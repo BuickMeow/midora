@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Midora.Midi.Tests/Midora.Midi.Tests.csproj" Id="b74ba963-ea2d-4969-8a6b-af71877e9e4d" />
+  <Project Path="Midora.Midi/Midora.Midi.csproj" Id="10c086bb-ea7f-46c9-9292-ea03f7f84dd9" />
+</Solution>

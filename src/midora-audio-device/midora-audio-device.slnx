@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="../midora-native-interops/Midora.NativeInterops.Bass/Midora.NativeInterops.Bass.csproj" />
+  <Project Path="../midora-native-interops/Midora.NativeInterops.BassWasapi/Midora.NativeInterops.BassWasapi.csproj" />
+  <Project Path="Midora.AudioDevice.BassWasapi.Tests.Console/Midora.AudioDevice.BassWasapi.Tests.Console.csproj" Id="dc78c3d6-3f1c-4287-ac71-33891ad1b395" />
+  <Project Path="Midora.AudioDevice.BassWasapi/Midora.AudioDevice.BassWasapi.csproj" Id="43705859-c408-4213-bc3a-e82492e25e54" />
+  <Project Path="Midora.AudioDevice/Midora.AudioDevice.csproj" Id="226e8034-e089-4f8b-a57a-f15a4b2d6e0f" />
+</Solution>

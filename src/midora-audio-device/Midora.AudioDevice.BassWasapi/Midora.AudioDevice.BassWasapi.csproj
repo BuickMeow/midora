@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\midora-native-interops\Midora.NativeInterops.BassWasapi\Midora.NativeInterops.BassWasapi.csproj" />
+    <ProjectReference Include="..\Midora.AudioDevice\Midora.AudioDevice.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Midora.AudioDevice.BassWasapi.Tests.Console" />
+  </ItemGroup>
+  
+</Project>

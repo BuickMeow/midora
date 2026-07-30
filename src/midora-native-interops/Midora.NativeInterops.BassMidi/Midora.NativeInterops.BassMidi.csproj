@@ -4,6 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -15,7 +16,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\midora-midi\Midora.Midi\Midora.Midi.csproj" />
+    <ProjectReference Include="..\Midora.NativeInterops.Bass\Midora.NativeInterops.Bass.csproj" />
   </ItemGroup>
 
 </Project>

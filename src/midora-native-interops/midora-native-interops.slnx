@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Midora.NativeInterops.Bass/Midora.NativeInterops.Bass.csproj" Id="8d1ba28a-c2aa-489f-af11-4f78be88dfa2" />
+  <Project Path="Midora.NativeInterops.BassMidi/Midora.NativeInterops.BassMidi.csproj" Id="946a61d4-05fc-4fe6-9437-90a409ffcfb2" />
+  <Project Path="Midora.NativeInterops.BassWasapi/Midora.NativeInterops.BassWasapi.csproj" Id="1e1b63e1-625d-4b33-b18c-ffc0ffe814c3" />
+</Solution>

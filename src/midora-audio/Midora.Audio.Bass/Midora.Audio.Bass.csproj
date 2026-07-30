@@ -7,20 +7,16 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
-    <CheckForOverflowUnderflow>False</CheckForOverflowUnderflow>
+    <IsAotCompatible>True</IsAotCompatible>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
-    <CheckForOverflowUnderflow>False</CheckForOverflowUnderflow>
+    <IsAotCompatible>True</IsAotCompatible>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ManagedBass" Version="4.0.2" />
-    <PackageReference Include="ManagedBass.Midi" Version="4.0.2" />
-  </ItemGroup>
-
-  <ItemGroup>
     <InternalsVisibleTo Include="Midora.Audio.Bass.Tests" />
+    <InternalsVisibleTo Include="Midora.Audio.Bass.Tests.Console" />
   </ItemGroup>
 
   <ItemGroup>

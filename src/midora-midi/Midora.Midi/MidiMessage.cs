@@ -164,17 +164,170 @@ public readonly struct MidiMessage
     public readonly byte Byte2 => (byte)((_raw & Data2Mask) >> Data2MaskOffset);
     public readonly ushort DataPositive14Bit => (ushort)((Byte1 & 0b__0111_1111) | ((Byte2 & 0b__0111_1111) << 7));
     public readonly int Length => (int)(_raw >> MessageLengthOffset);
-        
-    public readonly int WriteTo(Span<byte> destination, int startIndex = 0)
+
+    public readonly int WriteTo(Span<byte> destination)
     {
         int length = Length;
 
-        for (int i = 0; i < length; i++)
+        switch (length)
         {
-            destination[i + startIndex] = (byte)(_raw >> (i * 8));
+            case 0:
+                break;
+            case 1:
+                destination[0] = (byte)_raw;
+                break;
+            case 2:
+                destination[0] = (byte)_raw;
+                destination[1] = (byte)(_raw >> 8);
+                break;
+            case 3:
+                destination[0] = (byte)_raw;
+                destination[1] = (byte)(_raw >> 8);
+                destination[2] = (byte)(_raw >> 16);
+                break;
+            default:
+                ThrowInvalidMidiLengthException(length);
+                break;
         }
 
         return length;
+    }
+
+    public readonly int WriteTo(Span<byte> destination, int startIndex)
+    {
+        int length = Length;
+
+        switch (length)
+        {
+            case 1:
+                destination[0 + startIndex] = (byte)_raw;
+                break;
+            case 2:
+                destination[0 + startIndex] = (byte)_raw;
+                destination[1 + startIndex] = (byte)(_raw >> 8);
+                break;
+            case 3:
+                destination[0 + startIndex] = (byte)_raw;
+                destination[1 + startIndex] = (byte)(_raw >> 8);
+                destination[2 + startIndex] = (byte)(_raw >> 16);
+                break;
+            default:
+                ThrowInvalidMidiLengthException(length);
+                break;
+        }
+
+        return length;
+    }
+
+    public readonly unsafe int WriteTo(void* destination)
+    {
+        int length = Length;
+
+        switch (length)
+        {
+            case 1:
+                *(byte*)destination = (byte)_raw;
+                break;
+            case 2:
+                *(ushort*)destination = (ushort)_raw;
+                break;
+            case 3:
+                *(byte*)destination = (byte)_raw;
+                *(ushort*)((byte*)destination + 1) = (ushort)(_raw >> 8);
+                break;
+            default:
+                ThrowInvalidMidiLengthException(length);
+                break;
+        }
+
+        return length;
+    }
+
+    public readonly unsafe int WriteTo(byte* destination, nint startIndex)
+    {
+        int length = Length;
+
+        destination += startIndex;
+
+        switch (length)
+        {
+            case 1:
+                *destination = (byte)_raw;
+                break;
+            case 2:
+                *(ushort*)destination = (ushort)_raw;
+                break;
+            case 3:
+                *destination = (byte)_raw;
+                *(ushort*)(destination + 1) = (ushort)(_raw >> 8);
+                break;
+            default:
+                ThrowInvalidMidiLengthException(length);
+                break;
+        }
+
+        return length;
+    }
+
+    public readonly int WriteTo(Stream stream)
+    {
+        int length = Length;
+        Span<byte> buffer = stackalloc byte[length];
+
+        switch (length)
+        {
+            case 1:
+                buffer[0] = (byte)_raw;
+                break;
+            case 2:
+                buffer[0] = (byte)_raw;
+                buffer[1] = (byte)(_raw >> 8);
+                break;
+            case 3:
+                buffer[0] = (byte)_raw;
+                buffer[1] = (byte)(_raw >> 8);
+                buffer[2] = (byte)(_raw >> 16);
+                break;
+            default:
+                ThrowInvalidMidiLengthException(length);
+                break;
+        }
+
+        stream.Write(buffer);
+
+        return length;
+    }
+
+    public readonly byte[] ToArray()
+    {
+        int length = Length;
+        byte[] result = new byte[length];
+
+        switch (length)
+        {
+            case 1:
+                result[0] = (byte)_raw;
+                break;
+            case 2:
+                result[0] = (byte)_raw;
+                result[1] = (byte)(_raw >> 8);
+                break;
+            case 3:
+                result[0] = (byte)_raw;
+                result[1] = (byte)(_raw >> 8);
+                result[2] = (byte)(_raw >> 16);
+                break;
+            default:
+                ThrowInvalidMidiLengthException(length);
+                break;
+        }
+
+        return result;
+    }
+
+    private static void ThrowInvalidMidiLengthException(int length)
+    {
+        throw new MidoraMidiException($"Invalid midi message length: {length}");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

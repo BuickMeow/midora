@@ -7,12 +7,4 @@ public class NativeBassEnvironmentTests
     {
         NativeBassEnvironment.EnsureNativeLibrariesLoaded();
     }
-
-    [Fact]
-    public void ShouldProduceSounds()
-    {
-        NativeBassEnvironment.EnsureNativeLibrariesLoaded();
-
-        
-    }
 }

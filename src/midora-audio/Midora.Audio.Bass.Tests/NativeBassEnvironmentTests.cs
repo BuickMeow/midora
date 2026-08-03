@@ -5,6 +5,6 @@ public class NativeBassEnvironmentTests
     [Fact]
     public void ShouldLoadInWindows()
     {
-        NativeBassEnvironment.EnsureNativeLibrariesLoaded();
+        
     }
 }

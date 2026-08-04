@@ -6,8 +6,7 @@ using System.Text;
 namespace Midora.AudioDevice.BassWasapi.Internals;
 
 internal sealed unsafe class BassWasapiOutputDeviceFactory(
-    BassWasapiAudioOutputDeviceSettings settings,
-    IAudioRenderSource audioRenderSource
+    BassWasapiAudioOutputDeviceSettings settings
 ) : IAudioOutputDeviceFactory
 {
     public IReadOnlyList<AudioOutputDeviceInfo> GetDevices()
@@ -38,7 +37,7 @@ internal sealed unsafe class BassWasapiOutputDeviceFactory(
         return result;
     }
 
-    public IAudioOutputDevice Open(AudioOutputDeviceInfo deviceInfo)
+    public IAudioOutputDevice Open(AudioOutputDeviceInfo deviceInfo, IAudioRenderSource audioRenderSource)
     {
         return new BassWasapiOutputDevice(deviceInfo, settings, audioRenderSource);
     }

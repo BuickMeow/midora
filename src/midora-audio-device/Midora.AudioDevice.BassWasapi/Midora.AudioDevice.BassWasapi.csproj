@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Midora.AudioDevice.BassWasapi.Tests.Console" />
+    <InternalsVisibleTo Include="Midora.Audio.Bass.Tests.Console" />
   </ItemGroup>
   
 </Project>

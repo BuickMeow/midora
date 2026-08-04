@@ -15,6 +15,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice\Midora.AudioDevice.csproj" />
     <ProjectReference Include="..\..\midora-midi\Midora.Midi\Midora.Midi.csproj" />
   </ItemGroup>
 

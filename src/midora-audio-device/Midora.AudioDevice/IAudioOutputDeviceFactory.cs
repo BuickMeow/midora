@@ -8,5 +8,5 @@ public interface IAudioOutputDeviceFactory
 {
     IReadOnlyList<AudioOutputDeviceInfo> GetDevices();
 
-    IAudioOutputDevice Open(AudioOutputDeviceInfo deviceInfo);
+    IAudioOutputDevice Open(AudioOutputDeviceInfo deviceInfo, IAudioRenderSource audioRenderSource);
 }

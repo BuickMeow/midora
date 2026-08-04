@@ -4,6 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -20,7 +21,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice\Midora.AudioDevice.csproj" />
+    <ProjectReference Include="..\..\midora-native-interops\Midora.NativeInterops.BassMidi\Midora.NativeInterops.BassMidi.csproj" />
+    <ProjectReference Include="..\..\midora-native-interops\Midora.NativeInterops.Bass\Midora.NativeInterops.Bass.csproj" />
     <ProjectReference Include="..\Midora.Audio\Midora.Audio.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Settings\" />
   </ItemGroup>
 
 </Project>

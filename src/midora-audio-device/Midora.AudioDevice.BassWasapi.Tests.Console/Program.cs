@@ -86,13 +86,11 @@ public static class Program
 
         TriangleAudioRenderSource renderSource = new(300, 0.5);
 
-        BassWasapiOutputDeviceFactory deviceFactory = new(
-            new(),
-            renderSource
-        );
+        BassWasapiOutputDeviceFactory deviceFactory = new(new());
 
         IAudioOutputDevice outputDevice = deviceFactory.Open(
-            deviceFactory.GetDevices().FirstOrDefault() ?? throw new MidoraAudioDeviceException("No audio output devices.")
+            deviceFactory.GetDevices().FirstOrDefault() ?? throw new MidoraAudioDeviceException("No audio output devices."),
+            renderSource
         );
 
         outputDevice.Start();

@@ -568,19 +568,20 @@ Infinity
 ```text
 必须有明确取整策略。
 ```
-第 12 章《编译系统与 Canonical Compiled Result》 确认必须存在取整策略；具体默认策略和 UI 选择由实现设计确定。
+系统默认取整策略固定为 `Round`，midpoint 使用 Away From Zero；用户可在整数目标参数上显式选择 `Round`、`Floor` 或 `Ceil`。取整只在完整映射链得到最终输出后执行一次，不得挂在 Mapping Step 上或在每一步后重复量化。
 如果 Multiply / Divide 等映射结果产生小数，但目标为整数：
 ```text
 使用该目标参数配置的取整策略。
-若未配置，则使用系统默认取整策略。
+若未显式配置，则使用系统默认 `Round / Away From Zero`。
 ```
 ### 12.9.7 越界与 Clamp
 映射输出越界时：
 ```text
 默认 Error。
 ```
-除非 Mapping Step 显式配置 Clamp 等策略。
-Clamp 是用户显式选择的合法映射策略，不产生诊断。
+除非目标参数的最终越界策略显式配置为 Clamp。
+Mapping Step 中的 Clamp 操作只限制映射链中间值，不代替目标参数的最终越界策略；Remap Range 的输入越界策略仍属于该 Mapping Step。
+目标参数 Clamp 是用户显式选择的合法最终处理，不产生诊断。
 Remap Range 输入范围为 0：
 ```text
 编译失败，除非该 Mapping Step 明确配置了除零 fallback。

@@ -234,6 +234,14 @@ Ceil
 ```text
 Round
 ```
+`Round` 的 midpoint 规则固定为 Away From Zero：
+```text
+ 62.5 ->  63
+-62.5 -> -63
+```
+`Floor` 与 `Ceil` 使用标准数学定义。
+
+取整策略属于整数目标参数配置，不属于单个 Mapping Step。事件参数 Mapping、连续曲线和 Logical Parameter Mapping 都必须在各自目标参数上保存该配置；复制或重排 Mapping Step 不得改变目标参数的取整策略。同一 SubVoice 内多个 Logical Parameter Mapping 作用于同一 MIDI 目标时，必须共享同一取整与最终越界配置。
 适用目标包括但不限于：
 ```text
 Note number

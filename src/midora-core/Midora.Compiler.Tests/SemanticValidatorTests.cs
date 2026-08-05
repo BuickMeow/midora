@@ -5,6 +5,41 @@ namespace Midora.Compiler.Tests;
 public sealed class SemanticValidatorTests
 {
     [Fact]
+    public void LogicalMappingsForSameTargetRequireOneTargetPolicy()
+    {
+        var fixture = CompilerTestProject.Create();
+        LogicalParameterDefinition parameter = new(fixture.Project)
+        {
+            Name = "parameter",
+            Minimum = 0,
+            Maximum = 127
+        };
+        fixture.Instrument.LogicalParameters.Add(parameter);
+        LogicalParameterMapping first = new(fixture.Project)
+        {
+            ParameterId = parameter.Id,
+            SubVoiceId = fixture.Voice.Id,
+            Target = MidiValueTarget.ControlChange(1)
+        };
+        LogicalParameterMapping second = new(fixture.Project)
+        {
+            ParameterId = parameter.Id,
+            SubVoiceId = fixture.Voice.Id,
+            Target = MidiValueTarget.ControlChange(1)
+        };
+        second.TargetSettings.Rounding = MappingRounding.Floor;
+        fixture.Instrument.ParameterMappings.Add(first);
+        fixture.Instrument.ParameterMappings.Add(second);
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(result.IsConsumable);
+        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1275");
+    }
+
+    [Fact]
     public void BrokenEnvelopeReferenceIsAnError()
     {
         var fixture = CompilerTestProject.Create();

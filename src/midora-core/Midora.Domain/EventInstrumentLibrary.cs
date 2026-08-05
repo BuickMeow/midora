@@ -153,6 +153,9 @@ public static class EventInstrumentLibrary
                     HasBankLsb = value.HasBankLsb,
                     FollowPitchDelta = value.FollowPitchDelta
                 };
+                CopyTargetSettings(value.NumberTargetSettings, eventCopy.NumberTargetSettings);
+                CopyTargetSettings(value.ValueTargetSettings, eventCopy.ValueTargetSettings);
+                CopyTargetSettings(value.SecondaryValueTargetSettings, eventCopy.SecondaryValueTargetSettings);
                 CopyChain(project, value.NumberMappings, eventCopy.NumberMappings, parameters, functions, envelopes);
                 CopyChain(project, value.ValueMappings, eventCopy.ValueMappings, parameters, functions, envelopes);
                 CopyChain(project, value.SecondaryValueMappings, eventCopy.SecondaryValueMappings, parameters, functions, envelopes);
@@ -161,6 +164,7 @@ public static class EventInstrumentLibrary
             foreach (ValueCurve curve in voice.Curves)
             {
                 ValueCurve curveCopy = new(project) { Target = curve.Target };
+                CopyTargetSettings(curve.TargetSettings, curveCopy.TargetSettings);
                 foreach (CurvePoint point in curve.Points)
                 {
                     curveCopy.Points.Add(new(project, point.Tick, point.Value, point.Interpolation));
@@ -177,6 +181,7 @@ public static class EventInstrumentLibrary
                 SubVoiceId = Remap(voices, mapping.SubVoiceId),
                 Target = mapping.Target
             };
+            CopyTargetSettings(mapping.TargetSettings, copy.TargetSettings);
             CopyChain(project, mapping.Steps, copy.Steps, parameters, functions, envelopes);
             result.ParameterMappings.Add(copy);
         }
@@ -273,12 +278,16 @@ public static class EventInstrumentLibrary
                 SourceMaximum = step.SourceMaximum,
                 TargetMinimum = step.TargetMinimum,
                 TargetMaximum = step.TargetMaximum,
-                Rounding = step.Rounding,
                 InputOverflow = step.InputOverflow,
-                Overflow = step.Overflow,
                 DivideByZero = step.DivideByZero
             });
         }
+    }
+
+    private static void CopyTargetSettings(MidiIntegerTargetSettings source, MidiIntegerTargetSettings target)
+    {
+        target.Rounding = source.Rounding;
+        target.Overflow = source.Overflow;
     }
 
     private static MidoraId Remap(IReadOnlyDictionary<MidoraId, MidoraId> map, MidoraId id) =>

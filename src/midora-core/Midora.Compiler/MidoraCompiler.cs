@@ -421,10 +421,10 @@ public sealed class MidoraCompiler
         SourceReference source,
         ref long sequence)
     {
-        int number = ApplyMappedInt(value.Number, value.NumberMappings,
+        int number = ApplyMappedInt(value.Number, value.NumberMappings, value.NumberTargetSettings,
             context with { CurrentParameter = MappingTargetParameter.Number, TargetOriginalValue = value.Number },
             parameters, envelopes, functions, 0, 127, value.Number, false);
-        int eventValue = ApplyMappedInt(value.Value, value.ValueMappings,
+        int eventValue = ApplyMappedInt(value.Value, value.ValueMappings, value.ValueTargetSettings,
             context with { CurrentParameter = MappingTargetParameter.Value, TargetOriginalValue = value.Value },
             parameters, envelopes, functions,
             value.Kind switch
@@ -436,9 +436,10 @@ public sealed class MidoraCompiler
             value.Kind is TemplateEventKind.RegisteredParameter or TemplateEventKind.NonRegisteredParameter ? 16383 :
             value.Kind == TemplateEventKind.PitchBend ? 8191 : 127,
             DefaultTemplateValue(value.Kind), true);
-        int secondary = ApplyMappedInt(value.SecondaryValue, value.SecondaryValueMappings,
+        int secondary = ApplyMappedInt(value.SecondaryValue, value.SecondaryValueMappings, value.SecondaryValueTargetSettings,
             context with { CurrentParameter = MappingTargetParameter.SecondaryValue, TargetOriginalValue = value.SecondaryValue },
-            parameters, envelopes, functions, 0, 127,
+            parameters, envelopes, functions, 0,
+            value.Kind == TemplateEventKind.PitchBendRange ? 99 : 127,
             value.Kind == TemplateEventKind.PitchBendRange ? 0 : value.SecondaryValue, true);
         switch (value.Kind)
         {
@@ -489,6 +490,7 @@ public sealed class MidoraCompiler
     private int ApplyMappedInt(
         int value,
         MappingChain steps,
+        MidiIntegerTargetSettings targetSettings,
         in MappingContext context,
         IReadOnlyDictionary<MidoraId, double> parameters,
         IReadOnlyDictionary<MidoraId, double> envelopes,
@@ -504,8 +506,8 @@ public sealed class MidoraCompiler
         }
         double result = _mapping.Apply(
             value, steps, context, parameters, envelopes, functions,
-            minimum, maximum, targetDefault, allowClamp);
-        return MappingEngine.Round(result, steps.Last(item => item.IsEnabled).Rounding);
+            minimum, maximum, targetDefault, targetSettings.Overflow, allowClamp);
+        return MappingEngine.Round(result, targetSettings.Rounding);
     }
 
     private static int DefaultTemplateValue(TemplateEventKind kind) => kind switch
@@ -660,7 +662,7 @@ public sealed class MidoraCompiler
                     continue;
                 }
                 double value = EvaluateCurve(curve.Points, templateTick, 0);
-                int normalized = NormalizeTargetValue(curve.Target, value);
+                int normalized = NormalizeTargetValue(curve.Target, value, curve.TargetSettings);
                 if (previousOutputValue == normalized)
                 {
                     continue;
@@ -697,6 +699,8 @@ public sealed class MidoraCompiler
             .GroupBy(value => value.Target)
             .OrderBy(value => value.Key.Kind).ThenBy(value => value.Key.Number))
         {
+            LogicalParameterMapping[] mappings = group.ToArray();
+            MidiIntegerTargetSettings targetSettings = mappings[0].TargetSettings;
             double baseValue = DefaultTargetValue(group.Key);
             TargetStatePoint[] rawState = BuildTargetStateTimeline(output, group.Key);
             int rawStateIndex = 0;
@@ -715,7 +719,7 @@ public sealed class MidoraCompiler
                 double current = currentRawValue;
                 try
                 {
-                    foreach (LogicalParameterMapping mapping in group)
+                    foreach (LogicalParameterMapping mapping in mappings)
                     {
                         double logical = parameters[mapping.ParameterId];
                         long instanceTick = tick - projectStart;
@@ -741,9 +745,9 @@ public sealed class MidoraCompiler
                             ? logical
                             : _mapping.Apply(current, steps, context, parameters, envelopes, functions,
                                 TargetMinimum(group.Key), TargetMaximum(group.Key),
-                                DefaultTargetValue(group.Key), true);
+                                DefaultTargetValue(group.Key), mapping.TargetSettings.Overflow, true);
                     }
-                    int normalized = NormalizeTargetValue(group.Key, current);
+                    int normalized = NormalizeTargetValue(group.Key, current, targetSettings);
                     if (previousOutputValue != normalized)
                     {
                         previousOutputValue = normalized;
@@ -899,7 +903,7 @@ public sealed class MidoraCompiler
             value = definition.Type switch
             {
                 LogicalParameterType.Integer or LogicalParameterType.Enum =>
-                    Math.Round(value, MidpointRounding.AwayFromZero),
+                    MappingEngine.Round(value, MappingRounding.Round),
                 _ => value
             };
             result.Add(id, Math.Clamp(value, definition.Minimum, definition.Maximum));
@@ -953,7 +957,7 @@ public sealed class MidoraCompiler
         List<RawMidiEvent> output,
         long tick,
         MidiValueTarget target,
-        double value,
+        int value,
         SourceReference source,
         ref long sequence,
         CanonicalEventRole? roleOverride = null)
@@ -961,40 +965,59 @@ public sealed class MidoraCompiler
         switch (target.Kind)
         {
             case MidiValueKind.ControlChange:
-                output.Add(RawMidiEvent.Control(tick, target.Number, RoundClamp(value, 0, 127), roleOverride ?? CanonicalEventRole.ControlChange, sequence++, source));
+                output.Add(RawMidiEvent.Control(tick, target.Number, value, roleOverride ?? CanonicalEventRole.ControlChange, sequence++, source));
                 break;
             case MidiValueKind.BankMsb:
-                output.Add(RawMidiEvent.Control(tick, 0, RoundClamp(value, 0, 127), roleOverride ?? CanonicalEventRole.Bank, sequence++, source));
+                output.Add(RawMidiEvent.Control(tick, 0, value, roleOverride ?? CanonicalEventRole.Bank, sequence++, source));
                 break;
             case MidiValueKind.BankLsb:
-                output.Add(RawMidiEvent.Control(tick, 32, RoundClamp(value, 0, 127), roleOverride ?? CanonicalEventRole.Bank, sequence++, source));
+                output.Add(RawMidiEvent.Control(tick, 32, value, roleOverride ?? CanonicalEventRole.Bank, sequence++, source));
                 break;
             case MidiValueKind.Program:
-                output.Add(RawMidiEvent.Program(tick, RoundClamp(value, 0, 127), sequence++, source, roleOverride ?? CanonicalEventRole.Program));
+                output.Add(RawMidiEvent.Program(tick, value, sequence++, source, roleOverride ?? CanonicalEventRole.Program));
                 break;
             case MidiValueKind.PitchBend:
-                output.Add(RawMidiEvent.PitchBend(tick, RoundClamp(value, -8192, 8191), sequence++, source, roleOverride ?? CanonicalEventRole.PitchBend));
+                output.Add(RawMidiEvent.PitchBend(tick, value, sequence++, source, roleOverride ?? CanonicalEventRole.PitchBend));
                 break;
             case MidiValueKind.RegisteredParameter:
-                EmitParameter(output, tick, true, target.Number, RoundClamp(value, 0, 16383), source, ref sequence, roleOverride ?? CanonicalEventRole.Parameter);
+                EmitParameter(output, tick, true, target.Number, value, source, ref sequence, roleOverride ?? CanonicalEventRole.Parameter);
                 break;
             case MidiValueKind.NonRegisteredParameter:
-                EmitParameter(output, tick, false, target.Number, RoundClamp(value, 0, 16383), source, ref sequence, roleOverride ?? CanonicalEventRole.Parameter);
+                EmitParameter(output, tick, false, target.Number, value, source, ref sequence, roleOverride ?? CanonicalEventRole.Parameter);
                 break;
             case MidiValueKind.PitchBendRangeSemitones:
-                EmitPitchBendRangeComponent(output, tick, true, RoundClamp(value, 0, 127), source, ref sequence, roleOverride ?? CanonicalEventRole.Parameter);
+                EmitPitchBendRangeComponent(output, tick, true, value, source, ref sequence, roleOverride ?? CanonicalEventRole.Parameter);
                 break;
             case MidiValueKind.PitchBendRangeCents:
-                EmitPitchBendRangeComponent(output, tick, false, RoundClamp(value, 0, 99), source, ref sequence, roleOverride ?? CanonicalEventRole.Parameter);
+                EmitPitchBendRangeComponent(output, tick, false, value, source, ref sequence, roleOverride ?? CanonicalEventRole.Parameter);
                 break;
         }
     }
 
-    private static int RoundClamp(double value, int minimum, int maximum) =>
-        Math.Clamp(checked((int)Math.Round(value, MidpointRounding.AwayFromZero)), minimum, maximum);
-
-    private static int NormalizeTargetValue(MidiValueTarget target, double value) =>
-        RoundClamp(value, checked((int)TargetMinimum(target)), checked((int)TargetMaximum(target)));
+    private static int NormalizeTargetValue(
+        MidiValueTarget target,
+        double value,
+        MidiIntegerTargetSettings settings)
+    {
+        double minimum = TargetMinimum(target);
+        double maximum = TargetMaximum(target);
+        if (!double.IsFinite(value))
+        {
+            throw new MappingException("Target value is NaN or Infinity.");
+        }
+        if (value < minimum || value > maximum)
+        {
+            if (settings.Overflow == MappingOverflow.Clamp)
+            {
+                value = Math.Clamp(value, minimum, maximum);
+            }
+            else
+            {
+                throw new MappingException($"Target value {value} is outside [{minimum}, {maximum}].");
+            }
+        }
+        return MappingEngine.Round(value, settings.Rounding);
+    }
 
     private static double DefaultTargetValue(MidiValueTarget target) => target.Kind switch
     {
@@ -2033,14 +2056,18 @@ internal static class SourceFingerprint
                 }
                 Add(ref hash, value.FollowPitchDelta ? 1 : 0);
                 AddChain(ref hash, value.NumberMappings);
+                AddTargetSettings(ref hash, value.NumberTargetSettings);
                 AddChain(ref hash, value.ValueMappings);
+                AddTargetSettings(ref hash, value.ValueTargetSettings);
                 AddChain(ref hash, value.SecondaryValueMappings);
+                AddTargetSettings(ref hash, value.SecondaryValueTargetSettings);
             }
             foreach (ValueCurve curve in voice.Curves)
             {
                 Add(ref hash, curve.Id);
                 Add(ref hash, (int)curve.Target.Kind);
                 Add(ref hash, curve.Target.Number);
+                AddTargetSettings(ref hash, curve.TargetSettings);
                 foreach (CurvePoint point in curve.Points)
                 {
                     Add(ref hash, point.Id);
@@ -2058,6 +2085,7 @@ internal static class SourceFingerprint
             Add(ref hash, (int)mapping.Target.Kind);
             Add(ref hash, mapping.Target.Number);
             AddChain(ref hash, mapping.Steps);
+            AddTargetSettings(ref hash, mapping.TargetSettings);
         }
         foreach (CSharpMappingFunction function in instrument.MappingFunctions.OrderBy(value => value.Id))
         {
@@ -2118,10 +2146,14 @@ internal static class SourceFingerprint
         Add(ref hash, step.SourceMaximum);
         Add(ref hash, step.TargetMinimum);
         Add(ref hash, step.TargetMaximum);
-        Add(ref hash, (int)step.Rounding);
         Add(ref hash, (int)step.InputOverflow);
-        Add(ref hash, (int)step.Overflow);
         Add(ref hash, (int)step.DivideByZero);
+    }
+
+    private static void AddTargetSettings(ref ulong hash, MidiIntegerTargetSettings settings)
+    {
+        Add(ref hash, (int)settings.Rounding);
+        Add(ref hash, (int)settings.Overflow);
     }
 
     private static void AddChain(ref ulong hash, MappingChain chain)

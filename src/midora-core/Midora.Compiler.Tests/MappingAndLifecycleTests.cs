@@ -5,6 +5,98 @@ namespace Midora.Compiler.Tests;
 
 public sealed class MappingAndLifecycleTests
 {
+    [Theory]
+    [InlineData(MappingRounding.Round, 63)]
+    [InlineData(MappingRounding.Floor, 62)]
+    [InlineData(MappingRounding.Ceiling, 63)]
+    public void IntegerRoundingIsConfiguredOnTargetAndAppliedOnlyAtFinalOutput(
+        MappingRounding rounding,
+        int expected)
+    {
+        var fixture = CompilerTestProject.Create();
+        TemplateEvent program = TemplateEvent.Program(fixture.Project, 0, 0);
+        program.ValueTargetSettings.Rounding = rounding;
+        program.ValueMappings.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.Constant,
+            Operation = MappingOperation.Override,
+            Constant = 62.5
+        });
+        fixture.Voice.Events.Add(program);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(result.IsConsumable);
+        CanonicalMidiEvent value = Assert.Single(result.Events.ToArray(),
+            item => item.Role == CanonicalEventRole.Program);
+        Assert.Equal((byte)expected, value.Message.Byte1);
+    }
+
+    [Fact]
+    public void RoundMidpointUsesAwayFromZeroForNegativePitchBend()
+    {
+        var fixture = CompilerTestProject.Create();
+        TemplateEvent pitchBend = new(fixture.Project)
+        {
+            Kind = TemplateEventKind.PitchBend,
+            Value = 0
+        };
+        pitchBend.ValueMappings.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.Constant,
+            Operation = MappingOperation.Override,
+            Constant = -62.5
+        });
+        fixture.Voice.Events.Add(pitchBend);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        CanonicalMidiEvent value = Assert.Single(result.Events.ToArray(),
+            item => item.Role == CanonicalEventRole.PitchBend);
+        int signedValue = (value.Message.Byte2 << 7 | value.Message.Byte1) - 8192;
+        Assert.Equal(-63, signedValue);
+    }
+
+    [Fact]
+    public void CurveUsesItsTargetRoundingSettings()
+    {
+        var fixture = CompilerTestProject.Create();
+        ValueCurve curve = new(fixture.Project) { Target = MidiValueTarget.ControlChange(1) };
+        curve.TargetSettings.Rounding = MappingRounding.Floor;
+        curve.Points.Add(new CurvePoint(fixture.Project, 0, 62.5));
+        fixture.Voice.Curves.Add(curve);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        CanonicalMidiEvent value = Assert.Single(result.Events.ToArray(), item => item.Tick == 0
+            && item.Message.MessageType == MidiMessageType.ControlChange && item.Message.Byte1 == 1);
+        Assert.Equal((byte)62, value.Message.Byte2);
+    }
+
+    [Fact]
+    public void CurveFinalOverflowPolicyBelongsToTarget()
+    {
+        var fixture = CompilerTestProject.Create();
+        ValueCurve curve = new(fixture.Project) { Target = MidiValueTarget.ControlChange(1) };
+        curve.Points.Add(new CurvePoint(fixture.Project, 0, 200));
+        fixture.Voice.Curves.Add(curve);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult failed = new MidoraCompiler().CompileFull(fixture.Project);
+        curve.TargetSettings.Overflow = MappingOverflow.Clamp;
+        CanonicalCompiledResult clamped = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(failed.IsConsumable);
+        Assert.Contains(failed.Diagnostics, value => value.Code == "MIDORA1224");
+        Assert.True(clamped.IsConsumable);
+        Assert.Contains(clamped.Events.ToArray(), value => value.Tick == 0
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 1 && value.Message.Byte2 == 127);
+    }
+
     [Fact]
     public void BuiltInAndCSharpMappingsRunDuringCompilation()
     {
@@ -26,9 +118,9 @@ public sealed class MappingAndLifecycleTests
         noteEvent.ValueMappings.Add(new ValueMappingStep(fixture.Project)
         {
             Operation = MappingOperation.CustomCSharp,
-            MappingFunctionId = function.Id,
-            Overflow = MappingOverflow.Clamp
+            MappingFunctionId = function.Id
         });
+        noteEvent.ValueTargetSettings.Overflow = MappingOverflow.Clamp;
         fixture.Voice.Events.Add(noteEvent);
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480, 65);
 
@@ -128,9 +220,9 @@ public sealed class MappingAndLifecycleTests
         mapping.Steps.Add(new ValueMappingStep(fixture.Project)
         {
             Operation = MappingOperation.CustomCSharp,
-            MappingFunctionId = function.Id,
-            Overflow = MappingOverflow.Clamp
+            MappingFunctionId = function.Id
         });
+        mapping.TargetSettings.Overflow = MappingOverflow.Clamp;
         fixture.Instrument.ParameterMappings.Add(mapping);
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 900);
 
@@ -156,15 +248,14 @@ public sealed class MappingAndLifecycleTests
         {
             Source = MappingSource.Constant,
             Operation = MappingOperation.Override,
-            Constant = 0,
-            Overflow = MappingOverflow.Fail
+            Constant = 0
         };
         note.ValueMappings.Add(step);
         fixture.Voice.Events.Add(note);
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
 
         CanonicalCompiledResult failed = new MidoraCompiler().CompileFull(fixture.Project);
-        step.Overflow = MappingOverflow.Clamp;
+        note.ValueTargetSettings.Overflow = MappingOverflow.Clamp;
         CanonicalCompiledResult clamped = new MidoraCompiler().CompileFull(fixture.Project);
 
         Assert.False(failed.IsConsumable);
@@ -187,7 +278,7 @@ public sealed class MappingAndLifecycleTests
             DefaultValue = 0
         };
         fixture.Instrument.LogicalParameters.Add(parameter);
-        fixture.Instrument.ParameterMappings.Add(new LogicalParameterMapping(fixture.Project)
+        LogicalParameterMapping mapping = new(fixture.Project)
         {
             ParameterId = parameter.Id,
             SubVoiceId = fixture.Voice.Id,
@@ -202,11 +293,12 @@ public sealed class MappingAndLifecycleTests
                     SourceMinimum = 0,
                     SourceMaximum = 1,
                     TargetMinimum = 0,
-                    TargetMaximum = 127,
-                    Overflow = MappingOverflow.Clamp
+                    TargetMaximum = 127
                 }
             }
-        });
+        };
+        mapping.TargetSettings.Rounding = MappingRounding.Floor;
+        fixture.Instrument.ParameterMappings.Add(mapping);
         LogicalParameterLane lane = new(fixture.Project) { ParameterId = parameter.Id };
         lane.Points.Add(new(fixture.Project, 0, 0));
         lane.Points.Add(new(fixture.Project, 10, 1));
@@ -221,6 +313,7 @@ public sealed class MappingAndLifecycleTests
 
         Assert.Equal(11, values.Length);
         Assert.Equal((byte)0, values[0]);
+        Assert.Equal((byte)12, values[1]);
         Assert.Equal((byte)127, values[10]);
         Assert.Contains(result.Events.ToArray(), value => value.Tick == result.EndTick
             && value.Role == CanonicalEventRole.Reset
@@ -262,9 +355,9 @@ public sealed class MappingAndLifecycleTests
             SourceMinimum = 0,
             SourceMaximum = 1,
             TargetMinimum = 0,
-            TargetMaximum = 127,
-            Overflow = MappingOverflow.Clamp
+            TargetMaximum = 127
         });
+        mapping.TargetSettings.Overflow = MappingOverflow.Clamp;
         fixture.Instrument.ParameterMappings.Add(mapping);
         fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 400, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 200);
@@ -313,9 +406,9 @@ public sealed class MappingAndLifecycleTests
             SourceMinimum = 0,
             SourceMaximum = 1,
             TargetMinimum = 0,
-            TargetMaximum = 127,
-            Overflow = MappingOverflow.Clamp
+            TargetMaximum = 127
         });
+        mapping.TargetSettings.Overflow = MappingOverflow.Clamp;
         fixture.Instrument.ParameterMappings.Add(mapping);
         fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 400, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 200);
@@ -343,9 +436,9 @@ public sealed class MappingAndLifecycleTests
         controller.ValueMappings.Add(new ValueMappingStep(fixture.Project)
         {
             Source = MappingSource.TemplateTick,
-            Operation = MappingOperation.Override,
-            Overflow = MappingOverflow.Clamp
+            Operation = MappingOperation.Override
         });
+        controller.ValueTargetSettings.Overflow = MappingOverflow.Clamp;
         fixture.Voice.Events.Add(controller);
         fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 120, 30, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 900);
@@ -406,9 +499,9 @@ public sealed class MappingAndLifecycleTests
         {
             Source = MappingSource.LogicalParameter,
             LogicalParameterId = parameter.Id,
-            Operation = MappingOperation.Add,
-            Overflow = MappingOverflow.Clamp
+            Operation = MappingOperation.Add
         });
+        mapping.TargetSettings.Overflow = MappingOverflow.Clamp;
         fixture.Instrument.ParameterMappings.Add(mapping);
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 20);
 

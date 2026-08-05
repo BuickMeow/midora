@@ -49,6 +49,9 @@ public sealed class TemplateEvent
         NumberMappings = new MappingChain(project);
         ValueMappings = new MappingChain(project);
         SecondaryValueMappings = new MappingChain(project);
+        NumberTargetSettings = new MidiIntegerTargetSettings();
+        ValueTargetSettings = new MidiIntegerTargetSettings();
+        SecondaryValueTargetSettings = new MidiIntegerTargetSettings();
     }
 
     public MidoraId Id { get; init; }
@@ -64,6 +67,9 @@ public sealed class TemplateEvent
     public MappingChain NumberMappings { get; }
     public MappingChain ValueMappings { get; }
     public MappingChain SecondaryValueMappings { get; }
+    public MidiIntegerTargetSettings NumberTargetSettings { get; }
+    public MidiIntegerTargetSettings ValueTargetSettings { get; }
+    public MidiIntegerTargetSettings SecondaryValueTargetSettings { get; }
 
     public static TemplateEvent Note(
         MidoraProject project,

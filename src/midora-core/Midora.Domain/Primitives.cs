@@ -105,10 +105,12 @@ public sealed class ValueCurve
     {
         ArgumentNullException.ThrowIfNull(project);
         Id = project.AllocateStableId();
+        TargetSettings = new MidiIntegerTargetSettings();
     }
 
     public MidoraId Id { get; init; }
     public MidiValueTarget Target { get; set; }
+    public MidiIntegerTargetSettings TargetSettings { get; }
     public List<CurvePoint> Points { get; } = [];
 }
 

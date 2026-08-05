@@ -71,7 +71,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 2. **已确认：2A（2026-08-05）**。同一 tick 允许多个普通 Marker；名称可空、可重复，不按名称或 tick 去重，以稳定 ID 区分。SRS 4.8.2 与 18.7.4 已统一；编译器补充稳定 ID 次级排序，避免 canonical 结果依赖源列表顺序。
 3. **已确认：3A（2026-08-05）**。JSON、对象文件名和 `nextStableId` 固定使用 32 位小写十六进制字符串；protobuf 固定使用 `StableId.high` / `StableId.low` 两个 `fixed64` 字段，字段号分别为 1 / 2，wire 字节序遵循 protobuf 标准。SRS 2.5、16.11.2、16.13.2 与 21.3 已同步。
 4. **已确认：4A（2026-08-05）**。新建 Event Instrument 默认 `Reject`；策略范围内重叠产生 Error，结果不可消费。用户显式选择 `Warn` 时产生 Warning，默认仍可消费；启用“Warning 视为 Error”后结果不可消费，但诊断级别仍是 Warning。SRS 7.33、10.17 与 12.19 已统一。
-5. Mapping/曲线到整数 MIDI 值的默认取整：确认 Round/Floor/Ceiling 的默认值及 midpoint 规则；当前候选为 `AwayFromZero`。
+5. **已确认：5A（2026-08-05）**。整数目标参数默认 `Round`，midpoint 固定为 Away From Zero；`Floor` / `Ceil` 保留为目标参数可选项。取整只在完整映射链最终输出时执行一次；取整和最终越界策略已从 Mapping Step 移到事件参数、曲线或 Logical Parameter Mapping 的目标配置。SRS 9.4 与 12.9 已统一。
 6. 曲线离散化与压缩：确认每 tick 采样候选是否定版，或采用误差阈值/自适应采样；该选择影响可听结果、事件量和确定性。
 7. 实际无输出的 Event Instrument 是否占用 Channel Unit：SRS 7.31 明确留给编译优化；该选择会影响资源分配和 canonical 形式。
 8. tick→sample 整数舍入：当前候选为完整 Tempo Map 的 decimal 积分后只做一次 `AwayFromZero`。

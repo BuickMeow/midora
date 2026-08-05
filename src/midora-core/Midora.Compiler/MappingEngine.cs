@@ -45,6 +45,7 @@ internal sealed class MappingEngine
         double legalMinimum,
         double legalMaximum,
         double targetDefault,
+        MappingOverflow overflow,
         bool allowClamp)
     {
         double current = value;
@@ -82,8 +83,7 @@ internal sealed class MappingEngine
 
         if (current < legalMinimum || current > legalMaximum)
         {
-            ValueMappingStep? finalStep = steps.LastOrDefault(value => value.IsEnabled);
-            if (finalStep?.Overflow == MappingOverflow.Clamp && allowClamp)
+            if (overflow == MappingOverflow.Clamp && allowClamp)
             {
                 current = Math.Clamp(current, legalMinimum, legalMaximum);
             }

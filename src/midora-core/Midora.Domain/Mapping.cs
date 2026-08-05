@@ -86,6 +86,12 @@ public enum MappingOverflow
     Clamp
 }
 
+public sealed class MidiIntegerTargetSettings
+{
+    public MappingRounding Rounding { get; set; } = MappingRounding.Round;
+    public MappingOverflow Overflow { get; set; } = MappingOverflow.Fail;
+}
+
 public enum MappingInputOverflow
 {
     Clamp,
@@ -174,9 +180,7 @@ public sealed class ValueMappingStep
     public double SourceMaximum { get; set; } = 1;
     public double TargetMinimum { get; set; }
     public double TargetMaximum { get; set; } = 127;
-    public MappingRounding Rounding { get; set; } = MappingRounding.Round;
     public MappingInputOverflow InputOverflow { get; set; } = MappingInputOverflow.Clamp;
-    public MappingOverflow Overflow { get; set; } = MappingOverflow.Fail;
     public DivideByZeroPolicy DivideByZero { get; set; } = DivideByZeroPolicy.TargetMaximum;
 }
 
@@ -187,6 +191,7 @@ public sealed class LogicalParameterMapping
         ArgumentNullException.ThrowIfNull(project);
         Id = project.AllocateStableId();
         Steps = new MappingChain(project);
+        TargetSettings = new MidiIntegerTargetSettings();
     }
 
     public MidoraId Id { get; init; }
@@ -194,6 +199,7 @@ public sealed class LogicalParameterMapping
     public MidoraId SubVoiceId { get; set; }
     public MidiValueTarget Target { get; set; }
     public MappingChain Steps { get; }
+    public MidiIntegerTargetSettings TargetSettings { get; }
 }
 
 public readonly record struct MappingContext(

@@ -290,9 +290,9 @@ public static partial class Program
                 SourceMinimum = 0,
                 SourceMaximum = 1,
                 TargetMinimum = 32,
-                TargetMaximum = 127,
-                Overflow = MappingOverflow.Clamp
+                TargetMaximum = 127
             });
+            expression.TargetSettings.Overflow = MappingOverflow.Clamp;
             piano.ParameterMappings.Add(expression);
         }
         project.EventInstruments.Add(piano);

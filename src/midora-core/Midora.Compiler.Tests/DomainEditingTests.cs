@@ -39,6 +39,8 @@ public sealed class DomainEditingTests
         CSharpMappingFunction function = new(project) { Name = "mapping", Body = "return value;" };
         source.MappingFunctions.Add(function);
         TemplateEvent value = TemplateEvent.ControlChange(project, 0, 1, 10);
+        value.ValueTargetSettings.Rounding = MappingRounding.Floor;
+        value.ValueTargetSettings.Overflow = MappingOverflow.Clamp;
         value.ValueMappings.Add(new ValueMappingStep(project)
         {
             Operation = MappingOperation.CustomCSharp,
@@ -58,6 +60,7 @@ public sealed class DomainEditingTests
             Source = MappingSource.LogicalParameter,
             LogicalParameterId = parameter.Id
         });
+        parameterMapping.TargetSettings.Rounding = MappingRounding.Ceiling;
         source.ParameterMappings.Add(parameterMapping);
 
         EventInstrument copy = EventInstrumentLibrary.Duplicate(project, source.Id);
@@ -71,6 +74,9 @@ public sealed class DomainEditingTests
             copy.SubVoices[0].Events[0].ValueMappings[0].MappingFunctionId);
         Assert.Equal(copy.LogicalParameters[0].Id, copy.ParameterMappings[0].ParameterId);
         Assert.Equal(copy.SubVoices[0].Id, copy.ParameterMappings[0].SubVoiceId);
+        Assert.Equal(MappingRounding.Floor, copy.SubVoices[0].Events[0].ValueTargetSettings.Rounding);
+        Assert.Equal(MappingOverflow.Clamp, copy.SubVoices[0].Events[0].ValueTargetSettings.Overflow);
+        Assert.Equal(MappingRounding.Ceiling, copy.ParameterMappings[0].TargetSettings.Rounding);
         copy.SubVoices[0].Events[0].Value = 99;
         Assert.Equal(10, source.SubVoices[0].Events[0].Value);
     }

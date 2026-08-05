@@ -246,6 +246,7 @@ public static class SemanticValidator
                     AddError("MIDORA1221", "每个 SubVoice 的同一 MIDI target 最多一条非空 Curve。", subSource, diagnostics);
                 }
                 ValidateTarget(curve.Target, subSource, diagnostics);
+                ValidateTargetSettings(curve.TargetSettings, subSource, diagnostics);
                 if (curve.Target.Kind is MidiValueKind.BankMsb or MidiValueKind.BankLsb or MidiValueKind.Program)
                 {
                     AddError("MIDORA1223", "Bank 和 Program 不支持 Curve。", subSource, diagnostics);
@@ -265,7 +266,8 @@ public static class SemanticValidator
                         MidiValueKind.PitchBendRangeCents => 99,
                         _ => 127
                     };
-                    if (point.Value < minimum || point.Value > maximum)
+                    if ((point.Value < minimum || point.Value > maximum)
+                        && curve.TargetSettings.Overflow == MappingOverflow.Fail)
                     {
                         AddError("MIDORA1224", "Curve point 超出目标 MIDI 值域。", subSource with { Tick = point.Tick }, diagnostics);
                     }
@@ -325,8 +327,21 @@ public static class SemanticValidator
                 AddError("MIDORA1235", $"Parameter Mapping 引用了未知 SubVoice '{mapping.SubVoiceId}'。", source, diagnostics);
             }
             ValidateTarget(mapping.Target, source, diagnostics);
+            ValidateTargetSettings(mapping.TargetSettings, source, diagnostics);
             ValidateMappings(mapping.Steps, source, diagnostics);
             ValidateMappingReferences(ActiveSteps(mapping.Steps), parameters, envelopeIds, functions, source, diagnostics);
+        }
+        foreach (IGrouping<(MidoraId SubVoiceId, MidiValueTarget Target), LogicalParameterMapping> group in
+            instrument.ParameterMappings.Where(value => value.Steps.IsEnabled)
+                .GroupBy(value => (value.SubVoiceId, value.Target)))
+        {
+            LogicalParameterMapping first = group.First();
+            if (group.Skip(1).Any(value => value.TargetSettings.Rounding != first.TargetSettings.Rounding
+                || value.TargetSettings.Overflow != first.TargetSettings.Overflow))
+            {
+                AddError("MIDORA1275", "同一 SubVoice/目标参数的 Logical Parameter Mappings 必须共享取整和最终越界策略。",
+                    source with { SubVoiceId = group.Key.SubVoiceId }, diagnostics);
+            }
         }
         foreach (InstrumentEnvelope envelope in instrument.Envelopes)
         {
@@ -345,6 +360,13 @@ public static class SemanticValidator
     private static void ValidateTemplateEvent(TemplateEvent value, long templateLength, SourceReference source, List<CompilerDiagnostic> diagnostics)
     {
         SourceReference eventSource = source with { SourceEventId = value.Id, Tick = value.Tick };
+        ValidateTargetSettings(value.NumberTargetSettings, eventSource, diagnostics);
+        ValidateTargetSettings(value.ValueTargetSettings, eventSource, diagnostics);
+        ValidateTargetSettings(value.SecondaryValueTargetSettings, eventSource, diagnostics);
+        if (value.Kind == TemplateEventKind.Note && value.NumberTargetSettings.Overflow != MappingOverflow.Fail)
+        {
+            AddError("MIDORA1276", "Note number 的最终越界策略必须为 Fail。", eventSource, diagnostics);
+        }
         if (value.Tick < 0 || value.Tick >= templateLength)
         {
             AddError("MIDORA1240", "Template event 必须位于 Template 内。", eventSource, diagnostics);
@@ -713,6 +735,17 @@ public static class SemanticValidator
         if (invalid)
         {
             AddError("MIDORA1260", "Mapping/Curve target 非法或为被禁止的 CC91/CC93。", source, diagnostics);
+        }
+    }
+
+    private static void ValidateTargetSettings(
+        MidiIntegerTargetSettings settings,
+        SourceReference source,
+        List<CompilerDiagnostic> diagnostics)
+    {
+        if (!Enum.IsDefined(settings.Rounding) || !Enum.IsDefined(settings.Overflow))
+        {
+            AddError("MIDORA1277", "整数目标参数的取整或最终越界策略非法。", source, diagnostics);
         }
     }
 

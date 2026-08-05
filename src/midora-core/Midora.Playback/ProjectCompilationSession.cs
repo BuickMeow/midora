@@ -24,6 +24,7 @@ public sealed class ProjectCompilationSession
     public MidoraProject Project { get; }
     public CanonicalCompiledResult LastAttempt { get; private set; }
     public CanonicalCompiledResult? LastSuccessfulResult { get; private set; }
+    public CompilerRunTelemetry LastCompilationTelemetry => _compiler.LastTelemetry;
     public bool EditsLocked => Volatile.Read(ref _editsLocked);
     public event EventHandler? CompilationChanged;
 

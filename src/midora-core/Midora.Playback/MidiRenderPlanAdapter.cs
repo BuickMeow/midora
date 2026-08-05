@@ -10,7 +10,14 @@ public static class MidiRenderPlanAdapter
         CanonicalCompiledResult compiled,
         int sampleRate,
         IReadOnlySet<MidoraId>? audibleTrackIds = null)
-        => CreateCore(compiled, sampleRate, audibleTrackIds, preserveFilteredTrackEvents: false);
+        => CreateCore(compiled, sampleRate, audibleTrackIds,
+            preserveFilteredTrackEvents: false, restrictToFileSampleRateRange: true);
+
+    public static MidiRenderPlan CreateRealtime(
+        CanonicalCompiledResult compiled,
+        int sampleRate)
+        => CreateCore(compiled, sampleRate, audibleTrackIds: null,
+            preserveFilteredTrackEvents: false, restrictToFileSampleRateRange: false);
 
     public static MidiRenderPlan CreateRealtime(
         CanonicalCompiledResult compiled,
@@ -18,23 +25,24 @@ public static class MidiRenderPlanAdapter
         IReadOnlySet<MidoraId> audibleTrackIds)
     {
         ArgumentNullException.ThrowIfNull(audibleTrackIds);
-        return CreateCore(compiled, sampleRate, audibleTrackIds, preserveFilteredTrackEvents: true);
+        return CreateCore(compiled, sampleRate, audibleTrackIds,
+            preserveFilteredTrackEvents: true, restrictToFileSampleRateRange: false);
     }
 
     private static MidiRenderPlan CreateCore(
         CanonicalCompiledResult compiled,
         int sampleRate,
         IReadOnlySet<MidoraId>? audibleTrackIds,
-        bool preserveFilteredTrackEvents)
+        bool preserveFilteredTrackEvents,
+        bool restrictToFileSampleRateRange)
     {
         ArgumentNullException.ThrowIfNull(compiled);
-        if (!compiled.IsConsumable || compiled.IsPartial && compiled.Purpose is not CompilationPurpose.Playback
-            and not CompilationPurpose.Range and not CompilationPurpose.AudioRender
-            and not CompilationPurpose.SegmentPreview and not CompilationPurpose.EventInstrumentPreview)
+        if (!compiled.IsConsumable || compiled.IsPartial)
         {
             throw new ArgumentException("Only a consumable canonical result can produce an audio plan.", nameof(compiled));
         }
-        if (sampleRate is < 8_000 or > 192_000)
+        if (sampleRate <= 0
+            || restrictToFileSampleRateRange && sampleRate is < 8_000 or > 192_000)
         {
             throw new ArgumentOutOfRangeException(nameof(sampleRate));
         }

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Midora.Domain;
 using Midora.Midi;
 
@@ -8,6 +7,8 @@ public sealed class MidoraCompiler
 {
     private readonly Dictionary<MidoraId, TrackCacheEntry> _trackCache = [];
     private readonly MappingEngine _mapping = new();
+
+    public CompilerRunTelemetry LastTelemetry { get; private set; }
 
     public CanonicalCompiledResult CompileFull(MidoraProject project, CompilationRequest? request = null)
     {
@@ -35,7 +36,7 @@ public sealed class MidoraCompiler
         bool incremental,
         ProjectChangeSet changes)
     {
-        Stopwatch stopwatch = Stopwatch.StartNew();
+        LastTelemetry = default;
         List<CompilerDiagnostic> diagnostics = SemanticValidator.Validate(project, request);
         ValidateMappingFunctions(project, request, diagnostics);
         long naturalEnd = GetNaturalEnd(project);
@@ -43,14 +44,14 @@ public sealed class MidoraCompiler
         if (endTick < request.StartTick)
         {
             diagnostics.Add(new("MIDORA2001", DiagnosticSeverity.Error,
-                "有效编译结束 tick 早于范围起点。", new(project.Id, Tick: endTick)));
+                "有效编译结束 tick 早于范围起点。", new(Tick: endTick)));
             endTick = request.StartTick;
         }
 
         CanonicalConductor conductor = FreezeConductor(project.Conductor, request.StartTick, endTick);
         if (diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
         {
-            return Failure(project, request, endTick, conductor, diagnostics, stopwatch.Elapsed);
+            return Failure(project, request, endTick, conductor, diagnostics);
         }
 
         Dictionary<MidoraId, EventInstrument> instruments = project.EventInstruments.ToDictionary(value => value.Id);
@@ -108,11 +109,12 @@ public sealed class MidoraCompiler
         bool errors = diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         if (errors || warningsFail)
         {
+            LastTelemetry = new(recompiledTracks, reusedTracks);
             return new CanonicalCompiledResult(
-                project.Id, project.TicksPerQuarterNote, request.StartTick, endTick,
+                project.TicksPerQuarterNote, request.StartTick, endTick,
                 [], conductor, [], diagnostics.ToArray(), request.Purpose,
-                request.Purpose != CompilationPurpose.FullProject, false, 0,
-                new(selectedTracks.Count, recompiledTracks, reusedTracks, instances.Count, 0, allocation.PeakUnits, stopwatch.Elapsed));
+                false, false, 0,
+                new(selectedTracks.Count, instances.Count, 0, allocation.PeakUnits));
         }
 
         List<CanonicalMidiEvent> allEvents = MaterializeEvents(instances, allocation.UnitBySubVoice);
@@ -124,17 +126,17 @@ public sealed class MidoraCompiler
         if (allocation.PeakUnits >= 248)
         {
             diagnostics.Add(new("MIDORA2250", DiagnosticSeverity.Info,
-                $"Channel Unit 峰值为 {allocation.PeakUnits}/256。", new(project.Id)));
+                $"Channel Unit 峰值为 {allocation.PeakUnits}/256。", new()));
         }
 
         long resultFingerprint = SourceFingerprint.ForResult(
-            project.Id, request.StartTick, endTick, ranged, conductor);
-        stopwatch.Stop();
+            request.StartTick, endTick, ranged, conductor);
+        LastTelemetry = new(recompiledTracks, reusedTracks);
         return new CanonicalCompiledResult(
-            project.Id, project.TicksPerQuarterNote, request.StartTick, endTick,
+            project.TicksPerQuarterNote, request.StartTick, endTick,
             ranged, conductor, rangedAllocations, diagnostics.ToArray(), request.Purpose,
-            request.Purpose != CompilationPurpose.FullProject, true, resultFingerprint,
-            new(selectedTracks.Count, recompiledTracks, reusedTracks, instances.Count, ranged.Length, allocation.PeakUnits, stopwatch.Elapsed));
+            false, true, resultFingerprint,
+            new(selectedTracks.Count, instances.Count, ranged.Length, allocation.PeakUnits));
     }
 
     private static CanonicalCompiledResult Failure(
@@ -142,12 +144,11 @@ public sealed class MidoraCompiler
         CompilationRequest request,
         long endTick,
         CanonicalConductor conductor,
-        List<CompilerDiagnostic> diagnostics,
-        TimeSpan elapsed) => new(
-            project.Id, project.TicksPerQuarterNote, request.StartTick, endTick,
+        List<CompilerDiagnostic> diagnostics) => new(
+            project.TicksPerQuarterNote, request.StartTick, endTick,
             [], conductor, [], diagnostics.ToArray(), request.Purpose,
-            request.Purpose != CompilationPurpose.FullProject, false, 0,
-            new(project.Tracks.Count, 0, 0, 0, 0, 0, elapsed));
+            false, false, 0,
+            new(project.Tracks.Count, 0, 0, 0));
 
     private void ValidateMappingFunctions(
         MidoraProject project,
@@ -174,7 +175,7 @@ public sealed class MidoraCompiler
                     participates ? "MIDORA2103" : "MIDORA2104",
                     participates ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning,
                     error,
-                    new(project.Id, EventInstrumentId: instrument.Id)));
+                    new(EventInstrumentId: instrument.Id)));
             }
         }
     }
@@ -233,7 +234,7 @@ public sealed class MidoraCompiler
                 {
                     diagnostics.Add(new("MIDORA2203", DiagnosticSeverity.Warning,
                         "新实例与活动实例重叠，按 Cut New / Reject New 策略未生成。",
-                        new(project.Id, track.Id, segment.Id, note.Id, instrument.Id, Tick: projectStart)));
+                        new(track.Id, segment.Id, note.Id, instrument.Id, Tick: projectStart)));
                     continue;
                 }
                 if (conflicts.Length != 0 && instrument.OverlapPolicy == OverlapPolicy.CutPrevious)
@@ -242,7 +243,7 @@ public sealed class MidoraCompiler
                     {
                         diagnostics.Add(new("MIDORA2204", DiagnosticSeverity.Error,
                             "Cut Previous 下同 tick 的多个实例没有确定的先后截断语义。",
-                            new(project.Id, track.Id, segment.Id, note.Id, instrument.Id, Tick: projectStart)));
+                            new(track.Id, segment.Id, note.Id, instrument.Id, Tick: projectStart)));
                     }
                     else
                     {
@@ -331,7 +332,7 @@ public sealed class MidoraCompiler
         for (int voiceIndex = 0; voiceIndex < instrument.SubVoices.Count; voiceIndex++)
         {
             SubVoice voice = instrument.SubVoices[voiceIndex];
-            SourceReference source = new(project.Id, track.Id, segment.Id, note.Id, instrument.Id, voice.Id, Tick: projectStart);
+            SourceReference source = new(track.Id, segment.Id, note.Id, instrument.Id, voice.Id, Tick: projectStart);
             List<RawMidiEvent> events = [];
             MidiInitialState state = MergeState(project.GlobalInitialState, instrument.InitialState, voice.InitialState);
             HashSet<MidiValueTarget> tickZeroTargets = GetTickZeroTargets(voice);
@@ -458,8 +459,14 @@ public sealed class MidoraCompiler
                 output.Add(RawMidiEvent.Control(tick, number, eventValue, CanonicalEventRole.ControlChange, sequence++, source));
                 break;
             case TemplateEventKind.Bank:
-                output.Add(RawMidiEvent.Control(tick, 0, eventValue, CanonicalEventRole.Bank, sequence++, source));
-                output.Add(RawMidiEvent.Control(tick, 32, secondary, CanonicalEventRole.Bank, sequence++, source));
+                if (value.HasBankMsb)
+                {
+                    output.Add(RawMidiEvent.Control(tick, 0, eventValue, CanonicalEventRole.Bank, sequence++, source));
+                }
+                if (value.HasBankLsb)
+                {
+                    output.Add(RawMidiEvent.Control(tick, 32, secondary, CanonicalEventRole.Bank, sequence++, source));
+                }
                 break;
             case TemplateEventKind.Program:
                 output.Add(RawMidiEvent.Program(tick, eventValue, sequence++, source));
@@ -1148,8 +1155,8 @@ public sealed class MidoraCompiler
                 targets.Add(MidiValueTarget.ControlChange(value.Number));
                 break;
             case TemplateEventKind.Bank:
-                targets.Add(MidiValueTarget.BankMsb);
-                targets.Add(MidiValueTarget.BankLsb);
+                if (value.HasBankMsb) targets.Add(MidiValueTarget.BankMsb);
+                if (value.HasBankLsb) targets.Add(MidiValueTarget.BankLsb);
                 break;
             case TemplateEventKind.Program:
                 targets.Add(MidiValueTarget.Program);
@@ -1250,7 +1257,7 @@ public sealed class MidoraCompiler
                         ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning;
                     diagnostics.Add(new("MIDORA2201", severity,
                         "Event Instrument Instance 发生受策略约束的重叠。",
-                        new(project.Id, ordered[j].TrackId, ordered[j].SegmentId, ordered[j].InstanceId,
+                        new(ordered[j].TrackId, ordered[j].SegmentId, ordered[j].InstanceId,
                             ordered[j].InstrumentId, Tick: ordered[j].StartTick)));
                 }
             }
@@ -1336,7 +1343,7 @@ public sealed class MidoraCompiler
             {
                 diagnostics.Add(new("MIDORA2202", DiagnosticSeverity.Error,
                     $"无法为 {count} 个 SubVoice 原子分配 Channel Group；全局上限为 256 Channel Units。",
-                    new(project.Id, group.Instances[0].TrackId, group.Instances[0].SegmentId,
+                    new(group.Instances[0].TrackId, group.Instances[0].SegmentId,
                         group.Instances[0].InstanceId, group.Instances[0].InstrumentId, Tick: group.StartTick)));
                 continue;
             }
@@ -1666,7 +1673,7 @@ public sealed class MidoraCompiler
         source.Markers.Where(value => value.Tick >= startTick && value.Tick < endTick)
             .OrderBy(value => value.Tick)
             .Select(value => new CanonicalMarker(value.Id, value.Tick, value.Name)).ToArray(),
-        source.EndMarkerTick);
+        source.EndMarker is null ? null : new CanonicalEndMarker(source.EndMarker.Id, source.EndMarker.Tick));
 
     private static TResult[] RangeStateful<TSource, TResult>(
         TSource[] ordered,
@@ -1909,17 +1916,16 @@ internal static class SourceFingerprint
     }
 
     public static long ForResult(
-        MidoraId projectId,
         long start,
         long end,
         ReadOnlySpan<CanonicalMidiEvent> events,
         CanonicalConductor conductor)
     {
         ulong hash = Offset;
-        Add(ref hash, projectId);
         Add(ref hash, start);
         Add(ref hash, end);
         Add(ref hash, conductor.EndMarkerTick ?? -1);
+        Add(ref hash, conductor.EndMarker?.Id ?? default);
         foreach (CanonicalTempo value in conductor.Tempos)
         {
             Add(ref hash, value.SourceId);
@@ -1959,7 +1965,6 @@ internal static class SourceFingerprint
             Add(ref hash, value.StableOrder);
             Add(ref hash, value.SemanticTargetKey);
             Add(ref hash, value.SemanticGroup);
-            Add(ref hash, value.Source.ProjectId);
             Add(ref hash, value.Source.TrackId);
             Add(ref hash, value.Source.SegmentId);
             Add(ref hash, value.Source.LogicalNoteId);
@@ -2020,6 +2025,11 @@ internal static class SourceFingerprint
                 Add(ref hash, value.Number);
                 Add(ref hash, value.Value);
                 Add(ref hash, value.SecondaryValue);
+                if (value.Kind == TemplateEventKind.Bank)
+                {
+                    Add(ref hash, value.HasBankMsb ? 1 : 0);
+                    Add(ref hash, value.HasBankLsb ? 1 : 0);
+                }
                 Add(ref hash, value.FollowPitchDelta ? 1 : 0);
                 AddChain(ref hash, value.NumberMappings);
                 AddChain(ref hash, value.ValueMappings);

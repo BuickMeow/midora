@@ -42,19 +42,35 @@ public enum TemplateEventKind
 
 public sealed class TemplateEvent
 {
-    public MidoraId Id { get; init; } = MidoraId.New();
+    public TemplateEvent(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+        NumberMappings = new MappingChain(project);
+        ValueMappings = new MappingChain(project);
+        SecondaryValueMappings = new MappingChain(project);
+    }
+
+    public MidoraId Id { get; init; }
     public TemplateEventKind Kind { get; set; }
     public long Tick { get; set; }
     public long LengthTicks { get; set; }
     public int Number { get; set; }
     public int Value { get; set; }
     public int SecondaryValue { get; set; }
+    public bool HasBankMsb { get; internal set; } = true;
+    public bool HasBankLsb { get; internal set; } = true;
     public bool FollowPitchDelta { get; set; } = true;
-    public MappingChain NumberMappings { get; } = new();
-    public MappingChain ValueMappings { get; } = new();
-    public MappingChain SecondaryValueMappings { get; } = new();
+    public MappingChain NumberMappings { get; }
+    public MappingChain ValueMappings { get; }
+    public MappingChain SecondaryValueMappings { get; }
 
-    public static TemplateEvent Note(long tick, long lengthTicks, int note, int velocity) => new()
+    public static TemplateEvent Note(
+        MidoraProject project,
+        long tick,
+        long lengthTicks,
+        int note,
+        int velocity) => new(project)
     {
         Kind = TemplateEventKind.Note,
         Tick = tick,
@@ -63,7 +79,11 @@ public sealed class TemplateEvent
         Value = velocity
     };
 
-    public static TemplateEvent ControlChange(long tick, int controller, int value) => new()
+    public static TemplateEvent ControlChange(
+        MidoraProject project,
+        long tick,
+        int controller,
+        int value) => new(project)
     {
         Kind = TemplateEventKind.ControlChange,
         Tick = tick,
@@ -71,19 +91,21 @@ public sealed class TemplateEvent
         Value = value
     };
 
-    public static TemplateEvent Program(long tick, int program) => new()
+    public static TemplateEvent Program(MidoraProject project, long tick, int program) => new(project)
     {
         Kind = TemplateEventKind.Program,
         Tick = tick,
         Value = program
     };
 
-    public static TemplateEvent Bank(long tick, int msb, int lsb) => new()
+    public static TemplateEvent Bank(MidoraProject project, long tick, int? msb, int? lsb) => new(project)
     {
         Kind = TemplateEventKind.Bank,
         Tick = tick,
-        Value = msb,
-        SecondaryValue = lsb
+        Value = msb ?? 0,
+        SecondaryValue = lsb ?? 0,
+        HasBankMsb = msb.HasValue,
+        HasBankLsb = lsb.HasValue
     };
 }
 
@@ -129,7 +151,13 @@ public sealed class MidiInitialState
 
 public sealed class SubVoice
 {
-    public MidoraId Id { get; init; } = MidoraId.New();
+    public SubVoice(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+    }
+
+    public MidoraId Id { get; init; }
     public string? Name { get; set; }
     public int? RootNoteOverride { get; set; }
     public MidiInitialState InitialState { get; } = new();
@@ -139,7 +167,13 @@ public sealed class SubVoice
 
 public sealed class InstrumentEnvelope
 {
-    public MidoraId Id { get; init; } = MidoraId.New();
+    public InstrumentEnvelope(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+    }
+
+    public MidoraId Id { get; init; }
     public string? Name { get; set; }
     public long DelayTicks { get; set; }
     public long AttackTicks { get; set; }
@@ -154,7 +188,13 @@ public sealed class InstrumentEnvelope
 
 public sealed class EventInstrument
 {
-    public MidoraId Id { get; init; } = MidoraId.New();
+    public EventInstrument(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+    }
+
+    public MidoraId Id { get; init; }
     public required string Name { get; set; }
     public string? Description { get; set; }
     public MidoraColor Color { get; set; } = MidoraColor.DefaultInstrument;

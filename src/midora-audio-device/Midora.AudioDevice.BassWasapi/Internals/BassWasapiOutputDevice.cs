@@ -19,6 +19,7 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
     private long _consumedFrameCount;
     private uint _actualBufferFrameCount;
     private int _cleanupErrorCode;
+    private bool _cleanupFaulted;
     private int _deviceLost;
     private int _defaultDeviceChanged;
     private int _deviceListChanged;
@@ -45,6 +46,8 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
     public uint ActualBufferFrameCount => _actualBufferFrameCount;
 
     public int CleanupErrorCode => _cleanupErrorCode;
+
+    public bool CleanupFaulted => _cleanupFaulted;
 
     public bool DeviceLost => Volatile.Read(ref _deviceLost) != 0;
 
@@ -98,12 +101,21 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
             return;
         }
 
+        bool deviceSelected = true;
+        if (_isStarted || _notifyInstalled || _isInitialized)
+        {
+            deviceSelected = BASSWASAPI.SetDevice((uint)_deviceIndex) != 0;
+            if (!deviceSelected)
+            {
+                CaptureCleanupError();
+            }
+        }
+
         if (_isStarted)
         {
-            if (BASSWASAPI.SetDevice((uint)_deviceIndex) == 0
-                || BASSWASAPI.Stop(1) == 0)
+            if (deviceSelected && BASSWASAPI.Stop(1) == 0)
             {
-                _cleanupErrorCode = BassErrorCode();
+                CaptureCleanupError();
             }
 
             _isStarted = false;
@@ -111,9 +123,9 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
 
         if (_notifyInstalled)
         {
-            if (BASSWASAPI.SetNotify(null, null) == 0)
+            if (deviceSelected && BASSWASAPI.SetNotify(null, null) == 0)
             {
-                _cleanupErrorCode = BassErrorCode();
+                CaptureCleanupError();
             }
 
             _notifyInstalled = false;
@@ -121,10 +133,9 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
 
         if (_isInitialized)
         {
-            if (BASSWASAPI.SetDevice((uint)_deviceIndex) == 0
-                || BASSWASAPI.Free() == 0)
+            if (deviceSelected && BASSWASAPI.Free() == 0)
             {
-                _cleanupErrorCode = BassErrorCode();
+                CaptureCleanupError();
             }
 
             _isInitialized = false;
@@ -167,9 +178,8 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
             (void*)GCHandle.ToIntPtr(_sourceHandle)) == 0)
         {
             int error = BassErrorCode();
-            Dispose();
-            throw new MidoraAudioDeviceException(
-                $"BASS_WASAPI_SetNotify failed with BASS error {error}.");
+            throw FinalizeInitializationFailure(new MidoraAudioDeviceException(
+                $"BASS_WASAPI_SetNotify failed with BASS error {error}."));
         }
 
         _notifyInstalled = true;
@@ -178,16 +188,14 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
         if (BASSWASAPI.GetInfo(&actualInfo) == 0)
         {
             int error = BassErrorCode();
-            Dispose();
-            throw new MidoraAudioDeviceException(
-                $"BASS_WASAPI_GetInfo failed with BASS error {error}.");
+            throw FinalizeInitializationFailure(new MidoraAudioDeviceException(
+                $"BASS_WASAPI_GetInfo failed with BASS error {error}."));
         }
 
         if (actualInfo.format != BASSWASAPI.BASS_WASAPI_FORMAT_FLOAT || actualInfo.chans != 2)
         {
-            Dispose();
-            throw new MidoraAudioDeviceException(
-                $"Unsupported WASAPI runtime format: format={actualInfo.format}, channels={actualInfo.chans}.");
+            throw FinalizeInitializationFailure(new MidoraAudioDeviceException(
+                $"Unsupported WASAPI runtime format: format={actualInfo.format}, channels={actualInfo.chans}."));
         }
 
         AudioFormat actualFormat = new((int)actualInfo.freq, 2, AudioSampleFormat.Float32);
@@ -195,10 +203,21 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
         _info = _info with { AudioFormat = actualFormat };
         if (_audioRenderSource.Format != actualFormat)
         {
-            Dispose();
-            throw new MidoraAudioDeviceException(
-                $"The audio source format {_audioRenderSource.Format} does not match the initialized WASAPI format {actualFormat}; rebuild sample-domain state.");
+            throw FinalizeInitializationFailure(new MidoraAudioDeviceException(
+                $"The audio source format {_audioRenderSource.Format} does not match the initialized WASAPI format {actualFormat}; rebuild sample-domain state."));
         }
+    }
+
+    private Exception FinalizeInitializationFailure(Exception primaryFailure)
+    {
+        Dispose();
+        return CleanupFaulted
+            ? new AggregateException(
+                "BASSWASAPI initialization and cleanup both failed.",
+                primaryFailure,
+                new MidoraAudioDeviceException(
+                    $"BASSWASAPI cleanup failed with BASS error {CleanupErrorCode}."))
+            : primaryFailure;
     }
 
     private static void FindDeviceOrThrow(
@@ -238,6 +257,16 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
     private static int BassErrorCode()
     {
         return Midora.NativeInterops.Bass.BASS.ErrorGetCode();
+    }
+
+    private void CaptureCleanupError()
+    {
+        int error = BassErrorCode();
+        _cleanupFaulted = true;
+        if (_cleanupErrorCode == 0)
+        {
+            _cleanupErrorCode = error;
+        }
     }
 
     private static void ThrowBassWasapiError(string operation)

@@ -9,7 +9,7 @@ public sealed class CompilationTests
     public void LogicalNoteCompilesWithTranspositionAndExactBoundaryCleanup()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 480);
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 480, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 480, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480, 64);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
@@ -28,7 +28,7 @@ public sealed class CompilationTests
     public void SameTickNoteOffPrecedesNoteOn()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 960);
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 240, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 240, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 240, 240);
 
@@ -44,16 +44,36 @@ public sealed class CompilationTests
     }
 
     [Fact]
+    public void BankSelectMayContainOnlyLsb()
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Voice.Events.Add(TemplateEvent.Bank(fixture.Project, 0, null, 7));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+        CanonicalMidiEvent[] bank = result.Events.ToArray()
+            .Where(value => value.Role == CanonicalEventRole.Bank)
+            .ToArray();
+
+        CanonicalMidiEvent lsb = Assert.Single(bank);
+        Assert.Equal((byte)32, lsb.Message.Byte1);
+        Assert.Equal((byte)7, lsb.Message.Byte2);
+    }
+
+    [Fact]
     public void RangeStartRestoresStateWithoutRetriggeringEarlierNote()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 960);
         fixture.Voice.InitialState.Program = 12;
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 800, 60, 100));
+        fixture.Instrument.TemplateLengthTicks = 800;
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 800, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 900);
         CompilationRequest request = new() { Purpose = CompilationPurpose.Range, StartTick = 240, EndTick = 720 };
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project, request);
 
+        Assert.False(result.IsPartial);
         Assert.DoesNotContain(result.Events.ToArray(), value => value.Role == CanonicalEventRole.NoteOn);
         Assert.Contains(result.Events.ToArray(), value => value.Tick == 240
             && value.Message.MessageType == MidiMessageType.ProgramChange && value.Message.Byte1 == 12);
@@ -64,21 +84,22 @@ public sealed class CompilationTests
     public void RangeStartRestoresEveryRpnTransactionWithNullFunction()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 960);
-        fixture.Voice.Events.Add(new TemplateEvent
+        fixture.Voice.Events.Add(new TemplateEvent(fixture.Project)
         {
             Kind = TemplateEventKind.RegisteredParameter,
             Tick = 0,
             Number = 1,
             Value = 100
         });
-        fixture.Voice.Events.Add(new TemplateEvent
+        fixture.Voice.Events.Add(new TemplateEvent(fixture.Project)
         {
             Kind = TemplateEventKind.RegisteredParameter,
             Tick = 120,
             Number = 2,
             Value = 200
         });
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 800, 60, 100));
+        fixture.Instrument.TemplateLengthTicks = 800;
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 800, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 900);
         fixture.Project.GlobalResetDefaults.RegisteredParameters[1] = 321;
 
@@ -120,7 +141,7 @@ public sealed class CompilationTests
     public void RangeEndReplacesFilteredResetWhenAllocationEndsExactlyAtBoundary()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 480);
-        fixture.Voice.Events.Add(TemplateEvent.ControlChange(0, 1, 91));
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 0, 1, 91));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project, new CompilationRequest
@@ -141,7 +162,7 @@ public sealed class CompilationTests
     public void FullAndIncrementalResultsAreFormallyEqual()
     {
         var fixture = CompilerTestProject.Create();
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 240, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 240, 60, 100));
         LogicalNote note = CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480);
         MidoraCompiler incrementalCompiler = new();
         _ = incrementalCompiler.CompileFull(fixture.Project);
@@ -155,7 +176,8 @@ public sealed class CompilationTests
         Assert.Equal(full.Fingerprint, incremental.Fingerprint);
         Assert.Equal(full.Events.ToArray(), incremental.Events.ToArray());
         Assert.Equal(full.Allocations.ToArray(), incremental.Allocations.ToArray());
-        Assert.Equal(1, incremental.Statistics.RecompiledTrackCount);
+        Assert.Equal(full.Statistics, incremental.Statistics);
+        Assert.Equal(1, incrementalCompiler.LastTelemetry.RecompiledTrackCount);
     }
 
     [Fact]
@@ -163,7 +185,7 @@ public sealed class CompilationTests
     {
         var fixture = CompilerTestProject.Create();
         fixture.Project.GlobalInitialState.Controllers.Add(11, 100);
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 240, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 240, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480);
 
         CanonicalCompiledResult first = new MidoraCompiler().CompileFull(fixture.Project);
@@ -183,7 +205,7 @@ public sealed class CompilationTests
         fixture.Project.GlobalInitialState.Controllers.Add(11, 100);
         fixture.Project.GlobalInitialState.Controllers.Add(1, 64);
         fixture.Project.GlobalInitialState.RegisteredParameters.Add(0x0100, 8_192);
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 240, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 240, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480);
         CanonicalCompiledResult first = new MidoraCompiler().CompileFull(fixture.Project);
 
@@ -201,15 +223,15 @@ public sealed class CompilationTests
     public void UnchangedTrackFragmentIsReused()
     {
         var fixture = CompilerTestProject.Create();
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 240, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 240, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480);
         MidoraCompiler compiler = new();
         _ = compiler.CompileFull(fixture.Project);
 
         CanonicalCompiledResult result = compiler.CompileIncremental(fixture.Project, new ProjectChangeSet());
 
-        Assert.Equal(0, result.Statistics.RecompiledTrackCount);
-        Assert.Equal(1, result.Statistics.ReusedTrackCount);
+        Assert.Equal(0, compiler.LastTelemetry.RecompiledTrackCount);
+        Assert.Equal(1, compiler.LastTelemetry.ReusedTrackCount);
     }
 
     [Fact]
@@ -218,7 +240,7 @@ public sealed class CompilationTests
         var fixture = CompilerTestProject.Create(10);
         foreach (SubVoice voice in fixture.Instrument.SubVoices)
         {
-            voice.Events.Add(TemplateEvent.Note(0, 120, 60, 100));
+            voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
         }
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480);
 
@@ -232,10 +254,10 @@ public sealed class CompilationTests
     public void IncrementalCacheReplaysTrackExpansionDiagnostics()
     {
         var fixture = CompilerTestProject.Create();
-        CSharpMappingFunction function = new() { Name = "throws", Body = "throw new InvalidOperationException();" };
+        CSharpMappingFunction function = new(fixture.Project) { Name = "throws", Body = "throw new InvalidOperationException();" };
         fixture.Instrument.MappingFunctions.Add(function);
-        TemplateEvent value = TemplateEvent.ControlChange(0, 1, 20);
-        value.ValueMappings.Add(new ValueMappingStep
+        TemplateEvent value = TemplateEvent.ControlChange(fixture.Project, 0, 1, 20);
+        value.ValueMappings.Add(new ValueMappingStep(fixture.Project)
         {
             Operation = MappingOperation.CustomCSharp,
             MappingFunctionId = function.Id
@@ -251,7 +273,7 @@ public sealed class CompilationTests
         Assert.False(incremental.IsConsumable);
         Assert.Contains(full.Diagnostics, item => item.Code == "MIDORA2101");
         Assert.Contains(incremental.Diagnostics, item => item.Code == "MIDORA2101");
-        Assert.Equal(1, incremental.Statistics.ReusedTrackCount);
+        Assert.Equal(1, compiler.LastTelemetry.ReusedTrackCount);
     }
 
     [Fact]
@@ -272,12 +294,12 @@ public sealed class CompilationTests
     public void RangeConductorRestoresStateAndFiltersMarkers()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 1_000);
-        fixture.Project.Conductor.Tempos.Add(new TempoChange(100, 90m));
-        fixture.Project.Conductor.Tempos.Add(new TempoChange(500, 140m));
-        fixture.Project.Conductor.TimeSignatures.Add(new TimeSignatureChange(120, 3, 4));
-        fixture.Project.Conductor.KeySignatures.Add(new KeySignatureChange(160, 2, false));
-        fixture.Project.Conductor.Markers.Add(new ProjectMarker(MidoraId.New(), 200, "before"));
-        fixture.Project.Conductor.Markers.Add(new ProjectMarker(MidoraId.New(), 400, "inside"));
+        fixture.Project.Conductor.Tempos.Add(new TempoChange(fixture.Project, 100, 90m));
+        fixture.Project.Conductor.Tempos.Add(new TempoChange(fixture.Project, 500, 140m));
+        fixture.Project.Conductor.TimeSignatures.Add(new TimeSignatureChange(fixture.Project, 120, 3, 4));
+        fixture.Project.Conductor.KeySignatures.Add(new KeySignatureChange(fixture.Project, 160, 2, false));
+        fixture.Project.Conductor.Markers.Add(new ProjectMarker(fixture.Project, 200, "before"));
+        fixture.Project.Conductor.Markers.Add(new ProjectMarker(fixture.Project, 400, "inside"));
         CompilationRequest request = new() { Purpose = CompilationPurpose.Range, StartTick = 300, EndTick = 700 };
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project, request);
@@ -298,24 +320,24 @@ public sealed class CompilationTests
         var fixture = CompilerTestProject.Create();
         MidoraCompiler compiler = new();
         CanonicalCompiledResult before = compiler.CompileFull(fixture.Project);
-        fixture.Project.Conductor.Tempos.Add(new TempoChange(120, 100m));
+        fixture.Project.Conductor.Tempos.Add(new TempoChange(fixture.Project, 120, 100m));
 
         CanonicalCompiledResult after = compiler.CompileIncremental(
             fixture.Project, new ProjectChangeSet { AffectsConductor = true });
 
         Assert.NotEqual(before.Fingerprint, after.Fingerprint);
-        Assert.Equal(1, after.Statistics.ReusedTrackCount);
+        Assert.Equal(1, compiler.LastTelemetry.ReusedTrackCount);
     }
 
     [Fact]
     public void SourceIdentityChangeInvalidatesCanonicalFingerprintUsedByMonitoringCache()
     {
         var fixture = CompilerTestProject.Create();
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 120, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
         MidoraCompiler compiler = new();
         CanonicalCompiledResult before = compiler.CompileFull(fixture.Project);
-        LogicalTrack replacement = new()
+        LogicalTrack replacement = new(fixture.Project)
         {
             Name = fixture.Track.Name,
             EventInstrumentId = fixture.Track.EventInstrumentId
@@ -335,15 +357,15 @@ public sealed class CompilationTests
     {
         var fixture = CompilerTestProject.Create();
         fixture.Instrument.RequiresChannelIsolation = true;
-        CSharpMappingFunction function = new()
+        CSharpMappingFunction function = new(fixture.Project)
         {
             Name = "name-sensitive",
             Body = "return context.EventInstrumentName == \"Renamed\" ? 100 : 20;"
         };
         function.DeclaredContextFields.Add(nameof(MappingContext.EventInstrumentName));
         fixture.Instrument.MappingFunctions.Add(function);
-        TemplateEvent note = TemplateEvent.Note(0, 120, 60, 80);
-        note.ValueMappings.Add(new ValueMappingStep
+        TemplateEvent note = TemplateEvent.Note(fixture.Project, 0, 120, 60, 80);
+        note.ValueMappings.Add(new ValueMappingStep(fixture.Project)
         {
             Operation = MappingOperation.CustomCSharp,
             MappingFunctionId = function.Id
@@ -360,15 +382,15 @@ public sealed class CompilationTests
             && value.Message.Byte2 == 20);
         Assert.Contains(after.Events.ToArray(), value => value.Role == CanonicalEventRole.NoteOn
             && value.Message.Byte2 == 100);
-        Assert.Equal(1, after.Statistics.RecompiledTrackCount);
+        Assert.Equal(1, compiler.LastTelemetry.RecompiledTrackCount);
     }
 
     [Fact]
     public void OverlappingNotesShareChannelGroupWhenIsolationIsDisabled()
     {
         var fixture = CompilerTestProject.Create();
-        fixture.Voice.Events.Add(TemplateEvent.ControlChange(0, 1, 64));
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 240, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 0, 1, 64));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 240, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480, 60);
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 120, 480, 64);
 

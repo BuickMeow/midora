@@ -4,10 +4,11 @@ public readonly record struct SegmentSplitResult(Segment Left, Segment Right);
 
 public static class SegmentEditing
 {
-    public static Segment Duplicate(Segment source)
+    public static Segment Duplicate(MidoraProject project, Segment source)
     {
+        ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(source);
-        Segment result = new()
+        Segment result = new(project)
         {
             ProjectStartTick = source.ProjectStartTick,
             LengthTicks = source.LengthTicks,
@@ -15,14 +16,14 @@ public static class SegmentEditing
         };
         foreach (LogicalNote note in source.Notes)
         {
-            result.Notes.Add(CloneNote(note, note.LengthTicks, preserveId: false));
+            result.Notes.Add(CloneNote(project, note, note.LengthTicks, preserveId: false));
         }
         foreach (LogicalParameterLane lane in source.ParameterLanes)
         {
-            LogicalParameterLane copy = new() { ParameterId = lane.ParameterId };
+            LogicalParameterLane copy = new(project) { ParameterId = lane.ParameterId };
             foreach (CurvePoint point in lane.Points)
             {
-                copy.Points.Add(new(point.Tick, point.Value, point.Interpolation));
+                copy.Points.Add(new(project, point.Tick, point.Value, point.Interpolation));
             }
             result.ParameterLanes.Add(copy);
         }
@@ -40,8 +41,9 @@ public static class SegmentEditing
         segment.ProjectStartTick = newProjectStartTick;
     }
 
-    public static Segment Join(Segment first, Segment second)
+    public static Segment Join(MidoraProject project, Segment first, Segment second)
     {
+        ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(first);
         ArgumentNullException.ThrowIfNull(second);
         if (first.Id == second.Id)
@@ -60,9 +62,8 @@ public static class SegmentEditing
         long joinedContentOrigin = Math.Min(leftContentOrigin, rightContentOrigin);
         long joinedStart = left.ProjectStartTick;
         long joinedEnd = right.ProjectRange.EndTick;
-        Segment result = new()
+        Segment result = new(project, left.Id)
         {
-            Id = left.Id,
             ProjectStartTick = joinedStart,
             LengthTicks = checked(joinedEnd - joinedStart),
             ContentOffsetTick = checked(joinedStart - joinedContentOrigin)
@@ -76,7 +77,7 @@ public static class SegmentEditing
         foreach ((MidoraId parameterId, (MidoraId laneId, Dictionary<long, CurvePoint> points)) in lanes
             .OrderBy(value => value.Key))
         {
-            LogicalParameterLane lane = new() { Id = laneId, ParameterId = parameterId };
+            LogicalParameterLane lane = new(project, laneId) { ParameterId = parameterId };
             lane.Points.AddRange(points.OrderBy(value => value.Key).Select(value => value.Value));
             result.ParameterLanes.Add(lane);
         }
@@ -87,7 +88,7 @@ public static class SegmentEditing
             foreach (LogicalNote note in source.Notes)
             {
                 long absoluteTick = checked(sourceOrigin + note.StartTick);
-                LogicalNote copy = CloneNote(note, note.LengthTicks);
+                LogicalNote copy = CloneNote(project, note, note.LengthTicks);
                 copy.StartTick = checked(absoluteTick - joinedContentOrigin);
                 result.Notes.Add(copy);
             }
@@ -116,8 +117,9 @@ public static class SegmentEditing
         }
     }
 
-    public static SegmentSplitResult Split(Segment source, long projectSplitTick)
+    public static SegmentSplitResult Split(MidoraProject project, Segment source, long projectSplitTick)
     {
+        ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(source);
         if (projectSplitTick <= source.ProjectStartTick || projectSplitTick >= source.ProjectRange.EndTick)
         {
@@ -125,14 +127,13 @@ public static class SegmentEditing
         }
         long leftLength = projectSplitTick - source.ProjectStartTick;
         long splitContentTick = checked(source.ContentOffsetTick + leftLength);
-        Segment left = new()
+        Segment left = new(project, source.Id)
         {
-            Id = source.Id,
             ProjectStartTick = source.ProjectStartTick,
             LengthTicks = leftLength,
             ContentOffsetTick = source.ContentOffsetTick
         };
-        Segment right = new()
+        Segment right = new(project)
         {
             ProjectStartTick = projectSplitTick,
             LengthTicks = source.LengthTicks - leftLength,
@@ -143,17 +144,17 @@ public static class SegmentEditing
             if (note.StartTick < splitContentTick)
             {
                 long available = splitContentTick - note.StartTick;
-                left.Notes.Add(CloneNote(note, Math.Min(note.LengthTicks, available)));
+                left.Notes.Add(CloneNote(project, note, Math.Min(note.LengthTicks, available)));
             }
             else
             {
-                right.Notes.Add(CloneNote(note, note.LengthTicks));
+                right.Notes.Add(CloneNote(project, note, note.LengthTicks));
             }
         }
         foreach (LogicalParameterLane lane in source.ParameterLanes)
         {
-            LogicalParameterLane leftLane = new() { Id = lane.Id, ParameterId = lane.ParameterId };
-            LogicalParameterLane rightLane = new() { ParameterId = lane.ParameterId };
+            LogicalParameterLane leftLane = new(project, lane.Id) { ParameterId = lane.ParameterId };
+            LogicalParameterLane rightLane = new(project) { ParameterId = lane.ParameterId };
             CurvePoint[] points = lane.Points.OrderBy(value => value.Tick).ToArray();
             foreach (CurvePoint point in points)
             {
@@ -170,6 +171,7 @@ public static class SegmentEditing
                 && rightLane.Points.All(value => value.Tick != splitContentTick))
             {
                 rightLane.Points.Insert(0, new CurvePoint(
+                    project,
                     splitContentTick,
                     Evaluate(points, splitContentTick),
                     CurveInterpolation.Step));
@@ -180,14 +182,21 @@ public static class SegmentEditing
         return new(left, right);
     }
 
-    private static LogicalNote CloneNote(LogicalNote source, long length, bool preserveId = true) => new()
+    private static LogicalNote CloneNote(
+        MidoraProject project,
+        LogicalNote source,
+        long length,
+        bool preserveId = true)
     {
-        Id = preserveId ? source.Id : MidoraId.New(),
-        StartTick = source.StartTick,
-        LengthTicks = length,
-        Note = source.Note,
-        Velocity = source.Velocity
-    };
+        LogicalNote result = preserveId
+            ? new LogicalNote(project, source.Id)
+            : new LogicalNote(project);
+        result.StartTick = source.StartTick;
+        result.LengthTicks = length;
+        result.Note = source.Note;
+        result.Velocity = source.Velocity;
+        return result;
+    }
 
     private static double Evaluate(ReadOnlySpan<CurvePoint> points, long tick)
     {

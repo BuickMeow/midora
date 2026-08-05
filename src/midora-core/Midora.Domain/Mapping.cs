@@ -9,7 +9,13 @@ public enum LogicalParameterType
 
 public sealed class LogicalParameterDefinition
 {
-    public MidoraId Id { get; init; } = MidoraId.New();
+    public LogicalParameterDefinition(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+    }
+
+    public MidoraId Id { get; init; }
     public required string Name { get; set; }
     public LogicalParameterType Type { get; set; }
     public double Minimum { get; set; }
@@ -23,7 +29,13 @@ public sealed class LogicalParameterDefinition
 
 public sealed class LogicalParameterEnumItem
 {
-    public MidoraId Id { get; init; } = MidoraId.New();
+    public LogicalParameterEnumItem(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+    }
+
+    public MidoraId Id { get; init; }
     public required string Name { get; set; }
     public int Value { get; set; }
 }
@@ -99,7 +111,13 @@ public enum MappingTargetParameter
 
 public sealed class CSharpMappingFunction
 {
-    public MidoraId Id { get; init; } = MidoraId.New();
+    public CSharpMappingFunction(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+    }
+
+    public MidoraId Id { get; init; }
     public required string Name { get; set; }
     public required string Body { get; set; }
     public HashSet<string> DeclaredContextFields { get; } = new(StringComparer.Ordinal);
@@ -109,7 +127,13 @@ public sealed class MappingChain : IList<ValueMappingStep>, IReadOnlyList<ValueM
 {
     private readonly List<ValueMappingStep> _steps = [];
 
-    public MidoraId Id { get; init; } = MidoraId.New();
+    public MappingChain(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+    }
+
+    public MidoraId Id { get; init; }
     public bool IsEnabled { get; set; } = true;
     public int Count => _steps.Count;
     public bool IsReadOnly => false;
@@ -132,7 +156,13 @@ public sealed class MappingChain : IList<ValueMappingStep>, IReadOnlyList<ValueM
 
 public sealed class ValueMappingStep
 {
-    public MidoraId Id { get; init; } = MidoraId.New();
+    public ValueMappingStep(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+    }
+
+    public MidoraId Id { get; init; }
     public bool IsEnabled { get; set; } = true;
     public MappingSource Source { get; set; } = MappingSource.CurrentValue;
     public MappingOperation Operation { get; set; } = MappingOperation.Add;
@@ -152,11 +182,18 @@ public sealed class ValueMappingStep
 
 public sealed class LogicalParameterMapping
 {
-    public MidoraId Id { get; init; } = MidoraId.New();
+    public LogicalParameterMapping(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+        Steps = new MappingChain(project);
+    }
+
+    public MidoraId Id { get; init; }
     public MidoraId ParameterId { get; set; }
     public MidoraId SubVoiceId { get; set; }
     public MidiValueTarget Target { get; set; }
-    public MappingChain Steps { get; } = new();
+    public MappingChain Steps { get; }
 }
 
 public readonly record struct MappingContext(

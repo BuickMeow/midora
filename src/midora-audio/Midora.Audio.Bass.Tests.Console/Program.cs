@@ -185,7 +185,7 @@ public static partial class Program
             plan,
             soundFontPath,
             settings,
-            AudioMasterSettings.InitialReleaseDefault,
+            AudioMasterSettings.LimiterV1Candidate,
             ipcAudioBufferMilliseconds: 100,
             GetWorkerPath(repositoryRoot),
             GetBassNativeDirectory(),
@@ -228,7 +228,7 @@ public static partial class Program
             plan,
             soundFontPath,
             settings,
-            AudioMasterSettings.InitialReleaseDefault,
+            AudioMasterSettings.LimiterV1Candidate,
             ipcAudioBufferMilliseconds,
             GetWorkerPath(repositoryRoot),
             GetBassNativeDirectory(),
@@ -309,7 +309,7 @@ public static partial class Program
             plan,
             soundFontPath,
             rendererSettings,
-            AudioMasterSettings.InitialReleaseDefault);
+            AudioMasterSettings.LimiterV1Candidate);
     }
 
     private static BassMidiRendererSettings CreateRendererSettings(int maximumWorkFrames)

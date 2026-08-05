@@ -2,18 +2,55 @@ namespace Midora.Domain;
 
 public static class EventInstrumentLibrary
 {
+    public static EventInstrumentLibraryFolder CreateFolder(MidoraProject project, string name)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        EventInstrumentLibraryFolder result = new(project)
+        {
+            Name = ValidateFolderName(project, name, default)
+        };
+        project.EventInstrumentFolders.Add(result);
+        return result;
+    }
+
+    public static void RenameFolder(MidoraProject project, MidoraId folderId, string name)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        EventInstrumentLibraryFolder folder = project.EventInstrumentFolders
+            .FirstOrDefault(value => value.Id == folderId)
+            ?? throw new ArgumentOutOfRangeException(nameof(folderId));
+        folder.Name = ValidateFolderName(project, name, folderId);
+    }
+
+    public static IReadOnlyList<EventInstrument> DeleteFolder(MidoraProject project, MidoraId folderId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        EventInstrumentLibraryFolder folder = project.EventInstrumentFolders
+            .FirstOrDefault(value => value.Id == folderId)
+            ?? throw new ArgumentOutOfRangeException(nameof(folderId));
+        EventInstrument[] movedToUnfiled = project.EventInstruments
+            .Where(value => value.LibraryFolderId == folderId)
+            .ToArray();
+        foreach (EventInstrument instrument in movedToUnfiled)
+        {
+            instrument.LibraryFolderId = null;
+        }
+        _ = project.EventInstrumentFolders.Remove(folder);
+        return movedToUnfiled;
+    }
+
     public static EventInstrument Create(MidoraProject project, string? requestedName = null)
     {
         ArgumentNullException.ThrowIfNull(project);
         string name = requestedName is null
             ? GenerateUniqueName(project, "Event Instrument")
             : ValidateUniqueName(project, requestedName, default);
-        EventInstrument result = new()
+        EventInstrument result = new(project)
         {
             Name = name,
             TemplateLengthTicks = project.TicksPerQuarterNote
         };
-        result.SubVoices.Add(new SubVoice());
+        result.SubVoices.Add(new SubVoice(project));
         project.EventInstruments.Add(result);
         return result;
     }
@@ -34,7 +71,7 @@ public static class EventInstrumentLibrary
         Dictionary<MidoraId, MidoraId> voices = [];
         Dictionary<MidoraId, MidoraId> functions = [];
         Dictionary<MidoraId, MidoraId> envelopes = [];
-        EventInstrument result = new()
+        EventInstrument result = new(project)
         {
             Name = name,
             Description = source.Description,
@@ -54,7 +91,7 @@ public static class EventInstrumentLibrary
 
         foreach (LogicalParameterDefinition definition in source.LogicalParameters)
         {
-            LogicalParameterDefinition copy = new()
+            LogicalParameterDefinition copy = new(project)
             {
                 Name = definition.Name,
                 Type = definition.Type,
@@ -67,21 +104,21 @@ public static class EventInstrumentLibrary
             };
             foreach (LogicalParameterEnumItem item in definition.EnumItems)
             {
-                copy.EnumItems.Add(new() { Name = item.Name, Value = item.Value });
+                copy.EnumItems.Add(new LogicalParameterEnumItem(project) { Name = item.Name, Value = item.Value });
             }
             parameters.Add(definition.Id, copy.Id);
             result.LogicalParameters.Add(copy);
         }
         foreach (CSharpMappingFunction function in source.MappingFunctions)
         {
-            CSharpMappingFunction copy = new() { Name = function.Name, Body = function.Body };
+            CSharpMappingFunction copy = new(project) { Name = function.Name, Body = function.Body };
             copy.DeclaredContextFields.UnionWith(function.DeclaredContextFields);
             functions.Add(function.Id, copy.Id);
             result.MappingFunctions.Add(copy);
         }
         foreach (InstrumentEnvelope envelope in source.Envelopes)
         {
-            InstrumentEnvelope copy = new()
+            InstrumentEnvelope copy = new(project)
             {
                 Name = envelope.Name,
                 DelayTicks = envelope.DelayTicks,
@@ -99,12 +136,12 @@ public static class EventInstrumentLibrary
         }
         foreach (SubVoice voice in source.SubVoices)
         {
-            SubVoice copy = new() { Name = voice.Name, RootNoteOverride = voice.RootNoteOverride };
+            SubVoice copy = new(project) { Name = voice.Name, RootNoteOverride = voice.RootNoteOverride };
             CopyState(voice.InitialState, copy.InitialState);
             voices.Add(voice.Id, copy.Id);
             foreach (TemplateEvent value in voice.Events)
             {
-                TemplateEvent eventCopy = new()
+                TemplateEvent eventCopy = new(project)
                 {
                     Kind = value.Kind,
                     Tick = value.Tick,
@@ -112,19 +149,21 @@ public static class EventInstrumentLibrary
                     Number = value.Number,
                     Value = value.Value,
                     SecondaryValue = value.SecondaryValue,
+                    HasBankMsb = value.HasBankMsb,
+                    HasBankLsb = value.HasBankLsb,
                     FollowPitchDelta = value.FollowPitchDelta
                 };
-                CopyChain(value.NumberMappings, eventCopy.NumberMappings, parameters, functions, envelopes);
-                CopyChain(value.ValueMappings, eventCopy.ValueMappings, parameters, functions, envelopes);
-                CopyChain(value.SecondaryValueMappings, eventCopy.SecondaryValueMappings, parameters, functions, envelopes);
+                CopyChain(project, value.NumberMappings, eventCopy.NumberMappings, parameters, functions, envelopes);
+                CopyChain(project, value.ValueMappings, eventCopy.ValueMappings, parameters, functions, envelopes);
+                CopyChain(project, value.SecondaryValueMappings, eventCopy.SecondaryValueMappings, parameters, functions, envelopes);
                 copy.Events.Add(eventCopy);
             }
             foreach (ValueCurve curve in voice.Curves)
             {
-                ValueCurve curveCopy = new() { Target = curve.Target };
+                ValueCurve curveCopy = new(project) { Target = curve.Target };
                 foreach (CurvePoint point in curve.Points)
                 {
-                    curveCopy.Points.Add(new(point.Tick, point.Value, point.Interpolation));
+                    curveCopy.Points.Add(new(project, point.Tick, point.Value, point.Interpolation));
                 }
                 copy.Curves.Add(curveCopy);
             }
@@ -132,13 +171,13 @@ public static class EventInstrumentLibrary
         }
         foreach (LogicalParameterMapping mapping in source.ParameterMappings)
         {
-            LogicalParameterMapping copy = new()
+            LogicalParameterMapping copy = new(project)
             {
                 ParameterId = Remap(parameters, mapping.ParameterId),
                 SubVoiceId = Remap(voices, mapping.SubVoiceId),
                 Target = mapping.Target
             };
-            CopyChain(mapping.Steps, copy.Steps, parameters, functions, envelopes);
+            CopyChain(project, mapping.Steps, copy.Steps, parameters, functions, envelopes);
             result.ParameterMappings.Add(copy);
         }
 
@@ -195,7 +234,23 @@ public static class EventInstrumentLibrary
         }
     }
 
+    private static string ValidateFolderName(MidoraProject project, string name, MidoraId excludedId)
+    {
+        string normalized = name.Trim();
+        if (normalized.Length == 0
+            || string.Equals(normalized, "Unfiled", StringComparison.OrdinalIgnoreCase)
+            || project.EventInstrumentFolders.Any(value => value.Id != excludedId
+                && string.Equals(value.Name.Trim(), normalized, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ArgumentException(
+                "Folder names must be non-empty, unique ignoring case, and cannot use the reserved Unfiled name.",
+                nameof(name));
+        }
+        return normalized;
+    }
+
     private static void CopyChain(
+        MidoraProject project,
         MappingChain source,
         MappingChain target,
         IReadOnlyDictionary<MidoraId, MidoraId> parameters,
@@ -205,7 +260,7 @@ public static class EventInstrumentLibrary
         target.IsEnabled = source.IsEnabled;
         foreach (ValueMappingStep step in source)
         {
-            target.Add(new ValueMappingStep
+            target.Add(new ValueMappingStep(project)
             {
                 IsEnabled = step.IsEnabled,
                 Source = step.Source,

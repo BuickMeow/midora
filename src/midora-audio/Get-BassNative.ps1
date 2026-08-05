@@ -1,7 +1,11 @@
 [CmdletBinding()]
 param(
     [string]$Destination,
+    [Parameter(Mandatory)]
+    [ValidateSet("win-x64", "win-x86")]
+    [string]$Architecture,
     [switch]$Force,
+    [switch]$AcceptUnpinnedDevelopmentCandidate,
     [switch]$SetUserEnvironmentVariable
 )
 
@@ -31,22 +35,29 @@ function Resolve-Destination {
         throw "Unable to resolve LocalApplicationData. Pass -Destination or set $environmentVariableName."
     }
 
-    return Join-Path $localApplicationData "Midora\Native\BASS\win-x64"
+    return Join-Path $localApplicationData "Midora\Native\BASS\$Architecture"
 }
 
-function Get-X64Dll {
+function Get-ArchitectureDll {
     param(
         [Parameter(Mandatory)] [string]$ExtractedRoot,
-        [Parameter(Mandatory)] [string]$FileName
+        [Parameter(Mandatory)] [string]$FileName,
+        [Parameter(Mandatory)] [string]$TargetArchitecture
     )
 
     $candidates = @(
         Get-ChildItem -Path $ExtractedRoot -Recurse -File -Filter $FileName |
-            Where-Object { $_.FullName -match "[\\/]x64[\\/]" }
+            Where-Object {
+                if ($TargetArchitecture -eq "win-x64") {
+                    return $_.FullName -match "[\\/]x64[\\/]"
+                }
+
+                return $_.FullName -notmatch "[\\/]x64[\\/]"
+            }
     )
 
     if ($candidates.Count -ne 1) {
-        throw "Expected exactly one x64/$FileName in the official package; found $($candidates.Count)."
+        throw "Expected exactly one $TargetArchitecture/$FileName in the official package; found $($candidates.Count)."
     }
 
     return [string]$candidates[0].FullName
@@ -68,13 +79,13 @@ $resolvedDestination = Resolve-Destination -RequestedDestination $Destination
 
 if ((Test-InstalledFiles -Directory $resolvedDestination) -and -not $Force) {
     try {
-        & (Join-Path $PSScriptRoot "Test-BassNative.ps1") -Directory $resolvedDestination
+        & (Join-Path $PSScriptRoot "Test-BassNative.ps1") -Directory $resolvedDestination -Architecture $Architecture
     }
     catch {
         throw "Existing BASS native installation failed validation. Use -Force only if you intend to replace it. $($_.Exception.Message)"
     }
 
-    Write-Host "BASS native x64 files already exist at: $resolvedDestination"
+    Write-Host "BASS native $Architecture files already exist at: $resolvedDestination"
     Write-Host "No network request was made. Use -Force only when you intentionally want to refresh them."
 
     if ($SetUserEnvironmentVariable) {
@@ -84,6 +95,10 @@ if ((Test-InstalledFiles -Directory $resolvedDestination) -and -not $Force) {
     }
 
     return
+}
+
+if (-not $AcceptUnpinnedDevelopmentCandidate) {
+    throw "Downloading the vendor's current package is not a reproducible release input. Pass -AcceptUnpinnedDevelopmentCandidate only for an explicit local development candidate."
 }
 
 try {
@@ -104,9 +119,9 @@ try {
     Expand-Archive -Path $midiZip -DestinationPath $midiDir
     Expand-Archive -Path $wasapiZip -DestinationPath $wasapiDir
 
-    $bassDll = Get-X64Dll -ExtractedRoot $bassDir -FileName "bass.dll"
-    $bassMidiDll = Get-X64Dll -ExtractedRoot $midiDir -FileName "bassmidi.dll"
-    $bassWasapiDll = Get-X64Dll -ExtractedRoot $wasapiDir -FileName "basswasapi.dll"
+    $bassDll = Get-ArchitectureDll -ExtractedRoot $bassDir -FileName "bass.dll" -TargetArchitecture $Architecture
+    $bassMidiDll = Get-ArchitectureDll -ExtractedRoot $midiDir -FileName "bassmidi.dll" -TargetArchitecture $Architecture
+    $bassWasapiDll = Get-ArchitectureDll -ExtractedRoot $wasapiDir -FileName "basswasapi.dll" -TargetArchitecture $Architecture
 
     Copy-Item $bassDll (Join-Path $resolvedDestination "bass.dll") -Force
     Copy-Item $bassMidiDll (Join-Path $resolvedDestination "bassmidi.dll") -Force
@@ -114,6 +129,8 @@ try {
 
     $manifest = [ordered]@{
         retrievedAtUtc = [DateTime]::UtcNow.ToString("O")
+        architecture = $Architecture
+        releaseBaseline = $false
         source = @($bassUrl, $bassMidiUrl, $bassWasapiUrl)
         files = @(
             [ordered]@{
@@ -132,6 +149,7 @@ try {
     }
 
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $resolvedDestination "native-manifest.json") -Encoding utf8
+    & (Join-Path $PSScriptRoot "Test-BassNative.ps1") -Directory $resolvedDestination -Architecture $Architecture
 
     if ($SetUserEnvironmentVariable) {
         [Environment]::SetEnvironmentVariable($environmentVariableName, $resolvedDestination, "Process")
@@ -139,7 +157,7 @@ try {
         Write-Host "Set process and user environment variable $environmentVariableName=$resolvedDestination"
     }
 
-    Write-Host "BASS native x64 files installed at: $resolvedDestination"
+    Write-Host "BASS native $Architecture development candidate installed at: $resolvedDestination"
 }
 finally {
     if (Test-Path $tempRoot) {

@@ -158,7 +158,7 @@ public sealed class BassMidiRendererIntegrationTests
             plan,
             SoundFontPath,
             settings,
-            AudioMasterSettings.InitialReleaseDefault);
+            AudioMasterSettings.LimiterV1Candidate);
         float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
 
         fixed (float* destination = samples)
@@ -196,7 +196,7 @@ public sealed class BassMidiRendererIntegrationTests
             plan,
             SoundFontPath,
             settings,
-            AudioMasterSettings.InitialReleaseDefault);
+            AudioMasterSettings.LimiterV1Candidate);
 
         float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
         fixed (float* destination = samples)

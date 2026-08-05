@@ -8,7 +8,7 @@ public sealed class SemanticValidatorTests
     public void BrokenEnvelopeReferenceIsAnError()
     {
         var fixture = CompilerTestProject.Create();
-        LogicalParameterDefinition parameter = new()
+        LogicalParameterDefinition parameter = new(fixture.Project)
         {
             Name = "value",
             Type = LogicalParameterType.Double,
@@ -16,16 +16,16 @@ public sealed class SemanticValidatorTests
             Maximum = 1
         };
         fixture.Instrument.LogicalParameters.Add(parameter);
-        LogicalParameterMapping mapping = new()
+        LogicalParameterMapping mapping = new(fixture.Project)
         {
             ParameterId = parameter.Id,
             SubVoiceId = fixture.Voice.Id,
             Target = MidiValueTarget.ControlChange(1)
         };
-        mapping.Steps.Add(new ValueMappingStep
+        mapping.Steps.Add(new ValueMappingStep(fixture.Project)
         {
             Source = MappingSource.Envelope,
-            EnvelopeId = MidoraId.New()
+            EnvelopeId = fixture.Project.AllocateStableId()
         });
         fixture.Instrument.ParameterMappings.Add(mapping);
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
@@ -40,12 +40,12 @@ public sealed class SemanticValidatorTests
     public void DisabledStepDoesNotActivateBrokenFunctionReference()
     {
         var fixture = CompilerTestProject.Create();
-        TemplateEvent controller = TemplateEvent.ControlChange(0, 1, 20);
-        controller.ValueMappings.Add(new ValueMappingStep
+        TemplateEvent controller = TemplateEvent.ControlChange(fixture.Project, 0, 1, 20);
+        controller.ValueMappings.Add(new ValueMappingStep(fixture.Project)
         {
             IsEnabled = false,
             Operation = MappingOperation.CustomCSharp,
-            MappingFunctionId = MidoraId.New()
+            MappingFunctionId = fixture.Project.AllocateStableId()
         });
         fixture.Voice.Events.Add(controller);
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 20);
@@ -60,7 +60,7 @@ public sealed class SemanticValidatorTests
     public void InvalidUnreferencedMappingFunctionIsWarningOnly()
     {
         var fixture = CompilerTestProject.Create();
-        fixture.Instrument.MappingFunctions.Add(new CSharpMappingFunction
+        fixture.Instrument.MappingFunctions.Add(new CSharpMappingFunction(fixture.Project)
         {
             Name = "unused invalid",
             Body = "return ;"
@@ -77,7 +77,7 @@ public sealed class SemanticValidatorTests
     public void InvalidUnusedInstrumentDoesNotBlockWholeProjectCompilation()
     {
         var fixture = CompilerTestProject.Create();
-        EventInstrument unused = new()
+        EventInstrument unused = new(fixture.Project)
         {
             Name = "Unused",
             RootNote = 200,
@@ -115,7 +115,7 @@ public sealed class SemanticValidatorTests
     public void ForbiddenReverbControllerIsAnError()
     {
         var fixture = CompilerTestProject.Create();
-        fixture.Voice.Events.Add(TemplateEvent.ControlChange(0, 91, 64));
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 0, 91, 64));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
@@ -128,8 +128,8 @@ public sealed class SemanticValidatorTests
     public void ExplicitNoteNumberMappingRequiresPerNoteIsolation()
     {
         var fixture = CompilerTestProject.Create();
-        TemplateEvent note = TemplateEvent.Note(0, 120, 60, 100);
-        note.NumberMappings.Add(new ValueMappingStep
+        TemplateEvent note = TemplateEvent.Note(fixture.Project, 0, 120, 60, 100);
+        note.NumberMappings.Add(new ValueMappingStep(fixture.Project)
         {
             Source = MappingSource.Constant,
             Operation = MappingOperation.Add,
@@ -150,7 +150,7 @@ public sealed class SemanticValidatorTests
         var near = CompilerTestProject.Create(248);
         foreach (SubVoice voice in near.Instrument.SubVoices)
         {
-            voice.Events.Add(TemplateEvent.Note(0, 120, 60, 100));
+            voice.Events.Add(TemplateEvent.Note(near.Project, 0, 120, 60, 100));
         }
         CompilerTestProject.AddNote(near.Segment, near.Instrument, 0, 480);
         CanonicalCompiledResult nearResult = new MidoraCompiler().CompileFull(near.Project);
@@ -158,22 +158,23 @@ public sealed class SemanticValidatorTests
         Assert.Contains(nearResult.Diagnostics, value => value.Code == "MIDORA2250" && value.Severity == DiagnosticSeverity.Info);
 
         var over = CompilerTestProject.Create(256);
-        EventInstrument second = new()
+        EventInstrument second = new(over.Project)
         {
             Name = "Second",
             TemplateLengthTicks = 480,
             OverlapPolicy = OverlapPolicy.Warn
         };
-        second.SubVoices.Add(new SubVoice());
+        second.SubVoices.Add(new SubVoice(over.Project));
         over.Project.EventInstruments.Add(second);
         foreach (SubVoice voice in over.Instrument.SubVoices)
         {
-            voice.Events.Add(TemplateEvent.Note(0, 120, 60, 100));
+            voice.Events.Add(TemplateEvent.Note(over.Project, 0, 120, 60, 100));
         }
-        second.SubVoices[0].Events.Add(TemplateEvent.Note(0, 120, 60, 100));
+        second.SubVoices[0].Events.Add(TemplateEvent.Note(over.Project, 0, 120, 60, 100));
         CompilerTestProject.AddNote(over.Segment, over.Instrument, 0, 480);
-        LogicalTrack secondTrack = new() { Name = "Second", EventInstrumentId = second.Id };
-        Segment secondSegment = new() { LengthTicks = 1_920 };
+        LogicalTrack secondTrack = new(over.Project) { Name = "Second", EventInstrumentId = second.Id };
+        Segment secondSegment = new(over.Project) { LengthTicks = 1_920 };
+        CompilerTestProject.RegisterSegment(over.Project, secondSegment);
         CompilerTestProject.AddNote(secondSegment, second, 0, 480);
         secondTrack.Segments.Add(secondSegment);
         over.Project.Tracks.Add(secondTrack);
@@ -188,7 +189,7 @@ public sealed class SemanticValidatorTests
         var fixture = CompilerTestProject.Create(256);
         foreach (SubVoice voice in fixture.Instrument.SubVoices)
         {
-            voice.Events.Add(TemplateEvent.Note(0, 120, 60, 100));
+            voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
         }
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
 
@@ -219,15 +220,15 @@ public sealed class SemanticValidatorTests
     public void TimeSignatureUsesInitialReleaseBoundsAndMarkersMayShareTick()
     {
         var fixture = CompilerTestProject.Create();
-        fixture.Project.Conductor.Markers.Add(new ProjectMarker(MidoraId.New(), 120, "A"));
-        fixture.Project.Conductor.Markers.Add(new ProjectMarker(MidoraId.New(), 120, "B"));
-        fixture.Project.Conductor.TimeSignatures.Add(new TimeSignatureChange(240, 100, 4));
+        fixture.Project.Conductor.Markers.Add(new ProjectMarker(fixture.Project, 120, "A"));
+        fixture.Project.Conductor.Markers.Add(new ProjectMarker(fixture.Project, 120, "B"));
+        fixture.Project.Conductor.TimeSignatures.Add(new TimeSignatureChange(fixture.Project, 240, 100, 4));
 
         CanonicalCompiledResult invalid = new MidoraCompiler().CompileFull(fixture.Project);
         Assert.False(invalid.IsConsumable);
         Assert.Contains(invalid.Diagnostics, value => value.Code == "MIDORA1013");
 
-        fixture.Project.Conductor.TimeSignatures[^1] = new TimeSignatureChange(240, 99, 64);
+        fixture.Project.Conductor.TimeSignatures[^1] = new TimeSignatureChange(fixture.Project, 240, 99, 64);
         CanonicalCompiledResult valid = new MidoraCompiler().CompileFull(fixture.Project);
         Assert.True(valid.IsConsumable);
         Assert.Equal(["A", "B"], valid.Conductor.Markers.ToArray().Select(value => value.Name).ToArray());
@@ -237,7 +238,7 @@ public sealed class SemanticValidatorTests
     public void SegmentOverlapIsRejected()
     {
         var fixture = CompilerTestProject.Create();
-        fixture.Track.Segments.Add(new Segment { ProjectStartTick = 100, LengthTicks = 100 });
+        fixture.Track.Segments.Add(new Segment(fixture.Project) { ProjectStartTick = 100, LengthTicks = 100 });
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
         Assert.False(result.IsConsumable);
         Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1311");
@@ -255,5 +256,31 @@ public sealed class SemanticValidatorTests
         Assert.True(result.IsConsumable);
         Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1304" && value.Severity == DiagnosticSeverity.Info);
         Assert.Empty(result.Events.ToArray());
+    }
+
+    [Fact]
+    public void EmptyTrackAndMarkerNamesAreValid()
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Track.Name = string.Empty;
+        fixture.Project.Conductor.Markers.Add(new ProjectMarker(fixture.Project, 120, string.Empty));
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(result.IsConsumable);
+        Assert.DoesNotContain(result.Diagnostics, value => value.Code is "MIDORA1016" or "MIDORA1301");
+    }
+
+    [Fact]
+    public void TemplateNoteOffBeyondTemplateLengthIsRejected()
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 400, 100, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(result.IsConsumable);
+        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1241");
     }
 }

@@ -56,12 +56,13 @@ public sealed class PreviewCompiler
         long previewLength = checked(gateLength + instrument.TemplateLengthTicks + maximumRelease + 1);
         MidoraProject context = CreateContextShell(source);
         context.Conductor.Tempos.Clear();
-        context.Conductor.Tempos.Add(new TempoChange(0, tempo));
+        context.Conductor.Tempos.Add(new TempoChange(context, 0, tempo));
+        context.Conductor.TimeSignatures.Add(new TimeSignatureChange(context, 0, 4, 4));
         context.EventInstruments.Add(instrument);
 
-        LogicalTrack track = new() { Name = "Event Instrument Preview", EventInstrumentId = instrument.Id };
-        Segment segment = new() { ProjectStartTick = 0, ContentOffsetTick = 0, LengthTicks = previewLength };
-        segment.Notes.Add(new LogicalNote
+        LogicalTrack track = new(context) { Name = "Event Instrument Preview", EventInstrumentId = instrument.Id };
+        Segment segment = new(context) { ProjectStartTick = 0, ContentOffsetTick = 0, LengthTicks = previewLength };
+        segment.Notes.Add(new LogicalNote(context)
         {
             StartTick = 0,
             LengthTicks = gateLength,
@@ -92,7 +93,7 @@ public sealed class PreviewCompiler
             ?? throw new ArgumentException("The Segment does not belong to the Logical Track.", nameof(segmentId));
 
         MidoraProject context = CreateContextShell(source);
-        CopyConductor(source.Conductor, context.Conductor);
+        CopyConductor(source.Conductor, context);
         if (sourceTrack.EventInstrumentId.HasValue)
         {
             EventInstrument? instrument = source.EventInstruments.FirstOrDefault(
@@ -102,7 +103,7 @@ public sealed class PreviewCompiler
                 context.EventInstruments.Add(instrument);
             }
         }
-        LogicalTrack track = new()
+        LogicalTrack track = new(context)
         {
             Id = sourceTrack.Id,
             Name = sourceTrack.Name,
@@ -127,9 +128,8 @@ public sealed class PreviewCompiler
 
     private static MidoraProject CreateContextShell(MidoraProject source)
     {
-        MidoraProject context = new(source.TicksPerQuarterNote)
+        MidoraProject context = new(source.TicksPerQuarterNote, source.NextStableId)
         {
-            Id = source.Id,
             SoundFontPath = source.SoundFontPath
         };
         CopyState(source.GlobalInitialState, context.GlobalInitialState);
@@ -140,15 +140,18 @@ public sealed class PreviewCompiler
         return context;
     }
 
-    private static void CopyConductor(ConductorTrack source, ConductorTrack target)
+    private static void CopyConductor(ConductorTrack source, MidoraProject targetProject)
     {
+        ConductorTrack target = targetProject.Conductor;
         target.Tempos.Clear();
         target.Tempos.AddRange(source.Tempos);
         target.TimeSignatures.Clear();
         target.TimeSignatures.AddRange(source.TimeSignatures);
         target.KeySignatures.AddRange(source.KeySignatures);
         target.Markers.AddRange(source.Markers);
-        target.EndMarkerTick = source.EndMarkerTick;
+        target.EndMarker = source.EndMarker is null
+            ? null
+            : new ProjectEndMarker(targetProject, source.EndMarker.Tick) { Id = source.EndMarker.Id };
     }
 
     private static decimal GetTempoAt(ConductorTrack conductor, long tick) => conductor.Tempos

@@ -54,9 +54,9 @@
 
 仍待决定：任意合法采样率下 tick / absolute-seconds 到整数 sample-frame 的统一舍入算法。该算法应位于 Compiler 的 sample-domain adapter，并在决定前不得由音频后端暗中实现。
 
-## 3. ADR-AUDIO-002：初版 Limiter v1
+## 3. ADR-AUDIO-002（候选）：Limiter v1
 
-决定：先实现版本号为 1 的 stereo-linked、sample-peak、零 look-ahead Limiter：
+已实现候选：版本号为 1 的 stereo-linked、sample-peak、零 look-ahead Limiter：
 
 - ceiling：`1.0f`；
 - attack：同一 sample 立即降低增益，确保有限输入的输出峰值不超过 ceiling；

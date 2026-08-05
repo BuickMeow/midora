@@ -79,11 +79,27 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
             CreatePorts();
             WarmNativeHotPath();
         }
-        catch
+        catch (Exception preparationFailure)
         {
-            ReleaseNativeResources();
-            _runtimeLease?.Dispose();
-            throw;
+            Exception? cleanupFailure = ReleaseNativeResources();
+            try
+            {
+                _runtimeLease?.Dispose();
+            }
+            catch (Exception runtimeFailure)
+            {
+                cleanupFailure = CombineFailures(cleanupFailure, runtimeFailure);
+            }
+
+            if (cleanupFailure is null)
+            {
+                throw;
+            }
+
+            throw new AggregateException(
+                "BASS MIDI renderer preparation and native cleanup both failed.",
+                preparationFailure,
+                cleanupFailure);
         }
     }
 
@@ -199,9 +215,21 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
         }
 
         _disposed = true;
-        ReleaseNativeResources();
-        _runtimeLease?.Dispose();
+        Exception? cleanupFailure = ReleaseNativeResources();
+        try
+        {
+            _runtimeLease?.Dispose();
+        }
+        catch (Exception runtimeFailure)
+        {
+            cleanupFailure = CombineFailures(cleanupFailure, runtimeFailure);
+        }
         GC.SuppressFinalize(this);
+
+        if (cleanupFailure is not null)
+        {
+            throw cleanupFailure;
+        }
     }
 
     ~BassMidiRenderer()
@@ -209,8 +237,24 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
         if (!_disposed)
         {
             _disposed = true;
-            ReleaseNativeResources();
-            _runtimeLease?.Dispose();
+            try
+            {
+                _ = ReleaseNativeResources();
+            }
+            catch
+            {
+                // Finalizers cannot surface cleanup failures. Every failed native call is still
+                // checked and its thread-local error code is captured by ReleaseNativeResources.
+            }
+
+            try
+            {
+                _runtimeLease?.Dispose();
+            }
+            catch
+            {
+                // Dispose is the reporting path; the finalizer remains non-throwing.
+            }
         }
     }
 
@@ -290,9 +334,17 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
 
             return new PortState(plan, streamHandle);
         }
-        catch
+        catch (Exception creationFailure)
         {
-            _ = NativeBass.StreamFree(streamHandle);
+            if (NativeBass.StreamFree(streamHandle) == 0)
+            {
+                int error = NativeBass.ErrorGetCode();
+                throw new AggregateException(
+                    "BASS MIDI Port preparation and stream cleanup both failed.",
+                    creationFailure,
+                    new MidoraAudioException($"BASS_StreamFree failed with BASS error {error}."));
+            }
+
             throw;
         }
     }
@@ -346,19 +398,19 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
             if (NativeBassMidi.StreamEvent(
                 streamHandle,
                 channel,
-                NativeBassMidi.MIDI_EVENT_DEFDRUMS,
+                NativeBassMidi.MIDI_EVENT_RESET,
                 0) == 0)
             {
-                ThrowBassPreparationFailure("BASS_MIDI_StreamEvent(MIDI_EVENT_DEFDRUMS)");
+                ThrowBassPreparationFailure("BASS_MIDI_StreamEvent(MIDI_EVENT_RESET)");
             }
 
             if (NativeBassMidi.StreamEvent(
                 streamHandle,
                 channel,
-                NativeBassMidi.MIDI_EVENT_RESET,
+                NativeBassMidi.MIDI_EVENT_DEFDRUMS,
                 0) == 0)
             {
-                ThrowBassPreparationFailure("BASS_MIDI_StreamEvent(MIDI_EVENT_RESET)");
+                ThrowBassPreparationFailure("BASS_MIDI_StreamEvent(MIDI_EVENT_DEFDRUMS)");
             }
         }
     }
@@ -628,21 +680,35 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
         }
     }
 
-    private void ReleaseNativeResources()
+    private Exception? ReleaseNativeResources()
     {
+        Exception? cleanupFailure = null;
         for (int i = _ports.Length - 1; i >= 0; i--)
         {
             PortState? port = _ports[i];
             if (port is not null && port.StreamHandle != 0)
             {
-                _ = NativeBass.StreamFree(port.StreamHandle);
+                if (NativeBass.StreamFree(port.StreamHandle) == 0)
+                {
+                    int error = NativeBass.ErrorGetCode();
+                    cleanupFailure = CombineFailures(
+                        cleanupFailure,
+                        new MidoraAudioException(
+                            $"BASS_StreamFree for Port {port.Plan.ZeroBasedPortNumber} failed with BASS error {error}."));
+                }
                 port.StreamHandle = 0;
             }
         }
 
         if (_soundFontHandle != 0)
         {
-            _ = NativeBassMidi.FontFree(_soundFontHandle);
+            if (NativeBassMidi.FontFree(_soundFontHandle) == 0)
+            {
+                int error = NativeBass.ErrorGetCode();
+                cleanupFailure = CombineFailures(
+                    cleanupFailure,
+                    new MidoraAudioException($"BASS_MIDI_FontFree failed with BASS error {error}."));
+            }
             _soundFontHandle = 0;
         }
 
@@ -657,6 +723,15 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
             NativeMemory.Free(_packedMidiBuffer);
             _packedMidiBuffer = null;
         }
+
+        return cleanupFailure;
+    }
+
+    private static Exception CombineFailures(Exception? previous, Exception next)
+    {
+        return previous is null
+            ? next
+            : new AggregateException("Multiple native cleanup operations failed.", previous, next);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

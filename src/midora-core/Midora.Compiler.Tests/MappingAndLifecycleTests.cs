@@ -10,20 +10,20 @@ public sealed class MappingAndLifecycleTests
     {
         var fixture = CompilerTestProject.Create();
         fixture.Instrument.RequiresChannelIsolation = true;
-        CSharpMappingFunction function = new()
+        CSharpMappingFunction function = new(fixture.Project)
         {
             Name = "velocity boost",
             Body = "return Math.Min(127, value + context.TriggerVelocity / 10.0);"
         };
         function.DeclaredContextFields.Add(nameof(MappingContext.TriggerVelocity));
         fixture.Instrument.MappingFunctions.Add(function);
-        TemplateEvent noteEvent = TemplateEvent.Note(0, 120, 60, 80);
-        noteEvent.NumberMappings.Add(new ValueMappingStep
+        TemplateEvent noteEvent = TemplateEvent.Note(fixture.Project, 0, 120, 60, 80);
+        noteEvent.NumberMappings.Add(new ValueMappingStep(fixture.Project)
         {
             Source = MappingSource.TriggerNote,
             Operation = MappingOperation.Override
         });
-        noteEvent.ValueMappings.Add(new ValueMappingStep
+        noteEvent.ValueMappings.Add(new ValueMappingStep(fixture.Project)
         {
             Operation = MappingOperation.CustomCSharp,
             MappingFunctionId = function.Id,
@@ -45,8 +45,8 @@ public sealed class MappingAndLifecycleTests
     {
         var fixture = CompilerTestProject.Create();
         fixture.Instrument.ShortLifecycle = ShortNoteLifecycle.CutAtNoteOff;
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 400, 60, 100));
-        fixture.Voice.Events.Add(TemplateEvent.ControlChange(300, 1, 50));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 400, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 300, 1, 50));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
@@ -64,7 +64,7 @@ public sealed class MappingAndLifecycleTests
         fixture.Instrument.RequiresChannelIsolation = true;
         fixture.Instrument.LoopStartTick = 120;
         fixture.Instrument.LoopEndTick = 360;
-        fixture.Voice.Events.Add(TemplateEvent.Note(120, 60, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 120, 60, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 900);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
@@ -81,8 +81,8 @@ public sealed class MappingAndLifecycleTests
         fixture.Instrument.RequiresChannelIsolation = true;
         fixture.Instrument.LoopStartTick = 120;
         fixture.Instrument.LoopEndTick = 360;
-        fixture.Voice.Events.Add(TemplateEvent.ControlChange(400, 1, 77));
-        fixture.Voice.Events.Add(TemplateEvent.Note(400, 20, 67, 100));
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 400, 1, 77));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 400, 20, 67, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 900);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
@@ -104,7 +104,7 @@ public sealed class MappingAndLifecycleTests
         fixture.Instrument.RequiresChannelIsolation = true;
         fixture.Instrument.LoopStartTick = 120;
         fixture.Instrument.LoopEndTick = 360;
-        LogicalParameterDefinition parameter = new()
+        LogicalParameterDefinition parameter = new(fixture.Project)
         {
             Name = "dummy",
             Type = LogicalParameterType.Double,
@@ -112,20 +112,20 @@ public sealed class MappingAndLifecycleTests
             Maximum = 1
         };
         fixture.Instrument.LogicalParameters.Add(parameter);
-        CSharpMappingFunction function = new()
+        CSharpMappingFunction function = new(fixture.Project)
         {
             Name = "template tick",
             Body = "return context.TemplateTick % 128;"
         };
         function.DeclaredContextFields.Add(nameof(MappingContext.TemplateTick));
         fixture.Instrument.MappingFunctions.Add(function);
-        LogicalParameterMapping mapping = new()
+        LogicalParameterMapping mapping = new(fixture.Project)
         {
             ParameterId = parameter.Id,
             SubVoiceId = fixture.Voice.Id,
             Target = MidiValueTarget.ControlChange(1)
         };
-        mapping.Steps.Add(new ValueMappingStep
+        mapping.Steps.Add(new ValueMappingStep(fixture.Project)
         {
             Operation = MappingOperation.CustomCSharp,
             MappingFunctionId = function.Id,
@@ -151,8 +151,8 @@ public sealed class MappingAndLifecycleTests
     public void NoteVelocityMappingZeroRequiresExplicitClampPolicy()
     {
         var fixture = CompilerTestProject.Create();
-        TemplateEvent note = TemplateEvent.Note(0, 120, 60, 80);
-        ValueMappingStep step = new()
+        TemplateEvent note = TemplateEvent.Note(fixture.Project, 0, 120, 60, 80);
+        ValueMappingStep step = new(fixture.Project)
         {
             Source = MappingSource.Constant,
             Operation = MappingOperation.Override,
@@ -178,7 +178,7 @@ public sealed class MappingAndLifecycleTests
     public void ParameterLaneGeneratesMappedControllerCurve()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 20);
-        LogicalParameterDefinition parameter = new()
+        LogicalParameterDefinition parameter = new(fixture.Project)
         {
             Name = "expression",
             Type = LogicalParameterType.Double,
@@ -187,14 +187,14 @@ public sealed class MappingAndLifecycleTests
             DefaultValue = 0
         };
         fixture.Instrument.LogicalParameters.Add(parameter);
-        fixture.Instrument.ParameterMappings.Add(new LogicalParameterMapping
+        fixture.Instrument.ParameterMappings.Add(new LogicalParameterMapping(fixture.Project)
         {
             ParameterId = parameter.Id,
             SubVoiceId = fixture.Voice.Id,
             Target = MidiValueTarget.ControlChange(11),
             Steps =
             {
-                new ValueMappingStep
+                new ValueMappingStep(fixture.Project)
                 {
                     Operation = MappingOperation.Remap,
                     Source = MappingSource.LogicalParameter,
@@ -207,11 +207,11 @@ public sealed class MappingAndLifecycleTests
                 }
             }
         });
-        LogicalParameterLane lane = new() { ParameterId = parameter.Id };
-        lane.Points.Add(new(0, 0));
-        lane.Points.Add(new(10, 1));
+        LogicalParameterLane lane = new(fixture.Project) { ParameterId = parameter.Id };
+        lane.Points.Add(new(fixture.Project, 0, 0));
+        lane.Points.Add(new(fixture.Project, 10, 1));
         fixture.Segment.ParameterLanes.Add(lane);
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 10, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 10, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 20);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
@@ -233,9 +233,9 @@ public sealed class MappingAndLifecycleTests
     {
         var fixture = CompilerTestProject.Create(segmentLength: 600);
         fixture.Instrument.RequiresChannelIsolation = true;
-        InstrumentEnvelope envelope = new() { ReleaseTicks = 100, EndValue = 0 };
+        InstrumentEnvelope envelope = new(fixture.Project) { ReleaseTicks = 100, EndValue = 0 };
         fixture.Instrument.Envelopes.Add(envelope);
-        LogicalParameterDefinition parameter = new()
+        LogicalParameterDefinition parameter = new(fixture.Project)
         {
             Name = "dummy",
             Type = LogicalParameterType.Double,
@@ -243,19 +243,19 @@ public sealed class MappingAndLifecycleTests
             Maximum = 1
         };
         fixture.Instrument.LogicalParameters.Add(parameter);
-        LogicalParameterMapping mapping = new()
+        LogicalParameterMapping mapping = new(fixture.Project)
         {
             ParameterId = parameter.Id,
             SubVoiceId = fixture.Voice.Id,
             Target = MidiValueTarget.ControlChange(11)
         };
-        mapping.Steps.Add(new ValueMappingStep
+        mapping.Steps.Add(new ValueMappingStep(fixture.Project)
         {
             Source = MappingSource.Envelope,
             EnvelopeId = envelope.Id,
             Operation = MappingOperation.Override
         });
-        mapping.Steps.Add(new ValueMappingStep
+        mapping.Steps.Add(new ValueMappingStep(fixture.Project)
         {
             Source = MappingSource.CurrentValue,
             Operation = MappingOperation.Remap,
@@ -266,7 +266,7 @@ public sealed class MappingAndLifecycleTests
             Overflow = MappingOverflow.Clamp
         });
         fixture.Instrument.ParameterMappings.Add(mapping);
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 400, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 400, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 200);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
@@ -284,9 +284,9 @@ public sealed class MappingAndLifecycleTests
         var fixture = CompilerTestProject.Create(segmentLength: 600);
         fixture.Instrument.RequiresChannelIsolation = true;
         fixture.Instrument.ShortLifecycle = ShortNoteLifecycle.OneShot;
-        InstrumentEnvelope envelope = new() { ReleaseTicks = 100, EndValue = 0 };
+        InstrumentEnvelope envelope = new(fixture.Project) { ReleaseTicks = 100, EndValue = 0 };
         fixture.Instrument.Envelopes.Add(envelope);
-        LogicalParameterDefinition parameter = new()
+        LogicalParameterDefinition parameter = new(fixture.Project)
         {
             Name = "dummy",
             Type = LogicalParameterType.Double,
@@ -294,19 +294,19 @@ public sealed class MappingAndLifecycleTests
             Maximum = 1
         };
         fixture.Instrument.LogicalParameters.Add(parameter);
-        LogicalParameterMapping mapping = new()
+        LogicalParameterMapping mapping = new(fixture.Project)
         {
             ParameterId = parameter.Id,
             SubVoiceId = fixture.Voice.Id,
             Target = MidiValueTarget.ControlChange(11)
         };
-        mapping.Steps.Add(new ValueMappingStep
+        mapping.Steps.Add(new ValueMappingStep(fixture.Project)
         {
             Source = MappingSource.Envelope,
             EnvelopeId = envelope.Id,
             Operation = MappingOperation.Override
         });
-        mapping.Steps.Add(new ValueMappingStep
+        mapping.Steps.Add(new ValueMappingStep(fixture.Project)
         {
             Source = MappingSource.CurrentValue,
             Operation = MappingOperation.Remap,
@@ -317,7 +317,7 @@ public sealed class MappingAndLifecycleTests
             Overflow = MappingOverflow.Clamp
         });
         fixture.Instrument.ParameterMappings.Add(mapping);
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 400, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 400, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 200);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
@@ -339,15 +339,15 @@ public sealed class MappingAndLifecycleTests
         fixture.Instrument.RequiresChannelIsolation = true;
         fixture.Instrument.LoopStartTick = 120;
         fixture.Instrument.LoopEndTick = 360;
-        TemplateEvent controller = TemplateEvent.ControlChange(120, 1, 0);
-        controller.ValueMappings.Add(new ValueMappingStep
+        TemplateEvent controller = TemplateEvent.ControlChange(fixture.Project, 120, 1, 0);
+        controller.ValueMappings.Add(new ValueMappingStep(fixture.Project)
         {
             Source = MappingSource.TemplateTick,
             Operation = MappingOperation.Override,
             Overflow = MappingOverflow.Clamp
         });
         fixture.Voice.Events.Add(controller);
-        fixture.Voice.Events.Add(TemplateEvent.Note(120, 30, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 120, 30, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 900);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
@@ -363,7 +363,7 @@ public sealed class MappingAndLifecycleTests
     public void PitchBendRangeKeepsSemitoneAndCentsTransactionsAtomic()
     {
         var fixture = CompilerTestProject.Create();
-        fixture.Voice.Events.Add(new TemplateEvent
+        fixture.Voice.Events.Add(new TemplateEvent(fixture.Project)
         {
             Kind = TemplateEventKind.PitchBendRange,
             Tick = 0,
@@ -385,7 +385,7 @@ public sealed class MappingAndLifecycleTests
     public void LogicalParameterMappingComposesFromRawSubVoiceStateAndWinsSameTickConflict()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 20);
-        LogicalParameterDefinition parameter = new()
+        LogicalParameterDefinition parameter = new(fixture.Project)
         {
             Name = "offset",
             Type = LogicalParameterType.Integer,
@@ -394,15 +394,15 @@ public sealed class MappingAndLifecycleTests
             DefaultValue = 10
         };
         fixture.Instrument.LogicalParameters.Add(parameter);
-        fixture.Voice.Events.Add(TemplateEvent.ControlChange(0, 1, 40));
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 10, 60, 100));
-        LogicalParameterMapping mapping = new()
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 0, 1, 40));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 10, 60, 100));
+        LogicalParameterMapping mapping = new(fixture.Project)
         {
             ParameterId = parameter.Id,
             SubVoiceId = fixture.Voice.Id,
             Target = MidiValueTarget.ControlChange(1)
         };
-        mapping.Steps.Add(new ValueMappingStep
+        mapping.Steps.Add(new ValueMappingStep(fixture.Project)
         {
             Source = MappingSource.LogicalParameter,
             LogicalParameterId = parameter.Id,
@@ -425,8 +425,8 @@ public sealed class MappingAndLifecycleTests
     public void RemapInputOverflowDefaultsToClamp()
     {
         var fixture = CompilerTestProject.Create();
-        TemplateEvent controller = TemplateEvent.ControlChange(0, 1, 2);
-        controller.ValueMappings.Add(new ValueMappingStep
+        TemplateEvent controller = TemplateEvent.ControlChange(fixture.Project, 0, 1, 2);
+        controller.ValueMappings.Add(new ValueMappingStep(fixture.Project)
         {
             Source = MappingSource.CurrentValue,
             Operation = MappingOperation.Remap,
@@ -449,7 +449,7 @@ public sealed class MappingAndLifecycleTests
     {
         var fixture = CompilerTestProject.Create(segmentLength: 1_000);
         fixture.Instrument.OverlapPolicy = OverlapPolicy.CutNewRejectNew;
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 400, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 400, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 400);
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 100, 400);
 
@@ -466,9 +466,9 @@ public sealed class MappingAndLifecycleTests
         var fixture = CompilerTestProject.Create(segmentLength: 1_000);
         fixture.Instrument.RequiresChannelIsolation = true;
         fixture.Instrument.OverlapPolicy = OverlapPolicy.CutPrevious;
-        InstrumentEnvelope envelope = new() { ReleaseTicks = 50 };
+        InstrumentEnvelope envelope = new(fixture.Project) { ReleaseTicks = 50 };
         fixture.Instrument.Envelopes.Add(envelope);
-        LogicalParameterDefinition parameter = new()
+        LogicalParameterDefinition parameter = new(fixture.Project)
         {
             Name = "dummy",
             Type = LogicalParameterType.Double,
@@ -476,20 +476,20 @@ public sealed class MappingAndLifecycleTests
             Maximum = 1
         };
         fixture.Instrument.LogicalParameters.Add(parameter);
-        LogicalParameterMapping mapping = new()
+        LogicalParameterMapping mapping = new(fixture.Project)
         {
             ParameterId = parameter.Id,
             SubVoiceId = fixture.Voice.Id,
             Target = MidiValueTarget.ControlChange(11)
         };
-        mapping.Steps.Add(new ValueMappingStep
+        mapping.Steps.Add(new ValueMappingStep(fixture.Project)
         {
             Source = MappingSource.Envelope,
             EnvelopeId = envelope.Id,
             Operation = MappingOperation.Override
         });
         fixture.Instrument.ParameterMappings.Add(mapping);
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 400, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 400, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 400);
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 100, 400);
 

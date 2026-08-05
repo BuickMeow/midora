@@ -1,10 +1,30 @@
+using System.Buffers.Binary;
+
 namespace Midora.Domain;
 
 public readonly record struct MidoraId(Guid Value) : IComparable<MidoraId>
 {
-    public static MidoraId New() => new(Guid.NewGuid());
+    public static MidoraId FromSequence(UInt128 sequence)
+    {
+        if (sequence == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sequence), "Stable ID sequence zero is reserved.");
+        }
+        Span<byte> bytes = stackalloc byte[16];
+        BinaryPrimitives.WriteUInt64BigEndian(bytes, (ulong)(sequence >> 64));
+        BinaryPrimitives.WriteUInt64BigEndian(bytes[8..], (ulong)sequence);
+        return new(new Guid(bytes, bigEndian: true));
+    }
 
-    public int CompareTo(MidoraId other) => Value.CompareTo(other.Value);
+    public UInt128 ToSequence()
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        _ = Value.TryWriteBytes(bytes, bigEndian: true, out _);
+        return ((UInt128)BinaryPrimitives.ReadUInt64BigEndian(bytes) << 64)
+            | BinaryPrimitives.ReadUInt64BigEndian(bytes[8..]);
+    }
+
+    public int CompareTo(MidoraId other) => ToSequence().CompareTo(other.ToSequence());
 
     public override string ToString() => Value.ToString("N");
 }
@@ -28,14 +48,36 @@ public enum CurveInterpolation
     Linear
 }
 
-public sealed record CurvePoint(long Tick, double Value, CurveInterpolation Interpolation = CurveInterpolation.Linear)
+public sealed record CurvePoint
 {
-    public MidoraId Id { get; init; } = MidoraId.New();
+    public CurvePoint(
+        MidoraProject project,
+        long tick,
+        double value,
+        CurveInterpolation interpolation = CurveInterpolation.Linear)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+        Tick = tick;
+        Value = value;
+        Interpolation = interpolation;
+    }
+
+    public MidoraId Id { get; init; }
+    public long Tick { get; init; }
+    public double Value { get; init; }
+    public CurveInterpolation Interpolation { get; init; }
 }
 
 public sealed class ValueCurve
 {
-    public MidoraId Id { get; init; } = MidoraId.New();
+    public ValueCurve(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+    }
+
+    public MidoraId Id { get; init; }
     public MidiValueTarget Target { get; set; }
     public List<CurvePoint> Points { get; } = [];
 }

@@ -1,6 +1,6 @@
 # Midora 领域、编译与播放核心架构决策
 
-状态：已实现并进入回归验证（2026-08-05）
+状态：核心候选已实现并进入回归验证（2026-08-05）；未决项与非合规过渡实现见一致性审计记录
 适用范围：内存 Project 领域模型、语义验证、全量/增量编译、Canonical Compiled Result、播放计划缓存与无 UI 播放控制
 上位规范：`Midora-SRS-Initial-Release-v0.1`。本文是实现决策，不是需求规范；冲突时以 SRS 为准。
 
@@ -33,12 +33,12 @@
 - 实际使用的 Mapping Function 编译失败、抛异常、返回 NaN/Infinity，或映射结果不能按显式策略合法化时，编译失败。
 - 任一最终 Note、CC、Program、Bank、Pitch Bend、RPN/NRPN 或 Pitch Bend Range 超出合法范围且没有合法 Clamp 策略时，编译失败；Note number 不允许 Clamp。
 - 超过 256 Channel Units 或 Channel Group 不能原子分配时为 Error；峰值 `>= 248` 且未超限时只产生 Info。
-- 正式消费者只能消费与当前用途匹配的成功结果；Full Project 结果必须非 partial，Playback、Range 和 Preview 可以消费编译器为该用途明确生成的 partial 结果。无有效 SF2 或没有可用输出设备只阻止发声，不改变编译结果。
+- 正式消费者只能消费与当前用途匹配的成功、完整结果；Full Project、Playback、Range 和 Preview 的成功结果都不是 partial。失败时若未来返回 partial 数据，它只能用于诊断且不可消费。无有效 SF2 或没有可用输出设备只阻止发声，不改变编译结果。
 
 ### 1.5 诊断
 
 - 诊断级别为 Error、Warning、Info、Debug；Warning-as-error 只改变本次成功判定，不改写诊断级别。
-- 诊断尽量携带 Project、Track、Segment、Logical Note、Event Instrument、SubVoice、模板事件、Mapping、tick 和资源上下文。
+- 诊断尽量携带 Track、Segment、Logical Note、Event Instrument、SubVoice、模板事件、Mapping、tick 和资源上下文；初版 Project 本身没有稳定 Project ID。
 - 未绑定 Event Instrument 的非空 Track 为 Info；断裂参数 Lane 为 Warning；CC91/CC93、非法实际输出和资源不足为 Error。
 
 ### 1.6 持久化归属
@@ -74,23 +74,23 @@ Midora.Playback
 
 领域模型保存可编辑源数据；编译器输出冻结连续数组；播放层只做范围过滤、tick→sample、缓存和后端生命周期。Canonical result 不引用 BASS、WASAPI 或 WPF。
 
-## 3. ADR-CORE-002：确定性曲线离散化 v1
+## 3. ADR-CORE-002（候选）：确定性曲线离散化 v1
 
-决定：初版编译实现按整数 tick 采样连续曲线和 Envelope，包含曲线有效区间端点；阶梯段保持前值，直线与自由手绘段按相邻控制点线性插值。每个目标在同 tick 只输出最终合成值，跨 tick 的相同状态值暂不折叠。
+已实现候选：编译器按整数 tick 采样连续曲线和 Envelope，包含曲线有效区间端点；阶梯段保持前值，直线与自由手绘段按相邻控制点线性插值。每个目标在同 tick 只输出最终合成值，跨 tick 的相同状态值暂不折叠。
 
 依据：Project 的最高时间精度就是 tick；按 tick 采样不会引入第二个隐藏时间网格，结果与输出设备采样率无关，且可通过连续数组和预估容量实现线性时间复杂度。
 
 限制：这是实现 v1，不是 SRS 固定算法。若极长曲线的事件量或听感测试不能接受，必须以新 ADR 和 golden vectors 修改，不能静默改变。
 
-## 4. ADR-CORE-003：增量编译 v1
+## 4. ADR-CORE-003（非合规过渡原型）：Track 级增量缓存
 
-决定：全量编译仍是 oracle。增量编译 v1 按 Logical Track 缓存“已展开但未分配 Channel Unit”的冻结片段；ProjectChangeSet 与覆盖全部编译输入的 source fingerprint 共同决定 Track 片段复用。随后始终对本次上下文的全部实例重新执行确定性低号优先资源分配、全局排序、范围恢复和硬边界裁剪。
+当前原型：全量编译仍是 oracle。增量编译按 Logical Track 缓存“已展开但未分配 Channel Unit”的冻结片段；ProjectChangeSet 与覆盖全部编译输入的 source fingerprint 共同决定 Track 片段复用。随后始终对本次上下文的全部实例重新执行确定性低号优先资源分配、全局排序、范围恢复和硬边界裁剪。
 
-这样避免未变化 Track 的 Mapping、曲线、Loop 和模板展开工作，同时不保留历史 Port/Channel 分配。当前实现没有声称 Segment 级 checkpoint；若后续基准证明 Track 粒度不足，应另行增加 checkpoint 并继续以 Full Compile 逐字段等价作为门槛。
+该原型避免未变化 Track 的 Mapping、曲线、Loop 和模板展开工作，同时不保留历史 Port/Channel 分配；但它不满足 SRS 12.21.3 强制的 Checkpoint + Dirty Range + State Hash 收敛模型，不能作为初版合规实现。正式实现必须补齐该模型，并继续以 Full Compile 逐字段等价作为门槛；这不是由基准结果决定的可选优化。
 
 ## 5. ADR-CORE-004：tick 到 sample-frame 映射候选 v1
 
-决定：音频适配器按完整 Tempo Map 积分得到相对所选范围起点的绝对秒数，再使用 decimal 算术计算 `seconds × sampleRate`，最终以 `MidpointRounding.AwayFromZero` 舍入到 `Int64` sample-frame。每个 Tempo 分段的累计秒数不在分段边界提前取整。
+已实现候选：音频适配器按完整 Tempo Map 积分得到相对所选范围起点的绝对秒数，再使用 decimal 算术计算 `seconds × sampleRate`，最终以 `MidpointRounding.AwayFromZero` 舍入到 `Int64` sample-frame。每个 Tempo 分段的累计秒数不在分段边界提前取整。
 
 这是为本轮端到端试听采用的明确候选，不是 SRS 已规定规则。它替代“各调用点自行截断”的隐式行为，并保证相同输入、采样率和运行时下稳定、单调。正式发布前仍需用极端 Tempo、长时间累计和所有合法采样率的 ADR 测试向量确认或升级。
 

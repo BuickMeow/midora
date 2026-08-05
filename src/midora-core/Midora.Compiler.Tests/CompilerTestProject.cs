@@ -1,15 +1,18 @@
 using Midora.Domain;
+using System.Runtime.CompilerServices;
 
 namespace Midora.Compiler.Tests;
 
 internal static class CompilerTestProject
 {
+    private static readonly ConditionalWeakTable<Segment, MidoraProject> ProjectsBySegment = new();
+
     public static (MidoraProject Project, LogicalTrack Track, Segment Segment, EventInstrument Instrument, SubVoice Voice) Create(
         int subVoiceCount = 1,
         long segmentLength = 1920)
     {
         MidoraProject project = new(480);
-        EventInstrument instrument = new()
+        EventInstrument instrument = new(project)
         {
             Name = "Piano",
             RootNote = 60,
@@ -18,19 +21,27 @@ internal static class CompilerTestProject
         };
         for (int i = 0; i < subVoiceCount; i++)
         {
-            instrument.SubVoices.Add(new SubVoice { Name = $"Voice {i + 1}" });
+            instrument.SubVoices.Add(new SubVoice(project) { Name = $"Voice {i + 1}" });
         }
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new() { Name = "Track", EventInstrumentId = instrument.Id };
-        Segment segment = new() { ProjectStartTick = 0, LengthTicks = segmentLength };
+        LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
+        Segment segment = new(project) { ProjectStartTick = 0, LengthTicks = segmentLength };
         track.Segments.Add(segment);
         project.Tracks.Add(track);
+        ProjectsBySegment.Add(segment, project);
         return (project, track, segment, instrument, instrument.SubVoices[0]);
     }
 
-    public static LogicalNote AddNote(Segment segment, EventInstrument instrument, long start, long length, int note = 60)
+    public static LogicalNote AddNote(
+        Segment segment,
+        EventInstrument instrument,
+        long start,
+        long length,
+        int note = 60)
     {
-        LogicalNote value = new()
+        MidoraProject project = ProjectsBySegment.GetValue(segment,
+            _ => throw new InvalidOperationException("Register the test Segment before adding a note."));
+        LogicalNote value = new(project)
         {
             StartTick = start,
             LengthTicks = length,
@@ -40,4 +51,7 @@ internal static class CompilerTestProject
         segment.Notes.Add(value);
         return value;
     }
+
+    public static void RegisterSegment(MidoraProject project, Segment segment) =>
+        ProjectsBySegment.Add(segment, project);
 }

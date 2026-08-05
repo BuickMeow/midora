@@ -10,8 +10,8 @@ public sealed class StateAndEditingTests
     {
         var fixture = CompilerTestProject.Create();
         fixture.Voice.InitialState.Controllers[11] = 80;
-        fixture.Voice.Events.Add(TemplateEvent.ControlChange(0, 11, 100));
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 120, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 0, 11, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
@@ -28,8 +28,8 @@ public sealed class StateAndEditingTests
     {
         var fixture = CompilerTestProject.Create(segmentLength: 480);
         fixture.Project.GlobalResetDefaults.Controllers[11] = 77;
-        fixture.Voice.Events.Add(TemplateEvent.ControlChange(0, 11, 100));
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 120, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 0, 11, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
@@ -45,14 +45,15 @@ public sealed class StateAndEditingTests
     [Fact]
     public void SegmentSplitCutsCrossingNoteAndWritesRightParameterStartState()
     {
-        Segment source = new() { ProjectStartTick = 100, LengthTicks = 400, ContentOffsetTick = 20 };
-        source.Notes.Add(new LogicalNote { StartTick = 100, LengthTicks = 200, Note = 60, Velocity = 100 });
-        LogicalParameterLane lane = new() { ParameterId = MidoraId.New() };
-        lane.Points.Add(new(20, 0));
-        lane.Points.Add(new(420, 1));
+        MidoraProject project = new(480);
+        Segment source = new(project) { ProjectStartTick = 100, LengthTicks = 400, ContentOffsetTick = 20 };
+        source.Notes.Add(new LogicalNote(project) { StartTick = 100, LengthTicks = 200, Note = 60, Velocity = 100 });
+        LogicalParameterLane lane = new(project) { ParameterId = project.AllocateStableId() };
+        lane.Points.Add(new(project, 20, 0));
+        lane.Points.Add(new(project, 420, 1));
         source.ParameterLanes.Add(lane);
 
-        SegmentSplitResult split = SegmentEditing.Split(source, 300);
+        SegmentSplitResult split = SegmentEditing.Split(project, source, 300);
 
         Assert.Equal(200, split.Left.LengthTicks);
         Assert.Equal(200, split.Right.LengthTicks);
@@ -66,12 +67,13 @@ public sealed class StateAndEditingTests
     [Fact]
     public void SegmentSplitBeforeFirstParameterPointPreservesImplicitDefault()
     {
-        Segment source = new() { LengthTicks = 400 };
-        LogicalParameterLane lane = new() { ParameterId = MidoraId.New() };
-        lane.Points.Add(new(300, 0.8));
+        MidoraProject project = new(480);
+        Segment source = new(project) { LengthTicks = 400 };
+        LogicalParameterLane lane = new(project) { ParameterId = project.AllocateStableId() };
+        lane.Points.Add(new(project, 300, 0.8));
         source.ParameterLanes.Add(lane);
 
-        SegmentSplitResult split = SegmentEditing.Split(source, 200);
+        SegmentSplitResult split = SegmentEditing.Split(project, source, 200);
 
         Assert.Empty(split.Left.ParameterLanes[0].Points);
         CurvePoint point = Assert.Single(split.Right.ParameterLanes[0].Points);
@@ -83,10 +85,10 @@ public sealed class StateAndEditingTests
     public void CanonicalResultFreezesAllConductorContext()
     {
         var fixture = CompilerTestProject.Create();
-        fixture.Project.Conductor.Tempos.Add(new(480, 90));
-        fixture.Project.Conductor.TimeSignatures.Add(new(960, 3, 4));
-        fixture.Project.Conductor.KeySignatures.Add(new(0, -2, true));
-        fixture.Project.Conductor.Markers.Add(new(MidoraId.New(), 720, "Verse"));
+        fixture.Project.Conductor.Tempos.Add(new(fixture.Project, 480, 90));
+        fixture.Project.Conductor.TimeSignatures.Add(new(fixture.Project, 960, 3, 4));
+        fixture.Project.Conductor.KeySignatures.Add(new(fixture.Project, 0, -2, true));
+        fixture.Project.Conductor.Markers.Add(new(fixture.Project, 720, "Verse"));
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
 
@@ -100,12 +102,12 @@ public sealed class StateAndEditingTests
     public void DiscreteTemplatePointWinsOverCurveAtTheSameTick()
     {
         var fixture = CompilerTestProject.Create();
-        ValueCurve curve = new() { Target = MidiValueTarget.ControlChange(1) };
-        curve.Points.Add(new(0, 20));
-        curve.Points.Add(new(100, 40));
+        ValueCurve curve = new(fixture.Project) { Target = MidiValueTarget.ControlChange(1) };
+        curve.Points.Add(new(fixture.Project, 0, 20));
+        curve.Points.Add(new(fixture.Project, 100, 40));
         fixture.Voice.Curves.Add(curve);
-        fixture.Voice.Events.Add(TemplateEvent.ControlChange(0, 1, 80));
-        fixture.Voice.Events.Add(TemplateEvent.Note(0, 120, 60, 100));
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 0, 1, 80));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);

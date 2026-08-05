@@ -64,9 +64,15 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
             throw new MidoraAudioDeviceException("No enabled output device satisfies the selection.");
         }
         using ProbeSource source = new(_device.AudioFormat);
-        using BassWasapiOutputDevice probe = (BassWasapiOutputDevice)_factory.Open(_device, source);
+        BassWasapiOutputDevice probe = (BassWasapiOutputDevice)_factory.Open(_device, source);
         _actualSampleRate = probe.Info.AudioFormat.SampleRate;
         _device = probe.Info;
+        probe.Dispose();
+        if (probe.CleanupFaulted)
+        {
+            throw new MidoraAudioDeviceException(
+                $"BASSWASAPI probe cleanup failed with BASS error {probe.CleanupErrorCode}.");
+        }
         return _actualSampleRate;
     }
 
@@ -104,22 +110,35 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
             }
             _output.Start();
         }
-        catch
+        catch (Exception preparationFailure)
         {
-            Release();
-            throw;
+            Exception? cleanupFailure = Release();
+            if (cleanupFailure is null)
+            {
+                throw;
+            }
+            throw new AggregateException(
+                "Child-process playback preparation and cleanup both failed.",
+                preparationFailure,
+                cleanupFailure);
         }
     }
 
     public void Stop(bool flush)
     {
+        Exception? failure = null;
         try
         {
             _output?.Stop(flush);
         }
-        finally
+        catch (Exception exception)
         {
-            Release();
+            failure = CombineFailures(failure, exception);
+        }
+        failure = CombineFailures(failure, Release());
+        if (failure is not null)
+        {
+            throw failure;
         }
     }
 
@@ -134,29 +153,75 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
     public void Reset()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        Stop(true);
-        _factory = null;
-        _device = null;
-        _actualSampleRate = 0;
+        try
+        {
+            Stop(true);
+        }
+        finally
+        {
+            _factory = null;
+            _device = null;
+            _actualSampleRate = 0;
+        }
     }
 
     public void Dispose()
     {
         if (_disposed) return;
-        Stop(true);
-        _disposed = true;
+        try
+        {
+            Stop(true);
+        }
+        finally
+        {
+            _disposed = true;
+        }
     }
 
-    private void Release()
+    private Exception? Release()
     {
         _lastCallbackAllocatedBytes = _output?.CallbackAllocatedBytes ?? _lastCallbackAllocatedBytes;
         _lastChildAllocatedBytes = _session?.RenderingThreadAllocatedBytes ?? _lastChildAllocatedBytes;
         _lastUnderrunCount = _session?.UnderrunCount ?? _lastUnderrunCount;
         _lastChildFaulted = _session?.ProducerFaulted ?? _lastChildFaulted;
-        _output?.Dispose();
+
+        Exception? failure = null;
+        BassWasapiOutputDevice? output = _output;
         _output = null;
-        _session?.Dispose();
+        try
+        {
+            output?.Dispose();
+            if (output?.CleanupFaulted == true)
+            {
+                failure = CombineFailures(failure, new MidoraAudioDeviceException(
+                    $"BASSWASAPI cleanup failed with BASS error {output.CleanupErrorCode}."));
+            }
+        }
+        catch (Exception exception)
+        {
+            failure = CombineFailures(failure, exception);
+        }
+
+        BassMidiChildProcessSession? session = _session;
         _session = null;
+        try
+        {
+            session?.Dispose();
+        }
+        catch (Exception exception)
+        {
+            failure = CombineFailures(failure, exception);
+        }
+
+        return failure;
+    }
+
+    private static Exception? CombineFailures(Exception? previous, Exception? next)
+    {
+        if (next is null) return previous;
+        return previous is null
+            ? next
+            : new AggregateException("Multiple child playback cleanup operations failed.", previous, next);
     }
 
     private sealed unsafe class ProbeSource : IAudioRenderSource, IDisposable

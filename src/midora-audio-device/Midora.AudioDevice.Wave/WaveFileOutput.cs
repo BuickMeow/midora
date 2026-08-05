@@ -67,6 +67,7 @@ public static unsafe partial class WaveFileOutput
         long sourcePullAllocatedBytes = 0;
         long sampleWriteAllocatedBytes = 0;
         Exception? unexpectedFailure = null;
+        Exception? cleanupFailure = null;
 
         try
         {
@@ -162,20 +163,46 @@ public static unsafe partial class WaveFileOutput
             NativeMemory.Free(buffer);
             if (fileHandle != InvalidHandleValue)
             {
-                _ = CloseHandle(fileHandle);
+                if (CloseHandle(fileHandle) == 0)
+                {
+                    int error = Marshal.GetLastPInvokeError();
+                    cleanupFailure = new IOException(
+                        $"Closing the temporary WAVE file failed with Win32 error {error}.");
+                }
             }
         }
 
         if (unexpectedFailure is not null)
         {
             TryDeleteTemporaryFile(temporaryPath);
+            if (cleanupFailure is not null)
+            {
+                throw new AggregateException(
+                    "WAVE rendering and temporary file cleanup both failed.",
+                    unexpectedFailure,
+                    cleanupFailure);
+            }
             ExceptionDispatchInfo.Throw(unexpectedFailure);
         }
 
         if (failure != WaveRenderFailure.None)
         {
             TryDeleteTemporaryFile(temporaryPath);
-            throw CreateFinalizingException(failure, failureCode, renderedFrames);
+            Exception renderFailure = CreateFinalizingException(failure, failureCode, renderedFrames);
+            if (cleanupFailure is not null)
+            {
+                throw new AggregateException(
+                    "WAVE rendering and temporary file cleanup both failed.",
+                    renderFailure,
+                    cleanupFailure);
+            }
+            throw renderFailure;
+        }
+
+        if (cleanupFailure is not null)
+        {
+            TryDeleteTemporaryFile(temporaryPath);
+            throw cleanupFailure;
         }
 
         long actualLength = new FileInfo(temporaryPath).Length;

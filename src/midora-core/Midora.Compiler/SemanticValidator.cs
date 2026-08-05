@@ -9,7 +9,7 @@ public static class SemanticValidator
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(request);
         List<CompilerDiagnostic> diagnostics = [];
-        SourceReference projectSource = new(project.Id);
+        SourceReference projectSource = new();
 
         if (project.TicksPerQuarterNote <= 0)
         {
@@ -22,6 +22,7 @@ public static class SemanticValidator
         }
 
         ValidateConductor(project, diagnostics);
+        ValidateFolders(project, diagnostics);
         ValidateState(project.GlobalInitialState, projectSource, diagnostics);
         ValidateState(project.GlobalResetDefaults, projectSource, diagnostics);
 
@@ -93,7 +94,7 @@ public static class SemanticValidator
 
     private static void ValidateConductor(MidoraProject project, List<CompilerDiagnostic> diagnostics)
     {
-        SourceReference source = new(project.Id);
+        SourceReference source = new();
         if (project.Conductor.Tempos.Count(change => change.Tick == 0) != 1)
         {
             AddError("MIDORA1010", "Conductor 必须在 tick 0 恰好包含一个 Tempo 状态。", source, diagnostics);
@@ -134,9 +135,37 @@ public static class SemanticValidator
         }
         foreach (ProjectMarker marker in project.Conductor.Markers)
         {
-            if (marker.Tick < 0 || string.IsNullOrWhiteSpace(marker.Name))
+            if (marker.Tick < 0)
             {
-                AddError("MIDORA1016", "Marker 必须有非空名称和非负 tick。", source with { Tick = marker.Tick }, diagnostics);
+                AddError("MIDORA1016", "Marker tick 不得为负；名称允许为空和重复。", source with { Tick = marker.Tick }, diagnostics);
+            }
+        }
+    }
+
+    private static void ValidateFolders(MidoraProject project, List<CompilerDiagnostic> diagnostics)
+    {
+        HashSet<MidoraId> ids = [];
+        HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
+        foreach (EventInstrumentLibraryFolder folder in project.EventInstrumentFolders)
+        {
+            if (!ids.Add(folder.Id) || string.IsNullOrWhiteSpace(folder.Name)
+                || folder.Name != folder.Name.Trim()
+                || string.Equals(folder.Name, "Unfiled", StringComparison.OrdinalIgnoreCase)
+                || !names.Add(folder.Name))
+            {
+                AddError("MIDORA1020",
+                    "Event Instrument Library Folder 必须为单层、名称 trim 后非空且忽略大小写唯一。",
+                    new(), diagnostics);
+            }
+        }
+
+        foreach (EventInstrument instrument in project.EventInstruments)
+        {
+            if (instrument.LibraryFolderId.HasValue && !ids.Contains(instrument.LibraryFolderId.Value))
+            {
+                diagnostics.Add(new("MIDORA1021", DiagnosticSeverity.Warning,
+                    "Event Instrument 引用的 Library Folder 不存在；删除 Folder 时应把内容移至 Unfiled。",
+                    new(EventInstrumentId: instrument.Id)));
             }
         }
     }
@@ -257,6 +286,13 @@ public static class SemanticValidator
                     AddError("MIDORA1251", "该事件类型没有可映射的 secondary value。",
                         subSource with { SourceEventId = templateEvent.Id }, diagnostics);
                 }
+                if (templateEvent.Kind == TemplateEventKind.Bank
+                    && (!templateEvent.HasBankMsb && HasActiveSteps(templateEvent.ValueMappings)
+                        || !templateEvent.HasBankLsb && HasActiveSteps(templateEvent.SecondaryValueMappings)))
+                {
+                    AddError("MIDORA1253", "Bank Mapping 只能作用于该事件中实际存在的 MSB/LSB 值。",
+                        subSource with { SourceEventId = templateEvent.Id }, diagnostics);
+                }
                 if (templateEvent.Kind != TemplateEventKind.Note
                     && ActiveSteps(templateEvent.NumberMappings).Concat(ActiveSteps(templateEvent.ValueMappings))
                         .Concat(ActiveSteps(templateEvent.SecondaryValueMappings))
@@ -316,9 +352,11 @@ public static class SemanticValidator
         switch (value.Kind)
         {
             case TemplateEventKind.Note:
-                if (value.LengthTicks <= 0 || value.Number is < 0 or > 127 || value.Value is < 1 or > 127)
+                if (value.LengthTicks <= 0 || value.Number is < 0 or > 127 || value.Value is < 1 or > 127
+                    || value.Tick > long.MaxValue - Math.Max(value.LengthTicks, 0)
+                    || value.Tick + Math.Max(value.LengthTicks, 0) > templateLength)
                 {
-                    AddError("MIDORA1241", "Template Note 的 length/note/velocity 非法。", eventSource, diagnostics);
+                    AddError("MIDORA1241", "Template Note 的 length/note/velocity 非法，或 NoteOff 超出 Template Length。", eventSource, diagnostics);
                 }
                 break;
             case TemplateEventKind.ControlChange:
@@ -328,9 +366,11 @@ public static class SemanticValidator
                 }
                 break;
             case TemplateEventKind.Bank:
-                if (value.Value is < 0 or > 127 || value.SecondaryValue is < 0 or > 127)
+                if (!value.HasBankMsb && !value.HasBankLsb
+                    || value.HasBankMsb && value.Value is < 0 or > 127
+                    || value.HasBankLsb && value.SecondaryValue is < 0 or > 127)
                 {
-                    AddError("MIDORA1243", "Bank MSB/LSB 必须在 0–127。", eventSource, diagnostics);
+                    AddError("MIDORA1243", "Bank 必须至少包含 MSB/LSB 之一，存在的值必须在 0–127。", eventSource, diagnostics);
                 }
                 break;
             case TemplateEventKind.Program:
@@ -431,10 +471,10 @@ public static class SemanticValidator
         HashSet<MidoraId> trackIds = [];
         foreach (LogicalTrack track in project.Tracks)
         {
-            SourceReference trackSource = new(project.Id, TrackId: track.Id);
-            if (!trackIds.Add(track.Id) || string.IsNullOrWhiteSpace(track.Name) || track.Name != track.Name.Trim())
+            SourceReference trackSource = new(TrackId: track.Id);
+            if (!trackIds.Add(track.Id))
             {
-                AddError("MIDORA1301", "Logical Track ID 必须唯一且名称非空。", trackSource, diagnostics);
+                AddError("MIDORA1301", "Logical Track ID 必须唯一；名称允许为空和重复。", trackSource, diagnostics);
             }
             EventInstrument? boundInstrument = null;
             if (track.EventInstrumentId.HasValue
@@ -542,7 +582,7 @@ public static class SemanticValidator
         }
         if (request.IncludedTrackIds is not null && request.IncludedTrackIds.Any(id => !trackIds.Contains(id)))
         {
-            AddError("MIDORA1302", "编译请求引用了不存在的 Logical Track。", new(project.Id), diagnostics);
+            AddError("MIDORA1302", "编译请求引用了不存在的 Logical Track。", new(), diagnostics);
         }
     }
 
@@ -559,18 +599,21 @@ public static class SemanticValidator
     private static void ValidateStableIds(MidoraProject project, List<CompilerDiagnostic> diagnostics)
     {
         HashSet<MidoraId> ids = [];
-        Add(project.Id, new(project.Id));
-        foreach (TempoChange value in project.Conductor.Tempos) Add(value.Id, new(project.Id, Tick: value.Tick));
-        foreach (TimeSignatureChange value in project.Conductor.TimeSignatures) Add(value.Id, new(project.Id, Tick: value.Tick));
-        foreach (KeySignatureChange value in project.Conductor.KeySignatures) Add(value.Id, new(project.Id, Tick: value.Tick));
-        foreach (ProjectMarker marker in project.Conductor.Markers) Add(marker.Id, new(project.Id, Tick: marker.Tick));
+        foreach (TempoChange value in project.Conductor.Tempos) Add(value.Id, new(Tick: value.Tick));
+        foreach (TimeSignatureChange value in project.Conductor.TimeSignatures) Add(value.Id, new(Tick: value.Tick));
+        foreach (KeySignatureChange value in project.Conductor.KeySignatures) Add(value.Id, new(Tick: value.Tick));
+        foreach (ProjectMarker marker in project.Conductor.Markers) Add(marker.Id, new(Tick: marker.Tick));
+        if (project.Conductor.EndMarker is not null)
+        {
+            Add(project.Conductor.EndMarker.Id, new(Tick: project.Conductor.EndMarker.Tick));
+        }
         foreach (EventInstrumentLibraryFolder folder in project.EventInstrumentFolders)
         {
-            Add(folder.Id, new(project.Id));
+            Add(folder.Id, new());
         }
         foreach (EventInstrument instrument in project.EventInstruments)
         {
-            SourceReference instrumentSource = new(project.Id, EventInstrumentId: instrument.Id);
+            SourceReference instrumentSource = new(EventInstrumentId: instrument.Id);
             Add(instrument.Id, instrumentSource);
             foreach (LogicalParameterDefinition parameter in instrument.LogicalParameters)
             {
@@ -609,7 +652,7 @@ public static class SemanticValidator
         }
         foreach (LogicalTrack track in project.Tracks)
         {
-            SourceReference trackSource = new(project.Id, TrackId: track.Id);
+            SourceReference trackSource = new(TrackId: track.Id);
             Add(track.Id, trackSource);
             foreach (Segment segment in track.Segments)
             {
@@ -626,9 +669,11 @@ public static class SemanticValidator
 
         void Add(MidoraId id, SourceReference source)
         {
-            if (id == default || !ids.Add(id))
+            if (id == default || id.ToSequence() >= project.NextStableId || !ids.Add(id))
             {
-                AddError("MIDORA1003", "正式对象 Stable ID 为空或在 Project 内重复。", source, diagnostics);
+                AddError("MIDORA1003",
+                    "正式对象 Stable ID 为空、在 Project 内重复，或不属于当前 Project 的已分配计数器范围。",
+                    source, diagnostics);
             }
         }
     }

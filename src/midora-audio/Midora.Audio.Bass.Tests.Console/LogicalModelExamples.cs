@@ -69,7 +69,7 @@ public static partial class Program
             plan,
             soundFontPath,
             CreateRendererSettings(256),
-            AudioMasterSettings.InitialReleaseDefault,
+            AudioMasterSettings.LimiterV1Candidate,
             100,
             GetWorkerPath(repositoryRoot),
             GetBassNativeDirectory(),
@@ -137,7 +137,7 @@ public static partial class Program
         {
             return 1;
         }
-        using BassWasapiPlaybackBackend backend = new(BassWasapiPlaybackOptions.Default);
+        using BassWasapiPlaybackBackend backend = new(BassWasapiPlaybackOptions.PrototypeCandidate);
         using PlaybackController controller = new(session, backend);
         controller.Start();
         global::System.Console.WriteLine(
@@ -172,7 +172,7 @@ public static partial class Program
             100,
             50,
             CreateRendererSettings(256),
-            AudioMasterSettings.InitialReleaseDefault,
+            AudioMasterSettings.LimiterV1Candidate,
             TimeSpan.FromSeconds(30));
         using BassWasapiChildPlaybackBackend backend = new(options);
         using PlaybackController controller = new(session, backend);
@@ -210,7 +210,7 @@ public static partial class Program
                 $"[{diagnostic.Severity}] {diagnostic.Code}: {diagnostic.Message} tick={diagnostic.Source.Tick}");
         }
         global::System.Console.WriteLine(
-            $"编译：consumable={result.IsConsumable}；events={result.Events.Length}；instances={result.Statistics.ExpandedInstanceCount}；peak units={result.Statistics.PeakChannelUnitCount}；elapsed={result.Statistics.Elapsed.TotalMilliseconds:F2} ms");
+            $"编译：consumable={result.IsConsumable}；events={result.Events.Length}；instances={result.Statistics.ExpandedInstanceCount}；peak units={result.Statistics.PeakChannelUnitCount}");
     }
 
     private static MidoraProject CreateLogicalExample(string name) => name.ToLowerInvariant() switch
@@ -224,22 +224,22 @@ public static partial class Program
     private static MidoraProject CreateSegmentLifecycleExample()
     {
         MidoraProject project = new(480);
-        project.Conductor.EndMarkerTick = 3_840;
-        EventInstrument piano = CreatePianoInstrument("分段旋律", 480, ShortNoteLifecycle.CutAtNoteOff);
-        piano.SubVoices[0].Events.Add(TemplateEvent.Note(0, 430, 60, 102));
+        project.SetEndMarker(3_840);
+        EventInstrument piano = CreatePianoInstrument(project, "分段旋律", 480, ShortNoteLifecycle.CutAtNoteOff);
+        piano.SubVoices[0].Events.Add(TemplateEvent.Note(project, 0, 430, 60, 102));
         project.EventInstruments.Add(piano);
-        LogicalTrack track = new() { Name = "两个相邻 Segment", EventInstrumentId = piano.Id };
-        Segment left = new() { ProjectStartTick = 0, LengthTicks = 1_920, ContentOffsetTick = 0 };
-        AddNotes(left, 0, [60, 64, 67, 72], 360);
-        Segment right = new() { ProjectStartTick = 1_920, LengthTicks = 1_920, ContentOffsetTick = 480 };
-        right.Notes.Add(new LogicalNote
+        LogicalTrack track = new(project) { Name = "两个相邻 Segment", EventInstrumentId = piano.Id };
+        Segment left = new(project) { ProjectStartTick = 0, LengthTicks = 1_920, ContentOffsetTick = 0 };
+        AddNotes(project, left, 0, [60, 64, 67, 72], 360);
+        Segment right = new(project) { ProjectStartTick = 1_920, LengthTicks = 1_920, ContentOffsetTick = 480 };
+        right.Notes.Add(new LogicalNote(project)
         {
             StartTick = 0,
             LengthTicks = 360,
             Note = 36,
             Velocity = 127
         });
-        AddNotes(right, 480, [71, 67, 64, 60], 360);
+        AddNotes(project, right, 480, [71, 67, 64, 60], 360);
         track.Segments.Add(left);
         track.Segments.Add(right);
         project.Tracks.Add(track);
@@ -249,8 +249,8 @@ public static partial class Program
     private static MidoraProject CreateSubVoiceMappingExample()
     {
         MidoraProject project = new(480);
-        project.Conductor.EndMarkerTick = 3_840;
-        LogicalParameterDefinition expressionParameter = new()
+        project.SetEndMarker(3_840);
+        LogicalParameterDefinition expressionParameter = new(project)
         {
             Name = "力度包络",
             Type = LogicalParameterType.Double,
@@ -258,7 +258,7 @@ public static partial class Program
             Maximum = 1,
             DefaultValue = 0.35
         };
-        EventInstrument piano = new()
+        EventInstrument piano = new(project)
         {
             Name = "三 SubVoice 和弦",
             RootNote = 60,
@@ -269,20 +269,20 @@ public static partial class Program
         };
         foreach (int interval in new[] { 0, 4, 7 })
         {
-            SubVoice voice = new() { Name = $"interval {interval}" };
-            voice.Events.Add(TemplateEvent.Note(0, 430, 60 + interval, 94));
+            SubVoice voice = new(project) { Name = $"interval {interval}" };
+            voice.Events.Add(TemplateEvent.Note(project, 0, 430, 60 + interval, 94));
             piano.SubVoices.Add(voice);
         }
         piano.LogicalParameters.Add(expressionParameter);
         foreach (SubVoice voice in piano.SubVoices)
         {
-            LogicalParameterMapping expression = new()
+            LogicalParameterMapping expression = new(project)
             {
                 ParameterId = expressionParameter.Id,
                 SubVoiceId = voice.Id,
                 Target = MidiValueTarget.ControlChange(11)
             };
-            expression.Steps.Add(new ValueMappingStep
+            expression.Steps.Add(new ValueMappingStep(project)
             {
                 Source = MappingSource.LogicalParameter,
                 LogicalParameterId = expressionParameter.Id,
@@ -296,14 +296,14 @@ public static partial class Program
             piano.ParameterMappings.Add(expression);
         }
         project.EventInstruments.Add(piano);
-        LogicalTrack track = new() { Name = "参数自动化", EventInstrumentId = piano.Id };
-        Segment segment = new() { LengthTicks = 3_840 };
-        LogicalParameterLane lane = new() { ParameterId = expressionParameter.Id };
-        lane.Points.Add(new(0, 0.25));
-        lane.Points.Add(new(1_920, 1));
-        lane.Points.Add(new(3_839, 0.45));
+        LogicalTrack track = new(project) { Name = "参数自动化", EventInstrumentId = piano.Id };
+        Segment segment = new(project) { LengthTicks = 3_840 };
+        LogicalParameterLane lane = new(project) { ParameterId = expressionParameter.Id };
+        lane.Points.Add(new(project, 0, 0.25));
+        lane.Points.Add(new(project, 1_920, 1));
+        lane.Points.Add(new(project, 3_839, 0.45));
         segment.ParameterLanes.Add(lane);
-        AddNotes(segment, 0, [48, 53, 55, 48], 900, spacing: 960);
+        AddNotes(project, segment, 0, [48, 53, 55, 48], 900, spacing: 960);
         track.Segments.Add(segment);
         project.Tracks.Add(track);
         return project;
@@ -312,26 +312,26 @@ public static partial class Program
     private static MidoraProject CreateTempoLoopExample()
     {
         MidoraProject project = new(480);
-        project.Conductor.Tempos.Add(new(1_920, 90m));
-        project.Conductor.Tempos.Add(new(3_360, 150m));
-        project.Conductor.EndMarkerTick = 4_800;
-        EventInstrument piano = CreatePianoInstrument("长音循环琶音", 480, ShortNoteLifecycle.CutAtNoteOff);
+        project.Conductor.Tempos.Add(new(project, 1_920, 90m));
+        project.Conductor.Tempos.Add(new(project, 3_360, 150m));
+        project.SetEndMarker(4_800);
+        EventInstrument piano = CreatePianoInstrument(project, "长音循环琶音", 480, ShortNoteLifecycle.CutAtNoteOff);
         piano.RequiresChannelIsolation = true;
         piano.LoopStartTick = 120;
         piano.LoopEndTick = 360;
-        piano.SubVoices[0].Events.Add(TemplateEvent.Note(120, 100, 60, 92));
-        piano.SubVoices[0].Events.Add(TemplateEvent.Note(240, 100, 67, 84));
+        piano.SubVoices[0].Events.Add(TemplateEvent.Note(project, 120, 100, 60, 92));
+        piano.SubVoices[0].Events.Add(TemplateEvent.Note(project, 240, 100, 67, 84));
         project.EventInstruments.Add(piano);
-        LogicalTrack track = new() { Name = "Tempo + Loop", EventInstrumentId = piano.Id };
-        Segment segment = new() { LengthTicks = 4_800 };
-        segment.Notes.Add(new LogicalNote
+        LogicalTrack track = new(project) { Name = "Tempo + Loop", EventInstrumentId = piano.Id };
+        Segment segment = new(project) { LengthTicks = 4_800 };
+        segment.Notes.Add(new LogicalNote(project)
         {
             StartTick = 0,
             LengthTicks = 2_400,
             Note = 48,
             Velocity = 100
         });
-        segment.Notes.Add(new LogicalNote
+        segment.Notes.Add(new LogicalNote(project)
         {
             StartTick = 2_400,
             LengthTicks = 2_400,
@@ -343,9 +343,13 @@ public static partial class Program
         return project;
     }
 
-    private static EventInstrument CreatePianoInstrument(string name, long templateLength, ShortNoteLifecycle lifecycle)
+    private static EventInstrument CreatePianoInstrument(
+        MidoraProject project,
+        string name,
+        long templateLength,
+        ShortNoteLifecycle lifecycle)
     {
-        EventInstrument result = new()
+        EventInstrument result = new(project)
         {
             Name = name,
             RootNote = 60,
@@ -353,11 +357,12 @@ public static partial class Program
             ShortLifecycle = lifecycle,
             OverlapPolicy = OverlapPolicy.Warn
         };
-        result.SubVoices.Add(new SubVoice { Name = "Piano" });
+        result.SubVoices.Add(new SubVoice(project) { Name = "Piano" });
         return result;
     }
 
     private static void AddNotes(
+        MidoraProject project,
         Segment segment,
         long firstTick,
         IReadOnlyList<int> notes,
@@ -366,7 +371,7 @@ public static partial class Program
     {
         for (int i = 0; i < notes.Count; i++)
         {
-            segment.Notes.Add(new LogicalNote
+            segment.Notes.Add(new LogicalNote(project)
             {
                 StartTick = checked(firstTick + (i * spacing)),
                 LengthTicks = length,

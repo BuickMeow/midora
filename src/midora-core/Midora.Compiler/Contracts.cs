@@ -12,7 +12,6 @@ public enum DiagnosticSeverity
 }
 
 public readonly record struct SourceReference(
-    MidoraId ProjectId,
     MidoraId TrackId = default,
     MidoraId SegmentId = default,
     MidoraId LogicalNoteId = default,
@@ -34,7 +33,9 @@ public enum CompilationPurpose
     Playback,
     SegmentPreview,
     EventInstrumentPreview,
-    AudioRender
+    MidiExport,
+    AudioRender,
+    LogicalTrackAudioRender
 }
 
 public sealed class CompilationRequest
@@ -107,6 +108,7 @@ public readonly record struct CanonicalKeySignature(
     bool IsMinor,
     bool IsRangeRestore = false);
 public readonly record struct CanonicalMarker(MidoraId Id, long Tick, string Name);
+public readonly record struct CanonicalEndMarker(MidoraId Id, long Tick);
 
 public sealed class CanonicalConductor
 {
@@ -120,20 +122,21 @@ public sealed class CanonicalConductor
         CanonicalTimeSignature[] timeSignatures,
         CanonicalKeySignature[] keySignatures,
         CanonicalMarker[] markers,
-        long? endMarkerTick)
+        CanonicalEndMarker? endMarker)
     {
         _tempos = tempos;
         _timeSignatures = timeSignatures;
         _keySignatures = keySignatures;
         _markers = markers;
-        EndMarkerTick = endMarkerTick;
+        EndMarker = endMarker;
     }
 
     public ReadOnlySpan<CanonicalTempo> Tempos => _tempos;
     public ReadOnlySpan<CanonicalTimeSignature> TimeSignatures => _timeSignatures;
     public ReadOnlySpan<CanonicalKeySignature> KeySignatures => _keySignatures;
     public ReadOnlySpan<CanonicalMarker> Markers => _markers;
-    public long? EndMarkerTick { get; }
+    public CanonicalEndMarker? EndMarker { get; }
+    public long? EndMarkerTick => EndMarker?.Tick;
 }
 
 public sealed class CanonicalCompiledResult
@@ -143,7 +146,6 @@ public sealed class CanonicalCompiledResult
     private readonly CompilerDiagnostic[] _diagnostics;
 
     internal CanonicalCompiledResult(
-        MidoraId projectId,
         int ticksPerQuarterNote,
         long startTick,
         long endTick,
@@ -157,7 +159,6 @@ public sealed class CanonicalCompiledResult
         long fingerprint,
         CompilationStatistics statistics)
     {
-        ProjectId = projectId;
         TicksPerQuarterNote = ticksPerQuarterNote;
         StartTick = startTick;
         EndTick = endTick;
@@ -172,7 +173,6 @@ public sealed class CanonicalCompiledResult
         Statistics = statistics;
     }
 
-    public MidoraId ProjectId { get; }
     public int TicksPerQuarterNote { get; }
     public long StartTick { get; }
     public long EndTick { get; }
@@ -190,9 +190,10 @@ public sealed class CanonicalCompiledResult
 
 public readonly record struct CompilationStatistics(
     int SourceTrackCount,
-    int RecompiledTrackCount,
-    int ReusedTrackCount,
     int ExpandedInstanceCount,
     int EventCount,
-    int PeakChannelUnitCount,
-    TimeSpan Elapsed);
+    int PeakChannelUnitCount);
+
+public readonly record struct CompilerRunTelemetry(
+    int RecompiledTrackCount,
+    int ReusedTrackCount);

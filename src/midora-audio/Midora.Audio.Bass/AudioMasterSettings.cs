@@ -39,5 +39,5 @@ public sealed record class AudioMasterSettings
 
     public bool LimiterEnabled { get; }
 
-    public static AudioMasterSettings InitialReleaseDefault { get; } = new(-0.1f, 1f, 50f);
+    public static AudioMasterSettings LimiterV1Candidate { get; } = new(-0.1f, 1f, 50f);
 }

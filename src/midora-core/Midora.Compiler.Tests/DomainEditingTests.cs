@@ -26,19 +26,19 @@ public sealed class DomainEditingTests
         MidoraProject project = new(480);
         EventInstrument source = EventInstrumentLibrary.Create(project, "Source");
         source.Description = "description";
-        LogicalParameterDefinition parameter = new()
+        LogicalParameterDefinition parameter = new(project)
         {
             Name = "parameter",
             Minimum = 0,
             Maximum = 1
         };
         source.LogicalParameters.Add(parameter);
-        InstrumentEnvelope envelope = new() { Name = "envelope", ReleaseTicks = 20 };
+        InstrumentEnvelope envelope = new(project) { Name = "envelope", ReleaseTicks = 20 };
         source.Envelopes.Add(envelope);
-        CSharpMappingFunction function = new() { Name = "mapping", Body = "return value;" };
+        CSharpMappingFunction function = new(project) { Name = "mapping", Body = "return value;" };
         source.MappingFunctions.Add(function);
-        TemplateEvent value = TemplateEvent.ControlChange(0, 1, 10);
-        value.ValueMappings.Add(new ValueMappingStep
+        TemplateEvent value = TemplateEvent.ControlChange(project, 0, 1, 10);
+        value.ValueMappings.Add(new ValueMappingStep(project)
         {
             Operation = MappingOperation.CustomCSharp,
             MappingFunctionId = function.Id,
@@ -46,13 +46,13 @@ public sealed class DomainEditingTests
             LogicalParameterId = parameter.Id
         });
         source.SubVoices[0].Events.Add(value);
-        LogicalParameterMapping parameterMapping = new()
+        LogicalParameterMapping parameterMapping = new(project)
         {
             ParameterId = parameter.Id,
             SubVoiceId = source.SubVoices[0].Id,
             Target = MidiValueTarget.ControlChange(11)
         };
-        parameterMapping.Steps.Add(new ValueMappingStep
+        parameterMapping.Steps.Add(new ValueMappingStep(project)
         {
             Source = MappingSource.LogicalParameter,
             LogicalParameterId = parameter.Id
@@ -79,9 +79,9 @@ public sealed class DomainEditingTests
     {
         MidoraProject project = new(480);
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Bound");
-        LogicalTrack track = new() { Name = "Track", EventInstrumentId = instrument.Id };
-        Segment segment = new() { LengthTicks = 480 };
-        segment.Notes.Add(new LogicalNote { LengthTicks = 120 });
+        LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
+        Segment segment = new(project) { LengthTicks = 480 };
+        segment.Notes.Add(new LogicalNote(project) { LengthTicks = 120 });
         track.Segments.Add(segment);
         project.Tracks.Add(track);
 
@@ -101,22 +101,23 @@ public sealed class DomainEditingTests
     [Fact]
     public void SegmentDuplicateAndJoinPreserveContentCoordinatesAndRightPointWins()
     {
-        MidoraId parameterId = MidoraId.New();
-        Segment left = new() { ProjectStartTick = 100, LengthTicks = 100, ContentOffsetTick = 20 };
-        LogicalNote leftNote = new() { StartTick = 20, LengthTicks = 50 };
+        MidoraProject project = new(480);
+        MidoraId parameterId = project.AllocateStableId();
+        Segment left = new(project) { ProjectStartTick = 100, LengthTicks = 100, ContentOffsetTick = 20 };
+        LogicalNote leftNote = new(project) { StartTick = 20, LengthTicks = 50 };
         left.Notes.Add(leftNote);
-        LogicalParameterLane leftLane = new() { ParameterId = parameterId };
-        leftLane.Points.Add(new(220, 1)); // hidden point at absolute tick 300
+        LogicalParameterLane leftLane = new(project) { ParameterId = parameterId };
+        leftLane.Points.Add(new(project, 220, 1)); // hidden point at absolute tick 300
         left.ParameterLanes.Add(leftLane);
-        Segment right = new() { ProjectStartTick = 300, LengthTicks = 100 };
-        LogicalNote rightNote = new() { StartTick = 0, LengthTicks = 50 };
+        Segment right = new(project) { ProjectStartTick = 300, LengthTicks = 100 };
+        LogicalNote rightNote = new(project) { StartTick = 0, LengthTicks = 50 };
         right.Notes.Add(rightNote);
-        LogicalParameterLane rightLane = new() { ParameterId = parameterId };
-        rightLane.Points.Add(new(0, 2));
+        LogicalParameterLane rightLane = new(project) { ParameterId = parameterId };
+        rightLane.Points.Add(new(project, 0, 2));
         right.ParameterLanes.Add(rightLane);
 
-        Segment duplicate = SegmentEditing.Duplicate(left);
-        Segment joined = SegmentEditing.Join(left, right);
+        Segment duplicate = SegmentEditing.Duplicate(project, left);
+        Segment joined = SegmentEditing.Join(project, left, right);
 
         Assert.NotEqual(left.Id, duplicate.Id);
         Assert.NotEqual(leftNote.Id, duplicate.Notes[0].Id);
@@ -133,10 +134,11 @@ public sealed class DomainEditingTests
     [Fact]
     public void MappingChainSupportsOrderedEditing()
     {
-        MappingChain chain = new();
-        ValueMappingStep first = new() { Operation = MappingOperation.Add };
-        ValueMappingStep second = new() { Operation = MappingOperation.Multiply };
-        ValueMappingStep replacement = new() { Operation = MappingOperation.Clamp };
+        MidoraProject project = new(480);
+        MappingChain chain = new(project);
+        ValueMappingStep first = new(project) { Operation = MappingOperation.Add };
+        ValueMappingStep second = new(project) { Operation = MappingOperation.Multiply };
+        ValueMappingStep replacement = new(project) { Operation = MappingOperation.Clamp };
 
         chain.Add(second);
         chain.Insert(0, first);
@@ -147,5 +149,44 @@ public sealed class DomainEditingTests
         Assert.Equal([replacement], chain.ToArray());
         chain.Clear();
         Assert.Empty(chain);
+    }
+
+    [Fact]
+    public void ProjectStableIdsUseMonotonicCounterAndEndMarkerKeepsIdentityWhenMoved()
+    {
+        MidoraProject project = new(480);
+        UInt128 before = project.NextStableId;
+        EventInstrument first = EventInstrumentLibrary.Create(project, "First");
+        UInt128 afterFirst = project.NextStableId;
+        _ = EventInstrumentLibrary.Delete(project, first.Id, referencedDeletionConfirmed: true);
+        EventInstrument second = EventInstrumentLibrary.Create(project, "Second");
+
+        Assert.True(afterFirst > before);
+        Assert.True(second.Id.ToSequence() >= afterFirst);
+        Assert.True(project.NextStableId > second.Id.ToSequence());
+
+        project.SetEndMarker(960);
+        MidoraId endMarkerId = project.Conductor.EndMarker!.Id;
+        project.SetEndMarker(1_920);
+
+        Assert.Equal(endMarkerId, project.Conductor.EndMarker!.Id);
+        Assert.Equal(1_920, project.Conductor.EndMarkerTick);
+    }
+
+    [Fact]
+    public void DeletingFolderMovesContainedInstrumentsToUnfiled()
+    {
+        MidoraProject project = new(480);
+        EventInstrumentLibraryFolder folder = EventInstrumentLibrary.CreateFolder(project, "  Keys  ");
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Piano");
+        instrument.LibraryFolderId = folder.Id;
+
+        IReadOnlyList<EventInstrument> moved = EventInstrumentLibrary.DeleteFolder(project, folder.Id);
+
+        Assert.Equal("Keys", folder.Name);
+        Assert.Equal([instrument], moved);
+        Assert.Null(instrument.LibraryFolderId);
+        Assert.Empty(project.EventInstrumentFolders);
+        Assert.Throws<ArgumentException>(() => EventInstrumentLibrary.CreateFolder(project, "Unfiled"));
     }
 }

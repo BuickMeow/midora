@@ -315,6 +315,7 @@ public sealed class PlaybackController : IDisposable
                 _activePlan = null;
                 _activeTempoMap = null;
                 _session.SetEditsLocked(false);
+                ActiveTaskKind = PlaybackTaskKind.None;
                 LastError = null;
                 SetState(PlaybackState.Stopped);
                 return;
@@ -336,6 +337,7 @@ public sealed class PlaybackController : IDisposable
             _activePlan = null;
             _activeTempoMap = null;
             _session.SetEditsLocked(false);
+            ActiveTaskKind = PlaybackTaskKind.None;
             SetState(PlaybackState.Error);
             throw;
         }
@@ -375,7 +377,7 @@ public sealed class PlaybackController : IDisposable
                 SetState(PlaybackState.Stopped);
                 return;
             }
-            MidiRenderPlan plan = MidiRenderPlanAdapter.Create(compiled, actualSampleRate);
+            MidiRenderPlan plan = MidiRenderPlanAdapter.CreateRealtime(compiled, actualSampleRate);
             PlaybackProjectSettings settings = _session.Project.Playback;
             _backend.Start(plan, soundFont, new(
                 checked((float)settings.MasterVolumeDecibels), settings.LimiterEnabled));
@@ -392,6 +394,7 @@ public sealed class PlaybackController : IDisposable
             _activePlan = null;
             _activeTempoMap = null;
             _session.SetEditsLocked(false);
+            ActiveTaskKind = PlaybackTaskKind.None;
             SetState(PlaybackState.Error);
             throw;
         }

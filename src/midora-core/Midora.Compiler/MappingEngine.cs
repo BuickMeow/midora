@@ -82,8 +82,8 @@ internal sealed class MappingEngine
 
         if (current < legalMinimum || current > legalMaximum)
         {
-            ValueMappingStep finalStep = steps.LastOrDefault(value => value.IsEnabled) ?? new ValueMappingStep();
-            if (finalStep.Overflow == MappingOverflow.Clamp && allowClamp)
+            ValueMappingStep? finalStep = steps.LastOrDefault(value => value.IsEnabled);
+            if (finalStep?.Overflow == MappingOverflow.Clamp && allowClamp)
             {
                 current = Math.Clamp(current, legalMinimum, legalMaximum);
             }

@@ -35,6 +35,19 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void RealtimeAdapterUsesPositiveDeviceRateOutsideFileRenderRange()
+    {
+        MidoraProject project = CreateProject();
+        CanonicalCompiledResult compiled = new MidoraCompiler().CompileFull(project);
+
+        MidiRenderPlan realtime = MidiRenderPlanAdapter.CreateRealtime(
+            compiled, 384_000, new HashSet<MidoraId> { project.Tracks[0].Id });
+
+        Assert.Equal(384_000, realtime.SampleRate);
+        Assert.Throws<ArgumentOutOfRangeException>(() => MidiRenderPlanAdapter.Create(compiled, 384_000));
+    }
+
+    [Fact]
     public void RealtimeAdapterPreservesMutedTrackEventsAndMarksTheirSourceDisabled()
     {
         MidoraProject project = CreateProject();
@@ -67,7 +80,7 @@ public sealed class PlaybackTests
 
         Assert.True(result.IsConsumable);
         Assert.NotSame(first, second);
-        Assert.Equal(1, result.Statistics.RecompiledTrackCount);
+        Assert.Equal(1, session.LastCompilationTelemetry.RecompiledTrackCount);
     }
 
     [Fact]
@@ -271,8 +284,13 @@ public sealed class PlaybackTests
             controller.Start(240, 240);
 
             Assert.Equal(PlaybackState.Stopped, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
             Assert.Equal(1, backend.PrepareCount);
             Assert.Equal(0, backend.StartCount);
+
+            controller.Start(0, 240);
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            controller.Stop();
         }
         finally
         {
@@ -313,6 +331,32 @@ public sealed class PlaybackTests
             Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
             Assert.Equal(240, controller.CurrentTick);
             Assert.False(session.EditsLocked);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void RealtimePreviewUsesPositiveActualDeviceRateOutsideFileRange()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            project.SoundFontPath = soundFont;
+            FakeBackend backend = new() { ActualSampleRate = 384_000 };
+            using PlaybackController controller = new(new(project), backend);
+
+            controller.StartEventInstrumentPreview(new EventInstrumentPreviewRequest(
+                project.EventInstruments[0].Id,
+                Pitch: 67,
+                GateLengthTicks: 240,
+                Tempo: 100m));
+
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            controller.Stop();
         }
         finally
         {
@@ -386,19 +430,19 @@ public sealed class PlaybackTests
     private static MidoraProject CreateProject()
     {
         MidoraProject project = new(480);
-        EventInstrument instrument = new()
+        EventInstrument instrument = new(project)
         {
             Name = "Piano",
             TemplateLengthTicks = 480,
             OverlapPolicy = OverlapPolicy.Warn
         };
-        SubVoice voice = new();
-        voice.Events.Add(TemplateEvent.Note(0, 480, 60, 100));
+        SubVoice voice = new(project);
+        voice.Events.Add(TemplateEvent.Note(project, 0, 480, 60, 100));
         instrument.SubVoices.Add(voice);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new() { Name = "Track", EventInstrumentId = instrument.Id };
-        Segment segment = new() { LengthTicks = 960 };
-        segment.Notes.Add(new LogicalNote
+        LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
+        Segment segment = new(project) { LengthTicks = 960 };
+        segment.Notes.Add(new LogicalNote(project)
         {
             LengthTicks = 480,
             Note = 60,
@@ -411,7 +455,7 @@ public sealed class PlaybackTests
 
     private sealed class FakeBackend : IRealtimePlaybackBackend
     {
-        public int ActualSampleRate => 48_000;
+        public int ActualSampleRate { get; init; } = 48_000;
         public long PositionFrames { get; set; }
         public long RenderPositionFrames => PositionFrames;
         public bool IsBuffering => false;

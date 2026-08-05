@@ -404,4 +404,30 @@ public sealed class CompilationTests
         Assert.Single(allocations.Select(value => (value.ZeroBasedPort, value.ZeroBasedChannel)).Distinct());
         Assert.Equal(2, result.Events.ToArray().Count(value => value.Role == CanonicalEventRole.NoteOn));
     }
+
+    [Theory]
+    [InlineData(OverlapPolicy.Reject, false, DiagnosticSeverity.Error, false)]
+    [InlineData(OverlapPolicy.Warn, false, DiagnosticSeverity.Warning, true)]
+    [InlineData(OverlapPolicy.Warn, true, DiagnosticSeverity.Warning, false)]
+    public void RejectAndWarnOverlapHaveFixedSeverityAndConsumability(
+        OverlapPolicy policy,
+        bool treatWarningsAsErrors,
+        DiagnosticSeverity expectedSeverity,
+        bool expectedConsumable)
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Instrument.OverlapPolicy = policy;
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 480, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 120, 480);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project, new CompilationRequest
+        {
+            TreatWarningsAsErrors = treatWarningsAsErrors
+        });
+
+        Assert.Equal(expectedConsumable, result.IsConsumable);
+        CompilerDiagnostic diagnostic = Assert.Single(result.Diagnostics, value => value.Code == "MIDORA2201");
+        Assert.Equal(expectedSeverity, diagnostic.Severity);
+    }
 }

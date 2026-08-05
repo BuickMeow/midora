@@ -1182,6 +1182,13 @@ Warning 本身仍是 Warning，不被改写为 Error。
 Project 数据不改变。
 Info / Debug 永远不导致失败。
 ```
+### 12.19.8 Overlap Reject 与 Warn
+同一 Logical Track / Event Instrument Binding 内发生第 10.17 节定义的策略范围内重叠时：
+```text
+Overlap Strategy = Reject -> Error
+Overlap Strategy = Warn   -> Warning
+```
+`Reject` 必须使当前编译结果不可消费。`Warn` 默认保留两个实例并允许结果被消费；如果本次 CompileContext 启用“强制 Warning 导致编译失败”，则结果不可消费，但 Overlap 诊断的级别仍为 Warning。
 ---
 ## 12.20 编译成功判定与失败结果
 ### 12.20.1 成功判定

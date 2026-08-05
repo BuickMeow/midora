@@ -938,11 +938,11 @@ Channel Unit 释放后处于项目定义的安全状态
 ## 10.17 生命周期与 Overlap 的接口
 ### 10.17.1 第 10 章《实例生命周期、Loop、Envelope 与重叠》 范围
 第 10 章《实例生命周期、Loop、Envelope 与重叠》 只定义生命周期与 Overlap 的接口，不完整定义 Overlap 决策算法。
-Overlap 的具体决策、资源冲突、诊断等级留给 第 12 章《编译系统与 Canonical Compiled Result》 / 第 15 章《音频文件渲染》。
+Overlap 的资源冲突与结果生成由第 12 章《编译系统与 Canonical Compiled Result》处理；`Reject` / `Warn` 的诊断等级与成功判定由 10.17.8 和 12.19.8 固定。
 ### 10.17.2 默认 Overlap 策略
 承接 第 7 章《Event Instrument Library 与 Event Instrument 定义》，默认：
 ```text
-Overlap Strategy = Reject / Warn
+Overlap Strategy = Reject
 ```
 默认 Overlap 作用范围为：
 ```text
@@ -987,16 +987,19 @@ Reset 阶段至少在资源占用上视为尚未完全释放。
 ### 10.17.7 初版支持的 Overlap 策略
 初版支持：
 ```text
-Reject / Warn
+Reject
+Warn
 Let Overlap
 Cut Previous
 Cut New / Reject New
 ```
-### 10.17.8 Reject / Warn
-`Reject / Warn` 表示：
+### 10.17.8 Reject 与 Warn
+`Reject` 和 `Warn` 都不自动截断旧实例，也不修改 Project 源数据。发生策略作用范围内的生命周期重叠时：
 ```text
-同一 Logical Track / Event Instrument Binding 内，如果新实例与尚未结束的旧实例发生不允许的生命周期重叠，则编译失败或至少产生明确诊断，不自动截断旧实例。
+Reject -> 产生 Error；当前编译结果不可消费
+Warn   -> 产生 Warning；若不存在其他失败条件，重叠实例保留在 canonical 结果中
 ```
+`Warn` 默认不导致失败；启用“强制 Warning 导致编译失败”后，结果不可消费，但该诊断仍保持 Warning，不升级为 Error。
 ### 10.17.9 Let Overlap
 初版支持 `Let Overlap`，但默认不是 Let Overlap。
 ### 10.17.10 Cut Previous

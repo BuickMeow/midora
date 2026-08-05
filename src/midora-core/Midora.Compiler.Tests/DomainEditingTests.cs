@@ -15,6 +15,7 @@ public sealed class DomainEditingTests
         Assert.Equal("Event Instrument 1", first.Name);
         Assert.Equal("Event Instrument 2", second.Name);
         Assert.Equal(960, first.TemplateLengthTicks);
+        Assert.Equal(OverlapPolicy.Reject, first.OverlapPolicy);
         Assert.Single(first.SubVoices);
         Assert.Empty(first.SubVoices[0].Events);
         Assert.True(new MidoraCompiler().CompileFull(project).IsConsumable);

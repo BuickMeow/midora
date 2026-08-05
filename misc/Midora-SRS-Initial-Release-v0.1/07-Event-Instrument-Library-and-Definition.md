@@ -724,7 +724,7 @@ Event Instrument 定义应至少承担以下职责：
 | Envelope Preset 集合 | 是，限归属入口 | 具体参数由 第 10 章《实例生命周期、Loop、Envelope 与重叠》 或实现设计阶段细化。 |
 | Per-Note Instance Isolation | 是 | 本规格规定默认值、可编辑性和数据保留规则。 |
 | 生命周期策略 | 是，限入口和默认策略 | 具体算法由第 10 章《实例生命周期、Loop、Envelope 与重叠》规定。 |
-| Overlap 策略 | 是，限入口和默认策略 | 默认采用 `Reject / Warn`，不使用 `Let Overlap`。 |
+| Overlap 策略 | 是，限入口和默认策略 | 默认采用 `Reject`；用户可改为 `Warn` 或其他受支持策略，不使用 `Let Overlap` 作为默认值。 |
 | Reset 策略 | 是，限入口和覆盖层级 | 具体插入顺序由 第 10 章《实例生命周期、Loop、Envelope 与重叠》 / 第 12 章《编译系统与 Canonical Compiled Result》 细化。 |
 | 预览配置 | 否，原则入口可承接 | 具体预览音高、长度、行为由 第 13 章《播放与预览》 / 第 17～20 章的 UI 与交互规格 细化。 |
 ---
@@ -784,7 +784,7 @@ Reset 策略
 至少包含一条 SubVoice
 拥有 Per-Note Instance Isolation 设置
 拥有生命周期策略设置
-拥有 Overlap 策略设置，默认采用 `Reject / Warn`
+拥有 Overlap 策略设置，默认采用 `Reject`
 拥有 Reset 策略入口
 Mapping Function 集合可为空
 Logical Parameters 集合可为空
@@ -992,7 +992,8 @@ Cut Previous
 Let Overlap
 Merge
 Retrigger Same Channel
-Reject / Warn
+Reject
+Warn
 ```
 边界：
 ```text
@@ -1004,7 +1005,7 @@ Cut Previous 同一 tick 多个 Note On 会导致编译错误。
 Per-Note Instance Isolation 默认关闭，允许用户开启；默认 Overlap 策略不得使用 Let Overlap。
 因此，初版默认 Overlap 策略为：
 ```text
-Reject / Warn
+Reject
 ```
 系统级含义：
 ```text
@@ -1013,9 +1014,9 @@ Reject / Warn
 默认状态下，不自动裁剪旧实例。
 默认状态下，不自动合并实例。
 默认状态下，不自动使用 Retrigger Same Channel。
-当同一 Logical Track / Event Instrument Binding 内出现需要 Overlap 策略处理的重叠时，应由生命周期、编译与诊断系统按 Reject / Warn 策略处理。
+当同一 Logical Track / Event Instrument Binding 内出现需要 Overlap 策略处理的重叠时，默认按 Reject 策略处理。
 ```
-采用 `Reject / Warn` 作为默认值的理由：
+采用 `Reject` 作为默认值的理由：
 ```text
 它与 Per-Note Instance Isolation 默认关闭兼容。
 它不破坏 Let Overlap 必须依赖实例隔离开启的本规格规则。
@@ -1026,7 +1027,7 @@ Reject / Warn
 ```text
 用户仍可在 Event Instrument 中将 Overlap 策略改为其他受支持策略。
 选择 Let Overlap 时，必须同时满足 Per-Note Instance Isolation 开启等本规格其他章节适用条件。
-Reject / Warn 的精确诊断等级、是否表现为编译错误、警告或编辑阶段提示，由 第 10 章《实例生命周期、Loop、Envelope 与重叠》、第 12 章《编译系统与 Canonical Compiled Result》 和 第 15 章《音频文件渲染》 继续细化。
+`Reject` 与 `Warn` 是两个独立策略；精确诊断与成功判定见 10.17.8 和 12.19.8。
 ```
 ---
 ## 7.34 生命周期策略入口

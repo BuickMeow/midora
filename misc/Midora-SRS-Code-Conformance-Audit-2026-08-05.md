@@ -65,9 +65,9 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 
 本节只登记 SRS 内部冲突或 SRS/ADR 明确留待决定的选择；SRS 已闭合的规则不列入。
 
-按后续确认顺序登记：
+按后续确认顺序登记；已确认项目保留原编号并标记，未标记项目均待确认：
 
-1. Envelope 正式数据模型：SRS 10.11 明确为 ADSR-like（Delay/Attack/Hold/Decay/Sustain/Release/End），SRS 18.6.5 又明确“不限制为 ADSR”、采用有序点/曲线段/阶段标记；两者不能同时作为同一初版编辑模型。
+1. **已确认：1A（2026-08-05）**。初版 Envelope Preset 固定为 SRS 10.11 的 ADSR-like 结构；SRS 18.6.5 已修订为服从第 10.11 节，不采用任意有序点/曲线段模型。现有领域模型与编译器实现符合该决定，无需修改代码。
 2. 同 tick 普通 Marker 数量：SRS 4.8.2 可读为同 tick 最多一个普通 Marker；SRS 18.7.4 又要求同 tick Marker 可区分，明显预设可以有多个。当前代码候选允许多个。
 3. 稳定 ID 的文件兼容布局：确认 128-bit 计数值的 JSON 字符串格式、protobuf 固定结构和字节序；当前 big-endian/Guid-N 仅为内存候选。
 4. Overlap 的 `Reject / Warn`：确认新 Event Instrument 的默认项，以及重叠时是阻止编译的 Error，还是可消费结果附 Warning。

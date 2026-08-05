@@ -383,12 +383,13 @@ Overlap Strategy
 初版 Loop 是固定单一设置，不是多个对象。
 关闭 Loop 时保留边界数据。
 ### 18.6.5 Envelope
-Envelope 不限制为 ADSR，使用：
+初版 Envelope Preset 编辑器必须直接编辑第 10.11 节规定的固定 ADSR-like 结构：
 ```text
-Ordered points
-Curve segments
-Stage markers
+阶段时长：Delay / Attack / Hold / Decay / Release
+可编辑值：Start Value / Peak Value / Sustain Level / End Value
 ```
+本编辑器可以显示上述固定阶段的边界，但不得允许用户新增、删除或重排任意阶段，也不得把 Envelope 扩展为任意 Ordered Points 或 Curve Segments 数据模型。
+本节只规定编辑器呈现与操作入口；阶段语义、输出值域、时长单位、插值和 Gate End 后行为均以第 10.11 节为准。
 Release Start 是相对生命周期参考，不是固定 Project tick。
 ### 18.6.6 Scenario Preview
 支持输入：

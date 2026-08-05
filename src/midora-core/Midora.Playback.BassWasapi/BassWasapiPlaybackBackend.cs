@@ -20,14 +20,14 @@ public sealed record BassWasapiPlaybackOptions(
         null,
         100,
         50,
-        256,
+        InitialReleaseAudioRuntimePolicy.WorkFrameCount,
         new BassMidiRendererSettings(
             BassMidiNoteOffPolicy.ReleaseAllMatchingNotes,
             BassMidiInterpolation.BassDefault,
             BassMidiSampleLoading.OnDemand,
             0,
             0,
-            256),
+            InitialReleaseAudioRuntimePolicy.WorkFrameCount),
         AudioMasterSettings.LimiterV1);
 }
 
@@ -56,9 +56,12 @@ public sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
         {
             throw new ArgumentOutOfRangeException(nameof(options), "Render-Ahead must be 20–2000 ms.");
         }
-        if (_options.WorkFrameCount is < 16 or > 65_536)
+        if (_options.WorkFrameCount != InitialReleaseAudioRuntimePolicy.WorkFrameCount
+            || _options.RendererSettings is null
+            || _options.RendererSettings.MaximumWorkFrameCount != InitialReleaseAudioRuntimePolicy.WorkFrameCount)
         {
-            throw new ArgumentOutOfRangeException(nameof(options), "Work frame count must be 16–65536.");
+            throw new ArgumentOutOfRangeException(nameof(options),
+                $"Initial-release realtime work blocks must be {InitialReleaseAudioRuntimePolicy.WorkFrameCount} frames.");
         }
     }
 
@@ -66,7 +69,8 @@ public sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
     public long PositionFrames => _output?.ConsumedFrameCount ?? 0;
     public long RenderPositionFrames => _renderer?.PositionFrames ?? PositionFrames;
     public bool IsBuffering => _ring is not null && !_ring.ProducerCompleted
-        && _ring.AvailableFrameCount < _options.WorkFrameCount;
+        && _ring.AvailableFrameCount
+            < InitialReleaseAudioRuntimePolicy.WorkFramesForRingCapacity(_ring.CapacityFrameCount);
     public long CallbackAllocatedBytes => _output?.CallbackAllocatedBytes ?? _lastCallbackAllocatedBytes;
     public long RenderingThreadAllocatedBytes => _worker?.RenderingThreadAllocatedBytes ?? _lastRenderingAllocatedBytes;
     public long UnderrunCount => _ring?.UnderrunCount ?? _lastUnderrunCount;
@@ -136,13 +140,12 @@ public sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
                 _options.MasterSettings.LimiterReleaseMilliseconds,
                 master.LimiterEnabled);
             _renderer = new BassMidiRenderer(plan, soundFontPath, _options.RendererSettings, masterSettings);
-            int ringCapacity = checked(plan.SampleRate * _options.RenderAheadMilliseconds / 1_000);
-            if (ringCapacity < _options.WorkFrameCount)
-            {
-                throw new InvalidOperationException("Render-Ahead buffer is smaller than the work block.");
-            }
+            int ringCapacity = InitialReleaseAudioRuntimePolicy.BufferMillisecondsToFrameCapacity(
+                plan.SampleRate,
+                _options.RenderAheadMilliseconds);
             _ring = new AudioFrameRingBuffer(_renderer.Format, ringCapacity);
-            _worker = new AudioRenderAheadWorker(_renderer, _ring, _options.WorkFrameCount);
+            int producerWorkFrames = InitialReleaseAudioRuntimePolicy.WorkFramesForRingCapacity(ringCapacity);
+            _worker = new AudioRenderAheadWorker(_renderer, _ring, producerWorkFrames);
             _worker.Start();
             int threshold = ringCapacity * 3 / 4;
             while (_ring.AvailableFrameCount < threshold && !_ring.ProducerCompleted && !_ring.ProducerFaulted)

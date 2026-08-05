@@ -33,14 +33,22 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
     private bool _lastChildFaulted;
     private bool _disposed;
 
-    public BassWasapiChildPlaybackBackend(BassWasapiChildPlaybackOptions options) =>
+    public BassWasapiChildPlaybackBackend(BassWasapiChildPlaybackOptions options)
+    {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        if (_options.RendererSettings is null
+            || _options.RendererSettings.MaximumWorkFrameCount != InitialReleaseAudioRuntimePolicy.WorkFrameCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options),
+                $"Initial-release child-process work blocks must be {InitialReleaseAudioRuntimePolicy.WorkFrameCount} frames.");
+        }
+    }
 
     public int ActualSampleRate => _actualSampleRate;
     public long PositionFrames => _output?.ConsumedFrameCount ?? 0;
     public long RenderPositionFrames => _session?.ProducedFrameCount ?? PositionFrames;
     public bool IsBuffering => _session is not null && !_session.ProducerCompleted
-        && _session.AvailableFrameCount < _options.RendererSettings.MaximumWorkFrameCount;
+        && _session.AvailableFrameCount < _session.ProducerWorkFrameCount;
     public long CallbackAllocatedBytes => _output?.CallbackAllocatedBytes ?? _lastCallbackAllocatedBytes;
     public long ChildRenderingAllocatedBytes => _session?.RenderingThreadAllocatedBytes ?? _lastChildAllocatedBytes;
     public long UnderrunCount => _session?.UnderrunCount ?? _lastUnderrunCount;
@@ -94,7 +102,9 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
                 plan, soundFontPath, _options.RendererSettings, masterSettings,
                 _options.IpcAudioBufferMilliseconds, _options.WorkerPath, _options.BassNativeDirectory,
                 BassMidiChildConsumptionMode.RealtimeNonBlocking, _options.PreparingTimeout);
-            int threshold = plan.SampleRate * Math.Min(75, _options.IpcAudioBufferMilliseconds) / 1_000;
+            int threshold = InitialReleaseAudioRuntimePolicy.BufferMillisecondsToFrameCapacity(
+                plan.SampleRate,
+                Math.Min(75, _options.IpcAudioBufferMilliseconds));
             while (_session.AvailableFrameCount < threshold && !_session.ProducerCompleted && !_session.ProducerFaulted)
             {
                 Thread.Sleep(1);

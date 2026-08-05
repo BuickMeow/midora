@@ -949,7 +949,7 @@ tick
 四分音符
 ```
 播放系统内部可以根据 Tempo Map 将预渲染音乐长度转换为实际秒数 / sample 范围，但语义要求仍以音乐时间范围为准。
-第 13 章《播放与预览》 不固定具体 block / chunk 大小。
+初版正式实时合成与 Render-Ahead producer 的最大工作 block 固定为 `256 frames`。最终短块、事件边界前的短块和任务结束前的短块允许小于 256 frames，不得为凑满 block 越过事件或硬结束边界。
 
 需要区分：
 ```text
@@ -957,8 +957,15 @@ tick
 Render-Ahead PCM 容量：毫秒，按设备实际采样率换算为 frame
 Device Buffer Request：毫秒，最终实际值由设备决定
 IPC Audio Buffer：毫秒，仅内部子进程拓扑存在
-内部固定工作 block：frame，由实现和基准确定，不向用户暴露
+内部固定工作 block：256 frames，不向用户暴露
 ```
+
+Render-Ahead 与 IPC ring 容量不是固定 block 数，而是分别根据用户设置按以下规则换算：
+```text
+capacityFrames = ceil(actualSampleRate × bufferMilliseconds / 1000)
+```
+换算必须使用可检查溢出的整数运算；不得向下取整到短于请求时长，也不得为了对齐 256 frames 而静默扩大或缩小用户请求。
+如果合法的低采样率与最小 buffer 设置使 ring 容量小于 256 frames，则 producer 本次实际工作块等于 ring 容量；`256 frames` 是正式最大值，不得以固定块为由拒绝合法 buffer 设置。
 ### 13.19.3 compiled result 与播放 buffer
 播放 buffer 是 compiled result 之上的消费者缓存。
 规则：
@@ -1047,7 +1054,7 @@ Buffering 补充路径
 实时预览的对应音频路径
 ```
 
-固定 buffer 必须一次分配并重复复用。允许使用双缓冲、三缓冲或四缓冲；具体内部 block 数由性能测试决定，但内存必须有明确上限和所有权。
+固定工作区与 ring 必须在 Preparing 一次分配并重复复用。进程内 Render-Ahead 使用一个有界 SPSC PCM ring；子进程拓扑使用一个有界共享内存 SPSC PCM ring。ring 的 frame 容量服从第 13.19.2 节的毫秒换算，不另设固定 block 数；256-frame producer 工作区独立于 ring 容量。所有内存必须有明确上限、所有权和释放时机。
 
 Preparing、Stop 清理和 Finalizing 可以产生托管分配。与音频后端同进程的 UI 或其他非音频线程允许分配并触发进程级 GC；该 GC 本身不构成“音频活动线程产生托管分配”的验收失败，但 callback deadline miss、underrun 或爆音仍按运行期性能问题记录。
 

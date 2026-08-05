@@ -98,7 +98,7 @@ public static partial class Program
     {
         const int renderAheadMilliseconds = 100;
         const int deviceBufferRequestMilliseconds = 50;
-        const int workFrameCount = 256;
+        const int workFrameCount = InitialReleaseAudioRuntimePolicy.WorkFrameCount;
 
         BassWasapiOutputDeviceFactory deviceFactory = new(
             new BassWasapiAudioOutputDeviceSettings(deviceBufferRequestMilliseconds));
@@ -121,7 +121,9 @@ public static partial class Program
         MidiRenderPlan plan = CreateTestPlan(sampleRate);
         using BassMidiRenderer renderer = CreateRenderer(plan, soundFontPath, workFrameCount);
 
-        int ringCapacityFrames = checked(sampleRate * renderAheadMilliseconds / 1_000);
+        int ringCapacityFrames = InitialReleaseAudioRuntimePolicy.BufferMillisecondsToFrameCapacity(
+            sampleRate,
+            renderAheadMilliseconds);
         using AudioFrameRingBuffer ring = new(renderer.Format, ringCapacityFrames);
         using AudioRenderAheadWorker worker = new(renderer, ring, workFrameCount);
         worker.Start();
@@ -180,7 +182,8 @@ public static partial class Program
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
 
         MidiRenderPlan plan = CreateTestPlan(OfflineSampleRate);
-        BassMidiRendererSettings settings = CreateRendererSettings(maximumWorkFrames: 256);
+        BassMidiRendererSettings settings = CreateRendererSettings(
+            maximumWorkFrames: InitialReleaseAudioRuntimePolicy.WorkFrameCount);
         using BassMidiChildProcessSession session = new(
             plan,
             soundFontPath,
@@ -213,7 +216,7 @@ public static partial class Program
     {
         const int ipcAudioBufferMilliseconds = 100;
         const int deviceBufferRequestMilliseconds = 50;
-        const int workFrameCount = 256;
+        const int workFrameCount = InitialReleaseAudioRuntimePolicy.WorkFrameCount;
 
         BassWasapiOutputDeviceFactory deviceFactory = new(
             new BassWasapiAudioOutputDeviceSettings(deviceBufferRequestMilliseconds));
@@ -282,7 +285,9 @@ public static partial class Program
         AudioOutputDeviceInfo selected = devices.FirstOrDefault(static item => item.IsSystemDefault)
             ?? devices.FirstOrDefault()
             ?? throw new MidoraAudioDeviceException("没有可用的 enabled output device。");
-        int capacityFrames = selected.AudioFormat.SampleRate / 10;
+        int capacityFrames = InitialReleaseAudioRuntimePolicy.BufferMillisecondsToFrameCapacity(
+            selected.AudioFormat.SampleRate,
+            100);
         using AudioFrameRingBuffer silentRing = new(selected.AudioFormat, capacityFrames);
         using BassWasapiOutputDevice output = (BassWasapiOutputDevice)factory.Open(selected, silentRing);
         output.Start();

@@ -14,6 +14,7 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
     private const int MonitoringProtocolVersion = 1;
     private readonly string _ownedTemporaryDirectory;
     private readonly SharedAudioFrameRingBuffer _ring;
+    private readonly int _producerWorkFrameCount;
     private Process? _process;
     private Thread? _monitorThread;
     private readonly BassMidiChildConsumptionMode _consumptionMode;
@@ -67,14 +68,10 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
         string mapName = $"Midora.Audio.{Guid.NewGuid():N}";
         string controlPipeName = $"Midora.Audio.Control.{Guid.NewGuid():N}";
         AudioFormat format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
-        int capacityFrames = checked(plan.SampleRate * ipcAudioBufferMilliseconds / 1_000);
-        if (capacityFrames < rendererSettings.MaximumWorkFrameCount)
-        {
-            CleanupOwnedTemporaryDirectory();
-            throw new ArgumentException(
-                "The IPC Audio Buffer is smaller than the renderer work block.",
-                nameof(ipcAudioBufferMilliseconds));
-        }
+        int capacityFrames = InitialReleaseAudioRuntimePolicy.BufferMillisecondsToFrameCapacity(
+            plan.SampleRate,
+            ipcAudioBufferMilliseconds);
+        _producerWorkFrameCount = Math.Min(rendererSettings.MaximumWorkFrameCount, capacityFrames);
 
         _ring = SharedAudioFrameRingBuffer.Create(mapName, format, capacityFrames);
         try
@@ -143,6 +140,8 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
     public bool ProducerFaulted => _ring.ProducerFaulted;
 
     public int AvailableFrameCount => _ring.AvailableFrameCount;
+
+    public int ProducerWorkFrameCount => _producerWorkFrameCount;
 
     public long ProducedFrameCount => _ring.ProducedFrameCount;
 

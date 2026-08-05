@@ -68,7 +68,7 @@ public static partial class Program
         using BassMidiChildProcessSession child = new(
             plan,
             soundFontPath,
-            CreateRendererSettings(256),
+            CreateRendererSettings(InitialReleaseAudioRuntimePolicy.WorkFrameCount),
             AudioMasterSettings.LimiterV1,
             100,
             GetWorkerPath(repositoryRoot),
@@ -171,7 +171,7 @@ public static partial class Program
             null,
             100,
             50,
-            CreateRendererSettings(256),
+            CreateRendererSettings(InitialReleaseAudioRuntimePolicy.WorkFrameCount),
             AudioMasterSettings.LimiterV1,
             TimeSpan.FromSeconds(30));
         using BassWasapiChildPlaybackBackend backend = new(options);

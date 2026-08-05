@@ -73,7 +73,9 @@ public static class Program
                 Name = "Midora Audio Monitoring Control"
             };
             controlThread.Start();
-            int workFrameCount = rendererSettings.MaximumWorkFrameCount;
+            int workFrameCount = Math.Min(
+                rendererSettings.MaximumWorkFrameCount,
+                ring.CapacityFrameCount);
             float* workBuffer = (float*)NativeMemory.Alloc(
                 checked((nuint)workFrameCount * (nuint)renderer.Format.BytesPerFrame));
 

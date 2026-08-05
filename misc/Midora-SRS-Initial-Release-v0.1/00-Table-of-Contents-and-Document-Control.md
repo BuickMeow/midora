@@ -50,6 +50,7 @@
 
 ## 2026-08-05 修订摘要
 
+- 初版正式实时音频工作 block 固定为最多 `256 frames`；Render-Ahead / IPC 使用单个有界 SPSC ring，容量按 `ceil(actualSampleRate × bufferMilliseconds / 1000)` 计算，不固定 ring block 数。
 - 初版 WASAPI 输出固定为 Shared Mode、event-driven、stereo interleaved float32；采样率采用端点初始化后的实际混音采样率，buffer 请求不等于实际值，period 与 callback frame 数由设备决定。
 - 初版 Limiter 版本 1 固定为 stereo-linked sample-peak 算法：瞬时 attack、zero-look-ahead、线性 ceiling `1.0`、50 ms 单极指数 release；实时与离线输出共用逐样本状态语义。
 - tick→sample frame 固定为完整 Tempo Map 的 decimal 区间积分乘采样率后只执行一次 `AwayFromZero`；实时播放、预览与音频渲染共用该语义，不得逐 Tempo 段取整。

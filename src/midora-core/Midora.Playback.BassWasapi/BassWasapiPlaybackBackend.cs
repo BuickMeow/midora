@@ -28,7 +28,7 @@ public sealed record BassWasapiPlaybackOptions(
             0,
             0,
             256),
-        AudioMasterSettings.LimiterV1Candidate);
+        AudioMasterSettings.LimiterV1);
 }
 
 [SupportedOSPlatform("windows")]

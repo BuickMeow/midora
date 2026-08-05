@@ -849,6 +849,7 @@ ratio
 knee
 完整母带处理参数
 ```
+这些项目不向用户暴露不表示其值未定义；初版正式值与算法固定于第 13.17.6 节。
 ### 13.17.5 处理位置
 Limiter 位于：
 ```text
@@ -858,6 +859,35 @@ Playback Master Volume 之后
 ```
 Event Instrument 预览、SubVoice 预览、Segment 预览也默认经过播放 Limiter。
 所有实时发声都走同一播放输出链。
+### 13.17.6 初版固定算法
+初版 Limiter 算法版本为 `1`，固定为 stereo-linked、zero-look-ahead、sample-peak limiter。
+
+逐 sample frame 处理时，输入 `left` / `right` 已经过所有 Port 求和与 Playback Master Volume。令前一 frame 后保存的线性增益为 `gain`，新任务或显式重置后的初值为 `1.0`：
+```text
+peak = max(abs(left), abs(right))
+targetGain = peak > 1.0 ? 1.0 / peak : 1.0
+
+if targetGain < gain:
+    gain = targetGain
+else:
+    releaseCoefficient = exp(-1 / (sampleRate × 0.050))
+    gain = 1 - ((1 - gain) × releaseCoefficient)
+
+outputLeft  = left  × gain
+outputRight = right × gain
+```
+规则：
+```text
+左右声道共享同一个 peak、targetGain 和 gain，不得分别限制。
+attack 为当前 sample frame 立即生效，不做 look-ahead，也不引入算法延迟。
+sample-peak ceiling 固定为线性 1.0；初版不检测 true peak 或 inter-sample peak。
+release 是 50 ms 单极指数时间常数，按实际 sampleRate 计算系数。
+audio block 边界不得重置 gain；不同 callback / 工作 block 大小必须产生相同连续处理语义。
+新播放、预览或渲染任务以及 Stop / Reset 后必须把 gain 重置为 1.0；硬结束后不输出 release tail。
+任一输入或输出样本为 NaN / Infinity 时，当前音频任务按一致性错误失败，不得静默钳位或继续。
+```
+
+这是最简易 sample-peak 保护算法，不承诺专业母带质量；瞬时 attack 可能改变极端瞬态，但不得替换成硬削波、自动归一化或另一套未版本化算法。
 ---
 ## 13.18 clipping 与 limiter activity
 如果 Limiter 关闭且实时输出可能或已经发生削波：
@@ -875,7 +905,7 @@ Event Instrument 预览、SubVoice 预览、Segment 预览也默认经过播放 
 不标记 Project 已修改。
 不保存进 Project 文件。
 ```
-初版音频文件渲染不检测或报告 clipping / limiter activity；有限但超出 `[-1, 1]` 的 32-bit float 样本由 第 15 章《音频文件渲染》 规则处理。
+初版音频文件渲染不检测或报告 clipping / limiter activity；其强制启用的版本 1 Limiter 必须按第 15 章《音频文件渲染》输出范围规则处理最终样本。
 ---
 ## 13.19 预渲染 buffer 与 Buffering
 ### 13.19.1 基本策略

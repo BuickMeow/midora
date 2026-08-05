@@ -447,7 +447,7 @@ Windows 音量
 初版不提供 Master Volume bypass。
 Master Volume 为静音值时，允许成功生成静音 WAV。
 ### 15.8.3 Limiter
-音频文件渲染必须应用与实时播放相同语义的 Limiter，并使用正式生效的 Playback Limiter 参数语义。
+音频文件渲染必须应用第 13.17.6 节定义的版本 1 Limiter，并使用与实时播放相同的逐样本状态公式。
 初版：
 ```text
 不提供音频渲染专用 Limiter 开关。
@@ -473,7 +473,7 @@ Playback Master Volume
 渲染界面或结果说明必须明确提示该边界。
 ### 15.8.6 输出链延迟
 离线合成器或 DSP 内部延迟不得转化为 WAV 开头的额外静音。
-如果 Limiter 存在 look-ahead 或内部延迟：
+初版版本 1 Limiter 为 zero-look-ahead，不产生算法延迟。未来 Limiter 版本如果引入 look-ahead 或内部延迟：
 ```text
 离线渲染必须保持与播放一致的时间语义。
 不得让整首音乐整体后移。
@@ -489,12 +489,12 @@ Playback Master Volume
 chunk 大小不改变可感知输出语义。
 ```
 ### 15.9.2 有限样本
-有限但超出 `[-1, 1]` 的 float 样本允许写入 RIFF/WAVE IEEE float32 数据。
+版本 1 Limiter 之前允许存在超出 `[-1, 1]` 的有限 float 中间样本；强制 Limiter 之后写入 RIFF/WAVE 的最终样本必须处于 `[-1, 1]`。
 初版不：
 ```text
 检测 clipping
 提示 limiter activity
-硬裁剪到 [-1, 1]
+在 Limiter 之后追加硬裁剪
 自动归一化
 增加第二层 Limiter
 ```

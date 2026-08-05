@@ -53,7 +53,7 @@ Tempo Map 的查找、索引和缓存结构，但 tick→sample 结果必须与�
 Canonical Compiled Result 的最终内存布局
 BASSMIDI API 调用顺序、内部固定 buffer block 大小和音频线程模型
 初版发布最终采用进程内音频后端还是内部音频子进程
-Limiter DSP 算法和具体参数
+Limiter 的循环展开、SIMD 和状态存储实现，但算法与参数必须符合第 13.17.6 节版本 1 语义
 Roslyn 编译、缓存和 AssemblyLoadContext 方案
 JSON Schema、protobuf .proto 的其他最终字段名、字段号与代码生成方式；16.5.3 已固定的 `nextStableId` 和 16.13.2 已固定的稳定 ID 表示除外
 具体 WPF 控件、Visual Tree、MVVM 类型和 Timeline 虚拟化实现

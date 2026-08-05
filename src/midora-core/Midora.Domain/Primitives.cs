@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Globalization;
 
 namespace Midora.Domain;
 
@@ -16,6 +17,32 @@ public readonly record struct MidoraId(Guid Value) : IComparable<MidoraId>
         return new(new Guid(bytes, bigEndian: true));
     }
 
+    public static MidoraId FromParts(ulong high, ulong low)
+        => FromSequence(((UInt128)high << 64) | low);
+
+    public static bool TryParseCanonical(string? value, out MidoraId id)
+    {
+        id = default;
+        if (value is not { Length: 32 })
+        {
+            return false;
+        }
+        foreach (char character in value)
+        {
+            if (character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))
+            {
+                return false;
+            }
+        }
+        if (!UInt128.TryParse(value, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out UInt128 sequence)
+            || sequence == 0)
+        {
+            return false;
+        }
+        id = FromSequence(sequence);
+        return true;
+    }
+
     public UInt128 ToSequence()
     {
         Span<byte> bytes = stackalloc byte[16];
@@ -24,9 +51,12 @@ public readonly record struct MidoraId(Guid Value) : IComparable<MidoraId>
             | BinaryPrimitives.ReadUInt64BigEndian(bytes[8..]);
     }
 
+    public ulong High => (ulong)(ToSequence() >> 64);
+    public ulong Low => (ulong)ToSequence();
+
     public int CompareTo(MidoraId other) => ToSequence().CompareTo(other.ToSequence());
 
-    public override string ToString() => Value.ToString("N");
+    public override string ToString() => ToSequence().ToString("x32", CultureInfo.InvariantCulture);
 }
 
 public readonly record struct TickRange(long StartTick, long EndTick)

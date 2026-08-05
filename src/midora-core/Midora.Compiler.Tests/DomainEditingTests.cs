@@ -174,6 +174,24 @@ public sealed class DomainEditingTests
     }
 
     [Fact]
+    public void StableIdUsesCanonicalPersistenceTextAndProtobufParts()
+    {
+        const ulong high = 0x0123456789abcdef;
+        const ulong low = 0xfedcba9876543210;
+        MidoraId id = MidoraId.FromParts(high, low);
+
+        Assert.Equal("0123456789abcdeffedcba9876543210", id.ToString());
+        Assert.Equal(high, id.High);
+        Assert.Equal(low, id.Low);
+        Assert.Equal(((UInt128)high << 64) | low, id.ToSequence());
+        Assert.True(MidoraId.TryParseCanonical(id.ToString(), out MidoraId parsed));
+        Assert.Equal(id, parsed);
+        Assert.False(MidoraId.TryParseCanonical("0123456789ABCDEFFEDCBA9876543210", out _));
+        Assert.False(MidoraId.TryParseCanonical("00000000000000000000000000000000", out _));
+        Assert.Throws<ArgumentOutOfRangeException>(() => MidoraId.FromParts(0, 0));
+    }
+
+    [Fact]
     public void DeletingFolderMovesContainedInstrumentsToUnfiled()
     {
         MidoraProject project = new(480);

@@ -21,7 +21,7 @@
 | 项目 | SRS 依据 | 核对时差异 | 已实施修正 |
 | --- | --- | --- | --- |
 | Project ID | 16.5.2 | `MidoraProject.Id`、source reference 和 canonical result 错误携带 Project ID | 已删除独立 Project ID 及其 fingerprint 输入 |
-| 稳定 ID 分配 | 8.42、16.5.3、16.13.2 | 正式对象默认使用 `Guid.NewGuid()`，不符合 Project 级持久化单调计数器 | 已改为 Project 所有的 128-bit 单调计数器；零保留，不补缺、不复用；具体位布局仍是待确认候选 |
+| 稳定 ID 分配 | 8.42、16.5.3、16.13.2 | 正式对象默认使用 `Guid.NewGuid()`，不符合 Project 级持久化单调计数器 | 已改为 Project 所有的 128-bit 单调计数器；零保留，不补缺、不复用；文件兼容布局已按决定 3A 固定 |
 | Project End Marker 身份 | 4、16.8.2 | 只有 `long? EndMarkerTick`，缺少稳定 ID | 已建模为带稳定 ID 的可编辑事件，移动时保留身份，canonical conductor 保留该身份 |
 | Event Instrument 文件夹层级 | 18.8.2–18.8.3 | `ParentFolderId` 允许嵌套 | 已删除父文件夹语义；加入单层名称、保留名、引用校验及删除后移入 Unfiled 的领域操作 |
 | Marker 名称 | 18.7.4、20.8.4 | Validator 错误拒绝空名称 | 已允许空名称和重复名称；同 tick 数量存在 SRS 内部冲突，转入待确认项 |
@@ -51,7 +51,7 @@
 - Native interop 尚未固定支持修订；32/64 位布局、calling convention、版本不匹配、重复 init/free 和泄漏的独立自动化门不完整。
 - WASAPI 设备移除/默认设备变化、不同 callback block、deadline/underrun 和约 200 ms 端到端基准仍需要在正式候选硬件矩阵上验收。
 
-## 4. ADR-SRS-AUDIT-001（候选）：Project 级稳定 ID
+## 4. ADR-SRS-AUDIT-001（已接受）：Project 级稳定 ID
 
 SRS 已确定的部分：初版领域对象 ID 至少 128-bit；Project 保存 `nextStableId` 单调计数器。分配返回当前值后递增；零值保留为“未分配”；删除不回退计数器；复制、拆分右侧、新建事件和编辑器新增对象都必须通过所属 Project 分配。
 
@@ -59,7 +59,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 
 加载器未来必须从 `project.json` 恢复 `nextStableId` 并验证所有现存稳定 ID 非零、全局唯一且小于该计数器。加载损坏文件时不得通过扫描最大 ID、补缺或随机生成来“修复”。新对象图的 ID 分配属于编辑/创建阶段，不得由 Validator 或 Compiler 隐式修改源 Project。
 
-待确认的兼容性部分：当前代码候选把 128-bit 计数值按 big-endian 写入 `Guid`，字符串显示为 32 位十六进制 `N` 格式。持久化尚未实现，因此该布局尚未成为文件兼容承诺；必须在实现 schema/protobuf 前确认。
+文件兼容布局已按决定 3A 确认：JSON、对象文件名和 `nextStableId` 使用固定 32 位小写十六进制字符串，高 64-bit 在前、低 64-bit 在后；protobuf 使用 `StableId { fixed64 high = 1; fixed64 low = 2; }`，数值组合为 `(high << 64) | low`，wire 字节序服从 protobuf `fixed64` 标准。当前 `Guid` 只是在内存中承载该数值的实现细节，不构成 GUID 文件格式。
 
 ## 5. 必须由产品所有者确认、当前不得静默定版的项目
 
@@ -69,7 +69,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 
 1. **已确认：1A（2026-08-05）**。初版 Envelope Preset 固定为 SRS 10.11 的 ADSR-like 结构；SRS 18.6.5 已修订为服从第 10.11 节，不采用任意有序点/曲线段模型。现有领域模型与编译器实现符合该决定，无需修改代码。
 2. **已确认：2A（2026-08-05）**。同一 tick 允许多个普通 Marker；名称可空、可重复，不按名称或 tick 去重，以稳定 ID 区分。SRS 4.8.2 与 18.7.4 已统一；编译器补充稳定 ID 次级排序，避免 canonical 结果依赖源列表顺序。
-3. 稳定 ID 的文件兼容布局：确认 128-bit 计数值的 JSON 字符串格式、protobuf 固定结构和字节序；当前 big-endian/Guid-N 仅为内存候选。
+3. **已确认：3A（2026-08-05）**。JSON、对象文件名和 `nextStableId` 固定使用 32 位小写十六进制字符串；protobuf 固定使用 `StableId.high` / `StableId.low` 两个 `fixed64` 字段，字段号分别为 1 / 2，wire 字节序遵循 protobuf 标准。SRS 2.5、16.11.2、16.13.2 与 21.3 已同步。
 4. Overlap 的 `Reject / Warn`：确认新 Event Instrument 的默认项，以及重叠时是阻止编译的 Error，还是可消费结果附 Warning。
 5. Mapping/曲线到整数 MIDI 值的默认取整：确认 Round/Floor/Ceiling 的默认值及 midpoint 规则；当前候选为 `AwayFromZero`。
 6. 曲线离散化与压缩：确认每 tick 采样候选是否定版，或采用误差阈值/自适应采样；该选择影响可听结果、事件量和确定性。

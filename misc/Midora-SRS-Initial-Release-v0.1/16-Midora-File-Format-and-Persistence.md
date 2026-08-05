@@ -320,8 +320,9 @@ projectFileId
 ### 16.5.3 Project 级 ID 生成状态
 Project 级 ID 生成状态必须保存于：
 ```text
-project.json
+project.json 的 nextStableId 字段
 ```
+`nextStableId` 使用 16.13.2 规定的 canonical 32 位小写十六进制字符串。
 初版采用系统级原则：
 ```text
 持久化单调递增计数器
@@ -730,6 +731,7 @@ Logical Track 名称允许重复。
 ei_<id>.pb
 lt_<id>.pb
 ```
+其中 `<id>` 必须使用 16.13.2 规定的 canonical 32 位小写十六进制字符串。
 ### 16.11.3 对象内部 ID 与类型
 对象 `.pb` 内部必须保存：
 ```text
@@ -848,21 +850,35 @@ tick 值持久化使用：
 ```
 不得使用 floating point 保存 tick。
 ### 16.13.2 ID
-Project 内稳定 ID 在 JSON 中保存为：
+Project 内对象稳定 ID、对象文件名中的 `<id>` 和 `project.json` 中的 `nextStableId` 统一使用同一个 canonical 文本表示：
 ```text
-字符串
+32 个小写十六进制字符
+正则表达式：[0-9a-f]{32}
+无 0x 前缀
+无连字符
+高 64-bit 在前，低 64-bit 在后
 ```
-原因：
+例如：
 ```text
-避免 JSON number 精度和工具兼容问题。
+00000000000000000000000000000001
+0123456789abcdeffedcba9876543210
 ```
-Project 内稳定 ID 在 protobuf 中保存为固定结构字段，例如：
+JSON 读取器必须拒绝长度错误、大写字符、非十六进制字符、带连字符或带前缀的非 canonical 表示，不得静默规范化。对象稳定 ID 和 `nextStableId` 都不得为零；所有现存对象稳定 ID 还必须小于 `nextStableId`。
+
+Project 内稳定 ID 在 protobuf 中固定使用：
+```proto
+message StableId {
+  fixed64 high = 1;
+  fixed64 low = 2;
+}
+```
+语义组合规则固定为：
 ```text
-bytes
-两个 fixed64
-其他不少于 128-bit 信息量的固定结构
+value = (high << 64) | low
 ```
-具体二进制布局推迟到实现层。
+`high` 和 `low` 是无符号 64-bit 数值；其 wire 编码遵循 protobuf 对 `fixed64` 规定的 little-endian 字节序，不再叠加自定义字节翻转。字段号 1 和 2 是已发布兼容承诺，后续不得改变或复用。按 protobuf 默认值规则省略值为零的单个字段是合法编码，但组合后的稳定 ID 为零必须拒绝。
+
+不得使用 protobuf `bytes`、GUID 混合字节序或其他替代布局保存初版稳定 ID。外层对象消息中承载 `StableId` 的字段号仍由各自最终 `.proto` schema 确定。
 ### 16.13.3 enum
 持久化 enum 必须使用稳定编号或稳定字符串。
 JSON 中 enum 推荐保存为稳定字符串，例如：

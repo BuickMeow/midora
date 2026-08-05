@@ -50,6 +50,7 @@
 
 ## 2026-08-05 修订摘要
 
+- 稳定 ID 文件兼容布局固定为 32 位小写十六进制 JSON/文件名表示，以及 protobuf `StableId { fixed64 high = 1; fixed64 low = 2; }`；`fixed64` wire 字节序遵循 protobuf 标准。
 - 同一 tick 允许多个普通 Marker；它们不按名称或 tick 去重，以稳定 ID 区分，并在 canonical 结果中按稳定 ID 确定同 tick 顺序。
 - 初版 Envelope Preset 统一为第 10.11 节规定的固定 ADSR-like 结构；第 18.6.5 节编辑器不得扩展为任意有序点或曲线段模型。
 - `Channel Unit >= 248` 的诊断级别统一为 `Info`，不受“Warning 视为 Error”策略影响。

@@ -367,16 +367,17 @@ Tick 0 必须有显式 Time Signature
 不存在“看不见但生效”的隐式 Time Signature
 ```
 ### 4.8.2 同 tick 冲突
-同一 tick 只允许一个同类型全局事件。
+同一 tick 的 Tempo、Time Signature 和 Key Signature 各自只允许一个；普通 Marker 是例外，可以存在多个。
 规则：
 ```text
 同一 tick 只能有一个 Tempo
 同一 tick 只能有一个 Time Signature
 同一 tick 只能有一个 Key Signature
-同一 tick 只能有一个普通 Marker 名称相同与否的具体去重规则由实现设计确定
+同一 tick 可以有零个或多个普通 Marker
 同一 Project 最多只有一个 Project End Marker
 ```
-对于 Tempo、Time Signature、Key Signature 等同类型事件：
+普通 Marker 不按 tick 或名称去重。名称为空、名称重复、tick 相同的 Marker 仍是具有不同稳定 ID 的独立对象。Canonical Compiled Result 中同 tick 普通 Marker 按稳定 ID 升序排列，不得依赖源集合遍历顺序。
+对于 Tempo、Time Signature、Key Signature：
 ```text
 UI 层应直接替换旧事件
 同一 tick 最终只保留一个同类型事件

@@ -68,7 +68,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 按后续确认顺序登记；已确认项目保留原编号并标记，未标记项目均待确认：
 
 1. **已确认：1A（2026-08-05）**。初版 Envelope Preset 固定为 SRS 10.11 的 ADSR-like 结构；SRS 18.6.5 已修订为服从第 10.11 节，不采用任意有序点/曲线段模型。现有领域模型与编译器实现符合该决定，无需修改代码。
-2. 同 tick 普通 Marker 数量：SRS 4.8.2 可读为同 tick 最多一个普通 Marker；SRS 18.7.4 又要求同 tick Marker 可区分，明显预设可以有多个。当前代码候选允许多个。
+2. **已确认：2A（2026-08-05）**。同一 tick 允许多个普通 Marker；名称可空、可重复，不按名称或 tick 去重，以稳定 ID 区分。SRS 4.8.2 与 18.7.4 已统一；编译器补充稳定 ID 次级排序，避免 canonical 结果依赖源列表顺序。
 3. 稳定 ID 的文件兼容布局：确认 128-bit 计数值的 JSON 字符串格式、protobuf 固定结构和字节序；当前 big-endian/Guid-N 仅为内存候选。
 4. Overlap 的 `Reject / Warn`：确认新 Event Instrument 的默认项，以及重叠时是阻止编译的 Error，还是可消费结果附 Warning。
 5. Mapping/曲线到整数 MIDI 值的默认取整：确认 Round/Floor/Ceiling 的默认值及 midpoint 规则；当前候选为 `AwayFromZero`。

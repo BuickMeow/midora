@@ -220,8 +220,10 @@ public sealed class SemanticValidatorTests
     public void TimeSignatureUsesInitialReleaseBoundsAndMarkersMayShareTick()
     {
         var fixture = CompilerTestProject.Create();
-        fixture.Project.Conductor.Markers.Add(new ProjectMarker(fixture.Project, 120, "A"));
-        fixture.Project.Conductor.Markers.Add(new ProjectMarker(fixture.Project, 120, "B"));
+        ProjectMarker firstMarker = new(fixture.Project, 120, "A");
+        ProjectMarker secondMarker = new(fixture.Project, 120, "B");
+        fixture.Project.Conductor.Markers.Add(secondMarker);
+        fixture.Project.Conductor.Markers.Add(firstMarker);
         fixture.Project.Conductor.TimeSignatures.Add(new TimeSignatureChange(fixture.Project, 240, 100, 4));
 
         CanonicalCompiledResult invalid = new MidoraCompiler().CompileFull(fixture.Project);
@@ -231,6 +233,7 @@ public sealed class SemanticValidatorTests
         fixture.Project.Conductor.TimeSignatures[^1] = new TimeSignatureChange(fixture.Project, 240, 99, 64);
         CanonicalCompiledResult valid = new MidoraCompiler().CompileFull(fixture.Project);
         Assert.True(valid.IsConsumable);
+        Assert.True(firstMarker.Id.CompareTo(secondMarker.Id) < 0);
         Assert.Equal(["A", "B"], valid.Conductor.Markers.ToArray().Select(value => value.Name).ToArray());
     }
 

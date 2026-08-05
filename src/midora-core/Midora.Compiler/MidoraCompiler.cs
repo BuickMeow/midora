@@ -1672,6 +1672,7 @@ public sealed class MidoraCompiler
                 value.Id, tick, value.SharpsFlats, value.IsMinor, restored)),
         source.Markers.Where(value => value.Tick >= startTick && value.Tick < endTick)
             .OrderBy(value => value.Tick)
+            .ThenBy(value => value.Id)
             .Select(value => new CanonicalMarker(value.Id, value.Tick, value.Name)).ToArray(),
         source.EndMarker is null ? null : new CanonicalEndMarker(source.EndMarker.Id, source.EndMarker.Tick));
 

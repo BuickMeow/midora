@@ -432,7 +432,7 @@ Tempo 大于 0，允许小数，不设置 20～300 等经验型限制。
 Time Signature 修改只更新网格和音乐位置显示，不移动任何内容 tick。
 Key Signature 不自动转调或修改 Note 音高。
 ### 18.7.4 Marker
-Marker 名称可空、可重复。同 tick 或密集 Marker 必须可区分。
+普通 Marker 名称可空、可重复，同一 tick 可以存在多个。编辑器必须按稳定 ID 维持各 Marker 的独立身份，并使同 tick 或密集 Marker 在选择和编辑时可区分。
 Project End Marker 使用贯穿 Lane 的特殊竖线：
 - 不可重命名；
 - 最多一个；

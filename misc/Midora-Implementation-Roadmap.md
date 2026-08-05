@@ -95,7 +95,7 @@ MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、Pause/Scrub、Voice S
 - `BASS_MIDI_StreamEvents` 支持结构化事件和相对/绝对时间位置；`BASS_MIDI_EVENT.pos` 使用 byte position，可让事件时序脱离 UI/调用线程的睡眠精度。正式实现应利用这一能力或等价的分块边界调度，并证明两者在各种 block size 下结果一致。
 - BASSMIDI stream 默认把 Channel 10 当鼓通道，Midora 必须在每个实际 Port 的干净状态中显式关闭该默认语义。
 - `BASS_MIDI_NOFX` 会关闭 chorus/reverb；已确认所有正式 Midora BASSMIDI stream 必须使用该标志，且 CC91/CC93 在领域与编译层即被拒绝。
-- `BASS_MIDI_NOTEOFF1` 改变同音高重叠 Note 的释放选择。它可能有助于精确配对，但必须由 Midora 的 overlap、Cut Previous、reset 和 NoteOff 规则决定，不能只凭名称开启。
+- `BASS_MIDI_NOTEOFF1` 只让 NoteOff 释放同 Port、Channel、pitch 中最早开始的一个重叠实例；不启用时会一次释放全部匹配实例。13A 已固定正式 stream 启用该标志，并以真实 BASSMIDI 的 overlap、Cut Previous、reset 和 velocity `0` NoteOff 测试锁定。
 - WASAPI callback 的 sample data 固定为 float32、长度参数是 byte count；回调必须快速返回。exclusive mode 短读时其余部分由 BASSWASAPI 填静音；不能从 callback 内调用 `BASS_WASAPI_Free`。
 - BASS 错误码是线程相关状态；每个失败调用后应立即在同线程获取并转成 Midora 自己的错误对象。
 - 官方要求用各模块 `GetVersion` 校验加载 DLL 与 API 版本。当前官网列出的稳定版本为 BASS 2.4.18.3、BASSMIDI 2.4.16、BASSWASAPI 2.4.4.1；将来仍需在构建时固定实际版本和哈希，不能把这里的数字永久硬编码成“最新版”。
@@ -286,7 +286,7 @@ flowchart TD
 | 维度 | 必测内容 | 失败含义 |
 |---|---|---|
 | 时序 | Tempo 变化、同 tick 顺序、不同 tick 映射同 sample、非零 start、硬 end | scheduler 不满足 canonical 语义 |
-| Note 配对 | 同音高重叠、NoteOff velocity 0、Cut Previous、Reject New、Reset | `NOTEOFF1`/事件转换选择错误 |
+| Note 配对 | 同音高重叠、NoteOff velocity 0、Cut Previous、Reject New、Reset；固定验证 `NOTEOFF1` 存在且逐个释放 | stream flags、同 tick 顺序或事件转换错误 |
 | Port/Channel | 1/2/16 Port、Channel 1/10/16、低编号分配、复用 | stream 初始状态或路由错误 |
 | SF2 | 缺失、损坏、热替换前后、同一 SF2 多 Port | 资源门或 handle 生命周期错误 |
 | MIDI 效果 | CC91/93 在编辑、Mapping、验证、编译、导出和后端的一致拒绝；sustain、pitch bend/range、Bank/Program、RPN/NRPN | NOFX/拒绝边界/初始化/事件映射不完整 |

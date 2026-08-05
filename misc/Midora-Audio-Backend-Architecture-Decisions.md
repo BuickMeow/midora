@@ -75,14 +75,15 @@
 决定：
 
 - BASS 以 no-sound device 初始化，只承担 decode stream 所需的全局环境。
-- 只为实际使用的 Port 创建 stream，flags 固定包含 `BASS_SAMPLE_FLOAT | BASS_STREAM_DECODE | BASS_MIDI_NOFX`。
+- 只为实际使用的 Port 创建 stream，flags 固定包含 `BASS_SAMPLE_FLOAT | BASS_STREAM_DECODE | BASS_MIDI_NOFX | BASS_MIDI_NOTEOFF1`。
 - stream 采样率直接等于本次实时设备实际采样率或文件目标采样率。
 - 所有 Channel 的初始状态由统一例程显式建立，至少包含 Channel 10 melodic、Reset 后再应用的规范初始值和正式 SoundFont。
 - SoundFont handle 在多个 Port stream 间共享，并晚于所有 stream 释放。
 - 同一 frame 的 MIDI 消息紧凑打包后立即批量提交；提交和 `ChannelGetData` 都检查返回值并立即捕获当前线程 BASS error code。
 - 活动阶段不执行 sample loading、路径转换或托管内存分配。
+- `BASS_MIDI_NOTEOFF1` 固定启用；同 Port、Channel、pitch 的重叠 Note 实例由 velocity `0` 或普通 NoteOff 按最早开始者优先逐个释放。该语义已通过真实 BASSMIDI stream 的同音高重叠、Cut Previous 释放与新实例重叠、硬边界成对 NoteOff、Reset All Controllers 和 velocity `0` 集成测试。
 
-尚未决定，且本轮不得隐藏选择：`BASS_MIDI_NOTEOFF1`、interpolation、voice/CPU limiting、sample loading 参数及固定 BASS 修订。`NOTEOFF1` 仅在同音高重叠、Cut、Reset 和 NoteOff 配对测试证明与 Canonical 语义一致后才能启用。
+尚未决定，且本轮不得隐藏选择：interpolation、voice/CPU limiting、sample loading 参数及固定 BASS 修订。
 
 ## 5. ADR-AUDIO-004：WASAPI shared event-driven 与无锁缓冲
 

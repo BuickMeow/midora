@@ -50,7 +50,7 @@ Project Source Data
 - 所有实际 Port 使用同一正式生效的 Project SF2。无有效 SF2 时允许打开、编译和 MIDI 导出，但必须阻止播放、预览和音频渲染。
 - 每次 stream 创建、重建和复用前都要显式建立 melodic Channel 10 和规范要求的初始状态。只有完成精确 NoteOff、Reset 与状态清理后才允许复用。
 - 不得用 `Thread.Sleep`、UI 定时器或“调用 API 的瞬间”承担正式 MIDI 时序。事件必须从 Canonical Compiled Result 经统一 tick→sample 映射后做采样级调度；同 tick 顺序必须保留。
-- 所有正式 BASSMIDI Stream 必须启用 `BASS_MIDI_NOFX`。初版完全不支持 Reverb / Chorus；CC91 / CC93 不得进入 Project、Mapping、Canonical Result、播放调度或 MIDI 导出。后端收到它们时必须报告一致性 Error。`BASS_MIDI_NOTEOFF1` 是否使用必须通过同音高重叠、Cut、Reset 和配对 NoteOff 测试证明。
+- 所有正式 BASSMIDI Stream 必须启用 `BASS_MIDI_NOFX | BASS_MIDI_NOTEOFF1`。初版完全不支持 Reverb / Chorus；CC91 / CC93 不得进入 Project、Mapping、Canonical Result、播放调度或 MIDI 导出。后端收到它们时必须报告一致性 Error。同 Port、Channel、pitch 的重叠 Note 实例按 FIFO 与逐个 NoteOff 配对，硬边界必须按活动实例数完整释放。
 - 实时链固定为：实际 Port stereo 输出求和 → Playback Master Volume → Limiter → WASAPI；预览也走该链。离线整曲链语义相同，但不依赖 WASAPI 或物理设备。
 - WASAPI 回调不得编译、分配常规托管对象、阻塞、等待锁、做文件/网络 I/O 或让异常越过 native 边界。回调只消费已准备好的连续 float32 frame，正确处理短读、静音、停止和设备丢失。
 - Playing、Buffering、实时预览和文件 Rendering 阶段的 callback、调度、合成协调、混音、buffer 搬运及文件采样写入线程不得产生托管堆分配。Preparing / Finalizing 可以分配；同进程其他非音频线程可以分配和触发 GC。
@@ -90,3 +90,4 @@ Project Source Data
 2. Segment Split 必须为右侧 Segment 保留或生成分割 tick 的必要参数起点状态，使参数状态及相关曲线的听感不因分割而变化；一般 Segment 边界仍不做隐式跨 Segment 状态继承，跨分割点 Logical Note 仍按提前结束规则处理。
 3. 初版正式音频后端启用 `BASS_MIDI_NOFX`，完整拒绝 CC91 / CC93。
 4. 普通 RIFF/WAVE 取代 RF64；文件采样率可选，实时采样率跟随设备实际值。
+5. 正式 BASSMIDI Stream 启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠 Note 实例按最早开始者优先逐个释放。

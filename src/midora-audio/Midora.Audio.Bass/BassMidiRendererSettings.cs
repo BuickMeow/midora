@@ -3,18 +3,12 @@ namespace Midora.Audio.Bass;
 public sealed record class BassMidiRendererSettings
 {
     public BassMidiRendererSettings(
-        BassMidiNoteOffPolicy noteOffPolicy,
         BassMidiInterpolation interpolation,
         BassMidiSampleLoading sampleLoading,
         int maximumVoices,
         float cpuLimitPercent,
         int maximumWorkFrameCount)
     {
-        if (!Enum.IsDefined(noteOffPolicy))
-        {
-            throw new ArgumentOutOfRangeException(nameof(noteOffPolicy));
-        }
-
         if (!Enum.IsDefined(interpolation))
         {
             throw new ArgumentOutOfRangeException(nameof(interpolation));
@@ -40,15 +34,12 @@ public sealed record class BassMidiRendererSettings
             throw new ArgumentOutOfRangeException(nameof(maximumWorkFrameCount));
         }
 
-        NoteOffPolicy = noteOffPolicy;
         Interpolation = interpolation;
         SampleLoading = sampleLoading;
         MaximumVoices = maximumVoices;
         CpuLimitPercent = cpuLimitPercent;
         MaximumWorkFrameCount = maximumWorkFrameCount;
     }
-
-    public BassMidiNoteOffPolicy NoteOffPolicy { get; }
 
     public BassMidiInterpolation Interpolation { get; }
 
@@ -59,12 +50,6 @@ public sealed record class BassMidiRendererSettings
     public float CpuLimitPercent { get; }
 
     public int MaximumWorkFrameCount { get; }
-}
-
-public enum BassMidiNoteOffPolicy : byte
-{
-    ReleaseAllMatchingNotes,
-    ReleaseOldestMatchingNote
 }
 
 public enum BassMidiInterpolation : byte

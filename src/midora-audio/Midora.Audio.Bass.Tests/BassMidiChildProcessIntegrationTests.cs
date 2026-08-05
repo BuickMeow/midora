@@ -35,7 +35,6 @@ public sealed class BassMidiChildProcessIntegrationTests
 
         MidiRenderPlan plan = CreatePlan();
         BassMidiRendererSettings settings = new(
-            BassMidiNoteOffPolicy.ReleaseAllMatchingNotes,
             BassMidiInterpolation.BassDefault,
             BassMidiSampleLoading.OnDemand,
             maximumVoices: 0,
@@ -107,7 +106,6 @@ public sealed class BassMidiChildProcessIntegrationTests
             [sourceId],
             [0]);
         BassMidiRendererSettings settings = new(
-            BassMidiNoteOffPolicy.ReleaseAllMatchingNotes,
             BassMidiInterpolation.BassDefault,
             BassMidiSampleLoading.OnDemand,
             0,

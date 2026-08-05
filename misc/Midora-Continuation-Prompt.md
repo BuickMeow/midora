@@ -63,12 +63,12 @@ D:\Programing\midora
 11. 音频文件输出是普通 RIFF/WAVE、stereo、interleaved IEEE float32 little-endian。文件采样率允许 8,000–192,000 Hz 的任意整数，默认 48,000 Hz；UI 提供 44,100、48,000、88,200、96,000、176,400、192,000 Hz 快捷值。
 12. 文件渲染使用独立文件专用 `OutputDevice` 抽象，不依赖 WASAPI 或物理设备，直接按任务采样率渲染，不先固定 48 kHz 再重采样。
 13. Preparing 必须在创建临时文件前精确预检每个 RIFF 输出的可表示大小。任一目标超限时，整个任务以 Error 阻止；不得拆分、回退 RF64/WAVE64、降低采样率或缩短内容。
+14. 所有正式 BASSMIDI stream 必须启用 `BASS_MIDI_NOTEOFF1`。同 Port、Channel、pitch 的重叠 Note 实例按最早开始者优先与逐个 NoteOff 配对；硬边界必须按活动实例数完整释放。该策略不是用户设置。
 
 四、仍需 ADR 或实测决定的事项
 
 这些不是当前 SRS 冲突，不能静默写成实现默认值：
 
-- `BASS_MIDI_NOTEOFF1` 是否启用，必须由同音高重叠、Cut、Reset 和精确 NoteOff 配对测试决定；
 - BASSMIDI interpolation、voice/CPU limiting、sample loading 的正式参数档；
 - 初版正式支持的 Windows CPU RID 集合；
 - 固定的 BASS/BASSMIDI/BASSWASAPI 修订、SHA-256、升级回归策略和商业分发许可证；

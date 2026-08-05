@@ -52,7 +52,6 @@ public sealed class BassWasapiBackendPolicyTests
     }
 
     private static BassMidiRendererSettings CreateRendererSettings(int workFrameCount) => new(
-        BassMidiNoteOffPolicy.ReleaseAllMatchingNotes,
         BassMidiInterpolation.BassDefault,
         BassMidiSampleLoading.OnDemand,
         0,

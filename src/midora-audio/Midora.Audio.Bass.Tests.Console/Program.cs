@@ -320,7 +320,6 @@ public static partial class Program
     private static BassMidiRendererSettings CreateRendererSettings(int maximumWorkFrames)
     {
         return new BassMidiRendererSettings(
-            noteOffPolicy: BassMidiNoteOffPolicy.ReleaseAllMatchingNotes,
             interpolation: BassMidiInterpolation.BassDefault,
             sampleLoading: BassMidiSampleLoading.OnDemand,
             maximumVoices: 0,

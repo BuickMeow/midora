@@ -600,7 +600,22 @@ BASS_MIDI_NOFX
 
 `BASS_MIDI_NOFX` 是正式后端配置，不是用户可关闭的音色选项。
 
-### 13.12.7 Stream 采样率
+### 13.12.7 同音高重叠 Note 的释放
+
+所有正式播放、预览和音频文件渲染使用的 BASSMIDI Stream 必须启用：
+```text
+BASS_MIDI_NOTEOFF1
+```
+
+当同一 Port、同一 Channel、同一 pitch 同时存在多个活动 Note 实例时，每个 NoteOff（包括 velocity `0`）只释放最早开始且尚未释放的一个实例，即 FIFO 配对。不得允许调用方切换为“一次释放全部同 pitch 实例”。
+
+Canonical Compiled Result 仍必须为每个 Logical Note 保留独立 NoteOff；硬边界存在多个同 pitch 活动实例时，必须按配对数量发出 NoteOff，再执行规定的控制器状态重置。Cut Previous 的旧实例 Release 与新实例重叠时，旧实例后续 NoteOff 必须释放最早开始的旧实例，不得误杀替换实例。
+
+该规则不改变第 8.53.7 节允许同音高重叠 Note 的源数据语义，也不允许播放后端自行重建或猜测 Project 级 Note 身份。
+
+`BASS_MIDI_NOTEOFF1` 是正式后端配置，不是用户可调选项。
+
+### 13.12.8 Stream 采样率
 
 实时播放和预览的每个 BASSMIDI Stream 必须直接按当前所选输出设备初始化后报告的实际输出采样率生成音频。
 

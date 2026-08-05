@@ -78,29 +78,88 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
-    public void StreamFlagsAlwaysDisableEffectsAndKeepNoteOffPolicyExplicit()
+    public void StreamFlagsAlwaysDisableEffectsAndReleaseOnlyOldestMatchingNote()
     {
-        BassMidiRendererSettings releaseAll = new(
-            BassMidiNoteOffPolicy.ReleaseAllMatchingNotes,
-            BassMidiInterpolation.BassDefault,
-            BassMidiSampleLoading.OnDemand,
-            0,
-            0,
-            256);
-        BassMidiRendererSettings releaseOldest = new(
-            BassMidiNoteOffPolicy.ReleaseOldestMatchingNote,
+        BassMidiRendererSettings settings = new(
             BassMidiInterpolation.BassDefault,
             BassMidiSampleLoading.OnDemand,
             0,
             0,
             256);
 
-        uint releaseAllFlags = BassMidiRenderer.BuildStreamFlags(releaseAll);
-        uint releaseOldestFlags = BassMidiRenderer.BuildStreamFlags(releaseOldest);
+        uint flags = BassMidiRenderer.BuildStreamFlags(settings);
 
-        Assert.NotEqual(0u, releaseAllFlags & Midora.NativeInterops.BassMidi.BASSMIDI.BASS_MIDI_NOFX);
-        Assert.Equal(0u, releaseAllFlags & Midora.NativeInterops.BassMidi.BASSMIDI.BASS_MIDI_NOTEOFF1);
-        Assert.NotEqual(0u, releaseOldestFlags & Midora.NativeInterops.BassMidi.BASSMIDI.BASS_MIDI_NOTEOFF1);
+        Assert.NotEqual(0u, flags & Midora.NativeInterops.BassMidi.BASSMIDI.BASS_MIDI_NOFX);
+        Assert.NotEqual(0u, flags & Midora.NativeInterops.BassMidi.BASSMIDI.BASS_MIDI_NOTEOFF1);
+    }
+
+    [Fact]
+    public unsafe void ZeroVelocityNoteOffReleasesOldestSamePitchInstanceOneAtATime()
+    {
+        EnsureEnvironment();
+        ScheduledMidiMessage[] events =
+        [
+            new(0, MidiMessage.NoteOn(0, 60, 100)),
+            new(128, MidiMessage.NoteOn(0, 60, 80)),
+            new(256, MidiMessage.NoteOff(0, 60, 0)),
+            new(512, MidiMessage.NoteOff(0, 60, 0))
+        ];
+        MidiRenderPlan plan = new(SampleRate, 768, [new MidiPortRenderPlan(0, events)]);
+        using BassMidiRenderer renderer = CreateRenderer(plan, 256);
+        float* samples = stackalloc float[513 * 2];
+
+        Assert.Equal(257, renderer.PullFrames(samples, 257).FrameCount);
+        Assert.Equal(1u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+        Assert.Contains(new ReadOnlySpan<float>(samples, 257 * 2).ToArray(), static sample => sample != 0);
+
+        Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
+        Assert.Equal(0u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+        Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
+    }
+
+    [Fact]
+    public unsafe void CutPreviousReleaseNoteOffLeavesTheOverlappingReplacementPressed()
+    {
+        EnsureEnvironment();
+        ScheduledMidiMessage[] events =
+        [
+            new(0, MidiMessage.NoteOn(0, 60, 100)),
+            new(256, MidiMessage.NoteOn(0, 60, 90)),
+            // The previous instance reaches its release NoteOff after the replacement starts.
+            new(512, MidiMessage.NoteOff(0, 60, 0)),
+            new(768, MidiMessage.NoteOff(0, 60, 0))
+        ];
+        MidiRenderPlan plan = new(SampleRate, 1_024, [new MidiPortRenderPlan(0, events)]);
+        using BassMidiRenderer renderer = CreateRenderer(plan, 256);
+        float* samples = stackalloc float[769 * 2];
+
+        Assert.Equal(513, renderer.PullFrames(samples, 513).FrameCount);
+        Assert.Equal(1u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+
+        Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
+        Assert.Equal(0u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+        Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
+    }
+
+    [Fact]
+    public unsafe void HardBoundaryPairedNoteOffsThenControllerResetReleaseAllOverlapInstances()
+    {
+        EnsureEnvironment();
+        ScheduledMidiMessage[] events =
+        [
+            new(0, MidiMessage.NoteOn(0, 60, 100)),
+            new(128, MidiMessage.NoteOn(0, 60, 80)),
+            new(512, MidiMessage.NoteOff(0, 60, 0)),
+            new(512, MidiMessage.NoteOff(0, 60, 0)),
+            new(512, MidiMessage.ControlChange(0, 121, 0))
+        ];
+        MidiRenderPlan plan = new(SampleRate, 768, [new MidiPortRenderPlan(0, events)]);
+        using BassMidiRenderer renderer = CreateRenderer(plan, 256);
+        float* samples = stackalloc float[513 * 2];
+
+        Assert.Equal(513, renderer.PullFrames(samples, 513).FrameCount);
+        Assert.Equal(0u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+        Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
     }
 
     [Fact]
@@ -148,7 +207,6 @@ public sealed class BassMidiRendererIntegrationTests
             [sourceId],
             [0]);
         BassMidiRendererSettings settings = new(
-            BassMidiNoteOffPolicy.ReleaseAllMatchingNotes,
             BassMidiInterpolation.BassDefault,
             BassMidiSampleLoading.OnDemand,
             0,
@@ -191,7 +249,6 @@ public sealed class BassMidiRendererIntegrationTests
         out long allocatedBytes)
     {
         BassMidiRendererSettings settings = new(
-            BassMidiNoteOffPolicy.ReleaseAllMatchingNotes,
             BassMidiInterpolation.BassDefault,
             BassMidiSampleLoading.OnDemand,
             maximumVoices: 0,
@@ -227,6 +284,21 @@ public sealed class BassMidiRendererIntegrationTests
         }
 
         return samples;
+    }
+
+    private static BassMidiRenderer CreateRenderer(MidiRenderPlan plan, int maximumWorkFrameCount)
+    {
+        BassMidiRendererSettings settings = new(
+            BassMidiInterpolation.BassDefault,
+            BassMidiSampleLoading.OnDemand,
+            maximumVoices: 0,
+            cpuLimitPercent: 0,
+            maximumWorkFrameCount);
+        return new BassMidiRenderer(
+            plan,
+            SoundFontPath,
+            settings,
+            AudioMasterSettings.LimiterV1);
     }
 
     private static MidiRenderPlan CreateSingleNotePlan(byte channel, byte velocity = 80)

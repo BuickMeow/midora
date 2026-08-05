@@ -38,7 +38,7 @@ public static class Program
 
             if (string.Equals(args[0], "play", StringComparison.Ordinal))
             {
-                if (args.Length != 19)
+                if (args.Length != 18)
                 {
                     throw new ArgumentException("Invalid playback argument count.");
                 }
@@ -48,7 +48,7 @@ public static class Program
 
             // Kept only for the existing sample-equivalence harness. Formal realtime playback
             // exclusively uses the shared-control "play" mode above and never transports PCM.
-            if (args.Length == 15)
+            if (args.Length == 14)
             {
                 return RunLegacyPcmRenderer(args);
             }
@@ -103,18 +103,17 @@ public static class Program
         int renderAheadMilliseconds = ParseInt32(args[6]);
         int deviceBufferRequestMilliseconds = ParseInt32(args[7]);
         BassMidiRendererSettings rendererSettings = new(
-            (BassMidiNoteOffPolicy)ParseInt32(args[8]),
-            (BassMidiInterpolation)ParseInt32(args[9]),
-            (BassMidiSampleLoading)ParseInt32(args[10]),
-            ParseInt32(args[11]),
-            ParseSingle(args[12]),
-            ParseInt32(args[13]));
+            (BassMidiInterpolation)ParseInt32(args[8]),
+            (BassMidiSampleLoading)ParseInt32(args[9]),
+            ParseInt32(args[10]),
+            ParseSingle(args[11]),
+            ParseInt32(args[12]));
         AudioMasterSettings masterSettings = new(
+            ParseSingle(args[13]),
             ParseSingle(args[14]),
             ParseSingle(args[15]),
-            ParseSingle(args[16]),
-            ParseInt32(args[17]) != 0);
-        int expectedSampleRate = ParseInt32(args[18]);
+            ParseInt32(args[16]) != 0);
+        int expectedSampleRate = ParseInt32(args[17]);
 
         LoadBassLibraries(nativeDirectory, includeWasapi: true);
         MidiRenderPlan plan = MidiRenderPlanFile.Read(planPath);
@@ -251,17 +250,16 @@ public static class Program
             string soundFontPath = args[3];
             string nativeDirectory = args[4];
             BassMidiRendererSettings rendererSettings = new(
-                (BassMidiNoteOffPolicy)ParseInt32(args[5]),
-                (BassMidiInterpolation)ParseInt32(args[6]),
-                (BassMidiSampleLoading)ParseInt32(args[7]),
-                ParseInt32(args[8]),
-                ParseSingle(args[9]),
-                ParseInt32(args[10]));
+                (BassMidiInterpolation)ParseInt32(args[5]),
+                (BassMidiSampleLoading)ParseInt32(args[6]),
+                ParseInt32(args[7]),
+                ParseSingle(args[8]),
+                ParseInt32(args[9]));
             AudioMasterSettings masterSettings = new(
+                ParseSingle(args[10]),
                 ParseSingle(args[11]),
                 ParseSingle(args[12]),
-                ParseSingle(args[13]),
-                ParseInt32(args[14]) != 0);
+                ParseInt32(args[13]) != 0);
 
             ring = SharedAudioFrameRingBuffer.Open(mapName);
             controlPipe = new NamedPipeClientStream(

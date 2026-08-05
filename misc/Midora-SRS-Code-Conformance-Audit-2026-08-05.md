@@ -80,7 +80,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 10. **已确认：10A（2026-08-05）**。初版正式 WASAPI 输出固定为 Shared Mode、event-driven、stereo interleaved float32；采样率跟随端点初始化后的实际混音采样率。Device Buffer Request 只作为请求值，period 请求为 `0`，实际 buffer、callback period 与 callback frame 数由设备决定并只读报告。不得静默回退到 Exclusive、轮询 / push、整数 sample format、mono / 多声道或其他采样率。现有实现方向符合该决定，并已将初始化策略集中为可测试约束。
 11. **已确认：11A（2026-08-05）**。初版正式实时合成与 Render-Ahead producer 的最大工作 block 固定为 `256 frames`，事件边界和任务末尾允许短块。音频子进程内部的 Render-Ahead 使用单个有界 SPSC PCM ring，容量按 `ceil(actualSampleRate × RenderAheadMilliseconds / 1000)` frames 计算，不存在固定 ring block 数；实时 PCM 不跨进程。
 12. **已确认：12C（2026-08-05）**。初版唯一正式拓扑为完整内部音频子进程：子进程独占 BASS、BASSMIDI、Limiter、Render-Ahead、BASSWASAPI、设备 callback 和文件专用 OutputDevice；主进程只负责 Project、Compiler、Canonical Result、UI 与任务协调。Worker 针对最终支持的每个 Windows RID 单独 Native AOT 发布；运行时命令/状态使用固定版本、固定布局、有界的二进制共享内存 ABI，不使用 JSON/文本反序列化，热路径不得产生托管堆分配。产品 CPU RID 集合仍由第 15 项确认。
-13. `BASS_MIDI_NOTEOFF1`：必须基于同音高重叠、Cut、Reset 和配对 NoteOff 的真实测试决定；当前正式候选为关闭。
+13. **已确认：13A（2026-08-05）**。所有正式 BASSMIDI Stream 固定启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠实例按最早开始者优先逐个释放。配置层已删除 Release All 分支，完整音频 Worker 与旧对照链共享该不可配置语义；真实 BASSMIDI 集成测试已覆盖同音高重叠、NoteOff velocity `0`、Cut Previous 释放与新实例重叠，以及硬边界成对 NoteOff 后的 Reset All Controllers。
 14. BASSMIDI 性能参数档：interpolation、voice/CPU limiting、sample loading；当前原型为 BASS default/on-demand/不设 voice 与 CPU 上限。
 15. 产品 CPU 架构：win-x64、win-x86 或其他明确发布集合；工具已不再暗设 x64。
 16. BASS/BASSMIDI/BASSWASAPI 固定修订和每个发布文件的 SHA-256；不得把 vendor `latest` 当正式基线。

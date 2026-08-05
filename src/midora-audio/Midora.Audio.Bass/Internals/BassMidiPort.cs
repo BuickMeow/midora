@@ -111,6 +111,38 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
 
     public AudioRenderFault Fault => _fault;
 
+    internal uint GetPressedKeyCountForDiagnostics(int zeroBasedPortNumber, int zeroBasedChannel)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (zeroBasedPortNumber is < 0 or >= 16)
+        {
+            throw new ArgumentOutOfRangeException(nameof(zeroBasedPortNumber));
+        }
+        if (zeroBasedChannel is < 0 or >= 16)
+        {
+            throw new ArgumentOutOfRangeException(nameof(zeroBasedChannel));
+        }
+
+        int portIndex = _portIndexByNumber[zeroBasedPortNumber];
+        if (portIndex < 0)
+        {
+            throw new ArgumentException("The render plan does not use the requested Port.", nameof(zeroBasedPortNumber));
+        }
+
+        uint count = NativeBassMidi.StreamGetEvent(
+            _ports[portIndex].StreamHandle,
+            (uint)zeroBasedChannel,
+            NativeBassMidi.MIDI_EVENT_NOTES);
+        if (count == uint.MaxValue)
+        {
+            int error = NativeBass.ErrorGetCode();
+            throw new MidoraAudioException(
+                $"BASS_MIDI_StreamGetEvent(MIDI_EVENT_NOTES) failed with BASS error {error}.");
+        }
+
+        return count;
+    }
+
     public void EnqueueMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -355,12 +387,8 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
     {
         uint flags = NativeBass.BASS_SAMPLE_FLOAT
             | NativeBass.BASS_STREAM_DECODE
-            | NativeBassMidi.BASS_MIDI_NOFX;
-
-        if (settings.NoteOffPolicy == BassMidiNoteOffPolicy.ReleaseOldestMatchingNote)
-        {
-            flags |= NativeBassMidi.BASS_MIDI_NOTEOFF1;
-        }
+            | NativeBassMidi.BASS_MIDI_NOFX
+            | NativeBassMidi.BASS_MIDI_NOTEOFF1;
 
         if (settings.Interpolation == BassMidiInterpolation.Sinc)
         {

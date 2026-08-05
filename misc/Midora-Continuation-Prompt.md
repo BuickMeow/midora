@@ -53,12 +53,11 @@ D:\Programing\midora
 4. 所有正式 BASSMIDI stream 必须启用 `BASS_MIDI_NOFX`。初版完全不支持 Reverb / Chorus；CC91 / CC93 不得出现在编辑、初始状态、Mapping、编译结果、播放调度或 MIDI 导出中。源数据出现时语义验证 Error；后端收到时为一致性 Error。
 5. 正确性、确定性和资源上限满足后，时间性能优先于最小空间占用。允许使用有明确上限和所有权的预计算、缓存、固定 buffer、双缓冲、三缓冲或四缓冲换取速度。
 6. Playing、Buffering、实时预览和文件 Rendering 阶段，参与音频活动的线程不得产生托管堆分配。Preparing、Finalizing、Stop 清理及其他非音频线程可以分配；同进程其他线程可以正常触发进程级 GC，但 callback deadline miss、underrun、断音或爆音仍是性能问题。
-7. 只允许一个用户可启动、显示 UI、打开 Project 的 Midora 应用实例。允许一个由主应用管理、无 UI、不能独立打开或解释 Project 的内部音频子进程候选。初版最终采用进程内还是子进程拓扑，由 ADR 和可复现基准测试决定；不向用户提供拓扑切换设置，也不要求发布时同时维护两套正式模式。
+7. 只允许一个用户可启动、显示 UI、打开 Project 的 Midora 应用实例。初版正式音频后端固定为由主应用管理、无 UI、不能独立打开或解释 Project 的完整内部音频子进程；该 Worker 独占 BASS/BASSMIDI/Limiter/BASSWASAPI/callback，并按正式 RID Native AOT 发布。不向用户提供拓扑切换设置。
 8. 实时播放必须列出全部启用的音频输出设备并标记系统默认设备；排除输入、loopback input、disabled、unplugged 和 not-present 端点。实时采样率跟随所选设备初始化后报告的实际采样率；设备或实际采样率变化时丢弃 sample-domain 缓存并重建相关 stream。
 9. 用户直接调整 buffer 大小，而不是设置 Target Latency：
    - Render-Ahead Buffer：20–2000 ms，默认 100 ms；
    - Device Buffer Request：5–200 ms，默认 50 ms；
-   - IPC Audio Buffer：20–1000 ms，默认 100 ms，仅内部子进程拓扑显示。
    这些设置只允许在 Stopped 修改；设备实际 buffer、callback period 和内部工作 block 是只读运行时信息。
 10. 从视觉上音符应播放到听到声音的端到端实时延迟，以约 200 ms 作为性能测试和架构选择基准。它不是运行时播放成败逻辑，不自动调参，也不是用户 Target Latency。若使用内部子进程，IPC 延迟计入该基准。
 11. 音频文件输出是普通 RIFF/WAVE、stereo、interleaved IEEE float32 little-endian。文件采样率允许 8,000–192,000 Hz 的任意整数，默认 48,000 Hz；UI 提供 44,100、48,000、88,200、96,000、176,400、192,000 Hz 快捷值。
@@ -72,7 +71,7 @@ D:\Programing\midora
 - 任意合法目标采样率下统一的 tick / absolute-seconds → integer sample position 舍入算法；
 - Limiter 算法、内部参数、look-ahead 延迟与补偿、版本兼容策略；
 - WASAPI shared/exclusive、event-driven、buffer/period 与设备格式协商策略；
-- 初版正式采用进程内还是内部音频子进程，以及子进程 IPC、故障恢复和有界队列协议；
+- 内部音频子进程 IPC ABI 的演进、故障恢复和有界命令队列验收；
 - 初版 CPU 架构；
 - 固定的 BASS/BASSMIDI/BASSWASAPI 修订、SHA-256、升级回归策略和商业分发许可证；
 - `BASS_MIDI_NOTEOFF1` 是否启用，必须由同音高重叠、Cut、Reset 和精确 NoteOff 配对测试决定；

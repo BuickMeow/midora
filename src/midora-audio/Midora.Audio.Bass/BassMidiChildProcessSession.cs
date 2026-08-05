@@ -8,7 +8,7 @@ using System.Text;
 namespace Midora.Audio.Bass;
 
 [SupportedOSPlatform("windows")]
-public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDisposable
+internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDisposable
 {
     private const int MonitoringProtocolMagic = 0x4d43444d;
     private const int MonitoringProtocolVersion = 1;
@@ -373,7 +373,7 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
     }
 }
 
-public enum BassMidiChildConsumptionMode : byte
+internal enum BassMidiChildConsumptionMode : byte
 {
     RealtimeNonBlocking,
     OfflineBlocking

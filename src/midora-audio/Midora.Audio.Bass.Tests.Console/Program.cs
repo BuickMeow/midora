@@ -248,7 +248,7 @@ public static partial class Program
 
         using BassWasapiOutputDevice output = (BassWasapiOutputDevice)deviceFactory.Open(selected, session);
         global::System.Console.WriteLine(
-            $"独立进程实时播放：{selected.Name}；actual={output.Info.AudioFormat.SampleRate} Hz；IPC Audio Buffer={ipcAudioBufferMilliseconds} ms");
+            $"开发期混合链对照播放：{selected.Name}；actual={output.Info.AudioFormat.SampleRate} Hz；legacy shared PCM buffer={ipcAudioBufferMilliseconds} ms");
         output.Start();
         while (!session.ProducerFaulted
             && !(session.ProducerCompleted && session.AvailableFrameCount == 0))

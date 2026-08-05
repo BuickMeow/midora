@@ -27,12 +27,12 @@
 | INV-016 | 初版不支持 Reverb / Chorus；正式 BASSMIDI Stream 启用 `BASS_MIDI_NOFX`，Project、编译结果和 MIDI 导出不得包含 CC91 / CC93。 |
 | INV-017 | 实时播放按所选输出设备的实际采样率生成音频；文件渲染按本次选择的 8,000–192,000 Hz 整数采样率生成音频。 |
 | INV-018 | 音频活动线程在 Playing、Buffering、Preview Playing 和文件 Rendering 阶段不得产生托管堆分配；Preparing / Finalizing 不受此限制。 |
-| INV-019 | 初版只允许一个用户可启动并打开 Project 的应用实例，但允许由该实例管理一个无 UI、不能独立打开 Project 的内部音频子进程。 |
+| INV-019 | 初版只允许一个用户可启动并打开 Project 的应用实例；正式音频后端固定为由该实例管理的无 UI、不能独立打开或解释 Project 的 Native AOT 内部音频子进程。 |
 | INV-020 | 满足正确性、确定性和资源上限的候选实现中，时间性能优先于最小空间占用。 |
 | INV-021 | 实时播放、预览和音频渲染的 tick→sample 映射使用完整 Tempo Map 的 decimal 区间积分，乘采样率后只执行一次 `AwayFromZero`，不得逐 Tempo 段取整。 |
 | INV-022 | 初版 Limiter 版本 1 固定为 stereo-linked、sample-peak、瞬时 attack、zero-look-ahead、线性 ceiling 1.0、50 ms 单极指数 release；实时与离线使用同一算法。 |
 | INV-023 | 初版正式 WASAPI 输出固定为 Shared Mode、event-driven、stereo interleaved float32；采样率、实际 buffer 与 callback period 由端点初始化结果决定，不得静默回退到其他模式或格式。 |
-| INV-024 | 初版正式实时音频工作 block 固定为最多 256 frames；Render-Ahead / IPC ring 容量按实际采样率和用户毫秒设置向上取整为 frame，不固定 ring block 数。 |
+| INV-024 | 初版正式实时音频工作 block 固定为最多 256 frames；子进程内 Render-Ahead PCM ring 容量按实际采样率和用户毫秒设置向上取整为 frame，不固定 ring block 数；实时 PCM 不跨进程，运行时控制 IPC 使用固定版本二进制共享内存且热路径零分配。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|

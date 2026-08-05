@@ -1,7 +1,7 @@
 # Midora 初版音频后端架构决策记录
 
 状态：实现中（2026-08-05）  
-适用范围：BASSMIDI 合成、正式音频链、WAVE 文件输出、BASSWASAPI 实时输出及内部音频子进程候选  
+适用范围：BASSMIDI 合成、正式音频链、WAVE 文件输出、BASSWASAPI 实时输出及内部音频子进程
 上位规范：`Midora-SRS-Initial-Release-v0.1`。本文不是需求规范；若与 SRS 冲突，以 SRS 为准。
 
 ## 1. Requirement trace
@@ -31,11 +31,12 @@
 - Preparing 拒绝无效/缺失 SoundFont、非法 Port/Channel、负 frame、越界或乱序事件、CC91/CC93、非法采样率、非法总长度和不可由 RIFF 表示的目标。
 - Rendering 将 BASS/BASSMIDI/BASSWASAPI 原生失败、短读、非有限样本、设备丢失、IPC 故障和文件写入失败记录为结构化故障码；活动音频线程只写入预分配状态，不构造异常、字符串或集合。
 - Finalizing 在非音频线程把故障码转换为用户诊断，包含阶段、原生函数、原生错误码，以及可用时的 Port、frame 和目标路径。
-- 任一正式文件失败使整个任务失败；临时文件不得发布为最终结果。
+- 整曲单输出失败使任务失败；分轨任务按 SRS 15.13 允许各文件独立成功或失败。失败输出的临时文件不得发布为最终结果。
 
 ### 1.5 所有权
 
 - `.midora` 只持久化源数据，不保存本文所述 sample-domain 计划、BASS handle、音频 buffer、IPC 状态或输出结果。
+- 主应用拥有 Project、Compiler、Canonical Compiled Result、UI、文件事务授权和任务协调；音频子进程拥有 SoundFont、BASS/BASSMIDI、Limiter、Render-Ahead、BASSWASAPI、设备 callback 和文件专用 OutputDevice。
 - Preparing 创建并拥有渲染计划、SoundFont、stream、固定工作缓冲和输出事务；Playing / Buffering / Rendering 只消费；Stop / Finalizing 负责按反向顺序释放。
 - 内部音频子进程只能接收已编译的帧事件和运行参数，不能打开或解释 Project，不能显示 UI。
 
@@ -52,11 +53,11 @@
 
 依据：该协议直接匹配未来 Canonical Compiled Result 的稳定 Port/event 序列，避免消费者复制或重新解释音乐模型，同时把 BASS 保持为渲染实现细节。
 
-仍待决定：任意合法采样率下 tick / absolute-seconds 到整数 sample-frame 的统一舍入算法。该算法应位于 Compiler 的 sample-domain adapter，并在决定前不得由音频后端暗中实现。
+已决定：tick→sample frame 使用完整 Tempo Map 在 `[originTick, targetTick)` 上的 decimal 分段积分；总时长乘采样率后只执行一次 `AwayFromZero`。不得逐 Tempo 段取整，也不得先取整绝对 sample 位置再相减。算法位于 Compiler 的 sample-domain adapter，不由音频后端重新实现。
 
-## 3. ADR-AUDIO-002（候选）：Limiter v1
+## 3. ADR-AUDIO-002：Limiter v1
 
-已实现候选：版本号为 1 的 stereo-linked、sample-peak、零 look-ahead Limiter：
+决定：版本号为 1 的 stereo-linked、sample-peak、零 look-ahead Limiter：
 
 - ceiling：`1.0f`；
 - attack：同一 sample 立即降低增益，确保有限输入的输出峰值不超过 ceiling；
@@ -67,7 +68,7 @@
 
 理由：零 look-ahead 不引入起点预卷、范围末尾补偿或额外实时延迟，容易验证 block-size 不变性和精确总长度。代价是极端瞬态的失真可能高于 look-ahead 算法。
 
-限制：这是本轮实现决策，不是 SRS 已规定的算法。听感、峰值、确定性和性能测试不通过时必须以新 ADR 升级，不能静默改变 v1。
+限制：不检测 true peak / inter-sample peak。后续若升级算法必须增加版本并修订 SRS/ADR，不能静默改变 v1。
 
 ## 4. ADR-AUDIO-003：BASSMIDI stream 策略
 
@@ -83,21 +84,25 @@
 
 尚未决定，且本轮不得隐藏选择：`BASS_MIDI_NOTEOFF1`、interpolation、voice/CPU limiting、sample loading 参数及固定 BASS 修订。`NOTEOFF1` 仅在同音高重叠、Cut、Reset 和 NoteOff 配对测试证明与 Canonical 语义一致后才能启用。
 
-## 5. ADR-AUDIO-004：WASAPI 候选与无锁缓冲
+## 5. ADR-AUDIO-004：WASAPI shared event-driven 与无锁缓冲
 
-实现候选：shared、event-driven、stereo float32；请求采样率为 0，让设备选择 mix format；Device Buffer Request 使用用户的毫秒值。初始化后以 `BASS_WASAPI_GetInfo` 的实际 sample rate、buffer 和 format 为准，并据此重建所有 sample-domain 计划和 stream。
+决定：shared、event-driven、stereo interleaved float32；请求采样率为 0，让设备选择 mix format，period 请求为 `0`；Device Buffer Request 使用用户的毫秒值。初始化后以 `BASS_WASAPI_GetInfo` 的实际 sample rate、buffer 和 format 为准，并据此重建所有 sample-domain 计划和 stream。不得静默回退到 exclusive、polling/push、整数 sample format、mono/多声道或另一采样率。
 
 WASAPI callback 只从预分配的单生产者/单消费者连续 frame ring 复制。它不调用 BASSMIDI、不编译、不分配、不加锁、不等待、不做 I/O；异常由 native callback 边界完全截断。可消费 frame 不足时，本次 callback 整块输出静音且不推进音乐位置，进入 Buffering；重新达到启动阈值后继续。
 
-状态：候选，不是初版最终模式。shared/exclusive、event-driven、格式协商、period 和内部工作 block 仍须 ADR 与可复现设备测试决定。
+正式实时合成与 Render-Ahead producer 最大工作 block 固定为 256 frames；事件边界和任务末尾允许短块。Render-Ahead ring 容量按 `ceil(actualSampleRate × RenderAheadMilliseconds / 1000)` 计算，不按固定 block 数配置。
 
-## 6. ADR-AUDIO-005：独立音频子进程候选
+## 6. ADR-AUDIO-005：完整独立音频子进程与 Native AOT
 
-实现候选：主进程负责 Project、Compiler、Canonical Result、任务状态和 WASAPI；单个无 UI 子进程负责 BASS/BASSMIDI 合成。Preparing 通过有版本、长度和校验的二进制控制协议发送已编译的帧事件；Rendering 使用有界共享内存 SPSC float32 frame ring 和预创建事件协调。IPC Audio Buffer 决定 ring 容量。
+决定：主进程负责 Project、Compiler、Canonical Result、UI 与任务协调；单个无 UI 音频子进程独占 BASS、BASSMIDI、Limiter、子进程内 Render-Ahead PCM ring、BASSWASAPI、设备 callback 和文件专用 OutputDevice。实时 PCM 不跨进程传输，因而不再存在 IPC Audio Buffer 用户设置。
 
-子进程不得自行读取 Project 或重建音乐语义。序列号、格式、frame 位置或校验不一致均为任务 Error；子进程退出或无响应不得回退为另一套语义路径。
+Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domain 事件；运行时命令与状态使用固定版本、固定布局、有界的共享内存 ABI。协议不得使用 JSON、文本消息或逐消息对象反序列化。命令生产/消费和状态读写在 Playing、Buffering、Preview Playing 与 Rendering 热路径不得产生托管堆分配；队列满、版本不匹配、损坏字段或非法命令均为任务 Error，不允许丢弃后继续。
 
-状态：这是为基准测试实现的候选拓扑。初版最终采用进程内还是子进程仍由正式 ADR 和可复现的稳定性、吞吐、故障恢复及端到端延迟测试决定；不向用户提供切换设置，也不承诺发布时维护两套正式模式。
+子进程不得自行读取 Project 或重建音乐语义。序列号、格式、frame 位置或校验不一致均为任务 Error；子进程退出或无响应不得回退为进程内或混合拓扑。
+
+音频 Worker 针对每个正式支持的 Windows CPU RID 单独 Native AOT、自包含发布，正式运行不依赖 JIT；RID 集合仍由产品 CPU 架构决定。Native AOT 只消除 JIT 路径，不保证线程调度、原生库或设备行为确定，因此零分配、deadline、underrun、IPC 延迟和故障恢复门仍须独立验收。
+
+状态：已接受并作为初版唯一正式拓扑。旧的进程内链和“子进程合成、主进程 WASAPI”链仅保留为开发期对照测试，不得成为产品回退路径。
 
 ## 7. 验证门
 
@@ -108,4 +113,4 @@ WASAPI callback 只从预分配的单生产者/单消费者连续 frame ring 复
 - Rendering/Playing/Buffering 活动线程在预热后使用线程分配计数器验证零托管堆分配。
 - WAVE 验证 8,000、44,100、48,000、192,000 和自定义采样率，以及 RIFF/fmt/fact/data 大小、frame 对齐、上限拒绝、取消和原子发布。
 - WASAPI 验证短读、underrun/Buffering、设备移除、连续 start/stop、不同 callback block 和 callback 异常边界。
-- 子进程验证协议版本、损坏输入、ring wrap、背压、进程退出、超时、吞吐和包含 IPC 的端到端延迟。
+- 子进程验证 Native AOT 发布、协议版本、损坏输入、命令 ring wrap、背压、进程退出、超时、吞吐、运行时 IPC 零分配和包含 IPC 的端到端延迟。

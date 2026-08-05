@@ -12,14 +12,14 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
 {
     private const int MaximumMidiBatchEventCount = 1_024;
     private const int MaximumPackedMidiBatchByteCount = MaximumMidiBatchEventCount * 3;
-    private const int MonitoringBatchQueueCapacity = 64;
+    private const int MonitoringCommandQueueCapacity = 4_096;
     private readonly MidiRenderPlan _plan;
     private readonly BassMidiRendererSettings _settings;
     private readonly BassNativeRuntime.Lease? _runtimeLease;
     private readonly PortState[] _ports;
     private readonly int[] _portIndexByNumber;
     private readonly bool[] _sourceEnabled;
-    private readonly MidiMonitoringCommand[]?[] _monitoringBatches = new MidiMonitoringCommand[MonitoringBatchQueueCapacity][];
+    private readonly MidiMonitoringCommand[] _monitoringCommands = new MidiMonitoringCommand[MonitoringCommandQueueCapacity];
     private readonly object _monitoringProducerSync = new();
     private readonly float _masterGain;
     private readonly bool _limiterEnabled;
@@ -30,8 +30,8 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
     private long _positionFrames;
     private AudioRenderFault _fault;
     private int _pullActive;
-    private long _monitoringBatchReadPosition;
-    private long _monitoringBatchWritePosition;
+    private long _monitoringCommandReadPosition;
+    private long _monitoringCommandWritePosition;
     private bool _disposed;
 
     public BassMidiRenderer(
@@ -119,19 +119,21 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
             return;
         }
 
-        MidiMonitoringCommand[] batch = commands.ToArray();
-        ValidateMonitoringCommands(batch);
+        ValidateMonitoringCommands(commands);
         lock (_monitoringProducerSync)
         {
-            long write = _monitoringBatchWritePosition;
-            long read = Volatile.Read(ref _monitoringBatchReadPosition);
-            if (write - read >= MonitoringBatchQueueCapacity)
+            long write = _monitoringCommandWritePosition;
+            long read = Volatile.Read(ref _monitoringCommandReadPosition);
+            if (commands.Length > MonitoringCommandQueueCapacity - (write - read))
             {
                 throw new InvalidOperationException("The bounded MIDI monitoring command queue is full.");
             }
-            int slot = (int)(write % MonitoringBatchQueueCapacity);
-            Volatile.Write(ref _monitoringBatches[slot], batch);
-            Volatile.Write(ref _monitoringBatchWritePosition, write + 1);
+
+            for (int i = 0; i < commands.Length; i++)
+            {
+                _monitoringCommands[(int)((write + i) % MonitoringCommandQueueCapacity)] = commands[i];
+            }
+            Volatile.Write(ref _monitoringCommandWritePosition, write + commands.Length);
         }
     }
 
@@ -499,27 +501,18 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
 
     private bool ApplyPendingMonitoringCommands()
     {
-        long read = _monitoringBatchReadPosition;
-        long write = Volatile.Read(ref _monitoringBatchWritePosition);
+        long read = _monitoringCommandReadPosition;
+        long write = Volatile.Read(ref _monitoringCommandWritePosition);
         while (read < write)
         {
-            int slot = (int)(read % MonitoringBatchQueueCapacity);
-            MidiMonitoringCommand[]? batch = Volatile.Read(ref _monitoringBatches[slot]);
-            if (batch is null)
+            MidiMonitoringCommand command = _monitoringCommands[
+                (int)(read % MonitoringCommandQueueCapacity)];
+            if (command.Kind == MidiMonitoringCommandKind.SetSourceEnabled)
             {
-                SetFault(AudioRenderFaultCode.InvalidPullRequest, 0, -1);
-                return false;
+                _sourceEnabled[command.SourceIndex] = command.SourceEnabled;
             }
-
-            for (int i = 0; i < batch.Length; i++)
+            else
             {
-                MidiMonitoringCommand command = batch[i];
-                if (command.Kind == MidiMonitoringCommandKind.SetSourceEnabled)
-                {
-                    _sourceEnabled[command.SourceIndex] = command.SourceEnabled;
-                    continue;
-                }
-
                 int portIndex = _portIndexByNumber[command.ZeroBasedPortNumber];
                 if (portIndex < 0 || !SubmitImmediateMessage(_ports[portIndex], command.Message))
                 {
@@ -527,9 +520,8 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
                 }
             }
 
-            Volatile.Write(ref _monitoringBatches[slot], null);
             read++;
-            Volatile.Write(ref _monitoringBatchReadPosition, read);
+            Volatile.Write(ref _monitoringCommandReadPosition, read);
         }
         return true;
     }

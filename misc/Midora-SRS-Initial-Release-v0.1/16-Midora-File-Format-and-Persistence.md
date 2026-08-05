@@ -455,7 +455,6 @@ Stop Cursor Behavior
 播放设备选择
 Render-Ahead Buffer
 Device Buffer Request
-IPC Audio Buffer
 设备实际采样率 / buffer / callback period
 Mute / Solo
 播放光标位置
@@ -1742,7 +1741,6 @@ Mute / Solo
 播放设备选择
 Render-Ahead Buffer
 Device Buffer Request
-IPC Audio Buffer
 设备实际采样率、实际 buffer 与 callback period
 本机最近打开路径
 本机最近导出路径

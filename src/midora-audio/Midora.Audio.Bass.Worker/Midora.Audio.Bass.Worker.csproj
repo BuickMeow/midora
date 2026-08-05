@@ -7,10 +7,20 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsAotCompatible>true</IsAotCompatible>
+    <!-- The product RID remains an explicit release input; every RID-specific worker publish is Native AOT. -->
+    <PublishAot Condition="'$(RuntimeIdentifier)' != ''">true</PublishAot>
+    <PublishTrimmed Condition="'$(RuntimeIdentifier)' != ''">true</PublishTrimmed>
+    <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />
+    <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.BassWasapi\Midora.AudioDevice.BassWasapi.csproj" />
   </ItemGroup>
+
+  <Target Name="RequireExplicitAudioWorkerRuntimeIdentifier" BeforeTargets="Publish"
+          Condition="'$(RuntimeIdentifier)' == ''">
+    <Error Text="Midora.Audio.Bass.Worker must be published with an explicit Windows RuntimeIdentifier so the output is Native AOT." />
+  </Target>
 
 </Project>

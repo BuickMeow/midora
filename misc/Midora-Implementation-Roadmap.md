@@ -31,7 +31,7 @@ flowchart LR
 
 ### 2.1 已确认的关键约束
 
-- 技术边界：Windows Desktop、.NET 10、WPF、MIDI 1.0；仅允许一个用户可启动的 Midora UI/Project 应用实例同时打开一个 Project。允许一个无 UI、不能独立打开或解释 Project 的内部音频子进程候选；最终初版拓扑由 ADR 和基准测试决定，不向用户提供拓扑切换设置。
+- 技术边界：Windows Desktop、.NET 10、WPF、MIDI 1.0；仅允许一个用户可启动的 Midora UI/Project 应用实例同时打开一个 Project。正式音频后端固定为一个无 UI、不能独立打开或解释 Project 的完整内部音频子进程；Worker 按正式 RID Native AOT 发布，不向用户提供拓扑切换设置。
 - 时间：Project 创建时确定 TPQ，默认 192，之后不可修改；tick 使用有符号 64 位；所有正式范围是左闭右开 `[startTick, endTick)`。
 - Conductor：Project 恰有一条 Conductor Track；tick 0 必须有有效 Tempo 和 Time Signature；初版只支持离散 Tempo，不支持 ramp。
 - 身份：对象使用 Project 全局稳定 ID；引用不得依赖名称、位置、tick、Port 或 Channel。
@@ -44,9 +44,9 @@ flowchart LR
 - 状态与边界：范围起点恢复必要的非 Note 状态，但不能重触发起点前已开始的 Note；Segment/End Marker/渲染 end 是硬边界，必须精确 NoteOff 和 Reset，不能让 release/tail 越界。
 - 播放：单一活动播放/预览任务；无 Pause；Preparing/Playing/Buffering 期间锁定 Project 编辑；Mute/Solo 只做运行时过滤。
 - 实时设备：列出全部启用的音频输出设备并标记系统默认设备；排除输入、loopback、禁用、未连接和不存在的端点。播放采样率跟随所选设备实际采样率；设备或采样率变化会使 sample-domain 缓存和相关 stream 失效并重建。
-- 缓冲设置：用户直接设置 Render-Ahead Buffer（20～2000 ms，默认 100 ms）、Device Buffer Request（5～200 ms，默认 50 ms）以及仅内部子进程拓扑使用的 IPC Audio Buffer（20～1000 ms，默认 100 ms）。只允许在 Stopped 修改；设备实际 buffer/callback period 为只读运行时信息。
+- 缓冲设置：用户直接设置 Render-Ahead Buffer（20～2000 ms，默认 100 ms）和 Device Buffer Request（5～200 ms，默认 50 ms）。只允许在 Stopped 修改；设备实际 buffer/callback period 为只读运行时信息。实时 PCM 不跨进程，运行时命令/状态使用固定容量共享内存 ABI，不提供 IPC PCM buffer 设置。
 - 性能：在正确性、确定性和有界资源约束内，时间性能优先于最小空间占用，允许用预计算、缓存和双/三/四缓冲换取速度。Playing、Buffering、实时预览和文件 Rendering 期间，参与音频活动的线程不得产生托管堆分配；Preparing、Finalizing 及其他线程/进程不受此零分配约束。
-- 延迟：从视觉上音符应播放到听到声音的端到端延迟以约 200 ms 作为性能测试基准；它不是软件运行时判定、自动调参或阻止播放的逻辑阈值。若采用内部音频子进程，IPC 延迟计入该基准。
+- 延迟：从视觉上音符应播放到听到声音的端到端延迟以约 200 ms 作为性能测试基准；它不是软件运行时判定、自动调参或阻止播放的逻辑阈值。内部音频子进程的控制 IPC 延迟计入该基准。
 - 输出链：所有实际 Port 先混合为 stereo，再经过 Playback Master Volume（默认 -0.1 dB）和 Limiter，然后进入设备或文件。
 - MIDI 导出：SMF Type 1，使用 Project TPQ；以 canonical result 为唯一内容来源；真实 NoteOff velocity 0；支持整曲、按 Logical Track、按 Port。
 - 音频渲染：Whole Mix 或 Per Logical Track；普通 RIFF/WAVE、stereo、interleaved IEEE float32 little-endian；任务采样率允许 8000～192000 Hz 的任意整数，默认 48000 Hz。渲染使用独立文件专用 `OutputDevice` 抽象，不依赖 WASAPI 或物理设备，并采用分块流式、事务发布和强制最终 Limiter。Preparing 必须精确预检 RIFF 可表示大小，任何目标超限都以 Error 阻止整个任务，不自动拆分、不回退 RF64、不降低采样率。
@@ -163,7 +163,7 @@ flowchart TD
 - callback delegate 与 user context 的强引用必须覆盖 native callback 的整个生命周期；先停止并确认 callback 不再进入，再 free native session，最后释放 GCHandle。
 - 音频 worker 提前把 canonical events 转成带 absolute sample position 的不可变批次；WASAPI callback 不执行 Tempo Map、编译或 MIDI 展开。
 - Playing、Buffering、实时预览和文件 Rendering 阶段的音频活动线程只复用 Preparing 中预分配的固定缓冲、事件批次和队列节点，不创建托管对象；允许按基准测试采用双缓冲、三缓冲或四缓冲。
-- 若原型化内部音频子进程，IPC 只传输已冻结的消费输入、音频帧和控制/诊断消息；子进程不能读取或解释 Project。需要分别测量排队、复制/共享内存、唤醒与回传延迟。
+- 固定内部音频子进程的 Preparing 输入只包含已冻结的消费计划与已解析设置，运行时 IPC 只传输控制命令和状态；实时音频帧不跨进程。子进程不能读取或解释 Project。需要分别测量命令排队、共享内存读写、轮询/唤醒与状态回传延迟。
 - 正式结果的同 tick 次序必须在送入 BASS 前固定；不要依赖 BASS 自行排序解决 Midora 语义优先级。
 - 对每个 native 失败记录模块、函数、错误码、设备、stream/port 上下文和安全的恢复建议；不得只返回 `false`。
 
@@ -214,14 +214,14 @@ flowchart TD
 
 1. 重做 native runtime/handle/error/version 层，逐项核验官方 header ABI。
 2. 建每实际 Port 的 BASSMIDI float32 stereo decode stream，设置统一 SF2、`BASS_MIDI_NOFX`、melodic Channel 10 和必要属性；验证 CC91/CC93 不会到达后端。
-3. 选定并记录适用于任意合法目标采样率的 tick→sample 整数舍入算法；先以 canonical sample positions 驱动 BASS 的 timed events。
-4. 建 block-size-independent mixer、Master -0.1 dB 和一个被实时/离线共同调用的 Limiter。
+3. 按已确认的 decimal 分段积分与单次 `AwayFromZero` 规则生成 canonical sample positions，以其驱动 BASS 事件。
+4. 建 block-size-independent mixer、Playback Master Volume 和实时/离线共用的 Limiter v1。
 5. 建预分配 realtime queue 和最薄 WASAPI callback；只枚举启用的输出设备，完成默认设备标记、通知、实际采样率、start/stop/reset/free 和错误恢复。
-6. 实现三项用户缓冲设置及 Stopped-only 重建规则；证明音频活动线程在正式活动阶段无托管堆分配，并测试双/三/四缓冲的吞吐与延迟。
+6. 实现 Render-Ahead 与 Device Buffer Request 两项用户缓冲设置及 Stopped-only 重建规则；证明音频活动线程及运行时控制 IPC 热路径在正式活动阶段无托管堆分配。
 7. 建无需声卡的文件 `OutputDevice`/离线内存 sink，用于 CI 验证自定义采样率、时序、状态和数值。
-8. 原型比较进程内与内部音频子进程拓扑；分解测量 IPC 延迟、underrun、CPU 和复制成本，以约 200 ms 端到端基准辅助 ADR 选择。
+8. 完成固定内部音频子进程：Worker 独占全部原生音频后端与设备 callback，按显式 Windows RID Native AOT 发布；运行时命令/状态使用有界共享内存 ABI，并分解测量 IPC 延迟、underrun、CPU 和约 200 ms 端到端延迟。
 
-退出条件：在 64/128/256/511/1024 等不同 block size 及多种合法采样率下，事件 sample position、长度和状态符合统一规则；活动音频线程分配计数为零；循环 start/stop/reset 无 handle/GCHandle 泄漏；设备断开不会有异常跨 native 边界；进程拓扑 ADR 有可复现基准数据。
+退出条件：在 64/128/256/511/1024 等不同消费 block size 及多种合法采样率下，事件 sample position、长度和状态符合统一规则；正式 producer 最大工作块保持 256 frames；活动音频线程和控制 IPC 热路径分配计数为零；循环 start/stop/reset 无 handle/GCHandle 泄漏；设备断开不会有异常跨 native 边界；Native AOT Worker 有可复现的故障恢复和延迟基准。
 
 ### 阶段 4：完成编译语义与增量编译
 
@@ -290,12 +290,12 @@ flowchart TD
 | Port/Channel | 1/2/16 Port、Channel 1/10/16、低编号分配、复用 | stream 初始状态或路由错误 |
 | SF2 | 缺失、损坏、热替换前后、同一 SF2 多 Port | 资源门或 handle 生命周期错误 |
 | MIDI 效果 | CC91/93 在编辑、Mapping、验证、编译、导出和后端的一致拒绝；sustain、pitch bend/range、Bank/Program、RPN/NRPN | NOFX/拒绝边界/初始化/事件映射不完整 |
-| Buffer | 三项可调范围/默认值、Stopped-only 修改、多 block size、短读、队列耗尽、恢复、双/三/四缓冲、长时间运行 | 设置契约、callback 协议或 Buffering 状态机错误 |
+| Buffer | 两项可调范围/默认值、Stopped-only 修改、不同 callback block、短读、队列耗尽、恢复、长时间运行 | 设置契约、callback 协议或 Buffering 状态机错误 |
 | Device | 启用输出设备过滤、系统默认标记、实际采样率、设备/采样率变化、拔出、占用、格式协商 | WASAPI 枚举、采样率失效或生命周期/恢复不完整 |
 | Mix/DSP | 多 Port 求和、Master 前后、Limiter activity、超幅 finite float | 输出链顺序或数值处理错误 |
 | Offline | 无声卡、8000/44100/48000/96000/192000 Hz、固定长度、stems、RIFF 上限预检、取消、磁盘失败 | 渲染错误依赖实时设备、格式不合规或事务不安全 |
 | Allocation | Playing/Buffering/实时预览/文件 Rendering 的各音频活动线程；Preparing/Finalizing 对照 | 正式音频活动阶段产生托管堆分配 |
-| Process | 进程内/内部子进程基准、IPC buffer 边界、子进程崩溃/重启、Project 隔离、端到端延迟 | 拓扑语义不等价、故障隔离或延迟不可接受 |
+| Process | Native AOT 发布、共享内存协议版本/命令 ring 边界/热路径零分配、子进程崩溃/重启、Project 隔离、端到端延迟 | 正式拓扑、IPC、故障隔离或延迟不合规 |
 | Lifetime | 重复 create/start/stop/reset/dispose、异常路径、进程退出 | native handle/delegate/GCHandle 泄漏 |
 
 音频波形不要求跨 BASS 版本逐 sample 相同，SRS 也不承诺逐字节一致；但事件顺序、边界、长度、路由、输出链和同一固定运行环境内的确定性必须严格验证。
@@ -320,18 +320,14 @@ flowchart TD
 3. 所有正式 BASSMIDI stream 使用 `BASS_MIDI_NOFX`，CC91/CC93 完全不受支持。
 4. 实时采样率跟随设备；文件渲染采用任务自定义采样率和独立文件 `OutputDevice`。
 5. 文件格式为普通 RIFF/WAVE float32 stereo；超出 RIFF 表示范围时整个任务在 Preparing 阶段失败。
-6. 用户直接调整三个缓冲大小；约 200 ms 仅为端到端性能测试基准。
+6. 用户直接调整 Render-Ahead 与 Device Buffer Request 两个缓冲大小；约 200 ms 仅为端到端性能测试基准。
 7. 仅音频活动线程在正式活动阶段承担零托管堆分配约束；Preparing、Finalizing 及其他线程/进程可分配。
-8. 只允许一个用户可启动的 UI/Project 应用实例；内部无 UI 音频子进程是候选实现，最终由 ADR 和基准测试选择。
+8. 只允许一个用户可启动的 UI/Project 应用实例；唯一正式音频拓扑是内部无 UI Native AOT 音频子进程，实时 PCM 不跨进程。
 
 ### 9.2 SRS 留给实现设计的选择
 
 以下不是规格错误，但需要版本化 ADR 和测试向量：
 
-- tick/absolute-seconds 到任意合法目标采样率 integer sample position 的统一舍入算法。
-- 最简内置 Limiter 的算法、内部参数、延迟/look-ahead 补偿及版本兼容策略；SRS 只允许 UI 暴露开关，不等于算法无需定义。
-- WASAPI shared/exclusive、event-driven、buffer/period、设备格式协商和默认选择策略。
-- 初版选择进程内还是内部音频子进程拓扑，以及若选择子进程时的 IPC 传输机制、故障恢复和有界队列协议。
 - 初版正式支持的 CPU 架构；当前 native 安装脚本仅取 win-x64，但 SRS 未把 x64 写成产品范围。
 - BASSMIDI interpolation、voice/CPU limiting、sample loading 的正式参数；这些选择可能改变可听结果或 underrun 行为。
 - 固定哪个 BASS/BASSMIDI/BASSWASAPI revision，并如何升级及回归声音语义。
@@ -342,7 +338,7 @@ flowchart TD
 下一次实现任务应从阶段 0 开始，最小交付建议是：
 
 1. 修复当前 solution 构建基线，但不把原型接口直接定为正式 API。
-2. 建一份 requirement trace/ADR 目录，先确定 tick→sample 舍入、Limiter、WASAPI 策略和进程拓扑基准方案；不得在代码默认值中重新解释已确认的 SRS 决定。
+2. 维护 requirement trace/ADR，按已确认的 tick→sample、Limiter v1、WASAPI shared event-driven 与完整音频子进程约束继续实现；不得在代码默认值中重新解释这些决定。
 3. 定义 Domain 基础类型、Canonical Result 最小 schema 和 golden test 格式。
 4. 用“单 Track/单 Segment/单 SubVoice/一个 Note”贯通 Compiler → timed BASSMIDI → memory sink；证明 sample-accurate 时序后再接 WASAPI。
 

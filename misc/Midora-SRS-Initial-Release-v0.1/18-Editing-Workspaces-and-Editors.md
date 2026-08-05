@@ -608,7 +608,6 @@ Playback > Output Device
 ```text
 Render-Ahead Buffer: 20–2000 ms, default 100 ms
 Device Buffer Request: 5–200 ms, default 50 ms
-IPC Audio Buffer: 20–1000 ms, default 100 ms，仅内部音频子进程拓扑显示
 ```
 
 页面只读显示设备实际采样率、实际 buffer 和 callback period。设备及 buffer 设置只能在 Stopped 状态提交。

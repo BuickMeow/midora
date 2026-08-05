@@ -24,7 +24,7 @@
 | 稳定 ID 分配 | 8.42、16.5.3、16.13.2 | 正式对象默认使用 `Guid.NewGuid()`，不符合 Project 级持久化单调计数器 | 已改为 Project 所有的 128-bit 单调计数器；零保留，不补缺、不复用；文件兼容布局已按决定 3A 固定 |
 | Project End Marker 身份 | 4、16.8.2 | 只有 `long? EndMarkerTick`，缺少稳定 ID | 已建模为带稳定 ID 的可编辑事件，移动时保留身份，canonical conductor 保留该身份 |
 | Event Instrument 文件夹层级 | 18.8.2–18.8.3 | `ParentFolderId` 允许嵌套 | 已删除父文件夹语义；加入单层名称、保留名、引用校验及删除后移入 Unfiled 的领域操作 |
-| Marker 名称 | 18.7.4、20.8.4 | Validator 错误拒绝空名称 | 已允许空名称和重复名称；同 tick 数量存在 SRS 内部冲突，转入待确认项 |
+| Marker 名称 | 4.8.2、18.7.4、20.8.4 | Validator 错误拒绝空名称，且同 tick 数量规则冲突 | 已允许空名称、重复名称和同 tick 多个普通 Marker；按稳定 ID 确定同 tick 顺序 |
 | Logical Track 名称 | 3.7.3、11.2.2、20.8.4 | Validator 错误拒绝空名称/未 trim 名称 | 已允许为空和重复，名称不参与身份 |
 | Template Note 边界 | 7.27、8.51 | 只校验 NoteOn 位于 Template，未校验 NoteOff 不越界 | 已把越界源数据诊断为 Error；编辑器未来应先扩展 Template Length |
 | Bank Select 结构 | 8.55.2 | 事件强制同时生成 MSB/LSB，不能表达仅一部分存在 | 已分别保存存在性，只映射和输出实际存在的部分，并保持 MSB 先于 LSB |
@@ -35,8 +35,9 @@
 | 播放任务状态 | 13 | 零长度范围和 Preparing 异常后可能残留 Active Task | 已保证这些路径释放编辑锁并恢复 `ActiveTaskKind=None` |
 | Channel 10 初始化顺序 | 13、音频后端约束 | stream 先设 melodic 再 Reset，Reset 可能覆盖规范初始值 | 已改为每个 Channel 先 Reset、再显式设置 melodic，包括 MIDI Channel 10 |
 | 原生资源释放 | 13.19、15、21 | 部分 `StreamFree`/`FontFree`/全局 `Free`/WAVE `CloseHandle` 返回值被忽略，WASAPI 清理错误未被正式后端上报 | 已逐次检查返回值并立即读取线程本地错误码；WASAPI 先建立正确 device context 再清理；正式后端聚合并报告清理失败，finalizer 保持不抛异常 |
-| 未决音频参数的“默认值” | 21.3、音频 ADR | 原型参数被命名为 Initial Release Default，且实时后端可隐式采用 | 已改名为明确的 Prototype/Limiter v1 Candidate，并要求实时后端调用方显式传入选项 |
+| 未决音频参数的“默认值” | 21.3、音频 ADR | 原型参数被命名为 Initial Release Default，且实时后端可隐式采用 | 原型集合已明确标为 Prototype；9A 已把 Limiter v1 定版，其他未确认的 BASSMIDI 参数仍要求调用方显式传入 |
 | BASS 本地获取工具 | 21.3、发布约束 | 隐藏选择 win-x64、引用不存在的校验脚本、可无提示下载不固定的当前包 | 已要求显式架构和显式接受“未固定开发候选”，补充 manifest/SHA-256 校验；正式修订与发布 hash 仍待确认 |
+| 正式音频进程拓扑 | 3.2.2、13.30、15.7.6、21.3 | 现有正式候选是“子进程合成、主进程 WASAPI”，会让 PCM 跨进程且主进程仍持有设备 callback；控制命名管道逐批分配数组 | 已按 12C 改为完整音频子进程：BASS/BASSMIDI/Limiter/Render-Ahead/BASSWASAPI/callback 全部由 Worker 持有；运行时命令/状态改为固定版本共享内存 ABI，实测热路径零分配；Worker 按显式 RID Native AOT 发布；旧进程内/PCM IPC 类降为仅测试程序集可见 |
 
 ## 3. 尚未完成的初版模块（不是“现有代码语义矛盾”）
 
@@ -44,7 +45,7 @@
 - Event Instrument、Mapping、Lifecycle、Logical Track/Segment 的若干编辑器级数据与命令仍只有核心垂直切片，不是 SRS 07–11 的完整实现。
 - `.midora` ZIP/manifest/schema/迁移/安全保存/损坏隔离尚未实现。
 - 正式 MIDI Export workflow、SMF Type 1 组织、文件事务和导出报告尚未实现。
-- 正式 Audio Render workflow（整曲/分轨、任务快照、取消、结果报告）尚未实现；当前只有底层 renderer 与 WAVE 输出能力。
+- 正式 Audio Render workflow（整曲/分轨、任务快照、取消、结果报告和子进程内文件 OutputDevice）尚未实现；当前只有底层 renderer 与 WAVE 输出能力。
 - WPF UI、导航、编辑器、对话框和 Project 打开/关闭工作流尚未实现。
 - SRS 12.21 要求的 Segment checkpoint、输入/输出状态 hash、dirty 传播与收敛停止尚未实现；现有 Track 级缓存只能作为过渡实现，不能标记为初版合规。
 - Canonical CompileContext 摘要、失败阶段、完整来源追踪和可选 Debug 诊断仍不完整。
@@ -77,8 +78,8 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 8. **已确认：8A（2026-08-05）**。tick→sample frame 使用完整 Tempo Map 在 `[originTick, targetTick)` 上的 decimal 分段积分；总时长乘采样率后只执行一次 `AwayFromZero`。不得逐 Tempo 段取整，也不得先取整绝对 sample 位置再相减；实时播放、预览和音频渲染共用该语义。现有实现符合该决定。
 9. **已确认：9A（2026-08-05）**。初版 Limiter 算法版本 1 固定为 stereo-linked sample-peak：瞬时 attack、zero-look-ahead、线性 ceiling `1.0`、50 ms 单极指数 release；按实际采样率计算系数，跨 block 保持 gain，新任务或 Reset 后恢复 `1.0`。实时播放、预览和强制启用 Limiter 的音频渲染共用该算法；不检测 true peak / inter-sample peak。现有 DSP 实现符合该决定。
 10. **已确认：10A（2026-08-05）**。初版正式 WASAPI 输出固定为 Shared Mode、event-driven、stereo interleaved float32；采样率跟随端点初始化后的实际混音采样率。Device Buffer Request 只作为请求值，period 请求为 `0`，实际 buffer、callback period 与 callback frame 数由设备决定并只读报告。不得静默回退到 Exclusive、轮询 / push、整数 sample format、mono / 多声道或其他采样率。现有实现方向符合该决定，并已将初始化策略集中为可测试约束。
-11. **已确认：11A（2026-08-05）**。初版正式实时合成与 Render-Ahead producer 的最大工作 block 固定为 `256 frames`，事件边界和任务末尾允许短块；进程内与子进程拓扑共用该值。Render-Ahead / IPC 使用单个有界 SPSC ring，容量按 `ceil(actualSampleRate × bufferMilliseconds / 1000)` frames 计算，不存在固定 ring block 数。原审计项把用户毫秒容量误写成待定的固定 ring block 数，现已纠正。
-12. 正式进程拓扑：进程内合成或单个无 UI 音频子进程；当前两条链都只是评测候选。
+11. **已确认：11A（2026-08-05）**。初版正式实时合成与 Render-Ahead producer 的最大工作 block 固定为 `256 frames`，事件边界和任务末尾允许短块。音频子进程内部的 Render-Ahead 使用单个有界 SPSC PCM ring，容量按 `ceil(actualSampleRate × RenderAheadMilliseconds / 1000)` frames 计算，不存在固定 ring block 数；实时 PCM 不跨进程。
+12. **已确认：12C（2026-08-05）**。初版唯一正式拓扑为完整内部音频子进程：子进程独占 BASS、BASSMIDI、Limiter、Render-Ahead、BASSWASAPI、设备 callback 和文件专用 OutputDevice；主进程只负责 Project、Compiler、Canonical Result、UI 与任务协调。Worker 针对最终支持的每个 Windows RID 单独 Native AOT 发布；运行时命令/状态使用固定版本、固定布局、有界的二进制共享内存 ABI，不使用 JSON/文本反序列化，热路径不得产生托管堆分配。产品 CPU RID 集合仍由第 15 项确认。
 13. `BASS_MIDI_NOTEOFF1`：必须基于同音高重叠、Cut、Reset 和配对 NoteOff 的真实测试决定；当前正式候选为关闭。
 14. BASSMIDI 性能参数档：interpolation、voice/CPU limiting、sample loading；当前原型为 BASS default/on-demand/不设 voice 与 CPU 上限。
 15. 产品 CPU 架构：win-x64、win-x86 或其他明确发布集合；工具已不再暗设 x64。

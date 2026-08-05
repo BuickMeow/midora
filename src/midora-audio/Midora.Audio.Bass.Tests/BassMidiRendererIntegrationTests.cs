@@ -165,12 +165,17 @@ public sealed class BassMidiRendererIntegrationTests
         {
             AudioPullResult first = renderer.PullFrames(destination, 1_536);
             Assert.Equal(1_536, first.FrameCount);
-            renderer.EnqueueMonitoringCommands([MidiMonitoringCommand.EnableSource(0)]);
+            MidiMonitoringCommand command = MidiMonitoringCommand.EnableSource(0);
+            ReadOnlySpan<MidiMonitoringCommand> commands = MemoryMarshal.CreateReadOnlySpan(ref command, 1);
+            long enqueueBefore = GC.GetAllocatedBytesForCurrentThread();
+            renderer.EnqueueMonitoringCommands(commands);
+            long enqueueAllocated = GC.GetAllocatedBytesForCurrentThread() - enqueueBefore;
             long before = GC.GetAllocatedBytesForCurrentThread();
             AudioPullResult second = renderer.PullFrames(destination + (1_536 * 2), 2_560);
             long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
             Assert.Equal(2_560, second.FrameCount);
+            Assert.Equal(0, enqueueAllocated);
             Assert.Equal(0, allocated);
         }
 

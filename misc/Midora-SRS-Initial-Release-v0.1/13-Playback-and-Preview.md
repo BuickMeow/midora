@@ -667,7 +667,6 @@ Stop Cursor Behavior
 音频后端偏好
 Render-Ahead Buffer
 Device Buffer Request
-IPC Audio Buffer（仅内部音频子进程拓扑）
 ```
 初版不提供 WASAPI Shared / Exclusive 模式选择；正式 BASSWASAPI 后端固定使用第 13.14.7 节策略。
 
@@ -737,14 +736,12 @@ Application Preferences 提供以下整数毫秒设置：
 |---|---:|---:|---|
 | Render-Ahead Buffer | 20–2000 ms | 100 ms | 已渲染实时 PCM 队列目标容量 |
 | Device Buffer Request | 5–200 ms | 50 ms | 向 WASAPI 请求的设备 buffer 时长 |
-| IPC Audio Buffer | 20–1000 ms | 100 ms | 仅内部音频子进程拓扑使用的共享音频队列容量 |
 
 规则：
 ```text
 只能在 Stopped 状态提交修改
 非法值不提交、不静默 Clamp
-修改后使实时 PCM、调度、IPC 和设备连接相关缓存失效
-IPC Audio Buffer 在进程内拓扑下隐藏或 Disabled
+修改后使实时 PCM、调度和设备连接相关缓存失效
 Device Buffer Request 只是请求值；设备可以按自身能力调整实际 buffer
 请求值被设备调整本身不算错误
 只有后端或设备初始化失败才阻止播放
@@ -956,11 +953,10 @@ tick
 音乐语义预调度范围：tick / 小节 / 四分音符
 Render-Ahead PCM 容量：毫秒，按设备实际采样率换算为 frame
 Device Buffer Request：毫秒，最终实际值由设备决定
-IPC Audio Buffer：毫秒，仅内部子进程拓扑存在
 内部固定工作 block：256 frames，不向用户暴露
 ```
 
-Render-Ahead 与 IPC ring 容量不是固定 block 数，而是分别根据用户设置按以下规则换算：
+Render-Ahead ring 容量不是固定 block 数，而是根据用户设置按以下规则换算：
 ```text
 capacityFrames = ceil(actualSampleRate × bufferMilliseconds / 1000)
 ```
@@ -1049,12 +1045,13 @@ Preparing 阶段必须完成正式播放所需的 buffer、队列、事件批次
 BASSMIDI 拉取 / 合成协调
 多 Port 混音
 Master Volume / Limiter
-Render-Ahead / IPC buffer 搬运
+Render-Ahead buffer 搬运
+跨进程命令 / 状态共享内存热路径
 Buffering 补充路径
 实时预览的对应音频路径
 ```
 
-固定工作区与 ring 必须在 Preparing 一次分配并重复复用。进程内 Render-Ahead 使用一个有界 SPSC PCM ring；子进程拓扑使用一个有界共享内存 SPSC PCM ring。ring 的 frame 容量服从第 13.19.2 节的毫秒换算，不另设固定 block 数；256-frame producer 工作区独立于 ring 容量。所有内存必须有明确上限、所有权和释放时机。
+固定工作区与 ring 必须在 Preparing 一次分配并重复复用。音频子进程内部使用一个有界 SPSC PCM ring，ring 的 frame 容量服从第 13.19.2 节的毫秒换算，不另设固定 block 数；256-frame producer 工作区独立于 ring 容量。实时 PCM 不跨进程传输。主进程与子进程间的运行时命令和状态使用固定版本、固定布局、有界的二进制共享内存协议；命令生产和消费热路径不得分配托管对象，不得使用 JSON、文本协议或逐消息对象反序列化。所有内存必须有明确上限、所有权和释放时机。
 
 Preparing、Stop 清理和 Finalizing 可以产生托管分配。与音频后端同进程的 UI 或其他非音频线程允许分配并触发进程级 GC；该 GC 本身不构成“音频活动线程产生托管分配”的验收失败，但 callback deadline miss、underrun 或爆音仍按运行期性能问题记录。
 
@@ -1064,7 +1061,7 @@ Preparing、Stop 清理和 Finalizing 可以产生托管分配。与音频后端
 ```text
 事件在视觉 / 调度语义上应生效或交互预览触发被接受
 必要编译与准备
-IPC（如使用内部音频子进程）
+共享内存控制 IPC
 事件调度与渲染
 Render-Ahead 和设备 buffer
 对应样本提交到 WASAPI 输出端点
@@ -1371,24 +1368,22 @@ buffer 设置和实际值面板布局
 
 ## 13.30 音频后端进程拓扑
 
-初版允许两种实现候选：
-```text
-主应用进程内音频后端
-由主应用管理的单个内部音频后端子进程
-```
+初版正式音频后端固定为由主应用管理的单个内部音频子进程。主应用拥有 Project、Compiler、Canonical Compiled Result、UI 和任务协调；音频子进程独占 BASS、BASSMIDI、Limiter、Render-Ahead、BASSWASAPI、设备 callback 和文件专用 OutputDevice。主应用不得加载或持有这些正式音频后端的原生全局状态与 handle。
 
-初版发布前必须通过 ADR 和性能测试选择正式发布拓扑。初版不向用户提供拓扑切换设置，也不要求同时维护两套正式运行模式。
-
-如果采用内部音频子进程：
+子进程必须遵守：
 ```text
 它不提供 UI。
 它不能独立打开或解释 .midora Project。
 它只接收冻结的 canonical compiled result、已解析音频设置、必要 SF2 资源信息和控制命令。
 它不得重新解释 Event Instrument、Mapping、Lifecycle、Segment 或资源分配语义。
-它与主应用之间的音频队列使用 §13.14.6 的 IPC Audio Buffer。
+实时 PCM 只在子进程内部的 Render-Ahead ring 与 WASAPI callback 之间流动，不跨进程传输。
+运行时命令与状态使用固定版本、固定布局、有界的二进制共享内存 ABI；禁止 JSON、文本协议和逐消息对象反序列化。
+Playing、Preview Playing、Buffering 与 Rendering 的命令 / 状态 IPC 热路径不得产生托管堆分配。
 IPC 延迟和吞吐量计入 §13.19.10 的约 200 ms 性能基准。
 子进程异常退出时，当前播放 / 预览进入 Error 并完成主进程侧资源清理；允许通过 Reset Playback Engine 重建子进程。
 ```
 
-两种候选必须使用相同的 canonical result、采样率规则、输出链、buffer 设置语义、诊断含义和活动音频线程零托管分配要求。
+音频子进程必须针对每个正式支持的 Windows CPU RID 独立 Native AOT 发布，不允许在正式运行时依赖 JIT 编译；具体 RID 集合由产品发布架构决定。Native AOT 不替代零分配、callback deadline、underrun、故障恢复和确定性验收。
+
+进程内后端或“子进程合成、主进程 WASAPI”的混合链只允许作为开发期对照测试，不是正式消费者，不得由产品运行时回退或切换进入。
 ---

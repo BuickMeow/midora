@@ -1354,7 +1354,6 @@ Recent directories by picker purpose
 Selected playback output device ID or System Default choice
 Render-Ahead Buffer
 Device Buffer Request
-IPC Audio Buffer（仅内部音频子进程拓扑）
 ```
 ### 20.14.3 不持久化内容
 ```text
@@ -1441,7 +1440,6 @@ Current Tool: Select
 Playback Output Device: System Default
 Render-Ahead Buffer: 100 ms
 Device Buffer Request: 50 ms
-IPC Audio Buffer: 100 ms（仅内部音频子进程拓扑）
 ```
 ---
 ## 20.15 Window Sizing and 100% DPI Boundary

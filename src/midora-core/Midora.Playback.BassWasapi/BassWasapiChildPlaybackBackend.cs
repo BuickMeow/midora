@@ -1,10 +1,7 @@
 using System.Runtime.Versioning;
-using System.Runtime.InteropServices;
 using Midora.Audio;
 using Midora.Audio.Bass;
 using Midora.AudioDevice;
-using Midora.AudioDevice.BassWasapi.Internals;
-using Midora.AudioDevice.BassWasapi.Settings;
 
 namespace Midora.Playback.BassWasapi;
 
@@ -12,152 +9,160 @@ public sealed record BassWasapiChildPlaybackOptions(
     string WorkerPath,
     string BassNativeDirectory,
     string? DeviceId,
-    int IpcAudioBufferMilliseconds,
+    int RenderAheadMilliseconds,
     int DeviceBufferRequestMilliseconds,
     BassMidiRendererSettings RendererSettings,
     AudioMasterSettings MasterSettings,
     TimeSpan PreparingTimeout);
 
+/// <summary>
+/// Formal initial-release realtime backend. The main process only coordinates a frozen render plan
+/// and a fixed shared-memory control ABI; the worker owns synthesis, limiter, render-ahead, WASAPI,
+/// and the native callback for the complete active session.
+/// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
 {
     private readonly BassWasapiChildPlaybackOptions _options;
-    private BassWasapiOutputDeviceFactory? _factory;
-    private AudioOutputDeviceInfo? _device;
-    private BassMidiChildProcessSession? _session;
-    private BassWasapiOutputDevice? _output;
+    private BassMidiAudioWorkerSession? _session;
     private int _actualSampleRate;
-    private long _lastCallbackAllocatedBytes;
-    private long _lastChildAllocatedBytes;
-    private long _lastUnderrunCount;
-    private bool _lastChildFaulted;
+    private int _actualDeviceBufferFrameCount;
+    private AudioWorkerStatus _lastStatus;
+    private string? _lastStandardError;
+    private int? _lastExitCode;
     private bool _disposed;
 
     public BassWasapiChildPlaybackBackend(BassWasapiChildPlaybackOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        if (_options.RenderAheadMilliseconds is < 20 or > 2_000)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Render-Ahead must be 20-2000 ms.");
+        }
         if (_options.RendererSettings is null
-            || _options.RendererSettings.MaximumWorkFrameCount != InitialReleaseAudioRuntimePolicy.WorkFrameCount)
+            || _options.RendererSettings.MaximumWorkFrameCount
+                != InitialReleaseAudioRuntimePolicy.WorkFrameCount)
         {
             throw new ArgumentOutOfRangeException(nameof(options),
                 $"Initial-release child-process work blocks must be {InitialReleaseAudioRuntimePolicy.WorkFrameCount} frames.");
         }
     }
 
+    private AudioWorkerStatus CurrentStatus => _session?.Status ?? _lastStatus;
+
+    private int? CurrentExitCode => _session?.ExitCode ?? _lastExitCode;
+
     public int ActualSampleRate => _actualSampleRate;
-    public long PositionFrames => _output?.ConsumedFrameCount ?? 0;
-    public long RenderPositionFrames => _session?.ProducedFrameCount ?? PositionFrames;
-    public bool IsBuffering => _session is not null && !_session.ProducerCompleted
-        && _session.AvailableFrameCount < _session.ProducerWorkFrameCount;
-    public long CallbackAllocatedBytes => _output?.CallbackAllocatedBytes ?? _lastCallbackAllocatedBytes;
-    public long ChildRenderingAllocatedBytes => _session?.RenderingThreadAllocatedBytes ?? _lastChildAllocatedBytes;
-    public long UnderrunCount => _session?.UnderrunCount ?? _lastUnderrunCount;
-    public bool ChildFaulted => _session?.ProducerFaulted ?? _lastChildFaulted;
-    public bool IsCompleted => _session is not null && _session.ProducerCompleted && _session.AvailableFrameCount == 0;
-    public bool IsFaulted => ChildFaulted || _output?.CallbackFaulted == true;
+
+    public int ActualDeviceBufferFrameCount => _actualDeviceBufferFrameCount;
+
+    public long PositionFrames => CurrentStatus.PositionFrame;
+
+    public long RenderPositionFrames => CurrentStatus.RenderPositionFrame;
+
+    public bool IsBuffering => CurrentStatus.State == AudioWorkerState.Buffering;
+
+    public long CallbackAllocatedBytes => CurrentStatus.CallbackAllocatedBytes;
+
+    public long ChildRenderingAllocatedBytes => CurrentStatus.RenderingAllocatedBytes;
+
+    public long UnderrunCount => CurrentStatus.UnderrunCount;
+
+    public bool ChildFaulted => CurrentStatus.State == AudioWorkerState.Faulted;
+
+    public bool IsCompleted => CurrentStatus.State == AudioWorkerState.Completed;
+
+    public bool IsFaulted => ChildFaulted
+        || CurrentExitCode is not null and not 0
+            && CurrentStatus.State is not AudioWorkerState.Completed and not AudioWorkerState.Stopped;
+
     public string? FaultDescription => IsFaulted
-        ? $"callbackFault={_output?.CallbackFaulted == true}; childFault={ChildFaulted}; childExitCode={_session?.ExitCode}; stderr={_session?.StandardError}"
+        ? $"workerState={CurrentStatus.State}; fault={CurrentStatus.FaultCode}; childExitCode={CurrentExitCode}; stderr={_session?.StandardError ?? _lastStandardError}"
         : null;
 
     public int Prepare()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _factory = new BassWasapiOutputDeviceFactory(new(_options.DeviceBufferRequestMilliseconds));
-        IReadOnlyList<AudioOutputDeviceInfo> devices = _factory.GetDevices();
-        _device = _options.DeviceId is null
-            ? devices.FirstOrDefault(value => value.IsSystemDefault) ?? devices.FirstOrDefault()
-            : devices.FirstOrDefault(value => string.Equals(value.Id, _options.DeviceId, StringComparison.Ordinal));
-        if (_device is null)
+        if (_session is not null)
         {
-            throw new MidoraAudioDeviceException("No enabled output device satisfies the selection.");
+            throw new InvalidOperationException("Cannot prepare an active audio worker session.");
         }
-        using ProbeSource source = new(_device.AudioFormat);
-        BassWasapiOutputDevice probe = (BassWasapiOutputDevice)_factory.Open(_device, source);
-        _actualSampleRate = probe.Info.AudioFormat.SampleRate;
-        _device = probe.Info;
-        probe.Dispose();
-        if (probe.CleanupFaulted)
-        {
-            throw new MidoraAudioDeviceException(
-                $"BASSWASAPI probe cleanup failed with BASS error {probe.CleanupErrorCode}.");
-        }
+        BassMidiAudioWorkerProbeResult result = BassMidiAudioWorkerSession.Probe(
+            _options.WorkerPath,
+            _options.BassNativeDirectory,
+            _options.DeviceId,
+            _options.DeviceBufferRequestMilliseconds,
+            _options.PreparingTimeout);
+        _actualSampleRate = result.ActualSampleRate;
+        _actualDeviceBufferFrameCount = result.ActualDeviceBufferFrameCount;
         return _actualSampleRate;
     }
 
     public void Start(MidiRenderPlan plan, string soundFontPath, PlaybackMasterConfiguration master)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_factory is null || _device is null || plan.SampleRate != _actualSampleRate)
+        ArgumentNullException.ThrowIfNull(plan);
+        if (_actualSampleRate == 0 || plan.SampleRate != _actualSampleRate)
         {
             throw new InvalidOperationException("Prepare and a matching sample-domain plan are required.");
         }
-        try
+        if (_session is not null)
         {
-            AudioMasterSettings masterSettings = new(
-                master.VolumeDecibels,
-                _options.MasterSettings.LimiterCeiling,
-                _options.MasterSettings.LimiterReleaseMilliseconds,
-                master.LimiterEnabled);
-            _session = new BassMidiChildProcessSession(
-                plan, soundFontPath, _options.RendererSettings, masterSettings,
-                _options.IpcAudioBufferMilliseconds, _options.WorkerPath, _options.BassNativeDirectory,
-                BassMidiChildConsumptionMode.RealtimeNonBlocking, _options.PreparingTimeout);
-            int threshold = InitialReleaseAudioRuntimePolicy.BufferMillisecondsToFrameCapacity(
-                plan.SampleRate,
-                Math.Min(75, _options.IpcAudioBufferMilliseconds));
-            while (_session.AvailableFrameCount < threshold && !_session.ProducerCompleted && !_session.ProducerFaulted)
-            {
-                Thread.Sleep(1);
-            }
-            if (_session.ProducerFaulted)
-            {
-                throw new MidoraAudioException("The child renderer faulted during Preparing.");
-            }
-            _output = (BassWasapiOutputDevice)_factory.Open(_device, _session);
-            if (_output.Info.AudioFormat.SampleRate != _actualSampleRate)
-            {
-                throw new MidoraAudioDeviceException("Device actual sample rate changed during Preparing.");
-            }
-            _output.Start();
+            throw new InvalidOperationException("The audio worker is already active.");
         }
-        catch (Exception preparationFailure)
-        {
-            Exception? cleanupFailure = Release();
-            if (cleanupFailure is null)
-            {
-                throw;
-            }
-            throw new AggregateException(
-                "Child-process playback preparation and cleanup both failed.",
-                preparationFailure,
-                cleanupFailure);
-        }
-    }
 
-    public void Stop(bool flush)
-    {
-        Exception? failure = null;
-        try
-        {
-            _output?.Stop(flush);
-        }
-        catch (Exception exception)
-        {
-            failure = CombineFailures(failure, exception);
-        }
-        failure = CombineFailures(failure, Release());
-        if (failure is not null)
-        {
-            throw failure;
-        }
+        AudioMasterSettings masterSettings = new(
+            master.VolumeDecibels,
+            _options.MasterSettings.LimiterCeiling,
+            _options.MasterSettings.LimiterReleaseMilliseconds,
+            master.LimiterEnabled);
+        _session = new BassMidiAudioWorkerSession(
+            plan,
+            soundFontPath,
+            _options.RendererSettings,
+            masterSettings,
+            _options.RenderAheadMilliseconds,
+            _options.DeviceBufferRequestMilliseconds,
+            _options.DeviceId,
+            _options.WorkerPath,
+            _options.BassNativeDirectory,
+            _options.PreparingTimeout);
     }
 
     public void ApplyMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        BassMidiChildProcessSession session = _session
-            ?? throw new InvalidOperationException("The child renderer is not active.");
+        BassMidiAudioWorkerSession session = _session
+            ?? throw new InvalidOperationException("The audio worker is not active.");
         session.EnqueueMonitoringCommands(commands);
+    }
+
+    public void Stop(bool flush)
+    {
+        BassMidiAudioWorkerSession? session = _session;
+        if (session is null)
+        {
+            return;
+        }
+
+        Exception? failure = null;
+        try
+        {
+            session.Stop(flush, _options.PreparingTimeout);
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+        finally
+        {
+            _session = null;
+            CaptureAndRelease(session);
+        }
+        if (failure is not null)
+        {
+            throw failure;
+        }
     }
 
     public void Reset()
@@ -165,22 +170,24 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
         ObjectDisposedException.ThrowIf(_disposed, this);
         try
         {
-            Stop(true);
+            Stop(flush: true);
         }
         finally
         {
-            _factory = null;
-            _device = null;
             _actualSampleRate = 0;
+            _actualDeviceBufferFrameCount = 0;
         }
     }
 
     public void Dispose()
     {
-        if (_disposed) return;
+        if (_disposed)
+        {
+            return;
+        }
         try
         {
-            Stop(true);
+            Stop(flush: true);
         }
         finally
         {
@@ -188,63 +195,13 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
         }
     }
 
-    private Exception? Release()
+    private void CaptureAndRelease(BassMidiAudioWorkerSession session)
     {
-        _lastCallbackAllocatedBytes = _output?.CallbackAllocatedBytes ?? _lastCallbackAllocatedBytes;
-        _lastChildAllocatedBytes = _session?.RenderingThreadAllocatedBytes ?? _lastChildAllocatedBytes;
-        _lastUnderrunCount = _session?.UnderrunCount ?? _lastUnderrunCount;
-        _lastChildFaulted = _session?.ProducerFaulted ?? _lastChildFaulted;
-
-        Exception? failure = null;
-        BassWasapiOutputDevice? output = _output;
-        _output = null;
-        try
-        {
-            output?.Dispose();
-            if (output?.CleanupFaulted == true)
-            {
-                failure = CombineFailures(failure, new MidoraAudioDeviceException(
-                    $"BASSWASAPI cleanup failed with BASS error {output.CleanupErrorCode}."));
-            }
-        }
-        catch (Exception exception)
-        {
-            failure = CombineFailures(failure, exception);
-        }
-
-        BassMidiChildProcessSession? session = _session;
-        _session = null;
-        try
-        {
-            session?.Dispose();
-        }
-        catch (Exception exception)
-        {
-            failure = CombineFailures(failure, exception);
-        }
-
-        return failure;
-    }
-
-    private static Exception? CombineFailures(Exception? previous, Exception? next)
-    {
-        if (next is null) return previous;
-        return previous is null
-            ? next
-            : new AggregateException("Multiple child playback cleanup operations failed.", previous, next);
-    }
-
-    private sealed unsafe class ProbeSource : IAudioRenderSource, IDisposable
-    {
-        public ProbeSource(AudioFormat format) => Format = format;
-        public AudioFormat Format { get; }
-        public AudioPullResult PullFrames(float* destination, int requestedFrameCount)
-        {
-            NativeMemory.Clear(destination, checked((nuint)requestedFrameCount * (nuint)Format.BytesPerFrame));
-            return AudioPullResult.Continue(requestedFrameCount);
-        }
-        public void Dispose()
-        {
-        }
+        _lastStatus = session.Status;
+        _lastStandardError = session.StandardError;
+        _lastExitCode = session.ExitCode;
+        session.Dispose();
+        _lastStandardError ??= session.StandardError;
+        _lastExitCode ??= session.ExitCode;
     }
 }

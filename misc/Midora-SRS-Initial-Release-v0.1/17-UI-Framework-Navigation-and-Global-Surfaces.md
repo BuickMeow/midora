@@ -160,7 +160,6 @@ File picker recent directories by purpose
 Selected playback output device ID or System Default choice
 Render-Ahead Buffer
 Device Buffer Request
-IPC Audio Buffer（仅内部音频子进程拓扑）
 ```
 这些状态：
 - 不进入 Project Undo / Redo；

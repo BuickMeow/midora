@@ -8,7 +8,7 @@ using Midora.AudioDevice.BassWasapi.Settings;
 
 namespace Midora.Playback.BassWasapi;
 
-public sealed record BassWasapiPlaybackOptions(
+internal sealed record BassWasapiPlaybackOptions(
     string? DeviceId,
     int RenderAheadMilliseconds,
     int DeviceBufferRequestMilliseconds,
@@ -32,7 +32,7 @@ public sealed record BassWasapiPlaybackOptions(
 }
 
 [SupportedOSPlatform("windows")]
-public sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
+internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
 {
     private readonly BassWasapiPlaybackOptions _options;
     private BassWasapiOutputDeviceFactory? _factory;

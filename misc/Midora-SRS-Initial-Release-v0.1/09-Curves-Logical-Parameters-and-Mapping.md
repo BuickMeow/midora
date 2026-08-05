@@ -909,7 +909,7 @@ Initial State 与普通事件冲突规则
 以下由 第 12 章《编译系统与 Canonical Compiled Result》 继续细化：
 ```text
 事件展开算法
-曲线离散化采样密度
+曲线离散化的逐整数 tick 参考语义与重复值抑制
 映射链执行缓存
 C# 编译缓存
 Channel Group 分配

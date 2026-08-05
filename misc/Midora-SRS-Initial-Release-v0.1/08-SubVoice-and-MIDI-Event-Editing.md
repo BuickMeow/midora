@@ -1441,10 +1441,8 @@ MIDI Channel 状态自然保持最后值，直到后续事件或 Reset
 ```
 以下内容由 第 12 章《编译系统与 Canonical Compiled Result》 / 第 14 章《MIDI 导出》 细化：
 ```text
-采样密度
-离散化 tick 间隔
-去重算法
-压缩算法
+逐整数 tick 的参考求值语义
+最终整数值重复抑制
 导出事件排序
 同 tick 字节级排序
 ```

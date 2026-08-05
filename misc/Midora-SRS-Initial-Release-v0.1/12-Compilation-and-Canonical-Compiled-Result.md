@@ -502,13 +502,18 @@ Segment 裁剪窗口开始处：
 ```
 如果用户启用 Warning 导致编译失败，则本次编译失败。
 ### 12.8.6 曲线离散化
-Logical Parameter 曲线离散化属于编译系统职责。
-canonical compiled result 中应包含离散化后的实际 MIDI / 高级事件输出。
-同一 Project、同一 CompileContext 下：
+SubVoice Value Curve、Logical Parameter Lane 与 Mapping、Envelope Mapping 等连续值源的离散化属于编译系统职责。
+
+正式参考语义为：
 ```text
-曲线离散化结果必须确定一致。
+在该连续值源的有效左闭右开 tick 范围内，对每个整数 tick 求值。
+在完整映射链结束后，按照目标参数配置执行唯一一次最终取整与越界处理。
+输出该连续值源在范围内的第一个有效最终整数值。
+此后仅当最终整数值相对该连续值源上一次输出发生变化时才输出新事件。
 ```
-第 12 章《编译系统与 Canonical Compiled Result》 只定义一致性、边界和失败原则；具体采样算法、采样密度、压缩策略进入实现设计。
+因此，线性、指数或其他连续曲线跨越整数目标中点时，变化事件必须落在逐整数 tick 求值后首次得到新最终整数值的 tick。该规则适用于实时播放、预览、MIDI 导出与音频渲染共同消费的 canonical compiled result。
+
+实现允许使用分段分析、跳跃求值、缓存或其他优化，前提是其 canonical 事件、tick、最终整数值、来源追踪和诊断与上述逐整数 tick 参考算法完全一致；误差阈值、自适应采样或其他近似算法不得改变正式结果。
 ### 12.8.7 多 Mapping 作用同一目标
 多个 Logical Parameter Mapping 作用同一 SubVoice 目标参数时：
 ```text
@@ -744,10 +749,12 @@ Note 事件具有配对和生命周期语义。
 ```
 ---
 ## 12.12 跨 tick 事件折叠优化边界
-初版不做跨 tick 连续相同状态事件折叠。
+第 12.8.6 节规定的连续值源重复值抑制属于离散化定义的一部分：未变化的逐 tick 候选值不会生成 canonical 事件，不属于本节所称的跨 tick 事件折叠。
+
+除该离散化规则外，初版不对已经生成的跨 tick 连续相同状态事件做全局折叠。
 即：
 ```text
-连续多个相同 CC / Pitch Bend / Program / Bank / RPN / NRPN 输出，即使理论上可压缩，初版也应保留编译生成结果。
+来自显式源事件或不同来源的连续相同 CC / Pitch Bend / Program / Bank / RPN / NRPN 输出，即使理论上可压缩，初版也应保留编译生成结果。
 ```
 原因：
 ```text
@@ -765,7 +772,8 @@ Note 事件具有配对和生命周期语义。
 注意：
 ```text
 同 tick 同目标多值冲突仍必须折叠。
-跨 tick 连续相同值初版不折叠。
+连续值源内部按第 12.8.6 节抑制未变化的最终整数值。
+已经生成的跨 tick 连续相同值初版不做全局折叠。
 ```
 ---
 ## 12.13 Channel Unit 占用

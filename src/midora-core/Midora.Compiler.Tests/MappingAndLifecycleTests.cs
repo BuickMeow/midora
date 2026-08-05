@@ -77,6 +77,28 @@ public sealed class MappingAndLifecycleTests
     }
 
     [Fact]
+    public void CurveDiscretizationEvaluatesEveryIntegerTickAndSuppressesRepeatedFinalValues()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 20);
+        ValueCurve curve = new(fixture.Project) { Target = MidiValueTarget.ControlChange(1) };
+        curve.Points.Add(new CurvePoint(fixture.Project, 0, 0));
+        curve.Points.Add(new CurvePoint(fixture.Project, 10, 1));
+        fixture.Voice.Curves.Add(curve);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 11);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(result.IsConsumable, string.Join(Environment.NewLine,
+            result.Diagnostics.Select(value => value.Message)));
+        CanonicalMidiEvent[] values = result.Events.ToArray().Where(value =>
+            value.Role == CanonicalEventRole.ControlChange
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 1).ToArray();
+        Assert.Equal([0L, 5L], values.Select(value => value.Tick).ToArray());
+        Assert.Equal([0, 1], values.Select(value => (int)value.Message.Byte2).ToArray());
+    }
+
+    [Fact]
     public void CurveFinalOverflowPolicyBelongsToTarget()
     {
         var fixture = CompilerTestProject.Create();

@@ -690,14 +690,12 @@ Release = 0
 更复杂的曲线编辑方式
 ```
 ### 10.11.6 离散化
-Envelope 的 Attack / Decay / Release 曲线最终如何变成 MIDI 事件，留给 第 12 章《编译系统与 Canonical Compiled Result》 / 第 14 章《MIDI 导出》 细化。
+Envelope 的 Attack / Decay / Release 曲线最终如何变成 MIDI 事件，服从第 12.8.6 节统一规定的逐整数 tick 参考求值与最终整数值重复抑制语义；第 14 章《MIDI 导出》只消费 canonical compiled result，不得另行离散化。
 第 10 章《实例生命周期、Loop、Envelope 与重叠》 不定义：
 ```text
-每 tick 采样
-固定 PPQ 采样
-采样密度
-曲线压缩
-输出事件去重
+曲线求值函数的内部数据结构
+与逐 tick 参考结果完全等价的跳跃求值优化
+离散事件的内部缓存结构
 ```
 ---
 ## 10.12 Envelope 阶段与 Gate End

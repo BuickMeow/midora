@@ -626,6 +626,29 @@ Canonical Compiled Result 仍必须为每个 Logical Note 保留独立 NoteOff�
 ```
 
 SoundFont 内部样本插值或合成器内部采样处理不属于这里禁止的“固定输出采样率后再重采样”。
+
+### 13.12.9 BASSMIDI 合成性能档与实时复音上限
+
+所有正式 BASSMIDI Stream 固定使用：
+```text
+BASS_ATTRIB_MIDI_SRC = 1      // 8-point sinc
+BASS_ATTRIB_MIDI_CPU = 0      // automatic
+```
+
+`CPU = 0` 的 BASSMIDI 官方语义是 automatic，不得在通用说明中误写为无条件“不限制”。Midora 的正式 Stream 是由自身渲染线程主动拉取的 decode Stream，不由 BASS update thread 播放；在该拓扑中 `0` 表示不启用 BASSMIDI CPU shedding，不因 CPU 属性杀 voice。若后续改变处理拓扑，必须重新验证，不能沿用这一推论。
+
+Preparing 必须从冻结的 sample-domain 计划收集实际会被 Note On 使用的 Bank MSB / Program 组合，并在进入 Playing / Preview Playing 前通过 `BASS_MIDI_FontLoad` 预加载对应 SF2 presets。实时事件 Stream 不得调用只适用于 MIDI 文件/序列 Stream 的 `BASS_MIDI_StreamLoadSamples`。若引用的组合不存在，不得把它提升为 Project 或编译错误；后端必须保持第 6.12.3 节允许的 BASSMIDI fallback 语义，并确保 fallback 所需样本也在 Preparing 完成加载。
+
+Application Preferences 提供用户可编辑的 `Realtime Maximum Sample Voices per Stream`：
+```text
+合法范围：1–16,777,216 的整数
+默认值：750
+生效单位：每个实际使用 Port 对应的 BASSMIDI Stream
+```
+
+同一次播放或预览任务的所有实际 Port Stream 必须使用同一个冻结值。该值是 BASSMIDI 同时活动 sample voice 数上限，不是 MIDI Note 数；一个 Note 可以因 SF2 分层占用多个 sample voices。只允许在 Stopped 修改，修改后使实时 BASSMIDI Stream 和相关音频缓存失效。
+
+达到上限时允许 BASSMIDI 按其固定 voice-limit 行为终止 voice。这是用户配置的后端资源上限，不是 Compiler、Overlap 或 Channel Group 的语义级 Voice Stealing，不能修改 Canonical Compiled Result。需要音频逐采样或不同 block 完美一致的测试，前提必须包含实际活动 sample voices 未达到配置上限。
 ---
 ## 13.13 Reset Playback Engine
 初版需要提供 `Reset Playback Engine` 命令。
@@ -682,6 +705,7 @@ Stop Cursor Behavior
 音频后端偏好
 Render-Ahead Buffer
 Device Buffer Request
+Realtime Maximum Sample Voices per Stream
 ```
 初版不提供 WASAPI Shared / Exclusive 模式选择；正式 BASSWASAPI 后端固定使用第 13.14.7 节策略。
 

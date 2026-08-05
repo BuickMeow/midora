@@ -35,10 +35,7 @@ public sealed class BassMidiChildProcessIntegrationTests
 
         MidiRenderPlan plan = CreatePlan();
         BassMidiRendererSettings settings = new(
-            BassMidiInterpolation.BassDefault,
-            BassMidiSampleLoading.OnDemand,
-            maximumVoices: 0,
-            cpuLimitPercent: 0,
+            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
             maximumWorkFrameCount: 257);
         float[] expected = RenderInProcess(plan, settings);
         float[] actual = new float[expected.Length];
@@ -106,10 +103,7 @@ public sealed class BassMidiChildProcessIntegrationTests
             [sourceId],
             [0]);
         BassMidiRendererSettings settings = new(
-            BassMidiInterpolation.BassDefault,
-            BassMidiSampleLoading.OnDemand,
-            0,
-            0,
+            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
             256);
         float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
 

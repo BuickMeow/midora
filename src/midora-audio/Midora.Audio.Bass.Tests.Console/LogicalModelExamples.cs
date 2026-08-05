@@ -68,7 +68,7 @@ public static partial class Program
         using BassMidiChildProcessSession child = new(
             plan,
             soundFontPath,
-            CreateRendererSettings(InitialReleaseAudioRuntimePolicy.WorkFrameCount),
+            CreateOfflineRendererSettings(InitialReleaseAudioRuntimePolicy.WorkFrameCount),
             AudioMasterSettings.LimiterV1,
             100,
             GetWorkerPath(repositoryRoot),
@@ -98,7 +98,7 @@ public static partial class Program
             return 1;
         }
         MidiRenderPlan plan = MidiRenderPlanAdapter.Create(compiled, LogicalOfflineSampleRate);
-        using BassMidiRenderer renderer = CreateRenderer(plan, soundFontPath, maximumWorkFrames: 2_048);
+        using BassMidiRenderer renderer = CreateOfflineRenderer(plan, soundFontPath, maximumWorkFrames: 2_048);
         WaveFileRenderResult rendered;
         try
         {
@@ -171,7 +171,7 @@ public static partial class Program
             null,
             100,
             50,
-            CreateRendererSettings(InitialReleaseAudioRuntimePolicy.WorkFrameCount),
+            CreateRealtimeRendererSettings(InitialReleaseAudioRuntimePolicy.WorkFrameCount),
             AudioMasterSettings.LimiterV1,
             TimeSpan.FromSeconds(30));
         using BassWasapiChildPlaybackBackend backend = new(options);

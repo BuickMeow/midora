@@ -64,12 +64,12 @@ D:\Programing\midora
 12. 文件渲染使用独立文件专用 `OutputDevice` 抽象，不依赖 WASAPI 或物理设备，直接按任务采样率渲染，不先固定 48 kHz 再重采样。
 13. Preparing 必须在创建临时文件前精确预检每个 RIFF 输出的可表示大小。任一目标超限时，整个任务以 Error 阻止；不得拆分、回退 RF64/WAVE64、降低采样率或缩短内容。
 14. 所有正式 BASSMIDI stream 必须启用 `BASS_MIDI_NOTEOFF1`。同 Port、Channel、pitch 的重叠 Note 实例按最早开始者优先与逐个 NoteOff 配对；硬边界必须按活动实例数完整释放。该策略不是用户设置。
+15. 所有正式 BASSMIDI stream 固定 8-point sinc 和 CPU 属性 `0`；Preparing 使用 `BASS_MIDI_FontLoad` 预加载计划引用的 presets/fallback。实时与离线每 Stream sample voice 上限分别配置，默认均为 `750`，同一任务所有 Port 使用同一值；完美音频一致性测试以未触顶为前提。
 
 四、仍需 ADR 或实测决定的事项
 
 这些不是当前 SRS 冲突，不能静默写成实现默认值：
 
-- BASSMIDI interpolation、voice/CPU limiting、sample loading 的正式参数档；
 - 初版正式支持的 Windows CPU RID 集合；
 - 固定的 BASS/BASSMIDI/BASSWASAPI 修订、SHA-256、升级回归策略和商业分发许可证；
 - C# Mapping Function 的持久兼容 ABI、允许引用、缓存和 AssemblyLoadContext 卸载策略；

@@ -265,10 +265,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         startInfo.ArgumentList.Add(deviceId ?? string.Empty);
         startInfo.ArgumentList.Add(renderAheadMilliseconds.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(deviceBufferRequestMilliseconds.ToString(CultureInfo.InvariantCulture));
-        startInfo.ArgumentList.Add(((int)rendererSettings.Interpolation).ToString(CultureInfo.InvariantCulture));
-        startInfo.ArgumentList.Add(((int)rendererSettings.SampleLoading).ToString(CultureInfo.InvariantCulture));
-        startInfo.ArgumentList.Add(rendererSettings.MaximumVoices.ToString(CultureInfo.InvariantCulture));
-        startInfo.ArgumentList.Add(rendererSettings.CpuLimitPercent.ToString("R", CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add(rendererSettings.MaximumSampleVoiceCount.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(rendererSettings.MaximumWorkFrameCount.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(masterSettings.VolumeDecibels.ToString("R", CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(masterSettings.LimiterCeiling.ToString("R", CultureInfo.InvariantCulture));

@@ -51,7 +51,7 @@
 - `ProjectCompilationSession` 持有 Project、编译缓存、最后成功结果和 sample-domain 缓存；仅在 Stopped 状态提交编辑。
 - 每次成功编辑形成明确的 `ProjectChangeSet`，立即执行增量编译并原子替换最后结果；失败结果保留诊断但不替换最后可消费结果。
 - sample-domain 缓存键至少包含 canonical result 指纹、编译范围和实际采样率；Project 音乐语义、Tempo 或采样率变化时失效。
-- 播放控制负责 Start、Stop、Seek、Mute/Solo 的运行时过滤和后端资源清理，不拥有 Project 语义。Mute/Solo 通过 source-index 控制命令在合成推进边界生效，不触发 canonical 重编译或后端冷启动；已进入 render-ahead / IPC PCM buffer 的音频仍受相应 buffer 延迟约束。
+- 播放控制负责 Start、Stop、Seek、Mute/Solo 的运行时过滤和后端资源清理，不拥有 Project 语义。Mute/Solo 通过 source-index 控制命令在合成推进边界生效，不触发 canonical 重编译或后端冷启动；已进入音频子进程内 render-ahead PCM buffer 的音频仍受相应 buffer 延迟约束。
 
 ### 1.8 明确非目标
 
@@ -106,7 +106,7 @@ Midora.Playback
 
 禁用 source 时，播放层按当前 render frontier 向该 source 仍占用的 Channel Unit 发送精确清理（All Notes Off、All Sound Off、Reset All Controllers 及 canonical reset defaults）；重新启用时先恢复该范围起点必要的非 Note 状态，再放行未来 canonical 事件，不重触发已经越过起点的 Note。内部音频子进程使用独立控制管道传递同一固定协议，Project 和编译器不进入子进程。
 
-这是运行时消费过滤，不改变 Project、Canonical Compiled Result 或编译 fingerprint。可听响应时间仍包含已经生成的 render-ahead PCM、设备 buffer，以及子进程模式下的 IPC audio buffer。
+这是运行时消费过滤，不改变 Project、Canonical Compiled Result 或编译 fingerprint。可听响应时间仍包含音频子进程内已经生成的 render-ahead PCM 和设备 buffer；正式拓扑不跨进程传输实时 PCM。
 
 ## 8. 领域实现表示说明
 

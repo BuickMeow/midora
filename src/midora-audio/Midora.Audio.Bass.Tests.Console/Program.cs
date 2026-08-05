@@ -77,7 +77,7 @@ public static partial class Program
 
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         MidiRenderPlan plan = CreateTestPlan(OfflineSampleRate);
-        using BassMidiRenderer renderer = CreateRenderer(plan, soundFontPath, maximumWorkFrames: 2_048);
+        using BassMidiRenderer renderer = CreateOfflineRenderer(plan, soundFontPath, maximumWorkFrames: 2_048);
 
         WaveFileRenderResult result = WaveFileOutput.Render(
             renderer,
@@ -119,7 +119,7 @@ public static partial class Program
         AudioOutputDeviceInfo selected = devices.FirstOrDefault(static item => item.IsSystemDefault) ?? devices[0];
         int sampleRate = selected.AudioFormat.SampleRate;
         MidiRenderPlan plan = CreateTestPlan(sampleRate);
-        using BassMidiRenderer renderer = CreateRenderer(plan, soundFontPath, workFrameCount);
+        using BassMidiRenderer renderer = CreateRealtimeRenderer(plan, soundFontPath, workFrameCount);
 
         int ringCapacityFrames = InitialReleaseAudioRuntimePolicy.BufferMillisecondsToFrameCapacity(
             sampleRate,
@@ -182,7 +182,7 @@ public static partial class Program
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
 
         MidiRenderPlan plan = CreateTestPlan(OfflineSampleRate);
-        BassMidiRendererSettings settings = CreateRendererSettings(
+        BassMidiRendererSettings settings = CreateOfflineRendererSettings(
             maximumWorkFrames: InitialReleaseAudioRuntimePolicy.WorkFrameCount);
         using BassMidiChildProcessSession session = new(
             plan,
@@ -225,7 +225,7 @@ public static partial class Program
             ?? devices.FirstOrDefault()
             ?? throw new MidoraAudioDeviceException("没有可用的 enabled output device。");
         MidiRenderPlan plan = CreateTestPlan(selected.AudioFormat.SampleRate);
-        BassMidiRendererSettings settings = CreateRendererSettings(workFrameCount);
+        BassMidiRendererSettings settings = CreateRealtimeRendererSettings(workFrameCount);
 
         using BassMidiChildProcessSession session = new(
             plan,
@@ -303,12 +303,12 @@ public static partial class Program
             : 1;
     }
 
-    private static BassMidiRenderer CreateRenderer(
+    private static BassMidiRenderer CreateOfflineRenderer(
         MidiRenderPlan plan,
         string soundFontPath,
         int maximumWorkFrames)
     {
-        BassMidiRendererSettings rendererSettings = CreateRendererSettings(maximumWorkFrames);
+        BassMidiRendererSettings rendererSettings = CreateOfflineRendererSettings(maximumWorkFrames);
 
         return new BassMidiRenderer(
             plan,
@@ -317,15 +317,24 @@ public static partial class Program
             AudioMasterSettings.LimiterV1);
     }
 
-    private static BassMidiRendererSettings CreateRendererSettings(int maximumWorkFrames)
+    private static BassMidiRenderer CreateRealtimeRenderer(
+        MidiRenderPlan plan,
+        string soundFontPath,
+        int maximumWorkFrames)
     {
-        return new BassMidiRendererSettings(
-            interpolation: BassMidiInterpolation.BassDefault,
-            sampleLoading: BassMidiSampleLoading.OnDemand,
-            maximumVoices: 0,
-            cpuLimitPercent: 0,
-            maximumWorkFrameCount: maximumWorkFrames);
+        BassMidiRendererSettings rendererSettings = CreateRealtimeRendererSettings(maximumWorkFrames);
+        return new BassMidiRenderer(
+            plan,
+            soundFontPath,
+            rendererSettings,
+            AudioMasterSettings.LimiterV1);
     }
+
+    private static BassMidiRendererSettings CreateRealtimeRendererSettings(int maximumWorkFrames) =>
+        BassMidiPolyphonyConfiguration.Default.CreateRealtimeRendererSettings(maximumWorkFrames);
+
+    private static BassMidiRendererSettings CreateOfflineRendererSettings(int maximumWorkFrames) =>
+        BassMidiPolyphonyConfiguration.Default.CreateOfflineRendererSettings(maximumWorkFrames);
 
     private static MidiRenderPlan CreateTestPlan(int sampleRate)
     {

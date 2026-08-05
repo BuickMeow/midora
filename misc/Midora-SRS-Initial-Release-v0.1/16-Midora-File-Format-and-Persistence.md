@@ -473,6 +473,7 @@ Mute / Solo
 显式 Logical Track 稳定 ID 集合
 有限命名偏好
 默认文件采样率：8,000–192,000 Hz 整数，默认 48,000 Hz
+默认 Offline Maximum Sample Voices per Stream：1–16,777,216 整数，默认 750
 固定格式：RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float / Little-endian
 ```
 不保存：
@@ -498,6 +499,7 @@ SHA-256
 ```text
 固定格式字段属于当前 schema 必需且用户不可编辑的版本化字段。
 默认文件采样率属于用户可编辑 Project 默认值，但必须是 8,000–192,000 Hz 整数。
+默认 Offline Maximum Sample Voices per Stream 属于用户可编辑 Project 默认值，但必须是 1–16,777,216 整数。
 未知枚举、非法范围、无效字段组合或不支持的固定格式不得静默接受。
 当前 schema 要求文件存在而文件缺失 / hash 错误 / schema 无效时，按结构性设置损坏或不兼容规则处理。
 只有明确旧 fileFormatVersion 的迁移路径才允许生成默认设置。

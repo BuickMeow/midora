@@ -52,9 +52,6 @@ public sealed class BassWasapiBackendPolicyTests
     }
 
     private static BassMidiRendererSettings CreateRendererSettings(int workFrameCount) => new(
-        BassMidiInterpolation.BassDefault,
-        BassMidiSampleLoading.OnDemand,
-        0,
-        0,
+        BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
         workFrameCount);
 }

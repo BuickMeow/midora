@@ -22,7 +22,7 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
-    public void ProducesIdenticalSamplesAcrossDifferentPullAndInternalBlockSizes()
+    public void ProducesIdenticalSamplesAcrossDifferentBlocksWithinConfiguredVoiceLimit()
     {
         EnsureEnvironment();
         MidiRenderPlan plan = CreateSingleNotePlan(channel: 0);
@@ -81,16 +81,114 @@ public sealed class BassMidiRendererIntegrationTests
     public void StreamFlagsAlwaysDisableEffectsAndReleaseOnlyOldestMatchingNote()
     {
         BassMidiRendererSettings settings = new(
-            BassMidiInterpolation.BassDefault,
-            BassMidiSampleLoading.OnDemand,
-            0,
-            0,
+            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
             256);
 
         uint flags = BassMidiRenderer.BuildStreamFlags(settings);
 
         Assert.NotEqual(0u, flags & Midora.NativeInterops.BassMidi.BASSMIDI.BASS_MIDI_NOFX);
         Assert.NotEqual(0u, flags & Midora.NativeInterops.BassMidi.BASSMIDI.BASS_MIDI_NOTEOFF1);
+        Assert.Equal(0u, flags & Midora.NativeInterops.BassMidi.BASSMIDI.BASS_MIDI_SINCINTER);
+    }
+
+    [Fact]
+    public unsafe void EveryPortUsesEightPointSincCpuZeroAndTheSameConfiguredVoiceLimit()
+    {
+        EnsureEnvironment();
+        MidiRenderPlan single = CreateSingleNotePlan(channel: 0);
+        MidiRenderPlan plan = new(
+            SampleRate,
+            single.TotalFrameCount,
+            [single.Ports[0], new MidiPortRenderPlan(1, single.Ports[0].Events)]);
+        const int customVoiceLimit = 901;
+        using BassMidiRenderer renderer = new(
+            plan,
+            SoundFontPath,
+            new BassMidiRendererSettings(customVoiceLimit, 256),
+            AudioMasterSettings.LimiterV1);
+
+        foreach (int port in new[] { 0, 1 })
+        {
+            Assert.Equal(
+                1f,
+                renderer.GetStreamAttributeForDiagnostics(
+                    port,
+                    Midora.NativeInterops.BassMidi.BASSMIDI.BASS_ATTRIB_MIDI_SRC));
+            Assert.Equal(
+                customVoiceLimit,
+                renderer.GetStreamAttributeForDiagnostics(
+                    port,
+                    Midora.NativeInterops.BassMidi.BASSMIDI.BASS_ATTRIB_MIDI_VOICES));
+            Assert.Equal(
+                0f,
+                renderer.GetStreamAttributeForDiagnostics(
+                    port,
+                    Midora.NativeInterops.BassMidi.BASSMIDI.BASS_ATTRIB_MIDI_CPU));
+        }
+
+        float* samples = stackalloc float[256 * 2];
+        Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
+        Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
+    }
+
+    [Fact]
+    public void RealtimeAndOfflineVoicePreferencesAreIndependentAndDefaultTo750()
+    {
+        BassMidiPolyphonyConfiguration defaults = BassMidiPolyphonyConfiguration.Default;
+        Assert.Equal(750, defaults.RealtimeMaximumSampleVoiceCount);
+        Assert.Equal(750, defaults.OfflineMaximumSampleVoiceCount);
+
+        BassMidiPolyphonyConfiguration custom = new(321, 654);
+        Assert.Equal(321, custom.CreateRealtimeRendererSettings(256).MaximumSampleVoiceCount);
+        Assert.Equal(654, custom.CreateOfflineRendererSettings(256).MaximumSampleVoiceCount);
+    }
+
+    [Fact]
+    public void VoicePreferencesRejectValuesThatCannotBeTransferredExactlyToBass()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new BassMidiPolyphonyConfiguration(0, 750));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new BassMidiPolyphonyConfiguration(750, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new BassMidiPolyphonyConfiguration(
+            BassMidiPolyphonyConfiguration.MaximumSampleVoiceCount + 1,
+            750));
+    }
+
+    [Fact]
+    public void ReferencedPresetPreloadPlanTracksBankProgramAndNoteStateDeterministically()
+    {
+        MidiPortRenderPlan first = new(0,
+        [
+            new ScheduledMidiMessage(0, MidiMessage.NoteOn(1, 60, 100)),
+            new ScheduledMidiMessage(0, MidiMessage.ControlChange(0, 0, 2)),
+            new ScheduledMidiMessage(0, MidiMessage.ProgramChange(0, 5)),
+            new ScheduledMidiMessage(0, MidiMessage.NoteOn(0, 60, 100)),
+            new ScheduledMidiMessage(1, MidiMessage.ProgramChange(0, 7)),
+            new ScheduledMidiMessage(1, MidiMessage.NoteOn(0, 61, 100)),
+            new ScheduledMidiMessage(2, MidiMessage.NoteOn(0, 62, 0))
+        ]);
+        MidiPortRenderPlan second = new(1, first.Events);
+        MidiRenderPlan plan = new(SampleRate, 128, [first, second]);
+
+        Assert.Equal([0, (2 * 128) + 5, (2 * 128) + 7], BassMidiRenderer.CollectReferencedPresetKeys(plan));
+    }
+
+    [Fact]
+    public unsafe void MissingPresetKeepsBassFallbackAvailableAfterPreparing()
+    {
+        EnsureEnvironment();
+        ScheduledMidiMessage[] events =
+        [
+            new(0, MidiMessage.ControlChange(0, 0, 127)),
+            new(0, MidiMessage.ProgramChange(0, 127)),
+            new(0, MidiMessage.NoteOn(0, 60, 100)),
+            new(256, MidiMessage.NoteOff(0, 60, 0))
+        ];
+        MidiRenderPlan plan = new(SampleRate, 512, [new MidiPortRenderPlan(0, events)]);
+        using BassMidiRenderer renderer = CreateRenderer(plan, 256);
+        float* samples = stackalloc float[256 * 2];
+
+        Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
+        Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
     }
 
     [Fact]
@@ -207,10 +305,7 @@ public sealed class BassMidiRendererIntegrationTests
             [sourceId],
             [0]);
         BassMidiRendererSettings settings = new(
-            BassMidiInterpolation.BassDefault,
-            BassMidiSampleLoading.OnDemand,
-            0,
-            0,
+            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
             256);
         using BassMidiRenderer renderer = new(
             plan,
@@ -249,10 +344,7 @@ public sealed class BassMidiRendererIntegrationTests
         out long allocatedBytes)
     {
         BassMidiRendererSettings settings = new(
-            BassMidiInterpolation.BassDefault,
-            BassMidiSampleLoading.OnDemand,
-            maximumVoices: 0,
-            cpuLimitPercent: 0,
+            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
             maximumWorkFrameCount: internalBlockFrames);
         using BassMidiRenderer renderer = new(
             plan,
@@ -289,10 +381,7 @@ public sealed class BassMidiRendererIntegrationTests
     private static BassMidiRenderer CreateRenderer(MidiRenderPlan plan, int maximumWorkFrameCount)
     {
         BassMidiRendererSettings settings = new(
-            BassMidiInterpolation.BassDefault,
-            BassMidiSampleLoading.OnDemand,
-            maximumVoices: 0,
-            cpuLimitPercent: 0,
+            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
             maximumWorkFrameCount);
         return new BassMidiRenderer(
             plan,

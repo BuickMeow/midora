@@ -43,7 +43,7 @@
 ### 1.6 明确非目标
 
 - 后端不解释 Project、Event Instrument、Mapping、Lifecycle、Segment、tempo 或资源分配规则。
-- 初版不支持 Reverb、Chorus、CC91、CC93、effect tail、Voice Stealing、传统 MIDI OUT、MIDI 2.0、多 SoundFont、SFZ/DLS、录音或用户可见的进程拓扑切换。
+- 初版不支持 Reverb、Chorus、CC91、CC93、effect tail、语义级 Voice Stealing 策略、传统 MIDI OUT、MIDI 2.0、多 SoundFont、SFZ/DLS、录音或用户可见的进程拓扑切换。已确认的 BASSMIDI sample voice 资源上限不属于语义级 Voice Stealing。
 
 ## 2. ADR-AUDIO-001：绝对 sample-frame 消费协议
 
@@ -82,8 +82,12 @@
 - 同一 frame 的 MIDI 消息紧凑打包后立即批量提交；提交和 `ChannelGetData` 都检查返回值并立即捕获当前线程 BASS error code。
 - 活动阶段不执行 sample loading、路径转换或托管内存分配。
 - `BASS_MIDI_NOTEOFF1` 固定启用；同 Port、Channel、pitch 的重叠 Note 实例由 velocity `0` 或普通 NoteOff 按最早开始者优先逐个释放。该语义已通过真实 BASSMIDI stream 的同音高重叠、Cut Previous 释放与新实例重叠、硬边界成对 NoteOff、Reset All Controllers 和 velocity `0` 集成测试。
+- 插值固定为 `BASS_ATTRIB_MIDI_SRC = 1`（8-point sinc），不使用含义不够精确的旧式 `BASS_MIDI_SINCINTER` 开关。
+- CPU 属性固定为 `0`。官方含义是 automatic；在 Midora 主动拉取的 decode Stream 拓扑中不由 BASS update thread 处理，因此不启用 CPU shedding。拓扑改变时必须重验。
+- Preparing 从冻结计划提取实际 Note On 使用的 Bank MSB / Program，并对共享 SF2 调用 `BASS_MIDI_FontLoad`；缺失组合保持 BASS fallback，并预加载 fallback。不得对实时事件 Stream 调用 `BASS_MIDI_StreamLoadSamples`。
+- 实时与离线分别配置每 Stream sample voice 上限，默认均为 `750`；同一任务所有 Port 使用同一冻结值。达到上限时允许 BASSMIDI 固定 voice-limit 行为；完美音频一致性测试必须未触顶。
 
-尚未决定，且本轮不得隐藏选择：interpolation、voice/CPU limiting、sample loading 参数及固定 BASS 修订。
+尚未决定，且本轮不得隐藏选择：固定 BASS 修订。
 
 ## 5. ADR-AUDIO-004：WASAPI shared event-driven 与无锁缓冲
 

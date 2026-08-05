@@ -3,30 +3,12 @@ namespace Midora.Audio.Bass;
 public sealed record class BassMidiRendererSettings
 {
     public BassMidiRendererSettings(
-        BassMidiInterpolation interpolation,
-        BassMidiSampleLoading sampleLoading,
-        int maximumVoices,
-        float cpuLimitPercent,
+        int maximumSampleVoiceCount,
         int maximumWorkFrameCount)
     {
-        if (!Enum.IsDefined(interpolation))
+        if (maximumSampleVoiceCount is < 1 or > BassMidiPolyphonyConfiguration.MaximumSampleVoiceCount)
         {
-            throw new ArgumentOutOfRangeException(nameof(interpolation));
-        }
-
-        if (!Enum.IsDefined(sampleLoading))
-        {
-            throw new ArgumentOutOfRangeException(nameof(sampleLoading));
-        }
-
-        if (maximumVoices < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(maximumVoices));
-        }
-
-        if (!float.IsFinite(cpuLimitPercent) || cpuLimitPercent is < 0 or > 100)
-        {
-            throw new ArgumentOutOfRangeException(nameof(cpuLimitPercent));
+            throw new ArgumentOutOfRangeException(nameof(maximumSampleVoiceCount));
         }
 
         if (maximumWorkFrameCount is < 16 or > 65_536)
@@ -34,32 +16,49 @@ public sealed record class BassMidiRendererSettings
             throw new ArgumentOutOfRangeException(nameof(maximumWorkFrameCount));
         }
 
-        Interpolation = interpolation;
-        SampleLoading = sampleLoading;
-        MaximumVoices = maximumVoices;
-        CpuLimitPercent = cpuLimitPercent;
+        MaximumSampleVoiceCount = maximumSampleVoiceCount;
         MaximumWorkFrameCount = maximumWorkFrameCount;
     }
 
-    public BassMidiInterpolation Interpolation { get; }
-
-    public BassMidiSampleLoading SampleLoading { get; }
-
-    public int MaximumVoices { get; }
-
-    public float CpuLimitPercent { get; }
+    public int MaximumSampleVoiceCount { get; }
 
     public int MaximumWorkFrameCount { get; }
 }
 
-public enum BassMidiInterpolation : byte
+public sealed record class BassMidiPolyphonyConfiguration
 {
-    BassDefault,
-    Sinc
-}
+    public const int DefaultMaximumSampleVoiceCount = 750;
 
-public enum BassMidiSampleLoading : byte
-{
-    OnDemand,
-    PreloadAllReferencedSamples
+    // BASS_ATTRIB_MIDI_VOICES is transported as float. Keep every accepted integer exact.
+    public const int MaximumSampleVoiceCount = 1 << 24;
+
+    public BassMidiPolyphonyConfiguration(
+        int realtimeMaximumSampleVoiceCount = DefaultMaximumSampleVoiceCount,
+        int offlineMaximumSampleVoiceCount = DefaultMaximumSampleVoiceCount)
+    {
+        Validate(realtimeMaximumSampleVoiceCount, nameof(realtimeMaximumSampleVoiceCount));
+        Validate(offlineMaximumSampleVoiceCount, nameof(offlineMaximumSampleVoiceCount));
+        RealtimeMaximumSampleVoiceCount = realtimeMaximumSampleVoiceCount;
+        OfflineMaximumSampleVoiceCount = offlineMaximumSampleVoiceCount;
+    }
+
+    public static BassMidiPolyphonyConfiguration Default { get; } = new();
+
+    public int RealtimeMaximumSampleVoiceCount { get; }
+
+    public int OfflineMaximumSampleVoiceCount { get; }
+
+    public BassMidiRendererSettings CreateRealtimeRendererSettings(int maximumWorkFrameCount) =>
+        new(RealtimeMaximumSampleVoiceCount, maximumWorkFrameCount);
+
+    public BassMidiRendererSettings CreateOfflineRendererSettings(int maximumWorkFrameCount) =>
+        new(OfflineMaximumSampleVoiceCount, maximumWorkFrameCount);
+
+    private static void Validate(int value, string parameterName)
+    {
+        if (value is < 1 or > MaximumSampleVoiceCount)
+        {
+            throw new ArgumentOutOfRangeException(parameterName);
+        }
+    }
 }

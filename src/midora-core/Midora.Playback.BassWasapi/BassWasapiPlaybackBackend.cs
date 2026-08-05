@@ -21,11 +21,7 @@ internal sealed record BassWasapiPlaybackOptions(
         100,
         50,
         InitialReleaseAudioRuntimePolicy.WorkFrameCount,
-        new BassMidiRendererSettings(
-            BassMidiInterpolation.BassDefault,
-            BassMidiSampleLoading.OnDemand,
-            0,
-            0,
+        BassMidiPolyphonyConfiguration.Default.CreateRealtimeRendererSettings(
             InitialReleaseAudioRuntimePolicy.WorkFrameCount),
         AudioMasterSettings.LimiterV1);
 }

@@ -64,6 +64,7 @@
 - Segment Split 必须为右侧 Segment 保留或生成必要参数起点状态，维持参数状态及相关曲线在分割前后的听感；不改变跨分割点 Logical Note 的提前结束规则。
 - 正式 BASSMIDI 后端启用 `BASS_MIDI_NOFX`，初版不支持 Reverb / Chorus，也不允许 CC91 / CC93。
 - 正式 BASSMIDI 后端启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠 Note 实例按 FIFO 逐个释放，Cut Previous 的释放重叠与硬边界 Reset 必须保持精确 NoteOff 配对。
+- 正式 BASSMIDI Stream 固定使用 8-point sinc 和 CPU 属性 `0`，并在 Preparing 预加载计划引用的 SF2 presets；实时与离线 sample voice 上限分别配置，默认均为每 Stream `750`，同一任务所有 Port 使用同一值。
 - 实时播放跟随所选输出设备的实际采样率；音频文件渲染使用用户选择的 `8,000–192,000 Hz` 整数采样率。
 - 音频文件输出改为普通 RIFF/WAVE、Stereo、Interleaved IEEE 32-bit Float；超过 RIFF 大小上限时在 Preparing 阶段失败。
 - 增加启用输出设备枚举、可调 buffer、约 200 ms 性能基准、音频活动线程零托管分配和固定内部音频子进程要求。

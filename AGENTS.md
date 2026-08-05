@@ -37,7 +37,7 @@ Project Source Data
 
 - 目标是 Windows Desktop、.NET 10、WPF、MIDI 1.0、单个用户可启动的应用实例、单 Project、单个 Project SoundFont、最多 16 Port × 16 Channel Unit。允许由主实例管理一个无 UI、不能独立打开 Project 的内部音频子进程。
 - Channel 10 在所有 Port 上都必须按 melodic channel 初始化，不能使用 BASSMIDI 默认鼓通道语义。
-- 不得顺手加入 MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、Voice Stealing、多 SoundFont、SFZ/DLS、Pause/Scrub、多 Project 或 SRS 明确排除的能力。
+- 不得顺手加入 MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、由 Compiler/Overlap/Channel Group 实施的语义级 Voice Stealing、多 SoundFont、SFZ/DLS、Pause/Scrub、多 Project 或 SRS 明确排除的能力。BASSMIDI 每 Stream sample voice 上限是已确认的后端资源配置，不属于该禁止项。
 - Event Instrument、SubVoice、Mapping、Lifecycle、Logical Track、Segment 等正式语义以各自 SRS 章节为准，不以当前原型类结构为准。
 - 满足正确性、确定性、失败原子性和资源上限的候选实现中，时间性能优先于最小内存占用；允许用更多但有明确上限和释放时机的内存换取速度。
 
@@ -51,12 +51,13 @@ Project Source Data
 - 每次 stream 创建、重建和复用前都要显式建立 melodic Channel 10 和规范要求的初始状态。只有完成精确 NoteOff、Reset 与状态清理后才允许复用。
 - 不得用 `Thread.Sleep`、UI 定时器或“调用 API 的瞬间”承担正式 MIDI 时序。事件必须从 Canonical Compiled Result 经统一 tick→sample 映射后做采样级调度；同 tick 顺序必须保留。
 - 所有正式 BASSMIDI Stream 必须启用 `BASS_MIDI_NOFX | BASS_MIDI_NOTEOFF1`。初版完全不支持 Reverb / Chorus；CC91 / CC93 不得进入 Project、Mapping、Canonical Result、播放调度或 MIDI 导出。后端收到它们时必须报告一致性 Error。同 Port、Channel、pitch 的重叠 Note 实例按 FIFO 与逐个 NoteOff 配对，硬边界必须按活动实例数完整释放。
+- 所有正式 BASSMIDI Stream 固定 `BASS_ATTRIB_MIDI_SRC = 1`（8-point sinc）和 `BASS_ATTRIB_MIDI_CPU = 0`。实时与离线每 Stream sample voice 上限分别配置，默认均为 750；同一任务全部实际 Port Stream 使用同一冻结值。Preparing 必须用 `BASS_MIDI_FontLoad` 预加载计划引用的 presets/fallback，不得对实时事件 Stream 调用 `BASS_MIDI_StreamLoadSamples`。
 - 实时链固定为：实际 Port stereo 输出求和 → Playback Master Volume → Limiter → WASAPI；预览也走该链。离线整曲链语义相同，但不依赖 WASAPI 或物理设备。
 - WASAPI 回调不得编译、分配常规托管对象、阻塞、等待锁、做文件/网络 I/O 或让异常越过 native 边界。回调只消费已准备好的连续 float32 frame，正确处理短读、静音、停止和设备丢失。
 - Playing、Buffering、实时预览和文件 Rendering 阶段的 callback、调度、合成协调、混音、buffer 搬运及文件采样写入线程不得产生托管堆分配。Preparing / Finalizing 可以分配；同进程其他非音频线程可以分配和触发 GC。
 - 音频缓冲协议以 frame 为基本单位，显式携带采样率、声道数、sample format、frame count；不得混淆 byte count、sample count 和 frame count。
 - 必须列出全部 enabled output device 并排除输入、loopback input、disabled、unplugged 和 not-present 端点。实时音频按设备初始化后报告的实际采样率生成；设备或实际采样率变化时丢弃全部 sample-domain 缓存。
-- Application Preferences 的可调 buffer 为：Render-Ahead 20–2000 ms（默认 100）、Device Request 5–200 ms（默认 50）、IPC Audio 20–1000 ms（默认 100，仅子进程拓扑）。设备实际 buffer、callback period 和工作 block 只读。
+- Application Preferences 的可调实时参数为：Render-Ahead 20–2000 ms（默认 100）、Device Request 5–200 ms（默认 50）、Realtime Maximum Sample Voices per Stream 1–16,777,216（默认 750）。离线 sample voice 上限属于 Project 的 Audio Render Settings，取值范围相同、默认 750。实时 PCM 不跨进程，不提供 IPC Audio Buffer 设置；设备实际 buffer、callback period 和工作 block 只读。
 - BASS/BASSMIDI/BASSWASAPI 的全局初始化、线程相关 device context、原生 handle、callback delegate/GCHandle 和卸载顺序必须集中管理。所有原生调用都要检查返回值，并立即读取当前线程的错误码。
 - 启动时校验三个 DLL 的 API 主版本和受支持修订；构建/发布产物固定版本与 SHA-256，不依赖机器上偶然存在的 DLL。
 - 音频文件渲染输出普通 RIFF/WAVE、stereo、interleaved IEEE float32 little-endian；采样率是用户选择的 8,000–192,000 Hz 整数，默认 48,000 Hz。文件专用 OutputDevice 直接按目标采样率生成，不依赖 WASAPI。超过 RIFF 大小上限时 Preparing 失败，不拆分、不回退 RF64。流式分块写入并使用临时文件—校验—原子发布事务。
@@ -91,3 +92,4 @@ Project Source Data
 3. 初版正式音频后端启用 `BASS_MIDI_NOFX`，完整拒绝 CC91 / CC93。
 4. 普通 RIFF/WAVE 取代 RF64；文件采样率可选，实时采样率跟随设备实际值。
 5. 正式 BASSMIDI Stream 启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠 Note 实例按最早开始者优先逐个释放。
+6. 正式 BASSMIDI Stream 使用 8-point sinc、CPU 属性 0；实时/离线 sample voice 上限分别配置且默认均为每 Stream 750，完美音频一致性测试以未触顶为前提。

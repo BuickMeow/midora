@@ -35,7 +35,7 @@ flowchart LR
 - 时间：Project 创建时确定 TPQ，默认 192，之后不可修改；tick 使用有符号 64 位；所有正式范围是左闭右开 `[startTick, endTick)`。
 - Conductor：Project 恰有一条 Conductor Track；tick 0 必须有有效 Tempo 和 Time Signature；初版只支持离散 Tempo，不支持 ramp。
 - 身份：对象使用 Project 全局稳定 ID；引用不得依赖名称、位置、tick、Port 或 Channel。
-- 资源：最多 16 个 Port，每 Port 16 个 Channel Unit，共 256；实际使用多少 Port 就创建多少 BASSMIDI stream；Channel Group 原子分配、低编号优先、无 Voice Stealing。
+- 资源：最多 16 个 Port，每 Port 16 个 Channel Unit，共 256；实际使用多少 Port 就创建多少 BASSMIDI stream；Channel Group 原子分配、低编号优先，不做语义级 Voice Stealing。BASSMIDI sample voice 上限属于独立后端资源配置。
 - Channel 10：所有 Port 的 Channel 10 都是 melodic，不使用 General MIDI drum 默认语义。
 - MIDI 效果：所有正式 BASSMIDI stream 必须使用 `BASS_MIDI_NOFX`；Midora 完全不支持 CC91 Reverb Send 和 CC93 Chorus Send。它们不得进入编辑器、初始状态、Mapping、Canonical Compiled Result 或 MIDI 导出；源数据出现时属于语义 Error。
 - SoundFont：一个 Project 一个 SF2；缺失/损坏不妨碍打开、编译和 MIDI 导出，但阻止所有正式发声和音频渲染。
@@ -55,7 +55,7 @@ flowchart LR
 
 ### 2.2 明确不在初版范围内
 
-MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、Pause/Scrub、Voice Stealing、Channel 10 鼓通道、多 SoundFont、SFZ/DLS、多 Project、自动保存/崩溃恢复，以及 SRS 第 21 章列出的其他排除项。开发时不得以“顺便支持”为由扩大范围。
+MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、Pause/Scrub、语义级 Voice Stealing 策略、Channel 10 鼓通道、多 SoundFont、SFZ/DLS、多 Project、自动保存/崩溃恢复，以及 SRS 第 21 章列出的其他排除项。已确认的 BASSMIDI sample voice 资源上限除外。
 
 ## 3. 现有源码基线
 
@@ -329,7 +329,7 @@ flowchart TD
 以下不是规格错误，但需要版本化 ADR 和测试向量：
 
 - 初版正式支持的 CPU 架构；当前 native 安装脚本仅取 win-x64，但 SRS 未把 x64 写成产品范围。
-- BASSMIDI interpolation、voice/CPU limiting、sample loading 的正式参数；这些选择可能改变可听结果或 underrun 行为。
+- BASSMIDI 性能档已由 14A 固定；仍需在正式硬件矩阵验证 8-point sinc、每 Stream 默认 750 sample voices、preset 预加载和 CPU 属性 0 的峰值、内存、触顶及 underrun 行为。
 - 固定哪个 BASS/BASSMIDI/BASSWASAPI revision，并如何升级及回归声音语义。
 - 任意 C# Mapping 的执行隔离、资源限制与信任提示。SRS 明确“无 sandbox”，因此只能诚实管理风险，不能假定输入可信。
 

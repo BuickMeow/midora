@@ -14,7 +14,7 @@
 - 诊断：保持 Error/Warning/Info/Debug 原级别；Warning-as-error 只影响成功判定；`Channel Unit >= 248` 固定为 Info。
 - 持久化归属：`.midora` 只保存源数据和 Project 级稳定 ID 计数器；不得保存 Project ID、canonical 结果、缓存、Mute/Solo、播放位置或任务状态。
 - 运行时归属：Mute/Solo、设备、buffer、播放状态、sample-domain 缓存和 native handle 均不属于 Project。
-- 非目标：MIDI 2.0、传统 MIDI OUT、VST/DAW host、录音、Voice Stealing、多 SoundFont、Pause/Scrub 和多 Project。
+- 非目标：MIDI 2.0、传统 MIDI OUT、VST/DAW host、录音、语义级 Voice Stealing 策略、多 SoundFont、Pause/Scrub 和多 Project；已确认的 BASSMIDI sample voice 资源上限除外。
 
 ## 2. 已由 SRS 闭合、必须直接修正的差异
 
@@ -81,7 +81,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 11. **已确认：11A（2026-08-05）**。初版正式实时合成与 Render-Ahead producer 的最大工作 block 固定为 `256 frames`，事件边界和任务末尾允许短块。音频子进程内部的 Render-Ahead 使用单个有界 SPSC PCM ring，容量按 `ceil(actualSampleRate × RenderAheadMilliseconds / 1000)` frames 计算，不存在固定 ring block 数；实时 PCM 不跨进程。
 12. **已确认：12C（2026-08-05）**。初版唯一正式拓扑为完整内部音频子进程：子进程独占 BASS、BASSMIDI、Limiter、Render-Ahead、BASSWASAPI、设备 callback 和文件专用 OutputDevice；主进程只负责 Project、Compiler、Canonical Result、UI 与任务协调。Worker 针对最终支持的每个 Windows RID 单独 Native AOT 发布；运行时命令/状态使用固定版本、固定布局、有界的二进制共享内存 ABI，不使用 JSON/文本反序列化，热路径不得产生托管堆分配。产品 CPU RID 集合仍由第 15 项确认。
 13. **已确认：13A（2026-08-05）**。所有正式 BASSMIDI Stream 固定启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠实例按最早开始者优先逐个释放。配置层已删除 Release All 分支，完整音频 Worker 与旧对照链共享该不可配置语义；真实 BASSMIDI 集成测试已覆盖同音高重叠、NoteOff velocity `0`、Cut Previous 释放与新实例重叠，以及硬边界成对 NoteOff 后的 Reset All Controllers。
-14. BASSMIDI 性能参数档：interpolation、voice/CPU limiting、sample loading；当前原型为 BASS default/on-demand/不设 voice 与 CPU 上限。
+14. **已确认：14A（2026-08-05，含后续补充）**。正式 Stream 固定 `BASS_ATTRIB_MIDI_SRC=1`（8-point sinc）和 `BASS_ATTRIB_MIDI_CPU=0`；Preparing 使用 `BASS_MIDI_FontLoad` 预加载冻结计划引用的 presets，缺失组合保持并预加载 BASS fallback。实时与离线 sample voice 上限分别配置，默认均为每 Stream `750`，同一任务所有 Port 使用同一冻结值；达到上限允许 BASS 固定 voice-limit 行为，完美音频一致性测试以未触顶为前提。代码已删除 interpolation/sample-loading/CPU 可选分支，修复实时事件 Stream 错用 `StreamLoadSamples`，并建立实时/离线独立配置传播与真实属性回读测试。Application Preferences、Audio Render Settings 的完整 UI/持久化仍随对应未完成模块实施。
 15. 产品 CPU 架构：win-x64、win-x86 或其他明确发布集合；工具已不再暗设 x64。
 16. BASS/BASSMIDI/BASSWASAPI 固定修订和每个发布文件的 SHA-256；不得把 vendor `latest` 当正式基线。
 17. C# Mapping Function 的持久兼容 ABI：函数签名、允许引用、缓存和 AssemblyLoadContext 卸载策略；“初版不做 sandbox”已由 SRS 9.11.4 确认，不再询问。

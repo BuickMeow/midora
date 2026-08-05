@@ -33,7 +33,7 @@ MPE 或 MIDI 2.0 per-note controllers
 多个可独立启动、显示 UI 或打开 Project 的 Midora 应用实例；不包括由唯一主实例管理的内部音频后端子进程
 传统 Save As、自动保存或崩溃恢复
 Pause、Scrubbing、Recording、Count-in、Legato、Tempo Ramp
-Voice Steal
+由 Compiler、Overlap 或 Channel Group 实施的语义级 Voice Steal；不包括第 13.12.9、15.7.2 节明确允许的 BASSMIDI sample voice 资源上限
 多 SF2、每 Port/Track/Instrument 独立 SF2
 SFZ、DLS、Kontakt、LV2 等声音资源
 纯键盘完整工作流、屏幕阅读器和 Access Keys

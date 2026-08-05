@@ -34,6 +34,7 @@
 | INV-023 | 初版正式 WASAPI 输出固定为 Shared Mode、event-driven、stereo interleaved float32；采样率、实际 buffer 与 callback period 由端点初始化结果决定，不得静默回退到其他模式或格式。 |
 | INV-024 | 初版正式实时音频工作 block 固定为最多 256 frames；子进程内 Render-Ahead PCM ring 容量按实际采样率和用户毫秒设置向上取整为 frame，不固定 ring block 数；实时 PCM 不跨进程，运行时控制 IPC 使用固定版本二进制共享内存且热路径零分配。 |
 | INV-025 | 正式 BASSMIDI Stream 启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠实例按 FIFO 与逐个 NoteOff 配对，硬边界必须按活动实例数完整释放。 |
+| INV-026 | 正式 BASSMIDI Stream 固定 8-point sinc 和 CPU 属性 0；实时/离线分别配置每 Stream sample voice 上限，默认均为 750，同一任务所有 Port 使用同一冻结值。完美音频一致性测试以未触顶为前提。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|

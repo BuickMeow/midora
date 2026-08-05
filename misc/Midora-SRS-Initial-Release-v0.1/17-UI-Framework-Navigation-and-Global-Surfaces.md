@@ -160,6 +160,7 @@ File picker recent directories by purpose
 Selected playback output device ID or System Default choice
 Render-Ahead Buffer
 Device Buffer Request
+Realtime Maximum Sample Voices per Stream
 ```
 这些状态：
 - 不进入 Project Undo / Redo；

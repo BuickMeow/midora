@@ -65,6 +65,7 @@ SF2 资源
 Playback Master Volume
 用于渲染的 Limiter 语义与参数
 本次文件采样率
+本次 Offline Maximum Sample Voices per Stream
 文件专用 OutputDevice 配置
 输出目标列表
 覆盖授权
@@ -357,6 +358,11 @@ Windows 应用音量混音器
 SF2 加载
 Channel 10 melodic 初始化
 BASS_MIDI_NOFX 启用
+BASS_MIDI_NOTEOFF1 启用
+BASS_ATTRIB_MIDI_SRC = 1
+BASS_ATTRIB_MIDI_CPU = 0
+每个 Stream 使用本次冻结的同一 Offline Maximum Sample Voices 值
+在 Preparing 预加载计划引用的 SF2 presets 或其 fallback
 按本次文件采样率直接创建 / 配置
 compiled result 所需初始状态应用
 ```
@@ -1061,6 +1067,8 @@ Midora 不主动注入随机性。
 不要求重复渲染文件 hash 相同。
 ```
 buffer / chunk 大小不得改变音乐时间、事件顺序或可感知输出语义。
+
+涉及逐采样、逐字节或不同 block 完美一致性的音频测试，必须使用实际活动 sample voices 不超过本次 `Offline Maximum Sample Voices per Stream` 的输入。达到配置上限时，允许 BASSMIDI 的固定 voice-limit 行为改变音频；不得把这种资源上限行为误判为编译器或 block-size 不确定性。
 ---
 ## 15.20 Audio Render Settings
 ### 15.20.1 Project 顶层对象
@@ -1086,6 +1094,7 @@ Audio Render Settings
 有限的文件命名偏好
 固定格式字段
 默认文件采样率
+默认 Offline Maximum Sample Voices per Stream
 ```
 固定格式字段明确记录：
 ```text
@@ -1102,6 +1111,15 @@ Little-endian
 8,000–192,000 Hz
 ```
 本次任务修改采样率默认不修改 Project；只有显式 `Save as Project Defaults` 才提交该值。
+
+默认 `Offline Maximum Sample Voices per Stream` 是用户可编辑 Project 默认值：
+```text
+整数
+1–16,777,216
+默认 750
+```
+
+它与 Application Preferences 中的实时复音上限分别保存、分别修改。一次音频渲染任务的所有实际 Port Stream 使用同一个冻结的离线值；分轨模式的每个 Track 任务也使用本次任务冻结的同一值。
 ### 15.20.3 默认值
 新 Project 默认：
 ```text
@@ -1110,6 +1128,7 @@ Range = Project Default Range
 Track Selection = All Valid Logical Tracks
 Format = RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float
 Sample Rate = 48,000 Hz
+Offline Maximum Sample Voices per Stream = 750
 ```
 ### 15.20.4 范围设置
 默认范围模式至少支持：
@@ -1167,6 +1186,7 @@ Project 名称修改只影响未来整曲建议文件名。
 最近输出目录
 本次临时范围
 本次文件采样率覆盖值
+本次 Offline Maximum Sample Voices per Stream 覆盖值
 本次 Track 选择
 本次覆盖决定
 本次进度和剩余时间
@@ -1220,6 +1240,7 @@ Project Default Range
 All Valid Logical Tracks
 RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float
 Sample Rate = 48,000 Hz
+Offline Maximum Sample Voices per Stream = 750
 ```
 迁移后必须明确写入当前 schema 要求的固定格式字段和合法默认采样率。
 ### 15.21.4 严格字段规则

@@ -13,6 +13,8 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
     private const int MaximumMidiBatchEventCount = 1_024;
     private const int MaximumPackedMidiBatchByteCount = MaximumMidiBatchEventCount * 3;
     private const int MonitoringCommandQueueCapacity = 4_096;
+    private const float InitialReleaseInterpolationQuality = 1f;
+    private const float InitialReleaseCpuLimit = 0f;
     private readonly MidiRenderPlan _plan;
     private readonly BassMidiRendererSettings _settings;
     private readonly BassNativeRuntime.Lease? _runtimeLease;
@@ -76,6 +78,7 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
             nuint scratchByteCount = checked((nuint)settings.MaximumWorkFrameCount * 2 * sizeof(float));
             _portScratchBuffer = (float*)NativeMemory.Alloc(scratchByteCount);
             CreateSoundFont(soundFontPath);
+            PreloadReferencedPresets();
             CreatePorts();
             WarmNativeHotPath();
         }
@@ -141,6 +144,29 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
         }
 
         return count;
+    }
+
+    internal float GetStreamAttributeForDiagnostics(int zeroBasedPortNumber, uint attribute)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (zeroBasedPortNumber is < 0 or >= 16)
+        {
+            throw new ArgumentOutOfRangeException(nameof(zeroBasedPortNumber));
+        }
+
+        int portIndex = _portIndexByNumber[zeroBasedPortNumber];
+        if (portIndex < 0)
+        {
+            throw new ArgumentException("The render plan does not use the requested Port.", nameof(zeroBasedPortNumber));
+        }
+
+        float value;
+        if (NativeBass.ChannelGetAttribute(_ports[portIndex].StreamHandle, attribute, &value) == 0)
+        {
+            ThrowBassPreparationFailure("BASS_ChannelGetAttribute");
+        }
+
+        return value;
     }
 
     public void EnqueueMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
@@ -307,6 +333,87 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
         }
     }
 
+    private void PreloadReferencedPresets()
+    {
+        int[] referencedPresets = CollectReferencedPresetKeys(_plan);
+        for (int i = 0; i < referencedPresets.Length; i++)
+        {
+            int key = referencedPresets[i];
+            int preset = key & 127;
+            int bank = key >> 7;
+            if (NativeBassMidi.FontLoad(_soundFontHandle, preset, bank) != 0)
+            {
+                continue;
+            }
+
+            int error = NativeBass.ErrorGetCode();
+            if (error != NativeBass.BASS_ERROR_NOTAVAIL)
+            {
+                ThrowBassPreparationFailure("BASS_MIDI_FontLoad", error);
+            }
+
+            // Initial release deliberately does not validate whether a Program/Bank exists.
+            // BASSMIDI may fall back to another bank/preset, so preload the whole SF2 in this
+            // exceptional case to keep fallback rendering free of runtime sample loading.
+            if (NativeBassMidi.FontLoad(_soundFontHandle, -1, -1) == 0)
+            {
+                ThrowBassPreparationFailure("BASS_MIDI_FontLoad(all fallback presets)");
+            }
+            return;
+        }
+    }
+
+    internal static int[] CollectReferencedPresetKeys(MidiRenderPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        bool[] referenced = new bool[128 * 128];
+        int count = 0;
+        Span<byte> banks = stackalloc byte[16];
+        Span<byte> programs = stackalloc byte[16];
+        foreach (MidiPortRenderPlan port in plan.Ports)
+        {
+            banks.Clear();
+            programs.Clear();
+            foreach (ScheduledMidiMessage scheduled in port.Events)
+            {
+                MidiMessage message = scheduled.Message;
+                int channel = message.ChannelNumber;
+                if (message.MessageType == MidiMessageType.ControlChange && message.Byte1 == 0)
+                {
+                    banks[channel] = message.Byte2;
+                    continue;
+                }
+                if (message.MessageType == MidiMessageType.ProgramChange)
+                {
+                    programs[channel] = message.Byte1;
+                    continue;
+                }
+                if (message.MessageType != MidiMessageType.NoteOn || message.Byte2 == 0)
+                {
+                    continue;
+                }
+
+                int key = (banks[channel] << 7) | programs[channel];
+                if (!referenced[key])
+                {
+                    referenced[key] = true;
+                    count++;
+                }
+            }
+        }
+
+        int[] result = new int[count];
+        int resultIndex = 0;
+        for (int key = 0; key < referenced.Length; key++)
+        {
+            if (referenced[key])
+            {
+                result[resultIndex++] = key;
+            }
+        }
+        return result;
+    }
+
     private void CreatePorts()
     {
         ReadOnlySpan<MidiPortRenderPlan> plans = _plan.Ports;
@@ -341,11 +448,18 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
                 ThrowBassPreparationFailure("BASS_MIDI_StreamSetFonts");
             }
 
-            if (_settings.MaximumVoices != 0
-                && NativeBass.ChannelSetAttribute(
+            if (NativeBass.ChannelSetAttribute(
+                streamHandle,
+                NativeBassMidi.BASS_ATTRIB_MIDI_SRC,
+                InitialReleaseInterpolationQuality) == 0)
+            {
+                ThrowBassPreparationFailure("BASS_ChannelSetAttribute(BASS_ATTRIB_MIDI_SRC)");
+            }
+
+            if (NativeBass.ChannelSetAttribute(
                     streamHandle,
                     NativeBassMidi.BASS_ATTRIB_MIDI_VOICES,
-                    _settings.MaximumVoices) == 0)
+                    _settings.MaximumSampleVoiceCount) == 0)
             {
                 ThrowBassPreparationFailure("BASS_ChannelSetAttribute(BASS_ATTRIB_MIDI_VOICES)");
             }
@@ -353,18 +467,12 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
             if (NativeBass.ChannelSetAttribute(
                 streamHandle,
                 NativeBassMidi.BASS_ATTRIB_MIDI_CPU,
-                _settings.CpuLimitPercent) == 0)
+                InitialReleaseCpuLimit) == 0)
             {
                 ThrowBassPreparationFailure("BASS_ChannelSetAttribute(BASS_ATTRIB_MIDI_CPU)");
             }
 
             EstablishCanonicalInitialState(streamHandle);
-
-            if (_settings.SampleLoading == BassMidiSampleLoading.PreloadAllReferencedSamples
-                && NativeBassMidi.StreamLoadSamples(streamHandle) == 0)
-            {
-                ThrowBassPreparationFailure("BASS_MIDI_StreamLoadSamples");
-            }
 
             return new PortState(plan, streamHandle);
         }
@@ -389,11 +497,6 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
             | NativeBass.BASS_STREAM_DECODE
             | NativeBassMidi.BASS_MIDI_NOFX
             | NativeBassMidi.BASS_MIDI_NOTEOFF1;
-
-        if (settings.Interpolation == BassMidiInterpolation.Sinc)
-        {
-            flags |= NativeBassMidi.BASS_MIDI_SINCINTER;
-        }
 
         return flags;
     }
@@ -758,6 +861,12 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
     private static void ThrowBassPreparationFailure(string operation)
     {
         int error = NativeBass.ErrorGetCode();
+        throw new MidoraAudioException($"{operation} failed with BASS error {error}.");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ThrowBassPreparationFailure(string operation, int error)
+    {
         throw new MidoraAudioException($"{operation} failed with BASS error {error}.");
     }
 

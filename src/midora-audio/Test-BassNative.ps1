@@ -4,19 +4,38 @@ param(
     [string]$Directory,
     [Parameter(Mandatory)]
     [ValidateSet("win-x64")]
-    [string]$Architecture
+    [string]$Architecture,
+    [switch]$AllowUnpinnedDevelopmentCandidate
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $resolvedDirectory = [System.IO.Path]::GetFullPath($Directory)
-$manifestPath = Join-Path $resolvedDirectory "native-manifest.json"
-if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
-    throw "BASS native manifest does not exist: $manifestPath"
+$installedManifestPath = Join-Path $resolvedDirectory "native-manifest.json"
+$baselineManifestPath = Join-Path $PSScriptRoot "bass-native-baseline.win-x64.json"
+
+if ($AllowUnpinnedDevelopmentCandidate) {
+    if (-not (Test-Path -LiteralPath $installedManifestPath -PathType Leaf)) {
+        throw "BASS native candidate manifest does not exist: $installedManifestPath"
+    }
+
+    $manifest = Get-Content -LiteralPath $installedManifestPath -Raw -Encoding utf8 | ConvertFrom-Json
+    if ($manifest.schemaVersion -ne 1 -or $manifest.releaseBaseline -ne $false) {
+        throw "An unpinned development candidate manifest must use schemaVersion=1 and declare releaseBaseline=false."
+    }
+}
+else {
+    if (-not (Test-Path -LiteralPath $baselineManifestPath -PathType Leaf)) {
+        throw "Pinned BASS release baseline does not exist: $baselineManifestPath"
+    }
+
+    $manifest = Get-Content -LiteralPath $baselineManifestPath -Raw -Encoding utf8 | ConvertFrom-Json
+    if ($manifest.schemaVersion -ne 1 -or $manifest.releaseBaseline -ne $true) {
+        throw "Pinned BASS release baseline has an unsupported schema or is not marked as a release baseline."
+    }
 }
 
-$manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding utf8 | ConvertFrom-Json
 if ($manifest.architecture -ne $Architecture) {
     throw "BASS native architecture mismatch: manifest=$($manifest.architecture), requested=$Architecture."
 }
@@ -27,8 +46,24 @@ if ((@($manifestNames | Sort-Object) -join "`n") -ne (@($expectedNames | Sort-Ob
     throw "BASS native manifest must contain exactly bass.dll, bassmidi.dll, and basswasapi.dll."
 }
 
+$actualDllNames = @(
+    Get-ChildItem -LiteralPath $resolvedDirectory -File -Filter "*.dll" |
+        ForEach-Object { $_.Name }
+)
+if ((@($actualDllNames | Sort-Object) -join "`n") -ne (@($expectedNames | Sort-Object) -join "`n")) {
+    throw "BASS native directory must contain exactly bass.dll, bassmidi.dll, and basswasapi.dll."
+}
+
 foreach ($entry in $manifest.files) {
     $fileName = [string]$entry.name
+    if (-not $AllowUnpinnedDevelopmentCandidate) {
+        $hasValidVersion = ([string]$entry.version) -match "^\d+\.\d+\.\d+\.\d+$"
+        $hasValidVersionCode = ([string]$entry.versionCode) -match "^0x[0-9a-fA-F]{8}$"
+        if (-not $hasValidVersion -or -not $hasValidVersionCode) {
+            throw "Pinned BASS release baseline has an invalid version or versionCode for $fileName."
+        }
+    }
+
     $expectedHash = ([string]$entry.sha256).ToLowerInvariant()
     if ($expectedHash -notmatch "^[0-9a-f]{64}$") {
         throw "Invalid SHA-256 in BASS native manifest for $fileName."
@@ -45,4 +80,9 @@ foreach ($entry in $manifest.files) {
     }
 }
 
-Write-Host "Validated BASS native candidate at $resolvedDirectory ($Architecture)."
+if ($AllowUnpinnedDevelopmentCandidate) {
+    Write-Host "Validated unpinned BASS native development candidate at $resolvedDirectory ($Architecture)."
+}
+else {
+    Write-Host "Validated pinned BASS native release baseline at $resolvedDirectory ($Architecture)."
+}

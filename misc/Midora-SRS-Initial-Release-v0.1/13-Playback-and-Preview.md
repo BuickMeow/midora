@@ -1426,5 +1426,17 @@ IPC 延迟和吞吐量计入 §13.19.10 的约 200 ms 性能基准。
 
 初版音频子进程必须以 `win-x64` 独立 Native AOT、自包含发布，不允许在正式运行时依赖 JIT 编译，也不得生成或接受 `win-x86`、`win-arm64` 或 AnyCPU Worker 作为正式产物。Native AOT 不替代零分配、callback deadline、underrun、故障恢复和确定性验收。
 
+初版正式 BASS 原生基线固定如下；版本码是各模块 `GetVersion` 返回的完整 32-bit 值，不只是 API 主版本：
+
+| 文件 | 完整版本 | 版本码 | win-x64 DLL SHA-256 |
+|---|---:|---:|---|
+| `bass.dll` | 2.4.18.3 | `0x02041203` | `febb2cf1882d554c3a958280777da0b69f07de6e262df271de11c56e4a54afd4` |
+| `bassmidi.dll` | 2.4.16.0 | `0x02041000` | `e04e334ca35dce657b11eb9dacc7561b9c1365c337c1c3abac90a36336405ee6` |
+| `basswasapi.dll` | 2.4.4.1 | `0x02040401` | `6f0869c11431e01f759fbe1cd6080299c833c519eb8ab1feae12106907b1fbd1` |
+
+仓库只保存正式 manifest，不保存这些 DLL。正式构建必须由操作员提供官方二进制目录，先逐文件匹配正式 manifest，再把三项 DLL 和 manifest 纳入 `win-x64` Worker 发布目录；缺文件、多文件、架构不符、任一 hash 不符或任一运行时完整版本不符都必须失败。机器上偶然存在的 DLL、PATH 搜索结果、供应商可变的 current/latest URL 或只匹配 `2.4` API 主版本均不得成为正式输入。
+
+供应商 current-package URL 只允许在显式确认后生成 `releaseBaseline=false` 的本地开发候选。正式基线升级必须作为独立变更提交：固定新版本码与 SHA-256，重跑 Native interop、音频语义、逐采样确定性、实时/离线、性能和发布测试；不得自动跟随最新版。
+
 进程内后端或“子进程合成、主进程 WASAPI”的混合链只允许作为开发期对照测试，不是正式消费者，不得由产品运行时回退或切换进入。
 ---

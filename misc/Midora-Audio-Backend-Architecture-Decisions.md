@@ -87,7 +87,7 @@
 - Preparing 从冻结计划提取实际 Note On 使用的 Bank MSB / Program，并对共享 SF2 调用 `BASS_MIDI_FontLoad`；缺失组合保持 BASS fallback，并预加载 fallback。不得对实时事件 Stream 调用 `BASS_MIDI_StreamLoadSamples`。
 - 实时与离线分别配置每 Stream sample voice 上限，默认均为 `750`；同一任务所有 Port 使用同一冻结值。达到上限时允许 BASSMIDI 固定 voice-limit 行为；完美音频一致性测试必须未触顶。
 
-尚未决定，且本轮不得隐藏选择：固定 BASS 修订。
+固定原生修订由 ADR-AUDIO-006 定义；本节不得改回“同 API 主版本即可”的宽松策略。
 
 ## 5. ADR-AUDIO-004：WASAPI shared event-driven 与无锁缓冲
 
@@ -109,7 +109,17 @@ Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domai
 
 状态：已接受并作为初版唯一正式拓扑。旧的进程内链和“子进程合成、主进程 WASAPI”链仅保留为开发期对照测试，不得成为产品回退路径。
 
-## 7. 验证门
+## 7. ADR-AUDIO-006：BASS win-x64 固定原生基线
+
+决定：初版固定 `bass.dll 2.4.18.3 / 0x02041203`、`bassmidi.dll 2.4.16.0 / 0x02041000`、`basswasapi.dll 2.4.4.1 / 0x02040401`，逐文件 SHA-256 以仓库 `src/midora-audio/bass-native-baseline.win-x64.json` 为唯一正式清单。
+
+仓库不提交 DLL。正式发布由操作员提供官方二进制目录；发布目标先独立读取仓库 manifest 校验三个文件，再把 DLL 与 manifest 复制进 Worker 输出。运行时对三个 `GetVersion` 完整 32-bit 值做精确匹配。安装目录自带 manifest、机器 PATH、开发机缓存和供应商 current/latest URL 都不能替代仓库正式 manifest。
+
+`Get-BassNative.ps1 -AcceptUnpinnedDevelopmentCandidate` 只产生标记为 `releaseBaseline=false` 的本地候选。候选即使 API 主版本兼容，也不能进入正式发布；只有其字节恰好匹配仓库正式 hash 时才可由正式校验路径接受。升级必须显式更新 ADR/SRS/manifest、完整版本常量和回归证据，不自动追随供应商更新。
+
+本决定不授权重新分发 BASS；商业许可证和第三方 notices 仍是独立发布门。
+
+## 8. 验证门
 
 - 相同事件计划以不同工作 block（含非 2 次幂）渲染必须逐 sample 相同。
 - 验证事件前静音、事件 frame 起音、真实 NoteOff velocity 0、同 tick 顺序、同音高重叠、Reset、硬结束和总 frame 数。
@@ -119,3 +129,4 @@ Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domai
 - WAVE 验证 8,000、44,100、48,000、192,000 和自定义采样率，以及 RIFF/fmt/fact/data 大小、frame 对齐、上限拒绝、取消和原子发布。
 - WASAPI 验证短读、underrun/Buffering、设备移除、连续 start/stop、不同 callback block 和 callback 异常边界。
 - 子进程验证 Native AOT 发布、协议版本、损坏输入、命令 ring wrap、背压、进程退出、超时、吞吐、运行时 IPC 零分配和包含 IPC 的端到端延迟。
+- 原生基线验证正式 manifest schema、三个精确 hash、完整运行时版本、缺失/多余/篡改文件拒绝、开发候选隔离，以及正式发布目录确实包含被校验的 DLL 与 manifest。

@@ -59,7 +59,7 @@ Project Source Data
 - 必须列出全部 enabled output device 并排除输入、loopback input、disabled、unplugged 和 not-present 端点。实时音频按设备初始化后报告的实际采样率生成；设备或实际采样率变化时丢弃全部 sample-domain 缓存。
 - Application Preferences 的可调实时参数为：Render-Ahead 20–2000 ms（默认 100）、Device Request 5–200 ms（默认 50）、Realtime Maximum Sample Voices per Stream 1–16,777,216（默认 750）。离线 sample voice 上限属于 Project 的 Audio Render Settings，取值范围相同、默认 750。实时 PCM 不跨进程，不提供 IPC Audio Buffer 设置；设备实际 buffer、callback period 和工作 block 只读。
 - BASS/BASSMIDI/BASSWASAPI 的全局初始化、线程相关 device context、原生 handle、callback delegate/GCHandle 和卸载顺序必须集中管理。所有原生调用都要检查返回值，并立即读取当前线程的错误码。
-- 启动时校验三个 DLL 的 API 主版本和受支持修订；构建/发布产物固定版本与 SHA-256，不依赖机器上偶然存在的 DLL。
+- 正式原生基线固定为 BASS `2.4.18.3 / 0x02041203`、BASSMIDI `2.4.16.0 / 0x02041000`、BASSWASAPI `2.4.4.1 / 0x02040401` 以及 `bass-native-baseline.win-x64.json` 中的 SHA-256。仓库不保存 DLL；正式构建只接受操作员提供且逐文件匹配 manifest 的二进制，运行时校验完整版本码，不得只校验 API 主版本或自动采用 vendor current/latest。
 - 音频文件渲染输出普通 RIFF/WAVE、stereo、interleaved IEEE float32 little-endian；采样率是用户选择的 8,000–192,000 Hz 整数，默认 48,000 Hz。文件专用 OutputDevice 直接按目标采样率生成，不依赖 WASAPI。超过 RIFF 大小上限时 Preparing 失败，不拆分、不回退 RF64。流式分块写入并使用临时文件—校验—原子发布事务。
 - 约 200 ms 端到端实时延迟只是性能测试和架构选择基准，不是 Target Latency 设置，也不决定播放成败。若采用内部音频子进程，IPC 延迟必须计入。
 - 尚未由规格/ADR确定的音频语义或发布参数不得隐藏在实现默认值里；已确认的 Limiter、tick→sample 取整、WASAPI 模式、工作 block、进程拓扑和 `win-x64` 架构不得重新开放为可选分支。
@@ -94,3 +94,4 @@ Project Source Data
 5. 正式 BASSMIDI Stream 启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠 Note 实例按最早开始者优先逐个释放。
 6. 正式 BASSMIDI Stream 使用 8-point sinc、CPU 属性 0；实时/离线 sample voice 上限分别配置且默认均为每 Stream 750，完美音频一致性测试以未触顶为前提。
 7. 初版产品 CPU 架构固定为 `win-x64`；音频 Worker 只允许以该 RID Native AOT 发布。
+8. 初版三项 BASS DLL 的完整版本和 SHA-256 固定；仓库保存 manifest 而不提交 DLL，升级必须显式变更基线并完成全回归。

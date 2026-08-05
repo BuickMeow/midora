@@ -7,6 +7,25 @@ namespace Midora.AudioDevice.BassWasapi.Tests;
 public sealed class BassWasapiInitializationPolicyTests
 {
     [Fact]
+    public void PinnedBassWasapiVersionIsAcceptedExactly()
+    {
+        BassWasapiOutputDeviceFactory.ValidateExactVersion(BassWasapiOutputDeviceFactory.SupportedVersion);
+    }
+
+    [Theory]
+    [InlineData(0x02040400u)]
+    [InlineData(0x02040402u)]
+    [InlineData(0x02040500u)]
+    public void DifferentBassWasapiRevisionIsRejected(uint actualVersion)
+    {
+        MidoraAudioDeviceException exception = Assert.Throws<MidoraAudioDeviceException>(
+            () => BassWasapiOutputDeviceFactory.ValidateExactVersion(actualVersion));
+
+        Assert.Contains($"0x{actualVersion:x8}", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("0x02040401", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void InitialReleaseRequestsOnlySharedEventDrivenFloatStereo()
     {
         Assert.Equal(0, BassWasapiInitializationPolicy.RequestedFrequency);

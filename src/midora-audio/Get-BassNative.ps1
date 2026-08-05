@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Destination,
+    [string]$SourceDirectory,
     [Parameter(Mandatory)]
     [ValidateSet("win-x64")]
     [string]$Architecture,
@@ -71,9 +72,18 @@ function Test-InstalledFiles {
 
 $resolvedDestination = Resolve-Destination -RequestedDestination $Destination
 
+if ($AcceptUnpinnedDevelopmentCandidate -and -not [string]::IsNullOrWhiteSpace($SourceDirectory)) {
+    throw "SourceDirectory and AcceptUnpinnedDevelopmentCandidate are mutually exclusive."
+}
+
 if ((Test-InstalledFiles -Directory $resolvedDestination) -and -not $Force) {
     try {
-        & (Join-Path $PSScriptRoot "Test-BassNative.ps1") -Directory $resolvedDestination -Architecture $Architecture
+        if ($AcceptUnpinnedDevelopmentCandidate) {
+            & (Join-Path $PSScriptRoot "Test-BassNative.ps1") -Directory $resolvedDestination -Architecture $Architecture -AllowUnpinnedDevelopmentCandidate
+        }
+        else {
+            & (Join-Path $PSScriptRoot "Test-BassNative.ps1") -Directory $resolvedDestination -Architecture $Architecture
+        }
     }
     catch {
         throw "Existing BASS native installation failed validation. Use -Force only if you intend to replace it. $($_.Exception.Message)"
@@ -91,59 +101,84 @@ if ((Test-InstalledFiles -Directory $resolvedDestination) -and -not $Force) {
     return
 }
 
+if (-not $AcceptUnpinnedDevelopmentCandidate -and [string]::IsNullOrWhiteSpace($SourceDirectory)) {
+    throw "Pinned installation requires -SourceDirectory containing the operator-supplied official DLLs. Vendor current-package URLs are development-candidate inputs only."
+}
+
+$resolvedSource = $null
 if (-not $AcceptUnpinnedDevelopmentCandidate) {
-    throw "Downloading the vendor's current package is not a reproducible release input. Pass -AcceptUnpinnedDevelopmentCandidate only for an explicit local development candidate."
+    $resolvedSource = [System.IO.Path]::GetFullPath($SourceDirectory)
+    if ([string]::Equals($resolvedSource, $resolvedDestination, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "SourceDirectory and Destination must be different directories."
+    }
+
+    & (Join-Path $PSScriptRoot "Test-BassNative.ps1") -Directory $resolvedSource -Architecture $Architecture
 }
 
 try {
     New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+    if ($AcceptUnpinnedDevelopmentCandidate) {
+        $bassZip = Join-Path $tempRoot "bass24.zip"
+        $midiZip = Join-Path $tempRoot "bassmidi24.zip"
+        $wasapiZip = Join-Path $tempRoot "basswasapi24.zip"
+        Invoke-WebRequest -Uri $bassUrl -OutFile $bassZip
+        Invoke-WebRequest -Uri $bassMidiUrl -OutFile $midiZip
+        Invoke-WebRequest -Uri $bassWasapiUrl -OutFile $wasapiZip
+
+        $bassDir = Join-Path $tempRoot "bass"
+        $midiDir = Join-Path $tempRoot "bassmidi"
+        $wasapiDir = Join-Path $tempRoot "basswasapi"
+        Expand-Archive -Path $bassZip -DestinationPath $bassDir
+        Expand-Archive -Path $midiZip -DestinationPath $midiDir
+        Expand-Archive -Path $wasapiZip -DestinationPath $wasapiDir
+
+        $bassDll = Get-ArchitectureDll -ExtractedRoot $bassDir -FileName "bass.dll" -TargetArchitecture $Architecture
+        $bassMidiDll = Get-ArchitectureDll -ExtractedRoot $midiDir -FileName "bassmidi.dll" -TargetArchitecture $Architecture
+        $bassWasapiDll = Get-ArchitectureDll -ExtractedRoot $wasapiDir -FileName "basswasapi.dll" -TargetArchitecture $Architecture
+    }
+    else {
+        $bassDll = Join-Path $resolvedSource "bass.dll"
+        $bassMidiDll = Join-Path $resolvedSource "bassmidi.dll"
+        $bassWasapiDll = Join-Path $resolvedSource "basswasapi.dll"
+    }
+
     New-Item -ItemType Directory -Path $resolvedDestination -Force | Out-Null
-
-    $bassZip = Join-Path $tempRoot "bass24.zip"
-    $midiZip = Join-Path $tempRoot "bassmidi24.zip"
-    $wasapiZip = Join-Path $tempRoot "basswasapi24.zip"
-    Invoke-WebRequest -Uri $bassUrl -OutFile $bassZip
-    Invoke-WebRequest -Uri $bassMidiUrl -OutFile $midiZip
-    Invoke-WebRequest -Uri $bassWasapiUrl -OutFile $wasapiZip
-
-    $bassDir = Join-Path $tempRoot "bass"
-    $midiDir = Join-Path $tempRoot "bassmidi"
-    $wasapiDir = Join-Path $tempRoot "basswasapi"
-    Expand-Archive -Path $bassZip -DestinationPath $bassDir
-    Expand-Archive -Path $midiZip -DestinationPath $midiDir
-    Expand-Archive -Path $wasapiZip -DestinationPath $wasapiDir
-
-    $bassDll = Get-ArchitectureDll -ExtractedRoot $bassDir -FileName "bass.dll" -TargetArchitecture $Architecture
-    $bassMidiDll = Get-ArchitectureDll -ExtractedRoot $midiDir -FileName "bassmidi.dll" -TargetArchitecture $Architecture
-    $bassWasapiDll = Get-ArchitectureDll -ExtractedRoot $wasapiDir -FileName "basswasapi.dll" -TargetArchitecture $Architecture
-
     Copy-Item $bassDll (Join-Path $resolvedDestination "bass.dll") -Force
     Copy-Item $bassMidiDll (Join-Path $resolvedDestination "bassmidi.dll") -Force
     Copy-Item $bassWasapiDll (Join-Path $resolvedDestination "basswasapi.dll") -Force
 
-    $manifest = [ordered]@{
-        retrievedAtUtc = [DateTime]::UtcNow.ToString("O")
-        architecture = $Architecture
-        releaseBaseline = $false
-        source = @($bassUrl, $bassMidiUrl, $bassWasapiUrl)
-        files = @(
-            [ordered]@{
-                name = "bass.dll"
-                sha256 = (Get-FileHash (Join-Path $resolvedDestination "bass.dll") -Algorithm SHA256).Hash.ToLowerInvariant()
-            },
-            [ordered]@{
-                name = "bassmidi.dll"
-                sha256 = (Get-FileHash (Join-Path $resolvedDestination "bassmidi.dll") -Algorithm SHA256).Hash.ToLowerInvariant()
-            },
-            [ordered]@{
-                name = "basswasapi.dll"
-                sha256 = (Get-FileHash (Join-Path $resolvedDestination "basswasapi.dll") -Algorithm SHA256).Hash.ToLowerInvariant()
-            }
-        )
-    }
+    $installedManifestPath = Join-Path $resolvedDestination "native-manifest.json"
+    if ($AcceptUnpinnedDevelopmentCandidate) {
+        $manifest = [ordered]@{
+            schemaVersion = 1
+            retrievedAtUtc = [DateTime]::UtcNow.ToString("O")
+            architecture = $Architecture
+            releaseBaseline = $false
+            source = @($bassUrl, $bassMidiUrl, $bassWasapiUrl)
+            files = @(
+                [ordered]@{
+                    name = "bass.dll"
+                    sha256 = (Get-FileHash (Join-Path $resolvedDestination "bass.dll") -Algorithm SHA256).Hash.ToLowerInvariant()
+                },
+                [ordered]@{
+                    name = "bassmidi.dll"
+                    sha256 = (Get-FileHash (Join-Path $resolvedDestination "bassmidi.dll") -Algorithm SHA256).Hash.ToLowerInvariant()
+                },
+                [ordered]@{
+                    name = "basswasapi.dll"
+                    sha256 = (Get-FileHash (Join-Path $resolvedDestination "basswasapi.dll") -Algorithm SHA256).Hash.ToLowerInvariant()
+                }
+            )
+        }
 
-    $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $resolvedDestination "native-manifest.json") -Encoding utf8
-    & (Join-Path $PSScriptRoot "Test-BassNative.ps1") -Directory $resolvedDestination -Architecture $Architecture
+        $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path $installedManifestPath -Encoding utf8
+        & (Join-Path $PSScriptRoot "Test-BassNative.ps1") -Directory $resolvedDestination -Architecture $Architecture -AllowUnpinnedDevelopmentCandidate
+    }
+    else {
+        Copy-Item (Join-Path $PSScriptRoot "bass-native-baseline.win-x64.json") $installedManifestPath -Force
+        & (Join-Path $PSScriptRoot "Test-BassNative.ps1") -Directory $resolvedDestination -Architecture $Architecture
+    }
 
     if ($SetUserEnvironmentVariable) {
         [Environment]::SetEnvironmentVariable($environmentVariableName, $resolvedDestination, "Process")
@@ -151,7 +186,12 @@ try {
         Write-Host "Set process and user environment variable $environmentVariableName=$resolvedDestination"
     }
 
-    Write-Host "BASS native $Architecture development candidate installed at: $resolvedDestination"
+    if ($AcceptUnpinnedDevelopmentCandidate) {
+        Write-Host "BASS native $Architecture development candidate installed at: $resolvedDestination"
+    }
+    else {
+        Write-Host "Pinned BASS native $Architecture release baseline installed at: $resolvedDestination"
+    }
 }
 finally {
     if (Test-Path $tempRoot) {

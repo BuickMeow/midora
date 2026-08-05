@@ -13,9 +13,20 @@
     <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <BassNativeDirectory Condition="'$(BassNativeDirectory)' == ''">$(MIDORA_BASS_NATIVE_DIR)</BassNativeDirectory>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />
     <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.BassWasapi\Midora.AudioDevice.BassWasapi.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' and '$(BassNativeDirectory)' != ''">
+    <Content Include="$(BassNativeDirectory)\bass.dll" Link="bass.dll" CopyToPublishDirectory="Always" />
+    <Content Include="$(BassNativeDirectory)\bassmidi.dll" Link="bassmidi.dll" CopyToPublishDirectory="Always" />
+    <Content Include="$(BassNativeDirectory)\basswasapi.dll" Link="basswasapi.dll" CopyToPublishDirectory="Always" />
+    <Content Include="..\bass-native-baseline.win-x64.json" Link="native-manifest.json" CopyToPublishDirectory="Always" />
   </ItemGroup>
 
   <Target Name="ValidateAudioWorkerRuntimeIdentifier" BeforeTargets="Publish">
@@ -23,6 +34,10 @@
            Text="Midora.Audio.Bass.Worker must be published with the explicit win-x64 RuntimeIdentifier so the output is Native AOT." />
     <Error Condition="'$(RuntimeIdentifier)' != '' and '$(RuntimeIdentifier)' != 'win-x64'"
            Text="Midora initial release supports only the win-x64 audio worker RuntimeIdentifier." />
+    <Error Condition="'$(RuntimeIdentifier)' == 'win-x64' and '$(BassNativeDirectory)' == ''"
+           Text="Pinned win-x64 publish requires BassNativeDirectory or MIDORA_BASS_NATIVE_DIR containing the operator-supplied BASS release baseline." />
+    <Exec Condition="'$(RuntimeIdentifier)' == 'win-x64' and '$(BassNativeDirectory)' != ''"
+          Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\Test-BassNative.ps1&quot; -Directory &quot;$(BassNativeDirectory)&quot; -Architecture win-x64" />
   </Target>
 
 </Project>

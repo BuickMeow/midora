@@ -36,7 +36,7 @@
 | Channel 10 初始化顺序 | 13、音频后端约束 | stream 先设 melodic 再 Reset，Reset 可能覆盖规范初始值 | 已改为每个 Channel 先 Reset、再显式设置 melodic，包括 MIDI Channel 10 |
 | 原生资源释放 | 13.19、15、21 | 部分 `StreamFree`/`FontFree`/全局 `Free`/WAVE `CloseHandle` 返回值被忽略，WASAPI 清理错误未被正式后端上报 | 已逐次检查返回值并立即读取线程本地错误码；WASAPI 先建立正确 device context 再清理；正式后端聚合并报告清理失败，finalizer 保持不抛异常 |
 | 未决音频参数的“默认值” | 21.3、音频 ADR | 原型参数被命名为 Initial Release Default，且实时后端可隐式采用 | 原型集合已明确标为 Prototype；9A 已把 Limiter v1 定版，其他未确认的 BASSMIDI 参数仍要求调用方显式传入 |
-| BASS 本地获取工具 | 21.3、发布约束 | 隐藏选择 win-x64、引用不存在的校验脚本、可无提示下载不固定的当前包 | 已要求显式架构和显式接受“未固定开发候选”，补充 manifest/SHA-256 校验；正式修订与发布 hash 仍待确认 |
+| BASS 本地获取工具 | 13.30、21.3、发布约束 | 隐藏选择 win-x64、引用不存在的校验脚本、可无提示下载不固定的当前包 | 已固定 win-x64 正式 manifest、三项完整版本码与 SHA-256；正式安装/发布只接受操作员提供且匹配仓库 manifest 的 DLL，vendor current URL 仅生成显式未固定候选 |
 | 正式音频进程拓扑 | 3.2.2、13.30、15.7.6、21.3 | 现有正式候选是“子进程合成、主进程 WASAPI”，会让 PCM 跨进程且主进程仍持有设备 callback；控制命名管道逐批分配数组 | 已按 12C 改为完整音频子进程：BASS/BASSMIDI/Limiter/Render-Ahead/BASSWASAPI/callback 全部由 Worker 持有；运行时命令/状态改为固定版本共享内存 ABI，实测热路径零分配；Worker 按显式 RID Native AOT 发布；旧进程内/PCM IPC 类降为仅测试程序集可见 |
 
 ## 3. 尚未完成的初版模块（不是“现有代码语义矛盾”）
@@ -49,7 +49,7 @@
 - WPF UI、导航、编辑器、对话框和 Project 打开/关闭工作流尚未实现。
 - SRS 12.21 要求的 Segment checkpoint、输入/输出状态 hash、dirty 传播与收敛停止尚未实现；现有 Track 级缓存只能作为过渡实现，不能标记为初版合规。
 - Canonical CompileContext 摘要、失败阶段、完整来源追踪和可选 Debug 诊断仍不完整。
-- Native interop 尚未固定支持修订；32/64 位布局、calling convention、版本不匹配、重复 init/free 和泄漏的独立自动化门不完整。
+- Native interop 已固定三项支持修订并建立完整版本不匹配测试；32/64 位布局、calling convention、重复 init/free 和泄漏的独立自动化门仍不完整。
 - WASAPI 设备移除/默认设备变化、不同 callback block、deadline/underrun 和约 200 ms 端到端基准仍需要在正式候选硬件矩阵上验收。
 
 ## 4. ADR-SRS-AUDIT-001（已接受）：Project 级稳定 ID
@@ -83,7 +83,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 13. **已确认：13A（2026-08-05）**。所有正式 BASSMIDI Stream 固定启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠实例按最早开始者优先逐个释放。配置层已删除 Release All 分支，完整音频 Worker 与旧对照链共享该不可配置语义；真实 BASSMIDI 集成测试已覆盖同音高重叠、NoteOff velocity `0`、Cut Previous 释放与新实例重叠，以及硬边界成对 NoteOff 后的 Reset All Controllers。
 14. **已确认：14A（2026-08-05，含后续补充）**。正式 Stream 固定 `BASS_ATTRIB_MIDI_SRC=1`（8-point sinc）和 `BASS_ATTRIB_MIDI_CPU=0`；Preparing 使用 `BASS_MIDI_FontLoad` 预加载冻结计划引用的 presets，缺失组合保持并预加载 BASS fallback。实时与离线 sample voice 上限分别配置，默认均为每 Stream `750`，同一任务所有 Port 使用同一冻结值；达到上限允许 BASS 固定 voice-limit 行为，完美音频一致性测试以未触顶为前提。代码已删除 interpolation/sample-loading/CPU 可选分支，修复实时事件 Stream 错用 `StreamLoadSamples`，并建立实时/离线独立配置传播与真实属性回读测试。Application Preferences、Audio Render Settings 的完整 UI/持久化仍随对应未完成模块实施。
 15. **已确认：15A（2026-08-06）**。初版产品只发布 `win-x64`；主应用、Native AOT 音频 Worker 与 BASS/BASSMIDI/BASSWASAPI 必须同为 x64，不生成 x86、Arm64 或 AnyCPU 正式产物。Worker publish target 和 BASS 获取/校验脚本已拒绝其他 RID；x64 的 SSE2 基线满足 14A 固定的 8-point sinc 前提。
-16. BASS/BASSMIDI/BASSWASAPI 固定修订和每个发布文件的 SHA-256；不得把 vendor `latest` 当正式基线。
+16. **已确认：16A（2026-08-06）**。初版固定 BASS `2.4.18.3 / 0x02041203`、BASSMIDI `2.4.16.0 / 0x02041000`、BASSWASAPI `2.4.4.1 / 0x02040401` 及三项 win-x64 DLL SHA-256。仓库只提交正式 manifest，不提交 DLL；正式安装和 Worker publish 只接受操作员提供且逐文件匹配 manifest 的二进制，运行时校验完整版本码。vendor current/latest 下载只能生成 `releaseBaseline=false` 的开发候选；升级必须显式更新基线并完成全回归。商业分发许可证仍是独立发布门。
 17. C# Mapping Function 的持久兼容 ABI：函数签名、允许引用、缓存和 AssemblyLoadContext 卸载策略；“初版不做 sandbox”已由 SRS 9.11.4 确认，不再询问。
 18. `.midora` 首版 schema/protobuf 兼容基线：JSON Schema、protobuf 字段号、代码生成方式、文本最大长度和颜色/路径字段表示。
 19. Project SoundFont 可移植引用与哈希策略：相对路径规则、大小写/分隔符、同名冲突、哈希算法和计算时机。

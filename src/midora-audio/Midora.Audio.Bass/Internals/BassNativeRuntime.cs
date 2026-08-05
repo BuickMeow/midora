@@ -5,7 +5,8 @@ namespace Midora.Audio.Bass.Internals;
 
 internal static unsafe class BassNativeRuntime
 {
-    private const uint SupportedBassApiVersion = 0x0204;
+    internal const uint SupportedBassVersion = 0x02041203;
+    internal const uint SupportedBassMidiVersion = 0x02041000;
     private static readonly object Gate = new();
     private static int _referenceCount;
     private static MidoraAudioException? _terminalFailure;
@@ -23,8 +24,8 @@ internal static unsafe class BassNativeRuntime
 
             if (_referenceCount == 0)
             {
-                ValidateApiVersion("BASS", NativeBass.GetVersion());
-                ValidateApiVersion("BASSMIDI", NativeBassMidi.GetVersion());
+                ValidateExactVersion("BASS", NativeBass.GetVersion(), SupportedBassVersion);
+                ValidateExactVersion("BASSMIDI", NativeBassMidi.GetVersion(), SupportedBassMidiVersion);
 
                 if (NativeBass.Init(0, 48_000, 0, null, null) == 0)
                 {
@@ -38,13 +39,12 @@ internal static unsafe class BassNativeRuntime
         }
     }
 
-    private static void ValidateApiVersion(string component, uint version)
+    internal static void ValidateExactVersion(string component, uint actualVersion, uint expectedVersion)
     {
-        uint apiVersion = version >> 16;
-        if (apiVersion != SupportedBassApiVersion)
+        if (actualVersion != expectedVersion)
         {
             throw new MidoraAudioException(
-                $"Unsupported {component} API version 0x{apiVersion:x4}; expected 0x{SupportedBassApiVersion:x4}.");
+                $"Unsupported {component} version 0x{actualVersion:x8}; expected pinned version 0x{expectedVersion:x8}.");
         }
     }
 

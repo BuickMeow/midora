@@ -98,7 +98,7 @@ MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、Pause/Scrub、语义�
 - `BASS_MIDI_NOTEOFF1` 只让 NoteOff 释放同 Port、Channel、pitch 中最早开始的一个重叠实例；不启用时会一次释放全部匹配实例。13A 已固定正式 stream 启用该标志，并以真实 BASSMIDI 的 overlap、Cut Previous、reset 和 velocity `0` NoteOff 测试锁定。
 - WASAPI callback 的 sample data 固定为 float32、长度参数是 byte count；回调必须快速返回。exclusive mode 短读时其余部分由 BASSWASAPI 填静音；不能从 callback 内调用 `BASS_WASAPI_Free`。
 - BASS 错误码是线程相关状态；每个失败调用后应立即在同线程获取并转成 Midora 自己的错误对象。
-- 官方要求用各模块 `GetVersion` 校验加载 DLL 与 API 版本。当前官网列出的稳定版本为 BASS 2.4.18.3、BASSMIDI 2.4.16、BASSWASAPI 2.4.4.1；将来仍需在构建时固定实际版本和哈希，不能把这里的数字永久硬编码成“最新版”。
+- 官方要求用各模块 `GetVersion` 校验加载 DLL 与 API 版本。16A 已固定 BASS 2.4.18.3、BASSMIDI 2.4.16.0、BASSWASAPI 2.4.4.1 的完整版本码和 win-x64 DLL SHA-256；仓库 manifest 是正式清单，vendor current/latest 仅为开发候选。
 - BASS 仅对非商业且不以销售、广告等获利的产品免费；其他用途需要对应许可证，且按平台授权。发布方式尚不明确，因此这是发布前的强制法律/采购门，不是代码问题。
 
 官方参考：
@@ -177,7 +177,7 @@ flowchart TD
 
 1. 建需求追踪表，把 INV-001～INV-020 与各模块、测试套件对应。
 2. 将第 9 节仍需选择的实现内容写成版本化 ADR；不得重新打开已确认的规格决定。
-3. 按已确认的 `win-x64` 架构固定 BASS DLL 版本/哈希/分发方式和许可证路径。
+3. 使用已确认的 `win-x64` BASS manifest 和操作员提供的官方二进制完成正式发布输入；另行完成许可证路径。
 4. 建立一个不会并发重复编译共享项目的仓库级 build/test 入口；保留小 solution 还是合并 root solution 可另作工程决策。
 5. 把人工 console 发声程序标为 smoke 工具；建立真正的 unit/integration/conformance test 工程。
 
@@ -323,13 +323,13 @@ flowchart TD
 6. 用户直接调整 Render-Ahead 与 Device Buffer Request 两个缓冲大小；约 200 ms 仅为端到端性能测试基准。
 7. 仅音频活动线程在正式活动阶段承担零托管堆分配约束；Preparing、Finalizing 及其他线程/进程可分配。
 8. 只允许一个用户可启动的 UI/Project 应用实例；唯一正式音频拓扑是内部无 UI Native AOT 音频子进程，实时 PCM 不跨进程。
+9. BASS/BASSMIDI/BASSWASAPI 完整版本码与 win-x64 DLL SHA-256 已固定；仓库不提交 DLL，正式发布校验操作员提供的文件，运行时不接受同主版本的其他修订。
 
 ### 9.2 SRS 留给实现设计的选择
 
 以下不是规格错误，但需要版本化 ADR 和测试向量：
 
 - BASSMIDI 性能档已由 14A 固定；仍需在正式硬件矩阵验证 8-point sinc、每 Stream 默认 750 sample voices、preset 预加载和 CPU 属性 0 的峰值、内存、触顶及 underrun 行为。
-- 固定哪个 BASS/BASSMIDI/BASSWASAPI revision，并如何升级及回归声音语义。
 - 任意 C# Mapping 的执行隔离、资源限制与信任提示。SRS 明确“无 sandbox”，因此只能诚实管理风险，不能假定输入可信。
 
 ## 10. 下一步建议

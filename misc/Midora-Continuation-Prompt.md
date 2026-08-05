@@ -65,12 +65,13 @@ D:\Programing\midora
 13. Preparing 必须在创建临时文件前精确预检每个 RIFF 输出的可表示大小。任一目标超限时，整个任务以 Error 阻止；不得拆分、回退 RF64/WAVE64、降低采样率或缩短内容。
 14. 所有正式 BASSMIDI stream 必须启用 `BASS_MIDI_NOTEOFF1`。同 Port、Channel、pitch 的重叠 Note 实例按最早开始者优先与逐个 NoteOff 配对；硬边界必须按活动实例数完整释放。该策略不是用户设置。
 15. 所有正式 BASSMIDI stream 固定 8-point sinc 和 CPU 属性 `0`；Preparing 使用 `BASS_MIDI_FontLoad` 预加载计划引用的 presets/fallback。实时与离线每 Stream sample voice 上限分别配置，默认均为 `750`，同一任务所有 Port 使用同一值；完美音频一致性测试以未触顶为前提。
+16. 初版正式 BASS 原生基线固定为 `bass.dll 2.4.18.3 / 0x02041203`、`bassmidi.dll 2.4.16.0 / 0x02041000`、`basswasapi.dll 2.4.4.1 / 0x02040401` 及仓库 manifest 中的 win-x64 SHA-256。仓库不提交 DLL；正式发布只接受操作员提供且匹配 manifest 的文件，运行时校验完整版本码；vendor current/latest 只能生成开发候选。
 
 四、仍需 ADR 或实测决定的事项
 
 这些不是当前 SRS 冲突，不能静默写成实现默认值：
 
-- 固定的 BASS/BASSMIDI/BASSWASAPI 修订、SHA-256、升级回归策略和商业分发许可证；
+- BASS 商业分发许可证与第三方 notices；技术版本、SHA-256 和升级回归策略已经固定，不得与授权问题混为一项；
 - C# Mapping Function 的持久兼容 ABI、允许引用、缓存和 AssemblyLoadContext 卸载策略；
 - `.midora` 首版 JSON Schema / protobuf 字段与代码生成兼容基线；
 - Project SoundFont 可移植引用与哈希策略；

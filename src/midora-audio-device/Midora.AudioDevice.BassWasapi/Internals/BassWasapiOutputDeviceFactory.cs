@@ -6,18 +6,13 @@ namespace Midora.AudioDevice.BassWasapi.Internals;
 
 public sealed unsafe class BassWasapiOutputDeviceFactory : IAudioOutputDeviceFactory
 {
-    private const uint SupportedApiVersion = 0x0204;
+    internal const uint SupportedVersion = 0x02040401;
     private readonly BassWasapiAudioOutputDeviceSettings _settings;
 
     public BassWasapiOutputDeviceFactory(BassWasapiAudioOutputDeviceSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        uint apiVersion = BASSWASAPI.GetVersion() >> 16;
-        if (apiVersion != SupportedApiVersion)
-        {
-            throw new MidoraAudioDeviceException(
-                $"Unsupported BASSWASAPI API version 0x{apiVersion:x4}; expected 0x{SupportedApiVersion:x4}.");
-        }
+        ValidateExactVersion(BASSWASAPI.GetVersion());
 
         _settings = settings;
     }
@@ -25,6 +20,15 @@ public sealed unsafe class BassWasapiOutputDeviceFactory : IAudioOutputDeviceFac
     public int LastEnumerationErrorCode { get; private set; }
 
     public uint ApiVersion => BASSWASAPI.GetVersion();
+
+    internal static void ValidateExactVersion(uint actualVersion)
+    {
+        if (actualVersion != SupportedVersion)
+        {
+            throw new MidoraAudioDeviceException(
+                $"Unsupported BASSWASAPI version 0x{actualVersion:x8}; expected pinned version 0x{SupportedVersion:x8}.");
+        }
+    }
 
     public IReadOnlyList<AudioOutputDeviceInfo> GetDevices()
     {

@@ -1,7 +1,13 @@
-using System;
-using System.Collections.Generic;
-using System.Text;
-
 namespace Midora.Audio;
 
-public class MidoraAudioException(string message) : Exception(message);
+public class MidoraAudioException : Exception
+{
+    public MidoraAudioException(string message) : base(message)
+    {
+    }
+
+    public MidoraAudioException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+    }
+}

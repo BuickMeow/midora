@@ -6,7 +6,7 @@ namespace Midora.Audio;
 public static class MidiRenderPlanFile
 {
     private const uint Magic = 0x5041444d;
-    private const int Version = 1;
+    private const int Version = 2;
     private const int ChecksumByteCount = 32;
     private const int MaximumFileByteCount = 256 * 1024 * 1024;
     private const int MaximumEventCount = 16 * 1024 * 1024;
@@ -24,6 +24,16 @@ public static class MidiRenderPlanFile
             writer.Write(plan.SampleRate);
             writer.Write(plan.TotalFrameCount);
             writer.Write(plan.Ports.Length);
+            writer.Write(plan.SourceIds.Length);
+            foreach (Guid sourceId in plan.SourceIds)
+            {
+                writer.Write(sourceId.ToByteArray());
+            }
+            writer.Write(plan.InitiallyDisabledSourceIndices.Length);
+            foreach (int sourceIndex in plan.InitiallyDisabledSourceIndices)
+            {
+                writer.Write(sourceIndex);
+            }
 
             int totalEventCount = 0;
             foreach (MidiPortRenderPlan port in plan.Ports)
@@ -43,6 +53,7 @@ public static class MidiRenderPlanFile
                 {
                     writer.Write(item.SampleFrame);
                     writer.Write(item.Message.PackedValue);
+                    writer.Write(item.SourceIndex);
                 }
             }
         }
@@ -104,6 +115,27 @@ public static class MidiRenderPlanFile
             throw new InvalidDataException("The IPC MIDI Port count is invalid.");
         }
 
+        int sourceCount = reader.ReadInt32();
+        if (sourceCount is < 0 or > MaximumEventCount)
+        {
+            throw new InvalidDataException("The IPC MIDI source count is invalid.");
+        }
+        Guid[] sourceIds = new Guid[sourceCount];
+        for (int sourceIndex = 0; sourceIndex < sourceCount; sourceIndex++)
+        {
+            sourceIds[sourceIndex] = new Guid(reader.ReadBytes(16));
+        }
+        int disabledSourceCount = reader.ReadInt32();
+        if (disabledSourceCount is < 0 || disabledSourceCount > sourceCount)
+        {
+            throw new InvalidDataException("The IPC disabled MIDI source count is invalid.");
+        }
+        int[] disabledSourceIndices = new int[disabledSourceCount];
+        for (int sourceIndex = 0; sourceIndex < disabledSourceCount; sourceIndex++)
+        {
+            disabledSourceIndices[sourceIndex] = reader.ReadInt32();
+        }
+
         MidiPortRenderPlan[] ports = new MidiPortRenderPlan[portCount];
         int totalEventCount = 0;
         for (int portIndex = 0; portIndex < portCount; portIndex++)
@@ -123,7 +155,8 @@ public static class MidiRenderPlanFile
             {
                 long sampleFrame = reader.ReadInt64();
                 MidiMessage message = MidiMessage.FromPackedValue(reader.ReadUInt32());
-                events[eventIndex] = new ScheduledMidiMessage(sampleFrame, message);
+                int sourceIndex = reader.ReadInt32();
+                events[eventIndex] = new ScheduledMidiMessage(sampleFrame, message, sourceIndex);
             }
 
             ports[portIndex] = new MidiPortRenderPlan(portNumber, events);
@@ -134,6 +167,11 @@ public static class MidiRenderPlanFile
             throw new InvalidDataException("The IPC MIDI event plan contains trailing payload data.");
         }
 
-        return new MidiRenderPlan(sampleRate, totalFrameCount, ports);
+        return new MidiRenderPlan(
+            sampleRate,
+            totalFrameCount,
+            ports,
+            sourceIds,
+            disabledSourceIndices);
     }
 }

@@ -4,4 +4,5 @@ namespace Midora.Audio;
 
 public readonly record struct ScheduledMidiMessage(
     long SampleFrame,
-    MidiMessage Message);
+    MidiMessage Message,
+    int SourceIndex = -1);

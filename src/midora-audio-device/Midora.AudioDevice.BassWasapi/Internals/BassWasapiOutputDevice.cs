@@ -16,6 +16,7 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
     private int _callbackFaulted;
     private long _callbackCount;
     private long _callbackAllocatedBytes;
+    private long _consumedFrameCount;
     private uint _actualBufferFrameCount;
     private int _cleanupErrorCode;
     private int _deviceLost;
@@ -38,6 +39,8 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
     public long CallbackCount => Volatile.Read(ref _callbackCount);
 
     public long CallbackAllocatedBytes => Volatile.Read(ref _callbackAllocatedBytes);
+
+    public long ConsumedFrameCount => Volatile.Read(ref _consumedFrameCount);
 
     public uint ActualBufferFrameCount => _actualBufferFrameCount;
 
@@ -286,6 +289,8 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
             {
                 Interlocked.Exchange(ref device._callbackFaulted, 1);
             }
+
+            Interlocked.Add(ref device._consumedFrameCount, result.FrameCount);
 
             if (result.FrameCount < requestedFrames)
             {

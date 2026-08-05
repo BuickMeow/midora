@@ -1,18 +1,25 @@
 using Midora.AudioDevice;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Pipes;
 using System.Runtime.Versioning;
+using System.Text;
 
 namespace Midora.Audio.Bass;
 
 [SupportedOSPlatform("windows")]
 public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDisposable
 {
+    private const int MonitoringProtocolMagic = 0x4d43444d;
+    private const int MonitoringProtocolVersion = 1;
     private readonly string _ownedTemporaryDirectory;
     private readonly SharedAudioFrameRingBuffer _ring;
     private Process? _process;
     private Thread? _monitorThread;
     private readonly BassMidiChildConsumptionMode _consumptionMode;
+    private readonly object _controlWriteSync = new();
+    private NamedPipeServerStream? _controlPipe;
+    private BinaryWriter? _controlWriter;
     private string? _standardError;
     private int _exitCode = int.MinValue;
     private bool _disposed;
@@ -58,6 +65,7 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
         MidiRenderPlanFile.Write(planPath, plan);
 
         string mapName = $"Midora.Audio.{Guid.NewGuid():N}";
+        string controlPipeName = $"Midora.Audio.Control.{Guid.NewGuid():N}";
         AudioFormat format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
         int capacityFrames = checked(plan.SampleRate * ipcAudioBufferMilliseconds / 1_000);
         if (capacityFrames < rendererSettings.MaximumWorkFrameCount)
@@ -71,10 +79,17 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
         _ring = SharedAudioFrameRingBuffer.Create(mapName, format, capacityFrames);
         try
         {
+            _controlPipe = new NamedPipeServerStream(
+                controlPipeName,
+                PipeDirection.Out,
+                1,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous);
             ProcessStartInfo startInfo = CreateStartInfo(workerPath);
             AddWorkerArguments(
                 startInfo,
                 mapName,
+                controlPipeName,
                 planPath,
                 soundFontPath,
                 bassNativeDirectory,
@@ -88,6 +103,11 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
                 Name = "Midora Audio Worker Monitor"
             };
             _monitorThread.Start();
+            using (CancellationTokenSource connectionTimeout = new(preparingTimeout))
+            {
+                _controlPipe.WaitForConnectionAsync(connectionTimeout.Token).GetAwaiter().GetResult();
+            }
+            _controlWriter = new BinaryWriter(_controlPipe, Encoding.UTF8, leaveOpen: true);
             WaitUntilReady(preparingTimeout);
         }
         catch
@@ -108,6 +128,7 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
             }
 
             _ring.Dispose();
+            ReleaseControlPipe();
             CleanupOwnedTemporaryDirectory();
             throw;
         }
@@ -122,6 +143,8 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
     public bool ProducerFaulted => _ring.ProducerFaulted;
 
     public int AvailableFrameCount => _ring.AvailableFrameCount;
+
+    public long ProducedFrameCount => _ring.ProducedFrameCount;
 
     public long UnderrunCount => _ring.UnderrunCount;
 
@@ -151,6 +174,51 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
         return result;
     }
 
+    public void EnqueueMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (commands.IsEmpty)
+        {
+            return;
+        }
+
+        lock (_controlWriteSync)
+        {
+            try
+            {
+                BinaryWriter writer = _controlWriter
+                    ?? throw new InvalidOperationException("The child monitoring control channel is unavailable.");
+                writer.Write(MonitoringProtocolMagic);
+                writer.Write(MonitoringProtocolVersion);
+                writer.Write(commands.Length);
+                foreach (MidiMonitoringCommand command in commands)
+                {
+                    writer.Write((byte)command.Kind);
+                    writer.Write(command.ZeroBasedPortNumber);
+                    writer.Write(command.SourceEnabled);
+                    writer.Write((byte)0);
+                    writer.Write(command.SourceIndex);
+                    writer.Write(command.Message.PackedValue);
+                }
+                writer.Flush();
+            }
+            catch (IOException exception)
+            {
+                if (_process is not null)
+                {
+                    _ = SpinWait.SpinUntil(() => _process.HasExited, TimeSpan.FromSeconds(1));
+                    if (_process.HasExited)
+                    {
+                        _monitorThread?.Join();
+                    }
+                }
+                throw new MidoraAudioException(
+                    $"The child monitoring control channel failed; exitCode={ExitCode}; stderr={StandardError}",
+                    exception);
+            }
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -166,6 +234,7 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
 
         _monitorThread?.Join();
         _process?.Dispose();
+        ReleaseControlPipe();
         _ring.Dispose();
         CleanupOwnedTemporaryDirectory();
     }
@@ -196,6 +265,7 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
     private static void AddWorkerArguments(
         ProcessStartInfo startInfo,
         string mapName,
+        string controlPipeName,
         string planPath,
         string soundFontPath,
         string nativeDirectory,
@@ -203,6 +273,7 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
         AudioMasterSettings masterSettings)
     {
         startInfo.ArgumentList.Add(mapName);
+        startInfo.ArgumentList.Add(controlPipeName);
         startInfo.ArgumentList.Add(planPath);
         startInfo.ArgumentList.Add(soundFontPath);
         startInfo.ArgumentList.Add(nativeDirectory);
@@ -215,6 +286,7 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
         startInfo.ArgumentList.Add(masterSettings.VolumeDecibels.ToString("R", CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(masterSettings.LimiterCeiling.ToString("R", CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(masterSettings.LimiterReleaseMilliseconds.ToString("R", CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add(masterSettings.LimiterEnabled ? "1" : "0");
     }
 
     private void WaitUntilReady(TimeSpan timeout)
@@ -271,6 +343,33 @@ public sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, IDi
         catch
         {
             // The session result remains primary; startup cleanup can remove stale owned directories later.
+        }
+    }
+
+    private void ReleaseControlPipe()
+    {
+        try
+        {
+            _controlWriter?.Dispose();
+        }
+        catch (IOException)
+        {
+        }
+        finally
+        {
+            _controlWriter = null;
+        }
+
+        try
+        {
+            _controlPipe?.Dispose();
+        }
+        catch (IOException)
+        {
+        }
+        finally
+        {
+            _controlPipe = null;
         }
     }
 }

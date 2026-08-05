@@ -22,6 +22,10 @@ public sealed class MidiRenderPlanFileTests
             Assert.Equal(plan.SampleRate, restored.SampleRate);
             Assert.Equal(plan.TotalFrameCount, restored.TotalFrameCount);
             Assert.Equal(plan.Ports[0].Events[1], restored.Ports[0].Events[1]);
+            Assert.Equal(plan.SourceIds.ToArray(), restored.SourceIds.ToArray());
+            Assert.Equal(
+                plan.InitiallyDisabledSourceIndices.ToArray(),
+                restored.InitiallyDisabledSourceIndices.ToArray());
 
             byte[] damaged = File.ReadAllBytes(firstPath);
             damaged[12] ^= 1;
@@ -36,12 +40,13 @@ public sealed class MidiRenderPlanFileTests
 
     private static MidiRenderPlan CreatePlan()
     {
+        Guid sourceId = Guid.Parse("6a030612-f5eb-45be-9028-8d57bdca6518");
         MidiPortRenderPlan port = new(0,
         [
-            new ScheduledMidiMessage(0, MidiMessage.ProgramChange(0, 0)),
-            new ScheduledMidiMessage(100, MidiMessage.NoteOn(0, 60, 100)),
-            new ScheduledMidiMessage(500, MidiMessage.NoteOff(0, 60, 17))
+            new ScheduledMidiMessage(0, MidiMessage.ProgramChange(0, 0), 0),
+            new ScheduledMidiMessage(100, MidiMessage.NoteOn(0, 60, 100), 0),
+            new ScheduledMidiMessage(500, MidiMessage.NoteOff(0, 60, 17), 0)
         ]);
-        return new MidiRenderPlan(48_000, 1_000, [port]);
+        return new MidiRenderPlan(48_000, 1_000, [port], [sourceId], [0]);
     }
 }

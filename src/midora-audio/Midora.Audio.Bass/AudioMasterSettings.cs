@@ -4,7 +4,11 @@ public sealed record class AudioMasterSettings
 {
     public const int LimiterAlgorithmVersion = 1;
 
-    public AudioMasterSettings(float volumeDecibels, float limiterCeiling, float limiterReleaseMilliseconds)
+    public AudioMasterSettings(
+        float volumeDecibels,
+        float limiterCeiling,
+        float limiterReleaseMilliseconds,
+        bool limiterEnabled = true)
     {
         if (!float.IsFinite(volumeDecibels) || volumeDecibels > 0)
         {
@@ -24,6 +28,7 @@ public sealed record class AudioMasterSettings
         VolumeDecibels = volumeDecibels;
         LimiterCeiling = limiterCeiling;
         LimiterReleaseMilliseconds = limiterReleaseMilliseconds;
+        LimiterEnabled = limiterEnabled;
     }
 
     public float VolumeDecibels { get; }
@@ -31,6 +36,8 @@ public sealed record class AudioMasterSettings
     public float LimiterCeiling { get; }
 
     public float LimiterReleaseMilliseconds { get; }
+
+    public bool LimiterEnabled { get; }
 
     public static AudioMasterSettings InitialReleaseDefault { get; } = new(-0.1f, 1f, 50f);
 }

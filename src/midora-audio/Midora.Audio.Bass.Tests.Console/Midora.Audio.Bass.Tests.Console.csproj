@@ -13,6 +13,10 @@
     <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.Wave\Midora.AudioDevice.Wave.csproj" />
     <ProjectReference Include="..\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />
     <ProjectReference Include="..\Midora.Audio.Bass.Worker\Midora.Audio.Bass.Worker.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\midora-core\Midora.Domain\Midora.Domain.csproj" />
+    <ProjectReference Include="..\..\midora-core\Midora.Compiler\Midora.Compiler.csproj" />
+    <ProjectReference Include="..\..\midora-core\Midora.Playback\Midora.Playback.csproj" />
+    <ProjectReference Include="..\..\midora-core\Midora.Playback.BassWasapi\Midora.Playback.BassWasapi.csproj" />
   </ItemGroup>
 
 </Project>

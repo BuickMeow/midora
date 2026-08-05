@@ -10,7 +10,7 @@ using System.Runtime.Versioning;
 namespace Midora.Audio.Bass.Tests.Console;
 
 [SupportedOSPlatform("windows")]
-public static class Program
+public static partial class Program
 {
     private const int OfflineSampleRate = 48_000;
     private const string DefaultSoundFontPath = @"D:\Soundfonts\sf2\sDetrimental Concert Grand Piano.sf2";
@@ -37,8 +37,29 @@ public static class Program
                     args.Length >= 3 ? args[2] : null),
                 "realtime-child" => RunRealtimeChild(repositoryRoot, soundFontPath),
                 "wasapi-probe" => RunWasapiProbe(),
+                "logic-examples" => RunLogicalExampleSuite(
+                    repositoryRoot,
+                    soundFontPath,
+                    args.Length >= 3 ? args[2] : null),
+                "logic-offline" => RunLogicalOffline(
+                    repositoryRoot,
+                    soundFontPath,
+                    args.Length >= 3 ? args[2] : "segments",
+                    args.Length >= 4 ? args[3] : null),
+                "logic-offline-child" => RunLogicalOfflineChild(
+                    repositoryRoot,
+                    soundFontPath,
+                    args.Length >= 3 ? args[2] : "segments",
+                    args.Length >= 4 ? args[3] : null),
+                "logic-realtime" => RunLogicalRealtime(
+                    soundFontPath,
+                    args.Length >= 3 ? args[2] : "subvoices"),
+                "logic-realtime-child" => RunLogicalRealtimeChild(
+                    repositoryRoot,
+                    soundFontPath,
+                    args.Length >= 3 ? args[2] : "subvoices"),
                 _ => throw new ArgumentException(
-                    "用法：offline|offline-child [SF2路径] [WAV路径]、realtime|realtime-child [SF2路径] 或 wasapi-probe")
+                    "用法：offline|offline-child [SF2] [WAV]、realtime|realtime-child [SF2]、logic-examples [SF2] [目录]、logic-offline|logic-offline-child [SF2] [segments|subvoices|tempo-loop] [WAV]、logic-realtime|logic-realtime-child [SF2] [示例] 或 wasapi-probe")
             };
         }
         catch (Exception exception)

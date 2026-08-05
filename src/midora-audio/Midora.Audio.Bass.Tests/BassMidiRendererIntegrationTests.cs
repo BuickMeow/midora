@@ -103,6 +103,82 @@ public sealed class BassMidiRendererIntegrationTests
         Assert.NotEqual(0u, releaseOldestFlags & Midora.NativeInterops.BassMidi.BASSMIDI.BASS_MIDI_NOTEOFF1);
     }
 
+    [Fact]
+    public void ContinuesAfterSuccessfulPartialRawBatchSubmission()
+    {
+        EnsureEnvironment();
+        ScheduledMidiMessage[] events =
+        [
+            new(0, MidiMessage.ControlChange(0, 0, 0)),
+            new(0, MidiMessage.ControlChange(0, 32, 0)),
+            new(0, MidiMessage.ProgramChange(0, 0)),
+            new(0, MidiMessage.ControlChange(0, 101, 0)),
+            new(0, MidiMessage.ControlChange(0, 100, 0)),
+            new(0, MidiMessage.ControlChange(0, 6, 2)),
+            new(0, MidiMessage.ControlChange(0, 38, 0)),
+            new(0, MidiMessage.PitchWheelChange(0, 8_192)),
+            new(0, MidiMessage.NoteOn(0, 60, 100)),
+            new(512, MidiMessage.NoteOff(0, 60, 0))
+        ];
+        MidiRenderPlan plan = new(SampleRate, 1_024, [new MidiPortRenderPlan(0, events)]);
+
+        float[] samples = Render(plan, 257, 333, out long allocated);
+
+        Assert.Equal(0, allocated);
+        Assert.Contains(samples, static sample => sample != 0);
+    }
+
+    [Fact]
+    public unsafe void MonitoringEnableDoesNotRetriggerSkippedNoteAndAllowsFutureEventsWithoutAllocating()
+    {
+        EnsureEnvironment();
+        Guid sourceId = Guid.Parse("78cdf55d-d33e-42f3-8ea9-286526bd3be4");
+        ScheduledMidiMessage[] events =
+        [
+            new(0, MidiMessage.ProgramChange(0, 0), 0),
+            new(0, MidiMessage.NoteOn(0, 60, 100), 0),
+            new(1_024, MidiMessage.NoteOff(0, 60, 0), 0),
+            new(2_048, MidiMessage.NoteOn(0, 67, 100), 0),
+            new(3_072, MidiMessage.NoteOff(0, 67, 0), 0)
+        ];
+        MidiRenderPlan plan = new(
+            SampleRate,
+            4_096,
+            [new MidiPortRenderPlan(0, events)],
+            [sourceId],
+            [0]);
+        BassMidiRendererSettings settings = new(
+            BassMidiNoteOffPolicy.ReleaseAllMatchingNotes,
+            BassMidiInterpolation.BassDefault,
+            BassMidiSampleLoading.OnDemand,
+            0,
+            0,
+            256);
+        using BassMidiRenderer renderer = new(
+            plan,
+            SoundFontPath,
+            settings,
+            AudioMasterSettings.InitialReleaseDefault);
+        float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
+
+        fixed (float* destination = samples)
+        {
+            AudioPullResult first = renderer.PullFrames(destination, 1_536);
+            Assert.Equal(1_536, first.FrameCount);
+            renderer.EnqueueMonitoringCommands([MidiMonitoringCommand.EnableSource(0)]);
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            AudioPullResult second = renderer.PullFrames(destination + (1_536 * 2), 2_560);
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+            Assert.Equal(2_560, second.FrameCount);
+            Assert.Equal(0, allocated);
+        }
+
+        Assert.All(samples.AsSpan(0, 2_048 * 2).ToArray(), value => Assert.Equal(0f, value));
+        Assert.Contains(samples.AsSpan(2_048 * 2).ToArray(), value => value != 0f);
+        Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
+    }
+
     private static unsafe float[] Render(
         MidiRenderPlan plan,
         int internalBlockFrames,

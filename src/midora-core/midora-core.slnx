@@ -1,0 +1,16 @@
+<Solution>
+  <Project Path="../midora-midi/Midora.Midi/Midora.Midi.csproj" />
+  <Project Path="../midora-native-interops/Midora.NativeInterops.Bass/Midora.NativeInterops.Bass.csproj" />
+  <Project Path="../midora-native-interops/Midora.NativeInterops.BassMidi/Midora.NativeInterops.BassMidi.csproj" />
+  <Project Path="../midora-native-interops/Midora.NativeInterops.BassWasapi/Midora.NativeInterops.BassWasapi.csproj" />
+  <Project Path="../midora-audio-device/Midora.AudioDevice/Midora.AudioDevice.csproj" />
+  <Project Path="../midora-audio-device/Midora.AudioDevice.BassWasapi/Midora.AudioDevice.BassWasapi.csproj" />
+  <Project Path="../midora-audio/Midora.Audio/Midora.Audio.csproj" />
+  <Project Path="../midora-audio/Midora.Audio.Bass/Midora.Audio.Bass.csproj" />
+  <Project Path="Midora.Domain/Midora.Domain.csproj" />
+  <Project Path="Midora.Compiler/Midora.Compiler.csproj" />
+  <Project Path="Midora.Compiler.Tests/Midora.Compiler.Tests.csproj" />
+  <Project Path="Midora.Playback/Midora.Playback.csproj" />
+  <Project Path="Midora.Playback.Tests/Midora.Playback.Tests.csproj" />
+  <Project Path="Midora.Playback.BassWasapi/Midora.Playback.BassWasapi.csproj" />
+</Solution>

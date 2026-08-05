@@ -12,11 +12,17 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
 {
     private const int MaximumMidiBatchEventCount = 1_024;
     private const int MaximumPackedMidiBatchByteCount = MaximumMidiBatchEventCount * 3;
+    private const int MonitoringBatchQueueCapacity = 64;
     private readonly MidiRenderPlan _plan;
     private readonly BassMidiRendererSettings _settings;
     private readonly BassNativeRuntime.Lease? _runtimeLease;
     private readonly PortState[] _ports;
+    private readonly int[] _portIndexByNumber;
+    private readonly bool[] _sourceEnabled;
+    private readonly MidiMonitoringCommand[]?[] _monitoringBatches = new MidiMonitoringCommand[MonitoringBatchQueueCapacity][];
+    private readonly object _monitoringProducerSync = new();
     private readonly float _masterGain;
+    private readonly bool _limiterEnabled;
     private StereoPeakLimiter _limiter;
     private byte* _packedMidiBuffer;
     private float* _portScratchBuffer;
@@ -24,6 +30,8 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
     private long _positionFrames;
     private AudioRenderFault _fault;
     private int _pullActive;
+    private long _monitoringBatchReadPosition;
+    private long _monitoringBatchWritePosition;
     private bool _disposed;
 
     public BassMidiRenderer(
@@ -45,12 +53,21 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
         _plan = plan;
         _settings = settings;
         _masterGain = MathF.Pow(10f, masterSettings.VolumeDecibels / 20f);
+        _limiterEnabled = masterSettings.LimiterEnabled;
         _limiter = new StereoPeakLimiter(
             plan.SampleRate,
             masterSettings.LimiterCeiling,
             masterSettings.LimiterReleaseMilliseconds);
         _fault = AudioRenderFault.None;
         _ports = new PortState[plan.Ports.Length];
+        _portIndexByNumber = new int[16];
+        Array.Fill(_portIndexByNumber, -1);
+        _sourceEnabled = new bool[plan.SourceIds.Length];
+        Array.Fill(_sourceEnabled, true);
+        foreach (int sourceIndex in plan.InitiallyDisabledSourceIndices)
+        {
+            _sourceEnabled[sourceIndex] = false;
+        }
         _runtimeLease = BassNativeRuntime.Acquire();
 
         try
@@ -77,6 +94,30 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
     public long TotalFrameCount => _plan.TotalFrameCount;
 
     public AudioRenderFault Fault => _fault;
+
+    public void EnqueueMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (commands.IsEmpty)
+        {
+            return;
+        }
+
+        MidiMonitoringCommand[] batch = commands.ToArray();
+        ValidateMonitoringCommands(batch);
+        lock (_monitoringProducerSync)
+        {
+            long write = _monitoringBatchWritePosition;
+            long read = Volatile.Read(ref _monitoringBatchReadPosition);
+            if (write - read >= MonitoringBatchQueueCapacity)
+            {
+                throw new InvalidOperationException("The bounded MIDI monitoring command queue is full.");
+            }
+            int slot = (int)(write % MonitoringBatchQueueCapacity);
+            Volatile.Write(ref _monitoringBatches[slot], batch);
+            Volatile.Write(ref _monitoringBatchWritePosition, write + 1);
+        }
+    }
 
     public AudioPullResult PullFrames(float* destination, int requestedFrameCount)
     {
@@ -106,6 +147,10 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
 
             while (completedFrames < targetFrameCount)
             {
+                if (!ApplyPendingMonitoringCommands())
+                {
+                    return AudioPullResult.Fault(completedFrames);
+                }
                 if (!SubmitEventsAtCurrentFrame())
                 {
                     return AudioPullResult.Fault(completedFrames);
@@ -190,6 +235,7 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
         for (int i = 0; i < plans.Length; i++)
         {
             _ports[i] = CreatePort(plans[i]);
+            _portIndexByNumber[plans[i].ZeroBasedPortNumber] = i;
         }
     }
 
@@ -327,15 +373,21 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
             while (port.EventIndex < events.Length
                 && events[port.EventIndex].SampleFrame == _positionFrames)
             {
-                int batchStart = port.EventIndex;
+                int scanIndex = port.EventIndex;
                 int batchCount = 0;
                 int packedByteCount = 0;
 
-                while (batchStart + batchCount < events.Length
+                while (scanIndex < events.Length
                     && batchCount < MaximumMidiBatchEventCount
-                    && events[batchStart + batchCount].SampleFrame == _positionFrames)
+                    && events[scanIndex].SampleFrame == _positionFrames)
                 {
-                    MidiMessage message = events[batchStart + batchCount].Message;
+                    ScheduledMidiMessage scheduled = events[scanIndex++];
+                    if (scheduled.SourceIndex >= 0 && !_sourceEnabled[scheduled.SourceIndex])
+                    {
+                        continue;
+                    }
+
+                    MidiMessage message = scheduled.Message;
                     _packedMidiBuffer[packedByteCount++] = message.Byte0;
                     _packedMidiBuffer[packedByteCount++] = message.Byte1;
                     if (message.Length == 3)
@@ -346,13 +398,19 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
                     batchCount++;
                 }
 
+                if (batchCount == 0)
+                {
+                    port.EventIndex = scanIndex;
+                    continue;
+                }
+
                 uint submitted = NativeBassMidi.StreamEvents(
                     port.StreamHandle,
                     NativeBassMidi.BASS_MIDI_EVENTS_RAW | NativeBassMidi.BASS_MIDI_EVENTS_NORSTATUS,
                     _packedMidiBuffer,
                     (uint)packedByteCount);
 
-                if (submitted == uint.MaxValue || submitted != (uint)batchCount)
+                if (submitted == uint.MaxValue || submitted == 0 || submitted > (uint)batchCount)
                 {
                     int error = NativeBass.ErrorGetCode();
                     SetFault(
@@ -362,11 +420,120 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
                     return false;
                 }
 
-                port.EventIndex += batchCount;
+                if (submitted == (uint)batchCount)
+                {
+                    port.EventIndex = scanIndex;
+                    continue;
+                }
+
+                int acceptedEnabledEvents = 0;
+                while (port.EventIndex < scanIndex)
+                {
+                    ScheduledMidiMessage accepted = events[port.EventIndex++];
+                    if (accepted.SourceIndex < 0 || _sourceEnabled[accepted.SourceIndex])
+                    {
+                        acceptedEnabledEvents++;
+                        if (acceptedEnabledEvents == submitted)
+                        {
+                            break;
+                        }
+                    }
+                }
             }
         }
 
         return true;
+    }
+
+    private bool ApplyPendingMonitoringCommands()
+    {
+        long read = _monitoringBatchReadPosition;
+        long write = Volatile.Read(ref _monitoringBatchWritePosition);
+        while (read < write)
+        {
+            int slot = (int)(read % MonitoringBatchQueueCapacity);
+            MidiMonitoringCommand[]? batch = Volatile.Read(ref _monitoringBatches[slot]);
+            if (batch is null)
+            {
+                SetFault(AudioRenderFaultCode.InvalidPullRequest, 0, -1);
+                return false;
+            }
+
+            for (int i = 0; i < batch.Length; i++)
+            {
+                MidiMonitoringCommand command = batch[i];
+                if (command.Kind == MidiMonitoringCommandKind.SetSourceEnabled)
+                {
+                    _sourceEnabled[command.SourceIndex] = command.SourceEnabled;
+                    continue;
+                }
+
+                int portIndex = _portIndexByNumber[command.ZeroBasedPortNumber];
+                if (portIndex < 0 || !SubmitImmediateMessage(_ports[portIndex], command.Message))
+                {
+                    return false;
+                }
+            }
+
+            Volatile.Write(ref _monitoringBatches[slot], null);
+            read++;
+            Volatile.Write(ref _monitoringBatchReadPosition, read);
+        }
+        return true;
+    }
+
+    private bool SubmitImmediateMessage(PortState port, MidiMessage message)
+    {
+        _packedMidiBuffer[0] = message.Byte0;
+        _packedMidiBuffer[1] = message.Byte1;
+        int byteCount = 2;
+        if (message.Length == 3)
+        {
+            _packedMidiBuffer[2] = message.Byte2;
+            byteCount = 3;
+        }
+
+        uint submitted = NativeBassMidi.StreamEvents(
+            port.StreamHandle,
+            NativeBassMidi.BASS_MIDI_EVENTS_RAW | NativeBassMidi.BASS_MIDI_EVENTS_NORSTATUS,
+            _packedMidiBuffer,
+            (uint)byteCount);
+        if (submitted == 1)
+        {
+            return true;
+        }
+
+        int error = NativeBass.ErrorGetCode();
+        SetFault(AudioRenderFaultCode.BassMidiEventSubmissionFailed, error, port.Plan.ZeroBasedPortNumber);
+        return false;
+    }
+
+    private void ValidateMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
+    {
+        foreach (MidiMonitoringCommand command in commands)
+        {
+            if (command.Kind == MidiMonitoringCommandKind.SetSourceEnabled)
+            {
+                if ((uint)command.SourceIndex >= (uint)_sourceEnabled.Length)
+                {
+                    throw new ArgumentException("A monitoring command references an invalid source.", nameof(commands));
+                }
+                continue;
+            }
+
+            MidiMessage message = command.Message;
+            if (command.Kind != MidiMonitoringCommandKind.SendMessage
+                || command.ZeroBasedPortNumber >= 16
+                || _portIndexByNumber[command.ZeroBasedPortNumber] < 0
+                || !message.IsChannelVoiceMessage
+                || message.Length is < 2 or > 3
+                || message.Byte1 > 127
+                || message.Byte2 > 127
+                || message.MessageType == MidiMessageType.ControlChange && message.Byte1 is 91 or 93)
+            {
+                throw new ArgumentException("A monitoring command contains an invalid MIDI message or Port.", nameof(commands));
+            }
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -430,10 +597,23 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
             int sampleIndex = frameIndex * 2;
             float left = destination[sampleIndex] * _masterGain;
             float right = destination[sampleIndex + 1] * _masterGain;
-            if (!_limiter.Process(left, right, out destination[sampleIndex], out destination[sampleIndex + 1]))
+            if (_limiterEnabled)
             {
-                SetFault(AudioRenderFaultCode.NonFiniteSample, 0, -1);
-                return false;
+                if (!_limiter.Process(left, right, out destination[sampleIndex], out destination[sampleIndex + 1]))
+                {
+                    SetFault(AudioRenderFaultCode.NonFiniteSample, 0, -1);
+                    return false;
+                }
+            }
+            else
+            {
+                if (!float.IsFinite(left) || !float.IsFinite(right))
+                {
+                    SetFault(AudioRenderFaultCode.NonFiniteSample, 0, -1);
+                    return false;
+                }
+                destination[sampleIndex] = left;
+                destination[sampleIndex + 1] = right;
             }
         }
 

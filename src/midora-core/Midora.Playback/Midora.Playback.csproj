@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Midora.Domain\Midora.Domain.csproj" />
+    <ProjectReference Include="..\Midora.Compiler\Midora.Compiler.csproj" />
+    <ProjectReference Include="..\..\midora-audio\Midora.Audio\Midora.Audio.csproj" />
+  </ItemGroup>
+</Project>

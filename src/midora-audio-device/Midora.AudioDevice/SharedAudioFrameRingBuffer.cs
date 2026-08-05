@@ -62,6 +62,8 @@ public sealed unsafe class SharedAudioFrameRingBuffer : IAudioRenderSource, IDis
 
     public int FreeFrameCount => CapacityFrameCount - AvailableFrameCount;
 
+    public long ProducedFrameCount => Volatile.Read(ref Int64At(WritePositionOffset));
+
     public long UnderrunCount => Volatile.Read(ref Int64At(UnderrunCountOffset));
 
     public long ProducerAllocatedBytes => Volatile.Read(ref Int64At(ProducerAllocatedBytesOffset));

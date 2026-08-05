@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Midora.Playback\Midora.Playback.csproj" />
+    <ProjectReference Include="..\..\midora-audio\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />
+    <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.BassWasapi\Midora.AudioDevice.BassWasapi.csproj" />
+  </ItemGroup>
+</Project>

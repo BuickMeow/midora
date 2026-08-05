@@ -3,8 +3,15 @@ namespace Midora.Audio;
 public sealed class MidiRenderPlan
 {
     private readonly MidiPortRenderPlan[] _ports;
+    private readonly Guid[] _sourceIds;
+    private readonly int[] _initiallyDisabledSourceIndices;
 
-    public MidiRenderPlan(int sampleRate, long totalFrameCount, ReadOnlySpan<MidiPortRenderPlan> ports)
+    public MidiRenderPlan(
+        int sampleRate,
+        long totalFrameCount,
+        ReadOnlySpan<MidiPortRenderPlan> ports,
+        ReadOnlySpan<Guid> sourceIds = default,
+        ReadOnlySpan<int> initiallyDisabledSourceIndices = default)
     {
         if (sampleRate <= 0)
         {
@@ -24,7 +31,10 @@ public sealed class MidiRenderPlan
         SampleRate = sampleRate;
         TotalFrameCount = totalFrameCount;
         _ports = ports.ToArray();
-        ValidatePorts(_ports, totalFrameCount);
+        _sourceIds = sourceIds.ToArray();
+        _initiallyDisabledSourceIndices = initiallyDisabledSourceIndices.ToArray();
+        ValidateSources(_sourceIds, _initiallyDisabledSourceIndices);
+        ValidatePorts(_ports, totalFrameCount, _sourceIds.Length);
     }
 
     public int SampleRate { get; }
@@ -33,7 +43,39 @@ public sealed class MidiRenderPlan
 
     public ReadOnlySpan<MidiPortRenderPlan> Ports => _ports;
 
-    private static void ValidatePorts(ReadOnlySpan<MidiPortRenderPlan> ports, long totalFrameCount)
+    public ReadOnlySpan<Guid> SourceIds => _sourceIds;
+
+    public ReadOnlySpan<int> InitiallyDisabledSourceIndices => _initiallyDisabledSourceIndices;
+
+    public int FindSourceIndex(Guid sourceId) => Array.IndexOf(_sourceIds, sourceId);
+
+    private static void ValidateSources(ReadOnlySpan<Guid> sourceIds, ReadOnlySpan<int> disabledIndices)
+    {
+        HashSet<Guid> seen = [];
+        foreach (Guid sourceId in sourceIds)
+        {
+            if (sourceId == Guid.Empty || !seen.Add(sourceId))
+            {
+                throw new ArgumentException("Render source IDs must be non-empty and unique.", nameof(sourceIds));
+            }
+        }
+
+        HashSet<int> disabled = [];
+        foreach (int sourceIndex in disabledIndices)
+        {
+            if ((uint)sourceIndex >= (uint)sourceIds.Length || !disabled.Add(sourceIndex))
+            {
+                throw new ArgumentException(
+                    "Initially disabled source indices must be unique and reference the source table.",
+                    nameof(disabledIndices));
+            }
+        }
+    }
+
+    private static void ValidatePorts(
+        ReadOnlySpan<MidiPortRenderPlan> ports,
+        long totalFrameCount,
+        int sourceCount)
     {
         int previousPort = -1;
         for (int i = 0; i < ports.Length; i++)
@@ -48,6 +90,14 @@ public sealed class MidiRenderPlan
             if (!events.IsEmpty && events[^1].SampleFrame > totalFrameCount)
             {
                 throw new ArgumentException("A MIDI event is beyond the render range.", nameof(ports));
+            }
+
+            foreach (ScheduledMidiMessage scheduled in events)
+            {
+                if (scheduled.SourceIndex < -1 || scheduled.SourceIndex >= sourceCount)
+                {
+                    throw new ArgumentException("A MIDI event references an invalid render source.", nameof(ports));
+                }
             }
 
             previousPort = port.ZeroBasedPortNumber;

@@ -73,7 +73,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 4. **已确认：4A（2026-08-05）**。新建 Event Instrument 默认 `Reject`；策略范围内重叠产生 Error，结果不可消费。用户显式选择 `Warn` 时产生 Warning，默认仍可消费；启用“Warning 视为 Error”后结果不可消费，但诊断级别仍是 Warning。SRS 7.33、10.17 与 12.19 已统一。
 5. **已确认：5A（2026-08-05）**。整数目标参数默认 `Round`，midpoint 固定为 Away From Zero；`Floor` / `Ceil` 保留为目标参数可选项。取整只在完整映射链最终输出时执行一次；取整和最终越界策略已从 Mapping Step 移到事件参数、曲线或 Logical Parameter Mapping 的目标配置。SRS 9.4 与 12.9 已统一。
 6. **已确认：6A（2026-08-05）**。连续值源以有效范围内每个整数 tick 的最终目标值为参考语义；canonical 输出首次有效值，以及后续相对上次输出发生变化的最终整数值。允许跳跃求值、缓存等优化，但 canonical 事件、tick、值、来源和诊断必须与逐 tick 参考算法完全一致；不采用误差阈值或自适应近似采样。
-7. 实际无输出的 Event Instrument 是否占用 Channel Unit：SRS 7.31 明确留给编译优化；该选择会影响资源分配和 canonical 形式。
+7. **无需产品确认（SRS 已闭合）**。第 7.30 节只把决定延后到编译章节；第 12.7.3 节已明确最终完全无输出的实例不分配 Channel Group、不占用 Channel Unit。现有 `InstanceWithNoPossibleOutputConsumesNoChannelUnit` 测试已锁定该语义，代码无需修改。原审计记录误写为第 7.31 节，现已纠正。
 8. tick→sample 整数舍入：当前候选为完整 Tempo Map 的 decimal 积分后只做一次 `AwayFromZero`。
 9. Limiter 最终算法：当前候选是 stereo-linked、sample-peak、零 look-ahead、ceiling 1.0、50 ms release。
 10. WASAPI 正式输出策略：shared/exclusive、event-driven、格式协商和 period。

@@ -1,23 +1,46 @@
 using Midora.AudioDevice.BassWasapi.Settings;
 using Midora.NativeInterops.BassWasapi;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace Midora.AudioDevice.BassWasapi.Internals;
 
-internal sealed unsafe class BassWasapiOutputDeviceFactory(
-    BassWasapiAudioOutputDeviceSettings settings
-) : IAudioOutputDeviceFactory
+public sealed unsafe class BassWasapiOutputDeviceFactory : IAudioOutputDeviceFactory
 {
+    private const uint SupportedApiVersion = 0x0204;
+    private readonly BassWasapiAudioOutputDeviceSettings _settings;
+
+    public BassWasapiOutputDeviceFactory(BassWasapiAudioOutputDeviceSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        uint apiVersion = BASSWASAPI.GetVersion() >> 16;
+        if (apiVersion != SupportedApiVersion)
+        {
+            throw new MidoraAudioDeviceException(
+                $"Unsupported BASSWASAPI API version 0x{apiVersion:x4}; expected 0x{SupportedApiVersion:x4}.");
+        }
+
+        _settings = settings;
+    }
+
+    public int LastEnumerationErrorCode { get; private set; }
+
+    public uint ApiVersion => BASSWASAPI.GetVersion();
+
     public IReadOnlyList<AudioOutputDeviceInfo> GetDevices()
     {
         List<AudioOutputDeviceInfo> result = [];
+        LastEnumerationErrorCode = 0;
 
         BASSWASAPI.BASS_WASAPI_DEVICEINFO currentDeviceInfo;
 
         for (uint i = 0; 0 != BASSWASAPI.GetDeviceInfo(i, &currentDeviceInfo); i++)
         {
-            if ((currentDeviceInfo.flags & BASSWASAPI.BASS_DEVICE_INPUT) != 0)
+            const uint rejectedFlags = BASSWASAPI.BASS_DEVICE_INPUT
+                | BASSWASAPI.BASS_DEVICE_LOOPBACK
+                | BASSWASAPI.BASS_DEVICE_UNPLUGGED
+                | BASSWASAPI.BASS_DEVICE_DISABLED;
+
+            if ((currentDeviceInfo.flags & rejectedFlags) != 0)
             {
                 continue;
             }
@@ -28,17 +51,20 @@ internal sealed unsafe class BassWasapiOutputDeviceFactory(
             }
 
             result.Add(new AudioOutputDeviceInfo(
-                Marshal.PtrToStringAnsi((nint)currentDeviceInfo.id) ?? string.Empty,
-                Marshal.PtrToStringAnsi((nint)currentDeviceInfo.name),
-                new((int)currentDeviceInfo.mixfreq, (int)currentDeviceInfo.mixchans, AudioSampleFormat.Float32)
+                Marshal.PtrToStringUTF8((nint)currentDeviceInfo.id) ?? string.Empty,
+                Marshal.PtrToStringUTF8((nint)currentDeviceInfo.name),
+                new((int)currentDeviceInfo.mixfreq, 2, AudioSampleFormat.Float32),
+                (currentDeviceInfo.flags & BASSWASAPI.BASS_DEVICE_DEFAULT) != 0
             ));
         }
+
+        LastEnumerationErrorCode = Midora.NativeInterops.Bass.BASS.ErrorGetCode();
 
         return result;
     }
 
     public IAudioOutputDevice Open(AudioOutputDeviceInfo deviceInfo, IAudioRenderSource audioRenderSource)
     {
-        return new BassWasapiOutputDevice(deviceInfo, settings, audioRenderSource);
+        return new BassWasapiOutputDevice(deviceInfo, _settings, audioRenderSource);
     }
 }

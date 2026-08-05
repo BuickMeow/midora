@@ -1,190 +1,406 @@
+using Midora.Audio.Bass;
 using Midora.AudioDevice;
 using Midora.AudioDevice.BassWasapi.Internals;
+using Midora.AudioDevice.BassWasapi.Settings;
+using Midora.AudioDevice.Wave;
 using Midora.Midi;
-using Midora.NativeInterops.Bass;
-using Midora.NativeInterops.BassMidi;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 
 namespace Midora.Audio.Bass.Tests.Console;
 
-file sealed unsafe class TestBassMidiAudioRenderSource : IAudioRenderSource
-{
-    private readonly uint _bassStreamHandle;
-    private readonly uint _soundfontHandle;
-
-    private readonly MidiMessage* _midiMessageBuffer;
-    private readonly nint _midiMessageBufferSize;
-
-    private readonly byte* _midiPackBuffer;
-
-    public TestBassMidiAudioRenderSource()
-    {
-        _bassStreamHandle = BASSMIDI.StreamCreate(
-            16,
-            BASS.BASS_SAMPLE_FLOAT | BASS.BASS_STREAM_DECODE | BASSMIDI.BASS_MIDI_NOFX | BASSMIDI.BASS_MIDI_NOTEOFF1,
-            48000
-        );
-
-        if (0 == _bassStreamHandle)
-        {
-            throw new BassException();
-        }
-
-        nint sondfontNamePtr = Marshal.StringToHGlobalUni(@"D:\Soundfonts\sf2\sDetrimental Concert Grand Piano.sf2");
-
-        _soundfontHandle = BASSMIDI.FontInit(
-            (void*)sondfontNamePtr,
-            BASS.BASS_UNICODE | BASSMIDI.BASS_MIDI_FONT_MMAP
-        );
-
-        if (0 == _soundfontHandle)
-        {
-            throw new BassException();
-        }
-
-        Marshal.FreeHGlobal(sondfontNamePtr);
-
-        var font = new BASSMIDI.BASS_MIDI_FONT { font = _soundfontHandle, preset = -1, bank = 0 };
-
-        if (0 == BASSMIDI.StreamSetFonts(_bassStreamHandle, &font, 1))
-        {
-            throw new BassException();
-        }
-
-        _midiMessageBufferSize = 8192;
-        nuint requiredLength = checked((nuint)(sizeof(MidiMessage) * _midiMessageBufferSize));
-        _midiMessageBuffer = (MidiMessage*)NativeMemory.Alloc(requiredLength);
-        _midiPackBuffer = (byte*)NativeMemory.Alloc(requiredLength);
-    }
-
-    public void Play()
-    {
-        _midiMessageBuffer[0] = MidiMessage.ControlChange(0, 73, 90);
-        SendMidiMessages(1);
-
-        Thread.Sleep(100);
-
-        _midiMessageBuffer[0] = MidiMessage.NoteOn(0, 60, 75);
-        SendMidiMessages(1);
-
-        Thread.Sleep(200);
-
-        _midiMessageBuffer[0] = MidiMessage.NoteOn(0, 64, 85);
-        SendMidiMessages(1);
-
-        Thread.Sleep(200);
-
-        _midiMessageBuffer[0] = MidiMessage.NoteOn(0, 67, 95);
-        SendMidiMessages(1);
-
-        Thread.Sleep(500);
-
-        _midiMessageBuffer[0] = MidiMessage.PitchWheelChange(0, 9000);
-        SendMidiMessages(1);
-
-        Thread.Sleep(500);
-
-        _midiMessageBuffer[0] = MidiMessage.PitchWheelChange(0, 12000);
-        SendMidiMessages(1);
-
-        Thread.Sleep(500);
-
-        _midiMessageBuffer[0] = MidiMessage.PitchWheelChange(0, 16000);
-        SendMidiMessages(1);
-
-        Thread.Sleep(500);
-
-        _midiMessageBuffer[0] = MidiMessage.PitchWheelChange(0, 4000);
-        SendMidiMessages(1);
-
-        Thread.Sleep(500);
-
-        _midiMessageBuffer[0] = MidiMessage.PitchWheelChange(0, 1000);
-        SendMidiMessages(1);
-
-        Thread.Sleep(500);
-
-        _midiMessageBuffer[0] = MidiMessage.PitchWheelChange(0, 8192);
-        SendMidiMessages(1);
-
-        Thread.Sleep(500);
-
-        _midiMessageBuffer[0] = MidiMessage.ControlChange(0, 74, 10);
-        SendMidiMessages(1);
-
-        Thread.Sleep(500);
-
-        _midiMessageBuffer[0] = MidiMessage.ControlChange(0, 74, 0);
-        SendMidiMessages(1);
-
-        Thread.Sleep(500);
-
-        _midiMessageBuffer[0] = MidiMessage.NoteOff(0, 60);
-        _midiMessageBuffer[1] = MidiMessage.NoteOff(0, 64);
-        _midiMessageBuffer[2] = MidiMessage.NoteOff(0, 67);
-        SendMidiMessages(3);
-
-        Thread.Sleep(6000);
-    }
-
-    private void SendMidiMessages(int messageCount)
-    {
-        int packedMessageLength = 0;
-
-        for (int i = 0; i < messageCount; i++)
-        {
-            packedMessageLength += (_midiMessageBuffer + i)->WriteTo(_midiPackBuffer + packedMessageLength);
-        }
-
-        _ = BASSMIDI.StreamEvents(
-                _bassStreamHandle,
-                BASSMIDI.BASS_MIDI_EVENTS_RAW | BASSMIDI.BASS_MIDI_EVENTS_NORSTATUS,
-                _midiPackBuffer,
-                (uint)packedMessageLength
-            );
-    }
-
-    int IAudioRenderSource.Render(void* destination, int requiredBytes)
-    {
-        return (int)BASS.ChannelGetData(_bassStreamHandle, destination, (uint)requiredBytes);
-    }
-}
-
+[SupportedOSPlatform("windows")]
 public static class Program
 {
-    public static unsafe void Main()
+    private const int OfflineSampleRate = 48_000;
+    private const string DefaultSoundFontPath = @"D:\Soundfonts\sf2\sDetrimental Concert Grand Piano.sf2";
+
+    public static int Main(string[] args)
     {
-        LoadBassLib();
-
-        if (0 == BASS.Init(0, 48000, 0, null, null))
+        try
         {
-            throw new BassException();
+            string repositoryRoot = FindRepositoryRoot();
+            LoadBassLibraries();
+            string mode = args.Length >= 1 ? args[0].ToLowerInvariant() : "offline";
+            string soundFontPath = args.Length >= 2 ? args[1] : DefaultSoundFontPath;
+
+            return mode switch
+            {
+                "offline" => RunOffline(
+                    repositoryRoot,
+                    soundFontPath,
+                    args.Length >= 3 ? args[2] : null),
+                "realtime" => RunRealtime(soundFontPath),
+                "offline-child" => RunOfflineChild(
+                    repositoryRoot,
+                    soundFontPath,
+                    args.Length >= 3 ? args[2] : null),
+                "realtime-child" => RunRealtimeChild(repositoryRoot, soundFontPath),
+                "wasapi-probe" => RunWasapiProbe(),
+                _ => throw new ArgumentException(
+                    "用法：offline|offline-child [SF2路径] [WAV路径]、realtime|realtime-child [SF2路径] 或 wasapi-probe")
+            };
         }
-
-        TestBassMidiAudioRenderSource renderSource = new();
-
-        BassWasapiOutputDeviceFactory deviceFactory = new(new());
-
-        IAudioOutputDevice outputDevice = deviceFactory.Open(
-            deviceFactory.GetDevices().FirstOrDefault() ?? throw new MidoraAudioDeviceException("No audio output devices."),
-            renderSource
-        );
-
-        outputDevice.Start();
-
-        renderSource.Play();
+        catch (Exception exception)
+        {
+            global::System.Console.Error.WriteLine(exception);
+            return 1;
+        }
     }
 
-    static void LoadBassLib()
+    private static int RunOffline(string repositoryRoot, string soundFontPath, string? requestedOutputPath)
     {
-        string bassPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Midora", "Native", "BASS", "win-x64");
+        string outputPath = requestedOutputPath is not null
+            ? Path.GetFullPath(requestedOutputPath)
+            : Path.Combine(repositoryRoot, "artifacts", "audio", "midora-bass-offline-smoke.wav");
 
-        string bassDllPath = Path.Combine(bassPath, "bass.dll");
-        string bassMidiDllPath = Path.Combine(bassPath, "bassmidi.dll");
-        string bassWasapiDllPath = Path.Combine(bassPath, "basswasapi.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        MidiRenderPlan plan = CreateTestPlan(OfflineSampleRate);
+        using BassMidiRenderer renderer = CreateRenderer(plan, soundFontPath, maximumWorkFrames: 2_048);
 
-        NativeLibrary.Load(bassDllPath);
-        NativeLibrary.Load(bassMidiDllPath);
-        NativeLibrary.Load(bassWasapiDllPath);
+        WaveFileRenderResult result = WaveFileOutput.Render(
+            renderer,
+            plan.TotalFrameCount,
+            outputPath,
+            workFrameCount: 1_003,
+            overwrite: true);
+
+        global::System.Console.WriteLine($"离线渲染完成：{outputPath}");
+        global::System.Console.WriteLine($"采样率：{plan.SampleRate} Hz；frames：{result.FrameCount}；文件字节：{result.FileByteCount}");
+        global::System.Console.WriteLine($"Rendering 热循环当前线程托管分配：{result.RenderingThreadAllocatedBytes} bytes");
+        global::System.Console.WriteLine($"其中 source pull：{result.SourcePullAllocatedBytes} bytes；sample write：{result.SampleWriteAllocatedBytes} bytes");
+        global::System.Console.WriteLine($"渲染器故障：{renderer.Fault}");
+        return renderer.Fault.Code == AudioRenderFaultCode.None ? 0 : 1;
+    }
+
+    private static int RunRealtime(string soundFontPath)
+    {
+        const int renderAheadMilliseconds = 100;
+        const int deviceBufferRequestMilliseconds = 50;
+        const int workFrameCount = 256;
+
+        BassWasapiOutputDeviceFactory deviceFactory = new(
+            new BassWasapiAudioOutputDeviceSettings(deviceBufferRequestMilliseconds));
+        IReadOnlyList<AudioOutputDeviceInfo> devices = deviceFactory.GetDevices();
+        if (devices.Count == 0)
+        {
+            throw new MidoraAudioDeviceException("没有可用的 enabled output device。");
+        }
+
+        global::System.Console.WriteLine("可用输出设备：");
+        for (int i = 0; i < devices.Count; i++)
+        {
+            AudioOutputDeviceInfo item = devices[i];
+            global::System.Console.WriteLine(
+                $"  [{i}] {(item.IsSystemDefault ? "[系统默认] " : string.Empty)}{item.Name}；mix={item.AudioFormat.SampleRate} Hz；id={item.Id}");
+        }
+
+        AudioOutputDeviceInfo selected = devices.FirstOrDefault(static item => item.IsSystemDefault) ?? devices[0];
+        int sampleRate = selected.AudioFormat.SampleRate;
+        MidiRenderPlan plan = CreateTestPlan(sampleRate);
+        using BassMidiRenderer renderer = CreateRenderer(plan, soundFontPath, workFrameCount);
+
+        int ringCapacityFrames = checked(sampleRate * renderAheadMilliseconds / 1_000);
+        using AudioFrameRingBuffer ring = new(renderer.Format, ringCapacityFrames);
+        using AudioRenderAheadWorker worker = new(renderer, ring, workFrameCount);
+        worker.Start();
+
+        int startThresholdFrames = ringCapacityFrames * 3 / 4;
+        while (ring.AvailableFrameCount < startThresholdFrames
+            && !ring.ProducerCompleted
+            && !ring.ProducerFaulted)
+        {
+            Thread.Sleep(1);
+        }
+
+        if (ring.ProducerFaulted)
+        {
+            throw new MidoraAudioDeviceException($"Render-ahead Preparing 失败：{renderer.Fault}");
+        }
+
+        using BassWasapiOutputDevice output = (BassWasapiOutputDevice)deviceFactory.Open(selected, ring);
+        global::System.Console.WriteLine(
+            $"实时播放：{selected.Name}；actual={output.Info.AudioFormat.SampleRate} Hz；actual device buffer={output.ActualBufferFrameCount} frames");
+        global::System.Console.WriteLine(
+            $"Render-Ahead={renderAheadMilliseconds} ms；Device Request={deviceBufferRequestMilliseconds} ms；事件按 sample-frame 推进，不使用 Thread.Sleep 调度 MIDI。");
+
+        output.Start();
+        while (!ring.ProducerFaulted
+            && !(ring.ProducerCompleted && ring.AvailableFrameCount == 0))
+        {
+            Thread.Sleep(10);
+        }
+
+        Thread.Sleep(100);
+        output.Stop(flush: true);
+        worker.Stop();
+
+        global::System.Console.WriteLine(
+            $"播放结束：callbacks={output.CallbackCount}；callback allocations={output.CallbackAllocatedBytes} B；underruns={ring.UnderrunCount}；render-thread allocations={worker.RenderingThreadAllocatedBytes} B");
+        global::System.Console.WriteLine($"callback fault={output.CallbackFaulted}；producer fault={ring.ProducerFaulted}；renderer fault={renderer.Fault}");
+
+        return !output.CallbackFaulted
+            && !ring.ProducerFaulted
+            && renderer.Fault.Code == AudioRenderFaultCode.None
+            && output.CallbackAllocatedBytes == 0
+            && worker.RenderingThreadAllocatedBytes == 0
+            ? 0
+            : 1;
+    }
+
+    private static int RunOfflineChild(
+        string repositoryRoot,
+        string soundFontPath,
+        string? requestedOutputPath)
+    {
+        string outputPath = requestedOutputPath is not null
+            ? Path.GetFullPath(requestedOutputPath)
+            : Path.Combine(repositoryRoot, "artifacts", "audio", "midora-bass-child-offline-smoke.wav");
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+
+        MidiRenderPlan plan = CreateTestPlan(OfflineSampleRate);
+        BassMidiRendererSettings settings = CreateRendererSettings(maximumWorkFrames: 256);
+        using BassMidiChildProcessSession session = new(
+            plan,
+            soundFontPath,
+            settings,
+            AudioMasterSettings.InitialReleaseDefault,
+            ipcAudioBufferMilliseconds: 100,
+            GetWorkerPath(repositoryRoot),
+            GetBassNativeDirectory(),
+            BassMidiChildConsumptionMode.OfflineBlocking,
+            preparingTimeout: TimeSpan.FromSeconds(30));
+
+        WaveFileRenderResult result = WaveFileOutput.Render(
+            session,
+            plan.TotalFrameCount,
+            outputPath,
+            workFrameCount: 1_003,
+            overwrite: true);
+
+        global::System.Console.WriteLine($"独立进程离线渲染完成：{outputPath}");
+        global::System.Console.WriteLine(
+            $"frames={result.FrameCount}；WAVE Rendering allocations={result.RenderingThreadAllocatedBytes} B；child Rendering allocations={session.RenderingThreadAllocatedBytes} B；child fault={session.ProducerFaulted}");
+        return result.RenderingThreadAllocatedBytes == 0
+            && session.RenderingThreadAllocatedBytes == 0
+            && !session.ProducerFaulted
+            ? 0
+            : 1;
+    }
+
+    private static int RunRealtimeChild(string repositoryRoot, string soundFontPath)
+    {
+        const int ipcAudioBufferMilliseconds = 100;
+        const int deviceBufferRequestMilliseconds = 50;
+        const int workFrameCount = 256;
+
+        BassWasapiOutputDeviceFactory deviceFactory = new(
+            new BassWasapiAudioOutputDeviceSettings(deviceBufferRequestMilliseconds));
+        IReadOnlyList<AudioOutputDeviceInfo> devices = deviceFactory.GetDevices();
+        AudioOutputDeviceInfo selected = devices.FirstOrDefault(static item => item.IsSystemDefault)
+            ?? devices.FirstOrDefault()
+            ?? throw new MidoraAudioDeviceException("没有可用的 enabled output device。");
+        MidiRenderPlan plan = CreateTestPlan(selected.AudioFormat.SampleRate);
+        BassMidiRendererSettings settings = CreateRendererSettings(workFrameCount);
+
+        using BassMidiChildProcessSession session = new(
+            plan,
+            soundFontPath,
+            settings,
+            AudioMasterSettings.InitialReleaseDefault,
+            ipcAudioBufferMilliseconds,
+            GetWorkerPath(repositoryRoot),
+            GetBassNativeDirectory(),
+            BassMidiChildConsumptionMode.RealtimeNonBlocking,
+            preparingTimeout: TimeSpan.FromSeconds(30));
+
+        int startThresholdFrames = selected.AudioFormat.SampleRate * 75 / 1_000;
+        while (session.AvailableFrameCount < startThresholdFrames
+            && !session.ProducerCompleted
+            && !session.ProducerFaulted)
+        {
+            Thread.Sleep(1);
+        }
+
+        using BassWasapiOutputDevice output = (BassWasapiOutputDevice)deviceFactory.Open(selected, session);
+        global::System.Console.WriteLine(
+            $"独立进程实时播放：{selected.Name}；actual={output.Info.AudioFormat.SampleRate} Hz；IPC Audio Buffer={ipcAudioBufferMilliseconds} ms");
+        output.Start();
+        while (!session.ProducerFaulted
+            && !(session.ProducerCompleted && session.AvailableFrameCount == 0))
+        {
+            Thread.Sleep(10);
+        }
+
+        Thread.Sleep(100);
+        output.Stop(flush: true);
+        global::System.Console.WriteLine(
+            $"播放结束：callbacks={output.CallbackCount}；callback allocations={output.CallbackAllocatedBytes} B；IPC underruns={session.UnderrunCount}；child allocations={session.RenderingThreadAllocatedBytes} B；child fault={session.ProducerFaulted}");
+
+        return !output.CallbackFaulted
+            && !session.ProducerFaulted
+            && output.CallbackAllocatedBytes == 0
+            && session.RenderingThreadAllocatedBytes == 0
+            ? 0
+            : 1;
+    }
+
+    private static int RunWasapiProbe()
+    {
+        BassWasapiOutputDeviceFactory factory = new(new BassWasapiAudioOutputDeviceSettings(50));
+        IReadOnlyList<AudioOutputDeviceInfo> devices = factory.GetDevices();
+        global::System.Console.WriteLine(
+            $"BASSWASAPI enabled output devices（API=0x{factory.ApiVersion:x8}；enumeration terminal error={factory.LastEnumerationErrorCode}）：");
+        for (int i = 0; i < devices.Count; i++)
+        {
+            AudioOutputDeviceInfo item = devices[i];
+            global::System.Console.WriteLine(
+                $"  [{i}] default={item.IsSystemDefault}；{item.Name}；{item.AudioFormat.SampleRate} Hz；{item.Id}");
+        }
+
+        AudioOutputDeviceInfo selected = devices.FirstOrDefault(static item => item.IsSystemDefault)
+            ?? devices.FirstOrDefault()
+            ?? throw new MidoraAudioDeviceException("没有可用的 enabled output device。");
+        int capacityFrames = selected.AudioFormat.SampleRate / 10;
+        using AudioFrameRingBuffer silentRing = new(selected.AudioFormat, capacityFrames);
+        using BassWasapiOutputDevice output = (BassWasapiOutputDevice)factory.Open(selected, silentRing);
+        output.Start();
+        Thread.Sleep(250);
+        output.Stop(flush: true);
+
+        global::System.Console.WriteLine(
+            $"静音 probe 完成：actual={output.Info.AudioFormat}；device buffer={output.ActualBufferFrameCount} frames；callbacks={output.CallbackCount}；callback allocations={output.CallbackAllocatedBytes} B；callback fault={output.CallbackFaulted}");
+        return output.CallbackCount > 0
+            && output.CallbackAllocatedBytes == 0
+            && !output.CallbackFaulted
+            ? 0
+            : 1;
+    }
+
+    private static BassMidiRenderer CreateRenderer(
+        MidiRenderPlan plan,
+        string soundFontPath,
+        int maximumWorkFrames)
+    {
+        BassMidiRendererSettings rendererSettings = CreateRendererSettings(maximumWorkFrames);
+
+        return new BassMidiRenderer(
+            plan,
+            soundFontPath,
+            rendererSettings,
+            AudioMasterSettings.InitialReleaseDefault);
+    }
+
+    private static BassMidiRendererSettings CreateRendererSettings(int maximumWorkFrames)
+    {
+        return new BassMidiRendererSettings(
+            noteOffPolicy: BassMidiNoteOffPolicy.ReleaseAllMatchingNotes,
+            interpolation: BassMidiInterpolation.BassDefault,
+            sampleLoading: BassMidiSampleLoading.OnDemand,
+            maximumVoices: 0,
+            cpuLimitPercent: 0,
+            maximumWorkFrameCount: maximumWorkFrames);
+    }
+
+    private static MidiRenderPlan CreateTestPlan(int sampleRate)
+    {
+        List<ScheduledMidiMessage> events = [];
+
+        Add(0, MidiMessage.ControlChange(0, 121, 0));
+        Add(0, MidiMessage.ControlChange(0, 0, 0));
+        Add(0, MidiMessage.ControlChange(0, 32, 0));
+        Add(0, MidiMessage.ProgramChange(0, 0));
+        Add(0, MidiMessage.ControlChange(0, 7, 100));
+        Add(0, MidiMessage.ControlChange(0, 10, 64));
+        Add(0, MidiMessage.ControlChange(0, 11, 127));
+        Add(0, MidiMessage.ControlChange(0, 64, 127));
+
+        AddChord(0, 2_000, 48, 55, 60, 64);
+        AddChord(2_000, 4_000, 45, 52, 57, 60);
+        AddChord(4_000, 6_000, 41, 48, 53, 57);
+        AddChord(6_000, 8_000, 43, 50, 55, 59);
+
+        int[] melody = [72, 76, 79, 84, 79, 76, 74, 71, 69, 72, 77, 81, 79, 74, 71, 67];
+        for (int i = 0; i < melody.Length; i++)
+        {
+            int start = i * 500;
+            Add(start, MidiMessage.NoteOn(0, (byte)melody[i], (byte)(82 + ((i % 4) * 7))));
+            Add(start + 430, MidiMessage.NoteOff(0, (byte)melody[i], 23));
+        }
+
+        Add(8_000, MidiMessage.ControlChange(0, 64, 0));
+        Add(8_000, MidiMessage.ControlChange(0, 123, 0));
+
+        ScheduledMidiMessage[] orderedEvents = events
+            .OrderBy(static item => item.SampleFrame)
+            .ToArray();
+        MidiPortRenderPlan port = new(0, orderedEvents);
+        return new MidiRenderPlan(sampleRate, MillisecondsToFrames(8_000, sampleRate), [port]);
+
+        void Add(int milliseconds, MidiMessage message)
+        {
+            events.Add(new ScheduledMidiMessage(
+                MillisecondsToFrames(milliseconds, sampleRate),
+                message));
+        }
+
+        void AddChord(int startMilliseconds, int endMilliseconds, params int[] keys)
+        {
+            for (int i = 0; i < keys.Length; i++)
+            {
+                Add(startMilliseconds, MidiMessage.NoteOn(0, (byte)keys[i], (byte)(72 + (i * 4))));
+                Add(endMilliseconds, MidiMessage.NoteOff(0, (byte)keys[i], 18));
+            }
+        }
+    }
+
+    private static long MillisecondsToFrames(int milliseconds, int sampleRate)
+    {
+        return checked((long)milliseconds * sampleRate / 1_000);
+    }
+
+    private static void LoadBassLibraries()
+    {
+        string bassPath = GetBassNativeDirectory();
+
+        _ = NativeLibrary.Load(Path.Combine(bassPath, "bass.dll"));
+        _ = NativeLibrary.Load(Path.Combine(bassPath, "bassmidi.dll"));
+        _ = NativeLibrary.Load(Path.Combine(bassPath, "basswasapi.dll"));
+    }
+
+    private static string GetBassNativeDirectory()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Midora",
+            "Native",
+            "BASS",
+            "win-x64");
+    }
+
+    private static string GetWorkerPath(string repositoryRoot)
+    {
+        string configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name ?? "Debug";
+        return Path.Combine(
+            repositoryRoot,
+            "src",
+            "midora-audio",
+            "Midora.Audio.Bass.Worker",
+            "bin",
+            configuration,
+            "net10.0",
+            "Midora.Audio.Bass.Worker.dll");
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        DirectoryInfo? current = new(AppContext.BaseDirectory);
+        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Build.props")))
+        {
+            current = current.Parent;
+        }
+
+        return current?.FullName
+            ?? throw new DirectoryNotFoundException("Could not locate the Midora repository root.");
     }
 }

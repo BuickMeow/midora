@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +17,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />
+    <ProjectReference Include="..\Midora.Audio.Bass.Worker\Midora.Audio.Bass.Worker.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.Wave\Midora.AudioDevice.Wave.csproj" />
   </ItemGroup>
 
   <ItemGroup>

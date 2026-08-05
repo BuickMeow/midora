@@ -60,6 +60,7 @@ public readonly struct MidiMessage
 
     public static MidiMessage PitchWheelChange(byte channelNumber, ushort valuePositive14Bit)
     {
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(valuePositive14Bit, (ushort)16_383);
         return new(channelNumber,
             MidiMessageType.PitchWheelChange,
             (byte)(valuePositive14Bit & 0b__0111_1111),
@@ -73,6 +74,7 @@ public readonly struct MidiMessage
 
     public static MidiMessage SongPositionPointer(ushort beats14Bit)
     {
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(beats14Bit, (ushort)16_383);
         return new(MidiSystemMessageType.SongPositionPointer,
             (byte)(beats14Bit & 0b__0111_1111),
             (byte)((beats14Bit >> 7) & 0b__0111_1111));
@@ -128,8 +130,33 @@ public readonly struct MidiMessage
         return new(data);
     }
 
+    public static MidiMessage FromPackedValue(uint packedValue)
+    {
+        int length = (int)(packedValue >> MessageLengthOffset);
+        byte status = (byte)packedValue;
+        if (status is < 0x80 or > 0xef)
+        {
+            throw new ArgumentException("Only MIDI channel voice messages can be reconstructed from a packed render value.", nameof(packedValue));
+        }
+
+        MidiMessageType messageType = (MidiMessageType)(status & MessageTypeMask);
+        int expectedLength = GetMessageLengthByMessageType(messageType);
+        byte data1 = (byte)(packedValue >> Data1MaskOffset);
+        byte data2 = (byte)(packedValue >> Data2MaskOffset);
+        if (length != expectedLength || data1 > 127 || data2 > 127)
+        {
+            throw new ArgumentException("The packed MIDI channel message is malformed.", nameof(packedValue));
+        }
+
+        return new MidiMessage(packedValue, true);
+    }
+
     private MidiMessage(byte channelNumber, MidiMessageType messageType, byte data1, byte data2)
     {
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(channelNumber, (byte)15);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(data1, (byte)127);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(data2, (byte)127);
+
         _raw = (uint)channelNumber
             | (uint)messageType
             | (uint)(data1 << Data1MaskOffset)
@@ -139,6 +166,9 @@ public readonly struct MidiMessage
 
     private MidiMessage(MidiSystemMessageType systemMessageType, byte data1 = 0, byte data2 = 0)
     {
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(data1, (byte)127);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(data2, (byte)127);
+
         _raw = (uint)systemMessageType
             | (uint)(data1 << Data1MaskOffset)
             | (uint)(data2 << Data2MaskOffset)
@@ -147,15 +177,25 @@ public readonly struct MidiMessage
 
     private MidiMessage(byte byte0)
     {
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(byte0, (byte)127);
+
         _raw = byte0
             | (uint)(1 << MessageLengthOffset);
+    }
+
+    private MidiMessage(uint packedValue, bool validated)
+    {
+        _ = validated;
+        _raw = packedValue;
     }
 
     private readonly uint _raw;
 
     internal readonly uint Raw => _raw;
+    public readonly uint PackedValue => _raw;
     internal readonly uint RawWithoutLength => _raw & 0b__0000_0000__1111_1111__1111_1111__1111_1111;
     public readonly bool IsSysExContent => (_raw & (0b__1000_0000)) == 0;
+    public readonly bool IsChannelVoiceMessage => Byte0 is >= 0x80 and <= 0xef;
     public readonly MidiMessageType MessageType => (MidiMessageType)(_raw & MessageTypeMask);
     public readonly MidiSystemMessageType SystemMessageType => (MidiSystemMessageType)((byte)_raw);
     public readonly byte ChannelNumber => (byte)(_raw & ChannelNumberMask);

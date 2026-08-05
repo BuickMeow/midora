@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Text;
-
 namespace Midora.AudioDevice;
 
 public readonly record struct AudioFormat(
@@ -9,8 +5,8 @@ public readonly record struct AudioFormat(
     int ChannelCount,
     AudioSampleFormat SampleFormat)
 {
-    public int BytesPerFrame =>
-        ChannelCount * SampleFormat switch
+    public int BytesPerSample =>
+        SampleFormat switch
         {
             AudioSampleFormat.Int16 => 2,
             AudioSampleFormat.Int24 => 3,
@@ -18,6 +14,23 @@ public readonly record struct AudioFormat(
             AudioSampleFormat.Float32 => 4,
             _ => throw new ArgumentOutOfRangeException(nameof(SampleFormat))
         };
+
+    public int BytesPerFrame => checked(ChannelCount * BytesPerSample);
+
+    public void Validate()
+    {
+        if (SampleRate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(SampleRate));
+        }
+
+        if (ChannelCount <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(ChannelCount));
+        }
+
+        _ = BytesPerFrame;
+    }
 }
 
 public enum AudioSampleFormat

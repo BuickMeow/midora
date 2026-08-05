@@ -10,7 +10,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.BassWasapi\Midora.AudioDevice.BassWasapi.csproj" />
+    <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.Wave\Midora.AudioDevice.Wave.csproj" />
     <ProjectReference Include="..\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />
+    <ProjectReference Include="..\Midora.Audio.Bass.Worker\Midora.Audio.Bass.Worker.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

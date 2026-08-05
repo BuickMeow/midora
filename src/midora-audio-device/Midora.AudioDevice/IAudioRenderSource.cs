@@ -1,10 +1,8 @@
-using System;
-using System.Collections.Generic;
-using System.Text;
-
 namespace Midora.AudioDevice;
 
 public unsafe interface IAudioRenderSource
 {
-    int Render(void* destination, int requiredBytes);
+    AudioFormat Format { get; }
+
+    AudioPullResult PullFrames(float* destination, int requestedFrameCount);
 }

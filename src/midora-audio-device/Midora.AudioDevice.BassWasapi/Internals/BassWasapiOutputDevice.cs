@@ -156,11 +156,11 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
 
         if (0 == BASSWASAPI.Init(
             device: _deviceIndex,
-            freq: 0,
-            chans: 2,
-            flags: BASSWASAPI.BASS_WASAPI_EVENT,
+            freq: BassWasapiInitializationPolicy.RequestedFrequency,
+            chans: BassWasapiInitializationPolicy.RequestedChannelCount,
+            flags: BassWasapiInitializationPolicy.InitializationFlags,
             buffer: settings.DeviceBufferRequestMilliseconds / 1_000f,
-            period: 0,
+            period: BassWasapiInitializationPolicy.RequestedPeriodSeconds,
             proc: &BassWasapiProc,
             user: (void*)GCHandle.ToIntPtr(_sourceHandle)
         ))
@@ -192,14 +192,28 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
                 $"BASS_WASAPI_GetInfo failed with BASS error {error}."));
         }
 
-        if (actualInfo.format != BASSWASAPI.BASS_WASAPI_FORMAT_FLOAT || actualInfo.chans != 2)
+        if (!BassWasapiInitializationPolicy.IsSupportedRuntimeFormat(
+            actualInfo.initflags,
+            actualInfo.freq,
+            actualInfo.chans,
+            actualInfo.format))
         {
             throw FinalizeInitializationFailure(new MidoraAudioDeviceException(
-                $"Unsupported WASAPI runtime format: format={actualInfo.format}, channels={actualInfo.chans}."));
+                $"Unsupported WASAPI runtime policy: flags=0x{actualInfo.initflags:x8}, "
+                + $"sampleRate={actualInfo.freq}, format={actualInfo.format}, channels={actualInfo.chans}."));
         }
 
-        AudioFormat actualFormat = new((int)actualInfo.freq, 2, AudioSampleFormat.Float32);
-        _actualBufferFrameCount = actualInfo.buflen / 8;
+        AudioFormat actualFormat = new(
+            checked((int)actualInfo.freq),
+            BassWasapiInitializationPolicy.RequestedChannelCount,
+            AudioSampleFormat.Float32);
+        if (!BassWasapiInitializationPolicy.TryGetBufferFrameCount(
+            actualInfo.buflen,
+            out _actualBufferFrameCount))
+        {
+            throw FinalizeInitializationFailure(new MidoraAudioDeviceException(
+                $"Invalid WASAPI runtime buffer byte count {actualInfo.buflen}."));
+        }
         _info = _info with { AudioFormat = actualFormat };
         if (_audioRenderSource.Format != actualFormat)
         {
@@ -296,15 +310,15 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
             }
 
             IAudioRenderSource source = device._audioRenderSource;
-            if (source.Format.BytesPerFrame != 8
-                || length % 8 != 0)
+            if (source.Format.BytesPerFrame != BassWasapiInitializationPolicy.BytesPerFrame
+                || length % BassWasapiInitializationPolicy.BytesPerFrame != 0)
             {
                 Interlocked.Exchange(ref device._callbackFaulted, 1);
                 NativeMemory.Clear(buffer, length);
                 return length;
             }
 
-            int requestedFrames = checked((int)(length / 8));
+            int requestedFrames = checked((int)(length / BassWasapiInitializationPolicy.BytesPerFrame));
             Volatile.Write(ref device._lastCallbackFrameCount, requestedFrames);
             AudioPullResult result = source.PullFrames((float*)buffer, requestedFrames);
             if (result.FrameCount < 0 || result.FrameCount > requestedFrames)
@@ -323,7 +337,7 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
 
             if (result.FrameCount < requestedFrames)
             {
-                uint writtenBytes = (uint)result.FrameCount * 8;
+                uint writtenBytes = (uint)result.FrameCount * BassWasapiInitializationPolicy.BytesPerFrame;
                 NativeMemory.Clear((byte*)buffer + writtenBytes, length - writtenBytes);
             }
 

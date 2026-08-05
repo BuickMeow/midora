@@ -31,6 +31,7 @@
 | INV-020 | 满足正确性、确定性和资源上限的候选实现中，时间性能优先于最小空间占用。 |
 | INV-021 | 实时播放、预览和音频渲染的 tick→sample 映射使用完整 Tempo Map 的 decimal 区间积分，乘采样率后只执行一次 `AwayFromZero`，不得逐 Tempo 段取整。 |
 | INV-022 | 初版 Limiter 版本 1 固定为 stereo-linked、sample-peak、瞬时 attack、zero-look-ahead、线性 ceiling 1.0、50 ms 单极指数 release；实时与离线使用同一算法。 |
+| INV-023 | 初版正式 WASAPI 输出固定为 Shared Mode、event-driven、stereo interleaved float32；采样率、实际 buffer 与 callback period 由端点初始化结果决定，不得静默回退到其他模式或格式。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|

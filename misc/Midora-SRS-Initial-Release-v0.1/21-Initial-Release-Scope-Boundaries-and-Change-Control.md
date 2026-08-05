@@ -51,7 +51,7 @@ Channel Group 分配的具体扫描算法
 曲线离散化的内部优化算法，但结果必须与第 12.8.6 节逐整数 tick 参考语义完全一致
 Tempo Map 的查找、索引和缓存结构，但 tick→sample 结果必须与第 4.1.4 节 decimal 积分和单次 Away From Zero 取整语义完全一致
 Canonical Compiled Result 的最终内存布局
-BASSMIDI API 调用顺序、内部固定 buffer block 大小和音频线程模型
+BASSMIDI / BASSWASAPI 的具体封装与安全调用顺序、内部固定工作 block 和音频线程模型，但 WASAPI 模式、格式与 period 请求必须符合第 13.14.7 节
 初版发布最终采用进程内音频后端还是内部音频子进程
 Limiter 的循环展开、SIMD 和状态存储实现，但算法与参数必须符合第 13.17.6 节版本 1 语义
 Roslyn 编译、缓存和 AssemblyLoadContext 方案

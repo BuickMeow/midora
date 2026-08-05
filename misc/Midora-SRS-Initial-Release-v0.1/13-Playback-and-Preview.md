@@ -669,6 +669,7 @@ Render-Ahead Buffer
 Device Buffer Request
 IPC Audio Buffer（仅内部音频子进程拓扑）
 ```
+初版不提供 WASAPI Shared / Exclusive 模式选择；正式 BASSWASAPI 后端固定使用第 13.14.7 节策略。
 
 ### 13.14.3 设备枚举与选择
 
@@ -744,7 +745,7 @@ Application Preferences 提供以下整数毫秒设置：
 非法值不提交、不静默 Clamp
 修改后使实时 PCM、调度、IPC 和设备连接相关缓存失效
 IPC Audio Buffer 在进程内拓扑下隐藏或 Disabled
-设备可以按自身能力把 Device Buffer Request 向上调整
+Device Buffer Request 只是请求值；设备可以按自身能力调整实际 buffer
 请求值被设备调整本身不算错误
 只有后端或设备初始化失败才阻止播放
 ```
@@ -758,6 +759,29 @@ UI 必须只读显示后端初始化后的：
 ```
 
 设备决定的 callback period、callback frame 数和内部固定工作 block 不作为用户可调设置。
+### 13.14.7 WASAPI 初版输出策略
+正式 BASSWASAPI 输出固定使用：
+```text
+WASAPI Shared Mode
+event-driven callback
+stereo
+interleaved IEEE float32
+所选端点初始化后报告的实际混音采样率
+```
+
+初始化请求必须使用 `BASS_WASAPI_EVENT`，不得设置 `BASS_WASAPI_EXCLUSIVE`、`BASS_WASAPI_AUTOFORMAT`、`BASS_WASAPI_BUFFER` 或 `BASS_WASAPI_ASYNC`。采样率请求使用端点实际混音采样率语义，声道数固定请求 `2`；Device Buffer Request 传入设备 buffer 请求，period 请求为 `0`，由设备决定实际 callback period 和 callback frame 数。
+
+初始化后必须立即读取并验证实际信息：
+```text
+仍为 Shared Mode
+仍为 event-driven
+sampleRate > 0 且可安全表示
+channelCount = 2
+sampleFormat = float32
+```
+实际采样率、实际 buffer frame 数、观察到的 callback frame 数 / period 是 Derived / Runtime Data，只读报告，不写入 Project。实际采样率与 Preparing 使用的 sample-domain 计划不一致时，本次 Preparing 失败并清理；下一次播放必须重新枚举设备、按新采样率重建计划，不得重采样旧计划。
+
+初版不得静默回退到 Exclusive Mode、轮询 / push 模式、整数 sample format、mono / 多声道或另一采样率。设备不支持正式策略时，显示初始化失败并允许用户选择其他输出设备；不得影响 Project 打开、编辑、编译、保存、MIDI 导出或音频文件渲染。
 ---
 ## 13.15 实时播放输出链
 ### 13.15.1 输出格式

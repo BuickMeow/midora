@@ -68,19 +68,19 @@ D:\Programing\midora
 
 这些不是当前 SRS 冲突，不能静默写成实现默认值：
 
-- 任意合法目标采样率下统一的 tick / absolute-seconds → integer sample position 舍入算法；
-- Limiter 算法、内部参数、look-ahead 延迟与补偿、版本兼容策略；
-- WASAPI shared/exclusive、event-driven、buffer/period 与设备格式协商策略；
-- 内部音频子进程 IPC ABI 的演进、故障恢复和有界命令队列验收；
-- 初版 CPU 架构；
-- 固定的 BASS/BASSMIDI/BASSWASAPI 修订、SHA-256、升级回归策略和商业分发许可证；
 - `BASS_MIDI_NOTEOFF1` 是否启用，必须由同音高重叠、Cut、Reset 和精确 NoteOff 配对测试决定；
-- BASSMIDI interpolation、voice/CPU limiting、sample loading 参数；
-- 任意 C# Mapping 的执行隔离、资源限制与信任提示。
+- BASSMIDI interpolation、voice/CPU limiting、sample loading 的正式参数档；
+- 初版正式支持的 Windows CPU RID 集合；
+- 固定的 BASS/BASSMIDI/BASSWASAPI 修订、SHA-256、升级回归策略和商业分发许可证；
+- C# Mapping Function 的持久兼容 ABI、允许引用、缓存和 AssemblyLoadContext 卸载策略；
+- `.midora` 首版 JSON Schema / protobuf 字段与代码生成兼容基线；
+- Project SoundFont 可移植引用与哈希策略；
+- Project 工程总耗时累计规则；
+- MIDI 导出兼容细节和 MIDI/音频输出文件名规则。
 
 五、当前代码定位
 
-- 当前 BASS/BASSMIDI/BASSWASAPI 代码只是“可以发声”的技术原型，可以重写，不能据此宣称时序、状态、资源、生命周期、容错或零分配正确。
+- 已有正式实时垂直切片采用完整 Native AOT 音频子进程、子进程内 Render-Ahead/WASAPI 和固定共享内存控制 ABI；旧进程内与 PCM IPC 链只对测试程序集可见。设备移除、deadline、长期运行、故障恢复和正式硬件矩阵仍未完成发布验收。
 - `Thread.Sleep` 和即时 API 调用不能承担正式 MIDI 时序。
 - BASS 是音频实现细节，不得泄漏进 Project/Compiler 领域模型。
 - 每个实际使用的 Port 创建干净的 BASSMIDI decode stream，不预建 16 个永久 stream；必须显式建立 melodic Channel 10、NOFX、统一 SF2 和规范初始状态。

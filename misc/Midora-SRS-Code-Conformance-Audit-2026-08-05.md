@@ -84,7 +84,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 14. **已确认：14A（2026-08-05，含后续补充）**。正式 Stream 固定 `BASS_ATTRIB_MIDI_SRC=1`（8-point sinc）和 `BASS_ATTRIB_MIDI_CPU=0`；Preparing 使用 `BASS_MIDI_FontLoad` 预加载冻结计划引用的 presets，缺失组合保持并预加载 BASS fallback。实时与离线 sample voice 上限分别配置，默认均为每 Stream `750`，同一任务所有 Port 使用同一冻结值；达到上限允许 BASS 固定 voice-limit 行为，完美音频一致性测试以未触顶为前提。代码已删除 interpolation/sample-loading/CPU 可选分支，修复实时事件 Stream 错用 `StreamLoadSamples`，并建立实时/离线独立配置传播与真实属性回读测试。Application Preferences、Audio Render Settings 的完整 UI/持久化仍随对应未完成模块实施。
 15. **已确认：15A（2026-08-06）**。初版产品只发布 `win-x64`；主应用、Native AOT 音频 Worker 与 BASS/BASSMIDI/BASSWASAPI 必须同为 x64，不生成 x86、Arm64 或 AnyCPU 正式产物。Worker publish target 和 BASS 获取/校验脚本已拒绝其他 RID；x64 的 SSE2 基线满足 14A 固定的 8-point sinc 前提。
 16. **已确认：16A（2026-08-06）**。初版固定 BASS `2.4.18.3 / 0x02041203`、BASSMIDI `2.4.16.0 / 0x02041000`、BASSWASAPI `2.4.4.1 / 0x02040401` 及三项 win-x64 DLL SHA-256。仓库只提交正式 manifest，不提交 DLL；正式安装和 Worker publish 只接受操作员提供且逐文件匹配 manifest 的二进制，运行时校验完整版本码。vendor current/latest 下载只能生成 `releaseBaseline=false` 的开发候选；升级必须显式更新基线并完成全回归。商业分发许可证仍是独立发布门。
-17. C# Mapping Function 的持久兼容 ABI：函数签名、允许引用、缓存和 AssemblyLoadContext 卸载策略；“初版不做 sandbox”已由 SRS 9.11.4 确认，不再询问。
+17. C# Mapping Function 的持久兼容 ABI：函数签名、允许引用、缓存和 AssemblyLoadContext 卸载策略；“初版不做 sandbox”已由 SRS 9.6.2 确认，不再询问。
 18. `.midora` 首版 schema/protobuf 兼容基线：JSON Schema、protobuf 字段号、代码生成方式、文本最大长度和颜色/路径字段表示。
 19. Project SoundFont 可移植引用与哈希策略：相对路径规则、大小写/分隔符、同名冲突、哈希算法和计算时机。
 20. Project 工程总耗时累计规则：是否统计空闲、最小化、Buffering 等 SRS 明确留给实现的时段。

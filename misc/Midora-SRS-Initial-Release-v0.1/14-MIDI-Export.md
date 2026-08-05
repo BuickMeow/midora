@@ -1,0 +1,1123 @@
+# 第 14 章 MIDI 导出
+
+> 文档：**Midora Software Requirements Specification — Initial Release Scope**  
+> 规格版本：**v0.1**  
+> 适用产品范围：**Midora 初版**
+
+本章定义从 Canonical Compiled Result 生成 SMF Type 1 产物的规则，包括导出模式、范围、Routing、Track/Meta 组织、Channel 10 初始化、Readme、文件事务和兼容边界。
+
+## 14.1 MIDI 导出核心原则
+### 14.1.1 只消费 canonical compiled result
+MIDI 导出系统必须消费 `canonical compiled result`。
+规则：
+```text
+MIDI 导出系统不得直接读取 Logical Track / Segment / Event Instrument 并自行解释音乐语义。
+MIDI 导出系统不得重新计算 Logical Parameter Mapping。
+MIDI 导出系统不得重新决定生命周期、Reset、Channel Group 或 Port / Channel Unit 分配语义。
+MIDI 导出系统不得为了性能绕过编译系统。
+```
+MIDI 导出系统可以在 compiled result 之上构建：
+```text
+MIDI 文件结构
+MIDI Track 拆分
+Port / Device / Track Name 信息
+Readme 信息
+文件命名
+编码缓存
+导出诊断
+```
+但这些结构都是导出产物组织或辅助说明，不得成为另一套音乐语义来源。
+### 14.1.2 使用 MIDI Export CompileContext
+MIDI 导出必须使用专用：
+```text
+MIDI Export CompileContext
+```
+导出流程可以复用等价缓存，但必须保证输出等价于在同一 Project 内容、同一 Source 状态、同一 Export Settings / 一次性导出参数下重新执行该导出上下文编译。
+不得直接复用以下内容作为导出语义来源：
+```text
+最近一次播放 compiled result
+最近一次播放 buffer
+运行中的 BASSMIDI Stream 状态
+当前播放设备状态
+当前播放光标
+当前临时 Mute / Solo 状态
+```
+除非用户明确把播放光标等信息作为导出范围参数。
+### 14.1.3 编译失败时不导出 partial MIDI
+如果 MIDI Export CompileContext 编译失败：
+```text
+整个导出失败。
+不生成 partial .mid。
+不生成成功 Readme。
+```
+如果用户开启“Warning 导致编译失败”：
+```text
+导出准备编译中的 Warning 也会导致导出失败。
+```
+### 14.1.4 多文件导出原子性
+多文件导出中，如果任意一个文件导出失败：
+```text
+整体导出失败。
+不留下不完整文件。
+已经生成的临时或 partial 文件应尽力清理。
+如果无法清理，应进入文件写入诊断并提示用户。
+```
+允许并建议实现层采用：
+```text
+临时目录写入
+编码和自校验完成后再原子替换或移动到目标目录
+```
+具体实现策略实现设计阶段定义。
+---
+## 14.2 Standard MIDI File 类型
+### 14.2.1 初版统一使用 SMF Type 1
+Midora 初版所有 `.mid` 导出统一使用：
+```text
+SMF Type 1
+```
+初版不提供 Type 0 / Type 1 用户选择。
+理由：
+```text
+Midora 需要保留 Conductor Track / Meta Track。
+Midora 需要表达 Logical Track / Port 拆分关系。
+SMF Type 1 更适合多 Track 结构与全局 Meta Track。
+```
+### 14.2.2 MIDI division 使用 Project TPQ
+导出 MIDI 文件的 ticks-per-quarter-note 使用：
+```text
+Project TPQ
+```
+初版不允许在 MIDI 导出时修改 TPQ。
+不支持：
+```text
+导出时重新指定 TPQ
+导出时升采样 / 降采样
+只修改 MIDI 文件头但不重算事件
+```
+---
+## 14.3 导出模式
+初版至少支持以下 MIDI 导出模式：
+```text
+整曲单 MIDI 导出
+按 Logical Track 导出
+按 Port 导出
+```
+### 14.3.1 整曲单 MIDI 导出
+整曲导出生成一个 `.mid` 文件。
+Track 组织规则：
+```text
+Track 0 = Conductor / Meta Track
+后续事件 Track = Logical Track × Port
+```
+如果一个 Logical Track 在导出结果中使用 Port 1 和 Port 3，则整曲 `.mid` 中可生成：
+```text
+Track 0: Conductor / Meta Track
+Track 1: Logical Track A / Port 1
+Track 2: Logical Track A / Port 3
+```
+整曲事件 Track 排序：
+```text
+先按 Logical Track 手动排序
+再按 Port 编号排序
+```
+不生成完全无事件的 `Logical Track × Port` 事件 Track。
+Conductor Track 必须存在。
+### 14.3.2 按 Logical Track 导出
+按 Logical Track 导出时：
+```text
+每个被选择且有效参与导出的 Logical Track 生成一个 .mid 文件。
+每个 .mid 文件都包含 Track 0 Conductor / Meta Track。
+该文件内部可包含一个或多个事件 Track。
+如果该 Logical Track 使用多个 Port，仍然是一个 .mid 文件，而不是每个 Port 一个文件。
+```
+该单 Track 文件内部事件 Track 排序：
+```text
+Track 0 = Conductor / Meta Track
+后续事件 Track 按 Port 编号排序
+```
+如果某个有效 Track 没有产生任何音乐输出：
+```text
+仍生成结构有效的空音乐内容 MIDI。
+Readme / 诊断中说明该 Track 无音乐输出。
+```
+### 14.3.3 按 Port 导出
+按 Port 导出时：
+```text
+每个本次导出上下文实际使用的 Port 生成一个 .mid 文件。
+不固定生成 16 个文件。
+不为未使用 Port 生成空文件。
+```
+每个 Port 文件内部：
+```text
+Track 0 = Conductor / Meta Track
+后续事件 Track 按 Logical Track 手动排序
+```
+按 Port 导出时保留 Logical Track 结构。
+如果某个 Logical Track 在该 Port 没有事件：
+```text
+不生成完全无事件 Track。
+```
+每个单 Port 文件内部按独立 MIDI 文件处理：
+```text
+事件写入 Port 1 语义。
+原始 Midora Port 编号体现在文件名、MIDI Track Name、Readme 中。
+```
+这是一种文件级归一化，不等同于改变原 compiled result 的项目语义。
+### 14.3.4 多文件导出输出组织
+按 Logical Track / 按 Port 导出时：
+```text
+创建导出文件夹。
+文件夹中包含多个 .mid 文件。
+默认生成一个 Readme。
+```
+Readme 允许用户关闭；若用户关闭 Readme，则不存在 Readme 写入失败问题。
+---
+## 14.4 导出范围
+### 14.4.1 默认导出范围
+MIDI 导出默认范围：
+```text
+startTick = 0
+endTick = Project End Marker tick，若存在 Project End Marker
+endTick = 有效内容自然结束，若不存在 Project End Marker
+```
+如果 Project End Marker 早于后续内容：
+```text
+默认整曲导出不包含 Project End Marker 后内容。
+Project End Marker 后内容仍保留在 Project 中。
+```
+普通 Marker / 超出音乐内容的 Conductor 事件不强制延长默认结束位置。
+### 14.4.2 手动导出范围
+初版允许用户手动选择导出范围。
+范围统一采用左闭右开区间：
+```text
+[startTick, endTick)
+```
+合法性规则：
+```text
+startTick >= 0
+endTick >= startTick
+endTick == startTick 允许，表示零长度导出
+```
+不要求：
+```text
+startTick 必须为 0
+范围必须对齐小节线
+范围必须落在 Project End Marker 之前
+范围必须包含有效音乐内容
+```
+### 14.4.3 手动范围与 Project End Marker
+Project End Marker 只影响默认范围。
+显式手动范围优先于 Project End Marker。
+因此允许：
+```text
+startTick > Project End Marker tick
+endTick > Project End Marker tick
+手动范围跨过 Project End Marker
+```
+只要范围合法，显式手动范围内 Project End Marker 后的内容应参与导出。
+### 14.4.4 零长度导出
+当：
+```text
+startTick == endTick
+```
+允许生成结构有效 MIDI。
+零长度导出应至少包含：
+```text
+必要 Conductor / 状态信息
+End Of Track
+```
+End Of Track 写在：
+```text
+startTick / endTick
+```
+### 14.4.5 导出范围不受当前播放光标和选中对象影响
+默认 MIDI 导出范围不受以下内容影响：
+```text
+当前播放光标
+当前选中 Segment
+当前选中 Track
+当前视图范围
+当前 Mute / Solo 状态
+```
+除非用户明确选择相应导出范围，例如“从播放光标开始导出”。
+---
+## 14.5 范围导出状态恢复
+### 14.5.1 范围起点必须写入必要非 Note 状态
+当导出范围从项目中途开始时，导出结果应包含范围起点必要非 Note 状态恢复事件。
+包括但不限于：
+```text
+Tempo
+Time Signature
+Key Signature
+Program
+Bank Select
+Pitch Bend
+Pitch Bend Range
+CC
+RPN
+NRPN
+Logical Parameter Mapping 后影响到的非 Note 状态
+```
+恢复事件放在：
+```text
+startTick
+```
+并在语义排序上早于该 tick 的普通用户事件。
+如果恢复状态与 startTick 上用户原始事件冲突：
+```text
+startTick 用户原始事件优先。
+恢复事件只提供进入该 tick 前的上下文。
+```
+### 14.5.2 不补发范围前 Note On
+如果某个 Note On 已经在范围开始前发生：
+```text
+不得在 startTick 伪造或补发 Note On。
+```
+即使该音在范围内理论上仍持续发声，也不在范围起点重新发声。
+范围前已经 Note On、范围内发生原始 Note Off：
+```text
+应输出该 Note Off。
+```
+范围前已经 Note On、范围内没有 Note Off、范围结束时仍跨界：
+```text
+范围结束作为硬裁剪边界，需要补充必要 Note Off / Reset。
+```
+### 14.5.3 范围内 Conductor 事件
+范围导出中的 Conductor Track 规则：
+```text
+在范围起点写入当前有效 Tempo / Time Signature / Key Signature 状态。
+范围内普通 Marker 正常导出。
+范围前普通 Marker 不恢复。
+```
+普通 Marker 不是状态型事件。
+Key Signature 是全局状态型 Meta Event，因此范围起点应恢复当前有效 Key Signature。
+---
+## 14.6 Track 选择
+### 14.6.1 默认 Track 选择
+MIDI 导出默认选择：
+```text
+所有有效 Logical Track
+```
+未指定 Event Instrument 的 Logical Track 不参与导出。
+### 14.6.2 显式选择 Logical Track
+导出设置允许用户勾选要导出的 Logical Track。
+用户取消勾选某个 Track 后：
+```text
+该 Track 不参与本次导出编译。
+该 Track 不生成 Event Instrument Instance。
+该 Track 不占用本次导出上下文资源。
+不因“未导出”本身产生诊断。
+Readme 记录即可。
+```
+Track 选择集合会影响本次导出 CompileContext 的资源需求和 Port / Channel Unit 分配。
+### 14.6.3 未指定 Event Instrument 的 Track
+未指定 Event Instrument 但包含内容的 Logical Track：
+```text
+不参与导出。
+在导出诊断中列为 Info。
+不导致导出失败。
+不生成空 Track。
+不将 Logical Note 导出为普通 MIDI Note。
+```
+### 14.6.4 Mute / Solo 不影响导出
+MIDI 导出不受当前临时 Mute / Solo 状态影响。
+Mute / Solo 是实时监听状态，不是成品输出选择。
+---
+## 14.7 Routing 策略
+初版导出支持两种 Routing 策略：
+```text
+Compact Routing
+Preserve Routing
+```
+默认：
+```text
+按 Logical Track 导出默认使用 Compact Routing。
+用户可切换 Preserve Routing。
+```
+按 Port 导出也需要支持 Routing 选项，但其语义主要影响本次导出上下文如何决定实际使用 Port；单 Port 文件内部仍归一化为独立 Port 1。
+### 14.7.1 Compact Routing
+Compact Routing 的系统级语义：
+```text
+在不改变音乐语义的前提下，对本次导出内容重新分配 Port / Channel。
+从 Port 1 / Channel 1 开始尽量紧凑。
+如果不能保证语义等价，则导出失败。
+```
+Compact Routing 允许：
+```text
+改变 Port / Channel 分配
+把原本不同 Port 的内容压到同一 Port
+重新映射 Port / Channel Unit
+```
+前提：
+```text
+仍满足 Channel Unit 隔离
+仍满足 Channel-Wide 状态污染边界
+仍满足资源上限
+仍保证 canonical compiled result 语义等价
+```
+Compact Routing 不允许：
+```text
+改变导出模式要求的文件 / Track 组织结构
+改变 Logical Track 输出顺序
+改变生命周期、Reset、Overlap 或同 tick 语义排序
+通过丢弃事件换取更紧凑路由
+```
+Compact Routing 失败时：
+```text
+导出失败。
+提示用户可改用 Preserve Routing。
+不自动退回 Preserve Routing。
+```
+Readme 必须记录：
+```text
+原 compiled routing
+compact routing
+新旧路由映射关系
+```
+### 14.7.2 Preserve Routing
+Preserve Routing 的系统级语义：
+```text
+保持对应导出上下文中编译得到的 Port / Channel Unit 分配。
+不为导出重新压缩。
+```
+在 Track 子集导出时：
+```text
+Preserve Routing 保持该导出上下文编译得到的 Port / Channel 分配。
+不保证与全项目完整导出完全相同。
+```
+Preserve Routing 允许为了文件可读性重命名 Track。
+Track Name 可读性不属于 Port / Channel 分配语义，但不得隐瞒原始 Port 信息。
+Preserve Routing 不要求：
+```text
+输出未使用 Port 的空文件
+输出未使用 Channel Unit 的空 Track
+输出全部 16 Ports
+输出全部 256 Channel Units
+```
+---
+## 14.8 MIDI Track 与 Meta Track 组织
+### 14.8.1 Conductor / Meta Track
+每个导出的 MIDI 文件都必须包含：
+```text
+Track 0 = Conductor / Meta Track
+```
+Conductor Track 中允许写入：
+```text
+Tempo
+Time Signature
+Key Signature
+Marker
+Copyright Meta Event
+简短非语义 Text Meta Event
+Project 名称等项目信息
+Midora 生成工具信息
+End Of Track
+```
+Conductor Track 中不允许写入：
+```text
+Note
+CC
+Pitch Bend
+Program Change
+Bank Select
+RPN / NRPN 展开事件
+Pitch Bend Range 展开事件
+Channel 10 melodic 初始化 Channel Event / SysEx 初始化事件
+普通 Channel Event
+```
+Channel Event 必须写入对应事件 Track。
+### 14.8.2 Track Name
+导出文件应写入 Track Name Meta Event。
+规则：
+```text
+Conductor Track 写固定或可识别名称。
+事件 Track 使用 Logical Track 名称。
+必要时附加 Port 信息。
+整曲导出中事件 Track 名称必须包含 Logical Track 名称和必要 Port 信息。
+按 Port 导出时事件 Track 名称可包含原始 Midora Port 编号，例如 Original Port 3。
+```
+第 14 章《MIDI 导出》 不规定最终字符串格式。
+具体格式未来 UI / 实现层定义。
+### 14.8.3 Project 名称、版权和软件标识
+MIDI 文件内部可以写入：
+```text
+Project 名称：Track 0 文本类 Meta Event
+版权信息：Copyright Meta Event
+Midora 软件标识：非语义 Text Meta Event
+```
+这些信息不作为播放语义。
+Readme 也应记录 Project Metadata 中可用的版权信息和软件版本信息。
+### 14.8.4 不写 Lyric / Cue Point
+初版不写：
+```text
+Lyric Meta Event
+Cue Point Meta Event
+```
+不将 Project Metadata 备注写为 Lyric。
+不将普通 Marker 写为 Cue Point。
+不将 Project End Marker 写为 Cue Point。
+### 14.8.5 Text Meta Event
+初版允许写入简短非语义 Text Meta Event，例如：
+```text
+Project 名称
+Midora 生成信息
+必要的简短说明
+```
+不将完整 Readme 内容同步写入 MIDI Text Meta Event。
+Readme 可能较长，MIDI Text 只写必要简短非语义信息。
+---
+## 14.9 Conductor 事件导出
+### 14.9.1 Tempo
+Tempo 事件导出为 MIDI Set Tempo。
+第 14 章《MIDI 导出》 只规定：
+```text
+Tempo BPM 到 MIDI Set Tempo 的转换必须确定。
+转换必须可重复。
+转换错误必须可诊断。
+```
+具体 microseconds-per-quarter-note 舍入规则由实现设计阶段定义。
+如果 Tempo 无法表示为 Midora 支持的 MIDI 1.0 有效 Set Tempo：
+```text
+导出失败。
+```
+不自动 clamp，不删除该 Tempo 事件，不作为 Warning 继续。
+### 14.9.2 Time Signature
+Time Signature 应导出为 MIDI Time Signature Meta Event。
+MIDI metronome / 32nd-notes 字段：
+```text
+初版采用固定默认策略。
+具体字段值实现设计阶段定义。
+第 14 章《MIDI 导出》 只要求输出确定、稳定、可重复。
+```
+### 14.9.3 Key Signature
+如果 Project 没有显式 Key Signature：
+```text
+导出时不强行写入 C major。
+```
+如果存在 Key Signature，则按范围和状态恢复规则导出。
+### 14.9.4 Marker 与 Project End Marker
+普通 Marker：
+```text
+导出为 MIDI Marker Meta Event。
+范围导出时只导出范围内 Marker。
+范围前普通 Marker 不恢复。
+```
+Project End Marker：
+```text
+默认不作为普通 Marker 导出。
+它是 Midora 内部结束边界。
+它影响默认导出范围。
+它不等同于普通 Marker。
+```
+---
+## 14.10 Port / Device 信息
+### 14.10.1 整曲导出与按 Logical Track 导出
+整曲导出和按 Logical Track 导出中，导出器应写入必要 Port 信息，例如：
+```text
+Port Number
+Device Name
+Port Name
+Track Name 中的 Port 信息
+```
+具体采用哪些 Meta Event、最终字节编码和兼容策略由实现设计阶段定义。
+### 14.10.2 按 Port 导出
+按 Port 导出时，每个单 Port 文件内部按独立 MIDI 文件处理：
+```text
+内部 Port 语义归一化为 Port 1。
+原始 Midora Port 编号记录在文件名、Track Name 和 Readme 中。
+```
+### 14.10.3 兼容边界
+Port / Device 信息属于提高第三方环境可读性和兼容性的辅助信息。
+Midora 不承诺所有第三方播放器完全理解：
+```text
+Port meta event
+Device / Port Name
+多 Port 结构
+Channel 10 melodic 初始化
+SoundFont 相关说明
+```
+---
+## 14.11 Channel 10 melodic 初始化
+### 14.11.1 必须写入必要初始化
+MIDI 导出应写入必要的 Midora 内置 Channel 10 melodic 初始化事件。
+该初始化属于系统生成内容，不表示用户可以自由编辑 SysEx。
+初版仍然不开放用户自由 SysEx。
+### 14.11.2 写入位置
+Channel 10 melodic 初始化事件应写在：
+```text
+每个相关 Port / 事件 Track 的音乐事件之前
+```
+不得写入 Conductor Track。
+目标是保证该 Port 的 Channel 10 在普通事件前已完成 melodic 初始化。
+### 14.11.3 Readme 说明
+Readme 应说明：
+```text
+Midora 会写入必要初始化以提高 Channel 10 melodic 行为一致性。
+该初始化不承诺被所有播放器完全支持。
+```
+---
+## 14.12 MIDI Channel Event 与高级事件导出
+### 14.12.1 Note Off 编码形式
+Note Off 统一使用真正的 MIDI Note Off status：
+```text
+Note Off velocity = 0
+```
+不使用 Note On velocity = 0 作为普通 Note Off 表达。
+Note On velocity = 0 不作为普通 Note On 输出。
+### 14.12.2 Absolute tick 到 delta time
+`canonical compiled result` 内部事件以绝对 tick 表示。
+导出阶段按每条 MIDI Track 内事件顺序转换为：
+```text
+delta time
+```
+delta time 必须非负。
+### 14.12.3 Bank Select 与 Program Change
+同 tick 下：
+```text
+Bank Select 应早于 Program Change。
+```
+具体 Bank MSB / LSB 顺序由实现设计阶段定义，但必须稳定。
+### 14.12.4 RPN / NRPN / Pitch Bend Range
+RPN / NRPN / Pitch Bend Range 等 Midora 高级事件必须展开为标准 MIDI 1.0 CC 序列。
+规则：
+```text
+展开顺序必须稳定。
+不得写为自由 SysEx。
+不得写为 Text Meta Event 让播放器解释。
+不得在初版跳过导出。
+```
+具体 CC 展开字节序列由实现设计阶段定义。
+### 14.12.5 CC91 / CC93
+
+初版不支持 Reverb / Chorus Send，因此 MIDI 导出不得写出 CC91 或 CC93。
+
+正常情况下语义验证和编译阶段已经拒绝包含它们的 Project；导出器如果仍在 canonical compiled result 中发现 CC91 / CC93，必须把它视为 compiled result 一致性 Error，不得静默删除后继续发布文件。
+
+### 14.12.6 自由 SysEx 边界
+初版不允许用户自由 SysEx。
+但系统可写入内置必要初始化事件，例如 Channel 10 melodic 相关初始化。
+---
+## 14.13 同 tick 排序与编码优化边界
+### 14.13.1 状态恢复事件与用户事件
+范围起点恢复事件应早于该 tick 用户事件。
+如果同类状态冲突：
+```text
+用户事件优先。
+```
+### 14.13.2 Reset / 安全清理与普通事件
+Reset / 安全清理事件必须排在对应生命周期结束或范围结束的清理阶段。
+不得抢在仍应输出的普通事件之前。
+具体同 tick 细表由实现设计阶段定义。
+### 14.13.3 跨 MIDI Track 顺序
+不同 MIDI Track 之间不赋予严格音乐顺序语义。
+需要严格先后关系的事件应：
+```text
+位于同一 MIDI Track
+或由编译排序保证在同一资源语义内成立
+```
+导出器不负责把所有同 tick 跨 Track 事件全局线性化为单一顺序。
+### 14.13.4 Running status
+初版允许 MIDI 编码层使用 running status 优化。
+running status 只属于字节编码优化，不得改变：
+```text
+tick
+事件语义
+Note On / Off
+CC / Pitch Bend / Program
+Port / Channel 分配
+同 tick 语义排序
+播放结果
+```
+running status 的具体实现属于实现设计。
+### 14.13.5 不做冗余状态事件折叠
+初版 MIDI 导出不做冗余状态事件折叠。
+规则：
+```text
+导出器必须输出 compiled result 中应输出的事件。
+导出器不得为了减小文件体积删除状态事件。
+```
+因此不讨论跨 Note On / Note Off 的折叠安全条件。
+### 14.13.6 不允许为了文件大小改变语义排序
+导出器不得为了压缩或优化文件大小改变 `canonical compiled result` 的语义排序。
+---
+## 14.14 End Of Track 与导出末尾清理
+### 14.14.1 End Of Track 位置
+所有 MIDI Track 的 End Of Track 写到导出范围：
+```text
+endTick
+```
+包括：
+```text
+Conductor Track
+事件 Track
+```
+这样可以保证文件总长度一致。
+如果：
+```text
+endTick == startTick
+```
+End Of Track 写到同一个 tick。
+### 14.14.2 endTick 不包含普通原始事件
+由于导出范围采用：
+```text
+[startTick, endTick)
+```
+普通原始事件在 `endTick` 不导出。
+### 14.14.3 范围硬裁剪补充事件
+虽然 endTick 不包含普通原始事件，但范围硬裁剪需要的补充清理事件可以写在：
+```text
+endTick
+或文件结束清理位置
+```
+例如：
+```text
+必要 Note Off
+Reset
+All Notes Off
+All Sound Off
+Reset All Controllers
+```
+这些属于编译器 / 导出器生成清理事件，不是范围内普通用户事件。
+### 14.14.4 文件末尾安全 Reset
+在 compiled result 已有 Reset 基础上，导出器还可以在文件结束处对本文件实际使用过的 Channel Unit 写入必要安全清理。
+包括但不限于：
+```text
+All Notes Off
+All Sound Off
+Reset All Controllers
+```
+该行为用于降低第三方播放器悬挂音风险。
+具体清理序列与排序由实现设计阶段定义。
+---
+## 14.15 Readme
+### 14.15.1 默认生成，但允许关闭
+MIDI 导出默认生成 sidecar Readme。
+规则：
+```text
+单文件导出：Readme 与 .mid 同目录。
+多文件导出：Readme 位于导出文件夹根目录。
+```
+用户允许关闭 Readme 生成。
+如果用户关闭 Readme：
+```text
+不存在 Readme 写入失败问题。
+不存在因 Readme 写入失败导致导出失败的情况。
+```
+### 14.15.2 Readme 是被请求时的导出产物
+当用户开启 Readme 生成时，Readme 是本次导出产物的一部分。
+因此：
+```text
+.mid 写入成功但 Readme 写入失败，整体导出失败。
+单文件导出时 Readme 写入失败，也视为整体失败。
+如果已写出 .mid，应清理或提示未能清理。
+```
+### 14.15.3 Readme 格式
+初版 Readme 可使用 `.txt` 或 `.md`。
+默认格式：
+```text
+.md
+```
+具体模板实现设计阶段定义。
+### 14.15.4 Readme 内容
+Readme 应记录以下信息：
+```text
+Project Metadata：项目名称、项目版本、作者、Remix 信息、版权信息、备注等可用元数据
+SoundFont Settings：当前 SoundFont 信息；无 SF2 时注明未选择推荐 SoundFont
+导出模式
+导出范围：startTick、endTick、范围来源、是否 Project End Marker / 自然结束 / 手动范围
+Track 选择集合：实际导出的 Track、被排除的 Track
+Routing 信息：Compact / Preserve Routing、Port 映射、原始 Midora Port 对应关系
+按 Port 导出时的原始 Port 与文件映射
+TPQ
+Tempo / Time Signature / Key Signature 事件摘要或数量
+Channel 10 melodic 初始化说明
+第三方播放器兼容性说明
+导出相关 Warning / Info 摘要
+文件清单
+创建软件版本、最新保存软件版本、导出时软件版本
+导出时间
+```
+Error 导致导出失败时：
+```text
+不生成成功 Readme。
+```
+### 14.15.5 Readme 不影响 MIDI 语义
+Readme 是辅助说明。
+规则：
+```text
+Readme 不参与 MIDI 播放语义。
+播放器不需要读取 Readme 才能播放 MIDI。
+Readme 不用于还原路由语义。
+```
+### 14.15.6 文件哈希
+初版不要求 Readme 记录文件哈希。
+文件哈希可作为未来增强。
+---
+## 14.16 Export Settings
+### 14.16.1 Export Settings 属于 Project 内容
+`Export Settings` 是 Project 顶层对象。
+用户修改 Project 默认导出设置时：
+```text
+进入 Undo / Redo。
+标记 Project 已修改。
+```
+### 14.16.2 一次性导出参数与项目默认设置
+导出对话框中的参数分为：
+```text
+一次性导出参数
+项目默认 Export Settings
+```
+一次性导出参数不必写入 Project。
+只有用户明确保存为默认 Export Settings，或导出设置本身被确认写入 Project 时，才标记 Project 已修改。
+用户临时修改设置但取消导出：
+```text
+不修改 Project。
+不标记 Project 已修改。
+```
+### 14.16.3 Export Settings 保存内容
+初版 Export Settings 可保存：
+```text
+导出模式
+默认范围策略
+默认 Track 选择策略
+默认 Routing 策略
+是否默认生成 Readme
+其他导出偏好
+```
+可以保存范围策略，例如：
+```text
+Project End Marker / 自然结束
+手动范围
+```
+但不保存与当前编辑状态强绑定的临时选择对象。
+如果保存的默认手动范围超出当前 Project 有效内容：
+```text
+允许导出，只要范围合法。
+空白区间也可导出结构有效 MIDI。
+```
+### 14.16.4 不保存本机绝对输出目录
+初版不保存本机绝对输出目录进 Project。
+最多保存导出偏好，不保存本机路径依赖。
+不保存：
+```text
+绝对输出目录
+最近 10 个输出目录
+本机路径 fallback
+```
+---
+## 14.17 文件命名与文件系统行为
+### 14.17.1 文件名来源
+默认文件名来源：
+```text
+整曲导出：可使用 Project 名称作为前缀或主文件名来源
+按 Logical Track 导出：默认使用 Logical Track 名称作为文件名来源
+按 Port 导出：默认使用 Port 编号作为文件名来源
+```
+具体命名模板实现设计阶段定义。
+### 14.17.2 名称重复
+如果 Logical Track 名称重复，按 Track 导出时：
+```text
+系统自动生成唯一文件名，必要时追加序号。
+不要求 Track 名称唯一。
+不自动重命名 Project 中的 Track。
+```
+### 14.17.3 文件名冲突
+如果目标文件已存在：
+```text
+必须得到用户明确覆盖确认。
+未确认不得覆盖。
+```
+多文件导出目标文件夹已存在时：
+```text
+若可能覆盖已有文件，必须提示用户确认。
+用户取消则导出取消。
+```
+### 14.17.4 非法文件名字符
+初版规则：
+```text
+导出器保留原始候选文件名。
+不预先替换或移除文件系统非法字符。
+如果文件系统不接受该文件名，由操作系统 / 文件写入层返回错误。
+该错误进入 MIDI 导出诊断系统。
+```
+因此，按 Track / Port 批量导出时，如果某个 Track 名称含非法文件名字符：
+```text
+整体导出可能失败。
+```
+系统可以做预检查和安全文件名建议，但不得自动改名。
+可以提示：
+```text
+文件名可能非法。
+建议用户修改。
+```
+最终以文件系统写入结果为准。
+### 14.17.5 路径过长
+如果目标路径过长：
+```text
+由文件系统 / 写入层返回错误。
+导出失败。
+进入文件写入诊断。
+```
+不自动缩短文件名。
+### 14.17.6 Readme 文件名
+Readme 文件名也受非法文件名规则影响。
+如果 Readme 文件名来自 Project 名称且含非法字符：
+```text
+同样可能写入失败。
+```
+具体是否使用固定安全 Readme 名称由实现设计确定，但不得绕过本节的文件名合法性与失败规则。
+---
+## 14.18 导出流程
+### 14.18.1 播放期间触发导出
+如果播放期间触发 MIDI 导出：
+```text
+1. 自动 Stop 当前播放任务；
+2. 执行 Stop 清理；
+3. 播放光标位置按 Stop Cursor Behavior 处理；
+4. 进入 MIDI 导出流程；
+5. 导出完成后保持 Stopped；
+6. 不自动恢复播放。
+```
+Preparing / Buffering 期间触发导出：
+```text
+同样自动 Stop / 取消准备或 Buffering，清理后进入导出。
+```
+自动 Stop 清理失败时：
+```text
+提示风险并由用户确认后继续。
+```
+这是项目级导出操作的例外路径。
+### 14.18.2 导出预检查
+导出流程内部必须先完成预检查。
+预检查至少覆盖：
+```text
+导出专用编译
+编码可行性
+文件名 / 路径风险
+覆盖风险
+Readme 写入风险
+目标目录可用性
+```
+UI 可表现为正式导出前的预检查阶段。
+预检查成功后到实际写入之间：
+```text
+不允许修改会影响导出语义的 Project 内容。
+```
+### 14.18.3 导出期间 Project 锁定
+导出进行中禁止编辑会影响导出语义的 Project 内容。
+包括但不限于：
+```text
+Conductor Track
+Logical Track / Segment / Logical Note
+Logical Parameter Lane
+Event Instrument / SubVoice / Mapping / Lifecycle
+SoundFont Settings 中会影响 Readme / 导出说明的信息
+Export Settings 中本次导出使用的设置
+```
+允许查看已有诊断面板。
+不允许执行会改变导出语义的编辑操作。
+### 14.18.4 导出取消
+导出过程中允许用户取消。
+取消后：
+```text
+尽力停止导出。
+清理临时文件。
+不留下 partial 输出。
+用户取消不算 Error。
+可记录为用户取消的状态提示。
+不修改 Project 内容。
+不标记 Project 已修改。
+```
+除非用户已经明确保存了 Export Settings。
+### 14.18.5 导出自校验
+MIDI 编码完成后需要基本自校验。
+至少应检查：
+```text
+文件头
+Track 数
+delta time 非负
+事件可编码
+End Of Track 存在
+```
+具体校验项实现设计阶段定义。
+自校验失败：
+```text
+导出失败。
+不写出最终文件。
+进入导出编码诊断。
+```
+### 14.18.6 导出成功提示
+导出成功后显示轻量摘要，例如：
+```text
+生成文件数量
+导出范围
+是否生成 Readme
+```
+导出成功后不自动打开输出文件夹。
+可提供按钮让用户打开。
+导出成功后不自动播放 MIDI，不自动打开 Readme，不自动保存 Project。
+---
+## 14.19 导出诊断
+### 14.19.1 进入统一诊断系统
+MIDI 导出诊断进入统一诊断系统。
+导出诊断应区分：
+```text
+编译诊断
+导出编码诊断
+文件写入诊断
+用户取消状态
+```
+### 14.19.2 诊断类别
+导出编码错误来源至少分为：
+```text
+项目语义导致不可编码
+编译器生成异常
+导出器编码异常
+文件系统异常
+未知 compiled event 类型
+```
+### 14.19.3 源对象定位
+导出诊断应尽量定位到 Project 源对象，例如：
+```text
+Logical Track
+Segment
+Logical Note
+Logical Parameter
+Event Instrument
+SubVoice
+Mapping Function
+Conductor Track 事件
+```
+文件写入类错误则定位到：
+```text
+路径
+文件
+目录
+```
+### 14.19.4 compiled result 来源信息
+`canonical compiled result` 应保留足够来源信息，使导出失败能追溯到：
+```text
+Project 源对象
+编译器生成事件来源
+范围起点状态恢复
+范围结束硬裁剪清理
+导出器安全清理
+```
+不得只保存 MIDI 字节而失去诊断定位能力。
+### 14.19.5 MIDI 值域非法
+MIDI 值域非法应优先在编译 / 语义验证阶段失败。
+如果导出编码阶段仍发现非法值：
+```text
+也必须失败。
+产生导出编码诊断。
+```
+不得自动 clamp、忽略或交给播放器处理。
+### 14.19.6 未知 compiled event 类型
+导出时遇到未知 compiled event 类型：
+```text
+导出失败。
+说明导出器不支持该 compiled event 类型。
+```
+不忽略，不写为 Text Meta Event，不自动转换为 CC。
+### 14.19.7 导出失败与播放状态机
+MIDI 导出失败属于导出流程诊断。
+规则：
+```text
+不进入播放 Error 状态。
+不破坏已有有效编译缓存。
+与失败导出上下文相关的无效缓存可丢弃。
+```
+导出失败后，用户可在诊断面板查看编译 / 编码 / 文件写入错误。
+---
+## 14.20 缓存、确定性与进度
+### 14.20.1 编码缓存
+导出后可以缓存编码结果。
+规则：
+```text
+缓存不得成为语义来源。
+Project 或 Export Settings 变化后必须失效。
+```
+初版不要求导出缓存跨软件版本复用。
+软件版本变化应保守失效。
+### 14.20.2 确定性
+在相同条件下：
+```text
+相同 Project
+相同导出设置
+相同软件版本
+```
+MIDI 事件语义和排序必须确定。
+但如果 Readme 包含导出时间：
+```text
+Readme 不要求字节级完全一致。
+```
+### 14.20.3 导出进度
+长时间导出应提供进度状态。
+至少区分：
+```text
+编译
+编码
+写文件
+```
+导出进度是运行期 UI 状态：
+```text
+不保存进 Project。
+不进入 Undo / Redo。
+不写入 Readme。
+```
+---
+## 14.21 Project 内容、副作用与 Undo / Redo
+### 14.21.1 导出动作本身不修改 Project
+MIDI 导出动作本身：
+```text
+不修改 Project 内容。
+不标记 Project 已修改。
+不进入 Undo / Redo。
+不自动保存 Project。
+不更新 Project 修改时间。
+```
+除非用户明确修改并保存了 Export Settings 这类 Project 内容。
+### 14.21.2 Export Settings 修改
+如果用户修改 Project 默认 Export Settings：
+```text
+该修改属于 Project 内容修改。
+进入 Undo / Redo。
+标记 Project 已修改。
+更新 Project 修改时间应遵守 Project 保存 / 修改规则。
+```
+### 14.21.3 工程总耗时
+如果 Project 打开期间的时间累计规则包含导出期间：
+```text
+工程总耗时正常累计。
+```
+但导出本身不是 Project 内容修改。
+### 14.21.4 最近导出记录
+MIDI 导出可以更新软件级最近导出记录。
+该记录：
+```text
+不属于 Project 内容。
+不进入 Undo / Redo。
+不影响 Project 修改状态。
+```
+---
+## 14.22 第三方播放器兼容性边界
+Midora 导出标准 MIDI 1.0 数据。
+但 Midora 不承诺所有第三方播放器完全一致复现，尤其涉及：
+```text
+多 Port 解释
+Port Number / Device / Port Name Meta Event
+Channel 10 melodic 初始化
+系统写入的初始化事件
+SoundFont 选择
+非 GM SF2
+播放器自身对 RPN / NRPN / Pitch Bend Range 的解释
+不同播放器的同 pitch 重叠 Note 配对策略
+```
+Readme 应明确说明该兼容边界。
+MIDI 导出不依赖：
+```text
+当前播放设备
+当前 BASSMIDI Stream 状态
+当前播放 buffer
+```
+---

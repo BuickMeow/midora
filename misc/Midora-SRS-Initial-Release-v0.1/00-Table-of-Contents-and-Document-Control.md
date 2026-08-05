@@ -1,0 +1,63 @@
+# Midora Software Requirements Specification — Initial Release Scope
+
+> 中文引用名：**《Midora 软件需求规格说明书（初版范围）》**  
+> 日常简称：**《Midora SRS》**  
+> 规格版本：**v0.1**  
+> 生成日期：**2026-07-15**  
+> 最近修订日期：**2026-08-05**  
+> 文档形态：**按章节拆分的 Markdown 规格书**
+
+## 文档定位
+
+本规格定义 Midora 初版的产品范围、领域语义、编译与输出规则、持久化格式、UI 工作流、错误边界和明确不支持内容。它是初版实现、测试、评审和需求变更的产品基线。
+
+本规格不固定最终 C# 类型、具体算法、第三方 API 调用、线程模型或控件实现；这些实现选择必须满足本规格的外部语义和不变量。
+
+## 阅读顺序
+
+首次阅读建议按章节顺序进行。开发中可通过第 22 章快速定位主题和跨系统不变量。
+
+## 目录
+
+1. [产品范围、定位与总体目标](01-Product-Scope-and-Positioning.md)
+2. [系统模型、术语与符合性约定](02-System-Model-Terms-and-Conformance.md)
+3. [Project 模型与应用生命周期](03-Project-Model-and-Application-Lifecycle.md)
+4. [时间、Conductor Track 与全局音乐事件](04-Time-Conductor-and-Global-Musical-Events.md)
+5. [Port、Channel 与资源模型](05-Port-Channel-and-Resource-Model.md)
+6. [SoundFont 与声音资源](06-SoundFont-and-Sound-Resources.md)
+7. [Event Instrument Library 与 Event Instrument 定义](07-Event-Instrument-Library-and-Definition.md)
+8. [SubVoice 与 MIDI 事件编辑](08-SubVoice-and-MIDI-Event-Editing.md)
+9. [曲线、Logical Parameter 与映射](09-Curves-Logical-Parameters-and-Mapping.md)
+10. [实例生命周期、Loop、Envelope 与重叠](10-Instance-Lifecycle-Loop-Envelope-and-Overlap.md)
+11. [Logical Track、Segment 与编曲语义](11-Logical-Tracks-Segments-and-Arrangement-Semantics.md)
+12. [编译系统与 Canonical Compiled Result](12-Compilation-and-Canonical-Compiled-Result.md)
+13. [播放与预览](13-Playback-and-Preview.md)
+14. [MIDI 导出](14-MIDI-Export.md)
+15. [音频文件渲染](15-Audio-File-Rendering.md)
+16. [.midora 文件格式与持久化](16-Midora-File-Format-and-Persistence.md)
+17. [UI 框架、导航与全局界面](17-UI-Framework-Navigation-and-Global-Surfaces.md)
+18. [编辑工作区与编辑器](18-Editing-Workspaces-and-Editors.md)
+19. [Project、文件、输出与任务工作流](19-Project-File-Output-and-Task-Workflows.md)
+20. [通用交互、验证与 UI 验收边界](20-Common-Interaction-Validation-and-UI-Acceptance.md)
+21. [初版范围边界、实现自由度与变更控制](21-Initial-Release-Scope-Boundaries-and-Change-Control.md)
+22. [主题索引与跨系统不变量](22-Requirement-Locator-and-Cross-System-Invariants.md)
+
+## 文档版本规则
+
+- **Initial Release Scope** 表示产品范围，不表示文档草稿序号。
+- `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
+- 后续修订必须说明受影响章节，避免在实现中静默改变需求。
+
+## 2026-08-05 修订摘要
+
+- `Channel Unit >= 248` 的诊断级别统一为 `Info`，不受“Warning 视为 Error”策略影响。
+- Segment Split 必须为右侧 Segment 保留或生成必要参数起点状态，维持参数状态及相关曲线在分割前后的听感；不改变跨分割点 Logical Note 的提前结束规则。
+- 正式 BASSMIDI 后端启用 `BASS_MIDI_NOFX`，初版不支持 Reverb / Chorus，也不允许 CC91 / CC93。
+- 实时播放跟随所选输出设备的实际采样率；音频文件渲染使用用户选择的 `8,000–192,000 Hz` 整数采样率。
+- 音频文件输出改为普通 RIFF/WAVE、Stereo、Interleaved IEEE 32-bit Float；超过 RIFF 大小上限时在 Preparing 阶段失败。
+- 增加启用输出设备枚举、可调 buffer、约 200 ms 性能基准、音频活动线程零托管分配和可选内部音频子进程要求。
+- 性能选择在满足正确性、确定性和资源上限的前提下优先时间性能，可用受控内存换取速度。
+
+## 文件命名规则
+
+文件名前两位数字是稳定阅读顺序。章节内标题采用 `章.节.小节` 编号，可用于 Issue、ADR、测试和代码评审引用。

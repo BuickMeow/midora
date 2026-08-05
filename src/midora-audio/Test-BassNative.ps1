@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)]
     [string]$Directory,
     [Parameter(Mandatory)]
-    [ValidateSet("win-x64", "win-x86")]
+    [ValidateSet("win-x64")]
     [string]$Architecture
 )
 

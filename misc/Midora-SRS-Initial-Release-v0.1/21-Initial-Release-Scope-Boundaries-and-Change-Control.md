@@ -23,6 +23,7 @@
 初版不支持：
 ```text
 macOS、Linux、Web 或移动端
+x86 Windows、Arm64 Windows 或 AnyCPU 发布包
 MIDI 2.0
 DAW、音频录制、音频轨、VST/VSTi 宿主
 MPE 或 MIDI 2.0 per-note controllers

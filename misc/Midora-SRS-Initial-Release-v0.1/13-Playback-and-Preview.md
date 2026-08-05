@@ -637,6 +637,8 @@ BASS_ATTRIB_MIDI_CPU = 0      // automatic
 
 `CPU = 0` 的 BASSMIDI 官方语义是 automatic，不得在通用说明中误写为无条件“不限制”。Midora 的正式 Stream 是由自身渲染线程主动拉取的 decode Stream，不由 BASS update thread 播放；在该拓扑中 `0` 表示不启用 BASSMIDI CPU shedding，不因 CPU 属性杀 voice。若后续改变处理拓扑，必须重新验证，不能沿用这一推论。
 
+初版只支持 `win-x64`，x64 的 SSE2 基线满足 8-point sinc 的处理器前提。若未来增加其他 CPU 架构，必须重新验证 BASSMIDI 对应架构的 sinc 支持和逐采样回归，不得静默降低为 linear interpolation。
+
 Preparing 必须从冻结的 sample-domain 计划收集实际会被 Note On 使用的 Bank MSB / Program 组合，并在进入 Playing / Preview Playing 前通过 `BASS_MIDI_FontLoad` 预加载对应 SF2 presets。实时事件 Stream 不得调用只适用于 MIDI 文件/序列 Stream 的 `BASS_MIDI_StreamLoadSamples`。若引用的组合不存在，不得把它提升为 Project 或编译错误；后端必须保持第 6.12.3 节允许的 BASSMIDI fallback 语义，并确保 fallback 所需样本也在 Preparing 完成加载。
 
 Application Preferences 提供用户可编辑的 `Realtime Maximum Sample Voices per Stream`：
@@ -1422,7 +1424,7 @@ IPC 延迟和吞吐量计入 §13.19.10 的约 200 ms 性能基准。
 子进程异常退出时，当前播放 / 预览进入 Error 并完成主进程侧资源清理；允许通过 Reset Playback Engine 重建子进程。
 ```
 
-音频子进程必须针对每个正式支持的 Windows CPU RID 独立 Native AOT 发布，不允许在正式运行时依赖 JIT 编译；具体 RID 集合由产品发布架构决定。Native AOT 不替代零分配、callback deadline、underrun、故障恢复和确定性验收。
+初版音频子进程必须以 `win-x64` 独立 Native AOT、自包含发布，不允许在正式运行时依赖 JIT 编译，也不得生成或接受 `win-x86`、`win-arm64` 或 AnyCPU Worker 作为正式产物。Native AOT 不替代零分配、callback deadline、underrun、故障恢复和确定性验收。
 
 进程内后端或“子进程合成、主进程 WASAPI”的混合链只允许作为开发期对照测试，不是正式消费者，不得由产品运行时回退或切换进入。
 ---

@@ -121,7 +121,10 @@ Midora 只面向 Windows 桌面平台。
 .NET 10
 WPF
 Windows Desktop
+CPU / 发布架构：x64（win-x64）
 ```
+初版不发布 x86 或 Arm64 构建，不提供 AnyCPU 包，也不在运行时跨架构回退。主应用、内部音频子进程以及随产品分发的 BASS / BASSMIDI / BASSWASAPI 原生库必须全部为 x64。
+
 暂不考虑：
 * macOS
 * Linux

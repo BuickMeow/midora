@@ -53,7 +53,7 @@ D:\Programing\midora
 4. 所有正式 BASSMIDI stream 必须启用 `BASS_MIDI_NOFX`。初版完全不支持 Reverb / Chorus；CC91 / CC93 不得出现在编辑、初始状态、Mapping、编译结果、播放调度或 MIDI 导出中。源数据出现时语义验证 Error；后端收到时为一致性 Error。
 5. 正确性、确定性和资源上限满足后，时间性能优先于最小空间占用。允许使用有明确上限和所有权的预计算、缓存、固定 buffer、双缓冲、三缓冲或四缓冲换取速度。
 6. Playing、Buffering、实时预览和文件 Rendering 阶段，参与音频活动的线程不得产生托管堆分配。Preparing、Finalizing、Stop 清理及其他非音频线程可以分配；同进程其他线程可以正常触发进程级 GC，但 callback deadline miss、underrun、断音或爆音仍是性能问题。
-7. 只允许一个用户可启动、显示 UI、打开 Project 的 Midora 应用实例。初版正式音频后端固定为由主应用管理、无 UI、不能独立打开或解释 Project 的完整内部音频子进程；该 Worker 独占 BASS/BASSMIDI/Limiter/BASSWASAPI/callback，并按正式 RID Native AOT 发布。不向用户提供拓扑切换设置。
+7. 只允许一个用户可启动、显示 UI、打开 Project 的 Midora 应用实例。初版正式音频后端固定为由主应用管理、无 UI、不能独立打开或解释 Project 的完整内部音频子进程；该 Worker 独占 BASS/BASSMIDI/Limiter/BASSWASAPI/callback，并固定按 `win-x64` Native AOT、自包含发布。不向用户提供拓扑切换设置。
 8. 实时播放必须列出全部启用的音频输出设备并标记系统默认设备；排除输入、loopback input、disabled、unplugged 和 not-present 端点。实时采样率跟随所选设备初始化后报告的实际采样率；设备或实际采样率变化时丢弃 sample-domain 缓存并重建相关 stream。
 9. 用户直接调整 buffer 大小，而不是设置 Target Latency：
    - Render-Ahead Buffer：20–2000 ms，默认 100 ms；
@@ -70,7 +70,6 @@ D:\Programing\midora
 
 这些不是当前 SRS 冲突，不能静默写成实现默认值：
 
-- 初版正式支持的 Windows CPU RID 集合；
 - 固定的 BASS/BASSMIDI/BASSWASAPI 修订、SHA-256、升级回归策略和商业分发许可证；
 - C# Mapping Function 的持久兼容 ABI、允许引用、缓存和 AssemblyLoadContext 卸载策略；
 - `.midora` 首版 JSON Schema / protobuf 字段与代码生成兼容基线；

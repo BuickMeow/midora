@@ -35,7 +35,7 @@ Project Source Data
 
 ## 3. 初版范围护栏
 
-- 目标是 Windows Desktop、.NET 10、WPF、MIDI 1.0、单个用户可启动的应用实例、单 Project、单个 Project SoundFont、最多 16 Port × 16 Channel Unit。允许由主实例管理一个无 UI、不能独立打开 Project 的内部音频子进程。
+- 目标是 Windows Desktop、.NET 10、WPF、MIDI 1.0、`win-x64`、单个用户可启动的应用实例、单 Project、单个 Project SoundFont、最多 16 Port × 16 Channel Unit。主应用、Native AOT 音频子进程及 BASS/BASSMIDI/BASSWASAPI 必须同为 x64；初版不发布 x86、Arm64 或 AnyCPU 正式产物。
 - Channel 10 在所有 Port 上都必须按 melodic channel 初始化，不能使用 BASSMIDI 默认鼓通道语义。
 - 不得顺手加入 MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、由 Compiler/Overlap/Channel Group 实施的语义级 Voice Stealing、多 SoundFont、SFZ/DLS、Pause/Scrub、多 Project 或 SRS 明确排除的能力。BASSMIDI 每 Stream sample voice 上限是已确认的后端资源配置，不属于该禁止项。
 - Event Instrument、SubVoice、Mapping、Lifecycle、Logical Track、Segment 等正式语义以各自 SRS 章节为准，不以当前原型类结构为准。
@@ -62,7 +62,7 @@ Project Source Data
 - 启动时校验三个 DLL 的 API 主版本和受支持修订；构建/发布产物固定版本与 SHA-256，不依赖机器上偶然存在的 DLL。
 - 音频文件渲染输出普通 RIFF/WAVE、stereo、interleaved IEEE float32 little-endian；采样率是用户选择的 8,000–192,000 Hz 整数，默认 48,000 Hz。文件专用 OutputDevice 直接按目标采样率生成，不依赖 WASAPI。超过 RIFF 大小上限时 Preparing 失败，不拆分、不回退 RF64。流式分块写入并使用临时文件—校验—原子发布事务。
 - 约 200 ms 端到端实时延迟只是性能测试和架构选择基准，不是 Target Latency 设置，也不决定播放成败。若采用内部音频子进程，IPC 延迟必须计入。
-- Limiter 算法、各目标采样率的 tick→sample 整数舍入、WASAPI shared/exclusive 策略、内部工作 block、最终进程拓扑和产品 CPU 架构若尚未由规格/ADR确定，不得隐藏在实现默认值里。
+- 尚未由规格/ADR确定的音频语义或发布参数不得隐藏在实现默认值里；已确认的 Limiter、tick→sample 取整、WASAPI 模式、工作 block、进程拓扑和 `win-x64` 架构不得重新开放为可选分支。
 - 商业发布前必须核实并取得与实际产品/平台匹配的 BASS 许可证；技术可行不代表已具备分发授权。
 
 ## 5. 实施顺序
@@ -93,3 +93,4 @@ Project Source Data
 4. 普通 RIFF/WAVE 取代 RF64；文件采样率可选，实时采样率跟随设备实际值。
 5. 正式 BASSMIDI Stream 启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠 Note 实例按最早开始者优先逐个释放。
 6. 正式 BASSMIDI Stream 使用 8-point sinc、CPU 属性 0；实时/离线 sample voice 上限分别配置且默认均为每 Stream 750，完美音频一致性测试以未触顶为前提。
+7. 初版产品 CPU 架构固定为 `win-x64`；音频 Worker 只允许以该 RID Native AOT 发布。

@@ -2,7 +2,7 @@
 param(
     [string]$Destination,
     [Parameter(Mandatory)]
-    [ValidateSet("win-x64", "win-x86")]
+    [ValidateSet("win-x64")]
     [string]$Architecture,
     [switch]$Force,
     [switch]$AcceptUnpinnedDevelopmentCandidate,
@@ -47,13 +47,7 @@ function Get-ArchitectureDll {
 
     $candidates = @(
         Get-ChildItem -Path $ExtractedRoot -Recurse -File -Filter $FileName |
-            Where-Object {
-                if ($TargetArchitecture -eq "win-x64") {
-                    return $_.FullName -match "[\\/]x64[\\/]"
-                }
-
-                return $_.FullName -notmatch "[\\/]x64[\\/]"
-            }
+            Where-Object { $_.FullName -match "[\\/]x64[\\/]" }
     )
 
     if ($candidates.Count -ne 1) {

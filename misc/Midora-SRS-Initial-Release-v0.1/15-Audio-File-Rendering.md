@@ -350,6 +350,7 @@ Windows 应用音量混音器
 ```
 ### 15.7.2 BASSMIDI 与 SF2
 初版使用与播放一致的 BASSMIDI / SF2 发声语义。
+文件渲染由第 13.30 节规定的同一个 `win-x64` Native AOT 音频子进程执行，不允许用其他 CPU 架构或 JIT Worker 生成正式文件。
 本次 compiled result 实际使用的每个 Port 对应一个独立 BASSMIDI Stream。
 所有 Port 使用 Project 的同一个 SF2。
 每个 Stream 必须完成：

@@ -31,7 +31,7 @@ flowchart LR
 
 ### 2.1 已确认的关键约束
 
-- 技术边界：Windows Desktop、.NET 10、WPF、MIDI 1.0；仅允许一个用户可启动的 Midora UI/Project 应用实例同时打开一个 Project。正式音频后端固定为一个无 UI、不能独立打开或解释 Project 的完整内部音频子进程；Worker 按正式 RID Native AOT 发布，不向用户提供拓扑切换设置。
+- 技术边界：Windows Desktop、.NET 10、WPF、MIDI 1.0、`win-x64`；仅允许一个用户可启动的 Midora UI/Project 应用实例同时打开一个 Project。正式音频后端固定为一个无 UI、不能独立打开或解释 Project 的完整内部音频子进程；Worker 固定按 `win-x64` Native AOT、自包含发布，不向用户提供拓扑切换设置。
 - 时间：Project 创建时确定 TPQ，默认 192，之后不可修改；tick 使用有符号 64 位；所有正式范围是左闭右开 `[startTick, endTick)`。
 - Conductor：Project 恰有一条 Conductor Track；tick 0 必须有有效 Tempo 和 Time Signature；初版只支持离散 Tempo，不支持 ramp。
 - 身份：对象使用 Project 全局稳定 ID；引用不得依赖名称、位置、tick、Port 或 Channel。
@@ -177,7 +177,7 @@ flowchart TD
 
 1. 建需求追踪表，把 INV-001～INV-020 与各模块、测试套件对应。
 2. 将第 9 节仍需选择的实现内容写成版本化 ADR；不得重新打开已确认的规格决定。
-3. 确定初版产品 CPU 架构、BASS DLL 固定版本/哈希/分发方式和许可证路径。
+3. 按已确认的 `win-x64` 架构固定 BASS DLL 版本/哈希/分发方式和许可证路径。
 4. 建立一个不会并发重复编译共享项目的仓库级 build/test 入口；保留小 solution 还是合并 root solution 可另作工程决策。
 5. 把人工 console 发声程序标为 smoke 工具；建立真正的 unit/integration/conformance test 工程。
 
@@ -219,7 +219,7 @@ flowchart TD
 5. 建预分配 realtime queue 和最薄 WASAPI callback；只枚举启用的输出设备，完成默认设备标记、通知、实际采样率、start/stop/reset/free 和错误恢复。
 6. 实现 Render-Ahead 与 Device Buffer Request 两项用户缓冲设置及 Stopped-only 重建规则；证明音频活动线程及运行时控制 IPC 热路径在正式活动阶段无托管堆分配。
 7. 建无需声卡的文件 `OutputDevice`/离线内存 sink，用于 CI 验证自定义采样率、时序、状态和数值。
-8. 完成固定内部音频子进程：Worker 独占全部原生音频后端与设备 callback，按显式 Windows RID Native AOT 发布；运行时命令/状态使用有界共享内存 ABI，并分解测量 IPC 延迟、underrun、CPU 和约 200 ms 端到端延迟。
+8. 完成固定内部音频子进程：Worker 独占全部原生音频后端与设备 callback，按显式 `win-x64` RID Native AOT 发布；运行时命令/状态使用有界共享内存 ABI，并分解测量 IPC 延迟、underrun、CPU 和约 200 ms 端到端延迟。
 
 退出条件：在 64/128/256/511/1024 等不同消费 block size 及多种合法采样率下，事件 sample position、长度和状态符合统一规则；正式 producer 最大工作块保持 256 frames；活动音频线程和控制 IPC 热路径分配计数为零；循环 start/stop/reset 无 handle/GCHandle 泄漏；设备断开不会有异常跨 native 边界；Native AOT Worker 有可复现的故障恢复和延迟基准。
 
@@ -328,7 +328,6 @@ flowchart TD
 
 以下不是规格错误，但需要版本化 ADR 和测试向量：
 
-- 初版正式支持的 CPU 架构；当前 native 安装脚本仅取 win-x64，但 SRS 未把 x64 写成产品范围。
 - BASSMIDI 性能档已由 14A 固定；仍需在正式硬件矩阵验证 8-point sinc、每 Stream 默认 750 sample voices、preset 预加载和 CPU 属性 0 的峰值、内存、触顶及 underrun 行为。
 - 固定哪个 BASS/BASSMIDI/BASSWASAPI revision，并如何升级及回归声音语义。
 - 任意 C# Mapping 的执行隔离、资源限制与信任提示。SRS 明确“无 sandbox”，因此只能诚实管理风险，不能假定输入可信。

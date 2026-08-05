@@ -259,11 +259,14 @@ WAV 首个采样对应所选范围的 `startTick`。
 ### 15.5.1 tick 到 sample
 渲染使用 Conductor Track 完整 Tempo Map：
 ```text
-absolute tick
-→ absolute seconds
-→ 本次选择采样率下的 sample position
+absolute tick 与本次范围 startTick
+→ 按第 4.1.4 节得到两者之间的 decimal durationSeconds
+→ durationSeconds × 本次选择采样率
+→ 唯一一次 Round / Away From Zero
+→ 相对 WAV 起点的 sample frame
 ```
 所有范围内 Tempo 变化必须参与换算。
+范围起点之前最近有效的 Tempo 状态必须用于从 `startTick` 开始的第一个区间，但不得把 `startTick` 前的时长写成文件前导静音。
 Time Signature、Key Signature 和 Marker 不直接改变音频采样时间或声音输出。
 Tempo 非法时应在编译阶段失败，不进入音频生成。极端但合法的 Tempo 只要能被 Midora 时间系统有效表示，就按规则渲染，不额外限制或警告。
 ### 15.5.2 确定性要求
@@ -273,7 +276,7 @@ Tempo 非法时应在编译阶段失败，不进入音频生成。极端但合�
 单调
 同一 Project / Tempo Map / 范围 / 文件采样率下重复计算一致
 ```
-具体整数舍入算法由实现设计确定统一定义。
+不得逐 Tempo 段取整，不得先取整绝对 sample frame 再相减，也不得使用 `Floor`、To Even 或依赖平台浮点环境的隐式取整替代第 4.1.4 节规则。
 同 tick 事件映射到同一采样位置，其先后仍由 canonical compiled result 的同 tick 语义排序决定。
 不同 tick 允许映射到同一个采样。此时仍按：
 ```text

@@ -401,6 +401,7 @@ Mute / Solo 永远不影响 Conductor Track。
 实时播放速度完全由 Conductor Track 的 Tempo Map 决定。
 初版不提供额外 playback speed multiplier。
 播放系统必须支持播放过程中遇到 Tempo 事件后即时改变 tick-to-seconds 换算。
+每个 canonical 事件的 sample frame 以及播放范围的 sample 长度必须按第 4.1.4 节计算：使用本次实际设备采样率，对相对播放起点的完整 Tempo Map 区间做 decimal 积分，乘采样率后仅执行一次 `AwayFromZero`。不得为实时播放采用与预览或文件渲染不同的取整规则。
 ### 13.9.2 Time Signature
 Time Signature 只影响：
 ```text

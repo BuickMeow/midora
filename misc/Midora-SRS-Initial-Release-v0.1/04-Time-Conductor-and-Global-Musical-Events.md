@@ -50,7 +50,19 @@ BPM 不参与该换算。
 tick 到秒的换算由当前 Tempo Map 决定。
 系统必须支持同一项目中存在多个 Tempo 事件，以形成变速。
 中途播放、预览和音频渲染必须基于当前 tick 位置之前最近有效的 Tempo 状态计算秒时间。
-具体 Tempo Map 数据结构和 tick-to-second 算法属于实现设计阶段。
+
+对于 `originTick <= targetTick`，系统必须按 Tempo 事件的生效区间，对 `[originTick, targetTick)` 的每一段执行：
+```text
+segmentSeconds = segmentTickCount × 60 / (BPM × TPQ)
+durationSeconds = 所有 segmentSeconds 的 decimal 累加值
+```
+Tempo Map 的内部索引和查找结构属于实现设计，但不得在 Tempo 段边界把时间或 sample 提前取整。
+
+正式 tick→sample frame 映射为：
+```text
+sampleFrame = RoundAwayFromZero(durationSeconds × sampleRate)
+```
+只允许在完整区间积分并乘采样率后执行这一次整数取整。不得分别取整 Tempo 段，不得先取整两个绝对 sample 位置再相减。`originTick` 必须精确映射到 sample frame 0。实时播放、预览和音频文件渲染必须共用该语义；若 decimal 运算或最终整数结果溢出可安全表示范围，当前任务明确失败。
 ---
 ## 4.2 Conductor Track 的系统级定义
 ### 4.2.1 固定存在

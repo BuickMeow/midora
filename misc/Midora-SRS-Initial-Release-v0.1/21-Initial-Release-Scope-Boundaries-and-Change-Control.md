@@ -49,6 +49,7 @@ SFZ、DLS、Kontakt、LV2 等声音资源
 集合、索引和缓存的具体数据结构
 Channel Group 分配的具体扫描算法
 曲线离散化的内部优化算法，但结果必须与第 12.8.6 节逐整数 tick 参考语义完全一致
+Tempo Map 的查找、索引和缓存结构，但 tick→sample 结果必须与第 4.1.4 节 decimal 积分和单次 Away From Zero 取整语义完全一致
 Canonical Compiled Result 的最终内存布局
 BASSMIDI API 调用顺序、内部固定 buffer block 大小和音频线程模型
 初版发布最终采用进程内音频后端还是内部音频子进程

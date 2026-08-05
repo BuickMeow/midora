@@ -16,6 +16,17 @@ public sealed class PlaybackTests
         Assert.Equal(960, map.SampleFrameToTick(72_000, 0, 48_000, 2_000));
     }
 
+    [Fact]
+    public void TempoMapRoundsOnceAfterIntegratingFromNonZeroOriginAcrossTempoBoundary()
+    {
+        TempoSampleMap map = new(480, [new(0, 120m), new(480, 60m)]);
+
+        // [240, 480) and [480, 600) each last 0.25 seconds. Rounding each
+        // segment independently would produce 0 + 0 frames instead of 1.
+        Assert.Equal(0, map.TickToSampleFrame(599, 240, 1));
+        Assert.Equal(1, map.TickToSampleFrame(600, 240, 1));
+    }
+
     [Theory]
     [InlineData(8_000)]
     [InlineData(44_100)]

@@ -74,7 +74,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 5. **已确认：5A（2026-08-05）**。整数目标参数默认 `Round`，midpoint 固定为 Away From Zero；`Floor` / `Ceil` 保留为目标参数可选项。取整只在完整映射链最终输出时执行一次；取整和最终越界策略已从 Mapping Step 移到事件参数、曲线或 Logical Parameter Mapping 的目标配置。SRS 9.4 与 12.9 已统一。
 6. **已确认：6A（2026-08-05）**。连续值源以有效范围内每个整数 tick 的最终目标值为参考语义；canonical 输出首次有效值，以及后续相对上次输出发生变化的最终整数值。允许跳跃求值、缓存等优化，但 canonical 事件、tick、值、来源和诊断必须与逐 tick 参考算法完全一致；不采用误差阈值或自适应近似采样。
 7. **无需产品确认（SRS 已闭合）**。第 7.30 节只把决定延后到编译章节；第 12.7.3 节已明确最终完全无输出的实例不分配 Channel Group、不占用 Channel Unit。现有 `InstanceWithNoPossibleOutputConsumesNoChannelUnit` 测试已锁定该语义，代码无需修改。原审计记录误写为第 7.31 节，现已纠正。
-8. tick→sample 整数舍入：当前候选为完整 Tempo Map 的 decimal 积分后只做一次 `AwayFromZero`。
+8. **已确认：8A（2026-08-05）**。tick→sample frame 使用完整 Tempo Map 在 `[originTick, targetTick)` 上的 decimal 分段积分；总时长乘采样率后只执行一次 `AwayFromZero`。不得逐 Tempo 段取整，也不得先取整绝对 sample 位置再相减；实时播放、预览和音频渲染共用该语义。现有实现符合该决定。
 9. Limiter 最终算法：当前候选是 stereo-linked、sample-peak、零 look-ahead、ceiling 1.0、50 ms release。
 10. WASAPI 正式输出策略：shared/exclusive、event-driven、格式协商和 period。
 11. 内部固定工作 block 与 ring block 数：当前原型使用 256 frames 和有界 ring，但尚无正式基准结论。

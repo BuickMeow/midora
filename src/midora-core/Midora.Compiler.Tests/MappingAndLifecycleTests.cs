@@ -581,6 +581,38 @@ public sealed class MappingAndLifecycleTests
     }
 
     [Fact]
+    public void EmptyRemapInputRangeUsesConfiguredDivideByZeroPolicy()
+    {
+        var fixture = CompilerTestProject.Create();
+        TemplateEvent controller = TemplateEvent.ControlChange(fixture.Project, 0, 1, 2);
+        ValueMappingStep step = new(fixture.Project)
+        {
+            Source = MappingSource.CurrentValue,
+            Operation = MappingOperation.Remap,
+            SourceMinimum = 1,
+            SourceMaximum = 1,
+            TargetMinimum = 0,
+            TargetMaximum = 100,
+            DivideByZero = DivideByZeroPolicy.TargetMaximum
+        };
+        controller.ValueMappings.Add(step);
+        fixture.Voice.Events.Add(controller);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 20);
+
+        CanonicalCompiledResult fallback = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(fallback.IsConsumable);
+        Assert.Contains(fallback.Events.ToArray(), value => value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 1 && value.Message.Byte2 == 127);
+
+        step.DivideByZero = DivideByZeroPolicy.Fail;
+        CanonicalCompiledResult failure = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(failure.IsConsumable);
+        Assert.Contains(failure.Diagnostics, value => value.Code == "MIDORA2101");
+    }
+
+    [Fact]
     public void CutNewRejectNewOmitsConflictingTriggerWithDiagnostic()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 1_000);

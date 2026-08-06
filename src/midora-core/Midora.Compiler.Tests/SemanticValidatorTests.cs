@@ -219,6 +219,34 @@ public sealed class SemanticValidatorTests
     }
 
     [Fact]
+    public void UnknownMappingEnumsFailOnlyWhenStepParticipates()
+    {
+        var fixture = CompilerTestProject.Create();
+        TemplateEvent controller = TemplateEvent.ControlChange(fixture.Project, 0, 1, 20);
+        ValueMappingStep step = new(fixture.Project)
+        {
+            Source = (MappingSource)999,
+            Operation = (MappingOperation)999,
+            InputOverflow = (MappingInputOverflow)999,
+            DivideByZero = (DivideByZeroPolicy)999
+        };
+        controller.ValueMappings.Add(step);
+        fixture.Voice.Events.Add(controller);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 20);
+
+        CanonicalCompiledResult active = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(active.IsConsumable);
+        Assert.Contains(active.Diagnostics, value => value.Code == "MIDORA1270");
+
+        step.IsEnabled = false;
+        CanonicalCompiledResult disabled = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(disabled.IsConsumable);
+        Assert.DoesNotContain(disabled.Diagnostics, value => value.Code == "MIDORA1270");
+    }
+
+    [Fact]
     public void InvalidUnreferencedMappingFunctionIsWarningOnly()
     {
         var fixture = CompilerTestProject.Create();

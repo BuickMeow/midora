@@ -117,6 +117,23 @@
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
 
+### Q-NUI-008：删除非空 Mapping Chain 的确认与 v1 空链表示
+
+- 类型：小决定
+- 状态：已按推荐实施待确认
+- 发现日期：2026-08-06
+- SRS 依据：第 9.1.4～9.1.6、9.10.1、20.4.8、20.14.5 节。
+- 已确认事实：空 Mapping Chain 等同无映射并使用原始值；删除 Mapping Chain 只解除其中对 Mapping Function 等资源的引用，不删除资源；禁用链保留配置。当前已发布 v1 Domain/Protobuf 对每个事件参数以及每条 Logical Parameter Mapping 都要求一个非空 `MappingChain` 对象，属性只读且含稳定 ID，因此不能在不改变 v1 文件契约的前提下把整个 Chain 属性真正设为 null/移除。删除确认决定不持久化。
+- 不确定点：SRS 没有明确单个非空 Mapping Chain 删除是否必须确认，也没有规定当前“永久 Chain 对象”实现应如何表达删除后的 Chain enabled 配置。若只清空 Step 但保留 `IsEnabled = false`，当前声音仍等价，但以后新建/粘贴 Step 可能继承一个用户以为已删除的禁用状态。
+- 影响范围：只影响删除映射链这一局部编辑工作流、删除后的空 Chain sentinel 值和随后再次添加 Step 的默认启用状态；不改变 Chain/Step protobuf 字段、canonical 空链语义、Mapping Function/Envelope/Logical Parameter 资源、输出格式或并发模型。操作可完整 Undo。
+- 推荐方案：删除非空 Chain 要求调用方给出一次显式确认；已确认后清空全部 Step，把永久空 Chain sentinel 的 `IsEnabled` 复位为 `true`，同时保留 Chain 稳定 ID 和目标参数的 Rounding/Overflow 设置。Undo 恢复删除前的 Chain enabled、相同 Step 对象、引用和顺序。删除已空且 enabled 的 Chain 是无操作；删除已空但 disabled 的 Chain 只复位 sentinel 并进入 History。
+- 推荐依据与限制：非空 Chain 可包含多个有序 Step，删除是集中数据损失，单次明确确认与现有非空容器删除命令一致；enabled 空 sentinel 最接近“链不存在后未来重新创建”的默认状态，同时不破坏已发布 v1 必填对象。限制是内存/文件中仍保留不可见 Chain ID，严格说是 v1 表示等价而不是物理删除对象。
+- 备选方案及差异：A. 不要求确认，直接清空并复位 enabled；操作更快但更容易误删整组 Step。B. 要求确认但保留原 `IsEnabled`；Undo 更简单，但未来重新添加 Step 可能意外继续禁用。C. 修改 Domain/Protobuf 允许 nullable/optional Chain 并发布新 schema 版本；能物理表达不存在，但会扩大文件兼容、迁移和公共接口影响，不适合作为本轮局部命令修改。
+- 当前实施状态：已按推荐实现 `DeleteMappingChain`；现有测试覆盖拒绝未确认删除、空 sentinel、资源/ID 保留、同对象同顺序 Undo、禁用状态恢复及 Full/Incremental 等价。
+- 需要产品所有者回答：是否采用推荐方案？如不采用，请选择 A、B 或明确要求另开持久化版本设计；无论选择哪项，删除链都不会级联删除 Mapping Function/Envelope/Logical Parameter 资源。
+- 产品回答：待填写。
+- 最终处理与提交：待确认后填写。
+
 ## 3. 问题模板
 
 ### Q-NUI-XXX：标题

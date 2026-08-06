@@ -804,12 +804,14 @@ public static class SemanticValidator
     {
         foreach (ValueMappingStep step in ActiveSteps(steps))
         {
-            if (!double.IsFinite(step.Constant) || !double.IsFinite(step.SourceMinimum)
+            if (!Enum.IsDefined(step.Source) || !Enum.IsDefined(step.Operation)
+                || !Enum.IsDefined(step.InputOverflow) || !Enum.IsDefined(step.DivideByZero)
+                || !double.IsFinite(step.Constant) || !double.IsFinite(step.SourceMinimum)
                 || !double.IsFinite(step.SourceMaximum) || !double.IsFinite(step.TargetMinimum)
                 || !double.IsFinite(step.TargetMaximum) || step.SourceMaximum < step.SourceMinimum
                 || step.TargetMaximum < step.TargetMinimum)
             {
-                AddError("MIDORA1270", "Mapping step 的数值范围非法。", source, diagnostics);
+                AddError("MIDORA1270", "Mapping step 的枚举配置或数值范围非法。", source, diagnostics);
             }
             if (step.Operation == MappingOperation.CustomCSharp && !step.MappingFunctionId.HasValue)
             {

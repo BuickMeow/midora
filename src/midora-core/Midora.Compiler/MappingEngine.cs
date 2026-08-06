@@ -72,7 +72,7 @@ internal sealed class MappingEngine : IDisposable
                 MappingOperation.Override => source,
                 MappingOperation.Add => current + source,
                 MappingOperation.Multiply => current * source,
-                MappingOperation.Remap => Remap(source, step),
+                MappingOperation.Remap => Remap(source, step, legalMaximum, targetDefault),
                 MappingOperation.Clamp => Math.Clamp(current, step.TargetMinimum, step.TargetMaximum),
                 MappingOperation.Ignore => current,
                 MappingOperation.ConstantPlusValue => step.Constant + source,
@@ -147,31 +147,35 @@ internal sealed class MappingEngine : IDisposable
         in MappingContextV1 context,
         IReadOnlyDictionary<MidoraId, double> parameters,
         IReadOnlyDictionary<MidoraId, double> envelopes) => step.Source switch
-    {
-        MappingSource.CurrentValue => current,
-        MappingSource.TriggerNote => context.TriggerNote,
-        MappingSource.TriggerVelocity => context.TriggerVelocity,
-        MappingSource.GateLength => context.GateLength,
-        MappingSource.PitchDelta => context.PitchDelta,
-        MappingSource.TemplateTick => context.TemplateTick,
-        MappingSource.ProjectTick => context.ProjectTick,
-        MappingSource.TemplateNote => context.TemplateNote,
-        MappingSource.TemplateVelocity => context.TemplateVelocity,
-        MappingSource.LogicalParameter when step.LogicalParameterId.HasValue
-            && parameters.TryGetValue(step.LogicalParameterId.Value, out double value) => value,
-        MappingSource.Envelope when step.EnvelopeId.HasValue
-            && envelopes.TryGetValue(step.EnvelopeId.Value, out double value) => value,
-        MappingSource.Constant => step.Constant,
-        MappingSource.LogicalParameter => throw new MappingException($"Logical Parameter '{step.LogicalParameterId}' is unavailable."),
-        MappingSource.Envelope => throw new MappingException($"Envelope '{step.EnvelopeId}' is unavailable."),
-        _ => throw new MappingException($"Unknown mapping source {step.Source}.")
-    };
+        {
+            MappingSource.CurrentValue => current,
+            MappingSource.TriggerNote => context.TriggerNote,
+            MappingSource.TriggerVelocity => context.TriggerVelocity,
+            MappingSource.GateLength => context.GateLength,
+            MappingSource.PitchDelta => context.PitchDelta,
+            MappingSource.TemplateTick => context.TemplateTick,
+            MappingSource.ProjectTick => context.ProjectTick,
+            MappingSource.TemplateNote => context.TemplateNote,
+            MappingSource.TemplateVelocity => context.TemplateVelocity,
+            MappingSource.LogicalParameter when step.LogicalParameterId.HasValue
+                && parameters.TryGetValue(step.LogicalParameterId.Value, out double value) => value,
+            MappingSource.Envelope when step.EnvelopeId.HasValue
+                && envelopes.TryGetValue(step.EnvelopeId.Value, out double value) => value,
+            MappingSource.Constant => step.Constant,
+            MappingSource.LogicalParameter => throw new MappingException($"Logical Parameter '{step.LogicalParameterId}' is unavailable."),
+            MappingSource.Envelope => throw new MappingException($"Envelope '{step.EnvelopeId}' is unavailable."),
+            _ => throw new MappingException($"Unknown mapping source {step.Source}.")
+        };
 
-    private static double Remap(double value, ValueMappingStep step)
+    private static double Remap(
+        double value,
+        ValueMappingStep step,
+        double legalMaximum,
+        double targetDefault)
     {
         if (step.SourceMaximum == step.SourceMinimum)
         {
-            throw new MappingException("A remap source range cannot be empty.");
+            return Divide(0, 0, step, legalMaximum, targetDefault);
         }
         double input = step.InputOverflow switch
         {

@@ -202,7 +202,7 @@ Requirement trace：
 
 这些消息采用厂商文档中的默认 Device ID / Device Number。接收方不识别 vendor SysEx 或使用不同设备编号时仍可能把 Channel 10 当鼓通道，Readme 必须说明该兼容边界。该选择依据 [Roland M-GS64 MIDI Implementation](https://cdn.roland.com/assets/media/pdf/M-GS64_OM.pdf) 的 `40 1x 15 USE FOR RHYTHM PART` 和 [Yamaha XG MIDI Data Format](https://uk.yamaha.com/en/download/files/2090960) 的 `08 nn 07 PART MODE`；外部资料用于确认 wire 定义，不替代 SRS。
 
-## 13. ADR-CORE-011（已接受，23A/23.1A）：共享输出文件名合法化边界
+## 13. ADR-CORE-011（已接受，23A/23.1A/23.2A）：共享输出命名边界与初版模板
 
 决定：MIDI 导出和音频文件渲染不得各自实现不同的文件名策略。两个工作流共用一个确定性的 Windows 安全文件名合法化与冲突检测服务；它接收原始候选名称、扩展名预算和同一任务的候选集合，输出可预览、可诊断、可冻结的完整最终目标列表。任务开始后，编码器、渲染器和文件写入器不得再次解释或改变目标名称。
 
@@ -212,4 +212,6 @@ Requirement trace：输入是源名称、导出模式、扩展名、父目录和
 
 23.1A 固定公共算法：候选 stem / 扩展名使用 NFC；Win32 保留字符、Unicode Control category 和 SRS 14.17.4 的固定不可见字符表按连续段替换为 `_`，同时保留 ZWNJ、ZWJ、Variation Selector 与 emoji tag；清除 stem 两端 ASCII 空格和尾部句点。Windows 设备保留名（包括 `CONIN$` / `CONOUT$` 以及 `COM¹` / `LPT¹` 等 superscript 形式）统一在 stem 前加 `_`。最终文件名部分最多 255 UTF-16 code unit，包含扩展名和后缀，并只在 .NET text-element 边界截断。
 
-同一目录的冲突键是 NFC + `OrdinalIgnoreCase`。分配顺序由稳定源顺序和稳定源 key 固定，第一个无后缀，后续使用 ` (2)`、` (3)`……并重新预算；已有文件不参加后缀分配。公共实现 `Midora.OutputPlanning.WindowsOutputFileNamePlanner` 是纯 Preparing 组件，不读取文件系统；无合法 UTF-16、合法化后为空、扩展名契约错误、预算容不下一个完整文本元素或稳定 key 重复均原子失败。最终 MIDI Track Name/文件/Readme 模板仍需后续决定，不得由公共组件生成。
+同一目录的冲突键是 NFC + `OrdinalIgnoreCase`。分配顺序由稳定源顺序和稳定源 key 固定，第一个无后缀，后续使用 ` (2)`、` (3)`……并重新预算；已有文件不参加后缀分配。公共实现 `Midora.OutputPlanning.WindowsOutputFileNamePlanner` 是纯 Preparing 组件，不读取文件系统；无合法 UTF-16、合法化后为空、扩展名契约错误、预算容不下一个完整文本元素或稳定 key 重复均原子失败。
+
+23.2A 固定模板：整曲 MIDI / 音频分别为 `<ProjectStem>.mid` 与 `<ProjectStem>.wav`，ProjectStem 依 Project 名称、当前 `.midora` stem、模式固定 fallback 选择；分 Track 为 `<NN> - <LogicalTrackDisplayName>.mid/.wav`，NN 使用整个 Project 的一基手动顺序且至少两位；逐 Port MIDI 为 `Port <PP>.mid`；Readme 为 `README.md`。MIDI Conductor Track Name 固定 `Conductor`，事件 Track Name 固定 `<原始 Logical Track 名称或 fallback> / Port <P>`，不经过文件名合法化并由编码器严格 UTF-8 编码。多文件模式让用户选择完整输出目录，不自动增加嵌套目录。公共实现 `Midora.OutputPlanning.InitialReleaseOutputNaming` 只生成并合法化候选，不读取文件系统或推断覆盖权限。

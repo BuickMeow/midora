@@ -398,9 +398,11 @@ Preserve
 Compact 无法保证等价时导出失败，不自动切换 Preserve。
 ### 19.5.6 Output
 输出路径是一次性参数，不保存进 Project。
+整曲模式选择完整 `.mid` 目标路径；多文件模式选择完整输出目录，不自动在其下再建立模式或 Project 命名的嵌套文件夹。目录不存在时按用户所选精确路径创建。
 支持 Readme，默认开启。Readme 失败时整体导出失败。
 覆盖授权在任务开始前一次性完成，不逐文件循环询问。
 MIDI 导出与音频渲染共用同一确定性安全文件名合法化服务。Review 必须显示合法化后的全部最终路径、内部重复目标、现有文件冲突和所需覆盖授权；源名称不得被回写。
+Review 使用第 14.8.2、14.15.3、14.17.1 节的固定 MIDI 文件、Track Name 和 `README.md` 模板，不允许编码器或写入器另行命名。
 ### 19.5.7 Warning 策略
 用户可以配置 Warning 阻止导出，但诊断严重级别仍是 Warning。
 ### 19.5.8 Project Defaults
@@ -582,6 +584,7 @@ Blocked
 ```
 不做磁盘空间预检查。
 必须在 Start 前显示经公共文件名合法化和冲突检测后的全部最终 WAV 路径；不得只显示原始 Track 名称或模板。
+Whole Mix 与 Per Logical Track 分别使用第 15.10 节固定的 `<ProjectStem>.wav` 与 `<NN> - <LogicalTrackDisplayName>.wav` 模板。
 必须在创建任何临时输出前，按冻结的采样率、范围、最终 frame 数和 RIFF/WAVE 结构精确检查每个计划文件的 RIFF 大小上限。任一目标超过上限时，整个任务为 Blocked；不拆分、不回退 RF64、不自动降低采样率。
 Per Logical Track 模式可以在开始前显示哪些 Track 当前可准备、哪些存在已知问题，但正式任务仍按独立 Track 语义执行。
 ### 19.7.8 Project Defaults

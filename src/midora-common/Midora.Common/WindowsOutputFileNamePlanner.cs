@@ -189,6 +189,20 @@ public static class WindowsOutputFileNamePlanner
             : Failure(diagnostics);
     }
 
+    internal static OutputStemCandidateState ClassifyCandidateStem(string? candidateStem)
+    {
+        if (string.IsNullOrWhiteSpace(candidateStem))
+        {
+            return OutputStemCandidateState.EmptyAfterLegalization;
+        }
+
+        return TrySanitizeStem(candidateStem, out _, out string? errorCode)
+            ? OutputStemCandidateState.Usable
+            : errorCode == InvalidUnicodeCode
+                ? OutputStemCandidateState.InvalidUnicode
+                : OutputStemCandidateState.EmptyAfterLegalization;
+    }
+
     private static OutputFileNamePlan Failure(List<OutputFileNameDiagnostic> diagnostics) =>
         new([], diagnostics.ToArray());
 
@@ -385,4 +399,11 @@ public static class WindowsOutputFileNamePlanner
         OutputFileNameCandidate Candidate,
         string SanitizedStem,
         string Extension);
+}
+
+internal enum OutputStemCandidateState
+{
+    Usable,
+    EmptyAfterLegalization,
+    InvalidUnicode
 }

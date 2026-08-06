@@ -44,6 +44,7 @@
 | INV-033 | 初版 SMF Type 1 兼容档固定：Tempo 用 `60,000,000 / BPM` 后一次 `AwayFromZero`；拍号 `cc=24`、`bb=8`；Bank 顺序为 CC0→CC32→Program；文本 Meta 为严格 UTF-8；每个 Channel Event 显式 status；导出器不在 canonical 之外追加 Channel 清理；所有 Track 的 EOT 对齐统一 endTick。 |
 | INV-034 | MIDI 导出中，每个实际包含 Channel 10 canonical 事件的事件 Track 在相对 tick 0、Port Meta 后、canonical 事件前固定写一次 GS Normal Part 与一次 XG Normal Part SysEx，顺序 GS→XG；不得发送 GS/XG/GM Reset，不得改变 canonical Bank/Program；不相关事件 Track 与 Conductor 不写。 |
 | INV-035 | MIDI 导出与音频文件渲染必须共用同一确定性 Windows 安全文件名合法化和冲突检测服务：NFC、固定不安全字符集合、设备保留名前缀 `_`、文件名部分最多 255 UTF-16 code unit、text-element 安全截断、NFC + OrdinalIgnoreCase 冲突键和稳定 ` (n)` 后缀。合法化后的完整最终路径必须在任务开始前预览并冻结；不修改 Project 源名称，已有目标不参与后缀分配且仍需明确覆盖授权。 |
+| INV-036 | 初版输出模板固定：整曲 MIDI / 音频为 `<ProjectStem>.mid/.wav`，来源依次为 Project 名称、当前 `.midora` stem、模式 fallback；分 Track 为 `<NN> - <LogicalTrackDisplayName>.mid/.wav`，逐 Port MIDI 为 `Port <PP>.mid`，Readme 为 `README.md`。MIDI Conductor Track Name 为 `Conductor`，事件 Track Name 为原始名称或 fallback 加 ` / Port <P>`，且不经过文件名合法化。多文件模式选择完整输出目录，不自动增加嵌套目录。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|

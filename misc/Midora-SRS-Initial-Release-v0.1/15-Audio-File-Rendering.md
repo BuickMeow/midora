@@ -525,16 +525,15 @@ Denormal 的抑制属于实现层，但不得造成渲染失败或可感知语�
 ---
 ## 15.10 文件命名
 ### 15.10.1 整曲默认名称
-整曲建议文件名优先级：
+整曲固定候选文件名为 `<ProjectStem>.wav`。`ProjectStem` 的来源优先级为：
 ```text
 Project 名称
-当前 .midora 文件名
-Midora Render.wav
+当前 .midora 文件名 stem
+Midora Render
 ```
-Project 名称为空或非法时使用后续 fallback。
-未保存 Project 且 Project 名称为空时使用通用名称。
+候选为空、仅空白或按第 14.17.4 节合法化后为空时使用后续 fallback。Windows 保留字符等可合法化内容不是跳过候选的理由；非法 UTF-16 使规划失败。未保存 Project 且 Project 名称不可用时，最终 fallback 为 `Midora Render.wav`。
 ### 15.10.2 分轨默认名称
-初版分轨默认名称以 Logical Track 名称为主，并包含 Project 当前 Logical Track 显示序号，例如：
+初版分轨固定候选模板为 `<NN> - <LogicalTrackDisplayName>.wav`，例如：
 ```text
 01 - Piano.wav
 02 - Piano.wav

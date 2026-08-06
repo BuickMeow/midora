@@ -166,7 +166,8 @@ Track 0 = Conductor / Meta Track
 ### 14.3.4 多文件导出输出组织
 按 Logical Track / 按 Port 导出时：
 ```text
-创建导出文件夹。
+用户选择完整输出目录；该选择不是“父目录 + 系统自动生成的嵌套文件夹名”。
+所选目录不存在时，由任务按该精确路径创建；不得再自动增加一层目录。
 文件夹中包含多个 .mid 文件。
 默认生成一个 Readme。
 ```
@@ -430,14 +431,12 @@ Channel Event 必须写入对应事件 Track。
 导出文件应写入 Track Name Meta Event。
 规则：
 ```text
-Conductor Track 写固定或可识别名称。
-事件 Track 使用 Logical Track 名称。
-必要时附加 Port 信息。
-整曲导出中事件 Track 名称必须包含 Logical Track 名称和必要 Port 信息。
-按 Port 导出时事件 Track 名称可包含原始 Midora Port 编号，例如 Original Port 3。
+Conductor Track 固定为 `Conductor`。
+每个事件 Track 固定为 `<LogicalTrackDisplayName> / Port <P>`。
+P 是原始 Midora 一基 Port 编号 1–16，不补零；按 Port 导出内部路由归一化为 Port 1 时仍写原始 P。
 ```
-第 14 章《MIDI 导出》 不规定最终字符串格式。
-具体格式未来 UI / 实现层定义。
+
+`LogicalTrackDisplayName` 优先使用原始 Logical Track 名称。名称为空、仅空白或按第 14.17.4 节合法化后为空时，固定使用 `Logical Track <Project 当前一基显示序号>`。Track Name 不经过文件名合法化，不做 NFC、字符替换、截断或冲突后缀处理；文本 Meta 编码器按第 14.10.1 节对该原始可见字符串执行严格 UTF-8 编码，非法 Unicode 必须使导出预检查或编码失败。
 ### 14.8.3 Project 名称、版权和软件标识
 MIDI 文件内部可以写入：
 ```text
@@ -752,12 +751,11 @@ MIDI 导出默认生成 sidecar Readme。
 如果已写出 .mid，应清理或提示未能清理。
 ```
 ### 14.15.3 Readme 格式
-初版 Readme 可使用 `.txt` 或 `.md`。
-默认格式：
+初版 Readme 固定使用 Markdown，文件名固定为：
 ```text
-.md
+README.md
 ```
-具体模板实现设计阶段定义。
+内容模板可以演进，但不得在输出规划冻结后由写入器改名。
 ### 14.15.4 Readme 内容
 Readme 应记录以下信息：
 ```text
@@ -847,13 +845,18 @@ Project End Marker / 自然结束
 ---
 ## 14.17 文件命名与文件系统行为
 ### 14.17.1 文件名来源
-默认文件名来源：
+初版固定命名模板：
 ```text
-整曲导出：可使用 Project 名称作为前缀或主文件名来源
-按 Logical Track 导出：默认使用 Logical Track 名称作为文件名来源
-按 Port 导出：默认使用 Port 编号作为文件名来源
+整曲导出：<ProjectStem>.mid
+按 Logical Track 导出：<NN> - <LogicalTrackDisplayName>.mid
+按 Port 导出：Port <PP>.mid
 ```
-具体命名模板实现设计阶段定义。
+
+`ProjectStem` 按 Project 名称、当前 `.midora` 文件名 stem、固定 `Midora MIDI Export` 的顺序选择第一个非空、非仅空白且按第 14.17.4 节合法化后非空的候选。Windows 保留字符等可合法化内容不是跳过候选的理由；非法 UTF-16 仍使规划失败，不静默改用后续候选。
+
+`NN` 使用该 Track 在整个 Project 当前手动排序中的一基显示序号；不按本次选择重编号，未选 Track 仍占序号，允许跳号。宽度至少两位，并按整个 Project Logical Track 总数的十进制位数增长。`LogicalTrackDisplayName` 的 fallback 与第 14.8.2 节相同。`PP` 是原始一基 Port 编号，固定两位 `01`–`16`。
+
+以上是进入第 14.17.4 节公共合法化器之前的候选 stem 模板；扩展名为固定系统输入。模板不修改 Project 源名称。
 ### 14.17.2 名称重复
 如果 Logical Track 名称重复，按 Track 导出时：
 ```text
@@ -922,7 +925,7 @@ LPT1–LPT9、LPT¹、LPT²、LPT³
 不自动更换父目录，不根据完整路径临时再次缩短文件名，也不绕过失败继续部分导出。
 ```
 ### 14.17.6 Readme 文件名
-Readme 文件名属于同一冻结输出目标列表并服从第 14.17.4 节。具体固定名称仍由后续命名模板决定；不得由写入器在规划后另行改名。
+Readme 候选文件名固定为 `README.md`，属于同一冻结输出目标列表并服从第 14.17.4 节；不得由写入器在规划后另行改名。
 ---
 ## 14.18 导出流程
 ### 14.18.1 播放期间触发导出

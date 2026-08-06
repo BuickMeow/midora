@@ -197,7 +197,7 @@
 - 推荐方案：提交 `global.json`，精确使用 SDK `10.0.302`、`rollForward=disable`、禁止 prerelease；仓库级声明 `RuntimeIdentifiers=win-x64` 与 `RestorePackagesWithLockFile=true`，提交 32 个 `packages.lock.json`。普通开发测试在未配置原生集成资源时明确 Skip；正式 `Test-NonUIRelease.ps1` 必须显式给出经固定 manifest/hash 验证的 BASS 目录和一个现存 SF2，执行 locked restore、六个 solution Release build、Native AOT publish，再按版本化测试基线要求 10 个项目的当前精确计数全部通过且零 Skip；新增/删除测试必须显式评审并更新基线。
 - 推荐依据与限制：精确 SDK和锁文件把构建输入从机器隐式状态变为提交内容；零 Skip 的正式门避免把缺少硬件/资源误报为通过。限制是安装了其他 .NET 10 SDK但没有 10.0.302 的机器会在仓库根目录直接拒绝构建，安全升级 SDK/包时必须显式更新 `global.json`、lock files、基线并重跑完整门。
 - 备选方案及差异：A. SDK 使用 `latestPatch` roll-forward，安全补丁采用更方便，但不同时间/机器可能产生不同 AOT 与编译输出。B. 只固定直接包版本、不提交 lock files，文件较少但传递图仍可变化。C. 不固定 SDK，仅在发布记录中手工写版本；日常构建仍可能漂移，不推荐。
-- 当前实施状态：已按推荐实现并在本机完整运行发布门；当前 800 tests 全通过、0 Skip，固定 BASS 校验通过，Native AOT Worker 产物包含 `.exe`、三项 DLL、native manifest、MIT License 与 Third-Party Notices。
+- 当前实施状态：已按推荐实现并在本机完整运行发布门；当前 809 tests 全通过、0 Skip，固定 BASS 校验通过，Native AOT Worker 产物包含 `.exe`、三项 DLL、native manifest、MIT License 与 Third-Party Notices。
 - 需要产品所有者回答：是否采用推荐方案？如需允许 SDK patch roll-forward，请明确选择 A；NuGet 锁文件与正式零 Skip 门建议保留。
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
@@ -250,6 +250,23 @@
 - 备选方案及差异：A. 自动转为 Save Project，会改变 Modified/保存基线和内存 modified time，违背调用命令的显式语义。B. 允许 Save Copy 覆盖当前文件但不更新内存状态，会制造已确认的不一致，不可采用。C. 覆盖后自动重开副本，相当于未规定的 Save As/Project switch，不属于初版。
 - 当前实施状态：已按推荐在 `ProjectPersistenceCoordinator` 中实现；覆盖前拒绝并保持原文件字节、current path 和文档状态，已有自动测试。
 - 需要产品所有者回答：是否采用推荐方案？如希望自动转为普通 Save，请明确选择 A；B/C 不建议采用。
+- 产品回答：待填写。
+- 最终处理与提交：待确认后填写。
+
+### Q-NUI-016：缺失 metadata.json 时恢复时间戳的来源
+
+- 类型：小决定
+- 状态：已按推荐实施待确认
+- 发现日期：2026-08-06
+- SRS 依据：第 3.6.1 节、第 16.13.9 节、第 16.18.3 节、第 19.3.5 节；`metadata.json` 缺失时必须用空 Metadata 默认值恢复、生成 Error 并标记 Modified，但规范未逐字指定只读 `createdAtUtc` / `modifiedAtUtc` 的替代值。
+- 已确认事实：这两个 UTC 字段在 v1 `metadata.json` 中必填且必须满足 `modifiedAtUtc >= createdAtUtc`，不能表达 null；恢复后的 Project 必须允许用户普通保存。原实现隐式用 `TimeProvider.System` 构造恢复 Metadata，而 package 事务可使用注入时钟，两个时钟域不一致时会产生保存时间早于恢复创建时间并使保存失败。
+- 不确定点：缺失 Metadata 时应使用打开时刻、原 package 文件系统时间、固定 epoch，还是增加未规定的“未知时间”表示。
+- 影响范围：只影响 `metadata.json` 缺失这一已标记 Modified 的恢复分支及恢复后首次保存；不改变正常 Metadata、package schema、canonical、音频语义或迁移版本判断。
+- 推荐方案：在 package 打开事务中使用该 `MidoraProjectPackageV1` 的 UTC `TimeProvider` 当前值同时初始化恢复 `createdAtUtc` 与 `modifiedAtUtc`；正常存在的 Metadata 随后仍按文件内容完整恢复。该时间表示“本软件建立恢复默认 Metadata 的时刻”，并与后续保存使用同一时钟来源。
+- 推荐依据与限制：可确保恢复对象立即满足 v1 不变量、测试可重复且恢复后可保存；不依赖可被复制/改写的文件系统时间，也不伪造固定历史日期。限制是它不是原工程真实创建时间，UI 必须结合恢复 Error 明确该 Metadata 已丢失，不能把它描述为已证实的原始创建时间。
+- 备选方案及差异：A. 使用 package 文件最后写入时间，可能被复制/解压/同步改写且不一定是工程创建时间。B. 使用 Unix epoch，确定且安全但会显示明显虚假的历史日期。C. 修改 v1 schema 允许 unknown/null，会破坏已发布兼容基线，不可作为小修采用。
+- 当前实施状态：已按推荐让恢复构造器显式接收 package 时钟；增加缺失 Metadata 时间断言、恢复后普通 Save 与严格重开测试。
+- 需要产品所有者回答：是否采用推荐方案？如偏好文件最后写入时间请选择 A；不建议 B/C。
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
 

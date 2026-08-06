@@ -617,7 +617,10 @@ public sealed class MidoraProjectPackageV1
         }
 
         UInt128 storedNextStableId = ProjectCodecV1.GetNextStableId(projectIndex);
-        MidoraProject project = new(projectSettings.TicksPerQuarterNote, storedNextStableId);
+        MidoraProject project = new(
+            projectSettings.TicksPerQuarterNote,
+            storedNextStableId,
+            _timeProvider.GetUtcNow());
         MidiStateCodecV1.Restore(project.GlobalInitialState, projectSettings.GlobalInitialState);
 
         foreach (ProjectFolderIndexJsonV1 folder in projectIndex.EventInstrumentFolders)

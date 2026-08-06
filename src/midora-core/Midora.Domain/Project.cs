@@ -178,6 +178,18 @@ public sealed class MidoraProject
     {
     }
 
+    internal MidoraProject(
+        int ticksPerQuarterNote,
+        UInt128 nextStableId,
+        DateTimeOffset createdAtUtc)
+        : this(
+            ticksPerQuarterNote,
+            nextStableId,
+            createInitialConductorState: false,
+            createdAtUtc)
+    {
+    }
+
     private MidoraProject(
         int ticksPerQuarterNote,
         UInt128 nextStableId,

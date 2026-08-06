@@ -267,7 +267,18 @@ public sealed class MidoraProjectPackageV1Tests
             item.Severity == MidoraPackageDiagnosticSeverityV1.Error
             && item.Code == "MIDORA-PERSIST-RECOVERED-DEFAULT"));
         Assert.Equal(string.Empty, opened.Project.Metadata.ProjectName);
+        Assert.Equal(SavedAt, opened.Project.Metadata.CreatedAtUtc);
+        Assert.Equal(SavedAt, opened.Project.Metadata.ModifiedAtUtc);
         Assert.Null(opened.Project.SoundFont.Reference);
+
+        await packages.SaveProjectAsync(
+            opened.Project,
+            packagePath,
+            opened.FileInformation,
+            overwriteAuthorized: true);
+        MidoraProjectOpenResultV1 reopened = await packages.OpenAsync(packagePath);
+        Assert.False(reopened.IsModified);
+        Assert.Empty(reopened.Diagnostics);
     }
 
     [Fact]

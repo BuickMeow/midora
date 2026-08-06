@@ -590,6 +590,9 @@ public static class SemanticValidator
     {
         HashSet<MidoraId> allTrackIds = [];
         HashSet<MidoraId> participatingTrackIds = [];
+        HashSet<MidoraId> damagedInstrumentIds = project.DamagedEventInstruments
+            .Select(value => value.Id)
+            .ToHashSet();
         foreach (LogicalTrack track in project.Tracks)
         {
             SourceReference trackSource = new(TrackId: track.Id);
@@ -604,13 +607,21 @@ public static class SemanticValidator
                 AddError("MIDORA1301", "Logical Track ID 必须唯一；名称允许为空和重复。", trackSource, diagnostics);
             }
             EventInstrument? boundInstrument = null;
+            bool boundInstrumentIsDamaged = false;
             if (track.EventInstrumentId.HasValue
                 && !instruments.TryGetValue(track.EventInstrumentId.Value, out boundInstrument))
             {
-                diagnostics.Add(new("MIDORA1303", DiagnosticSeverity.Info,
-                    "Logical Track 的 Event Instrument 引用已断裂；本次按未绑定 Track 处理。", trackSource));
+                boundInstrumentIsDamaged = damagedInstrumentIds.Contains(track.EventInstrumentId.Value);
+                diagnostics.Add(boundInstrumentIsDamaged
+                    ? new("MIDORA1305", DiagnosticSeverity.Error,
+                        "Logical Track 绑定的 Event Instrument 已损坏；该 Track 不参与编译。", trackSource with
+                        {
+                            EventInstrumentId = track.EventInstrumentId.Value
+                        })
+                    : new("MIDORA1303", DiagnosticSeverity.Info,
+                        "Logical Track 的 Event Instrument 引用已断裂；本次按未绑定 Track 处理。", trackSource));
             }
-            if (boundInstrument is null
+            if (boundInstrument is null && !boundInstrumentIsDamaged
                 && track.Segments.Any(segment => segment.Notes.Count != 0 || segment.ParameterLanes.Count != 0))
             {
                 diagnostics.Add(new("MIDORA1304", DiagnosticSeverity.Info,

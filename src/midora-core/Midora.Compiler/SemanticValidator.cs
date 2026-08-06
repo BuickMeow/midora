@@ -621,6 +621,15 @@ public static class SemanticValidator
                     : new("MIDORA1303", DiagnosticSeverity.Info,
                         "Logical Track 的 Event Instrument 引用已断裂；本次按未绑定 Track 处理。", trackSource));
             }
+            if (request.Purpose == CompilationPurpose.SegmentPreview
+                && boundInstrument is null
+                && !boundInstrumentIsDamaged)
+            {
+                AddError("MIDORA1306",
+                    "Segment Preview 要求 Logical Track 绑定一个可用的 Event Instrument。",
+                    trackSource,
+                    diagnostics);
+            }
             if (boundInstrument is null && !boundInstrumentIsDamaged
                 && track.Segments.Any(segment => segment.Notes.Count != 0 || segment.ParameterLanes.Count != 0))
             {

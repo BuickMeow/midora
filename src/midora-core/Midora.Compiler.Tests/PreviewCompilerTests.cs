@@ -133,4 +133,30 @@ public sealed class PreviewCompilerTests
         Assert.DoesNotContain(instrumentPreview.Diagnostics, value => value.Code == "MIDORA1021");
         Assert.DoesNotContain(segmentPreview.Diagnostics, value => value.Code == "MIDORA1021");
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SegmentPreviewRejectsUnboundAndBrokenInstrumentBindings(bool brokenReference)
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        fixture.Track.EventInstrumentId = brokenReference
+            ? fixture.Project.AllocateStableId()
+            : null;
+
+        CanonicalCompiledResult result = new PreviewCompiler().CompileSegment(
+            fixture.Project,
+            fixture.Track.Id,
+            fixture.Segment.Id);
+
+        Assert.False(result.IsConsumable);
+        Assert.True(result.IsPartial);
+        CompilerDiagnostic diagnostic = Assert.Single(result.Diagnostics, value =>
+            value.Code == "MIDORA1306");
+        Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
+        Assert.Equal(fixture.Track.Id, diagnostic.Source.TrackId);
+        Assert.Equal(
+            brokenReference,
+            result.Diagnostics.Any(value => value.Code == "MIDORA1303"));
+    }
 }

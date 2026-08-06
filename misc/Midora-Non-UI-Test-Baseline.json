@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "sdkVersion": "10.0.302",
   "configuration": "Release",
-  "totalTestCount": 839,
+  "totalTestCount": 842,
   "projects": [
     {
       "path": "src/midora-common/Midora.Common.Tests/Midora.Common.Tests.csproj",
@@ -10,7 +10,7 @@
     },
     {
       "path": "src/midora-core/Midora.Compiler.Tests/Midora.Compiler.Tests.csproj",
-      "expectedTestCount": 193
+      "expectedTestCount": 195
     },
     {
       "path": "src/midora-core/Midora.MidiExport.Tests/Midora.MidiExport.Tests.csproj",
@@ -30,7 +30,7 @@
     },
     {
       "path": "src/midora-core/Midora.Playback.Tests/Midora.Playback.Tests.csproj",
-      "expectedTestCount": 51
+      "expectedTestCount": 52
     },
     {
       "path": "src/midora-audio/Midora.Audio.Bass.Tests/Midora.Audio.Bass.Tests.csproj",

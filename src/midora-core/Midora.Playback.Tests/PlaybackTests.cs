@@ -602,6 +602,35 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void UnboundSegmentPreviewFailsBeforeBackendPreparation()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            project.Tracks[0].EventInstrumentId = null;
+            ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+
+            InvalidOperationException failure = Assert.Throws<InvalidOperationException>(() =>
+                controller.StartSegmentPreview(
+                    project.Tracks[0].Id,
+                    project.Tracks[0].Segments[0].Id));
+
+            Assert.Contains("MIDORA1306", failure.Message, StringComparison.Ordinal);
+            Assert.Equal(PlaybackState.Error, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.False(session.EditsLocked);
+            Assert.Equal(0, backend.PrepareCount);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void RealtimePreviewUsesPositiveActualDeviceRateOutsideFileRange()
     {
         string soundFont = Path.GetTempFileName();

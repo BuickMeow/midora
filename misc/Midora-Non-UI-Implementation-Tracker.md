@@ -119,6 +119,7 @@
 | 2026-08-06 | Damaged Event Instrument 绑定编译边界 | Placeholder 不参与定义；绑定 Track 专用 MIDORA1305 Error 与 Track/Instrument 来源；普通断裂仍为 Info；Whole/健康选择/损坏选择作用域；Compiler 191 tests；全仓基线 835 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip |
 | 2026-08-06 | Audio Render 损坏 Instrument 绑定 canonical 透传 | Whole Mix 不再把强制 Error 降为未绑定 Info；Per Logical Track 为损坏绑定保留独立失败项且健康项可继续；Audio Render 33 tests；全仓基线 837 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-a4005a7bf4e84f48a372cf0382ed981c` |
 | 2026-08-06 | Preview 临时 Project 上下文完整性 | Segment Preview 保留损坏 Instrument placeholder 并输出 MIDORA1305；Event Instrument/Segment Preview 保留相关有效 Library Folder，消除虚假 MIDORA1021；Compiler 193 tests；全仓基线 839 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-371f13d69cb84b519079f79318b3c5bf` |
+| 2026-08-06 | Segment Preview 绑定前置条件 | 未绑定与普通断裂绑定在 SegmentPreview context 中产生 MIDORA1306 Error，Damaged 仍使用 MIDORA1305；失败 Preview 在 Backend Prepare 前被拒绝并释放 edit lock；Compiler 195、Playback 52 tests；全仓基线 842 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-8549557fbe94435298edb7be6545b2df` |
 
 ## 7. 未解决风险
 
@@ -142,3 +143,4 @@
 - Global Event Scope Defaults 被 SRS 声明为可修改且影响可听/资源语义，但没有任何字段或默认规则；已发布 v1 又是严格空 marker。schema v2、History 与编译消费等待 Q-NUI-020，不能把建议字段静默塞入 v1。
 - Audio Render 对损坏 Event Instrument 绑定的选择已交还 canonical 编译器判定：Whole Mix 整体失败，Per Logical Track 仅对应项失败并允许其他项继续；普通未绑定/断裂引用仍保持 Info 与无输出目标语义。
 - Preview 临时 Project shell 已复制所选对象所需的损坏绑定身份与有效 Library Folder 结构；后续新增任何 Project 外壳式 CompileContext 时都必须审计同类引用闭包，不能让临时上下文制造虚假断裂或降级真实损坏。
+- Segment Preview 的绑定要求严于主时间线的一般未绑定 Track 语义：`MIDORA1306` 只属于该 Preview context；Playback Preview 必须先验证 canonical 可消费性，再初始化 Backend。

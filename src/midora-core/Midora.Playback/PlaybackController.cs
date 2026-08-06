@@ -429,13 +429,13 @@ public sealed class PlaybackController : IDisposable
             SetState(PlaybackState.Preparing);
             string soundFont = RequireEffectiveSoundFont("Preview");
             CanonicalCompiledResult compiled = compile();
-            int actualSampleRate = _backend.Prepare();
-            _session.InvalidateSampleDomainCaches();
             if (!compiled.IsConsumable)
             {
                 throw new InvalidOperationException(string.Join(Environment.NewLine,
                     compiled.Diagnostics.Select(value => $"{value.Code}: {value.Message}")));
             }
+            int actualSampleRate = _backend.Prepare();
+            _session.InvalidateSampleDomainCaches();
             if (compiled.EndTick <= compiled.StartTick)
             {
                 ReleaseEditLock();

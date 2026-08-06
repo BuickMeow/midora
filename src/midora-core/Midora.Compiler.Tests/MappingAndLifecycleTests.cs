@@ -100,6 +100,26 @@ public sealed class MappingAndLifecycleTests
     }
 
     [Fact]
+    public void CurveProducesNoEventBeforeItsFirstPoint()
+    {
+        var fixture = CompilerTestProject.Create();
+        ValueCurve curve = new(fixture.Project) { Target = MidiValueTarget.ControlChange(1) };
+        curve.Points.Add(new CurvePoint(fixture.Project, 100, 64));
+        fixture.Voice.Curves.Add(curve);
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 240, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        CanonicalMidiEvent value = Assert.Single(result.Events.ToArray(), item =>
+            item.Role == CanonicalEventRole.ControlChange
+            && item.Message.MessageType == MidiMessageType.ControlChange
+            && item.Message.Byte1 == 1);
+        Assert.Equal(100, value.Tick);
+        Assert.Equal((byte)64, value.Message.Byte2);
+    }
+
+    [Fact]
     public void CurveFinalOverflowPolicyBelongsToTarget()
     {
         var fixture = CompilerTestProject.Create();

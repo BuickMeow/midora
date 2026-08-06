@@ -952,15 +952,20 @@ public sealed class MidoraCompiler : IDisposable
     {
         foreach (ValueCurve curve in voice.Curves.OrderBy(value => value.Target.Kind).ThenBy(value => value.Target.Number))
         {
+            CurvePoint[] points = curve.Points.OrderBy(value => value.Tick).ToArray();
+            if (points.Length == 0)
+            {
+                continue;
+            }
             int? previousOutputValue = null;
             for (long localTick = 0; projectStart + localTick < actualEnd; localTick++)
             {
                 long templateTick = MapLongTickToTemplate(instrument, localTick, gateLength);
-                if (templateTick < 0 || templateTick >= instrument.TemplateLengthTicks)
+                if (templateTick < points[0].Tick || templateTick >= instrument.TemplateLengthTicks)
                 {
                     continue;
                 }
-                double value = EvaluateCurve(curve.Points, templateTick, 0);
+                double value = EvaluateCurve(points, templateTick, 0);
                 int normalized = NormalizeTargetValue(curve.Target, value, curve.TargetSettings);
                 if (previousOutputValue == normalized)
                 {

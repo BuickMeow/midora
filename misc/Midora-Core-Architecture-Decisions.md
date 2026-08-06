@@ -334,3 +334,5 @@ Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复�
 第四批命令覆盖 Event Instrument Template Length、Isolation、Overlap、Lifecycle、Loop 与 SubVoice 基础结构。Template Length 的应用层下界由 Note end、瞬时事件/Curve Point 的半开边界和 Loop End 共同决定；Initial State 与 Envelope 时长不参与。关闭 Isolation 保留现存不兼容数据并允许 canonical 产生正式诊断，不能借编辑命令删除数据；受限制的 Loop 仍允许显式禁用。删除 SubVoice 拒绝最后一条、对非空内容要求确认，并把指向该 Voice 的 Logical Parameter Mapping 作为同一可逆事务删除/恢复。Compiler 另外对四类公开策略枚举增加定义域诊断，防止损坏或未来未知数值落入 switch 默认路径。
 
 第五批命令覆盖既有 Template Event 的 Note、CC、Bank、Program、Pitch Bend、RPN、NRPN、Pitch Bend Range 属性及删除。编辑保持事件和三个 Mapping Chain/Target Settings 的对象身份；Note end 或瞬时事件 `tick + 1` 超过当前 Template Length 时原子延长。编辑到同 tick/同状态目标时保留当前被编辑事件并删除冲突旧对象，Undo 按原索引恢复；Pitch Bend Range 与 RPN 0 作为同一状态目标处理。Bank MSB/LSB 的存在性与数值分离，存在活动 Mapping Step 的组件不得被移除。Compiler 同时拒绝未定义 Template Event Kind 与 Curve Interpolation，避免损坏/未来枚举值越过验证。
+
+第六批命令覆盖既有 Value Curve 的 Target Settings、Point 更新/删除和整条 Curve 删除。Point 仍以稳定 ID 定位，更新使用同 ID 的不可变记录替换，移动超过 Template Length 时按 `tick + 1` 半开边界原子延长；Target Overflow 为 Fail 时拒绝超值域基础点，为 Clamp 时允许保存并由 canonical 归一化。删除 Curve 只移除曲线对象，不触碰同目标离散事件。Compiler 修正首点前语义：事件曲线在第一个点之前不输出隐式 0，点集在本次编译准备期排序一次后复用，最后一点之后仍由 MIDI Channel 状态自然保持。

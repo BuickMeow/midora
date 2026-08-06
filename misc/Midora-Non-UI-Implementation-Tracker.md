@@ -112,6 +112,7 @@
 | 2026-08-06 | Save / Save Copy 应用事务 | 首存路径/file info/保存基线原子提交；当前路径普通 Save；副本保持 Modified/History/内存时间；工程时间快照；Damaged/Embedded 门；覆盖/取消/并发矩阵；Application 179 tests；全仓基线 786 tests | 通过，0 failure；Save Copy 自身路径等待 Q-NUI-015 确认 |
 | 2026-08-06 | New Project 非 UI 候选事务 | TPQ/Metadata/默认空领域图；Unsaved/Create and Save；首次 package 原子发布；External 受限相对 SF2 与两阶段验证；Embedded 快照所有权；失败不返回候选；提交前不累计工程时间；Application 193 tests；全仓基线 800 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip |
 | 2026-08-06 | Open Project 非 UI 候选事务 | `.midora`/`.zip` 严格候选；当前 Project 保留边界；恢复 Modified/诊断；Damaged 保存门；Embedded lease/External runtime 状态；无长期源文件占用；Q-NUI-016 恢复时钟一致性；Application 202 tests、Persistence 75 tests；全仓基线 809 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip |
+| 2026-08-06 | Close / Exit 工程时长生命周期 | Project Switch Guard 与 Save 期间继续累计；实际切换入口才 Begin Closing；成功保持暂停；实际切换失败恢复且不补计暂停窗口；Application 205 tests；全仓基线 812 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；精确暂停边界等待 Q-NUI-017 确认 |
 
 ## 7. 未解决风险
 

@@ -334,8 +334,21 @@ public sealed class ApplicationTaskCoordinator : IDisposable
                     }
                 }
 
-                T value = await actions.PerformProjectSwitchAsync(token).ConfigureAwait(false);
-                return ProjectSwitchGuardResult<T>.Completed(value);
+                bool projectSwitchCompleted = false;
+                _session.BeginProjectClosing();
+                try
+                {
+                    T value = await actions.PerformProjectSwitchAsync(token).ConfigureAwait(false);
+                    projectSwitchCompleted = true;
+                    return ProjectSwitchGuardResult<T>.Completed(value);
+                }
+                finally
+                {
+                    if (!projectSwitchCompleted)
+                    {
+                        _session.CancelProjectClosing();
+                    }
+                }
             },
             acquireProjectEditLock: false,
             playbackCleanupContinuation,

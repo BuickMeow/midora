@@ -197,7 +197,7 @@
 - 推荐方案：提交 `global.json`，精确使用 SDK `10.0.302`、`rollForward=disable`、禁止 prerelease；仓库级声明 `RuntimeIdentifiers=win-x64` 与 `RestorePackagesWithLockFile=true`，提交 32 个 `packages.lock.json`。普通开发测试在未配置原生集成资源时明确 Skip；正式 `Test-NonUIRelease.ps1` 必须显式给出经固定 manifest/hash 验证的 BASS 目录和一个现存 SF2，执行 locked restore、六个 solution Release build、Native AOT publish，再按版本化测试基线要求 10 个项目的当前精确计数全部通过且零 Skip；新增/删除测试必须显式评审并更新基线。
 - 推荐依据与限制：精确 SDK和锁文件把构建输入从机器隐式状态变为提交内容；零 Skip 的正式门避免把缺少硬件/资源误报为通过。限制是安装了其他 .NET 10 SDK但没有 10.0.302 的机器会在仓库根目录直接拒绝构建，安全升级 SDK/包时必须显式更新 `global.json`、lock files、基线并重跑完整门。
 - 备选方案及差异：A. SDK 使用 `latestPatch` roll-forward，安全补丁采用更方便，但不同时间/机器可能产生不同 AOT 与编译输出。B. 只固定直接包版本、不提交 lock files，文件较少但传递图仍可变化。C. 不固定 SDK，仅在发布记录中手工写版本；日常构建仍可能漂移，不推荐。
-- 当前实施状态：已按推荐实现并在本机完整运行发布门；当前 809 tests 全通过、0 Skip，固定 BASS 校验通过，Native AOT Worker 产物包含 `.exe`、三项 DLL、native manifest、MIT License 与 Third-Party Notices。
+- 当前实施状态：已按推荐实现并在本机完整运行发布门；当前 812 tests 全通过、0 Skip，固定 BASS 校验通过，Native AOT Worker 产物包含 `.exe`、三项 DLL、native manifest、MIT License 与 Third-Party Notices。
 - 需要产品所有者回答：是否采用推荐方案？如需允许 SDK patch roll-forward，请明确选择 A；NuGet 锁文件与正式零 Skip 门建议保留。
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
@@ -267,6 +267,23 @@
 - 备选方案及差异：A. 使用 package 文件最后写入时间，可能被复制/解压/同步改写且不一定是工程创建时间。B. 使用 Unix epoch，确定且安全但会显示明显虚假的历史日期。C. 修改 v1 schema 允许 unknown/null，会破坏已发布兼容基线，不可作为小修采用。
 - 当前实施状态：已按推荐让恢复构造器显式接收 package 时钟；增加缺失 Metadata 时间断言、恢复后普通 Save 与严格重开测试。
 - 需要产品所有者回答：是否采用推荐方案？如偏好文件最后写入时间请选择 A；不建议 B/C。
+- 产品回答：待填写。
+- 最终处理与提交：待确认后填写。
+
+### Q-NUI-017：Project Switch 关闭流程的工程时长暂停边界
+
+- 类型：小决定
+- 状态：已按推荐实施待确认
+- 发现日期：2026-08-06
+- SRS 依据：第 3.6.4、3.9.4、19.2.2、19.2.5 节；Project 打开期间的模态对话框、保存和任务窗口都累计工程时长，开始关闭后暂停，关闭取消时只恢复后续累计且不补计暂停时间。
+- 已确认事实：New/Open/Close/Exit 共用 Stop → Draft → unsaved Save Guard → actual switch 顺序；Open/New 候选完成前旧 Project 必须保留；普通 Save 的工程时长快照应反映保存发生时的完整打开会话。现有 `ProjectCompilationSession` 已提供可组合的 `BeginProjectClosing` / `CancelProjectClosing`，但此前实际 Project Switch 工作流没有调用它们。
+- 不确定点：SRS 的“Project 开始关闭”没有逐字指定为用户发出 New/Open/Close/Exit 请求时、进入未保存确认时，还是全部 Guard 通过并开始实际替换/释放当前 Project 时。
+- 影响范围：只影响 Project Switch Guard 期间计入 `totalEditingTimeMilliseconds` 的时段和关闭取消后的恢复位置；不改变 Project 源音乐数据、Modified、Undo/Redo、metadata 修改时间、canonical、文件格式或可听结果。
+- 推荐方案：Stop/cleanup、Draft、未保存确认和普通 Save 期间继续累计；全部 Guard 通过后，在调用实际 Project switch 动作前立即 `BeginProjectClosing`。实际切换成功保持暂停等待旧会话释放；实际切换异常或取消则 `CancelProjectClosing`，从失败/取消完成后的单调时钟位置继续，不补计实际切换尝试的暂停窗口。
+- 推荐依据与限制：该边界同时符合“Project 打开时模态/保存/任务累计”和“开始关闭后暂停”，并保证 Open/New 候选失败、用户取消或 Save unavailable 不会让仍打开的旧 Project 提前停止计时。限制是用户停留在关闭确认对话框的时间仍计入工程总耗时；这是 SRS 对打开 Project 模态时段的明确规则。
+- 备选方案及差异：A. 用户发出 Project Switch 请求即暂停；关闭确认、Draft 和可能很长的普通 Save 都不计时，与“打开状态的模态/保存累计”冲突。B. 实际 switch 成功返回后才暂停；实际资源替换/释放所耗时间会被计入，且失败路径不存在需要恢复的暂停窗口。C. 只对 Close/Exit 暂停，New/Open 替换旧 Project 不暂停；会让同一 Project 关闭语义因命令入口不同而不一致。
+- 当前实施状态：已按推荐接入 `ApplicationTaskCoordinator.ExecuteProjectSwitchAsync`；自动测试覆盖 Guard Save 继续计时、实际切换入口暂停、成功保持暂停、未保存 Cancel 继续计时及实际切换失败恢复不补计。
+- 需要产品所有者回答：是否采用推荐边界？如果希望用户一发出关闭/切换请求就停止累计，请选择 A。
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
 

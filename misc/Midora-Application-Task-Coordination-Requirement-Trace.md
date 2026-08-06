@@ -31,7 +31,7 @@
 - Save/Save Copy 通过 `ProjectPersistenceCoordinator` 直接使用该打开会话持有的单调工程时间源；首存成功才提交 path/file information/保存基线，Save Copy 不改变当前 Document 状态，且不能选择当前 Project 自身路径。
 - New Project 候选由 `ProjectCreationCoordinator` 在旧 Project 之外构建；Create Unsaved 不具有路径，Create and Save 在 package 原子发布后才返回。External SF2 必须已有首次目标并采用受限相对引用；Embedded SF2 运行时快照随候选返回并由会话所有者释放。
 - Open Project 候选由 `ProjectOpenCoordinator` 在旧 Project 之外严格读取；成功前不编译、不启动工程时间且不占用源文件，成功后才允许同一候选构造 Document/Persistence/SoundFont Runtime 会话。package recovery 转换为独立 dirty reason，Damaged Placeholder 或不可用 Embedded 资源持续禁用保存。
-- Project 切换固定顺序：Stop/cleanup → Function Draft Apply/Discard/Cancel → 取得 Project 编辑锁 → 未保存 Save/Close Without Saving/Cancel → 实际切换。Draft Apply 必须在编辑锁外完成；嵌套 Save 一旦开始使用不可取消 token。
+- Project 切换固定顺序：Stop/cleanup → Function Draft Apply/Discard/Cancel → 取得 Project 编辑锁 → 未保存 Save/Close Without Saving/Cancel → `BeginProjectClosing` → 实际切换。Draft Apply 必须在编辑锁外完成；嵌套 Save 一旦开始使用不可取消 token。Guard 与 Save 仍计入当前 Project 工程时长；实际切换失败时 `CancelProjectClosing` 从失败完成后恢复累计，成功后保持暂停直到旧会话释放。
 
 ## 3. 失败、诊断与原子性
 
@@ -64,7 +64,7 @@
 - 单任务排他、非允许命令不抢占、允许命令自动 Stop 且不恢复。
 - Save 清理失败继续；风险命令产生一次性 continuation；嵌套 Project 锁正确释放。
 - 任务取消、Finalizing、Full Application 锁、Save 不可取消。
-- Project 切换顺序、Draft Apply 锁外执行、未保存处理锁内执行、Save 不可取消、Cancel 和 Save unavailable 分支。
+- Project 切换顺序、Draft Apply 锁外执行、未保存处理锁内执行、Save 不可取消、Cancel 和 Save unavailable 分支；Guard 期间计时、实际切换边界暂停、成功保持暂停及失败恢复不补计。
 - 偏好默认值、边界值、确定性 JSON 往返、未知/损坏/超大/版本错误回退、写失败回退、绝对目录、用途隔离、Stopped-only、任务忙碌拒绝及 sample-domain 缓存失效。
 - 首存、已有目标覆盖、当前路径 Save、Save Copy 状态保持、工程时间快照、Damaged/Embedded 资源门、取消和持久化并发拒绝。
 - New Project 默认图、Unsaved/Persisted 语义、Metadata/TPQ、External/Embedded SF2、覆盖、竞态、资源清理、严格重开和提交前不累计工程时间。

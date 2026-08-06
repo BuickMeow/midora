@@ -364,6 +364,88 @@ public sealed class ApplicationTaskCoordinatorTests
     }
 
     [Fact]
+    public async Task ProjectSwitchCountsGuardWorkThenPausesAtActualSwitchBoundary()
+    {
+        ManualTimeProvider clock = new();
+        using TestContext fixture = TestContext.Create(clock);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        RecordingSwitchActions actions = new(fixture.Session)
+        {
+            HasUnsavedProjectChanges = true,
+            UnsavedResolution = UnsavedProjectResolution.SaveProject,
+            SaveEntered = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            SaveRelease = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            SwitchEntered = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            SwitchRelease = new(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+
+        Task<ApplicationTaskExecution<ProjectSwitchGuardResult<string>>> running =
+            fixture.Coordinator.ExecuteProjectSwitchAsync(
+                ApplicationTaskKind.CloseProject,
+                actions);
+        await actions.SaveEntered.Task;
+        clock.Advance(TimeSpan.FromSeconds(2));
+        Assert.Equal(3_000, fixture.Session.SnapshotTotalEditingTimeMilliseconds());
+
+        actions.SaveRelease.SetResult();
+        await actions.SwitchEntered.Task;
+        clock.Advance(TimeSpan.FromHours(1));
+        Assert.Equal(3_000, fixture.Session.SnapshotTotalEditingTimeMilliseconds());
+
+        actions.SwitchRelease.SetResult();
+        ApplicationTaskExecution<ProjectSwitchGuardResult<string>> execution = await running;
+        Assert.Equal(ApplicationTaskOutcome.Completed, execution.Outcome);
+        Assert.Equal(ProjectSwitchGuardStatus.Completed, execution.Value?.Status);
+        clock.Advance(TimeSpan.FromHours(1));
+        Assert.Equal(3_000, fixture.Session.SnapshotTotalEditingTimeMilliseconds());
+    }
+
+    [Fact]
+    public async Task CancelledProjectSwitchLeavesEditingTimeRunningWithoutBackfill()
+    {
+        ManualTimeProvider clock = new();
+        using TestContext fixture = TestContext.Create(clock);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        RecordingSwitchActions actions = new(fixture.Session)
+        {
+            HasUnsavedProjectChanges = true,
+            UnsavedResolution = UnsavedProjectResolution.Cancel
+        };
+
+        ApplicationTaskExecution<ProjectSwitchGuardResult<string>> execution =
+            await fixture.Coordinator.ExecuteProjectSwitchAsync(
+                ApplicationTaskKind.Exit,
+                actions);
+        clock.Advance(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(ApplicationTaskOutcome.Completed, execution.Outcome);
+        Assert.Equal(ProjectSwitchGuardStatus.Cancelled, execution.Value?.Status);
+        Assert.Equal(3_000, fixture.Session.SnapshotTotalEditingTimeMilliseconds());
+    }
+
+    [Fact]
+    public async Task FailedActualProjectSwitchResumesEditingTimeAfterFailure()
+    {
+        ManualTimeProvider clock = new();
+        using TestContext fixture = TestContext.Create(clock);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        RecordingSwitchActions actions = new(fixture.Session)
+        {
+            SwitchError = new InvalidOperationException("Injected switch failure.")
+        };
+
+        ApplicationTaskExecution<ProjectSwitchGuardResult<string>> execution =
+            await fixture.Coordinator.ExecuteProjectSwitchAsync(
+                ApplicationTaskKind.OpenProject,
+                actions);
+        clock.Advance(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(ApplicationTaskOutcome.Failed, execution.Outcome);
+        Assert.IsType<InvalidOperationException>(execution.Error);
+        Assert.Equal(3_000, fixture.Session.SnapshotTotalEditingTimeMilliseconds());
+    }
+
+    [Fact]
     public void RealtimePreferencesRequireStoppedIdleStateAndInvalidateSamplePlans()
     {
         using TestContext fixture = TestContext.Create();
@@ -502,10 +584,13 @@ public sealed class ApplicationTaskCoordinatorTests
         public PlaybackController Playback { get; }
         public ApplicationTaskCoordinator Coordinator { get; }
 
-        public static TestContext Create()
+        public static TestContext Create(TimeProvider? editingTimeProvider = null)
         {
             string soundFont = Path.GetTempFileName();
-            ProjectCompilationSession session = new(CreateProject(), soundFont);
+            ProjectCompilationSession session = new(
+                CreateProject(),
+                soundFont,
+                editingTimeProvider);
             FakeBackend backend = new();
             PlaybackController playback = new(session, backend);
             return new(
@@ -620,6 +705,9 @@ public sealed class ApplicationTaskCoordinatorTests
         public bool WasEditLockedWhileSwitching { get; private set; }
         public TaskCompletionSource? SaveEntered { get; set; }
         public TaskCompletionSource? SaveRelease { get; set; }
+        public TaskCompletionSource? SwitchEntered { get; set; }
+        public TaskCompletionSource? SwitchRelease { get; set; }
+        public Exception? SwitchError { get; set; }
 
         public ValueTask<FunctionDraftResolution> ResolveFunctionDraftsAsync(
             CancellationToken cancellationToken)
@@ -664,12 +752,33 @@ public sealed class ApplicationTaskCoordinatorTests
             }
         }
 
-        public Task<string> PerformProjectSwitchAsync(CancellationToken cancellationToken)
+        public async Task<string> PerformProjectSwitchAsync(CancellationToken cancellationToken)
         {
             Events.Add("switch");
             WasEditLockedWhileSwitching = session.EditsLocked;
-            return Task.FromResult("switched");
+            SwitchEntered?.SetResult();
+            if (SwitchRelease is not null)
+            {
+                await SwitchRelease.Task;
+            }
+            if (SwitchError is not null)
+            {
+                throw SwitchError;
+            }
+            return "switched";
         }
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private long _timestamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp() => _timestamp;
+
+        public void Advance(TimeSpan duration) =>
+            _timestamp = checked(_timestamp + duration.Ticks);
     }
 
     private sealed class TemporaryDirectory : IDisposable

@@ -456,3 +456,11 @@ Requirement trace：输入为 Project 源对象图、预览请求、SoundFont、
 改变为另一合法 Loop 范围仍从当前 tick 重建至新 loopEnd；当前 tick 已越过新 loopEnd 时从新 loopStart 冷启动。首次播放开始 tick 不因这些冷重启改变，因此后续 Stop Cursor Behavior 的 ReturnToPlaybackStart 仍回到原任务起点。Loop 设置只影响主播放运行时范围，不修改 Project、canonical cache、Mute/Solo、Preview、MIDI 导出或音频渲染。
 
 Requirement trace：输入为活动计划、当前 tick、旧/新 Loop 和原请求 endTick；正式输出为匹配新 Loop 状态的唯一活动冷启动计划，或已越过原终点时的 Stopped。边界是关闭 Loop 必须丢弃旧裁剪计划、同值 no-op、反向重启禁止、回绕仍执行完整硬边界清理。Loop、当前 tick 和请求终点只属于播放会话，不持久化、不进入 Undo/Redo；明确非目标是 Pause、无清理热改计划、补发范围前 NoteOn 或改变 Project Default Range。
+
+## 35. ADR-CORE-033（已接受，Q-NUI-017 待确认）：Project Switch 的关闭计时边界
+
+决定：New、Open、Close 和 Exit 共用的 Project Switch Guard 在 Stop/cleanup、Function Draft 与未保存 Project 处理期间仍保持当前 Project 为打开状态并继续累计工程总耗时。只有所有 Guard 均通过、即将调用 `PerformProjectSwitchAsync` 实际替换、关闭或退出当前 Project 时，才调用 `BeginProjectClosing` 冻结累计值。实际切换成功后保持 Closing pause，交由旧会话释放；实际切换抛错或被取消时调用 `CancelProjectClosing`，从失败/取消完成后的单调时钟位置恢复累计，不补计实际切换尝试期间的暂停时间。
+
+该顺序保持保存事务取得的累计快照包含关闭确认前的完整打开会话时间，也避免 Open/New 的候选构建或 Guard 对话一出现就提前停止旧 Project 计时。Guard 在进入实际切换前取消、Save unavailable 或保存失败时从未进入 Closing pause，旧 Project 继续保持打开。`BeginProjectClosing` 位于已有 Project Edit Lock 内；实际切换动作仍由应用 composition 负责原子接管新候选或释放旧 Project 资源，非 UI 协调器不预先丢弃当前 Project。
+
+Requirement trace：输入为当前打开 `ProjectCompilationSession`、四类 Project Switch 命令、Draft/未保存决定及实际切换结果；正式输出为与当前 Project 开闭状态一致的单调工程时长 pause/resume 状态和既有结构化 Guard 结果。边界是 Guard/保存仍计时、真正切换入口开始暂停、失败恢复不回填、成功保持暂停。该计时状态不进入 Undo/Redo、不单独标记 Modified、不改变 metadata 修改时间或 canonical；明确非目标是 WPF 对话框、空状态页面、候选资源的 UI ownership 和应用进程 shutdown API。

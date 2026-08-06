@@ -33,6 +33,7 @@
 - Overlap 与资源分配只作用于和本次 `[startTick,endTick)` 相交的实例；范围外未来峰值不能使当前范围失败。分配记录同时保留 instance ID 与共享 group ID，结构化 shortage 区间和相关稳定 ID 集合每次从当前完整分配重建。
 - canonical 事件与诊断来源包含 Parameter/Mapping/Step/C# Function/Curve/Envelope 身份及生成 Origin；这些字段进入结果 fingerprint。缓存复用必须重放完全相同的细粒度来源，不能只保证 MIDI 字节相同。
 - 范围裁剪按 Port/Channel/pitch 维护活动 Note 来源 FIFO；硬边界逐实例 NoteOff 保留原 Logical Note/Template Event 来源。活动音、清理 Channel、污染 target 与 canonical 最终 tie-breaker 都有显式全序，不能依赖字典/集合遍历。
+- CompileContext 可显式收集确定性的 Debug 上下文/结果摘要；开关进入冻结 Context。缓存命中、耗时和重编次数只属于执行遥测，不进入正式 diagnostics，以保持 Full/Incremental 逐字段等价。
 
 ## 4. 持久化、运行时归属与非目标
 
@@ -58,3 +59,4 @@
 - 模板 Mapping 成功/失败、Logical Parameter Mapping 成功/失败、Value Curve、断裂引用、Mapping Function ABI 失败、Merged Initial、Range Restore、Project Reset 与硬边界 NoteOff 均锁定来源 ID/Origin。
 - 同 pitch 重叠 Note 的真实 NoteOff 按 FIFO 释放，硬边界剩余实例保留正确来源；多 pitch 边界清理固定按 Port→Channel→pitch 排序。
 - 零长度/范围外实例不产生空 SubVoice Info，显式 SubVoice 预览只诊断实际选择的空 Voice。
+- Debug 默认关闭；开启后成功、语义失败与后续 partial 失败均返回稳定 Debug，且不改变 fingerprint、事件、分配、统计或 Warning-as-error。Full/Incremental Debug diagnostics 逐字段相同。

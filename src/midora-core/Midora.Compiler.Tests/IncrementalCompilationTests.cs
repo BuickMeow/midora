@@ -245,6 +245,7 @@ public sealed class IncrementalCompilationTests
         Assert.Equal(expected.Context.IncludesAllTracks, actual.Context.IncludesAllTracks);
         Assert.Equal(expected.Context.IncludesAllSubVoices, actual.Context.IncludesAllSubVoices);
         Assert.Equal(expected.Context.TreatWarningsAsErrors, actual.Context.TreatWarningsAsErrors);
+        Assert.Equal(expected.Context.CollectDebugDiagnostics, actual.Context.CollectDebugDiagnostics);
         Assert.Equal(expected.Context.IncludedTrackIds.ToArray(), actual.Context.IncludedTrackIds.ToArray());
         Assert.Equal(expected.Context.IncludedSubVoiceIds.ToArray(), actual.Context.IncludedSubVoiceIds.ToArray());
         Assert.Equal(expected.StartTick, actual.StartTick);

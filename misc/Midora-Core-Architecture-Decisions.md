@@ -408,3 +408,11 @@ Requirement trace：输入为编译展开时的源对象稳定 ID、实际 Mappi
 空 SubVoice 的 `MIDORA1225 / Info` 在范围及显式 SubVoice 过滤之后生成：只有本次范围内确有实例且该 Voice 参与本次选择时才报告。该 Info 不进入 Segment 增量缓存，避免范围外实例或未选 Voice 的旧缓存诊断污染当前 CompileContext。是否保留此 Info 的 SRS 文字冲突另见 Q-NUI-010。
 
 Requirement trace：输入为已分配 canonical 事件、范围前及范围内 NoteOn/NoteOff 流、资源占用、SubVoice 选择和 `[startTick,endTick)`；正式输出为逐实例配对、来源可定位且全序确定的硬边界 NoteOff/Reset，以及只针对实际参与 Voice 的空 Voice Info。边界是同 pitch FIFO、真实 NoteOff velocity 0、endTick 特殊补充事件和低号 Port/Channel 顺序；不同 pitch 的边界释放顺序不形成用户音乐优先级。状态和诊断只属于本次编译，不持久化；明确非目标是 Voice Stealing、补发范围前 NoteOn 或改变正常用户事件的显式顺序。
+
+## 29. ADR-CORE-027（已接受）：CompileContext Debug 诊断收集门
+
+决定：`CompilationRequest.CollectDebugDiagnostics` 是本次编译的显式、默认关闭的诊断收集策略，并冻结进入 `CompilationContextSummary`。开启时 canonical diagnostics 追加两个稳定 Debug：`MIDORA2900` 记录 Purpose、实际范围、Track/SubVoice 选择数量和 Warning 策略；`MIDORA2901` 记录成功或明确失败阶段及确定性的 Track/Segment/Instance/Instrument/SubVoice/Event/Channel Unit/Port 统计。成功、语义失败和后续 partial 失败都可返回 Debug。
+
+Debug 不进入 result fingerprint，不改变事件、分配、统计、成功判定或 Warning 原级别；Info/Debug 永远不触发 Warning-as-error。正式 canonical diagnostics 中不写墙钟耗时、缓存命中数或增量重编次数，因为这些运行历史会破坏 Full/Incremental 逐字段等价；此类实现执行遥测继续只通过 `LastTelemetry` 暴露，不属于正式结果。
+
+Requirement trace：输入为 CompileContext Debug 收集开关和本次确定性编译结果；正式输出为可选、来源 tick 可定位且 Full/Incremental 相等的 Debug 摘要。边界是默认不收集、显示级别仍由未来 UI 独立过滤、执行遥测与正式诊断分离。Debug 及遥测均不持久化，不进入 Project/Modified/Undo 或消费者语义；明确非目标是 UI 诊断面板过滤、持久化 Debug、把性能时长纳入 canonical，或用 Debug 改变失败政策。

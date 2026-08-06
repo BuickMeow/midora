@@ -91,6 +91,7 @@
 | 2026-08-06 | 范围内资源分配与结构化峰值统计 | 范围相交实例过滤；allocation instance/group 双身份；Segment/Instrument/SubVoice/Port 统计；shortage 区间与相关稳定 ID 集合；Full/Incremental failure oracle；Compiler 169 tests；10 个测试项目累计 659 tests；Core 全解 553 tests | 通过，0 failure |
 | 2026-08-06 | Canonical 细粒度来源链 | Parameter/Mapping/Step/C# Function/Curve/Envelope ID；Mapping 异常精确 Step；模板/曲线/逻辑参数成功来源；Initial/Restore/Reset/Boundary Origin；来源进入 fingerprint；Compiler 176 tests；10 个测试项目累计 666 tests；Core 全解 560 tests | 通过，0 failure |
 | 2026-08-06 | 范围硬边界 Note FIFO 与确定全序 | 活动 Note 来源 FIFO；真实 NoteOff/velocity-0 逐实例释放；硬边界保留 Logical Note/Template Event 来源；活动音/Channel/target 显式排序；canonical 完全 tie-breaker；空 Voice Info 在范围/Voice 过滤后生成；Compiler 181 tests；10 个测试项目累计 671 tests；Core 全解 565 tests | 通过，0 failure |
+| 2026-08-06 | CompileContext Debug 诊断收集 | 默认关闭的 Debug 门及冻结摘要；成功/语义失败/partial 的确定上下文和结果统计；不改 canonical/失败政策；执行遥测与正式诊断分离；Full/Incremental Debug 等价；Compiler 185 tests；10 个测试项目累计 675 tests；Core 全解 569 tests | 通过，0 failure |
 
 ## 7. 未解决风险
 

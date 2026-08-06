@@ -72,6 +72,7 @@ public sealed class CompilationRequest
     public long StartTick { get; init; }
     public long? EndTick { get; init; }
     public bool TreatWarningsAsErrors { get; init; }
+    public bool CollectDebugDiagnostics { get; init; }
     public HashSet<MidoraId>? IncludedTrackIds { get; init; }
     public HashSet<MidoraId>? IncludedSubVoiceIds { get; init; }
 }
@@ -108,6 +109,7 @@ public sealed class CompilationContextSummary
             .OrderBy(id => id)
             .ToArray() ?? [];
         TreatWarningsAsErrors = request.TreatWarningsAsErrors;
+        CollectDebugDiagnostics = request.CollectDebugDiagnostics;
     }
 
     public CompilationPurpose Purpose { get; }
@@ -118,6 +120,7 @@ public sealed class CompilationContextSummary
     public bool IncludesAllTracks { get; }
     public bool IncludesAllSubVoices { get; }
     public bool TreatWarningsAsErrors { get; }
+    public bool CollectDebugDiagnostics { get; }
     public bool IsFullProject => Purpose == CompilationPurpose.FullProject && IncludesAllTracks;
     public bool IsPlayback => Purpose == CompilationPurpose.Playback;
     public bool IsPreview => Purpose is CompilationPurpose.SegmentPreview

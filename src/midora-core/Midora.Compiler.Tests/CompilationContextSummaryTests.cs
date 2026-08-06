@@ -22,6 +22,7 @@ public sealed class CompilationContextSummaryTests
         Assert.True(context.IncludesAllSubVoices);
         Assert.True(context.IsFullProject);
         Assert.False(context.TreatWarningsAsErrors);
+        Assert.False(context.CollectDebugDiagnostics);
         Assert.Empty(context.IncludedTrackIds.ToArray());
         Assert.Empty(context.IncludedSubVoiceIds.ToArray());
     }
@@ -39,7 +40,8 @@ public sealed class CompilationContextSummaryTests
             EndTick = 100,
             IncludedTrackIds = tracks,
             IncludedSubVoiceIds = subVoices,
-            TreatWarningsAsErrors = true
+            TreatWarningsAsErrors = true,
+            CollectDebugDiagnostics = true
         };
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project, request);
@@ -55,6 +57,7 @@ public sealed class CompilationContextSummaryTests
         Assert.Equal([fixture.Track.Id], context.IncludedTrackIds.ToArray());
         Assert.Equal([fixture.Voice.Id], context.IncludedSubVoiceIds.ToArray());
         Assert.True(context.TreatWarningsAsErrors);
+        Assert.True(context.CollectDebugDiagnostics);
         Assert.True(context.IsPlayback);
         Assert.False(context.IsFullProject);
     }

@@ -190,11 +190,22 @@ public sealed class MidoraCompiler : IDisposable
                         ? CompilationFailureStage.ResourceAllocation
                         : CompilationFailureStage.WarningPolicy;
             LastTelemetry = telemetry;
+            CompilationStatistics failureStatistics = CreateStatistics(
+                selectedTracks.Count,
+                instances,
+                0,
+                allocation);
+            AppendDebugDiagnostics(
+                request,
+                endTick,
+                diagnostics,
+                failureStatistics,
+                failureStage);
             return new CanonicalCompiledResult(
                 project.TicksPerQuarterNote, CreateContextSummary(project, request, endTick),
                 [], conductor, [], diagnostics.ToArray(),
                 true, false, failureStage, 0,
-                CreateStatistics(selectedTracks.Count, instances, 0, allocation));
+                failureStatistics);
         }
 
         List<CanonicalMidiEvent> allEvents = MaterializeEvents(instances, allocation.UnitBySubVoice);
@@ -212,11 +223,22 @@ public sealed class MidoraCompiler : IDisposable
         long resultFingerprint = SourceFingerprint.ForResult(
             request.StartTick, endTick, ranged, conductor);
         LastTelemetry = telemetry;
+        CompilationStatistics successStatistics = CreateStatistics(
+            selectedTracks.Count,
+            instances,
+            ranged.Length,
+            allocation);
+        AppendDebugDiagnostics(
+            request,
+            endTick,
+            diagnostics,
+            successStatistics,
+            null);
         return new CanonicalCompiledResult(
             project.TicksPerQuarterNote, CreateContextSummary(project, request, endTick),
             ranged, conductor, rangedAllocations, diagnostics.ToArray(),
             false, true, null, resultFingerprint,
-            CreateStatistics(selectedTracks.Count, instances, ranged.Length, allocation));
+            successStatistics);
     }
 
     private static CanonicalCompiledResult Failure(
@@ -225,11 +247,16 @@ public sealed class MidoraCompiler : IDisposable
         long endTick,
         CanonicalConductor conductor,
         List<CompilerDiagnostic> diagnostics,
-        CompilationFailureStage failureStage) => new(
+        CompilationFailureStage failureStage)
+    {
+        CompilationStatistics statistics = new(CountSelectedTracks(project, request), 0, 0, 0);
+        AppendDebugDiagnostics(request, endTick, diagnostics, statistics, failureStage);
+        return new(
             project.TicksPerQuarterNote, CreateContextSummary(project, request, endTick),
             [], conductor, [], diagnostics.ToArray(),
             true, false, failureStage, 0,
-            new(CountSelectedTracks(project, request), 0, 0, 0));
+            statistics);
+    }
 
     private static CompilationContextSummary CreateContextSummary(
         MidoraProject project,
@@ -274,6 +301,36 @@ public sealed class MidoraCompiler : IDisposable
                 .Count(),
             ResourceShortage = allocation.ResourceShortage
         };
+
+    private static void AppendDebugDiagnostics(
+        CompilationRequest request,
+        long endTick,
+        List<CompilerDiagnostic> diagnostics,
+        CompilationStatistics statistics,
+        CompilationFailureStage? failureStage)
+    {
+        if (!request.CollectDebugDiagnostics)
+        {
+            return;
+        }
+        diagnostics.Add(new(
+            "MIDORA2900",
+            DiagnosticSeverity.Debug,
+            $"CompileContext purpose={request.Purpose}; range=[{request.StartTick},{endTick}); "
+                + $"tracks={(request.IncludedTrackIds is null ? "all" : request.IncludedTrackIds.Count)}; "
+                + $"subVoices={(request.IncludedSubVoiceIds is null ? "all" : request.IncludedSubVoiceIds.Count)}; "
+                + $"warningPolicy={(request.TreatWarningsAsErrors ? "fail" : "preserve")}.",
+            new(Tick: request.StartTick)));
+        diagnostics.Add(new(
+            "MIDORA2901",
+            DiagnosticSeverity.Debug,
+            $"CompileResult outcome={(failureStage.HasValue ? $"partial/{failureStage.Value}" : "success")}; "
+                + $"tracks={statistics.SourceTrackCount}; segments={statistics.ExpandedSegmentCount}; "
+                + $"instances={statistics.ExpandedInstanceCount}; instruments={statistics.ParticipatingEventInstrumentCount}; "
+                + $"subVoices={statistics.ParticipatingSubVoiceCount}; events={statistics.EventCount}; "
+                + $"peakUnits={statistics.PeakChannelUnitCount}; ports={statistics.UsedPortCount}.",
+            new(Tick: request.StartTick)));
+    }
 
     private void ValidateMappingFunctions(
         MidoraProject project,

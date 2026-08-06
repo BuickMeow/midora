@@ -102,6 +102,7 @@
 | 2026-08-06 | WASAPI 设备变化故障传播 | 只把当前设备 disabled/fail 认定为丢失；系统默认选择跟随默认映射变化、显式设备不误停；正式 Worker 与对照 backend 并入不可恢复 fault；WASAPI 35 tests；10 个测试项目累计 709 tests | 通过，0 failure |
 | 2026-08-06 | 实时音频拉取协议闭包 | 四种状态闭合集、帧数/零进展一致性门；Render-Ahead Buffering 重试不推进、未知状态故障且零分配；BASS 74 tests、WASAPI 35 tests；10 个测试项目累计 711 tests | 通过，0 failure |
 | 2026-08-06 | 正式实时 Worker 启动与终态门 | 正式客户端只接受 Native AOT `.exe`，托管 `.dll` 仅内部测试放行；绝对启动路径；Stop/运行时同时校验共享终态和 exit code；BASS 80 tests、Playback 48 tests；10 个测试项目累计 723 tests | 通过，0 failure |
+| 2026-08-06 | MDAP v2 严格有界解析 | 写前完整大小门；读前剩余 payload 计数门；reserved 必须为零；校验和有效的非法 Port/保留位/伪造大计数统一拒绝；BASS 83 tests；10 个测试项目累计 726 tests | 通过，0 failure |
 
 ## 7. 未解决风险
 

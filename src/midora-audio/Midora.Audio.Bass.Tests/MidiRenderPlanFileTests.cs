@@ -1,4 +1,6 @@
 using Midora.Midi;
+using System.Buffers.Binary;
+using System.Security.Cryptography;
 
 namespace Midora.Audio.Bass.Tests;
 
@@ -36,6 +38,64 @@ public sealed class MidiRenderPlanFileTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Theory]
+    [InlineData(0, 16)]
+    [InlineData(1, 1)]
+    public void RejectsChecksumValidInvalidPortAndReservedFields(int portRecordOffset, byte value)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"midora-plan-invalid-{Guid.NewGuid():N}.mdap");
+        try
+        {
+            MidiRenderPlan plan = CreatePlan();
+            MidiRenderPlanFile.Write(path, plan);
+            byte[] bytes = File.ReadAllBytes(path);
+            int firstPortOffset = 28
+                + (plan.SourceIds.Length * 16)
+                + sizeof(int)
+                + (plan.InitiallyDisabledSourceIndices.Length * sizeof(int));
+            bytes[firstPortOffset + portRecordOffset] = value;
+            RewriteChecksum(bytes);
+            File.WriteAllBytes(path, bytes);
+
+            _ = Assert.Throws<InvalidDataException>(() => MidiRenderPlanFile.Read(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void RejectsChecksumValidImpossibleSourceCountBeforeAllocation()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"midora-plan-count-{Guid.NewGuid():N}.mdap");
+        try
+        {
+            MidiRenderPlanFile.Write(path, CreatePlan());
+            byte[] bytes = File.ReadAllBytes(path);
+            BinaryPrimitives.WriteInt32LittleEndian(
+                bytes.AsSpan(24, sizeof(int)),
+                16 * 1024 * 1024);
+            RewriteChecksum(bytes);
+            File.WriteAllBytes(path, bytes);
+
+            _ = Assert.Throws<InvalidDataException>(() => MidiRenderPlanFile.Read(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private static void RewriteChecksum(Span<byte> bytes)
+    {
+        const int checksumByteCount = 32;
+        int payloadLength = bytes.Length - checksumByteCount;
+        _ = SHA256.HashData(
+            bytes[..payloadLength],
+            bytes[payloadLength..]);
     }
 
     private static MidiRenderPlan CreatePlan()

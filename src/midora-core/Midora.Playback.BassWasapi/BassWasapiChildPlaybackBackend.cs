@@ -39,12 +39,29 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
         {
             throw new ArgumentOutOfRangeException(nameof(options), "Render-Ahead must be 20-2000 ms.");
         }
+        if (_options.DeviceBufferRequestMilliseconds is < 5 or > 200)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options),
+                "Device Buffer Request must be 5-200 ms.");
+        }
+        if (_options.PreparingTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options),
+                "Preparing timeout must be positive.");
+        }
         if (_options.RendererSettings is null
             || _options.RendererSettings.MaximumWorkFrameCount
                 != InitialReleaseAudioRuntimePolicy.WorkFrameCount)
         {
             throw new ArgumentOutOfRangeException(nameof(options),
                 $"Initial-release child-process work blocks must be {InitialReleaseAudioRuntimePolicy.WorkFrameCount} frames.");
+        }
+        if (_options.MasterSettings is null
+            || _options.MasterSettings.LimiterCeiling != 1f
+            || _options.MasterSettings.LimiterReleaseMilliseconds != 50f)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options),
+                "Initial-release realtime playback requires the fixed Limiter v1 algorithm.");
         }
     }
 
@@ -72,12 +89,28 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
 
     public bool IsCompleted => CurrentStatus.State == AudioWorkerState.Completed;
 
-    public bool IsFaulted => ChildFaulted
-        || IsUnexpectedWorkerTermination(CurrentStatus.State, CurrentExitCode);
+    public bool IsFaulted
+    {
+        get
+        {
+            AudioWorkerStatus status = CurrentStatus;
+            return status.State == AudioWorkerState.Faulted
+                || IsUnexpectedWorkerTermination(status.State, CurrentExitCode);
+        }
+    }
 
-    public string? FaultDescription => IsFaulted
-        ? $"workerState={CurrentStatus.State}; fault={CurrentStatus.FaultCode}; childExitCode={CurrentExitCode}; stderr={_session?.StandardError ?? _lastStandardError}"
-        : null;
+    public string? FaultDescription
+    {
+        get
+        {
+            AudioWorkerStatus status = CurrentStatus;
+            int? exitCode = CurrentExitCode;
+            return status.State == AudioWorkerState.Faulted
+                || IsUnexpectedWorkerTermination(status.State, exitCode)
+                ? $"workerState={status.State}; fault={status.FaultCode}; childExitCode={exitCode}; stderr={_session?.StandardError ?? _lastStandardError}"
+                : null;
+        }
+    }
 
     public int Prepare()
     {
@@ -156,7 +189,7 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
         finally
         {
             _session = null;
-            CaptureAndRelease(session);
+            failure = CombineFailures(failure, CaptureAndRelease(session));
         }
         if (failure is not null)
         {
@@ -194,14 +227,65 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
         }
     }
 
-    private void CaptureAndRelease(BassMidiAudioWorkerSession session)
+    private Exception? CaptureAndRelease(BassMidiAudioWorkerSession session) =>
+        ExecuteGuaranteedRelease(
+            () =>
+            {
+                _lastStandardError = session.StandardError;
+                _lastExitCode = session.ExitCode;
+                _lastStatus = session.Status;
+            },
+            () =>
+            {
+                try
+                {
+                    session.Dispose();
+                }
+                finally
+                {
+                    _lastStandardError ??= session.StandardError;
+                    _lastExitCode ??= session.ExitCode;
+                }
+            });
+
+    internal static Exception? ExecuteGuaranteedRelease(
+        Action capture,
+        Action release)
     {
-        _lastStatus = session.Status;
-        _lastStandardError = session.StandardError;
-        _lastExitCode = session.ExitCode;
-        session.Dispose();
-        _lastStandardError ??= session.StandardError;
-        _lastExitCode ??= session.ExitCode;
+        ArgumentNullException.ThrowIfNull(capture);
+        ArgumentNullException.ThrowIfNull(release);
+        Exception? failure = null;
+        try
+        {
+            capture();
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+        try
+        {
+            release();
+        }
+        catch (Exception exception)
+        {
+            failure = CombineFailures(failure, exception);
+        }
+        return failure;
+    }
+
+    private static Exception? CombineFailures(Exception? previous, Exception? next)
+    {
+        if (next is null)
+        {
+            return previous;
+        }
+        return previous is null
+            ? next
+            : new AggregateException(
+                "Multiple realtime audio worker cleanup operations failed.",
+                previous,
+                next);
     }
 
     internal static bool IsUnexpectedWorkerTermination(AudioWorkerState state, int? exitCode) =>

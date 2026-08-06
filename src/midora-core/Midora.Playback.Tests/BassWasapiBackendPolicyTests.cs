@@ -68,6 +68,64 @@ public sealed class BassWasapiBackendPolicyTests
             BassWasapiChildPlaybackBackend.IsUnexpectedWorkerTermination(state, exitCode));
     }
 
+    [Fact]
+    public void ChildCleanupStillReleasesWhenStatusCaptureFails()
+    {
+        bool released = false;
+        InvalidDataException captureFailure = new("corrupt shared status");
+
+        Exception? failure = BassWasapiChildPlaybackBackend.ExecuteGuaranteedRelease(
+            () => throw captureFailure,
+            () => released = true);
+
+        Assert.Same(captureFailure, failure);
+        Assert.True(released);
+    }
+
+    [Fact]
+    public void ChildCleanupAggregatesCaptureAndReleaseFailures()
+    {
+        InvalidDataException captureFailure = new("corrupt shared status");
+        IOException releaseFailure = new("mapping release failed");
+
+        AggregateException failure = Assert.IsType<AggregateException>(
+            BassWasapiChildPlaybackBackend.ExecuteGuaranteedRelease(
+                () => throw captureFailure,
+                () => throw releaseFailure));
+
+        Assert.Equal([captureFailure, releaseFailure], failure.InnerExceptions);
+    }
+
+    [Fact]
+    public void ChildBackendRejectsNonFormalRuntimePolicyOptions()
+    {
+        BassWasapiChildPlaybackOptions baseline = new(
+            string.Empty,
+            string.Empty,
+            null,
+            100,
+            50,
+            CreateRendererSettings(InitialReleaseAudioRuntimePolicy.WorkFrameCount),
+            AudioMasterSettings.LimiterV1,
+            TimeSpan.FromSeconds(1));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new BassWasapiChildPlaybackBackend(baseline with
+            {
+                DeviceBufferRequestMilliseconds = 4
+            }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new BassWasapiChildPlaybackBackend(baseline with
+            {
+                PreparingTimeout = TimeSpan.Zero
+            }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new BassWasapiChildPlaybackBackend(baseline with
+            {
+                MasterSettings = new AudioMasterSettings(-3, 0.9f, 50)
+            }));
+    }
+
     private static BassMidiRendererSettings CreateRendererSettings(int workFrameCount) => new(
         BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
         workFrameCount);

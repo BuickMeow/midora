@@ -223,6 +223,122 @@ public sealed class CompilationTests
     }
 
     [Fact]
+    public void AllUnorderedSourceContainerInsertionOrdersProduceIdenticalCanonicalForm()
+    {
+        var fixture = CompilerTestProject.Create(2, segmentLength: 480);
+        fixture.Instrument.RequiresChannelIsolation = true;
+        fixture.Project.GlobalInitialState.Controllers.Add(1, 64);
+        fixture.Project.GlobalInitialState.Controllers.Add(11, 100);
+        fixture.Project.GlobalInitialState.RegisteredParameters.Add(1, 1_001);
+        fixture.Project.GlobalInitialState.RegisteredParameters.Add(2, 2_002);
+        fixture.Project.GlobalInitialState.NonRegisteredParameters.Add(3, 3_003);
+        fixture.Project.GlobalInitialState.NonRegisteredParameters.Add(4, 4_004);
+        fixture.Project.GlobalResetDefaults.Controllers.Add(1, 0);
+        fixture.Project.GlobalResetDefaults.Controllers.Add(11, 127);
+        fixture.Project.GlobalResetDefaults.RegisteredParameters.Add(1, 101);
+        fixture.Project.GlobalResetDefaults.RegisteredParameters.Add(2, 202);
+        fixture.Project.GlobalResetDefaults.NonRegisteredParameters.Add(3, 303);
+        fixture.Project.GlobalResetDefaults.NonRegisteredParameters.Add(4, 404);
+        fixture.Instrument.InitialState.Controllers.Add(7, 90);
+        fixture.Instrument.InitialState.Controllers.Add(10, 32);
+        fixture.Instrument.InitialState.RegisteredParameters.Add(5, 5_005);
+        fixture.Instrument.InitialState.RegisteredParameters.Add(6, 6_006);
+        fixture.Instrument.InitialState.NonRegisteredParameters.Add(7, 7_007);
+        fixture.Instrument.InitialState.NonRegisteredParameters.Add(8, 8_008);
+        fixture.Instrument.SubVoices[0].InitialState.Controllers.Add(64, 127);
+        fixture.Instrument.SubVoices[0].InitialState.Controllers.Add(74, 80);
+        fixture.Instrument.SubVoices[1].InitialState.RegisteredParameters.Add(9, 9_009);
+        fixture.Instrument.SubVoices[1].InitialState.NonRegisteredParameters.Add(10, 10_010);
+
+        CSharpMappingFunction function = new(fixture.Project)
+        {
+            Name = "context",
+            Body = "return value + context.ProjectTick - context.ProjectTick"
+                + " + context.EventInstrumentRootNote - context.EventInstrumentRootNote;"
+        };
+        function.DeclaredContextFields.Add(nameof(MappingContextV1.ProjectTick));
+        function.DeclaredContextFields.Add(nameof(MappingContextV1.EventInstrumentRootNote));
+        fixture.Instrument.MappingFunctions.Add(function);
+        TemplateEvent controller = TemplateEvent.ControlChange(fixture.Project, 0, 1, 20);
+        controller.ValueMappings.Add(new ValueMappingStep(fixture.Project)
+        {
+            Operation = MappingOperation.CustomCSharp,
+            MappingFunctionId = function.Id
+        });
+        fixture.Instrument.SubVoices[0].Events.Add(controller);
+        fixture.Instrument.SubVoices[0].Events.Add(
+            TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        fixture.Instrument.SubVoices[1].Events.Add(
+            TemplateEvent.Note(fixture.Project, 0, 120, 67, 90));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
+
+        LogicalTrack secondTrack = new(fixture.Project)
+        {
+            Name = "Second",
+            EventInstrumentId = fixture.Instrument.Id
+        };
+        Segment secondSegment = new(fixture.Project)
+        {
+            ProjectStartTick = 480,
+            LengthTicks = 480
+        };
+        CompilerTestProject.RegisterSegment(fixture.Project, secondSegment);
+        secondTrack.Segments.Add(secondSegment);
+        fixture.Project.Tracks.Add(secondTrack);
+        CompilerTestProject.AddNote(secondSegment, fixture.Instrument, 0, 240, 65);
+
+        CompilationRequest firstRequest = new()
+        {
+            Purpose = CompilationPurpose.Range,
+            EndTick = 960,
+            IncludedTrackIds = [fixture.Track.Id, secondTrack.Id],
+            IncludedSubVoiceIds = [fixture.Instrument.SubVoices[0].Id, fixture.Instrument.SubVoices[1].Id]
+        };
+        CanonicalCompiledResult first = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            firstRequest);
+
+        ReverseInsertionOrder(fixture.Project.GlobalInitialState);
+        ReverseInsertionOrder(fixture.Project.GlobalResetDefaults);
+        ReverseInsertionOrder(fixture.Instrument.InitialState);
+        ReverseInsertionOrder(fixture.Instrument.SubVoices[0].InitialState);
+        ReverseInsertionOrder(fixture.Instrument.SubVoices[1].InitialState);
+        string[] declaredFields = function.DeclaredContextFields.ToArray();
+        function.DeclaredContextFields.Clear();
+        foreach (string field in declaredFields.Reverse())
+        {
+            function.DeclaredContextFields.Add(field);
+        }
+        CompilationRequest secondRequest = new()
+        {
+            Purpose = CompilationPurpose.Range,
+            EndTick = 960,
+            IncludedTrackIds = [secondTrack.Id, fixture.Track.Id],
+            IncludedSubVoiceIds = [fixture.Instrument.SubVoices[1].Id, fixture.Instrument.SubVoices[0].Id]
+        };
+        CanonicalCompiledResult second = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            secondRequest);
+
+        Assert.True(first.IsConsumable, string.Join(Environment.NewLine,
+            first.Diagnostics.ToArray().Select(value => $"{value.Code}: {value.Message}")));
+        Assert.True(second.IsConsumable, string.Join(Environment.NewLine,
+            second.Diagnostics.ToArray().Select(value => $"{value.Code}: {value.Message}")));
+        Assert.Equal(first.Fingerprint, second.Fingerprint);
+        Assert.Equal(first.Context.IncludedTrackIds.ToArray(), second.Context.IncludedTrackIds.ToArray());
+        Assert.Equal(first.Context.IncludedSubVoiceIds.ToArray(), second.Context.IncludedSubVoiceIds.ToArray());
+        Assert.Equal(first.Events.ToArray(), second.Events.ToArray());
+        Assert.Equal(first.Allocations.ToArray(), second.Allocations.ToArray());
+        Assert.Equal(first.Conductor.Tempos.ToArray(), second.Conductor.Tempos.ToArray());
+        Assert.Equal(first.Conductor.TimeSignatures.ToArray(), second.Conductor.TimeSignatures.ToArray());
+        Assert.Equal(first.Conductor.KeySignatures.ToArray(), second.Conductor.KeySignatures.ToArray());
+        Assert.Equal(first.Conductor.Markers.ToArray(), second.Conductor.Markers.ToArray());
+        Assert.Equal(first.Conductor.EndMarker, second.Conductor.EndMarker);
+        Assert.Equal(first.Diagnostics.ToArray(), second.Diagnostics.ToArray());
+        Assert.Equal(first.Statistics, second.Statistics);
+    }
+
+    [Fact]
     public void UnchangedTrackFragmentIsReused()
     {
         var fixture = CompilerTestProject.Create();
@@ -235,6 +351,23 @@ public sealed class CompilationTests
 
         Assert.Equal(0, compiler.LastTelemetry.RecompiledTrackCount);
         Assert.Equal(1, compiler.LastTelemetry.ReusedTrackCount);
+    }
+
+    private static void ReverseInsertionOrder(MidiInitialState state)
+    {
+        ReverseInsertionOrder(state.Controllers);
+        ReverseInsertionOrder(state.RegisteredParameters);
+        ReverseInsertionOrder(state.NonRegisteredParameters);
+    }
+
+    private static void ReverseInsertionOrder(Dictionary<int, int> values)
+    {
+        KeyValuePair<int, int>[] snapshot = values.ToArray();
+        values.Clear();
+        foreach ((int key, int value) in snapshot.Reverse())
+        {
+            values.Add(key, value);
+        }
     }
 
     [Fact]

@@ -1,6 +1,6 @@
 # Midora Project History、Modified 与 Undo/Redo Requirement Trace
 
-状态：基础框架与三批不分配稳定 ID 的领域对象命令已实现；分配稳定 ID 的创建/复制/分割命令等待 Q-NUI-005
+状态：基础框架与四批不分配稳定 ID 的领域对象命令已实现；分配稳定 ID 的创建/复制/分割命令等待 Q-NUI-005
 
 日期：2026-08-06
 
@@ -36,6 +36,8 @@
 - Logical Parameter Lane/Point：删除 Lane 需要显式确认；Point 更新阻止负 tick、NaN/Infinity、同 tick 冲突、越界、非整数 Integer 和非 Step/未定义 Enum 值；断裂 Lane 只允许删除或显式重绑定，不允许在缺少定义值域时继续普通点编辑。
 - Lane 重绑定：目标只允许当前 Track 绑定 Instrument 的稳定 Parameter ID，禁止同 Segment 重复 Parameter Lane；调用方显式选择 Clamp 或 Discard，目标为 Enum 时还必须确认整数兼容不代表语义兼容的警告。转换保留 Lane/Point ID，Undo 恢复原 Parameter ID、原 Point 对象和顺序。Q-NUI-007 待确认的局部实现采用 AwayFromZero，并把目标 Enum 的保留点转为 Step。
 - Event Instrument 基础属性：Description 按 65,536 Unicode scalar、允许 Tab/LF/CR 但拒绝 NUL/其他控制字符的持久化契约原样保存；Color 与 Description 进入 History/Modified 但不失效 canonical；Root Note 限 0～127、失效相关 Instrument 编译，且不改写 SubVoice override 或模板 Note。
+- Event Instrument 生命周期属性：Template Length 只能缩短到仍覆盖 Note end、瞬时事件/Curve Point 半开边界和 Loop End 的长度；Isolation 关闭保留已有 Loop/Envelope/Mapping 等不兼容数据；Loop 只可在 Isolation 开启时启用/编辑，但受限制状态仍可显式禁用；Overlap、Scope 与短/长音策略按已定义枚举原子更新，Let Overlap 只能在 Isolation 开启时主动选择。
+- SubVoice：可选短文本名称、Root Note inherit/override、手动排序和删除均进入 Instrument 级编译失效；名称/Root 修改不重写模板 Note。最后一条 SubVoice 不可删除；非空删除需要确认，并同时移除指向该 SubVoice 的 Logical Parameter Mapping；Undo 恢复 SubVoice、全部内部数据、外部 Mapping、原对象、原索引和稳定 ID。
 - 以上命令 Prepare 不修改 Project；删除、移动、连接和撤销复用原对象/稳定 ID，不回滚或推进 `nextStableId`。每项结构编辑测试均以 Full Compile 为 oracle 核对当前 Incremental Compile 的语义和形式等价。
 - Logical Track 名称可空/重复；Event Instrument 与 Folder 名称必填且分别在规定范围内唯一。所有上述名称先拒绝非法 Unicode、换行/NUL/控制字符，再 Trim，并统一执行 schema 的 256 Unicode scalar 上限，不静默截断。
 

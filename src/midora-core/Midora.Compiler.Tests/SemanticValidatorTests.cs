@@ -4,6 +4,37 @@ namespace Midora.Compiler.Tests;
 
 public sealed class SemanticValidatorTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void UndefinedEventInstrumentPolicyEnumsAreRejected(int field)
+    {
+        var fixture = CompilerTestProject.Create();
+        switch (field)
+        {
+            case 0:
+                fixture.Instrument.OverlapPolicy = (OverlapPolicy)999;
+                break;
+            case 1:
+                fixture.Instrument.OverlapScope = (OverlapScope)999;
+                break;
+            case 2:
+                fixture.Instrument.ShortLifecycle = (ShortNoteLifecycle)999;
+                break;
+            case 3:
+                fixture.Instrument.LongLifecycle = (LongNoteLifecycle)999;
+                break;
+        }
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(result.IsConsumable);
+        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1216");
+    }
+
     [Fact]
     public void TempoMustFitTheMidiOneSetTempoFieldAfterSingleAwayFromZeroRounding()
     {

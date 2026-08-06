@@ -47,7 +47,7 @@
 
 ## 3. 尚未完成的初版模块（不是“现有代码语义矛盾”）
 
-- Project Metadata、metadata v1 schema/codec、20A 会话计时、非 UI Application Preferences、单应用任务协调、Project switch guard，以及不分配稳定 ID 的 Project History/Modified/Undo 基础已实现；Track/Instrument/Folder/Damaged Placeholder、Segment、Conductor、Project Settings、Logical Note、Logical Parameter Lane/Point 与 Event Instrument 基础属性命令已经接入并用 Full Compile oracle 覆盖。ID 分配型 Undo 等待 Q-NUI-005。WPF composition、电源/关闭事件接线和剩余 SubVoice/Mapping/Lifecycle 编辑命令矩阵仍未完成。SoundFont 的 BASSMIDI 格式/可加载性验证和文件监控仍未实现；内嵌资源复制与损坏修复门已实现。
+- Project Metadata、metadata v1 schema/codec、20A 会话计时、非 UI Application Preferences、单应用任务协调、Project switch guard，以及不分配稳定 ID 的 Project History/Modified/Undo 基础已实现；Track/Instrument/Folder/Damaged Placeholder、Segment、Conductor、Project Settings、Logical Note、Logical Parameter Lane/Point、Event Instrument Lifecycle 与 SubVoice 基础结构命令已经接入并用 Full Compile oracle 覆盖。ID 分配型 Undo 等待 Q-NUI-005。WPF composition、电源/关闭事件接线和剩余 Template Event/Curve/Mapping/Envelope 编辑命令矩阵仍未完成。SoundFont 的 BASSMIDI 格式/可加载性验证和文件监控仍未实现；内嵌资源复制与损坏修复门已实现。
 - Conductor 现有事件与 Playback/Audio Render Settings 的非 ID 分配可逆命令已接入；Compiler 现已在 canonical 语义验证阶段拒绝无法按固定取整规则表示为 24-bit SMF Set Tempo 的 BPM。Event Instrument、Mapping、Lifecycle、Logical Track/Segment 的若干嵌套属性命令仍只有核心垂直切片，不是 SRS 07–11 的完整实现。
 - `.midora` 已实现基础 Project package 垂直切片：12 个 Draft 2020-12 JSON schema、source-generated 严格 codec、固定入口确定性 ZIP、manifest/hash/container 校验、普通结构文件默认恢复、必需文件严格失败、Project round-trip，以及 Save/Save Copy 的同目录备份—临时包—严格重开—原子发布与取消清理事务。当前只支持空 Event Instrument/Logical Track 对象图及无/External SF2；完整对象 protobuf、Damaged Placeholder、迁移、Embedded SF2 复制、磁盘/清理故障注入与 WPF 工作流仍未实现。
 - MIDI Export 已有整曲 SMF Type 1 canonical 编码、自校验和 Channel 10 GS→XG melodic 初始化垂直切片；按 Track/Port 模式、Compact Routing、Readme、文件事务、取消/进度和完整导出报告尚未实现。

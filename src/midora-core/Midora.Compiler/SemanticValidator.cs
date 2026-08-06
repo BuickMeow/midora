@@ -204,6 +204,13 @@ public static class SemanticValidator
         {
             AddError("MIDORA1211", "Event Instrument 必须包含 1–256 个 SubVoice。", source, diagnostics);
         }
+        if (!Enum.IsDefined(instrument.OverlapPolicy)
+            || !Enum.IsDefined(instrument.OverlapScope)
+            || !Enum.IsDefined(instrument.ShortLifecycle)
+            || !Enum.IsDefined(instrument.LongLifecycle))
+        {
+            AddError("MIDORA1216", "Event Instrument Overlap 或生命周期枚举值非法。", source, diagnostics);
+        }
         bool hasLoop = instrument.LoopStartTick.HasValue || instrument.LoopEndTick.HasValue;
         HashSet<MidoraId> envelopeIds = instrument.Envelopes.Select(value => value.Id).ToHashSet();
         Dictionary<MidoraId, CSharpMappingFunction> functions = [];

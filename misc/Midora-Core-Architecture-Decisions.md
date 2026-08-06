@@ -330,3 +330,5 @@ Requirement trace：输入为 Project、来源状态、可逆 command、保存�
 Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复原记录对象；tick 0 Tempo/Time Signature、同 tick 唯一性及 SMF Tempo 可表示性在 Prepare 阶段阻止非法输入。Playback 与 Audio Render Settings 以整组快照原子替换；它们进入 Project History/Modified，但使用空 compilation change-set，canonical 保持不变，下一次播放/渲染任务从正式 Project Settings 冻结实际参数。
 
 第三批命令覆盖不分配 ID 的 Logical Note、Logical Parameter Lane/Point 与 Event Instrument Description/Color/Root Note。Note 编辑不把裁剪区当作数据合法边界；Point 正常编辑必须能从当前绑定定义验证值域和类型，断裂 Lane 只保留、删除或走显式重绑定修复。重绑定的 Clamp/Discard 由调用方每次明确选择，目标 Enum 还强制调用方确认整数兼容不代表语义兼容；转换后的点沿用原稳定 ID，Undo 恢复原对象图。Q-NUI-007 待确认期间，整数中点暂按现有 Mapping `Round` 一致的 AwayFromZero，目标 Enum 的保留点转为 Step；该局部选择不得扩散成持久化或编译器的新隐式默认。
+
+第四批命令覆盖 Event Instrument Template Length、Isolation、Overlap、Lifecycle、Loop 与 SubVoice 基础结构。Template Length 的应用层下界由 Note end、瞬时事件/Curve Point 的半开边界和 Loop End 共同决定；Initial State 与 Envelope 时长不参与。关闭 Isolation 保留现存不兼容数据并允许 canonical 产生正式诊断，不能借编辑命令删除数据；受限制的 Loop 仍允许显式禁用。删除 SubVoice 拒绝最后一条、对非空内容要求确认，并把指向该 Voice 的 Logical Parameter Mapping 作为同一可逆事务删除/恢复。Compiler 另外对四类公开策略枚举增加定义域诊断，防止损坏或未来未知数值落入 switch 默认路径。

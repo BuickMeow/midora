@@ -16,7 +16,7 @@
 
 - 被选择 Track 中的 Stable ID 空值、重复值或超出 `nextStableId` 仍是 `MIDORA1003` Error。
 - 被选择 Track ID 不存在仍是 `MIDORA1302` Error；重复且因此选择歧义的 Track ID 仍是 `MIDORA1301` Error。
-- 未选择 Track 及未被任何选择 Track 引用的 Event Instrument，其内部 Stable ID 损坏不进入本次 scoped compilation 诊断；对同一 Project 执行 Whole Project compile 时必须完整报告。
+- 未选择 Track 及未被任何选择 Track 引用的 Event Instrument，其内部 Stable ID 损坏或彼此重复的 Instrument ID 不进入本次 scoped compilation 诊断；对同一 Project 执行 Whole Project compile 时必须完整报告。
 - Conductor、全局 Initial/Reset、Library Folder 等非 Track 选择对象仍属于正式全局上下文，不被 Track 选择静默排除。
 
 ## 3. 诊断、持久化与运行时归属
@@ -36,5 +36,6 @@
 - 同一 Project 的 Whole Project compile 必须捕获未选 Track 内重复 Stable ID，scoped compile 必须成功且不含该来源诊断。
 - 同一 Project 的 Whole Project compile 必须捕获未参与 Event Instrument 内重复 Stable ID，scoped compile 必须成功且不含该 Instrument 来源诊断。
 - Whole Project compile 必须保留未参与 Event Instrument 的断裂 Folder Warning；启用 Warning-as-error 的 scoped compile 必须忽略该未参与来源并成功。
+- 两个未参与 Event Instrument 使用相同 ID 时，Whole Project compile 必须报告 `MIDORA1201`；scoped compile 必须既不误诊，也不得因构建全 Project dictionary 而抛异常。
 - Compiler 全集、全仓正式非 UI 发布门及 Full/Incremental 既有 oracle 必须保持通过。
-- 2026-08-06 正式门结果：Compiler 188/188、全仓 832/832、零 Skip；六个 Release solution 0 warning / 0 error；固定 BASS baseline 与 win-x64 Native AOT Worker 发布均通过。证据目录为 `artifacts/non-ui-release-gate-57a49347b6624061b50c9a278a2359dd/`。
+- 2026-08-06 正式门结果：Compiler 189/189、全仓 833/833、零 Skip；六个 Release solution 0 warning / 0 error；固定 BASS baseline 与 win-x64 Native AOT Worker 发布均通过。证据目录为 `artifacts/non-ui-release-gate-d998705683cc4fcf953c6a9e0269919f/`。

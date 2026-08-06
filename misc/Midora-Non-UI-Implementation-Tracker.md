@@ -115,7 +115,7 @@
 | 2026-08-06 | Close / Exit 工程时长生命周期 | Project Switch Guard 与 Save 期间继续累计；实际切换入口才 Begin Closing；成功保持暂停；实际切换失败恢复且不补计暂停窗口；Application 205 tests；全仓基线 812 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；精确暂停边界等待 Q-NUI-017 确认 |
 | 2026-08-06 | Recent Projects 本机 MRU | 分离 JSON v1；成功激活后显式记录；10 项 Windows OrdinalIgnoreCase MRU；严格未知/重复字段；1 MiB 门；离线路径保留/可用投影；原子失败保持；Application 217 tests；全仓基线 824 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；列表策略等待 Q-NUI-018 确认 |
 | 2026-08-06 | Native interop win-x64 ABI 快照 | BASS/BASSMIDI/BASSWASAPI 正式结构 size/offset；pointer/function pointer/handle 宽度；精确 LibraryImport DLL/entry point；BOOL/handle return；统一 Windows x64 默认调用 ABI；BASS 119 tests；全仓基线 829 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；固定 DLL baseline 与 Native AOT Worker 通过 |
-| 2026-08-06 | 显式 Track 编译诊断作用域 | 未选 Track/未参与 Instrument 的 Stable ID 损坏与断裂 Folder Warning 不污染 scoped compile；Whole Project 仍完整捕获；不存在/歧义选择与全局上下文门保持；Compiler 188 tests；全仓基线 832 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip |
+| 2026-08-06 | 显式 Track 编译诊断作用域 | 未选 Track/未参与 Instrument 的 Stable ID 损坏、重复 Instrument ID 与断裂 Folder Warning 不污染 scoped compile；编译查找表同步收窄；Whole Project 仍完整捕获；Compiler 189 tests；全仓基线 833 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip |
 
 ## 7. 未解决风险
 

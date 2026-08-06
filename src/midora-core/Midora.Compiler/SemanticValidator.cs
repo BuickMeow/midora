@@ -37,11 +37,12 @@ public static class SemanticValidator
         foreach (EventInstrument instrument in project.EventInstruments)
         {
             SourceReference source = projectSource with { EventInstrumentId = instrument.Id };
-            if (!instruments.TryAdd(instrument.Id, instrument))
+            bool participates = participatingInstrumentIds.Contains(instrument.Id);
+            if (!instruments.TryAdd(instrument.Id, instrument)
+                && (request.IncludedTrackIds is null || participates))
             {
                 Error("MIDORA1201", "Event Instrument ID 重复。", source);
             }
-            bool participates = participatingInstrumentIds.Contains(instrument.Id);
             if ((request.IncludedTrackIds is null || participates)
                 && (string.IsNullOrWhiteSpace(instrument.Name)
                     || instrument.Name != instrument.Name.Trim()

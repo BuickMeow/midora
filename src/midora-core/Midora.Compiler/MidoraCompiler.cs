@@ -86,7 +86,12 @@ public sealed class MidoraCompiler : IDisposable
                 CompilationFailureStage.SemanticValidation);
         }
 
-        Dictionary<MidoraId, EventInstrument> instruments = project.EventInstruments.ToDictionary(value => value.Id);
+        HashSet<MidoraId> participatingInstrumentIds =
+            SemanticValidator.GetParticipatingInstrumentIds(project, request);
+        Dictionary<MidoraId, EventInstrument> instruments = project.EventInstruments
+            .Where(instrument => request.IncludedTrackIds is null
+                || participatingInstrumentIds.Contains(instrument.Id))
+            .ToDictionary(value => value.Id);
         List<RawInstance> instances = [];
         int recompiledTracks = 0;
         int reusedTracks = 0;

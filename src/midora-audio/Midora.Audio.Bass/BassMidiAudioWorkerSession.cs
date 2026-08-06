@@ -30,16 +30,50 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         string workerPath,
         string bassNativeDirectory,
         TimeSpan preparingTimeout)
+        : this(
+            plan,
+            soundFontPath,
+            rendererSettings,
+            masterSettings,
+            renderAheadMilliseconds,
+            deviceBufferRequestMilliseconds,
+            deviceId,
+            workerPath,
+            bassNativeDirectory,
+            preparingTimeout,
+            allowManagedTestWorker: false)
+    {
+    }
+
+    internal BassMidiAudioWorkerSession(
+        MidiRenderPlan plan,
+        string soundFontPath,
+        BassMidiRendererSettings rendererSettings,
+        AudioMasterSettings masterSettings,
+        int renderAheadMilliseconds,
+        int deviceBufferRequestMilliseconds,
+        string? deviceId,
+        string workerPath,
+        string bassNativeDirectory,
+        TimeSpan preparingTimeout,
+        bool allowManagedTestWorker)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
         ArgumentNullException.ThrowIfNull(rendererSettings);
         ArgumentNullException.ThrowIfNull(masterSettings);
-        ValidateCommon(workerPath, bassNativeDirectory, deviceBufferRequestMilliseconds, preparingTimeout);
+        ValidateCommon(
+            workerPath,
+            bassNativeDirectory,
+            deviceBufferRequestMilliseconds,
+            preparingTimeout,
+            allowManagedTestWorker);
         if (renderAheadMilliseconds is < 20 or > 2_000)
         {
             throw new ArgumentOutOfRangeException(nameof(renderAheadMilliseconds));
         }
+        workerPath = Path.GetFullPath(workerPath);
+        bassNativeDirectory = Path.GetFullPath(bassNativeDirectory);
 
         _ownedTemporaryDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -110,7 +144,14 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         int deviceBufferRequestMilliseconds,
         TimeSpan timeout)
     {
-        ValidateCommon(workerPath, bassNativeDirectory, deviceBufferRequestMilliseconds, timeout);
+        ValidateCommon(
+            workerPath,
+            bassNativeDirectory,
+            deviceBufferRequestMilliseconds,
+            timeout,
+            allowManagedTestWorker: false);
+        workerPath = Path.GetFullPath(workerPath);
+        bassNativeDirectory = Path.GetFullPath(bassNativeDirectory);
         using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
             $"Midora.Audio.Probe.{Guid.NewGuid():N}");
         using Process process = StartProbe(
@@ -168,21 +209,31 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
 
     public void Stop(bool flush, TimeSpan timeout)
     {
-        if (_disposed || _process.HasExited)
+        if (_disposed)
         {
             return;
         }
-        if (!_control.TryEnqueueStop(flush))
+        if (!_process.HasExited)
         {
-            throw new InvalidOperationException("The bounded audio worker command ring is full.");
-        }
-        if (!_process.WaitForExit(checked((int)timeout.TotalMilliseconds)))
-        {
-            _process.Kill(entireProcessTree: true);
-            _process.WaitForExit();
-            throw new TimeoutException("The audio worker did not stop within the requested timeout.");
+            if (!_control.TryEnqueueStop(flush))
+            {
+                throw new InvalidOperationException("The bounded audio worker command ring is full.");
+            }
+            if (!_process.WaitForExit(checked((int)timeout.TotalMilliseconds)))
+            {
+                _process.Kill(entireProcessTree: true);
+                _process.WaitForExit();
+                _monitorThread.Join();
+                throw new TimeoutException("The audio worker did not stop within the requested timeout.");
+            }
         }
         _monitorThread.Join();
+        AudioWorkerStatus status = Status;
+        if (!IsSuccessfulTerminalExit(status.State, ExitCode))
+        {
+            throw new MidoraAudioException(
+                $"The audio worker did not stop cleanly; state={status.State}; fault={status.FaultCode}; exitCode={ExitCode}; stderr={StandardError}");
+        }
     }
 
     public void Dispose()
@@ -320,13 +371,14 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         string workerPath,
         string nativeDirectory,
         int deviceBufferRequestMilliseconds,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        bool allowManagedTestWorker)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(workerPath);
+        ValidateWorkerLaunchPath(workerPath, allowManagedTestWorker);
         ArgumentException.ThrowIfNullOrWhiteSpace(nativeDirectory);
-        if (!File.Exists(workerPath))
+        if (!Directory.Exists(nativeDirectory))
         {
-            throw new FileNotFoundException("The Midora audio worker was not found.", workerPath);
+            throw new DirectoryNotFoundException(nativeDirectory);
         }
         if (deviceBufferRequestMilliseconds is < 5 or > 200)
         {
@@ -337,6 +389,28 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             throw new ArgumentOutOfRangeException(nameof(timeout));
         }
     }
+
+    internal static void ValidateWorkerLaunchPath(string workerPath, bool allowManagedTestWorker)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workerPath);
+        if (!File.Exists(workerPath))
+        {
+            throw new FileNotFoundException("The Midora Native AOT audio worker was not found.", workerPath);
+        }
+
+        string extension = Path.GetExtension(workerPath);
+        if (!string.Equals(extension, ".exe", StringComparison.OrdinalIgnoreCase)
+            && !(allowManagedTestWorker
+                && string.Equals(extension, ".dll", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidDataException(
+                "Formal realtime playback requires the win-x64 Native AOT .exe worker; managed .dll launch is test-only.");
+        }
+    }
+
+    internal static bool IsSuccessfulTerminalExit(AudioWorkerState state, int? exitCode) =>
+        exitCode == 0
+        && state is AudioWorkerState.Stopped or AudioWorkerState.Completed;
 
     private static void CleanupOwnedTemporaryDirectory(string path)
     {

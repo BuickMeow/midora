@@ -109,6 +109,8 @@ Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domai
 
 子进程不得自行读取 Project 或重建音乐语义。序列号、格式、frame 位置或校验不一致均为任务 Error；子进程退出或无响应不得回退为进程内或混合拓扑。
 
+正式实时客户端与正式文件客户端都只接受现存的 `.exe` Worker 路径并按绝对路径启动；托管 `.dll` 仅能通过程序集内部的测试入口显式放行，任意其他扩展名始终拒绝。实时 Worker 退出必须同时满足 exit code 0 与共享状态 Stopped/Completed；非零退出、Faulted，或 exit code 0 但仍停留在 Preparing/Playing/Buffering 等非终态，均为任务错误。显式 Stop 也必须在等待进程后校验这两个信号，不能因进程已经退出而跳过失败报告。
+
 音频 Worker 固定以 `win-x64` Native AOT、自包含发布，正式运行不依赖 JIT；不生成或接受 x86、Arm64、AnyCPU Worker 作为初版正式产物。主应用、Worker 与 BASS/BASSMIDI/BASSWASAPI 必须全部为 x64。Native AOT 只消除 JIT 路径，不保证线程调度、原生库或设备行为确定，因此零分配、deadline、underrun、IPC 延迟和故障恢复门仍须独立验收。
 
 状态：已接受并作为初版唯一正式拓扑。旧的进程内链和“子进程合成、主进程 WASAPI”链仅保留为开发期对照测试，不得成为产品回退路径。

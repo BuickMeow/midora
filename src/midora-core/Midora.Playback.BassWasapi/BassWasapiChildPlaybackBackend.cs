@@ -73,8 +73,7 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
     public bool IsCompleted => CurrentStatus.State == AudioWorkerState.Completed;
 
     public bool IsFaulted => ChildFaulted
-        || CurrentExitCode is not null and not 0
-            && CurrentStatus.State is not AudioWorkerState.Completed and not AudioWorkerState.Stopped;
+        || IsUnexpectedWorkerTermination(CurrentStatus.State, CurrentExitCode);
 
     public string? FaultDescription => IsFaulted
         ? $"workerState={CurrentStatus.State}; fault={CurrentStatus.FaultCode}; childExitCode={CurrentExitCode}; stderr={_session?.StandardError ?? _lastStandardError}"
@@ -204,4 +203,9 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
         _lastStandardError ??= session.StandardError;
         _lastExitCode ??= session.ExitCode;
     }
+
+    internal static bool IsUnexpectedWorkerTermination(AudioWorkerState state, int? exitCode) =>
+        exitCode.HasValue
+        && (exitCode.Value != 0
+            || state is not AudioWorkerState.Completed and not AudioWorkerState.Stopped);
 }

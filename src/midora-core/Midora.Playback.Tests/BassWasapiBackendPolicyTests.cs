@@ -51,6 +51,23 @@ public sealed class BassWasapiBackendPolicyTests
         using BassWasapiChildPlaybackBackend child = new(options);
     }
 
+    [Theory]
+    [InlineData(AudioWorkerState.Playing, null, false)]
+    [InlineData(AudioWorkerState.Playing, 0, true)]
+    [InlineData(AudioWorkerState.Completed, 0, false)]
+    [InlineData(AudioWorkerState.Stopped, 0, false)]
+    [InlineData(AudioWorkerState.Completed, 1, true)]
+    [InlineData(AudioWorkerState.Stopped, 1, true)]
+    public void ChildExitIsFaultUnlessCodeAndSharedStateAreBothTerminal(
+        AudioWorkerState state,
+        int? exitCode,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            BassWasapiChildPlaybackBackend.IsUnexpectedWorkerTermination(state, exitCode));
+    }
+
     private static BassMidiRendererSettings CreateRendererSettings(int workFrameCount) => new(
         BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
         workFrameCount);

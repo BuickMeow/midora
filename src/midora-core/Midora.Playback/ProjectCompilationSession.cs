@@ -10,7 +10,7 @@ public sealed class ProjectCompilationSession : IDisposable
     private readonly MidoraCompiler _compiler = new();
     private readonly ProjectEditingTimeSession _editingTime;
     private readonly Dictionary<(long Fingerprint, int SampleRate), MidiRenderPlan> _samplePlans = [];
-    private bool _editsLocked;
+    private int _editLockCount;
     private bool _disposed;
 
     public ProjectCompilationSession(
@@ -45,7 +45,7 @@ public sealed class ProjectCompilationSession : IDisposable
     public CanonicalCompiledResult LastAttempt { get; private set; }
     public CanonicalCompiledResult? LastSuccessfulResult { get; private set; }
     public CompilerRunTelemetry LastCompilationTelemetry => _compiler.LastTelemetry;
-    public bool EditsLocked => Volatile.Read(ref _editsLocked);
+    public bool EditsLocked => Volatile.Read(ref _editLockCount) != 0;
     public event EventHandler? CompilationChanged;
 
     public CanonicalCompiledResult ApplyEdit(Action<MidoraProject> edit, ProjectChangeSet changes)
@@ -55,9 +55,10 @@ public sealed class ProjectCompilationSession : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_editsLocked)
+            if (_editLockCount != 0)
             {
-                throw new InvalidOperationException("Project edits are forbidden while audio is Preparing, Playing or Buffering.");
+                throw new InvalidOperationException(
+                    "Project edits are forbidden while a Project edit lock is active.");
             }
             edit(Project);
             LastAttempt = _compiler.CompileIncremental(Project, changes);
@@ -77,9 +78,10 @@ public sealed class ProjectCompilationSession : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_editsLocked)
+            if (_editLockCount != 0)
             {
-                throw new InvalidOperationException("Compilation after editing is forbidden while audio is active.");
+                throw new InvalidOperationException(
+                    "Compilation after editing is forbidden while a Project edit lock is active.");
             }
             LastAttempt = _compiler.CompileIncremental(Project, changes);
             _samplePlans.Clear();
@@ -140,9 +142,10 @@ public sealed class ProjectCompilationSession : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_editsLocked)
+            if (_editLockCount != 0)
             {
-                throw new InvalidOperationException("The effective SoundFont cannot change while audio is active.");
+                throw new InvalidOperationException(
+                    "The effective SoundFont cannot change while a Project edit lock is active.");
             }
             EffectiveSoundFontPath = value is null ? null : Path.GetFullPath(value);
         }
@@ -193,6 +196,16 @@ public sealed class ProjectCompilationSession : IDisposable
         }
     }
 
+    public IDisposable AcquireProjectEditLock()
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _editLockCount = checked(_editLockCount + 1);
+            return new ProjectEditLockLease(this);
+        }
+    }
+
     public void Dispose()
     {
         lock (_sync)
@@ -209,14 +222,32 @@ public sealed class ProjectCompilationSession : IDisposable
             finally
             {
                 _compiler.Dispose();
+                _editLockCount = 0;
                 _disposed = true;
             }
         }
     }
 
-    internal void SetEditsLocked(bool value)
+    private void ReleaseProjectEditLock()
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        Volatile.Write(ref _editsLocked, value);
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            if (_editLockCount <= 0)
+            {
+                throw new InvalidOperationException("The Project edit lock lease has already been released.");
+            }
+            _editLockCount--;
+        }
+    }
+
+    private sealed class ProjectEditLockLease(ProjectCompilationSession owner) : IDisposable
+    {
+        private ProjectCompilationSession? _owner = owner;
+
+        public void Dispose() => Interlocked.Exchange(ref _owner, null)?.ReleaseProjectEditLock();
     }
 }

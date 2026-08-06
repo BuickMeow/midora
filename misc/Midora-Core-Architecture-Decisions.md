@@ -302,3 +302,15 @@ Q-NUI-003 只暂停 Project `ExportProjectSettings` 正式字段、schema v2 和
 每个输出先在目标目录写唯一临时 WAV，完整渲染后严格校验 RIFF/WAVE、float32 stereo、采样率、frame 数和文件长度，再以移动或带备份替换原子发布。冻结时不存在而发布前新出现的路径不得覆盖。Whole Mix 任一失败使任务失败；Per Track 的编译、渲染、校验和发布彼此独立，失败后继续，已成功文件保留。取消清理当前临时文件、不开始后续 Track并保留已发布文件；清理失败必须报告残留路径，不能把残留物视为有效输出。
 
 Requirement trace：输入是 Project 源数据、专用 CompileContext、有效 SF2 运行时身份、Project 音量/渲染设置和冻结路径授权；正式输出是 canonical 唯一派生的普通 RIFF/WAVE 及逐输出任务报告。边界是 `[startTick,endTick)`、同一分轨最终 sample 长度、Mute/Solo 不参与、公共输出命名和普通 RIFF 上限全任务预检。任务级失败包括无有效目标、零范围、无有效 SF2、公共 Worker 准备失败、路径规划失败或任一文件超过 RIFF 上限。绝对路径、canonical、sample-domain plan、进度、诊断、临时/备份文件和结果只属于运行时，不持久化、不进入 Undo/Redo。明确非目标是 UI、并发多渲染任务、按 Port 音频、RF64、编码格式/位深/声道选择、tail、断点续渲和任务历史；应用级“同一时间单个音频任务及开始渲染前自动 Stop”由 NUI-10 任务协调器统一实现。
+
+## 20. ADR-CORE-018（已接受，Q-NUI-004 待确认）：单一应用任务与本机偏好边界
+
+决定：主应用使用唯一 `ApplicationTaskCoordinator` 仲裁播放、预览、显式编译、Project 生命周期、保存、MIDI Export 和 Audio Render。任务只允许直接 admission 或拒绝，不建立命令队列；只有 SRS 明确列出的命令可以自动 Stop。任务持有与操作对应的 UI 锁级别，并通过可计数 lease 持有 `ProjectCompilationSession` 编辑锁，避免嵌套任务或播放清理错误地解除其他所有者的锁。
+
+Project 切换顺序固定为播放清理、Function Draft 处理、未保存处理、实际切换。Draft Apply 在取得编辑锁前执行；后续未保存处理和实际切换在锁内执行。Save/Save Copy 的保存事务不接受取消。播放清理失败时，Save 类命令继续并保留错误；其他会改变 Project/产物的命令返回与原命令绑定的一次性 continuation，只有调用方明确继续后才执行。
+
+Application Preferences 是与 `.midora` 独立的当前 Windows 用户本机状态。非 UI 切片保存正式音频偏好和五类 picker 最近目录；音频偏好只能在 Stopped 且应用空闲时提交，实际变化清除 sample-domain cache 并通知应用 composition 重建实时后端。读写失败回到 SRS 安全默认值并生成非 Project notice，不设置 Modified，不进入 Undo/Redo。
+
+Requirement trace：输入为当前应用/播放状态、一个任务请求、Project 切换决策回调和已验证偏好；正式输出为结构化任务结果、阶段/锁投影及本机偏好快照。边界是单活动任务、无队列、明确 auto-Stop 白名单、一次性风险继续、Stopped-only 音频设置和原子偏好发布。异常、取消、播放 cleanup、偏好 I/O/格式/版本失败分别保留类别；所有路径释放自身 lease。任务状态、绝对输出路径、设备运行状态和偏好均不进入 Project/canonical；冻结的导出/渲染请求仍由既有 canonical 消费链执行。明确非目标是 WPF 表面、通知展示、任务历史持久化、多 Project/多任务并发、Preference sync/profile/import/export 和纯 UI 布局偏好。
+
+Q-NUI-004 只涉及 SRS 未固定的本机表示：当前实现使用 `%LOCALAPPDATA%\Midora\preferences-v1.json`、source-generated UTF-8 JSON v1、1 MiB 读取上限和同目录原子替换。该选择不影响 `.midora`、可听语义或跨机器文件兼容；产品所有者若选择其他本机存储，可替换 store 而不改变协调器或偏好领域契约。

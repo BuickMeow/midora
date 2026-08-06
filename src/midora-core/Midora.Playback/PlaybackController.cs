@@ -57,6 +57,7 @@ public sealed class PlaybackController : IDisposable
     private long _cursorTick;
     private long? _requestedEndTick;
     private TickRange? _loopRange;
+    private IDisposable? _editLockLease;
     private bool _disposed;
 
     public PlaybackController(ProjectCompilationSession session, IRealtimePlaybackBackend backend)
@@ -277,7 +278,7 @@ public sealed class PlaybackController : IDisposable
             }
             catch
             {
-                _session.SetEditsLocked(false);
+                ReleaseEditLock();
             }
         }
         _backend.Dispose();
@@ -294,7 +295,10 @@ public sealed class PlaybackController : IDisposable
         }
         _cursorTick = cursorTick;
         SetState(PlaybackState.Preparing);
-        if (acquireEditLock) _session.SetEditsLocked(true);
+        if (acquireEditLock)
+        {
+            _editLockLease = _session.AcquireProjectEditLock();
+        }
         try
         {
             int actualSampleRate = _backend.Prepare();
@@ -314,7 +318,7 @@ public sealed class PlaybackController : IDisposable
                 _activeResult = null;
                 _activePlan = null;
                 _activeTempoMap = null;
-                _session.SetEditsLocked(false);
+                ReleaseEditLock();
                 ActiveTaskKind = PlaybackTaskKind.None;
                 LastError = null;
                 SetState(PlaybackState.Stopped);
@@ -336,7 +340,7 @@ public sealed class PlaybackController : IDisposable
             _activeResult = null;
             _activePlan = null;
             _activeTempoMap = null;
-            _session.SetEditsLocked(false);
+            ReleaseEditLock();
             ActiveTaskKind = PlaybackTaskKind.None;
             SetState(PlaybackState.Error);
             throw;
@@ -360,7 +364,7 @@ public sealed class PlaybackController : IDisposable
 
         ActiveTaskKind = taskKind;
         SetState(PlaybackState.Preparing);
-        _session.SetEditsLocked(true);
+        _editLockLease = _session.AcquireProjectEditLock();
         try
         {
             int actualSampleRate = _backend.Prepare();
@@ -372,7 +376,7 @@ public sealed class PlaybackController : IDisposable
             }
             if (compiled.EndTick <= compiled.StartTick)
             {
-                _session.SetEditsLocked(false);
+                ReleaseEditLock();
                 ActiveTaskKind = PlaybackTaskKind.None;
                 SetState(PlaybackState.Stopped);
                 return;
@@ -393,7 +397,7 @@ public sealed class PlaybackController : IDisposable
             _activeResult = null;
             _activePlan = null;
             _activeTempoMap = null;
-            _session.SetEditsLocked(false);
+            ReleaseEditLock();
             ActiveTaskKind = PlaybackTaskKind.None;
             SetState(PlaybackState.Error);
             throw;
@@ -413,7 +417,7 @@ public sealed class PlaybackController : IDisposable
         }
         catch
         {
-            _session.SetEditsLocked(false);
+            ReleaseEditLock();
             throw;
         }
     }
@@ -449,7 +453,7 @@ public sealed class PlaybackController : IDisposable
         }
         finally
         {
-            if (releaseEditLock) _session.SetEditsLocked(false);
+            if (releaseEditLock) ReleaseEditLock();
         }
     }
 
@@ -614,7 +618,7 @@ public sealed class PlaybackController : IDisposable
             _cursorTick = failedTick;
         }
         ActiveTaskKind = PlaybackTaskKind.None;
-        _session.SetEditsLocked(false);
+        ReleaseEditLock();
         LastError = cleanupError is null
             ? new InvalidOperationException(description)
             : new AggregateException(description, cleanupError);
@@ -626,5 +630,11 @@ public sealed class PlaybackController : IDisposable
         if (State == state) return;
         State = state;
         StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ReleaseEditLock()
+    {
+        _editLockLease?.Dispose();
+        _editLockLease = null;
     }
 }

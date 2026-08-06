@@ -8,20 +8,35 @@ public sealed class ProjectCompilationSession : IDisposable
 {
     private readonly object _sync = new();
     private readonly MidoraCompiler _compiler = new();
+    private readonly ProjectEditingTimeSession _editingTime;
     private readonly Dictionary<(long Fingerprint, int SampleRate), MidiRenderPlan> _samplePlans = [];
     private bool _editsLocked;
     private bool _disposed;
 
-    public ProjectCompilationSession(MidoraProject project, string? effectiveSoundFontPath = null)
+    public ProjectCompilationSession(
+        MidoraProject project,
+        string? effectiveSoundFontPath = null,
+        TimeProvider? editingTimeProvider = null)
     {
         Project = project ?? throw new ArgumentNullException(nameof(project));
-        EffectiveSoundFontPath = effectiveSoundFontPath is null
+        string? normalizedSoundFontPath = effectiveSoundFontPath is null
             ? null
             : Path.GetFullPath(effectiveSoundFontPath);
-        LastAttempt = _compiler.CompileFull(project);
-        if (LastAttempt.IsConsumable)
+        _editingTime = new ProjectEditingTimeSession(project, editingTimeProvider);
+        EffectiveSoundFontPath = normalizedSoundFontPath;
+        try
         {
-            LastSuccessfulResult = LastAttempt;
+            LastAttempt = _compiler.CompileFull(project);
+            if (LastAttempt.IsConsumable)
+            {
+                LastSuccessfulResult = LastAttempt;
+            }
+        }
+        catch
+        {
+            _editingTime.Dispose();
+            _compiler.Dispose();
+            throw;
         }
     }
 
@@ -133,6 +148,51 @@ public sealed class ProjectCompilationSession : IDisposable
         }
     }
 
+    public long SnapshotTotalEditingTimeMilliseconds()
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _editingTime.SnapshotTotalEditingTimeMilliseconds();
+        }
+    }
+
+    public void NotifySystemSuspending()
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _editingTime.NotifySystemSuspending();
+        }
+    }
+
+    public void NotifySystemResumed()
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _editingTime.NotifySystemResumed();
+        }
+    }
+
+    public void BeginProjectClosing()
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _editingTime.BeginClosing();
+        }
+    }
+
+    public void CancelProjectClosing()
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _editingTime.CancelClosing();
+        }
+    }
+
     public void Dispose()
     {
         lock (_sync)
@@ -142,8 +202,15 @@ public sealed class ProjectCompilationSession : IDisposable
                 return;
             }
             _samplePlans.Clear();
-            _compiler.Dispose();
-            _disposed = true;
+            try
+            {
+                _editingTime.Dispose();
+            }
+            finally
+            {
+                _compiler.Dispose();
+                _disposed = true;
+            }
         }
     }
 

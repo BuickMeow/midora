@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Midora metadata.json v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectName",
+    "projectVersion",
+    "authorOrTeam",
+    "originalWork",
+    "copyright",
+    "notes",
+    "createdAtUtc",
+    "modifiedAtUtc",
+    "totalEditingTimeMilliseconds"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "common-v1.schema.json#/$defs/schemaVersion"
+    },
+    "projectName": {
+      "$ref": "common-v1.schema.json#/$defs/shortText"
+    },
+    "projectVersion": {
+      "$ref": "common-v1.schema.json#/$defs/shortText"
+    },
+    "authorOrTeam": {
+      "$ref": "common-v1.schema.json#/$defs/metadataText"
+    },
+    "originalWork": {
+      "$ref": "common-v1.schema.json#/$defs/metadataText"
+    },
+    "copyright": {
+      "$ref": "common-v1.schema.json#/$defs/metadataText"
+    },
+    "notes": {
+      "$ref": "common-v1.schema.json#/$defs/description"
+    },
+    "createdAtUtc": {
+      "$ref": "common-v1.schema.json#/$defs/utcTimestamp"
+    },
+    "modifiedAtUtc": {
+      "$ref": "common-v1.schema.json#/$defs/utcTimestamp"
+    },
+    "totalEditingTimeMilliseconds": {
+      "$ref": "common-v1.schema.json#/$defs/editingDurationMilliseconds"
+    }
+  }
+}

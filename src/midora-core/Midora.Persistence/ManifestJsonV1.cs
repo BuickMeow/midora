@@ -50,5 +50,6 @@ internal sealed class ManifestFileEntryJsonV1
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(ManifestJsonV1))]
+[JsonSerializable(typeof(MetadataJsonV1))]
 [JsonSerializable(typeof(SoundFontSettingsJsonV1))]
 internal sealed partial class MidoraJsonSerializerContextV1 : JsonSerializerContext;

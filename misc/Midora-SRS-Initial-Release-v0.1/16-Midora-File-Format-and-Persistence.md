@@ -411,6 +411,23 @@ lastSavedWithSoftwareVersion
 更新 manifest 中 lastSavedWithSoftwareVersion。
 不更新 createdWithSoftwareVersion。
 ```
+### 16.6.4 metadata.json v1 字段
+初版 `metadata.json` schema v1 固定保存：
+```text
+schemaVersion = 1
+projectName
+projectVersion
+authorOrTeam
+originalWork
+copyright
+notes
+createdAtUtc
+modifiedAtUtc
+totalEditingTimeMilliseconds
+```
+上述字段全部必须存在；允许为空的用户文本仍写为空字符串，不使用 `null` 或缺字段替代。时间和累计值服从第 16.13.9 节；`modifiedAtUtc` 不得早于 `createdAtUtc`。未知字段、重复字段、非法文本、非 canonical 时间或负累计值使现有 `metadata.json` 无效，并按第 16.18.3 节导致打开失败。
+
+保存事务获取 metadata 快照前，必须先把当前活动打开会话截至快照瞬间的单调 elapsed time 合并进 `totalEditingTimeMilliseconds`。读取累计值、保存、Save Copy、播放、Buffering、导出和渲染都不建立独立计时器，也不得重复累计同一时间区间。
 ---
 ## 16.7 settings 文件
 ### 16.7.1 拆分

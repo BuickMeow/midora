@@ -237,7 +237,7 @@ flowchart TD
 
 ### 阶段 5：`.midora` 持久化
 
-当前进度：18A/18.1A 已冻结 v1 common/manifest 的 JSON/protobuf 工具链、基础类型、严格字段策略、descriptor/golden 基线和 manifest codec；19A 已冻结 SoundFont External/Embedded 领域引用和 soundfont-settings v1，并实现相对路径解析与流式 SHA-256 基础。其余结构性文件 schema、ZIP、迁移、内嵌资源复制及保存事务仍未实现；受决定 20–22 影响的字段不得提前以临时默认值发布。
+当前进度：18A/18.1A 已冻结 v1 common/manifest 的 JSON/protobuf 工具链、基础类型、严格字段策略、descriptor/golden 基线和 manifest codec；19A 已冻结 SoundFont External/Embedded 领域引用和 soundfont-settings v1，并实现相对路径解析与流式 SHA-256 基础；20A 已冻结 Project Metadata、metadata v1 和单调打开会话累计语义。其余结构性文件 schema、ZIP、迁移、内嵌资源复制及保存事务仍未实现；受决定 21–22 影响的字段不得提前以临时默认值发布。
 
 工作：
 
@@ -329,6 +329,7 @@ flowchart TD
 10. C# Mapping 固定 ABI v1、Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10` 和独立只读 Context 契约；每 Project 只缓存当前源码修订并以 collectible ALC 卸载旧项，编译产物不持久化。
 11. `.midora` v1 固定 Draft 2020-12 JSON schema/source-generated DTO、Edition 2024 protobuf、Google.Protobuf 3.35.1/Grpc.Tools 2.83.0、严格重复/未知字段拒绝和 descriptor/golden 兼容门；基础文本、路径、opaque sRGB、UTC 时间及 int64 毫秒表示已固定。
 12. Project SoundFont 固定 External/Embedded 可移植 union；外部引用只允许 Project 根目录/直属 `soundfonts/`，精确 case 优先、唯一 ignore-case 回退、歧义拒绝。SHA-256 只在明确绑定/接受时更新；绝对路径、验证结果和缓存不持久化。
+13. 工程总耗时按完整 Project 打开会话使用单调时钟累计；空闲、最小化、失焦、Buffering、MIDI 导出和音频渲染计入，系统睡眠 / 休眠及关闭流程暂停。自动累计不单独标记 Modified，也不影响 canonical。
 
 ### 9.2 SRS 留给实现设计的选择
 

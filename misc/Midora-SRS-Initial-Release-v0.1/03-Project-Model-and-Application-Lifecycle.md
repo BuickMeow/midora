@@ -158,7 +158,22 @@ Created With / Last Saved With Midora
 - 项目格式版本与用户可见的“项目版本”不是同一概念。
 - 项目格式版本用于软件兼容性与迁移，应由系统管理。
 - 用户可见的项目版本用于作品或工程版本记录。
-- 工程总耗时的累计规则、暂停规则、是否统计空闲时间，由实现设计确定细化。
+### 3.6.4 工程总耗时累计规则
+初版工程总耗时从新建 Project 成功提交到主窗口，或打开 Project 成功建立可信 Project Object Graph 时开始累计；New / Open 对话框、打开前验证和失败候选不累计。累计到 Project 开始关闭为止；关闭被取消时，从取消完成、Project 恢复打开状态后继续累计，不补计关闭流程中的暂停时间。
+
+Project 处于打开状态时，以下时段全部累计：
+```text
+用户无输入的空闲时间
+窗口最小化或应用失去焦点
+模态对话框和任务窗口
+编辑、保存和保存副本
+编译、播放、预览和 Buffering
+MIDI 导出
+音频渲染的 Preparing、Rendering、Cancelling 和 Finalizing
+```
+系统进入睡眠或休眠后暂停累计，恢复后从恢复通知完成时继续；应用未运行期间不累计。当前会话必须使用不受系统墙钟校时影响的单调 elapsed-time 时钟，不能用 `DateTime.Now` 差值承担累计。
+
+自动累计本身不进入 Undo / Redo、不改变 metadata 修改时间，也不使 Project 单独进入 Modified；普通保存或 Save Copy 只写入取保存快照时已经累计的非负整毫秒值。自动累计不影响音乐编译语义、canonical fingerprint 或任何音乐消费者缓存。
 ---
 ## 3.7 项目内对象名称与 ID 规则
 ### 3.7.1 内部稳定 ID

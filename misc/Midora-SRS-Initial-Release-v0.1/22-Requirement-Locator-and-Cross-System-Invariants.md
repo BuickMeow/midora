@@ -40,6 +40,7 @@
 | INV-029 | 初版 C# Mapping ABI v1 固定 `double Transform(double value, in MappingContextV1 context)`、C# 14、`Microsoft.NETCore.App.Ref 10.0.10` 与独立只读契约；每 Project 仅缓存当前源码修订并用 collectible AssemblyLoadContext 卸载旧项，编译产物不得持久化。引用白名单不是 sandbox。 |
 | INV-030 | 初版持久化兼容基线固定为 JSON Schema Draft 2020-12 与 protobuf Edition 2024；结构性 JSON/protobuf 严格拒绝未知字段，JSON 还拒绝重复属性。已发布 `.proto` 字段号、descriptor、golden bytes 与固定 runtime/codegen profile属于兼容承诺。 |
 | INV-031 | 外部 Project SF2 只保存项目根目录或直属 `soundfonts/` 中的相对路径；精确大小写优先，唯一 ignore-case 回退产生 Warning，歧义时不可用。SHA-256 基于完整原始字节且仅由用户明确绑定/接受更新；被动资源变化不修改 Project。 |
+| INV-032 | 工程总耗时按 Project 成功打开后的完整会话单调累计，包含空闲、最小化、失焦、Buffering、MIDI 导出与音频渲染；系统睡眠 / 休眠和关闭流程暂停。自动累计不单独标记 Modified，也不影响 canonical 语义。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|

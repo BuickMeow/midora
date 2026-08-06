@@ -7,6 +7,61 @@ namespace Midora.Playback.Tests;
 public sealed class PlaybackTests
 {
     [Fact]
+    public void ProjectOpenTimeCountsAllActiveSessionTimeAndPausesOnlyForSuspendOrClosing()
+    {
+        ManualTimeProvider clock = new();
+        MidoraProject project = CreateProject();
+        ProjectCompilationSession session = new(project, editingTimeProvider: clock);
+        long fingerprint = session.LastAttempt.Fingerprint;
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.Equal(10_000, session.SnapshotTotalEditingTimeMilliseconds());
+
+        session.NotifySystemSuspending();
+        clock.Advance(TimeSpan.FromHours(1));
+        Assert.Equal(10_000, session.SnapshotTotalEditingTimeMilliseconds());
+
+        session.NotifySystemResumed();
+        clock.Advance(TimeSpan.FromMilliseconds(250));
+        Assert.Equal(10_250, session.SnapshotTotalEditingTimeMilliseconds());
+
+        session.BeginProjectClosing();
+        session.NotifySystemSuspending();
+        session.CancelProjectClosing();
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(10_250, session.SnapshotTotalEditingTimeMilliseconds());
+
+        session.NotifySystemResumed();
+        clock.Advance(TimeSpan.FromMilliseconds(750));
+        Assert.Equal(11_000, session.SnapshotTotalEditingTimeMilliseconds());
+        Assert.Equal(
+            fingerprint,
+            session.Recompile(new ProjectChangeSet()).Fingerprint);
+        session.Dispose();
+
+        Assert.Equal(11_000, project.Metadata.TotalEditingTimeMilliseconds);
+    }
+
+    [Fact]
+    public void ProjectRejectsConcurrentEditingTimeOwnersAndAllowsNextOpenAfterClose()
+    {
+        ManualTimeProvider clock = new();
+        MidoraProject project = CreateProject();
+        ProjectCompilationSession first = new(project, editingTimeProvider: clock);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            new ProjectCompilationSession(project, editingTimeProvider: clock));
+
+        clock.Advance(TimeSpan.FromMilliseconds(1_500));
+        first.Dispose();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        using ProjectCompilationSession reopened = new(project, editingTimeProvider: clock);
+        clock.Advance(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(3_500, reopened.SnapshotTotalEditingTimeMilliseconds());
+    }
+
+    [Fact]
     public void TempoMapUsesCumulativeTempoAndSingleFinalRounding()
     {
         TempoSampleMap map = new(480, [new(0, 120m), new(480, 60m)]);
@@ -507,6 +562,28 @@ public sealed class PlaybackTests
         }
         public void Dispose()
         {
+        }
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private DateTimeOffset _utcNow = new(2026, 8, 6, 0, 0, 0, TimeSpan.Zero);
+        private long _timestamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public override long GetTimestamp() => _timestamp;
+
+        public void Advance(TimeSpan amount)
+        {
+            if (amount < TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(amount));
+            }
+            _utcNow += amount;
+            _timestamp = checked(_timestamp + amount.Ticks);
         }
     }
 }

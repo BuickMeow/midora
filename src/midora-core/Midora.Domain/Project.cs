@@ -107,19 +107,33 @@ public sealed class MidoraProject
     private UInt128 _nextStableId;
 
     public MidoraProject(int ticksPerQuarterNote)
-        : this(ticksPerQuarterNote, (UInt128)1, createInitialConductorState: true)
+        : this(ticksPerQuarterNote, TimeProvider.System.GetUtcNow())
+    {
+    }
+
+    public MidoraProject(int ticksPerQuarterNote, DateTimeOffset createdAtUtc)
+        : this(
+            ticksPerQuarterNote,
+            (UInt128)1,
+            createInitialConductorState: true,
+            createdAtUtc)
     {
     }
 
     internal MidoraProject(int ticksPerQuarterNote, UInt128 nextStableId)
-        : this(ticksPerQuarterNote, nextStableId, createInitialConductorState: false)
+        : this(
+            ticksPerQuarterNote,
+            nextStableId,
+            createInitialConductorState: false,
+            TimeProvider.System.GetUtcNow())
     {
     }
 
     private MidoraProject(
         int ticksPerQuarterNote,
         UInt128 nextStableId,
-        bool createInitialConductorState)
+        bool createInitialConductorState,
+        DateTimeOffset createdAtUtc)
     {
         if (ticksPerQuarterNote <= 0)
         {
@@ -131,11 +145,13 @@ public sealed class MidoraProject
         }
         TicksPerQuarterNote = ticksPerQuarterNote;
         _nextStableId = nextStableId;
+        Metadata = new ProjectMetadata(createdAtUtc);
         Conductor = new ConductorTrack(this, createInitialConductorState);
     }
 
     public int TicksPerQuarterNote { get; }
     public UInt128 NextStableId => _nextStableId;
+    public ProjectMetadata Metadata { get; }
     public ConductorTrack Conductor { get; }
     public MidiInitialState GlobalInitialState { get; } = new();
     public MidiInitialState GlobalResetDefaults { get; } = new();

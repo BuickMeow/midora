@@ -130,7 +130,7 @@ public static partial class Program
     private static int RunLogicalRealtime(string soundFontPath, string example)
     {
         MidoraProject project = CreateLogicalExample(example);
-        ProjectCompilationSession session = new(project, soundFontPath);
+        using ProjectCompilationSession session = new(project, soundFontPath);
         PrintCompilation(session.LastAttempt);
         if (!session.LastAttempt.IsConsumable)
         {
@@ -157,7 +157,7 @@ public static partial class Program
     private static int RunLogicalRealtimeChild(string repositoryRoot, string soundFontPath, string example)
     {
         MidoraProject project = CreateLogicalExample(example);
-        ProjectCompilationSession session = new(project, soundFontPath);
+        using ProjectCompilationSession session = new(project, soundFontPath);
         PrintCompilation(session.LastAttempt);
         if (!session.LastAttempt.IsConsumable)
         {

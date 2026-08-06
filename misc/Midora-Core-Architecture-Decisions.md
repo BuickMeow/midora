@@ -43,7 +43,7 @@
 
 ### 1.6 持久化归属
 
-- 已建立 `.midora` v1 持久化契约基础：严格 `manifest.json` DTO/codec、Draft 2020-12 common/manifest schema、Edition 2024 protobuf 通用类型、descriptor hash 与 golden bytes；完整 package 打开/保存和其余结构性文件 schema 尚未实现。
+- 已建立 `.midora` v1 持久化契约基础：严格 `manifest.json`、`metadata.json`、`soundfont-settings.json` DTO/codec，Draft 2020-12 schema、Edition 2024 protobuf 通用类型、descriptor hash 与 golden bytes；完整 package 打开/保存和其余结构性文件 schema 尚未实现。
 - Project 源数据中的稳定 ID、显式顺序、opaque sRGB 颜色、C# Mapping 源码和版本化设置属于未来 `.midora` 内容；只有发布了对应结构性文件 schema 后才形成文件兼容承诺。
 - Canonical result、编译 checkpoint、fingerprint、sample-domain 计划、PCM ring、播放状态、Mute/Solo 和诊断结果都是派生或运行时数据，不属于 Project 持久内容。
 
@@ -141,11 +141,11 @@ Requirement trace：
 - 边界：文本上限按 Unicode scalar；相对路径保留大小写和原 Unicode、不 normalization；颜色为 opaque sRGB；UTC 时间严格为七位小数秒 `Z`；总耗时为非负 int64 毫秒。
 - 失败条件：BOM、JSON 重复/未知字段、未知 protobuf tag、错误 wire type、非法 UTF-8、越界标量、非 canonical hash/path/version 或 descriptor/golden 漂移均失败，不截断也不静默修复。
 - 诊断：当前 codec 以 `JsonException` / `InvalidDataException` 保留失败类别；完整打开流程实现时再映射为 SRS 第 16.20 节的文件级正式诊断，不能把异常文本直接当 UI 诊断协议。
-- 持久化归属：本 ADR 冻结通用值类型和 `manifest.json` v1；`soundfont-settings.json` 随 ADR-CORE-008 单独冻结。受工程耗时累计、MIDI 导出和文件命名决定影响的其余 settings、metadata 与完整对象 schema 尚未发布。
+- 持久化归属：本 ADR 冻结通用值类型和 `manifest.json` v1；`soundfont-settings.json` 与 `metadata.json` 分别随 ADR-CORE-008、ADR-CORE-009 冻结。受 MIDI 导出和文件命名决定影响的其余 settings 与完整对象 schema 尚未发布。
 - 运行时归属：DTO、descriptor、codec 和校验属于 Preparing/open/save 路径，不进入编译器 canonical 语义或音频活动线程。
 - 明确非目标：本增量不实现 ZIP 结构、hash 全包校验、迁移、损坏占位、Save/Save Copy 原子事务和完整 Project round-trip。
 
-兼容规则：已发布 protobuf 字段号不得复用，删除字段必须 reserved。deterministic protobuf 不是跨 library/tool 版本的 canonical encoding；依赖升级必须显式评审 descriptor diff、golden bytes 和旧文件重开。完整 v1 对象 schema 只能在决定 19–22 闭合对应字段后发布，不能用临时默认值提前冻结。
+兼容规则：已发布 protobuf 字段号不得复用，删除字段必须 reserved。deterministic protobuf 不是跨 library/tool 版本的 canonical encoding；依赖升级必须显式评审 descriptor diff、golden bytes 和旧文件重开。受决定 21–22 影响的其余 v1 对象 / settings schema 只能在对应字段闭合后发布，不能用临时默认值提前冻结。
 
 ## 10. ADR-CORE-008（已接受，19A）：Project SoundFont 可移植引用与内容身份
 
@@ -163,3 +163,20 @@ Requirement trace：
 - 明确非目标：本增量不实现 SF2 格式/BASSMIDI 可加载性验证、完整 package 资源复制、损坏 Embedded 保存策略、文件监控器、UI 接受变化命令或 ZIP 事务。
 
 hash 使用 SHA-256 并流式读取。用户选择、替换、重新绑定或明确接受当前内容时才生成新的源引用；被动验证只返回当前 hash/状态，不修改原引用。打开流程未来必须在结构加载后异步完整验证，验证完成前禁用发声；首次音频任务只能使用仍有效的验证缓存，否则重新验证。
+
+## 11. ADR-CORE-009（已接受，20A）：Project 工程总耗时单调会话累计
+
+决定：工程总耗时从 Project 成功新建 / 打开并成为当前可信 Project 时开始，到关闭流程开始时暂停。空闲、最小化、失焦、模态 UI、保存、编译、播放、预览、Buffering、MIDI 导出与音频渲染全阶段均累计；系统睡眠 / 休眠和关闭流程不累计，关闭取消后从恢复打开状态时继续。自动累计不单独设置 Modified、不进入 Undo / Redo、不更新 `modifiedAtUtc`，也不参与 compiler fingerprint。
+
+Requirement trace：
+
+- 输入：已保存的非负 `totalEditingTimeMilliseconds`、单调 `TimeProvider` timestamp、系统 suspend/resume 和 Project begin/cancel-close 生命周期通知。
+- 正式输出：当前内存 Project Metadata 的非递减 int64 整毫秒累计快照，以及严格 `metadata.json` v1 的 `totalEditingTimeMilliseconds`。
+- 边界：成功建立 Project 前不计；活动打开会话全部计；任一 pause reason 存在时不计；关闭取消只恢复后续累计，不补计暂停区间。每个 Project 同时只能有一个累计会话。
+- 失败条件：持久值为负、时间戳非 canonical、修改时间早于创建时间、同一 Project 重复打开累计 owner、注入时钟倒退或 metadata 字段无效均失败；累计超过 int64 表示范围时饱和到 `long.MaxValue`。
+- 诊断：当前领域 / codec 以参数、状态和 `InvalidDataException` 分类；完整应用打开 / 保存流程实现时映射为生命周期或 metadata 文件诊断。
+- 持久化归属：用户 metadata、UTC 创建 / 修改时间和已累计整毫秒属于 Project；当前 timestamp、sub-millisecond remainder、pause reasons 与 owner flag 不持久化。Save Copy 只序列化快照，不回写当前 Project 修改时间。
+- 运行时归属：`ProjectEditingTimeSession` 使用单调 timestamp 并由当前 `ProjectCompilationSession` 过渡持有；UI 未来负责转发 Windows suspend/resume 和 begin/cancel-close 通知。计时不进入音频 Worker 或音频活动线程。
+- 明确非目标：本增量不实现 WPF 电源事件接线、Project Modified/Undo 框架、完整 New/Open/Save/Close/Save Copy 事务、自动保存或崩溃恢复。
+
+`metadata.json` v1 同时冻结项目名称、用户版本、作者/团队、原作、版权、备注、UTC 创建 / 修改时间和总耗时字段。会话内部保留 100 ns `TimeSpan` tick 余数，生成持久快照时向下取完整毫秒；重复取快照不会重复累计同一区间，系统墙钟校时不改变累计值。

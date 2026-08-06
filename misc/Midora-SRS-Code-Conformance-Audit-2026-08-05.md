@@ -41,12 +41,13 @@
 | C# Mapping 持久 ABI | 9.6、9.7、12.9、16.1.4/16.9.2 | 原型使用 `LanguageVersion.Latest`、运行机器全部 TPA、随机程序集名、默认 ALC 和无界进程缓存；`MappingContext` 直接暴露 Domain 类型 | 已按 17A 建立独立只读 ABI v1 契约，固定 Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10` 和基于源码 hash 的身份；每 Project 只保留当前修订，每项使用 collectible ALC；领域源模型只携带 `abiVersion`/函数体/声明，编译产物不持久化 |
 | 颜色兼容表示 | 16.13.8、18A | `MidoraColor` 原型使用 32-bit ARGB，允许形成未规定 alpha 语义 | 已改为三个 byte 分量的 opaque sRGB；protobuf 固定 `RgbColor` 1/2/3 字段，JSON 需要颜色时固定小写 `#rrggbb` |
 | SoundFont 路径归属 | 6.4、6.7、16.7.6、19A | `MidoraProject.SoundFontPath` 直接保存运行机器绝对路径，外部/内嵌模式、资源 ID 和已接受内容身份均未建模 | 已移除 Project 绝对路径；领域层使用严格 External/Embedded source union，绝对有效路径只存在于播放会话；新增 soundfont-settings v1、流式 SHA-256、精确/唯一 ignore-case 解析和被动验证不改源引用测试 |
+| 工程总耗时 | 3.6.4、13.19.8、14.21.3、15.16.2、16.6.4、20A | 领域层无 Project Metadata，播放会话也没有打开时间 owner；SRS 只固定 int64 毫秒表示，未固定空闲、最小化和 suspend 边界 | 已建立 Project Metadata、单 owner 单调会话计时、系统 suspend / closing 组合暂停和 metadata v1 codec/schema；自动累计不失效 canonical 或单独标记 Modified |
 
 ## 3. 尚未完成的初版模块（不是“现有代码语义矛盾”）
 
-- Project Metadata、Application Preferences、SoundFont 的 BASSMIDI 格式/可加载性验证、文件监控、内嵌资源复制及正式应用生命周期尚未实现；19A 的可移植领域引用、JSON schema、路径解析和内容 hash 基础已实现。
+- Project Metadata 领域对象、metadata v1 schema/codec 和 20A 会话计时基础已实现；Application Preferences、WPF 电源/关闭事件接线、完整 Modified/Undo 和正式应用生命周期尚未实现。SoundFont 的 BASSMIDI 格式/可加载性验证、文件监控及内嵌资源复制仍未实现。
 - Event Instrument、Mapping、Lifecycle、Logical Track/Segment 的若干编辑器级数据与命令仍只有核心垂直切片，不是 SRS 07–11 的完整实现。
-- `.midora` 已实现 v1 common/manifest/soundfont-settings schema、严格 codec、protobuf descriptor-aware wire 校验和兼容基线测试；完整 ZIP、其余结构性文件 schema、迁移、安全保存、损坏隔离与 Project round-trip 尚未实现。
+- `.midora` 已实现 v1 common/manifest/metadata/soundfont-settings schema、严格 codec、protobuf descriptor-aware wire 校验和兼容基线测试；完整 ZIP、其余结构性文件 schema、迁移、安全保存、损坏隔离与 Project round-trip 尚未实现。
 - 正式 MIDI Export workflow、SMF Type 1 组织、文件事务和导出报告尚未实现。
 - 正式 Audio Render workflow（整曲/分轨、任务快照、取消、结果报告和子进程内文件 OutputDevice）尚未实现；当前只有底层 renderer 与 WAVE 输出能力。
 - WPF UI、导航、编辑器、对话框和 Project 打开/关闭工作流尚未实现。
@@ -88,9 +89,9 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 15. **已确认：15A（2026-08-06）**。初版产品只发布 `win-x64`；主应用、Native AOT 音频 Worker 与 BASS/BASSMIDI/BASSWASAPI 必须同为 x64，不生成 x86、Arm64 或 AnyCPU 正式产物。Worker publish target 和 BASS 获取/校验脚本已拒绝其他 RID；x64 的 SSE2 基线满足 14A 固定的 8-point sinc 前提。
 16. **已确认：16A（2026-08-06）**。初版固定 BASS `2.4.18.3 / 0x02041203`、BASSMIDI `2.4.16.0 / 0x02041000`、BASSWASAPI `2.4.4.1 / 0x02040401` 及三项 win-x64 DLL SHA-256。仓库只提交正式 manifest，不提交 DLL；正式安装和 Worker publish 只接受操作员提供且逐文件匹配 manifest 的二进制，运行时校验完整版本码。vendor current/latest 下载只能生成 `releaseBaseline=false` 的开发候选；升级必须显式更新基线并完成全回归。商业分发许可证仍是独立发布门。
 17. **已确认：17A（2026-08-06）**。初版固定 C# Mapping ABI v1：`double Transform(double value, in MappingContextV1 context)`，独立只读契约程序集，Roslyn 5.3.0、C# 14、`Microsoft.NETCore.App.Ref 10.0.10`，不开放 Midora 内部、WPF/WindowsDesktop 或第三方编译引用。缓存键为 ABI/compiler profile/函数体 UTF-8 SHA-256，每 Project 只保留当前修订且每项使用 collectible ALC；`.midora` 只保存 ABI 版本、函数体和 Context 声明。该引用边界不是 sandbox，SRS 9.6.2 的风险仍成立。
-18. **已确认：18A + 18.1A（2026-08-06）**。结构性 JSON 固定 Draft 2020-12、内部版本化 `System.Text.Json` source-generated DTO，严格拒绝重复/未知属性；protobuf 固定 Edition 2024、Google.Protobuf 3.35.1、Grpc.Tools 2.83.0，`.proto`/descriptor 基线提交、生成 C# 仅在 `obj`，descriptor-aware 检查拒绝未知 tag。字段号、reserved、deterministic 输出与 golden bytes 构成兼容门，依赖升级必须评审。文本上限按 Unicode scalar 固定为 256/4,096/65,536/1,048,576，路径为最多 4,096 scalars 的 UTF-8 相对 `/` 路径且保留大小写/原 Unicode；颜色固定 opaque sRGB。`createdAtUtc`/`modifiedAtUtc` 固定 `yyyy-MM-ddTHH:mm:ss.fffffffZ`，`totalEditingTimeMilliseconds` 为非负 int64。当前已冻结 common/manifest v1，soundfont-settings v1 随 19A 冻结；受 20–22 影响的其余完整对象/settings schema 尚未发布，完整 `.midora` 读写也尚未实现。
+18. **已确认：18A + 18.1A（2026-08-06）**。结构性 JSON 固定 Draft 2020-12、内部版本化 `System.Text.Json` source-generated DTO，严格拒绝重复/未知属性；protobuf 固定 Edition 2024、Google.Protobuf 3.35.1、Grpc.Tools 2.83.0，`.proto`/descriptor 基线提交、生成 C# 仅在 `obj`，descriptor-aware 检查拒绝未知 tag。字段号、reserved、deterministic 输出与 golden bytes 构成兼容门，依赖升级必须评审。文本上限按 Unicode scalar 固定为 256/4,096/65,536/1,048,576，路径为最多 4,096 scalars 的 UTF-8 相对 `/` 路径且保留大小写/原 Unicode；颜色固定 opaque sRGB。`createdAtUtc`/`modifiedAtUtc` 固定 `yyyy-MM-ddTHH:mm:ss.fffffffZ`，`totalEditingTimeMilliseconds` 为非负 int64。当前已冻结 common/manifest v1，soundfont-settings v1 随 19A 冻结，metadata v1 随 20A 冻结；受 21–22 影响的其余完整对象/settings schema 尚未发布，完整 `.midora` 读写也尚未实现。
 19. **已确认：19A（2026-08-06）**。External SF2 只允许 Project 根目录或直属 `soundfonts/`，保存实际大小写/原 Unicode 的 `/` 相对路径；逐分量精确匹配优先，唯一 ignore-case 回退并 Warning，多个近似候选为歧义不可用，根目录与子目录同名文件按完整路径区分。SHA-256 对完整原始字节流式计算；路径/hash/size 只在用户明确选择、替换、重绑定或接受当前内容时更新，被动缺失/hash mismatch/fallback 不改 Project。绝对路径和验证缓存是运行时状态。代码已移除 `MidoraProject.SoundFontPath`，建立 External/Embedded union、soundfont-settings v1 codec/schema、解析/hash 服务和测试；BASS 可加载性、监控、Embedded package 复制和完整打开/保存仍未实现。
-20. Project 工程总耗时累计规则：是否统计空闲、最小化、Buffering 等 SRS 明确留给实现的时段。
+20. **已确认：20A（2026-08-06）**。从 Project 成功新建 / 打开到开始关闭，以单调时钟累计完整打开会话；空闲、最小化、失焦、模态 UI、保存、编译、播放、预览、Buffering、MIDI 导出和音频渲染全阶段均计入。系统睡眠 / 休眠与关闭流程暂停，关闭取消后只恢复后续累计。自动累计不进入 Undo / Redo、不单独标记 Modified、不更新 metadata 修改时间、不影响 canonical。代码已建立 Project Metadata、单 owner 计时会话、组合 pause reason、metadata v1 codec/schema 和确定性测试；WPF 生命周期接线与完整保存事务仍未实现。
 21. MIDI 导出兼容细节：Tempo 的 microseconds-per-quarter-note 舍入、running status、必要 Meta Event 兼容档和输出命名模板。
 22. MIDI/音频输出文件名规则：Unicode normalization、最大长度、非法字符替换、冲突序号和分轨命名模板。
 

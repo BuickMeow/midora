@@ -423,13 +423,18 @@ public sealed class CanonicalMidiFileExporterTests
             null);
         return new(
             192,
-            0,
-            1,
+            new CompilationContextSummary(
+                new CompilationRequest
+                {
+                    Purpose = CompilationPurpose.MidiExport,
+                    EndTick = 1
+                },
+                1,
+                CompilationEndTickSource.ExplicitRequest),
             events,
             conductor,
             [],
             [],
-            CompilationPurpose.MidiExport,
             false,
             true,
             null,

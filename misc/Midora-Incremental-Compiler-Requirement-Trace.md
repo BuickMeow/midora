@@ -7,7 +7,7 @@
 ## 1. 输入与正式输出
 
 - 输入：完整内存 Project、`CompilationRequest`、当前 Project 会话内上一轮 Full/Incremental Compile 生成的运行时检查点，以及调用方提供的 `ProjectChangeSet`。
-- 正式输出：与相同输入、相同请求的确定性 Full Compile 逐字段一致的 `CanonicalCompiledResult`。缓存、检查点和 telemetry 都不是正式音乐输出。
+- 正式输出：与相同输入、相同请求的确定性 Full Compile 逐字段一致的 `CanonicalCompiledResult`。结果冻结 Purpose、请求/解析范围及 end 来源、Track/SubVoice 选择与 Warning 策略；缓存、检查点和 telemetry 都不是正式音乐输出。
 - Source 分层：Track 展开上下文 fingerprint 覆盖 TPQ、Global Initial/Reset、Track 稳定 ID/绑定和所绑定 Event Instrument 的全部展开语义；Segment fingerprint 覆盖 Segment 窗口、Logical Note、Logical Parameter Lane/Point/Curve 及稳定 ID。
 
 ## 2. Checkpoint、Dirty Range 与收敛
@@ -49,4 +49,5 @@
 - Segment 集合乱序：Canonical Result 不变。
 - `ClearCache()` 后全部 Segment 重编；切换为非零范围请求时只复用全上下文 RawInstance 检查点，并重新生成正式范围结果。
 - 固定种子 80 轮连续合法 Note 编辑：Incremental 与独立 Full oracle 对 result 状态、范围、fingerprint、statistics、events、allocations、Conductor 和 diagnostics 逐字段相等。
+- CompileContext 的 nullable requested end、resolved end/end source、全量或显式 Track/SubVoice 集合及 Warning 策略逐字段进入 Full/Incremental oracle；请求集合在编译返回后修改不影响已冻结结果。
 - 语义、展开 MIDI 值域、超过 256 个 Channel Unit、Overlap Reject 及 Warning-as-error 分别锁定失败阶段；所有失败结果锁定 partial/不可消费契约，所有成功结果锁定无失败阶段。

@@ -57,6 +57,60 @@ public sealed class CompilationRequest
     public HashSet<MidoraId>? IncludedSubVoiceIds { get; init; }
 }
 
+public enum CompilationEndTickSource
+{
+    ExplicitRequest,
+    ProjectEndMarker,
+    NaturalContent
+}
+
+public sealed class CompilationContextSummary
+{
+    private readonly MidoraId[] _includedTrackIds;
+    private readonly MidoraId[] _includedSubVoiceIds;
+
+    internal CompilationContextSummary(
+        CompilationRequest request,
+        long resolvedEndTick,
+        CompilationEndTickSource endTickSource)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        Purpose = request.Purpose;
+        StartTick = request.StartTick;
+        RequestedEndTick = request.EndTick;
+        EndTick = resolvedEndTick;
+        EndTickSource = endTickSource;
+        IncludesAllTracks = request.IncludedTrackIds is null;
+        IncludesAllSubVoices = request.IncludedSubVoiceIds is null;
+        _includedTrackIds = request.IncludedTrackIds?
+            .OrderBy(id => id)
+            .ToArray() ?? [];
+        _includedSubVoiceIds = request.IncludedSubVoiceIds?
+            .OrderBy(id => id)
+            .ToArray() ?? [];
+        TreatWarningsAsErrors = request.TreatWarningsAsErrors;
+    }
+
+    public CompilationPurpose Purpose { get; }
+    public long StartTick { get; }
+    public long? RequestedEndTick { get; }
+    public long EndTick { get; }
+    public CompilationEndTickSource EndTickSource { get; }
+    public bool IncludesAllTracks { get; }
+    public bool IncludesAllSubVoices { get; }
+    public bool TreatWarningsAsErrors { get; }
+    public bool IsFullProject => Purpose == CompilationPurpose.FullProject && IncludesAllTracks;
+    public bool IsPlayback => Purpose == CompilationPurpose.Playback;
+    public bool IsPreview => Purpose is CompilationPurpose.SegmentPreview
+        or CompilationPurpose.EventInstrumentPreview;
+    public bool IsMidiExportPreparation => Purpose == CompilationPurpose.MidiExport;
+    public bool IsAudioRenderPreparation => Purpose is CompilationPurpose.AudioRender
+        or CompilationPurpose.LogicalTrackAudioRender;
+    public bool UsesProjectEndMarkerAsDefault => EndTickSource == CompilationEndTickSource.ProjectEndMarker;
+    public ReadOnlySpan<MidoraId> IncludedTrackIds => _includedTrackIds;
+    public ReadOnlySpan<MidoraId> IncludedSubVoiceIds => _includedSubVoiceIds;
+}
+
 public enum CanonicalEventRole : byte
 {
     NoteOff = 0,
@@ -156,13 +210,11 @@ public sealed class CanonicalCompiledResult
 
     internal CanonicalCompiledResult(
         int ticksPerQuarterNote,
-        long startTick,
-        long endTick,
+        CompilationContextSummary context,
         CanonicalMidiEvent[] events,
         CanonicalConductor conductor,
         ChannelUnitAllocation[] allocations,
         CompilerDiagnostic[] diagnostics,
-        CompilationPurpose purpose,
         bool isPartial,
         bool isConsumable,
         CompilationFailureStage? failureStage,
@@ -170,13 +222,14 @@ public sealed class CanonicalCompiledResult
         CompilationStatistics statistics)
     {
         TicksPerQuarterNote = ticksPerQuarterNote;
-        StartTick = startTick;
-        EndTick = endTick;
+        Context = context ?? throw new ArgumentNullException(nameof(context));
+        StartTick = context.StartTick;
+        EndTick = context.EndTick;
         _events = events;
         Conductor = conductor;
         _allocations = allocations;
         _diagnostics = diagnostics;
-        Purpose = purpose;
+        Purpose = context.Purpose;
         IsPartial = isPartial;
         IsConsumable = isConsumable;
         FailureStage = failureStage;
@@ -185,6 +238,7 @@ public sealed class CanonicalCompiledResult
     }
 
     public int TicksPerQuarterNote { get; }
+    public CompilationContextSummary Context { get; }
     public long StartTick { get; }
     public long EndTick { get; }
     public CompilationPurpose Purpose { get; }

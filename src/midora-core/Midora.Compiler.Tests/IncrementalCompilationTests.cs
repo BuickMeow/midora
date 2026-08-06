@@ -237,6 +237,16 @@ public sealed class IncrementalCompilationTests
         Assert.Equal(expected.IsConsumable, actual.IsConsumable);
         Assert.Equal(expected.IsPartial, actual.IsPartial);
         Assert.Equal(expected.FailureStage, actual.FailureStage);
+        Assert.Equal(expected.Context.Purpose, actual.Context.Purpose);
+        Assert.Equal(expected.Context.StartTick, actual.Context.StartTick);
+        Assert.Equal(expected.Context.RequestedEndTick, actual.Context.RequestedEndTick);
+        Assert.Equal(expected.Context.EndTick, actual.Context.EndTick);
+        Assert.Equal(expected.Context.EndTickSource, actual.Context.EndTickSource);
+        Assert.Equal(expected.Context.IncludesAllTracks, actual.Context.IncludesAllTracks);
+        Assert.Equal(expected.Context.IncludesAllSubVoices, actual.Context.IncludesAllSubVoices);
+        Assert.Equal(expected.Context.TreatWarningsAsErrors, actual.Context.TreatWarningsAsErrors);
+        Assert.Equal(expected.Context.IncludedTrackIds.ToArray(), actual.Context.IncludedTrackIds.ToArray());
+        Assert.Equal(expected.Context.IncludedSubVoiceIds.ToArray(), actual.Context.IncludedSubVoiceIds.ToArray());
         Assert.Equal(expected.StartTick, actual.StartTick);
         Assert.Equal(expected.EndTick, actual.EndTick);
         Assert.Equal(expected.Fingerprint, actual.Fingerprint);

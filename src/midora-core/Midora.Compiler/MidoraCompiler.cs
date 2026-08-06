@@ -186,8 +186,8 @@ public sealed class MidoraCompiler : IDisposable
                         : CompilationFailureStage.WarningPolicy;
             LastTelemetry = telemetry;
             return new CanonicalCompiledResult(
-                project.TicksPerQuarterNote, request.StartTick, endTick,
-                [], conductor, [], diagnostics.ToArray(), request.Purpose,
+                project.TicksPerQuarterNote, CreateContextSummary(project, request, endTick),
+                [], conductor, [], diagnostics.ToArray(),
                 true, false, failureStage, 0,
                 new(selectedTracks.Count, instances.Count, 0, allocation.PeakUnits));
         }
@@ -208,8 +208,8 @@ public sealed class MidoraCompiler : IDisposable
             request.StartTick, endTick, ranged, conductor);
         LastTelemetry = telemetry;
         return new CanonicalCompiledResult(
-            project.TicksPerQuarterNote, request.StartTick, endTick,
-            ranged, conductor, rangedAllocations, diagnostics.ToArray(), request.Purpose,
+            project.TicksPerQuarterNote, CreateContextSummary(project, request, endTick),
+            ranged, conductor, rangedAllocations, diagnostics.ToArray(),
             false, true, null, resultFingerprint,
             new(selectedTracks.Count, instances.Count, ranged.Length, allocation.PeakUnits));
     }
@@ -221,10 +221,23 @@ public sealed class MidoraCompiler : IDisposable
         CanonicalConductor conductor,
         List<CompilerDiagnostic> diagnostics,
         CompilationFailureStage failureStage) => new(
-            project.TicksPerQuarterNote, request.StartTick, endTick,
-            [], conductor, [], diagnostics.ToArray(), request.Purpose,
+            project.TicksPerQuarterNote, CreateContextSummary(project, request, endTick),
+            [], conductor, [], diagnostics.ToArray(),
             true, false, failureStage, 0,
             new(CountSelectedTracks(project, request), 0, 0, 0));
+
+    private static CompilationContextSummary CreateContextSummary(
+        MidoraProject project,
+        CompilationRequest request,
+        long resolvedEndTick)
+    {
+        CompilationEndTickSource endTickSource = request.EndTick.HasValue
+            ? CompilationEndTickSource.ExplicitRequest
+            : project.Conductor.EndMarkerTick.HasValue
+                ? CompilationEndTickSource.ProjectEndMarker
+                : CompilationEndTickSource.NaturalContent;
+        return new(request, resolvedEndTick, endTickSource);
+    }
 
     private static int CountSelectedTracks(MidoraProject project, CompilationRequest request) =>
         request.IncludedTrackIds is null

@@ -374,3 +374,11 @@ Requirement trace：输入为当前 `.midora` 绝对路径、External source ref
 播放和预览 admission 在启动前调用同步 stamp gate：只有 runtime 状态 Available、External 缓存未失效且绝对路径/file ID/size/mtime 仍匹配，或 Embedded 租约快照路径仍存在，才允许进入 PlaybackController。stamp 不匹配时先失效并拒绝启动，完整复核由异步 Refresh 完成。Audio Render 仍使用其任务私有 SF2 冻结流程并执行完整内容复核，不复用实时路径替代冻结。
 
 Requirement trace：输入为打开 Project 的 source reference、当前 `.midora` 路径、可选 Embedded 资源租约、验证缓存、正式后端验证器、编译会话和播放任务协调器；正式输出为结构化 runtime availability、有效绝对路径、Warning 标志和音频 admission 结果。边界是单 Project session、预期 reference 比较、Project Edit Lock、监控失效、启动前 stamp gate 与自动 Stop。失败只改变运行时可用状态，不改 Project/Modified/canonical；状态、绝对路径、watcher、cache、lease 和 BASS error 不持久化。明确非目标是 WPF 状态展示，以及 Q-NUI-005 决定前 Embedded 选择/替换 History 的 ID 与跨分支租约所有权。
+
+## 25. ADR-CORE-023（已接受）：Canonical CompileContext 冻结摘要
+
+决定：每个成功或失败的 `CanonicalCompiledResult` 都必须携带只读 `CompilationContextSummary`，由编译器从本次 `CompilationRequest` 和实际解析后的结束范围一次性冻结。摘要保存编译 Purpose、请求/解析范围、结束范围来源、Track/SubVoice 选择及 Warning-as-error 策略，并提供全项目、播放、预览、MIDI 导出准备和音频渲染准备的确定派生分类。调用方之后修改请求中的 `HashSet` 不能改变既有结果。
+
+结束范围来源严格区分显式请求、Project End Marker 默认和自然内容结束；不能只保存最终数值后丢失来源。`IncludesAllTracks` / `IncludesAllSubVoices` 与空显式集合不同：前者表示未限制集合，后者表示调用方明确选择零项。成功、语义失败和后续 partial 失败使用同一摘要路径；Full/Incremental 对同一请求必须逐字段一致。
+
+Requirement trace：输入为完整 `CompilationRequest`、当前 Project End Marker 和最终 resolved end tick；正式输出是 canonical 内不可变上下文摘要。边界是请求集合按稳定 ID 排序复制、nullable 显式 end 保留、消费者类别只由固定 Purpose 枚举推导。非法 Purpose 仍由 Semantic Validation 诊断，摘要原样保留失败请求以便定位。摘要、选择快照和失败策略属于本次编译运行时结果，不写入 `.midora`，不影响事件 fingerprint，也不允许消费者借此重新解释 Project 语义。明确非目标是 UI 诊断显示过滤、持久化 CompileContext、Mute/Solo 或设备/SoundFont 状态。

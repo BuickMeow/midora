@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Midora settings/project-settings.json v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ticksPerQuarterNote", "globalInitialState"],
+  "properties": {
+    "schemaVersion": { "$ref": "common-v1.schema.json#/$defs/schemaVersion" },
+    "ticksPerQuarterNote": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "globalInitialState": { "$ref": "common-v1.schema.json#/$defs/midiState" }
+  }
+}

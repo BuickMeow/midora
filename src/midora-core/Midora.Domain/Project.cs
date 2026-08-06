@@ -102,6 +102,48 @@ public sealed class GlobalEventScopeDefaults
     public static bool IsChannelWide(TemplateEventKind kind) => kind != TemplateEventKind.Note;
 }
 
+public enum ProjectRangeMode
+{
+    ProjectDefaultRange,
+    ManualRange
+}
+
+public enum ProjectTrackSelectionMode
+{
+    AllValidLogicalTracks,
+    ExplicitLogicalTrackIds
+}
+
+public enum AudioRenderMode
+{
+    WholeMix,
+    PerLogicalTrack
+}
+
+public sealed class ExportProjectSettings
+{
+}
+
+public sealed class AudioRenderProjectSettings
+{
+    public const int MinimumSampleRate = 8_000;
+    public const int MaximumSampleRate = 192_000;
+    public const int DefaultSampleRate = 48_000;
+    public const int MinimumSampleVoicesPerStream = 1;
+    public const int MaximumSampleVoicesPerStreamLimit = 16_777_216;
+    public const int DefaultSampleVoicesPerStream = 750;
+
+    public AudioRenderMode Mode { get; set; } = AudioRenderMode.WholeMix;
+    public ProjectRangeMode RangeMode { get; set; } = ProjectRangeMode.ProjectDefaultRange;
+    public long? ManualStartTick { get; set; }
+    public long? ManualEndTick { get; set; }
+    public ProjectTrackSelectionMode TrackSelectionMode { get; set; } =
+        ProjectTrackSelectionMode.AllValidLogicalTracks;
+    public HashSet<MidoraId> ExplicitLogicalTrackIds { get; } = [];
+    public int SampleRate { get; set; } = DefaultSampleRate;
+    public int MaximumSampleVoicesPerStream { get; set; } = DefaultSampleVoicesPerStream;
+}
+
 public sealed class MidoraProject
 {
     private UInt128 _nextStableId;
@@ -160,6 +202,8 @@ public sealed class MidoraProject
     public List<EventInstrumentLibraryFolder> EventInstrumentFolders { get; } = [];
     public List<LogicalTrack> Tracks { get; } = [];
     public PlaybackProjectSettings Playback { get; } = new();
+    public ExportProjectSettings Export { get; } = new();
+    public AudioRenderProjectSettings AudioRender { get; } = new();
     public ProjectSoundFontSettings SoundFont { get; } = new();
 
     public MidoraId AllocateStableId()
@@ -171,6 +215,15 @@ public sealed class MidoraProject
         MidoraId result = MidoraId.FromSequence(_nextStableId);
         _nextStableId++;
         return result;
+    }
+
+    internal void RestoreNextStableId(UInt128 nextStableId)
+    {
+        if (nextStableId == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(nextStableId));
+        }
+        _nextStableId = nextStableId;
     }
 
     public void SetEndMarker(long? tick)
@@ -200,6 +253,12 @@ public sealed class EventInstrumentLibraryFolder
     {
         ArgumentNullException.ThrowIfNull(project);
         Id = project.AllocateStableId();
+    }
+
+    internal EventInstrumentLibraryFolder(MidoraId preservedId)
+    {
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
     }
 
     public MidoraId Id { get; init; }

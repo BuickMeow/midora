@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Midora settings/global-reset-defaults.json v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "state"],
+  "properties": {
+    "schemaVersion": { "$ref": "common-v1.schema.json#/$defs/schemaVersion" },
+    "state": { "$ref": "common-v1.schema.json#/$defs/midiState" }
+  }
+}

@@ -63,7 +63,7 @@ public sealed class SoundFontPersistenceV1Tests
             }
 
             """;
-        Assert.Equal(expected, Encoding.UTF8.GetString(externalBytes));
+        Assert.Equal(expected.ReplaceLineEndings("\n"), Encoding.UTF8.GetString(externalBytes));
         Assert.Equal(
             project.SoundFont.Reference,
             SoundFontSettingsCodecV1.Parse(externalBytes));

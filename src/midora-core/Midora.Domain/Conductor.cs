@@ -10,6 +10,14 @@ public sealed record TempoChange
         BeatsPerMinute = beatsPerMinute;
     }
 
+    internal TempoChange(MidoraId preservedId, long tick, decimal beatsPerMinute)
+    {
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
+        Tick = tick;
+        BeatsPerMinute = beatsPerMinute;
+    }
+
     public MidoraId Id { get; init; }
     public long Tick { get; init; }
     public decimal BeatsPerMinute { get; init; }
@@ -21,6 +29,15 @@ public sealed record TimeSignatureChange
     {
         ArgumentNullException.ThrowIfNull(project);
         Id = project.AllocateStableId();
+        Tick = tick;
+        Numerator = numerator;
+        Denominator = denominator;
+    }
+
+    internal TimeSignatureChange(MidoraId preservedId, long tick, int numerator, int denominator)
+    {
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
         Tick = tick;
         Numerator = numerator;
         Denominator = denominator;
@@ -43,6 +60,15 @@ public sealed record KeySignatureChange
         IsMinor = isMinor;
     }
 
+    internal KeySignatureChange(MidoraId preservedId, long tick, int sharpsFlats, bool isMinor)
+    {
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
+        Tick = tick;
+        SharpsFlats = sharpsFlats;
+        IsMinor = isMinor;
+    }
+
     public MidoraId Id { get; init; }
     public long Tick { get; init; }
     public int SharpsFlats { get; init; }
@@ -59,6 +85,14 @@ public sealed record ProjectMarker
         Name = name ?? throw new ArgumentNullException(nameof(name));
     }
 
+    internal ProjectMarker(MidoraId preservedId, long tick, string name)
+    {
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
+        Tick = tick;
+        Name = name ?? throw new ArgumentNullException(nameof(name));
+    }
+
     public MidoraId Id { get; init; }
     public long Tick { get; init; }
     public string Name { get; init; }
@@ -70,6 +104,13 @@ public sealed class ProjectEndMarker
     {
         ArgumentNullException.ThrowIfNull(project);
         Id = project.AllocateStableId();
+        Tick = tick;
+    }
+
+    internal ProjectEndMarker(MidoraId preservedId, long tick)
+    {
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
         Tick = tick;
     }
 

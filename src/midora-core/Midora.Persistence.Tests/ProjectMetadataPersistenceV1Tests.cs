@@ -42,7 +42,7 @@ public sealed class ProjectMetadataPersistenceV1Tests
             }
 
             """;
-        Assert.Equal(expected, Encoding.UTF8.GetString(bytes));
+        Assert.Equal(expected.ReplaceLineEndings("\n"), Encoding.UTF8.GetString(bytes));
         Assert.Equal(snapshot, MetadataCodecV1.Parse(bytes));
 
         MetadataCodecV1.Restore(project.Metadata, bytes);

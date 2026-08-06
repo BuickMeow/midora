@@ -170,12 +170,17 @@ public sealed class PersistenceContractV1Tests
     {
         string schemaDirectory = Path.Combine(AppContext.BaseDirectory, "Schemas", "Json");
         string[] paths = Directory.GetFiles(schemaDirectory, "*.schema.json", SearchOption.TopDirectoryOnly);
-        Assert.Equal(4, paths.Length);
+        Assert.Equal(12, paths.Length);
         foreach (string path in paths)
         {
             using JsonDocument schema = JsonDocument.Parse(File.ReadAllBytes(path));
             Assert.Equal(PersistenceContractV1.JsonSchemaDialect,
                 schema.RootElement.GetProperty("$schema").GetString());
+            if (schema.RootElement.TryGetProperty("type", out JsonElement type)
+                && type.GetString() == "object")
+            {
+                Assert.False(schema.RootElement.GetProperty("additionalProperties").GetBoolean());
+            }
         }
         using JsonDocument manifest = JsonDocument.Parse(
             File.ReadAllBytes(Path.Combine(schemaDirectory, "manifest-v1.schema.json")));

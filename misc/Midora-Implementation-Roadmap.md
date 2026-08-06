@@ -238,7 +238,7 @@ flowchart TD
 
 ### 阶段 5：`.midora` 持久化
 
-当前进度：18A/18.1A 已冻结 v1 common/manifest 的 JSON/protobuf 工具链、基础类型、严格字段策略、descriptor/golden 基线和 manifest codec；19A 已冻结 SoundFont External/Embedded 领域引用和 soundfont-settings v1，并实现相对路径解析与流式 SHA-256 基础；20A 已冻结 Project Metadata、metadata v1 和单调打开会话累计语义。23A/23.1A/23.2A 已冻结并实现 MIDI/音频共享文件名合法化和初版模板组件。其余结构性文件 schema、ZIP、迁移、内嵌资源复制及保存事务仍未实现；不得把后续未确认的输出设置以临时默认值发布。
+当前进度：18A/18.1A 已冻结 v1 common/manifest 的 JSON/protobuf 工具链、基础类型、严格字段策略、descriptor/golden 基线和 manifest codec；19A 已冻结 SoundFont External/Embedded 领域引用和 soundfont-settings v1，并实现相对路径解析与流式 SHA-256 基础；20A 已冻结 Project Metadata、metadata v1 和单调打开会话累计语义。2026-08-06 已完成基础 Project package 垂直切片：发布 Project/Conductor/Project Settings/Export marker/Playback/Audio Render/Global Reset/Global Event Scope JSON schema v1，实现固定入口确定性 ZIP、manifest/hash 严格打开、普通文件默认恢复、必需文件失败、Save/Save Copy 同目录备份—临时包—严格重开—原子发布、取消清理和句柄释放。当前切片只无损支持空 Event Instrument/Logical Track 对象图及无/External SF2；对应 protobuf 对象 schema、Damaged Placeholder、迁移、Embedded SF2 复制、WPF Modified/Undo 接线和磁盘/清理故障注入仍待实现。23A/23.1A/23.2A 已冻结并实现 MIDI/音频共享文件名合法化和初版模板组件；不得把后续未确认的输出设置以临时默认值发布。
 
 工作：
 

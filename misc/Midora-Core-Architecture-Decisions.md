@@ -215,3 +215,20 @@ Requirement trace：输入是源名称、导出模式、扩展名、父目录和
 同一目录的冲突键是 NFC + `OrdinalIgnoreCase`。分配顺序由稳定源顺序和稳定源 key 固定，第一个无后缀，后续使用 ` (2)`、` (3)`……并重新预算；已有文件不参加后缀分配。公共实现 `Midora.OutputPlanning.WindowsOutputFileNamePlanner` 是纯 Preparing 组件，不读取文件系统；无合法 UTF-16、合法化后为空、扩展名契约错误、预算容不下一个完整文本元素或稳定 key 重复均原子失败。
 
 23.2A 固定模板：整曲 MIDI / 音频分别为 `<ProjectStem>.mid` 与 `<ProjectStem>.wav`，ProjectStem 依 Project 名称、当前 `.midora` stem、模式固定 fallback 选择；分 Track 为 `<NN> - <LogicalTrackDisplayName>.mid/.wav`，NN 使用整个 Project 的一基手动顺序且至少两位；逐 Port MIDI 为 `Port <PP>.mid`；Readme 为 `README.md`。MIDI Conductor Track Name 固定 `Conductor`，事件 Track Name 固定 `<原始 Logical Track 名称或 fallback> / Port <P>`，不经过文件名合法化并由编码器严格 UTF-8 编码。多文件模式让用户选择完整输出目录，不自动增加嵌套目录。公共实现 `Midora.OutputPlanning.InitialReleaseOutputNaming` 只生成并合法化候选，不读取文件系统或推断覆盖权限。
+
+## 14. ADR-CORE-012（已接受）：`.midora` v1 基础 Project 包垂直切片
+
+决定：首个完整 package 切片只冻结当前已有领域能力可以无损重建的 JSON 边界，并贯通“内存 Project → 完整固定目录 ZIP → 严格自校验 → 同目录原子发布 → 释放句柄后重开”。本切片发布 `project.json`、`conductor-track.json`、`project-settings.json`、`export-settings.json`、`playback-settings.json`、`audio-render-settings.json`、`global-reset-defaults.json` 与 `global-event-scope-defaults.json` 的 schema v1；既有 `manifest.json`、`metadata.json` 与 `soundfont-settings.json` v1 保持不变。
+
+Requirement trace：
+
+- 输入：当前内存 `MidoraProject` 的 Metadata、TPQ、Conductor、Event Instrument Library 文件夹、Global Initial / Reset、Playback、Audio Render、无或 External SoundFont 设置，以及目标路径、软件版本和保存时间快照。
+- 正式输出：包含全部第 16.2 节固定核心文件的确定性 Zip package；manifest 索引所有写出 entry 的 kind、schemaVersion 与未压缩内容 SHA-256。
+- 边界：稳定 ID 全局唯一且小于 `nextStableId`；路径使用 `/`；JSON 严格 UTF-8 无 BOM、LF、固定字段顺序；Zip entry 顺序与时间戳固定。保存时间在事务建立不可变快照时冻结，作为本次普通保存或 Save Copy 的文件修改时间。
+- 失败条件：未知/重复字段、路径或 kind 错乱、hash/schema 不一致、非法稳定 ID、非法设置组合、非空 Event Instrument/Logical Track 集合、Embedded SoundFont、序列化、自校验或发布失败均原子失败。本切片不得写出无法重开的 partial package。
+- 诊断：package/container、manifest/index/hash、structure/schema、serialization/self-validation、publish/cleanup 分阶段；未知或未索引 entry 只产生打开 Info，保存时不保留。
+- 持久化归属：只写 Project 源数据；canonical、缓存、诊断、Undo/Redo、Modified、设备、Mute/Solo、播放位置、任务和 UI 状态均不写入。
+- 运行时归属：目标绝对路径、事务 ID、临时/备份路径、打开诊断和 External SoundFont 解析状态仅属于打开/保存会话。
+- 明确非目标：本切片不发布 Event Instrument / Logical Track protobuf schema，不实现 Damaged Placeholder、旧版本迁移、Embedded SF2 复制或 WPF Modified/Undo 接线。非空对象集合和 Embedded SF2 必须显式拒绝，不能静默丢弃；后续垂直切片在发布对应 `.proto`、descriptor 与 golden bytes 后解除限制。
+
+`project.json` v1 预留并严格定义 Event Instrument / Logical Track 索引项结构，但本切片只接受空索引；这使后续对象 `.pb` 切片无需重新解释 Project 身份、顺序、路径和名称快照。`export-settings.json` v1 仅确认固定顶层设置对象存在，不提前选择 SRS 尚未固定的默认导出模式；Audio Render 与 Playback 只保存 SRS 已固定的字段和默认值。Audio Render 的有限命名偏好按已确认的固定分 Track 模板记录为 `project-order-number-and-track-name`，不重新开放“是否包含 Track 序号”的可选分支。

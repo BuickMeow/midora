@@ -92,6 +92,16 @@ public sealed class ProjectMetadata
         TotalEditingTimeMilliseconds = value;
     }
 
+    internal void CommitSuccessfulSave(DateTimeOffset modifiedAtUtc)
+    {
+        DateTimeOffset value = modifiedAtUtc.ToUniversalTime();
+        if (value < CreatedAtUtc)
+        {
+            throw new ArgumentOutOfRangeException(nameof(modifiedAtUtc));
+        }
+        ModifiedAtUtc = value;
+    }
+
     internal void BeginEditingTimeSession()
     {
         if (Interlocked.CompareExchange(ref _editingTimeSessionActive, 1, 0) != 0)

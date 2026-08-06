@@ -61,6 +61,54 @@
     "rgbColor": {
       "type": "string",
       "pattern": "^#[0-9a-f]{6}$"
+    },
+    "midiState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["controllers", "registeredParameters", "nonRegisteredParameters"],
+      "properties": {
+        "bankMsb": { "type": "integer", "minimum": 0, "maximum": 127 },
+        "bankLsb": { "type": "integer", "minimum": 0, "maximum": 127 },
+        "program": { "type": "integer", "minimum": 0, "maximum": 127 },
+        "pitchBend": { "type": "integer", "minimum": -8192, "maximum": 8191 },
+        "pitchBendRangeSemitones": { "type": "integer", "minimum": 0, "maximum": 127 },
+        "pitchBendRangeCents": { "type": "integer", "minimum": 0, "maximum": 99 },
+        "controllers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/controllerStateEntry" }
+        },
+        "registeredParameters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/parameterStateEntry" }
+        },
+        "nonRegisteredParameters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/parameterStateEntry" }
+        }
+      }
+    },
+    "controllerStateEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "value"],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 119,
+          "not": { "enum": [91, 93] }
+        },
+        "value": { "type": "integer", "minimum": 0, "maximum": 127 }
+      }
+    },
+    "parameterStateEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "value"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 0, "maximum": 16383 },
+        "value": { "type": "integer", "minimum": 0, "maximum": 16383 }
+      }
     }
   }
 }

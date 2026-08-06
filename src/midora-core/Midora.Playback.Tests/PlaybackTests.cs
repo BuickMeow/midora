@@ -662,6 +662,7 @@ public sealed class PlaybackTests
             ProjectCompilationSession session = new(project, soundFont);
             using PlaybackController controller = new(session, backend);
             controller.Start();
+            MidiRenderPlan cachedBeforeFault = session.GetOrCreateRenderPlan(48_000);
             backend.PositionFrames = 12_000;
             backend.IsFaulted = true;
             backend.FaultDescription = "synthetic backend fault";
@@ -673,6 +674,7 @@ public sealed class PlaybackTests
             Assert.False(session.EditsLocked);
             Assert.Contains("synthetic", controller.LastError?.Message);
             Assert.Equal(240, controller.CurrentTick);
+            Assert.NotSame(cachedBeforeFault, session.GetOrCreateRenderPlan(48_000));
 
             backend.IsFaulted = false;
             controller.Start();

@@ -399,9 +399,7 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
                 Volatile.Write(ref device._defaultDeviceChanged, 1);
             }
 
-            if ((notify & BASSWASAPI.BASS_WASAPI_NOTIFY_FAIL) != 0
-                || (notify == BASSWASAPI.BASS_WASAPI_NOTIFY_DISABLED
-                    && deviceIndex == (uint)device._deviceIndex))
+            if (IsDeviceLossNotification(notify, deviceIndex, device._deviceIndex))
             {
                 Volatile.Write(ref device._deviceLost, 1);
             }
@@ -411,4 +409,14 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
             // Native notification boundary: no exception may escape.
         }
     }
+
+    internal static bool IsDeviceLossNotification(uint notify, uint deviceIndex, int selectedDeviceIndex) =>
+        deviceIndex == (uint)selectedDeviceIndex
+        && notify is BASSWASAPI.BASS_WASAPI_NOTIFY_DISABLED or BASSWASAPI.BASS_WASAPI_NOTIFY_FAIL;
+
+    public static bool IsOutputSelectionInvalidated(
+        bool followsSystemDefault,
+        bool defaultDeviceChanged,
+        bool deviceLost) =>
+        deviceLost || (followsSystemDefault && defaultDeviceChanged);
 }

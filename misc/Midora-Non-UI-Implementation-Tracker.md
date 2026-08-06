@@ -99,6 +99,7 @@
 | 2026-08-06 | 运行中关闭 Loop 冷重启 | 关闭时从当前 tick 重建到原请求/自然终点；已越过原显式终点直接完成；同值设置 no-op；不再消费旧 loopEnd 裁剪计划；Playback 42 tests；10 个测试项目累计 690 tests；Core 全解 584 tests | 通过，0 failure |
 | 2026-08-06 | WASAPI 严格设备枚举与 UTF-8 模式 | BASS Init/设备枚举前启用并回读 UTF-8；只允许 BASS_ERROR_DEVICE 正常终止；异常不返回部分列表；enabled/present/output 过滤与 Open 时复核；空/重复 ID 拒绝；BASS 71 tests、WASAPI 32 tests；10 个测试项目累计 705 tests | 通过，0 failure |
 | 2026-08-06 | Buffering 音乐位置冻结 | 本地/共享 ring underrun 整块静音且返回 0 consumed frame；read position 与已缓冲数据不动；WASAPI 拒绝 Buffering+非零消费协议；BASS 72 tests、WASAPI 33 tests；10 个测试项目累计 707 tests | 通过，0 failure |
+| 2026-08-06 | WASAPI 设备变化故障传播 | 只把当前设备 disabled/fail 认定为丢失；系统默认选择跟随默认映射变化、显式设备不误停；正式 Worker 与对照 backend 并入不可恢复 fault；WASAPI 35 tests；10 个测试项目累计 709 tests | 通过，0 failure |
 
 ## 7. 未解决风险
 

@@ -41,6 +41,8 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
     private long _lastRenderingAllocatedBytes;
     private long _lastUnderrunCount;
     private bool _lastCallbackFaulted;
+    private bool _lastDeviceLost;
+    private bool _lastDefaultDeviceChanged;
     private AudioRenderFault _lastRendererFault = AudioRenderFault.None;
     private bool _disposed;
 
@@ -70,13 +72,21 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
     public long RenderingThreadAllocatedBytes => _worker?.RenderingThreadAllocatedBytes ?? _lastRenderingAllocatedBytes;
     public long UnderrunCount => _ring?.UnderrunCount ?? _lastUnderrunCount;
     public bool CallbackFaulted => _output?.CallbackFaulted ?? _lastCallbackFaulted;
+    public bool DeviceLost => _output?.DeviceLost ?? _lastDeviceLost;
+    public bool DefaultDeviceChanged => _output?.DefaultDeviceChanged ?? _lastDefaultDeviceChanged;
+    public bool OutputSelectionInvalidated => BassWasapiOutputDevice.IsOutputSelectionInvalidated(
+        _options.DeviceId is null,
+        DefaultDeviceChanged,
+        DeviceLost);
     public AudioRenderFault RendererFault => _renderer?.Fault ?? _lastRendererFault;
     public AudioOutputDeviceInfo? SelectedDevice => _output?.Info ?? _device;
     public bool IsCompleted => _ring is not null && _ring.ProducerCompleted && _ring.AvailableFrameCount == 0;
-    public bool IsFaulted => CallbackFaulted || _ring?.ProducerFaulted == true
+    public bool IsFaulted => CallbackFaulted || OutputSelectionInvalidated || _ring?.ProducerFaulted == true
         || RendererFault.Code != AudioRenderFaultCode.None;
     public string? FaultDescription => IsFaulted
-        ? $"callbackFault={CallbackFaulted}; producerFault={_ring?.ProducerFaulted == true}; rendererFault={RendererFault}"
+        ? $"callbackFault={CallbackFaulted}; deviceLost={DeviceLost}; "
+            + $"defaultMappingChanged={_options.DeviceId is null && DefaultDeviceChanged}; "
+            + $"producerFault={_ring?.ProducerFaulted == true}; rendererFault={RendererFault}"
         : null;
 
     public int Prepare()
@@ -247,6 +257,8 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
         _lastRenderingAllocatedBytes = _worker?.RenderingThreadAllocatedBytes ?? _lastRenderingAllocatedBytes;
         _lastUnderrunCount = _ring?.UnderrunCount ?? _lastUnderrunCount;
         _lastCallbackFaulted = _output?.CallbackFaulted ?? _lastCallbackFaulted;
+        _lastDeviceLost = _output?.DeviceLost ?? _lastDeviceLost;
+        _lastDefaultDeviceChanged = _output?.DefaultDeviceChanged ?? _lastDefaultDeviceChanged;
         _lastRendererFault = _renderer?.Fault ?? _lastRendererFault;
 
         Exception? failure = null;

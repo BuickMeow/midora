@@ -730,6 +730,7 @@ public sealed class PlaybackController : IDisposable
         {
             cleanupError = exception;
         }
+        _session.InvalidateSampleDomainCaches();
         _activeResult = null;
         _activePlan = null;
         _activeTempoMap = null;

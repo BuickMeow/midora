@@ -153,4 +153,42 @@ public sealed class BassWasapiInitializationPolicyTests
         Assert.False(BassWasapiOutputDevice.IsValidCallbackPullResult(
             AudioPullResult.Continue(257), 256));
     }
+
+    [Fact]
+    public void OnlySelectedDeviceDisableOrFailureIsADeviceLoss()
+    {
+        Assert.True(BassWasapiOutputDevice.IsDeviceLossNotification(
+            BASSWASAPI.BASS_WASAPI_NOTIFY_DISABLED, 7, 7));
+        Assert.True(BassWasapiOutputDevice.IsDeviceLossNotification(
+            BASSWASAPI.BASS_WASAPI_NOTIFY_FAIL, 7, 7));
+        Assert.False(BassWasapiOutputDevice.IsDeviceLossNotification(
+            BASSWASAPI.BASS_WASAPI_NOTIFY_DISABLED, 8, 7));
+        Assert.False(BassWasapiOutputDevice.IsDeviceLossNotification(
+            BASSWASAPI.BASS_WASAPI_NOTIFY_FAIL, 8, 7));
+        Assert.False(BassWasapiOutputDevice.IsDeviceLossNotification(
+            BASSWASAPI.BASS_WASAPI_NOTIFY_ENABLED, 7, 7));
+        Assert.False(BassWasapiOutputDevice.IsDeviceLossNotification(
+            BASSWASAPI.BASS_WASAPI_NOTIFY_DEFOUTPUT, 7, 7));
+    }
+
+    [Fact]
+    public void DefaultMappingChangeInvalidatesOnlySystemDefaultSelection()
+    {
+        Assert.True(BassWasapiOutputDevice.IsOutputSelectionInvalidated(
+            followsSystemDefault: true,
+            defaultDeviceChanged: true,
+            deviceLost: false));
+        Assert.False(BassWasapiOutputDevice.IsOutputSelectionInvalidated(
+            followsSystemDefault: false,
+            defaultDeviceChanged: true,
+            deviceLost: false));
+        Assert.False(BassWasapiOutputDevice.IsOutputSelectionInvalidated(
+            followsSystemDefault: true,
+            defaultDeviceChanged: false,
+            deviceLost: false));
+        Assert.True(BassWasapiOutputDevice.IsOutputSelectionInvalidated(
+            followsSystemDefault: false,
+            defaultDeviceChanged: false,
+            deviceLost: true));
+    }
 }

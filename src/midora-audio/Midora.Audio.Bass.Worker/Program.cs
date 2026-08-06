@@ -205,11 +205,17 @@ public static class Program
                     MemoryMarshal.CreateReadOnlySpan(ref monitoring, 1));
             }
 
-            if (output.CallbackFaulted || ring.ProducerFaulted
+            bool outputSelectionInvalidated = BassWasapiOutputDevice.IsOutputSelectionInvalidated(
+                requestedDeviceId is null,
+                output.DefaultDeviceChanged,
+                output.DeviceLost);
+            if (output.CallbackFaulted || outputSelectionInvalidated || ring.ProducerFaulted
                 || renderer.Fault.Code != AudioRenderFaultCode.None)
             {
                 throw new MidoraAudioException(
-                    $"Audio worker fault: callback={output.CallbackFaulted}; ring={ring.ProducerFaulted}; renderer={renderer.Fault}.");
+                    $"Audio worker fault: callback={output.CallbackFaulted}; deviceLost={output.DeviceLost}; "
+                    + $"defaultMappingChanged={requestedDeviceId is null && output.DefaultDeviceChanged}; "
+                    + $"ring={ring.ProducerFaulted}; renderer={renderer.Fault}.");
             }
 
             completed = ring.ProducerCompleted && ring.AvailableFrameCount == 0;

@@ -7,6 +7,7 @@ namespace Midora.Domain;
 internal static class ProjectTextRules
 {
     public const int ShortTextMaximumScalars = 256;
+    public const int MetadataTextMaximumScalars = 4_096;
     public const int DescriptionMaximumScalars = 65_536;
     public const int MappingBodyMaximumScalars = 1_048_576;
 
@@ -67,6 +68,22 @@ internal static class ProjectTextRules
         return value;
     }
 
+    public static string ValidateShortTextContent(
+        string value,
+        string parameterName) =>
+        ValidateSingleLineContent(
+            value,
+            ShortTextMaximumScalars,
+            parameterName);
+
+    public static string ValidateMetadataText(
+        string value,
+        string parameterName) =>
+        ValidateSingleLineContent(
+            value,
+            MetadataTextMaximumScalars,
+            parameterName);
+
     public static string ValidateMappingBody(string value, string parameterName)
     {
         ArgumentNullException.ThrowIfNull(value, parameterName);
@@ -101,6 +118,22 @@ internal static class ProjectTextRules
             }
             remaining = remaining[charactersConsumed..];
         }
+    }
+
+    private static string ValidateSingleLineContent(
+        string value,
+        int maximumScalars,
+        string parameterName)
+    {
+        ArgumentNullException.ThrowIfNull(value, parameterName);
+        ValidateUnicodeAndControls(value, parameterName);
+        if (CountScalars(value) > maximumScalars)
+        {
+            throw new ArgumentException(
+                $"The value must contain at most {maximumScalars} Unicode scalars.",
+                parameterName);
+        }
+        return value;
     }
 
     private static int CountScalars(string value)

@@ -73,6 +73,11 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(renderAheadMilliseconds));
         }
+        InitialReleaseAudioWorkerProtocolPolicy.ValidateRealtimeSettings(
+            rendererSettings,
+            masterSettings,
+            renderAheadMilliseconds,
+            deviceBufferRequestMilliseconds);
         if (!File.Exists(soundFontPath))
         {
             throw new FileNotFoundException(

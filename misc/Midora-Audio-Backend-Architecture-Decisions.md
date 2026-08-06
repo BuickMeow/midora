@@ -117,6 +117,8 @@ Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domai
 
 实时 Worker 启动事务先验证并冻结现存 SF2、Worker 和原生目录的绝对路径，再依次取得私有计划目录、MDAP、共享控制区和子进程；任何一步失败都反向释放已经取得的资源并删除私有计划目录。子进程启动后立即并发排空 stdout/stderr，不能等到 `WaitForExit` 之后才读取而形成重定向管道背压死锁；Preparing 的 Faulted、探测完成和显式 Stop 均须在同一个有界期限内等待退出，逾期强制结束。监控线程自身的异常必须被截获并提升为任务故障，不能越过线程边界成为未处理异常或让父进程无限等待。
 
+Worker 是独立的协议校验边界，不能只信任当前父进程会生成合法命令行。`probe/play/file-probe/file-render` 的文件与目录输入必须是现存的 fully-qualified 路径，文件渲染目标必须是 fully-qualified、父目录现存且尚未占用的新路径；协议布尔只接受精确 `0`/`1`。正式实时与文件模式只接受最大 256-frame 工作块、规定 buffer 值域和 Limiter v1 固定 ceiling/release；文件模式还强制 Limiter enabled 与 8,000～192,000 Hz。MDAP 解析与全部纯托管策略校验必须先于加载原生库，非法输入统一在 Preparing 失败并发布 Faulted。
+
 音频 Worker 固定以 `win-x64` Native AOT、自包含发布，正式运行不依赖 JIT；不生成或接受 x86、Arm64、AnyCPU Worker 作为初版正式产物。主应用、Worker 与 BASS/BASSMIDI/BASSWASAPI 必须全部为 x64。Native AOT 只消除 JIT 路径，不保证线程调度、原生库或设备行为确定，因此零分配、deadline、underrun、IPC 延迟和故障恢复门仍须独立验收。
 
 状态：已接受并作为初版唯一正式拓扑。旧的进程内链和“子进程合成、主进程 WASAPI”链仅保留为开发期对照测试，不得成为产品回退路径。

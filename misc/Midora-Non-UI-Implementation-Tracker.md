@@ -46,7 +46,7 @@
 - 2026-08-06 提交 `4b69e72` 完成 `.midora` 空对象图基础垂直切片；Release 构建通过，累计 330 个自动测试通过。
 - 2026-08-06 提交 `61b7042` 完成 Event Instrument / Logical Track protobuf v1、对象级损坏隔离与可撤销删除、Embedded SF2 正常资源流式 package 链。
 - `misc/Midora-SRS-Code-Conformance-Audit-2026-08-05.md` 记录的 1A～25.1A 均视为已确认决定，不再询问。
-- 当前有 4 个未闭合的产品所有者重大决定：Q-NUI-002（初版 `.midora` 历史格式基线）、Q-NUI-003（Project MIDI Export Settings v2 字段/默认值）、Q-NUI-005（ID 分配型 Undo 和 `nextStableId`/Modified 关系）与 Q-NUI-009（Logical Parameter Definition 结构变更的既有 Lane 迁移）；分别只暂停成功迁移器、Export Settings schema/领域默认分支、创建/复制/分割类 History 命令和需要迁移 Lane 的 Definition 编辑。Q-NUI-004、Q-NUI-006、Q-NUI-007、Q-NUI-008 是已按推荐方案落地、仍待确认的小决定。Q-NUI-001 已按推荐方案确认并实现。
+- 当前有 5 个未闭合的产品所有者重大决定：Q-NUI-002（初版 `.midora` 历史格式基线）、Q-NUI-003（Project MIDI Export Settings v2 字段/默认值）、Q-NUI-005（ID 分配型 Undo 和 `nextStableId`/Modified 关系）、Q-NUI-009（Logical Parameter Definition 结构变更的既有 Lane 迁移）与 Q-NUI-011（共享音频状态快照 ABI v2 并发契约）；分别只暂停成功迁移器、Export Settings schema/领域默认分支、创建/复制/分割类 History 命令、需要迁移 Lane 的 Definition 编辑和共享状态快照协议升级。Q-NUI-004、Q-NUI-006、Q-NUI-007、Q-NUI-008、Q-NUI-010 是已按推荐方案落地、仍待确认的小决定。Q-NUI-001 已按推荐方案确认并实现。
 
 ## 5. 当前实施顺序
 
@@ -105,6 +105,7 @@
 | 2026-08-06 | MDAP v2 严格有界解析 | 写前完整大小门；读前剩余 payload 计数门；reserved 必须为零；校验和有效的非法 Port/保留位/伪造大计数统一拒绝；BASS 83 tests；10 个测试项目累计 726 tests | 通过，0 failure |
 | 2026-08-06 | 共享内存 ABI v1 损坏闭包 | ring 单调/容量/溢出门先于指针运算；Stop/Monitoring 全 payload 与 reserved 双向校验；整批失败无前缀；状态/映射/header/Dispose 边界；BASS 97 tests；10 个测试项目累计 740 tests | 通过，0 failure |
 | 2026-08-06 | 实时 Worker 启动失败原子性与输出排空 | SF2/Worker/native 绝对路径门；计划目录/MDAP/共享区/管道/进程逐层反向回收；stdout/stderr 启动后并发排空；Faulted/Probe/Stop 有界退出；监控异常任务化；BASS 99 tests；10 个测试项目累计 742 tests | 通过，0 failure |
+| 2026-08-06 | Native AOT Worker 输入协议门 | fully-qualified 现存输入/新输出；0/1 布尔；实时/文件 256-frame、buffer、Limiter v1 与文件采样率门；MDAP/策略先于原生加载；独立进程验证非法相对路径发布 Faulted；BASS 114 tests；10 个测试项目累计 757 tests | 通过，0 failure |
 
 ## 7. 未解决风险
 
@@ -116,3 +117,4 @@
 - 十三批不分配稳定 ID 的结构/设置/音乐内容编辑命令已接入统一 History；Project Metadata/Track Color、External SoundFont 与安全的 Logical Parameter Definition/Mapping/Target Settings 属性已覆盖，需要迁移既有 Lane 的 Definition 类型/Enum 结构/range 分支等待 Q-NUI-009，Embedded SoundFont 与创建/复制/分割类命令等待 Q-NUI-005。
 - Audio Render 的 canonical/输出事务、正式 Native AOT 文件链、应用级单音频任务锁和开始渲染前自动 Stop 已完成；实时硬件压力与集中人工试听仍属于 NUI-09/NUI-11。
 - 实际 BASS DLL、物理 WASAPI 设备、设备移除和人耳听音不能只凭无设备 CI 结论替代。
+- 共享控制 ABI v1 已闭合字段/ring 损坏边界，但整组状态快照仍可能跨两次同状态发布混合；ABI v2 seqlock/双缓冲选择等待 Q-NUI-011，不能把逐字段原子误报为整快照原子。

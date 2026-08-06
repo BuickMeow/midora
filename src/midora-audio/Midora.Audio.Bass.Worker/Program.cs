@@ -94,9 +94,15 @@ public static class Program
     private static int RunProbe(string[] args, SharedAudioWorkerControl control)
     {
         control.PublishState(AudioWorkerState.Preparing);
-        string nativeDirectory = args[2];
+        string nativeDirectory = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingDirectory(
+            args[2],
+            "native library");
         string? requestedDeviceId = EmptyToNull(args[3]);
         int deviceBufferRequestMilliseconds = ParseInt32(args[4]);
+        if (deviceBufferRequestMilliseconds is < 5 or > 200)
+        {
+            throw new InvalidDataException("Device Buffer Request must be 5-200 ms.");
+        }
         LoadBassLibraries(nativeDirectory, includeWasapi: true);
 
         BassWasapiOutputDeviceFactory factory = new(
@@ -120,9 +126,15 @@ public static class Program
     private static int RunPlayback(string[] args, SharedAudioWorkerControl control)
     {
         control.PublishState(AudioWorkerState.Preparing);
-        string planPath = args[2];
-        string soundFontPath = args[3];
-        string nativeDirectory = args[4];
+        string planPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
+            args[2],
+            "render plan");
+        string soundFontPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
+            args[3],
+            "SoundFont");
+        string nativeDirectory = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingDirectory(
+            args[4],
+            "native library");
         string? requestedDeviceId = EmptyToNull(args[5]);
         int renderAheadMilliseconds = ParseInt32(args[6]);
         int deviceBufferRequestMilliseconds = ParseInt32(args[7]);
@@ -133,15 +145,24 @@ public static class Program
             ParseSingle(args[10]),
             ParseSingle(args[11]),
             ParseSingle(args[12]),
-            ParseInt32(args[13]) != 0);
+            InitialReleaseAudioWorkerProtocolPolicy.ParseBoolean(args[13], "limiterEnabled"));
+        InitialReleaseAudioWorkerProtocolPolicy.ValidateRealtimeSettings(
+            rendererSettings,
+            masterSettings,
+            renderAheadMilliseconds,
+            deviceBufferRequestMilliseconds);
         int expectedSampleRate = ParseInt32(args[14]);
+        if (expectedSampleRate <= 0)
+        {
+            throw new InvalidDataException("The expected realtime sample rate must be positive.");
+        }
 
-        LoadBassLibraries(nativeDirectory, includeWasapi: true);
         MidiRenderPlan plan = MidiRenderPlanFile.Read(planPath);
         if (plan.SampleRate != expectedSampleRate)
         {
             throw new InvalidDataException("The frozen render plan does not match the probed device rate.");
         }
+        LoadBassLibraries(nativeDirectory, includeWasapi: true);
 
         using BassMidiRenderer renderer = new(
             plan,
@@ -253,13 +274,21 @@ public static class Program
     private static int RunFileProbe(string[] args, SharedAudioWorkerControl control)
     {
         control.PublishState(AudioWorkerState.Preparing);
-        string soundFontPath = args[2];
-        string nativeDirectory = args[3];
+        string soundFontPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
+            args[2],
+            "SoundFont");
+        string nativeDirectory = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingDirectory(
+            args[3],
+            "native library");
         int sampleRate = ParseInt32(args[4]);
         BassMidiRendererSettings rendererSettings = new(
             ParseInt32(args[5]),
             InitialReleaseAudioRuntimePolicy.WorkFrameCount);
         AudioMasterSettings masterSettings = ParseRequiredFileMasterSettings(args, 6);
+        InitialReleaseAudioWorkerProtocolPolicy.ValidateFileSettings(
+            rendererSettings,
+            masterSettings,
+            sampleRate);
 
         LoadBassLibraries(nativeDirectory, includeWasapi: false);
         MidiRenderPlan plan = new(sampleRate, 0, []);
@@ -276,17 +305,29 @@ public static class Program
     private static int RunFileRender(string[] args, SharedAudioWorkerControl control)
     {
         control.PublishState(AudioWorkerState.Preparing);
-        string planPath = args[2];
-        string soundFontPath = args[3];
-        string nativeDirectory = args[4];
-        string temporaryOutputPath = args[5];
+        string planPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
+            args[2],
+            "render plan");
+        string soundFontPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
+            args[3],
+            "SoundFont");
+        string nativeDirectory = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingDirectory(
+            args[4],
+            "native library");
+        string temporaryOutputPath = InitialReleaseAudioWorkerProtocolPolicy.RequireNewFileTarget(
+            args[5],
+            "temporary WAV");
         BassMidiRendererSettings rendererSettings = new(
             ParseInt32(args[6]),
             InitialReleaseAudioRuntimePolicy.WorkFrameCount);
         AudioMasterSettings masterSettings = ParseRequiredFileMasterSettings(args, 7);
 
-        LoadBassLibraries(nativeDirectory, includeWasapi: false);
         MidiRenderPlan plan = MidiRenderPlanFile.Read(planPath);
+        InitialReleaseAudioWorkerProtocolPolicy.ValidateFileSettings(
+            rendererSettings,
+            masterSettings,
+            plan.SampleRate);
+        LoadBassLibraries(nativeDirectory, includeWasapi: false);
         using BassMidiRenderer renderer = new(
             plan,
             soundFontPath,
@@ -344,14 +385,9 @@ public static class Program
             ParseSingle(args[offset]),
             ParseSingle(args[offset + 1]),
             ParseSingle(args[offset + 2]),
-            ParseInt32(args[offset + 3]) != 0);
-        if (!result.LimiterEnabled
-            || result.LimiterCeiling != 1f
-            || result.LimiterReleaseMilliseconds != 50f)
-        {
-            throw new InvalidDataException(
-                "Initial-release file rendering requires the fixed Limiter v1 chain.");
-        }
+            InitialReleaseAudioWorkerProtocolPolicy.ParseBoolean(
+                args[offset + 3],
+                "limiterEnabled"));
         return result;
     }
 

@@ -16,6 +16,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Midora.Audio.Bass.Worker" />
     <InternalsVisibleTo Include="Midora.Audio.Bass.Tests" />
     <InternalsVisibleTo Include="Midora.Audio.Bass.Tests.Console" />
   </ItemGroup>

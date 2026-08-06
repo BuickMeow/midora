@@ -364,3 +364,13 @@ Requirement trace：输入为当前 `.midora` 绝对路径、用户选择的绝�
 可读文件建立 `FileSystemWatcher` 只作为失效提示；Changed/Created/Deleted/Renamed/Error 都递增失效代次并使下一次验证重新执行完整 SHA-256。监控不能替代每次消费前对当前文件 stamp 的同步检查；验证期间收到失效时最多自动重试两次，持续变化则失败，不能发布一个已知过期的“可用”结果。被动验证只返回当前 hash/大小及 mismatch Warning，不修改 Project 引用或 Modified。
 
 Requirement trace：输入为当前 `.midora` 绝对路径、External source reference、当前文件系统状态、强制复核标志和取消令牌；正式输出为精确/唯一 ignore-case/缺失/歧义/不可读解析状态、当前内容身份、hash match、文件 stamp 和会话缓存，或持续变化/取消失败。边界是 Windows 初版文件身份、完整原始字节 SHA-256、单 Project 会话 watcher 和缓存失效代次；Win32 handle、绝对路径、watcher、stamp 与缓存计数均只属于运行时。明确非目标是把监控结果持久化、用 mtime 代替首次 hash，以及尚未完成的 Project 打开/首次音频任务状态机接线。
+
+## 24. ADR-CORE-022（已接受）：Project SoundFont 运行时可用状态与音频消费门
+
+决定：每个打开 Project 建立一个非持久化 `ProjectSoundFontRuntimeSession`。打开后状态先为 NotVerified/Verifying；无引用进入 NoReference，External 必须经 ADR-CORE-021 完整 hash/cache 验证和正式 `ISoundFontLoadabilityValidator`，Embedded 必须持有与 source reference 完全匹配的可用资源租约并通过同一后端加载验证。缺失、歧义、不可读、格式/损坏、后端不可用和 Embedded 资源错配分别保留稳定状态，不阻止 Project 打开、编译或 MIDI Export。External hash mismatch 与唯一 ignore-case fallback 在加载成功时仍为 Available，但 `RequiresWarning=true`，绝不被动改写 source hash。
+
+验证开始先在 `ProjectCompilationSession` 锁内按预期 source reference 清空 effective path；验证成功也只在 source reference 仍相同时提交路径，旧异步结果不能覆盖并发选择/Undo/Redo。任一 SoundFont source History 变化通过 CompilationChanged 立即把新引用标为 VerificationRequired 并清空选择命令临时设置的路径，要求运行时再验证后才可消费。watcher 失效同样清空路径；即使 Project Edit Lock 正由播放持有，资源失效也允许清空未来消费入口，并由 `ApplicationTaskCoordinator` 自动 Stop 当前播放/预览、释放编辑锁。旧资源 watcher 只绑定其已验证 reference，不能清除后来选择的新资源。
+
+播放和预览 admission 在启动前调用同步 stamp gate：只有 runtime 状态 Available、External 缓存未失效且绝对路径/file ID/size/mtime 仍匹配，或 Embedded 租约快照路径仍存在，才允许进入 PlaybackController。stamp 不匹配时先失效并拒绝启动，完整复核由异步 Refresh 完成。Audio Render 仍使用其任务私有 SF2 冻结流程并执行完整内容复核，不复用实时路径替代冻结。
+
+Requirement trace：输入为打开 Project 的 source reference、当前 `.midora` 路径、可选 Embedded 资源租约、验证缓存、正式后端验证器、编译会话和播放任务协调器；正式输出为结构化 runtime availability、有效绝对路径、Warning 标志和音频 admission 结果。边界是单 Project session、预期 reference 比较、Project Edit Lock、监控失效、启动前 stamp gate 与自动 Stop。失败只改变运行时可用状态，不改 Project/Modified/canonical；状态、绝对路径、watcher、cache、lease 和 BASS error 不持久化。明确非目标是 WPF 状态展示，以及 Q-NUI-005 决定前 Embedded 选择/替换 History 的 ID 与跨分支租约所有权。

@@ -146,6 +146,51 @@ public sealed class ExternalSoundFontVerificationCacheV1 : IDisposable
 
     public void Invalidate() => InvalidateCore(ignoreDisposed: false);
 
+    public bool TryConfirmCurrent(
+        ExternalProjectSoundFontReference reference)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        CacheEntry? cached;
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            cached = !_invalidated && _cached?.Reference == reference
+                ? _cached
+                : null;
+        }
+        if (cached is null)
+        {
+            return false;
+        }
+
+        ExternalSoundFontFileStampV1 current;
+        try
+        {
+            current = SoundFontFileSnapshotReaderV1.CaptureStamp(
+                cached.Stamp.ResolvedAbsolutePath);
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or Win32Exception)
+        {
+            InvalidateCore(ignoreDisposed: false);
+            return false;
+        }
+
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_invalidated
+                && ReferenceEquals(_cached, cached)
+                && cached.Matches(reference, current))
+            {
+                return true;
+            }
+        }
+        InvalidateCore(ignoreDisposed: false);
+        return false;
+    }
+
     public void Dispose()
     {
         FileSystemWatcher? watcher;

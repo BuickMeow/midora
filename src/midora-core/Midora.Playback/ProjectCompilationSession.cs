@@ -206,6 +206,69 @@ public sealed class ProjectCompilationSession : IDisposable
         }
     }
 
+    public bool TryBeginSoundFontVerification(
+        ProjectSoundFontReference? expectedReference)
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_editLockCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "The effective SoundFont cannot be verified while a Project edit lock is active.");
+            }
+            if (Project.SoundFont.Reference != expectedReference)
+            {
+                return false;
+            }
+            EffectiveSoundFontPath = null;
+            _samplePlans.Clear();
+            return true;
+        }
+    }
+
+    public bool TrySetVerifiedSoundFontPath(
+        ProjectSoundFontReference expectedReference,
+        string value)
+    {
+        ArgumentNullException.ThrowIfNull(expectedReference);
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        string path = Path.GetFullPath(value);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_editLockCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "The effective SoundFont cannot change while a Project edit lock is active.");
+            }
+            if (Project.SoundFont.Reference != expectedReference)
+            {
+                return false;
+            }
+            EffectiveSoundFontPath = path;
+            _samplePlans.Clear();
+            return true;
+        }
+    }
+
+    public bool TryInvalidateSoundFontResource(
+        ProjectSoundFontReference expectedReference)
+    {
+        ArgumentNullException.ThrowIfNull(expectedReference);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (Project.SoundFont.Reference != expectedReference)
+            {
+                return false;
+            }
+            EffectiveSoundFontPath = null;
+            _samplePlans.Clear();
+            return true;
+        }
+    }
+
     public long SnapshotTotalEditingTimeMilliseconds()
     {
         lock (_sync)

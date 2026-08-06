@@ -121,6 +121,7 @@ public sealed class ApplicationTaskCoordinator : IDisposable
     private readonly object _sync = new();
     private readonly ProjectCompilationSession _session;
     private readonly PlaybackController _playback;
+    private readonly ProjectSoundFontRuntimeSession? _soundFontRuntime;
     private ApplicationTaskKind _activeTaskKind;
     private ApplicationTaskKind _pendingTaskKind;
     private ApplicationTaskPhase _phase;
@@ -132,11 +133,17 @@ public sealed class ApplicationTaskCoordinator : IDisposable
 
     public ApplicationTaskCoordinator(
         ProjectCompilationSession session,
-        PlaybackController playback)
+        PlaybackController playback,
+        ProjectSoundFontRuntimeSession? soundFontRuntime = null)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _playback = playback ?? throw new ArgumentNullException(nameof(playback));
+        _soundFontRuntime = soundFontRuntime;
         _playback.StateChanged += PlaybackStateChanged;
+        if (_soundFontRuntime is not null)
+        {
+            _soundFontRuntime.AvailabilityChanged += SoundFontAvailabilityChanged;
+        }
     }
 
     public ApplicationTaskKind ActiveTaskKind
@@ -497,6 +504,10 @@ public sealed class ApplicationTaskCoordinator : IDisposable
             }
             _disposed = true;
             _playback.StateChanged -= PlaybackStateChanged;
+            if (_soundFontRuntime is not null)
+            {
+                _soundFontRuntime.AvailabilityChanged -= SoundFontAvailabilityChanged;
+            }
             cancellation = _activeCancellation;
             stopPlayback = IsPlaybackTask(_activeTaskKind);
         }
@@ -539,6 +550,16 @@ public sealed class ApplicationTaskCoordinator : IDisposable
 
     private void StartPlaybackTask(ApplicationTaskKind taskKind, Action start)
     {
+        lock (_sync)
+        {
+            ThrowIfDisposed();
+        }
+        if (_soundFontRuntime is not null
+            && !_soundFontRuntime.TryConfirmReadyForAudioStart())
+        {
+            throw new InvalidOperationException(
+                "Playback or preview requires a currently verified Project SoundFont.");
+        }
         lock (_sync)
         {
             ThrowIfDisposed();
@@ -715,6 +736,47 @@ public sealed class ApplicationTaskCoordinator : IDisposable
                 case PlaybackState.Stopped:
                     ClearActiveTask();
                     break;
+            }
+        }
+    }
+
+    private void SoundFontAvailabilityChanged(object? sender, EventArgs e)
+    {
+        ProjectSoundFontAvailability availability;
+        try
+        {
+            availability = _soundFontRuntime?.Current.Availability
+                ?? ProjectSoundFontAvailability.NotVerified;
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+        if (availability != ProjectSoundFontAvailability.VerificationRequired)
+        {
+            return;
+        }
+
+        lock (_sync)
+        {
+            if (_disposed || !IsPlaybackTask(_activeTaskKind))
+            {
+                return;
+            }
+            _phase = ApplicationTaskPhase.Stopping;
+        }
+        try
+        {
+            _playback.Stop();
+        }
+        catch
+        {
+            lock (_sync)
+            {
+                if (IsPlaybackTask(_activeTaskKind))
+                {
+                    ClearActiveTask(ApplicationTaskPhase.Error);
+                }
             }
         }
     }

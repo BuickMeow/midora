@@ -1,11 +1,68 @@
 using Midora.Audio;
 using Midora.Domain;
+using Midora.Persistence;
 using Midora.Playback;
 
 namespace Midora.Application.Tests;
 
 public sealed class ApplicationTaskCoordinatorTests
 {
+    [Fact]
+    public async Task SoundFontMonitorInvalidationStopsActivePlaybackAndReleasesEditLock()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            $"midora-coordinator-sf2-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string projectPath = Path.Combine(directory, "Song.midora");
+            string soundFontPath = Path.Combine(directory, "Piano.sf2");
+            await File.WriteAllBytesAsync(soundFontPath, [1, 2, 3, 4]);
+            ExternalSoundFontBindingV1 binding = await SoundFontBindingV1.BindExternalAsync(
+                projectPath,
+                soundFontPath);
+            MidoraProject project = CreateProject();
+            project.SoundFont.SetReference(binding.Reference);
+            using ProjectCompilationSession session = new(project);
+            using ProjectSoundFontRuntimeSession soundFontRuntime = new(
+                session,
+                new AcceptingSoundFontValidator());
+            Assert.True((await soundFontRuntime.RefreshAsync(projectPath)).IsAvailable);
+            FakeBackend backend = new();
+            using PlaybackController playback = new(session, backend);
+            using ApplicationTaskCoordinator coordinator = new(
+                session,
+                playback,
+                soundFontRuntime);
+            TaskCompletionSource invalidated = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            soundFontRuntime.AvailabilityChanged += (_, _) =>
+            {
+                if (soundFontRuntime.Current.Availability
+                    == ProjectSoundFontAvailability.VerificationRequired)
+                {
+                    invalidated.TrySetResult();
+                }
+            };
+            coordinator.StartMainPlayback();
+
+            await File.WriteAllBytesAsync(soundFontPath, [5, 6, 7, 8]);
+            await invalidated.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(1, backend.StopCount);
+            Assert.Equal(PlaybackState.Stopped, playback.State);
+            Assert.Equal(ApplicationTaskKind.None, coordinator.ActiveTaskKind);
+            Assert.Equal(ApplicationTaskPhase.Idle, coordinator.Phase);
+            Assert.False(session.EditsLocked);
+            Assert.Null(session.EffectiveSoundFontPath);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task PlaybackOwnsSingleTaskAndExplicitCompileDoesNotAutoPreemptIt()
     {
@@ -458,6 +515,17 @@ public sealed class ApplicationTaskCoordinatorTests
             Playback.Dispose();
             Session.Dispose();
             File.Delete(_soundFontPath);
+        }
+    }
+
+    private sealed class AcceptingSoundFontValidator : ISoundFontLoadabilityValidator
+    {
+        public ValueTask ValidateAsync(
+            string soundFontPath,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
         }
     }
 

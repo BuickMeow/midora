@@ -29,6 +29,7 @@ public sealed class ExternalSoundFontVerificationCacheV1Tests
             Assert.True(first.HashMatches);
             Assert.NotNull(first.FileStamp);
             Assert.False(cache.IsInvalidated);
+            Assert.True(cache.TryConfirmCurrent(binding.Reference));
             Assert.Equal(1, cache.FullHashComputationCount);
 
             ExternalSoundFontVerificationV1 forced = await cache.VerifyAsync(
@@ -108,6 +109,44 @@ public sealed class ExternalSoundFontVerificationCacheV1Tests
             Assert.NotEqual(before.FileId, after.FileId);
             Assert.Equal(before.FileSizeBytes, after.FileSizeBytes);
             Assert.Equal(before.LastWriteFileTimeUtc, after.LastWriteFileTimeUtc);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AudioStartStampGateRejectsSameMetadataFileReplacement()
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            string projectPath = Path.Combine(directory, "Song.midora");
+            string soundFontPath = Path.Combine(directory, "Piano.sf2");
+            string replacementPath = Path.Combine(directory, "Replacement.sf2");
+            await File.WriteAllBytesAsync(soundFontPath, [1, 2, 3, 4]);
+            ExternalSoundFontBindingV1 binding = await SoundFontBindingV1.BindExternalAsync(
+                projectPath,
+                soundFontPath);
+            using ExternalSoundFontVerificationCacheV1 cache = new();
+            ExternalSoundFontVerificationV1 verified = await cache.VerifyAsync(
+                projectPath,
+                binding.Reference);
+            ExternalSoundFontFileStampV1 stamp = Assert.IsType<ExternalSoundFontFileStampV1>(
+                verified.FileStamp);
+            await File.WriteAllBytesAsync(replacementPath, [5, 6, 7, 8]);
+            File.SetLastWriteTimeUtc(
+                replacementPath,
+                DateTime.FromFileTimeUtc(stamp.LastWriteFileTimeUtc));
+            File.Move(replacementPath, soundFontPath, overwrite: true);
+            File.SetLastWriteTimeUtc(
+                soundFontPath,
+                DateTime.FromFileTimeUtc(stamp.LastWriteFileTimeUtc));
+
+            Assert.False(cache.TryConfirmCurrent(binding.Reference));
+            Assert.True(cache.IsInvalidated);
+            Assert.Equal(1, cache.FullHashComputationCount);
         }
         finally
         {

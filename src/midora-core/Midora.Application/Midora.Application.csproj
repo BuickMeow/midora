@@ -11,4 +11,7 @@
     <ProjectReference Include="..\Midora.Persistence\Midora.Persistence.csproj" />
     <ProjectReference Include="..\Midora.Playback\Midora.Playback.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Midora.Application.Tests" />
+  </ItemGroup>
 </Project>

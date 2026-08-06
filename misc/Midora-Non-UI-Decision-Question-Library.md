@@ -194,10 +194,10 @@
 - 已确认事实：仓库全部项目目标框架为 `net10.0`，此前没有 `global.json`、NuGet lock files 或单命令非 UI 发布门；同一工作树会使用机器默认 SDK和当次解析出的传递包图。当前完整验证环境安装并使用 `.NET SDK 10.0.302`，对应 .NET 10.0.10 runtime/reference pack；所有直接 PackageReference 已有显式版本。
 - 不确定点：SRS 固定 .NET 10 和 Mapping reference pack，但未固定一般项目的 SDK feature band、是否允许 patch roll-forward、是否提交每项目 NuGet lock file，也未规定开发期可移植测试缺少原生 BASS/SF2 时应失败还是 Skip。
 - 影响范围：开发/CI 机器准备、依赖还原、编译器与 Native AOT 产物可复现性、测试发现完整性和发布门维护；不改变 Project 文件、canonical、MIDI/WAVE、运行时用户设置或音乐语义。
-- 推荐方案：提交 `global.json`，精确使用 SDK `10.0.302`、`rollForward=disable`、禁止 prerelease；仓库级声明 `RuntimeIdentifiers=win-x64` 与 `RestorePackagesWithLockFile=true`，提交 32 个 `packages.lock.json`。普通开发测试在未配置原生集成资源时明确 Skip；正式 `Test-NonUIRelease.ps1` 必须显式给出经固定 manifest/hash 验证的 BASS 目录和一个现存 SF2，执行 locked restore、六个 solution Release build、Native AOT publish，再按版本化测试基线要求 10 个项目精确 760 项全部通过且零 Skip。
+- 推荐方案：提交 `global.json`，精确使用 SDK `10.0.302`、`rollForward=disable`、禁止 prerelease；仓库级声明 `RuntimeIdentifiers=win-x64` 与 `RestorePackagesWithLockFile=true`，提交 32 个 `packages.lock.json`。普通开发测试在未配置原生集成资源时明确 Skip；正式 `Test-NonUIRelease.ps1` 必须显式给出经固定 manifest/hash 验证的 BASS 目录和一个现存 SF2，执行 locked restore、六个 solution Release build、Native AOT publish，再按版本化测试基线要求 10 个项目的当前精确计数全部通过且零 Skip；新增/删除测试必须显式评审并更新基线。
 - 推荐依据与限制：精确 SDK和锁文件把构建输入从机器隐式状态变为提交内容；零 Skip 的正式门避免把缺少硬件/资源误报为通过。限制是安装了其他 .NET 10 SDK但没有 10.0.302 的机器会在仓库根目录直接拒绝构建，安全升级 SDK/包时必须显式更新 `global.json`、lock files、基线并重跑完整门。
 - 备选方案及差异：A. SDK 使用 `latestPatch` roll-forward，安全补丁采用更方便，但不同时间/机器可能产生不同 AOT 与编译输出。B. 只固定直接包版本、不提交 lock files，文件较少但传递图仍可变化。C. 不固定 SDK，仅在发布记录中手工写版本；日常构建仍可能漂移，不推荐。
-- 当前实施状态：已按推荐实现并在本机完整运行发布门；760 tests 全通过、0 Skip，固定 BASS 校验通过，Native AOT Worker 产物包含 `.exe`、三项 DLL、native manifest、MIT License 与 Third-Party Notices。
+- 当前实施状态：已按推荐实现并在本机完整运行发布门；当前 774 tests 全通过、0 Skip，固定 BASS 校验通过，Native AOT Worker 产物包含 `.exe`、三项 DLL、native manifest、MIT License 与 Third-Party Notices。
 - 需要产品所有者回答：是否采用推荐方案？如需允许 SDK patch roll-forward，请明确选择 A；NuGet 锁文件与正式零 Skip 门建议保留。
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
@@ -218,6 +218,23 @@
 - 需要产品所有者回答：请提供实际发布主体、主体商业/非商业性质、全部收入方式、计划平台/渠道/分发形式，并选择推荐方案、A 或 B；在这些事实和届时条款核验完成前，本分支保持不放行正式含 DLL 分发。
 - 产品回答：待填写。
 - 最终处理与提交：待填写。
+
+### Q-NUI-014：单应用实例是按 Windows 交互登录会话还是整机互斥
+
+- 类型：小决定
+- 状态：已按推荐实施待确认
+- 发现日期：2026-08-06
+- SRS 依据：第 3.3 节、第 3.18.1 节和 INV-019；SRS 要求第二次启动转发给已有实例，并把具体转发与操作系统互斥机制留作实现细则。
+- 已确认事实：Windows 的不同交互登录 Session 具有彼此隔离的桌面；一个 Session 中的 UI 进程不能可靠地激活另一个 Session 的窗口。内部 Native AOT 音频 Worker 不参与主应用实例互斥。
+- 不确定点：SRS 的“整个系统只允许一个”没有明确区分同一 Windows 用户的多个远程/本地 Session，也没有规定跨 Session broker、服务或切换用户场景。
+- 影响范围：只影响同一台 Windows 机器同时存在多个交互登录 Session 时，第二个 Session 能否独立运行 Midora；不改变单 Session 内的唯一实例、Project、持久化、canonical、MIDI/WAVE 或音频语义。
+- 推荐方案：按当前 Windows 交互登录 Session 互斥。对象名包含稳定应用 ID 和 Windows Session ID，使用 `Local\\` 命名内核对象；第二次启动以 `CurrentUserOnly` Named Pipe 向同 Session 主实例转发。这样每个可见桌面最多一个主实例，并避免向不可见桌面转发。
+- 推荐依据与限制：该方案不需要常驻 Windows 服务或跨 Session UI broker，符合桌面应用可操作边界。限制是同一机器的另一个登录 Session 可以运行自己的一个 Midora 实例；如果“整个系统”意图是机器级绝对唯一，则需另行设计跨 Session 授权和前台交互。
+- 备选方案及差异：A. 整机 `Global\\` 互斥，最严格但第二个 Session 无法可靠激活首个 Session 的 UI，且需处理跨用户 ACL。B. 按 Windows 用户 SID、跨该用户全部 Session 互斥，需要 broker 决定请求应投递到哪个桌面并处理断开 Session，复杂度显著提高。C. 不做 OS 互斥只依赖窗口状态，存在竞态，不符合 SRS。
+- 当前实施状态：已按推荐实现版本化、严格有界的启动 IPC v1；并发竞争只有一个 Primary，Unicode/空参数、畸形/截断客户端、队列上限、取消、释放与重新取得均有自动测试。WPF 只需在未来入口持有 lease 并消费请求队列。
+- 需要产品所有者回答：是否采用推荐的“每个 Windows 交互登录 Session 一个 Midora 主实例”？如要求机器级绝对唯一，请选择 A；如要求同一用户跨 Session 唯一，请选择 B。
+- 产品回答：待填写。
+- 最终处理与提交：待确认后填写。
 
 ## 3. 问题模板
 

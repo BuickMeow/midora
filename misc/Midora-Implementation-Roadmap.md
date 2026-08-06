@@ -77,7 +77,7 @@ MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、Pause/Scrub、语义�
 
 ### 3.2 已确认的原型性质与问题
 
-- `Midora.Midi` 只有紧凑 MIDI message 基础；`StandardMidiFile` 尚为空，离正式导出器很远。
+- `Midora.Midi` 已按 21A 实现确定性 SMF Type 1 writer/validator；`Midora.MidiExport` 已有整曲 canonical 编码垂直切片。Channel 10 melodic SysEx 档、多文件模式、Compact Routing、Readme 和文件事务仍未实现。
 - `BassMidiPort` 的消息排队、推音频和 reset 尚未实现完整；当前接口签名已分叉，solution 无法整体构建。
 - 事件由测试程序即时调用并依赖 `Thread.Sleep`，只能证明设备能够发声，不能证明 tick/sample 调度正确。
 - 当前原型使用 `BASS_MIDI_NOFX` 的方向符合已确认需求；正式实现仍缺少 CC91/CC93 全链路拒绝、状态清理和一致性检查。
@@ -254,7 +254,7 @@ flowchart TD
 工作：
 
 1. **Playback/Preview**：Stopped/Preparing/Playing/Buffering/Stopping/Error；预加载、underrun 恢复、cursor/loop 冷启动、单任务锁定。
-2. **MIDI Export**：SMF Type 1、Conductor Track、三种模式、Compact/Preserve、RPN/NRPN 展开、多文件事务。
+2. **MIDI Export**：在已完成的 21A SMF Type 1 / Conductor / canonical 整曲编码基础上，补 Channel 10 初始化、三种模式、Compact/Preserve、Readme 和多文件事务；RPN/NRPN 继续只编码 canonical 已展开序列。
 3. **Audio Render**：Whole Mix/Per Logical Track、普通 RIFF/WAVE float32 stereo、8000～192000 Hz 自定义任务采样率、RIFF 大小预检、相同长度、强制 Limiter、文件 `OutputDevice`、取消与原子发布。
 4. 三类消费者都只能重组 canonical result，不能重新调用高层语义。
 

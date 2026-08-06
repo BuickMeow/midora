@@ -100,3 +100,4 @@ Project Source Data
 10. 初版持久化固定 JSON Schema Draft 2020-12、内部版本化 System.Text.Json source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 与 Grpc.Tools 2.83.0；未知/重复字段严格拒绝，已发布 descriptor/字段号/golden bytes 必须保持兼容。文本、路径、opaque sRGB、UTC 七位小数秒和非负 int64 毫秒表示按 SRS 16.13 固定。
 11. 外部 Project SF2 只允许项目根目录或直属 `soundfonts/` 相对引用；路径精确大小写优先、唯一 ignore-case 回退并 Warning、歧义拒绝。SHA-256 对完整原始字节流式计算，只在用户明确选择/替换/重绑定/接受变化时更新；被动变化不改 Project。绝对解析路径和验证缓存只属于运行时。
 12. 工程总耗时按 Project 成功打开后的完整会话时间累计，包括空闲、最小化、失焦、Buffering、MIDI 导出和音频渲染；系统睡眠 / 休眠及关闭流程暂停。会话使用单调时钟；自动累计不单独标记 Modified，不进入 Undo / Redo，不影响编译或 canonical fingerprint。
+13. 初版 SMF Type 1 兼容档固定：Tempo 以十进制 `60,000,000 / BPM` 后只执行一次 `AwayFromZero`，24-bit 越界即失败；Time Signature 固定 `cc=24`、`bb=8`；Bank 顺序固定 CC0→CC32→Program；事件 Track 只写 Track Name 与 MIDI Port，不写 Device/Program Name；文本 Meta 严格 UTF-8；禁用 Running Status；导出器不得在 canonical 之外追加 Channel 清理；所有 Track 在统一 `endTick` 写 EOT。

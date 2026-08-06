@@ -475,7 +475,11 @@ Tempo BPM 到 MIDI Set Tempo 的转换必须确定。
 转换必须可重复。
 转换错误必须可诊断。
 ```
-具体 microseconds-per-quarter-note 舍入规则由实现设计阶段定义。
+初版固定换算规则：
+```text
+microsecondsPerQuarterNote = 60,000,000 / BPM
+```
+使用十进制计算，并只对最终商执行一次 `Round / Away From Zero`。舍入后的值必须位于 MIDI Set Tempo 的 24-bit 有效范围 `1..0xFFFFFF`；不得逐步取整、截断或 clamp。
 如果 Tempo 无法表示为 Midora 支持的 MIDI 1.0 有效 Set Tempo：
 ```text
 导出失败。
@@ -485,10 +489,10 @@ Tempo BPM 到 MIDI Set Tempo 的转换必须确定。
 Time Signature 应导出为 MIDI Time Signature Meta Event。
 MIDI metronome / 32nd-notes 字段：
 ```text
-初版采用固定默认策略。
-具体字段值实现设计阶段定义。
-第 14 章《MIDI 导出》 只要求输出确定、稳定、可重复。
+clocks per metronome click = 24
+notated 32nd notes per MIDI quarter note = 8
 ```
+这两个字段不是用户设置。
 ### 14.9.3 Key Signature
 如果 Project 没有显式 Key Signature：
 ```text
@@ -519,7 +523,15 @@ Device Name
 Port Name
 Track Name 中的 Port 信息
 ```
-具体采用哪些 Meta Event、最终字节编码和兼容策略由实现设计阶段定义。
+初版兼容档固定为：
+```text
+每个事件 Track 写 Track Name Meta Event
+每个事件 Track 写 MIDI Port Meta Event
+不写 Device Name Meta Event
+不写 Program Name Meta Event
+文本类 Meta Event 使用严格 UTF-8
+```
+Track Name 最终可见字符串和输出文件命名模板仍由导出工作流提供，不得由编码器隐藏生成。
 ### 14.10.2 按 Port 导出
 按 Port 导出时，每个单 Port 文件内部按独立 MIDI 文件处理：
 ```text
@@ -576,7 +588,13 @@ delta time 必须非负。
 ```text
 Bank Select 应早于 Program Change。
 ```
-具体 Bank MSB / LSB 顺序由实现设计阶段定义，但必须稳定。
+固定顺序为：
+```text
+CC0 Bank Select MSB
+→ CC32 Bank Select LSB
+→ Program Change
+```
+缺少 MSB 或 LSB 时只省略不存在的部分，不改变其余相对顺序。
 ### 14.12.4 RPN / NRPN / Pitch Bend Range
 RPN / NRPN / Pitch Bend Range 等 Midora 高级事件必须展开为标准 MIDI 1.0 CC 序列。
 规则：
@@ -617,8 +635,8 @@ Reset / 安全清理事件必须排在对应生命周期结束或范围结束的
 ```
 导出器不负责把所有同 tick 跨 Track 事件全局线性化为单一顺序。
 ### 14.13.4 Running status
-初版允许 MIDI 编码层使用 running status 优化。
-running status 只属于字节编码优化，不得改变：
+初版兼容档不使用 running status。每个 Channel Event 都必须显式写入 status byte。
+该规则不得改变：
 ```text
 tick
 事件语义
@@ -628,7 +646,7 @@ Port / Channel 分配
 同 tick 语义排序
 播放结果
 ```
-running status 的具体实现属于实现设计。
+读取后自校验发现依赖 running status 的 Midora 输出时，编码整体失败。
 ### 14.13.5 不做冗余状态事件折叠
 初版 MIDI 导出不做冗余状态事件折叠。
 规则：
@@ -678,16 +696,15 @@ All Sound Off
 Reset All Controllers
 ```
 这些属于编译器 / 导出器生成清理事件，不是范围内普通用户事件。
-### 14.14.4 文件末尾安全 Reset
-在 compiled result 已有 Reset 基础上，导出器还可以在文件结束处对本文件实际使用过的 Channel Unit 写入必要安全清理。
-包括但不限于：
+### 14.14.4 文件末尾不追加安全 Reset
+初版导出器不得在 canonical compiled result 之外追加 Channel 清理事件。
+规则：
 ```text
-All Notes Off
-All Sound Off
-Reset All Controllers
+范围硬裁剪所需 Note Off / Reset 必须已经存在于 canonical compiled result
+导出器只编码 canonical Channel Event
+导出器额外生成的文件结构事件仅限本章规定的 Meta / 初始化内容与 End Of Track
 ```
-该行为用于降低第三方播放器悬挂音风险。
-具体清理序列与排序由实现设计阶段定义。
+如果 canonical 结果缺少所需清理，这是 compiled result 一致性错误，不得由导出器静默补救。
 ---
 ## 14.15 Readme
 ### 14.15.1 默认生成，但允许关闭
@@ -938,6 +955,10 @@ Track 数
 delta time 非负
 事件可编码
 End Of Track 存在
+所有 Track 的 End Of Track tick 一致
+每个 Channel Event 都有显式 status byte
+声明的 Track chunk 长度与实际字节一致
+文件末尾不存在未声明字节
 ```
 具体校验项实现设计阶段定义。
 自校验失败：

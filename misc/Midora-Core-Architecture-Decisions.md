@@ -56,7 +56,7 @@
 
 ### 1.8 明确非目标
 
-- 本轮不实现完整 `.midora` ZIP 打开/保存事务、其余顶层对象 schema、WPF UI、MIDI 文件导出、传统 MIDI OUT、Pause、Scrub、录音、多 SoundFont、MIDI 2.0、VST 或 Voice Stealing。
+- 本轮不实现完整 `.midora` ZIP 打开/保存事务、其余顶层对象 schema、WPF UI、完整 MIDI 文件事务/多文件工作流、传统 MIDI OUT、Pause、Scrub、录音、多 SoundFont、MIDI 2.0、VST 或 Voice Stealing。
 - 本轮不把 BASS handle、WASAPI 设备或 sample-frame 写入领域模型或 canonical result。
 
 ## 2. ADR-CORE-001：分层与冻结边界
@@ -180,3 +180,22 @@ Requirement trace：
 - 明确非目标：本增量不实现 WPF 电源事件接线、Project Modified/Undo 框架、完整 New/Open/Save/Close/Save Copy 事务、自动保存或崩溃恢复。
 
 `metadata.json` v1 同时冻结项目名称、用户版本、作者/团队、原作、版权、备注、UTC 创建 / 修改时间和总耗时字段。会话内部保留 100 ns `TimeSpan` tick 余数，生成持久快照时向下取完整毫秒；重复取快照不会重复累计同一区间，系统墙钟校时不改变累计值。
+
+## 12. ADR-CORE-010（已接受，21A）：SMF Type 1 兼容编码档
+
+决定：初版 `.mid` 编码固定使用 SMF Type 1 和 Project TPQ。Tempo 以十进制 `60,000,000 / BPM` 计算，并只对最终 microseconds-per-quarter-note 执行一次 `AwayFromZero`；舍入结果超出 `1..0xFFFFFF` 时整体失败。Time Signature 固定写 `cc=24`、`bb=8`。同 tick 的 Bank/Program 字节顺序固定为 CC0、CC32、Program Change。所有文本 Meta 使用严格 UTF-8；事件 Track 只写 Track Name 与 MIDI Port Meta，不写 Device Name / Program Name。每个 Channel Event 都显式写 status byte，不使用 Running Status。
+
+Requirement trace：
+
+- 输入：用途为 `MidiExport`、成功、完整、可消费的 `CanonicalCompiledResult`，以及按 Logical Track 手动顺序提供的显式 Track/Port 名称布局。编码器不读取 Project、播放状态、SoundFont、设备或 Mute/Solo。
+- 正式输出：范围起点重基为 MIDI tick 0 的确定性 SMF Type 1 字节；Track 0 为 Conductor，事件 Track 按 Logical Track 布局顺序再按 Port 排序；所有 Track 在统一相对 `endTick - startTick` 写 EOT。
+- 边界：Channel Event 逐条保持 canonical 子序列和真实 NoteOff velocity 0；RPN/NRPN/Pitch Bend Range 使用 canonical 已展开的标准 CC；导出器不得折叠状态，不得在 canonical 外追加 All Notes Off、All Sound Off、Reset All Controllers 或其他 Channel 清理。Track Name 的最终可见字符串由上层工作流显式提供，编码器不隐藏选择命名模板。
+- 失败条件：非 MidiExport 上下文、不可消费/partial 结果、非法 TPQ、超出四字节 VLQ 的事件间隔、24-bit Tempo 越界、非法 Time/Key Signature、未知 Channel Event、CC91/93、NoteOn velocity 0、非零 NoteOff velocity、路由/来源不一致、Track 布局缺失或自校验失败均整体失败且返回零 partial 字节。
+- 诊断：当前垂直切片区分 canonical consistency 与 encoding 两类结构化诊断；完整工作流实现时再接入统一任务/文件写入诊断，不把异常文本当持久协议。
+- 持久化归属：SMF 是导出产物，不进入 `.midora`；Track 可见名称布局和输出路径是本次工作流快照。受文件命名决定影响的 Export Settings schema 仍未发布。
+- 运行时归属：SMF 组织、字节编码和读取后自校验属于 MIDI 导出 Preparing/Encoding；不进入 compiler canonical 语义，也不进入音频 Worker。
+- 明确非目标：本增量不实现按 Logical Track/按 Port 多文件模式、Compact Routing、Readme、临时目录原子发布、覆盖确认、取消/进度、最终文件命名模板和完整 WPF 工作流。
+
+编码完成后必须重新解析并检查 MThd、MTrk 数量与长度、显式 status、可编码 delta、单个最终 EOT、所有 Track EOT tick 一致和文件末尾无额外字节。低层 `StandardMidiFile` 已提供 Type 1 writer/validator；正式消费者 `CanonicalMidiFileExporter` 只接受 canonical 结果。
+
+Channel 10 melodic 初始化没有通用 GM Channel Voice 表达，具体 GS/XG/其他 SysEx 兼容档仍需单独决定。为避免静默导出成鼓通道，本 ADR 的垂直切片在 canonical 使用 Channel 10 时返回明确失败；这不是初版最终能力边界。

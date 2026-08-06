@@ -13,6 +13,8 @@
   <Project Path="Midora.Domain/Midora.Domain.csproj" />
   <Project Path="Midora.Compiler/Midora.Compiler.csproj" />
   <Project Path="Midora.Compiler.Tests/Midora.Compiler.Tests.csproj" />
+  <Project Path="Midora.MidiExport/Midora.MidiExport.csproj" />
+  <Project Path="Midora.MidiExport.Tests/Midora.MidiExport.Tests.csproj" />
   <Project Path="Midora.Playback/Midora.Playback.csproj" />
   <Project Path="Midora.Playback.Tests/Midora.Playback.Tests.csproj" />
   <Project Path="Midora.Playback.BassWasapi/Midora.Playback.BassWasapi.csproj" />

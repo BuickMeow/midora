@@ -26,5 +26,6 @@
   </Target>
   <ItemGroup>
     <InternalsVisibleTo Include="Midora.Compiler.Tests" />
+    <InternalsVisibleTo Include="Midora.MidiExport.Tests" />
   </ItemGroup>
 </Project>

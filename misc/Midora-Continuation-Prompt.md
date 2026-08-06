@@ -70,13 +70,14 @@ D:\Programing\midora
 18. 初版持久化兼容基线固定为 JSON Schema Draft 2020-12、内部版本化 `System.Text.Json` source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 和 Grpc.Tools 2.83.0；严格拒绝 JSON 重复/未知属性及 protobuf 未知 tag，`.proto`/descriptor/golden bytes 进入兼容门。文本、路径、opaque sRGB、UTC 七位小数秒与非负 int64 毫秒表示已固定。
 19. External Project SF2 只保存 Project 根目录或直属 `soundfonts/` 的相对路径；精确大小写优先、唯一 ignore-case 回退并 Warning、歧义拒绝。完整原始字节 SHA-256 只在用户明确选择/替换/重绑定/接受变化时更新，被动状态不修改 Project；绝对路径与验证缓存只属于运行时。
 20. 工程总耗时从 Project 成功新建 / 打开到开始关闭使用单调时钟累计；空闲、最小化、失焦、Buffering、MIDI 导出和音频渲染均计入，系统睡眠 / 休眠及关闭流程暂停。自动累计不单独标记 Modified、不进入 Undo / Redo、不影响 canonical。
+21. SMF Type 1 兼容档固定为：Tempo 十进制 `60,000,000 / BPM` 后一次 `AwayFromZero`；Time Signature `cc=24` / `bb=8`；CC0→CC32→Program；事件 Track 写 Track Name + MIDI Port，文本 Meta 严格 UTF-8，不写 Device/Program Name；禁用 Running Status；canonical 外不追加 Channel 清理；所有 Track EOT 对齐统一 endTick。
 
 四、仍需 ADR 或实测决定的事项
 
 这些不是当前 SRS 冲突，不能静默写成实现默认值：
 
 - BASS 商业分发许可证与第三方 notices；技术版本、SHA-256 和升级回归策略已经固定，不得与授权问题混为一项；
-- MIDI 导出兼容细节和 MIDI/音频输出文件名规则。
+- Channel 10 melodic 的 SMF vendor SysEx 兼容档，以及 MIDI/音频输出文件最终命名模板。
 
 五、当前代码定位
 

@@ -4,6 +4,68 @@ namespace Midora.Compiler.Tests;
 
 public sealed class SemanticValidatorTests
 {
+    [Fact]
+    public void UndefinedTemplateEventKindIsRejected()
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Voice.Events.Add(new TemplateEvent(fixture.Project)
+        {
+            Kind = (TemplateEventKind)999,
+            Tick = 0
+        });
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(result.IsConsumable);
+        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1249");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UndefinedCurveInterpolationIsRejected(bool logicalParameterLane)
+    {
+        var fixture = CompilerTestProject.Create();
+        CurvePoint invalidPoint = new(
+            fixture.Project,
+            tick: 0,
+            value: 64,
+            interpolation: (CurveInterpolation)999);
+        if (logicalParameterLane)
+        {
+            LogicalParameterDefinition parameter = new(fixture.Project)
+            {
+                Name = "Expression",
+                Type = LogicalParameterType.Double,
+                Minimum = 0,
+                Maximum = 127,
+                DefaultValue = 64
+            };
+            fixture.Instrument.LogicalParameters.Add(parameter);
+            LogicalParameterLane lane = new(fixture.Project) { ParameterId = parameter.Id };
+            lane.Points.Add(invalidPoint);
+            fixture.Segment.ParameterLanes.Add(lane);
+        }
+        else
+        {
+            ValueCurve curve = new(fixture.Project)
+            {
+                Target = MidiValueTarget.ControlChange(1)
+            };
+            curve.Points.Add(invalidPoint);
+            fixture.Voice.Curves.Add(curve);
+        }
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(result.IsConsumable);
+        Assert.Contains(result.Diagnostics, value => value.Code ==
+            (logicalParameterLane ? "MIDORA1313" : "MIDORA1222"));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]

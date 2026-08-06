@@ -277,9 +277,11 @@ public static class SemanticValidator
                 long previous = -1;
                 foreach (CurvePoint point in curve.Points.OrderBy(point => point.Tick))
                 {
-                    if (point.Tick < 0 || point.Tick >= instrument.TemplateLengthTicks || point.Tick == previous || !double.IsFinite(point.Value))
+                    if (point.Tick < 0 || point.Tick >= instrument.TemplateLengthTicks
+                        || point.Tick == previous || !double.IsFinite(point.Value)
+                        || !Enum.IsDefined(point.Interpolation))
                     {
-                        AddError("MIDORA1222", "Curve point 的 tick/value 非法或同 tick 重复。", subSource with { Tick = point.Tick }, diagnostics);
+                        AddError("MIDORA1222", "Curve point 的 tick/value/interpolation 非法或同 tick 重复。", subSource with { Tick = point.Tick }, diagnostics);
                     }
                     double minimum = curve.Target.Kind == MidiValueKind.PitchBend ? -8192 : 0;
                     double maximum = curve.Target.Kind switch
@@ -399,6 +401,10 @@ public static class SemanticValidator
     private static void ValidateTemplateEvent(TemplateEvent value, long templateLength, SourceReference source, List<CompilerDiagnostic> diagnostics)
     {
         SourceReference eventSource = source with { SourceEventId = value.Id, Tick = value.Tick };
+        if (!Enum.IsDefined(value.Kind))
+        {
+            AddError("MIDORA1249", "Template Event 类型枚举值非法。", eventSource, diagnostics);
+        }
         ValidateTargetSettings(value.NumberTargetSettings, eventSource, diagnostics);
         ValidateTargetSettings(value.ValueTargetSettings, eventSource, diagnostics);
         ValidateTargetSettings(value.SecondaryValueTargetSettings, eventSource, diagnostics);
@@ -601,9 +607,10 @@ public static class SemanticValidator
                     parameters.TryGetValue(lane.ParameterId, out LogicalParameterDefinition? definition);
                     foreach (CurvePoint point in lane.Points.OrderBy(point => point.Tick))
                     {
-                        if (point.Tick < 0 || point.Tick == prior || !double.IsFinite(point.Value))
+                        if (point.Tick < 0 || point.Tick == prior || !double.IsFinite(point.Value)
+                            || !Enum.IsDefined(point.Interpolation))
                         {
-                            AddError("MIDORA1313", "参数 Lane point 非法或同 tick 重复。", segmentSource with { Tick = point.Tick }, diagnostics);
+                            AddError("MIDORA1313", "参数 Lane point 的 tick/value/interpolation 非法或同 tick 重复。", segmentSource with { Tick = point.Tick }, diagnostics);
                         }
                         if (definition is not null)
                         {

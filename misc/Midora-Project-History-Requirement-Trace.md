@@ -1,6 +1,6 @@
 # Midora Project History、Modified 与 Undo/Redo Requirement Trace
 
-状态：基础框架与四批不分配稳定 ID 的领域对象命令已实现；分配稳定 ID 的创建/复制/分割命令等待 Q-NUI-005
+状态：基础框架与五批不分配稳定 ID 的领域对象命令已实现；分配稳定 ID 的创建/复制/分割命令等待 Q-NUI-005
 
 日期：2026-08-06
 
@@ -38,6 +38,7 @@
 - Event Instrument 基础属性：Description 按 65,536 Unicode scalar、允许 Tab/LF/CR 但拒绝 NUL/其他控制字符的持久化契约原样保存；Color 与 Description 进入 History/Modified 但不失效 canonical；Root Note 限 0～127、失效相关 Instrument 编译，且不改写 SubVoice override 或模板 Note。
 - Event Instrument 生命周期属性：Template Length 只能缩短到仍覆盖 Note end、瞬时事件/Curve Point 半开边界和 Loop End 的长度；Isolation 关闭保留已有 Loop/Envelope/Mapping 等不兼容数据；Loop 只可在 Isolation 开启时启用/编辑，但受限制状态仍可显式禁用；Overlap、Scope 与短/长音策略按已定义枚举原子更新，Let Overlap 只能在 Isolation 开启时主动选择。
 - SubVoice：可选短文本名称、Root Note inherit/override、手动排序和删除均进入 Instrument 级编译失效；名称/Root 修改不重写模板 Note。最后一条 SubVoice 不可删除；非空删除需要确认，并同时移除指向该 SubVoice 的 Logical Parameter Mapping；Undo 恢复 SubVoice、全部内部数据、外部 Mapping、原对象、原索引和稳定 ID。
+- Template Event：Note、CC、Bank、Program、Pitch Bend、RPN、NRPN 与 Pitch Bend Range 的既有对象可原子更新时间和值；基础 MIDI 值域、CC91/CC93/Channel Mode 禁止项、Int64 end 及事件类型在 Prepare 阶段阻止非法提交。Note end 或瞬时事件的半开边界超过当前 Template Length 时自动延长而不裁剪；同 SubVoice/tick/目标的状态冲突以被编辑对象替换旧对象，Pitch Bend Range 与 RPN 0 按统一内部语义冲突。Bank 只允许移除没有活动 Mapping Step 的已有 MSB/LSB 组件；编辑保留事件、Mapping Chain、Step、Target Settings 及全部稳定 ID，删除/Undo 精确恢复原对象与索引。
 - 以上命令 Prepare 不修改 Project；删除、移动、连接和撤销复用原对象/稳定 ID，不回滚或推进 `nextStableId`。每项结构编辑测试均以 Full Compile 为 oracle 核对当前 Incremental Compile 的语义和形式等价。
 - Logical Track 名称可空/重复；Event Instrument 与 Folder 名称必填且分别在规定范围内唯一。所有上述名称先拒绝非法 Unicode、换行/NUL/控制字符，再 Trim，并统一执行 schema 的 256 Unicode scalar 上限，不静默截断。
 

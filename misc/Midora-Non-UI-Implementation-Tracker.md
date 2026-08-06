@@ -122,6 +122,7 @@
 | 2026-08-06 | Segment Preview 绑定前置条件 | 未绑定与普通断裂绑定在 SegmentPreview context 中产生 MIDORA1306 Error，Damaged 仍使用 MIDORA1305；失败 Preview 在 Backend Prepare 前被拒绝并释放 edit lock；Compiler 195、Playback 52 tests；全仓基线 842 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-8549557fbe94435298edb7be6545b2df` |
 | 2026-08-06 | Compiler Int64 裁剪与 Loop 极值 | Note/Gate/Lifecycle/Template Note Off 先裁剪后加法；Project↔Content 差值优先换算；窗外 Event 先排除；Loop 以剩余量终止且 tail 饱和；Compiler 198 tests；全仓基线 845 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-ffea5b4bc45045d1b02e7a2dc163540c` |
 | 2026-08-06 | Event Instrument Preview Int64 范围 | Gate/Template/Release 容器长度使用饱和加法，非法负时长仍交由统一语义诊断；Compiler 200 tests；全仓基线 847 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-7f2e646808c74d82a6d3dda3af502376` |
+| 2026-08-06 | Tempo Sample Map Int64 反向换算 | 上界二分中点改为不溢出的 distance 分解，保持 decimal 累加与一次 AwayFromZero；Playback 53 tests；全仓基线 848 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-cfd2b382b66b4e238fccaaa1d74e9094` |
 
 ## 7. 未解决风险
 

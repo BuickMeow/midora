@@ -68,7 +68,8 @@ public sealed class TempoSampleMap
         long high = maximumTick;
         while (low < high)
         {
-            long middle = low + ((high - low + 1) >> 1);
+            long distance = high - low;
+            long middle = low + (distance / 2) + (distance % 2);
             if (TickToSampleFrame(middle, originTick, sampleRate) <= sampleFrame)
             {
                 low = middle;

@@ -83,6 +83,18 @@ public sealed class PlaybackTests
         Assert.Equal(1, map.TickToSampleFrame(600, 240, 1));
     }
 
+    [Fact]
+    public void TempoMapInverseSearchSupportsInt64MaximumTick()
+    {
+        TempoSampleMap map = new(int.MaxValue, [new(0, 60_000_000m)]);
+        long finalFrame = map.TickToSampleFrame(long.MaxValue, 0, 1);
+
+        long tick = map.SampleFrameToTick(finalFrame, 0, 1, long.MaxValue);
+
+        Assert.Equal(long.MaxValue, tick);
+        Assert.Equal(finalFrame, map.TickToSampleFrame(tick, 0, 1));
+    }
+
     [Theory]
     [InlineData(8_000)]
     [InlineData(44_100)]

@@ -123,6 +123,7 @@
 | 2026-08-06 | Compiler Int64 裁剪与 Loop 极值 | Note/Gate/Lifecycle/Template Note Off 先裁剪后加法；Project↔Content 差值优先换算；窗外 Event 先排除；Loop 以剩余量终止且 tail 饱和；Compiler 198 tests；全仓基线 845 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-ffea5b4bc45045d1b02e7a2dc163540c` |
 | 2026-08-06 | Event Instrument Preview Int64 范围 | Gate/Template/Release 容器长度使用饱和加法，非法负时长仍交由统一语义诊断；Compiler 200 tests；全仓基线 847 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-7f2e646808c74d82a6d3dda3af502376` |
 | 2026-08-06 | Tempo Sample Map Int64 反向换算 | 上界二分中点改为不溢出的 distance 分解，保持 decimal 累加与一次 AwayFromZero；Playback 53 tests；全仓基线 848 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-cfd2b382b66b4e238fccaaa1d74e9094` |
+| 2026-08-06 | BASS 不同工作块逐 sample 确定性 | 固定 256-frame 原生 decode 序列；事件/硬结束前短块；预分配 staging；consumer/render 双位置；复杂 Tempo/Loop 106-event 回归；BASS 120 tests；全仓基线 849 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；进程内/子进程逻辑 WAVE hash 相同；产物 `non-ui-release-gate-4bfddba55a254b1da6a2b39350a7a33a` |
 
 ## 7. 未解决风险
 
@@ -132,7 +133,7 @@
 - §12.21 的 Segment checkpoint、dirty range 与 state-hash 收敛模型已替换旧 Track 整片段缓存；当前剩余风险是继续扩大随机 Project 生成器和 §7～§12 全语义组合矩阵，而不是已知的增量架构缺口。
 - Project MIDI Export Settings 仍是空 v1 占位；schema v2 与默认值等待 Q-NUI-003，不能回写修改已发布 v1。
 - 十三批不分配稳定 ID 的结构/设置/音乐内容编辑命令已接入统一 History；Project Metadata/Track Color、External SoundFont 与安全的 Logical Parameter Definition/Mapping/Target Settings 属性已覆盖，需要迁移既有 Lane 的 Definition 类型/Enum 结构/range 分支等待 Q-NUI-009，Embedded SoundFont 与创建/复制/分割类命令等待 Q-NUI-005。
-- Audio Render 的 canonical/输出事务、正式 Native AOT 文件链、应用级单音频任务锁和开始渲染前自动 Stop 已完成；实时硬件压力与集中人工试听仍属于 NUI-09/NUI-11。
+- Audio Render 的 canonical/输出事务、正式 Native AOT 文件链、应用级单音频任务锁和开始渲染前自动 Stop 已完成；不同工作块的复杂 BASS 输出已达到逐 sample 一致。集中人工试听与物理设备清单已写入 `misc/Midora-Manual-Audio-Acceptance.md`，执行结果仍属于 NUI-09/NUI-11。
 - 实际 BASS DLL、物理 WASAPI 设备、设备移除和人耳听音不能只凭无设备 CI 结论替代。
 - 共享控制 ABI v1 已闭合字段/ring 损坏边界，但整组状态快照仍可能跨两次同状态发布混合；ABI v2 seqlock/双缓冲选择等待 Q-NUI-011，不能把逐字段原子误报为整快照原子。
 - 非 UI 发布门已经能生成并测试本地 Native AOT Worker 产物，但这不是 BASS 重新分发授权；实际发布主体、收入、渠道、届时条款与供应商许可文本等待 Q-NUI-013，当前不得把本地测试产物作为正式发行包上传。

@@ -154,9 +154,19 @@ Logical Parameter Lane / Point / Curve
 大量曲线数据
 ```
 protobuf 是初版重数据的默认二进制序列化格式。
-需求不固定具体 protobuf 库。
+初版 protobuf 兼容基线固定为：
+```text
+protobuf Edition 2024
+Google.Protobuf 3.35.1
+Grpc.Tools 2.83.0
+```
+`.proto` 源文件和对应 descriptor SHA-256 基线必须纳入版本控制；生成的 C# 只进入 `obj`，不得作为手工维护源码提交。升级 protobuf runtime、代码生成器或 descriptor 基线前必须完成显式兼容性评审、descriptor diff、golden byte 回归和旧文件重开测试。
 如果未来因兼容性、性能或迁移需要替换具体二进制编码，必须通过新的文件格式版本和迁移策略引入。
-### 16.3.3 Conductor Track 未来迁移口
+### 16.3.3 JSON schema 与代码生成
+初版结构性 JSON 固定使用 JSON Schema Draft 2020-12。实现使用内部版本化 JSON DTO 和 `System.Text.Json` source generation；不得把领域对象的当前属性布局直接当作文件 schema，也不得依赖运行时反射自动扩张已发布字段面。
+
+每个已发布 JSON schema 必须作为独立版本化文件纳入版本控制，并使用 `additionalProperties: false` 或等价严格约束。JSON 读取器必须拒绝重复属性、未知属性、注释、尾随逗号、UTF-8 BOM 和不符合当前 schema 的值。
+### 16.3.4 Conductor Track 未来迁移口
 初版 Conductor Track 使用：
 ```text
 conductor-track.json
@@ -828,12 +838,14 @@ manifest 中的 schemaVersion：打开前预检与兼容性判断入口。
 尽量保留未知字段
 保存时原样写回未知字段
 ```
+JSON 必须在反序列化前或反序列化过程中检查重复属性，并通过版本化 DTO 拒绝未知属性。protobuf 必须先以当前消息 descriptor 检查原始 wire 数据，再反序列化；任一未知 field tag、错误 wire type、非法 UTF-8、越界标量或畸形 wire 数据均导致对应结构性文件读取失败。不得依赖 protobuf runtime 默认保留或跳过 `UnknownFieldSet` 的行为。
 ### 16.12.6 schema 演进原则
 已发布字段原则：
 ```text
 不实际删除字段。
 废弃字段应标记 deprecated。
 protobuf 字段号永不复用。
+protobuf 已删除字段的编号与名称必须 `reserved`；新增字段必须使用新的明确字段号。
 JSON 已发布字段名不复用为不同语义。
 已发布 enum 值不得改变语义。
 ```
@@ -900,15 +912,60 @@ Infinity
 protobuf Double 类型字段也不允许持久化 NaN / Infinity。
 保存前必须诊断失败或规范化。
 ### 16.13.5 路径
-包内路径、相对资源路径在项目文件中统一使用：
+包内路径、相对资源路径在项目文件中保存为 UTF-8 相对路径字符串，并统一使用：
 ```text
 /
 ```
-不得使用 Windows `\`。
+不得使用 Windows `\`。保存和读取时保持原大小写与原 Unicode scalar 序列，不执行 Unicode normalization，不改写分隔符，也不静默修正路径。
+
+路径必须包含 1–4096 个 Unicode scalar，并拒绝：
+```text
+空 segment
+`.` 或 `..` segment
+绝对路径
+Windows 盘符路径
+反斜杠
+NUL 或控制字符
+```
+SoundFont 外部引用的允许基目录、hash 不匹配处置与解析时机由 16.15 的独立兼容决定固定，不由本节路径编码规则隐式决定。
 ### 16.13.6 字符串规范化
 初版不强制 Unicode normalization。
 用户可见字符串保持用户输入。
 唯一性比较按对应章节规则处理，例如 Event Instrument 名称大小写不敏感并去除首尾空白。
+### 16.13.7 文本长度
+所有上限按 Unicode scalar 数量计算，不按 UTF-16 code unit 或 UTF-8 byte 数计算。初版固定上限为：
+
+| 字段类别 | 最大 Unicode scalars |
+|---|---:|
+| 短名称、标签、用户可见版本、Marker 名称、名称快照 | 256 |
+| 作者、版权及其他单行 metadata | 4,096 |
+| 描述、备注 | 65,536 |
+| 单个 C# Mapping Function 函数体 | 1,048,576 |
+| 相对路径 | 4,096 |
+
+超过上限必须拒绝，不得截断。短文本和单行 metadata 不允许控制字符；描述可包含 Tab、LF、CR，但不允许 NUL 或其他控制字符。
+
+### 16.13.8 颜色
+初版持久颜色固定为不透明 sRGB，不保存 alpha。protobuf 使用：
+
+```proto
+message RgbColor {
+  uint32 red = 1;
+  uint32 green = 2;
+  uint32 blue = 3;
+}
+```
+
+每个分量必须位于 `[0, 255]`。颜色若出现在 JSON 中，固定使用小写 `#rrggbb`；不得接受 shorthand、alpha、命名颜色或大写 canonical 输出。
+
+### 16.13.9 时间与工程总耗时
+`metadata.json` 的 `createdAtUtc` 与 `modifiedAtUtc` 固定使用 UTC、七位小数秒和 `Z` 后缀：
+
+```text
+yyyy-MM-ddTHH:mm:ss.fffffffZ
+```
+
+不得接受本地时间、时区偏移或不同小数位数作为 v1 canonical 表示。工程总耗时字段固定命名为 `totalEditingTimeMilliseconds`，使用非负 signed 64-bit integer；本节只固定存储表示，哪些运行阶段计入累计仍由独立工程总耗时决定固定。
 ---
 ## 16.14 JSON / protobuf 输出确定性
 ### 16.14.1 JSON
@@ -928,12 +985,13 @@ LF
 ```
 具体字段顺序由实现层定义，但同一内容重复保存应尽量产生稳定输出。
 ### 16.14.2 protobuf
-保存 protobuf 时要求 deterministic serialization。
+保存 protobuf 时要求 deterministic serialization，并使用当前已固定 runtime/codegen profile。protobuf 的 deterministic serialization 只保证同一 runtime/profile 下的稳定输出，不等同于跨实现、跨版本的 canonical encoding。
 如果使用 map：
 ```text
 不得让 map 顺序导致同内容多次保存输出不同。
 ```
 并行序列化只影响执行计划，不得改变最终文件内容或 Zip entry 顺序。
+每个已发布 protobuf schema 必须有 descriptor 基线和代表性 golden bytes；升级库、工具或生成 profile 时必须执行兼容性评审，不得仅因新版本仍声明 deterministic 就自动采用。
 ---
 ## 16.15 SoundFont 资源持久化
 ### 16.15.1 内嵌 SF2 位置

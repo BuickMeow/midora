@@ -43,7 +43,8 @@
 
 ### 1.6 持久化归属
 
-- 本轮源模型保留未来持久化所需的稳定 ID、显式顺序和 C# Mapping 源码，但不实现 `.midora` 读写。
+- 已建立 `.midora` v1 持久化契约基础：严格 `manifest.json` DTO/codec、Draft 2020-12 common/manifest schema、Edition 2024 protobuf 通用类型、descriptor hash 与 golden bytes；完整 package 打开/保存和其余结构性文件 schema 尚未实现。
+- Project 源数据中的稳定 ID、显式顺序、opaque sRGB 颜色、C# Mapping 源码和版本化设置属于未来 `.midora` 内容；只有发布了对应结构性文件 schema 后才形成文件兼容承诺。
 - Canonical result、编译 checkpoint、fingerprint、sample-domain 计划、PCM ring、播放状态、Mute/Solo 和诊断结果都是派生或运行时数据，不属于 Project 持久内容。
 
 ### 1.7 运行时归属
@@ -55,7 +56,7 @@
 
 ### 1.8 明确非目标
 
-- 本轮不实现 WPF UI、`.midora` 文件、MIDI 文件导出、传统 MIDI OUT、Pause、Scrub、录音、多 SoundFont、MIDI 2.0、VST 或 Voice Stealing。
+- 本轮不实现完整 `.midora` ZIP 打开/保存事务、其余顶层对象 schema、WPF UI、MIDI 文件导出、传统 MIDI OUT、Pause、Scrub、录音、多 SoundFont、MIDI 2.0、VST 或 Voice Stealing。
 - 本轮不把 BASS handle、WASAPI 设备或 sample-frame 写入领域模型或 canonical result。
 
 ## 2. ADR-CORE-001：分层与冻结边界
@@ -126,5 +127,22 @@ Compiler 在 canonical 编译阶段执行 Mapping Function，活动音频线程�
 
 ## 8. 领域实现表示说明
 
-- `MidoraColor` 当前以 32-bit ARGB 值表示颜色；SRS 规定颜色元数据能力，但没有固定内存表示。这是领域实现选择，不是文件格式决定。
+- `MidoraColor` 已与 18A 文件兼容决定统一为三个 byte 分量的 opaque sRGB；不再保留 alpha/ARGB 内存入口，protobuf 和 JSON 表示分别服从 SRS 16.13.8。
 - Event Instrument Library 的 Create / Rename / Duplicate / Delete 是内存领域服务；Duplicate 重建内部稳定 ID 和内部引用，Delete 在明确确认被引用对象后解除 Track binding 并保留 Track 内容。
+
+## 9. ADR-CORE-007（已接受，18A/18.1A）：`.midora` v1 序列化兼容基线
+
+决定：轻量结构性文件固定使用 JSON Schema Draft 2020-12 和内部版本化 `System.Text.Json` source-generated DTO；重对象固定使用 protobuf Edition 2024、Google.Protobuf 3.35.1 与 Grpc.Tools 2.83.0。`.proto` 和 runtime `FileDescriptorSet` SHA-256 基线提交到仓库，生成 C# 只存在于 `obj`。JSON 未知/重复属性和 protobuf descriptor 未知 tag 均在领域反序列化前拒绝。
+
+Requirement trace：
+
+- 输入：v1 manifest DTO、已发布 protobuf message、UTF-8 JSON/protobuf wire bytes，以及已确认的稳定 ID、文本、路径、颜色和 metadata 基础值。
+- 正式输出：字段顺序和 LF 固定的 UTF-8 无 BOM JSON；固定 runtime/profile 下的 deterministic protobuf bytes；版本控制中的 Draft 2020-12 schema、`.proto`、descriptor hash 与 golden bytes。
+- 边界：文本上限按 Unicode scalar；相对路径保留大小写和原 Unicode、不 normalization；颜色为 opaque sRGB；UTC 时间严格为七位小数秒 `Z`；总耗时为非负 int64 毫秒。
+- 失败条件：BOM、JSON 重复/未知字段、未知 protobuf tag、错误 wire type、非法 UTF-8、越界标量、非 canonical hash/path/version 或 descriptor/golden 漂移均失败，不截断也不静默修复。
+- 诊断：当前 codec 以 `JsonException` / `InvalidDataException` 保留失败类别；完整打开流程实现时再映射为 SRS 第 16.20 节的文件级正式诊断，不能把异常文本直接当 UI 诊断协议。
+- 持久化归属：本 ADR 只冻结通用值类型和 `manifest.json` v1；受 SoundFont、工程耗时累计、MIDI 导出和文件命名决定影响的 `project.json`、`metadata.json`、settings 与两类对象完整 schema 尚未发布。
+- 运行时归属：DTO、descriptor、codec 和校验属于 Preparing/open/save 路径，不进入编译器 canonical 语义或音频活动线程。
+- 明确非目标：本增量不实现 ZIP 结构、hash 全包校验、迁移、损坏占位、Save/Save Copy 原子事务和完整 Project round-trip。
+
+兼容规则：已发布 protobuf 字段号不得复用，删除字段必须 reserved。deterministic protobuf 不是跨 library/tool 版本的 canonical encoding；依赖升级必须显式评审 descriptor diff、golden bytes 和旧文件重开。完整 v1 对象 schema 只能在决定 19–22 闭合对应字段后发布，不能用临时默认值提前冻结。

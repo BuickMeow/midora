@@ -84,7 +84,7 @@ Project Source Data
 - 音频语义：多 Port 求和、Channel 10 melodic、CC91/CC93 被完整拒绝、NOFX、SF2 更换、设备采样率变化、Master/Limiter 顺序、实时与离线共享语义。
 - 实时音频性能：三类 buffer 边界、活动音频线程零托管分配、callback deadline、underrun、约 200 ms 基准，以及可选 IPC 吞吐和延迟。
 - 渲染：8,000/44,100/48,000/192,000 Hz 与自定义整数值、固定长度、非零起点、Tempo 变化、硬结束无 tail、NaN/Infinity 失败、RIFF/fmt/data size 与 frame 对齐、RIFF 上限拒绝、取消与原子发布。
-- 持久化：deterministic JSON/protobuf/ZIP、损坏隔离、版本迁移、未知字段拒绝、安全 Save/Save Copy、重开校验。
+- 持久化：Draft 2020-12 JSON schema/source-generated DTO、Edition 2024 protobuf descriptor/golden bytes、deterministic JSON/protobuf/ZIP、重复及未知字段拒绝、损坏隔离、版本迁移、安全 Save/Save Copy、重开校验。
 
 ## 7. 已确认且不得重新引入的规则
 
@@ -97,3 +97,4 @@ Project Source Data
 7. 初版产品 CPU 架构固定为 `win-x64`；音频 Worker 只允许以该 RID Native AOT 发布。
 8. 初版三项 BASS DLL 的完整版本和 SHA-256 固定；仓库保存 manifest 而不提交 DLL，升级必须显式变更基线并完成全回归。
 9. 初版 C# Mapping 固定 ABI v1、Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10` 和独立只读 Mapping 契约；每 Project 只缓存当前源码修订并使用 collectible ALC，编译产物不持久化。该机制不是 sandbox。
+10. 初版持久化固定 JSON Schema Draft 2020-12、内部版本化 System.Text.Json source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 与 Grpc.Tools 2.83.0；未知/重复字段严格拒绝，已发布 descriptor/字段号/golden bytes 必须保持兼容。文本、路径、opaque sRGB、UTC 七位小数秒和非负 int64 毫秒表示按 SRS 16.13 固定。

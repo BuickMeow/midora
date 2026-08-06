@@ -1,0 +1,19 @@
+edition = "2024";
+
+package midora.persistence.v1;
+
+option csharp_namespace = "Midora.Persistence.Wire.Proto.V1";
+option features.field_presence = IMPLICIT;
+
+message StableId {
+  fixed64 high = 1;
+  fixed64 low = 2;
+  reserved 3 to max;
+}
+
+message RgbColor {
+  uint32 red = 1;
+  uint32 green = 2;
+  uint32 blue = 3;
+  reserved 4 to max;
+}

@@ -39,12 +39,13 @@
 | BASS 本地获取工具 | 13.30、21.3、发布约束 | 隐藏选择 win-x64、引用不存在的校验脚本、可无提示下载不固定的当前包 | 已固定 win-x64 正式 manifest、三项完整版本码与 SHA-256；正式安装/发布只接受操作员提供且匹配仓库 manifest 的 DLL，vendor current URL 仅生成显式未固定候选 |
 | 正式音频进程拓扑 | 3.2.2、13.30、15.7.6、21.3 | 现有正式候选是“子进程合成、主进程 WASAPI”，会让 PCM 跨进程且主进程仍持有设备 callback；控制命名管道逐批分配数组 | 已按 12C 改为完整音频子进程：BASS/BASSMIDI/Limiter/Render-Ahead/BASSWASAPI/callback 全部由 Worker 持有；运行时命令/状态改为固定版本共享内存 ABI，实测热路径零分配；Worker 按显式 RID Native AOT 发布；旧进程内/PCM IPC 类降为仅测试程序集可见 |
 | C# Mapping 持久 ABI | 9.6、9.7、12.9、16.1.4/16.9.2 | 原型使用 `LanguageVersion.Latest`、运行机器全部 TPA、随机程序集名、默认 ALC 和无界进程缓存；`MappingContext` 直接暴露 Domain 类型 | 已按 17A 建立独立只读 ABI v1 契约，固定 Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10` 和基于源码 hash 的身份；每 Project 只保留当前修订，每项使用 collectible ALC；领域源模型只携带 `abiVersion`/函数体/声明，编译产物不持久化 |
+| 颜色兼容表示 | 16.13.8、18A | `MidoraColor` 原型使用 32-bit ARGB，允许形成未规定 alpha 语义 | 已改为三个 byte 分量的 opaque sRGB；protobuf 固定 `RgbColor` 1/2/3 字段，JSON 需要颜色时固定小写 `#rrggbb` |
 
 ## 3. 尚未完成的初版模块（不是“现有代码语义矛盾”）
 
 - Project Metadata、Application Preferences、SoundFont 完整校验/可移植引用及正式应用生命周期尚未实现。
 - Event Instrument、Mapping、Lifecycle、Logical Track/Segment 的若干编辑器级数据与命令仍只有核心垂直切片，不是 SRS 07–11 的完整实现。
-- `.midora` ZIP/manifest/schema/迁移/安全保存/损坏隔离尚未实现。
+- `.midora` 已实现 v1 common/manifest schema、严格 manifest codec、protobuf descriptor-aware wire 校验和兼容基线测试；完整 ZIP、其余结构性文件 schema、迁移、安全保存、损坏隔离与 Project round-trip 尚未实现。
 - 正式 MIDI Export workflow、SMF Type 1 组织、文件事务和导出报告尚未实现。
 - 正式 Audio Render workflow（整曲/分轨、任务快照、取消、结果报告和子进程内文件 OutputDevice）尚未实现；当前只有底层 renderer 与 WAVE 输出能力。
 - WPF UI、导航、编辑器、对话框和 Project 打开/关闭工作流尚未实现。
@@ -86,7 +87,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 15. **已确认：15A（2026-08-06）**。初版产品只发布 `win-x64`；主应用、Native AOT 音频 Worker 与 BASS/BASSMIDI/BASSWASAPI 必须同为 x64，不生成 x86、Arm64 或 AnyCPU 正式产物。Worker publish target 和 BASS 获取/校验脚本已拒绝其他 RID；x64 的 SSE2 基线满足 14A 固定的 8-point sinc 前提。
 16. **已确认：16A（2026-08-06）**。初版固定 BASS `2.4.18.3 / 0x02041203`、BASSMIDI `2.4.16.0 / 0x02041000`、BASSWASAPI `2.4.4.1 / 0x02040401` 及三项 win-x64 DLL SHA-256。仓库只提交正式 manifest，不提交 DLL；正式安装和 Worker publish 只接受操作员提供且逐文件匹配 manifest 的二进制，运行时校验完整版本码。vendor current/latest 下载只能生成 `releaseBaseline=false` 的开发候选；升级必须显式更新基线并完成全回归。商业分发许可证仍是独立发布门。
 17. **已确认：17A（2026-08-06）**。初版固定 C# Mapping ABI v1：`double Transform(double value, in MappingContextV1 context)`，独立只读契约程序集，Roslyn 5.3.0、C# 14、`Microsoft.NETCore.App.Ref 10.0.10`，不开放 Midora 内部、WPF/WindowsDesktop 或第三方编译引用。缓存键为 ABI/compiler profile/函数体 UTF-8 SHA-256，每 Project 只保留当前修订且每项使用 collectible ALC；`.midora` 只保存 ABI 版本、函数体和 Context 声明。该引用边界不是 sandbox，SRS 9.6.2 的风险仍成立。
-18. `.midora` 首版 schema/protobuf 兼容基线：JSON Schema、protobuf 字段号、代码生成方式、文本最大长度和颜色/路径字段表示。
+18. **已确认：18A + 18.1A（2026-08-06）**。结构性 JSON 固定 Draft 2020-12、内部版本化 `System.Text.Json` source-generated DTO，严格拒绝重复/未知属性；protobuf 固定 Edition 2024、Google.Protobuf 3.35.1、Grpc.Tools 2.83.0，`.proto`/descriptor 基线提交、生成 C# 仅在 `obj`，descriptor-aware 检查拒绝未知 tag。字段号、reserved、deterministic 输出与 golden bytes 构成兼容门，依赖升级必须评审。文本上限按 Unicode scalar 固定为 256/4,096/65,536/1,048,576，路径为最多 4,096 scalars 的 UTF-8 相对 `/` 路径且保留大小写/原 Unicode；颜色固定 opaque sRGB。`createdAtUtc`/`modifiedAtUtc` 固定 `yyyy-MM-ddTHH:mm:ss.fffffffZ`，`totalEditingTimeMilliseconds` 为非负 int64。当前已冻结 common/manifest v1 并建立测试；受 19–22 影响的完整对象/settings schema 尚未发布，完整 `.midora` 读写也尚未实现。
 19. Project SoundFont 可移植引用与哈希策略：相对路径规则、大小写/分隔符、同名冲突、哈希算法和计算时机。
 20. Project 工程总耗时累计规则：是否统计空闲、最小化、Buffering 等 SRS 明确留给实现的时段。
 21. MIDI 导出兼容细节：Tempo 的 microseconds-per-quarter-note 舍入、running status、必要 Meta Event 兼容档和输出命名模板。

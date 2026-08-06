@@ -38,6 +38,7 @@
 | INV-027 | Midora 初版只发布 `win-x64`；主应用、Native AOT 音频子进程及 BASS/BASSMIDI/BASSWASAPI 必须同为 x64，不发布 x86、Arm64 或 AnyCPU 正式产物。 |
 | INV-028 | 初版正式 BASS 原生基线固定为 BASS 2.4.18.3、BASSMIDI 2.4.16.0、BASSWASAPI 2.4.4.1 及第 13.30 节列出的 win-x64 DLL SHA-256；正式构建和运行时必须分别校验文件 hash 与完整版本码，不得自动跟随 vendor current/latest。 |
 | INV-029 | 初版 C# Mapping ABI v1 固定 `double Transform(double value, in MappingContextV1 context)`、C# 14、`Microsoft.NETCore.App.Ref 10.0.10` 与独立只读契约；每 Project 仅缓存当前源码修订并用 collectible AssemblyLoadContext 卸载旧项，编译产物不得持久化。引用白名单不是 sandbox。 |
+| INV-030 | 初版持久化兼容基线固定为 JSON Schema Draft 2020-12 与 protobuf Edition 2024；结构性 JSON/protobuf 严格拒绝未知字段，JSON 还拒绝重复属性。已发布 `.proto` 字段号、descriptor、golden bytes 与固定 runtime/codegen profile属于兼容承诺。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|

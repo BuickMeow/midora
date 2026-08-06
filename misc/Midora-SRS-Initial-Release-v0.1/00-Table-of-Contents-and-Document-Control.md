@@ -50,6 +50,8 @@
 
 ## 2026-08-06 修订摘要
 
+- 初版持久化兼容基线固定为 JSON Schema Draft 2020-12、内部版本化 `System.Text.Json` source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 与 Grpc.Tools 2.83.0；严格拒绝重复/未知 JSON 属性和未知 protobuf tag，已发布 schema 以 descriptor/golden bytes 锁定。
+- 持久化文本、相对路径、opaque sRGB 颜色、UTC 时间和工程总耗时的 v1 表示已固定；路径保留大小写与原 Unicode，不做 normalization，时间使用七位小数秒 UTC `Z` 格式，总耗时使用非负 int64 毫秒。
 - 初版 C# Mapping 固定 ABI v1：版本化函数体、只读独立 MappingContext 契约、C# 14/`Microsoft.NETCore.App.Ref 10.0.10`，以及按 Project 当前源码修订管理的 collectible AssemblyLoadContext 缓存；编译产物不持久化，引用白名单不构成 sandbox。
 - 初版产品发布架构固定为 `win-x64`；主应用、Native AOT 音频子进程和三项 BASS 原生库必须同为 x64，不发布 x86、Arm64 或 AnyCPU 正式产物。
 - 初版正式原生基线固定为 BASS 2.4.18.3、BASSMIDI 2.4.16.0、BASSWASAPI 2.4.4.1 及三项 win-x64 DLL 的明确 SHA-256；仓库只保存 manifest，正式构建由操作员提供并校验二进制，vendor current/latest 只能生成开发候选。

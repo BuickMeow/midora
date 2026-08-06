@@ -67,9 +67,9 @@ public readonly record struct TickRange(long StartTick, long EndTick)
     public bool Intersects(TickRange other) => StartTick < other.EndTick && other.StartTick < EndTick;
 }
 
-public readonly record struct MidoraColor(uint Argb)
+public readonly record struct MidoraColor(byte Red, byte Green, byte Blue)
 {
-    public static MidoraColor DefaultInstrument { get; } = new(0xff6b7280);
+    public static MidoraColor DefaultInstrument { get; } = new(0x6b, 0x72, 0x80);
 }
 
 public enum CurveInterpolation

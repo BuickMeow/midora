@@ -355,6 +355,23 @@
 - 产品回答：待填写。
 - 最终处理与提交：待回答后补 exporter/task 级边界测试，并按决定保持失败或实现确定性拆分。
 
+### Q-NUI-022：虚拟键盘按住预览的未知 Gate Length 与实时 canonical 语义
+
+- 类型：大决定
+- 状态：待确认；暂停 Event Instrument/SubVoice 虚拟键盘 held-preview 动态 Gate 分支
+- 发现日期：2026-08-06
+- SRS 依据：第 12.2.4、13.19、13.21～13.23 节；鼠标按下必须立即开始发声，按住期间 Gate 未结束，松开时发送 Gate End，实际按住时长作为临时 Gate Length 进入 MappingContext，全部输出必须来自 Preview CompileContext 的 canonical compiled result；实时链还使用可配置 20–2000 ms Render-Ahead。
+- 已确认事实：C# Mapping ABI v1 从第一个模板事件起即可读取 `GateLength`。松开前最终 Gate Length 尚未知，因此 tick 0 的 Mapping 输出可能依赖未来输入；任何实时实现都无法同时知道该最终值并在按下瞬间输出。当前后端接收冻结 `MidiRenderPlan`，Render-Ahead producer 会提前生成尚未由设备消费的 PCM；松开时以已消费 frame、已渲染 frontier 或清空/回滚 ring 后的 frame 作为 Gate End，会产生不同 Gate 长度与响应延迟。当前代码只实现 SRS 13.22.4 的固定长度 Preview 按钮路径，没有 held-preview Gate Start/End API。
+- 不确定点：held preview 是否允许使用与最终固定长度 canonical compile 不完全等价的因果实时语义；Gate End 应落在用户输入时对应的已消费音乐 frame、包含设备缓冲的下一可播放 frame，还是 producer 尚未渲染的 frontier；是否允许 held preview 使用小于用户 Render-Ahead 的专用缓冲；Mapping 在 Gate End 前读取 `GateLength` 时应得到什么稳定值。
+- 影响范围：可听触发与 release 时机、C# Mapping ABI v1 运行语义、PreviewCompiler、PlaybackController/backend 接口、进程内与子进程 Worker 协议、render-ahead ring 回滚/重建、零分配热路径、确定性测试和硬件输入延迟测试。该选择不应改变普通固定长度 Preview、主播放、MIDI 导出或音频渲染。
+- 推荐方案：为 held preview 明确定义“因果 Gate”子上下文：Gate Start 时 MappingContext 的 `GateLength` 使用固定哨兵 `Int64.MaxValue` 表示尚未结束；Gate End 后只对尚未渲染的边界及后续 Release/Tail/Reset 使用冻结的实际 Gate Length，不承诺整段字节等价于事后以最终 Gate Length 执行的一次固定预览编译。Gate End 固定落在 producer 尚未渲染的第一个 frame，禁止回写已消费/已缓冲 PCM；因此可听 release 最多增加当前 Render-Ahead，任务报告该输入到生效延迟。保持用户 Render-Ahead，不引入回滚和 callback 同步。
+- 推荐依据与限制：该方案满足因果性、按下即时、热路径零分配和现有 ring/子进程模型，且不会伪造对未来 Gate Length 的预知。限制是它需要正式新增 held-preview canonical 语义和 MappingContext 哨兵约定，松开响应会受 Render-Ahead 影响，并与“实际 Gate Length 进入 MappingContext”及单次 canonical 结果的字面要求存在偏差，必须由产品所有者明确接受并修订 SRS/ABI 说明。
+- 备选方案及差异：A. 延迟到松开后才按最终 Gate Length 编译并开始播放；保持单次 canonical 等价，但直接违反“按下立即开始发声”，听到的是事后回放。B. 按下用 `previewGateLength` 或滚动预测值编译，松开重编尾部；开始及时但早期 Mapping 结果依赖猜测，且 GateLength 预测变化会破坏确定性。C. 在 held preview 中禁止 Mapping 读取 GateLength，或固定返回 0；会改变 ABI v1 已确认语义并使同一 Instrument 在 Preview 与正式 Track 中不同。D. Gate End 映射到用户输入时的已消费 frame，丢弃其后的 render-ahead PCM并从该点恢复/重渲染；最接近实际按住时长，但要求 sample-domain 状态快照、BASSMIDI stream 回滚、ring 原子替换与防 underrun，显著扩大并发协议，且 Mapping 对未知最终 Gate Length 的前因问题仍然存在。E. 为 held preview 强制极小专用 Render-Ahead，再在下一未渲染 frame 生效；响应更快，但静默覆盖用户设置、设备稳定性和性能契约。
+- 当前实施状态：固定长度 Event Instrument/SubVoice Preview 与 Segment Preview 已通过 canonical/统一音频链；held-preview 未实现，不以即时裸 MIDI 或停止重启冒充。其他非 UI 分支继续。
+- 需要产品所有者回答：是否采用推荐的“因果 Gate + `Int64.MaxValue` 未结束哨兵 + 未渲染 frontier 生效”方案？若更重视事后 canonical 完全等价请选择 A；若要求接近输入瞬间的 release 请选择 D，并接受新增回滚协议与仍需另定 GateLength 前因规则。
+- 产品回答：待填写。
+- 最终处理与提交：待回答后新增 ADR、held PreviewContext/Compiler 契约、backend/Worker Gate 命令、进程内与子进程一致性测试、Mapping GateLength 测试、不同 Render-Ahead/设备 block/松开边界测试及人工延迟验收。
+
 ## 3. 问题模板
 
 ### Q-NUI-XXX：标题

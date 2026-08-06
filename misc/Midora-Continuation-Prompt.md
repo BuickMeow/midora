@@ -63,13 +63,13 @@ D:\Programing\midora
 23. MIDI 导出与音频文件渲染共用确定性的 Windows 安全文件名合法化和冲突检测服务。算法固定为 NFC、SRS 14.17.4 的不安全字符连续段替换 `_`、设备保留名前缀 `_`、255 UTF-16 code unit、text-element 截断、NFC + OrdinalIgnoreCase 冲突键和稳定 ` (n)` 后缀。任务开始前预览并冻结全部最终路径；不修改源名称，已有目标不参与后缀分配且仍须明确覆盖授权。
 23.2. 输出模板固定：整曲 MIDI/音频为 `<ProjectStem>.mid/.wav`，分 Track 为 `<NN> - <LogicalTrackDisplayName>.mid/.wav`，逐 Port MIDI 为 `Port <PP>.mid`，Readme 为 `README.md`；MIDI Conductor/Event Track Name 固定为 `Conductor` 和 `<原始名称或 fallback> / Port <P>`。多文件模式不自动增加嵌套目录。
 24. Midora 初版固定为免费、开源、非商业软件。BASS 不属于 Midora 的开源许可范围；正式分发仍须按实际发布主体、收入方式、平台、分发方式和届时有效条款核验免费使用条件并提供 notices，条件不明或商业化时先联系权利人或取得适用许可。
-25. Midora 自有源代码固定采用未经自定义修改的标准 MIT License；项目自身非商业不限制下游商业使用。BASS 等第三方材料不纳入该许可证。
+25. Midora 自有源代码固定采用根目录 `LICENSE` 中未经自定义修改的标准 MIT License，版权署名固定为 `Copyright (c) 2026 Midora contributors`；项目自身非商业不限制下游商业使用。BASS 等第三方材料不纳入该许可证。
 
 四、仍需 ADR 或实测决定的事项
 
 这些不是当前 SRS 冲突，不能静默写成实现默认值：
 
-- MIT `LICENSE` 中使用的版权持有人署名；不得从 Git 账号、仓库 URL 或提交者显示名推断；
+- 当前没有剩余的产品所有者技术或发布语义决定；后续只在新实现发现新的 SRS 冲突或未闭合外部语义时追加，不得把一般实现细节包装成产品决定；
 
 五、当前代码定位
 

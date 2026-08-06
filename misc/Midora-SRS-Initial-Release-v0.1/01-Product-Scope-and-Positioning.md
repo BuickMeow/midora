@@ -31,7 +31,7 @@ Midora 初版的产品定位固定为：
 非商业软件
 ```
 
-该定位描述 Midora 自身，不把 BASS、BASSMIDI、BASSWASAPI、用户提供的 SoundFont 或其他第三方材料重新许可为 Midora 的开源组成部分。Midora 自有源代码固定采用 OSI 批准的 MIT License，不增加“禁止商业使用”等自定义限制；正式 `LICENSE` 必须使用标准 MIT 全文并填写经产品所有者确认的版权持有人。版权署名尚未确认前，仓库不得提交带猜测署名的许可证文件。
+该定位描述 Midora 自身，不把 BASS、BASSMIDI、BASSWASAPI、用户提供的 SoundFont 或其他第三方材料重新许可为 Midora 的开源组成部分。Midora 自有源代码固定采用 OSI 批准的 MIT License，不增加“禁止商业使用”等自定义限制；根目录 `LICENSE` 使用标准 MIT 全文，版权署名固定为 `Copyright (c) 2026 Midora contributors`。
 
 免费、开源、非商业定位也不自动构成对第三方许可证条件的法律认定。发布包含或依赖第三方二进制的正式产物时，仍须执行第 21.6 节的逐项发布门。
 ---

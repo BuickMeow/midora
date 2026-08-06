@@ -280,7 +280,7 @@ flowchart TD
 1. 大 Project 性能、256 Channel Unit 峰值、长 tick/Tempo 极值、长时间播放/渲染、内存上限。
 2. Native/module 版本不匹配、无 SF2、坏 SF2、设备丢失、underrun、磁盘满、取消和清理失败。
 3. 确定性回归、包格式兼容、迁移矩阵和音频语义回归资产。
-4. MIT `LICENSE` 版权署名、BASS 非商业免费使用条件或适用许可证、SF2 内容许可证、第三方 notices、DLL 完整性和安装/升级路径。
+4. MIT `LICENSE` 与第三方声明一致性、BASS 非商业免费使用条件或适用许可证、SF2 内容许可证、DLL 完整性和安装/升级路径。
 
 退出条件：所有 SRS 初版验收项有证据；发布包不依赖开发机路径/环境变量；授权和第三方分发条件已确认。
 

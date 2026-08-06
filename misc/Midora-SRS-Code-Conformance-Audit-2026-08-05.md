@@ -100,6 +100,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 23.1. **已确认：23.1A（2026-08-06）**。公共算法固定为 NFC；Win32 保留字符、Unicode Control category 和固定安全风险不可见字符连续段替换为 `_`，保留 ZWNJ/ZWJ/Variation Selector/emoji tag；设备保留名前缀 `_`；最终文件名部分限 255 UTF-16 code unit并按 text element 截断；同目录以 NFC + OrdinalIgnoreCase 检测冲突，按稳定源顺序/key 分配 ` (2)`、` (3)`。已有目标不参与后缀分配。代码已在 `Midora.Common` 实现纯公共规划器并覆盖精确字符表、设备名、Unicode、长度、冲突、乱序输入和原子失败测试。
 23.2. **已确认：23.2A（2026-08-06）**。整曲 MIDI/音频固定为 `<ProjectStem>.mid/.wav`，来源依次为 Project 名称、当前 `.midora` stem 和模式 fallback；分 Track 固定为 `<NN> - <LogicalTrackDisplayName>.mid/.wav`，使用整个 Project 的一基手动序号且至少两位；逐 Port MIDI 为 `Port <PP>.mid`；Readme 为 `README.md`。MIDI Conductor Track Name 为 `Conductor`，事件 Track Name 为原始 Logical Track 名称或 fallback 加 ` / Port <P>`，不经过文件名合法化。多文件模式选择完整输出目录，不自动嵌套。代码已在 `Midora.Common` 实现纯模板规划组件，并覆盖来源 fallback、全项目序号、逐 Port、原始 Track Name、README、Unicode 和原子失败测试。
 24. **已确认：24A（2026-08-06）**。Midora 初版是免费、开源、非商业软件。该定位不把 BASS/BASSMIDI/BASSWASAPI 纳入 Midora 的开源许可证，也不单独证明已满足 BASS 免费使用条件。正式分发前必须按实际发布主体、收入方式、平台、分发方式和届时有效条款完成核验并提供 notices；条件不明或商业化时必须先联系权利人确认或取得适用许可。仓库继续不提交 BASS DLL。
-25. **已确认：25B（2026-08-06）**。Midora 自有源代码采用未经自定义修改的标准 MIT License。该许可证允许下游商业使用；“Midora 初版非商业”只描述项目自身发布定位，不得写成额外许可限制。BASS/BASSMIDI/BASSWASAPI、用户 SoundFont 和其他第三方材料不纳入 MIT 授权范围。正式 `LICENSE` 尚缺产品所有者明确指定的版权持有人，不得从仓库账号推断。
+25. **已确认：25B（2026-08-06）**。Midora 自有源代码采用未经自定义修改的标准 MIT License。该许可证允许下游商业使用；“Midora 初版非商业”只描述项目自身发布定位，不得写成额外许可限制。BASS/BASSMIDI/BASSWASAPI、用户 SoundFont 和其他第三方材料不纳入 MIT 授权范围。
+25.1. **已确认：25.1A（2026-08-06）**。根目录 `LICENSE` 使用标准 MIT 全文，版权署名固定为 `Copyright (c) 2026 Midora contributors`；不需要逐源码文件添加许可证头。
 
-下一项需要产品所有者确认的是 MIT `LICENSE` 的版权持有人署名。确认前仓库仍没有正式 `LICENSE`，公开可读源码不等于已经完成 MIT 授权落地。
+截至本轮全量核对，当前没有剩余的产品所有者技术或发布语义决定。尚未实现的初版模块和发布验收门继续按第 3 节推进；一般实现细节不应重新包装为产品决定。

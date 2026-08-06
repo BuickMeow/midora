@@ -410,11 +410,19 @@ public sealed class SemanticValidatorTests
             voice.Events.Add(TemplateEvent.Note(over.Project, 0, 120, 60, 100));
         }
         second.SubVoices[0].Events.Add(TemplateEvent.Note(over.Project, 0, 120, 60, 100));
-        CompilerTestProject.AddNote(over.Segment, over.Instrument, 0, 480);
+        LogicalNote firstOverLimitNote = CompilerTestProject.AddNote(
+            over.Segment,
+            over.Instrument,
+            0,
+            480);
         LogicalTrack secondTrack = new(over.Project) { Name = "Second", EventInstrumentId = second.Id };
         Segment secondSegment = new(over.Project) { LengthTicks = 1_920 };
         CompilerTestProject.RegisterSegment(over.Project, secondSegment);
-        CompilerTestProject.AddNote(secondSegment, second, 0, 480);
+        LogicalNote secondOverLimitNote = CompilerTestProject.AddNote(
+            secondSegment,
+            second,
+            0,
+            480);
         secondTrack.Segments.Add(secondSegment);
         over.Project.Tracks.Add(secondTrack);
         CanonicalCompiledResult overResult = new MidoraCompiler().CompileFull(over.Project);
@@ -422,6 +430,19 @@ public sealed class SemanticValidatorTests
         Assert.True(overResult.IsPartial);
         Assert.Equal(CompilationFailureStage.ResourceAllocation, overResult.FailureStage);
         Assert.Contains(overResult.Diagnostics, value => value.Code == "MIDORA2202" && value.Severity == DiagnosticSeverity.Error);
+        ResourceShortageDetails shortage = Assert.IsType<ResourceShortageDetails>(
+            overResult.Statistics.ResourceShortage);
+        Assert.Equal(new TickRange(0, 480), shortage.Range);
+        Assert.Equal(1, shortage.RequestedChannelUnitCount);
+        Assert.Equal(0, shortage.AvailableChannelUnitCount);
+        Assert.Equal(2, shortage.TrackIds.Length);
+        Assert.Equal(2, shortage.SegmentIds.Length);
+        Assert.Equal(
+            [firstOverLimitNote.Id, secondOverLimitNote.Id],
+            shortage.LogicalNoteIds.ToArray().Order().ToArray());
+        Assert.Equal(2, shortage.EventInstrumentIds.Length);
+        Assert.Equal(257, shortage.SubVoiceIds.Length);
+        Assert.Equal(16, overResult.Statistics.UsedPortCount);
     }
 
     [Fact]

@@ -162,6 +162,10 @@ public sealed class MidoraCompiler : IDisposable
                 .ToList();
         }
 
+        instances = instances
+            .Where(instance => instance.StartTick < endTick && instance.EndTick > request.StartTick)
+            .ToList();
+
         int overlapDiagnosticStart = diagnostics.Count;
         ValidateOverlap(project, instances, diagnostics);
         bool overlapErrors = diagnostics
@@ -189,7 +193,7 @@ public sealed class MidoraCompiler : IDisposable
                 project.TicksPerQuarterNote, CreateContextSummary(project, request, endTick),
                 [], conductor, [], diagnostics.ToArray(),
                 true, false, failureStage, 0,
-                new(selectedTracks.Count, instances.Count, 0, allocation.PeakUnits));
+                CreateStatistics(selectedTracks.Count, instances, 0, allocation));
         }
 
         List<CanonicalMidiEvent> allEvents = MaterializeEvents(instances, allocation.UnitBySubVoice);
@@ -211,7 +215,7 @@ public sealed class MidoraCompiler : IDisposable
             project.TicksPerQuarterNote, CreateContextSummary(project, request, endTick),
             ranged, conductor, rangedAllocations, diagnostics.ToArray(),
             false, true, null, resultFingerprint,
-            new(selectedTracks.Count, instances.Count, ranged.Length, allocation.PeakUnits));
+            CreateStatistics(selectedTracks.Count, instances, ranged.Length, allocation));
     }
 
     private static CanonicalCompiledResult Failure(
@@ -243,6 +247,32 @@ public sealed class MidoraCompiler : IDisposable
         request.IncludedTrackIds is null
             ? project.Tracks.Count
             : project.Tracks.Count(track => request.IncludedTrackIds.Contains(track.Id));
+
+    private static CompilationStatistics CreateStatistics(
+        int selectedTrackCount,
+        IReadOnlyCollection<RawInstance> instances,
+        int eventCount,
+        AllocationResult allocation) => new(
+            selectedTrackCount,
+            instances.Count,
+            eventCount,
+            allocation.PeakUnits)
+        {
+            ExpandedSegmentCount = instances.Select(instance => instance.SegmentId).Distinct().Count(),
+            ParticipatingEventInstrumentCount = instances
+                .Select(instance => instance.InstrumentId)
+                .Distinct()
+                .Count(),
+            ParticipatingSubVoiceCount = instances
+                .SelectMany(instance => instance.Voices.Select(voice => (instance.InstrumentId, voice.SubVoiceId)))
+                .Distinct()
+                .Count(),
+            UsedPortCount = allocation.Allocations
+                .Select(value => value.ZeroBasedPort)
+                .Distinct()
+                .Count(),
+            ResourceShortage = allocation.ResourceShortage
+        };
 
     private void ValidateMappingFunctions(
         MidoraProject project,
@@ -1679,6 +1709,7 @@ public sealed class MidoraCompiler : IDisposable
         Dictionary<(MidoraId InstanceId, MidoraId SubVoiceId), int> unitByVoice = [];
         List<ChannelUnitAllocation> allocations = [];
         int peak = 0;
+        ResourceShortageDetails? resourceShortage = null;
         foreach (AllocationGroup group in groups)
         {
             for (int i = active.Count - 1; i >= 0; i--)
@@ -1704,6 +1735,27 @@ public sealed class MidoraCompiler : IDisposable
             }
             if (found != count)
             {
+                if (resourceShortage is null)
+                {
+                    AllocationGroup[] relatedGroups = active
+                        .Select(value => value.Group)
+                        .Append(group)
+                        .ToArray();
+                    RawInstance[] relatedInstances = relatedGroups
+                        .SelectMany(value => value.Instances)
+                        .ToArray();
+                    resourceShortage = new ResourceShortageDetails(
+                        new TickRange(
+                            group.StartTick,
+                            relatedGroups.Min(value => value.EndTick)),
+                        count,
+                        used.Count(value => !value),
+                        relatedInstances.Select(value => value.TrackId),
+                        relatedInstances.Select(value => value.SegmentId),
+                        relatedInstances.Select(value => value.InstanceId),
+                        relatedInstances.Select(value => value.InstrumentId),
+                        relatedInstances.SelectMany(value => value.Voices.Select(voice => voice.SubVoiceId)));
+                }
                 diagnostics.Add(new("MIDORA2202", DiagnosticSeverity.Error,
                     $"无法为 {count} 个 SubVoice 原子分配 Channel Group；全局上限为 256 Channel Units。",
                     new(group.Instances[0].TrackId, group.Instances[0].SegmentId,
@@ -1714,7 +1766,7 @@ public sealed class MidoraCompiler : IDisposable
             {
                 used[unit] = true;
             }
-            active.Add(new(group.EndTick, units));
+            active.Add(new(group, units));
             peak = Math.Max(peak, used.Count(value => value));
             foreach (RawInstance instance in group.Instances)
             {
@@ -1723,12 +1775,13 @@ public sealed class MidoraCompiler : IDisposable
                     RawSubVoice voice = instance.Voices[i];
                     int unit = units[i];
                     unitByVoice[(instance.InstanceId, voice.SubVoiceId)] = unit;
-                    allocations.Add(new(instance.TrackId, instance.InstrumentId, group.GroupId, voice.SubVoiceId,
+                    allocations.Add(new(instance.TrackId, instance.InstrumentId, instance.InstanceId,
+                        group.GroupId, voice.SubVoiceId,
                         group.StartTick, group.EndTick, (byte)(unit >> 4), (byte)(unit & 15)));
                 }
             }
         }
-        return new(unitByVoice, allocations.ToArray(), peak);
+        return new(unitByVoice, allocations.ToArray(), peak, resourceShortage);
     }
 
     private static List<CanonicalMidiEvent> MaterializeEvents(
@@ -2246,11 +2299,15 @@ public sealed class MidoraCompiler : IDisposable
         }
     }
 
-    private sealed record ActiveAllocation(long EndTick, int[] Units);
+    private sealed record ActiveAllocation(AllocationGroup Group, int[] Units)
+    {
+        public long EndTick => Group.EndTick;
+    }
     private sealed record AllocationResult(
         Dictionary<(MidoraId InstanceId, MidoraId SubVoiceId), int> UnitBySubVoice,
         ChannelUnitAllocation[] Allocations,
-        int PeakUnits);
+        int PeakUnits,
+        ResourceShortageDetails? ResourceShortage);
 
     private static MappingStableIdV1 ToMappingId(MidoraId id) => new(id.High, id.Low);
 

@@ -250,7 +250,7 @@ public sealed class IncrementalCompilationTests
         Assert.Equal(expected.StartTick, actual.StartTick);
         Assert.Equal(expected.EndTick, actual.EndTick);
         Assert.Equal(expected.Fingerprint, actual.Fingerprint);
-        Assert.Equal(expected.Statistics, actual.Statistics);
+        AssertStatisticsEqual(expected.Statistics, actual.Statistics);
         Assert.Equal(expected.Events.ToArray(), actual.Events.ToArray());
         Assert.Equal(expected.Allocations.ToArray(), actual.Allocations.ToArray());
         Assert.Equal(expected.Conductor.Tempos.ToArray(), actual.Conductor.Tempos.ToArray());
@@ -259,6 +259,45 @@ public sealed class IncrementalCompilationTests
         Assert.Equal(expected.Conductor.Markers.ToArray(), actual.Conductor.Markers.ToArray());
         Assert.Equal(expected.Conductor.EndMarker, actual.Conductor.EndMarker);
         Assert.Equal(expected.Diagnostics, actual.Diagnostics);
+    }
+
+    private static void AssertStatisticsEqual(
+        CompilationStatistics expected,
+        CompilationStatistics actual)
+    {
+        Assert.Equal(expected.SourceTrackCount, actual.SourceTrackCount);
+        Assert.Equal(expected.ExpandedInstanceCount, actual.ExpandedInstanceCount);
+        Assert.Equal(expected.EventCount, actual.EventCount);
+        Assert.Equal(expected.PeakChannelUnitCount, actual.PeakChannelUnitCount);
+        Assert.Equal(expected.ExpandedSegmentCount, actual.ExpandedSegmentCount);
+        Assert.Equal(
+            expected.ParticipatingEventInstrumentCount,
+            actual.ParticipatingEventInstrumentCount);
+        Assert.Equal(expected.ParticipatingSubVoiceCount, actual.ParticipatingSubVoiceCount);
+        Assert.Equal(expected.UsedPortCount, actual.UsedPortCount);
+        if (expected.ResourceShortage is null)
+        {
+            Assert.Null(actual.ResourceShortage);
+            return;
+        }
+
+        ResourceShortageDetails shortage = Assert.IsType<ResourceShortageDetails>(actual.ResourceShortage);
+        Assert.Equal(expected.ResourceShortage.Range, shortage.Range);
+        Assert.Equal(
+            expected.ResourceShortage.RequestedChannelUnitCount,
+            shortage.RequestedChannelUnitCount);
+        Assert.Equal(
+            expected.ResourceShortage.AvailableChannelUnitCount,
+            shortage.AvailableChannelUnitCount);
+        Assert.Equal(expected.ResourceShortage.TrackIds.ToArray(), shortage.TrackIds.ToArray());
+        Assert.Equal(expected.ResourceShortage.SegmentIds.ToArray(), shortage.SegmentIds.ToArray());
+        Assert.Equal(
+            expected.ResourceShortage.LogicalNoteIds.ToArray(),
+            shortage.LogicalNoteIds.ToArray());
+        Assert.Equal(
+            expected.ResourceShortage.EventInstrumentIds.ToArray(),
+            shortage.EventInstrumentIds.ToArray());
+        Assert.Equal(expected.ResourceShortage.SubVoiceIds.ToArray(), shortage.SubVoiceIds.ToArray());
     }
 
     private sealed record MultiSegmentFixture(

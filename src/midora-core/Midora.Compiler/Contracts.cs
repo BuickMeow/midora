@@ -140,6 +140,7 @@ public readonly record struct CanonicalMidiEvent(
 public readonly record struct ChannelUnitAllocation(
     MidoraId TrackId,
     MidoraId EventInstrumentId,
+    MidoraId InstanceId,
     MidoraId InstanceGroupId,
     MidoraId SubVoiceId,
     long StartTick,
@@ -258,7 +259,57 @@ public readonly record struct CompilationStatistics(
     int SourceTrackCount,
     int ExpandedInstanceCount,
     int EventCount,
-    int PeakChannelUnitCount);
+    int PeakChannelUnitCount)
+{
+    public int ExpandedSegmentCount { get; init; }
+    public int ParticipatingEventInstrumentCount { get; init; }
+    public int ParticipatingSubVoiceCount { get; init; }
+    public int UsedPortCount { get; init; }
+    public ResourceShortageDetails? ResourceShortage { get; init; }
+}
+
+public sealed class ResourceShortageDetails
+{
+    private readonly MidoraId[] _trackIds;
+    private readonly MidoraId[] _segmentIds;
+    private readonly MidoraId[] _logicalNoteIds;
+    private readonly MidoraId[] _eventInstrumentIds;
+    private readonly MidoraId[] _subVoiceIds;
+
+    internal ResourceShortageDetails(
+        TickRange range,
+        int requestedChannelUnitCount,
+        int availableChannelUnitCount,
+        IEnumerable<MidoraId> trackIds,
+        IEnumerable<MidoraId> segmentIds,
+        IEnumerable<MidoraId> logicalNoteIds,
+        IEnumerable<MidoraId> eventInstrumentIds,
+        IEnumerable<MidoraId> subVoiceIds)
+    {
+        Range = range;
+        RequestedChannelUnitCount = requestedChannelUnitCount;
+        AvailableChannelUnitCount = availableChannelUnitCount;
+        _trackIds = FreezeIds(trackIds);
+        _segmentIds = FreezeIds(segmentIds);
+        _logicalNoteIds = FreezeIds(logicalNoteIds);
+        _eventInstrumentIds = FreezeIds(eventInstrumentIds);
+        _subVoiceIds = FreezeIds(subVoiceIds);
+    }
+
+    public TickRange Range { get; }
+    public int RequestedChannelUnitCount { get; }
+    public int AvailableChannelUnitCount { get; }
+    public ReadOnlySpan<MidoraId> TrackIds => _trackIds;
+    public ReadOnlySpan<MidoraId> SegmentIds => _segmentIds;
+    public ReadOnlySpan<MidoraId> LogicalNoteIds => _logicalNoteIds;
+    public ReadOnlySpan<MidoraId> EventInstrumentIds => _eventInstrumentIds;
+    public ReadOnlySpan<MidoraId> SubVoiceIds => _subVoiceIds;
+
+    private static MidoraId[] FreezeIds(IEnumerable<MidoraId> ids) => ids
+        .Distinct()
+        .OrderBy(id => id)
+        .ToArray();
+}
 
 public readonly record struct CompilerRunTelemetry(
     int RecompiledTrackCount,

@@ -30,6 +30,7 @@
 - Conductor 每次重新冻结；End Marker、Tempo、Time/Key Signature、Marker、请求范围和输出目的不从 Segment 缓存恢复。
 - 缓存片段保留本段 Mapping/展开诊断；复用时按确定 Segment 顺序重放。Track 级空 SubVoice Info 每次从当前合并实例和当前 Instrument 重新生成。
 - 全局低号优先资源分配、峰值诊断、canonical 同 tick 排序、范围状态恢复、硬结束和结果 fingerprint 每次重算，因此局部缓存不能固定旧 Port/Channel 或诊断结果。
+- Overlap 与资源分配只作用于和本次 `[startTick,endTick)` 相交的实例；范围外未来峰值不能使当前范围失败。分配记录同时保留 instance ID 与共享 group ID，结构化 shortage 区间和相关稳定 ID 集合每次从当前完整分配重建。
 
 ## 4. 持久化、运行时归属与非目标
 
@@ -51,3 +52,4 @@
 - 固定种子 80 轮连续合法 Note 编辑：Incremental 与独立 Full oracle 对 result 状态、范围、fingerprint、statistics、events、allocations、Conductor 和 diagnostics 逐字段相等。
 - CompileContext 的 nullable requested end、resolved end/end source、全量或显式 Track/SubVoice 集合及 Warning 策略逐字段进入 Full/Incremental oracle；请求集合在编译返回后修改不影响已冻结结果。
 - 语义、展开 MIDI 值域、超过 256 个 Channel Unit、Overlap Reject 及 Warning-as-error 分别锁定失败阶段；所有失败结果锁定 partial/不可消费契约，所有成功结果锁定无失败阶段。
+- 多 Port 统计、共享 group 的逐 instance 归属、范围外峰值隔离，以及资源 shortage 区间/Track/Segment/Note/Instrument/SubVoice 集合均有直接测试；资源失败的 Full/Incremental 结构化统计逐字段一致。

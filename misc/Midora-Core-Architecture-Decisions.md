@@ -382,3 +382,11 @@ Requirement trace：输入为打开 Project 的 source reference、当前 `.mido
 结束范围来源严格区分显式请求、Project End Marker 默认和自然内容结束；不能只保存最终数值后丢失来源。`IncludesAllTracks` / `IncludesAllSubVoices` 与空显式集合不同：前者表示未限制集合，后者表示调用方明确选择零项。成功、语义失败和后续 partial 失败使用同一摘要路径；Full/Incremental 对同一请求必须逐字段一致。
 
 Requirement trace：输入为完整 `CompilationRequest`、当前 Project End Marker 和最终 resolved end tick；正式输出是 canonical 内不可变上下文摘要。边界是请求集合按稳定 ID 排序复制、nullable 显式 end 保留、消费者类别只由固定 Purpose 枚举推导。非法 Purpose 仍由 Semantic Validation 诊断，摘要原样保留失败请求以便定位。摘要、选择快照和失败策略属于本次编译运行时结果，不写入 `.midora`，不影响事件 fingerprint，也不允许消费者借此重新解释 Project 语义。明确非目标是 UI 诊断显示过滤、持久化 CompileContext、Mute/Solo 或设备/SoundFont 状态。
+
+## 26. ADR-CORE-024（已接受）：范围内资源分配与结构化峰值统计
+
+决定：Overlap 检查、Channel Unit 分配和资源峰值只接收与本次 `[startTick,endTick)` 相交的已展开实例；结束不晚于 start 或开始不早于 end 的实例不得因范围外重叠/资源不足阻止当前范围结果。相交实例仍保留完整原始事件供范围起点状态恢复和结束硬裁剪，故该过滤不改变范围内 Mapping、Reset 或 NoteOff 语义。
+
+每条 `ChannelUnitAllocation` 同时保存单个 Logical Note instance ID 和共享 allocation group ID：前者用于定位具体触发，后者表达 Per-Note Isolation 关闭时多个实例共享同一 Channel Group。统计补充相交 Segment 数、参与 Instrument/SubVoice 数和实际 Port 数。首次资源不足冻结精确 shortage 区间、请求/可用 Channel Unit 数，以及当时占用或请求资源的 Track、Segment、Logical Note、Event Instrument、SubVoice 稳定 ID 集合；ID 集合排序、去重、只读。后续失败仍可产生诊断，但首个失败点作为确定性统计入口。
+
+Requirement trace：输入为本次范围内 Raw Instance、确定排序的 allocation group 和 256-unit 位图；正式输出为 instance/group 双身份占用区间、资源统计或 `ResourceShortageDetails`。边界是最低可用 Unit 分配算法和 16×16 上限不变，空显式范围统计为零，超过范围的未来峰值不参与。资源不足仍使结果 partial/不可消费，诊断和结构化统计必须 Full/Incremental 等价。上述数据只属于 canonical 运行时结果，不持久化，不允许消费者重新分配 Port/Channel；明确非目标是语义级 Voice Stealing、自动合并 SubVoice 或提高初版资源上限。

@@ -32,7 +32,7 @@
 | NUI-01 | 仓库级构建、测试和兼容基线 | 待复核 | §2、§21、INV-027～030 | 单命令 Release 构建；全部自动测试；固定工具链/原生 manifest 门 |
 | NUI-02 | 完整领域源模型与编辑事务 | 进行中 | §3～11 | 所有对象和值域、复制/删除/分割/合并、原子命令与 Undo/Redo 属性测试 |
 | NUI-03 | Semantic Validation 与诊断来源 | 进行中 | §3～12 | 全错误/警告/Info 矩阵与稳定排序 golden |
-| NUI-04 | Full/Incremental Canonical Compiler | 进行中 | §12、INV-009/010/015 | checkpoint + dirty range + state hash；随机输入逐字段等价 |
+| NUI-04 | Full/Incremental Canonical Compiler | 强增量模型完成；全 §12 矩阵继续扩充 | §12、INV-009/010/015 | Segment checkpoint + dirty range + state hash 已实现；固定种子连续编辑逐字段等价 |
 | NUI-05 | Playback/Preview 非 UI 状态机 | 进行中 | §13、§19 | 全状态、自动 Stop、Mute/Solo、设备故障和重复生命周期测试 |
 | NUI-06 | MIDI Export 完整工作流 | 进行中 | §14、§19 | 三模式、routing、README、冻结命名、多文件原子事务、自校验 |
 | NUI-07 | Audio Render 完整工作流 | 自动化与 AOT 文件链完成；试听待验收 | §15、§19 | Whole/Per Track、采样率/长度/RIFF 边界、取消、独立发布、零分配 |
@@ -73,7 +73,7 @@
 
 - 当前领域模型和编译器虽已有大量覆盖，但尚未逐条证明 §7～§12 全矩阵完成。
 - 当前 `.midora` 已支持完整 Event Instrument/Logical Track 对象图、完整性正常的 Embedded SF2，以及 Q-NUI-001 规定的损坏资源结构化修复门；旧格式迁移尚未实现，因此 NUI-08 仍未完成。
-- 当前 Track 级增量缓存不符合 §12.21 的强制 checkpoint/state-hash 收敛模型。
+- §12.21 的 Segment checkpoint、dirty range 与 state-hash 收敛模型已替换旧 Track 整片段缓存；当前剩余风险是继续扩大随机 Project 生成器和 §7～§12 全语义组合矩阵，而不是已知的增量架构缺口。
 - Project MIDI Export Settings 仍是空 v1 占位；schema v2 与默认值等待 Q-NUI-003，不能回写修改已发布 v1。
 - Audio Render 的 canonical/输出事务与正式 Native AOT 文件链已完成，但应用级单音频任务锁和开始渲染前自动 Stop 仍属于 NUI-10；实时硬件压力与集中人工试听仍属于 NUI-09/NUI-11。
 - 实际 BASS DLL、物理 WASAPI 设备、设备移除和人耳听音不能只凭无设备 CI 结论替代。

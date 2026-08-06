@@ -53,7 +53,7 @@
 - MIDI Export 已有整曲 SMF Type 1 canonical 编码、自校验和 Channel 10 GS→XG melodic 初始化垂直切片；按 Track/Port 模式、Compact Routing、Readme、文件事务、取消/进度和完整导出报告尚未实现。
 - 正式 Audio Render workflow（整曲/分轨、任务快照、取消、结果报告和子进程内文件 OutputDevice）尚未实现；当前只有底层 renderer 与 WAVE 输出能力。
 - WPF UI、导航、编辑器、对话框和 Project 打开/关闭工作流尚未实现。
-- SRS 12.21 要求的 Segment checkpoint、输入/输出状态 hash、dirty 传播与收敛停止尚未实现；现有 Track 级缓存只能作为过渡实现，不能标记为初版合规。
+- 后续复核（2026-08-06）：SRS 12.21 的 Segment checkpoint、dirty range、state hash 与收敛停止已实现并替换 Track 整片段过渡缓存；全局资源分配和 canonical 后处理仍完整重算。剩余工作是继续扩充随机 Project 与 §7～§12 组合覆盖。
 - Canonical CompileContext 摘要、失败阶段、完整来源追踪和可选 Debug 诊断仍不完整。
 - Native interop 已固定三项支持修订并建立完整版本不匹配测试；32/64 位布局、calling convention、重复 init/free 和泄漏的独立自动化门仍不完整。
 - WASAPI 设备移除/默认设备变化、不同 callback block、deadline/underrun 和约 200 ms 端到端基准仍需要在正式候选硬件矩阵上验收。

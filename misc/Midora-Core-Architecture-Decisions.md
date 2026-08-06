@@ -83,11 +83,17 @@ Midora.Playback
 
 限制：这是实现 v1，不是 SRS 固定算法。若极长曲线的事件量或听感测试不能接受，必须以新 ADR 和 golden vectors 修改，不能静默改变。
 
-## 4. ADR-CORE-003（非合规过渡原型）：Track 级增量缓存
+## 4. ADR-CORE-003（已接受）：Segment 边界 Checkpoint、Dirty Range 与状态收敛
 
-当前原型：全量编译仍是 oracle。增量编译按 Logical Track 缓存“已展开但未分配 Channel Unit”的冻结片段；ProjectChangeSet 与覆盖全部编译输入的 source fingerprint 共同决定 Track 片段复用。随后始终对本次上下文的全部实例重新执行确定性低号优先资源分配、全局排序、范围恢复和硬边界裁剪。
+决定：Full Compile 在每个按 `ProjectStartTick`、稳定 ID 排序的 Segment 入口以及 Track 末尾生成运行时检查点。缓存单元是“已展开、尚未分配 Channel Unit”的 Segment 冻结片段；每个入口检查点保存 tick、下一实例 `SourceOrder`、完整展开上下文 fingerprint 和由这些字段确定生成的 state hash。状态等价判定同时比较 hash 与全部原始字段，不能只凭 hash 命中。
 
-该原型避免未变化 Track 的 Mapping、曲线、Loop 和模板展开工作，同时不保留历史 Port/Channel 分配；但它不满足 SRS 12.21.3 强制的 Checkpoint + Dirty Range + State Hash 收敛模型，不能作为初版合规实现。正式实现必须补齐该模型，并继续以 Full Compile 逐字段等价作为门槛；这不是由基准结果决定的可选优化。
+该边界成立的依据是：同一 Track 的 Segment 经语义验证后不得重叠；每个实例都被 Segment End 硬裁剪并在边界发出完整 NoteOff/Reset。因此进入下一 Segment 时，展开阶段不存在跨边界活动实例、生命周期、Logical Parameter 继承或待处理 Reset；唯一跨 Segment 的展开状态是用于稳定排序的下一 `SourceOrder`。Channel Group、Channel Unit、当前 MIDI 状态和资源分配器不进入此中间缓存，因为每次 Full/Incremental Compile 都对全部本次实例重新执行同一确定性全局分配、materialize、排序、范围恢复与硬裁剪。这样不会复用历史 Port/Channel 分配。
+
+Dirty 起点按新旧有序 Segment source fingerprint 的首个差异确定；插入、删除和移动同时取新旧边界的较早 tick。Track/Event Instrument/全局上下文 fingerprint 变化时从 Track 首段回退。显式 `ProjectChangeSet` 标记但 fingerprint 未变化时，仍至少重编一个 Segment 以验证缓存覆盖面。编译器从 Dirty Segment 按 Full Compile 规则向后展开；只有新的检查点状态逐字段等于旧检查点，且其后的 Segment ID、source fingerprint 和顺序全部未变时，才复用冻结后缀。实例计数或过滤状态改变会改变 `SourceOrder`，从而阻止错误收敛并继续重编到上下文末尾。
+
+Conductor、范围、Track/SubVoice 选择和 End Marker 不混入 Segment 缓存：Conductor 每次重新冻结，原始实例缓存保持全上下文，之后再按本次请求重做范围恢复、选择、硬边界与结果 fingerprint。所有语义验证和实际 Mapping Function 可用性检查也在缓存判定前重新执行；缓存只存在于当前 `MidoraCompiler`/Project 会话，切换 Project、显式清理或 Dispose 时释放，不持久化到 `.midora`。
+
+验证门：Full Compile 继续作为 oracle；固定向量覆盖中段编辑、插入/删除空 Segment、实例计数改变、Event Instrument 上下文失效、集合乱序和显式失效，固定种子性质测试在连续合法编辑后逐字段比较 result、Conductor、事件、分配、诊断、统计与 fingerprint。当前粒度不会在单个 Segment 内建立 Note 级检查点，因此长 Segment 的最坏情况是重编整个 Segment；SRS 未规定更细粒度，后续只有在性能证据要求时才可增加内部检查点，且不得改变本 ADR 的状态等价与 Full oracle 门。
 
 ## 5. ADR-CORE-004：tick 到 sample-frame 映射候选 v1
 

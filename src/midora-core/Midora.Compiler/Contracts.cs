@@ -196,4 +196,10 @@ public readonly record struct CompilationStatistics(
 
 public readonly record struct CompilerRunTelemetry(
     int RecompiledTrackCount,
-    int ReusedTrackCount);
+    int ReusedTrackCount)
+{
+    public int RecompiledSegmentCount { get; init; }
+    public int ReusedSegmentCount { get; init; }
+    public int StateConvergenceCount { get; init; }
+    public long? EarliestDirtyTick { get; init; }
+}

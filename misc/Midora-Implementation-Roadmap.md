@@ -226,6 +226,8 @@ flowchart TD
 
 ### 阶段 4：完成编译语义与增量编译
 
+当前进度：2026-08-06 已以 ADR-CORE-003 的 Segment 入口/Track 末尾检查点替换 Track 整片段过渡缓存；已实现 dirty 起点、展开上下文与 Segment source fingerprint、逐字段状态等价、后续 Source 未变门和收敛后缀复用。全局资源分配、canonical 排序、范围恢复与硬边界仍每次完整重算。固定向量和 80 轮固定种子连续合法编辑已通过独立 Full Compile 逐字段 oracle；阶段剩余项是继续扩充 §7～§12 全语义组合矩阵。
+
 工作：
 
 1. Event Instrument 多 SubVoice、Logical Parameter、ordered mapping chain、C# Mapping、round/overflow/NaN/Infinity。

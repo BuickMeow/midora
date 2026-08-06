@@ -84,6 +84,10 @@ public sealed class MidoraCompiler : IDisposable
         List<RawInstance> instances = [];
         int recompiledTracks = 0;
         int reusedTracks = 0;
+        int recompiledSegments = 0;
+        int reusedSegments = 0;
+        int stateConvergences = 0;
+        long? earliestDirtyTick = null;
         IReadOnlyList<LogicalTrack> selectedTracks = project.Tracks
             .Where(track => request.IncludedTrackIds is null || request.IncludedTrackIds.Contains(track.Id))
             .ToArray();
@@ -96,25 +100,29 @@ public sealed class MidoraCompiler : IDisposable
 
         foreach (LogicalTrack track in selectedTracks)
         {
-            long fingerprint = SourceFingerprint.ForTrack(track, instruments, project);
-            bool explicitlyDirty = changes.AffectsEverything || changes.TrackIds.Contains(track.Id)
-                || changes.EventInstrumentIds.Any(id => TrackReferences(track, id));
-            if (incremental && !explicitlyDirty && _trackCache.TryGetValue(track.Id, out TrackCacheEntry? cached)
-                && cached.Fingerprint == fingerprint)
+            TrackExpansion expansion = ExpandTrackIncrementally(
+                project, track, instruments, incremental, changes);
+            instances.AddRange(expansion.Instances);
+            diagnostics.AddRange(expansion.Diagnostics);
+            recompiledTracks += expansion.Recompiled ? 1 : 0;
+            reusedTracks += expansion.Recompiled ? 0 : 1;
+            recompiledSegments += expansion.RecompiledSegmentCount;
+            reusedSegments += expansion.ReusedSegmentCount;
+            stateConvergences += expansion.StateConvergenceCount;
+            if (expansion.EarliestDirtyTick.HasValue
+                && (!earliestDirtyTick.HasValue || expansion.EarliestDirtyTick.Value < earliestDirtyTick.Value))
             {
-                instances.AddRange(cached.Instances);
-                diagnostics.AddRange(cached.Diagnostics);
-                reusedTracks++;
-                continue;
+                earliestDirtyTick = expansion.EarliestDirtyTick;
             }
-
-            int diagnosticStart = diagnostics.Count;
-            RawInstance[] compiledTrack = ExpandTrack(project, track, instruments, diagnostics);
-            CompilerDiagnostic[] trackDiagnostics = diagnostics.Skip(diagnosticStart).ToArray();
-            _trackCache[track.Id] = new TrackCacheEntry(fingerprint, compiledTrack, trackDiagnostics);
-            instances.AddRange(compiledTrack);
-            recompiledTracks++;
         }
+
+        CompilerRunTelemetry telemetry = new(recompiledTracks, reusedTracks)
+        {
+            RecompiledSegmentCount = recompiledSegments,
+            ReusedSegmentCount = reusedSegments,
+            StateConvergenceCount = stateConvergences,
+            EarliestDirtyTick = earliestDirtyTick
+        };
 
         if (!request.EndTick.HasValue && !project.Conductor.EndMarkerTick.HasValue)
         {
@@ -153,7 +161,7 @@ public sealed class MidoraCompiler : IDisposable
         bool errors = diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         if (errors || warningsFail)
         {
-            LastTelemetry = new(recompiledTracks, reusedTracks);
+            LastTelemetry = telemetry;
             return new CanonicalCompiledResult(
                 project.TicksPerQuarterNote, request.StartTick, endTick,
                 [], conductor, [], diagnostics.ToArray(), request.Purpose,
@@ -175,7 +183,7 @@ public sealed class MidoraCompiler : IDisposable
 
         long resultFingerprint = SourceFingerprint.ForResult(
             request.StartTick, endTick, ranged, conductor);
-        LastTelemetry = new(recompiledTracks, reusedTracks);
+        LastTelemetry = telemetry;
         return new CanonicalCompiledResult(
             project.TicksPerQuarterNote, request.StartTick, endTick,
             ranged, conductor, rangedAllocations, diagnostics.ToArray(), request.Purpose,
@@ -236,25 +244,268 @@ public sealed class MidoraCompiler : IDisposable
                     .Concat(ActiveSteps(value.ValueMappings))
                     .Concat(ActiveSteps(value.SecondaryValueMappings))));
 
-    private RawInstance[] ExpandTrack(
+    private TrackExpansion ExpandTrackIncrementally(
         MidoraProject project,
         LogicalTrack track,
         IReadOnlyDictionary<MidoraId, EventInstrument> instruments,
-        List<CompilerDiagnostic> diagnostics)
+        bool incremental,
+        ProjectChangeSet changes)
+    {
+        long contextFingerprint = SourceFingerprint.ForTrackContext(track, instruments, project);
+        CurrentSegment[] currentSegments = track.Segments
+            .OrderBy(value => value.ProjectStartTick)
+            .ThenBy(value => value.Id)
+            .Select(value => new CurrentSegment(value, SourceFingerprint.ForSegment(value)))
+            .ToArray();
+        bool explicitlyDirty = changes.AffectsEverything
+            || changes.TrackIds.Contains(track.Id)
+            || changes.EventInstrumentIds.Any(id => TrackReferences(track, id));
+        _trackCache.TryGetValue(track.Id, out TrackCacheEntry? cached);
+        bool hasCompatibleCache = incremental
+            && cached is not null
+            && cached.ContextFingerprint == contextFingerprint;
+        bool sourceSequenceUnchanged = hasCompatibleCache
+            && SegmentSourcesEqual(currentSegments, 0, cached!.Segments, 0);
+
+        if (hasCompatibleCache
+            && !explicitlyDirty
+            && sourceSequenceUnchanged)
+        {
+            return CreateTrackExpansion(
+                track, instruments, cached!.Segments, false,
+                0, cached.Segments.Length, 0, null);
+        }
+
+        int reusablePrefixCount = 0;
+        if (hasCompatibleCache)
+        {
+            int limit = Math.Min(currentSegments.Length, cached!.Segments.Length);
+            while (reusablePrefixCount < limit
+                && SegmentSourceEquals(currentSegments[reusablePrefixCount], cached.Segments[reusablePrefixCount]))
+            {
+                reusablePrefixCount++;
+            }
+
+            if (explicitlyDirty && reusablePrefixCount == currentSegments.Length
+                && reusablePrefixCount == cached.Segments.Length)
+            {
+                reusablePrefixCount = 0;
+            }
+        }
+
+        List<SegmentCacheEntry> newEntries = [];
+        int reusedSegmentCount = 0;
+        int recompiledSegmentCount = 0;
+        int stateConvergenceCount = 0;
+        int nextSourceOrder = 0;
+        if (hasCompatibleCache && reusablePrefixCount != 0)
+        {
+            for (int index = 0; index < reusablePrefixCount; index++)
+            {
+                newEntries.Add(cached!.Segments[index]);
+            }
+            reusedSegmentCount = reusablePrefixCount;
+            nextSourceOrder = cached!.Segments[reusablePrefixCount - 1].NextSourceOrder;
+        }
+
+        long? earliestDirtyTick = FindDirtyTick(currentSegments, cached, reusablePrefixCount);
+        int currentIndex = reusablePrefixCount;
+        if (hasCompatibleCache
+            && (!explicitlyDirty || !sourceSequenceUnchanged)
+            && TryReuseUnchangedSuffix(
+                currentSegments, currentIndex, cached!.Segments,
+                nextSourceOrder, contextFingerprint, newEntries, out int initiallyReused))
+        {
+            reusedSegmentCount += initiallyReused;
+            stateConvergenceCount++;
+            currentIndex = currentSegments.Length;
+        }
+
+        while (currentIndex < currentSegments.Length)
+        {
+            CurrentSegment current = currentSegments[currentIndex];
+            ExpansionCheckpoint entryCheckpoint = ExpansionCheckpoint.Create(
+                current.Segment.ProjectStartTick, nextSourceOrder, contextFingerprint);
+            List<CompilerDiagnostic> segmentDiagnostics = [];
+            RawInstance[] segmentInstances = ExpandSegment(
+                project, track, current.Segment, instruments, nextSourceOrder,
+                segmentDiagnostics, out nextSourceOrder);
+            newEntries.Add(new SegmentCacheEntry(
+                current.Segment.Id,
+                current.SourceFingerprint,
+                entryCheckpoint,
+                nextSourceOrder,
+                segmentInstances,
+                segmentDiagnostics.ToArray()));
+            recompiledSegmentCount++;
+            currentIndex++;
+
+            if (hasCompatibleCache
+                && TryReuseUnchangedSuffix(
+                    currentSegments, currentIndex, cached!.Segments,
+                    nextSourceOrder, contextFingerprint, newEntries, out int suffixReused))
+            {
+                reusedSegmentCount += suffixReused;
+                stateConvergenceCount++;
+                currentIndex = currentSegments.Length;
+            }
+        }
+
+        long terminalTick = currentSegments.Length == 0
+            ? 0
+            : checked(currentSegments[^1].Segment.ProjectStartTick + currentSegments[^1].Segment.LengthTicks);
+        TrackCacheEntry replacement = new(
+            contextFingerprint,
+            newEntries.ToArray(),
+            ExpansionCheckpoint.Create(terminalTick, nextSourceOrder, contextFingerprint));
+        _trackCache[track.Id] = replacement;
+        return CreateTrackExpansion(
+            track, instruments, replacement.Segments, true,
+            recompiledSegmentCount, reusedSegmentCount, stateConvergenceCount, earliestDirtyTick);
+    }
+
+    private static TrackExpansion CreateTrackExpansion(
+        LogicalTrack track,
+        IReadOnlyDictionary<MidoraId, EventInstrument> instruments,
+        IReadOnlyList<SegmentCacheEntry> segments,
+        bool recompiled,
+        int recompiledSegmentCount,
+        int reusedSegmentCount,
+        int stateConvergenceCount,
+        long? earliestDirtyTick)
+    {
+        RawInstance[] instances = segments.SelectMany(value => value.Instances).ToArray();
+        List<CompilerDiagnostic> diagnostics = segments
+            .SelectMany(value => value.Diagnostics)
+            .ToList();
+        if (instances.Length != 0
+            && track.EventInstrumentId.HasValue
+            && instruments.TryGetValue(track.EventInstrumentId.Value, out EventInstrument? instrument))
+        {
+            foreach (SubVoice emptyVoice in instrument.SubVoices.Where(voice =>
+                voice.Events.Count == 0
+                && voice.Curves.Count == 0
+                && !instrument.ParameterMappings.Any(mapping => mapping.Steps.IsEnabled)))
+            {
+                diagnostics.Add(new(
+                    "MIDORA1225",
+                    DiagnosticSeverity.Info,
+                    "实际参与编译的 SubVoice 没有普通 MIDI 输出内容。",
+                    new(track.Id, EventInstrumentId: instrument.Id, SubVoiceId: emptyVoice.Id)));
+            }
+        }
+        return new TrackExpansion(
+            instances,
+            diagnostics.ToArray(),
+            recompiled,
+            recompiledSegmentCount,
+            reusedSegmentCount,
+            stateConvergenceCount,
+            earliestDirtyTick);
+    }
+
+    private static bool TryReuseUnchangedSuffix(
+        IReadOnlyList<CurrentSegment> current,
+        int currentStart,
+        IReadOnlyList<SegmentCacheEntry> cached,
+        int nextSourceOrder,
+        long contextFingerprint,
+        List<SegmentCacheEntry> destination,
+        out int reusedCount)
+    {
+        reusedCount = current.Count - currentStart;
+        if (reusedCount <= 0 || reusedCount > cached.Count)
+        {
+            return false;
+        }
+
+        int cachedStart = cached.Count - reusedCount;
+        if (!SegmentSourcesEqual(current, currentStart, cached, cachedStart))
+        {
+            return false;
+        }
+
+        ExpansionCheckpoint currentCheckpoint = ExpansionCheckpoint.Create(
+            current[currentStart].Segment.ProjectStartTick,
+            nextSourceOrder,
+            contextFingerprint);
+        if (!currentCheckpoint.IsEquivalentTo(cached[cachedStart].EntryCheckpoint))
+        {
+            return false;
+        }
+
+        for (int index = cachedStart; index < cached.Count; index++)
+        {
+            destination.Add(cached[index]);
+        }
+        return true;
+    }
+
+    private static bool SegmentSourcesEqual(
+        IReadOnlyList<CurrentSegment> current,
+        int currentStart,
+        IReadOnlyList<SegmentCacheEntry> cached,
+        int cachedStart)
+    {
+        if (current.Count - currentStart != cached.Count - cachedStart)
+        {
+            return false;
+        }
+        for (int offset = 0; offset < current.Count - currentStart; offset++)
+        {
+            if (!SegmentSourceEquals(current[currentStart + offset], cached[cachedStart + offset]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool SegmentSourceEquals(CurrentSegment current, SegmentCacheEntry cached) =>
+        current.Segment.Id == cached.SegmentId
+        && current.SourceFingerprint == cached.SourceFingerprint;
+
+    private static long? FindDirtyTick(
+        IReadOnlyList<CurrentSegment> current,
+        TrackCacheEntry? cached,
+        int dirtyIndex)
+    {
+        long? currentTick = dirtyIndex < current.Count
+            ? current[dirtyIndex].Segment.ProjectStartTick
+            : null;
+        long? cachedTick = cached is not null && dirtyIndex < cached.Segments.Length
+            ? cached.Segments[dirtyIndex].EntryCheckpoint.Tick
+            : null;
+        if (currentTick.HasValue && cachedTick.HasValue)
+        {
+            return Math.Min(currentTick.Value, cachedTick.Value);
+        }
+        return currentTick ?? cachedTick ?? (current.Count == 0 && cached is null ? 0 : null);
+    }
+
+    private RawInstance[] ExpandSegment(
+        MidoraProject project,
+        LogicalTrack track,
+        Segment requestedSegment,
+        IReadOnlyDictionary<MidoraId, EventInstrument> instruments,
+        int initialSourceOrder,
+        List<CompilerDiagnostic> diagnostics,
+        out int nextSourceOrder)
     {
         List<RawInstance> result = [];
         if (!track.EventInstrumentId.HasValue
             || !instruments.TryGetValue(track.EventInstrumentId.Value, out EventInstrument? instrument))
         {
+            nextSourceOrder = initialSourceOrder;
             return [];
         }
         Dictionary<MidoraId, LogicalParameterDefinition> definitions = instrument.LogicalParameters
             .ToDictionary(value => value.Id);
         Dictionary<MidoraId, CSharpMappingFunction> functions = instrument.MappingFunctions
             .ToDictionary(value => value.Id);
-        int sourceOrder = 0;
+        int sourceOrder = initialSourceOrder;
         List<AcceptedInstance> activePolicyInstances = [];
-        foreach (Segment segment in track.Segments.OrderBy(value => value.ProjectStartTick))
+        foreach (Segment segment in new[] { requestedSegment })
         {
             Dictionary<MidoraId, LogicalParameterLane> lanes = segment.ParameterLanes
                 .Where(value => definitions.ContainsKey(value.ParameterId))
@@ -316,20 +567,7 @@ public sealed class MidoraCompiler : IDisposable
                     instanceSourceOrder, instance));
             }
         }
-        if (result.Count != 0)
-        {
-            foreach (SubVoice emptyVoice in instrument.SubVoices.Where(voice =>
-                voice.Events.Count == 0
-                && voice.Curves.Count == 0
-                && !instrument.ParameterMappings.Any(mapping => mapping.Steps.IsEnabled)))
-            {
-                diagnostics.Add(new(
-                    "MIDORA1225",
-                    DiagnosticSeverity.Info,
-                    "实际参与编译的 SubVoice 没有普通 MIDI 输出内容。",
-                    new(track.Id, EventInstrumentId: instrument.Id, SubVoiceId: emptyVoice.Id)));
-            }
-        }
+        nextSourceOrder = sourceOrder;
         return result.ToArray();
     }
 
@@ -1793,10 +2031,49 @@ public sealed class MidoraCompiler : IDisposable
     private static bool TrackReferences(LogicalTrack track, MidoraId instrumentId) =>
         track.EventInstrumentId == instrumentId;
 
+    private readonly record struct CurrentSegment(Segment Segment, long SourceFingerprint);
+
     private sealed record TrackCacheEntry(
-        long Fingerprint,
+        long ContextFingerprint,
+        SegmentCacheEntry[] Segments,
+        ExpansionCheckpoint TerminalCheckpoint);
+
+    private sealed record SegmentCacheEntry(
+        MidoraId SegmentId,
+        long SourceFingerprint,
+        ExpansionCheckpoint EntryCheckpoint,
+        int NextSourceOrder,
         RawInstance[] Instances,
         CompilerDiagnostic[] Diagnostics);
+
+    private readonly record struct ExpansionCheckpoint(
+        long Tick,
+        int NextSourceOrder,
+        long ContextFingerprint,
+        long StateHash)
+    {
+        public static ExpansionCheckpoint Create(long tick, int nextSourceOrder, long contextFingerprint)
+        {
+            long hash = unchecked(contextFingerprint ^ (tick * -7046029254386353131L));
+            hash = unchecked((hash * 1099511628211L) ^ nextSourceOrder);
+            return new(tick, nextSourceOrder, contextFingerprint, hash);
+        }
+
+        public bool IsEquivalentTo(ExpansionCheckpoint other) =>
+            StateHash == other.StateHash
+            && Tick == other.Tick
+            && NextSourceOrder == other.NextSourceOrder
+            && ContextFingerprint == other.ContextFingerprint;
+    }
+
+    private sealed record TrackExpansion(
+        RawInstance[] Instances,
+        CompilerDiagnostic[] Diagnostics,
+        bool Recompiled,
+        int RecompiledSegmentCount,
+        int ReusedSegmentCount,
+        int StateConvergenceCount,
+        long? EarliestDirtyTick);
 
     private sealed class CanonicalStateGroup(
         long tick,
@@ -1978,7 +2255,7 @@ internal static class SourceFingerprint
     private const ulong Offset = 14695981039346656037UL;
     private const ulong Prime = 1099511628211UL;
 
-    public static long ForTrack(
+    public static long ForTrackContext(
         LogicalTrack track,
         IReadOnlyDictionary<MidoraId, EventInstrument> instruments,
         MidoraProject project)
@@ -1989,40 +2266,39 @@ internal static class SourceFingerprint
         AddState(ref hash, project.GlobalResetDefaults);
         Add(ref hash, track.Id);
         Add(ref hash, track.EventInstrumentId ?? default);
-        HashSet<MidoraId> referencedInstrumentIds = [];
-        if (track.EventInstrumentId.HasValue) referencedInstrumentIds.Add(track.EventInstrumentId.Value);
-        foreach (Segment segment in track.Segments)
+        if (track.EventInstrumentId.HasValue
+            && instruments.TryGetValue(track.EventInstrumentId.Value, out EventInstrument? instrument))
         {
-            Add(ref hash, segment.Id);
-            Add(ref hash, segment.ProjectStartTick);
-            Add(ref hash, segment.LengthTicks);
-            Add(ref hash, segment.ContentOffsetTick);
-            foreach (LogicalNote note in segment.Notes)
-            {
-                Add(ref hash, note.Id);
-                Add(ref hash, note.StartTick);
-                Add(ref hash, note.LengthTicks);
-                Add(ref hash, note.Note);
-                Add(ref hash, note.Velocity);
-            }
-            foreach (LogicalParameterLane lane in segment.ParameterLanes)
-            {
-                Add(ref hash, lane.Id);
-                Add(ref hash, lane.ParameterId);
-                foreach (CurvePoint point in lane.Points)
-                {
-                    Add(ref hash, point.Id);
-                    Add(ref hash, point.Tick);
-                    Add(ref hash, BitConverter.DoubleToInt64Bits(point.Value));
-                    Add(ref hash, (int)point.Interpolation);
-                }
-            }
+            AddInstrument(ref hash, instrument);
         }
-        foreach (MidoraId instrumentId in referencedInstrumentIds.OrderBy(value => value))
+        return unchecked((long)hash);
+    }
+
+    public static long ForSegment(Segment segment)
+    {
+        ulong hash = Offset;
+        Add(ref hash, segment.Id);
+        Add(ref hash, segment.ProjectStartTick);
+        Add(ref hash, segment.LengthTicks);
+        Add(ref hash, segment.ContentOffsetTick);
+        foreach (LogicalNote note in segment.Notes)
         {
-            if (instruments.TryGetValue(instrumentId, out EventInstrument? instrument))
+            Add(ref hash, note.Id);
+            Add(ref hash, note.StartTick);
+            Add(ref hash, note.LengthTicks);
+            Add(ref hash, note.Note);
+            Add(ref hash, note.Velocity);
+        }
+        foreach (LogicalParameterLane lane in segment.ParameterLanes)
+        {
+            Add(ref hash, lane.Id);
+            Add(ref hash, lane.ParameterId);
+            foreach (CurvePoint point in lane.Points)
             {
-                AddInstrument(ref hash, instrument);
+                Add(ref hash, point.Id);
+                Add(ref hash, point.Tick);
+                Add(ref hash, BitConverter.DoubleToInt64Bits(point.Value));
+                Add(ref hash, (int)point.Interpolation);
             }
         }
         return unchecked((long)hash);

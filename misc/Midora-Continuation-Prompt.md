@@ -278,7 +278,7 @@ Project Source Data
 
 1. Domain/Compiler 已有可运行的垂直切片和较完整确定性测试；已修正 Project ID、稳定 ID、End Marker、Marker/Track 空名、Template Note 边界、Bank Select 部分存在性、Compile Purpose、partial 语义、canonical telemetry 等早期 SRS 冲突。
 
-2. 当前增量编译按 Track 缓存展开片段，并始终重新执行全局确定性资源分配、排序、范围恢复和裁剪；它仍未满足 SRS 12.21 强制的 Segment checkpoint + dirty range + input/output state hash 收敛模型。Full Compile 仍是 oracle，现有增量只能视为过渡实现。
+2. 2026-08-06 已以 ADR-CORE-003 的 Segment 入口/Track 末尾 checkpoint 替换 Track 整片段过渡缓存；dirty range、展开状态逐字段等价、state hash 和“后续 Source 未变”收敛门已实现。全局确定性资源分配、排序、范围恢复和裁剪仍完整重算，Full Compile 继续作为逐字段 oracle。
 
 3. C# Mapping ABI v1 已有独立契约、固定编译 profile、source hash identity、collectible ALC 当前修订缓存和测试。
 

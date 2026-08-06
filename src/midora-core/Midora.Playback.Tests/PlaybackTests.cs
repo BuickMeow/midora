@@ -623,6 +623,118 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void ResetContinuesAfterStopFailureAndRecoversToStopped()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            controller.Start();
+            backend.ThrowStop = true;
+
+            controller.ResetPlaybackEngine();
+
+            Assert.Equal(1, backend.StopCount);
+            Assert.Equal(1, backend.ResetCount);
+            Assert.Equal(PlaybackState.Stopped, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.Null(controller.LastError);
+            Assert.False(session.EditsLocked);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void ResetFromStoppedClearsBackendWithoutStoppingOrChangingProjectCompilation()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            long fingerprint = session.LastAttempt.Fingerprint;
+
+            controller.ResetPlaybackEngine();
+
+            Assert.Equal(0, backend.StopCount);
+            Assert.Equal(1, backend.ResetCount);
+            Assert.Equal(PlaybackState.Stopped, controller.State);
+            Assert.Equal(fingerprint, session.LastAttempt.Fingerprint);
+            Assert.Null(controller.LastError);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void ResetFailurePreservesErrorAndAggregatesStopFailure()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            controller.Start();
+            backend.ThrowStop = true;
+            backend.ThrowReset = true;
+
+            AggregateException failure = Assert.Throws<AggregateException>(controller.ResetPlaybackEngine);
+
+            Assert.Equal(2, failure.InnerExceptions.Count);
+            Assert.Equal(1, backend.StopCount);
+            Assert.Equal(1, backend.ResetCount);
+            Assert.Equal(PlaybackState.Error, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.Same(failure, controller.LastError);
+            Assert.False(session.EditsLocked);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void DirectPlayRecoveryKeepsErrorWhenBackendResetFails()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new() { ThrowPrepare = true };
+            using PlaybackController controller = new(session, backend);
+            Assert.Throws<InvalidOperationException>(() => controller.Start());
+            backend.ThrowPrepare = false;
+            backend.ThrowReset = true;
+
+            InvalidOperationException failure = Assert.Throws<InvalidOperationException>(() => controller.Start());
+
+            Assert.Equal(1, backend.ResetCount);
+            Assert.Equal(PlaybackState.Error, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.Same(failure, controller.LastError);
+            Assert.False(session.EditsLocked);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void SeekRestartStopFailureClearsTaskAndPreservesCurrentCursor()
     {
         string soundFont = Path.GetTempFileName();
@@ -793,6 +905,7 @@ public sealed class PlaybackTests
         public int MonitoringApplyCount { get; private set; }
         public bool ThrowPrepare { get; set; }
         public bool ThrowStop { get; set; }
+        public bool ThrowReset { get; set; }
         public MidiRenderPlan? LastStartedPlan { get; private set; }
         public List<MidiMonitoringCommand> MonitoringCommands { get; } = [];
         public int Prepare()
@@ -834,8 +947,12 @@ public sealed class PlaybackTests
         }
         public void Reset()
         {
-            PositionFrames = 0;
             ResetCount++;
+            if (ThrowReset)
+            {
+                throw new InvalidOperationException("Injected reset failure.");
+            }
+            PositionFrames = 0;
         }
         public void Dispose()
         {

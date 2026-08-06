@@ -432,3 +432,11 @@ Requirement trace：输入为当前播放状态、光标、显式/Loop 范围、
 冷结果只提供编译器正式解析的当前状态值和顺序，活动结果只提供已经冻结且 backend 正在消费的路由；播放层不重新解释 Mapping、Lifecycle 或分配规则。来源身份缺失、活动 allocation 不存在或恢复消息不是 channel voice 时，整批 monitoring commands 在调用 backend 前失败，控制器回滚本次 Mute/Solo 集合变更，不能向错误 Channel 发送部分恢复状态。
 
 Requirement trace：输入为活动 canonical/plan、render frontier、重新启用 Track 集合和该 tick 的可消费 Range 编译结果；正式输出为 EnableSource 以及仅恢复必要非 Note 状态、路由到活动 Port/Channel 的原子命令批。边界是范围前 NoteOn 不补发、未来事件继续由原 plan source filter 放行、禁用清理只作用于该 Track 当前 allocation。监听集合、重路由表和命令只属于当前播放运行时，不修改 canonical、Project、MIDI 导出或音频渲染；明确非目标是重新分配活动 Stream、重触发错过的 Note、全局 All Sound Off 或用冷编译 Port/Channel 替换活动计划。
+
+## 32. ADR-CORE-030（已接受）：Reset Playback Engine 两阶段尽最大努力清理
+
+决定：显式 Reset 在非 Stopped 状态先执行普通 Stop 类清理；即使该阶段报告失败，仍必须继续调用后端 Reset，强制销毁或重建 Stream、连接和播放缓存。后端 Reset 成功即视为恢复完成：清空活动 canonical/plan/tempo、任务身份、编辑锁和 sample-domain 缓存，清除旧播放错误并进入 Stopped；先前 Stop 失败已被更强的完整 Reset 覆盖，不阻止恢复。只有 Reset 本身失败才保持 Error 并抛出；若 Stop 与 Reset 均失败，以 AggregateException 保留两项原因。Error 状态直接 Play 复用同一 Reset 路径，Reset 失败不得进入 Preparing。
+
+Reset 不使 canonical compiled result 缓存失效，Stopped 状态也直接执行后端 Reset 且不额外 Stop。无论 Reset 成败，控制器自身派生引用、任务身份和编辑锁都在返回或抛出前释放；后端失败时 sample-domain 状态视为不可信并失效。Project 源数据、Modified 和 Undo/Redo 不受影响；活动主播放的光标仍按普通 Stop Cursor Behavior 处理，原本处于 Error 或 Stopped 时保留已有光标。
+
+Requirement trace：输入为当前播放状态、活动任务、后端 Stop/Reset 结果和 sample-domain cache；正式输出为完整重置后的 Stopped，或不残留活动任务/编辑锁且保留全部失败原因的 Error。边界是 Stop 清理失败不能短路 Reset、Stopped 不调用 Stop、Error 后 Play 必须先恢复后端。Reset/错误/缓存均只属于播放运行时，不持久化、不修改 canonical 或 Project；明确非目标是吞掉 Reset 失败、重编译 Project、重置 Mute/Solo、自动换设备或在 MIDI Export/Audio Render 模态互斥之外排队命令。

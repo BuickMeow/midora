@@ -260,15 +260,53 @@ public sealed class PlaybackController : IDisposable
     public void ResetPlaybackEngine()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        Exception? stopFailure = null;
         if (State != PlaybackState.Stopped)
         {
-            StopCore(applyCursorBehavior: true, releaseEditLock: true);
+            try
+            {
+                StopCore(applyCursorBehavior: true, releaseEditLock: true);
+            }
+            catch (Exception exception)
+            {
+                stopFailure = exception;
+            }
         }
-        _backend.Reset();
-        _session.InvalidateSampleDomainCaches();
-        LastError = null;
-        ActiveTaskKind = PlaybackTaskKind.None;
-        SetState(PlaybackState.Stopped);
+
+        Exception? resetFailure = null;
+        try
+        {
+            _backend.Reset();
+        }
+        catch (Exception exception)
+        {
+            resetFailure = exception;
+        }
+        finally
+        {
+            _session.InvalidateSampleDomainCaches();
+            _activeResult = null;
+            _activePlan = null;
+            _activeTempoMap = null;
+            ActiveTaskKind = PlaybackTaskKind.None;
+            ReleaseEditLock();
+        }
+
+        if (resetFailure is null)
+        {
+            LastError = null;
+            SetState(PlaybackState.Stopped);
+            return;
+        }
+
+        LastError = stopFailure is null
+            ? resetFailure
+            : new AggregateException(
+                "Playback stop and backend reset both failed.",
+                stopFailure,
+                resetFailure);
+        SetState(PlaybackState.Error);
+        throw LastError;
     }
 
     public void RecoverFromError()
@@ -650,14 +688,7 @@ public sealed class PlaybackController : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (State == PlaybackState.Error)
         {
-            _backend.Reset();
-            _session.InvalidateSampleDomainCaches();
-            _activeResult = null;
-            _activePlan = null;
-            _activeTempoMap = null;
-            LastError = null;
-            ActiveTaskKind = PlaybackTaskKind.None;
-            SetState(PlaybackState.Stopped);
+            ResetPlaybackEngine();
         }
         if (State != PlaybackState.Stopped || ActiveTaskKind != PlaybackTaskKind.None)
         {

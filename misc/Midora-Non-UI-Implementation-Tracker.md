@@ -94,6 +94,7 @@
 | 2026-08-06 | CompileContext Debug 诊断收集 | 默认关闭的 Debug 门及冻结摘要；成功/语义失败/partial 的确定上下文和结果统计；不改 canonical/失败政策；执行遥测与正式诊断分离；Full/Incremental Debug 等价；Compiler 185 tests；10 个测试项目累计 675 tests；Core 全解 569 tests | 通过，0 failure |
 | 2026-08-06 | 播放启动/停止/冷重启失败原子性 | 显式与 Loop 范围启动前预检；SF2 锁前预检/锁内复核；Prepare/Stop/Seek restart 失败清 active result/plan/task/锁并保留 cursor；Error 直接 Reset 恢复；Playback 32 tests；10 个测试项目累计 680 tests；Core 全解 574 tests | 通过，0 failure |
 | 2026-08-06 | Mute/Solo 冷恢复活动路由 | RangeRestore 状态按 Track/Instance/SubVoice 身份重路由回活动 canonical Port/Channel；冷编译只供状态、不采用其紧凑分配；路由失败发送前原子回滚；Playback 33 tests；10 个测试项目累计 681 tests；Core 全解 575 tests | 通过，0 failure |
+| 2026-08-06 | Reset Playback Engine 尽最大努力清理 | Stop 失败仍继续完整 backend Reset；Reset 成功恢复 Stopped；双失败聚合且保持 Error；Stopped 与 Error→Play 复用同一恢复门；Playback 37 tests；10 个测试项目累计 685 tests；Core 全解 579 tests | 通过，0 failure |
 
 ## 7. 未解决风险
 

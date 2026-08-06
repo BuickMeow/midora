@@ -7,19 +7,8 @@ namespace Midora.Audio.Bass.Tests;
 public sealed class BassMidiRendererIntegrationTests
 {
     private const int SampleRate = 48_000;
-    private const string SoundFontPath = @"D:\Soundfonts\sf2\sDetrimental Concert Grand Piano.sf2";
-
-    static BassMidiRendererIntegrationTests()
-    {
-        string bassPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Midora",
-            "Native",
-            "BASS",
-            "win-x64");
-        _ = NativeLibrary.Load(Path.Combine(bassPath, "bass.dll"));
-        _ = NativeLibrary.Load(Path.Combine(bassPath, "bassmidi.dll"));
-    }
+    private static string SoundFontPath =>
+        NativeAudioIntegrationEnvironment.RequireSoundFontPath();
 
     [Fact]
     public void ProducesIdenticalSamplesAcrossDifferentBlocksWithinConfiguredVoiceLimit()
@@ -406,6 +395,7 @@ public sealed class BassMidiRendererIntegrationTests
 
     private static void EnsureEnvironment()
     {
-        Assert.True(File.Exists(SoundFontPath), $"Missing integration-test SoundFont: {SoundFontPath}");
+        NativeAudioIntegrationEnvironment.LoadBassMidi();
+        _ = SoundFontPath;
     }
 }

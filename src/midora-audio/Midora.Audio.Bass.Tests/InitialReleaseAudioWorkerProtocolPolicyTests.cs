@@ -148,7 +148,7 @@ public sealed class InitialReleaseAudioWorkerProtocolPolicyTests
     [Fact]
     public async Task ManagedWorkerPublishesFaultForRelativeFormalInputPath()
     {
-        string workerPath = FindManagedWorkerPath();
+        string workerPath = NativeAudioIntegrationEnvironment.RequireManagedWorkerPath();
         string controlName = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
         using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(controlName);
         ProcessStartInfo startInfo = new()
@@ -196,27 +196,5 @@ public sealed class InitialReleaseAudioWorkerProtocolPolicyTests
         Assert.Equal(1, process.ExitCode);
         Assert.Equal(AudioWorkerState.Faulted, control.ReadStatus().State);
         Assert.Contains("fully qualified", standardError, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string FindManagedWorkerPath()
-    {
-        DirectoryInfo? current = new(AppContext.BaseDirectory);
-        while (current is not null
-            && !File.Exists(Path.Combine(current.FullName, "Directory.Build.props")))
-        {
-            current = current.Parent;
-        }
-        string repositoryRoot = current?.FullName
-            ?? throw new DirectoryNotFoundException("Could not locate the repository root.");
-        string configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name ?? "Debug";
-        return Path.Combine(
-            repositoryRoot,
-            "src",
-            "midora-audio",
-            "Midora.Audio.Bass.Worker",
-            "bin",
-            configuration,
-            "net10.0",
-            "Midora.Audio.Bass.Worker.dll");
     }
 }

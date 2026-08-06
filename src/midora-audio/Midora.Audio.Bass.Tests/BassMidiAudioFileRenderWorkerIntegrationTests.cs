@@ -7,31 +7,18 @@ namespace Midora.Audio.Bass.Tests;
 [SupportedOSPlatform("windows")]
 public sealed class BassMidiAudioFileRenderWorkerIntegrationTests
 {
-    private const string SoundFontPath = @"D:\Soundfonts\sf2\sDetrimental Concert Grand Piano.sf2";
+    private static string SoundFontPath =>
+        NativeAudioIntegrationEnvironment.RequireSoundFontPath();
 
     [Fact]
     public async Task WorkerHostRendersValidatedNonSilentWaveThroughFormalFileProtocol()
     {
-        string repositoryRoot = FindRepositoryRoot();
-        string configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name ?? "Debug";
-        string managedWorkerPath = Path.Combine(
-            repositoryRoot,
-            "src",
-            "midora-audio",
-            "Midora.Audio.Bass.Worker",
-            "bin",
-            configuration,
-            "net10.0",
-            "Midora.Audio.Bass.Worker.dll");
+        string managedWorkerPath = NativeAudioIntegrationEnvironment.RequireManagedWorkerPath();
         string? formalWorkerPath = Environment.GetEnvironmentVariable(
             "MIDORA_TEST_NATIVE_AOT_FILE_WORKER");
-        string developmentNativeDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Midora",
-            "Native",
-            "BASS",
-            "win-x64");
-        string nativeDirectory = developmentNativeDirectory;
+        NativeAudioIntegrationEnvironment.LoadBassMidi();
+        string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
+        _ = SoundFontPath;
         string outputDirectory = Path.Combine(
             Path.GetTempPath(),
             $"midora-file-worker-integration-{Guid.NewGuid():N}");
@@ -85,16 +72,5 @@ public sealed class BassMidiAudioFileRenderWorkerIntegrationTests
         {
             Directory.Delete(outputDirectory, recursive: true);
         }
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        DirectoryInfo? current = new(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Build.props")))
-        {
-            current = current.Parent;
-        }
-        return current?.FullName
-            ?? throw new DirectoryNotFoundException("Could not locate the Midora repository root.");
     }
 }

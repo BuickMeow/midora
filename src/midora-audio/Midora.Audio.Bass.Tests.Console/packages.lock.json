@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "Microsoft.CodeAnalysis.Analyzers": {
+        "type": "Transitive",
+        "resolved": "5.3.0-2.25625.1",
+        "contentHash": "4Yhh2fnu3G+J0J1lDc8WZVgMjgbynSeTfkl5IFJMFrmiIO0sc7Tjx+f3sFVV8Sd35PrIUWfof0RWc3lAMl7Azg=="
+      },
+      "Microsoft.CodeAnalysis.Common": {
+        "type": "Transitive",
+        "resolved": "5.3.0",
+        "contentHash": "uC0qk3jzTQY7i90ehfnCqaOZpBUGJyPMiHJ3c0jOb8yaPBjWzIhVdNxPbeVzI74DB0C+YgBKPLqUkgFZzua5Mg==",
+        "dependencies": {
+          "Microsoft.CodeAnalysis.Analyzers": "5.3.0-2.25625.1"
+        }
+      },
+      "Microsoft.CodeAnalysis.CSharp": {
+        "type": "Transitive",
+        "resolved": "5.3.0",
+        "contentHash": "SQFNGQF4f7UfDXKxMzzGNMr3fjrPDIjLfmRvvVgDCw+dyvEHDaRfHuKA5q0Pr0/JW0Gcw89TxrxrS/MjwBvluQ==",
+        "dependencies": {
+          "Microsoft.CodeAnalysis.Analyzers": "5.3.0-2.25625.1",
+          "Microsoft.CodeAnalysis.Common": "[5.3.0]"
+        }
+      },
+      "midora.audio": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.AudioDevice": "[1.0.0, )",
+          "Midora.Midi": "[1.0.0, )"
+        }
+      },
+      "midora.audio.bass": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.Audio": "[1.0.0, )",
+          "Midora.AudioDevice": "[1.0.0, )",
+          "Midora.NativeInterops.Bass": "[1.0.0, )",
+          "Midora.NativeInterops.BassMidi": "[1.0.0, )"
+        }
+      },
+      "midora.audiodevice": {
+        "type": "Project"
+      },
+      "midora.audiodevice.basswasapi": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.AudioDevice": "[1.0.0, )",
+          "Midora.NativeInterops.BassWasapi": "[1.0.0, )"
+        }
+      },
+      "midora.audiodevice.wave": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.AudioDevice": "[1.0.0, )"
+        }
+      },
+      "midora.compiler": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.CodeAnalysis.CSharp": "[5.3.0, )",
+          "Midora.Domain": "[1.0.0, )",
+          "Midora.Mapping.Contract.V1": "[1.0.0, )",
+          "Midora.Midi": "[1.0.0, )"
+        }
+      },
+      "midora.domain": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.Mapping.Contract.V1": "[1.0.0, )"
+        }
+      },
+      "midora.mapping.contract.v1": {
+        "type": "Project"
+      },
+      "midora.midi": {
+        "type": "Project"
+      },
+      "midora.nativeinterops.bass": {
+        "type": "Project"
+      },
+      "midora.nativeinterops.bassmidi": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.NativeInterops.Bass": "[1.0.0, )"
+        }
+      },
+      "midora.nativeinterops.basswasapi": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.NativeInterops.Bass": "[1.0.0, )"
+        }
+      },
+      "midora.playback": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.Audio": "[1.0.0, )",
+          "Midora.Compiler": "[1.0.0, )",
+          "Midora.Domain": "[1.0.0, )"
+        }
+      },
+      "midora.playback.basswasapi": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.Audio.Bass": "[1.0.0, )",
+          "Midora.AudioDevice.BassWasapi": "[1.0.0, )",
+          "Midora.Playback": "[1.0.0, )"
+        }
+      }
+    },
+    "net10.0/win-x64": {}
+  }
+}

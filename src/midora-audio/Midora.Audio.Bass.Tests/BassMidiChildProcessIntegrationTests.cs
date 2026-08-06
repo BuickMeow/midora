@@ -8,30 +8,16 @@ namespace Midora.Audio.Bass.Tests;
 [SupportedOSPlatform("windows")]
 public sealed class BassMidiChildProcessIntegrationTests
 {
-    private const string SoundFontPath = @"D:\Soundfonts\sf2\sDetrimental Concert Grand Piano.sf2";
+    private static string SoundFontPath =>
+        NativeAudioIntegrationEnvironment.RequireSoundFontPath();
 
     [Fact]
     public unsafe void ChildProcessMatchesInProcessSamplesAndAllocatesNothingWhileRendering()
     {
-        string repositoryRoot = FindRepositoryRoot();
-        string configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name ?? "Debug";
-        string workerPath = Path.Combine(
-            repositoryRoot,
-            "src",
-            "midora-audio",
-            "Midora.Audio.Bass.Worker",
-            "bin",
-            configuration,
-            "net10.0",
-            "Midora.Audio.Bass.Worker.dll");
-        string nativeDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Midora",
-            "Native",
-            "BASS",
-            "win-x64");
-        _ = NativeLibrary.Load(Path.Combine(nativeDirectory, "bass.dll"));
-        _ = NativeLibrary.Load(Path.Combine(nativeDirectory, "bassmidi.dll"));
+        string workerPath = NativeAudioIntegrationEnvironment.RequireManagedWorkerPath();
+        NativeAudioIntegrationEnvironment.LoadBassMidi();
+        string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
+        _ = SoundFontPath;
 
         MidiRenderPlan plan = CreatePlan();
         BassMidiRendererSettings settings = new(
@@ -73,23 +59,10 @@ public sealed class BassMidiChildProcessIntegrationTests
     [Fact]
     public unsafe void ChildControlPipeEnablesFutureSourceEventsWithoutAudioThreadAllocation()
     {
-        string repositoryRoot = FindRepositoryRoot();
-        string configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name ?? "Debug";
-        string workerPath = Path.Combine(
-            repositoryRoot,
-            "src",
-            "midora-audio",
-            "Midora.Audio.Bass.Worker",
-            "bin",
-            configuration,
-            "net10.0",
-            "Midora.Audio.Bass.Worker.dll");
-        string nativeDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Midora",
-            "Native",
-            "BASS",
-            "win-x64");
+        string workerPath = NativeAudioIntegrationEnvironment.RequireManagedWorkerPath();
+        NativeAudioIntegrationEnvironment.LoadBassMidi();
+        string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
+        _ = SoundFontPath;
         Guid sourceId = Guid.Parse("bf0726a6-93e8-46ef-b4bb-d0952c750998");
         MidiRenderPlan plan = new(
             48_000,
@@ -170,17 +143,5 @@ public sealed class BassMidiChildProcessIntegrationTests
             new ScheduledMidiMessage(2_048, MidiMessage.NoteOff(0, 60, 19))
         ]);
         return new MidiRenderPlan(48_000, 4_096, [port]);
-    }
-
-    private static string FindRepositoryRoot()
-    {
-        DirectoryInfo? current = new(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Directory.Build.props")))
-        {
-            current = current.Parent;
-        }
-
-        return current?.FullName
-            ?? throw new DirectoryNotFoundException("Could not locate the repository root.");
     }
 }

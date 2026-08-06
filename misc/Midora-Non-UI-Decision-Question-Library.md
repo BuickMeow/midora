@@ -185,6 +185,40 @@
 - 产品回答：待填写。
 - 最终处理与提交：待填写。
 
+### Q-NUI-012：非 UI 发布门的精确 .NET SDK 与 NuGet 锁定策略
+
+- 类型：小决定
+- 状态：已按推荐实施待确认
+- 发现日期：2026-08-06
+- SRS 依据：第 1 章/.NET 10 技术边界、第 21.3 节正确性与确定性优先级、INV-027；Mapping ABI 的 `Microsoft.NETCore.App.Ref 10.0.10` 仍由 INV-029 独立固定。
+- 已确认事实：仓库全部项目目标框架为 `net10.0`，此前没有 `global.json`、NuGet lock files 或单命令非 UI 发布门；同一工作树会使用机器默认 SDK和当次解析出的传递包图。当前完整验证环境安装并使用 `.NET SDK 10.0.302`，对应 .NET 10.0.10 runtime/reference pack；所有直接 PackageReference 已有显式版本。
+- 不确定点：SRS 固定 .NET 10 和 Mapping reference pack，但未固定一般项目的 SDK feature band、是否允许 patch roll-forward、是否提交每项目 NuGet lock file，也未规定开发期可移植测试缺少原生 BASS/SF2 时应失败还是 Skip。
+- 影响范围：开发/CI 机器准备、依赖还原、编译器与 Native AOT 产物可复现性、测试发现完整性和发布门维护；不改变 Project 文件、canonical、MIDI/WAVE、运行时用户设置或音乐语义。
+- 推荐方案：提交 `global.json`，精确使用 SDK `10.0.302`、`rollForward=disable`、禁止 prerelease；仓库级声明 `RuntimeIdentifiers=win-x64` 与 `RestorePackagesWithLockFile=true`，提交 32 个 `packages.lock.json`。普通开发测试在未配置原生集成资源时明确 Skip；正式 `Test-NonUIRelease.ps1` 必须显式给出经固定 manifest/hash 验证的 BASS 目录和一个现存 SF2，执行 locked restore、六个 solution Release build、Native AOT publish，再按版本化测试基线要求 10 个项目精确 760 项全部通过且零 Skip。
+- 推荐依据与限制：精确 SDK和锁文件把构建输入从机器隐式状态变为提交内容；零 Skip 的正式门避免把缺少硬件/资源误报为通过。限制是安装了其他 .NET 10 SDK但没有 10.0.302 的机器会在仓库根目录直接拒绝构建，安全升级 SDK/包时必须显式更新 `global.json`、lock files、基线并重跑完整门。
+- 备选方案及差异：A. SDK 使用 `latestPatch` roll-forward，安全补丁采用更方便，但不同时间/机器可能产生不同 AOT 与编译输出。B. 只固定直接包版本、不提交 lock files，文件较少但传递图仍可变化。C. 不固定 SDK，仅在发布记录中手工写版本；日常构建仍可能漂移，不推荐。
+- 当前实施状态：已按推荐实现并在本机完整运行发布门；760 tests 全通过、0 Skip，固定 BASS 校验通过，Native AOT Worker 产物包含 `.exe`、三项 DLL、native manifest、MIT License 与 Third-Party Notices。
+- 需要产品所有者回答：是否采用推荐方案？如需允许 SDK patch roll-forward，请明确选择 A；NuGet 锁文件与正式零 Skip 门建议保留。
+- 产品回答：待填写。
+- 最终处理与提交：待确认后填写。
+
+### Q-NUI-013：正式分发 BASS 二进制的发布主体与许可放行
+
+- 类型：大决定 / 外部发布门
+- 状态：待确认；只暂停包含 BASS/BASSMIDI/BASSWASAPI DLL 的正式对外分发
+- 发现日期：2026-08-06
+- SRS 依据：第 21.6 节、INV-037、INV-038；根目录 `THIRD-PARTY-NOTICES.md`。
+- 已确认事实：Midora 自有代码使用标准 MIT License，初版产品定位为免费、开源、非商业；该定位不把 BASS 变成开源依赖，也不自动证明任意发布主体满足 Un4seen 的免费使用条件。仓库不提交 DLL；当前技术发布门只从操作员目录复制三项固定版本/hash DLL到本地测试产物，并明确打印“分发授权仍是独立门”。
+- 不确定点：尚未获得实际正式发布主体（个人/组织及其商业性质）、Midora 是否通过销售/广告/订阅/付费分发或其他方式获利、计划发布渠道与分发方式、正式发布日期有效条款的复核结论，以及要随包提供的供应商原始许可文件清单。技术实现不能代替权利人授权判断。
+- 影响范围：任何包含 `bass.dll`、`bassmidi.dll`、`basswasapi.dll` 的 GitHub Release、安装包、压缩包、镜像或其他对外分发；不影响仓库 MIT 源码发布、不含 BASS 的构建、用户自行提供 DLL 的开发测试、编译/MIDI/持久化等非发声功能。
+- 推荐方案：正式分发前由产品所有者冻结并书面记录：发布主体法定/公开身份及非商业性质；产品全部收入模式为无销售、无广告、无订阅、无付费分发；平台仅 Windows win-x64；具体渠道和是否由第三方镜像；按发布当日官方条款确认免费资格；把供应商要求的原始许可文本与现有 notices 一并纳入最终包。若任一事实不明确、发布主体具有商业性质、未来引入收入或条款解释有疑问，先联系 Un4seen 取得书面确认或购买适用许可，再放行含 DLL 产物。
+- 推荐依据与限制：该方案严格执行 SRS 已确认的许可边界，不用项目“开源/免费”口号替代第三方授权。限制是实现方无法仅凭源码和自动测试自行完成主体资格、收入和届时条款的法律/商业事实核验；最终许可判断应由发布主体承担，必要时咨询专业人士或权利人。
+- 备选方案及差异：A. 正式发布包不含任何 BASS DLL，仅提供校验工具和用户自行取得/配置流程；避免仓库方重新分发二进制，但首次使用流程更复杂，且仍需核验实际使用条件。B. 取得商业/其他明确许可后随包分发；成本与条款由权利人决定。C. 仅凭当前非商业声明直接随包分发；无法闭合 SRS 要求的主体/收入/渠道/届时条款核验，不可采用。
+- 当前实施状态：技术构建、固定 hash/version 校验、runtime version gate、MIT/Third-Party Notices 复制和本地 Native AOT 测试产物均已实现；没有创建或推送正式发行包，也没有把 BASS DLL提交到 Git。
+- 需要产品所有者回答：请提供实际发布主体、主体商业/非商业性质、全部收入方式、计划平台/渠道/分发形式，并选择推荐方案、A 或 B；在这些事实和届时条款核验完成前，本分支保持不放行正式含 DLL 分发。
+- 产品回答：待填写。
+- 最终处理与提交：待填写。
+
 ## 3. 问题模板
 
 ### Q-NUI-XXX：标题

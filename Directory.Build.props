@@ -2,6 +2,8 @@
     <PropertyGroup>                
         <Nullable>enable</Nullable>
         <Deterministic>true</Deterministic>
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+        <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
         <CheckForOverflowUnderflow>false</CheckForOverflowUnderflow>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <WarningsAsErrors>$(WarningsAsErrors);nullable</WarningsAsErrors>

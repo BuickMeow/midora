@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "Google.Protobuf": {
+        "type": "Direct",
+        "requested": "[3.35.1, )",
+        "resolved": "3.35.1",
+        "contentHash": "pxtkuXhR8svkvDTQrYew9GZQt6eWhblz/V/WKUFrQgkHYlQPsumJTeF6ppHRJpe6j9ffukkd5lQULiiKaek4xA=="
+      },
+      "Grpc.Tools": {
+        "type": "Direct",
+        "requested": "[2.83.0, )",
+        "resolved": "2.83.0",
+        "contentHash": "vK2Go/83W0v2Nn7tTP9fGrX4IjmOa93s3M0SZeFimU1vIIr2wL9yNJlIyK21y85SGm3++JncB8IF751cjoLHuQ=="
+      },
+      "midora.domain": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.Mapping.Contract.V1": "[1.0.0, )"
+        }
+      },
+      "midora.mapping.contract.v1": {
+        "type": "Project"
+      }
+    },
+    "net10.0/win-x64": {}
+  }
+}

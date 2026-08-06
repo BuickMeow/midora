@@ -8,7 +8,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsAotCompatible>true</IsAotCompatible>
     <!-- Initial release supports win-x64 only; the RID remains explicit so publish can never fall back to JIT. -->
-    <PublishAot Condition="'$(RuntimeIdentifier)' != ''">true</PublishAot>
+    <PublishAot>true</PublishAot>
     <PublishTrimmed Condition="'$(RuntimeIdentifier)' != ''">true</PublishTrimmed>
     <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
   </PropertyGroup>
@@ -21,6 +21,11 @@
     <ProjectReference Include="..\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />
     <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.BassWasapi\Midora.AudioDevice.BassWasapi.csproj" />
     <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.Wave\Midora.AudioDevice.Wave.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\..\LICENSE" Link="LICENSE" CopyToPublishDirectory="Always" />
+    <Content Include="..\..\..\THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md" CopyToPublishDirectory="Always" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' and '$(BassNativeDirectory)' != ''">

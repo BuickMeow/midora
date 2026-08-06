@@ -77,7 +77,9 @@ public sealed class CompilationTests
         Assert.False(result.IsPartial);
         Assert.DoesNotContain(result.Events.ToArray(), value => value.Role == CanonicalEventRole.NoteOn);
         Assert.Contains(result.Events.ToArray(), value => value.Tick == 240
-            && value.Message.MessageType == MidiMessageType.ProgramChange && value.Message.Byte1 == 12);
+            && value.Message.MessageType == MidiMessageType.ProgramChange
+            && value.Message.Byte1 == 12
+            && value.Source.Origin == SourceOrigin.RangeRestore);
         Assert.Contains(result.Events.ToArray(), value => value.Tick == 720 && value.Role == CanonicalEventRole.NoteOff);
     }
 

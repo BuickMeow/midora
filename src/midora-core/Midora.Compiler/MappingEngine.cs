@@ -20,6 +20,11 @@ internal sealed class MappingException : Exception
     public MappingException(string message, Exception innerException) : base(message, innerException)
     {
     }
+
+    public MidoraId? MappingStepId { get; set; }
+    public MidoraId? MappingFunctionId { get; set; }
+    public MidoraId? LogicalParameterId { get; set; }
+    public MidoraId? EnvelopeId { get; set; }
 }
 
 internal sealed class MappingEngine : IDisposable
@@ -60,36 +65,48 @@ internal sealed class MappingEngine : IDisposable
         bool allowClamp)
     {
         double current = value;
+        ValueMappingStep? lastAppliedStep = null;
         foreach (ValueMappingStep step in steps)
         {
             if (!step.IsEnabled)
             {
                 continue;
             }
-            double source = GetSource(step, current, context, parameters, envelopes);
-            current = step.Operation switch
+            lastAppliedStep = step;
+            try
             {
-                MappingOperation.Override => source,
-                MappingOperation.Add => current + source,
-                MappingOperation.Multiply => current * source,
-                MappingOperation.Remap => Remap(source, step, legalMaximum, targetDefault),
-                MappingOperation.Clamp => Math.Clamp(current, step.TargetMinimum, step.TargetMaximum),
-                MappingOperation.Ignore => current,
-                MappingOperation.ConstantPlusValue => step.Constant + source,
-                MappingOperation.ConstantMultiplyValue => step.Constant * source,
-                MappingOperation.ConstantMinusValue => step.Constant - source,
-                MappingOperation.ValueMinusConstant => source - step.Constant,
-                MappingOperation.ConstantDivideValue => Divide(step.Constant, source, step, legalMaximum, targetDefault),
-                MappingOperation.ValueDivideConstant => Divide(source, step.Constant, step, legalMaximum, targetDefault),
-                MappingOperation.CustomCSharp => EvaluateCSharp(step, current, context, functions),
-                _ => throw new MappingException($"Unknown mapping operation {step.Operation}.")
-            };
+                double source = GetSource(step, current, context, parameters, envelopes);
+                current = step.Operation switch
+                {
+                    MappingOperation.Override => source,
+                    MappingOperation.Add => current + source,
+                    MappingOperation.Multiply => current * source,
+                    MappingOperation.Remap => Remap(source, step, legalMaximum, targetDefault),
+                    MappingOperation.Clamp => Math.Clamp(current, step.TargetMinimum, step.TargetMaximum),
+                    MappingOperation.Ignore => current,
+                    MappingOperation.ConstantPlusValue => step.Constant + source,
+                    MappingOperation.ConstantMultiplyValue => step.Constant * source,
+                    MappingOperation.ConstantMinusValue => step.Constant - source,
+                    MappingOperation.ValueMinusConstant => source - step.Constant,
+                    MappingOperation.ConstantDivideValue => Divide(step.Constant, source, step, legalMaximum, targetDefault),
+                    MappingOperation.ValueDivideConstant => Divide(source, step.Constant, step, legalMaximum, targetDefault),
+                    MappingOperation.CustomCSharp => EvaluateCSharp(step, current, context, functions),
+                    _ => throw new MappingException($"Unknown mapping operation {step.Operation}.")
+                };
 
-            if (!double.IsFinite(current))
-            {
-                throw new MappingException("Mapping produced NaN or Infinity.");
+                if (!double.IsFinite(current))
+                {
+                    throw new MappingException("Mapping produced NaN or Infinity.");
+                }
             }
-
+            catch (MappingException exception)
+            {
+                exception.MappingStepId ??= step.Id;
+                exception.MappingFunctionId ??= step.MappingFunctionId;
+                exception.LogicalParameterId ??= step.LogicalParameterId;
+                exception.EnvelopeId ??= step.EnvelopeId;
+                throw;
+            }
         }
 
         if (current < legalMinimum || current > legalMaximum)
@@ -100,7 +117,13 @@ internal sealed class MappingEngine : IDisposable
             }
             else
             {
-                throw new MappingException($"Mapping result {current} is outside [{legalMinimum}, {legalMaximum}].");
+                throw new MappingException($"Mapping result {current} is outside [{legalMinimum}, {legalMaximum}].")
+                {
+                    MappingStepId = lastAppliedStep?.Id,
+                    MappingFunctionId = lastAppliedStep?.MappingFunctionId,
+                    LogicalParameterId = lastAppliedStep?.LogicalParameterId,
+                    EnvelopeId = lastAppliedStep?.EnvelopeId
+                };
             }
         }
 

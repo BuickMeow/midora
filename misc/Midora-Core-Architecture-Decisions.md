@@ -390,3 +390,11 @@ Requirement trace：输入为完整 `CompilationRequest`、当前 Project End Ma
 每条 `ChannelUnitAllocation` 同时保存单个 Logical Note instance ID 和共享 allocation group ID：前者用于定位具体触发，后者表达 Per-Note Isolation 关闭时多个实例共享同一 Channel Group。统计补充相交 Segment 数、参与 Instrument/SubVoice 数和实际 Port 数。首次资源不足冻结精确 shortage 区间、请求/可用 Channel Unit 数，以及当时占用或请求资源的 Track、Segment、Logical Note、Event Instrument、SubVoice 稳定 ID 集合；ID 集合排序、去重、只读。后续失败仍可产生诊断，但首个失败点作为确定性统计入口。
 
 Requirement trace：输入为本次范围内 Raw Instance、确定排序的 allocation group 和 256-unit 位图；正式输出为 instance/group 双身份占用区间、资源统计或 `ResourceShortageDetails`。边界是最低可用 Unit 分配算法和 16×16 上限不变，空显式范围统计为零，超过范围的未来峰值不参与。资源不足仍使结果 partial/不可消费，诊断和结构化统计必须 Full/Incremental 等价。上述数据只属于 canonical 运行时结果，不持久化，不允许消费者重新分配 Port/Channel；明确非目标是语义级 Voice Stealing、自动合并 SubVoice 或提高初版资源上限。
+
+## 27. ADR-CORE-025（已接受）：Canonical 细粒度来源链与生成来源
+
+决定：`SourceReference` 在既有 Track/Segment/Logical Note/Event Instrument/SubVoice/Template Event 之外，保存 Logical Parameter Definition、Logical Parameter Mapping、Value Mapping Step、C# Mapping Function、Value Curve 和 Envelope 稳定 ID。Mapping 运行异常在 Mapping Engine 内捕获实际失败 Step 及其 Function/Parameter/Envelope 引用，向外层诊断传播；语义引用诊断直接绑定被验证对象。成功的模板/曲线/Logical Parameter canonical 事件也保存其确定性的最终 Mapping 来源。
+
+由于单个 MIDI 事件可能由多条顺序 Mapping 共同合成，而当前 `SourceReference` 是一个主来源位置，成功事件记录最终生效 Mapping/Step；失败事件记录实际抛错 Step。它不声称替代未来的完整多来源图。`SourceOrigin` 另外区分 Template Event、Value Curve、Logical Parameter Mapping、合并 Initial State、Project Reset Defaults、Range Restore 和编译器硬边界清理；Role 继续表示同 tick 排序语义，Origin 只解释来源，不能改变排序。
+
+Requirement trace：输入为编译展开时的源对象稳定 ID、实际 Mapping Step 异常和编译器生成事件原因；正式输出为可定位、可 fingerprint 的 canonical/diagnostic source trace。边界是缺少该层来源时保留 default ID，不以名称或集合位置替代身份；成功事件与失败诊断的新增来源字段进入 result fingerprint 和 Full/Incremental 逐字段 oracle。来源链、异常对象和生成原因不持久化，不进入 Mapping ABI，也不允许消费者重算 Mapping。明确非目标是持久化诊断、多来源有向图、UI 导航展示和修改同 tick 事件排序。

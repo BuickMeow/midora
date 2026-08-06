@@ -304,7 +304,7 @@ public sealed class MidoraCompiler : IDisposable
                     participates ? "MIDORA2103" : "MIDORA2104",
                     participates ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning,
                     error,
-                    new(EventInstrumentId: instrument.Id)));
+                    new(EventInstrumentId: instrument.Id, MappingFunctionId: function.Id)));
             }
         }
     }
@@ -705,7 +705,13 @@ public sealed class MidoraCompiler : IDisposable
             List<RawMidiEvent> events = [];
             MidiInitialState state = MergeState(project.GlobalInitialState, instrument.InitialState, voice.InitialState);
             HashSet<MidiValueTarget> tickZeroTargets = GetTickZeroTargets(voice);
-            EmitInitialState(events, projectStart, state, tickZeroTargets, source, ref sequence);
+            EmitInitialState(
+                events,
+                projectStart,
+                state,
+                tickZeroTargets,
+                source with { Origin = SourceOrigin.MergedInitialState },
+                ref sequence);
             int root = voice.RootNoteOverride ?? instrument.RootNote;
             int pitchDelta = note.Note - root;
             EmitVoiceCurves(events, instrument, voice, projectStart, gateLength, actualEnd, source, ref sequence);
@@ -750,12 +756,26 @@ public sealed class MidoraCompiler : IDisposable
                         EmitTemplateEvent(events, templateEvent, tick, gateEnd, actualEnd,
                             releaseTriggered, pitchDelta, note.Velocity,
                             context, parametersAtTick, envelopesAtTick, functions,
-                            source with { SourceEventId = templateEvent.Id, Tick = tick }, ref sequence);
+                            source with
+                            {
+                                SourceEventId = templateEvent.Id,
+                                Tick = tick,
+                                Origin = SourceOrigin.TemplateEvent
+                            },
+                            ref sequence);
                     }
                     catch (Exception exception) when (exception is MappingException or OverflowException)
                     {
                         diagnostics.Add(new("MIDORA2101", DiagnosticSeverity.Error,
-                            exception.Message, source with { SourceEventId = templateEvent.Id, Tick = tick }));
+                            exception.Message,
+                            AddMappingSource(
+                                source with
+                                {
+                                    SourceEventId = templateEvent.Id,
+                                    Tick = tick,
+                                    Origin = SourceOrigin.TemplateEvent
+                                },
+                                exception)));
                     }
                 }
             }
@@ -765,7 +785,12 @@ public sealed class MidoraCompiler : IDisposable
                 functions, source, ref sequence, diagnostics);
             HashSet<MidiValueTarget> usedTargets = CollectUsedTargets(instrument, voice, state);
             EmitReset(events, actualEnd, usedTargets, project.GlobalResetDefaults,
-                source with { Tick = actualEnd }, ref sequence);
+                source with
+                {
+                    Tick = actualEnd,
+                    Origin = SourceOrigin.ProjectResetDefaults
+                },
+                ref sequence);
             voices[voiceIndex] = new RawSubVoice(voice.Id, events.ToArray());
         }
 
@@ -812,48 +837,75 @@ public sealed class MidoraCompiler : IDisposable
             parameters, envelopes, functions, 0,
             value.Kind == TemplateEventKind.PitchBendRange ? 99 : 127,
             value.Kind == TemplateEventKind.PitchBendRange ? 0 : value.SecondaryValue, true);
+        SourceReference numberSource = AddFinalMappingStepSource(source, value.NumberMappings);
+        SourceReference valueSource = AddFinalMappingStepSource(source, value.ValueMappings);
+        SourceReference secondarySource = AddFinalMappingStepSource(source, value.SecondaryValueMappings);
         switch (value.Kind)
         {
             case TemplateEventKind.Note:
                 number = value.FollowPitchDelta ? checked(number + pitchDelta) : number;
                 if (number is < 0 or > 127)
                 {
-                    throw new MappingException("Transposed Note number is outside 0–127; Note number cannot clamp.");
+                    throw new MappingException("Transposed Note number is outside 0–127; Note number cannot clamp.")
+                    {
+                        MappingStepId = numberSource.MappingStepId == default
+                            ? null
+                            : numberSource.MappingStepId,
+                        MappingFunctionId = numberSource.MappingFunctionId == default
+                            ? null
+                            : numberSource.MappingFunctionId,
+                        LogicalParameterId = numberSource.LogicalParameterId == default
+                            ? null
+                            : numberSource.LogicalParameterId,
+                        EnvelopeId = numberSource.EnvelopeId == default
+                            ? null
+                            : numberSource.EnvelopeId
+                    };
                 }
-                output.Add(RawMidiEvent.NoteOn(tick, number, eventValue, sequence++, source));
+                SourceReference noteSource = value.NumberMappings.IsEnabled
+                    && value.NumberMappings.Any(step => step.IsEnabled)
+                    ? numberSource
+                    : valueSource;
+                output.Add(RawMidiEvent.NoteOn(tick, number, eventValue, sequence++, noteSource));
                 long naturalOffTick = checked(tick + value.LengthTicks);
                 long offTick = releaseTriggered && naturalOffTick > gateEnd && actualEnd > gateEnd
                     ? actualEnd
                     : Math.Min(naturalOffTick, actualEnd);
-                output.Add(RawMidiEvent.NoteOff(offTick, number, sequence++, source with { Tick = offTick }));
+                output.Add(RawMidiEvent.NoteOff(offTick, number, sequence++, noteSource with { Tick = offTick }));
                 break;
             case TemplateEventKind.ControlChange:
-                output.Add(RawMidiEvent.Control(tick, number, eventValue, CanonicalEventRole.ControlChange, sequence++, source));
+                output.Add(RawMidiEvent.Control(tick, number, eventValue, CanonicalEventRole.ControlChange, sequence++, valueSource));
                 break;
             case TemplateEventKind.Bank:
                 if (value.HasBankMsb)
                 {
-                    output.Add(RawMidiEvent.Control(tick, 0, eventValue, CanonicalEventRole.Bank, sequence++, source));
+                    output.Add(RawMidiEvent.Control(tick, 0, eventValue, CanonicalEventRole.Bank, sequence++, valueSource));
                 }
                 if (value.HasBankLsb)
                 {
-                    output.Add(RawMidiEvent.Control(tick, 32, secondary, CanonicalEventRole.Bank, sequence++, source));
+                    output.Add(RawMidiEvent.Control(tick, 32, secondary, CanonicalEventRole.Bank, sequence++, secondarySource));
                 }
                 break;
             case TemplateEventKind.Program:
-                output.Add(RawMidiEvent.Program(tick, eventValue, sequence++, source));
+                output.Add(RawMidiEvent.Program(tick, eventValue, sequence++, valueSource));
                 break;
             case TemplateEventKind.PitchBend:
-                output.Add(RawMidiEvent.PitchBend(tick, eventValue, sequence++, source));
+                output.Add(RawMidiEvent.PitchBend(tick, eventValue, sequence++, valueSource));
                 break;
             case TemplateEventKind.RegisteredParameter:
-                EmitParameter(output, tick, true, number, eventValue, source, ref sequence);
+                EmitParameter(output, tick, true, number, eventValue, valueSource, ref sequence);
                 break;
             case TemplateEventKind.NonRegisteredParameter:
-                EmitParameter(output, tick, false, number, eventValue, source, ref sequence);
+                EmitParameter(output, tick, false, number, eventValue, valueSource, ref sequence);
                 break;
             case TemplateEventKind.PitchBendRange:
-                EmitPitchBendRange(output, tick, eventValue, Math.Clamp(secondary, 0, 99), source, ref sequence);
+                EmitPitchBendRange(
+                    output,
+                    tick,
+                    eventValue,
+                    Math.Clamp(secondary, 0, 99),
+                    valueSource,
+                    ref sequence);
                 break;
         }
     }
@@ -879,6 +931,24 @@ public sealed class MidoraCompiler : IDisposable
             value, steps, context, parameters, envelopes, functions,
             minimum, maximum, targetDefault, targetSettings.Overflow, allowClamp);
         return MappingEngine.Round(result, targetSettings.Rounding);
+    }
+
+    private static SourceReference AddFinalMappingStepSource(
+        SourceReference source,
+        MappingChain chain)
+    {
+        ValueMappingStep? step = chain.IsEnabled
+            ? chain.LastOrDefault(value => value.IsEnabled)
+            : null;
+        return step is null
+            ? source
+            : source with
+            {
+                MappingStepId = step.Id,
+                MappingFunctionId = step.MappingFunctionId ?? default,
+                LogicalParameterId = step.LogicalParameterId ?? source.LogicalParameterId,
+                EnvelopeId = step.EnvelopeId ?? default
+            };
     }
 
     private static int DefaultTemplateValue(TemplateEventKind kind) => kind switch
@@ -1045,7 +1115,13 @@ public sealed class MidoraCompiler : IDisposable
                 }
                 previousOutputValue = normalized;
                 EmitTarget(output, projectStart + localTick, curve.Target, normalized,
-                    source with { Tick = projectStart + localTick }, ref sequence);
+                    source with
+                    {
+                        Tick = projectStart + localTick,
+                        ValueCurveId = curve.Id,
+                        Origin = SourceOrigin.ValueCurve
+                    },
+                    ref sequence);
             }
         }
     }
@@ -1085,6 +1161,7 @@ public sealed class MidoraCompiler : IDisposable
             int rawStateIndex = 0;
             double currentRawValue = baseValue;
             int? previousOutputValue = null;
+            LogicalParameterMapping? currentMapping = null;
             for (long tick = projectStart; tick < actualEnd; tick++)
             {
                 while (rawStateIndex < rawState.Length && rawState[rawStateIndex].Tick <= tick)
@@ -1096,10 +1173,12 @@ public sealed class MidoraCompiler : IDisposable
                 Dictionary<MidoraId, double> envelopes = EvaluateEnvelopes(
                     instrument, tick - projectStart, releaseStartLocalTick, usedEnvelopeIds);
                 double current = currentRawValue;
+                currentMapping = null;
                 try
                 {
                     foreach (LogicalParameterMapping mapping in mappings)
                     {
+                        currentMapping = mapping;
                         double logical = parameters[mapping.ParameterId];
                         long instanceTick = tick - projectStart;
                         long templateTick = MapLongTickToTemplate(instrument, instanceTick, gateLength);
@@ -1134,13 +1213,35 @@ public sealed class MidoraCompiler : IDisposable
                     if (previousOutputValue != normalized)
                     {
                         previousOutputValue = normalized;
-                        EmitTarget(output, tick, group.Key, normalized, source with { Tick = tick }, ref sequence,
+                        LogicalParameterMapping outputMapping = mappings[^1];
+                        ValueMappingStep? outputStep = outputMapping.Steps
+                            .LastOrDefault(step => step.IsEnabled);
+                        EmitTarget(output, tick, group.Key, normalized, source with
+                        {
+                            Tick = tick,
+                            LogicalParameterId = outputMapping.ParameterId,
+                            LogicalParameterMappingId = outputMapping.Id,
+                            MappingStepId = outputStep?.Id ?? default,
+                            MappingFunctionId = outputStep?.MappingFunctionId ?? default,
+                            Origin = SourceOrigin.LogicalParameterMapping
+                        }, ref sequence,
                             CanonicalEventRole.LogicalParameter);
                     }
                 }
                 catch (Exception exception) when (exception is MappingException or OverflowException)
                 {
-                    diagnostics.Add(new("MIDORA2102", DiagnosticSeverity.Error, exception.Message, source with { Tick = tick }));
+                    SourceReference failureSource = source with
+                    {
+                        Tick = tick,
+                        LogicalParameterId = currentMapping?.ParameterId ?? default,
+                        LogicalParameterMappingId = currentMapping?.Id ?? default,
+                        Origin = SourceOrigin.LogicalParameterMapping
+                    };
+                    diagnostics.Add(new(
+                        "MIDORA2102",
+                        DiagnosticSeverity.Error,
+                        exception.Message,
+                        AddMappingSource(failureSource, exception)));
                     break;
                 }
             }
@@ -1167,6 +1268,18 @@ public sealed class MidoraCompiler : IDisposable
             .Select(value => new TargetStatePoint(value.Tick, value.Value))
             .ToArray();
     }
+
+    private static SourceReference AddMappingSource(
+        SourceReference source,
+        Exception exception) => exception is MappingException mapping
+            ? source with
+            {
+                MappingStepId = mapping.MappingStepId ?? source.MappingStepId,
+                MappingFunctionId = mapping.MappingFunctionId ?? source.MappingFunctionId,
+                LogicalParameterId = mapping.LogicalParameterId ?? source.LogicalParameterId,
+                EnvelopeId = mapping.EnvelopeId ?? source.EnvelopeId
+            }
+            : source;
 
     private static double DecodeTargetGroup(MidiValueTarget target, IEnumerable<RawMidiEvent> group) =>
         target.Kind switch
@@ -1929,7 +2042,8 @@ public sealed class MidoraCompiler : IDisposable
                 {
                     Tick = startTick,
                     Role = CanonicalEventRole.RangeRestore,
-                    StableOrder = restoreOrder++
+                    StableOrder = restoreOrder++,
+                    Source = previous.Source with { Origin = SourceOrigin.RangeRestore }
                 });
             }
         }
@@ -1940,7 +2054,8 @@ public sealed class MidoraCompiler : IDisposable
             for (int i = 0; i < count; i++)
             {
                 result.Add(new(endTick, port, channel, MidiMessage.NoteOff(channel, note, 0),
-                    CanonicalEventRole.NoteOff, long.MaxValue - 4, long.MinValue, long.MinValue, default));
+                    CanonicalEventRole.NoteOff, long.MaxValue - 4, long.MinValue, long.MinValue,
+                    new(Origin: SourceOrigin.CompilerBoundaryCleanup)));
             }
             if (count > 0)
             {
@@ -2049,7 +2164,8 @@ public sealed class MidoraCompiler : IDisposable
 
         void Add(MidiMessage message) => output.Add(new(
             tick, port, channel, message, CanonicalEventRole.Reset,
-            currentOrder++, target, group, default));
+            currentOrder++, target, group,
+            new(Origin: SourceOrigin.ProjectResetDefaults)));
 
         order = currentOrder;
     }
@@ -2465,6 +2581,13 @@ internal static class SourceFingerprint
             Add(ref hash, value.Source.SubVoiceId);
             Add(ref hash, value.Source.SourceEventId);
             Add(ref hash, value.Source.Tick);
+            Add(ref hash, value.Source.LogicalParameterId);
+            Add(ref hash, value.Source.LogicalParameterMappingId);
+            Add(ref hash, value.Source.MappingStepId);
+            Add(ref hash, value.Source.MappingFunctionId);
+            Add(ref hash, value.Source.ValueCurveId);
+            Add(ref hash, value.Source.EnvelopeId);
+            Add(ref hash, (int)value.Source.Origin);
         }
         return unchecked((long)hash);
     }

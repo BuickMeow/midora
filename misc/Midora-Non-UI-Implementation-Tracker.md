@@ -89,6 +89,7 @@
 | 2026-08-06 | Canonical 失败结果与 CompileContext 防御 | 失败结果统一 partial/不可消费；五阶段 `FailureStage`；保留阶段性统计；非法 Purpose 和不参与编译的 SubVoice 选择确定性诊断；取消状态与 FileSystemWatcher 重试测试去竞态；Compiler 156 tests；10 个测试项目累计 646 tests；Core 全解 540 tests | 通过，0 failure |
 | 2026-08-06 | Canonical CompileContext 冻结摘要 | Purpose、请求/解析范围、Explicit/End Marker/Natural end 来源、Track/SubVoice 全量或显式选择、Warning 策略及消费者类别；请求集合防别名；Full/Incremental 逐字段 oracle；Compiler 165 tests；10 个测试项目累计 655 tests；Core 全解 549 tests | 通过，0 failure |
 | 2026-08-06 | 范围内资源分配与结构化峰值统计 | 范围相交实例过滤；allocation instance/group 双身份；Segment/Instrument/SubVoice/Port 统计；shortage 区间与相关稳定 ID 集合；Full/Incremental failure oracle；Compiler 169 tests；10 个测试项目累计 659 tests；Core 全解 553 tests | 通过，0 failure |
+| 2026-08-06 | Canonical 细粒度来源链 | Parameter/Mapping/Step/C# Function/Curve/Envelope ID；Mapping 异常精确 Step；模板/曲线/逻辑参数成功来源；Initial/Restore/Reset/Boundary Origin；来源进入 fingerprint；Compiler 176 tests；10 个测试项目累计 666 tests；Core 全解 560 tests | 通过，0 failure |
 
 ## 7. 未解决风险
 

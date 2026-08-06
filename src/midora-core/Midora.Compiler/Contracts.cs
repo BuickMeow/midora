@@ -11,6 +11,18 @@ public enum DiagnosticSeverity
     Error
 }
 
+public enum SourceOrigin
+{
+    Unspecified,
+    TemplateEvent,
+    ValueCurve,
+    LogicalParameterMapping,
+    MergedInitialState,
+    ProjectResetDefaults,
+    RangeRestore,
+    CompilerBoundaryCleanup
+}
+
 public readonly record struct SourceReference(
     MidoraId TrackId = default,
     MidoraId SegmentId = default,
@@ -18,7 +30,14 @@ public readonly record struct SourceReference(
     MidoraId EventInstrumentId = default,
     MidoraId SubVoiceId = default,
     MidoraId SourceEventId = default,
-    long Tick = -1);
+    long Tick = -1,
+    MidoraId LogicalParameterId = default,
+    MidoraId LogicalParameterMappingId = default,
+    MidoraId MappingStepId = default,
+    MidoraId MappingFunctionId = default,
+    MidoraId ValueCurveId = default,
+    MidoraId EnvelopeId = default,
+    SourceOrigin Origin = SourceOrigin.Unspecified);
 
 public sealed record CompilerDiagnostic(
     string Code,

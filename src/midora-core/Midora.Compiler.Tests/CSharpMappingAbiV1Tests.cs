@@ -177,7 +177,9 @@ public sealed class CSharpMappingAbiV1Tests
 
         Assert.True(unused.IsConsumable);
         Assert.Contains(unused.Diagnostics, diagnostic =>
-            diagnostic.Code == "MIDORA2104" && diagnostic.Severity == DiagnosticSeverity.Warning);
+            diagnostic.Code == "MIDORA2104"
+            && diagnostic.Severity == DiagnosticSeverity.Warning
+            && diagnostic.Source.MappingFunctionId == function.Id);
 
         TemplateEvent value = TemplateEvent.ControlChange(fixture.Project, 0, 1, 20);
         value.ValueMappings.Add(new ValueMappingStep(fixture.Project)
@@ -192,7 +194,9 @@ public sealed class CSharpMappingAbiV1Tests
 
         Assert.False(used.IsConsumable);
         Assert.Contains(used.Diagnostics, diagnostic =>
-            diagnostic.Code == "MIDORA2103" && diagnostic.Severity == DiagnosticSeverity.Error);
+            diagnostic.Code == "MIDORA2103"
+            && diagnostic.Severity == DiagnosticSeverity.Error
+            && diagnostic.Source.MappingFunctionId == function.Id);
     }
 
     [Fact]

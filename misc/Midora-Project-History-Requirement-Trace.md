@@ -1,6 +1,6 @@
 # Midora Project History、Modified 与 Undo/Redo Requirement Trace
 
-状态：基础框架与六批不分配稳定 ID 的领域对象命令已实现；分配稳定 ID 的创建/复制/分割命令等待 Q-NUI-005
+状态：基础框架与七批不分配稳定 ID 的领域对象命令已实现；分配稳定 ID 的创建/复制/分割命令等待 Q-NUI-005
 
 日期：2026-08-06
 
@@ -40,6 +40,7 @@
 - SubVoice：可选短文本名称、Root Note inherit/override、手动排序和删除均进入 Instrument 级编译失效；名称/Root 修改不重写模板 Note。最后一条 SubVoice 不可删除；非空删除需要确认，并同时移除指向该 SubVoice 的 Logical Parameter Mapping；Undo 恢复 SubVoice、全部内部数据、外部 Mapping、原对象、原索引和稳定 ID。
 - Template Event：Note、CC、Bank、Program、Pitch Bend、RPN、NRPN 与 Pitch Bend Range 的既有对象可原子更新时间和值；基础 MIDI 值域、CC91/CC93/Channel Mode 禁止项、Int64 end 及事件类型在 Prepare 阶段阻止非法提交。Note end 或瞬时事件的半开边界超过当前 Template Length 时自动延长而不裁剪；同 SubVoice/tick/目标的状态冲突以被编辑对象替换旧对象，Pitch Bend Range 与 RPN 0 按统一内部语义冲突。Bank 只允许移除没有活动 Mapping Step 的已有 MSB/LSB 组件；编辑保留事件、Mapping Chain、Step、Target Settings 及全部稳定 ID，删除/Undo 精确恢复原对象与索引。
 - Value Curve：既有 Curve 的 Target Rounding/Overflow、Point tick/value/interpolation、Point 删除与整条 Curve 删除进入 History。Point 更新阻止负 tick、Int64 半开边界溢出、NaN/Infinity、未定义插值和同 tick 重复；合法目标的 Fail/Clamp 策略在提交时生效，移动到当前 Template Length 外会自动延长。Point 更新以同稳定 ID 的不可变记录替换，Undo 恢复原 Point 对象；删除 Curve 不删除同目标的用户离散事件。
+- Initial State / Reset Defaults：Project Initial、Project Reset、Event Instrument Initial 与 SubVoice Initial 通过统一 `MidiValueTarget` 更新或删除单个固定值；支持 CC、Bank MSB/LSB、Program、Pitch Bend、RPN/NRPN、Pitch Bend Range semitone/cents，阻止 CC91/CC93、Channel Mode、非法目标身份和全部值域越界。三层 Initial State 按 SubVoice > Instrument > Project > 内置默认合并，Reset 只属于 Project；这些编辑不影响 Template Length、不分配 ID，并保持各 `MidiInitialState` 容器对象身份。对缺失 override 再写 null 是无操作，删除已存在 override 可精确 Undo。
 - 以上命令 Prepare 不修改 Project；删除、移动、连接和撤销复用原对象/稳定 ID，不回滚或推进 `nextStableId`。每项结构编辑测试均以 Full Compile 为 oracle 核对当前 Incremental Compile 的语义和形式等价。
 - Logical Track 名称可空/重复；Event Instrument 与 Folder 名称必填且分别在规定范围内唯一。所有上述名称先拒绝非法 Unicode、换行/NUL/控制字符，再 Trim，并统一执行 schema 的 256 Unicode scalar 上限，不静默截断。
 

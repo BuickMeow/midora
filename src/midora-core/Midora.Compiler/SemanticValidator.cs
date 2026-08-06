@@ -777,7 +777,7 @@ public static class SemanticValidator
 
     private static void ValidateTarget(MidiValueTarget target, SourceReference source, List<CompilerDiagnostic> diagnostics)
     {
-        bool invalid = target.Kind switch
+        bool invalid = !Enum.IsDefined(target.Kind) || target.Kind switch
         {
             MidiValueKind.ControlChange => target.Number is < 0 or > 119 || target.Number is 91 or 93,
             MidiValueKind.RegisteredParameter or MidiValueKind.NonRegisteredParameter => target.Number is < 0 or > 16383,

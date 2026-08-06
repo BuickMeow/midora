@@ -66,6 +66,25 @@ public sealed class SemanticValidatorTests
             (logicalParameterLane ? "MIDORA1313" : "MIDORA1222"));
     }
 
+    [Fact]
+    public void UndefinedMidiValueTargetKindIsRejected()
+    {
+        var fixture = CompilerTestProject.Create();
+        ValueCurve curve = new(fixture.Project)
+        {
+            Target = new MidiValueTarget((MidiValueKind)999)
+        };
+        curve.Points.Add(new CurvePoint(fixture.Project, 0, 64));
+        fixture.Voice.Curves.Add(curve);
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(result.IsConsumable);
+        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1260");
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]

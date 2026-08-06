@@ -82,4 +82,55 @@ public sealed class PreviewCompilerTests
         Assert.Equal(64, note.Message.Byte1);
         Assert.DoesNotContain(result.Events.ToArray(), value => value.Message.MessageType == MidiMessageType.NoteOn && value.Message.Byte1 == 72);
     }
+
+    [Fact]
+    public void SegmentPreviewPreservesDamagedInstrumentBindingError()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120, 64);
+        _ = fixture.Project.EventInstruments.Remove(fixture.Instrument);
+        fixture.Project.DamagedEventInstruments.Add(new(
+            fixture.Instrument.Id,
+            fixture.Instrument.Name,
+            "event-instruments/damaged.pb",
+            "Invalid protobuf",
+            0));
+
+        CanonicalCompiledResult result = new PreviewCompiler().CompileSegment(
+            fixture.Project,
+            fixture.Track.Id,
+            fixture.Segment.Id);
+
+        Assert.False(result.IsConsumable);
+        Assert.True(result.IsPartial);
+        CompilerDiagnostic diagnostic = Assert.Single(result.Diagnostics, value =>
+            value.Code == "MIDORA1305");
+        Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
+        Assert.Equal(fixture.Track.Id, diagnostic.Source.TrackId);
+        Assert.Equal(fixture.Instrument.Id, diagnostic.Source.EventInstrumentId);
+        Assert.DoesNotContain(result.Diagnostics, value => value.Code == "MIDORA1303");
+    }
+
+    [Fact]
+    public void PreviewContextsPreserveSelectedInstrumentLibraryFolderIdentity()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        EventInstrumentLibraryFolder folder = new(fixture.Project) { Name = "Folder" };
+        fixture.Project.EventInstrumentFolders.Add(folder);
+        fixture.Instrument.LibraryFolderId = folder.Id;
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120, 64);
+
+        CanonicalCompiledResult instrumentPreview = new PreviewCompiler().CompileEventInstrument(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(fixture.Instrument.Id));
+        CanonicalCompiledResult segmentPreview = new PreviewCompiler().CompileSegment(
+            fixture.Project,
+            fixture.Track.Id,
+            fixture.Segment.Id);
+
+        Assert.True(instrumentPreview.IsConsumable);
+        Assert.True(segmentPreview.IsConsumable);
+        Assert.DoesNotContain(instrumentPreview.Diagnostics, value => value.Code == "MIDORA1021");
+        Assert.DoesNotContain(segmentPreview.Diagnostics, value => value.Code == "MIDORA1021");
+    }
 }

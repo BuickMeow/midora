@@ -118,6 +118,7 @@
 | 2026-08-06 | 显式 Track 编译诊断作用域 | 未选 Track/未参与 Instrument 的 Stable ID 损坏、重复 Instrument ID 与断裂 Folder Warning 不污染 scoped compile；编译查找表同步收窄；Whole Project 仍完整捕获；Compiler 189 tests；全仓基线 833 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip |
 | 2026-08-06 | Damaged Event Instrument 绑定编译边界 | Placeholder 不参与定义；绑定 Track 专用 MIDORA1305 Error 与 Track/Instrument 来源；普通断裂仍为 Info；Whole/健康选择/损坏选择作用域；Compiler 191 tests；全仓基线 835 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip |
 | 2026-08-06 | Audio Render 损坏 Instrument 绑定 canonical 透传 | Whole Mix 不再把强制 Error 降为未绑定 Info；Per Logical Track 为损坏绑定保留独立失败项且健康项可继续；Audio Render 33 tests；全仓基线 837 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-a4005a7bf4e84f48a372cf0382ed981c` |
+| 2026-08-06 | Preview 临时 Project 上下文完整性 | Segment Preview 保留损坏 Instrument placeholder 并输出 MIDORA1305；Event Instrument/Segment Preview 保留相关有效 Library Folder，消除虚假 MIDORA1021；Compiler 193 tests；全仓基线 839 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-371f13d69cb84b519079f79318b3c5bf` |
 
 ## 7. 未解决风险
 
@@ -140,3 +141,4 @@
 - 正常 Track 对 Damaged Event Instrument 占位的绑定已按 §16.19.3 作为编译 Error；普通断裂引用仍按未绑定 Track 的 Info 语义保留，消费者不得把两者合并成同一级别。
 - Global Event Scope Defaults 被 SRS 声明为可修改且影响可听/资源语义，但没有任何字段或默认规则；已发布 v1 又是严格空 marker。schema v2、History 与编译消费等待 Q-NUI-020，不能把建议字段静默塞入 v1。
 - Audio Render 对损坏 Event Instrument 绑定的选择已交还 canonical 编译器判定：Whole Mix 整体失败，Per Logical Track 仅对应项失败并允许其他项继续；普通未绑定/断裂引用仍保持 Info 与无输出目标语义。
+- Preview 临时 Project shell 已复制所选对象所需的损坏绑定身份与有效 Library Folder 结构；后续新增任何 Project 外壳式 CompileContext 时都必须审计同类引用闭包，不能让临时上下文制造虚假断裂或降级真实损坏。

@@ -58,7 +58,7 @@ public sealed class PreviewCompiler
         context.Conductor.Tempos.Clear();
         context.Conductor.Tempos.Add(new TempoChange(context, 0, tempo));
         context.Conductor.TimeSignatures.Add(new TimeSignatureChange(context, 0, 4, 4));
-        context.EventInstruments.Add(instrument);
+        AddInstrumentContext(source, context, instrument);
 
         LogicalTrack track = new(context) { Name = "Event Instrument Preview", EventInstrumentId = instrument.Id };
         Segment segment = new(context) { ProjectStartTick = 0, ContentOffsetTick = 0, LengthTicks = previewLength };
@@ -101,8 +101,10 @@ public sealed class PreviewCompiler
                 value => value.Id == sourceTrack.EventInstrumentId.Value);
             if (instrument is not null)
             {
-                context.EventInstruments.Add(instrument);
+                AddInstrumentContext(source, context, instrument);
             }
+            context.DamagedEventInstruments.AddRange(source.DamagedEventInstruments.Where(
+                value => value.Id == sourceTrack.EventInstrumentId.Value));
         }
         LogicalTrack track = new(context)
         {
@@ -137,6 +139,24 @@ public sealed class PreviewCompiler
         context.Playback.LimiterEnabled = source.Playback.LimiterEnabled;
         context.Playback.StopCursorBehavior = source.Playback.StopCursorBehavior;
         return context;
+    }
+
+    private static void AddInstrumentContext(
+        MidoraProject source,
+        MidoraProject context,
+        EventInstrument instrument)
+    {
+        context.EventInstruments.Add(instrument);
+        if (!instrument.LibraryFolderId.HasValue)
+        {
+            return;
+        }
+        EventInstrumentLibraryFolder? folder = source.EventInstrumentFolders.FirstOrDefault(
+            value => value.Id == instrument.LibraryFolderId.Value);
+        if (folder is not null)
+        {
+            context.EventInstrumentFolders.Add(folder);
+        }
     }
 
     private static void CopyConductor(ConductorTrack source, MidoraProject targetProject)

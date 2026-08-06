@@ -2,7 +2,7 @@ using Midora.Domain;
 
 namespace Midora.Application;
 
-public static class ProjectDomainEditCommands
+public static partial class ProjectDomainEditCommands
 {
     public static IProjectEditCommand RenameLogicalTrack(MidoraId trackId, string name) =>
         Command("Rename logical track", project =>
@@ -677,6 +677,8 @@ public static class ProjectDomainEditCommands
         result.EventInstrumentIds.Add(eventInstrumentId);
         return result;
     }
+
+    private static ProjectChangeSet ConductorChange() => new() { AffectsConductor = true };
 
     private sealed class DelegateCommand(
         string name,

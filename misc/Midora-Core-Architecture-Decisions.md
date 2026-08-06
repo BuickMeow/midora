@@ -326,3 +326,5 @@ Modified 不使用简单“Undo cursor 是否为零”。每个会话历史状�
 Requirement trace：输入为 Project、来源状态、可逆 command、保存成功和 external dirty reason；正式输出为全 Project History、操作名称、Modified/关闭保护和同步 canonical。边界是单线性分支、无操作不建历史、Project Edit Lock 排他和 command change-set 冻结。失败时恢复源并 Full Compile；rollback 再失败必须聚合报告。History/state ID/反向对象不持久化、不影响 canonical fingerprint；Project 源本身照常持久化。明确非目标是 Draft/文本本地 Undo、WPF focus routing、历史持久化、autosave/crash recovery，以及 Q-NUI-005 决定前所有会分配新稳定 ID 的 Undo 命令。
 
 首批具体命令采用同一约束：Prepare 完成引用、名称、确认、时间范围、重叠和可恢复索引校验；Apply/Undo 复用原对象与原稳定 ID。Track/Instrument/Folder/Damaged Placeholder 删除、Track 绑定/排序、Library 组织和 Segment 移动/裁剪/删除/连接已经接入。Last Known Instrument Name 在显式绑定时更新为目标当前名称、显式取消绑定时保留最近可用名称、Instrument 重命名时同步更新当前绑定 Track 的快照；撤销恢复此前精确值。该快照只用于断裂提示，不参与按名称匹配或正式编译引用。
+
+Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复原记录对象；tick 0 Tempo/Time Signature、同 tick 唯一性及 SMF Tempo 可表示性在 Prepare 阶段阻止非法输入。Playback 与 Audio Render Settings 以整组快照原子替换；它们进入 Project History/Modified，但使用空 compilation change-set，canonical 保持不变，下一次播放/渲染任务从正式 Project Settings 冻结实际参数。

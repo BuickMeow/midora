@@ -5,6 +5,21 @@ namespace Midora.Compiler.Tests;
 public sealed class SemanticValidatorTests
 {
     [Fact]
+    public void TempoMustFitTheMidiOneSetTempoFieldAfterSingleAwayFromZeroRounding()
+    {
+        foreach (decimal beatsPerMinute in new[] { 0.000001m, 120_000_001m })
+        {
+            MidoraProject project = new(480);
+            project.Conductor.Tempos[0] = new TempoChange(project, 0, beatsPerMinute);
+
+            CanonicalCompiledResult result = new MidoraCompiler().CompileFull(project);
+
+            Assert.False(result.IsConsumable);
+            Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1012");
+        }
+    }
+
+    [Fact]
     public void LogicalMappingsForSameTargetRequireOneTargetPolicy()
     {
         var fixture = CompilerTestProject.Create();

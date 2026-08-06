@@ -105,7 +105,9 @@ public static class SemanticValidator
         HashSet<long> tempoTicks = [];
         foreach (TempoChange tempo in project.Conductor.Tempos)
         {
-            if (tempo.Tick < 0 || tempo.BeatsPerMinute <= 0 || !tempoTicks.Add(tempo.Tick))
+            if (tempo.Tick < 0
+                || !IsRepresentableTempo(tempo.BeatsPerMinute)
+                || !tempoTicks.Add(tempo.Tick))
             {
                 AddError("MIDORA1012", "Tempo tick 必须非负、BPM 必须为正且同 tick 唯一。", source with { Tick = tempo.Tick }, diagnostics);
             }
@@ -139,6 +141,25 @@ public static class SemanticValidator
                 AddError("MIDORA1016", "Marker tick 不得为负；名称允许为空和重复。", source with { Tick = marker.Tick }, diagnostics);
             }
         }
+    }
+
+    private static bool IsRepresentableTempo(decimal beatsPerMinute)
+    {
+        if (beatsPerMinute <= 0)
+        {
+            return false;
+        }
+        decimal exact;
+        try
+        {
+            exact = 60_000_000m / beatsPerMinute;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+        decimal rounded = decimal.Round(exact, 0, MidpointRounding.AwayFromZero);
+        return rounded is >= 1m and <= 16_777_215m;
     }
 
     private static void ValidateFolders(MidoraProject project, List<CompilerDiagnostic> diagnostics)

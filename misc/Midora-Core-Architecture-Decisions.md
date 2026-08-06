@@ -440,3 +440,11 @@ Requirement trace：输入为活动 canonical/plan、render frontier、重新启
 Reset 不使 canonical compiled result 缓存失效，Stopped 状态也直接执行后端 Reset 且不额外 Stop。无论 Reset 成败，控制器自身派生引用、任务身份和编辑锁都在返回或抛出前释放；后端失败时 sample-domain 状态视为不可信并失效。Project 源数据、Modified 和 Undo/Redo 不受影响；活动主播放的光标仍按普通 Stop Cursor Behavior 处理，原本处于 Error 或 Stopped 时保留已有光标。
 
 Requirement trace：输入为当前播放状态、活动任务、后端 Stop/Reset 结果和 sample-domain cache；正式输出为完整重置后的 Stopped，或不残留活动任务/编辑锁且保留全部失败原因的 Error。边界是 Stop 清理失败不能短路 Reset、Stopped 不调用 Stop、Error 后 Play 必须先恢复后端。Reset/错误/缓存均只属于播放运行时，不持久化、不修改 canonical 或 Project；明确非目标是吞掉 Reset 失败、重编译 Project、重置 Mute/Solo、自动换设备或在 MIDI Export/Audio Render 模态互斥之外排队命令。
+
+## 33. ADR-CORE-031（已接受）：Preparing 发布与预览编译锁定顺序
+
+决定：主播放和全部 Preview 在发布 `Preparing` 状态之前必须已经取得 Project Edit Lock；因为 `StateChanged` 是同步可重入通知，不能先通知 Preparing 再留下任何可编辑源数据的窗口。Event Instrument、SubVoice 和 Segment Preview 的 `PreviewCompiler` 读取及临时上下文构造也必须位于同一锁租约内，直至 backend 停止或启动失败，不能先编译未锁 Project 再锁定并消费旧快照。
+
+Preview 仍在锁前检查当前任务互斥和有效 SoundFont，在锁内重新检查 SoundFont；编译抛出、返回不可消费结果、设备 Prepare 或 backend Start 失败均清空任务/派生结果、释放锁并进入 Error。Error 后的下一次 Preview 先走 ADR-CORE-030 的完整 Reset，再重新取得锁和编译；Preview 明确忽略 Mute/Solo，且不移动主播放光标。
+
+Requirement trace：输入为 Project 源对象图、预览请求、SoundFont、播放互斥状态和同步状态订阅者；正式输出为锁定源快照派生的 canonical Preview 计划，或无活动任务/无锁泄漏的 Error。边界是锁必须先于 Preparing 通知可见、预览编译全程持锁、成功播放持续持锁，Stop 后释放。锁、临时 Preview Project、状态通知和计划只属于运行时，不持久化、不修改 Project/canonical cache；明确非目标是后台并行编译、预览抢占主播放、允许 Preparing 编辑或把 Preview 临时对象写回 Project。

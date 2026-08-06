@@ -443,6 +443,80 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void PreparingStateIsPublishedOnlyAfterProjectEditsAreLocked()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            List<bool> preparingLockStates = [];
+            controller.StateChanged += (_, _) =>
+            {
+                if (controller.State == PlaybackState.Preparing)
+                {
+                    preparingLockStates.Add(session.EditsLocked);
+                }
+            };
+
+            controller.Start();
+            controller.Stop();
+            controller.StartEventInstrumentPreview(new EventInstrumentPreviewRequest(
+                project.EventInstruments[0].Id,
+                Pitch: 67,
+                GateLengthTicks: 240,
+                Tempo: 100m));
+
+            Assert.Equal([true, true], preparingLockStates);
+            Assert.True(session.EditsLocked);
+            controller.Stop();
+            Assert.False(session.EditsLocked);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void PreviewCompilationFailureClearsTaskAndProjectEditLock()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+
+            Assert.Throws<ArgumentException>(() => controller.StartEventInstrumentPreview(
+                new EventInstrumentPreviewRequest(MidoraId.FromParts(ulong.MaxValue, ulong.MaxValue))));
+
+            Assert.Equal(PlaybackState.Error, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.False(session.EditsLocked);
+            Assert.Equal(0, backend.PrepareCount);
+            Assert.NotNull(controller.LastError);
+
+            controller.StartEventInstrumentPreview(new EventInstrumentPreviewRequest(
+                project.EventInstruments[0].Id,
+                Pitch: 67,
+                GateLengthTicks: 240,
+                Tempo: 100m));
+
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            Assert.Equal(1, backend.ResetCount);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void RealtimePreviewUsesPositiveActualDeviceRateOutsideFileRange()
     {
         string soundFont = Path.GetTempFileName();

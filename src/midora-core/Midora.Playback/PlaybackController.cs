@@ -125,17 +125,19 @@ public sealed class PlaybackController : IDisposable
     {
         ArgumentNullException.ThrowIfNull(request);
         EnsureCanStartTask();
-        CanonicalCompiledResult compiled = new PreviewCompiler().CompileEventInstrument(_session.Project, request);
-        StartPreview(compiled, request.SubVoiceId.HasValue
-            ? PlaybackTaskKind.SubVoicePreview
-            : PlaybackTaskKind.EventInstrumentPreview);
+        StartPreview(
+            () => new PreviewCompiler().CompileEventInstrument(_session.Project, request),
+            request.SubVoiceId.HasValue
+                ? PlaybackTaskKind.SubVoicePreview
+                : PlaybackTaskKind.EventInstrumentPreview);
     }
 
     public void StartSegmentPreview(MidoraId trackId, MidoraId segmentId)
     {
         EnsureCanStartTask();
-        CanonicalCompiledResult compiled = new PreviewCompiler().CompileSegment(_session.Project, trackId, segmentId);
-        StartPreview(compiled, PlaybackTaskKind.SegmentPreview);
+        StartPreview(
+            () => new PreviewCompiler().CompileSegment(_session.Project, trackId, segmentId),
+            PlaybackTaskKind.SegmentPreview);
     }
 
     public void Stop()
@@ -340,12 +342,12 @@ public sealed class PlaybackController : IDisposable
         _cursorTick = cursorTick;
         try
         {
-            ActiveTaskKind = PlaybackTaskKind.MainTimeline;
-            SetState(PlaybackState.Preparing);
             if (acquireEditLock)
             {
                 _editLockLease = _session.AcquireProjectEditLock();
             }
+            ActiveTaskKind = PlaybackTaskKind.MainTimeline;
+            SetState(PlaybackState.Preparing);
             string soundFont = RequireEffectiveSoundFont("Playback");
             int actualSampleRate = _backend.Prepare();
             _session.InvalidateSampleDomainCaches();
@@ -393,10 +395,10 @@ public sealed class PlaybackController : IDisposable
         }
     }
 
-    private void StartPreview(CanonicalCompiledResult compiled, PlaybackTaskKind taskKind)
+    private void StartPreview(Func<CanonicalCompiledResult> compile, PlaybackTaskKind taskKind)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        ArgumentNullException.ThrowIfNull(compiled);
+        ArgumentNullException.ThrowIfNull(compile);
         if (State != PlaybackState.Stopped || ActiveTaskKind != PlaybackTaskKind.None)
         {
             throw new InvalidOperationException("A playback or preview task is already active.");
@@ -405,10 +407,11 @@ public sealed class PlaybackController : IDisposable
 
         try
         {
+            _editLockLease = _session.AcquireProjectEditLock();
             ActiveTaskKind = taskKind;
             SetState(PlaybackState.Preparing);
-            _editLockLease = _session.AcquireProjectEditLock();
             string soundFont = RequireEffectiveSoundFont("Preview");
+            CanonicalCompiledResult compiled = compile();
             int actualSampleRate = _backend.Prepare();
             _session.InvalidateSampleDomainCaches();
             if (!compiled.IsConsumable)

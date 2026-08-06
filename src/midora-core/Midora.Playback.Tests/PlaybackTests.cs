@@ -1,6 +1,7 @@
 using Midora.Audio;
 using Midora.Compiler;
 using Midora.Domain;
+using Midora.Midi;
 
 namespace Midora.Playback.Tests;
 
@@ -305,6 +306,46 @@ public sealed class PlaybackTests
             Assert.Equal(2, backend.MonitoringApplyCount);
             Assert.Contains(backend.MonitoringCommands,
                 value => value.Kind == MidiMonitoringCommandKind.SetSourceEnabled && !value.SourceEnabled);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void MonitoringRestoreUsesActivePlanRoutingInsteadOfColdRangeReallocation()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            (MidoraProject project, LogicalTrack restoredTrack) = CreateMonitoringRoutingProject();
+            ProjectCompilationSession session = new(project, soundFont);
+            ChannelUnitAllocation activeAllocation = Assert.Single(
+                session.LastAttempt.Allocations.ToArray(),
+                value => value.TrackId == restoredTrack.Id);
+            Assert.Equal((byte)1, activeAllocation.ZeroBasedChannel);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            controller.Start();
+            backend.PositionFrames = 15_000; // tick 300 at 120 BPM / 48 kHz
+
+            controller.SetTrackMuted(restoredTrack.Id, true);
+            int commandCountBeforeRestore = backend.MonitoringCommands.Count;
+            controller.SetTrackMuted(restoredTrack.Id, false);
+
+            MidiMonitoringCommand[] restoreCommands = backend.MonitoringCommands
+                .Skip(commandCountBeforeRestore)
+                .ToArray();
+            Assert.Contains(restoreCommands, value =>
+                value.Kind == MidiMonitoringCommandKind.SetSourceEnabled
+                && value.SourceEnabled);
+            MidiMonitoringCommand programRestore = Assert.Single(restoreCommands, value =>
+                value.Kind == MidiMonitoringCommandKind.SendMessage
+                && value.Message.MessageType == MidiMessageType.ProgramChange);
+            Assert.Equal(activeAllocation.ZeroBasedPort, programRestore.ZeroBasedPortNumber);
+            Assert.Equal(activeAllocation.ZeroBasedChannel, programRestore.Message.ChannelNumber);
             controller.Stop();
         }
         finally
@@ -671,6 +712,68 @@ public sealed class PlaybackTests
         track.Segments.Add(segment);
         project.Tracks.Add(track);
         return project;
+    }
+
+    private static (MidoraProject Project, LogicalTrack RestoredTrack) CreateMonitoringRoutingProject()
+    {
+        MidoraProject project = new(480);
+
+        EventInstrument firstInstrument = new(project)
+        {
+            Name = "First",
+            RootNote = 60,
+            TemplateLengthTicks = 480,
+            OverlapPolicy = OverlapPolicy.Warn
+        };
+        SubVoice firstVoice = new(project);
+        firstVoice.Events.Add(TemplateEvent.Note(project, 0, 480, 60, 100));
+        firstInstrument.SubVoices.Add(firstVoice);
+        project.EventInstruments.Add(firstInstrument);
+        LogicalTrack firstTrack = new(project)
+        {
+            Name = "First",
+            EventInstrumentId = firstInstrument.Id
+        };
+        Segment firstSegment = new(project) { LengthTicks = 960 };
+        firstSegment.Notes.Add(new LogicalNote(project)
+        {
+            StartTick = 0,
+            LengthTicks = 240,
+            Note = 60,
+            Velocity = 100
+        });
+        firstTrack.Segments.Add(firstSegment);
+        project.Tracks.Add(firstTrack);
+
+        EventInstrument restoredInstrument = new(project)
+        {
+            Name = "Restored",
+            RootNote = 60,
+            TemplateLengthTicks = 480,
+            OverlapPolicy = OverlapPolicy.Warn
+        };
+        SubVoice restoredVoice = new(project);
+        restoredVoice.InitialState.Program = 42;
+        restoredVoice.Events.Add(TemplateEvent.Note(project, 0, 480, 60, 100));
+        restoredInstrument.SubVoices.Add(restoredVoice);
+        project.EventInstruments.Add(restoredInstrument);
+        LogicalTrack restoredTrack = new(project)
+        {
+            Name = "Restored",
+            EventInstrumentId = restoredInstrument.Id
+        };
+        Segment restoredSegment = new(project) { LengthTicks = 960 };
+        restoredSegment.Notes.Add(new LogicalNote(project)
+        {
+            StartTick = 120,
+            LengthTicks = 480,
+            Note = 60,
+            Velocity = 100
+        });
+        restoredTrack.Segments.Add(restoredSegment);
+        project.Tracks.Add(restoredTrack);
+
+        return (project, restoredTrack);
     }
 
     private sealed class FakeBackend : IRealtimePlaybackBackend

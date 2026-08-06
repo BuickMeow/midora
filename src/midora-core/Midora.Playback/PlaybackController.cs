@@ -529,6 +529,12 @@ public sealed class PlaybackController : IDisposable
         {
             throw new InvalidOperationException("A monitoring cold-start state could not be compiled.");
         }
+        Dictionary<(MidoraId TrackId, MidoraId InstanceId, MidoraId SubVoiceId), ChannelUnitAllocation>
+            activeRouting = compiled.Allocations.ToArray()
+                .Where(value => value.StartTick <= renderTick && value.EndTick > renderTick)
+                .ToDictionary(
+                    value => (value.TrackId, value.InstanceId, value.SubVoiceId),
+                    value => value);
 
         List<MidiMonitoringCommand> commands = [];
         foreach (MidoraId trackId in newlyDisabled)
@@ -549,7 +555,18 @@ public sealed class PlaybackController : IDisposable
                     && value.Role == CanonicalEventRole.RangeRestore
                     && value.Source.TrackId == trackId)
                 {
-                    commands.Add(MidiMonitoringCommand.Send(value.ZeroBasedPort, value.Message));
+                    var routingKey = (
+                        value.Source.TrackId,
+                        value.Source.LogicalNoteId,
+                        value.Source.SubVoiceId);
+                    if (!activeRouting.TryGetValue(routingKey, out ChannelUnitAllocation activeAllocation))
+                    {
+                        throw new InvalidOperationException(
+                            "A monitoring restore event could not be routed to its active canonical Channel Unit.");
+                    }
+                    commands.Add(MidiMonitoringCommand.Send(
+                        activeAllocation.ZeroBasedPort,
+                        WithChannel(value.Message, activeAllocation.ZeroBasedChannel)));
                 }
             }
         }
@@ -557,6 +574,17 @@ public sealed class PlaybackController : IDisposable
         {
             _backend.ApplyMonitoringCommands(CollectionsMarshal.AsSpan(commands));
         }
+    }
+
+    private static MidiMessage WithChannel(MidiMessage message, byte channel)
+    {
+        if (!message.IsChannelVoiceMessage)
+        {
+            throw new InvalidOperationException(
+                "Monitoring state restore accepts only canonical MIDI channel messages.");
+        }
+        uint packed = message.PackedValue & ~MidiMessage.ChannelNumberMask | channel;
+        return MidiMessage.FromPackedValue(packed);
     }
 
     private static void AppendTrackCleanup(

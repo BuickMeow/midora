@@ -90,6 +90,39 @@ public sealed class AudioFrameRingBufferTests
         Assert.Equal(0, worker.RenderingThreadAllocatedBytes);
     }
 
+    [Fact]
+    public void RenderAheadWorkerRetriesBufferingWithoutAdvancingOrAllocating()
+    {
+        BufferOnceSource source = new();
+        using AudioFrameRingBuffer ring = new(source.Format, 64);
+        using AudioRenderAheadWorker worker = new(source, ring, 64);
+
+        worker.Start();
+        Assert.True(SpinWait.SpinUntil(() => worker.IsFinished, TimeSpan.FromSeconds(5)));
+
+        Assert.Equal(2, source.PullCount);
+        Assert.False(ring.ProducerFaulted);
+        Assert.True(ring.ProducerCompleted);
+        Assert.Equal(64, ring.AvailableFrameCount);
+        Assert.Equal(0, worker.RenderingThreadAllocatedBytes);
+    }
+
+    [Fact]
+    public void RenderAheadWorkerFaultsOnUnknownPullStatusWithoutAllocating()
+    {
+        UnknownStatusSource source = new();
+        using AudioFrameRingBuffer ring = new(source.Format, 64);
+        using AudioRenderAheadWorker worker = new(source, ring, 64);
+
+        worker.Start();
+        Assert.True(SpinWait.SpinUntil(() => worker.IsFinished, TimeSpan.FromSeconds(5)));
+
+        Assert.True(ring.ProducerFaulted);
+        Assert.False(ring.ProducerCompleted);
+        Assert.Equal(0, ring.AvailableFrameCount);
+        Assert.Equal(0, worker.RenderingThreadAllocatedBytes);
+    }
+
     private static unsafe void FillFrames(float* destination, int frameCount, int startValue)
     {
         for (int frame = 0; frame < frameCount; frame++)
@@ -119,5 +152,33 @@ public sealed class AudioFrameRingBufferTests
                 ? AudioPullResult.EndOfStream(frames)
                 : AudioPullResult.Continue(frames);
         }
+    }
+
+    private sealed unsafe class BufferOnceSource : IAudioRenderSource
+    {
+        public AudioFormat Format => new(48_000, 2, AudioSampleFormat.Float32);
+        public int PullCount { get; private set; }
+
+        public AudioPullResult PullFrames(float* destination, int requestedFrameCount)
+        {
+            PullCount++;
+            if (PullCount == 1)
+            {
+                return AudioPullResult.Buffering();
+            }
+
+            NativeMemory.Clear(
+                destination,
+                checked((nuint)requestedFrameCount * (nuint)Format.BytesPerFrame));
+            return AudioPullResult.EndOfStream(requestedFrameCount);
+        }
+    }
+
+    private sealed unsafe class UnknownStatusSource : IAudioRenderSource
+    {
+        public AudioFormat Format => new(48_000, 2, AudioSampleFormat.Float32);
+
+        public AudioPullResult PullFrames(float* destination, int requestedFrameCount) =>
+            new(0, (AudioPullStatus)byte.MaxValue);
     }
 }

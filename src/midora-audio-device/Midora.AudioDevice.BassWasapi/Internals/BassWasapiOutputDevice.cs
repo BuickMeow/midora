@@ -373,9 +373,7 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
     }
 
     internal static bool IsValidCallbackPullResult(AudioPullResult result, int requestedFrames) =>
-        result.FrameCount >= 0
-        && result.FrameCount <= requestedFrames
-        && (result.Status != AudioPullStatus.Buffering || result.FrameCount == 0);
+        result.IsValidForRequest(requestedFrames);
 
     [UnmanagedCallersOnly]
     private static void BassWasapiNotify(uint notify, uint deviceIndex, void* user)

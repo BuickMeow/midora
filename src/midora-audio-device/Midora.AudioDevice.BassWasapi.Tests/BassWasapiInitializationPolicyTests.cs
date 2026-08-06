@@ -152,6 +152,12 @@ public sealed class BassWasapiInitializationPolicyTests
             AudioPullResult.Continue(-1), 256));
         Assert.False(BassWasapiOutputDevice.IsValidCallbackPullResult(
             AudioPullResult.Continue(257), 256));
+        Assert.False(BassWasapiOutputDevice.IsValidCallbackPullResult(
+            AudioPullResult.Continue(0), 256));
+        Assert.False(BassWasapiOutputDevice.IsValidCallbackPullResult(
+            new AudioPullResult(0, (AudioPullStatus)byte.MaxValue), 256));
+        Assert.True(BassWasapiOutputDevice.IsValidCallbackPullResult(
+            AudioPullResult.Continue(0), 0));
     }
 
     [Fact]

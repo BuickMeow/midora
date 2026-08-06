@@ -104,12 +104,17 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
                 }
 
                 AudioPullResult result = _source.PullFrames(_workBuffer, _workFrameCount);
-                if (result.Status == AudioPullStatus.Fault
-                    || result.FrameCount < 0
-                    || result.FrameCount > _workFrameCount)
+                if (!result.IsValidForRequest(_workFrameCount)
+                    || result.Status == AudioPullStatus.Fault)
                 {
                     _destination.FaultProducer();
                     break;
+                }
+
+                if (result.Status == AudioPullStatus.Buffering)
+                {
+                    Thread.Sleep(1);
+                    continue;
                 }
 
                 if (result.FrameCount != 0

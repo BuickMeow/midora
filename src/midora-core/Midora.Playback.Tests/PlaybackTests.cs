@@ -101,14 +101,16 @@ public sealed class PlaybackTests
         try
         {
             MidoraProject project = CreateProject();
-            project.SoundFontPath = soundFont;
-            ProjectCompilationSession session = new(project);
+            ProjectCompilationSession session = new(project, soundFont);
             FakeBackend backend = new();
             using PlaybackController controller = new(session, backend);
 
             controller.Start();
             Assert.Equal(PlaybackState.Playing, controller.State);
             Assert.True(session.EditsLocked);
+            Assert.Null(project.SoundFont.Reference);
+            Assert.Throws<InvalidOperationException>(() =>
+                session.SetEffectiveSoundFontPath(null));
             Assert.Throws<InvalidOperationException>(() => session.ApplyEdit(_ => { }, new ProjectChangeSet()));
 
             controller.Seek(240);
@@ -150,9 +152,8 @@ public sealed class PlaybackTests
         try
         {
             MidoraProject project = CreateProject();
-            project.SoundFontPath = soundFont;
             FakeBackend backend = new();
-            using PlaybackController controller = new(new(project), backend);
+            using PlaybackController controller = new(new(project, soundFont), backend);
 
             controller.Start(0);
             controller.Seek(240);
@@ -175,9 +176,8 @@ public sealed class PlaybackTests
         try
         {
             MidoraProject project = CreateProject();
-            project.SoundFontPath = soundFont;
             FakeBackend backend = new();
-            using PlaybackController controller = new(new(project), backend);
+            using PlaybackController controller = new(new(project, soundFont), backend);
             controller.SetLoop(new TickRange(240, 480));
             controller.Start();
 
@@ -202,9 +202,8 @@ public sealed class PlaybackTests
         try
         {
             MidoraProject project = CreateProject();
-            project.SoundFontPath = soundFont;
             FakeBackend backend = new();
-            ProjectCompilationSession session = new(project);
+            ProjectCompilationSession session = new(project, soundFont);
             using PlaybackController controller = new(session, backend);
             MidoraId trackId = project.Tracks[0].Id;
             long fingerprint = session.LastAttempt.Fingerprint;
@@ -237,9 +236,8 @@ public sealed class PlaybackTests
         try
         {
             MidoraProject project = CreateProject();
-            project.SoundFontPath = soundFont;
             FakeBackend backend = new() { ThrowMonitoringCommands = true };
-            using PlaybackController controller = new(new ProjectCompilationSession(project), backend);
+            using PlaybackController controller = new(new ProjectCompilationSession(project, soundFont), backend);
             MidoraId trackId = project.Tracks[0].Id;
             controller.Start();
 
@@ -265,9 +263,8 @@ public sealed class PlaybackTests
         try
         {
             MidoraProject project = CreateProject();
-            project.SoundFontPath = soundFont;
             FakeBackend backend = new();
-            using PlaybackController controller = new(new(project), backend);
+            using PlaybackController controller = new(new(project, soundFont), backend);
 
             controller.Seek(240);
             controller.Start();
@@ -288,9 +285,8 @@ public sealed class PlaybackTests
         try
         {
             MidoraProject project = CreateProject();
-            project.SoundFontPath = soundFont;
             FakeBackend backend = new();
-            using PlaybackController controller = new(new(project), backend);
+            using PlaybackController controller = new(new(project, soundFont), backend);
 
             controller.Start(240, 240);
 
@@ -316,9 +312,8 @@ public sealed class PlaybackTests
         try
         {
             MidoraProject project = CreateProject();
-            project.SoundFontPath = soundFont;
             FakeBackend backend = new();
-            ProjectCompilationSession session = new(project);
+            ProjectCompilationSession session = new(project, soundFont);
             using PlaybackController controller = new(session, backend);
             controller.Seek(240);
 
@@ -356,9 +351,8 @@ public sealed class PlaybackTests
         try
         {
             MidoraProject project = CreateProject();
-            project.SoundFontPath = soundFont;
             FakeBackend backend = new() { ActualSampleRate = 384_000 };
-            using PlaybackController controller = new(new(project), backend);
+            using PlaybackController controller = new(new(project, soundFont), backend);
 
             controller.StartEventInstrumentPreview(new EventInstrumentPreviewRequest(
                 project.EventInstruments[0].Id,
@@ -382,9 +376,8 @@ public sealed class PlaybackTests
         try
         {
             MidoraProject project = CreateProject();
-            project.SoundFontPath = soundFont;
             FakeBackend backend = new();
-            using PlaybackController controller = new(new(project), backend);
+            using PlaybackController controller = new(new(project, soundFont), backend);
             controller.Seek(300);
             controller.StartSegmentPreview(project.Tracks[0].Id, project.Tracks[0].Segments[0].Id);
             backend.IsCompleted = true;
@@ -408,9 +401,8 @@ public sealed class PlaybackTests
         try
         {
             MidoraProject project = CreateProject();
-            project.SoundFontPath = soundFont;
             FakeBackend backend = new();
-            ProjectCompilationSession session = new(project);
+            ProjectCompilationSession session = new(project, soundFont);
             using PlaybackController controller = new(session, backend);
             controller.Start();
             backend.PositionFrames = 12_000;

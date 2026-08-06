@@ -144,7 +144,7 @@ public sealed class MidoraProject
     public List<EventInstrumentLibraryFolder> EventInstrumentFolders { get; } = [];
     public List<LogicalTrack> Tracks { get; } = [];
     public PlaybackProjectSettings Playback { get; } = new();
-    public string? SoundFontPath { get; set; }
+    public ProjectSoundFontSettings SoundFont { get; } = new();
 
     public MidoraId AllocateStableId()
     {

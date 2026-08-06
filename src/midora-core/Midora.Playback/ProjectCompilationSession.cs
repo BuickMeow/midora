@@ -12,9 +12,12 @@ public sealed class ProjectCompilationSession : IDisposable
     private bool _editsLocked;
     private bool _disposed;
 
-    public ProjectCompilationSession(MidoraProject project)
+    public ProjectCompilationSession(MidoraProject project, string? effectiveSoundFontPath = null)
     {
         Project = project ?? throw new ArgumentNullException(nameof(project));
+        EffectiveSoundFontPath = effectiveSoundFontPath is null
+            ? null
+            : Path.GetFullPath(effectiveSoundFontPath);
         LastAttempt = _compiler.CompileFull(project);
         if (LastAttempt.IsConsumable)
         {
@@ -23,6 +26,7 @@ public sealed class ProjectCompilationSession : IDisposable
     }
 
     public MidoraProject Project { get; }
+    public string? EffectiveSoundFontPath { get; private set; }
     public CanonicalCompiledResult LastAttempt { get; private set; }
     public CanonicalCompiledResult? LastSuccessfulResult { get; private set; }
     public CompilerRunTelemetry LastCompilationTelemetry => _compiler.LastTelemetry;
@@ -113,6 +117,19 @@ public sealed class ProjectCompilationSession : IDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             _samplePlans.Clear();
+        }
+    }
+
+    public void SetEffectiveSoundFontPath(string? value)
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_editsLocked)
+            {
+                throw new InvalidOperationException("The effective SoundFont cannot change while audio is active.");
+            }
+            EffectiveSoundFontPath = value is null ? null : Path.GetFullPath(value);
         }
     }
 

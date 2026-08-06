@@ -524,17 +524,21 @@ Sample Rate = 48,000 Hz
 ```
 保存时只写出已规范化的合法设置；已删除 Track 的无效 ID 不得原样写回。
 ### 16.7.6 soundfont-settings.json
-保存 SoundFont Settings 语义，例如：
+初版 schema v1 固定保存：
 ```text
-未选择 SF2
-外部相对引用 SF2
-内嵌 SF2 引用
-last known hash
-原始文件名
-资源 ID
-资源状态
+schemaVersion = 1
+mode = none / external / embedded
+relativePath（仅 external）
+resourceId（仅 embedded）
+originalFileName（已选择时）
+sha256（已选择时）
+fileSizeBytes（已选择时，非负 int64）
 ```
-外部引用 SF2 初版只保存允许目录下的相对路径，不保存绝对路径 fallback。
+`mode = none` 时不得保留其余 payload 字段。External 与 Embedded 的字段组合必须严格互斥，未知字段或无效组合导致该 settings 文件无效。
+
+外部引用只保存第 6.4.4 节允许的两种相对路径，不保存绝对路径 fallback。`resourceId` 使用 canonical 非零稳定 ID。`sha256` 是 64 个小写十六进制字符；external 表示用户最后明确接受的内容，embedded 表示包内资源的预期内容。
+
+缺失、不可读、hash mismatch、case-insensitive fallback、BASSMIDI 加载失败和“验证中”等状态属于打开后的派生资源状态，不写入 Project。被动状态变化不得改写本文件或使 Project 进入已修改状态。
 ### 16.7.7 global-reset-defaults.json
 保存 Project 级 Reset 默认值，例如：
 ```text
@@ -927,7 +931,7 @@ Windows 盘符路径
 反斜杠
 NUL 或控制字符
 ```
-SoundFont 外部引用的允许基目录、hash 不匹配处置与解析时机由 16.15 的独立兼容决定固定，不由本节路径编码规则隐式决定。
+SoundFont 外部引用进一步限制为第 6.4.4 与 16.15 节的两种直接子路径；大小写回退、hash 不匹配处置与验证时机按这些章节执行。
 ### 16.13.6 字符串规范化
 初版不强制 Unicode normalization。
 用户可见字符串保持用户输入。
@@ -1021,6 +1025,9 @@ last known hash
 文件大小等辅助信息
 ```
 初版只保存允许目录下的相对路径，不保存绝对路径 fallback。
+路径逐分量优先 ordinal 精确匹配；仅当精确匹配不存在且 ordinal-ignore-case 候选唯一时才允许回退，并产生 Warning。多个大小写近似候选导致资源歧义和不可用。回退只影响本次运行时解析，不改写已保存路径；用户明确重新绑定或接受当前文件后，才以实际解析到的大小写写入新路径。
+
+外部 `sha256` 和 `fileSizeBytes` 只在用户明确选择、替换、重新绑定或接受当前内容时更新。打开时完整流式计算 SHA-256；普通保存、保存副本、文件监控和音频任务中的被动检查不得静默更新这些字段或 Project 修改状态。
 如果外部 SF2 缺失：
 ```text
 Project 正常打开。
@@ -1037,6 +1044,7 @@ MIDI 导出仍可用。
 ### 16.15.4 内嵌 SF2 完整性
 内嵌 SF2 是项目包内部资源。
 manifest 记录其 SHA-256。
+`soundfont-settings.json` 同时记录同一资源 ID、SHA-256、原始文件名和未压缩文件大小；settings hash、manifest hash 与实际未压缩资源字节必须一致。导入和 package 写出均流式计算，不得整文件读入单个托管数组。
 如果内嵌 SF2 hash 不匹配或无法加载：
 ```text
 Project 正常打开。

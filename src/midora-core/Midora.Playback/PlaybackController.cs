@@ -286,7 +286,7 @@ public sealed class PlaybackController : IDisposable
 
     private void StartPreparedRange(long cursorTick, long? endTick, bool acquireEditLock)
     {
-        string soundFont = _session.Project.SoundFontPath
+        string soundFont = _session.EffectiveSoundFontPath
             ?? throw new InvalidOperationException("Playback requires an effective Project SoundFont.");
         if (!File.Exists(soundFont))
         {
@@ -351,7 +351,7 @@ public sealed class PlaybackController : IDisposable
         {
             throw new InvalidOperationException("A playback or preview task is already active.");
         }
-        string soundFont = _session.Project.SoundFontPath
+        string soundFont = _session.EffectiveSoundFontPath
             ?? throw new InvalidOperationException("Preview requires an effective Project SoundFont.");
         if (!File.Exists(soundFont))
         {

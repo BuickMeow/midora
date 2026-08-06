@@ -130,10 +130,7 @@ public sealed class PreviewCompiler
 
     private static MidoraProject CreateContextShell(MidoraProject source)
     {
-        MidoraProject context = new(source.TicksPerQuarterNote, source.NextStableId)
-        {
-            SoundFontPath = source.SoundFontPath
-        };
+        MidoraProject context = new(source.TicksPerQuarterNote, source.NextStableId);
         CopyState(source.GlobalInitialState, context.GlobalInitialState);
         CopyState(source.GlobalResetDefaults, context.GlobalResetDefaults);
         context.Playback.MasterVolumeDecibels = source.Playback.MasterVolumeDecibels;

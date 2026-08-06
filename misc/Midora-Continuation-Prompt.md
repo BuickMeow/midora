@@ -68,13 +68,13 @@ D:\Programing\midora
 16. 初版正式 BASS 原生基线固定为 `bass.dll 2.4.18.3 / 0x02041203`、`bassmidi.dll 2.4.16.0 / 0x02041000`、`basswasapi.dll 2.4.4.1 / 0x02040401` 及仓库 manifest 中的 win-x64 SHA-256。仓库不提交 DLL；正式发布只接受操作员提供且匹配 manifest 的文件，运行时校验完整版本码；vendor current/latest 只能生成开发候选。
 17. 初版 C# Mapping 固定 ABI v1：签名为 `double Transform(double value, in MappingContextV1 context)`；独立只读契约，固定 Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10`；每 Project 只缓存当前源码修订并用 collectible ALC 卸载旧项。`.midora` 只保存 ABI 版本、函数体和 Context 声明。该边界不是 sandbox。
 18. 初版持久化兼容基线固定为 JSON Schema Draft 2020-12、内部版本化 `System.Text.Json` source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 和 Grpc.Tools 2.83.0；严格拒绝 JSON 重复/未知属性及 protobuf 未知 tag，`.proto`/descriptor/golden bytes 进入兼容门。文本、路径、opaque sRGB、UTC 七位小数秒与非负 int64 毫秒表示已固定。
+19. External Project SF2 只保存 Project 根目录或直属 `soundfonts/` 的相对路径；精确大小写优先、唯一 ignore-case 回退并 Warning、歧义拒绝。完整原始字节 SHA-256 只在用户明确选择/替换/重绑定/接受变化时更新，被动状态不修改 Project；绝对路径与验证缓存只属于运行时。
 
 四、仍需 ADR 或实测决定的事项
 
 这些不是当前 SRS 冲突，不能静默写成实现默认值：
 
 - BASS 商业分发许可证与第三方 notices；技术版本、SHA-256 和升级回归策略已经固定，不得与授权问题混为一项；
-- Project SoundFont 可移植引用与哈希策略；
 - Project 工程总耗时累计规则；
 - MIDI 导出兼容细节和 MIDI/音频输出文件名规则。
 

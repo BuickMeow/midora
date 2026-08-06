@@ -22,4 +22,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Midora.Persistence.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Midora.Domain\Midora.Domain.csproj" />
+  </ItemGroup>
 </Project>

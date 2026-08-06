@@ -170,7 +170,7 @@ public sealed class PersistenceContractV1Tests
     {
         string schemaDirectory = Path.Combine(AppContext.BaseDirectory, "Schemas", "Json");
         string[] paths = Directory.GetFiles(schemaDirectory, "*.schema.json", SearchOption.TopDirectoryOnly);
-        Assert.Equal(2, paths.Length);
+        Assert.Equal(3, paths.Length);
         foreach (string path in paths)
         {
             using JsonDocument schema = JsonDocument.Parse(File.ReadAllBytes(path));

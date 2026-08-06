@@ -50,6 +50,7 @@
 
 ## 2026-08-06 修订摘要
 
+- Project 外部 SoundFont 固定为项目根目录或直属 `soundfonts/` 的相对 SF2；路径精确大小写优先、唯一 ignore-case 回退并警告、歧义拒绝。原始字节 SHA-256 只在用户明确绑定/接受时更新，被动变化不修改 Project；内嵌资源的 settings/manifest/hash 必须一致。
 - 初版持久化兼容基线固定为 JSON Schema Draft 2020-12、内部版本化 `System.Text.Json` source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 与 Grpc.Tools 2.83.0；严格拒绝重复/未知 JSON 属性和未知 protobuf tag，已发布 schema 以 descriptor/golden bytes 锁定。
 - 持久化文本、相对路径、opaque sRGB 颜色、UTC 时间和工程总耗时的 v1 表示已固定；路径保留大小写与原 Unicode，不做 normalization，时间使用七位小数秒 UTC `Z` 格式，总耗时使用非负 int64 毫秒。
 - 初版 C# Mapping 固定 ABI v1：版本化函数体、只读独立 MappingContext 契约、C# 14/`Microsoft.NETCore.App.Ref 10.0.10`，以及按 Project 当前源码修订管理的 collectible AssemblyLoadContext 缓存；编译产物不持久化，引用白名单不构成 sandbox。

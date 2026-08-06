@@ -16,7 +16,7 @@ internal static class ManifestCodecV1
 
     public static ManifestJsonV1 Parse(ReadOnlySpan<byte> utf8)
     {
-        RejectBomAndDuplicateProperties(utf8);
+        StrictJsonV1.ValidateInput(utf8);
         ManifestJsonV1 result = JsonSerializer.Deserialize(
             utf8,
             MidoraJsonSerializerContextV1.Default.ManifestJsonV1)
@@ -47,21 +47,9 @@ internal static class ManifestCodecV1
                 })
                 .ToArray()
         };
-        byte[] body = JsonSerializer.SerializeToUtf8Bytes(
+        return StrictJsonV1.SerializeWithFinalLf(
             canonical,
             MidoraJsonSerializerContextV1.Default.ManifestJsonV1);
-        int carriageReturnCount = body.Count(value => value == (byte)'\r');
-        byte[] result = GC.AllocateUninitializedArray<byte>(body.Length - carriageReturnCount + 1);
-        int destination = 0;
-        foreach (byte value in body)
-        {
-            if (value != (byte)'\r')
-            {
-                result[destination++] = value;
-            }
-        }
-        result[^1] = (byte)'\n';
-        return result;
     }
 
     public static void Validate(ManifestJsonV1 manifest, bool allowUnknownFileKinds = false)
@@ -116,45 +104,4 @@ internal static class ManifestCodecV1
         }
     }
 
-    private static void RejectBomAndDuplicateProperties(ReadOnlySpan<byte> utf8)
-    {
-        if (utf8.Length >= 3
-            && utf8[0] == 0xef
-            && utf8[1] == 0xbb
-            && utf8[2] == 0xbf)
-        {
-            throw new InvalidDataException("Midora JSON must be UTF-8 without BOM.");
-        }
-        using JsonDocument document = JsonDocument.Parse(utf8.ToArray(), new JsonDocumentOptions
-        {
-            AllowTrailingCommas = false,
-            CommentHandling = JsonCommentHandling.Disallow,
-            MaxDepth = 100
-        });
-        ValidateNoDuplicateProperties(document.RootElement, "$");
-    }
-
-    private static void ValidateNoDuplicateProperties(JsonElement value, string path)
-    {
-        if (value.ValueKind == JsonValueKind.Object)
-        {
-            HashSet<string> names = new(StringComparer.Ordinal);
-            foreach (JsonProperty property in value.EnumerateObject())
-            {
-                if (!names.Add(property.Name))
-                {
-                    throw new InvalidDataException($"Duplicate JSON property '{property.Name}' at {path}.");
-                }
-                ValidateNoDuplicateProperties(property.Value, $"{path}.{property.Name}");
-            }
-        }
-        else if (value.ValueKind == JsonValueKind.Array)
-        {
-            int index = 0;
-            foreach (JsonElement item in value.EnumerateArray())
-            {
-                ValidateNoDuplicateProperties(item, $"{path}[{index++}]");
-            }
-        }
-    }
 }

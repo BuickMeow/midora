@@ -141,8 +141,25 @@ Requirement trace：
 - 边界：文本上限按 Unicode scalar；相对路径保留大小写和原 Unicode、不 normalization；颜色为 opaque sRGB；UTC 时间严格为七位小数秒 `Z`；总耗时为非负 int64 毫秒。
 - 失败条件：BOM、JSON 重复/未知字段、未知 protobuf tag、错误 wire type、非法 UTF-8、越界标量、非 canonical hash/path/version 或 descriptor/golden 漂移均失败，不截断也不静默修复。
 - 诊断：当前 codec 以 `JsonException` / `InvalidDataException` 保留失败类别；完整打开流程实现时再映射为 SRS 第 16.20 节的文件级正式诊断，不能把异常文本直接当 UI 诊断协议。
-- 持久化归属：本 ADR 只冻结通用值类型和 `manifest.json` v1；受 SoundFont、工程耗时累计、MIDI 导出和文件命名决定影响的 `project.json`、`metadata.json`、settings 与两类对象完整 schema 尚未发布。
+- 持久化归属：本 ADR 冻结通用值类型和 `manifest.json` v1；`soundfont-settings.json` 随 ADR-CORE-008 单独冻结。受工程耗时累计、MIDI 导出和文件命名决定影响的其余 settings、metadata 与完整对象 schema 尚未发布。
 - 运行时归属：DTO、descriptor、codec 和校验属于 Preparing/open/save 路径，不进入编译器 canonical 语义或音频活动线程。
 - 明确非目标：本增量不实现 ZIP 结构、hash 全包校验、迁移、损坏占位、Save/Save Copy 原子事务和完整 Project round-trip。
 
 兼容规则：已发布 protobuf 字段号不得复用，删除字段必须 reserved。deterministic protobuf 不是跨 library/tool 版本的 canonical encoding；依赖升级必须显式评审 descriptor diff、golden bytes 和旧文件重开。完整 v1 对象 schema 只能在决定 19–22 闭合对应字段后发布，不能用临时默认值提前冻结。
+
+## 10. ADR-CORE-008（已接受，19A）：Project SoundFont 可移植引用与内容身份
+
+决定：Project 不保存绝对 `SoundFontPath`。领域源数据使用严格 External/Embedded union；实际解析出的绝对路径、验证中/缺失/歧义/hash mismatch/加载失败状态和验证缓存均属于运行时。`settings/soundfont-settings.json` v1 已冻结为 `schemaVersion`、`mode` 及模式对应的 `relativePath`/`resourceId`、`originalFileName`、`sha256`、`fileSizeBytes`。
+
+Requirement trace：
+
+- 输入：`.midora` 的完全限定路径、用户选择的完全限定 SF2 路径、Project SoundFont 源引用及当前外部文件字节。
+- 正式输出：External 保存 `<file>.sf2` 或实际大小写的 `<soundfonts>/<file>.sf2`；Embedded 保存稳定 resource ID；二者都保存原始文件名、完整原始字节 SHA-256 和非负文件大小。
+- 边界：只允许 Project 根目录或直属 `soundfonts/`；路径逐分量 ordinal 精确匹配优先，唯一 ordinal-ignore-case 候选可回退并 Warning，多个近似候选为歧义。根目录和 `soundfonts/` 的同名文件由完整相对路径区分。
+- 失败条件：选择位置越界、嵌套目录、非 SF2、非法/非 canonical 路径或 hash、文件不可读、大小写歧义、Embedded resource ID 为零，以及 mode/payload 组合不一致均失败。
+- 诊断：External 缺失、不可读、case fallback 和 hash mismatch 是资源状态，不是编译诊断；fallback/hash mismatch 为 Warning，缺失/不可读/歧义阻止发声消费者但不阻止 Project 打开、编译或 MIDI 导出。
+- 持久化归属：External 的相对路径和最后明确接受的内容身份、Embedded 的 resource ID/内容身份属于 Project；普通保存或被动监控不得更新 External 身份。可访问/加载状态不持久化。
+- 运行时归属：解析后的绝对路径、完整 hash 验证结果、文件身份/大小/mtime 缓存和文件监控只属于打开会话。`ProjectCompilationSession.EffectiveSoundFontPath` 是当前过渡运行时注入点，不进入 Project 或 compiler fingerprint。
+- 明确非目标：本增量不实现 SF2 格式/BASSMIDI 可加载性验证、完整 package 资源复制、损坏 Embedded 保存策略、文件监控器、UI 接受变化命令或 ZIP 事务。
+
+hash 使用 SHA-256 并流式读取。用户选择、替换、重新绑定或明确接受当前内容时才生成新的源引用；被动验证只返回当前 hash/状态，不修改原引用。打开流程未来必须在结构加载后异步完整验证，验证完成前禁用发声；首次音频任务只能使用仍有效的验证缓存，否则重新验证。

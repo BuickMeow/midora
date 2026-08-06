@@ -38,7 +38,7 @@
 | NUI-07 | Audio Render 完整工作流 | 自动化与 AOT 文件链完成；试听待验收 | §15、§19 | Whole/Per Track、采样率/长度/RIFF 边界、取消、独立发布、零分配 |
 | NUI-08 | `.midora` 完整持久化 | 进行中 | §16、§19 | protobuf 对象图、损坏隔离、迁移、Embedded SF2、确定性与事务矩阵 |
 | NUI-09 | BASS/BASSMIDI/WASAPI/Worker | 进行中 | §13、§15、INV-018～028 | ABI/版本/生命周期/设备/underrun/IPC/零分配自动门与硬件验收 |
-| NUI-10 | 非 UI 应用任务协调与偏好 | 非 UI 核心完成；WPF composition 待 UI 阶段 | §3、§13～17、§19～20 | 单任务/锁级、自动 Stop、Project switch guard、结构化报告、Application Preferences 及缓存失效均有自动测试 |
+| NUI-10 | 非 UI 应用任务协调与偏好 | 非 UI 核心完成；WPF composition 待 UI 阶段 | §3、§13～17、§19～20 | 单任务/锁级、自动 Stop、Project switch guard、Save/Save Copy 会话事务、结构化报告、Application Preferences 及缓存失效均有自动测试 |
 | NUI-11 | 系统加固与发布门 | 自动发布门完成；压力/硬件/许可待闭合 | §21、INV-027/028/037/038 | 锁定 SDK/依赖、零 Skip 全测、AOT/hash/notices 已自动化；实时性能/硬件与 Q-NUI-013 许可放行仍待闭合 |
 
 ## 4. 当前已确认基线
@@ -46,7 +46,7 @@
 - 2026-08-06 提交 `4b69e72` 完成 `.midora` 空对象图基础垂直切片；Release 构建通过，累计 330 个自动测试通过。
 - 2026-08-06 提交 `61b7042` 完成 Event Instrument / Logical Track protobuf v1、对象级损坏隔离与可撤销删除、Embedded SF2 正常资源流式 package 链。
 - `misc/Midora-SRS-Code-Conformance-Audit-2026-08-05.md` 记录的 1A～25.1A 均视为已确认决定，不再询问。
-- 当前有 6 个未闭合的产品所有者重大决定：Q-NUI-002（初版 `.midora` 历史格式基线）、Q-NUI-003（Project MIDI Export Settings v2 字段/默认值）、Q-NUI-005（ID 分配型 Undo 和 `nextStableId`/Modified 关系）、Q-NUI-009（Logical Parameter Definition 结构变更的既有 Lane 迁移）、Q-NUI-011（共享音频状态快照 ABI v2 并发契约）与 Q-NUI-013（正式 BASS 二进制分发许可放行）；分别只暂停成功迁移器、Export Settings schema/领域默认分支、创建/复制/分割类 History 命令、需要迁移 Lane 的 Definition 编辑、共享状态快照协议升级和含 BASS DLL 的正式对外分发。Q-NUI-004、Q-NUI-006、Q-NUI-007、Q-NUI-008、Q-NUI-010、Q-NUI-012、Q-NUI-014 是已按推荐方案落地、仍待确认的小决定。Q-NUI-001 已按推荐方案确认并实现。
+- 当前有 6 个未闭合的产品所有者重大决定：Q-NUI-002（初版 `.midora` 历史格式基线）、Q-NUI-003（Project MIDI Export Settings v2 字段/默认值）、Q-NUI-005（ID 分配型 Undo 和 `nextStableId`/Modified 关系）、Q-NUI-009（Logical Parameter Definition 结构变更的既有 Lane 迁移）、Q-NUI-011（共享音频状态快照 ABI v2 并发契约）与 Q-NUI-013（正式 BASS 二进制分发许可放行）；分别只暂停成功迁移器、Export Settings schema/领域默认分支、创建/复制/分割类 History 命令、需要迁移 Lane 的 Definition 编辑、共享状态快照协议升级和含 BASS DLL 的正式对外分发。Q-NUI-004、Q-NUI-006、Q-NUI-007、Q-NUI-008、Q-NUI-010、Q-NUI-012、Q-NUI-014、Q-NUI-015 是已按推荐方案落地、仍待确认的小决定。Q-NUI-001 已按推荐方案确认并实现。
 
 ## 5. 当前实施顺序
 
@@ -107,8 +107,9 @@
 | 2026-08-06 | 实时 Worker 启动失败原子性与输出排空 | SF2/Worker/native 绝对路径门；计划目录/MDAP/共享区/管道/进程逐层反向回收；stdout/stderr 启动后并发排空；Faulted/Probe/Stop 有界退出；监控异常任务化；BASS 99 tests；10 个测试项目累计 742 tests | 通过，0 failure |
 | 2026-08-06 | Native AOT Worker 输入协议门 | fully-qualified 现存输入/新输出；0/1 布尔；实时/文件 256-frame、buffer、Limiter v1 与文件采样率门；MDAP/策略先于原生加载；独立进程验证非法相对路径发布 Faulted；BASS 114 tests；10 个测试项目累计 757 tests | 通过，0 failure |
 | 2026-08-06 | 正式实时 backend 清理故障聚合 | 最终状态读取失败仍释放进程/映射/计划目录；Stop/capture/release 按序聚合；单次 fault 判断只消费一个状态值；构造期拒绝非法 buffer/timeout/Limiter 算法；Playback 51 tests；10 个测试项目累计 760 tests | 通过，0 failure |
-| 2026-08-06 | 非 UI 可复现发布门 | SDK 10.0.302 精确锁定；32 项目 NuGet lock；全仓 win-x64 RID；固定 BASS hash；6 solution Release；Native AOT Worker + manifest/MIT/notices；加入单实例切片后 10 项目 TRX 精确 774 tests、0 Skip；`Test-NonUIRelease.ps1` 再次完整运行 | 通过，0 warning / 0 error / 0 failure / 0 skip；正式 BASS 分发仍等待 Q-NUI-013 |
+| 2026-08-06 | 非 UI 可复现发布门 | SDK 10.0.302 精确锁定；32 项目 NuGet lock；全仓 win-x64 RID；固定 BASS hash；6 solution Release；Native AOT Worker + manifest/MIT/notices；加入 Save / Save Copy 应用事务后 10 项目 TRX 精确 786 tests、0 Skip；`Test-NonUIRelease.ps1` 再次完整运行 | 通过，0 warning / 0 error / 0 failure / 0 skip；正式 BASS 分发仍等待 Q-NUI-013 |
 | 2026-08-06 | 单应用实例与启动请求转发 | Session-scoped 命名 Mutex lease；CurrentUserOnly Named Pipe；严格有界 binary v1；真实子进程转发；唯一 Primary、Unicode/空参数、畸形/截断、队列满、取消、失联 owner、释放/重取；Application 167 tests；全仓基线 774 tests | 通过，0 failure；WPF 入口接线待 UI 阶段，Session 范围等待 Q-NUI-014 确认 |
+| 2026-08-06 | Save / Save Copy 应用事务 | 首存路径/file info/保存基线原子提交；当前路径普通 Save；副本保持 Modified/History/内存时间；工程时间快照；Damaged/Embedded 门；覆盖/取消/并发矩阵；Application 179 tests；全仓基线 786 tests | 通过，0 failure；Save Copy 自身路径等待 Q-NUI-015 确认 |
 
 ## 7. 未解决风险
 
@@ -123,3 +124,4 @@
 - 共享控制 ABI v1 已闭合字段/ring 损坏边界，但整组状态快照仍可能跨两次同状态发布混合；ABI v2 seqlock/双缓冲选择等待 Q-NUI-011，不能把逐字段原子误报为整快照原子。
 - 非 UI 发布门已经能生成并测试本地 Native AOT Worker 产物，但这不是 BASS 重新分发授权；实际发布主体、收入、渠道、届时条款与供应商许可文本等待 Q-NUI-013，当前不得把本地测试产物作为正式发行包上传。
 - 单应用实例所有权和启动 IPC 已形成 WPF 无关的运行时组件；当前按交互登录 Session 隔离，范围等待 Q-NUI-014 确认，主窗口激活与 Project Switch Guard 接线属于后续 UI composition。
+- Save/Save Copy 已通过统一非 UI 协调层绑定 package 事务、打开会话工程时间、current path/file information 与 Document 保存基线；WPF Progress/Result 接线待 UI 阶段，Save Copy 自身路径策略等待 Q-NUI-015 确认。

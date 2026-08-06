@@ -197,7 +197,7 @@
 - 推荐方案：提交 `global.json`，精确使用 SDK `10.0.302`、`rollForward=disable`、禁止 prerelease；仓库级声明 `RuntimeIdentifiers=win-x64` 与 `RestorePackagesWithLockFile=true`，提交 32 个 `packages.lock.json`。普通开发测试在未配置原生集成资源时明确 Skip；正式 `Test-NonUIRelease.ps1` 必须显式给出经固定 manifest/hash 验证的 BASS 目录和一个现存 SF2，执行 locked restore、六个 solution Release build、Native AOT publish，再按版本化测试基线要求 10 个项目的当前精确计数全部通过且零 Skip；新增/删除测试必须显式评审并更新基线。
 - 推荐依据与限制：精确 SDK和锁文件把构建输入从机器隐式状态变为提交内容；零 Skip 的正式门避免把缺少硬件/资源误报为通过。限制是安装了其他 .NET 10 SDK但没有 10.0.302 的机器会在仓库根目录直接拒绝构建，安全升级 SDK/包时必须显式更新 `global.json`、lock files、基线并重跑完整门。
 - 备选方案及差异：A. SDK 使用 `latestPatch` roll-forward，安全补丁采用更方便，但不同时间/机器可能产生不同 AOT 与编译输出。B. 只固定直接包版本、不提交 lock files，文件较少但传递图仍可变化。C. 不固定 SDK，仅在发布记录中手工写版本；日常构建仍可能漂移，不推荐。
-- 当前实施状态：已按推荐实现并在本机完整运行发布门；当前 774 tests 全通过、0 Skip，固定 BASS 校验通过，Native AOT Worker 产物包含 `.exe`、三项 DLL、native manifest、MIT License 与 Third-Party Notices。
+- 当前实施状态：已按推荐实现并在本机完整运行发布门；当前 786 tests 全通过、0 Skip，固定 BASS 校验通过，Native AOT Worker 产物包含 `.exe`、三项 DLL、native manifest、MIT License 与 Third-Party Notices。
 - 需要产品所有者回答：是否采用推荐方案？如需允许 SDK patch roll-forward，请明确选择 A；NuGet 锁文件与正式零 Skip 门建议保留。
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
@@ -233,6 +233,23 @@
 - 备选方案及差异：A. 整机 `Global\\` 互斥，最严格但第二个 Session 无法可靠激活首个 Session 的 UI，且需处理跨用户 ACL。B. 按 Windows 用户 SID、跨该用户全部 Session 互斥，需要 broker 决定请求应投递到哪个桌面并处理断开 Session，复杂度显著提高。C. 不做 OS 互斥只依赖窗口状态，存在竞态，不符合 SRS。
 - 当前实施状态：已按推荐实现版本化、严格有界的启动 IPC v1；并发竞争只有一个 Primary，Unicode/空参数、畸形/截断客户端、队列上限、取消、释放与重新取得均有自动测试。WPF 只需在未来入口持有 lease 并消费请求队列。
 - 需要产品所有者回答：是否采用推荐的“每个 Windows 交互登录 Session 一个 Midora 主实例”？如要求机器级绝对唯一，请选择 A；如要求同一用户跨 Session 唯一，请选择 B。
+- 产品回答：待填写。
+- 最终处理与提交：待确认后填写。
+
+### Q-NUI-015：Save Copy 目标等于当前 Project 文件时的处理
+
+- 类型：小决定
+- 状态：已按推荐实施待确认
+- 发现日期：2026-08-06
+- SRS 依据：第 3.9.2 节、第 19.2.4 节；Save Copy 不得改变当前 Project path、Modified、Undo History、内存修改时间或当前文件版本信息，初版没有传统 Save As。
+- 已确认事实：如果 Save Copy 直接覆盖当前 `.midora` 路径，磁盘上的“当前文件”会变成副本完成时快照，但内存仍按规范保持原 current file information、Modified 和 modified time；这会让当前路径的磁盘内容与打开会话状态分裂。
+- 不确定点：SRS 未逐字规定文件选择器选中当前 Project 自身路径时应拒绝、转为 Save Project，还是允许覆盖。
+- 影响范围：只影响 Save Copy 的目标路径预检查和错误提示；不改变 package 格式、普通 Save、其他副本目标、Project 源数据或音乐语义。
+- 推荐方案：确定性比较完全限定 Windows 路径；若 Save Copy 目标等于当前 Project 路径，则在写文件前拒绝，并提示使用 Save Project。不得静默转成 Save，因为调用方明确选择的是不改变当前状态的命令。
+- 推荐依据与限制：拒绝能同时保持 Save Copy 的全部“不改变当前状态”不变量和磁盘/会话一致性，也避免隐藏命令语义切换。限制是用户若确实想更新当前文件，需要回到普通 Save 命令。
+- 备选方案及差异：A. 自动转为 Save Project，会改变 Modified/保存基线和内存 modified time，违背调用命令的显式语义。B. 允许 Save Copy 覆盖当前文件但不更新内存状态，会制造已确认的不一致，不可采用。C. 覆盖后自动重开副本，相当于未规定的 Save As/Project switch，不属于初版。
+- 当前实施状态：已按推荐在 `ProjectPersistenceCoordinator` 中实现；覆盖前拒绝并保持原文件字节、current path 和文档状态，已有自动测试。
+- 需要产品所有者回答：是否采用推荐方案？如希望自动转为普通 Save，请明确选择 A；B/C 不建议采用。
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
 

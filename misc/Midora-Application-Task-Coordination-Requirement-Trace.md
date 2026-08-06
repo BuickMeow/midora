@@ -8,8 +8,8 @@
 
 ## 1. 输入与正式输出
 
-- 输入：当前 `ProjectCompilationSession`、`PlaybackController`、一个待执行的全局任务、任务取消请求、Project 切换时的 Function Draft/未保存状态决策，以及当前 Windows 用户的 Application Preferences。
-- 正式输出：唯一活动任务的种类、阶段与锁级别；结构化完成/取消/失败/忙碌/播放清理风险结果；一次性清理风险 continuation；Project 切换保护结果；已验证并自动保存的本机偏好快照。
+- 输入：当前 `ProjectCompilationSession`、`PlaybackController`、一个待执行的全局任务、任务取消请求、Project 切换时的 Function Draft/未保存状态决策、Save/Save Copy 的 package/路径/覆盖授权，以及当前 Windows 用户的 Application Preferences。
+- 正式输出：唯一活动任务的种类、阶段与锁级别；结构化完成/取消/失败/忙碌/播放清理风险结果；一次性清理风险 continuation；Project 切换保护结果；Save/Save Copy 后与磁盘一致的 current path/file information/Document 保存基线；已验证并自动保存的本机偏好快照。
 - MIDI Export 与 Audio Render 在取得应用任务锁和 Project 编辑锁后才调用 request factory，因此 canonical、SF2、参数与最终路径快照在正式任务开始点冻结。
 - 本层不产生音乐语义；播放、MIDI 导出和音频渲染继续只消费各自现有的 canonical 派生入口。
 
@@ -28,6 +28,7 @@
 - 只有 SRS 指定的 Save、Save Copy、New/Open/Close/Exit、MIDI Export、Audio Render 可以自动 Stop；Stop 后不恢复播放。
 - `Stopping` 和已预留 admission 期间不接受第二个命令。
 - Project 编辑锁使用计数 lease；播放层与应用任务层可以安全嵌套，任一所有者只能释放自己的 lease。
+- Save/Save Copy 通过 `ProjectPersistenceCoordinator` 直接使用该打开会话持有的单调工程时间源；首存成功才提交 path/file information/保存基线，Save Copy 不改变当前 Document 状态，且不能选择当前 Project 自身路径。
 - Project 切换固定顺序：Stop/cleanup → Function Draft Apply/Discard/Cancel → 取得 Project 编辑锁 → 未保存 Save/Close Without Saving/Cancel → 实际切换。Draft Apply 必须在编辑锁外完成；嵌套 Save 一旦开始使用不可取消 token。
 
 ## 3. 失败、诊断与原子性
@@ -38,6 +39,7 @@
 - Playback 进入 Error 后不再占有活动任务或 Project 编辑锁。
 - Application Preferences 的非法值拒绝且不 Clamp；读取、解析或写入失败使用 SRS 安全默认值并返回非 Project notice。偏好文件限制为 1 MiB，避免无界读取。
 - 偏好写入使用同目录临时文件、落盘 flush 和原子 move/replace；发布前失败不破坏原文件，运行时切回安全默认值。
+- Save/Save Copy 的参数、取消、序列化、自校验、发布或清理失败不提交 current path/file information/保存基线，并总是释放应用层持久化操作槽；Damaged Placeholder 在 staging 前返回结构化不可保存原因。
 
 ## 4. 偏好归属与失效规则
 
@@ -60,3 +62,4 @@
 - 任务取消、Finalizing、Full Application 锁、Save 不可取消。
 - Project 切换顺序、Draft Apply 锁外执行、未保存处理锁内执行、Save 不可取消、Cancel 和 Save unavailable 分支。
 - 偏好默认值、边界值、确定性 JSON 往返、未知/损坏/超大/版本错误回退、写失败回退、绝对目录、用途隔离、Stopped-only、任务忙碌拒绝及 sample-domain 缓存失效。
+- 首存、已有目标覆盖、当前路径 Save、Save Copy 状态保持、工程时间快照、Damaged/Embedded 资源门、取消和持久化并发拒绝。

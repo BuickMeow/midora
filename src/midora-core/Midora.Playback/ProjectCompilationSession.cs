@@ -41,6 +41,7 @@ public sealed class ProjectCompilationSession : IDisposable
     }
 
     public MidoraProject Project { get; }
+    internal ProjectEditingTimeSession EditingTimeSession => _editingTime;
     public string? EffectiveSoundFontPath { get; private set; }
     public CanonicalCompiledResult LastAttempt { get; private set; }
     public CanonicalCompiledResult? LastSuccessfulResult { get; private set; }

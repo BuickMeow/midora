@@ -25,6 +25,27 @@ internal static class ManifestCodecV1
         return result;
     }
 
+    public static ManifestVersionHeaderV1 ReadVersionHeader(ReadOnlySpan<byte> utf8)
+    {
+        StrictJsonV1.ValidateInput(utf8);
+        using JsonDocument document = JsonDocument.Parse(utf8.ToArray());
+        JsonElement root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException("manifest.json root must be an object.");
+        }
+
+        string magic = ReadRequiredString(root, "magic");
+        if (magic != Magic)
+        {
+            throw new InvalidDataException("manifest.json magic is invalid.");
+        }
+        return new ManifestVersionHeaderV1(
+            ReadRequiredInt32(root, "fileFormatVersion"),
+            ReadRequiredInt32(root, "minimumReadableVersion"),
+            ReadRequiredInt32(root, "manifestSchemaVersion"));
+    }
+
     public static byte[] Serialize(ManifestJsonV1 manifest)
     {
         Validate(manifest, allowUnknownFileKinds: false);
@@ -104,4 +125,31 @@ internal static class ManifestCodecV1
         }
     }
 
+    private static string ReadRequiredString(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out JsonElement value)
+            || value.ValueKind != JsonValueKind.String)
+        {
+            throw new InvalidDataException($"manifest.json {name} must be a string.");
+        }
+        return value.GetString()
+            ?? throw new InvalidDataException($"manifest.json {name} cannot be null.");
+    }
+
+    private static int ReadRequiredInt32(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out JsonElement value)
+            || value.ValueKind != JsonValueKind.Number
+            || !value.TryGetInt32(out int result))
+        {
+            throw new InvalidDataException($"manifest.json {name} must be a 32-bit integer.");
+        }
+        return result;
+    }
+
 }
+
+internal readonly record struct ManifestVersionHeaderV1(
+    int FileFormatVersion,
+    int MinimumReadableVersion,
+    int ManifestSchemaVersion);

@@ -27,6 +27,7 @@ public enum MidoraPackageStageV1
     Staging,
     Container,
     Manifest,
+    VersionPreflight,
     HashValidation,
     Structure,
     Serialization,
@@ -71,7 +72,7 @@ public sealed record MidoraProjectSaveResultV1(
     MidoraProjectFileInformationV1 FileInformation,
     IReadOnlyList<MidoraPackageDiagnosticV1> Diagnostics);
 
-public sealed class MidoraPackageExceptionV1 : IOException
+public class MidoraPackageExceptionV1 : IOException
 {
     public MidoraPackageExceptionV1(
         MidoraPackageStageV1 stage,
@@ -97,6 +98,72 @@ public sealed class MidoraPackageExceptionV1 : IOException
     public string? TemporaryPath { get; }
 }
 
+public enum EmbeddedSoundFontRepairActionV1
+{
+    ReplaceOrRebind,
+    ClearReference
+}
+
+public sealed class MidoraEmbeddedSoundFontRepairRequiredExceptionV1 : MidoraPackageExceptionV1
+{
+    private static readonly IReadOnlyList<EmbeddedSoundFontRepairActionV1> AllowedActions =
+        Array.AsReadOnly<EmbeddedSoundFontRepairActionV1>(
+        [
+            EmbeddedSoundFontRepairActionV1.ReplaceOrRebind,
+            EmbeddedSoundFontRepairActionV1.ClearReference
+        ]);
+
+    internal MidoraEmbeddedSoundFontRepairRequiredExceptionV1(
+        MidoraPackageStageV1 stage,
+        string targetPath,
+        EmbeddedProjectSoundFontReference reference,
+        EmbeddedSoundFontResourceStatusV1 resourceStatus,
+        string? actualSha256 = null,
+        long? actualFileSizeBytes = null,
+        Exception? innerException = null)
+        : base(
+            stage,
+            "The Embedded SoundFont must be explicitly replaced, rebound, or cleared before this Project can be saved.",
+            targetPath,
+            MidoraPackagePathsV1.EmbeddedSoundFont(reference.ResourceId),
+            innerException: innerException)
+    {
+        Reference = reference;
+        ResourceStatus = resourceStatus;
+        ActualSha256 = actualSha256;
+        ActualFileSizeBytes = actualFileSizeBytes;
+    }
+
+    public EmbeddedProjectSoundFontReference Reference { get; }
+    public EmbeddedSoundFontResourceStatusV1 ResourceStatus { get; }
+    public string? ActualSha256 { get; }
+    public long? ActualFileSizeBytes { get; }
+    public IReadOnlyList<EmbeddedSoundFontRepairActionV1> RepairActions => AllowedActions;
+}
+
+public sealed class MidoraPackageVersionCompatibilityExceptionV1 : MidoraPackageExceptionV1
+{
+    internal MidoraPackageVersionCompatibilityExceptionV1(
+        string targetPath,
+        ManifestVersionHeaderV1 header)
+        : base(
+            MidoraPackageStageV1.VersionPreflight,
+            "The Midora package requires a newer file-format or manifest-schema reader.",
+            targetPath,
+            MidoraPackagePathsV1.Manifest)
+    {
+        FileFormatVersion = header.FileFormatVersion;
+        MinimumReadableVersion = header.MinimumReadableVersion;
+        ManifestSchemaVersion = header.ManifestSchemaVersion;
+    }
+
+    public int FileFormatVersion { get; }
+    public int MinimumReadableVersion { get; }
+    public int ManifestSchemaVersion { get; }
+    public int SupportedFileFormatVersion => PersistenceContractV1.FileFormatVersion;
+    public int SupportedManifestSchemaVersion => PersistenceContractV1.SchemaVersion;
+}
+
 public sealed class MidoraProjectPackageV1
 {
     private static readonly DateTimeOffset CanonicalZipTimestamp =
@@ -104,13 +171,23 @@ public sealed class MidoraProjectPackageV1
 
     private readonly string _softwareVersion;
     private readonly TimeProvider _timeProvider;
+    private readonly IMidoraPackageFaultInjectorV1 _faultInjector;
 
     public MidoraProjectPackageV1(string softwareVersion, TimeProvider? timeProvider = null)
+        : this(softwareVersion, timeProvider, NoOpMidoraPackageFaultInjectorV1.Instance)
+    {
+    }
+
+    internal MidoraProjectPackageV1(
+        string softwareVersion,
+        TimeProvider? timeProvider,
+        IMidoraPackageFaultInjectorV1 faultInjector)
     {
         PersistenceValueValidationV1.ValidateShortText(
             softwareVersion, nameof(softwareVersion), allowEmpty: false);
         _softwareVersion = softwareVersion;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _faultInjector = faultInjector ?? throw new ArgumentNullException(nameof(faultInjector));
     }
 
     public async Task<MidoraProjectOpenResultV1> OpenAsync(
@@ -128,6 +205,7 @@ public sealed class MidoraProjectPackageV1
 
         try
         {
+            _faultInjector.ThrowIfRequested(MidoraPackageFaultPointV1.BeforeContainerOpen, path);
             return await OpenCoreAsync(path, cancellationToken).ConfigureAwait(false);
         }
         catch (MidoraPackageExceptionV1)
@@ -218,6 +296,10 @@ public sealed class MidoraProjectPackageV1
                 "The target exists but overwrite was not explicitly authorized.",
                 targetPath: target);
         }
+        RequireEmbeddedSoundFontReadyForSave(
+            project,
+            embeddedSoundFontResource,
+            target);
 
         DateTimeOffset savedAtUtc = _timeProvider.GetUtcNow().ToUniversalTime();
         _ = editingTimeSession?.SnapshotTotalEditingTimeMilliseconds();
@@ -229,7 +311,7 @@ public sealed class MidoraProjectPackageV1
         PackageContentV1 content;
         try
         {
-            ValidateSupportedProject(project, embeddedSoundFontResource);
+            ValidateSupportedProject(project);
             content = BuildContent(
                 project,
                 metadata,
@@ -262,6 +344,7 @@ public sealed class MidoraProjectPackageV1
             {
                 try
                 {
+                    _faultInjector.ThrowIfRequested(MidoraPackageFaultPointV1.BeforeBackup, backupPath);
                     File.Copy(target, backupPath, overwrite: false);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -278,14 +361,28 @@ public sealed class MidoraProjectPackageV1
 
             try
             {
+                _faultInjector.ThrowIfRequested(
+                    MidoraPackageFaultPointV1.BeforeContentWrite,
+                    temporaryDirectory);
                 Directory.CreateDirectory(temporaryDirectory);
                 File.SetAttributes(
                     temporaryDirectory,
                     File.GetAttributes(temporaryDirectory) | FileAttributes.Hidden);
                 await WriteContentDirectoryAsync(temporaryDirectory, content, cancellationToken)
                     .ConfigureAwait(false);
+                _faultInjector.ThrowIfRequested(
+                    MidoraPackageFaultPointV1.BeforeZipWrite,
+                    temporaryPackage);
                 await WriteZipAsync(temporaryDirectory, temporaryPackage, cancellationToken)
                     .ConfigureAwait(false);
+            }
+            catch (EmbeddedSoundFontResourceUnavailableExceptionV1 exception)
+            {
+                throw CreateEmbeddedSoundFontRepairRequired(
+                    MidoraPackageStageV1.Staging,
+                    target,
+                    project,
+                    exception);
             }
             catch (Exception exception) when (exception is IOException
                 or UnauthorizedAccessException
@@ -304,6 +401,9 @@ public sealed class MidoraProjectPackageV1
             MidoraProjectOpenResultV1 reopened;
             try
             {
+                _faultInjector.ThrowIfRequested(
+                    MidoraPackageFaultPointV1.BeforeSelfValidation,
+                    temporaryPackage);
                 reopened = await OpenAsync(temporaryPackage, cancellationToken).ConfigureAwait(false);
                 using (reopened)
                 {
@@ -319,7 +419,9 @@ public sealed class MidoraProjectPackageV1
                     RequireEqualContent(content.MemoryFiles, reopenedContent.MemoryFiles);
                 }
             }
-            catch (Exception exception) when (exception is MidoraPackageExceptionV1 or InvalidDataException)
+            catch (Exception exception) when (exception is IOException
+                or UnauthorizedAccessException
+                or NotSupportedException)
             {
                 throw new MidoraPackageExceptionV1(
                     MidoraPackageStageV1.SelfValidation,
@@ -333,6 +435,7 @@ public sealed class MidoraProjectPackageV1
             publishAttempted = true;
             try
             {
+                _faultInjector.ThrowIfRequested(MidoraPackageFaultPointV1.BeforePublish, target);
                 if (!targetExisted && File.Exists(target))
                 {
                     throw new IOException(
@@ -360,8 +463,14 @@ public sealed class MidoraProjectPackageV1
                     innerException: exception);
             }
 
-            TryDeleteFile(backupPath, cleanupDiagnostics);
-            TryDeleteDirectory(temporaryDirectory, cleanupDiagnostics);
+            TryDeleteFile(
+                backupPath,
+                cleanupDiagnostics,
+                MidoraPackageFaultPointV1.BeforeBackupCleanup);
+            TryDeleteDirectory(
+                temporaryDirectory,
+                cleanupDiagnostics,
+                MidoraPackageFaultPointV1.BeforeStagingDirectoryCleanup);
             if (updateCurrentProject)
             {
                 project.Metadata.CommitSuccessfulSave(savedAtUtc);
@@ -406,13 +515,54 @@ public sealed class MidoraProjectPackageV1
                 MidoraPackagePathsV1.Manifest);
         }
 
+        byte[] manifestBytes;
+        try
+        {
+            _faultInjector.ThrowIfRequested(
+                MidoraPackageFaultPointV1.BeforeManifestRead,
+                MidoraPackagePathsV1.Manifest);
+            manifestBytes = await ReadEntryAsync(manifestEntry, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException)
+        {
+            throw new MidoraPackageExceptionV1(
+                MidoraPackageStageV1.Manifest,
+                "manifest.json is invalid.",
+                path,
+                MidoraPackagePathsV1.Manifest,
+                innerException: exception);
+        }
+
+        ManifestVersionHeaderV1 versionHeader;
+        try
+        {
+            versionHeader = ManifestCodecV1.ReadVersionHeader(manifestBytes);
+        }
+        catch (Exception exception) when (exception is InvalidDataException
+            or System.Text.Json.JsonException)
+        {
+            throw new MidoraPackageExceptionV1(
+                MidoraPackageStageV1.Manifest,
+                "manifest.json is invalid.",
+                path,
+                MidoraPackagePathsV1.Manifest,
+                innerException: exception);
+        }
+        if (versionHeader.FileFormatVersion > PersistenceContractV1.FileFormatVersion
+            || versionHeader.MinimumReadableVersion > PersistenceContractV1.FileFormatVersion
+            || versionHeader.ManifestSchemaVersion > PersistenceContractV1.SchemaVersion)
+        {
+            throw new MidoraPackageVersionCompatibilityExceptionV1(path, versionHeader);
+        }
+
         ManifestJsonV1 manifest;
         try
         {
-            manifest = ManifestCodecV1.Parse(await ReadEntryAsync(manifestEntry, cancellationToken)
-                .ConfigureAwait(false));
+            manifest = ManifestCodecV1.Parse(manifestBytes);
         }
-        catch (Exception exception) when (exception is InvalidDataException or System.Text.Json.JsonException)
+        catch (Exception exception) when (exception is InvalidDataException
+            or System.Text.Json.JsonException)
         {
             throw new MidoraPackageExceptionV1(
                 MidoraPackageStageV1.Manifest,
@@ -720,20 +870,12 @@ public sealed class MidoraProjectPackageV1
         return new(content, embeddedPath, embeddedReference, embeddedSoundFontResource);
     }
 
-    private static void ValidateSupportedProject(
-        MidoraProject project,
-        EmbeddedSoundFontResourceV1? embeddedSoundFontResource)
+    private static void ValidateSupportedProject(MidoraProject project)
     {
         if (project.DamagedEventInstruments.Count != 0 || project.DamagedLogicalTracks.Count != 0)
         {
             throw new InvalidDataException(
                 "Projects containing damaged object placeholders cannot be saved.");
-        }
-        if (project.SoundFont.Reference is EmbeddedProjectSoundFontReference embeddedReference)
-        {
-            _ = embeddedSoundFontResource?.RequireReadablePath(embeddedReference)
-                ?? throw new InvalidDataException(
-                    "The current Embedded SoundFont has no matching available runtime resource.");
         }
         HashSet<MidoraId> trackIds = project.Tracks.Select(track => track.Id).ToHashSet();
         if (!project.AudioRender.ExplicitLogicalTrackIds.IsSubsetOf(trackIds))
@@ -768,6 +910,58 @@ public sealed class MidoraProjectPackageV1
         {
             AddId(embedded.ResourceId, project.NextStableId, ids, "Embedded SoundFont resource");
         }
+    }
+
+    private static void RequireEmbeddedSoundFontReadyForSave(
+        MidoraProject project,
+        EmbeddedSoundFontResourceV1? embeddedSoundFontResource,
+        string targetPath)
+    {
+        if (project.SoundFont.Reference is not EmbeddedProjectSoundFontReference embeddedReference)
+        {
+            return;
+        }
+        try
+        {
+            if (embeddedSoundFontResource is null)
+            {
+                throw new EmbeddedSoundFontResourceUnavailableExceptionV1(
+                    EmbeddedSoundFontResourceStatusV1.RuntimeResourceMissing);
+            }
+            _ = embeddedSoundFontResource.RequireReadablePath(embeddedReference);
+        }
+        catch (EmbeddedSoundFontResourceUnavailableExceptionV1 exception)
+        {
+            throw new MidoraEmbeddedSoundFontRepairRequiredExceptionV1(
+                MidoraPackageStageV1.Preflight,
+                targetPath,
+                embeddedReference,
+                exception.Status,
+                exception.ActualSha256,
+                exception.ActualFileSizeBytes,
+                exception);
+        }
+    }
+
+    private static MidoraEmbeddedSoundFontRepairRequiredExceptionV1
+        CreateEmbeddedSoundFontRepairRequired(
+            MidoraPackageStageV1 stage,
+            string targetPath,
+            MidoraProject project,
+            EmbeddedSoundFontResourceUnavailableExceptionV1 exception)
+    {
+        EmbeddedProjectSoundFontReference reference =
+            project.SoundFont.Reference as EmbeddedProjectSoundFontReference
+            ?? throw new InvalidOperationException(
+                "An Embedded SoundFont repair failure requires an Embedded Project reference.");
+        return new(
+            stage,
+            targetPath,
+            reference,
+            exception.Status,
+            exception.ActualSha256,
+            exception.ActualFileSizeBytes,
+            exception);
     }
 
     private static Dictionary<string, ZipArchiveEntry> ValidateContainer(ZipArchive archive, string targetPath)
@@ -1490,19 +1684,14 @@ public sealed class MidoraProjectPackageV1
         {
             EmbeddedProjectSoundFontReference reference = content.EmbeddedReference
                 ?? throw new InvalidDataException("Embedded SoundFont package content has no reference.");
-            string sourcePath = content.EmbeddedResource?.RequireReadablePath(reference)
-                ?? throw new InvalidDataException("Embedded SoundFont package content has no runtime resource.");
+            EmbeddedSoundFontResourceV1 resource = content.EmbeddedResource
+                ?? throw new EmbeddedSoundFontResourceUnavailableExceptionV1(
+                    EmbeddedSoundFontResourceStatusV1.RuntimeResourceMissing);
             string destinationPath = Path.Combine(
                 root,
                 content.EmbeddedPackagePath.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
-            await using FileStream source = new(
-                sourcePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                bufferSize: 128 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await using FileStream source = resource.OpenReadForSave(reference);
             await using FileStream destination = new(
                 destinationPath,
                 FileMode.CreateNew,
@@ -1518,8 +1707,12 @@ public sealed class MidoraProjectPackageV1
             if (actual.FileSizeBytes != reference.FileSizeBytes
                 || !string.Equals(actual.Sha256, reference.Sha256, StringComparison.Ordinal))
             {
-                throw new InvalidDataException(
-                    "The Embedded SoundFont runtime resource changed after it was bound to the Project.");
+                throw new EmbeddedSoundFontResourceUnavailableExceptionV1(
+                    actual.FileSizeBytes != reference.FileSizeBytes
+                        ? EmbeddedSoundFontResourceStatusV1.SizeMismatch
+                        : EmbeddedSoundFontResourceStatusV1.HashMismatch,
+                    actual.Sha256,
+                    actual.FileSizeBytes);
             }
         }
         await File.WriteAllBytesAsync(
@@ -1795,13 +1988,18 @@ public sealed class MidoraProjectPackageV1
         }
     }
 
-    private static void TryDeleteFile(
+    private void TryDeleteFile(
         string? path,
-        ICollection<MidoraPackageDiagnosticV1> diagnostics)
+        ICollection<MidoraPackageDiagnosticV1> diagnostics,
+        MidoraPackageFaultPointV1? faultPoint = null)
     {
         if (path is null || !File.Exists(path)) return;
         try
         {
+            if (faultPoint.HasValue)
+            {
+                _faultInjector.ThrowIfRequested(faultPoint.Value, path);
+            }
             File.Delete(path);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -1810,13 +2008,18 @@ public sealed class MidoraProjectPackageV1
         }
     }
 
-    private static void TryDeleteDirectory(
+    private void TryDeleteDirectory(
         string path,
-        ICollection<MidoraPackageDiagnosticV1> diagnostics)
+        ICollection<MidoraPackageDiagnosticV1> diagnostics,
+        MidoraPackageFaultPointV1? faultPoint = null)
     {
         if (!Directory.Exists(path)) return;
         try
         {
+            if (faultPoint.HasValue)
+            {
+                _faultInjector.ThrowIfRequested(faultPoint.Value, path);
+            }
             Directory.Delete(path, recursive: true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

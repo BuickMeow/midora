@@ -7,6 +7,8 @@ namespace Midora.Persistence;
 public enum EmbeddedSoundFontResourceStatusV1
 {
     Available,
+    RuntimeResourceMissing,
+    ReferenceMismatch,
     MissingManifestEntry,
     InvalidManifestEntry,
     MissingPackageEntry,
@@ -70,14 +72,42 @@ public sealed class EmbeddedSoundFontResourceV1 : IDisposable, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(expectedReference);
         if (!IsAvailable
-            || Reference != expectedReference
-            || ResolvedAbsolutePath is null
-            || !File.Exists(ResolvedAbsolutePath))
+            || ResolvedAbsolutePath is null)
         {
-            throw new InvalidDataException(
-                "The available Embedded SoundFont runtime resource does not match the current Project reference.");
+            throw new EmbeddedSoundFontResourceUnavailableExceptionV1(Status);
+        }
+        if (Reference != expectedReference)
+        {
+            throw new EmbeddedSoundFontResourceUnavailableExceptionV1(
+                EmbeddedSoundFontResourceStatusV1.ReferenceMismatch);
+        }
+        if (!File.Exists(ResolvedAbsolutePath))
+        {
+            throw new EmbeddedSoundFontResourceUnavailableExceptionV1(
+                EmbeddedSoundFontResourceStatusV1.RuntimeResourceMissing);
         }
         return ResolvedAbsolutePath;
+    }
+
+    internal FileStream OpenReadForSave(EmbeddedProjectSoundFontReference expectedReference)
+    {
+        string path = RequireReadablePath(expectedReference);
+        try
+        {
+            return new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new EmbeddedSoundFontResourceUnavailableExceptionV1(
+                EmbeddedSoundFontResourceStatusV1.Unreadable,
+                innerException: exception);
+        }
     }
 
     internal static async Task<EmbeddedSoundFontResourceV1> ImportAndBindAsync(
@@ -207,3 +237,17 @@ public sealed class EmbeddedSoundFontResourceV1 : IDisposable, IAsyncDisposable
 }
 
 internal sealed record StreamCopyIdentityV1(string Sha256, long FileSizeBytes);
+
+internal sealed class EmbeddedSoundFontResourceUnavailableExceptionV1(
+    EmbeddedSoundFontResourceStatusV1 status,
+    string? actualSha256 = null,
+    long? actualFileSizeBytes = null,
+    Exception? innerException = null)
+    : Exception(
+        "The Embedded SoundFont runtime resource is unavailable or no longer matches the Project.",
+        innerException)
+{
+    public EmbeddedSoundFontResourceStatusV1 Status { get; } = status;
+    public string? ActualSha256 { get; } = actualSha256;
+    public long? ActualFileSizeBytes { get; } = actualFileSizeBytes;
+}

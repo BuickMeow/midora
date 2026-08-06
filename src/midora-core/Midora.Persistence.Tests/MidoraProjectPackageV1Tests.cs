@@ -144,10 +144,16 @@ public sealed class MidoraProjectPackageV1Tests
             123);
         MidoraProjectPackageV1 packages = CreateService();
 
-        MidoraPackageExceptionV1 resourceFailure = await Assert.ThrowsAsync<MidoraPackageExceptionV1>(() =>
-            packages.SaveProjectAsync(project, packagePath, overwriteAuthorized: true));
+        MidoraEmbeddedSoundFontRepairRequiredExceptionV1 resourceFailure =
+            await Assert.ThrowsAsync<MidoraEmbeddedSoundFontRepairRequiredExceptionV1>(() =>
+                packages.SaveProjectAsync(project, packagePath, overwriteAuthorized: true));
 
-        Assert.Equal(MidoraPackageStageV1.Serialization, resourceFailure.Stage);
+        Assert.Equal(MidoraPackageStageV1.Preflight, resourceFailure.Stage);
+        Assert.Equal(EmbeddedSoundFontResourceStatusV1.RuntimeResourceMissing, resourceFailure.ResourceStatus);
+        Assert.Collection(
+            resourceFailure.RepairActions,
+            action => Assert.Equal(EmbeddedSoundFontRepairActionV1.ReplaceOrRebind, action),
+            action => Assert.Equal(EmbeddedSoundFontRepairActionV1.ClearReference, action));
         Assert.Equal(original, await File.ReadAllBytesAsync(packagePath));
         Assert.Empty(Directory.GetFileSystemEntries(temporary.Path, ".midora-save-*"));
     }
@@ -344,6 +350,33 @@ public sealed class MidoraProjectPackageV1Tests
         Assert.Equal(MidoraPackageStageV1.Container, failure.Stage);
     }
 
+    [Theory]
+    [InlineData("fileFormatVersion", 2)]
+    [InlineData("minimumReadableVersion", 2)]
+    [InlineData("manifestSchemaVersion", 2)]
+    public async Task FutureManifestVersionIsRejectedDuringVersionPreflight(
+        string propertyName,
+        int futureVersion)
+    {
+        using TemporaryDirectory temporary = new();
+        string packagePath = temporary.PathFor("future.midora");
+        MidoraProjectPackageV1 packages = CreateService();
+        await packages.SaveCopyAsync(CreatePopulatedProject(), packagePath);
+        ReplaceManifestInteger(packagePath, propertyName, futureVersion);
+
+        MidoraPackageVersionCompatibilityExceptionV1 failure =
+            await Assert.ThrowsAsync<MidoraPackageVersionCompatibilityExceptionV1>(() =>
+                packages.OpenAsync(packagePath));
+
+        Assert.Equal(MidoraPackageStageV1.VersionPreflight, failure.Stage);
+        Assert.Equal("manifest.json", failure.PackagePath);
+        Assert.Equal(1, failure.SupportedFileFormatVersion);
+        Assert.Equal(1, failure.SupportedManifestSchemaVersion);
+        Assert.Equal(propertyName == "fileFormatVersion" ? 2 : 1, failure.FileFormatVersion);
+        Assert.Equal(propertyName == "minimumReadableVersion" ? 2 : 1, failure.MinimumReadableVersion);
+        Assert.Equal(propertyName == "manifestSchemaVersion" ? 2 : 1, failure.ManifestSchemaVersion);
+    }
+
     [Fact]
     public void NewJsonCodecsRejectDuplicateAndUnknownProperties()
     {
@@ -485,6 +518,24 @@ public sealed class MidoraProjectPackageV1Tests
             using Stream output = replacement.Open();
             output.Write("{}"u8);
         }
+    }
+
+    private static void ReplaceManifestInteger(string packagePath, string propertyName, int value)
+    {
+        using ZipArchive archive = ZipFile.Open(packagePath, ZipArchiveMode.Update);
+        ZipArchiveEntry original = archive.GetEntry("manifest.json")!;
+        string json;
+        using (StreamReader reader = new(original.Open(), Encoding.UTF8, detectEncodingFromByteOrderMarks: false))
+        {
+            json = reader.ReadToEnd();
+        }
+        original.Delete();
+        string current = $"\"{propertyName}\": 1";
+        string replacement = $"\"{propertyName}\": {value}";
+        Assert.Contains(current, json, StringComparison.Ordinal);
+        ZipArchiveEntry updated = archive.CreateEntry("manifest.json", CompressionLevel.Optimal);
+        using StreamWriter writer = new(updated.Open(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        writer.Write(json.Replace(current, replacement, StringComparison.Ordinal));
     }
 
     private static void AddEntry(string packagePath, string entryName, byte[] bytes)

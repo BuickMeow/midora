@@ -250,7 +250,7 @@ Requirement trace：
 - 运行时归属：占位承载、删除/撤销 token 和打开诊断只属于当前会话；未来应用命令栈负责把 token 接入统一 Modified/Undo/Redo 工作流。
 - 明确非目标：本切片不实现全局应用 Undo 栈、旧版本迁移、自动修复对象字节或保留未知 protobuf tag。
 
-## 16. ADR-CORE-014（部分完成；Q-NUI-001 阻塞损坏保存分支）：Embedded SF2 流式资源租约
+## 16. ADR-CORE-014（已接受，Q-NUI-001）：Embedded SF2 流式资源租约
 
 决定：Project/Domain 继续只保存 Embedded SF2 的稳定 resource ID、原始文件名、SHA-256 和大小，不保存绝对路径或字节数组。Persistence 为打开会话建立可释放的运行时资源租约：导入时先把用户选择文件流式复制到会话临时快照并计算身份，全部成功后才原子设置 Project 引用；打开 package 时把合法资源流式解压、计算实际 hash/size，并返回随 `MidoraProjectOpenResultV1` 释放的绝对临时路径。Save/Save Copy 必须显式接收与当前 Project 引用匹配的可用租约，并在 staging 再次边复制边校验。
 
@@ -263,6 +263,14 @@ Requirement trace：
 - 诊断：Embedded 结构/内容损坏产生 Resource Error，但不设置 Project Modified；未引用 Embedded entry 产生 Info 并在下次合法保存移除。SF2/BASSMIDI 可加载性仍由音频 Preparing 阶段报告，不由 ZIP 完整性检查假装完成。
 - 持久化归属：只有 Embedded 引用与合法资源原始字节属于 package；实际路径、临时目录、当前实际 hash、可用状态和租约所有权只属于会话。
 - 运行时归属：调用方必须在 Project 关闭、替换/清空资源或打开结果不再使用时释放租约；保存自校验会释放其内部重开租约，包句柄在返回前全部关闭。
-- 明确非目标：本切片不加载 BASSMIDI、不验证 SF2 内部格式、不实现文件监控缓存，也不为 Q-NUI-001 静默选择损坏 Embedded 资源的再次保存表示。
+- 明确非目标：本切片不加载 BASSMIDI、不验证 SF2 内部格式、不实现文件监控缓存，也不保存未由用户明确接受的损坏 Embedded 资源表示。
 
-Q-NUI-001 决定前，损坏租约不能用于 Save/Save Copy；这是有意暴露的未闭合合规分支，防止实现用临时默认值生成三方不一致的已知损坏包。
+Q-NUI-001 已确认：损坏、缺失或与当前 Project 引用错配的租约不能直接用于 Save/Save Copy。持久化层返回结构化 `MidoraEmbeddedSoundFontRepairRequiredExceptionV1`，列出且只列出 `ReplaceOrRebind`、`ClearReference` 两个修复动作；Preflight 或 staging 失败均不得发布文件。用户完成明确修复编辑后重新保存，输出才重新满足 settings、manifest、实际字节三方一致。
+
+## 17. ADR-CORE-015（已接受）：`.midora` 版本预检与故障注入事务门
+
+决定：打开流程在 manifest 索引和任何内容 hash 之前读取最小版本头。`fileFormatVersion`、`minimumReadableVersion` 或 `manifestSchemaVersion` 任一高于当前支持值时，以结构化 `MidoraPackageVersionCompatibilityExceptionV1` 在 `VersionPreflight` 阶段拒绝，不按损坏 v1 处理。低版本成功迁移所需的来源契约由 Q-NUI-002 决定；在决定前不得猜测 v0 字段、默认值或 protobuf wire 语义。
+
+保存事务设置内部、确定性的故障注入缝，覆盖 Backup、Staging、SelfValidation、Publish 和 Cleanup；打开覆盖 Container 与 Manifest I/O。注入器只供测试与内部组合使用，不进入公共产品配置、Project、package 或诊断协议。发布前失败必须保留原目标并清理本事务产物；进入发布尝试后失败必须保留原目标、已验证临时包和备份供恢复；发布成功后的清理失败只能产生稳定 Warning，不得把已经发布的保存反转成失败。
+
+Requirement trace：输入为现有目标、冻结保存快照、manifest 最小版本头及可重复的阶段故障；正式输出为原子发布的新包或带精确阶段/恢复路径的失败。边界是原目标字节和 Project `modifiedAtUtc` 只在发布成功后改变，临时包必须通过严格重开和逐内容相等校验。I/O、权限、格式、自检和发布异常不得越过阶段包装；清理异常不得遮蔽主要结果。绝对事务路径、注入状态和保留恢复文件只属于保存会话，不持久化。明确非目标是自动回滚一个已经成功的原子替换、自动采用未来格式、或在 Q-NUI-002 前伪造旧格式迁移。

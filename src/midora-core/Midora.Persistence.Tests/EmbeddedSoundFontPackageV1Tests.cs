@@ -110,14 +110,17 @@ public sealed class EmbeddedSoundFontPackageV1Tests
             await SoundFontBindingV1.BindEmbeddedAsync(project, sourcePath);
         await File.WriteAllBytesAsync(resource.ResolvedAbsolutePath!, [9, 8, 7]);
 
-        MidoraPackageExceptionV1 failure = await Assert.ThrowsAsync<MidoraPackageExceptionV1>(() =>
-            CreateService().SaveProjectAsync(
-                project,
-                targetPath,
-                overwriteAuthorized: true,
-                embeddedSoundFontResource: resource));
+        MidoraEmbeddedSoundFontRepairRequiredExceptionV1 failure =
+            await Assert.ThrowsAsync<MidoraEmbeddedSoundFontRepairRequiredExceptionV1>(() =>
+                CreateService().SaveProjectAsync(
+                    project,
+                    targetPath,
+                    overwriteAuthorized: true,
+                    embeddedSoundFontResource: resource));
 
         Assert.Equal(MidoraPackageStageV1.Staging, failure.Stage);
+        Assert.Equal(EmbeddedSoundFontResourceStatusV1.SizeMismatch, failure.ResourceStatus);
+        Assert.Equal(3L, failure.ActualFileSizeBytes);
         Assert.Equal(originalTarget, await File.ReadAllBytesAsync(targetPath));
         Assert.Empty(Directory.GetFileSystemEntries(temporary.Path, ".midora-save-*"));
         Assert.Empty(Directory.GetFileSystemEntries(temporary.Path, ".*.midora-temp-*"));
@@ -162,13 +165,15 @@ public sealed class EmbeddedSoundFontPackageV1Tests
         Assert.Equal(reference, opened.Project.SoundFont.Reference);
 
         string rejectedCopy = temporary.PathFor("rejected-copy.midora");
-        MidoraPackageExceptionV1 saveFailure = await Assert.ThrowsAsync<MidoraPackageExceptionV1>(() =>
-            CreateService().SaveCopyAsync(
-                opened.Project,
-                rejectedCopy,
-                opened.FileInformation,
-                embeddedSoundFontResource: damaged));
-        Assert.Equal(MidoraPackageStageV1.Serialization, saveFailure.Stage);
+        MidoraEmbeddedSoundFontRepairRequiredExceptionV1 saveFailure =
+            await Assert.ThrowsAsync<MidoraEmbeddedSoundFontRepairRequiredExceptionV1>(() =>
+                CreateService().SaveCopyAsync(
+                    opened.Project,
+                    rejectedCopy,
+                    opened.FileInformation,
+                    embeddedSoundFontResource: damaged));
+        Assert.Equal(MidoraPackageStageV1.Preflight, saveFailure.Stage);
+        Assert.Equal(EmbeddedSoundFontResourceStatusV1.HashMismatch, saveFailure.ResourceStatus);
         Assert.False(File.Exists(rejectedCopy));
     }
 

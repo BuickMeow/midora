@@ -372,6 +372,23 @@
 - 产品回答：待填写。
 - 最终处理与提交：待回答后新增 ADR、held PreviewContext/Compiler 契约、backend/Worker Gate 命令、进程内与子进程一致性测试、Mapping GateLength 测试、不同 Render-Ahead/设备 block/松开边界测试及人工延迟验收。
 
+### Q-NUI-023：Project TPQ 合法范围与 SMF 15-bit division 上限
+
+- 类型：大决定
+- 状态：待确认；暂停 TPQ 范围收窄或高 TPQ MIDI 转换分支
+- 发现日期：2026-08-06
+- SRS 依据：第 4.1.2、4.14、14.2.2、16.7.3 节；TPQ 在创建 Project 时确定且之后不可修改，MIDI division 必须直接使用 Project TPQ，导出时不允许重指定、升采样或降采样；SRS 把“TPQ 非法”列为 Error，但没有给出数值范围。
+- 已确认事实：当前领域、Project 创建和已发布 `project-settings-v1.schema.json` 明确接受 `1..Int32.MaxValue`。SMF 的 TPQ division 是最高位必须为 0 的 15-bit 正整数，`StandardMidiFile` 因此只接受 `1..32767`；`CanonicalMidiFileExporter` 会把更高 TPQ 转换为结构化 Encoding Error，Artifact/Task 不发布 partial。高 TPQ Project 仍可编译、播放、音频渲染和持久化，但由于 TPQ 不可修改，也禁止导出换算，它在初版没有任何成功 MIDI 导出路径。
+- 不确定点：初版 Project TPQ 是否本应限制为 `1..32767`；若是，已经允许到 `Int32.MaxValue` 的 v1 文件应继续打开但标记不可导出、迁移到新版本、还是作为结构错误拒绝；若高 TPQ 继续合法，是否正式接受“该 Project 不支持 MIDI 导出”的永久能力差异。
+- 影响范围：Project 创建、领域构造、`project-settings` JSON schema 与文件兼容、打开/迁移、Event Instrument 默认 Template Length、时间换算、MIDI 导出可用性、诊断和创建 UI。不同选择不应改变既有合法低 TPQ Project 的事件 tick。
+- 推荐方案：保留 v1 的 `1..Int32.MaxValue` 读取兼容，但把初版新建 Project 的 TPQ 输入限制为 `1..32767`；打开既有高 TPQ v1 时允许编辑、播放、音频和保存，并产生持久的 MIDI Export 不可用诊断，不自动改写 TPQ。后续若产品需要把高 TPQ 转换为可导出工程，另行设计显式“另存并重映射全部 tick”的版本化转换工具，不属于普通 Save 或 MIDI Export。
+- 推荐依据与限制：不破坏已经发布的严格 v1 schema/文件，不让新建工程进入无法导出的状态，也遵守“创建后不可修改”和“导出时不重采样”。限制是同一 v1 schema 中仍存在历史兼容的高 TPQ 值，且它们永久缺少初版 MIDI Export；Project 创建范围与持久化可读取范围将有意不同，必须在规范和诊断中明确。
+- 备选方案及差异：A. 将领域、创建、schema v1 全部收窄为 `1..32767` 并拒绝高 TPQ v1；规则最简单，但属于对已发布 schema v1 的不兼容修改，不推荐。B. 保持所有正 `Int32` TPQ 都可新建，MIDI 导出时结构化失败；实现现状最小，但用户可能创建后才发现永久无法导出。C. MIDI 导出时自动缩放 tick/division 到 32767 或其约数；会违反 SRS 明确禁止的导出重采样，并改变取整、同 tick 合并和文件字节。D. 允许创建后修改 TPQ 并重算全部内容；SRS 明确排除，且需要大型迁移/Undo/可听语义设计。
+- 当前实施状态：领域/创建/持久化仍按 v1 接受正 `Int32`；SMF/exporter 对 >32767 结构化失败且无输出。未收窄创建范围、未改 schema、未自动重采样。
+- 需要产品所有者回答：是否采用推荐的“新建限制 1..32767、既有高 TPQ v1 保持可打开但明确不可 MIDI 导出”方案？如选择 A，需明确授权发布不兼容的 schema v1 修订；如选择 C/D，需先另行冻结 tick 重映射算法与迁移契约。
+- 产品回答：待填写。
+- 最终处理与提交：待回答后更新 TPQ ADR、创建验证/诊断、必要的 schema 或兼容说明，以及 32767/32768/Int32.MaxValue 的创建、重开、编译与导出矩阵测试。
+
 ## 3. 问题模板
 
 ### Q-NUI-XXX：标题

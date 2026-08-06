@@ -46,7 +46,7 @@
 - 2026-08-06 提交 `4b69e72` 完成 `.midora` 空对象图基础垂直切片；Release 构建通过，累计 330 个自动测试通过。
 - 2026-08-06 提交 `61b7042` 完成 Event Instrument / Logical Track protobuf v1、对象级损坏隔离与可撤销删除、Embedded SF2 正常资源流式 package 链。
 - `misc/Midora-SRS-Code-Conformance-Audit-2026-08-05.md` 记录的 1A～25.1A 均视为已确认决定，不再询问。
-- 当前有 10 个未闭合的产品所有者重大决定：Q-NUI-002（初版 `.midora` 历史格式基线）、Q-NUI-003（Project MIDI Export Settings v2 字段/默认值）、Q-NUI-005（ID 分配型 Undo 和 `nextStableId`/Modified 关系）、Q-NUI-009（Logical Parameter Definition 结构变更的既有 Lane 迁移）、Q-NUI-011（共享音频状态快照 ABI v2 并发契约）、Q-NUI-013（正式 BASS 二进制分发许可放行）、Q-NUI-019（小节中途 Time Signature 变化的 Bar:Beat:Tick 规则）、Q-NUI-020（Global Event Scope Defaults 初版字段/固定 marker）、Q-NUI-021（SMF 超长 delta 的失败/占位拆分策略）与 Q-NUI-022（held Preview 未知 Gate Length 的因果实时语义）；分别只暂停成功迁移器、Export Settings schema/领域默认分支、创建/复制/分割类 History 命令、需要迁移 Lane 的 Definition 编辑、共享状态快照协议升级、含 BASS DLL 的正式对外分发、Project 音乐位置/网格换算服务、Event Scope defaults v2/History/编译消费、超长 delta 继续导出兼容分支和虚拟键盘动态 Gate 分支。Q-NUI-004、Q-NUI-006、Q-NUI-007、Q-NUI-008、Q-NUI-010、Q-NUI-012、Q-NUI-014、Q-NUI-015、Q-NUI-016、Q-NUI-017、Q-NUI-018 是已按推荐方案落地、仍待确认的小决定。Q-NUI-001 已按推荐方案确认并实现。
+- 当前有 11 个未闭合的产品所有者重大决定：Q-NUI-002（初版 `.midora` 历史格式基线）、Q-NUI-003（Project MIDI Export Settings v2 字段/默认值）、Q-NUI-005（ID 分配型 Undo 和 `nextStableId`/Modified 关系）、Q-NUI-009（Logical Parameter Definition 结构变更的既有 Lane 迁移）、Q-NUI-011（共享音频状态快照 ABI v2 并发契约）、Q-NUI-013（正式 BASS 二进制分发许可放行）、Q-NUI-019（小节中途 Time Signature 变化的 Bar:Beat:Tick 规则）、Q-NUI-020（Global Event Scope Defaults 初版字段/固定 marker）、Q-NUI-021（SMF 超长 delta 的失败/占位拆分策略）、Q-NUI-022（held Preview 未知 Gate Length 的因果实时语义）与 Q-NUI-023（Project TPQ 与 SMF division 上限）；分别只暂停成功迁移器、Export Settings schema/领域默认分支、创建/复制/分割类 History 命令、需要迁移 Lane 的 Definition 编辑、共享状态快照协议升级、含 BASS DLL 的正式对外分发、Project 音乐位置/网格换算服务、Event Scope defaults v2/History/编译消费、超长 delta 继续导出兼容分支、虚拟键盘动态 Gate 分支和 TPQ 新建范围/高 TPQ 兼容分支。Q-NUI-004、Q-NUI-006、Q-NUI-007、Q-NUI-008、Q-NUI-010、Q-NUI-012、Q-NUI-014、Q-NUI-015、Q-NUI-016、Q-NUI-017、Q-NUI-018 是已按推荐方案落地、仍待确认的小决定。Q-NUI-001 已按推荐方案确认并实现。
 
 ## 5. 当前实施顺序
 
@@ -146,6 +146,7 @@
 - Global Event Scope Defaults 被 SRS 声明为可修改且影响可听/资源语义，但没有任何字段或默认规则；已发布 v1 又是严格空 marker。schema v2、History 与编译消费等待 Q-NUI-020，不能把建议字段静默塞入 v1。
 - SMF 单个 delta time 受四字节 VLQ 的 `0x0FFFFFFF` 上限约束，而 SRS 未定义超长间隔的占位拆分事件；现有导出会结构化失败且不发布文件，继续导出兼容策略等待 Q-NUI-021，不能静默向 canonical 事件之外插入 Meta spacer。
 - 虚拟键盘 held Preview 要求按下即时发声、松开才冻结 Gate Length，但 C# Mapping 从 tick 0 即可读取最终 GateLength，Render-Ahead 又会提前生成 PCM；三项要求无法按单次固定 canonical 结果同时满足。因果 Gate/延迟回放/回滚协议等待 Q-NUI-022，不能用裸 MIDI 或猜测 Gate Length 实现。
+- Project/schema v1 接受 TPQ 到 `Int32.MaxValue`，SMF division 只能到 32767，且 SRS 同时禁止导出重采样与创建后修改 TPQ；新建范围、历史高 TPQ 兼容和不可导出诊断等待 Q-NUI-023，不能静默收窄 v1 或缩放 tick。
 - Audio Render 对损坏 Event Instrument 绑定的选择已交还 canonical 编译器判定：Whole Mix 整体失败，Per Logical Track 仅对应项失败并允许其他项继续；普通未绑定/断裂引用仍保持 Info 与无输出目标语义。
 - Preview 临时 Project shell 已复制所选对象所需的损坏绑定身份与有效 Library Folder 结构；后续新增任何 Project 外壳式 CompileContext 时都必须审计同类引用闭包，不能让临时上下文制造虚假断裂或降级真实损坏。
 - Segment Preview 的绑定要求严于主时间线的一般未绑定 Track 语义：`MIDORA1306` 只属于该 Preview context；Playback Preview 必须先验证 canonical 可消费性，再初始化 Backend。

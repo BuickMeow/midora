@@ -487,6 +487,166 @@ public sealed class PlaybackTests
         }
     }
 
+    [Fact]
+    public void MissingSoundFontStartFailureClearsTaskAndEditLockForRecovery()
+    {
+        MidoraProject project = CreateProject();
+        ProjectCompilationSession session = new(project);
+        FakeBackend backend = new();
+        using PlaybackController controller = new(session, backend);
+
+        Assert.Throws<InvalidOperationException>(() => controller.Start());
+
+        Assert.Equal(PlaybackState.Stopped, controller.State);
+        Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+        Assert.False(session.EditsLocked);
+        Assert.Null(backend.LastStartedPlan);
+
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            session.SetEffectiveSoundFontPath(soundFont);
+            controller.Start();
+
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            Assert.Equal(0, backend.ResetCount);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void PrepareFailureClearsTaskAndEditLockForDirectRecovery()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new() { ThrowPrepare = true };
+            using PlaybackController controller = new(session, backend);
+
+            Assert.Throws<InvalidOperationException>(() => controller.Start());
+
+            Assert.Equal(PlaybackState.Error, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.False(session.EditsLocked);
+            backend.ThrowPrepare = false;
+
+            controller.Start();
+
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            Assert.Equal(1, backend.ResetCount);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void StopFailureClearsActiveStateAndUnlocksBeforeRecovery()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            controller.Start();
+            backend.ThrowStop = true;
+
+            Assert.Throws<InvalidOperationException>(() => controller.Stop());
+
+            Assert.Equal(PlaybackState.Error, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.False(session.EditsLocked);
+            Assert.NotNull(controller.LastError);
+            backend.ThrowStop = false;
+
+            controller.Start();
+
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            Assert.Equal(1, backend.ResetCount);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void SeekRestartStopFailureClearsTaskAndPreservesCurrentCursor()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            controller.Start();
+            backend.PositionFrames = 12_000;
+            Assert.Equal(240, controller.CurrentTick);
+            backend.ThrowStop = true;
+
+            Assert.Throws<InvalidOperationException>(() => controller.Seek(480));
+
+            Assert.Equal(PlaybackState.Error, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.Equal(240, controller.CurrentTick);
+            Assert.False(session.EditsLocked);
+            backend.ThrowStop = false;
+
+            controller.Start();
+
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            Assert.Equal(1, backend.ResetCount);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void InvalidEffectiveLoopRangeIsRejectedBeforeMutatingPlaybackState()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            FakeBackend backend = new();
+            using PlaybackController controller = new(new(project, soundFont), backend);
+            controller.Seek(600);
+            controller.SetLoop(new TickRange(240, 480));
+
+            Assert.Throws<ArgumentOutOfRangeException>(() => controller.Start());
+
+            Assert.Equal(PlaybackState.Stopped, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.Equal(0, backend.PrepareCount);
+
+            controller.Seek(0);
+            controller.Start();
+            Assert.Throws<ArgumentOutOfRangeException>(() => controller.Seek(600));
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            Assert.Equal(0, backend.StopCount);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
     private static MidoraProject CreateProject()
     {
         MidoraProject project = new(480);
@@ -528,10 +688,17 @@ public sealed class PlaybackTests
         public int PrepareCount { get; private set; }
         public bool ThrowMonitoringCommands { get; set; }
         public int MonitoringApplyCount { get; private set; }
+        public bool ThrowPrepare { get; set; }
+        public bool ThrowStop { get; set; }
+        public MidiRenderPlan? LastStartedPlan { get; private set; }
         public List<MidiMonitoringCommand> MonitoringCommands { get; } = [];
         public int Prepare()
         {
             PrepareCount++;
+            if (ThrowPrepare)
+            {
+                throw new InvalidOperationException("Injected prepare failure.");
+            }
             return ActualSampleRate;
         }
         public void Start(MidiRenderPlan plan, string soundFontPath, PlaybackMasterConfiguration master)
@@ -540,6 +707,7 @@ public sealed class PlaybackTests
             Assert.True(File.Exists(soundFontPath));
             Assert.Equal(-0.1f, master.VolumeDecibels);
             StartCount++;
+            LastStartedPlan = plan;
             PositionFrames = 0;
             IsCompleted = false;
         }
@@ -547,6 +715,10 @@ public sealed class PlaybackTests
         {
             Assert.True(flush);
             StopCount++;
+            if (ThrowStop)
+            {
+                throw new InvalidOperationException("Injected stop failure.");
+            }
         }
         public void ApplyMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
         {

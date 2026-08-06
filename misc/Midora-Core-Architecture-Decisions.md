@@ -416,3 +416,11 @@ Requirement trace：输入为已分配 canonical 事件、范围前及范围内 
 Debug 不进入 result fingerprint，不改变事件、分配、统计、成功判定或 Warning 原级别；Info/Debug 永远不触发 Warning-as-error。正式 canonical diagnostics 中不写墙钟耗时、缓存命中数或增量重编次数，因为这些运行历史会破坏 Full/Incremental 逐字段等价；此类实现执行遥测继续只通过 `LastTelemetry` 暴露，不属于正式结果。
 
 Requirement trace：输入为 CompileContext Debug 收集开关和本次确定性编译结果；正式输出为可选、来源 tick 可定位且 Full/Incremental 相等的 Debug 摘要。边界是默认不收集、显示级别仍由未来 UI 独立过滤、执行遥测与正式诊断分离。Debug 及遥测均不持久化，不进入 Project/Modified/Undo 或消费者语义；明确非目标是 UI 诊断面板过滤、持久化 Debug、把性能时长纳入 canonical，或用 Debug 改变失败政策。
+
+## 30. ADR-CORE-028（已接受）：播放启动、停止与冷重启失败原子性
+
+决定：主播放在修改光标/任务状态前预检非反向的显式及 Loop 有效范围和当前有效 SoundFont；预检失败保持 `Stopped/None`，不 Prepare、不取得编辑锁。进入 Preparing 后先取得 Project Edit Lock，再在锁内重新读取并检查 SoundFont 路径，冻结本次启动资源入口；避免预检与实际启动之间的资源切换竞态。Preview 使用相同的“锁前预检、锁内复核”。
+
+Prepare、compile、plan 或 backend start 失败时进入 Error，同时清空 active canonical/plan/tempo、清除 ActiveTaskKind 并释放自身编辑锁。Stop 以及 Seek/Loop 冷重启的 backend stop 失败执行同一清理；主播放保留失败发生前的当前 tick，若旧 backend 已成功停止而新起点 Preparing 失败，则保留新起点。Error 后再次 Play 先 Reset backend、清 sample-domain cache 和旧错误，再重新 Preparing。进入 Stop/Seek 前即可发现的有效范围错误直接拒绝，不能先停止一个仍健康的播放任务。
+
+Requirement trace：输入为当前播放状态、光标、显式/Loop 范围、有效 SF2、Project 编辑锁和 backend 生命周期结果；正式输出为唯一活动 Main/Preview 任务，或完全释放任务身份/派生引用/锁且位置可恢复的 Stopped/Error。边界是零长度范围仍可 Preparing 后立即 Stopped，缺失 SF2 属于启动 admission 失败而非不可恢复 backend Error，Stop 失败不允许残留“活动任务”。状态、错误、光标、锁和 sample plan 均只属于运行时，不持久化、不修改 Project/canonical；明确非目标是自动选择其他 SF2/设备、Pause/Scrub、抢占另一播放任务或吞掉清理异常。

@@ -108,11 +108,17 @@ public sealed class PlaybackController : IDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(cursorTick), "Playback requires a non-negative, non-reversed range.");
         }
+        long? effectiveEndTick = EffectiveEndTick(endTick);
+        if (effectiveEndTick < effectiveCursorTick)
+        {
+            throw new ArgumentOutOfRangeException(nameof(cursorTick),
+                "The effective playback or loop end must not precede the playback cursor.");
+        }
+        _ = RequireEffectiveSoundFont("Playback");
         _taskStartTick = effectiveCursorTick;
         _cursorTick = effectiveCursorTick;
         _requestedEndTick = endTick;
-        ActiveTaskKind = PlaybackTaskKind.MainTimeline;
-        StartPreparedRange(effectiveCursorTick, EffectiveEndTick(endTick), acquireEditLock: true);
+        StartPreparedRange(effectiveCursorTick, effectiveEndTick, acquireEditLock: true);
     }
 
     public void StartEventInstrumentPreview(EventInstrumentPreviewRequest request)
@@ -148,7 +154,13 @@ public sealed class PlaybackController : IDisposable
         if ((State is PlaybackState.Playing or PlaybackState.Buffering)
             && ActiveTaskKind == PlaybackTaskKind.MainTimeline)
         {
-            RestartAt(tick, EffectiveEndTick(_requestedEndTick));
+            long? effectiveEndTick = EffectiveEndTick(_requestedEndTick);
+            if (effectiveEndTick < tick)
+            {
+                throw new ArgumentOutOfRangeException(nameof(tick),
+                    "The seek target must not follow the effective playback or loop end.");
+            }
+            RestartAt(tick, effectiveEndTick);
         }
         else if (State == PlaybackState.Stopped)
         {
@@ -287,20 +299,16 @@ public sealed class PlaybackController : IDisposable
 
     private void StartPreparedRange(long cursorTick, long? endTick, bool acquireEditLock)
     {
-        string soundFont = _session.EffectiveSoundFontPath
-            ?? throw new InvalidOperationException("Playback requires an effective Project SoundFont.");
-        if (!File.Exists(soundFont))
-        {
-            throw new FileNotFoundException("The effective Project SoundFont does not exist.", soundFont);
-        }
         _cursorTick = cursorTick;
-        SetState(PlaybackState.Preparing);
-        if (acquireEditLock)
-        {
-            _editLockLease = _session.AcquireProjectEditLock();
-        }
         try
         {
+            ActiveTaskKind = PlaybackTaskKind.MainTimeline;
+            SetState(PlaybackState.Preparing);
+            if (acquireEditLock)
+            {
+                _editLockLease = _session.AcquireProjectEditLock();
+            }
+            string soundFont = RequireEffectiveSoundFont("Playback");
             int actualSampleRate = _backend.Prepare();
             _session.InvalidateSampleDomainCaches();
             CanonicalCompiledResult compiled = _session.CompileForPlayback(cursorTick, endTick);
@@ -355,18 +363,14 @@ public sealed class PlaybackController : IDisposable
         {
             throw new InvalidOperationException("A playback or preview task is already active.");
         }
-        string soundFont = _session.EffectiveSoundFontPath
-            ?? throw new InvalidOperationException("Preview requires an effective Project SoundFont.");
-        if (!File.Exists(soundFont))
-        {
-            throw new FileNotFoundException("The effective Project SoundFont does not exist.", soundFont);
-        }
+        _ = RequireEffectiveSoundFont("Preview");
 
-        ActiveTaskKind = taskKind;
-        SetState(PlaybackState.Preparing);
-        _editLockLease = _session.AcquireProjectEditLock();
         try
         {
+            ActiveTaskKind = taskKind;
+            SetState(PlaybackState.Preparing);
+            _editLockLease = _session.AcquireProjectEditLock();
+            string soundFont = RequireEffectiveSoundFont("Preview");
             int actualSampleRate = _backend.Prepare();
             _session.InvalidateSampleDomainCaches();
             if (!compiled.IsConsumable)
@@ -406,18 +410,28 @@ public sealed class PlaybackController : IDisposable
 
     private void RestartAt(long tick, long? endTick)
     {
+        long stoppedTick = CurrentTaskTick;
+        bool backendStopped = false;
         SetState(PlaybackState.Stopping);
         try
         {
             _backend.Stop(flush: true);
+            backendStopped = true;
             _activeResult = null;
             _activePlan = null;
             _activeTempoMap = null;
             StartPreparedRange(tick, endTick, acquireEditLock: false);
         }
-        catch
+        catch (Exception exception)
         {
+            LastError = exception;
+            _activeResult = null;
+            _activePlan = null;
+            _activeTempoMap = null;
+            _cursorTick = backendStopped ? tick : stoppedTick;
+            ActiveTaskKind = PlaybackTaskKind.None;
             ReleaseEditLock();
+            SetState(PlaybackState.Error);
             throw;
         }
     }
@@ -448,6 +462,14 @@ public sealed class PlaybackController : IDisposable
         catch (Exception exception)
         {
             LastError = exception;
+            _activeResult = null;
+            _activePlan = null;
+            _activeTempoMap = null;
+            if (stoppedTask == PlaybackTaskKind.MainTimeline)
+            {
+                _cursorTick = stoppedTick;
+            }
+            ActiveTaskKind = PlaybackTaskKind.None;
             SetState(PlaybackState.Error);
             throw;
         }
@@ -458,6 +480,20 @@ public sealed class PlaybackController : IDisposable
     }
 
     private long? EffectiveEndTick(long? requested) => _loopRange?.EndTick ?? requested;
+
+    private string RequireEffectiveSoundFont(string operation)
+    {
+        string soundFont = _session.EffectiveSoundFontPath
+            ?? throw new InvalidOperationException(
+                $"{operation} requires an effective Project SoundFont.");
+        if (!File.Exists(soundFont))
+        {
+            throw new FileNotFoundException(
+                "The effective Project SoundFont does not exist.",
+                soundFont);
+        }
+        return soundFont;
+    }
 
     private void ApplyMonitoringChange()
     {
@@ -588,6 +624,10 @@ public sealed class PlaybackController : IDisposable
         {
             _backend.Reset();
             _session.InvalidateSampleDomainCaches();
+            _activeResult = null;
+            _activePlan = null;
+            _activeTempoMap = null;
+            LastError = null;
             ActiveTaskKind = PlaybackTaskKind.None;
             SetState(PlaybackState.Stopped);
         }
@@ -612,6 +652,7 @@ public sealed class PlaybackController : IDisposable
             cleanupError = exception;
         }
         _activeResult = null;
+        _activePlan = null;
         _activeTempoMap = null;
         if (failedTask == PlaybackTaskKind.MainTimeline)
         {

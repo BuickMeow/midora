@@ -17,6 +17,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
     private readonly Thread _monitorThread;
     private string? _standardError;
     private int _exitCode = int.MinValue;
+    private int _monitorFaulted;
     private bool _disposed;
 
     public BassMidiAudioWorkerSession(
@@ -72,20 +73,30 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(renderAheadMilliseconds));
         }
+        if (!File.Exists(soundFontPath))
+        {
+            throw new FileNotFoundException(
+                "The frozen Project SoundFont does not exist.",
+                soundFontPath);
+        }
         workerPath = Path.GetFullPath(workerPath);
         bassNativeDirectory = Path.GetFullPath(bassNativeDirectory);
+        soundFontPath = Path.GetFullPath(soundFontPath);
 
         _ownedTemporaryDirectory = Path.Combine(
             Path.GetTempPath(),
             $"midora-audio-worker-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(_ownedTemporaryDirectory);
-        string planPath = Path.Combine(_ownedTemporaryDirectory, "compiled-audio-plan.mdap");
-        MidiRenderPlanFile.Write(planPath, plan);
-        _control = SharedAudioWorkerControl.Create($"Midora.Audio.Control.{Guid.NewGuid():N}");
+        SharedAudioWorkerControl? createdControl = null;
         Process? startedProcess = null;
         Thread? startedMonitorThread = null;
         try
         {
+            Directory.CreateDirectory(_ownedTemporaryDirectory);
+            string planPath = Path.Combine(_ownedTemporaryDirectory, "compiled-audio-plan.mdap");
+            MidiRenderPlanFile.Write(planPath, plan);
+            createdControl = SharedAudioWorkerControl.Create(
+                $"Midora.Audio.Control.{Guid.NewGuid():N}");
+            _control = createdControl;
             ProcessStartInfo startInfo = CreateStartInfo(workerPath);
             AddPlaybackArguments(
                 startInfo,
@@ -102,7 +113,10 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             startedProcess = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Could not start the Midora audio worker process.");
             _process = startedProcess;
-            startedMonitorThread = new Thread(MonitorProcess)
+            Task<string> standardError = startedProcess.StandardError.ReadToEndAsync();
+            Task<string> standardOutput = startedProcess.StandardOutput.ReadToEndAsync();
+            startedMonitorThread = new Thread(
+                () => MonitorProcess(standardError, standardOutput))
             {
                 IsBackground = true,
                 Name = "Midora Audio Worker Monitor"
@@ -115,15 +129,14 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         {
             if (startedProcess is not null)
             {
-                if (!startedProcess.HasExited)
+                TerminateProcess(startedProcess);
+                if (startedMonitorThread is { IsAlive: true })
                 {
-                    startedProcess.Kill(entireProcessTree: true);
-                    startedProcess.WaitForExit();
+                    startedMonitorThread.Join();
                 }
-                startedMonitorThread?.Join();
                 startedProcess.Dispose();
             }
-            _control.Dispose();
+            createdControl?.Dispose();
             CleanupOwnedTemporaryDirectory(_ownedTemporaryDirectory);
             throw;
         }
@@ -160,6 +173,8 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             bassNativeDirectory,
             deviceId,
             deviceBufferRequestMilliseconds);
+        Task<string> standardError = process.StandardError.ReadToEndAsync();
+        Task<string> standardOutput = process.StandardOutput.ReadToEndAsync();
         long deadline = Environment.TickCount64 + checked((long)timeout.TotalMilliseconds);
         while (true)
         {
@@ -168,12 +183,13 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             {
                 if (!process.WaitForExit(RemainingMilliseconds(deadline)))
                 {
-                    process.Kill(entireProcessTree: true);
-                    process.WaitForExit();
+                    TerminateProcess(process);
+                    _ = standardError.GetAwaiter().GetResult();
+                    _ = standardOutput.GetAwaiter().GetResult();
                     throw new TimeoutException("The audio worker probe did not exit within the Preparing timeout.");
                 }
-                string error = process.StandardError.ReadToEnd();
-                _ = process.StandardOutput.ReadToEnd();
+                string error = standardError.GetAwaiter().GetResult();
+                _ = standardOutput.GetAwaiter().GetResult();
                 if (process.ExitCode != 0)
                 {
                     throw new MidoraAudioException(
@@ -183,15 +199,20 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             }
             if (status.State == AudioWorkerState.Faulted || process.HasExited)
             {
-                string error = process.StandardError.ReadToEnd();
-                _ = process.StandardOutput.ReadToEnd();
+                if (!process.WaitForExit(RemainingMilliseconds(deadline)))
+                {
+                    TerminateProcess(process);
+                }
+                string error = standardError.GetAwaiter().GetResult();
+                _ = standardOutput.GetAwaiter().GetResult();
                 throw new MidoraAudioException(
                     $"The audio worker probe failed; fault={status.FaultCode}; exitCode={process.ExitCode}; stderr={error}");
             }
             if (Environment.TickCount64 >= deadline)
             {
-                process.Kill(entireProcessTree: true);
-                process.WaitForExit();
+                TerminateProcess(process);
+                _ = standardError.GetAwaiter().GetResult();
+                _ = standardOutput.GetAwaiter().GetResult();
                 throw new TimeoutException("The audio worker probe did not complete within the Preparing timeout.");
             }
             Thread.Sleep(1);
@@ -221,8 +242,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             }
             if (!_process.WaitForExit(checked((int)timeout.TotalMilliseconds)))
             {
-                _process.Kill(entireProcessTree: true);
-                _process.WaitForExit();
+                TerminateProcess(_process);
                 _monitorThread.Join();
                 throw new TimeoutException("The audio worker did not stop within the requested timeout.");
             }
@@ -247,8 +267,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         {
             if (!_control.TryEnqueueStop() || !_process.WaitForExit(5_000))
             {
-                _process.Kill(entireProcessTree: true);
-                _process.WaitForExit();
+                TerminateProcess(_process);
             }
         }
         _monitorThread.Join();
@@ -339,13 +358,22 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             }
             if (status.State == AudioWorkerState.Faulted || ExitCode is not null)
             {
+                if (!_process.WaitForExit(RemainingMilliseconds(deadline)))
+                {
+                    TerminateProcess(_process);
+                }
                 _monitorThread.Join();
                 throw new MidoraAudioException(
                     $"The audio worker failed during Preparing; fault={status.FaultCode}; exitCode={ExitCode}; stderr={StandardError}");
             }
+            if (Volatile.Read(ref _monitorFaulted) != 0)
+            {
+                throw new MidoraAudioException(
+                    $"The audio worker monitor failed during Preparing: {StandardError}");
+            }
             if (Environment.TickCount64 >= deadline)
             {
-                _process.Kill(entireProcessTree: true);
+                TerminateProcess(_process);
                 _monitorThread.Join();
                 throw new TimeoutException("The audio worker did not start within the Preparing timeout.");
             }
@@ -353,18 +381,44 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         }
     }
 
-    private void MonitorProcess()
+    private void MonitorProcess(
+        Task<string> standardError,
+        Task<string> standardOutput)
     {
-        _process.WaitForExit();
-        _standardError = _process.StandardError.ReadToEnd();
-        _ = _process.StandardOutput.ReadToEnd();
-        Volatile.Write(ref _exitCode, _process.ExitCode);
+        try
+        {
+            _process.WaitForExit();
+            _standardError = standardError.GetAwaiter().GetResult();
+            _ = standardOutput.GetAwaiter().GetResult();
+            Volatile.Write(ref _exitCode, _process.ExitCode);
+        }
+        catch (Exception exception)
+        {
+            _standardError = $"The audio worker monitor failed: {exception}";
+            Volatile.Write(ref _monitorFaulted, 1);
+        }
     }
 
     private static int RemainingMilliseconds(long deadline)
     {
         long remaining = deadline - Environment.TickCount64;
         return remaining <= 0 ? 0 : checked((int)Math.Min(remaining, int.MaxValue));
+    }
+
+    private static void TerminateProcess(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (InvalidOperationException) when (process.HasExited)
+        {
+            // The child exited between HasExited and Kill.
+        }
+        process.WaitForExit();
     }
 
     private static void ValidateCommon(

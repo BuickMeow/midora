@@ -104,6 +104,7 @@
 | 2026-08-06 | 正式实时 Worker 启动与终态门 | 正式客户端只接受 Native AOT `.exe`，托管 `.dll` 仅内部测试放行；绝对启动路径；Stop/运行时同时校验共享终态和 exit code；BASS 80 tests、Playback 48 tests；10 个测试项目累计 723 tests | 通过，0 failure |
 | 2026-08-06 | MDAP v2 严格有界解析 | 写前完整大小门；读前剩余 payload 计数门；reserved 必须为零；校验和有效的非法 Port/保留位/伪造大计数统一拒绝；BASS 83 tests；10 个测试项目累计 726 tests | 通过，0 failure |
 | 2026-08-06 | 共享内存 ABI v1 损坏闭包 | ring 单调/容量/溢出门先于指针运算；Stop/Monitoring 全 payload 与 reserved 双向校验；整批失败无前缀；状态/映射/header/Dispose 边界；BASS 97 tests；10 个测试项目累计 740 tests | 通过，0 failure |
+| 2026-08-06 | 实时 Worker 启动失败原子性与输出排空 | SF2/Worker/native 绝对路径门；计划目录/MDAP/共享区/管道/进程逐层反向回收；stdout/stderr 启动后并发排空；Faulted/Probe/Stop 有界退出；监控异常任务化；BASS 99 tests；10 个测试项目累计 742 tests | 通过，0 failure |
 
 ## 7. 未解决风险
 

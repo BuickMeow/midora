@@ -23,6 +23,7 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
     private BinaryWriter? _controlWriter;
     private string? _standardError;
     private int _exitCode = int.MinValue;
+    private int _monitorFaulted;
     private bool _disposed;
 
     public BassMidiChildProcessSession(
@@ -51,19 +52,29 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
         {
             throw new FileNotFoundException("The Midora audio worker was not found.", workerPath);
         }
+        if (!File.Exists(soundFontPath))
+        {
+            throw new FileNotFoundException(
+                "The frozen Project SoundFont does not exist.",
+                soundFontPath);
+        }
+        if (!Directory.Exists(bassNativeDirectory))
+        {
+            throw new DirectoryNotFoundException(bassNativeDirectory);
+        }
 
         if (preparingTimeout <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(preparingTimeout));
         }
+        workerPath = Path.GetFullPath(workerPath);
+        soundFontPath = Path.GetFullPath(soundFontPath);
+        bassNativeDirectory = Path.GetFullPath(bassNativeDirectory);
 
         _ownedTemporaryDirectory = Path.Combine(
             Path.GetTempPath(),
             $"midora-audio-ipc-{Guid.NewGuid():N}");
         _consumptionMode = consumptionMode;
-        Directory.CreateDirectory(_ownedTemporaryDirectory);
-        string planPath = Path.Combine(_ownedTemporaryDirectory, "compiled-audio-plan.mdap");
-        MidiRenderPlanFile.Write(planPath, plan);
 
         string mapName = $"Midora.Audio.{Guid.NewGuid():N}";
         string controlPipeName = $"Midora.Audio.Control.{Guid.NewGuid():N}";
@@ -73,9 +84,14 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
             ipcAudioBufferMilliseconds);
         _producerWorkFrameCount = Math.Min(rendererSettings.MaximumWorkFrameCount, capacityFrames);
 
-        _ring = SharedAudioFrameRingBuffer.Create(mapName, format, capacityFrames);
+        SharedAudioFrameRingBuffer? createdRing = null;
         try
         {
+            Directory.CreateDirectory(_ownedTemporaryDirectory);
+            string planPath = Path.Combine(_ownedTemporaryDirectory, "compiled-audio-plan.mdap");
+            MidiRenderPlanFile.Write(planPath, plan);
+            createdRing = SharedAudioFrameRingBuffer.Create(mapName, format, capacityFrames);
+            _ring = createdRing;
             _controlPipe = new NamedPipeServerStream(
                 controlPipeName,
                 PipeDirection.Out,
@@ -94,7 +110,10 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
                 masterSettings);
             _process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Could not start the Midora audio worker process.");
-            _monitorThread = new Thread(MonitorProcess)
+            Task<string> standardError = _process.StandardError.ReadToEndAsync();
+            Task<string> standardOutput = _process.StandardOutput.ReadToEndAsync();
+            _monitorThread = new Thread(
+                () => MonitorProcess(standardError, standardOutput))
             {
                 IsBackground = true,
                 Name = "Midora Audio Worker Monitor"
@@ -114,6 +133,7 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
                 if (!_process.HasExited)
                 {
                     _process.Kill(entireProcessTree: true);
+                    _process.WaitForExit();
                 }
 
                 if (_monitorThread is not null && _monitorThread.IsAlive)
@@ -124,7 +144,7 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
                 _process.Dispose();
             }
 
-            _ring.Dispose();
+            createdRing?.Dispose();
             ReleaseControlPipe();
             CleanupOwnedTemporaryDirectory();
             throw;
@@ -294,6 +314,11 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
                 throw new MidoraAudioException(
                     $"The audio worker exited during Preparing with code {_exitCode}: {_standardError}");
             }
+            if (Volatile.Read(ref _monitorFaulted) != 0)
+            {
+                throw new MidoraAudioException(
+                    $"The audio worker monitor failed during Preparing: {_standardError}");
+            }
 
             if (Environment.TickCount64 >= deadline)
             {
@@ -309,17 +334,28 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
         }
     }
 
-    private void MonitorProcess()
+    private void MonitorProcess(
+        Task<string> standardError,
+        Task<string> standardOutput)
     {
         Process process = _process
             ?? throw new InvalidOperationException("The audio worker process is unavailable.");
-        process.WaitForExit();
-        _standardError = process.StandardError.ReadToEnd();
-        _ = process.StandardOutput.ReadToEnd();
-        Volatile.Write(ref _exitCode, process.ExitCode);
-        if (!_ring.ProducerCompleted && process.ExitCode != 0)
+        try
         {
+            process.WaitForExit();
+            _standardError = standardError.GetAwaiter().GetResult();
+            _ = standardOutput.GetAwaiter().GetResult();
+            Volatile.Write(ref _exitCode, process.ExitCode);
+            if (!_ring.ProducerCompleted && process.ExitCode != 0)
+            {
+                _ring.FaultProducer();
+            }
+        }
+        catch (Exception exception)
+        {
+            _standardError = $"The audio worker monitor failed: {exception}";
             _ring.FaultProducer();
+            Volatile.Write(ref _monitorFaulted, 1);
         }
     }
 

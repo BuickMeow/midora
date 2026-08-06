@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Runtime.Versioning;
 using Midora.Audio;
 
@@ -6,6 +7,76 @@ namespace Midora.Audio.Bass.Tests;
 [SupportedOSPlatform("windows")]
 public sealed class BassMidiAudioWorkerSessionPolicyTests
 {
+    [Fact]
+    public void StartupFailureReleasesOwnedPlanDirectory()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            $"midora-realtime-worker-startup-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        string nativeWorker = Path.Combine(directory, "Midora.Audio.Bass.Worker.exe");
+        string soundFont = Path.Combine(directory, "project.sf2");
+        File.WriteAllBytes(nativeWorker, [0]);
+        File.WriteAllBytes(soundFont, [0]);
+        HashSet<string> before = EnumerateOwnedPlanDirectories();
+        try
+        {
+            _ = Assert.Throws<Win32Exception>(() => new BassMidiAudioWorkerSession(
+                CreatePlan(),
+                soundFont,
+                new BassMidiRendererSettings(750, 256),
+                AudioMasterSettings.LimiterV1,
+                100,
+                50,
+                null,
+                nativeWorker,
+                directory,
+                TimeSpan.FromSeconds(1)));
+
+            Assert.Empty(EnumerateOwnedPlanDirectories().Except(before));
+        }
+        finally
+        {
+            foreach (string residual in EnumerateOwnedPlanDirectories().Except(before))
+            {
+                Directory.Delete(residual, recursive: true);
+            }
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MissingSoundFontFailsBeforeCreatingOwnedPlanDirectory()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            $"midora-realtime-worker-startup-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        string nativeWorker = Path.Combine(directory, "Midora.Audio.Bass.Worker.exe");
+        File.WriteAllBytes(nativeWorker, [0]);
+        HashSet<string> before = EnumerateOwnedPlanDirectories();
+        try
+        {
+            _ = Assert.Throws<FileNotFoundException>(() => new BassMidiAudioWorkerSession(
+                CreatePlan(),
+                Path.Combine(directory, "missing.sf2"),
+                new BassMidiRendererSettings(750, 256),
+                AudioMasterSettings.LimiterV1,
+                100,
+                50,
+                null,
+                nativeWorker,
+                directory,
+                TimeSpan.FromSeconds(1)));
+
+            Assert.True(before.SetEquals(EnumerateOwnedPlanDirectories()));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void FormalRealtimeClientAcceptsOnlyNativeExecutableWorker()
     {
@@ -57,4 +128,13 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
             expected,
             BassMidiAudioWorkerSession.IsSuccessfulTerminalExit(state, exitCode));
     }
+
+    private static MidiRenderPlan CreatePlan() => new(48_000, 0, []);
+
+    private static HashSet<string> EnumerateOwnedPlanDirectories() =>
+        Directory.EnumerateDirectories(
+            Path.GetTempPath(),
+            "midora-audio-worker-*")
+        .Select(Path.GetFullPath)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
 }

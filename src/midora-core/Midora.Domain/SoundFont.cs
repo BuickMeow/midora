@@ -84,6 +84,19 @@ public sealed class ProjectSoundFontSettings
 
     public void Clear() => Reference = null;
 
+    public void SetReference(ProjectSoundFontReference? reference)
+    {
+        if (reference is not null
+            and not ExternalProjectSoundFontReference
+            and not EmbeddedProjectSoundFontReference)
+        {
+            throw new ArgumentException(
+                "The Project SoundFont reference kind is not supported by this release.",
+                nameof(reference));
+        }
+        Reference = reference;
+    }
+
     public void SetExternal(
         string relativePath,
         string originalFileName,
@@ -111,7 +124,7 @@ public sealed class ProjectSoundFontSettings
         return resourceId;
     }
 
-    internal void Restore(ProjectSoundFontReference? reference) => Reference = reference;
+    internal void Restore(ProjectSoundFontReference? reference) => SetReference(reference);
 }
 
 public static class SoundFontReferenceValidation

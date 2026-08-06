@@ -5,8 +5,10 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\midora-audio\Midora.Audio\Midora.Audio.csproj" />
     <ProjectReference Include="..\Midora.AudioRender\Midora.AudioRender.csproj" />
     <ProjectReference Include="..\Midora.MidiExport\Midora.MidiExport.csproj" />
+    <ProjectReference Include="..\Midora.Persistence\Midora.Persistence.csproj" />
     <ProjectReference Include="..\Midora.Playback\Midora.Playback.csproj" />
   </ItemGroup>
 </Project>

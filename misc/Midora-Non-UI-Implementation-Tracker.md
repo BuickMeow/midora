@@ -30,7 +30,7 @@
 | 编号 | 工作包 | 状态 | 主要需求 | 退出证据 |
 |---|---|---|---|---|
 | NUI-01 | 仓库级构建、测试和兼容基线 | 待复核 | §2、§21、INV-027～030 | 单命令 Release 构建；全部自动测试；固定工具链/原生 manifest 门 |
-| NUI-02 | 完整领域源模型与编辑事务 | History/Modified 与十二批非 ID 分配对象命令完成；ID 分配命令等待 Q-NUI-005 | §3～11 | Track/Instrument/Folder/Damaged/Segment、Conductor、Project Settings/Metadata、Track Color、Note/Lane/Point、Instrument Lifecycle、SubVoice、Template Event、Value Curve、Initial/Reset State、Envelope、Mapping Function、Mapping Chain/Step，以及安全的 Logical Parameter Definition/Mapping/Target Settings 属性已覆盖；需要 Lane 迁移的 Definition 结构编辑等待 Q-NUI-009 |
+| NUI-02 | 完整领域源模型与编辑事务 | History/Modified 与十三批非 ID 分配对象命令完成；ID 分配命令等待 Q-NUI-005 | §3～11 | Track/Instrument/Folder/Damaged/Segment、Conductor、Project Settings/Metadata、Track Color、External SoundFont、Note/Lane/Point、Instrument Lifecycle、SubVoice、Template Event、Value Curve、Initial/Reset State、Envelope、Mapping Function、Mapping Chain/Step，以及安全的 Logical Parameter Definition/Mapping/Target Settings 属性已覆盖；需要 Lane 迁移的 Definition 结构编辑等待 Q-NUI-009 |
 | NUI-03 | Semantic Validation 与诊断来源 | 进行中 | §3～12 | 全错误/警告/Info 矩阵与稳定排序 golden |
 | NUI-04 | Full/Incremental Canonical Compiler | 强增量模型完成；全 §12 矩阵继续扩充 | §12、INV-009/010/015 | Segment checkpoint + dirty range + state hash 已实现；固定种子连续编辑逐字段等价 |
 | NUI-05 | Playback/Preview 非 UI 状态机 | 进行中 | §13、§19 | 全状态、自动 Stop、Mute/Solo、设备故障和重复生命周期测试 |
@@ -83,6 +83,7 @@
 | 2026-08-06 | Mapping Chain / Step History 与完整内置映射矩阵 | 事件参数/Logical Parameter Chain 稳定 ID 定位；Chain/Step Enable；Step 全快照、排序、删除；整链空 sentinel 删除/恢复；未完成配置保存与禁用诊断隔离；未知四类 Mapping 枚举防御；12 种内置 Source、12 种内置 Operation、Remap InputOverflow、两向 Divide 与四种 DivideByZero policy；Application 122 tests、Compiler 147 tests；10 个测试项目累计 598 tests；Core Release build | 通过，0 warning / 0 error / 0 failure |
 | 2026-08-06 | Logical Parameter Definition / Mapping / Target Settings History | 安全 Definition 属性、display-only Track cache 复用、引用保留删除；Mapping source/target/order/共享 Target Settings 与确认删除；事件参数三类 Target Settings；未知 Parameter Type 与越界 Enum item 防御；Q-NUI-009 迁移分支保持暂停；Application 135 tests、Compiler 149 tests；10 个测试项目累计 613 tests；Core Release build | 通过，0 warning / 0 error / 0 failure |
 | 2026-08-06 | Project Metadata 与 Logical Track 颜色 History | 六字段原子 Metadata 快照；原 Unicode/空白保留；256/4,096/65,536 scalar 和控制字符边界；只读系统时间/耗时不覆盖；Track nullable opaque sRGB override；空 change-set 与 Track cache 复用；Application 139 tests、Persistence 70 tests；10 个测试项目累计 617 tests；Core Release build | 通过，0 warning / 0 error / 0 failure |
+| 2026-08-06 | External SoundFont 两阶段验证与 History | 允许目录/完整 hash、正式 BASSMIDI `FontInit` + 全 sample preload、提交前内容复核；source/effective path 同事务、Undo/Redo/clear/no-op；验证失败/内容竞态/锁冲突零变更；Application 144 tests、BASS 67 tests；10 个测试项目累计 625 tests；Core Release build | 通过，0 warning / 0 error / 0 failure；Embedded 编辑与文件监控仍待后续 |
 
 ## 7. 未解决风险
 
@@ -90,6 +91,6 @@
 - 当前 `.midora` 已支持完整 Event Instrument/Logical Track 对象图、完整性正常的 Embedded SF2，以及 Q-NUI-001 规定的损坏资源结构化修复门；旧格式迁移尚未实现，因此 NUI-08 仍未完成。
 - §12.21 的 Segment checkpoint、dirty range 与 state-hash 收敛模型已替换旧 Track 整片段缓存；当前剩余风险是继续扩大随机 Project 生成器和 §7～§12 全语义组合矩阵，而不是已知的增量架构缺口。
 - Project MIDI Export Settings 仍是空 v1 占位；schema v2 与默认值等待 Q-NUI-003，不能回写修改已发布 v1。
-- 十二批不分配稳定 ID 的结构/设置/音乐内容编辑命令已接入统一 History；Project Metadata/Track Color 与安全的 Logical Parameter Definition/Mapping/Target Settings 属性已覆盖，需要迁移既有 Lane 的 Definition 类型/Enum 结构/range 分支等待 Q-NUI-009，创建/复制/分割类命令等待 Q-NUI-005。
+- 十三批不分配稳定 ID 的结构/设置/音乐内容编辑命令已接入统一 History；Project Metadata/Track Color、External SoundFont 与安全的 Logical Parameter Definition/Mapping/Target Settings 属性已覆盖，需要迁移既有 Lane 的 Definition 类型/Enum 结构/range 分支等待 Q-NUI-009，Embedded SoundFont 与创建/复制/分割类命令等待 Q-NUI-005。
 - Audio Render 的 canonical/输出事务、正式 Native AOT 文件链、应用级单音频任务锁和开始渲染前自动 Stop 已完成；实时硬件压力与集中人工试听仍属于 NUI-09/NUI-11。
 - 实际 BASS DLL、物理 WASAPI 设备、设备移除和人耳听音不能只凭无设备 CI 结论替代。

@@ -348,3 +348,11 @@ Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复�
 第十一批命令覆盖不需要批量迁移既有 Lane 的 Logical Parameter Definition 属性、引用保留删除、Logical Parameter Mapping 属性和事件参数 Target Settings。display range 只影响展示，仍进入 History/Modified，但从 Track source fingerprint 排除并使用空 change-set；名称可能影响 MappingContext，default/legal range、Mapping source/target/order/target policy 均失效相关 Instrument。相同 SubVoice/目标的 Logical Parameter Mapping 在显式策略编辑时作为一个共享组同步，Undo 为每个对象恢复原值；移动 Mapping 到现有组采用该组既有一致策略，损坏且不一致的组先拒绝普通移动。删除 Definition 或 Mapping 保留全部外部断裂 ID、内部 Chain/Step 与稳定身份。Compiler 防御未知 Parameter Type 及越界 Enum item。Q-NUI-009 决定前，不实现类型、Enum 模式/数值/顺序/删除或任何需要改写全 Project Lane Point 的 Definition 变更。
 
 第十二批命令覆盖 Project Metadata 六个用户字段与 Logical Track 颜色覆盖。Metadata 作为一个原子快照更新，项目名称/用户版本按 256 scalar 单行文本，作者/原曲/版权按 4,096 scalar 单行文本，备注按 65,536 scalar 描述文本校验；所有字段保留原 Unicode scalar 序列和空白，不执行 normalization 或 Trim。创建时间、修改时间和工程总耗时不进入可编辑快照，活动单调计时 owner 不被打断。Track color override 只保存 nullable opaque sRGB。两者均进入 History/Modified 和 `.midora`，但不属于音乐语义，使用空 change-set、复用 Track 编译缓存并保持 canonical fingerprint。
+
+## 22. ADR-CORE-020（已接受，Q-NUI-005 局部暂停）：SoundFont 选择的两阶段验证与可撤销运行时切换
+
+决定：不分配稳定 ID 的 External SF2 选择、替换、重新绑定和取消选择统一进入 `ProjectDocumentSession`。选择先在 Project 事务外完成允许目录解析、完整 SHA-256/大小计算，再经注入的 `ISoundFontLoadabilityValidator` 使用正式固定版本 BASS/BASSMIDI 执行 `BASS_MIDI_FontInit`、全 preset/sample `BASS_MIDI_FontLoad` 和受检释放；随后重新解析并完整复核内容身份，只有仍与准备结果完全一致时才提交。提交命令在一个 Project Edit Lock/History 事务内同步替换可持久化 SoundFont union 和 `ProjectCompilationSession.EffectiveSoundFontPath`；Undo/Redo 同步恢复两者。取消选择使用同一命令把两者清空。
+
+SoundFont 不属于 canonical MIDI 语义，命令使用空 `ProjectChangeSet`；Incremental Compile 复用 Track，并清除会话 sample-domain cache。不存在、不可读、路径越界、加载失败、取消、验证期间内容变化或最终锁冲突都必须在建立 History entry 前失败，Project 引用、运行时路径、Modified 和 canonical 保持原状。相同引用与相同解析路径的重复选择以及已清空状态的重复取消是无操作。
+
+Requirement trace：输入为当前 `.midora` 绝对路径、用户选择的绝对 SF2 路径、当前 Project/History、正式后端加载验证器和取消令牌；正式输出为 External 引用（相对路径、原文件名、SHA-256、大小）、本会话有效绝对路径及可撤销 History entry，或零源变更的结构化失败。边界是仅允许 Project 根或直属 `soundfonts/`、逐分量精确/唯一 ignore-case 解析、完整字节身份复核、Project Edit Lock 排他及 source/runtime 同步 Undo。绝对路径、BASS error、验证中间状态和 native handle 只属于运行时，不进入 `.midora` 或 canonical。明确非目标是文件监控/验证缓存、WPF 组合，以及 Q-NUI-005 决定前会分配 Embedded resource ID 的选择/替换；Embedded 旧/新资源租约跨 Undo 分支的所有权也必须在该分支实现时一并闭合。

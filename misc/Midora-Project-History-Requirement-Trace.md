@@ -1,6 +1,6 @@
 # Midora Project History、Modified 与 Undo/Redo Requirement Trace
 
-状态：基础框架与十二批不分配稳定 ID 的领域对象命令已实现；分配稳定 ID 的创建/复制/分割命令等待 Q-NUI-005
+状态：基础框架与十三批不分配稳定 ID 的领域对象命令已实现；分配稳定 ID 的创建/复制/分割命令等待 Q-NUI-005
 
 日期：2026-08-06
 
@@ -46,6 +46,7 @@
 - Mapping Chain / Step：事件参数与 Logical Parameter Mapping 的既有 Chain 均按稳定 Chain ID 定位；Chain/Step Enable、Step 全配置更新、Step 手动排序/删除和整链删除进入 History。Step 更新只阻止未定义枚举、NaN/Infinity 与空稳定引用 ID，允许倒置范围、空范围和断裂/未完成引用进入 Project，再由活动 canonical 路径诊断；禁用 Chain/Step 中的错误配置不诊断。当前 v1 领域/持久化为每个目标永久保存一个 Chain 对象，因此删除链使用“清空全部 Step、把空链 sentinel 复位为 enabled”的等价表示，保留 Chain ID 与目标 Target Settings；Undo 恢复此前 Chain enabled、相同 Step 对象、引用和顺序。Compiler 测试逐项覆盖全部内置 Source/Operation、Remap 输入越界和 DivideByZero policy；Q-NUI-008 待确认期间，非空链删除要求显式确认。
 - Logical Parameter Definition / Mapping：Definition 的名称、合法 default、display range、不使现有 Lane/Enum 失效的 legal range、Enum item 名称和引用保留删除，以及 Mapping 的 source/target/共享 Target Settings、手动顺序和确认删除均已进入 History。display range 作为纯展示字段不失效已编译 Track；Definition 名称仍可能进入 C# Mapping Context，因此失效相关 Instrument。Mapping 移入已有同 SubVoice/target 组时采用该组已共享的整数目标策略；显式修改策略会原子同步该组全部 Mapping，Undo 恢复各对象原值。事件参数 Number/Value/Secondary Value 的 Rounding/Overflow 也按事件类型和组件存在性校验后可编辑，Note number 继续强制最终 Overflow=Fail。Compiler 额外拒绝未知 Logical Parameter Type 和超出 legal range 的 Enum item。Q-NUI-009 决定前，类型/Enum 结构变更及会使既有 Lane 失效的范围缩窄保持暂停，不隐式迁移源数据。
 - Project Metadata / Track 显示颜色：六个用户可编辑 Metadata 字段以整组原子命令进入 History，严格保留原输入，不 Trim、不 normalization，并按持久化契约执行 256/4,096/65,536 Unicode scalar 与控制字符校验；Created/Modified UTC 和工程总耗时只读字段不在命令快照中。Logical Track 颜色覆盖可设置或清除，Undo 恢复原 nullable opaque sRGB 值。两者均保存进 `.midora`、标记 Modified，但使用空 change-set 并复用已编译 Track，不影响 canonical fingerprint。
+- Project SoundFont（不分配 ID 分支）：External 选择/替换/重新绑定先完成路径、完整 hash/size、正式 BASSMIDI loadability 与提交前内容复核，再把 source reference 和会话 effective path 作为同一 History 命令提交；取消选择同步清空二者。加载失败、验证期间文件变化和锁冲突均零变更；Undo/Redo 同步恢复 source/runtime，重复选择/清空无操作。Embedded 导入仍因 resource ID 分配与跨 History 资源租约所有权等待 Q-NUI-005。
 - 以上命令 Prepare 不修改 Project；删除、移动、连接和撤销复用原对象/稳定 ID，不回滚或推进 `nextStableId`。每项结构编辑测试均以 Full Compile 为 oracle 核对当前 Incremental Compile 的语义和形式等价。
 - Logical Track 名称可空/重复；Event Instrument 与 Folder 名称必填且分别在规定范围内唯一。所有上述名称先拒绝非法 Unicode、换行/NUL/控制字符，再 Trim，并统一执行 schema 的 256 Unicode scalar 上限，不静默截断。
 

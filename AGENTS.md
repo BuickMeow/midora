@@ -79,6 +79,7 @@ Project Source Data
 - 编译器：golden tests、同输入重复编译、乱序集合输入、Full/Incremental 等价、范围起点状态恢复、同 tick 排序、资源峰值和来源追踪。
 - C# Mapping ABI：v1 公共契约快照、固定 Roslyn/C# profile、.NET 10 核心引用允许、Midora/第三方引用拒绝、ABI/源码缓存键、当前修订失效、collectible ALC 卸载和 Project 关闭释放。
 - MIDI：0/127 边界、真实 NoteOff velocity 0、Bank/Program、RPN/NRPN、Pitch Bend Range、同音高重叠、Segment/End Marker 精确截断。
+- 输出命名：MIDI/音频公共合法化 golden、非法字符、保留设备名、尾部空格/句点、控制与不可见字符、Unicode 规范化别名、长度预算、大小写冲突、同批唯一性、最终路径预览冻结和覆盖授权分离。
 - Native interop：结构布局、calling convention、32/64 位宽度、错误返回、版本不匹配、重复 init/free、handle/delegate 泄漏。
 - 实时音频：不同 callback block size、短读、underrun/Buffering、设备移除/默认设备变化、连续 start/stop/reset、无回调线程异常。
 - 音频语义：多 Port 求和、Channel 10 melodic、CC91/CC93 被完整拒绝、NOFX、SF2 更换、设备采样率变化、Master/Limiter 顺序、实时与离线共享语义。
@@ -102,3 +103,4 @@ Project Source Data
 12. 工程总耗时按 Project 成功打开后的完整会话时间累计，包括空闲、最小化、失焦、Buffering、MIDI 导出和音频渲染；系统睡眠 / 休眠及关闭流程暂停。会话使用单调时钟；自动累计不单独标记 Modified，不进入 Undo / Redo，不影响编译或 canonical fingerprint。
 13. 初版 SMF Type 1 兼容档固定：Tempo 以十进制 `60,000,000 / BPM` 后只执行一次 `AwayFromZero`，24-bit 越界即失败；Time Signature 固定 `cc=24`、`bb=8`；Bank 顺序固定 CC0→CC32→Program；事件 Track 只写 Track Name 与 MIDI Port，不写 Device/Program Name；文本 Meta 严格 UTF-8；禁用 Running Status；导出器不得在 canonical 之外追加 Channel 清理；所有 Track 在统一 `endTick` 写 EOT。
 14. MIDI 导出的 Channel 10 melodic 初始化固定为每个实际相关事件 Track 在相对 tick 0、MIDI Port Meta 后、canonical 事件前各写一次 Roland GS Normal Part `F0 41 10 42 12 40 10 15 00 1B F7` 与 Yamaha XG Normal Part `F0 43 10 4C 08 09 07 00 F7`，顺序 GS→XG。不得发送任何 GS/XG/GM Reset，不得改变 canonical Bank/Program；不使用 Channel 10 的事件 Track 和 Conductor 不写。
+15. MIDI 导出和音频文件渲染必须共用确定性的 Windows 安全文件名合法化与冲突检测服务；任务开始前预览并冻结全部最终路径。合法化不修改 Project 源名称、不进入 Undo / Redo；已有目标仍须明确覆盖授权。精确替换、Unicode、长度、冲突后缀和最终模板尚未确认时不得隐藏选择。

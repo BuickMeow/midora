@@ -95,6 +95,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 20. **已确认：20A（2026-08-06）**。从 Project 成功新建 / 打开到开始关闭，以单调时钟累计完整打开会话；空闲、最小化、失焦、模态 UI、保存、编译、播放、预览、Buffering、MIDI 导出和音频渲染全阶段均计入。系统睡眠 / 休眠与关闭流程暂停，关闭取消后只恢复后续累计。自动累计不进入 Undo / Redo、不单独标记 Modified、不更新 metadata 修改时间、不影响 canonical。代码已建立 Project Metadata、单 owner 计时会话、组合 pause reason、metadata v1 codec/schema 和确定性测试；WPF 生命周期接线与完整保存事务仍未实现。
 21. **已确认：21A（2026-08-06）**。初版 SMF Type 1 采用兼容优先固定档：Tempo 为十进制 `60,000,000 / BPM` 后一次 `AwayFromZero`，结果限 `1..0xFFFFFF`；Time Signature 固定 `cc=24`、`bb=8`；Bank 顺序 CC0→CC32→Program；事件 Track 只写 Track Name 与 MIDI Port，不写 Device/Program Name；文本 Meta 严格 UTF-8；每个 Channel Event 显式 status，不用 Running Status；不在 canonical 外追加 Channel 清理；所有 Track EOT 对齐统一 endTick。代码已实现低层 writer/validator、整曲 canonical adapter、结构自校验与 golden/一致性测试。Track 可见字符串和文件命名模板不由编码器隐藏决定。
 22. **已确认：22A（2026-08-06）**。每个实际包含 Channel 10 canonical 事件的事件 Track 在相对 tick 0、MIDI Port Meta 后、canonical Channel Event 前固定各写一次 Roland GS Normal Part 与 Yamaha XG Normal Part SysEx，顺序 GS→XG，使用固定默认 Device ID / Device Number。不发送 GS Reset、XG System On/Reset 或 GM Reset，不改写 canonical Bank/Program；不相关 Track 与 Conductor 不写。接收方忽略 vendor SysEx 或设备编号不同时仍可能按鼓通道处理，Readme 必须说明。代码已锁定精确 payload、顺序、条件写入和多 Port 分布。
-23. MIDI/音频输出文件名规则：在 SRS 已固定“不自动替换非法字符、不自动缩短路径、覆盖需确认”的前提下，仍需决定最终 Track Name/文件名模板、重复名称序号格式和固定 Readme 名称；不得重新询问已经闭合的非法字符/路径失败语义。
+23. **已确认：23A（2026-08-06）**。纠正本审计旧记录：原 SRS 并未统一命名策略，14.17 要求 MIDI 保留非法字符并失败，15.10 则要求音频自动合法化。现已统一为 MIDI/音频共用确定性的 Windows 安全文件名合法化与冲突检测服务，任务开始前必须预览并冻结全部最终路径；合法化不回写 Project 源名称，已有目标仍需明确覆盖授权。现有源码尚无批量命名器，底层 WAV writer 只消费调用方冻结的目标路径，因此没有旧算法需要迁移。
+23.1. 公共合法化算法：仍需固定非法/不可见字符替换、Windows 保留设备名处理、Unicode 规范化形式、文件名部分长度预算、大小写/Unicode 别名冲突后缀；不得在代码中先写隐藏默认值。
 
 发布前另有一项非技术选择：必须由产品所有者确认并取得适用于实际产品、平台和分发方式的 BASS 商业许可证。技术测试通过不等于具备分发授权。

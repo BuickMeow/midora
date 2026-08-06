@@ -201,3 +201,13 @@ Requirement trace：
 22A 已固定 Channel 10 melodic 兼容档。每个实际包含 Channel 10 canonical 事件的事件 Track 在相对 tick 0、Track Name 与 MIDI Port Meta 之后、全部 canonical Channel Event 之前，分别写一次 Roland GS Normal Part `F0 41 10 42 12 40 10 15 00 1B F7` 和 Yamaha XG Normal Part `F0 43 10 4C 08 09 07 00 F7`，顺序为 GS→XG。编码器不得发送 GS Reset、XG System On/Reset、GM Reset，不得替换或补写 canonical Bank/Program；不相关事件 Track 与 Conductor 不写这些 SysEx。
 
 这些消息采用厂商文档中的默认 Device ID / Device Number。接收方不识别 vendor SysEx 或使用不同设备编号时仍可能把 Channel 10 当鼓通道，Readme 必须说明该兼容边界。该选择依据 [Roland M-GS64 MIDI Implementation](https://cdn.roland.com/assets/media/pdf/M-GS64_OM.pdf) 的 `40 1x 15 USE FOR RHYTHM PART` 和 [Yamaha XG MIDI Data Format](https://uk.yamaha.com/en/download/files/2090960) 的 `08 nn 07 PART MODE`；外部资料用于确认 wire 定义，不替代 SRS。
+
+## 13. ADR-CORE-011（已接受，23A）：共享输出文件名合法化边界
+
+决定：MIDI 导出和音频文件渲染不得各自实现不同的文件名策略。两个工作流共用一个确定性的 Windows 安全文件名合法化与冲突检测服务；它接收原始候选名称、扩展名预算和同一任务的候选集合，输出可预览、可诊断、可冻结的完整最终目标列表。任务开始后，编码器、渲染器和文件写入器不得再次解释或改变目标名称。
+
+合法化只属于 Preparing / Review 输出规划，不修改 Project、Logical Track 或其他源名称，不进入 Undo / Redo，也不影响 canonical、MIDI 字节或音频样本。已有目标的覆盖授权仍由任务工作流在开始前一次性取得；合法化不能转化为静默覆盖权限。
+
+Requirement trace：输入是源名称、导出模式、扩展名、父目录和同批候选集合；正式输出是合法化且内部唯一的冻结目标列表。边界包括 Windows 非法字符、保留设备名、尾部空格/句点、不可见字符、文件名部分长度、大小写和 Unicode 别名冲突。失败条件是公共算法无法形成唯一、合法、可表示的完整目标，或合法化后完整路径仍不可用；诊断归属文件系统/输出规划。持久化只允许保存 SRS 明确允许的有限命名偏好，不保存最终路径或合法化结果。明确非目标是修改源名称、基于父目录临时改变算法、运行中重命名、自动授权覆盖或把命名并入 canonical 内容。
+
+23A 只固定共享策略和阶段边界。替换字符、Unicode 规范化形式、文件名部分上限、冲突后缀以及最终 MIDI Track Name/文件/Readme 模板仍会影响用户工作流，必须由后续决定明确后才能实现公共服务；不得先写入隐藏默认值。

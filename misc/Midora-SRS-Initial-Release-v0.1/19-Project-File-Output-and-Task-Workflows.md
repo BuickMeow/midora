@@ -400,6 +400,7 @@ Compact 无法保证等价时导出失败，不自动切换 Preserve。
 输出路径是一次性参数，不保存进 Project。
 支持 Readme，默认开启。Readme 失败时整体导出失败。
 覆盖授权在任务开始前一次性完成，不逐文件循环询问。
+MIDI 导出与音频渲染共用同一确定性安全文件名合法化服务。Review 必须显示合法化后的全部最终路径、内部重复目标、现有文件冲突和所需覆盖授权；源名称不得被回写。
 ### 19.5.7 Warning 策略
 用户可以配置 Warning 阻止导出，但诊断严重级别仍是 Warning。
 ### 19.5.8 Project Defaults
@@ -580,6 +581,7 @@ Partially Ready
 Blocked
 ```
 不做磁盘空间预检查。
+必须在 Start 前显示经公共文件名合法化和冲突检测后的全部最终 WAV 路径；不得只显示原始 Track 名称或模板。
 必须在创建任何临时输出前，按冻结的采样率、范围、最终 frame 数和 RIFF/WAVE 结构精确检查每个计划文件的 RIFF 大小上限。任一目标超过上限时，整个任务为 Blocked；不拆分、不回退 RF64、不自动降低采样率。
 Per Logical Track 模式可以在开始前显示哪些 Track 当前可准备、哪些存在已知问题，但正式任务仍按独立 Track 语义执行。
 ### 19.7.8 Project Defaults

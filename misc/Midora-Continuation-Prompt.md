@@ -24,22 +24,10 @@ D:\Programing\midora
 
 二、Git 与工作树基线
 
-- 文档基线已提交并推送到 `origin/main`：
-  - commit：`996109377adeff010e79860fcd9558affa6e2215`
-  - subject：`docs(srs): 更新音频后端与输出约束`
-- 该提交只包含 `AGENTS.md` 和 `misc/` 文档。
-- 当前 `src/` 下仍有本次文档工作开始前就存在的未提交修改和删除项。它们属于用户已有工作，不属于上述文档提交；在明确审阅其内容和归属前不得丢弃、覆盖或自动纳入其他提交。
-- 已知未提交路径如下，但仍应以新聊天开始时的实际 `git status` 为准：
-  - `src/midora-audio-device/Midora.AudioDevice.BassWasapi.Tests.Console/Program.cs`
-  - `src/midora-audio-device/Midora.AudioDevice.BassWasapi/Internals/BassWasapiOutputDevice.cs`
-  - `src/midora-audio-device/Midora.AudioDevice/IAudioRenderSource.cs`
-  - `src/midora-audio/Midora.Audio.Bass.Tests.Console/Program.cs`
-  - `src/midora-audio/Midora.Audio.Bass/Internals/BassMidiPort.cs`
-  - `src/midora-audio/Midora.Audio/IMidiPort.cs`
-  - `src/midora-audio/Midora.Audio/Midora.Audio.csproj`
-  - 删除：`src/midora-logical/Midora.Logical/EventInstrument.cs`
-  - 删除：`src/midora-logical/Midora.Logical/Midora.Logical.csproj`
-  - 删除：`src/midora-logical/midora-logical.slnx`
+- 不在续接提示中硬编码某个历史 commit 或历史未提交路径；这些信息会随每次垂直切片过时。
+- 以新聊天开始时的 `git status --short --branch`、`git log -1 --oneline` 和实际 diff 为唯一当前 Git 事实。
+- `main` 通常在每项已确认决定落实并通过回归后推送到 `origin/main`；若实际状态不一致，必须先查明差异归属，不得假设可以丢弃。
+- 工作树中的任何现有修改都视为用户改动，除非能从当前任务和提交历史明确证明属于本轮；不得 reset、checkout、覆盖或顺手纳入无关提交。
 
 三、已确认的需求基线
 
@@ -72,13 +60,14 @@ D:\Programing\midora
 20. 工程总耗时从 Project 成功新建 / 打开到开始关闭使用单调时钟累计；空闲、最小化、失焦、Buffering、MIDI 导出和音频渲染均计入，系统睡眠 / 休眠及关闭流程暂停。自动累计不单独标记 Modified、不进入 Undo / Redo、不影响 canonical。
 21. SMF Type 1 兼容档固定为：Tempo 十进制 `60,000,000 / BPM` 后一次 `AwayFromZero`；Time Signature `cc=24` / `bb=8`；CC0→CC32→Program；事件 Track 写 Track Name + MIDI Port，文本 Meta 严格 UTF-8，不写 Device/Program Name；禁用 Running Status；canonical 外不追加 Channel 清理；所有 Track EOT 对齐统一 endTick。
 22. MIDI 导出的 Channel 10 melodic 初始化固定为每个实际相关事件 Track 在相对 tick 0、Port Meta 后、canonical 事件前按 GS→XG 各写一次固定 Normal Part SysEx；不发送 GS/XG/GM Reset，不改变 canonical Bank/Program。不识别 vendor 消息或使用不同设备编号的接收方仍可能按鼓通道处理，Readme 必须说明。
+23. MIDI 导出与音频文件渲染共用确定性的 Windows 安全文件名合法化和冲突检测服务；任务开始前预览并冻结全部最终路径。合法化不修改 Project 源名称，不进入 Undo / Redo；已有目标仍须明确覆盖授权。精确替换、Unicode、长度、冲突后缀和最终模板仍待后续决定。
 
 四、仍需 ADR 或实测决定的事项
 
 这些不是当前 SRS 冲突，不能静默写成实现默认值：
 
 - BASS 商业分发许可证与第三方 notices；技术版本、SHA-256 和升级回归策略已经固定，不得与授权问题混为一项；
-- MIDI/音频输出文件最终命名模板。
+- MIDI/音频公共文件名合法化的精确算法，以及最终 Track Name/文件/Readme 命名模板；共享合法化边界已经由 23A 固定，不得恢复为 MIDI/音频两套策略；
 
 五、当前代码定位
 

@@ -1,6 +1,6 @@
 # Midora 初版实施路线图
 
-文档修订日期：2026-08-05  
+文档修订日期：2026-08-06
 性质：需求理解、现状审阅和实施建议；不是 SRS 的替代品。
 
 ## 1. 审阅范围
@@ -50,6 +50,7 @@ flowchart LR
 - 输出链：所有实际 Port 先混合为 stereo，再经过 Playback Master Volume（默认 -0.1 dB）和 Limiter，然后进入设备或文件。
 - MIDI 导出：SMF Type 1，使用 Project TPQ；以 canonical result 为唯一内容来源；真实 NoteOff velocity 0；支持整曲、按 Logical Track、按 Port。
 - 音频渲染：Whole Mix 或 Per Logical Track；普通 RIFF/WAVE、stereo、interleaved IEEE float32 little-endian；任务采样率允许 8000～192000 Hz 的任意整数，默认 48000 Hz。渲染使用独立文件专用 `OutputDevice` 抽象，不依赖 WASAPI 或物理设备，并采用分块流式、事务发布和强制最终 Limiter。Preparing 必须精确预检 RIFF 可表示大小，任何目标超限都以 Error 阻止整个任务，不自动拆分、不回退 RF64、不降低采样率。
+- 输出命名：MIDI 与音频共用确定性的 Windows 安全文件名合法化和冲突检测；Review 预览并冻结全部最终路径，合法化不回写源名称，覆盖仍需明确授权。精确合法化算法和最终模板尚待后续决定。
 - 持久化：`.midora` 是固定结构 ZIP，轻数据 JSON、重对象 protobuf；只保存源数据；严格 schema/version；确定性序列化；Save 采用同目录临时文件、重开校验和原子替换。
 - UI：单 WPF 主窗口；Project/工作区/Inspector/Diagnostics/Tasks/Status 分区；界面只操作正式模型，不重建编译语义。
 
@@ -237,7 +238,7 @@ flowchart TD
 
 ### 阶段 5：`.midora` 持久化
 
-当前进度：18A/18.1A 已冻结 v1 common/manifest 的 JSON/protobuf 工具链、基础类型、严格字段策略、descriptor/golden 基线和 manifest codec；19A 已冻结 SoundFont External/Embedded 领域引用和 soundfont-settings v1，并实现相对路径解析与流式 SHA-256 基础；20A 已冻结 Project Metadata、metadata v1 和单调打开会话累计语义。其余结构性文件 schema、ZIP、迁移、内嵌资源复制及保存事务仍未实现；受决定 21–22 影响的字段不得提前以临时默认值发布。
+当前进度：18A/18.1A 已冻结 v1 common/manifest 的 JSON/protobuf 工具链、基础类型、严格字段策略、descriptor/golden 基线和 manifest codec；19A 已冻结 SoundFont External/Embedded 领域引用和 soundfont-settings v1，并实现相对路径解析与流式 SHA-256 基础；20A 已冻结 Project Metadata、metadata v1 和单调打开会话累计语义。23A 已冻结 MIDI/音频共享文件名合法化边界，但精确算法和模板尚未决定。其余结构性文件 schema、ZIP、迁移、内嵌资源复制及保存事务仍未实现；不得把后续未确认的输出设置以临时默认值发布。
 
 工作：
 

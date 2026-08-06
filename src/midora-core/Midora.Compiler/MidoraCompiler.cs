@@ -670,9 +670,10 @@ public sealed class MidoraCompiler : IDisposable
                     continue;
                 }
 
-                long projectStart = checked(segment.ProjectStartTick + note.StartTick - segment.ContentOffsetTick);
+                long projectStart = checked(
+                    segment.ProjectStartTick + (note.StartTick - segment.ContentOffsetTick));
                 long segmentEnd = checked(segment.ProjectStartTick + segment.LengthTicks);
-                long gateEnd = Math.Min(checked(projectStart + note.LengthTicks), segmentEnd);
+                long gateEnd = AddDurationClamped(projectStart, note.LengthTicks, segmentEnd);
                 Dictionary<MidoraId, double> parameterValues = EvaluateParameters(definitions, lanes, note.StartTick);
                 int instanceSourceOrder = sourceOrder++;
                 activePolicyInstances.RemoveAll(value => value.Instance.EndTick <= projectStart);
@@ -724,6 +725,18 @@ public sealed class MidoraCompiler : IDisposable
         return result.ToArray();
     }
 
+    private static long AddDurationClamped(long startTick, long duration, long endTick) =>
+        startTick + Math.Min(duration, endTick - startTick);
+
+    private static long AddDurationsClamped(long left, long right, long maximum)
+    {
+        if (left >= maximum || right >= maximum - left)
+        {
+            return maximum;
+        }
+        return left + right;
+    }
+
     private RawInstance ExpandInstance(
         MidoraProject project,
         LogicalTrack track,
@@ -749,29 +762,40 @@ public sealed class MidoraCompiler : IDisposable
             ? instrument.ShortLifecycle != ShortNoteLifecycle.OneShot
             : instrument.LongLifecycle != LongNoteLifecycle.EndAtTemplate;
         long? releaseStartLocalTick = releaseTriggered ? gateLength : null;
+        long maximumDuration = segmentEnd - projectStart;
         long naturalDuration;
         if (shortNote)
         {
             naturalDuration = instrument.ShortLifecycle switch
             {
-                ShortNoteLifecycle.CutAtNoteOff => checked(gateLength + release),
-                ShortNoteLifecycle.OneShot => instrument.TemplateLengthTicks,
-                ShortNoteLifecycle.Tail => Math.Max(instrument.TemplateLengthTicks, checked(gateLength + release)),
+                ShortNoteLifecycle.CutAtNoteOff => AddDurationsClamped(
+                    gateLength,
+                    release,
+                    maximumDuration),
+                ShortNoteLifecycle.OneShot => Math.Min(
+                    instrument.TemplateLengthTicks,
+                    maximumDuration),
+                ShortNoteLifecycle.Tail => Math.Max(
+                    Math.Min(instrument.TemplateLengthTicks, maximumDuration),
+                    AddDurationsClamped(gateLength, release, maximumDuration)),
                 _ => gateLength
             };
         }
         else if (instrument.LongLifecycle == LongNoteLifecycle.EndAtTemplate)
         {
-            naturalDuration = instrument.TemplateLengthTicks;
+            naturalDuration = Math.Min(instrument.TemplateLengthTicks, maximumDuration);
         }
         else
         {
             long loopTailLength = instrument.LoopEndTick.HasValue
                 ? instrument.TemplateLengthTicks - instrument.LoopEndTick.Value
                 : 0;
-            naturalDuration = checked(gateLength + Math.Max(release, loopTailLength));
+            naturalDuration = AddDurationsClamped(
+                gateLength,
+                Math.Max(release, loopTailLength),
+                maximumDuration);
         }
-        long actualEnd = Math.Min(checked(projectStart + naturalDuration), segmentEnd);
+        long actualEnd = projectStart + naturalDuration;
         if (actualEnd < projectStart)
         {
             actualEnd = projectStart;
@@ -800,7 +824,11 @@ public sealed class MidoraCompiler : IDisposable
             {
                 foreach (EventOccurrence occurrence in EnumerateOccurrences(instrument, templateEvent.Tick, gateLength, shortNote))
                 {
-                    long tick = checked(projectStart + occurrence.LocalTick);
+                    if (occurrence.LocalTick >= actualEnd - projectStart)
+                    {
+                        continue;
+                    }
+                    long tick = projectStart + occurrence.LocalTick;
                     bool afterGate = tick >= gateEnd;
                     if (tick >= actualEnd
                         || (shortNote && instrument.ShortLifecycle == ShortNoteLifecycle.CutAtNoteOff && afterGate)
@@ -809,7 +837,9 @@ public sealed class MidoraCompiler : IDisposable
                         continue;
                     }
                     Dictionary<MidoraId, double> parametersAtTick = EvaluateParameters(
-                        definitions, lanes, checked(segment.ContentOffsetTick + tick - segment.ProjectStartTick));
+                        definitions,
+                        lanes,
+                        checked(segment.ContentOffsetTick + (tick - segment.ProjectStartTick)));
                     Dictionary<MidoraId, double> envelopesAtTick = EvaluateEnvelopes(
                         instrument, occurrence.LocalTick, releaseStartLocalTick, usedEnvelopeIds);
                     MappingContextV1 context = new(
@@ -821,7 +851,8 @@ public sealed class MidoraCompiler : IDisposable
                         EffectiveRootNote = root,
                         CurrentEventId = ToMappingId(templateEvent.Id),
                         CurrentEventKind = ToMappingEventKind(templateEvent.Kind),
-                        SegmentLocalTick = checked(segment.ContentOffsetTick + tick - segment.ProjectStartTick),
+                        SegmentLocalTick = checked(
+                            segment.ContentOffsetTick + (tick - segment.ProjectStartTick)),
                         TrackId = ToMappingId(track.Id),
                         SegmentId = ToMappingId(segment.Id),
                         SubVoiceId = ToMappingId(voice.Id),
@@ -948,7 +979,7 @@ public sealed class MidoraCompiler : IDisposable
                     ? numberSource
                     : valueSource;
                 output.Add(RawMidiEvent.NoteOn(tick, number, eventValue, sequence++, noteSource));
-                long naturalOffTick = checked(tick + value.LengthTicks);
+                long naturalOffTick = AddDurationClamped(tick, value.LengthTicks, actualEnd);
                 long offTick = releaseTriggered && naturalOffTick > gateEnd && actualEnd > gateEnd
                     ? actualEnd
                     : Math.Min(naturalOffTick, actualEnd);
@@ -1059,14 +1090,27 @@ public sealed class MidoraCompiler : IDisposable
         }
         if (eventTick >= loopEnd)
         {
-            yield return new(checked(gateLength + eventTick - loopEnd), eventTick);
+            yield return new(AddDurationsClamped(
+                gateLength,
+                eventTick - loopEnd,
+                long.MaxValue), eventTick);
             yield break;
         }
         long loopLength = loopEnd - loopStart;
         long relative = eventTick - loopStart;
-        for (long iterationStart = loopStart; iterationStart + relative < gateLength; iterationStart = checked(iterationStart + loopLength))
+        for (long iterationStart = loopStart; iterationStart < gateLength;)
         {
-            yield return new(checked(iterationStart + relative), eventTick);
+            long remaining = gateLength - iterationStart;
+            if (relative >= remaining)
+            {
+                yield break;
+            }
+            yield return new(iterationStart + relative, eventTick);
+            if (loopLength >= remaining)
+            {
+                yield break;
+            }
+            iterationStart += loopLength;
         }
     }
 
@@ -1249,7 +1293,8 @@ public sealed class MidoraCompiler : IDisposable
                 {
                     currentRawValue = rawState[rawStateIndex++].Value;
                 }
-                long contentTick = checked(segment.ContentOffsetTick + tick - segment.ProjectStartTick);
+                long contentTick = checked(
+                    segment.ContentOffsetTick + (tick - segment.ProjectStartTick));
                 Dictionary<MidoraId, double> parameters = EvaluateParameters(definitions, lanes, contentTick);
                 Dictionary<MidoraId, double> envelopes = EvaluateEnvelopes(
                     instrument, tick - projectStart, releaseStartLocalTick, usedEnvelopeIds);
@@ -1460,7 +1505,7 @@ public sealed class MidoraCompiler : IDisposable
         }
         if (localTick >= gateLength)
         {
-            return checked(instrument.LoopEndTick.Value + localTick - gateLength);
+            return checked(instrument.LoopEndTick.Value + (localTick - gateLength));
         }
         long loopLength = instrument.LoopEndTick.Value - instrument.LoopStartTick.Value;
         return instrument.LoopStartTick.Value + ((localTick - instrument.LoopStartTick.Value) % loopLength);

@@ -4,12 +4,13 @@ using Midora.Domain;
 
 namespace Midora.Playback;
 
-public sealed class ProjectCompilationSession
+public sealed class ProjectCompilationSession : IDisposable
 {
     private readonly object _sync = new();
     private readonly MidoraCompiler _compiler = new();
     private readonly Dictionary<(long Fingerprint, int SampleRate), MidiRenderPlan> _samplePlans = [];
     private bool _editsLocked;
+    private bool _disposed;
 
     public ProjectCompilationSession(MidoraProject project)
     {
@@ -34,6 +35,7 @@ public sealed class ProjectCompilationSession
         ArgumentNullException.ThrowIfNull(changes);
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (_editsLocked)
             {
                 throw new InvalidOperationException("Project edits are forbidden while audio is Preparing, Playing or Buffering.");
@@ -55,6 +57,7 @@ public sealed class ProjectCompilationSession
         ArgumentNullException.ThrowIfNull(changes);
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (_editsLocked)
             {
                 throw new InvalidOperationException("Compilation after editing is forbidden while audio is active.");
@@ -74,6 +77,7 @@ public sealed class ProjectCompilationSession
     {
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             return _compiler.CompileIncremental(Project, new ProjectChangeSet(), new CompilationRequest
             {
                 Purpose = CompilationPurpose.Playback,
@@ -87,6 +91,7 @@ public sealed class ProjectCompilationSession
     {
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             CanonicalCompiledResult result = LastAttempt;
             if (!result.IsConsumable)
             {
@@ -106,9 +111,28 @@ public sealed class ProjectCompilationSession
     {
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             _samplePlans.Clear();
         }
     }
 
-    internal void SetEditsLocked(bool value) => Volatile.Write(ref _editsLocked, value);
+    public void Dispose()
+    {
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _samplePlans.Clear();
+            _compiler.Dispose();
+            _disposed = true;
+        }
+    }
+
+    internal void SetEditsLocked(bool value)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        Volatile.Write(ref _editsLocked, value);
+    }
 }

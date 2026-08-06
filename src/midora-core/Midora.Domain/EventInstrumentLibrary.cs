@@ -111,7 +111,12 @@ public static class EventInstrumentLibrary
         }
         foreach (CSharpMappingFunction function in source.MappingFunctions)
         {
-            CSharpMappingFunction copy = new(project) { Name = function.Name, Body = function.Body };
+            CSharpMappingFunction copy = new(project)
+            {
+                Name = function.Name,
+                Body = function.Body,
+                AbiVersion = function.AbiVersion
+            };
             copy.DeclaredContextFields.UnionWith(function.DeclaredContextFields);
             functions.Add(function.Id, copy.Id);
             result.MappingFunctions.Add(copy);

@@ -536,6 +536,7 @@ Error
 ```text
 可按既有规则诊断为 Warning。
 ```
+未知 `abiVersion`、ABI v1 函数体不符合固定方法体结构、引用了 ABI v1 未开放的程序集或使用了高于 C# 14 的语法，均按 Mapping Function 编译错误处理。
 ### 12.9.2 运行时异常
 C# Mapping Function 运行时异常：
 ```text
@@ -560,6 +561,10 @@ C# Mapping Function 不允许修改 Project 内容。
 ```
 导致不确定，用户自担风险。
 Debug 可辅助暴露这种问题。
+
+系统自身的 ABI v1 编译必须固定 C# 14、`Microsoft.NETCore.App.Ref 10.0.10`、Mapping v1 契约、编译选项和基于源码 hash 的程序集身份；不得使用 `LanguageVersion.Latest`、运行机器 TPA 枚举、随机程序集名称或缓存历史改变编译结果。
+
+每个 Project 的 Mapping 代码缓存只保留当前源码修订，并通过 collectible AssemblyLoadContext 在修订失效、清缓存或 Project 关闭后请求卸载。该缓存只影响性能，不得改变 Full/Incremental 输出或诊断。
 ### 12.9.5 非法返回值
 C# Mapping Function 返回以下结果时：
 ```text

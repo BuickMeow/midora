@@ -1,4 +1,5 @@
 using Midora.Domain;
+using Midora.Mapping.Contract.V1;
 using Midora.Midi;
 
 namespace Midora.Compiler.Tests;
@@ -362,7 +363,7 @@ public sealed class CompilationTests
             Name = "name-sensitive",
             Body = "return context.EventInstrumentName == \"Renamed\" ? 100 : 20;"
         };
-        function.DeclaredContextFields.Add(nameof(MappingContext.EventInstrumentName));
+        function.DeclaredContextFields.Add(nameof(MappingContextV1.EventInstrumentName));
         fixture.Instrument.MappingFunctions.Add(function);
         TemplateEvent note = TemplateEvent.Note(fixture.Project, 0, 120, 60, 80);
         note.ValueMappings.Add(new ValueMappingStep(fixture.Project)

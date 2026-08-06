@@ -7,6 +7,7 @@
   <Project Path="../midora-audio-device/Midora.AudioDevice.BassWasapi/Midora.AudioDevice.BassWasapi.csproj" />
   <Project Path="../midora-audio/Midora.Audio/Midora.Audio.csproj" />
   <Project Path="../midora-audio/Midora.Audio.Bass/Midora.Audio.Bass.csproj" />
+  <Project Path="Midora.Mapping.Contract.V1/Midora.Mapping.Contract.V1.csproj" />
   <Project Path="Midora.Domain/Midora.Domain.csproj" />
   <Project Path="Midora.Compiler/Midora.Compiler.csproj" />
   <Project Path="Midora.Compiler.Tests/Midora.Compiler.Tests.csproj" />

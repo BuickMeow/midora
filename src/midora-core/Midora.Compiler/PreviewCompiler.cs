@@ -72,7 +72,8 @@ public sealed class PreviewCompiler
         track.Segments.Add(segment);
         context.Tracks.Add(track);
 
-        return new MidoraCompiler().CompileFull(context, new CompilationRequest
+        using MidoraCompiler compiler = new();
+        return compiler.CompileFull(context, new CompilationRequest
         {
             Purpose = CompilationPurpose.EventInstrumentPreview,
             StartTick = 0,
@@ -117,7 +118,8 @@ public sealed class PreviewCompiler
             && sourceSegment.ProjectStartTick > long.MaxValue - sourceSegment.LengthTicks
                 ? long.MaxValue
                 : sourceSegment.ProjectStartTick + sourceSegment.LengthTicks;
-        return new MidoraCompiler().CompileFull(context, new CompilationRequest
+        using MidoraCompiler compiler = new();
+        return compiler.CompileFull(context, new CompilationRequest
         {
             Purpose = CompilationPurpose.SegmentPreview,
             StartTick = sourceSegment.ProjectStartTick,

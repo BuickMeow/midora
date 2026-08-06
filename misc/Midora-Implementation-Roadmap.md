@@ -309,7 +309,7 @@ flowchart TD
 - 在所有正确、确定且资源有界的候选实现中优先时间性能；允许用更多内存换取预计算、缓存和多缓冲，但必须记录上限、所有权与失效条件。
 - “音频线程不产生 GC”的准确工程门是：指定活动阶段内，各参与音频活动的线程不得产生托管堆分配。其他线程触发进程级 GC 是允许的，但仍要通过压力测试证明不会导致不可接受的断音或爆音。
 - 不把设备选择写进 Project；它是 application preference。Playback Master/Limiter 是 Project 设置，但不改变 MIDI canonical content。
-- C# Mapping 初版按 SRS 允许完整任意 C# 且无 sandbox，这是显著安全与确定性风险。实现时必须明确编译版本、引用集合、超时/取消、声明的 context fields 和诊断；不得向用户声称其安全沙箱化。
+- C# Mapping 初版按 17A 固定 ABI v1、Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10`、只读独立契约和 collectible ALC 当前修订缓存。它仍按 SRS 允许自由 C# 且无 sandbox；引用白名单不能被宣传为安全隔离，死循环、进程终止和外部副作用也不由 ALC 阻止。
 
 ## 9. 已确认决定与仍需 ADR 的事项
 
@@ -324,13 +324,14 @@ flowchart TD
 7. 仅音频活动线程在正式活动阶段承担零托管堆分配约束；Preparing、Finalizing 及其他线程/进程可分配。
 8. 只允许一个用户可启动的 UI/Project 应用实例；唯一正式音频拓扑是内部无 UI Native AOT 音频子进程，实时 PCM 不跨进程。
 9. BASS/BASSMIDI/BASSWASAPI 完整版本码与 win-x64 DLL SHA-256 已固定；仓库不提交 DLL，正式发布校验操作员提供的文件，运行时不接受同主版本的其他修订。
+10. C# Mapping 固定 ABI v1、Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10` 和独立只读 Context 契约；每 Project 只缓存当前源码修订并以 collectible ALC 卸载旧项，编译产物不持久化。
 
 ### 9.2 SRS 留给实现设计的选择
 
 以下不是规格错误，但需要版本化 ADR 和测试向量：
 
 - BASSMIDI 性能档已由 14A 固定；仍需在正式硬件矩阵验证 8-point sinc、每 Stream 默认 750 sample voices、preset 预加载和 CPU 属性 0 的峰值、内存、触顶及 underrun 行为。
-- 任意 C# Mapping 的执行隔离、资源限制与信任提示。SRS 明确“无 sandbox”，因此只能诚实管理风险，不能假定输入可信。
+- 任意 C# Mapping 的产品信任提示与故障处置仍需在 UI/工作流实现时落实。SRS 明确“无 sandbox”，ABI v1 的引用白名单和 collectible ALC 只解决兼容与资源生命周期，不隔离死循环、`Environment.FailFast`、反射、文件/网络访问或其他副作用。
 
 ## 10. 下一步建议
 

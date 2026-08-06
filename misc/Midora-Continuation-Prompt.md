@@ -66,13 +66,13 @@ D:\Programing\midora
 14. 所有正式 BASSMIDI stream 必须启用 `BASS_MIDI_NOTEOFF1`。同 Port、Channel、pitch 的重叠 Note 实例按最早开始者优先与逐个 NoteOff 配对；硬边界必须按活动实例数完整释放。该策略不是用户设置。
 15. 所有正式 BASSMIDI stream 固定 8-point sinc 和 CPU 属性 `0`；Preparing 使用 `BASS_MIDI_FontLoad` 预加载计划引用的 presets/fallback。实时与离线每 Stream sample voice 上限分别配置，默认均为 `750`，同一任务所有 Port 使用同一值；完美音频一致性测试以未触顶为前提。
 16. 初版正式 BASS 原生基线固定为 `bass.dll 2.4.18.3 / 0x02041203`、`bassmidi.dll 2.4.16.0 / 0x02041000`、`basswasapi.dll 2.4.4.1 / 0x02040401` 及仓库 manifest 中的 win-x64 SHA-256。仓库不提交 DLL；正式发布只接受操作员提供且匹配 manifest 的文件，运行时校验完整版本码；vendor current/latest 只能生成开发候选。
+17. 初版 C# Mapping 固定 ABI v1：签名为 `double Transform(double value, in MappingContextV1 context)`；独立只读契约，固定 Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10`；每 Project 只缓存当前源码修订并用 collectible ALC 卸载旧项。`.midora` 只保存 ABI 版本、函数体和 Context 声明。该边界不是 sandbox。
 
 四、仍需 ADR 或实测决定的事项
 
 这些不是当前 SRS 冲突，不能静默写成实现默认值：
 
 - BASS 商业分发许可证与第三方 notices；技术版本、SHA-256 和升级回归策略已经固定，不得与授权问题混为一项；
-- C# Mapping Function 的持久兼容 ABI、允许引用、缓存和 AssemblyLoadContext 卸载策略；
 - `.midora` 首版 JSON Schema / protobuf 字段与代码生成兼容基线；
 - Project SoundFont 可移植引用与哈希策略；
 - Project 工程总耗时累计规则；

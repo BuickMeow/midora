@@ -1,4 +1,5 @@
 using Midora.Domain;
+using Midora.Mapping.Contract.V1;
 
 namespace Midora.Compiler;
 
@@ -190,15 +191,11 @@ public static class SemanticValidator
         HashSet<string> functionNames = new(StringComparer.OrdinalIgnoreCase);
         foreach (CSharpMappingFunction function in instrument.MappingFunctions)
         {
-            if (!functions.TryAdd(function.Id, function) || string.IsNullOrWhiteSpace(function.Name)
-                || function.Name != function.Name.Trim() || !functionNames.Add(function.Name))
+            string normalizedName = function.Name?.Trim() ?? string.Empty;
+            if (!functions.TryAdd(function.Id, function) || normalizedName.Length == 0
+                || !functionNames.Add(normalizedName))
             {
                 AddError("MIDORA1273", "Mapping Function ID 与 trim 后名称必须在 Event Instrument 内唯一且非空。", source, diagnostics);
-            }
-            if (string.IsNullOrWhiteSpace(function.Body)
-                || function.DeclaredContextFields.Any(field => !ValidMappingContextFields.Contains(field)))
-            {
-                AddError("MIDORA1274", "Mapping Function 函数体为空或声明了未知 Context 字段。", source, diagnostics);
             }
         }
         bool usesEnvelope = EnumerateMappingSteps(instrument)
@@ -277,6 +274,9 @@ public static class SemanticValidator
             foreach (TemplateEvent templateEvent in subVoice.Events)
             {
                 ValidateTemplateEvent(templateEvent, instrument.TemplateLengthTicks, subSource, diagnostics);
+                IEnumerable<ValueMappingStep> eventSteps = ActiveSteps(templateEvent.NumberMappings)
+                    .Concat(ActiveSteps(templateEvent.ValueMappings))
+                    .Concat(ActiveSteps(templateEvent.SecondaryValueMappings));
                 if (templateEvent.Kind != TemplateEventKind.Note && HasActiveSteps(templateEvent.NumberMappings))
                 {
                     AddError("MIDORA1250", "只有 Note number 是可映射的事件 number；CC/RPN/NRPN number 属于事件身份。",
@@ -296,16 +296,18 @@ public static class SemanticValidator
                         subSource with { SourceEventId = templateEvent.Id }, diagnostics);
                 }
                 if (templateEvent.Kind != TemplateEventKind.Note
-                    && ActiveSteps(templateEvent.NumberMappings).Concat(ActiveSteps(templateEvent.ValueMappings))
-                        .Concat(ActiveSteps(templateEvent.SecondaryValueMappings))
-                        .Any(step => step.Source is MappingSource.TemplateNote or MappingSource.TemplateVelocity))
+                    && eventSteps.Any(step => step.Source is MappingSource.TemplateNote or MappingSource.TemplateVelocity))
                 {
                     AddError("MIDORA1252", "非 Note 事件不得使用 templateNote/templateVelocity Mapping Source。",
                         subSource with { SourceEventId = templateEvent.Id }, diagnostics);
                 }
-                ValidateMappingReferences(
-                    ActiveSteps(templateEvent.NumberMappings).Concat(ActiveSteps(templateEvent.ValueMappings))
-                        .Concat(ActiveSteps(templateEvent.SecondaryValueMappings)),
+                if (templateEvent.Kind != TemplateEventKind.Note
+                    && DeclaresNoteOnlyContext(eventSteps, functions))
+                {
+                    AddError("MIDORA1254", "非 Note 事件的 C# Mapping Function 不得声明 TemplateNote/TemplateVelocity。",
+                        subSource with { SourceEventId = templateEvent.Id }, diagnostics);
+                }
+                ValidateMappingReferences(eventSteps,
                     parameters, envelopeIds, functions, subSource with { SourceEventId = templateEvent.Id }, diagnostics);
                 if (hasLoop && templateEvent.Kind == TemplateEventKind.Note
                     && templateEvent.Tick >= instrument.LoopStartTick
@@ -330,6 +332,17 @@ public static class SemanticValidator
             ValidateTargetSettings(mapping.TargetSettings, source, diagnostics);
             ValidateMappings(mapping.Steps, source, diagnostics);
             ValidateMappingReferences(ActiveSteps(mapping.Steps), parameters, envelopeIds, functions, source, diagnostics);
+            if (ActiveSteps(mapping.Steps)
+                .Any(step => step.Source is MappingSource.TemplateNote or MappingSource.TemplateVelocity))
+            {
+                AddError("MIDORA1252", "Logical Parameter Mapping 不得使用 TemplateNote/TemplateVelocity。",
+                    source with { SubVoiceId = mapping.SubVoiceId }, diagnostics);
+            }
+            if (DeclaresNoteOnlyContext(ActiveSteps(mapping.Steps), functions))
+            {
+                AddError("MIDORA1254", "Logical Parameter C# Mapping Function 不得声明 TemplateNote/TemplateVelocity。",
+                    source with { SubVoiceId = mapping.SubVoiceId }, diagnostics);
+            }
         }
         foreach (IGrouping<(MidoraId SubVoiceId, MidiValueTarget Target), LogicalParameterMapping> group in
             instrument.ParameterMappings.Where(value => value.Steps.IsEnabled)
@@ -778,6 +791,15 @@ public static class SemanticValidator
 
     private static bool HasActiveSteps(MappingChain chain) => chain.IsEnabled && chain.Any(value => value.IsEnabled);
 
+    private static bool DeclaresNoteOnlyContext(
+        IEnumerable<ValueMappingStep> steps,
+        IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions) =>
+        steps.Any(step => step.Operation == MappingOperation.CustomCSharp
+            && step.MappingFunctionId.HasValue
+            && functions.TryGetValue(step.MappingFunctionId.Value, out CSharpMappingFunction? function)
+            && (function.DeclaredContextFields.Contains(nameof(MappingContextV1.TemplateNote))
+                || function.DeclaredContextFields.Contains(nameof(MappingContextV1.TemplateVelocity))));
+
     private static void ValidateMappingReferences(
         IEnumerable<ValueMappingStep> steps,
         IReadOnlyDictionary<MidoraId, LogicalParameterDefinition> parameters,
@@ -813,38 +835,7 @@ public static class SemanticValidator
         MappingSource.TriggerNote or MappingSource.TriggerVelocity or MappingSource.GateLength or MappingSource.PitchDelta;
 
     private static bool IsPerNoteContextField(string field) => field is
-        nameof(MappingContext.TriggerNote) or nameof(MappingContext.TriggerVelocity)
-        or nameof(MappingContext.EffectiveRootNote) or nameof(MappingContext.PitchDelta)
-        or nameof(MappingContext.GateLength) or nameof(MappingContext.SegmentLocalTick);
-
-    private static readonly HashSet<string> ValidMappingContextFields = new(StringComparer.Ordinal)
-    {
-        nameof(MappingContext.CurrentValue),
-        nameof(MappingContext.TriggerNote),
-        nameof(MappingContext.TriggerVelocity),
-        nameof(MappingContext.GateLength),
-        nameof(MappingContext.PitchDelta),
-        nameof(MappingContext.TemplateTick),
-        nameof(MappingContext.ProjectTick),
-        nameof(MappingContext.TemplateNote),
-        nameof(MappingContext.TemplateVelocity),
-        nameof(MappingContext.EffectiveRootNote),
-        nameof(MappingContext.CurrentEventId),
-        nameof(MappingContext.CurrentParameter),
-        nameof(MappingContext.CurrentEventKind),
-        nameof(MappingContext.LogicalParameterId),
-        nameof(MappingContext.LogicalParameterName),
-        nameof(MappingContext.LogicalParameterValue),
-        nameof(MappingContext.TargetOriginalValue),
-        nameof(MappingContext.SegmentLocalTick),
-        nameof(MappingContext.TrackId),
-        nameof(MappingContext.SegmentId),
-        nameof(MappingContext.SubVoiceId),
-        nameof(MappingContext.SubVoiceName),
-        nameof(MappingContext.SubVoiceIndex),
-        nameof(MappingContext.SubVoiceEffectiveRootNote),
-        nameof(MappingContext.EventInstrumentId),
-        nameof(MappingContext.EventInstrumentName),
-        nameof(MappingContext.EventInstrumentRootNote)
-    };
+        nameof(MappingContextV1.TriggerNote) or nameof(MappingContextV1.TriggerVelocity)
+        or nameof(MappingContextV1.EffectiveRootNote) or nameof(MappingContextV1.PitchDelta)
+        or nameof(MappingContextV1.GateLength) or nameof(MappingContextV1.SegmentLocalTick);
 }

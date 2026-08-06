@@ -1,9 +1,13 @@
-using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 using Midora.Domain;
+using Midora.Mapping.Contract.V1;
 
 namespace Midora.Compiler;
 
@@ -18,15 +22,22 @@ internal sealed class MappingException : Exception
     }
 }
 
-internal sealed class MappingEngine
+internal sealed class MappingEngine : IDisposable
 {
     private readonly CSharpMappingCompiler _csharp = new();
+
+    public void SynchronizeFunctions(IEnumerable<CSharpMappingFunction> functions) =>
+        _csharp.SynchronizeFunctions(functions);
+
+    public void ClearCache() => _csharp.Clear();
+
+    public void Dispose() => _csharp.Dispose();
 
     public string? ValidateFunction(CSharpMappingFunction function)
     {
         try
         {
-            _ = _csharp.GetOrCompile(function.Body);
+            _ = _csharp.GetOrCompile(function);
             return null;
         }
         catch (Exception exception) when (exception is MappingException or InvalidOperationException)
@@ -38,7 +49,7 @@ internal sealed class MappingEngine
     public double Apply(
         double value,
         IReadOnlyList<ValueMappingStep> steps,
-        in MappingContext context,
+        in MappingContextV1 context,
         IReadOnlyDictionary<MidoraId, double> parameters,
         IReadOnlyDictionary<MidoraId, double> envelopes,
         IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions,
@@ -107,7 +118,7 @@ internal sealed class MappingEngine
     private double EvaluateCSharp(
         ValueMappingStep step,
         double current,
-        in MappingContext context,
+        in MappingContextV1 context,
         IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions)
     {
         try
@@ -117,7 +128,8 @@ internal sealed class MappingEngine
             {
                 throw new MappingException($"Mapping Function '{step.MappingFunctionId}' is unavailable.");
             }
-            return _csharp.GetOrCompile(function.Body)(current, context);
+            MappingContextV1 invocationContext = context with { CurrentValue = current };
+            return _csharp.GetOrCompile(function)(current, in invocationContext);
         }
         catch (MappingException)
         {
@@ -132,7 +144,7 @@ internal sealed class MappingEngine
     private static double GetSource(
         ValueMappingStep step,
         double current,
-        in MappingContext context,
+        in MappingContextV1 context,
         IReadOnlyDictionary<MidoraId, double> parameters,
         IReadOnlyDictionary<MidoraId, double> envelopes) => step.Source switch
     {
@@ -197,55 +209,304 @@ internal sealed class MappingEngine
     }
 }
 
-internal sealed class CSharpMappingCompiler
+internal sealed class CSharpMappingCompiler : IDisposable
 {
-    internal delegate double MappingDelegate(double value, MappingContext context);
+    internal delegate double MappingDelegate(double value, in MappingContextV1 context);
 
-    private readonly ConcurrentDictionary<string, MappingDelegate> _cache = new(StringComparer.Ordinal);
+    internal const string ReferencePackRelativeDirectory = "mapping-reference-pack/v1";
+    internal const string GeneratedTypeName = "MidoraGeneratedMappingV1";
+    internal static readonly LanguageVersion FixedLanguageVersion = LanguageVersion.CSharp14;
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+    private static readonly HashSet<string> ContextFieldNames = typeof(MappingContextV1)
+        .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+        .Select(property => property.Name)
+        .ToHashSet(StringComparer.Ordinal);
+    private static readonly Lazy<IReadOnlyList<MetadataReference>> References = new(
+        ResolveReferences, LazyThreadSafetyMode.ExecutionAndPublication);
 
-    public MappingDelegate GetOrCompile(string body) => _cache.GetOrAdd(body, Compile);
+    private readonly Dictionary<CacheKey, CacheEntry> _cache = [];
+    private bool _disposed;
 
-    private static MappingDelegate Compile(string body)
+    internal int CompilationCount { get; private set; }
+    internal int CachedEntryCount => _cache.Count;
+
+    public MappingDelegate GetOrCompile(CSharpMappingFunction function)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ValidateDefinition(function);
+        CacheKey key = CreateKey(function.AbiVersion, function.Body);
+        if (!_cache.TryGetValue(key, out CacheEntry? entry))
+        {
+            entry = Compile(key, function.Body);
+            _cache.Add(key, entry);
+            CompilationCount++;
+        }
+        if (entry.Error is not null)
+        {
+            throw new MappingException(entry.Error);
+        }
+        return entry.Delegate!;
+    }
+
+    public void SynchronizeFunctions(IEnumerable<CSharpMappingFunction> functions)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(functions);
+        HashSet<CacheKey> live = [];
+        foreach (CSharpMappingFunction function in functions.Where(function => function is not null))
+        {
+            try
+            {
+                live.Add(CreateKey(function.AbiVersion, function.Body ?? string.Empty));
+            }
+            catch (EncoderFallbackException)
+            {
+                // Invalid source cannot own a compiled cache entry; GetOrCompile emits its diagnostic.
+            }
+        }
+        foreach (CacheKey stale in _cache.Keys.Where(key => !live.Contains(key)).ToArray())
+        {
+            CacheEntry entry = _cache[stale];
+            _cache.Remove(stale);
+            entry.Dispose();
+        }
+    }
+
+    public void Clear()
+    {
+        foreach (CacheEntry entry in _cache.Values)
+        {
+            entry.Dispose();
+        }
+        _cache.Clear();
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        Clear();
+        _disposed = true;
+        GC.SuppressFinalize(this);
+    }
+
+    ~CSharpMappingCompiler()
+    {
+        try
+        {
+            Clear();
+        }
+        catch
+        {
+            // A finalizer is only a leak-prevention fallback and must never escape.
+        }
+    }
+
+    internal WeakReference? GetLoadContextWeakReference(CSharpMappingFunction function)
+    {
+        CacheKey key = CreateKey(function.AbiVersion, function.Body);
+        return _cache.TryGetValue(key, out CacheEntry? entry) ? entry.LoadContextWeakReference : null;
+    }
+
+    private static void ValidateDefinition(CSharpMappingFunction function)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+        if (function.AbiVersion != MappingAbiV1.Version)
+        {
+            throw new MappingException(
+                $"Unsupported C# Mapping ABI version {function.AbiVersion}; expected {MappingAbiV1.Version}.");
+        }
+        if (string.IsNullOrWhiteSpace(function.Body))
+        {
+            throw new MappingException("C# Mapping function body cannot be empty.");
+        }
+        try
+        {
+            _ = StrictUtf8.GetByteCount(function.Body);
+        }
+        catch (EncoderFallbackException exception)
+        {
+            throw new MappingException("C# Mapping function body must be valid Unicode with an exact UTF-8 encoding.", exception);
+        }
+        string[] invalidFields = function.DeclaredContextFields
+            .Where(field => !ContextFieldNames.Contains(field))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (invalidFields.Length != 0)
+        {
+            throw new MappingException(
+                $"C# Mapping declares unknown ABI v1 context fields: {string.Join(", ", invalidFields)}.");
+        }
+    }
+
+    private static CacheKey CreateKey(int abiVersion, string body)
+    {
+        byte[] input = StrictUtf8.GetBytes(body);
+        string bodyHash = Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant();
+        return new(abiVersion, MappingAbiV1.CompilerProfileId, bodyHash);
+    }
+
+    private static CacheEntry Compile(CacheKey key, string body)
     {
         string source = $$"""
+            #nullable enable
             using System;
-            using Midora.Domain;
-            public static class MidoraGeneratedMapping
+            using Midora.Mapping.Contract.V1;
+
+            public static class {{GeneratedTypeName}}
             {
-                public static double Transform(double value, MappingContext context)
+                public static double Transform(double value, in MappingContextV1 context)
                 {
-                    {{body}}
+            #line 1 "mapping-function-v1.cs"
+            {{body}}
+            #line default
                 }
             }
             """;
-        SyntaxTree tree = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(LanguageVersion.Latest));
-        List<MetadataReference> references = [];
-        string? trusted = AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string;
-        if (trusted is not null)
+        CSharpParseOptions parseOptions = new(
+            FixedLanguageVersion,
+            DocumentationMode.None,
+            SourceCodeKind.Regular);
+        SyntaxTree tree = CSharpSyntaxTree.ParseText(
+            SourceText.From(source, Encoding.UTF8),
+            parseOptions,
+            "mapping-function-v1.cs");
+        CompilationUnitSyntax root = (CompilationUnitSyntax)tree.GetRoot();
+        if (root.Members.Count != 1
+            || root.Members[0] is not ClassDeclarationSyntax generatedClass
+            || generatedClass.Identifier.ValueText != GeneratedTypeName
+            || generatedClass.Members.Count != 1
+            || generatedClass.Members[0] is not MethodDeclarationSyntax)
         {
-            foreach (string path in trusted.Split(Path.PathSeparator))
-            {
-                references.Add(MetadataReference.CreateFromFile(path));
-            }
+            return CacheEntry.Failure(
+                "C# Mapping ABI v1 source must be a function body and cannot replace the generated wrapper.");
         }
-        references.Add(MetadataReference.CreateFromFile(typeof(MappingContext).Assembly.Location));
+
+        string assemblyName = $"Midora.Mapping.Generated.V1.{key.SourceHash}";
         CSharpCompilation compilation = CSharpCompilation.Create(
-            $"Midora.Mapping.{Guid.NewGuid():N}",
+            assemblyName,
             [tree],
-            references,
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, optimizationLevel: OptimizationLevel.Release));
+            References.Value,
+            new CSharpCompilationOptions(
+                OutputKind.DynamicallyLinkedLibrary,
+                optimizationLevel: OptimizationLevel.Release,
+                checkOverflow: false,
+                allowUnsafe: true,
+                platform: Platform.X64,
+                warningLevel: 4,
+                nullableContextOptions: NullableContextOptions.Enable,
+                deterministic: true,
+                concurrentBuild: false));
         using MemoryStream stream = new();
         Microsoft.CodeAnalysis.Emit.EmitResult result = compilation.Emit(stream);
         if (!result.Success)
         {
             string text = string.Join(Environment.NewLine, result.Diagnostics
                 .Where(diagnostic => diagnostic.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
+                .OrderBy(diagnostic => diagnostic.Location.SourceSpan.Start)
+                .ThenBy(diagnostic => diagnostic.Id, StringComparer.Ordinal)
                 .Select(diagnostic => diagnostic.ToString()));
-            throw new MappingException($"C# Mapping compilation failed: {text}");
+            return CacheEntry.Failure($"C# Mapping compilation failed: {text}");
         }
+
         stream.Position = 0;
-        Assembly assembly = AssemblyLoadContext.Default.LoadFromStream(stream);
-        MethodInfo method = assembly.GetType("MidoraGeneratedMapping")!.GetMethod("Transform", BindingFlags.Public | BindingFlags.Static)!;
-        return method.CreateDelegate<MappingDelegate>();
+        MappingAssemblyLoadContext loadContext = new(assemblyName);
+        try
+        {
+            Assembly assembly = loadContext.LoadFromStream(stream);
+            MethodInfo method = assembly.GetType(GeneratedTypeName, throwOnError: true)!
+                .GetMethod("Transform", BindingFlags.Public | BindingFlags.Static)!;
+            return CacheEntry.Success(method.CreateDelegate<MappingDelegate>(), loadContext);
+        }
+        catch (Exception exception)
+        {
+            loadContext.Unload();
+            return CacheEntry.Failure($"C# Mapping assembly load failed: {exception.Message}");
+        }
+    }
+
+    private static IReadOnlyList<MetadataReference> ResolveReferences()
+    {
+        string directory = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            ReferencePackRelativeDirectory.Replace('/', Path.DirectorySeparatorChar)));
+        if (!Directory.Exists(directory))
+        {
+            throw new MappingException($"C# Mapping ABI v1 reference pack is missing: {directory}.");
+        }
+
+        string[] paths = Directory.GetFiles(directory, "*.dll", SearchOption.TopDirectoryOnly)
+            .Where(path => IsAllowedFrameworkReference(Path.GetFileName(path)))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (!paths.Any(path => string.Equals(Path.GetFileName(path), "System.Runtime.dll", StringComparison.Ordinal)))
+        {
+            throw new MappingException($"C# Mapping ABI v1 reference pack is incomplete: {directory}.");
+        }
+
+        List<MetadataReference> references = paths
+            .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
+            .ToList();
+        string contractPath = typeof(MappingContextV1).Assembly.Location;
+        if (string.IsNullOrWhiteSpace(contractPath) || !File.Exists(contractPath))
+        {
+            throw new MappingException("C# Mapping ABI v1 contract assembly has no usable file location.");
+        }
+        references.Add(MetadataReference.CreateFromFile(contractPath));
+        return references;
+    }
+
+    private static bool IsAllowedFrameworkReference(string fileName) =>
+        fileName is "mscorlib.dll" or "netstandard.dll" or "Microsoft.CSharp.dll"
+            or "Microsoft.VisualBasic.dll" or "Microsoft.VisualBasic.Core.dll"
+        || fileName.StartsWith("System.", StringComparison.Ordinal)
+        || fileName.StartsWith("Microsoft.Win32.", StringComparison.Ordinal);
+
+    private readonly record struct CacheKey(int AbiVersion, string CompilerProfile, string SourceHash);
+
+    private sealed class CacheEntry : IDisposable
+    {
+        private MappingDelegate? _delegate;
+        private MappingAssemblyLoadContext? _loadContext;
+
+        private CacheEntry(MappingDelegate? mappingDelegate, MappingAssemblyLoadContext? loadContext, string? error)
+        {
+            _delegate = mappingDelegate;
+            _loadContext = loadContext;
+            Error = error;
+            LoadContextWeakReference = loadContext is null ? null : new WeakReference(loadContext);
+        }
+
+        public MappingDelegate? Delegate => _delegate;
+        public string? Error { get; }
+        public WeakReference? LoadContextWeakReference { get; }
+
+        public static CacheEntry Success(MappingDelegate mappingDelegate, MappingAssemblyLoadContext loadContext) =>
+            new(mappingDelegate, loadContext, null);
+
+        public static CacheEntry Failure(string error) => new(null, null, error);
+
+        public void Dispose()
+        {
+            _delegate = null;
+            MappingAssemblyLoadContext? loadContext = _loadContext;
+            _loadContext = null;
+            loadContext?.Unload();
+        }
+    }
+
+    private sealed class MappingAssemblyLoadContext : AssemblyLoadContext
+    {
+        public MappingAssemblyLoadContext(string name) : base(name, isCollectible: true)
+        {
+        }
+
+        protected override Assembly? Load(AssemblyName assemblyName)
+        {
+            Assembly contract = typeof(MappingContextV1).Assembly;
+            return AssemblyName.ReferenceMatchesDefinition(assemblyName, contract.GetName()) ? contract : null;
+        }
     }
 }

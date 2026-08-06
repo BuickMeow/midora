@@ -3,12 +3,28 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <MappingAbiV1ReferencePackVersion>10.0.10</MappingAbiV1ReferencePackVersion>
+    <MappingAbiV1ReferencePackDirectory>$(NetCoreTargetingPackRoot)\Microsoft.NETCore.App.Ref\$(MappingAbiV1ReferencePackVersion)\ref\$(TargetFramework)</MappingAbiV1ReferencePackDirectory>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Midora.Mapping.Contract.V1\Midora.Mapping.Contract.V1.csproj" />
     <ProjectReference Include="..\Midora.Domain\Midora.Domain.csproj" />
     <ProjectReference Include="..\..\midora-midi\Midora.Midi\Midora.Midi.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.3.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="$(MappingAbiV1ReferencePackDirectory)\*.dll"
+             Link="mapping-reference-pack\v1\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="ValidateMappingAbiV1ReferencePack" BeforeTargets="Build">
+    <Error Condition="!Exists('$(MappingAbiV1ReferencePackDirectory)\System.Runtime.dll')"
+           Text="Mapping ABI v1 requires Microsoft.NETCore.App.Ref $(MappingAbiV1ReferencePackVersion) at '$(MappingAbiV1ReferencePackDirectory)'." />
+  </Target>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Midora.Compiler.Tests" />
   </ItemGroup>
 </Project>

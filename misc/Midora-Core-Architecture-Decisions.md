@@ -94,11 +94,27 @@ Midora.Playback
 
 这是为本轮端到端试听采用的明确候选，不是 SRS 已规定规则。它替代“各调用点自行截断”的隐式行为，并保证相同输入、采样率和运行时下稳定、单调。正式发布前仍需用极端 Tempo、长时间累计和所有合法采样率的 ADR 测试向量确认或升级。
 
-## 6. ADR-CORE-005：C# Mapping 执行
+## 6. ADR-CORE-005（已接受，17A）：C# Mapping ABI v1
 
-决定：C# Mapping Function 保存函数体源码和声明的 Context 字段。Compiler 使用 Roslyn 在 Preparing/Compilation 阶段编译为委托，并按源码、声明字段和编译器版本缓存；活动音频线程不编译也不调用 Project 源码。Mapping 执行发生在 canonical 编译阶段。
+决定：初版 C# Mapping Function 使用版本化的 `Midora C# Mapping ABI v1`。Project 源数据只保存 `abiVersion = 1`、函数体源码和声明的 Context 字段；编译产物、程序集和缓存不进入 `.midora`。
 
-初版按 SRS 不提供 sandbox，也不声称确定性或安全隔离。编译错误、异常和非有限结果均转为可定位诊断并使实际使用路径失败。
+ABI v1 固定以下持久兼容边界：
+
+```csharp
+double Transform(double value, in MappingContextV1 context)
+```
+
+- `MappingContextV1`、`MappingStableIdV1`、`MappingTargetParameterV1` 和 `MappingEventKindV1` 位于独立、只读且不引用 Midora Domain/Compiler 的契约程序集。
+- 源码是上述固定方法的方法体，不是完整 compilation unit；包装类、方法名、参数名和类型由 ABI 固定。
+- 语言版本固定为 C# 14，编译目标引用面固定为 `Microsoft.NETCore.App.Ref 10.0.10` 和 ABI v1 契约程序集。不得引用 Midora Domain/Compiler、WPF/WindowsDesktop 或第三方程序集。
+- 引用白名单只用于持久兼容和依赖收敛，不是安全边界。SRS 9.6.2 的“自由 C#、无 sandbox”保持不变；`System.IO`、时间、随机数、反射和外部状态仍可经普通 .NET API 使用，Midora 不保证这类函数可复现或安全。
+- Roslyn 固定为 `Microsoft.CodeAnalysis.CSharp 5.3.0`，并使用 Release、deterministic、允许 unsafe 的 C# 14 固定 profile；生成程序集名称由 ABI 版本与完整函数体 UTF-8 SHA-256 确定，不使用 GUID、时间或编译历史。允许 unsafe 是 SRS 9.6.2“完整自由 C#、不做 sandbox”的直接结果；`in MappingContextV1` 只提供普通 C# 语言层的只读调用约束，不是安全隔离。
+
+Compiler 在 canonical 编译阶段执行 Mapping Function，活动音频线程不编译也不调用 Project 源码。每个打开 Project 的缓存按 `ABI version + compiler profile + 函数体精确 UTF-8 SHA-256` 索引；相同函数体可共享当前缓存项，声明字段不改变生成代码，因此不进入代码缓存键，但仍进入 Project/source fingerprint 和兼容性校验。
+
+每个成功代码缓存项由独立 collectible `AssemblyLoadContext` 持有。缓存同步时只保留当前 Project 仍存在的源码修订；编辑、删除、切换 Project、显式清缓存或关闭 Project 后，旧项在没有在途编译调用时释放委托并调用 `Unload()`。缓存大小因此受当前 Project 中不同函数修订数约束，不随编辑历史无界增长。Project 编译会话和 Compiler 都提供显式释放入口；终结器只作为未正确释放时的兜底。
+
+未来 ABI 变更必须增加 `abiVersion` 并保留旧 ABI 执行器或提供显式迁移；不得让 `LanguageVersion.Latest`、运行机器 TPA、应用内部程序集或当前进程已加载程序集静默改变旧 Project 的编译面。编译错误、未知 ABI、异常和非有限结果均转为可定位诊断，并按是否实际参与路径决定 Error/Warning。
 
 ## 7. ADR-CORE-006：动态 Mute / Solo 与进程边界
 

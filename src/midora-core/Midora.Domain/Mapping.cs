@@ -1,3 +1,5 @@
+using Midora.Mapping.Contract.V1;
+
 namespace Midora.Domain;
 
 public enum LogicalParameterType
@@ -107,14 +109,6 @@ public enum DivideByZeroPolicy
     Fail
 }
 
-public enum MappingTargetParameter
-{
-    Number,
-    Value,
-    SecondaryValue,
-    LogicalParameterOutput
-}
-
 public sealed class CSharpMappingFunction
 {
     public CSharpMappingFunction(MidoraProject project)
@@ -126,6 +120,7 @@ public sealed class CSharpMappingFunction
     public MidoraId Id { get; init; }
     public required string Name { get; set; }
     public required string Body { get; set; }
+    public int AbiVersion { get; set; } = MappingAbiV1.Version;
     public HashSet<string> DeclaredContextFields { get; } = new(StringComparer.Ordinal);
 }
 
@@ -200,35 +195,4 @@ public sealed class LogicalParameterMapping
     public MidiValueTarget Target { get; set; }
     public MappingChain Steps { get; }
     public MidiIntegerTargetSettings TargetSettings { get; }
-}
-
-public readonly record struct MappingContext(
-    double CurrentValue,
-    int TriggerNote,
-    int TriggerVelocity,
-    long GateLength,
-    int PitchDelta,
-    long TemplateTick,
-    long ProjectTick,
-    int TemplateNote,
-    int TemplateVelocity)
-{
-    public int EffectiveRootNote { get; init; }
-    public MidoraId CurrentEventId { get; init; }
-    public MappingTargetParameter CurrentParameter { get; init; }
-    public TemplateEventKind CurrentEventKind { get; init; }
-    public MidoraId LogicalParameterId { get; init; }
-    public string? LogicalParameterName { get; init; }
-    public double LogicalParameterValue { get; init; }
-    public double TargetOriginalValue { get; init; }
-    public long SegmentLocalTick { get; init; }
-    public MidoraId TrackId { get; init; }
-    public MidoraId SegmentId { get; init; }
-    public MidoraId SubVoiceId { get; init; }
-    public string? SubVoiceName { get; init; }
-    public int SubVoiceIndex { get; init; }
-    public int SubVoiceEffectiveRootNote { get; init; }
-    public MidoraId EventInstrumentId { get; init; }
-    public string? EventInstrumentName { get; init; }
-    public int EventInstrumentRootNote { get; init; }
 }

@@ -77,6 +77,7 @@ Project Source Data
 ## 6. 必须设置的验证门
 
 - 编译器：golden tests、同输入重复编译、乱序集合输入、Full/Incremental 等价、范围起点状态恢复、同 tick 排序、资源峰值和来源追踪。
+- C# Mapping ABI：v1 公共契约快照、固定 Roslyn/C# profile、.NET 10 核心引用允许、Midora/第三方引用拒绝、ABI/源码缓存键、当前修订失效、collectible ALC 卸载和 Project 关闭释放。
 - MIDI：0/127 边界、真实 NoteOff velocity 0、Bank/Program、RPN/NRPN、Pitch Bend Range、同音高重叠、Segment/End Marker 精确截断。
 - Native interop：结构布局、calling convention、32/64 位宽度、错误返回、版本不匹配、重复 init/free、handle/delegate 泄漏。
 - 实时音频：不同 callback block size、短读、underrun/Buffering、设备移除/默认设备变化、连续 start/stop/reset、无回调线程异常。
@@ -95,3 +96,4 @@ Project Source Data
 6. 正式 BASSMIDI Stream 使用 8-point sinc、CPU 属性 0；实时/离线 sample voice 上限分别配置且默认均为每 Stream 750，完美音频一致性测试以未触顶为前提。
 7. 初版产品 CPU 架构固定为 `win-x64`；音频 Worker 只允许以该 RID Native AOT 发布。
 8. 初版三项 BASS DLL 的完整版本和 SHA-256 固定；仓库保存 manifest 而不提交 DLL，升级必须显式变更基线并完成全回归。
+9. 初版 C# Mapping 固定 ABI v1、Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10` 和独立只读 Mapping 契约；每 Project 只缓存当前源码修订并使用 collectible ALC，编译产物不持久化。该机制不是 sandbox。

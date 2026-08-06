@@ -380,10 +380,9 @@ Clamp
 ---
 ## 9.6 C# Mapping Function
 ### 9.6.1 函数模型
-C# Mapping Function 初版采用以下方向：
+C# Mapping Function 初版固定使用 ABI v1：
 ```csharp
-// 概念形式，具体签名由实现层细化
-double Transform(double value, MappingContext context)
+double Transform(double value, in MappingContextV1 context)
 ```
 含义：
 ```text
@@ -391,7 +390,16 @@ double Transform(double value, MappingContext context)
 输入只读 MappingContext
 返回新的中间数值
 ```
-实际函数签名、类包装、命名空间、引用程序集等由实现设计细化。
+Project 保存的方法源码是该方法的函数体，不保存完整 compilation unit、包装类或编译产物。函数参数名固定为 `value` 与 `context`。
+
+每个 Mapping Function 必须保存：
+```text
+abiVersion = 1
+函数体源码
+声明的 Context 字段集合
+```
+
+ABI v1 固定使用 `Microsoft.CodeAnalysis.CSharp 5.3.0`、允许 unsafe 的 C# 14、`Microsoft.NETCore.App.Ref 10.0.10` 和独立 Mapping ABI v1 契约程序集；不向函数编译开放 Midora Domain/Compiler、WPF/WindowsDesktop 或第三方程序集。引用集合用于兼容性收敛，不构成安全沙箱；`in MappingContextV1` 只提供普通 C# 语言层只读约束。
 ### 9.6.2 自由 C# 边界
 初版：
 ```text
@@ -456,15 +464,18 @@ Mapping Function 需要稳定 ID。
 运行时才检查
 ```
 ### 9.6.5 编译缓存边界
-第 9 章《曲线、Logical Parameter 与映射》 只规定 C# Mapping Function 的系统级语义。
-以下内容由 第 12 章《编译系统与 Canonical Compiled Result》 / 第 13 章《播放与预览》 / 实现层细化：
+初版 C# Mapping Function 缓存键固定包含：
 ```text
-C# 编译缓存
-增量编译
-失效策略
-运行时调用缓存
-错误定位格式
+ABI version
+固定 compiler profile
+函数体精确 UTF-8 SHA-256
 ```
+
+声明的 Context 字段参与 Project/source fingerprint 和兼容性检查，但不改变生成代码，因此不进入代码缓存键。
+
+缓存属于当前打开 Project 的运行时编译会话，只保留当前 Project 中仍存在的不同源码修订。每个成功缓存项使用独立 collectible AssemblyLoadContext；编辑、删除、切换或关闭 Project、显式清缓存后，旧修订必须释放委托并请求卸载，不得随编辑历史无界累积。缓存和编译产物不得持久化。
+
+未来改变语言版本、函数签名、Context 类型、允许引用或编译 profile 时，必须增加 ABI version，并保留旧 ABI 执行器或提供显式迁移；不得静默用 `LanguageVersion.Latest` 或运行机器已加载程序集解释旧 Project。
 ### 9.6.6 Mapping Function 复制
 初版支持在同一个 Event Instrument 内复制 Mapping Function。
 复制规则：

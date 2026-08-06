@@ -36,7 +36,7 @@ public sealed class DomainEditingTests
         source.LogicalParameters.Add(parameter);
         InstrumentEnvelope envelope = new(project) { Name = "envelope", ReleaseTicks = 20 };
         source.Envelopes.Add(envelope);
-        CSharpMappingFunction function = new(project) { Name = "mapping", Body = "return value;" };
+        CSharpMappingFunction function = new(project) { Name = "mapping", Body = "return value;", AbiVersion = 7 };
         source.MappingFunctions.Add(function);
         TemplateEvent value = TemplateEvent.ControlChange(project, 0, 1, 10);
         value.ValueTargetSettings.Rounding = MappingRounding.Floor;
@@ -69,6 +69,7 @@ public sealed class DomainEditingTests
         Assert.NotEqual(source.SubVoices[0].Id, copy.SubVoices[0].Id);
         Assert.NotEqual(parameter.Id, copy.LogicalParameters[0].Id);
         Assert.NotEqual(function.Id, copy.MappingFunctions[0].Id);
+        Assert.Equal(7, copy.MappingFunctions[0].AbiVersion);
         Assert.NotEqual(envelope.Id, copy.Envelopes[0].Id);
         Assert.Equal(copy.MappingFunctions[0].Id,
             copy.SubVoices[0].Events[0].ValueMappings[0].MappingFunctionId);

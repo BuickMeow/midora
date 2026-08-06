@@ -637,6 +637,7 @@ Reset 策略入口
 ```
 SubVoice 不拆独立文件。
 Mapping Function 源码 / 定义保存于对应 Event Instrument `.pb` 内。
+每个 Mapping Function 定义必须保存 `abiVersion`、函数体源码和声明的 Context 字段集合。初版新建函数固定写 `abiVersion = 1`；未知 ABI 可以作为源数据打开和保留，但实际参与编译时按 Mapping Function 编译错误处理。编译产物、参考程序集、AssemblyLoadContext 状态和缓存不得写入 `.midora`。
 Logical Parameter Definition 保存于对应 Event Instrument `.pb` 内。
 ### 16.9.3 Library 集合结构
 Event Instrument Library 的集合级信息保存于 `project.json`，包括：

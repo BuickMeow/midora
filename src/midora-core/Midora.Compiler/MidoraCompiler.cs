@@ -1,12 +1,15 @@
 using Midora.Domain;
+using Midora.Mapping.Contract.V1;
 using Midora.Midi;
 
 namespace Midora.Compiler;
 
-public sealed class MidoraCompiler
+public sealed class MidoraCompiler : IDisposable
 {
     private readonly Dictionary<MidoraId, TrackCacheEntry> _trackCache = [];
     private readonly MappingEngine _mapping = new();
+    private MidoraProject? _cacheOwner;
+    private bool _disposed;
 
     public CompilerRunTelemetry LastTelemetry { get; private set; }
 
@@ -28,7 +31,23 @@ public sealed class MidoraCompiler
         return CompileCore(project, request, true, changes);
     }
 
-    public void ClearCache() => _trackCache.Clear();
+    public void ClearCache()
+    {
+        _trackCache.Clear();
+        _mapping.ClearCache();
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        ClearCache();
+        _mapping.Dispose();
+        _cacheOwner = null;
+        _disposed = true;
+    }
 
     private CanonicalCompiledResult CompileCore(
         MidoraProject project,
@@ -36,6 +55,13 @@ public sealed class MidoraCompiler
         bool incremental,
         ProjectChangeSet changes)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!ReferenceEquals(_cacheOwner, project))
+        {
+            ClearCache();
+            _cacheOwner = project;
+        }
+        _mapping.SynchronizeFunctions(project.EventInstruments.SelectMany(instrument => instrument.MappingFunctions));
         LastTelemetry = default;
         List<CompilerDiagnostic> diagnostics = SemanticValidator.Validate(project, request);
         ValidateMappingFunctions(project, request, diagnostics);
@@ -356,21 +382,23 @@ public sealed class MidoraCompiler
                         definitions, lanes, checked(segment.ContentOffsetTick + tick - segment.ProjectStartTick));
                     Dictionary<MidoraId, double> envelopesAtTick = EvaluateEnvelopes(
                         instrument, occurrence.LocalTick, releaseStartLocalTick, usedEnvelopeIds);
-                    MappingContext context = new(
+                    MappingContextV1 context = new(
                         templateEvent.Value, note.Note, note.Velocity, gateLength, pitchDelta,
-                        occurrence.TemplateTick, tick, templateEvent.Number, templateEvent.Value)
+                        occurrence.TemplateTick, tick,
+                        templateEvent.Kind == TemplateEventKind.Note ? templateEvent.Number : 0,
+                        templateEvent.Kind == TemplateEventKind.Note ? templateEvent.Value : 0)
                     {
                         EffectiveRootNote = root,
-                        CurrentEventId = templateEvent.Id,
-                        CurrentEventKind = templateEvent.Kind,
+                        CurrentEventId = ToMappingId(templateEvent.Id),
+                        CurrentEventKind = ToMappingEventKind(templateEvent.Kind),
                         SegmentLocalTick = checked(segment.ContentOffsetTick + tick - segment.ProjectStartTick),
-                        TrackId = track.Id,
-                        SegmentId = segment.Id,
-                        SubVoiceId = voice.Id,
+                        TrackId = ToMappingId(track.Id),
+                        SegmentId = ToMappingId(segment.Id),
+                        SubVoiceId = ToMappingId(voice.Id),
                         SubVoiceName = voice.Name,
                         SubVoiceIndex = voiceIndex,
                         SubVoiceEffectiveRootNote = root,
-                        EventInstrumentId = instrument.Id,
+                        EventInstrumentId = ToMappingId(instrument.Id),
                         EventInstrumentName = instrument.Name,
                         EventInstrumentRootNote = instrument.RootNote
                     };
@@ -414,7 +442,7 @@ public sealed class MidoraCompiler
         bool releaseTriggered,
         int pitchDelta,
         int triggerVelocity,
-        MappingContext context,
+        MappingContextV1 context,
         IReadOnlyDictionary<MidoraId, double> parameters,
         IReadOnlyDictionary<MidoraId, double> envelopes,
         IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions,
@@ -422,10 +450,10 @@ public sealed class MidoraCompiler
         ref long sequence)
     {
         int number = ApplyMappedInt(value.Number, value.NumberMappings, value.NumberTargetSettings,
-            context with { CurrentParameter = MappingTargetParameter.Number, TargetOriginalValue = value.Number },
+            context with { CurrentParameter = MappingTargetParameterV1.Number, TargetOriginalValue = value.Number },
             parameters, envelopes, functions, 0, 127, value.Number, false);
         int eventValue = ApplyMappedInt(value.Value, value.ValueMappings, value.ValueTargetSettings,
-            context with { CurrentParameter = MappingTargetParameter.Value, TargetOriginalValue = value.Value },
+            context with { CurrentParameter = MappingTargetParameterV1.Value, TargetOriginalValue = value.Value },
             parameters, envelopes, functions,
             value.Kind switch
             {
@@ -437,7 +465,7 @@ public sealed class MidoraCompiler
             value.Kind == TemplateEventKind.PitchBend ? 8191 : 127,
             DefaultTemplateValue(value.Kind), true);
         int secondary = ApplyMappedInt(value.SecondaryValue, value.SecondaryValueMappings, value.SecondaryValueTargetSettings,
-            context with { CurrentParameter = MappingTargetParameter.SecondaryValue, TargetOriginalValue = value.SecondaryValue },
+            context with { CurrentParameter = MappingTargetParameterV1.SecondaryValue, TargetOriginalValue = value.SecondaryValue },
             parameters, envelopes, functions, 0,
             value.Kind == TemplateEventKind.PitchBendRange ? 99 : 127,
             value.Kind == TemplateEventKind.PitchBendRange ? 0 : value.SecondaryValue, true);
@@ -491,7 +519,7 @@ public sealed class MidoraCompiler
         int value,
         MappingChain steps,
         MidiIntegerTargetSettings targetSettings,
-        in MappingContext context,
+        in MappingContextV1 context,
         IReadOnlyDictionary<MidoraId, double> parameters,
         IReadOnlyDictionary<MidoraId, double> envelopes,
         IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions,
@@ -694,6 +722,9 @@ public sealed class MidoraCompiler
         List<CompilerDiagnostic> diagnostics)
     {
         _ = initialParameters;
+        int targetVoiceIndex = instrument.SubVoices.FindIndex(voice => voice.Id == source.SubVoiceId);
+        SubVoice targetVoice = instrument.SubVoices[targetVoiceIndex];
+        int targetVoiceRoot = targetVoice.RootNoteOverride ?? instrument.RootNote;
         foreach (IGrouping<MidiValueTarget, LogicalParameterMapping> group in instrument.ParameterMappings
             .Where(value => value.Steps.IsEnabled && value.SubVoiceId == source.SubVoiceId)
             .GroupBy(value => value.Target)
@@ -724,19 +755,23 @@ public sealed class MidoraCompiler
                         double logical = parameters[mapping.ParameterId];
                         long instanceTick = tick - projectStart;
                         long templateTick = MapLongTickToTemplate(instrument, instanceTick, gateLength);
-                        MappingContext context = new(current, note.Note, note.Velocity, gateLength, pitchDelta,
+                        MappingContextV1 context = new(current, note.Note, note.Velocity, gateLength, pitchDelta,
                             templateTick, tick, 0, 0)
                         {
-                            CurrentParameter = MappingTargetParameter.LogicalParameterOutput,
-                            LogicalParameterId = mapping.ParameterId,
+                            CurrentParameter = MappingTargetParameterV1.LogicalParameterOutput,
+                            CurrentEventKind = ToMappingEventKind(group.Key.Kind),
+                            LogicalParameterId = ToMappingId(mapping.ParameterId),
                             LogicalParameterName = definitions[mapping.ParameterId].Name,
                             LogicalParameterValue = logical,
                             TargetOriginalValue = currentRawValue,
                             SegmentLocalTick = contentTick,
-                            TrackId = source.TrackId,
-                            SegmentId = source.SegmentId,
-                            SubVoiceId = source.SubVoiceId,
-                            EventInstrumentId = instrument.Id,
+                            TrackId = ToMappingId(source.TrackId),
+                            SegmentId = ToMappingId(source.SegmentId),
+                            SubVoiceId = ToMappingId(source.SubVoiceId),
+                            SubVoiceName = targetVoice.Name,
+                            SubVoiceIndex = targetVoiceIndex,
+                            SubVoiceEffectiveRootNote = targetVoiceRoot,
+                            EventInstrumentId = ToMappingId(instrument.Id),
                             EventInstrumentName = instrument.Name,
                             EventInstrumentRootNote = instrument.RootNote
                         };
@@ -1866,6 +1901,33 @@ public sealed class MidoraCompiler
         ChannelUnitAllocation[] Allocations,
         int PeakUnits);
 
+    private static MappingStableIdV1 ToMappingId(MidoraId id) => new(id.High, id.Low);
+
+    private static MappingEventKindV1 ToMappingEventKind(TemplateEventKind kind) => kind switch
+    {
+        TemplateEventKind.Note => MappingEventKindV1.Note,
+        TemplateEventKind.ControlChange => MappingEventKindV1.ControlChange,
+        TemplateEventKind.Bank => MappingEventKindV1.BankSelect,
+        TemplateEventKind.Program => MappingEventKindV1.ProgramChange,
+        TemplateEventKind.PitchBend => MappingEventKindV1.PitchBend,
+        TemplateEventKind.RegisteredParameter => MappingEventKindV1.Rpn,
+        TemplateEventKind.NonRegisteredParameter => MappingEventKindV1.Nrpn,
+        TemplateEventKind.PitchBendRange => MappingEventKindV1.PitchBendRange,
+        _ => MappingEventKindV1.Unknown
+    };
+
+    private static MappingEventKindV1 ToMappingEventKind(MidiValueKind kind) => kind switch
+    {
+        MidiValueKind.ControlChange => MappingEventKindV1.ControlChange,
+        MidiValueKind.BankMsb or MidiValueKind.BankLsb => MappingEventKindV1.BankSelect,
+        MidiValueKind.Program => MappingEventKindV1.ProgramChange,
+        MidiValueKind.PitchBend => MappingEventKindV1.PitchBend,
+        MidiValueKind.RegisteredParameter => MappingEventKindV1.Rpn,
+        MidiValueKind.NonRegisteredParameter => MappingEventKindV1.Nrpn,
+        MidiValueKind.PitchBendRangeSemitones or MidiValueKind.PitchBendRangeCents => MappingEventKindV1.PitchBendRange,
+        _ => MappingEventKindV1.Unknown
+    };
+
     private sealed class CanonicalComparer : IComparer<CanonicalMidiEvent>
     {
         public static CanonicalComparer Instance { get; } = new();
@@ -2003,7 +2065,7 @@ internal static class SourceFingerprint
     private static void AddInstrument(ref ulong hash, EventInstrument instrument)
     {
         Add(ref hash, instrument.Id);
-        // These display names are part of MappingContext and can therefore affect
+        // These display names are part of MappingContextV1 and can therefore affect
         // a free C# Mapping Function's returned value.
         Add(ref hash, instrument.Name);
         Add(ref hash, instrument.RootNote);
@@ -2091,6 +2153,7 @@ internal static class SourceFingerprint
         {
             Add(ref hash, function.Id);
             Add(ref hash, function.Name);
+            Add(ref hash, function.AbiVersion);
             Add(ref hash, function.Body);
             foreach (string field in function.DeclaredContextFields.Order(StringComparer.Ordinal)) Add(ref hash, field);
         }

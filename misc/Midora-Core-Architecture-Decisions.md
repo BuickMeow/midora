@@ -464,3 +464,11 @@ Requirement trace：输入为活动计划、当前 tick、旧/新 Loop 和原请
 该顺序保持保存事务取得的累计快照包含关闭确认前的完整打开会话时间，也避免 Open/New 的候选构建或 Guard 对话一出现就提前停止旧 Project 计时。Guard 在进入实际切换前取消、Save unavailable 或保存失败时从未进入 Closing pause，旧 Project 继续保持打开。`BeginProjectClosing` 位于已有 Project Edit Lock 内；实际切换动作仍由应用 composition 负责原子接管新候选或释放旧 Project 资源，非 UI 协调器不预先丢弃当前 Project。
 
 Requirement trace：输入为当前打开 `ProjectCompilationSession`、四类 Project Switch 命令、Draft/未保存决定及实际切换结果；正式输出为与当前 Project 开闭状态一致的单调工程时长 pause/resume 状态和既有结构化 Guard 结果。边界是 Guard/保存仍计时、真正切换入口开始暂停、失败恢复不回填、成功保持暂停。该计时状态不进入 Undo/Redo、不单独标记 Modified、不改变 metadata 修改时间或 canonical；明确非目标是 WPF 对话框、空状态页面、候选资源的 UI ownership 和应用进程 shutdown API。
+
+## 36. ADR-CORE-034（已接受，Q-NUI-018 待确认）：Recent Projects 本机 MRU 边界
+
+决定：Recent Projects 使用与 `preferences-v1.json` 分离的当前 Windows 用户本机 `recent-projects-v1.json`，避免为一个 SRS 未定义的列表字段修改已发布的严格 Preferences v1 表示。列表固定最多 10 个完全限定路径，最新成功激活的持久化 Project 位于首项；使用 Windows `OrdinalIgnoreCase` 身份去重，重复激活首项为 no-op。只有 Project 已经成功提交为当前打开 Project 后，应用 composition 才调用 `RecordSuccessfulProjectActivation`；候选验证、取消、失败打开、Save Copy 和未提交的新建结果都不得记录。
+
+本机文件使用 source-generated UTF-8 JSON v1、未知/重复字段拒绝、1 MiB 读取上限及同目录 flush 后原子 move/replace。读取损坏时返回空列表和非 Project notice；写入失败保持内存及磁盘旧列表。不存在的路径仍保留并投影当前可用状态，以支持临时断开的可移动磁盘或网络位置；只在用户明确移除或清空时删除。路径不做大小写修正、存在性过滤、符号链接解析或 Project 内容探测。
+
+Requirement trace：输入为成功激活的持久化 Project 绝对路径、现有本机 MRU 和显式移除/清空请求；正式输出为确定顺序、有界、原子发布的本机列表及当前 `File.Exists` 可用投影。边界是成功激活后才记录、大小写路径同一、最多 10 项、离线路径不自动丢弃。MRU、可用投影、notice 和绝对路径不进入 `.midora`、Project、Modified、Undo/Redo 或 canonical；明确非目标是云同步、跨用户/跨设备列表、时间戳、固定/分组、扫描式内容验证及 WPF 菜单展示。

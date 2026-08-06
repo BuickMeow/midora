@@ -8,8 +8,8 @@
 
 ## 1. 输入与正式输出
 
-- 输入：当前 `ProjectCompilationSession`、`PlaybackController`、一个待执行的全局任务、任务取消请求、Project 切换时的 Function Draft/未保存状态决策、New Project 的创建参数/SF2/首次目标、Open Project 候选路径、Save/Save Copy 的 package/路径/覆盖授权，以及当前 Windows 用户的 Application Preferences。
-- 正式输出：唯一活动任务的种类、阶段与锁级别；结构化完成/取消/失败/忙碌/播放清理风险结果；一次性清理风险 continuation；Project 切换保护结果；仅在完整验证/首次发布成功后返回的 New Project 候选；仅在严格读取完成后返回且拥有诊断/Embedded 资源的 Open Project 候选；Save/Save Copy 后与磁盘一致的 current path/file information/Document 保存基线；已验证并自动保存的本机偏好快照。
+- 输入：当前 `ProjectCompilationSession`、`PlaybackController`、一个待执行的全局任务、任务取消请求、Project 切换时的 Function Draft/未保存状态决策、New Project 的创建参数/SF2/首次目标、Open Project 候选路径、Save/Save Copy 的 package/路径/覆盖授权、成功激活的持久化 Project 路径，以及当前 Windows 用户的 Application Preferences/Recent Projects 本机状态。
+- 正式输出：唯一活动任务的种类、阶段与锁级别；结构化完成/取消/失败/忙碌/播放清理风险结果；一次性清理风险 continuation；Project 切换保护结果；仅在完整验证/首次发布成功后返回的 New Project 候选；仅在严格读取完成后返回且拥有诊断/Embedded 资源的 Open Project 候选；Save/Save Copy 后与磁盘一致的 current path/file information/Document 保存基线；已验证并自动保存的本机偏好快照；成功激活后显式记录的有界 Recent Projects MRU。
 - MIDI Export 与 Audio Render 在取得应用任务锁和 Project 编辑锁后才调用 request factory，因此 canonical、SF2、参数与最终路径快照在正式任务开始点冻结。
 - 本层不产生音乐语义；播放、MIDI 导出和音频渲染继续只消费各自现有的 canonical 派生入口。
 
@@ -52,6 +52,7 @@
 - 音频偏好实际变化后立即清除 sample-domain 计划并发出 `RealtimeAudioPreferencesChanged`，由未来应用 composition 重建实时 Worker/设备连接；当前任务的冻结值不被中途改写。
 - 最近目录只作为对应 picker 起点；必须是完全限定目录，可被清空，不进入 Project，也不转换为默认导出路径。
 - Application Preferences 与 `.midora` 版本独立；不标记 Project Modified、不进入 Undo/Redo，不持久化覆盖授权、关闭不保存、丢弃草稿、播放状态、设备枚举结果、实际采样率/buffer、IPC 状态或任务历史。
+- Recent Projects 与 Preferences v1 分文件保存，最多 10 个 Windows OrdinalIgnoreCase 唯一绝对路径；只在持久化 Project 成功激活后记录。离线路径保留并只投影当前可用状态，读取损坏回到空列表、写入失败保持旧列表。
 - UI 布局、窗口、Grid/Snap 等纯 UI 偏好明确不属于本次非 UI 实现范围。
 
 ## 5. 小决定与明确非目标
@@ -69,3 +70,4 @@
 - 首存、已有目标覆盖、当前路径 Save、Save Copy 状态保持、工程时间快照、Damaged/Embedded 资源门、取消和持久化并发拒绝。
 - New Project 默认图、Unsaved/Persisted 语义、Metadata/TPQ、External/Embedded SF2、覆盖、竞态、资源清理、严格重开和提交前不累计工程时间。
 - Open Project 的 `.midora`/`.zip`、无长期文件占用、恢复 Modified、未知 entry、Damaged Placeholder、Embedded/External SF2、候选资源释放、取消/阻断失败和同 Project 工厂约束。
+- Recent Projects 的 MRU/大小写去重/10 项淘汰、严格/有界 JSON、确定性往返、离线路径保留、原子写失败保持、移除和清空。

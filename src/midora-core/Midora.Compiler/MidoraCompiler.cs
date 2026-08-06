@@ -2393,8 +2393,6 @@ internal static class SourceFingerprint
             Add(ref hash, (int)definition.Type);
             Add(ref hash, definition.Minimum);
             Add(ref hash, definition.Maximum);
-            Add(ref hash, definition.DisplayMinimum);
-            Add(ref hash, definition.DisplayMaximum);
             Add(ref hash, definition.DefaultValue);
             Add(ref hash, definition.UsesExplicitEnumValues ? 1 : 0);
             foreach (LogicalParameterEnumItem value in definition.EnumItems)

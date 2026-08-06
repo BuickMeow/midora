@@ -134,6 +134,23 @@
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
 
+### Q-NUI-009：Logical Parameter 类型、范围与 Enum 结构变更时的既有 Lane 迁移
+
+- 类型：大决定
+- 状态：待确认；只暂停会使既有 Lane/Enum 数值失配的 Definition 变更分支
+- 发现日期：2026-08-06
+- SRS 依据：第 9.8.2、9.8.10～9.8.12、11.12.3～11.13.4、11.19.2～11.19.5、18.5.2 节。
+- 已确认事实：Logical Parameter Definition 可编辑名称、Integer/Double/Enum 类型、defaultValue、legal/display range 与 Enum items，修改必须进入全 Project Undo/Redo；Lane 按稳定 Parameter ID 绑定，正常重命名不破坏绑定。Integer、Double、Enum 对点值与插值有不同合法性，Enum 只允许已定义整数值与 Step。SRS 已为“把一条 Lane 显式重绑定到另一个 Parameter”规定 Clamp/Discard 和 Enum 语义警告，但没有把该规则扩展到“原 Parameter Definition 自身改变”。
+- 不确定点：当类型、legal range、Enum 显式模式/数值/顺序/删除使当前 Project 中一条或多条既有 Lane Point 不再合法时，系统应拒绝 Definition 修改、保留失配数据并让编译失败，还是原子转换所有引用 Lane；若转换，还需决定逐 Lane 还是整次操作统一选择 Clamp/Discard、Double→Integer 中点、Linear→Enum、隐式 Enum 重排和删除项的语义。
+- 影响范围：可能跨所有绑定同一 Event Instrument 的 Logical Track/Segment 批量改写 Lane Point，对默认状态、插值、Mapping 输出和可听结果产生大范围影响；还涉及 Undo 快照体积、诊断、复制、持久化源数据及未来 UI 确认工作流。稳定 ID 和 protobuf 字段可保持不变，但数据语义会改变。
+- 推荐方案：Definition 编辑采用显式迁移计划并形成单个原子 History entry。仅重命名、合法 defaultValue、display range、不会使任何 default/Enum item/现有 Lane Point 失效的 legal range，以及不改变 Enum 数值身份的 item 重命名可直接提交。任何类型变更、Enum 显式模式切换、Enum 数值/顺序/删除或会使既有数据失效的 range 缩窄，都要求调用方明确选择 `Clamp` 或 `DiscardInvalidValues`，并对目标 Enum 确认语义警告；转换规则复用 Q-NUI-007 的 AwayFromZero、Enum 最近值等距取较小值和 Linear→Step，原子处理全 Project 所有引用 Lane。Enum item 稳定 ID 保留；被删除 item 的 Lane 数值按同一迁移策略处理。
+- 推荐依据与限制：复用已有显式 Lane 重绑定规则，避免同一种不兼容转换出现两套舍入/Enum 语义；一次 Definition 修改与所有受影响 Lane 同事务，既不会留下中间非法状态，也能完整 Undo。限制是大 Project 的准备快照和转换成本较高，且 Enum 语义转换即使数值相近也不能保证音乐含义相同，因此必须显式确认。
+- 备选方案及差异：A. 只要任何既有 Lane 会失效就拒绝 Definition 修改，要求用户先逐 Lane 修复；最保守但工作流繁琐，且多 Track 项目难以一次完成。B. 允许 Definition 修改但完全保留失配 Lane，让保存成功而 canonical 失败；最少改写数据，但一个高层接口编辑可使全工程不可播放，且恢复需逐点处理。C. 对所有失配值静默 Clamp/转 Step；操作简短但会在无明确授权下改变可听语义，不推荐。
+- 当前实施状态：该迁移分支尚未实现。已经完成名称、合法 defaultValue、display range、不会使现有 Lane/Enum 失效的 legal range、Enum item 重命名、引用保留删除，以及 Logical Parameter Mapping source/target/order/共享 Target Settings/确认删除；range 缩窄若会使任何现有 Lane Point 失效会明确拒绝并指向本问题。自动测试同时证明 display range 不失效已编译 Track，所有可听编辑保持 Full/Incremental 等价。
+- 需要产品所有者回答：是否采用推荐方案？如不采用，请选择 A 或 B，并分别说明类型变更、range 缩窄、Enum 模式/数值/顺序/删除的处理；C 不建议采用。
+- 产品回答：待填写。
+- 最终处理与提交：待填写。
+
 ## 3. 问题模板
 
 ### Q-NUI-XXX：标题

@@ -485,13 +485,14 @@ public static class SemanticValidator
             {
                 AddError("MIDORA1101", "Logical Parameter ID 与 trim 后名称必须在 Event Instrument 内唯一且非空。", source, diagnostics);
             }
-            if (!double.IsFinite(parameter.Minimum) || !double.IsFinite(parameter.Maximum)
+            if (!Enum.IsDefined(parameter.Type)
+                || !double.IsFinite(parameter.Minimum) || !double.IsFinite(parameter.Maximum)
                 || !double.IsFinite(parameter.DisplayMinimum) || !double.IsFinite(parameter.DisplayMaximum)
                 || !double.IsFinite(parameter.DefaultValue) || parameter.Maximum < parameter.Minimum
                 || parameter.DisplayMaximum < parameter.DisplayMinimum
                 || parameter.DefaultValue < parameter.Minimum || parameter.DefaultValue > parameter.Maximum)
             {
-                AddError("MIDORA1102", $"Logical Parameter '{parameter.Name}' 的合法范围、显示范围或默认值无效。", source, diagnostics);
+                AddError("MIDORA1102", $"Logical Parameter '{parameter.Name}' 的类型、合法范围、显示范围或默认值无效。", source, diagnostics);
             }
             if (parameter.Type == LogicalParameterType.Integer
                 && (parameter.Minimum != Math.Truncate(parameter.Minimum)
@@ -513,9 +514,10 @@ public static class SemanticValidator
                     LogicalParameterEnumItem item = parameter.EnumItems[i];
                     int effectiveValue = parameter.UsesExplicitEnumValues ? item.Value : i;
                     if (string.IsNullOrWhiteSpace(item.Name) || item.Name != item.Name.Trim()
-                        || !enumNames.Add(item.Name) || !enumValues.Add(effectiveValue))
+                        || !enumNames.Add(item.Name) || !enumValues.Add(effectiveValue)
+                        || effectiveValue < parameter.Minimum || effectiveValue > parameter.Maximum)
                     {
-                        AddError("MIDORA1105", $"Enum 参数 '{parameter.Name}' 的 item 名称/值非法或重复。", source, diagnostics);
+                        AddError("MIDORA1105", $"Enum 参数 '{parameter.Name}' 的 item 名称/值非法、重复或超出合法范围。", source, diagnostics);
                     }
                 }
                 if (parameter.DefaultValue < int.MinValue || parameter.DefaultValue > int.MaxValue

@@ -167,6 +167,55 @@ public sealed class SemanticValidatorTests
     }
 
     [Fact]
+    public void EnumItemValueOutsideLogicalParameterRangeIsRejected()
+    {
+        var fixture = CompilerTestProject.Create();
+        LogicalParameterDefinition parameter = new(fixture.Project)
+        {
+            Name = "mode",
+            Type = LogicalParameterType.Enum,
+            Minimum = 0,
+            Maximum = 1,
+            DefaultValue = 0,
+            UsesExplicitEnumValues = true
+        };
+        parameter.EnumItems.Add(new LogicalParameterEnumItem(fixture.Project)
+        {
+            Name = "valid",
+            Value = 0
+        });
+        parameter.EnumItems.Add(new LogicalParameterEnumItem(fixture.Project)
+        {
+            Name = "outside",
+            Value = 2
+        });
+        fixture.Instrument.LogicalParameters.Add(parameter);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(result.IsConsumable);
+        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1105");
+    }
+
+    [Fact]
+    public void UndefinedLogicalParameterTypeIsRejected()
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Instrument.LogicalParameters.Add(new LogicalParameterDefinition(fixture.Project)
+        {
+            Name = "invalid",
+            Type = (LogicalParameterType)999,
+            Minimum = 0,
+            Maximum = 1
+        });
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(result.IsConsumable);
+        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1102");
+    }
+
+    [Fact]
     public void BrokenEnvelopeReferenceIsAnError()
     {
         var fixture = CompilerTestProject.Create();

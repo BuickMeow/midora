@@ -20,42 +20,110 @@ public static class CanonicalMidiFileExporter
         ArgumentNullException.ThrowIfNull(request.ConductorTrackName);
         ArgumentNullException.ThrowIfNull(request.LogicalTracks);
 
+        return EncodeCore(
+            request.CompiledResult,
+            request.ConductorTrackName,
+            request.LogicalTracks,
+            static (_, _) => true,
+            static port => port,
+            requireIncludedEvent: false);
+    }
+
+    public static MidiExportEncodingResult EncodeLogicalTrack(LogicalTrackMidiEncodingRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.CompiledResult);
+        ArgumentNullException.ThrowIfNull(request.ConductorTrackName);
+        ArgumentNullException.ThrowIfNull(request.LogicalTrack);
+
+        MidoraId trackId = request.LogicalTrack.TrackId;
+        return EncodeCore(
+            request.CompiledResult,
+            request.ConductorTrackName,
+            [request.LogicalTrack],
+            (_, ownerTrackId) => ownerTrackId == trackId,
+            static port => port,
+            requireIncludedEvent: false);
+    }
+
+    public static MidiExportEncodingResult EncodePort(PortMidiEncodingRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.CompiledResult);
+        ArgumentNullException.ThrowIfNull(request.ConductorTrackName);
+        ArgumentNullException.ThrowIfNull(request.LogicalTracks);
+        if (request.ZeroBasedOriginalPort > 15)
+        {
+            throw new ArgumentOutOfRangeException(nameof(request.ZeroBasedOriginalPort));
+        }
+
+        byte selectedPort = request.ZeroBasedOriginalPort;
+        return EncodeCore(
+            request.CompiledResult,
+            request.ConductorTrackName,
+            request.LogicalTracks,
+            (value, _) => value.ZeroBasedPort == selectedPort,
+            static _ => 0,
+            requireIncludedEvent: true);
+    }
+
+    private static MidiExportEncodingResult EncodeCore(
+        CanonicalCompiledResult compiledResult,
+        string conductorTrackName,
+        IReadOnlyList<MidiExportLogicalTrackLayout> logicalTracks,
+        Func<CanonicalMidiEvent, MidoraId, bool> includeEvent,
+        Func<byte, byte> mapOutputPort,
+        bool requireIncludedEvent)
+    {
         List<MidiExportDiagnostic> diagnostics = [];
         try
         {
-            ValidateCompiledResult(request.CompiledResult, diagnostics);
+            ValidateCompiledResult(compiledResult, diagnostics);
             Dictionary<MidoraId, (int Order, MidiExportLogicalTrackLayout Layout)> layouts =
-                BuildLayoutIndex(request.LogicalTracks, diagnostics);
+                BuildLayoutIndex(logicalTracks, diagnostics);
             if (diagnostics.Count != 0)
             {
                 return Failure(diagnostics);
             }
 
-            long duration = checked(request.CompiledResult.EndTick - request.CompiledResult.StartTick);
+            long duration = checked(compiledResult.EndTick - compiledResult.StartTick);
             List<StandardMidiFileTrack> tracks =
-                [BuildConductorTrack(request.CompiledResult, request.ConductorTrackName, duration)];
+                [BuildConductorTrack(compiledResult, conductorTrackName, duration)];
 
             Dictionary<(MidoraId TrackId, byte Port), List<CanonicalMidiEvent>> grouped = [];
-            foreach (CanonicalMidiEvent value in request.CompiledResult.Events)
+            foreach (CanonicalMidiEvent value in compiledResult.Events)
             {
-                ValidateCanonicalEvent(request.CompiledResult, value, diagnostics);
-                MidoraId trackId = ResolveTrackId(request.CompiledResult, value, diagnostics);
-                if (trackId == default || !layouts.ContainsKey(trackId))
+                ValidateCanonicalEvent(compiledResult, value, diagnostics);
+                MidoraId trackId = ResolveTrackId(compiledResult, value, diagnostics);
+                if (trackId == default)
                 {
-                    if (trackId != default)
-                    {
-                        diagnostics.Add(new(
-                            "MIDORA-MIDI-EXPORT-TRACK-LAYOUT",
-                            MidiExportDiagnosticCategory.CanonicalConsistency,
-                            $"Canonical event references Track {trackId}, but the export layout does not contain it.",
-                            value.Source));
-                    }
+                    continue;
+                }
+                if (!includeEvent(value, trackId))
+                {
+                    continue;
+                }
+                if (!layouts.ContainsKey(trackId))
+                {
+                    diagnostics.Add(new(
+                        "MIDORA-MIDI-EXPORT-TRACK-LAYOUT",
+                        MidiExportDiagnosticCategory.CanonicalConsistency,
+                        $"Canonical event references Track {trackId}, but the export layout does not contain it.",
+                        value.Source));
                     continue;
                 }
                 grouped.GetOrAdd((trackId, value.ZeroBasedPort)).Add(value);
             }
             if (diagnostics.Count != 0)
             {
+                return Failure(diagnostics);
+            }
+            if (requireIncludedEvent && grouped.Count == 0)
+            {
+                diagnostics.Add(new(
+                    "MIDORA-MIDI-EXPORT-UNUSED-PORT",
+                    MidiExportDiagnosticCategory.Encoding,
+                    "Per-Port export does not create a file for a Port with no canonical events."));
                 return Failure(diagnostics);
             }
 
@@ -74,9 +142,9 @@ public static class CanonicalMidiFileExporter
                 }
                 ValidateBankProgramOrder(values, diagnostics);
                 tracks.Add(BuildEventTrack(
-                    request.CompiledResult.StartTick,
+                    compiledResult.StartTick,
                     duration,
-                    port,
+                    mapOutputPort(port),
                     eventTrackName,
                     values));
             }
@@ -86,7 +154,7 @@ public static class CanonicalMidiFileExporter
             }
 
             byte[] bytes = StandardMidiFile.EncodeType1(
-                request.CompiledResult.TicksPerQuarterNote,
+                compiledResult.TicksPerQuarterNote,
                 tracks);
             return new(bytes, []);
         }

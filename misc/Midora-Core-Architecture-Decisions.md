@@ -274,3 +274,15 @@ Q-NUI-001 已确认：损坏、缺失或与当前 Project 引用错配的租约�
 保存事务设置内部、确定性的故障注入缝，覆盖 Backup、Staging、SelfValidation、Publish 和 Cleanup；打开覆盖 Container 与 Manifest I/O。注入器只供测试与内部组合使用，不进入公共产品配置、Project、package 或诊断协议。发布前失败必须保留原目标并清理本事务产物；进入发布尝试后失败必须保留原目标、已验证临时包和备份供恢复；发布成功后的清理失败只能产生稳定 Warning，不得把已经发布的保存反转成失败。
 
 Requirement trace：输入为现有目标、冻结保存快照、manifest 最小版本头及可重复的阶段故障；正式输出为原子发布的新包或带精确阶段/恢复路径的失败。边界是原目标字节和 Project `modifiedAtUtc` 只在发布成功后改变，临时包必须通过严格重开和逐内容相等校验。I/O、权限、格式、自检和发布异常不得越过阶段包装；清理异常不得遮蔽主要结果。绝对事务路径、注入状态和保留恢复文件只属于保存会话，不持久化。明确非目标是自动回滚一个已经成功的原子替换、自动采用未来格式、或在 Q-NUI-002 前伪造旧格式迁移。
+
+## 18. ADR-CORE-016（已接受，Q-NUI-003 局部暂停）：MIDI Export 冻结任务与多文件事务
+
+决定：正式任务先以专用 `CompilationPurpose.MidiExport` 和显式 Track 集合生成单一 canonical 快照；Whole Project、Per Logical Track 与 Per Port 只在该 canonical 之上组织文件。Per Track 按 Track owner 过滤但保留该 Track 的全部实际 Port；无音乐输出的有效 Track 仍生成 Conductor-only SMF。Per Port 只为有 canonical 事件的 Port 生成文件，文件内 MIDI Port Meta 固定归一化为 Port 1，Track Name/文件名/Readme 保留原始一基 Port。
+
+文件名经公共合法化器形成绝对路径并冻结，同时冻结目标存在状态和一次性覆盖授权。所有 `.mid` 与被请求的 `README.md` 先写入同卷 staging 并完成 SMF Type 1 自校验；缺失目标目录以目录 rename 整体发布，已有目录逐文件原子替换/移动并保留事务备份，任一中途失败按逆序恢复。Finalizing 前允许取消并清理；Finalizing 短暂不可取消。回滚失败保留 staging/backup 路径，发布成功后的清理失败只产生 Warning。
+
+Requirement trace：输入为冻结 Project/Track/范围/Routing/Warning 参数、canonical、原始名称、Project/file metadata、软件版本、输出目录和覆盖授权；正式输出为固定模板 SMF Type 1 文件及可选 `README.md`，或不含 partial 成功文件的失败/取消报告。边界包括同 tick canonical 顺序、统一 EOT、Channel 10 GS→XG、Per Port 文件级 Port 归一化、目标出现竞态和 Readme 同事务。编码、自校验、staging、publish、rollback、cleanup 均有独立阶段；任务状态、绝对路径、缓存、诊断和导出时间不进入 Project。明确非目标是读取播放 buffer/Mute/Solo、在导出器中重算语义、静默覆盖新出现目标或自动修改 Project Export Settings。
+
+当前编译器的确定性 Channel Unit 分配本身从 Port 1/Channel 1 起使用最低空闲单元，因此 Compact 对当前 canonical 分配是同形映射；Preserve 保持该导出 CompileContext 的同一分配，二者均不由编码器重分配音乐事件。若未来 Project 引入可持久化显式路由，必须在编译上下文内实现并重新证明 Compact 等价，不能把语义分配下放给文件写入器。
+
+Q-NUI-003 只暂停 Project `ExportProjectSettings` 正式字段、schema v2 和 v1→v2 设置迁移；一次性任务参数、三模式编码、Readme、输出规划和事务不依赖该默认值决定。

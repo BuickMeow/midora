@@ -265,6 +265,93 @@ public sealed class CanonicalMidiFileExporterTests
         Assert.Equal(["Conductor", "B0", "B1", "A0"], parsed.Select(GetTrackName));
     }
 
+    [Fact]
+    public void PerLogicalTrackKeepsAllUsedPortsAndCanEncodeAnEmptyMusicFile()
+    {
+        MidoraId trackId = MidoraId.FromSequence(1);
+        MidoraId excludedTrackId = MidoraId.FromSequence(2);
+        CanonicalCompiledResult compiled = CreateSyntheticCompiled(
+        [
+            SyntheticEvent(trackId, 0, MidiMessage.NoteOn(0, 60, 100), 0),
+            SyntheticEvent(trackId, 2, MidiMessage.NoteOn(1, 64, 100), 1, zeroBasedChannel: 1),
+            SyntheticEvent(excludedTrackId, 0, MidiMessage.NoteOn(0, 72, 100), 2)
+        ]);
+        MidiExportLogicalTrackLayout layout = new(
+            trackId,
+            new Dictionary<byte, string> { [0] = "Track / Port 1", [2] = "Track / Port 3" });
+
+        MidiExportEncodingResult encoded = CanonicalMidiFileExporter.EncodeLogicalTrack(new()
+        {
+            CompiledResult = compiled,
+            ConductorTrackName = "Conductor",
+            LogicalTrack = layout
+        });
+        MidiExportEncodingResult empty = CanonicalMidiFileExporter.EncodeLogicalTrack(new()
+        {
+            CompiledResult = CreateSyntheticCompiled([]),
+            ConductorTrackName = "Conductor",
+            LogicalTrack = new(trackId, new Dictionary<byte, string>())
+        });
+
+        Assert.True(encoded.Succeeded);
+        ParsedTrack[] tracks = ParseTracks(encoded.FileBytes);
+        Assert.Equal(["Conductor", "Track / Port 1", "Track / Port 3"], tracks.Select(GetTrackName));
+        Assert.Contains(tracks[1].MetaEvents, value =>
+            value.Type == StandardMidiFile.MidiPortMetaType && value.Data.SequenceEqual(new byte[] { 0 }));
+        Assert.Contains(tracks[2].MetaEvents, value =>
+            value.Type == StandardMidiFile.MidiPortMetaType && value.Data.SequenceEqual(new byte[] { 2 }));
+        Assert.DoesNotContain(
+            tracks.SelectMany(track => track.ChannelEvents),
+            value => value.Data.Length > 1 && value.Data[1] == 72);
+        Assert.True(empty.Succeeded);
+        Assert.Single(ParseTracks(empty.FileBytes));
+    }
+
+    [Fact]
+    public void PerPortKeepsLogicalTrackOrderAndNormalizesEveryEventTrackToPortOne()
+    {
+        MidoraId trackA = MidoraId.FromSequence(1);
+        MidoraId trackB = MidoraId.FromSequence(2);
+        CanonicalCompiledResult compiled = CreateSyntheticCompiled(
+        [
+            SyntheticEvent(trackA, 2, MidiMessage.NoteOn(0, 60, 100), 0),
+            SyntheticEvent(trackB, 2, MidiMessage.NoteOn(1, 61, 100), 1, zeroBasedChannel: 1),
+            SyntheticEvent(trackA, 0, MidiMessage.NoteOn(0, 62, 100), 2)
+        ]);
+
+        MidiExportEncodingResult encoded = CanonicalMidiFileExporter.EncodePort(new()
+        {
+            CompiledResult = compiled,
+            ConductorTrackName = "Conductor",
+            ZeroBasedOriginalPort = 2,
+            LogicalTracks =
+            [
+                new(trackB, new Dictionary<byte, string> { [2] = "B / Port 3" }),
+                new(trackA, new Dictionary<byte, string> { [2] = "A / Port 3" })
+            ]
+        });
+        MidiExportEncodingResult unused = CanonicalMidiFileExporter.EncodePort(new()
+        {
+            CompiledResult = compiled,
+            ConductorTrackName = "Conductor",
+            ZeroBasedOriginalPort = 15,
+            LogicalTracks =
+            [
+                new(trackB, new Dictionary<byte, string>()),
+                new(trackA, new Dictionary<byte, string>())
+            ]
+        });
+
+        Assert.True(encoded.Succeeded);
+        ParsedTrack[] tracks = ParseTracks(encoded.FileBytes);
+        Assert.Equal(["Conductor", "B / Port 3", "A / Port 3"], tracks.Select(GetTrackName));
+        Assert.All(tracks.Skip(1), track => Assert.Contains(track.MetaEvents, value =>
+            value.Type == StandardMidiFile.MidiPortMetaType && value.Data.SequenceEqual(new byte[] { 0 })));
+        Assert.DoesNotContain(tracks.SelectMany(track => track.ChannelEvents), value => value.Data[1] == 62);
+        Assert.False(unused.Succeeded);
+        Assert.Contains(unused.Diagnostics, value => value.Code == "MIDORA-MIDI-EXPORT-UNUSED-PORT");
+    }
+
     private static (MidoraProject Project, LogicalTrack Track, EventInstrument Instrument, SubVoice Voice) CreateProject(
         long segmentStart = 0)
     {

@@ -53,6 +53,21 @@ public sealed class WholeProjectMidiEncodingRequest
     public required IReadOnlyList<MidiExportLogicalTrackLayout> LogicalTracks { get; init; }
 }
 
+public sealed class LogicalTrackMidiEncodingRequest
+{
+    public required CanonicalCompiledResult CompiledResult { get; init; }
+    public required string ConductorTrackName { get; init; }
+    public required MidiExportLogicalTrackLayout LogicalTrack { get; init; }
+}
+
+public sealed class PortMidiEncodingRequest
+{
+    public required CanonicalCompiledResult CompiledResult { get; init; }
+    public required string ConductorTrackName { get; init; }
+    public required IReadOnlyList<MidiExportLogicalTrackLayout> LogicalTracks { get; init; }
+    public required byte ZeroBasedOriginalPort { get; init; }
+}
+
 public sealed class MidiExportEncodingResult
 {
     internal MidiExportEncodingResult(byte[] fileBytes, MidiExportDiagnostic[] diagnostics)

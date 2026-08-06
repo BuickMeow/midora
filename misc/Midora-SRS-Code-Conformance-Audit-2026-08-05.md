@@ -42,14 +42,14 @@
 | 颜色兼容表示 | 16.13.8、18A | `MidoraColor` 原型使用 32-bit ARGB，允许形成未规定 alpha 语义 | 已改为三个 byte 分量的 opaque sRGB；protobuf 固定 `RgbColor` 1/2/3 字段，JSON 需要颜色时固定小写 `#rrggbb` |
 | SoundFont 路径归属 | 6.4、6.7、16.7.6、19A | `MidoraProject.SoundFontPath` 直接保存运行机器绝对路径，外部/内嵌模式、资源 ID 和已接受内容身份均未建模 | 已移除 Project 绝对路径；领域层使用严格 External/Embedded source union，绝对有效路径只存在于播放会话；新增 soundfont-settings v1、流式 SHA-256、精确/唯一 ignore-case 解析和被动验证不改源引用测试 |
 | 工程总耗时 | 3.6.4、13.19.8、14.21.3、15.16.2、16.6.4、20A | 领域层无 Project Metadata，播放会话也没有打开时间 owner；SRS 只固定 int64 毫秒表示，未固定空闲、最小化和 suspend 边界 | 已建立 Project Metadata、单 owner 单调会话计时、系统 suspend / closing 组合暂停和 metadata v1 codec/schema；自动累计不失效 canonical 或单独标记 Modified |
-| SMF 编码兼容档 | 14.2、14.8–14.14、14.18.5、21A | `StandardMidiFile` 为空，没有正式 canonical MIDI 消费者；Tempo、Time Signature、Running Status、Meta 最小集和额外末尾清理仍是实现空白 | 已按 21A 建立 Type 1 writer/validator 和整曲 canonical 垂直切片，固定一次 AwayFromZero、cc/bb、Bank 顺序、严格 UTF-8、无 Running Status、最小 Meta、canonical 外零清理及统一 EOT；Channel 10 初始化仍等待下一决定 |
+| SMF 编码兼容档 | 14.2、14.8–14.14、14.18.5、21A/22A | `StandardMidiFile` 为空，没有正式 canonical MIDI 消费者；Tempo、Time Signature、Running Status、Meta 最小集、Channel 10 初始化和额外末尾清理仍是实现空白 | 已建立 Type 1 writer/validator 和整曲 canonical 垂直切片，固定一次 AwayFromZero、cc/bb、Bank 顺序、严格 UTF-8、无 Running Status、最小 Meta、canonical 外零清理、统一 EOT，以及每个实际相关事件 Track 的 GS→XG Channel 10 Normal Part 初始化 |
 
 ## 3. 尚未完成的初版模块（不是“现有代码语义矛盾”）
 
 - Project Metadata 领域对象、metadata v1 schema/codec 和 20A 会话计时基础已实现；Application Preferences、WPF 电源/关闭事件接线、完整 Modified/Undo 和正式应用生命周期尚未实现。SoundFont 的 BASSMIDI 格式/可加载性验证、文件监控及内嵌资源复制仍未实现。
 - Event Instrument、Mapping、Lifecycle、Logical Track/Segment 的若干编辑器级数据与命令仍只有核心垂直切片，不是 SRS 07–11 的完整实现。
 - `.midora` 已实现 v1 common/manifest/metadata/soundfont-settings schema、严格 codec、protobuf descriptor-aware wire 校验和兼容基线测试；完整 ZIP、其余结构性文件 schema、迁移、安全保存、损坏隔离与 Project round-trip 尚未实现。
-- MIDI Export 已有整曲 SMF Type 1 canonical 编码与自校验垂直切片；Channel 10 melodic 初始化、按 Track/Port 模式、Compact Routing、Readme、文件事务、取消/进度和完整导出报告尚未实现。
+- MIDI Export 已有整曲 SMF Type 1 canonical 编码、自校验和 Channel 10 GS→XG melodic 初始化垂直切片；按 Track/Port 模式、Compact Routing、Readme、文件事务、取消/进度和完整导出报告尚未实现。
 - 正式 Audio Render workflow（整曲/分轨、任务快照、取消、结果报告和子进程内文件 OutputDevice）尚未实现；当前只有底层 renderer 与 WAVE 输出能力。
 - WPF UI、导航、编辑器、对话框和 Project 打开/关闭工作流尚未实现。
 - SRS 12.21 要求的 Segment checkpoint、输入/输出状态 hash、dirty 传播与收敛停止尚未实现；现有 Track 级缓存只能作为过渡实现，不能标记为初版合规。
@@ -94,7 +94,7 @@ Project 本身没有独立稳定 ID。诊断来源和 canonical result 只携带
 19. **已确认：19A（2026-08-06）**。External SF2 只允许 Project 根目录或直属 `soundfonts/`，保存实际大小写/原 Unicode 的 `/` 相对路径；逐分量精确匹配优先，唯一 ignore-case 回退并 Warning，多个近似候选为歧义不可用，根目录与子目录同名文件按完整路径区分。SHA-256 对完整原始字节流式计算；路径/hash/size 只在用户明确选择、替换、重绑定或接受当前内容时更新，被动缺失/hash mismatch/fallback 不改 Project。绝对路径和验证缓存是运行时状态。代码已移除 `MidoraProject.SoundFontPath`，建立 External/Embedded union、soundfont-settings v1 codec/schema、解析/hash 服务和测试；BASS 可加载性、监控、Embedded package 复制和完整打开/保存仍未实现。
 20. **已确认：20A（2026-08-06）**。从 Project 成功新建 / 打开到开始关闭，以单调时钟累计完整打开会话；空闲、最小化、失焦、模态 UI、保存、编译、播放、预览、Buffering、MIDI 导出和音频渲染全阶段均计入。系统睡眠 / 休眠与关闭流程暂停，关闭取消后只恢复后续累计。自动累计不进入 Undo / Redo、不单独标记 Modified、不更新 metadata 修改时间、不影响 canonical。代码已建立 Project Metadata、单 owner 计时会话、组合 pause reason、metadata v1 codec/schema 和确定性测试；WPF 生命周期接线与完整保存事务仍未实现。
 21. **已确认：21A（2026-08-06）**。初版 SMF Type 1 采用兼容优先固定档：Tempo 为十进制 `60,000,000 / BPM` 后一次 `AwayFromZero`，结果限 `1..0xFFFFFF`；Time Signature 固定 `cc=24`、`bb=8`；Bank 顺序 CC0→CC32→Program；事件 Track 只写 Track Name 与 MIDI Port，不写 Device/Program Name；文本 Meta 严格 UTF-8；每个 Channel Event 显式 status，不用 Running Status；不在 canonical 外追加 Channel 清理；所有 Track EOT 对齐统一 endTick。代码已实现低层 writer/validator、整曲 canonical adapter、结构自校验与 golden/一致性测试。Track 可见字符串和文件命名模板不由编码器隐藏决定。
-22. Channel 10 melodic 的 SMF 初始化兼容档：MIDI/GM 没有不改变 Bank 语义的通用 Channel Voice 开关；需要决定是否写入 Roland GS、Yamaha XG 的 Normal Part SysEx 组合，以及接收方忽略这些 vendor SysEx 时的兼容说明。当前编码垂直切片遇到 Channel 10 会明确失败，避免静默输出成鼓通道。
+22. **已确认：22A（2026-08-06）**。每个实际包含 Channel 10 canonical 事件的事件 Track 在相对 tick 0、MIDI Port Meta 后、canonical Channel Event 前固定各写一次 Roland GS Normal Part 与 Yamaha XG Normal Part SysEx，顺序 GS→XG，使用固定默认 Device ID / Device Number。不发送 GS Reset、XG System On/Reset 或 GM Reset，不改写 canonical Bank/Program；不相关 Track 与 Conductor 不写。接收方忽略 vendor SysEx 或设备编号不同时仍可能按鼓通道处理，Readme 必须说明。代码已锁定精确 payload、顺序、条件写入和多 Port 分布。
 23. MIDI/音频输出文件名规则：在 SRS 已固定“不自动替换非法字符、不自动缩短路径、覆盖需确认”的前提下，仍需决定最终 Track Name/文件名模板、重复名称序号格式和固定 Readme 名称；不得重新询问已经闭合的非法字符/路径失败语义。
 
 发布前另有一项非技术选择：必须由产品所有者确认并取得适用于实际产品、平台和分发方式的 BASS 商业许可证。技术测试通过不等于具备分发授权。

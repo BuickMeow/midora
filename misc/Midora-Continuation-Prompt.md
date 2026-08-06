@@ -71,13 +71,14 @@ D:\Programing\midora
 19. External Project SF2 只保存 Project 根目录或直属 `soundfonts/` 的相对路径；精确大小写优先、唯一 ignore-case 回退并 Warning、歧义拒绝。完整原始字节 SHA-256 只在用户明确选择/替换/重绑定/接受变化时更新，被动状态不修改 Project；绝对路径与验证缓存只属于运行时。
 20. 工程总耗时从 Project 成功新建 / 打开到开始关闭使用单调时钟累计；空闲、最小化、失焦、Buffering、MIDI 导出和音频渲染均计入，系统睡眠 / 休眠及关闭流程暂停。自动累计不单独标记 Modified、不进入 Undo / Redo、不影响 canonical。
 21. SMF Type 1 兼容档固定为：Tempo 十进制 `60,000,000 / BPM` 后一次 `AwayFromZero`；Time Signature `cc=24` / `bb=8`；CC0→CC32→Program；事件 Track 写 Track Name + MIDI Port，文本 Meta 严格 UTF-8，不写 Device/Program Name；禁用 Running Status；canonical 外不追加 Channel 清理；所有 Track EOT 对齐统一 endTick。
+22. MIDI 导出的 Channel 10 melodic 初始化固定为每个实际相关事件 Track 在相对 tick 0、Port Meta 后、canonical 事件前按 GS→XG 各写一次固定 Normal Part SysEx；不发送 GS/XG/GM Reset，不改变 canonical Bank/Program。不识别 vendor 消息或使用不同设备编号的接收方仍可能按鼓通道处理，Readme 必须说明。
 
 四、仍需 ADR 或实测决定的事项
 
 这些不是当前 SRS 冲突，不能静默写成实现默认值：
 
 - BASS 商业分发许可证与第三方 notices；技术版本、SHA-256 和升级回归策略已经固定，不得与授权问题混为一项；
-- Channel 10 melodic 的 SMF vendor SysEx 兼容档，以及 MIDI/音频输出文件最终命名模板。
+- MIDI/音频输出文件最终命名模板。
 
 五、当前代码定位
 

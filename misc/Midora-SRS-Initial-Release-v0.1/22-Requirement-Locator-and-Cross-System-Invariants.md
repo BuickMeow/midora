@@ -42,6 +42,7 @@
 | INV-031 | 外部 Project SF2 只保存项目根目录或直属 `soundfonts/` 中的相对路径；精确大小写优先，唯一 ignore-case 回退产生 Warning，歧义时不可用。SHA-256 基于完整原始字节且仅由用户明确绑定/接受更新；被动资源变化不修改 Project。 |
 | INV-032 | 工程总耗时按 Project 成功打开后的完整会话单调累计，包含空闲、最小化、失焦、Buffering、MIDI 导出与音频渲染；系统睡眠 / 休眠和关闭流程暂停。自动累计不单独标记 Modified，也不影响 canonical 语义。 |
 | INV-033 | 初版 SMF Type 1 兼容档固定：Tempo 用 `60,000,000 / BPM` 后一次 `AwayFromZero`；拍号 `cc=24`、`bb=8`；Bank 顺序为 CC0→CC32→Program；文本 Meta 为严格 UTF-8；每个 Channel Event 显式 status；导出器不在 canonical 之外追加 Channel 清理；所有 Track 的 EOT 对齐统一 endTick。 |
+| INV-034 | MIDI 导出中，每个实际包含 Channel 10 canonical 事件的事件 Track 在相对 tick 0、Port Meta 后、canonical 事件前固定写一次 GS Normal Part 与一次 XG Normal Part SysEx，顺序 GS→XG；不得发送 GS/XG/GM Reset，不得改变 canonical Bank/Program；不相关事件 Track 与 Conductor 不写。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|

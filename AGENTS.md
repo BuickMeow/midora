@@ -101,3 +101,4 @@ Project Source Data
 11. 外部 Project SF2 只允许项目根目录或直属 `soundfonts/` 相对引用；路径精确大小写优先、唯一 ignore-case 回退并 Warning、歧义拒绝。SHA-256 对完整原始字节流式计算，只在用户明确选择/替换/重绑定/接受变化时更新；被动变化不改 Project。绝对解析路径和验证缓存只属于运行时。
 12. 工程总耗时按 Project 成功打开后的完整会话时间累计，包括空闲、最小化、失焦、Buffering、MIDI 导出和音频渲染；系统睡眠 / 休眠及关闭流程暂停。会话使用单调时钟；自动累计不单独标记 Modified，不进入 Undo / Redo，不影响编译或 canonical fingerprint。
 13. 初版 SMF Type 1 兼容档固定：Tempo 以十进制 `60,000,000 / BPM` 后只执行一次 `AwayFromZero`，24-bit 越界即失败；Time Signature 固定 `cc=24`、`bb=8`；Bank 顺序固定 CC0→CC32→Program；事件 Track 只写 Track Name 与 MIDI Port，不写 Device/Program Name；文本 Meta 严格 UTF-8；禁用 Running Status；导出器不得在 canonical 之外追加 Channel 清理；所有 Track 在统一 `endTick` 写 EOT。
+14. MIDI 导出的 Channel 10 melodic 初始化固定为每个实际相关事件 Track 在相对 tick 0、MIDI Port Meta 后、canonical 事件前各写一次 Roland GS Normal Part `F0 41 10 42 12 40 10 15 00 1B F7` 与 Yamaha XG Normal Part `F0 43 10 4C 08 09 07 00 F7`，顺序 GS→XG。不得发送任何 GS/XG/GM Reset，不得改变 canonical Bank/Program；不使用 Channel 10 的事件 Track 和 Conductor 不写。

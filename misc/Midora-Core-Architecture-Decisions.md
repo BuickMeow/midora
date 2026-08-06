@@ -181,7 +181,7 @@ Requirement trace：
 
 `metadata.json` v1 同时冻结项目名称、用户版本、作者/团队、原作、版权、备注、UTC 创建 / 修改时间和总耗时字段。会话内部保留 100 ns `TimeSpan` tick 余数，生成持久快照时向下取完整毫秒；重复取快照不会重复累计同一区间，系统墙钟校时不改变累计值。
 
-## 12. ADR-CORE-010（已接受，21A）：SMF Type 1 兼容编码档
+## 12. ADR-CORE-010（已接受，21A/22A）：SMF Type 1 兼容编码档
 
 决定：初版 `.mid` 编码固定使用 SMF Type 1 和 Project TPQ。Tempo 以十进制 `60,000,000 / BPM` 计算，并只对最终 microseconds-per-quarter-note 执行一次 `AwayFromZero`；舍入结果超出 `1..0xFFFFFF` 时整体失败。Time Signature 固定写 `cc=24`、`bb=8`。同 tick 的 Bank/Program 字节顺序固定为 CC0、CC32、Program Change。所有文本 Meta 使用严格 UTF-8；事件 Track 只写 Track Name 与 MIDI Port Meta，不写 Device Name / Program Name。每个 Channel Event 都显式写 status byte，不使用 Running Status。
 
@@ -198,4 +198,6 @@ Requirement trace：
 
 编码完成后必须重新解析并检查 MThd、MTrk 数量与长度、显式 status、可编码 delta、单个最终 EOT、所有 Track EOT tick 一致和文件末尾无额外字节。低层 `StandardMidiFile` 已提供 Type 1 writer/validator；正式消费者 `CanonicalMidiFileExporter` 只接受 canonical 结果。
 
-Channel 10 melodic 初始化没有通用 GM Channel Voice 表达，具体 GS/XG/其他 SysEx 兼容档仍需单独决定。为避免静默导出成鼓通道，本 ADR 的垂直切片在 canonical 使用 Channel 10 时返回明确失败；这不是初版最终能力边界。
+22A 已固定 Channel 10 melodic 兼容档。每个实际包含 Channel 10 canonical 事件的事件 Track 在相对 tick 0、Track Name 与 MIDI Port Meta 之后、全部 canonical Channel Event 之前，分别写一次 Roland GS Normal Part `F0 41 10 42 12 40 10 15 00 1B F7` 和 Yamaha XG Normal Part `F0 43 10 4C 08 09 07 00 F7`，顺序为 GS→XG。编码器不得发送 GS Reset、XG System On/Reset、GM Reset，不得替换或补写 canonical Bank/Program；不相关事件 Track 与 Conductor 不写这些 SysEx。
+
+这些消息采用厂商文档中的默认 Device ID / Device Number。接收方不识别 vendor SysEx 或使用不同设备编号时仍可能把 Channel 10 当鼓通道，Readme 必须说明该兼容边界。该选择依据 [Roland M-GS64 MIDI Implementation](https://cdn.roland.com/assets/media/pdf/M-GS64_OM.pdf) 的 `40 1x 15 USE FOR RHYTHM PART` 和 [Yamaha XG MIDI Data Format](https://uk.yamaha.com/en/download/files/2090960) 的 `08 nn 07 PART MODE`；外部资料用于确认 wire 定义，不替代 SRS。

@@ -554,10 +554,31 @@ SoundFont 相关说明
 MIDI 导出应写入必要的 Midora 内置 Channel 10 melodic 初始化事件。
 该初始化属于系统生成内容，不表示用户可以自由编辑 SysEx。
 初版仍然不开放用户自由 SysEx。
+
+初版固定同时写入以下两个 vendor Normal Part 初始化，顺序不得改变：
+```text
+Roland GS: F0 41 10 42 12 40 10 15 00 1B F7
+Yamaha XG: F0 43 10 4C 08 09 07 00 F7
+```
+规则：
+```text
+GS 在前，XG 在后
+使用上述固定默认 Device ID / Device Number 字节
+不得发送 GS Reset、XG System On / Reset 或 GM Reset
+不得借初始化改写 canonical Bank / Program
+只对实际包含 Channel 10 canonical Channel Event 的事件 Track 写入
+每个相关事件 Track 各写一次 GS 和 XG 初始化
+不使用 Channel 10 的事件 Track 不写入这些 SysEx
+Conductor Track 永远不写入这些 SysEx
+```
+无法识别某个 vendor SysEx 的接收方可以忽略该消息；两类消息均无法识别时，接收方仍可能按其默认鼓通道处理 Channel 10。
 ### 14.11.2 写入位置
 Channel 10 melodic 初始化事件应写在：
 ```text
-每个相关 Port / 事件 Track 的音乐事件之前
+相对导出 tick 0
+Track Name Meta 之后
+MIDI Port Meta 之后
+全部 canonical Channel Event 之前
 ```
 不得写入 Conductor Track。
 目标是保证该 Port 的 Channel 10 在普通事件前已完成 melodic 初始化。
@@ -565,6 +586,8 @@ Channel 10 melodic 初始化事件应写在：
 Readme 应说明：
 ```text
 Midora 会写入必要初始化以提高 Channel 10 melodic 行为一致性。
+初版同时写入 GS 与 XG Normal Part 消息，但不发送任何 GS/XG/GM Reset。
+初始化使用固定默认 Device ID / Device Number；接收方配置不同设备编号时可能忽略。
 该初始化不承诺被所有播放器完全支持。
 ```
 ---

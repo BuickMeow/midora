@@ -150,7 +150,7 @@ public sealed class CanonicalMidiFileExporterTests
     }
 
     [Fact]
-    public void KeepsChannel10BlockedUntilMelodicInitializationProfileIsAccepted()
+    public void WritesGsThenXgNormalPartBeforeChannel10Events()
     {
         MidoraId trackId = MidoraId.FromSequence(1);
         CanonicalCompiledResult compiled = CreateSyntheticCompiled(
@@ -165,9 +165,49 @@ public sealed class CanonicalMidiFileExporterTests
             LogicalTracks = [Layout(trackId, 0, "Track")]
         });
 
-        Assert.False(encoded.Succeeded);
-        Assert.Empty(encoded.FileBytes);
-        Assert.Contains(encoded.Diagnostics, value => value.Code == "MIDORA-MIDI-EXPORT-CHANNEL10-PROFILE");
+        Assert.True(encoded.Succeeded);
+        Assert.Empty(encoded.Diagnostics);
+        ParsedTrack eventTrack = ParseTracks(encoded.FileBytes)[1];
+        Assert.Equal(2, eventTrack.SystemExclusiveEvents.Count);
+        Assert.Equal(
+            new byte[] { 0x41, 0x10, 0x42, 0x12, 0x40, 0x10, 0x15, 0x00, 0x1b, 0xf7 },
+            eventTrack.SystemExclusiveEvents[0].Data);
+        Assert.Equal(
+            new byte[] { 0x43, 0x10, 0x4c, 0x08, 0x09, 0x07, 0x00, 0xf7 },
+            eventTrack.SystemExclusiveEvents[1].Data);
+        Assert.All(eventTrack.SystemExclusiveEvents, value => Assert.Equal(0, value.Tick));
+
+        int port = encoded.FileBytes.AsSpan().IndexOf(new byte[] { 0x00, 0xff, 0x21, 0x01, 0x00 });
+        int gs = encoded.FileBytes.AsSpan().IndexOf(
+            new byte[] { 0x00, 0xf0, 0x0a, 0x41, 0x10, 0x42, 0x12, 0x40, 0x10, 0x15, 0x00, 0x1b, 0xf7 });
+        int xg = encoded.FileBytes.AsSpan().IndexOf(
+            new byte[] { 0x00, 0xf0, 0x08, 0x43, 0x10, 0x4c, 0x08, 0x09, 0x07, 0x00, 0xf7 });
+        int noteOn = encoded.FileBytes.AsSpan().IndexOf(new byte[] { 0x00, 0x99, 0x3c, 0x64 });
+        Assert.True(port < gs && gs < xg && xg < noteOn);
+    }
+
+    [Fact]
+    public void WritesChannel10InitializationOncePerRelevantEventTrackAndNeverElsewhere()
+    {
+        MidoraId trackId = MidoraId.FromSequence(1);
+        CanonicalCompiledResult compiled = CreateSyntheticCompiled(
+        [
+            SyntheticEvent(trackId, 0, MidiMessage.NoteOn(0, 60, 100), 0),
+            SyntheticEvent(trackId, 1, MidiMessage.NoteOn(9, 61, 100), 1, zeroBasedChannel: 9)
+        ]);
+
+        MidiExportEncodingResult encoded = CanonicalMidiFileExporter.EncodeWholeProject(new()
+        {
+            CompiledResult = compiled,
+            ConductorTrackName = "Conductor",
+            LogicalTracks = [new(trackId, new Dictionary<byte, string> { [0] = "P1", [1] = "P2" })]
+        });
+
+        Assert.True(encoded.Succeeded);
+        ParsedTrack[] tracks = ParseTracks(encoded.FileBytes);
+        Assert.Empty(tracks[0].SystemExclusiveEvents);
+        Assert.Empty(tracks[1].SystemExclusiveEvents);
+        Assert.Equal(2, tracks[2].SystemExclusiveEvents.Count);
     }
 
     [Fact]
@@ -342,6 +382,7 @@ public sealed class CanonicalMidiFileExporterTests
             List<TimedChannelEvent> channelEvents = [];
             List<byte[]> channelMessages = [];
             List<TimedMetaEvent> metaEvents = [];
+            List<TimedSystemExclusiveEvent> systemExclusiveEvents = [];
             while (position < end)
             {
                 tick += ReadVariableLength(file, ref position);
@@ -358,7 +399,9 @@ public sealed class CanonicalMidiFileExporterTests
                 if (status is 0xf0 or 0xf7)
                 {
                     int dataLength = ReadVariableLength(file, ref position);
+                    byte[] data = file.AsSpan(position, dataLength).ToArray();
                     position += dataLength;
+                    systemExclusiveEvents.Add(new(tick, status, data));
                     continue;
                 }
                 int dataCount = (status & 0xf0) is 0xc0 or 0xd0 ? 1 : 2;
@@ -369,7 +412,12 @@ public sealed class CanonicalMidiFileExporterTests
                 channelMessages.Add(message);
                 channelEvents.Add(new(tick, message));
             }
-            result[trackIndex] = new(tick, channelMessages, channelEvents, metaEvents);
+            result[trackIndex] = new(
+                tick,
+                channelMessages,
+                channelEvents,
+                metaEvents,
+                systemExclusiveEvents);
         }
         return result;
     }
@@ -391,7 +439,9 @@ public sealed class CanonicalMidiFileExporterTests
         long EndTick,
         List<byte[]> ChannelMessages,
         List<TimedChannelEvent> ChannelEvents,
-        List<TimedMetaEvent> MetaEvents);
+        List<TimedMetaEvent> MetaEvents,
+        List<TimedSystemExclusiveEvent> SystemExclusiveEvents);
     private sealed record TimedChannelEvent(long Tick, byte[] Data);
     private sealed record TimedMetaEvent(long Tick, byte Type, byte[] Data);
+    private sealed record TimedSystemExclusiveEvent(long Tick, byte Status, byte[] Data);
 }

@@ -8,6 +8,10 @@ namespace Midora.MidiExport;
 public static class CanonicalMidiFileExporter
 {
     private const string GenericEncodingErrorCode = "MIDORA-MIDI-EXPORT-ENCODING";
+    private static ReadOnlySpan<byte> RolandGsChannel10NormalPart =>
+        [0x41, 0x10, 0x42, 0x12, 0x40, 0x10, 0x15, 0x00, 0x1b, 0xf7];
+    private static ReadOnlySpan<byte> YamahaXgChannel10NormalPart =>
+        [0x43, 0x10, 0x4c, 0x08, 0x09, 0x07, 0x00, 0xf7];
 
     public static MidiExportEncodingResult EncodeWholeProject(WholeProjectMidiEncodingRequest request)
     {
@@ -265,6 +269,11 @@ public static class CanonicalMidiFileExporter
             StandardMidiFileEvent.Text(0, StandardMidiFile.TrackNameMetaType, trackName),
             StandardMidiFileEvent.Meta(0, StandardMidiFile.MidiPortMetaType, [port])
         ];
+        if (values.Any(value => value.ZeroBasedChannel == 9))
+        {
+            events.Add(StandardMidiFileEvent.SystemExclusive(0, RolandGsChannel10NormalPart));
+            events.Add(StandardMidiFileEvent.SystemExclusive(0, YamahaXgChannel10NormalPart));
+        }
         foreach (CanonicalMidiEvent value in values)
         {
             events.Add(StandardMidiFileEvent.ChannelVoice(
@@ -290,14 +299,6 @@ public static class CanonicalMidiFileExporter
         {
             Add("Canonical MIDI routing or status/channel data is inconsistent.");
             return;
-        }
-        if (value.ZeroBasedChannel == 9)
-        {
-            diagnostics.Add(new(
-                "MIDORA-MIDI-EXPORT-CHANNEL10-PROFILE",
-                MidiExportDiagnosticCategory.Encoding,
-                "The required Channel 10 melodic SMF initialization profile has not yet been fixed by an accepted decision.",
-                value.Source));
         }
         if (message.MessageType == MidiMessageType.NoteOff && message.Byte2 != 0)
         {

@@ -1,0 +1,161 @@
+using Midora.Compiler;
+using Midora.Domain;
+
+namespace Midora.AudioRender.Tests;
+
+public sealed class AudioRenderCompilationCoordinatorTests
+{
+    [Fact]
+    public void WholeMixUsesOneDedicatedCanonicalContextAndIgnoresMuteSoloState()
+    {
+        MidoraProject project = AudioRenderTestProject.Create(
+            ("Piano", 192, 60),
+            ("Strings", 384, 64));
+        LogicalTrack unbound = new(project) { Name = "Unbound" };
+        project.Tracks.Add(unbound);
+        using MidoraCompiler compiler = new();
+
+        AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = AudioRenderMode.WholeMix,
+            StartTick = 24,
+            EndTick = 480,
+            SelectedTrackIds = new HashSet<MidoraId>
+            {
+                project.Tracks[0].Id,
+                project.Tracks[1].Id,
+                unbound.Id
+            }
+        });
+
+        AudioRenderCompilationItem item = Assert.Single(result.Items);
+        Assert.True(item.Succeeded);
+        Assert.Equal(CompilationPurpose.AudioRender, item.CompiledResult.Purpose);
+        Assert.Equal(24, item.CompiledResult.StartTick);
+        Assert.Equal(480, item.CompiledResult.EndTick);
+        Assert.Equal(480, result.EndTick);
+        Assert.Contains(result.Diagnostics, value =>
+            value.Code == "MIDORA-AUDIO-RENDER-TRACK-UNBOUND"
+            && value.Severity == AudioRenderDiagnosticSeverity.Info);
+    }
+
+    [Fact]
+    public void PerTrackCompilesIndependentlyAndFreezesOneNaturalRange()
+    {
+        MidoraProject project = AudioRenderTestProject.Create(
+            ("Short", 192, 60),
+            ("Long", 768, 64));
+        using MidoraCompiler compiler = new();
+
+        AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = AudioRenderMode.PerLogicalTrack
+        });
+
+        Assert.True(result.HasRenderableOutput);
+        Assert.Equal(2, result.Items.Count);
+        Assert.All(result.Items, item =>
+        {
+            Assert.True(item.Succeeded);
+            Assert.Equal(CompilationPurpose.LogicalTrackAudioRender, item.CompiledResult.Purpose);
+            Assert.Equal(result.EndTick, item.CompiledResult.EndTick);
+            Assert.All(item.CompiledResult.Allocations.ToArray(), allocation =>
+            {
+                Assert.Equal(0, allocation.ZeroBasedPort);
+                Assert.Equal(0, allocation.ZeroBasedChannel);
+            });
+        });
+        Assert.True(result.EndTick >= 768);
+    }
+
+    [Fact]
+    public void BoundEmptyInstrumentRemainsSilentTargetWithCommonRange()
+    {
+        MidoraProject project = AudioRenderTestProject.Create(("Audible", 192, 60));
+        EventInstrument emptyInstrument = new(project)
+        {
+            Name = "Empty",
+            RootNote = 60,
+            TemplateLengthTicks = 192
+        };
+        SubVoice emptyVoice = new(project) { Name = "Empty Voice" };
+        emptyInstrument.SubVoices.Add(emptyVoice);
+        project.EventInstruments.Add(emptyInstrument);
+        LogicalTrack silentTrack = new(project)
+        {
+            Name = "Silent",
+            EventInstrumentId = emptyInstrument.Id
+        };
+        Segment silentSegment = new(project) { LengthTicks = 384 };
+        silentSegment.Notes.Add(new(project)
+        {
+            LengthTicks = 384,
+            Note = 64,
+            Velocity = 100
+        });
+        silentTrack.Segments.Add(silentSegment);
+        project.Tracks.Add(silentTrack);
+        using MidoraCompiler compiler = new();
+
+        AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = AudioRenderMode.PerLogicalTrack
+        });
+
+        Assert.True(result.HasRenderableOutput);
+        Assert.Equal(2, result.Items.Count);
+        AudioRenderCompilationItem silent = Assert.Single(result.Items, value =>
+            value.Track?.TrackId == silentTrack.Id);
+        Assert.True(
+            silent.Succeeded,
+            string.Join(" | ", silent.Diagnostics.Select(value =>
+                $"{value.Code}:{value.Severity}:{value.Message}")));
+        Assert.Equal(result.EndTick, silent.CompiledResult.EndTick);
+        Assert.DoesNotContain(silent.CompiledResult.Events.ToArray(), value =>
+            value.Role is CanonicalEventRole.NoteOn or CanonicalEventRole.NoteOff);
+        Assert.Single(silent.CompiledResult.Allocations.ToArray());
+        Assert.Contains(silent.Diagnostics, value =>
+            value.Code == "MIDORA1225"
+            && value.Severity == DiagnosticSeverity.Info
+            && value.Source.SubVoiceId == emptyVoice.Id);
+    }
+
+    [Fact]
+    public void NoBoundSelectedTrackBlocksBeforeRendering()
+    {
+        MidoraProject project = new(192);
+        LogicalTrack track = new(project) { Name = "Unbound" };
+        project.Tracks.Add(track);
+        using MidoraCompiler compiler = new();
+
+        AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = AudioRenderMode.PerLogicalTrack,
+            SelectedTrackIds = new HashSet<MidoraId> { track.Id }
+        });
+
+        Assert.False(result.HasRenderableOutput);
+        Assert.Empty(result.Items);
+        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA-AUDIO-RENDER-NO-TARGETS");
+    }
+
+    [Fact]
+    public void RejectsZeroLengthManualRange()
+    {
+        MidoraProject project = AudioRenderTestProject.Create(("Track", 192, 60));
+        using MidoraCompiler compiler = new();
+        AudioRenderCompilationCoordinator coordinator = new(compiler);
+
+        _ = Assert.Throws<ArgumentOutOfRangeException>(() => coordinator.Compile(new()
+        {
+            Project = project,
+            Mode = AudioRenderMode.WholeMix,
+            StartTick = 100,
+            EndTick = 100
+        }));
+    }
+}

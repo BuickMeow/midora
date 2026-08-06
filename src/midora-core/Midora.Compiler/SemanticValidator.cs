@@ -37,15 +37,23 @@ public static class SemanticValidator
             {
                 Error("MIDORA1201", "Event Instrument ID 重复。", source);
             }
-            if (string.IsNullOrWhiteSpace(instrument.Name) || instrument.Name != instrument.Name.Trim() || !names.Add(instrument.Name))
+            bool participates = participatingInstrumentIds.Contains(instrument.Id);
+            if ((request.IncludedTrackIds is null || participates)
+                && (string.IsNullOrWhiteSpace(instrument.Name)
+                    || instrument.Name != instrument.Name.Trim()
+                    || !names.Add(instrument.Name)))
             {
                 Error("MIDORA1202", "Event Instrument 名称必须 trim 后非空且忽略大小写唯一。", source);
+            }
+            if (request.IncludedTrackIds is not null && !participates)
+            {
+                continue;
             }
             int internalDiagnosticStart = diagnostics.Count;
             Dictionary<MidoraId, LogicalParameterDefinition> parameters = ValidateParameterDefinitions(
                 instrument.LogicalParameters, source, diagnostics);
             ValidateInstrument(instrument, parameters, source, diagnostics);
-            if (!participatingInstrumentIds.Contains(instrument.Id))
+            if (!participates)
             {
                 for (int i = internalDiagnosticStart; i < diagnostics.Count; i++)
                 {
@@ -70,7 +78,6 @@ public static class SemanticValidator
         MidoraProject project,
         CompilationRequest request)
     {
-        long rangeEnd = request.EndTick ?? project.Conductor.EndMarkerTick ?? long.MaxValue;
         HashSet<MidoraId> result = [];
         foreach (LogicalTrack track in project.Tracks)
         {
@@ -79,16 +86,7 @@ public static class SemanticValidator
             {
                 continue;
             }
-            bool participates = track.Segments.Any(segment =>
-                segment.ProjectStartTick < rangeEnd
-                && segment.LengthTicks > 0
-                && segment.ProjectStartTick <= long.MaxValue - segment.LengthTicks
-                && segment.ProjectStartTick + segment.LengthTicks > request.StartTick
-                && segment.Notes.Count != 0);
-            if (participates)
-            {
-                result.Add(track.EventInstrumentId.Value);
-            }
+            result.Add(track.EventInstrumentId.Value);
         }
         return result;
     }
@@ -510,6 +508,11 @@ public static class SemanticValidator
             if (!trackIds.Add(track.Id))
             {
                 AddError("MIDORA1301", "Logical Track ID 必须唯一；名称允许为空和重复。", trackSource, diagnostics);
+            }
+            if (request.IncludedTrackIds is not null
+                && !request.IncludedTrackIds.Contains(track.Id))
+            {
+                continue;
             }
             EventInstrument? boundInstrument = null;
             if (track.EventInstrumentId.HasValue

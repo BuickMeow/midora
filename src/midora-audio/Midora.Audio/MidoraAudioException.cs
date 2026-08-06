@@ -6,7 +6,7 @@ public class MidoraAudioException : Exception
     {
     }
 
-    public MidoraAudioException(string message, Exception innerException)
+    public MidoraAudioException(string message, Exception? innerException)
         : base(message, innerException)
     {
     }

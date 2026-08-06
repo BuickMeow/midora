@@ -328,7 +328,8 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
         try
         {
             string fullPath = Path.GetFullPath(_ownedTemporaryDirectory);
-            string expectedPrefix = Path.GetFullPath(Path.GetTempPath()) + Path.DirectorySeparatorChar;
+            string expectedPrefix = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(Path.GetTempPath())) + Path.DirectorySeparatorChar;
             if (fullPath.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase)
                 && Path.GetFileName(fullPath).StartsWith("midora-audio-ipc-", StringComparison.Ordinal))
             {

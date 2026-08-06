@@ -91,7 +91,9 @@ public sealed class PlaybackTests
     public void AdapterSupportsAllRequiredSampleRateShapes(int sampleRate)
     {
         MidoraProject project = CreateProject();
-        CanonicalCompiledResult compiled = new MidoraCompiler().CompileFull(project);
+        CanonicalCompiledResult compiled = new MidoraCompiler().CompileFull(
+            project,
+            new CompilationRequest { EndTick = 960 });
 
         MidiRenderPlan plan = MidiRenderPlanAdapter.Create(compiled, sampleRate);
 

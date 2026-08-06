@@ -19,7 +19,8 @@ public static unsafe partial class WaveFileOutput
         string targetPath,
         int workFrameCount,
         bool overwrite,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IWaveFileRenderMonitor? monitor = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
@@ -105,7 +106,8 @@ public static unsafe partial class WaveFileOutput
             long allocatedBeforeRendering = GC.GetAllocatedBytesForCurrentThread();
             while (renderedFrames < frameCount)
             {
-                if (cancellationToken.IsCancellationRequested)
+                if (cancellationToken.IsCancellationRequested
+                    || monitor?.IsCancellationRequested == true)
                 {
                     failure = WaveRenderFailure.Cancelled;
                     break;
@@ -145,8 +147,21 @@ public static unsafe partial class WaveFileOutput
                 sampleWriteAllocatedBytes += GC.GetAllocatedBytesForCurrentThread() - allocatedBeforeWrite;
 
                 renderedFrames += requestedFrames;
+                monitor?.ReportRenderedFrames(renderedFrames);
             }
             renderingAllocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocatedBeforeRendering;
+
+            if (failure == WaveRenderFailure.None
+                && (cancellationToken.IsCancellationRequested
+                    || monitor?.IsCancellationRequested == true))
+            {
+                failure = WaveRenderFailure.Cancelled;
+            }
+
+            if (failure == WaveRenderFailure.None)
+            {
+                monitor?.BeginFinalizing();
+            }
 
             if (failure == WaveRenderFailure.None && FlushFileBuffers(fileHandle) == 0)
             {

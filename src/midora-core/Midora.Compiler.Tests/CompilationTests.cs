@@ -278,7 +278,7 @@ public sealed class CompilationTests
     }
 
     [Fact]
-    public void InstanceWithNoPossibleOutputConsumesNoChannelUnit()
+    public void EmptySubVoiceInstanceConsumesChannelUnitAndReportsInfo()
     {
         var fixture = CompilerTestProject.Create();
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
@@ -286,9 +286,14 @@ public sealed class CompilationTests
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
 
         Assert.True(result.IsConsumable);
-        Assert.Empty(result.Events.ToArray());
-        Assert.Empty(result.Allocations.ToArray());
-        Assert.Equal(0, result.Statistics.PeakChannelUnitCount);
+        Assert.DoesNotContain(result.Events.ToArray(), value =>
+            value.Role is CanonicalEventRole.NoteOn or CanonicalEventRole.NoteOff);
+        Assert.Single(result.Allocations.ToArray());
+        Assert.Equal(1, result.Statistics.PeakChannelUnitCount);
+        Assert.Contains(result.Diagnostics, value =>
+            value.Code == "MIDORA1225"
+            && value.Severity == DiagnosticSeverity.Info
+            && value.Source.SubVoiceId == fixture.Voice.Id);
     }
 
     [Fact]
@@ -320,11 +325,12 @@ public sealed class CompilationTests
     {
         var fixture = CompilerTestProject.Create();
         MidoraCompiler compiler = new();
-        CanonicalCompiledResult before = compiler.CompileFull(fixture.Project);
+        CompilationRequest range = new() { EndTick = 480 };
+        CanonicalCompiledResult before = compiler.CompileFull(fixture.Project, range);
         fixture.Project.Conductor.Tempos.Add(new TempoChange(fixture.Project, 120, 100m));
 
         CanonicalCompiledResult after = compiler.CompileIncremental(
-            fixture.Project, new ProjectChangeSet { AffectsConductor = true });
+            fixture.Project, new ProjectChangeSet { AffectsConductor = true }, range);
 
         Assert.NotEqual(before.Fingerprint, after.Fingerprint);
         Assert.Equal(1, compiler.LastTelemetry.ReusedTrackCount);

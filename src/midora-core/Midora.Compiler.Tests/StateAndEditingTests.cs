@@ -35,7 +35,9 @@ public sealed class StateAndEditingTests
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
         CanonicalMidiEvent[] resets = result.Events.ToArray().Where(value => value.Role == CanonicalEventRole.Reset).ToArray();
 
-        CanonicalMidiEvent reset = Assert.Single(resets);
+        CanonicalMidiEvent reset = Assert.Single(resets, value =>
+            value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 11);
         Assert.Equal((byte)11, reset.Message.Byte1);
         Assert.Equal((byte)77, reset.Message.Byte2);
         Assert.DoesNotContain(result.Events.ToArray(), value => value.Message.MessageType == MidiMessageType.ControlChange
@@ -90,7 +92,9 @@ public sealed class StateAndEditingTests
         fixture.Project.Conductor.KeySignatures.Add(new(fixture.Project, 0, -2, true));
         fixture.Project.Conductor.Markers.Add(new(fixture.Project, 720, "Verse"));
 
-        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            new CompilationRequest { EndTick = 1_200 });
 
         Assert.Equal(2, result.Conductor.Tempos.Length);
         Assert.Equal(2, result.Conductor.TimeSignatures.Length);

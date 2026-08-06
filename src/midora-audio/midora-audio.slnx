@@ -3,7 +3,10 @@
   <Project Path="../midora-core/Midora.Mapping.Contract.V1/Midora.Mapping.Contract.V1.csproj" />
   <Project Path="../midora-core/Midora.Domain/Midora.Domain.csproj" />
   <Project Path="../midora-core/Midora.Compiler/Midora.Compiler.csproj" />
+  <Project Path="../midora-core/Midora.Persistence/Midora.Persistence.csproj" />
   <Project Path="../midora-core/Midora.Playback/Midora.Playback.csproj" />
+  <Project Path="../midora-core/Midora.AudioRender/Midora.AudioRender.csproj" />
+  <Project Path="../midora-core/Midora.AudioRender.Tests/Midora.AudioRender.Tests.csproj" />
   <Project Path="../midora-core/Midora.Playback.BassWasapi/Midora.Playback.BassWasapi.csproj" />
   <Project Path="../midora-audio-device/Midora.AudioDevice.BassWasapi/Midora.AudioDevice.BassWasapi.csproj" />
   <Project Path="../midora-audio-device/Midora.AudioDevice/Midora.AudioDevice.csproj" />

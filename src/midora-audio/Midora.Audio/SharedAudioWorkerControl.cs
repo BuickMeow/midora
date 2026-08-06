@@ -15,7 +15,11 @@ public enum AudioWorkerState : int
     Completed,
     Stopping,
     Stopped,
-    Faulted
+    Faulted,
+    Rendering,
+    Cancelling,
+    Finalizing,
+    Cancelled
 }
 
 public enum AudioWorkerControlCommandKind : byte

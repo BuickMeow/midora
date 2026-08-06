@@ -65,7 +65,7 @@ public sealed class MidoraCompiler : IDisposable
         LastTelemetry = default;
         List<CompilerDiagnostic> diagnostics = SemanticValidator.Validate(project, request);
         ValidateMappingFunctions(project, request, diagnostics);
-        long naturalEnd = GetNaturalEnd(project);
+        long naturalEnd = GetNaturalEnd(project, request.IncludedTrackIds);
         long endTick = request.EndTick ?? project.Conductor.EndMarkerTick ?? naturalEnd;
         if (endTick < request.StartTick)
         {
@@ -116,14 +116,32 @@ public sealed class MidoraCompiler : IDisposable
             recompiledTracks++;
         }
 
+        if (!request.EndTick.HasValue && !project.Conductor.EndMarkerTick.HasValue)
+        {
+            endTick = instances
+                .Select(value => value.EndTick)
+                .DefaultIfEmpty(0)
+                .Max();
+            if (endTick < request.StartTick)
+            {
+                diagnostics.Add(new(
+                    "MIDORA2001",
+                    DiagnosticSeverity.Error,
+                    "有效编译结束 tick 早于范围起点。",
+                    new(Tick: endTick)));
+                endTick = request.StartTick;
+            }
+            conductor = FreezeConductor(project.Conductor, request.StartTick, endTick);
+        }
+
         if (request.IncludedSubVoiceIds is not null)
         {
             instances = instances.Select(instance => instance with
-                {
-                    Voices = instance.Voices
+            {
+                Voices = instance.Voices
                         .Where(voice => request.IncludedSubVoiceIds.Contains(voice.SubVoiceId))
                         .ToArray()
-                })
+            })
                 .Where(instance => instance.Voices.Length != 0)
                 .ToList();
         }
@@ -184,6 +202,11 @@ public sealed class MidoraCompiler : IDisposable
         HashSet<MidoraId> selectedInstrumentIds = SemanticValidator.GetParticipatingInstrumentIds(project, request);
         foreach (EventInstrument instrument in project.EventInstruments)
         {
+            if (request.IncludedTrackIds is not null
+                && !selectedInstrumentIds.Contains(instrument.Id))
+            {
+                continue;
+            }
             HashSet<MidoraId> activeReferences = GetActiveMappingSteps(instrument)
                 .Where(step => step.Operation == MappingOperation.CustomCSharp && step.MappingFunctionId.HasValue)
                 .Select(step => step.MappingFunctionId!.Value)
@@ -222,10 +245,6 @@ public sealed class MidoraCompiler : IDisposable
         List<RawInstance> result = [];
         if (!track.EventInstrumentId.HasValue
             || !instruments.TryGetValue(track.EventInstrumentId.Value, out EventInstrument? instrument))
-        {
-            return [];
-        }
-        if (!InstrumentCanOutput(project, instrument))
         {
             return [];
         }
@@ -295,6 +314,20 @@ public sealed class MidoraCompiler : IDisposable
                 activePolicyInstances.Add(new(
                     result.Count - 1, segment, note, projectStart, segmentEnd,
                     instanceSourceOrder, instance));
+            }
+        }
+        if (result.Count != 0)
+        {
+            foreach (SubVoice emptyVoice in instrument.SubVoices.Where(voice =>
+                voice.Events.Count == 0
+                && voice.Curves.Count == 0
+                && !instrument.ParameterMappings.Any(mapping => mapping.Steps.IsEnabled)))
+            {
+                diagnostics.Add(new(
+                    "MIDORA1225",
+                    DiagnosticSeverity.Info,
+                    "实际参与编译的 SubVoice 没有普通 MIDI 输出内容。",
+                    new(track.Id, EventInstrumentId: instrument.Id, SubVoiceId: emptyVoice.Id)));
             }
         }
         return result.ToArray();
@@ -1322,19 +1355,6 @@ public sealed class MidoraCompiler : IDisposable
         }
     }
 
-    private static bool InstrumentCanOutput(MidoraProject project, EventInstrument instrument) =>
-        HasExplicitState(project.GlobalInitialState)
-        || HasExplicitState(instrument.InitialState)
-        || instrument.ParameterMappings.Any(value => value.Steps.IsEnabled)
-        || instrument.SubVoices.Any(voice => HasExplicitState(voice.InitialState)
-            || voice.Events.Count != 0 || voice.Curves.Count != 0);
-
-    private static bool HasExplicitState(MidiInitialState state) =>
-        state.BankMsb.HasValue || state.BankLsb.HasValue || state.Program.HasValue
-        || state.PitchBend.HasValue || state.PitchBendRangeSemitones.HasValue
-        || state.PitchBendRangeCents.HasValue || state.Controllers.Count != 0
-        || state.RegisteredParameters.Count != 0 || state.NonRegisteredParameters.Count != 0;
-
     private static AllocationResult Allocate(
         MidoraProject project,
         List<RawInstance> instances,
@@ -1696,14 +1716,21 @@ public sealed class MidoraCompiler : IDisposable
         order = currentOrder;
     }
 
-    private static long GetNaturalEnd(MidoraProject project)
+    private static long GetNaturalEnd(
+        MidoraProject project,
+        IReadOnlySet<MidoraId>? includedTrackIds)
     {
         long end = 0;
         foreach (LogicalTrack track in project.Tracks)
         {
+            if (includedTrackIds is not null && !includedTrackIds.Contains(track.Id))
+            {
+                continue;
+            }
             foreach (Segment segment in track.Segments)
             {
-                if (segment.ProjectStartTick >= 0 && segment.LengthTicks > 0
+                if (segment.Notes.Count != 0
+                    && segment.ProjectStartTick >= 0 && segment.LengthTicks > 0
                     && segment.ProjectStartTick <= long.MaxValue - segment.LengthTicks)
                 {
                     end = Math.Max(end, segment.ProjectStartTick + segment.LengthTicks);

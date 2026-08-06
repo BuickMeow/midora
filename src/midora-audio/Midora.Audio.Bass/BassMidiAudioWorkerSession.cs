@@ -343,7 +343,8 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         try
         {
             string fullPath = Path.GetFullPath(path);
-            string expectedPrefix = Path.GetFullPath(Path.GetTempPath()) + Path.DirectorySeparatorChar;
+            string expectedPrefix = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(Path.GetTempPath())) + Path.DirectorySeparatorChar;
             if (fullPath.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase)
                 && Path.GetFileName(fullPath).StartsWith("midora-audio-worker-", StringComparison.Ordinal))
             {

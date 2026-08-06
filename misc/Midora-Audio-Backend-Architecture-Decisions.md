@@ -119,7 +119,17 @@ Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domai
 
 本决定不授权重新分发 BASS。Midora 初版虽按 24A 定位为免费、开源、非商业软件，正式分发仍须核验发布主体、收入方式、平台、分发方式和届时有效的 BASS 条款，并随产物提供第三方 notices；条件不明或商业化时先联系权利人确认或取得适用许可。
 
-## 8. 验证门
+## 8. ADR-AUDIO-007：离线文件 Worker 与双层原子发布边界
+
+决定：正式音频文件渲染仍使用 ADR-AUDIO-005 的唯一 `win-x64` Native AOT Worker，不依赖 WASAPI 或物理设备。主进程只向 Worker 传递固定二进制 `MidiRenderPlan`、冻结 SF2、sample voice 上限、Master Volume、Limiter v1 和一个已授权的任务临时 WAV 路径；不传 Project，不跨进程传 PCM。正式客户端只接受 `.exe`，托管 `.dll` 启动入口只供测试。
+
+公共 `file-probe` 在任务级 Preparing 验证原生基线、SF2 可加载性和固定输出链；每个 `file-render` 进程创建本文件实际 Port 的干净 BASSMIDI stream，按计划预加载实际 preset/fallback，以固定 256-frame 最大工作块执行“多 Port 求和 → Master Volume → Limiter v1”，直接流式写普通 RIFF/WAVE。Worker 内部先写其私有临时文件并最终化为主进程授权的任务临时路径；主进程随后独立校验 WAVE，再负责最终目标的移动/替换事务。Worker 不能直接获得最终覆盖权限。
+
+共享内存状态协议只携带 Preparing/Rendering/Cancelling/Finalizing/Completed/Faulted、frame 进度、故障码和热路径分配计数；取消使用有界控制命令，不靠终止进程模拟正常 Stop。Preparing 超时可强制结束尚未建立正式输出的 Worker。正常取消等待资源安全释放，并扫描/清理 Worker 内层临时文件；任何无法删除的残留路径返回主任务诊断。
+
+Worker 启动时先按绝对路径加载三项原生库，并为各 interop assembly 安装返回这些精确句柄的 DllImport resolver；不得让 AOT 发布目录与外部目录的同名 DLL 形成两个 BASS 全局实例。该选择已用真实 BASS/BASSMIDI 验证开发期托管 Worker 与正式 `win-x64` Native AOT `.exe`：两者均通过独立进程文件协议、非静音 WAVE、精确 frame/文件长度和 Rendering 零托管分配；AOT publish 同时通过固定 manifest/DLL 校验。剩余发布门是故障/取消压力、最终分发核验与人工试听。
+
+## 9. 验证门
 
 - 相同事件计划以不同工作 block（含非 2 次幂）渲染必须逐 sample 相同。
 - 验证事件前静音、事件 frame 起音、真实 NoteOff velocity 0、同 tick 顺序、同音高重叠、Reset、硬结束和总 frame 数。

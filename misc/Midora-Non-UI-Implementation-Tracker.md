@@ -35,7 +35,7 @@
 | NUI-04 | Full/Incremental Canonical Compiler | 进行中 | §12、INV-009/010/015 | checkpoint + dirty range + state hash；随机输入逐字段等价 |
 | NUI-05 | Playback/Preview 非 UI 状态机 | 进行中 | §13、§19 | 全状态、自动 Stop、Mute/Solo、设备故障和重复生命周期测试 |
 | NUI-06 | MIDI Export 完整工作流 | 进行中 | §14、§19 | 三模式、routing、README、冻结命名、多文件原子事务、自校验 |
-| NUI-07 | Audio Render 完整工作流 | 进行中 | §15、§19 | Whole/Per Track、采样率/长度/RIFF 边界、取消、独立发布、零分配 |
+| NUI-07 | Audio Render 完整工作流 | 自动化与 AOT 文件链完成；试听待验收 | §15、§19 | Whole/Per Track、采样率/长度/RIFF 边界、取消、独立发布、零分配 |
 | NUI-08 | `.midora` 完整持久化 | 进行中 | §16、§19 | protobuf 对象图、损坏隔离、迁移、Embedded SF2、确定性与事务矩阵 |
 | NUI-09 | BASS/BASSMIDI/WASAPI/Worker | 进行中 | §13、§15、INV-018～028 | ABI/版本/生命周期/设备/underrun/IPC/零分配自动门与硬件验收 |
 | NUI-10 | 非 UI 应用任务协调与偏好 | 待实施 | §3、§13～16、§19 | 单任务锁、Project switch guard、Application Preferences、报告对象 |
@@ -51,10 +51,11 @@
 ## 5. 当前实施顺序
 
 1. Q-NUI-002 回答后补 `.midora` 成功迁移器分支；未来版本预检和保存/打开故障注入已完成。
-2. MIDI Export 三模式、Readme 和文件事务已形成可运行垂直切片；Q-NUI-003 回答后补 Project 默认设置。当前转入 Audio Render 工作流，两者复用同一冻结命名服务。
-3. 用 Full Compile 作为 oracle，实现 SRS 强制的 checkpoint/dirty range/state hash 增量模型并建立属性测试。
-4. 完成非 UI 任务协调、播放/预览状态机和 Application Preferences。
-5. 加固原生音频 Worker、WASAPI 硬件矩阵和发布门；最后生成统一人工试听/手动测试清单。
+2. MIDI Export 三模式、Readme 和文件事务已形成可运行垂直切片；Q-NUI-003 回答后补 Project 默认设置。
+3. Audio Render Whole/Per Track、SF2 快照、正式文件 Worker 协议、WAVE 校验、逐文件事务及 Native AOT 文件链已完成；试听归入 NUI-11 统一人工验收。
+4. 用 Full Compile 作为 oracle，实现 SRS 强制的 checkpoint/dirty range/state hash 增量模型并建立属性测试。
+5. 完成非 UI 任务协调、播放/预览状态机和 Application Preferences。
+6. 加固原生音频 Worker、WASAPI 硬件矩阵和发布门；最后生成统一人工试听/手动测试清单。
 
 ## 6. 验证日志
 
@@ -66,6 +67,7 @@
 | 2026-08-06 | Q-NUI-001、版本预检与持久化事务故障门 | 结构化 Embedded 修复动作；未来三版本字段预检；打开/保存 7 阶段故障注入；Persistence 70 tests | 通过 |
 | 2026-08-06 | MIDI Export 三模式与任务事务 | 单一导出 CompileContext；Whole/Per Track/Per Port；Port 归一化；Readme 快照；冻结路径/覆盖；取消、自校验、回滚与故障注入；MIDI Export 30 tests | 通过 |
 | 2026-08-06 | 当前工作树仓库级回归 | common 68 + compiler 88 + persistence 70 + MIDI export 9 + playback 27 + MIDI 18 + audio 58 + audio-device 21 = 359 tests；6 个 solution Release build；限定改动文件 `dotnet format --verify-no-changes` | 通过，0 warning / 0 error |
+| 2026-08-06 | Audio Render 冻结任务、文件 Worker 与事务 | Whole/Per Track；空 SubVoice 静音目标；5 类采样率；RIFF/WAVE/取消/部分成功/覆盖竞态/残留；真实 BASS 文件 Worker 非静音与零分配；正式 win-x64 Native AOT publish + manifest/DLL 门 + AOT 文件链；全仓 9 个测试项目累计 420 tests；限定改动文件 format 门 | 通过，0 failure |
 
 ## 7. 未解决风险
 
@@ -73,4 +75,5 @@
 - 当前 `.midora` 已支持完整 Event Instrument/Logical Track 对象图、完整性正常的 Embedded SF2，以及 Q-NUI-001 规定的损坏资源结构化修复门；旧格式迁移尚未实现，因此 NUI-08 仍未完成。
 - 当前 Track 级增量缓存不符合 §12.21 的强制 checkpoint/state-hash 收敛模型。
 - Project MIDI Export Settings 仍是空 v1 占位；schema v2 与默认值等待 Q-NUI-003，不能回写修改已发布 v1。
+- Audio Render 的 canonical/输出事务与正式 Native AOT 文件链已完成，但应用级单音频任务锁和开始渲染前自动 Stop 仍属于 NUI-10；实时硬件压力与集中人工试听仍属于 NUI-09/NUI-11。
 - 实际 BASS DLL、物理 WASAPI 设备、设备移除和人耳听音不能只凭无设备 CI 结论替代。

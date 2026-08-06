@@ -261,12 +261,13 @@ public sealed class SemanticValidatorTests
         fixture.Project.Conductor.Markers.Add(firstMarker);
         fixture.Project.Conductor.TimeSignatures.Add(new TimeSignatureChange(fixture.Project, 240, 100, 4));
 
-        CanonicalCompiledResult invalid = new MidoraCompiler().CompileFull(fixture.Project);
+        CompilationRequest range = new() { EndTick = 480 };
+        CanonicalCompiledResult invalid = new MidoraCompiler().CompileFull(fixture.Project, range);
         Assert.False(invalid.IsConsumable);
         Assert.Contains(invalid.Diagnostics, value => value.Code == "MIDORA1013");
 
         fixture.Project.Conductor.TimeSignatures[^1] = new TimeSignatureChange(fixture.Project, 240, 99, 64);
-        CanonicalCompiledResult valid = new MidoraCompiler().CompileFull(fixture.Project);
+        CanonicalCompiledResult valid = new MidoraCompiler().CompileFull(fixture.Project, range);
         Assert.True(valid.IsConsumable);
         Assert.True(firstMarker.Id.CompareTo(secondMarker.Id) < 0);
         Assert.Equal(["A", "B"], valid.Conductor.Markers.ToArray().Select(value => value.Name).ToArray());

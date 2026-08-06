@@ -1,11 +1,15 @@
 using Midora.AudioDevice;
 using Midora.AudioDevice.BassWasapi.Internals;
 using Midora.AudioDevice.BassWasapi.Settings;
+using Midora.AudioDevice.Wave;
 using Midora.Midi;
 using System.Globalization;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using NativeBass = Midora.NativeInterops.Bass.BASS;
+using NativeBassMidi = Midora.NativeInterops.BassMidi.BASSMIDI;
+using NativeBassWasapi = Midora.NativeInterops.BassWasapi.BASSWASAPI;
 
 namespace Midora.Audio.Bass.Worker;
 
@@ -44,6 +48,26 @@ public static class Program
                 }
                 control = SharedAudioWorkerControl.Open(args[1]);
                 return RunPlayback(args, control);
+            }
+
+            if (string.Equals(args[0], "file-probe", StringComparison.Ordinal))
+            {
+                if (args.Length != 10)
+                {
+                    throw new ArgumentException("Invalid file-render probe argument count.");
+                }
+                control = SharedAudioWorkerControl.Open(args[1]);
+                return RunFileProbe(args, control);
+            }
+
+            if (string.Equals(args[0], "file-render", StringComparison.Ordinal))
+            {
+                if (args.Length != 11)
+                {
+                    throw new ArgumentException("Invalid file-render argument count.");
+                }
+                control = SharedAudioWorkerControl.Open(args[1]);
+                return RunFileRender(args, control);
             }
 
             // Kept only for the existing sample-equivalence harness. Formal realtime playback
@@ -218,6 +242,111 @@ public static class Program
             output.CallbackAllocatedBytes,
             renderWorker.RenderingThreadAllocatedBytes);
         return 0;
+    }
+
+    private static int RunFileProbe(string[] args, SharedAudioWorkerControl control)
+    {
+        control.PublishState(AudioWorkerState.Preparing);
+        string soundFontPath = args[2];
+        string nativeDirectory = args[3];
+        int sampleRate = ParseInt32(args[4]);
+        BassMidiRendererSettings rendererSettings = new(
+            ParseInt32(args[5]),
+            InitialReleaseAudioRuntimePolicy.WorkFrameCount);
+        AudioMasterSettings masterSettings = ParseRequiredFileMasterSettings(args, 6);
+
+        LoadBassLibraries(nativeDirectory, includeWasapi: false);
+        MidiRenderPlan plan = new(sampleRate, 0, []);
+        using BassMidiRenderer renderer = new(
+            plan,
+            soundFontPath,
+            rendererSettings,
+            masterSettings);
+        control.PublishPrepared(sampleRate, 0);
+        control.PublishRuntimeStatus(AudioWorkerState.Completed, 0, 0, 0, 0, 0);
+        return 0;
+    }
+
+    private static int RunFileRender(string[] args, SharedAudioWorkerControl control)
+    {
+        control.PublishState(AudioWorkerState.Preparing);
+        string planPath = args[2];
+        string soundFontPath = args[3];
+        string nativeDirectory = args[4];
+        string temporaryOutputPath = args[5];
+        BassMidiRendererSettings rendererSettings = new(
+            ParseInt32(args[6]),
+            InitialReleaseAudioRuntimePolicy.WorkFrameCount);
+        AudioMasterSettings masterSettings = ParseRequiredFileMasterSettings(args, 7);
+
+        LoadBassLibraries(nativeDirectory, includeWasapi: false);
+        MidiRenderPlan plan = MidiRenderPlanFile.Read(planPath);
+        using BassMidiRenderer renderer = new(
+            plan,
+            soundFontPath,
+            rendererSettings,
+            masterSettings);
+        FileRenderMonitor monitor = new(control, plan.TotalFrameCount);
+        control.PublishPrepared(plan.SampleRate, 0);
+        control.PublishRuntimeStatus(AudioWorkerState.Rendering, 0, 0, 0, 0, 0);
+        try
+        {
+            WaveFileRenderResult rendered = WaveFileOutput.Render(
+                renderer,
+                plan.TotalFrameCount,
+                temporaryOutputPath,
+                InitialReleaseAudioRuntimePolicy.WorkFrameCount,
+                overwrite: false,
+                monitor: monitor);
+            if (renderer.Fault.Code != AudioRenderFaultCode.None)
+            {
+                throw new MidoraAudioException($"The BASSMIDI renderer failed: {renderer.Fault}.");
+            }
+            if (rendered.RenderingThreadAllocatedBytes != 0)
+            {
+                File.Delete(temporaryOutputPath);
+                throw new MidoraAudioException(
+                    $"The audio file Rendering hot path allocated {rendered.RenderingThreadAllocatedBytes} managed bytes.");
+            }
+            control.PublishRuntimeStatus(
+                AudioWorkerState.Completed,
+                rendered.FrameCount,
+                rendered.FrameCount,
+                0,
+                0,
+                rendered.RenderingThreadAllocatedBytes);
+            return 0;
+        }
+        catch (OperationCanceledException) when (monitor.CancellationWasRequested)
+        {
+            control.PublishRuntimeStatus(
+                AudioWorkerState.Cancelled,
+                renderer.PositionFrames,
+                renderer.PositionFrames,
+                0,
+                0,
+                0);
+            return 0;
+        }
+    }
+
+    private static AudioMasterSettings ParseRequiredFileMasterSettings(
+        string[] args,
+        int offset)
+    {
+        AudioMasterSettings result = new(
+            ParseSingle(args[offset]),
+            ParseSingle(args[offset + 1]),
+            ParseSingle(args[offset + 2]),
+            ParseInt32(args[offset + 3]) != 0);
+        if (!result.LimiterEnabled
+            || result.LimiterCeiling != 1f
+            || result.LimiterReleaseMilliseconds != 50f)
+        {
+            throw new InvalidDataException(
+                "Initial-release file rendering requires the fixed Limiter v1 chain.");
+        }
+        return result;
     }
 
     private static AudioOutputDeviceInfo SelectDevice(
@@ -413,17 +542,86 @@ public static class Program
 
     private static void LoadBassLibraries(string nativeDirectory, bool includeWasapi)
     {
-        _ = NativeLibrary.Load(Path.Combine(nativeDirectory, "bass.dll"));
-        _ = NativeLibrary.Load(Path.Combine(nativeDirectory, "bassmidi.dll"));
+        nint bassHandle = NativeLibrary.Load(Path.Combine(nativeDirectory, "bass.dll"));
+        nint bassMidiHandle = NativeLibrary.Load(Path.Combine(nativeDirectory, "bassmidi.dll"));
+        NativeLibrary.SetDllImportResolver(
+            typeof(NativeBass).Assembly,
+            (libraryName, _, _) => string.Equals(
+                libraryName,
+                NativeBass.LibraryName,
+                StringComparison.OrdinalIgnoreCase)
+                    ? bassHandle
+                    : 0);
+        NativeLibrary.SetDllImportResolver(
+            typeof(NativeBassMidi).Assembly,
+            (libraryName, _, _) => string.Equals(
+                libraryName,
+                NativeBassMidi.LibraryName,
+                StringComparison.OrdinalIgnoreCase)
+                    ? bassMidiHandle
+                    : 0);
         if (includeWasapi)
         {
-            _ = NativeLibrary.Load(Path.Combine(nativeDirectory, "basswasapi.dll"));
+            nint bassWasapiHandle = NativeLibrary.Load(Path.Combine(nativeDirectory, "basswasapi.dll"));
+            NativeLibrary.SetDllImportResolver(
+                typeof(NativeBassWasapi).Assembly,
+                (libraryName, _, _) => string.Equals(
+                    libraryName,
+                    NativeBassWasapi.LibraryName,
+                    StringComparison.OrdinalIgnoreCase)
+                        ? bassWasapiHandle
+                        : 0);
         }
     }
 
     private sealed class LegacyControlThreadState
     {
         public int StopRequested;
+    }
+
+    private sealed class FileRenderMonitor(
+        SharedAudioWorkerControl control,
+        long totalFrameCount) : IWaveFileRenderMonitor
+    {
+        private bool _cancelled;
+
+        public bool CancellationWasRequested => _cancelled;
+
+        public bool IsCancellationRequested
+        {
+            get
+            {
+                while (control.TryDequeue(out AudioWorkerControlCommand command))
+                {
+                    if (command.Kind != AudioWorkerControlCommandKind.Stop)
+                    {
+                        throw new InvalidDataException(
+                            "File rendering received a command other than cancellation.");
+                    }
+                    _cancelled = true;
+                    control.PublishState(AudioWorkerState.Cancelling);
+                }
+                return _cancelled;
+            }
+        }
+
+        public void ReportRenderedFrames(long renderedFrameCount) =>
+            control.PublishRuntimeStatus(
+                AudioWorkerState.Rendering,
+                renderedFrameCount,
+                renderedFrameCount,
+                0,
+                0,
+                0);
+
+        public void BeginFinalizing() =>
+            control.PublishRuntimeStatus(
+                AudioWorkerState.Finalizing,
+                totalFrameCount,
+                totalFrameCount,
+                0,
+                0,
+                0);
     }
 
     private sealed unsafe class SilentSource(AudioFormat format) : IAudioRenderSource, IDisposable

@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />
     <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.BassWasapi\Midora.AudioDevice.BassWasapi.csproj" />
+    <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.Wave\Midora.AudioDevice.Wave.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' and '$(BassNativeDirectory)' != ''">

@@ -123,6 +123,81 @@ public sealed class WaveFileOutputTests
         }
     }
 
+    [Fact]
+    public void AllocationFreeMonitorReceivesProgressAndFinalizingWithoutChangingHotPathBudget()
+    {
+        string directory = CreateOwnedTemporaryDirectory();
+        string target = Path.Combine(directory, "monitored.wav");
+        try
+        {
+            const int frames = 257;
+            RampSource source = new(48_000, frames);
+            RecordingMonitor monitor = new();
+
+            WaveFileRenderResult result = WaveFileOutput.Render(
+                source,
+                frames,
+                target,
+                workFrameCount: 37,
+                overwrite: false,
+                monitor: monitor);
+
+            Assert.Equal(0, result.RenderingThreadAllocatedBytes);
+            Assert.Equal(frames, monitor.LastRenderedFrame);
+            Assert.True(monitor.FinalizingBegan);
+            WaveFileValidation.ValidateInitialReleaseFile(target, 48_000, frames);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MonitorCancellationStopsBeforeFinalizingAndLeavesNoOutput()
+    {
+        string directory = CreateOwnedTemporaryDirectory();
+        string target = Path.Combine(directory, "monitor-cancelled.wav");
+        try
+        {
+            CancelAfterFirstBlockMonitor monitor = new();
+
+            _ = Assert.Throws<OperationCanceledException>(() => WaveFileOutput.Render(
+                new RampSource(48_000, 512),
+                512,
+                target,
+                workFrameCount: 64,
+                overwrite: false,
+                monitor: monitor));
+
+            Assert.False(monitor.FinalizingBegan);
+            Assert.False(File.Exists(target));
+            Assert.Empty(Directory.EnumerateFiles(directory));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void StructuralValidatorRejectsMalformedOrUnexpectedWaveHeader()
+    {
+        string directory = CreateOwnedTemporaryDirectory();
+        string target = Path.Combine(directory, "malformed.wav");
+        try
+        {
+            File.WriteAllBytes(target, new byte[WaveFileSize.HeaderByteCount + 8]);
+
+            _ = Assert.Throws<InvalidDataException>(() =>
+                WaveFileValidation.ValidateInitialReleaseFile(target, 48_000, 1));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static string CreateOwnedTemporaryDirectory()
     {
         string result = Path.Combine(Path.GetTempPath(), $"midora-wave-test-{Guid.NewGuid():N}");
@@ -166,5 +241,23 @@ public sealed class WaveFileOutputTests
 
             return AudioPullResult.Continue(requestedFrameCount);
         }
+    }
+
+    private sealed class RecordingMonitor : IWaveFileRenderMonitor
+    {
+        public long LastRenderedFrame { get; private set; }
+        public bool FinalizingBegan { get; private set; }
+        public bool IsCancellationRequested => false;
+        public void ReportRenderedFrames(long renderedFrameCount) => LastRenderedFrame = renderedFrameCount;
+        public void BeginFinalizing() => FinalizingBegan = true;
+    }
+
+    private sealed class CancelAfterFirstBlockMonitor : IWaveFileRenderMonitor
+    {
+        private bool _cancel;
+        public bool FinalizingBegan { get; private set; }
+        public bool IsCancellationRequested => _cancel;
+        public void ReportRenderedFrames(long renderedFrameCount) => _cancel = renderedFrameCount != 0;
+        public void BeginFinalizing() => FinalizingBegan = true;
     }
 }

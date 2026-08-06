@@ -13,6 +13,7 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
     private const int MaximumMidiBatchEventCount = 1_024;
     private const int MaximumPackedMidiBatchByteCount = MaximumMidiBatchEventCount * 3;
     private const int MonitoringCommandQueueCapacity = 4_096;
+    private const int DeterministicNativeDecodeFrameCount = InitialReleaseAudioRuntimePolicy.WorkFrameCount;
     private const float InitialReleaseInterpolationQuality = 1f;
     private const float InitialReleaseCpuLimit = 0f;
     private readonly MidiRenderPlan _plan;
@@ -28,9 +29,13 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
     private StereoPeakLimiter _limiter;
     private byte* _packedMidiBuffer;
     private float* _portScratchBuffer;
+    private float* _outputStagingBuffer;
     private uint _soundFontHandle;
     private long _positionFrames;
+    private long _renderPositionFrames;
     private AudioRenderFault _fault;
+    private int _stagedFrameOffset;
+    private int _stagedFrameCount;
     private int _pullActive;
     private long _monitoringCommandReadPosition;
     private long _monitoringCommandWritePosition;
@@ -75,8 +80,10 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
         try
         {
             _packedMidiBuffer = (byte*)NativeMemory.Alloc(MaximumPackedMidiBatchByteCount);
-            nuint scratchByteCount = checked((nuint)settings.MaximumWorkFrameCount * 2 * sizeof(float));
+            nuint scratchByteCount = checked(
+                (nuint)DeterministicNativeDecodeFrameCount * 2 * sizeof(float));
             _portScratchBuffer = (float*)NativeMemory.Alloc(scratchByteCount);
+            _outputStagingBuffer = (float*)NativeMemory.Alloc(scratchByteCount);
             CreateSoundFont(soundFontPath);
             PreloadReferencedPresets();
             CreatePorts();
@@ -223,38 +230,29 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
 
             while (completedFrames < targetFrameCount)
             {
-                if (!ApplyPendingMonitoringCommands())
-                {
-                    return AudioPullResult.Fault(completedFrames);
-                }
-                if (!SubmitEventsAtCurrentFrame())
+                if (_stagedFrameCount == 0 && !FillOutputStagingBuffer())
                 {
                     return AudioPullResult.Fault(completedFrames);
                 }
 
-                long nextEventFrame = FindNextEventFrame();
-                int workFrameCount = Math.Min(
-                    _settings.MaximumWorkFrameCount,
+                int copyFrameCount = Math.Min(
+                    _stagedFrameCount,
                     targetFrameCount - completedFrames);
+                nuint copyByteCount = checked((nuint)copyFrameCount * 2 * sizeof(float));
+                Buffer.MemoryCopy(
+                    _outputStagingBuffer + (_stagedFrameOffset * 2),
+                    destination + (completedFrames * 2),
+                    copyByteCount,
+                    copyByteCount);
 
-                if (nextEventFrame != long.MaxValue)
+                _stagedFrameOffset += copyFrameCount;
+                _stagedFrameCount -= copyFrameCount;
+                if (_stagedFrameCount == 0)
                 {
-                    workFrameCount = (int)Math.Min(workFrameCount, nextEventFrame - _positionFrames);
+                    _stagedFrameOffset = 0;
                 }
-
-                if (workFrameCount <= 0)
-                {
-                    SetFault(AudioRenderFaultCode.BassMidiEventSubmissionFailed, 0, -1);
-                    return AudioPullResult.Fault(completedFrames);
-                }
-
-                if (!RenderFrames(destination + (completedFrames * 2), workFrameCount))
-                {
-                    return AudioPullResult.Fault(completedFrames);
-                }
-
-                completedFrames += workFrameCount;
-                _positionFrames += workFrameCount;
+                completedFrames += copyFrameCount;
+                _positionFrames += copyFrameCount;
             }
 
             return _positionFrames == _plan.TotalFrameCount
@@ -265,6 +263,38 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
         {
             Volatile.Write(ref _pullActive, 0);
         }
+    }
+
+    private bool FillOutputStagingBuffer()
+    {
+        if (!ApplyPendingMonitoringCommands() || !SubmitEventsAtCurrentFrame())
+        {
+            return false;
+        }
+
+        long nextEventFrame = FindNextEventFrame();
+        int frameCount = (int)Math.Min(
+            DeterministicNativeDecodeFrameCount,
+            _plan.TotalFrameCount - _renderPositionFrames);
+        if (nextEventFrame != long.MaxValue)
+        {
+            frameCount = (int)Math.Min(frameCount, nextEventFrame - _renderPositionFrames);
+        }
+
+        if (frameCount <= 0)
+        {
+            SetFault(AudioRenderFaultCode.BassMidiEventSubmissionFailed, 0, -1);
+            return false;
+        }
+        if (!RenderFrames(_outputStagingBuffer, frameCount))
+        {
+            return false;
+        }
+
+        _stagedFrameOffset = 0;
+        _stagedFrameCount = frameCount;
+        _renderPositionFrames += frameCount;
+        return true;
     }
 
     public void Dispose()
@@ -556,7 +586,7 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
             ReadOnlySpan<ScheduledMidiMessage> events = port.Plan.Events;
 
             while (port.EventIndex < events.Length
-                && events[port.EventIndex].SampleFrame == _positionFrames)
+                && events[port.EventIndex].SampleFrame == _renderPositionFrames)
             {
                 int scanIndex = port.EventIndex;
                 int batchCount = 0;
@@ -564,7 +594,7 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
 
                 while (scanIndex < events.Length
                     && batchCount < MaximumMidiBatchEventCount
-                    && events[scanIndex].SampleFrame == _positionFrames)
+                    && events[scanIndex].SampleFrame == _renderPositionFrames)
                 {
                     ScheduledMidiMessage scheduled = events[scanIndex++];
                     if (scheduled.SourceIndex >= 0 && !_sourceEnabled[scheduled.SourceIndex])
@@ -799,7 +829,7 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
     {
         if (_fault.Code == AudioRenderFaultCode.None)
         {
-            _fault = new AudioRenderFault(code, nativeErrorCode, zeroBasedPortNumber, _positionFrames);
+            _fault = new AudioRenderFault(code, nativeErrorCode, zeroBasedPortNumber, _renderPositionFrames);
         }
     }
 
@@ -839,6 +869,12 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer
         {
             NativeMemory.Free(_portScratchBuffer);
             _portScratchBuffer = null;
+        }
+
+        if (_outputStagingBuffer != null)
+        {
+            NativeMemory.Free(_outputStagingBuffer);
+            _outputStagingBuffer = null;
         }
 
         if (_packedMidiBuffer != null)

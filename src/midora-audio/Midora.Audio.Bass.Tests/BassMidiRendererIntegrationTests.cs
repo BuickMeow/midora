@@ -25,6 +25,21 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
+    public void ProducesIdenticalComplexCanonicalSamplesAcrossDifferentBlocksWithinConfiguredVoiceLimit()
+    {
+        EnsureEnvironment();
+        MidiRenderPlan plan = CreateComplexTempoLoopPlan();
+        Assert.Equal(106, plan.Ports[0].Events.Length);
+
+        float[] first = Render(plan, internalBlockFrames: 2_048, pullBlockFrames: 1_003, out long firstAllocated);
+        float[] second = Render(plan, internalBlockFrames: 256, pullBlockFrames: 1_003, out long secondAllocated);
+
+        Assert.Equal(0, firstAllocated);
+        Assert.Equal(0, secondAllocated);
+        Assert.True(MemoryMarshal.AsBytes(first.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(second.AsSpan())));
+    }
+
+    [Fact]
     public void IsSilentBeforeTheExactEventFrameAndProducesAudioAfterIt()
     {
         EnsureEnvironment();
@@ -391,6 +406,97 @@ public sealed class BassMidiRendererIntegrationTests
         ];
         MidiPortRenderPlan port = new(0, events);
         return new MidiRenderPlan(SampleRate, 4_096, [port]);
+    }
+
+    private static MidiRenderPlan CreateComplexTempoLoopPlan()
+    {
+        List<ScheduledMidiMessage> events = [];
+        AddInitialState(events, 0, 0);
+        AddAlternatingNotes(events, 0, 6_000, 90_000, 6_000, 5_000, 48, 55);
+        AddNote(events, 0, 96_000, 6_667, 55, 84);
+        AddAlternatingNotes(events, 0, 104_000, 120_000, 8_000, 6_667, 48, 55);
+
+        AddInitialState(events, 1, 128_000);
+        AddAlternatingNotes(events, 1, 136_000, 184_000, 8_000, 6_667, 53, 60);
+        AddNote(events, 1, 192_000, 4_000, 60, 84);
+        AddAlternatingNotes(events, 1, 196_800, 244_800, 4_800, 4_000, 53, 60);
+        AddHardEndState(events, 1, 249_600);
+        return new MidiRenderPlan(
+            SampleRate,
+            249_600,
+            [new MidiPortRenderPlan(0, events.ToArray())]);
+
+        static void AddAlternatingNotes(
+            List<ScheduledMidiMessage> destination,
+            byte channel,
+            long firstFrame,
+            long lastFrame,
+            long spacingFrames,
+            long lengthFrames,
+            byte firstNote,
+            byte secondNote)
+        {
+            int index = 0;
+            for (long frame = firstFrame; frame <= lastFrame; frame += spacingFrames, index++)
+            {
+                bool first = (index & 1) == 0;
+                AddNote(
+                    destination,
+                    channel,
+                    frame,
+                    lengthFrames,
+                    first ? firstNote : secondNote,
+                    first ? (byte)92 : (byte)84);
+            }
+        }
+
+        static void AddNote(
+            List<ScheduledMidiMessage> destination,
+            byte channel,
+            long frame,
+            long lengthFrames,
+            byte note,
+            byte velocity)
+        {
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.NoteOn(channel, note, velocity)));
+            destination.Add(new ScheduledMidiMessage(
+                frame + lengthFrames,
+                MidiMessage.NoteOff(channel, note, 0)));
+        }
+
+        static void AddInitialState(
+            List<ScheduledMidiMessage> destination,
+            byte channel,
+            long frame)
+        {
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 0, 0)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 32, 0)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ProgramChange(channel, 0)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 101, 0)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 100, 0)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 6, 2)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 38, 0)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 101, 127)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 100, 127)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.PitchWheelChange(channel, 8_192)));
+        }
+
+        static void AddHardEndState(
+            List<ScheduledMidiMessage> destination,
+            byte channel,
+            long frame)
+        {
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 0, 0)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 32, 0)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ProgramChange(channel, 0)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.PitchWheelChange(channel, 8_192)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 101, 0)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 100, 0)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 6, 2)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 38, 0)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 101, 127)));
+            destination.Add(new ScheduledMidiMessage(frame, MidiMessage.ControlChange(channel, 100, 127)));
+        }
     }
 
     private static void EnsureEnvironment()

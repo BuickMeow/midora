@@ -340,3 +340,5 @@ Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复�
 第七批命令把 Project Initial、Project Reset、Event Instrument Initial 与 SubVoice Initial 的单目标更新统一到 `MidiValueTarget`。Null 表示删除该层 override；字典目标必须区分“缺失”与数值 0，Undo 恢复此前精确存在性和值。CC91/CC93、Channel Mode、未知/不匹配 target identity 与原始值越界在 Prepare 阶段拒绝；Project 级变化使全部编译范围失效，Instrument/SubVoice 级变化只失效相关 Instrument。Initial State 不扩展 Template Length，Reset 仍只允许 Project 级。Compiler 同时把未定义 `MidiValueKind` 纳入 `MIDORA1260`，避免未知枚举以 number 0 绕过目标验证。
 
 第八批命令覆盖既有 Envelope Preset 的全 ADSR-like 快照更新与删除。Isolation 关闭时按 SRS restricted data 规则拒绝普通编辑，但允许删除作为修复入口。删除引用判定覆盖事件参数和 Logical Parameter Mapping 中的全部 Step，不因 Chain/Step 禁用而忽略持久引用；被引用删除要求显式确认，且只移除 Envelope 对象，故 Step 保留原 Envelope ID 并形成可持久化的正式断裂引用。Undo 恢复同一 Envelope 对象、原索引和完整数值，不影响 Template Length 或稳定 ID 计数器。
+
+第九批命令覆盖既有 C# Mapping Function 的名称、函数体和声明 Context 字段集合更新及删除。ABI 固定为 v1，不暴露编辑入口；函数体按精确文本保存，不 Trim，仅执行有效 Unicode 与 1,048,576 scalar 持久化上限，编译错误按 SRS 允许进入 Project 并由 canonical 诊断。声明字段按 Ordinal 集合冻结和排序，参与 source fingerprint/兼容性而不改变源码缓存键。任何 Step 持有该 Function ID 都视为引用，不受当前 Operation/Enable 状态影响；确认删除后保留断裂 ID，Undo 恢复原对象与引用。

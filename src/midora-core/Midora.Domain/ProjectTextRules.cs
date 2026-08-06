@@ -8,6 +8,7 @@ internal static class ProjectTextRules
 {
     public const int ShortTextMaximumScalars = 256;
     public const int DescriptionMaximumScalars = 65_536;
+    public const int MappingBodyMaximumScalars = 1_048_576;
 
     public static string NormalizeShortText(
         string value,
@@ -66,6 +67,19 @@ internal static class ProjectTextRules
         return value;
     }
 
+    public static string ValidateMappingBody(string value, string parameterName)
+    {
+        ArgumentNullException.ThrowIfNull(value, parameterName);
+        int scalarCount = CountScalars(value, parameterName);
+        if (scalarCount > MappingBodyMaximumScalars)
+        {
+            throw new ArgumentException(
+                $"The value must contain at most {MappingBodyMaximumScalars} Unicode scalars.",
+                parameterName);
+        }
+        return value;
+    }
+
     private static void ValidateUnicodeAndControls(string value, string parameterName)
     {
         ReadOnlySpan<char> remaining = value;
@@ -95,6 +109,26 @@ internal static class ProjectTextRules
         foreach (Rune _ in value.EnumerateRunes())
         {
             count++;
+        }
+        return count;
+    }
+
+    private static int CountScalars(string value, string parameterName)
+    {
+        int count = 0;
+        ReadOnlySpan<char> remaining = value;
+        while (!remaining.IsEmpty)
+        {
+            OperationStatus status = Rune.DecodeFromUtf16(
+                remaining,
+                out _,
+                out int charactersConsumed);
+            if (status != OperationStatus.Done)
+            {
+                throw new ArgumentException("The value contains invalid Unicode.", parameterName);
+            }
+            count++;
+            remaining = remaining[charactersConsumed..];
         }
         return count;
     }

@@ -30,7 +30,7 @@
 | 编号 | 工作包 | 状态 | 主要需求 | 退出证据 |
 |---|---|---|---|---|
 | NUI-01 | 仓库级构建、测试和兼容基线 | 待复核 | §2、§21、INV-027～030 | 单命令 Release 构建；全部自动测试；固定工具链/原生 manifest 门 |
-| NUI-02 | 完整领域源模型与编辑事务 | History/Modified 与八批非 ID 分配对象命令完成；ID 分配命令等待 Q-NUI-005 | §3～11 | Track/Instrument/Folder/Damaged/Segment、Conductor、Project Settings、Note/Lane/Point、Instrument Lifecycle、SubVoice、Template Event、Value Curve、Initial/Reset State 与 Envelope 已覆盖；继续 Mapping 属性矩阵 |
+| NUI-02 | 完整领域源模型与编辑事务 | History/Modified 与九批非 ID 分配对象命令完成；ID 分配命令等待 Q-NUI-005 | §3～11 | Track/Instrument/Folder/Damaged/Segment、Conductor、Project Settings、Note/Lane/Point、Instrument Lifecycle、SubVoice、Template Event、Value Curve、Initial/Reset State、Envelope 与 Mapping Function 已覆盖；继续 Mapping Chain/Step/Logical Parameter 属性矩阵 |
 | NUI-03 | Semantic Validation 与诊断来源 | 进行中 | §3～12 | 全错误/警告/Info 矩阵与稳定排序 golden |
 | NUI-04 | Full/Incremental Canonical Compiler | 强增量模型完成；全 §12 矩阵继续扩充 | §12、INV-009/010/015 | Segment checkpoint + dirty range + state hash 已实现；固定种子连续编辑逐字段等价 |
 | NUI-05 | Playback/Preview 非 UI 状态机 | 进行中 | §13、§19 | 全状态、自动 Stop、Mute/Solo、设备故障和重复生命周期测试 |
@@ -79,6 +79,7 @@
 | 2026-08-06 | Value Curve History 与首点边界修复 | Target Rounding/Overflow；Point tick/value/interpolation 更新及自动延长；Point/Curve 精确对象删除恢复；离散事件保留；首点前不输出隐式 0；编译期点集单次排序；Application 84 tests、Compiler 109 tests；10 个测试项目累计 522 tests；Core Release build | 通过，0 warning / 0 error / 0 failure |
 | 2026-08-06 | Initial State / Reset Defaults History | Project/Instrument/SubVoice Initial precedence；Project Reset；九类 MIDI target 设置/删除和值域；null 缺失语义；对象/ID/Template Length 保持；未知 MidiValueKind 诊断；Application 104 tests、Compiler 110 tests；10 个测试项目累计 543 tests；Core Release build | 通过，0 warning / 0 error / 0 failure |
 | 2026-08-06 | Envelope Preset History | ADSR 时长/值/名称原子更新；Isolation restricted 编辑；被引用删除确认；断裂 Step 引用保留；未引用 restricted 删除修复；精确对象/索引/ID Undo；Application 108 tests；10 个测试项目累计 547 tests；Core Release build | 通过，0 warning / 0 error / 0 failure |
+| 2026-08-06 | C# Mapping Function History | 唯一名称、精确源码、Context 声明集合；ABI v1 保持；非法 Unicode/长度契约；编译错误可保存；被引用删除确认与断裂 ID；缓存修订经 canonical 会话刷新；Application 113 tests；10 个测试项目累计 552 tests；Core Release build | 通过，0 warning / 0 error / 0 failure |
 
 ## 7. 未解决风险
 
@@ -86,6 +87,6 @@
 - 当前 `.midora` 已支持完整 Event Instrument/Logical Track 对象图、完整性正常的 Embedded SF2，以及 Q-NUI-001 规定的损坏资源结构化修复门；旧格式迁移尚未实现，因此 NUI-08 仍未完成。
 - §12.21 的 Segment checkpoint、dirty range 与 state-hash 收敛模型已替换旧 Track 整片段缓存；当前剩余风险是继续扩大随机 Project 生成器和 §7～§12 全语义组合矩阵，而不是已知的增量架构缺口。
 - Project MIDI Export Settings 仍是空 v1 占位；schema v2 与默认值等待 Q-NUI-003，不能回写修改已发布 v1。
-- 八批不分配稳定 ID 的结构/设置/音乐内容编辑命令已接入统一 History；Logical Parameter Definition/Mapping 与 Mapping Function 命令矩阵仍需继续扩充，创建/复制/分割类命令等待 Q-NUI-005。
+- 九批不分配稳定 ID 的结构/设置/音乐内容编辑命令已接入统一 History；Logical Parameter Definition/Mapping 与 Mapping Chain/Step 命令矩阵仍需继续扩充，创建/复制/分割类命令等待 Q-NUI-005。
 - Audio Render 的 canonical/输出事务、正式 Native AOT 文件链、应用级单音频任务锁和开始渲染前自动 Stop 已完成；实时硬件压力与集中人工试听仍属于 NUI-09/NUI-11。
 - 实际 BASS DLL、物理 WASAPI 设备、设备移除和人耳听音不能只凭无设备 CI 结论替代。

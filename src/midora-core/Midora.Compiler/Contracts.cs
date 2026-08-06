@@ -38,6 +38,15 @@ public enum CompilationPurpose
     LogicalTrackAudioRender
 }
 
+public enum CompilationFailureStage
+{
+    SemanticValidation,
+    InstanceExpansion,
+    OverlapValidation,
+    ResourceAllocation,
+    WarningPolicy
+}
+
 public sealed class CompilationRequest
 {
     public CompilationPurpose Purpose { get; init; } = CompilationPurpose.FullProject;
@@ -156,6 +165,7 @@ public sealed class CanonicalCompiledResult
         CompilationPurpose purpose,
         bool isPartial,
         bool isConsumable,
+        CompilationFailureStage? failureStage,
         long fingerprint,
         CompilationStatistics statistics)
     {
@@ -169,6 +179,7 @@ public sealed class CanonicalCompiledResult
         Purpose = purpose;
         IsPartial = isPartial;
         IsConsumable = isConsumable;
+        FailureStage = failureStage;
         Fingerprint = fingerprint;
         Statistics = statistics;
     }
@@ -179,6 +190,7 @@ public sealed class CanonicalCompiledResult
     public CompilationPurpose Purpose { get; }
     public bool IsPartial { get; }
     public bool IsConsumable { get; }
+    public CompilationFailureStage? FailureStage { get; }
     public long Fingerprint { get; }
     public CompilationStatistics Statistics { get; }
     public CanonicalConductor Conductor { get; }

@@ -22,6 +22,9 @@
 ## 3. 边界、失败条件与诊断
 
 - Semantic Validation 与 Mapping Function 同步/可用性检查先于缓存消费；失败请求不以旧缓存掩盖当前错误。
+- 未定义的 `CompilationPurpose`、不存在的 Track，以及不属于本次参与编译 Instrument 的 SubVoice 选择均在语义验证阶段确定性失败，不能退化成静默空输出。
+- 失败结果统一设置 `IsPartial=true`、`IsConsumable=false`，并报告 `SemanticValidation`、`InstanceExpansion`、`OverlapValidation`、`ResourceAllocation` 或 `WarningPolicy` 失败阶段；成功结果固定没有失败阶段。Warning-as-error 不改写原 Warning 级别。
+- 语义阶段失败仍报告本次 Track 选择范围内的 source Track 数；展开后的失败继续保留已知实例数与 Channel Unit 峰值。partial 结果不暴露可消费事件或分配。
 - Segment 内 Note/参数修改至少回退至该 Segment 入口。实例候选数变化导致 `SourceOrder` 不同，必须阻止后缀收敛。
 - Event Instrument 定义或 Global Initial/Reset 改变会改变上下文 fingerprint，不允许复用旧 Segment 片段。
 - Conductor 每次重新冻结；End Marker、Tempo、Time/Key Signature、Marker、请求范围和输出目的不从 Segment 缓存恢复。
@@ -46,3 +49,4 @@
 - Segment 集合乱序：Canonical Result 不变。
 - `ClearCache()` 后全部 Segment 重编；切换为非零范围请求时只复用全上下文 RawInstance 检查点，并重新生成正式范围结果。
 - 固定种子 80 轮连续合法 Note 编辑：Incremental 与独立 Full oracle 对 result 状态、范围、fingerprint、statistics、events、allocations、Conductor 和 diagnostics 逐字段相等。
+- 语义、展开 MIDI 值域、超过 256 个 Channel Unit、Overlap Reject 及 Warning-as-error 分别锁定失败阶段；所有失败结果锁定 partial/不可消费契约，所有成功结果锁定无失败阶段。

@@ -419,6 +419,8 @@ public sealed class SemanticValidatorTests
         over.Project.Tracks.Add(secondTrack);
         CanonicalCompiledResult overResult = new MidoraCompiler().CompileFull(over.Project);
         Assert.False(overResult.IsConsumable);
+        Assert.True(overResult.IsPartial);
+        Assert.Equal(CompilationFailureStage.ResourceAllocation, overResult.FailureStage);
         Assert.Contains(overResult.Diagnostics, value => value.Code == "MIDORA2202" && value.Severity == DiagnosticSeverity.Error);
     }
 

@@ -364,6 +364,7 @@ public sealed class ProjectConductorAndSettingsEditCommandsTests
         CanonicalCompiledResult actual = compilation.LastAttempt;
         Assert.Equal(expected.IsConsumable, actual.IsConsumable);
         Assert.Equal(expected.IsPartial, actual.IsPartial);
+        Assert.Equal(expected.FailureStage, actual.FailureStage);
         Assert.Equal(expected.StartTick, actual.StartTick);
         Assert.Equal(expected.EndTick, actual.EndTick);
         Assert.Equal(expected.Fingerprint, actual.Fingerprint);

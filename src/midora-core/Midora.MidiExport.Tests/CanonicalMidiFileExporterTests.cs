@@ -432,6 +432,7 @@ public sealed class CanonicalMidiFileExporterTests
             CompilationPurpose.MidiExport,
             false,
             true,
+            null,
             1,
             new(events.Select(value => value.Source.TrackId).Distinct().Count(), 1, events.Length, 1));
     }

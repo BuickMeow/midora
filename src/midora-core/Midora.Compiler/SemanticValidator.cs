@@ -21,6 +21,10 @@ public static class SemanticValidator
         {
             Error("MIDORA1002", "编译范围必须是非负且不反向的 [startTick, endTick)。", projectSource);
         }
+        if (!Enum.IsDefined(request.Purpose))
+        {
+            Error("MIDORA1004", "编译请求的 Compilation Purpose 枚举值非法。", projectSource);
+        }
 
         ValidateConductor(project, diagnostics);
         ValidateFolders(project, diagnostics);
@@ -67,11 +71,38 @@ public static class SemanticValidator
         }
 
         ValidateTracks(project, request, instruments, diagnostics);
+        ValidateIncludedSubVoices(project, request, diagnostics);
         ValidateStableIds(project, diagnostics);
         return diagnostics;
 
         void Error(string code, string message, SourceReference source) =>
             diagnostics.Add(new(code, DiagnosticSeverity.Error, message, source));
+    }
+
+    private static void ValidateIncludedSubVoices(
+        MidoraProject project,
+        CompilationRequest request,
+        List<CompilerDiagnostic> diagnostics)
+    {
+        if (request.IncludedSubVoiceIds is null)
+        {
+            return;
+        }
+
+        HashSet<MidoraId> participatingInstrumentIds = GetParticipatingInstrumentIds(project, request);
+        HashSet<MidoraId> participatingSubVoiceIds = project.EventInstruments
+            .Where(instrument => participatingInstrumentIds.Contains(instrument.Id))
+            .SelectMany(instrument => instrument.SubVoices)
+            .Select(subVoice => subVoice.Id)
+            .ToHashSet();
+        if (request.IncludedSubVoiceIds.Any(id => !participatingSubVoiceIds.Contains(id)))
+        {
+            AddError(
+                "MIDORA1005",
+                "编译请求引用了不属于参与编译 Event Instrument 的 SubVoice。",
+                new(),
+                diagnostics);
+        }
     }
 
     internal static HashSet<MidoraId> GetParticipatingInstrumentIds(

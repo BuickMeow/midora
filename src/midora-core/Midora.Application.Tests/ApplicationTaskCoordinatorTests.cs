@@ -208,18 +208,25 @@ public sealed class ApplicationTaskCoordinatorTests
     {
         using TestContext fixture = TestContext.Create();
         TaskCompletionSource entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource cancellationObserved = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource releaseCancellation = new(TaskCreationOptions.RunContinuationsAsynchronously);
         Task<ApplicationTaskExecution<int>> running = fixture.Coordinator.ExecuteAsync(
             ApplicationTaskKind.AudioRender,
             async (_, token) =>
             {
+                using CancellationTokenRegistration registration = token.Register(
+                    () => cancellationObserved.TrySetResult());
                 entered.SetResult();
-                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                await releaseCancellation.Task;
+                token.ThrowIfCancellationRequested();
                 return 1;
             });
         await entered.Task;
 
         Assert.True(fixture.Coordinator.RequestCancellation());
+        await cancellationObserved.Task;
         Assert.Equal(ApplicationTaskPhase.Cancelling, fixture.Coordinator.Phase);
+        releaseCancellation.SetResult();
         ApplicationTaskExecution<int> result = await running;
 
         Assert.Equal(ApplicationTaskOutcome.Cancelled, result.Outcome);

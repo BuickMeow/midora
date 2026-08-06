@@ -86,6 +86,7 @@
 | 2026-08-06 | External SoundFont 两阶段验证与 History | 允许目录/完整 hash、正式 BASSMIDI `FontInit` + 全 sample preload、提交前内容复核；source/effective path 同事务、Undo/Redo/clear/no-op；验证失败/内容竞态/锁冲突零变更；Application 144 tests、BASS 67 tests；10 个测试项目累计 625 tests；Core Release build | 通过，0 warning / 0 error / 0 failure；Embedded 编辑与文件监控仍待后续 |
 | 2026-08-06 | External SoundFont 验证缓存与监控失效 | Windows volume/file ID + size + raw last-write FILETIME + absolute path + stored identity 完整缓存键；同句柄前后 stamp；强制复核；FileSystemWatcher 只失效；持续变化重试；同 size/mtime 文件替换检测；Persistence 74 tests；10 个测试项目累计 629 tests；Core Release build | 通过，0 warning / 0 error / 0 failure；Project 打开/首次音频任务状态机接线待后续 |
 | 2026-08-06 | Project SoundFont 运行时可用状态与消费门 | open/refresh 状态；External hash/fallback Warning；Embedded lease loadability；预期 reference 并发提交；History/source 变化失效；启动前同步 stamp gate；监控自动 Stop 播放/预览并释放锁；Application 153 tests、Persistence 75 tests；10 个测试项目累计 639 tests；Core Release build | 通过，0 warning / 0 error / 0 failure；Embedded 选择 History 仍等待 Q-NUI-005 |
+| 2026-08-06 | Canonical 失败结果与 CompileContext 防御 | 失败结果统一 partial/不可消费；五阶段 `FailureStage`；保留阶段性统计；非法 Purpose 和不参与编译的 SubVoice 选择确定性诊断；取消状态与 FileSystemWatcher 重试测试去竞态；Compiler 156 tests；10 个测试项目累计 646 tests；Core 全解 540 tests | 通过，0 failure |
 
 ## 7. 未解决风险
 

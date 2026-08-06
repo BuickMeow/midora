@@ -77,7 +77,13 @@ public sealed class MidoraCompiler : IDisposable
         CanonicalConductor conductor = FreezeConductor(project.Conductor, request.StartTick, endTick);
         if (diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
         {
-            return Failure(project, request, endTick, conductor, diagnostics);
+            return Failure(
+                project,
+                request,
+                endTick,
+                conductor,
+                diagnostics,
+                CompilationFailureStage.SemanticValidation);
         }
 
         Dictionary<MidoraId, EventInstrument> instruments = project.EventInstruments.ToDictionary(value => value.Id);
@@ -142,6 +148,8 @@ public sealed class MidoraCompiler : IDisposable
             conductor = FreezeConductor(project.Conductor, request.StartTick, endTick);
         }
 
+        bool expansionErrors = diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+
         if (request.IncludedSubVoiceIds is not null)
         {
             instances = instances.Select(instance => instance with
@@ -154,18 +162,33 @@ public sealed class MidoraCompiler : IDisposable
                 .ToList();
         }
 
+        int overlapDiagnosticStart = diagnostics.Count;
         ValidateOverlap(project, instances, diagnostics);
+        bool overlapErrors = diagnostics
+            .Skip(overlapDiagnosticStart)
+            .Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        int allocationDiagnosticStart = diagnostics.Count;
         AllocationResult allocation = Allocate(project, instances, diagnostics);
+        bool allocationErrors = diagnostics
+            .Skip(allocationDiagnosticStart)
+            .Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         bool warningsFail = request.TreatWarningsAsErrors
             && diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning);
         bool errors = diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         if (errors || warningsFail)
         {
+            CompilationFailureStage failureStage = expansionErrors
+                ? CompilationFailureStage.InstanceExpansion
+                : overlapErrors
+                    ? CompilationFailureStage.OverlapValidation
+                    : allocationErrors
+                        ? CompilationFailureStage.ResourceAllocation
+                        : CompilationFailureStage.WarningPolicy;
             LastTelemetry = telemetry;
             return new CanonicalCompiledResult(
                 project.TicksPerQuarterNote, request.StartTick, endTick,
                 [], conductor, [], diagnostics.ToArray(), request.Purpose,
-                false, false, 0,
+                true, false, failureStage, 0,
                 new(selectedTracks.Count, instances.Count, 0, allocation.PeakUnits));
         }
 
@@ -187,7 +210,7 @@ public sealed class MidoraCompiler : IDisposable
         return new CanonicalCompiledResult(
             project.TicksPerQuarterNote, request.StartTick, endTick,
             ranged, conductor, rangedAllocations, diagnostics.ToArray(), request.Purpose,
-            false, true, resultFingerprint,
+            false, true, null, resultFingerprint,
             new(selectedTracks.Count, instances.Count, ranged.Length, allocation.PeakUnits));
     }
 
@@ -196,11 +219,17 @@ public sealed class MidoraCompiler : IDisposable
         CompilationRequest request,
         long endTick,
         CanonicalConductor conductor,
-        List<CompilerDiagnostic> diagnostics) => new(
+        List<CompilerDiagnostic> diagnostics,
+        CompilationFailureStage failureStage) => new(
             project.TicksPerQuarterNote, request.StartTick, endTick,
             [], conductor, [], diagnostics.ToArray(), request.Purpose,
-            false, false, 0,
-            new(project.Tracks.Count, 0, 0, 0));
+            true, false, failureStage, 0,
+            new(CountSelectedTracks(project, request), 0, 0, 0));
+
+    private static int CountSelectedTracks(MidoraProject project, CompilationRequest request) =>
+        request.IncludedTrackIds is null
+            ? project.Tracks.Count
+            : project.Tracks.Count(track => request.IncludedTrackIds.Contains(track.Id));
 
     private void ValidateMappingFunctions(
         MidoraProject project,

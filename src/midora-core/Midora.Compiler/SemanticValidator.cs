@@ -27,7 +27,7 @@ public static class SemanticValidator
         }
 
         ValidateConductor(project, diagnostics);
-        ValidateFolders(project, diagnostics);
+        ValidateFolders(project, request, diagnostics);
         ValidateState(project.GlobalInitialState, projectSource, diagnostics);
         ValidateState(project.GlobalResetDefaults, projectSource, diagnostics);
 
@@ -193,7 +193,10 @@ public static class SemanticValidator
         return rounded is >= 1m and <= 16_777_215m;
     }
 
-    private static void ValidateFolders(MidoraProject project, List<CompilerDiagnostic> diagnostics)
+    private static void ValidateFolders(
+        MidoraProject project,
+        CompilationRequest request,
+        List<CompilerDiagnostic> diagnostics)
     {
         HashSet<MidoraId> ids = [];
         HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
@@ -210,8 +213,14 @@ public static class SemanticValidator
             }
         }
 
+        HashSet<MidoraId> participatingInstrumentIds = GetParticipatingInstrumentIds(project, request);
         foreach (EventInstrument instrument in project.EventInstruments)
         {
+            if (request.IncludedTrackIds is not null
+                && !participatingInstrumentIds.Contains(instrument.Id))
+            {
+                continue;
+            }
             if (instrument.LibraryFolderId.HasValue && !ids.Contains(instrument.LibraryFolderId.Value))
             {
                 diagnostics.Add(new("MIDORA1021", DiagnosticSeverity.Warning,

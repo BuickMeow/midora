@@ -185,4 +185,42 @@ public sealed class AudioRenderScopedCompilationTests
         Assert.DoesNotContain(selected.Diagnostics, value =>
             value.Source.EventInstrumentId == unusedInstrument.Id);
     }
+
+    [Fact]
+    public void UnusedInstrumentBrokenFolderReferenceDoesNotPoisonTrackSelection()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
+        EventInstrument unusedInstrument = new(fixture.Project)
+        {
+            Name = "Unused",
+            TemplateLengthTicks = 480,
+            LibraryFolderId = MidoraId.FromSequence(fixture.Project.NextStableId + 100)
+        };
+        unusedInstrument.SubVoices.Add(new SubVoice(fixture.Project));
+        fixture.Project.EventInstruments.Add(unusedInstrument);
+
+        CanonicalCompiledResult wholeProject = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            new CompilationRequest { EndTick = 480 });
+        CanonicalCompiledResult selected = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            new CompilationRequest
+            {
+                Purpose = CompilationPurpose.LogicalTrackAudioRender,
+                EndTick = 480,
+                IncludedTrackIds = [fixture.Track.Id],
+                TreatWarningsAsErrors = true
+            });
+
+        Assert.True(wholeProject.IsConsumable);
+        Assert.Contains(wholeProject.Diagnostics, value =>
+            value.Code == "MIDORA1021"
+            && value.Source.EventInstrumentId == unusedInstrument.Id);
+        Assert.True(selected.IsConsumable);
+        Assert.DoesNotContain(selected.Diagnostics, value =>
+            value.Code == "MIDORA1021"
+            || value.Source.EventInstrumentId == unusedInstrument.Id);
+    }
 }

@@ -9,7 +9,7 @@
 
 - 输入：完整 Project Source Data 与可选的 `CompilationRequest.IncludedTrackIds`。
 - Whole Project 输入未给出 Track 选择集合时，语义验证继续检查全部 Track、全部 Event Instrument 与全 Project Stable ID 唯一性。
-- 显式 Track 输入只为被选择 Track、其引用的 Event Instrument 和始终参与的 Project/Conductor/Global 上下文产生本次编译诊断。
+- 显式 Track 输入只为被选择 Track、其引用的 Event Instrument 和始终参与的 Project/Conductor/Global 上下文产生本次编译诊断；未参与 Instrument 的断裂 Library Folder 引用不产生本次 Warning。
 - 正式输出仍是同一 `CanonicalCompiledResult`；作用域变化不改写 Project，也不把未选内容复制或删除。
 
 ## 2. 边界与失败条件
@@ -35,5 +35,6 @@
 
 - 同一 Project 的 Whole Project compile 必须捕获未选 Track 内重复 Stable ID，scoped compile 必须成功且不含该来源诊断。
 - 同一 Project 的 Whole Project compile 必须捕获未参与 Event Instrument 内重复 Stable ID，scoped compile 必须成功且不含该 Instrument 来源诊断。
+- Whole Project compile 必须保留未参与 Event Instrument 的断裂 Folder Warning；启用 Warning-as-error 的 scoped compile 必须忽略该未参与来源并成功。
 - Compiler 全集、全仓正式非 UI 发布门及 Full/Incremental 既有 oracle 必须保持通过。
-- 2026-08-06 正式门结果：Compiler 187/187、全仓 831/831、零 Skip；六个 Release solution 0 warning / 0 error；固定 BASS baseline 与 win-x64 Native AOT Worker 发布均通过。证据目录为 `artifacts/non-ui-release-gate-eb284b767f834aeaaf4bac531fdad414/`。
+- 2026-08-06 正式门结果：Compiler 188/188、全仓 832/832、零 Skip；六个 Release solution 0 warning / 0 error；固定 BASS baseline 与 win-x64 Native AOT Worker 发布均通过。证据目录为 `artifacts/non-ui-release-gate-57a49347b6624061b50c9a278a2359dd/`。

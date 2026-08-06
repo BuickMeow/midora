@@ -356,3 +356,11 @@ Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复�
 SoundFont 不属于 canonical MIDI 语义，命令使用空 `ProjectChangeSet`；Incremental Compile 复用 Track，并清除会话 sample-domain cache。不存在、不可读、路径越界、加载失败、取消、验证期间内容变化或最终锁冲突都必须在建立 History entry 前失败，Project 引用、运行时路径、Modified 和 canonical 保持原状。相同引用与相同解析路径的重复选择以及已清空状态的重复取消是无操作。
 
 Requirement trace：输入为当前 `.midora` 绝对路径、用户选择的绝对 SF2 路径、当前 Project/History、正式后端加载验证器和取消令牌；正式输出为 External 引用（相对路径、原文件名、SHA-256、大小）、本会话有效绝对路径及可撤销 History entry，或零源变更的结构化失败。边界是仅允许 Project 根或直属 `soundfonts/`、逐分量精确/唯一 ignore-case 解析、完整字节身份复核、Project Edit Lock 排他及 source/runtime 同步 Undo。绝对路径、BASS error、验证中间状态和 native handle 只属于运行时，不进入 `.midora` 或 canonical。明确非目标是文件监控/验证缓存、WPF 组合，以及 Q-NUI-005 决定前会分配 Embedded resource ID 的选择/替换；Embedded 旧/新资源租约跨 Undo 分支的所有权也必须在该分支实现时一并闭合。
+
+## 23. ADR-CORE-021（已接受）：External SoundFont 完整验证缓存与文件监控失效
+
+决定：External SF2 完整验证缓存只在当前打开会话内存在。缓存命中键同时包含解析后的绝对路径、当前 Project 引用的已保存 SHA-256/大小、Windows volume serial + file ID、当前文件大小和原始 FILETIME 最后写入值；缺少其中任一项都不得复用完整 hash 结果。完整读取使用不共享写入/删除的异步文件句柄，在同一句柄上读取前后各获取一次 `GetFileInformationByHandle`，身份、大小或时间发生变化时拒绝该结果。缓存仍允许调用方强制完整复核。
+
+可读文件建立 `FileSystemWatcher` 只作为失效提示；Changed/Created/Deleted/Renamed/Error 都递增失效代次并使下一次验证重新执行完整 SHA-256。监控不能替代每次消费前对当前文件 stamp 的同步检查；验证期间收到失效时最多自动重试两次，持续变化则失败，不能发布一个已知过期的“可用”结果。被动验证只返回当前 hash/大小及 mismatch Warning，不修改 Project 引用或 Modified。
+
+Requirement trace：输入为当前 `.midora` 绝对路径、External source reference、当前文件系统状态、强制复核标志和取消令牌；正式输出为精确/唯一 ignore-case/缺失/歧义/不可读解析状态、当前内容身份、hash match、文件 stamp 和会话缓存，或持续变化/取消失败。边界是 Windows 初版文件身份、完整原始字节 SHA-256、单 Project 会话 watcher 和缓存失效代次；Win32 handle、绝对路径、watcher、stamp 与缓存计数均只属于运行时。明确非目标是把监控结果持久化、用 mtime 代替首次 hash，以及尚未完成的 Project 打开/首次音频任务状态机接线。

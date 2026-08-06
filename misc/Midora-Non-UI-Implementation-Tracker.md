@@ -84,11 +84,13 @@
 | 2026-08-06 | Logical Parameter Definition / Mapping / Target Settings History | 安全 Definition 属性、display-only Track cache 复用、引用保留删除；Mapping source/target/order/共享 Target Settings 与确认删除；事件参数三类 Target Settings；未知 Parameter Type 与越界 Enum item 防御；Q-NUI-009 迁移分支保持暂停；Application 135 tests、Compiler 149 tests；10 个测试项目累计 613 tests；Core Release build | 通过，0 warning / 0 error / 0 failure |
 | 2026-08-06 | Project Metadata 与 Logical Track 颜色 History | 六字段原子 Metadata 快照；原 Unicode/空白保留；256/4,096/65,536 scalar 和控制字符边界；只读系统时间/耗时不覆盖；Track nullable opaque sRGB override；空 change-set 与 Track cache 复用；Application 139 tests、Persistence 70 tests；10 个测试项目累计 617 tests；Core Release build | 通过，0 warning / 0 error / 0 failure |
 | 2026-08-06 | External SoundFont 两阶段验证与 History | 允许目录/完整 hash、正式 BASSMIDI `FontInit` + 全 sample preload、提交前内容复核；source/effective path 同事务、Undo/Redo/clear/no-op；验证失败/内容竞态/锁冲突零变更；Application 144 tests、BASS 67 tests；10 个测试项目累计 625 tests；Core Release build | 通过，0 warning / 0 error / 0 failure；Embedded 编辑与文件监控仍待后续 |
+| 2026-08-06 | External SoundFont 验证缓存与监控失效 | Windows volume/file ID + size + raw last-write FILETIME + absolute path + stored identity 完整缓存键；同句柄前后 stamp；强制复核；FileSystemWatcher 只失效；持续变化重试；同 size/mtime 文件替换检测；Persistence 74 tests；10 个测试项目累计 629 tests；Core Release build | 通过，0 warning / 0 error / 0 failure；Project 打开/首次音频任务状态机接线待后续 |
 
 ## 7. 未解决风险
 
 - 当前领域模型和编译器虽已有大量覆盖，但尚未逐条证明 §7～§12 全矩阵完成。
 - 当前 `.midora` 已支持完整 Event Instrument/Logical Track 对象图、完整性正常的 Embedded SF2，以及 Q-NUI-001 规定的损坏资源结构化修复门；旧格式迁移尚未实现，因此 NUI-08 仍未完成。
+- External SF2 的完整验证缓存与文件监控失效原语已实现，缓存键包含 Windows 文件身份；尚需接入 Project 打开后的异步可用状态与首次音频任务强制复核，不能仅凭缓存原语宣称运行时编排完成。
 - §12.21 的 Segment checkpoint、dirty range 与 state-hash 收敛模型已替换旧 Track 整片段缓存；当前剩余风险是继续扩大随机 Project 生成器和 §7～§12 全语义组合矩阵，而不是已知的增量架构缺口。
 - Project MIDI Export Settings 仍是空 v1 占位；schema v2 与默认值等待 Q-NUI-003，不能回写修改已发布 v1。
 - 十三批不分配稳定 ID 的结构/设置/音乐内容编辑命令已接入统一 History；Project Metadata/Track Color、External SoundFont 与安全的 Logical Parameter Definition/Mapping/Target Settings 属性已覆盖，需要迁移既有 Lane 的 Definition 类型/Enum 结构/range 分支等待 Q-NUI-009，Embedded SoundFont 与创建/复制/分割类命令等待 Q-NUI-005。

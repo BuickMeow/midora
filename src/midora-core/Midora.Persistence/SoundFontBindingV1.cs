@@ -29,6 +29,8 @@ public sealed record ExternalSoundFontVerificationV1(
     long? CurrentFileSizeBytes,
     bool? HashMatches)
 {
+    public ExternalSoundFontFileStampV1? FileStamp { get; init; }
+
     public bool IsReadable => Resolution is
         ExternalSoundFontResolutionKind.Exact or
         ExternalSoundFontResolutionKind.CaseInsensitiveFallback;
@@ -99,26 +101,34 @@ public static class SoundFontBindingV1
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(reference);
-        string projectDirectory = GetProjectDirectory(projectFilePath);
-        PathResolution resolution = ResolveRelativePath(projectDirectory, reference.RelativePath);
-        if (resolution.Kind is not ExternalSoundFontResolutionKind.Exact
+        ExternalSoundFontResolutionV1 resolution = ResolveExternal(
+            projectFilePath,
+            reference);
+        if (resolution.Resolution is not ExternalSoundFontResolutionKind.Exact
             and not ExternalSoundFontResolutionKind.CaseInsensitiveFallback)
         {
-            return new(resolution.Kind, null, null, null, null);
+            return new(resolution.Resolution, null, null, null, null);
         }
 
         try
         {
-            SoundFontContentIdentityV1 current = await ReadContentIdentityAsync(
-                resolution.AbsolutePath!, cancellationToken).ConfigureAwait(false);
-            bool matches = current.FileSizeBytes == reference.FileSizeBytes
-                && string.Equals(current.Sha256, reference.Sha256, StringComparison.Ordinal);
+            SoundFontFileSnapshotV1 current = await SoundFontFileSnapshotReaderV1.ReadAsync(
+                resolution.ResolvedAbsolutePath!,
+                cancellationToken).ConfigureAwait(false);
+            bool matches = current.Identity.FileSizeBytes == reference.FileSizeBytes
+                && string.Equals(
+                    current.Identity.Sha256,
+                    reference.Sha256,
+                    StringComparison.Ordinal);
             return new(
-                resolution.Kind,
-                resolution.AbsolutePath,
-                current.Sha256,
-                current.FileSizeBytes,
-                matches);
+                resolution.Resolution,
+                resolution.ResolvedAbsolutePath,
+                current.Identity.Sha256,
+                current.Identity.FileSizeBytes,
+                matches)
+            {
+                FileStamp = current.Stamp
+            };
         }
         catch (Exception exception) when (exception is IOException
             or UnauthorizedAccessException
@@ -133,18 +143,20 @@ public static class SoundFontBindingV1
         CancellationToken cancellationToken = default)
     {
         string path = GetFullyQualifiedPath(soundFontPath, nameof(soundFontPath));
-        string originalFileName = Path.GetFileName(path);
-        SoundFontReferenceValidation.ValidateOriginalFileName(originalFileName);
-        await using FileStream stream = new(
+        SoundFontFileSnapshotV1 snapshot = await SoundFontFileSnapshotReaderV1.ReadAsync(
             path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            bufferSize: 128 * 1024,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-        long length = stream.Length;
-        byte[] hash = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
-        return new(originalFileName, Convert.ToHexStringLower(hash), length);
+            cancellationToken).ConfigureAwait(false);
+        return snapshot.Identity;
+    }
+
+    public static ExternalSoundFontResolutionV1 ResolveExternal(
+        string projectFilePath,
+        ExternalProjectSoundFontReference reference)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        string projectDirectory = GetProjectDirectory(projectFilePath);
+        PathResolution resolution = ResolveRelativePath(projectDirectory, reference.RelativePath);
+        return new(resolution.Kind, resolution.AbsolutePath);
     }
 
     internal static (string? Name, bool UsedFallback, bool Ambiguous) SelectCandidateName(

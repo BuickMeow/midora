@@ -321,6 +321,23 @@
 - 产品回答：待填写。
 - 最终处理与提交：待回答后实施并补 tick↔Bar:Beat:Tick、边界、溢出和随机往返测试。
 
+### Q-NUI-020：Global Event Scope Defaults 的初版正式字段与语义
+
+- 类型：大决定
+- 状态：待确认；暂停 Global Event Scope Defaults 的可编辑领域模型、schema v2、History 与编译消费
+- 发现日期：2026-08-06
+- SRS 依据：第 2.3、3.2、3.4、3.11.2、12.22.5、17.2.1、18.9.1 节；SRS 将 Global Event Scope Defaults 列为必备 Project Content、Modified 来源、Project Settings 子页，并规定修改后可能改变 Reset 输出、状态作用域、资源释放和事件排序。
+- 已确认事实：SRS 没有列出该对象的任何字段、枚举、默认值、作用层级、可覆盖事件类型或冲突解决规则。现有领域类型只有固定辅助规则“Note 非 Channel-Wide，其余 Template Event Channel-Wide”；已发布严格 v1 `settings/global-event-scope-defaults.json` 只有 `schemaVersion`，不能向 v1 静默增加字段。
+- 不确定点：初版是否真的允许用户配置事件作用域；若允许，需要明确可配置对象（Event Kind、MIDI target、Initial/Reset、Logical Parameter 输出等）、候选作用域、默认表、Event Instrument/SubVoice 覆盖关系、非法组合、Reset/资源占用和同 tick 排序语义。
+- 影响范围：领域模型、Project Settings/History/Modified、canonical 编译与缓存 fingerprint、Channel Group 共享/隔离、Reset、播放/预览/MIDI/音频一致性、JSON schema v2 和旧 v1 迁移；选择不同会改变可听结果与文件兼容性。
+- 推荐方案：初版把该文件确认为“固定策略的版本化 marker”，不提供可编辑字段；正式规则继续由各事件语义固定：Note 是逐实例事件，Bank/Program/CC/Pitch Bend/RPN/NRPN/Pitch Bend Range 等是 Channel-Wide 状态。将 SRS 中“修改 Global Event Scope Defaults”解释为预留的未来版本入口，并在后续 SRS 修订中明确初版不可编辑。理由是当前没有足够信息定义安全、可逆且兼容的配置语义，空 v1 已经锁定；未来如新增配置必须发布 schema v2 与迁移规则。
+- 推荐依据与限制：该方案不发明会影响听感的隐式默认，不改变已发布 v1，不扩大初版复杂度；限制是与当前 SRS 把它列为可修改 Project Content 的字面表述存在冲突，必须由产品所有者明确选择并在后续规范修订中消除。
+- 备选方案及差异：A. 初版新增可配置字段；必须先完整回答上面的作用对象、枚举、默认、覆盖与冲突问题，并设计 schema v2，不能只给一个布尔值。B. 删除该 Project Content/文件；会破坏已发布 package 固定入口与 v1 兼容，不推荐。C. 保留空文件但仍在 UI 显示可编辑页；没有可提交语义，会制造虚假设置，不推荐。
+- 当前实施状态：领域与持久化保留空 v1 marker；编译器按具体 MIDI/Event Instrument 语义执行既有固定作用域，不读取可配置 defaults；未实现 schema v2、History 或 UI 接线。
+- 需要产品所有者回答：是否采用推荐的“初版固定 marker、不可编辑”方案？若选择 A，请先给出完整字段表、默认表、覆盖层级和冲突规则，之后再实施 v2。
+- 产品回答：待填写。
+- 最终处理与提交：待回答后实施或将固定 marker 结论写入 ADR/追踪；不得直接改写现有 v1 schema。
+
 ## 3. 问题模板
 
 ### Q-NUI-XXX：标题

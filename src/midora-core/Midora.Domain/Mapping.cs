@@ -17,6 +17,13 @@ public sealed class LogicalParameterDefinition
         Id = project.AllocateStableId();
     }
 
+    internal LogicalParameterDefinition(MidoraProject project, MidoraId preservedId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
+    }
+
     public MidoraId Id { get; init; }
     public required string Name { get; set; }
     public LogicalParameterType Type { get; set; }
@@ -35,6 +42,13 @@ public sealed class LogicalParameterEnumItem
     {
         ArgumentNullException.ThrowIfNull(project);
         Id = project.AllocateStableId();
+    }
+
+    internal LogicalParameterEnumItem(MidoraProject project, MidoraId preservedId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
     }
 
     public MidoraId Id { get; init; }
@@ -117,6 +131,13 @@ public sealed class CSharpMappingFunction
         Id = project.AllocateStableId();
     }
 
+    internal CSharpMappingFunction(MidoraProject project, MidoraId preservedId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
+    }
+
     public MidoraId Id { get; init; }
     public required string Name { get; set; }
     public required string Body { get; set; }
@@ -132,6 +153,13 @@ public sealed class MappingChain : IList<ValueMappingStep>, IReadOnlyList<ValueM
     {
         ArgumentNullException.ThrowIfNull(project);
         Id = project.AllocateStableId();
+    }
+
+    internal MappingChain(MidoraProject project, MidoraId preservedId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
     }
 
     public MidoraId Id { get; init; }
@@ -163,6 +191,13 @@ public sealed class ValueMappingStep
         Id = project.AllocateStableId();
     }
 
+    internal ValueMappingStep(MidoraProject project, MidoraId preservedId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
+    }
+
     public MidoraId Id { get; init; }
     public bool IsEnabled { get; set; } = true;
     public MappingSource Source { get; set; } = MappingSource.CurrentValue;
@@ -186,6 +221,18 @@ public sealed class LogicalParameterMapping
         ArgumentNullException.ThrowIfNull(project);
         Id = project.AllocateStableId();
         Steps = new MappingChain(project);
+        TargetSettings = new MidiIntegerTargetSettings();
+    }
+
+    internal LogicalParameterMapping(
+        MidoraProject project,
+        MidoraId preservedId,
+        MidoraId preservedStepsId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
+        Steps = new MappingChain(project, preservedStepsId);
         TargetSettings = new MidiIntegerTargetSettings();
     }
 

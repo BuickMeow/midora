@@ -93,6 +93,21 @@ public sealed record CurvePoint
         Interpolation = interpolation;
     }
 
+    internal CurvePoint(
+        MidoraProject project,
+        MidoraId preservedId,
+        long tick,
+        double value,
+        CurveInterpolation interpolation)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
+        Tick = tick;
+        Value = value;
+        Interpolation = interpolation;
+    }
+
     public MidoraId Id { get; init; }
     public long Tick { get; init; }
     public double Value { get; init; }
@@ -105,6 +120,14 @@ public sealed class ValueCurve
     {
         ArgumentNullException.ThrowIfNull(project);
         Id = project.AllocateStableId();
+        TargetSettings = new MidiIntegerTargetSettings();
+    }
+
+    internal ValueCurve(MidoraProject project, MidoraId preservedId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
         TargetSettings = new MidiIntegerTargetSettings();
     }
 

@@ -76,6 +76,13 @@ public sealed class LogicalTrack
         Id = project.AllocateStableId();
     }
 
+    internal LogicalTrack(MidoraProject project, MidoraId preservedId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
+    }
+
     public MidoraId Id { get; init; }
     public required string Name { get; set; }
     public MidoraId? EventInstrumentId { get; set; }
@@ -199,8 +206,10 @@ public sealed class MidoraProject
     public MidiInitialState GlobalResetDefaults { get; } = new();
     public GlobalEventScopeDefaults GlobalEventScopeDefaults { get; } = new();
     public List<EventInstrument> EventInstruments { get; } = [];
+    public List<DamagedProjectObject> DamagedEventInstruments { get; } = [];
     public List<EventInstrumentLibraryFolder> EventInstrumentFolders { get; } = [];
     public List<LogicalTrack> Tracks { get; } = [];
+    public List<DamagedProjectObject> DamagedLogicalTracks { get; } = [];
     public PlaybackProjectSettings Playback { get; } = new();
     public ExportProjectSettings Export { get; } = new();
     public AudioRenderProjectSettings AudioRender { get; } = new();
@@ -246,6 +255,13 @@ public sealed class MidoraProject
         }
     }
 }
+
+public sealed record DamagedProjectObject(
+    MidoraId Id,
+    string NameSnapshot,
+    string PackagePath,
+    string Error,
+    int OriginalIndex);
 
 public sealed class EventInstrumentLibraryFolder
 {

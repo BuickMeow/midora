@@ -40,6 +40,15 @@ public sealed record ExternalSoundFontVerificationV1(
 
 public static class SoundFontBindingV1
 {
+    public static Task<EmbeddedSoundFontResourceV1> BindEmbeddedAsync(
+        MidoraProject project,
+        string selectedSoundFontPath,
+        CancellationToken cancellationToken = default) =>
+        EmbeddedSoundFontResourceV1.ImportAndBindAsync(
+            project,
+            selectedSoundFontPath,
+            cancellationToken);
+
     public static async Task<ExternalSoundFontBindingV1> BindExternalAsync(
         string projectFilePath,
         string selectedSoundFontPath,

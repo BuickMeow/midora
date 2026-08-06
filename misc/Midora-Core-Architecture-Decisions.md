@@ -232,3 +232,37 @@ Requirement trace：
 - 明确非目标：本切片不发布 Event Instrument / Logical Track protobuf schema，不实现 Damaged Placeholder、旧版本迁移、Embedded SF2 复制或 WPF Modified/Undo 接线。非空对象集合和 Embedded SF2 必须显式拒绝，不能静默丢弃；后续垂直切片在发布对应 `.proto`、descriptor 与 golden bytes 后解除限制。
 
 `project.json` v1 预留并严格定义 Event Instrument / Logical Track 索引项结构，但本切片只接受空索引；这使后续对象 `.pb` 切片无需重新解释 Project 身份、顺序、路径和名称快照。`export-settings.json` v1 仅确认固定顶层设置对象存在，不提前选择 SRS 尚未固定的默认导出模式；Audio Render 与 Playback 只保存 SRS 已固定的字段和默认值。Audio Render 的有限命名偏好按已确认的固定分 Track 模板记录为 `project-order-number-and-track-name`，不重新开放“是否包含 Track 序号”的可选分支。
+
+后续状态：ADR-CORE-013 已解除非空 Event Instrument / Logical Track 限制；ADR-CORE-014 已解除完整性正常的 Embedded SF2 限制。ADR-CORE-012 的拒绝规则只描述基础切片当时的兼容边界，不再代表当前实现能力。
+
+## 15. ADR-CORE-013（已接受）：`.midora` v1 重对象与损坏占位切片
+
+决定：Event Instrument 与 Logical Track 使用独立 protobuf Edition 2024 schema v1，并以 `project.json` 的显式索引作为身份、顺序、名称快照与路径入口。对象内部保存完整源对象图、稳定 ID 和映射源码；manifest/object header/project index 三层类型与 schema 必须一致。正常对象进入领域集合，无法信任的单个对象形成独立损坏占位，不把半反序列化对象交给编译器。
+
+Requirement trace：
+
+- 输入：完整 Event Instrument、SubVoice、Template Event、Curve、Envelope、Logical Parameter/Mapping/C# Function、Logical Track、Segment、Logical Note 和 Parameter Lane 源对象图，以及 `project.json` 索引和对象 `.pb` 字节。
+- 正式输出：稳定路径 `event-instruments/ei_<id>.pb`、`logical-tracks/lt_<id>.pb`；确定性 wire bytes；已提交 `.proto`、descriptor SHA-256 与代表性 golden bytes；打开后的正常对象或保留 ID/名称快照/路径/错误/原位置的损坏占位。
+- 边界：所有嵌套稳定 ID 全局唯一且小于 `nextStableId`；集合和 map 按固定顺序编码；公共 ABI 字段号发布后不得复用；Event Instrument 文件夹归属只在 `project.json` 保存。语义上非法但结构可表示的音乐数据仍交给 Semantic Validation，不由持久化层冒充业务诊断。
+- 失败条件：对象类型/schema/path/kind 错乱使整个 Project 打开失败；对象 entry 缺失、hash 不匹配、wire/UTF-8/必需字段损坏或内部 ID 与索引不一致形成损坏占位；含占位的 Project 禁止保存，直到用户删除占位。孤立对象只产生 Info，保存时移除。
+- 诊断：结构兼容失败属于 package Structure；单对象损坏使用稳定 FileDamage 诊断；删除损坏 Event Instrument 会解除 Track 绑定但保留名称，删除损坏 Track 同步维护 Audio Render 显式选择。删除与 Undo token 原子恢复原位置和引用。
+- 持久化归属：只保存源对象、显式顺序、稳定身份和引用；损坏占位、错误文本、Undo token、descriptor runtime 对象和反序列化缓存不写入包。
+- 运行时归属：占位承载、删除/撤销 token 和打开诊断只属于当前会话；未来应用命令栈负责把 token 接入统一 Modified/Undo/Redo 工作流。
+- 明确非目标：本切片不实现全局应用 Undo 栈、旧版本迁移、自动修复对象字节或保留未知 protobuf tag。
+
+## 16. ADR-CORE-014（部分完成；Q-NUI-001 阻塞损坏保存分支）：Embedded SF2 流式资源租约
+
+决定：Project/Domain 继续只保存 Embedded SF2 的稳定 resource ID、原始文件名、SHA-256 和大小，不保存绝对路径或字节数组。Persistence 为打开会话建立可释放的运行时资源租约：导入时先把用户选择文件流式复制到会话临时快照并计算身份，全部成功后才原子设置 Project 引用；打开 package 时把合法资源流式解压、计算实际 hash/size，并返回随 `MidoraProjectOpenResultV1` 释放的绝对临时路径。Save/Save Copy 必须显式接收与当前 Project 引用匹配的可用租约，并在 staging 再次边复制边校验。
+
+Requirement trace：
+
+- 输入：用户选择的完全限定 SF2 路径，或 package 中 `resources/soundfonts/<resourceId>.sf2` entry；当前 Embedded 引用；manifest 记录；保存事务目标。
+- 正式输出：manifest kind `embedded-resource` 且无结构 schemaVersion；settings hash、manifest hash、未压缩实际字节与大小一致的 package；打开会话可供后续 BASS 验证/加载的只读语义运行时路径和资源状态。
+- 边界：复制、hash、解压和写包使用固定有界缓冲，不把整个 SF2 读入单个托管数组；资源稳定 ID 参加 Project 全局 ID 唯一性校验；租约路径与临时目录不进入 Domain、compiler fingerprint 或 package。取消、替换或清空引用后的新包只写当前引用资源。
+- 失败条件：导入源缺失/不可读时 Project 与 `nextStableId` 不变；保存缺少匹配可用租约、租约文件被改写或 hash/size 不一致时事务在发布前原子失败；manifest/Zip entry 缺失、kind 错误、size/hash 不一致或解压失败时 Project 仍打开，但资源状态不可用且发声消费者必须被阻止。
+- 诊断：Embedded 结构/内容损坏产生 Resource Error，但不设置 Project Modified；未引用 Embedded entry 产生 Info 并在下次合法保存移除。SF2/BASSMIDI 可加载性仍由音频 Preparing 阶段报告，不由 ZIP 完整性检查假装完成。
+- 持久化归属：只有 Embedded 引用与合法资源原始字节属于 package；实际路径、临时目录、当前实际 hash、可用状态和租约所有权只属于会话。
+- 运行时归属：调用方必须在 Project 关闭、替换/清空资源或打开结果不再使用时释放租约；保存自校验会释放其内部重开租约，包句柄在返回前全部关闭。
+- 明确非目标：本切片不加载 BASSMIDI、不验证 SF2 内部格式、不实现文件监控缓存，也不为 Q-NUI-001 静默选择损坏 Embedded 资源的再次保存表示。
+
+Q-NUI-001 决定前，损坏租约不能用于 Save/Save Copy；这是有意暴露的未闭合合规分支，防止实现用临时默认值生成三方不一致的已知损坏包。

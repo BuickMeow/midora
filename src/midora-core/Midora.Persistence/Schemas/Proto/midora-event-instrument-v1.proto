@@ -1,0 +1,303 @@
+edition = "2024";
+
+package midora.persistence.v1;
+
+import "Schemas/Proto/midora-common-v1.proto";
+
+option csharp_namespace = "Midora.Persistence.Wire.Proto.V1";
+option features.field_presence = EXPLICIT;
+
+enum EventInstrumentOverlapPolicyV1 {
+  EVENT_INSTRUMENT_OVERLAP_POLICY_REJECT = 0;
+  EVENT_INSTRUMENT_OVERLAP_POLICY_WARN = 1;
+  EVENT_INSTRUMENT_OVERLAP_POLICY_LET_OVERLAP = 2;
+  EVENT_INSTRUMENT_OVERLAP_POLICY_CUT_PREVIOUS = 3;
+  EVENT_INSTRUMENT_OVERLAP_POLICY_CUT_NEW_REJECT_NEW = 4;
+}
+
+enum EventInstrumentOverlapScopeV1 {
+  EVENT_INSTRUMENT_OVERLAP_SCOPE_SAME_PITCH = 0;
+  EVENT_INSTRUMENT_OVERLAP_SCOPE_ANY_PITCH = 1;
+}
+
+enum EventInstrumentShortLifecycleV1 {
+  EVENT_INSTRUMENT_SHORT_LIFECYCLE_CUT_AT_NOTE_OFF = 0;
+  EVENT_INSTRUMENT_SHORT_LIFECYCLE_ONE_SHOT = 1;
+  EVENT_INSTRUMENT_SHORT_LIFECYCLE_TAIL = 2;
+}
+
+enum EventInstrumentLongLifecycleV1 {
+  EVENT_INSTRUMENT_LONG_LIFECYCLE_HOLD_LAST_STATE = 0;
+  EVENT_INSTRUMENT_LONG_LIFECYCLE_END_AT_TEMPLATE = 1;
+}
+
+enum LogicalParameterTypeV1 {
+  LOGICAL_PARAMETER_TYPE_INTEGER = 0;
+  LOGICAL_PARAMETER_TYPE_DOUBLE = 1;
+  LOGICAL_PARAMETER_TYPE_ENUM = 2;
+}
+
+enum TemplateEventKindV1 {
+  TEMPLATE_EVENT_KIND_NOTE = 0;
+  TEMPLATE_EVENT_KIND_CONTROL_CHANGE = 1;
+  TEMPLATE_EVENT_KIND_BANK = 2;
+  TEMPLATE_EVENT_KIND_PROGRAM = 3;
+  TEMPLATE_EVENT_KIND_PITCH_BEND = 4;
+  TEMPLATE_EVENT_KIND_REGISTERED_PARAMETER = 5;
+  TEMPLATE_EVENT_KIND_NON_REGISTERED_PARAMETER = 6;
+  TEMPLATE_EVENT_KIND_PITCH_BEND_RANGE = 7;
+}
+
+enum CurveInterpolationV1 {
+  CURVE_INTERPOLATION_STEP = 0;
+  CURVE_INTERPOLATION_LINEAR = 1;
+}
+
+enum MidiValueKindV1 {
+  MIDI_VALUE_KIND_CONTROL_CHANGE = 0;
+  MIDI_VALUE_KIND_BANK_MSB = 1;
+  MIDI_VALUE_KIND_BANK_LSB = 2;
+  MIDI_VALUE_KIND_PROGRAM = 3;
+  MIDI_VALUE_KIND_PITCH_BEND = 4;
+  MIDI_VALUE_KIND_REGISTERED_PARAMETER = 5;
+  MIDI_VALUE_KIND_NON_REGISTERED_PARAMETER = 6;
+  MIDI_VALUE_KIND_PITCH_BEND_RANGE_SEMITONES = 7;
+  MIDI_VALUE_KIND_PITCH_BEND_RANGE_CENTS = 8;
+}
+
+enum MappingSourceV1 {
+  MAPPING_SOURCE_CURRENT_VALUE = 0;
+  MAPPING_SOURCE_TRIGGER_NOTE = 1;
+  MAPPING_SOURCE_TRIGGER_VELOCITY = 2;
+  MAPPING_SOURCE_GATE_LENGTH = 3;
+  MAPPING_SOURCE_PITCH_DELTA = 4;
+  MAPPING_SOURCE_TEMPLATE_TICK = 5;
+  MAPPING_SOURCE_PROJECT_TICK = 6;
+  MAPPING_SOURCE_TEMPLATE_NOTE = 7;
+  MAPPING_SOURCE_TEMPLATE_VELOCITY = 8;
+  MAPPING_SOURCE_LOGICAL_PARAMETER = 9;
+  MAPPING_SOURCE_ENVELOPE = 10;
+  MAPPING_SOURCE_CONSTANT = 11;
+}
+
+enum MappingOperationV1 {
+  MAPPING_OPERATION_OVERRIDE = 0;
+  MAPPING_OPERATION_ADD = 1;
+  MAPPING_OPERATION_MULTIPLY = 2;
+  MAPPING_OPERATION_REMAP = 3;
+  MAPPING_OPERATION_CLAMP = 4;
+  MAPPING_OPERATION_IGNORE = 5;
+  MAPPING_OPERATION_CONSTANT_PLUS_VALUE = 6;
+  MAPPING_OPERATION_CONSTANT_MULTIPLY_VALUE = 7;
+  MAPPING_OPERATION_CONSTANT_MINUS_VALUE = 8;
+  MAPPING_OPERATION_VALUE_MINUS_CONSTANT = 9;
+  MAPPING_OPERATION_CONSTANT_DIVIDE_VALUE = 10;
+  MAPPING_OPERATION_VALUE_DIVIDE_CONSTANT = 11;
+  MAPPING_OPERATION_CUSTOM_CSHARP = 12;
+}
+
+enum MappingInputOverflowV1 {
+  MAPPING_INPUT_OVERFLOW_CLAMP = 0;
+  MAPPING_INPUT_OVERFLOW_EXTRAPOLATE = 1;
+  MAPPING_INPUT_OVERFLOW_FAIL = 2;
+}
+
+enum DivideByZeroPolicyV1 {
+  DIVIDE_BY_ZERO_POLICY_TARGET_MAXIMUM = 0;
+  DIVIDE_BY_ZERO_POLICY_TARGET_DEFAULT = 1;
+  DIVIDE_BY_ZERO_POLICY_ZERO = 2;
+  DIVIDE_BY_ZERO_POLICY_FAIL = 3;
+}
+
+enum MappingRoundingV1 {
+  MAPPING_ROUNDING_ROUND = 0;
+  MAPPING_ROUNDING_FLOOR = 1;
+  MAPPING_ROUNDING_CEILING = 2;
+}
+
+enum MappingOverflowV1 {
+  MAPPING_OVERFLOW_FAIL = 0;
+  MAPPING_OVERFLOW_CLAMP = 1;
+}
+
+message MidiStateEntryV1 {
+  int32 number = 1;
+  int32 value = 2;
+  reserved 3 to max;
+}
+
+message MidiInitialStateV1 {
+  int32 bank_msb = 1;
+  int32 bank_lsb = 2;
+  int32 program = 3;
+  int32 pitch_bend = 4;
+  int32 pitch_bend_range_semitones = 5;
+  int32 pitch_bend_range_cents = 6;
+  repeated MidiStateEntryV1 controllers = 7;
+  repeated MidiStateEntryV1 registered_parameters = 8;
+  repeated MidiStateEntryV1 non_registered_parameters = 9;
+  reserved 10 to max;
+}
+
+message MidiIntegerTargetSettingsV1 {
+  MappingRoundingV1 rounding = 1;
+  MappingOverflowV1 overflow = 2;
+  reserved 3 to max;
+}
+
+message MidiValueTargetV1 {
+  MidiValueKindV1 kind = 1;
+  int32 number = 2;
+  reserved 3 to max;
+}
+
+message ValueMappingStepV1 {
+  StableId id = 1;
+  bool is_enabled = 2;
+  MappingSourceV1 source = 3;
+  MappingOperationV1 operation = 4;
+  StableId logical_parameter_id = 5;
+  StableId envelope_id = 6;
+  StableId mapping_function_id = 7;
+  double constant = 8;
+  double source_minimum = 9;
+  double source_maximum = 10;
+  double target_minimum = 11;
+  double target_maximum = 12;
+  MappingInputOverflowV1 input_overflow = 13;
+  DivideByZeroPolicyV1 divide_by_zero = 14;
+  reserved 15 to max;
+}
+
+message MappingChainV1 {
+  StableId id = 1;
+  bool is_enabled = 2;
+  repeated ValueMappingStepV1 steps = 3;
+  reserved 4 to max;
+}
+
+message LogicalParameterEnumItemV1 {
+  StableId id = 1;
+  string name = 2;
+  int32 value = 3;
+  reserved 4 to max;
+}
+
+message LogicalParameterDefinitionV1 {
+  StableId id = 1;
+  string name = 2;
+  LogicalParameterTypeV1 type = 3;
+  double minimum = 4;
+  double maximum = 5;
+  double display_minimum = 6;
+  double display_maximum = 7;
+  double default_value = 8;
+  bool uses_explicit_enum_values = 9;
+  repeated LogicalParameterEnumItemV1 enum_items = 10;
+  reserved 11 to max;
+}
+
+message TemplateEventV1 {
+  StableId id = 1;
+  TemplateEventKindV1 kind = 2;
+  int64 tick = 3;
+  int64 length_ticks = 4;
+  int32 number = 5;
+  int32 value = 6;
+  int32 secondary_value = 7;
+  bool has_bank_msb = 8;
+  bool has_bank_lsb = 9;
+  bool follow_pitch_delta = 10;
+  MappingChainV1 number_mappings = 11;
+  MappingChainV1 value_mappings = 12;
+  MappingChainV1 secondary_value_mappings = 13;
+  MidiIntegerTargetSettingsV1 number_target_settings = 14;
+  MidiIntegerTargetSettingsV1 value_target_settings = 15;
+  MidiIntegerTargetSettingsV1 secondary_value_target_settings = 16;
+  reserved 17 to max;
+}
+
+message CurvePointV1 {
+  StableId id = 1;
+  int64 tick = 2;
+  double value = 3;
+  CurveInterpolationV1 interpolation = 4;
+  reserved 5 to max;
+}
+
+message ValueCurveV1 {
+  StableId id = 1;
+  MidiValueTargetV1 target = 2;
+  MidiIntegerTargetSettingsV1 target_settings = 3;
+  repeated CurvePointV1 points = 4;
+  reserved 5 to max;
+}
+
+message SubVoiceV1 {
+  StableId id = 1;
+  string name = 2;
+  int32 root_note_override = 3;
+  MidiInitialStateV1 initial_state = 4;
+  repeated TemplateEventV1 events = 5;
+  repeated ValueCurveV1 curves = 6;
+  reserved 7 to max;
+}
+
+message InstrumentEnvelopeV1 {
+  StableId id = 1;
+  string name = 2;
+  int64 delay_ticks = 3;
+  int64 attack_ticks = 4;
+  int64 hold_ticks = 5;
+  int64 decay_ticks = 6;
+  double start_value = 7;
+  double peak_value = 8;
+  double sustain_value = 9;
+  int64 release_ticks = 10;
+  double end_value = 11;
+  reserved 12 to max;
+}
+
+message CSharpMappingFunctionV1 {
+  StableId id = 1;
+  string name = 2;
+  string body = 3;
+  int32 abi_version = 4;
+  repeated string declared_context_fields = 5;
+  reserved 6 to max;
+}
+
+message LogicalParameterMappingV1 {
+  StableId id = 1;
+  StableId parameter_id = 2;
+  StableId sub_voice_id = 3;
+  MidiValueTargetV1 target = 4;
+  MappingChainV1 steps = 5;
+  MidiIntegerTargetSettingsV1 target_settings = 6;
+  reserved 7 to max;
+}
+
+message EventInstrumentV1 {
+  uint32 schema_version = 1;
+  string object_type = 2;
+  StableId id = 3;
+  string name = 4;
+  RgbColor color = 5;
+  string description = 6;
+  int32 root_note = 7;
+  int64 template_length_ticks = 8;
+  bool requires_channel_isolation = 9;
+  EventInstrumentOverlapPolicyV1 overlap_policy = 10;
+  EventInstrumentOverlapScopeV1 overlap_scope = 11;
+  EventInstrumentShortLifecycleV1 short_lifecycle = 12;
+  EventInstrumentLongLifecycleV1 long_lifecycle = 13;
+  int64 loop_start_tick = 14;
+  int64 loop_end_tick = 15;
+  MidiInitialStateV1 initial_state = 16;
+  repeated LogicalParameterDefinitionV1 logical_parameters = 17;
+  repeated SubVoiceV1 sub_voices = 18;
+  repeated InstrumentEnvelopeV1 envelopes = 19;
+  repeated CSharpMappingFunctionV1 mapping_functions = 20;
+  repeated LogicalParameterMappingV1 parameter_mappings = 21;
+  reserved 22 to max;
+}

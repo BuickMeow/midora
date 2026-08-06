@@ -54,6 +54,24 @@ public sealed class TemplateEvent
         SecondaryValueTargetSettings = new MidiIntegerTargetSettings();
     }
 
+    internal TemplateEvent(
+        MidoraProject project,
+        MidoraId preservedId,
+        MidoraId numberMappingsId,
+        MidoraId valueMappingsId,
+        MidoraId secondaryValueMappingsId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
+        NumberMappings = new MappingChain(project, numberMappingsId);
+        ValueMappings = new MappingChain(project, valueMappingsId);
+        SecondaryValueMappings = new MappingChain(project, secondaryValueMappingsId);
+        NumberTargetSettings = new MidiIntegerTargetSettings();
+        ValueTargetSettings = new MidiIntegerTargetSettings();
+        SecondaryValueTargetSettings = new MidiIntegerTargetSettings();
+    }
+
     public MidoraId Id { get; init; }
     public TemplateEventKind Kind { get; set; }
     public long Tick { get; set; }
@@ -77,25 +95,25 @@ public sealed class TemplateEvent
         long lengthTicks,
         int note,
         int velocity) => new(project)
-    {
-        Kind = TemplateEventKind.Note,
-        Tick = tick,
-        LengthTicks = lengthTicks,
-        Number = note,
-        Value = velocity
-    };
+        {
+            Kind = TemplateEventKind.Note,
+            Tick = tick,
+            LengthTicks = lengthTicks,
+            Number = note,
+            Value = velocity
+        };
 
     public static TemplateEvent ControlChange(
         MidoraProject project,
         long tick,
         int controller,
         int value) => new(project)
-    {
-        Kind = TemplateEventKind.ControlChange,
-        Tick = tick,
-        Number = controller,
-        Value = value
-    };
+        {
+            Kind = TemplateEventKind.ControlChange,
+            Tick = tick,
+            Number = controller,
+            Value = value
+        };
 
     public static TemplateEvent Program(MidoraProject project, long tick, int program) => new(project)
     {
@@ -163,6 +181,13 @@ public sealed class SubVoice
         Id = project.AllocateStableId();
     }
 
+    internal SubVoice(MidoraProject project, MidoraId preservedId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
+    }
+
     public MidoraId Id { get; init; }
     public string? Name { get; set; }
     public int? RootNoteOverride { get; set; }
@@ -177,6 +202,13 @@ public sealed class InstrumentEnvelope
     {
         ArgumentNullException.ThrowIfNull(project);
         Id = project.AllocateStableId();
+    }
+
+    internal InstrumentEnvelope(MidoraProject project, MidoraId preservedId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
     }
 
     public MidoraId Id { get; init; }
@@ -198,6 +230,13 @@ public sealed class EventInstrument
     {
         ArgumentNullException.ThrowIfNull(project);
         Id = project.AllocateStableId();
+    }
+
+    internal EventInstrument(MidoraProject project, MidoraId preservedId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
     }
 
     public MidoraId Id { get; init; }

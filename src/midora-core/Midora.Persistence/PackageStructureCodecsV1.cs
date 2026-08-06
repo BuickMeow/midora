@@ -17,6 +17,9 @@ internal static class MidoraPackagePathsV1
     public const string GlobalResetDefaults = "settings/global-reset-defaults.json";
     public const string GlobalEventScopeDefaults = "settings/global-event-scope-defaults.json";
 
+    public static string EmbeddedSoundFont(MidoraId resourceId) =>
+        $"resources/soundfonts/{resourceId}.sf2";
+
     public static readonly string[] FixedContentPaths =
     [
         Project,

@@ -130,28 +130,20 @@ public sealed class MidoraProjectPackageV1Tests
     }
 
     [Fact]
-    public async Task UnsupportedObjectGraphAndEmbeddedSoundFontFailWithoutTouchingTarget()
+    public async Task EmbeddedSoundFontWithoutRuntimeResourceFailsWithoutTouchingTarget()
     {
         using TemporaryDirectory temporary = new();
         string packagePath = temporary.PathFor("atomic.midora");
         byte[] original = [1, 2, 3, 4];
         await File.WriteAllBytesAsync(packagePath, original);
         MidoraProject project = new(480, CreatedAt);
-        project.Tracks.Add(new LogicalTrack(project) { Name = "Track" });
-        MidoraProjectPackageV1 packages = CreateService();
-
-        MidoraPackageExceptionV1 objectFailure = await Assert.ThrowsAsync<MidoraPackageExceptionV1>(() =>
-            packages.SaveProjectAsync(project, packagePath, overwriteAuthorized: true));
-
-        Assert.Equal(MidoraPackageStageV1.Serialization, objectFailure.Stage);
-        Assert.Equal(original, await File.ReadAllBytesAsync(packagePath));
-
-        project.Tracks.Clear();
-        _ = project.SoundFont.SetEmbedded(
+        project.SoundFont.SetEmbedded(
             project,
             "Orchestra.sf2",
             new string('a', 64),
             123);
+        MidoraProjectPackageV1 packages = CreateService();
+
         MidoraPackageExceptionV1 resourceFailure = await Assert.ThrowsAsync<MidoraPackageExceptionV1>(() =>
             packages.SaveProjectAsync(project, packagePath, overwriteAuthorized: true));
 

@@ -54,7 +54,9 @@ internal static class StrictProtobufWireV1
                 throw new InvalidDataException($"Unknown protobuf field {fieldNumber} at {path}.");
             }
 
-            int expectedWireType = field.IsRepeated && field.IsPacked ? 2 : GetWireType(field.FieldType);
+            int expectedWireType = field.IsRepeated && field.IsPacked && IsPackable(field.FieldType)
+                ? 2
+                : GetWireType(field.FieldType);
             if (wireType != expectedWireType)
             {
                 throw new InvalidDataException(
@@ -72,7 +74,7 @@ internal static class StrictProtobufWireV1
         int depth)
     {
         string fieldPath = $"{path}.{field.Name}";
-        if (field.IsRepeated && field.IsPacked)
+        if (field.IsRepeated && field.IsPacked && IsPackable(field.FieldType))
         {
             ReadOnlySpan<byte> packed = ReadLengthDelimited(data, ref offset, fieldPath);
             ValidatePacked(packed, field, fieldPath);
@@ -268,4 +270,7 @@ internal static class StrictProtobufWireV1
         FieldType.Fixed32 or FieldType.SFixed32 or FieldType.Float => 5,
         _ => throw new InvalidDataException($"Unsupported protobuf field type {fieldType}.")
     };
+
+    private static bool IsPackable(FieldType fieldType) => fieldType is not
+        FieldType.String and not FieldType.Bytes and not FieldType.Message and not FieldType.Group;
 }

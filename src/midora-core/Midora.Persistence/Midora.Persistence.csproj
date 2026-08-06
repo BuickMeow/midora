@@ -12,6 +12,12 @@
     <Protobuf Include="Schemas\Proto\midora-common-v1.proto"
               GrpcServices="None"
               AdditionalProtocArguments="--csharp_opt=internal_access" />
+    <Protobuf Include="Schemas\Proto\midora-event-instrument-v1.proto"
+              GrpcServices="None"
+              AdditionalProtocArguments="--csharp_opt=internal_access" />
+    <Protobuf Include="Schemas\Proto\midora-logical-track-v1.proto"
+              GrpcServices="None"
+              AdditionalProtocArguments="--csharp_opt=internal_access" />
     <Content Include="Schemas\Json\*.schema.json"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />

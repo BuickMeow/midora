@@ -4,7 +4,7 @@
 
 Midora uses the BASS, BASSMIDI, and BASSWASAPI audio libraries supplied by Un4seen Developments.
 
-These libraries are not open-source components of Midora and are not licensed under Midora's source-code license. Their use and redistribution are governed by the terms supplied by Un4seen Developments:
+These libraries are not open-source components of Midora and are not licensed under Midora's MIT source-code license. Their use and redistribution are governed by the terms supplied by Un4seen Developments:
 
 - <https://www.un4seen.com/bass.html>
 

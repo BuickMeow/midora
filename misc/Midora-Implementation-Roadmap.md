@@ -100,7 +100,7 @@ MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、Pause/Scrub、语义�
 - WASAPI callback 的 sample data 固定为 float32、长度参数是 byte count；回调必须快速返回。exclusive mode 短读时其余部分由 BASSWASAPI 填静音；不能从 callback 内调用 `BASS_WASAPI_Free`。
 - BASS 错误码是线程相关状态；每个失败调用后应立即在同线程获取并转成 Midora 自己的错误对象。
 - 官方要求用各模块 `GetVersion` 校验加载 DLL 与 API 版本。16A 已固定 BASS 2.4.18.3、BASSMIDI 2.4.16.0、BASSWASAPI 2.4.4.1 的完整版本码和 win-x64 DLL SHA-256；仓库 manifest 是正式清单，vendor current/latest 仅为开发候选。
-- Midora 初版已确定为免费、开源、非商业软件。BASS 官方免费使用条件还取决于实际发布主体为非商业实体，且产品不通过销售、广告等获利；开源或免费下载本身不是充分条件。正式发布仍须核验主体、收入、平台、分发方式、届时有效条款和第三方 notices；条件不明或商业化时先联系权利人或取得适用许可。
+- Midora 初版已确定为免费、开源、非商业软件，自有源代码使用标准 MIT License；项目自身非商业不限制下游商业使用。BASS 官方免费使用条件还取决于实际发布主体为非商业实体，且产品不通过销售、广告等获利；开源或免费下载本身不是充分条件。正式发布仍须核验主体、收入、平台、分发方式、届时有效条款和第三方 notices；条件不明或商业化时先联系权利人或取得适用许可。
 
 官方参考：
 
@@ -280,7 +280,7 @@ flowchart TD
 1. 大 Project 性能、256 Channel Unit 峰值、长 tick/Tempo 极值、长时间播放/渲染、内存上限。
 2. Native/module 版本不匹配、无 SF2、坏 SF2、设备丢失、underrun、磁盘满、取消和清理失败。
 3. 确定性回归、包格式兼容、迁移矩阵和音频语义回归资产。
-4. Midora 开源许可证、BASS 非商业免费使用条件或适用许可证、SF2 内容许可证、第三方 notices、DLL 完整性和安装/升级路径。
+4. MIT `LICENSE` 版权署名、BASS 非商业免费使用条件或适用许可证、SF2 内容许可证、第三方 notices、DLL 完整性和安装/升级路径。
 
 退出条件：所有 SRS 初版验收项有证据；发布包不依赖开发机路径/环境变量；授权和第三方分发条件已确认。
 

@@ -97,6 +97,8 @@ JSON Schema、protobuf .proto 的其他最终字段名、字段号与代码生�
 
 Midora 初版固定为免费、开源、非商业软件。该产品决定不等于 BASS 已转为开源依赖，也不等于任何免费发布方式都自动满足 BASS 许可条件。
 
+Midora 自有源代码固定采用标准 MIT License。该许可证允许使用、复制、修改、合并、发布、分发、再许可和销售 Midora 自有代码副本；“Midora 官方初版非商业”是项目自身发布定位，不得通过修改 MIT 正文变成对下游商业领域的限制。正式 `LICENSE` 中的版权持有人必须由产品所有者明确确认，不能从 Git 账号、仓库 URL 或提交者显示名推断。
+
 根据 2026-08-06 核验的 Un4seen 官方 BASS 授权页，免费使用条件同时涉及发布主体的非商业性质，以及产品不通过销售、广告等方式产生收入。正式发布前必须冻结并核验：
 
 ```text
@@ -115,3 +117,4 @@ Midora 仓库不提交 BASS DLL。Midora 的开源许可证不得覆盖或重新
 
 - [BASS 产品与授权](https://www.un4seen.com/bass.html)
 - [Un4seen 关于 GitHub 免费开源发布与商业再使用的答复](https://www.un4seen.com/forum/?topic=20159.0)
+- [OSI 批准的 MIT License 标准文本](https://opensource.org/license/mit)

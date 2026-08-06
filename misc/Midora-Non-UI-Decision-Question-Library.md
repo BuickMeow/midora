@@ -197,7 +197,7 @@
 - 推荐方案：提交 `global.json`，精确使用 SDK `10.0.302`、`rollForward=disable`、禁止 prerelease；仓库级声明 `RuntimeIdentifiers=win-x64` 与 `RestorePackagesWithLockFile=true`，提交 32 个 `packages.lock.json`。普通开发测试在未配置原生集成资源时明确 Skip；正式 `Test-NonUIRelease.ps1` 必须显式给出经固定 manifest/hash 验证的 BASS 目录和一个现存 SF2，执行 locked restore、六个 solution Release build、Native AOT publish，再按版本化测试基线要求 10 个项目的当前精确计数全部通过且零 Skip；新增/删除测试必须显式评审并更新基线。
 - 推荐依据与限制：精确 SDK和锁文件把构建输入从机器隐式状态变为提交内容；零 Skip 的正式门避免把缺少硬件/资源误报为通过。限制是安装了其他 .NET 10 SDK但没有 10.0.302 的机器会在仓库根目录直接拒绝构建，安全升级 SDK/包时必须显式更新 `global.json`、lock files、基线并重跑完整门。
 - 备选方案及差异：A. SDK 使用 `latestPatch` roll-forward，安全补丁采用更方便，但不同时间/机器可能产生不同 AOT 与编译输出。B. 只固定直接包版本、不提交 lock files，文件较少但传递图仍可变化。C. 不固定 SDK，仅在发布记录中手工写版本；日常构建仍可能漂移，不推荐。
-- 当前实施状态：已按推荐实现并在本机完整运行发布门；当前 824 tests 全通过、0 Skip，固定 BASS 校验通过，Native AOT Worker 产物包含 `.exe`、三项 DLL、native manifest、MIT License 与 Third-Party Notices。
+- 当前实施状态：已按推荐实现并在本机完整运行发布门；当前 829 tests 全通过、0 Skip，固定 BASS 校验通过，Native AOT Worker 产物包含 `.exe`、三项 DLL、native manifest、MIT License 与 Third-Party Notices。
 - 需要产品所有者回答：是否采用推荐方案？如需允许 SDK patch roll-forward，请明确选择 A；NuGet 锁文件与正式零 Skip 门建议保留。
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
@@ -303,6 +303,23 @@
 - 需要产品所有者回答：是否采用推荐方案？如需 20 项请选择 B；如需 Preferences v2 统一存储请选择 A；C/D/E 不建议采用。
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
+
+### Q-NUI-019：小节中途 Time Signature 变化的 Bar:Beat:Tick 语义
+
+- 类型：大决定
+- 状态：待确认；暂停 Project 音乐位置/小节线/拍网格换算服务
+- 发现日期：2026-08-06
+- SRS 依据：第 4.9、20.13.3 节；Bar/Beat 从 1 开始、Tick offset 从 0 开始、Project 起点为 `1:1:0`，Beat 使用当前 Time Signature 分母单位且不推断复合拍大拍；修改拍号不移动任何绝对 tick。
+- 已确认事实：当前领域与持久化允许 Time Signature 位于任意非负 tick，仅要求 tick 0 恰有一个、同 tick 唯一、分子 1–99、分母为 1/2/4/8/16/32/64；SRS 没有要求变化点落在既有小节边界。若变化发生在小节中途，必须先定义该变化点与前后小节编号的关系，才能确定所有后续 Bar:Beat:Tick、网格线、snap 和定位结果。
+- 不确定点：中途拍号变化是立即截断当前小节并从新小节开始、在当前不完整小节内切换 beat 单位但不增加 Bar、延迟到旧拍号的下一小节边界生效，还是把这种变化认定为非法。
+- 影响范围：Project 时间坐标显示与反向解析、Arrangement/Segment 映射位置、小节线/拍网格/snap、Marker 与播放光标定位，以及拍号编辑后的后续坐标重算；不改变事件绝对 tick、Tempo 秒时间、canonical MIDI 事件或 `.midora` 已存 tick。
+- 推荐方案：每个 Time Signature 变化 tick 都立即成为一个新小节边界；如果它位于旧小节中途，旧小节是被截断的不完整小节，变化点的坐标为下一 Bar 的 `Beat 1, Tick 0`，此后按新分子/分母推进。位于 tick 0 的初始拍号仍是 `1:1:0`，位于原本小节边界的变化只正常开启下一 Bar。
+- 推荐依据与限制：拍号事件从其精确 tick 正式生效，不需要延迟或移动源事件；前后每个 tick 都有唯一可逆坐标；小节线与 beat 单位在同一 tick 一致切换。限制是误放在小节中途的拍号会产生短小节并使后续 Bar 编号增加，UI 应明确显示变化点，不能静默吸附。
+- 备选方案及差异：A. 中途变化继续使用同一 Bar 编号，并在变化点把 Beat 重置为 1；一个 Bar 内会出现两个 `Beat 1`，若格式不增加额外段号则 tick→坐标不可逆。B. 拍号延迟到旧拍号下一小节边界生效；存储 tick 与显示/网格实际生效 tick 不一致。C. 禁止中途变化并要求编辑命令吸附/拒绝；会把当前 SRS 允许的 Project 数据新增为语义错误，并影响已有文件兼容。D. 中途变化立即切换 beat 单位但 Beat 序号连续；不完整拍单位与 Tick offset 定义复杂，且可能产生 Beat 超过新分子的坐标。
+- 当前实施状态：尚未实现 Bar:Beat:Tick/网格换算，避免把推荐方案伪装成 SRS 既定事实；现有 Time Signature 领域、持久化、编译与 MIDI 导出继续保留精确绝对 tick，不受暂停影响。
+- 需要产品所有者回答：是否采用推荐的“变化 tick 立即开启下一 Bar，允许短小节”？如需禁止中途变化请选择 C，并确认对已存在中途变化的 `.midora` 应报 Error 还是打开后标记需修复。
+- 产品回答：待填写。
+- 最终处理与提交：待回答后实施并补 tick↔Bar:Beat:Tick、边界、溢出和随机往返测试。
 
 ## 3. 问题模板
 

@@ -160,6 +160,7 @@ Requirement trace：输入为固定版本 BASS/BASSWASAPI、进程全局字符�
 - 相同事件计划以不同工作 block（含非 2 次幂）渲染必须逐 sample 相同。
 - 验证事件前静音、事件 frame 起音、真实 NoteOff velocity 0、同 tick 顺序、同音高重叠、Reset、硬结束和总 frame 数。
 - 验证多 Port 求和、Channel 10 melodic、统一 SF2、NOFX 和 CC91/CC93 全路径拒绝。
+- 固定 win-x64 ABI 快照必须验证正式使用的 BASS/BASSMIDI/BASSWASAPI C 结构大小与字段偏移、pointer/function-pointer/handle 宽度、精确 LibraryImport DLL/entry point、BOOL/handle 返回宽度和 Windows x64 统一默认调用 ABI；不能只靠“真实调用没有崩溃”推断声明正确。
 - Limiter 验证峰值、左右联动、release 连续性、Reset 和 block-size 不变性。
 - Rendering/Playing/Buffering 活动线程在预热后使用线程分配计数器验证零托管堆分配。
 - WAVE 验证 8,000、44,100、48,000、192,000 和自定义采样率，以及 RIFF/fmt/fact/data 大小、frame 对齐、上限拒绝、取消和原子发布。

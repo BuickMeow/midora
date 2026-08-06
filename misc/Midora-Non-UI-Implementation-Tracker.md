@@ -46,7 +46,7 @@
 - 2026-08-06 提交 `4b69e72` 完成 `.midora` 空对象图基础垂直切片；Release 构建通过，累计 330 个自动测试通过。
 - 2026-08-06 提交 `61b7042` 完成 Event Instrument / Logical Track protobuf v1、对象级损坏隔离与可撤销删除、Embedded SF2 正常资源流式 package 链。
 - `misc/Midora-SRS-Code-Conformance-Audit-2026-08-05.md` 记录的 1A～25.1A 均视为已确认决定，不再询问。
-- 当前有 6 个未闭合的产品所有者重大决定：Q-NUI-002（初版 `.midora` 历史格式基线）、Q-NUI-003（Project MIDI Export Settings v2 字段/默认值）、Q-NUI-005（ID 分配型 Undo 和 `nextStableId`/Modified 关系）、Q-NUI-009（Logical Parameter Definition 结构变更的既有 Lane 迁移）、Q-NUI-011（共享音频状态快照 ABI v2 并发契约）与 Q-NUI-013（正式 BASS 二进制分发许可放行）；分别只暂停成功迁移器、Export Settings schema/领域默认分支、创建/复制/分割类 History 命令、需要迁移 Lane 的 Definition 编辑、共享状态快照协议升级和含 BASS DLL 的正式对外分发。Q-NUI-004、Q-NUI-006、Q-NUI-007、Q-NUI-008、Q-NUI-010、Q-NUI-012、Q-NUI-014、Q-NUI-015、Q-NUI-016、Q-NUI-017、Q-NUI-018 是已按推荐方案落地、仍待确认的小决定。Q-NUI-001 已按推荐方案确认并实现。
+- 当前有 7 个未闭合的产品所有者重大决定：Q-NUI-002（初版 `.midora` 历史格式基线）、Q-NUI-003（Project MIDI Export Settings v2 字段/默认值）、Q-NUI-005（ID 分配型 Undo 和 `nextStableId`/Modified 关系）、Q-NUI-009（Logical Parameter Definition 结构变更的既有 Lane 迁移）、Q-NUI-011（共享音频状态快照 ABI v2 并发契约）、Q-NUI-013（正式 BASS 二进制分发许可放行）与 Q-NUI-019（小节中途 Time Signature 变化的 Bar:Beat:Tick 规则）；分别只暂停成功迁移器、Export Settings schema/领域默认分支、创建/复制/分割类 History 命令、需要迁移 Lane 的 Definition 编辑、共享状态快照协议升级、含 BASS DLL 的正式对外分发和 Project 音乐位置/网格换算服务。Q-NUI-004、Q-NUI-006、Q-NUI-007、Q-NUI-008、Q-NUI-010、Q-NUI-012、Q-NUI-014、Q-NUI-015、Q-NUI-016、Q-NUI-017、Q-NUI-018 是已按推荐方案落地、仍待确认的小决定。Q-NUI-001 已按推荐方案确认并实现。
 
 ## 5. 当前实施顺序
 
@@ -114,6 +114,7 @@
 | 2026-08-06 | Open Project 非 UI 候选事务 | `.midora`/`.zip` 严格候选；当前 Project 保留边界；恢复 Modified/诊断；Damaged 保存门；Embedded lease/External runtime 状态；无长期源文件占用；Q-NUI-016 恢复时钟一致性；Application 202 tests、Persistence 75 tests；全仓基线 809 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip |
 | 2026-08-06 | Close / Exit 工程时长生命周期 | Project Switch Guard 与 Save 期间继续累计；实际切换入口才 Begin Closing；成功保持暂停；实际切换失败恢复且不补计暂停窗口；Application 205 tests；全仓基线 812 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；精确暂停边界等待 Q-NUI-017 确认 |
 | 2026-08-06 | Recent Projects 本机 MRU | 分离 JSON v1；成功激活后显式记录；10 项 Windows OrdinalIgnoreCase MRU；严格未知/重复字段；1 MiB 门；离线路径保留/可用投影；原子失败保持；Application 217 tests；全仓基线 824 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；列表策略等待 Q-NUI-018 确认 |
+| 2026-08-06 | Native interop win-x64 ABI 快照 | BASS/BASSMIDI/BASSWASAPI 正式结构 size/offset；pointer/function pointer/handle 宽度；精确 LibraryImport DLL/entry point；BOOL/handle return；统一 Windows x64 默认调用 ABI；BASS 119 tests；全仓基线 829 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；固定 DLL baseline 与 Native AOT Worker 通过 |
 
 ## 7. 未解决风险
 
@@ -131,3 +132,4 @@
 - Save/Save Copy 已通过统一非 UI 协调层绑定 package 事务、打开会话工程时间、current path/file information 与 Document 保存基线；WPF Progress/Result 接线待 UI 阶段，Save Copy 自身路径策略等待 Q-NUI-015 确认。
 - New Project 已能在旧 Project 之外构建完整候选，覆盖 Unsaved/Create and Save 及 External/Embedded SF2；WPF 后续只负责在 Project Switch Guard 成功分支提交候选并导航 Arrangement，不能提前启动工程时间或暴露半创建候选。
 - Open Project 已能在旧 Project 之外严格建立候选并绑定恢复/损坏/资源状态；旧格式成功迁移仍等待 Q-NUI-002，WPF 后续只能在 Project Switch Guard 成功分支接管候选资源并启动打开会话。
+- Bar:Beat:Tick 的 1-based Bar/Beat、0-based Tick 与分母拍单位已经由 SRS 固定，但拍号可位于任意 tick；中途拍号变化是否截断并开启新小节等待 Q-NUI-019，决定前不实现会影响全局网格/坐标的换算服务。

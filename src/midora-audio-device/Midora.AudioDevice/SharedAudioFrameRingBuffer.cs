@@ -177,7 +177,7 @@ public sealed unsafe class SharedAudioFrameRingBuffer : IAudioRenderSource, IDis
                 destination,
                 checked((nuint)requestedFrameCount * (nuint)Format.BytesPerFrame));
             Interlocked.Increment(ref Int64At(UnderrunCountOffset));
-            return new AudioPullResult(requestedFrameCount, AudioPullStatus.Buffering);
+            return AudioPullResult.Buffering();
         }
 
         int copiedFrames = Math.Min(availableFrames, requestedFrameCount);

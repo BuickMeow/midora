@@ -10,6 +10,9 @@ public readonly record struct AudioPullResult(
     public static AudioPullResult EndOfStream(int frameCount = 0) =>
         new(frameCount, AudioPullStatus.EndOfStream);
 
+    public static AudioPullResult Buffering() =>
+        new(0, AudioPullStatus.Buffering);
+
     public static AudioPullResult Fault(int frameCount = 0) =>
         new(frameCount, AudioPullStatus.Fault);
 }

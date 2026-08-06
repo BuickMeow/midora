@@ -41,4 +41,36 @@ public sealed class SharedAudioFrameRingBufferTests
         Assert.True(consumer.ProducerCompleted);
         Assert.Equal(123, consumer.ProducerAllocatedBytes);
     }
+
+    [Fact]
+    public unsafe void UnderrunReturnsZeroConsumedFramesAndPreservesSharedReadPosition()
+    {
+        string name = $"Midora.Audio.Test.{Guid.NewGuid():N}";
+        AudioFormat format = new(48_000, 2, AudioSampleFormat.Float32);
+        using SharedAudioFrameRingBuffer producer = SharedAudioFrameRingBuffer.Create(name, format, 32);
+        using SharedAudioFrameRingBuffer consumer = SharedAudioFrameRingBuffer.Open(name);
+        float* source = stackalloc float[4] { 0.25f, -0.25f, 0.5f, -0.5f };
+        float* destination = stackalloc float[8];
+        Assert.True(producer.TryWriteFrames(source, 2));
+
+        AudioPullResult buffering = consumer.PullFrames(destination, 4);
+
+        Assert.Equal(AudioPullStatus.Buffering, buffering.Status);
+        Assert.Equal(0, buffering.FrameCount);
+        Assert.Equal(1, consumer.UnderrunCount);
+        Assert.Equal(2, consumer.AvailableFrameCount);
+        for (int i = 0; i < 8; i++)
+        {
+            Assert.Equal(0, destination[i]);
+        }
+
+        AudioPullResult resumed = consumer.PullFrames(destination, 2);
+        Assert.Equal(AudioPullStatus.Continue, resumed.Status);
+        Assert.Equal(2, resumed.FrameCount);
+        Assert.Equal(0, consumer.AvailableFrameCount);
+        for (int i = 0; i < 4; i++)
+        {
+            Assert.Equal(source[i], destination[i]);
+        }
+    }
 }

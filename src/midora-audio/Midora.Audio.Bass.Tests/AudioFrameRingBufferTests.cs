@@ -44,6 +44,8 @@ public sealed class AudioFrameRingBufferTests
         using AudioFrameRingBuffer ring = new(
             new AudioFormat(48_000, 2, AudioSampleFormat.Float32),
             16);
+        float* source = stackalloc float[4] { 0.25f, -0.25f, 0.5f, -0.5f };
+        Assert.True(ring.TryWriteFrames(source, 2));
         float* destination = stackalloc float[8];
         for (int i = 0; i < 8; i++)
         {
@@ -53,12 +55,21 @@ public sealed class AudioFrameRingBufferTests
         AudioPullResult result = ring.PullFrames(destination, 4);
 
         Assert.Equal(AudioPullStatus.Buffering, result.Status);
-        Assert.Equal(4, result.FrameCount);
+        Assert.Equal(0, result.FrameCount);
         Assert.Equal(1, ring.UnderrunCount);
-        Assert.Equal(0, ring.AvailableFrameCount);
+        Assert.Equal(2, ring.AvailableFrameCount);
         for (int i = 0; i < 8; i++)
         {
             Assert.Equal(0, destination[i]);
+        }
+
+        AudioPullResult resumed = ring.PullFrames(destination, 2);
+        Assert.Equal(AudioPullStatus.Continue, resumed.Status);
+        Assert.Equal(2, resumed.FrameCount);
+        Assert.Equal(0, ring.AvailableFrameCount);
+        for (int i = 0; i < 4; i++)
+        {
+            Assert.Equal(source[i], destination[i]);
         }
     }
 

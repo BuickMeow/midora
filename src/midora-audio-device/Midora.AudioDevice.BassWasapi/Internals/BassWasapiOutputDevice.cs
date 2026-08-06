@@ -328,7 +328,7 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
             int requestedFrames = checked((int)(length / BassWasapiInitializationPolicy.BytesPerFrame));
             Volatile.Write(ref device._lastCallbackFrameCount, requestedFrames);
             AudioPullResult result = source.PullFrames((float*)buffer, requestedFrames);
-            if (result.FrameCount < 0 || result.FrameCount > requestedFrames)
+            if (!IsValidCallbackPullResult(result, requestedFrames))
             {
                 Interlocked.Exchange(ref device._callbackFaulted, 1);
                 NativeMemory.Clear(buffer, length);
@@ -371,6 +371,11 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
             }
         }
     }
+
+    internal static bool IsValidCallbackPullResult(AudioPullResult result, int requestedFrames) =>
+        result.FrameCount >= 0
+        && result.FrameCount <= requestedFrames
+        && (result.Status != AudioPullStatus.Buffering || result.FrameCount == 0);
 
     [UnmanagedCallersOnly]
     private static void BassWasapiNotify(uint notify, uint deviceIndex, void* user)

@@ -95,6 +95,8 @@
 
 WASAPI callback 只从预分配的单生产者/单消费者连续 frame ring 复制。它不调用 BASSMIDI、不编译、不分配、不加锁、不等待、不做 I/O；异常由 native callback 边界完全截断。可消费 frame 不足时，本次 callback 整块输出静音且不推进音乐位置，进入 Buffering；重新达到启动阈值后继续。
 
+`AudioPullResult.FrameCount` 表示实际消费并推进的音乐 frame，不是本次物理 callback 请求或输出的 frame 数。underrun/Buffering 固定返回 `FrameCount=0`，ring read position、WASAPI `ConsumedFrameCount` 与播放 tick 全部保持；物理设备请求的整个 buffer 仍填充静音并返回完整 byte length。任何 Buffering source 返回非零消费数都属于协议一致性故障，callback 清零整块并标记 fault。producer 完成后的合法短尾仍按实际消费数推进，其余部分静音。
+
 正式实时合成与 Render-Ahead producer 最大工作 block 固定为 256 frames；事件边界和任务末尾允许短块。Render-Ahead ring 容量按 `ceil(actualSampleRate × RenderAheadMilliseconds / 1000)` 计算，不按固定 block 数配置。
 
 ## 6. ADR-AUDIO-005：完整独立音频子进程与 Native AOT

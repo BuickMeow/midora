@@ -136,4 +136,21 @@ public sealed class BassWasapiInitializationPolicyTests
         BassWasapiOutputDeviceFactory.ValidateUtf8DeviceInformationMode(1);
         BassWasapiOutputDeviceFactory.ValidateUtf8DeviceInformationMode(2);
     }
+
+    [Fact]
+    public void CallbackPullContractForbidsAdvancingMusicDuringBuffering()
+    {
+        Assert.True(BassWasapiOutputDevice.IsValidCallbackPullResult(
+            AudioPullResult.Buffering(), 256));
+        Assert.True(BassWasapiOutputDevice.IsValidCallbackPullResult(
+            AudioPullResult.Continue(256), 256));
+        Assert.True(BassWasapiOutputDevice.IsValidCallbackPullResult(
+            AudioPullResult.EndOfStream(17), 256));
+        Assert.False(BassWasapiOutputDevice.IsValidCallbackPullResult(
+            new AudioPullResult(1, AudioPullStatus.Buffering), 256));
+        Assert.False(BassWasapiOutputDevice.IsValidCallbackPullResult(
+            AudioPullResult.Continue(-1), 256));
+        Assert.False(BassWasapiOutputDevice.IsValidCallbackPullResult(
+            AudioPullResult.Continue(257), 256));
+    }
 }

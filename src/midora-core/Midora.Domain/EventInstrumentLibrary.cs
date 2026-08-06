@@ -219,11 +219,14 @@ public static class EventInstrumentLibrary
         project.EventInstruments.FirstOrDefault(value => value.Id == id)
         ?? throw new ArgumentOutOfRangeException(nameof(id));
 
-    private static string ValidateUniqueName(MidoraProject project, string name, MidoraId excludedId)
+    internal static string ValidateUniqueName(MidoraProject project, string name, MidoraId excludedId)
     {
-        string normalized = name.Trim();
-        if (normalized.Length == 0
-            || project.EventInstruments.Any(value => value.Id != excludedId
+        ArgumentNullException.ThrowIfNull(project);
+        string normalized = ProjectTextRules.NormalizeShortText(
+            name,
+            allowEmpty: false,
+            nameof(name));
+        if (project.EventInstruments.Any(value => value.Id != excludedId
                 && string.Equals(value.Name.Trim(), normalized, StringComparison.OrdinalIgnoreCase)))
         {
             throw new ArgumentException("Event Instrument names must be non-empty and unique ignoring case.", nameof(name));
@@ -244,11 +247,14 @@ public static class EventInstrumentLibrary
         }
     }
 
-    private static string ValidateFolderName(MidoraProject project, string name, MidoraId excludedId)
+    internal static string ValidateFolderName(MidoraProject project, string name, MidoraId excludedId)
     {
-        string normalized = name.Trim();
-        if (normalized.Length == 0
-            || string.Equals(normalized, "Unfiled", StringComparison.OrdinalIgnoreCase)
+        ArgumentNullException.ThrowIfNull(project);
+        string normalized = ProjectTextRules.NormalizeShortText(
+            name,
+            allowEmpty: false,
+            nameof(name));
+        if (string.Equals(normalized, "Unfiled", StringComparison.OrdinalIgnoreCase)
             || project.EventInstrumentFolders.Any(value => value.Id != excludedId
                 && string.Equals(value.Name.Trim(), normalized, StringComparison.OrdinalIgnoreCase)))
         {

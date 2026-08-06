@@ -324,3 +324,5 @@ Modified 不使用简单“Undo cursor 是否为零”。每个会话历史状�
 未保存新 Project 的初始构建不进入 History且可保持 `IsModified = false`，但因没有持久化来源，`NeedsSaveBeforeClose = true`。Save Copy 不调用保存点提交，不改变当前 Modified、History 或来源。History entry 在会话内保留准备好的反向数据；SRS 没有定义容量或合并策略，初版不设置会静默丢失旧 Undo 的固定条目上限，手势级合并由调用方形成单个 prepared command。
 
 Requirement trace：输入为 Project、来源状态、可逆 command、保存成功和 external dirty reason；正式输出为全 Project History、操作名称、Modified/关闭保护和同步 canonical。边界是单线性分支、无操作不建历史、Project Edit Lock 排他和 command change-set 冻结。失败时恢复源并 Full Compile；rollback 再失败必须聚合报告。History/state ID/反向对象不持久化、不影响 canonical fingerprint；Project 源本身照常持久化。明确非目标是 Draft/文本本地 Undo、WPF focus routing、历史持久化、autosave/crash recovery，以及 Q-NUI-005 决定前所有会分配新稳定 ID 的 Undo 命令。
+
+首批具体命令采用同一约束：Prepare 完成引用、名称、确认、时间范围、重叠和可恢复索引校验；Apply/Undo 复用原对象与原稳定 ID。Track/Instrument/Folder/Damaged Placeholder 删除、Track 绑定/排序、Library 组织和 Segment 移动/裁剪/删除/连接已经接入。Last Known Instrument Name 在显式绑定时更新为目标当前名称、显式取消绑定时保留最近可用名称、Instrument 重命名时同步更新当前绑定 Track 的快照；撤销恢复此前精确值。该快照只用于断裂提示，不参与按名称匹配或正式编译引用。

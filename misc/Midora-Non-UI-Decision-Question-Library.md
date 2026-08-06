@@ -78,10 +78,27 @@
 - 推荐方案：`nextStableId` 在当前打开会话内永不回退；Redo 恢复原对象与原 ID，新分支分配更高 ID。History 判断 Modified 时把“只有已撤销瞬态分配导致的计数器空洞”视为不需要单独保存：Undo 回到保存点可清除 Modified；若以后因其他编辑 Save，则把更高计数器一并持久化。关闭一个 otherwise-clean Project 时允许丢弃这些从未持久化、无存活对象、无存活 redo history 的瞬态 ID；把“不复用”解释为当前会话及任何可存活/可持久化身份不得复用。
 - 推荐依据与限制：该方案在当前会话内严格保持身份单调和 Redo 稳定，不会仅为不可见 allocator 空洞强迫用户保存；对象、引用、canonical 均无隐藏差异。限制是关闭后从旧保存点重开，未来可能再次分配一个只在已丢弃瞬态历史中出现过的数值；该瞬态身份没有文件、对象或 Undo 引用可观察。
 - 备选方案及差异：A. 任何计数器推进都永久 Modified，Undo 创建后仍要求保存一个只有 `nextStableId` 变化的文件；最严格遵守字面单调，但用户工作流反直觉。B. Undo 创建时把计数器回退到命令前值，并在新分支复用；可实现字节级保存点恢复，但直接放宽当前“单调/不复用”规则。C. 将 allocator 高水位另存为 Application/会话状态；会让 Project 身份分配依赖文件外历史，违反 Project 自包含边界。
-- 当前实施状态：不分配 ID 的属性/设置命令、History、Modified/savepoint、branch、external dirty、锁和编译回滚已实现；所有 ID 分配型正式命令尚未接入 History。
+- 当前实施状态：不分配 ID 的属性/设置命令、History、Modified/savepoint、branch、external dirty、锁和编译回滚已实现；Track/Instrument/Folder/Damaged Placeholder 与 Segment 的首批结构命令已接入；所有 ID 分配型正式命令尚未接入 History。
 - 需要产品所有者回答：是否采用推荐方案？如果不采用，请选择备选 A 或 B；C 不推荐且需要同时修改 Project 自包含不变量。
 - 产品回答：待填写。
 - 最终处理与提交：待填写。
+
+### Q-NUI-006：正常绑定期间 Last Known Instrument Name 的维护时机
+
+- 类型：小决定
+- 状态：已按推荐实施待确认
+- 发现日期：2026-08-06
+- SRS 依据：第 7.12、7.20.2、11.3、16.10.3、20.8.4 节。
+- 已确认事实：Logical Track 以稳定 ID 正式绑定 Event Instrument；名称不构成引用，也不得用于自动重绑。引用断裂或被引用 Instrument 删除后，应保留可用的最近绑定名称，仅供提示。名称和 Last Known Name 都按持久化 short text 保存。
+- 不确定点：SRS 明确了删除/断裂后的结果，但没有逐操作规定正常绑定、显式取消绑定和已绑定 Instrument 重命名时，`lastBoundEventInstrumentName` 字段应何时刷新。
+- 影响范围：仅以后发生删除、损坏或引用断裂时显示的提示文本，以及 Logical Track protobuf 中该快照字段的值；不改变稳定 ID 引用、编译、播放、MIDI、音频、资源分配或现有编辑是否进入 History/Modified。
+- 推荐方案：成功绑定/改绑时把快照更新为目标 Instrument 当前名称；当前绑定的 Instrument 重命名时同步更新其所有已绑定 Track 快照；显式取消绑定时保留刚离开的 Instrument 名称；删除仍写入删除当时名称。Undo/Redo 精确恢复操作前的 ID 与快照值。
+- 推荐依据与限制：这样“Last Known”在未来真正断裂时是最近一次用户可见名称，同时仍完全禁止按名称解析或修复。额外快照写入只发生在本来就会修改 Project 的绑定/重命名命令内，不新增独立 History entry。限制是 `.midora` 中已绑定 Track 也会保存一个可由 ID 解析出的冗余名称快照。
+- 备选方案及差异：A. 只在删除或打开时发现断裂时写快照；正常绑定期间字段保持 null/旧值，文件更少冗余，但若目标对象内容已经无法读取，可能没有可用最新名称。B. 正常绑定时更新，但 Instrument 重命名不更新；实现更少联动，不过断裂提示可能显示历史旧名，不符合“最近”直觉。
+- 当前实施状态：已在 `ProjectDomainEditCommands` 的绑定、取消绑定、Instrument 重命名和删除命令中按推荐方案实现，并覆盖精确 Undo/Redo；不影响底层按 ID 绑定规则。
+- 需要产品所有者回答：是否采用推荐方案？如不采用，请选择 A 或 B；无论选择哪项，都不会启用按名称自动绑定。
+- 产品回答：待填写。
+- 最终处理与提交：待确认后填写。
 
 ## 3. 问题模板
 

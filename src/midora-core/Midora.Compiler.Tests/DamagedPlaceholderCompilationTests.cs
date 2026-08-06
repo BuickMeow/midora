@@ -81,6 +81,124 @@ public sealed class DamagedPlaceholderCompilationTests
         Assert.DoesNotContain(result.Diagnostics, value => value.Code == "MIDORA1305");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WholeProjectRejectsDamagedPlaceholderStableIdCollision(bool logicalTrack)
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        if (logicalTrack)
+        {
+            fixture.Project.DamagedLogicalTracks.Add(new(
+                fixture.Track.Id,
+                "Damaged Track",
+                "tracks/damaged.pb",
+                "hash mismatch",
+                1));
+        }
+        else
+        {
+            fixture.Project.DamagedEventInstruments.Add(new(
+                fixture.Instrument.Id,
+                "Damaged Instrument",
+                "instruments/damaged.pb",
+                "hash mismatch",
+                1));
+        }
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            new CompilationRequest { EndTick = 480 });
+
+        Assert.False(result.IsConsumable);
+        Assert.Equal(CompilationFailureStage.SemanticValidation, result.FailureStage);
+        Assert.Contains(result.Diagnostics, value =>
+            value.Code == "MIDORA1003"
+            && (logicalTrack
+                ? value.Source.TrackId == fixture.Track.Id
+                : value.Source.EventInstrumentId == fixture.Instrument.Id));
+    }
+
+    [Fact]
+    public void ExplicitTrackScopeIgnoresUnrelatedDamagedPlaceholderStableIdCollisions()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        EventInstrument excludedInstrument = new(fixture.Project)
+        {
+            Name = "Excluded",
+            TemplateLengthTicks = 480
+        };
+        excludedInstrument.SubVoices.Add(new SubVoice(fixture.Project));
+        fixture.Project.EventInstruments.Add(excludedInstrument);
+        LogicalTrack excludedTrack = new(fixture.Project)
+        {
+            Name = "Excluded",
+            EventInstrumentId = excludedInstrument.Id
+        };
+        fixture.Project.Tracks.Add(excludedTrack);
+        fixture.Project.DamagedEventInstruments.Add(new(
+            excludedInstrument.Id,
+            "Damaged Instrument",
+            "instruments/damaged.pb",
+            "hash mismatch",
+            1));
+        fixture.Project.DamagedLogicalTracks.Add(new(
+            excludedTrack.Id,
+            "Damaged Track",
+            "tracks/damaged.pb",
+            "hash mismatch",
+            1));
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            new CompilationRequest
+            {
+                Purpose = CompilationPurpose.LogicalTrackAudioRender,
+                EndTick = 480,
+                IncludedTrackIds = [fixture.Track.Id]
+            });
+
+        Assert.True(result.IsConsumable);
+        Assert.DoesNotContain(result.Diagnostics, value => value.Code == "MIDORA1003");
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void WholeProjectRejectsInvalidDamagedPlaceholderStableId(
+        bool logicalTrack,
+        bool zero)
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        MidoraId invalidId = zero
+            ? default
+            : MidoraId.FromSequence(fixture.Project.NextStableId);
+        DamagedProjectObject placeholder = new(
+            invalidId,
+            "Damaged",
+            logicalTrack ? "tracks/damaged.pb" : "instruments/damaged.pb",
+            "hash mismatch",
+            1);
+        if (logicalTrack)
+        {
+            fixture.Project.DamagedLogicalTracks.Add(placeholder);
+        }
+        else
+        {
+            fixture.Project.DamagedEventInstruments.Add(placeholder);
+        }
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            new CompilationRequest { EndTick = 480 });
+
+        Assert.False(result.IsConsumable);
+        Assert.Equal(CompilationFailureStage.SemanticValidation, result.FailureStage);
+        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1003");
+    }
+
     private static void AssertDamagedBindingFailure(
         CanonicalCompiledResult result,
         MidoraId trackId,

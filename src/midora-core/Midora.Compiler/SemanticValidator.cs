@@ -807,6 +807,15 @@ public static class SemanticValidator
                 }
             }
         }
+        foreach (DamagedProjectObject damagedInstrument in project.DamagedEventInstruments)
+        {
+            if (request.IncludedTrackIds is not null
+                && !participatingInstrumentIds.Contains(damagedInstrument.Id))
+            {
+                continue;
+            }
+            Add(damagedInstrument.Id, new(EventInstrumentId: damagedInstrument.Id));
+        }
         foreach (LogicalTrack track in project.Tracks)
         {
             if (request.IncludedTrackIds is not null
@@ -827,6 +836,15 @@ public static class SemanticValidator
                     foreach (CurvePoint point in lane.Points) Add(point.Id, segmentSource with { Tick = point.Tick });
                 }
             }
+        }
+        foreach (DamagedProjectObject damagedTrack in project.DamagedLogicalTracks)
+        {
+            if (request.IncludedTrackIds is not null
+                && !request.IncludedTrackIds.Contains(damagedTrack.Id))
+            {
+                continue;
+            }
+            Add(damagedTrack.Id, new(TrackId: damagedTrack.Id));
         }
 
         void Add(MidoraId id, SourceReference source)

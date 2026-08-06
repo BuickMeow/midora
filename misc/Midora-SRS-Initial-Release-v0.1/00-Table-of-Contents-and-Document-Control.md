@@ -51,7 +51,7 @@
 ## 2026-08-06 修订摘要
 
 - MIDI 导出的 Channel 10 melodic 初始化固定为：每个实际相关事件 Track 在相对 tick 0 按 GS→XG 写入两条 Normal Part SysEx，使用固定默认设备编号，不发送任何 GS/XG/GM Reset，也不改写 canonical Bank/Program；Readme 必须说明不识别 vendor SysEx 的兼容边界。
-- MIDI 导出与音频文件渲染统一使用确定性 Windows 安全文件名合法化和冲突检测；任务开始前必须预览并冻结全部最终路径，源名称不被修改，已有目标仍需明确覆盖授权。精确合法化和命名模板继续由后续决定固定。
+- MIDI 导出与音频文件渲染统一使用确定性 Windows 安全文件名合法化和冲突检测；精确算法固定为 NFC、固定不安全字符集合、设备保留名前缀 `_`、255 UTF-16 code unit、text-element 安全截断、NFC + OrdinalIgnoreCase 冲突键和稳定 ` (n)` 后缀。任务开始前必须预览并冻结全部最终路径，源名称不被修改，已有目标不参与后缀分配且仍需明确覆盖授权；最终命名模板继续由后续决定固定。
 - MIDI 导出兼容档固定为 SMF Type 1、无 Running Status、严格 UTF-8 文本 Meta、事件 Track 的 Track Name + MIDI Port 最小组合、CC0→CC32→Program、Time Signature `cc=24` / `bb=8`、Tempo 十进制换算后一次 `AwayFromZero`，并禁止导出器在 canonical 之外追加 Channel 清理；所有 Track 的 EOT 对齐统一 endTick。
 - 工程总耗时固定按 Project 成功打开后的完整会话时间累计，包含空闲、最小化、失焦、Buffering、导出和渲染；系统睡眠 / 休眠及关闭流程暂停。当前会话使用单调时钟，自动累计不单独标记 Project Modified，也不影响编译语义。
 - Project 外部 SoundFont 固定为项目根目录或直属 `soundfonts/` 的相对 SF2；路径精确大小写优先、唯一 ignore-case 回退并警告、歧义拒绝。原始字节 SHA-256 只在用户明确绑定/接受时更新，被动变化不修改 Project；内嵌资源的 settings/manifest/hash 必须一致。

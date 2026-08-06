@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="../midora-common/Midora.Common/Midora.Common.csproj" />
+  <Project Path="../midora-common/Midora.Common.Tests/Midora.Common.Tests.csproj" />
   <Project Path="../midora-midi/Midora.Midi/Midora.Midi.csproj" />
   <Project Path="../midora-native-interops/Midora.NativeInterops.Bass/Midora.NativeInterops.Bass.csproj" />
   <Project Path="../midora-native-interops/Midora.NativeInterops.BassMidi/Midora.NativeInterops.BassMidi.csproj" />

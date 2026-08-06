@@ -1,10 +1,17 @@
 <Solution>
+  <Project Path="../midora-common/Midora.Common/Midora.Common.csproj" />
+  <Project Path="../midora-core/Midora.Mapping.Contract.V1/Midora.Mapping.Contract.V1.csproj" />
+  <Project Path="../midora-core/Midora.Domain/Midora.Domain.csproj" />
+  <Project Path="../midora-core/Midora.Compiler/Midora.Compiler.csproj" />
+  <Project Path="../midora-core/Midora.Playback/Midora.Playback.csproj" />
+  <Project Path="../midora-core/Midora.Playback.BassWasapi/Midora.Playback.BassWasapi.csproj" />
   <Project Path="../midora-audio-device/Midora.AudioDevice.BassWasapi/Midora.AudioDevice.BassWasapi.csproj" />
   <Project Path="../midora-audio-device/Midora.AudioDevice/Midora.AudioDevice.csproj" />
   <Project Path="../midora-audio-device/Midora.AudioDevice.Wave/Midora.AudioDevice.Wave.csproj" />
   <Project Path="../midora-midi/Midora.Midi/Midora.Midi.csproj" />
   <Project Path="../midora-native-interops/Midora.NativeInterops.Bass/Midora.NativeInterops.Bass.csproj" />
   <Project Path="../midora-native-interops/Midora.NativeInterops.BassMidi/Midora.NativeInterops.BassMidi.csproj" />
+  <Project Path="../midora-native-interops/Midora.NativeInterops.BassWasapi/Midora.NativeInterops.BassWasapi.csproj" />
   <Project Path="Midora.Audio.Bass.Tests.Console/Midora.Audio.Bass.Tests.Console.csproj" Id="36bdd8ae-f514-4f0a-b468-8c8b9e101e09" />
   <Project Path="Midora.Audio.Bass.Tests/Midora.Audio.Bass.Tests.csproj" Id="a84f6ba4-f19f-48aa-bfcf-6ac0d55463ca" />
   <Project Path="Midora.Audio.Bass.Worker/Midora.Audio.Bass.Worker.csproj" />

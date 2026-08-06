@@ -202,7 +202,7 @@ Requirement trace：
 
 这些消息采用厂商文档中的默认 Device ID / Device Number。接收方不识别 vendor SysEx 或使用不同设备编号时仍可能把 Channel 10 当鼓通道，Readme 必须说明该兼容边界。该选择依据 [Roland M-GS64 MIDI Implementation](https://cdn.roland.com/assets/media/pdf/M-GS64_OM.pdf) 的 `40 1x 15 USE FOR RHYTHM PART` 和 [Yamaha XG MIDI Data Format](https://uk.yamaha.com/en/download/files/2090960) 的 `08 nn 07 PART MODE`；外部资料用于确认 wire 定义，不替代 SRS。
 
-## 13. ADR-CORE-011（已接受，23A）：共享输出文件名合法化边界
+## 13. ADR-CORE-011（已接受，23A/23.1A）：共享输出文件名合法化边界
 
 决定：MIDI 导出和音频文件渲染不得各自实现不同的文件名策略。两个工作流共用一个确定性的 Windows 安全文件名合法化与冲突检测服务；它接收原始候选名称、扩展名预算和同一任务的候选集合，输出可预览、可诊断、可冻结的完整最终目标列表。任务开始后，编码器、渲染器和文件写入器不得再次解释或改变目标名称。
 
@@ -210,4 +210,6 @@ Requirement trace：
 
 Requirement trace：输入是源名称、导出模式、扩展名、父目录和同批候选集合；正式输出是合法化且内部唯一的冻结目标列表。边界包括 Windows 非法字符、保留设备名、尾部空格/句点、不可见字符、文件名部分长度、大小写和 Unicode 别名冲突。失败条件是公共算法无法形成唯一、合法、可表示的完整目标，或合法化后完整路径仍不可用；诊断归属文件系统/输出规划。持久化只允许保存 SRS 明确允许的有限命名偏好，不保存最终路径或合法化结果。明确非目标是修改源名称、基于父目录临时改变算法、运行中重命名、自动授权覆盖或把命名并入 canonical 内容。
 
-23A 只固定共享策略和阶段边界。替换字符、Unicode 规范化形式、文件名部分上限、冲突后缀以及最终 MIDI Track Name/文件/Readme 模板仍会影响用户工作流，必须由后续决定明确后才能实现公共服务；不得先写入隐藏默认值。
+23.1A 固定公共算法：候选 stem / 扩展名使用 NFC；Win32 保留字符、Unicode Control category 和 SRS 14.17.4 的固定不可见字符表按连续段替换为 `_`，同时保留 ZWNJ、ZWJ、Variation Selector 与 emoji tag；清除 stem 两端 ASCII 空格和尾部句点。Windows 设备保留名（包括 `CONIN$` / `CONOUT$` 以及 `COM¹` / `LPT¹` 等 superscript 形式）统一在 stem 前加 `_`。最终文件名部分最多 255 UTF-16 code unit，包含扩展名和后缀，并只在 .NET text-element 边界截断。
+
+同一目录的冲突键是 NFC + `OrdinalIgnoreCase`。分配顺序由稳定源顺序和稳定源 key 固定，第一个无后缀，后续使用 ` (2)`、` (3)`……并重新预算；已有文件不参加后缀分配。公共实现 `Midora.OutputPlanning.WindowsOutputFileNamePlanner` 是纯 Preparing 组件，不读取文件系统；无合法 UTF-16、合法化后为空、扩展名契约错误、预算容不下一个完整文本元素或稳定 key 重复均原子失败。最终 MIDI Track Name/文件/Readme 模板仍需后续决定，不得由公共组件生成。

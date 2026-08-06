@@ -17,7 +17,7 @@
 
 - 六个 solution 的 Release 构建证据，全部启用 warnings-as-errors 与 CI deterministic build 属性。
 - 一个本次运行唯一目录中的 `win-x64` Native AOT Worker 本地测试产物；必须包含 Worker `.exe`、三项固定 BASS DLL、`native-manifest.json`、根 MIT `LICENSE` 与 `THIRD-PARTY-NOTICES.md`。
-- 十个测试项目各自的 TRX；当前基线精确为 835 tests，全部 passed、零 failed、零 notExecuted/Skip。
+- 十个测试项目各自的 TRX；当前基线精确为 837 tests，全部 passed、零 failed、零 notExecuted/Skip。
 - 非零退出码或结构化 PowerShell 异常作为门失败；成功时打印产物位置，并再次声明 BASS 分发授权仍是独立门。
 
 ## 3. 边界与失败条件
@@ -51,4 +51,4 @@
   -SoundFontPath "D:\Soundfonts\sf2\sDetrimental Concert Grand Piano.sf2"
 ```
 
-结果：固定 BASS baseline 通过；六个 Release solution 0 warning / 0 error；生成 Native AOT Worker；10 个测试项目 835/835 passed、0 skipped。最近一次完整产物位于 `artifacts/non-ui-release-gate-c10b79e97ef94f2f80d5d3b168f264d0/`，只用于本地验证且被 Git 排除。
+结果：固定 BASS baseline 通过；六个 Release solution 0 warning / 0 error；生成 Native AOT Worker；10 个测试项目 837/837 passed、0 skipped。最近一次完整产物位于 `artifacts/non-ui-release-gate-a4005a7bf4e84f48a372cf0382ed981c/`，只用于本地验证且被 Git 排除。

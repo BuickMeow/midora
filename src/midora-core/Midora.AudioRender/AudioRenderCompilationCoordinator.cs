@@ -95,6 +95,9 @@ public sealed class AudioRenderCompilationCoordinator
         HashSet<MidoraId> instrumentIds = request.Project.EventInstruments
             .Select(value => value.Id)
             .ToHashSet();
+        HashSet<MidoraId> damagedInstrumentIds = request.Project.DamagedEventInstruments
+            .Select(value => value.Id)
+            .ToHashSet();
         List<AudioRenderTrackSnapshot> tracks = [];
         List<AudioRenderDiagnostic> diagnostics = [];
         for (int index = 0; index < request.Project.Tracks.Count; index++)
@@ -103,7 +106,9 @@ public sealed class AudioRenderCompilationCoordinator
             bool selectedForTask = selected is null || selected.Contains(track.Id);
             bool bound = track.EventInstrumentId.HasValue
                 && instrumentIds.Contains(track.EventInstrumentId.Value);
-            bool participates = selectedForTask && bound;
+            bool damagedBinding = track.EventInstrumentId.HasValue
+                && damagedInstrumentIds.Contains(track.EventInstrumentId.Value);
+            bool participates = selectedForTask && (bound || damagedBinding);
             int displayOrder = index + 1;
             string displayName = InitialReleaseOutputNaming.GetLogicalTrackDisplayName(
                 track.Name,
@@ -123,6 +128,10 @@ public sealed class AudioRenderCompilationCoordinator
                 exclusion));
             if (selectedForTask && !bound)
             {
+                if (damagedBinding)
+                {
+                    continue;
+                }
                 diagnostics.Add(new(
                     "MIDORA-AUDIO-RENDER-TRACK-UNBOUND",
                     AudioRenderDiagnosticSeverity.Info,

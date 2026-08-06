@@ -144,6 +144,85 @@ public sealed class AudioRenderCompilationCoordinatorTests
     }
 
     [Fact]
+    public void WholeMixPreservesDamagedInstrumentBindingAsCanonicalError()
+    {
+        MidoraProject project = AudioRenderTestProject.Create(("Healthy", 192, 60));
+        MidoraId damagedInstrumentId = project.AllocateStableId();
+        project.DamagedEventInstruments.Add(new(
+            damagedInstrumentId,
+            "Damaged",
+            "event-instruments/damaged.pb",
+            "Invalid protobuf",
+            1));
+        LogicalTrack damagedTrack = CreateDamagedTrack(project, damagedInstrumentId);
+        project.Tracks.Add(damagedTrack);
+        using MidoraCompiler compiler = new();
+
+        AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = AudioRenderMode.WholeMix,
+            SelectedTrackIds = new HashSet<MidoraId>
+            {
+                project.Tracks[0].Id,
+                damagedTrack.Id
+            }
+        });
+
+        AudioRenderCompilationItem item = Assert.Single(result.Items);
+        Assert.False(item.Succeeded);
+        Assert.False(result.HasRenderableOutput);
+        Assert.Contains(result.Tracks, value => value.TrackId == damagedTrack.Id && value.Participates);
+        Assert.Contains(item.Diagnostics, value =>
+            value.Code == "MIDORA1305"
+            && value.Severity == DiagnosticSeverity.Error
+            && value.Source.TrackId == damagedTrack.Id
+            && value.Source.EventInstrumentId == damagedInstrumentId);
+        Assert.DoesNotContain(result.Diagnostics, value =>
+            value.Code == "MIDORA-AUDIO-RENDER-TRACK-UNBOUND"
+            && value.TrackId == damagedTrack.Id);
+    }
+
+    [Fact]
+    public void PerTrackRecordsDamagedInstrumentBindingFailureAndKeepsHealthyOutput()
+    {
+        MidoraProject project = AudioRenderTestProject.Create(("Healthy", 192, 60));
+        MidoraId damagedInstrumentId = project.AllocateStableId();
+        project.DamagedEventInstruments.Add(new(
+            damagedInstrumentId,
+            "Damaged",
+            "event-instruments/damaged.pb",
+            "Invalid protobuf",
+            1));
+        LogicalTrack damagedTrack = CreateDamagedTrack(project, damagedInstrumentId);
+        project.Tracks.Add(damagedTrack);
+        using MidoraCompiler compiler = new();
+
+        AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = AudioRenderMode.PerLogicalTrack,
+            SelectedTrackIds = new HashSet<MidoraId>
+            {
+                project.Tracks[0].Id,
+                damagedTrack.Id
+            }
+        });
+
+        Assert.True(result.HasRenderableOutput);
+        Assert.Equal(2, result.Items.Count);
+        Assert.True(Assert.Single(result.Items, value =>
+            value.Track?.TrackId == project.Tracks[0].Id).Succeeded);
+        AudioRenderCompilationItem damaged = Assert.Single(result.Items, value =>
+            value.Track?.TrackId == damagedTrack.Id);
+        Assert.False(damaged.Succeeded);
+        Assert.Contains(damaged.Diagnostics, value =>
+            value.Code == "MIDORA1305"
+            && value.Severity == DiagnosticSeverity.Error
+            && value.Source.TrackId == damagedTrack.Id);
+    }
+
+    [Fact]
     public void RejectsZeroLengthManualRange()
     {
         MidoraProject project = AudioRenderTestProject.Create(("Track", 192, 60));
@@ -157,5 +236,25 @@ public sealed class AudioRenderCompilationCoordinatorTests
             StartTick = 100,
             EndTick = 100
         }));
+    }
+
+    private static LogicalTrack CreateDamagedTrack(
+        MidoraProject project,
+        MidoraId damagedInstrumentId)
+    {
+        LogicalTrack track = new(project)
+        {
+            Name = "Damaged Track",
+            EventInstrumentId = damagedInstrumentId
+        };
+        Segment segment = new(project) { LengthTicks = 192 };
+        segment.Notes.Add(new(project)
+        {
+            LengthTicks = 96,
+            Note = 64,
+            Velocity = 100
+        });
+        track.Segments.Add(segment);
+        return track;
     }
 }

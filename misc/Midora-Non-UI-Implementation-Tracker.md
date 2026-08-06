@@ -96,6 +96,7 @@
 | 2026-08-06 | Mute/Solo 冷恢复活动路由 | RangeRestore 状态按 Track/Instance/SubVoice 身份重路由回活动 canonical Port/Channel；冷编译只供状态、不采用其紧凑分配；路由失败发送前原子回滚；Playback 33 tests；10 个测试项目累计 681 tests；Core 全解 575 tests | 通过，0 failure |
 | 2026-08-06 | Reset Playback Engine 尽最大努力清理 | Stop 失败仍继续完整 backend Reset；Reset 成功恢复 Stopped；双失败聚合且保持 Error；Stopped 与 Error→Play 复用同一恢复门；Playback 37 tests；10 个测试项目累计 685 tests；Core 全解 579 tests | 通过，0 failure |
 | 2026-08-06 | Preparing/Preview 源快照锁定 | Project Edit Lock 先于同步 Preparing 通知；PreviewCompiler 全程位于同一锁租约；编译失败清任务与锁、Error 后 Reset 可恢复；Playback 39 tests；10 个测试项目累计 687 tests；Core 全解 581 tests | 通过，0 failure |
+| 2026-08-06 | 运行中关闭 Loop 冷重启 | 关闭时从当前 tick 重建到原请求/自然终点；已越过原显式终点直接完成；同值设置 no-op；不再消费旧 loopEnd 裁剪计划；Playback 42 tests；10 个测试项目累计 690 tests；Core 全解 584 tests | 通过，0 failure |
 
 ## 7. 未解决风险
 

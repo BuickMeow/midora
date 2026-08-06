@@ -181,17 +181,34 @@ public sealed class PlaybackController : IDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(range));
         }
-        _loopRange = range;
-        if (range.HasValue && ActiveTaskKind == PlaybackTaskKind.MainTimeline
-            && (State is PlaybackState.Playing or PlaybackState.Buffering))
+        if (_loopRange == range)
         {
-            long tick = CurrentTick;
+            return;
+        }
+        _loopRange = range;
+        if (ActiveTaskKind != PlaybackTaskKind.MainTimeline
+            || State is not PlaybackState.Playing and not PlaybackState.Buffering)
+        {
+            return;
+        }
+
+        long tick = CurrentTick;
+        if (range.HasValue)
+        {
             if (tick >= range.Value.EndTick)
             {
                 tick = range.Value.StartTick;
             }
             RestartAt(tick, range.Value.EndTick);
+            return;
         }
+
+        if (_requestedEndTick.HasValue && tick >= _requestedEndTick.Value)
+        {
+            StopCore(applyCursorBehavior: true, releaseEditLock: true);
+            return;
+        }
+        RestartAt(tick, _requestedEndTick);
     }
 
     public void Update()

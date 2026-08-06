@@ -448,3 +448,11 @@ Requirement trace：输入为当前播放状态、活动任务、后端 Stop/Res
 Preview 仍在锁前检查当前任务互斥和有效 SoundFont，在锁内重新检查 SoundFont；编译抛出、返回不可消费结果、设备 Prepare 或 backend Start 失败均清空任务/派生结果、释放锁并进入 Error。Error 后的下一次 Preview 先走 ADR-CORE-030 的完整 Reset，再重新取得锁和编译；Preview 明确忽略 Mute/Solo，且不移动主播放光标。
 
 Requirement trace：输入为 Project 源对象图、预览请求、SoundFont、播放互斥状态和同步状态订阅者；正式输出为锁定源快照派生的 canonical Preview 计划，或无活动任务/无锁泄漏的 Error。边界是锁必须先于 Preparing 通知可见、预览编译全程持锁、成功播放持续持锁，Stop 后释放。锁、临时 Preview Project、状态通知和计划只属于运行时，不持久化、不修改 Project/canonical cache；明确非目标是后台并行编译、预览抢占主播放、允许 Preparing 编辑或把 Preview 临时对象写回 Project。
+
+## 34. ADR-CORE-032（已接受）：运行中关闭 Loop 的冷重启语义
+
+决定：活动主播放关闭 Loop 时，旧计划已被裁到原 loopEnd，不能只清空 Loop 标志后继续消费。控制器必须在当前 tick 执行与 Seek/循环回绕相同的 Stop 清理，再按原始播放请求终点冷启动并恢复非 Note 状态；新计划完成后保持 Stopped，不再回绕。若当前 tick 已达到或超过原显式 endTick，关闭 Loop 立即按普通完成路径 Stop，不能构造反向范围；没有显式终点时交由 Playback CompileContext 重新解析 End Marker 或自然终点。重复设置完全相同的 Loop 值是运行时 no-op，不做无意义清理或重启。
+
+改变为另一合法 Loop 范围仍从当前 tick 重建至新 loopEnd；当前 tick 已越过新 loopEnd 时从新 loopStart 冷启动。首次播放开始 tick 不因这些冷重启改变，因此后续 Stop Cursor Behavior 的 ReturnToPlaybackStart 仍回到原任务起点。Loop 设置只影响主播放运行时范围，不修改 Project、canonical cache、Mute/Solo、Preview、MIDI 导出或音频渲染。
+
+Requirement trace：输入为活动计划、当前 tick、旧/新 Loop 和原请求 endTick；正式输出为匹配新 Loop 状态的唯一活动冷启动计划，或已越过原终点时的 Stopped。边界是关闭 Loop 必须丢弃旧裁剪计划、同值 no-op、反向重启禁止、回绕仍执行完整硬边界清理。Loop、当前 tick 和请求终点只属于播放会话，不持久化、不进入 Undo/Redo；明确非目标是 Pause、无清理热改计划、补发范围前 NoteOn 或改变 Project Default Range。

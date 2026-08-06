@@ -254,6 +254,91 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void DisablingLoopColdRestartsFromCurrentTickToOriginalRangeEnd()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            FakeBackend backend = new();
+            using PlaybackController controller = new(new(project, soundFont), backend);
+            controller.SetLoop(new TickRange(240, 480));
+            controller.Start();
+            backend.PositionFrames = 15_000; // tick 300 at 120 BPM / 48 kHz
+
+            controller.SetLoop(null);
+
+            Assert.Null(controller.LoopRange);
+            Assert.Equal(1, backend.StopCount);
+            Assert.Equal(2, backend.StartCount);
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            Assert.Equal(300, controller.CurrentTick);
+
+            backend.IsCompleted = true;
+            controller.Update();
+            Assert.Equal(PlaybackState.Stopped, controller.State);
+            Assert.Equal(2, backend.StopCount);
+            Assert.Equal(2, backend.StartCount);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void SettingIdenticalLoopRangeDuringPlaybackIsANoOp()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            FakeBackend backend = new();
+            using PlaybackController controller = new(new(project, soundFont), backend);
+            TickRange loop = new(240, 480);
+            controller.SetLoop(loop);
+            controller.Start();
+
+            controller.SetLoop(loop);
+
+            Assert.Equal(0, backend.StopCount);
+            Assert.Equal(1, backend.StartCount);
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void DisablingLoopAfterOriginalRequestedEndCompletesPlaybackWithoutReversedRestart()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            FakeBackend backend = new();
+            using PlaybackController controller = new(new(project, soundFont), backend);
+            controller.SetLoop(new TickRange(240, 480));
+            controller.Start(0, 240);
+            backend.PositionFrames = 15_000; // tick 300 at 120 BPM / 48 kHz
+
+            controller.SetLoop(null);
+
+            Assert.Equal(PlaybackState.Stopped, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.Equal(1, backend.StartCount);
+            Assert.Equal(1, backend.StopCount);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void MuteSoloAreRuntimeOnlyAndResetPlaybackEngineClearsBackend()
     {
         string soundFont = Path.GetTempFileName();

@@ -26,6 +26,7 @@ internal static unsafe class BassNativeRuntime
             {
                 ValidateExactVersion("BASS", NativeBass.GetVersion(), SupportedBassVersion);
                 ValidateExactVersion("BASSMIDI", NativeBassMidi.GetVersion(), SupportedBassMidiVersion);
+                EnsureUtf8DeviceInformation();
 
                 if (NativeBass.Init(0, 48_000, 0, null, null) == 0)
                 {
@@ -37,6 +38,43 @@ internal static unsafe class BassNativeRuntime
             _referenceCount++;
             return new Lease();
         }
+    }
+
+    internal static void ValidateUtf8DeviceInformationMode(uint configuredValue)
+    {
+        if (configuredValue is 0 or uint.MaxValue)
+        {
+            throw new MidoraAudioException(
+                "BASS UTF-8 device information mode is required before process-wide initialization.");
+        }
+    }
+
+    private static void EnsureUtf8DeviceInformation()
+    {
+        uint configured = NativeBass.GetConfig(NativeBass.BASS_CONFIG_UNICODE);
+        if (configured == uint.MaxValue)
+        {
+            int error = NativeBass.ErrorGetCode();
+            throw new MidoraAudioException(
+                $"BASS_GetConfig(BASS_CONFIG_UNICODE) failed with error {error}.");
+        }
+        if (configured == 0)
+        {
+            if (NativeBass.SetConfig(NativeBass.BASS_CONFIG_UNICODE, 1) == 0)
+            {
+                int error = NativeBass.ErrorGetCode();
+                throw new MidoraAudioException(
+                    $"BASS_SetConfig(BASS_CONFIG_UNICODE) failed with error {error}.");
+            }
+            configured = NativeBass.GetConfig(NativeBass.BASS_CONFIG_UNICODE);
+            if (configured == uint.MaxValue)
+            {
+                int error = NativeBass.ErrorGetCode();
+                throw new MidoraAudioException(
+                    $"BASS_GetConfig(BASS_CONFIG_UNICODE) failed with error {error}.");
+            }
+        }
+        ValidateUtf8DeviceInformationMode(configured);
     }
 
     internal static void ValidateExactVersion(string component, uint actualVersion, uint expectedVersion)

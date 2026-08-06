@@ -246,12 +246,19 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
         {
             if (Marshal.PtrToStringUTF8((nint)currentDeviceInfo.id) == id)
             {
+                if (!BassWasapiOutputDeviceFactory.IsEligibleOutputDevice(currentDeviceInfo.flags))
+                {
+                    throw new MidoraAudioDeviceException(
+                        $"The selected output device [{id}] is no longer enabled and present.");
+                }
                 bassDeviceInfo = currentDeviceInfo;
                 index = (int)i;
                 return;
             }
         }
 
+        int error = BassErrorCode();
+        BassWasapiOutputDeviceFactory.ValidateEnumerationTerminalError(error);
         throw new MidoraAudioDeviceException($"Could not find the device [{id}]");
     }
 

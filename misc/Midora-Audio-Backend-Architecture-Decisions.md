@@ -129,7 +129,15 @@ Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domai
 
 Worker 启动时先按绝对路径加载三项原生库，并为各 interop assembly 安装返回这些精确句柄的 DllImport resolver；不得让 AOT 发布目录与外部目录的同名 DLL 形成两个 BASS 全局实例。该选择已用真实 BASS/BASSMIDI 验证开发期托管 Worker 与正式 `win-x64` Native AOT `.exe`：两者均通过独立进程文件协议、非静音 WAVE、精确 frame/文件长度和 Rendering 零托管分配；AOT publish 同时通过固定 manifest/DLL 校验。剩余发布门是故障/取消压力、最终分发核验与人工试听。
 
-## 9. 验证门
+## 9. ADR-AUDIO-008：WASAPI 设备枚举与 UTF-8 全局模式
+
+决定：Windows 上任何 `BASS_WASAPI_GetDeviceInfo` 或 `BASS_Init` 之前，进程必须把 `BASS_CONFIG_UNICODE` 显式设为 enabled 并回读确认；独立 WASAPI probe 和 process-wide BASSMIDI runtime 都执行同一门。正式代码随后只按 UTF-8 解码 `BASS_WASAPI_DEVICEINFO.name/id`，不能用默认 ANSI 数据交给 UTF-8 解码器。配置读取的 `uint.MaxValue`、设置失败或回读仍为 disabled 均立即读取当前线程 BASS error 并在 Preparing 失败。
+
+设备枚举只接受 `BASS_ERROR_DEVICE` 作为越过最后索引的正常终止；`BASS_ERROR_WASAPI` 或其他返回码表示枚举未完成，必须整体失败，不能返回部分设备列表。候选必须同时为 enabled、非 input、非 loopback、非 unplugged、非 disabled；没有 enabled/disabled/unplugged 任一状态的 not-present 端点因缺少 enabled 自动排除。设备 ID 必须非空且本次枚举内 Ordinal 唯一，mix sample rate 必须可表示为正 `Int32`。从列表到 Init 之间再次按 ID 查找时重新检查 eligibility；设备已移除/禁用必须失败并触发上层重新枚举，不能继续初始化旧条目。
+
+Requirement trace：输入为固定版本 BASS/BASSWASAPI、进程全局字符集配置和当前 endpoint 列表；正式输出为完整、UTF-8、只含当前可用输出端点的运行时快照，或带原生错误码的 Preparing 失败。边界是正常越界终止码与 WASAPI 不可用严格区分、设备选择按原始稳定 ID 做 Ordinal 匹配、实际采样率仍由 Init/GetInfo 冻结。配置、设备绝对 ID/名称、索引、默认标志和错误码只属于当前机器运行时，不写入 Project；Application Preference 仅持久化用户选择的设备 ID。明确非目标是列出输入/loopback/disabled/not-present 端点、ANSI fallback、返回部分列表、自动改选设备或把枚举 mix format 当作最终初始化结果。
+
+## 10. 验证门
 
 - 相同事件计划以不同工作 block（含非 2 次幂）渲染必须逐 sample 相同。
 - 验证事件前静音、事件 frame 起音、真实 NoteOff velocity 0、同 tick 顺序、同音高重叠、Reset、硬结束和总 frame 数。

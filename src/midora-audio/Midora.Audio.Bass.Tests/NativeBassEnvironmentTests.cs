@@ -29,4 +29,21 @@ public sealed class NativeBassEnvironmentTests
         Assert.Contains($"0x{actual:x8}", exception.Message, StringComparison.Ordinal);
         Assert.Contains($"0x{expected:x8}", exception.Message, StringComparison.Ordinal);
     }
+
+    [Theory]
+    [InlineData(0u)]
+    [InlineData(uint.MaxValue)]
+    public void ProcessRuntimeRejectsUnavailableUtf8DeviceInformationMode(uint configuredValue)
+    {
+        Assert.Throws<MidoraAudioException>(() =>
+            BassNativeRuntime.ValidateUtf8DeviceInformationMode(configuredValue));
+    }
+
+    [Theory]
+    [InlineData(1u)]
+    [InlineData(2u)]
+    public void ProcessRuntimeAcceptsEnabledUtf8DeviceInformationMode(uint configuredValue)
+    {
+        BassNativeRuntime.ValidateUtf8DeviceInformationMode(configuredValue);
+    }
 }

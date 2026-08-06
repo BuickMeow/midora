@@ -95,4 +95,45 @@ public sealed class BassWasapiInitializationPolicyTests
         Assert.False(BassWasapiInitializationPolicy.TryGetBufferFrameCount(bytes, out uint frames));
         Assert.Equal(0u, frames);
     }
+
+    [Theory]
+    [InlineData(BASSWASAPI.BASS_DEVICE_ENABLED, true)]
+    [InlineData(BASSWASAPI.BASS_DEVICE_ENABLED | BASSWASAPI.BASS_DEVICE_DEFAULT, true)]
+    [InlineData(0u, false)]
+    [InlineData(BASSWASAPI.BASS_DEVICE_INPUT | BASSWASAPI.BASS_DEVICE_ENABLED, false)]
+    [InlineData(BASSWASAPI.BASS_DEVICE_LOOPBACK | BASSWASAPI.BASS_DEVICE_ENABLED, false)]
+    [InlineData(BASSWASAPI.BASS_DEVICE_UNPLUGGED | BASSWASAPI.BASS_DEVICE_ENABLED, false)]
+    [InlineData(BASSWASAPI.BASS_DEVICE_DISABLED | BASSWASAPI.BASS_DEVICE_ENABLED, false)]
+    public void DeviceEnumerationIncludesOnlyEnabledPresentNonLoopbackOutputs(uint flags, bool expected)
+    {
+        Assert.Equal(expected, BassWasapiOutputDeviceFactory.IsEligibleOutputDevice(flags));
+    }
+
+    [Fact]
+    public void InvalidDeviceIndexIsTheOnlySuccessfulEnumerationTerminator()
+    {
+        BassWasapiOutputDeviceFactory.ValidateEnumerationTerminalError(
+            Midora.NativeInterops.Bass.BASS.BASS_ERROR_DEVICE);
+
+        MidoraAudioDeviceException failure = Assert.Throws<MidoraAudioDeviceException>(() =>
+            BassWasapiOutputDeviceFactory.ValidateEnumerationTerminalError(
+                BASSWASAPI.BASS_ERROR_WASAPI));
+        Assert.Contains(BASSWASAPI.BASS_ERROR_WASAPI.ToString(), failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0u)]
+    [InlineData(uint.MaxValue)]
+    public void WasapiEnumerationRequiresExplicitUtf8DeviceInformationMode(uint configuredValue)
+    {
+        Assert.Throws<MidoraAudioDeviceException>(() =>
+            BassWasapiOutputDeviceFactory.ValidateUtf8DeviceInformationMode(configuredValue));
+    }
+
+    [Fact]
+    public void Utf8DeviceInformationModeAcceptsEnabledValue()
+    {
+        BassWasapiOutputDeviceFactory.ValidateUtf8DeviceInformationMode(1);
+        BassWasapiOutputDeviceFactory.ValidateUtf8DeviceInformationMode(2);
+    }
 }

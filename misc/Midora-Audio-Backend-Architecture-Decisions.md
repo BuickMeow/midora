@@ -117,7 +117,7 @@ Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domai
 
 `Get-BassNative.ps1 -AcceptUnpinnedDevelopmentCandidate` 只产生标记为 `releaseBaseline=false` 的本地候选。候选即使 API 主版本兼容，也不能进入正式发布；只有其字节恰好匹配仓库正式 hash 时才可由正式校验路径接受。升级必须显式更新 ADR/SRS/manifest、完整版本常量和回归证据，不自动追随供应商更新。
 
-本决定不授权重新分发 BASS；商业许可证和第三方 notices 仍是独立发布门。
+本决定不授权重新分发 BASS。Midora 初版虽按 24A 定位为免费、开源、非商业软件，正式分发仍须核验发布主体、收入方式、平台、分发方式和届时有效的 BASS 条款，并随产物提供第三方 notices；条件不明或商业化时先联系权利人确认或取得适用许可。
 
 ## 8. 验证门
 

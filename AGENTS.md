@@ -63,7 +63,7 @@ Project Source Data
 - 音频文件渲染输出普通 RIFF/WAVE、stereo、interleaved IEEE float32 little-endian；采样率是用户选择的 8,000–192,000 Hz 整数，默认 48,000 Hz。文件专用 OutputDevice 直接按目标采样率生成，不依赖 WASAPI。超过 RIFF 大小上限时 Preparing 失败，不拆分、不回退 RF64。流式分块写入并使用临时文件—校验—原子发布事务。
 - 约 200 ms 端到端实时延迟只是性能测试和架构选择基准，不是 Target Latency 设置，也不决定播放成败。若采用内部音频子进程，IPC 延迟必须计入。
 - 尚未由规格/ADR确定的音频语义或发布参数不得隐藏在实现默认值里；已确认的 Limiter、tick→sample 取整、WASAPI 模式、工作 block、进程拓扑和 `win-x64` 架构不得重新开放为可选分支。
-- 商业发布前必须核实并取得与实际产品/平台匹配的 BASS 许可证；技术可行不代表已具备分发授权。
+- Midora 初版是免费、开源、非商业软件，但该定位不把 BASS/BASSMIDI/BASSWASAPI 纳入 Midora 的开源许可证，也不自动满足其免费使用条件。正式分发第三方二进制前必须按实际发布主体、收入方式、平台、分发方式和发布时有效条款完成核验并提供 notices；条件不明或商业化时必须先联系权利人确认或取得适用许可。仓库不提交 BASS DLL。
 
 ## 5. 实施顺序
 
@@ -105,3 +105,4 @@ Project Source Data
 14. MIDI 导出的 Channel 10 melodic 初始化固定为每个实际相关事件 Track 在相对 tick 0、MIDI Port Meta 后、canonical 事件前各写一次 Roland GS Normal Part `F0 41 10 42 12 40 10 15 00 1B F7` 与 Yamaha XG Normal Part `F0 43 10 4C 08 09 07 00 F7`，顺序 GS→XG。不得发送任何 GS/XG/GM Reset，不得改变 canonical Bank/Program；不使用 Channel 10 的事件 Track 和 Conductor 不写。
 15. MIDI 导出和音频文件渲染必须共用确定性的 Windows 安全文件名合法化与冲突检测服务：NFC、SRS 14.17.4 固定不安全字符表连续段替换为 `_`、设备保留名前缀 `_`、255 UTF-16 code unit、text-element 安全截断、NFC + OrdinalIgnoreCase 冲突键、稳定 ` (n)` 后缀。任务开始前预览并冻结全部最终路径；合法化不修改 Project 源名称、不进入 Undo / Redo，已有目标不参与后缀分配且仍须明确覆盖授权。
 16. 初版输出模板固定：整曲 MIDI / 音频为 `<ProjectStem>.mid/.wav`，ProjectStem 依 Project 名称、当前 `.midora` stem、模式 fallback 选择；分 Track 为 `<NN> - <LogicalTrackDisplayName>.mid/.wav`，NN 使用整个 Project 的一基手动顺序且至少两位；逐 Port MIDI 为 `Port <PP>.mid`；Readme 为 `README.md`。MIDI Conductor Track Name 为 `Conductor`，事件 Track Name 为原始名称或 fallback 加 ` / Port <P>`，不经过文件名合法化。多文件模式选择完整输出目录，不自动增加嵌套目录。
+17. Midora 初版定位为免费、开源、非商业软件。该定位不覆盖 BASS/BASSMIDI/BASSWASAPI，也不自动证明满足其免费使用条件；正式分发前必须按实际主体、收入、平台、分发方式和届时有效条款完成核验并提供第三方 notices。Midora 源代码的具体开源许可证尚待产品所有者确认；没有正式 `LICENSE` 前不得擅自选择或声称已经授予特定开源权利。

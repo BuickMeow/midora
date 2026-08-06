@@ -62,12 +62,13 @@ D:\Programing\midora
 22. MIDI 导出的 Channel 10 melodic 初始化固定为每个实际相关事件 Track 在相对 tick 0、Port Meta 后、canonical 事件前按 GS→XG 各写一次固定 Normal Part SysEx；不发送 GS/XG/GM Reset，不改变 canonical Bank/Program。不识别 vendor 消息或使用不同设备编号的接收方仍可能按鼓通道处理，Readme 必须说明。
 23. MIDI 导出与音频文件渲染共用确定性的 Windows 安全文件名合法化和冲突检测服务。算法固定为 NFC、SRS 14.17.4 的不安全字符连续段替换 `_`、设备保留名前缀 `_`、255 UTF-16 code unit、text-element 截断、NFC + OrdinalIgnoreCase 冲突键和稳定 ` (n)` 后缀。任务开始前预览并冻结全部最终路径；不修改源名称，已有目标不参与后缀分配且仍须明确覆盖授权。
 23.2. 输出模板固定：整曲 MIDI/音频为 `<ProjectStem>.mid/.wav`，分 Track 为 `<NN> - <LogicalTrackDisplayName>.mid/.wav`，逐 Port MIDI 为 `Port <PP>.mid`，Readme 为 `README.md`；MIDI Conductor/Event Track Name 固定为 `Conductor` 和 `<原始名称或 fallback> / Port <P>`。多文件模式不自动增加嵌套目录。
+24. Midora 初版固定为免费、开源、非商业软件。BASS 不属于 Midora 的开源许可范围；正式分发仍须按实际发布主体、收入方式、平台、分发方式和届时有效条款核验免费使用条件并提供 notices，条件不明或商业化时先联系权利人或取得适用许可。
 
 四、仍需 ADR 或实测决定的事项
 
 这些不是当前 SRS 冲突，不能静默写成实现默认值：
 
-- BASS 商业分发许可证与第三方 notices；技术版本、SHA-256 和升级回归策略已经固定，不得与授权问题混为一项；
+- Midora 源代码的具体开源许可证；仓库当前没有 `LICENSE`，不得仅凭公开源码假定已授予开源权利；
 
 五、当前代码定位
 

@@ -398,3 +398,13 @@ Requirement trace：输入为本次范围内 Raw Instance、确定排序的 allo
 由于单个 MIDI 事件可能由多条顺序 Mapping 共同合成，而当前 `SourceReference` 是一个主来源位置，成功事件记录最终生效 Mapping/Step；失败事件记录实际抛错 Step。它不声称替代未来的完整多来源图。`SourceOrigin` 另外区分 Template Event、Value Curve、Logical Parameter Mapping、合并 Initial State、Project Reset Defaults、Range Restore 和编译器硬边界清理；Role 继续表示同 tick 排序语义，Origin 只解释来源，不能改变排序。
 
 Requirement trace：输入为编译展开时的源对象稳定 ID、实际 Mapping Step 异常和编译器生成事件原因；正式输出为可定位、可 fingerprint 的 canonical/diagnostic source trace。边界是缺少该层来源时保留 default ID，不以名称或集合位置替代身份；成功事件与失败诊断的新增来源字段进入 result fingerprint 和 Full/Incremental 逐字段 oracle。来源链、异常对象和生成原因不持久化，不进入 Mapping ABI，也不允许消费者重算 Mapping。明确非目标是持久化诊断、多来源有向图、UI 导航展示和修改同 tick 事件排序。
+
+## 28. ADR-CORE-026（已接受）：范围硬边界活动 Note FIFO 与完全确定排序
+
+决定：范围裁剪器按 `(Port, Channel, pitch)` 保存活动 NoteOn 的 FIFO 来源队列，而不是只保存活动数量。真实 NoteOff（包括兼容输入中的 velocity 0 NoteOn）只释放队首实例；范围硬结束为仍活动的每个实例逐一生成 NoteOff，并保留原 Logical Track、Segment、Logical Note、Event Instrument、SubVoice 和 Template Event 来源，只把 tick 与 Origin 改为本次硬边界清理。
+
+所有活动音键固定按 Port→Channel→pitch 排序，队内按原 NoteOn 顺序释放；需要清理的 Channel 和污染目标也固定按 Port→Channel→target 排序。Canonical 比较器在系统 Role、Port/Channel 和显式 StableOrder 完全相同时，继续用来源稳定 ID、语义 target/group、MIDI packed value、source tick 与 Origin 建立完全顺序，不能依赖 `Dictionary`/`HashSet` 遍历或 `List.Sort` 对相等元素的内部行为。
+
+空 SubVoice 的 `MIDORA1225 / Info` 在范围及显式 SubVoice 过滤之后生成：只有本次范围内确有实例且该 Voice 参与本次选择时才报告。该 Info 不进入 Segment 增量缓存，避免范围外实例或未选 Voice 的旧缓存诊断污染当前 CompileContext。是否保留此 Info 的 SRS 文字冲突另见 Q-NUI-010。
+
+Requirement trace：输入为已分配 canonical 事件、范围前及范围内 NoteOn/NoteOff 流、资源占用、SubVoice 选择和 `[startTick,endTick)`；正式输出为逐实例配对、来源可定位且全序确定的硬边界 NoteOff/Reset，以及只针对实际参与 Voice 的空 Voice Info。边界是同 pitch FIFO、真实 NoteOff velocity 0、endTick 特殊补充事件和低号 Port/Channel 顺序；不同 pitch 的边界释放顺序不形成用户音乐优先级。状态和诊断只属于本次编译，不持久化；明确非目标是 Voice Stealing、补发范围前 NoteOn 或改变正常用户事件的显式顺序。

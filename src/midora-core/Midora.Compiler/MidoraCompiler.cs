@@ -165,6 +165,7 @@ public sealed class MidoraCompiler : IDisposable
         instances = instances
             .Where(instance => instance.StartTick < endTick && instance.EndTick > request.StartTick)
             .ToList();
+        AppendEmptySubVoiceDiagnostics(instances, instruments, diagnostics);
 
         int overlapDiagnosticStart = diagnostics.Count;
         ValidateOverlap(project, instances, diagnostics);
@@ -450,22 +451,6 @@ public sealed class MidoraCompiler : IDisposable
         List<CompilerDiagnostic> diagnostics = segments
             .SelectMany(value => value.Diagnostics)
             .ToList();
-        if (instances.Length != 0
-            && track.EventInstrumentId.HasValue
-            && instruments.TryGetValue(track.EventInstrumentId.Value, out EventInstrument? instrument))
-        {
-            foreach (SubVoice emptyVoice in instrument.SubVoices.Where(voice =>
-                voice.Events.Count == 0
-                && voice.Curves.Count == 0
-                && !instrument.ParameterMappings.Any(mapping => mapping.Steps.IsEnabled)))
-            {
-                diagnostics.Add(new(
-                    "MIDORA1225",
-                    DiagnosticSeverity.Info,
-                    "实际参与编译的 SubVoice 没有普通 MIDI 输出内容。",
-                    new(track.Id, EventInstrumentId: instrument.Id, SubVoiceId: emptyVoice.Id)));
-            }
-        }
         return new TrackExpansion(
             instances,
             diagnostics.ToArray(),
@@ -474,6 +459,40 @@ public sealed class MidoraCompiler : IDisposable
             reusedSegmentCount,
             stateConvergenceCount,
             earliestDirtyTick);
+    }
+
+    private static void AppendEmptySubVoiceDiagnostics(
+        IReadOnlyCollection<RawInstance> instances,
+        IReadOnlyDictionary<MidoraId, EventInstrument> instruments,
+        List<CompilerDiagnostic> diagnostics)
+    {
+        foreach (IGrouping<(MidoraId TrackId, MidoraId InstrumentId), RawInstance> binding in instances
+            .GroupBy(instance => (instance.TrackId, instance.InstrumentId)))
+        {
+            if (!instruments.TryGetValue(binding.Key.InstrumentId, out EventInstrument? instrument))
+            {
+                continue;
+            }
+            HashSet<MidoraId> participatingVoiceIds = binding
+                .SelectMany(instance => instance.Voices)
+                .Select(voice => voice.SubVoiceId)
+                .ToHashSet();
+            foreach (SubVoice emptyVoice in instrument.SubVoices.Where(voice =>
+                participatingVoiceIds.Contains(voice.Id)
+                && voice.Events.Count == 0
+                && voice.Curves.Count == 0
+                && !instrument.ParameterMappings.Any(mapping =>
+                    mapping.SubVoiceId == voice.Id && mapping.Steps.IsEnabled)))
+            {
+                diagnostics.Add(new(
+                    "MIDORA1225",
+                    DiagnosticSeverity.Info,
+                    "实际参与编译的 SubVoice 没有普通 MIDI 输出内容。",
+                    new(binding.Key.TrackId,
+                        EventInstrumentId: instrument.Id,
+                        SubVoiceId: emptyVoice.Id)));
+            }
+        }
     }
 
     private static bool TryReuseUnchangedSuffix(
@@ -1959,7 +1978,7 @@ public sealed class MidoraCompiler : IDisposable
     {
         List<CanonicalMidiEvent> result = [];
         Dictionary<(byte Port, byte Channel, long Target), CanonicalStateGroup> state = [];
-        Dictionary<(byte Port, byte Channel, byte Note), int> activeNotes = [];
+        Dictionary<(byte Port, byte Channel, byte Note), Queue<SourceReference>> activeNotes = [];
         HashSet<(byte Port, byte Channel, long Target)> pollutedTargets = [];
         HashSet<(byte Port, byte Channel)> activeAtStart = [];
         foreach (ChannelUnitAllocation allocation in allocations)
@@ -1977,15 +1996,21 @@ public sealed class MidoraCompiler : IDisposable
                 if (message.MessageType == MidiMessageType.NoteOn && message.Byte2 != 0)
                 {
                     (byte, byte, byte) key = (value.ZeroBasedPort, value.ZeroBasedChannel, message.Byte1);
-                    activeNotes[key] = activeNotes.GetValueOrDefault(key) + 1;
+                    if (!activeNotes.TryGetValue(key, out Queue<SourceReference>? sources))
+                    {
+                        sources = new Queue<SourceReference>();
+                        activeNotes.Add(key, sources);
+                    }
+                    sources.Enqueue(value.Source);
                 }
                 else if (message.MessageType == MidiMessageType.NoteOff
                     || (message.MessageType == MidiMessageType.NoteOn && message.Byte2 == 0))
                 {
                     (byte, byte, byte) key = (value.ZeroBasedPort, value.ZeroBasedChannel, message.Byte1);
-                    if (activeNotes.TryGetValue(key, out int count) && count > 0)
+                    if (activeNotes.TryGetValue(key, out Queue<SourceReference>? sources)
+                        && sources.Count > 0)
                     {
-                        activeNotes[key] = count - 1;
+                        _ = sources.Dequeue();
                     }
                 }
                 else if (value.SemanticTargetKey != long.MinValue)
@@ -2016,14 +2041,21 @@ public sealed class MidoraCompiler : IDisposable
             if (message.MessageType == MidiMessageType.NoteOn && message.Byte2 != 0)
             {
                 (byte, byte, byte) key = (value.ZeroBasedPort, value.ZeroBasedChannel, message.Byte1);
-                activeNotes[key] = activeNotes.GetValueOrDefault(key) + 1;
+                if (!activeNotes.TryGetValue(key, out Queue<SourceReference>? sources))
+                {
+                    sources = new Queue<SourceReference>();
+                    activeNotes.Add(key, sources);
+                }
+                sources.Enqueue(value.Source);
             }
-            else if (message.MessageType == MidiMessageType.NoteOff)
+            else if (message.MessageType == MidiMessageType.NoteOff
+                || (message.MessageType == MidiMessageType.NoteOn && message.Byte2 == 0))
             {
                 (byte, byte, byte) key = (value.ZeroBasedPort, value.ZeroBasedChannel, message.Byte1);
-                if (activeNotes.TryGetValue(key, out int count) && count > 0)
+                if (activeNotes.TryGetValue(key, out Queue<SourceReference>? sources)
+                    && sources.Count > 0)
                 {
-                    activeNotes[key] = count - 1;
+                    _ = sources.Dequeue();
                 }
             }
         }
@@ -2049,18 +2081,24 @@ public sealed class MidoraCompiler : IDisposable
         }
 
         HashSet<(byte Port, byte Channel)> cleanupChannels = [];
-        foreach (((byte port, byte channel, byte note), int count) in activeNotes)
+        long boundaryNoteOffOrder = long.MaxValue / 2;
+        foreach (((byte port, byte channel, byte note), Queue<SourceReference> sources) in activeNotes
+            .Where(value => value.Value.Count != 0)
+            .OrderBy(value => value.Key.Port)
+            .ThenBy(value => value.Key.Channel)
+            .ThenBy(value => value.Key.Note))
         {
-            for (int i = 0; i < count; i++)
+            foreach (SourceReference sourceReference in sources)
             {
                 result.Add(new(endTick, port, channel, MidiMessage.NoteOff(channel, note, 0),
-                    CanonicalEventRole.NoteOff, long.MaxValue - 4, long.MinValue, long.MinValue,
-                    new(Origin: SourceOrigin.CompilerBoundaryCleanup)));
+                    CanonicalEventRole.NoteOff, boundaryNoteOffOrder++, long.MinValue, long.MinValue,
+                    sourceReference with
+                    {
+                        Tick = endTick,
+                        Origin = SourceOrigin.CompilerBoundaryCleanup
+                    }));
             }
-            if (count > 0)
-            {
-                cleanupChannels.Add((port, channel));
-            }
+            cleanupChannels.Add((port, channel));
         }
         foreach (ChannelUnitAllocation allocation in allocations)
         {
@@ -2073,10 +2111,14 @@ public sealed class MidoraCompiler : IDisposable
             }
         }
         long resetOrder = long.MaxValue / 2;
-        foreach ((byte port, byte channel) in cleanupChannels)
+        foreach ((byte port, byte channel) in cleanupChannels
+            .OrderBy(value => value.Port)
+            .ThenBy(value => value.Channel))
         {
             foreach ((byte statePort, byte stateChannel, long target) in pollutedTargets
-                .OrderBy(value => value.Target))
+                .OrderBy(value => value.Port)
+                .ThenBy(value => value.Channel)
+                .ThenBy(value => value.Target))
             {
                 if (statePort != port || stateChannel != channel)
                 {
@@ -2465,7 +2507,41 @@ public sealed class MidoraCompiler : IDisposable
             if (value != 0) return value;
             value = x.ZeroBasedChannel.CompareTo(y.ZeroBasedChannel);
             if (value != 0) return value;
-            return x.StableOrder.CompareTo(y.StableOrder);
+            value = x.StableOrder.CompareTo(y.StableOrder);
+            if (value != 0) return value;
+            value = x.Source.TrackId.CompareTo(y.Source.TrackId);
+            if (value != 0) return value;
+            value = x.Source.SegmentId.CompareTo(y.Source.SegmentId);
+            if (value != 0) return value;
+            value = x.Source.LogicalNoteId.CompareTo(y.Source.LogicalNoteId);
+            if (value != 0) return value;
+            value = x.Source.EventInstrumentId.CompareTo(y.Source.EventInstrumentId);
+            if (value != 0) return value;
+            value = x.Source.SubVoiceId.CompareTo(y.Source.SubVoiceId);
+            if (value != 0) return value;
+            value = x.Source.SourceEventId.CompareTo(y.Source.SourceEventId);
+            if (value != 0) return value;
+            value = x.Source.LogicalParameterId.CompareTo(y.Source.LogicalParameterId);
+            if (value != 0) return value;
+            value = x.Source.LogicalParameterMappingId.CompareTo(y.Source.LogicalParameterMappingId);
+            if (value != 0) return value;
+            value = x.Source.MappingStepId.CompareTo(y.Source.MappingStepId);
+            if (value != 0) return value;
+            value = x.Source.MappingFunctionId.CompareTo(y.Source.MappingFunctionId);
+            if (value != 0) return value;
+            value = x.Source.ValueCurveId.CompareTo(y.Source.ValueCurveId);
+            if (value != 0) return value;
+            value = x.Source.EnvelopeId.CompareTo(y.Source.EnvelopeId);
+            if (value != 0) return value;
+            value = x.SemanticTargetKey.CompareTo(y.SemanticTargetKey);
+            if (value != 0) return value;
+            value = x.SemanticGroup.CompareTo(y.SemanticGroup);
+            if (value != 0) return value;
+            value = x.Message.PackedValue.CompareTo(y.Message.PackedValue);
+            if (value != 0) return value;
+            value = x.Source.Tick.CompareTo(y.Source.Tick);
+            if (value != 0) return value;
+            return x.Source.Origin.CompareTo(y.Source.Origin);
         }
     }
 }

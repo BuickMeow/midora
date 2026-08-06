@@ -28,10 +28,11 @@
 - Segment 内 Note/参数修改至少回退至该 Segment 入口。实例候选数变化导致 `SourceOrder` 不同，必须阻止后缀收敛。
 - Event Instrument 定义或 Global Initial/Reset 改变会改变上下文 fingerprint，不允许复用旧 Segment 片段。
 - Conductor 每次重新冻结；End Marker、Tempo、Time/Key Signature、Marker、请求范围和输出目的不从 Segment 缓存恢复。
-- 缓存片段保留本段 Mapping/展开诊断；复用时按确定 Segment 顺序重放。Track 级空 SubVoice Info 每次从当前合并实例和当前 Instrument 重新生成。
+- 缓存片段保留本段 Mapping/展开诊断；复用时按确定 Segment 顺序重放。空 SubVoice Info 不进入片段缓存，而在范围及显式 SubVoice 过滤后从本次实际实例重新生成。
 - 全局低号优先资源分配、峰值诊断、canonical 同 tick 排序、范围状态恢复、硬结束和结果 fingerprint 每次重算，因此局部缓存不能固定旧 Port/Channel 或诊断结果。
 - Overlap 与资源分配只作用于和本次 `[startTick,endTick)` 相交的实例；范围外未来峰值不能使当前范围失败。分配记录同时保留 instance ID 与共享 group ID，结构化 shortage 区间和相关稳定 ID 集合每次从当前完整分配重建。
 - canonical 事件与诊断来源包含 Parameter/Mapping/Step/C# Function/Curve/Envelope 身份及生成 Origin；这些字段进入结果 fingerprint。缓存复用必须重放完全相同的细粒度来源，不能只保证 MIDI 字节相同。
+- 范围裁剪按 Port/Channel/pitch 维护活动 Note 来源 FIFO；硬边界逐实例 NoteOff 保留原 Logical Note/Template Event 来源。活动音、清理 Channel、污染 target 与 canonical 最终 tie-breaker 都有显式全序，不能依赖字典/集合遍历。
 
 ## 4. 持久化、运行时归属与非目标
 
@@ -55,3 +56,5 @@
 - 语义、展开 MIDI 值域、超过 256 个 Channel Unit、Overlap Reject 及 Warning-as-error 分别锁定失败阶段；所有失败结果锁定 partial/不可消费契约，所有成功结果锁定无失败阶段。
 - 多 Port 统计、共享 group 的逐 instance 归属、范围外峰值隔离，以及资源 shortage 区间/Track/Segment/Note/Instrument/SubVoice 集合均有直接测试；资源失败的 Full/Incremental 结构化统计逐字段一致。
 - 模板 Mapping 成功/失败、Logical Parameter Mapping 成功/失败、Value Curve、断裂引用、Mapping Function ABI 失败、Merged Initial、Range Restore、Project Reset 与硬边界 NoteOff 均锁定来源 ID/Origin。
+- 同 pitch 重叠 Note 的真实 NoteOff 按 FIFO 释放，硬边界剩余实例保留正确来源；多 pitch 边界清理固定按 Port→Channel→pitch 排序。
+- 零长度/范围外实例不产生空 SubVoice Info，显式 SubVoice 预览只诊断实际选择的空 Voice。

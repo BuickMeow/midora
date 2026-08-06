@@ -127,6 +127,7 @@
 | 2026-08-06 | SubVoice 编辑器预览 Mute/Solo | 临时请求集合；多 Solo；Mute 优先；无 Solo 过滤；全 Mute 合法静音；重复/外部/单 SubVoice 混用拒绝；仍经完整 Preview canonical 管线；Compiler 203 tests；全仓基线 852 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-89b36a856e2a49059f81fd017bfc5960` |
 | 2026-08-06 | Compiler 无序源容器确定性 | Global/Instrument/SubVoice Initial State、Reset Defaults、C# Mapping Context 字段、CompileContext Track/SubVoice 集合反向插入；全部正式结果逐字段等价；显式用户 List 顺序保持语义；Compiler 204 tests；全仓基线 853 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-101f16d56a684539bb404186989bbc72` |
 | 2026-08-06 | Damaged Placeholder 稳定 ID 闭包 | Whole Project 纳入两类占位 ID；显式 Track 只纳入被选/被引用占位；正常对象碰撞、零、`nextStableId` 上界和未选隔离；Compiler 211 tests；全仓基线 860 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-86a76d7a595949789295a381823d306b` |
+| 2026-08-06 | Library Folder 编译诊断作用域 | 显式 Track 只验证参与 Instrument 引用的 Folder 依赖闭包；Whole Project 保持全量；未选保留名称/重复 ID 隔离与参与 Folder 严格失败；Compiler 213 tests；全仓基线 862 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-c7ab8b35c36e489ab813d7508e09eba8` |
 
 ## 7. 未解决风险
 

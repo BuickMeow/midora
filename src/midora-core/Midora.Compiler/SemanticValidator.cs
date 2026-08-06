@@ -123,6 +123,15 @@ public static class SemanticValidator
         return result;
     }
 
+    private static HashSet<MidoraId> GetReferencedFolderIds(
+        MidoraProject project,
+        IReadOnlySet<MidoraId> participatingInstrumentIds) =>
+        project.EventInstruments
+            .Where(instrument => participatingInstrumentIds.Contains(instrument.Id)
+                && instrument.LibraryFolderId.HasValue)
+            .Select(instrument => instrument.LibraryFolderId!.Value)
+            .ToHashSet();
+
     private static void ValidateConductor(MidoraProject project, List<CompilerDiagnostic> diagnostics)
     {
         SourceReference source = new();
@@ -199,10 +208,18 @@ public static class SemanticValidator
         CompilationRequest request,
         List<CompilerDiagnostic> diagnostics)
     {
+        HashSet<MidoraId> participatingInstrumentIds = GetParticipatingInstrumentIds(project, request);
+        HashSet<MidoraId>? referencedFolderIds = request.IncludedTrackIds is null
+            ? null
+            : GetReferencedFolderIds(project, participatingInstrumentIds);
         HashSet<MidoraId> ids = [];
         HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
         foreach (EventInstrumentLibraryFolder folder in project.EventInstrumentFolders)
         {
+            if (referencedFolderIds is not null && !referencedFolderIds.Contains(folder.Id))
+            {
+                continue;
+            }
             if (!ids.Add(folder.Id) || string.IsNullOrWhiteSpace(folder.Name)
                 || folder.Name != folder.Name.Trim()
                 || string.Equals(folder.Name, "Unfiled", StringComparison.OrdinalIgnoreCase)
@@ -214,7 +231,6 @@ public static class SemanticValidator
             }
         }
 
-        HashSet<MidoraId> participatingInstrumentIds = GetParticipatingInstrumentIds(project, request);
         foreach (EventInstrument instrument in project.EventInstruments)
         {
             if (request.IncludedTrackIds is not null
@@ -751,6 +767,9 @@ public static class SemanticValidator
     {
         HashSet<MidoraId> ids = [];
         HashSet<MidoraId> participatingInstrumentIds = GetParticipatingInstrumentIds(project, request);
+        HashSet<MidoraId>? referencedFolderIds = request.IncludedTrackIds is null
+            ? null
+            : GetReferencedFolderIds(project, participatingInstrumentIds);
         foreach (TempoChange value in project.Conductor.Tempos) Add(value.Id, new(Tick: value.Tick));
         foreach (TimeSignatureChange value in project.Conductor.TimeSignatures) Add(value.Id, new(Tick: value.Tick));
         foreach (KeySignatureChange value in project.Conductor.KeySignatures) Add(value.Id, new(Tick: value.Tick));
@@ -761,6 +780,10 @@ public static class SemanticValidator
         }
         foreach (EventInstrumentLibraryFolder folder in project.EventInstrumentFolders)
         {
+            if (referencedFolderIds is not null && !referencedFolderIds.Contains(folder.Id))
+            {
+                continue;
+            }
             Add(folder.Id, new());
         }
         foreach (EventInstrument instrument in project.EventInstruments)

@@ -225,6 +225,69 @@ public sealed class AudioRenderScopedCompilationTests
     }
 
     [Fact]
+    public void UnusedInvalidFolderDefinitionAndStableIdDoNotPoisonTrackSelection()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        EventInstrument unusedInstrument = new(fixture.Project)
+        {
+            Name = "Unused",
+            TemplateLengthTicks = 480
+        };
+        unusedInstrument.SubVoices.Add(new SubVoice(fixture.Project));
+        fixture.Project.EventInstruments.Add(unusedInstrument);
+        EventInstrumentLibraryFolder invalidFolder = new(fixture.Project)
+        {
+            Id = unusedInstrument.Id,
+            Name = "Unfiled"
+        };
+        fixture.Project.EventInstrumentFolders.Add(invalidFolder);
+
+        CanonicalCompiledResult wholeProject = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            new CompilationRequest { EndTick = 480 });
+        CanonicalCompiledResult selected = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            new CompilationRequest
+            {
+                Purpose = CompilationPurpose.LogicalTrackAudioRender,
+                EndTick = 480,
+                IncludedTrackIds = [fixture.Track.Id]
+            });
+
+        Assert.False(wholeProject.IsConsumable);
+        Assert.Contains(wholeProject.Diagnostics, value => value.Code == "MIDORA1020");
+        Assert.Contains(wholeProject.Diagnostics, value => value.Code == "MIDORA1003");
+        Assert.True(selected.IsConsumable);
+        Assert.DoesNotContain(selected.Diagnostics, value =>
+            value.Code is "MIDORA1020" or "MIDORA1003");
+    }
+
+    [Fact]
+    public void ParticipatingInvalidFolderDefinitionStillFailsTrackSelection()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        EventInstrumentLibraryFolder invalidFolder = new(fixture.Project)
+        {
+            Name = "Unfiled"
+        };
+        fixture.Project.EventInstrumentFolders.Add(invalidFolder);
+        fixture.Instrument.LibraryFolderId = invalidFolder.Id;
+
+        CanonicalCompiledResult selected = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            new CompilationRequest
+            {
+                Purpose = CompilationPurpose.LogicalTrackAudioRender,
+                EndTick = 480,
+                IncludedTrackIds = [fixture.Track.Id]
+            });
+
+        Assert.False(selected.IsConsumable);
+        Assert.Equal(CompilationFailureStage.SemanticValidation, selected.FailureStage);
+        Assert.Contains(selected.Diagnostics, value => value.Code == "MIDORA1020");
+    }
+
+    [Fact]
     public void UnusedDuplicateInstrumentIdDoesNotPoisonOrThrowFromTrackSelection()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 480);

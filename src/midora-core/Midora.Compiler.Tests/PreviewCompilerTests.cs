@@ -55,6 +55,99 @@ public sealed class PreviewCompilerTests
     }
 
     [Fact]
+    public void EventInstrumentPreviewAppliesMultipleSoloWithMuteTakingPriority()
+    {
+        var fixture = CompilerTestProject.Create(subVoiceCount: 4);
+        for (int i = 0; i < fixture.Instrument.SubVoices.Count; i++)
+        {
+            fixture.Instrument.SubVoices[i].Events.Add(
+                TemplateEvent.Note(fixture.Project, 0, 120, 60 + i, 100));
+        }
+        SubVoice first = fixture.Instrument.SubVoices[0];
+        SubVoice mutedSolo = fixture.Instrument.SubVoices[1];
+        SubVoice second = fixture.Instrument.SubVoices[2];
+
+        CanonicalCompiledResult result = new PreviewCompiler().CompileEventInstrument(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(fixture.Instrument.Id)
+            {
+                SoloSubVoiceIds = [first.Id, mutedSolo.Id, second.Id],
+                MutedSubVoiceIds = [mutedSolo.Id]
+            });
+
+        Assert.True(result.IsConsumable);
+        Assert.Equal(
+            [first.Id, second.Id],
+            result.Allocations.ToArray().Select(value => value.SubVoiceId).Order().ToArray());
+        Assert.Equal(
+            [60, 62],
+            result.Events.ToArray()
+                .Where(value => value.Role == CanonicalEventRole.NoteOn)
+                .Select(value => (int)value.Message.Byte1)
+                .Order()
+                .ToArray());
+    }
+
+    [Fact]
+    public void EventInstrumentPreviewWithoutSoloExcludesEveryMutedSubVoiceIncludingAllMuted()
+    {
+        var fixture = CompilerTestProject.Create(subVoiceCount: 2);
+        foreach (SubVoice voice in fixture.Instrument.SubVoices)
+        {
+            voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        }
+
+        CanonicalCompiledResult oneAudible = new PreviewCompiler().CompileEventInstrument(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(fixture.Instrument.Id)
+            {
+                MutedSubVoiceIds = [fixture.Instrument.SubVoices[0].Id],
+                SoloSubVoiceIds = []
+            });
+        CanonicalCompiledResult allMuted = new PreviewCompiler().CompileEventInstrument(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(fixture.Instrument.Id)
+            {
+                MutedSubVoiceIds = fixture.Instrument.SubVoices.Select(value => value.Id).ToArray()
+            });
+
+        Assert.True(oneAudible.IsConsumable);
+        Assert.Single(oneAudible.Allocations.ToArray());
+        Assert.Equal(fixture.Instrument.SubVoices[1].Id, oneAudible.Allocations[0].SubVoiceId);
+        Assert.True(allMuted.IsConsumable);
+        Assert.Empty(allMuted.Allocations.ToArray());
+        Assert.DoesNotContain(allMuted.Events.ToArray(), value => value.Role == CanonicalEventRole.NoteOn);
+    }
+
+    [Fact]
+    public void EventInstrumentPreviewRejectsInvalidOrAmbiguousSubVoiceListeningState()
+    {
+        var fixture = CompilerTestProject.Create(subVoiceCount: 2);
+        MidoraId firstId = fixture.Instrument.SubVoices[0].Id;
+        MidoraId foreignId = fixture.Project.AllocateStableId();
+        PreviewCompiler compiler = new();
+
+        Assert.Throws<ArgumentException>(() => compiler.CompileEventInstrument(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(fixture.Instrument.Id)
+            {
+                MutedSubVoiceIds = [firstId, firstId]
+            }));
+        Assert.Throws<ArgumentException>(() => compiler.CompileEventInstrument(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(fixture.Instrument.Id)
+            {
+                SoloSubVoiceIds = [foreignId]
+            }));
+        Assert.Throws<ArgumentException>(() => compiler.CompileEventInstrument(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(fixture.Instrument.Id, firstId)
+            {
+                MutedSubVoiceIds = []
+            }));
+    }
+
+    [Fact]
     public void SegmentPreviewUsesOnlySelectedSegmentAndProjectConductorRange()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 480);

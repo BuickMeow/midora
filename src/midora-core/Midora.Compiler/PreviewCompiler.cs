@@ -9,7 +9,12 @@ public sealed record EventInstrumentPreviewRequest(
     int Velocity = 100,
     long? GateLengthTicks = null,
     decimal? Tempo = null,
-    long CursorTick = 0);
+    long CursorTick = 0)
+{
+    public IReadOnlyCollection<MidoraId>? MutedSubVoiceIds { get; init; }
+
+    public IReadOnlyCollection<MidoraId>? SoloSubVoiceIds { get; init; }
+}
 
 public sealed class PreviewCompiler
 {
@@ -29,6 +34,7 @@ public sealed class PreviewCompiler
         {
             throw new ArgumentException("The SubVoice does not belong to the Event Instrument.", nameof(request));
         }
+        HashSet<MidoraId>? includedSubVoiceIds = ResolvePreviewSubVoices(instrument, request);
 
         int pitch = request.Pitch ?? selectedVoice?.RootNoteOverride ?? instrument.RootNote;
         long gateLength = request.GateLengthTicks ?? instrument.TemplateLengthTicks;
@@ -82,8 +88,73 @@ public sealed class PreviewCompiler
             Purpose = CompilationPurpose.EventInstrumentPreview,
             StartTick = 0,
             EndTick = previewLength,
-            IncludedSubVoiceIds = selectedVoice is null ? null : [selectedVoice.Id]
+            IncludedSubVoiceIds = selectedVoice is null
+                ? includedSubVoiceIds
+                : new HashSet<MidoraId> { selectedVoice.Id }
         });
+    }
+
+    private static HashSet<MidoraId>? ResolvePreviewSubVoices(
+        EventInstrument instrument,
+        EventInstrumentPreviewRequest request)
+    {
+        if (request.SubVoiceId.HasValue
+            && (request.MutedSubVoiceIds is not null || request.SoloSubVoiceIds is not null))
+        {
+            throw new ArgumentException(
+                "Dedicated SubVoice preview cannot also carry Event Instrument preview Mute/Solo state.",
+                nameof(request));
+        }
+        if (request.SubVoiceId.HasValue
+            || request.MutedSubVoiceIds is null && request.SoloSubVoiceIds is null)
+        {
+            return null;
+        }
+
+        HashSet<MidoraId> knownIds = instrument.SubVoices.Select(value => value.Id).ToHashSet();
+        HashSet<MidoraId> muted = ValidatePreviewStateIds(
+            request.MutedSubVoiceIds,
+            knownIds,
+            "Mute",
+            request);
+        HashSet<MidoraId> soloed = ValidatePreviewStateIds(
+            request.SoloSubVoiceIds,
+            knownIds,
+            "Solo",
+            request);
+        bool hasSolo = soloed.Count > 0;
+        return instrument.SubVoices
+            .Where(value => !muted.Contains(value.Id) && (!hasSolo || soloed.Contains(value.Id)))
+            .Select(value => value.Id)
+            .ToHashSet();
+    }
+
+    private static HashSet<MidoraId> ValidatePreviewStateIds(
+        IReadOnlyCollection<MidoraId>? ids,
+        HashSet<MidoraId> knownIds,
+        string stateName,
+        EventInstrumentPreviewRequest request)
+    {
+        if (ids is null)
+        {
+            return [];
+        }
+
+        MidoraId[] snapshot = ids.ToArray();
+        HashSet<MidoraId> result = new(snapshot);
+        if (result.Count != snapshot.Length)
+        {
+            throw new ArgumentException(
+                $"The SubVoice {stateName} state contains duplicate IDs.",
+                nameof(request));
+        }
+        if (result.Any(value => !knownIds.Contains(value)))
+        {
+            throw new ArgumentException(
+                $"The SubVoice {stateName} state references another Event Instrument.",
+                nameof(request));
+        }
+        return result;
     }
 
     public CanonicalCompiledResult CompileSegment(

@@ -124,6 +124,7 @@
 | 2026-08-06 | Event Instrument Preview Int64 范围 | Gate/Template/Release 容器长度使用饱和加法，非法负时长仍交由统一语义诊断；Compiler 200 tests；全仓基线 847 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-7f2e646808c74d82a6d3dda3af502376` |
 | 2026-08-06 | Tempo Sample Map Int64 反向换算 | 上界二分中点改为不溢出的 distance 分解，保持 decimal 累加与一次 AwayFromZero；Playback 53 tests；全仓基线 848 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-cfd2b382b66b4e238fccaaa1d74e9094` |
 | 2026-08-06 | BASS 不同工作块逐 sample 确定性 | 固定 256-frame 原生 decode 序列；事件/硬结束前短块；预分配 staging；consumer/render 双位置；复杂 Tempo/Loop 106-event 回归；BASS 120 tests；全仓基线 849 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；进程内/子进程逻辑 WAVE hash 相同；产物 `non-ui-release-gate-4bfddba55a254b1da6a2b39350a7a33a` |
+| 2026-08-06 | SubVoice 编辑器预览 Mute/Solo | 临时请求集合；多 Solo；Mute 优先；无 Solo 过滤；全 Mute 合法静音；重复/外部/单 SubVoice 混用拒绝；仍经完整 Preview canonical 管线；Compiler 203 tests；全仓基线 852 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-89b36a856e2a49059f81fd017bfc5960` |
 
 ## 7. 未解决风险
 

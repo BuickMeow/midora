@@ -31,7 +31,7 @@
 |---|---|---|---|---|
 | NUI-01 | 仓库级构建、测试和兼容基线 | 非 UI 自动门与单实例内核完成；WPF 入口接线待 UI 阶段 | §2、§3.3、§21、INV-019/027～030 | 单命令 Release 构建；全部自动测试；固定工具链/原生 manifest 门；唯一主实例与启动请求转发 |
 | NUI-02 | 完整领域源模型与编辑事务 | History/Modified 与十三批非 ID 分配对象命令完成；ID 分配命令等待 Q-NUI-005 | §3～11 | Track/Instrument/Folder/Damaged/Segment、Conductor、Project Settings/Metadata、Track Color、External SoundFont、Note/Lane/Point、Instrument Lifecycle、SubVoice、Template Event、Value Curve、Initial/Reset State、Envelope、Mapping Function、Mapping Chain/Step，以及安全的 Logical Parameter Definition/Mapping/Target Settings 属性已覆盖；需要 Lane 迁移的 Definition 结构编辑等待 Q-NUI-009 |
-| NUI-03 | Semantic Validation 与诊断来源 | 进行中 | §3～12 | 全错误/警告/Info 矩阵与稳定排序 golden |
+| NUI-03 | Semantic Validation 与诊断来源 | 进行中 | §3～12 | 全错误/警告/Info 矩阵与稳定排序 golden；显式 Track 编译诊断作用域已闭合 |
 | NUI-04 | Full/Incremental Canonical Compiler | 强增量模型完成；全 §12 矩阵继续扩充 | §12、INV-009/010/015 | Segment checkpoint + dirty range + state hash 已实现；固定种子连续编辑逐字段等价 |
 | NUI-05 | Playback/Preview 非 UI 状态机 | 进行中 | §13、§19 | 全状态、自动 Stop、Mute/Solo、设备故障和重复生命周期测试 |
 | NUI-06 | MIDI Export 完整工作流 | 进行中 | §14、§19 | 三模式、routing、README、冻结命名、多文件原子事务、自校验 |
@@ -115,6 +115,7 @@
 | 2026-08-06 | Close / Exit 工程时长生命周期 | Project Switch Guard 与 Save 期间继续累计；实际切换入口才 Begin Closing；成功保持暂停；实际切换失败恢复且不补计暂停窗口；Application 205 tests；全仓基线 812 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；精确暂停边界等待 Q-NUI-017 确认 |
 | 2026-08-06 | Recent Projects 本机 MRU | 分离 JSON v1；成功激活后显式记录；10 项 Windows OrdinalIgnoreCase MRU；严格未知/重复字段；1 MiB 门；离线路径保留/可用投影；原子失败保持；Application 217 tests；全仓基线 824 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；列表策略等待 Q-NUI-018 确认 |
 | 2026-08-06 | Native interop win-x64 ABI 快照 | BASS/BASSMIDI/BASSWASAPI 正式结构 size/offset；pointer/function pointer/handle 宽度；精确 LibraryImport DLL/entry point；BOOL/handle return；统一 Windows x64 默认调用 ABI；BASS 119 tests；全仓基线 829 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；固定 DLL baseline 与 Native AOT Worker 通过 |
+| 2026-08-06 | 显式 Track 编译诊断作用域 | 未选 Track/未参与 Instrument 的 Stable ID 损坏不污染 scoped compile；Whole Project 仍完整捕获；不存在/歧义选择与全局上下文门保持；Compiler 187 tests；全仓基线 831 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip |
 
 ## 7. 未解决风险
 
@@ -133,3 +134,4 @@
 - New Project 已能在旧 Project 之外构建完整候选，覆盖 Unsaved/Create and Save 及 External/Embedded SF2；WPF 后续只负责在 Project Switch Guard 成功分支提交候选并导航 Arrangement，不能提前启动工程时间或暴露半创建候选。
 - Open Project 已能在旧 Project 之外严格建立候选并绑定恢复/损坏/资源状态；旧格式成功迁移仍等待 Q-NUI-002，WPF 后续只能在 Project Switch Guard 成功分支接管候选资源并启动打开会话。
 - Bar:Beat:Tick 的 1-based Bar/Beat、0-based Tick 与分母拍单位已经由 SRS 固定，但拍号可位于任意 tick；中途拍号变化是否截断并开启新小节等待 Q-NUI-019，决定前不实现会影响全局网格/坐标的换算服务。
+- 显式 Track 编译已按 §12.6.3 将普通语义与 Stable ID 诊断统一限制到选择作用域；Whole Project compile 仍是发现未选内容损坏的正式入口，后续消费者不得自行扩大诊断范围。

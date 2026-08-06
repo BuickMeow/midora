@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "sdkVersion": "10.0.302",
   "configuration": "Release",
-  "totalTestCount": 829,
+  "totalTestCount": 831,
   "projects": [
     {
       "path": "src/midora-common/Midora.Common.Tests/Midora.Common.Tests.csproj",
@@ -10,7 +10,7 @@
     },
     {
       "path": "src/midora-core/Midora.Compiler.Tests/Midora.Compiler.Tests.csproj",
-      "expectedTestCount": 185
+      "expectedTestCount": 187
     },
     {
       "path": "src/midora-core/Midora.MidiExport.Tests/Midora.MidiExport.Tests.csproj",

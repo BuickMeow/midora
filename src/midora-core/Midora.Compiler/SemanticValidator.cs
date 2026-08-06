@@ -72,7 +72,7 @@ public static class SemanticValidator
 
         ValidateTracks(project, request, instruments, diagnostics);
         ValidateIncludedSubVoices(project, request, diagnostics);
-        ValidateStableIds(project, diagnostics);
+        ValidateStableIds(project, request, diagnostics);
         return diagnostics;
 
         void Error(string code, string message, SourceReference source) =>
@@ -578,18 +578,20 @@ public static class SemanticValidator
         IReadOnlyDictionary<MidoraId, EventInstrument> instruments,
         List<CompilerDiagnostic> diagnostics)
     {
-        HashSet<MidoraId> trackIds = [];
+        HashSet<MidoraId> allTrackIds = [];
+        HashSet<MidoraId> participatingTrackIds = [];
         foreach (LogicalTrack track in project.Tracks)
         {
             SourceReference trackSource = new(TrackId: track.Id);
-            if (!trackIds.Add(track.Id))
-            {
-                AddError("MIDORA1301", "Logical Track ID 必须唯一；名称允许为空和重复。", trackSource, diagnostics);
-            }
+            allTrackIds.Add(track.Id);
             if (request.IncludedTrackIds is not null
                 && !request.IncludedTrackIds.Contains(track.Id))
             {
                 continue;
+            }
+            if (!participatingTrackIds.Add(track.Id))
+            {
+                AddError("MIDORA1301", "Logical Track ID 必须唯一；名称允许为空和重复。", trackSource, diagnostics);
             }
             EventInstrument? boundInstrument = null;
             if (track.EventInstrumentId.HasValue
@@ -696,7 +698,7 @@ public static class SemanticValidator
                 }
             }
         }
-        if (request.IncludedTrackIds is not null && request.IncludedTrackIds.Any(id => !trackIds.Contains(id)))
+        if (request.IncludedTrackIds is not null && request.IncludedTrackIds.Any(id => !allTrackIds.Contains(id)))
         {
             AddError("MIDORA1302", "编译请求引用了不存在的 Logical Track。", new(), diagnostics);
         }
@@ -712,9 +714,13 @@ public static class SemanticValidator
         return values;
     }
 
-    private static void ValidateStableIds(MidoraProject project, List<CompilerDiagnostic> diagnostics)
+    private static void ValidateStableIds(
+        MidoraProject project,
+        CompilationRequest request,
+        List<CompilerDiagnostic> diagnostics)
     {
         HashSet<MidoraId> ids = [];
+        HashSet<MidoraId> participatingInstrumentIds = GetParticipatingInstrumentIds(project, request);
         foreach (TempoChange value in project.Conductor.Tempos) Add(value.Id, new(Tick: value.Tick));
         foreach (TimeSignatureChange value in project.Conductor.TimeSignatures) Add(value.Id, new(Tick: value.Tick));
         foreach (KeySignatureChange value in project.Conductor.KeySignatures) Add(value.Id, new(Tick: value.Tick));
@@ -729,6 +735,11 @@ public static class SemanticValidator
         }
         foreach (EventInstrument instrument in project.EventInstruments)
         {
+            if (request.IncludedTrackIds is not null
+                && !participatingInstrumentIds.Contains(instrument.Id))
+            {
+                continue;
+            }
             SourceReference instrumentSource = new(EventInstrumentId: instrument.Id);
             Add(instrument.Id, instrumentSource);
             foreach (LogicalParameterDefinition parameter in instrument.LogicalParameters)
@@ -768,6 +779,11 @@ public static class SemanticValidator
         }
         foreach (LogicalTrack track in project.Tracks)
         {
+            if (request.IncludedTrackIds is not null
+                && !request.IncludedTrackIds.Contains(track.Id))
+            {
+                continue;
+            }
             SourceReference trackSource = new(TrackId: track.Id);
             Add(track.Id, trackSource);
             foreach (Segment segment in track.Segments)

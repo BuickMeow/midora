@@ -30,7 +30,7 @@
 | 编号 | 工作包 | 状态 | 主要需求 | 退出证据 |
 |---|---|---|---|---|
 | NUI-01 | 仓库级构建、测试和兼容基线 | 待复核 | §2、§21、INV-027～030 | 单命令 Release 构建；全部自动测试；固定工具链/原生 manifest 门 |
-| NUI-02 | 完整领域源模型与编辑事务 | History/Modified 与两批非 ID 分配对象命令完成；ID 分配命令等待 Q-NUI-005 | §3～11 | Track/Instrument/Folder/Damaged/Segment、Conductor 与 Playback/Audio Render Settings 已覆盖；继续 Instrument/Note/Lane/Mapping/Lifecycle 属性矩阵 |
+| NUI-02 | 完整领域源模型与编辑事务 | History/Modified 与三批非 ID 分配对象命令完成；ID 分配命令等待 Q-NUI-005 | §3～11 | Track/Instrument/Folder/Damaged/Segment、Conductor、Project Settings、Note/Lane/Point 与 Instrument 基础属性已覆盖；继续 SubVoice/Mapping/Lifecycle 属性矩阵 |
 | NUI-03 | Semantic Validation 与诊断来源 | 进行中 | §3～12 | 全错误/警告/Info 矩阵与稳定排序 golden |
 | NUI-04 | Full/Incremental Canonical Compiler | 强增量模型完成；全 §12 矩阵继续扩充 | §12、INV-009/010/015 | Segment checkpoint + dirty range + state hash 已实现；固定种子连续编辑逐字段等价 |
 | NUI-05 | Playback/Preview 非 UI 状态机 | 进行中 | §13、§19 | 全状态、自动 Stop、Mute/Solo、设备故障和重复生命周期测试 |
@@ -46,7 +46,7 @@
 - 2026-08-06 提交 `4b69e72` 完成 `.midora` 空对象图基础垂直切片；Release 构建通过，累计 330 个自动测试通过。
 - 2026-08-06 提交 `61b7042` 完成 Event Instrument / Logical Track protobuf v1、对象级损坏隔离与可撤销删除、Embedded SF2 正常资源流式 package 链。
 - `misc/Midora-SRS-Code-Conformance-Audit-2026-08-05.md` 记录的 1A～25.1A 均视为已确认决定，不再询问。
-- 当前有 3 个未闭合的产品所有者重大决定：Q-NUI-002（初版 `.midora` 历史格式基线）、Q-NUI-003（Project MIDI Export Settings v2 字段/默认值）与 Q-NUI-005（ID 分配型 Undo 和 `nextStableId`/Modified 关系）；分别只暂停成功迁移器、Export Settings schema/领域默认分支和创建/复制/分割类 History 命令。Q-NUI-004 是已按推荐方案落地、仍待确认的小决定。Q-NUI-001 已按推荐方案确认并实现。
+- 当前有 3 个未闭合的产品所有者重大决定：Q-NUI-002（初版 `.midora` 历史格式基线）、Q-NUI-003（Project MIDI Export Settings v2 字段/默认值）与 Q-NUI-005（ID 分配型 Undo 和 `nextStableId`/Modified 关系）；分别只暂停成功迁移器、Export Settings schema/领域默认分支和创建/复制/分割类 History 命令。Q-NUI-004、Q-NUI-006、Q-NUI-007 是已按推荐方案落地、仍待确认的小决定。Q-NUI-001 已按推荐方案确认并实现。
 
 ## 5. 当前实施顺序
 
@@ -73,6 +73,7 @@
 | 2026-08-06 | Project History、Modified 与 Undo/Redo 基础 | 未保存/已持久化来源、保存点、branch、external dirty、无操作、锁、canonical 同步、异常 rollback + Full Compile、通知重入；Application 42 tests；10 个测试项目累计 471 tests；Core Release build | 通过，0 warning / 0 error / 0 failure；ID 分配命令等待 Q-NUI-005 |
 | 2026-08-06 | 首批具体领域 History 命令 | Track/Instrument/Folder/Damaged Placeholder 重命名、绑定、排序、删除与精确恢复；Segment 跨 Track 移动、裁剪窗口、删除、连接；名称 schema 上限与控制字符；每步 Full/Incremental 等价及 `nextStableId` 不变；Application 54 tests；10 个测试项目累计 483 tests；Core Release build；限定改动文件 format 门 | 通过，0 warning / 0 error / 0 failure；ID 分配命令仍只等待 Q-NUI-005 |
 | 2026-08-06 | Conductor 与 Project Settings History 命令 | Tempo/Time Signature/Key Signature/Marker/现有 End Marker 的修改、移动、删除和 tick 0/冲突/值域门；Playback 与 Audio Render Settings 原子快照；SMF 24-bit Tempo canonical 语义验证补齐；Application 63 tests、Compiler 101 tests；10 个测试项目累计 493 tests；Core Release build；限定改动文件 format 门 | 通过，0 warning / 0 error / 0 failure |
+| 2026-08-06 | Logical Note、Lane/Point 与 Instrument 基础属性 History 命令 | Note 裁剪区外编辑和值域；Lane 显式 Clamp/Discard 重绑定、Enum 最近值/Step、删除确认；Point 类型/值域/同 tick 门；Description/Color/Root Note 编译失效分类；精确对象/ID Undo；Application 69 tests；10 个测试项目累计 499 tests；Core Release build | 通过，0 warning / 0 error / 0 failure；Q-NUI-007 小决定待确认 |
 
 ## 7. 未解决风险
 
@@ -80,6 +81,6 @@
 - 当前 `.midora` 已支持完整 Event Instrument/Logical Track 对象图、完整性正常的 Embedded SF2，以及 Q-NUI-001 规定的损坏资源结构化修复门；旧格式迁移尚未实现，因此 NUI-08 仍未完成。
 - §12.21 的 Segment checkpoint、dirty range 与 state-hash 收敛模型已替换旧 Track 整片段缓存；当前剩余风险是继续扩大随机 Project 生成器和 §7～§12 全语义组合矩阵，而不是已知的增量架构缺口。
 - Project MIDI Export Settings 仍是空 v1 占位；schema v2 与默认值等待 Q-NUI-003，不能回写修改已发布 v1。
-- 两批不分配稳定 ID 的结构/设置编辑命令已接入统一 History；Event Instrument/Track/Segment 等嵌套属性、Note/Lane/Mapping/Lifecycle 命令矩阵仍需继续扩充，创建/复制/分割类命令等待 Q-NUI-005。
+- 三批不分配稳定 ID 的结构/设置/音乐内容编辑命令已接入统一 History；SubVoice、Template Event/Curve、Logical Parameter Definition/Mapping、Envelope 与 Lifecycle 命令矩阵仍需继续扩充，创建/复制/分割类命令等待 Q-NUI-005。
 - Audio Render 的 canonical/输出事务、正式 Native AOT 文件链、应用级单音频任务锁和开始渲染前自动 Stop 已完成；实时硬件压力与集中人工试听仍属于 NUI-09/NUI-11。
 - 实际 BASS DLL、物理 WASAPI 设备、设备移除和人耳听音不能只凭无设备 CI 结论替代。

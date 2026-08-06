@@ -328,3 +328,5 @@ Requirement trace：输入为 Project、来源状态、可逆 command、保存�
 首批具体命令采用同一约束：Prepare 完成引用、名称、确认、时间范围、重叠和可恢复索引校验；Apply/Undo 复用原对象与原稳定 ID。Track/Instrument/Folder/Damaged Placeholder 删除、Track 绑定/排序、Library 组织和 Segment 移动/裁剪/删除/连接已经接入。Last Known Instrument Name 在显式绑定时更新为目标当前名称、显式取消绑定时保留最近可用名称、Instrument 重命名时同步更新当前绑定 Track 的快照；撤销恢复此前精确值。该快照只用于断裂提示，不参与按名称匹配或正式编译引用。
 
 Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复原记录对象；tick 0 Tempo/Time Signature、同 tick 唯一性及 SMF Tempo 可表示性在 Prepare 阶段阻止非法输入。Playback 与 Audio Render Settings 以整组快照原子替换；它们进入 Project History/Modified，但使用空 compilation change-set，canonical 保持不变，下一次播放/渲染任务从正式 Project Settings 冻结实际参数。
+
+第三批命令覆盖不分配 ID 的 Logical Note、Logical Parameter Lane/Point 与 Event Instrument Description/Color/Root Note。Note 编辑不把裁剪区当作数据合法边界；Point 正常编辑必须能从当前绑定定义验证值域和类型，断裂 Lane 只保留、删除或走显式重绑定修复。重绑定的 Clamp/Discard 由调用方每次明确选择，目标 Enum 还强制调用方确认整数兼容不代表语义兼容；转换后的点沿用原稳定 ID，Undo 恢复原对象图。Q-NUI-007 待确认期间，整数中点暂按现有 Mapping `Round` 一致的 AwayFromZero，目标 Enum 的保留点转为 Step；该局部选择不得扩散成持久化或编译器的新隐式默认。

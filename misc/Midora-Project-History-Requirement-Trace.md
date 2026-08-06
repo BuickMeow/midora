@@ -1,6 +1,6 @@
 # Midora Project History、Modified 与 Undo/Redo Requirement Trace
 
-状态：基础框架与首批不分配稳定 ID 的领域对象命令已实现；分配稳定 ID 的创建/复制/分割命令等待 Q-NUI-005
+状态：基础框架与三批不分配稳定 ID 的领域对象命令已实现；分配稳定 ID 的创建/复制/分割命令等待 Q-NUI-005
 
 日期：2026-08-06
 
@@ -32,6 +32,10 @@
 - Segment：同 Track/跨 Track 整体移动、裁剪窗口更新、带非空确认的删除、同 Track 非重叠连接；移动/裁剪阻止负 tick、非正长度、Int64 溢出及同 Track 重叠，连接保留绝对内容位置并采用右侧同 tick 参数点覆盖规则。
 - Conductor：在不创建新 ID 的范围内修改/移动/删除 Tempo、Time Signature、Key Signature、Marker 和现有 Project End Marker；tick 0 Tempo/Time Signature 不可移动或删除，同类型事件阻止同 tick 冲突，Tempo 输入必须经一次 `AwayFromZero` 取整后可由 24-bit MIDI Set Tempo 表示。
 - Project Settings：原子修改 Playback Master Volume/Limiter/Stop Cursor Behavior，以及 Audio Render 模式、范围、Track 选择、采样率和离线 sample voice 上限；设置在 Prepare 阶段按现行 schema 值域、范围一致性和 live Track ID 集合校验。它们保存进 Project 并进入 History/Modified，但不改变 canonical MIDI 编译结果。
+- Logical Note：原子修改 local start、length、pitch、velocity，允许内容留在 Segment 当前裁剪区外，但阻止负 tick、非正长度、Int64 end 溢出和 MIDI 值域错误；删除与 Undo 恢复原对象、原索引和稳定 ID。
+- Logical Parameter Lane/Point：删除 Lane 需要显式确认；Point 更新阻止负 tick、NaN/Infinity、同 tick 冲突、越界、非整数 Integer 和非 Step/未定义 Enum 值；断裂 Lane 只允许删除或显式重绑定，不允许在缺少定义值域时继续普通点编辑。
+- Lane 重绑定：目标只允许当前 Track 绑定 Instrument 的稳定 Parameter ID，禁止同 Segment 重复 Parameter Lane；调用方显式选择 Clamp 或 Discard，目标为 Enum 时还必须确认整数兼容不代表语义兼容的警告。转换保留 Lane/Point ID，Undo 恢复原 Parameter ID、原 Point 对象和顺序。Q-NUI-007 待确认的局部实现采用 AwayFromZero，并把目标 Enum 的保留点转为 Step。
+- Event Instrument 基础属性：Description 按 65,536 Unicode scalar、允许 Tab/LF/CR 但拒绝 NUL/其他控制字符的持久化契约原样保存；Color 与 Description 进入 History/Modified 但不失效 canonical；Root Note 限 0～127、失效相关 Instrument 编译，且不改写 SubVoice override 或模板 Note。
 - 以上命令 Prepare 不修改 Project；删除、移动、连接和撤销复用原对象/稳定 ID，不回滚或推进 `nextStableId`。每项结构编辑测试均以 Full Compile 为 oracle 核对当前 Incremental Compile 的语义和形式等价。
 - Logical Track 名称可空/重复；Event Instrument 与 Folder 名称必填且分别在规定范围内唯一。所有上述名称先拒绝非法 Unicode、换行/NUL/控制字符，再 Trim，并统一执行 schema 的 256 Unicode scalar 上限，不静默截断。
 
@@ -48,4 +52,4 @@
 - Playback、Preview、Explicit Compile、Save/Export/Render 等持有 Project Edit Lock 时，Execute/Undo/Redo 在任何源变更前拒绝。
 - History、state ID、command 反向数据、external dirty reason 和 UI 操作名称均为运行时状态，不进入 `.midora`；Project 源变更及 `nextStableId` 仍服从各自正式持久化规则。
 - 本切片不实现 field-local/Draft Undo、WPF focus 路由、gesture 合并、UI 展示、autosave/crash recovery 或命令历史持久化。
-- 本切片提供通用属性命令及上述不分配稳定 ID 的具体领域命令。创建 Event Instrument/Folder/Track/Segment/Note/Lane、复制 Event Instrument/Track/Segment、Segment Split 和创建 Conductor/End Marker 事件等 ID 分配命令的 Undo/Modified 语义由 Q-NUI-005 决定后接入；Q-NUI-003 决定前不扩展 MIDI Export Settings v2。
+- 本切片提供通用属性命令及上述不分配稳定 ID 的具体领域命令。创建 Event Instrument/Folder/Track/Segment/Note/Lane/Point、复制 Event Instrument/Track/Segment、Segment Split 和创建 Conductor/End Marker 事件等 ID 分配命令的 Undo/Modified 语义由 Q-NUI-005 决定后接入；Q-NUI-003 决定前不扩展 MIDI Export Settings v2。

@@ -100,6 +100,23 @@
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
 
+### Q-NUI-007：Logical Parameter Lane 重绑定的整数中点与 Enum 插值转换
+
+- 类型：小决定
+- 状态：已按推荐实施待确认
+- 发现日期：2026-08-06
+- SRS 依据：第 11.13.1、11.19.2～11.19.5、18.2.5 节。
+- 已确认事实：不兼容 Lane 重绑定必须由调用方显式选择 Clamp 或“丢弃范围外的值”；Double 转 Integer 先按目标 Integer 规则取整；转 Enum 先得到整数值，Clamp 时匹配最近已定义值且等距选较小值；Enum Lane 只允许 Step 状态。命令必须原子进入 Project History，并保留点稳定 ID。
+- 不确定点：SRS 没有固定恰好位于 `n + 0.5` 时采用 AwayFromZero、ToEven 或其他中点规则，也没有逐句规定原 Linear point 重绑定为 Enum 后是自动改为 Step、拒绝整个重绑定，还是删除相关点。
+- 影响范围：只影响用户明确执行类型不兼容 Lane 重绑定时的转换结果和曲线形状；不改变 `.midora` wire/schema、正常点编辑、编译器既有曲线求值、导出格式、音频后端或并发模型。命令可完整 Undo，因此修改成本局部。
+- 推荐方案：整数中点统一采用 `MidpointRounding.AwayFromZero`；目标为 Enum 时，所有保留点的 interpolation 明确转为 `Step`。Clamp/Discard 仍是每次命令的显式参数，不设置隐藏默认；Enum 最近值等距时选较小值。
+- 推荐依据与限制：现有 Mapping 整数目标的 `Round` 已使用 AwayFromZero，可避免应用修复命令与编译器常规整数化出现两套中点规则；Enum 的连续插值在 SRS 中本来就非法，转为 Step 可让显式修复完成后立即形成合法源数据。限制是原 Linear 段会变为阶梯状态，属于用户已选择重绑定到 Enum 时可预期但可听的变化。
+- 备选方案及差异：A. 中点采用 ToEven，可减少统计偏差，但与现有 Mapping `Round` 不一致。B. 目标 Enum 遇到任何 Linear point 时拒绝，要求用户先单独改成 Step；最保守但会把一次修复拆成多步。C. 删除 Linear point；会产生比改为 Step 更大的数据损失，不推荐。
+- 当前实施状态：`RebindLogicalParameterLane` 已实现显式 Clamp/Discard、强制 Enum 语义警告确认、AwayFromZero、Enum 最近值/等距较小值、Linear→Step、稳定 ID 保留和原子 Undo；自动测试覆盖确认门、Clamp、Discard、边界、精确恢复及 Full/Incremental 等价。
+- 需要产品所有者回答：是否采用推荐方案？如不采用，请分别指定整数中点规则和目标 Enum 遇到 Linear point 时采用备选 B 或其他明确转换。
+- 产品回答：待填写。
+- 最终处理与提交：待确认后填写。
+
 ## 3. 问题模板
 
 ### Q-NUI-XXX：标题

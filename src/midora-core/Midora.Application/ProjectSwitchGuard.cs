@@ -45,7 +45,7 @@ public sealed class ProjectSwitchGuardResult<T>
 public interface IProjectSwitchGuardActions<T>
 {
     bool HasFunctionDrafts { get; }
-    bool IsProjectModified { get; }
+    bool HasUnsavedProjectChanges { get; }
     bool CanSaveProject { get; }
 
     ValueTask<FunctionDraftResolution> ResolveFunctionDraftsAsync(CancellationToken cancellationToken);

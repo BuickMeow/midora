@@ -1,0 +1,427 @@
+using Midora.Compiler;
+using Midora.Domain;
+using Midora.Playback;
+
+namespace Midora.Application;
+
+public enum ProjectDocumentOrigin
+{
+    Unsaved,
+    Persisted
+}
+
+public sealed record ProjectHistoryEntryInfo(
+    string Name,
+    long BeforeStateId,
+    long AfterStateId);
+
+public sealed record ProjectEditExecution(
+    bool Changed,
+    CanonicalCompiledResult CompilationResult);
+
+public interface IProjectEditCommand
+{
+    string Name { get; }
+    IPreparedProjectEdit Prepare(MidoraProject project);
+}
+
+public interface IPreparedProjectEdit
+{
+    bool HasChanges { get; }
+    ProjectChangeSet Changes { get; }
+    void Apply(MidoraProject project);
+    void Undo(MidoraProject project);
+}
+
+public sealed class ProjectPropertyEditCommand<T> : IProjectEditCommand
+{
+    private readonly Func<MidoraProject, T> _read;
+    private readonly Action<MidoraProject, T> _write;
+    private readonly T _newValue;
+    private readonly ProjectChangeSet _changes;
+    private readonly IEqualityComparer<T> _comparer;
+
+    public ProjectPropertyEditCommand(
+        string name,
+        Func<MidoraProject, T> read,
+        Action<MidoraProject, T> write,
+        T newValue,
+        ProjectChangeSet changes,
+        IEqualityComparer<T>? comparer = null)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("A Project edit command name is required.", nameof(name));
+        }
+        Name = name.Trim();
+        _read = read ?? throw new ArgumentNullException(nameof(read));
+        _write = write ?? throw new ArgumentNullException(nameof(write));
+        _newValue = newValue;
+        _changes = CloneChanges(changes ?? throw new ArgumentNullException(nameof(changes)));
+        _comparer = comparer ?? EqualityComparer<T>.Default;
+    }
+
+    public string Name { get; }
+
+    public IPreparedProjectEdit Prepare(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        T oldValue = _read(project);
+        return new Prepared(
+            _write,
+            oldValue,
+            _newValue,
+            !_comparer.Equals(oldValue, _newValue),
+            _changes);
+    }
+
+    private sealed class Prepared(
+        Action<MidoraProject, T> write,
+        T oldValue,
+        T newValue,
+        bool hasChanges,
+        ProjectChangeSet changes) : IPreparedProjectEdit
+    {
+        public bool HasChanges { get; } = hasChanges;
+        public ProjectChangeSet Changes { get; } = changes;
+        public void Apply(MidoraProject project) => write(project, newValue);
+        public void Undo(MidoraProject project) => write(project, oldValue);
+    }
+
+    private static ProjectChangeSet CloneChanges(ProjectChangeSet source)
+    {
+        ProjectChangeSet result = new()
+        {
+            AffectsEverything = source.AffectsEverything,
+            AffectsConductor = source.AffectsConductor
+        };
+        result.TrackIds.UnionWith(source.TrackIds);
+        result.EventInstrumentIds.UnionWith(source.EventInstrumentIds);
+        return result;
+    }
+}
+
+public sealed class ProjectDocumentSession
+{
+    private readonly object _sync = new();
+    private readonly ProjectCompilationSession _compilation;
+    private readonly List<HistoryEntry> _entries = [];
+    private readonly HashSet<string> _externalDirtyReasons = new(StringComparer.Ordinal);
+    private int _cursor;
+    private long _currentStateId;
+    private long _nextStateId = 1;
+    private long _baselineStateId;
+    private bool _hasPersistentOrigin;
+    private bool _notifying;
+
+    public ProjectDocumentSession(
+        ProjectCompilationSession compilation,
+        ProjectDocumentOrigin origin = ProjectDocumentOrigin.Unsaved)
+    {
+        _compilation = compilation ?? throw new ArgumentNullException(nameof(compilation));
+        _hasPersistentOrigin = origin switch
+        {
+            ProjectDocumentOrigin.Unsaved => false,
+            ProjectDocumentOrigin.Persisted => true,
+            _ => throw new ArgumentOutOfRangeException(nameof(origin))
+        };
+        _baselineStateId = _currentStateId;
+    }
+
+    public MidoraProject Project => _compilation.Project;
+    public ProjectCompilationSession Compilation => _compilation;
+
+    public bool HasPersistentOrigin
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _hasPersistentOrigin;
+            }
+        }
+    }
+
+    public bool IsModified
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return IsModifiedCore;
+            }
+        }
+    }
+
+    public bool NeedsSaveBeforeClose
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return !_hasPersistentOrigin || IsModifiedCore;
+            }
+        }
+    }
+
+    public bool CanUndo
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _cursor != 0;
+            }
+        }
+    }
+
+    public bool CanRedo
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _cursor != _entries.Count;
+            }
+        }
+    }
+
+    public string? UndoName
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _cursor == 0 ? null : _entries[_cursor - 1].Name;
+            }
+        }
+    }
+
+    public string? RedoName
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _cursor == _entries.Count ? null : _entries[_cursor].Name;
+            }
+        }
+    }
+
+    public IReadOnlyList<ProjectHistoryEntryInfo> History
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _entries
+                    .Select(entry => new ProjectHistoryEntryInfo(
+                        entry.Name,
+                        entry.BeforeStateId,
+                        entry.AfterStateId))
+                    .ToArray();
+            }
+        }
+    }
+
+    public IReadOnlyList<string> ExternalDirtyReasons
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _externalDirtyReasons.Order(StringComparer.Ordinal).ToArray();
+            }
+        }
+    }
+
+    public event EventHandler? HistoryChanged;
+
+    public ProjectEditExecution Execute(IProjectEditCommand command)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        lock (_sync)
+        {
+            ThrowIfNotifying();
+            string commandName = command.Name;
+            if (string.IsNullOrWhiteSpace(commandName))
+            {
+                throw new ArgumentException(
+                    "A Project edit command name is required.",
+                    nameof(command));
+            }
+            commandName = commandName.Trim();
+            IPreparedProjectEdit sourcePrepared = command.Prepare(Project)
+                ?? throw new InvalidOperationException(
+                    "A Project edit command returned no prepared edit.");
+            FrozenPreparedProjectEdit prepared = FreezePreparedEdit(sourcePrepared);
+            if (!prepared.HasChanges)
+            {
+                return new(false, _compilation.LastAttempt);
+            }
+            if (_nextStateId == long.MaxValue)
+            {
+                throw new InvalidOperationException("The Project history state counter is exhausted.");
+            }
+
+            CanonicalCompiledResult result = _compilation.ApplyReversibleEdit(
+                prepared.Apply,
+                prepared.Undo,
+                prepared.Changes);
+            if (_cursor != _entries.Count)
+            {
+                _entries.RemoveRange(_cursor, _entries.Count - _cursor);
+            }
+            long nextStateId = _nextStateId++;
+            _entries.Add(new(
+                commandName,
+                _currentStateId,
+                nextStateId,
+                prepared));
+            _cursor++;
+            _currentStateId = nextStateId;
+            NotifyEditChanged();
+            return new(true, result);
+        }
+    }
+
+    public CanonicalCompiledResult Undo()
+    {
+        lock (_sync)
+        {
+            ThrowIfNotifying();
+            if (_cursor == 0)
+            {
+                throw new InvalidOperationException("There is no Project edit to undo.");
+            }
+            HistoryEntry entry = _entries[_cursor - 1];
+            CanonicalCompiledResult result = _compilation.ApplyReversibleEdit(
+                entry.Prepared.Undo,
+                entry.Prepared.Apply,
+                entry.Prepared.Changes);
+            _cursor--;
+            _currentStateId = entry.BeforeStateId;
+            NotifyEditChanged();
+            return result;
+        }
+    }
+
+    public CanonicalCompiledResult Redo()
+    {
+        lock (_sync)
+        {
+            ThrowIfNotifying();
+            if (_cursor == _entries.Count)
+            {
+                throw new InvalidOperationException("There is no Project edit to redo.");
+            }
+            HistoryEntry entry = _entries[_cursor];
+            CanonicalCompiledResult result = _compilation.ApplyReversibleEdit(
+                entry.Prepared.Apply,
+                entry.Prepared.Undo,
+                entry.Prepared.Changes);
+            _cursor++;
+            _currentStateId = entry.AfterStateId;
+            NotifyEditChanged();
+            return result;
+        }
+    }
+
+    public void MarkSaveSucceeded()
+    {
+        lock (_sync)
+        {
+            ThrowIfNotifying();
+            bool changed = !_hasPersistentOrigin
+                || _baselineStateId != _currentStateId
+                || _externalDirtyReasons.Count != 0;
+            _hasPersistentOrigin = true;
+            _baselineStateId = _currentStateId;
+            _externalDirtyReasons.Clear();
+            if (changed)
+            {
+                NotifyHistoryChanged(compilationChanged: false);
+            }
+        }
+    }
+
+    public void MarkExternallyModified(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            throw new ArgumentException("An external modification reason is required.", nameof(reason));
+        }
+        lock (_sync)
+        {
+            ThrowIfNotifying();
+            if (_externalDirtyReasons.Add(reason.Trim()))
+            {
+                NotifyHistoryChanged(compilationChanged: false);
+            }
+        }
+    }
+
+    private bool IsModifiedCore =>
+        _externalDirtyReasons.Count != 0
+        || _baselineStateId != _currentStateId;
+
+    private void NotifyEditChanged()
+    {
+        NotifyHistoryChanged(compilationChanged: true);
+    }
+
+    private void NotifyHistoryChanged(bool compilationChanged)
+    {
+        _notifying = true;
+        try
+        {
+            if (compilationChanged)
+            {
+                _compilation.NotifyCompilationChanged();
+            }
+            HistoryChanged?.Invoke(this, EventArgs.Empty);
+        }
+        finally
+        {
+            _notifying = false;
+        }
+    }
+
+    private void ThrowIfNotifying()
+    {
+        if (_notifying)
+        {
+            throw new InvalidOperationException(
+                "Project History cannot be mutated reentrantly from a change notification.");
+        }
+    }
+
+    private static FrozenPreparedProjectEdit FreezePreparedEdit(IPreparedProjectEdit prepared)
+    {
+        ArgumentNullException.ThrowIfNull(prepared.Changes);
+        ProjectChangeSet changes = new()
+        {
+            AffectsEverything = prepared.Changes.AffectsEverything,
+            AffectsConductor = prepared.Changes.AffectsConductor
+        };
+        changes.TrackIds.UnionWith(prepared.Changes.TrackIds);
+        changes.EventInstrumentIds.UnionWith(prepared.Changes.EventInstrumentIds);
+        return new(prepared, changes);
+    }
+
+    private sealed record HistoryEntry(
+        string Name,
+        long BeforeStateId,
+        long AfterStateId,
+        IPreparedProjectEdit Prepared);
+
+    private sealed class FrozenPreparedProjectEdit(
+        IPreparedProjectEdit source,
+        ProjectChangeSet changes) : IPreparedProjectEdit
+    {
+        public bool HasChanges { get; } = source.HasChanges;
+        public ProjectChangeSet Changes { get; } = changes;
+        public void Apply(MidoraProject project) => source.Apply(project);
+        public void Undo(MidoraProject project) => source.Undo(project);
+    }
+}

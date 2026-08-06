@@ -48,7 +48,7 @@ public sealed class ProjectCompilationSession : IDisposable
     public bool EditsLocked => Volatile.Read(ref _editLockCount) != 0;
     public event EventHandler? CompilationChanged;
 
-    public CanonicalCompiledResult ApplyEdit(Action<MidoraProject> edit, ProjectChangeSet changes)
+    internal CanonicalCompiledResult ApplyEdit(Action<MidoraProject> edit, ProjectChangeSet changes)
     {
         ArgumentNullException.ThrowIfNull(edit);
         ArgumentNullException.ThrowIfNull(changes);
@@ -71,6 +71,61 @@ public sealed class ProjectCompilationSession : IDisposable
         CompilationChanged?.Invoke(this, EventArgs.Empty);
         return LastAttempt;
     }
+
+    internal CanonicalCompiledResult ApplyReversibleEdit(
+        Action<MidoraProject> edit,
+        Action<MidoraProject> rollback,
+        ProjectChangeSet changes)
+    {
+        ArgumentNullException.ThrowIfNull(edit);
+        ArgumentNullException.ThrowIfNull(rollback);
+        ArgumentNullException.ThrowIfNull(changes);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_editLockCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "Project edits are forbidden while a Project edit lock is active.");
+            }
+
+            CanonicalCompiledResult? previousSuccessful = LastSuccessfulResult;
+            try
+            {
+                edit(Project);
+                LastAttempt = _compiler.CompileIncremental(Project, changes);
+                _samplePlans.Clear();
+                if (LastAttempt.IsConsumable)
+                {
+                    LastSuccessfulResult = LastAttempt;
+                }
+                return LastAttempt;
+            }
+            catch (Exception editError)
+            {
+                try
+                {
+                    rollback(Project);
+                    LastAttempt = _compiler.CompileFull(Project);
+                    _samplePlans.Clear();
+                    LastSuccessfulResult = LastAttempt.IsConsumable
+                        ? LastAttempt
+                        : previousSuccessful;
+                }
+                catch (Exception rollbackError)
+                {
+                    throw new AggregateException(
+                        "The Project edit failed and its rollback could not restore a verified compiler state.",
+                        editError,
+                        rollbackError);
+                }
+                throw;
+            }
+        }
+    }
+
+    internal void NotifyCompilationChanged() =>
+        CompilationChanged?.Invoke(this, EventArgs.Empty);
 
     public CanonicalCompiledResult Recompile(ProjectChangeSet changes)
     {

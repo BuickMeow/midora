@@ -304,7 +304,7 @@ public sealed class ApplicationTaskCoordinator : IDisposable
                 }
 
                 using IDisposable editLock = _session.AcquireProjectEditLock();
-                if (actions.IsProjectModified)
+                if (actions.HasUnsavedProjectChanges)
                 {
                     UnsavedProjectResolution unsavedResolution =
                         await actions.ResolveUnsavedProjectAsync(token).ConfigureAwait(false);

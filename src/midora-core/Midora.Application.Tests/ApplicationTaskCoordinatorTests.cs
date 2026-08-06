@@ -201,7 +201,7 @@ public sealed class ApplicationTaskCoordinatorTests
         {
             HasFunctionDrafts = true,
             DraftResolution = FunctionDraftResolution.Apply,
-            IsProjectModified = true,
+            HasUnsavedProjectChanges = true,
             UnsavedResolution = UnsavedProjectResolution.SaveProject
         };
 
@@ -234,7 +234,7 @@ public sealed class ApplicationTaskCoordinatorTests
         {
             HasFunctionDrafts = true,
             DraftResolution = FunctionDraftResolution.Cancel,
-            IsProjectModified = true
+            HasUnsavedProjectChanges = true
         };
 
         ApplicationTaskExecution<ProjectSwitchGuardResult<string>> execution =
@@ -254,7 +254,7 @@ public sealed class ApplicationTaskCoordinatorTests
         using TestContext fixture = TestContext.Create();
         RecordingSwitchActions actions = new(fixture.Session)
         {
-            IsProjectModified = true,
+            HasUnsavedProjectChanges = true,
             CanSaveProject = false,
             UnsavedResolution = UnsavedProjectResolution.SaveProject
         };
@@ -277,7 +277,7 @@ public sealed class ApplicationTaskCoordinatorTests
         using CancellationTokenSource cancellation = new();
         RecordingSwitchActions actions = new(fixture.Session)
         {
-            IsProjectModified = true,
+            HasUnsavedProjectChanges = true,
             UnsavedResolution = UnsavedProjectResolution.SaveProject,
             SaveEntered = new(TaskCreationOptions.RunContinuationsAsynchronously),
             SaveRelease = new(TaskCreationOptions.RunContinuationsAsynchronously)
@@ -532,7 +532,7 @@ public sealed class ApplicationTaskCoordinatorTests
         : IProjectSwitchGuardActions<string>
     {
         public bool HasFunctionDrafts { get; set; }
-        public bool IsProjectModified { get; set; }
+        public bool HasUnsavedProjectChanges { get; set; }
         public bool CanSaveProject { get; set; } = true;
         public FunctionDraftResolution DraftResolution { get; set; } =
             FunctionDraftResolution.Discard;

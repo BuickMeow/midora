@@ -314,3 +314,13 @@ Application Preferences 是与 `.midora` 独立的当前 Windows 用户本机状
 Requirement trace：输入为当前应用/播放状态、一个任务请求、Project 切换决策回调和已验证偏好；正式输出为结构化任务结果、阶段/锁投影及本机偏好快照。边界是单活动任务、无队列、明确 auto-Stop 白名单、一次性风险继续、Stopped-only 音频设置和原子偏好发布。异常、取消、播放 cleanup、偏好 I/O/格式/版本失败分别保留类别；所有路径释放自身 lease。任务状态、绝对输出路径、设备运行状态和偏好均不进入 Project/canonical；冻结的导出/渲染请求仍由既有 canonical 消费链执行。明确非目标是 WPF 表面、通知展示、任务历史持久化、多 Project/多任务并发、Preference sync/profile/import/export 和纯 UI 布局偏好。
 
 Q-NUI-004 只涉及 SRS 未固定的本机表示：当前实现使用 `%LOCALAPPDATA%\Midora\preferences-v1.json`、source-generated UTF-8 JSON v1、1 MiB 读取上限和同目录原子替换。该选择不影响 `.midora`、可听语义或跨机器文件兼容；产品所有者若选择其他本机存储，可替换 store 而不改变协调器或偏好领域契约。
+
+## 21. ADR-CORE-019（已接受，Q-NUI-005 局部暂停）：Project History 与编译事务
+
+决定：初版使用每 Project 一个、跨编辑器统一的线性 History。正式 Project 编辑先只读 Prepare，再以 `Apply/Undo` 可逆动作和冻结 `ProjectChangeSet` 进入 `ProjectCompilationSession`；每次 Execute、Undo、Redo 都在同一 Project Edit Lock 边界内完成源变更和 Incremental Compile。语义错误可以形成不可消费 canonical 并进入 History；基础设施异常必须反向恢复源数据并 Full Compile 校验，不得留下“源已变但 History 未记录”的半事务。
+
+Modified 不使用简单“Undo cursor 是否为零”。每个会话历史状态有不持久化的稳定 state ID，Save 成功把当前 ID 设为保存点；Undo/Redo 只有回到同一保存点才清除 Modified。Undo 后建立新分支会丢弃 redo entries，但不会让已经不可达的保存点与新分支错误等价。迁移/损坏回退等非普通命令变化以 external dirty reason 叠加，普通 Undo 不清除，成功 Save 才清除。
+
+未保存新 Project 的初始构建不进入 History且可保持 `IsModified = false`，但因没有持久化来源，`NeedsSaveBeforeClose = true`。Save Copy 不调用保存点提交，不改变当前 Modified、History 或来源。History entry 在会话内保留准备好的反向数据；SRS 没有定义容量或合并策略，初版不设置会静默丢失旧 Undo 的固定条目上限，手势级合并由调用方形成单个 prepared command。
+
+Requirement trace：输入为 Project、来源状态、可逆 command、保存成功和 external dirty reason；正式输出为全 Project History、操作名称、Modified/关闭保护和同步 canonical。边界是单线性分支、无操作不建历史、Project Edit Lock 排他和 command change-set 冻结。失败时恢复源并 Full Compile；rollback 再失败必须聚合报告。History/state ID/反向对象不持久化、不影响 canonical fingerprint；Project 源本身照常持久化。明确非目标是 Draft/文本本地 Undo、WPF focus routing、历史持久化、autosave/crash recovery，以及 Q-NUI-005 决定前所有会分配新稳定 ID 的 Undo 命令。

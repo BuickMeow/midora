@@ -159,4 +159,30 @@ public sealed class PreviewCompilerTests
             brokenReference,
             result.Diagnostics.Any(value => value.Code == "MIDORA1303"));
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void EventInstrumentPreviewClampsExtremeContainerLength(bool extremeGate)
+    {
+        var fixture = CompilerTestProject.Create();
+        long gateLength = extremeGate ? long.MaxValue : fixture.Instrument.TemplateLengthTicks;
+        if (!extremeGate)
+        {
+            fixture.Instrument.Envelopes.Add(new InstrumentEnvelope(fixture.Project)
+            {
+                ReleaseTicks = long.MaxValue
+            });
+        }
+
+        CanonicalCompiledResult result = new PreviewCompiler().CompileEventInstrument(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(
+                fixture.Instrument.Id,
+                GateLengthTicks: gateLength));
+
+        Assert.True(result.IsConsumable);
+        Assert.Equal(long.MaxValue, result.EndTick);
+        Assert.DoesNotContain(result.Diagnostics, value => value.Severity == DiagnosticSeverity.Error);
+    }
 }

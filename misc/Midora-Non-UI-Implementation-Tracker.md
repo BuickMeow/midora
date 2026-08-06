@@ -121,6 +121,7 @@
 | 2026-08-06 | Preview 临时 Project 上下文完整性 | Segment Preview 保留损坏 Instrument placeholder 并输出 MIDORA1305；Event Instrument/Segment Preview 保留相关有效 Library Folder，消除虚假 MIDORA1021；Compiler 193 tests；全仓基线 839 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-371f13d69cb84b519079f79318b3c5bf` |
 | 2026-08-06 | Segment Preview 绑定前置条件 | 未绑定与普通断裂绑定在 SegmentPreview context 中产生 MIDORA1306 Error，Damaged 仍使用 MIDORA1305；失败 Preview 在 Backend Prepare 前被拒绝并释放 edit lock；Compiler 195、Playback 52 tests；全仓基线 842 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-8549557fbe94435298edb7be6545b2df` |
 | 2026-08-06 | Compiler Int64 裁剪与 Loop 极值 | Note/Gate/Lifecycle/Template Note Off 先裁剪后加法；Project↔Content 差值优先换算；窗外 Event 先排除；Loop 以剩余量终止且 tail 饱和；Compiler 198 tests；全仓基线 845 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-ffea5b4bc45045d1b02e7a2dc163540c` |
+| 2026-08-06 | Event Instrument Preview Int64 范围 | Gate/Template/Release 容器长度使用饱和加法，非法负时长仍交由统一语义诊断；Compiler 200 tests；全仓基线 847 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-7f2e646808c74d82a6d3dda3af502376` |
 
 ## 7. 未解决风险
 

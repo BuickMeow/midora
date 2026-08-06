@@ -53,7 +53,11 @@ public sealed class PreviewCompiler
         long maximumRelease = instrument.Envelopes.Count == 0
             ? 0
             : instrument.Envelopes.Max(value => value.ReleaseTicks);
-        long previewLength = checked(gateLength + instrument.TemplateLengthTicks + maximumRelease + 1);
+        long previewLength = AddPreviewDurationClamped(
+            AddPreviewDurationClamped(
+                AddPreviewDurationClamped(gateLength, Math.Max(instrument.TemplateLengthTicks, 0)),
+                Math.Max(maximumRelease, 0)),
+            1);
         MidoraProject context = CreateContextShell(source);
         context.Conductor.Tempos.Clear();
         context.Conductor.Tempos.Add(new TempoChange(context, 0, tempo));
@@ -179,6 +183,11 @@ public sealed class PreviewCompiler
         .LastOrDefault()?.BeatsPerMinute
         ?? conductor.Tempos.OrderBy(value => value.Tick).FirstOrDefault()?.BeatsPerMinute
         ?? 120m;
+
+    private static long AddPreviewDurationClamped(long left, long right) =>
+        right >= long.MaxValue - left
+            ? long.MaxValue
+            : left + right;
 
     private static void CopyState(MidiInitialState source, MidiInitialState target)
     {

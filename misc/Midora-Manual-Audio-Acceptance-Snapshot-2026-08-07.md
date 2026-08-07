@@ -13,9 +13,9 @@
 | M-AUD-001 | 通过 | Segment 边界与隐藏内容符合预期。 |
 | M-AUD-002 | 失败 | 四个三和弦均可听见，整体先增强后回落；第一、第三、第四和弦末尾出现音量突然增大。其他听感符合预期。 |
 | M-AUD-003 | 通过，已澄清预期 | 可听到两个换调实例及实例边界附近的间隔；当前示例确实会产生该可听间隔，详见第 2 节。 |
-| M-AUD-004 | 人耳部分通过 | 听感与 M-AUD-001 一致；本次没有返回 callback/render-thread/underrun/fault 终端计数，因此只关闭听感部分。 |
-| M-AUD-005 | 人耳失败 | 听感与 M-AUD-002 一致，即同样存在第一、第三、第四和弦末尾音量突然增大；终端计数未返回。 |
-| M-AUD-006 | 人耳部分通过 | 听感与 M-AUD-003 一致；实例边界附近间隔符合当前示例；终端计数未返回。 |
+| M-AUD-004 | 通过 | 听感与 M-AUD-001 一致；Beats Flex、48 kHz；callback/render-thread allocations 均为 0 B、underruns=0、callback fault=False、renderer fault=None。 |
+| M-AUD-005 | 失败；技术指标通过 | 听感与 M-AUD-002 一致，即同样存在第一、第三、第四和弦末尾音量突然增大；Beats Flex、48 kHz；零分配、零 underrun 且无 callback/renderer fault。技术指标不抵消听感失败。 |
+| M-AUD-006 | 通过 | 听感与 M-AUD-003 一致，实例边界附近间隔符合当前示例；Beats Flex、48 kHz；callback/render-thread allocations 均为 0 B、underruns=0、callback fault=False、renderer fault=None。 |
 | M-AUD-007 | 阻塞，未进入播放 | 正式子进程启动前拒绝 managed `.dll` Worker；没有形成子进程 Segment 人耳结果。 |
 | M-AUD-008 | 阻塞，未进入播放 | 同一 Worker 路径错误；没有形成子进程 SubVoice 人耳结果。 |
 | M-AUD-009 | 阻塞，未进入播放 | 同一 Worker 路径错误；没有形成子进程 Tempo/Loop 人耳结果。 |
@@ -23,7 +23,7 @@
 | M-AUD-011 | 阻塞，未执行目标设备操作 | 在播放开始前被 managed `.dll` Worker 门拒绝；不能据此判断默认设备切换行为。 |
 | M-AUD-012 | 阻塞，未执行目标设备操作 | 在播放开始前被 managed `.dll` Worker 门拒绝；不能据此判断活动设备移除/禁用行为。 |
 
-M-AUD-004～006 只返回了“与 001～003 听感一致”。清单同时要求的零分配、underrun 和 fault 终端指标本轮未提供，因此这些技术指标仍待复测，不从听感陈述中推断为通过。
+M-AUD-004～006 的首次返回只包含“与 001～003 听感一致”；随后补充的完整控制台输出见第 7 节，已经关闭三项零分配、underrun、callback fault 与 renderer fault 技术指标。M-AUD-005 仍因人耳音量突增判定失败。
 
 ## 2. 对 M-AUD-003 的确认答复
 
@@ -67,7 +67,7 @@ src/midora-audio/Midora.Audio.Bass.Worker/bin/<Configuration>/net10.0/Midora.Aud
 3. 让人工 Console 使用发布门生成并校验的 `win-x64` Native AOT Worker `.exe`，或接受显式 Worker `.exe` 参数；同步修订人工验收前置发布命令和路径检查。
 4. 修复验收入口后先重跑 M-AUD-007～009，并保存 callback/child allocation、IPC underrun 与 fault 指标。
 5. 子进程正式播放成立后再执行 M-AUD-011/012；保存设备切换/移除的完整终端输出，确认受控失败、无崩溃、卡死、旧设备继续发声或悬挂音。
-6. 补录 M-AUD-004～006 本轮未返回的 callback/render-thread allocation、underrun 与 fault 指标；人耳结论与技术指标分别闭合。
+6. M-AUD-004～006 的 callback/render-thread allocation、underrun 与 fault 指标已由本次补充闭合；后续只需随相关修复复测 M-AUD-005，不需要为缺失终端输出单独复测 M-AUD-004/006。
 
 ## 6. 产品所有者原始结果与终端输出
 
@@ -194,4 +194,35 @@ System.IO.InvalidDataException: Formal realtime playback requires the win-x64 Na
    at Midora.Playback.PlaybackController.Start(Nullable`1 cursorTick, Nullable`1 endTick) in D:\Programing\midora\src\midora-core\Midora.Playback\PlaybackController.cs:line 121
    at Midora.Audio.Bass.Tests.Console.Program.RunLogicalRealtimeChild(String repositoryRoot, String soundFontPath, String example) in D:\Programing\midora\src\midora-audio\Midora.Audio.Bass.Tests.Console\LogicalModelExamples.cs:line 177
    at Midora.Audio.Bass.Tests.Console.Program.Main(String[] args) in D:\Programing\midora\src\midora-audio\Midora.Audio.Bass.Tests.Console\Program.cs:line 57
+```
+
+## 7. 产品所有者补充的 M-AUD-004～006 完整控制台输出
+
+以下内容按后续补充原样追加，不覆盖第 6 节首次返回。
+
+### M-AUD-004
+
+```text
+dotnet run --project $ConsoleProject -c Release --no-restore -- logic-realtime $Sf2 segments
+编译：consumable=True；events=96；instances=8；peak units=1
+逻辑模型实时播放：segments；设备=耳机 (Beats Flex)；actual=48000 Hz
+播放结束：callback allocations=0 B；render-thread allocations=0 B；underruns=0；callback fault=False；renderer fault=AudioRenderFault { Code = None, NativeErrorCode = 0, ZeroBasedPortNumber = -1, SampleFrame = -1 }
+```
+
+### M-AUD-005
+
+```text
+dotnet run --project $ConsoleProject -c Release --no-restore -- logic-realtime $Sf2 subvoices
+编译：consumable=True；events=516；instances=4；peak units=3
+逻辑模型实时播放：subvoices；设备=耳机 (Beats Flex)；actual=48000 Hz
+播放结束：callback allocations=0 B；render-thread allocations=0 B；underruns=0；callback fault=False；renderer fault=AudioRenderFault { Code = None, NativeErrorCode = 0, ZeroBasedPortNumber = -1, SampleFrame = -1 }
+```
+
+### M-AUD-006
+
+```text
+dotnet run --project $ConsoleProject -c Release --no-restore -- logic-realtime $Sf2 tempo-loop
+编译：consumable=True；events=106；instances=2；peak units=2
+逻辑模型实时播放：tempo-loop；设备=耳机 (Beats Flex)；actual=48000 Hz
+播放结束：callback allocations=0 B；render-thread allocations=0 B；underruns=0；callback fault=False；renderer fault=AudioRenderFault { Code = None, NativeErrorCode = 0, ZeroBasedPortNumber = -1, SampleFrame = -1 }
 ```

@@ -57,7 +57,7 @@
 2. 按 Q-NUI-003、Q-NUI-005、Q-NUI-009、Q-NUI-019 与 Q-NUI-023 实施 Export Settings v1、ID 分配 History、Definition/Lane 原子迁移、Bar:Beat:Tick/截断 Warning 和 TPQ `1..32767` 全链。
 3. 按 Q-NUI-011 与 Q-NUI-022 实施共享状态 ABI v2 和 held Preview 因果 Gate，并补进程内/子进程一致性、零分配与人工时延验收。
 4. 先用 canonical trace 与 PCM 包络测量复现 M-AUD-002/M-AUD-005 的实例末尾音量突增；再依据 SRS 决定 Compiler/renderer 修复或人工示例调整，本轮快照不得覆盖。
-5. 修复 Console 正式子进程验收入口，使其使用已发布并校验的 `win-x64` Native AOT `.exe`；依次复测 M-AUD-007～009、011～012，并补录 M-AUD-004～006 的终端技术指标。
+5. 修复 Console 正式子进程验收入口，使其使用已发布并校验的 `win-x64` Native AOT `.exe`；依次复测 M-AUD-007～009、011～012。M-AUD-004～006 的进程内终端技术指标已补齐。
 6. 继续 NUI-02/NUI-03 的剩余领域编辑命令、诊断矩阵和 §7～§12 组合覆盖；Full/Incremental oracle 持续作为每个增量的硬门。
 7. 发布前按 Q-NUI-013 再核验当日官方条款，把供应商原始许可文本与 notices 纳入最终包；未到实际发布日期时不得把该动态核验误报为已完成。
 
@@ -134,6 +134,7 @@
 | 2026-08-06 | Library Folder 编译诊断作用域 | 显式 Track 只验证参与 Instrument 引用的 Folder 依赖闭包；Whole Project 保持全量；未选保留名称/重复 ID 隔离与参与 Folder 严格失败；Compiler 213 tests；全仓基线 862 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-c7ab8b35c36e489ab813d7508e09eba8` |
 | 2026-08-07 | Q-NUI-002～Q-NUI-025 决策闭合记录 | 仅更新问题库与实施台账；Q-NUI-025 固定 JSON canonical integer、十进制文件名、protobuf `int64` 与直接修订开发期 v1；未修改源码、SRS、schema、descriptor、golden 或测试 | 全部现有问题均已回答；本轮未运行构建/测试，既有自动基线仍为 862 tests，不把未运行验证写成通过 |
 | 2026-08-07 | 人工音频验收首轮快照 | M-AUD-001～012 产品所有者结果；M-AUD-002/005 音量突增；M-AUD-003 实例/音符间隔源码核对；M-AUD-007～009/011/012 完整 managed Worker 拒绝堆栈；M-AUD-010 端点与 0 B callback | 仅记录/分析，未修改代码且未运行新自动测试；完整快照见 `misc/Midora-Manual-Audio-Acceptance-Snapshot-2026-08-07.md` |
+| 2026-08-07 | M-AUD-004～006 控制台指标补录 | Beats Flex、48 kHz；三项 callback/render-thread allocations 均为 0 B、underruns=0、callback fault=False、renderer fault=None；原始输出追加到同日快照 | 004/006 完整通过；005 技术指标通过但听感失败保持；仅文档补录，未修改代码或运行新测试 |
 
 ## 7. 未解决风险
 
@@ -146,7 +147,7 @@
 - Audio Render 的 canonical/输出事务、正式 Native AOT 文件链、应用级单音频任务锁和开始渲染前自动 Stop 已完成；不同工作块的复杂 BASS 输出已达到逐 sample 一致。2026-08-07 首轮人工结果发现 M-AUD-002/M-AUD-005 第一、第三、第四和弦末尾音量突增；CC11 在实例末尾 Reset 到 127 并放大仍可听 SF2 release 是高可信推断，尚待 canonical/PCM 自动复现确认。
 - M-AUD-003/M-AUD-006 中两个实例范围 `[0,2400)`/`[2400,4800)` 首尾相接，但当前示例事件会在跨实例边界产生 140 tick（约 194 ms）可听音符空隙；该听感符合当前构造，人工清单措辞需要后续澄清。
 - M-AUD-007～009/011/012 尚未测试目标行为：Console `GetWorkerPath` 返回 managed Worker `.dll`，被正式 Native AOT `.exe` 保护门在播放前拒绝。必须修复验收入口后复测，不能把这些堆栈误报为子进程音频或设备故障处理失败。
-- M-AUD-010 已在 Beats Flex 48 kHz 端点通过，27 callbacks、callback allocation 0 B、无 fault；M-AUD-004～006 只关闭人耳部分，callback/render-thread allocation、underrun 和 fault 指标本轮未返回。实际设备切换/移除和其余人耳失败不能只凭无设备 CI 结论替代。
+- M-AUD-004～006 已在 Beats Flex 48 kHz 完成进程内听感与技术指标：三项 callback/render-thread allocation 均为 0 B、underrun 为 0、无 callback/renderer fault；004/006 完整通过，005 仍因音量突增失败。M-AUD-010 同端点通过，27 callbacks、callback allocation 0 B、无 fault。实际设备切换/移除和其余人耳失败不能只凭无设备 CI 结论替代。
 - 共享控制 ABI v1 已闭合字段/ring 损坏边界，但整组状态快照仍可能跨两次同状态发布混合；Q-NUI-011 已确认升级内部 ABI v2，具体 seqlock/双缓冲协议及回归尚待实施，不能把逐字段原子误报为整快照原子。
 - 非 UI 发布门已经能生成并测试本地 Native AOT Worker 产物；Q-NUI-013 已给出产品层含 DLL 分发放行，但发布当日官方条款复核、供应商原始许可文本打包及实际产物验收尚未发生。当前本地测试产物仍不是可直接上传的正式发行包。
 - 单应用实例所有权和启动 IPC 已形成 WPF 无关的运行时组件；Q-NUI-014 已确认按交互登录 Session 隔离，主窗口激活与 Project Switch Guard 接线属于后续 UI composition。

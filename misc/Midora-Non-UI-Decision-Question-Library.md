@@ -1,6 +1,6 @@
 # Midora 初版非 UI 实施决定问题库
 
-状态：Q-NUI-001～Q-NUI-025 的产品答复均已记录；本次仅记录，不修改代码、SRS 或任何契约资产
+状态：Q-NUI-001～Q-NUI-025 的产品答复均已记录；Q-NUI-022 的钢琴卷帘适用范围已写入 SRS，代码仍待实施
 创建日期：2026-08-06
 最近更新：2026-08-07
 关联台账：`misc/Midora-Non-UI-Implementation-Tracker.md`
@@ -40,7 +40,7 @@
 | Q-NUI-019 | 采用推荐方案：Time Signature 变化 tick 立即开启新 Bar，允许前一小节缩短；另新增规则：每个发生在小节中途、因而截断旧小节的 Time Signature 变化都产生一条 Warning。 |
 | Q-NUI-020 | 采用推荐方案；初版 Global Event Scope Defaults 保持不可编辑的版本化空 marker，作用域继续由各正式事件语义固定。 |
 | Q-NUI-021 | 采用推荐方案；超过 SMF 四字节 VLQ 上限的 delta 继续结构化失败，不插入非 canonical Meta spacer。 |
-| Q-NUI-022 | 采用推荐方案；held Preview 使用因果 Gate、`Int64.MaxValue` 未结束哨兵和未渲染 frontier 生效规则。 |
+| Q-NUI-022 | 采用推荐方案；held Preview 使用因果 Gate、`Int64.MaxValue` 未结束哨兵和未渲染 frontier 生效规则。2026-08-07 进一步确认 Segment Editor 左侧 Pitch Ruler 琴键与单个 Logical Note 放置预览均复用该逻辑，并属于初版范围。 |
 | Q-NUI-023 | 选择备选 A：直接把开发期 v1 的领域、创建与 schema 合法范围收窄为 `1..32767`，拒绝高 TPQ v1。当前处于开发期，没有既有兼容承诺，不创建新版本或迁移。 |
 | Q-NUI-024 | Midora 稳定 ID 的核心值改为单个 C# `long`；不再以 `Guid`、`UInt128` 或两个 `ulong` 承载。Project 范围内的持久化单调递增 ID 足够满足身份需求。 |
 | Q-NUI-025 | 采用推荐方案：合法范围 `1..long.MaxValue`；JSON 使用 canonical 十进制 integer；对象文件名使用无符号、无前导零的十进制 ASCII；protobuf 使用标量 `int64` 并保留各外层字段号；直接重写开发期 v1 契约，不提供 128-bit v1 迁移器。 |
@@ -433,6 +433,13 @@
 - 需要产品所有者回答：是否采用推荐的“因果 Gate + `Int64.MaxValue` 未结束哨兵 + 未渲染 frontier 生效”方案？若更重视事后 canonical 完全等价请选择 A；若要求接近输入瞬间的 release 请选择 D，并接受新增回滚协议与仍需另定 GateLength 前因规则。
 - 产品回答：待填写。
 - 最终处理与提交：待回答后新增 ADR、held PreviewContext/Compiler 契约、backend/Worker Gate 命令、进程内与子进程一致性测试、Mapping GateLength 测试、不同 Render-Ahead/设备 block/松开边界测试及人工延迟验收。
+
+#### 2026-08-07 产品补充决定
+
+- 当前 SRS 核查：第 18.2.3 节已要求 Segment Editor 左侧 Pitch Ruler “点击键位可发起预览”，但未规定 held Gate 的编译与音频语义；SRS 原先没有规定放置单个 Logical Note 时的预览。
+- 产品补充：两项都属于初版范围，并且都是 Gate End 前最终 Gate Length 未知的预览，统一采用 Q-NUI-022 已确认的推荐方案。
+- 规格处理：已在 SRS 第 9.7.7、12.2.4、13.22.7、13.24.5、18.2.3～18.2.4、20.19 节和 INV-039 中固定同一因果 Gate、`Int64.MaxValue` 哨兵、未渲染 frontier、清理、互斥及编辑不受预览失败阻断的规则。
+- 代码状态：本次不改代码；实现时不得为钢琴卷帘增加直接 MIDI 或独立固定长度试听捷径，须与 Event Instrument / SubVoice held Preview 共用协议、编译和音频链测试。
 
 ### Q-NUI-023：Project TPQ 合法范围与 SMF 15-bit division 上限
 

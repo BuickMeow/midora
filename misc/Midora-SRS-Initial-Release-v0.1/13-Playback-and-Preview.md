@@ -1281,6 +1281,30 @@ previewTempo
 ```
 velocity 在 Gate Start 固定。
 鼠标按下后在同一键上上下移动，不会改变已触发 velocity。
+
+### 13.22.7 held Preview 的因果 Gate
+
+以下初版交互统一属于 held Preview：
+
+```text
+Event Instrument / SubVoice 虚拟键盘按住预览
+Segment Editor 左侧 Pitch Ruler 琴键按住预览
+Segment Editor 放置单个 Logical Note 时的草稿音符预览
+```
+
+它们必须复用同一套 Gate Start / Gate End 控制、Preview CompileContext、canonical 生成与正式实时音频链，不得为钢琴卷帘另写裸 MIDI 试听路径。
+
+Gate Start 时最终 Gate Length 尚未知，因此：
+
+```text
+MappingContext.gateLength = Int64.MaxValue
+```
+
+`Int64.MaxValue` 只表示 Gate 尚未结束。Gate End 到达后冻结实际 Gate Length，并固定从 producer 尚未渲染的第一个 sample frame 起影响后续输出；不得回写已消费或已进入 Render-Ahead ring 的 PCM，不得用 `previewGateLength` 或预测值冒充最终值。保持用户当前 Render-Ahead 设置，不为 held Preview 静默改用更小的专用缓冲。
+
+从 Gate End 输入到对应 Release 生效的延迟必须计入并报告预览交互延迟；最坏情况允许包含当前 Render-Ahead。该因果结果不承诺与事后使用最终 Gate Length 执行一次固定长度预览完全等价。
+
+Pointer capture 丢失、窗口失焦、手势取消、预览错误、Stop 或预览对象失效时，必须进入确定的 Gate End / Reset 清理，不能遗留活动 Note、Channel 状态或预览任务。
 ---
 ## 13.23 SubVoice 预览
 单独预览某条 SubVoice 时：
@@ -1332,6 +1356,42 @@ Segment 预览始终使用项目实际 Tempo Map。
 Event Instrument 预览不改变主时间线播放光标。
 Segment 预览也不改变主时间线播放光标。
 Segment 预览播放时，UI 可以显示独立的 Segment 预览光标，但不改变主播放光标状态。
+
+### 13.24.5 Segment Editor 钢琴卷帘交互预览
+
+Segment Editor 初版必须提供：
+
+```text
+左侧 Pitch Ruler 琴键按住预览
+放置单个 Logical Note 时的草稿音符预览
+```
+
+两者都使用当前 Segment 所属 Logical Track 绑定的 Event Instrument；绑定缺失、损坏、不兼容或无法编译时，按普通 Preview 失败规则报告，不得改用通用钢琴音色、裸 SoundFont preset 或其他 Event Instrument 代替。
+
+Pitch Ruler 预览：
+
+```text
+鼠标左键按下目标琴键 = Gate Start
+鼠标左键松开或交互取消 = Gate End
+pitch = 被按下琴键的 MIDI note number
+velocity = 当前 Event Instrument 预览 velocity
+实际 Gate Length = 在本次固定 previewTempo 下由按住时长换算的 tick 长度
+不创建或修改 Project Note
+```
+
+单音符放置预览只适用于“新建一个 Logical Note”的单次手势，不自动扩展到移动、缩放已有 Note、批量 Paste、Duplicate 或批量编辑：
+
+```text
+合法放置手势开始 = Gate Start
+pitch / velocity / startTick = 当前草稿 Logical Note 的值
+拖动期间最终 Note Length 未知
+成功提交 = 以最终提交的 Note Length 作为实际 Gate Length 发送 Gate End
+取消或提交失败 = Gate End 后 Reset，不创建 Project Note
+```
+
+草稿预览使用该 Segment / Logical Track 的临时 Preview CompileContext；在可解析时，按草稿 `startTick` 对应的项目位置读取 Tempo 与 Logical Parameter 有效状态。预览本身不写入 Project、不进入 Undo / Redo、不标记 Modified，也不改变一次放置手势只形成一个 Project Undo 的规则。
+
+如果当前播放状态、SF2、输出设备或编译状态使预览不可用，合法的 Note 放置仍必须能够提交；预览失败不得回滚、阻止或额外拆分该 Project 编辑命令。Pitch Ruler 点击没有 Project 编辑副作用，只报告预览不可用。
 ---
 ## 13.25 空项目播放
 空项目在有有效 SF2 的情况下允许点击播放。

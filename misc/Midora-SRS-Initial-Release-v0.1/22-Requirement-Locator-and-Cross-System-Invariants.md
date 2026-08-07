@@ -47,6 +47,7 @@
 | INV-036 | 初版输出模板固定：整曲 MIDI / 音频为 `<ProjectStem>.mid/.wav`，来源依次为 Project 名称、当前 `.midora` stem、模式 fallback；分 Track 为 `<NN> - <LogicalTrackDisplayName>.mid/.wav`，逐 Port MIDI 为 `Port <PP>.mid`，Readme 为 `README.md`。MIDI Conductor Track Name 为 `Conductor`，事件 Track Name 为原始名称或 fallback 加 ` / Port <P>`，且不经过文件名合法化。多文件模式选择完整输出目录，不自动增加嵌套目录。 |
 | INV-037 | Midora 初版定位为免费、开源、非商业软件，但 BASS/BASSMIDI/BASSWASAPI 不属于 Midora 的开源许可范围。正式分发第三方二进制前必须按实际发布主体、收入方式、平台、分发方式和发布时有效条款完成许可核验并提供 notices；条件不明或商业化时不得沿用免费非商业结论。 |
 | INV-038 | Midora 自有源代码固定使用根目录 `LICENSE` 中未经自定义修改的标准 MIT License，版权署名为 `Copyright (c) 2026 Midora contributors`；项目自身的非商业发布定位不得转化为限制下游商业使用的附加许可条件。 |
+| INV-039 | Event Instrument / SubVoice 虚拟键盘、Segment Editor Pitch Ruler 和单个 Logical Note 放置预览必须复用同一 held Preview 因果 Gate：Gate End 前 `MappingContext.gateLength = Int64.MaxValue`，Gate End 从 producer 尚未渲染的第一个 frame 起生效，不回写已消费或已缓冲 PCM；钢琴卷帘不得另建裸 MIDI 试听路径。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|
@@ -62,7 +63,7 @@
 | Release、Loop、Envelope、Overlap | 第 10 章 |
 | Track、Segment、裁剪与 Logical Note | 第 11 章 |
 | CompileContext、资源分配、Compiled Result | 第 12 章 |
-| 播放、预览、BASSMIDI、输出设备、采样率、buffer、Limiter | 第 13 章 |
+| 播放、预览、held Preview 因果 Gate、BASSMIDI、输出设备、采样率、buffer、Limiter | 第 9、12、13、18、20 章 |
 | MIDI 文件结构与导出 | 第 14 章 |
 | 普通 RIFF/WAVE、自定义采样率与离线渲染 | 第 15 章 |
 | `.midora` package、schema、损坏与事务 | 第 16 章 |

@@ -610,7 +610,21 @@ Project End Marker
 预渲染上下文
 ```
 这些由 第 10 章《实例生命周期、Loop、Envelope 与重叠》、第 11 章《Logical Track、Segment 与编曲语义》、第 12 章《编译系统与 Canonical Compiled Result》、第 13 章《播放与预览》 继续细化。
-### 9.7.7 Context 不暴露对象图
+### 9.7.7 gateLength 与 held Preview
+
+普通编译和固定长度预览中的 `gateLength` 必须是已知、合法的最终 Gate Length。
+
+只有第 13.22.7、13.24.5 节定义的 held Preview 因果 Gate 子上下文允许在 Gate End 尚未发生时使用：
+
+```text
+gateLength = Int64.MaxValue
+```
+
+该值是“Gate 尚未结束”的固定哨兵，不表示一个可持久化、可导出或可作为普通 Logical Note 长度使用的超长 Gate。Mapping Function 必须能够读取该值；编译器、预览消费者和 UI 不得把它夹取、换算或猜测为 `previewGateLength`。Gate End 后，只有尚未渲染的边界及后续 Release / Tail / Reset 使用冻结的实际 Gate Length；已经消费或已经缓冲的结果不回写，也不承诺与事后使用最终 Gate Length 执行一次固定长度编译完全等价。
+
+该哨兵只属于临时 Preview CompileContext，不进入 Project、`.midora`、MIDI 导出、音频文件渲染或普通 canonical compiled result。
+
+### 9.7.8 Context 不暴露对象图
 初版 MappingContext 不提供：
 ```text
 完整 Project 对象图
@@ -621,7 +635,7 @@ Project End Marker
 可写 API
 ```
 ---
-### 9.7.8 Logical Parameter Mapping Context
+### 9.7.9 Logical Parameter Mapping Context
 Logical Parameter Mapping 的 C# 函数可接收 Logical Parameter 专用上下文。
 专用字段至少包括：
 ```text

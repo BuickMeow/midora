@@ -1643,5 +1643,9 @@ Compile 和 MIDI Export 不依赖 SF2 加载。
 12. 后台更新不抢焦点或改变 Selection；
 13. `.midora` 不保存 UI View State；
 14. 初版所有正式 UI 文案使用 English；
-15. 初版正式尺寸与布局验收以 Windows 100% DPI 为准。
+15. 初版正式尺寸与布局验收以 Windows 100% DPI 为准；
+16. Segment Editor 左侧 Pitch Ruler 按下即开始、松开即结束单键 held Preview，且不创建 Project Note；
+17. 新建单个 Logical Note 的放置手势按草稿 pitch / velocity / startTick 发起 held Preview，提交时以最终 Note Length 结束 Gate，取消或失败后无残留发声；
+18. 上述两种钢琴卷帘预览与 Event Instrument / SubVoice 虚拟键盘复用同一因果 Gate、`Int64.MaxValue` 哨兵、未渲染 frontier、互斥、零分配和清理规则，不存在独立裸 MIDI 路径；
+19. 无 SF2、预览编译失败、已有播放任务或输出不可用时，合法单音符放置仍可提交，并且只形成一个 Project Undo。
 具体像素、控件类、颜色值、动画参数和内部实现应在 UI 原型、实现设计或实现设计继续确定，但不得改变本章已经明确的交互语义和系统边界。

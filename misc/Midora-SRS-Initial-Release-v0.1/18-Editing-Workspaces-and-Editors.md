@@ -124,9 +124,15 @@ Segment Editor 以 Segment local tick 为主，同时可显示映射后的 Proje
 - MIDI Note 60 显示为 C4；
 - 黑键使用升号；
 - 初版不在键位上写 MIDI Note 编号；
-- 点击键位可发起预览，但不创建 Project Note。
+- 鼠标左键按下键位发起 held Preview，松开或取消结束 Gate；
+- 该预览不创建 Project Note，并严格使用第 13.22.7、13.24.5 节的因果 Gate 与当前 Segment 绑定的 Event Instrument。
 ### 18.2.4 Note Editor
 使用 piano roll 编辑 Logical Notes。
+
+初版在每次新建单个 Logical Note 的放置手势中预览当前草稿音符。预览从合法放置手势开始持续到成功提交、取消或失败清理；最终 Note Length 在手势结束前未知，因此严格复用第 13.22.7、13.24.5 节的因果 Gate，不得另行猜测固定 Gate Length 或直接发送 MIDI。
+
+预览是编辑手势的临时运行时副作用，不是 Project 数据。预览不可用或失败不得阻止原本合法的 Note 提交，也不得增加额外 Undo entry。移动、缩放已有 Note、批量 Paste、Duplicate 和批量编辑不因本条要求自动发起预览。
+
 active crop window 外内容：
 - 保留；
 - 可见但弱化；

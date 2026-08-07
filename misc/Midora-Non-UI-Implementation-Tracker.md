@@ -55,7 +55,7 @@
 
 1. 按已闭合的 Q-NUI-024/Q-NUI-025 一次性重构 `MidoraId`/`nextStableId`、Mapping ABI、开发期 v1 持久化契约及所有受影响测试，避免在旧 128-bit 基线上继续扩张代码。
 2. 按 Q-NUI-003、Q-NUI-005、Q-NUI-009、Q-NUI-019 与 Q-NUI-023 实施 Export Settings v1、ID 分配 History、Definition/Lane 原子迁移、Bar:Beat:Tick/截断 Warning 和 TPQ `1..32767` 全链。
-3. 按 Q-NUI-011 与 Q-NUI-022 实施共享状态 ABI v2 和 held Preview 因果 Gate，并补进程内/子进程一致性、零分配与人工时延验收。
+3. 按 Q-NUI-011 与 Q-NUI-022 实施共享状态 ABI v2 和 held Preview 因果 Gate；Event Instrument/SubVoice 虚拟键盘、Segment Editor Pitch Ruler 与单个 Logical Note 放置预览必须共用该逻辑，并补进程内/子进程一致性、编辑失败隔离、零分配与人工时延验收。
 4. 先用 canonical trace 与 PCM 包络测量复现 M-AUD-002/M-AUD-005 的实例末尾音量突增；再依据 SRS 决定 Compiler/renderer 修复或人工示例调整，本轮快照不得覆盖。
 5. 修复 Console 正式子进程验收入口，使其使用已发布并校验的 `win-x64` Native AOT `.exe`；依次复测 M-AUD-007～009、011～012。M-AUD-004～006 的进程内终端技术指标已补齐。
 6. 继续 NUI-02/NUI-03 的剩余领域编辑命令、诊断矩阵和 §7～§12 组合覆盖；Full/Incremental oracle 持续作为每个增量的硬门。
@@ -159,7 +159,7 @@
 - 正常 Track 对 Damaged Event Instrument 占位的绑定已按 §16.19.3 作为编译 Error；普通断裂引用仍按未绑定 Track 的 Info 语义保留，消费者不得把两者合并成同一级别。
 - Q-NUI-020 已确认 Global Event Scope Defaults 在初版保持不可编辑的版本化空 marker；现有固定事件作用域继续有效，不新增 schema/History/compiler 配置分支。后续需把该产品解释写入正式规格，消除 SRS “可修改 Project Content”的字面冲突。
 - Q-NUI-021 已确认 SMF 单个 delta 超过 `0x0FFFFFFF` 时保持结构化失败且不发布文件；不得向 canonical 事件之外插入 Meta spacer。现有实现仍需按决定补 exporter/task 级完整边界证据。
-- Q-NUI-022 已确认 held Preview 的因果 Gate、`Int64.MaxValue` 未结束哨兵和未渲染 frontier 规则；held Preview 尚未实现，不能用裸 MIDI、猜测 Gate Length 或回写已缓冲 PCM 冒充。
+- Q-NUI-022 已确认 held Preview 的因果 Gate、`Int64.MaxValue` 未结束哨兵和未渲染 frontier 规则；2026-08-07 又明确把 Segment Editor Pitch Ruler 与单个 Logical Note 放置预览纳入初版并复用同一逻辑。SRS 已补齐，held Preview 代码尚未实现，不能用裸 MIDI、猜测 Gate Length、回写已缓冲 PCM 或让预览失败阻断合法 Note 提交来冒充。
 - Q-NUI-023 已选择备选 A：把开发期 v1 的领域、创建和 schema 全部收窄到 `1..32767` 并拒绝高 TPQ v1；当前代码仍接受到 `Int32.MaxValue`，因此实现、descriptor/schema/golden 和 32767/32768 边界回归尚待完成。
 - Q-NUI-024/Q-NUI-025 已确认 `MidoraId`/Project allocator 改为单个正 `long`，并固定 JSON canonical integer、十进制文件名和 protobuf 标量 `int64`。这与当前 `Guid`/`UInt128`、32 位十六进制、protobuf high/low 及现行 SRS 明确冲突；后续必须先同步修订 SRS/ADR，再一次性实施开发期 v1 契约与代码全链，不能继续把 128-bit 表示视为冻结发布承诺。
 - Audio Render 对损坏 Event Instrument 绑定的选择已交还 canonical 编译器判定：Whole Mix 整体失败，Per Logical Track 仅对应项失败并允许其他项继续；普通未绑定/断裂引用仍保持 Info 与无输出目标语义。

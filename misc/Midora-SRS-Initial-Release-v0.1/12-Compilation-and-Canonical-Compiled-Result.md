@@ -153,6 +153,17 @@ Event Instrument 预览时，临时 Logical Note 的 pitch、velocity、Gate Len
 Segment 预览如果绑定到项目时间位置，应按该位置解析 Tempo、Time Signature、Key Signature 等全局上下文。
 预览编译不占用 Project 正式编译资源，但仍应模拟 Channel Group 需求。如果单实例需求超过系统上限，应报错。
 Segment 预览应遵守 Segment End 硬边界和 Reset 规则。
+
+第 13.22.7、13.24.5 节定义的 held Preview 是唯一允许 Gate Length 在 Gate Start 时尚未确定的 Preview CompileContext。它必须复用同一 Event Instrument 展开、Mapping、生命周期、资源分配、同 tick 排序和 canonical 消费管线，但采用因果增量语义：
+
+```text
+Gate Start 至 Gate End 前：MappingContext.gateLength = Int64.MaxValue
+Gate End：冻结该交互入口定义的实际 Gate Length
+生效边界：producer 尚未渲染的第一个 sample frame
+禁止：回写已消费或已缓冲 PCM、猜测最终 Gate Length、绕过 canonical 直接发送 MIDI
+```
+
+因果 Gate 的前缀结果不要求与 Gate End 后使用最终 Gate Length 重新执行一次固定长度编译字节等价；相同 Gate Start 输入、Gate End 输入、Tempo / sample 映射、Render-Ahead 和有效资源状态仍必须产生确定一致的因果结果。
 ---
 ## 12.3 编译 tick 范围
 ### 12.3.1 左闭右开区间

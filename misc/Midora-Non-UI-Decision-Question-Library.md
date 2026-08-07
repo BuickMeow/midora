@@ -1,7 +1,8 @@
 # Midora 初版非 UI 实施决定问题库
 
-状态：进行中
+状态：Q-NUI-001～Q-NUI-024 的产品答复已记录；Q-NUI-025 待确认；本次仅记录，不修改代码、SRS 或任何契约资产
 创建日期：2026-08-06
+最近更新：2026-08-07
 关联台账：`misc/Midora-Non-UI-Implementation-Tracker.md`
 
 本文只收录实施“全部非 UI 初版能力”过程中真正需要产品所有者决定、确认或修改的问题。SRS 已规定的事实以及 `misc/Midora-SRS-Code-Conformance-Audit-2026-08-05.md` 中已确认的 1A～25.1A 不重复登记。
@@ -13,7 +14,67 @@
 - 每个问题必须记录：SRS/源码依据、事实与不确定性、影响范围、推荐方案、备选方案、当前实施状态、产品回答和最终处理提交。
 - 已回答问题保留原编号，不删除，作为决定审计链。
 
-## 2. 当前开放问题
+## 2. 2026-08-07 产品答复与实施判定
+
+本节是 Q-NUI-002～Q-NUI-024 的当前权威答复。第 3 节保留问题提出时的完整事实、影响和备选方案；其中原有的“待确认”“待填写”和“等待回答”字段是答复前快照，不再表示当前状态。本轮按产品所有者要求只记录决定，不修改源码、SRS、JSON Schema、protobuf descriptor、golden bytes 或测试基线。
+
+| 编号 | 产品答复与实施判定 |
+|---|---|
+| Q-NUI-002 | 采用推荐方案：初版 v1 没有需要支持的历史格式；保留严格版本预检和空迁移注册表。 |
+| Q-NUI-003 | 采用推荐方案中的字段、默认值、任务快照与原子 History 语义；版本处理改为直接修订开发期 v1，不创建 v2，也不创建 v1→v2 迁移。当前 v1 尚未冻结或发布，开发期变化不构成升级；版本只在冻结时确定。 |
+| Q-NUI-004 | 采用推荐方案；现有本机 Preferences 实现获确认。 |
+| Q-NUI-005 | 采用推荐方案：会话内 `nextStableId` 不回退，Redo 恢复原 ID，仅有已撤销瞬态分配造成的计数器空洞不单独保持 Modified。 |
+| Q-NUI-006 | 采用推荐方案；现有 Last Known Instrument Name 维护时机获确认。 |
+| Q-NUI-007 | 采用推荐方案；现有 Lane 重绑定取整、Enum 最近值和插值转换获确认。 |
+| Q-NUI-008 | 采用推荐方案；现有非空 Chain 删除确认及空 Chain sentinel 表示获确认。 |
+| Q-NUI-009 | 采用推荐方案：Definition 结构编辑必须显式迁移并作为单个原子 History entry 处理全部引用 Lane。 |
+| Q-NUI-010 | 采用推荐方案；空 SubVoice 保持静音目标且不产生额外 Info。 |
+| Q-NUI-011 | 采用推荐方案，允许内部共享音频状态快照 ABI 在开发期升级到 v2。该 ABI 是内部版本号，因此不适用 Q-NUI-003 的外部 Project 文件开发期版本原则。 |
+| Q-NUI-012 | 采用推荐方案；现有 SDK、NuGet lock 与发布门锁定策略获确认。 |
+| Q-NUI-013 | 产品所有者放行正式包含 BASS/BASSMIDI/BASSWASAPI DLL 的分发。公开身份为 `Zacksony`；产品无销售、广告、订阅、付费分发或其他形式收入；初版为 Windows `win-x64`，未来可能多平台；通过 GitHub Release 发布；发布当日必须按官方条款重新确认免费资格；最终包必须同时包含供应商要求的原始许可文本和现有 notices。该答复记录发布主体与产品事实及产品放行，不替代发布当日外部条款核验。 |
+| Q-NUI-014 | 采用推荐方案；单应用实例按 Windows 交互登录 Session 隔离。 |
+| Q-NUI-015 | 采用推荐方案；Save Copy 目标与当前 Project 文件相同时直接拒绝。 |
+| Q-NUI-016 | 采用推荐方案；缺失 metadata 时使用 package 打开事务注入的 UTC `TimeProvider` 当前值同时初始化恢复 `createdAtUtc`/`modifiedAtUtc`，并保留既定恢复 Error/Modified 语义。 |
+| Q-NUI-017 | 采用推荐方案；只有实际进入不可逆关闭/切换边界后才暂停工程时长，失败恢复不补计暂停窗口。 |
+| Q-NUI-018 | 采用推荐方案；Recent Projects 使用独立本机 MRU 文件与现有更新/去重策略。 |
+| Q-NUI-019 | 采用推荐方案：Time Signature 变化 tick 立即开启新 Bar，允许前一小节缩短；另新增规则：每个发生在小节中途、因而截断旧小节的 Time Signature 变化都产生一条 Warning。 |
+| Q-NUI-020 | 采用推荐方案；初版 Global Event Scope Defaults 保持不可编辑的版本化空 marker，作用域继续由各正式事件语义固定。 |
+| Q-NUI-021 | 采用推荐方案；超过 SMF 四字节 VLQ 上限的 delta 继续结构化失败，不插入非 canonical Meta spacer。 |
+| Q-NUI-022 | 采用推荐方案；held Preview 使用因果 Gate、`Int64.MaxValue` 未结束哨兵和未渲染 frontier 生效规则。 |
+| Q-NUI-023 | 选择备选 A：直接把开发期 v1 的领域、创建与 schema 合法范围收窄为 `1..32767`，拒绝高 TPQ v1。当前处于开发期，没有既有兼容承诺，不创建新版本或迁移。 |
+| Q-NUI-024 | Midora 稳定 ID 的核心值改为单个 C# `long`；不再以 `Guid`、`UInt128` 或两个 `ulong` 承载。Project 范围内的持久化单调递增 ID 足够满足身份需求。该方向已确认，但具体持久化编码由 Q-NUI-025 单独闭合。 |
+
+版本判定以产品答复为准：开发期尚未冻结的外部 Project 文件契约直接修订 v1；不得仅因为开发过程中的字段或范围变化创建 v2。内部 ABI 有独立生命周期，Q-NUI-011 明确允许升级。后续冻结时再确定首个正式版本的完整 schema、descriptor 与 golden 资产。
+
+### Q-NUI-024：`MidoraId` 改为单个 `long` 的稳定 ID
+
+- 类型：大决定，已确认方向。
+- 记录日期：2026-08-07。
+- 产品回答：`Midora.Domain.MidoraId` 重构为纯粹以单个 C# `long` 为核心的 ID；Project 范围内单调递增 ID 已足够，不再使用 `Guid`、`UInt128` 或两个 `ulong`，以减少 ID 运算和序列化/反序列化转换。
+- 当前源码事实：`MidoraId` 当前声明为 `record struct MidoraId(Guid Value)`，通过高低 64 位与 `UInt128` 相互转换；`MidoraProject.NextStableId` 当前为 `UInt128`；Mapping ABI v1、持久化 codec、schema、protobuf、文件名、descriptor/golden 与大量测试都依赖 128-bit 表示。
+- 当前 SRS 冲突：第 8.52.2 节建议不少于 128-bit；第 16.5.3、16.11.2、16.13.2 节以及第 00 章固定 32 位小写十六进制文本和 protobuf `StableId { fixed64 high; fixed64 low; }`。产品答复改变了该基线，后续实施必须显式修订相应规格记录，不能把旧 SRS 描述继续当作有效要求。
+- 保持不变的语义：ID 仍是 Project 内全对象类型共享的稳定身份；名称、位置、tick、Port、Channel 和 ID 数值大小都不构成业务排序；分配仍由 Project 负责，保持正值、持久化单调递增、不补缺、不复用和全局唯一；复制生成新 ID，Undo/Redo 恢复原 ID。`0` 与负值不作为合法稳定 ID；到达 `long.MaxValue` 后必须结构化拒绝继续分配。
+- 影响范围：Domain 公共值类型和 Project allocator；所有引用、集合键、排序 tie-break 与 canonical fingerprint；Mapping ABI v2；JSON/对象文件名/protobuf v1、descriptor、golden bytes、迁移预检与损坏诊断；应用 History、Compiler、Playback、MIDI、Audio Render、持久化和全仓测试 fixture。
+- 版本处理：依照 Q-NUI-003 与 Q-NUI-023 的开发期原则，后续实现直接修订尚未冻结的 v1 契约资产，不因本次变化创建 Project file v2；内部 Mapping ABI 按 Q-NUI-011 的决定升级。
+- 当前实施状态：仅记录；没有修改任何代码、SRS、schema、descriptor、golden 或测试。精确持久化编码先由 Q-NUI-025 闭合。
+
+### Q-NUI-025：单 `long` 稳定 ID 的 v1 精确持久化编码
+
+- 类型：大决定。
+- 状态：待确认；在确认前暂停 Q-NUI-024 的代码和契约资产改写。
+- 发现日期：2026-08-07。
+- 已确认事实：Q-NUI-024 已确定内存核心和 Project allocator 使用正 `long`；Q-NUI-003/Q-NUI-023 已确定开发期外部格式直接修订 v1。仅凭“使用 long”仍不能唯一决定 JSON 是数字还是字符串、对象文件名格式，以及 protobuf 使用 `int64`、`sint64` 或 `fixed64`。
+- 影响范围：`.midora` v1 的 JSON Schema、对象文件名、protobuf descriptor/golden bytes、严格读取与损坏诊断、确定性 ZIP bytes，以及其他语言或 JavaScript 工具读取超出 `2^53-1` 的 JSON 数字时的精度。
+- 推荐方案：合法范围统一为 `1..long.MaxValue`；JSON 中稳定 ID 与 `nextStableId` 使用十进制 JSON integer，原始 token 必须匹配 `[1-9][0-9]*`，拒绝小数和指数写法；对象文件名 `<id>` 使用无正负号、无前导零的 invariant 十进制 ASCII；protobuf 将各外层现有 ID 字段直接改为标量 `int64` 并保留这些外层字段号，删除嵌套 `StableId high/low`；protobuf 对正数使用标准 `int64` varint；所有读取器拒绝 0、负值、非 canonical 文件名和溢出。直接重写开发期 v1 descriptor/schema/golden，不提供 128-bit v1 迁移器。
+- 推荐依据与限制：这是与 C# `long` 最直接、转换最少的表示，典型递增小 ID 的 protobuf varint 也更紧凑。限制是通用 JavaScript JSON 消费者无法精确表示大于 `2^53-1` 的数字；Midora 的正式 .NET 读取器不受该限制，但第三方工具必须使用任意精度整数解析。
+- 备选方案及差异：A. JSON 和文件名使用 canonical 十进制字符串、protobuf 仍用 `int64`；跨语言 JSON 精度更稳健，但保留文本解析。B. JSON integer、文件名十进制、protobuf 使用 `fixed64`；每个值固定 8 bytes，但语义是 unsigned wire 且典型小 ID 更大。C. protobuf 使用 `sint64`；正数需要 ZigZag，收益不成立且 wire 与常规 `int64` 不同。D. 保留嵌套 `StableId` 但只留一个字段；仍保留无必要的消息层和转换。
+- 需要产品所有者回答：是否采用推荐的“JSON integer + 十进制文件名 + protobuf 标量 `int64` + 直接修订 v1”方案？若更重视任意 JSON 工具的无损读取，请选择备选 A。
+- 产品回答：待填写。
+- 最终处理与提交：本次不实施；收到答复后，与 Q-NUI-024 一并更新规格、ADR、Domain、Mapping ABI、持久化契约与完整覆盖测试。
+
+## 3. 问题原文与影响分析（答复前快照）
+
+以下条目的状态、产品回答和最终处理字段保留为 2026-08-07 答复前的原始快照；当前决定以第 2 节为准。
 
 ### Q-NUI-002：初版 `.midora` 需要迁移的历史格式基线
 
@@ -389,7 +450,7 @@
 - 产品回答：待填写。
 - 最终处理与提交：待回答后更新 TPQ ADR、创建验证/诊断、必要的 schema 或兼容说明，以及 32767/32768/Int32.MaxValue 的创建、重开、编译与导出矩阵测试。
 
-## 3. 问题模板
+## 4. 问题模板
 
 ### Q-NUI-XXX：标题
 
@@ -408,7 +469,7 @@
 - 产品回答：
 - 最终处理与提交：
 
-## 4. 已回答问题
+## 5. 已回答问题
 
 ### Q-NUI-001：损坏内嵌 SF2 的再次保存表示
 
@@ -427,7 +488,7 @@
 - 产品回答：2026-08-06，采用推荐方案。
 - 最终处理与提交：代码和测试已完成，提交 `4efb0f6`。
 
-## 5. 人工试听 / 手动硬件测试问题
+## 6. 人工试听 / 手动硬件测试问题
 
 本节不是产品决定。只在自动测试无法替代时，集中记录可复制命令、前置条件、预期结果和产品所有者返回结果。
 

@@ -493,13 +493,13 @@
 
 本节不是产品决定。只在自动测试无法替代时，集中记录可复制命令、前置条件、预期结果和产品所有者返回结果。
 
-完整命令、前置条件、逐项预期和返回模板见 `misc/Midora-Manual-Audio-Acceptance.md`。当前待执行项目为：
+完整命令、前置条件、逐项预期和返回模板见 `misc/Midora-Manual-Audio-Acceptance.md`。2026-08-07 首轮结果及完整错误输出保存在 `misc/Midora-Manual-Audio-Acceptance-Snapshot-2026-08-07.md`；后续复测不得覆盖该快照。
 
 | 编号 | 类型 | 内容 | 状态 |
 |---|---|---|---|
-| M-AUD-001～003 | 离线人耳试听 | Segment 边界、SubVoice/Mapping、Tempo/Loop | 待执行 |
-| M-AUD-004～006 | 实时进程内对照 | 与离线语义一致、无爆音/悬挂/断续 | 待执行 |
-| M-AUD-007～009 | 正式子进程拓扑 | 与进程内/离线语义一致、物理输出正常 | 待执行 |
-| M-AUD-010 | 物理设备 | enabled output endpoint 枚举与静音 callback probe | 待执行 |
-| M-AUD-011 | 物理设备 | 跟随系统默认时切换默认输出的受控失败 | 待执行 |
-| M-AUD-012 | 物理设备 | 活动 USB/蓝牙输出移除或禁用的受控失败 | 待执行；无安全设备时可记环境不具备 |
+| M-AUD-001～003 | 离线人耳试听 | Segment 边界、SubVoice/Mapping、Tempo/Loop | 001 通过；002 音量突增失败；003 通过且实例边界间隔已澄清 |
+| M-AUD-004～006 | 实时进程内对照 | 与离线语义一致、无爆音/悬挂/断续 | 听感分别同 001～003；005 失败；三项终端技术指标待补录 |
+| M-AUD-007～009 | 正式子进程拓扑 | 与进程内/离线语义一致、物理输出正常 | managed `.dll` Worker 被正式门拒绝；均未进入播放，待修复入口后复测 |
+| M-AUD-010 | 物理设备 | enabled output endpoint 枚举与静音 callback probe | 通过：Beats Flex、48 kHz、27 callbacks、0 B、无 fault |
+| M-AUD-011 | 物理设备 | 跟随系统默认时切换默认输出的受控失败 | Worker 前置阻塞；未执行目标切换，待复测 |
+| M-AUD-012 | 物理设备 | 活动 USB/蓝牙输出移除或禁用的受控失败 | Worker 前置阻塞；未执行目标移除/禁用，待复测 |

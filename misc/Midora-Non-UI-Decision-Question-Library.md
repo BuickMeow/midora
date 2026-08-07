@@ -1,6 +1,6 @@
 # Midora 初版非 UI 实施决定问题库
 
-状态：Q-NUI-001～Q-NUI-024 的产品答复已记录；Q-NUI-025 待确认；本次仅记录，不修改代码、SRS 或任何契约资产
+状态：Q-NUI-001～Q-NUI-025 的产品答复均已记录；本次仅记录，不修改代码、SRS 或任何契约资产
 创建日期：2026-08-06
 最近更新：2026-08-07
 关联台账：`misc/Midora-Non-UI-Implementation-Tracker.md`
@@ -16,7 +16,7 @@
 
 ## 2. 2026-08-07 产品答复与实施判定
 
-本节是 Q-NUI-002～Q-NUI-024 的当前权威答复。第 3 节保留问题提出时的完整事实、影响和备选方案；其中原有的“待确认”“待填写”和“等待回答”字段是答复前快照，不再表示当前状态。本轮按产品所有者要求只记录决定，不修改源码、SRS、JSON Schema、protobuf descriptor、golden bytes 或测试基线。
+本节是 Q-NUI-002～Q-NUI-025 的当前权威答复。第 3 节保留问题提出时的完整事实、影响和备选方案；其中原有的“待确认”“待填写”和“等待回答”字段是答复前快照，不再表示当前状态。本轮按产品所有者要求只记录决定，不修改源码、SRS、JSON Schema、protobuf descriptor、golden bytes 或测试基线。
 
 | 编号 | 产品答复与实施判定 |
 |---|---|
@@ -42,7 +42,8 @@
 | Q-NUI-021 | 采用推荐方案；超过 SMF 四字节 VLQ 上限的 delta 继续结构化失败，不插入非 canonical Meta spacer。 |
 | Q-NUI-022 | 采用推荐方案；held Preview 使用因果 Gate、`Int64.MaxValue` 未结束哨兵和未渲染 frontier 生效规则。 |
 | Q-NUI-023 | 选择备选 A：直接把开发期 v1 的领域、创建与 schema 合法范围收窄为 `1..32767`，拒绝高 TPQ v1。当前处于开发期，没有既有兼容承诺，不创建新版本或迁移。 |
-| Q-NUI-024 | Midora 稳定 ID 的核心值改为单个 C# `long`；不再以 `Guid`、`UInt128` 或两个 `ulong` 承载。Project 范围内的持久化单调递增 ID 足够满足身份需求。该方向已确认，但具体持久化编码由 Q-NUI-025 单独闭合。 |
+| Q-NUI-024 | Midora 稳定 ID 的核心值改为单个 C# `long`；不再以 `Guid`、`UInt128` 或两个 `ulong` 承载。Project 范围内的持久化单调递增 ID 足够满足身份需求。 |
+| Q-NUI-025 | 采用推荐方案：合法范围 `1..long.MaxValue`；JSON 使用 canonical 十进制 integer；对象文件名使用无符号、无前导零的十进制 ASCII；protobuf 使用标量 `int64` 并保留各外层字段号；直接重写开发期 v1 契约，不提供 128-bit v1 迁移器。 |
 
 版本判定以产品答复为准：开发期尚未冻结的外部 Project 文件契约直接修订 v1；不得仅因为开发过程中的字段或范围变化创建 v2。内部 ABI 有独立生命周期，Q-NUI-011 明确允许升级。后续冻结时再确定首个正式版本的完整 schema、descriptor 与 golden 资产。
 
@@ -56,21 +57,21 @@
 - 保持不变的语义：ID 仍是 Project 内全对象类型共享的稳定身份；名称、位置、tick、Port、Channel 和 ID 数值大小都不构成业务排序；分配仍由 Project 负责，保持正值、持久化单调递增、不补缺、不复用和全局唯一；复制生成新 ID，Undo/Redo 恢复原 ID。`0` 与负值不作为合法稳定 ID；到达 `long.MaxValue` 后必须结构化拒绝继续分配。
 - 影响范围：Domain 公共值类型和 Project allocator；所有引用、集合键、排序 tie-break 与 canonical fingerprint；Mapping ABI v2；JSON/对象文件名/protobuf v1、descriptor、golden bytes、迁移预检与损坏诊断；应用 History、Compiler、Playback、MIDI、Audio Render、持久化和全仓测试 fixture。
 - 版本处理：依照 Q-NUI-003 与 Q-NUI-023 的开发期原则，后续实现直接修订尚未冻结的 v1 契约资产，不因本次变化创建 Project file v2；内部 Mapping ABI 按 Q-NUI-011 的决定升级。
-- 当前实施状态：仅记录；没有修改任何代码、SRS、schema、descriptor、golden 或测试。精确持久化编码先由 Q-NUI-025 闭合。
+- 当前实施状态：Q-NUI-025 已闭合精确持久化编码；本轮仍仅记录，没有修改任何代码、SRS、schema、descriptor、golden 或测试。
 
 ### Q-NUI-025：单 `long` 稳定 ID 的 v1 精确持久化编码
 
 - 类型：大决定。
-- 状态：待确认；在确认前暂停 Q-NUI-024 的代码和契约资产改写。
+- 状态：已确认；待后续实施。
 - 发现日期：2026-08-07。
 - 已确认事实：Q-NUI-024 已确定内存核心和 Project allocator 使用正 `long`；Q-NUI-003/Q-NUI-023 已确定开发期外部格式直接修订 v1。仅凭“使用 long”仍不能唯一决定 JSON 是数字还是字符串、对象文件名格式，以及 protobuf 使用 `int64`、`sint64` 或 `fixed64`。
 - 影响范围：`.midora` v1 的 JSON Schema、对象文件名、protobuf descriptor/golden bytes、严格读取与损坏诊断、确定性 ZIP bytes，以及其他语言或 JavaScript 工具读取超出 `2^53-1` 的 JSON 数字时的精度。
 - 推荐方案：合法范围统一为 `1..long.MaxValue`；JSON 中稳定 ID 与 `nextStableId` 使用十进制 JSON integer，原始 token 必须匹配 `[1-9][0-9]*`，拒绝小数和指数写法；对象文件名 `<id>` 使用无正负号、无前导零的 invariant 十进制 ASCII；protobuf 将各外层现有 ID 字段直接改为标量 `int64` 并保留这些外层字段号，删除嵌套 `StableId high/low`；protobuf 对正数使用标准 `int64` varint；所有读取器拒绝 0、负值、非 canonical 文件名和溢出。直接重写开发期 v1 descriptor/schema/golden，不提供 128-bit v1 迁移器。
 - 推荐依据与限制：这是与 C# `long` 最直接、转换最少的表示，典型递增小 ID 的 protobuf varint 也更紧凑。限制是通用 JavaScript JSON 消费者无法精确表示大于 `2^53-1` 的数字；Midora 的正式 .NET 读取器不受该限制，但第三方工具必须使用任意精度整数解析。
 - 备选方案及差异：A. JSON 和文件名使用 canonical 十进制字符串、protobuf 仍用 `int64`；跨语言 JSON 精度更稳健，但保留文本解析。B. JSON integer、文件名十进制、protobuf 使用 `fixed64`；每个值固定 8 bytes，但语义是 unsigned wire 且典型小 ID 更大。C. protobuf 使用 `sint64`；正数需要 ZigZag，收益不成立且 wire 与常规 `int64` 不同。D. 保留嵌套 `StableId` 但只留一个字段；仍保留无必要的消息层和转换。
-- 需要产品所有者回答：是否采用推荐的“JSON integer + 十进制文件名 + protobuf 标量 `int64` + 直接修订 v1”方案？若更重视任意 JSON 工具的无损读取，请选择备选 A。
-- 产品回答：待填写。
-- 最终处理与提交：本次不实施；收到答复后，与 Q-NUI-024 一并更新规格、ADR、Domain、Mapping ABI、持久化契约与完整覆盖测试。
+- 需要产品所有者回答：已回答。
+- 产品回答：2026-08-07，采用推荐方案。
+- 最终处理与提交：决定已记录；本次不实施。后续与 Q-NUI-024 一并更新规格、ADR、Domain、Mapping ABI、开发期 v1 持久化契约与完整覆盖测试。
 
 ## 3. 问题原文与影响分析（答复前快照）
 

@@ -31,13 +31,13 @@
 | 编号 | 工作包 | 状态 | 主要需求 | 退出证据 |
 |---|---|---|---|---|
 | NUI-01 | 仓库级构建、测试和兼容基线 | 非 UI 自动门与单实例内核完成；WPF 入口接线待 UI 阶段 | §2、§3.3、§21、INV-019/027～030 | 单命令 Release 构建；全部自动测试；固定工具链/原生 manifest 门；唯一主实例与启动请求转发 |
-| NUI-02 | 完整领域源模型与编辑事务 | History/Modified 与十三批非 ID 分配对象命令完成；Q-NUI-005/Q-NUI-009 已确认，待实施；ID 全链重构等待 Q-NUI-025 | §3～11 | Track/Instrument/Folder/Damaged/Segment、Conductor、Project Settings/Metadata、Track Color、External SoundFont、Note/Lane/Point、Instrument Lifecycle、SubVoice、Template Event、Value Curve、Initial/Reset State、Envelope、Mapping Function、Mapping Chain/Step，以及安全的 Logical Parameter Definition/Mapping/Target Settings 属性已覆盖；后续补 ID 分配命令和 Lane 原子迁移 |
+| NUI-02 | 完整领域源模型与编辑事务 | History/Modified 与十三批非 ID 分配对象命令完成；Q-NUI-005/Q-NUI-009 已确认，待实施；Q-NUI-024/Q-NUI-025 的 ID 全链契约已闭合，待实施 | §3～11 | Track/Instrument/Folder/Damaged/Segment、Conductor、Project Settings/Metadata、Track Color、External SoundFont、Note/Lane/Point、Instrument Lifecycle、SubVoice、Template Event、Value Curve、Initial/Reset State、Envelope、Mapping Function、Mapping Chain/Step，以及安全的 Logical Parameter Definition/Mapping/Target Settings 属性已覆盖；后续补 ID 全链、分配命令和 Lane 原子迁移 |
 | NUI-03 | Semantic Validation 与诊断来源 | 进行中 | §3～12、§16.19 | 全错误/警告/Info 矩阵与稳定排序 golden；显式 Track 作用域和 Damaged Instrument 绑定 Error 已闭合 |
 | NUI-04 | Full/Incremental Canonical Compiler | 强增量模型完成；全 §12 矩阵继续扩充 | §12、INV-009/010/015 | Segment checkpoint + dirty range + state hash 已实现；固定种子连续编辑逐字段等价 |
 | NUI-05 | Playback/Preview 非 UI 状态机 | 进行中 | §13、§19 | 全状态、自动 Stop、Mute/Solo、设备故障和重复生命周期测试 |
 | NUI-06 | MIDI Export 完整工作流 | 进行中 | §14、§19 | 三模式、routing、README、冻结命名、多文件原子事务、自校验 |
 | NUI-07 | Audio Render 完整工作流 | 自动化与 AOT 文件链完成；试听待验收 | §15、§19 | Whole/Per Track、采样率/长度/RIFF 边界、取消、独立发布、零分配 |
-| NUI-08 | `.midora` 完整持久化 | 进行中；开发期 v1 直接修订原则已确认；稳定 ID 精确编码等待 Q-NUI-025 | §16、§19 | protobuf 对象图、损坏隔离、开发期 v1 契约重写、Embedded SF2、确定性与事务矩阵 |
+| NUI-08 | `.midora` 完整持久化 | 进行中；开发期 v1 直接修订原则与单 `long` ID 精确编码均已确认，待实施 | §16、§19 | protobuf 对象图、损坏隔离、开发期 v1 契约重写、Embedded SF2、确定性与事务矩阵 |
 | NUI-09 | BASS/BASSMIDI/WASAPI/Worker | 进行中；共享状态 ABI v2 与 held Preview 语义已确认待实施 | §13、§15、INV-018～028 | ABI/版本/生命周期/设备/underrun/IPC/零分配自动门与硬件验收 |
 | NUI-10 | 非 UI 应用任务协调与偏好 | 非 UI 核心完成；WPF composition 待 UI 阶段 | §3、§13～17、§19～20 | 单任务/锁级、自动 Stop、Project switch guard、New/Open Project 候选事务、Save/Save Copy 会话事务、结构化报告、Application Preferences 及缓存失效均有自动测试 |
 | NUI-11 | 系统加固与发布门 | 自动发布门完成；产品已放行含 DLL 分发；压力、硬件与发布当日外部条款核验待闭合 | §21、INV-027/028/037/038 | 锁定 SDK/依赖、零 Skip 全测、AOT/hash/notices 已自动化；发布包还须加入供应商原始许可文本并按发布当日条款复核 |
@@ -48,12 +48,12 @@
 - 2026-08-06 提交 `61b7042` 完成 Event Instrument / Logical Track protobuf v1、对象级损坏隔离与可撤销删除、Embedded SF2 正常资源流式 package 链。
 - `misc/Midora-SRS-Code-Conformance-Audit-2026-08-05.md` 记录的 1A～25.1A 均视为已确认决定，不再询问。
 - 2026-08-07，Q-NUI-002～Q-NUI-023 均收到产品答复；Q-NUI-024 进一步确认将 `MidoraId` 与 Project allocator 重构为单个正 `long`。Q-NUI-003 确认外部 Project 文件仍处开发期，字段变化直接修订 v1，不创建 v2；Q-NUI-011 的内部 ABI 允许独立升级；Q-NUI-023 选择备选 A，直接把开发期 v1 TPQ 收窄为 `1..32767`。
-- 当前只剩 Q-NUI-025 需要产品所有者确认：单 `long` ID 的 JSON、对象文件名和 protobuf v1 精确编码。该选择影响持久化 wire 契约，因此 Q-NUI-024 的代码与契约资产改写在确认前暂停。其余已答复决定均进入待实施或既有实现已获确认状态。
+- 2026-08-07，Q-NUI-025 采用推荐方案，至此 Q-NUI-001～Q-NUI-025 均已收到产品答复。单 `long` ID 固定为 JSON canonical 十进制 integer、无符号无前导零的十进制对象文件名和 protobuf 标量 `int64`；直接修订开发期 v1，不提供 128-bit v1 迁移器。所有决定均进入待实施或既有实现已获确认状态。
 - Q-NUI-013 记录的是产品所有者基于公开身份 `Zacksony`、零收入和 GitHub Release 渠道给出的含 DLL 分发放行；发布当日官方条款复核与供应商原始许可文本打包仍是外部发布硬门，不能把当前答复表述为永久法律结论。
 
 ## 5. 当前实施顺序
 
-1. 先由产品所有者回答 Q-NUI-025；随后一次性重构 `MidoraId`/`nextStableId`、Mapping ABI、开发期 v1 持久化契约及所有受影响测试，避免在旧 128-bit 基线上继续扩张代码。
+1. 按已闭合的 Q-NUI-024/Q-NUI-025 一次性重构 `MidoraId`/`nextStableId`、Mapping ABI、开发期 v1 持久化契约及所有受影响测试，避免在旧 128-bit 基线上继续扩张代码。
 2. 按 Q-NUI-003、Q-NUI-005、Q-NUI-009、Q-NUI-019 与 Q-NUI-023 实施 Export Settings v1、ID 分配 History、Definition/Lane 原子迁移、Bar:Beat:Tick/截断 Warning 和 TPQ `1..32767` 全链。
 3. 按 Q-NUI-011 与 Q-NUI-022 实施共享状态 ABI v2 和 held Preview 因果 Gate，并补进程内/子进程一致性、零分配与人工时延验收。
 4. Audio Render Whole/Per Track、SF2 快照、正式文件 Worker 协议、WAVE 校验、逐文件事务及 Native AOT 文件链已完成；继续完成实际 BASS/WASAPI 硬件与集中试听验收。
@@ -131,7 +131,7 @@
 | 2026-08-06 | Compiler 无序源容器确定性 | Global/Instrument/SubVoice Initial State、Reset Defaults、C# Mapping Context 字段、CompileContext Track/SubVoice 集合反向插入；全部正式结果逐字段等价；显式用户 List 顺序保持语义；Compiler 204 tests；全仓基线 853 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-101f16d56a684539bb404186989bbc72` |
 | 2026-08-06 | Damaged Placeholder 稳定 ID 闭包 | Whole Project 纳入两类占位 ID；显式 Track 只纳入被选/被引用占位；正常对象碰撞、零、`nextStableId` 上界和未选隔离；Compiler 211 tests；全仓基线 860 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-86a76d7a595949789295a381823d306b` |
 | 2026-08-06 | Library Folder 编译诊断作用域 | 显式 Track 只验证参与 Instrument 引用的 Folder 依赖闭包；Whole Project 保持全量；未选保留名称/重复 ID 隔离与参与 Folder 严格失败；Compiler 213 tests；全仓基线 862 tests | 完整发布门通过，0 warning / 0 error / 0 failure / 0 skip；产物 `non-ui-release-gate-c7ab8b35c36e489ab813d7508e09eba8` |
-| 2026-08-07 | Q-NUI-002～Q-NUI-025 决策记录 | 仅更新问题库与实施台账；核对现行 SRS 8.52.2、16.5.3、16.11.2、16.13.2 及当前 `Guid`/`UInt128`/high-low 实现依赖；未修改源码、SRS、schema、descriptor、golden 或测试 | 文档记录完成；本轮未运行构建/测试，既有自动基线仍为 862 tests，不把未运行验证写成通过 |
+| 2026-08-07 | Q-NUI-002～Q-NUI-025 决策闭合记录 | 仅更新问题库与实施台账；Q-NUI-025 固定 JSON canonical integer、十进制文件名、protobuf `int64` 与直接修订开发期 v1；未修改源码、SRS、schema、descriptor、golden 或测试 | 全部现有问题均已回答；本轮未运行构建/测试，既有自动基线仍为 862 tests，不把未运行验证写成通过 |
 
 ## 7. 未解决风险
 
@@ -156,7 +156,7 @@
 - Q-NUI-021 已确认 SMF 单个 delta 超过 `0x0FFFFFFF` 时保持结构化失败且不发布文件；不得向 canonical 事件之外插入 Meta spacer。现有实现仍需按决定补 exporter/task 级完整边界证据。
 - Q-NUI-022 已确认 held Preview 的因果 Gate、`Int64.MaxValue` 未结束哨兵和未渲染 frontier 规则；held Preview 尚未实现，不能用裸 MIDI、猜测 Gate Length 或回写已缓冲 PCM 冒充。
 - Q-NUI-023 已选择备选 A：把开发期 v1 的领域、创建和 schema 全部收窄到 `1..32767` 并拒绝高 TPQ v1；当前代码仍接受到 `Int32.MaxValue`，因此实现、descriptor/schema/golden 和 32767/32768 边界回归尚待完成。
-- Q-NUI-024 已确认 `MidoraId`/Project allocator 改为单个正 `long`，这与当前 `Guid`/`UInt128`、32 位十六进制、protobuf high/low 及现行 SRS 明确冲突。Q-NUI-025 尚未确定 JSON、文件名和 protobuf v1 的精确编码；确认前不得开始大范围代码/契约重写，也不得继续把 128-bit 表示视为冻结发布承诺。
+- Q-NUI-024/Q-NUI-025 已确认 `MidoraId`/Project allocator 改为单个正 `long`，并固定 JSON canonical integer、十进制文件名和 protobuf 标量 `int64`。这与当前 `Guid`/`UInt128`、32 位十六进制、protobuf high/low 及现行 SRS 明确冲突；后续必须先同步修订 SRS/ADR，再一次性实施开发期 v1 契约与代码全链，不能继续把 128-bit 表示视为冻结发布承诺。
 - Audio Render 对损坏 Event Instrument 绑定的选择已交还 canonical 编译器判定：Whole Mix 整体失败，Per Logical Track 仅对应项失败并允许其他项继续；普通未绑定/断裂引用仍保持 Info 与无输出目标语义。
 - Preview 临时 Project shell 已复制所选对象所需的损坏绑定身份与有效 Library Folder 结构；后续新增任何 Project 外壳式 CompileContext 时都必须审计同类引用闭包，不能让临时上下文制造虚假断裂或降级真实损坏。
 - Segment Preview 的绑定要求严于主时间线的一般未绑定 Track 语义：`MIDORA1306` 只属于该 Preview context；Playback Preview 必须先验证 canonical 可消费性，再初始化 Backend。

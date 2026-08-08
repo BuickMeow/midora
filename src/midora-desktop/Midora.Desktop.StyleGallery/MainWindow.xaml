@@ -1,0 +1,1235 @@
+<Window x:Class="Midora.Desktop.StyleGallery.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:ui="clr-namespace:Midora.Desktop.StyleGallery.Controls"
+        Title="Midora — WPF Style Gallery"
+        Width="1440"
+        Height="900"
+        MinWidth="1180"
+        MinHeight="720"
+        Background="{StaticResource Brush.Surface.0}"
+        ResizeMode="CanResize"
+        SnapsToDevicePixels="True"
+        UseLayoutRounding="True"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        mc:Ignorable="d">
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight="36"
+                        CornerRadius="0"
+                        GlassFrameThickness="0"
+                        ResizeBorderThickness="6"
+                        UseAeroCaptionButtons="False" />
+  </shell:WindowChrome.WindowChrome>
+
+  <Window.Resources>
+    <Style x:Key="Panel.Header" TargetType="Border">
+      <Setter Property="Height" Value="38" />
+      <Setter Property="Padding" Value="12,0" />
+      <Setter Property="Background" Value="{StaticResource Brush.Surface.1}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+
+    <Style x:Key="Field.Label" TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}">
+      <Setter Property="Margin" Value="0,0,0,5" />
+      <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
+    </Style>
+
+    <Style x:Key="Status.Dot" TargetType="Ellipse">
+      <Setter Property="Width" Value="6" />
+      <Setter Property="Height" Value="6" />
+      <Setter Property="Margin" Value="0,0,6,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style x:Key="Timeline.TrackHeader" TargetType="Border">
+      <Setter Property="Background" Value="{StaticResource Brush.Surface.2}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+      <Setter Property="BorderThickness" Value="0,0,1,1" />
+      <Setter Property="Padding" Value="10,0" />
+    </Style>
+
+    <Style x:Key="Timeline.Lane" TargetType="Border">
+      <Setter Property="Background" Value="{StaticResource Brush.Surface.0}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+
+    <Style x:Key="Piano.WhiteKey" TargetType="Border">
+      <Setter Property="Background" Value="#D9DCE0" />
+      <Setter Property="BorderBrush" Value="#8A9098" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+
+    <Style x:Key="Piano.BlackKey" TargetType="Border">
+      <Setter Property="Width" Value="34" />
+      <Setter Property="Height" Value="13" />
+      <Setter Property="HorizontalAlignment" Value="Left" />
+      <Setter Property="VerticalAlignment" Value="Top" />
+      <Setter Property="Background" Value="#111318" />
+      <Setter Property="BorderBrush" Value="#030405" />
+      <Setter Property="BorderThickness" Value="0,0,1,1" />
+    </Style>
+  </Window.Resources>
+
+  <Border x:Name="WindowFrame">
+    <Border.Style>
+      <Style TargetType="Border">
+        <Setter Property="BorderBrush" Value="{StaticResource Brush.Border.Strong}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Style.Triggers>
+          <DataTrigger Binding="{Binding WindowState, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                       Value="Maximized">
+            <Setter Property="BorderThickness" Value="0" />
+          </DataTrigger>
+        </Style.Triggers>
+      </Style>
+    </Border.Style>
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="36" />
+        <RowDefinition Height="30" />
+        <RowDefinition Height="48" />
+        <RowDefinition Height="32" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="156" />
+        <RowDefinition Height="26" />
+      </Grid.RowDefinitions>
+
+      <!-- Custom title bar -->
+      <Grid Grid.Row="0"
+            Background="{StaticResource Brush.Black}"
+            MouseLeftButtonDown="OnTitleBarMouseLeftButtonDown"
+            MouseRightButtonUp="OnTitleBarMouseRightButtonUp">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <StackPanel Margin="12,0,0,0" VerticalAlignment="Center" Orientation="Horizontal">
+          <Grid Width="18" Height="18" Margin="0,0,9,0">
+            <Border Width="5" Height="18" HorizontalAlignment="Left" Background="{StaticResource Brush.Red}" CornerRadius="1" />
+            <Border Width="5" Height="12" Margin="6,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Bottom" Background="{StaticResource Brush.Red.Dark}" CornerRadius="1" />
+            <Border Width="5" Height="7" HorizontalAlignment="Right" VerticalAlignment="Bottom" Background="{StaticResource Brush.Text.Tertiary}" CornerRadius="1" />
+          </Grid>
+          <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold" Text="MIDORA" />
+          <Border Width="1" Height="12" Margin="10,0" Background="{StaticResource Brush.Border.Strong}" />
+          <TextBlock Style="{StaticResource Text.Caption}" VerticalAlignment="Center" Text="WPF STYLE GALLERY  /  STATIC PREVIEW" />
+        </StackPanel>
+        <StackPanel Grid.Column="1"
+                    shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                    SnapsToDevicePixels="True"
+                    UseLayoutRounding="True"
+                    Orientation="Horizontal">
+          <Button Style="{StaticResource Button.Caption}"
+                  ToolTip="Minimize"
+                  Click="OnMinimizeClick">
+            <ui:FluentIcon Style="{StaticResource Icon.WindowControl.Minimize}"
+                           Data="{StaticResource WindowControl.Minimize}" />
+          </Button>
+          <Button Style="{StaticResource Button.Caption}"
+                  ToolTip="Maximize or restore"
+                  Click="OnMaximizeClick">
+            <ui:FluentIcon x:Name="MaximizeGlyph"
+                           Style="{StaticResource Icon.WindowControl}"
+                           Data="{StaticResource WindowControl.Maximize}" />
+          </Button>
+          <Button Style="{StaticResource Button.Caption.Close}"
+                  ToolTip="Close"
+                  Click="OnCloseClick">
+            <ui:FluentIcon Style="{StaticResource Icon.WindowControl}"
+                           Data="{StaticResource WindowControl.Close}" />
+          </Button>
+        </StackPanel>
+      </Grid>
+
+      <!-- Main menu -->
+      <Border Grid.Row="1"
+              Background="{StaticResource Brush.Surface.1}"
+              BorderBrush="{StaticResource Brush.Border}"
+              BorderThickness="0,0,0,1">
+        <Menu shell:WindowChrome.IsHitTestVisibleInChrome="True" Margin="6,0">
+          <MenuItem Header="File">
+            <MenuItem Header="New Project" InputGestureText="Ctrl+N" />
+            <MenuItem Header="Open Project…" InputGestureText="Ctrl+O" />
+            <Separator />
+            <MenuItem Header="Save Project" InputGestureText="Ctrl+S" />
+            <MenuItem Header="Save Copy…" />
+            <Separator />
+            <MenuItem Header="Exit" />
+          </MenuItem>
+          <MenuItem Header="Edit">
+            <MenuItem Header="Undo" InputGestureText="Ctrl+Z" />
+            <MenuItem Header="Redo" InputGestureText="Ctrl+Y" />
+          </MenuItem>
+          <MenuItem Header="View" />
+          <MenuItem Header="Project" />
+          <MenuItem Header="Playback">
+            <MenuItem Header="Play" InputGestureText="Space" />
+            <MenuItem Header="Stop" InputGestureText="Shift+Space" />
+            <Separator />
+            <MenuItem Header="Reset Playback Engine" />
+          </MenuItem>
+          <MenuItem Header="Compile" />
+          <MenuItem Header="Export" />
+          <MenuItem Header="Help" />
+        </Menu>
+      </Border>
+
+      <!-- Command and transport bar -->
+      <Border Grid.Row="2"
+              Padding="10,0"
+              Background="{StaticResource Brush.Surface.1}"
+              BorderBrush="{StaticResource Brush.Border}"
+              BorderThickness="0,0,0,1">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+          </Grid.ColumnDefinitions>
+
+          <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+            <Button Style="{StaticResource Button.Icon}" ToolTip="New Project">
+              <ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Data="{StaticResource Fluent.Add20Regular}" />
+            </Button>
+            <Button Margin="3,0,0,0" Style="{StaticResource Button.Icon}" ToolTip="Save Project">
+              <ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Data="{StaticResource Fluent.Save20Regular}" />
+            </Button>
+            <Border Width="1" Height="20" Margin="8,0" Background="{StaticResource Brush.Border}" />
+            <Button Style="{StaticResource Button.Icon}" ToolTip="Undo">
+              <ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Data="{StaticResource Fluent.ArrowUndo20Regular}" />
+            </Button>
+            <Button Margin="3,0,0,0" Style="{StaticResource Button.Icon}" ToolTip="Redo" IsEnabled="False">
+              <ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Data="{StaticResource Fluent.ArrowRedo20Regular}" />
+            </Button>
+          </StackPanel>
+
+          <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal">
+            <Button Width="34" Style="{StaticResource Button.Icon}" ToolTip="Stop">
+              <ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Data="{StaticResource Fluent.Stop20Filled}" />
+            </Button>
+            <Button Width="40" Margin="5,0" Style="{StaticResource Button.Primary}" ToolTip="Play">
+              <ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Foreground="White" Data="{StaticResource Fluent.Play20Filled}" />
+            </Button>
+            <ToggleButton Width="34" Style="{StaticResource Toggle.Segment}" ToolTip="Loop range">
+              <ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Data="{StaticResource Fluent.RepeatAll20Regular}" />
+            </ToggleButton>
+            <Border Height="32" Margin="10,0,0,0" Padding="10,0" Background="{StaticResource Brush.Surface.0}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+              <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                <TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Mono}" Foreground="{StaticResource Brush.Text.Primary}" Text="0003 : 02 : 144" />
+                <TextBlock Margin="9,0,0,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="120.00 BPM" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <StackPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+            <Button Margin="0,0,5,0" Content="Compile" />
+            <Button Margin="0,0,5,0" Style="{StaticResource Button.Ghost}" Content="MIDI Export" />
+            <Button Style="{StaticResource Button.Ghost}" Content="Render Audio" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- Non-semantic preview notice -->
+      <Border Grid.Row="3"
+              Padding="12,0"
+              Background="{StaticResource Brush.Red.Subtle}"
+              BorderBrush="{StaticResource Brush.Red.Dark}"
+              BorderThickness="0,0,0,1">
+        <Grid>
+          <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+            <ui:FluentIcon Width="14" Height="14" Margin="0,0,7,0" Foreground="{StaticResource Brush.Red.Hover}" Data="{StaticResource Fluent.Info20Regular}" />
+            <TextBlock FontWeight="SemiBold" Foreground="{StaticResource Brush.Text.Primary}" Text="Style preview" />
+            <TextBlock Margin="7,0,0,0" Style="{StaticResource Text.Caption}" Text="All project content, diagnostics, and task states shown here are static visual samples." />
+          </StackPanel>
+          <Button HorizontalAlignment="Right" VerticalAlignment="Center" Height="24" Style="{StaticResource Button.Ghost}" Content="Review scope" />
+        </Grid>
+      </Border>
+
+      <!-- Resizable main shell -->
+      <Grid Grid.Row="4">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="224" MinWidth="180" MaxWidth="340" />
+          <ColumnDefinition Width="4" />
+          <ColumnDefinition Width="*" MinWidth="560" />
+          <ColumnDefinition Width="4" />
+          <ColumnDefinition Width="276" MinWidth="232" MaxWidth="380" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Project panel -->
+        <Border Grid.Column="0" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="38" />
+              <RowDefinition Height="52" />
+              <RowDefinition Height="*" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Border Style="{StaticResource Panel.Header}">
+              <Grid>
+                <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="PROJECT" />
+              <Button Width="26" Height="26" HorizontalAlignment="Right" Style="{StaticResource Button.Icon}" ToolTip="Project panel options">
+                <ui:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.MoreHorizontal20Regular}" />
+              </Button>
+              </Grid>
+            </Border>
+            <Grid Grid.Row="1" Margin="10,9">
+              <TextBox Padding="28,3,8,3"
+                       VerticalContentAlignment="Center"
+                       Text="Search project"
+                       Foreground="{StaticResource Brush.Text.Tertiary}" />
+              <ui:FluentIcon Width="14"
+                             Height="14"
+                             Margin="9,0,0,0"
+                             HorizontalAlignment="Left"
+                             VerticalAlignment="Center"
+                             UseLayoutRounding="True"
+                             Foreground="{StaticResource Brush.Text.Tertiary}"
+                             Data="{StaticResource Fluent.Search20Regular}" />
+            </Grid>
+            <ListBox Grid.Row="2" Margin="4,4,4,0" SelectedIndex="4">
+              <ListBoxItem>
+                <StackPanel Orientation="Horizontal">
+                  <ui:FluentIcon Width="14" Height="14" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.Warning}" Data="{StaticResource Fluent.MusicNote220Regular}" />
+                  <TextBlock Text="Conductor Track" />
+                </StackPanel>
+              </ListBoxItem>
+              <ListBoxItem>
+                <StackPanel Orientation="Horizontal">
+                  <ui:FluentIcon Width="14" Height="14" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.Red.Hover}" Data="{StaticResource Fluent.Folder20Regular}" />
+                  <TextBlock Text="Event Instrument Library" />
+                  <Border Margin="8,0,0,0" Style="{StaticResource Badge.Count}">
+                    <TextBlock HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               FontSize="10"
+                               LineHeight="12"
+                               LineStackingStrategy="BlockLineHeight"
+                               Style="{StaticResource Text.Caption}"
+                               Text="4"
+                               TextAlignment="Center" />
+                  </Border>
+                </StackPanel>
+              </ListBoxItem>
+              <ListBoxItem>
+                <StackPanel Orientation="Horizontal">
+                  <ui:FluentIcon Width="14" Height="14" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.Text.Tertiary}" Data="{StaticResource Fluent.Document20Regular}" />
+                  <TextBlock FontWeight="SemiBold" Text="Logical Tracks" />
+                </StackPanel>
+              </ListBoxItem>
+              <ListBoxItem Padding="24,7,9,7">
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse Width="7" Height="7" Margin="0,0,9,0" VerticalAlignment="Center" Fill="{StaticResource Brush.Info}" />
+                  <TextBlock Text="Lead Motif" />
+                </StackPanel>
+              </ListBoxItem>
+              <ListBoxItem Padding="24,7,9,7">
+                <ListBoxItem.ContextMenu>
+                  <ContextMenu>
+                    <MenuItem Header="Open in Arrangement" />
+                    <MenuItem Header="Rename" />
+                    <MenuItem Header="Duplicate" />
+                    <Separator />
+                    <MenuItem Header="Delete Track" Foreground="{StaticResource Brush.Red.Hover}" />
+                  </ContextMenu>
+                </ListBoxItem.ContextMenu>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <Ellipse Width="7" Height="7" Margin="0,0,9,0" VerticalAlignment="Center" Fill="{StaticResource Brush.Red}" />
+                  <TextBlock Grid.Column="1" FontWeight="SemiBold" Text="Low Strings" />
+                  <ui:FluentIcon Grid.Column="2" Width="14" Height="14" Foreground="{StaticResource Brush.Warning}" Data="{StaticResource Fluent.Warning20Regular}" ToolTip="One lane needs attention" />
+                </Grid>
+              </ListBoxItem>
+              <ListBoxItem Padding="24,7,9,7">
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse Width="7" Height="7" Margin="0,0,9,0" VerticalAlignment="Center" Fill="{StaticResource Brush.Success}" />
+                  <TextBlock Text="Percussive Glass" />
+                </StackPanel>
+              </ListBoxItem>
+              <ListBoxItem>
+                <StackPanel Orientation="Horizontal">
+                  <ui:FluentIcon Width="14" Height="14" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.Text.Tertiary}" Data="{StaticResource Fluent.Settings20Regular}" />
+                  <TextBlock Text="Project Settings" />
+                </StackPanel>
+              </ListBoxItem>
+              <ListBoxItem>
+                <StackPanel Orientation="Horizontal">
+                  <ui:FluentIcon Width="14" Height="14" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.Red.Hover}" Data="{StaticResource Fluent.ErrorCircle20Regular}" />
+                  <TextBlock Text="Diagnostics" />
+                  <Border Margin="8,0,0,0" Style="{StaticResource Badge.Count.Error}">
+                    <TextBlock HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               FontSize="10"
+                               Foreground="{StaticResource Brush.Red.Hover}"
+                               LineHeight="12"
+                               LineStackingStrategy="BlockLineHeight"
+                               Text="2"
+                               TextAlignment="Center" />
+                  </Border>
+                </StackPanel>
+              </ListBoxItem>
+            </ListBox>
+            <Border Grid.Row="3" Margin="10" Padding="10" Background="{StaticResource Brush.Surface.2}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="4">
+              <StackPanel>
+                <Grid>
+                  <TextBlock Style="{StaticResource Text.Caption}" Text="PLAYBACK ENGINE" />
+                  <Border HorizontalAlignment="Right" Style="{StaticResource Badge.Success}">
+                    <StackPanel Orientation="Horizontal">
+                      <Ellipse Style="{StaticResource Status.Dot}" Fill="{StaticResource Brush.Success}" />
+                      <TextBlock FontSize="10" Foreground="{StaticResource Brush.Success}" Text="STOPPED" />
+                    </StackPanel>
+                  </Border>
+                </Grid>
+                <TextBlock Margin="0,8,0,0" Style="{StaticResource Text.Caption}" Text="Default Audio Device · 48,000 Hz" />
+                <TextBlock Margin="0,3,0,0" Style="{StaticResource Text.Caption}" Text="Render-ahead 100 ms" />
+              </StackPanel>
+            </Border>
+          </Grid>
+        </Border>
+
+        <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" ResizeDirection="Columns" />
+
+        <!-- Workspace tabs and style gallery -->
+        <TabControl Grid.Column="2" Background="{StaticResource Brush.Surface.0}" SelectedIndex="0">
+          <TabItem Header="Style Gallery">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+              <StackPanel Margin="18,16,18,28">
+                <Grid Margin="0,0,0,14">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Style="{StaticResource Text.Overline}" Text="FOUNDATION / REVIEW 01" />
+                    <TextBlock Margin="0,4,0,0" FontSize="22" FontWeight="SemiBold" Text="Dark, restrained, signal-red." />
+                    <TextBlock Margin="0,6,0,0" Style="{StaticResource Text.Muted}" Text="A compact component language for dense music editing without visual noise." />
+                  </StackPanel>
+                  <Border Grid.Column="1" VerticalAlignment="Top" Style="{StaticResource Badge.Info}">
+                    <TextBlock Foreground="{StaticResource Brush.Info}" Text="100% DPI baseline" />
+                  </Border>
+                </Grid>
+
+                <!-- Palette -->
+                <Border Margin="0,0,0,12" Style="{StaticResource Card}">
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="170" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                      <TextBlock Style="{StaticResource Text.Section}" Text="Color roles" />
+                      <TextBlock Margin="0,5,14,0" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Text="Near-black surfaces; red is reserved for active intent, play state, focus, and blocking severity." />
+                    </StackPanel>
+                    <UniformGrid Grid.Column="1" Rows="1" Columns="7">
+                      <StackPanel Margin="4">
+                        <Border Height="36" Background="{StaticResource Brush.Black}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3" />
+                        <TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="Black" />
+                      </StackPanel>
+                      <StackPanel Margin="4">
+                        <Border Height="36" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3" />
+                        <TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="Surface" />
+                      </StackPanel>
+                      <StackPanel Margin="4">
+                        <Border Height="36" Background="{StaticResource Brush.Surface.3}" BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1" CornerRadius="3" />
+                        <TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="Raised" />
+                      </StackPanel>
+                      <StackPanel Margin="4">
+                        <Border Height="36" Background="{StaticResource Brush.Red}" CornerRadius="3" />
+                        <TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="Signal" />
+                      </StackPanel>
+                      <StackPanel Margin="4">
+                        <Border Height="36" Background="{StaticResource Brush.Info}" CornerRadius="3" />
+                        <TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="Info" />
+                      </StackPanel>
+                      <StackPanel Margin="4">
+                        <Border Height="36" Background="{StaticResource Brush.Warning}" CornerRadius="3" />
+                        <TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="Warning" />
+                      </StackPanel>
+                      <StackPanel Margin="4">
+                        <Border Height="36" Background="{StaticResource Brush.Success}" CornerRadius="3" />
+                        <TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="Ready" />
+                      </StackPanel>
+                    </UniformGrid>
+                  </Grid>
+                </Border>
+
+                <!-- Arrangement component -->
+                <Border Margin="0,0,0,12" Padding="0" Style="{StaticResource Card}">
+                  <Grid>
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="44" />
+                      <RowDefinition Height="22" />
+                      <RowDefinition Height="54" />
+                      <RowDefinition Height="54" />
+                      <RowDefinition Height="54" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Padding="12,0" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
+                      <Grid>
+                        <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                          <TextBlock Style="{StaticResource Text.Section}" Text="Arrangement timeline" />
+                          <Border Margin="10,0,0,0" Style="{StaticResource Badge}">
+                            <TextBlock Style="{StaticResource Text.Caption}" Text="Canonical-aware shell" />
+                          </Border>
+                        </StackPanel>
+                        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+                          <ToggleButton IsChecked="True" Style="{StaticResource Toggle.Segment}" Content="Bars" />
+                          <ToggleButton Margin="4,0,0,0" Style="{StaticResource Toggle.Segment}" Content="Ticks" />
+                        <Button Margin="8,0,0,0" Style="{StaticResource Button.Icon}" ToolTip="Fit range">
+                          <ui:FluentIcon Data="{StaticResource Fluent.ArrowFit20Regular}" />
+                        </Button>
+                        </StackPanel>
+                      </Grid>
+                    </Border>
+                    <Border Grid.Row="1" Background="{StaticResource Brush.Surface.2}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="166" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Margin="10,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="TRACK" />
+                        <UniformGrid Grid.Column="1" Rows="1" Columns="8">
+                          <TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="1.1" />
+                          <TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="2.1" />
+                          <TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="3.1" />
+                          <TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="4.1" />
+                          <TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="5.1" />
+                          <TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="6.1" />
+                          <TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="7.1" />
+                          <TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="8.1" />
+                        </UniformGrid>
+                      </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="2">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="166" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Border Style="{StaticResource Timeline.TrackHeader}">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                          </Grid.ColumnDefinitions>
+                          <StackPanel VerticalAlignment="Center">
+                            <TextBlock FontWeight="SemiBold" Text="Lead Motif" />
+                            <TextBlock Margin="0,2,0,0" Style="{StaticResource Text.Caption}" Text="Glass Arc" />
+                          </StackPanel>
+                          <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal">
+                            <ToggleButton Style="{StaticResource Toggle.TrackState}" Content="M" />
+                            <ToggleButton Margin="3,0,0,0" Style="{StaticResource Toggle.TrackState}" Content="S" />
+                          </StackPanel>
+                        </Grid>
+                      </Border>
+                      <Border Grid.Column="1" Style="{StaticResource Timeline.Lane}">
+                        <Grid ClipToBounds="True">
+                          <UniformGrid Columns="8">
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border />
+                          </UniformGrid>
+                          <Grid Margin="7,7">
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition Width="1.7*" />
+                              <ColumnDefinition Width="0.12*" />
+                              <ColumnDefinition Width="1.15*" />
+                              <ColumnDefinition Width="0.6*" />
+                              <ColumnDefinition Width="1.4*" />
+                              <ColumnDefinition Width="1.1*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Padding="8,0" Background="#532126" BorderBrush="{StaticResource Brush.Red.Dark}" BorderThickness="1" CornerRadius="3">
+                              <TextBlock VerticalAlignment="Center" Foreground="#FFB7BA" Text="Opening figure" />
+                            </Border>
+                            <Border Grid.Column="2" Padding="8,0" Background="#3A1C20" BorderBrush="{StaticResource Brush.Red.Dark}" BorderThickness="1" CornerRadius="3">
+                              <TextBlock VerticalAlignment="Center" Foreground="#E68E92" Text="Answer" />
+                            </Border>
+                            <Border Grid.Column="4" Grid.ColumnSpan="2" Padding="8,0" Background="#532126" BorderBrush="{StaticResource Brush.Red}" BorderThickness="1" CornerRadius="3">
+                              <TextBlock VerticalAlignment="Center" Foreground="#FFB7BA" Text="Variation A" />
+                            </Border>
+                          </Grid>
+                          <Border Width="1" Margin="220,0,0,0" HorizontalAlignment="Left" Background="{StaticResource Brush.Red}" />
+                        </Grid>
+                      </Border>
+                    </Grid>
+
+                    <Grid Grid.Row="3">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="166" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Border Style="{StaticResource Timeline.TrackHeader}">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                          </Grid.ColumnDefinitions>
+                          <StackPanel VerticalAlignment="Center">
+                            <TextBlock FontWeight="SemiBold" Text="Low Strings" />
+                            <TextBlock Margin="0,2,0,0" Style="{StaticResource Text.Caption}" Text="Dark Ensemble" />
+                          </StackPanel>
+                          <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal">
+                            <ToggleButton Style="{StaticResource Toggle.TrackState}" Content="M" />
+                            <ToggleButton Margin="3,0,0,0" IsChecked="True" Style="{StaticResource Toggle.TrackState}" Content="S" />
+                          </StackPanel>
+                        </Grid>
+                      </Border>
+                      <Border Grid.Column="1" Style="{StaticResource Timeline.Lane}">
+                        <Grid ClipToBounds="True">
+                          <UniformGrid Columns="8">
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border />
+                          </UniformGrid>
+                          <Grid Margin="7,7">
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition Width="2.25*" />
+                              <ColumnDefinition Width="0.12*" />
+                              <ColumnDefinition Width="2.8*" />
+                              <ColumnDefinition Width="0.12*" />
+                              <ColumnDefinition Width="1.5*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Padding="8,0" Background="#1C2737" BorderBrush="#355274" BorderThickness="1" CornerRadius="3">
+                              <TextBlock VerticalAlignment="Center" Foreground="#9BC7F9" Text="Sustain bed" />
+                            </Border>
+                            <Border Grid.Column="2" Padding="8,0" Background="#1C2737" BorderBrush="#355274" BorderThickness="1" CornerRadius="3">
+                              <TextBlock VerticalAlignment="Center" Foreground="#9BC7F9" Text="Sustain bed / split" />
+                            </Border>
+                            <Border Grid.Column="4" Padding="8,0" Background="#1C2737" BorderBrush="#355274" BorderThickness="1" CornerRadius="3">
+                              <TextBlock VerticalAlignment="Center" Foreground="#9BC7F9" Text="End" />
+                            </Border>
+                          </Grid>
+                          <Border Width="1" Margin="220,0,0,0" HorizontalAlignment="Left" Background="{StaticResource Brush.Red}" />
+                        </Grid>
+                      </Border>
+                    </Grid>
+
+                    <Grid Grid.Row="4">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="166" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Border Style="{StaticResource Timeline.TrackHeader}">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                          </Grid.ColumnDefinitions>
+                          <StackPanel VerticalAlignment="Center">
+                            <TextBlock FontWeight="SemiBold" Text="Percussive Glass" />
+                            <TextBlock Margin="0,2,0,0" Style="{StaticResource Text.Caption}" Text="Unassigned instrument" />
+                          </StackPanel>
+                          <Border Grid.Column="1" VerticalAlignment="Center" Style="{StaticResource Badge.Warning}">
+                            <TextBlock FontSize="10" Foreground="{StaticResource Brush.Warning}" Text="INFO" />
+                          </Border>
+                        </Grid>
+                      </Border>
+                      <Border Grid.Column="1" Style="{StaticResource Timeline.Lane}">
+                        <Grid>
+                          <UniformGrid Columns="8" Opacity="0.7">
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                            <Border />
+                          </UniformGrid>
+                          <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="No playable segments in this range" />
+                        </Grid>
+                      </Border>
+                    </Grid>
+                  </Grid>
+                </Border>
+
+                <!-- Actions and inputs -->
+                <Grid Margin="0,0,0,12">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <Border Grid.Column="0" Style="{StaticResource Card}">
+                    <StackPanel>
+                      <TextBlock Style="{StaticResource Text.Section}" Text="Actions and state" />
+                      <TextBlock Margin="0,5,0,14" Style="{StaticResource Text.Caption}" Text="Primary intent is scarce; destructive actions remain explicit." />
+                      <WrapPanel Margin="0,0,0,14">
+                        <Button Margin="0,0,7,7" Style="{StaticResource Button.Primary}" Content="Apply changes" />
+                        <Button Margin="0,0,7,7" Content="Secondary" />
+                        <Button Margin="0,0,7,7" Style="{StaticResource Button.Ghost}" Content="Ghost" />
+                        <Button Margin="0,0,7,7" Style="{StaticResource Button.Danger}" Content="Delete" />
+                        <Button Margin="0,0,7,7" IsEnabled="False" Content="Disabled" />
+                        <Button Margin="0,0,7,7" Style="{StaticResource Button.Icon}" ToolTip="More actions">
+                          <ui:FluentIcon Data="{StaticResource Fluent.MoreHorizontal20Regular}" />
+                        </Button>
+                      </WrapPanel>
+                      <WrapPanel Margin="0,0,0,14">
+                        <CheckBox Margin="0,0,14,8" IsChecked="True" Content="Snap to grid" />
+                        <CheckBox Margin="0,0,14,8" Content="Show hidden" />
+                        <CheckBox Margin="0,0,14,8" IsEnabled="False" Content="Unavailable" />
+                      </WrapPanel>
+                      <WrapPanel Margin="0,0,0,14">
+                        <RadioButton Margin="0,0,14,8" GroupName="CompileMode" IsChecked="True" Content="Full" />
+                        <RadioButton Margin="0,0,14,8" GroupName="CompileMode" Content="Incremental" />
+                      </WrapPanel>
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="Auto" />
+                          <ColumnDefinition Width="50" />
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Muted}" Text="Limiter" />
+                        <ToggleButton Grid.Column="1" Margin="10,0,0,0" IsChecked="True" Style="{StaticResource Toggle.Switch}" />
+                        <Slider Grid.Column="2" Margin="18,0,10,0" Minimum="0" Maximum="100" Value="68" />
+                        <TextBlock Grid.Column="3" VerticalAlignment="Center" Style="{StaticResource Text.Mono}" Text="-0.1 dB" />
+                      </Grid>
+                    </StackPanel>
+                  </Border>
+
+                  <Border Grid.Column="2" Style="{StaticResource Card}">
+                    <StackPanel>
+                      <TextBlock Style="{StaticResource Text.Section}" Text="Inputs and validation" />
+                      <TextBlock Margin="0,5,0,14" Style="{StaticResource Text.Caption}" Text="Focus, read-only, disabled, and invalid remain visually distinct." />
+                      <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="10" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                          <TextBlock Style="{StaticResource Field.Label}" Text="DISPLAY NAME" />
+                          <TextBox Text="Low Strings" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                          <TextBlock Style="{StaticResource Field.Label}" Text="EVENT INSTRUMENT" />
+                          <ComboBox SelectedIndex="1">
+                            <ComboBoxItem Content="Glass Arc" />
+                            <ComboBoxItem Content="Dark Ensemble" />
+                            <ComboBoxItem Content="Felt Pulse" />
+                          </ComboBox>
+                        </StackPanel>
+                      </Grid>
+                      <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="10" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                          <TextBlock Style="{StaticResource Field.Label}" Text="READ-ONLY STABLE ID" />
+                          <TextBox IsReadOnly="True" Text="trk_0187a3f0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                          <TextBlock Style="{StaticResource Field.Label}" Text="DISABLED VALUE" />
+                          <TextBox IsEnabled="False" Text="Unavailable" />
+                        </StackPanel>
+                      </Grid>
+                      <TextBlock Style="{StaticResource Field.Label}" Text="START TICK" />
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="30" />
+                          <ColumnDefinition Width="30" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox BorderBrush="{StaticResource Brush.Red}" Text="-24" />
+                          <Button Grid.Column="1" Margin="4,0,0,0" Padding="0">
+                            <ui:FluentIcon Style="{StaticResource Icon.Stepper}" Data="{StaticResource Fluent.Subtract20Regular}" />
+                          </Button>
+                          <Button Grid.Column="2" Margin="4,0,0,0" Padding="0">
+                            <ui:FluentIcon Style="{StaticResource Icon.Stepper}" Data="{StaticResource Fluent.Add20Regular}" />
+                          </Button>
+                      </Grid>
+                      <StackPanel Margin="0,6,0,0" Orientation="Horizontal">
+                      <ui:FluentIcon Width="14" Height="14" Margin="0,0,6,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.Red.Hover}" Data="{StaticResource Fluent.ErrorCircle20Regular}" />
+                        <TextBlock Style="{StaticResource Text.Caption}" Foreground="{StaticResource Brush.Red.Hover}" Text="Start tick must be 0 or greater." />
+                      </StackPanel>
+                    </StackPanel>
+                  </Border>
+                </Grid>
+
+                <!-- Piano roll -->
+                <Border Margin="0,0,0,12" Padding="0" Style="{StaticResource Card}">
+                  <Grid>
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="44" />
+                      <RowDefinition Height="204" />
+                      <RowDefinition Height="42" />
+                    </Grid.RowDefinitions>
+                    <Border Padding="12,0" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
+                      <Grid>
+                        <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                          <TextBlock Style="{StaticResource Text.Section}" Text="Segment editor / piano roll" />
+                          <Border Margin="10,0,0,0" Style="{StaticResource Badge}">
+                            <TextBlock Style="{StaticResource Text.Caption}" Text="Pitch + logical parameter lanes" />
+                          </Border>
+                        </StackPanel>
+                        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+                          <ToggleButton IsChecked="True" Style="{StaticResource Toggle.Segment}" Content="Draw" />
+                          <ToggleButton Margin="4,0,0,0" Style="{StaticResource Toggle.Segment}" Content="Select" />
+                          <ToggleButton Margin="4,0,0,0" Style="{StaticResource Toggle.Segment}" Content="Erase" />
+                        </StackPanel>
+                      </Grid>
+                    </Border>
+                    <Grid Grid.Row="1">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="58" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Grid Background="#D9DCE0">
+                        <UniformGrid Rows="12">
+                          <Border Style="{StaticResource Piano.WhiteKey}" />
+                          <Border Style="{StaticResource Piano.WhiteKey}" />
+                          <Border Style="{StaticResource Piano.WhiteKey}" />
+                          <Border Style="{StaticResource Piano.WhiteKey}" />
+                          <Border Style="{StaticResource Piano.WhiteKey}" />
+                          <Border Style="{StaticResource Piano.WhiteKey}" />
+                          <Border Style="{StaticResource Piano.WhiteKey}" />
+                          <Border Style="{StaticResource Piano.WhiteKey}" />
+                          <Border Style="{StaticResource Piano.WhiteKey}" />
+                          <Border Style="{StaticResource Piano.WhiteKey}" />
+                          <Border Style="{StaticResource Piano.WhiteKey}" />
+                          <Border Style="{StaticResource Piano.WhiteKey}" />
+                        </UniformGrid>
+                        <Border Margin="0,17,0,0" Style="{StaticResource Piano.BlackKey}" />
+                        <Border Margin="0,51,0,0" Style="{StaticResource Piano.BlackKey}" />
+                        <Border Margin="0,85,0,0" Style="{StaticResource Piano.BlackKey}" />
+                        <Border Margin="0,119,0,0" Style="{StaticResource Piano.BlackKey}" />
+                        <Border Margin="0,153,0,0" Style="{StaticResource Piano.BlackKey}" />
+                        <TextBlock Margin="38,2,0,0" VerticalAlignment="Top" FontSize="9" Foreground="#252830" Text="C5" />
+                      </Grid>
+                      <Grid Grid.Column="1" Background="{StaticResource Brush.Surface.0}" ClipToBounds="True">
+                        <UniformGrid Columns="16" Opacity="0.85">
+                          <Border BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0" />
+                          <Border />
+                        </UniformGrid>
+                        <UniformGrid Rows="12" Opacity="0.6">
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" />
+                          <Border Background="#0C0E12" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" />
+                          <Border Background="#0C0E12" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" />
+                          <Border Background="#0C0E12" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" />
+                          <Border BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" />
+                          <Border Background="#0C0E12" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" />
+                          <Border />
+                        </UniformGrid>
+                        <Canvas>
+                          <Border Canvas.Left="28" Canvas.Top="18" Width="114" Height="14" Background="#8F2429" BorderBrush="{StaticResource Brush.Red}" BorderThickness="1" CornerRadius="2" />
+                          <Border Canvas.Left="146" Canvas.Top="52" Width="74" Height="14" Background="#6D2024" BorderBrush="{StaticResource Brush.Red.Dark}" BorderThickness="1" CornerRadius="2" />
+                          <Border Canvas.Left="224" Canvas.Top="35" Width="152" Height="14" Background="#8F2429" BorderBrush="{StaticResource Brush.Red}" BorderThickness="1" CornerRadius="2" />
+                          <Border Canvas.Left="382" Canvas.Top="86" Width="96" Height="14" Background="#5A1E22" BorderBrush="{StaticResource Brush.Red.Dark}" BorderThickness="1" CornerRadius="2" />
+                          <Border Canvas.Left="484" Canvas.Top="69" Width="132" Height="14" Background="#8F2429" BorderBrush="{StaticResource Brush.Red}" BorderThickness="1" CornerRadius="2" />
+                          <Border Canvas.Left="620" Canvas.Top="103" Width="80" Height="14" Background="#5A1E22" BorderBrush="{StaticResource Brush.Red.Dark}" BorderThickness="1" CornerRadius="2" />
+                          <Border Canvas.Left="330" Width="1" Height="204" Background="{StaticResource Brush.Red}" />
+                        </Canvas>
+                      </Grid>
+                    </Grid>
+                    <Border Grid.Row="2" Padding="10,0" Background="{StaticResource Brush.Surface.2}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+                      <Grid>
+                        <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                          <TextBlock Width="130" Style="{StaticResource Text.Caption}" Text="Velocity" />
+                          <ProgressBar Width="180" Value="76" />
+                          <TextBlock Margin="10,0,0,0" Style="{StaticResource Text.Mono}" Text="96" />
+                        </StackPanel>
+                        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+                          <TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Audition on placement" />
+                          <ToggleButton Margin="9,0,0,0" IsChecked="True" Style="{StaticResource Toggle.Switch}" />
+                        </StackPanel>
+                      </Grid>
+                    </Border>
+                  </Grid>
+                </Border>
+
+                <!-- Mapping and status surfaces -->
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <Border Grid.Column="0" Style="{StaticResource Card}">
+                    <StackPanel>
+                      <Grid>
+                        <TextBlock Style="{StaticResource Text.Section}" Text="Ordered mapping chain" />
+                        <Button Width="28" Height="28" HorizontalAlignment="Right" Style="{StaticResource Button.Icon}" ToolTip="Add mapping">
+                          <ui:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Add20Regular}" />
+                        </Button>
+                      </Grid>
+                      <TextBlock Margin="0,5,0,12" Style="{StaticResource Text.Caption}" Text="Order is explicit; broken references remain visible." />
+                      <Border Padding="9,7" Background="{StaticResource Brush.Surface.2}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="24" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                          </Grid.ColumnDefinitions>
+                          <ui:FluentIcon Width="16" Height="16" Foreground="{StaticResource Brush.Text.Tertiary}" Data="{StaticResource Fluent.ReOrderDotsVertical20Regular}" />
+                          <StackPanel Grid.Column="1">
+                            <TextBlock FontWeight="SemiBold" Text="Velocity → Expression" />
+                            <TextBlock Margin="0,2,0,0" Style="{StaticResource Text.Caption}" Text="Linear · clamp 0…127" />
+                          </StackPanel>
+                          <Border Grid.Column="2" VerticalAlignment="Center" Style="{StaticResource Badge.Success}">
+                            <TextBlock FontSize="10" Foreground="{StaticResource Brush.Success}" Text="READY" />
+                          </Border>
+                        </Grid>
+                      </Border>
+                      <Border Margin="0,6,0,0" Padding="9,7" Background="{StaticResource Brush.Surface.2}" BorderBrush="{StaticResource Brush.Red.Dark}" BorderThickness="1" CornerRadius="3">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="24" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                          </Grid.ColumnDefinitions>
+                          <ui:FluentIcon Width="16" Height="16" Foreground="{StaticResource Brush.Text.Tertiary}" Data="{StaticResource Fluent.ReOrderDotsVertical20Regular}" />
+                          <StackPanel Grid.Column="1">
+                            <TextBlock FontWeight="SemiBold" Text="Pressure → Brightness" />
+                            <TextBlock Margin="0,2,0,0" Style="{StaticResource Text.Caption}" Foreground="{StaticResource Brush.Red.Hover}" Text="Target parameter is missing" />
+                          </StackPanel>
+                          <Border Grid.Column="2" VerticalAlignment="Center" Style="{StaticResource Badge.Error}">
+                            <TextBlock FontSize="10" Foreground="{StaticResource Brush.Red.Hover}" Text="BROKEN" />
+                          </Border>
+                        </Grid>
+                      </Border>
+                      <Border Margin="0,6,0,0" Padding="9,7" Background="{StaticResource Brush.Surface.2}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="24" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                          </Grid.ColumnDefinitions>
+                          <ui:FluentIcon Width="16" Height="16" Foreground="{StaticResource Brush.Text.Tertiary}" Data="{StaticResource Fluent.ReOrderDotsVertical20Regular}" />
+                          <StackPanel Grid.Column="1">
+                            <TextBlock FontWeight="SemiBold" Text="Gate length → Release" />
+                            <TextBlock Margin="0,2,0,0" Style="{StaticResource Text.Caption}" Text="C# Mapping Function · ABI v2" />
+                          </StackPanel>
+                          <ToggleButton Grid.Column="2" VerticalAlignment="Center" IsChecked="True" Style="{StaticResource Toggle.Switch}" />
+                        </Grid>
+                      </Border>
+                      <Expander Margin="0,12,0,0" Header="C# Mapping draft" IsExpanded="True">
+                        <TextBox Height="116"
+                                 Padding="10"
+                                 AcceptsReturn="True"
+                                 FontFamily="{StaticResource Font.Mono}"
+                                 FontSize="11"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 Text="return context.GateLength &gt; 192&#x0a;    ? 96L&#x0a;    : 48L;"
+                                 VerticalScrollBarVisibility="Auto" />
+                      </Expander>
+                    </StackPanel>
+                  </Border>
+
+                  <Border Grid.Column="2" Style="{StaticResource Card}">
+                    <StackPanel>
+                      <TextBlock Style="{StaticResource Text.Section}" Text="State surfaces" />
+                      <TextBlock Margin="0,5,0,12" Style="{StaticResource Text.Caption}" Text="Status never relies on color alone." />
+                      <UniformGrid Rows="2" Columns="2">
+                        <Border Margin="0,0,5,5" Padding="12" Background="{StaticResource Brush.Surface.2}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="4">
+                          <StackPanel>
+                            <ui:FluentIcon Width="18" Height="18" HorizontalAlignment="Left" Foreground="{StaticResource Brush.Text.Tertiary}" Data="{StaticResource Fluent.Document20Regular}" />
+                            <TextBlock Margin="0,7,0,0" FontWeight="SemiBold" Text="Empty" />
+                            <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Text="No logical tracks yet." />
+                            <Button Margin="0,10,0,0" HorizontalAlignment="Left" Content="Create track" />
+                          </StackPanel>
+                        </Border>
+                        <Border Margin="5,0,0,5" Padding="12" Background="{StaticResource Brush.Info.Subtle}" BorderBrush="#28517A" BorderThickness="1" CornerRadius="4">
+                          <StackPanel>
+                            <ui:FluentIcon Width="18" Height="18" HorizontalAlignment="Left" Foreground="{StaticResource Brush.Info}" Data="{StaticResource Fluent.RepeatAll20Regular}" />
+                            <TextBlock Margin="0,7,0,0" FontWeight="SemiBold" Text="Loading" />
+                            <TextBlock Margin="0,4,0,10" Style="{StaticResource Text.Caption}" Text="Opening project…" />
+                            <ProgressBar Foreground="{StaticResource Brush.Info}" Value="62" />
+                          </StackPanel>
+                        </Border>
+                        <Border Margin="0,5,5,0" Padding="12" Background="{StaticResource Brush.Damaged.Subtle}" BorderBrush="#694085" BorderThickness="1" CornerRadius="4">
+                          <StackPanel>
+                            <ui:FluentIcon Width="18" Height="18" HorizontalAlignment="Left" Foreground="{StaticResource Brush.Damaged}" Data="{StaticResource Fluent.ErrorCircle20Regular}" />
+                            <TextBlock Margin="0,7,0,0" FontWeight="SemiBold" Text="Damaged object" />
+                            <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Text="Name and ID remain readable; editing is blocked." />
+                          </StackPanel>
+                        </Border>
+                        <Border Margin="5,5,0,0" Padding="12" Background="{StaticResource Brush.Warning.Subtle}" BorderBrush="#735820" BorderThickness="1" CornerRadius="4">
+                          <StackPanel>
+                            <ui:FluentIcon Width="18" Height="18" HorizontalAlignment="Left" Foreground="{StaticResource Brush.Warning}" Data="{StaticResource Fluent.Warning20Regular}" />
+                            <TextBlock Margin="0,7,0,0" FontWeight="SemiBold" Text="No results" />
+                            <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Text="No diagnostics match the active filters." />
+                          </StackPanel>
+                        </Border>
+                      </UniformGrid>
+                    </StackPanel>
+                  </Border>
+                </Grid>
+              </StackPanel>
+            </ScrollViewer>
+          </TabItem>
+
+          <TabItem Header="Arrangement">
+            <Grid Background="{StaticResource Brush.Surface.0}">
+              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <ui:FluentIcon Width="28" Height="28" HorizontalAlignment="Center" Foreground="{StaticResource Brush.Text.Tertiary}" Data="{StaticResource Fluent.Document20Regular}" />
+                <TextBlock Margin="0,12,0,0" Style="{StaticResource Text.Title}" Text="Arrangement workspace placeholder" />
+                <TextBlock Margin="0,6,0,0" Style="{StaticResource Text.Caption}" Text="The production workspace is intentionally not implemented in this sample." />
+              </StackPanel>
+            </Grid>
+          </TabItem>
+          <TabItem Header="Low Strings  ×">
+            <Grid Background="{StaticResource Brush.Surface.0}">
+              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <ui:FluentIcon Width="28" Height="28" HorizontalAlignment="Center" Foreground="{StaticResource Brush.Red.Hover}" Data="{StaticResource Fluent.MusicNote220Regular}" />
+                <TextBlock Margin="0,12,0,0" Style="{StaticResource Text.Title}" Text="Track workspace placeholder" />
+              </StackPanel>
+            </Grid>
+          </TabItem>
+        </TabControl>
+
+        <GridSplitter Grid.Column="3" HorizontalAlignment="Stretch" ResizeDirection="Columns" />
+
+        <!-- Inspector -->
+        <Border Grid.Column="4" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1,0,0,0">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="38" />
+              <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Border Style="{StaticResource Panel.Header}">
+              <Grid>
+                <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="INSPECTOR" />
+                <Border HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource Badge}">
+                  <TextBlock Style="{StaticResource Text.Caption}" Text="1 selected" />
+                </Border>
+              </Grid>
+            </Border>
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+              <StackPanel Margin="14,14,14,22">
+                <StackPanel Margin="0,0,0,14">
+                  <TextBlock Style="{StaticResource Text.Overline}" Text="LOGICAL TRACK" />
+                  <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Title}" Text="Low Strings" />
+                  <StackPanel Margin="0,8,0,0" Orientation="Horizontal">
+                    <Border Style="{StaticResource Badge.Success}">
+                      <StackPanel Orientation="Horizontal">
+                        <ui:FluentIcon Width="13" Height="13" Margin="0,0,5,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.Success}" Data="{StaticResource Fluent.CheckmarkCircle20Regular}" />
+                        <TextBlock Foreground="{StaticResource Brush.Success}" Text="VALID" />
+                      </StackPanel>
+                    </Border>
+                    <Border Margin="5,0,0,0" Style="{StaticResource Badge.Warning}">
+                      <TextBlock Foreground="{StaticResource Brush.Warning}" Text="1 NOTICE" />
+                    </Border>
+                  </StackPanel>
+                </StackPanel>
+
+                <TextBlock Style="{StaticResource Field.Label}" Text="DISPLAY NAME" />
+                <TextBox Margin="0,0,0,12" Text="Low Strings" />
+
+                <TextBlock Style="{StaticResource Field.Label}" Text="EVENT INSTRUMENT" />
+                <ComboBox Margin="0,0,0,12" SelectedIndex="1">
+                  <ComboBoxItem Content="Glass Arc" />
+                  <ComboBoxItem Content="Dark Ensemble" />
+                  <ComboBoxItem Content="Felt Pulse" />
+                  <ComboBoxItem Content="Unassigned" />
+                </ComboBox>
+
+                <Border Margin="0,0,0,12" Padding="10" Background="{StaticResource Brush.Warning.Subtle}" BorderBrush="#735820" BorderThickness="1" CornerRadius="4">
+                  <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                      <ui:FluentIcon Width="14" Height="14" Margin="0,0,7,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.Warning}" Data="{StaticResource Fluent.Warning20Regular}" />
+                      <TextBlock FontWeight="SemiBold" Text="Binding impact" />
+                    </StackPanel>
+                    <TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Text="Replacing this binding may make one logical parameter lane inapplicable." />
+                    <Button Margin="0,9,0,0" HorizontalAlignment="Left" Height="26" Style="{StaticResource Button.Ghost}" Content="View affected lane" />
+                  </StackPanel>
+                </Border>
+
+                <Grid Margin="0,0,0,12">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Style="{StaticResource Field.Label}" Text="VALUE SOURCE" />
+                    <TextBlock Foreground="{StaticResource Brush.Text.Primary}" Text="Explicit Override" />
+                  </StackPanel>
+                  <ToggleButton Grid.Column="1" VerticalAlignment="Center" IsChecked="True" Style="{StaticResource Toggle.Switch}" />
+                </Grid>
+
+                <TextBlock Style="{StaticResource Field.Label}" Text="PLAYBACK MASTER VOLUME" />
+                <Grid Margin="0,0,0,12">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="58" />
+                  </Grid.ColumnDefinitions>
+                  <Slider Minimum="-60" Maximum="6" Value="-0.1" />
+                  <Border Grid.Column="1" Margin="8,0,0,0" Background="{StaticResource Brush.Surface.0}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+                    <TextBlock HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource Brush.Text.Primary}"
+                               Style="{StaticResource Text.Mono}"
+                               Text="-0.1" />
+                  </Border>
+                </Grid>
+
+                <TextBlock Style="{StaticResource Field.Label}" Text="TRACK ORDER" />
+                <Grid Margin="0,0,0,12">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="30" />
+                    <ColumnDefinition Width="30" />
+                  </Grid.ColumnDefinitions>
+                  <TextBox Text="2" />
+                  <Button Grid.Column="1" Margin="4,0,0,0" Padding="0">
+                    <ui:FluentIcon Style="{StaticResource Icon.Stepper}" Data="{StaticResource Fluent.Subtract20Regular}" />
+                  </Button>
+                  <Button Grid.Column="2" Margin="4,0,0,0" Padding="0">
+                    <ui:FluentIcon Style="{StaticResource Icon.Stepper}" Data="{StaticResource Fluent.Add20Regular}" />
+                  </Button>
+                </Grid>
+
+                <TextBlock Style="{StaticResource Field.Label}" Text="STABLE ID" />
+                <TextBox Margin="0,0,0,12" FontFamily="{StaticResource Font.Mono}" IsReadOnly="True" Text="trk_0187a3f0" />
+
+                <Expander Header="Advanced" IsExpanded="False">
+                  <StackPanel>
+                    <CheckBox IsChecked="True" Content="Include in default export selection" />
+                    <TextBlock Margin="0,8,0,0" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Text="This control is shown for visual review only; no Project setting is written." />
+                  </StackPanel>
+                </Expander>
+              </StackPanel>
+            </ScrollViewer>
+          </Grid>
+        </Border>
+      </Grid>
+
+      <!-- Diagnostics / Details / Tasks -->
+      <Border Grid.Row="5" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+        <TabControl SelectedIndex="0">
+          <TabItem Header="Diagnostics  3">
+            <Grid Margin="12,8,12,10">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="22" />
+                <RowDefinition Height="*" />
+              </Grid.RowDefinitions>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="74" />
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="170" />
+                  <ColumnDefinition Width="100" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Text.Caption}" Text="SEVERITY" />
+                <TextBlock Grid.Column="1" Style="{StaticResource Text.Caption}" Text="MESSAGE" />
+                <TextBlock Grid.Column="2" Style="{StaticResource Text.Caption}" Text="SOURCE" />
+                <TextBlock Grid.Column="3" Style="{StaticResource Text.Caption}" Text="CODE" />
+              </Grid>
+              <StackPanel Grid.Row="1">
+                <Border Padding="0,6" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="74" />
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="170" />
+                      <ColumnDefinition Width="100" />
+                    </Grid.ColumnDefinitions>
+                    <Border HorizontalAlignment="Left" Style="{StaticResource Badge.Error}"><TextBlock FontSize="10" Foreground="{StaticResource Brush.Red.Hover}" Text="ERROR" /></Border>
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Target logical parameter no longer exists." />
+                    <TextBlock Grid.Column="2" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Low Strings / Pressure" />
+                    <TextBlock Grid.Column="3" VerticalAlignment="Center" Style="{StaticResource Text.Mono}" Text="MAP-014" />
+                  </Grid>
+                </Border>
+                <Border Padding="0,6" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="74" />
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="170" />
+                      <ColumnDefinition Width="100" />
+                    </Grid.ColumnDefinitions>
+                    <Border HorizontalAlignment="Left" Style="{StaticResource Badge.Warning}"><TextBlock FontSize="10" Foreground="{StaticResource Brush.Warning}" Text="WARNING" /></Border>
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="External SoundFont hash changed; review and accept explicitly." />
+                    <TextBlock Grid.Column="2" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Project SoundFont" />
+                    <TextBlock Grid.Column="3" VerticalAlignment="Center" Style="{StaticResource Text.Mono}" Text="SF2-008" />
+                  </Grid>
+                </Border>
+              </StackPanel>
+            </Grid>
+          </TabItem>
+          <TabItem Header="Details">
+            <Grid Margin="14">
+              <TextBlock Style="{StaticResource Text.Caption}" Text="Select a diagnostic or task to inspect provenance, affected range, and safe next actions." />
+            </Grid>
+          </TabItem>
+          <TabItem Header="Tasks  1">
+            <Grid Margin="14,10">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="90" />
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock FontWeight="SemiBold" Text="Whole Project Compile" />
+                <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Building canonical result" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Margin="16,2">
+                <ProgressBar Value="71" />
+                <TextBlock Margin="0,6,0,0" Style="{StaticResource Text.Caption}" Text="14 of 20 segments · Project edit lock" />
+              </StackPanel>
+              <Button Grid.Column="2" Height="28" Content="Cancel" />
+            </Grid>
+          </TabItem>
+        </TabControl>
+      </Border>
+
+      <!-- Status bar -->
+      <Border Grid.Row="6" Padding="10,0" Background="{StaticResource Brush.Black}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Grid>
+          <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+            <Ellipse Style="{StaticResource Status.Dot}" Fill="{StaticResource Brush.Success}" />
+            <TextBlock Style="{StaticResource Text.Caption}" Foreground="{StaticResource Brush.Text.Secondary}" Text="Stopped" />
+            <Border Width="1" Height="12" Margin="10,0" Background="{StaticResource Brush.Border}" />
+            <TextBlock Style="{StaticResource Text.Caption}" Text="Compile state: Needs compile" />
+            <Border Width="1" Height="12" Margin="10,0" Background="{StaticResource Brush.Border}" />
+            <TextBlock Style="{StaticResource Text.Caption}" Text="3 diagnostics" />
+          </StackPanel>
+          <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+            <TextBlock Style="{StaticResource Text.Caption}" Text="TPQ 192" />
+            <Border Width="1" Height="12" Margin="10,0" Background="{StaticResource Brush.Border}" />
+            <TextBlock Style="{StaticResource Text.Caption}" Text="Zoom 100%" />
+            <Border Width="1" Height="12" Margin="10,0" Background="{StaticResource Brush.Border}" />
+            <TextBlock Style="{StaticResource Text.Caption}" Text="win-x64 · .NET 10" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

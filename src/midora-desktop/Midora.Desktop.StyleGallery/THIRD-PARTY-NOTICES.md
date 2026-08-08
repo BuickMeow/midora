@@ -1,0 +1,58 @@
+# Third-party notices
+
+## Fluent System Icons
+
+This style gallery contains WPF Geometry conversions of selected 20 px SVG paths from
+Microsoft's Fluent System Icons repository at revision
+`0a92ff83f03fa5319edaf0e2b2a09e460b69091a`.
+
+Assets used:
+
+- `ic_fluent_add_20_regular.svg`
+- `ic_fluent_subtract_20_regular.svg`
+- `ic_fluent_dismiss_20_regular.svg`
+- `ic_fluent_square_20_regular.svg`
+- `ic_fluent_square_multiple_20_regular.svg`
+- `ic_fluent_save_20_regular.svg`
+- `ic_fluent_arrow_undo_20_regular.svg`
+- `ic_fluent_arrow_redo_20_regular.svg`
+- `ic_fluent_stop_20_filled.svg`
+- `ic_fluent_play_20_filled.svg`
+- `ic_fluent_arrow_repeat_all_20_regular.svg`
+- `ic_fluent_more_horizontal_20_regular.svg`
+- `ic_fluent_search_20_regular.svg`
+- `ic_fluent_music_note_2_20_regular.svg`
+- `ic_fluent_folder_20_regular.svg`
+- `ic_fluent_document_20_regular.svg`
+- `ic_fluent_settings_20_regular.svg`
+- `ic_fluent_error_circle_20_regular.svg`
+- `ic_fluent_warning_20_regular.svg`
+- `ic_fluent_info_20_regular.svg`
+- `ic_fluent_checkmark_circle_20_regular.svg`
+- `ic_fluent_arrow_fit_20_regular.svg`
+- `ic_fluent_re_order_dots_vertical_20_regular.svg`
+
+MIT License
+
+Copyright (c) 2020 Microsoft Corporation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Upstream license:
+https://github.com/microsoft/fluentui-system-icons/blob/main/LICENSE

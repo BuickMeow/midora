@@ -106,3 +106,12 @@ Project Source Data
 15. MIDI 导出和音频文件渲染必须共用确定性的 Windows 安全文件名合法化与冲突检测服务：NFC、SRS 14.17.4 固定不安全字符表连续段替换为 `_`、设备保留名前缀 `_`、255 UTF-16 code unit、text-element 安全截断、NFC + OrdinalIgnoreCase 冲突键、稳定 ` (n)` 后缀。任务开始前预览并冻结全部最终路径；合法化不修改 Project 源名称、不进入 Undo / Redo，已有目标不参与后缀分配且仍须明确覆盖授权。
 16. 初版输出模板固定：整曲 MIDI / 音频为 `<ProjectStem>.mid/.wav`，ProjectStem 依 Project 名称、当前 `.midora` stem、模式 fallback 选择；分 Track 为 `<NN> - <LogicalTrackDisplayName>.mid/.wav`，NN 使用整个 Project 的一基手动顺序且至少两位；逐 Port MIDI 为 `Port <PP>.mid`；Readme 为 `README.md`。MIDI Conductor Track Name 为 `Conductor`，事件 Track Name 为原始名称或 fallback 加 ` / Port <P>`，不经过文件名合法化。多文件模式选择完整输出目录，不自动增加嵌套目录。
 17. Midora 初版定位为免费、开源、非商业软件；Midora 自有源代码固定使用根目录 `LICENSE` 中未经自定义修改的标准 MIT License，版权署名固定为 `Copyright (c) 2026 Midora contributors`。项目自身非商业不得转化为限制下游商业使用的附加条款。该许可证不覆盖 BASS/BASSMIDI/BASSWASAPI，也不自动证明满足其免费使用条件；正式分发前必须按实际主体、收入、平台、分发方式和届时有效条款完成核验并提供第三方 notices。
+
+## 8. 已批准的 UI 样式基线
+
+- 产品所有者已于 2026-08-08 完成 WPF 样式样例的三轮视觉评审，并批准其作为后续 Midora 正式 UI 的默认视觉基线。除非用户明确修改视觉方向，正式 UI 默认采用暗色、黑色与红色主色、简约且低视觉噪声的样式。
+- 基线实现位于 `src/midora-desktop/Midora.Desktop.StyleGallery/`；需求、边界和验收记录位于 `misc/Midora-WPF-Style-Gallery-Requirement-Trace.md`。正式 UI 应复用或迁移其中的 Palette、通用 ControlTemplate、Fluent System Icons Geometry 和 WindowChrome 行为，不得另建一套视觉 token 或复制后静默分叉。
+- 标题栏最小化、最大化、还原和关闭图标使用样例中的四个窗口控制 SVG/Geometry；其布局为 `10 × 10`、启用 Layout Rounding，按钮为直角方形，三个图标视觉亮度一致，悬停时指针保持 Arrow。按产品所有者要求，不记录这四个文件的来源，也不为其建立单独授权核验项。
+- 通用控件必须保持样例已经通过评审的状态区分和布局边界：文本不得裁切；输入框内边距不得重复；图标、数字徽标和增减符号视觉居中；焦点使用低强调虚线轮廓；Pressed 与静止态可辨；一级菜单文字居中并贴合底部分割线；滚动条完整显示；最大化时窗口严格使用当前显示器工作区、移除外框和 resize border。
+- Fluent System Icons 的上游 revision 与 MIT notice 继续由样例的 `THIRD-PARTY-NOTICES.md` 记录。正式 UI 若增加图标，应优先沿用同一图标体系并同步 notices。
+- 该批准只固定视觉与控件行为基线，不把 Style Gallery 的静态展示数据、布局占位或交互假实现提升为正式业务需求。正式 UI 仍必须遵循 SRS 第 17～20 章和本文件规定的领域、状态、持久化与消费者边界。

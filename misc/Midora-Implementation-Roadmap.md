@@ -1,9 +1,11 @@
 # Midora 初版实施路线图
 
-文档修订日期：2026-08-06
+文档修订日期：2026-08-08
 性质：需求理解、现状审阅和实施建议；不是 SRS 的替代品。
 
 > 现状提示（2026-08-08）：本文后续“当前进度/尚未实现”描述保留为历史路线记录，已经过时；不得据此判定源码缺口。当前权威实施状态见 `misc/Midora-Non-UI-Implementation-Tracker.md`，§7～§12 逐节证据见 `misc/Midora-Domain-Compiler-Conformance-Matrix.md`。
+>
+> UI 阶段现状（2026-08-08）：`src/midora-desktop/Midora.Desktop.StyleGallery/` 已建立独立的 .NET 10、WPF、`win-x64` 样式样例，并完成三轮产品所有者视觉评审。该样例现为后续正式 UI 的默认视觉基线；它仍是静态组件画廊，不代表 Main Window 业务组合、命令路由、ViewModel 或正式工作流已经实现。详细边界和验收证据见 `misc/Midora-WPF-Style-Gallery-Requirement-Trace.md`。
 
 ## 1. 审阅范围
 
@@ -266,6 +268,8 @@ flowchart TD
 退出条件：对同一 CompileContext，三消费者的事件身份、顺序、范围和诊断可追溯到同一 canonical entry；任何 failed/partial result 都不能开始消费。
 
 ### 阶段 7：WPF 应用与工作流
+
+当前进度（2026-08-08）：已完成并批准暗色黑红简约风格的 WPF 组件样例，覆盖 WindowChrome、菜单、命令栏、Project Panel、Workspace/Inspector/Bottom Panel、通用输入与状态控件、滚动条以及 Midora 代表性编辑表面。样例通过 .NET 10 Release 构建和 100% DPI 视觉/窗口边界检查。正式 UI composition、业务数据绑定和第 17～20 章工作流仍未开始；后续实现默认复用该样例的资源字典与控件模板。
 
 工作：
 

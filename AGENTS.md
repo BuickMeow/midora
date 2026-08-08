@@ -97,7 +97,7 @@ Project Source Data
 6. 正式 BASSMIDI Stream 使用 8-point sinc、CPU 属性 0；Realtime/Offline Maximum Sample Voices per Unit Stream 分别配置且默认均为 500，完美音频一致性测试以未触顶为前提。
 7. 初版产品 CPU 架构固定为 `win-x64`；音频 Worker 只允许以该 RID Native AOT 发布。
 8. 初版三项 BASS DLL 的完整版本和 SHA-256 固定；仓库保存 manifest 而不提交 DLL，升级必须显式变更基线并完成全回归。
-9. 初版 C# Mapping 固定 ABI v1、Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10` 和独立只读 Mapping 契约；每 Project 只缓存当前源码修订并使用 collectible ALC，编译产物不持久化。该机制不是 sandbox。
+9. 初版 C# Mapping 当前固定 ABI v2、`MappingStableIdV2(long)`、Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10` 和独立只读 Mapping 契约；每 Project 只缓存当前源码修订并使用 collectible ALC，编译产物不持久化。ABI v1 已在开发期被 v2 取代且不提供并行回退；该机制不是 sandbox。
 10. 初版持久化固定 JSON Schema Draft 2020-12、内部版本化 System.Text.Json source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 与 Grpc.Tools 2.83.0；未知/重复字段严格拒绝，已发布 descriptor/字段号/golden bytes 必须保持兼容。文本、路径、opaque sRGB、UTC 七位小数秒和非负 int64 毫秒表示按 SRS 16.13 固定。
 11. 外部 Project SF2 只允许项目根目录或直属 `soundfonts/` 相对引用；路径精确大小写优先、唯一 ignore-case 回退并 Warning、歧义拒绝。SHA-256 对完整原始字节流式计算，只在用户明确选择/替换/重绑定/接受变化时更新；被动变化不改 Project。绝对解析路径和验证缓存只属于运行时。
 12. 工程总耗时按 Project 成功打开后的完整会话时间累计，包括空闲、最小化、失焦、Buffering、MIDI 导出和音频渲染；系统睡眠 / 休眠及关闭流程暂停。会话使用单调时钟；自动累计不单独标记 Modified，不进入 Undo / Redo，不影响编译或 canonical fingerprint。

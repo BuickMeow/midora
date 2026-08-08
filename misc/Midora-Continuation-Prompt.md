@@ -1,115 +1,121 @@
 # Midora 跨聊天续接提示词
 
-用途：把下方整个 `text` 代码块原样复制到新的 Codex 聊天。它是接手索引，不替代仓库内 SRS、ADR、源码、测试和实时 Git 状态。
+用途：把下方整个 “text” 代码块原样复制到新的 Codex 聊天。它是详尽的接手索引，但不替代仓库中的 SRS、ADR、源码、测试和实时 Git 状态。
 
-```text
-你现在接续 Midora 项目的领域层、编译器、播放控制、MIDI 导出、音频全链路、持久化与后续 WPF 工作。
+~~~text
+你现在接续 Midora 项目的后续开发。仓库绝对路径：
 
-仓库绝对路径：
 D:\Programing\midora
 
-默认使用简体中文。必须严谨、直接、以事实为先。回答和交付中明确区分：
+默认使用简体中文。沟通必须严谨、直接、以事实为先。必须明确区分：
 
 - SRS 已规定的正式需求；
-- 从当前源码、测试、构建和 Git 状态确认的实现事实；
+- 产品所有者已经确认的变更决定；
 - ADR 已接受的实现决定；
+- 从当前源码、测试、构建和 Git 状态确认的实现事实；
 - 合理设计推断；
-- 未实现能力；
-- 尚待产品所有者决定的问题。
+- 尚未实现的能力；
+- 尚待产品所有者确认的问题。
 
-不得把路线图、建议、原型行为、测试能发声、合理猜测或本提示词本身冒充 SRS 原文。
+不得把路线图、历史记录、原型行为、“已经能发声”、合理猜测或本提示词本身冒充正式需求。
 
-============================================================
-一、接手后必须先做的只读检查
-============================================================
+================================================================
+一、接手后必须先做的检查
+================================================================
 
-1. 完整读取下列文件：
+1. 完整读取以下文件，不得只看摘要：
 
-   - D:\Programing\midora\AGENTS.md
-   - D:\Programing\midora\misc\Midora-SRS-Initial-Release-v0.1\00-Table-of-Contents-and-Document-Control.md
-   - D:\Programing\midora\misc\Midora-SRS-Initial-Release-v0.1\22-Requirement-Locator-and-Cross-System-Invariants.md
-   - D:\Programing\midora\misc\Midora-SRS-Code-Conformance-Audit-2026-08-05.md
-   - D:\Programing\midora\misc\Midora-Core-Architecture-Decisions.md
-   - D:\Programing\midora\misc\Midora-Audio-Backend-Architecture-Decisions.md
-   - D:\Programing\midora\misc\Midora-Implementation-Roadmap.md
-   - 与本次具体任务直接相关的所有 SRS 章节。
+   D:\Programing\midora\AGENTS.md
+   D:\Programing\midora\misc\Midora-SRS-Initial-Release-v0.1\00-Table-of-Contents-and-Document-Control.md
+   D:\Programing\midora\misc\Midora-SRS-Initial-Release-v0.1\22-Requirement-Locator-and-Cross-System-Invariants.md
+   D:\Programing\midora\misc\Midora-Non-UI-Implementation-Tracker.md
+   D:\Programing\midora\misc\Midora-Non-UI-Decision-Question-Library.md
+   D:\Programing\midora\misc\Midora-Domain-Compiler-Conformance-Matrix.md
+   D:\Programing\midora\misc\Midora-Segment-Unit-Audio-Cache-Requirement-Trace.md
+   D:\Programing\midora\misc\Midora-SF2-Release-Gate-Matrix-2026-08-08.md
+   D:\Programing\midora\misc\Midora-Core-Architecture-Decisions.md
+   D:\Programing\midora\misc\Midora-Audio-Backend-Architecture-Decisions.md
+   D:\Programing\midora\misc\Midora-Manual-Audio-Acceptance.md
+   D:\Programing\midora\misc\Midora-Implementation-Roadmap.md
 
-2. 需求优先级：
+2. 再完整读取与用户新任务直接相关的 SRS 章节。若下一阶段是 WPF，至少读取第 17、18、20 章，以及第 3、13、19 章中与应用生命周期、播放、任务工作流有关的部分。
 
-   - `misc/Midora-SRS-Initial-Release-v0.1/` 是正式需求基线。
-   - `AGENTS.md` 是仓库工作约束和已经确认规则的摘要。
+3. 需求和记录的权威顺序：
+
+   - misc/Midora-SRS-Initial-Release-v0.1/ 是当前正式需求基线。
+   - 产品所有者在 Midora-Non-UI-Decision-Question-Library.md 中已经明确批准、且目的就是修改 SRS 的决定，是有效变更授权。
+   - AGENTS.md 是仓库工作约束和关键规则摘要。
    - Core/Audio Architecture Decisions 是已接受设计记录。
-   - Code Conformance Audit 是全量核对、修正和未实现项记录。
-   - Implementation Roadmap 是实施建议与历史现状，不是需求规范；冲突时以 SRS 为准。
-   - 本续接提示只用于导航，任何细节仍须回到正式文件和源码核验。
+   - Non-UI Implementation Tracker 和各 Requirement Trace 记录实施与验证事实。
+   - Implementation Roadmap 是历史路线图和建议，不是需求规范；其中旧的 ABI v1、每 Port Stream、默认 750 等历史文字不得覆盖当前 SRS/ADR/源码。
+   - 本交接提示仅用于导航；冲突时必须回到正式文件、提交历史和源码核验。
 
-3. 立即执行只读 Git 检查：
+4. 立即执行只读 Git 检查：
 
    git status --short --branch
    git log -8 --oneline --decorate
    git diff --stat
    git diff --cached --stat
+   git rev-parse HEAD
+   git rev-parse origin/main
 
-4. 所有工作树现有修改均先视为用户改动。不得 reset、checkout、覆盖、删除、移动、格式化或顺手提交无关文件。只有能够从任务、diff 和提交历史明确证明归属后，才能纳入本轮。
+5. 交接生成时的 Git 快照：
 
-5. 在修改前检查相关 solution、project、源码和测试，并写一份简短 requirement trace，至少包括：
+   - 分支：main
+   - 非 UI 完整基线提交：4001981e69328c00a17573affd16309f6189cb14
+   - 提交标题：feat: complete initial non-UI feature set
+   - 该提交已推送到 origin/main。
+   - 交接文档本身可能位于后续提交；必须以新聊天实时 HEAD 为准。
+   - 交接生成前工作树已经干净；新聊天仍须重新检查，不得盲信。
 
-   - 输入；
-   - 正式输出；
-   - 时间、范围、资源和文件边界；
-   - 失败条件与失败原子性；
-   - 诊断类别和严重级别；
-   - 持久化归属；
-   - 运行时归属；
-   - 明确非目标。
+6. 所有现有工作树修改先视为用户改动。不得 reset、checkout、覆盖、删除、移动、批量格式化或顺手提交无关文件。只有从任务、diff 和提交历史明确证明归属后才能纳入本轮。
 
-6. 如果选择会影响可听结果、确定性、公共接口、`.midora` 兼容性、文件产物、并发所有权或用户工作流，而 SRS/ADR 没有闭合，先记录准确冲突和候选方案，再请产品所有者决定。一般实现细节不应包装成产品决定。
+================================================================
+二、产品所有者要求的工作方式
+================================================================
 
-============================================================
-二、交接时 Git 与验证快照（必须重新核验，不能盲信）
-============================================================
+1. 原始范围是“完成初版所有 UI 以外的功能及完整自动测试”；该范围现已完成。不要重新实现已有非 UI 模块，也不要把持续加固误写成已知功能缺口。
 
-交接生成时的已确认事实：
+2. 若后续发现需要产品决定：
 
-- 日期：2026-08-06。
-- 分支：`main`。
-- HEAD 与 `origin/main`：`3578e82 docs: 落地MIT版权署名`。
-- 工作树：干净。
-- 最近关键提交：
-  - `3578e82 docs: 落地MIT版权署名`
-  - `561bee7 docs(srs): 固定MIT开源许可证`
-  - `a3db8b5 docs(srs): 固定非商业开源发布定位`
-  - `df8960e feat(common): 固定初版输出命名模板`
-  - `ed9ab5c feat(common): 固定输出文件名合法化`
-  - `3d51485 docs(srs): 统一输出文件名合法化边界`
-  - `c72d282 feat(midi): 固定Channel 10导出初始化`
-  - `80da779 feat(midi): 固定SMF兼容编码档`
+   - 小决定，或不同选择影响范围很小：先按你的推荐方案实施，随后把问题、方案、影响、已实施选择和测试证据详尽记录到 Midora-Non-UI-Decision-Question-Library.md，交给产品所有者确认或修改。
+   - 大决定，或不同选择会广泛影响可听语义、文件兼容性、确定性、公共接口、并发模型、用户工作流：暂停受影响部分，先把问题、SRS/源码矛盾、候选方案、推荐方案和影响写入问题库，再请求产品所有者决定。其他不依赖该决定的工作继续。
+   - 以前已经确认的问题不得重复询问。
 
-以上只是交接快照。新聊天必须以当时真实的 Git 状态为准；若不同，先查明新增提交或改动归属，不得回退用户工作。
+3. 不涉及人耳或物理设备的验证由你自行运行、修复并闭合。必须人耳试听或物理设备操作的项目集中列出准确命令、预期与观察点，让产品所有者逐条执行；失败时完整保存原始输出快照，本轮是否修复以用户指令为准。
 
-最近一次代码全量验证证据：
+4. 用户已经授权：完整、已验证且范围清晰的增量需要时可以提交并推送 Git。提交前必须检查 staged diff、禁止混入 SF2/BASS DLL/AOT/TRX/artifacts，并在推送后核对 HEAD、upstream 和工作树。
 
-- `midora-common.slnx` Release：0 warning / 0 error。
-- `midora-core.slnx` Release：0 warning / 0 error。
-- `midora-midi.slnx` Release：0 warning / 0 error。
-- `midora-audio.slnx` Release：0 warning / 0 error，全部列出的依赖输出位于 `bin/Release`。
-- 8 个测试项目合计 310/310：
-  - Midora.Common.Tests：68；
-  - Midora.Compiler.Tests：88；
-  - Midora.Persistence.Tests：21；
-  - Midora.MidiExport.Tests：9；
-  - Midora.Playback.Tests：27；
-  - Midora.Midi.Tests：18；
-  - Midora.Audio.Bass.Tests：58；
-  - Midora.AudioDevice.BassWasapi.Tests：21。
-- `dotnet format src\midora-common\midora-common.slnx --no-restore --verify-no-changes` 通过。
-- 此后直到本提示生成，只提交了 SRS、许可和续接文档，没有代码语义变化。
+5. 修改前先写简短 requirement trace，至少包含输入、正式输出、范围/资源/文件边界、失败条件、诊断、持久化归属、运行时归属和明确非目标。涉及可听语义、持久化格式、公共接口或并发所有权时先更新 ADR/Requirement Trace。
 
-注意：不要把历史通过当作本轮修改后的验证结果。只报告实际在本轮运行且成功的检查。
+================================================================
+三、当前项目状态
+================================================================
 
-============================================================
-三、不可破坏的系统主线和范围语义
-============================================================
+截至 2026-08-08，SRS 初版全部非 UI 源码已经闭合：
+
+- Domain 与完整 Project 源模型；
+- 统一 History、Undo/Redo、Modified、稳定 ID 分配；
+- Semantic Validation；
+- Full/Incremental Compiler 与 Canonical Compiled Result；
+- Playback、全部 Preview、held Preview 因果 Gate；
+- MIDI Export；
+- 实时/离线 BASS 音频、WASAPI、Native AOT Worker；
+- 五层编译/PCM/播放跨度缓存与 Buffering 恢复；
+- Audio File Render；
+- .midora JSON/protobuf/ZIP 持久化；
+- Application Preferences、任务协调、New/Open/Save/Save Copy、Recent Projects、单实例 IPC；
+- 输出规划、命名、覆盖与原子文件事务；
+- 非 UI Clipboard 与 batch editing；
+- 发布脚本、固定测试基线和验证文档。
+
+当前没有已知的非 UI 功能缺口，也没有未回答的大决定。后续主要阶段是 WPF UI composition、交互和 UI 验收。
+
+当前没有 WPF project、XAML 或 Desktop 入口文件；创建前必须先核对实时仓库，不能假定已有 UI 骨架。
+
+================================================================
+四、不可破坏的系统主线
+================================================================
 
 所有正式消费者必须遵循：
 
@@ -121,347 +127,371 @@ Project Source Data
 
 硬约束：
 
-1. Project 是完整语义上下文；消费者不得重新解释 Event Instrument、Mapping、Lifecycle、Segment、Logical Track、资源分配或 Reset 规则。
+1. Project 是完整语义上下文；消费者和 UI 不得重新解释 Event Instrument、Mapping、Lifecycle、Logical Track、Segment 或资源分配。
 2. Canonical Compiled Result 是播放、预览、MIDI 导出和音频渲染唯一正式音乐语义输入。
-3. Full Compile 与 Incremental Compile 对同一输入必须语义和形式逐字段完全一致。
-4. 稳定 ID 是身份；名称、列表位置、tick、MIDI Track/Port/Channel 都不是身份。
-5. 正式结果不得依赖集合枚举顺序、线程竞争、历史分配、随机数、缓存命中或 UI 临时状态。
-6. 所有统一范围使用 `[startTick, endTick)`。Segment、End Marker、播放范围和渲染范围的硬边界必须精确 NoteOff、Reset 和清理。
-7. Mute/Solo 只属于实时消费过滤；不得修改 Project、Canonical Result、MIDI 导出或音频渲染正式内容。
-8. `.midora` 只保存源数据；不保存 canonical、编译缓存、运行缓存、导出结果、Undo/Redo、播放位置或会话 UI 状态。
-9. UI 只展示、编辑和导航正式模型及诊断，不得重建第二套业务语义。
+3. Full 与 Incremental 对同一输入必须语义和形式逐字段完全一致。
+4. 稳定 ID 是身份；名称、列表位置、tick、MIDI Track/Port/Channel 不是身份。
+5. 正式结果不得依赖集合枚举顺序、线程竞争、历史分配、随机数、缓存命中或当前 UI 状态。
+6. 统一范围为 [startTick, endTick)。Segment、End Marker、播放和渲染硬边界必须精确 NoteOff、Reset、CC120 与资源清理。
+7. Mute/Solo 只属于运行时消费过滤；不得修改 Project、canonical、MIDI 导出或离线正式内容。
+8. .midora 只保存源数据；不得保存 canonical、编译缓存、PCM 缓存、导出结果、Undo/Redo 或会话 UI 状态。
+9. UI 只能展示、编辑、导航正式模型与诊断；不得创建第二套业务语义。
+10. 初版固定 Windows Desktop、.NET 10、WPF、MIDI 1.0、win-x64、单用户可启动实例、单 Project、单 Project SF2、最多 16 Port × 16 Channel Unit。
+11. 不加入 MIDI 2.0、MPE、VST/DAW host、传统实时 MIDI OUT、录音、语义级 Voice Stealing、多 SoundFont、SFZ/DLS、Pause/Scrub、多 Project或其他 SRS 排除项。
 
-初版范围固定为 Windows Desktop、.NET 10、WPF、MIDI 1.0、`win-x64`、单用户可启动应用实例、单 Project、单 Project SoundFont、最多 16 Port × 16 Channel Unit。不得顺手加入 MIDI 2.0、MPE、VST/DAW host、传统实时 MIDI OUT、录音、语义级 Voice Stealing、多 SoundFont、SFZ/DLS、Pause/Scrub、多 Project 或其他 SRS 排除项。
+================================================================
+五、关键已确认决定与当前语义
+================================================================
 
-============================================================
-四、产品所有者已经确认的全部决定
-============================================================
+完整记录以问题库和 ADR 为准。以下是最容易被旧上下文误导的当前规则。
 
-以下决定已经写入 SRS/ADR/代码或测试。不得重新询问、恢复旧分支或另设可配置选项。
+1. 稳定 ID：
 
-1A. Envelope Preset 固定为 SRS 10.11 的 ADSR-like 结构，不采用任意有序点/曲线段模型。
+   - MidoraId 核心是单个正 long，范围 1..long.MaxValue。
+   - Project 持有单调 nextStableId。
+   - JSON 使用 canonical 十进制 integer；对象文件名使用无符号、无前导零的十进制 ASCII；protobuf 使用标量 int64。
+   - 开发期旧 Guid/UInt128/high-low 格式不兼容读取或迁移。
 
-2A. 同一 tick 可有多个普通 Marker；名称可空、可重复；以稳定 ID 区分和确定同 tick 次序。
+2. C# Mapping：
 
-3A. 稳定 ID 的内存核心是正 `long`（`1..long.MaxValue`）；JSON 与 `nextStableId` 使用 canonical 十进制 integer，对象文件名使用无符号、无前导零的十进制 ASCII；protobuf 在既有外层字段号上使用标量 `int64`。开发期旧 128-bit 格式不兼容读取或迁移。
+   - 当前正式内部契约是 Mapping ABI v2，不是 v1。
+   - 固定签名为 double Transform(double value, in MappingContextV2 context)。
+   - 稳定身份通过 MappingStableIdV2(long) 传递。
+   - 固定 Roslyn 5.3.0、C# 14、Microsoft.NETCore.App.Ref 10.0.10、独立只读契约。
+   - 每 Project 只缓存当前源码修订，collectible ALC 卸载；不是 sandbox。
+   - ABI v1 已在开发期被 v2 取代，不提供并行回退。
 
-4A. 新建 Event Instrument 默认 Overlap=`Reject`；命中产生 Error。用户显式 `Warn` 时产生 Warning，默认可消费；Warning-as-error 只改变成功判定，不改变诊断级别。
+3. 时间：
 
-5A. 整数目标默认 `Round`，midpoint=`AwayFromZero`；可选 `Floor`/`Ceil`。只在完整 Mapping 链最终输出取整一次；越界策略归属最终目标配置。
+   - TPQ 范围 1..32767。
+   - 每个 Time Signature 必须满足 4 × TPQ % denominator == 0。
+   - Bar:Beat:Tick 为 1-based Bar/Beat、0-based Tick，必须可逆。
+   - 中途 Time Signature 截断旧小节并从变化 tick 开始新 Bar，同时产生 Warning。
+   - 自然拍网格/Snap 使用统一 ProjectTimeSignatureMap。
 
-6A. 连续值源以有效范围内每个整数 tick 的最终目标值为参考语义；canonical 输出首值和后续变化值。优化必须与逐 tick 参考结果完全一致，不允许误差阈值或自适应近似。
+4. Segment Split：
 
-7. SRS 已闭合：最终完全无输出的实例不分配 Channel Group、不占 Channel Unit，无需再次确认。
+   - 右侧 Segment 必须保留/生成 split tick 必要参数起点状态，使参数听感不变。
+   - 普通 Segment 边界不做隐式跨 Segment 状态继承。
+   - 跨 split tick Logical Note 仍按提前结束规则处理。
 
-8A. tick→sample frame 使用完整 Tempo Map 在 `[originTick, targetTick)` 上做 decimal 分段积分，总时长乘采样率后只执行一次 `AwayFromZero`。不得逐段取整或用两个已取整绝对位置相减。
+5. allocation group 清理：
 
-9A. Limiter v1 固定为 stereo-linked sample-peak、瞬时 attack、zero-look-ahead、linear ceiling=1.0、50 ms 单极指数 release；按实际采样率算系数，跨 block 保持 gain，新任务/Reset 恢复 1.0；不做 true-peak。
+   - 实际 group 结束时顺序为精确 NoteOff → CC120 All Sound Off → 已使用目标 Reset → Unit 释放/同 tick 复用。
+   - CC120 已用真实 BASS/SF2 验证：可截断 SF2 release，4 ms 防爆音后稳定为零，且只作用于目标 Channel。
+   - MIDI exporter 忠实导出 canonical 中的 CC120。
 
-10A. WASAPI 固定 Shared Mode、event-driven、stereo interleaved float32；采样率跟随初始化后的设备实际混音采样率。Device Buffer Request 只是请求值，period 请求为 0；不回退 Exclusive、轮询、整数格式或其他声道/采样率。
+6. held Preview：
 
-11A. 实时合成和 Render-Ahead producer 最大工作块固定 256 frames；事件边界和末尾允许短块。子进程内部使用单个有界 SPSC PCM ring，容量为 `ceil(actualSampleRate × RenderAheadMilliseconds / 1000)` frames；实时 PCM 不跨进程。
+   - Event Instrument、SubVoice、钢琴卷帘左侧琴键、放置单 Note 草稿复用同一 held Preview 因果 Gate、Preview Compiler、正式音频链与 Worker 协议。
+   - Gate Open 使用未知最终 Gate 的因果语义；Gate End 只作用于 producer 尚未渲染 frontier，不能回写已消费/device ring PCM。
+   - 当前内部调度为 8 秒 causal window、剩余 4 秒时续接；这是 Q-NUI-031 的已实施待确认小决定。
 
-12C. 唯一正式拓扑为完整内部音频子进程：Worker 独占 BASS/BASSMIDI/Limiter/Render-Ahead/BASSWASAPI/device callback/文件 OutputDevice；主进程持有 Project、Compiler、Canonical Result、UI 和任务协调。Worker 仅 `win-x64` Native AOT、自包含发布。控制/状态使用固定版本、固定布局、有界二进制共享内存 ABI；热路径禁止托管分配，禁止 JSON/文本逐消息反序列化。
+7. 设备丢失：
 
-13A. 正式 BASSMIDI stream 固定启用 `BASS_MIDI_NOTEOFF1`。同 Port/Channel/pitch 重叠 Note 按最早开始者优先、逐个 NoteOff FIFO 配对；硬边界按活动实例数完整释放。
+   - 活动输出被拔掉/禁用时不得让进程崩溃。
+   - Worker 断开输出并受控退出；主程序要求用户手动重新指定设备。
+   - 不自动静默切换到默认或其他设备。
+   - Console 验收路径用退出码 2 表示受控 DeviceLost，不是普通 fault。
 
-14A. 正式 stream 固定 `BASS_ATTRIB_MIDI_SRC=1`（8-point sinc）和 `BASS_ATTRIB_MIDI_CPU=0`。Preparing 使用 `BASS_MIDI_FontLoad` 预加载冻结计划引用的 presets 和 fallback，不对实时事件 stream 调 `StreamLoadSamples`。实时/离线 sample voice 上限分别配置，范围 1–16,777,216，默认均为每 stream 750，同一任务各 Port 使用同一冻结值；完美一致性测试假定未触顶。
+8. MIDI：
 
-15A. 初版只发布 `win-x64`；主应用、Native AOT Worker 和 BASS/BASSMIDI/BASSWASAPI 同为 x64，不发布 x86、Arm64 或 AnyCPU 正式产物。
+   - SMF Type 1，Tempo/Time Signature/Bank/Program/UTF-8/Running Status/EOT 规则见 AGENTS.md。
+   - Channel 10 必须 melodic；相关 Track 在 tick 0 写 GS→XG Normal Part SysEx，不发送 Reset。
+   - 单 delta 超过 0x0FFFFFFF 时结构化失败，不插入 Meta spacer。
 
-16A. 原生基线固定：
+9. 持久化：
 
-- BASS 2.4.18.3 / `0x02041203`；
-- BASSMIDI 2.4.16.0 / `0x02041000`；
-- BASSWASAPI 2.4.4.1 / `0x02040401`；
-- SHA-256 以 `src/midora-audio/bass-native-baseline.win-x64.json` 为准。
+   - 当前仍是开发期 v1；Q-NUI-003/Q-NUI-023/Q-NUI-024/Q-NUI-025 的变化直接修订 v1，不虚构 v2 迁移。
+   - 初版不存在受支持的旧格式成功迁移样本；未知来源版本严格失败。
+   - JSON Schema Draft 2020-12、source-generated DTO、protobuf Edition 2024、严格重复/未知字段拒绝、确定性 ZIP 和安全事务均已实施。
+   - External SF2 只允许 Project 根目录或直属 soundfonts/；Embedded SF2 使用资源 lease 和损坏修复门。
 
-仓库不提交 DLL。正式构建只接受操作员提供且逐文件匹配 manifest 的二进制，运行时校验完整版本码；vendor current/latest 只能生成显式开发候选，不能自动升级正式基线。
+10. 输出与许可：
 
-17A. C# Mapping 内部 ABI v2 固定签名 `double Transform(double value, in MappingContextV2 context)`；稳定身份通过 `MappingStableIdV2(long)` 传递。契约独立只读，Roslyn 5.3.0、C# 14、`Microsoft.NETCore.App.Ref 10.0.10`，不开放 Midora/WPF/第三方引用。缓存键包含 ABI/compiler profile/函数体 UTF-8 SHA-256；每 Project 只保留当前源码修订并用 collectible ALC 卸载。该机制不是 sandbox。
+   - MIDI/Audio 共用 Windows 安全文件名合法化、冻结路径规划、稳定冲突后缀和独立覆盖授权。
+   - Midora 自有代码采用标准 MIT，Copyright (c) 2026 Midora contributors。
+   - 仓库不提交 BASS DLL。
+   - 产品所有者已按当前免费、开源、非商业、GitHub Release、公开身份 Zacksony 的条件放行正式含 DLL 分发，但实际发布日仍须复核官方条款并把供应商原始许可文本与 notices 一并打包。
 
-18A/18.1A. 持久化基线：
+================================================================
+六、五层缓存与 Buffering 恢复
+================================================================
 
-- JSON Schema Draft 2020-12；
-- 内部版本化 `System.Text.Json` source-generated DTO；
-- 严格拒绝重复和未知 JSON 属性；
-- protobuf Edition 2024、Google.Protobuf 3.35.1、Grpc.Tools 2.83.0；
-- `.proto` 和 descriptor SHA-256/golden bytes 进入兼容门；
-- 未知 protobuf tag 严格拒绝；
-- 生成 C# 只在 `obj`；
-- 文本上限按 Unicode scalar 固定为 256 / 4,096 / 65,536 / 1,048,576；
-- 相对路径最多 4,096 scalars，使用 `/`，保留大小写和原 Unicode，不 normalization；
-- 颜色为 opaque sRGB，JSON `#rrggbb`；
-- UTC 为七位小数秒 `yyyy-MM-ddTHH:mm:ss.fffffffZ`；
-- 总编辑时长为非负 int64 毫秒。
+Q-NUI-034～Q-NUI-042 已确认并完整实施：
 
-19A. Project SoundFont 使用严格 External/Embedded union。External 只允许 Project 根目录或直属 `soundfonts/` 相对 SF2；逐分量精确 case 优先，唯一 ignore-case 回退并 Warning，歧义拒绝。SHA-256 对完整原始字节流式计算，只在用户明确选择、替换、重绑定或接受当前内容时更新；被动缺失/hash mismatch/fallback 不修改 Project。绝对路径和验证缓存只属于运行时。
+1. Project revision / canonical range cache。
+2. 与物理 Port/Channel 无关的 Segment/抽象 Unit compiled fragment cache。
+3. canonical 派生、位于 Mute/Solo/Master/Limiter 前的 raw Unit PCM cache。
+4. 完成确定性求和、audible set、Master、Limiter 的 exact playback span cache。
+5. 用户 Render-Ahead 对应的短 SPSC ring。
 
-20A. 工程总耗时从 Project 成功新建/打开到开始关闭，以单调时钟累计整个打开会话，包括空闲、最小化、失焦、模态 UI、Buffering、MIDI 导出和音频渲染；系统睡眠/休眠和 closing 暂停。关闭取消后只恢复后续累计。自动累计不进入 Undo/Redo、不单独标记 Modified、不更新 metadata 修改时间、不影响 canonical。
+规则：
 
-21A. SMF Type 1 兼容档固定：
+- 正式 canonical 仍保留全局 Port/Channel 分配和最多 256 Unit 检查；缓存不得绕过 canonical。
+- canonical 成功后投影为抽象 Unit；每个实际 Unit 使用干净 1-channel BASSMIDI decode stream 语义，由有界 pool 复用，不为 Project 历史 Unit 永久保留 stream。
+- raw Unit key 包含 Segment/Unit semantic fingerprint、局部 Tempo、SF2 SHA-256、固定 native baseline、采样率、格式、NOFX/NOTEOFF1、插值、CPU、Maximum Sample Voices 等全部声音环境。
+- exact playback span 命中时完全绕过 BASSMIDI；raw Unit 命中时只重新混音/Master/Limiter。
+- underrun 在 frame F 锁存，不推进音乐位置或 ring read position；先完整准备 [F,R) 再连续恢复。
+- 若 F 在 Bar 起点，目标是当前完整 Bar；若在 Bar 中途，目标是当前 Bar 剩余 + 下一完整自然 Bar；最终受播放终点和 F + 16 个四分音符裁剪。
+- reusable cache 是 session-scoped 磁盘后备 + 有界 RAM hot-set，不写入 .midora。
+- Application Preferences 缓存 root 默认 %LOCALAPPDATA%\Midora\AudioCache；默认 reusable quota 16 GiB，允许用户选择本机绝对目录和设置 0。
+- quota=0 表示长期缓存关闭、每次实时重渲染；普通长期缓存空间不足/写失败只报告状态 Warning，继续现渲染，不让播放失败。
+- recovery transient spool 独立于 reusable quota；磁盘不可用时用 Preparing 预留的 unmanaged RAM；两者都不可用才在实际 underrun 时受控 Stop。
+- 实时与离线 Maximum Sample Voices per Unit Stream 是两个独立用户值，范围 1..16,777,216，新安装/新 Project 默认均为 500。
+- 修改任一 voice 值必须在无活动音频任务时提交，并轮换当前 Project/session 全部 PCM/audio cache generation；tick-domain compiler/canonical cache不失效。
+- 设备或实际采样率变化使全部 sample-domain cache 失效；相同格式的设备可复用 PCM。
+- Segment Preview 可复用 raw Unit cache；Event/SubVoice/琴键/草稿 held Preview 使用 transient generation，不把未知/未提交内容写入 Project cache。
+- Audio Render 在 key 全同的情况下可复用 raw Unit cache，但自行构建 Track selection、Master/Limiter、范围和原子文件事务。
 
-- Tempo 为十进制 `60,000,000 / BPM` 后一次 `AwayFromZero`，结果限 1..0xFFFFFF；
-- Time Signature 固定 `cc=24`、`bb=8`；
-- Bank 顺序 CC0→CC32→Program；
-- 事件 Track 只写 Track Name + MIDI Port，不写 Device/Program Name；
-- 文本 Meta 严格 UTF-8；
-- 不用 Running Status，每条 Channel Event 显式 status；
-- 导出器不在 canonical 外追加 Channel 清理；
-- 所有 Track EOT 对齐统一 endTick。
+================================================================
+七、音频后端强制边界
+================================================================
 
-22A. 每个实际包含 Channel 10 canonical 事件的事件 Track，在相对 tick 0、MIDI Port Meta 后、canonical Channel Event 前固定写 GS→XG 两条 Normal Part SysEx：
+1. BASS 是实现细节，不得泄漏进 Domain/Compiler。
+2. 所有实际 Port 使用同一个有效 Project SF2。无有效 SF2 可打开、编译、MIDI 导出，但禁止播放、Preview、Audio Render。
+3. 所有正式 stream 使用 BASS_MIDI_NOFX | BASS_MIDI_NOTEOFF1；完整拒绝 CC91/CC93。
+4. Channel 10 显式 melodic；同 Port/Channel/pitch Note 按 FIFO 逐个 NoteOff。
+5. 固定 BASS_ATTRIB_MIDI_SRC=1、BASS_ATTRIB_MIDI_CPU=0。
+6. Preparing 用 BASS_MIDI_FontLoad 预加载引用 preset/fallback，不在实时事件 stream 调 StreamLoadSamples。
+7. 正式链为 Unit/Port stereo 确定性求和 → Playback Master Volume → 单全局 Limiter → WASAPI；Preview 同链。离线语义相同但不依赖物理设备。
+8. WASAPI callback 不编译、不分配、不阻塞、不等待锁、不做文件/网络 I/O；异常不得越过 native callback。
+9. Playing、Buffering、Preview、Rendering 的 callback/render/mix/ring/文件 sample 写线程零托管堆分配。
+10. buffer 协议以 frame 为单位，明确 sample rate/channel/format/frame count。
+11. Render-Ahead 20–2000 ms 默认 100；Device Request 5–200 ms 默认 50；voice 默认 500。
+12. 实时采样率跟随设备实际值；文件采样率 8,000–192,000 任意整数，默认 48,000。
+13. 文件输出固定普通 RIFF/WAVE、stereo、interleaved IEEE float32 LE；超过 RIFF 上限 Preparing 原子失败，不 RF64。
+14. Native AOT Worker 固定 self-contained win-x64。
+15. 固定原生基线：
 
-- Roland GS：`F0 41 10 42 12 40 10 15 00 1B F7`；
-- Yamaha XG：`F0 43 10 4C 08 09 07 00 F7`。
+    BASS 2.4.18.3 / 0x02041203
+    BASSMIDI 2.4.16.0 / 0x02041000
+    BASSWASAPI 2.4.4.1 / 0x02040401
 
-不发送 GS/XG/GM Reset，不改 canonical Bank/Program；不相关 Track 和 Conductor 不写。Readme 必须说明接收端忽略 vendor SysEx 或设备号不同时仍可能把 Channel 10 当鼓通道。
+    SHA-256 以 src/midora-audio/bass-native-baseline.win-x64.json 为准。
 
-23A/23.1A. MIDI 与音频共用唯一 Windows 安全文件名合法化和冲突服务：
+================================================================
+八、当前验证证据
+================================================================
 
-- stem/extension NFC；非法 UTF-16 原子失败；
-- Win32 `< > : " / \ | ? *`、Unicode Control 及 SRS 14.17.4 固定风险字符表的连续段替换为单个 `_`；
-- 保留 ZWNJ、ZWJ、Variation Selector、emoji tag；
-- 清除 stem 首尾 ASCII space 和尾部 period，截断后重做尾部清理；
-- Windows 设备保留名，包括 CON/CONIN$/CONOUT$/PRN/AUX/NUL、COM1–9/上标 1–3、LPT1–9/上标 1–3，统一加 `_` 前缀；
-- 最终文件名部分最多 255 UTF-16 code units，按 .NET text element 边界截断；
-- 同目录以 NFC + OrdinalIgnoreCase 判断冲突；
-- 按稳定源顺序、再按稳定 source key 分配无后缀、` (2)`、` (3)`；
-- 已有文件不参加后缀分配，覆盖仍需单独明确授权；
-- 公共规划器不读文件系统，任务开始前预览并冻结全部最终路径；
-- 不修改 Project 源名称，不进入 Undo/Redo。
+当前精确非 UI 自动基线为 1053 项：
 
-23.2A. 初版模板固定：
+- Midora.Common.Tests：68
+- Midora.Compiler.Tests：250
+- Midora.MidiExport.Tests：33
+- Midora.Persistence.Tests：94
+- Midora.AudioRender.Tests：36
+- Midora.Application.Tests：274
+- Midora.Playback.Tests：75
+- Midora.Audio.Bass.Tests：170
+- Midora.AudioDevice.BassWasapi.Tests：35
+- Midora.Midi.Tests：18
 
-- 整曲 MIDI：`<ProjectStem>.mid`，Project name → 当前 `.midora` stem → `Midora MIDI Export`；
-- 整曲音频：`<ProjectStem>.wav`，Project name → 当前 `.midora` stem → `Midora Render`；
-- 分 Track MIDI/音频：`<NN> - <LogicalTrackDisplayName>.mid/.wav`；
-- NN 是整个 Project 当前一基手动顺序，至少两位，宽度随总 Track 数增长，不按选择子集重编号；
-- 空、仅空白或合法化后空的 Track 名称 fallback 为 `Logical Track <N>`；
-- 逐 Port MIDI：`Port <PP>.mid`，PP=01..16；
-- Readme：`README.md`；
-- MIDI Conductor Track Name：`Conductor`；
-- 事件 Track Name：`<原始 Track 名称或 fallback> / Port <P>`，P=1..16 不补零；
-- MIDI Track Name 不经过文件名合法化，保留原始文本并严格 UTF-8；
-- 多文件模式选择完整输出目录，不自动再创建嵌套目录。
+八组真实 SF2 分别独立运行完整 Test-NonUIRelease.ps1：
 
-24A. Midora 初版产品定位为免费、开源、非商业软件。BASS/BASSMIDI/BASSWASAPI 不纳入 Midora 开源许可证。正式分发仍按实际主体、收入方式、平台、分发方式和届时有效条款核验 BASS 非商业免费使用条件并提供第三方 notices；条件不明或商业化时先联系权利人或取得适用许可。
+1. D:\Soundfonts\sf2\sDetrimental Concert Grand Piano.sf2
+2. D:\Soundfonts\sf2\SGM-V2.01.sf2
+3. D:\Soundfonts\sf2\JV1080Ti.sf2
+4. D:\Soundfonts\sf2\Ultima C7 Grand II.sf2
+5. D:\Soundfonts\sf2\Z-Doc Acoustic Piano Fantasy Mode.sf2
+6. D:\Soundfonts\sf2\Roland XP-80.sf2
+7. D:\Soundfonts\sf2\Splendid_256.sf2
+8. D:\Soundfonts\sf2\minecraft.sf2
 
-25B/25.1A. Midora 自有源代码采用根目录 `LICENSE` 中未经修改的标准 MIT License，版权署名为 `Copyright (c) 2026 Midora contributors`。项目自身非商业不限制下游商业使用。BASS、用户 SoundFont 和其他第三方材料不纳入 MIT 许可。根目录 `THIRD-PARTY-NOTICES.md` 已建立。
+结果：
 
-当前没有剩余的产品所有者技术或发布语义决定。只有新实现发现新的 SRS 内部冲突或未闭合外部语义时才追加决定；不得重新询问 1A–25.1A。
+- 每组 1053/1053、0 failure、0 skip；
+- 累计 8424/8424；
+- 80 个 TRX 已解析复核；
+- 每组 6 solution CI Release build 均 0 warning / 0 error；
+- 每组发布当前 win-x64 Native AOT Worker；
+- 八套目录均包含 Worker exe、native-manifest.json、LICENSE、THIRD-PARTY-NOTICES.md；
+- 八套目录均再次通过固定版本/SHA-256/架构/DLL 集合校验；
+- 真实 cache miss→publish→exact hit PCM 逐样本等价；
+- exact hit 路径 ChannelGetData synthesis frame 数严格为 0；
+- 最大 256 个 1-channel Unit Stream、完整拉取、render 热路径 0 B、无 renderer fault；
+- Native AOT 子进程集成通过。
 
-============================================================
-五、音频链的强制实现边界
-============================================================
+完整矩阵：
 
-1. BASS 是实现细节，不得出现在 Project/Compiler 领域模型中。
-2. 每个实际使用的 Port 创建一个干净 BASSMIDI decode stream；不预建 16 个永久 stream。
-3. 所有实际 Port 使用同一正式生效的 Project SF2。无有效 SF2 可以打开、编译、MIDI 导出，但必须阻止播放、预览和音频渲染。
-4. stream 创建、重建和复用前显式 Reset 后重建 melodic Channel 10 和规范初始状态；只在精确 NoteOff/Reset/清理后复用。
-5. 不用 `Thread.Sleep`、UI timer 或 API 调用瞬间承担 MIDI 时序。Canonical 事件经统一 tick→sample 后做 sample-accurate 调度并保持同 tick 顺序。
-6. 正式实时链：实际 Port stereo 求和 → Playback Master Volume → Limiter → WASAPI。预览同链。离线整曲链语义相同但不依赖 WASAPI。
-7. WASAPI callback 不编译、不分配普通托管对象、不阻塞、不等待锁、不做文件/网络 I/O；只消费已准备好的连续 float32 frames。异常不得越过 native callback 边界。
-8. Playing、Buffering、Preview Playing、Rendering 的 callback、调度、合成协调、混音、buffer 搬运和文件 sample 写入线程不得产生托管堆分配。Preparing/Finalizing 可以分配。
-9. 协议以 frame 为单位，显式携带 sample rate、channel count、sample format、frame count；不得混淆 byte/sample/frame。
-10. 可调实时参数只有：Render-Ahead 20–2000 ms 默认 100；Device Request 5–200 ms 默认 50；Realtime Maximum Sample Voices per Stream 1–16,777,216 默认 750。离线 voice 上限属于 Project Audio Render Settings，范围相同默认 750。
-11. 实时音频跟随设备实际采样率；文件输出采样率 8,000–192,000 任意整数，默认 48,000。
-12. 文件输出固定普通 RIFF/WAVE、stereo、interleaved IEEE float32 LE。超过 RIFF 大小上限在 Preparing 原子失败，不拆分、不 RF64。使用临时文件→校验→原子发布事务。
-13. 原生全局初始化、线程 device context、handle、delegate/GCHandle 和卸载顺序集中管理；每个原生返回值都检查，错误码立即在同线程读取。
-14. 约 200 ms 端到端延迟只是性能基准，不是设置或成功条件。
+D:\Programing\midora\misc\Midora-SF2-Release-Gate-Matrix-2026-08-08.md
 
-============================================================
-六、当前代码实际已经做到什么
-============================================================
+证据目录：
 
-以下是实现事实，不等于初版全部完成：
+D:\Programing\midora\artifacts\non-ui-release-gate-sf2-01-sdetrimental-20260808
+至
+D:\Programing\midora\artifacts\non-ui-release-gate-sf2-08-minecraft-20260808
 
-1. Domain/Compiler 已有可运行的垂直切片和较完整确定性测试；已修正 Project ID、稳定 ID、End Marker、Marker/Track 空名、Template Note 边界、Bank Select 部分存在性、Compile Purpose、partial 语义、canonical telemetry 等早期 SRS 冲突。
+artifacts 被 Git 忽略，不得提交。新聊天应先确认本机目录仍存在；不存在不代表测试历史失效，但不得声称重新运行。
 
-2. 2026-08-06 已以 ADR-CORE-003 的 Segment 入口/Track 末尾 checkpoint 替换 Track 整片段过渡缓存；dirty range、展开状态逐字段等价、state hash 和“后续 Source 未变”收敛门已实现。全局确定性资源分配、排序、范围恢复和裁剪仍完整重算，Full Compile 继续作为逐字段 oracle。
+人工音频验收 M-AUD-001～M-AUD-012 已全部通过。原始快照和复测结果位于 misc/Midora-Manual-Audio-Acceptance*.md。除 UI pointer/交互时延和未来新增物理设备场景外，不要重复要求既有清单。
 
-3. C# Mapping ABI v2 已有独立契约、单 `long` 稳定身份、固定编译 profile、source hash identity、collectible ALC 当前修订缓存和测试。
+不要把历史通过当作新修改后的验证结果。每次改动后只报告实际运行且成功的检查。
 
-4. Persistence 已实现：
+================================================================
+九、已实施、待产品所有者确认的小决定
+================================================================
 
-- v1 common/manifest/metadata/soundfont-settings schema/codec；
-- StrictJsonV1；
-- protobuf descriptor-aware StrictProtobufWireV1；
-- descriptor SHA-256 和代表性 golden/契约测试；
-- SoundFont External/Embedded 领域引用、相对路径解析和流式 SHA-256 基础；
-- Project Metadata 和单 owner 单调会话计时基础。
+这些问题不阻塞当前实现；已按推荐方案实施。若产品所有者在新聊天给出答复，先记录，再按答复保持或修改。不得把它们误报为未实现功能。
 
-5. MIDI 已实现：
+- Q-NUI-029：运行时临时 MIDI Render Plan 在稳定 ID 改为 long 时升级内部版本，而不是原地改变旧布局。该原则已实施；当前 MDAP 后续已继续升级到 v4。
+- Q-NUI-031：held Preview 使用 8 秒 causal window、剩余 4 秒时续接。
+- Q-NUI-032：Clipboard 使用不透明进程内 payload + Plain Text Summary + ProjectDocumentSession 身份；不支持重启/跨进程恢复内部对象。
+- Q-NUI-033：Compatible ordered content 初版包含同 Event Instrument、exact target 的 ValueCurve points 和 MappingChain。
+- Q-NUI-043：自然拍 Snap 完全等距时选择后一个边界。
+- Q-NUI-044：内部 MDAP 直接升级 v4，加入确定性 Unit fragment 元数据，只接受 v4，不兼容旧临时文件。
+- Q-NUI-045：共享 Worker ABI v4 使用既有 64-bit Payload 编码 BufferingRecoveryPrepare(endFrame)，不扩大 record/header。
+- Q-NUI-046：raw cache hit 的活动 Unit 被 Mute/Solo 过滤时，从 producer frontier 做固定 4 ms 线性退场。
+- Q-NUI-047：final span hit 后切换 Mute/Solo，在 producer frontier 失效旧 generation，冷启动底层、Limiter 重置，并作 4 ms 最终 PCM 交叉淡化。
+- Q-NUI-048：专用低优先级缓存 I/O 线程；每 raw Unit 16,384-frame 读/写 hot-set，4,096-frame 刷盘；最多 256 Unit 时读写约 64 MiB；实时背压进入 Buffering，离线原 frame 等待。
 
-- 低层 SMF Type 1 writer/parser validator；
-- 整曲 CanonicalMidiFileExporter；
-- 严格 UTF-8、无 running status、Tempo/拍号/Bank/EOT 固定兼容档；
-- Channel 10 GS→XG Normal Part 初始化；
-- 结构自校验和 golden/一致性测试。
+问题全文、候选方案和影响在：
 
-6. 公共输出命名已实现：
+D:\Programing\midora\misc\Midora-Non-UI-Decision-Question-Library.md
 
-- `Midora.OutputPlanning.WindowsOutputFileNamePlanner`：纯 Preparing 公共合法化/冲突规划器；
-- `Midora.OutputPlanning.InitialReleaseOutputNaming`：整曲、分 Track、逐 Port、README 和 MIDI Track Name 模板；
-- 相关测试覆盖精确字符表、设备名、Unicode、长度、冲突、乱序、fallback 和原子失败。
+当前没有未回答的大决定。
 
-7. Audio 已有正式方向的垂直切片：
+================================================================
+十、后续真正剩余的工作
+================================================================
 
-- 完整内部音频 Worker 和共享内存控制 ABI；
-- Render-Ahead ring、WASAPI 回调消费、BASSMIDI Port stream、Master/Limiter；
-- win-x64 Native AOT publish 约束；
-- 固定版本/hash native manifest；
-- Wave float32 writer；
-- overlap/NoteOff/NOFX/Channel 10/voice limit/零分配等测试基础。
+1. WPF UI 阶段：
 
-8. 根目录已有：
+   - 创建 win-x64 .NET 10 WPF 主应用与 composition root；
+   - 单实例启动、主窗口激活和 Project open request 接线；
+   - Project Switch Guard、New/Open/Save/Save Copy、Recent Projects；
+   - Arrangement、Event Instrument、SubVoice、Piano Roll、Conductor、Mapping 等工作区；
+   - Transport、播放范围、Loop、Mute/Solo、Preview、设备选择；
+   - 钢琴卷帘左键琴键 held preview、放置单 Note held preview；
+   - Preferences：Render-Ahead、Device Request、Realtime voices、cache root/quota；
+   - Project Audio Render Settings：Offline voices、采样率及任务覆盖；
+   - MIDI/Audio 输出规划、路径预览、覆盖授权、Progress、取消和结果；
+   - 诊断展示、Warning-as-error、损坏对象/资源修复工作流；
+   - Clipboard、焦点、Selection、CanExecute、Pointer Capture、失焦释放；
+   - DPI、键盘导航、可访问性、窗口生命周期和 UI 自动测试；
+   - 人工交互时延、held Preview 和物理设备场景验收。
 
-- `LICENSE`：MIT，`Copyright (c) 2026 Midora contributors`；
-- `THIRD-PARTY-NOTICES.md`；
-- 仓库不含 BASS DLL。
+   UI 必须调用既有 Application/Domain/Compiler/Playback/Persistence 服务，不得复制业务语义。
 
-============================================================
-七、当前剩余边界
-============================================================
+2. 发布日外部门：
 
-截至 2026-08-08，SRS 初版的非 UI 源码实现已经闭合。领域、编译、播放/预览、MIDI 导出、音频文件渲染、BASS/WASAPI/Worker、持久化、Application 工作流、偏好、输出事务和发布脚本均已实现；§7～§12 逐节追踪见 `misc/Midora-Domain-Compiler-Conformance-Matrix.md`。
+   - 按实际发布日 BASS 官方条款复核免费资格；
+   - 纳入供应商原始许可文本和现有 notices；
+   - 验收实际最终发行包；
+   - 仓库仍不得提交 BASS DLL。
 
-当前不是源码功能缺口，而是以下外部或后续阶段边界：
+3. 持续加固但不是当前缺口：
 
-1. WPF UI、导航、控件、pointer capture、窗口与用户交互接线明确属于后续 UI 阶段；不得在非 UI 层复制业务语义。
-2. 实际 GitHub Release 当日仍须按 Q-NUI-013 复核届时 BASS 官方免费使用条件，把供应商原始许可文本与现有 notices 一并放入最终分发包；当前本地 AOT 测试产物不是正式发行包。
-3. Q-NUI-029、Q-NUI-031～033、Q-NUI-043～048 是已经按推荐实现、等待产品所有者确认的小决定；不阻塞当前实现，若答复修改才按问题库调整。
-4. 扩大固定种子随机 Project、更多 SF2/设备/硬件矩阵属于持续加固，不得误写成当前存在已知语义缺口。
+   - 更大固定种子随机 Project；
+   - 更多 SF2、设备、采样率、callback block、磁盘和硬件矩阵；
+   - WPF 端到端/UI 性能测试。
 
-当前精确自动基线是 1053 项。八组真实 SF2 已分别执行根目录 `Test-NonUIRelease.ps1` 的固定原生 manifest、locked restore、6 solution CI Release build、win-x64 Native AOT publish 和 10 项目零跳过门，累计 8424/8424、0 failure、0 skip；每组 build 均为 0 warning/0 error。证据目录为 `artifacts/non-ui-release-gate-sf2-01-sdetrimental-20260808` ～ `artifacts/non-ui-release-gate-sf2-08-minecraft-20260808`，最后一套已验证 AOT Worker 位于 `artifacts/non-ui-release-gate-sf2-08-minecraft-20260808/worker-win-x64`。
-
-============================================================
-八、关键代码和文档定位
-============================================================
-
-正式文档：
-
-- `misc/Midora-SRS-Initial-Release-v0.1/`
-- `misc/Midora-SRS-Code-Conformance-Audit-2026-08-05.md`
-- `misc/Midora-Core-Architecture-Decisions.md`
-- `misc/Midora-Audio-Backend-Architecture-Decisions.md`
-- `misc/Midora-Implementation-Roadmap.md`
+================================================================
+十一、关键代码与文档定位
+================================================================
 
 主要 solutions：
 
-- `src/midora-common/midora-common.slnx`
-- `src/midora-core/midora-core.slnx`
-- `src/midora-midi/midora-midi.slnx`
-- `src/midora-native-interops/midora-native-interops.slnx`
-- `src/midora-audio-device/midora-audio-device.slnx`
-- `src/midora-audio/midora-audio.slnx`
+- src/midora-common/midora-common.slnx
+- src/midora-core/midora-core.slnx
+- src/midora-midi/midora-midi.slnx
+- src/midora-native-interops/midora-native-interops.slnx
+- src/midora-audio-device/midora-audio-device.slnx
+- src/midora-audio/midora-audio.slnx
 
 关键代码：
 
-- Domain：`src/midora-core/Midora.Domain/`
-- Compiler：`src/midora-core/Midora.Compiler/`
-- Compiler tests：`src/midora-core/Midora.Compiler.Tests/`
-- Persistence：`src/midora-core/Midora.Persistence/`
-- Persistence tests：`src/midora-core/Midora.Persistence.Tests/`
-- Mapping ABI：`src/midora-core/Midora.Mapping.Contract.V2/`
-- Playback：`src/midora-core/Midora.Playback/`
-- Playback/BASS-WASAPI adapter：`src/midora-core/Midora.Playback.BassWasapi/`
-- MIDI primitives：`src/midora-midi/Midora.Midi/`
-- MIDI canonical exporter：`src/midora-core/Midora.MidiExport/`
-- Output filename planner：`src/midora-common/Midora.Common/WindowsOutputFileNamePlanner.cs`
-- Initial output templates：`src/midora-common/Midora.Common/InitialReleaseOutputNaming.cs`
-- Audio abstractions：`src/midora-audio/Midora.Audio/`
-- BASS renderer/worker client：`src/midora-audio/Midora.Audio.Bass/`
-- Native AOT Worker：`src/midora-audio/Midora.Audio.Bass.Worker/`
-- Audio device abstractions：`src/midora-audio-device/Midora.AudioDevice/`
-- WASAPI device：`src/midora-audio-device/Midora.AudioDevice.BassWasapi/`
-- WAVE device：`src/midora-audio-device/Midora.AudioDevice.Wave/`
-- Native interop：`src/midora-native-interops/`
-- BASS native baseline：`src/midora-audio/bass-native-baseline.win-x64.json`
+- Domain：src/midora-core/Midora.Domain/
+- Application：src/midora-core/Midora.Application/
+- Compiler：src/midora-core/Midora.Compiler/
+- Mapping ABI v2：src/midora-core/Midora.Mapping.Contract.V2/
+- Persistence：src/midora-core/Midora.Persistence/
+- MIDI Export：src/midora-core/Midora.MidiExport/
+- Playback：src/midora-core/Midora.Playback/
+- Playback/BASS-WASAPI adapter：src/midora-core/Midora.Playback.BassWasapi/
+- Audio Render：src/midora-core/Midora.AudioRender/
+- MIDI primitives：src/midora-midi/Midora.Midi/
+- Audio abstractions/cache：src/midora-audio/Midora.Audio/
+- BASS renderer/worker client：src/midora-audio/Midora.Audio.Bass/
+- Native AOT Worker：src/midora-audio/Midora.Audio.Bass.Worker/
+- Audio device abstractions/cache I/O：src/midora-audio-device/Midora.AudioDevice/
+- WASAPI：src/midora-audio-device/Midora.AudioDevice.BassWasapi/
+- WAVE：src/midora-audio-device/Midora.AudioDevice.Wave/
+- Native interop：src/midora-native-interops/
+- 固定 native baseline：src/midora-audio/bass-native-baseline.win-x64.json
+- 全量发布门：Test-NonUIRelease.ps1
+- 精确测试基线：misc/Midora-Non-UI-Test-Baseline.json
 
-============================================================
-九、实现与编辑规则
-============================================================
+关键 Requirement Trace：
 
-1. 使用 `rg`/`rg --files` 搜索；用 `apply_patch` 修改文本文件。不要用脚本重写用户文件，不要顺手格式化无关项目。
-2. 保护 dirty worktree。严禁 `git reset --hard`、`git checkout -- <file>` 或其他丢弃用户内容的操作，除非用户明确要求且目标精确。
-3. 涉及可听语义、持久化格式、公共接口或并发所有权时，先更新/新增 ADR 或 requirement trace，再实现。
-4. 优先完成 Domain → Compiler → Canonical Result → Consumer 的最小垂直切片，不要先造与正式链脱离的大型框架。
-5. 测试 console 只能作为人工 smoke test，不能代替自动化、语义和资源验收。
-6. 任何正式原生调用都检查返回值并立即读取当前线程错误码；清理失败同样要进入诊断。
-7. 不因为 BASS“能发声”就认为时序、状态、资源、错误和零分配合规。
-8. 不擅自修改已确认 SRS 语义。发现新的内部冲突时记录具体章节、源码影响和候选解释，请产品所有者决定。
-9. SRS 没规定且不影响外部语义的一般类型名、局部数据结构或测试组织，可依据现有风格直接实现，无需产品确认。
+- misc/Midora-Stable-Id-Long-Refactor-Requirement-Trace.md
+- misc/Midora-Time-Signature-TPQ-Compatibility-Requirement-Trace.md
+- misc/Midora-Held-Preview-Causal-Gate-Requirement-Trace.md
+- misc/Midora-Segment-Compilation-and-Audio-Cache-Design-Discussion-2026-08-08.md
+- misc/Midora-Segment-Unit-Audio-Cache-Requirement-Trace.md
+- misc/Midora-Project-Clipboard-and-Batch-Editing-Requirement-Trace.md
+- misc/Midora-Manual-Audio-Blocking-Fixes-Requirement-Trace.md
 
-============================================================
-十、构建、格式和测试方法
-============================================================
+================================================================
+十二、构建、测试和 Git 规则
+================================================================
 
-常用 Release 构建：
+1. 仓库固定 .NET SDK 10.0.302；使用 locked restore。缺少固定 SDK/包时报告真实环境问题，不静默换版本。
 
-dotnet build 'src\midora-common\midora-common.slnx' -c Release --no-restore
-dotnet build 'src\midora-core\midora-core.slnx' -c Release --no-restore
-dotnet build 'src\midora-midi\midora-midi.slnx' -c Release --no-restore
-dotnet build 'src\midora-audio\midora-audio.slnx' -c Release --no-restore
+2. 各 solution 共享跨目录 ProjectReference 和 obj/Release。构建必须串行，避免 CS2012 文件锁；不要并行 build 六个 solution。
 
-重要陷阱：这些 solution 共享跨目录 ProjectReference 和同一 `obj/Release`。不要并行构建四个 solution，否则可能出现 CS2012 文件锁；应串行构建。`midora-audio.slnx` 已显式包含跨目录依赖，检查输出必须全部在 `bin/Release`。
+3. 正式完整非 UI 门使用根目录 Test-NonUIRelease.ps1，并显式提供：
 
-自动测试项目：
+   - 固定 manifest 匹配的 BASS native directory；
+   - 一个现存有效 SF2；
+   - 新的 artifacts 输出目录。
 
-dotnet test 'src\midora-common\Midora.Common.Tests\Midora.Common.Tests.csproj' -c Release --no-build
-dotnet test 'src\midora-core\Midora.Compiler.Tests\Midora.Compiler.Tests.csproj' -c Release --no-build
-dotnet test 'src\midora-core\Midora.Persistence.Tests\Midora.Persistence.Tests.csproj' -c Release --no-build
-dotnet test 'src\midora-core\Midora.MidiExport.Tests\Midora.MidiExport.Tests.csproj' -c Release --no-build
-dotnet test 'src\midora-core\Midora.Playback.Tests\Midora.Playback.Tests.csproj' -c Release --no-build
-dotnet test 'src\midora-midi\Midora.Midi.Tests\Midora.Midi.Tests.csproj' -c Release --no-build
-dotnet test 'src\midora-audio\Midora.Audio.Bass.Tests\Midora.Audio.Bass.Tests.csproj' -c Release --no-build
-dotnet test 'src\midora-audio-device\Midora.AudioDevice.BassWasapi.Tests\Midora.AudioDevice.BassWasapi.Tests.csproj' -c Release --no-build
+   不得下载或采用 vendor current/latest 替代固定正式基线。
 
-先完成串行构建后，互不写 `obj` 的 `--no-build` 测试可并行。报告各项目实际通过数量，不只报告总退出码。
+4. 修改 C# 后：
 
-格式：
+   - 先运行风险对应的定向测试；
+   - 再运行相关 solution Release build；
+   - 对改动文件运行 dotnet format；
+   - 发布级变化运行完整零跳过门；
+   - 报告每个项目实际测试计数，不只报告退出码。
 
-- 修改 C# 后对相关 solution 运行 `dotnet format ... --no-restore`。
-- 再运行 `dotnet format ... --no-restore --verify-no-changes`。
-- 仓库 C# 使用 CRLF；`apply_patch` 可能产生局部 LF，formatter 会报告 ENDOFLINE，必须实际运行 format 修复后再 verify。
-- 提交前运行 `git diff --check` 和 `git diff --cached --check`。
+5. 提交前：
 
-PowerShell profile 偶尔会输出与仓库无关的 Terminal-Icons 初始化消息。只有命令退出码和具体项目测试结果能证明成功，不要把 profile 噪声当成仓库失败或忽略真实失败。
+   git status --short
+   git diff --check
+   git diff --cached --check
 
-涉及真实 BASS 的测试要求操作员提供匹配 manifest 的 DLL 和适用环境。DLL 缺失时明确区分“测试未运行/环境缺失”与“测试失败”，不得下载或采用 current/latest 替代正式基线。
+   检查 staged 文件，不得包含 .sf2、BASS DLL、.exe、.trx、.wav、.midora 或 artifacts。
 
-============================================================
-十一、Git 提交与推送约定
-============================================================
+6. 使用 Conventional Commits；完整、验证通过且范围清晰时提交当前实时分支并推送 upstream。推送后确认本地 HEAD 等于远端引用且工作树符合预期。
 
-原用户已经要求“提交并推动 git”。因此在每个完整、已验证、范围清晰的增量完成后：
+================================================================
+十三、新聊天的首轮行为
+================================================================
 
-1. 再检查 `git status --short`，只 stage 本轮文件。
-2. 运行 staged diff 检查。
-3. 使用仓库现有 Conventional Commits 风格，示例：
-   - `feat(compiler): 中文说明`
-   - `feat(midi): 中文说明`
-   - `feat(audio): 中文说明`
-   - `feat(persistence): 中文说明`
-   - `docs(srs): 中文说明`
-4. 提交当前分支；当前通常是 `main`，但必须以实时状态为准。
-5. 推送对应远端分支；推送失败必须报告真实原因，不声称已成功。
-6. 推送后确认工作树状态和 `HEAD`/upstream。
+1. 如果用户只粘贴本交接提示、尚未给出具体新任务：
 
-不得把未通过验证、partial、与用户改动混杂或存在未解决 SRS 冲突的内容强行提交为完成状态。
+   - 只做上述只读接手检查；
+   - 简洁报告已读取的规范/ADR、实时分支/HEAD/upstream/工作树；
+   - 报告非 UI 已闭合、八组 SF2 门已通过；
+   - 报告当前没有未回答的大决定；
+   - 说明下一主要阶段是 WPF，但不要在用户指定任务前修改代码、SRS、Git 或外部系统；
+   - 请用户给出下一项具体任务。
 
-============================================================
-十二、新聊天第一条回复的要求
-============================================================
+2. 如果用户同时要求开始 WPF：
 
-在用户尚未给出新的具体实现任务时，只做只读接手检查，然后用简洁中文报告：
+   - 先读取 SRS 第 17、18、20 章及关联第 3、13、19 章；
+   - 确认当前确实没有 WPF project/XAML；
+   - 写 WPF composition requirement trace 和实施顺序；
+   - 先建立只负责组合既有非 UI 服务的最小垂直切片；
+   - 不重新发明 Project、编译、播放、Preview、持久化、缓存或任务语义；
+   - 每个增量执行构建/测试并按用户授权提交推送。
 
-1. 已完整读取哪些正式规格、ADR 和工作约束；
-2. 实时 Git 分支、HEAD、upstream 与工作树状态；
-3. 是否存在必须保护的已有改动；
-4. 当前没有未确认的产品所有者技术/发布语义决定；
-5. 已实现和未实现边界仍以审计第 2、3 节为准；
-6. 请用户指定下一项具体实现任务，或从持久化、正式增量编译、MIDI 多文件导出、Audio Render workflow、WPF 生命周期候选中选择。
+3. 如果用户先回答 Q-NUI-029、031～033、043～048：
 
-在用户给出具体任务前，不修改代码、SRS、Git 或外部系统。收到任务后自主读取相关 SRS、源码和测试，完成实现、验证、提交和推送；除非缺少会显著改变结果的产品决定，否则不要用不必要的澄清阻塞工作。
-```
+   - 先把答案原样记录到问题库；
+   - 判断答案是否保持当前实现；
+   - 保持则只更新状态/证据；修改则评估影响、更新 SRS/ADR/代码/测试；
+   - 不重新询问已经回答的 Q-NUI-001～028、030、034～042。
+~~~

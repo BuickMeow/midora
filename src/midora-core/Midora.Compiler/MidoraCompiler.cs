@@ -1,5 +1,5 @@
 using Midora.Domain;
-using Midora.Mapping.Contract.V1;
+using Midora.Mapping.Contract.V2;
 using Midora.Midi;
 
 namespace Midora.Compiler;
@@ -56,6 +56,29 @@ public sealed class MidoraCompiler : IDisposable
         ProjectChangeSet changes)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (request.HeldPreviewGateOpen
+            && (request.Purpose != CompilationPurpose.EventInstrumentPreview
+                || request.StartTick < 0
+                || !request.EndTick.HasValue
+                || request.EndTick.Value <= request.StartTick
+                || request.HeldPreviewFinalGateLengthTicks.HasValue))
+        {
+            throw new ArgumentException(
+                "An open held-preview gate requires a non-empty Event Instrument Preview window [start,end).",
+                nameof(request));
+        }
+        if (request.HeldPreviewFinalGateLengthTicks is long finalGateLength
+            && (request.HeldPreviewGateOpen
+                || request.Purpose != CompilationPurpose.EventInstrumentPreview
+                || request.StartTick < 0
+                || !request.EndTick.HasValue
+                || request.EndTick.Value <= request.StartTick
+                || finalGateLength <= 0))
+        {
+            throw new ArgumentException(
+                "A held-preview Gate End requires a positive final Gate Length and a non-empty Event Instrument Preview window [start,end).",
+                nameof(request));
+        }
         if (!ReferenceEquals(_cacheOwner, project))
         {
             ClearCache();
@@ -112,7 +135,13 @@ public sealed class MidoraCompiler : IDisposable
         foreach (LogicalTrack track in selectedTracks)
         {
             TrackExpansion expansion = ExpandTrackIncrementally(
-                project, track, instruments, incremental, changes);
+                project,
+                track,
+                instruments,
+                incremental,
+                changes,
+                request.HeldPreviewGateOpen,
+                request.HeldPreviewFinalGateLengthTicks);
             instances.AddRange(expansion.Instances);
             diagnostics.AddRange(expansion.Diagnostics);
             recompiledTracks += expansion.Recompiled ? 1 : 0;
@@ -213,9 +242,18 @@ public sealed class MidoraCompiler : IDisposable
                 failureStatistics);
         }
 
-        List<CanonicalMidiEvent> allEvents = MaterializeEvents(instances, allocation.UnitBySubVoice);
+        List<CanonicalMidiEvent> allEvents = MaterializeEvents(
+            instances,
+            allocation.Groups,
+            allocation.UnitBySubVoice,
+            project.GlobalResetDefaults);
         CanonicalMidiEvent[] ranged = ApplyRange(
-            allEvents, allocation.Allocations, request.StartTick, endTick, project.GlobalResetDefaults);
+            allEvents,
+            allocation.Allocations,
+            request.StartTick,
+            endTick,
+            project.GlobalResetDefaults,
+            request.HeldPreviewGateOpen);
         ChannelUnitAllocation[] rangedAllocations = allocation.Allocations
             .Where(value => value.StartTick < endTick && value.EndTick > request.StartTick)
             .ToArray();
@@ -384,9 +422,18 @@ public sealed class MidoraCompiler : IDisposable
         LogicalTrack track,
         IReadOnlyDictionary<MidoraId, EventInstrument> instruments,
         bool incremental,
-        ProjectChangeSet changes)
+        ProjectChangeSet changes,
+        bool heldPreviewGateOpen,
+        long? heldPreviewFinalGateLengthTicks)
     {
         long contextFingerprint = SourceFingerprint.ForTrackContext(track, instruments, project);
+        if (heldPreviewGateOpen || heldPreviewFinalGateLengthTicks.HasValue)
+        {
+            contextFingerprint ^= heldPreviewGateOpen
+                ? unchecked((long)0x9e3779b97f4a7c15UL)
+                : heldPreviewFinalGateLengthTicks.GetValueOrDefault();
+            incremental = false;
+        }
         CurrentSegment[] currentSegments = track.Segments
             .OrderBy(value => value.ProjectStartTick)
             .ThenBy(value => value.Id)
@@ -464,7 +511,10 @@ public sealed class MidoraCompiler : IDisposable
             List<CompilerDiagnostic> segmentDiagnostics = [];
             RawInstance[] segmentInstances = ExpandSegment(
                 project, track, current.Segment, instruments, nextSourceOrder,
-                segmentDiagnostics, out nextSourceOrder);
+                segmentDiagnostics,
+                heldPreviewGateOpen,
+                heldPreviewFinalGateLengthTicks,
+                out nextSourceOrder);
             newEntries.Add(new SegmentCacheEntry(
                 current.Segment.Id,
                 current.SourceFingerprint,
@@ -643,6 +693,8 @@ public sealed class MidoraCompiler : IDisposable
         IReadOnlyDictionary<MidoraId, EventInstrument> instruments,
         int initialSourceOrder,
         List<CompilerDiagnostic> diagnostics,
+        bool heldPreviewGateOpen,
+        long? heldPreviewFinalGateLengthTicks,
         out int nextSourceOrder)
     {
         List<RawInstance> result = [];
@@ -705,7 +757,10 @@ public sealed class MidoraCompiler : IDisposable
                                 project, track, previous.Segment, previous.Note, instrument,
                                 previous.ProjectStartTick, projectStart, previous.SegmentEndTick,
                                 previousParameters, definitions, lanes, functions,
-                                previous.SourceOrder, diagnostics);
+                                previous.SourceOrder,
+                                diagnostics,
+                                heldPreviewGateOpen,
+                                heldPreviewFinalGateLengthTicks);
                             result[previous.ResultIndex] = shortened;
                             previous.Instance = shortened;
                             activePolicyInstances.Remove(previous);
@@ -714,7 +769,9 @@ public sealed class MidoraCompiler : IDisposable
                 }
                 RawInstance instance = ExpandInstance(
                     project, track, segment, note, instrument, projectStart, gateEnd, segmentEnd,
-                    parameterValues, definitions, lanes, functions, instanceSourceOrder, diagnostics);
+                    parameterValues, definitions, lanes, functions, instanceSourceOrder, diagnostics,
+                    heldPreviewGateOpen,
+                    heldPreviewFinalGateLengthTicks);
                 result.Add(instance);
                 activePolicyInstances.Add(new(
                     result.Count - 1, segment, note, projectStart, segmentEnd,
@@ -751,25 +808,35 @@ public sealed class MidoraCompiler : IDisposable
         IReadOnlyDictionary<MidoraId, LogicalParameterLane> lanes,
         IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions,
         int sourceOrder,
-        List<CompilerDiagnostic> diagnostics)
+        List<CompilerDiagnostic> diagnostics,
+        bool heldPreviewGateOpen = false,
+        long? heldPreviewFinalGateLengthTicks = null)
     {
-        long gateLength = gateEnd - projectStart;
-        bool shortNote = gateLength < instrument.TemplateLengthTicks;
+        long playbackGateLength = heldPreviewGateOpen ? long.MaxValue : gateEnd - projectStart;
+        long mappingGateLength = heldPreviewGateOpen
+            ? long.MaxValue
+            : heldPreviewFinalGateLengthTicks ?? playbackGateLength;
+        bool shortNote = !heldPreviewGateOpen
+            && mappingGateLength < instrument.TemplateLengthTicks;
         HashSet<MidoraId> usedEnvelopeIds = GetUsedEnvelopeIds(instrument);
         long release = instrument.Envelopes.Where(value => usedEnvelopeIds.Contains(value.Id))
             .Select(value => value.ReleaseTicks).DefaultIfEmpty().Max();
-        bool releaseTriggered = shortNote
+        bool releaseTriggered = !heldPreviewGateOpen && (shortNote
             ? instrument.ShortLifecycle != ShortNoteLifecycle.OneShot
-            : instrument.LongLifecycle != LongNoteLifecycle.EndAtTemplate;
-        long? releaseStartLocalTick = releaseTriggered ? gateLength : null;
+            : instrument.LongLifecycle != LongNoteLifecycle.EndAtTemplate);
+        long? releaseStartLocalTick = releaseTriggered ? playbackGateLength : null;
         long maximumDuration = segmentEnd - projectStart;
         long naturalDuration;
-        if (shortNote)
+        if (heldPreviewGateOpen)
+        {
+            naturalDuration = maximumDuration;
+        }
+        else if (shortNote)
         {
             naturalDuration = instrument.ShortLifecycle switch
             {
                 ShortNoteLifecycle.CutAtNoteOff => AddDurationsClamped(
-                    gateLength,
+                    playbackGateLength,
                     release,
                     maximumDuration),
                 ShortNoteLifecycle.OneShot => Math.Min(
@@ -777,8 +844,8 @@ public sealed class MidoraCompiler : IDisposable
                     maximumDuration),
                 ShortNoteLifecycle.Tail => Math.Max(
                     Math.Min(instrument.TemplateLengthTicks, maximumDuration),
-                    AddDurationsClamped(gateLength, release, maximumDuration)),
-                _ => gateLength
+                    AddDurationsClamped(playbackGateLength, release, maximumDuration)),
+                _ => playbackGateLength
             };
         }
         else if (instrument.LongLifecycle == LongNoteLifecycle.EndAtTemplate)
@@ -791,7 +858,7 @@ public sealed class MidoraCompiler : IDisposable
                 ? instrument.TemplateLengthTicks - instrument.LoopEndTick.Value
                 : 0;
             naturalDuration = AddDurationsClamped(
-                gateLength,
+                playbackGateLength,
                 Math.Max(release, loopTailLength),
                 maximumDuration);
         }
@@ -819,10 +886,23 @@ public sealed class MidoraCompiler : IDisposable
                 ref sequence);
             int root = voice.RootNoteOverride ?? instrument.RootNote;
             int pitchDelta = note.Note - root;
-            EmitVoiceCurves(events, instrument, voice, projectStart, gateLength, actualEnd, source, ref sequence);
+            EmitVoiceCurves(
+                events,
+                instrument,
+                voice,
+                projectStart,
+                playbackGateLength,
+                actualEnd,
+                source,
+                ref sequence);
             foreach (TemplateEvent templateEvent in voice.Events.OrderBy(value => value.Tick))
             {
-                foreach (EventOccurrence occurrence in EnumerateOccurrences(instrument, templateEvent.Tick, gateLength, shortNote))
+                foreach (EventOccurrence occurrence in EnumerateOccurrences(
+                    instrument,
+                    templateEvent.Tick,
+                    playbackGateLength,
+                    shortNote,
+                    actualEnd - projectStart))
                 {
                     if (occurrence.LocalTick >= actualEnd - projectStart)
                     {
@@ -842,8 +922,12 @@ public sealed class MidoraCompiler : IDisposable
                         checked(segment.ContentOffsetTick + (tick - segment.ProjectStartTick)));
                     Dictionary<MidoraId, double> envelopesAtTick = EvaluateEnvelopes(
                         instrument, occurrence.LocalTick, releaseStartLocalTick, usedEnvelopeIds);
-                    MappingContextV1 context = new(
-                        templateEvent.Value, note.Note, note.Velocity, gateLength, pitchDelta,
+                    MappingContextV2 context = new(
+                        templateEvent.Value,
+                        note.Note,
+                        note.Velocity,
+                        mappingGateLength,
+                        pitchDelta,
                         occurrence.TemplateTick, tick,
                         templateEvent.Kind == TemplateEventKind.Note ? templateEvent.Number : 0,
                         templateEvent.Kind == TemplateEventKind.Note ? templateEvent.Value : 0)
@@ -874,7 +958,8 @@ public sealed class MidoraCompiler : IDisposable
                                 Tick = tick,
                                 Origin = SourceOrigin.TemplateEvent
                             },
-                            ref sequence);
+                            ref sequence,
+                            heldPreviewGateOpen);
                     }
                     catch (Exception exception) when (exception is MappingException or OverflowException)
                     {
@@ -893,17 +978,25 @@ public sealed class MidoraCompiler : IDisposable
             }
 
             EmitParameterMappings(events, instrument, segment, projectStart, actualEnd, note, pitchDelta,
-                gateLength, releaseStartLocalTick, usedEnvelopeIds, definitions, lanes, initialParameters,
+                playbackGateLength,
+                mappingGateLength,
+                releaseStartLocalTick,
+                usedEnvelopeIds,
+                definitions,
+                lanes,
+                initialParameters,
                 functions, source, ref sequence, diagnostics);
             HashSet<MidiValueTarget> usedTargets = CollectUsedTargets(instrument, voice, state);
-            EmitReset(events, actualEnd, usedTargets, project.GlobalResetDefaults,
-                source with
-                {
-                    Tick = actualEnd,
-                    Origin = SourceOrigin.ProjectResetDefaults
-                },
-                ref sequence);
-            voices[voiceIndex] = new RawSubVoice(voice.Id, events.ToArray());
+            voices[voiceIndex] = new RawSubVoice(
+                voice.Id,
+                events.ToArray(),
+                usedTargets
+                    .Where(static target => target.Kind != MidiValueKind.ControlChange
+                        || target.Number != AllSoundOffController)
+                    .OrderBy(static target => target.Kind)
+                    .ThenBy(static target => target.Number)
+                    .ToArray(),
+                events.Any(static value => value.Kind == RawMessageKind.NoteOn && value.Data2 != 0));
         }
 
         return new RawInstance(
@@ -922,18 +1015,19 @@ public sealed class MidoraCompiler : IDisposable
         bool releaseTriggered,
         int pitchDelta,
         int triggerVelocity,
-        MappingContextV1 context,
+        MappingContextV2 context,
         IReadOnlyDictionary<MidoraId, double> parameters,
         IReadOnlyDictionary<MidoraId, double> envelopes,
         IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions,
         SourceReference source,
-        ref long sequence)
+        ref long sequence,
+        bool heldPreviewGateOpen)
     {
         int number = ApplyMappedInt(value.Number, value.NumberMappings, value.NumberTargetSettings,
-            context with { CurrentParameter = MappingTargetParameterV1.Number, TargetOriginalValue = value.Number },
+            context with { CurrentParameter = MappingTargetParameterV2.Number, TargetOriginalValue = value.Number },
             parameters, envelopes, functions, 0, 127, value.Number, false);
         int eventValue = ApplyMappedInt(value.Value, value.ValueMappings, value.ValueTargetSettings,
-            context with { CurrentParameter = MappingTargetParameterV1.Value, TargetOriginalValue = value.Value },
+            context with { CurrentParameter = MappingTargetParameterV2.Value, TargetOriginalValue = value.Value },
             parameters, envelopes, functions,
             value.Kind switch
             {
@@ -945,7 +1039,7 @@ public sealed class MidoraCompiler : IDisposable
             value.Kind == TemplateEventKind.PitchBend ? 8191 : 127,
             DefaultTemplateValue(value.Kind), true);
         int secondary = ApplyMappedInt(value.SecondaryValue, value.SecondaryValueMappings, value.SecondaryValueTargetSettings,
-            context with { CurrentParameter = MappingTargetParameterV1.SecondaryValue, TargetOriginalValue = value.SecondaryValue },
+            context with { CurrentParameter = MappingTargetParameterV2.SecondaryValue, TargetOriginalValue = value.SecondaryValue },
             parameters, envelopes, functions, 0,
             value.Kind == TemplateEventKind.PitchBendRange ? 99 : 127,
             value.Kind == TemplateEventKind.PitchBendRange ? 0 : value.SecondaryValue, true);
@@ -979,11 +1073,17 @@ public sealed class MidoraCompiler : IDisposable
                     ? numberSource
                     : valueSource;
                 output.Add(RawMidiEvent.NoteOn(tick, number, eventValue, sequence++, noteSource));
-                long naturalOffTick = AddDurationClamped(tick, value.LengthTicks, actualEnd);
+                long unclippedNaturalOffTick = value.LengthTicks >= long.MaxValue - tick
+                    ? long.MaxValue
+                    : tick + value.LengthTicks;
+                long naturalOffTick = Math.Min(unclippedNaturalOffTick, actualEnd);
                 long offTick = releaseTriggered && naturalOffTick > gateEnd && actualEnd > gateEnd
                     ? actualEnd
                     : Math.Min(naturalOffTick, actualEnd);
-                output.Add(RawMidiEvent.NoteOff(offTick, number, sequence++, noteSource with { Tick = offTick }));
+                if (!heldPreviewGateOpen || unclippedNaturalOffTick < actualEnd)
+                {
+                    output.Add(RawMidiEvent.NoteOff(offTick, number, sequence++, noteSource with { Tick = offTick }));
+                }
                 break;
             case TemplateEventKind.ControlChange:
                 output.Add(RawMidiEvent.Control(tick, number, eventValue, CanonicalEventRole.ControlChange, sequence++, valueSource));
@@ -1026,7 +1126,7 @@ public sealed class MidoraCompiler : IDisposable
         int value,
         MappingChain steps,
         MidiIntegerTargetSettings targetSettings,
-        in MappingContextV1 context,
+        in MappingContextV2 context,
         IReadOnlyDictionary<MidoraId, double> parameters,
         IReadOnlyDictionary<MidoraId, double> envelopes,
         IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions,
@@ -1073,32 +1173,44 @@ public sealed class MidoraCompiler : IDisposable
         EventInstrument instrument,
         long eventTick,
         long gateLength,
-        bool shortNote)
+        bool shortNote,
+        long maximumLocalTick)
     {
         if (shortNote || !instrument.LoopStartTick.HasValue || !instrument.LoopEndTick.HasValue
             || gateLength <= instrument.TemplateLengthTicks)
         {
-            yield return new(eventTick, eventTick);
+            if (eventTick < maximumLocalTick)
+            {
+                yield return new(eventTick, eventTick);
+            }
             yield break;
         }
         long loopStart = instrument.LoopStartTick.Value;
         long loopEnd = instrument.LoopEndTick.Value;
         if (eventTick < loopStart)
         {
-            yield return new(eventTick, eventTick);
+            if (eventTick < maximumLocalTick)
+            {
+                yield return new(eventTick, eventTick);
+            }
             yield break;
         }
         if (eventTick >= loopEnd)
         {
-            yield return new(AddDurationsClamped(
+            long occurrence = AddDurationsClamped(
                 gateLength,
                 eventTick - loopEnd,
-                long.MaxValue), eventTick);
+                long.MaxValue);
+            if (occurrence < maximumLocalTick)
+            {
+                yield return new(occurrence, eventTick);
+            }
             yield break;
         }
         long loopLength = loopEnd - loopStart;
         long relative = eventTick - loopStart;
-        for (long iterationStart = loopStart; iterationStart < gateLength;)
+        for (long iterationStart = loopStart;
+            iterationStart < gateLength && iterationStart < maximumLocalTick;)
         {
             long remaining = gateLength - iterationStart;
             if (relative >= remaining)
@@ -1259,7 +1371,8 @@ public sealed class MidoraCompiler : IDisposable
         long actualEnd,
         LogicalNote note,
         int pitchDelta,
-        long gateLength,
+        long playbackGateLength,
+        long mappingGateLength,
         long? releaseStartLocalTick,
         IReadOnlySet<MidoraId> usedEnvelopeIds,
         IReadOnlyDictionary<MidoraId, LogicalParameterDefinition> definitions,
@@ -1307,11 +1420,22 @@ public sealed class MidoraCompiler : IDisposable
                         currentMapping = mapping;
                         double logical = parameters[mapping.ParameterId];
                         long instanceTick = tick - projectStart;
-                        long templateTick = MapLongTickToTemplate(instrument, instanceTick, gateLength);
-                        MappingContextV1 context = new(current, note.Note, note.Velocity, gateLength, pitchDelta,
-                            templateTick, tick, 0, 0)
+                        long templateTick = MapLongTickToTemplate(
+                            instrument,
+                            instanceTick,
+                            playbackGateLength);
+                        MappingContextV2 context = new(
+                            current,
+                            note.Note,
+                            note.Velocity,
+                            mappingGateLength,
+                            pitchDelta,
+                            templateTick,
+                            tick,
+                            0,
+                            0)
                         {
-                            CurrentParameter = MappingTargetParameterV1.LogicalParameterOutput,
+                            CurrentParameter = MappingTargetParameterV2.LogicalParameterOutput,
                             CurrentEventKind = ToMappingEventKind(group.Key.Kind),
                             LogicalParameterId = ToMappingId(mapping.ParameterId),
                             LogicalParameterName = definitions[mapping.ParameterId].Name,
@@ -1723,6 +1847,7 @@ public sealed class MidoraCompiler : IDisposable
     private const long PitchBendRangeSemitoneTargetKey = 0x6_0000;
     private const long PitchBendRangeCentsTargetKey = 0x6_0001;
     private const long PitchBendRangeTargetKey = 0x6_0002;
+    private const int AllSoundOffController = 120;
 
     private static long ControlTargetKey(int controller) => ControlTargetKeyBase + controller;
 
@@ -2014,18 +2139,20 @@ public sealed class MidoraCompiler : IDisposable
                     RawSubVoice voice = instance.Voices[i];
                     int unit = units[i];
                     unitByVoice[(instance.InstanceId, voice.SubVoiceId)] = unit;
-                    allocations.Add(new(instance.TrackId, instance.InstrumentId, instance.InstanceId,
+                    allocations.Add(new(instance.TrackId, instance.SegmentId, instance.InstrumentId, instance.InstanceId,
                         group.GroupId, voice.SubVoiceId,
                         group.StartTick, group.EndTick, (byte)(unit >> 4), (byte)(unit & 15)));
                 }
             }
         }
-        return new(unitByVoice, allocations.ToArray(), peak, resourceShortage);
+        return new(unitByVoice, groups.ToArray(), allocations.ToArray(), peak, resourceShortage);
     }
 
     private static List<CanonicalMidiEvent> MaterializeEvents(
         List<RawInstance> instances,
-        IReadOnlyDictionary<(MidoraId InstanceId, MidoraId SubVoiceId), int> unitByVoice)
+        ReadOnlySpan<AllocationGroup> groups,
+        IReadOnlyDictionary<(MidoraId InstanceId, MidoraId SubVoiceId), int> unitByVoice,
+        MidiInitialState resetDefaults)
     {
         List<CanonicalMidiEvent> result = [];
         foreach (RawInstance instance in instances)
@@ -2044,6 +2171,77 @@ public sealed class MidoraCompiler : IDisposable
                 }
             }
         }
+
+        long cleanupSequence = long.MaxValue / 2;
+        foreach (AllocationGroup group in groups)
+        {
+            RawInstance sourceInstance = group.Instances
+                .OrderByDescending(static value => value.EndTick)
+                .ThenByDescending(static value => value.SourceOrder)
+                .First();
+            for (int voiceIndex = 0; voiceIndex < sourceInstance.Voices.Length; voiceIndex++)
+            {
+                RawSubVoice sourceVoice = sourceInstance.Voices[voiceIndex];
+                if (!unitByVoice.TryGetValue(
+                    (sourceInstance.InstanceId, sourceVoice.SubVoiceId),
+                    out int unit))
+                {
+                    continue;
+                }
+
+                RawSubVoice[] groupedVoices = group.Instances
+                    .Select(instance => instance.Voices[voiceIndex])
+                    .ToArray();
+                SourceReference source = new(
+                    sourceInstance.TrackId,
+                    sourceInstance.SegmentId,
+                    sourceInstance.InstanceId,
+                    sourceInstance.InstrumentId,
+                    sourceVoice.SubVoiceId,
+                    Tick: group.EndTick,
+                    Origin: SourceOrigin.ProjectResetDefaults);
+                List<RawMidiEvent> cleanup = [];
+                if (groupedVoices.Any(static voice => voice.HasSoundingNotes))
+                {
+                    cleanup.Add(RawMidiEvent.Control(
+                        group.EndTick,
+                        AllSoundOffController,
+                        0,
+                        CanonicalEventRole.Reset,
+                        cleanupSequence++,
+                        source));
+                }
+
+                MidiValueTarget[] usedTargets = groupedVoices
+                    .SelectMany(static voice => voice.UsedTargets)
+                    .Distinct()
+                    .OrderBy(static target => target.Kind)
+                    .ThenBy(static target => target.Number)
+                    .ToArray();
+                EmitReset(
+                    cleanup,
+                    group.EndTick,
+                    usedTargets,
+                    resetDefaults,
+                    source,
+                    ref cleanupSequence);
+                byte channel = (byte)(unit & 15);
+                foreach (RawMidiEvent value in cleanup)
+                {
+                    result.Add(new(
+                        value.Tick,
+                        (byte)(unit >> 4),
+                        channel,
+                        value.ToMidiMessage(channel),
+                        value.Role,
+                        value.Sequence,
+                        value.SemanticTargetKey,
+                        value.SemanticGroup,
+                        value.Source));
+                }
+            }
+        }
+
         result.Sort(CanonicalComparer.Instance);
         return FoldSameTickStates(result);
     }
@@ -2081,12 +2279,14 @@ public sealed class MidoraCompiler : IDisposable
         ReadOnlySpan<ChannelUnitAllocation> allocations,
         long startTick,
         long endTick,
-        MidiInitialState resetDefaults)
+        MidiInitialState resetDefaults,
+        bool suppressEndCleanup = false)
     {
         List<CanonicalMidiEvent> result = [];
         Dictionary<(byte Port, byte Channel, long Target), CanonicalStateGroup> state = [];
         Dictionary<(byte Port, byte Channel, byte Note), Queue<SourceReference>> activeNotes = [];
         HashSet<(byte Port, byte Channel, long Target)> pollutedTargets = [];
+        HashSet<(byte Port, byte Channel)> channelsNeedingSoundOff = [];
         HashSet<(byte Port, byte Channel)> activeAtStart = [];
         foreach (ChannelUnitAllocation allocation in allocations)
         {
@@ -2098,6 +2298,18 @@ public sealed class MidoraCompiler : IDisposable
         foreach (CanonicalMidiEvent value in source)
         {
             MidiMessage message = value.Message;
+            if (value.Tick < endTick
+                && message.MessageType == MidiMessageType.NoteOn
+                && message.Byte2 != 0)
+            {
+                channelsNeedingSoundOff.Add((value.ZeroBasedPort, value.ZeroBasedChannel));
+            }
+            else if (value.Tick < endTick
+                && message.MessageType == MidiMessageType.ControlChange
+                && message.Byte1 == AllSoundOffController)
+            {
+                channelsNeedingSoundOff.Remove((value.ZeroBasedPort, value.ZeroBasedChannel));
+            }
             if (value.Tick < startTick)
             {
                 if (message.MessageType == MidiMessageType.NoteOn && message.Byte2 != 0)
@@ -2141,7 +2353,9 @@ public sealed class MidoraCompiler : IDisposable
             }
             result.Add(value);
             if (message.MessageType is not MidiMessageType.NoteOn and not MidiMessageType.NoteOff
-                && value.Role != CanonicalEventRole.Reset && value.SemanticTargetKey != long.MinValue)
+                && value.Role != CanonicalEventRole.Reset
+                && value.SemanticTargetKey != long.MinValue
+                && value.SemanticTargetKey != ControlTargetKey(AllSoundOffController))
             {
                 pollutedTargets.Add((value.ZeroBasedPort, value.ZeroBasedChannel, value.SemanticTargetKey));
             }
@@ -2187,6 +2401,12 @@ public sealed class MidoraCompiler : IDisposable
             }
         }
 
+        if (suppressEndCleanup)
+        {
+            result.Sort(CanonicalComparer.Instance);
+            return FoldSameTickStates(result).ToArray();
+        }
+
         HashSet<(byte Port, byte Channel)> cleanupChannels = [];
         long boundaryNoteOffOrder = long.MaxValue / 2;
         foreach (((byte port, byte channel, byte note), Queue<SourceReference> sources) in activeNotes
@@ -2222,6 +2442,21 @@ public sealed class MidoraCompiler : IDisposable
             .OrderBy(value => value.Port)
             .ThenBy(value => value.Channel))
         {
+            if (channelsNeedingSoundOff.Contains((port, channel)))
+            {
+                long soundOffOrder = resetOrder++;
+                result.Add(new(
+                    endTick,
+                    port,
+                    channel,
+                    MidiMessage.ControlChange(channel, AllSoundOffController, 0),
+                    CanonicalEventRole.Reset,
+                    soundOffOrder,
+                    ControlTargetKey(AllSoundOffController),
+                    soundOffOrder,
+                    new(Tick: endTick, Origin: SourceOrigin.CompilerBoundaryCleanup)));
+            }
+
             foreach ((byte statePort, byte stateChannel, long target) in pollutedTargets
                 .OrderBy(value => value.Port)
                 .ThenBy(value => value.Channel)
@@ -2467,7 +2702,11 @@ public sealed class MidoraCompiler : IDisposable
         int SourceOrder,
         RawSubVoice[] Voices);
 
-    private sealed record RawSubVoice(MidoraId SubVoiceId, RawMidiEvent[] Events);
+    private sealed record RawSubVoice(
+        MidoraId SubVoiceId,
+        RawMidiEvent[] Events,
+        MidiValueTarget[] UsedTargets,
+        bool HasSoundingNotes);
 
     private sealed class AcceptedInstance(
         int resultIndex,
@@ -2570,35 +2809,36 @@ public sealed class MidoraCompiler : IDisposable
     }
     private sealed record AllocationResult(
         Dictionary<(MidoraId InstanceId, MidoraId SubVoiceId), int> UnitBySubVoice,
+        AllocationGroup[] Groups,
         ChannelUnitAllocation[] Allocations,
         int PeakUnits,
         ResourceShortageDetails? ResourceShortage);
 
-    private static MappingStableIdV1 ToMappingId(MidoraId id) => new(id.High, id.Low);
+    private static MappingStableIdV2 ToMappingId(MidoraId id) => new(id.Value);
 
-    private static MappingEventKindV1 ToMappingEventKind(TemplateEventKind kind) => kind switch
+    private static MappingEventKindV2 ToMappingEventKind(TemplateEventKind kind) => kind switch
     {
-        TemplateEventKind.Note => MappingEventKindV1.Note,
-        TemplateEventKind.ControlChange => MappingEventKindV1.ControlChange,
-        TemplateEventKind.Bank => MappingEventKindV1.BankSelect,
-        TemplateEventKind.Program => MappingEventKindV1.ProgramChange,
-        TemplateEventKind.PitchBend => MappingEventKindV1.PitchBend,
-        TemplateEventKind.RegisteredParameter => MappingEventKindV1.Rpn,
-        TemplateEventKind.NonRegisteredParameter => MappingEventKindV1.Nrpn,
-        TemplateEventKind.PitchBendRange => MappingEventKindV1.PitchBendRange,
-        _ => MappingEventKindV1.Unknown
+        TemplateEventKind.Note => MappingEventKindV2.Note,
+        TemplateEventKind.ControlChange => MappingEventKindV2.ControlChange,
+        TemplateEventKind.Bank => MappingEventKindV2.BankSelect,
+        TemplateEventKind.Program => MappingEventKindV2.ProgramChange,
+        TemplateEventKind.PitchBend => MappingEventKindV2.PitchBend,
+        TemplateEventKind.RegisteredParameter => MappingEventKindV2.Rpn,
+        TemplateEventKind.NonRegisteredParameter => MappingEventKindV2.Nrpn,
+        TemplateEventKind.PitchBendRange => MappingEventKindV2.PitchBendRange,
+        _ => MappingEventKindV2.Unknown
     };
 
-    private static MappingEventKindV1 ToMappingEventKind(MidiValueKind kind) => kind switch
+    private static MappingEventKindV2 ToMappingEventKind(MidiValueKind kind) => kind switch
     {
-        MidiValueKind.ControlChange => MappingEventKindV1.ControlChange,
-        MidiValueKind.BankMsb or MidiValueKind.BankLsb => MappingEventKindV1.BankSelect,
-        MidiValueKind.Program => MappingEventKindV1.ProgramChange,
-        MidiValueKind.PitchBend => MappingEventKindV1.PitchBend,
-        MidiValueKind.RegisteredParameter => MappingEventKindV1.Rpn,
-        MidiValueKind.NonRegisteredParameter => MappingEventKindV1.Nrpn,
-        MidiValueKind.PitchBendRangeSemitones or MidiValueKind.PitchBendRangeCents => MappingEventKindV1.PitchBendRange,
-        _ => MappingEventKindV1.Unknown
+        MidiValueKind.ControlChange => MappingEventKindV2.ControlChange,
+        MidiValueKind.BankMsb or MidiValueKind.BankLsb => MappingEventKindV2.BankSelect,
+        MidiValueKind.Program => MappingEventKindV2.ProgramChange,
+        MidiValueKind.PitchBend => MappingEventKindV2.PitchBend,
+        MidiValueKind.RegisteredParameter => MappingEventKindV2.Rpn,
+        MidiValueKind.NonRegisteredParameter => MappingEventKindV2.Nrpn,
+        MidiValueKind.PitchBendRangeSemitones or MidiValueKind.PitchBendRangeCents => MappingEventKindV2.PitchBendRange,
+        _ => MappingEventKindV2.Unknown
     };
 
     private sealed class CanonicalComparer : IComparer<CanonicalMidiEvent>
@@ -2778,7 +3018,7 @@ internal static class SourceFingerprint
     private static void AddInstrument(ref ulong hash, EventInstrument instrument)
     {
         Add(ref hash, instrument.Id);
-        // These display names are part of MappingContextV1 and can therefore affect
+        // These display names are part of MappingContextV2 and can therefore affect
         // a free C# Mapping Function's returned value.
         Add(ref hash, instrument.Name);
         Add(ref hash, instrument.RootNote);
@@ -2939,9 +3179,7 @@ internal static class SourceFingerprint
 
     private static void Add(ref ulong hash, MidoraId value)
     {
-        Span<byte> bytes = stackalloc byte[16];
-        value.Value.TryWriteBytes(bytes);
-        foreach (byte item in bytes) Add(ref hash, item);
+        Add(ref hash, value.Value);
     }
     private static void Add(ref ulong hash, string value)
     {

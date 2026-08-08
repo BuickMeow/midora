@@ -1141,6 +1141,19 @@ Enum 转 Integer / Double：
 使用 Enum 内部整数值作为旧值
 再按目标参数规则处理
 ```
+### 11.19.6 Definition 自身变化的全 Project 原子迁移
+当同一 Logical Parameter Definition 的类型、合法范围或 Enum 结构变化会改变既有值的合法性或数值身份时，以上转换规则同样适用于全 Project 所有引用该稳定 Parameter ID 的 Lane。该操作必须一次性冻结完整目标 Definition 和有序 Enum item 集合，并由调用方显式选择 `Clamp` 或“丢弃不合法值”；目标 Enum 还必须确认语义警告。
+
+统一规则：
+```text
+Double 转 Integer / Enum 的中点固定 Away From Zero
+Enum Clamp 等距时选较小已定义值
+目标 Enum 的所有保留点使用 Step
+保留点与保留 Enum item 的稳定 ID 不变
+新增 Enum item 在首次提交时分配新 ID
+Definition、Enum items 和全部引用 Lane 形成一个撤销 / 重做项
+失败时不得留下部分迁移结果
+```
 ---
 ## 11.20 Logical Parameter 与 Segment 操作
 ### 11.20.1 复制 Segment

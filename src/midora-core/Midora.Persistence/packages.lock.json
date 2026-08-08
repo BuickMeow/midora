@@ -17,10 +17,10 @@
       "midora.domain": {
         "type": "Project",
         "dependencies": {
-          "Midora.Mapping.Contract.V1": "[1.0.0, )"
+          "Midora.Mapping.Contract.V2": "[1.0.0, )"
         }
       },
-      "midora.mapping.contract.v1": {
+      "midora.mapping.contract.v2": {
         "type": "Project"
       }
     },

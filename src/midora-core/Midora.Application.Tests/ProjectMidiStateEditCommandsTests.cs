@@ -39,7 +39,7 @@ public sealed class ProjectMidiStateEditCommandsTests
         MidiInitialState projectState = fixture.Project.GlobalInitialState;
         MidiInitialState instrumentState = fixture.Instrument.InitialState;
         MidiInitialState voiceState = fixture.Voice.InitialState;
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 

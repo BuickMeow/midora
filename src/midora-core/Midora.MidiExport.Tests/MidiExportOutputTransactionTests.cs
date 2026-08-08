@@ -42,6 +42,49 @@ public sealed class MidiExportOutputTransactionTests
     }
 
     [Fact]
+    public void FrozenPlansRejectInvalidPathsAndInvalidOutputTopology()
+    {
+        using TemporaryDirectory temporary = new();
+        string fileInsteadOfDirectory = temporary.PathFor("not-a-directory");
+        File.WriteAllBytes(fileInsteadOfDirectory, [1]);
+        MidiExportFrozenOutputPlan filePlan = MidiExportOutputPlanner.PlanWholeProject(
+            fileInsteadOfDirectory,
+            "Song",
+            null,
+            includeReadme: false);
+
+        string targetDirectory = temporary.PathFor("target-is-directory");
+        Directory.CreateDirectory(Path.Combine(targetDirectory, "Song.mid"));
+        MidiExportFrozenOutputPlan directoryTargetPlan = MidiExportOutputPlanner.PlanWholeProject(
+            targetDirectory,
+            "Song",
+            null,
+            includeReadme: false);
+        MidiExportFrozenOutputPlan noMidiPlan = MidiExportOutputPlanner.PlanLogicalTracks(
+            temporary.PathFor("no-midi"),
+            [],
+            totalProjectTrackCount: 0,
+            includeReadme: true);
+        MidiExportFrozenOutputPlan invalidPathPlan = MidiExportOutputPlanner.PlanWholeProject(
+            "\0",
+            "Song",
+            null,
+            includeReadme: false);
+
+        Assert.False(filePlan.Succeeded);
+        Assert.Contains(filePlan.Diagnostics, value => value.Code == "MIDORA-MIDI-EXPORT-OUTPUT-PATH"
+            && value.Message.Contains("existing file", StringComparison.Ordinal));
+        Assert.False(directoryTargetPlan.Succeeded);
+        Assert.Contains(directoryTargetPlan.Diagnostics,
+            value => value.Message.Contains("existing directory", StringComparison.Ordinal));
+        Assert.False(noMidiPlan.Succeeded);
+        Assert.Contains(noMidiPlan.Diagnostics,
+            value => value.Message.Contains("at least one .mid", StringComparison.Ordinal));
+        Assert.False(invalidPathPlan.Succeeded);
+        Assert.Empty(invalidPathPlan.Targets);
+    }
+
+    [Fact]
     public async Task PublishesAllArtifactsByAtomicallyCreatingTheExactMissingDirectory()
     {
         using TemporaryDirectory temporary = new();

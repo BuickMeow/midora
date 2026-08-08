@@ -66,7 +66,7 @@ internal static class LogicalTrackProtobufCodecV1
         LogicalTrack result = new(project, ProtobufValueCodecV1.FromWire(value.Id, "Logical Track ID"))
         {
             Name = value.Name,
-            EventInstrumentId = value.EventInstrumentId is null
+            EventInstrumentId = !value.HasEventInstrumentId
                 ? null
                 : ProtobufValueCodecV1.FromWire(value.EventInstrumentId, "Logical Track Event Instrument ID"),
             LastBoundEventInstrumentName = value.HasLastBoundEventInstrumentName
@@ -161,7 +161,7 @@ internal static class LogicalTrackProtobufCodecV1
         }
         _ = ProtobufValueCodecV1.FromWire(value.Id, "Logical Track ID");
         PersistenceValueValidationV1.ValidateShortText(value.Name, "Logical Track name");
-        if (value.EventInstrumentId is not null)
+        if (value.HasEventInstrumentId)
         {
             _ = ProtobufValueCodecV1.FromWire(value.EventInstrumentId, "Logical Track Event Instrument ID");
         }

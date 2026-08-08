@@ -9,6 +9,7 @@ public sealed unsafe class AudioFrameRingBuffer : IAudioRenderSource, IDisposabl
     private long _readPosition;
     private long _writePosition;
     private long _underrunCount;
+    private int _buffering;
     private int _producerCompleted;
     private int _producerFaulted;
     private bool _disposed;
@@ -49,6 +50,12 @@ public sealed unsafe class AudioFrameRingBuffer : IAudioRenderSource, IDisposabl
     public int FreeFrameCount => _capacityFrameCount - AvailableFrameCount;
 
     public long UnderrunCount => Volatile.Read(ref _underrunCount);
+
+    public bool IsBuffering => Volatile.Read(ref _buffering) != 0;
+
+    public long ReadPositionFrame => Volatile.Read(ref _readPosition);
+
+    public long WritePositionFrame => Volatile.Read(ref _writePosition);
 
     public bool ProducerCompleted => Volatile.Read(ref _producerCompleted) != 0;
 
@@ -93,12 +100,21 @@ public sealed unsafe class AudioFrameRingBuffer : IAudioRenderSource, IDisposabl
         long write = Volatile.Read(ref _writePosition);
         int availableFrames = (int)(write - read);
 
+        if (IsBuffering)
+        {
+            NativeMemory.Clear(
+                destination,
+                checked((nuint)requestedFrameCount * (nuint)Format.BytesPerFrame));
+            return AudioPullResult.Buffering();
+        }
+
         if (availableFrames < requestedFrameCount && !ProducerCompleted && !ProducerFaulted)
         {
             NativeMemory.Clear(
                 destination,
                 checked((nuint)requestedFrameCount * (nuint)Format.BytesPerFrame));
             Interlocked.Increment(ref _underrunCount);
+            Volatile.Write(ref _buffering, 1);
             return AudioPullResult.Buffering();
         }
 
@@ -130,6 +146,45 @@ public sealed unsafe class AudioFrameRingBuffer : IAudioRenderSource, IDisposabl
     public void FaultProducer()
     {
         Volatile.Write(ref _producerFaulted, 1);
+    }
+
+    public int CopyAvailableFramesTo(float* destination, int destinationFrameCapacity)
+    {
+        if (_disposed || destination == null || destinationFrameCapacity < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(destinationFrameCapacity));
+        }
+        long read = Volatile.Read(ref _readPosition);
+        long write = Volatile.Read(ref _writePosition);
+        int available = checked((int)(write - read));
+        if (available > destinationFrameCapacity)
+        {
+            throw new ArgumentException(
+                "The destination cannot contain all currently buffered frames.",
+                nameof(destinationFrameCapacity));
+        }
+        CopyFromRing(destination, read, available);
+        return available;
+    }
+
+    public void ResetBufferedFramesAtReadPosition()
+    {
+        if (_disposed || !IsBuffering)
+        {
+            throw new InvalidOperationException(
+                "Buffered frames can only be reset while an underrun is latched.");
+        }
+        long read = Volatile.Read(ref _readPosition);
+        Volatile.Write(ref _writePosition, read);
+    }
+
+    public void ReleaseBuffering()
+    {
+        if (_disposed || !IsBuffering)
+        {
+            throw new InvalidOperationException("No ring underrun is latched.");
+        }
+        Volatile.Write(ref _buffering, 0);
     }
 
     public void Dispose()

@@ -5,23 +5,19 @@ namespace Midora.Persistence;
 
 internal static class ProtobufValueCodecV1
 {
-    public static StableId ToWire(MidoraId value)
+    public static long ToWire(MidoraId value)
     {
         if (value == default)
         {
             throw new InvalidDataException("Stable ID zero is reserved.");
         }
-        return new StableId { High = value.High, Low = value.Low };
+        return value.Value;
     }
 
-    public static MidoraId FromWire(StableId? value, string fieldName)
+    public static MidoraId FromWire(long value, string fieldName)
     {
-        if (value is null)
-        {
-            throw new InvalidDataException($"{fieldName} is required.");
-        }
-        PersistenceValueValidationV1.ValidateStableId(value.High, value.Low, fieldName);
-        return MidoraId.FromParts(value.High, value.Low);
+        PersistenceValueValidationV1.ValidateStableId(value, fieldName);
+        return new MidoraId(value);
     }
 
     public static RgbColor ToWire(MidoraColor value) => new()

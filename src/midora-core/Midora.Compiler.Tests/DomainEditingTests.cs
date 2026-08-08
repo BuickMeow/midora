@@ -1,9 +1,33 @@
+using System.Reflection;
 using Midora.Domain;
 
 namespace Midora.Compiler.Tests;
 
 public sealed class DomainEditingTests
 {
+    [Fact]
+    public void ProjectTicksPerQuarterNoteUsesSmfCompatibleInitialReleaseRange()
+    {
+        Assert.Equal(1, new MidoraProject(1).TicksPerQuarterNote);
+        Assert.Equal(32_767, new MidoraProject(32_767).TicksPerQuarterNote);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new MidoraProject(0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new MidoraProject(32_768));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new MidoraProject(int.MaxValue));
+    }
+
+    [Fact]
+    public void TimeSignatureCreationRejectsDenominatorIncompatibleWithProjectTpq()
+    {
+        MidoraProject project = new(1);
+        long nextStableId = project.NextStableId;
+
+        Assert.Throws<ArgumentException>(() =>
+            new TimeSignatureChange(project, 1, 3, 8));
+
+        Assert.Equal(nextStableId, project.NextStableId);
+        Assert.Single(project.Conductor.TimeSignatures);
+    }
+
     [Fact]
     public void LibraryCreationProducesMinimalValidUniqueInstrument()
     {
@@ -163,15 +187,15 @@ public sealed class DomainEditingTests
     public void ProjectStableIdsUseMonotonicCounterAndEndMarkerKeepsIdentityWhenMoved()
     {
         MidoraProject project = new(480);
-        UInt128 before = project.NextStableId;
+        long before = project.NextStableId;
         EventInstrument first = EventInstrumentLibrary.Create(project, "First");
-        UInt128 afterFirst = project.NextStableId;
+        long afterFirst = project.NextStableId;
         _ = EventInstrumentLibrary.Delete(project, first.Id, referencedDeletionConfirmed: true);
         EventInstrument second = EventInstrumentLibrary.Create(project, "Second");
 
         Assert.True(afterFirst > before);
-        Assert.True(second.Id.ToSequence() >= afterFirst);
-        Assert.True(project.NextStableId > second.Id.ToSequence());
+        Assert.True(second.Id.Value >= afterFirst);
+        Assert.True(project.NextStableId > second.Id.Value);
 
         project.SetEndMarker(960);
         MidoraId endMarkerId = project.Conductor.EndMarker!.Id;
@@ -182,21 +206,39 @@ public sealed class DomainEditingTests
     }
 
     [Fact]
-    public void StableIdUsesCanonicalPersistenceTextAndProtobufParts()
+    public void StableIdUsesCanonicalPositiveInt64ValueAndDecimalText()
     {
-        const ulong high = 0x0123456789abcdef;
-        const ulong low = 0xfedcba9876543210;
-        MidoraId id = MidoraId.FromParts(high, low);
+        const long value = 1_234_567_890_123_456_789;
+        MidoraId id = new(value);
 
-        Assert.Equal("0123456789abcdeffedcba9876543210", id.ToString());
-        Assert.Equal(high, id.High);
-        Assert.Equal(low, id.Low);
-        Assert.Equal(((UInt128)high << 64) | low, id.ToSequence());
+        Assert.Equal("1234567890123456789", id.ToString());
+        Assert.Equal(value, id.Value);
         Assert.True(MidoraId.TryParseCanonical(id.ToString(), out MidoraId parsed));
         Assert.Equal(id, parsed);
-        Assert.False(MidoraId.TryParseCanonical("0123456789ABCDEFFEDCBA9876543210", out _));
-        Assert.False(MidoraId.TryParseCanonical("00000000000000000000000000000000", out _));
-        Assert.Throws<ArgumentOutOfRangeException>(() => MidoraId.FromParts(0, 0));
+        Assert.False(MidoraId.TryParseCanonical("01", out _));
+        Assert.False(MidoraId.TryParseCanonical("+1", out _));
+        Assert.False(MidoraId.TryParseCanonical("-1", out _));
+        Assert.False(MidoraId.TryParseCanonical("1e0", out _));
+        Assert.False(MidoraId.TryParseCanonical("0", out _));
+        Assert.False(MidoraId.TryParseCanonical("9223372036854775808", out _));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new MidoraId(0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new MidoraId(-1));
+    }
+
+    [Fact]
+    public void StableIdAllocatorRejectsExhaustionBeforeMutatingProject()
+    {
+        ConstructorInfo constructor = typeof(MidoraProject).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            [typeof(int), typeof(long)],
+            modifiers: null)!;
+        MidoraProject project = (MidoraProject)constructor.Invoke([480, long.MaxValue]);
+
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => project.AllocateStableId());
+
+        Assert.Contains("exhausted", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(long.MaxValue, project.NextStableId);
     }
 
     [Fact]

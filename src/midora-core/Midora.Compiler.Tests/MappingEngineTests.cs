@@ -1,5 +1,5 @@
 using Midora.Domain;
-using Midora.Mapping.Contract.V1;
+using Midora.Mapping.Contract.V2;
 
 namespace Midora.Compiler.Tests;
 
@@ -199,7 +199,7 @@ public sealed class MappingEngineTests
         Assert.Equal(expected, actual, precision: 12);
     }
 
-    private static MappingContextV1 Context(int triggerVelocity = 99) =>
+    private static MappingContextV2 Context(int triggerVelocity = 99) =>
         new(
             CurrentValue: 999,
             TriggerNote: 61,
@@ -214,7 +214,7 @@ public sealed class MappingEngineTests
     private static double Apply(
         ValueMappingStep step,
         double current,
-        MappingContextV1 context,
+        MappingContextV2 context,
         IReadOnlyDictionary<MidoraId, double>? parameters = null,
         IReadOnlyDictionary<MidoraId, double>? envelopes = null,
         double legalMaximum = 10_000,

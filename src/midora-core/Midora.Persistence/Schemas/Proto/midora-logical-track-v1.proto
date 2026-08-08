@@ -9,7 +9,7 @@ option csharp_namespace = "Midora.Persistence.Wire.Proto.V1";
 option features.field_presence = EXPLICIT;
 
 message LogicalNoteV1 {
-  StableId id = 1;
+  int64 id = 1;
   int64 start_tick = 2;
   int64 length_ticks = 3;
   int32 note = 4;
@@ -18,14 +18,14 @@ message LogicalNoteV1 {
 }
 
 message LogicalParameterLaneV1 {
-  StableId id = 1;
-  StableId parameter_id = 2;
+  int64 id = 1;
+  int64 parameter_id = 2;
   repeated CurvePointV1 points = 3;
   reserved 4 to max;
 }
 
 message SegmentV1 {
-  StableId id = 1;
+  int64 id = 1;
   int64 project_start_tick = 2;
   int64 length_ticks = 3;
   int64 content_offset_tick = 4;
@@ -37,9 +37,9 @@ message SegmentV1 {
 message LogicalTrackV1 {
   uint32 schema_version = 1;
   string object_type = 2;
-  StableId id = 3;
+  int64 id = 3;
   string name = 4;
-  StableId event_instrument_id = 5;
+  int64 event_instrument_id = 5;
   string last_bound_event_instrument_name = 6;
   RgbColor color_override = 7;
   repeated SegmentV1 segments = 8;

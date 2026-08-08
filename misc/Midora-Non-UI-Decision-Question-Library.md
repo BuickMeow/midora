@@ -1,8 +1,8 @@
 # Midora 初版非 UI 实施决定问题库
 
-状态：Q-NUI-001～Q-NUI-025 的产品答复均已记录；Q-NUI-022 的钢琴卷帘适用范围已写入 SRS，代码仍待实施
+状态：Q-NUI-001～Q-NUI-028、Q-NUI-030、Q-NUI-034～Q-NUI-042 的产品答复均已记录；Q-NUI-029、Q-NUI-031～Q-NUI-033、Q-NUI-043～Q-NUI-048 为已按推荐方案实施、待产品确认的小决定；新的 Segment/Unit 音频缓存与 underrun 恢复架构已无剩余大决定阻塞，主体实现完成并进入全量门禁；M-AUD-001～012 全部通过
 创建日期：2026-08-06
-最近更新：2026-08-07
+最近更新：2026-08-08
 关联台账：`misc/Midora-Non-UI-Implementation-Tracker.md`
 
 本文只收录实施“全部非 UI 初版能力”过程中真正需要产品所有者决定、确认或修改的问题。SRS 已规定的事实以及 `misc/Midora-SRS-Code-Conformance-Audit-2026-08-05.md` 中已确认的 1A～25.1A 不重复登记。
@@ -14,9 +14,9 @@
 - 每个问题必须记录：SRS/源码依据、事实与不确定性、影响范围、推荐方案、备选方案、当前实施状态、产品回答和最终处理提交。
 - 已回答问题保留原编号，不删除，作为决定审计链。
 
-## 2. 2026-08-07 产品答复与实施判定
+## 2. 产品答复与实施判定
 
-本节是 Q-NUI-002～Q-NUI-025 的当前权威答复。第 3 节保留问题提出时的完整事实、影响和备选方案；其中原有的“待确认”“待填写”和“等待回答”字段是答复前快照，不再表示当前状态。本轮按产品所有者要求只记录决定，不修改源码、SRS、JSON Schema、protobuf descriptor、golden bytes 或测试基线。
+本节是 Q-NUI-002～Q-NUI-028、Q-NUI-030、Q-NUI-034～Q-NUI-042 的当前权威答复。第 3 节保留问题提出时的完整事实、影响和备选方案；其中已经在本表回答的问题，即使原问题正文仍保留“待确认”“待填写”和“等待回答”字样，也以本表为准。未列入本表的新小决定仍以问题正文中的“已实施、待确认”状态为准。
 
 | 编号 | 产品答复与实施判定 |
 |---|---|
@@ -29,7 +29,7 @@
 | Q-NUI-008 | 采用推荐方案；现有非空 Chain 删除确认及空 Chain sentinel 表示获确认。 |
 | Q-NUI-009 | 采用推荐方案：Definition 结构编辑必须显式迁移并作为单个原子 History entry 处理全部引用 Lane。 |
 | Q-NUI-010 | 采用推荐方案；空 SubVoice 保持静音目标且不产生额外 Info。 |
-| Q-NUI-011 | 采用推荐方案，允许内部共享音频状态快照 ABI 在开发期升级到 v2。该 ABI 是内部版本号，因此不适用 Q-NUI-003 的外部 Project 文件开发期版本原则。 |
+| Q-NUI-011 | 采用推荐方案，允许内部共享音频状态快照 ABI 在开发期独立升级。v2 引入 seqlock；Q-NUI-022 的 held Preview 控制引入 v3；Q-NUI-034～035 的完整恢复区间命令使当前版本升至 v4，并继续保持同一 header/seqlock。该 ABI 是内部版本号，因此不适用 Q-NUI-003 的外部 Project 文件开发期版本原则。 |
 | Q-NUI-012 | 采用推荐方案；现有 SDK、NuGet lock 与发布门锁定策略获确认。 |
 | Q-NUI-013 | 产品所有者放行正式包含 BASS/BASSMIDI/BASSWASAPI DLL 的分发。公开身份为 `Zacksony`；产品无销售、广告、订阅、付费分发或其他形式收入；初版为 Windows `win-x64`，未来可能多平台；通过 GitHub Release 发布；发布当日必须按官方条款重新确认免费资格；最终包必须同时包含供应商要求的原始许可文本和现有 notices。该答复记录发布主体与产品事实及产品放行，不替代发布当日外部条款核验。 |
 | Q-NUI-014 | 采用推荐方案；单应用实例按 Windows 交互登录 Session 隔离。 |
@@ -40,29 +40,42 @@
 | Q-NUI-019 | 采用推荐方案：Time Signature 变化 tick 立即开启新 Bar，允许前一小节缩短；另新增规则：每个发生在小节中途、因而截断旧小节的 Time Signature 变化都产生一条 Warning。 |
 | Q-NUI-020 | 采用推荐方案；初版 Global Event Scope Defaults 保持不可编辑的版本化空 marker，作用域继续由各正式事件语义固定。 |
 | Q-NUI-021 | 采用推荐方案；超过 SMF 四字节 VLQ 上限的 delta 继续结构化失败，不插入非 canonical Meta spacer。 |
-| Q-NUI-022 | 采用推荐方案；held Preview 使用因果 Gate、`Int64.MaxValue` 未结束哨兵和未渲染 frontier 生效规则。2026-08-07 进一步确认 Segment Editor 左侧 Pitch Ruler 琴键与单个 Logical Note 放置预览均复用该逻辑，并属于初版范围。 |
+| Q-NUI-022 | 采用推荐方案；held Preview 使用因果 Gate、`Int64.MaxValue` 未结束哨兵和未渲染 frontier 生效规则。2026-08-07 进一步确认 Segment Editor 左侧 Pitch Ruler 琴键与单个 Logical Note 放置预览均复用该逻辑，并属于初版范围。非 UI 全链已经实施并通过进程内、托管 Worker 和 Native AOT Worker 自动回归。 |
 | Q-NUI-023 | 选择备选 A：直接把开发期 v1 的领域、创建与 schema 合法范围收窄为 `1..32767`，拒绝高 TPQ v1。当前处于开发期，没有既有兼容承诺，不创建新版本或迁移。 |
 | Q-NUI-024 | Midora 稳定 ID 的核心值改为单个 C# `long`；不再以 `Guid`、`UInt128` 或两个 `ulong` 承载。Project 范围内的持久化单调递增 ID 足够满足身份需求。 |
 | Q-NUI-025 | 采用推荐方案：合法范围 `1..long.MaxValue`；JSON 使用 canonical 十进制 integer；对象文件名使用无符号、无前导零的十进制 ASCII；protobuf 使用标量 `int64` 并保留各外层字段号；直接重写开发期 v1 契约，不提供 128-bit v1 迁移器。 |
+| Q-NUI-026 | 采用推荐方案 A：allocation group 实际结束时执行精确 NoteOff → CC120 All Sound Off → Project/Global 状态 Reset → Channel Unit 释放/复用。真实 BASSMIDI/SF2 对比已确认 CC120 在 48 kHz 下经过固定 192-frame（4 ms）防爆音衰减后稳定为零，且只影响目标 Channel；正式实现和自动回归已完成，等待人工复听。 |
+| Q-NUI-027 | 接受已实施方案：人工 Console 使用显式 `MIDORA_AUDIO_WORKER_PATH` 或标准 `win-x64/publish` Native AOT `.exe`，不存在时失败，绝不回退 managed `.dll`。 |
+| Q-NUI-028 | 活动输出设备播放中被拔出或禁用时，断开当前输出并受控停止；主应用不得因清理异常崩溃，必须要求用户显式重新指定设备，完成选择前不得自动或静默切换到任何设备。非活动设备变化不影响当前播放。 |
+| Q-NUI-030 | 采用推荐方案：直接收紧开发期 v1，要求 Project 中每个 Time Signature 都满足 `4 × TPQ % denominator == 0`；Domain、semantic validation 和 persistence 统一拒绝不兼容组合。按 Q-NUI-003 直接修改 v1，不创建迁移版本。现已实施统一 Project Time Signature Map、可逆 Bar:Beat:Tick、自然拍网格/Snap 和中途截断 Warning。 |
+| Q-NUI-034 | 采用五层分离推荐架构：canonical range cache、Segment/Unit compiled fragment、Segment/Unit PCM、playback span、短 Render-Ahead ring。旧 ring-cap 推荐及 A/B/C 作废。 |
+| Q-NUI-035 | 选择备选 B：若 underrun 位于小节中途，恢复区间包含当前小节剩余部分和下一个完整自然小节；若正好位于 Bar 起点，只取当前完整小节。总恢复区间上限由 8 个四分音符放宽为 16 个，播放范围剩余不足时以实际终点为界。当前实现解释为 16 四分音符限制整个 `[F,R)`；若极端拍号导致截断下一完整小节，上限优先。 |
+| Q-NUI-036 | 采用每 Unit 单通道渲染语义 + 有界复用 Stream pool。sample-voice 值允许用户在设置中修改；变化后使全部音频 PCM/cache generation 失效。默认值由 750 改为 500；Realtime/Offline 的精确范围见 Q-NUI-042。 |
+| Q-NUI-037 | 采用 session-scoped 磁盘后备 + RAM hot set，并修改容量失败语义：缓存位置、当前占用和上限对用户透明；用户可选择缓存磁盘/目录并设置程序级最大长期缓存大小，允许 0。达到配额或普通长期缓存写入空间不足时显示状态 Warning，停止写入新长期缓存并退化为每次实时重渲染，不因长期缓存不可写直接阻止播放。Q-NUI-035 所需临时恢复存储和默认路径/配额见 Q-NUI-041。 |
+| Q-NUI-038 | 采用推荐的因果 Dirty tick：能够证明旧前缀等价时保留；不能证明时回退 Segment 有效起点。 |
+| Q-NUI-039 | 采用推荐方案：物理设备改变但实际采样率/格式相同时保留 device-independent Segment/Unit PCM，只重建设备绑定状态、ring 和输出 generation。 |
+| Q-NUI-040 | 采用推荐缓存边界：正式 Project 内容在主时间线、固定 Segment Preview 和 exact-key 离线渲染间复用 raw Unit PCM；草稿及未知 Gate Preview 使用 transient generation。 |
+| Q-NUI-041 | 采用推荐方案：Application Preferences 的默认缓存根目录为 `%LOCALAPPDATA%\Midora\AudioCache`，默认 reusable 上限为 16 GiB，允许 `0..long.MaxValue` bytes，0 禁用 reusable cache；仅允许可写的本机绝对路径，拒绝相对路径和 UNC/network path。Transient Recovery Spool 独立于 reusable 配额并单独透明显示；若磁盘 spool 和预留 RAM 都不可用，则受控 Stop、保留失败 tick 并报告 `AudioRecoveryStorageUnavailable`。 |
+| Q-NUI-042 | 采用推荐方案：Realtime 与 Offline 继续作为两个独立可编辑设置，统一语义为 `Maximum Sample Voices per Unit Stream`；新安装 Realtime 默认 500，新 Project Offline 默认 500。任一值只能在无活动音频任务时提交，并清除当前 Project/session 的全部 PCM/audio cache generations；tick-domain compiler/canonical cache 不失效。开发期 v1 直接修改默认，不创建迁移。 |
 
-版本判定以产品答复为准：开发期尚未冻结的外部 Project 文件契约直接修订 v1；不得仅因为开发过程中的字段或范围变化创建 v2。内部 ABI 有独立生命周期，Q-NUI-011 明确允许升级。后续冻结时再确定首个正式版本的完整 schema、descriptor 与 golden 资产。
+版本判定以产品答复为准：开发期尚未冻结的外部 Project 文件契约直接修订 v1；不得仅因为开发过程中的字段或范围变化创建 v2。内部 ABI 有独立生命周期，Q-NUI-011 明确允许升级。后续冻结时再确定首个正式版本的完整 schema、descriptor 与 golden 资产。Q-NUI-034～Q-NUI-042 已完整冻结新的缓存/underrun、运行时存储和设置边界。
 
 ### Q-NUI-024：`MidoraId` 改为单个 `long` 的稳定 ID
 
 - 类型：大决定，已确认方向。
 - 记录日期：2026-08-07。
 - 产品回答：`Midora.Domain.MidoraId` 重构为纯粹以单个 C# `long` 为核心的 ID；Project 范围内单调递增 ID 已足够，不再使用 `Guid`、`UInt128` 或两个 `ulong`，以减少 ID 运算和序列化/反序列化转换。
-- 当前源码事实：`MidoraId` 当前声明为 `record struct MidoraId(Guid Value)`，通过高低 64 位与 `UInt128` 相互转换；`MidoraProject.NextStableId` 当前为 `UInt128`；Mapping ABI v1、持久化 codec、schema、protobuf、文件名、descriptor/golden 与大量测试都依赖 128-bit 表示。
+- 实施前源码事实：`MidoraId` 曾声明为 `record struct MidoraId(Guid Value)`，通过高低 64 位与 `UInt128` 相互转换；`MidoraProject.NextStableId` 曾为 `UInt128`；Mapping ABI v1、持久化 codec、schema、protobuf、文件名、descriptor/golden 与大量测试依赖 128-bit 表示。
 - 当前 SRS 冲突：第 8.52.2 节建议不少于 128-bit；第 16.5.3、16.11.2、16.13.2 节以及第 00 章固定 32 位小写十六进制文本和 protobuf `StableId { fixed64 high; fixed64 low; }`。产品答复改变了该基线，后续实施必须显式修订相应规格记录，不能把旧 SRS 描述继续当作有效要求。
 - 保持不变的语义：ID 仍是 Project 内全对象类型共享的稳定身份；名称、位置、tick、Port、Channel 和 ID 数值大小都不构成业务排序；分配仍由 Project 负责，保持正值、持久化单调递增、不补缺、不复用和全局唯一；复制生成新 ID，Undo/Redo 恢复原 ID。`0` 与负值不作为合法稳定 ID；到达 `long.MaxValue` 后必须结构化拒绝继续分配。
 - 影响范围：Domain 公共值类型和 Project allocator；所有引用、集合键、排序 tie-break 与 canonical fingerprint；Mapping ABI v2；JSON/对象文件名/protobuf v1、descriptor、golden bytes、迁移预检与损坏诊断；应用 History、Compiler、Playback、MIDI、Audio Render、持久化和全仓测试 fixture。
 - 版本处理：依照 Q-NUI-003 与 Q-NUI-023 的开发期原则，后续实现直接修订尚未冻结的 v1 契约资产，不因本次变化创建 Project file v2；内部 Mapping ABI 按 Q-NUI-011 的决定升级。
-- 当前实施状态：Q-NUI-025 已闭合精确持久化编码；本轮仍仅记录，没有修改任何代码、SRS、schema、descriptor、golden 或测试。
+- 当前实施状态：已完成。SRS 与 ADR-CORE-035 已同步；Domain/allocator、Compiler/fingerprint/source trace、Mapping ABI v2、JSON、对象文件名、protobuf v1、descriptor/golden、Playback/Audio plan 和全仓 fixture 均改为单 `long`。专项 Release 构建 0 warning/0 error；Compiler 218/218、Persistence 85/85、MidiRenderPlan 专项 9/9 通过，完整发布门将在后续非 UI 总门统一重跑。
 
 ### Q-NUI-025：单 `long` 稳定 ID 的 v1 精确持久化编码
 
 - 类型：大决定。
-- 状态：已确认；待后续实施。
+- 状态：已确认并实施。
 - 发现日期：2026-08-07。
 - 已确认事实：Q-NUI-024 已确定内存核心和 Project allocator 使用正 `long`；Q-NUI-003/Q-NUI-023 已确定开发期外部格式直接修订 v1。仅凭“使用 long”仍不能唯一决定 JSON 是数字还是字符串、对象文件名格式，以及 protobuf 使用 `int64`、`sint64` 或 `fixed64`。
 - 影响范围：`.midora` v1 的 JSON Schema、对象文件名、protobuf descriptor/golden bytes、严格读取与损坏诊断、确定性 ZIP bytes，以及其他语言或 JavaScript 工具读取超出 `2^53-1` 的 JSON 数字时的精度。
@@ -71,11 +84,325 @@
 - 备选方案及差异：A. JSON 和文件名使用 canonical 十进制字符串、protobuf 仍用 `int64`；跨语言 JSON 精度更稳健，但保留文本解析。B. JSON integer、文件名十进制、protobuf 使用 `fixed64`；每个值固定 8 bytes，但语义是 unsigned wire 且典型小 ID 更大。C. protobuf 使用 `sint64`；正数需要 ZigZag，收益不成立且 wire 与常规 `int64` 不同。D. 保留嵌套 `StableId` 但只留一个字段；仍保留无必要的消息层和转换。
 - 需要产品所有者回答：已回答。
 - 产品回答：2026-08-07，采用推荐方案。
-- 最终处理与提交：决定已记录；本次不实施。后续与 Q-NUI-024 一并更新规格、ADR、Domain、Mapping ABI、开发期 v1 持久化契约与完整覆盖测试。
+- 最终处理与提交：已与 Q-NUI-024 一并实施。JSON 使用自定义 source-generated 可用 converter 严格检查原始 numeric token，拒绝字符串、小数、指数、符号、前导零、零与溢出；protobuf 各 ID 字段保持外层字段号并直接使用 `int64`，三份 descriptor hash 与代表性 golden bytes 已重建；旧 high/low 和 Mapping ABI v1 正式消费路径已从源码移除。
 
-## 3. 问题原文与影响分析（答复前快照）
+## 3. 问题原文、影响分析与新增待确认问题
 
-以下条目的状态、产品回答和最终处理字段保留为 2026-08-07 答复前的原始快照；当前决定以第 2 节为准。
+Q-NUI-026～027 是本轮新增问题；其后 Q-NUI-002～025 的状态、产品回答和最终处理字段保留为 2026-08-07 答复前的原始快照，当前决定以第 2 节为准。
+
+### Q-NUI-026：Channel Unit 结束时如何终止 SoundFont 残余 release
+
+- 类型：大决定；阻塞 M-AUD-002/M-AUD-005 的正式语义修复，其他工作不阻塞。
+- 状态：已采用推荐方案 A；真实 BASSMIDI 最小对比、正式实现与自动回归完成，等待人工复听。
+- 发现日期：2026-08-07。
+- 人工与自动证据：SubVoice 验收例的四个实例范围为 `[0,900)`、`[960,1860)`、`[1920,2820)`、`[2880,3780)`。每个模板和弦在局部 tick 430 NoteOff，SF2 release 到实例结束仍可听；实例结束的 CC11 Reset 恢复到 127。48 kHz PCM 在 tick 900、2820、3780 后明显增大，在 CC11 已接近 127 的 tick 1860 没有同类增大，与产品所有者报告的第一、第三、第四和弦末尾突增精确一致。根因已确认，不再只是推断。
+- SRS 依据：10.16.3 要求普通生命周期按“Release/Tail 完成 → 必要精确 NoteOff → Reset → Channel Unit 可释放”；10.16.4 允许 All Notes Off 作为 Reset/安全兜底但不得替代精确 NoteOff；12.10.4～12.10.5 要求 Reset 完成后才能释放或同 tick 复用 Channel Unit；14.14.3 明确列出 All Notes Off、All Sound Off、Reset All Controllers 可以属于 canonical 范围清理；14.14.4 禁止 exporter 在 canonical 外自行追加清理；15.1 禁止 audio consumer 重解释 Release/Tail/Reset。
+- 当前实现的额外事实：Reset 目前在每个 Raw Instance 结束时生成。非隔离重叠实例会合并到一个 allocation group 并共享 Channel Unit；如果只在每个实例结束时新增 CC120，先结束的实例会杀掉同组仍在发声的实例。因此安全终止必须按 allocation group/Channel Unit 占用结束处理，并同时审计现有状态 Reset 的归属，不能只给人工示例打补丁。
+- 推荐方案 A：在 canonical compiler 中把资源安全清理统一到每个 allocation group 的实际结束点。先完成该 group 所有精确 NoteOff，再发 CC120 All Sound Off 终止 SoundFont 内部残余 voice，然后输出现有 Project/Global Reset 状态，最后释放或同 tick 复用 Channel Unit。硬范围结束使用同一顺序。若作者希望保留更长尾音，必须在 Event Instrument 的 Release/Tail 生命周期中显式延长 group，而不能依赖未知 SoundFont 残余越过正式实例结束。MIDI 导出会忠实包含这些 canonical CC120。
+- 推荐依据：该方案最直接满足“Release/Tail 在资源释放前完成”和消费者不得重解释 canonical；能确定性消除 Reset 放大旧 release，也能在 Channel Unit 复用前建立真正干净的 BASSMIDI voice 状态。清理基于 allocation group 而不是单实例，可避免杀掉合法重叠实例。
+- 推荐方案的可听与兼容影响：所有正常 allocation group 结束点的 SoundFont 内部残余 release 会被硬终止；生命周期设置不足时可能听到截尾。Canonical fingerprint、MIDI 导出事件和 golden bytes 会变化，Full/Incremental、范围、重叠、同 tick 复用和全部消费者都需回归。这正是该问题必须先决定的原因。
+- 备选方案 B：保持当前正式语义，只把人工示例的实例改成首尾相接，使旧 Reset 与新 Logical Parameter 在同 tick 折叠。它能让当前样例不突增，但不再覆盖有间隔时的真实失败，属于规避验收，不推荐。
+- 备选方案 C：允许 SoundFont residual release 越过实例结束，并延迟到后端检测静音后再 Reset。该方案使 canonical/资源分配依赖 SoundFont、采样率与后端内部状态，破坏确定性及 MIDI/音频一致性，不接受。
+- 备选方案 D：改变 CC11 默认 Reset 值、把 Reset 提前到 NoteOff 前，或只在 BASS consumer 中插入清理。它们分别会造成另一方向的音量跳变、违反已定生命周期顺序，或使 MIDI 与音频消费不一致，不推荐。
+- 需要产品所有者回答：是否采用推荐方案 A？如果不采用，请在 B～D 之外明确说明希望保留的正常实例结束尾音语义，以及 Channel Unit 何时才算可安全释放/复用。
+- 产品回答：2026-08-07，采用推荐方案 A。实施前先验证两点：CC120 是否真正截断 SoundFont 自带 release 并稳定保证目标 Channel 无残余音；CC120 是否只作用于对应 Channel 而不是全局。
+- 实测结论：使用首轮人工验收同一 `test.sf2`、BASSMIDI `2.4.16.0`、48 kHz 对比。仅 NoteOff 的 release 到 24000-frame 测试缓冲末端仍非零；在 frame 6000 加入 CC120 后，最后一个非零 frame 为 6191，即 192 frames / 4 ms 的后端防爆音衰减，frame 6192 起严格全零。双 Channel 同一 Stream 中，目标 Channel 衰减结束后的 PCM 与“只渲染非目标 Channel”的参考逐字节相同，证明 CC120 不是 Stream/全局清理且未改变另一 Channel。官方 BASSMIDI 事件定义也将 `MIDI_EVENT_SOUNDOFF` 标为对应 MIDI controller 120、按 `chan` 参数作用的 Stop all sounds；实测而非文档推断作为本次实现门。
+- 最终处理与提交：编译器已把状态 Reset 从单个 Raw Instance 结束迁移到实际 allocation group 结束；有发声 Note 的每个 group/Channel Unit 按精确 NoteOff → CC120 → 已使用目标 Reset 排序。非隔离重叠组只在最后实例结束时清理；相邻组同 tick 复用时旧组清理先于新组 Initial/NoteOn；硬范围结束使用同序；空 SubVoice 不发 CC120；MIDI exporter 仅忠实编码 canonical。完整发布门 873/873、0 Skip、六个 solution 0 warning/0 error，当前源码 Native AOT Worker 产物为 `artifacts/non-ui-release-gate-q026-20260807`。编译器、MIDI、真实 SF2 PCM 和进程内/Native AOT 子进程逐字节一致回归已通过，等待 M-AUD-002/005/008 人工复听后关闭可听门。
+
+### Q-NUI-027：人工 Console 的 Native AOT Worker 路径解析
+
+- 类型：小决定；已按推荐方案实施，等待产品所有者确认或修改。
+- 发现日期：2026-08-07。
+- 已确认事实：旧 Console 固定传入 managed Worker `.dll`，M-AUD-007～009/011/012 在正式播放前被保护门正确拒绝；仓库发布门和标准 `dotnet publish -r win-x64` 已能生成并校验 Native AOT `.exe`。
+- 推荐并已实施方案：Console 优先读取仅供验收进程使用的 `MIDORA_AUDIO_WORKER_PATH`；未设置时解析标准 `Midora.Audio.Bass.Worker/bin/<Configuration>/net10.0/win-x64/publish/Midora.Audio.Bass.Worker.exe`。路径不存在时给出明确发布提示；绝不回退 managed `.dll`，也不从多个历史 `artifacts/non-ui-release-gate-*` 中猜选产物。人工清单在子进程测试前显式执行 locked restore/publish，并检查 `.exe`、manifest、MIT License 和 notices。
+- 影响范围：只影响开发期人工 Console 和验收说明，不进入产品配置、Project、canonical、安装布局或正式 Worker 协议。正式会话原有 `.exe`、ABI、版本、hash、架构和握手校验保持不变。
+- 备选方案：A. 每条 Console 命令增加 Worker 位置参数，显式但重复且容易在 007～012 间传错。B. 自动选择最新 release-gate artifact，结果依赖本机历史和目录时间，不确定。C. Console 自动触发 AOT publish，把构建副作用混入播放启动且耗时不可控。
+- 需要产品所有者确认：已确认。
+- 产品回答：2026-08-07，接受已实施的推荐方案。
+- 最终处理与提交：已实现并获确认；4 项路径回归通过，标准 publish 路径与显式环境变量路径都已实际启动 Native AOT Worker 完成子进程离线渲染。Segment 子进程/进程内 WAVE SHA-256 均为 `7D3001050F0EE44B7C19B50A83AFC486EEE415E0EEDF469255F4FAF0219ADDFF`，两条链逐字节一致；完整非 UI Release 门 866/866、0 Skip、0 warning/0 error。
+
+### Q-NUI-028：活动输出设备丢失后的受控断开与人工重选门
+
+- 类型：大决定；产品所有者已直接给出正式行为。
+- 发现日期：2026-08-07。
+- 人工证据：M-AUD-012 中 Worker 已正确检测 `deviceLost=True`，callback、ring 和 renderer 均未报告故障，但 Worker 把设备丢失作为普通 `Faulted/fault=1/exitCode=1` 退出；主进程随后在 `PlaybackController.Stop()` 再次把该终态当作清理失败抛出，控制台出现未处理 `MidoraAudioException` 堆栈。拔出或禁用非活动设备不会触发该路径，符合预期。
+- SRS 依据与补充：§13.14.4 要求不可用设备不得进入 Playing，§13.14.5 要求运行期端点变化停止、清理、丢弃 sample-domain 缓存并提示，§13.19.7 把设备丢失列为不可恢复播放错误；SRS 没有明确错误后的重选门和禁止自动切换规则，本决定补足该运行时工作流，不修改 Project 或 canonical 语义。
+- 产品回答：活动设备丢失时主应用进程不得崩溃；至少要断开输出端并主动要求用户手动重新指定设备，不得自动静默切换。非活动设备变化不影响播放。
+- 实施方案：共享控制 ABI v2 追加 `OutputDeviceUnavailable` 非故障终态。Worker 检测活动设备丢失后先 Dispose WASAPI 输出、停止 render-ahead，再发布终态并以 0 正常退出；不得尝试对已失效端点 flush。后端把该终态与普通 Worker Fault 区分；PlaybackController 受控进入 Stopped、释放编辑锁、冻结失败 tick、清除活动计划并使 sample-domain 缓存失效，同时设置 `OutputDeviceSelectionRequired`。所有 Start/Preview 在门关闭前抛出专用 `OutputDeviceSelectionRequiredException`；只有显式 `SelectOutputDevice(string?)` 能清除门并重建设备域状态。
+- 不自动切换边界：设备丢失处理本身绝不枚举并挑选替代设备，也不把系统默认映射变化当作隐式选择。`SelectOutputDevice(null)` 只在用户明确选择“System Default”时允许；它不是设备丢失路径的自动回退。
+- 失败边界：未知 Worker 异常、callback/ring/renderer fault、非零退出和损坏 IPC 状态仍进入 Error，不能伪装成设备重选请求。若设备丢失后的托管资源清理本身失败，控制器保留聚合错误并进入 Error，但仍保持重选门。
+- 当前状态：实现、完整非 UI Release 门和 M-AUD-012 物理复测均完成；本问题已关闭。
+- 自动证据：Playback 状态机覆盖无异常受控停止、`flush=false`、编辑锁/缓存释放、失败 tick、重选前阻止 Start、显式选择后恢复；IPC 覆盖 ABI v2 和合法非故障终态；Worker/Session/Backend 覆盖终态与 exitCode 组合；既有设备通知测试继续证明只有选中设备的 Disabled/Fail 才构成 DeviceLost。完整发布门通过 881/881、0 Skip、六个 solution 0 warning/0 error，当前源码 Native AOT Worker 位于 `artifacts/non-ui-release-gate-q028-20260807/worker-win-x64`。
+
+### Q-NUI-029：运行时 MIDI Render Plan 临时文件版本随稳定 ID 改为 `long`
+
+- 类型：小决定；已按推荐方案实施，待产品所有者确认或修改。
+- 发现日期：2026-08-07。
+- 已确认事实：`MidiRenderPlanFile` 是主进程为 Native AOT Audio Worker 生成的有校验和临时计划，不属于 `.midora`、canonical 持久化、MIDI/WAVE 输出或公开交换格式。旧内部版本 2 的 source table 每项保存 16-byte Guid；Q-NUI-024 后正式 source ID 已变为正 `long`，继续写旧宽度会保留无意义转换，原地改格式但不升级版本则会把旧文件误读为新布局。
+- 推荐并已实施方案：内部计划版本从 2 升为 3，source table 每项固定写一个 little-endian signed Int64，并在读写时要求正值、唯一；版本 2 及其他版本一律拒绝，不提供迁移。主进程与 Worker 同源发布，计划文件只在单次任务准备/清理窗口存活，因此无需跨版本兼容。
+- 影响范围：只影响运行时临时 MIDI Render Plan 的 byte layout、大小上限计算和自动测试；不改变共享控制 ABI（该问题实施时为 v3，当前为 v4）、Project file v1、Mapping ABI v2、canonical、可听语义或用户工作流。每 source 从 16 bytes 降为 8 bytes。
+- 备选方案：A. 保持内部版本 2 但改变布局，会使旧文件被错误解释，拒绝。B. 版本 3 继续写 16 bytes（8 bytes ID + 8 reserved），保留无用空间且没有兼容收益。C. Worker 同时读取 2/3，需要恢复 Guid→long 映射且临时文件没有兼容需求。
+- 自动证据：计划 v3 确定性往返、checksum、边界长度、正/负/零/重复 source ID、旧版本拒绝与 render monitoring source lookup 均有覆盖；专项测试通过。
+- 需要产品所有者确认：是否接受推荐的内部计划版本 3？若需修改，请说明为何单次任务临时文件需要跨版本读取。
+- 产品回答：待填写。
+- 最终处理与提交：已实施，待确认。
+
+### Q-NUI-030：非整除 TPQ / Time Signature 下的整数 Bar:Beat:Tick
+
+- 类型：大决定；已确认并实施。
+- 状态：2026-08-08 采用推荐方案；Domain、Application、Compiler、Persistence、Project 音乐位置和 SRS 已同步。
+- 发现日期：2026-08-07。
+- 已确认事实：SRS 允许 `TicksPerQuarterNote = 1..32767`，Time Signature 分母允许 `1/2/4/8/16/32/64`；同时又要求 Bar/Beat 为整数、Beat 以分母音符为单位、Tick 为 0-based Project tick 偏移，并要求 tick 与 Bar:Beat:Tick 唯一、可逆。一个分母拍的长度是 `4 × TPQ / denominator` 个 Project tick。若不能整除，例如 TPQ=1、分母=64，则一拍只有 `1/16` tick，不存在同时满足上述约束的整数 Tick 坐标。
+- 冲突性质：这不是实现精度问题。只要 Project tick 仍是最小整数时间单位，就无法用整数 `Bar:Beat:Tick` 唯一表示落在若干分数拍边界之间的 tick；四舍五入会造成重复坐标、不可逆或长期漂移，零 tick 拍也可能出现。
+- 影响范围：Bar:Beat:Tick 显示/输入、拍与小节网格、Snap、Time Signature 中途截断判定和 Warning 的公共语义；若改变 TPQ/Time Signature 合法性，还影响 Domain、创建、语义校验、`.midora` v1 schema 和导入失败诊断。绝对 Project tick、canonical 编译、播放、MIDI 和音频消费本身不因此受阻。
+- 推荐方案：直接收紧尚未冻结的开发期 v1：Project 中每个 Time Signature 都必须满足 `4 × TPQ % denominator == 0`。Domain 创建/编辑、semantic validation 和 persistence 读取统一拒绝不兼容组合；错误必须指出 TPQ、分母和事件来源。这样每拍始终包含正整数 Project ticks，既定整数 Bar:Beat:Tick 可唯一往返，中途 Time Signature 截断 Warning 也能精确定义。该变化按 Q-NUI-003 直接修订 v1，不创建迁移版本。
+- 推荐依据与限制：这是保持现有整数 tick、既定 BBT 语法、可逆性和无漂移网格的最小一致方案。限制是部分单独合法的 TPQ 与分母组合将不能共存，例如 TPQ=480 支持全部既定分母，而 TPQ=1 只支持 1、2、4；用户修改 TPQ 或 Time Signature 时可能需要先修正另一侧。
+- 备选方案及差异：A. 把 BBT 的 Tick 改为有理数/子 tick，并连带修改解析、显示、公共类型和吸附；兼容面与 UI 复杂度显著增加。B. 对拍边界进行确定性量化；会产生不等长拍、可能的零 tick 拍和不可逆坐标，不推荐。C. 对不兼容 Project 禁用 BBT/拍网格，仅保留绝对 tick；违反初版要求这些功能可用的目标，不推荐。
+- 需要产品所有者回答：已回答。
+- 产品回答：2026-08-08，采用推荐方案。
+- 最终处理与提交：已直接修订开发期 v1，不创建新版本或迁移。`ProjectTimeSignatureRules`/`ProjectTimeSignatureMap` 统一兼容性、Bar:Beat:Tick、自然小节/拍边界和 Snap；Domain 创建、Application Create/Update、semantic validation、persistence restore/serialize 全部拒绝不兼容组合；`MIDORA1018` 对中途截断产生 Warning。Core Release 构建 0 warning/0 error；Compiler 242、Persistence 94、Application 261 tests 通过。
+
+### Q-NUI-031：held Preview 的有界因果窗口与续接阈值
+
+- 类型：小决定；已按推荐方案实施，待产品所有者确认或修改。
+- 发现日期：2026-08-07。
+- 已确认事实：Q-NUI-022 固定 Gate Open 时 `GateLength = Int64.MaxValue`，但编译器不能真的展开到 `long.MaxValue`；Loop/Envelope/Mapping 可能持续产生事件。正式实时链还必须保持用户当前 Render-Ahead，并保证 Gate End 只影响 producer 尚未渲染的第一个 frame。
+- 推荐并已实施方案：每次编译 8 秒的有限 causal window；当 producer frontier 距当前窗口末尾不多于 4 秒时，先在 producer frontier 暂停，使用同一 Gate Open 上下文编译下一窗口、替换未渲染后缀并恢复。Gate End 也沿用相同 pause/splice/resume 边界。窗口与阈值是内部调度常量，不保存到 Project、不影响 canonical 持久化或导出，也不覆盖用户 Render-Ahead。
+- 推荐依据与限制：8 秒给编译/IPC 留出远大于正常调度抖动的余量；4 秒提前续接可在保留有限内存与有限 Loop 展开的同时避免接近窗口末端才阻塞。限制是极端超过 4 秒的暂停/编译/IPC 卡顿仍会进入既有 Buffering 或结构化失败，不能把无限计算伪装成实时保证。
+- 影响范围：Preview Compiler 的有界范围、Playback 续接调度、ABI v3 引入且由当前 v4 保持的 pause/apply-plan/resume 与相关性能/故障测试。不会改变固定长度 Project Note、MIDI 导出、音频文件渲染、`.midora` 或 Mapping ABI。
+- 备选方案：A. 使用更短固定窗口，会增加编译和 IPC 频率；B. 使用更长窗口，会增加最坏内存和 Loop 展开；C. 根据 Render-Ahead 动态改变窗口，会让调度行为更难预测且可能把用户参数误当语义。D. 一次编译到 `long.MaxValue` 不可终止，不接受。
+- 自动证据：窗口续接、frontier 精确 NoteOff、ring 内 PCM 不回写、延迟报告、同音高活动实例、producer pause/drain/resume、ABI v3 generation 确认，以及托管/Native AOT Worker 往返均有测试。专项完整回归为 Compiler 224/224、Playback 60/60、Application 238/238、BASS 148/148。
+- 需要产品所有者确认：是否接受 8 秒窗口与剩余 4 秒续接阈值？如需修改，请给出目标窗口/阈值或性能约束。
+- 产品回答：待填写。
+- 最终处理与提交：已实施，待确认。
+
+### Q-NUI-032：Project Object Clipboard 的会话内载荷表示
+
+- 类型：小决定；已按推荐方案实施，待产品所有者确认或修改。
+- 发现日期：2026-08-07。
+- SRS 依据：第 20.6.2～20.6.4 节要求当前 Windows Clipboard、Midora Internal Object Payload + Plain Text Summary、仅来源 Project 会话有效、关闭/替换后失效、Copy 时不可变快照；不要求跨进程或跨应用序列化格式。
+- 推荐并已实施方案：非 UI 层公开不透明的 `ProjectObjectClipboardPayload`，内部保存深复制快照并绑定 `ProjectDocumentSession` 的仅运行时身份对象；WPF 阶段只负责把该对象和 `PlainTextSummary` 写入当前 Windows Clipboard。粘贴必须同时通过 payload kind、目标上下文和来源会话身份检查；新建/打开/替换后的 Document 即使内容或路径相同也不能复用旧 payload。载荷不序列化、不持久化、不进入 Undo/Redo，也不建立内部历史或多槽。
+- 推荐依据与限制：严格实现当前会话边界且不发明公开 clipboard wire format；进程内对象避免重复序列化复杂对象图和破损引用。限制是应用重启、另一进程或 Windows Clipboard 延迟呈现无法恢复 Midora 内部对象，只能看到 Plain Text Summary；这与初版不支持跨 Project Paste 一致。
+- 备选方案：A. 为 Clipboard 发布版本化二进制/JSON 格式，可跨进程保留，但会新增永久兼容与不可信输入解析面。B. 只在内存保存 payload、Windows Clipboard 仅写 token；可工作但 token 在 clipboard 中没有自描述价值，且仍需同一进程注册表和过期清理。C. 仅比较 Project 路径或内容 ID，会错误允许关闭后重开同一文件继续 Paste，违反“当前来源 Project 会话”。
+- 自动证据：跨 `ProjectDocumentSession` 拒绝、同会话 kind/目标检查、删除源对象后快照仍有效、payload 保留、重复 Paste 每次分配新 ID均已覆盖。
+- 需要产品所有者确认：是否接受推荐的“不透明进程内 payload + Plain Text Summary + Document 会话身份”方案？若初版必须支持应用重启后 Paste，需要选择 A 并先冻结格式与安全边界。
+- 产品回答：待填写。
+- 最终处理与提交：已实施，待确认。
+
+### Q-NUI-033：`Compatible ordered content` 的初版非 UI 解释
+
+- 类型：小决定；已按推荐方案实施，待产品所有者确认或修改。
+- 发现日期：2026-08-07。
+- SRS 依据：第 20.6.5 节明确列出 Segment、Logical Note、Logical Parameter 内容、SubVoice timeline events、普通 Conductor events，并另列未展开的 `Compatible ordered content`；第 20.5.6.4 节把 Mapping 等定义为有序结构。
+- 推荐并已实施方案：初版非 UI Clipboard 把 `ValueCurve` 的选中 Point 内容和完整 `MappingChain` 视为 compatible ordered content。Value Curve 内容只能在同一 Event Instrument 内粘贴到 exact `MidiValueTarget`；Mapping Chain 只能在同一 Event Instrument 内替换目标 Chain，目标非空时需要显式确认。两者都保持顺序、深复制 owned stable ID、保留同 Instrument 外部引用，并在任一不兼容时整体失败。
+- 推荐依据与限制：二者都是当前模型中明确存在且已有专用编辑命令的有序内容；同 Instrument/exact target 边界避免按名称或近似值域猜测。限制是初版没有把 Enum Item、SubVoice Definition、Logical Parameter Definition 等高层结构塞入普通 Clipboard；它们继续使用 reorder、Duplicate 或专用命令。
+- 备选方案：A. `Compatible ordered content` 初版只指 Mapping Chain，不含 Value Curve 内容；会使 SubVoice 曲线点只能逐点编辑。B. 允许跨 Event Instrument 粘贴并按名称修复 Mapping 引用；违反稳定 ID 和禁止自动名称匹配。C. 把所有有序定义都放入 Clipboard；会与第 20.6.5 节显式排除的高层定义冲突。
+- 自动证据：Value Curve exact target/同 Instrument 门、Mapping Chain 非空确认、深快照、新 Chain/Step ID、外部 Parameter 引用保留及 Undo/Redo 同一复制对象均已覆盖。
+- 需要产品所有者确认：是否接受上述范围？若 Value Curve 内容不应属于普通 Clipboard，请选择 A；其他高层定义仍不建议加入。
+- 产品回答：待填写。
+- 最终处理与提交：已实施，待确认。
+
+### Q-NUI-034：Segment/Unit 长期音频缓存与 Buffering 恢复总架构
+
+- 类型：大决定；阻塞长期 PCM 缓存、播放重复命中和新的 underrun 恢复分支，其他不依赖该架构的非 UI 工作继续。
+- 状态：已确认并完成；旧推荐及 A/B/C 已撤回，采用重写后的五层推荐架构。Q-NUI-041～Q-NUI-042 已补足设置边界。
+- 发现日期：2026-08-08；意图澄清日期：2026-08-08。
+- 产品意图：Render-Ahead 是约 200 ms 的短期未来窗口，不是长期缓存。underrun 说明当前位置及后续可能持续高负载，不能每填约 200 ms 就断续推进；应保持当前位置静音等待，完整渲染一个自然音乐区间后再连续播放。已渲染内容必须同时进入可重复使用的长期缓存；音乐内容、设备/采样率及其他语义输入未变时，第二次播放同一区间不再重复编译或 BASSMIDI 渲染。长期缓存应由多个独立 Segment 的缓存组合，而不是一个不可分割的整曲文件；其他 Segment 的编辑不应使未改变的重负载 Segment 反复重算。
+- SRS 与源码核对：SRS 的 Segment End/Reset、同 Track 不重叠和跨 Track 状态独立支持 Segment 作为主要缓存边界。当前编译器实际上已有全局分配之前的 `SegmentCacheEntry`/`RawInstance[]` 展开缓存，所以编译部分是形式化、增加范围结果缓存和安全细粒度复用，不是从零重写。正式 canonical 仍必须执行全局 256 Unit 检查和 Port/Channel 分配；音频不得绕过 canonical 直接消费私有缓存。
+- 已确认的原冲突修正：长期缓存与精确 Render-Ahead ring 分层后，SRS 的一小节恢复目标不需要装入 ring。ring 只从已经完整发布的较长 playback span 分批读取，因此不再需要把恢复目标裁到 ring capacity。旧推荐错误地把两种缓存当成同一个容器，不能满足产品意图。
+- 重写后的推荐方案：采用五层分离：① Project revision/canonical range cache；② Port/Channel-independent Segment/Unit compiled fragment cache；③ canonical 派生、位于 Mute/Solo/Master/Limiter 之前的 Segment/Unit PCM tile cache；④ 完成确定性求和、当前 Mute/Solo、Master 和单个全局 Limiter 的稀疏 playback span cache；⑤ 容量仍严格等于用户设置的短 Render-Ahead ring。exact replay 命中第④层时只搬运 PCM；第④层 miss 但第③层 hit 时只重新混音/Master/Limiter，不调用 BASSMIDI。
+- 正式主线：`Project → Validation → Segment fragment cache → global canonical → canonical audio projection → Segment/Unit PCM → playback span → ring → WASAPI`。Segment 抽象片段不包含最终路由，但只是 compiler 内部缓存；Canonical Compiled Result 仍保留全局路由和诊断。
+- Buffering 行为：在 underrun tick `F` 锁存 `Playing.Buffering`，音乐位置和 ring read position不推进；优先补齐 `[F,R)` 所需的全部 Segment/Unit tile 和最终 playback span；只有整个区间原子完成后才恢复。`R` 的精确定义见 Q-NUI-035。
+- 完整分析：`misc/Midora-Segment-Compilation-and-Audio-Cache-Design-Discussion-2026-08-08.md`。
+- 需要产品所有者回答：已回答。
+- 产品回答：2026-08-08，采用推荐方案。
+- 最终处理与提交：决定已记录；五层缓存、正式 Worker、自然段恢复和缓存 generation 边界均已实施。八组真实 SF2 分别通过 1053 项零跳过发布门，累计 8424/8424；cache miss→hit PCM 等价、零重复 BASS synthesis、256 Unit Stream、热路径 0 B 与 Native AOT 集成门已闭合。
+
+### Q-NUI-035：underrun 位于小节中途时“一整个小节”的精确定义
+
+- 类型：大决定；直接改变 Buffering 后恢复的可听时长。
+- 状态：已确认并完成；选择备选 B，并把总上限由 8 个四分音符放宽为 16 个。
+- 已确认矛盾：SRS 只写 `min(当前拍号下一整个小节长度, 8 个四分音符)`，没有规定 underrun tick 位于小节中途时，目标是“剩余当前小节”“从该 tick 起一个小节时长”还是“当前剩余部分再加下一个完整小节”。三者可相差接近一整个小节。
+- 推荐方案：从 underrun tick `F` 起，按 `F` 处当前拍号计算一个完整小节的**时长**，再与 8 个四分音符取最小，令 `R = F + targetTicks`。它不强制 `R` 落在 Bar 边界；若区间内发生 Time Signature 变化，本次目标仍使用 `F` 处冻结拍号，下一次 underrun 再使用新拍号。这样无论 `F` 位于哪里，都确实储备一个完整小节时长，不会因恰好接近小节末尾只得到极短储备，也不会等待接近两个小节。
+- 备选方案 A：只到当前自然小节末尾；Bar 语义直观，但 underrun 若发生在末尾附近会立即再次断续，不符合稳定恢复目的。
+- 备选方案 B：当前小节剩余部分加下一个完整自然小节；最有自然段感，但可能接近两个小节，并与“最多 8 个四分音符”的硬上限冲突。
+- 备选方案 C：从下一个 Bar 起缓存一个完整小节，同时 `F` 到下一个 Bar 另作前导；本质接近 B，协议更复杂。
+- 最终语义解释：若 `F` 正好位于自然 Bar 起点，目标是该当前完整小节；若 `F` 位于小节中途，目标是当前小节剩余部分加下一个完整自然小节。随后以 `F + 16 个四分音符` 和本次播放实际终点共同裁剪 `R`，即总 `[F,R)` 上限为 16 个四分音符；若极端拍号下该上限截断“下一个完整小节”，上限优先。Time Signature 中途变化依 Q-NUI-019 立即形成新 Bar，因此自然小节边界使用同一正式 Bar Map。
+- 需要产品所有者回答：已回答。上述“16 个四分音符限制整个恢复区间、Bar 起点不额外再取第二小节”是根据回答补足的精确解释；若意图不同，请直接修正。
+- 产品回答：2026-08-08，选择 B；最大 8 个四分音符限制放宽为 16 个。
+- 最终处理与提交：决定已记录并实施；Bar Map、F→R 锁存、16 四分音符总上限和恢复区间裁剪均有自动门。
+
+### Q-NUI-036：每 Unit 单通道 Stream、Stream pool 与 sample-voice 上限
+
+- 类型：大决定；改变正式实时/离线合成拓扑、达到 voice limit 时的可听结果和性能边界。
+- 状态：已确认并完成推荐拓扑和可调/失效方向；Q-NUI-042 已确认 Realtime/Offline 两个默认均为 500。
+- 已确认事实：现行 SRS/ADR 要求每个实际 Port 一个 BASSMIDI Stream，并把实时/离线 750 定义为每个 Port Stream 的上限。BASSMIDI 官方接口允许一个 Stream 有 1～128 个 MIDI channel；官方 voice limit 是每个 Stream 的 sample voice 上限，达到时会结束最低音量 voice。因此从每 Port 改为每 Unit 会让不同 Unit 不再竞争 750，显著增大任务总 voice 容量。
+- 推荐方案：采纳产品所有者的 Unit 隔离目标，但不为每个 Unit 永久持有 Stream。定义“一个抽象 Channel Unit 渲染任务对应一个干净的 1-channel BASSMIDI Stream”，由有界、可复用 worker pool 执行；Unit PCM 分别缓存，按固定顺序在 Segment/Project 层求和。每次复用前执行精确 NoteOff、CC120、Reset 和状态重建。实时与音频文件渲染共享同一分解和求和语义。
+- sample-voice 影响：现有 `Maximum Sample Voices per Stream` 将按字面作用于每个 Unit render Stream，而不再是每 Port；这避免跨 Unit voice stealing，但总 CPU 保护弱于现行语义。worker pool 并发数只控制完成速度和 native 资源，不改变音频结果。产品已把默认值从 750 改为 500，并要求允许用户修改；任一正式 sample-voice 设置提交后清除所有 Segment/Unit PCM、playback span、Preview/Offline raw PCM 与短 sample-domain generation，tick-domain compiled/canonical cache 不因此失效。
+- 推荐依据与限制：该方案完全去除物理 Port/Channel 对 Unit PCM key 的影响，并实现我们自己的跨 Unit 混音；Stream 数量由 pool 而非 Project 总 Unit 数限定。限制是第一次渲染更慢、缓存量更大，且 voice limit 的资源语义发生实质变化。
+- 备选方案 A：一个 Segment 使用尽量少的 1～128-channel render shard；首次渲染更快、Stream 更少，但同 shard 的 Unit 会继续竞争 voice limit，缓存也只能稳定到 shard/Segment 粒度。
+- 备选方案 B：保持每 Port Stream，只增加最终时间片缓存；最少改动，但 Port 分配变化会破坏缓存身份，达到 voice limit 时也无法证明独立 Segment PCM 与整曲 Port Stream 等价，不能完整实现产品意图。
+- 需要产品所有者回答：已回答；默认 500 对 Realtime/Offline 的精确作用范围见 Q-NUI-042。
+- 产品回答：2026-08-08，采用推荐方案；复音数允许用户在设置中修改，修改后失效所有音频缓存；默认从 750 改为 500。
+- 最终处理与提交：决定已记录并实施；voice 设置变化会轮换全部 PCM generations，tick-domain canonical 保持有效。
+
+### Q-NUI-037：长期 PCM 缓存的位置、生命周期与容量失败语义
+
+- 类型：大决定；决定磁盘消耗、重复播放保证、跨会话行为和故障工作流。
+- 状态：已确认并完成推荐生命周期与容量/失败语义；Q-NUI-041 已确认默认设置与临时恢复存储边界。
+- 已确认事实：stereo float32 48 kHz 每累计一小时 PCM 约 1.38 GB（约 1.29 GiB），192 kHz 约为四倍。Unit/Segment 分离后按所有缓存 Unit 的累计时长增长，可能远大于 Project 总时长。缓存不得写入 `.midora`。
+- 已确认方案：初版采用 session-scoped 磁盘后备缓存 + 有界 RAM hot set；每个打开 Project 使用独立 cache session 目录。已完整写入并校验的条目在 Project 打开期间 pin，不做 LRU 驱逐；Project 关闭/替换时删除，不跨重开复用。缓存父目录/磁盘、最大长期缓存大小属于 Application Preferences，不进入 `.midora`；允许最大值为 0。应用必须展示配置位置、当前实际占用、最大值、是否仍在记录长期缓存，并提供安全打开/清理入口。
+- 修改后的容量语义：新 tile 会超过用户配额、长期缓存目录不可写或普通磁盘剩余空间不足时，不删除当前会话已 pin 的完整条目，也不把播放提升为 Error。发布状态 Warning，停止写入新的**可复用长期缓存**，当前及以后 cache miss 改为每次实时 BASS 渲染；已有完整命中仍可读取。最大值 0 从任务开始就采用该模式，因此 exact replay 不再承诺免合成，这是用户显式选择的 100% 实时模式。
+- 必须区分：上述降级只解决长期复用缓存不可写。若实时渲染发生 underrun，Q-NUI-035 已要求先存放并完成最长 16 四分音符的恢复区间再继续；这些 PCM 不可能只放入短 ring。它仍需要一次性 transient recovery spool（消费后立即删除，不提供下次复用）。如果 RAM 和所选磁盘都无法提供该临时空间，就不能同时满足 Q-NUI-035，必须受控停止并报告，而不能恢复 200 ms 断续播放。其配额归属和默认设置见 Q-NUI-041。
+- 备选方案 A：Application Preference 提供缓存配额并使用 LRU；资源可控，但 exact replay 只在条目尚未被驱逐时保证，弱于本次产品意图。
+- 备选方案 B：持久化 content-addressed cache 跨 Project 重开复用；体验更强，但要增加长期配额、隐私、旧 engine/SF2 清理、孤儿回收和崩溃恢复契约。
+- 备选方案 C：只使用有界 RAM；实现简单，但无法覆盖长曲和大量 Unit，不满足目标。
+- 需要产品所有者回答：已回答；默认目录/配额和 transient recovery spool 边界见 Q-NUI-041。
+- 产品回答：2026-08-08，采用推荐方案；缓存位置与占用对用户透明，允许选择缓存磁盘/目录和程序级最大缓存大小；长期缓存允许为 0。磁盘不足时希望只显示状态 Warning，不再存长期缓存，继续每次实时渲染播放。
+- 最终处理与提交：决定与必要限制已记录并实施；session store、配额 0、Warning 降级、透明统计和 spool/RAM 边界均有自动门。
+
+### Q-NUI-038：Segment 内缓存的因果 Dirty 起点
+
+- 类型：大决定；影响缓存正确性和局部编辑后的复用率。
+- 状态：已确认并完成。
+- 冲突说明：产品描述中的“内容改变后，只失效改变时间点之后”表达了正确的性能目标，但若把 UI 编辑 tick 无条件当作失效点会出错。Note length、Overlap/Lifecycle、Mapping、Parameter 状态或 Segment 裁剪变化可能使更早开始的实例或状态发生改变；SRS 当前也要求 Logical Note/Parameter 修改通常回退到 Segment 起点或可证明等价的 checkpoint。
+- 推荐方案：每种编辑计算“最早可证明的因果影响 tick”，PCM 从包含该 tick 的 tile 起向后失效；能够证明旧前缀逐事件、逐 sample 等价时保留前缀。无法证明、修改 Instrument/Mapping/Lifecycle/Reset 或 checkpoint 状态不等价时，回退到 Segment 有效起点。全局 Port/Channel 分配仍从正式 compiler dirty checkpoint 重算直到状态收敛。
+- 备选方案 A：任何 Segment 内容变化都使整个 Segment fragment/PCM 失效；最简单且正确，但长 Segment 局部编辑收益较低。
+- 备选方案 B：一律从用户编辑 tick 向后失效；性能最好但不满足正确性，拒绝作为正式方案。
+- 需要产品所有者回答：已回答。
+- 产品回答：2026-08-08，接受推荐方案。
+- 最终处理与提交：决定已记录并实施；cache key/dirty tick、Segment checkpoint 和 source/state hash 收敛均有回归。
+
+### Q-NUI-039：切换物理设备但实际格式相同时的 PCM 复用
+
+- 类型：小决定；已确认并完成。
+- 状态：已确认并完成。
+- 已确认冲突：现行 SRS 第 13.12.8 节写“设备或其实际采样率变化时，旧 Stream 和所有 sample-domain 缓存失效”。但推荐的 Segment/Unit PCM 在 BASS decode 阶段生成，不包含 WASAPI 设备身份；在实际采样率、stereo float32 格式及全部合成 key 相同时，物理 endpoint ID 不会改变这段 PCM。
+- 推荐方案：把 sample-domain cache 分为 device-independent synthesis PCM 和 device-bound output state。切换设备时始终断开/重建 WASAPI、callback、ring 和设备绑定 playback generation；若新设备实际采样率/格式与旧设备完全相同，则保留已校验 Segment/Unit PCM。采样率或格式不同才失效全部 PCM。设备丢失仍执行 Q-NUI-028 的人工重选门，绝不自动切换。
+- 备选方案：继续按现行 SRS 在任何设备 ID 变化时删除全部 PCM；实现保守，但会在同采样率设备切换后无必要地重复重负载合成。
+- 需要产品所有者回答：已回答。
+- 产品回答：2026-08-08，采用推荐方案。
+- 最终处理与提交：决定已记录并实施；设备绑定 generation 与同格式 synthesis PCM 已分层，SRS blanket invalidation 已收窄。
+
+### Q-NUI-040：主时间线、Preview 与音频文件渲染的缓存复用边界
+
+- 类型：小决定；已确认，不改变正式音符语义，但影响缓存污染、命中率和实时/离线一致性。
+- 状态：已确认并完成。
+- 推荐方案：主时间线播放和绑定 Project 时间位置的固定 Segment Preview 共用 Segment/Unit compiled/PCM cache。Event Instrument Preview、Pitch Ruler、单 Note 放置等 Gate 未知或草稿源 Preview 使用独立 transient generation，不把未提交草稿写入 Project cache；若内容随后正式提交，只能按正式 source fingerprint 重新命中或生成。音频文件渲染可以在 SF2、采样率、voice policy、canonical fragment、范围起点冷启动上下文和 renderer version 全部相同时复用第三层 Unit PCM，但必须单独构建自己的 Track selection、Master/Limiter、范围和原子文件事务，绝不复用设备 ring 或普通 playback span。
+- 推荐依据：避免临时 held Preview 污染长期 Project 缓存，同时让相同正式 Segment 在实时和离线 exact key 下共享最昂贵的 BASS 合成。Offline Maximum Sample Voices 与 realtime 设置不同时自然 cache miss。
+- 备选方案 A：长期缓存只服务主时间线；边界最简单，但 Segment Preview 和同配置音频渲染会重复合成。
+- 备选方案 B：所有 Preview 都写入同一缓存；命中机会多，但草稿、未知 Gate 和未提交内容会扩大存储并增加错误复用风险。
+- 需要产品所有者回答：已回答。
+- 产品回答：2026-08-08，采用推荐方案。
+- 最终处理与提交：决定已记录并实施；正式 Project Preview/Offline exact-key 复用与 held/draft transient generation 已分离。
+
+### Q-NUI-041：长期缓存默认设置与 0-cache 模式的临时恢复存储
+
+- 类型：大决定；阻塞 Q-NUI-034～Q-NUI-037 的存储协议和 Application Preferences 契约。
+- 状态：已确认并完成推荐方案。
+- 已确认输入：Q-NUI-037 要求用户可见缓存目录、当前占用和最大值；可选择磁盘/目录；最大长期缓存允许 0；配额/空间不足时只产生状态 Warning，并退化为每次实时渲染。长期缓存不进入 `.midora`，clean close 删除，crash 后允许用户安全手动删除。
+- 必须区分的两类磁盘数据：`Reusable Cache` 在第二次播放复用，受用户长期缓存上限约束；`Transient Recovery Spool` 只为一次 Q-NUI-035 Buffering 储存完整恢复区间，消费后立即删除，不允许下次命中。最大长期缓存为 0 时，前者完全禁用，但后者仍是保持“先完成自然段再恢复”的必要工作空间。
+- 已确认上界：Q-NUI-035 把恢复音乐长度封顶为 16 个四分音符；合法 Tempo 还必须可表示为 24-bit MIDI Set Tempo。最慢可表示 Tempo 下，16 个四分音符不超过约 268.44 秒；单份 stereo float32 final spool 在 48 kHz 约 98.3 MiB、192 kHz 约 393.2 MiB。实现仍必须用正式 Tempo Map 精确预检实际 frame/byte 数，不能依靠该估算分配。
+- 推荐默认与路径协议：Application Preferences 新增专用缓存根目录和最大 reusable cache bytes；默认根目录 `%LOCALAPPDATA%\Midora\AudioCache`，默认上限 16 GiB，合法上限为 `0..long.MaxValue` bytes，`0` 表示不写 reusable cache。用户可选择任意可写的本机绝对目录/卷；初版拒绝相对路径和 UNC/network path。Midora 只在该 root 内管理带版本化 manifest 的 `session-*` 子目录，绝不递归删除用户选中的 root 或其中未知文件。
+- 推荐透明度/清理：Application Settings 展示配置 root、reusable 已用/上限、transient 当前/峰值、当前 retention enabled/disabled 和最近 Warning；提供 `Open Cache Folder`、`Clear Inactive Cache`。手工删除整个 root 在 Midora 完全退出时安全；运行中删除条目按 cache miss/Warning 处理，不得崩溃。clean close 删除本 session；启动时只清理能够通过 manifest + 无活动 lease 证明为 orphan 的 Midora session，不能猜测删除其他目录。
+- 推荐配额语义：reusable cache 达到用户上限或写失败时，已完整 pin 条目继续可读，新条目不再写并产生非模态状态 Warning；下次 Project/用户显式 Retry 可重新探测。Transient spool 的实际占用显示给用户，但不计入 reusable 16 GiB/用户上限，否则 `0` 模式无法满足 Q-NUI-035。spool 优先使用所选 cache root，消费/Stop 后立即删除。
+- 临时存储失败边界：如果 transient spool 的预检、创建、写入或校验失败，且没有足够的已预留 RAM 工作区，则当前 underrun 无法继续满足 Q-NUI-035；控制器应受控 Stop，保留失败 tick，并报告 `AudioRecoveryStorageUnavailable`。不得退回 200 ms 断续播放，也不得把普通 reusable cache 写失败误报为该致命边界。
+- 备选方案 A：把 transient spool 也计入用户最大值；更符合“总磁盘上限”的字面，但最大值 0 时任何 underrun 都只能 Stop，无法形成用户希望的 100% 实时可继续模式。
+- 备选方案 B：默认上限采用所选卷可用空间百分比；能适应不同磁盘，但默认值随时点变化，难以解释和测试。可在 UI 提供建议值，不建议作为持久化语义。
+- 需要产品所有者回答：已回答。
+- 产品回答：2026-08-08，采用推荐方案。
+- 最终处理与提交：决定已记录并实施；Preferences、session root/quota、transient spool、unmanaged RAM fallback 与受控停止均有自动门。
+
+### Q-NUI-042：默认 500 对 Realtime 与 Offline 设置的作用范围
+
+- 类型：大决定；会修改 Application Preferences、Project Audio Render Settings 开发期 v1 默认值及达到 voice limit 时的可听结果。
+- 状态：已确认并完成推荐方案。
+- 已确认事实：现行规格有两个彼此分离的用户值，当前都默认 750：Realtime 值属于 Application Preferences，Offline 值属于 Project Audio Render Settings/任务覆盖。Q-NUI-036 已把 Stream 语义改成每 Unit，并要求用户可修改、修改后失效所有音频缓存、默认改为 500，但“这个复音数”没有唯一说明只改 Realtime 还是两者都改。
+- 推荐解释：两个值继续分离且都可编辑，语义统一改名为 `Maximum Sample Voices per Unit Stream`；新安装 Realtime Application default = 500，新 Project 的 Offline Project default = 500。既有开发期 v1 直接改默认，不创建版本迁移。修改任一值时只允许在没有活动播放/预览/文件渲染任务时提交，并清除当前打开 Project/session 的全部 PCM/audio cache generations；tick-domain compiler/canonical cache不失效。一次 Offline 任务覆盖值仍只属于任务快照，不改 Project 默认，除非用户显式 `Save as Project Defaults`。
+- 推荐依据：实时与文件渲染采用 Q-NUI-036 同一 Unit 分解时，两边默认一致最易理解；保留两个设置仍允许离线任务使用更高值。清空全部音频缓存严格遵守本次回答，即使精确 cache key 理论上可以保留另一设置的条目。
+- 备选方案 A：只把 Realtime 默认改为 500，Offline 继续默认 750；保留离线更高质量/资源默认，但“默认从 750 改 500”的范围不一致。
+- 备选方案 B：合并为一个 Application 值；会推翻既有 Project Offline Settings 和任务覆盖工作流，不推荐。
+- 需要产品所有者回答：已回答。
+- 产品回答：2026-08-08，采用推荐方案。
+- 最终处理与提交：决定已记录并实施；Realtime/Offline 默认 500、活动任务提交门、History/Undo/Redo 与全部 PCM generation 轮换均有自动门。
+
+### Q-NUI-043：自然拍 Snap 完全等距时的方向
+
+- 类型：小决定；已按推荐方案实施，待产品所有者确认或修改。
+- 发现日期：2026-08-08。
+- 已确认事实：Q-NUI-030 要求无漂移的自然拍网格与 Snap，但 SRS 未规定目标 tick 到前后两个自然拍边界距离完全相等时选择哪一个。两种结果都保持整数、可逆且确定，不影响 Project 源数据之外的时间语义。
+- 推荐并已实施方案：完全等距时选择后一个拍边界。Project 时间非负，该行为与 midpoint `AwayFromZero` 的前进方向一致；非等距时始终选择实际 tick 距离更近的边界。Time Signature 变化 tick 自身是新拍号的 Beat 1 边界，也可成为该后向目标。
+- 影响范围：`ProjectTimeSignatureMap.SnapToNearestBeatGrid` 和后续 WPF Timeline 的自然拍 Snap；不影响 canonical、MIDI、音频、持久化、Undo/Redo 或已有对象。Pointer Up 提交的是已经算出的 absolute tick，Redo 不重新读取当前 Snap preference。
+- 备选方案 A：完全等距时选择前一个边界；同样确定，但与当前推荐方向相反。备选方案 B：保留原 tick、不吸附；会让“Snap Enabled”在正中点形成例外。备选方案 C：按拖动方向选择；需要额外手势历史输入，同一目标 tick 不再是纯函数，不推荐作为基础服务语义。
+- 自动证据：TPQ/分母矩阵、跨中途变拍的 previous/next/nearest beat grid，以及 960/1000 两边界正中 tick 980 向 1000 吸附均已覆盖。
+- 需要产品所有者确认：是否接受完全等距时选择后一个自然拍边界？若选择 A，请明确改为前一个边界。
+- 产品回答：待填写。
+- 最终处理与提交：已实施，待确认。
+
+### Q-NUI-044：内部 MIDI Render Plan 文件加入 Segment/Unit 片段元数据
+
+- 类型：小决定；已按推荐方案实施，待产品所有者确认或修改。
+- 发现日期：2026-08-08。
+- 已确认事实：正式 Native AOT Worker 只能从内部临时 MIDI Render Plan 文件取得冻结播放计划。Q-NUI-034～Q-NUI-040 要求 Worker 在 sample domain 区分可复用的 Segment/抽象 Unit 片段；旧内部 MDAP v3 只保存按 canonical Port 聚合的事件，不能无歧义恢复 Segment、Instrument、Instance Group、SubVoice、片段边界和 route-independent semantic fingerprint。该文件不是 `.midora`，不进入 Project 持久化，也不承诺跨版本兼容；Q-NUI-011 已确认内部 ABI 在开发期可正常升级。
+- 推荐并已实施方案：内部 MDAP 直接升级到 v4，在原 canonical Port 计划之后追加确定性排序的 Unit fragment 记录及其 channel-0 事件；读取端严格只接受 v4，旧 v3 受控拒绝，不加入兼容分支。记录保留 canonical route 只用于当前 playback generation 的执行；长期 Unit PCM key 使用不含物理 Port/Channel 的 semantic fingerprint。
+- 影响范围：主进程到 Native AOT Worker 的单次任务临时文件、大小/校验和/损坏门、Worker 的片段缓存调度。它不修改 canonical、MIDI 导出、音频文件格式、`.midora` schema、用户工作流或可听语义。当前编码会同时保留 Port 聚合事件和片段事件，内存/文件上限因而更保守；后续只有在证明能力边界受影响时才改为索引编码。
+- 备选方案 A：保持 v3，另写第二个 sidecar manifest；会增加双文件原子性、校验和清理状态，不推荐。备选方案 B：让 Worker 从 canonical 或 Project 重新推断 Segment；违反正式消费者只消费冻结计划且不得重解释 Project 的主线。备选方案 C：兼容读取 v3；没有持久化或跨版本使用场景，只会永久扩大测试与攻击面。
+- 自动证据：v4 确定性 round-trip、checksum/长度/损坏门、v3 拒绝、Unit 片段身份/边界/排序/channel-0 投影及计划文件上限均有定向测试。
+- 需要产品所有者确认：是否接受内部 MDAP v4 直接替换 v3，并继续不提供旧内部临时文件兼容？
+- 产品回答：待填写。
+- 最终处理与提交：已实施，待确认。
+
+### Q-NUI-045：共享音频 Worker ABI v4 的 Buffering 恢复命令编码
+
+- 类型：小决定；已按推荐方案实施，待产品所有者确认或修改。
+- 发现日期：2026-08-08。
+- 已确认事实：Q-NUI-035 要求 underrun 后先完整准备 `[F,R)` 才恢复。主进程持有统一 `ProjectTimeSignatureMap` 和冻结播放终点，能确定计算 `R`；Worker 只消费 sample-domain 计划，不应重新解释拍号。现行共享 ABI v3 已有 16-byte 固定 command record，其中 offset 4 的 64-bit payload 只被 held-preview apply-plan generation 使用，其他 held 命令要求它为零。Q-NUI-011 已明确允许该内部 ABI 在开发期升级。
+- 推荐并已实施方案：共享控制 ABI 直接升级为 v4，新增闭集命令 `BufferingRecoveryPrepare(endFrame)`；`endFrame` 必须为正且不超过任务总 frame。沿用 command record offset 4 的通用 64-bit payload，不扩大 128-byte header、16-byte command record 或 1024-command ring；字段的 C# 名称改为中性的 `Payload`。主进程与 Worker 只接受 v4，v1～v3 和其他版本全部受控拒绝，不提供临时内部协议兼容。
+- 影响范围：只影响主进程/Native AOT Worker 的单次会话命令闭集、校验与自动测试；不改变 `.midora`、canonical、MDAP v4、Mapping ABI、MIDI/WAVE、可听区间算法或用户设置。seqlock header、offset 68 状态序列和 offset 88 held generation 均不改变。
+- 备选方案 A：扩大 header 增加专用 recovery endpoint 字段；会把一次性命令状态混入持续状态快照并改变映射布局。备选方案 B：让 Worker 从 tick/拍号自行计算 `R`；会复制 Project 音乐时间语义并违反 Worker 不重解释 Project。备选方案 C：另建 pipe/文本命令；违反固定有界零分配 IPC 约束。
+- 自动证据：v4 当前版本/旧版拒绝、命令 round-trip、零/负 endpoint 拒绝、reserved byte、ring 边界、零分配和 Worker 恢复往返均有覆盖。
+- 需要产品所有者确认：是否接受共享控制 ABI v4 的上述直接升级和通用 64-bit command payload 编码？
+- 产品回答：待填写。
+- 最终处理与提交：已实施，待确认。
+
+### Q-NUI-046：缓存命中片段在实时 Mute/Solo 时的防爆音退场
+
+- 类型：小决定；已按推荐方案实施，待产品所有者确认或修改。
+- 发现日期：2026-08-08。
+- 已确认事实：Segment/Unit raw PCM cache 位于 Mute/Solo 之前。正常 live BASSMIDI 路径在 Track 被过滤时收到 CC120，并已用正式 SF2 验证会对目标 Channel 执行固定 4 ms 防爆音衰减；缓存命中路径不调用 BASSMIDI 合成，因此不能依靠该 native 衰减。若直接停止混入缓存 PCM，会在任意采样值处硬切并可能爆音；若继续读完整 tile，又违反 Mute/Solo 立即清理。
+- 推荐并已实施方案：缓存命中的活动 Unit 在 source 从 audible 变为 filtered 时，从 producer 处理该命令的首个尚未渲染 frame 起执行固定 4 ms 线性 gain 退场，首 frame 保持当前幅度、最后一帧降至 `1/N`、后续严格为零；同时立即使该 source 后续 cache generation 失效/绕过。其他 Unit 不受影响。解除过滤仍按既有当前 tick 冷启动：只恢复必要非 Note 状态，不补发错过的 Note On。48 kHz 时 `N=192`，其他采样率使用向上取整的 4 ms frame 数。
+- 影响范围：只影响播放中切换 Mute/Solo 且当前活动 Unit 恰好命中 raw PCM cache 的短暂监听退场；不改变 Project、canonical、导出、离线渲染、正常边界清理或长期 cache key。该退场不写入 reusable raw PCM。
+- 备选方案 A：缓存命中立即硬切；最严格的瞬时静音，但存在明显不连续和爆音风险。备选方案 B：为命中 tile 启动隐藏 BASSMIDI Stream 并重建历史 Note 后再发 CC120；无法从任意 PCM frame 精确恢复 sample-voice/native envelope 状态，也会破坏“命中不合成”。备选方案 C：固定 4 ms equal-power 曲线；同样可防爆音，但与当前 CC120 实测只确认时长、未确认曲线，线性实现更简单且确定。
+- 自动证据：完整 4 ms 后严格为零、首 frame 连续、跨不同 256-frame 分块结果逐样本一致；缓存暂存/监控失效及现有 live CC120 Channel 作用域门继续覆盖。
+- 需要产品所有者确认：是否接受缓存命中路径使用固定 4 ms 线性退场来对应 native CC120 的 4 ms 防爆音行为？
+- 产品回答：待填写。
+- 最终处理与提交：已实施，待确认。
+
+### Q-NUI-047：最终播放跨度缓存命中后切换 Mute/Solo 的因果切换
+
+- 类型：小决定；已按推荐方案实施，待产品所有者确认或修改。
+- 发现日期：2026-08-08。
+- 已确认事实：post-sum/Master/Limiter playback span 是冻结 audible-set 的最终 PCM。命中后不会运行底层 BASSMIDI/Limiter，因此播放中改变 Mute/Solo 时，旧跨度不能继续作为新 audible-set 的正式输出；同时不能回写已消费或已进入 device ring 的 PCM，也不能从任意 sample 恢复 BASSMIDI 内部 envelope/Limiter 历史。Q-NUI-022 已确立 producer frontier 的因果实时边界，Q-NUI-046 已确立 4 ms 线性防爆音时长。
+- 推荐并已实施方案：在处理监控命令的首个 producer frontier 使当前最终跨度 generation 失效；底层 renderer 从该 frontier 按冷启动语义开始，不补发已经错过的 Note On，复用仍有效的 raw Unit PCM；Limiter 状态从 `gain=1` 重置。首 4 ms 使用旧最终跨度与新实时结果作线性交叉淡化，之后只输出新 generation。未消费的旧跨度不写回长期缓存；已完整发布的旧 audible-set exact span 仍可供以后相同 audible-set 命中。
+- 影响范围：只影响“主时间线命中最终跨度后，在播放中切换 Mute/Solo”的短暂监听过渡；不改变 Project、canonical、导出、离线音频、raw Unit key、播放位置或已消费 PCM。由于冷启动不补 Note，解除过滤时可能要到下一次 Note On 才重新发声，这是现有正式监控语义，不是缓存特例。
+- 备选方案 A：立即硬切到冷启动结果；更直接但可能在任意 sample 产生不连续。备选方案 B：继续旧跨度直到自然 tile 边界；会延迟 Mute/Solo 生效。备选方案 C：回滚 producer/device ring 并从旧 checkpoint 重放；需要冻结原生 sample-voice/Limiter 全状态并扩大并发协议，不符合初版因果边界。
+- 自动证据：命中路径不调用底层 source；frontier 精确传递；1 kHz 下 4-frame 交叉淡化为旧、75/25、50/50、25/75，随后完全切换；分块读取、EOS、零托管分配和缓存 generation 失效均有定向覆盖。
+- 需要产品所有者确认：是否接受上述 producer-frontier 冷启动、Limiter 重置和 4 ms 最终 PCM 交叉淡化？
+- 产品回答：待填写。
+- 最终处理与提交：已实施，待确认。
+
+### Q-NUI-048：长期 PCM 缓存的有界 RAM hot-set 与磁盘背压参数
+
+- 类型：小决定；已按推荐方案实施，待产品所有者确认或修改。
+- 发现日期：2026-08-08。
+- 已确认事实：Q-NUI-037 已确认 session-scoped 磁盘后备 + RAM hot-set；SRS 禁止 WASAPI callback、BASSMIDI render/mix 和 ring 搬运线程直接做文件 I/O。若让内存映射页在渲染线程按需缺页，仍可能把磁盘等待隐藏进实时路径；若把整段 PCM 全载入 RAM，又没有可接受的工程时长上界。
+- 推荐并已实施方案：所有 reusable PCM 文件读写都由专用低优先级 I/O 线程完成。最终跨度使用一个 `16,384 frames`（stereo float32 为 128 KiB）的顺序 SPSC hot-set；raw Unit 对每个本次实际存在 cache hit/miss 的 canonical Unit 分别预留 `16,384 frames` 读/写 ring，最大 256 Unit 时读、写各最多 32 MiB；写入累计到 `4,096 frames`、片段结束、切换片段或任务完成时刷盘。实时 render 线程只复制 unmanaged ring；读前或写后跟不上时返回 `Buffering`，沿 Q-NUI-035 完整自然段恢复。离线渲染没有设备 deadline，在同一 frame 原地等待 I/O，不推进输出。普通写失败使 capture 失效并继续现渲染；已接受 cache hit 的运行期读取失败作为明确 renderer fault，不输出未经验证的 PCM。
+- 影响范围：只影响缓存 I/O 调度、Preparing RAM 预留、极端磁盘吞吐下何时进入 Buffering；不改变 cache key、PCM 字节、Project、canonical、导出、设备 ring 容量或用户 reusable 配额。最大 hot-set 在读写同时覆盖全部 256 Unit 时约 64 MiB，另有最终跨度 128 KiB 和既有固定工作区；任务结束全部释放。
+- 备选方案 A：直接 memory-map 并由 render 线程访问；代码简单，但 page fault 可能违反无文件 I/O/无阻塞热路径。备选方案 B：Preparing 全量载入所有命中 PCM；第二次播放平稳，但 RAM 随工程长度和 Unit 数无界。备选方案 C：把 hot-set 大小做成用户设置；会新增缺乏产品价值的高级参数和测试矩阵，初版不推荐。
+- 自动证据：跨 fragment 读前切换、写 ring wrap/批量刷盘、最终跨度 hit/miss、I/O 背压、完整回放及 producer/render 调用零托管分配均已覆盖；八组真实固定 SF2 的完整发布矩阵累计 8424/8424、0 failure、0 skip，并覆盖最大 256 Unit Stream 与真实 cache miss→hit。不同物理磁盘的吞吐差异仍属于后续硬件矩阵，不改变已实施协议。
+- 需要产品所有者确认：是否接受上述固定有界 hot-set/刷盘参数，以及“实时背压进入正式 Buffering、离线原 frame 等待”的行为？
+- 产品回答：待填写。
+- 最终处理与提交：已实施，待确认。
 
 ### Q-NUI-002：初版 `.midora` 需要迁移的历史格式基线
 
@@ -97,7 +424,7 @@
 ### Q-NUI-003：Project MIDI Export Settings v2 字段与初始默认值
 
 - 类型：大决定
-- 状态：待确认；只暂停 Export Settings 领域默认值、schema v2 与 v1→v2 设置迁移分支
+- 状态：已确认并实施；开发期直接修订 v1
 - 发现日期：2026-08-06
 - SRS 依据：第 3.7.7、14.7、14.15、14.16、16.7.3、19.5.7～19.5.8 节。
 - 已确认事实：`Export Settings` 是 Project 内容；可保存模式、范围策略、Track 选择策略、Routing、Readme 和 Warning 策略，但不得保存绝对输出路径。仓库已经发布并使用严格 `export-settings.json` schema v1，当前 v1 只包含 `schemaVersion`；按兼容规则不得直接在 v1 增加必填字段。SRS 明确 Readme 默认开启，并明确“按 Logical Track 导出”默认 Compact，但没有规定新 Project 的默认导出模式、Whole/Per Port 的 Routing 默认、Warning-as-error 默认，也没有说明默认 Track 策略为 Explicit 时是否持久化具体稳定 ID 集合。
@@ -106,10 +433,10 @@
 - 推荐方案：保留 v1 不变，新增 `export-settings.json` schema v2，并提供明确的 v1→v2 文件级迁移。新 Project 与 v1 迁移默认采用：`Whole Project`、`Project Default Range`、`All Valid Logical Tracks`、`Compact`、`includeReadme = true`、`treatWarningsAsErrors = false`；只有 Manual Range 时保存合法 `startTick/endTick`。初版不在默认设置中持久化 Explicit Track ID 集合，只保存选择策略；一次性具体勾选仍属于任务快照。设置变更由一个原子领域命令提交/撤销。
 - 推荐依据与限制：Whole Project 是最小惊讶的单文件入口；Compact 与当前确定性分配器一致，Readme 默认和 Warning 原级别遵循 SRS 已明确方向；不持久化具体勾选避免默认设置绑死当前编辑对象。限制是用户若期望默认分 Track、Preserve 或持久化固定 Track 集合，需要采用其他契约，且必须在 schema v2 发布前确定。
 - 备选方案及差异：A. 默认 Per Logical Track + Compact，批量素材工作流更直接但首次导出产生多文件。B. 默认 Whole Project + Preserve，优先保持对应导出上下文的路由表示，但当前编译器分配本身已紧凑，两者初期通常同形。C. v2 保存 Explicit Track IDs，能形成固定默认子集，但对象删除/复制/损坏迁移与默认集合修复面显著扩大。D. 继续保留空 v1，只使用会话默认；这不满足 Project Export Settings 的正式持久化要求。
-- 当前实施状态：三模式一次性任务、Routing 快照、Readme、冻结命名与文件事务已实现；未修改 `ExportProjectSettings` 和 `export-settings-v1.schema.json`，未发布 v2。
+- 当前实施状态：三模式一次性任务、Routing 快照、Readme、冻结命名与文件事务既有实现保持；`ExportProjectSettings`、原子 History、`export-settings-v1.schema.json`/codec/package round-trip 与损坏恢复均已实施。
 - 需要产品所有者回答：是否采用推荐方案？若不采用，请逐项给出默认模式、默认范围、默认 Track 策略（以及是否保存具体 ID）、默认 Routing、Readme 和 Warning-as-error，并确认仍采用 schema v2 + v1→v2 迁移而不是修改 v1。
-- 产品回答：待填写。
-- 最终处理与提交：待填写。
+- 产品回答：采用推荐字段与默认值，但当前处于开发期，直接修改 v1；不创建 v2 或迁移器。
+- 最终处理与提交：SRS、ADR-CORE-037、领域设置、History、严格 JSON v1、package 打开/保存与覆盖测试已同步。具体显式 Track ID 与输出路径仍只属于任务快照。
 
 ### Q-NUI-004：Application Preferences 的本机路径与编码
 
@@ -131,7 +458,7 @@
 ### Q-NUI-005：创建对象 Undo 后 `nextStableId` 与 Modified 的关系
 
 - 类型：大决定
-- 状态：待确认；只暂停会分配新稳定 ID 的创建/复制/分割 Undo 命令
+- 状态：已确认；已实施
 - 发现日期：2026-08-06
 - SRS 依据：第 3.10、3.12、16.5.3、16.13.2、16.27 节。
 - 已确认事实：Project 保存 `nextStableId`；计数器必须持久化、单调递增、不补缺、不复用，所有现存对象 ID 全局唯一且小于它。创建、复制、Segment Split 右侧等操作必须分配新 ID；Project History 本身不持久化。Undo/Redo 要恢复对象原状态，Save 成功清除 Modified。
@@ -140,10 +467,10 @@
 - 推荐方案：`nextStableId` 在当前打开会话内永不回退；Redo 恢复原对象与原 ID，新分支分配更高 ID。History 判断 Modified 时把“只有已撤销瞬态分配导致的计数器空洞”视为不需要单独保存：Undo 回到保存点可清除 Modified；若以后因其他编辑 Save，则把更高计数器一并持久化。关闭一个 otherwise-clean Project 时允许丢弃这些从未持久化、无存活对象、无存活 redo history 的瞬态 ID；把“不复用”解释为当前会话及任何可存活/可持久化身份不得复用。
 - 推荐依据与限制：该方案在当前会话内严格保持身份单调和 Redo 稳定，不会仅为不可见 allocator 空洞强迫用户保存；对象、引用、canonical 均无隐藏差异。限制是关闭后从旧保存点重开，未来可能再次分配一个只在已丢弃瞬态历史中出现过的数值；该瞬态身份没有文件、对象或 Undo 引用可观察。
 - 备选方案及差异：A. 任何计数器推进都永久 Modified，Undo 创建后仍要求保存一个只有 `nextStableId` 变化的文件；最严格遵守字面单调，但用户工作流反直觉。B. Undo 创建时把计数器回退到命令前值，并在新分支复用；可实现字节级保存点恢复，但直接放宽当前“单调/不复用”规则。C. 将 allocator 高水位另存为 Application/会话状态；会让 Project 身份分配依赖文件外历史，违反 Project 自包含边界。
-- 当前实施状态：不分配 ID 的属性/设置命令、History、Modified/savepoint、branch、external dirty、锁和编译回滚已实现；Track/Instrument/Folder/Damaged Placeholder、Segment、Conductor、Project Settings、Note/Lane/Point、Instrument Lifecycle 与 SubVoice 基础命令已接入；所有 ID 分配型正式命令尚未接入 History。
+- 当前实施状态：全部现有稳定 ID 对象的创建/复制/Split/Paste 已接入统一 History；Embedded SF2 使用无副作用 staging、首次 Apply resource ID 分配和可逆资源租约切换；Mapping Chain 粘贴为新 Chain/Step ID。
 - 需要产品所有者回答：是否采用推荐方案？如果不采用，请选择备选 A 或 B；C 不推荐且需要同时修改 Project 自包含不变量。
-- 产品回答：待填写。
-- 最终处理与提交：待填写。
+- 产品回答：采用推荐方案。
+- 最终处理与提交：SRS 与 ADR-CORE-038 已同步；分配型创建/复制/Split/Paste/Embedded 选择均按首次 Apply 分配、Undo 高水位不退、Redo 原 ID 的统一协议实施并通过全 Application/Persistence 回归。
 
 ### Q-NUI-006：正常绑定期间 Last Known Instrument Name 的维护时机
 
@@ -199,7 +526,7 @@
 ### Q-NUI-009：Logical Parameter 类型、范围与 Enum 结构变更时的既有 Lane 迁移
 
 - 类型：大决定
-- 状态：待确认；只暂停会使既有 Lane/Enum 数值失配的 Definition 变更分支
+- 状态：已确认；已实施
 - 发现日期：2026-08-06
 - SRS 依据：第 9.8.2、9.8.10～9.8.12、11.12.3～11.13.4、11.19.2～11.19.5、18.5.2 节。
 - 已确认事实：Logical Parameter Definition 可编辑名称、Integer/Double/Enum 类型、defaultValue、legal/display range 与 Enum items，修改必须进入全 Project Undo/Redo；Lane 按稳定 Parameter ID 绑定，正常重命名不破坏绑定。Integer、Double、Enum 对点值与插值有不同合法性，Enum 只允许已定义整数值与 Step。SRS 已为“把一条 Lane 显式重绑定到另一个 Parameter”规定 Clamp/Discard 和 Enum 语义警告，但没有把该规则扩展到“原 Parameter Definition 自身改变”。
@@ -208,10 +535,10 @@
 - 推荐方案：Definition 编辑采用显式迁移计划并形成单个原子 History entry。仅重命名、合法 defaultValue、display range、不会使任何 default/Enum item/现有 Lane Point 失效的 legal range，以及不改变 Enum 数值身份的 item 重命名可直接提交。任何类型变更、Enum 显式模式切换、Enum 数值/顺序/删除或会使既有数据失效的 range 缩窄，都要求调用方明确选择 `Clamp` 或 `DiscardInvalidValues`，并对目标 Enum 确认语义警告；转换规则复用 Q-NUI-007 的 AwayFromZero、Enum 最近值等距取较小值和 Linear→Step，原子处理全 Project 所有引用 Lane。Enum item 稳定 ID 保留；被删除 item 的 Lane 数值按同一迁移策略处理。
 - 推荐依据与限制：复用已有显式 Lane 重绑定规则，避免同一种不兼容转换出现两套舍入/Enum 语义；一次 Definition 修改与所有受影响 Lane 同事务，既不会留下中间非法状态，也能完整 Undo。限制是大 Project 的准备快照和转换成本较高，且 Enum 语义转换即使数值相近也不能保证音乐含义相同，因此必须显式确认。
 - 备选方案及差异：A. 只要任何既有 Lane 会失效就拒绝 Definition 修改，要求用户先逐 Lane 修复；最保守但工作流繁琐，且多 Track 项目难以一次完成。B. 允许 Definition 修改但完全保留失配 Lane，让保存成功而 canonical 失败；最少改写数据，但一个高层接口编辑可使全工程不可播放，且恢复需逐点处理。C. 对所有失配值静默 Clamp/转 Step；操作简短但会在无明确授权下改变可听语义，不推荐。
-- 当前实施状态：该迁移分支尚未实现。已经完成名称、合法 defaultValue、display range、不会使现有 Lane/Enum 失效的 legal range、Enum item 重命名、引用保留删除，以及 Logical Parameter Mapping source/target/order/共享 Target Settings/确认删除；range 缩窄若会使任何现有 Lane Point 失效会明确拒绝并指向本问题。自动测试同时证明 display range 不失效已编译 Track，所有可听编辑保持 Full/Incremental 等价。
+- 当前实施状态：已实现 `MigrateLogicalParameterDefinition` 完整目标快照；类型/range/Enum 显式模式、数值、顺序、删除和新增与全 Project 引用 Lane 在单个 History entry 原子提交。转换复用 Q-NUI-007；新 Enum item 首次 Apply 分配 ID，Undo/Redo 保持身份。
 - 需要产品所有者回答：是否采用推荐方案？如不采用，请选择 A 或 B，并分别说明类型变更、range 缩窄、Enum 模式/数值/顺序/删除的处理；C 不建议采用。
-- 产品回答：待填写。
-- 最终处理与提交：待填写。
+- 产品回答：采用推荐方案。
+- 最终处理与提交：SRS 9.8.10、11.19.6、ADR-CORE-039 与 requirement trace 已同步；Clamp/Discard、Enum 确认、跨 Track Lane、点/Enum ID、失败前零分配和 Full/Incremental 等价均有自动测试。
 
 ### Q-NUI-010：空 SubVoice 是否产生 Info 诊断的 SRS 冲突
 
@@ -233,7 +560,7 @@
 ### Q-NUI-011：共享音频 Worker 状态快照的 ABI v2 并发契约
 
 - 类型：大决定
-- 状态：待确认；只暂停共享状态快照协议升级分支
+- 状态：已确认并实施
 - 发现日期：2026-08-06
 - SRS 依据：第 2 章确定性/失败原子性原则、第 13.30 节内部音频子进程与热路径零分配要求、INV-018～INV-028；`misc/Midora-Audio-Backend-Architecture-Decisions.md` 的 ADR-AUDIO-005。
 - 已确认事实：当前共享内存 ABI v1 对每个对齐的 `Int32/Int64` 字段分别使用 Volatile 读写，且 Worker 是状态单写者；这能避免单字段撕裂，但不能保证包含 State、Position、RenderPosition、Underrun 和分配计数的整组快照来自同一次发布。发布方连续写两次相同 Playing/Rendering 状态时，读取方可能组合前一次与后一次字段；当前 v1 的 offset 68 被定义为必须为零的 reserved 字段，不能在仍声称兼容 v1 时静默改作序列号。
@@ -242,10 +569,10 @@
 - 推荐方案：在初版发布前把共享控制协议升级为 ABI v2；保留总大小和其余 offset，把 offset 68 明确定义为对齐的 32-bit `statusSequence`。单一 Writer 每次发布先以原子增量变为奇数，再写完整字段，最后以 release 写/原子增量发布下一个偶数；Reader 读取偶数序列、复制全部字段、再次读取序列，只有两次相同且为偶数才接受，否则在固定上限内无分配重试，超过上限作为 IPC 一致性故障。Create 只建立 v2，Open 只接受 v2，主进程与 Worker 不做混合版本回退；压力测试验证从未观察到跨代组合、序列 wrap 不破坏相等判定、读写热路径零分配。
 - 推荐依据与限制：seqlock 适合当前单 Writer、多次无锁 Reader 的小型固定快照，不增加映射大小，也不在音频热路径加锁或分配；显式升 v2 保持版本声明诚实。限制是极端持续写入时 Reader 可能达到重试上限并使任务失败，因此需要选择足够高且有界的上限；协议 v1 的测试 Worker 与 v2 主进程将被明确拒绝，必须同版本部署。
 - 备选方案及差异：A. ABI v2 使用双状态槽加活动索引；Reader 更容易取得稳定槽，但要扩大并重排共享布局，复制/验证面更大。B. 保持 v1，只把 State 视作最后提交标志并允许同状态发布的字段跨代组合；兼容面最小，但无法证明整组进度和计数来自同一次发布，不推荐。C. 给状态读写加跨进程锁；可提供强快照，但阻塞与故障进程持锁风险不符合热路径约束，不推荐。
-- 当前实施状态：已确认 v1 存在跨发布混合快照风险；未修改 `ProtocolVersion`、reserved 字段或读写算法。其余命令 ring、字段值域、故障传播和 Worker 生命周期加固继续进行。
-- 需要产品所有者回答：是否采用推荐的 ABI v2 seqlock？如不采用，请选择双缓冲 A，或明确接受 B 的弱快照；C 不建议采用。
-- 产品回答：待填写。
-- 最终处理与提交：待填写。
+- 当前实施状态：已完成。共享控制 ABI 已因 Q-NUI-028 处于开发期 v2；offset 68 现定义为 `statusSequence`。四个完整状态发布入口统一执行 even→odd CAS、字段发布、release 写入下一偶数；Reader 仅接受前后相同的偶数序列，并在 1024 次有界无分配重试后报告 IPC 一致性错误。并发 Writer/中断发布被结构化拒绝；序列跨 `Int32` wrap 仍按位相等与奇偶规则工作。
+- 需要产品所有者回答：已回答。
+- 产品回答：采用推荐方案。该 ABI 是内部版本号，开发期升级合理，不适用外部 Project v1 的冻结原则。
+- 最终处理与提交：SRS §13.30、ADR-AUDIO-005 与专项 requirement trace 已同步；测试覆盖跨代快照压力、奇数序列有界失败、并发/中断 Writer、序列 wrap、字段值域、损坏边界及状态发布/读取零托管分配。主进程与 Worker 只接受 ABI v2，不提供 v1 混合回退。
 
 ### Q-NUI-012：非 UI 发布门的精确 .NET SDK 与 NuGet 锁定策略
 
@@ -386,7 +713,7 @@
 ### Q-NUI-020：Global Event Scope Defaults 的初版正式字段与语义
 
 - 类型：大决定
-- 状态：待确认；暂停 Global Event Scope Defaults 的可编辑领域模型、schema v2、History 与编译消费
+- 状态：已确认并完成规范收口
 - 发现日期：2026-08-06
 - SRS 依据：第 2.3、3.2、3.4、3.11.2、12.22.5、17.2.1、18.9.1 节；SRS 将 Global Event Scope Defaults 列为必备 Project Content、Modified 来源、Project Settings 子页，并规定修改后可能改变 Reset 输出、状态作用域、资源释放和事件排序。
 - 已确认事实：SRS 没有列出该对象的任何字段、枚举、默认值、作用层级、可覆盖事件类型或冲突解决规则。现有领域类型只有固定辅助规则“Note 非 Channel-Wide，其余 Template Event Channel-Wide”；已发布严格 v1 `settings/global-event-scope-defaults.json` 只有 `schemaVersion`，不能向 v1 静默增加字段。
@@ -396,9 +723,9 @@
 - 推荐依据与限制：该方案不发明会影响听感的隐式默认，不改变已发布 v1，不扩大初版复杂度；限制是与当前 SRS 把它列为可修改 Project Content 的字面表述存在冲突，必须由产品所有者明确选择并在后续规范修订中消除。
 - 备选方案及差异：A. 初版新增可配置字段；必须先完整回答上面的作用对象、枚举、默认、覆盖与冲突问题，并设计 schema v2，不能只给一个布尔值。B. 删除该 Project Content/文件；会破坏已发布 package 固定入口与 v1 兼容，不推荐。C. 保留空文件但仍在 UI 显示可编辑页；没有可提交语义，会制造虚假设置，不推荐。
 - 当前实施状态：领域与持久化保留空 v1 marker；编译器按具体 MIDI/Event Instrument 语义执行既有固定作用域，不读取可配置 defaults；未实现 schema v2、History 或 UI 接线。
-- 需要产品所有者回答：是否采用推荐的“初版固定 marker、不可编辑”方案？若选择 A，请先给出完整字段表、默认表、覆盖层级和冲突规则，之后再实施 v2。
-- 产品回答：待填写。
-- 最终处理与提交：待回答后实施或将固定 marker 结论写入 ADR/追踪；不得直接改写现有 v1 schema。
+- 需要产品所有者回答：已回答。
+- 产品回答：2026-08-07，采用推荐方案。
+- 最终处理与提交：既有领域、空 v1 schema/codec 与编译器固定语义保持不变；2026-08-08 已同步修订 SRS 第 3、12、16、17、18 章，移除初版可编辑设置、Modified 来源和独立缓存失效入口。未来配置仍必须另行版本化。
 
 ### Q-NUI-021：超过 SMF 四字节 VLQ 上限的 MIDI Track 长间隔
 
@@ -444,7 +771,7 @@
 ### Q-NUI-023：Project TPQ 合法范围与 SMF 15-bit division 上限
 
 - 类型：大决定
-- 状态：待确认；暂停 TPQ 范围收窄或高 TPQ MIDI 转换分支
+- 状态：已确认并实施
 - 发现日期：2026-08-06
 - SRS 依据：第 4.1.2、4.14、14.2.2、16.7.3 节；TPQ 在创建 Project 时确定且之后不可修改，MIDI division 必须直接使用 Project TPQ，导出时不允许重指定、升采样或降采样；SRS 把“TPQ 非法”列为 Error，但没有给出数值范围。
 - 已确认事实：当前领域、Project 创建和已发布 `project-settings-v1.schema.json` 明确接受 `1..Int32.MaxValue`。SMF 的 TPQ division 是最高位必须为 0 的 15-bit 正整数，`StandardMidiFile` 因此只接受 `1..32767`；`CanonicalMidiFileExporter` 会把更高 TPQ 转换为结构化 Encoding Error，Artifact/Task 不发布 partial。高 TPQ Project 仍可编译、播放、音频渲染和持久化，但由于 TPQ 不可修改，也禁止导出换算，它在初版没有任何成功 MIDI 导出路径。
@@ -453,10 +780,10 @@
 - 推荐方案：保留 v1 的 `1..Int32.MaxValue` 读取兼容，但把初版新建 Project 的 TPQ 输入限制为 `1..32767`；打开既有高 TPQ v1 时允许编辑、播放、音频和保存，并产生持久的 MIDI Export 不可用诊断，不自动改写 TPQ。后续若产品需要把高 TPQ 转换为可导出工程，另行设计显式“另存并重映射全部 tick”的版本化转换工具，不属于普通 Save 或 MIDI Export。
 - 推荐依据与限制：不破坏已经发布的严格 v1 schema/文件，不让新建工程进入无法导出的状态，也遵守“创建后不可修改”和“导出时不重采样”。限制是同一 v1 schema 中仍存在历史兼容的高 TPQ 值，且它们永久缺少初版 MIDI Export；Project 创建范围与持久化可读取范围将有意不同，必须在规范和诊断中明确。
 - 备选方案及差异：A. 将领域、创建、schema v1 全部收窄为 `1..32767` 并拒绝高 TPQ v1；规则最简单，但属于对已发布 schema v1 的不兼容修改，不推荐。B. 保持所有正 `Int32` TPQ 都可新建，MIDI 导出时结构化失败；实现现状最小，但用户可能创建后才发现永久无法导出。C. MIDI 导出时自动缩放 tick/division 到 32767 或其约数；会违反 SRS 明确禁止的导出重采样，并改变取整、同 tick 合并和文件字节。D. 允许创建后修改 TPQ 并重算全部内容；SRS 明确排除，且需要大型迁移/Undo/可听语义设计。
-- 当前实施状态：领域/创建/持久化仍按 v1 接受正 `Int32`；SMF/exporter 对 >32767 结构化失败且无输出。未收窄创建范围、未改 schema、未自动重采样。
+- 当前实施状态：Domain、New Project admission、Semantic Validation、开发期 project-settings v1 schema/codec 已统一收窄为 `1..32767`；SMF 继续直接写 Project TPQ，不自动重采样。
 - 需要产品所有者回答：是否采用推荐的“新建限制 1..32767、既有高 TPQ v1 保持可打开但明确不可 MIDI 导出”方案？如选择 A，需明确授权发布不兼容的 schema v1 修订；如选择 C/D，需先另行冻结 tick 重映射算法与迁移契约。
-- 产品回答：待填写。
-- 最终处理与提交：待回答后更新 TPQ ADR、创建验证/诊断、必要的 schema 或兼容说明，以及 32767/32768/Int32.MaxValue 的创建、重开、编译与导出矩阵测试。
+- 产品回答：A。直接修改开发期 v1，不建立兼容或迁移分支。
+- 最终处理与提交：SRS、ADR-CORE-036、领域/创建/语义验证、schema/codec 与边界测试已同步；完整证据记录在 `Midora-TPQ-Range-Requirement-Trace.md`。
 
 ## 4. 问题模板
 
@@ -504,9 +831,9 @@
 
 | 编号 | 类型 | 内容 | 状态 |
 |---|---|---|---|
-| M-AUD-001～003 | 离线人耳试听 | Segment 边界、SubVoice/Mapping、Tempo/Loop | 001 通过；002 音量突增失败；003 通过且实例边界间隔已澄清 |
-| M-AUD-004～006 | 实时进程内对照 | 与离线语义一致、无爆音/悬挂/断续 | 004/006 完整通过；005 零分配、零 underrun、无 fault，但听感音量突增仍失败 |
-| M-AUD-007～009 | 正式子进程拓扑 | 与进程内/离线语义一致、物理输出正常 | managed `.dll` Worker 被正式门拒绝；均未进入播放，待修复入口后复测 |
+| M-AUD-001～003 | 离线人耳试听 | Segment 边界、SubVoice/Mapping、Tempo/Loop | 全部通过；002 确认只有短暂平滑截断，不爆音，整体听感符合预期 |
+| M-AUD-004～006 | 实时进程内对照 | 与离线语义一致、无爆音/悬挂/断续 | 全部通过 |
+| M-AUD-007～009 | 正式子进程拓扑 | 与进程内/离线语义一致、物理输出正常 | 全部通过 |
 | M-AUD-010 | 物理设备 | enabled output endpoint 枚举与静音 callback probe | 通过：Beats Flex、48 kHz、27 callbacks、0 B、无 fault |
-| M-AUD-011 | 物理设备 | 跟随系统默认时切换默认输出的受控失败 | Worker 前置阻塞；未执行目标切换，待复测 |
-| M-AUD-012 | 物理设备 | 活动 USB/蓝牙输出移除或禁用的受控失败 | Worker 前置阻塞；未执行目标移除/禁用，待复测 |
+| M-AUD-011 | 物理设备 | 跟随系统默认时切换默认输出的受控失败 | 通过 |
+| M-AUD-012 | 物理设备 | 活动 USB/蓝牙输出移除或禁用的受控断开与人工重选门 | 通过：0 B callback/child allocations、0 IPC underrun、无 child fault/异常堆栈，明确人工重选提示，返回码 2 |

@@ -7,11 +7,9 @@
       "const": 1
     },
     "stableId": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{32}$",
-      "not": {
-        "const": "00000000000000000000000000000000"
-      }
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
     },
     "sha256": {
       "type": "string",

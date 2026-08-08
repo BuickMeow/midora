@@ -16,7 +16,10 @@ public sealed class ApplicationPreferencesStoreTests
         Assert.Null(result.Preferences.RealtimeAudio.PlaybackOutputDeviceId);
         Assert.Equal(100, result.Preferences.RealtimeAudio.RenderAheadMilliseconds);
         Assert.Equal(50, result.Preferences.RealtimeAudio.DeviceBufferRequestMilliseconds);
-        Assert.Equal(750, result.Preferences.RealtimeAudio.MaximumSampleVoicesPerStream);
+        Assert.Equal(500, result.Preferences.RealtimeAudio.MaximumSampleVoicesPerUnitStream);
+        Assert.Equal(
+            AudioCachePreferences.DefaultMaximumReusableBytes,
+            result.Preferences.AudioCache.MaximumReusableBytes);
     }
 
     [Fact]
@@ -27,6 +30,7 @@ public sealed class ApplicationPreferencesStoreTests
         ApplicationPreferencesStore store = new(path);
         ApplicationPreferences preferences = new(
             new RealtimeAudioPreferences("endpoint-id", 2_000, 200, 16_777_216),
+            new AudioCachePreferences(Path.Combine(directory.Path, "cache"), 0),
             new ApplicationRecentDirectories(
                 Path.Combine(directory.Path, "open"),
                 Path.Combine(directory.Path, "save"),
@@ -66,10 +70,10 @@ public sealed class ApplicationPreferencesStoreTests
     }
 
     [Theory]
-    [InlineData(19, 50, 750)]
-    [InlineData(2_001, 50, 750)]
-    [InlineData(100, 4, 750)]
-    [InlineData(100, 201, 750)]
+    [InlineData(19, 50, 500)]
+    [InlineData(2_001, 50, 500)]
+    [InlineData(100, 4, 500)]
+    [InlineData(100, 201, 500)]
     [InlineData(100, 50, 0)]
     [InlineData(100, 50, 16_777_217)]
     public void RealtimeAudioOutOfRangeValuesAreRejectedWithoutClamp(
@@ -89,7 +93,7 @@ public sealed class ApplicationPreferencesStoreTests
     [Theory]
     [InlineData("{\"schemaVersion\":2}")]
     [InlineData("{\"schemaVersion\":1,\"unknown\":true}")]
-    [InlineData("{\"schemaVersion\":1,\"playbackOutputDeviceId\":null,\"renderAheadMilliseconds\":19,\"deviceBufferRequestMilliseconds\":50,\"realtimeMaximumSampleVoicesPerStream\":750,\"recentDirectories\":{}}")]
+    [InlineData("{\"schemaVersion\":1,\"playbackOutputDeviceId\":null,\"renderAheadMilliseconds\":19,\"deviceBufferRequestMilliseconds\":50,\"realtimeMaximumSampleVoicesPerUnitStream\":500,\"audioCacheRootPath\":\"C:\\\\cache\",\"maximumReusableAudioCacheBytes\":17179869184,\"recentDirectories\":{}}")]
     [InlineData("not-json")]
     public void UnsupportedCorruptOrInvalidFileUsesDefaultsAndNotice(string json)
     {
@@ -127,7 +131,8 @@ public sealed class ApplicationPreferencesStoreTests
         string path = Path.Combine(directory.Path, "preferences.json");
         ApplicationPreferencesStore store = new(path);
         ApplicationPreferences original = new(
-            new RealtimeAudioPreferences("original", 100, 50, 750),
+            new RealtimeAudioPreferences("original", 100, 50, 500),
+            new AudioCachePreferences(Path.Combine(directory.Path, "cache"), 1024),
             ApplicationRecentDirectories.Empty);
         ApplicationPreferences replacement = original with
         {
@@ -153,12 +158,32 @@ public sealed class ApplicationPreferencesStoreTests
         using TemporaryDirectory directory = new();
         ApplicationPreferences invalid = new(
             RealtimeAudioPreferences.Default,
+            new AudioCachePreferences(Path.Combine(directory.Path, "cache"), 1024),
             ApplicationRecentDirectories.Empty with { MidiExport = "relative" });
         ApplicationPreferencesStore store = new(
             Path.Combine(directory.Path, "preferences.json"));
 
         Assert.Throws<ArgumentException>(() => store.Save(invalid));
         Assert.False(File.Exists(store.FilePath));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(long.MaxValue)]
+    public void AudioCacheQuotaBoundaryValuesAreAccepted(long maximumReusableBytes)
+    {
+        using TemporaryDirectory directory = new();
+        new AudioCachePreferences(directory.Path, maximumReusableBytes).Validate();
+    }
+
+    [Fact]
+    public void AudioCacheRejectsRelativeUncAndNegativeQuota()
+    {
+        Assert.Throws<ArgumentException>(() => new AudioCachePreferences("relative", 0).Validate());
+        Assert.Throws<ArgumentException>(() =>
+            new AudioCachePreferences(@"\\server\share\Midora", 0).Validate());
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new AudioCachePreferences(@"C:\Midora\AudioCache", -1).Validate());
     }
 
     private sealed class TemporaryDirectory : IDisposable

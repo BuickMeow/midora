@@ -2,7 +2,7 @@
   "version": 1,
   "dependencies": {
     "net10.0": {
-      "midora.mapping.contract.v1": {
+      "midora.mapping.contract.v2": {
         "type": "Project"
       }
     },

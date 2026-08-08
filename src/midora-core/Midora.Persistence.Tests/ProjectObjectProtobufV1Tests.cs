@@ -75,7 +75,7 @@ public sealed class ProjectObjectProtobufV1Tests
         string firstPath = temporary.PathFor("objects-a.midora");
         string secondPath = temporary.PathFor("objects-b.midora");
         MidoraProject source = CreateObjectProject();
-        UInt128 nextStableId = source.NextStableId;
+        long nextStableId = source.NextStableId;
         MidoraProjectPackageV1 packages = CreateService();
 
         await packages.SaveCopyAsync(source, firstPath);
@@ -171,7 +171,7 @@ public sealed class ProjectObjectProtobufV1Tests
 
         byte[] original = ReadEntry(idPath, objectPath);
         EventInstrumentV1 wrongId = EventInstrumentV1.Parser.ParseFrom(original);
-        wrongId.Id = new StableId { Low = 999 };
+        wrongId.Id = 999;
         ReplaceEntryAndUpdateManifest(
             idPath,
             objectPath,
@@ -278,6 +278,16 @@ public sealed class ProjectObjectProtobufV1Tests
         Assert.Equal(1, LogicalTrackV1.Descriptor.FindFieldByName("schema_version")!.FieldNumber);
         Assert.Equal(3, LogicalTrackV1.Descriptor.FindFieldByName("id")!.FieldNumber);
         Assert.Equal(8, LogicalTrackV1.Descriptor.FindFieldByName("segments")!.FieldNumber);
+        MessageDescriptor[] messages = EventInstrumentV1.Descriptor.File.MessageTypes
+            .Concat(LogicalTrackV1.Descriptor.File.MessageTypes)
+            .ToArray();
+        Assert.DoesNotContain(messages, message => message.Name == "StableId");
+        FieldDescriptor[] stableIdFields = messages
+            .SelectMany(message => message.Fields.InDeclarationOrder())
+            .Where(field => field.Name == "id" || field.Name.EndsWith("_id", StringComparison.Ordinal))
+            .ToArray();
+        Assert.NotEmpty(stableIdFields);
+        Assert.All(stableIdFields, field => Assert.Equal(FieldType.Int64, field.FieldType));
 
         AssertDescriptorHash(
             EventInstrumentV1.Descriptor.File,
@@ -296,11 +306,13 @@ public sealed class ProjectObjectProtobufV1Tests
         string instrumentBase64 = Convert.ToBase64String(instrumentBytes);
         string trackBase64 = Convert.ToBase64String(trackBytes);
         const string expectedInstrumentBase64 =
-            "CAESEGV2ZW50LWluc3RydW1lbnQaCREDAAAAAAAAACIHTWluaW1hbCoHCGsQchiAATg8QOADSABQAFgAYABoAIIBAJIBDQoJEQQAAAAAAAAAIgA=";
+            "CAESEGV2ZW50LWluc3RydW1lbnQYAyIHTWluaW1hbCoHCGsQchiAATg8QOADSABQAFgAYABoAIIBAJIBBAgEIgA=";
         const string expectedTrackBase64 =
-            "CAESDWxvZ2ljYWwtdHJhY2saCREFAAAAAAAAACIAKgkRAwAAAAAAAAA=";
-        Assert.Equal(expectedInstrumentBase64, instrumentBase64);
-        Assert.Equal(expectedTrackBase64, trackBase64);
+            "CAESDWxvZ2ljYWwtdHJhY2sYBSIAKAM=";
+        Assert.True(string.Equals(expectedInstrumentBase64, instrumentBase64, StringComparison.Ordinal),
+            $"Event Instrument golden mismatch. Actual={instrumentBase64}");
+        Assert.True(string.Equals(expectedTrackBase64, trackBase64, StringComparison.Ordinal),
+            $"Logical Track golden mismatch. Actual={trackBase64}");
     }
 
     private static void AssertDescriptorHash(FileDescriptor descriptor, string baselineName)
@@ -310,7 +322,9 @@ public sealed class ProjectObjectProtobufV1Tests
         byte[] bytes = StrictProtobufWireV1.SerializeDeterministic(descriptorSet);
         string actual = Convert.ToHexStringLower(SHA256.HashData(bytes));
         string baselinePath = Path.Combine(AppContext.BaseDirectory, "Schemas", "Proto", baselineName);
-        Assert.Equal(File.ReadAllText(baselinePath).Trim(), actual);
+        string expected = File.ReadAllText(baselinePath).Trim();
+        Assert.True(string.Equals(expected, actual, StringComparison.Ordinal),
+            $"Descriptor hash mismatch for {baselineName}. Expected={expected}; Actual={actual}");
     }
 
     private static MidoraProject CreateObjectProject()

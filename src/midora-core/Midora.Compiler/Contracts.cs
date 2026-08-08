@@ -75,6 +75,18 @@ public sealed class CompilationRequest
     public bool CollectDebugDiagnostics { get; init; }
     public HashSet<MidoraId>? IncludedTrackIds { get; init; }
     public HashSet<MidoraId>? IncludedSubVoiceIds { get; init; }
+
+    /// <summary>
+    /// Internal held-preview causal window. The instance gate remains open for the whole window,
+    /// MappingContext.GateLength is Int64.MaxValue, and the range end must not synthesize cleanup.
+    /// </summary>
+    public bool HeldPreviewGateOpen { get; init; }
+
+    /// <summary>
+    /// Internal held-preview Gate End override. The instance ends at its source Note length, while
+    /// MappingContext.GateLength observes the frozen user/draft Gate length from Gate Start.
+    /// </summary>
+    public long? HeldPreviewFinalGateLengthTicks { get; init; }
 }
 
 public enum CompilationEndTickSource
@@ -161,6 +173,7 @@ public readonly record struct CanonicalMidiEvent(
 
 public readonly record struct ChannelUnitAllocation(
     MidoraId TrackId,
+    MidoraId SegmentId,
     MidoraId EventInstrumentId,
     MidoraId InstanceId,
     MidoraId InstanceGroupId,

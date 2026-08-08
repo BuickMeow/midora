@@ -1,10 +1,12 @@
 # Midora 初版非 UI 实施台账
 
-状态：进行中
+状态：非 UI 源码、托管门与八组真实 SF2 零跳过发布门全部完成
 创建日期：2026-08-06
-最近决策更新：2026-08-07；本次只更新文档，未修改代码或契约资产
+最近决策更新：2026-08-08；M-AUD-001～012 已全部通过；Q-NUI-030、Q-NUI-034～Q-NUI-042 已回答；Q-NUI-030 的整数 TPQ/拍号、Bar:Beat:Tick、自然拍网格/Snap 与截断 Warning 已实施；缓存/underrun 主体实现已完成并转入全量门禁。Q-NUI-043～048 为已按推荐实施、待确认的小决定
 上位规范：`misc/Midora-SRS-Initial-Release-v0.1/`
 问题库：`misc/Midora-Non-UI-Decision-Question-Library.md`
+缓存设计讨论：`misc/Midora-Segment-Compilation-and-Audio-Cache-Design-Discussion-2026-08-08.md`
+八组 SF2 发布门矩阵：`misc/Midora-SF2-Release-Gate-Matrix-2026-08-08.md`
 
 本文用于跨任务、跨上下文持续记录 Midora 初版全部非 UI 能力的实施范围、需求追踪、验证证据和剩余风险。它不是 SRS；通常与 SRS 冲突时以 SRS 为准。对于问题库中已经由产品所有者明确批准、且目的就是修改现行 SRS 的决定，问题库构成变更授权；实施前必须先把对应 SRS/ADR 修订到一致，不能在规范仍冲突时直接改代码。
 
@@ -31,16 +33,16 @@
 | 编号 | 工作包 | 状态 | 主要需求 | 退出证据 |
 |---|---|---|---|---|
 | NUI-01 | 仓库级构建、测试和兼容基线 | 非 UI 自动门与单实例内核完成；WPF 入口接线待 UI 阶段 | §2、§3.3、§21、INV-019/027～030 | 单命令 Release 构建；全部自动测试；固定工具链/原生 manifest 门；唯一主实例与启动请求转发 |
-| NUI-02 | 完整领域源模型与编辑事务 | History/Modified 与十三批非 ID 分配对象命令完成；Q-NUI-005/Q-NUI-009 已确认，待实施；Q-NUI-024/Q-NUI-025 的 ID 全链契约已闭合，待实施 | §3～11 | Track/Instrument/Folder/Damaged/Segment、Conductor、Project Settings/Metadata、Track Color、External SoundFont、Note/Lane/Point、Instrument Lifecycle、SubVoice、Template Event、Value Curve、Initial/Reset State、Envelope、Mapping Function、Mapping Chain/Step，以及安全的 Logical Parameter Definition/Mapping/Target Settings 属性已覆盖；后续补 ID 全链、分配命令和 Lane 原子迁移 |
-| NUI-03 | Semantic Validation 与诊断来源 | 进行中 | §3～12、§16.19 | 全错误/警告/Info 矩阵与稳定排序 golden；显式 Track 作用域和 Damaged Instrument 绑定 Error 已闭合 |
-| NUI-04 | Full/Incremental Canonical Compiler | 强增量模型完成；全 §12 矩阵继续扩充 | §12、INV-009/010/015 | Segment checkpoint + dirty range + state hash 已实现；固定种子连续编辑逐字段等价 |
-| NUI-05 | Playback/Preview 非 UI 状态机 | 进行中 | §13、§19 | 全状态、自动 Stop、Mute/Solo、设备故障和重复生命周期测试 |
-| NUI-06 | MIDI Export 完整工作流 | 进行中 | §14、§19 | 三模式、routing、README、冻结命名、多文件原子事务、自校验 |
-| NUI-07 | Audio Render 完整工作流 | 自动化与 AOT 文件链完成；首轮试听发现 SubVoice/Mapping 实例末尾音量突增，待分析修复和复测 | §15、§19 | Whole/Per Track、采样率/长度/RIFF 边界、取消、独立发布、零分配；M-AUD-001/003 通过，M-AUD-002 失败 |
-| NUI-08 | `.midora` 完整持久化 | 进行中；开发期 v1 直接修订原则与单 `long` ID 精确编码均已确认，待实施 | §16、§19 | protobuf 对象图、损坏隔离、开发期 v1 契约重写、Embedded SF2、确定性与事务矩阵 |
-| NUI-09 | BASS/BASSMIDI/WASAPI/Worker | 进行中；首轮进程内听感与 M-AUD-010 完成；正式子进程人工入口传入 managed `.dll`，M-AUD-007～009/011/012 被阻塞 | §13、§15、INV-018～028 | ABI/版本/生命周期/设备/underrun/IPC/零分配自动门；修复 Native AOT `.exe` 验收入口后补硬件矩阵 |
+| NUI-02 | 完整领域源模型与编辑事务 | History/Modified、单 `long` ID、分配型命令、Q-NUI-009 迁移、§20.4 batch 与 §20.6 Project Clipboard 非 UI 内核已完成；§7～§11 逐节矩阵闭合 | §3～11、§20.4～20.6 | Track/Instrument/Folder/Segment/Conductor、SubVoice/Event/Curve、Logical Parameter/Enum/Mapping、Embedded SF2、安全属性编辑、原子批量编辑及普通对象 Clipboard 均覆盖；逐节证据见 `Midora-Domain-Compiler-Conformance-Matrix.md` |
+| NUI-03 | Semantic Validation 与诊断来源 | 初版非 UI 矩阵已实施，转入全量回归审计 | §3～12、§16.19 | 错误/Warning/Info 来源与稳定排序、显式 Track 作用域、Damaged Instrument、TPQ/拍号组合及截断 Warning 均有自动门 |
+| NUI-04 | Full/Incremental Canonical Compiler | 强增量模型与 §12 逐节矩阵完成；Q-NUI-034/038 的形式化 Segment/Unit fragment、范围结果缓存和因果 Dirty tick 已接入 | §12、INV-009/010/015 | Segment checkpoint + dirty range + state hash；固定种子连续编辑逐字段等价；后续 exact replay 不重复范围编译；同 tick/跨 tick folding 直接门 |
+| NUI-05 | Playback/Preview 非 UI 状态机 | 主状态机、全部 Preview、设备故障、五层缓存、16 四分音符自然段恢复及 spool/RAM fallback 已完成；八组真实 SF2 性能/集成门通过 | §13、§19 | 全状态、自动 Stop、Mute/Solo、设备故障、重复生命周期、Worker tile/span、锁存 Buffering、完整恢复区间和 generation 门 |
+| NUI-06 | MIDI Export 完整工作流 | 初版非 UI 工作流已完成，转入全量回归审计 | §14、§19 | 三模式、routing、README、冻结命名、多文件原子事务、自校验和 VLQ 边界均覆盖 |
+| NUI-07 | Audio Render 完整工作流 | 自动化、AOT 文件链与 allocation group 尾音清理完成；相关人工试听全部通过；Q-NUI-036/040/042 的 exact-key Unit PCM 与实时共用 Project session cache，Offline 默认 500；八组真实 SF2 cache hit/miss PCM 等价门通过 | §15、§19 | Whole/Per Track、采样率/长度/RIFF 边界、取消、独立发布、零分配与真实 SF2 缓存复用 |
+| NUI-08 | `.midora` 完整持久化 | 初版开发期 v1 非 UI 契约已完成：单 `long` ID、完整对象图、TPQ/Time Signature 跨文件门、损坏隔离和事务矩阵；转入全量回归审计 | §16、§19 | protobuf 对象图、损坏隔离、Embedded SF2、确定性与事务矩阵 |
+| NUI-09 | BASS/BASSMIDI/WASAPI/Worker | Native AOT、设备故障、每 Unit 1-channel 有界复用、MDAP/ABI v4、raw Unit/final span、专用缓存 I/O、自然段恢复和 RAM fallback 已完成；M-AUD-001～012 及八组真实 SF2 发布门已通过 | §13、§15、INV-018～028 | ABI/版本/生命周期/设备/underrun/IPC/零分配、真实固定 SF2 cache/stream-pool 性能与 PCM 等价门 |
 | NUI-10 | 非 UI 应用任务协调与偏好 | 非 UI 核心完成；WPF composition 待 UI 阶段 | §3、§13～17、§19～20 | 单任务/锁级、自动 Stop、Project switch guard、New/Open Project 候选事务、Save/Save Copy 会话事务、结构化报告、Application Preferences 及缓存失效均有自动测试 |
-| NUI-11 | 系统加固与发布门 | 自动发布门完成；人工音频首轮存在失败/阻塞；产品已放行含 DLL 分发；压力、硬件与发布当日外部条款核验待闭合 | §21、INV-027/028/037/038 | 锁定 SDK/依赖、零 Skip 全测、AOT/hash/notices 已自动化；关闭人工失败/阻塞；发布包加入供应商原始许可文本并按发布当日条款复核 |
+| NUI-11 | 系统加固与发布门 | 自动发布门与人工音频 001～012 完成；产品已放行含 DLL 分发；发布当日外部条款与最终包仍须届时核验 | §21、INV-027/028/037/038 | 锁定 SDK/依赖、零 Skip 全测、AOT/hash/notices 已自动化；发布包加入供应商原始许可文本并按发布当日条款复核 |
 
 ## 4. 当前已确认基线
 
@@ -50,16 +52,18 @@
 - 2026-08-07，Q-NUI-002～Q-NUI-023 均收到产品答复；Q-NUI-024 进一步确认将 `MidoraId` 与 Project allocator 重构为单个正 `long`。Q-NUI-003 确认外部 Project 文件仍处开发期，字段变化直接修订 v1，不创建 v2；Q-NUI-011 的内部 ABI 允许独立升级；Q-NUI-023 选择备选 A，直接把开发期 v1 TPQ 收窄为 `1..32767`。
 - 2026-08-07，Q-NUI-025 采用推荐方案，至此 Q-NUI-001～Q-NUI-025 均已收到产品答复。单 `long` ID 固定为 JSON canonical 十进制 integer、无符号无前导零的十进制对象文件名和 protobuf 标量 `int64`；直接修订开发期 v1，不提供 128-bit v1 迁移器。所有决定均进入待实施或既有实现已获确认状态。
 - Q-NUI-013 记录的是产品所有者基于公开身份 `Zacksony`、零收入和 GitHub Release 渠道给出的含 DLL 分发放行；发布当日官方条款复核与供应商原始许可文本打包仍是外部发布硬门，不能把当前答复表述为永久法律结论。
+- 2026-08-08，Q-NUI-030 的 `4 × TPQ % denominator == 0` 已完成：统一 `ProjectTimeSignatureMap` 提供可逆 Bar:Beat:Tick、自然小节/拍网格和 Snap，Domain/Application/Compiler/Persistence 全链拒绝不兼容组合，`MIDORA1018` 报告中途拍号截断；等距 Snap 向后作为 Q-NUI-043 待确认。Q-NUI-034～042 已确认五层缓存、Bar 对齐恢复/16 四分音符总上限、每 Unit 单通道 render pool、因果 Dirty tick、相同格式设备 PCM 复用和 Preview/Offline 边界。Application Preferences 默认缓存 root 为 `%LOCALAPPDATA%\Midora\AudioCache`、默认 reusable 上限为 16 GiB，并允许用户选择本机目录、设置 0-cache；普通长期缓存不可写只 Warning 并实时重渲染。Transient recovery spool 独立于 reusable 配额；spool/RAM 都不可用时受控 Stop。Realtime/Offline 两个独立的每 Unit Stream voice 设置均默认 500。
 
 ## 5. 当前实施顺序
 
-1. 按已闭合的 Q-NUI-024/Q-NUI-025 一次性重构 `MidoraId`/`nextStableId`、Mapping ABI、开发期 v1 持久化契约及所有受影响测试，避免在旧 128-bit 基线上继续扩张代码。
-2. 按 Q-NUI-003、Q-NUI-005、Q-NUI-009、Q-NUI-019 与 Q-NUI-023 实施 Export Settings v1、ID 分配 History、Definition/Lane 原子迁移、Bar:Beat:Tick/截断 Warning 和 TPQ `1..32767` 全链。
-3. 按 Q-NUI-011 与 Q-NUI-022 实施共享状态 ABI v2 和 held Preview 因果 Gate；Event Instrument/SubVoice 虚拟键盘、Segment Editor Pitch Ruler 与单个 Logical Note 放置预览必须共用该逻辑，并补进程内/子进程一致性、编辑失败隔离、零分配与人工时延验收。
-4. 先用 canonical trace 与 PCM 包络测量复现 M-AUD-002/M-AUD-005 的实例末尾音量突增；再依据 SRS 决定 Compiler/renderer 修复或人工示例调整，本轮快照不得覆盖。
-5. 修复 Console 正式子进程验收入口，使其使用已发布并校验的 `win-x64` Native AOT `.exe`；依次复测 M-AUD-007～009、011～012。M-AUD-004～006 的进程内终端技术指标已补齐。
-6. 继续 NUI-02/NUI-03 的剩余领域编辑命令、诊断矩阵和 §7～§12 组合覆盖；Full/Incremental oracle 持续作为每个增量的硬门。
+1. Q-NUI-024/Q-NUI-025 的 `MidoraId`/`nextStableId`、Mapping ABI v2、开发期 v1 持久化契约重构已完成；运行时 MIDI Render Plan 内部版本 3 作为小决定 Q-NUI-029 待产品确认。
+2. Q-NUI-030 已完成：开发期 v1 直接加入 `4 × TPQ % denominator == 0` 的 Domain、semantic validation、persistence、Bar:Beat:Tick、自然拍网格/Snap 与中途 Time Signature 截断 Warning 全链，不创建迁移版本；Q-NUI-043 只待确认等距 Snap 方向，不阻塞后续实施。
+3. Q-NUI-022 held Preview 因果 Gate 的非 UI 全链已完成：Event Instrument/SubVoice、Segment Pitch Ruler 与单 Note 草稿共用 Preview Compiler、producer frontier splice 和正式音频链；held 命令由 ABI v3 引入，当前共享控制 ABI 为 v4。8 秒窗口/4 秒续接阈值作为小决定 Q-NUI-031 待确认；WPF pointer capture 与人工交互时延验收留到 UI 阶段。
+4. M-AUD-001～012 已全部通过；后续代码变更继续由自动音频门守护，除非出现新的必须人耳或物理设备验证项，不重复要求既有清单。
+5. §20.4 batch 与 §20.6 Project Object Clipboard 的非 UI 内核已完成；WPF 后续只接 Windows Clipboard、焦点、Selection 和 CanExecute，不复制业务语义。
+6. NUI-03/NUI-04 的 §7～§12 逐节追踪已闭合；Full/Incremental oracle、固定种子组合矩阵和 `CanonicalOrderingAndFoldingTests` 持续作为回归硬门，不再作为已知实现缺口。
 7. 发布前按 Q-NUI-013 再核验当日官方条款，把供应商原始许可文本与 notices 纳入最终包；未到实际发布日期时不得把该动态核验误报为已完成。
+8. Q-NUI-034～042 的缓存/underrun 协议及全部已确认补充边界已经实施：普通 reusable cache 配额/写失败降级、transient spool/RAM fallback、每 Unit Stream pool、exact span、自然段恢复和 Realtime/Offline 500 默认均有自动门；真实 SF2 下的原生 PCM/256 Stream 性能门已由八组音色库零跳过矩阵闭合。
 
 ## 6. 验证日志
 
@@ -135,34 +139,53 @@
 | 2026-08-07 | Q-NUI-002～Q-NUI-025 决策闭合记录 | 仅更新问题库与实施台账；Q-NUI-025 固定 JSON canonical integer、十进制文件名、protobuf `int64` 与直接修订开发期 v1；未修改源码、SRS、schema、descriptor、golden 或测试 | 全部现有问题均已回答；本轮未运行构建/测试，既有自动基线仍为 862 tests，不把未运行验证写成通过 |
 | 2026-08-07 | 人工音频验收首轮快照 | M-AUD-001～012 产品所有者结果；M-AUD-002/005 音量突增；M-AUD-003 实例/音符间隔源码核对；M-AUD-007～009/011/012 完整 managed Worker 拒绝堆栈；M-AUD-010 端点与 0 B callback | 仅记录/分析，未修改代码且未运行新自动测试；完整快照见 `misc/Midora-Manual-Audio-Acceptance-Snapshot-2026-08-07.md` |
 | 2026-08-07 | M-AUD-004～006 控制台指标补录 | Beats Flex、48 kHz；三项 callback/render-thread allocations 均为 0 B、underruns=0、callback fault=False、renderer fault=None；原始输出追加到同日快照 | 004/006 完整通过；005 技术指标通过但听感失败保持；仅文档补录，未修改代码或运行新测试 |
+| 2026-08-07 | 人工音频阻塞项诊断与 Native AOT Console 入口 | canonical/PCM 确认 CC11 Reset→SF2 release 突增；Console 支持 `MIDORA_AUDIO_WORKER_PATH` 和标准 `win-x64/publish` `.exe`；4 项路径回归使 BASS tests 达 124；真实 AOT 子进程离线 Segment/Tempo-Loop 均 0 B、无 fault，Segment 与进程内 hash 同为 `7D300105...9ADDFF` | Worker 启动阻塞已解除；正式尾音清理作为 Q-NUI-026 大决定暂停；Q-NUI-027 已实施待确认；完整发布门 866/866、0 Skip、0 warning/0 error，产物 `non-ui-release-gate-516234b029e8474d8a415958155f62c9` |
+| 2026-08-07 | Q-NUI-026 allocation group 尾音清理 | 真实 BASSMIDI/SF2 对比确认 CC120 在 48 kHz 下 192-frame/4 ms 防爆音衰减后全零且只影响目标 Channel；compiler 按 group 生成 NoteOff→CC120→Reset；硬范围、重叠组、同 tick 复用、空 SubVoice、来源、MIDI 编码、原 SubVoice PCM 与三例 inproc/child hash 全覆盖；Compiler 217、BASS 127 tests；全仓基线 873 | 完整发布门 873/873、0 Skip、6 solution 0 warning/0 error；Native AOT Worker 产物 `artifacts/non-ui-release-gate-q026-20260807`；等待 M-AUD-002/005/007～009/011～012 人工复测 |
+| 2026-08-07 | Q-NUI-028 活动输出设备丢失受控断开 | 第二轮 M-AUD-002/005/007～009/011 全部通过；M-AUD-012 原始 Faulted/exit 1/Stop 二次抛出已快照。Worker ABI v2 新增 `OutputDeviceUnavailable` 非故障终态，先断开输出再正常退出；Playback 进入 Stopped 并设置人工重选门，重选前统一阻止播放/预览；非活动设备通知保持无影响；Playback 57、BASS 131、设备层 35 tests；全仓基线 881 | 完整发布门 881/881、0 Skip、6 solution 0 warning/0 error；M-AUD-012 修复后物理复测通过，M-AUD-001～012 全部关闭；产物 `artifacts/non-ui-release-gate-q028-20260807` |
+| 2026-08-07 | Q-NUI-005/Q-NUI-009 与共享状态 ABI v2 seqlock | 稳定 ID 分配 History、Embedded SF2 lease、Definition 全 Project Lane 原子迁移；IPC offset 68 `statusSequence`，四类状态发布统一 even→odd CAS→完整字段→release 偶数，读取最多 1024 次取得前后相同偶数代；并发/中断 Writer、wrap、损坏与零分配覆盖 | Application 236/236、BASS 136/136、0 Skip；当前全仓精确基线更新为 919，完整发布门待本轮后续增量统一运行 |
+| 2026-08-07 | Q-NUI-022 held Preview 因果 Gate 非 UI 全链 | Gate Open `long.MaxValue` Mapping 哨兵；Gate End 冻结实际长度并从 producer frontier splice；8 秒/4 秒有界续窗；Event/SubVoice/Pitch Ruler/单 Note 草稿共用入口；提交失败隔离；共享控制 ABI v3 generation；托管与 Native AOT Worker pause/apply/resume | Compiler 224/224、Playback 60/60、Application 238/238、BASS 148/148，0 Skip；完整全仓发布门待本轮后续增量统一运行；Q-NUI-031 待确认 |
+| 2026-08-07 | Q-NUI-021 exporter/task VLQ 边界 | exporter 接受最大 `0x0FFFFFFF` delta、拒绝下一 tick；任务级失败发生在发布前，不产生最终或临时输出；不插入 Meta spacer | MIDI Export 定向 2/2 通过；完整项目当前为 32 tests，待本轮完整发布门统一核对 |
+| 2026-08-08 | §20.4 batch 与 §20.6 Project Clipboard 非 UI 内核 | Note/Segment/Parameter Point 原子批量；8 类 payload；深快照、会话边界、fresh owned IDs、外部引用、exact target、跨 Track、Conductor、全部 8 类 Cut 两阶段和 Mapping Chain | Batch 10/10、Clipboard 12/12；Application 260/260，0 Skip；限定文件 format 门通过；Q-NUI-032/Q-NUI-033 待确认 |
+| 2026-08-08 | Full/Incremental 混合修改等价矩阵 | 4 个固定种子、240 次连续合法修改；Note、Lane/Point、Segment crop、Template Event、Mapping、Instrument 与 Conductor；Full Project/Range 请求交替，逐字段 formal oracle | Compiler 228/228，0 Skip；限定文件 format 门通过 |
+| 2026-08-08 | 输出规划与 `.midora` Zip 容器失败边界 | MIDI/Audio 输出目录为文件、目标为目录、非法路径、无有效目标、非法 forbidden path；Zip 精确重复、路径穿越/绝对/盘符/反斜杠拒绝，普通空目录允许但 Save Copy 不保留 | MIDI Export 33/33、Audio Render 35/35、Persistence 93/93，0 Skip；限定文件 format 门通过 |
+| 2026-08-07 | 当前源码完整非 UI Release 门 | 修复门脚本同时向 held Preview AOT 集成提供文件 Worker 与实时 Worker 路径；更新精确测试基线；6 个 solution Release build；当前源码 win-x64 Native AOT Worker；文件渲染与 held Preview 实时集成 | 964/964、0 Skip、0 warning / 0 error / 0 failure；证据目录 `artifacts/non-ui-release-gate-clipboard-20260807` |
+| 2026-08-08 | Q-NUI-034～042 缓存/underrun 决策记录 | 采用五层缓存、Bar 对齐 B/16 四分音符、每 Unit 单通道 pool、用户可选缓存 root/上限/0-cache、因果 Dirty tick、同格式设备 PCM 复用、正式/草稿/离线缓存边界；Q-NUI-041/042 进一步冻结默认 root/16 GiB、独立 transient spool 及 Realtime/Offline 分离且均默认 500 | 仅文档分析与记录；未修改源码/SRS/ADR/Preferences，未运行构建或测试；tracked 文档 `git diff --check` 与三份记录尾随空白检查通过 |
+| 2026-08-08 | Q-NUI-030 TPQ/Time Signature 整数时间全链 | `ProjectTimeSignatureRules/Map`；Domain/Application 创建编辑门；`MIDORA1017/1018`；persistence serialize/restore 跨文件门；BBT 往返、截断 Bar、自然拍 grid/Snap、`long.MaxValue` Bar、Full/Incremental 等价 | Core Release 0 warning/0 error；Compiler 242/242、Persistence 94/94、Application 261/261，0 Skip；Q-NUI-043 等距 Snap 方向待确认 |
+| 2026-08-08 | Q-NUI-034～042 第一阶段缓存基础设施 | exact-key canonical range cache；Segment/抽象 Unit route-independent 投影与完整环境 key；每 Unit 1-channel BASSMIDI 渲染语义；session cache store/quota=0/Warning 降级/transient spool；Preferences 16 GiB/500 voices；MDAP v4 sample-domain fragment | Playback 70/70；MDAP/plan 14/14；PCM payload 3/3；投影 2/2；Preferences 重配置 1/1；本机无测试 SF2，原生 PCM 等价门未运行；Q-NUI-044 待确认，正式 Worker tile/Buffering 仍未完成 |
+| 2026-08-08 | Q-NUI-034～042 缓存/恢复完整实现 | 正式 realtime/offline Worker raw Unit tile 命中/发布；post-Limiter exact span；F→R 自然段 Buffering；磁盘 spool + Preparing 预留 unmanaged RAM；有界异步 I/O hot-set；Mute/Solo 因果切换；Realtime/Offline voice 变化轮换全部 PCM generations 而不失效 canonical | Application 274/274、Playback 75/75、BASS 托管子集 140/140；真实 SF2 门新增 miss→publish→exact hit 字节等价/零重复 BASS synthesis 与 256 个单通道 Stream/热路径 0 B；当时等待环境输入，随后由下方八组矩阵闭合 |
+| 2026-08-08 | §7～§12 逐节一致性复核 | 每个一级小节映射到正式源码和直接测试组；新增跨 tick 同值不折叠 6 类矩阵、全角色同 tick 顺序和 Note 显式对象顺序 | `Midora-Domain-Compiler-Conformance-Matrix.md`；Compiler 250/250、Application 274/274，0 Skip；未发现新的非 UI 语义缺口 |
+| 2026-08-08 | SF2 提供前的托管/构建/AOT 门 | 6 solution CI Release；9 个纯托管项目 + BASS 无 SF2 子集；固定 BASS manifest、AOT 必需文件、无效 SF2 拒绝；style/analyzer 和本轮文件完整 format；基线总数更新 | 托管 1023/1023、原生无效 SF2 1/1、0 Skip；6 solution 0 warning/0 error；SDK 10.0.302；基线 1053；AOT `artifacts/non-ui-release-gate-cache-final-20260808/worker-win-x64`；`git diff --check` 通过；当时剩余 29 项只缺有效 SF2，随后由下方八组矩阵闭合 |
+| 2026-08-08 | 八组真实 SF2 完整零跳过发布矩阵 | `sDetrimental Concert Grand Piano`、`SGM-V2.01`、`JV1080Ti`、`Ultima C7 Grand II`、`Z-Doc Acoustic Piano Fantasy Mode`、`Roland XP-80`、`Splendid_256`、`minecraft`；每组独立执行固定原生 manifest 校验、locked restore、6 solution Release build、当前 win-x64 Native AOT Worker publish 和 10 项目全量门 | 8 × 1053 = 8424/8424、0 failure、0 skip；80 个 TRX；每组 build 0 warning/0 error；八套 AOT 目录均含 Worker `.exe`、manifest、LICENSE、notices；完整矩阵见 `misc/Midora-SF2-Release-Gate-Matrix-2026-08-08.md` |
 
 ## 7. 未解决风险
 
-- 当前领域模型和编译器虽已有大量覆盖，但尚未逐条证明 §7～§12 全矩阵完成。
-- 当前 `.midora` 已支持完整 Event Instrument/Logical Track 对象图、完整性正常的 Embedded SF2，以及 Q-NUI-001 规定的损坏资源结构化修复门。Q-NUI-002 已确认初版 v1 不支持不存在的历史格式，迁移注册表为空是正式结果；NUI-08 的主要剩余工作转为 Q-NUI-024/Q-NUI-025 的开发期 v1 ID 契约重写及其完整回归。
-- External/Embedded SF2 已接入 Project 打开后的运行时可用状态；External 缓存键包含 Windows 文件身份，播放/预览启动前同步复核 stamp，监控失效会自动 Stop 当前播放。WPF composition 尚需在 UI 阶段构造并展示该非 UI 会话；Embedded 选择 History 已按 Q-NUI-005 确认规则，尚待实施。
-- §12.21 的 Segment checkpoint、dirty range 与 state-hash 收敛模型已替换旧 Track 整片段缓存；当前剩余风险是继续扩大随机 Project 生成器和 §7～§12 全语义组合矩阵，而不是已知的增量架构缺口。
-- Project MIDI Export Settings 仍是空 v1 占位；Q-NUI-003 已确认字段/defaults 方案并明确直接修订开发期 v1，不创建 v2 或迁移器。实现与完整持久化/History/任务默认测试尚待完成。
-- 十三批不分配稳定 ID 的结构/设置/音乐内容编辑命令已接入统一 History；Project Metadata/Track Color、External SoundFont 与安全的 Logical Parameter Definition/Mapping/Target Settings 属性已覆盖。Q-NUI-009 的 Lane 原子迁移与 Q-NUI-005 的 Embedded SoundFont、创建/复制/分割规则均已确认但尚待实施；它们还必须适配 Q-NUI-024 的单 `long` ID。
-- Audio Render 的 canonical/输出事务、正式 Native AOT 文件链、应用级单音频任务锁和开始渲染前自动 Stop 已完成；不同工作块的复杂 BASS 输出已达到逐 sample 一致。2026-08-07 首轮人工结果发现 M-AUD-002/M-AUD-005 第一、第三、第四和弦末尾音量突增；CC11 在实例末尾 Reset 到 127 并放大仍可听 SF2 release 是高可信推断，尚待 canonical/PCM 自动复现确认。
+- §7～§12 已完成逐节源码/测试追踪，见 `Midora-Domain-Compiler-Conformance-Matrix.md`；固定种子 Project 生成器继续扩充属于稳健性维护，不再是已知功能缺口。
+- 五层缓存与自然段恢复主体已完成：正式实时/离线 Worker 读写 raw Unit tile，主时间线读写 post-Limiter exact span；underrun 在 F 锁存并完整准备到 R，磁盘 spool 不可用时使用 Preparing 预留的 unmanaged RAM。缓存磁盘访问位于专用有界 I/O 线程，render/mix 只访问 hot-set。真实 PCM 等价、cache miss→hit 零重复合成、最大 256 Unit Stream 和 Native AOT 集成门已在八组真实 SF2 上通过；后续更多设备/磁盘/音色库只属于持续加固矩阵。
+- 当前 `.midora` 已支持完整 Event Instrument/Logical Track 对象图、完整性正常的 Embedded SF2，以及 Q-NUI-001 规定的损坏资源结构化修复门。Q-NUI-002 已确认初版 v1 不支持不存在的历史格式，迁移注册表为空是正式结果；Q-NUI-024/Q-NUI-025 的开发期 v1 单 `long` ID 契约重写已经完成并通过专项回归。
+- External/Embedded SF2 已接入 Project 打开后的运行时可用状态；External 缓存键包含 Windows 文件身份，播放/预览启动前同步复核 stamp，监控失效会自动 Stop 当前播放。Embedded 选择 History、lease 所有权转移、Undo/Redo 和失败原子性已按 Q-NUI-005 实施；WPF composition 尚需在 UI 阶段构造并展示该非 UI 会话。
+- §12.21 的 Segment checkpoint、dirty range 与 state-hash 收敛模型已替换旧 Track 整片段缓存；Full/Incremental 固定种子复合编辑 oracle 和逐节矩阵均已闭合。后续扩大随机 Project 生成器是持续加固，不代表当前存在已知增量架构缺口。
+- Project MIDI Export Settings 已按 Q-NUI-003 直接修订开发期 v1：领域默认、原子 History、严格 JSON/schema、package round-trip、损坏恢复和任务默认初始化均已覆盖；不创建 v2 或迁移器。
+- 不分配与分配稳定 ID 的结构/设置/音乐内容编辑命令均已接入统一 History；Project Metadata/Track Color、External/Embedded SoundFont、Logical Parameter Definition 全 Project Lane 原子迁移、Mapping/Target Settings 与复制/分割/粘贴均已覆盖并适配单 `long` ID。
+- Audio Render 的 canonical/输出事务、正式 Native AOT 文件链、应用级单音频任务锁和开始渲染前自动 Stop 已完成；不同工作块的复杂 BASS 输出已达到逐 sample 一致。M-AUD-002/M-AUD-005 的 CC11 Reset 放大残余 release 已按 Q-NUI-026 在 allocation group 层修复，真实 PCM 自动门和第二轮人耳复测均通过。
 - M-AUD-003/M-AUD-006 中两个实例范围 `[0,2400)`/`[2400,4800)` 首尾相接，但当前示例事件会在跨实例边界产生 140 tick（约 194 ms）可听音符空隙；该听感符合当前构造，人工清单措辞需要后续澄清。
-- M-AUD-007～009/011/012 尚未测试目标行为：Console `GetWorkerPath` 返回 managed Worker `.dll`，被正式 Native AOT `.exe` 保护门在播放前拒绝。必须修复验收入口后复测，不能把这些堆栈误报为子进程音频或设备故障处理失败。
-- M-AUD-004～006 已在 Beats Flex 48 kHz 完成进程内听感与技术指标：三项 callback/render-thread allocation 均为 0 B、underrun 为 0、无 callback/renderer fault；004/006 完整通过，005 仍因音量突增失败。M-AUD-010 同端点通过，27 callbacks、callback allocation 0 B、无 fault。实际设备切换/移除和其余人耳失败不能只凭无设备 CI 结论替代。
-- 共享控制 ABI v1 已闭合字段/ring 损坏边界，但整组状态快照仍可能跨两次同状态发布混合；Q-NUI-011 已确认升级内部 ABI v2，具体 seqlock/双缓冲协议及回归尚待实施，不能把逐字段原子误报为整快照原子。
+- M-AUD-007～009/011 的第二轮物理复测均通过。M-AUD-012 确认旧实现会把已检测的 DeviceLost 作为普通 Worker Fault 并在 Stop 二次抛出；Q-NUI-028 改为非故障终态、受控断开和显式人工重选门后，物理拔出/禁用活动设备复测通过。M-AUD-001～012 已全部关闭。
+- M-AUD-004～006 已在 Beats Flex 48 kHz 完成进程内听感与技术指标：三项 callback/render-thread allocation 均为 0 B、underrun 为 0、无 callback/renderer fault；004/006 首轮通过，005 修复后第二轮通过。M-AUD-010 同端点通过，27 callbacks、callback allocation 0 B、无 fault。
+- 共享控制 ABI v2 引入的单 Writer seqlock 已由当前 ABI v4 原样保持；offset 68 为 `statusSequence`，offset 88 的 held plan generation 纳入同一快照，Reader 只接受前后相同偶数代并有 1024 次有界重试。v3 引入 held pause/apply-plan/resume；v4 在不改变 header/record 大小的前提下新增 `BufferingRecoveryPrepare(endFrame)`；跨发布混合快照、序列 wrap、并发/中断 Writer、generation、命令 payload、损坏边界和零托管分配均有专项回归；不提供 ABI v1～v3 混合回退。
 - 非 UI 发布门已经能生成并测试本地 Native AOT Worker 产物；Q-NUI-013 已给出产品层含 DLL 分发放行，但发布当日官方条款复核、供应商原始许可文本打包及实际产物验收尚未发生。当前本地测试产物仍不是可直接上传的正式发行包。
 - 单应用实例所有权和启动 IPC 已形成 WPF 无关的运行时组件；Q-NUI-014 已确认按交互登录 Session 隔离，主窗口激活与 Project Switch Guard 接线属于后续 UI composition。
 - Save/Save Copy 已通过统一非 UI 协调层绑定 package 事务、打开会话工程时间、current path/file information 与 Document 保存基线；Q-NUI-015 已确认同路径拒绝策略，WPF Progress/Result 接线待 UI 阶段。
 - New Project 已能在旧 Project 之外构建完整候选，覆盖 Unsaved/Create and Save 及 External/Embedded SF2；WPF 后续只负责在 Project Switch Guard 成功分支提交候选并导航 Arrangement，不能提前启动工程时间或暴露半创建候选。
 - Open Project 已能在旧 Project 之外严格建立候选并绑定恢复/损坏/资源状态；Q-NUI-002 已确认没有受支持的旧格式成功迁移分支，WPF 后续只能在 Project Switch Guard 成功分支接管候选资源并启动打开会话。
-- Bar:Beat:Tick 的 1-based Bar/Beat、0-based Tick 与分母拍单位已经由 SRS 固定；Q-NUI-019 已确认中途 Time Signature 变化立即截断旧小节并开启新 Bar，且每次这种截断产生 Warning。换算服务、诊断稳定排序和边界/往返测试尚待实施。
+- Bar:Beat:Tick 的 1-based Bar/Beat、0-based Tick 与分母拍单位已由 SRS 固定；Q-NUI-019/Q-NUI-030 的中途截断、新 Bar、`4 × TPQ % denominator == 0`、可逆换算、自然拍网格/Snap、截断 Warning 及开发期 v1 跨文件验证链均已实施。仅等距 Snap 选择后一个边界作为 Q-NUI-043 待确认的小决定。
 - 显式 Track 编译已按 §12.6.3 将普通语义与 Stable ID 诊断统一限制到选择作用域；Whole Project compile 仍是发现未选内容损坏的正式入口，后续消费者不得自行扩大诊断范围。
 - 正常 Track 对 Damaged Event Instrument 占位的绑定已按 §16.19.3 作为编译 Error；普通断裂引用仍按未绑定 Track 的 Info 语义保留，消费者不得把两者合并成同一级别。
-- Q-NUI-020 已确认 Global Event Scope Defaults 在初版保持不可编辑的版本化空 marker；现有固定事件作用域继续有效，不新增 schema/History/compiler 配置分支。后续需把该产品解释写入正式规格，消除 SRS “可修改 Project Content”的字面冲突。
-- Q-NUI-021 已确认 SMF 单个 delta 超过 `0x0FFFFFFF` 时保持结构化失败且不发布文件；不得向 canonical 事件之外插入 Meta spacer。现有实现仍需按决定补 exporter/task 级完整边界证据。
-- Q-NUI-022 已确认 held Preview 的因果 Gate、`Int64.MaxValue` 未结束哨兵和未渲染 frontier 规则；2026-08-07 又明确把 Segment Editor Pitch Ruler 与单个 Logical Note 放置预览纳入初版并复用同一逻辑。SRS 已补齐，held Preview 代码尚未实现，不能用裸 MIDI、猜测 Gate Length、回写已缓冲 PCM 或让预览失败阻断合法 Note 提交来冒充。
-- Q-NUI-023 已选择备选 A：把开发期 v1 的领域、创建和 schema 全部收窄到 `1..32767` 并拒绝高 TPQ v1；当前代码仍接受到 `Int32.MaxValue`，因此实现、descriptor/schema/golden 和 32767/32768 边界回归尚待完成。
-- Q-NUI-024/Q-NUI-025 已确认 `MidoraId`/Project allocator 改为单个正 `long`，并固定 JSON canonical integer、十进制文件名和 protobuf 标量 `int64`。这与当前 `Guid`/`UInt128`、32 位十六进制、protobuf high/low 及现行 SRS 明确冲突；后续必须先同步修订 SRS/ADR，再一次性实施开发期 v1 契约与代码全链，不能继续把 128-bit 表示视为冻结发布承诺。
+- Q-NUI-020 已确认 Global Event Scope Defaults 在初版保持不可编辑的版本化空 marker；现有固定事件作用域继续有效，不新增 schema/History/compiler 配置分支。SRS 第 3、12、16、17、18 章已同步收口，旧有“可修改 Project Content”字面冲突已消除。
+- Q-NUI-021 已确认并完成：SMF 单个 delta 超过 `0x0FFFFFFF` 时结构化失败且不发布文件，不向 canonical 事件之外插入 Meta spacer；exporter 最大/越界及 task 无输出边界均有直接测试。
+- Q-NUI-022 held Preview 非 UI 全链已实施：Gate Open 哨兵、Gate End 实际长度、producer frontier splice、Render-Ahead 不回写、Event/SubVoice/Pitch Ruler/单 Note 草稿、编辑提交隔离及托管/Native AOT Worker 一致性均有自动覆盖。当前剩余的是 WPF pointer capture/失焦接线与人工交互时延验收；8 秒窗口和 4 秒续接阈值作为 Q-NUI-031 小决定待确认。
+- Q-NUI-023 已选择备选 A：开发期 v1 的领域、创建和 schema 已收窄到 `1..32767`，并以 32767/32768 边界回归锁定；Q-NUI-030 已进一步闭合 TPQ/Time Signature 整除组合约束。
+- Q-NUI-024/Q-NUI-025 已实施：`MidoraId`/Project allocator 为单个正 `long`，JSON 使用 canonical integer，对象文件名为十进制，protobuf 为标量 `int64`，Mapping 内部 ABI 为 v2；旧 `Guid`/`UInt128`、32 位十六进制和 protobuf high/low 正式消费路径已移除。
 - Audio Render 对损坏 Event Instrument 绑定的选择已交还 canonical 编译器判定：Whole Mix 整体失败，Per Logical Track 仅对应项失败并允许其他项继续；普通未绑定/断裂引用仍保持 Info 与无输出目标语义。
 - Preview 临时 Project shell 已复制所选对象所需的损坏绑定身份与有效 Library Folder 结构；后续新增任何 Project 外壳式 CompileContext 时都必须审计同类引用闭包，不能让临时上下文制造虚假断裂或降级真实损坏。
 - Segment Preview 的绑定要求严于主时间线的一般未绑定 Track 语义：`MIDORA1306` 只属于该 Preview context；Playback Preview 必须先验证 canonical 可消费性，再初始化 Backend。
 - 合法但靠近 `Int64.MaxValue` 的 Segment/Note/Loop 源数据必须按硬边界先裁剪再做 Project-domain 加法；不能依赖“先 checked 溢出、再取 Min”的实现顺序。
+- Q-NUI-034～042 已确认并完成主体实现：正式实时/离线 Worker 共用 raw Unit cache；主时间线另有 post-Limiter exact span；canonical 峰值 route 是最多 256 个 1-channel Stream 的有界任务内复用池；磁盘 transient spool 与等容量 RAM fallback 均已接入。0-cache 仍每次现渲染，普通 retention 写失败只 Warning。八组真实 SF2 原生性能/PCM 门已全部闭合。

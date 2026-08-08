@@ -380,9 +380,9 @@ Clamp
 ---
 ## 9.6 C# Mapping Function
 ### 9.6.1 函数模型
-C# Mapping Function 初版固定使用 ABI v1：
+C# Mapping Function 初版固定使用 ABI v2：
 ```csharp
-double Transform(double value, in MappingContextV1 context)
+double Transform(double value, in MappingContextV2 context)
 ```
 含义：
 ```text
@@ -394,12 +394,12 @@ Project 保存的方法源码是该方法的函数体，不保存完整 compilat
 
 每个 Mapping Function 必须保存：
 ```text
-abiVersion = 1
+abiVersion = 2
 函数体源码
 声明的 Context 字段集合
 ```
 
-ABI v1 固定使用 `Microsoft.CodeAnalysis.CSharp 5.3.0`、允许 unsafe 的 C# 14、`Microsoft.NETCore.App.Ref 10.0.10` 和独立 Mapping ABI v1 契约程序集；不向函数编译开放 Midora Domain/Compiler、WPF/WindowsDesktop 或第三方程序集。引用集合用于兼容性收敛，不构成安全沙箱；`in MappingContextV1` 只提供普通 C# 语言层只读约束。
+ABI v2 固定使用 `Microsoft.CodeAnalysis.CSharp 5.3.0`、允许 unsafe 的 C# 14、`Microsoft.NETCore.App.Ref 10.0.10` 和独立 Mapping ABI v2 契约程序集；稳定 ID Context 字段使用只承载单个正 `long` 的 `MappingStableIdV2`。不向函数编译开放 Midora Domain/Compiler、WPF/WindowsDesktop 或第三方程序集。引用集合用于兼容性收敛，不构成安全沙箱；`in MappingContextV2` 只提供普通 C# 语言层只读约束。
 ### 9.6.2 自由 C# 边界
 初版：
 ```text
@@ -794,6 +794,8 @@ Logical Track 改绑 Event Instrument 后：
 不自动把旧 Lane 转换成裸 MIDI 事件。
 ```
 如果用户后续需要迁移参数 Lane，应由显式转换 / 修复操作完成。具体 UI 与转换规则由 第 11 章《Logical Track、Segment 与编曲语义》 / 第 17～20 章的 UI 与交互规格 或实现设计阶段细化。
+
+Logical Parameter Definition 自身发生类型、Enum 显式模式、Enum 数值/顺序/删除或会使既有数据失效的合法范围变化时，必须由调用方提交显式迁移计划，并与全 Project 所有引用该 Parameter ID 的 Lane 形成单个原子撤销 / 重做项。迁移策略必须显式选择 `Clamp` 或 `DiscardInvalidValues`；目标为 Enum 时还必须确认数值兼容不保证 Enum 语义等价。Double 转 Integer/Enum 使用 Away From Zero 中点规则，Enum Clamp 选择最近已定义值且等距取较小值，目标 Enum 的保留点统一转为 Step。点与保留 Enum item 的稳定 ID 不变；新增 Enum item 首次提交时分配新 ID。不得静默迁移、按名称重绑定或留下 Definition 已变而 Lane 尚未处理的中间状态。
 ### 9.8.11 保存、复制与撤销 / 重做
 Logical Parameter Definition、Logical Parameter Lane、Point、Curve、Mapping 均属于项目内容。
 规则：

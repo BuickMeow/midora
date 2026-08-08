@@ -20,7 +20,7 @@ public sealed class ProjectTemplateEventEditCommandsTests
         };
         note.ValueMappings.Add(mapping);
         MappingChain valueMappings = note.ValueMappings;
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -130,7 +130,7 @@ public sealed class ProjectTemplateEventEditCommandsTests
             secondaryValue: 0);
         voice.Events.AddRange([controllerConflict, rpnZero, controllerTarget, pitchBendRange]);
         TemplateEvent[] originalOrder = voice.Events.ToArray();
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -226,7 +226,7 @@ public sealed class ProjectTemplateEventEditCommandsTests
         TemplateEvent program = TemplateEvent.Program(project, 240, 10);
         voice.Events.AddRange([controller, program]);
         TemplateEvent[] originalOrder = voice.Events.ToArray();
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 

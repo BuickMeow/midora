@@ -111,6 +111,7 @@ foreach ($requiredPath in @(
     }
 }
 $env:MIDORA_TEST_NATIVE_AOT_FILE_WORKER = $workerPath
+$env:MIDORA_TEST_NATIVE_AOT_REALTIME_WORKER = $workerPath
 
 $observedTotal = 0
 foreach ($project in $baseline.projects) {

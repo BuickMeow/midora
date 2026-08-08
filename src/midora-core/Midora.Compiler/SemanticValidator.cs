@@ -1,5 +1,5 @@
 using Midora.Domain;
-using Midora.Mapping.Contract.V1;
+using Midora.Mapping.Contract.V2;
 
 namespace Midora.Compiler;
 
@@ -12,9 +12,10 @@ public static class SemanticValidator
         List<CompilerDiagnostic> diagnostics = [];
         SourceReference projectSource = new();
 
-        if (project.TicksPerQuarterNote <= 0)
+        if (project.TicksPerQuarterNote is < MidoraProject.MinimumTicksPerQuarterNote
+            or > MidoraProject.MaximumTicksPerQuarterNote)
         {
-            Error("MIDORA1001", "TicksPerQuarterNote 必须大于 0。", projectSource);
+            Error("MIDORA1001", "TicksPerQuarterNote 必须位于 1..32767。", projectSource);
         }
 
         if (request.StartTick < 0 || request.EndTick is < 0 || request.EndTick < request.StartTick)
@@ -154,13 +155,56 @@ public static class SemanticValidator
             }
         }
         HashSet<long> signatureTicks = [];
+        bool canAnalyzeTimeSignatureBars = true;
         foreach (TimeSignatureChange signature in project.Conductor.TimeSignatures)
         {
             bool supportedDenominator = signature.Denominator is 1 or 2 or 4 or 8 or 16 or 32 or 64;
             if (signature.Tick < 0 || signature.Numerator is < 1 or > 99
                 || !supportedDenominator || !signatureTicks.Add(signature.Tick))
             {
-                AddError("MIDORA1013", "Time Signature 非法或同 tick 重复。", source with { Tick = signature.Tick }, diagnostics);
+                AddError(
+                    "MIDORA1013",
+                    "Time Signature 非法或同 tick 重复。",
+                    source with { SourceEventId = signature.Id, Tick = signature.Tick },
+                    diagnostics);
+                canAnalyzeTimeSignatureBars = false;
+            }
+            else if (!ProjectTimeSignatureRules.IsCompatible(
+                project.TicksPerQuarterNote,
+                signature.Denominator))
+            {
+                AddError(
+                    "MIDORA1017",
+                    $"Time Signature 分母 {signature.Denominator} 与 TPQ "
+                    + $"{project.TicksPerQuarterNote} 不兼容；4 × TPQ 必须能被分母整除。",
+                    source with { SourceEventId = signature.Id, Tick = signature.Tick },
+                    diagnostics);
+                canAnalyzeTimeSignatureBars = false;
+            }
+        }
+        if (canAnalyzeTimeSignatureBars && signatureTicks.Contains(0))
+        {
+            TimeSignatureChange[] orderedSignatures = project.Conductor.TimeSignatures
+                .OrderBy(value => value.Tick)
+                .ThenBy(value => value.Id)
+                .ToArray();
+            for (int i = 1; i < orderedSignatures.Length; i++)
+            {
+                TimeSignatureChange previous = orderedSignatures[i - 1];
+                TimeSignatureChange current = orderedSignatures[i];
+                long previousBarTicks = ProjectTimeSignatureRules.GetTicksPerBar(
+                    project.TicksPerQuarterNote,
+                    previous.Numerator,
+                    previous.Denominator);
+                if ((current.Tick - previous.Tick) % previousBarTicks != 0)
+                {
+                    diagnostics.Add(new(
+                        "MIDORA1018",
+                        DiagnosticSeverity.Warning,
+                        $"tick {current.Tick} 的 Time Signature 变化截断了旧小节；"
+                        + "该 tick 立即作为新小节 Beat 1。",
+                        source with { SourceEventId = current.Id, Tick = current.Tick }));
+                }
             }
         }
         if (project.Conductor.EndMarkerTick is < 0)
@@ -872,7 +916,7 @@ public static class SemanticValidator
 
         void Add(MidoraId id, SourceReference source)
         {
-            if (id == default || id.ToSequence() >= project.NextStableId || !ids.Add(id))
+            if (id == default || id.Value >= project.NextStableId || !ids.Add(id))
             {
                 AddError("MIDORA1003",
                     "正式对象 Stable ID 为空、在 Project 内重复，或不属于当前 Project 的已分配计数器范围。",
@@ -974,8 +1018,8 @@ public static class SemanticValidator
         steps.Any(step => step.Operation == MappingOperation.CustomCSharp
             && step.MappingFunctionId.HasValue
             && functions.TryGetValue(step.MappingFunctionId.Value, out CSharpMappingFunction? function)
-            && (function.DeclaredContextFields.Contains(nameof(MappingContextV1.TemplateNote))
-                || function.DeclaredContextFields.Contains(nameof(MappingContextV1.TemplateVelocity))));
+            && (function.DeclaredContextFields.Contains(nameof(MappingContextV2.TemplateNote))
+                || function.DeclaredContextFields.Contains(nameof(MappingContextV2.TemplateVelocity))));
 
     private static void ValidateMappingReferences(
         IEnumerable<ValueMappingStep> steps,
@@ -1019,7 +1063,7 @@ public static class SemanticValidator
         MappingSource.TriggerNote or MappingSource.TriggerVelocity or MappingSource.GateLength or MappingSource.PitchDelta;
 
     private static bool IsPerNoteContextField(string field) => field is
-        nameof(MappingContextV1.TriggerNote) or nameof(MappingContextV1.TriggerVelocity)
-        or nameof(MappingContextV1.EffectiveRootNote) or nameof(MappingContextV1.PitchDelta)
-        or nameof(MappingContextV1.GateLength) or nameof(MappingContextV1.SegmentLocalTick);
+        nameof(MappingContextV2.TriggerNote) or nameof(MappingContextV2.TriggerVelocity)
+        or nameof(MappingContextV2.EffectiveRootNote) or nameof(MappingContextV2.PitchDelta)
+        or nameof(MappingContextV2.GateLength) or nameof(MappingContextV2.SegmentLocalTick);
 }

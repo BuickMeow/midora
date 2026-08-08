@@ -4,6 +4,41 @@ namespace Midora.Application;
 
 public static partial class ProjectDomainEditCommands
 {
+    public static IProjectEditCommand UpdateMidiExportSettings(
+        ProjectMidiExportMode mode,
+        ProjectRangeMode rangeMode,
+        long? manualStartTick,
+        long? manualEndTick,
+        ProjectMidiExportTrackSelectionMode trackSelectionMode,
+        ProjectMidiExportRoutingStrategy routing,
+        bool includeReadme,
+        bool treatWarningsAsErrors) =>
+        Command("Change MIDI export settings", project =>
+        {
+            ValidateMidiExportSettings(
+                mode,
+                rangeMode,
+                manualStartTick,
+                manualEndTick,
+                trackSelectionMode,
+                routing);
+            MidiExportSettingsValue old = SnapshotMidiExportSettings(project.Export);
+            MidiExportSettingsValue replacement = new(
+                mode,
+                rangeMode,
+                manualStartTick,
+                manualEndTick,
+                trackSelectionMode,
+                routing,
+                includeReadme,
+                treatWarningsAsErrors);
+            return Prepared(
+                old != replacement,
+                NoCompilationChange(),
+                value => RestoreMidiExportSettings(value.Export, replacement),
+                value => RestoreMidiExportSettings(value.Export, old));
+        });
+
     public static IProjectEditCommand UpdatePlaybackSettings(
         double masterVolumeDecibels,
         bool limiterEnabled,
@@ -42,7 +77,7 @@ public static partial class ProjectDomainEditCommands
         ProjectTrackSelectionMode trackSelectionMode,
         IEnumerable<MidoraId> explicitLogicalTrackIds,
         int sampleRate,
-        int maximumSampleVoicesPerStream)
+        int maximumSampleVoicesPerUnitStream)
     {
         ArgumentNullException.ThrowIfNull(explicitLogicalTrackIds);
         List<MidoraId> requestedIds = [];
@@ -70,7 +105,7 @@ public static partial class ProjectDomainEditCommands
                 trackSelectionMode,
                 requestedIds,
                 sampleRate,
-                maximumSampleVoicesPerStream);
+                maximumSampleVoicesPerUnitStream);
             AudioRenderSettingsValue old = SnapshotAudioRenderSettings(project.AudioRender);
             AudioRenderSettingsValue replacement = new(
                 mode,
@@ -80,10 +115,16 @@ public static partial class ProjectDomainEditCommands
                 trackSelectionMode,
                 requestedIds.ToArray(),
                 sampleRate,
-                maximumSampleVoicesPerStream);
+                maximumSampleVoicesPerUnitStream);
+            ProjectChangeSet changes = new()
+            {
+                AffectsAudioPcmCacheGeneration = old.SampleRate != replacement.SampleRate
+                    || old.MaximumSampleVoicesPerUnitStream
+                        != replacement.MaximumSampleVoicesPerUnitStream
+            };
             return Prepared(
                 !AudioRenderSettingsEqual(old, replacement),
-                NoCompilationChange(),
+                changes,
                 value => RestoreAudioRenderSettings(value.AudioRender, replacement),
                 value => RestoreAudioRenderSettings(value.AudioRender, old));
         });
@@ -98,7 +139,7 @@ public static partial class ProjectDomainEditCommands
         ProjectTrackSelectionMode trackSelectionMode,
         IReadOnlyCollection<MidoraId> explicitLogicalTrackIds,
         int sampleRate,
-        int maximumSampleVoicesPerStream)
+        int maximumSampleVoicesPerUnitStream)
     {
         if (!Enum.IsDefined(mode))
         {
@@ -138,12 +179,71 @@ public static partial class ProjectDomainEditCommands
         {
             throw new ArgumentOutOfRangeException(nameof(sampleRate));
         }
-        if (maximumSampleVoicesPerStream
-            is < AudioRenderProjectSettings.MinimumSampleVoicesPerStream
-            or > AudioRenderProjectSettings.MaximumSampleVoicesPerStreamLimit)
+        if (maximumSampleVoicesPerUnitStream
+            is < AudioRenderProjectSettings.MinimumSampleVoicesPerUnitStream
+            or > AudioRenderProjectSettings.MaximumSampleVoicesPerUnitStreamLimit)
         {
-            throw new ArgumentOutOfRangeException(nameof(maximumSampleVoicesPerStream));
+            throw new ArgumentOutOfRangeException(nameof(maximumSampleVoicesPerUnitStream));
         }
+    }
+
+    private static void ValidateMidiExportSettings(
+        ProjectMidiExportMode mode,
+        ProjectRangeMode rangeMode,
+        long? manualStartTick,
+        long? manualEndTick,
+        ProjectMidiExportTrackSelectionMode trackSelectionMode,
+        ProjectMidiExportRoutingStrategy routing)
+    {
+        if (!Enum.IsDefined(mode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(mode));
+        }
+        if (!Enum.IsDefined(rangeMode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(rangeMode));
+        }
+        if (!Enum.IsDefined(trackSelectionMode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(trackSelectionMode));
+        }
+        if (!Enum.IsDefined(routing))
+        {
+            throw new ArgumentOutOfRangeException(nameof(routing));
+        }
+        bool manualRange = rangeMode == ProjectRangeMode.ManualRange;
+        if (manualRange != (manualStartTick.HasValue && manualEndTick.HasValue)
+            || manualRange && (manualStartTick < 0 || manualEndTick <= manualStartTick)
+            || !manualRange && (manualStartTick.HasValue || manualEndTick.HasValue))
+        {
+            throw new ArgumentException("MIDI Export range fields are inconsistent.");
+        }
+    }
+
+    private static MidiExportSettingsValue SnapshotMidiExportSettings(
+        ExportProjectSettings settings) =>
+        new(
+            settings.Mode,
+            settings.RangeMode,
+            settings.ManualStartTick,
+            settings.ManualEndTick,
+            settings.TrackSelectionMode,
+            settings.Routing,
+            settings.IncludeReadme,
+            settings.TreatWarningsAsErrors);
+
+    private static void RestoreMidiExportSettings(
+        ExportProjectSettings settings,
+        MidiExportSettingsValue value)
+    {
+        settings.Mode = value.Mode;
+        settings.RangeMode = value.RangeMode;
+        settings.ManualStartTick = value.ManualStartTick;
+        settings.ManualEndTick = value.ManualEndTick;
+        settings.TrackSelectionMode = value.TrackSelectionMode;
+        settings.Routing = value.Routing;
+        settings.IncludeReadme = value.IncludeReadme;
+        settings.TreatWarningsAsErrors = value.TreatWarningsAsErrors;
     }
 
     private static void RestorePlaybackSettings(
@@ -165,7 +265,7 @@ public static partial class ProjectDomainEditCommands
             settings.TrackSelectionMode,
             settings.ExplicitLogicalTrackIds.Order().ToArray(),
             settings.SampleRate,
-            settings.MaximumSampleVoicesPerStream);
+            settings.MaximumSampleVoicesPerUnitStream);
 
     private static void RestoreAudioRenderSettings(
         AudioRenderProjectSettings settings,
@@ -179,7 +279,7 @@ public static partial class ProjectDomainEditCommands
         settings.ExplicitLogicalTrackIds.Clear();
         settings.ExplicitLogicalTrackIds.UnionWith(value.ExplicitLogicalTrackIds);
         settings.SampleRate = value.SampleRate;
-        settings.MaximumSampleVoicesPerStream = value.MaximumSampleVoicesPerStream;
+        settings.MaximumSampleVoicesPerUnitStream = value.MaximumSampleVoicesPerUnitStream;
     }
 
     private static bool AudioRenderSettingsEqual(
@@ -192,12 +292,22 @@ public static partial class ProjectDomainEditCommands
         && left.TrackSelectionMode == right.TrackSelectionMode
         && left.ExplicitLogicalTrackIds.SequenceEqual(right.ExplicitLogicalTrackIds)
         && left.SampleRate == right.SampleRate
-        && left.MaximumSampleVoicesPerStream == right.MaximumSampleVoicesPerStream;
+        && left.MaximumSampleVoicesPerUnitStream == right.MaximumSampleVoicesPerUnitStream;
 
     private readonly record struct PlaybackSettingsValue(
         double MasterVolumeDecibels,
         bool LimiterEnabled,
         StopCursorBehavior StopCursorBehavior);
+
+    private readonly record struct MidiExportSettingsValue(
+        ProjectMidiExportMode Mode,
+        ProjectRangeMode RangeMode,
+        long? ManualStartTick,
+        long? ManualEndTick,
+        ProjectMidiExportTrackSelectionMode TrackSelectionMode,
+        ProjectMidiExportRoutingStrategy Routing,
+        bool IncludeReadme,
+        bool TreatWarningsAsErrors);
 
     private sealed record AudioRenderSettingsValue(
         AudioRenderMode Mode,
@@ -207,5 +317,5 @@ public static partial class ProjectDomainEditCommands
         ProjectTrackSelectionMode TrackSelectionMode,
         MidoraId[] ExplicitLogicalTrackIds,
         int SampleRate,
-        int MaximumSampleVoicesPerStream);
+        int MaximumSampleVoicesPerUnitStream);
 }

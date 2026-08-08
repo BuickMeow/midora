@@ -414,8 +414,22 @@ public static partial class Program
 
     private static string GetWorkerPath(string repositoryRoot)
     {
-        string configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name ?? "Debug";
-        return Path.Combine(
+        const string environmentVariable = "MIDORA_AUDIO_WORKER_PATH";
+        string? explicitPath = Environment.GetEnvironmentVariable(environmentVariable);
+        return ResolveWorkerPath(repositoryRoot, FindBuildConfiguration(), explicitPath);
+    }
+
+    internal static string ResolveWorkerPath(
+        string repositoryRoot,
+        string configuration,
+        string? explicitPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(repositoryRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(configuration);
+
+        string selectedPath = !string.IsNullOrWhiteSpace(explicitPath)
+            ? Path.GetFullPath(explicitPath)
+            : Path.Combine(
             repositoryRoot,
             "src",
             "midora-audio",
@@ -423,7 +437,44 @@ public static partial class Program
             "bin",
             configuration,
             "net10.0",
-            "Midora.Audio.Bass.Worker.dll");
+            "win-x64",
+            "publish",
+            "Midora.Audio.Bass.Worker.exe");
+        return RequirePublishedWorker(Path.GetFullPath(selectedPath));
+    }
+
+    private static string FindBuildConfiguration()
+    {
+        for (DirectoryInfo? current = new(AppContext.BaseDirectory);
+             current is not null;
+             current = current.Parent)
+        {
+            if (string.Equals(current.Name, "Debug", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(current.Name, "Release", StringComparison.OrdinalIgnoreCase))
+            {
+                return current.Name;
+            }
+        }
+
+        return "Release";
+    }
+
+    private static string RequirePublishedWorker(string workerPath)
+    {
+        if (!File.Exists(workerPath))
+        {
+            throw new FileNotFoundException(
+                "未找到已发布的 win-x64 Native AOT 音频 Worker。先按人工音频验收文档执行 " +
+                "dotnet publish，或把 MIDORA_AUDIO_WORKER_PATH 设置为已校验的 Worker .exe 绝对路径。",
+                workerPath);
+        }
+        if (!string.Equals(Path.GetExtension(workerPath), ".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException(
+                "人工正式拓扑只接受已发布的 win-x64 Native AOT Worker .exe；managed .dll 只供内部测试入口使用。");
+        }
+
+        return workerPath;
     }
 
     private static string FindRepositoryRoot()

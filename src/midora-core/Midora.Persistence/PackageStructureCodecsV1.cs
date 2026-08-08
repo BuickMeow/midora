@@ -54,7 +54,7 @@ internal static class ProjectCodecV1
         ProjectJsonV1 value = new()
         {
             SchemaVersion = PersistenceContractV1.SchemaVersion,
-            NextStableId = project.NextStableId.ToString("x32"),
+            NextStableId = new StableIdJsonV1(project.NextStableId),
             MetadataPath = MidoraPackagePathsV1.Metadata,
             ConductorTrackPath = MidoraPackagePathsV1.ConductorTrack,
             Settings = new ProjectSettingsPathsJsonV1
@@ -68,19 +68,21 @@ internal static class ProjectCodecV1
                 GlobalEventScopeDefaults = MidoraPackagePathsV1.GlobalEventScopeDefaults
             },
             EventInstrumentFolders = project.EventInstrumentFolders.Select(folder =>
-                new ProjectFolderIndexJsonV1 { Id = folder.Id.ToString(), Name = folder.Name }).ToArray(),
+                new ProjectFolderIndexJsonV1 { Id = new StableIdJsonV1(folder.Id.Value), Name = folder.Name }).ToArray(),
             EventInstruments = project.EventInstruments.Select(instrument =>
                 new ProjectObjectIndexJsonV1
                 {
-                    Id = instrument.Id.ToString(),
+                    Id = new StableIdJsonV1(instrument.Id.Value),
                     Path = $"event-instruments/ei_{instrument.Id}.pb",
                     NameSnapshot = instrument.Name,
-                    FolderId = instrument.LibraryFolderId?.ToString()
+                    FolderId = instrument.LibraryFolderId is MidoraId folderId
+                        ? new StableIdJsonV1(folderId.Value)
+                        : null
                 }).ToArray(),
             LogicalTracks = project.Tracks.Select(track =>
                 new ProjectObjectIndexJsonV1
                 {
-                    Id = track.Id.ToString(),
+                    Id = new StableIdJsonV1(track.Id.Value),
                     Path = $"logical-tracks/lt_{track.Id}.pb",
                     NameSnapshot = track.Name
                 }).ToArray()
@@ -91,13 +93,13 @@ internal static class ProjectCodecV1
             MidoraJsonSerializerContextV1.Default.ProjectJsonV1);
     }
 
-    public static UInt128 GetNextStableId(ProjectJsonV1 value)
+    public static long GetNextStableId(ProjectJsonV1 value)
     {
-        if (!MidoraId.TryParseCanonical(value.NextStableId, out MidoraId id))
+        if (value.NextStableId.Value <= 0)
         {
             throw new InvalidDataException("project.json nextStableId is not canonical.");
         }
-        return id.ToSequence();
+        return value.NextStableId.Value;
     }
 
     private static void Validate(ProjectJsonV1 value)
@@ -127,7 +129,7 @@ internal static class ProjectCodecV1
         {
             throw new InvalidDataException("project.json index arrays cannot be null.");
         }
-        HashSet<string> ids = new(StringComparer.Ordinal);
+        HashSet<StableIdJsonV1> ids = [];
         HashSet<string> folderNames = new(StringComparer.OrdinalIgnoreCase);
         foreach (ProjectFolderIndexJsonV1 folder in value.EventInstrumentFolders)
         {
@@ -140,23 +142,22 @@ internal static class ProjectCodecV1
                 throw new InvalidDataException("project.json Event Instrument folder names are invalid or duplicated.");
             }
         }
-        HashSet<string> folderIds = value.EventInstrumentFolders
+        HashSet<StableIdJsonV1> folderIds = value.EventInstrumentFolders
             .Select(folder => folder.Id)
-            .ToHashSet(StringComparer.Ordinal);
+            .ToHashSet();
         foreach (ProjectObjectIndexJsonV1 instrument in value.EventInstruments)
         {
-            string id = RequireIndexId(instrument?.Id, "eventInstruments.id", ids);
+            StableIdJsonV1 id = RequireIndexId(instrument?.Id, "eventInstruments.id", ids);
             RequireObjectPath(instrument!.Path, $"event-instruments/ei_{id}.pb", "eventInstruments.path");
             PersistenceValueValidationV1.ValidateShortText(instrument.NameSnapshot, "eventInstruments.nameSnapshot");
-            if (instrument.FolderId is not null
-                && (!MidoraId.TryParseCanonical(instrument.FolderId, out _) || !folderIds.Contains(instrument.FolderId)))
+            if (instrument.FolderId is StableIdJsonV1 folderId && !folderIds.Contains(folderId))
             {
                 throw new InvalidDataException("project.json Event Instrument folderId is invalid.");
             }
         }
         foreach (ProjectObjectIndexJsonV1 track in value.LogicalTracks)
         {
-            string id = RequireIndexId(track?.Id, "logicalTracks.id", ids);
+            StableIdJsonV1 id = RequireIndexId(track?.Id, "logicalTracks.id", ids);
             RequireObjectPath(track!.Path, $"logical-tracks/lt_{id}.pb", "logicalTracks.path");
             PersistenceValueValidationV1.ValidateShortText(track.NameSnapshot, "logicalTracks.nameSnapshot");
             if (track.FolderId is not null)
@@ -166,13 +167,16 @@ internal static class ProjectCodecV1
         }
     }
 
-    private static string RequireIndexId(string? value, string fieldName, ISet<string> ids)
+    private static StableIdJsonV1 RequireIndexId(
+        StableIdJsonV1? value,
+        string fieldName,
+        ISet<StableIdJsonV1> ids)
     {
-        if (!MidoraId.TryParseCanonical(value, out _) || !ids.Add(value!))
+        if (value is not StableIdJsonV1 id || id.Value <= 0 || !ids.Add(id))
         {
             throw new InvalidDataException($"project.json {fieldName} is invalid or duplicated.");
         }
-        return value!;
+        return id;
     }
 
     private static void RequirePath(string? actual, string expected, string fieldName)
@@ -227,7 +231,9 @@ internal static class ProjectSettingsCodecV1
 
     private static void Validate(ProjectSettingsJsonV1 value)
     {
-        if (value.SchemaVersion != PersistenceContractV1.SchemaVersion || value.TicksPerQuarterNote <= 0)
+        if (value.SchemaVersion != PersistenceContractV1.SchemaVersion
+            || value.TicksPerQuarterNote is < MidoraProject.MinimumTicksPerQuarterNote
+                or > MidoraProject.MaximumTicksPerQuarterNote)
         {
             throw new InvalidDataException("project-settings.json version or TPQ is invalid.");
         }
@@ -237,22 +243,113 @@ internal static class ProjectSettingsCodecV1
 
 internal static class ExportSettingsCodecV1
 {
-    public static void Parse(ReadOnlySpan<byte> utf8)
+    private const string WholeProject = "whole-project";
+    private const string PerLogicalTrack = "per-logical-track";
+    private const string PerPort = "per-port";
+    private const string ProjectDefaultRange = "project-default-range";
+    private const string ManualRange = "manual-range";
+    private const string AllValidLogicalTracks = "all-valid-logical-tracks";
+    private const string ExplicitAtTaskStart = "explicit-at-task-start";
+    private const string Compact = "compact";
+    private const string Preserve = "preserve";
+
+    public static ExportSettingsJsonV1 Parse(ReadOnlySpan<byte> utf8)
     {
         StrictJsonV1.ValidateInput(utf8);
         ExportSettingsJsonV1 value = JsonSerializer.Deserialize(
             utf8,
             MidoraJsonSerializerContextV1.Default.ExportSettingsJsonV1)
             ?? throw new InvalidDataException("export-settings.json cannot be null.");
-        if (value.SchemaVersion != PersistenceContractV1.SchemaVersion)
-        {
-            throw new InvalidDataException("export-settings.json schemaVersion is not v1.");
-        }
+        Validate(value);
+        return value;
     }
 
-    public static byte[] Serialize() => StrictJsonV1.SerializeWithFinalLf(
-        new ExportSettingsJsonV1 { SchemaVersion = PersistenceContractV1.SchemaVersion },
-        MidoraJsonSerializerContextV1.Default.ExportSettingsJsonV1);
+    public static byte[] Serialize(ExportProjectSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        ExportSettingsJsonV1 value = new()
+        {
+            SchemaVersion = PersistenceContractV1.SchemaVersion,
+            Mode = settings.Mode switch
+            {
+                ProjectMidiExportMode.WholeProject => WholeProject,
+                ProjectMidiExportMode.PerLogicalTrack => PerLogicalTrack,
+                ProjectMidiExportMode.PerPort => PerPort,
+                _ => throw new InvalidDataException("Unknown MIDI Export mode.")
+            },
+            RangeMode = settings.RangeMode switch
+            {
+                ProjectRangeMode.ProjectDefaultRange => ProjectDefaultRange,
+                ProjectRangeMode.ManualRange => ManualRange,
+                _ => throw new InvalidDataException("Unknown MIDI Export range mode.")
+            },
+            ManualStartTick = settings.ManualStartTick,
+            ManualEndTick = settings.ManualEndTick,
+            TrackSelectionMode = settings.TrackSelectionMode switch
+            {
+                ProjectMidiExportTrackSelectionMode.AllValidLogicalTracks => AllValidLogicalTracks,
+                ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart => ExplicitAtTaskStart,
+                _ => throw new InvalidDataException("Unknown MIDI Export Track selection mode.")
+            },
+            Routing = settings.Routing switch
+            {
+                ProjectMidiExportRoutingStrategy.Compact => Compact,
+                ProjectMidiExportRoutingStrategy.Preserve => Preserve,
+                _ => throw new InvalidDataException("Unknown MIDI Export routing strategy.")
+            },
+            IncludeReadme = settings.IncludeReadme,
+            TreatWarningsAsErrors = settings.TreatWarningsAsErrors
+        };
+        Validate(value);
+        return StrictJsonV1.SerializeWithFinalLf(
+            value,
+            MidoraJsonSerializerContextV1.Default.ExportSettingsJsonV1);
+    }
+
+    public static void Restore(ExportProjectSettings settings, ExportSettingsJsonV1 value)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(value);
+        Validate(value);
+        settings.Mode = value.Mode switch
+        {
+            WholeProject => ProjectMidiExportMode.WholeProject,
+            PerLogicalTrack => ProjectMidiExportMode.PerLogicalTrack,
+            _ => ProjectMidiExportMode.PerPort
+        };
+        settings.RangeMode = value.RangeMode == ProjectDefaultRange
+            ? ProjectRangeMode.ProjectDefaultRange
+            : ProjectRangeMode.ManualRange;
+        settings.ManualStartTick = value.ManualStartTick;
+        settings.ManualEndTick = value.ManualEndTick;
+        settings.TrackSelectionMode = value.TrackSelectionMode == AllValidLogicalTracks
+            ? ProjectMidiExportTrackSelectionMode.AllValidLogicalTracks
+            : ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart;
+        settings.Routing = value.Routing == Compact
+            ? ProjectMidiExportRoutingStrategy.Compact
+            : ProjectMidiExportRoutingStrategy.Preserve;
+        settings.IncludeReadme = value.IncludeReadme;
+        settings.TreatWarningsAsErrors = value.TreatWarningsAsErrors;
+    }
+
+    private static void Validate(ExportSettingsJsonV1 value)
+    {
+        if (value.SchemaVersion != PersistenceContractV1.SchemaVersion
+            || value.Mode is not WholeProject and not PerLogicalTrack and not PerPort
+            || value.RangeMode is not ProjectDefaultRange and not ManualRange
+            || value.TrackSelectionMode is not AllValidLogicalTracks and not ExplicitAtTaskStart
+            || value.Routing is not Compact and not Preserve)
+        {
+            throw new InvalidDataException("export-settings.json contains an invalid fixed value.");
+        }
+        bool manualRange = value.RangeMode == ManualRange;
+        if (manualRange != (value.ManualStartTick.HasValue && value.ManualEndTick.HasValue)
+            || manualRange && (value.ManualStartTick < 0 || value.ManualEndTick <= value.ManualStartTick)
+            || !manualRange && (value.ManualStartTick.HasValue || value.ManualEndTick.HasValue))
+        {
+            throw new InvalidDataException("export-settings.json range fields are inconsistent.");
+        }
+    }
 }
 
 internal static class PlaybackSettingsCodecV1
@@ -365,14 +462,14 @@ internal static class AudioRenderSettingsCodecV1
             },
             ExplicitLogicalTrackIds = settings.ExplicitLogicalTrackIds
                 .OrderBy(id => id)
-                .Select(id => id.ToString())
+                .Select(id => new StableIdJsonV1(id.Value))
                 .ToArray(),
             Container = "riff-wave",
             ChannelLayout = "stereo",
             SampleFormat = "interleaved-ieee-float32",
             Endianness = "little-endian",
             SampleRate = settings.SampleRate,
-            MaximumSampleVoicesPerStream = settings.MaximumSampleVoicesPerStream,
+            MaximumSampleVoicesPerUnitStream = settings.MaximumSampleVoicesPerUnitStream,
             TrackFileNamePattern = ProjectOrderNumberAndTrackName
         };
         Validate(value);
@@ -393,13 +490,12 @@ internal static class AudioRenderSettingsCodecV1
             ? ProjectTrackSelectionMode.AllValidLogicalTracks
             : ProjectTrackSelectionMode.ExplicitLogicalTrackIds;
         settings.ExplicitLogicalTrackIds.Clear();
-        foreach (string idText in value.ExplicitLogicalTrackIds)
+        foreach (StableIdJsonV1 idValue in value.ExplicitLogicalTrackIds)
         {
-            _ = MidoraId.TryParseCanonical(idText, out MidoraId id);
-            settings.ExplicitLogicalTrackIds.Add(id);
+            settings.ExplicitLogicalTrackIds.Add(idValue.ToDomain());
         }
         settings.SampleRate = value.SampleRate;
-        settings.MaximumSampleVoicesPerStream = value.MaximumSampleVoicesPerStream;
+        settings.MaximumSampleVoicesPerUnitStream = value.MaximumSampleVoicesPerUnitStream;
     }
 
     private static void Validate(AudioRenderSettingsJsonV1 value)
@@ -415,8 +511,8 @@ internal static class AudioRenderSettingsCodecV1
             || value.TrackFileNamePattern != ProjectOrderNumberAndTrackName
             || value.SampleRate is < AudioRenderProjectSettings.MinimumSampleRate
                 or > AudioRenderProjectSettings.MaximumSampleRate
-            || value.MaximumSampleVoicesPerStream is < AudioRenderProjectSettings.MinimumSampleVoicesPerStream
-                or > AudioRenderProjectSettings.MaximumSampleVoicesPerStreamLimit)
+            || value.MaximumSampleVoicesPerUnitStream is < AudioRenderProjectSettings.MinimumSampleVoicesPerUnitStream
+                or > AudioRenderProjectSettings.MaximumSampleVoicesPerUnitStreamLimit)
         {
             throw new InvalidDataException("audio-render-settings.json contains an invalid fixed or ranged value.");
         }
@@ -431,10 +527,10 @@ internal static class AudioRenderSettingsCodecV1
         {
             throw new InvalidDataException("audio-render-settings.json explicitLogicalTrackIds cannot be null.");
         }
-        HashSet<string> ids = new(StringComparer.Ordinal);
-        foreach (string id in value.ExplicitLogicalTrackIds)
+        HashSet<StableIdJsonV1> ids = [];
+        foreach (StableIdJsonV1 id in value.ExplicitLogicalTrackIds)
         {
-            if (!MidoraId.TryParseCanonical(id, out _) || !ids.Add(id))
+            if (id.Value <= 0 || !ids.Add(id))
             {
                 throw new InvalidDataException("audio-render-settings.json contains an invalid or duplicate Track ID.");
             }

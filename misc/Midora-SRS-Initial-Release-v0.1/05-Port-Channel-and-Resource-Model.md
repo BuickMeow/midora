@@ -62,13 +62,14 @@ Port 数判断属于编译 / 播放上下文解析的重要职责
 初版不得把 Port 创建 / 删除责任交给用户
 ```
 ### 5.1.5 Port 与播放后端的关系
-播放时，编译 / 播放上下文中实际使用的每个 Midora Port 对应一个独立 BASSMIDI Stream。
+播放和音频渲染仍消费 canonical 中最终确定的 Midora Port / Channel 路由，但原生合成粒度不是 Port。每个实际使用的抽象 Channel Unit 使用一个干净的 1-channel BASSMIDI Stream 语义；实际 native Stream 由有界 pool 按生命周期复用。
 系统级含义是：
 ```text
-实际使用的 Midora Port = 独立 synth 实例语义
+canonical Port / Channel = 确定性资源路由与 MIDI 导出地址
+abstract Channel Unit = 独立的单声道 synth 与 raw PCM 缓存语义
 ```
-因此，同号 Channel 在不同 Port 上不应互相污染。
-未被当前编译结果或当前播放 / 渲染上下文使用的 Port，不应强制创建对应 BASSMIDI Stream。
+因此，任何 Unit 之间都不得共享可污染的 MIDI Channel-Wide 状态；物理 Port / Channel 号不得进入抽象 Unit PCM 缓存身份。
+未被当前编译结果或当前播放 / 渲染上下文使用的 Unit，不应强制创建对应 BASSMIDI Stream。
 具体 BASSMIDI Stream 创建、销毁、SF2 加载、混音、buffer 拉取等由 第 13 章《播放与预览》 和实现设计阶段细化。
 ### 5.1.6 Port 与 MIDI 导出的关系
 MIDI 导出系统必须能够表达 Midora 的 Port 概念。
@@ -522,9 +523,9 @@ Channel Unit 使用量 >= 248 时产生资源使用量 Info
 播放、预览和音频渲染依赖编译结果中的 Port-separated MIDI event streams 和 Channel Unit 分配结果。
 播放系统必须遵守：
 ```text
-每个实际使用的 Midora Port 对应一个独立 BASSMIDI Stream
-空闲 Port 不应强制创建 BASSMIDI Stream
-所有实际使用 Port 的 Channel 10 都初始化为 melodic
+每个实际使用的抽象 Channel Unit 使用独立的 1-channel BASSMIDI Stream 语义
+空闲 Unit 不应强制创建 BASSMIDI Stream
+canonical MIDI Channel 10 对应的 Unit 也必须按 melodic 初始化
 同一 Port 内的 Channel-Wide 状态按编译结果生效
 不同 Port 的同号 Channel 不互相污染
 ```

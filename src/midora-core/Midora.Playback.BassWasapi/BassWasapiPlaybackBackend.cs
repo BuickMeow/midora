@@ -27,9 +27,11 @@ internal sealed record BassWasapiPlaybackOptions(
 }
 
 [SupportedOSPlatform("windows")]
-internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
+internal sealed class BassWasapiPlaybackBackend
+    : IRealtimePlaybackBackend, IHeldPreviewRealtimePlaybackBackend
 {
     private readonly BassWasapiPlaybackOptions _options;
+    private string? _selectedDeviceId;
     private BassWasapiOutputDeviceFactory? _factory;
     private AudioOutputDeviceInfo? _device;
     private BassMidiRenderer? _renderer;
@@ -49,6 +51,7 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
     public BassWasapiPlaybackBackend(BassWasapiPlaybackOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _selectedDeviceId = _options.DeviceId;
         if (_options.RenderAheadMilliseconds is < 20 or > 2_000)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "Render-Ahead must be 20–2000 ms.");
@@ -64,7 +67,7 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
 
     public int ActualSampleRate => _actualSampleRate;
     public long PositionFrames => _output?.ConsumedFrameCount ?? 0;
-    public long RenderPositionFrames => _renderer?.PositionFrames ?? PositionFrames;
+    public long RenderPositionFrames => _renderer?.RenderPositionFrames ?? PositionFrames;
     public bool IsBuffering => _ring is not null && !_ring.ProducerCompleted
         && _ring.AvailableFrameCount
             < InitialReleaseAudioRuntimePolicy.WorkFramesForRingCapacity(_ring.CapacityFrameCount);
@@ -75,9 +78,13 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
     public bool DeviceLost => _output?.DeviceLost ?? _lastDeviceLost;
     public bool DefaultDeviceChanged => _output?.DefaultDeviceChanged ?? _lastDefaultDeviceChanged;
     public bool OutputSelectionInvalidated => BassWasapiOutputDevice.IsOutputSelectionInvalidated(
-        _options.DeviceId is null,
+        _selectedDeviceId is null,
         DefaultDeviceChanged,
         DeviceLost);
+    public bool OutputDeviceSelectionRequired => DeviceLost;
+    public string? OutputDeviceSelectionReason => OutputDeviceSelectionRequired
+        ? "The active output device was removed or disabled; the audio output was disconnected."
+        : null;
     public AudioRenderFault RendererFault => _renderer?.Fault ?? _lastRendererFault;
     public AudioOutputDeviceInfo? SelectedDevice => _output?.Info ?? _device;
     public bool IsCompleted => _ring is not null && _ring.ProducerCompleted && _ring.AvailableFrameCount == 0;
@@ -85,7 +92,7 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
         || RendererFault.Code != AudioRenderFaultCode.None;
     public string? FaultDescription => IsFaulted
         ? $"callbackFault={CallbackFaulted}; deviceLost={DeviceLost}; "
-            + $"defaultMappingChanged={_options.DeviceId is null && DefaultDeviceChanged}; "
+            + $"defaultMappingChanged={_selectedDeviceId is null && DefaultDeviceChanged}; "
             + $"producerFault={_ring?.ProducerFaulted == true}; rendererFault={RendererFault}"
         : null;
 
@@ -99,9 +106,9 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
         _factory = new BassWasapiOutputDeviceFactory(
             new BassWasapiAudioOutputDeviceSettings(_options.DeviceBufferRequestMilliseconds));
         IReadOnlyList<AudioOutputDeviceInfo> devices = _factory.GetDevices();
-        _device = _options.DeviceId is null
+        _device = _selectedDeviceId is null
             ? devices.FirstOrDefault(value => value.IsSystemDefault) ?? devices.FirstOrDefault()
-            : devices.FirstOrDefault(value => string.Equals(value.Id, _options.DeviceId, StringComparison.Ordinal));
+            : devices.FirstOrDefault(value => string.Equals(value.Id, _selectedDeviceId, StringComparison.Ordinal));
         if (_device is null)
         {
             throw new MidoraAudioDeviceException("No enabled output device satisfies the selection.");
@@ -188,14 +195,18 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
         {
             return;
         }
+        bool outputDeviceUnavailable = DeviceLost;
         Exception? failure = null;
-        try
+        if (!outputDeviceUnavailable)
         {
-            _output?.Stop(flush);
-        }
-        catch (Exception exception)
-        {
-            failure = CombineFailures(failure, exception);
+            try
+            {
+                _output?.Stop(flush);
+            }
+            catch (Exception exception)
+            {
+                failure = CombineFailures(failure, exception);
+            }
         }
         try
         {
@@ -205,7 +216,9 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
         {
             failure = CombineFailures(failure, exception);
         }
-        failure = CombineFailures(failure, ReleaseActiveResources());
+        failure = CombineFailures(
+            failure,
+            ReleaseActiveResources(tolerateUnavailableOutputCleanup: outputDeviceUnavailable));
         if (failure is not null)
         {
             throw failure;
@@ -218,6 +231,44 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
         BassMidiRenderer renderer = _renderer
             ?? throw new InvalidOperationException("The realtime renderer is not active.");
         renderer.EnqueueMonitoringCommands(commands);
+    }
+
+    public long PauseHeldPreviewAtProducerFrontier(TimeSpan timeout)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        AudioRenderAheadWorker worker = _worker
+            ?? throw new InvalidOperationException("The realtime render-ahead producer is not active.");
+        BassMidiRenderer renderer = _renderer
+            ?? throw new InvalidOperationException("The realtime MIDI renderer is not active.");
+        worker.PauseAtProducerFrontier(timeout);
+        return renderer.RenderPositionFrames;
+    }
+
+    public void ReplaceHeldPreviewFutureAndResume(
+        MidiRenderPlan plan,
+        long producerFrontierFrame,
+        TimeSpan timeout)
+    {
+        _ = timeout;
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        AudioRenderAheadWorker worker = _worker
+            ?? throw new InvalidOperationException("The realtime render-ahead producer is not active.");
+        BassMidiRenderer renderer = _renderer
+            ?? throw new InvalidOperationException("The realtime MIDI renderer is not active.");
+        if (!worker.IsPaused)
+        {
+            throw new InvalidOperationException("The render-ahead producer is not paused.");
+        }
+        renderer.ReplaceFuturePlan(plan, producerFrontierFrame);
+        worker.ResumeFromProducerFrontier();
+    }
+
+    public void ResumeHeldPreviewFromProducerFrontier()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        AudioRenderAheadWorker worker = _worker
+            ?? throw new InvalidOperationException("The realtime render-ahead producer is not active.");
+        worker.ResumeFromProducerFrontier();
     }
 
     public void Reset()
@@ -233,6 +284,34 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
             _device = null;
             _actualSampleRate = 0;
         }
+    }
+
+    public void SelectOutputDevice(string? deviceId)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (deviceId is { Length: 0 })
+        {
+            throw new ArgumentException(
+                "The output device ID must be null for System Default or non-empty.",
+                nameof(deviceId));
+        }
+        if (_output is not null || _worker is not null || _renderer is not null)
+        {
+            throw new InvalidOperationException(
+                "The output device cannot be selected while realtime playback is active.");
+        }
+
+        _selectedDeviceId = deviceId;
+        _factory = null;
+        _device = null;
+        _actualSampleRate = 0;
+        _lastCallbackAllocatedBytes = 0;
+        _lastRenderingAllocatedBytes = 0;
+        _lastUnderrunCount = 0;
+        _lastCallbackFaulted = false;
+        _lastDeviceLost = false;
+        _lastDefaultDeviceChanged = false;
+        _lastRendererFault = AudioRenderFault.None;
     }
 
     public void Dispose()
@@ -251,7 +330,7 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
         }
     }
 
-    private Exception? ReleaseActiveResources()
+    private Exception? ReleaseActiveResources(bool tolerateUnavailableOutputCleanup = false)
     {
         _lastCallbackAllocatedBytes = _output?.CallbackAllocatedBytes ?? _lastCallbackAllocatedBytes;
         _lastRenderingAllocatedBytes = _worker?.RenderingThreadAllocatedBytes ?? _lastRenderingAllocatedBytes;
@@ -267,7 +346,7 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
         try
         {
             output?.Dispose();
-            if (output?.CleanupFaulted == true)
+            if (output?.CleanupFaulted == true && !tolerateUnavailableOutputCleanup)
             {
                 failure = CombineFailures(failure, new MidoraAudioDeviceException(
                     $"BASSWASAPI cleanup failed with BASS error {output.CleanupErrorCode}."));
@@ -275,7 +354,10 @@ internal sealed class BassWasapiPlaybackBackend : IRealtimePlaybackBackend
         }
         catch (Exception exception)
         {
-            failure = CombineFailures(failure, exception);
+            if (!tolerateUnavailableOutputCleanup)
+            {
+                failure = CombineFailures(failure, exception);
+            }
         }
 
         AudioRenderAheadWorker? worker = _worker;

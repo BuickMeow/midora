@@ -7,7 +7,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using Midora.Domain;
-using Midora.Mapping.Contract.V1;
+using Midora.Mapping.Contract.V2;
 
 namespace Midora.Compiler;
 
@@ -54,7 +54,7 @@ internal sealed class MappingEngine : IDisposable
     public double Apply(
         double value,
         IReadOnlyList<ValueMappingStep> steps,
-        in MappingContextV1 context,
+        in MappingContextV2 context,
         IReadOnlyDictionary<MidoraId, double> parameters,
         IReadOnlyDictionary<MidoraId, double> envelopes,
         IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions,
@@ -141,7 +141,7 @@ internal sealed class MappingEngine : IDisposable
     private double EvaluateCSharp(
         ValueMappingStep step,
         double current,
-        in MappingContextV1 context,
+        in MappingContextV2 context,
         IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions)
     {
         try
@@ -151,7 +151,7 @@ internal sealed class MappingEngine : IDisposable
             {
                 throw new MappingException($"Mapping Function '{step.MappingFunctionId}' is unavailable.");
             }
-            MappingContextV1 invocationContext = context with { CurrentValue = current };
+            MappingContextV2 invocationContext = context with { CurrentValue = current };
             return _csharp.GetOrCompile(function)(current, in invocationContext);
         }
         catch (MappingException)
@@ -167,7 +167,7 @@ internal sealed class MappingEngine : IDisposable
     private static double GetSource(
         ValueMappingStep step,
         double current,
-        in MappingContextV1 context,
+        in MappingContextV2 context,
         IReadOnlyDictionary<MidoraId, double> parameters,
         IReadOnlyDictionary<MidoraId, double> envelopes) => step.Source switch
         {
@@ -238,13 +238,13 @@ internal sealed class MappingEngine : IDisposable
 
 internal sealed class CSharpMappingCompiler : IDisposable
 {
-    internal delegate double MappingDelegate(double value, in MappingContextV1 context);
+    internal delegate double MappingDelegate(double value, in MappingContextV2 context);
 
-    internal const string ReferencePackRelativeDirectory = "mapping-reference-pack/v1";
-    internal const string GeneratedTypeName = "MidoraGeneratedMappingV1";
+    internal const string ReferencePackRelativeDirectory = "mapping-reference-pack/v2";
+    internal const string GeneratedTypeName = "MidoraGeneratedMappingV2";
     internal static readonly LanguageVersion FixedLanguageVersion = LanguageVersion.CSharp14;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
-    private static readonly HashSet<string> ContextFieldNames = typeof(MappingContextV1)
+    private static readonly HashSet<string> ContextFieldNames = typeof(MappingContextV2)
         .GetProperties(BindingFlags.Instance | BindingFlags.Public)
         .Select(property => property.Name)
         .ToHashSet(StringComparer.Ordinal);
@@ -340,10 +340,10 @@ internal sealed class CSharpMappingCompiler : IDisposable
     private static void ValidateDefinition(CSharpMappingFunction function)
     {
         ArgumentNullException.ThrowIfNull(function);
-        if (function.AbiVersion != MappingAbiV1.Version)
+        if (function.AbiVersion != MappingAbiV2.Version)
         {
             throw new MappingException(
-                $"Unsupported C# Mapping ABI version {function.AbiVersion}; expected {MappingAbiV1.Version}.");
+                $"Unsupported C# Mapping ABI version {function.AbiVersion}; expected {MappingAbiV2.Version}.");
         }
         if (string.IsNullOrWhiteSpace(function.Body))
         {
@@ -364,7 +364,7 @@ internal sealed class CSharpMappingCompiler : IDisposable
         if (invalidFields.Length != 0)
         {
             throw new MappingException(
-                $"C# Mapping declares unknown ABI v1 context fields: {string.Join(", ", invalidFields)}.");
+                $"C# Mapping declares unknown ABI v2 context fields: {string.Join(", ", invalidFields)}.");
         }
     }
 
@@ -372,7 +372,7 @@ internal sealed class CSharpMappingCompiler : IDisposable
     {
         byte[] input = StrictUtf8.GetBytes(body);
         string bodyHash = Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant();
-        return new(abiVersion, MappingAbiV1.CompilerProfileId, bodyHash);
+        return new(abiVersion, MappingAbiV2.CompilerProfileId, bodyHash);
     }
 
     private static CacheEntry Compile(CacheKey key, string body)
@@ -380,13 +380,13 @@ internal sealed class CSharpMappingCompiler : IDisposable
         string source = $$"""
             #nullable enable
             using System;
-            using Midora.Mapping.Contract.V1;
+            using Midora.Mapping.Contract.V2;
 
             public static class {{GeneratedTypeName}}
             {
-                public static double Transform(double value, in MappingContextV1 context)
+                public static double Transform(double value, in MappingContextV2 context)
                 {
-            #line 1 "mapping-function-v1.cs"
+            #line 1 "mapping-function-v2.cs"
             {{body}}
             #line default
                 }
@@ -399,7 +399,7 @@ internal sealed class CSharpMappingCompiler : IDisposable
         SyntaxTree tree = CSharpSyntaxTree.ParseText(
             SourceText.From(source, Encoding.UTF8),
             parseOptions,
-            "mapping-function-v1.cs");
+            "mapping-function-v2.cs");
         CompilationUnitSyntax root = (CompilationUnitSyntax)tree.GetRoot();
         if (root.Members.Count != 1
             || root.Members[0] is not ClassDeclarationSyntax generatedClass
@@ -408,10 +408,10 @@ internal sealed class CSharpMappingCompiler : IDisposable
             || generatedClass.Members[0] is not MethodDeclarationSyntax)
         {
             return CacheEntry.Failure(
-                "C# Mapping ABI v1 source must be a function body and cannot replace the generated wrapper.");
+                "C# Mapping ABI v2 source must be a function body and cannot replace the generated wrapper.");
         }
 
-        string assemblyName = $"Midora.Mapping.Generated.V1.{key.SourceHash}";
+        string assemblyName = $"Midora.Mapping.Generated.V2.{key.SourceHash}";
         CSharpCompilation compilation = CSharpCompilation.Create(
             assemblyName,
             [tree],
@@ -461,7 +461,7 @@ internal sealed class CSharpMappingCompiler : IDisposable
             ReferencePackRelativeDirectory.Replace('/', Path.DirectorySeparatorChar)));
         if (!Directory.Exists(directory))
         {
-            throw new MappingException($"C# Mapping ABI v1 reference pack is missing: {directory}.");
+            throw new MappingException($"C# Mapping ABI v2 reference pack is missing: {directory}.");
         }
 
         string[] paths = Directory.GetFiles(directory, "*.dll", SearchOption.TopDirectoryOnly)
@@ -470,16 +470,16 @@ internal sealed class CSharpMappingCompiler : IDisposable
             .ToArray();
         if (!paths.Any(path => string.Equals(Path.GetFileName(path), "System.Runtime.dll", StringComparison.Ordinal)))
         {
-            throw new MappingException($"C# Mapping ABI v1 reference pack is incomplete: {directory}.");
+            throw new MappingException($"C# Mapping ABI v2 reference pack is incomplete: {directory}.");
         }
 
         List<MetadataReference> references = paths
             .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
             .ToList();
-        string contractPath = typeof(MappingContextV1).Assembly.Location;
+        string contractPath = typeof(MappingContextV2).Assembly.Location;
         if (string.IsNullOrWhiteSpace(contractPath) || !File.Exists(contractPath))
         {
-            throw new MappingException("C# Mapping ABI v1 contract assembly has no usable file location.");
+            throw new MappingException("C# Mapping ABI v2 contract assembly has no usable file location.");
         }
         references.Add(MetadataReference.CreateFromFile(contractPath));
         return references;
@@ -532,7 +532,7 @@ internal sealed class CSharpMappingCompiler : IDisposable
 
         protected override Assembly? Load(AssemblyName assemblyName)
         {
-            Assembly contract = typeof(MappingContextV1).Assembly;
+            Assembly contract = typeof(MappingContextV2).Assembly;
             return AssemblyName.ReferenceMatchesDefinition(assemblyName, contract.GetName()) ? contract : null;
         }
     }

@@ -18,9 +18,12 @@ internal static class ConductorTrackCodecV1
         return value;
     }
 
-    public static byte[] Serialize(ConductorTrack conductor)
+    public static byte[] Serialize(MidoraProject project)
     {
+        ArgumentNullException.ThrowIfNull(project);
+        ConductorTrack conductor = project.Conductor;
         ArgumentNullException.ThrowIfNull(conductor);
+        ValidateCompatibility(project.TicksPerQuarterNote, conductor.TimeSignatures);
         ConductorTrackJsonV1 value = new()
         {
             SchemaVersion = PersistenceContractV1.SchemaVersion,
@@ -29,7 +32,7 @@ internal static class ConductorTrackCodecV1
                 .ThenBy(item => item.Id)
                 .Select(item => new TempoChangeJsonV1
                 {
-                    Id = item.Id.ToString(),
+                    Id = new StableIdJsonV1(item.Id.Value),
                     Tick = item.Tick,
                     BeatsPerMinute = item.BeatsPerMinute
                 })
@@ -39,7 +42,7 @@ internal static class ConductorTrackCodecV1
                 .ThenBy(item => item.Id)
                 .Select(item => new TimeSignatureChangeJsonV1
                 {
-                    Id = item.Id.ToString(),
+                    Id = new StableIdJsonV1(item.Id.Value),
                     Tick = item.Tick,
                     Numerator = item.Numerator,
                     Denominator = item.Denominator
@@ -50,7 +53,7 @@ internal static class ConductorTrackCodecV1
                 .ThenBy(item => item.Id)
                 .Select(item => new KeySignatureChangeJsonV1
                 {
-                    Id = item.Id.ToString(),
+                    Id = new StableIdJsonV1(item.Id.Value),
                     Tick = item.Tick,
                     SharpsFlats = item.SharpsFlats,
                     IsMinor = item.IsMinor
@@ -61,7 +64,7 @@ internal static class ConductorTrackCodecV1
                 .ThenBy(item => item.Id)
                 .Select(item => new ProjectMarkerJsonV1
                 {
-                    Id = item.Id.ToString(),
+                    Id = new StableIdJsonV1(item.Id.Value),
                     Tick = item.Tick,
                     Name = item.Name
                 })
@@ -70,7 +73,7 @@ internal static class ConductorTrackCodecV1
                 ? null
                 : new ProjectEndMarkerJsonV1
                 {
-                    Id = conductor.EndMarker.Id.ToString(),
+                    Id = new StableIdJsonV1(conductor.EndMarker.Id.Value),
                     Tick = conductor.EndMarker.Tick
                 }
         };
@@ -84,6 +87,7 @@ internal static class ConductorTrackCodecV1
     {
         ArgumentNullException.ThrowIfNull(project);
         Validate(value);
+        ValidateCompatibility(project.TicksPerQuarterNote, value.TimeSignatures);
         ConductorTrack conductor = project.Conductor;
         conductor.Tempos.Clear();
         conductor.TimeSignatures.Clear();
@@ -216,12 +220,42 @@ internal static class ConductorTrackCodecV1
         }
     }
 
-    private static MidoraId ParseId(string? value, string fieldName)
+    private static void ValidateCompatibility(
+        int ticksPerQuarterNote,
+        IEnumerable<TimeSignatureChange> values)
     {
-        if (!MidoraId.TryParseCanonical(value, out MidoraId id))
+        foreach (TimeSignatureChange value in values)
+        {
+            if (!ProjectTimeSignatureRules.IsCompatible(ticksPerQuarterNote, value.Denominator))
+            {
+                throw new InvalidDataException(
+                    $"Time Signature {value.Id} at tick {value.Tick} uses denominator "
+                    + $"{value.Denominator}, which is incompatible with TPQ {ticksPerQuarterNote}.");
+            }
+        }
+    }
+
+    private static void ValidateCompatibility(
+        int ticksPerQuarterNote,
+        IEnumerable<TimeSignatureChangeJsonV1> values)
+    {
+        foreach (TimeSignatureChangeJsonV1 value in values)
+        {
+            if (!ProjectTimeSignatureRules.IsCompatible(ticksPerQuarterNote, value.Denominator))
+            {
+                throw new InvalidDataException(
+                    $"Time Signature {value.Id.Value} at tick {value.Tick} uses denominator "
+                    + $"{value.Denominator}, which is incompatible with TPQ {ticksPerQuarterNote}.");
+            }
+        }
+    }
+
+    private static MidoraId ParseId(StableIdJsonV1? value, string fieldName)
+    {
+        if (value is not StableIdJsonV1 id || id.Value <= 0)
         {
             throw new InvalidDataException($"conductor-track.json {fieldName} is not canonical.");
         }
-        return id;
+        return id.ToDomain();
     }
 }

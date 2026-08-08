@@ -59,7 +59,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         ValidateCommon(
             preparation.SoundFontPath,
             preparation.SampleRate,
-            preparation.MaximumSampleVoicesPerStream,
+            preparation.MaximumSampleVoicesPerUnitStream,
             preparation.MasterVolumeDecibels);
         using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
             $"Midora.Audio.FileProbe.{Guid.NewGuid():N}");
@@ -84,7 +84,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         ValidateCommon(
             request.SoundFontPath,
             request.Plan.SampleRate,
-            request.MaximumSampleVoicesPerStream,
+            request.MaximumSampleVoicesPerUnitStream,
             request.MasterVolumeDecibels);
         string temporaryOutputPath = Path.GetFullPath(request.TemporaryOutputPath);
         string? outputDirectory = Path.GetDirectoryName(temporaryOutputPath);
@@ -102,17 +102,42 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
             $"midora-audio-file-worker-{Guid.NewGuid():N}");
         Directory.CreateDirectory(ownedDirectory);
         string planPath = Path.Combine(ownedDirectory, "compiled-audio-plan.mdap");
+        AudioUnitCacheStaging? cacheStaging = null;
         try
         {
-            MidiRenderPlanFile.Write(planPath, request.Plan);
+            try
+            {
+                cacheStaging = AudioUnitCacheStaging.Create(
+                    request.Plan,
+                    request.AudioCache,
+                    request.SoundFontPath,
+                    _bassNativeDirectory,
+                    request.MaximumSampleVoicesPerUnitStream);
+            }
+            catch (Exception exception) when (exception is IOException
+                or UnauthorizedAccessException
+                or NotSupportedException)
+            {
+                // Offline output remains formal without reusable retention.
+                request.AudioCache?.DisableReusableAudioRetention(
+                    "Reusable audio cache staging failed; new cache misses will be rendered without retention. "
+                        + exception.Message);
+            }
+            MidiRenderPlan plan = cacheStaging?.Plan ?? request.Plan;
+            MidiRenderPlanFile.Write(planPath, plan);
             using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
                 $"Midora.Audio.FileRender.{Guid.NewGuid():N}");
             using Process process = Start(
-                CreateRenderStartInfo(request, control.Name, planPath, temporaryOutputPath));
+                CreateRenderStartInfo(
+                    request,
+                    control.Name,
+                    planPath,
+                    temporaryOutputPath,
+                    cacheStaging?.FilePath));
             AudioWorkerStatus status = await ObserveProcessAsync(
                 process,
                 control,
-                request.Plan.TotalFrameCount,
+                plan.TotalFrameCount,
                 temporaryOutputPath,
                 progress,
                 cancellationToken).ConfigureAwait(false);
@@ -122,13 +147,18 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
                     AudioFileRenderWorkerFailureStage.Finalizing,
                     "The audio worker completed without publishing its authorized temporary WAV target.");
             }
+            if (cacheStaging is not null && request.AudioCache is not null)
+            {
+                cacheStaging.PublishCompleted(request.AudioCache, status.RenderPositionFrame);
+            }
             return new(
-                request.Plan.TotalFrameCount,
+                plan.TotalFrameCount,
                 new FileInfo(temporaryOutputPath).Length,
                 status.RenderingAllocatedBytes);
         }
         finally
         {
+            cacheStaging?.Dispose();
             CleanupOwnedDirectory(ownedDirectory);
         }
     }
@@ -246,7 +276,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         result.ArgumentList.Add(Path.GetFullPath(preparation.SoundFontPath));
         result.ArgumentList.Add(_bassNativeDirectory);
         result.ArgumentList.Add(preparation.SampleRate.ToString(CultureInfo.InvariantCulture));
-        result.ArgumentList.Add(preparation.MaximumSampleVoicesPerStream.ToString(CultureInfo.InvariantCulture));
+        result.ArgumentList.Add(preparation.MaximumSampleVoicesPerUnitStream.ToString(CultureInfo.InvariantCulture));
         AddMasterSettings(result, preparation.MasterVolumeDecibels);
         return result;
     }
@@ -255,7 +285,8 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         AudioFileRenderWorkerRequest request,
         string controlName,
         string planPath,
-        string temporaryOutputPath)
+        string temporaryOutputPath,
+        string? cacheStagingPath)
     {
         ProcessStartInfo result = CreateStartInfo();
         result.ArgumentList.Add("file-render");
@@ -264,8 +295,9 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         result.ArgumentList.Add(Path.GetFullPath(request.SoundFontPath));
         result.ArgumentList.Add(_bassNativeDirectory);
         result.ArgumentList.Add(temporaryOutputPath);
-        result.ArgumentList.Add(request.MaximumSampleVoicesPerStream.ToString(CultureInfo.InvariantCulture));
+        result.ArgumentList.Add(request.MaximumSampleVoicesPerUnitStream.ToString(CultureInfo.InvariantCulture));
         AddMasterSettings(result, request.MasterVolumeDecibels);
+        result.ArgumentList.Add(cacheStagingPath ?? string.Empty);
         return result;
     }
 
@@ -305,7 +337,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
     private static void ValidateCommon(
         string soundFontPath,
         int sampleRate,
-        int maximumSampleVoicesPerStream,
+        int maximumSampleVoicesPerUnitStream,
         float masterVolumeDecibels)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
@@ -317,9 +349,10 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         {
             throw new ArgumentOutOfRangeException(nameof(sampleRate));
         }
-        if (maximumSampleVoicesPerStream is < 1 or > BassMidiPolyphonyConfiguration.MaximumSampleVoiceCount)
+        if (maximumSampleVoicesPerUnitStream is < 1
+            or > BassMidiPolyphonyConfiguration.MaximumSampleVoicesPerUnitStream)
         {
-            throw new ArgumentOutOfRangeException(nameof(maximumSampleVoicesPerStream));
+            throw new ArgumentOutOfRangeException(nameof(maximumSampleVoicesPerUnitStream));
         }
         if (!float.IsFinite(masterVolumeDecibels) || masterVolumeDecibels > 0)
         {

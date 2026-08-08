@@ -89,6 +89,97 @@ public sealed class BoundaryCleanupTests
     }
 
     [Fact]
+    public void HardBoundaryOrdersExactNoteOffThenAllSoundOffThenStateReset()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 0, 11, 80));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 300, 60, 100));
+        _ = CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            new CompilationRequest
+            {
+                Purpose = CompilationPurpose.Range,
+                EndTick = 150
+            });
+
+        CanonicalMidiEvent[] boundary = result.Events.ToArray()
+            .Where(value => value.Tick == 150)
+            .ToArray();
+        int noteOff = Array.FindIndex(boundary, value =>
+            value.Message.MessageType == MidiMessageType.NoteOff);
+        int soundOff = Array.FindIndex(boundary, value =>
+            value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 120);
+        int expressionReset = Array.FindIndex(boundary, value =>
+            value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Role == CanonicalEventRole.Reset);
+
+        Assert.True(noteOff >= 0 && noteOff < soundOff && soundOff < expressionReset);
+        Assert.Equal(SourceOrigin.CompilerBoundaryCleanup, boundary[soundOff].Source.Origin);
+    }
+
+    [Fact]
+    public void SharedAllocationGroupCleansOnlyAfterTheLastOverlappingInstance()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 960);
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        _ = CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
+        _ = CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 120, 240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+        CanonicalMidiEvent[] soundOffs = result.Events.ToArray()
+            .Where(value => value.Message.MessageType == MidiMessageType.ControlChange
+                && value.Message.Byte1 == 120)
+            .ToArray();
+
+        CanonicalMidiEvent soundOff = Assert.Single(soundOffs);
+        Assert.Equal(360, soundOff.Tick);
+        Assert.DoesNotContain(result.Events.ToArray(), value =>
+            value.Tick == 240 && value.Role == CanonicalEventRole.Reset);
+        Assert.Single(result.Allocations.ToArray().Select(value => value.InstanceGroupId).Distinct());
+    }
+
+    [Fact]
+    public void AdjacentAllocationGroupsCleanBeforeTheReplacementStartsOnTheReusedChannel()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 960);
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        _ = CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
+        _ = CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 240, 240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+        CanonicalMidiEvent[] atReuse = result.Events.ToArray()
+            .Where(value => value.Tick == 240)
+            .ToArray();
+        int soundOff = Array.FindIndex(atReuse, value =>
+            value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 120);
+        int noteOn = Array.FindIndex(atReuse, value =>
+            value.Message.MessageType == MidiMessageType.NoteOn
+            && value.Message.Byte2 != 0);
+
+        Assert.True(soundOff >= 0 && soundOff < noteOn);
+        Assert.Equal(atReuse[soundOff].ZeroBasedPort, atReuse[noteOn].ZeroBasedPort);
+        Assert.Equal(atReuse[soundOff].ZeroBasedChannel, atReuse[noteOn].ZeroBasedChannel);
+    }
+
+    [Fact]
+    public void EmptySubVoiceDoesNotEmitAllSoundOff()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        _ = CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.DoesNotContain(result.Events.ToArray(), value =>
+            value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 120);
+    }
+
+    [Fact]
     public void ZeroLengthRangeDoesNotReportRangeExternalEmptySubVoice()
     {
         var fixture = CompilerTestProject.Create();

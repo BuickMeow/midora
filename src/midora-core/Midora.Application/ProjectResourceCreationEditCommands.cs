@@ -1,0 +1,1020 @@
+using Midora.Domain;
+
+namespace Midora.Application;
+
+public static partial class ProjectDomainEditCommands
+{
+    public static IProjectEditCommand CreateSubVoice(
+        MidoraId eventInstrumentId,
+        string? name = null,
+        int? rootNoteOverride = null,
+        int? insertionIndex = null) =>
+        Command("Create SubVoice", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            EnsureSubVoiceCapacity(instrument);
+            string? normalizedName = NormalizeOptionalShortText(name, nameof(name));
+            ValidateRootNoteOverride(rootNoteOverride);
+            int index = insertionIndex ?? instrument.SubVoices.Count;
+            ValidateInsertionIndex(index, instrument.SubVoices.Count, nameof(insertionIndex));
+            return DeferredCreate(
+                EventInstrumentChange(eventInstrumentId),
+                value =>
+                {
+                    SubVoice voice = new(value)
+                    {
+                        Name = normalizedName,
+                        RootNoteOverride = rootNoteOverride
+                    };
+                    instrument.SubVoices.Insert(index, voice);
+                    return voice;
+                },
+                (_, voice) => InsertAt(instrument.SubVoices, index, voice, "SubVoice"),
+                (_, voice) => RemoveRequired(instrument.SubVoices, voice, "SubVoice"));
+        });
+
+    public static IProjectEditCommand DuplicateSubVoice(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        string? name = null) =>
+        Command("Duplicate SubVoice", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            SubVoice source = FindSubVoice(instrument, subVoiceId);
+            EnsureSubVoiceCapacity(instrument);
+            string? normalizedName = name is null
+                ? source.Name
+                : NormalizeOptionalShortText(name, nameof(name));
+            int index = instrument.SubVoices.IndexOf(source) + 1;
+            return DeferredCreate(
+                EventInstrumentChange(eventInstrumentId),
+                value =>
+                {
+                    SubVoice copy = CloneSubVoice(value, source, normalizedName);
+                    instrument.SubVoices.Insert(index, copy);
+                    return copy;
+                },
+                (_, copy) => InsertAt(instrument.SubVoices, index, copy, "SubVoice"),
+                (_, copy) => RemoveRequired(instrument.SubVoices, copy, "SubVoice"));
+        });
+
+    public static IProjectEditCommand CreateTemplateNote(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        long tick,
+        long lengthTicks,
+        int note,
+        int velocity,
+        bool followPitchDelta = true) =>
+        CreateTemplateEvent(
+            "Create template note",
+            eventInstrumentId,
+            subVoiceId,
+            new(
+                TemplateEventKind.Note,
+                tick,
+                lengthTicks,
+                note,
+                velocity,
+                0,
+                true,
+                true,
+                followPitchDelta));
+
+    public static IProjectEditCommand CreateTemplateControlChange(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        long tick,
+        int controller,
+        int value) =>
+        CreateTemplateEvent(
+            "Create template control change",
+            eventInstrumentId,
+            subVoiceId,
+            new(TemplateEventKind.ControlChange, tick, 0, controller, value, 0, true, true, true));
+
+    public static IProjectEditCommand CreateTemplateBank(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        long tick,
+        int? bankMsb,
+        int? bankLsb) =>
+        CreateTemplateEvent(
+            "Create template bank",
+            eventInstrumentId,
+            subVoiceId,
+            new(
+                TemplateEventKind.Bank,
+                tick,
+                0,
+                0,
+                bankMsb ?? 0,
+                bankLsb ?? 0,
+                bankMsb.HasValue,
+                bankLsb.HasValue,
+                true));
+
+    public static IProjectEditCommand CreateTemplateProgram(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        long tick,
+        int program) =>
+        CreateTemplateEvent(
+            "Create template program",
+            eventInstrumentId,
+            subVoiceId,
+            new(TemplateEventKind.Program, tick, 0, 0, program, 0, true, true, true));
+
+    public static IProjectEditCommand CreateTemplatePitchBend(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        long tick,
+        int value) =>
+        CreateTemplateEvent(
+            "Create template pitch bend",
+            eventInstrumentId,
+            subVoiceId,
+            new(TemplateEventKind.PitchBend, tick, 0, 0, value, 0, true, true, true));
+
+    public static IProjectEditCommand CreateTemplateRegisteredParameter(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        long tick,
+        int parameter,
+        int value) =>
+        CreateTemplateEvent(
+            "Create template RPN",
+            eventInstrumentId,
+            subVoiceId,
+            new(TemplateEventKind.RegisteredParameter, tick, 0, parameter, value, 0, true, true, true));
+
+    public static IProjectEditCommand CreateTemplateNonRegisteredParameter(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        long tick,
+        int parameter,
+        int value) =>
+        CreateTemplateEvent(
+            "Create template NRPN",
+            eventInstrumentId,
+            subVoiceId,
+            new(TemplateEventKind.NonRegisteredParameter, tick, 0, parameter, value, 0, true, true, true));
+
+    public static IProjectEditCommand CreateTemplatePitchBendRange(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        long tick,
+        int semitones,
+        int cents) =>
+        CreateTemplateEvent(
+            "Create template pitch bend range",
+            eventInstrumentId,
+            subVoiceId,
+            new(TemplateEventKind.PitchBendRange, tick, 0, 0, semitones, cents, true, true, true));
+
+    public static IProjectEditCommand CreateValueCurve(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        MidiValueTarget target,
+        MappingRounding rounding = MappingRounding.Round,
+        MappingOverflow overflow = MappingOverflow.Fail,
+        int? insertionIndex = null) =>
+        Command("Create value curve", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            _ = ValueCurveTargetRange(target);
+            ValidateIntegerTargetSettings(rounding, overflow);
+            if (voice.Curves.Any(value => value.Target == target))
+            {
+                throw new InvalidOperationException(
+                    "Only one Value Curve is allowed for a MIDI target in a SubVoice.");
+            }
+            int index = insertionIndex ?? voice.Curves.Count;
+            ValidateInsertionIndex(index, voice.Curves.Count, nameof(insertionIndex));
+            return DeferredCreate(
+                EventInstrumentChange(eventInstrumentId),
+                value =>
+                {
+                    ValueCurve curve = new(value) { Target = target };
+                    curve.TargetSettings.Rounding = rounding;
+                    curve.TargetSettings.Overflow = overflow;
+                    voice.Curves.Insert(index, curve);
+                    return curve;
+                },
+                (_, curve) => InsertAt(voice.Curves, index, curve, "Value Curve"),
+                (_, curve) => RemoveRequired(voice.Curves, curve, "Value Curve"));
+        });
+
+    public static IProjectEditCommand CreateValueCurvePoint(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        MidoraId curveId,
+        long tick,
+        double value,
+        CurveInterpolation interpolation = CurveInterpolation.Linear) =>
+        Command("Create value curve point", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            ValueCurve curve = FindValueCurve(voice, curveId);
+            ValidateValueCurvePoint(curve, default, tick, value, interpolation);
+            long oldTemplateLength = instrument.TemplateLengthTicks;
+            long replacementTemplateLength = Math.Max(oldTemplateLength, checked(tick + 1));
+            return DeferredCreate(
+                EventInstrumentChange(eventInstrumentId),
+                owner =>
+                {
+                    CurvePoint point = new(owner, tick, value, interpolation);
+                    InsertValueCurvePoint(curve.Points, point);
+                    instrument.TemplateLengthTicks = replacementTemplateLength;
+                    return point;
+                },
+                (_, point) =>
+                {
+                    InsertValueCurvePoint(curve.Points, point);
+                    instrument.TemplateLengthTicks = replacementTemplateLength;
+                },
+                (_, point) =>
+                {
+                    RemoveRequired(curve.Points, point, "Value Curve point");
+                    instrument.TemplateLengthTicks = oldTemplateLength;
+                });
+        });
+
+    public static IProjectEditCommand CreateLogicalParameter(
+        MidoraId eventInstrumentId,
+        string name,
+        LogicalParameterType type,
+        double minimum,
+        double maximum,
+        double displayMinimum,
+        double displayMaximum,
+        double defaultValue,
+        bool usesExplicitEnumValues = false,
+        int? insertionIndex = null) =>
+        Command("Create logical parameter", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            string normalizedName = NormalizeUniqueLogicalParameterName(instrument, default, name);
+            ValidateLogicalParameterDefinitionCreation(
+                type,
+                minimum,
+                maximum,
+                displayMinimum,
+                displayMaximum,
+                defaultValue);
+            int index = insertionIndex ?? instrument.LogicalParameters.Count;
+            ValidateInsertionIndex(index, instrument.LogicalParameters.Count, nameof(insertionIndex));
+            return DeferredCreate(
+                EventInstrumentChange(eventInstrumentId),
+                owner =>
+                {
+                    LogicalParameterDefinition parameter = new(owner)
+                    {
+                        Name = normalizedName,
+                        Type = type,
+                        Minimum = minimum,
+                        Maximum = maximum,
+                        DisplayMinimum = displayMinimum,
+                        DisplayMaximum = displayMaximum,
+                        DefaultValue = defaultValue,
+                        UsesExplicitEnumValues = usesExplicitEnumValues
+                    };
+                    instrument.LogicalParameters.Insert(index, parameter);
+                    return parameter;
+                },
+                (_, parameter) => InsertAt(
+                    instrument.LogicalParameters,
+                    index,
+                    parameter,
+                    "Logical Parameter"),
+                (_, parameter) => RemoveRequired(
+                    instrument.LogicalParameters,
+                    parameter,
+                    "Logical Parameter"));
+        });
+
+    public static IProjectEditCommand CreateLogicalParameterEnumItem(
+        MidoraId eventInstrumentId,
+        MidoraId parameterId,
+        string name,
+        int? explicitValue = null,
+        int? insertionIndex = null) =>
+        Command("Create logical parameter enum item", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            LogicalParameterDefinition parameter = FindLogicalParameter(instrument, parameterId);
+            if (parameter.Type != LogicalParameterType.Enum)
+            {
+                throw new InvalidOperationException(
+                    "Enum items can only be created for an Enum Logical Parameter.");
+            }
+            string normalizedName = NormalizeUniqueEnumItemName(parameter, default, name);
+            int index = insertionIndex ?? parameter.EnumItems.Count;
+            ValidateInsertionIndex(index, parameter.EnumItems.Count, nameof(insertionIndex));
+            if (!parameter.UsesExplicitEnumValues && index != parameter.EnumItems.Count)
+            {
+                throw new InvalidOperationException(
+                    "Inserting an implicit Enum item before existing items changes their numeric identity; use the atomic Logical Parameter definition migration command.");
+            }
+            int storedValue = parameter.UsesExplicitEnumValues
+                ? explicitValue ?? throw new ArgumentNullException(nameof(explicitValue))
+                : index;
+            if (!parameter.UsesExplicitEnumValues && explicitValue.HasValue)
+            {
+                throw new ArgumentException(
+                    "Implicit Enum items do not accept explicit integer values.",
+                    nameof(explicitValue));
+            }
+            if (parameter.UsesExplicitEnumValues
+                && parameter.EnumItems.Any(value => value.Value == storedValue))
+            {
+                throw new InvalidOperationException(
+                    "Explicit Enum item values must be unique in a Logical Parameter.");
+            }
+            if (storedValue < parameter.Minimum || storedValue > parameter.Maximum)
+            {
+                throw new ArgumentOutOfRangeException(nameof(explicitValue));
+            }
+            return DeferredCreate(
+                EventInstrumentChange(eventInstrumentId),
+                owner =>
+                {
+                    LogicalParameterEnumItem item = new(owner)
+                    {
+                        Name = normalizedName,
+                        Value = storedValue
+                    };
+                    parameter.EnumItems.Insert(index, item);
+                    NormalizeImplicitEnumItemValues(parameter);
+                    return item;
+                },
+                (_, item) =>
+                {
+                    InsertAt(parameter.EnumItems, index, item, "Logical Parameter Enum item");
+                    NormalizeImplicitEnumItemValues(parameter);
+                },
+                (_, item) =>
+                {
+                    RemoveRequired(parameter.EnumItems, item, "Logical Parameter Enum item");
+                    NormalizeImplicitEnumItemValues(parameter);
+                });
+        });
+
+    public static IProjectEditCommand CreateInstrumentEnvelope(
+        MidoraId eventInstrumentId,
+        string? name = null,
+        long delayTicks = 0,
+        long attackTicks = 0,
+        long holdTicks = 0,
+        long decayTicks = 0,
+        double startValue = 0,
+        double peakValue = 1,
+        double sustainValue = 1,
+        long releaseTicks = 0,
+        double endValue = 0,
+        int? insertionIndex = null) =>
+        Command("Create envelope preset", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            if (!instrument.RequiresChannelIsolation)
+            {
+                throw new InvalidOperationException(
+                    "Envelope Presets cannot be created while Per-Note Instance Isolation is disabled.");
+            }
+            string? normalizedName = NormalizeOptionalShortText(name, nameof(name));
+            EnvelopeValue value = new(
+                normalizedName,
+                delayTicks,
+                attackTicks,
+                holdTicks,
+                decayTicks,
+                startValue,
+                peakValue,
+                sustainValue,
+                releaseTicks,
+                endValue);
+            ValidateEnvelopeValue(value);
+            int index = insertionIndex ?? instrument.Envelopes.Count;
+            ValidateInsertionIndex(index, instrument.Envelopes.Count, nameof(insertionIndex));
+            return DeferredCreate(
+                EventInstrumentChange(eventInstrumentId),
+                owner =>
+                {
+                    InstrumentEnvelope envelope = new(owner);
+                    SetEnvelope(envelope, value);
+                    instrument.Envelopes.Insert(index, envelope);
+                    return envelope;
+                },
+                (_, envelope) => InsertAt(
+                    instrument.Envelopes,
+                    index,
+                    envelope,
+                    "Envelope Preset"),
+                (_, envelope) => RemoveRequired(
+                    instrument.Envelopes,
+                    envelope,
+                    "Envelope Preset"));
+        });
+
+    public static IProjectEditCommand CreateMappingFunction(
+        MidoraId eventInstrumentId,
+        string name,
+        string body,
+        IEnumerable<string> declaredContextFields,
+        int? insertionIndex = null)
+    {
+        ArgumentNullException.ThrowIfNull(declaredContextFields);
+        string[] frozenFields = declaredContextFields.ToArray();
+        return Command("Create mapping function", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            string normalizedName = NormalizeUniqueMappingFunctionName(instrument, default, name);
+            string validatedBody = ProjectTextRules.ValidateMappingBody(body, nameof(body));
+            string[] normalizedFields = NormalizeContextFields(frozenFields);
+            MappingFunctionValue value = new(normalizedName, validatedBody, normalizedFields);
+            int index = insertionIndex ?? instrument.MappingFunctions.Count;
+            ValidateInsertionIndex(index, instrument.MappingFunctions.Count, nameof(insertionIndex));
+            return DeferredCreate(
+                EventInstrumentChange(eventInstrumentId),
+                owner =>
+                {
+                    CSharpMappingFunction function = new(owner)
+                    {
+                        Name = normalizedName,
+                        Body = validatedBody
+                    };
+                    SetMappingFunction(function, value);
+                    instrument.MappingFunctions.Insert(index, function);
+                    return function;
+                },
+                (_, function) => InsertAt(
+                    instrument.MappingFunctions,
+                    index,
+                    function,
+                    "Mapping Function"),
+                (_, function) => RemoveRequired(
+                    instrument.MappingFunctions,
+                    function,
+                    "Mapping Function"));
+        });
+    }
+
+    public static IProjectEditCommand DuplicateMappingFunction(
+        MidoraId eventInstrumentId,
+        MidoraId mappingFunctionId,
+        string? name = null) =>
+        Command("Duplicate mapping function", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            CSharpMappingFunction source = FindMappingFunction(instrument, mappingFunctionId);
+            string normalizedName = name is null
+                ? CreateUniqueMappingFunctionCopyName(instrument, source.Name)
+                : NormalizeUniqueMappingFunctionName(instrument, default, name);
+            MappingFunctionValue value = new(
+                normalizedName,
+                source.Body,
+                source.DeclaredContextFields.Order(StringComparer.Ordinal).ToArray());
+            int index = instrument.MappingFunctions.IndexOf(source) + 1;
+            return DeferredCreate(
+                EventInstrumentChange(eventInstrumentId),
+                owner =>
+                {
+                    CSharpMappingFunction copy = new(owner)
+                    {
+                        Name = normalizedName,
+                        Body = source.Body
+                    };
+                    SetMappingFunction(copy, value);
+                    instrument.MappingFunctions.Insert(index, copy);
+                    return copy;
+                },
+                (_, copy) => InsertAt(
+                    instrument.MappingFunctions,
+                    index,
+                    copy,
+                    "Mapping Function"),
+                (_, copy) => RemoveRequired(
+                    instrument.MappingFunctions,
+                    copy,
+                    "Mapping Function"));
+        });
+
+    public static IProjectEditCommand CreateLogicalParameterMapping(
+        MidoraId eventInstrumentId,
+        MidoraId parameterId,
+        MidoraId subVoiceId,
+        MidiValueTarget target,
+        MappingRounding rounding = MappingRounding.Round,
+        MappingOverflow overflow = MappingOverflow.Fail,
+        int? insertionIndex = null) =>
+        Command("Create logical parameter mapping", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            _ = FindLogicalParameter(instrument, parameterId);
+            _ = FindSubVoice(instrument, subVoiceId);
+            ValidateMidiStateValue(target, value: null);
+            ValidateIntegerTargetSettings(rounding, overflow);
+            LogicalParameterMapping[] peers = instrument.ParameterMappings
+                .Where(value => value.SubVoiceId == subVoiceId && value.Target == target)
+                .ToArray();
+            if (peers.Length != 0)
+            {
+                IntegerTargetSettingsValue shared = GetSharedTargetSettings(peers);
+                if (shared != new IntegerTargetSettingsValue(rounding, overflow))
+                {
+                    throw new InvalidOperationException(
+                        "Mappings for the same SubVoice MIDI target must share target settings.");
+                }
+            }
+            int index = insertionIndex ?? instrument.ParameterMappings.Count;
+            ValidateInsertionIndex(index, instrument.ParameterMappings.Count, nameof(insertionIndex));
+            return DeferredCreate(
+                EventInstrumentChange(eventInstrumentId),
+                owner =>
+                {
+                    LogicalParameterMapping mapping = new(owner)
+                    {
+                        ParameterId = parameterId,
+                        SubVoiceId = subVoiceId,
+                        Target = target
+                    };
+                    mapping.TargetSettings.Rounding = rounding;
+                    mapping.TargetSettings.Overflow = overflow;
+                    instrument.ParameterMappings.Insert(index, mapping);
+                    return mapping;
+                },
+                (_, mapping) => InsertAt(
+                    instrument.ParameterMappings,
+                    index,
+                    mapping,
+                    "Logical Parameter Mapping"),
+                (_, mapping) => RemoveRequired(
+                    instrument.ParameterMappings,
+                    mapping,
+                    "Logical Parameter Mapping"));
+        });
+
+    public static IProjectEditCommand CreateMappingStep(
+        MidoraId eventInstrumentId,
+        MidoraId mappingChainId,
+        MappingSource source = MappingSource.CurrentValue,
+        MappingOperation operation = MappingOperation.Add,
+        MidoraId? logicalParameterId = null,
+        MidoraId? envelopeId = null,
+        MidoraId? mappingFunctionId = null,
+        double constant = 0,
+        double sourceMinimum = 0,
+        double sourceMaximum = 1,
+        double targetMinimum = 0,
+        double targetMaximum = 127,
+        MappingInputOverflow inputOverflow = MappingInputOverflow.Clamp,
+        DivideByZeroPolicy divideByZero = DivideByZeroPolicy.TargetMaximum,
+        int? insertionIndex = null) =>
+        Command("Create mapping step", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            MappingChain chain = FindMappingChain(instrument, mappingChainId);
+            MappingStepValue value = new(
+                source,
+                operation,
+                logicalParameterId,
+                envelopeId,
+                mappingFunctionId,
+                constant,
+                sourceMinimum,
+                sourceMaximum,
+                targetMinimum,
+                targetMaximum,
+                inputOverflow,
+                divideByZero);
+            ValidateMappingStepValue(value);
+            int index = insertionIndex ?? chain.Count;
+            ValidateInsertionIndex(index, chain.Count, nameof(insertionIndex));
+            return DeferredCreate(
+                EventInstrumentChange(eventInstrumentId),
+                owner =>
+                {
+                    ValueMappingStep step = new(owner);
+                    SetMappingStep(step, value);
+                    chain.Insert(index, step);
+                    return step;
+                },
+                (_, step) => InsertMappingStepAt(chain, index, step),
+                (_, step) => RemoveMappingStepRequired(chain, step));
+        });
+
+    public static IProjectEditCommand PasteMappingChain(
+        MidoraId eventInstrumentId,
+        MidoraId sourceMappingChainId,
+        MidoraId targetMappingChainId,
+        bool nonEmptyReplacementConfirmed) =>
+        Command("Paste mapping chain", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            MappingChain source = FindMappingChain(instrument, sourceMappingChainId);
+            MappingChain target = FindMappingChain(instrument, targetMappingChainId);
+            if (ReferenceEquals(source, target))
+            {
+                return Prepared(
+                    hasChanges: false,
+                    EventInstrumentChange(eventInstrumentId),
+                    _ => { },
+                    _ => { });
+            }
+            if (target.Count != 0 && !nonEmptyReplacementConfirmed)
+            {
+                throw new InvalidOperationException(
+                    "Replacing a non-empty Mapping Chain requires explicit confirmation.");
+            }
+            MappingChain? replacement = null;
+            return Prepared(
+                hasChanges: true,
+                EventInstrumentChange(eventInstrumentId),
+                owner =>
+                {
+                    if (replacement is null)
+                    {
+                        replacement = new MappingChain(owner);
+                        CopyMappingChain(owner, source, replacement);
+                    }
+                    ReplaceMappingChain(instrument, target, replacement);
+                },
+                _ => ReplaceMappingChain(
+                    instrument,
+                    replacement ?? throw new InvalidOperationException(
+                        "A pasted Mapping Chain cannot be undone before its first Apply."),
+                    target));
+        });
+
+    private static IProjectEditCommand CreateTemplateEvent(
+        string commandName,
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        TemplateEventValue replacement) =>
+        Command(commandName, project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            ValidateTemplateEventCreation(replacement);
+            long requiredBoundary = replacement.Kind == TemplateEventKind.Note
+                ? checked(replacement.Tick + replacement.LengthTicks)
+                : checked(replacement.Tick + 1);
+            long oldTemplateLength = instrument.TemplateLengthTicks;
+            long replacementTemplateLength = Math.Max(oldTemplateLength, requiredBoundary);
+            IndexedTemplateEvent[] conflicts = voice.Events
+                .Select((value, index) => new IndexedTemplateEvent(value, index))
+                .Where(value => TemplateEventsConflict(value.Event, replacement))
+                .ToArray();
+            ValidateRestorableTemplateEventConflicts(conflicts);
+            return DeferredCreate(
+                EventInstrumentChange(eventInstrumentId),
+                owner =>
+                {
+                    TemplateEvent created = new(owner);
+                    SetTemplateEvent(created, replacement);
+                    RemoveTemplateEventConflicts(voice, conflicts);
+                    voice.Events.Add(created);
+                    instrument.TemplateLengthTicks = replacementTemplateLength;
+                    return created;
+                },
+                (_, created) =>
+                {
+                    RemoveTemplateEventConflicts(voice, conflicts);
+                    voice.Events.Add(created);
+                    instrument.TemplateLengthTicks = replacementTemplateLength;
+                },
+                (_, created) =>
+                {
+                    RemoveRequired(voice.Events, created, "Template Event");
+                    RestoreTemplateEventConflicts(voice, conflicts);
+                    instrument.TemplateLengthTicks = oldTemplateLength;
+                });
+        });
+
+    private static void ValidateTemplateEventCreation(TemplateEventValue value)
+    {
+        if (!Enum.IsDefined(value.Kind) || value.Tick < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value));
+        }
+        switch (value.Kind)
+        {
+            case TemplateEventKind.Note:
+                if (value.LengthTicks <= 0 || value.Tick > long.MaxValue - value.LengthTicks)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                }
+                if (value.Number is < 0 or > 127 || value.Value is < 1 or > 127)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                }
+                break;
+            case TemplateEventKind.ControlChange:
+                if (value.Number is < 0 or > 119 or 91 or 93)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                }
+                ValidateSevenBit(value.Value, nameof(value));
+                break;
+            case TemplateEventKind.Bank:
+                if (!value.HasBankMsb && !value.HasBankLsb)
+                {
+                    throw new ArgumentException("Bank must contain an MSB, an LSB, or both.", nameof(value));
+                }
+                if (value.HasBankMsb) ValidateSevenBit(value.Value, nameof(value));
+                if (value.HasBankLsb) ValidateSevenBit(value.SecondaryValue, nameof(value));
+                break;
+            case TemplateEventKind.Program:
+                ValidateSevenBit(value.Value, nameof(value));
+                break;
+            case TemplateEventKind.PitchBend:
+                if (value.Value is < -8192 or > 8191)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                }
+                break;
+            case TemplateEventKind.RegisteredParameter:
+            case TemplateEventKind.NonRegisteredParameter:
+                ValidateFourteenBit(value.Number, nameof(value));
+                ValidateFourteenBit(value.Value, nameof(value));
+                break;
+            case TemplateEventKind.PitchBendRange:
+                ValidateSevenBit(value.Value, nameof(value));
+                if (value.SecondaryValue is < 0 or > 99)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                }
+                break;
+        }
+        if (value.Kind != TemplateEventKind.Note && value.Tick == long.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value));
+        }
+    }
+
+    private static void ValidateRestorableTemplateEventConflicts(
+        IReadOnlyCollection<IndexedTemplateEvent> conflicts)
+    {
+        if (conflicts.Select(value => value.Event.Id).Distinct().Count() != conflicts.Count)
+        {
+            throw new InvalidOperationException(
+                "Conflicting Template Event stable IDs must be unique.");
+        }
+    }
+
+    private static void RemoveTemplateEventConflicts(
+        SubVoice voice,
+        IEnumerable<IndexedTemplateEvent> conflicts)
+    {
+        IndexedTemplateEvent[] frozen = conflicts.ToArray();
+        foreach (IndexedTemplateEvent conflict in frozen)
+        {
+            RequireContains(voice.Events, conflict.Event, "conflicting Template Event");
+        }
+        for (int index = frozen.Length - 1; index >= 0; index--)
+        {
+            RemoveRequired(voice.Events, frozen[index].Event, "conflicting Template Event");
+        }
+    }
+
+    private static void RestoreTemplateEventConflicts(
+        SubVoice voice,
+        IEnumerable<IndexedTemplateEvent> conflicts)
+    {
+        foreach (IndexedTemplateEvent conflict in conflicts)
+        {
+            InsertAt(voice.Events, conflict.Index, conflict.Event, "conflicting Template Event");
+        }
+    }
+
+    private static SubVoice CloneSubVoice(
+        MidoraProject project,
+        SubVoice source,
+        string? name)
+    {
+        SubVoice copy = new(project)
+        {
+            Name = name,
+            RootNoteOverride = source.RootNoteOverride
+        };
+        CopyMidiInitialState(source.InitialState, copy.InitialState);
+        foreach (TemplateEvent sourceEvent in source.Events)
+        {
+            TemplateEvent eventCopy = new(project);
+            SetTemplateEvent(eventCopy, CaptureTemplateEvent(sourceEvent));
+            CopyMappingChain(project, sourceEvent.NumberMappings, eventCopy.NumberMappings);
+            CopyMappingChain(project, sourceEvent.ValueMappings, eventCopy.ValueMappings);
+            CopyMappingChain(project, sourceEvent.SecondaryValueMappings, eventCopy.SecondaryValueMappings);
+            SetTargetSettings(
+                eventCopy.NumberTargetSettings,
+                new(sourceEvent.NumberTargetSettings.Rounding, sourceEvent.NumberTargetSettings.Overflow));
+            SetTargetSettings(
+                eventCopy.ValueTargetSettings,
+                new(sourceEvent.ValueTargetSettings.Rounding, sourceEvent.ValueTargetSettings.Overflow));
+            SetTargetSettings(
+                eventCopy.SecondaryValueTargetSettings,
+                new(
+                    sourceEvent.SecondaryValueTargetSettings.Rounding,
+                    sourceEvent.SecondaryValueTargetSettings.Overflow));
+            copy.Events.Add(eventCopy);
+        }
+        foreach (ValueCurve sourceCurve in source.Curves)
+        {
+            ValueCurve curveCopy = new(project) { Target = sourceCurve.Target };
+            SetTargetSettings(
+                curveCopy.TargetSettings,
+                new(sourceCurve.TargetSettings.Rounding, sourceCurve.TargetSettings.Overflow));
+            foreach (CurvePoint point in sourceCurve.Points)
+            {
+                curveCopy.Points.Add(new CurvePoint(
+                    project,
+                    point.Tick,
+                    point.Value,
+                    point.Interpolation));
+            }
+            copy.Curves.Add(curveCopy);
+        }
+        return copy;
+    }
+
+    private static void CopyMidiInitialState(MidiInitialState source, MidiInitialState target)
+    {
+        target.BankMsb = source.BankMsb;
+        target.BankLsb = source.BankLsb;
+        target.Program = source.Program;
+        target.PitchBend = source.PitchBend;
+        target.PitchBendRangeSemitones = source.PitchBendRangeSemitones;
+        target.PitchBendRangeCents = source.PitchBendRangeCents;
+        foreach ((int key, int value) in source.Controllers) target.Controllers.Add(key, value);
+        foreach ((int key, int value) in source.RegisteredParameters) target.RegisteredParameters.Add(key, value);
+        foreach ((int key, int value) in source.NonRegisteredParameters) target.NonRegisteredParameters.Add(key, value);
+    }
+
+    private static void CopyMappingChain(
+        MidoraProject project,
+        MappingChain source,
+        MappingChain target)
+    {
+        target.IsEnabled = source.IsEnabled;
+        foreach (ValueMappingStep sourceStep in source)
+        {
+            ValueMappingStep step = new(project) { IsEnabled = sourceStep.IsEnabled };
+            SetMappingStep(step, CaptureMappingStep(sourceStep));
+            target.Add(step);
+        }
+    }
+
+    private static void ReplaceMappingChain(
+        EventInstrument instrument,
+        MappingChain expected,
+        MappingChain replacement)
+    {
+        foreach (SubVoice voice in instrument.SubVoices)
+        {
+            foreach (TemplateEvent templateEvent in voice.Events)
+            {
+                if (ReferenceEquals(templateEvent.NumberMappings, expected))
+                {
+                    templateEvent.NumberMappings = replacement;
+                    return;
+                }
+                if (ReferenceEquals(templateEvent.ValueMappings, expected))
+                {
+                    templateEvent.ValueMappings = replacement;
+                    return;
+                }
+                if (ReferenceEquals(templateEvent.SecondaryValueMappings, expected))
+                {
+                    templateEvent.SecondaryValueMappings = replacement;
+                    return;
+                }
+            }
+        }
+        foreach (LogicalParameterMapping mapping in instrument.ParameterMappings)
+        {
+            if (ReferenceEquals(mapping.Steps, expected))
+            {
+                mapping.Steps = replacement;
+                return;
+            }
+        }
+        throw new InvalidOperationException(
+            "The Mapping Chain is no longer attached to the Event Instrument.");
+    }
+
+    private static void InsertValueCurvePoint(List<CurvePoint> points, CurvePoint point)
+    {
+        if (points.Any(value => value.Id == point.Id || value.Tick == point.Tick))
+        {
+            throw new InvalidOperationException(
+                "The Value Curve point ID or tick is already present.");
+        }
+        int index = points.FindIndex(value =>
+            value.Tick > point.Tick
+            || value.Tick == point.Tick && value.Id.CompareTo(point.Id) > 0);
+        points.Insert(index < 0 ? points.Count : index, point);
+    }
+
+    private static void ValidateLogicalParameterDefinitionCreation(
+        LogicalParameterType type,
+        double minimum,
+        double maximum,
+        double displayMinimum,
+        double displayMaximum,
+        double defaultValue)
+    {
+        if (!Enum.IsDefined(type))
+        {
+            throw new ArgumentOutOfRangeException(nameof(type));
+        }
+        ValidateFiniteOrderedRange(minimum, maximum, nameof(minimum));
+        ValidateFiniteOrderedRange(displayMinimum, displayMaximum, nameof(displayMinimum));
+        if (!double.IsFinite(defaultValue) || defaultValue < minimum || defaultValue > maximum)
+        {
+            throw new ArgumentOutOfRangeException(nameof(defaultValue));
+        }
+        if (type is LogicalParameterType.Integer or LogicalParameterType.Enum
+            && (minimum != Math.Truncate(minimum)
+                || maximum != Math.Truncate(maximum)
+                || defaultValue != Math.Truncate(defaultValue)))
+        {
+            throw new ArgumentException(
+                "Integer and Enum Logical Parameters require integer legal range endpoints and default values.");
+        }
+    }
+
+    private static string NormalizeUniqueEnumItemName(
+        LogicalParameterDefinition parameter,
+        MidoraId excludedId,
+        string name)
+    {
+        string normalized = ProjectTextRules.NormalizeShortText(name, allowEmpty: false, nameof(name));
+        if (parameter.EnumItems.Any(value =>
+            value.Id != excludedId
+            && string.Equals(value.Name.Trim(), normalized, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                "An Enum item with the same name already exists in this Logical Parameter.");
+        }
+        return normalized;
+    }
+
+    private static void NormalizeImplicitEnumItemValues(LogicalParameterDefinition parameter)
+    {
+        if (parameter.UsesExplicitEnumValues)
+        {
+            return;
+        }
+        for (int index = 0; index < parameter.EnumItems.Count; index++)
+        {
+            parameter.EnumItems[index].Value = index;
+        }
+    }
+
+    private static string CreateUniqueMappingFunctionCopyName(
+        EventInstrument instrument,
+        string sourceName)
+    {
+        string baseName = ProjectTextRules.NormalizeShortText(
+            $"{sourceName} Copy",
+            allowEmpty: false,
+            nameof(sourceName));
+        string candidate = baseName;
+        for (int suffix = 2; ; suffix++)
+        {
+            if (!instrument.MappingFunctions.Any(value =>
+                string.Equals(value.Name.Trim(), candidate, StringComparison.OrdinalIgnoreCase)))
+            {
+                return candidate;
+            }
+            candidate = ProjectTextRules.NormalizeShortText(
+                $"{baseName} ({suffix})",
+                allowEmpty: false,
+                nameof(sourceName));
+        }
+    }
+
+    private static string? NormalizeOptionalShortText(string? value, string parameterName) =>
+        value is null
+            ? null
+            : ProjectTextRules.NormalizeShortText(value, allowEmpty: true, parameterName);
+
+    private static void EnsureSubVoiceCapacity(EventInstrument instrument)
+    {
+        if (instrument.SubVoices.Count >= 256)
+        {
+            throw new InvalidOperationException(
+                "An Event Instrument cannot contain more than 256 SubVoices.");
+        }
+    }
+
+    private static void ValidateRootNoteOverride(int? rootNoteOverride)
+    {
+        if (rootNoteOverride is < 0 or > 127)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rootNoteOverride));
+        }
+    }
+}

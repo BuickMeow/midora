@@ -5,6 +5,23 @@ namespace Midora.Compiler.Tests;
 public sealed class IncrementalCompilationTests
 {
     [Fact]
+    public void ConductorTimeSignatureWarningMatchesFullCompilation()
+    {
+        var fixture = CompilerTestProject.Create();
+        MidoraCompiler compiler = new();
+        _ = compiler.CompileFull(fixture.Project);
+        fixture.Project.Conductor.TimeSignatures.Add(new(fixture.Project, 1_000, 3, 4));
+
+        CanonicalCompiledResult incremental = compiler.CompileIncremental(
+            fixture.Project,
+            new ProjectChangeSet { AffectsConductor = true });
+        CanonicalCompiledResult full = new MidoraCompiler().CompileFull(fixture.Project);
+
+        AssertFormallyEqual(full, incremental);
+        Assert.Contains(incremental.Diagnostics, value => value.Code == "MIDORA1018");
+    }
+
+    [Fact]
     public void ChangedMiddleSegmentRecompilesDirtyRangeAndReusesConvergedSuffix()
     {
         MultiSegmentFixture fixture = CreateThreeSegmentProject();
@@ -194,6 +211,97 @@ public sealed class IncrementalCompilationTests
         }
     }
 
+    [Theory]
+    [InlineData(0x13579BDF)]
+    [InlineData(0x2468ACE0)]
+    [InlineData(0x4D49444F)]
+    [InlineData(0x52414E47)]
+    public void MixedLegalSourceEditsRemainFormallyEqualAcrossFullAndRangeRequests(int seed)
+    {
+        RichIncrementalFixture fixture = CreateRichIncrementalProject();
+        MidoraCompiler compiler = new();
+        _ = compiler.CompileFull(fixture.Base.Project);
+        Random random = new(seed);
+
+        for (int iteration = 0; iteration < 60; iteration++)
+        {
+            ProjectChangeSet changes;
+            int segmentIndex = random.Next(fixture.Base.Segments.Length);
+            Segment segment = fixture.Base.Segments[segmentIndex];
+            LogicalParameterLane lane = fixture.Lanes[segmentIndex];
+            switch (random.Next(10))
+            {
+                case 0:
+                    fixture.Base.Notes[segmentIndex].Note = random.Next(36, 96);
+                    changes = TrackChange(fixture.Base.Track);
+                    break;
+                case 1:
+                    fixture.Base.Notes[segmentIndex].Velocity = random.Next(1, 128);
+                    changes = TrackChange(fixture.Base.Track);
+                    break;
+                case 2:
+                    lane.Points[1] = lane.Points[1] with
+                    {
+                        Tick = random.Next(60, 181),
+                        Value = random.NextDouble()
+                    };
+                    changes = TrackChange(fixture.Base.Track);
+                    break;
+                case 3:
+                    lane.Points.Reverse();
+                    changes = TrackChange(fixture.Base.Track);
+                    break;
+                case 4:
+                    segment.ContentOffsetTick = random.Next(0, 121);
+                    changes = TrackChange(fixture.Base.Track);
+                    break;
+                case 5:
+                    fixture.TemplateController.Value = random.Next(0, 128);
+                    changes = InstrumentChange(fixture.Base.Instrument);
+                    break;
+                case 6:
+                    fixture.Mapping.TargetSettings.Rounding =
+                        (MappingRounding)random.Next(0, 3);
+                    changes = InstrumentChange(fixture.Base.Instrument);
+                    break;
+                case 7:
+                    fixture.Mapping.Steps[0].TargetMaximum = random.Next(96, 128);
+                    changes = InstrumentChange(fixture.Base.Instrument);
+                    break;
+                case 8:
+                    fixture.Base.Instrument.RootNote = random.Next(48, 73);
+                    changes = InstrumentChange(fixture.Base.Instrument);
+                    break;
+                default:
+                    TempoChange tempo = fixture.Base.Project.Conductor.Tempos[0];
+                    fixture.Base.Project.Conductor.Tempos[0] = tempo with
+                    {
+                        BeatsPerMinute = random.Next(40, 241)
+                    };
+                    changes = new ProjectChangeSet { AffectsConductor = true };
+                    break;
+            }
+
+            CompilationRequest? request = (iteration % 3) == 0
+                ? new CompilationRequest
+                {
+                    Purpose = CompilationPurpose.Range,
+                    StartTick = 100,
+                    EndTick = 1_100,
+                    CollectDebugDiagnostics = (iteration & 1) == 0
+                }
+                : null;
+            CanonicalCompiledResult incremental = request is null
+                ? compiler.CompileIncremental(fixture.Base.Project, changes)
+                : compiler.CompileIncremental(fixture.Base.Project, changes, request);
+            CanonicalCompiledResult full = request is null
+                ? new MidoraCompiler().CompileFull(fixture.Base.Project)
+                : new MidoraCompiler().CompileFull(fixture.Base.Project, request);
+
+            AssertFormallyEqual(full, incremental);
+        }
+    }
+
     private static MultiSegmentFixture CreateThreeSegmentProject()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 360);
@@ -223,10 +331,64 @@ public sealed class IncrementalCompilationTests
             notes);
     }
 
+    private static RichIncrementalFixture CreateRichIncrementalProject()
+    {
+        MultiSegmentFixture fixture = CreateThreeSegmentProject();
+        LogicalParameterDefinition parameter = new(fixture.Project)
+        {
+            Name = "expression",
+            Type = LogicalParameterType.Double,
+            Minimum = 0,
+            Maximum = 1,
+            DefaultValue = 0
+        };
+        fixture.Instrument.LogicalParameters.Add(parameter);
+        LogicalParameterMapping mapping = new(fixture.Project)
+        {
+            ParameterId = parameter.Id,
+            SubVoiceId = fixture.Instrument.SubVoices[0].Id,
+            Target = MidiValueTarget.ControlChange(11)
+        };
+        mapping.Steps.Add(new ValueMappingStep(fixture.Project)
+        {
+            Operation = MappingOperation.Remap,
+            Source = MappingSource.LogicalParameter,
+            LogicalParameterId = parameter.Id,
+            SourceMinimum = 0,
+            SourceMaximum = 1,
+            TargetMinimum = 0,
+            TargetMaximum = 127
+        });
+        mapping.TargetSettings.Overflow = MappingOverflow.Clamp;
+        fixture.Instrument.ParameterMappings.Add(mapping);
+
+        LogicalParameterLane[] lanes = new LogicalParameterLane[fixture.Segments.Length];
+        for (int index = 0; index < fixture.Segments.Length; index++)
+        {
+            LogicalParameterLane lane = new(fixture.Project) { ParameterId = parameter.Id };
+            lane.Points.Add(new CurvePoint(fixture.Project, 0, 0));
+            lane.Points.Add(new CurvePoint(fixture.Project, 120, 0.5));
+            lane.Points.Add(new CurvePoint(fixture.Project, 240, 1));
+            fixture.Segments[index].ParameterLanes.Add(lane);
+            lanes[index] = lane;
+        }
+
+        TemplateEvent controller = TemplateEvent.ControlChange(fixture.Project, 20, 1, 64);
+        fixture.Instrument.SubVoices[0].Events.Add(controller);
+        return new RichIncrementalFixture(fixture, parameter, mapping, lanes, controller);
+    }
+
     private static ProjectChangeSet TrackChange(LogicalTrack track)
     {
         ProjectChangeSet result = new();
         result.TrackIds.Add(track.Id);
+        return result;
+    }
+
+    private static ProjectChangeSet InstrumentChange(EventInstrument instrument)
+    {
+        ProjectChangeSet result = new();
+        result.EventInstrumentIds.Add(instrument.Id);
         return result;
     }
 
@@ -307,4 +469,11 @@ public sealed class IncrementalCompilationTests
         EventInstrument Instrument,
         Segment[] Segments,
         LogicalNote[] Notes);
+
+    private sealed record RichIncrementalFixture(
+        MultiSegmentFixture Base,
+        LogicalParameterDefinition Parameter,
+        LogicalParameterMapping Mapping,
+        LogicalParameterLane[] Lanes,
+        TemplateEvent TemplateController);
 }

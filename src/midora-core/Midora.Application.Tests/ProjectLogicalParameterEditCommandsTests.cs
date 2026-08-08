@@ -11,7 +11,7 @@ public sealed class ProjectLogicalParameterEditCommandsTests
     public void SafeDefinitionPropertiesPreserveIdentityAndUndoExactly()
     {
         Fixture fixture = CreateFixture();
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
         AssertController(compilation.LastAttempt, controller: 1, value: 21, tick: 0);
@@ -170,7 +170,7 @@ public sealed class ProjectLogicalParameterEditCommandsTests
     public void ReferencedParameterDeletePreservesAllBrokenReferencesAndUndoRestoresObject()
     {
         Fixture fixture = CreateFixture();
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 

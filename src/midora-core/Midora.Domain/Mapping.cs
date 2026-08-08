@@ -1,4 +1,4 @@
-using Midora.Mapping.Contract.V1;
+using Midora.Mapping.Contract.V2;
 
 namespace Midora.Domain;
 
@@ -141,7 +141,7 @@ public sealed class CSharpMappingFunction
     public MidoraId Id { get; init; }
     public required string Name { get; set; }
     public required string Body { get; set; }
-    public int AbiVersion { get; set; } = MappingAbiV1.Version;
+    public int AbiVersion { get; set; } = MappingAbiV2.Version;
     public HashSet<string> DeclaredContextFields { get; } = new(StringComparer.Ordinal);
 }
 
@@ -240,6 +240,6 @@ public sealed class LogicalParameterMapping
     public MidoraId ParameterId { get; set; }
     public MidoraId SubVoiceId { get; set; }
     public MidiValueTarget Target { get; set; }
-    public MappingChain Steps { get; }
+    public MappingChain Steps { get; internal set; }
     public MidiIntegerTargetSettings TargetSettings { get; }
 }

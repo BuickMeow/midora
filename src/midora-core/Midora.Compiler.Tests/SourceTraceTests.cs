@@ -212,8 +212,12 @@ public sealed class SourceTraceTests
             value.Tick == result.EndTick
             && value.Role == CanonicalEventRole.Reset).ToArray();
         Assert.NotEmpty(resets);
+        CanonicalMidiEvent soundOff = Assert.Single(resets, value =>
+            value.Message.MessageType == Midora.Midi.MidiMessageType.ControlChange
+            && value.Message.Byte1 == 120);
+        Assert.Equal(SourceOrigin.CompilerBoundaryCleanup, soundOff.Source.Origin);
         Assert.All(
-            resets,
+            resets.Where(value => value != soundOff),
             value => Assert.Equal(SourceOrigin.ProjectResetDefaults, value.Source.Origin));
     }
 

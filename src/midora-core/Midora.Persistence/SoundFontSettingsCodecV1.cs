@@ -42,7 +42,7 @@ internal static class SoundFontSettingsCodecV1
             {
                 SchemaVersion = PersistenceContractV1.SchemaVersion,
                 Mode = EmbeddedMode,
-                ResourceId = embedded.ResourceId.ToString(),
+                ResourceId = new StableIdJsonV1(embedded.ResourceId.Value),
                 OriginalFileName = embedded.OriginalFileName,
                 Sha256 = embedded.Sha256,
                 FileSizeBytes = embedded.FileSizeBytes
@@ -95,10 +95,11 @@ internal static class SoundFontSettingsCodecV1
 
     private static EmbeddedProjectSoundFontReference CreateEmbedded(SoundFontSettingsJsonV1 value)
     {
-        if (!MidoraId.TryParseCanonical(value.ResourceId, out MidoraId resourceId))
+        if (value.ResourceId is not StableIdJsonV1 resourceIdValue || resourceIdValue.Value <= 0)
         {
             throw new InvalidDataException("Embedded SoundFont resourceId is not canonical.");
         }
+        MidoraId resourceId = resourceIdValue.ToDomain();
         try
         {
             return new EmbeddedProjectSoundFontReference(

@@ -1,3 +1,4 @@
+using Midora.Audio;
 using Midora.Compiler;
 using Midora.Domain;
 using Midora.Playback;
@@ -13,7 +14,7 @@ public sealed class ProjectConductorAndSettingsEditCommandsTests
         TempoChange initial = project.Conductor.Tempos[0];
         TempoChange later = new(project, 960, 90m);
         project.Conductor.Tempos.Add(later);
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -55,7 +56,7 @@ public sealed class ProjectConductorAndSettingsEditCommandsTests
         TimeSignatureChange initialSignature = project.Conductor.TimeSignatures[0];
         TimeSignatureChange laterSignature = new(project, 1_920, 3, 4);
         project.Conductor.TimeSignatures.Add(laterSignature);
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -143,7 +144,7 @@ public sealed class ProjectConductorAndSettingsEditCommandsTests
         ProjectMarker first = new(project, 240, "Intro");
         ProjectMarker second = new(project, 240, "Intro");
         project.Conductor.Markers.AddRange([first, second]);
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -173,7 +174,7 @@ public sealed class ProjectConductorAndSettingsEditCommandsTests
         MidoraProject project = new(480);
         project.SetEndMarker(960);
         ProjectEndMarker marker = project.Conductor.EndMarker!;
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -235,6 +236,114 @@ public sealed class ProjectConductorAndSettingsEditCommandsTests
     }
 
     [Fact]
+    public void MidiExportSettingsAreAtomicValidatedAndDoNotChangeCanonicalResult()
+    {
+        MidoraProject project = new(480);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+        long originalFingerprint = compilation.LastAttempt.Fingerprint;
+
+        document.Execute(ProjectDomainEditCommands.UpdateMidiExportSettings(
+            ProjectMidiExportMode.PerPort,
+            ProjectRangeMode.ManualRange,
+            240,
+            3_840,
+            ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart,
+            ProjectMidiExportRoutingStrategy.Preserve,
+            includeReadme: false,
+            treatWarningsAsErrors: true));
+
+        Assert.Equal(ProjectMidiExportMode.PerPort, project.Export.Mode);
+        Assert.Equal(ProjectRangeMode.ManualRange, project.Export.RangeMode);
+        Assert.Equal(240, project.Export.ManualStartTick);
+        Assert.Equal(3_840, project.Export.ManualEndTick);
+        Assert.Equal(
+            ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart,
+            project.Export.TrackSelectionMode);
+        Assert.Equal(ProjectMidiExportRoutingStrategy.Preserve, project.Export.Routing);
+        Assert.False(project.Export.IncludeReadme);
+        Assert.True(project.Export.TreatWarningsAsErrors);
+        Assert.Equal(originalFingerprint, compilation.LastAttempt.Fingerprint);
+        Assert.True(document.IsModified);
+
+        document.Undo();
+
+        Assert.Equal(ProjectMidiExportMode.WholeProject, project.Export.Mode);
+        Assert.Equal(ProjectRangeMode.ProjectDefaultRange, project.Export.RangeMode);
+        Assert.Null(project.Export.ManualStartTick);
+        Assert.Null(project.Export.ManualEndTick);
+        Assert.Equal(
+            ProjectMidiExportTrackSelectionMode.AllValidLogicalTracks,
+            project.Export.TrackSelectionMode);
+        Assert.Equal(ProjectMidiExportRoutingStrategy.Compact, project.Export.Routing);
+        Assert.True(project.Export.IncludeReadme);
+        Assert.False(project.Export.TreatWarningsAsErrors);
+        Assert.Equal(originalFingerprint, compilation.LastAttempt.Fingerprint);
+        Assert.False(document.IsModified);
+    }
+
+    [Fact]
+    public void TimeSignatureCommandsRejectTpqIncompatibleDenominatorAtomically()
+    {
+        MidoraProject project = new(1);
+        TimeSignatureChange initial = project.Conductor.TimeSignatures[0];
+        long nextStableId = project.NextStableId;
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        Assert.Throws<ArgumentException>(() => document.Execute(
+            ProjectDomainEditCommands.CreateTimeSignature(4, 3, 8)));
+        Assert.Throws<ArgumentException>(() => document.Execute(
+            ProjectDomainEditCommands.UpdateTimeSignature(initial.Id, 0, 3, 8)));
+
+        Assert.Equal(nextStableId, project.NextStableId);
+        Assert.Equal([initial], project.Conductor.TimeSignatures);
+        Assert.False(document.IsModified);
+        Assert.False(document.CanUndo);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void MidiExportSettingsRejectInconsistentRangeAndUnknownEnums()
+    {
+        using ProjectCompilationSession compilation = new(new MidoraProject(480));
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        Assert.Throws<ArgumentException>(() => document.Execute(
+            ProjectDomainEditCommands.UpdateMidiExportSettings(
+                ProjectMidiExportMode.WholeProject,
+                ProjectRangeMode.ProjectDefaultRange,
+                0,
+                480,
+                ProjectMidiExportTrackSelectionMode.AllValidLogicalTracks,
+                ProjectMidiExportRoutingStrategy.Compact,
+                true,
+                false)));
+        Assert.Throws<ArgumentException>(() => document.Execute(
+            ProjectDomainEditCommands.UpdateMidiExportSettings(
+                ProjectMidiExportMode.WholeProject,
+                ProjectRangeMode.ManualRange,
+                480,
+                480,
+                ProjectMidiExportTrackSelectionMode.AllValidLogicalTracks,
+                ProjectMidiExportRoutingStrategy.Compact,
+                true,
+                false)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => document.Execute(
+            ProjectDomainEditCommands.UpdateMidiExportSettings(
+                (ProjectMidiExportMode)int.MaxValue,
+                ProjectRangeMode.ProjectDefaultRange,
+                null,
+                null,
+                ProjectMidiExportTrackSelectionMode.AllValidLogicalTracks,
+                ProjectMidiExportRoutingStrategy.Compact,
+                true,
+                false)));
+        Assert.Empty(document.History);
+        Assert.False(document.IsModified);
+    }
+
+    [Fact]
     public void AudioRenderSettingsFreezeExplicitIdsAndUndoExactSnapshot()
     {
         MidoraProject project = CreateProjectWithTracks();
@@ -264,7 +373,7 @@ public sealed class ProjectConductorAndSettingsEditCommandsTests
         Assert.Equal(ProjectTrackSelectionMode.ExplicitLogicalTrackIds, project.AudioRender.TrackSelectionMode);
         Assert.Equal([second.Id], project.AudioRender.ExplicitLogicalTrackIds);
         Assert.Equal(44_100, project.AudioRender.SampleRate);
-        Assert.Equal(1_024, project.AudioRender.MaximumSampleVoicesPerStream);
+        Assert.Equal(1_024, project.AudioRender.MaximumSampleVoicesPerUnitStream);
         Assert.Equal(originalFingerprint, compilation.LastAttempt.Fingerprint);
 
         document.Undo();
@@ -276,8 +385,8 @@ public sealed class ProjectConductorAndSettingsEditCommandsTests
         Assert.Empty(project.AudioRender.ExplicitLogicalTrackIds);
         Assert.Equal(AudioRenderProjectSettings.DefaultSampleRate, project.AudioRender.SampleRate);
         Assert.Equal(
-            AudioRenderProjectSettings.DefaultSampleVoicesPerStream,
-            project.AudioRender.MaximumSampleVoicesPerStream);
+            AudioRenderProjectSettings.DefaultSampleVoicesPerUnitStream,
+            project.AudioRender.MaximumSampleVoicesPerUnitStream);
         Assert.False(document.IsModified);
         Assert.Equal(originalFingerprint, compilation.LastAttempt.Fingerprint);
     }
@@ -327,6 +436,67 @@ public sealed class ProjectConductorAndSettingsEditCommandsTests
             750));
         Assert.Empty(document.History);
         Assert.False(document.IsModified);
+    }
+
+    [Fact]
+    public void AudioRenderVoiceChangeAndHistoryClearAllSessionPcmGenerations()
+    {
+        string cacheRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"midora-offline-voice-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cacheRoot);
+        try
+        {
+            MidoraProject project = CreateProjectWithTracks();
+            using ProjectCompilationSession compilation = new(project);
+            _ = compilation.ConfigureAudioCache(cacheRoot, 4096);
+            ProjectDocumentSession document = PersistedDocument(compilation);
+            string key = AudioCacheSessionStore.ComputeKey([1, 2, 3]);
+            Assert.True(compilation.PublishReusableAudio(key, [4, 5, 6]).Published);
+            string beforeEdit = compilation.AudioCacheSnapshot!.Value.SessionPath;
+            long canonicalFingerprint = compilation.LastAttempt.Fingerprint;
+
+            document.Execute(ProjectDomainEditCommands.UpdateAudioRenderSettings(
+                AudioRenderMode.WholeMix,
+                ProjectRangeMode.ProjectDefaultRange,
+                null,
+                null,
+                ProjectTrackSelectionMode.AllValidLogicalTracks,
+                [],
+                AudioRenderProjectSettings.DefaultSampleRate,
+                AudioRenderProjectSettings.DefaultSampleVoicesPerUnitStream + 1));
+
+            string afterEdit = compilation.AudioCacheSnapshot!.Value.SessionPath;
+            Assert.NotEqual(beforeEdit, afterEdit);
+            Assert.False(Directory.Exists(beforeEdit));
+            Assert.False(compilation.TryReadReusableAudio(key, out _));
+            Assert.Equal(canonicalFingerprint, compilation.LastAttempt.Fingerprint);
+            Assert.True(compilation.PublishReusableAudio(key, [7, 8, 9]).Published);
+
+            document.Undo();
+
+            string afterUndo = compilation.AudioCacheSnapshot!.Value.SessionPath;
+            Assert.NotEqual(afterEdit, afterUndo);
+            Assert.False(Directory.Exists(afterEdit));
+            Assert.False(compilation.TryReadReusableAudio(key, out _));
+            Assert.Equal(canonicalFingerprint, compilation.LastAttempt.Fingerprint);
+            Assert.True(compilation.PublishReusableAudio(key, [10, 11, 12]).Published);
+
+            document.Redo();
+
+            string afterRedo = compilation.AudioCacheSnapshot!.Value.SessionPath;
+            Assert.NotEqual(afterUndo, afterRedo);
+            Assert.False(Directory.Exists(afterUndo));
+            Assert.False(compilation.TryReadReusableAudio(key, out _));
+            Assert.Equal(canonicalFingerprint, compilation.LastAttempt.Fingerprint);
+        }
+        finally
+        {
+            if (Directory.Exists(cacheRoot))
+            {
+                Directory.Delete(cacheRoot, recursive: true);
+            }
+        }
     }
 
     private static IProjectEditCommand AudioSettings(

@@ -110,4 +110,90 @@ public sealed class AudioRenderOutputPlannerTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    [Fact]
+    public void WholeMixRejectsInvalidPathDirectoryTargetAndInvalidForbiddenPath()
+    {
+        string directory = AudioRenderTestProject.CreateOwnedDirectory();
+        try
+        {
+            string directoryTarget = Path.Combine(directory, "mix.wav");
+            Directory.CreateDirectory(directoryTarget);
+
+            AudioRenderFrozenOutputPlan invalidPath = AudioRenderOutputPlanner.PlanWholeMix("\0");
+            AudioRenderFrozenOutputPlan targetIsDirectory =
+                AudioRenderOutputPlanner.PlanWholeMix(directoryTarget);
+            AudioRenderFrozenOutputPlan invalidForbidden = AudioRenderOutputPlanner.PlanWholeMix(
+                Path.Combine(directory, "valid.wav"),
+                ["\0"]);
+
+            Assert.False(invalidPath.Succeeded);
+            Assert.Empty(invalidPath.Targets);
+            Assert.False(targetIsDirectory.Succeeded);
+            Assert.Contains(targetIsDirectory.Diagnostics,
+                value => value.Message.Contains("existing directory", StringComparison.Ordinal));
+            Assert.False(invalidForbidden.Succeeded);
+            Assert.Contains(invalidForbidden.Diagnostics,
+                value => value.Message.Contains("forbidden output target path is invalid", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PerTrackRejectsInvalidDirectoryTopologyAndNoParticipatingTargets()
+    {
+        MidoraProject project = AudioRenderTestProject.Create(("Track", 192, 60));
+        using MidoraCompiler compiler = new();
+        AudioRenderCompilationResult compilation = new AudioRenderCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = AudioRenderMode.PerLogicalTrack,
+            EndTick = 192
+        });
+        string directory = AudioRenderTestProject.CreateOwnedDirectory();
+        try
+        {
+            string fileInsteadOfDirectory = Path.Combine(directory, "not-a-directory");
+            File.WriteAllBytes(fileInsteadOfDirectory, [1]);
+            string directoryTargetRoot = Path.Combine(directory, "target-is-directory");
+            Directory.CreateDirectory(Path.Combine(directoryTargetRoot, "01 - Track.wav"));
+
+            AudioRenderFrozenOutputPlan filePlan = AudioRenderOutputPlanner.PlanLogicalTracks(
+                fileInsteadOfDirectory,
+                compilation.Tracks,
+                project.Tracks.Count);
+            AudioRenderFrozenOutputPlan directoryTargetPlan = AudioRenderOutputPlanner.PlanLogicalTracks(
+                directoryTargetRoot,
+                compilation.Tracks,
+                project.Tracks.Count);
+            AudioRenderFrozenOutputPlan emptyPlan = AudioRenderOutputPlanner.PlanLogicalTracks(
+                Path.Combine(directory, "empty"),
+                compilation.Tracks.Select(value => value with { Participates = false }),
+                project.Tracks.Count);
+            AudioRenderFrozenOutputPlan invalidPathPlan = AudioRenderOutputPlanner.PlanLogicalTracks(
+                "\0",
+                compilation.Tracks,
+                project.Tracks.Count);
+
+            Assert.False(filePlan.Succeeded);
+            Assert.Contains(filePlan.Diagnostics,
+                value => value.Message.Contains("existing file", StringComparison.Ordinal));
+            Assert.False(directoryTargetPlan.Succeeded);
+            Assert.Contains(directoryTargetPlan.Diagnostics,
+                value => value.Message.Contains("existing directory", StringComparison.Ordinal));
+            Assert.False(emptyPlan.Succeeded);
+            Assert.Empty(emptyPlan.Targets);
+            Assert.Contains(emptyPlan.Diagnostics,
+                value => value.Message.Contains("no valid WAV target", StringComparison.Ordinal));
+            Assert.False(invalidPathPlan.Succeeded);
+            Assert.Empty(invalidPathPlan.Targets);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 }

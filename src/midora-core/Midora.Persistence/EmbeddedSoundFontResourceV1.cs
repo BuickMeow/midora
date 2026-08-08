@@ -116,6 +116,19 @@ public sealed class EmbeddedSoundFontResourceV1 : IDisposable, IAsyncDisposable
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(project);
+        await using EmbeddedSoundFontImportCandidateV1 candidate =
+            await EmbeddedSoundFontImportCandidateV1.CreateAsync(
+                selectedSoundFontPath,
+                cancellationToken).ConfigureAwait(false);
+        EmbeddedSoundFontResourceV1 resource = candidate.Bind(project);
+        project.SoundFont.SetReference(resource.Reference);
+        return resource;
+    }
+
+    internal static async Task<EmbeddedSoundFontImportCandidateV1> StageImportAsync(
+        string selectedSoundFontPath,
+        CancellationToken cancellationToken)
+    {
         string sourcePath = NormalizeAbsolutePath(selectedSoundFontPath, nameof(selectedSoundFontPath));
         string originalFileName = Path.GetFileName(sourcePath);
         SoundFontReferenceValidation.ValidateOriginalFileName(originalFileName);
@@ -142,24 +155,12 @@ public sealed class EmbeddedSoundFontResourceV1 : IDisposable, IAsyncDisposable
                 source, destination, cancellationToken).ConfigureAwait(false);
             await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
 
-            MidoraId resourceId = project.SoundFont.SetEmbedded(
-                project,
+            return new EmbeddedSoundFontImportCandidateV1(
                 originalFileName,
                 identity.Sha256,
-                identity.FileSizeBytes);
-            EmbeddedProjectSoundFontReference reference =
-                (EmbeddedProjectSoundFontReference)project.SoundFont.Reference!;
-            if (reference.ResourceId != resourceId)
-            {
-                throw new InvalidOperationException("Embedded SoundFont binding did not preserve its allocated ID.");
-            }
-            return new(
-                reference,
-                EmbeddedSoundFontResourceStatusV1.Available,
+                identity.FileSizeBytes,
                 snapshotPath,
-                directory,
-                identity.Sha256,
-                identity.FileSizeBytes);
+                directory);
         }
         catch
         {
@@ -225,7 +226,7 @@ public sealed class EmbeddedSoundFontResourceV1 : IDisposable, IAsyncDisposable
         }
     }
 
-    private static string NormalizeAbsolutePath(string value, string parameterName)
+    internal static string NormalizeAbsolutePath(string value, string parameterName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
         if (!Path.IsPathFullyQualified(value))
@@ -234,6 +235,72 @@ public sealed class EmbeddedSoundFontResourceV1 : IDisposable, IAsyncDisposable
         }
         return Path.GetFullPath(value);
     }
+}
+
+public sealed class EmbeddedSoundFontImportCandidateV1 : IDisposable, IAsyncDisposable
+{
+    private string? _ownedDirectory;
+
+    internal EmbeddedSoundFontImportCandidateV1(
+        string originalFileName,
+        string sha256,
+        long fileSizeBytes,
+        string resolvedAbsolutePath,
+        string ownedDirectory)
+    {
+        OriginalFileName = originalFileName;
+        Sha256 = sha256;
+        FileSizeBytes = fileSizeBytes;
+        ResolvedAbsolutePath = resolvedAbsolutePath;
+        _ownedDirectory = ownedDirectory;
+    }
+
+    public string OriginalFileName { get; }
+    public string Sha256 { get; }
+    public long FileSizeBytes { get; }
+    public string ResolvedAbsolutePath { get; }
+    public bool IsBound => _ownedDirectory is null;
+
+    public EmbeddedSoundFontResourceV1 Bind(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        string directory = _ownedDirectory
+            ?? throw new InvalidOperationException(
+                "The Embedded SoundFont import candidate has already been bound or disposed.");
+        MidoraId resourceId = project.AllocateStableId();
+        EmbeddedProjectSoundFontReference reference = new(
+            resourceId,
+            OriginalFileName,
+            Sha256,
+            FileSizeBytes);
+        _ownedDirectory = null;
+        return new EmbeddedSoundFontResourceV1(
+            reference,
+            EmbeddedSoundFontResourceStatusV1.Available,
+            ResolvedAbsolutePath,
+            directory,
+            Sha256,
+            FileSizeBytes);
+    }
+
+    public void Dispose()
+    {
+        string? directory = Interlocked.Exchange(ref _ownedDirectory, null);
+        EmbeddedSoundFontResourceV1.TryDeleteDirectory(directory);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    public static Task<EmbeddedSoundFontImportCandidateV1> CreateAsync(
+        string selectedSoundFontPath,
+        CancellationToken cancellationToken = default) =>
+        EmbeddedSoundFontResourceV1.StageImportAsync(
+            selectedSoundFontPath,
+            cancellationToken);
 }
 
 internal sealed record StreamCopyIdentityV1(string Sha256, long FileSizeBytes);

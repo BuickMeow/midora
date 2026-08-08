@@ -75,7 +75,10 @@ public sealed class ApplicationPreferencesStore
                     dto.PlaybackOutputDeviceId,
                     dto.RenderAheadMilliseconds,
                     dto.DeviceBufferRequestMilliseconds,
-                    dto.RealtimeMaximumSampleVoicesPerStream),
+                    dto.RealtimeMaximumSampleVoicesPerUnitStream),
+                new AudioCachePreferences(
+                    dto.AudioCacheRootPath,
+                    dto.MaximumReusableAudioCacheBytes).Normalize(),
                 new ApplicationRecentDirectories(
                     ApplicationPreferences.NormalizeDirectory(recentDirectories.OpenProject),
                     ApplicationPreferences.NormalizeDirectory(recentDirectories.SaveAndSaveCopy),
@@ -127,8 +130,10 @@ public sealed class ApplicationPreferencesStore
                 RenderAheadMilliseconds = preferences.RealtimeAudio.RenderAheadMilliseconds,
                 DeviceBufferRequestMilliseconds =
                     preferences.RealtimeAudio.DeviceBufferRequestMilliseconds,
-                RealtimeMaximumSampleVoicesPerStream =
-                    preferences.RealtimeAudio.MaximumSampleVoicesPerStream,
+                RealtimeMaximumSampleVoicesPerUnitStream =
+                    preferences.RealtimeAudio.MaximumSampleVoicesPerUnitStream,
+                AudioCacheRootPath = preferences.AudioCache.RootPath,
+                MaximumReusableAudioCacheBytes = preferences.AudioCache.MaximumReusableBytes,
                 RecentDirectories = new ApplicationRecentDirectoriesJsonV1
                 {
                     OpenProject = preferences.RecentDirectories.OpenProject,
@@ -210,9 +215,15 @@ internal sealed class ApplicationPreferencesJsonV1
     public int DeviceBufferRequestMilliseconds { get; set; }
 
     [JsonPropertyOrder(4)]
-    public int RealtimeMaximumSampleVoicesPerStream { get; set; }
+    public int RealtimeMaximumSampleVoicesPerUnitStream { get; set; }
 
     [JsonPropertyOrder(5)]
+    public required string AudioCacheRootPath { get; set; }
+
+    [JsonPropertyOrder(6)]
+    public required long MaximumReusableAudioCacheBytes { get; set; }
+
+    [JsonPropertyOrder(7)]
     public ApplicationRecentDirectoriesJsonV1? RecentDirectories { get; set; }
 }
 

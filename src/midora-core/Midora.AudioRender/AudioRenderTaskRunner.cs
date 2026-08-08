@@ -44,7 +44,7 @@ public sealed class AudioRenderTaskRequest
     public required AudioRenderFrozenOutputPlan OutputPlan { get; init; }
     public required AudioRenderSoundFontSnapshot SoundFont { get; init; }
     public required int SampleRate { get; init; }
-    public required int MaximumSampleVoicesPerStream { get; init; }
+    public required int MaximumSampleVoicesPerUnitStream { get; init; }
     public required double MasterVolumeDecibels { get; init; }
     public bool OverwriteAuthorized { get; init; }
 }
@@ -122,6 +122,31 @@ public sealed class AudioRenderTaskRunner
         AudioRenderTaskRequest request,
         IProgress<AudioRenderTaskProgress>? progress = null,
         CancellationToken cancellationToken = default)
+        => await ExecuteCoreAsync(
+            request,
+            audioCache: null,
+            progress,
+            cancellationToken).ConfigureAwait(false);
+
+    public async Task<AudioRenderTaskResult> ExecuteAsync(
+        AudioRenderTaskRequest request,
+        IAudioPcmCacheSessionAccess audioCache,
+        IProgress<AudioRenderTaskProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(audioCache);
+        return await ExecuteCoreAsync(
+            request,
+            audioCache,
+            progress,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<AudioRenderTaskResult> ExecuteCoreAsync(
+        AudioRenderTaskRequest request,
+        IAudioPcmCacheSessionAccess? audioCache,
+        IProgress<AudioRenderTaskProgress>? progress,
+        CancellationToken cancellationToken)
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
         List<AudioRenderDiagnostic> taskDiagnostics = [];
@@ -151,7 +176,7 @@ public sealed class AudioRenderTaskRunner
                 new(
                     request.SoundFont.FrozenPath,
                     request.SampleRate,
-                    request.MaximumSampleVoicesPerStream,
+                    request.MaximumSampleVoicesPerUnitStream,
                     checked((float)request.MasterVolumeDecibels)),
                 cancellationToken).ConfigureAwait(false);
 
@@ -243,8 +268,9 @@ public sealed class AudioRenderTaskRunner
                             output.Plan,
                             request.SoundFont.FrozenPath,
                             temporaryPath,
-                            request.MaximumSampleVoicesPerStream,
-                            checked((float)request.MasterVolumeDecibels)),
+                            request.MaximumSampleVoicesPerUnitStream,
+                            checked((float)request.MasterVolumeDecibels),
+                            audioCache),
                         bridge,
                         cancellationToken).ConfigureAwait(false);
                     WaveFileSize validated = WaveFileValidation.ValidateInitialReleaseFile(
@@ -413,11 +439,11 @@ public sealed class AudioRenderTaskRunner
         {
             throw new ArgumentOutOfRangeException(nameof(request.SampleRate));
         }
-        if (request.MaximumSampleVoicesPerStream
-            is < AudioRenderProjectSettings.MinimumSampleVoicesPerStream
-            or > AudioRenderProjectSettings.MaximumSampleVoicesPerStreamLimit)
+        if (request.MaximumSampleVoicesPerUnitStream
+            is < AudioRenderProjectSettings.MinimumSampleVoicesPerUnitStream
+            or > AudioRenderProjectSettings.MaximumSampleVoicesPerUnitStreamLimit)
         {
-            throw new ArgumentOutOfRangeException(nameof(request.MaximumSampleVoicesPerStream));
+            throw new ArgumentOutOfRangeException(nameof(request.MaximumSampleVoicesPerUnitStream));
         }
         if (!double.IsFinite(request.MasterVolumeDecibels) || request.MasterVolumeDecibels > 0)
         {

@@ -1,4 +1,5 @@
 using Midora.Audio;
+using Midora.Compiler;
 using Midora.Domain;
 using Midora.Persistence;
 using Midora.Playback;
@@ -84,6 +85,91 @@ public sealed class ApplicationTaskCoordinatorTests
         fixture.Coordinator.StopPlayback();
         Assert.False(fixture.Coordinator.IsBusy);
         Assert.False(fixture.Session.EditsLocked);
+    }
+
+    [Fact]
+    public void CoordinatorKeepsHeldPreviewExclusiveThroughGateEndAndCancellation()
+    {
+        using TestContext fixture = TestContext.Create();
+        EventInstrument instrument = fixture.Session.Project.EventInstruments[0];
+
+        fixture.Coordinator.StartHeldEventInstrumentPreview(
+            new EventInstrumentPreviewRequest(instrument.Id, Tempo: 120m));
+
+        Assert.Equal(ApplicationTaskKind.EventInstrumentPreview, fixture.Coordinator.ActiveTaskKind);
+        Assert.True(fixture.Playback.IsHeldPreviewGateOpen);
+        HeldPreviewGateEndReport report = fixture.Coordinator.EndHeldPreviewGate(240);
+        Assert.Equal(240, report.FinalGateLengthTicks);
+        Assert.False(fixture.Playback.IsHeldPreviewGateOpen);
+        Assert.Equal(ApplicationTaskKind.EventInstrumentPreview, fixture.Coordinator.ActiveTaskKind);
+        fixture.Coordinator.StopPlayback();
+
+        fixture.Coordinator.StartHeldEventInstrumentPreview(
+            new EventInstrumentPreviewRequest(instrument.Id, Tempo: 120m));
+        fixture.Coordinator.CancelHeldPreview();
+
+        Assert.Equal(ApplicationTaskKind.None, fixture.Coordinator.ActiveTaskKind);
+        Assert.Equal(ApplicationTaskPhase.Idle, fixture.Coordinator.Phase);
+        Assert.False(fixture.Session.EditsLocked);
+    }
+
+    [Fact]
+    public void DraftNoteCommitSucceedsAfterGateEndAndAlsoWhenPreviewCouldNotStart()
+    {
+        using TestContext fixture = TestContext.Create();
+        LogicalTrack track = fixture.Session.Project.Tracks[0];
+        Segment segment = track.Segments[0];
+        SegmentNotePreviewRequest request = new(
+            track.Id,
+            segment.Id,
+            StartTick: 240,
+            Pitch: 67,
+            Velocity: 105);
+        fixture.Coordinator.StartHeldSegmentNotePreview(request);
+        Assert.True(fixture.Session.EditsLocked);
+        ProjectChangeSet changes = new();
+        changes.TrackIds.Add(track.Id);
+
+        SegmentNotePlacementPreviewCompletion completed =
+            fixture.Coordinator.CompleteSegmentNotePlacement(
+                120,
+                () => fixture.Session.ApplyEdit(
+                    project => project.Tracks[0].Segments[0].Notes.Add(new LogicalNote(project)
+                    {
+                        StartTick = 240,
+                        LengthTicks = 120,
+                        Note = 67,
+                        Velocity = 105
+                    }),
+                    changes));
+
+        Assert.Null(completed.PreviewError);
+        Assert.NotNull(completed.GateEndReport);
+        Assert.False(fixture.Session.EditsLocked);
+        Assert.Contains(fixture.Session.Project.Tracks[0].Segments[0].Notes, value =>
+            value.StartTick == 240 && value.Note == 67);
+        fixture.Coordinator.StopPlayback();
+
+        SegmentNotePreviewRequest invalid = request with { SegmentId = new MidoraId(long.MaxValue) };
+        Exception? previewFailure = fixture.Coordinator.TryStartHeldSegmentNotePreview(invalid);
+        Assert.NotNull(previewFailure);
+        int noteCount = fixture.Session.Project.Tracks[0].Segments[0].Notes.Count;
+        SegmentNotePlacementPreviewCompletion withoutPreview =
+            fixture.Coordinator.CompleteSegmentNotePlacement(
+                60,
+                () => fixture.Session.ApplyEdit(
+                    project => project.Tracks[0].Segments[0].Notes.Add(new LogicalNote(project)
+                    {
+                        StartTick = 480,
+                        LengthTicks = 60,
+                        Note = 69,
+                        Velocity = 100
+                    }),
+                    changes));
+
+        Assert.Null(withoutPreview.GateEndReport);
+        Assert.Null(withoutPreview.PreviewError);
+        Assert.Equal(noteCount + 1, fixture.Session.Project.Tracks[0].Segments[0].Notes.Count);
     }
 
     [Fact]
@@ -448,13 +534,23 @@ public sealed class ApplicationTaskCoordinatorTests
     [Fact]
     public void RealtimePreferencesRequireStoppedIdleStateAndInvalidateSamplePlans()
     {
-        using TestContext fixture = TestContext.Create();
         using TemporaryDirectory directory = new();
+        using TestContext fixture = TestContext.Create();
+        string preferencePath = Path.Combine(directory.Path, "preferences.json");
+        string cacheRoot = Path.Combine(directory.Path, "cache");
+        ApplicationPreferences initial = ApplicationPreferences.Default with
+        {
+            AudioCache = new AudioCachePreferences(cacheRoot, 4096)
+        };
+        Assert.True(new ApplicationPreferencesStore(preferencePath).Save(initial).Succeeded);
         ApplicationPreferencesService preferences = new(
-            new ApplicationPreferencesStore(Path.Combine(directory.Path, "preferences.json")),
+            new ApplicationPreferencesStore(preferencePath),
             fixture.Coordinator,
             fixture.Session);
         MidiRenderPlan originalPlan = fixture.Session.GetOrCreateRenderPlan(48_000);
+        string key = AudioCacheSessionStore.ComputeKey([1, 2, 3]);
+        Assert.True(fixture.Session.PublishReusableAudio(key, [4, 5, 6]).Published);
+        AudioCacheSessionSnapshot originalCache = fixture.Session.AudioCacheSnapshot!.Value;
         int changeEvents = 0;
         preferences.RealtimeAudioPreferencesChanged += (_, _) => changeEvents++;
 
@@ -473,10 +569,55 @@ public sealed class ApplicationTaskCoordinatorTests
         Assert.Equal(1, changeEvents);
         Assert.Equal("device-1", preferences.Current.RealtimeAudio.PlaybackOutputDeviceId);
         Assert.NotSame(originalPlan, fixture.Session.GetOrCreateRenderPlan(48_000));
+        AudioCacheSessionSnapshot replacementCache = fixture.Session.AudioCacheSnapshot!.Value;
+        Assert.NotEqual(originalCache.SessionPath, replacementCache.SessionPath);
+        Assert.False(Directory.Exists(originalCache.SessionPath));
+        Assert.False(fixture.Session.TryReadReusableAudio(key, out _));
         ApplicationPreferencesLoadResult reloaded = new ApplicationPreferencesStore(
-            Path.Combine(directory.Path, "preferences.json")).Load();
+            preferencePath).Load();
         Assert.Null(reloaded.Notice);
         Assert.Equal(preferences.Current, reloaded.Preferences);
+    }
+
+    [Fact]
+    public void AudioCachePreferencesRecreateTheProjectSessionStoreOnlyWhileStopped()
+    {
+        using TemporaryDirectory directory = new();
+        using TestContext fixture = TestContext.Create();
+        string preferencePath = Path.Combine(directory.Path, "preferences.json");
+        string firstRoot = Path.Combine(directory.Path, "cache-a");
+        string secondRoot = Path.Combine(directory.Path, "cache-b");
+        ApplicationPreferences initial = ApplicationPreferences.Default with
+        {
+            AudioCache = new AudioCachePreferences(firstRoot, 4096)
+        };
+        Assert.True(new ApplicationPreferencesStore(preferencePath).Save(initial).Succeeded);
+        ApplicationPreferencesService preferences = new(
+            new ApplicationPreferencesStore(preferencePath),
+            fixture.Coordinator,
+            fixture.Session);
+        AudioCacheSessionSnapshot first = fixture.Session.AudioCacheSnapshot!.Value;
+        string key = AudioCacheSessionStore.ComputeKey([1, 2, 3]);
+        Assert.True(fixture.Session.PublishReusableAudio(key, [4, 5, 6]).Published);
+
+        fixture.Coordinator.StartMainPlayback();
+        ApplicationPreferenceUpdateResult rejected = preferences.UpdateAudioCache(
+            new AudioCachePreferences(secondRoot, 0));
+        Assert.Equal(
+            ApplicationPreferenceUpdateStatus.RejectedPlaybackNotStopped,
+            rejected.Status);
+        Assert.Equal(first.SessionPath, fixture.Session.AudioCacheSnapshot!.Value.SessionPath);
+        fixture.Coordinator.StopPlayback();
+
+        ApplicationPreferenceUpdateResult applied = preferences.UpdateAudioCache(
+            new AudioCachePreferences(secondRoot, 0));
+        AudioCacheSessionSnapshot second = fixture.Session.AudioCacheSnapshot!.Value;
+
+        Assert.True(applied.Succeeded);
+        Assert.Equal(Path.GetFullPath(secondRoot), second.RootPath);
+        Assert.Equal(AudioCacheRetentionState.DisabledByPreference, second.RetentionState);
+        Assert.False(Directory.Exists(first.SessionPath));
+        Assert.False(fixture.Session.TryReadReusableAudio(key, out _));
     }
 
     [Fact]
@@ -647,7 +788,8 @@ public sealed class ApplicationTaskCoordinatorTests
         return project;
     }
 
-    private sealed class FakeBackend : IRealtimePlaybackBackend
+    private sealed class FakeBackend
+        : IRealtimePlaybackBackend, IHeldPreviewRealtimePlaybackBackend
     {
         public int ActualSampleRate => 48_000;
         public long PositionFrames { get; private set; }
@@ -656,8 +798,11 @@ public sealed class ApplicationTaskCoordinatorTests
         public bool IsCompleted => false;
         public bool IsFaulted => false;
         public string? FaultDescription => null;
+        public bool OutputDeviceSelectionRequired => false;
+        public string? OutputDeviceSelectionReason => null;
         public int StopCount { get; private set; }
         public bool ThrowOnStop { get; set; }
+        public bool HeldProducerPaused { get; private set; }
 
         public int Prepare() => ActualSampleRate;
 
@@ -670,6 +815,25 @@ public sealed class ApplicationTaskCoordinatorTests
         {
         }
 
+        public long PauseHeldPreviewAtProducerFrontier(TimeSpan timeout)
+        {
+            HeldProducerPaused = true;
+            return RenderPositionFrames;
+        }
+
+        public void ReplaceHeldPreviewFutureAndResume(
+            MidiRenderPlan plan,
+            long producerFrontierFrame,
+            TimeSpan timeout)
+        {
+            HeldProducerPaused = false;
+        }
+
+        public void ResumeHeldPreviewFromProducerFrontier()
+        {
+            HeldProducerPaused = false;
+        }
+
         public void Stop(bool flush)
         {
             StopCount++;
@@ -680,6 +844,10 @@ public sealed class ApplicationTaskCoordinatorTests
         }
 
         public void Reset()
+        {
+        }
+
+        public void SelectOutputDevice(string? deviceId)
         {
         }
 

@@ -296,7 +296,7 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
         startInfo.ArgumentList.Add(planPath);
         startInfo.ArgumentList.Add(soundFontPath);
         startInfo.ArgumentList.Add(nativeDirectory);
-        startInfo.ArgumentList.Add(rendererSettings.MaximumSampleVoiceCount.ToString(CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add(rendererSettings.MaximumSampleVoicesPerUnitStream.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(rendererSettings.MaximumWorkFrameCount.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(masterSettings.VolumeDecibels.ToString("R", CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(masterSettings.LimiterCeiling.ToString("R", CultureInfo.InvariantCulture));

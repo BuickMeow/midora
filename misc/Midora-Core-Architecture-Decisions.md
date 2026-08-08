@@ -101,7 +101,7 @@ Conductor、范围、Track/SubVoice 选择和 End Marker 不混入 Segment 缓�
 
 这是为本轮端到端试听采用的明确候选，不是 SRS 已规定规则。它替代“各调用点自行截断”的隐式行为，并保证相同输入、采样率和运行时下稳定、单调。正式发布前仍需用极端 Tempo、长时间累计和所有合法采样率的 ADR 测试向量确认或升级。
 
-## 6. ADR-CORE-005（已接受，17A）：C# Mapping ABI v1
+## 6. ADR-CORE-005（已接受，17A；已由 ADR-CORE-035 取代）：C# Mapping ABI v1
 
 决定：初版 C# Mapping Function 使用版本化的 `Midora C# Mapping ABI v1`。Project 源数据只保存 `abiVersion = 1`、函数体源码和声明的 Context 字段；编译产物、程序集和缓存不进入 `.midora`。
 
@@ -472,3 +472,45 @@ Requirement trace：输入为当前打开 `ProjectCompilationSession`、四类 P
 本机文件使用 source-generated UTF-8 JSON v1、未知/重复字段拒绝、1 MiB 读取上限及同目录 flush 后原子 move/replace。读取损坏时返回空列表和非 Project notice；写入失败保持内存及磁盘旧列表。不存在的路径仍保留并投影当前可用状态，以支持临时断开的可移动磁盘或网络位置；只在用户明确移除或清空时删除。路径不做大小写修正、存在性过滤、符号链接解析或 Project 内容探测。
 
 Requirement trace：输入为成功激活的持久化 Project 绝对路径、现有本机 MRU 和显式移除/清空请求；正式输出为确定顺序、有界、原子发布的本机列表及当前 `File.Exists` 可用投影。边界是成功激活后才记录、大小写路径同一、最多 10 项、离线路径不自动丢弃。MRU、可用投影、notice 和绝对路径不进入 `.midora`、Project、Modified、Undo/Redo 或 canonical；明确非目标是云同步、跨用户/跨设备列表、时间戳、固定/分组、扫描式内容验证及 WPF 菜单展示。
+
+## 37. ADR-CORE-035（已接受，Q-NUI-024/Q-NUI-025）：单 `long` 稳定 ID 与 Mapping ABI v2
+
+决定：Project 内所有对象类型共享一个以单个 C# `long` 为核心的 `MidoraId` 值类型和持久化单调分配器。合法值为 `1..long.MaxValue`；default/零和负值非法。分配器不补缺、不复用，现存对象全局唯一且小于 `NextStableId`；到达 `long.MaxValue` 时在分配前结构化失败。ID 只表示身份，不以数值推断用户顺序、创建顺序或同 tick 事件顺序。
+
+开发期 `.midora` v1 契约直接修订：JSON ID 与 `nextStableId` 使用原始 token 匹配 `[1-9][0-9]*` 的十进制 integer；对象文件名使用相同值的 invariant 十进制 ASCII，无符号、无前导零；protobuf 删除嵌套 high/low `StableId`，在每个既有外层 ID 字段号上直接使用标量 `int64`。读取器拒绝零、负值、非 canonical token/文件名和溢出。旧 128-bit v1 未冻结、未发布，不提供迁移、兼容读取或双写分支；schema、descriptor 和 golden bytes 作为同一开发期 v1 资产重建。
+
+C# Mapping 内部 ABI 从 v1 升级为 v2，签名为 `double Transform(double value, in MappingContextV2 context)`；`MappingStableIdV2` 只含单个 `long Value`，default 值表示无来源，其余值必须为正。Project 新建 Mapping Function 写 `abiVersion = 2`，正式编译器只消费 v2；v1 契约不作为兼容运行分支保留。Roslyn 5.3.0、C# 14、`Microsoft.NETCore.App.Ref 10.0.10`、独立只读契约、确定性 source-hash identity、当前修订 collectible AssemblyLoadContext 缓存和非 sandbox 边界保持不变。
+
+Requirement trace：输入为 Project 分配状态、对象身份/引用、Mapping Context、JSON/protobuf/路径及开发期 v1 schema 资产；正式输出为无 Guid/UInt128/high-low 转换的单 `long` Domain/Compiler/Mapping/持久化全链。边界为正值、全局唯一、小于 `NextStableId`、分配耗尽、严格 token/wire/path 一致性、ABI v2 快照和确定性重开。稳定 ID 与分配器属于 Project 源数据；compiled source trace、Mapping 程序集/缓存及解析路径属于派生或运行时状态。明确非目标是跨 Project 全局身份、随机/分布式生成、128-bit 迁移、JavaScript Number 精度兼容层、根据 ID 数值建立业务优先级或同时运行 Mapping ABI v1/v2。
+
+## 38. ADR-CORE-036（已接受，Q-NUI-023）：Project TPQ 与 SMF division 共用 15-bit 正整数范围
+
+决定：初版 Project TPQ 的唯一合法范围为 `1..32767`，默认仍为 192，且只在创建 Project 时确定。Domain 构造、New Project admission、Semantic Validation、开发期 `project-settings-v1.schema.json` 与严格 JSON codec 使用同一边界。因为 v1 尚未冻结或发布，原先接受到 `Int32.MaxValue` 的开发资产直接修订，不建立 v2、高 TPQ 兼容读取或迁移分支。
+
+MIDI Export 继续把 Project TPQ 原值写入 SMF Type 1 division，不缩放 tick、不重采样、不允许导出时替换 TPQ。越界输入在 Project 创建或打开阶段失败，因此正式内存 Project 不会进入“可播放但永久不可导出”的高 TPQ 状态。
+
+Requirement trace：输入为新建请求和 `settings/project-settings.json` 的 TPQ；正式输出为可被 Compiler、Playback、MIDI Export 与 Audio Render 共同消费的固定 Project 时间基准。边界是 1/32767 接受，0/32768/`Int32.MaxValue` 拒绝，默认 192；失败发生在写文件、SoundFont 验证或建立活动 Project 之前。TPQ 属于 Project 源数据并持久化；换算缓存属于运行时。明确非目标是创建后修改 TPQ、自动 tick 重映射、SMPTE division 或旧高 TPQ v1 迁移。
+
+## 39. ADR-CORE-037（已接受，Q-NUI-003）：Project MIDI Export Settings 开发期 v1 完整快照
+
+决定：`ExportProjectSettings` 保存 Mode、Range、Track Selection 策略、Routing、Include Readme 与 Treat Warnings As Errors。默认固定为 Whole Project、Project Default Range、All Valid Logical Tracks、Compact、`includeReadme=true`、`treatWarningsAsErrors=false`。Manual Range 才保存成对且满足 `0 <= startTick < endTick` 的边界。Explicit 策略只表示任务开始时要求显式选择，不持久化具体 Track ID；该集合与输出/覆盖路径继续只属于一次性冻结任务。
+
+开发期 `export-settings.json` v1 直接增加必填字段，不创建 v2 或 v1→v2 迁移器。缺失、hash 不符或字段损坏仍服从 ordinary settings 恢复规则：用上述当前默认值恢复，产生 Error 并标记 Modified。设置变更由单个 History 命令原子执行和撤销，因其只影响未来 MIDI Export 请求而使用空 compilation change set，不改变当前 canonical fingerprint。
+
+Requirement trace：输入为 Project 默认设置编辑及 v1 settings JSON；正式输出为可确定初始化一次性 MIDI Export 参数的 Project 源快照。边界是枚举严格、Manual 字段成对、默认值固定、具体 Track ID 与绝对路径禁止持久化。该对象属于 Project/Modified/Undo/Redo；冻结选择、输出路径、覆盖授权和运行进度属于任务运行时。明确非目标是把最近导出参数自动写回 Project、保存本机路径、持久化显式 Track 集合或从设置层重解释 canonical 内容。
+
+## 40. ADR-CORE-038（已接受，Q-NUI-005）：分配型 History 命令的会话高水位与稳定 Redo 身份
+
+决定：所有会分配稳定 ID 的正式创建、复制和 Split 命令在首次 Apply 时构造完整对象图；Undo 只移除或恢复对象图，不回退 `nextStableId`；Redo 重新挂接同一对象实例与相同 ID，不重新分配。撤销后建立新分支会丢弃旧 Redo entry，但 allocator 继续从更高值分配。构造或编译失败期间已经取得的 ID 同样烧掉，避免当前会话内身份复用；失败不留下可见对象或 History entry。
+
+History 的保存点身份只比较可撤销 Project 状态，不把 allocator 的瞬态空洞单独视为 Modified。因此创建后 Undo 回保存点可以恢复 clean；以后发生其他编辑并保存时，当前高水位随 `project.json.nextStableId` 一并持久化。关闭 otherwise-clean Project 时，未持久化、无存活对象且无存活 redo history 的身份随会话消失；不另建 Project 外 allocator 存储。
+
+Requirement trace：输入为当前 Project、高水位、创建/复制/Split 参数和 History cursor；正式输出为唯一的新对象图及可稳定 Undo/Redo 的身份。边界是 first Apply 分配、Undo 高水位不退、Redo 不分配、新分支只升高、失败不留对象、保存写当前高水位。对象与 allocator 属于 Project 源数据；History 栈不持久化。明确非目标是回收 ID、跨 Project 全局 allocator、把瞬态空洞单独强制保存或让创建绕过统一 History/编译事务。
+
+## 41. ADR-CORE-039（已接受，Q-NUI-009）：Logical Parameter Definition 与引用 Lane 原子迁移
+
+决定：任何会改变 Logical Parameter 类型、Enum 数值身份/显式模式/顺序/成员或使既有 default、Enum item、Lane Point 失效的 legal range 编辑，都使用完整目标 Definition 计划，并与全 Project 所有引用同一 Parameter ID 的 Lane 形成单个 History entry。调用方必须显式选择 `Clamp` 或 `DiscardInvalidValues`；目标为 Enum 时还必须确认整数接近不表示语义等价。普通重命名、display range、合法 default 与不失效的范围编辑继续使用轻量命令。
+
+转换统一复用 Q-NUI-007：Double→Integer/Enum 按 Away From Zero；Clamp 先限 legal range，Enum 再选最近已定义值且等距选较小值；Discard 删除转换后不合法点；目标 Enum 的保留点强制 Step。Curve Point 和保留 Enum item 的稳定 ID 不变；新增 Enum item 仅首次 Apply 分配，Undo 高水位不退，Redo 恢复同一 item。Definition、Enum items、所有 Lane 与编译 change set 一次提交/回滚，不允许暴露中间非法对象图。
+
+Requirement trace：输入为当前 Definition、完整目标 Definition/有序 Enum 集合、显式迁移策略、Enum 确认和全 Project Lane；正式输出为稳定 ID 可追踪且 Full/Incremental 等价的新源图。边界是目标 Enum 非空、名称/值/default 合法、existing item ID 属于当前 Definition、失败前尽量零分配、编译失败完整回滚。迁移结果属于 Project 源数据；策略与确认只属于一次命令，不持久化。明确非目标是按名称重绑、静默 Clamp、生成新 Point ID、逐 Lane 留下半迁移状态或保证 Enum 音乐语义等价。

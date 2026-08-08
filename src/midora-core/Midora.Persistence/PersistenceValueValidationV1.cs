@@ -1,26 +1,25 @@
 using System.Globalization;
 using System.Text;
+using Midora.Domain;
 
 namespace Midora.Persistence;
 
 internal static class PersistenceValueValidationV1
 {
-    public static void ValidateStableId(ulong high, ulong low, string fieldName)
+    public static void ValidateStableId(long value, string fieldName)
     {
-        if (high == 0 && low == 0)
+        if (value <= 0)
         {
-            throw new InvalidDataException($"{fieldName} stable ID zero is reserved.");
+            throw new InvalidDataException($"{fieldName} stable ID must be positive.");
         }
     }
 
     public static void ValidateStableIdText(string value, string fieldName)
     {
         ArgumentNullException.ThrowIfNull(value);
-        if (value.Length != 32
-            || value.All(character => character == '0')
-            || value.Any(character => character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
+        if (!MidoraId.TryParseCanonical(value, out _))
         {
-            throw new InvalidDataException($"{fieldName} is not a canonical nonzero stable ID.");
+            throw new InvalidDataException($"{fieldName} is not a canonical positive decimal stable ID.");
         }
     }
 

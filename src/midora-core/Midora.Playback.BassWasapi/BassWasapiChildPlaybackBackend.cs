@@ -21,10 +21,21 @@ public sealed record BassWasapiChildPlaybackOptions(
 /// and the native callback for the complete active session.
 /// </summary>
 [SupportedOSPlatform("windows")]
-public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
+public sealed class BassWasapiChildPlaybackBackend
+    : IRealtimePlaybackBackend,
+      IHeldPreviewRealtimePlaybackBackend,
+      IRealtimePlaybackCacheBackend,
+      IBufferingRecoveryRealtimePlaybackBackend
 {
     private readonly BassWasapiChildPlaybackOptions _options;
+    private string? _selectedDeviceId;
     private BassMidiAudioWorkerSession? _session;
+    private IRealtimePlaybackCacheStore? _audioCache;
+    private RealtimePlaybackCacheMode _nextPlaybackCacheMode;
+    private AudioCacheSessionStore.AudioRecoverySpool? _nextRecoverySpool;
+    private AudioCacheSessionStore.AudioRecoverySpool? _activeRecoverySpool;
+    private long _nextRecoveryMemoryFrameCapacity;
+    private long _activeRecoveryMemoryFrameCapacity;
     private int _actualSampleRate;
     private int _actualDeviceBufferFrameCount;
     private AudioWorkerStatus _lastStatus;
@@ -35,6 +46,7 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
     public BassWasapiChildPlaybackBackend(BassWasapiChildPlaybackOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _selectedDeviceId = _options.DeviceId;
         if (_options.RenderAheadMilliseconds is < 20 or > 2_000)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "Render-Ahead must be 20-2000 ms.");
@@ -89,6 +101,16 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
 
     public bool IsCompleted => CurrentStatus.State == AudioWorkerState.Completed;
 
+    public bool OutputDeviceSelectionRequired =>
+        CurrentStatus.State == AudioWorkerState.OutputDeviceUnavailable;
+
+    public string? OutputDeviceSelectionReason => OutputDeviceSelectionRequired
+        ? "The active output device was removed or disabled; the audio output was disconnected."
+        : null;
+
+    public bool HasBufferingRecoveryStorage => _activeRecoverySpool is not null
+        || _activeRecoveryMemoryFrameCapacity > 0;
+
     public bool IsFaulted
     {
         get
@@ -122,7 +144,7 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
         BassMidiAudioWorkerProbeResult result = BassMidiAudioWorkerSession.Probe(
             _options.WorkerPath,
             _options.BassNativeDirectory,
-            _options.DeviceId,
+            _selectedDeviceId,
             _options.DeviceBufferRequestMilliseconds,
             _options.PreparingTimeout);
         _actualSampleRate = result.ActualSampleRate;
@@ -148,17 +170,101 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
             _options.MasterSettings.LimiterCeiling,
             _options.MasterSettings.LimiterReleaseMilliseconds,
             master.LimiterEnabled);
-        _session = new BassMidiAudioWorkerSession(
-            plan,
-            soundFontPath,
-            _options.RendererSettings,
-            masterSettings,
-            _options.RenderAheadMilliseconds,
-            _options.DeviceBufferRequestMilliseconds,
-            _options.DeviceId,
-            _options.WorkerPath,
-            _options.BassNativeDirectory,
-            _options.PreparingTimeout);
+        RealtimePlaybackCacheMode cacheMode = _nextPlaybackCacheMode;
+        IRealtimePlaybackCacheStore? cache = cacheMode == RealtimePlaybackCacheMode.Disabled
+            ? null
+            : _audioCache;
+        _nextPlaybackCacheMode = RealtimePlaybackCacheMode.Disabled;
+        _activeRecoverySpool = _nextRecoverySpool;
+        _nextRecoverySpool = null;
+        _activeRecoveryMemoryFrameCapacity = _nextRecoveryMemoryFrameCapacity;
+        _nextRecoveryMemoryFrameCapacity = 0;
+        try
+        {
+            _session = new BassMidiAudioWorkerSession(
+                plan,
+                soundFontPath,
+                _options.RendererSettings,
+                masterSettings,
+                _options.RenderAheadMilliseconds,
+                _options.DeviceBufferRequestMilliseconds,
+                _selectedDeviceId,
+                _options.WorkerPath,
+                _options.BassNativeDirectory,
+                _options.PreparingTimeout,
+                cache,
+                _activeRecoverySpool?.Path,
+                _activeRecoveryMemoryFrameCapacity,
+                cacheMode == RealtimePlaybackCacheMode.UnitPcmAndPlaybackSpan);
+        }
+        catch
+        {
+            _activeRecoverySpool?.Dispose();
+            _activeRecoverySpool = null;
+            _activeRecoveryMemoryFrameCapacity = 0;
+            throw;
+        }
+    }
+
+    public void SetAudioCacheStore(IRealtimePlaybackCacheStore cacheStore)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(cacheStore);
+        if (_session is not null)
+        {
+            throw new InvalidOperationException(
+                "The audio cache store cannot change while the Worker is active.");
+        }
+        _audioCache = cacheStore;
+    }
+
+    public void SetNextPlaybackCacheMode(RealtimePlaybackCacheMode mode)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_session is not null)
+        {
+            throw new InvalidOperationException(
+                "The next playback cache policy cannot change while the Worker is active.");
+        }
+        if (!Enum.IsDefined(mode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(mode));
+        }
+        _nextPlaybackCacheMode = mode;
+    }
+
+    public void SetNextBufferingRecoveryStorage(
+        AudioCacheSessionStore.AudioRecoverySpool? recoverySpool,
+        long memoryFallbackFrameCapacity)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_session is not null)
+        {
+            throw new InvalidOperationException(
+                "Buffering recovery storage cannot change while the Worker is active.");
+        }
+        if (memoryFallbackFrameCapacity < 0
+            || recoverySpool is not null && memoryFallbackFrameCapacity != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(memoryFallbackFrameCapacity));
+        }
+        _nextRecoverySpool?.Dispose();
+        _nextRecoverySpool = recoverySpool;
+        _nextRecoveryMemoryFrameCapacity = memoryFallbackFrameCapacity;
+    }
+
+    public void BeginBufferingRecovery(long recoveryEndFrame)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_activeRecoverySpool is null && _activeRecoveryMemoryFrameCapacity <= 0)
+        {
+            throw new AudioRecoveryStorageUnavailableException(
+                "The complete Buffering recovery interval has no reserved spool.",
+                new IOException("No Buffering recovery spool is active."));
+        }
+        BassMidiAudioWorkerSession session = _session
+            ?? throw new InvalidOperationException("The audio worker is not active.");
+        session.BeginBufferingRecovery(recoveryEndFrame);
     }
 
     public void ApplyMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
@@ -167,6 +273,33 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
         BassMidiAudioWorkerSession session = _session
             ?? throw new InvalidOperationException("The audio worker is not active.");
         session.EnqueueMonitoringCommands(commands);
+    }
+
+    public long PauseHeldPreviewAtProducerFrontier(TimeSpan timeout)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        BassMidiAudioWorkerSession session = _session
+            ?? throw new InvalidOperationException("The audio worker is not active.");
+        return session.PauseHeldPreviewAtProducerFrontier(timeout);
+    }
+
+    public void ReplaceHeldPreviewFutureAndResume(
+        MidiRenderPlan plan,
+        long producerFrontierFrame,
+        TimeSpan timeout)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        BassMidiAudioWorkerSession session = _session
+            ?? throw new InvalidOperationException("The audio worker is not active.");
+        session.ReplaceHeldPreviewFutureAndResume(plan, producerFrontierFrame, timeout);
+    }
+
+    public void ResumeHeldPreviewFromProducerFrontier()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        BassMidiAudioWorkerSession session = _session
+            ?? throw new InvalidOperationException("The audio worker is not active.");
+        session.ResumeHeldPreviewFromProducerFrontier(_options.PreparingTimeout);
     }
 
     public void Stop(bool flush)
@@ -190,6 +323,16 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
         {
             _session = null;
             failure = CombineFailures(failure, CaptureAndRelease(session));
+            try
+            {
+                _activeRecoverySpool?.Dispose();
+            }
+            catch (Exception exception)
+            {
+                failure = CombineFailures(failure, exception);
+            }
+            _activeRecoverySpool = null;
+            _activeRecoveryMemoryFrameCapacity = 0;
         }
         if (failure is not null)
         {
@@ -211,6 +354,29 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
         }
     }
 
+    public void SelectOutputDevice(string? deviceId)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (deviceId is { Length: 0 })
+        {
+            throw new ArgumentException(
+                "The output device ID must be null for System Default or non-empty.",
+                nameof(deviceId));
+        }
+        if (_session is not null)
+        {
+            throw new InvalidOperationException(
+                "The output device cannot be selected while an audio worker session is active.");
+        }
+
+        _selectedDeviceId = deviceId;
+        _actualSampleRate = 0;
+        _actualDeviceBufferFrameCount = 0;
+        _lastStatus = default;
+        _lastStandardError = null;
+        _lastExitCode = null;
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -223,6 +389,9 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
         }
         finally
         {
+            _nextRecoverySpool?.Dispose();
+            _nextRecoverySpool = null;
+            _nextRecoveryMemoryFrameCapacity = 0;
             _disposed = true;
         }
     }
@@ -291,5 +460,7 @@ public sealed class BassWasapiChildPlaybackBackend : IRealtimePlaybackBackend
     internal static bool IsUnexpectedWorkerTermination(AudioWorkerState state, int? exitCode) =>
         exitCode.HasValue
         && (exitCode.Value != 0
-            || state is not AudioWorkerState.Completed and not AudioWorkerState.Stopped);
+            || state is not AudioWorkerState.Completed
+                and not AudioWorkerState.Stopped
+                and not AudioWorkerState.OutputDeviceUnavailable);
 }

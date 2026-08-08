@@ -86,7 +86,7 @@ public sealed class EmbeddedSoundFontPackageV1Tests
     {
         using TemporaryDirectory temporary = new();
         MidoraProject project = new(480, SavedAt);
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
 
         await Assert.ThrowsAsync<FileNotFoundException>(() => SoundFontBindingV1.BindEmbeddedAsync(
             project,

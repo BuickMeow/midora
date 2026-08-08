@@ -34,17 +34,78 @@ public interface IRealtimePlaybackBackend : IDisposable
     bool IsCompleted { get; }
     bool IsFaulted { get; }
     string? FaultDescription { get; }
+    bool OutputDeviceSelectionRequired { get; }
+    string? OutputDeviceSelectionReason { get; }
     int Prepare();
     void Start(MidiRenderPlan plan, string soundFontPath, PlaybackMasterConfiguration master);
     void ApplyMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands);
     void Stop(bool flush);
     void Reset();
+    void SelectOutputDevice(string? deviceId);
+}
+
+public interface IHeldPreviewRealtimePlaybackBackend
+{
+    long PauseHeldPreviewAtProducerFrontier(TimeSpan timeout);
+    void ReplaceHeldPreviewFutureAndResume(
+        MidiRenderPlan plan,
+        long producerFrontierFrame,
+        TimeSpan timeout);
+    void ResumeHeldPreviewFromProducerFrontier();
+}
+
+public interface IRealtimePlaybackCacheStore : IAudioPcmCacheSessionAccess
+{
+    bool TryReadReusableAudio(string key, out byte[] payload);
+    AudioCachePublishResult PublishReusableAudio(string key, ReadOnlySpan<byte> payload);
+}
+
+public interface IRealtimePlaybackCacheBackend
+{
+    void SetAudioCacheStore(IRealtimePlaybackCacheStore cacheStore);
+    void SetNextPlaybackCacheMode(RealtimePlaybackCacheMode mode);
+}
+
+public enum RealtimePlaybackCacheMode
+{
+    Disabled,
+    UnitPcm,
+    UnitPcmAndPlaybackSpan
+}
+
+public interface IBufferingRecoveryRealtimePlaybackBackend
+{
+    void SetNextBufferingRecoveryStorage(
+        AudioCacheSessionStore.AudioRecoverySpool? recoverySpool,
+        long memoryFallbackFrameCapacity);
+
+    bool HasBufferingRecoveryStorage { get; }
+
+    void BeginBufferingRecovery(long recoveryEndFrame);
+}
+
+public sealed class OutputDeviceSelectionRequiredException : InvalidOperationException
+{
+    public OutputDeviceSelectionRequiredException(string message)
+        : base(message)
+    {
+    }
 }
 
 public readonly record struct PlaybackMasterConfiguration(float VolumeDecibels, bool LimiterEnabled);
 
+public readonly record struct HeldPreviewGateEndReport(
+    long FinalGateLengthTicks,
+    long ConsumedFrameAtGateEnd,
+    long ProducerFrontierFrame,
+    long QueuedLatencyFrameCount,
+    double QueuedLatencyMilliseconds);
+
 public sealed class PlaybackController : IDisposable
 {
+    private const int HeldPreviewWindowSeconds = 8;
+    private const int HeldPreviewRenewalThresholdSeconds = 4;
+    private static readonly TimeSpan HeldPreviewBackendTimeout = TimeSpan.FromSeconds(5);
     private readonly ProjectCompilationSession _session;
     private readonly IRealtimePlaybackBackend _backend;
     private readonly HashSet<MidoraId> _mutedTracks = [];
@@ -58,18 +119,33 @@ public sealed class PlaybackController : IDisposable
     private long? _requestedEndTick;
     private TickRange? _loopRange;
     private IDisposable? _editLockLease;
+    private Func<long, CanonicalCompiledResult>? _heldPreviewOpenCompiler;
+    private Func<long, long, CanonicalCompiledResult>? _heldPreviewEndCompiler;
+    private decimal _heldPreviewTempo;
+    private long _heldPreviewWindowEndTick;
+    private bool _heldPreviewGateOpen;
+    private bool _releaseEditLockAtHeldGateEnd;
+    private AudioRecoveryStorageUnavailableException? _recoveryStorageFailure;
+    private bool _bufferingRecoveryRequested;
     private bool _disposed;
 
     public PlaybackController(ProjectCompilationSession session, IRealtimePlaybackBackend backend)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _backend = backend ?? throw new ArgumentNullException(nameof(backend));
+        if (backend is IRealtimePlaybackCacheBackend cacheBackend)
+        {
+            cacheBackend.SetAudioCacheStore(session);
+        }
         RebuildAudibleTracks();
     }
 
     public PlaybackState State { get; private set; } = PlaybackState.Stopped;
     public PlaybackTaskKind ActiveTaskKind { get; private set; }
     public Exception? LastError { get; private set; }
+    public bool OutputDeviceSelectionRequired { get; private set; }
+    public bool IsHeldPreviewGateOpen => _heldPreviewGateOpen;
+    public HeldPreviewGateEndReport? LastHeldPreviewGateEndReport { get; private set; }
     public TickRange? LoopRange => _loopRange;
     public event EventHandler? StateChanged;
 
@@ -132,6 +208,252 @@ public sealed class PlaybackController : IDisposable
                 : PlaybackTaskKind.EventInstrumentPreview);
     }
 
+    public void StartHeldEventInstrumentPreview(EventInstrumentPreviewRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.GateLengthTicks.HasValue)
+        {
+            throw new ArgumentException(
+                "A held-preview Gate Start must not carry a final Gate Length.",
+                nameof(request));
+        }
+        decimal previewTempo = ResolvePreviewTempo(_session.Project, request);
+        StartHeldPreviewCore(
+            windowEndTick => new PreviewCompiler().CompileHeldEventInstrumentGateOpen(
+                _session.Project,
+                request,
+                windowEndTick),
+            (finalGateLength, effectiveGateEndTick) =>
+                new PreviewCompiler().CompileHeldEventInstrumentGateEnd(
+                    _session.Project,
+                    request,
+                    finalGateLength,
+                    effectiveGateEndTick),
+            previewTempo,
+            request.SubVoiceId.HasValue
+                ? PlaybackTaskKind.SubVoicePreview
+                : PlaybackTaskKind.EventInstrumentPreview,
+            releaseEditLockAtGateEnd: false);
+    }
+
+    public void StartHeldSegmentPitchRulerPreview(
+        MidoraId trackId,
+        MidoraId segmentId,
+        int pitch,
+        int velocity,
+        decimal previewTempo)
+    {
+        LogicalTrack track = _session.Project.Tracks.FirstOrDefault(value => value.Id == trackId)
+            ?? throw new ArgumentOutOfRangeException(nameof(trackId));
+        Segment segment = track.Segments.FirstOrDefault(value => value.Id == segmentId)
+            ?? throw new ArgumentOutOfRangeException(nameof(segmentId));
+        MidoraId instrumentId = track.EventInstrumentId
+            ?? throw new InvalidOperationException(
+                "Pitch Ruler preview requires a bound Event Instrument.");
+        if (!_session.Project.EventInstruments.Any(value => value.Id == instrumentId))
+        {
+            throw new InvalidOperationException(
+                "The Pitch Ruler preview Event Instrument binding is missing or damaged.");
+        }
+        StartHeldEventInstrumentPreview(new EventInstrumentPreviewRequest(
+            instrumentId,
+            Pitch: pitch,
+            Velocity: velocity,
+            Tempo: previewTempo,
+            CursorTick: segment.ProjectStartTick));
+    }
+
+    public void StartHeldSegmentNotePreview(SegmentNotePreviewRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        LogicalTrack track = _session.Project.Tracks.FirstOrDefault(
+            value => value.Id == request.TrackId)
+            ?? throw new ArgumentOutOfRangeException(nameof(request));
+        Segment segment = track.Segments.FirstOrDefault(value => value.Id == request.SegmentId)
+            ?? throw new ArgumentOutOfRangeException(nameof(request));
+        long projectStartTick = checked(
+            segment.ProjectStartTick + (request.StartTick - segment.ContentOffsetTick));
+        decimal previewTempo = ResolvePreviewTempo(_session.Project, projectStartTick);
+        StartHeldPreviewCore(
+            windowLengthTicks => new PreviewCompiler().CompileHeldSegmentNoteGateOpen(
+                _session.Project,
+                request,
+                windowLengthTicks),
+            (finalGateLength, effectiveGateEndTick) =>
+                new PreviewCompiler().CompileHeldSegmentNoteGateEnd(
+                    _session.Project,
+                    request,
+                    finalGateLength,
+                    effectiveGateEndTick),
+            previewTempo,
+            PlaybackTaskKind.EventInstrumentPreview,
+            releaseEditLockAtGateEnd: true);
+    }
+
+    private void StartHeldPreviewCore(
+        Func<long, CanonicalCompiledResult> compileOpen,
+        Func<long, long, CanonicalCompiledResult> compileEnd,
+        decimal previewTempo,
+        PlaybackTaskKind taskKind,
+        bool releaseEditLockAtGateEnd)
+    {
+        ArgumentNullException.ThrowIfNull(compileOpen);
+        ArgumentNullException.ThrowIfNull(compileEnd);
+        EnsureCanStartTask();
+        if (_backend is not IHeldPreviewRealtimePlaybackBackend)
+        {
+            throw new NotSupportedException(
+                "The selected realtime backend does not support causal held Preview.");
+        }
+        _ = RequireEffectiveSoundFont("Held Preview");
+
+        try
+        {
+            _editLockLease = _session.AcquireProjectEditLock();
+            ActiveTaskKind = taskKind;
+            SetState(PlaybackState.Preparing);
+            string soundFont = RequireEffectiveSoundFont("Held Preview");
+            long initialWindowEndTick = CalculateHeldPreviewWindowTicks(
+                _session.Project.TicksPerQuarterNote,
+                previewTempo,
+                HeldPreviewWindowSeconds);
+            CanonicalCompiledResult compiled = compileOpen(initialWindowEndTick);
+            RequireConsumablePreview(compiled);
+            int actualSampleRate = _backend.Prepare();
+            _session.InvalidateSampleDomainCaches();
+            MidiRenderPlan plan = MidiRenderPlanAdapter.CreateRealtime(
+                compiled,
+                actualSampleRate);
+            PlaybackProjectSettings settings = _session.Project.Playback;
+            ConfigureNextBufferingRecovery(compiled, plan);
+            SetNextPlaybackCacheMode(RealtimePlaybackCacheMode.Disabled);
+            _backend.Start(plan, soundFont, new(
+                checked((float)settings.MasterVolumeDecibels),
+                settings.LimiterEnabled));
+            _activeResult = compiled;
+            _activePlan = plan;
+            _activeTempoMap = new(compiled.TicksPerQuarterNote, compiled.Tempos);
+            _heldPreviewOpenCompiler = compileOpen;
+            _heldPreviewEndCompiler = compileEnd;
+            _heldPreviewTempo = previewTempo;
+            _heldPreviewWindowEndTick = initialWindowEndTick;
+            _heldPreviewGateOpen = true;
+            _releaseEditLockAtHeldGateEnd = releaseEditLockAtGateEnd;
+            LastHeldPreviewGateEndReport = null;
+            LastError = null;
+            SetState(_backend.IsBuffering ? PlaybackState.Buffering : PlaybackState.Playing);
+        }
+        catch (Exception exception)
+        {
+            LastError = exception;
+            _activeResult = null;
+            _activePlan = null;
+            _activeTempoMap = null;
+            ClearHeldPreviewState();
+            ReleaseEditLock();
+            ActiveTaskKind = PlaybackTaskKind.None;
+            SetState(PlaybackState.Error);
+            throw;
+        }
+    }
+
+    public HeldPreviewGateEndReport EndHeldPreviewGate(long? finalGateLengthTicks = null)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_heldPreviewGateOpen
+            || _heldPreviewEndCompiler is null
+            || _activeResult is null
+            || _activePlan is null
+            || _activeTempoMap is null
+            || _backend is not IHeldPreviewRealtimePlaybackBackend heldBackend
+            || State is not PlaybackState.Playing and not PlaybackState.Buffering)
+        {
+            throw new InvalidOperationException("No held-preview Gate is active.");
+        }
+        if (finalGateLengthTicks.HasValue && finalGateLengthTicks.Value <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(finalGateLengthTicks));
+        }
+
+        long consumedFrame = _backend.PositionFrames;
+        try
+        {
+            long producerFrontier = heldBackend.PauseHeldPreviewAtProducerFrontier(
+                HeldPreviewBackendTimeout);
+            long frozenGateLength = finalGateLengthTicks
+                ?? Math.Max(
+                    1,
+                    _activeTempoMap.SampleFrameToTick(
+                        consumedFrame,
+                        _activeResult.StartTick,
+                        _backend.ActualSampleRate,
+                        _activeResult.EndTick) - _activeResult.StartTick);
+            long effectiveGateEndTick = Math.Max(
+                1,
+                FirstTickAtOrAfterFrame(
+                    _activeTempoMap,
+                    producerFrontier,
+                    _activeResult.StartTick,
+                    _backend.ActualSampleRate,
+                    _activeResult.EndTick) - _activeResult.StartTick);
+            CanonicalCompiledResult continuation = _heldPreviewEndCompiler(
+                frozenGateLength,
+                effectiveGateEndTick);
+            RequireConsumablePreview(continuation);
+            MidiRenderPlan continuationPlan = MidiRenderPlanAdapter.CreateRealtime(
+                continuation,
+                _backend.ActualSampleRate);
+            MidiRenderPlan replacement = MidiRenderPlanSplicer
+                .SpliceHeldGateEndAtProducerFrontier(
+                    _activePlan,
+                    continuationPlan,
+                    producerFrontier);
+            heldBackend.ReplaceHeldPreviewFutureAndResume(
+                replacement,
+                producerFrontier,
+                HeldPreviewBackendTimeout);
+            _activeResult = continuation;
+            _activePlan = replacement;
+            _activeTempoMap = new(
+                continuation.TicksPerQuarterNote,
+                continuation.Tempos);
+            _heldPreviewGateOpen = false;
+            _heldPreviewOpenCompiler = null;
+            _heldPreviewEndCompiler = null;
+            _heldPreviewTempo = 0;
+            _heldPreviewWindowEndTick = 0;
+            if (_releaseEditLockAtHeldGateEnd)
+            {
+                ReleaseEditLock();
+            }
+            _releaseEditLockAtHeldGateEnd = false;
+            long latencyFrames = Math.Max(0, producerFrontier - consumedFrame);
+            HeldPreviewGateEndReport report = new(
+                frozenGateLength,
+                consumedFrame,
+                producerFrontier,
+                latencyFrames,
+                latencyFrames * 1_000d / _backend.ActualSampleRate);
+            LastHeldPreviewGateEndReport = report;
+            return report;
+        }
+        catch (Exception exception)
+        {
+            FailHeldPreview(exception);
+            throw;
+        }
+    }
+
+    public void CancelHeldPreview()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_heldPreviewGateOpen)
+        {
+            return;
+        }
+        StopCore(applyCursorBehavior: false, releaseEditLock: true);
+    }
+
     public void StartSegmentPreview(MidoraId trackId, MidoraId segmentId)
     {
         EnsureCanStartTask();
@@ -144,6 +466,27 @@ public sealed class PlaybackController : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         StopCore(applyCursorBehavior: true, releaseEditLock: true);
+    }
+
+    public void SelectOutputDevice(string? deviceId)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (deviceId is { Length: 0 })
+        {
+            throw new ArgumentException(
+                "The output device ID must be null for System Default or non-empty.",
+                nameof(deviceId));
+        }
+        if (State != PlaybackState.Stopped || ActiveTaskKind != PlaybackTaskKind.None)
+        {
+            throw new InvalidOperationException(
+                "The playback output device can only be selected while playback is stopped.");
+        }
+
+        _backend.SelectOutputDevice(deviceId);
+        _session.InvalidateSampleDomainCaches();
+        OutputDeviceSelectionRequired = false;
+        LastError = null;
     }
 
     public void Seek(long tick)
@@ -218,12 +561,31 @@ public sealed class PlaybackController : IDisposable
         {
             return;
         }
-        SetState(_backend.IsBuffering ? PlaybackState.Buffering : PlaybackState.Playing);
+        if (_backend.OutputDeviceSelectionRequired)
+        {
+            EnterOutputDeviceSelectionRequired();
+            return;
+        }
         if (_backend.IsFaulted)
         {
             EnterBackendError();
             return;
         }
+        if (_backend.IsBuffering)
+        {
+            if (!_bufferingRecoveryRequested && !TryBeginBufferingRecovery())
+            {
+                return;
+            }
+            SetState(PlaybackState.Buffering);
+            return;
+        }
+        _bufferingRecoveryRequested = false;
+        if (_heldPreviewGateOpen)
+        {
+            ExtendHeldPreviewWindowIfNeeded();
+        }
+        SetState(_backend.IsBuffering ? PlaybackState.Buffering : PlaybackState.Playing);
         if (!_backend.IsCompleted)
         {
             return;
@@ -307,13 +669,17 @@ public sealed class PlaybackController : IDisposable
             _activeResult = null;
             _activePlan = null;
             _activeTempoMap = null;
+            ClearHeldPreviewState();
             ActiveTaskKind = PlaybackTaskKind.None;
             ReleaseEditLock();
         }
 
         if (resetFailure is null)
         {
-            LastError = null;
+            if (!OutputDeviceSelectionRequired)
+            {
+                LastError = null;
+            }
             SetState(PlaybackState.Stopped);
             return;
         }
@@ -383,6 +749,7 @@ public sealed class PlaybackController : IDisposable
                 _activeResult = null;
                 _activePlan = null;
                 _activeTempoMap = null;
+                ClearHeldPreviewState();
                 ReleaseEditLock();
                 ActiveTaskKind = PlaybackTaskKind.None;
                 LastError = null;
@@ -391,6 +758,8 @@ public sealed class PlaybackController : IDisposable
             }
             MidiRenderPlan plan = MidiRenderPlanAdapter.CreateRealtime(compiled, actualSampleRate, _audibleTracks);
             PlaybackProjectSettings settings = _session.Project.Playback;
+            ConfigureNextBufferingRecovery(compiled, plan);
+            SetNextPlaybackCacheMode(RealtimePlaybackCacheMode.UnitPcmAndPlaybackSpan);
             _backend.Start(plan, soundFont, new(
                 checked((float)settings.MasterVolumeDecibels), settings.LimiterEnabled));
             _activeResult = compiled;
@@ -405,6 +774,7 @@ public sealed class PlaybackController : IDisposable
             _activeResult = null;
             _activePlan = null;
             _activeTempoMap = null;
+            ClearHeldPreviewState();
             ReleaseEditLock();
             ActiveTaskKind = PlaybackTaskKind.None;
             SetState(PlaybackState.Error);
@@ -445,6 +815,10 @@ public sealed class PlaybackController : IDisposable
             }
             MidiRenderPlan plan = MidiRenderPlanAdapter.CreateRealtime(compiled, actualSampleRate);
             PlaybackProjectSettings settings = _session.Project.Playback;
+            ConfigureNextBufferingRecovery(compiled, plan);
+            SetNextPlaybackCacheMode(taskKind == PlaybackTaskKind.SegmentPreview
+                ? RealtimePlaybackCacheMode.UnitPcm
+                : RealtimePlaybackCacheMode.Disabled);
             _backend.Start(plan, soundFont, new(
                 checked((float)settings.MasterVolumeDecibels), settings.LimiterEnabled));
             _activeResult = compiled;
@@ -459,11 +833,170 @@ public sealed class PlaybackController : IDisposable
             _activeResult = null;
             _activePlan = null;
             _activeTempoMap = null;
+            ClearHeldPreviewState();
             ReleaseEditLock();
             ActiveTaskKind = PlaybackTaskKind.None;
             SetState(PlaybackState.Error);
             throw;
         }
+    }
+
+    private void ExtendHeldPreviewWindowIfNeeded()
+    {
+        if (!_heldPreviewGateOpen
+            || _heldPreviewOpenCompiler is null
+            || _activePlan is null
+            || _backend is not IHeldPreviewRealtimePlaybackBackend heldBackend)
+        {
+            return;
+        }
+        long thresholdFrames = checked(
+            (long)_backend.ActualSampleRate * HeldPreviewRenewalThresholdSeconds);
+        if (_activePlan.TotalFrameCount - _backend.RenderPositionFrames > thresholdFrames)
+        {
+            return;
+        }
+
+        try
+        {
+            long producerFrontier = heldBackend.PauseHeldPreviewAtProducerFrontier(
+                HeldPreviewBackendTimeout);
+            long extensionTicks = CalculateHeldPreviewWindowTicks(
+                _session.Project.TicksPerQuarterNote,
+                _heldPreviewTempo,
+                HeldPreviewWindowSeconds);
+            long replacementWindowEndTick = _heldPreviewWindowEndTick >= long.MaxValue - extensionTicks
+                ? long.MaxValue
+                : _heldPreviewWindowEndTick + extensionTicks;
+            if (replacementWindowEndTick == _heldPreviewWindowEndTick)
+            {
+                heldBackend.ResumeHeldPreviewFromProducerFrontier();
+                return;
+            }
+            CanonicalCompiledResult expanded = _heldPreviewOpenCompiler(
+                replacementWindowEndTick);
+            RequireConsumablePreview(expanded);
+            MidiRenderPlan expandedPlan = MidiRenderPlanAdapter.CreateRealtime(
+                expanded,
+                _backend.ActualSampleRate);
+            MidiRenderPlan replacement = MidiRenderPlanSplicer.SpliceAtProducerFrontier(
+                _activePlan,
+                expandedPlan,
+                producerFrontier);
+            heldBackend.ReplaceHeldPreviewFutureAndResume(
+                replacement,
+                producerFrontier,
+                HeldPreviewBackendTimeout);
+            _activeResult = expanded;
+            _activePlan = replacement;
+            _activeTempoMap = new(expanded.TicksPerQuarterNote, expanded.Tempos);
+            _heldPreviewWindowEndTick = replacementWindowEndTick;
+        }
+        catch (Exception exception)
+        {
+            FailHeldPreview(exception);
+            throw;
+        }
+    }
+
+    private static long CalculateHeldPreviewWindowTicks(
+        int ticksPerQuarterNote,
+        decimal tempo,
+        int seconds)
+    {
+        if (tempo <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(tempo), "Preview Tempo must be positive.");
+        }
+        try
+        {
+            decimal ticks = decimal.Ceiling(
+                checked(tempo * ticksPerQuarterNote * seconds / 60m));
+            return ticks >= long.MaxValue ? long.MaxValue : Math.Max(1, checked((long)ticks));
+        }
+        catch (OverflowException)
+        {
+            return long.MaxValue;
+        }
+    }
+
+    private static decimal ResolvePreviewTempo(
+        MidoraProject project,
+        EventInstrumentPreviewRequest request) => request.Tempo
+        ?? ResolvePreviewTempo(project, request.CursorTick);
+
+    private static decimal ResolvePreviewTempo(
+        MidoraProject project,
+        long tick) => project.Conductor.Tempos
+            .Where(value => value.Tick <= tick)
+            .OrderBy(value => value.Tick)
+            .LastOrDefault()?.BeatsPerMinute
+        ?? project.Conductor.Tempos
+            .OrderBy(value => value.Tick)
+            .FirstOrDefault()?.BeatsPerMinute
+        ?? 120m;
+
+    private static long FirstTickAtOrAfterFrame(
+        TempoSampleMap map,
+        long frame,
+        long originTick,
+        int sampleRate,
+        long maximumTick)
+    {
+        long tick = map.SampleFrameToTick(frame, originTick, sampleRate, maximumTick);
+        if (tick < maximumTick
+            && map.TickToSampleFrame(tick, originTick, sampleRate) < frame)
+        {
+            tick++;
+        }
+        return tick;
+    }
+
+    private static void RequireConsumablePreview(CanonicalCompiledResult compiled)
+    {
+        if (!compiled.IsConsumable)
+        {
+            throw new InvalidOperationException(string.Join(
+                Environment.NewLine,
+                compiled.Diagnostics.Select(value => $"{value.Code}: {value.Message}")));
+        }
+    }
+
+    private void FailHeldPreview(Exception failure)
+    {
+        Exception? cleanupFailure = null;
+        try
+        {
+            _backend.Stop(flush: true);
+        }
+        catch (Exception exception)
+        {
+            cleanupFailure = exception;
+        }
+        _session.InvalidateSampleDomainCaches();
+        _activeResult = null;
+        _activePlan = null;
+        _activeTempoMap = null;
+        ClearHeldPreviewState();
+        ActiveTaskKind = PlaybackTaskKind.None;
+        ReleaseEditLock();
+        LastError = cleanupFailure is null
+            ? failure
+            : new AggregateException(
+                "Held Preview failed and backend cleanup also failed.",
+                failure,
+                cleanupFailure);
+        SetState(PlaybackState.Error);
+    }
+
+    private void ClearHeldPreviewState()
+    {
+        _heldPreviewOpenCompiler = null;
+        _heldPreviewEndCompiler = null;
+        _heldPreviewTempo = 0;
+        _heldPreviewWindowEndTick = 0;
+        _heldPreviewGateOpen = false;
+        _releaseEditLockAtHeldGateEnd = false;
     }
 
     private void RestartAt(long tick, long? endTick)
@@ -478,6 +1011,7 @@ public sealed class PlaybackController : IDisposable
             _activeResult = null;
             _activePlan = null;
             _activeTempoMap = null;
+            ClearHeldPreviewState();
             StartPreparedRange(tick, endTick, acquireEditLock: false);
         }
         catch (Exception exception)
@@ -486,6 +1020,7 @@ public sealed class PlaybackController : IDisposable
             _activeResult = null;
             _activePlan = null;
             _activeTempoMap = null;
+            ClearHeldPreviewState();
             _cursorTick = backendStopped ? tick : stoppedTick;
             ActiveTaskKind = PlaybackTaskKind.None;
             ReleaseEditLock();
@@ -506,6 +1041,7 @@ public sealed class PlaybackController : IDisposable
             _activeResult = null;
             _activePlan = null;
             _activeTempoMap = null;
+            ClearHeldPreviewState();
             if (stoppedTask == PlaybackTaskKind.MainTimeline)
             {
                 _cursorTick = applyCursorBehavior
@@ -523,6 +1059,7 @@ public sealed class PlaybackController : IDisposable
             _activeResult = null;
             _activePlan = null;
             _activeTempoMap = null;
+            ClearHeldPreviewState();
             if (stoppedTask == PlaybackTaskKind.MainTimeline)
             {
                 _cursorTick = stoppedTick;
@@ -538,6 +1075,153 @@ public sealed class PlaybackController : IDisposable
     }
 
     private long? EffectiveEndTick(long? requested) => _loopRange?.EndTick ?? requested;
+
+    private void SetNextPlaybackCacheMode(RealtimePlaybackCacheMode mode)
+    {
+        if (_backend is IRealtimePlaybackCacheBackend cacheBackend)
+        {
+            cacheBackend.SetNextPlaybackCacheMode(mode);
+        }
+    }
+
+    private void ConfigureNextBufferingRecovery(
+        CanonicalCompiledResult compiled,
+        MidiRenderPlan plan)
+    {
+        _bufferingRecoveryRequested = false;
+        _recoveryStorageFailure = null;
+        if (_backend is not IBufferingRecoveryRealtimePlaybackBackend recoveryBackend)
+        {
+            return;
+        }
+
+        long maximumFrames = CalculateMaximumRecoveryFrameCount(compiled, plan);
+        try
+        {
+            AudioCacheSessionStore.AudioRecoverySpool spool =
+                _session.CreateBufferingRecoverySpool(checked(
+                    maximumFrames * 2L * sizeof(float)));
+            recoveryBackend.SetNextBufferingRecoveryStorage(spool, 0);
+        }
+        catch (AudioRecoveryStorageUnavailableException exception)
+        {
+            _recoveryStorageFailure = exception;
+            recoveryBackend.SetNextBufferingRecoveryStorage(null, maximumFrames);
+        }
+    }
+
+    private static long CalculateMaximumRecoveryFrameCount(
+        CanonicalCompiledResult compiled,
+        MidiRenderPlan plan)
+    {
+        decimal minimumTempo = compiled.Tempos.ToArray()
+            .Select(value => value.BeatsPerMinute)
+            .DefaultIfEmpty(120m)
+            .Min();
+        decimal upperBound = decimal.Ceiling(
+            BufferingRecoveryPlanner.MaximumQuarterNoteCount
+            * 60m
+            * plan.SampleRate
+            / minimumTempo) + 2m;
+        long frames = upperBound >= long.MaxValue
+            ? long.MaxValue
+            : decimal.ToInt64(upperBound);
+        return Math.Max(1, Math.Min(frames, plan.TotalFrameCount));
+    }
+
+    private bool TryBeginBufferingRecovery()
+    {
+        CanonicalCompiledResult compiled = _activeResult
+            ?? throw new InvalidOperationException(
+                "The active canonical playback result is unavailable during Buffering.");
+        TempoSampleMap map = _activeTempoMap
+            ?? throw new InvalidOperationException(
+                "The active Tempo map is unavailable during Buffering.");
+        if (_backend is not IBufferingRecoveryRealtimePlaybackBackend recoveryBackend)
+        {
+            EnterBufferingRecoveryError(new NotSupportedException(
+                "The selected realtime backend cannot prepare a complete natural recovery interval."));
+            return false;
+        }
+        if (!recoveryBackend.HasBufferingRecoveryStorage)
+        {
+            EnterBufferingRecoveryError(_recoveryStorageFailure
+                ?? new AudioRecoveryStorageUnavailableException(
+                    "The complete Buffering recovery interval has no reserved storage.",
+                    new IOException("No recovery spool is active.")));
+            return false;
+        }
+
+        long failureFrame = _backend.PositionFrames;
+        long failureTick = map.SampleFrameToTick(
+            failureFrame,
+            compiled.StartTick,
+            _backend.ActualSampleRate,
+            compiled.EndTick);
+        if (failureTick >= compiled.EndTick)
+        {
+            return true;
+        }
+        BufferingRecoveryInterval interval = BufferingRecoveryPlanner.Plan(
+            compiled,
+            failureTick,
+            compiled.EndTick);
+        long recoveryEndFrame = map.TickToSampleFrame(
+            interval.EndTick,
+            compiled.StartTick,
+            _backend.ActualSampleRate);
+        if (recoveryEndFrame <= failureFrame)
+        {
+            EnterBufferingRecoveryError(new InvalidDataException(
+                "The natural Buffering recovery interval did not advance a sample frame."));
+            return false;
+        }
+        try
+        {
+            recoveryBackend.BeginBufferingRecovery(recoveryEndFrame);
+            _bufferingRecoveryRequested = true;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            EnterBufferingRecoveryError(exception);
+            return false;
+        }
+    }
+
+    private void EnterBufferingRecoveryError(Exception failure)
+    {
+        long failedTick = CurrentTaskTick;
+        PlaybackTaskKind failedTask = ActiveTaskKind;
+        Exception? cleanupError = null;
+        try
+        {
+            _backend.Stop(flush: true);
+        }
+        catch (Exception exception)
+        {
+            cleanupError = exception;
+        }
+        _session.InvalidateSampleDomainCaches();
+        _activeResult = null;
+        _activePlan = null;
+        _activeTempoMap = null;
+        ClearHeldPreviewState();
+        if (failedTask == PlaybackTaskKind.MainTimeline)
+        {
+            _cursorTick = failedTick;
+        }
+        ActiveTaskKind = PlaybackTaskKind.None;
+        ReleaseEditLock();
+        _bufferingRecoveryRequested = false;
+        LastError = cleanupError is null
+            ? failure
+            : new AggregateException(
+                "Buffering recovery failed and backend cleanup also failed.",
+                failure,
+                cleanupError);
+        SetState(PlaybackState.Error);
+    }
 
     private string RequireEffectiveSoundFont(string operation)
     {
@@ -706,6 +1390,11 @@ public sealed class PlaybackController : IDisposable
     private void EnsureCanStartTask()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (OutputDeviceSelectionRequired)
+        {
+            throw new OutputDeviceSelectionRequiredException(
+                "The active output device became unavailable. Select an output device explicitly before starting playback or preview again.");
+        }
         if (State == PlaybackState.Error)
         {
             ResetPlaybackEngine();
@@ -744,6 +1433,42 @@ public sealed class PlaybackController : IDisposable
             ? new InvalidOperationException(description)
             : new AggregateException(description, cleanupError);
         SetState(PlaybackState.Error);
+    }
+
+    private void EnterOutputDeviceSelectionRequired()
+    {
+        long failedTick = CurrentTaskTick;
+        PlaybackTaskKind failedTask = ActiveTaskKind;
+        string description = _backend.OutputDeviceSelectionReason
+            ?? "The active output device became unavailable.";
+        Exception? cleanupError = null;
+        try
+        {
+            _backend.Stop(flush: false);
+        }
+        catch (Exception exception)
+        {
+            cleanupError = exception;
+        }
+        _session.InvalidateSampleDomainCaches();
+        _activeResult = null;
+        _activePlan = null;
+        _activeTempoMap = null;
+        ClearHeldPreviewState();
+        ClearHeldPreviewState();
+        if (failedTask == PlaybackTaskKind.MainTimeline)
+        {
+            _cursorTick = failedTick;
+        }
+        ActiveTaskKind = PlaybackTaskKind.None;
+        ReleaseEditLock();
+        OutputDeviceSelectionRequired = true;
+        OutputDeviceSelectionRequiredException selectionRequired = new(
+            $"{description} Select an output device explicitly before playback or preview can start again.");
+        LastError = cleanupError is null
+            ? selectionRequired
+            : new AggregateException(selectionRequired.Message, selectionRequired, cleanupError);
+        SetState(cleanupError is null ? PlaybackState.Stopped : PlaybackState.Error);
     }
 
     private void SetState(PlaybackState state)

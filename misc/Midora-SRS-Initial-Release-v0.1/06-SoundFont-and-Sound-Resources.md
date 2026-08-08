@@ -73,7 +73,7 @@ SoundFont stack
 说明：
 ```text
 “所有 Port 使用同一个 SF2”不等于 16 个 Port 都要常驻加载 SF2。
-只有当前播放、预览或音频渲染上下文实际使用到的 Port 才需要对应 BASSMIDI Stream。
+只有当前播放、预览或音频渲染上下文实际使用到的抽象 Channel Unit 才需要对应 1-channel BASSMIDI Stream 语义。
 ```
 ---
 ## 6.4 SF2 保存与引用模式
@@ -310,11 +310,11 @@ MIDI 导出结构
 当 Project 处于有效 SF2 状态时，播放系统应在实际需要发声的上下文中使用该 SF2。
 系统级规则：
 ```text
-每个实际使用的 Midora Port 对应一个 BASSMIDI Stream
-所有实际使用 Port 使用同一个 SF2
-空闲 Port 不创建 BASSMIDI Stream
-空闲 Port 不加载 SF2
-所有实际使用 Port 的 Channel 10 初始化为 melodic
+每个实际使用的抽象 Channel Unit 使用一个 1-channel BASSMIDI Stream 语义
+所有实际使用 Unit Stream 使用同一个 SF2
+空闲 Unit 不创建 BASSMIDI Stream
+空闲 Unit 不单独加载 SF2
+canonical MIDI Channel 10 对应的 Unit 也初始化为 melodic
 所有正式 Stream 启用 BASS_MIDI_NOFX
 实时 Stream 按输出设备实际采样率创建，文件渲染 Stream 按本次文件采样率创建
 选择、替换、取消 SF2 或发现影响声音结果的 SF2 变化后，相关播放 / 预览 / 渲染缓存立即失效
@@ -460,7 +460,7 @@ Midora 不假设当前 SF2 是 GM 音色库
 1. 初版只支持 SF2。
 2. 初版一个 Project 最多选择一个 SF2。
 3. 所有实际使用 Port 使用同一个 SF2。
-4. 空闲 Port 不创建 BASSMIDI Stream，也不加载 SF2。
+4. 空闲 Unit 不创建 BASSMIDI Stream，也不单独加载 SF2。
 5. 每 Port 不支持独立 SF2。
 6. 每 Logical Track 不支持独立 SF2。
 7. 每 Event Instrument 不支持独立 SF2。

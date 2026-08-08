@@ -17,5 +17,6 @@ public enum AudioRenderFaultCode : byte
     BassMidiEventSubmissionFailed,
     BassMidiDecodeFailed,
     BassMidiShortRead,
+    PcmCacheReadFailed,
     NonFiniteSample
 }

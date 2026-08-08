@@ -80,6 +80,10 @@ public sealed class ApplicationTaskExecution<T>
     public bool Succeeded => Outcome == ApplicationTaskOutcome.Completed;
 }
 
+public readonly record struct SegmentNotePlacementPreviewCompletion(
+    HeldPreviewGateEndReport? GateEndReport,
+    Exception? PreviewError);
+
 public sealed class PlaybackCleanupContinuation
 {
     private readonly ApplicationTaskCoordinator _owner;
@@ -209,6 +213,135 @@ public sealed class ApplicationTaskCoordinator : IDisposable
                 : ApplicationTaskKind.EventInstrumentPreview,
             () => _playback.StartEventInstrumentPreview(request));
 
+    public void StartHeldEventInstrumentPreview(EventInstrumentPreviewRequest request) =>
+        StartPlaybackTask(
+            request.SubVoiceId.HasValue
+                ? ApplicationTaskKind.SubVoicePreview
+                : ApplicationTaskKind.EventInstrumentPreview,
+            () => _playback.StartHeldEventInstrumentPreview(request));
+
+    public void StartHeldSegmentPitchRulerPreview(
+        MidoraId trackId,
+        MidoraId segmentId,
+        int pitch,
+        int velocity,
+        decimal previewTempo) =>
+        StartPlaybackTask(
+            ApplicationTaskKind.EventInstrumentPreview,
+            () => _playback.StartHeldSegmentPitchRulerPreview(
+                trackId,
+                segmentId,
+                pitch,
+                velocity,
+                previewTempo));
+
+    public void StartHeldSegmentNotePreview(SegmentNotePreviewRequest request) =>
+        StartPlaybackTask(
+            ApplicationTaskKind.EventInstrumentPreview,
+            () => _playback.StartHeldSegmentNotePreview(request));
+
+    public Exception? TryStartHeldSegmentNotePreview(SegmentNotePreviewRequest request)
+    {
+        try
+        {
+            StartHeldSegmentNotePreview(request);
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    public SegmentNotePlacementPreviewCompletion CompleteSegmentNotePlacement(
+        long finalGateLengthTicks,
+        Action commit)
+    {
+        ArgumentNullException.ThrowIfNull(commit);
+        if (finalGateLengthTicks <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(finalGateLengthTicks));
+        }
+
+        HeldPreviewGateEndReport? report = null;
+        Exception? previewError = null;
+        if (_playback.IsHeldPreviewGateOpen)
+        {
+            try
+            {
+                report = EndHeldPreviewGate(finalGateLengthTicks);
+            }
+            catch (Exception exception)
+            {
+                previewError = exception;
+            }
+        }
+
+        try
+        {
+            commit();
+        }
+        catch (Exception commitFailure)
+        {
+            Exception? cleanupFailure = null;
+            try
+            {
+                StopPlayback();
+            }
+            catch (Exception exception)
+            {
+                cleanupFailure = exception;
+            }
+            if (previewError is null && cleanupFailure is null)
+            {
+                throw;
+            }
+            List<Exception> failures = [commitFailure];
+            if (previewError is not null)
+            {
+                failures.Add(previewError);
+            }
+            if (cleanupFailure is not null)
+            {
+                failures.Add(cleanupFailure);
+            }
+            throw new AggregateException(
+                "The Note placement failed; preview errors did not replace the edit failure.",
+                failures);
+        }
+
+        return new(report, previewError);
+    }
+
+    public HeldPreviewGateEndReport EndHeldPreviewGate(long? finalGateLengthTicks = null)
+    {
+        lock (_sync)
+        {
+            ThrowIfDisposed();
+            if (_activeTaskKind is not ApplicationTaskKind.EventInstrumentPreview
+                and not ApplicationTaskKind.SubVoicePreview)
+            {
+                throw new InvalidOperationException("No held-preview task is active.");
+            }
+        }
+        return _playback.EndHeldPreviewGate(finalGateLengthTicks);
+    }
+
+    public void CancelHeldPreview()
+    {
+        lock (_sync)
+        {
+            ThrowIfDisposed();
+            if (_activeTaskKind is not ApplicationTaskKind.EventInstrumentPreview
+                and not ApplicationTaskKind.SubVoicePreview)
+            {
+                return;
+            }
+            _phase = ApplicationTaskPhase.Stopping;
+        }
+        _playback.CancelHeldPreview();
+    }
+
     public void StopPlayback()
     {
         lock (_sync)
@@ -251,6 +384,7 @@ public sealed class ApplicationTaskCoordinator : IDisposable
             ApplicationTaskKind.AudioRender,
             (context, token) => runner.ExecuteAsync(
                 requestFactory(),
+                _session,
                 new InlineProgress<AudioRenderTaskProgress>(value =>
                 {
                     context.ReportPhase(ToApplicationPhase(value.Status));

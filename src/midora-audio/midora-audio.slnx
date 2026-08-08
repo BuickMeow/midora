@@ -1,6 +1,6 @@
 <Solution>
   <Project Path="../midora-common/Midora.Common/Midora.Common.csproj" />
-  <Project Path="../midora-core/Midora.Mapping.Contract.V1/Midora.Mapping.Contract.V1.csproj" />
+  <Project Path="../midora-core/Midora.Mapping.Contract.V2/Midora.Mapping.Contract.V2.csproj" />
   <Project Path="../midora-core/Midora.Domain/Midora.Domain.csproj" />
   <Project Path="../midora-core/Midora.Compiler/Midora.Compiler.csproj" />
   <Project Path="../midora-core/Midora.Persistence/Midora.Persistence.csproj" />

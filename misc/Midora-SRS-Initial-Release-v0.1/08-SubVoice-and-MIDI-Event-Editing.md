@@ -899,14 +899,15 @@ Logical Parameter Mapping
 建议：
 ```text
 MidoraObjectId 应是轻量稳定身份值
-建议不少于 128-bit 信息量
+核心值使用单个 signed 64-bit integer（C# long）
+合法范围为 1..long.MaxValue；0 与负值保留为无效 / 未指定状态
 ID 值本身只负责承载、比较和序列化身份
 ID 不内置生成唯一 ID 的功能
 ```
 说明：
 ```text
-如果 ID 使用 4 个 int32，则单个 ID 裸数据约 16 bytes。
-500 万个 Note 的 ID 裸数据约 76.3 MiB。
+单个 long ID 裸数据为 8 bytes。
+500 万个 Note 的 ID 裸数据约 38.1 MiB。
 真正应避免的是每个 Note 都成为重量级堆对象、每个事件点自带复杂集合、每个事件点自带独立 Dictionary / List 等模型。
 ```
 ### 8.52.3 Project 级 ID 生成状态
@@ -915,8 +916,9 @@ ID 不内置生成唯一 ID 的功能
 ```text
 Project 必须维护项目级 ID 生成状态
 Project ID 生成状态必须持久化进 Project 文件
-推荐采用仅递增、不补缺的持久化计数器模型
+采用仅递增、不补缺的持久化正 long 计数器模型
 Project 必须保证同一 Project 内生成的 ID 唯一
+计数器达到 long.MaxValue 后必须结构化拒绝继续分配
 ```
 不采用：
 ```text

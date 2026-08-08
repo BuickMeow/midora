@@ -1,5 +1,5 @@
 using Midora.Domain;
-using Midora.Mapping.Contract.V1;
+using Midora.Mapping.Contract.V2;
 using Midora.Midi;
 
 namespace Midora.Compiler.Tests;
@@ -150,7 +150,7 @@ public sealed class MappingAndLifecycleTests
             Name = "velocity boost",
             Body = "return Math.Min(127, value + context.TriggerVelocity / 10.0);"
         };
-        function.DeclaredContextFields.Add(nameof(MappingContextV1.TriggerVelocity));
+        function.DeclaredContextFields.Add(nameof(MappingContextV2.TriggerVelocity));
         fixture.Instrument.MappingFunctions.Add(function);
         TemplateEvent noteEvent = TemplateEvent.Note(fixture.Project, 0, 120, 60, 80);
         noteEvent.NumberMappings.Add(new ValueMappingStep(fixture.Project)
@@ -252,7 +252,7 @@ public sealed class MappingAndLifecycleTests
             Name = "template tick",
             Body = "return context.TemplateTick % 128;"
         };
-        function.DeclaredContextFields.Add(nameof(MappingContextV1.TemplateTick));
+        function.DeclaredContextFields.Add(nameof(MappingContextV2.TemplateTick));
         fixture.Instrument.MappingFunctions.Add(function);
         LogicalParameterMapping mapping = new(fixture.Project)
         {

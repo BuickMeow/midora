@@ -1,62 +1,50 @@
-using System.Buffers.Binary;
 using System.Globalization;
 
 namespace Midora.Domain;
 
-public readonly record struct MidoraId(Guid Value) : IComparable<MidoraId>
+public readonly record struct MidoraId : IComparable<MidoraId>
 {
-    public static MidoraId FromSequence(UInt128 sequence)
+    public MidoraId(long value)
     {
-        if (sequence == 0)
+        if (value <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(sequence), "Stable ID sequence zero is reserved.");
+            throw new ArgumentOutOfRangeException(nameof(value), "Stable IDs must be positive.");
         }
-        Span<byte> bytes = stackalloc byte[16];
-        BinaryPrimitives.WriteUInt64BigEndian(bytes, (ulong)(sequence >> 64));
-        BinaryPrimitives.WriteUInt64BigEndian(bytes[8..], (ulong)sequence);
-        return new(new Guid(bytes, bigEndian: true));
+
+        Value = value;
     }
 
-    public static MidoraId FromParts(ulong high, ulong low)
-        => FromSequence(((UInt128)high << 64) | low);
+    public long Value { get; }
+
+    public static MidoraId FromSequence(long sequence) => new(sequence);
 
     public static bool TryParseCanonical(string? value, out MidoraId id)
     {
         id = default;
-        if (value is not { Length: 32 })
+        if (string.IsNullOrEmpty(value) || value[0] is < '1' or > '9')
         {
             return false;
         }
         foreach (char character in value)
         {
-            if (character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))
+            if (character is < '0' or > '9')
             {
                 return false;
             }
         }
-        if (!UInt128.TryParse(value, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out UInt128 sequence)
-            || sequence == 0)
+
+        if (!long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out long sequence))
         {
             return false;
         }
+
         id = FromSequence(sequence);
         return true;
     }
 
-    public UInt128 ToSequence()
-    {
-        Span<byte> bytes = stackalloc byte[16];
-        _ = Value.TryWriteBytes(bytes, bigEndian: true, out _);
-        return ((UInt128)BinaryPrimitives.ReadUInt64BigEndian(bytes) << 64)
-            | BinaryPrimitives.ReadUInt64BigEndian(bytes[8..]);
-    }
+    public int CompareTo(MidoraId other) => Value.CompareTo(other.Value);
 
-    public ulong High => (ulong)(ToSequence() >> 64);
-    public ulong Low => (ulong)ToSequence();
-
-    public int CompareTo(MidoraId other) => ToSequence().CompareTo(other.ToSequence());
-
-    public override string ToString() => ToSequence().ToString("x32", CultureInfo.InvariantCulture);
+    public override string ToString() => Value.ToString(CultureInfo.InvariantCulture);
 }
 
 public readonly record struct TickRange(long StartTick, long EndTick)

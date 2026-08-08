@@ -67,6 +67,39 @@ public static class MidiRenderPlanAdapter
                 .Select(value => value.index)
                 .ToArray()
             : [];
+        CanonicalAudioUnitFragment[] canonicalFragments =
+            CanonicalAudioUnitProjection.Create(compiled).Fragments.ToArray()
+                .Where(fragment => preserveFilteredTrackEvents
+                    || audibleTrackIds is null
+                    || audibleTrackIds.Contains(fragment.TrackId))
+                .ToArray();
+        MidiUnitFragmentRenderPlan[] unitFragments = canonicalFragments
+            .Select(fragment => new MidiUnitFragmentRenderPlan(
+                ResolveAllocation(compiled, fragment).ZeroBasedPort,
+                ResolveAllocation(compiled, fragment).ZeroBasedChannel,
+                fragment.TrackId.Value,
+                fragment.SegmentId.Value,
+                fragment.EventInstrumentId.Value,
+                fragment.InstanceGroupId.Value,
+                fragment.SubVoiceId.Value,
+                sourceIndices[fragment.TrackId],
+                map.TickToSampleFrame(fragment.EffectiveStartTick, compiled.StartTick, sampleRate),
+                map.TickToSampleFrame(fragment.EffectiveEndTick, compiled.StartTick, sampleRate),
+                fragment.SemanticFingerprint,
+                fragment.Events.ToArray()
+                    .Select(value => new ScheduledMidiMessage(
+                        map.TickToSampleFrame(
+                            fragment.GroupStartTick + value.RelativeTick,
+                            compiled.StartTick,
+                            sampleRate),
+                        value.Message,
+                        sourceIndices[fragment.TrackId]))
+                    .ToArray()))
+            .OrderBy(value => value.CanonicalUnitNumber)
+            .ThenBy(value => value.StartFrame)
+            .ThenBy(value => value.InstanceGroupId)
+            .ThenBy(value => value.SubVoiceId)
+            .ToArray();
         List<MidiPortRenderPlan> ports = [];
         CanonicalMidiEvent[] events = compiled.Events.ToArray();
         for (byte port = 0; port < 16; port++)
@@ -98,6 +131,14 @@ public static class MidiRenderPlanAdapter
             totalFrames,
             ports.ToArray(),
             sourceIds.Select(value => value.Value).ToArray(),
-            initiallyDisabled);
+            initiallyDisabled,
+            unitFragments);
     }
+
+    private static ChannelUnitAllocation ResolveAllocation(
+        CanonicalCompiledResult compiled,
+        CanonicalAudioUnitFragment fragment) => compiled.Allocations.ToArray()
+            .First(value =>
+                value.InstanceGroupId == fragment.InstanceGroupId
+                && value.SubVoiceId == fragment.SubVoiceId);
 }

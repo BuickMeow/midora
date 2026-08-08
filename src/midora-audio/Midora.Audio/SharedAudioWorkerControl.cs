@@ -19,18 +19,25 @@ public enum AudioWorkerState : int
     Rendering,
     Cancelling,
     Finalizing,
-    Cancelled
+    Cancelled,
+    OutputDeviceUnavailable,
+    HeldPreviewPaused
 }
 
 public enum AudioWorkerControlCommandKind : byte
 {
     Stop,
-    Monitoring
+    Monitoring,
+    HeldPreviewPause,
+    HeldPreviewApplyPlan,
+    HeldPreviewResume,
+    BufferingRecoveryPrepare
 }
 
 public readonly record struct AudioWorkerControlCommand(
     AudioWorkerControlCommandKind Kind,
-    MidiMonitoringCommand MonitoringCommand);
+    MidiMonitoringCommand MonitoringCommand,
+    long Payload = 0);
 
 public readonly record struct AudioWorkerStatus(
     AudioWorkerState State,
@@ -41,7 +48,8 @@ public readonly record struct AudioWorkerStatus(
     long UnderrunCount,
     long CallbackAllocatedBytes,
     long RenderingAllocatedBytes,
-    int FaultCode);
+    int FaultCode,
+    long HeldPreviewPlanGeneration);
 
 /// <summary>
 /// Fixed-version, bounded, allocation-free runtime IPC between the UI process and the audio worker.
@@ -51,8 +59,9 @@ public readonly record struct AudioWorkerStatus(
 [SupportedOSPlatform("windows")]
 public sealed unsafe class SharedAudioWorkerControl : IDisposable
 {
-    public const int ProtocolVersion = 1;
+    public const int ProtocolVersion = 4;
     public const int CommandCapacity = 1_024;
+    public const int MaximumStatusReadAttempts = 1_024;
 
     private const int Magic = 0x4357414d;
     private const int HeaderByteCount = 128;
@@ -70,10 +79,11 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
     private const int CallbackAllocatedBytesOffset = 48;
     private const int RenderingAllocatedBytesOffset = 56;
     private const int FaultCodeOffset = 64;
-    private const int StatusReservedOffset = 68;
+    private const int StatusSequenceOffset = 68;
     private const int CommandReadPositionOffset = 72;
     private const int CommandWritePositionOffset = 80;
-    private const int HeaderReservedOffset = 88;
+    private const int HeldPreviewPlanGenerationOffset = 88;
+    private const int HeaderReservedOffset = 96;
 
     private readonly MemoryMappedFile _mapping;
     private readonly MemoryMappedViewAccessor _view;
@@ -150,7 +160,6 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
             if (result.Int32At(MagicOffset) != Magic
                 || result.Int32At(VersionOffset) != ProtocolVersion
                 || result.Int32At(CapacityOffset) != CommandCapacity
-                || result.Int32At(StatusReservedOffset) != 0
                 || !result.IsZeroedRange(HeaderReservedOffset, HeaderByteCount))
             {
                 throw new InvalidDataException("The audio worker shared-memory ABI is incompatible.");
@@ -175,21 +184,37 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
     public AudioWorkerStatus ReadStatus()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        AudioWorkerStatus result = new(
-            (AudioWorkerState)Volatile.Read(ref Int32At(StateOffset)),
-            Volatile.Read(ref Int32At(ActualSampleRateOffset)),
-            Volatile.Read(ref Int32At(ActualDeviceBufferFrameCountOffset)),
-            Volatile.Read(ref Int64At(PositionFrameOffset)),
-            Volatile.Read(ref Int64At(RenderPositionFrameOffset)),
-            Volatile.Read(ref Int64At(UnderrunCountOffset)),
-            Volatile.Read(ref Int64At(CallbackAllocatedBytesOffset)),
-            Volatile.Read(ref Int64At(RenderingAllocatedBytesOffset)),
-            Volatile.Read(ref Int32At(FaultCodeOffset)));
-        if (!IsValidStatus(result))
+        for (int attempt = 0; attempt < MaximumStatusReadAttempts; attempt++)
         {
-            throw new InvalidDataException("The audio worker shared-memory status is invalid.");
+            int before = Volatile.Read(ref Int32At(StatusSequenceOffset));
+            if ((before & 1) != 0)
+            {
+                continue;
+            }
+            AudioWorkerStatus result = new(
+                (AudioWorkerState)Volatile.Read(ref Int32At(StateOffset)),
+                Volatile.Read(ref Int32At(ActualSampleRateOffset)),
+                Volatile.Read(ref Int32At(ActualDeviceBufferFrameCountOffset)),
+                Volatile.Read(ref Int64At(PositionFrameOffset)),
+                Volatile.Read(ref Int64At(RenderPositionFrameOffset)),
+                Volatile.Read(ref Int64At(UnderrunCountOffset)),
+                Volatile.Read(ref Int64At(CallbackAllocatedBytesOffset)),
+                Volatile.Read(ref Int64At(RenderingAllocatedBytesOffset)),
+                Volatile.Read(ref Int32At(FaultCodeOffset)),
+                Volatile.Read(ref Int64At(HeldPreviewPlanGenerationOffset)));
+            int after = Volatile.Read(ref Int32At(StatusSequenceOffset));
+            if (before != after || (after & 1) != 0)
+            {
+                continue;
+            }
+            if (!IsValidStatus(result))
+            {
+                throw new InvalidDataException("The audio worker shared-memory status is invalid.");
+            }
+            return result;
         }
-        return result;
+        throw new InvalidDataException(
+            "The audio worker shared-memory status did not stabilize within the bounded retry limit.");
     }
 
     public void PublishPrepared(int actualSampleRate, int actualDeviceBufferFrameCount)
@@ -203,16 +228,20 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(actualDeviceBufferFrameCount));
         }
+        int sequence = BeginStatusPublication();
         Volatile.Write(ref Int32At(ActualSampleRateOffset), actualSampleRate);
         Volatile.Write(ref Int32At(ActualDeviceBufferFrameCountOffset), actualDeviceBufferFrameCount);
         Volatile.Write(ref Int32At(StateOffset), (int)AudioWorkerState.Prepared);
+        EndStatusPublication(sequence);
     }
 
     public void PublishState(AudioWorkerState state)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ValidateState(state);
+        int sequence = BeginStatusPublication();
         Volatile.Write(ref Int32At(StateOffset), (int)state);
+        EndStatusPublication(sequence);
     }
 
     public void PublishRuntimeStatus(
@@ -233,12 +262,50 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(positionFrame));
         }
+        int sequence = BeginStatusPublication();
         Volatile.Write(ref Int64At(PositionFrameOffset), positionFrame);
         Volatile.Write(ref Int64At(RenderPositionFrameOffset), renderPositionFrame);
         Volatile.Write(ref Int64At(UnderrunCountOffset), underrunCount);
         Volatile.Write(ref Int64At(CallbackAllocatedBytesOffset), callbackAllocatedBytes);
         Volatile.Write(ref Int64At(RenderingAllocatedBytesOffset), renderingAllocatedBytes);
         Volatile.Write(ref Int32At(StateOffset), (int)state);
+        EndStatusPublication(sequence);
+    }
+
+    public void PublishHeldPreviewStatus(
+        AudioWorkerState state,
+        long positionFrame,
+        long producerFrontierFrame,
+        long underrunCount,
+        long callbackAllocatedBytes,
+        long renderingAllocatedBytes,
+        long planGeneration)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (state is not AudioWorkerState.HeldPreviewPaused
+            and not AudioWorkerState.Playing
+            and not AudioWorkerState.Buffering)
+        {
+            throw new ArgumentOutOfRangeException(nameof(state));
+        }
+        if (positionFrame < 0
+            || producerFrontierFrame < 0
+            || underrunCount < 0
+            || callbackAllocatedBytes < 0
+            || renderingAllocatedBytes < 0
+            || planGeneration < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(producerFrontierFrame));
+        }
+        int sequence = BeginStatusPublication();
+        Volatile.Write(ref Int64At(PositionFrameOffset), positionFrame);
+        Volatile.Write(ref Int64At(RenderPositionFrameOffset), producerFrontierFrame);
+        Volatile.Write(ref Int64At(UnderrunCountOffset), underrunCount);
+        Volatile.Write(ref Int64At(CallbackAllocatedBytesOffset), callbackAllocatedBytes);
+        Volatile.Write(ref Int64At(RenderingAllocatedBytesOffset), renderingAllocatedBytes);
+        Volatile.Write(ref Int64At(HeldPreviewPlanGenerationOffset), planGeneration);
+        Volatile.Write(ref Int32At(StateOffset), (int)state);
+        EndStatusPublication(sequence);
     }
 
     public void PublishFault(int faultCode)
@@ -248,8 +315,10 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(faultCode));
         }
+        int sequence = BeginStatusPublication();
         Volatile.Write(ref Int32At(FaultCodeOffset), faultCode);
         Volatile.Write(ref Int32At(StateOffset), (int)AudioWorkerState.Faulted);
+        EndStatusPublication(sequence);
     }
 
     public bool TryEnqueueStop(bool flush = true)
@@ -257,6 +326,36 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         MidiMonitoringCommand payload = new(default, 0, 0, default, flush);
         AudioWorkerControlCommand command = new(AudioWorkerControlCommandKind.Stop, payload);
         return TryEnqueue(command);
+    }
+
+    public bool TryEnqueueHeldPreviewPause() => TryEnqueue(
+        new(AudioWorkerControlCommandKind.HeldPreviewPause, default));
+
+    public bool TryEnqueueHeldPreviewApplyPlan(long planGeneration)
+    {
+        if (planGeneration <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(planGeneration));
+        }
+        return TryEnqueue(new(
+            AudioWorkerControlCommandKind.HeldPreviewApplyPlan,
+            default,
+            planGeneration));
+    }
+
+    public bool TryEnqueueHeldPreviewResume() => TryEnqueue(
+        new(AudioWorkerControlCommandKind.HeldPreviewResume, default));
+
+    public bool TryEnqueueBufferingRecovery(long recoveryEndFrame)
+    {
+        if (recoveryEndFrame <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(recoveryEndFrame));
+        }
+        return TryEnqueue(new(
+            AudioWorkerControlCommandKind.BufferingRecoveryPrepare,
+            default,
+            recoveryEndFrame));
     }
 
     public bool TryEnqueueMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
@@ -348,14 +447,22 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
     private void WriteCommand(long position, AudioWorkerControlCommand command)
     {
         byte* target = CommandPointer(position);
+        NativeMemory.Clear(target, CommandByteCount);
         target[0] = (byte)command.Kind;
+        if (command.Kind is AudioWorkerControlCommandKind.HeldPreviewPause
+            or AudioWorkerControlCommandKind.HeldPreviewApplyPlan
+            or AudioWorkerControlCommandKind.HeldPreviewResume
+            or AudioWorkerControlCommandKind.BufferingRecoveryPrepare)
+        {
+            *(long*)(target + 4) = command.Payload;
+            return;
+        }
         MidiMonitoringCommand monitoring = command.MonitoringCommand;
         target[1] = (byte)monitoring.Kind;
         target[2] = monitoring.ZeroBasedPortNumber;
         target[3] = monitoring.SourceEnabled ? (byte)1 : (byte)0;
         *(int*)(target + 4) = monitoring.SourceIndex;
         *(uint*)(target + 8) = monitoring.Message.PackedValue;
-        *(uint*)(target + 12) = 0;
     }
 
     private AudioWorkerControlCommand ReadCommand(long position)
@@ -371,6 +478,37 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         if (reserved != 0 || sourceEnabled > 1)
         {
             throw new InvalidDataException("The audio worker command payload or reserved field is invalid.");
+        }
+
+        if (kind is AudioWorkerControlCommandKind.HeldPreviewPause
+            or AudioWorkerControlCommandKind.HeldPreviewApplyPlan
+            or AudioWorkerControlCommandKind.HeldPreviewResume)
+        {
+            long generation = *(long*)(source + 4);
+            if (monitoringKind != 0
+                || zeroBasedPortNumber != 0
+                || sourceEnabled != 0
+                || kind == AudioWorkerControlCommandKind.HeldPreviewApplyPlan && generation <= 0
+                || kind != AudioWorkerControlCommandKind.HeldPreviewApplyPlan && generation != 0)
+            {
+                throw new InvalidDataException(
+                    "The audio worker held-preview command payload is invalid.");
+            }
+            return new(kind, default, generation);
+        }
+
+        if (kind == AudioWorkerControlCommandKind.BufferingRecoveryPrepare)
+        {
+            long recoveryEndFrame = *(long*)(source + 4);
+            if (monitoringKind != 0
+                || zeroBasedPortNumber != 0
+                || sourceEnabled != 0
+                || recoveryEndFrame <= 0)
+            {
+                throw new InvalidDataException(
+                    "The audio worker Buffering recovery command payload is invalid.");
+            }
+            return new(kind, default, recoveryEndFrame);
         }
 
         if (kind == AudioWorkerControlCommandKind.Stop)
@@ -437,6 +575,29 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
 
     private ref long Int64At(int offset) => ref *(long*)(_basePointer + offset);
 
+    private int BeginStatusPublication()
+    {
+        ref int sequence = ref Int32At(StatusSequenceOffset);
+        int even = Volatile.Read(ref sequence);
+        if ((even & 1) != 0)
+        {
+            throw new InvalidOperationException(
+                "The audio worker status has a concurrent or interrupted writer.");
+        }
+        int odd = unchecked(even + 1);
+        if (Interlocked.CompareExchange(ref sequence, odd, even) != even)
+        {
+            throw new InvalidOperationException(
+                "The audio worker status supports only one writer.");
+        }
+        return odd;
+    }
+
+    private void EndStatusPublication(int oddSequence) =>
+        Volatile.Write(
+            ref Int32At(StatusSequenceOffset),
+            unchecked(oddSequence + 1));
+
     private static void ValidateCommandRingPositions(long read, long write)
     {
         if (read < 0 || write < read || write - read > CommandCapacity)
@@ -474,7 +635,7 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
     }
 
     private static bool IsValidStatus(AudioWorkerStatus status) =>
-        (uint)status.State <= (uint)AudioWorkerState.Cancelled
+        (uint)status.State <= (uint)AudioWorkerState.HeldPreviewPaused
         && status.ActualSampleRate >= 0
         && status.ActualDeviceBufferFrameCount >= 0
         && status.PositionFrame >= 0
@@ -482,11 +643,12 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         && status.UnderrunCount >= 0
         && status.CallbackAllocatedBytes >= 0
         && status.RenderingAllocatedBytes >= 0
-        && status.FaultCode >= 0;
+        && status.FaultCode >= 0
+        && status.HeldPreviewPlanGeneration >= 0;
 
     private static void ValidateState(AudioWorkerState state)
     {
-        if ((uint)state > (uint)AudioWorkerState.Cancelled)
+        if ((uint)state > (uint)AudioWorkerState.HeldPreviewPaused)
         {
             throw new ArgumentOutOfRangeException(nameof(state));
         }

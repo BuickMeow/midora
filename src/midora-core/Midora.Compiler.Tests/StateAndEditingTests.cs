@@ -40,6 +40,10 @@ public sealed class StateAndEditingTests
             && value.Message.Byte1 == 11);
         Assert.Equal((byte)11, reset.Message.Byte1);
         Assert.Equal((byte)77, reset.Message.Byte2);
+        Assert.Single(resets, value =>
+            value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 120
+            && value.Message.Byte2 == 0);
         Assert.DoesNotContain(result.Events.ToArray(), value => value.Message.MessageType == MidiMessageType.ControlChange
             && value.Message.Byte1 is 121 or 123);
     }

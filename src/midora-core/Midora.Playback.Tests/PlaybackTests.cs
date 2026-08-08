@@ -142,6 +142,14 @@ public sealed class PlaybackTests
         Assert.Equal([project.Tracks[0].Id.Value], plan.SourceIds.ToArray());
         Assert.Equal([0], plan.InitiallyDisabledSourceIndices.ToArray());
         Assert.Contains(plan.Ports[0].Events.ToArray(), value => value.SourceIndex == 0);
+        MidiUnitFragmentRenderPlan fragment = Assert.Single(plan.UnitFragments.ToArray());
+        Assert.Equal(project.Tracks[0].Id.Value, fragment.TrackId);
+        Assert.Equal(project.Tracks[0].Segments[0].Id.Value, fragment.SegmentId);
+        Assert.Equal(0, fragment.SourceIndex);
+        Assert.Equal(64, fragment.SemanticFingerprint.Length);
+        Assert.All(
+            fragment.Events.ToArray(),
+            value => Assert.Equal(0, value.Message.ChannelNumber));
     }
 
     [Fact]
@@ -162,6 +170,67 @@ public sealed class PlaybackTests
         Assert.True(result.IsConsumable);
         Assert.NotSame(first, second);
         Assert.Equal(1, session.LastCompilationTelemetry.RecompiledTrackCount);
+    }
+
+    [Fact]
+    public void OfflineTrackProjectionExcludesOtherTrackUnitFragments()
+    {
+        (MidoraProject project, LogicalTrack secondTrack) = CreateMonitoringRoutingProject();
+        LogicalTrack firstTrack = project.Tracks[0];
+        using MidoraCompiler compiler = new();
+        CanonicalCompiledResult compiled = compiler.CompileFull(project);
+
+        MidiRenderPlan plan = MidiRenderPlanAdapter.Create(
+            compiled,
+            48_000,
+            new HashSet<MidoraId> { firstTrack.Id });
+
+        Assert.NotEmpty(plan.UnitFragments.ToArray());
+        Assert.All(
+            plan.UnitFragments.ToArray(),
+            value => Assert.Equal(firstTrack.Id.Value, value.TrackId));
+        Assert.DoesNotContain(
+            plan.UnitFragments.ToArray(),
+            value => value.TrackId == secondTrack.Id.Value);
+    }
+
+    [Fact]
+    public void ExactPlaybackRangeReplayReusesCanonicalResultUntilSourceChanges()
+    {
+        MidoraProject project = CreateProject();
+        using ProjectCompilationSession session = new(project);
+
+        CanonicalCompiledResult first = session.CompileForPlayback(0, 960);
+        CanonicalCompiledResult second = session.CompileForPlayback(0, 960);
+
+        Assert.Same(first, second);
+        Assert.Equal(1, session.PlaybackRangeCompilationCount);
+        Assert.Equal(1, session.PlaybackRangeCacheHitCount);
+
+        ProjectChangeSet changes = new();
+        changes.TrackIds.Add(project.Tracks[0].Id);
+        session.ApplyEdit(
+            value => value.Tracks[0].Segments[0].Notes[0].Velocity = 99,
+            changes);
+        CanonicalCompiledResult afterEdit = session.CompileForPlayback(0, 960);
+
+        Assert.NotSame(first, afterEdit);
+        Assert.Equal(2, session.PlaybackRangeCompilationCount);
+        Assert.Equal(1, session.PlaybackRangeCacheHitCount);
+    }
+
+    [Fact]
+    public void SampleDomainInvalidationDoesNotDiscardTickDomainPlaybackRangeCache()
+    {
+        using ProjectCompilationSession session = new(CreateProject());
+        CanonicalCompiledResult first = session.CompileForPlayback(0, 960);
+
+        session.InvalidateSampleDomainCaches();
+        CanonicalCompiledResult second = session.CompileForPlayback(0, 960);
+
+        Assert.Same(first, second);
+        Assert.Equal(1, session.PlaybackRangeCompilationCount);
+        Assert.Equal(1, session.PlaybackRangeCacheHitCount);
     }
 
     [Fact]
@@ -589,7 +658,7 @@ public sealed class PlaybackTests
             using PlaybackController controller = new(session, backend);
 
             Assert.Throws<ArgumentException>(() => controller.StartEventInstrumentPreview(
-                new EventInstrumentPreviewRequest(MidoraId.FromParts(ulong.MaxValue, ulong.MaxValue))));
+                new EventInstrumentPreviewRequest(new MidoraId(long.MaxValue))));
 
             Assert.Equal(PlaybackState.Error, controller.State);
             Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
@@ -723,6 +792,229 @@ public sealed class PlaybackTests
             Assert.Equal(PlaybackState.Playing, controller.State);
             Assert.Equal(1, backend.ResetCount);
             controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void ActiveOutputDeviceLossStopsWithoutThrowAndRequiresExplicitSelection()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            FakeBackend backend = new();
+            ProjectCompilationSession session = new(project, soundFont);
+            using PlaybackController controller = new(session, backend);
+            controller.Start();
+            MidiRenderPlan cachedBeforeLoss = session.GetOrCreateRenderPlan(48_000);
+            backend.PositionFrames = 12_000;
+            backend.OutputDeviceSelectionRequired = true;
+            backend.OutputDeviceSelectionReason = "active device removed";
+
+            controller.Update();
+
+            Assert.Equal(PlaybackState.Stopped, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.True(controller.OutputDeviceSelectionRequired);
+            Assert.False(session.EditsLocked);
+            Assert.Equal(240, controller.CurrentTick);
+            Assert.Equal(1, backend.StopCount);
+            Assert.False(backend.LastStopFlush);
+            Assert.IsType<OutputDeviceSelectionRequiredException>(controller.LastError);
+            Assert.Contains("active device removed", controller.LastError?.Message);
+            Assert.NotSame(cachedBeforeLoss, session.GetOrCreateRenderPlan(48_000));
+
+            Assert.Throws<OutputDeviceSelectionRequiredException>(() => controller.Start());
+            Assert.Equal(1, backend.StartCount);
+
+            controller.SelectOutputDevice("replacement-device");
+            Assert.False(controller.OutputDeviceSelectionRequired);
+            Assert.Equal("replacement-device", backend.SelectedOutputDeviceId);
+            controller.Start();
+
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            Assert.Equal(2, backend.StartCount);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void PlaybackKindsSelectOnlyTheirApprovedReusableCacheLayers()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            FakeBackend backend = new();
+            using PlaybackController controller = new(new(project, soundFont), backend);
+
+            controller.Start();
+            controller.Stop();
+            controller.StartSegmentPreview(
+                project.Tracks[0].Id,
+                project.Tracks[0].Segments[0].Id);
+            controller.Stop();
+            controller.StartEventInstrumentPreview(new EventInstrumentPreviewRequest(
+                project.EventInstruments[0].Id,
+                Pitch: 67,
+                GateLengthTicks: 240,
+                Tempo: 100m));
+
+            Assert.Equal(
+                [
+                    RealtimePlaybackCacheMode.UnitPcmAndPlaybackSpan,
+                    RealtimePlaybackCacheMode.UnitPcm,
+                    RealtimePlaybackCacheMode.Disabled
+                ],
+                backend.CacheModes);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void HeldPreviewGateEndFreezesConsumedLengthButChangesAudioAtProducerFrontier()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            FakeBackend backend = new();
+            using PlaybackController controller = new(new(project, soundFont), backend);
+
+            controller.StartHeldEventInstrumentPreview(new EventInstrumentPreviewRequest(
+                project.EventInstruments[0].Id,
+                Pitch: 67,
+                Tempo: 120m));
+            Assert.True(controller.IsHeldPreviewGateOpen);
+            Assert.DoesNotContain(backend.LastStartedPlan!.Ports[0].Events.ToArray(), value =>
+                value.SampleFrame == backend.LastStartedPlan.TotalFrameCount);
+
+            backend.PositionFrames = 12_000;
+            backend.ExplicitRenderPositionFrames = 16_800;
+            HeldPreviewGateEndReport report = controller.EndHeldPreviewGate();
+
+            Assert.False(controller.IsHeldPreviewGateOpen);
+            Assert.Equal(240, report.FinalGateLengthTicks);
+            Assert.Equal(12_000, report.ConsumedFrameAtGateEnd);
+            Assert.Equal(16_800, report.ProducerFrontierFrame);
+            Assert.Equal(4_800, report.QueuedLatencyFrameCount);
+            Assert.Equal(100, report.QueuedLatencyMilliseconds, 6);
+            Assert.Equal(1, backend.HeldPauseCount);
+            Assert.Equal(1, backend.HeldReplaceCount);
+            Assert.Contains(backend.LastStartedPlan!.Ports[0].Events.ToArray(), value =>
+                value.SampleFrame == 16_800
+                && value.Message.MessageType == MidiMessageType.NoteOff);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void HeldPreviewUpdateRenewsTheFiniteCausalWindowBeforeProducerCompletion()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            FakeBackend backend = new();
+            using PlaybackController controller = new(new(project, soundFont), backend);
+            controller.StartHeldEventInstrumentPreview(new EventInstrumentPreviewRequest(
+                project.EventInstruments[0].Id,
+                Tempo: 120m));
+            long initialTotalFrames = backend.LastStartedPlan!.TotalFrameCount;
+            backend.ExplicitRenderPositionFrames = initialTotalFrames - (3 * backend.ActualSampleRate);
+
+            controller.Update();
+
+            Assert.Equal(1, backend.HeldPauseCount);
+            Assert.Equal(1, backend.HeldReplaceCount);
+            Assert.True(backend.LastStartedPlan!.TotalFrameCount > initialTotalFrames);
+            Assert.True(controller.IsHeldPreviewGateOpen);
+            controller.CancelHeldPreview();
+            Assert.False(controller.IsHeldPreviewGateOpen);
+            Assert.Equal(PlaybackState.Stopped, controller.State);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void SegmentPitchRulerPreviewUsesTheTrackBindingAndHasNoProjectEditSideEffect()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            LogicalTrack track = project.Tracks[0];
+            Segment segment = track.Segments[0];
+            int noteCount = segment.Notes.Count;
+            FakeBackend backend = new();
+            using PlaybackController controller = new(new(project, soundFont), backend);
+
+            controller.StartHeldSegmentPitchRulerPreview(
+                track.Id,
+                segment.Id,
+                pitch: 71,
+                velocity: 112,
+                previewTempo: 90m);
+
+            Assert.Contains(backend.LastStartedPlan!.Ports[0].Events.ToArray(), value =>
+                value.Message.MessageType == MidiMessageType.NoteOn
+                && value.Message.Byte1 == 71);
+            Assert.Equal(noteCount, segment.Notes.Count);
+            controller.CancelHeldPreview();
+
+            track.EventInstrumentId = null;
+            Assert.Throws<InvalidOperationException>(() =>
+                controller.StartHeldSegmentPitchRulerPreview(
+                    track.Id,
+                    segment.Id,
+                    60,
+                    100,
+                    120m));
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void OutputDeviceSelectionRejectsEmptyIdAndActivePlayback()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            FakeBackend backend = new();
+            using PlaybackController controller = new(
+                new ProjectCompilationSession(project, soundFont),
+                backend);
+
+            Assert.Throws<ArgumentException>(() => controller.SelectOutputDevice(string.Empty));
+            controller.Start();
+            Assert.Throws<InvalidOperationException>(() =>
+                controller.SelectOutputDevice("replacement-device"));
+            controller.Stop();
+
+            controller.SelectOutputDevice(null);
+            Assert.Null(backend.SelectedOutputDeviceId);
         }
         finally
         {
@@ -1002,6 +1294,105 @@ public sealed class PlaybackTests
         }
     }
 
+    [Fact]
+    public void LatchedUnderrunRequestsOneCompleteRecoveryIntervalAndKeepsCursorFrozen()
+    {
+        string soundFont = Path.GetTempFileName();
+        string cacheRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"midora-playback-recovery-{Guid.NewGuid():N}");
+        try
+        {
+            using ProjectCompilationSession session = new(CreateProject(), soundFont);
+            _ = session.ConfigureAudioCache(cacheRoot, 16 * 1024 * 1024);
+            using RecoveryBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            controller.Start();
+            backend.PositionFrames = 4_800;
+            backend.IsBuffering = true;
+            long frozenTick = controller.CurrentTick;
+
+            controller.Update();
+            controller.Update();
+
+            Assert.Equal(PlaybackState.Buffering, controller.State);
+            Assert.Equal(1, backend.BeginRecoveryCount);
+            Assert.True(backend.RecoveryEndFrame > backend.PositionFrames);
+            Assert.Equal(frozenTick, controller.CurrentTick);
+            Assert.True(session.AudioCacheSnapshot!.Value.TransientBytes > 0);
+
+            backend.IsBuffering = false;
+            controller.Update();
+            Assert.Equal(PlaybackState.Playing, controller.State);
+            controller.Stop();
+            Assert.Equal(0, session.AudioCacheSnapshot!.Value.TransientBytes);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+            if (Directory.Exists(cacheRoot))
+            {
+                Directory.Delete(cacheRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void UnavailableDiskRecoveryStorageFallsBackToReservedWorkerMemory()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            using ProjectCompilationSession session = new(CreateProject(), soundFont);
+            using RecoveryBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            controller.Start();
+            backend.PositionFrames = 4_800;
+            backend.IsBuffering = true;
+
+            controller.Update();
+
+            Assert.Equal(PlaybackState.Buffering, controller.State);
+            Assert.Equal(PlaybackTaskKind.MainTimeline, controller.ActiveTaskKind);
+            Assert.Equal(0, backend.StopCount);
+            Assert.Equal(1, backend.BeginRecoveryCount);
+            Assert.True(backend.ActiveMemoryFrameCapacity > 0);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void UnderrunWithoutDiskOrMemoryRecoveryStorageStopsAtStructuredError()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            using ProjectCompilationSession session = new(CreateProject(), soundFont);
+            using RecoveryBackend backend = new() { AcceptMemoryFallback = false };
+            using PlaybackController controller = new(session, backend);
+            controller.Start();
+            backend.PositionFrames = 4_800;
+            backend.IsBuffering = true;
+
+            controller.Update();
+
+            Assert.Equal(PlaybackState.Error, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.IsType<AudioRecoveryStorageUnavailableException>(controller.LastError);
+            Assert.Equal(1, backend.StopCount);
+            Assert.Equal(0, backend.BeginRecoveryCount);
+            Assert.False(session.EditsLocked);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
     private static MidoraProject CreateProject()
     {
         MidoraProject project = new(480);
@@ -1090,26 +1481,47 @@ public sealed class PlaybackTests
         return (project, restoredTrack);
     }
 
-    private sealed class FakeBackend : IRealtimePlaybackBackend
+    private sealed class FakeBackend
+        : IRealtimePlaybackBackend,
+          IHeldPreviewRealtimePlaybackBackend,
+          IRealtimePlaybackCacheBackend
     {
         public int ActualSampleRate { get; init; } = 48_000;
         public long PositionFrames { get; set; }
-        public long RenderPositionFrames => PositionFrames;
+        public long RenderPositionFrames => ExplicitRenderPositionFrames ?? PositionFrames;
+        public long? ExplicitRenderPositionFrames { get; set; }
         public bool IsBuffering => false;
         public bool IsCompleted { get; set; }
         public bool IsFaulted { get; set; }
         public string? FaultDescription { get; set; }
+        public bool OutputDeviceSelectionRequired { get; set; }
+        public string? OutputDeviceSelectionReason { get; set; }
+        public string? SelectedOutputDeviceId { get; private set; }
         public int StartCount { get; private set; }
         public int StopCount { get; private set; }
+        public bool? LastStopFlush { get; private set; }
         public int ResetCount { get; private set; }
         public int PrepareCount { get; private set; }
         public bool ThrowMonitoringCommands { get; set; }
         public int MonitoringApplyCount { get; private set; }
+        public int HeldPauseCount { get; private set; }
+        public int HeldReplaceCount { get; private set; }
+        public int HeldResumeCount { get; private set; }
+        public bool HeldProducerPaused { get; private set; }
         public bool ThrowPrepare { get; set; }
         public bool ThrowStop { get; set; }
         public bool ThrowReset { get; set; }
         public MidiRenderPlan? LastStartedPlan { get; private set; }
         public List<MidiMonitoringCommand> MonitoringCommands { get; } = [];
+        public List<RealtimePlaybackCacheMode> CacheModes { get; } = [];
+        public IRealtimePlaybackCacheStore? CacheStore { get; private set; }
+
+        public void SetAudioCacheStore(IRealtimePlaybackCacheStore cacheStore) =>
+            CacheStore = cacheStore;
+
+        public void SetNextPlaybackCacheMode(RealtimePlaybackCacheMode mode) =>
+            CacheModes.Add(mode);
+
         public int Prepare()
         {
             PrepareCount++;
@@ -1127,12 +1539,13 @@ public sealed class PlaybackTests
             StartCount++;
             LastStartedPlan = plan;
             PositionFrames = 0;
+            ExplicitRenderPositionFrames = null;
             IsCompleted = false;
         }
         public void Stop(bool flush)
         {
-            Assert.True(flush);
             StopCount++;
+            LastStopFlush = flush;
             if (ThrowStop)
             {
                 throw new InvalidOperationException("Injected stop failure.");
@@ -1147,6 +1560,33 @@ public sealed class PlaybackTests
             }
             MonitoringCommands.AddRange(commands);
         }
+        public long PauseHeldPreviewAtProducerFrontier(TimeSpan timeout)
+        {
+            Assert.True(timeout > TimeSpan.Zero);
+            Assert.False(HeldProducerPaused);
+            HeldPauseCount++;
+            HeldProducerPaused = true;
+            return RenderPositionFrames;
+        }
+        public void ReplaceHeldPreviewFutureAndResume(
+            MidiRenderPlan plan,
+            long producerFrontierFrame,
+            TimeSpan timeout)
+        {
+            Assert.True(timeout > TimeSpan.Zero);
+            Assert.True(HeldProducerPaused);
+            Assert.Equal(RenderPositionFrames, producerFrontierFrame);
+            HeldReplaceCount++;
+            LastStartedPlan = plan;
+            ExplicitRenderPositionFrames = producerFrontierFrame;
+            HeldProducerPaused = false;
+        }
+        public void ResumeHeldPreviewFromProducerFrontier()
+        {
+            Assert.True(HeldProducerPaused);
+            HeldResumeCount++;
+            HeldProducerPaused = false;
+        }
         public void Reset()
         {
             ResetCount++;
@@ -1156,8 +1596,104 @@ public sealed class PlaybackTests
             }
             PositionFrames = 0;
         }
+        public void SelectOutputDevice(string? deviceId)
+        {
+            SelectedOutputDeviceId = deviceId;
+            OutputDeviceSelectionRequired = false;
+            OutputDeviceSelectionReason = null;
+            IsFaulted = false;
+        }
         public void Dispose()
         {
+        }
+    }
+
+    private sealed class RecoveryBackend
+        : IRealtimePlaybackBackend, IBufferingRecoveryRealtimePlaybackBackend
+    {
+        private AudioCacheSessionStore.AudioRecoverySpool? _nextSpool;
+        private AudioCacheSessionStore.AudioRecoverySpool? _activeSpool;
+        private long _nextMemoryFrameCapacity;
+        private long _activeMemoryFrameCapacity;
+
+        public int ActualSampleRate => 48_000;
+        public long PositionFrames { get; set; }
+        public long RenderPositionFrames => PositionFrames;
+        public bool IsBuffering { get; set; }
+        public bool IsCompleted => false;
+        public bool IsFaulted => false;
+        public string? FaultDescription => null;
+        public bool OutputDeviceSelectionRequired => false;
+        public string? OutputDeviceSelectionReason => null;
+        public bool HasBufferingRecoveryStorage => _activeSpool is not null
+            || _activeMemoryFrameCapacity > 0;
+        public int BeginRecoveryCount { get; private set; }
+        public long RecoveryEndFrame { get; private set; }
+        public int StopCount { get; private set; }
+        public bool AcceptMemoryFallback { get; init; } = true;
+        public long ActiveMemoryFrameCapacity => _activeMemoryFrameCapacity;
+
+        public int Prepare() => ActualSampleRate;
+
+        public void Start(
+            MidiRenderPlan plan,
+            string soundFontPath,
+            PlaybackMasterConfiguration master)
+        {
+            _activeSpool = _nextSpool;
+            _nextSpool = null;
+            _activeMemoryFrameCapacity = _nextMemoryFrameCapacity;
+            _nextMemoryFrameCapacity = 0;
+            PositionFrames = 0;
+            IsBuffering = false;
+        }
+
+        public void SetNextBufferingRecoveryStorage(
+            AudioCacheSessionStore.AudioRecoverySpool? recoverySpool,
+            long memoryFallbackFrameCapacity)
+        {
+            _nextSpool?.Dispose();
+            _nextSpool = recoverySpool;
+            _nextMemoryFrameCapacity = AcceptMemoryFallback
+                ? memoryFallbackFrameCapacity
+                : 0;
+        }
+
+        public void BeginBufferingRecovery(long recoveryEndFrame)
+        {
+            Assert.True(IsBuffering);
+            Assert.True(HasBufferingRecoveryStorage);
+            BeginRecoveryCount++;
+            RecoveryEndFrame = recoveryEndFrame;
+        }
+
+        public void ApplyMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
+        {
+        }
+
+        public void Stop(bool flush)
+        {
+            StopCount++;
+            _activeSpool?.Dispose();
+            _activeSpool = null;
+            _activeMemoryFrameCapacity = 0;
+            IsBuffering = false;
+        }
+
+        public void Reset()
+        {
+        }
+
+        public void SelectOutputDevice(string? deviceId)
+        {
+        }
+
+        public void Dispose()
+        {
+            _nextSpool?.Dispose();
+            _nextSpool = null;
+            _activeSpool?.Dispose();
+            _activeSpool = null;
         }
     }
 

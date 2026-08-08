@@ -547,7 +547,7 @@ Error
 ```text
 可按既有规则诊断为 Warning。
 ```
-未知 `abiVersion`、ABI v1 函数体不符合固定方法体结构、引用了 ABI v1 未开放的程序集或使用了高于 C# 14 的语法，均按 Mapping Function 编译错误处理。
+未知 `abiVersion`、ABI v2 函数体不符合固定方法体结构、引用了 ABI v2 未开放的程序集或使用了高于 C# 14 的语法，均按 Mapping Function 编译错误处理。
 ### 12.9.2 运行时异常
 C# Mapping Function 运行时异常：
 ```text
@@ -573,7 +573,7 @@ C# Mapping Function 不允许修改 Project 内容。
 导致不确定，用户自担风险。
 Debug 可辅助暴露这种问题。
 
-系统自身的 ABI v1 编译必须固定 C# 14、`Microsoft.NETCore.App.Ref 10.0.10`、Mapping v1 契约、编译选项和基于源码 hash 的程序集身份；不得使用 `LanguageVersion.Latest`、运行机器 TPA 枚举、随机程序集名称或缓存历史改变编译结果。
+系统自身的 ABI v2 编译必须固定 C# 14、`Microsoft.NETCore.App.Ref 10.0.10`、Mapping v2 契约、编译选项和基于源码 hash 的程序集身份；不得使用 `LanguageVersion.Latest`、运行机器 TPA 枚举、随机程序集名称或缓存历史改变编译结果。
 
 每个 Project 的 Mapping 代码缓存只保留当前源码修订，并通过 collectible AssemblyLoadContext 在修订失效、清缓存或 Project 关闭后请求卸载。该缓存只影响性能，不得改变 Full/Incremental 输出或诊断。
 ### 12.9.5 非法返回值
@@ -1126,6 +1126,7 @@ NaN / Infinity 映射结果
 类型不匹配目标参数
 资源不足
 Per-Note Instance Isolation 关闭时使用不兼容功能
+Time Signature Denominator 与 Project TPQ 不满足 `4 × TPQ % Denominator == 0`
 ```
 ---
 ## 12.19 诊断系统
@@ -1214,6 +1215,9 @@ Overlap Strategy = Reject -> Error
 Overlap Strategy = Warn   -> Warning
 ```
 `Reject` 必须使当前编译结果不可消费。`Warn` 默认保留两个实例并允许结果被消费；如果本次 CompileContext 启用“强制 Warning 导致编译失败”，则结果不可消费，但 Overlap 诊断的级别仍为 Warning。
+
+### 12.19.9 Time Signature 截断 Warning
+Time Signature 变化 tick 立即开启新小节。如果该 tick 不是前一个拍号段起点之后的自然完整小节边界，编译器必须产生一条 Warning，定位到该 Time Signature 稳定 ID 和 tick。Warning 默认不阻止消费；启用 Warning-as-error 时按第 12.19.7 节使结果不可消费，但诊断级别仍为 Warning。
 ---
 ## 12.20 编译成功判定与失败结果
 ### 12.20.1 成功判定
@@ -1353,6 +1357,7 @@ Project End Marker 会影响默认编译范围和硬裁剪边界。
 因此：
 ```text
 Conductor Track 修改必须使相关全局状态、范围上下文、播放 / 渲染时间换算缓存失效。
+Time Signature 修改还必须使 Project `Bar:Beat:Tick`、自然小节/拍网格和 Snap 派生映射失效，并重新计算中途截断 Warning。
 是否导致 Channel Unit 事件流整体重编，取决于修改是否影响本次编译范围、硬边界或输出 Meta Event。
 ```
 ### 12.21.7 增量编译不保证局部不变
@@ -1448,12 +1453,12 @@ Envelope / Loop
 修改以下内容应失效相关编译缓存：
 ```text
 Global Reset Defaults
-Global Event Scope Defaults
 ```
 原因：
 ```text
-可能改变 Reset 输出、状态作用域、资源释放和事件排序结果。
+可能改变 Reset 输出、资源释放和事件排序结果。
 ```
+初版 `Global Event Scope Defaults` 是不可编辑的版本化空 marker，不参与 canonical fingerprint，也没有独立缓存失效路径。Note 与 Channel-Wide 状态的作用域继续由第 5 章及各事件专项规则固定；未来版本若增加可配置作用域，必须同步定义其缓存失效语义。
 ### 12.22.6 Conductor Track 修改
 修改 Conductor Track 应失效相关全局状态、范围上下文、时间换算、播放和渲染缓存。
 Project End Marker 修改可能改变默认编译范围和硬裁剪边界。

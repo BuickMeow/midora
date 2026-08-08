@@ -421,7 +421,7 @@ public static partial class ProjectDomainEditCommands
             {
                 throw new InvalidOperationException("Only Segments on the same Logical Track can be joined.");
             }
-            UInt128 nextStableId = project.NextStableId;
+            long nextStableId = project.NextStableId;
             Segment joined = SegmentEditing.Join(project, first.Segment, second.Segment);
             if (project.NextStableId != nextStableId)
             {
@@ -479,6 +479,41 @@ public static partial class ProjectDomainEditCommands
         Action<MidoraProject> apply,
         Action<MidoraProject> undo) =>
         new DelegatePreparedEdit(hasChanges, changes, apply, undo);
+
+    private static IPreparedProjectEdit DeferredCreate<T>(
+        ProjectChangeSet changes,
+        Func<MidoraProject, T> createAndAttach,
+        Action<MidoraProject, T> reattach,
+        Action<MidoraProject, T> detach)
+        where T : class
+    {
+        T? created = null;
+        return Prepared(
+            hasChanges: true,
+            changes,
+            project =>
+            {
+                if (created is null)
+                {
+                    created = createAndAttach(project)
+                        ?? throw new InvalidOperationException(
+                            "A Project creation command returned no object.");
+                }
+                else
+                {
+                    reattach(project, created);
+                }
+            },
+            project =>
+            {
+                if (created is null)
+                {
+                    throw new InvalidOperationException(
+                        "A Project creation command cannot be undone before its first Apply.");
+                }
+                detach(project, created);
+            });
+    }
 
     private static LogicalTrack FindTrack(MidoraProject project, MidoraId trackId) =>
         project.Tracks.SingleOrDefault(value => value.Id == trackId)
@@ -539,7 +574,7 @@ public static partial class ProjectDomainEditCommands
 
     private static void EnsureNoSegmentOverlap(
         LogicalTrack track,
-        Segment primaryExcluded,
+        Segment? primaryExcluded,
         long projectStartTick,
         long lengthTicks,
         Segment? secondaryExcluded = null)
@@ -574,6 +609,14 @@ public static partial class ProjectDomainEditCommands
     private static void ValidateExistingIndex(int index, int count, string parameterName)
     {
         if ((uint)index >= (uint)count)
+        {
+            throw new ArgumentOutOfRangeException(parameterName);
+        }
+    }
+
+    private static void ValidateInsertionIndex(int index, int count, string parameterName)
+    {
+        if ((uint)index > (uint)count)
         {
             throw new ArgumentOutOfRangeException(parameterName);
         }

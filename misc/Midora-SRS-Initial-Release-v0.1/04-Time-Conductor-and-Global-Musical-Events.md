@@ -25,6 +25,11 @@ TPQ 表示每个四分音符包含多少 tick。
 ```text
 TPQ = 192
 ```
+初版合法范围固定为：
+```text
+1..32767
+```
+该上限与 SMF TPQ division 的 15-bit 正整数表示一致；开发期 v1 中不接受更高 TPQ。
 初版允许用户在创建 Project 时设置 TPQ。
 创建 Project 后，TPQ 禁止修改。
 这意味着：
@@ -227,10 +232,16 @@ Time Signature 必须包含：
 Numerator: 1–99
 Denominator: 1, 2, 4, 8, 16, 32, 64
 ```
+此外，每个 Time Signature 与当前 Project TPQ 必须满足：
+```text
+4 × TPQ % Denominator == 0
+```
+因此一个分母拍始终包含正整数个 Project tick，`Bar:Beat:Tick`、自然拍网格和 Snap 可以保持整数、唯一、可逆且无累计漂移。该约束是尚未冻结的开发期 v1 直接修订；不为不兼容组合创建迁移或分数 tick 表示。
 不允许：
 ```text
 Numerator <= 0
 不在允许集合内的 Denominator
+与 Project TPQ 不满足上述整除约束的 Denominator
 ```
 ### 4.4.4 Additive Meter
 初版不支持 additive meter 显示。
@@ -444,6 +455,17 @@ Time Signature 变化会影响后续小节线与拍网格显示。
 拍号不应影响音符位置
 ```
 如果未来提供“保持小节:拍位置不变并重算 tick”的高级编辑功能，必须作为显式批量编辑命令设计，不应作为拍号修改的默认行为。
+
+### 4.9.4 拍号变化处的小节边界
+每个 Time Signature 变化 tick 都立即开启新小节，并成为该小节的 Beat 1；变化前后的任何 Project 内容保持原 absolute tick。
+
+如果变化 tick 不是前一个拍号段起点之后的自然完整小节边界：
+```text
+旧小节在变化 tick 被截断
+变化 tick 开启下一个 1-based Bar
+产生一条 Warning，定位到该 Time Signature 的稳定 ID 和 tick
+```
+如果变化恰好位于自然小节边界，则不产生截断 Warning。后续 Bar 编号、Beat 网格和 `Bar:Beat:Tick` 均从变化 tick 按新拍号重新计算。
 ---
 ## 4.10 Conductor Track 事件与项目范围
 ### 4.10.1 超出最后音乐内容的全局事件
@@ -527,6 +549,7 @@ Conductor Track 缺失 Tick 0 Time Signature
 Tempo 值小于等于 0
 Tempo 值无法在 Midora 支持的 MIDI 1.0 导出语义下表示
 Time Signature 值非法
+Time Signature Denominator 与 Project TPQ 不满足 `4 × TPQ % Denominator == 0`
 Key Signature 值非法
 Conductor Track 事件位于负 tick
 同一 tick 存在多个冲突的同类型全局事件，且 UI 未提前替换或阻止
@@ -536,6 +559,7 @@ Project 中存在多个 Project End Marker
 ```
 ### 4.14.2 警告
 初版不因为 Tempo 极端偏低或偏高而产生警告。
+每个发生在旧小节中途并截断旧小节的 Time Signature 变化必须产生 Warning；该 Warning 不修改事件 tick，且服从编译请求的 Warning-as-error 策略。
 以下情况是否作为警告，后续由 第 15 章《音频文件渲染》 统一细化：
 ```text
 拍号极端复杂，可能导致网格显示难以阅读
@@ -578,25 +602,27 @@ Marker 仅用于定位，不影响声音
 22. 初版不支持 Tempo Ramp 或曲线 Tempo Automation。
 23. Time Signature Numerator 允许范围为 1–99。
 24. Time Signature Denominator 允许值为 1、2、4、8、16、32、64。
-25. 初版不支持 additive meter。
-26. Time Signature 改变不重排任何已有内容。
-27. 拍号不应影响音符位置。
-28. Key Signature 初版开放编辑。
-29. Key Signature 只作为元数据、显示信息和导出信息。
-30. Key Signature 不影响自动音高、转调、Scale Quantize 或映射。
-31. 初版支持普通 Marker。
-32. 初版 UI 应支持 Marker 列表和定位能力。
-33. 初版不支持通用 Text / Lyric / Cue Point / Copyright 等复杂文本类 Meta Event 编辑。
-34. 同一 tick 的同类型全局事件由 UI 层替换，最终只保留一个。
-35. Conductor Track 事件不参与 Segment 裁剪。
-36. Conductor Track 允许存在超过最后音乐内容的事件。
-37. Project End Marker 可选。
-38. Project End Marker 存在时，系统使用其作为显式项目结束位置。
-39. Project End Marker 不存在时，由内容自然决定项目长度。
-40. 一个 Project 最多只能有一个 Project End Marker。
-41. Project End Marker 早于已有内容时，项目内容仍然保留。
-42. Project End Marker 早于已有内容时，其作为导出 / 渲染等操作的默认范围依据，不自动销毁其后内容。
-43. Project End Marker 早于已有内容时，系统应给出信息或警告，具体诊断等级由第 15 章《音频文件渲染》规定。
+25. 每个 Time Signature 必须满足 `4 × TPQ % Denominator == 0`。
+26. 每个 Time Signature 变化 tick 立即开启新小节；若它截断旧小节，必须产生 Warning。
+27. 初版不支持 additive meter。
+28. Time Signature 改变不重排任何已有内容。
+29. 拍号不应影响音符位置。
+30. Key Signature 初版开放编辑。
+31. Key Signature 只作为元数据、显示信息和导出信息。
+32. Key Signature 不影响自动音高、转调、Scale Quantize 或映射。
+33. 初版支持普通 Marker。
+34. 初版 UI 应支持 Marker 列表和定位能力。
+35. 初版不支持通用 Text / Lyric / Cue Point / Copyright 等复杂文本类 Meta Event 编辑。
+36. 同一 tick 的同类型全局事件由 UI 层替换，最终只保留一个。
+37. Conductor Track 事件不参与 Segment 裁剪。
+38. Conductor Track 允许存在超过最后音乐内容的事件。
+39. Project End Marker 可选。
+40. Project End Marker 存在时，系统使用其作为显式项目结束位置。
+41. Project End Marker 不存在时，由内容自然决定项目长度。
+42. 一个 Project 最多只能有一个 Project End Marker。
+43. Project End Marker 早于已有内容时，项目内容仍然保留。
+44. Project End Marker 早于已有内容时，其作为导出 / 渲染等操作的默认范围依据，不自动销毁其后内容。
+45. Project End Marker 早于已有内容时，系统应给出信息或警告，具体诊断等级由第 15 章《音频文件渲染》规定。
 ### 4.15.2 失败条件
 以下情况应导致相应操作失败或进入错误状态：
 | 场景 | 结果 |
@@ -609,6 +635,7 @@ Marker 仅用于定位，不影响声音
 | Tempo 无法表示为 Midora 支持的 MIDI 1.0 导出语义 | 阻止输入、编译失败或导出失败，具体处理阶段由相关专项规则确定 |
 | Time Signature Numerator 非法 | 阻止输入或编译失败 |
 | Time Signature Denominator 非法 | 阻止输入或编译失败 |
+| Time Signature Denominator 与 Project TPQ 不满足整除约束 | 阻止输入、持久化读取/保存拒绝或编译失败 |
 | Key Signature 非法 | 阻止输入或编译失败 |
 | 创建后尝试修改 TPQ | 阻止操作 |
 | Conductor Track 事件位于负 tick | 阻止输入或编译失败 |

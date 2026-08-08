@@ -143,10 +143,23 @@ public static partial class Program
             $"逻辑模型实时播放：{example}；设备={backend.SelectedDevice?.Name}；actual={backend.ActualSampleRate} Hz");
         WaitForRealtimeCompletion(
             () => backend.IsCompleted,
-            () => backend.CallbackFaulted || backend.RendererFault.Code != AudioRenderFaultCode.None);
-        controller.Stop();
+            () => backend.OutputDeviceSelectionRequired
+                || backend.CallbackFaulted
+                || backend.RendererFault.Code != AudioRenderFaultCode.None);
+        controller.Update();
         global::System.Console.WriteLine(
             $"播放结束：callback allocations={backend.CallbackAllocatedBytes} B；render-thread allocations={backend.RenderingThreadAllocatedBytes} B；underruns={backend.UnderrunCount}；callback fault={backend.CallbackFaulted}；renderer fault={backend.RendererFault}");
+        if (controller.OutputDeviceSelectionRequired)
+        {
+            global::System.Console.Error.WriteLine(
+                "活动输出设备已不可用，输出端已断开。请手动重新指定输出设备；Midora 不会自动切换设备。");
+            return 2;
+        }
+        if (controller.State == PlaybackState.Error)
+        {
+            global::System.Console.Error.WriteLine($"实时播放受控失败：{controller.LastError?.Message}");
+            return 1;
+        }
         return backend.CallbackAllocatedBytes == 0
             && backend.RenderingThreadAllocatedBytes == 0
             && backend.UnderrunCount == 0
@@ -176,10 +189,23 @@ public static partial class Program
         using PlaybackController controller = new(session, backend);
         controller.Start();
         global::System.Console.WriteLine($"逻辑模型子进程实时播放：{example}；actual={backend.ActualSampleRate} Hz");
-        WaitForRealtimeCompletion(() => backend.IsCompleted, () => backend.ChildFaulted);
-        controller.Stop();
+        WaitForRealtimeCompletion(
+            () => backend.IsCompleted,
+            () => backend.OutputDeviceSelectionRequired || backend.ChildFaulted);
+        controller.Update();
         global::System.Console.WriteLine(
             $"播放结束：callback allocations={backend.CallbackAllocatedBytes} B；child allocations={backend.ChildRenderingAllocatedBytes} B；IPC underruns={backend.UnderrunCount}；child fault={backend.ChildFaulted}");
+        if (controller.OutputDeviceSelectionRequired)
+        {
+            global::System.Console.Error.WriteLine(
+                "活动输出设备已不可用，音频 Worker 已断开输出并受控退出。请手动重新指定输出设备；Midora 不会自动切换设备。");
+            return 2;
+        }
+        if (controller.State == PlaybackState.Error)
+        {
+            global::System.Console.Error.WriteLine($"子进程实时播放受控失败：{controller.LastError?.Message}");
+            return 1;
+        }
         return backend.CallbackAllocatedBytes == 0
             && backend.ChildRenderingAllocatedBytes == 0
             && backend.UnderrunCount == 0
@@ -211,7 +237,7 @@ public static partial class Program
             $"编译：consumable={result.IsConsumable}；events={result.Events.Length}；instances={result.Statistics.ExpandedInstanceCount}；peak units={result.Statistics.PeakChannelUnitCount}");
     }
 
-    private static MidoraProject CreateLogicalExample(string name) => name.ToLowerInvariant() switch
+    internal static MidoraProject CreateLogicalExample(string name) => name.ToLowerInvariant() switch
     {
         "segments" => CreateSegmentLifecycleExample(),
         "subvoices" => CreateSubVoiceMappingExample(),

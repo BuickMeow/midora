@@ -15,9 +15,15 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
     private readonly SharedAudioWorkerControl _control;
     private readonly Process _process;
     private readonly Thread _monitorThread;
+    private readonly IAudioPcmCacheSessionAccess? _audioCache;
+    private readonly AudioUnitCacheStaging? _cacheStaging;
+    private readonly PlaybackSpanCacheStaging? _playbackSpanCacheStaging;
+    private readonly long _totalFrameCount;
     private string? _standardError;
     private int _exitCode = int.MinValue;
     private int _monitorFaulted;
+    private int _cachePublished;
+    private long _nextHeldPreviewPlanGeneration;
     private bool _disposed;
 
     public BassMidiAudioWorkerSession(
@@ -30,7 +36,11 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         string? deviceId,
         string workerPath,
         string bassNativeDirectory,
-        TimeSpan preparingTimeout)
+        TimeSpan preparingTimeout,
+        IAudioPcmCacheSessionAccess? audioCache = null,
+        string? bufferingRecoverySpoolPath = null,
+        long bufferingRecoveryMemoryFrameCapacity = 0,
+        bool playbackSpanCacheEnabled = false)
         : this(
             plan,
             soundFontPath,
@@ -42,7 +52,11 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             workerPath,
             bassNativeDirectory,
             preparingTimeout,
-            allowManagedTestWorker: false)
+            allowManagedTestWorker: false,
+            audioCache,
+            bufferingRecoverySpoolPath,
+            bufferingRecoveryMemoryFrameCapacity,
+            playbackSpanCacheEnabled)
     {
     }
 
@@ -57,7 +71,11 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         string workerPath,
         string bassNativeDirectory,
         TimeSpan preparingTimeout,
-        bool allowManagedTestWorker)
+        bool allowManagedTestWorker,
+        IAudioPcmCacheSessionAccess? audioCache = null,
+        string? bufferingRecoverySpoolPath = null,
+        long bufferingRecoveryMemoryFrameCapacity = 0,
+        bool playbackSpanCacheEnabled = false)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
@@ -87,6 +105,25 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         workerPath = Path.GetFullPath(workerPath);
         bassNativeDirectory = Path.GetFullPath(bassNativeDirectory);
         soundFontPath = Path.GetFullPath(soundFontPath);
+        if (bufferingRecoverySpoolPath is not null)
+        {
+            bufferingRecoverySpoolPath = Path.GetFullPath(bufferingRecoverySpoolPath);
+            if (!File.Exists(bufferingRecoverySpoolPath))
+            {
+                throw new FileNotFoundException(
+                    "The Buffering recovery spool does not exist.",
+                    bufferingRecoverySpoolPath);
+            }
+        }
+        if (bufferingRecoveryMemoryFrameCapacity < 0
+            || bufferingRecoveryMemoryFrameCapacity > plan.TotalFrameCount
+            || bufferingRecoverySpoolPath is not null
+                && bufferingRecoveryMemoryFrameCapacity != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(bufferingRecoveryMemoryFrameCapacity));
+        }
+        _audioCache = audioCache;
+        _totalFrameCount = plan.TotalFrameCount;
 
         _ownedTemporaryDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -97,6 +134,49 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         try
         {
             Directory.CreateDirectory(_ownedTemporaryDirectory);
+            if (playbackSpanCacheEnabled)
+            {
+                try
+                {
+                    _playbackSpanCacheStaging = PlaybackSpanCacheStaging.Create(
+                        plan,
+                        audioCache,
+                        soundFontPath,
+                        bassNativeDirectory,
+                        rendererSettings.MaximumSampleVoicesPerUnitStream,
+                        masterSettings);
+                }
+                catch (Exception exception) when (exception is IOException
+                    or UnauthorizedAccessException
+                    or NotSupportedException)
+                {
+                    audioCache?.DisableReusableAudioRetention(
+                        "Playback-span cache staging failed; playback will use Unit PCM or live synthesis. "
+                            + exception.Message);
+                    _playbackSpanCacheStaging = null;
+                }
+            }
+            try
+            {
+                _cacheStaging = AudioUnitCacheStaging.Create(
+                    plan,
+                    audioCache,
+                    soundFontPath,
+                    bassNativeDirectory,
+                    rendererSettings.MaximumSampleVoicesPerUnitStream);
+            }
+            catch (Exception exception) when (exception is IOException
+                or UnauthorizedAccessException
+                or NotSupportedException)
+            {
+                // Reusable retention is opportunistic. Failure to stage it must not prevent
+                // formal realtime playback; the renderer falls back to live synthesis.
+                audioCache?.DisableReusableAudioRetention(
+                    "Reusable audio cache staging failed; new cache misses will be rendered without retention. "
+                        + exception.Message);
+                _cacheStaging = null;
+            }
+            plan = _cacheStaging?.Plan ?? plan;
             string planPath = Path.Combine(_ownedTemporaryDirectory, "compiled-audio-plan.mdap");
             MidiRenderPlanFile.Write(planPath, plan);
             createdControl = SharedAudioWorkerControl.Create(
@@ -114,7 +194,12 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
                 deviceBufferRequestMilliseconds,
                 rendererSettings,
                 masterSettings,
-                plan.SampleRate);
+                plan.SampleRate,
+                _cacheStaging?.FilePath,
+                bufferingRecoverySpoolPath,
+                bufferingRecoveryMemoryFrameCapacity,
+                _playbackSpanCacheStaging?.FilePath,
+                _playbackSpanCacheStaging?.Hit == true);
             startedProcess = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Could not start the Midora audio worker process.");
             _process = startedProcess;
@@ -142,6 +227,8 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
                 startedProcess.Dispose();
             }
             createdControl?.Dispose();
+            _cacheStaging?.Dispose();
+            _playbackSpanCacheStaging?.Dispose();
             CleanupOwnedTemporaryDirectory(_ownedTemporaryDirectory);
             throw;
         }
@@ -227,10 +314,82 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
     public void EnqueueMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!commands.IsEmpty)
+        {
+            _playbackSpanCacheStaging?.InvalidateCapture();
+        }
         if (!_control.TryEnqueueMonitoringCommands(commands))
         {
             throw new InvalidOperationException("The bounded audio worker command ring is full.");
         }
+    }
+
+    public long PauseHeldPreviewAtProducerFrontier(TimeSpan timeout)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_control.TryEnqueueHeldPreviewPause())
+        {
+            throw new InvalidOperationException("The bounded audio worker command ring is full.");
+        }
+        AudioWorkerStatus status = WaitForHeldPreviewStatus(
+            static value => value.State == AudioWorkerState.HeldPreviewPaused,
+            timeout,
+            "pause");
+        return status.RenderPositionFrame;
+    }
+
+    public void ReplaceHeldPreviewFutureAndResume(
+        MidiRenderPlan plan,
+        long producerFrontierFrame,
+        TimeSpan timeout)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(plan);
+        AudioWorkerStatus paused = Status;
+        if (paused.State != AudioWorkerState.HeldPreviewPaused
+            || paused.RenderPositionFrame != producerFrontierFrame
+            || plan.TotalFrameCount < producerFrontierFrame)
+        {
+            throw new InvalidOperationException(
+                "The audio worker is not paused at the requested held-preview frontier.");
+        }
+
+        long generation = checked(++_nextHeldPreviewPlanGeneration);
+        string path = Path.Combine(
+            _ownedTemporaryDirectory,
+            HeldPreviewPlanExchange.GetFileName(generation));
+        MidiRenderPlanFile.Write(path, plan);
+        if (!_control.TryEnqueueHeldPreviewApplyPlan(generation))
+        {
+            File.Delete(path);
+            throw new InvalidOperationException("The bounded audio worker command ring is full.");
+        }
+        _ = WaitForHeldPreviewStatus(
+            value => value.HeldPreviewPlanGeneration == generation
+                && value.State is AudioWorkerState.Playing
+                    or AudioWorkerState.Buffering
+                    or AudioWorkerState.Completed,
+            timeout,
+            "apply a replacement plan and resume");
+    }
+
+    public void ResumeHeldPreviewFromProducerFrontier(TimeSpan timeout)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (Status.State != AudioWorkerState.HeldPreviewPaused)
+        {
+            throw new InvalidOperationException("The audio worker held-preview producer is not paused.");
+        }
+        if (!_control.TryEnqueueHeldPreviewResume())
+        {
+            throw new InvalidOperationException("The bounded audio worker command ring is full.");
+        }
+        _ = WaitForHeldPreviewStatus(
+            static value => value.State is AudioWorkerState.Playing
+                or AudioWorkerState.Buffering
+                or AudioWorkerState.Completed,
+            timeout,
+            "resume");
     }
 
     public void Stop(bool flush, TimeSpan timeout)
@@ -259,6 +418,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             throw new MidoraAudioException(
                 $"The audio worker did not stop cleanly; state={status.State}; fault={status.FaultCode}; exitCode={ExitCode}; stderr={StandardError}");
         }
+        PublishCompletedCache(status.RenderPositionFrame);
     }
 
     public void Dispose()
@@ -276,8 +436,14 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             }
         }
         _monitorThread.Join();
+        if (IsSuccessfulTerminalExit(Status.State, ExitCode))
+        {
+            PublishCompletedCache(Status.RenderPositionFrame);
+        }
         _process.Dispose();
         _control.Dispose();
+        _cacheStaging?.Dispose();
+        _playbackSpanCacheStaging?.Dispose();
         CleanupOwnedTemporaryDirectory(_ownedTemporaryDirectory);
     }
 
@@ -330,7 +496,12 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         int deviceBufferRequestMilliseconds,
         BassMidiRendererSettings rendererSettings,
         AudioMasterSettings masterSettings,
-        int expectedSampleRate)
+        int expectedSampleRate,
+        string? cacheStagingPath,
+        string? bufferingRecoverySpoolPath,
+        long bufferingRecoveryMemoryFrameCapacity,
+        string? playbackSpanCacheStagingPath,
+        bool playbackSpanCacheHit)
     {
         startInfo.ArgumentList.Add("play");
         startInfo.ArgumentList.Add(controlName);
@@ -340,13 +511,44 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         startInfo.ArgumentList.Add(deviceId ?? string.Empty);
         startInfo.ArgumentList.Add(renderAheadMilliseconds.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(deviceBufferRequestMilliseconds.ToString(CultureInfo.InvariantCulture));
-        startInfo.ArgumentList.Add(rendererSettings.MaximumSampleVoiceCount.ToString(CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add(rendererSettings.MaximumSampleVoicesPerUnitStream.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(rendererSettings.MaximumWorkFrameCount.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(masterSettings.VolumeDecibels.ToString("R", CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(masterSettings.LimiterCeiling.ToString("R", CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(masterSettings.LimiterReleaseMilliseconds.ToString("R", CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(masterSettings.LimiterEnabled ? "1" : "0");
         startInfo.ArgumentList.Add(expectedSampleRate.ToString(CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add(cacheStagingPath ?? string.Empty);
+        startInfo.ArgumentList.Add(bufferingRecoverySpoolPath ?? string.Empty);
+        startInfo.ArgumentList.Add(bufferingRecoveryMemoryFrameCapacity.ToString(CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add(playbackSpanCacheStagingPath ?? string.Empty);
+        startInfo.ArgumentList.Add(playbackSpanCacheHit ? "1" : "0");
+    }
+
+    public void BeginBufferingRecovery(long recoveryEndFrame)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (Status.State != AudioWorkerState.Buffering)
+        {
+            throw new InvalidOperationException("The audio Worker has no latched underrun.");
+        }
+        if (!_control.TryEnqueueBufferingRecovery(recoveryEndFrame))
+        {
+            throw new InvalidOperationException("The bounded audio worker command ring is full.");
+        }
+    }
+
+    private void PublishCompletedCache(long completedRenderFrame)
+    {
+        if (_audioCache is null || Interlocked.Exchange(ref _cachePublished, 1) != 0)
+        {
+            return;
+        }
+        _cacheStaging?.PublishCompleted(_audioCache, completedRenderFrame);
+        _playbackSpanCacheStaging?.PublishCompleted(
+            _audioCache,
+            completedRenderFrame,
+            _totalFrameCount);
     }
 
     private void WaitUntilPlaybackStarted(TimeSpan timeout)
@@ -357,7 +559,8 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             AudioWorkerStatus status = Status;
             if (status.State is AudioWorkerState.Playing
                 or AudioWorkerState.Buffering
-                or AudioWorkerState.Completed)
+                or AudioWorkerState.Completed
+                or AudioWorkerState.OutputDeviceUnavailable)
             {
                 return;
             }
@@ -381,6 +584,41 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
                 TerminateProcess(_process);
                 _monitorThread.Join();
                 throw new TimeoutException("The audio worker did not start within the Preparing timeout.");
+            }
+            Thread.Sleep(1);
+        }
+    }
+
+    private AudioWorkerStatus WaitForHeldPreviewStatus(
+        Func<AudioWorkerStatus, bool> predicate,
+        TimeSpan timeout,
+        string operation)
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+        if (timeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeout));
+        }
+        long deadline = Environment.TickCount64 + checked((long)Math.Ceiling(timeout.TotalMilliseconds));
+        while (true)
+        {
+            AudioWorkerStatus status = Status;
+            if (predicate(status))
+            {
+                return status;
+            }
+            if (status.State is AudioWorkerState.Faulted
+                or AudioWorkerState.OutputDeviceUnavailable
+                || ExitCode is not null)
+            {
+                throw new MidoraAudioException(
+                    $"The audio worker could not {operation} held Preview; state={status.State}; "
+                    + $"fault={status.FaultCode}; exitCode={ExitCode}; stderr={StandardError}");
+            }
+            if (Environment.TickCount64 >= deadline)
+            {
+                throw new TimeoutException(
+                    $"The audio worker did not {operation} held Preview within the requested timeout.");
             }
             Thread.Sleep(1);
         }
@@ -469,7 +707,9 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
 
     internal static bool IsSuccessfulTerminalExit(AudioWorkerState state, int? exitCode) =>
         exitCode == 0
-        && state is AudioWorkerState.Stopped or AudioWorkerState.Completed;
+        && state is AudioWorkerState.Stopped
+            or AudioWorkerState.Completed
+            or AudioWorkerState.OutputDeviceUnavailable;
 
     private static void CleanupOwnedTemporaryDirectory(string path)
     {

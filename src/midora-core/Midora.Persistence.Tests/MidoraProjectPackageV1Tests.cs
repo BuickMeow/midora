@@ -18,7 +18,7 @@ public sealed class MidoraProjectPackageV1Tests
         using TemporaryDirectory temporary = new();
         string packagePath = temporary.PathFor("round-trip.midora");
         MidoraProject source = CreatePopulatedProject();
-        UInt128 expectedNextStableId = source.NextStableId;
+        long expectedNextStableId = source.NextStableId;
         ProjectMetadataSnapshot originalMetadata = source.Metadata.Snapshot();
         MidoraProjectPackageV1 packages = CreateService();
 
@@ -46,6 +46,16 @@ public sealed class MidoraProjectPackageV1Tests
         Assert.Equal(12, opened.Project.GlobalInitialState.BankMsb);
         Assert.Equal(99, opened.Project.GlobalInitialState.Controllers[7]);
         Assert.Equal(64, opened.Project.GlobalResetDefaults.Controllers[64]);
+        Assert.Equal(ProjectMidiExportMode.PerPort, opened.Project.Export.Mode);
+        Assert.Equal(ProjectRangeMode.ManualRange, opened.Project.Export.RangeMode);
+        Assert.Equal(120, opened.Project.Export.ManualStartTick);
+        Assert.Equal(3_840, opened.Project.Export.ManualEndTick);
+        Assert.Equal(
+            ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart,
+            opened.Project.Export.TrackSelectionMode);
+        Assert.Equal(ProjectMidiExportRoutingStrategy.Preserve, opened.Project.Export.Routing);
+        Assert.False(opened.Project.Export.IncludeReadme);
+        Assert.True(opened.Project.Export.TreatWarningsAsErrors);
         Assert.Equal(-6.5, opened.Project.Playback.MasterVolumeDecibels);
         Assert.False(opened.Project.Playback.LimiterEnabled);
         Assert.Equal(StopCursorBehavior.StayAtStoppedTick, opened.Project.Playback.StopCursorBehavior);
@@ -54,7 +64,7 @@ public sealed class MidoraProjectPackageV1Tests
         Assert.Equal(240, opened.Project.AudioRender.ManualStartTick);
         Assert.Equal(3_840, opened.Project.AudioRender.ManualEndTick);
         Assert.Equal(44_100, opened.Project.AudioRender.SampleRate);
-        Assert.Equal(1_024, opened.Project.AudioRender.MaximumSampleVoicesPerStream);
+        Assert.Equal(1_024, opened.Project.AudioRender.MaximumSampleVoicesPerUnitStream);
         ExternalProjectSoundFontReference soundFont = Assert.IsType<ExternalProjectSoundFontReference>(
             opened.Project.SoundFont.Reference);
         Assert.Equal("soundfonts/Orchestra.sf2", soundFont.RelativePath);
@@ -193,16 +203,22 @@ public sealed class MidoraProjectPackageV1Tests
         TamperEntriesWithoutUpdatingManifest(
             packagePath,
             "settings/project-settings.json",
+            "settings/export-settings.json",
             "settings/playback-settings.json",
             "conductor-track.json");
 
         MidoraProjectOpenResultV1 opened = await packages.OpenAsync(packagePath);
 
         Assert.True(opened.IsModified);
-        Assert.Equal(3, opened.Diagnostics.Count(item =>
+        Assert.Equal(4, opened.Diagnostics.Count(item =>
             item.Severity == MidoraPackageDiagnosticSeverityV1.Error
             && item.Code == "MIDORA-PERSIST-RECOVERED-DEFAULT"));
         Assert.Equal(192, opened.Project.TicksPerQuarterNote);
+        Assert.Equal(ProjectMidiExportMode.WholeProject, opened.Project.Export.Mode);
+        Assert.Equal(ProjectRangeMode.ProjectDefaultRange, opened.Project.Export.RangeMode);
+        Assert.Equal(ProjectMidiExportRoutingStrategy.Compact, opened.Project.Export.Routing);
+        Assert.True(opened.Project.Export.IncludeReadme);
+        Assert.False(opened.Project.Export.TreatWarningsAsErrors);
         Assert.Equal(-0.1, opened.Project.Playback.MasterVolumeDecibels);
         Assert.True(opened.Project.Playback.LimiterEnabled);
         Assert.Single(opened.Project.Conductor.Tempos);
@@ -311,6 +327,59 @@ public sealed class MidoraProjectPackageV1Tests
 
         Assert.Equal(MidoraPackageStageV1.Container, failure.Stage);
         Assert.Equal("PROJECT.JSON", failure.PackagePath);
+    }
+
+    [Fact]
+    public async Task ExactDuplicateZipEntriesAreRejectedBeforeManifestConsumption()
+    {
+        using TemporaryDirectory temporary = new();
+        string packagePath = temporary.PathFor("duplicate.midora");
+        MidoraProjectPackageV1 packages = CreateService();
+        await packages.SaveCopyAsync(CreatePopulatedProject(), packagePath);
+        AddEntry(packagePath, "project.json", Encoding.UTF8.GetBytes("{}"));
+
+        MidoraPackageExceptionV1 failure = await Assert.ThrowsAsync<MidoraPackageExceptionV1>(() =>
+            packages.OpenAsync(packagePath));
+
+        Assert.Equal(MidoraPackageStageV1.Container, failure.Stage);
+        Assert.Equal("project.json", failure.PackagePath);
+    }
+
+    [Theory]
+    [InlineData("../outside.json")]
+    [InlineData("/absolute.json")]
+    [InlineData("C:/drive.json")]
+    [InlineData("settings\\backslash.json")]
+    public async Task InvalidZipEntryPathsAreRejectedDuringContainerValidation(string entryName)
+    {
+        using TemporaryDirectory temporary = new();
+        string packagePath = temporary.PathFor("invalid-path.midora");
+        MidoraProjectPackageV1 packages = CreateService();
+        await packages.SaveCopyAsync(CreatePopulatedProject(), packagePath);
+        AddEntry(packagePath, entryName, [1]);
+
+        MidoraPackageExceptionV1 failure = await Assert.ThrowsAsync<MidoraPackageExceptionV1>(() =>
+            packages.OpenAsync(packagePath));
+
+        Assert.Equal(MidoraPackageStageV1.Container, failure.Stage);
+        Assert.Equal(entryName, failure.PackagePath);
+    }
+
+    [Fact]
+    public async Task OrdinaryEmptyDirectoryEntryIsAllowedAndDroppedBySaveCopy()
+    {
+        using TemporaryDirectory temporary = new();
+        string sourcePath = temporary.PathFor("empty-directory.midora");
+        string copyPath = temporary.PathFor("copy.midora");
+        MidoraProjectPackageV1 packages = CreateService();
+        await packages.SaveCopyAsync(CreatePopulatedProject(), sourcePath);
+        AddEntry(sourcePath, "empty/", []);
+
+        MidoraProjectOpenResultV1 opened = await packages.OpenAsync(sourcePath);
+        await packages.SaveCopyAsync(opened.Project, copyPath);
+
+        using ZipArchive copy = ZipFile.OpenRead(copyPath);
+        Assert.DoesNotContain(copy.Entries, value => value.FullName == "empty/");
     }
 
     [Fact]
@@ -462,6 +531,14 @@ public sealed class MidoraProjectPackageV1Tests
         project.GlobalInitialState.Controllers.Add(7, 99);
         project.GlobalInitialState.RegisteredParameters.Add(0, 256);
         project.GlobalResetDefaults.Controllers.Add(64, 64);
+        project.Export.Mode = ProjectMidiExportMode.PerPort;
+        project.Export.RangeMode = ProjectRangeMode.ManualRange;
+        project.Export.ManualStartTick = 120;
+        project.Export.ManualEndTick = 3_840;
+        project.Export.TrackSelectionMode = ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart;
+        project.Export.Routing = ProjectMidiExportRoutingStrategy.Preserve;
+        project.Export.IncludeReadme = false;
+        project.Export.TreatWarningsAsErrors = true;
         project.Playback.MasterVolumeDecibels = -6.5;
         project.Playback.LimiterEnabled = false;
         project.Playback.StopCursorBehavior = StopCursorBehavior.StayAtStoppedTick;
@@ -470,7 +547,7 @@ public sealed class MidoraProjectPackageV1Tests
         project.AudioRender.ManualStartTick = 240;
         project.AudioRender.ManualEndTick = 3_840;
         project.AudioRender.SampleRate = 44_100;
-        project.AudioRender.MaximumSampleVoicesPerStream = 1_024;
+        project.AudioRender.MaximumSampleVoicesPerUnitStream = 1_024;
         project.SoundFont.SetExternal(
             "soundfonts/Orchestra.sf2",
             "Orchestra.sf2",

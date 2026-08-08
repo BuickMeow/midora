@@ -1,5 +1,6 @@
 using Midora.Compiler;
 using Midora.Domain;
+using Midora.Midi;
 using Midora.OutputPlanning;
 
 namespace Midora.MidiExport.Tests;
@@ -90,6 +91,42 @@ public sealed class MidiExportTaskRunnerTests
 
         Assert.Equal(MidiExportTaskStatus.Cancelled, result.Status);
         Assert.Null(result.OutputFailure);
+        Assert.False(Directory.Exists(outputDirectory));
+    }
+
+    [Fact]
+    public async Task SmfDeltaOverflowFailsBeforePublishingAnyOutput()
+    {
+        using TemporaryDirectory temporary = new();
+        MidoraProject project = new(192);
+        using MidoraCompiler compiler = new();
+        MidiExportCompilationResult compilation = new MidiExportCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = MidiExportMode.WholeProject,
+            Routing = MidiExportRoutingStrategy.Preserve,
+            EndTick = (long)StandardMidiFile.MaximumVariableLengthValue + 1
+        });
+        string outputDirectory = temporary.PathFor("vlq-overflow");
+        MidiExportFrozenOutputPlan plan = MidiExportOutputPlanner.PlanWholeProject(
+            outputDirectory,
+            "Project",
+            null,
+            includeReadme: false);
+
+        MidiExportTaskResult result = await new MidiExportTaskRunner().ExecuteAsync(new()
+        {
+            Compilation = compilation,
+            OutputPlan = plan
+        });
+
+        Assert.True(compilation.Succeeded);
+        Assert.Equal(MidiExportTaskStatus.Failed, result.Status);
+        Assert.Null(result.Output);
+        Assert.Null(result.OutputFailure);
+        MidiExportArtifactDiagnostic diagnostic = Assert.Single(result.ArtifactDiagnostics);
+        Assert.Equal("MIDORA-MIDI-EXPORT-ENCODING", diagnostic.Diagnostic.Code);
+        Assert.Contains("delta time", diagnostic.Diagnostic.Message, StringComparison.Ordinal);
         Assert.False(Directory.Exists(outputDirectory));
     }
 

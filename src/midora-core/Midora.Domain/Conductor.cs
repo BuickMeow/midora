@@ -28,6 +28,10 @@ public sealed record TimeSignatureChange
     public TimeSignatureChange(MidoraProject project, long tick, int numerator, int denominator)
     {
         ArgumentNullException.ThrowIfNull(project);
+        ProjectTimeSignatureRules.ValidateCompatibility(
+            project.TicksPerQuarterNote,
+            denominator,
+            nameof(denominator));
         Id = project.AllocateStableId();
         Tick = tick;
         Numerator = numerator;

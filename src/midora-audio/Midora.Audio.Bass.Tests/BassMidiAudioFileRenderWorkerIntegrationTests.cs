@@ -49,13 +49,13 @@ public sealed class BassMidiAudioFileRenderWorkerIntegrationTests
             await worker.PrepareAsync(new(
                 SoundFontPath,
                 plan.SampleRate,
-                BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
+                BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
                 -0.1f));
             AudioFileRenderWorkerResult rendered = await worker.RenderAsync(new(
                 plan,
                 SoundFontPath,
                 outputPath,
-                BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
+                BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
                 -0.1f));
 
             WaveFileSize size = WaveFileValidation.ValidateInitialReleaseFile(

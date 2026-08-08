@@ -549,36 +549,30 @@ Event Instrument 预览、SubVoice 预览、Segment 预览与主播放一样需�
 ```
 ---
 ## 13.12 BASSMIDI Stream 生命周期
-### 13.12.1 Stream 创建
-播放开始时，只为本次播放 compiled result 实际使用到的 Port 创建 BASSMIDI Stream。
-不允许：
-```text
-始终创建 16 个 Stream
-维持历史最大 Port 集合
-用户手动创建 Port Stream
-```
-### 13.12.2 Channel 10 melodic 初始化
-每个实际使用 Port 对应的 BASSMIDI Stream 创建或重建时，必须立即执行 Channel 10 melodic 初始化。
-即使复用 Stream，下次播放开始前也必须确保 Channel 10 melodic 状态有效。
+### 13.12.1 Canonical Unit 音频投影
+正式 Canonical Compiled Result 仍必须完成全局 Port / Channel 分配，并保留其资源上限、诊断与 MIDI 导出语义。只有 canonical 成功后，音频消费者才可以确定性派生不依赖物理 Port / Channel 编号的抽象 Channel Unit 音频投影。
+
+每个抽象 Unit 使用一个干净的 1-channel BASSMIDI decode stream 语义。音频投影不得绕过 canonical、合并两个不同 Unit，或改变 canonical 同 tick 顺序。
+
+### 13.12.2 Stream pool 与 melodic 初始化
+实际 native Stream 由有明确上限、按需创建的可复用 pool 提供，不为 Project 中每个 Unit 永久保留 Stream，也不按历史最大 Unit 数预建 Stream。
+
+每次创建、重建或复用 Unit Stream 时，必须把唯一 channel 0 显式建立为 melodic，并应用规范初始状态。Canonical Channel 10 的事件投影到 Unit Stream 后不得触发 BASSMIDI 默认鼓通道语义。
+
 ### 13.12.3 Stream 复用
-Stop 后允许保留已创建的 BASSMIDI Stream 作为缓存，以加快下一次播放。
-但复用前必须重新确认：
+Stream 复用只能是性能优化。复用前必须重新确认：
 ```text
 SF2 是当前 Project 当前选择的 SF2
-Port 使用集合匹配本次播放需求
-Channel 10 melodic 初始化有效
+采样率、格式和 Maximum Sample Voices per Unit Stream 匹配本次任务
 Stream 处于清洁状态
+channel 0 melodic 初始化有效
 无残留 Note
 无残留 CC / Pitch Bend / Program / RPN / NRPN 等状态
 ```
-Stream 复用只能是性能优化。
-不得继承上次播放残留状态。
-### 13.12.4 Port 使用集合变化
-如果下一次播放所需 Port 集合与上一次不同：
-```text
-Stream 管理按实际使用集合创建 / 释放 / 复用。
-只保留或创建实际需要的 Stream。
-```
+不得继承上次 Unit 或上次播放残留状态。Stop / Reset Playback Engine 必须释放或清洁 pool 中的全部已使用 Stream。
+
+### 13.12.4 Unit 使用集合变化
+下一次播放的 Unit 集合变化时，pool 只按本次实际并发需求取得、清洁并复用 Stream；不允许把物理 Port/Channel 历史分配作为 PCM 缓存身份。
 ### 13.12.5 Stop 清理范围
 Stop 清理应覆盖本次播放任务实际使用过的所有 Channel Unit，而不仅是当前仍有活动 Note 的 Channel Unit。
 Stop 是立即停止，安全优先，不追求音乐性尾音。
@@ -617,10 +611,10 @@ Canonical Compiled Result 仍必须为每个 Logical Note 保留独立 NoteOff�
 
 ### 13.12.8 Stream 采样率
 
-实时播放和预览的每个 BASSMIDI Stream 必须直接按当前所选输出设备初始化后报告的实际输出采样率生成音频。
+实时播放和预览的每个 Unit BASSMIDI Stream 必须直接按当前所选输出设备初始化后报告的实际输出采样率生成音频。
 
 ```text
-所有实际 Port 使用同一实时采样率
+所有实际 Unit 使用同一实时采样率
 不先固定生成 48 kHz 再做最终重采样
 设备或其实际采样率变化时，旧 Stream 和所有 sample-domain 缓存失效
 ```
@@ -641,14 +635,14 @@ BASS_ATTRIB_MIDI_CPU = 0      // automatic
 
 Preparing 必须从冻结的 sample-domain 计划收集实际会被 Note On 使用的 Bank MSB / Program 组合，并在进入 Playing / Preview Playing 前通过 `BASS_MIDI_FontLoad` 预加载对应 SF2 presets。实时事件 Stream 不得调用只适用于 MIDI 文件/序列 Stream 的 `BASS_MIDI_StreamLoadSamples`。若引用的组合不存在，不得把它提升为 Project 或编译错误；后端必须保持第 6.12.3 节允许的 BASSMIDI fallback 语义，并确保 fallback 所需样本也在 Preparing 完成加载。
 
-Application Preferences 提供用户可编辑的 `Realtime Maximum Sample Voices per Stream`：
+Application Preferences 提供用户可编辑的 `Realtime Maximum Sample Voices per Unit Stream`：
 ```text
 合法范围：1–16,777,216 的整数
-默认值：750
-生效单位：每个实际使用 Port 对应的 BASSMIDI Stream
+默认值：500
+生效单位：每个抽象 Channel Unit 的 1-channel BASSMIDI Stream
 ```
 
-同一次播放或预览任务的所有实际 Port Stream 必须使用同一个冻结值。该值是 BASSMIDI 同时活动 sample voice 数上限，不是 MIDI Note 数；一个 Note 可以因 SF2 分层占用多个 sample voices。只允许在 Stopped 修改，修改后使实时 BASSMIDI Stream 和相关音频缓存失效。
+同一次播放或预览任务的所有 Unit Stream 必须使用同一个冻结值。该值是单个 Unit Stream 内 BASSMIDI 同时活动 sample voice 数上限，不是 MIDI Note 数；一个 Note 可以因 SF2 分层占用多个 sample voices。只允许在 Stopped 修改，修改后使实时 native Stream 与全部实时音频 PCM/cache generations 失效，但不使 tick-domain canonical compiled result 失效。
 
 达到上限时允许 BASSMIDI 按其固定 voice-limit 行为终止 voice。这是用户配置的后端资源上限，不是 Compiler、Overlap 或 Channel Group 的语义级 Voice Stealing，不能修改 Canonical Compiled Result。需要音频逐采样或不同 block 完美一致的测试，前提必须包含实际活动 sample voices 未达到配置上限。
 ---
@@ -707,7 +701,9 @@ Stop Cursor Behavior
 音频后端偏好
 Render-Ahead Buffer
 Device Buffer Request
-Realtime Maximum Sample Voices per Stream
+Realtime Maximum Sample Voices per Unit Stream
+Audio Cache Root
+Maximum Reusable Audio Cache Bytes
 ```
 初版不提供 WASAPI Shared / Exclusive 模式选择；正式 BASSWASAPI 后端固定使用第 13.14.7 节策略。
 
@@ -755,7 +751,7 @@ System Default 标记（如适用）
 Stopped 状态下修改播放设备时：
 ```text
 所有播放后端缓存失效。
-所有按旧设备采样率建立的调度、PCM 和 Stream 缓存失效。
+所有按旧设备采样率建立的调度、PCM 和 Stream 缓存失效。若新旧设备的实际 sample format（含采样率、声道数、样本格式）完全相同，已完成且不绑定设备连接的 Unit raw PCM 可以保留；device-bound generation 与连接仍必须重建。
 下一次播放重新创建后端连接。
 ```
 播放期间禁止修改播放设备。
@@ -825,7 +821,7 @@ sampleFormat = float32
 ### 13.15.1 输出格式
 初版实时播放只定义 stereo 输出。
 
-实时播放采样率不是 Project 固定值，也不写死为 48 kHz。它等于所选输出设备初始化后正式报告的实际采样率。所有 Port Stream、stereo mix、Master Volume、Limiter 和实时 PCM buffer 使用该采样率。
+实时播放采样率不是 Project 固定值，也不写死为 48 kHz。它等于所选输出设备初始化后正式报告的实际采样率。所有 Unit Stream、stereo mix、Master Volume、Limiter 和实时 PCM buffer 使用该采样率。
 
 初版不支持：
 ```text
@@ -834,16 +830,17 @@ mono / stereo 可选
 按 Port 输出到不同物理通道
 按 Logical Track 输出到不同物理通道
 ```
-### 13.15.2 Port 混音
-多个 BASSMIDI Stream / Port 的音频输出先混合到同一个 stereo bus。
+### 13.15.2 Unit 混音
+多个抽象 Unit 的 BASSMIDI Stream 音频输出按稳定 Unit key 顺序混合到同一个 stereo bus。
 实时播放输出链为：
 ```text
 Compiled Result
-→ 播放调度 / 预渲染
-→ 每个实际使用 Port 的 BASSMIDI Stream
-→ 多 Stream stereo mix
+→ Canonical Segment / Unit 音频投影
+→ Unit raw PCM / 播放 span 缓存
+→ 确定性多 Unit stereo mix
 → Playback Master Volume
 → Limiter
+→ Render-Ahead ring
 → 输出设备
 ```
 ### 13.15.3 内部精度
@@ -915,7 +912,7 @@ knee
 ### 13.17.5 处理位置
 Limiter 位于：
 ```text
-所有 Port 的 stereo mix 之后
+所有 Unit 的确定性 stereo mix 之后
 Playback Master Volume 之后
 输出设备 / 音频文件写入之前
 ```
@@ -924,7 +921,7 @@ Event Instrument 预览、SubVoice 预览、Segment 预览也默认经过播放 
 ### 13.17.6 初版固定算法
 初版 Limiter 算法版本为 `1`，固定为 stereo-linked、zero-look-ahead、sample-peak limiter。
 
-逐 sample frame 处理时，输入 `left` / `right` 已经过所有 Port 求和与 Playback Master Volume。令前一 frame 后保存的线性增益为 `gain`，新任务或显式重置后的初值为 `1.0`：
+逐 sample frame 处理时，输入 `left` / `right` 已经过所有 Unit 确定性求和与 Playback Master Volume。令前一 frame 后保存的线性增益为 `gain`，新任务或显式重置后的初值为 `1.0`：
 ```text
 peak = max(abs(left), abs(right))
 targetGain = peak > 1.0 ? 1.0 / peak : 1.0
@@ -1034,15 +1031,15 @@ Buffering 期间：
 不改变“本次播放开始 tick”。
 ```
 ### 13.19.5 Buffering 恢复目标
-恢复播放前目标预渲染长度为：
+underrun 在失败音乐位置 `F` 锁存。恢复终点 `R` 按自然小节计算：
 ```text
-min(当前拍号下的一整个小节长度, 8 个四分音符)
+F 位于自然小节起点：候选区间是当前完整自然小节。
+F 位于自然小节中途：候选区间是当前小节剩余部分加下一个完整自然小节。
 ```
-含义：
-```text
-常规拍号下尽量等待至少当前一小节。
-如果当前小节超过 8 个四分音符，则以 8 个四分音符封顶。
-```
+
+候选区间随后以实际播放终点和从 `F` 起 `16` 个四分音符裁剪；`16` 个四分音符上限优先。Time Signature 中途变化立即开始的新自然小节必须由第 4 章统一小节映射提供，播放系统不得另建不一致算法。
+
+只有完整 `[F, R)` 已经生成、校验并作为同一 generation 连续可读后才恢复播放。不得每获得约一个 Render-Ahead 窗口就恢复一次，也不得形成“渲染短块—播放短块—再次静音”的不规则断续。
 ### 13.19.6 连续 underrun
 短时间内连续发生 underrun 时：
 ```text
@@ -1096,7 +1093,57 @@ Buffering 补充路径
 
 Preparing、Stop 清理和 Finalizing 可以产生托管分配。与音频后端同进程的 UI 或其他非音频线程允许分配并触发进程级 GC；该 GC 本身不构成“音频活动线程产生托管分配”的验收失败，但 callback deadline miss、underrun 或爆音仍按运行期性能问题记录。
 
-### 13.19.10 约 200 ms 性能基准
+### 13.19.10 Segment/Unit 音频缓存层
+
+初版正式缓存分为：
+```text
+Project revision / canonical range cache
+Compiler-internal Segment / Unit compiled fragment cache
+Segment / Unit raw PCM tile cache
+Playback span cache
+Render-Ahead ring
+```
+
+Segment/Unit raw PCM 位于 Mute/Solo、Playback Master Volume 与 Limiter 之前。Playback span 对当前 audible Track 集合做确定性求和，再统一应用 Master 与一个全局 Limiter。Limiter 不得分别作用于每个 Unit 或 Segment。
+
+相同 Project semantic revision、CompileContext、范围和完整 cache key 的 exact replay 命中时，不得再次进行语义编译或 BASSMIDI 合成。跨范围复用必须把范围冷启动上下文纳入 key；不得把含范围前持续 Note 的连续 PCM 切片冒充从中途冷启动的结果。
+
+缓存失效至少服从：
+```text
+Segment 内容：从最早可证明 causal dirty tick 起；无法证明时从 Segment 有效起点起。
+Event Instrument / Mapping / Lifecycle：失效所有引用的 Segment/Unit。
+Tempo：失效局部 Tempo 投影改变的 sample-domain entry 与时间放置。
+SF2 hash、采样率/格式、native baseline、voice policy：失效全部相关 Unit PCM。
+Mute/Solo：保留 Unit PCM，建立新 playback span generation。
+Master/Limiter：保留 Unit PCM，失效相关 playback span。
+设备变化且实际格式相同：保留 device-independent Unit raw PCM；重建设备连接和 device-bound generation。
+```
+
+### 13.19.11 Session cache 存储与配额
+
+音频缓存不进入 `.midora`。初版缓存只在当前 Project 打开 session 内有效，不跨会话复用；Project 关闭时删除本 session 的已知缓存条目。已完成条目在 Project 打开期间不做 LRU 驱逐。
+
+Application Preferences 包含：
+```text
+Audio Cache Root：默认 %LOCALAPPDATA%\Midora\AudioCache
+Maximum Reusable Audio Cache Bytes：默认 16 GiB，范围 0..Int64.MaxValue
+```
+
+Cache Root 只接受可写的本机 fully-qualified 路径，拒绝相对路径、UNC 和网络位置。程序只能管理 root 下由当前版本 manifest 标识的 `session-*` 子目录；不得递归删除 root 或未知文件。
+
+quota 为 `0` 时不保留 reusable entry，cache miss 每次实时渲染。配额满、空间不足或普通 reusable 写入失败时：
+```text
+显示 AudioCacheRetentionDisabled Warning。
+停止创建新的 reusable entry。
+已完成 entry 继续可读。
+cache miss 现渲染，不直接使播放失败。
+```
+
+Buffering 完整恢复区间使用独立于 reusable quota 的 transient recovery spool；消费或 Stop 后删除。系统必须分别报告 reusable 当前占用/上限、transient 当前/峰值和 retention Warning。若 spool 不可用且预留 RAM 也不足以容纳完整恢复区间，在 `F` 受控 Stop 并报告 `AudioRecoveryStorageUnavailable`，不得退化为短块断续播放。
+
+完整 tile 写完并校验 checksum/generation 后才原子发布。WASAPI callback、BASSMIDI render/mix、ring 搬运线程不得做 cache 文件 I/O。损坏或半写 entry 必须隔离并重建，不能作为命中。
+
+### 13.19.12 约 200 ms 性能基准
 
 实时播放和预览的端到端延迟以约 200 ms 作为性能测试基准。测试路径尽量覆盖：
 ```text
@@ -1480,9 +1527,13 @@ buffer 设置和实际值面板布局
 实时 PCM 只在子进程内部的 Render-Ahead ring 与 WASAPI callback 之间流动，不跨进程传输。
 运行时命令与状态使用固定版本、固定布局、有界的二进制共享内存 ABI；禁止 JSON、文本协议和逐消息对象反序列化。
 Playing、Preview Playing、Buffering 与 Rendering 的命令 / 状态 IPC 热路径不得产生托管堆分配。
-IPC 延迟和吞吐量计入 §13.19.10 的约 200 ms 性能基准。
+IPC 延迟和吞吐量计入 §13.19.12 的约 200 ms 性能基准。
 子进程异常退出时，当前播放 / 预览进入 Error 并完成主进程侧资源清理；允许通过 Reset Playback Engine 重建子进程。
 ```
+
+共享控制 ABI v2 引入、当前 ABI v4 保持的 Worker 状态快照采用单 Writer seqlock。固定 header offset 68 的对齐 `Int32 statusSequence` 是状态发布代号：稳定状态必须为偶数；Writer 在发布 State、Fault、Position、Render Position、Underrun、callback/render-thread allocation、设备变化标志及 held preview plan generation 的完整集合前，以原子 compare-exchange 把当前偶数改为奇数，全部字段写完后再以 release 语义发布下一偶数。并发 Writer 或前一次发布中断形成的奇数序列属于协议故障，不能继续覆盖。
+
+Reader 只能在第一次读到偶数序列时复制完整字段，并在第二次读到相同偶数序列后接受快照；否则无分配重试，最多 1024 次，耗尽后作为 IPC 一致性错误使当前任务失败。序列按 32-bit two's-complement 位模式自然 wrap，相等与奇偶判断不得改成有符号大小比较。ABI v3 在 offset 88 保存 held preview plan generation，并新增 producer pause、应用 generation 计划及 resume 命令；暂停期间 WASAPI 仍可消费既有 Render-Ahead PCM，Worker 只能在 producer 尚未渲染的 frontier 替换后缀计划。ABI v4 保持 header 与 16-byte command record 布局，并新增携带正 sample-domain `endFrame` 的 `BufferingRecoveryPrepare` 命令；Worker 不得从 tick/拍号自行推导恢复终点。Create 与 Open 只生成/接受当前 ABI v4，主进程和 Worker 不提供 v1～v3 混合版本回退。
 
 初版音频子进程必须以 `win-x64` 独立 Native AOT、自包含发布，不允许在正式运行时依赖 JIT 编译，也不得生成或接受 `win-x86`、`win-arm64` 或 AnyCPU Worker 作为正式产物。Native AOT 不替代零分配、callback deadline、underrun、故障恢复和确定性验收。
 

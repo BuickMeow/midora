@@ -243,7 +243,8 @@ public sealed class ProjectCreationCoordinator
 
     private static ValidatedRequest ValidateRequest(NewProjectCreationRequest request)
     {
-        if (request.TicksPerQuarterNote <= 0)
+        if (request.TicksPerQuarterNote is < MidoraProject.MinimumTicksPerQuarterNote
+            or > MidoraProject.MaximumTicksPerQuarterNote)
         {
             throw new ArgumentOutOfRangeException(nameof(request.TicksPerQuarterNote));
         }

@@ -3,6 +3,8 @@
 文档修订日期：2026-08-06
 性质：需求理解、现状审阅和实施建议；不是 SRS 的替代品。
 
+> 现状提示（2026-08-08）：本文后续“当前进度/尚未实现”描述保留为历史路线记录，已经过时；不得据此判定源码缺口。当前权威实施状态见 `misc/Midora-Non-UI-Implementation-Tracker.md`，§7～§12 逐节证据见 `misc/Midora-Domain-Compiler-Conformance-Matrix.md`。
+
 ## 1. 审阅范围
 
 已审阅：

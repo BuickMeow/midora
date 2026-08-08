@@ -469,13 +469,13 @@ internal static class EventInstrumentProtobufCodecV1
         IsEnabled = value.IsEnabled,
         Source = (MappingSource)(int)value.Source,
         Operation = (MappingOperation)(int)value.Operation,
-        LogicalParameterId = value.LogicalParameterId is null
+        LogicalParameterId = !value.HasLogicalParameterId
             ? null
             : ProtobufValueCodecV1.FromWire(value.LogicalParameterId, "Mapping Step Logical Parameter ID"),
-        EnvelopeId = value.EnvelopeId is null
+        EnvelopeId = !value.HasEnvelopeId
             ? null
             : ProtobufValueCodecV1.FromWire(value.EnvelopeId, "Mapping Step Envelope ID"),
-        MappingFunctionId = value.MappingFunctionId is null
+        MappingFunctionId = !value.HasMappingFunctionId
             ? null
             : ProtobufValueCodecV1.FromWire(value.MappingFunctionId, "Mapping Step Function ID"),
         Constant = value.Constant,
@@ -737,15 +737,15 @@ internal static class EventInstrumentProtobufCodecV1
             {
                 step.Constant, step.SourceMinimum, step.SourceMaximum, step.TargetMinimum, step.TargetMaximum
             }) ProtobufValueCodecV1.RequireFinite(item, "Mapping Step numeric value");
-            if (step.LogicalParameterId is not null)
+            if (step.HasLogicalParameterId)
             {
                 _ = ProtobufValueCodecV1.FromWire(step.LogicalParameterId, "Mapping Step Logical Parameter ID");
             }
-            if (step.EnvelopeId is not null)
+            if (step.HasEnvelopeId)
             {
                 _ = ProtobufValueCodecV1.FromWire(step.EnvelopeId, "Mapping Step Envelope ID");
             }
-            if (step.MappingFunctionId is not null)
+            if (step.HasMappingFunctionId)
             {
                 _ = ProtobufValueCodecV1.FromWire(step.MappingFunctionId, "Mapping Step Function ID");
             }

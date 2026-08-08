@@ -11,7 +11,7 @@ public sealed class ProjectMappingChainEditCommandsTests
     public void ChainAndStepEnabledStatesChangeCompilationAndUndoExactly()
     {
         Fixture fixture = CreateFixture();
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
         AssertController(compilation.LastAttempt, 50);
@@ -55,7 +55,7 @@ public sealed class ProjectMappingChainEditCommandsTests
     public void StepUpdatePreservesIdentityAndReferencesAndUndoIsExact()
     {
         Fixture fixture = CreateFixture();
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         MidoraId id = fixture.FirstStep.Id;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
@@ -163,7 +163,7 @@ public sealed class ProjectMappingChainEditCommandsTests
     public void NonEmptyChainDeleteRequiresConfirmationAndUndoRestoresAllSteps()
     {
         Fixture fixture = CreateFixture();
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 

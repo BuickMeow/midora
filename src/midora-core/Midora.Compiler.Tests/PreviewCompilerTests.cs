@@ -75,7 +75,7 @@ public sealed class PreviewCompilerTests
                 MutedSubVoiceIds = [mutedSolo.Id]
             });
 
-        Assert.True(result.IsConsumable);
+        Assert.True(result.IsConsumable, string.Join(" | ", result.Diagnostics.Select(value => $"{value.Code}:{value.Message}")));
         Assert.Equal(
             [first.Id, second.Id],
             result.Allocations.ToArray().Select(value => value.SubVoiceId).Order().ToArray());
@@ -277,5 +277,208 @@ public sealed class PreviewCompilerTests
         Assert.True(result.IsConsumable);
         Assert.Equal(long.MaxValue, result.EndTick);
         Assert.DoesNotContain(result.Diagnostics, value => value.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void HeldPreviewGateOpenUsesMaximumGateSentinelAndDoesNotCleanAtWindowEnd()
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Instrument.RequiresChannelIsolation = true;
+        fixture.Instrument.TemplateLengthTicks = 2_000;
+        TemplateEvent control = TemplateEvent.ControlChange(fixture.Project, 0, 11, 1);
+        control.ValueMappings.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.GateLength,
+            Operation = MappingOperation.Override
+        });
+        control.ValueTargetSettings.Overflow = MappingOverflow.Clamp;
+        fixture.Voice.Events.Add(control);
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 2_000, 60, 100));
+
+        CanonicalCompiledResult result = new PreviewCompiler().CompileHeldEventInstrumentGateOpen(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(fixture.Instrument.Id),
+            windowEndTick: 600);
+
+        Assert.True(result.IsConsumable, string.Join(" | ", result.Diagnostics.Select(value => $"{value.Code}:{value.Message}")));
+        Assert.True(result.Context.IsPreview);
+        CanonicalMidiEvent mapped = Assert.Single(result.Events.ToArray(), value =>
+            value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Role == CanonicalEventRole.ControlChange);
+        Assert.Equal(127, mapped.Message.Byte2);
+        Assert.Contains(result.Events.ToArray(), value => value.Role == CanonicalEventRole.NoteOn);
+        Assert.DoesNotContain(result.Events.ToArray(), value =>
+            value.Tick == 600
+            || value.Source.Origin == SourceOrigin.CompilerBoundaryCleanup);
+        Assert.DoesNotContain(result.Events.ToArray(), value =>
+            value.Message.MessageType is MidiMessageType.NoteOff
+            || value.Message.MessageType == MidiMessageType.NoteOn && value.Message.Byte2 == 0);
+    }
+
+    [Fact]
+    public void HeldPreviewGateOpenBoundsLoopExpansionToTheRequestedCausalWindow()
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Instrument.RequiresChannelIsolation = true;
+        fixture.Instrument.TemplateLengthTicks = 300;
+        fixture.Instrument.LoopStartTick = 100;
+        fixture.Instrument.LoopEndTick = 200;
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 120, 10, 60, 100));
+
+        CanonicalCompiledResult result = new PreviewCompiler().CompileHeldEventInstrumentGateOpen(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(fixture.Instrument.Id),
+            windowEndTick: 450);
+
+        Assert.True(result.IsConsumable, string.Join(" | ", result.Diagnostics.Select(value => $"{value.Code}:{value.Message}")));
+        Assert.Equal(
+            [120L, 220L, 320L, 420L],
+            result.Events.ToArray()
+                .Where(value => value.Role == CanonicalEventRole.NoteOn)
+                .Select(value => value.Tick)
+                .ToArray());
+        Assert.DoesNotContain(result.Events.ToArray(), value => value.Tick >= 450);
+    }
+
+    [Fact]
+    public void HeldPreviewGateEndSeparatesFrozenMappingLengthFromTheCausalReleaseTick()
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Instrument.RequiresChannelIsolation = true;
+        fixture.Instrument.TemplateLengthTicks = 1_000;
+        fixture.Instrument.ShortLifecycle = ShortNoteLifecycle.CutAtNoteOff;
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 1_000, 60, 100));
+        TemplateEvent control = TemplateEvent.ControlChange(fixture.Project, 400, 11, 1);
+        control.ValueMappings.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.GateLength,
+            Operation = MappingOperation.Override
+        });
+        fixture.Voice.Events.Add(control);
+
+        CanonicalCompiledResult result = new PreviewCompiler().CompileHeldEventInstrumentGateEnd(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(fixture.Instrument.Id),
+            finalGateLengthTicks: 120,
+            effectiveGateEndTick: 480);
+
+        Assert.True(result.IsConsumable, string.Join(" | ", result.Diagnostics.Select(value => $"{value.Code}:{value.Message}")));
+        CanonicalMidiEvent mapped = Assert.Single(result.Events.ToArray(), value =>
+            value.Tick == 400
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Role == CanonicalEventRole.ControlChange);
+        Assert.Equal(120, mapped.Message.Byte2);
+        Assert.Contains(result.Events.ToArray(), value =>
+            value.Tick == 480
+            && value.Message.MessageType is MidiMessageType.NoteOff);
+    }
+
+    [Fact]
+    public void HeldDraftNotePreviewUsesSegmentProjectPositionAndParameterStateWithoutMutation()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 1_000);
+        fixture.Segment.ProjectStartTick = 1_000;
+        fixture.Segment.ContentOffsetTick = 200;
+        fixture.Instrument.RequiresChannelIsolation = true;
+        fixture.Instrument.TemplateLengthTicks = 1_000;
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 1_000, 60, 100));
+        LogicalParameterDefinition parameter = new(fixture.Project)
+        {
+            Name = "expression",
+            Type = LogicalParameterType.Double,
+            Minimum = 0,
+            Maximum = 1,
+            DefaultValue = 0
+        };
+        fixture.Instrument.LogicalParameters.Add(parameter);
+        LogicalParameterMapping mapping = new(fixture.Project)
+        {
+            ParameterId = parameter.Id,
+            SubVoiceId = fixture.Voice.Id,
+            Target = MidiValueTarget.ControlChange(11),
+            Steps =
+            {
+                new ValueMappingStep(fixture.Project)
+                {
+                    Operation = MappingOperation.Remap,
+                    Source = MappingSource.LogicalParameter,
+                    LogicalParameterId = parameter.Id,
+                    SourceMinimum = 0,
+                    SourceMaximum = 1,
+                    TargetMinimum = 0,
+                    TargetMaximum = 127
+                }
+            }
+        };
+        fixture.Instrument.ParameterMappings.Add(mapping);
+        LogicalParameterLane lane = new(fixture.Project) { ParameterId = parameter.Id };
+        lane.Points.Add(new(fixture.Project, 200, 0, CurveInterpolation.Step));
+        lane.Points.Add(new(fixture.Project, 320, 1, CurveInterpolation.Step));
+        fixture.Segment.ParameterLanes.Add(lane);
+        SegmentNotePreviewRequest request = new(
+            fixture.Track.Id,
+            fixture.Segment.Id,
+            StartTick: 320,
+            Pitch: 67,
+            Velocity: 111);
+        int originalNoteCount = fixture.Segment.Notes.Count;
+        PreviewCompiler preview = new();
+
+        CanonicalCompiledResult open = preview.CompileHeldSegmentNoteGateOpen(
+            fixture.Project,
+            request,
+            windowLengthTicks: 480);
+        CanonicalCompiledResult ended = preview.CompileHeldSegmentNoteGateEnd(
+            fixture.Project,
+            request,
+            finalGateLengthTicks: 120,
+            effectiveGateEndTick: 240);
+
+        Assert.True(open.IsConsumable, string.Join(" | ", open.Diagnostics.Select(value => $"{value.Code}:{value.Message}")));
+        Assert.Equal(1_120, open.StartTick);
+        Assert.Equal(1_600, open.EndTick);
+        Assert.Contains(open.Events.ToArray(), value =>
+            value.Tick == 1_120
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 127);
+        Assert.Contains(open.Events.ToArray(), value =>
+            value.Role == CanonicalEventRole.NoteOn && value.Message.Byte1 == 67);
+        Assert.True(ended.IsConsumable, string.Join(" | ", ended.Diagnostics.Select(value => $"{value.Code}:{value.Message}")));
+        Assert.Contains(ended.Events.ToArray(), value =>
+            value.Tick == 1_360
+            && value.Message.MessageType == MidiMessageType.NoteOff);
+        Assert.Equal(originalNoteCount, fixture.Segment.Notes.Count);
+    }
+
+    [Fact]
+    public void HeldPreviewGateStartRejectsAClaimedFinalLengthAndInvalidDirectCompilerContext()
+    {
+        var fixture = CompilerTestProject.Create();
+        PreviewCompiler preview = new();
+
+        Assert.Throws<ArgumentException>(() => preview.CompileHeldEventInstrumentGateOpen(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(fixture.Instrument.Id, GateLengthTicks: 120),
+            480));
+        using MidoraCompiler compiler = new();
+        Assert.Throws<ArgumentException>(() => compiler.CompileFull(
+            fixture.Project,
+            new CompilationRequest
+            {
+                Purpose = CompilationPurpose.Playback,
+                EndTick = 480,
+                HeldPreviewGateOpen = true
+            }));
+        Assert.Throws<ArgumentException>(() => compiler.CompileFull(
+            fixture.Project,
+            new CompilationRequest
+            {
+                Purpose = CompilationPurpose.Playback,
+                EndTick = 480,
+                HeldPreviewFinalGateLengthTicks = 120
+            }));
     }
 }

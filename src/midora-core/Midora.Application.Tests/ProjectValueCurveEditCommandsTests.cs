@@ -12,7 +12,7 @@ public sealed class ProjectValueCurveEditCommandsTests
     {
         Fixture fixture = CreateFixture();
         CurvePoint original = fixture.Curve.Points[0];
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -180,7 +180,7 @@ public sealed class ProjectValueCurveEditCommandsTests
         CurvePoint removedPoint = fixture.Curve.Points[0];
         CurvePoint[] originalPoints = fixture.Curve.Points.ToArray();
         ValueCurve[] originalCurves = fixture.Voice.Curves.ToArray();
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 

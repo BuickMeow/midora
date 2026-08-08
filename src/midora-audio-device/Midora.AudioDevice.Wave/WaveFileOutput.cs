@@ -119,8 +119,12 @@ public static unsafe partial class WaveFileOutput
                 sourcePullAllocatedBytes += GC.GetAllocatedBytesForCurrentThread() - allocatedBeforePull;
                 if (pull.Status == AudioPullStatus.Buffering)
                 {
-                    failure = WaveRenderFailure.SourceBuffering;
-                    break;
+                    // A reusable PCM cache is fed by a dedicated bounded I/O
+                    // thread. Offline rendering has no device deadline, so wait
+                    // without advancing the output frame rather than treating
+                    // cache read-ahead backpressure as a semantic source failure.
+                    Thread.Sleep(1);
+                    continue;
                 }
 
                 if (pull.FrameCount != requestedFrames)

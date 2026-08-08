@@ -19,4 +19,8 @@
     <ProjectReference Include="..\..\midora-core\Midora.Playback.BassWasapi\Midora.Playback.BassWasapi.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Midora.Audio.Bass.Tests" />
+  </ItemGroup>
+
 </Project>

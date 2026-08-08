@@ -1104,6 +1104,8 @@ Buffer Underrun
 Clipping
 Limiter Activity
 Temporary device issue
+Audio cache retention disabled
+Audio cache entry corrupt and rebuilt
 ```
 显示于 Status Bar、Bottom Runtime Panel 或 Runtime History；不自动成为 Project Error。
 不可恢复错误执行 Stop 类清理，保留来源和上下文，不修改 Project。
@@ -1307,6 +1309,7 @@ Bar:Beat:Tick
 - Tick offset 0-based；
 - Project 起点 `1:1:0`。
 Beat 按当前 Time Signature 分母单位计算；初版不推断复合拍大拍。
+每个 Time Signature 必须满足 `4 × TPQ % denominator == 0`，因此 Beat 长度和 Tick offset 均使用整数 Project tick。Time Signature 变化 tick 立即显示为新 Bar 的 `Beat 1:Tick 0`；若旧小节被截断，不存在的旧小节尾部坐标不得解析或吸附。
 Segment local time 和 Template time 使用独立 tick。
 长度和 Delta 使用 tick，不使用绝对位置格式。
 ### 20.13.4 音高与编号
@@ -1354,6 +1357,9 @@ Recent directories by picker purpose
 Selected playback output device ID or System Default choice
 Render-Ahead Buffer
 Device Buffer Request
+Realtime Maximum Sample Voices per Unit Stream
+Audio Cache Root
+Maximum Reusable Audio Cache Bytes
 ```
 ### 20.14.3 不持久化内容
 ```text
@@ -1380,6 +1386,9 @@ Function Draft
 设备实际采样率
 设备实际 buffer 和 callback period
 IPC 连接与队列运行状态
+Audio cache reusable 当前占用
+Audio cache transient 当前与峰值占用
+Audio cache session 路径、retention 状态和 Warning
 ```
 ### 20.14.4 Recent Directories
 分别保存：

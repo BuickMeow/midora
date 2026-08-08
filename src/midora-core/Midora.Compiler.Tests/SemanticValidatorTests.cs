@@ -501,6 +501,54 @@ public sealed class SemanticValidatorTests
     }
 
     [Fact]
+    public void TimeSignatureTpqCompatibilityAndMidBarTruncationAreDiagnosed()
+    {
+        MidoraProject incompatible = new(1);
+        TimeSignatureChange source = incompatible.Conductor.TimeSignatures[0];
+        incompatible.Conductor.TimeSignatures[0] = source with { Denominator = 8 };
+
+        CanonicalCompiledResult invalid = new MidoraCompiler().CompileFull(incompatible);
+
+        CompilerDiagnostic error = Assert.Single(
+            invalid.Diagnostics,
+            value => value.Code == "MIDORA1017");
+        Assert.False(invalid.IsConsumable);
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+        Assert.Equal(source.Id, error.Source.SourceEventId);
+        Assert.Equal(0, error.Source.Tick);
+        Assert.Contains("TPQ 1", error.Message, StringComparison.Ordinal);
+        Assert.Contains("分母 8", error.Message, StringComparison.Ordinal);
+
+        MidoraProject truncated = new(480);
+        TimeSignatureChange change = new(truncated, 1_000, 3, 4);
+        truncated.Conductor.TimeSignatures.Add(change);
+        CanonicalCompiledResult warning = new MidoraCompiler().CompileFull(
+            truncated,
+            new CompilationRequest { EndTick = 2_000 });
+
+        CompilerDiagnostic diagnostic = Assert.Single(
+            warning.Diagnostics,
+            value => value.Code == "MIDORA1018");
+        Assert.True(warning.IsConsumable);
+        Assert.Equal(DiagnosticSeverity.Warning, diagnostic.Severity);
+        Assert.Equal(change.Id, diagnostic.Source.SourceEventId);
+        Assert.Equal(change.Tick, diagnostic.Source.Tick);
+
+        CanonicalCompiledResult warningAsError = new MidoraCompiler().CompileFull(
+            truncated,
+            new CompilationRequest { EndTick = 2_000, TreatWarningsAsErrors = true });
+        Assert.False(warningAsError.IsConsumable);
+        Assert.Equal(CompilationFailureStage.WarningPolicy, warningAsError.FailureStage);
+
+        MidoraProject aligned = new(480);
+        aligned.Conductor.TimeSignatures.Add(new(aligned, 1_920, 3, 4));
+        CanonicalCompiledResult noWarning = new MidoraCompiler().CompileFull(
+            aligned,
+            new CompilationRequest { EndTick = 3_000 });
+        Assert.DoesNotContain(noWarning.Diagnostics, value => value.Code == "MIDORA1018");
+    }
+
+    [Fact]
     public void SegmentOverlapIsRejected()
     {
         var fixture = CompilerTestProject.Create();

@@ -30,7 +30,7 @@ public sealed class SoundFontPersistenceV1Tests
         Assert.Throws<ArgumentException>(() =>
             project.SoundFont.SetExternal(".sf2", ".sf2", HashA, 1));
 
-        UInt128 beforeInvalidEmbedded = project.NextStableId;
+        long beforeInvalidEmbedded = project.NextStableId;
         Assert.Throws<ArgumentException>(() =>
             project.SoundFont.SetEmbedded(project, "Piano.sf2", "invalid", 1));
         Assert.Equal(beforeInvalidEmbedded, project.NextStableId);

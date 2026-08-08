@@ -21,7 +21,7 @@ public sealed class BassMidiChildProcessIntegrationTests
 
         MidiRenderPlan plan = CreatePlan();
         BassMidiRendererSettings settings = new(
-            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
+            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
             maximumWorkFrameCount: 257);
         float[] expected = RenderInProcess(plan, settings);
         float[] actual = new float[expected.Length];
@@ -63,7 +63,7 @@ public sealed class BassMidiChildProcessIntegrationTests
         NativeAudioIntegrationEnvironment.LoadBassMidi();
         string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
         _ = SoundFontPath;
-        Guid sourceId = Guid.Parse("bf0726a6-93e8-46ef-b4bb-d0952c750998");
+        const long sourceId = 7_002;
         MidiRenderPlan plan = new(
             48_000,
             16_384,
@@ -76,7 +76,7 @@ public sealed class BassMidiChildProcessIntegrationTests
             [sourceId],
             [0]);
         BassMidiRendererSettings settings = new(
-            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
+            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
             256);
         float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
 

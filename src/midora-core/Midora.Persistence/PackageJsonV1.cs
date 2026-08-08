@@ -9,7 +9,7 @@ internal sealed class ProjectJsonV1
     public required int SchemaVersion { get; init; }
 
     [JsonPropertyOrder(1)]
-    public required string NextStableId { get; init; }
+    public required StableIdJsonV1 NextStableId { get; init; }
 
     [JsonPropertyOrder(2)]
     public required string MetadataPath { get; init; }
@@ -59,7 +59,7 @@ internal sealed class ProjectSettingsPathsJsonV1
 internal sealed class ProjectFolderIndexJsonV1
 {
     [JsonPropertyOrder(0)]
-    public required string Id { get; init; }
+    public required StableIdJsonV1 Id { get; init; }
 
     [JsonPropertyOrder(1)]
     public required string Name { get; init; }
@@ -69,7 +69,7 @@ internal sealed class ProjectFolderIndexJsonV1
 internal sealed class ProjectObjectIndexJsonV1
 {
     [JsonPropertyOrder(0)]
-    public required string Id { get; init; }
+    public required StableIdJsonV1 Id { get; init; }
 
     [JsonPropertyOrder(1)]
     public required string Path { get; init; }
@@ -79,7 +79,7 @@ internal sealed class ProjectObjectIndexJsonV1
 
     [JsonPropertyOrder(3)]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? FolderId { get; init; }
+    public StableIdJsonV1? FolderId { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -100,6 +100,32 @@ internal sealed class ExportSettingsJsonV1
 {
     [JsonPropertyOrder(0)]
     public required int SchemaVersion { get; init; }
+
+    [JsonPropertyOrder(1)]
+    public required string Mode { get; init; }
+
+    [JsonPropertyOrder(2)]
+    public required string RangeMode { get; init; }
+
+    [JsonPropertyOrder(3)]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? ManualStartTick { get; init; }
+
+    [JsonPropertyOrder(4)]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? ManualEndTick { get; init; }
+
+    [JsonPropertyOrder(5)]
+    public required string TrackSelectionMode { get; init; }
+
+    [JsonPropertyOrder(6)]
+    public required string Routing { get; init; }
+
+    [JsonPropertyOrder(7)]
+    public required bool IncludeReadme { get; init; }
+
+    [JsonPropertyOrder(8)]
+    public required bool TreatWarningsAsErrors { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -142,7 +168,7 @@ internal sealed class AudioRenderSettingsJsonV1
     public required string TrackSelectionMode { get; init; }
 
     [JsonPropertyOrder(6)]
-    public required string[] ExplicitLogicalTrackIds { get; init; }
+    public required StableIdJsonV1[] ExplicitLogicalTrackIds { get; init; }
 
     [JsonPropertyOrder(7)]
     public required string Container { get; init; }
@@ -160,7 +186,7 @@ internal sealed class AudioRenderSettingsJsonV1
     public required int SampleRate { get; init; }
 
     [JsonPropertyOrder(12)]
-    public required int MaximumSampleVoicesPerStream { get; init; }
+    public required int MaximumSampleVoicesPerUnitStream { get; init; }
 
     [JsonPropertyOrder(13)]
     public required string TrackFileNamePattern { get; init; }
@@ -257,7 +283,7 @@ internal sealed class ConductorTrackJsonV1
 internal sealed class TempoChangeJsonV1
 {
     [JsonPropertyOrder(0)]
-    public required string Id { get; init; }
+    public required StableIdJsonV1 Id { get; init; }
 
     [JsonPropertyOrder(1)]
     public required long Tick { get; init; }
@@ -270,7 +296,7 @@ internal sealed class TempoChangeJsonV1
 internal sealed class TimeSignatureChangeJsonV1
 {
     [JsonPropertyOrder(0)]
-    public required string Id { get; init; }
+    public required StableIdJsonV1 Id { get; init; }
 
     [JsonPropertyOrder(1)]
     public required long Tick { get; init; }
@@ -286,7 +312,7 @@ internal sealed class TimeSignatureChangeJsonV1
 internal sealed class KeySignatureChangeJsonV1
 {
     [JsonPropertyOrder(0)]
-    public required string Id { get; init; }
+    public required StableIdJsonV1 Id { get; init; }
 
     [JsonPropertyOrder(1)]
     public required long Tick { get; init; }
@@ -302,7 +328,7 @@ internal sealed class KeySignatureChangeJsonV1
 internal sealed class ProjectMarkerJsonV1
 {
     [JsonPropertyOrder(0)]
-    public required string Id { get; init; }
+    public required StableIdJsonV1 Id { get; init; }
 
     [JsonPropertyOrder(1)]
     public required long Tick { get; init; }
@@ -315,7 +341,7 @@ internal sealed class ProjectMarkerJsonV1
 internal sealed class ProjectEndMarkerJsonV1
 {
     [JsonPropertyOrder(0)]
-    public required string Id { get; init; }
+    public required StableIdJsonV1 Id { get; init; }
 
     [JsonPropertyOrder(1)]
     public required long Tick { get; init; }

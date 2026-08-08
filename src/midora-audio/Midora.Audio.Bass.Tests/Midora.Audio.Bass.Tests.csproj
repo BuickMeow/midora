@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />
+    <ProjectReference Include="..\Midora.Audio.Bass.Tests.Console\Midora.Audio.Bass.Tests.Console.csproj" />
     <ProjectReference Include="..\Midora.Audio.Bass.Worker\Midora.Audio.Bass.Worker.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\midora-audio-device\Midora.AudioDevice.Wave\Midora.AudioDevice.Wave.csproj" />
     <ProjectReference Include="..\..\midora-native-interops\Midora.NativeInterops.BassWasapi\Midora.NativeInterops.BassWasapi.csproj" />

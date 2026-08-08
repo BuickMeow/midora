@@ -65,6 +65,10 @@ public static partial class ProjectDomainEditCommands
             {
                 throw new ArgumentOutOfRangeException(nameof(denominator));
             }
+            ProjectTimeSignatureRules.ValidateCompatibility(
+                project.TicksPerQuarterNote,
+                denominator,
+                nameof(denominator));
             EnsureUniqueTick(
                 project.Conductor.TimeSignatures,
                 timeSignatureId,

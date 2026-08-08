@@ -332,7 +332,7 @@ Project 级 ID 生成状态必须保存于：
 ```text
 project.json 的 nextStableId 字段
 ```
-`nextStableId` 使用 16.13.2 规定的 canonical 32 位小写十六进制字符串。
+`nextStableId` 使用 16.13.2 规定的 canonical 十进制 JSON integer。
 初版采用系统级原则：
 ```text
 持久化单调递增计数器
@@ -340,6 +340,7 @@ project.json 的 nextStableId 字段
 不复用
 Project 内所有稳定 ID 全局唯一
 ```
+打开会话内的分配高水位不因 Undo、失败创建或 Redo 分支丢弃而回退；Redo 必须恢复原 ID。仅由已撤销瞬态分配形成的空洞不单独维持 Modified，但在任何后续保存中仍写出当前高水位。关闭 otherwise-clean 会话后，未持久化、无存活对象且无存活 History 引用的瞬态 ID 可以随会话丢弃。
 不采用：
 ```text
 打开时扫描最大 ID 后继续
@@ -460,8 +461,11 @@ TPQ
 ```
 TPQ 必须保存于 `settings/project-settings.json`。
 TPQ 是 Project 语义，不是文件格式语义。
+开发期 v1 的 `ticksPerQuarterNote` 只接受整数 `1..32767`；打开超出范围的值按 settings 结构损坏处理，不迁移、不自动缩放 tick。
+开发期 v1 还要求 `conductor-track.json` 中每个 Time Signature 满足 `4 × ticksPerQuarterNote % denominator == 0`。这是 project settings 与 Conductor 之间的跨文件一致性约束；读取和保存均必须校验，不创建新 schemaVersion、fileFormatVersion 或迁移器。
 ### 16.7.3 export-settings.json
 保存 Project 默认导出设置。
+开发期 v1 固定保存：导出模式、范围策略、仅在 Manual Range 时存在的 start/end tick、Track 选择策略、Routing、Readme 开关与 Warning-as-error 开关。新 Project 默认 Whole Project / Project Default Range / All Valid Logical Tracks / Compact / Include Readme / 不把 Warning 当 Error。显式 Track 具体稳定 ID 不进入该 settings 文件。
 一次性导出参数不保存进 Project，除非用户明确将其保存为默认 Export Settings。
 不保存：
 ```text
@@ -482,6 +486,9 @@ Stop Cursor Behavior
 播放设备选择
 Render-Ahead Buffer
 Device Buffer Request
+Realtime Maximum Sample Voices per Unit Stream
+Audio Cache Root
+Maximum Reusable Audio Cache Bytes
 设备实际采样率 / buffer / callback period
 Mute / Solo
 播放光标位置
@@ -500,7 +507,7 @@ Mute / Solo
 显式 Logical Track 稳定 ID 集合
 有限命名偏好
 默认文件采样率：8,000–192,000 Hz 整数，默认 48,000 Hz
-默认 Offline Maximum Sample Voices per Stream：1–16,777,216 整数，默认 750
+默认 Offline Maximum Sample Voices per Unit Stream：1–16,777,216 整数，默认 500
 固定格式：RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float / Little-endian
 ```
 不保存：
@@ -526,7 +533,7 @@ SHA-256
 ```text
 固定格式字段属于当前 schema 必需且用户不可编辑的版本化字段。
 默认文件采样率属于用户可编辑 Project 默认值，但必须是 8,000–192,000 Hz 整数。
-默认 Offline Maximum Sample Voices per Stream 属于用户可编辑 Project 默认值，但必须是 1–16,777,216 整数。
+默认 Offline Maximum Sample Voices per Unit Stream 属于用户可编辑 Project 默认值，但必须是 1–16,777,216 整数。
 未知枚举、非法范围、无效字段组合或不支持的固定格式不得静默接受。
 当前 schema 要求文件存在而文件缺失 / hash 错误 / schema 无效时，按结构性设置损坏或不兼容规则处理。
 只有明确旧 fileFormatVersion 的迁移路径才允许生成默认设置。
@@ -538,6 +545,7 @@ Range = Project Default Range
 Track Selection = All Valid Logical Tracks
 Format = RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float
 Sample Rate = 48,000 Hz
+Offline Maximum Sample Voices per Unit Stream = 500
 ```
 保存时只写出已规范化的合法设置；已删除 Track 的无效 ID 不得原样写回。
 ### 16.7.6 soundfont-settings.json
@@ -566,7 +574,7 @@ Program / Bank 相关 Reset 策略默认值
 其他 Project 级 Reset Defaults
 ```
 ### 16.7.8 global-event-scope-defaults.json
-保存 Project 级事件作用域默认规则。
+初版保存不可编辑的版本化空 marker，只包含严格 schema 所要求的版本字段。该文件不得被解释为存在未定义的用户可配置事件作用域；Note 与 Channel-Wide 状态的作用域由各正式事件语义固定。未来如新增配置字段，必须发布新的 schema 版本并定义迁移规则。
 ---
 ## 16.8 conductor-track.json
 ### 16.8.1 内容
@@ -624,11 +632,14 @@ Project 标记为已修改。
 事件 tick < 0
 Tempo BPM <= 0
 非法 Time Signature
+Time Signature Denominator 与 Project TPQ 不满足 `4 × TPQ % Denominator == 0`
 非法 Key Signature
 ```
 Project 可打开，但应产生错误诊断。
 相关编译、播放、导出应禁止，直到用户修复。
 这类问题不是文件结构损坏，而是 Project 语义错误。
+
+开发期 v1 的 TPQ/Time Signature 整除约束是例外：它同时决定 `Bar:Beat:Tick` 能否按 v1 固定整数语义读取。若单个文件各自结构有效、但二者组合不满足 `4 × TPQ % Denominator == 0`，持久化读取必须拒绝该 Conductor 内容，并按第 16.18.5 节的 Conductor 损坏/缺失有界回退规则处理；不得以分数 tick、量化或静默改拍号继续。
 ---
 ## 16.9 Event Instrument protobuf 文件
 ### 16.9.1 文件粒度
@@ -668,7 +679,7 @@ Reset 策略入口
 ```
 SubVoice 不拆独立文件。
 Mapping Function 源码 / 定义保存于对应 Event Instrument `.pb` 内。
-每个 Mapping Function 定义必须保存 `abiVersion`、函数体源码和声明的 Context 字段集合。初版新建函数固定写 `abiVersion = 1`；未知 ABI 可以作为源数据打开和保留，但实际参与编译时按 Mapping Function 编译错误处理。编译产物、参考程序集、AssemblyLoadContext 状态和缓存不得写入 `.midora`。
+每个 Mapping Function 定义必须保存 `abiVersion`、函数体源码和声明的 Context 字段集合。初版新建函数固定写 `abiVersion = 2`；未知 ABI 可以作为源数据打开和保留，但实际参与编译时按 Mapping Function 编译错误处理。编译产物、参考程序集、AssemblyLoadContext 状态和缓存不得写入 `.midora`。
 Logical Parameter Definition 保存于对应 Event Instrument `.pb` 内。
 ### 16.9.3 Library 集合结构
 Event Instrument Library 的集合级信息保存于 `project.json`，包括：
@@ -764,7 +775,7 @@ Logical Track 名称允许重复。
 ei_<id>.pb
 lt_<id>.pb
 ```
-其中 `<id>` 必须使用 16.13.2 规定的 canonical 32 位小写十六进制字符串。
+其中 `<id>` 必须使用 16.13.2 规定的无符号、无前导零十进制 ASCII。
 ### 16.11.3 对象内部 ID 与类型
 对象 `.pb` 内部必须保存：
 ```text
@@ -885,35 +896,27 @@ tick 值持久化使用：
 ```
 不得使用 floating point 保存 tick。
 ### 16.13.2 ID
-Project 内对象稳定 ID、对象文件名中的 `<id>` 和 `project.json` 中的 `nextStableId` 统一使用同一个 canonical 文本表示：
+Project 内稳定 ID 的语义核心固定为 signed 64-bit integer，合法范围统一为：
 ```text
-32 个小写十六进制字符
-正则表达式：[0-9a-f]{32}
-无 0x 前缀
-无连字符
-高 64-bit 在前，低 64-bit 在后
+1..9223372036854775807（long.MaxValue）
 ```
-例如：
-```text
-00000000000000000000000000000001
-0123456789abcdeffedcba9876543210
-```
-JSON 读取器必须拒绝长度错误、大写字符、非十六进制字符、带连字符或带前缀的非 canonical 表示，不得静默规范化。对象稳定 ID 和 `nextStableId` 都不得为零；所有现存对象稳定 ID 还必须小于 `nextStableId`。
+`0` 与负值非法；所有现存对象稳定 ID 还必须小于 `nextStableId`。
 
-Project 内稳定 ID 在 protobuf 中固定使用：
+JSON 中的对象稳定 ID 与 `project.json.nextStableId` 必须使用十进制 JSON integer token。原始 UTF-8 token 必须匹配：
+```text
+[1-9][0-9]*
+```
+读取器必须拒绝字符串、小数、指数、正负号、前导零、超出 `long.MaxValue` 的 token 以及任何静默规范化。正式 .NET 读取器必须以 64-bit integer 精确处理；使用 JavaScript 等只能精确表示到 `2^53-1` 的第三方消费者必须自行使用任意精度整数解析。
+
+对象文件名中的 `<id>` 使用同一数值的 invariant 十进制 ASCII：无正负号、无前导零，且必须落在相同合法范围。文件名、`project.json` 索引和对象内部 ID 必须数值一致。
+
+Project 内稳定 ID 在 protobuf 中固定直接使用标量：
 ```proto
-message StableId {
-  fixed64 high = 1;
-  fixed64 low = 2;
-}
+int64 <field_name> = <existing_outer_field_number>;
 ```
-语义组合规则固定为：
-```text
-value = (high << 64) | low
-```
-`high` 和 `low` 是无符号 64-bit 数值；其 wire 编码遵循 protobuf 对 `fixed64` 规定的 little-endian 字节序，不再叠加自定义字节翻转。字段号 1 和 2 是已发布兼容承诺，后续不得改变或复用。按 protobuf 默认值规则省略值为零的单个字段是合法编码，但组合后的稳定 ID 为零必须拒绝。
+每个对象或引用保留其既有外层字段号；正值按 protobuf 标准 `int64` varint 编码。不得保留嵌套 `StableId` 消息，不得使用 `sint64`、`fixed64`、`bytes`、GUID 混合字节序或其他替代布局。读取器必须拒绝缺省得到的零、负值和超出合法语义范围的值。
 
-不得使用 protobuf `bytes`、GUID 混合字节序或其他替代布局保存初版稳定 ID。外层对象消息中承载 `StableId` 的字段号仍由各自最终 `.proto` schema 确定。
+该布局是首版冻结前对开发期 v1 的直接修订；旧 128-bit high/low 布局未发布，不提供迁移器或兼容读取分支。
 ### 16.13.3 enum
 持久化 enum 必须使用稳定编号或稳定字符串。
 JSON 中 enum 推荐保存为稳定字符串，例如：
@@ -1737,6 +1740,7 @@ project.json 可生成合法索引
 settings 可序列化
 metadata 可序列化
 conductor-track 可序列化
+TPQ 与全部 Time Signature 分母满足开发期 v1 整除约束
 ```
 一致性检查失败：
 ```text

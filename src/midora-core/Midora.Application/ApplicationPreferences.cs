@@ -15,23 +15,23 @@ public sealed record RealtimeAudioPreferences(
     string? PlaybackOutputDeviceId,
     int RenderAheadMilliseconds,
     int DeviceBufferRequestMilliseconds,
-    int MaximumSampleVoicesPerStream)
+    int MaximumSampleVoicesPerUnitStream)
 {
     public const int DefaultRenderAheadMilliseconds = 100;
     public const int DefaultDeviceBufferRequestMilliseconds = 50;
-    public const int DefaultMaximumSampleVoicesPerStream = 750;
+    public const int DefaultMaximumSampleVoicesPerUnitStream = 500;
     public const int MinimumRenderAheadMilliseconds = 20;
     public const int MaximumRenderAheadMilliseconds = 2_000;
     public const int MinimumDeviceBufferRequestMilliseconds = 5;
     public const int MaximumDeviceBufferRequestMilliseconds = 200;
-    public const int MinimumSampleVoicesPerStream = 1;
-    public const int MaximumAllowedSampleVoicesPerStream = 16_777_216;
+    public const int MinimumSampleVoicesPerUnitStream = 1;
+    public const int MaximumAllowedSampleVoicesPerUnitStream = 16_777_216;
 
     public static RealtimeAudioPreferences Default { get; } = new(
         null,
         DefaultRenderAheadMilliseconds,
         DefaultDeviceBufferRequestMilliseconds,
-        DefaultMaximumSampleVoicesPerStream);
+        DefaultMaximumSampleVoicesPerUnitStream);
 
     public void Validate()
     {
@@ -51,11 +51,71 @@ public sealed record RealtimeAudioPreferences(
         {
             throw new ArgumentOutOfRangeException(nameof(DeviceBufferRequestMilliseconds));
         }
-        if (MaximumSampleVoicesPerStream is < MinimumSampleVoicesPerStream
-            or > MaximumAllowedSampleVoicesPerStream)
+        if (MaximumSampleVoicesPerUnitStream is < MinimumSampleVoicesPerUnitStream
+            or > MaximumAllowedSampleVoicesPerUnitStream)
         {
-            throw new ArgumentOutOfRangeException(nameof(MaximumSampleVoicesPerStream));
+            throw new ArgumentOutOfRangeException(nameof(MaximumSampleVoicesPerUnitStream));
         }
+    }
+}
+
+public sealed record AudioCachePreferences(
+    string RootPath,
+    long MaximumReusableBytes)
+{
+    public const long DefaultMaximumReusableBytes = 16L * 1024 * 1024 * 1024;
+
+    public static AudioCachePreferences Default { get; } = new(
+        GetDefaultRootPath(),
+        DefaultMaximumReusableBytes);
+
+    public static string GetDefaultRootPath()
+    {
+        string localApplicationData = Environment.GetFolderPath(
+            Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(localApplicationData))
+        {
+            throw new InvalidOperationException(
+                "The current Windows user's Local Application Data directory is unavailable.");
+        }
+        return Path.Combine(localApplicationData, "Midora", "AudioCache");
+    }
+
+    public void Validate()
+    {
+        if (MaximumReusableBytes < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MaximumReusableBytes));
+        }
+        _ = NormalizeRootPath(RootPath);
+    }
+
+    public AudioCachePreferences Normalize() => this with
+    {
+        RootPath = NormalizeRootPath(RootPath)
+    };
+
+    internal static string NormalizeRootPath(string rootPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
+        if (!Path.IsPathFullyQualified(rootPath)
+            || rootPath.StartsWith("\\\\", StringComparison.Ordinal)
+            || rootPath.StartsWith("//", StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "The audio cache root must be a fully-qualified local path; UNC and network paths are not supported.",
+                nameof(rootPath));
+        }
+
+        string fullPath = Path.GetFullPath(rootPath);
+        string? pathRoot = Path.GetPathRoot(fullPath);
+        if (string.IsNullOrEmpty(pathRoot))
+        {
+            throw new ArgumentException("The audio cache root has no local volume root.", nameof(rootPath));
+        }
+        return string.Equals(fullPath, pathRoot, StringComparison.OrdinalIgnoreCase)
+            ? fullPath
+            : Path.TrimEndingDirectorySeparator(fullPath);
     }
 }
 
@@ -94,16 +154,22 @@ public sealed record ApplicationRecentDirectories(
 
 public sealed record ApplicationPreferences(
     RealtimeAudioPreferences RealtimeAudio,
+    AudioCachePreferences AudioCache,
     ApplicationRecentDirectories RecentDirectories)
 {
     public static ApplicationPreferences Default { get; } =
-        new(RealtimeAudioPreferences.Default, ApplicationRecentDirectories.Empty);
+        new(
+            RealtimeAudioPreferences.Default,
+            AudioCachePreferences.Default,
+            ApplicationRecentDirectories.Empty);
 
     public void Validate()
     {
         ArgumentNullException.ThrowIfNull(RealtimeAudio);
+        ArgumentNullException.ThrowIfNull(AudioCache);
         ArgumentNullException.ThrowIfNull(RecentDirectories);
         RealtimeAudio.Validate();
+        AudioCache.Validate();
         ValidateDirectory(RecentDirectories.OpenProject);
         ValidateDirectory(RecentDirectories.SaveAndSaveCopy);
         ValidateDirectory(RecentDirectories.SoundFont);
@@ -178,6 +244,9 @@ public sealed class ApplicationPreferencesService
         ApplicationPreferencesLoadResult loaded = _store.Load();
         _current = loaded.Preferences;
         StartupNotice = loaded.Notice;
+        _session.ConfigureAudioCache(
+            _current.AudioCache.RootPath,
+            _current.AudioCache.MaximumReusableBytes);
     }
 
     public ApplicationPreferenceNotice? StartupNotice { get; }
@@ -194,6 +263,7 @@ public sealed class ApplicationPreferencesService
     }
 
     public event EventHandler? RealtimeAudioPreferencesChanged;
+    public event EventHandler? AudioCachePreferencesChanged;
 
     public ApplicationPreferenceUpdateResult UpdateRealtimeAudio(
         RealtimeAudioPreferences preferences)
@@ -218,6 +288,36 @@ public sealed class ApplicationPreferencesService
         return Persist(
             current => current with { RealtimeAudio = preferences },
             realtimeMayChange: true,
+            audioCacheMayChange: false,
+            requiresPlaybackStopped: true);
+    }
+
+    public ApplicationPreferenceUpdateResult UpdateAudioCache(
+        AudioCachePreferences preferences)
+    {
+        ArgumentNullException.ThrowIfNull(preferences);
+        AudioCachePreferences normalized;
+        try
+        {
+            normalized = preferences.Normalize();
+            normalized.Validate();
+        }
+        catch (Exception exception) when (exception is ArgumentException
+            or IOException
+            or NotSupportedException)
+        {
+            return new(
+                ApplicationPreferenceUpdateStatus.RejectedInvalidValue,
+                new ApplicationPreferenceNotice(
+                    "PreferenceValueInvalid",
+                    exception.Message,
+                    exception));
+        }
+
+        return Persist(
+            current => current with { AudioCache = normalized },
+            realtimeMayChange: false,
+            audioCacheMayChange: true,
             requiresPlaybackStopped: true);
     }
 
@@ -246,6 +346,7 @@ public sealed class ApplicationPreferencesService
                 RecentDirectories = current.RecentDirectories.With(purpose, normalized)
             },
             realtimeMayChange: false,
+            audioCacheMayChange: false,
             requiresPlaybackStopped: false);
     }
 
@@ -254,12 +355,14 @@ public sealed class ApplicationPreferencesService
         return Persist(
             _ => ApplicationPreferences.Default,
             realtimeMayChange: true,
+            audioCacheMayChange: true,
             requiresPlaybackStopped: true);
     }
 
     private ApplicationPreferenceUpdateResult Persist(
         Func<ApplicationPreferences, ApplicationPreferences> update,
         bool realtimeMayChange,
+        bool audioCacheMayChange,
         bool requiresPlaybackStopped)
     {
         IDisposable? admission = _tasks.TryAcquirePreferenceUpdateLock(
@@ -276,6 +379,7 @@ public sealed class ApplicationPreferencesService
         }
 
         bool realtimeChanged;
+        bool audioCacheChanged;
         ApplicationPreferencesSaveResult saved;
         try
         {
@@ -288,6 +392,8 @@ public sealed class ApplicationPreferencesService
                 {
                     realtimeChanged = realtimeMayChange
                         && !Equals(_current.RealtimeAudio, candidate.RealtimeAudio);
+                    audioCacheChanged = audioCacheMayChange
+                        && !Equals(_current.AudioCache, candidate.AudioCache);
                     _current = candidate;
                 }
                 else
@@ -295,14 +401,26 @@ public sealed class ApplicationPreferencesService
                     realtimeChanged = !Equals(
                         _current.RealtimeAudio,
                         ApplicationPreferences.Default.RealtimeAudio);
+                    audioCacheChanged = !Equals(
+                        _current.AudioCache,
+                        ApplicationPreferences.Default.AudioCache);
                     _current = ApplicationPreferences.Default;
                 }
             }
 
             if (realtimeChanged)
             {
-                _session.InvalidateSampleDomainCaches();
+                if (!audioCacheChanged)
+                {
+                    _ = _session.ResetAudioCacheGenerations();
+                }
                 RealtimeAudioPreferencesChanged?.Invoke(this, EventArgs.Empty);
+            }
+            if (audioCacheChanged)
+            {
+                AudioCachePreferences cache = Current.AudioCache;
+                _session.ConfigureAudioCache(cache.RootPath, cache.MaximumReusableBytes);
+                AudioCachePreferencesChanged?.Invoke(this, EventArgs.Empty);
             }
             return saved.Succeeded
                 ? new(ApplicationPreferenceUpdateStatus.Applied)

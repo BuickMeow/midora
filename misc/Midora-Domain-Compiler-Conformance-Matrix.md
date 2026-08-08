@@ -1,0 +1,45 @@
+# Midora §7～§12 非 UI 领域与编译一致性矩阵
+
+状态：2026-08-08 逐节复核完成；未发现尚未实现的 §7～§12 初版非 UI 语义。本文是需求追踪记录，不替代 SRS。
+
+## 1. Requirement trace
+
+- 输入：完整 `MidoraProject` 源数据、显式 `CompilationRequest`、运行时 Preview/Mute/Solo 选择和 Project History 编辑命令。
+- 正式输出：经过语义验证的 Project 编辑结果，以及唯一可供播放、预览、MIDI 导出和音频渲染消费的 `CanonicalCompiledResult`。
+- 边界：稳定 ID 仅表示身份；所有音乐范围为 `[startTick, endTick)`；Port/Channel 只由 Compiler 分配；同 tick 顺序、范围起点恢复和硬结束清理必须确定。
+- 失败条件：非法基础 MIDI 值、参与作用域的断裂资源、Mapping 失败、生命周期/Overlap 非法、Segment 重叠、资源超过 256 Unit、范围或整数溢出均产生结构化失败，不发布可消费结果。
+- 诊断：Error/Warning/Info/Debug 保持原等级；Warning-as-error 只改变可消费判定；未参与显式 Track/SubVoice 作用域的普通内容不得污染该作用域诊断。
+- 持久化归属：§7～§11 的源对象和 Project 级稳定 ID 计数器属于 `.midora`；canonical、编译缓存、Mute/Solo、Preview gate 和分配路由不持久化。
+- 运行时归属：Mute/Solo、Preview 临时上下文、Full/Incremental cache/checkpoint 和消费者选择均不修改 Project。
+- 明确非目标：UI 布局/选择状态、MIDI 2.0、传统 MIDI OUT、VST、录音、语义级 Voice Stealing、多 SoundFont、Pause/Scrub。
+
+## 2. 逐章矩阵
+
+| SRS 范围 | 已实现的正式语义 | 主要实现 | 直接自动测试证据 |
+| --- | --- | --- | --- |
+| §7.1～§7.21 Event Instrument Library | Project 归属、稳定身份、trim + ignore-case 唯一名称、默认空库、创建/复制/删除/引用保留、单层 Folder/Unfiled、手动顺序、未引用/无效定义诊断和统一 History | `EventInstrumentLibrary.cs`、`ProjectCreationEditCommands.cs`、`ProjectDomainEditCommands.cs`、`SemanticValidator.cs` | `DomainEditingTests`、`ProjectCreationEditCommandsTests`、`ProjectDomainEditCommandsTests`、`AudioRenderScopedCompilationTests`、`PreviewCompilerTests` |
+| §7.22～§7.47 Event Instrument 定义本体 | Root Note、Template Length、SubVoice、Isolation、Overlap/Lifecycle/Reset、Mapping/Parameter/Envelope、描述/颜色和可保存但不可消费的参与式失败 | `Instruments.cs`、`ProjectEventInstrumentEditCommands.cs`、`ProjectMusicContentEditCommands.cs`、`MidoraCompiler.cs` | `ProjectEventInstrumentEditCommandsTests`、`ProjectMusicContentEditCommandsTests`、`MappingAndLifecycleTests`、`SemanticValidatorTests`、`CompilationFailureContractTests` |
+| §8.1～§8.49 SubVoice 核心 | 1～256 SubVoice、稳定 ID/名称/顺序、Effective Root、Initial State 分层、Mute/Solo 仅预览过滤、空 SubVoice 仍占 Unit、精确诊断来源 | `SubVoice`/`MidiInitialState`、`ProjectResourceCreationEditCommands.cs`、`ProjectEventInstrumentEditCommands.cs`、`PreviewCompiler.cs` | `ProjectCreationEditCommandsTests`、`ProjectEventInstrumentEditCommandsTests`、`ProjectMidiStateEditCommandsTests`、`PreviewCompilerTests`、`BoundaryCleanupTests`、`CompilationTests.EmptySubVoiceInstanceConsumesChannelUnitAndReportsInfo` |
+| §8.50～§8.63 事件编辑系统 | Note/CC/Bank/Program/Pitch Bend/RPN/NRPN/Curve 的基础值门、CC91/93 与 CC120～127 禁止、Bank 可空分量、RPN/NRPN Null Function、曲线/离散点冲突、固定同 tick 顺序、Undo/Redo 与复制/粘贴 | `TemplateEvent`/`ValueCurve`、`ProjectTemplateEventEditCommands.cs`、`ProjectValueCurveEditCommands.cs`、`ProjectObjectClipboard*.cs`、Compiler expansion/sort | `ProjectTemplateEventEditCommandsTests`、`ProjectValueCurveEditCommandsTests`、`ProjectObjectClipboardTests`、`StateAndEditingTests`、`CompilationTests`、`CanonicalOrderingAndFoldingTests`、`SemanticValidatorTests.ForbiddenReverbControllerIsAnError` |
+| §9.1～§9.5 图形 Mapping | 所有内建 source/operation、顺序组合、最终一次取整、overflow/remap/divide-by-zero 策略、目标共享策略和稳定 Step/Chain ID | `Mapping.cs`、`MappingEngine.cs`、`ProjectMappingChainEditCommands.cs`、`ProjectMappingTargetSettingsEditCommands.cs` | `MappingEngineTests` 全 operation/source/policy 参数矩阵、`ProjectMappingChainEditCommandsTests`、`ProjectMappingTargetSettingsEditCommandsTests`、`MappingAndLifecycleTests` |
+| §9.6～§9.7 C# Mapping | ABI v2 只读独立契约、固定 Roslyn/C#/.NET 引用面、源修订缓存、参与式诊断、collectible ALC 释放；不宣称 sandbox | `Midora.Mapping.Contract.V2`、`CSharpMappingCompiler` | `CSharpMappingAbiV2Tests` 的公共契约快照、引用允许/拒绝、未知 ABI、缓存和 ALC 卸载门 |
+| §9.8～§9.12 Logical Parameter 与诊断 | Double/Integer/Enum 定义、Lane、定义迁移、Mapping 顺序/共享目标、断裂引用保留、Isolation 兼容性、来源追踪 | `LogicalParameterDefinition`/`LogicalParameterLane`、`ProjectLogicalParameter*Commands.cs`、Compiler parameter expansion | `ProjectLogicalParameterEditCommandsTests`、`ProjectLogicalParameterDefinitionMigrationCommandsTests`、`ProjectMusicContentEditCommandsTests`、`MappingAndLifecycleTests`、`SourceTraceTests`、`SemanticValidatorTests` |
+| §10.1～§10.8 生命周期/Tail/Release | 短/长音策略、Gate、实际 NoteOff、Tail/Release 期间事件边界和硬裁剪 | `EventInstrument` 生命周期字段、Compiler instance expansion | `MappingAndLifecycleTests.ShortCutSuppressesFutureEventsAndCutsNotesAtGate`、`LongLoopExitsIntoPostLoopTailWithoutStartingNewReleaseNotes`、`EnvelopeIsNormalizedMappingSourceAndDelaysActiveNoteOffThroughRelease`、`OneShotDoesNotEnterEnvelopeReleaseAtGateEnd`、`BoundaryCleanupTests` |
+| §10.9～§10.14 Loop/Envelope | Loop 区间、长音循环、post-loop tail、ADSR-like Envelope、引用删除/复制与 Isolation 限制 | `InstrumentEnvelope`/Event Instrument loop fields、`ProjectEnvelopeEditCommands.cs`、Compiler lifecycle expansion | `ProjectEnvelopeEditCommandsTests`、`ProjectEventInstrumentEditCommandsTests`、`MappingAndLifecycleTests.LongLoop*`、`LogicalParameterMappingReceivesLoopedAndPostLoopTemplateTick` |
+| §10.15～§10.23 实例长度/Overlap/边界 | Rendered Instance Length、Initial/Reset、SamePitch/AnyPitch、Reject/Warn/LetOverlap/CutPrevious/CutNewRejectNew、Segment/End Marker 截断、无输出实例资源占用和诊断 | Compiler overlap validation/allocation/boundary cleanup | `CompilationTests.RejectAndWarnOverlapHaveFixedSeverityAndConsumability`、`MappingAndLifecycleTests.Cut*`、`BoundaryCleanupTests`、`CompilationFailureContractTests`、`ResourceStatisticsTests` |
+| §11.1～§11.5 Logical Track | 身份/名称/颜色、绑定与 LastKnownName、创建/删除/复制/排序；Mute/Solo 只进入运行时消费过滤 | `LogicalTrack`、`ProjectCreationEditCommands.cs`、`ProjectDomainEditCommands.cs`、Playback filters | `ProjectCreationEditCommandsTests`、`ProjectDomainEditCommandsTests`、`ProjectMetadataAndDisplayEditCommandsTests`、Playback mute/solo tests |
+| §11.6～§11.10 Segment | 不重叠 `[start,end)`、裁剪隐藏内容、移动/扩张/复制/连接/分割；分割点参数起始状态和 crossing Note 提前结束 | `Segment`、`SegmentEditing.cs`、`ProjectDomainEditCommands.cs`、`ProjectBatchTimelineEditCommands.cs` | `DomainEditingTests.SegmentDuplicateAndJoinPreserveContentCoordinatesAndRightPointWins`、`ProjectDomainEditCommandsTests` Segment 组、`ProjectCreationEditCommandsTests.SegmentContentCreationAndSplitPreserveIdsAndExactUndo`、`StateAndEditingTests` split 组 |
+| §11.11～§11.20 Note/Parameter/Segment 操作 | Note、Parameter Lane/Point、输入类型、Segment 局部状态、不隐式跨普通边界继承、重绑定迁移、批量与 Clipboard 原子性 | Domain music objects、`ProjectMusicContentEditCommands.cs`、`ProjectBatch*.cs`、`ProjectObjectClipboard*.cs` | `ProjectMusicContentEditCommandsTests`、`ProjectLogicalParameter*Tests`、`ProjectBatchTimelineEditCommandsTests`、`ProjectObjectClipboardTests` |
+| §11.21～§11.24 End Marker/Preview/消费者边界 | End Marker 硬边界、Segment Preview 仅选中 Segment + Project Conductor、损坏绑定保持失败语义、正式消费者只读 canonical | `PreviewCompiler.cs`、`MidoraCompiler.cs`、Playback/Render adapters | `PreviewCompilerTests`、`AudioRenderScopedCompilationTests`、`Int64BoundaryCompilationTests`、Playback consumer rejection tests |
+| §12.1～§12.6 CompileContext/范围/过滤 | 显式 purpose/context 冻结、自然/End Marker/显式范围、起点 Conductor/MIDI 状态恢复、Track/SubVoice/Segment 作用域诊断 | `Contracts.cs`、Compiler range/filter/conductor stages、`SemanticValidator.cs` | `CompilationContextSummaryTests`、`CompilationTests.RangeStart*`/`RangeConductorRestoresStateAndFiltersMarkers`、`AudioRenderScopedCompilationTests`、`BoundaryCleanupTests.EmptySubVoiceInfoHonorsExplicitSubVoiceSelection` |
+| §12.7～§12.12 展开/Mapping/排序/折叠 | 实例、Parameter/Mapping、Initial/Reset、同 tick folding 与跨 tick 不折叠；Note 不作为状态折叠 | Compiler expansion/mapping/sort | `MappingAndLifecycleTests`、`StateAndEditingTests`、`SourceTraceTests`、新增 `CanonicalOrderingAndFoldingTests`（6 类跨 tick 同值、全角色顺序、Note 显式顺序） |
+| §12.13～§12.16 Unit/资源/Isolation | 左闭右开占用、无事件仍占用、确定性低号优先、Channel 10 melodic、最大 256、≥248 Info、资源不足不降级、Isolation 关闭共享 group | Compiler allocator/statistics | `ResourceStatisticsTests`、`SemanticValidatorTests.ChannelUnitThresholdIsInfoAndHardLimitIsError`/`ExactlyTwoHundredFiftySixChannelUnitsAreLegal`、`CompilationTests.AllocatorUsesPortOneChannelTenAsMelodicUnit`/`OverlappingNotesShareChannelGroupWhenIsolationIsDisabled` |
+| §12.17～§12.20 canonical/验证/失败契约 | 冻结结构、完整来源、确定性 fingerprint、失败阶段、non-consumable、Warning policy、可选 Debug 不影响结果 | `CanonicalCompiledResult`、Compiler formalization/fingerprint/diagnostics | `CompilationFailureContractTests`、`SourceTraceTests`、`DebugDiagnosticTests`、`CompilationTests.RepeatedFullCompileProducesIdenticalCanonicalForm`/unordered-input tests |
+| §12.21～§12.24 Incremental/cache/消费者 | Segment checkpoint、dirty tick、source/state hash 收敛、后缀复用；同输入 Full/Incremental 逐字段等价，消费者不得二次解释 | Compiler incremental cache、`ProjectCompilationSession` | `IncrementalCompilationTests` 的 checkpoint/invalidation/range/4-seed 复合连续编辑 oracle、`CompilationTests.FullAndIncrementalResultsAreFormallyEqual`、各消费者 canonical-only tests |
+
+## 3. 复核结论与边界
+
+- §7～§12 的每个一级小节均已归入上表，并能落到正式源码和至少一个直接测试组；没有发现仅存在于 SRS、但缺少非 UI 模型/命令/编译路径的初版功能。
+- 本轮新增 8 个 Compiler test case，锁定此前只有实现、缺少直接回归证据的 §8.60.4、§12.11、§12.12 边界。
+- 固定种子随机合法编辑的 Full/Incremental 逐字段 oracle 属于持续扩充的稳健性测试，不再代表已知需求缺口。不存在有限测试可以穷举所有 Project 组合；“完整覆盖”在本项目中指每条规范分支有直接门、关键组合有参数矩阵、增量路径由 Full Compile oracle 约束。
+- UI 中的可视搜索、临时选择、指针捕获和控件交互不在本矩阵范围；其底层 Project/Preview/History 语义已经提供。

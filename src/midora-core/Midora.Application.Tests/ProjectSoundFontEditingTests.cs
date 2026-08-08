@@ -1,6 +1,7 @@
 using Midora.Audio;
 using Midora.Compiler;
 using Midora.Domain;
+using Midora.Persistence;
 using Midora.Playback;
 
 namespace Midora.Application.Tests;
@@ -189,6 +190,152 @@ public sealed class ProjectSoundFontEditingTests
 
         Assert.Empty(validator.ValidatedPaths);
         Assert.False(document.CanUndo);
+    }
+
+    [Fact]
+    public async Task EmbeddedSelectionStagesBeforeAllocationAndUndoRedoKeepLeaseAndIdentity()
+    {
+        string directory = CreateTemporaryDirectory();
+        string? stagedPath = null;
+        try
+        {
+            string sourcePath = Path.Combine(directory, "Embedded.sf2");
+            await File.WriteAllBytesAsync(sourcePath, [4, 3, 2, 1]);
+            MidoraProject project = CreateProject();
+            using ProjectCompilationSession compilation = new(project);
+            ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Unsaved);
+            long before = project.NextStableId;
+
+            await using (ProjectSoundFontEditing editing = new(document, new RecordingValidator()))
+            {
+                EmbeddedSoundFontEditExecution selected =
+                    await editing.SelectEmbeddedAsync(sourcePath);
+                stagedPath = selected.Resource.ResolvedAbsolutePath;
+
+                Assert.Equal(before, selected.Reference.ResourceId.Value);
+                Assert.Equal(before + 1, project.NextStableId);
+                Assert.Equal(selected.Reference, project.SoundFont.Reference);
+                Assert.Same(selected.Resource, editing.CurrentEmbeddedSoundFontResource);
+                Assert.Equal(stagedPath, compilation.EffectiveSoundFontPath);
+                Assert.True(File.Exists(stagedPath));
+                AssertCurrentCompilationMatchesFull(compilation);
+
+                document.Undo();
+                Assert.Null(project.SoundFont.Reference);
+                Assert.Null(editing.CurrentEmbeddedSoundFontResource);
+                Assert.Null(compilation.EffectiveSoundFontPath);
+                Assert.Equal(before + 1, project.NextStableId);
+                Assert.True(File.Exists(stagedPath));
+
+                document.Redo();
+                Assert.Equal(selected.Reference, project.SoundFont.Reference);
+                Assert.Same(selected.Resource, editing.CurrentEmbeddedSoundFontResource);
+                Assert.Equal(before + 1, project.NextStableId);
+                AssertCurrentCompilationMatchesFull(compilation);
+
+                MidoraProjectPackageV1 packages = new("1.0.0");
+                ProjectPersistenceCoordinator persistence = new(
+                    document,
+                    packages,
+                    embeddedSoundFontResourceProvider: () =>
+                        editing.CurrentEmbeddedSoundFontResource);
+                string target = Path.Combine(directory, "Project.midora");
+                _ = await persistence.SaveProjectAsync(target);
+                await using MidoraProjectOpenResultV1 reopened = await packages.OpenAsync(target);
+                Assert.Equal(selected.Reference, reopened.Project.SoundFont.Reference);
+                Assert.True(reopened.EmbeddedSoundFontResource!.IsAvailable);
+            }
+
+            Assert.False(File.Exists(stagedPath));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task EmbeddedValidationFailureDoesNotAllocateOrRetainStagedSnapshot()
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            string sourcePath = Path.Combine(directory, "Changing.sf2");
+            await File.WriteAllBytesAsync(sourcePath, [1, 2, 3]);
+            MidoraProject project = CreateProject();
+            using ProjectCompilationSession compilation = new(project);
+            ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
+            string? stagedPath = null;
+            await using ProjectSoundFontEditing editing = new(
+                document,
+                new RecordingValidator(onValidate: path =>
+                {
+                    stagedPath = path;
+                    File.WriteAllBytes(path, [9, 8, 7, 6]);
+                }));
+            long highWater = project.NextStableId;
+
+            ProjectSoundFontSelectionException failure =
+                await Assert.ThrowsAsync<ProjectSoundFontSelectionException>(() =>
+                    editing.SelectEmbeddedAsync(sourcePath));
+
+            Assert.Equal(
+                ProjectSoundFontSelectionFailure.ContentChangedDuringValidation,
+                failure.Failure);
+            Assert.NotNull(stagedPath);
+            Assert.False(File.Exists(stagedPath));
+            Assert.Equal(highWater, project.NextStableId);
+            Assert.Null(project.SoundFont.Reference);
+            Assert.Null(editing.CurrentEmbeddedSoundFontResource);
+            Assert.False(document.CanUndo);
+            Assert.False(document.IsModified);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task EmbeddedReplacementClearAndUndoRestoreMatchingRuntimeLease()
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            string firstPath = Path.Combine(directory, "First.sf2");
+            string secondPath = Path.Combine(directory, "Second.sf2");
+            await File.WriteAllBytesAsync(firstPath, [1]);
+            await File.WriteAllBytesAsync(secondPath, [2]);
+            MidoraProject project = CreateProject();
+            using ProjectCompilationSession compilation = new(project);
+            ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
+            await using ProjectSoundFontEditing editing = new(document, new RecordingValidator());
+
+            EmbeddedSoundFontEditExecution first = await editing.SelectEmbeddedAsync(firstPath);
+            EmbeddedSoundFontEditExecution second = await editing.SelectEmbeddedAsync(secondPath);
+            Assert.Equal(second.Reference, project.SoundFont.Reference);
+            Assert.Same(second.Resource, editing.CurrentEmbeddedSoundFontResource);
+
+            document.Undo();
+            Assert.Equal(first.Reference, project.SoundFont.Reference);
+            Assert.Same(first.Resource, editing.CurrentEmbeddedSoundFontResource);
+            Assert.Equal(first.Resource.ResolvedAbsolutePath, compilation.EffectiveSoundFontPath);
+
+            document.Redo();
+            Assert.Equal(second.Reference, project.SoundFont.Reference);
+            Assert.Same(second.Resource, editing.CurrentEmbeddedSoundFontResource);
+
+            editing.Clear();
+            Assert.Null(project.SoundFont.Reference);
+            Assert.Null(editing.CurrentEmbeddedSoundFontResource);
+            document.Undo();
+            Assert.Equal(second.Reference, project.SoundFont.Reference);
+            Assert.Same(second.Resource, editing.CurrentEmbeddedSoundFontResource);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     private static MidoraProject CreateProject() =>

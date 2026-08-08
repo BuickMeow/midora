@@ -16,8 +16,139 @@ public sealed record EventInstrumentPreviewRequest(
     public IReadOnlyCollection<MidoraId>? SoloSubVoiceIds { get; init; }
 }
 
+public sealed record SegmentNotePreviewRequest(
+    MidoraId TrackId,
+    MidoraId SegmentId,
+    long StartTick,
+    int Pitch,
+    int Velocity = 100);
+
 public sealed class PreviewCompiler
 {
+    public CanonicalCompiledResult CompileHeldSegmentNoteGateOpen(
+        MidoraProject source,
+        SegmentNotePreviewRequest request,
+        long windowLengthTicks)
+    {
+        if (windowLengthTicks <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(windowLengthTicks));
+        }
+        return CompileHeldSegmentNoteCore(
+            source,
+            request,
+            noteGateLengthTicks: long.MaxValue,
+            previewLengthTicks: windowLengthTicks,
+            heldGateOpen: true,
+            finalMappingGateLength: null);
+    }
+
+    public CanonicalCompiledResult CompileHeldSegmentNoteGateEnd(
+        MidoraProject source,
+        SegmentNotePreviewRequest request,
+        long finalGateLengthTicks,
+        long effectiveGateEndTick)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(request);
+        if (finalGateLengthTicks <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(finalGateLengthTicks));
+        }
+        if (effectiveGateEndTick <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(effectiveGateEndTick));
+        }
+        (_, _, EventInstrument instrument) = RequireSegmentNoteContext(source, request);
+        long maximumRelease = instrument.Envelopes.Count == 0
+            ? 0
+            : instrument.Envelopes.Max(value => value.ReleaseTicks);
+        long previewLength = AddPreviewDurationClamped(
+            AddPreviewDurationClamped(
+                AddPreviewDurationClamped(
+                    effectiveGateEndTick,
+                    Math.Max(instrument.TemplateLengthTicks, 0)),
+                Math.Max(maximumRelease, 0)),
+            1);
+        return CompileHeldSegmentNoteCore(
+            source,
+            request,
+            effectiveGateEndTick,
+            previewLength,
+            heldGateOpen: false,
+            finalMappingGateLength: finalGateLengthTicks);
+    }
+
+    public CanonicalCompiledResult CompileHeldEventInstrumentGateOpen(
+        MidoraProject source,
+        EventInstrumentPreviewRequest request,
+        long windowEndTick)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.GateLengthTicks.HasValue)
+        {
+            throw new ArgumentException(
+                "A held-preview Gate Start cannot carry a final Gate Length.",
+                nameof(request));
+        }
+        if (windowEndTick <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(windowEndTick));
+        }
+
+        return CompileEventInstrumentCore(
+            source,
+            request,
+            long.MaxValue,
+            windowEndTick,
+            heldGateOpen: true,
+            finalMappingGateLength: null);
+    }
+
+    public CanonicalCompiledResult CompileHeldEventInstrumentGateEnd(
+        MidoraProject source,
+        EventInstrumentPreviewRequest request,
+        long finalGateLengthTicks,
+        long effectiveGateEndTick)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.GateLengthTicks.HasValue)
+        {
+            throw new ArgumentException(
+                "A held-preview request must not carry a second final Gate Length.",
+                nameof(request));
+        }
+        if (finalGateLengthTicks <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(finalGateLengthTicks));
+        }
+        if (effectiveGateEndTick <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(effectiveGateEndTick));
+        }
+
+        EventInstrument instrument = RequireInstrument(source, request, out _);
+        long maximumRelease = instrument.Envelopes.Count == 0
+            ? 0
+            : instrument.Envelopes.Max(value => value.ReleaseTicks);
+        long previewLength = AddPreviewDurationClamped(
+            AddPreviewDurationClamped(
+                AddPreviewDurationClamped(
+                    effectiveGateEndTick,
+                    Math.Max(instrument.TemplateLengthTicks, 0)),
+                Math.Max(maximumRelease, 0)),
+            1);
+        return CompileEventInstrumentCore(
+            source,
+            request,
+            effectiveGateEndTick,
+            previewLength,
+            heldGateOpen: false,
+            finalMappingGateLength: finalGateLengthTicks);
+    }
+
     public CanonicalCompiledResult CompileEventInstrument(
         MidoraProject source,
         EventInstrumentPreviewRequest request)
@@ -25,19 +156,38 @@ public sealed class PreviewCompiler
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(request);
 
-        EventInstrument instrument = source.EventInstruments.FirstOrDefault(value => value.Id == request.EventInstrumentId)
-            ?? throw new ArgumentException("The Event Instrument does not belong to the Project.", nameof(request));
-        SubVoice? selectedVoice = request.SubVoiceId.HasValue
-            ? instrument.SubVoices.FirstOrDefault(value => value.Id == request.SubVoiceId.Value)
-            : null;
-        if (request.SubVoiceId.HasValue && selectedVoice is null)
-        {
-            throw new ArgumentException("The SubVoice does not belong to the Event Instrument.", nameof(request));
-        }
+        EventInstrument instrument = RequireInstrument(source, request, out _);
+        long gateLength = request.GateLengthTicks ?? instrument.TemplateLengthTicks;
+        long maximumRelease = instrument.Envelopes.Count == 0
+            ? 0
+            : instrument.Envelopes.Max(value => value.ReleaseTicks);
+        long previewLength = AddPreviewDurationClamped(
+            AddPreviewDurationClamped(
+                AddPreviewDurationClamped(gateLength, Math.Max(instrument.TemplateLengthTicks, 0)),
+                Math.Max(maximumRelease, 0)),
+            1);
+        return CompileEventInstrumentCore(
+            source,
+            request,
+            gateLength,
+            previewLength,
+            heldGateOpen: false,
+            finalMappingGateLength: null);
+    }
+
+    private CanonicalCompiledResult CompileEventInstrumentCore(
+        MidoraProject source,
+        EventInstrumentPreviewRequest request,
+        long gateLength,
+        long previewLength,
+        bool heldGateOpen,
+        long? finalMappingGateLength)
+    {
+        EventInstrument instrument = RequireInstrument(source, request, out SubVoice? selectedVoice);
+
         HashSet<MidoraId>? includedSubVoiceIds = ResolvePreviewSubVoices(instrument, request);
 
         int pitch = request.Pitch ?? selectedVoice?.RootNoteOverride ?? instrument.RootNote;
-        long gateLength = request.GateLengthTicks ?? instrument.TemplateLengthTicks;
         decimal tempo = request.Tempo ?? GetTempoAt(source.Conductor, request.CursorTick);
         if (pitch is < 0 or > 127)
         {
@@ -56,14 +206,6 @@ public sealed class PreviewCompiler
             throw new ArgumentOutOfRangeException(nameof(request), "Preview Tempo must be positive.");
         }
 
-        long maximumRelease = instrument.Envelopes.Count == 0
-            ? 0
-            : instrument.Envelopes.Max(value => value.ReleaseTicks);
-        long previewLength = AddPreviewDurationClamped(
-            AddPreviewDurationClamped(
-                AddPreviewDurationClamped(gateLength, Math.Max(instrument.TemplateLengthTicks, 0)),
-                Math.Max(maximumRelease, 0)),
-            1);
         MidoraProject context = CreateContextShell(source);
         context.Conductor.Tempos.Clear();
         context.Conductor.Tempos.Add(new TempoChange(context, 0, tempo));
@@ -88,9 +230,146 @@ public sealed class PreviewCompiler
             Purpose = CompilationPurpose.EventInstrumentPreview,
             StartTick = 0,
             EndTick = previewLength,
+            HeldPreviewGateOpen = heldGateOpen,
+            HeldPreviewFinalGateLengthTicks = finalMappingGateLength,
             IncludedSubVoiceIds = selectedVoice is null
                 ? includedSubVoiceIds
                 : new HashSet<MidoraId> { selectedVoice.Id }
+        });
+    }
+
+    private static EventInstrument RequireInstrument(
+        MidoraProject source,
+        EventInstrumentPreviewRequest request,
+        out SubVoice? selectedVoice)
+    {
+        EventInstrument instrument = source.EventInstruments.FirstOrDefault(
+            value => value.Id == request.EventInstrumentId)
+            ?? throw new ArgumentException(
+                "The Event Instrument does not belong to the Project.",
+                nameof(request));
+        selectedVoice = request.SubVoiceId.HasValue
+            ? instrument.SubVoices.FirstOrDefault(value => value.Id == request.SubVoiceId.Value)
+            : null;
+        if (request.SubVoiceId.HasValue && selectedVoice is null)
+        {
+            throw new ArgumentException(
+                "The SubVoice does not belong to the Event Instrument.",
+                nameof(request));
+        }
+        return instrument;
+    }
+
+    private static (LogicalTrack Track, Segment Segment, EventInstrument Instrument)
+        RequireSegmentNoteContext(
+            MidoraProject source,
+            SegmentNotePreviewRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(request);
+        LogicalTrack track = source.Tracks.FirstOrDefault(value => value.Id == request.TrackId)
+            ?? throw new ArgumentException(
+                "The Logical Track does not belong to the Project.",
+                nameof(request));
+        Segment segment = track.Segments.FirstOrDefault(value => value.Id == request.SegmentId)
+            ?? throw new ArgumentException(
+                "The Segment does not belong to the Logical Track.",
+                nameof(request));
+        if (!track.EventInstrumentId.HasValue)
+        {
+            throw new InvalidOperationException(
+                "Segment Note preview requires a bound Event Instrument.");
+        }
+        EventInstrument instrument = source.EventInstruments.FirstOrDefault(
+            value => value.Id == track.EventInstrumentId.Value)
+            ?? throw new InvalidOperationException(
+                "The Segment Note preview Event Instrument binding is missing or damaged.");
+        if (request.StartTick < segment.ContentOffsetTick
+            || request.StartTick >= segment.ContentEndTick)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(request),
+                "The draft Note start must be inside the Segment content range.");
+        }
+        if (request.Pitch is < 0 or > 127 || request.Velocity is < 1 or > 127)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(request),
+                "Draft Note pitch must be 0..127 and velocity must be 1..127.");
+        }
+        return (track, segment, instrument);
+    }
+
+    private CanonicalCompiledResult CompileHeldSegmentNoteCore(
+        MidoraProject source,
+        SegmentNotePreviewRequest request,
+        long noteGateLengthTicks,
+        long previewLengthTicks,
+        bool heldGateOpen,
+        long? finalMappingGateLength)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(request);
+        if (noteGateLengthTicks <= 0 || previewLengthTicks <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(noteGateLengthTicks));
+        }
+        (LogicalTrack sourceTrack, Segment sourceSegment, EventInstrument instrument) =
+            RequireSegmentNoteContext(source, request);
+        long projectStartTick = checked(
+            sourceSegment.ProjectStartTick
+            + (request.StartTick - sourceSegment.ContentOffsetTick));
+        long projectEndTick = projectStartTick >= long.MaxValue - previewLengthTicks
+            ? long.MaxValue
+            : projectStartTick + previewLengthTicks;
+        long availableLength = projectEndTick - projectStartTick;
+        if (availableLength <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(previewLengthTicks));
+        }
+
+        MidoraProject context = CreateContextShell(source);
+        context.Conductor.Tempos.Clear();
+        context.Conductor.Tempos.Add(new TempoChange(
+            context,
+            0,
+            GetTempoAt(source.Conductor, projectStartTick)));
+        context.Conductor.TimeSignatures.Add(new TimeSignatureChange(context, 0, 4, 4));
+        AddInstrumentContext(source, context, instrument);
+        LogicalTrack track = new(context)
+        {
+            Id = sourceTrack.Id,
+            Name = sourceTrack.Name,
+            EventInstrumentId = instrument.Id,
+            LastBoundEventInstrumentName = sourceTrack.LastBoundEventInstrumentName
+        };
+        Segment segment = new(context)
+        {
+            Id = sourceSegment.Id,
+            ProjectStartTick = projectStartTick,
+            ContentOffsetTick = request.StartTick,
+            LengthTicks = availableLength
+        };
+        segment.ParameterLanes.AddRange(sourceSegment.ParameterLanes);
+        segment.Notes.Add(new LogicalNote(context)
+        {
+            StartTick = request.StartTick,
+            LengthTicks = heldGateOpen ? availableLength : noteGateLengthTicks,
+            Note = request.Pitch,
+            Velocity = request.Velocity
+        });
+        track.Segments.Add(segment);
+        context.Tracks.Add(track);
+
+        using MidoraCompiler compiler = new();
+        return compiler.CompileFull(context, new CompilationRequest
+        {
+            Purpose = CompilationPurpose.EventInstrumentPreview,
+            StartTick = projectStartTick,
+            EndTick = projectEndTick,
+            HeldPreviewGateOpen = heldGateOpen,
+            HeldPreviewFinalGateLengthTicks = finalMappingGateLength,
+            IncludedTrackIds = [track.Id]
         });
     }
 

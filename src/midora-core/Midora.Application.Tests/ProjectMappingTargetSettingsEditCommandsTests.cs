@@ -10,7 +10,7 @@ public sealed class ProjectMappingTargetSettingsEditCommandsTests
     public void TemplateEventTargetSettingsUpdateSupportedSlotsAndUndoExactly()
     {
         Fixture fixture = CreateFixture();
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 

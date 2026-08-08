@@ -93,7 +93,8 @@ public sealed class ProjectPropertyEditCommand<T> : IProjectEditCommand
         ProjectChangeSet result = new()
         {
             AffectsEverything = source.AffectsEverything,
-            AffectsConductor = source.AffectsConductor
+            AffectsConductor = source.AffectsConductor,
+            AffectsAudioPcmCacheGeneration = source.AffectsAudioPcmCacheGeneration
         };
         result.TrackIds.UnionWith(source.TrackIds);
         result.EventInstrumentIds.UnionWith(source.EventInstrumentIds);
@@ -103,6 +104,7 @@ public sealed class ProjectPropertyEditCommand<T> : IProjectEditCommand
 
 public sealed class ProjectDocumentSession
 {
+    private readonly object _clipboardSessionIdentity = new();
     private readonly object _sync = new();
     private readonly ProjectCompilationSession _compilation;
     private readonly List<HistoryEntry> _entries = [];
@@ -130,6 +132,7 @@ public sealed class ProjectDocumentSession
 
     public MidoraProject Project => _compilation.Project;
     public ProjectCompilationSession Compilation => _compilation;
+    internal object ClipboardSessionIdentity => _clipboardSessionIdentity;
 
     public bool HasPersistentOrigin
     {
@@ -402,7 +405,9 @@ public sealed class ProjectDocumentSession
         ProjectChangeSet changes = new()
         {
             AffectsEverything = prepared.Changes.AffectsEverything,
-            AffectsConductor = prepared.Changes.AffectsConductor
+            AffectsConductor = prepared.Changes.AffectsConductor,
+            AffectsAudioPcmCacheGeneration =
+                prepared.Changes.AffectsAudioPcmCacheGeneration
         };
         changes.TrackIds.UnionWith(prepared.Changes.TrackIds);
         changes.EventInstrumentIds.UnionWith(prepared.Changes.EventInstrumentIds);

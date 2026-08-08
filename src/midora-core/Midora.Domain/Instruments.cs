@@ -82,9 +82,9 @@ public sealed class TemplateEvent
     public bool HasBankMsb { get; internal set; } = true;
     public bool HasBankLsb { get; internal set; } = true;
     public bool FollowPitchDelta { get; set; } = true;
-    public MappingChain NumberMappings { get; }
-    public MappingChain ValueMappings { get; }
-    public MappingChain SecondaryValueMappings { get; }
+    public MappingChain NumberMappings { get; internal set; }
+    public MappingChain ValueMappings { get; internal set; }
+    public MappingChain SecondaryValueMappings { get; internal set; }
     public MidiIntegerTargetSettings NumberTargetSettings { get; }
     public MidiIntegerTargetSettings ValueTargetSettings { get; }
     public MidiIntegerTargetSettings SecondaryValueTargetSettings { get; }

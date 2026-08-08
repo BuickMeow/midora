@@ -17,7 +17,7 @@ public sealed class ProjectEventInstrumentEditCommandsTests
         instrument.RequiresChannelIsolation = true;
         instrument.LoopStartTick = 120;
         instrument.LoopEndTick = 480;
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -135,7 +135,7 @@ public sealed class ProjectEventInstrumentEditCommandsTests
         SubVoice second = new(project);
         instrument.SubVoices.Add(second);
         TemplateEvent templateNote = first.Events[0];
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -184,7 +184,7 @@ public sealed class ProjectEventInstrumentEditCommandsTests
         LogicalParameterMapping secondMapping = CreateMapping(project, parameter.Id, second.Id, 2);
         LogicalParameterMapping thirdMapping = CreateMapping(project, parameter.Id, first.Id, 3);
         instrument.ParameterMappings.AddRange([firstMapping, secondMapping, thirdMapping]);
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 

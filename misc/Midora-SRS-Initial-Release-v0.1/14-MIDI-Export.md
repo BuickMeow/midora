@@ -822,6 +822,18 @@ Readme 不用于还原路由语义。
 是否默认生成 Readme
 其他导出偏好
 ```
+
+新 Project 与缺失/损坏 ordinary settings 的 v1 恢复默认值固定为：
+```text
+Mode = Whole Project
+Range = Project Default Range
+Track Selection = All Valid Logical Tracks
+Routing = Compact
+Include Readme = true
+Treat Warnings As Errors = false
+```
+
+开发期 `export-settings.json` v1 直接保存上述字段。只有 Manual Range 保存合法的 `manualStartTick` / `manualEndTick`。Track Selection 只保存“全部有效 Track”或“任务开始时显式选择”策略，不保存具体 Track 稳定 ID；具体勾选集合只属于一次性任务冻结快照。
 可以保存范围策略，例如：
 ```text
 Project End Marker / 自然结束

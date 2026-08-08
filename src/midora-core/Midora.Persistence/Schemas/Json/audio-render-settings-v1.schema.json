@@ -14,7 +14,7 @@
     "sampleFormat",
     "endianness",
     "sampleRate",
-    "maximumSampleVoicesPerStream",
+    "maximumSampleVoicesPerUnitStream",
     "trackFileNamePattern"
   ],
   "properties": {
@@ -36,7 +36,7 @@
     "sampleFormat": { "const": "interleaved-ieee-float32" },
     "endianness": { "const": "little-endian" },
     "sampleRate": { "type": "integer", "minimum": 8000, "maximum": 192000 },
-    "maximumSampleVoicesPerStream": {
+    "maximumSampleVoicesPerUnitStream": {
       "type": "integer",
       "minimum": 1,
       "maximum": 16777216

@@ -10,7 +10,7 @@ public sealed class ProjectEnvelopeEditCommandsTests
     public void EnvelopeUpdateValidatesNormalizesPreservesIdentityAndUndoIsExact()
     {
         Fixture fixture = CreateFixture();
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -97,7 +97,7 @@ public sealed class ProjectEnvelopeEditCommandsTests
     {
         Fixture fixture = CreateFixture();
         ValueMappingStep step = fixture.Controller.ValueMappings.Single();
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 

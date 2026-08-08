@@ -143,8 +143,8 @@ Playback Settings
 MIDI Export Settings
 Audio Render Settings
 Reset Defaults
-Event Scope Defaults
 ```
+`Global Event Scope Defaults` 在初版只是持久化兼容所需的不可编辑空 marker，不属于用户可修改 Project 内容，也不提供独立设置入口。
 ### 17.2.2 Application Preferences
 保存于当前 Windows 用户本机，跨 Project 共享：
 ```text
@@ -160,7 +160,9 @@ File picker recent directories by purpose
 Selected playback output device ID or System Default choice
 Render-Ahead Buffer
 Device Buffer Request
-Realtime Maximum Sample Voices per Stream
+Realtime Maximum Sample Voices per Unit Stream
+Audio Cache Root
+Maximum Reusable Audio Cache Bytes
 ```
 这些状态：
 - 不进入 Project Undo / Redo；
@@ -168,7 +170,7 @@ Realtime Maximum Sample Voices per Stream
 - 不进入 `.midora`；
 - 不做账号、云端或设备同步。
 
-设备实际采样率、实际 buffer、callback period、当前设备枚举结果和 IPC 运行状态属于 Derived / Runtime Data，不作为 Application Preference 保存。
+设备实际采样率、实际 buffer、callback period、当前设备枚举结果和 IPC 运行状态属于 Derived / Runtime Data，不作为 Application Preference 保存。音频缓存的 reusable 当前占用、transient 当前/峰值、session 目录、retention 状态与 Warning 同样是运行时派生状态；只保存配置 root 和 reusable byte quota。
 ### 17.2.3 Project Session UI State
 只存在于当前 Project 会话：
 ```text

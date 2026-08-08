@@ -21,7 +21,7 @@
 渲染系统可以在 compiled result 之上建立：
 ```text
 离线调度队列
-Port Stream 集合
+Canonical Segment / Unit 音频投影与 Unit Stream pool
 预分配音频混合 buffer
 输出链状态
 文件写入事务
@@ -65,7 +65,7 @@ SF2 资源
 Playback Master Volume
 用于渲染的 Limiter 语义与参数
 本次文件采样率
-本次 Offline Maximum Sample Voices per Stream
+本次 Offline Maximum Sample Voices per Unit Stream
 文件专用 OutputDevice 配置
 输出目标列表
 覆盖授权
@@ -351,8 +351,8 @@ Windows 应用音量混音器
 ### 15.7.2 BASSMIDI 与 SF2
 初版使用与播放一致的 BASSMIDI / SF2 发声语义。
 文件渲染由第 13.30 节规定的同一个 `win-x64` Native AOT 音频子进程执行，不允许用其他 CPU 架构或 JIT Worker 生成正式文件。
-本次 compiled result 实际使用的每个 Port 对应一个独立 BASSMIDI Stream。
-所有 Port 使用 Project 的同一个 SF2。
+本次 compiled result 必须先完成全局 Port / Channel 分配，再确定性派生 Segment/抽象 Unit 音频投影。每个 Unit 使用独立、干净的 1-channel BASSMIDI Stream 语义；实际 native Stream 可由有界 pool 复用。
+所有 Unit 使用 Project 的同一个 SF2。
 每个 Stream 必须完成：
 ```text
 干净初始化
@@ -362,7 +362,7 @@ BASS_MIDI_NOFX 启用
 BASS_MIDI_NOTEOFF1 启用
 BASS_ATTRIB_MIDI_SRC = 1
 BASS_ATTRIB_MIDI_CPU = 0
-每个 Stream 使用本次冻结的同一 Offline Maximum Sample Voices 值
+每个 Unit Stream 使用本次冻结的同一 Offline Maximum Sample Voices per Unit Stream 值
 在 Preparing 预加载计划引用的 SF2 presets 或其 fallback
 按本次文件采样率直接创建 / 配置
 compiled result 所需初始状态应用
@@ -396,7 +396,7 @@ Limiter 状态
 其他合成器或输出链状态
 ```
 一条 Track 的失败后端状态不得被下一条 Track 复用。
-初版没有 DAW 式轨道发送或共享总线。每条分轨只包含该 Track 通过自身 Event Instrument、Port Streams 和公共 Master 输出链产生的结果，不继承其他 Track 的非音符控制或效果状态。
+初版没有 DAW 式轨道发送或共享总线。每条分轨只包含该 Track 通过自身 Event Instrument、canonical Unit 投影和公共 Master 输出链产生的结果，不继承其他 Track 的非音符控制或效果状态。
 
 ### 15.7.5 文件专用 OutputDevice 抽象
 
@@ -434,14 +434,14 @@ Limiter 状态
 每个输出文件采用：
 ```text
 canonical compiled result
-→ 实际使用 Port 的 BASSMIDI Streams
-→ stereo mix
+→ Canonical Segment / Unit 音频投影
+→ Unit raw PCM / 确定性 stereo mix
 → Playback Master Volume
 → 强制 Limiter
 → 文件专用 OutputDevice
 → RIFF/WAVE writer
 ```
-各 Port 不因 Port 数量自动平均、降低或归一化增益。
+各 Unit 不因 Unit 数量自动平均、降低或归一化增益。
 ### 15.8.2 Playback Master Volume
 音频渲染使用 Project 当前正式生效的 `Playback Master Volume`。
 不使用：
@@ -464,12 +464,12 @@ Limiter 无法初始化时，渲染准备失败。
 即使实时播放未来允许关闭监听 Limiter，初版音频文件渲染链仍不提供绕过该最终保护处理的能力。
 如果未来播放 Master / Limiter 链发生版本化变化，音频文件渲染必须同步采用相同系统语义，并通过设置或格式版本处理兼容，不得长期维护另一套隐式输出链。
 ### 15.8.4 处理顺序
-必须先混合所有实际使用 Port，再统一应用：
+必须先按稳定 Unit key 顺序混合所有实际使用 Unit，再统一应用：
 ```text
 Playback Master Volume
 最终 Limiter
 ```
-不得每个 Port 先独立 Limiter 后再混合。
+不得每个 Unit 或 Segment 先独立 Limiter 后再混合。
 整曲模式中，所有选中 Track 混合后共同进入 Master Limiter，因此一个 Track 可能影响整曲的最终限制处理。
 分轨模式中，每条 Track 独立进入完整输出链，因此不存在其他 Track 触发 Limiter 对当前分轨的影响。
 ### 15.8.5 分轨不可重建整曲
@@ -1026,16 +1026,17 @@ SF2 路径、模式、hash 或实际内容变化：
 canonical compiled result
 可证明等价的 Event Instrument / 曲线 / Mapping 编译结果
 离线调度中间结果
-受完整缓存键约束的音频中间块
+受完整缓存键约束的 Segment / Unit raw PCM tile
+受完整范围、Track 集合、Master 和 Limiter key 约束的 playback/render span
 ```
 不要求缓存完整最终 WAV 样本。
-缓存不保存进 `.midora`，关闭 Project 或应用后不保证保留。
+缓存不保存进 `.midora`。初版只在当前 Project 打开 session 内保留，不跨会话复用；Project 关闭时删除本 session 的已知条目。
 ### 15.19.2 等价原则
 所有缓存必须遵守 第 12 章《编译系统与 Canonical Compiled Result》：
 ```text
 使用缓存的结果必须等价于同一上下文下重新完整计算的结果。
 ```
-不得为保留旧缓存而保留旧 Port / Channel 分配或忽略设置变化。
+不得为保留旧缓存而保留旧 Port / Channel 分配或忽略设置变化。音频只能在成功 canonical 之后派生不依赖物理 Port/Channel 身份的抽象 Unit 投影。
 ### 15.19.3 缓存键与失效
 至少应考虑：
 ```text
@@ -1045,10 +1046,13 @@ Track 选择
 范围
 Tempo Map
 SF2 资源状态
+SF2 完整 SHA-256
 Playback Master Volume
 渲染 Limiter 语义和参数
 固定容器 / 声道 / 样本格式
 本次选择的文件采样率
+Offline Maximum Sample Voices per Unit Stream
+固定 BASS/BASSMIDI baseline 与 audio renderer version
 ```
 具体规则：
 ```text
@@ -1062,6 +1066,10 @@ Track 选择：属于 CompileContext，不得误用其他 Track 集合的最终�
 Track 排序：不改变单 Track 音乐语义，但改变处理顺序、默认文件序号和结果顺序。
 播放设备变化：不使音频渲染缓存失效。
 ```
+
+Segment/Unit raw PCM 位于 Track 选择求和、Master 和 Limiter 之前。未修改 Segment 的完整 key 不变时可跨其他 Segment 编辑复用；从编辑位置起部分失效只允许使用编译器能证明的最早 causal dirty tick，无法证明时必须回退到 Segment 有效起点。
+
+相同 Project revision、Audio Render CompileContext、范围和完整 key 的 exact replay 命中时，不得再次执行语义编译或 BASSMIDI 合成。跨范围复用必须包含范围冷启动上下文，不能切片包含范围前持续 Note 的连续 PCM。
 ### 15.19.4 结果稳定性
 相同 Project、SF2、CompileContext、输出链配置和软件环境下，渲染应尽量稳定一致。
 Midora 不主动注入随机性。
@@ -1072,7 +1080,7 @@ Midora 不主动注入随机性。
 ```
 buffer / chunk 大小不得改变音乐时间、事件顺序或可感知输出语义。
 
-涉及逐采样、逐字节或不同 block 完美一致性的音频测试，必须使用实际活动 sample voices 不超过本次 `Offline Maximum Sample Voices per Stream` 的输入。达到配置上限时，允许 BASSMIDI 的固定 voice-limit 行为改变音频；不得把这种资源上限行为误判为编译器或 block-size 不确定性。
+涉及逐采样、逐字节或不同 block 完美一致性的音频测试，必须使用实际活动 sample voices 不超过本次 `Offline Maximum Sample Voices per Unit Stream` 的输入。达到配置上限时，允许 BASSMIDI 的固定 voice-limit 行为改变音频；不得把这种资源上限行为误判为编译器或 block-size 不确定性。
 ---
 ## 15.20 Audio Render Settings
 ### 15.20.1 Project 顶层对象
@@ -1098,7 +1106,7 @@ Audio Render Settings
 有限的文件命名偏好
 固定格式字段
 默认文件采样率
-默认 Offline Maximum Sample Voices per Stream
+默认 Offline Maximum Sample Voices per Unit Stream
 ```
 固定格式字段明确记录：
 ```text
@@ -1116,14 +1124,14 @@ Little-endian
 ```
 本次任务修改采样率默认不修改 Project；只有显式 `Save as Project Defaults` 才提交该值。
 
-默认 `Offline Maximum Sample Voices per Stream` 是用户可编辑 Project 默认值：
+默认 `Offline Maximum Sample Voices per Unit Stream` 是用户可编辑 Project 默认值：
 ```text
 整数
 1–16,777,216
-默认 750
+默认 500
 ```
 
-它与 Application Preferences 中的实时复音上限分别保存、分别修改。一次音频渲染任务的所有实际 Port Stream 使用同一个冻结的离线值；分轨模式的每个 Track 任务也使用本次任务冻结的同一值。
+它与 Application Preferences 中的实时复音上限分别保存、分别修改。一次音频渲染任务的所有 Unit Stream 使用同一个冻结的离线值；分轨模式的每个 Track 任务也使用本次任务冻结的同一值。修改离线值失效所有离线音频 PCM/cache generations，但不失效 tick-domain canonical。
 ### 15.20.3 默认值
 新 Project 默认：
 ```text
@@ -1132,7 +1140,7 @@ Range = Project Default Range
 Track Selection = All Valid Logical Tracks
 Format = RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float
 Sample Rate = 48,000 Hz
-Offline Maximum Sample Voices per Stream = 750
+Offline Maximum Sample Voices per Unit Stream = 500
 ```
 ### 15.20.4 范围设置
 默认范围模式至少支持：
@@ -1190,7 +1198,7 @@ Project 名称修改只影响未来整曲建议文件名。
 最近输出目录
 本次临时范围
 本次文件采样率覆盖值
-本次 Offline Maximum Sample Voices per Stream 覆盖值
+本次 Offline Maximum Sample Voices per Unit Stream 覆盖值
 本次 Track 选择
 本次覆盖决定
 本次进度和剩余时间
@@ -1244,7 +1252,7 @@ Project Default Range
 All Valid Logical Tracks
 RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float
 Sample Rate = 48,000 Hz
-Offline Maximum Sample Voices per Stream = 750
+Offline Maximum Sample Voices per Unit Stream = 500
 ```
 迁移后必须明确写入当前 schema 要求的固定格式字段和合法默认采样率。
 ### 15.21.4 严格字段规则
@@ -1334,7 +1342,7 @@ Preparing 阶段必须完成 Rendering 热路径所需的托管内存分配。�
 ```text
 事件调度
 BASSMIDI 拉取 / 合成协调
-多 Port 混音
+多 Unit 确定性混音
 Master Volume / Limiter
 工作 buffer 搬运
 文件样本分块写入

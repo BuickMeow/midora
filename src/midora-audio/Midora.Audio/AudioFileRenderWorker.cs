@@ -3,15 +3,16 @@ namespace Midora.Audio;
 public sealed record AudioFileRenderWorkerPreparation(
     string SoundFontPath,
     int SampleRate,
-    int MaximumSampleVoicesPerStream,
+    int MaximumSampleVoicesPerUnitStream,
     float MasterVolumeDecibels);
 
 public sealed record AudioFileRenderWorkerRequest(
     MidiRenderPlan Plan,
     string SoundFontPath,
     string TemporaryOutputPath,
-    int MaximumSampleVoicesPerStream,
-    float MasterVolumeDecibels);
+    int MaximumSampleVoicesPerUnitStream,
+    float MasterVolumeDecibels,
+    IAudioPcmCacheSessionAccess? AudioCache = null);
 
 public readonly record struct AudioFileRenderWorkerProgress(
     AudioWorkerState State,

@@ -48,7 +48,7 @@ public sealed class ProjectCreationCoordinatorTests
         Assert.Null(project.SoundFont.Reference);
         Assert.Empty(project.EventInstruments);
         Assert.Empty(project.Tracks);
-        Assert.Equal((UInt128)3, project.NextStableId);
+        Assert.Equal(3, project.NextStableId);
         Assert.Equal(-0.1, project.Playback.MasterVolumeDecibels);
         Assert.True(project.Playback.LimiterEnabled);
         Assert.Equal(
@@ -60,7 +60,7 @@ public sealed class ProjectCreationCoordinatorTests
             ProjectTrackSelectionMode.AllValidLogicalTracks,
             project.AudioRender.TrackSelectionMode);
         Assert.Equal(48_000, project.AudioRender.SampleRate);
-        Assert.Equal(750, project.AudioRender.MaximumSampleVoicesPerStream);
+        Assert.Equal(500, project.AudioRender.MaximumSampleVoicesPerUnitStream);
         Assert.Empty(project.Conductor.KeySignatures);
         Assert.Empty(project.Conductor.Markers);
         Assert.Null(project.Conductor.EndMarker);
@@ -152,6 +152,8 @@ public sealed class ProjectCreationCoordinatorTests
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
             coordinator.CreateAsync(new() { TicksPerQuarterNote = 0 }));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            coordinator.CreateAsync(new() { TicksPerQuarterNote = 32_768 }));
         await Assert.ThrowsAsync<ArgumentException>(() =>
             coordinator.CreateAsync(new() { ProjectName = "bad\nname" }));
         await Assert.ThrowsAsync<ArgumentException>(() =>

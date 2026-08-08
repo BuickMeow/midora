@@ -46,7 +46,7 @@ SFZ、DLS、Kontakt、LV2 等声音资源
 本规格有意不固定以下实现选择：
 ```text
 最终 C# namespace、class、record、struct 与字段布局
-稳定 ID 的内存承载类型和内部转换实现，但必须服从 16.5.3 的分配语义和 16.13.2 的持久化布局
+稳定 ID 值类型的具体 C# 声明与内部比较优化，但核心值必须为单个正 signed 64-bit integer，并服从 16.5.3 的分配语义和 16.13.2 的持久化布局
 集合、索引和缓存的具体数据结构
 Channel Group 分配的具体扫描算法
 曲线离散化的内部优化算法，但结果必须与第 12.8.6 节逐整数 tick 参考语义完全一致
@@ -56,7 +56,7 @@ BASSMIDI / BASSWASAPI 的具体封装与安全调用顺序和音频线程模型�
 内部音频子进程的类型拆分、轮询细节和共享内存字段打包，但不得改变第 13.30 节固定的完整子进程所有权、Native AOT、二进制 ABI 与零分配约束
 Limiter 的循环展开、SIMD 和状态存储实现，但算法与参数必须符合第 13.17.6 节版本 1 语义
 Roslyn 编译、缓存和 AssemblyLoadContext 方案
-JSON Schema、protobuf .proto 的其他最终字段名、字段号与代码生成方式；16.5.3 已固定的 `nextStableId` 和 16.13.2 已固定的稳定 ID 表示除外
+JSON Schema、protobuf .proto 的其他最终字段名、字段号与代码生成方式；16.5.3 已固定的 `nextStableId`、16.13.2 已固定的稳定 ID 表示和既有外层 ID 字段号除外
 具体 WPF 控件、Visual Tree、MVVM 类型和 Timeline 虚拟化实现
 错误码编号和自动化测试框架
 ```

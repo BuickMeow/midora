@@ -22,6 +22,7 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
 
     private readonly MidoraProjectPackageV1 _packages;
     private readonly MidoraProjectOpenResultV1 _openResult;
+    private readonly ProjectSoundFontResourceSession _soundFontResources;
     private int _disposeStarted;
 
     internal ProjectOpenCandidate(
@@ -31,6 +32,7 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
     {
         _packages = packages;
         _openResult = openResult;
+        _soundFontResources = new(openResult.EmbeddedSoundFontResource);
         CurrentProjectPath = currentProjectPath;
         Diagnostics = Array.AsReadOnly(openResult.Diagnostics.ToArray());
         InitialSoundFontState = CreateInitialSoundFontState(openResult);
@@ -43,7 +45,7 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
     public bool RequiresSave => _openResult.IsModified;
     public IReadOnlyList<MidoraPackageDiagnosticV1> Diagnostics { get; }
     public EmbeddedSoundFontResourceV1? EmbeddedSoundFontResource =>
-        _openResult.EmbeddedSoundFontResource;
+        _soundFontResources.CurrentEmbeddedResource;
     public ProjectSoundFontRuntimeSnapshot InitialSoundFontState { get; }
     public bool HasDamagedProjectObjects =>
         Project.DamagedEventInstruments.Count != 0
@@ -88,12 +90,22 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
         return new(compilation, loadabilityValidator);
     }
 
+    public ProjectSoundFontEditing CreateSoundFontEditing(
+        ProjectDocumentSession document,
+        ISoundFontLoadabilityValidator loadabilityValidator)
+    {
+        ThrowIfDisposed();
+        RequireCandidateProject(document.Project);
+        return new(document, loadabilityValidator, _soundFontResources);
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
         {
             return;
         }
+        _soundFontResources.Dispose();
         _openResult.Dispose();
     }
 
@@ -103,6 +115,7 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
         {
             return;
         }
+        await _soundFontResources.DisposeAsync().ConfigureAwait(false);
         await _openResult.DisposeAsync().ConfigureAwait(false);
     }
 

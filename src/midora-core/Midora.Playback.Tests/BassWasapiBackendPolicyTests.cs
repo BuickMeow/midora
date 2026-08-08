@@ -56,8 +56,10 @@ public sealed class BassWasapiBackendPolicyTests
     [InlineData(AudioWorkerState.Playing, 0, true)]
     [InlineData(AudioWorkerState.Completed, 0, false)]
     [InlineData(AudioWorkerState.Stopped, 0, false)]
+    [InlineData(AudioWorkerState.OutputDeviceUnavailable, 0, false)]
     [InlineData(AudioWorkerState.Completed, 1, true)]
     [InlineData(AudioWorkerState.Stopped, 1, true)]
+    [InlineData(AudioWorkerState.OutputDeviceUnavailable, 1, true)]
     public void ChildExitIsFaultUnlessCodeAndSharedStateAreBothTerminal(
         AudioWorkerState state,
         int? exitCode,
@@ -127,6 +129,6 @@ public sealed class BassWasapiBackendPolicyTests
     }
 
     private static BassMidiRendererSettings CreateRendererSettings(int workFrameCount) => new(
-        BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
+        BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
         workFrameCount);
 }

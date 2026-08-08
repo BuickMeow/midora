@@ -22,7 +22,7 @@ Midora Project 是用户在 Midora 中进行完整工作的最高层单位。
 | Event Instrument Library | 是 | 否 | 当前项目内事件乐器集合 |
 | Logical Tracks | 是 | 否 | 当前项目内逻辑轨道集合，可为空 |
 | Global Reset Defaults | 是 | 否 | 项目级 Reset 默认值 |
-| Global Event Scope Defaults | 是 | 否 | 项目级事件作用域默认规则 |
+| Global Event Scope Defaults | 是 | 否 | 初版不可编辑的版本化空 marker；事件作用域由各正式事件语义固定 |
 | Export Settings | 是 | 否 | MIDI 导出默认设置 |
 | Playback Settings | 是 | 否 | 播放相关默认设置 |
 | Audio Render Settings | 是 | 否 | 音频文件渲染默认模式、范围、Track 选择、采样率与格式设置 |
@@ -418,13 +418,13 @@ Project 应维护未保存修改状态。
 指定、取消指定、替换 Logical Track 的 Event Instrument
 新建、删除、移动、缩放、分割、连接、编辑 Segment
 修改 Global Reset Defaults
-修改 Global Event Scope Defaults
 修改 SoundFont Settings
 修改 Playback Settings
 修改 Export Settings
 修改 Audio Render Settings 中持久化的默认值
 修改任何影响编译、播放、预览、渲染或导出结果的项目内容
 ```
+初版 `Global Event Scope Defaults` 没有可编辑字段；其空 marker 不形成独立 Project 编辑或 Modified 来源。未来如新增可配置作用域，必须先定义字段、默认值、覆盖层级和冲突语义，并发布对应 schema 版本与迁移规则。
 以下行为不应使项目进入已修改状态：
 ```text
 改变当前播放位置
@@ -463,6 +463,8 @@ Project 应维护未保存修改状态。
 本章只规定系统级要求，不定义具体命令栈结构、事务模型、合并规则或内存策略。
 撤销 / 重做的具体 UI 行为由第 17～20 章规定。
 撤销 / 重做的数据结构与实现规则由实现设计工程细则细化。
+
+分配稳定 ID 的创建、复制、粘贴或分割命令遵守：当前打开会话中的 `nextStableId` 高水位永不因 Undo、失败尝试或丢弃 Redo 分支而回退。Redo 恢复同一个对象图及原稳定 ID；新分支只分配更高 ID。若 Undo 回到保存点且除此之外没有变化，单纯的瞬态 allocator 空洞不保持 Modified，也不单独要求保存；以后因其他编辑保存时，当前更高高水位随 Project 一并持久化。关闭 otherwise-clean Project 后丢弃的、从未持久化且不再被任何对象或 History 引用的瞬态身份不构成跨会话兼容承诺。
 ---
 ## 3.13 自动保存与崩溃恢复
 初版不做自动保存。

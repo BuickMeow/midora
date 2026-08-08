@@ -9,6 +9,34 @@ namespace Midora.Audio.Bass.Tests;
 public sealed class SharedAudioWorkerControlTests
 {
     [Fact]
+    public void CurrentRealtimeControlAbiIsVersionFour()
+    {
+        Assert.Equal(4, SharedAudioWorkerControl.ProtocolVersion);
+    }
+
+    [Fact]
+    public void OutputDeviceUnavailableIsAValidNonFaultTerminalStatus()
+    {
+        string name = $"Midora.Audio.Control.Tests.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+
+        producer.PublishRuntimeStatus(
+            AudioWorkerState.OutputDeviceUnavailable,
+            10,
+            20,
+            0,
+            0,
+            0);
+
+        AudioWorkerStatus status = consumer.ReadStatus();
+        Assert.Equal(AudioWorkerState.OutputDeviceUnavailable, status.State);
+        Assert.Equal(0, status.FaultCode);
+        Assert.Equal(10, status.PositionFrame);
+        Assert.Equal(20, status.RenderPositionFrame);
+    }
+
+    [Fact]
     public void FixedSharedMemoryAbiTransfersStatusAndCommands()
     {
         string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
@@ -38,14 +66,56 @@ public sealed class SharedAudioWorkerControlTests
         Assert.True(consumer.TryDequeue(out AudioWorkerControlCommand stop));
         Assert.Equal(AudioWorkerControlCommandKind.Stop, stop.Kind);
         Assert.False(stop.MonitoringCommand.SourceEnabled);
+
+        Assert.True(producer.TryEnqueueHeldPreviewPause());
+        Assert.True(producer.TryEnqueueHeldPreviewApplyPlan(7));
+        Assert.True(producer.TryEnqueueHeldPreviewResume());
+        Assert.True(producer.TryEnqueueBufferingRecovery(12_345));
+        Assert.True(consumer.TryDequeue(out AudioWorkerControlCommand pause));
+        Assert.Equal(AudioWorkerControlCommandKind.HeldPreviewPause, pause.Kind);
+        Assert.Equal(0, pause.Payload);
+        Assert.True(consumer.TryDequeue(out AudioWorkerControlCommand apply));
+        Assert.Equal(AudioWorkerControlCommandKind.HeldPreviewApplyPlan, apply.Kind);
+        Assert.Equal(7, apply.Payload);
+        Assert.True(consumer.TryDequeue(out AudioWorkerControlCommand resume));
+        Assert.Equal(AudioWorkerControlCommandKind.HeldPreviewResume, resume.Kind);
+        Assert.Equal(0, resume.Payload);
+        Assert.True(consumer.TryDequeue(out AudioWorkerControlCommand recovery));
+        Assert.Equal(AudioWorkerControlCommandKind.BufferingRecoveryPrepare, recovery.Kind);
+        Assert.Equal(12_345, recovery.Payload);
+    }
+
+    [Fact]
+    public void HeldPreviewStatusPublishesFrontierAndAcknowledgedPlanGenerationAtomically()
+    {
+        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+
+        producer.PublishHeldPreviewStatus(
+            AudioWorkerState.HeldPreviewPaused,
+            positionFrame: 10_000,
+            producerFrontierFrame: 12_345,
+            underrunCount: 1,
+            callbackAllocatedBytes: 2,
+            renderingAllocatedBytes: 3,
+            planGeneration: 9);
+
+        AudioWorkerStatus status = consumer.ReadStatus();
+        Assert.Equal(AudioWorkerState.HeldPreviewPaused, status.State);
+        Assert.Equal(10_000, status.PositionFrame);
+        Assert.Equal(12_345, status.RenderPositionFrame);
+        Assert.Equal(1, status.UnderrunCount);
+        Assert.Equal(2, status.CallbackAllocatedBytes);
+        Assert.Equal(3, status.RenderingAllocatedBytes);
+        Assert.Equal(9, status.HeldPreviewPlanGeneration);
     }
 
     [Theory]
     [InlineData(0, 0)]
     [InlineData(4, SharedAudioWorkerControl.ProtocolVersion + 1)]
     [InlineData(8, SharedAudioWorkerControl.CommandCapacity - 1)]
-    [InlineData(68, 1)]
-    [InlineData(88, 1)]
+    [InlineData(96, 1)]
     public void OpenRejectsCorruptFixedHeaderAndReservedFields(int offset, int value)
     {
         string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
@@ -184,6 +254,7 @@ public sealed class SharedAudioWorkerControlTests
     [Theory]
     [InlineData(12, 255L)]
     [InlineData(24, -1L)]
+    [InlineData(88, -1L)]
     public void CorruptStatusStateAndCountersAreRejected(int offset, long value)
     {
         string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
@@ -202,6 +273,122 @@ public sealed class SharedAudioWorkerControlTests
         }
 
         Assert.Throws<InvalidDataException>(() => _ = control.ReadStatus());
+    }
+
+    [Fact]
+    public void OddStatusSequenceFailsAfterBoundedRetryInsteadOfReturningMixedData()
+    {
+        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using MemoryMappedFile mapping = MemoryMappedFile.OpenExisting(
+            name,
+            MemoryMappedFileRights.ReadWrite);
+        using MemoryMappedViewAccessor view = mapping.CreateViewAccessor();
+        view.Write(68, 1);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+
+        Assert.Throws<InvalidDataException>(() => consumer.ReadStatus());
+        Assert.Throws<InvalidOperationException>(() => producer.PublishState(AudioWorkerState.Playing));
+    }
+
+    [Fact]
+    public void StatusSequenceWrapPreservesEvenPublicationAndReadableSnapshot()
+    {
+        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+        using MemoryMappedFile mapping = MemoryMappedFile.OpenExisting(
+            name,
+            MemoryMappedFileRights.ReadWrite);
+        using MemoryMappedViewAccessor view = mapping.CreateViewAccessor();
+        view.Write(68, int.MaxValue - 1);
+
+        producer.PublishRuntimeStatus(AudioWorkerState.Playing, 11, 22, 33, 44, 55);
+
+        Assert.Equal(int.MinValue, view.ReadInt32(68));
+        AudioWorkerStatus status = consumer.ReadStatus();
+        Assert.Equal(AudioWorkerState.Playing, status.State);
+        Assert.Equal(11, status.PositionFrame);
+        Assert.Equal(22, status.RenderPositionFrame);
+        Assert.Equal(33, status.UnderrunCount);
+        Assert.Equal(44, status.CallbackAllocatedBytes);
+        Assert.Equal(55, status.RenderingAllocatedBytes);
+    }
+
+    [Fact]
+    public async Task ConcurrentStatusStressNeverReturnsCrossPublicationSnapshot()
+    {
+        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+        const int publicationCount = 100_000;
+        producer.PublishRuntimeStatus(AudioWorkerState.Playing, 0, 0, 0, 0, 0);
+
+        Task writer = Task.Run(() =>
+        {
+            for (int generation = 1; generation <= publicationCount; generation++)
+            {
+                producer.PublishRuntimeStatus(
+                    generation % 2 == 0 ? AudioWorkerState.Playing : AudioWorkerState.Buffering,
+                    generation,
+                    generation * 2L,
+                    generation * 3L,
+                    generation * 4L,
+                    generation * 5L);
+            }
+        });
+
+        while (!writer.IsCompleted)
+        {
+            AudioWorkerStatus status;
+            try
+            {
+                status = consumer.ReadStatus();
+            }
+            catch (InvalidDataException)
+            {
+                continue;
+            }
+            long generation = status.PositionFrame;
+            Assert.Equal(generation * 2, status.RenderPositionFrame);
+            Assert.Equal(generation * 3, status.UnderrunCount);
+            Assert.Equal(generation * 4, status.CallbackAllocatedBytes);
+            Assert.Equal(generation * 5, status.RenderingAllocatedBytes);
+            Assert.Equal(
+                generation % 2 == 0 ? AudioWorkerState.Playing : AudioWorkerState.Buffering,
+                status.State);
+        }
+        await writer;
+    }
+
+    [Fact]
+    public void StatusReadAndPublicationAllocateNoManagedMemoryAfterWarmup()
+    {
+        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+        producer.PublishRuntimeStatus(AudioWorkerState.Playing, 1, 2, 3, 4, 5);
+        _ = consumer.ReadStatus();
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int generation = 1; generation <= 10_000; generation++)
+        {
+            producer.PublishRuntimeStatus(
+                AudioWorkerState.Playing,
+                generation,
+                generation,
+                generation,
+                generation,
+                generation);
+            AudioWorkerStatus status = consumer.ReadStatus();
+            if (status.PositionFrame != generation)
+            {
+                throw new InvalidDataException("Status publication was not visible.");
+            }
+        }
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(0, allocated);
     }
 
     [Fact]

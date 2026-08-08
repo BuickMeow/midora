@@ -17,7 +17,7 @@ internal sealed class SoundFontSettingsJsonV1
 
     [JsonPropertyOrder(3)]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? ResourceId { get; init; }
+    public StableIdJsonV1? ResourceId { get; init; }
 
     [JsonPropertyOrder(4)]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

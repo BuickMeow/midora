@@ -13,7 +13,7 @@ public sealed class ProjectMusicContentEditCommandsTests
         LogicalTrack track = project.Tracks[0];
         Segment segment = track.Segments[0];
         LogicalNote note = segment.Notes[0];
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -74,7 +74,7 @@ public sealed class ProjectMusicContentEditCommandsTests
         };
         segment.Notes.Add(secondNote);
         LogicalParameterLane lane = segment.ParameterLanes[0];
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -118,7 +118,7 @@ public sealed class ProjectMusicContentEditCommandsTests
         CurvePoint blocker = new(project, 480, 6);
         lane.Points.Add(point);
         lane.Points.Add(blocker);
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -211,7 +211,7 @@ public sealed class ProjectMusicContentEditCommandsTests
         CurvePoint tie = new(project, 240, 5);
         CurvePoint upper = new(project, 480, 8.2);
         lane.Points.AddRange([below, tie, upper]);
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -291,7 +291,7 @@ public sealed class ProjectMusicContentEditCommandsTests
         EventInstrument instrument = project.EventInstruments[0];
         SubVoice voice = instrument.SubVoices[0];
         TemplateEvent templateNote = voice.Events[0];
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
         long initialFingerprint = compilation.LastAttempt.Fingerprint;

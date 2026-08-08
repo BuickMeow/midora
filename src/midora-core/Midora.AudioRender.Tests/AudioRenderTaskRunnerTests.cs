@@ -39,8 +39,26 @@ public sealed class AudioRenderTaskRunnerTests
         Assert.Equal(1, worker.PrepareCount);
         Assert.Equal(1, worker.RenderCount);
         Assert.Equal(sampleRate, worker.LastPreparation!.SampleRate);
-        Assert.Equal(750, worker.LastPreparation.MaximumSampleVoicesPerStream);
+        Assert.Equal(500, worker.LastPreparation.MaximumSampleVoicesPerUnitStream);
         Assert.Equal(-0.1f, worker.LastPreparation.MasterVolumeDecibels);
+    }
+
+    [Fact]
+    public async Task FormalRunnerForwardsProjectSessionUnitCacheToOfflineWorker()
+    {
+        await using TestContext context = await TestContext.CreateAsync(
+            AudioRenderMode.WholeMix,
+            48_000,
+            ("Track", 192, 60));
+        FakeAudioFileRenderWorker worker = new();
+        StubCache cache = new();
+
+        AudioRenderTaskResult result = await new AudioRenderTaskRunner(worker).ExecuteAsync(
+            context.CreateRequest(),
+            cache);
+
+        Assert.Equal(AudioRenderTaskStatus.Completed, result.Status);
+        Assert.Same(cache, worker.LastRequest!.AudioCache);
     }
 
     [Fact]
@@ -363,7 +381,7 @@ public sealed class AudioRenderTaskRunnerTests
                 OutputPlan = outputPlan,
                 SoundFont = soundFont,
                 SampleRate = 192_000,
-                MaximumSampleVoicesPerStream = 750,
+                MaximumSampleVoicesPerUnitStream = 500,
                 MasterVolumeDecibels = -0.1
             });
 
@@ -492,7 +510,7 @@ public sealed class AudioRenderTaskRunnerTests
             OutputPlan = OutputPlan,
             SoundFont = SoundFont,
             SampleRate = SampleRate,
-            MaximumSampleVoicesPerStream = 750,
+            MaximumSampleVoicesPerUnitStream = 500,
             MasterVolumeDecibels = -0.1,
             OverwriteAuthorized = overwriteAuthorized
         };
@@ -510,6 +528,7 @@ public sealed class AudioRenderTaskRunnerTests
         public int PrepareCount { get; private set; }
         public int RenderCount { get; private set; }
         public AudioFileRenderWorkerPreparation? LastPreparation { get; private set; }
+        public AudioFileRenderWorkerRequest? LastRequest { get; private set; }
         public HashSet<int> FailRenderCalls { get; } = [];
         public int CancelOnRenderCall { get; init; }
         public CancellationTokenSource? CancellationSource { get; init; }
@@ -531,6 +550,7 @@ public sealed class AudioRenderTaskRunnerTests
             CancellationToken cancellationToken = default)
         {
             RenderCount++;
+            LastRequest = request;
             if (RenderCount == CancelOnRenderCall)
             {
                 CancellationSource!.Cancel();
@@ -640,6 +660,36 @@ public sealed class AudioRenderTaskRunnerTests
                 throw new IOException("Injected cleanup failure.");
             }
             _inner.DeleteFile(path);
+        }
+    }
+
+    private sealed class StubCache : IAudioPcmCacheSessionAccess
+    {
+        public AudioCacheSessionSnapshot? AudioCacheSnapshot => null;
+
+        public bool TryCopyReusableAudio(
+            string key,
+            Stream destination,
+            out long payloadLength)
+        {
+            payloadLength = 0;
+            return false;
+        }
+
+        public AudioCachePublishResult PublishReusableAudio(
+            string key,
+            Stream source,
+            long payloadLength) => default;
+
+        public void InvalidateReusableAudio(string key)
+        {
+        }
+
+        public AudioCacheSessionStore.AudioRecoverySpool CreateTransientAudioSpool(
+            long lengthBytes) => throw new NotSupportedException();
+
+        public void DisableReusableAudioRetention(string reason)
+        {
         }
     }
 }

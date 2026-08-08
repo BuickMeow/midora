@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-08-07**
+> 最近修订日期：**2026-08-08**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -48,9 +48,20 @@
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
 
+## 2026-08-08 修订摘要
+
+- 解决整数 Project tick 与 `Bar:Beat:Tick` 在部分 TPQ/拍号组合下不可逆的冲突：开发期 v1 中每个 Time Signature 必须满足 `4 × TPQ % denominator == 0`。Domain 创建/编辑、语义验证和持久化统一拒绝不兼容组合，不创建 v2 或迁移器。
+- Time Signature 变化 tick 立即成为新小节 Beat 1；若该 tick 不是旧拍号下的自然小节边界，旧小节被截断并产生 Warning。统一的 Project Time Signature Map 负责可逆 `Bar:Beat:Tick`、自然小节/拍网格和 Snap 基础。
+- Q-NUI-034～042 固定五层缓存：canonical range、Segment/Unit fragment、Unit raw PCM、playback span、短 Render-Ahead ring。相同完整 key 的 exact replay 命中不得重复语义编译或 BASSMIDI 合成；缓存只在 Project session 内有效，不进入 `.midora`。
+- underrun 在失败位置锁存，按自然小节准备连续恢复区间；小节中途为“当前剩余 + 下一完整小节”，小节起点为当前完整小节，并以播放终点和 16 个四分音符裁剪。完整区间准备好之前不得短块断续推进。
+- 音频在 canonical 成功后按抽象 Unit 使用 1-channel BASSMIDI Stream 语义和有界 stream pool。Realtime/Offline Maximum Sample Voices per Unit Stream 分别保存，默认均由 750 改为 500。
+- Application Preferences 增加 session 音频缓存 root（默认 `%LOCALAPPDATA%\Midora\AudioCache`）和 reusable byte quota（默认 16 GiB，可为 0）。Transient recovery spool 独立于 quota；spool/RAM 均不可用时受控 Stop。
+
 ## 2026-08-07 修订摘要
 
 - 明确 Segment Editor 钢琴卷帘的两种初版交互预览：左侧 Pitch Ruler 琴键按住预览，以及放置单个 Logical Note 时的草稿音符预览。两者统一复用 held Preview 的因果 Gate、`Int64.MaxValue` 未结束哨兵和未渲染 frontier 生效规则；预览不写入 Project，预览不可用或失败不得阻止合法音符编辑提交。
+- Project 内稳定 ID 的核心与分配器统一改为单个正 `long`，合法范围为 `1..long.MaxValue`；JSON 使用 canonical 十进制 integer，对象文件名使用无符号、无前导零的十进制 ASCII，protobuf 在各既有外层字段号上直接使用标量 `int64`。这是尚未冻结的开发期 v1 直接修订，不提供旧 128-bit 布局迁移器。
+- C# Mapping 内部 ABI 升级为 v2：签名改为 `double Transform(double value, in MappingContextV2 context)`，`MappingStableIdV2` 只承载单个正 `long`；语言、引用面、确定性编译、collectible AssemblyLoadContext 和非 sandbox 边界保持不变。
 
 ## 2026-08-06 修订摘要
 
@@ -62,7 +73,7 @@
 - Project 外部 SoundFont 固定为项目根目录或直属 `soundfonts/` 的相对 SF2；路径精确大小写优先、唯一 ignore-case 回退并警告、歧义拒绝。原始字节 SHA-256 只在用户明确绑定/接受时更新，被动变化不修改 Project；内嵌资源的 settings/manifest/hash 必须一致。
 - 初版持久化兼容基线固定为 JSON Schema Draft 2020-12、内部版本化 `System.Text.Json` source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 与 Grpc.Tools 2.83.0；严格拒绝重复/未知 JSON 属性和未知 protobuf tag，已发布 schema 以 descriptor/golden bytes 锁定。
 - 持久化文本、相对路径、opaque sRGB 颜色、UTC 时间和工程总耗时的 v1 表示已固定；路径保留大小写与原 Unicode，不做 normalization，时间使用七位小数秒 UTC `Z` 格式，总耗时使用非负 int64 毫秒。
-- 初版 C# Mapping 固定 ABI v1：版本化函数体、只读独立 MappingContext 契约、C# 14/`Microsoft.NETCore.App.Ref 10.0.10`，以及按 Project 当前源码修订管理的 collectible AssemblyLoadContext 缓存；编译产物不持久化，引用白名单不构成 sandbox。
+- 初版 C# Mapping 最初采用 ABI v1；该内部 ABI 已于 2026-08-07 因稳定 ID 改为单 `long` 而升级为 ABI v2，当前有效规则见同日修订摘要。版本化函数体、只读独立 MappingContext 契约、C# 14/`Microsoft.NETCore.App.Ref 10.0.10`，以及按 Project 当前源码修订管理的 collectible AssemblyLoadContext 缓存等边界保持不变。
 - 初版产品发布架构固定为 `win-x64`；主应用、Native AOT 音频子进程和三项 BASS 原生库必须同为 x64，不发布 x86、Arm64 或 AnyCPU 正式产物。
 - 初版正式原生基线固定为 BASS 2.4.18.3、BASSMIDI 2.4.16.0、BASSWASAPI 2.4.4.1 及三项 win-x64 DLL 的明确 SHA-256；仓库只保存 manifest，正式构建由操作员提供并校验二进制，vendor current/latest 只能生成开发候选。
 
@@ -75,14 +86,14 @@
 - 连续值源离散化固定以每个整数 tick 的最终目标值为参考语义；canonical 输出首次有效值及后续整数变化值，任何跳跃求值或缓存优化都必须与逐 tick 参考结果完全一致。
 - 整数目标参数默认使用 `Round / Away From Zero`，只在完整映射链最终输出时取整一次；取整与最终越界策略属于目标参数，不属于 Mapping Step。
 - 新建 Event Instrument 的 Overlap 策略固定默认为 `Reject`；`Reject` 重叠产生 Error，`Warn` 重叠产生 Warning，并服从全局“强制 Warning 导致编译失败”策略而不改变诊断级别。
-- 稳定 ID 文件兼容布局固定为 32 位小写十六进制 JSON/文件名表示，以及 protobuf `StableId { fixed64 high = 1; fixed64 low = 2; }`；`fixed64` wire 字节序遵循 protobuf 标准。
+- 稳定 ID 文件布局最初采用 32 位小写十六进制文本和 protobuf high/low；该开发期布局已于 2026-08-07 在首版冻结前由单 `long` 契约直接取代，不构成已发布兼容承诺。
 - 同一 tick 允许多个普通 Marker；它们不按名称或 tick 去重，以稳定 ID 区分，并在 canonical 结果中按稳定 ID 确定同 tick 顺序。
 - 初版 Envelope Preset 统一为第 10.11 节规定的固定 ADSR-like 结构；第 18.6.5 节编辑器不得扩展为任意有序点或曲线段模型。
 - `Channel Unit >= 248` 的诊断级别统一为 `Info`，不受“Warning 视为 Error”策略影响。
 - Segment Split 必须为右侧 Segment 保留或生成必要参数起点状态，维持参数状态及相关曲线在分割前后的听感；不改变跨分割点 Logical Note 的提前结束规则。
 - 正式 BASSMIDI 后端启用 `BASS_MIDI_NOFX`，初版不支持 Reverb / Chorus，也不允许 CC91 / CC93。
 - 正式 BASSMIDI 后端启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠 Note 实例按 FIFO 逐个释放，Cut Previous 的释放重叠与硬边界 Reset 必须保持精确 NoteOff 配对。
-- 正式 BASSMIDI Stream 固定使用 8-point sinc 和 CPU 属性 `0`，并在 Preparing 预加载计划引用的 SF2 presets；实时与离线 sample voice 上限分别配置，默认均为每 Stream `750`，同一任务所有 Port 使用同一值。
+- 正式 BASSMIDI Stream 固定使用 8-point sinc 和 CPU 属性 `0`，并在 Preparing 预加载计划引用的 SF2 presets；Realtime/Offline Maximum Sample Voices per Unit Stream 分别配置，默认均为 `500`，同一任务所有 Unit Stream 使用同一冻结值。
 - 实时播放跟随所选输出设备的实际采样率；音频文件渲染使用用户选择的 `8,000–192,000 Hz` 整数采样率。
 - 音频文件输出改为普通 RIFF/WAVE、Stereo、Interleaved IEEE 32-bit Float；超过 RIFF 大小上限时在 Preparing 阶段失败。
 - 增加启用输出设备枚举、可调 buffer、约 200 ms 性能基准、音频活动线程零托管分配和固定内部音频子进程要求。

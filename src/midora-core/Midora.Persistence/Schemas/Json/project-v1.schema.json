@@ -72,7 +72,7 @@
         "id": { "$ref": "common-v1.schema.json#/$defs/stableId" },
         "path": {
           "type": "string",
-          "pattern": "^event-instruments/ei_[0-9a-f]{32}\\.pb$"
+          "pattern": "^event-instruments/ei_[1-9][0-9]*\\.pb$"
         },
         "nameSnapshot": { "$ref": "common-v1.schema.json#/$defs/shortText" },
         "folderId": { "$ref": "common-v1.schema.json#/$defs/stableId" }
@@ -86,7 +86,7 @@
         "id": { "$ref": "common-v1.schema.json#/$defs/stableId" },
         "path": {
           "type": "string",
-          "pattern": "^logical-tracks/lt_[0-9a-f]{32}\\.pb$"
+          "pattern": "^logical-tracks/lt_[1-9][0-9]*\\.pb$"
         },
         "nameSnapshot": { "$ref": "common-v1.schema.json#/$defs/shortText" }
       }

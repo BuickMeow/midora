@@ -127,8 +127,37 @@ public enum AudioRenderMode
     PerLogicalTrack
 }
 
+public enum ProjectMidiExportMode
+{
+    WholeProject,
+    PerLogicalTrack,
+    PerPort
+}
+
+public enum ProjectMidiExportTrackSelectionMode
+{
+    AllValidLogicalTracks,
+    ExplicitAtTaskStart
+}
+
+public enum ProjectMidiExportRoutingStrategy
+{
+    Compact,
+    Preserve
+}
+
 public sealed class ExportProjectSettings
 {
+    public ProjectMidiExportMode Mode { get; set; } = ProjectMidiExportMode.WholeProject;
+    public ProjectRangeMode RangeMode { get; set; } = ProjectRangeMode.ProjectDefaultRange;
+    public long? ManualStartTick { get; set; }
+    public long? ManualEndTick { get; set; }
+    public ProjectMidiExportTrackSelectionMode TrackSelectionMode { get; set; } =
+        ProjectMidiExportTrackSelectionMode.AllValidLogicalTracks;
+    public ProjectMidiExportRoutingStrategy Routing { get; set; } =
+        ProjectMidiExportRoutingStrategy.Compact;
+    public bool IncludeReadme { get; set; } = true;
+    public bool TreatWarningsAsErrors { get; set; }
 }
 
 public sealed class AudioRenderProjectSettings
@@ -136,9 +165,9 @@ public sealed class AudioRenderProjectSettings
     public const int MinimumSampleRate = 8_000;
     public const int MaximumSampleRate = 192_000;
     public const int DefaultSampleRate = 48_000;
-    public const int MinimumSampleVoicesPerStream = 1;
-    public const int MaximumSampleVoicesPerStreamLimit = 16_777_216;
-    public const int DefaultSampleVoicesPerStream = 750;
+    public const int MinimumSampleVoicesPerUnitStream = 1;
+    public const int MaximumSampleVoicesPerUnitStreamLimit = 16_777_216;
+    public const int DefaultSampleVoicesPerUnitStream = 500;
 
     public AudioRenderMode Mode { get; set; } = AudioRenderMode.WholeMix;
     public ProjectRangeMode RangeMode { get; set; } = ProjectRangeMode.ProjectDefaultRange;
@@ -148,12 +177,15 @@ public sealed class AudioRenderProjectSettings
         ProjectTrackSelectionMode.AllValidLogicalTracks;
     public HashSet<MidoraId> ExplicitLogicalTrackIds { get; } = [];
     public int SampleRate { get; set; } = DefaultSampleRate;
-    public int MaximumSampleVoicesPerStream { get; set; } = DefaultSampleVoicesPerStream;
+    public int MaximumSampleVoicesPerUnitStream { get; set; } = DefaultSampleVoicesPerUnitStream;
 }
 
 public sealed class MidoraProject
 {
-    private UInt128 _nextStableId;
+    public const int MinimumTicksPerQuarterNote = 1;
+    public const int MaximumTicksPerQuarterNote = 32_767;
+
+    private long _nextStableId;
 
     public MidoraProject(int ticksPerQuarterNote)
         : this(ticksPerQuarterNote, TimeProvider.System.GetUtcNow())
@@ -163,13 +195,13 @@ public sealed class MidoraProject
     public MidoraProject(int ticksPerQuarterNote, DateTimeOffset createdAtUtc)
         : this(
             ticksPerQuarterNote,
-            (UInt128)1,
+            1,
             createInitialConductorState: true,
             createdAtUtc)
     {
     }
 
-    internal MidoraProject(int ticksPerQuarterNote, UInt128 nextStableId)
+    internal MidoraProject(int ticksPerQuarterNote, long nextStableId)
         : this(
             ticksPerQuarterNote,
             nextStableId,
@@ -180,7 +212,7 @@ public sealed class MidoraProject
 
     internal MidoraProject(
         int ticksPerQuarterNote,
-        UInt128 nextStableId,
+        long nextStableId,
         DateTimeOffset createdAtUtc)
         : this(
             ticksPerQuarterNote,
@@ -192,11 +224,11 @@ public sealed class MidoraProject
 
     private MidoraProject(
         int ticksPerQuarterNote,
-        UInt128 nextStableId,
+        long nextStableId,
         bool createInitialConductorState,
         DateTimeOffset createdAtUtc)
     {
-        if (ticksPerQuarterNote <= 0)
+        if (ticksPerQuarterNote is < MinimumTicksPerQuarterNote or > MaximumTicksPerQuarterNote)
         {
             throw new ArgumentOutOfRangeException(nameof(ticksPerQuarterNote));
         }
@@ -211,7 +243,7 @@ public sealed class MidoraProject
     }
 
     public int TicksPerQuarterNote { get; }
-    public UInt128 NextStableId => _nextStableId;
+    public long NextStableId => _nextStableId;
     public ProjectMetadata Metadata { get; }
     public ConductorTrack Conductor { get; }
     public MidiInitialState GlobalInitialState { get; } = new();
@@ -229,7 +261,7 @@ public sealed class MidoraProject
 
     public MidoraId AllocateStableId()
     {
-        if (_nextStableId == UInt128.MaxValue)
+        if (_nextStableId == long.MaxValue)
         {
             throw new InvalidOperationException("The Project stable ID counter is exhausted.");
         }
@@ -238,9 +270,9 @@ public sealed class MidoraProject
         return result;
     }
 
-    internal void RestoreNextStableId(UInt128 nextStableId)
+    internal void RestoreNextStableId(long nextStableId)
     {
-        if (nextStableId == 0)
+        if (nextStableId <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(nextStableId));
         }
@@ -299,6 +331,7 @@ public sealed class ProjectChangeSet
 
     public bool AffectsEverything { get; init; }
     public bool AffectsConductor { get; init; }
+    public bool AffectsAudioPcmCacheGeneration { get; init; }
     public HashSet<MidoraId> TrackIds { get; } = [];
     public HashSet<MidoraId> EventInstrumentIds { get; } = [];
 }

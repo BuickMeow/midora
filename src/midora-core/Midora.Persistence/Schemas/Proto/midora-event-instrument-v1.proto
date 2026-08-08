@@ -152,13 +152,13 @@ message MidiValueTargetV1 {
 }
 
 message ValueMappingStepV1 {
-  StableId id = 1;
+  int64 id = 1;
   bool is_enabled = 2;
   MappingSourceV1 source = 3;
   MappingOperationV1 operation = 4;
-  StableId logical_parameter_id = 5;
-  StableId envelope_id = 6;
-  StableId mapping_function_id = 7;
+  int64 logical_parameter_id = 5;
+  int64 envelope_id = 6;
+  int64 mapping_function_id = 7;
   double constant = 8;
   double source_minimum = 9;
   double source_maximum = 10;
@@ -170,21 +170,21 @@ message ValueMappingStepV1 {
 }
 
 message MappingChainV1 {
-  StableId id = 1;
+  int64 id = 1;
   bool is_enabled = 2;
   repeated ValueMappingStepV1 steps = 3;
   reserved 4 to max;
 }
 
 message LogicalParameterEnumItemV1 {
-  StableId id = 1;
+  int64 id = 1;
   string name = 2;
   int32 value = 3;
   reserved 4 to max;
 }
 
 message LogicalParameterDefinitionV1 {
-  StableId id = 1;
+  int64 id = 1;
   string name = 2;
   LogicalParameterTypeV1 type = 3;
   double minimum = 4;
@@ -198,7 +198,7 @@ message LogicalParameterDefinitionV1 {
 }
 
 message TemplateEventV1 {
-  StableId id = 1;
+  int64 id = 1;
   TemplateEventKindV1 kind = 2;
   int64 tick = 3;
   int64 length_ticks = 4;
@@ -218,7 +218,7 @@ message TemplateEventV1 {
 }
 
 message CurvePointV1 {
-  StableId id = 1;
+  int64 id = 1;
   int64 tick = 2;
   double value = 3;
   CurveInterpolationV1 interpolation = 4;
@@ -226,7 +226,7 @@ message CurvePointV1 {
 }
 
 message ValueCurveV1 {
-  StableId id = 1;
+  int64 id = 1;
   MidiValueTargetV1 target = 2;
   MidiIntegerTargetSettingsV1 target_settings = 3;
   repeated CurvePointV1 points = 4;
@@ -234,7 +234,7 @@ message ValueCurveV1 {
 }
 
 message SubVoiceV1 {
-  StableId id = 1;
+  int64 id = 1;
   string name = 2;
   int32 root_note_override = 3;
   MidiInitialStateV1 initial_state = 4;
@@ -244,7 +244,7 @@ message SubVoiceV1 {
 }
 
 message InstrumentEnvelopeV1 {
-  StableId id = 1;
+  int64 id = 1;
   string name = 2;
   int64 delay_ticks = 3;
   int64 attack_ticks = 4;
@@ -259,7 +259,7 @@ message InstrumentEnvelopeV1 {
 }
 
 message CSharpMappingFunctionV1 {
-  StableId id = 1;
+  int64 id = 1;
   string name = 2;
   string body = 3;
   int32 abi_version = 4;
@@ -268,9 +268,9 @@ message CSharpMappingFunctionV1 {
 }
 
 message LogicalParameterMappingV1 {
-  StableId id = 1;
-  StableId parameter_id = 2;
-  StableId sub_voice_id = 3;
+  int64 id = 1;
+  int64 parameter_id = 2;
+  int64 sub_voice_id = 3;
   MidiValueTargetV1 target = 4;
   MappingChainV1 steps = 5;
   MidiIntegerTargetSettingsV1 target_settings = 6;
@@ -280,7 +280,7 @@ message LogicalParameterMappingV1 {
 message EventInstrumentV1 {
   uint32 schema_version = 1;
   string object_type = 2;
-  StableId id = 3;
+  int64 id = 3;
   string name = 4;
   RgbColor color = 5;
   string description = 6;

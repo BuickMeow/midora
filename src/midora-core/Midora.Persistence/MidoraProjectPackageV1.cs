@@ -616,7 +616,7 @@ public sealed class MidoraProjectPackageV1
             isModified = true;
         }
 
-        UInt128 storedNextStableId = ProjectCodecV1.GetNextStableId(projectIndex);
+        long storedNextStableId = ProjectCodecV1.GetNextStableId(projectIndex);
         MidoraProject project = new(
             projectSettings.TicksPerQuarterNote,
             storedNextStableId,
@@ -714,15 +714,12 @@ public sealed class MidoraProjectPackageV1
             }
         }
 
-        _ = await RestoreOrdinarySettingsAsync(
+        ExportSettingsJsonV1? export = await RestoreOrdinarySettingsAsync(
             MidoraPackagePathsV1.ExportSettings,
-            bytes =>
-            {
-                ExportSettingsCodecV1.Parse(bytes);
-                return true;
-            },
+            bytes => ExportSettingsCodecV1.Parse(bytes),
             entries, index, path, diagnostics, cancellationToken,
             () => isModified = true).ConfigureAwait(false);
+        if (export is not null) ExportSettingsCodecV1.Restore(project.Export, export);
 
         PlaybackSettingsJsonV1? playback = await RestoreOrdinarySettingsAsync(
             MidoraPackagePathsV1.PlaybackSettings,
@@ -812,9 +809,9 @@ public sealed class MidoraProjectPackageV1
         {
             [MidoraPackagePathsV1.Project] = ProjectCodecV1.Serialize(project),
             [MidoraPackagePathsV1.Metadata] = MetadataCodecV1.Serialize(metadata),
-            [MidoraPackagePathsV1.ConductorTrack] = ConductorTrackCodecV1.Serialize(project.Conductor),
+            [MidoraPackagePathsV1.ConductorTrack] = ConductorTrackCodecV1.Serialize(project),
             [MidoraPackagePathsV1.ProjectSettings] = ProjectSettingsCodecV1.Serialize(project),
-            [MidoraPackagePathsV1.ExportSettings] = ExportSettingsCodecV1.Serialize(),
+            [MidoraPackagePathsV1.ExportSettings] = ExportSettingsCodecV1.Serialize(project.Export),
             [MidoraPackagePathsV1.PlaybackSettings] = PlaybackSettingsCodecV1.Serialize(project.Playback),
             [MidoraPackagePathsV1.AudioRenderSettings] = AudioRenderSettingsCodecV1.Serialize(project.AudioRender),
             [MidoraPackagePathsV1.SoundFontSettings] = SoundFontSettingsCodecV1.Serialize(project.SoundFont),
@@ -1801,7 +1798,7 @@ public sealed class MidoraProjectPackageV1
         MidoraProject project,
         ConductorTrack? conductor,
         ProjectSoundFontReference? soundFont,
-        UInt128 nextStableId)
+        long nextStableId)
     {
         HashSet<MidoraId> ids = [];
         foreach (ProjectFolderIndexJsonV1 folder in projectIndex.EventInstrumentFolders)
@@ -1920,21 +1917,21 @@ public sealed class MidoraProjectPackageV1
         }
     }
 
-    private static void AddId(MidoraId id, UInt128 nextStableId, ISet<MidoraId> ids, string source)
+    private static void AddId(MidoraId id, long nextStableId, ISet<MidoraId> ids, string source)
     {
-        if (id == default || id.ToSequence() >= nextStableId || !ids.Add(id))
+        if (id == default || id.Value >= nextStableId || !ids.Add(id))
         {
             throw new InvalidDataException($"{source} stable ID is zero, duplicated, or not below nextStableId.");
         }
     }
 
-    private static MidoraId ParseId(string value, string fieldName)
+    private static MidoraId ParseId(StableIdJsonV1? value, string fieldName)
     {
-        if (!MidoraId.TryParseCanonical(value, out MidoraId id))
+        if (value is not StableIdJsonV1 id || id.Value <= 0)
         {
             throw new InvalidDataException($"{fieldName} is not canonical.");
         }
-        return id;
+        return id.ToDomain();
     }
 
     private static void RequireEqualContent(

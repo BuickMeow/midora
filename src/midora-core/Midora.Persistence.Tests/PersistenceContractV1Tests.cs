@@ -12,6 +12,78 @@ namespace Midora.Persistence.Tests;
 public sealed class PersistenceContractV1Tests
 {
     [Fact]
+    public void ProjectSettingsV1UsesSmfCompatibleTicksPerQuarterNoteRange()
+    {
+        MidoraProject maximum = new(32_767);
+        ProjectSettingsJsonV1 parsed = ProjectSettingsCodecV1.Parse(
+            ProjectSettingsCodecV1.Serialize(maximum));
+
+        Assert.Equal(32_767, parsed.TicksPerQuarterNote);
+        string canonical = Encoding.UTF8.GetString(ProjectSettingsCodecV1.Serialize(maximum));
+        Assert.Throws<InvalidDataException>(() => ProjectSettingsCodecV1.Parse(
+            Encoding.UTF8.GetBytes(canonical.Replace(
+                "\"ticksPerQuarterNote\": 32767",
+                "\"ticksPerQuarterNote\": 0",
+                StringComparison.Ordinal))));
+        Assert.Throws<InvalidDataException>(() => ProjectSettingsCodecV1.Parse(
+            Encoding.UTF8.GetBytes(canonical.Replace(
+                "\"ticksPerQuarterNote\": 32767",
+                "\"ticksPerQuarterNote\": 32768",
+                StringComparison.Ordinal))));
+    }
+
+    [Fact]
+    public void MidiExportSettingsV1RoundTripDefaultsAndManualSnapshot()
+    {
+        ExportProjectSettings defaults = new();
+        ExportSettingsJsonV1 defaultJson = ExportSettingsCodecV1.Parse(
+            ExportSettingsCodecV1.Serialize(defaults));
+        ExportProjectSettings restoredDefaults = new();
+        ExportSettingsCodecV1.Restore(restoredDefaults, defaultJson);
+
+        Assert.Equal(ProjectMidiExportMode.WholeProject, restoredDefaults.Mode);
+        Assert.Equal(ProjectRangeMode.ProjectDefaultRange, restoredDefaults.RangeMode);
+        Assert.Equal(
+            ProjectMidiExportTrackSelectionMode.AllValidLogicalTracks,
+            restoredDefaults.TrackSelectionMode);
+        Assert.Equal(ProjectMidiExportRoutingStrategy.Compact, restoredDefaults.Routing);
+        Assert.True(restoredDefaults.IncludeReadme);
+        Assert.False(restoredDefaults.TreatWarningsAsErrors);
+
+        ExportProjectSettings manual = new()
+        {
+            Mode = ProjectMidiExportMode.PerLogicalTrack,
+            RangeMode = ProjectRangeMode.ManualRange,
+            ManualStartTick = 240,
+            ManualEndTick = 3_840,
+            TrackSelectionMode = ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart,
+            Routing = ProjectMidiExportRoutingStrategy.Preserve,
+            IncludeReadme = false,
+            TreatWarningsAsErrors = true
+        };
+        ExportProjectSettings restoredManual = new();
+        ExportSettingsCodecV1.Restore(
+            restoredManual,
+            ExportSettingsCodecV1.Parse(ExportSettingsCodecV1.Serialize(manual)));
+
+        Assert.Equal(ProjectMidiExportMode.PerLogicalTrack, restoredManual.Mode);
+        Assert.Equal(ProjectRangeMode.ManualRange, restoredManual.RangeMode);
+        Assert.Equal(240, restoredManual.ManualStartTick);
+        Assert.Equal(3_840, restoredManual.ManualEndTick);
+        Assert.Equal(
+            ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart,
+            restoredManual.TrackSelectionMode);
+        Assert.Equal(ProjectMidiExportRoutingStrategy.Preserve, restoredManual.Routing);
+        Assert.False(restoredManual.IncludeReadme);
+        Assert.True(restoredManual.TreatWarningsAsErrors);
+
+        string invalid = Encoding.UTF8.GetString(ExportSettingsCodecV1.Serialize(defaults))
+            .Replace("\"mode\": \"whole-project\"", "\"mode\": \"unknown\"", StringComparison.Ordinal);
+        Assert.Throws<InvalidDataException>(() =>
+            ExportSettingsCodecV1.Parse(Encoding.UTF8.GetBytes(invalid)));
+    }
+
+    [Fact]
     public void ContractVersionsAndTextLimitsAreFrozen()
     {
         Assert.Equal(1, PersistenceContractV1.FileFormatVersion);
@@ -81,42 +153,119 @@ public sealed class PersistenceContractV1Tests
     [Fact]
     public void ProtobufPrimitiveFieldNumbersAndGoldenBytesAreFrozen()
     {
-        Assert.True(StableId.Descriptor.File.ToProto().HasEdition);
-        Assert.Equal(1001, (int)StableId.Descriptor.File.ToProto().Edition);
-        Assert.Equal(1, StableId.Descriptor.FindFieldByName("high")!.FieldNumber);
-        Assert.Equal(2, StableId.Descriptor.FindFieldByName("low")!.FieldNumber);
+        Assert.True(RgbColor.Descriptor.File.ToProto().HasEdition);
+        Assert.Equal(1001, (int)RgbColor.Descriptor.File.ToProto().Edition);
         Assert.Equal(1, RgbColor.Descriptor.FindFieldByName("red")!.FieldNumber);
         Assert.Equal(2, RgbColor.Descriptor.FindFieldByName("green")!.FieldNumber);
         Assert.Equal(3, RgbColor.Descriptor.FindFieldByName("blue")!.FieldNumber);
+        Assert.Equal(3, EventInstrumentV1.Descriptor.FindFieldByName("id")!.FieldNumber);
+        Assert.Equal(FieldType.Int64, EventInstrumentV1.Descriptor.FindFieldByName("id")!.FieldType);
+        Assert.Equal(3, LogicalTrackV1.Descriptor.FindFieldByName("id")!.FieldNumber);
+        Assert.Equal(FieldType.Int64, LogicalTrackV1.Descriptor.FindFieldByName("id")!.FieldType);
+        Assert.Equal(5, LogicalTrackV1.Descriptor.FindFieldByName("event_instrument_id")!.FieldNumber);
+        Assert.Equal(FieldType.Int64,
+            LogicalTrackV1.Descriptor.FindFieldByName("event_instrument_id")!.FieldType);
 
-        PersistenceValueValidationV1.ValidateStableId(
-            0x0102030405060708, 0x1112131415161718, "id");
-        PersistenceValueValidationV1.ValidateStableIdText(
-            "01020304050607081112131415161718", "id");
+        PersistenceValueValidationV1.ValidateStableId(long.MaxValue, "id");
+        PersistenceValueValidationV1.ValidateStableIdText("9223372036854775807", "id");
         Assert.Throws<InvalidDataException>(() =>
-            PersistenceValueValidationV1.ValidateStableId(0, 0, "id"));
+            PersistenceValueValidationV1.ValidateStableId(0, "id"));
         Assert.Throws<InvalidDataException>(() =>
-            PersistenceValueValidationV1.ValidateStableIdText(new string('0', 32), "id"));
+            PersistenceValueValidationV1.ValidateStableId(-1, "id"));
+        Assert.Throws<InvalidDataException>(() =>
+            PersistenceValueValidationV1.ValidateStableIdText("01", "id"));
 
-        StableId id = new() { High = 0x0102030405060708, Low = 0x1112131415161718 };
+        LogicalNoteV1 id = new() { Id = 300 };
         byte[] bytes = StrictProtobufWireV1.SerializeDeterministic(id);
 
-        Assert.Equal("090807060504030201111817161514131211", Convert.ToHexString(bytes).ToLowerInvariant());
-        StrictProtobufWireV1.Validate(bytes, StableId.Descriptor);
+        Assert.Equal("08ac02", Convert.ToHexString(bytes).ToLowerInvariant());
+        StrictProtobufWireV1.Validate(bytes, LogicalNoteV1.Descriptor);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("01")]
+    [InlineData("+1")]
+    [InlineData("1.0")]
+    [InlineData("1e0")]
+    [InlineData("\"1\"")]
+    [InlineData("9223372036854775808")]
+    public void StableIdJsonRejectsEveryNonCanonicalOrOutOfRangeToken(string json)
+    {
+        Assert.ThrowsAny<JsonException>(() => JsonSerializer.Deserialize<StableIdJsonV1>(json));
+    }
+
+    [Fact]
+    public void StableIdJsonWritesExactDecimalIntegerTokensAcrossProjectAndConductor()
+    {
+        StableIdJsonV1 maximum = JsonSerializer.Deserialize<StableIdJsonV1>("9223372036854775807");
+        Assert.Equal(long.MaxValue, maximum.Value);
+        Assert.Equal("9223372036854775807", JsonSerializer.Serialize(maximum));
+
+        MidoraProject project = new(480, new DateTimeOffset(2026, 8, 7, 0, 0, 0, TimeSpan.Zero));
+        EventInstrumentLibraryFolder folder = EventInstrumentLibrary.CreateFolder(project, "Folder");
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        instrument.LibraryFolderId = folder.Id;
+
+        using JsonDocument projectJson = JsonDocument.Parse(ProjectCodecV1.Serialize(project));
+        JsonElement root = projectJson.RootElement;
+        Assert.Equal(JsonValueKind.Number, root.GetProperty("nextStableId").ValueKind);
+        Assert.Equal(JsonValueKind.Number,
+            root.GetProperty("eventInstrumentFolders")[0].GetProperty("id").ValueKind);
+        Assert.Equal(JsonValueKind.Number,
+            root.GetProperty("eventInstruments")[0].GetProperty("id").ValueKind);
+        Assert.Equal(JsonValueKind.Number,
+            root.GetProperty("eventInstruments")[0].GetProperty("folderId").ValueKind);
+
+        using JsonDocument conductorJson = JsonDocument.Parse(ConductorTrackCodecV1.Serialize(project));
+        Assert.Equal(JsonValueKind.Number,
+            conductorJson.RootElement.GetProperty("tempos")[0].GetProperty("id").ValueKind);
+    }
+
+    [Fact]
+    public void ConductorPersistenceRejectsTimeSignatureIncompatibleWithProjectTpq()
+    {
+        MidoraProject project = new(1);
+        string json = Encoding.UTF8.GetString(ConductorTrackCodecV1.Serialize(project));
+        string incompatibleJson = json.Replace(
+            "\"denominator\": 4",
+            "\"denominator\": 8",
+            StringComparison.Ordinal);
+        Assert.NotEqual(json, incompatibleJson);
+        ConductorTrackJsonV1 incompatible = ConductorTrackCodecV1.Parse(
+            Encoding.UTF8.GetBytes(incompatibleJson));
+
+        Assert.Throws<InvalidDataException>(() =>
+            ConductorTrackCodecV1.Restore(project, incompatible));
+        project.Conductor.TimeSignatures[0] = project.Conductor.TimeSignatures[0] with
+        {
+            Denominator = 8
+        };
+        Assert.Throws<InvalidDataException>(() => ConductorTrackCodecV1.Serialize(project));
+    }
+
+    [Fact]
+    public void ProtobufStableIdScalarRejectsZeroAndNegativeValues()
+    {
+        Assert.Equal(long.MaxValue,
+            ProtobufValueCodecV1.FromWire(long.MaxValue, "id").Value);
+        Assert.Throws<InvalidDataException>(() => ProtobufValueCodecV1.FromWire(0, "id"));
+        Assert.Throws<InvalidDataException>(() => ProtobufValueCodecV1.FromWire(-1, "id"));
     }
 
     [Fact]
     public void StrictProtobufRejectsUnknownFieldsWrongWireTypesAndInvalidRgb()
     {
-        byte[] unknownField = Convert.FromHexString("0901000000000000001801");
-        byte[] wrongWireType = Convert.FromHexString("0801");
+        byte[] unknownField = Convert.FromHexString("08013001");
+        byte[] wrongWireType = Convert.FromHexString("090100000000000000");
         byte[] uint32Overflow = Convert.FromHexString("088080808010");
         byte[] nonFiniteDouble = Convert.FromHexString("09000000000000f87f");
 
         Assert.Throws<InvalidDataException>(() =>
-            StrictProtobufWireV1.Validate(unknownField, StableId.Descriptor));
+            StrictProtobufWireV1.Validate(unknownField, LogicalNoteV1.Descriptor));
         Assert.Throws<InvalidDataException>(() =>
-            StrictProtobufWireV1.Validate(wrongWireType, StableId.Descriptor));
+            StrictProtobufWireV1.Validate(wrongWireType, LogicalNoteV1.Descriptor));
         Assert.Throws<InvalidDataException>(() =>
             StrictProtobufWireV1.Validate(uint32Overflow, RgbColor.Descriptor));
         Assert.Throws<InvalidDataException>(() =>
@@ -191,13 +340,15 @@ public sealed class PersistenceContractV1Tests
     public void CheckedInDescriptorHashMatchesFrozenProtoDescriptor()
     {
         FileDescriptorSet descriptorSet = new();
-        descriptorSet.File.Add(StableId.Descriptor.File.ToProto());
+        descriptorSet.File.Add(RgbColor.Descriptor.File.ToProto());
         byte[] descriptorBytes = StrictProtobufWireV1.SerializeDeterministic(descriptorSet);
         string actual = Convert.ToHexString(SHA256.HashData(descriptorBytes)).ToLowerInvariant();
         string baselinePath = Path.Combine(
             AppContext.BaseDirectory, "Schemas", "Proto", "midora-common-v1.descriptor.sha256");
 
-        Assert.Equal(File.ReadAllText(baselinePath).Trim(), actual);
+        string expected = File.ReadAllText(baselinePath).Trim();
+        Assert.True(string.Equals(expected, actual, StringComparison.Ordinal),
+            $"Common protobuf descriptor hash mismatch. Expected={expected}; Actual={actual}");
     }
 
     private static ManifestJsonV1 CreateManifest() => new()

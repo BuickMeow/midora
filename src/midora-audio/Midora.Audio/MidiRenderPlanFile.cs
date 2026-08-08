@@ -6,13 +6,14 @@ namespace Midora.Audio;
 public static class MidiRenderPlanFile
 {
     private const uint Magic = 0x5041444d;
-    private const int Version = 2;
+    private const int Version = 4;
     private const int ChecksumByteCount = 32;
     private const int MaximumFileByteCount = 256 * 1024 * 1024;
     private const int MaximumEventCount = 16 * 1024 * 1024;
-    private const int FixedPayloadByteCount = 32;
-    private const int SourceIdByteCount = 16;
+    private const int FixedPayloadByteCount = 36;
+    private const int SourceIdByteCount = sizeof(long);
     private const int PortHeaderByteCount = 8;
+    private const int UnitFragmentHeaderByteCount = 148;
     private const int EventByteCount = 16;
 
     public static void Write(string filePath, MidiRenderPlan plan)
@@ -30,9 +31,9 @@ public static class MidiRenderPlanFile
             writer.Write(plan.TotalFrameCount);
             writer.Write(plan.Ports.Length);
             writer.Write(plan.SourceIds.Length);
-            foreach (Guid sourceId in plan.SourceIds)
+            foreach (long sourceId in plan.SourceIds)
             {
-                writer.Write(sourceId.ToByteArray());
+                writer.Write(sourceId);
             }
             writer.Write(plan.InitiallyDisabledSourceIndices.Length);
             foreach (int sourceIndex in plan.InitiallyDisabledSourceIndices)
@@ -48,6 +49,35 @@ public static class MidiRenderPlanFile
                 writer.Write((ushort)0);
                 writer.Write(events.Length);
                 foreach (ScheduledMidiMessage item in events)
+                {
+                    writer.Write(item.SampleFrame);
+                    writer.Write(item.Message.PackedValue);
+                    writer.Write(item.SourceIndex);
+                }
+            }
+            writer.Write(plan.UnitFragments.Length);
+            foreach (MidiUnitFragmentRenderPlan fragment in plan.UnitFragments)
+            {
+                writer.Write(fragment.CanonicalZeroBasedPortNumber);
+                writer.Write(fragment.CanonicalZeroBasedChannelNumber);
+                writer.Write((ushort)0);
+                writer.Write(fragment.TrackId);
+                writer.Write(fragment.SegmentId);
+                writer.Write(fragment.EventInstrumentId);
+                writer.Write(fragment.InstanceGroupId);
+                writer.Write(fragment.SubVoiceId);
+                writer.Write(fragment.SourceIndex);
+                writer.Write(fragment.StartFrame);
+                writer.Write(fragment.EndFrame);
+                writer.Write(Convert.FromHexString(fragment.SemanticFingerprint));
+                writer.Write(fragment.PcmCacheKey is null
+                    ? new byte[32]
+                    : Convert.FromHexString(fragment.PcmCacheKey));
+                writer.Write(fragment.PcmCachePayloadOffset);
+                writer.Write(fragment.PcmCacheHit);
+                writer.Write(new byte[7]);
+                writer.Write(fragment.Events.Length);
+                foreach (ScheduledMidiMessage item in fragment.Events)
                 {
                     writer.Write(item.SampleFrame);
                     writer.Write(item.Message.PackedValue);
@@ -122,16 +152,10 @@ public static class MidiRenderPlanFile
             {
                 throw new InvalidDataException("The IPC MIDI source count is invalid.");
             }
-            Guid[] sourceIds = new Guid[sourceCount];
-            Span<byte> sourceIdBytes = stackalloc byte[SourceIdByteCount];
+            long[] sourceIds = new long[sourceCount];
             for (int sourceIndex = 0; sourceIndex < sourceCount; sourceIndex++)
             {
-                int sourceIdByteCount = reader.Read(sourceIdBytes);
-                if (sourceIdByteCount != SourceIdByteCount)
-                {
-                    throw new InvalidDataException("The IPC MIDI source table is truncated.");
-                }
-                sourceIds[sourceIndex] = new Guid(sourceIdBytes);
+                sourceIds[sourceIndex] = reader.ReadInt64();
             }
             int disabledSourceCount = reader.ReadInt32();
             if (disabledSourceCount is < 0 || disabledSourceCount > sourceCount
@@ -176,6 +200,89 @@ public static class MidiRenderPlanFile
                 ports[portIndex] = new MidiPortRenderPlan(portNumber, events);
             }
 
+            int fragmentCount = reader.ReadInt32();
+            if (fragmentCount is < 0 or > MaximumEventCount
+                || (long)fragmentCount * UnitFragmentHeaderByteCount
+                    > payloadLength - stream.Position)
+            {
+                throw new InvalidDataException("The IPC MIDI Unit fragment count is invalid.");
+            }
+            MidiUnitFragmentRenderPlan[] fragments = new MidiUnitFragmentRenderPlan[fragmentCount];
+            for (int fragmentIndex = 0; fragmentIndex < fragmentCount; fragmentIndex++)
+            {
+                byte portNumber = reader.ReadByte();
+                byte channelNumber = reader.ReadByte();
+                ushort reserved = reader.ReadUInt16();
+                if (reserved != 0)
+                {
+                    throw new InvalidDataException(
+                        "The IPC MIDI Unit fragment has a non-zero reserved field.");
+                }
+                long trackId = reader.ReadInt64();
+                long segmentId = reader.ReadInt64();
+                long eventInstrumentId = reader.ReadInt64();
+                long instanceGroupId = reader.ReadInt64();
+                long subVoiceId = reader.ReadInt64();
+                int sourceIndex = reader.ReadInt32();
+                long startFrame = reader.ReadInt64();
+                long endFrame = reader.ReadInt64();
+                string fingerprint = Convert.ToHexStringLower(reader.ReadBytes(32));
+                if (fingerprint.Length != 64)
+                {
+                    throw new InvalidDataException(
+                        "The IPC MIDI Unit fragment fingerprint is truncated.");
+                }
+                byte[] cacheKeyBytes = reader.ReadBytes(32);
+                if (cacheKeyBytes.Length != 32)
+                {
+                    throw new InvalidDataException(
+                        "The IPC MIDI Unit fragment cache key is truncated.");
+                }
+                bool hasCacheKey = cacheKeyBytes.Any(value => value != 0);
+                string? cacheKey = hasCacheKey
+                    ? Convert.ToHexStringLower(cacheKeyBytes)
+                    : null;
+                long cachePayloadOffset = reader.ReadInt64();
+                bool cacheHit = reader.ReadBoolean();
+                if (reader.ReadBytes(7).Any(value => value != 0))
+                {
+                    throw new InvalidDataException(
+                        "The IPC MIDI Unit fragment cache binding has non-zero reserved fields.");
+                }
+                int eventCount = reader.ReadInt32();
+                totalEventCount = checked(totalEventCount + eventCount);
+                if (eventCount < 0 || totalEventCount > MaximumEventCount
+                    || (long)eventCount * EventByteCount > payloadLength - stream.Position)
+                {
+                    throw new InvalidDataException(
+                        "The IPC MIDI Unit fragment event count is invalid.");
+                }
+                ScheduledMidiMessage[] events = new ScheduledMidiMessage[eventCount];
+                for (int eventIndex = 0; eventIndex < eventCount; eventIndex++)
+                {
+                    events[eventIndex] = new(
+                        reader.ReadInt64(),
+                        MidiMessage.FromPackedValue(reader.ReadUInt32()),
+                        reader.ReadInt32());
+                }
+                fragments[fragmentIndex] = new(
+                    portNumber,
+                    channelNumber,
+                    trackId,
+                    segmentId,
+                    eventInstrumentId,
+                    instanceGroupId,
+                    subVoiceId,
+                    sourceIndex,
+                    startFrame,
+                    endFrame,
+                    fingerprint,
+                    events,
+                    cacheKey,
+                    cachePayloadOffset,
+                    cacheHit);
+            }
+
             if (stream.Position != payloadLength)
             {
                 throw new InvalidDataException("The IPC MIDI event plan contains trailing payload data.");
@@ -186,7 +293,8 @@ public static class MidiRenderPlanFile
                 totalFrameCount,
                 ports,
                 sourceIds,
-                disabledSourceIndices);
+                disabledSourceIndices,
+                fragments);
         }
         catch (Exception exception) when (exception is EndOfStreamException
             or OverflowException
@@ -214,11 +322,21 @@ public static class MidiRenderPlanFile
                 throw new InvalidDataException("The IPC MIDI event plan exceeds its bounded event limit.");
             }
         }
+        foreach (MidiUnitFragmentRenderPlan fragment in plan.UnitFragments)
+        {
+            totalEventCount += fragment.Events.Length;
+            if (totalEventCount > MaximumEventCount)
+            {
+                throw new InvalidDataException(
+                    "The IPC MIDI event plan exceeds its bounded Unit fragment event limit.");
+            }
+        }
 
         long payloadByteCount = FixedPayloadByteCount
             + ((long)sourceCount * SourceIdByteCount)
             + ((long)disabledSourceCount * sizeof(int))
             + ((long)plan.Ports.Length * PortHeaderByteCount)
+            + ((long)plan.UnitFragments.Length * UnitFragmentHeaderByteCount)
             + ((long)totalEventCount * EventByteCount);
         if (payloadByteCount + ChecksumByteCount > MaximumFileByteCount)
         {

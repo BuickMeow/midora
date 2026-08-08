@@ -143,7 +143,7 @@ Project Source Data
 
 2A. 同一 tick 可有多个普通 Marker；名称可空、可重复；以稳定 ID 区分和确定同 tick 次序。
 
-3A. 稳定 ID 的 JSON、对象文件名和 `nextStableId` 使用 32 位小写十六进制字符串，高 64-bit 在前；protobuf 使用 `StableId { fixed64 high = 1; fixed64 low = 2; }`。
+3A. 稳定 ID 的内存核心是正 `long`（`1..long.MaxValue`）；JSON 与 `nextStableId` 使用 canonical 十进制 integer，对象文件名使用无符号、无前导零的十进制 ASCII；protobuf 在既有外层字段号上使用标量 `int64`。开发期旧 128-bit 格式不兼容读取或迁移。
 
 4A. 新建 Event Instrument 默认 Overlap=`Reject`；命中产生 Error。用户显式 `Warn` 时产生 Warning，默认可消费；Warning-as-error 只改变成功判定，不改变诊断级别。
 
@@ -178,7 +178,7 @@ Project Source Data
 
 仓库不提交 DLL。正式构建只接受操作员提供且逐文件匹配 manifest 的二进制，运行时校验完整版本码；vendor current/latest 只能生成显式开发候选，不能自动升级正式基线。
 
-17A. C# Mapping ABI v1 固定签名 `double Transform(double value, in MappingContextV1 context)`；独立只读契约，Roslyn 5.3.0、C# 14、`Microsoft.NETCore.App.Ref 10.0.10`，不开放 Midora/WPF/第三方引用。缓存键包含 ABI/compiler profile/函数体 UTF-8 SHA-256；每 Project 只保留当前源码修订并用 collectible ALC 卸载。该机制不是 sandbox。
+17A. C# Mapping 内部 ABI v2 固定签名 `double Transform(double value, in MappingContextV2 context)`；稳定身份通过 `MappingStableIdV2(long)` 传递。契约独立只读，Roslyn 5.3.0、C# 14、`Microsoft.NETCore.App.Ref 10.0.10`，不开放 Midora/WPF/第三方引用。缓存键包含 ABI/compiler profile/函数体 UTF-8 SHA-256；每 Project 只保留当前源码修订并用 collectible ALC 卸载。该机制不是 sandbox。
 
 18A/18.1A. 持久化基线：
 
@@ -280,7 +280,7 @@ Project Source Data
 
 2. 2026-08-06 已以 ADR-CORE-003 的 Segment 入口/Track 末尾 checkpoint 替换 Track 整片段过渡缓存；dirty range、展开状态逐字段等价、state hash 和“后续 Source 未变”收敛门已实现。全局确定性资源分配、排序、范围恢复和裁剪仍完整重算，Full Compile 继续作为逐字段 oracle。
 
-3. C# Mapping ABI v1 已有独立契约、固定编译 profile、source hash identity、collectible ALC 当前修订缓存和测试。
+3. C# Mapping ABI v2 已有独立契约、单 `long` 稳定身份、固定编译 profile、source hash identity、collectible ALC 当前修订缓存和测试。
 
 4. Persistence 已实现：
 
@@ -321,31 +321,19 @@ Project Source Data
 - 仓库不含 BASS DLL。
 
 ============================================================
-七、尚未完成的初版模块
+七、当前剩余边界
 ============================================================
 
-这些是实现缺口，不是待重新决定的产品语义：
+截至 2026-08-08，SRS 初版的非 UI 源码实现已经闭合。领域、编译、播放/预览、MIDI 导出、音频文件渲染、BASS/WASAPI/Worker、持久化、Application 工作流、偏好、输出事务和发布脚本均已实现；§7～§12 逐节追踪见 `misc/Midora-Domain-Compiler-Conformance-Matrix.md`。
 
-1. 完整 `.midora`：ZIP package、所有剩余 schema、Project object graph round-trip、迁移、安全 Save/Save Copy、重开校验、损坏隔离、未知内容拒绝、内嵌 SF2 复制和事务发布。
-2. Application Preferences、完整 Project Defaults、Modified/Undo/Redo、WPF 电源/suspend/closing 生命周期接线。
-3. Event Instrument、SubVoice、Mapping、Lifecycle、Logical Track/Segment/曲线的完整编辑器级领域对象与命令。
-4. SRS 12.21 Segment checkpoint、dirty propagation、state hash 收敛和正式 incremental compiler。
-5. Canonical CompileContext 摘要、失败阶段、完整来源追踪和可选 Debug 诊断。
-6. MIDI 按 Logical Track、按 Port、多文件目录、Compact Routing、Readme 内容、事务、覆盖确认、取消/进度和完整报告。
-7. 正式 Audio Render workflow：Whole Mix/Per Logical Track、任务快照、子进程内文件 OutputDevice、取消、独立/原子发布语义、结果报告。
-8. SoundFont 的 BASSMIDI 可加载性验证、监控、Embedded package 完整实现。
-9. 完整 WPF UI、导航、编辑器、对话框、Project 打开/关闭和任务工作流。
-10. Native interop 的结构布局、calling convention、位宽、重复 init/free、handle/delegate 泄漏完整自动化门。
-11. WASAPI 设备移除/默认设备变化、不同 callback block、deadline、underrun、长期运行、故障恢复和正式硬件矩阵。
-12. BASS 非商业免费使用条件在实际发布主体/收入/平台/分发方式上的最终发布核验，以及 SF2 内容许可和最终 notices/package 验收。
+当前不是源码功能缺口，而是以下外部或后续阶段边界：
 
-建议优先级以 `misc/Midora-Implementation-Roadmap.md` 和用户本次指令为准。若用户没有指定下一任务，可以提出以下候选但不要自动开工：
+1. WPF UI、导航、控件、pointer capture、窗口与用户交互接线明确属于后续 UI 阶段；不得在非 UI 层复制业务语义。
+2. 实际 GitHub Release 当日仍须按 Q-NUI-013 复核届时 BASS 官方免费使用条件，把供应商原始许可文本与现有 notices 一并放入最终分发包；当前本地 AOT 测试产物不是正式发行包。
+3. Q-NUI-029、Q-NUI-031～033、Q-NUI-043～048 是已经按推荐实现、等待产品所有者确认的小决定；不阻塞当前实现，若答复修改才按问题库调整。
+4. 扩大固定种子随机 Project、更多 SF2/设备/硬件矩阵属于持续加固，不得误写成当前存在已知语义缺口。
 
-- 完整 `.midora` 持久化最小垂直切片；
-- SRS 12.21 正式 incremental compiler；
-- MIDI 多文件导出 workflow；
-- 正式 Audio Render workflow；
-- WPF 应用生命周期与 Project 工作流。
+当前精确自动基线是 1053 项。八组真实 SF2 已分别执行根目录 `Test-NonUIRelease.ps1` 的固定原生 manifest、locked restore、6 solution CI Release build、win-x64 Native AOT publish 和 10 项目零跳过门，累计 8424/8424、0 failure、0 skip；每组 build 均为 0 warning/0 error。证据目录为 `artifacts/non-ui-release-gate-sf2-01-sdetrimental-20260808` ～ `artifacts/non-ui-release-gate-sf2-08-minecraft-20260808`，最后一套已验证 AOT Worker 位于 `artifacts/non-ui-release-gate-sf2-08-minecraft-20260808/worker-win-x64`。
 
 ============================================================
 八、关键代码和文档定位
@@ -375,7 +363,7 @@ Project Source Data
 - Compiler tests：`src/midora-core/Midora.Compiler.Tests/`
 - Persistence：`src/midora-core/Midora.Persistence/`
 - Persistence tests：`src/midora-core/Midora.Persistence.Tests/`
-- Mapping ABI：`src/midora-core/Midora.Mapping.Contract.V1/`
+- Mapping ABI：`src/midora-core/Midora.Mapping.Contract.V2/`
 - Playback：`src/midora-core/Midora.Playback/`
 - Playback/BASS-WASAPI adapter：`src/midora-core/Midora.Playback.BassWasapi/`
 - MIDI primitives：`src/midora-midi/Midora.Midi/`

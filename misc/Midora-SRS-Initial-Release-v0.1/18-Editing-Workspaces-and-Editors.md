@@ -548,7 +548,6 @@ Playback
 MIDI Export
 Audio Render
 Reset Defaults
-Event Scope Defaults
 ```
 ### 18.9.2 General 与 Metadata
 TPQ 创建 Project 后只读。
@@ -628,13 +627,14 @@ Audio Render Settings 必须允许保存默认文件采样率：
 默认 48,000 Hz
 ```
 RIFF/WAVE、Stereo、Interleaved IEEE 32-bit Float 和 Little-endian 是只读固定格式字段。
-### 18.9.6 Reset 与 Event Scope
+### 18.9.6 Reset 与固定 Event Scope
 Reset Defaults 必须与以下内容明确区分：
 ```text
 SubVoice Initial State
 Timeline Event
 Instance-end Reset
 ```
+初版不显示或编辑 `Global Event Scope Defaults`。Note 为逐实例事件；Bank、Program、CC、Pitch Bend、RPN、NRPN 与 Pitch Bend Range 等状态类事件的 Channel-Wide 作用域由各专项章节固定，不提供用户覆盖入口。
 ### 18.9.7 字段提交
 设置字段提交后进入 Project Undo / Redo。
 非法值：

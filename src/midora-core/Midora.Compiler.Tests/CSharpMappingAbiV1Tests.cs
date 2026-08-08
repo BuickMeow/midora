@@ -5,37 +5,37 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.CodeAnalysis.CSharp;
 using Midora.Domain;
-using Midora.Mapping.Contract.V1;
+using Midora.Mapping.Contract.V2;
 
 namespace Midora.Compiler.Tests;
 
-public sealed class CSharpMappingAbiV1Tests
+public sealed class CSharpMappingAbiV2Tests
 {
     [Fact]
     public void ContractPublicSurfaceIsVersionedReadonlyAndDomainIndependent()
     {
-        Assert.Equal(1, MappingAbiV1.Version);
-        Assert.Equal("10.0.10", MappingAbiV1.NetCoreReferencePackVersion);
-        Assert.Equal("midora-csharp14-net10.0.10-roslyn5.3-v1", MappingAbiV1.CompilerProfileId);
-        Assert.True(typeof(MappingContextV1).IsValueType);
-        Assert.NotNull(typeof(MappingContextV1).GetCustomAttribute<IsReadOnlyAttribute>());
+        Assert.Equal(2, MappingAbiV2.Version);
+        Assert.Equal("10.0.10", MappingAbiV2.NetCoreReferencePackVersion);
+        Assert.Equal("midora-csharp14-net10.0.10-roslyn5.3-v2", MappingAbiV2.CompilerProfileId);
+        Assert.True(typeof(MappingContextV2).IsValueType);
+        Assert.NotNull(typeof(MappingContextV2).GetCustomAttribute<IsReadOnlyAttribute>());
 
-        string[] exportedTypes = typeof(MappingContextV1).Assembly.GetExportedTypes()
+        string[] exportedTypes = typeof(MappingContextV2).Assembly.GetExportedTypes()
             .Select(type => type.FullName!)
             .Order(StringComparer.Ordinal)
             .ToArray();
         Assert.Equal(
         [
-            "Midora.Mapping.Contract.V1.MappingAbiV1",
-            "Midora.Mapping.Contract.V1.MappingContextV1",
-            "Midora.Mapping.Contract.V1.MappingEventKindV1",
-            "Midora.Mapping.Contract.V1.MappingStableIdV1",
-            "Midora.Mapping.Contract.V1.MappingTargetParameterV1"
+            "Midora.Mapping.Contract.V2.MappingAbiV2",
+            "Midora.Mapping.Contract.V2.MappingContextV2",
+            "Midora.Mapping.Contract.V2.MappingEventKindV2",
+            "Midora.Mapping.Contract.V2.MappingStableIdV2",
+            "Midora.Mapping.Contract.V2.MappingTargetParameterV2"
         ], exportedTypes);
-        Assert.DoesNotContain(typeof(MappingContextV1).Assembly.GetReferencedAssemblies(), reference =>
+        Assert.DoesNotContain(typeof(MappingContextV2).Assembly.GetReferencedAssemblies(), reference =>
             reference.Name?.StartsWith("Midora.", StringComparison.Ordinal) == true);
 
-        PropertyInfo[] properties = typeof(MappingContextV1).GetProperties(BindingFlags.Instance | BindingFlags.Public);
+        PropertyInfo[] properties = typeof(MappingContextV2).GetProperties(BindingFlags.Instance | BindingFlags.Public);
         Assert.Equal(27, properties.Length);
         Assert.Equal(
         [
@@ -53,12 +53,12 @@ public sealed class CSharpMappingAbiV1Tests
             Assert.DoesNotContain("Midora.Domain", property.PropertyType.FullName ?? string.Empty, StringComparison.Ordinal);
         });
 
-        Assert.Equal(0, (int)MappingEventKindV1.Unknown);
-        Assert.Equal(8, (int)MappingEventKindV1.PitchBendRange);
-        Assert.Equal(0, (int)MappingTargetParameterV1.Unknown);
-        Assert.Equal(4, (int)MappingTargetParameterV1.LogicalParameterOutput);
-        Assert.Equal("0123456789abcdeffedcba9876543210",
-            new MappingStableIdV1(0x0123456789abcdef, 0xfedcba9876543210).ToString());
+        Assert.Equal(0, (int)MappingEventKindV2.Unknown);
+        Assert.Equal(8, (int)MappingEventKindV2.PitchBendRange);
+        Assert.Equal(0, (int)MappingTargetParameterV2.Unknown);
+        Assert.Equal(4, (int)MappingTargetParameterV2.LogicalParameterOutput);
+        Assert.Equal("9223372036854775807", new MappingStableIdV2(long.MaxValue).ToString());
+        Assert.Throws<ArgumentOutOfRangeException>(() => new MappingStableIdV2(-1));
     }
 
     [Fact]
@@ -67,13 +67,13 @@ public sealed class CSharpMappingAbiV1Tests
         MidoraProject project = new(480);
         CSharpMappingFunction function = Function(project,
             "return value + context.TriggerVelocity;");
-        function.DeclaredContextFields.Add(nameof(MappingContextV1.TriggerVelocity));
+        function.DeclaredContextFields.Add(nameof(MappingContextV2.TriggerVelocity));
         using CSharpMappingCompiler compiler = new();
         compiler.SynchronizeFunctions([function]);
 
         CSharpMappingCompiler.MappingDelegate first = compiler.GetOrCompile(function);
         CSharpMappingCompiler.MappingDelegate second = compiler.GetOrCompile(function);
-        MappingContextV1 context = new(2, 60, 7, 120, 0, 0, 0, 60, 100);
+        MappingContextV2 context = new(2, 60, 7, 120, 0, 0, 0, 60, 100);
 
         Assert.Same(first, second);
         Assert.Equal(9, first(2, in context));
@@ -82,14 +82,14 @@ public sealed class CSharpMappingAbiV1Tests
         Assert.Equal(LanguageVersion.CSharp14, CSharpMappingCompiler.FixedLanguageVersion);
         Assert.Equal(new Version(5, 3, 0, 0), typeof(CSharpCompilation).Assembly.GetName().Version);
         string bodyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(function.Body))).ToLowerInvariant();
-        Assert.Equal($"Midora.Mapping.Generated.V1.{bodyHash}", first.Method.Module.Assembly.GetName().Name);
+        Assert.Equal($"Midora.Mapping.Generated.V2.{bodyHash}", first.Method.Module.Assembly.GetName().Name);
         Assert.True(AssemblyLoadContext.GetLoadContext(first.Method.Module.Assembly)!.IsCollectible);
         ParameterInfo[] delegateParameters = typeof(CSharpMappingCompiler.MappingDelegate).GetMethod("Invoke")!.GetParameters();
-        Assert.Equal(typeof(MappingContextV1).MakeByRefType(), delegateParameters[1].ParameterType);
+        Assert.Equal(typeof(MappingContextV2).MakeByRefType(), delegateParameters[1].ParameterType);
         Assert.True(delegateParameters[1].IsIn);
         Assert.True(first.Method.GetParameters()[1].IsIn);
 
-        function.DeclaredContextFields.Add(nameof(MappingContextV1.ProjectTick));
+        function.DeclaredContextFields.Add(nameof(MappingContextV2.ProjectTick));
         Assert.Same(first, compiler.GetOrCompile(function));
         Assert.Equal(1, compiler.CompilationCount);
     }
@@ -104,7 +104,7 @@ public sealed class CSharpMappingAbiV1Tests
         compiler.SynchronizeFunctions([coreApi]);
 
         CSharpMappingCompiler.MappingDelegate mapping = compiler.GetOrCompile(coreApi);
-        MappingContextV1 context = default;
+        MappingContextV2 context = default;
         Assert.Equal(5, mapping(0, in context));
 
         CSharpMappingFunction domain = Function(project,
@@ -131,7 +131,7 @@ public sealed class CSharpMappingAbiV1Tests
         compiler.SynchronizeFunctions([function]);
 
         CSharpMappingCompiler.MappingDelegate mapping = compiler.GetOrCompile(function);
-        MappingContextV1 context = default;
+        MappingContextV2 context = default;
 
         Assert.Equal(12.5, mapping(12.5, in context));
     }
@@ -142,13 +142,13 @@ public sealed class CSharpMappingAbiV1Tests
         MidoraProject project = new(480);
         using CSharpMappingCompiler compiler = new();
         CSharpMappingFunction unknownAbi = Function(project, "return value;");
-        unknownAbi.AbiVersion = 2;
-        Assert.Contains("ABI version 2", Assert.Throws<MappingException>(() => compiler.GetOrCompile(unknownAbi)).Message,
+        unknownAbi.AbiVersion = 1;
+        Assert.Contains("ABI version 1", Assert.Throws<MappingException>(() => compiler.GetOrCompile(unknownAbi)).Message,
             StringComparison.Ordinal);
 
         CSharpMappingFunction unknownField = Function(project, "return value;");
         unknownField.DeclaredContextFields.Add("Project");
-        Assert.Contains("unknown ABI v1 context fields",
+        Assert.Contains("unknown ABI v2 context fields",
             Assert.Throws<MappingException>(() => compiler.GetOrCompile(unknownField)).Message,
             StringComparison.Ordinal);
 
@@ -169,7 +169,7 @@ public sealed class CSharpMappingAbiV1Tests
     {
         var fixture = CompilerTestProject.Create();
         CSharpMappingFunction function = Function(fixture.Project, "return value;");
-        function.AbiVersion = 2;
+        function.AbiVersion = 1;
         fixture.Instrument.MappingFunctions.Add(function);
 
         using MidoraCompiler compiler = new();
@@ -260,7 +260,7 @@ public sealed class CSharpMappingAbiV1Tests
     {
         var fixture = CompilerTestProject.Create();
         CSharpMappingFunction function = Function(fixture.Project, "return context.TemplateVelocity;");
-        function.DeclaredContextFields.Add(nameof(MappingContextV1.TemplateVelocity));
+        function.DeclaredContextFields.Add(nameof(MappingContextV2.TemplateVelocity));
         fixture.Instrument.MappingFunctions.Add(function);
         TemplateEvent controller = TemplateEvent.ControlChange(fixture.Project, 0, 1, 20);
         controller.ValueMappings.Add(new ValueMappingStep(fixture.Project)

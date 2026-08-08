@@ -42,7 +42,7 @@ public static class Program
 
             if (string.Equals(args[0], "play", StringComparison.Ordinal))
             {
-                if (args.Length != 15)
+                if (args.Length != 20)
                 {
                     throw new ArgumentException("Invalid playback argument count.");
                 }
@@ -62,7 +62,7 @@ public static class Program
 
             if (string.Equals(args[0], "file-render", StringComparison.Ordinal))
             {
-                if (args.Length != 11)
+                if (args.Length != 12)
                 {
                     throw new ArgumentException("Invalid file-render argument count.");
                 }
@@ -158,6 +158,46 @@ public static class Program
         }
 
         MidiRenderPlan plan = MidiRenderPlanFile.Read(planPath);
+        string? cacheStagingPath = EmptyToNull(args[15]);
+        if (cacheStagingPath is not null)
+        {
+            cacheStagingPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
+                cacheStagingPath,
+                "Unit PCM cache staging");
+        }
+        string? bufferingRecoverySpoolPath = EmptyToNull(args[16]);
+        if (bufferingRecoverySpoolPath is not null)
+        {
+            bufferingRecoverySpoolPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
+                bufferingRecoverySpoolPath,
+                "Buffering recovery spool");
+        }
+        long bufferingRecoveryMemoryFrameCapacity = ParseInt64(args[17]);
+        if (bufferingRecoveryMemoryFrameCapacity < 0
+            || bufferingRecoveryMemoryFrameCapacity > plan.TotalFrameCount
+            || bufferingRecoverySpoolPath is not null
+                && bufferingRecoveryMemoryFrameCapacity != 0)
+        {
+            throw new InvalidDataException(
+                "The Buffering recovery memory capacity is incompatible with the render plan.");
+        }
+        string? playbackSpanCacheStagingPath = EmptyToNull(args[18]);
+        if (playbackSpanCacheStagingPath is not null)
+        {
+            playbackSpanCacheStagingPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
+                playbackSpanCacheStagingPath,
+                "playback-span cache staging");
+        }
+        bool playbackSpanCacheHit = InitialReleaseAudioWorkerProtocolPolicy.ParseBoolean(
+            args[19],
+            "playbackSpanCacheHit");
+        if (playbackSpanCacheHit && playbackSpanCacheStagingPath is null)
+        {
+            throw new InvalidDataException(
+                "A playback-span cache hit requires a staging payload.");
+        }
+        string planDirectory = Path.GetDirectoryName(planPath)
+            ?? throw new InvalidDataException("The render plan path has no parent directory.");
         if (plan.SampleRate != expectedSampleRate)
         {
             throw new InvalidDataException("The frozen render plan does not match the probed device rate.");
@@ -168,13 +208,46 @@ public static class Program
             plan,
             soundFontPath,
             rendererSettings,
-            masterSettings);
+            masterSettings,
+            cacheStagingPath);
+        using PlaybackSpanRenderSource? playbackSpanSource =
+            playbackSpanCacheStagingPath is null
+                ? null
+                : new PlaybackSpanRenderSource(
+                    renderer,
+                    playbackSpanCacheStagingPath,
+                    playbackSpanCacheHit);
+        IAudioRenderSource primaryRenderSource =
+            (IAudioRenderSource?)playbackSpanSource ?? renderer;
+        BufferingRecoveryRenderSource? createdRecoverySource = null;
+        Exception? recoveryStorageFailure = null;
+        try
+        {
+            createdRecoverySource = bufferingRecoverySpoolPath is not null
+                ? new BufferingRecoveryRenderSource(
+                    primaryRenderSource,
+                    bufferingRecoverySpoolPath,
+                    InitialReleaseAudioRuntimePolicy.WorkFrameCount)
+                : bufferingRecoveryMemoryFrameCapacity > 0
+                    ? new BufferingRecoveryRenderSource(
+                        primaryRenderSource,
+                        bufferingRecoveryMemoryFrameCapacity,
+                        InitialReleaseAudioRuntimePolicy.WorkFrameCount)
+                    : null;
+        }
+        catch (Exception exception) when (exception is OutOfMemoryException
+            or OverflowException)
+        {
+            recoveryStorageFailure = exception;
+        }
+        using BufferingRecoveryRenderSource? recoverySource = createdRecoverySource;
+        IAudioRenderSource renderSource = (IAudioRenderSource?)recoverySource ?? primaryRenderSource;
         int ringCapacityFrames = InitialReleaseAudioRuntimePolicy.BufferMillisecondsToFrameCapacity(
             plan.SampleRate,
             renderAheadMilliseconds);
         using AudioFrameRingBuffer ring = new(renderer.Format, ringCapacityFrames);
         int workFrameCount = InitialReleaseAudioRuntimePolicy.WorkFramesForRingCapacity(ringCapacityFrames);
-        using AudioRenderAheadWorker renderWorker = new(renderer, ring, workFrameCount);
+        using AudioRenderAheadWorker renderWorker = new(renderSource, ring, workFrameCount);
         renderWorker.Start();
 
         int prefillThreshold = ringCapacityFrames * 3 / 4;
@@ -206,6 +279,8 @@ public static class Program
         bool stopRequested = false;
         bool flushOnStop = true;
         bool completed = false;
+        bool heldPreviewPaused = false;
+        long heldPreviewPlanGeneration = 0;
         while (!stopRequested && !completed)
         {
             while (control.TryDequeue(out AudioWorkerControlCommand command))
@@ -216,20 +291,130 @@ public static class Program
                     flushOnStop = command.MonitoringCommand.SourceEnabled;
                     break;
                 }
+                if (command.Kind == AudioWorkerControlCommandKind.HeldPreviewPause)
+                {
+                    if (heldPreviewPaused)
+                    {
+                        throw new InvalidDataException("The held-preview producer is already paused.");
+                    }
+                    renderWorker.PauseAtProducerFrontier(TimeSpan.FromSeconds(5));
+                    heldPreviewPaused = true;
+                    control.PublishHeldPreviewStatus(
+                        AudioWorkerState.HeldPreviewPaused,
+                        output.ConsumedFrameCount,
+                        GetRenderPosition(renderer, playbackSpanSource),
+                        ring.UnderrunCount,
+                        output.CallbackAllocatedBytes,
+                        renderWorker.RenderingThreadAllocatedBytes,
+                        heldPreviewPlanGeneration);
+                    continue;
+                }
+                if (command.Kind == AudioWorkerControlCommandKind.HeldPreviewApplyPlan)
+                {
+                    if (!heldPreviewPaused)
+                    {
+                        throw new InvalidDataException(
+                            "A held-preview plan can only be applied while the producer is paused.");
+                    }
+                    string replacementPath = Path.Combine(
+                        planDirectory,
+                        HeldPreviewPlanExchange.GetFileName(command.Payload));
+                    MidiRenderPlan replacement = MidiRenderPlanFile.Read(replacementPath);
+                    renderer.ReplaceFuturePlan(replacement, renderer.RenderPositionFrames);
+                    heldPreviewPlanGeneration = command.Payload;
+                    renderWorker.ResumeFromProducerFrontier();
+                    heldPreviewPaused = false;
+                    control.PublishHeldPreviewStatus(
+                        AudioWorkerState.Playing,
+                        output.ConsumedFrameCount,
+                        GetRenderPosition(renderer, playbackSpanSource),
+                        ring.UnderrunCount,
+                        output.CallbackAllocatedBytes,
+                        renderWorker.RenderingThreadAllocatedBytes,
+                        heldPreviewPlanGeneration);
+                    continue;
+                }
+                if (command.Kind == AudioWorkerControlCommandKind.HeldPreviewResume)
+                {
+                    if (!heldPreviewPaused)
+                    {
+                        throw new InvalidDataException(
+                            "The held-preview producer is not paused.");
+                    }
+                    renderWorker.ResumeFromProducerFrontier();
+                    heldPreviewPaused = false;
+                    continue;
+                }
+                if (command.Kind == AudioWorkerControlCommandKind.BufferingRecoveryPrepare)
+                {
+                    if (recoverySource is null)
+                    {
+                        throw new AudioRecoveryStorageUnavailableException(
+                            "The complete Buffering recovery interval has neither a disk spool nor an in-memory reservation.",
+                            recoveryStorageFailure ?? new OutOfMemoryException(
+                                "The Worker could not reserve the in-memory fallback."));
+                    }
+                    if (!ring.IsBuffering || heldPreviewPaused)
+                    {
+                        throw new InvalidDataException(
+                            "A Buffering recovery command requires a configured spool and latched underrun.");
+                    }
+                    renderWorker.PauseAtProducerFrontier(TimeSpan.FromSeconds(5));
+                    recoverySource.PrepareRecovery(
+                        ring,
+                        command.Payload);
+                    renderWorker.ResumeFromProducerFrontier();
+                    while (ring.AvailableFrameCount < prefillThreshold
+                        && !ring.ProducerCompleted
+                        && !ring.ProducerFaulted)
+                    {
+                        Thread.Sleep(1);
+                    }
+                    if (ring.ProducerFaulted)
+                    {
+                        throw new MidoraAudioException(
+                            "The render-ahead producer faulted while publishing the recovery span.");
+                    }
+                    ring.ReleaseBuffering();
+                    continue;
+                }
                 if (command.Kind != AudioWorkerControlCommandKind.Monitoring)
                 {
                     throw new InvalidDataException("The shared audio command kind is invalid.");
                 }
 
                 MidiMonitoringCommand monitoring = command.MonitoringCommand;
+                playbackSpanSource?.RequestMonitoringFallback();
                 renderer.EnqueueMonitoringCommands(
                     MemoryMarshal.CreateReadOnlySpan(ref monitoring, 1));
+            }
+
+            if (output.DeviceLost)
+            {
+                // A removed/disabled active endpoint cannot be stopped through that endpoint again.
+                // Dispose first to detach the native callback and release every owned handle, then
+                // publish a non-fault terminal state that requires an explicit main-process choice.
+                output.Dispose();
+                renderWorker.Stop();
+                FinalizeAndMarkCacheCaptures(
+                    cacheStagingPath,
+                    playbackSpanCacheStagingPath,
+                    renderer,
+                    playbackSpanSource);
+                control.PublishRuntimeStatus(
+                    AudioWorkerState.OutputDeviceUnavailable,
+                    output.ConsumedFrameCount,
+                    GetRenderPosition(renderer, playbackSpanSource),
+                    ring.UnderrunCount,
+                    output.CallbackAllocatedBytes,
+                    renderWorker.RenderingThreadAllocatedBytes);
+                return 0;
             }
 
             bool outputSelectionInvalidated = BassWasapiOutputDevice.IsOutputSelectionInvalidated(
                 requestedDeviceId is null,
                 output.DefaultDeviceChanged,
-                output.DeviceLost);
+                deviceLost: false);
             if (output.CallbackFaulted || outputSelectionInvalidated || ring.ProducerFaulted
                 || renderer.Fault.Code != AudioRenderFaultCode.None)
             {
@@ -239,16 +424,30 @@ public static class Program
                     + $"ring={ring.ProducerFaulted}; renderer={renderer.Fault}.");
             }
 
+            if (heldPreviewPaused)
+            {
+                control.PublishHeldPreviewStatus(
+                    AudioWorkerState.HeldPreviewPaused,
+                    output.ConsumedFrameCount,
+                    GetRenderPosition(renderer, playbackSpanSource),
+                    ring.UnderrunCount,
+                    output.CallbackAllocatedBytes,
+                    renderWorker.RenderingThreadAllocatedBytes,
+                    heldPreviewPlanGeneration);
+                Thread.Sleep(1);
+                continue;
+            }
+
             completed = ring.ProducerCompleted && ring.AvailableFrameCount == 0;
             AudioWorkerState state = completed
                 ? AudioWorkerState.Completed
-                : ring.AvailableFrameCount < workFrameCount
+                : ring.IsBuffering
                     ? AudioWorkerState.Buffering
                     : AudioWorkerState.Playing;
             control.PublishRuntimeStatus(
                 state,
                 output.ConsumedFrameCount,
-                renderer.PositionFrames,
+                GetRenderPosition(renderer, playbackSpanSource),
                 ring.UnderrunCount,
                 output.CallbackAllocatedBytes,
                 renderWorker.RenderingThreadAllocatedBytes);
@@ -261,14 +460,40 @@ public static class Program
         control.PublishState(stopRequested ? AudioWorkerState.Stopping : AudioWorkerState.Completed);
         output.Stop(flushOnStop);
         renderWorker.Stop();
+        FinalizeAndMarkCacheCaptures(
+            cacheStagingPath,
+            playbackSpanCacheStagingPath,
+            renderer,
+            playbackSpanSource);
         control.PublishRuntimeStatus(
             stopRequested ? AudioWorkerState.Stopped : AudioWorkerState.Completed,
             output.ConsumedFrameCount,
-            renderer.PositionFrames,
+            GetRenderPosition(renderer, playbackSpanSource),
             ring.UnderrunCount,
             output.CallbackAllocatedBytes,
             renderWorker.RenderingThreadAllocatedBytes);
         return 0;
+    }
+
+    private static void FinalizeAndMarkCacheCaptures(
+        string? cacheStagingPath,
+        string? playbackSpanCacheStagingPath,
+        BassMidiRenderer renderer,
+        PlaybackSpanRenderSource? playbackSpanSource)
+    {
+        playbackSpanSource?.FinalizeCapture();
+        renderer.FinalizeCacheCapture();
+        if (cacheStagingPath is not null && renderer.CacheCaptureInvalidated)
+        {
+            File.WriteAllText(cacheStagingPath + ".invalidated", "monitoring-generation\n");
+        }
+        if (playbackSpanCacheStagingPath is not null
+            && playbackSpanSource?.CacheCaptureInvalidated == true)
+        {
+            File.WriteAllText(
+                playbackSpanCacheStagingPath + ".invalidated",
+                "cache-io-failure\n");
+        }
     }
 
     private static int RunFileProbe(string[] args, SharedAudioWorkerControl control)
@@ -321,6 +546,13 @@ public static class Program
             ParseInt32(args[6]),
             InitialReleaseAudioRuntimePolicy.WorkFrameCount);
         AudioMasterSettings masterSettings = ParseRequiredFileMasterSettings(args, 7);
+        string? cacheStagingPath = EmptyToNull(args[11]);
+        if (cacheStagingPath is not null)
+        {
+            cacheStagingPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
+                cacheStagingPath,
+                "Unit PCM cache staging");
+        }
 
         MidiRenderPlan plan = MidiRenderPlanFile.Read(planPath);
         InitialReleaseAudioWorkerProtocolPolicy.ValidateFileSettings(
@@ -332,7 +564,8 @@ public static class Program
             plan,
             soundFontPath,
             rendererSettings,
-            masterSettings);
+            masterSettings,
+            cacheStagingPath);
         FileRenderMonitor monitor = new(control, plan.TotalFrameCount);
         control.PublishPrepared(plan.SampleRate, 0);
         control.PublishRuntimeStatus(AudioWorkerState.Rendering, 0, 0, 0, 0, 0);
@@ -355,6 +588,11 @@ public static class Program
                 throw new MidoraAudioException(
                     $"The audio file Rendering hot path allocated {rendered.RenderingThreadAllocatedBytes} managed bytes.");
             }
+            FinalizeAndMarkCacheCaptures(
+                cacheStagingPath,
+                playbackSpanCacheStagingPath: null,
+                renderer,
+                playbackSpanSource: null);
             control.PublishRuntimeStatus(
                 AudioWorkerState.Completed,
                 rendered.FrameCount,
@@ -576,6 +814,14 @@ public static class Program
 
     private static int ParseInt32(string value) =>
         int.Parse(value, NumberStyles.Integer, CultureInfo.InvariantCulture);
+
+    private static long ParseInt64(string value) =>
+        long.Parse(value, NumberStyles.Integer, CultureInfo.InvariantCulture);
+
+    private static long GetRenderPosition(
+        BassMidiRenderer renderer,
+        PlaybackSpanRenderSource? playbackSpanSource) =>
+        playbackSpanSource?.PositionFrames ?? renderer.RenderPositionFrames;
 
     private static float ParseSingle(string value) =>
         float.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture);

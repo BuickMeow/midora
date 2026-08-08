@@ -78,7 +78,7 @@ public sealed class ProjectDomainEditCommandsTests
         LogicalTrack second = new(project) { Name = "Second" };
         project.Tracks.Add(second);
         project.AudioRender.ExplicitLogicalTrackIds.Add(first.Id);
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -140,7 +140,7 @@ public sealed class ProjectDomainEditCommandsTests
         EventInstrument second = CreateInstrument(project, "Strings");
         LogicalTrack track = project.Tracks[0];
         track.LastBoundEventInstrumentName = "Exact Old Snapshot";
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -247,7 +247,7 @@ public sealed class ProjectDomainEditCommandsTests
             0);
         project.DamagedLogicalTracks.Add(damagedTrack);
         project.AudioRender.ExplicitLogicalTrackIds.Add(damagedTrackId);
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -285,7 +285,7 @@ public sealed class ProjectDomainEditCommandsTests
         Segment blocker = new(project) { ProjectStartTick = 2_000, LengthTicks = 480 };
         targetTrack.Segments.Add(blocker);
         project.Tracks.Add(targetTrack);
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -353,7 +353,7 @@ public sealed class ProjectDomainEditCommandsTests
         MidoraProject project = CreateProject();
         LogicalTrack track = project.Tracks[0];
         Segment segment = track.Segments[0];
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -398,7 +398,7 @@ public sealed class ProjectDomainEditCommandsTests
         rightLane.Points.Add(new CurvePoint(project, 0, 0.75));
         right.ParameterLanes.Add(rightLane);
         track.Segments.Add(right);
-        UInt128 nextStableId = project.NextStableId;
+        long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 

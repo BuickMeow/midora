@@ -1,6 +1,6 @@
 using Midora.Compiler;
 using Midora.Domain;
-using Midora.Mapping.Contract.V1;
+using Midora.Mapping.Contract.V2;
 using Midora.Midi;
 using Midora.Playback;
 
@@ -12,7 +12,7 @@ public sealed class ProjectMappingFunctionEditCommandsTests
     public void FunctionUpdatePreservesIdentityReferenceAbiAndUndoIsExact()
     {
         Fixture fixture = CreateFixture();
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
         AssertController(compilation.LastAttempt, 21);
@@ -22,14 +22,14 @@ public sealed class ProjectMappingFunctionEditCommandsTests
             fixture.Function.Id,
             "  More Boost  ",
             "return value + 10;",
-            [nameof(MappingContextV1.ProjectTick)]));
+            [nameof(MappingContextV2.ProjectTick)]));
 
         Assert.Same(fixture.Function, fixture.Instrument.MappingFunctions.Single());
         Assert.Equal("More Boost", fixture.Function.Name);
         Assert.Equal("return value + 10;", fixture.Function.Body);
-        Assert.Equal([nameof(MappingContextV1.ProjectTick)],
+        Assert.Equal([nameof(MappingContextV2.ProjectTick)],
             fixture.Function.DeclaredContextFields.Order().ToArray());
-        Assert.Equal(MappingAbiV1.Version, fixture.Function.AbiVersion);
+        Assert.Equal(MappingAbiV2.Version, fixture.Function.AbiVersion);
         Assert.Equal(fixture.Function.Id, fixture.Step.MappingFunctionId);
         Assert.Equal(nextStableId, fixture.Project.NextStableId);
         AssertController(compilation.LastAttempt, 30);
@@ -121,7 +121,7 @@ public sealed class ProjectMappingFunctionEditCommandsTests
     public void ReferencedDeleteRequiresConfirmationAndPreservesBrokenReferenceForUndo()
     {
         Fixture fixture = CreateFixture();
-        UInt128 nextStableId = fixture.Project.NextStableId;
+        long nextStableId = fixture.Project.NextStableId;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 

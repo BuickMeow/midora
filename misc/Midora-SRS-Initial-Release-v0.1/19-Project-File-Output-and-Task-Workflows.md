@@ -41,6 +41,7 @@ Create Unsaved or Create and Save
 ```text
 192
 ```
+合法输入范围：`1..32767`。
 TPQ 创建后不可修改。
 ### 19.1.3 默认 Project 内容
 ```text
@@ -537,7 +538,7 @@ Sample Rate 提供常用选项：
 ```
 并允许手工输入 `8,000–192,000 Hz` 范围内的其他整数。默认取 Project Audio Render Settings，初始默认为 48,000 Hz。
 
-同一窗口提供 `Offline Maximum Sample Voices per Stream` 整数输入，合法范围 `1–16,777,216`，默认取 Project Audio Render Settings，初始默认为 `750`。该值与实时播放 Application Preference 分离；当前渲染任务的所有 Port Stream 使用同一个冻结值。
+同一窗口提供 `Offline Maximum Sample Voices per Unit Stream` 整数输入，合法范围 `1–16,777,216`，默认取 Project Audio Render Settings，初始默认为 `500`。该值与实时播放 Application Preference 分离；当前渲染任务的所有 Unit Stream 使用同一个冻结值。
 ### 19.7.4 Range
 Audio Render 不允许零长度范围。
 非零起点：

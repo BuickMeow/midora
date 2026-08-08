@@ -1,6 +1,10 @@
 using Midora.AudioDevice;
+using Midora.Audio.Bass.Tests.Console;
+using Midora.Compiler;
 using Midora.Midi;
+using Midora.Playback;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 
 namespace Midora.Audio.Bass.Tests;
 
@@ -85,7 +89,7 @@ public sealed class BassMidiRendererIntegrationTests
     public void StreamFlagsAlwaysDisableEffectsAndReleaseOnlyOldestMatchingNote()
     {
         BassMidiRendererSettings settings = new(
-            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
+            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
             256);
 
         uint flags = BassMidiRenderer.BuildStreamFlags(settings);
@@ -136,15 +140,15 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
-    public void RealtimeAndOfflineVoicePreferencesAreIndependentAndDefaultTo750()
+    public void RealtimeAndOfflineVoicePreferencesAreIndependentAndDefaultTo500()
     {
         BassMidiPolyphonyConfiguration defaults = BassMidiPolyphonyConfiguration.Default;
-        Assert.Equal(750, defaults.RealtimeMaximumSampleVoiceCount);
-        Assert.Equal(750, defaults.OfflineMaximumSampleVoiceCount);
+        Assert.Equal(500, defaults.RealtimeMaximumSampleVoicesPerUnitStream);
+        Assert.Equal(500, defaults.OfflineMaximumSampleVoicesPerUnitStream);
 
         BassMidiPolyphonyConfiguration custom = new(321, 654);
-        Assert.Equal(321, custom.CreateRealtimeRendererSettings(256).MaximumSampleVoiceCount);
-        Assert.Equal(654, custom.CreateOfflineRendererSettings(256).MaximumSampleVoiceCount);
+        Assert.Equal(321, custom.CreateRealtimeRendererSettings(256).MaximumSampleVoicesPerUnitStream);
+        Assert.Equal(654, custom.CreateOfflineRendererSettings(256).MaximumSampleVoicesPerUnitStream);
     }
 
     [Fact]
@@ -153,7 +157,7 @@ public sealed class BassMidiRendererIntegrationTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new BassMidiPolyphonyConfiguration(0, 750));
         Assert.Throws<ArgumentOutOfRangeException>(() => new BassMidiPolyphonyConfiguration(750, 0));
         Assert.Throws<ArgumentOutOfRangeException>(() => new BassMidiPolyphonyConfiguration(
-            BassMidiPolyphonyConfiguration.MaximumSampleVoiceCount + 1,
+            BassMidiPolyphonyConfiguration.MaximumSampleVoicesPerUnitStream + 1,
             750));
     }
 
@@ -220,6 +224,74 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
+    public unsafe void HeldPreviewPlanCanReplaceOnlyTheUnrenderedFutureAtTheProducerFrontier()
+    {
+        EnsureEnvironment();
+        MidiRenderPlan causal = new(
+            SampleRate,
+            1_024,
+            [
+                new MidiPortRenderPlan(
+                    0,
+                    [
+                        new(0, MidiMessage.NoteOn(0, 60, 100)),
+                        new(512, MidiMessage.NoteOff(0, 60, 0))
+                    ])
+            ]);
+        MidiRenderPlan replacement = new(
+            SampleRate,
+            1_280,
+            [
+                new MidiPortRenderPlan(
+                    0,
+                    [
+                        new(0, MidiMessage.NoteOn(0, 72, 100)),
+                        new(256, MidiMessage.NoteOff(0, 60, 0)),
+                        new(256, MidiMessage.NoteOn(0, 64, 90)),
+                        new(768, MidiMessage.NoteOff(0, 64, 0))
+                    ])
+            ]);
+        MidiRenderPlan spliced = MidiRenderPlanSplicer.SpliceAtProducerFrontier(
+            causal,
+            replacement,
+            256);
+        using BassMidiRenderer renderer = CreateRenderer(causal, 256);
+        float* samples = stackalloc float[512 * 2];
+
+        Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
+        Assert.Equal(1u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+
+        renderer.ReplaceFuturePlan(spliced, 256);
+        Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
+        Assert.Equal(1u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+        Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
+
+        Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
+        Assert.Equal(1, renderer.PullFrames(samples, 1).FrameCount);
+        Assert.Equal(0u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+    }
+
+    [Fact]
+    public unsafe void HeldPreviewPlanReplacementPreservesAlreadyRenderedStagedFrames()
+    {
+        EnsureEnvironment();
+        MidiRenderPlan plan = new(
+            SampleRate,
+            1_024,
+            [new MidiPortRenderPlan(0, [new(0, MidiMessage.NoteOn(0, 60, 100))])]);
+        using BassMidiRenderer renderer = CreateRenderer(plan, 256);
+        float* samples = stackalloc float[256 * 2];
+
+        Assert.Equal(1, renderer.PullFrames(samples, 1).FrameCount);
+
+        Assert.Equal(256, renderer.RenderPositionFrames);
+        renderer.ReplaceFuturePlan(plan, 256);
+        Assert.Equal(255, renderer.PullFrames(samples, 255).FrameCount);
+        Assert.Equal(256, renderer.PositionFrames);
+        Assert.Throws<InvalidOperationException>(() => renderer.ReplaceFuturePlan(plan, 255));
+    }
+
+    [Fact]
     public unsafe void CutPreviousReleaseNoteOffLeavesTheOverlappingReplacementPressed()
     {
         EnsureEnvironment();
@@ -265,6 +337,115 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
+    public void AllSoundOffCutsTheSoundFontReleaseAndLeavesTheChannelSilent()
+    {
+        EnsureEnvironment();
+        const long soundOffFrame = 6_000;
+        const long maximumDeClickRampFrames = 256;
+        MidiRenderPlan noteOffOnly = CreateAllSoundOffComparisonPlan(includeAllSoundOff: false);
+        MidiRenderPlan withAllSoundOff = CreateAllSoundOffComparisonPlan(includeAllSoundOff: true);
+
+        float[] releaseSamples = Render(noteOffOnly, 257, 333, out _);
+        float[] cutSamples = Render(withAllSoundOff, 257, 333, out _);
+        ReadOnlySpan<float> releaseTail = releaseSamples.AsSpan(checked((int)soundOffFrame * 2));
+        ReadOnlySpan<float> cutTail = cutSamples.AsSpan(checked((int)soundOffFrame * 2));
+        float releasePeak = MaximumAbsoluteSample(releaseTail);
+        long releaseLastNonZeroFrame = LastNonZeroFrame(releaseSamples);
+        long cutLastNonZeroFrame = LastNonZeroFrame(cutSamples);
+
+        Assert.True(
+            releasePeak > 0.000_001f,
+            $"The comparison SoundFont produced no measurable release after NoteOff; peak={releasePeak:R}.");
+        Assert.InRange(
+            cutLastNonZeroFrame,
+            soundOffFrame,
+            soundOffFrame + maximumDeClickRampFrames - 1);
+        Assert.True(
+            releaseLastNonZeroFrame > soundOffFrame + maximumDeClickRampFrames,
+            $"CC120 did not measurably shorten the release: cut last frame={cutLastNonZeroFrame}; "
+            + $"natural-release last frame={releaseLastNonZeroFrame}.");
+        Assert.All(
+            cutSamples.AsSpan(checked((int)(soundOffFrame + maximumDeClickRampFrames) * 2)).ToArray(),
+            static sample => Assert.Equal(0f, sample));
+    }
+
+    [Fact]
+    public void AllSoundOffAffectsOnlyTheAddressedMidiChannel()
+    {
+        EnsureEnvironment();
+        const int soundOffFrame = 6_000;
+        const int maximumDeClickRampFrames = 256;
+        const int comparisonEndFrame = 22_000;
+        MidiRenderPlan otherChannelOnly = CreateAllSoundOffComparisonPlan(
+            includeAllSoundOff: false,
+            includeReleaseChannel: false,
+            includeOtherChannel: true);
+        MidiRenderPlan bothChannels = CreateAllSoundOffComparisonPlan(
+            includeAllSoundOff: true,
+            includeReleaseChannel: true,
+            includeOtherChannel: true);
+
+        float[] reference = Render(otherChannelOnly, 257, 333, out _);
+        float[] actual = Render(bothChannels, 257, 333, out _);
+        int comparisonStartFrame = soundOffFrame + maximumDeClickRampFrames;
+        ReadOnlySpan<byte> referenceBytes = MemoryMarshal.AsBytes(
+            reference.AsSpan(
+                comparisonStartFrame * 2,
+                (comparisonEndFrame - comparisonStartFrame) * 2));
+        ReadOnlySpan<byte> actualBytes = MemoryMarshal.AsBytes(
+            actual.AsSpan(
+                comparisonStartFrame * 2,
+                (comparisonEndFrame - comparisonStartFrame) * 2));
+
+        Assert.Contains(
+            reference.AsSpan(
+                comparisonStartFrame * 2,
+                (comparisonEndFrame - comparisonStartFrame) * 2).ToArray(),
+            static sample => sample != 0f);
+        Assert.True(
+            referenceBytes.SequenceEqual(actualBytes),
+            $"CC120 changed output from the non-addressed channel; maximum difference={MaximumAbsoluteDifference(referenceBytes, actualBytes):R}.");
+    }
+
+    [Fact]
+    [SupportedOSPlatform("windows")]
+    public void CompiledSubVoiceExampleIsSilentAfterEveryAllocationGroupDeClickRamp()
+    {
+        EnsureEnvironment();
+        using MidoraCompiler compiler = new();
+        CanonicalCompiledResult compiled = compiler.CompileFull(
+            Program.CreateLogicalExample("subvoices"),
+            new CompilationRequest { Purpose = CompilationPurpose.AudioRender });
+        CanonicalMidiEvent[] soundOffs = compiled.Events.ToArray()
+            .Where(value => value.Message.MessageType == MidiMessageType.ControlChange
+                && value.Message.Byte1 == 120)
+            .ToArray();
+        MidiRenderPlan plan = MidiRenderPlanAdapter.Create(compiled, SampleRate);
+
+        float[] samples = Render(plan, 2_048, 1_003, out long allocated);
+
+        Assert.True(compiled.IsConsumable);
+        Assert.Equal(12, soundOffs.Length);
+        Assert.Equal(0, allocated);
+        foreach ((long endTick, long nextStartTick) in new[]
+        {
+            (900L, 960L),
+            (1_860L, 1_920L),
+            (2_820L, 2_880L),
+            (3_780L, 3_840L)
+        })
+        {
+            int firstStableSilentFrame = checked((int)(endTick * 50 + 256));
+            int nextStartFrame = checked((int)(nextStartTick * 50));
+            Assert.All(
+                samples.AsSpan(
+                    firstStableSilentFrame * 2,
+                    (nextStartFrame - firstStableSilentFrame) * 2).ToArray(),
+                static sample => Assert.Equal(0f, sample));
+        }
+    }
+
+    [Fact]
     public void ContinuesAfterSuccessfulPartialRawBatchSubmission()
     {
         EnsureEnvironment();
@@ -293,7 +474,7 @@ public sealed class BassMidiRendererIntegrationTests
     public unsafe void MonitoringEnableDoesNotRetriggerSkippedNoteAndAllowsFutureEventsWithoutAllocating()
     {
         EnsureEnvironment();
-        Guid sourceId = Guid.Parse("78cdf55d-d33e-42f3-8ea9-286526bd3be4");
+        const long sourceId = 7_003;
         ScheduledMidiMessage[] events =
         [
             new(0, MidiMessage.ProgramChange(0, 0), 0),
@@ -309,7 +490,7 @@ public sealed class BassMidiRendererIntegrationTests
             [sourceId],
             [0]);
         BassMidiRendererSettings settings = new(
-            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
+            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
             256);
         using BassMidiRenderer renderer = new(
             plan,
@@ -341,6 +522,114 @@ public sealed class BassMidiRendererIntegrationTests
         Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
     }
 
+    [Fact]
+    public void ExactRawUnitPcmHitMatchesTheNativeMissWithoutRepeatingBassSynthesis()
+    {
+        EnsureEnvironment();
+        string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
+        string cacheRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"midora-native-unit-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cacheRoot);
+        try
+        {
+            MidiRenderPlan sourcePlan = CreateCacheableSingleNotePlan();
+            using AudioCacheSessionStore store = new(cacheRoot, 1024 * 1024);
+            CacheAccess cache = new(store);
+            const int maximumSampleVoices = 500;
+
+            float[] missSamples;
+            long missNativeFrames;
+            using (AudioUnitCacheStaging miss = Assert.IsType<AudioUnitCacheStaging>(
+                AudioUnitCacheStaging.Create(
+                    sourcePlan,
+                    cache,
+                    SoundFontPath,
+                    nativeDirectory,
+                    maximumSampleVoices)))
+            {
+                Assert.False(miss.Plan.UnitFragments[0].PcmCacheHit);
+                missSamples = RenderCachePlan(
+                    miss.Plan,
+                    miss.FilePath,
+                    maximumSampleVoices,
+                    out missNativeFrames);
+                miss.PublishCompleted(cache, miss.Plan.TotalFrameCount);
+            }
+
+            float[] hitSamples;
+            long hitNativeFrames;
+            using (AudioUnitCacheStaging hit = Assert.IsType<AudioUnitCacheStaging>(
+                AudioUnitCacheStaging.Create(
+                    sourcePlan,
+                    cache,
+                    SoundFontPath,
+                    nativeDirectory,
+                    maximumSampleVoices)))
+            {
+                Assert.True(hit.Plan.UnitFragments[0].PcmCacheHit);
+                hitSamples = RenderCachePlan(
+                    hit.Plan,
+                    hit.FilePath,
+                    maximumSampleVoices,
+                    out hitNativeFrames);
+            }
+
+            Assert.Equal(sourcePlan.TotalFrameCount, missNativeFrames);
+            Assert.Equal(0, hitNativeFrames);
+            Assert.True(MemoryMarshal.AsBytes(missSamples.AsSpan()).SequenceEqual(
+                MemoryMarshal.AsBytes(hitSamples.AsSpan())));
+        }
+        finally
+        {
+            if (Directory.Exists(cacheRoot))
+            {
+                Directory.Delete(cacheRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public unsafe void MaximumCanonicalUnitCountUses256StreamsWithoutHotPathAllocation()
+    {
+        EnsureEnvironment();
+        MidiRenderPlan plan = CreateMaximumUnitPlan();
+        using BassMidiRenderer renderer = new(
+            plan,
+            SoundFontPath,
+            new BassMidiRendererSettings(500, 256),
+            AudioMasterSettings.LimiterV1);
+        float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
+
+        fixed (float* destination = samples)
+        {
+            _ = renderer.PullFrames(destination, 0);
+            int completed = 0;
+            bool invalidPull = false;
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            while (completed < plan.TotalFrameCount)
+            {
+                int requested = (int)Math.Min(257, plan.TotalFrameCount - completed);
+                AudioPullResult result = renderer.PullFrames(destination + (completed * 2), requested);
+                if (result.Status == AudioPullStatus.Fault || result.FrameCount <= 0)
+                {
+                    invalidPull = true;
+                    break;
+                }
+                completed += result.FrameCount;
+            }
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.False(invalidPull);
+            Assert.Equal(plan.TotalFrameCount, completed);
+            Assert.Equal(0, allocated);
+        }
+
+        Assert.Equal(256, renderer.UnitStreamCountForDiagnostics);
+        Assert.Equal(plan.TotalFrameCount * 256, renderer.NativeSynthesisFrameCountForDiagnostics);
+        Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
+        Assert.Contains(samples, static sample => sample != 0f);
+    }
+
     private static unsafe float[] Render(
         MidiRenderPlan plan,
         int internalBlockFrames,
@@ -348,7 +637,7 @@ public sealed class BassMidiRendererIntegrationTests
         out long allocatedBytes)
     {
         BassMidiRendererSettings settings = new(
-            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
+            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
             maximumWorkFrameCount: internalBlockFrames);
         using BassMidiRenderer renderer = new(
             plan,
@@ -385,7 +674,7 @@ public sealed class BassMidiRendererIntegrationTests
     private static BassMidiRenderer CreateRenderer(MidiRenderPlan plan, int maximumWorkFrameCount)
     {
         BassMidiRendererSettings settings = new(
-            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoiceCount,
+            BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
             maximumWorkFrameCount);
         return new BassMidiRenderer(
             plan,
@@ -406,6 +695,215 @@ public sealed class BassMidiRendererIntegrationTests
         ];
         MidiPortRenderPlan port = new(0, events);
         return new MidiRenderPlan(SampleRate, 4_096, [port]);
+    }
+
+    private static MidiRenderPlan CreateCacheableSingleNotePlan()
+    {
+        ScheduledMidiMessage[] events =
+        [
+            new(0, MidiMessage.ProgramChange(0, 0), 0),
+            new(256, MidiMessage.NoteOn(0, 60, 80), 0),
+            new(2_048, MidiMessage.NoteOff(0, 60, 0), 0)
+        ];
+        MidiUnitFragmentRenderPlan fragment = new(
+            0,
+            0,
+            trackId: 1,
+            segmentId: 2,
+            eventInstrumentId: 3,
+            instanceGroupId: 4,
+            subVoiceId: 5,
+            sourceIndex: 0,
+            startFrame: 0,
+            endFrame: 4_096,
+            semanticFingerprint: new string('a', 64),
+            events);
+        return new MidiRenderPlan(
+            SampleRate,
+            4_096,
+            [new MidiPortRenderPlan(0, events)],
+            sourceIds: [1],
+            unitFragments: [fragment]);
+    }
+
+    private static MidiRenderPlan CreateMaximumUnitPlan()
+    {
+        List<MidiPortRenderPlan> ports = [];
+        List<MidiUnitFragmentRenderPlan> fragments = [];
+        long[] sourceIds = new long[256];
+        for (byte port = 0; port < 16; port++)
+        {
+            List<ScheduledMidiMessage> portEvents = [];
+            for (byte channel = 0; channel < 16; channel++)
+            {
+                int sourceIndex = (port * 16) + channel;
+                sourceIds[sourceIndex] = sourceIndex + 1L;
+                byte pitch = checked((byte)(36 + (sourceIndex % 48)));
+                ScheduledMidiMessage[] unitEvents =
+                [
+                    new(0, MidiMessage.ProgramChange(0, 0), sourceIndex),
+                    new(0, MidiMessage.NoteOn(0, pitch, 8), sourceIndex),
+                    new(512, MidiMessage.NoteOff(0, pitch, 0), sourceIndex)
+                ];
+                portEvents.Add(new(0, MidiMessage.ProgramChange(channel, 0), sourceIndex));
+                portEvents.Add(new(0, MidiMessage.NoteOn(channel, pitch, 8), sourceIndex));
+                portEvents.Add(new(512, MidiMessage.NoteOff(channel, pitch, 0), sourceIndex));
+                fragments.Add(new(
+                    port,
+                    channel,
+                    trackId: sourceIndex + 1L,
+                    segmentId: sourceIndex + 257L,
+                    eventInstrumentId: sourceIndex + 513L,
+                    instanceGroupId: sourceIndex + 769L,
+                    subVoiceId: sourceIndex + 1_025L,
+                    sourceIndex,
+                    startFrame: 0,
+                    endFrame: 1_024,
+                    semanticFingerprint: sourceIndex.ToString("x64"),
+                    unitEvents));
+            }
+            ports.Add(new(
+                port,
+                portEvents.OrderBy(static value => value.SampleFrame).ToArray()));
+        }
+        return new MidiRenderPlan(
+            SampleRate,
+            1_024,
+            ports.ToArray(),
+            sourceIds,
+            unitFragments: fragments.ToArray());
+    }
+
+    private static unsafe float[] RenderCachePlan(
+        MidiRenderPlan plan,
+        string cacheStagingPath,
+        int maximumSampleVoices,
+        out long nativeSynthesisFrames)
+    {
+        float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
+        using BassMidiRenderer renderer = new(
+            plan,
+            SoundFontPath,
+            new BassMidiRendererSettings(maximumSampleVoices, 256),
+            AudioMasterSettings.LimiterV1,
+            cacheStagingPath);
+        fixed (float* destination = samples)
+        {
+            int completed = 0;
+            long deadline = Environment.TickCount64 + 10_000;
+            while (completed < plan.TotalFrameCount)
+            {
+                int requested = (int)Math.Min(257, plan.TotalFrameCount - completed);
+                AudioPullResult result = renderer.PullFrames(destination + (completed * 2), requested);
+                Assert.True(result.IsValidForRequest(requested));
+                if (result.Status == AudioPullStatus.Buffering)
+                {
+                    Assert.True(Environment.TickCount64 < deadline, "PCM cache I/O remained Buffering.");
+                    Thread.Yield();
+                    continue;
+                }
+                Assert.NotEqual(AudioPullStatus.Fault, result.Status);
+                Assert.True(result.FrameCount > 0);
+                completed += result.FrameCount;
+            }
+        }
+        renderer.FinalizeCacheCapture();
+        Assert.False(renderer.CacheCaptureInvalidated);
+        Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
+        nativeSynthesisFrames = renderer.NativeSynthesisFrameCountForDiagnostics;
+        return samples;
+    }
+
+    private sealed class CacheAccess(AudioCacheSessionStore store) : IAudioPcmCacheSessionAccess
+    {
+        public AudioCacheSessionSnapshot? AudioCacheSnapshot => store.GetSnapshot();
+
+        public bool TryCopyReusableAudio(
+            string key,
+            Stream destination,
+            out long payloadLength) => store.TryCopyReusable(key, destination, out payloadLength);
+
+        public AudioCachePublishResult PublishReusableAudio(
+            string key,
+            Stream source,
+            long payloadLength) => store.PublishReusable(key, source, payloadLength);
+
+        public void InvalidateReusableAudio(string key) => store.InvalidateReusable(key);
+
+        public AudioCacheSessionStore.AudioRecoverySpool CreateTransientAudioSpool(
+            long lengthBytes) => store.CreateRecoverySpool(lengthBytes);
+
+        public void DisableReusableAudioRetention(string reason) =>
+            store.DisableReusableRetention(reason);
+    }
+
+    private static MidiRenderPlan CreateAllSoundOffComparisonPlan(
+        bool includeAllSoundOff,
+        bool includeReleaseChannel = true,
+        bool includeOtherChannel = false)
+    {
+        List<ScheduledMidiMessage> events = [];
+        if (includeReleaseChannel)
+        {
+            events.Add(new ScheduledMidiMessage(0, MidiMessage.ProgramChange(0, 0)));
+            events.Add(new ScheduledMidiMessage(256, MidiMessage.NoteOn(0, 60, 32)));
+            events.Add(new ScheduledMidiMessage(4_800, MidiMessage.NoteOff(0, 60, 0)));
+            if (includeAllSoundOff)
+            {
+                events.Add(new ScheduledMidiMessage(6_000, MidiMessage.ControlChange(0, 120, 0)));
+            }
+        }
+
+        if (includeOtherChannel)
+        {
+            events.Add(new ScheduledMidiMessage(0, MidiMessage.ProgramChange(1, 0)));
+            events.Add(new ScheduledMidiMessage(256, MidiMessage.NoteOn(1, 67, 32)));
+            events.Add(new ScheduledMidiMessage(22_000, MidiMessage.NoteOff(1, 67, 0)));
+        }
+
+        return new MidiRenderPlan(
+            SampleRate,
+            24_000,
+            [new MidiPortRenderPlan(0, events.OrderBy(static item => item.SampleFrame).ToArray())]);
+    }
+
+    private static float MaximumAbsoluteSample(ReadOnlySpan<float> samples)
+    {
+        float maximum = 0f;
+        foreach (float sample in samples)
+        {
+            maximum = Math.Max(maximum, Math.Abs(sample));
+        }
+
+        return maximum;
+    }
+
+    private static float MaximumAbsoluteDifference(
+        ReadOnlySpan<byte> firstBytes,
+        ReadOnlySpan<byte> secondBytes)
+    {
+        ReadOnlySpan<float> first = MemoryMarshal.Cast<byte, float>(firstBytes);
+        ReadOnlySpan<float> second = MemoryMarshal.Cast<byte, float>(secondBytes);
+        float maximum = 0f;
+        for (int index = 0; index < first.Length; index++)
+        {
+            maximum = Math.Max(maximum, Math.Abs(first[index] - second[index]));
+        }
+
+        return maximum;
+    }
+
+    private static long LastNonZeroFrame(ReadOnlySpan<float> samples)
+    {
+        for (int sampleIndex = samples.Length - 1; sampleIndex >= 0; sampleIndex--)
+        {
+            if (samples[sampleIndex] != 0f)
+            {
+                return sampleIndex / 2;
+            }
+        }
+
+        return -1;
     }
 
     private static MidiRenderPlan CreateComplexTempoLoopPlan()

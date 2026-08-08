@@ -65,6 +65,7 @@ public sealed class CanonicalMidiFileExporterTests
         int program = Find(exportedMessages, 0xc0, 5);
         Assert.True(bankMsb < bankLsb && bankLsb < program);
         Assert.Contains(exportedMessages, value => value.SequenceEqual(new byte[] { 0x80, 60, 0 }));
+        Assert.Contains(exportedMessages, value => value.SequenceEqual(new byte[] { 0xb0, 120, 0 }));
 
         ParsedTrack[] parsed = ParseTracks(first.FileBytes);
         Assert.All(parsed, value => Assert.Equal(192, value.EndTick));
@@ -234,6 +235,41 @@ public sealed class CanonicalMidiFileExporterTests
         ParsedTrack track = Assert.Single(ParseTracks(encoded.FileBytes));
         Assert.Equal(0, track.EndTick);
         Assert.Empty(track.ChannelMessages);
+    }
+
+    [Fact]
+    public void AcceptsMaximumSmfDeltaAndRejectsTheNextTickWithoutSpacerEvents()
+    {
+        CanonicalCompiledResult maximum = CreateSyntheticCompiled(
+            [],
+            StandardMidiFile.MaximumVariableLengthValue);
+        CanonicalCompiledResult overflow = CreateSyntheticCompiled(
+            [],
+            (long)StandardMidiFile.MaximumVariableLengthValue + 1);
+
+        MidiExportEncodingResult accepted = CanonicalMidiFileExporter.EncodeWholeProject(new()
+        {
+            CompiledResult = maximum,
+            ConductorTrackName = "Conductor",
+            LogicalTracks = []
+        });
+        MidiExportEncodingResult rejected = CanonicalMidiFileExporter.EncodeWholeProject(new()
+        {
+            CompiledResult = overflow,
+            ConductorTrackName = "Conductor",
+            LogicalTracks = []
+        });
+
+        Assert.True(accepted.Succeeded);
+        ParsedTrack acceptedTrack = Assert.Single(ParseTracks(accepted.FileBytes));
+        Assert.Equal(StandardMidiFile.MaximumVariableLengthValue, acceptedTrack.EndTick);
+        Assert.Single(acceptedTrack.MetaEvents, value => value.Type == StandardMidiFile.EndOfTrackMetaType);
+
+        Assert.False(rejected.Succeeded);
+        Assert.Empty(rejected.FileBytes);
+        MidiExportDiagnostic diagnostic = Assert.Single(rejected.Diagnostics);
+        Assert.Equal("MIDORA-MIDI-EXPORT-ENCODING", diagnostic.Code);
+        Assert.Contains("delta time", diagnostic.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -413,7 +449,9 @@ public sealed class CanonicalMidiFileExporterTests
             source);
     }
 
-    private static CanonicalCompiledResult CreateSyntheticCompiled(CanonicalMidiEvent[] events)
+    private static CanonicalCompiledResult CreateSyntheticCompiled(
+        CanonicalMidiEvent[] events,
+        long endTick = 1)
     {
         CanonicalConductor conductor = new(
             [new CanonicalTempo(0, 120m)],
@@ -427,9 +465,9 @@ public sealed class CanonicalMidiFileExporterTests
                 new CompilationRequest
                 {
                     Purpose = CompilationPurpose.MidiExport,
-                    EndTick = 1
+                    EndTick = endTick
                 },
-                1,
+                endTick,
                 CompilationEndTickSource.ExplicitRequest),
             events,
             conductor,
@@ -438,7 +476,7 @@ public sealed class CanonicalMidiFileExporterTests
             false,
             true,
             null,
-            1,
+            endTick,
             new(events.Select(value => value.Source.TrackId).Distinct().Count(), 1, events.Length, 1));
     }
 

@@ -120,6 +120,15 @@
           "xunit.extensibility.core": "[2.9.3]"
         }
       },
+      "Midora": {
+        "type": "Project",
+        "dependencies": {
+          "Midora.Application": "[1.0.0, )",
+          "Midora.Audio.Bass": "[1.0.0, )",
+          "Midora.Desktop.Presentation": "[1.0.0, )",
+          "Midora.Playback.BassWasapi": "[1.0.0, )"
+        }
+      },
       "midora.application": {
         "type": "Project",
         "dependencies": {
@@ -184,15 +193,6 @@
           "Midora.Domain": "[1.0.0, )",
           "Midora.Mapping.Contract.V2": "[1.0.0, )",
           "Midora.Midi": "[1.0.0, )"
-        }
-      },
-      "midora.desktop": {
-        "type": "Project",
-        "dependencies": {
-          "Midora.Application": "[1.0.0, )",
-          "Midora.Audio.Bass": "[1.0.0, )",
-          "Midora.Desktop.Presentation": "[1.0.0, )",
-          "Midora.Playback.BassWasapi": "[1.0.0, )"
         }
       },
       "midora.desktop.presentation": {

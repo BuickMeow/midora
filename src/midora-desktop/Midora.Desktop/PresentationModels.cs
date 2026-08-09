@@ -169,7 +169,8 @@ public sealed class InspectorField(
     string label,
     string value,
     bool isEditable = true,
-    InspectorFieldValueState valueState = InspectorFieldValueState.SameValue) : ObservableObject
+    InspectorFieldValueState valueState = InspectorFieldValueState.SameValue,
+    IReadOnlyList<string>? options = null) : ObservableObject
 {
     private string _value = value;
 
@@ -179,6 +180,8 @@ public sealed class InspectorField(
     public InspectorFieldValueState ValueState { get; } = valueState;
     public bool IsMixed => ValueState == InspectorFieldValueState.Mixed;
     public bool IsUnavailable => ValueState == InspectorFieldValueState.Unavailable;
+    public IReadOnlyList<string> Options { get; } = options ?? [];
+    public bool IsChoice => Options.Count > 0;
     public string Value
     {
         get => _value;
@@ -247,6 +250,244 @@ public enum TimelineWorkspaceMode
     Conductor
 }
 
+public readonly record struct TimelineSubdivision(
+    int Numerator,
+    int Denominator,
+    string Label,
+    bool IsBar = false)
+{
+    public long ToTicks(int ticksPerQuarterNote, int barNumerator = 4, int barDenominator = 4)
+    {
+        if (ticksPerQuarterNote <= 0) throw new ArgumentOutOfRangeException(nameof(ticksPerQuarterNote));
+        if (IsBar)
+        {
+            if (barNumerator <= 0 || barDenominator <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(barNumerator));
+            }
+            return Math.Max(1, checked((long)Math.Ceiling(
+                ticksPerQuarterNote * 4d * barNumerator / barDenominator)));
+        }
+        if (Numerator <= 0 || Denominator <= 0)
+        {
+            throw new InvalidOperationException("Timeline subdivisions must be positive.");
+        }
+        return Math.Max(1, checked((long)Math.Ceiling(
+            ticksPerQuarterNote * 4d * Numerator / Denominator)));
+    }
+
+    public override string ToString() => Label;
+
+    public static bool TryParse(string? text, out TimelineSubdivision value)
+    {
+        string normalized = text?.Trim() ?? string.Empty;
+        if (string.Equals(normalized, "Bar", StringComparison.OrdinalIgnoreCase))
+        {
+            value = Presets[0];
+            return true;
+        }
+        int slash = normalized.IndexOf('/');
+        int denominatorEnd = slash + 1;
+        while (denominatorEnd < normalized.Length && char.IsAsciiDigit(normalized[denominatorEnd]))
+        {
+            denominatorEnd++;
+        }
+        if (slash > 0
+            && int.TryParse(normalized[..slash], out int numerator)
+            && denominatorEnd > slash + 1
+            && int.TryParse(normalized[(slash + 1)..denominatorEnd], out int denominator)
+            && numerator > 0
+            && denominator > 0)
+        {
+            value = new(numerator, denominator, $"{numerator}/{denominator}");
+            return true;
+        }
+        if (int.TryParse(normalized, out int customDenominator) && customDenominator > 0)
+        {
+            value = new(1, customDenominator, $"1/{customDenominator}");
+            return true;
+        }
+        value = default;
+        return false;
+    }
+
+    public static IReadOnlyList<TimelineSubdivision> Presets { get; } =
+    [
+        new(1, 1, "Bar", IsBar: true),
+        new(1, 1, "1/1 · Whole"),
+        new(1, 2, "1/2 · Half"),
+        new(1, 3, "1/3 · Half triplet"),
+        new(1, 4, "1/4 · Quarter"),
+        new(1, 6, "1/6 · Quarter triplet"),
+        new(3, 16, "3/16 · Dotted eighth"),
+        new(1, 8, "1/8 · Eighth"),
+        new(1, 12, "1/12 · Eighth triplet"),
+        new(3, 32, "3/32 · Dotted sixteenth"),
+        new(1, 16, "1/16 · Sixteenth"),
+        new(1, 24, "1/24 · Sixteenth triplet"),
+        new(3, 64, "3/64 · Dotted thirty-second"),
+        new(1, 32, "1/32 · Thirty-second"),
+        new(1, 48, "1/48 · Thirty-second triplet"),
+        new(1, 64, "1/64 · Sixty-fourth"),
+        new(1, 128, "1/128"),
+        new(1, 256, "1/256")
+    ];
+}
+
+public sealed class TimelineEditorSettings : ObservableObject
+{
+    private TimelineSubdivision _displaySubdivision = new(1, 4, "1/4 · Quarter");
+    private TimelineSubdivision _operationSubdivision = new(1, 16, "1/16 · Sixteenth");
+    private bool _snapEnabled = true;
+    private bool _gridVisible = true;
+    private long _defaultLengthTicks = 768;
+    private int _defaultVelocity = 100;
+    private int _ticksPerQuarterNote = 768;
+    private int _barNumerator = 4;
+    private int _barDenominator = 4;
+    private ProjectTimeSignatureMap? _timeSignatureMap;
+
+    public IReadOnlyList<TimelineSubdivision> SubdivisionPresets => TimelineSubdivision.Presets;
+    public TimelineSubdivision DisplaySubdivision
+    {
+        get => _displaySubdivision;
+        set
+        {
+            if (!Set(ref _displaySubdivision, value)) return;
+            Raise(nameof(DisplayGridStepTicks));
+            Raise(nameof(DisplayGridUsesBars));
+            Raise(nameof(DisplayGridLabel));
+            Raise(nameof(DisplaySubdivisionText));
+        }
+    }
+    public TimelineSubdivision OperationSubdivision
+    {
+        get => _operationSubdivision;
+        set
+        {
+            if (!Set(ref _operationSubdivision, value)) return;
+            Raise(nameof(OperationStepTicks));
+            Raise(nameof(EffectiveOperationStepTicks));
+            Raise(nameof(EffectiveOperationUsesBars));
+            Raise(nameof(OperationGridLabel));
+            Raise(nameof(OperationSubdivisionText));
+        }
+    }
+    public bool SnapEnabled
+    {
+        get => _snapEnabled;
+        set
+        {
+            if (!Set(ref _snapEnabled, value)) return;
+            Raise(nameof(EffectiveOperationStepTicks));
+            Raise(nameof(EffectiveOperationUsesBars));
+        }
+    }
+    public bool GridVisible { get => _gridVisible; set => Set(ref _gridVisible, value); }
+    public long DefaultLengthTicks
+    {
+        get => _defaultLengthTicks;
+        set => Set(ref _defaultLengthTicks, Math.Max(1, value));
+    }
+    public int DefaultVelocity
+    {
+        get => _defaultVelocity;
+        set => Set(ref _defaultVelocity, Math.Clamp(value, 1, 127));
+    }
+    public long DisplayGridStepTicks => DisplaySubdivision.ToTicks(
+        _ticksPerQuarterNote, _barNumerator, _barDenominator);
+    public long OperationStepTicks => OperationSubdivision.ToTicks(
+        _ticksPerQuarterNote, _barNumerator, _barDenominator);
+    public long EffectiveOperationStepTicks => SnapEnabled ? OperationStepTicks : 1;
+    public bool DisplayGridUsesBars => DisplaySubdivision.IsBar;
+    public bool EffectiveOperationUsesBars => SnapEnabled && OperationSubdivision.IsBar;
+    public ProjectTimeSignatureMap? TimeSignatureMap => _timeSignatureMap;
+    public string DisplayGridLabel => $"Grid {DisplaySubdivision.Label}";
+    public string OperationGridLabel => $"Step {OperationSubdivision.Label}";
+    public string DisplaySubdivisionText
+    {
+        get => DisplaySubdivision.IsBar
+            ? "Bar"
+            : $"{DisplaySubdivision.Numerator}/{DisplaySubdivision.Denominator}";
+        set
+        {
+            if (TimelineSubdivision.TryParse(value, out TimelineSubdivision parsed))
+            {
+                DisplaySubdivision = parsed;
+            }
+        }
+    }
+    public string OperationSubdivisionText
+    {
+        get => OperationSubdivision.IsBar
+            ? "Bar"
+            : $"{OperationSubdivision.Numerator}/{OperationSubdivision.Denominator}";
+        set
+        {
+            if (TimelineSubdivision.TryParse(value, out TimelineSubdivision parsed))
+            {
+                OperationSubdivision = parsed;
+            }
+        }
+    }
+
+    public void ConfigureProject(MidoraProject project, long referenceTick)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        _ticksPerQuarterNote = project.TicksPerQuarterNote;
+        _timeSignatureMap = new ProjectTimeSignatureMap(project);
+        TimeSignatureChange? signature = project.Conductor.TimeSignatures
+            .Where(item => item.Tick <= Math.Max(0, referenceTick))
+            .OrderByDescending(item => item.Tick)
+            .FirstOrDefault();
+        _barNumerator = signature?.Numerator ?? 4;
+        _barDenominator = signature?.Denominator ?? 4;
+        Raise(nameof(DisplayGridStepTicks));
+        Raise(nameof(OperationStepTicks));
+        Raise(nameof(EffectiveOperationStepTicks));
+        Raise(nameof(TimeSignatureMap));
+    }
+
+    public long SnapAbsolute(long tick, int movementDirection = 0) =>
+        TimelineGridQuantization.SnapAbsolute(
+            Math.Max(0, tick),
+            EffectiveOperationStepTicks,
+            EffectiveOperationUsesBars,
+            TimeSignatureMap,
+            movementDirection);
+
+    public long SnapDelta(long delta, long targetTick) =>
+        TimelineGridQuantization.SnapDelta(
+            delta,
+            Math.Max(0, targetTick),
+            EffectiveOperationStepTicks,
+            EffectiveOperationUsesBars,
+            TimeSignatureMap);
+
+    public void Reset(bool arrangement, int ticksPerQuarterNote = 768)
+    {
+        _ticksPerQuarterNote = Math.Max(1, ticksPerQuarterNote);
+        _timeSignatureMap = null;
+        DisplaySubdivision = TimelineSubdivision.Presets.Single(item => !item.IsBar && item.Numerator == 1 && item.Denominator == 4);
+        OperationSubdivision = TimelineSubdivision.Presets.Single(item => !item.IsBar && item.Numerator == 1 && item.Denominator == 16);
+        SnapEnabled = true;
+        GridVisible = true;
+        DefaultLengthTicks = arrangement ? checked((long)_ticksPerQuarterNote * 4) : _ticksPerQuarterNote;
+        DefaultVelocity = 100;
+        ConfigureBarDefaults();
+        Raise(nameof(TimeSignatureMap));
+    }
+
+    private void ConfigureBarDefaults()
+    {
+        _barNumerator = 4;
+        _barDenominator = 4;
+        Raise(nameof(DisplayGridStepTicks));
+        Raise(nameof(OperationStepTicks));
+        Raise(nameof(EffectiveOperationStepTicks));
+    }
+}
+
 public sealed record ConductorEventRow(
     MidoraId Id,
     long Tick,
@@ -268,6 +509,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     private TimelineRenderSnapshot? _snapshot;
     private TimelineRenderSnapshot? _rulerSnapshot;
     private TimelineRenderSnapshot? _parameterSnapshot;
+    private TimelineRenderSnapshot? _velocitySnapshot;
+    private int _activeParameterLaneIndex;
     private string _context = string.Empty;
     private long _startTick;
     private long _tickSpan;
@@ -282,23 +525,39 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     private long? _playbackCursorTick;
     private bool _viewportInitialized;
     private TimelineToolMode _toolMode = TimelineToolMode.Select;
-    private bool _gridVisible = true;
-    private int _requestedGridDivisionsPerQuarter = 4;
-    private int _ticksPerQuarterNote = 768;
+    private double _activeValueMinimum;
+    private double _activeValueMaximum = 127;
+    private bool _activeValueIntegral = true;
 
     public TimelineWorkspaceViewModel(
         WorkspaceKey key,
         string header,
-        TimelineWorkspaceMode mode)
+        TimelineWorkspaceMode mode,
+        TimelineEditorSettings? editorSettings = null)
         : base(key, header)
     {
         Mode = mode;
+        EditorSettings = editorSettings ?? new TimelineEditorSettings();
+        EditorSettings.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(TimelineEditorSettings.DisplayGridStepTicks)
+                or nameof(TimelineEditorSettings.DisplayGridLabel)
+                or nameof(TimelineEditorSettings.EffectiveOperationStepTicks)
+                or nameof(TimelineEditorSettings.GridVisible))
+            {
+                Raise(nameof(GridStepTicks));
+                Raise(nameof(OperationStepTicks));
+                Raise(nameof(GridLabel));
+                Raise(nameof(GridVisible));
+            }
+        };
         _laneHeight = mode == TimelineWorkspaceMode.Arrangement ? 56 : 18;
         _firstLane = mode == TimelineWorkspaceMode.Segment ? 48 : 0;
         _tickSpan = 3072;
     }
 
     public TimelineWorkspaceMode Mode { get; }
+    public TimelineEditorSettings EditorSettings { get; }
     public bool IsSegment => Mode == TimelineWorkspaceMode.Segment;
     public bool IsConductor => Mode == TimelineWorkspaceMode.Conductor;
     public bool IsArrangement => Mode == TimelineWorkspaceMode.Arrangement;
@@ -326,19 +585,12 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     public bool IsDrawTool => ToolMode == TimelineToolMode.Draw;
     public bool IsEraseTool => ToolMode == TimelineToolMode.Erase;
     public bool IsSplitTool => ToolMode == TimelineToolMode.Split;
-    public bool GridVisible { get => _gridVisible; set => Set(ref _gridVisible, value); }
-    public int EffectiveGridDivisionsPerQuarter =>
-        _ticksPerQuarterNote % _requestedGridDivisionsPerQuarter == 0
-            ? _requestedGridDivisionsPerQuarter
-            : 1;
-    public string GridLabel => $"Grid 1/{EffectiveGridDivisionsPerQuarter}";
-
-    public void ConfigureGridDivisions(int divisionsPerQuarter)
+    public bool GridVisible
     {
-        if (divisionsPerQuarter <= 0) throw new ArgumentOutOfRangeException(nameof(divisionsPerQuarter));
-        _requestedGridDivisionsPerQuarter = divisionsPerQuarter;
-        RecalculateGridStep();
+        get => EditorSettings.GridVisible;
+        set => EditorSettings.GridVisible = value;
     }
+    public string GridLabel => EditorSettings.DisplayGridLabel;
     public TimelineRenderSnapshot? Snapshot
     {
         get => _snapshot;
@@ -353,6 +605,32 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     {
         get => _parameterSnapshot;
         private set => Set(ref _parameterSnapshot, value);
+    }
+    public TimelineRenderSnapshot? VelocitySnapshot
+    {
+        get => _velocitySnapshot;
+        private set => Set(ref _velocitySnapshot, value);
+    }
+    public ObservableCollection<string> ParameterLaneLabels { get; } = [];
+    public int ActiveParameterLaneIndex
+    {
+        get => _activeParameterLaneIndex;
+        set => Set(ref _activeParameterLaneIndex, Math.Max(0, value));
+    }
+    public double ActiveValueMinimum
+    {
+        get => _activeValueMinimum;
+        private set => Set(ref _activeValueMinimum, value);
+    }
+    public double ActiveValueMaximum
+    {
+        get => _activeValueMaximum;
+        private set => Set(ref _activeValueMaximum, value);
+    }
+    public bool ActiveValueIntegral
+    {
+        get => _activeValueIntegral;
+        private set => Set(ref _activeValueIntegral, value);
     }
     public string Context
     {
@@ -379,7 +657,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         get => _laneHeight;
         set => Set(ref _laneHeight, Math.Clamp(value, 8, 128));
     }
-    public long GridStepTicks { get; private set; } = 192;
+    public long GridStepTicks => EditorSettings.DisplayGridStepTicks;
+    public long OperationStepTicks => EditorSettings.EffectiveOperationStepTicks;
     public long? RangeStartTick
     {
         get => _rangeStartTick;
@@ -547,8 +826,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
 
     public override void Rebuild(MidoraProject project, long revision)
     {
-        _ticksPerQuarterNote = project.TicksPerQuarterNote;
-        RecalculateGridStep();
+        EditorSettings.ConfigureProject(project, StartTick);
         if (!_viewportInitialized)
         {
             TickSpan = Math.Max(TickSpan, checked((long)project.TicksPerQuarterNote * 16));
@@ -578,13 +856,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         long paddedContent = contentEnd <= long.MaxValue - padding ? contentEnd + padding : long.MaxValue;
         TimelineExtentEndTick = Math.Max(minimumExtent, paddedContent);
         Raise(nameof(GridStepTicks));
-    }
-
-    private void RecalculateGridStep()
-    {
-        GridStepTicks = Math.Max(1, _ticksPerQuarterNote / EffectiveGridDivisionsPerQuarter);
-        Raise(nameof(GridStepTicks));
-        Raise(nameof(EffectiveGridDivisionsPerQuarter));
+        Raise(nameof(OperationStepTicks));
         Raise(nameof(GridLabel));
     }
 
@@ -650,6 +922,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             Context = "The Segment no longer exists.";
             Snapshot = new(revision, $"segment:{ObjectId}", Array.Empty<TimelineRenderItem>());
             ParameterSnapshot = new(revision, $"segment-parameters:{ObjectId}", Array.Empty<TimelineRenderItem>());
+            VelocitySnapshot = new(revision, $"segment-velocities:{ObjectId}", Array.Empty<TimelineRenderItem>());
             return;
         }
         LogicalTrack track = located.Value.Track;
@@ -681,17 +954,58 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             $"segment:{segment.Id.Value}",
             items,
             Enumerable.Range(0, 128).Select(lane => MidiNoteName(127 - lane)).ToArray());
+        VelocitySnapshot = new(
+            revision,
+            $"segment-velocities:{segment.Id.Value}",
+            segment.Notes.Select(note => new TimelineRenderItem(
+                note.Id,
+                TimelineItemKind.Velocity,
+                note.StartTick,
+                checked(note.StartTick + Math.Max(1, note.LengthTicks)),
+                0,
+                note.Velocity / 127d,
+                1,
+                Selection.Ids.Contains(note.Id)
+                    ? TimelineItemState.Selected
+                      | (Selection.Primary == note.Id ? TimelineItemState.Primary : TimelineItemState.None)
+                    : TimelineItemState.None)),
+            ["Velocity"]);
 
         EventInstrument? instrument = track.EventInstrumentId is MidoraId instrumentId
             ? project.EventInstruments.FirstOrDefault(item => item.Id == instrumentId)
             : null;
         List<TimelineRenderItem> parameterItems = [];
         List<string> parameterLabels = [];
+        ParameterLaneLabels.Clear();
+        foreach (LogicalParameterLane lane in segment.ParameterLanes)
+        {
+            LogicalParameterDefinition? definition = instrument?.LogicalParameters
+                .FirstOrDefault(item => item.Id == lane.ParameterId);
+            ParameterLaneLabels.Add(definition?.Name ?? $"Broken parameter {lane.ParameterId.Value}");
+        }
+        if (ActiveParameterLaneIndex >= segment.ParameterLanes.Count) ActiveParameterLaneIndex = 0;
+        ActiveValueMinimum = 0;
+        ActiveValueMaximum = 127;
+        ActiveValueIntegral = true;
         for (int laneIndex = 0; laneIndex < segment.ParameterLanes.Count; laneIndex++)
         {
+            if (laneIndex != ActiveParameterLaneIndex) continue;
             LogicalParameterLane lane = segment.ParameterLanes[laneIndex];
             LogicalParameterDefinition? definition = instrument?.LogicalParameters
                 .FirstOrDefault(item => item.Id == lane.ParameterId);
+            if (definition is not null)
+            {
+                double minimum = definition.DisplayMinimum;
+                double maximum = definition.DisplayMaximum;
+                if (!double.IsFinite(minimum) || !double.IsFinite(maximum) || maximum <= minimum)
+                {
+                    minimum = definition.Minimum;
+                    maximum = definition.Maximum;
+                }
+                ActiveValueMinimum = minimum;
+                ActiveValueMaximum = maximum;
+                ActiveValueIntegral = definition.Type is LogicalParameterType.Integer or LogicalParameterType.Enum;
+            }
             parameterLabels.Add(definition?.Name ?? $"Broken parameter {lane.ParameterId.Value}");
             CurvePoint[] points = lane.Points.OrderBy(item => item.Tick).ThenBy(item => item.Id).ToArray();
             for (int pointIndex = 0; pointIndex < points.Length; pointIndex++)
@@ -712,7 +1026,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                         TimelineItemKind.LogicalParameterCurve,
                         point.Tick,
                         next.Tick,
-                        laneIndex,
+                        0,
                         normalized,
                         0,
                         state | TimelineItemState.HitTestDisabled)
@@ -726,7 +1040,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                     TimelineItemKind.LogicalParameterPoint,
                     point.Tick,
                     checked(point.Tick + 1),
-                    laneIndex,
+                    0,
                     normalized,
                     1,
                     state));
@@ -945,7 +1259,10 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             minimum = definition.Minimum;
             maximum = definition.Maximum;
         }
-        return minimum + Math.Clamp(normalized, 0, 1) * (maximum - minimum);
+        double value = minimum + Math.Clamp(normalized, 0, 1) * (maximum - minimum);
+        return definition.Type == LogicalParameterType.Integer
+            ? Math.Round(value, MidpointRounding.AwayFromZero)
+            : value;
     }
 }
 
@@ -1063,7 +1380,10 @@ public sealed class LibraryWorkspaceViewModel()
     }
 }
 
-public sealed class InstrumentWorkspaceViewModel(MidoraId instrumentId, string header)
+public sealed class InstrumentWorkspaceViewModel(
+    MidoraId instrumentId,
+    string header,
+    TimelineEditorSettings? editorSettings = null)
     : WorkspaceViewModel(
         WorkspaceKey.ForObject(WorkspaceKind.EventInstrumentEditor, instrumentId),
         header)
@@ -1072,6 +1392,8 @@ public sealed class InstrumentWorkspaceViewModel(MidoraId instrumentId, string h
     private TimelineRenderSnapshot? _subVoiceSnapshot;
     private TimelineRenderSnapshot? _subVoiceNoteSnapshot;
     private TimelineRenderSnapshot? _subVoiceEventSnapshot;
+    private TimelineRenderSnapshot? _subVoiceVelocitySnapshot;
+    private int _activeRenderLaneIndex;
     private MidoraId? _activeSubVoiceId;
     private string _activeSubVoiceName = "No SubVoice";
     private string _activeSubVoiceContext = "Create or select a SubVoice to edit its timeline.";
@@ -1091,10 +1413,15 @@ public sealed class InstrumentWorkspaceViewModel(MidoraId instrumentId, string h
     private bool _scenarioHasHardBoundary;
     private long _scenarioHardBoundaryTick = 384;
     private TimelineToolMode _toolMode = TimelineToolMode.Select;
+    private double _activeValueMinimum;
+    private double _activeValueMaximum = 127;
+    private bool _activeValueIntegral = true;
     private bool _isPreviewExpanded;
     private bool _isPreviewMuted;
     private bool _isPreviewSoloSelected;
     private InstrumentPreviewMode _previewMode;
+
+    public TimelineEditorSettings EditorSettings { get; } = editorSettings ?? new TimelineEditorSettings();
 
     public string Summary
     {
@@ -1115,6 +1442,31 @@ public sealed class InstrumentWorkspaceViewModel(MidoraId instrumentId, string h
     {
         get => _subVoiceEventSnapshot;
         private set => Set(ref _subVoiceEventSnapshot, value);
+    }
+    public TimelineRenderSnapshot? SubVoiceVelocitySnapshot
+    {
+        get => _subVoiceVelocitySnapshot;
+        private set => Set(ref _subVoiceVelocitySnapshot, value);
+    }
+    public int ActiveRenderLaneIndex
+    {
+        get => _activeRenderLaneIndex;
+        set => Set(ref _activeRenderLaneIndex, Math.Max(0, value));
+    }
+    public double ActiveValueMinimum
+    {
+        get => _activeValueMinimum;
+        private set => Set(ref _activeValueMinimum, value);
+    }
+    public double ActiveValueMaximum
+    {
+        get => _activeValueMaximum;
+        private set => Set(ref _activeValueMaximum, value);
+    }
+    public bool ActiveValueIntegral
+    {
+        get => _activeValueIntegral;
+        private set => Set(ref _activeValueIntegral, value);
     }
     public MidoraId? ActiveSubVoiceId
     {
@@ -1210,6 +1562,7 @@ public sealed class InstrumentWorkspaceViewModel(MidoraId instrumentId, string h
             SubVoiceSnapshot = new(revision, $"instrument:{ObjectId}", Array.Empty<TimelineRenderItem>());
             SubVoiceNoteSnapshot = new(revision, $"instrument-notes:{ObjectId}", Array.Empty<TimelineRenderItem>());
             SubVoiceEventSnapshot = new(revision, $"instrument-events:{ObjectId}", Array.Empty<TimelineRenderItem>());
+            SubVoiceVelocitySnapshot = new(revision, $"instrument-velocities:{ObjectId}", Array.Empty<TimelineRenderItem>());
             ActiveSubVoiceId = null;
             ActiveSubVoiceName = "Missing SubVoice";
             ActiveSubVoiceContext = "The Event Instrument no longer exists.";
@@ -1382,6 +1735,29 @@ public sealed class InstrumentWorkspaceViewModel(MidoraId instrumentId, string h
         }
 
         RenderLanes = lanes;
+        if (ActiveRenderLaneIndex >= lanes.Count) ActiveRenderLaneIndex = 0;
+        ActiveValueMinimum = 0;
+        ActiveValueMaximum = 127;
+        ActiveValueIntegral = true;
+        if (lanes.Count != 0)
+        {
+            InstrumentRenderLane activeLane = lanes[ActiveRenderLaneIndex];
+            if (activeLane.ValueCurveId is MidoraId activeCurveId && activeVoice is not null)
+            {
+                ValueCurve curve = activeVoice.Curves.Single(item => item.Id == activeCurveId);
+                (ActiveValueMinimum, ActiveValueMaximum) = MidiValueRange(curve.Target);
+            }
+            else if (activeLane.EventKind == TemplateEventKind.PitchBend)
+            {
+                ActiveValueMinimum = -8192;
+                ActiveValueMaximum = 8191;
+            }
+        }
+        TimelineRenderItem[] activeEvents = lanes.Count == 0
+            ? []
+            : events.Where(item => item.Lane == ActiveRenderLaneIndex)
+                .Select(item => item with { Lane = 0 })
+                .ToArray();
         string projectionSuffix = activeVoice?.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none";
         SubVoiceNoteSnapshot = new(
             revision,
@@ -1391,8 +1767,24 @@ public sealed class InstrumentWorkspaceViewModel(MidoraId instrumentId, string h
         SubVoiceEventSnapshot = new(
             revision,
             $"instrument-events:{instrument.Id.Value}:{projectionSuffix}",
-            events,
-            lanes.Select(lane => lane.Label).ToArray());
+            activeEvents,
+            lanes.Count == 0 ? [] : [lanes[ActiveRenderLaneIndex].Label]);
+        SubVoiceVelocitySnapshot = new(
+            revision,
+            $"instrument-velocities:{instrument.Id.Value}:{projectionSuffix}",
+            activeVoice?.Events
+                .Where(item => item.Kind == TemplateEventKind.Note)
+                .Select(item => new TimelineRenderItem(
+                    item.Id,
+                    TimelineItemKind.Velocity,
+                    item.Tick,
+                    checked(item.Tick + Math.Max(1, item.LengthTicks)),
+                    0,
+                    item.Value / 127d,
+                    1,
+                    SelectionState(item.Id)))
+                .ToArray() ?? [],
+            ["Velocity"]);
         SubVoiceSnapshot = new(
             revision,
             $"instrument-overview:{instrument.Id.Value}:{projectionSuffix}",
@@ -1595,7 +1987,15 @@ public sealed class SettingsWorkspaceViewModel()
     public string ProjectName { get => _projectName; private set => Set(ref _projectName, value); }
     public string ProjectVersion { get => _projectVersion; private set => Set(ref _projectVersion, value); }
     public string Author { get => _author; private set => Set(ref _author, value); }
-    public string SoundFont { get => _soundFont; private set => Set(ref _soundFont, value); }
+    public string SoundFont
+    {
+        get => _soundFont;
+        private set
+        {
+            if (Set(ref _soundFont, value)) Raise(nameof(HasSoundFont));
+        }
+    }
+    public bool HasSoundFont => !string.Equals(SoundFont, "No SoundFont Selected", StringComparison.Ordinal);
     public string Playback { get => _playback; private set => Set(ref _playback, value); }
     public string AudioRender { get => _audioRender; private set => Set(ref _audioRender, value); }
     public ObservableCollection<InspectorField> GeneralFields { get; } = [];
@@ -1626,23 +2026,23 @@ public sealed class SettingsWorkspaceViewModel()
             new("settings.project.tpq", "TICKS PER QUARTER NOTE", project.TicksPerQuarterNote.ToString(), false));
         Replace(PlaybackFields,
             new("settings.playback.master", "MASTER VOLUME (DB)", project.Playback.MasterVolumeDecibels.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-            new("settings.playback.limiter", "LIMITER ENABLED", project.Playback.LimiterEnabled.ToString()),
-            new("settings.playback.stopCursor", "STOP CURSOR BEHAVIOR", project.Playback.StopCursorBehavior.ToString()));
+            Choice("settings.playback.limiter", "LIMITER ENABLED", project.Playback.LimiterEnabled, ["False", "True"]),
+            Choice("settings.playback.stopCursor", "STOP CURSOR BEHAVIOR", project.Playback.StopCursorBehavior));
         Replace(MidiExportFields,
-            new("settings.midi.mode", "MODE", project.Export.Mode.ToString()),
-            new("settings.midi.rangeMode", "RANGE MODE", project.Export.RangeMode.ToString()),
+            Choice("settings.midi.mode", "MODE", project.Export.Mode),
+            Choice("settings.midi.rangeMode", "RANGE MODE", project.Export.RangeMode),
             new("settings.midi.start", "MANUAL START TICK", project.Export.ManualStartTick?.ToString() ?? string.Empty),
             new("settings.midi.end", "MANUAL END TICK", project.Export.ManualEndTick?.ToString() ?? string.Empty),
-            new("settings.midi.trackSelection", "TRACK SELECTION", project.Export.TrackSelectionMode.ToString()),
-            new("settings.midi.routing", "ROUTING", project.Export.Routing.ToString()),
-            new("settings.midi.readme", "INCLUDE README", project.Export.IncludeReadme.ToString()),
-            new("settings.midi.warnings", "WARNINGS AS ERRORS", project.Export.TreatWarningsAsErrors.ToString()));
+            Choice("settings.midi.trackSelection", "TRACK SELECTION", project.Export.TrackSelectionMode),
+            Choice("settings.midi.routing", "ROUTING", project.Export.Routing),
+            Choice("settings.midi.readme", "INCLUDE README", project.Export.IncludeReadme, ["False", "True"]),
+            Choice("settings.midi.warnings", "WARNINGS AS ERRORS", project.Export.TreatWarningsAsErrors, ["False", "True"]));
         Replace(AudioRenderFields,
-            new("settings.audio.mode", "MODE", project.AudioRender.Mode.ToString()),
-            new("settings.audio.rangeMode", "RANGE MODE", project.AudioRender.RangeMode.ToString()),
+            Choice("settings.audio.mode", "MODE", project.AudioRender.Mode),
+            Choice("settings.audio.rangeMode", "RANGE MODE", project.AudioRender.RangeMode),
             new("settings.audio.start", "MANUAL START TICK", project.AudioRender.ManualStartTick?.ToString() ?? string.Empty),
             new("settings.audio.end", "MANUAL END TICK", project.AudioRender.ManualEndTick?.ToString() ?? string.Empty),
-            new("settings.audio.trackSelection", "TRACK SELECTION", project.AudioRender.TrackSelectionMode.ToString()),
+            Choice("settings.audio.trackSelection", "TRACK SELECTION", project.AudioRender.TrackSelectionMode),
             new("settings.audio.sampleRate", "SAMPLE RATE", project.AudioRender.SampleRate.ToString()),
             new("settings.audio.voices", "MAXIMUM SAMPLE VOICES / UNIT", project.AudioRender.MaximumSampleVoicesPerUnitStream.ToString()));
         AudioRenderTracks.Clear();
@@ -1676,6 +2076,17 @@ public sealed class SettingsWorkspaceViewModel()
             .Select(item => new InspectorField($"{prefix}.nrpn.{item.Key}", $"NRPN {item.Key}", item.Value.ToString())));
         return fields.ToArray();
     }
+
+    private static InspectorField Choice<T>(
+        string key,
+        string label,
+        T value,
+        IReadOnlyList<string>? options = null)
+        where T : notnull => new(
+            key,
+            label,
+            value.ToString() ?? string.Empty,
+            options: options ?? (typeof(T).IsEnum ? Enum.GetNames(typeof(T)) : []));
 
     private static void Replace(ObservableCollection<InspectorField> target, params InspectorField[] fields)
     {

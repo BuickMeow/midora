@@ -314,6 +314,9 @@ internal static class InspectorProjection
     {
         TValue first = selector(items[0]);
         bool same = items.Skip(1).All(item => EqualityComparer<TValue>.Default.Equals(first, selector(item)));
+        IReadOnlyList<string>? options = typeof(TValue).IsEnum
+            ? Enum.GetNames(typeof(TValue))
+            : null;
         return new(
             key,
             label,
@@ -321,7 +324,8 @@ internal static class InspectorProjection
                 ? Convert.ToString(first, CultureInfo.InvariantCulture) ?? string.Empty
                 : "Mixed",
             true,
-            same ? InspectorFieldValueState.SameValue : InspectorFieldValueState.Mixed);
+            same ? InspectorFieldValueState.SameValue : InspectorFieldValueState.Mixed,
+            options);
     }
 
     private sealed record LogicalParameterPointBatch(
@@ -996,7 +1000,13 @@ internal static class InspectorProjection
     }
 
     private static InspectorField Field(string key, string label, object value, bool editable = true) =>
-        new(key, label, Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty, editable);
+        new(
+            key,
+            label,
+            Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty,
+            editable,
+            InspectorFieldValueState.SameValue,
+            value.GetType().IsEnum ? Enum.GetNames(value.GetType()) : null);
 
     private static InspectorField StateField(string key, string label, int? value) =>
         new(key, label, value?.ToString(CultureInfo.InvariantCulture) ?? string.Empty);

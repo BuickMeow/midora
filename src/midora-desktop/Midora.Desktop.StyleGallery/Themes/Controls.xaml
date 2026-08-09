@@ -296,7 +296,6 @@
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.Surface.3}" />
-              <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource Brush.Border}" />
               <Setter Property="Foreground" Value="{StaticResource Brush.Text.Disabled}" />
             </Trigger>
           </ControlTemplate.Triggers>
@@ -308,6 +307,7 @@
   <Style x:Key="Button.Ghost" TargetType="Button" BasedOn="{StaticResource Button.Base}">
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
   </Style>
 
@@ -1157,6 +1157,13 @@
                                   Margin="0,0,7,0"
                                   VerticalAlignment="Center"
                                   ContentSource="Icon" />
+                <TextBlock x:Name="CheckMark"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Foreground="{StaticResource Brush.Red.Hover}"
+                           FontWeight="SemiBold"
+                           Text="✓"
+                           Visibility="Collapsed" />
                 <ContentPresenter x:Name="HeaderPresenter"
                                   Grid.Column="1"
                                   VerticalAlignment="Center"
@@ -1225,6 +1232,10 @@
             </Trigger>
             <Trigger Property="Role" Value="SubmenuHeader">
               <Setter TargetName="SubmenuArrow" Property="Visibility" Value="Visible" />
+            </Trigger>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="CheckMark" Property="Visibility" Value="Visible" />
+              <Setter TargetName="IconPresenter" Property="Visibility" Value="Collapsed" />
             </Trigger>
             <Trigger Property="IsHighlighted" Value="True">
               <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.Surface.4}" />

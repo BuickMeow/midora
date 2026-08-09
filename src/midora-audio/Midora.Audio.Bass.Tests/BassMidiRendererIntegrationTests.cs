@@ -292,6 +292,52 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
+    public unsafe void HeldPreviewGateEndCanReplaceAtTheProducerFrontierWithoutFaulting()
+    {
+        EnsureEnvironment();
+        MidiRenderPlan causal = new(
+            SampleRate,
+            16_000,
+            [new MidiPortRenderPlan(
+                0,
+                [
+                    new(0, MidiMessage.NoteOn(0, 0, 100)),
+                    new(14_000, MidiMessage.NoteOff(0, 0, 0))
+                ])]);
+        MidiRenderPlan continuation = new(
+            SampleRate,
+            20_000,
+            [new MidiPortRenderPlan(
+                0,
+                [
+                    new(0, MidiMessage.NoteOn(0, 0, 100)),
+                    new(7_936, MidiMessage.NoteOff(0, 0, 0)),
+                    new(7_936, MidiMessage.ControlChange(0, 120, 0)),
+                    new(7_936, MidiMessage.ControlChange(0, 7, 100)),
+                    new(7_936, MidiMessage.PitchWheelChange(0, 0)),
+                    new(7_936, MidiMessage.ControlChange(0, 101, 0)),
+                    new(7_936, MidiMessage.ControlChange(0, 100, 0)),
+                    new(7_936, MidiMessage.ControlChange(0, 6, 2)),
+                    new(7_936, MidiMessage.ControlChange(0, 101, 127)),
+                    new(7_936, MidiMessage.ControlChange(0, 100, 127))
+                ])]);
+        MidiRenderPlan replacement =
+            MidiRenderPlanSplicer.SpliceHeldGateEndAtProducerFrontier(
+                causal,
+                continuation,
+                7_936);
+        using BassMidiRenderer renderer = CreateRenderer(causal, 256);
+        float* samples = stackalloc float[8_000 * 2];
+
+        Assert.Equal(7_936, renderer.PullFrames(samples, 7_936).FrameCount);
+        renderer.ReplaceFuturePlan(replacement, 7_936);
+
+        Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
+        Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
+        Assert.Equal(0u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+    }
+
+    [Fact]
     public unsafe void CutPreviousReleaseNoteOffLeavesTheOverlappingReplacementPressed()
     {
         EnsureEnvironment();
@@ -458,6 +504,8 @@ public sealed class BassMidiRendererIntegrationTests
             new(0, MidiMessage.ControlChange(0, 100, 0)),
             new(0, MidiMessage.ControlChange(0, 6, 2)),
             new(0, MidiMessage.ControlChange(0, 38, 0)),
+            new(0, MidiMessage.ControlChange(0, 101, 127)),
+            new(0, MidiMessage.ControlChange(0, 100, 127)),
             new(0, MidiMessage.PitchWheelChange(0, 8_192)),
             new(0, MidiMessage.NoteOn(0, 60, 100)),
             new(512, MidiMessage.NoteOff(0, 60, 0))

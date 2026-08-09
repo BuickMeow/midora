@@ -398,6 +398,91 @@ public sealed class ProjectBatchTimelineEditCommandsTests
     }
 
     [Fact]
+    public void VelocityPaintUsesPerNoteValuesAndOneUndoUnit()
+    {
+        (MidoraProject project, _, Segment segment, LogicalNote first, LogicalNote second) = CreateProject();
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.PaintLogicalNoteVelocities(
+            segment.Id,
+            new Dictionary<MidoraId, int>
+            {
+                [second.Id] = 117,
+                [first.Id] = 24
+            }));
+
+        Assert.Equal((24, 117), (first.Velocity, second.Velocity));
+        Assert.Single(document.History);
+        document.Undo();
+        Assert.Equal((100, 80), (first.Velocity, second.Velocity));
+        Assert.False(document.IsModified);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void TemplateVelocityPaintUsesPerNoteValuesAndOneUndoUnit()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument" };
+        SubVoice voice = new(project) { Name = "Voice" };
+        TemplateEvent first = TemplateEvent.Note(project, 0, 60, 60, 100);
+        TemplateEvent second = TemplateEvent.Note(project, 120, 60, 64, 80);
+        voice.Events.AddRange([first, second]);
+        instrument.SubVoices.Add(voice);
+        project.EventInstruments.Add(instrument);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.PaintTemplateNoteVelocities(
+            instrument.Id,
+            voice.Id,
+            new Dictionary<MidoraId, int>
+            {
+                [second.Id] = 117,
+                [first.Id] = 24
+            }));
+
+        Assert.Equal((24, 117), (first.Value, second.Value));
+        Assert.Single(document.History);
+        document.Undo();
+        Assert.Equal((100, 80), (first.Value, second.Value));
+        Assert.False(document.IsModified);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void TemplateNoteBatchMoveUsesOneUndoAndPreservesRelativePlacement()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument", TemplateLengthTicks = 480 };
+        SubVoice voice = new(project) { Name = "Voice" };
+        TemplateEvent first = TemplateEvent.Note(project, 0, 60, 60, 100);
+        TemplateEvent second = TemplateEvent.Note(project, 120, 90, 64, 80);
+        voice.Events.AddRange([first, second]);
+        instrument.SubVoices.Add(voice);
+        project.EventInstruments.Add(instrument);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.MoveTemplateNotes(
+            instrument.Id,
+            voice.Id,
+            [second.Id, first.Id],
+            tickDelta: 30,
+            pitchDelta: 2));
+
+        Assert.Equal((30L, 62), (first.Tick, first.Number));
+        Assert.Equal((150L, 66), (second.Tick, second.Number));
+        Assert.Single(document.History);
+        document.Undo();
+        Assert.Equal((0L, 60), (first.Tick, first.Number));
+        Assert.Equal((120L, 64), (second.Tick, second.Number));
+        Assert.False(document.IsModified);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
     public void LogicalParameterPointCombinedDragIsOneAtomicUndoUnit()
     {
         MidoraProject project = new(480);

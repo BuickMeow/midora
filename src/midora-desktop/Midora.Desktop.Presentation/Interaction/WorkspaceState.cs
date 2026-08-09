@@ -145,3 +145,96 @@ public static class TimelineSnap
         return movementDirection > 0 ? upper : lower;
     }
 }
+
+public static class TimelineGridQuantization
+{
+    public static long SnapAbsolute(
+        long tick,
+        long fixedStepTicks,
+        bool useBars,
+        ProjectTimeSignatureMap? timeSignatureMap,
+        int movementDirection)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(tick);
+        if (!useBars || timeSignatureMap is null)
+        {
+            return TimelineSnap.Snap(tick, Math.Max(1, fixedStepTicks), movementDirection);
+        }
+
+        ProjectBarInfo bar = timeSignatureMap.GetBarContaining(tick);
+        long lowerDistance = tick - bar.StartTick;
+        long upperDistance = bar.EndTick - tick;
+        if (lowerDistance < upperDistance)
+        {
+            return bar.StartTick;
+        }
+        if (upperDistance < lowerDistance)
+        {
+            return bar.EndTick;
+        }
+        return movementDirection > 0 ? bar.EndTick : bar.StartTick;
+    }
+
+    public static long SnapDelta(
+        long delta,
+        long targetTick,
+        long fixedStepTicks,
+        bool useBars,
+        ProjectTimeSignatureMap? timeSignatureMap)
+    {
+        if (delta == 0)
+        {
+            return 0;
+        }
+
+        long step = Math.Max(1, fixedStepTicks);
+        if (useBars && timeSignatureMap is not null)
+        {
+            ProjectBarInfo bar = timeSignatureMap.GetBarContaining(Math.Max(0, targetTick));
+            step = Math.Max(1, checked(bar.EndTick - bar.StartTick));
+        }
+
+        long magnitude = delta == long.MinValue ? long.MaxValue : Math.Abs(delta);
+        long snapped = TimelineSnap.Snap(magnitude, step, Math.Sign(delta));
+        return delta < 0 ? -snapped : snapped;
+    }
+
+    public static long GetGridTickAtOrAfter(
+        long tick,
+        long fixedStepTicks,
+        bool useBars,
+        ProjectTimeSignatureMap? timeSignatureMap)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(tick);
+        if (useBars && timeSignatureMap is not null)
+        {
+            ProjectBarInfo bar = timeSignatureMap.GetBarContaining(tick);
+            return bar.StartTick == tick ? tick : bar.EndTick;
+        }
+
+        long step = Math.Max(1, fixedStepTicks);
+        long lower = tick / step * step;
+        return lower == tick ? tick : checked(lower + step);
+    }
+
+    public static long GetNextGridTick(
+        long tick,
+        long fixedStepTicks,
+        bool useBars,
+        ProjectTimeSignatureMap? timeSignatureMap)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(tick);
+        if (useBars && timeSignatureMap is not null)
+        {
+            ProjectBarInfo bar = timeSignatureMap.GetBarContaining(tick);
+            if (bar.EndTick > tick)
+            {
+                return bar.EndTick;
+            }
+
+            return timeSignatureMap.GetBarContaining(checked(tick + 1)).EndTick;
+        }
+
+        return checked(tick + Math.Max(1, fixedStepTicks));
+    }
+}

@@ -50,3 +50,17 @@
 - 不增加 Pause、Scrub、跨应用恢复 Zoom、Track 独立编辑 Workspace 或新的双击命令。
 - 不改变 Event Instrument、Mapping、生命周期、Channel Unit 分配或输出文件格式语义。
 - 不通过 UI 或音频消费者重新解释 Project；边界音乐语义仍由 canonical 编译结果提供。
+
+## 已关闭缺陷
+
+### WPF-AUDIO-HELD-001：SubVoice / Segment Held Preview 结束时 Worker fault
+
+- 状态：**Fixed / verified 2026-08-09**。使用重新发布的 Native AOT Worker 和指定复现工程完成实际 WPF 路径验证。
+- 复现工程：`D:\MIDI\Midora Projects\Test\TestProject2.midora`。
+- 复现路径：在 SubVoice 工作区预览音符，或在 Segment Editor 中预览音符；松开并结束 Held Preview 时弹出 `End Held Preview` 错误。
+- 已观察诊断：`AudioRenderFaultCode.BassMidiEventSubmissionFailed`，`NativeErrorCode = 0`，`ZeroBasedPortNumber = 0`；`SampleFrame` 随实际按住时长变化，不是固定故障位置。
+- 需求边界：《Midora SRS》INV-039 以及 §13.22.7、§13.24.5；两条 UI 路径必须共用 held Preview 因果 Gate，Gate End 只能替换 producer 尚未渲染后缀，失败时必须受控清理且不得残留音符。
+- 根因：`BassMidiRenderer.SubmitEventsAtCurrentFrame` 把 `BASS_MIDI_StreamEvents` 的“已处理事件数”误当成 RAW 输入消息的消费偏移。Held Gate End 同帧批次包含 NoteOff、状态恢复和 RPN 选择/数据输入/取消选择；BASS 对完整批次成功返回小于输入 MIDI 消息数的计数后，旧代码会拆分并重发后缀。脱离 RPN 前缀的后缀成功返回 `0`，旧代码再把该非错误返回误报为 `BassMidiEventSubmissionFailed`。
+- 修复：RAW 批次只在 BASS 返回 `uint.MaxValue`（原生 `-1`）时失败；其他返回值均表示该次完整输入调用成功，调度器整体推进到 `scanIndex`，不再按处理计数拆分或重发。Held Gate splice 同时复用 continuation 已有的边界 NoteOff，并保留 continuation Unit Fragment。
+- 自动回归：`HeldPreviewGateEndCanReplaceAtTheProducerFrontierWithoutFaulting` 在恢复旧返回值判断时稳定失败（首个 replacement pull 为 `0`），在修复后使用 `D:\Soundfonts\sf2\Roland XP-80 Layer0.sf2` 通过；`ReopenedEmbeddedProjectRestoresVerifiedSoundFontAndPlaysTwice` 使用该复现工程覆盖 Event Instrument、Selected SubVoice 和 Segment Pitch Ruler 的两轮 Worker 端到端预览并通过。
+- WPF 验证：通过 Computer Use 打开该工程，重新发布 Worker 后分别执行 Selected SubVoice Preview 两次和 Segment Pitch Ruler Preview 两次；均无弹窗、无 Worker fault，诊断保持 `0 Errors / 0 Warnings`，每次自然回到 `Stopped`。关闭条件已满足。

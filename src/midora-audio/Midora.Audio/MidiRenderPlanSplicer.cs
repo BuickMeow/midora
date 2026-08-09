@@ -41,11 +41,27 @@ public static class MidiRenderPlanSplicer
             }
 
             int cleanupCount = 0;
+            ScheduledMidiMessage[] current = spliced.Ports[portIndex].Events.ToArray();
+            int continuationIndex = causalPrefixCount;
+            while (continuationIndex < current.Length
+                && current[continuationIndex].SampleFrame == producerFrontierFrame)
+            {
+                MidiMessage message = current[continuationIndex].Message;
+                if (message.MessageType == MidiMessageType.NoteOff
+                    || message.MessageType == MidiMessageType.NoteOn && message.Byte2 == 0)
+                {
+                    ref int count = ref activeNotes[message.ChannelNumber, message.Byte1];
+                    if (count != 0)
+                    {
+                        count--;
+                    }
+                }
+                continuationIndex++;
+            }
             foreach (int count in activeNotes)
             {
                 cleanupCount = checked(cleanupCount + count);
             }
-            ScheduledMidiMessage[] current = spliced.Ports[portIndex].Events.ToArray();
             ScheduledMidiMessage[] withCleanup = new ScheduledMidiMessage[
                 current.Length + cleanupCount];
             Array.Copy(current, 0, withCleanup, 0, causalPrefixCount);
@@ -78,7 +94,8 @@ public static class MidiRenderPlanSplicer
             spliced.TotalFrameCount,
             ports,
             spliced.SourceIds,
-            spliced.InitiallyDisabledSourceIndices);
+            spliced.InitiallyDisabledSourceIndices,
+            spliced.UnitFragments);
     }
 
     public static MidiRenderPlan SpliceAtProducerFrontier(
@@ -151,7 +168,8 @@ public static class MidiRenderPlanSplicer
             continuation.TotalFrameCount,
             ports,
             causalPrefix.SourceIds,
-            causalPrefix.InitiallyDisabledSourceIndices);
+            causalPrefix.InitiallyDisabledSourceIndices,
+            continuation.UnitFragments);
     }
 
     public static int FindFirstEventAtOrAfter(

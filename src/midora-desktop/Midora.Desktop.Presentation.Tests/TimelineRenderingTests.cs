@@ -177,6 +177,29 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void BarGridFollowsEffectiveTimeSignatureAndTruncatedBoundary()
+    {
+        MidoraProject project = new(480);
+        project.Conductor.TimeSignatures.Add(new TimeSignatureChange(project, 1_000, 3, 4));
+        ProjectTimeSignatureMap map = new(project);
+
+        Assert.Equal(1_000, TimelineGridQuantization.GetGridTickAtOrAfter(900, 1_920, true, map));
+        Assert.Equal(2_440, TimelineGridQuantization.GetNextGridTick(1_000, 1_920, true, map));
+        Assert.Equal(1_000, TimelineGridQuantization.SnapAbsolute(970, 1_920, true, map, 0));
+    }
+
+    [Fact]
+    public void BarDeltaUsesTheBarLengthAtTheTargetTick()
+    {
+        MidoraProject project = new(480);
+        project.Conductor.TimeSignatures.Add(new TimeSignatureChange(project, 1_000, 3, 4));
+        ProjectTimeSignatureMap map = new(project);
+
+        Assert.Equal(1_000, TimelineGridQuantization.SnapDelta(800, 900, 1_920, true, map));
+        Assert.Equal(1_440, TimelineGridQuantization.SnapDelta(800, 1_100, 1_920, true, map));
+    }
+
+    [Fact]
     public void WorkspaceSelectionMaintainsValidPrimary()
     {
         WorkspaceSelection selection = new();

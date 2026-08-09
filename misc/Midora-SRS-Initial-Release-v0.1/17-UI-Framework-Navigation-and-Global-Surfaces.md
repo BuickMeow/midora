@@ -152,7 +152,6 @@ Normal window bounds and maximized state
 Project Panel and Inspector width and collapsed state
 Bottom Panel height, state and last active tab
 Major splitters
-Workspace-type Grid and Snap preferences
 Follow Playback preference
 Default lane heights
 List or card view preferences
@@ -185,6 +184,10 @@ Search queries and filters
 Tree expansion
 Active subpage
 Workspace-local lane height and focus history
+Arrangement Grid / Snap session settings
+Shared Segment and SubVoice piano-roll Grid / Snap session settings
+Default Segment creation length
+Shared piano-roll default Note length and velocity
 ```
 关闭或替换 Project 后清除，不跨应用重启恢复。
 ### 17.2.4 Transient Interaction State
@@ -450,7 +453,7 @@ MIDI Export
 Audio Render
 ```
 ### 17.7.2 Global Notice Bar
-只用于持续、重要且影响全局工作流的状态：
+只用于持续、重要且影响全局工作流，或必须由用户关注才能继续的状态：
 ```text
 Damaged Objects Prevent Saving
 Migrated Project Requires Saving
@@ -460,13 +463,15 @@ Uncommitted Function Drafts
 Preference Storage Failed
 ```
 正常状态不占空间。
+成功操作、普通信息、短暂锁定原因和可恢复的小错误不得打开 Notice Bar；它们使用 Status Bar 的瞬时消息区域。只有阻止安全继续、要求用户决策或持续影响全局工作流的问题才进入 Notice Bar 或 Blocking Dialog。
 同时存在多个 Notice 时显示最高优先级项和 `View All`，不堆满窗口。
 关闭或折叠 Notice 只改变 UI 显示，不清除问题或诊断。
 ### 17.7.3 Status Bar
 示例格式：
 ```text
-Modified | 2 Errors, 3 Warnings | SoundFont Configured | Compile Outdated
+Modified | SoundFont Configured | Compile Outdated | 2 Errors, 3 Warnings                  <Transient Message>
 ```
+SoundFont Resource 位于左侧第二个状态单元。最右侧只用于瞬时消息；非错误消息使用次要文本色，错误消息使用错误色。该区域不得显示 CPU RID 或 .NET 运行时版本。
 Issues 显示 Whole Project 当前诊断计数，不受 Diagnostics 当前搜索和筛选影响。
 Compile State：
 ```text

@@ -33,13 +33,25 @@ Drag ruler  -> create Time Range Selection
 Playing 时，单击 Ruler 按播放系统规则跳转。
 初版不支持 Scrubbing；拖动 Ruler 不连续试听。
 ### 20.1.4 Grid 与 Snap
-Grid Visible 和 Snap Enabled 相互独立。
-改变 Grid、Snap 或 subdivision：
-- 不修改已有对象；
-- 不重新量化；
-- 不进入 Project Undo；
-- 属于 Application Preference 或当前 UI 状态。
-`Alt` 在 Timeline 对象拖动中临时绕过 Snap。
+每个 tick 时间线同时具有相互独立的：
+```text
+Display Grid Subdivision
+Operation Subdivision
+Snap Enabled
+```
+Arrangement 使用独立设置；所有 Segment Editor 与所有 SubVoice piano roll 在同一 Project 会话内共用另一套设置。两套设置均不进入 `.midora`、Application Preferences 或 Project Undo；关闭或替换 Project 后恢复默认值：Display Grid `1/4`、Operation `1/16`、Snap Enabled。
+
+分数相对于全音符：`1/1 = 4 × TPQ`、`1/2 = 2 × TPQ`、`1/4 = TPQ`。实际 tick 步长统一为：
+```text
+max(1, Ceiling(TPQ * 4 * numerator / denominator))
+```
+用户可输入任意正整数分母的 `1/n`。预置至少包括：Bar、`1/1`、`1/2`、`1/3`（三连二分）、`1/4`、`1/6`（三连四分）、`3/16`（附点八分）、`1/8`、`1/12`（三连八分）、`3/32`（附点十六分）、`1/16`、`1/24`（三连十六分）、`3/64`（附点三十二分）、`1/32`、`1/48`（三连三十二分）、`1/64`、`1/128`、`1/256`。`Bar` 按目标 tick 的有效 Time Signature 计算当前小节长度。
+
+Display Grid 只控制分割线。Snap 应用 Operation Subdivision；Snap Disabled 时有效操作步长为 1 tick。改变任一设置不修改或重新量化已有对象。
+
+有效操作步长用于 Marquee 与 Time Range 的开始和长度、Edit Cursor 与 Playback Cursor 定位、Segment / Note 放置位置、Segment / Note Resize 的 delta（而不是最终总长度），以及 Segment / Note Move 的共享 delta（而不是最终绝对位置）。
+
+`Alt` 在 Timeline 对象拖动中临时绕过 Snap，此时有效操作步长为 1 tick。
 ### 20.1.5 Zoom 与 Pan
 ```text
 Ctrl + Mouse Wheel  -> horizontal zoom around pointer time
@@ -48,6 +60,7 @@ Middle-button Drag  -> pan
 ```
 不使用 `Space + Drag` 平移，因为 Space 在 Timeline Context 中用于 Play / Stop。
 同一 Workspace 中共享时间坐标的 Ruler、Lane 和 Canvas 必须同步横向缩放和滚动。
+在 piano roll 左侧 Pitch Ruler 上使用 `Ctrl + Mouse Wheel` 时只改变垂直音高缩放，并以指针下音高为锚点；不得同时改变横向缩放。
 ### 20.1.6 工具模式
 通用工具：
 ```text
@@ -71,6 +84,7 @@ Important semantic impact
 ```
 Pointer Up 一次提交；Escape 取消且不产生 Undo。
 拖到视图边缘时自动滚动。
+Draw 模式在可创建 Segment 或 Note 的空白位置悬停时，也必须显示包含位置和默认长度的虚线创建预览；非法 Segment overlap 预览使用错误色。
 ### 20.1.8 边界
 ```text
 Tick 0            -> hard left boundary
@@ -253,6 +267,7 @@ Length
 Velocity
 ```
 结果越界时整组受共同合法边界限制。
+拖动任何可移动的 Timeline 选择时，若请求 delta 会使任一对象越过时间、pitch、Track/Lane 或所属容器硬边界，使用一个共同 clamp 后的 delta 使整个选择保持相对关系并贴合边界；不因可安全 clamp 的越界请求弹出错误 Dialog。
 多选边缘调整采用同一 Edge Delta；初版不做比例时间伸缩。
 ### 20.4.5 数值编辑
 必须区分：
@@ -1183,13 +1198,12 @@ Project 对象区域使用 Project Clipboard 命令。
 Text / Code Editor 不触发 Project Duplicate、Delete 或 Rename。
 F2 在 Segment、Project End Marker、固定顶层节点、Damaged Placeholder、多选或文本编辑器中 No Action。
 ### 20.12.6 Space
-只有明确 Timeline Context 获得焦点时：
+主窗口没有活动 Modal、Popup、Menu 或本地编辑会话，且焦点不在 TextBox、PasswordBox、RichTextBox 或代码编辑器时：
 ```text
 Stopped                    -> Play
 Preparing / Playing / Buffering -> Stop
 ```
-Text Field、Code Editor、Button、Checkbox 和标准控件优先接收 Space。
-Project Panel、Inspector、Diagnostics、Tasks、Library、Settings、Menu 和 Status Bar 中 Space 不控制播放。
+Button、Checkbox、Tree、List、Project Panel、Inspector、Diagnostics、Tasks、Library、Settings 与 Status Bar 不再优先消费 Space；这些区域的 Space 执行全局 Play / Stop。文本输入、代码输入、打开的菜单/Popup 和 Modal Dialog 仍优先处理 Space。
 初版没有 Pause。
 ### 20.12.7 Escape
 优先顺序：
@@ -1347,9 +1361,6 @@ Project Panel width and collapsed state
 Inspector width and collapsed state
 Bottom Panel height, state and last active tab
 Major splitters
-Workspace-type Grid Visible
-Workspace-type Snap Enabled
-Workspace-type Grid Subdivision
 Follow Playback preference
 Default lane height
 Library list or card view
@@ -1382,6 +1393,8 @@ Playback state
 Task History
 Runtime Diagnostics
 Function Draft
+Arrangement Grid / Snap and default creation values
+Shared piano-roll Grid / Snap and default creation values
 当前设备枚举结果
 设备实际采样率
 设备实际 buffer 和 callback period
@@ -1442,8 +1455,6 @@ DPI override
 Project Panel: Visible
 Inspector: Visible
 Bottom Panel: Collapsed with Diagnostics active
-Grid: Visible
-Snap: Enabled
 Follow Playback: Enabled
 Current Tool: Select
 Playback Output Device: System Default
@@ -1654,7 +1665,7 @@ Compile 和 MIDI Export 不依赖 SF2 加载。
 14. 初版所有正式 UI 文案使用 English；
 15. 初版正式尺寸与布局验收以 Windows 100% DPI 为准；
 16. Segment Editor 左侧 Pitch Ruler 按下即开始、松开即结束单键 held Preview，且不创建 Project Note；
-17. 新建单个 Logical Note 的放置手势按草稿 pitch / velocity / startTick 发起 held Preview，提交时以最终 Note Length 结束 Gate，取消或失败后无残留发声；
-18. 上述两种钢琴卷帘预览与 Event Instrument / SubVoice 虚拟键盘复用同一因果 Gate、`Int64.MaxValue` 哨兵、未渲染 frontier、互斥、零分配和清理规则，不存在独立裸 MIDI 路径；
-19. 无 SF2、预览编译失败、已有播放任务或输出不可用时，合法单音符放置仍可提交，并且只形成一个 Project Undo。
+17. 新建单个 Logical Note 的放置手势只提供虚线视觉预览，不启动音频 Preview；
+18. Pitch Ruler 与 Event Instrument / SubVoice 虚拟键盘复用同一因果 Gate、`Int64.MaxValue` 哨兵、未渲染 frontier、互斥、零分配和清理规则，不存在独立裸 MIDI 路径；
+19. 无 SF2、已有播放任务或输出不可用时，合法单音符放置仍可提交，并且只形成一个 Project Undo。
 具体像素、控件类、颜色值、动画参数和内部实现应在 UI 原型、实现设计或实现设计继续确定，但不得改变本章已经明确的交互语义和系统边界。

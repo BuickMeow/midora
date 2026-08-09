@@ -823,7 +823,7 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
                     _packedMidiBuffer,
                     (uint)packedByteCount);
 
-                if (submitted == uint.MaxValue || submitted == 0 || submitted > (uint)batchCount)
+                if (submitted == uint.MaxValue)
                 {
                     int error = NativeBass.ErrorGetCode();
                     SetFault(
@@ -833,25 +833,12 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
                     return false;
                 }
 
-                if (submitted == (uint)batchCount)
-                {
-                    unit.EventIndex = scanIndex;
-                    continue;
-                }
-
-                int acceptedEnabledEvents = 0;
-                while (unit.EventIndex < scanIndex)
-                {
-                    ScheduledMidiMessage accepted = events[unit.EventIndex++];
-                    if (ShouldSubmitScheduledEvent(unit, accepted))
-                    {
-                        acceptedEnabledEvents++;
-                        if (acceptedEnabledEvents == submitted)
-                        {
-                            break;
-                        }
-                    }
-                }
+                // The return value is the count of events BASS processed, not a RAW-input
+                // consumption offset. Controller/RPN sequences can therefore return fewer
+                // processed events than the number of MIDI messages supplied. Any result
+                // other than uint.MaxValue is success for this complete input buffer; never
+                // split and resubmit a suffix based on the processed-event count.
+                unit.EventIndex = scanIndex;
             }
         }
 
@@ -921,7 +908,7 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
             NativeBassMidi.BASS_MIDI_EVENTS_RAW | NativeBassMidi.BASS_MIDI_EVENTS_NORSTATUS,
             _packedMidiBuffer,
             (uint)byteCount);
-        if (submitted == 1)
+        if (submitted != uint.MaxValue)
         {
             return true;
         }

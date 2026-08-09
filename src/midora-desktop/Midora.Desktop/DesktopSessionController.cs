@@ -40,8 +40,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private ProjectTimeSignatureMap? _timeSignatureMap;
     private string _projectTreeSearchText = string.Empty;
     private bool _isNavigatingHistory;
-    private bool _timelineSnapEnabled = true;
-    private int _timelineGridDivisionsPerQuarter = 4;
+    private string? _statusMessage;
+    private bool _statusMessageIsError;
 
     public DesktopSessionController()
     {
@@ -84,6 +84,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 : "Untitled Project";
         }
     }
+    public string TitleBarProjectDisplayName => _context is null
+        ? "No Project"
+        : $"{ProjectDisplayName}{(Document!.IsModified ? " *" : string.Empty)}";
     public string ProjectState => _context is null
         ? "No Project"
         : Persistence?.CurrentProjectPath is null
@@ -190,23 +193,27 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     public DiagnosticsWorkspaceViewModel BottomDiagnosticsViewModel { get; } = new();
     public ObservableCollection<DesktopTaskViewModel> TaskHistory { get; } = [];
     public InspectorViewModel Inspector { get; } = new();
-    public bool TimelineSnapEnabled
+    public TimelineEditorSettings ArrangementEditorSettings { get; } = new();
+    public TimelineEditorSettings PianoRollEditorSettings { get; } = new();
+    public string? StatusMessage
     {
-        get => _timelineSnapEnabled;
-        set => Set(ref _timelineSnapEnabled, value);
-    }
-    public int TimelineGridDivisionsPerQuarter
-    {
-        get => _timelineGridDivisionsPerQuarter;
-        set
+        get => _statusMessage;
+        private set
         {
-            if (value <= 0) throw new ArgumentOutOfRangeException(nameof(value));
-            if (!Set(ref _timelineGridDivisionsPerQuarter, value)) return;
-            foreach (TimelineWorkspaceViewModel workspace in Workspaces.OfType<TimelineWorkspaceViewModel>())
-            {
-                workspace.ConfigureGridDivisions(value);
-            }
+            if (Set(ref _statusMessage, value)) Raise(nameof(HasStatusMessage));
         }
+    }
+    public bool HasStatusMessage => !string.IsNullOrWhiteSpace(StatusMessage);
+    public bool StatusMessageIsError
+    {
+        get => _statusMessageIsError;
+        private set => Set(ref _statusMessageIsError, value);
+    }
+
+    public void SetStatusMessage(string? message, bool isError = false)
+    {
+        StatusMessageIsError = isError;
+        StatusMessage = string.IsNullOrWhiteSpace(message) ? null : message.Trim();
     }
 
     public WorkspaceViewModel? ActiveWorkspace
@@ -393,6 +400,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         if (_context is null) throw new InvalidOperationException("No Project is open.");
         await _context.SoundFontEditing.SelectEmbeddedAsync(selectedPath, cancellationToken);
+        await _context.RefreshSoundFontAsync(cancellationToken);
+        RefreshAll();
     }
 
     public async Task SelectExternalSoundFontAsync(
@@ -407,12 +416,15 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             projectPath,
             selectedPath,
             cancellationToken);
+        await _context.RefreshSoundFontAsync(cancellationToken);
+        RefreshAll();
     }
 
     public void ClearSoundFont()
     {
         if (_context is null) throw new InvalidOperationException("No Project is open.");
         _context.SoundFontEditing.Clear();
+        RefreshAll();
     }
 
     public void StartPlayback(long? cursorTick = null)
@@ -730,7 +742,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         if (!TaskHistory.Contains(task)) return;
         task.Report(detail, progress);
-        Notice = detail;
+        SetStatusMessage(detail);
         Raise(nameof(ActivityText));
         Raise(nameof(ActiveForegroundTask));
         Raise(nameof(IsMainWindowTaskLocked));
@@ -741,7 +753,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         if (!TaskHistory.Contains(task)) return;
         task.Complete(status, detail);
-        Notice = status == "Failed" ? detail : null;
+        if (!string.IsNullOrWhiteSpace(detail))
+        {
+            SetStatusMessage(detail, status == "Failed");
+        }
         Raise(nameof(ActivityText));
         Raise(nameof(ActiveForegroundTask));
         Raise(nameof(IsMainWindowTaskLocked));
@@ -816,7 +831,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
         if (source.SourceEventId == default && source.Tick < 0)
         {
-            Notice = "This diagnostic has no navigable Project source.";
+            SetStatusMessage("This diagnostic has no navigable Project source.", isError: true);
             return;
         }
         TimelineWorkspaceViewModel conductor = (TimelineWorkspaceViewModel)OpenWorkspace(
@@ -926,13 +941,14 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 () => new TimelineWorkspaceViewModel(
                     WorkspaceKey.ForType(WorkspaceKind.ConductorTrack),
                     "Conductor Track",
-                    TimelineWorkspaceMode.Conductor)),
+                    TimelineWorkspaceMode.Conductor,
+                    ArrangementEditorSettings)),
             ProjectTreeNodeKind.InstrumentLibrary => GetOrCreate(
                 WorkspaceKey.ForType(WorkspaceKind.EventInstrumentLibrary),
                 static () => new LibraryWorkspaceViewModel()),
             ProjectTreeNodeKind.EventInstrument when node.ObjectId is MidoraId id => GetOrCreate(
                 WorkspaceKey.ForObject(WorkspaceKind.EventInstrumentEditor, id),
-                () => new InstrumentWorkspaceViewModel(id, node.Title)),
+                () => new InstrumentWorkspaceViewModel(id, node.Title, PianoRollEditorSettings)),
             ProjectTreeNodeKind.LogicalTracks or ProjectTreeNodeKind.LogicalTrack => OpenArrangement(),
             ProjectTreeNodeKind.ProjectSettings => GetOrCreate(
                 WorkspaceKey.ForType(WorkspaceKind.ProjectSettings),
@@ -956,7 +972,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             () => new TimelineWorkspaceViewModel(
                 WorkspaceKey.ForType(WorkspaceKind.Arrangement),
                 "Arrangement",
-                TimelineWorkspaceMode.Arrangement));
+                TimelineWorkspaceMode.Arrangement,
+                ArrangementEditorSettings));
         ActiveWorkspace = workspace;
         return workspace;
     }
@@ -968,7 +985,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             () => new TimelineWorkspaceViewModel(
                 WorkspaceKey.ForObject(WorkspaceKind.SegmentEditor, segmentId),
                 "Segment",
-                TimelineWorkspaceMode.Segment));
+                TimelineWorkspaceMode.Segment,
+                PianoRollEditorSettings));
         ActiveWorkspace = workspace;
         return workspace;
     }
@@ -979,7 +997,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             ?? throw new InvalidOperationException("The Event Instrument no longer exists.");
         InstrumentWorkspaceViewModel workspace = (InstrumentWorkspaceViewModel)GetOrCreate(
             WorkspaceKey.ForObject(WorkspaceKind.EventInstrumentEditor, instrumentId),
-            () => new InstrumentWorkspaceViewModel(instrumentId, instrument.Name));
+            () => new InstrumentWorkspaceViewModel(instrumentId, instrument.Name, PianoRollEditorSettings));
         ActiveWorkspace = workspace;
         return workspace;
     }
@@ -1124,6 +1142,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ActiveWorkspace = null;
         _revision = 0;
         _timeSignatureMap = null;
+        SetStatusMessage(null);
         RefreshProperties();
         await previous.DisposeAsync();
     }
@@ -1152,6 +1171,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ActiveWorkspace = null;
         _revision = 1;
         _timeSignatureMap = new(Project!);
+        ArrangementEditorSettings.Reset(arrangement: true, Project!.TicksPerQuarterNote);
+        PianoRollEditorSettings.Reset(arrangement: false, Project.TicksPerQuarterNote);
+        ArrangementEditorSettings.ConfigureProject(Project, referenceTick: 0);
+        PianoRollEditorSettings.ConfigureProject(Project, referenceTick: 0);
+        SetStatusMessage(null);
         RefreshAll();
         OpenArrangement();
         if (previous is not null)
@@ -1191,6 +1215,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private void RefreshAll()
     {
         _timeSignatureMap = Project is null ? null : new ProjectTimeSignatureMap(Project);
+        if (Project is not null)
+        {
+            ArrangementEditorSettings.ConfigureProject(Project, CurrentTick);
+            PianoRollEditorSettings.ConfigureProject(Project, CurrentTick);
+        }
         RefreshDiagnostics();
         RefreshProjectTree();
         if (Project is not null)
@@ -1222,10 +1251,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     private void PrepareWorkspaceRuntimeState(WorkspaceViewModel workspace)
     {
-        if (workspace is TimelineWorkspaceViewModel timelineWorkspace)
-        {
-            timelineWorkspace.ConfigureGridDivisions(TimelineGridDivisionsPerQuarter);
-        }
         if (workspace is TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement } timeline)
         {
             timeline.SetTrackMonitoringStates(_mutedTrackIds, _soloTrackIds);
@@ -1360,6 +1385,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         Raise(nameof(Persistence));
         Raise(nameof(WindowTitle));
         Raise(nameof(ProjectDisplayName));
+        Raise(nameof(TitleBarProjectDisplayName));
         Raise(nameof(ProjectState));
         Raise(nameof(CompileState));
         Raise(nameof(SoundFontState));
@@ -1441,7 +1467,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     LastError: Exception failure
                 })
             {
-                Notice = $"Playback failed: {failure.Message}";
+                SetStatusMessage($"Playback failed: {failure.Message}", isError: true);
             }
             RefreshProperties();
         });

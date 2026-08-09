@@ -30,6 +30,7 @@ public enum TimelineItemKind
     Marker,
     ProjectEndMarker,
     LifecycleBoundary
+    ,Velocity
 }
 
 [Flags]

@@ -233,4 +233,59 @@ public sealed class MidiRenderPlanTests
         Assert.Equal(MidiMessageType.ControlChange, atFrontier[2].Message.MessageType);
         Assert.DoesNotContain(result.Ports[0].Events.ToArray(), value => value.SampleFrame == 700);
     }
+
+    [Fact]
+    public void HeldGateEndReusesAContinuationNoteOffAndPreservesItsUnitFragments()
+    {
+        MidiRenderPlan causal = new(
+            48_000,
+            1_000,
+            [new MidiPortRenderPlan(
+                0,
+                [
+                    new(10, MidiMessage.NoteOn(0, 60, 100), 0),
+                    new(700, MidiMessage.NoteOff(0, 60, 0), 0)
+                ])],
+            [101]);
+        MidiUnitFragmentRenderPlan continuationFragment = new(
+            0,
+            0,
+            trackId: 1,
+            segmentId: 2,
+            eventInstrumentId: 3,
+            instanceGroupId: 4,
+            subVoiceId: 5,
+            sourceIndex: 0,
+            startFrame: 0,
+            endFrame: 1_200,
+            semanticFingerprint: new string('a', 64),
+            [
+                new(10, MidiMessage.NoteOn(0, 60, 100), 0),
+                new(500, MidiMessage.NoteOff(0, 60, 0), 0),
+                new(500, MidiMessage.ControlChange(0, 120, 0), 0)
+            ]);
+        MidiRenderPlan continuation = new(
+            48_000,
+            1_200,
+            [new MidiPortRenderPlan(
+                0,
+                [
+                    new(10, MidiMessage.NoteOn(0, 60, 100), 0),
+                    new(500, MidiMessage.NoteOff(0, 60, 0), 0),
+                    new(500, MidiMessage.ControlChange(0, 120, 0), 0)
+                ])],
+            [101],
+            unitFragments: [continuationFragment]);
+
+        MidiRenderPlan result = MidiRenderPlanSplicer.SpliceHeldGateEndAtProducerFrontier(
+            causal,
+            continuation,
+            500);
+
+        Assert.Single(result.Ports[0].Events.ToArray(), value =>
+            value.SampleFrame == 500
+            && value.Message.MessageType == MidiMessageType.NoteOff
+            && value.Message.Byte1 == 60);
+        Assert.Same(continuationFragment, Assert.Single(result.UnitFragments.ToArray()));
+    }
 }

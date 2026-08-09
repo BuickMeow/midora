@@ -83,26 +83,51 @@ public sealed class DesktopSessionControllerTests
             Assert.Null(session.Notice);
         }
 
-        MidoraId instrumentId = Assert.Single(session.Project.EventInstruments).Id;
-        for (int attempt = 1; attempt <= 2; attempt++)
+        EventInstrument instrument = Assert.Single(session.Project.EventInstruments);
+        MidoraId subVoiceId = Assert.Single(instrument.SubVoices).Id;
+        (LogicalTrack Track, Segment Segment) segmentContext = session.Project.Tracks
+            .Where(track => track.EventInstrumentId == instrument.Id)
+            .SelectMany(track => track.Segments.Select(segment => (Track: track, Segment: segment)))
+            .First();
+        (string Name, Action Start)[] previewPaths =
+        [
+            ("Event Instrument", () => session.StartHeldEventInstrumentPreview(
+                new EventInstrumentPreviewRequest(
+                    instrument.Id,
+                    Pitch: 60,
+                    Tempo: 120m))),
+            ("SubVoice", () => session.StartHeldEventInstrumentPreview(
+                new EventInstrumentPreviewRequest(
+                    instrument.Id,
+                    subVoiceId,
+                    Pitch: 60,
+                    Tempo: 120m))),
+            ("Segment Pitch Ruler", () => session.StartHeldSegmentPitchRulerPreview(
+                segmentContext.Track.Id,
+                segmentContext.Segment.Id,
+                pitch: 60,
+                velocity: 100,
+                tempo: 120m))
+        ];
+        foreach ((string previewPath, Action startPreview) in previewPaths)
         {
-            session.StartHeldEventInstrumentPreview(new EventInstrumentPreviewRequest(
-                instrumentId,
-                Pitch: 60,
-                Tempo: 120m));
-            Thread.Sleep(50);
-            session.EndHeldPreviewGate();
-            long deadline = Environment.TickCount64 + 10_000;
-            while (session.IsPlaybackActive && Environment.TickCount64 < deadline)
+            for (int attempt = 1; attempt <= 2; attempt++)
             {
-                Thread.Sleep(2);
-                session.UpdatePlayback();
-            }
+                startPreview();
+                Thread.Sleep(50);
+                session.EndHeldPreviewGate();
+                long deadline = Environment.TickCount64 + 10_000;
+                while (session.IsPlaybackActive && Environment.TickCount64 < deadline)
+                {
+                    Thread.Sleep(2);
+                    session.UpdatePlayback();
+                }
 
-            Assert.True(
-                session.PlaybackState == Midora.Playback.PlaybackState.Stopped,
-                $"Preview attempt={attempt}; state={session.PlaybackState}; notice={session.Notice}");
-            Assert.Null(session.Notice);
+                Assert.True(
+                    session.PlaybackState == Midora.Playback.PlaybackState.Stopped,
+                    $"Preview={previewPath}; attempt={attempt}; state={session.PlaybackState}; notice={session.Notice}");
+                Assert.Null(session.Notice);
+            }
         }
     }
 

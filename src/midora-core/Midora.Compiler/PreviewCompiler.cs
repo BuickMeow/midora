@@ -11,6 +11,8 @@ public sealed record EventInstrumentPreviewRequest(
     decimal? Tempo = null,
     long CursorTick = 0)
 {
+    public bool DirectSubVoicePitchPreview { get; init; }
+
     public IReadOnlyCollection<MidoraId>? MutedSubVoiceIds { get; init; }
 
     public IReadOnlyCollection<MidoraId>? SoloSubVoiceIds { get; init; }
@@ -187,6 +189,12 @@ public sealed class PreviewCompiler
 
         HashSet<MidoraId>? includedSubVoiceIds = ResolvePreviewSubVoices(instrument, request);
 
+        if (request.DirectSubVoicePitchPreview && selectedVoice is null)
+        {
+            throw new ArgumentException(
+                "Direct SubVoice pitch Preview requires a selected SubVoice.",
+                nameof(request));
+        }
         int pitch = request.Pitch ?? selectedVoice?.RootNoteOverride ?? instrument.RootNote;
         decimal tempo = request.Tempo ?? GetTempoAt(source.Conductor, request.CursorTick);
         if (pitch is < 0 or > 127)
@@ -210,7 +218,16 @@ public sealed class PreviewCompiler
         context.Conductor.Tempos.Clear();
         context.Conductor.Tempos.Add(new TempoChange(context, 0, tempo));
         context.Conductor.TimeSignatures.Add(new TimeSignatureChange(context, 0, 4, 4));
-        AddInstrumentContext(source, context, instrument);
+        EventInstrument compileInstrument = request.DirectSubVoicePitchPreview
+            ? CreateDirectPitchPreviewInstrument(
+                context,
+                instrument,
+                selectedVoice!,
+                pitch,
+                request.Velocity,
+                gateLength)
+            : instrument;
+        AddInstrumentContext(source, context, compileInstrument);
 
         LogicalTrack track = new(context) { Name = "Event Instrument Preview", EventInstrumentId = instrument.Id };
         Segment segment = new(context) { ProjectStartTick = 0, ContentOffsetTick = 0, LengthTicks = previewLength };
@@ -218,7 +235,7 @@ public sealed class PreviewCompiler
         {
             StartTick = 0,
             LengthTicks = gateLength,
-            Note = pitch,
+            Note = request.DirectSubVoicePitchPreview ? compileInstrument.RootNote : pitch,
             Velocity = request.Velocity
         });
         track.Segments.Add(segment);
@@ -236,6 +253,43 @@ public sealed class PreviewCompiler
                 ? includedSubVoiceIds
                 : new HashSet<MidoraId> { selectedVoice.Id }
         });
+    }
+
+    private static EventInstrument CreateDirectPitchPreviewInstrument(
+        MidoraProject context,
+        EventInstrument sourceInstrument,
+        SubVoice sourceVoice,
+        int pitch,
+        int velocity,
+        long gateLength)
+    {
+        EventInstrument instrument = new(context)
+        {
+            Id = sourceInstrument.Id,
+            Name = sourceInstrument.Name,
+            Description = sourceInstrument.Description,
+            Color = sourceInstrument.Color,
+            RootNote = sourceInstrument.RootNote,
+            TemplateLengthTicks = gateLength == long.MaxValue ? long.MaxValue : Math.Max(1, gateLength),
+            RequiresChannelIsolation = sourceInstrument.RequiresChannelIsolation,
+            OverlapPolicy = sourceInstrument.OverlapPolicy,
+            OverlapScope = sourceInstrument.OverlapScope,
+            ShortLifecycle = ShortNoteLifecycle.CutAtNoteOff,
+            LongLifecycle = LongNoteLifecycle.HoldLastState
+        };
+        CopyState(sourceInstrument.InitialState, instrument.InitialState);
+        SubVoice voice = new(context)
+        {
+            Id = sourceVoice.Id,
+            Name = sourceVoice.Name,
+            RootNoteOverride = sourceVoice.RootNoteOverride
+        };
+        CopyState(sourceVoice.InitialState, voice.InitialState);
+        TemplateEvent note = TemplateEvent.Note(context, 0, gateLength, pitch, velocity);
+        note.FollowPitchDelta = false;
+        voice.Events.Add(note);
+        instrument.SubVoices.Add(voice);
+        return instrument;
     }
 
     private static EventInstrument RequireInstrument(

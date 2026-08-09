@@ -98,6 +98,8 @@ Time Range Selection
 ```
 Project End Marker 后区域弱化，但仍显示并允许编辑。End Marker 不是右编辑边界。
 无显式 End Marker 时可显示 Natural End 参考，但它不是 Project 对象。
+
+Arrangement Toolbar 必须分别提供可见分割线粒度、操作粒度与 Snap 开关，以及默认 Segment 创建长度（tick，输入即生效）。Draw 模式下，鼠标所在 Track 必须显示按当前操作粒度定位、按默认长度计算的虚线创建预览。若默认长度超出当前可用间隙，创建命令静默缩短为从目标 tick 起可容纳的最大正长度；预览显示实际将提交的长度。不存在正长度空隙时预览为错误色并拒绝创建。该规则只适用于新建 Segment；已有 Segment 的移动和 Resize 仍不得因重叠而被静默缩短。
 ---
 ## 18.2 Segment Editor
 ### 18.2.1 布局
@@ -129,9 +131,9 @@ Segment Editor 以 Segment local tick 为主，同时可显示映射后的 Proje
 ### 18.2.4 Note Editor
 使用 piano roll 编辑 Logical Notes。
 
-初版在每次新建单个 Logical Note 的放置手势中预览当前草稿音符。预览从合法放置手势开始持续到成功提交、取消或失败清理；最终 Note Length 在手势结束前未知，因此严格复用第 13.22.7、13.24.5 节的因果 Gate，不得另行猜测固定 Gate Length 或直接发送 MIDI。
+新建单个 Logical Note 的放置手势不得启动声音预览。Draw 模式只显示当前 pitch、位置和默认长度的虚线视觉预览；该视觉预览不是 Project 数据。点击已有 Note 时，将该 Note 的长度复制为后续创建的默认 Note 长度，但不修改该 Note。
 
-预览是编辑手势的临时运行时副作用，不是 Project 数据。预览不可用或失败不得阻止原本合法的 Note 提交，也不得增加额外 Undo entry。移动、缩放已有 Note、批量 Paste、Duplicate 和批量编辑不因本条要求自动发起预览。
+Segment Toolbar 必须提供共享 piano-roll 的可见分割线粒度、操作粒度、Snap、默认 Note 长度（tick）与默认 velocity。默认长度和 velocity 独立于 Grid；默认长度允许小于操作粒度。
 
 active crop window 外内容：
 - 保留；
@@ -155,6 +157,10 @@ Hide Lane
 Delete Lane Data
 ```
 Hide 不删除 Project 数据；Delete Lane Data 删除该 Lane 的用户内容，并按破坏性规则确认。
+
+下部编辑区使用“Velocity + Lane 列表 + 单个活动 Lane 编辑器”，不得把所有参数 Lane 垂直压缩堆叠。Velocity 视图按 Note start tick 绘制柱，高度表示 velocity；左键拖动自由修改经过的柱，右键拖动使用起止点直线插值修改范围内柱，一次完整拖动形成一次 Project Undo，且不得改变 Note 的位置、长度或 pitch。
+
+单个参数 Lane 编辑器左侧显示值标尺，右侧显示对应水平参考线；Lane 具有独立于 piano roll 的纵向缩放。参考值密度随纵向缩放调整。Integer 参数由指针纵坐标得到的值必须先按 `AwayFromZero` 取到最近整数，再执行合法范围验证。
 ### 18.2.6 同步
 Segment 编辑后：
 - Arrangement Note Preview 实时更新；
@@ -249,6 +255,8 @@ Initial State
 - 不展开 RPN / NRPN 底层 CC 序列；
 - 不显示 GM Program 名称或 SF2 preset 名称；
 - Program 只显示用户侧 1～128 编号。
+
+SubVoice Timeline 与 Segment Editor 共用当前 Project 会话的 piano-roll Grid / Snap、默认 Note 长度和默认 velocity。下部编辑区同样使用 Velocity 与单个活动事件/曲线 Lane 切换，不保留多 Lane 垂直堆叠模式。
 ### 18.4.3 Initial State
 Initial State 与 tick 0 普通事件严格分离：
 ```text

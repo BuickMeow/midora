@@ -55,6 +55,67 @@ public sealed class PreviewCompilerTests
     }
 
     [Fact]
+    public void DirectSubVoicePitchPreviewAuditionsRequestedPitchWithoutOuterLogicalTransposition()
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Instrument.RootNote = 60;
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 127, 100));
+
+        CanonicalCompiledResult result = new PreviewCompiler().CompileEventInstrument(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(
+                fixture.Instrument.Id,
+                fixture.Voice.Id,
+                Pitch: 127,
+                Velocity: 96,
+                GateLengthTicks: 240)
+            {
+                DirectSubVoicePitchPreview = true
+            });
+
+        Assert.True(result.IsConsumable, string.Join(" | ", result.Diagnostics.Select(value => $"{value.Code}:{value.Message}")));
+        CanonicalMidiEvent note = Assert.Single(
+            result.Events.ToArray(),
+            value => value.Role == CanonicalEventRole.NoteOn);
+        Assert.Equal(127, note.Message.Byte1);
+        Assert.Equal(96, note.Message.Byte2);
+        Assert.DoesNotContain(result.Diagnostics, value => value.Code == "MIDORA2101");
+        Assert.Single(fixture.Voice.Events);
+    }
+
+    [Fact]
+    public void DirectSubVoiceHeldPreviewKeepsRequestedExtremePitchOpenForTheRequestedWindow()
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Instrument.RootNote = 60;
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 127, 100));
+
+        CanonicalCompiledResult result = new PreviewCompiler().CompileHeldEventInstrumentGateOpen(
+            fixture.Project,
+            new EventInstrumentPreviewRequest(
+                fixture.Instrument.Id,
+                fixture.Voice.Id,
+                Pitch: 127,
+                Velocity: 96)
+            {
+                DirectSubVoicePitchPreview = true
+            },
+            windowEndTick: 480);
+
+        Assert.True(result.IsConsumable, string.Join(" | ", result.Diagnostics.Select(value => $"{value.Code}:{value.Message}")));
+        CanonicalMidiEvent note = Assert.Single(
+            result.Events.ToArray(),
+            value => value.Role == CanonicalEventRole.NoteOn);
+        Assert.Equal(127, note.Message.Byte1);
+        Assert.Equal(96, note.Message.Byte2);
+        Assert.DoesNotContain(result.Diagnostics, value => value.Code == "MIDORA2101");
+        Assert.DoesNotContain(result.Events.ToArray(), value =>
+            value.Message.MessageType is MidiMessageType.NoteOff
+            || value.Message.MessageType == MidiMessageType.NoteOn && value.Message.Byte2 == 0);
+        Assert.Single(fixture.Voice.Events);
+    }
+
+    [Fact]
     public void EventInstrumentPreviewAppliesMultipleSoloWithMuteTakingPriority()
     {
         var fixture = CompilerTestProject.Create(subVoiceCount: 4);

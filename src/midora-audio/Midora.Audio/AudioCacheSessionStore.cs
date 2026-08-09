@@ -604,13 +604,13 @@ public sealed class AudioCacheSessionStore : IDisposable
         return payloadLength;
     }
 
-    private void ReleaseRecoverySpool(string path, FileStream stream, long lengthBytes)
+    private void ReleaseRecoverySpool(string path, FileStream? stream, long lengthBytes)
     {
         lock (_sync)
         {
             try
             {
-                stream.Dispose();
+                stream?.Dispose();
             }
             finally
             {
@@ -796,11 +796,22 @@ public sealed class AudioCacheSessionStore : IDisposable
         public long LengthBytes { get; }
         public Stream Stream => _stream ?? throw new ObjectDisposedException(nameof(AudioRecoverySpool));
 
+        public void ReleaseFileHandleForExternalUse()
+        {
+            if (Volatile.Read(ref _owner) is null)
+            {
+                throw new ObjectDisposedException(nameof(AudioRecoverySpool));
+            }
+
+            FileStream? stream = Interlocked.Exchange(ref _stream, null);
+            stream?.Dispose();
+        }
+
         public void Dispose()
         {
             AudioCacheSessionStore? owner = Interlocked.Exchange(ref _owner, null);
             FileStream? stream = Interlocked.Exchange(ref _stream, null);
-            if (owner is not null && stream is not null)
+            if (owner is not null)
             {
                 owner.ReleaseRecoverySpool(Path, stream, LengthBytes);
             }

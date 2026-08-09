@@ -116,9 +116,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             }
         }
         if (bufferingRecoveryMemoryFrameCapacity < 0
-            || bufferingRecoveryMemoryFrameCapacity > plan.TotalFrameCount
-            || bufferingRecoverySpoolPath is not null
-                && bufferingRecoveryMemoryFrameCapacity != 0)
+            || bufferingRecoveryMemoryFrameCapacity > plan.TotalFrameCount)
         {
             throw new ArgumentOutOfRangeException(nameof(bufferingRecoveryMemoryFrameCapacity));
         }

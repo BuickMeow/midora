@@ -12,7 +12,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Page Remove="Themes\*.xaml" />
     <None Remove="Resources\Vectors\control_*.svg" />
     <Resource Include="Resources\Vectors\control_*.svg" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Midora.Desktop.Presentation\Midora.Desktop.Presentation.csproj" />
   </ItemGroup>
 </Project>

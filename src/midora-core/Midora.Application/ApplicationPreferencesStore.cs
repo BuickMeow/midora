@@ -70,6 +70,7 @@ public sealed class ApplicationPreferencesStore
                 ?? throw new InvalidDataException(
                     "Application Preferences recentDirectories is required.");
 
+            DesktopUiPreferencesJsonV1? desktop = dto.DesktopUi;
             ApplicationPreferences preferences = new(
                 new RealtimeAudioPreferences(
                     dto.PlaybackOutputDeviceId,
@@ -84,7 +85,28 @@ public sealed class ApplicationPreferencesStore
                     ApplicationPreferences.NormalizeDirectory(recentDirectories.SaveAndSaveCopy),
                     ApplicationPreferences.NormalizeDirectory(recentDirectories.SoundFont),
                     ApplicationPreferences.NormalizeDirectory(recentDirectories.MidiExport),
-                    ApplicationPreferences.NormalizeDirectory(recentDirectories.AudioRender)));
+                    ApplicationPreferences.NormalizeDirectory(recentDirectories.AudioRender)))
+            {
+                DesktopUi = desktop is null
+                    ? DesktopUiPreferences.Default
+                    : new DesktopUiPreferences(
+                        desktop.MainWindowWidth,
+                        desktop.MainWindowHeight,
+                        desktop.MainWindowLeft,
+                        desktop.MainWindowTop,
+                        desktop.MainWindowMaximized,
+                        desktop.ProjectPanelWidth,
+                        desktop.InspectorWidth,
+                        desktop.BottomPanelHeight,
+                        desktop.TimelineSnapEnabled,
+                        desktop.TimelineGridDivisionsPerQuarter)
+                    {
+                        ProjectPanelVisible = desktop.ProjectPanelVisible ?? true,
+                        InspectorVisible = desktop.InspectorVisible ?? true,
+                        BottomPanelVisible = desktop.BottomPanelVisible ?? true,
+                        FollowPlayback = desktop.FollowPlayback ?? true
+                    }
+            };
             preferences.Validate();
             return new(preferences, null);
         }
@@ -141,6 +163,23 @@ public sealed class ApplicationPreferencesStore
                     SoundFont = preferences.RecentDirectories.SoundFont,
                     MidiExport = preferences.RecentDirectories.MidiExport,
                     AudioRender = preferences.RecentDirectories.AudioRender
+                },
+                DesktopUi = new DesktopUiPreferencesJsonV1
+                {
+                    MainWindowWidth = preferences.DesktopUi.MainWindowWidth,
+                    MainWindowHeight = preferences.DesktopUi.MainWindowHeight,
+                    MainWindowLeft = preferences.DesktopUi.MainWindowLeft,
+                    MainWindowTop = preferences.DesktopUi.MainWindowTop,
+                    MainWindowMaximized = preferences.DesktopUi.MainWindowMaximized,
+                    ProjectPanelWidth = preferences.DesktopUi.ProjectPanelWidth,
+                    InspectorWidth = preferences.DesktopUi.InspectorWidth,
+                    BottomPanelHeight = preferences.DesktopUi.BottomPanelHeight,
+                    TimelineSnapEnabled = preferences.DesktopUi.TimelineSnapEnabled,
+                    TimelineGridDivisionsPerQuarter = preferences.DesktopUi.TimelineGridDivisionsPerQuarter,
+                    ProjectPanelVisible = preferences.DesktopUi.ProjectPanelVisible,
+                    InspectorVisible = preferences.DesktopUi.InspectorVisible,
+                    BottomPanelVisible = preferences.DesktopUi.BottomPanelVisible,
+                    FollowPlayback = preferences.DesktopUi.FollowPlayback
                 }
             };
             byte[] json = JsonSerializer.SerializeToUtf8Bytes(
@@ -225,6 +264,27 @@ internal sealed class ApplicationPreferencesJsonV1
 
     [JsonPropertyOrder(7)]
     public ApplicationRecentDirectoriesJsonV1? RecentDirectories { get; set; }
+
+    [JsonPropertyOrder(8)]
+    public DesktopUiPreferencesJsonV1? DesktopUi { get; set; }
+}
+
+internal sealed class DesktopUiPreferencesJsonV1
+{
+    [JsonPropertyOrder(0)] public double MainWindowWidth { get; set; }
+    [JsonPropertyOrder(1)] public double MainWindowHeight { get; set; }
+    [JsonPropertyOrder(2)] public double? MainWindowLeft { get; set; }
+    [JsonPropertyOrder(3)] public double? MainWindowTop { get; set; }
+    [JsonPropertyOrder(4)] public bool MainWindowMaximized { get; set; }
+    [JsonPropertyOrder(5)] public double ProjectPanelWidth { get; set; }
+    [JsonPropertyOrder(6)] public double InspectorWidth { get; set; }
+    [JsonPropertyOrder(7)] public double BottomPanelHeight { get; set; }
+    [JsonPropertyOrder(8)] public bool TimelineSnapEnabled { get; set; }
+    [JsonPropertyOrder(9)] public int TimelineGridDivisionsPerQuarter { get; set; }
+    [JsonPropertyOrder(10)] public bool? ProjectPanelVisible { get; set; }
+    [JsonPropertyOrder(11)] public bool? InspectorVisible { get; set; }
+    [JsonPropertyOrder(12)] public bool? BottomPanelVisible { get; set; }
+    [JsonPropertyOrder(13)] public bool? FollowPlayback { get; set; }
 }
 
 internal sealed class ApplicationRecentDirectoriesJsonV1

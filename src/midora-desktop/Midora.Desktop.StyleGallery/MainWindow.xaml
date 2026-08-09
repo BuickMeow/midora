@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        xmlns:ui="clr-namespace:Midora.Desktop.StyleGallery.Controls"
+        xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls;assembly=Midora.Desktop.Presentation"
         Title="Midora — WPF Style Gallery"
         Width="1440"
         Height="900"

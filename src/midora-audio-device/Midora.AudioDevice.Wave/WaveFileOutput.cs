@@ -67,6 +67,9 @@ public static unsafe partial class WaveFileOutput
         long renderingAllocatedBytes = 0;
         long sourcePullAllocatedBytes = 0;
         long sampleWriteAllocatedBytes = 0;
+        AudioPullStatus shortReadStatus = AudioPullStatus.Continue;
+        int shortReadFrameCount = 0;
+        int shortReadRequestedFrameCount = 0;
         Exception? unexpectedFailure = null;
         Exception? cleanupFailure = null;
 
@@ -127,21 +130,32 @@ public static unsafe partial class WaveFileOutput
                     continue;
                 }
 
-                if (pull.FrameCount != requestedFrames)
+                if (!pull.IsValidForRequest(requestedFrames)
+                    || pull.Status == AudioPullStatus.Fault)
                 {
-                    failure = pull.Status == AudioPullStatus.Fault
-                        ? WaveRenderFailure.SourceFault
-                        : WaveRenderFailure.SourceShortRead;
+                    failure = WaveRenderFailure.SourceFault;
+                    shortReadStatus = pull.Status;
+                    shortReadFrameCount = pull.FrameCount;
+                    shortReadRequestedFrameCount = requestedFrames;
                     break;
                 }
 
-                if (ContainsNonFinite(buffer, requestedFrames * 2))
+                if (pull.FrameCount == 0)
+                {
+                    failure = WaveRenderFailure.SourceShortRead;
+                    shortReadStatus = pull.Status;
+                    shortReadFrameCount = 0;
+                    shortReadRequestedFrameCount = requestedFrames;
+                    break;
+                }
+
+                if (ContainsNonFinite(buffer, pull.FrameCount * 2))
                 {
                     failure = WaveRenderFailure.NonFiniteSample;
                     break;
                 }
 
-                uint byteCount = checked((uint)(requestedFrames * WaveFileSize.StereoFloat32BytesPerFrame));
+                uint byteCount = checked((uint)(pull.FrameCount * WaveFileSize.StereoFloat32BytesPerFrame));
                 long allocatedBeforeWrite = GC.GetAllocatedBytesForCurrentThread();
                 if (!TryWriteAll(fileHandle, buffer, byteCount, out failureCode))
                 {
@@ -150,8 +164,17 @@ public static unsafe partial class WaveFileOutput
                 }
                 sampleWriteAllocatedBytes += GC.GetAllocatedBytesForCurrentThread() - allocatedBeforeWrite;
 
-                renderedFrames += requestedFrames;
+                renderedFrames += pull.FrameCount;
                 monitor?.ReportRenderedFrames(renderedFrames);
+
+                if (pull.Status == AudioPullStatus.EndOfStream && renderedFrames < frameCount)
+                {
+                    failure = WaveRenderFailure.SourceShortRead;
+                    shortReadStatus = pull.Status;
+                    shortReadFrameCount = pull.FrameCount;
+                    shortReadRequestedFrameCount = requestedFrames;
+                    break;
+                }
             }
             renderingAllocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocatedBeforeRendering;
 
@@ -207,7 +230,13 @@ public static unsafe partial class WaveFileOutput
         if (failure != WaveRenderFailure.None)
         {
             TryDeleteTemporaryFile(temporaryPath);
-            Exception renderFailure = CreateFinalizingException(failure, failureCode, renderedFrames);
+            Exception renderFailure = CreateFinalizingException(
+                failure,
+                failureCode,
+                renderedFrames,
+                shortReadStatus,
+                shortReadFrameCount,
+                shortReadRequestedFrameCount);
             if (cleanupFailure is not null)
             {
                 throw new AggregateException(
@@ -309,7 +338,10 @@ public static unsafe partial class WaveFileOutput
     private static Exception CreateFinalizingException(
         WaveRenderFailure failure,
         int nativeErrorCode,
-        long renderedFrames)
+        long renderedFrames,
+        AudioPullStatus shortReadStatus,
+        int shortReadFrameCount,
+        int shortReadRequestedFrameCount)
     {
         return failure switch
         {
@@ -318,7 +350,9 @@ public static unsafe partial class WaveFileOutput
             WaveRenderFailure.SourceFault => new MidoraAudioDeviceException(
                 $"The audio source failed after {renderedFrames} frames."),
             WaveRenderFailure.SourceShortRead => new MidoraAudioDeviceException(
-                $"The audio source ended early after {renderedFrames} frames."),
+                $"The audio source ended early after {renderedFrames} frames; "
+                + $"status={shortReadStatus}; requestedFrames={shortReadRequestedFrameCount}; "
+                + $"returnedFrames={shortReadFrameCount}."),
             WaveRenderFailure.SourceBuffering => new MidoraAudioDeviceException(
                 $"The audio source entered Buffering during file rendering after {renderedFrames} frames."),
             WaveRenderFailure.NonFiniteSample => new MidoraAudioDeviceException(

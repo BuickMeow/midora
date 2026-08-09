@@ -1,3 +1,7 @@
 <Solution>
+  <Project Path="Midora.Desktop/Midora.Desktop.csproj" />
+  <Project Path="Midora.Desktop.Presentation/Midora.Desktop.Presentation.csproj" />
+  <Project Path="Midora.Desktop.Presentation.Tests/Midora.Desktop.Presentation.Tests.csproj" />
+  <Project Path="Midora.Desktop.Tests/Midora.Desktop.Tests.csproj" />
   <Project Path="Midora.Desktop.StyleGallery/Midora.Desktop.StyleGallery.csproj" />
 </Solution>

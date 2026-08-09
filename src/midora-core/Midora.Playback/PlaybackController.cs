@@ -507,7 +507,8 @@ public sealed class PlaybackController : IDisposable
             }
             RestartAt(tick, effectiveEndTick);
         }
-        else if (State == PlaybackState.Stopped)
+        else if ((State is PlaybackState.Stopped or PlaybackState.Error)
+            && ActiveTaskKind == PlaybackTaskKind.None)
         {
             _cursorTick = tick;
         }
@@ -1101,7 +1102,7 @@ public sealed class PlaybackController : IDisposable
             AudioCacheSessionStore.AudioRecoverySpool spool =
                 _session.CreateBufferingRecoverySpool(checked(
                     maximumFrames * 2L * sizeof(float)));
-            recoveryBackend.SetNextBufferingRecoveryStorage(spool, 0);
+            recoveryBackend.SetNextBufferingRecoveryStorage(spool, maximumFrames);
         }
         catch (AudioRecoveryStorageUnavailableException exception)
         {
@@ -1423,6 +1424,7 @@ public sealed class PlaybackController : IDisposable
         _activeResult = null;
         _activePlan = null;
         _activeTempoMap = null;
+        ClearHeldPreviewState();
         if (failedTask == PlaybackTaskKind.MainTimeline)
         {
             _cursorTick = failedTick;
@@ -1454,7 +1456,6 @@ public sealed class PlaybackController : IDisposable
         _activeResult = null;
         _activePlan = null;
         _activeTempoMap = null;
-        ClearHeldPreviewState();
         ClearHeldPreviewState();
         if (failedTask == PlaybackTaskKind.MainTimeline)
         {

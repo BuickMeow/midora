@@ -67,6 +67,35 @@ public sealed class WaveFileOutputTests
         }
     }
 
+    [Fact]
+    public void AcceptsAllocationFreeContinueShortReadsUntilTheExactFrameCount()
+    {
+        string directory = CreateOwnedTemporaryDirectory();
+        string target = Path.Combine(directory, "short-reads.wav");
+        try
+        {
+            const int frames = 257;
+            ShortReadSource source = new(48_000, frames, maximumFramesPerPull: 11);
+
+            WaveFileRenderResult result = WaveFileOutput.Render(
+                source,
+                frames,
+                target,
+                workFrameCount: 37,
+                overwrite: false);
+
+            Assert.Equal(frames, result.FrameCount);
+            Assert.Equal(0, result.RenderingThreadAllocatedBytes);
+            Assert.Equal(0, result.SourcePullAllocatedBytes);
+            Assert.Equal(0, result.SampleWriteAllocatedBytes);
+            WaveFileValidation.ValidateInitialReleaseFile(target, 48_000, frames);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData(float.NaN)]
     [InlineData(float.PositiveInfinity)]
@@ -240,6 +269,32 @@ public sealed class WaveFileOutputTests
             }
 
             return AudioPullResult.Continue(requestedFrameCount);
+        }
+    }
+
+    private sealed unsafe class ShortReadSource(
+        int sampleRate,
+        long totalFrames,
+        int maximumFramesPerPull) : IAudioRenderSource
+    {
+        private long _position;
+
+        public AudioFormat Format { get; } = new(sampleRate, 2, AudioSampleFormat.Float32);
+
+        public AudioPullResult PullFrames(float* destination, int requestedFrameCount)
+        {
+            int count = (int)Math.Min(
+                Math.Min(requestedFrameCount, maximumFramesPerPull),
+                totalFrames - _position);
+            for (int i = 0; i < count * 2; i++)
+            {
+                destination[i] = 0;
+            }
+
+            _position += count;
+            return _position == totalFrames
+                ? AudioPullResult.EndOfStream(count)
+                : AudioPullResult.Continue(count);
         }
     }
 

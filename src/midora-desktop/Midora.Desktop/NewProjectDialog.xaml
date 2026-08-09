@@ -1,0 +1,50 @@
+<Window x:Class="Midora.Desktop.NewProjectDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls;assembly=Midora.Desktop.Presentation"
+        Title="New Project" Width="620" Height="520" MinWidth="560" MinHeight="460"
+        WindowStyle="None" ResizeMode="CanResize" WindowStartupLocation="CenterOwner"
+        Background="{StaticResource Brush.Surface.0}" SnapsToDevicePixels="True" UseLayoutRounding="True">
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="38" CornerRadius="0" GlassFrameThickness="0"
+                  ResizeBorderThickness="6" UseAeroCaptionButtons="False" />
+  </WindowChrome.WindowChrome>
+  <Border BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid>
+      <Grid.RowDefinitions><RowDefinition Height="38"/><RowDefinition Height="*"/><RowDefinition Height="54"/></Grid.RowDefinitions>
+      <Grid Background="{StaticResource Brush.Black}" MouseLeftButtonDown="OnTitleMouseDown">
+        <TextBlock Margin="12,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="New Project"/>
+        <Button Width="46" Height="38" HorizontalAlignment="Right" Style="{StaticResource Button.Caption.Close}" Click="OnCancelClick"><ui:FluentIcon Style="{StaticResource Icon.WindowControl}" Data="{StaticResource WindowControl.Close}"/></Button>
+      </Grid>
+      <ScrollViewer Grid.Row="1" Padding="18" VerticalScrollBarVisibility="Auto">
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <StackPanel>
+            <TextBlock Style="{StaticResource Text.Overline}" Text="GENERAL"/>
+            <TextBlock Margin="0,10,0,4" Style="{StaticResource Text.Caption}" Text="PROJECT NAME"/>
+            <TextBox x:Name="ProjectNameBox" Text="Untitled Project"/>
+            <TextBlock Margin="0,10,0,4" Style="{StaticResource Text.Caption}" Text="TICKS PER QUARTER NOTE"/>
+            <TextBox x:Name="TpqBox" Text="192" PreviewTextInput="OnIntegerTextInput"/>
+            <TextBlock Margin="0,10,0,4" Style="{StaticResource Text.Caption}" Text="PROJECT VERSION"/>
+            <TextBox x:Name="VersionBox"/>
+            <TextBlock Margin="0,10,0,4" Style="{StaticResource Text.Caption}" Text="AUTHOR / TEAM"/>
+            <TextBox x:Name="AuthorBox"/>
+          </StackPanel>
+          <StackPanel Grid.Column="2">
+            <TextBlock Style="{StaticResource Text.Overline}" Text="CREATION"/>
+            <CheckBox x:Name="SaveNowCheck" Margin="0,12,0,0" Content="Save Project immediately" Checked="OnSaveNowChanged" Unchecked="OnSaveNowChanged"/>
+            <TextBlock Margin="0,12,0,4" Style="{StaticResource Text.Caption}" Text="TARGET FILE"/>
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox x:Name="PathBox" IsReadOnly="True"/><Button x:Name="BrowseButton" Grid.Column="1" Width="76" Margin="6,0,0,0" Content="Browse…" Click="OnBrowseClick"/></Grid>
+            <Border Margin="0,18,0,0" Style="{StaticResource Card}">
+              <StackPanel><TextBlock FontWeight="SemiBold" Text="Project SoundFont"/><TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="No SoundFont will be selected. The Project remains editable and MIDI export remains available; playback, preview, and audio rendering remain unavailable until a valid Project SoundFont is configured." TextWrapping="Wrap"/></StackPanel>
+            </Border>
+            <TextBlock x:Name="ValidationText" Margin="0,12,0,0" Foreground="{StaticResource Brush.Red.Hover}" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Grid>
+      </ScrollViewer>
+      <Border Grid.Row="2" Padding="10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Width="86" Margin="0,0,7,0" Content="Cancel" IsCancel="True" Click="OnCancelClick"/><Button Width="106" Style="{StaticResource Button.Primary}" Content="Create Project" IsDefault="True" Click="OnCreateClick"/></StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

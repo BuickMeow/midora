@@ -1,0 +1,104 @@
+<Window x:Class="Midora.Desktop.LogicalParameterDefinitionDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Edit Logical Parameter Definition"
+        Width="720" Height="680" MinWidth="620" MinHeight="560"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
+        Background="{StaticResource Brush.Surface.0}"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <Border Padding="18,14" Background="{StaticResource Brush.Surface.1}"
+            BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
+      <StackPanel>
+        <TextBlock Style="{StaticResource Text.Title}" Text="Logical Parameter Definition"/>
+        <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Definition changes and every referencing Lane are migrated as one atomic Project edit."/>
+      </StackPanel>
+    </Border>
+
+    <ScrollViewer Grid.Row="1" Padding="18" VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+        <UniformGrid Columns="2">
+          <StackPanel Margin="0,0,8,10">
+            <TextBlock Style="{StaticResource Text.Overline}" Text="INPUT TYPE"/>
+            <ComboBox x:Name="TypeBox" Margin="0,5,0,0" SelectionChanged="OnDefinitionShapeChanged"/>
+          </StackPanel>
+          <StackPanel Margin="8,0,0,10">
+            <TextBlock Style="{StaticResource Text.Overline}" Text="DEFAULT VALUE"/>
+            <TextBox x:Name="DefaultValueBox" Margin="0,5,0,0"/>
+          </StackPanel>
+          <StackPanel Margin="0,0,8,10">
+            <TextBlock Style="{StaticResource Text.Overline}" Text="LEGAL MINIMUM"/>
+            <TextBox x:Name="MinimumBox" Margin="0,5,0,0"/>
+          </StackPanel>
+          <StackPanel Margin="8,0,0,10">
+            <TextBlock Style="{StaticResource Text.Overline}" Text="LEGAL MAXIMUM"/>
+            <TextBox x:Name="MaximumBox" Margin="0,5,0,0"/>
+          </StackPanel>
+          <StackPanel Margin="0,0,8,10">
+            <TextBlock Style="{StaticResource Text.Overline}" Text="DISPLAY MINIMUM"/>
+            <TextBox x:Name="DisplayMinimumBox" Margin="0,5,0,0"/>
+          </StackPanel>
+          <StackPanel Margin="8,0,0,10">
+            <TextBlock Style="{StaticResource Text.Overline}" Text="DISPLAY MAXIMUM"/>
+            <TextBox x:Name="DisplayMaximumBox" Margin="0,5,0,0"/>
+          </StackPanel>
+        </UniformGrid>
+
+        <Border x:Name="EnumPanel" Margin="0,2,0,12" Padding="12" Style="{StaticResource Card}">
+          <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <Grid>
+              <TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Section}" Text="Enum items"/>
+              <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                <Button Width="28" Height="24" Margin="0,0,4,0" Padding="0" Content="↑" ToolTip="Move item up" Click="OnMoveEnumItemUpClick"/>
+                <Button Width="28" Height="24" Margin="0,0,4,0" Padding="0" Content="↓" ToolTip="Move item down" Click="OnMoveEnumItemDownClick"/>
+                <Button Width="28" Height="24" Margin="0,0,4,0" Padding="0" Content="−" ToolTip="Remove item" Click="OnRemoveEnumItemClick"/>
+                <Button Width="28" Height="24" Padding="0" Content="+" ToolTip="Add item" Click="OnAddEnumItemClick"/>
+              </StackPanel>
+            </Grid>
+            <CheckBox x:Name="ExplicitValuesBox" Grid.Row="1" Margin="0,10,0,8"
+                      Content="Use explicit integer values" Checked="OnExplicitValuesChanged" Unchecked="OnExplicitValuesChanged"/>
+            <ListBox x:Name="EnumItemsList" Grid.Row="2" MinHeight="120" MaxHeight="230"
+                     ItemsSource="{Binding EnumItems}">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Grid Margin="0,2">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="110"/></Grid.ColumnDefinitions>
+                    <TextBox Margin="0,0,6,0" Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                    <TextBox Grid.Column="1" Text="{Binding ValueText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             IsReadOnly="{Binding IsValueReadOnly}"/>
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Grid>
+        </Border>
+
+        <Border Padding="12" Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Text.Section}" Text="Existing Lane migration"/>
+            <TextBlock x:Name="AffectedDataText" Margin="0,4,0,10" Style="{StaticResource Text.Caption}"/>
+            <TextBlock Style="{StaticResource Text.Overline}" Text="INVALID EXISTING VALUES"/>
+            <ComboBox x:Name="MigrationModeBox" Margin="0,5,0,10"/>
+            <CheckBox x:Name="EnumWarningBox" Content="I understand that numeric Enum compatibility does not preserve semantic meaning."/>
+          </StackPanel>
+        </Border>
+        <TextBlock x:Name="ErrorText" Margin="0,10,0,0" Foreground="{StaticResource Brush.Red.Hover}" TextWrapping="Wrap"/>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Grid.Row="2" Padding="12" Background="{StaticResource Brush.Surface.1}"
+            BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+      <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+        <Button Width="86" Margin="0,0,6,0" IsCancel="True" Content="Cancel"/>
+        <Button Width="112" Style="{StaticResource Button.Primary}" Content="Apply Migration" Click="OnApplyClick"/>
+      </StackPanel>
+    </Border>
+  </Grid>
+</Window>

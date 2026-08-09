@@ -371,6 +371,124 @@ public sealed class ProjectBatchTimelineEditCommandsTests
     }
 
     [Fact]
+    public void ExactSetLogicalNoteValuesIsAtomicAndUndoRestoresMixedValues()
+    {
+        (MidoraProject project, _, Segment segment, LogicalNote first, LogicalNote second) =
+            CreateProject();
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.SetLogicalNoteValues(
+            segment.Id,
+            [second.Id, first.Id],
+            lengthTicks: 90,
+            velocity: 72));
+
+        Assert.Equal((90L, 72), (first.LengthTicks, first.Velocity));
+        Assert.Equal((90L, 72), (second.LengthTicks, second.Velocity));
+        Assert.Single(document.History);
+        AssertMatchesFull(compilation);
+
+        document.Undo();
+
+        Assert.Equal((60L, 100), (first.LengthTicks, first.Velocity));
+        Assert.Equal((60L, 80), (second.LengthTicks, second.Velocity));
+        Assert.False(document.IsModified);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void LogicalParameterPointCombinedDragIsOneAtomicUndoUnit()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument" };
+        LogicalParameterDefinition parameter = new(project)
+        {
+            Name = "Amount",
+            Type = LogicalParameterType.Double,
+            Minimum = 0,
+            Maximum = 10
+        };
+        instrument.LogicalParameters.Add(parameter);
+        project.EventInstruments.Add(instrument);
+        LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
+        Segment segment = new(project) { LengthTicks = 480 };
+        LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
+        CurvePoint first = new(project, 10, 2);
+        CurvePoint second = new(project, 30, 4);
+        lane.Points.AddRange([first, second]);
+        segment.ParameterLanes.Add(lane);
+        track.Segments.Add(segment);
+        project.Tracks.Add(track);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.AdjustLogicalParameterPoints(
+            segment.Id,
+            lane.Id,
+            [second.Id, first.Id],
+            tickDelta: 20,
+            valueDelta: 1.5));
+
+        Assert.Equal([30L, 50L], lane.Points.Select(value => value.Tick));
+        Assert.Equal([3.5, 5.5], lane.Points.Select(value => value.Value));
+        Assert.Single(document.History);
+        AssertMatchesFull(compilation);
+
+        document.Undo();
+        Assert.Equal([10L, 30L], lane.Points.Select(value => value.Tick));
+        Assert.Equal([2d, 4d], lane.Points.Select(value => value.Value));
+        Assert.False(document.IsModified);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void ExactSetLogicalParameterPointsUsesOneUndoAndValidatesWholeBatch()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument" };
+        LogicalParameterDefinition parameter = new(project)
+        {
+            Name = "Amount",
+            Type = LogicalParameterType.Double,
+            Minimum = 0,
+            Maximum = 10
+        };
+        instrument.LogicalParameters.Add(parameter);
+        project.EventInstruments.Add(instrument);
+        LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
+        Segment segment = new(project) { LengthTicks = 480 };
+        LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
+        CurvePoint first = new(project, 10, 2, CurveInterpolation.Linear);
+        CurvePoint second = new(project, 30, 4, CurveInterpolation.Linear);
+        lane.Points.AddRange([first, second]);
+        segment.ParameterLanes.Add(lane);
+        track.Segments.Add(segment);
+        project.Tracks.Add(track);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.SetLogicalParameterPoints(
+            segment.Id,
+            lane.Id,
+            [first.Id, second.Id],
+            value: 7.5,
+            interpolation: CurveInterpolation.Step));
+
+        Assert.Equal([7.5, 7.5], lane.Points.Select(item => item.Value));
+        Assert.All(lane.Points, item => Assert.Equal(CurveInterpolation.Step, item.Interpolation));
+        Assert.Single(document.History);
+        AssertMatchesFull(compilation);
+
+        document.Undo();
+
+        Assert.Equal([2d, 4d], lane.Points.Select(item => item.Value));
+        Assert.All(lane.Points, item => Assert.Equal(CurveInterpolation.Linear, item.Interpolation));
+        Assert.False(document.IsModified);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
     public void MixedConductorBatchDeleteRejectsRequiredInitialEventsAndRestoresOrdering()
     {
         MidoraProject project = new(480);

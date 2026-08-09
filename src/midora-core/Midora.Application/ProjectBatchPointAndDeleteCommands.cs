@@ -36,6 +36,43 @@ public static partial class ProjectDomainEditCommands
                 replacement);
         });
 
+    public static IProjectEditCommand AdjustLogicalParameterPoints(
+        MidoraId segmentId,
+        MidoraId laneId,
+        IReadOnlyCollection<MidoraId> pointIds,
+        long tickDelta,
+        double valueDelta) =>
+        Command("Adjust logical parameter points", project =>
+        {
+            if (!double.IsFinite(valueDelta))
+            {
+                throw new ArgumentOutOfRangeException(nameof(valueDelta));
+            }
+            SegmentLocation segment = FindSegment(project, segmentId);
+            LogicalParameterLane lane = FindLogicalParameterLane(segment.Segment, laneId);
+            SelectedCurvePoint[] selected = SelectCurvePoints(lane.Points, pointIds);
+            LogicalParameterDefinition definition = FindBoundLogicalParameter(
+                project,
+                segment.Track,
+                lane.ParameterId);
+            CurvePoint[] replacement = selected.Select(value => new CurvePoint(
+                project,
+                value.Point.Id,
+                checked(value.Point.Tick + tickDelta),
+                value.Point.Value + valueDelta,
+                value.Point.Interpolation)).ToArray();
+            ValidateLogicalParameterPointBatch(
+                definition,
+                lane.Points,
+                selected,
+                replacement);
+            return PrepareCurvePointReplacementBatch(
+                segment.Track.Id,
+                lane.Points,
+                selected,
+                replacement);
+        });
+
     public static IProjectEditCommand SetLogicalParameterPointValues(
         MidoraId segmentId,
         MidoraId laneId,
@@ -64,6 +101,55 @@ public static partial class ProjectDomainEditCommands
                     ? value
                     : item.Point.Value + value,
                 item.Point.Interpolation)).ToArray();
+            ValidateLogicalParameterPointBatch(
+                definition,
+                lane.Points,
+                selected,
+                replacement);
+            return PrepareCurvePointReplacementBatch(
+                segment.Track.Id,
+                lane.Points,
+                selected,
+                replacement);
+        });
+
+    public static IProjectEditCommand SetLogicalParameterPoints(
+        MidoraId segmentId,
+        MidoraId laneId,
+        IReadOnlyCollection<MidoraId> pointIds,
+        long? tick = null,
+        double? value = null,
+        CurveInterpolation? interpolation = null) =>
+        Command("Set logical parameter points", project =>
+        {
+            if (tick is null && value is null && interpolation is null)
+            {
+                throw new ArgumentException(
+                    "At least one Logical Parameter point value must be provided.",
+                    nameof(tick));
+            }
+            if (value is double pointValue && !double.IsFinite(pointValue))
+            {
+                throw new ArgumentOutOfRangeException(nameof(value));
+            }
+            if (interpolation is CurveInterpolation interpolationValue
+                && !Enum.IsDefined(interpolationValue))
+            {
+                throw new ArgumentOutOfRangeException(nameof(interpolation));
+            }
+            SegmentLocation segment = FindSegment(project, segmentId);
+            LogicalParameterLane lane = FindLogicalParameterLane(segment.Segment, laneId);
+            SelectedCurvePoint[] selected = SelectCurvePoints(lane.Points, pointIds);
+            LogicalParameterDefinition definition = FindBoundLogicalParameter(
+                project,
+                segment.Track,
+                lane.ParameterId);
+            CurvePoint[] replacement = selected.Select(item => new CurvePoint(
+                project,
+                item.Point.Id,
+                tick ?? item.Point.Tick,
+                value ?? item.Point.Value,
+                interpolation ?? item.Point.Interpolation)).ToArray();
             ValidateLogicalParameterPointBatch(
                 definition,
                 lane.Points,
@@ -108,6 +194,108 @@ public static partial class ProjectDomainEditCommands
                 curve.Points,
                 selected,
                 "Value Curve point");
+        });
+
+    public static IProjectEditCommand AdjustValueCurvePoints(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        MidoraId curveId,
+        IReadOnlyCollection<MidoraId> pointIds,
+        long tickDelta,
+        double valueDelta) =>
+        Command("Adjust value curve points", project =>
+        {
+            if (!double.IsFinite(valueDelta))
+            {
+                throw new ArgumentOutOfRangeException(nameof(valueDelta));
+            }
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            ValueCurve curve = FindValueCurve(voice, curveId);
+            SelectedCurvePoint[] selected = SelectCurvePoints(curve.Points, pointIds);
+            CurvePoint[] replacement = selected.Select(value => new CurvePoint(
+                project,
+                value.Point.Id,
+                checked(value.Point.Tick + tickDelta),
+                value.Point.Value + valueDelta,
+                value.Point.Interpolation)).ToArray();
+            ValidateValueCurvePointBatch(curve, selected, replacement);
+            long oldTemplateLength = instrument.TemplateLengthTicks;
+            long replacementTemplateLength = Math.Max(
+                oldTemplateLength,
+                checked(replacement.Max(value => value.Tick) + 1));
+            CurvePoint[] old = selected.Select(value => value.Point).ToArray();
+            return Prepared(
+                old.Where((value, index) => value != replacement[index]).Any()
+                    || oldTemplateLength != replacementTemplateLength,
+                EventInstrumentChange(eventInstrumentId),
+                _ =>
+                {
+                    ReplaceCurvePointBatch(curve.Points, old, replacement);
+                    instrument.TemplateLengthTicks = replacementTemplateLength;
+                },
+                _ =>
+                {
+                    ReplaceCurvePointBatch(curve.Points, replacement, old);
+                    instrument.TemplateLengthTicks = oldTemplateLength;
+                });
+        });
+
+    public static IProjectEditCommand SetValueCurvePoints(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        MidoraId curveId,
+        IReadOnlyCollection<MidoraId> pointIds,
+        long? tick = null,
+        double? value = null,
+        CurveInterpolation? interpolation = null) =>
+        Command("Set value curve points", project =>
+        {
+            if (tick is null && value is null && interpolation is null)
+            {
+                throw new ArgumentException(
+                    "At least one Value Curve point value must be provided.",
+                    nameof(tick));
+            }
+            if (value is double pointValue && !double.IsFinite(pointValue))
+            {
+                throw new ArgumentOutOfRangeException(nameof(value));
+            }
+            if (interpolation is CurveInterpolation interpolationValue
+                && !Enum.IsDefined(interpolationValue))
+            {
+                throw new ArgumentOutOfRangeException(nameof(interpolation));
+            }
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            ValueCurve curve = FindValueCurve(voice, curveId);
+            SelectedCurvePoint[] selected = SelectCurvePoints(curve.Points, pointIds);
+            CurvePoint[] replacement = selected.Select(item => new CurvePoint(
+                project,
+                item.Point.Id,
+                tick ?? item.Point.Tick,
+                value ?? item.Point.Value,
+                interpolation ?? item.Point.Interpolation)).ToArray();
+            ValidateValueCurvePointBatch(curve, selected, replacement);
+            long oldTemplateLength = instrument.TemplateLengthTicks;
+            long replacementTemplateLength = Math.Max(
+                oldTemplateLength,
+                checked(replacement.Max(item => item.Tick) + 1));
+            CurvePoint[] old = selected.Select(item => item.Point).ToArray();
+            return Prepared(
+                old.Where((item, index) => item != replacement[index]).Any()
+                    || oldTemplateLength != replacementTemplateLength,
+                EventInstrumentChange(eventInstrumentId),
+                _ =>
+                {
+                    ReplaceCurvePointBatch(curve.Points, old, replacement);
+                    instrument.TemplateLengthTicks = replacementTemplateLength;
+                },
+                _ =>
+                {
+                    ReplaceCurvePointBatch(curve.Points, replacement, old);
+                    instrument.TemplateLengthTicks = oldTemplateLength;
+                });
         });
 
     public static IProjectEditCommand DeleteTemplateEvents(
@@ -267,6 +455,38 @@ public static partial class ProjectDomainEditCommands
         {
             throw new InvalidOperationException(
                 "The Logical Parameter point batch would create duplicate point ticks.");
+        }
+    }
+
+    private static void ValidateValueCurvePointBatch(
+        ValueCurve curve,
+        IReadOnlyCollection<SelectedCurvePoint> selected,
+        IReadOnlyCollection<CurvePoint> replacement)
+    {
+        (double minimum, double maximum) = ValueCurveTargetRange(curve.Target);
+        foreach (CurvePoint point in replacement)
+        {
+            if (point.Tick < 0 || point.Tick == long.MaxValue)
+            {
+                throw new ArgumentOutOfRangeException(nameof(replacement));
+            }
+            if (!double.IsFinite(point.Value) || !Enum.IsDefined(point.Interpolation))
+            {
+                throw new ArgumentOutOfRangeException(nameof(replacement));
+            }
+            if ((point.Value < minimum || point.Value > maximum)
+                && curve.TargetSettings.Overflow == MappingOverflow.Fail)
+            {
+                throw new ArgumentOutOfRangeException(nameof(replacement));
+            }
+        }
+        HashSet<MidoraId> selectedIds = selected.Select(value => value.Point.Id).ToHashSet();
+        long[] ticks = replacement.Select(value => value.Tick).ToArray();
+        if (ticks.Distinct().Count() != ticks.Length
+            || curve.Points.Any(value => !selectedIds.Contains(value.Id) && ticks.Contains(value.Tick)))
+        {
+            throw new InvalidOperationException(
+                "The Value Curve point batch would create duplicate point ticks.");
         }
     }
 

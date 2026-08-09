@@ -423,6 +423,8 @@ Requirement trace：输入为 CompileContext Debug 收集开关和本次确定�
 
 Prepare、compile、plan 或 backend start 失败时进入 Error，同时清空 active canonical/plan/tempo、清除 ActiveTaskKind 并释放自身编辑锁。Stop 以及 Seek/Loop 冷重启的 backend stop 失败执行同一清理；主播放保留失败发生前的当前 tick，若旧 backend 已成功停止而新起点 Preparing 失败，则保留新起点。Error 后再次 Play 先 Reset backend、清 sample-domain cache 和旧错误，再重新 Preparing。进入 Stop/Seek 前即可发现的有效范围错误直接拒绝，不能先停止一个仍健康的播放任务。
 
+Error 且 `ActiveTaskKind=None` 是无活动音频任务的静止运行时状态，允许用户设置非负 Playback Cursor；该操作只更新 Project session cursor，不调用 backend、不清除 `LastError`、不把状态伪装成 Stopped，也不绕过下一次 Play 必须先 Reset 的恢复门。Preparing、Stopping、Preview 活动任务或其他非静止状态仍拒绝这种定位。
+
 Requirement trace：输入为当前播放状态、光标、显式/Loop 范围、有效 SF2、Project 编辑锁和 backend 生命周期结果；正式输出为唯一活动 Main/Preview 任务，或完全释放任务身份/派生引用/锁且位置可恢复的 Stopped/Error。边界是零长度范围仍可 Preparing 后立即 Stopped，缺失 SF2 属于启动 admission 失败而非不可恢复 backend Error，Stop 失败不允许残留“活动任务”。状态、错误、光标、锁和 sample plan 均只属于运行时，不持久化、不修改 Project/canonical；明确非目标是自动选择其他 SF2/设备、Pause/Scrub、抢占另一播放任务或吞掉清理异常。
 
 ## 31. ADR-CORE-029（已接受）：Mute/Solo 冷恢复重路由到活动 Channel Unit

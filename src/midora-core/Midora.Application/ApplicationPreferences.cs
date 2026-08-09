@@ -152,11 +152,61 @@ public sealed record ApplicationRecentDirectories(
         };
 }
 
+public sealed record DesktopUiPreferences(
+    double MainWindowWidth,
+    double MainWindowHeight,
+    double? MainWindowLeft,
+    double? MainWindowTop,
+    bool MainWindowMaximized,
+    double ProjectPanelWidth,
+    double InspectorWidth,
+    double BottomPanelHeight,
+    bool TimelineSnapEnabled,
+    int TimelineGridDivisionsPerQuarter)
+{
+    public bool ProjectPanelVisible { get; init; } = true;
+    public bool InspectorVisible { get; init; } = true;
+    public bool BottomPanelVisible { get; init; } = true;
+    public bool FollowPlayback { get; init; } = true;
+
+    public static DesktopUiPreferences Default { get; } = new(
+        1440,
+        900,
+        null,
+        null,
+        false,
+        224,
+        270,
+        150,
+        true,
+        4);
+
+    public void Validate()
+    {
+        if (!double.IsFinite(MainWindowWidth) || MainWindowWidth is < 1100 or > 32768
+            || !double.IsFinite(MainWindowHeight) || MainWindowHeight is < 680 or > 32768
+            || MainWindowLeft.HasValue && !double.IsFinite(MainWindowLeft.Value)
+            || MainWindowTop.HasValue && !double.IsFinite(MainWindowTop.Value)
+            || !double.IsFinite(ProjectPanelWidth) || ProjectPanelWidth is < 170 or > 360
+            || !double.IsFinite(InspectorWidth) || InspectorWidth is < 220 or > 420
+            || !double.IsFinite(BottomPanelHeight) || BottomPanelHeight is < 80 or > 500)
+        {
+            throw new ArgumentOutOfRangeException(nameof(DesktopUiPreferences));
+        }
+        if (TimelineGridDivisionsPerQuarter is not (1 or 2 or 3 or 4 or 6 or 8 or 12 or 16 or 24 or 32 or 48 or 64))
+        {
+            throw new ArgumentOutOfRangeException(nameof(TimelineGridDivisionsPerQuarter));
+        }
+    }
+}
+
 public sealed record ApplicationPreferences(
     RealtimeAudioPreferences RealtimeAudio,
     AudioCachePreferences AudioCache,
     ApplicationRecentDirectories RecentDirectories)
 {
+    public DesktopUiPreferences DesktopUi { get; init; } = DesktopUiPreferences.Default;
+
     public static ApplicationPreferences Default { get; } =
         new(
             RealtimeAudioPreferences.Default,
@@ -168,8 +218,10 @@ public sealed record ApplicationPreferences(
         ArgumentNullException.ThrowIfNull(RealtimeAudio);
         ArgumentNullException.ThrowIfNull(AudioCache);
         ArgumentNullException.ThrowIfNull(RecentDirectories);
+        ArgumentNullException.ThrowIfNull(DesktopUi);
         RealtimeAudio.Validate();
         AudioCache.Validate();
+        DesktopUi.Validate();
         ValidateDirectory(RecentDirectories.OpenProject);
         ValidateDirectory(RecentDirectories.SaveAndSaveCopy);
         ValidateDirectory(RecentDirectories.SoundFont);

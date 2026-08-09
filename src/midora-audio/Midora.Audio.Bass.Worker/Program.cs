@@ -7,6 +7,7 @@ using System.Globalization;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text;
 using NativeBass = Midora.NativeInterops.Bass.BASS;
 using NativeBassMidi = Midora.NativeInterops.BassMidi.BASSMIDI;
 using NativeBassWasapi = Midora.NativeInterops.BassWasapi.BASSWASAPI;
@@ -38,6 +39,15 @@ public static class Program
                 }
                 control = SharedAudioWorkerControl.Open(args[1]);
                 return RunProbe(args, control);
+            }
+
+            if (string.Equals(args[0], "list-output-devices", StringComparison.Ordinal))
+            {
+                if (args.Length != 2)
+                {
+                    throw new ArgumentException("Invalid output-device enumeration argument count.");
+                }
+                return ListOutputDevices(args[1]);
             }
 
             if (string.Equals(args[0], "play", StringComparison.Ordinal))
@@ -174,9 +184,7 @@ public static class Program
         }
         long bufferingRecoveryMemoryFrameCapacity = ParseInt64(args[17]);
         if (bufferingRecoveryMemoryFrameCapacity < 0
-            || bufferingRecoveryMemoryFrameCapacity > plan.TotalFrameCount
-            || bufferingRecoverySpoolPath is not null
-                && bufferingRecoveryMemoryFrameCapacity != 0)
+            || bufferingRecoveryMemoryFrameCapacity > plan.TotalFrameCount)
         {
             throw new InvalidDataException(
                 "The Buffering recovery memory capacity is incompatible with the render plan.");
@@ -221,24 +229,45 @@ public static class Program
             (IAudioRenderSource?)playbackSpanSource ?? renderer;
         BufferingRecoveryRenderSource? createdRecoverySource = null;
         Exception? recoveryStorageFailure = null;
-        try
+        if (bufferingRecoverySpoolPath is not null)
         {
-            createdRecoverySource = bufferingRecoverySpoolPath is not null
-                ? new BufferingRecoveryRenderSource(
+            try
+            {
+                createdRecoverySource = new BufferingRecoveryRenderSource(
                     primaryRenderSource,
                     bufferingRecoverySpoolPath,
-                    InitialReleaseAudioRuntimePolicy.WorkFrameCount)
-                : bufferingRecoveryMemoryFrameCapacity > 0
-                    ? new BufferingRecoveryRenderSource(
-                        primaryRenderSource,
-                        bufferingRecoveryMemoryFrameCapacity,
-                        InitialReleaseAudioRuntimePolicy.WorkFrameCount)
-                    : null;
+                    InitialReleaseAudioRuntimePolicy.WorkFrameCount);
+            }
+            catch (Exception exception) when (exception is IOException
+                or UnauthorizedAccessException
+                or NotSupportedException
+                or InvalidDataException
+                or OutOfMemoryException
+                or OverflowException)
+            {
+                recoveryStorageFailure = exception;
+            }
         }
-        catch (Exception exception) when (exception is OutOfMemoryException
-            or OverflowException)
+
+        if (createdRecoverySource is null && bufferingRecoveryMemoryFrameCapacity > 0)
         {
-            recoveryStorageFailure = exception;
+            try
+            {
+                createdRecoverySource = new BufferingRecoveryRenderSource(
+                    primaryRenderSource,
+                    bufferingRecoveryMemoryFrameCapacity,
+                    InitialReleaseAudioRuntimePolicy.WorkFrameCount);
+            }
+            catch (Exception exception) when (exception is OutOfMemoryException
+                or OverflowException)
+            {
+                recoveryStorageFailure = recoveryStorageFailure is null
+                    ? exception
+                    : new AggregateException(
+                        "Both disk and in-memory Buffering recovery reservations failed.",
+                        recoveryStorageFailure,
+                        exception);
+            }
         }
         using BufferingRecoveryRenderSource? recoverySource = createdRecoverySource;
         IAudioRenderSource renderSource = (IAudioRenderSource?)recoverySource ?? primaryRenderSource;
@@ -640,6 +669,34 @@ public static class Program
                 string.Equals(value.Id, requestedDeviceId, StringComparison.Ordinal));
         return device
             ?? throw new MidoraAudioDeviceException("No enabled output device satisfies the selection.");
+    }
+
+    private static int ListOutputDevices(string nativeDirectoryArgument)
+    {
+        string nativeDirectory = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingDirectory(
+            nativeDirectoryArgument,
+            "native library");
+        LoadBassLibraries(nativeDirectory, includeWasapi: true);
+        BassWasapiOutputDeviceFactory factory = new(
+            new BassWasapiAudioOutputDeviceSettings(50));
+        IReadOnlyList<AudioOutputDeviceInfo> devices = factory.GetDevices();
+
+        // Private, versioned, line-oriented protocol. Base64 prevents device names and endpoint IDs
+        // from changing field boundaries; the main process never loads a BASS native library.
+        global::System.Console.Out.WriteLine("MIDORA-AUDIO-DEVICES-V1");
+        foreach (AudioOutputDeviceInfo device in devices)
+        {
+            string id = Convert.ToBase64String(Encoding.UTF8.GetBytes(device.Id));
+            string name = Convert.ToBase64String(Encoding.UTF8.GetBytes(device.Name ?? string.Empty));
+            global::System.Console.Out.WriteLine(string.Join(
+                '\t',
+                device.IsSystemDefault ? "1" : "0",
+                device.AudioFormat.SampleRate.ToString(CultureInfo.InvariantCulture),
+                device.AudioFormat.ChannelCount.ToString(CultureInfo.InvariantCulture),
+                id,
+                name));
+        }
+        return 0;
     }
 
     private static unsafe int RunLegacyPcmRenderer(string[] args)

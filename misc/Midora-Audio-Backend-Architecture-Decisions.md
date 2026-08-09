@@ -174,6 +174,8 @@ Requirement trace：输入为固定版本 BASS/BASSWASAPI、进程全局字符�
 
 reusable quota=0、配额满或普通写失败只产生 `AudioCacheRetentionDisabled` Warning，并停止新 reusable 写入；已完成条目继续可读，miss 现渲染。Buffering 的 transient recovery spool 不受 reusable quota 限制，使用后立即删除并单独报告当前/峰值占用。spool 不可用且预留 RAM 不足时在失败 tick 受控停止并报告 `AudioRecoveryStorageUnavailable`，不得退化为短块断续播放。
 
+跨进程 recovery spool 使用显式所有权交接：主进程先创建、定长并计入 session transient 占用，启动 Worker 前关闭本进程文件句柄但继续持有逻辑租约；Worker 在整个活动任务内独占该路径的 memory mapping；Stop/失败清理后由主进程租约删除文件并扣减占用。不得让主进程保留打开句柄再要求 Worker 重新映射同一路径。命令协议同时携带等容量的 RAM fallback 上限，但只在 Worker 的磁盘 mapping 失败时于 Preparing 分配 unmanaged RAM；两种存储都失败才记录结构化 storage failure，并在实际 underrun 请求恢复时受控 Stop。
+
 cache writer 位于专用 I/O 路径。WASAPI callback、BASSMIDI render/mix、ring 搬运热路径不做文件 I/O；完整 tile 写完、checksum/generation 验证通过后才原子发布。损坏条目隔离并重建，不能以半写或旧 generation PCM 命中。
 
 初版 I/O hot-set 固定实现为：最终 playback span 使用一个 `16,384 frames` 顺序 SPSC ring；raw Unit 对本任务实际有 hit/miss 的 canonical Unit 分别使用 `16,384 frames` 读/写 ring，写 ring 达到 `4,096 frames`、片段结束、片段切换或任务完成时由单个低优先级 cache I/O 线程刷盘。最大 256 Unit 时 raw 读/写 hot-set 各最多 32 MiB。实时读前/写后背压返回 `Buffering` 并进入正式自然段恢复；离线渲染在同一 frame 等待 I/O，不推进输出。普通写失败只使当前 capture generation 失效并继续现渲染；已接受 hit 的运行期读取失败不得输出未验证 PCM。

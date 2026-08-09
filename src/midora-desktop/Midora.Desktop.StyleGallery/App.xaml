@@ -5,10 +5,10 @@
   <Application.Resources>
     <ResourceDictionary>
       <ResourceDictionary.MergedDictionaries>
-        <ResourceDictionary Source="Themes/Palette.xaml" />
-        <ResourceDictionary Source="Themes/FluentSystemIcons.xaml" />
-        <ResourceDictionary Source="Themes/WindowControlIcons.xaml" />
-        <ResourceDictionary Source="Themes/Controls.xaml" />
+        <ResourceDictionary Source="/Midora.Desktop.Presentation;component/Themes/Palette.xaml" />
+        <ResourceDictionary Source="/Midora.Desktop.Presentation;component/Themes/FluentSystemIcons.xaml" />
+        <ResourceDictionary Source="/Midora.Desktop.Presentation;component/Themes/WindowControlIcons.xaml" />
+        <ResourceDictionary Source="/Midora.Desktop.Presentation;component/Themes/Controls.xaml" />
       </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>
   </Application.Resources>

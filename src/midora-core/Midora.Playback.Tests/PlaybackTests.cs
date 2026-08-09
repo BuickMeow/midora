@@ -924,6 +924,38 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void HeldPreviewBackendFaultClearsTheCausalGateWithTheActiveTask()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            controller.StartHeldEventInstrumentPreview(new EventInstrumentPreviewRequest(
+                project.EventInstruments[0].Id,
+                Pitch: 67,
+                Tempo: 120m));
+            Assert.True(controller.IsHeldPreviewGateOpen);
+
+            backend.IsFaulted = true;
+            backend.FaultDescription = "synthetic held-preview backend fault";
+            controller.Update();
+
+            Assert.Equal(PlaybackState.Error, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+            Assert.False(controller.IsHeldPreviewGateOpen);
+            Assert.False(session.EditsLocked);
+            controller.CancelHeldPreview();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void HeldPreviewUpdateRenewsTheFiniteCausalWindowBeforeProducerCompletion()
     {
         string soundFont = Path.GetTempFileName();
@@ -1069,11 +1101,19 @@ public sealed class PlaybackTests
             Assert.Equal(PlaybackState.Error, controller.State);
             Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
             Assert.False(session.EditsLocked);
+            Exception originalFailure = controller.LastError!;
+
+            controller.Seek(240);
+
+            Assert.Equal(PlaybackState.Error, controller.State);
+            Assert.Equal(240, controller.CurrentTick);
+            Assert.Same(originalFailure, controller.LastError);
             backend.ThrowPrepare = false;
 
             controller.Start();
 
             Assert.Equal(PlaybackState.Playing, controller.State);
+            Assert.Equal(240, controller.CurrentTick);
             Assert.Equal(1, backend.ResetCount);
             controller.Stop();
         }

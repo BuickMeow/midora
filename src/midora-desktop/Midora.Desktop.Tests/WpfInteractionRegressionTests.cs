@@ -1,0 +1,155 @@
+using System.Collections.Specialized;
+using System.Runtime.ExceptionServices;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Shell;
+using System.Windows.Threading;
+using Midora.Application;
+using Midora.Desktop.Presentation.Interaction;
+using Midora.Domain;
+using Xunit;
+
+namespace Midora.Desktop.Tests;
+
+public sealed class WpfInteractionRegressionTests
+{
+    [Fact]
+    public void ProjectEditsQueueBoundCollectionRefreshesOnTheDispatcher()
+    {
+        RunOnSta(() =>
+        {
+            Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(dispatcher));
+            int dispatcherThreadId = Environment.CurrentManagedThreadId;
+            DesktopSessionController session = new();
+            try
+            {
+                PumpUntil(session.CreateProjectAsync(new NewProjectCreationRequest
+                {
+                    ProjectName = "WPF refresh",
+                    PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+                }));
+
+                ProjectTreeNode tracks = session.ProjectTree.Single(
+                    item => item.Kind == ProjectTreeNodeKind.LogicalTracks);
+                Assert.Empty(tracks.Children);
+                List<int> collectionChangeThreads = [];
+                session.ProjectTree.CollectionChanged += (_, _) =>
+                    collectionChangeThreads.Add(Environment.CurrentManagedThreadId);
+
+                session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+
+                Assert.Single(session.Project!.Tracks);
+                Assert.Empty(tracks.Children);
+                DrainDispatcher();
+
+                ProjectTreeNode refreshedTracks = session.ProjectTree.Single(
+                    item => item.Kind == ProjectTreeNodeKind.LogicalTracks);
+                Assert.Single(refreshedTracks.Children);
+                Assert.NotEmpty(collectionChangeThreads);
+                Assert.All(collectionChangeThreads, threadId =>
+                    Assert.Equal(dispatcherThreadId, threadId));
+
+                collectionChangeThreads.Clear();
+                PumpUntil(Task.Run(() =>
+                    session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"))));
+                DrainDispatcher();
+                ProjectTreeNode library = session.ProjectTree.Single(
+                    item => item.Kind == ProjectTreeNodeKind.InstrumentLibrary);
+                Assert.Contains(library.Children, item => item.Title == "Instrument");
+                Assert.NotEmpty(collectionChangeThreads);
+                Assert.All(collectionChangeThreads, threadId =>
+                    Assert.Equal(dispatcherThreadId, threadId));
+
+                session.Execute(ProjectDomainEditCommands.CreateEventInstrumentFolder("Folder"));
+                DrainDispatcher();
+                Assert.Contains(
+                    session.ProjectTree.Single(item => item.Kind == ProjectTreeNodeKind.InstrumentLibrary).Children,
+                    item => item.Title == "Folder");
+
+                EventInstrument instrument = Assert.Single(session.Project.EventInstruments);
+                Assert.IsType<InstrumentWorkspaceViewModel>(session.OpenInstrument(instrument.Id));
+                Assert.Equal(
+                    WorkspaceKind.ConductorTrack,
+                    session.OpenWorkspace(session.ProjectTree.Single(
+                        item => item.Kind == ProjectTreeNodeKind.Conductor)).Kind);
+            }
+            finally
+            {
+                PumpUntil(session.DisposeAsync().AsTask());
+            }
+        });
+    }
+
+    [Fact]
+    public void CaptionButtonStyleIsInteractiveInsideWindowChrome()
+    {
+        RunOnSta(() =>
+        {
+            ResourceDictionary controls = (ResourceDictionary)System.Windows.Application.LoadComponent(
+                new Uri(
+                    "/Midora.Desktop.Presentation;component/Themes/Controls.xaml",
+                    UriKind.Relative));
+            Style caption = Assert.IsType<Style>(controls["Button.Caption"]);
+
+            Setter setter = Assert.Single(caption.Setters.OfType<Setter>(), item =>
+                item.Property == WindowChrome.IsHitTestVisibleInChromeProperty);
+            Assert.Equal(true, setter.Value);
+        });
+    }
+
+    private static void PumpUntil(Task task)
+    {
+        Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+        DispatcherFrame frame = new();
+        _ = task.ContinueWith(
+            _ => dispatcher.BeginInvoke(
+                DispatcherPriority.Send,
+                new Action(() => frame.Continue = false)),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        Dispatcher.PushFrame(frame);
+        task.GetAwaiter().GetResult();
+    }
+
+    private static void DrainDispatcher()
+    {
+        DispatcherFrame frame = new();
+        _ = Dispatcher.CurrentDispatcher.BeginInvoke(
+            DispatcherPriority.ApplicationIdle,
+            new Action(() => frame.Continue = false));
+        Dispatcher.PushFrame(frame);
+    }
+
+    private static void RunOnSta(Action action)
+    {
+        Exception? failure = null;
+        Thread thread = new(() =>
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromSeconds(30)))
+        {
+            throw new TimeoutException("The WPF Dispatcher regression test did not complete.");
+        }
+        if (failure is not null)
+        {
+            ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+    }
+}

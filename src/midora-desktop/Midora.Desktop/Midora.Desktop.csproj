@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Midora.Desktop</AssemblyName>
+    <RootNamespace>Midora.Desktop</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Midora.Desktop.Presentation\Midora.Desktop.Presentation.csproj" />
+    <ProjectReference Include="..\..\midora-core\Midora.Application\Midora.Application.csproj" />
+    <ProjectReference Include="..\..\midora-audio\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />
+    <ProjectReference Include="..\..\midora-core\Midora.Playback.BassWasapi\Midora.Playback.BassWasapi.csproj" />
+  </ItemGroup>
+</Project>

@@ -115,9 +115,9 @@ public sealed class BassWasapiChildPlaybackBackend
     {
         get
         {
-            AudioWorkerStatus status = CurrentStatus;
+            (AudioWorkerStatus status, int? exitCode) = ReadCurrentProcessSnapshot();
             return status.State == AudioWorkerState.Faulted
-                || IsUnexpectedWorkerTermination(status.State, CurrentExitCode);
+                || IsUnexpectedWorkerTermination(status.State, exitCode);
         }
     }
 
@@ -125,8 +125,7 @@ public sealed class BassWasapiChildPlaybackBackend
     {
         get
         {
-            AudioWorkerStatus status = CurrentStatus;
-            int? exitCode = CurrentExitCode;
+            (AudioWorkerStatus status, int? exitCode) = ReadCurrentProcessSnapshot();
             return status.State == AudioWorkerState.Faulted
                 || IsUnexpectedWorkerTermination(status.State, exitCode)
                 ? $"workerState={status.State}; fault={status.FaultCode}; childExitCode={exitCode}; stderr={_session?.StandardError ?? _lastStandardError}"
@@ -181,6 +180,10 @@ public sealed class BassWasapiChildPlaybackBackend
         _nextRecoveryMemoryFrameCapacity = 0;
         try
         {
+            // The worker owns the memory-mapped recovery payload while playback is active.
+            // Keeping the reservation handle open in this process prevents
+            // MemoryMappedFile.CreateFromFile from opening the same path on Windows.
+            _activeRecoverySpool?.ReleaseFileHandleForExternalUse();
             _session = new BassMidiAudioWorkerSession(
                 plan,
                 soundFontPath,
@@ -243,8 +246,7 @@ public sealed class BassWasapiChildPlaybackBackend
             throw new InvalidOperationException(
                 "Buffering recovery storage cannot change while the Worker is active.");
         }
-        if (memoryFallbackFrameCapacity < 0
-            || recoverySpool is not null && memoryFallbackFrameCapacity != 0)
+        if (memoryFallbackFrameCapacity < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(memoryFallbackFrameCapacity));
         }
@@ -416,6 +418,23 @@ public sealed class BassWasapiChildPlaybackBackend
                     _lastExitCode ??= session.ExitCode;
                 }
             });
+
+    private (AudioWorkerStatus Status, int? ExitCode) ReadCurrentProcessSnapshot()
+    {
+        BassMidiAudioWorkerSession? session = _session;
+        if (session is null)
+        {
+            return (_lastStatus, _lastExitCode);
+        }
+
+        // Observe process termination before reading the shared status. Once a zero exit code is
+        // visible, the Worker can no longer publish another state, so the following status read is
+        // its terminal snapshot. Reading in the opposite order can combine an earlier Playing state
+        // with a newly visible zero exit code and falsely classify fast cached playback as a crash.
+        int? exitCode = session.ExitCode;
+        AudioWorkerStatus status = session.Status;
+        return (status, exitCode);
+    }
 
     internal static Exception? ExecuteGuaranteedRelease(
         Action capture,

@@ -8,6 +8,69 @@ namespace Midora.Application.Tests;
 public sealed class ProjectValueCurveEditCommandsTests
 {
     [Fact]
+    public void PointBatchDragChangesTickAndValueAsOneAtomicUndoUnit()
+    {
+        Fixture fixture = CreateFixture();
+        CurvePoint first = fixture.Curve.Points[0];
+        CurvePoint second = fixture.Curve.Points[1];
+        using ProjectCompilationSession compilation = new(fixture.Project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.AdjustValueCurvePoints(
+            fixture.Instrument.Id,
+            fixture.Voice.Id,
+            fixture.Curve.Id,
+            [second.Id, first.Id],
+            tickDelta: 20,
+            valueDelta: 5));
+
+        Assert.Equal([140L, 260L], fixture.Curve.Points.Select(value => value.Tick));
+        Assert.Equal([15d, 25d], fixture.Curve.Points.Select(value => value.Value));
+        Assert.Single(document.History);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+        Assert.Same(first, fixture.Curve.Points[0]);
+        Assert.Same(second, fixture.Curve.Points[1]);
+        Assert.Equal([120L, 240L], fixture.Curve.Points.Select(value => value.Tick));
+        Assert.Equal([10d, 20d], fixture.Curve.Points.Select(value => value.Value));
+        Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void ExactSetPointBatchIsAtomicAndUndoRestoresEachOriginalValue()
+    {
+        Fixture fixture = CreateFixture();
+        CurvePoint first = fixture.Curve.Points[0];
+        CurvePoint second = fixture.Curve.Points[1];
+        using ProjectCompilationSession compilation = new(fixture.Project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.SetValueCurvePoints(
+            fixture.Instrument.Id,
+            fixture.Voice.Id,
+            fixture.Curve.Id,
+            [second.Id, first.Id],
+            value: 64,
+            interpolation: CurveInterpolation.Step));
+
+        Assert.Equal([64d, 64d], fixture.Curve.Points.Select(item => item.Value));
+        Assert.All(fixture.Curve.Points, item => Assert.Equal(CurveInterpolation.Step, item.Interpolation));
+        Assert.Single(document.History);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+
+        Assert.Same(first, fixture.Curve.Points[0]);
+        Assert.Same(second, fixture.Curve.Points[1]);
+        Assert.Equal([10d, 20d], fixture.Curve.Points.Select(item => item.Value));
+        Assert.All(fixture.Curve.Points, item => Assert.Equal(CurveInterpolation.Linear, item.Interpolation));
+        Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
     public void PointUpdatePreservesStableIdentityAutoExtendsTemplateAndUndoIsExact()
     {
         Fixture fixture = CreateFixture();

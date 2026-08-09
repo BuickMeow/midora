@@ -1,0 +1,87 @@
+using System.IO;
+using System.Windows;
+using Midora.Application;
+
+namespace Midora.Desktop;
+
+public partial class App : System.Windows.Application
+{
+    private SingleApplicationInstanceCoordinator? _instance;
+    private CancellationTokenSource? _instanceRequests;
+
+    protected override async void OnStartup(StartupEventArgs e)
+    {
+        base.OnStartup(e);
+        try
+        {
+            ApplicationStartupRequest request = new(
+                Path.GetFullPath(Environment.CurrentDirectory),
+                e.Args);
+            ApplicationInstanceStartResult result =
+                await SingleApplicationInstanceCoordinator.StartOrForwardAsync(
+                    "Midora.InitialRelease",
+                    request);
+            if (result.ShouldExit)
+            {
+                Shutdown();
+                return;
+            }
+
+            _instance = result.PrimaryInstance
+                ?? throw new InvalidOperationException("The primary Midora instance was not created.");
+            _instanceRequests = new CancellationTokenSource();
+
+            MainWindow window = new();
+            MainWindow = window;
+            window.Show();
+            await window.HandleStartupRequestAsync(request);
+            _ = ReceiveStartupRequestsAsync(window, _instanceRequests.Token);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                $"Midora could not start.\n\n{exception.Message}",
+                "Midora Startup Failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            Shutdown(1);
+        }
+    }
+
+    protected override async void OnExit(ExitEventArgs e)
+    {
+        _instanceRequests?.Cancel();
+        if (_instance is not null)
+        {
+            await _instance.DisposeAsync();
+        }
+        _instanceRequests?.Dispose();
+        base.OnExit(e);
+    }
+
+    private static async Task ReceiveStartupRequestsAsync(
+        MainWindow window,
+        CancellationToken cancellationToken)
+    {
+        App application = (App)Current;
+        try
+        {
+            await foreach (ApplicationStartupRequest request in
+                application._instance!.ReadAllAsync(cancellationToken))
+            {
+                await window.Dispatcher.InvokeAsync(async () =>
+                {
+                    if (window.WindowState == WindowState.Minimized)
+                    {
+                        window.WindowState = WindowState.Normal;
+                    }
+                    window.Activate();
+                    await window.HandleStartupRequestAsync(request);
+                }).Task.Unwrap();
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+}

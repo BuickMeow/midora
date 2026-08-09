@@ -1,3 +1,4 @@
+using System.IO.MemoryMappedFiles;
 using System.Text;
 using Midora.Audio;
 
@@ -79,6 +80,36 @@ public sealed class AudioCacheSessionStoreTests
         Assert.Equal(0, released.TransientBytes);
         Assert.Equal(256, released.PeakTransientBytes);
         Assert.False(File.Exists(spoolPath));
+    }
+
+    [Fact]
+    public void RecoverySpoolTransfersItsFileHandleWithoutReleasingTheReservation()
+    {
+        using TemporaryDirectory root = new();
+        using AudioCacheSessionStore store = new(root.Path, 4096);
+        AudioCacheSessionStore.AudioRecoverySpool spool = store.CreateRecoverySpool(256);
+        string path = spool.Path;
+
+        spool.ReleaseFileHandleForExternalUse();
+
+        Assert.Throws<ObjectDisposedException>(() => _ = spool.Stream);
+        Assert.Equal(256, store.GetSnapshot().TransientBytes);
+        using (MemoryMappedFile mapping = MemoryMappedFile.CreateFromFile(
+            path,
+            FileMode.Open,
+            mapName: null,
+            capacity: 256,
+            MemoryMappedFileAccess.ReadWrite))
+        using (MemoryMappedViewAccessor view = mapping.CreateViewAccessor())
+        {
+            view.Write(0, (byte)0x5a);
+            Assert.Equal(0x5a, view.ReadByte(0));
+        }
+
+        spool.Dispose();
+
+        Assert.Equal(0, store.GetSnapshot().TransientBytes);
+        Assert.False(File.Exists(path));
     }
 
     [Fact]

@@ -103,6 +103,42 @@ public static partial class ProjectDomainEditCommands
                 replacement);
         });
 
+    public static IProjectEditCommand SetLogicalNoteValues(
+        MidoraId segmentId,
+        IReadOnlyCollection<MidoraId> logicalNoteIds,
+        long? startTick = null,
+        long? lengthTicks = null,
+        int? note = null,
+        int? velocity = null) =>
+        Command("Set logical note values", project =>
+        {
+            if (startTick is null
+                && lengthTicks is null
+                && note is null
+                && velocity is null)
+            {
+                throw new ArgumentException(
+                    "At least one Logical Note value must be provided.",
+                    nameof(startTick));
+            }
+            SegmentLocation segment = FindSegment(project, segmentId);
+            SelectedLogicalNote[] selected = SelectLogicalNotes(
+                segment.Segment,
+                logicalNoteIds);
+            LogicalNoteValue[] old = selected.Select(item => Snapshot(item.Note)).ToArray();
+            LogicalNoteValue[] replacement = old.Select(item => new LogicalNoteValue(
+                startTick ?? item.StartTick,
+                lengthTicks ?? item.LengthTicks,
+                note ?? item.Note,
+                velocity ?? item.Velocity)).ToArray();
+            ValidateLogicalNoteBatch(replacement);
+            return PrepareLogicalNoteBatch(
+                segment.Track.Id,
+                selected,
+                old,
+                replacement);
+        });
+
     public static IProjectEditCommand AlignLogicalNotes(
         MidoraId segmentId,
         IReadOnlyCollection<MidoraId> logicalNoteIds,

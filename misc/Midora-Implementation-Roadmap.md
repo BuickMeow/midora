@@ -5,7 +5,7 @@
 
 > 现状提示（2026-08-08）：本文后续“当前进度/尚未实现”描述保留为历史路线记录，已经过时；不得据此判定源码缺口。当前权威实施状态见 `misc/Midora-Non-UI-Implementation-Tracker.md`，§7～§12 逐节证据见 `misc/Midora-Domain-Compiler-Conformance-Matrix.md`。
 >
-> UI 阶段现状（2026-08-08）：`src/midora-desktop/Midora.Desktop.StyleGallery/` 已建立独立的 .NET 10、WPF、`win-x64` 样式样例，并完成三轮产品所有者视觉评审。该样例现为后续正式 UI 的默认视觉基线；它仍是静态组件画廊，不代表 Main Window 业务组合、命令路由、ViewModel 或正式工作流已经实现。详细边界和验收证据见 `misc/Midora-WPF-Style-Gallery-Requirement-Trace.md`。
+> UI 阶段现状（2026-08-08）：正式 `Midora.Desktop`、共享 `Midora.Desktop.Presentation` 及其测试项目已经建立。主窗口、Project 生命周期、工作区、Inspector、Diagnostics/Tasks、Preferences、MIDI/Audio 输出工作流和第 18 章主要编辑器已接入正式 Domain/Application/Compiler/consumer 入口；Arrangement、Segment、SubVoice、Logical Parameter 和 Conductor 的大量对象编辑采用专用渲染表面。Style Gallery 继续作为同一共享主题的视觉样例，不是生产依赖。当前 UI 需求映射与验证证据见 `misc/Midora-WPF-UI-Requirement-Trace.md`，架构决定见 `misc/Midora-WPF-UI-Architecture-Decisions.md`。
 
 ## 1. 审阅范围
 
@@ -269,7 +269,7 @@ flowchart TD
 
 ### 阶段 7：WPF 应用与工作流
 
-当前进度（2026-08-08）：已完成并批准暗色黑红简约风格的 WPF 组件样例，覆盖 WindowChrome、菜单、命令栏、Project Panel、Workspace/Inspector/Bottom Panel、通用输入与状态控件、滚动条以及 Midora 代表性编辑表面。样例通过 .NET 10 Release 构建和 100% DPI 视觉/窗口边界检查。正式 UI composition、业务数据绑定和第 17～20 章工作流仍未开始；后续实现默认复用该样例的资源字典与控件模板。
+当前进度（2026-08-08）：正式 WPF composition、共享呈现层、业务数据绑定和第 17～20 章主要工作流已实现。时间线编辑器使用按 lane/pitch 分桶的区间索引和 `OnRender` 自绘，覆盖 Arrangement、Segment piano roll、Logical Parameter、SubVoice note/event、Conductor、overview 与 Lifecycle preview；Event Instrument 已包含 Overview/SubVoices/Parameters/Lifecycle、独立 Initial State 和会话级 Preview。Project Tree 保持浅层，普通大集合使用 recycling virtualization。Desktop/Presentation 自动测试和 100% DPI 实际窗口检查作为当前验证基线；详细证据和仍需持续执行的发布门见 `misc/Midora-WPF-UI-Requirement-Trace.md`。
 
 工作：
 

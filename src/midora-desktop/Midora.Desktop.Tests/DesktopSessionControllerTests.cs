@@ -530,6 +530,36 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public async Task SegmentTimelineDimsNotesOnlyWhenGateStartIsOutsideActiveRange()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Segment note range state",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        LogicalTrack track = Assert.Single(session.Project!.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(
+            track.Id,
+            projectStartTick: 0,
+            lengthTicks: 480,
+            contentOffsetTick: 240));
+        Segment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(segment.Id, 200, 80, 60, 100));
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(segment.Id, 700, 40, 62, 100));
+        LogicalNote outsideStart = segment.Notes.Single(note => note.StartTick == 200);
+        LogicalNote insideStartWithOutsideEnd = segment.Notes.Single(note => note.StartTick == 700);
+
+        TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+        TimelineRenderItem outsideItem = workspace.Snapshot!.Items.Single(item => item.Id == outsideStart.Id);
+        TimelineRenderItem crossingEndItem = workspace.Snapshot.Items.Single(item => item.Id == insideStartWithOutsideEnd.Id);
+
+        Assert.True(outsideItem.State.HasFlag(TimelineItemState.OutsideActiveRange));
+        Assert.False(crossingEndItem.State.HasFlag(TimelineItemState.OutsideActiveRange));
+    }
+
+    [Fact]
     public async Task ArrangementBuildsReadOnlyConductorOverviewForItsRuler()
     {
         await using DesktopSessionController session = new();

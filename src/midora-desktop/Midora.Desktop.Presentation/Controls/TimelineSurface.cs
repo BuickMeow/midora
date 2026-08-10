@@ -356,11 +356,13 @@ public sealed class TimelineSurface : Control
     private Brush? _penInfoBrush;
     private Brush? _penTextBrush;
     private Brush? _penRedBrush;
+    private Brush? _penSegmentSelectionBrush;
     private Pen? _borderPen;
     private Pen? _infoPen;
     private Pen? _textPen;
     private Pen? _redPen;
     private Pen? _selectionPen;
+    private Pen? _segmentSelectionPen;
     private Pen? _editCursorPen;
     private Pen? _marqueePen;
     private readonly Dictionary<string, FormattedText> _textCache = new(StringComparer.Ordinal);
@@ -690,7 +692,11 @@ public sealed class TimelineSurface : Control
         Brush info = Brush("Brush.Info", Color.FromRgb(98, 166, 246));
         Brush warning = Brush("Brush.Warning", Color.FromRgb(232, 179, 75));
         Brush text = Brush("Brush.Text.Primary", Color.FromRgb(241, 243, 245));
-        EnsurePens(border, info, text, red);
+        Brush segment = Brush("Brush.Segment", Color.FromRgb(75, 88, 100));
+        Brush selectedSegment = Brush("Brush.Segment.Selected", Color.FromRgb(48, 59, 69));
+        Brush segmentSelection = Brush("Brush.Segment.Selection", Color.FromRgb(145, 166, 184));
+        Brush segmentNotePreview = Brush("Brush.Segment.NotePreview", Color.FromRgb(135, 147, 157));
+        EnsurePens(border, info, text, red, segmentSelection);
 
         drawingContext.DrawRectangle(surface, null, new Rect(0, 0, ActualWidth, ActualHeight));
         double laneHeaderWidth = GetLaneHeaderWidth();
@@ -731,7 +737,19 @@ public sealed class TimelineSurface : Control
                 _visibleItems);
             foreach (TimelineRenderItem item in _visibleItems)
             {
-                DrawItem(drawingContext, viewport, item, red, info, warning, laneHeaderWidth, rulerHeight);
+                DrawItem(
+                    drawingContext,
+                    viewport,
+                    item,
+                    red,
+                    redDark,
+                    info,
+                    warning,
+                    segment,
+                    selectedSegment,
+                    segmentNotePreview,
+                    laneHeaderWidth,
+                    rulerHeight);
             }
         }
 
@@ -1534,8 +1552,12 @@ public sealed class TimelineSurface : Control
         TimelineViewport viewport,
         TimelineRenderItem item,
         Brush red,
+        Brush redDark,
         Brush info,
         Brush warning,
+        Brush segment,
+        Brush selectedSegment,
+        Brush segmentNotePreview,
         double laneHeaderWidth,
         double rulerHeight)
     {
@@ -1563,13 +1585,18 @@ public sealed class TimelineSurface : Control
             return;
         }
 
+        bool selected = item.State.HasFlag(TimelineItemState.Selected);
         Brush fill = item.State.HasFlag(TimelineItemState.Invalid)
             || item.State.HasFlag(TimelineItemState.Broken)
             ? warning
+            : item.Kind == TimelineItemKind.Segment
+                ? selected ? selectedSegment : segment
             : item.Kind is TimelineItemKind.LogicalNote or TimelineItemKind.TemplateNote
-                ? red
+                ? selected ? redDark : red
                 : info;
-        double opacity = item.State.HasFlag(TimelineItemState.OutsideActiveRange) ? 0.35 : 0.78;
+        double opacity = item.State.HasFlag(TimelineItemState.OutsideActiveRange)
+            ? 0.35
+            : item.Kind == TimelineItemKind.Segment ? 0.88 : 0.78;
         context.PushOpacity(opacity);
         Rect rectangle = new(left, top, Math.Max(1, right - left), height);
         context.DrawRoundedRectangle(fill, _borderPen, rectangle, 2, 2);
@@ -1578,12 +1605,15 @@ public sealed class TimelineSurface : Control
         if (item.Kind == TimelineItemKind.Segment
             && Snapshot?.SegmentPreviews.TryGetValue(item.Id, out TimelineSegmentPreview? preview) == true)
         {
-            DrawSegmentPreview(context, rectangle, preview, red);
+            DrawSegmentPreview(context, rectangle, preview, segmentNotePreview);
         }
 
-        if (item.State.HasFlag(TimelineItemState.Selected))
+        if (selected)
         {
-            context.DrawRoundedRectangle(null, _selectionPen, rectangle, 2, 2);
+            Pen selectionPen = item.Kind == TimelineItemKind.Segment
+                ? _segmentSelectionPen!
+                : _selectionPen!;
+            context.DrawRoundedRectangle(null, selectionPen, rectangle, 2, 2);
             if (item.State.HasFlag(TimelineItemState.Primary)
                 && rectangle.Width > 4
                 && rectangle.Height > 4)
@@ -1593,7 +1623,7 @@ public sealed class TimelineSurface : Control
                     rectangle.Top + 1,
                     rectangle.Width - 2,
                     rectangle.Height - 2);
-                context.DrawRoundedRectangle(null, _selectionPen, primary, 1, 1);
+                context.DrawRoundedRectangle(null, selectionPen, primary, 1, 1);
             }
         }
     }
@@ -1606,7 +1636,7 @@ public sealed class TimelineSurface : Control
     {
         if (preview.Notes.Count == 0 || segmentBounds.Width <= 0 || segmentBounds.Height <= 0) return;
         context.PushClip(new RectangleGeometry(segmentBounds));
-        context.PushOpacity(0.9);
+        context.PushOpacity(0.72);
         double noteHeight = Math.Max(1, Math.Round(segmentBounds.Height / 128d));
         double pitchTravel = Math.Max(0, segmentBounds.Height - noteHeight);
         foreach (TimelineSegmentPreviewNote note in preview.Notes)
@@ -2274,12 +2304,13 @@ public sealed class TimelineSurface : Control
 
     private double GetRulerHeight() => SurfaceMode == TimelineSurfaceMode.General ? 0 : 24;
 
-    private void EnsurePens(Brush border, Brush info, Brush text, Brush red)
+    private void EnsurePens(Brush border, Brush info, Brush text, Brush red, Brush segmentSelection)
     {
         if (ReferenceEquals(_penBorderBrush, border)
             && ReferenceEquals(_penInfoBrush, info)
             && ReferenceEquals(_penTextBrush, text)
-            && ReferenceEquals(_penRedBrush, red))
+            && ReferenceEquals(_penRedBrush, red)
+            && ReferenceEquals(_penSegmentSelectionBrush, segmentSelection))
         {
             return;
         }
@@ -2288,12 +2319,14 @@ public sealed class TimelineSurface : Control
         _penInfoBrush = info;
         _penTextBrush = text;
         _penRedBrush = red;
+        _penSegmentSelectionBrush = segmentSelection;
         _borderPen = FrozenPen(border, 1);
         _infoPen = FrozenPen(info, 1);
         _textPen = FrozenPen(text, 2);
         _redPen = FrozenPen(red, 1);
         Brush selection = Brush("Brush.Red.Hover", Color.FromRgb(255, 96, 101));
         _selectionPen = FrozenPen(selection, 2);
+        _segmentSelectionPen = FrozenPen(segmentSelection, 2);
         _editCursorPen = FrozenPen(info, 1, DashStyles.Dash);
         _marqueePen = FrozenPen(info, 1, DashStyles.Dash);
     }

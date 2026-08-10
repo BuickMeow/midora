@@ -1006,7 +1006,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 z: 1,
                 value: note.Velocity,
                 extra: note.StartTick < segment.ContentOffsetTick
-                    || note.StartTick + note.LengthTicks > segment.ContentEndTick
+                    || note.StartTick >= segment.ContentEndTick
                     ? TimelineItemState.OutsideActiveRange
                     : TimelineItemState.None))
             .ToArray();

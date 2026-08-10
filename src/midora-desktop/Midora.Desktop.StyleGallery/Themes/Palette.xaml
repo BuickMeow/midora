@@ -26,6 +26,10 @@
   <Color x:Key="Color.Warning.Subtle">#2A2111</Color>
   <Color x:Key="Color.Info">#62A6F6</Color>
   <Color x:Key="Color.Info.Subtle">#101F31</Color>
+  <Color x:Key="Color.Segment">#4B5864</Color>
+  <Color x:Key="Color.Segment.Selected">#303B45</Color>
+  <Color x:Key="Color.Segment.Selection">#91A6B8</Color>
+  <Color x:Key="Color.Segment.NotePreview">#87939D</Color>
   <Color x:Key="Color.Damaged">#C78AFF</Color>
   <Color x:Key="Color.Damaged.Subtle">#24152F</Color>
 
@@ -55,6 +59,10 @@
   <SolidColorBrush x:Key="Brush.Warning.Subtle" Color="{StaticResource Color.Warning.Subtle}" />
   <SolidColorBrush x:Key="Brush.Info" Color="{StaticResource Color.Info}" />
   <SolidColorBrush x:Key="Brush.Info.Subtle" Color="{StaticResource Color.Info.Subtle}" />
+  <SolidColorBrush x:Key="Brush.Segment" Color="{StaticResource Color.Segment}" />
+  <SolidColorBrush x:Key="Brush.Segment.Selected" Color="{StaticResource Color.Segment.Selected}" />
+  <SolidColorBrush x:Key="Brush.Segment.Selection" Color="{StaticResource Color.Segment.Selection}" />
+  <SolidColorBrush x:Key="Brush.Segment.NotePreview" Color="{StaticResource Color.Segment.NotePreview}" />
   <SolidColorBrush x:Key="Brush.Damaged" Color="{StaticResource Color.Damaged}" />
   <SolidColorBrush x:Key="Brush.Damaged.Subtle" Color="{StaticResource Color.Damaged.Subtle}" />
 

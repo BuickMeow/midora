@@ -104,6 +104,8 @@ Project End Marker 后区域弱化，但仍显示并允许编辑。End Marker �
 Arrangement Toolbar 必须分别提供可见分割线粒度、操作粒度与 Snap 开关，以及默认 Segment 创建长度（tick，输入即生效）。Draw 模式下，鼠标所在 Track 必须显示按当前操作粒度定位、按默认长度计算的虚线创建预览。若默认长度超出当前可用间隙，创建命令静默缩短为从目标 tick 起可容纳的最大正长度；预览显示实际将提交的长度。不存在正长度空隙时预览为错误色并拒绝创建。该规则只适用于新建 Segment；已有 Segment 的移动和 Resize 仍不得因重叠而被静默缩短。
 
 Arrangement 中只有 Draw 模式允许拖动 Segment 主体或调整边缘；Select 模式仍允许单击和框选，但不得直接移动、Resize 或双击创建 Segment。拖动和 Resize 期间必须显示位置与长度预览，并隐藏同位置的创建预览。工具互斥、指针和快捷键规则见第 20.1.6、20.12 节。
+
+Draw 模式下在 Segment 主体执行 `Ctrl+Drag` 时，复制当前 Segment 选择集并以一个共同时间/Track delta 放置完整副本；原 Segment 不移动。复制成功后只选择副本，一次完整手势形成一个 Project Undo。
 ---
 ## 18.2 Segment Editor
 ### 18.2.1 布局
@@ -138,6 +140,8 @@ Segment Editor 以 Segment local tick 为主，同时可显示映射后的 Proje
 新建单个 Logical Note 的放置手势不得启动声音预览。Draw 模式只显示当前 pitch、位置和默认长度的虚线视觉预览；该视觉预览不是 Project 数据。点击已有 Note 时，将该 Note 的长度复制为后续创建的默认 Note 长度，但不修改该 Note。
 
 只有 Draw 模式允许拖动或 Resize Logical Note；Select 模式仍允许单击和框选，但不得直接移动、Resize 或双击创建 Note。移动和 Resize 期间必须显示位置与长度预览，并隐藏创建预览。
+
+Draw 模式下在 Logical Note 主体执行 `Ctrl+Drag` 时，复制当前 Note 选择集并以一个共同时间/pitch delta 放置副本；原 Note 不移动，相对时间、音程、长度和 velocity 保持不变。复制成功后只选择副本，一次完整手势形成一个 Project Undo。边缘 `Ctrl+Drag` 仍按 Resize 处理，不隐式复制。
 
 Segment Toolbar 必须提供共享 piano-roll 的可见分割线粒度、操作粒度、Snap、默认 Note 长度（tick）与默认 velocity。默认长度和 velocity 独立于 Grid；默认长度允许小于操作粒度。
 

@@ -359,11 +359,15 @@ Escape、Pointer Capture 丢失、源对象失效等取消拖动并完整恢复�
 Timeline 和列表支持边缘自动滚动。Folder 可停留后临时展开。
 初版不通过悬停 Workspace Tab 自动切页，也不直接跨 Workspace 拖动内部内容。
 ### 20.5.6 具体对象
-#### 20.5.6.1 Segment
+#### 20.5.6.1 Segment 与 Piano Roll Note
 ```text
-Ctrl+Drag -> copy complete Segment
+Arrangement Segment body Ctrl+Drag -> copy complete selected Segments
+Segment Note body Ctrl+Drag       -> copy selected Logical Notes
+SubVoice Note body Ctrl+Drag      -> copy selected Template Notes
 ```
-全部子对象获得新稳定 ID。跨 Track 不自动重绑或删除 Lane。
+Segment 全部子对象获得新稳定 ID；Logical Note 获得新稳定 ID；Template Note 及其 Mapping Chain/Step 获得新稳定 ID。跨 Track 不自动重绑或删除 Lane。Note 副本使用一个共同时间/pitch delta，并保持相对时间、音程、长度、velocity、Mapping 与目标设置。成功后只选择副本，一次完整手势只形成一个 Project Undo。
+
+复制意图在 Draw 模式的主体拖动越过阈值时确认；未越过阈值的 `Ctrl+Click` 仍按选择切换处理，边缘 `Ctrl+Drag` 仍是 Resize。时间、pitch 与 Track 越界请求使用选择集共同 clamp；Escape、Pointer Capture 丢失、Segment overlap、选择集不兼容或共同 clamp 后仍非法时整体取消，不创建部分副本。
 #### 20.5.6.2 Event Instrument
 Library 内只支持 Move / Reorder；Duplicate 使用显式命令。
 拖到 Logical Tracks 表示创建或绑定 Track，不移动 Instrument 本身。

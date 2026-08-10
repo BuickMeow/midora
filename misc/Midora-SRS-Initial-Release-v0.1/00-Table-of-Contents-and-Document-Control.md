@@ -56,6 +56,7 @@
 - 明确 Arrangement Segment Note Preview 使用固定 MIDI pitch `0..127`、最小 1 px Note 高度、布局取整和按 Segment 稳定 ID/内容指纹复用的手工渲染缓存；tick 0 Note 不得遗漏。
 - 明确 Velocity 普通点击、自由拖动、右键直线插值、选择集过滤和单柱顶部边缘调整语义；所有手势在按下时立即生效并保持一次手势一次 Undo。
 - 明确 Piano Roll 与数值 Lane 的纵向视口边界、右侧滚动条、随平移更新的标尺和边界标签可见性；显式滚动条 Thumb 按实际可见范围计算。Segment 下部编辑区的显隐与高度属于 Project Session UI State，其分隔条在完整上部 Timeline 区域与下部编辑区之间调整高度。
+- 明确 Draw 模式下 Arrangement Segment、Segment Logical Note 与 SubVoice Template Note 的主体 `Ctrl+Drag` 使用原子“复制并拖拽”语义；复制集使用共同 delta、生成新稳定 ID、成功后只选择副本并只形成一个 Undo，普通 `Ctrl+Click` 与边缘 Resize 语义不变。
 - 补充 Timeline 工具栏、状态栏已读、选择边框、键位明暗、Disabled Ghost Button 和顶部 Transport 信息的 WPF 验收要求。
 
 ## 2026-08-08 修订摘要

@@ -14,6 +14,7 @@
 
 - Arrangement、Segment Piano Roll 和 SubVoice Piano Roll 的工具按钮互斥且始终恰有一个激活；重复点击当前工具不清空工具状态，新 Workspace 仍默认 Select。
 - Draw 是 Segment / Note 的直接编辑工具：空白处创建，主体拖动，左右边缘 Resize；命中对象或执行直接编辑时隐藏创建预览，并显示提交后的位置与长度。
+- Draw 模式下在 Arrangement Segment、Segment Logical Note 或 SubVoice Template Note 主体执行 `Ctrl+Drag` 时，复制当前选择集并以同一个时间及 Track/pitch delta 放置副本；原对象不移动。复制意图在越过拖动阈值时确认，普通 `Ctrl+Click` 仍切换选择，边缘 `Ctrl+Drag` 仍是 Resize。成功后只选择副本，完整手势形成一个 Project Undo。
 - Select 只负责单击选择和框选，不直接拖动、Resize 或双击创建 Segment / Note。Draw 与 Select 的单击对象都保留选择行为。
 - Draw 在空白处使用默认指针，在对象主体和边缘使用移动与水平 Resize 指针；Select 使用十字指针且命中对象时不切换为编辑指针；Split 命中 Segment 时使用 I-beam 指针。
 - 无修饰键 `D`、`S`、`E` 分别切换活动 Timeline Workspace 的 Draw、Select、Erase；文本/代码输入、ComboBox、菜单、Popup、内联编辑和 Modal 优先处理输入，不切换背景工具。
@@ -41,5 +42,6 @@
 
 - 播放或全局任务锁期间的编辑禁用、非法 overlap、越界 tick / pitch 和无效 Resize 仍由既有命令与验证边界拒绝，不得提交部分 Project 修改。
 - 可预期的工具快捷键 No Action 不弹窗；文本或弹出层拥有输入焦点时，字母键按本地输入处理。
+- Copy Drag 的时间、pitch 与 Track 越界请求按选择集计算一个共同 clamp；Segment overlap、选择集不兼容或共同 clamp 后仍非法时整体拒绝，不产生部分副本。Escape、Pointer Capture 丢失或未越过拖动阈值均不创建副本。
 - 本轮不修改音频 Worker、held Preview、SoundFont、Mapping、Lifecycle、持久化格式或高性能手工渲染架构。
 - 本轮不扩大初版 DPI 验收范围；继续以 Windows 100% Display Scaling 和 Midora Built-in Theme 为正式视觉验收环境。

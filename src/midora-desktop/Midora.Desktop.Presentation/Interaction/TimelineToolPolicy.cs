@@ -26,6 +26,18 @@ public static class TimelineToolPolicy
             ? toolMode == TimelineToolMode.Draw && IsDirectManipulationItem(itemKind)
             : toolMode != TimelineToolMode.Erase;
 
+    public static bool SupportsCopyDrag(
+        TimelineToolMode toolMode,
+        TimelineSurfaceMode surfaceMode,
+        TimelineItemKind itemKind,
+        TimelineItemEditKind editKind) =>
+        toolMode == TimelineToolMode.Draw
+        && editKind == TimelineItemEditKind.Move
+        && surfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll
+        && itemKind is TimelineItemKind.Segment
+            or TimelineItemKind.LogicalNote
+            or TimelineItemKind.TemplateNote;
+
     public static bool RequestsBackgroundCreation(
         TimelineToolMode toolMode,
         TimelineSurfaceMode surfaceMode,

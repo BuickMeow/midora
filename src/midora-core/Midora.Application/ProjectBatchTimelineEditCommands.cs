@@ -223,6 +223,19 @@ public static partial class ProjectDomainEditCommands
         IReadOnlyCollection<MidoraId> logicalNoteIds,
         MidoraId targetSegmentId,
         long newEarliestStartTick) =>
+        DuplicateLogicalNotes(
+            sourceSegmentId,
+            logicalNoteIds,
+            targetSegmentId,
+            newEarliestStartTick,
+            pitchDelta: 0);
+
+    public static IProjectEditCommand DuplicateLogicalNotes(
+        MidoraId sourceSegmentId,
+        IReadOnlyCollection<MidoraId> logicalNoteIds,
+        MidoraId targetSegmentId,
+        long newEarliestStartTick,
+        int pitchDelta) =>
         Command("Duplicate logical notes", project =>
         {
             if (newEarliestStartTick < 0)
@@ -239,7 +252,8 @@ public static partial class ProjectDomainEditCommands
             LogicalNoteValue[] snapshots = selected
                 .Select(value => Snapshot(value.Note) with
                 {
-                    StartTick = checked(value.Note.StartTick + delta)
+                    StartTick = checked(value.Note.StartTick + delta),
+                    Note = checked(value.Note.Note + pitchDelta)
                 })
                 .ToArray();
             ValidateLogicalNoteBatch(snapshots);

@@ -371,6 +371,39 @@ public sealed class ProjectBatchTimelineEditCommandsTests
     }
 
     [Fact]
+    public void DuplicateNotesAppliesSharedTimeAndPitchDeltaInOneUndo()
+    {
+        (MidoraProject project, _, Segment segment, LogicalNote first, LogicalNote second) =
+            CreateProject();
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.DuplicateLogicalNotes(
+            segment.Id,
+            [second.Id, first.Id],
+            segment.Id,
+            newEarliestStartTick: 30,
+            pitchDelta: 5));
+
+        LogicalNote[] copies = segment.Notes
+            .Where(item => item.Id != first.Id && item.Id != second.Id)
+            .ToArray();
+        Assert.Equal([30L, 150L], copies.Select(item => item.StartTick));
+        Assert.Equal([65, 69], copies.Select(item => item.Note));
+        Assert.Equal([60L, 60L], copies.Select(item => item.LengthTicks));
+        Assert.Single(document.History);
+        AssertMatchesFull(compilation);
+
+        document.Undo();
+        Assert.Equal([first, second], segment.Notes);
+        Assert.False(document.IsModified);
+
+        document.Redo();
+        Assert.Equal(copies, segment.Notes.Skip(2));
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
     public void ExactSetLogicalNoteValuesIsAtomicAndUndoRestoresMixedValues()
     {
         (MidoraProject project, _, Segment segment, LogicalNote first, LogicalNote second) =
@@ -479,6 +512,50 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         Assert.Equal((0L, 60), (first.Tick, first.Number));
         Assert.Equal((120L, 64), (second.Tick, second.Number));
         Assert.False(document.IsModified);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void TemplateNoteCopyDragCommandDeepCopiesNotesAndKeepsRedoIdentity()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument", TemplateLengthTicks = 480 };
+        SubVoice voice = new(project) { Name = "Voice" };
+        TemplateEvent first = TemplateEvent.Note(project, 0, 60, 60, 100);
+        TemplateEvent second = TemplateEvent.Note(project, 120, 90, 64, 80);
+        first.NumberMappings.Add(new ValueMappingStep(project) { Constant = 2 });
+        voice.Events.AddRange([first, second]);
+        instrument.SubVoices.Add(voice);
+        project.EventInstruments.Add(instrument);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.DuplicateTemplateNotes(
+            instrument.Id,
+            voice.Id,
+            [second.Id, first.Id],
+            newEarliestTick: 500,
+            pitchDelta: 2));
+
+        TemplateEvent[] copies = voice.Events.Skip(2).ToArray();
+        Assert.Equal([500L, 620L], copies.Select(item => item.Tick));
+        Assert.Equal([62, 66], copies.Select(item => item.Number));
+        Assert.Equal(710, instrument.TemplateLengthTicks);
+        Assert.NotEqual(first.Id, copies[0].Id);
+        Assert.NotEqual(first.NumberMappings.Id, copies[0].NumberMappings.Id);
+        Assert.Single(copies[0].NumberMappings);
+        Assert.NotEqual(first.NumberMappings[0].Id, copies[0].NumberMappings[0].Id);
+        Assert.Single(document.History);
+        AssertMatchesFull(compilation);
+
+        document.Undo();
+        Assert.Equal([first, second], voice.Events);
+        Assert.Equal(480, instrument.TemplateLengthTicks);
+        Assert.False(document.IsModified);
+
+        document.Redo();
+        Assert.Equal(copies, voice.Events.Skip(2));
+        Assert.Equal(710, instrument.TemplateLengthTicks);
         AssertMatchesFull(compilation);
     }
 

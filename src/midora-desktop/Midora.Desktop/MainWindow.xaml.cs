@@ -1850,7 +1850,8 @@ public partial class MainWindow : Window
     {
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
         workspace.ActiveLane = e.Item.Lane;
-        if ((e.Modifiers & ModifierKeys.Control) != 0) workspace.Selection.Toggle(e.Item.Id);
+        if (e.IsCopyDragStart) workspace.Selection.Add(e.Item.Id);
+        else if ((e.Modifiers & ModifierKeys.Control) != 0) workspace.Selection.Toggle(e.Item.Id);
         else if ((e.Modifiers & ModifierKeys.Shift) != 0) workspace.Selection.Add(e.Item.Id);
         else if (workspace.Selection.Ids.Contains(e.Item.Id)) workspace.Selection.Add(e.Item.Id);
         else workspace.Selection.Replace(e.Item.Id);
@@ -2784,7 +2785,7 @@ public partial class MainWindow : Window
             int targetLane = checked(edit.Item.Lane + laneDelta);
             snappedTarget = checked(edit.Item.StartTick + clampedDelta);
             MidoraId targetTrackId = _session.Project.Tracks[targetLane].Id;
-            if ((edit.Modifiers & ModifierKeys.Control) != 0)
+            if (edit.CopyRequested)
             {
                 long firstNewStableId = _session.Project.NextStableId;
                 _session.Execute(ProjectDomainEditCommands.DuplicateSegments(
@@ -2853,11 +2854,28 @@ public partial class MainWindow : Window
                     requestedPitchDelta,
                     -notes.Min(item => item.Note),
                     127 - notes.Max(item => item.Note));
-                _session.Execute(ProjectDomainEditCommands.MoveLogicalNotes(
-                    segmentId,
-                    selected,
-                    tickDelta,
-                    pitchDelta));
+                MidoraId[] noteIds = notes.Select(item => item.Id).ToArray();
+                if (edit.CopyRequested)
+                {
+                    long firstNewStableId = _session.Project!.NextStableId;
+                    _session.Execute(ProjectDomainEditCommands.DuplicateLogicalNotes(
+                        segmentId,
+                        noteIds,
+                        segmentId,
+                        checked(notes.Min(item => item.StartTick) + tickDelta),
+                        pitchDelta));
+                    SelectCreatedWorkspaceObjects(
+                        (TimelineWorkspaceViewModel)_session.ActiveWorkspace!,
+                        firstNewStableId);
+                }
+                else
+                {
+                    _session.Execute(ProjectDomainEditCommands.MoveLogicalNotes(
+                        segmentId,
+                        noteIds,
+                        tickDelta,
+                        pitchDelta));
+                }
                 break;
             case TimelineItemEditKind.ResizeStart:
                 long startDelta = Math.Clamp(
@@ -3009,12 +3027,26 @@ public partial class MainWindow : Window
                         requestedPitchDelta,
                         -selectedNotes.Min(item => item.Number),
                         127 - selectedNotes.Max(item => item.Number));
-                    _session.Execute(ProjectDomainEditCommands.MoveTemplateNotes(
-                        instrumentId,
-                        voice.Id,
-                        selectedIds,
-                        tickDelta,
-                        pitchDelta));
+                    if (edit.CopyRequested)
+                    {
+                        long firstNewStableId = _session.Project.NextStableId;
+                        _session.Execute(ProjectDomainEditCommands.DuplicateTemplateNotes(
+                            instrumentId,
+                            voice.Id,
+                            selectedIds,
+                            checked(selectedNotes.Min(item => item.Tick) + tickDelta),
+                            pitchDelta));
+                        SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
+                    }
+                    else
+                    {
+                        _session.Execute(ProjectDomainEditCommands.MoveTemplateNotes(
+                            instrumentId,
+                            voice.Id,
+                            selectedIds,
+                            tickDelta,
+                            pitchDelta));
+                    }
                     return;
                 case TimelineItemEditKind.ResizeStart:
                     long startDelta = Math.Clamp(

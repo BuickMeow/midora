@@ -15,13 +15,15 @@ public sealed class TimelineItemEventArgs(
     long tick,
     int lane,
     ModifierKeys modifiers,
-    bool isDoubleClick) : RoutedEventArgs
+    bool isDoubleClick,
+    bool isCopyDragStart = false) : RoutedEventArgs
 {
     public TimelineRenderItem Item { get; } = item;
     public long Tick { get; } = tick;
     public int Lane { get; } = lane;
     public ModifierKeys Modifiers { get; } = modifiers;
     public bool IsDoubleClick { get; } = isDoubleClick;
+    public bool IsCopyDragStart { get; } = isCopyDragStart;
 }
 
 public sealed class TimelineMarqueeEventArgs(
@@ -133,7 +135,8 @@ public sealed class TimelineItemEditEventArgs(
     long tickDelta,
     int laneDelta,
     double valueDelta,
-    ModifierKeys modifiers) : RoutedEventArgs
+    ModifierKeys modifiers,
+    bool copyRequested = false) : RoutedEventArgs
 {
     public TimelineRenderItem Item { get; } = item;
     public TimelineItemEditKind EditKind { get; } = editKind;
@@ -141,6 +144,7 @@ public sealed class TimelineItemEditEventArgs(
     public int LaneDelta { get; } = laneDelta;
     public double ValueDelta { get; } = valueDelta;
     public ModifierKeys Modifiers { get; } = modifiers;
+    public bool CopyRequested { get; } = copyRequested;
 }
 
 public sealed class TimelineSurface : Control
@@ -389,6 +393,7 @@ public sealed class TimelineSurface : Control
     private long _dragCurrentTick;
     private int _dragCurrentLane;
     private bool _dragActivated;
+    private bool _dragCopyRequested;
     private TimelineLanePreviewEventArgs? _activeLanePreview;
     private long? _notePlacementStartTick;
     private long _notePlacementCurrentTick;
@@ -991,6 +996,12 @@ public sealed class TimelineSurface : Control
                 _dragCurrentTick = tick;
                 _dragCurrentLane = lane;
                 _dragActivated = false;
+                _dragCopyRequested = (Keyboard.Modifiers & ModifierKeys.Control) != 0
+                    && TimelineToolPolicy.SupportsCopyDrag(
+                        ToolMode,
+                        SurfaceMode,
+                        hit.Kind,
+                        _dragKind);
                 CaptureMouse();
             }
         }
@@ -1109,13 +1120,26 @@ public sealed class TimelineSurface : Control
             InvalidateVisual();
             return;
         }
-        if (_dragItem is not null && e.LeftButton == MouseButtonState.Pressed
+        if (_dragItem is TimelineRenderItem dragItem && e.LeftButton == MouseButtonState.Pressed
             && TryCreateViewport(out TimelineViewport dragViewport))
         {
             _dragCurrentTick = dragViewport.XToTick(point.X - GetLaneHeaderWidth());
             _dragCurrentLane = dragViewport.YToLane(point.Y - GetRulerHeight());
+            bool wasActivated = _dragActivated;
             _dragActivated |= Math.Abs(point.X - _dragOrigin.X) >= 3
                 || Math.Abs(point.Y - _dragOrigin.Y) >= 3;
+            if (!wasActivated && _dragActivated && _dragCopyRequested)
+            {
+                ItemInvoked?.Invoke(
+                    this,
+                    new TimelineItemEventArgs(
+                        dragItem,
+                        _dragOriginTick,
+                        _dragOriginLane,
+                        ModifierKeys.Control,
+                        isDoubleClick: false,
+                        isCopyDragStart: true));
+            }
             if (_dragActivated)
             {
                 Cursor = _dragKind == TimelineItemEditKind.Move
@@ -1281,7 +1305,8 @@ public sealed class TimelineSurface : Control
                         checked(_dragCurrentTick - _dragOriginTick),
                         checked(_dragCurrentLane - _dragOriginLane),
                         -(e.GetPosition(this).Y - _dragOrigin.Y) / Math.Max(1, LaneHeight),
-                        Keyboard.Modifiers));
+                        Keyboard.Modifiers,
+                        _dragCopyRequested));
             }
             ClearItemDrag();
             ReleaseMouseCapture();
@@ -1784,7 +1809,7 @@ public sealed class TimelineSurface : Control
         Rect bar = new(left, top, width, Math.Max(1, bottom - top));
         bool selected = item.State.HasFlag(TimelineItemState.Selected);
         Brush barBrush = selected ? selectedBrush : normalBrush;
-        context.PushOpacity(selected ? 0.55 : 0.42);
+        context.PushOpacity(selected ? 0.4 : 0.2);
         context.DrawRectangle(barBrush, null, bar);
         context.Pop();
         context.PushOpacity(selected ? 1 : 0.86);
@@ -2033,6 +2058,15 @@ public sealed class TimelineSurface : Control
         double top = rulerHeight + (lane - viewport.FirstLane) * LaneHeight + 2;
         Rect rectangle = new(left, top, Math.Max(1, right - left), Math.Max(3, LaneHeight - 4));
         context.DrawRoundedRectangle(null, _marqueePen, rectangle, 2, 2);
+        if (_dragCopyRequested)
+        {
+            FormattedText copyMarker = GetFormattedText(
+                "+",
+                Brush("Brush.Text.Primary", Color.FromRgb(241, 243, 245)),
+                12,
+                FontWeights.Bold);
+            context.DrawText(copyMarker, new Point(rectangle.Left + 4, rectangle.Top + 1));
+        }
     }
 
     private void DrawTimelineChrome(
@@ -2573,6 +2607,7 @@ public sealed class TimelineSurface : Control
     {
         _dragItem = null;
         _dragActivated = false;
+        _dragCopyRequested = false;
         Cursor = Cursors.Arrow;
     }
 }

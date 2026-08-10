@@ -225,6 +225,26 @@ public sealed class TimelineRenderingTests
             TimelineToolMode.Select,
             TimelineSurfaceMode.PianoRoll,
             clickCount: 2));
+        Assert.True(TimelineToolPolicy.SupportsCopyDrag(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.PianoRoll,
+            TimelineItemKind.LogicalNote,
+            TimelineItemEditKind.Move));
+        Assert.True(TimelineToolPolicy.SupportsCopyDrag(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.Arrangement,
+            TimelineItemKind.Segment,
+            TimelineItemEditKind.Move));
+        Assert.False(TimelineToolPolicy.SupportsCopyDrag(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.PianoRoll,
+            TimelineItemKind.LogicalNote,
+            TimelineItemEditKind.ResizeEnd));
+        Assert.False(TimelineToolPolicy.SupportsCopyDrag(
+            TimelineToolMode.Select,
+            TimelineSurfaceMode.PianoRoll,
+            TimelineItemKind.TemplateNote,
+            TimelineItemEditKind.Move));
     }
 
     [Theory]

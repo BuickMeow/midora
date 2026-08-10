@@ -1153,32 +1153,31 @@ public sealed class PlaybackController : IDisposable
             return false;
         }
 
-        long failureFrame = _backend.PositionFrames;
-        long failureTick = map.SampleFrameToTick(
-            failureFrame,
-            compiled.StartTick,
-            _backend.ActualSampleRate,
-            compiled.EndTick);
-        if (failureTick >= compiled.EndTick)
-        {
-            return true;
-        }
-        BufferingRecoveryInterval interval = BufferingRecoveryPlanner.Plan(
-            compiled,
-            failureTick,
-            compiled.EndTick);
-        long recoveryEndFrame = map.TickToSampleFrame(
-            interval.EndTick,
-            compiled.StartTick,
-            _backend.ActualSampleRate);
-        if (recoveryEndFrame <= failureFrame)
-        {
-            EnterBufferingRecoveryError(new InvalidDataException(
-                "The natural Buffering recovery interval did not advance a sample frame."));
-            return false;
-        }
         try
         {
+            long failureFrame = _backend.PositionFrames;
+            long failureTick = map.SampleFrameToTick(
+                failureFrame,
+                compiled.StartTick,
+                _backend.ActualSampleRate,
+                compiled.EndTick);
+            if (failureTick >= compiled.EndTick)
+            {
+                return true;
+            }
+            BufferingRecoveryInterval interval = BufferingRecoveryPlanner.Plan(
+                compiled,
+                failureTick,
+                compiled.EndTick);
+            long recoveryEndFrame = map.TickToSampleFrame(
+                interval.EndTick,
+                compiled.StartTick,
+                _backend.ActualSampleRate);
+            if (recoveryEndFrame <= failureFrame)
+            {
+                throw new InvalidDataException(
+                    "The natural Buffering recovery interval did not advance a sample frame.");
+            }
             recoveryBackend.BeginBufferingRecovery(recoveryEndFrame);
             _bufferingRecoveryRequested = true;
             return true;

@@ -213,18 +213,21 @@ public sealed class CanonicalConductor
 {
     private readonly CanonicalTempo[] _tempos;
     private readonly CanonicalTimeSignature[] _timeSignatures;
+    private readonly CanonicalTimeSignature[] _sourceTimeSignatureMap;
     private readonly CanonicalKeySignature[] _keySignatures;
     private readonly CanonicalMarker[] _markers;
 
     internal CanonicalConductor(
         CanonicalTempo[] tempos,
         CanonicalTimeSignature[] timeSignatures,
+        CanonicalTimeSignature[] sourceTimeSignatureMap,
         CanonicalKeySignature[] keySignatures,
         CanonicalMarker[] markers,
         CanonicalEndMarker? endMarker)
     {
         _tempos = tempos;
         _timeSignatures = timeSignatures;
+        _sourceTimeSignatureMap = sourceTimeSignatureMap;
         _keySignatures = keySignatures;
         _markers = markers;
         EndMarker = endMarker;
@@ -232,6 +235,8 @@ public sealed class CanonicalConductor
 
     public ReadOnlySpan<CanonicalTempo> Tempos => _tempos;
     public ReadOnlySpan<CanonicalTimeSignature> TimeSignatures => _timeSignatures;
+    public ReadOnlySpan<CanonicalTimeSignature> SourceTimeSignatureMap =>
+        _sourceTimeSignatureMap;
     public ReadOnlySpan<CanonicalKeySignature> KeySignatures => _keySignatures;
     public ReadOnlySpan<CanonicalMarker> Markers => _markers;
     public CanonicalEndMarker? EndMarker { get; }

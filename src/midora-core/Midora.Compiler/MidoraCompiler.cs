@@ -2588,6 +2588,16 @@ public sealed class MidoraCompiler : IDisposable
             value => value.Tick,
             (value, tick, restored) => new CanonicalTimeSignature(
                 value.Id, tick, value.Numerator, value.Denominator, restored)),
+        source.TimeSignatures
+            .Where(value => value.Tick < endTick || value.Tick == 0)
+            .OrderBy(value => value.Tick)
+            .ThenBy(value => value.Id)
+            .Select(value => new CanonicalTimeSignature(
+                value.Id,
+                value.Tick,
+                value.Numerator,
+                value.Denominator))
+            .ToArray(),
         RangeStateful(
             source.KeySignatures.OrderBy(value => value.Tick).ToArray(), startTick, endTick,
             value => value.Tick,
@@ -2972,6 +2982,13 @@ internal static class SourceFingerprint
             Add(ref hash, value.Numerator);
             Add(ref hash, value.Denominator);
             Add(ref hash, value.IsRangeRestore ? 1 : 0);
+        }
+        foreach (CanonicalTimeSignature value in conductor.SourceTimeSignatureMap)
+        {
+            Add(ref hash, value.SourceId);
+            Add(ref hash, value.Tick);
+            Add(ref hash, value.Numerator);
+            Add(ref hash, value.Denominator);
         }
         foreach (CanonicalKeySignature value in conductor.KeySignatures)
         {

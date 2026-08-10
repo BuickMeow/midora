@@ -1378,6 +1378,35 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void NonZeroPlaybackStartCanEnterBufferingWithoutLosingTheTickZeroSignature()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            using ProjectCompilationSession session = new(CreateProject(), soundFont);
+            using RecoveryBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            controller.Seek(240);
+            controller.Start();
+            backend.PositionFrames = 4_800;
+            backend.IsBuffering = true;
+
+            Exception? failure = Record.Exception(controller.Update);
+
+            Assert.Null(failure);
+            Assert.Equal(PlaybackState.Buffering, controller.State);
+            Assert.Equal(PlaybackTaskKind.MainTimeline, controller.ActiveTaskKind);
+            Assert.Equal(1, backend.BeginRecoveryCount);
+            Assert.True(backend.RecoveryEndFrame > backend.PositionFrames);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void UnavailableDiskRecoveryStorageFallsBackToReservedWorkerMemory()
     {
         string soundFont = Path.GetTempFileName();

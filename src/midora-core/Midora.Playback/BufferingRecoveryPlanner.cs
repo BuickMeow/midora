@@ -41,7 +41,7 @@ public static class BufferingRecoveryPlanner
 
         ProjectTimeSignatureMap map = new(
             compiled.TicksPerQuarterNote,
-            compiled.Conductor.TimeSignatures.ToArray().Select(value =>
+            compiled.Conductor.SourceTimeSignatureMap.ToArray().Select(value =>
                 new ProjectTimeSignaturePoint(
                     value.SourceId,
                     value.Tick,

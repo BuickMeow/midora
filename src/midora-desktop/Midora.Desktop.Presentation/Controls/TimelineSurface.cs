@@ -1784,8 +1784,11 @@ public sealed class TimelineSurface : Control
         Rect bar = new(left, top, width, Math.Max(1, bottom - top));
         bool selected = item.State.HasFlag(TimelineItemState.Selected);
         Brush barBrush = selected ? selectedBrush : normalBrush;
+        context.PushOpacity(selected ? 0.55 : 0.42);
+        context.DrawRectangle(barBrush, null, bar);
+        context.Pop();
         context.PushOpacity(selected ? 1 : 0.86);
-        context.DrawRectangle(barBrush, _borderPen, bar);
+        context.DrawRectangle(null, _borderPen, bar);
         context.Pop();
 
         if (left >= laneHeaderWidth && left < ActualWidth)

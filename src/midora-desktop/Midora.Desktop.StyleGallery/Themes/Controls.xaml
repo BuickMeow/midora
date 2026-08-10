@@ -257,8 +257,8 @@
               <Setter TargetName="Content" Property="Margin" Value="0,1,0,-1" />
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
-              <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.Surface.2}" />
-              <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+              <Setter TargetName="Chrome" Property="Background" Value="{Binding Background, RelativeSource={RelativeSource TemplatedParent}}" />
+              <Setter TargetName="Chrome" Property="BorderBrush" Value="{Binding BorderBrush, RelativeSource={RelativeSource TemplatedParent}}" />
               <Setter Property="Foreground" Value="{StaticResource Brush.Text.Disabled}" />
               <Setter Property="Cursor" Value="Arrow" />
             </Trigger>

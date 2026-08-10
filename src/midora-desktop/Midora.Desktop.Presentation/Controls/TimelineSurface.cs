@@ -149,7 +149,10 @@ public sealed class TimelineSurface : Control
         nameof(Snapshot),
         typeof(TimelineRenderSnapshot),
         typeof(TimelineSurface),
-        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+        new FrameworkPropertyMetadata(
+            null,
+            FrameworkPropertyMetadataOptions.AffectsRender,
+            OnViewportMetricsChanged));
 
     public static readonly DependencyProperty RulerSnapshotProperty = DependencyProperty.Register(
         nameof(RulerSnapshot),
@@ -173,13 +176,20 @@ public sealed class TimelineSurface : Control
         nameof(FirstLane),
         typeof(int),
         typeof(TimelineSurface),
-        new FrameworkPropertyMetadata(0, FrameworkPropertyMetadataOptions.AffectsRender));
+        new FrameworkPropertyMetadata(
+            0,
+            FrameworkPropertyMetadataOptions.AffectsRender | FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
+            OnViewportMetricsChanged,
+            CoerceFirstLane));
 
     public static readonly DependencyProperty LaneHeightProperty = DependencyProperty.Register(
         nameof(LaneHeight),
         typeof(double),
         typeof(TimelineSurface),
-        new FrameworkPropertyMetadata(24d, FrameworkPropertyMetadataOptions.AffectsRender));
+        new FrameworkPropertyMetadata(
+            24d,
+            FrameworkPropertyMetadataOptions.AffectsRender | FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
+            OnViewportMetricsChanged));
 
     public static readonly DependencyProperty GridStepTicksProperty = DependencyProperty.Register(
         nameof(GridStepTicks),
@@ -281,7 +291,10 @@ public sealed class TimelineSurface : Control
         nameof(SurfaceMode),
         typeof(TimelineSurfaceMode),
         typeof(TimelineSurface),
-        new FrameworkPropertyMetadata(TimelineSurfaceMode.General, FrameworkPropertyMetadataOptions.AffectsRender));
+        new FrameworkPropertyMetadata(
+            TimelineSurfaceMode.General,
+            FrameworkPropertyMetadataOptions.AffectsRender,
+            OnViewportMetricsChanged));
 
     public static readonly DependencyProperty CanEditProperty = DependencyProperty.Register(
         nameof(CanEdit),
@@ -301,6 +314,40 @@ public sealed class TimelineSurface : Control
         typeof(TimelineSurface),
         new FrameworkPropertyMetadata(true, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    private static readonly DependencyPropertyKey MaximumFirstLanePropertyKey = DependencyProperty.RegisterReadOnly(
+        nameof(MaximumFirstLane),
+        typeof(int),
+        typeof(TimelineSurface),
+        new FrameworkPropertyMetadata(0));
+
+    public static readonly DependencyProperty MaximumFirstLaneProperty = MaximumFirstLanePropertyKey.DependencyProperty;
+
+    public static readonly DependencyProperty ValueScrollOffsetProperty = DependencyProperty.Register(
+        nameof(ValueScrollOffset),
+        typeof(double),
+        typeof(TimelineSurface),
+        new FrameworkPropertyMetadata(
+            0d,
+            FrameworkPropertyMetadataOptions.AffectsRender | FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
+            OnValueScrollOffsetChanged,
+            CoerceValueScrollOffset));
+
+    private static readonly DependencyPropertyKey ValueScrollMaximumPropertyKey = DependencyProperty.RegisterReadOnly(
+        nameof(ValueScrollMaximum),
+        typeof(double),
+        typeof(TimelineSurface),
+        new FrameworkPropertyMetadata(0d));
+
+    public static readonly DependencyProperty ValueScrollMaximumProperty = ValueScrollMaximumPropertyKey.DependencyProperty;
+
+    private static readonly DependencyPropertyKey ValueScrollViewportSizePropertyKey = DependencyProperty.RegisterReadOnly(
+        nameof(ValueScrollViewportSize),
+        typeof(double),
+        typeof(TimelineSurface),
+        new FrameworkPropertyMetadata(1d));
+
+    public static readonly DependencyProperty ValueScrollViewportSizeProperty = ValueScrollViewportSizePropertyKey.DependencyProperty;
+
     private readonly List<TimelineRenderItem> _visibleItems = new(capacity: 512);
     private readonly List<TimelineRenderItem> _rulerItems = new(capacity: 64);
     private readonly List<TimelineRenderItem> _hitItems = new(capacity: 16);
@@ -313,6 +360,7 @@ public sealed class TimelineSurface : Control
     private Pen? _infoPen;
     private Pen? _textPen;
     private Pen? _redPen;
+    private Pen? _selectionPen;
     private Pen? _editCursorPen;
     private Pen? _marqueePen;
     private readonly Dictionary<string, FormattedText> _textCache = new(StringComparer.Ordinal);
@@ -320,6 +368,7 @@ public sealed class TimelineSurface : Control
     private Point? _panOrigin;
     private long _panStartTick;
     private int _panFirstLane;
+    private double _panValueScrollOffset;
     private Point? _marqueeOrigin;
     private Point? _marqueeCurrent;
     private TimelineRenderItem? _dragItem;
@@ -344,6 +393,8 @@ public sealed class TimelineSurface : Control
     private Point? _velocityOrigin;
     private Point? _velocityLastPoint;
     private MouseButton _velocityButton;
+    private MidoraId? _velocityTopEdgeItemId;
+    private bool _velocitySelectionRestricted;
     private readonly Dictionary<MidoraId, int> _velocityEdits = [];
     private double _valueViewMinimum;
     private double _valueViewMaximum = 1;
@@ -355,6 +406,7 @@ public sealed class TimelineSurface : Control
         SnapsToDevicePixels = true;
         UseLayoutRounding = true;
         Cursor = Cursors.Arrow;
+        FocusVisualStyle = null;
     }
 
     protected override AutomationPeer OnCreateAutomationPeer() =>
@@ -395,6 +447,18 @@ public sealed class TimelineSurface : Control
         get => (int)GetValue(FirstLaneProperty);
         set => SetValue(FirstLaneProperty, value);
     }
+
+    public int MaximumFirstLane => (int)GetValue(MaximumFirstLaneProperty);
+
+    public double ValueScrollOffset
+    {
+        get => (double)GetValue(ValueScrollOffsetProperty);
+        set => SetValue(ValueScrollOffsetProperty, value);
+    }
+
+    public double ValueScrollMaximum => (double)GetValue(ValueScrollMaximumProperty);
+
+    public double ValueScrollViewportSize => (double)GetValue(ValueScrollViewportSizeProperty);
 
     public double LaneHeight
     {
@@ -537,6 +601,79 @@ public sealed class TimelineSurface : Control
     public event EventHandler<TimelineVelocityEditEventArgs>? VelocityEditCompleted;
     public event EventHandler? ViewportChanged;
 
+    protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
+    {
+        base.OnRenderSizeChanged(sizeInfo);
+        UpdateVerticalViewportMetrics();
+    }
+
+    private static void OnViewportMetricsChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs args)
+    {
+        if (dependencyObject is TimelineSurface surface)
+        {
+            surface.UpdateVerticalViewportMetrics();
+        }
+    }
+
+    private static object CoerceFirstLane(DependencyObject dependencyObject, object baseValue)
+    {
+        TimelineSurface surface = (TimelineSurface)dependencyObject;
+        return Math.Clamp((int)baseValue, 0, surface.ComputeMaximumFirstLane());
+    }
+
+    private static object CoerceValueScrollOffset(DependencyObject dependencyObject, object baseValue)
+    {
+        TimelineSurface surface = (TimelineSurface)dependencyObject;
+        double value = (double)baseValue;
+        return double.IsFinite(value)
+            ? Math.Clamp(value, 0, surface.ValueScrollMaximum)
+            : 0d;
+    }
+
+    private static void OnValueScrollOffsetChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs args)
+    {
+        TimelineSurface surface = (TimelineSurface)dependencyObject;
+        double range = Math.Clamp(surface._valueViewMaximum - surface._valueViewMinimum, 1d / 64, 1);
+        double offset = Math.Clamp((double)args.NewValue, 0, Math.Max(0, 1 - range));
+        surface._valueViewMaximum = 1 - offset;
+        surface._valueViewMinimum = surface._valueViewMaximum - range;
+        surface.InvalidateVisual();
+        surface.ViewportChanged?.Invoke(surface, EventArgs.Empty);
+    }
+
+    private void UpdateVerticalViewportMetrics()
+    {
+        int maximum = ComputeMaximumFirstLane();
+        SetValue(MaximumFirstLanePropertyKey, maximum);
+        CoerceValue(FirstLaneProperty);
+        UpdateValueScrollMetrics();
+    }
+
+    private int ComputeMaximumFirstLane()
+    {
+        int totalLanes = SurfaceMode == TimelineSurfaceMode.PianoRoll
+            ? 128
+            : SurfaceMode is TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity
+                ? 1
+                : Math.Max(
+                    Snapshot?.LaneLabels.Count ?? 0,
+                    Snapshot?.Items.Count > 0 ? Snapshot.Items.Max(item => item.Lane) + 1 : 0);
+        double contentHeight = Math.Max(0, ActualHeight - GetRulerHeight());
+        int visibleLanes = LaneHeight > 0 && double.IsFinite(LaneHeight)
+            ? Math.Max(1, (int)Math.Ceiling(contentHeight / LaneHeight))
+            : 1;
+        return Math.Max(0, totalLanes - visibleLanes);
+    }
+
+    private void UpdateValueScrollMetrics()
+    {
+        double range = Math.Clamp(_valueViewMaximum - _valueViewMinimum, 1d / 64, 1);
+        double maximum = Math.Max(0, 1 - range);
+        SetValue(ValueScrollMaximumPropertyKey, maximum);
+        SetValue(ValueScrollViewportSizePropertyKey, range);
+        CoerceValue(ValueScrollOffsetProperty);
+    }
+
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
@@ -563,7 +700,7 @@ public sealed class TimelineSurface : Control
             double y = rulerHeight + relativeLane * LaneHeight;
             int absoluteLane = viewport.FirstLane + relativeLane;
             bool shaded = SurfaceMode == TimelineSurfaceMode.PianoRoll
-                ? IsBlackPianoKey(127 - absoluteLane)
+                ? !IsBlackPianoKey(127 - absoluteLane)
                 : (relativeLane & 1) != 0;
             if (shaded)
             {
@@ -622,6 +759,7 @@ public sealed class TimelineSurface : Control
             _panOrigin = point;
             _panStartTick = StartTick;
             _panFirstLane = FirstLane;
+            _panValueScrollOffset = ValueScrollOffset;
             CaptureMouse();
             e.Handled = true;
             return;
@@ -641,7 +779,21 @@ public sealed class TimelineSurface : Control
             _velocityLastPoint = point;
             _velocityButton = e.ChangedButton;
             _velocityEdits.Clear();
-            UpdateVelocityGesture(point, point, viewport, resetToOrigin: true);
+            _velocitySelectionRestricted = Snapshot?.Items.Any(item =>
+                item.Kind == TimelineItemKind.Velocity
+                && item.State.HasFlag(TimelineItemState.Selected)) == true;
+            _velocityTopEdgeItemId = e.ChangedButton == MouseButton.Left
+                && TryHitVelocityTopEdge(point, viewport, out TimelineRenderItem topEdgeItem)
+                ? topEdgeItem.Id
+                : null;
+            if (_velocityTopEdgeItemId is MidoraId topEdgeId)
+            {
+                UpdateSingleVelocity(topEdgeId, point.Y, GetRulerHeight());
+            }
+            else
+            {
+                UpdateVelocityGesture(point, point, viewport, resetToOrigin: true);
+            }
             CaptureMouse();
             InvalidateVisual();
             e.Handled = true;
@@ -860,10 +1012,17 @@ public sealed class TimelineSurface : Control
             && (e.LeftButton == MouseButtonState.Pressed || e.RightButton == MouseButtonState.Pressed)
             && TryCreateViewport(out TimelineViewport velocityViewport))
         {
-            Point from = _velocityButton == MouseButton.Right
-                ? velocityOrigin
-                : _velocityLastPoint ?? velocityOrigin;
-            UpdateVelocityGesture(from, point, velocityViewport, resetToOrigin: _velocityButton == MouseButton.Right);
+            if (_velocityTopEdgeItemId is MidoraId topEdgeId)
+            {
+                UpdateSingleVelocity(topEdgeId, point.Y, GetRulerHeight());
+            }
+            else
+            {
+                Point from = _velocityButton == MouseButton.Right
+                    ? velocityOrigin
+                    : _velocityLastPoint ?? velocityOrigin;
+                UpdateVelocityGesture(from, point, velocityViewport, resetToOrigin: _velocityButton == MouseButton.Right);
+            }
             _velocityLastPoint = point;
             InvalidateVisual();
             return;
@@ -912,7 +1071,16 @@ public sealed class TimelineSurface : Control
                 deltaX / viewport.PixelsPerTick,
                 MidpointRounding.AwayFromZero));
             StartTick = Math.Max(0, _panStartTick - tickDelta);
-            FirstLane = Math.Max(0, _panFirstLane - (int)Math.Round(deltaY / LaneHeight));
+            if (SurfaceMode is TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity)
+            {
+                double contentHeight = Math.Max(1, ActualHeight - GetRulerHeight());
+                ValueScrollOffset = _panValueScrollOffset
+                    - deltaY / contentHeight * ValueScrollViewportSize;
+            }
+            else
+            {
+                FirstLane = _panFirstLane - (int)Math.Round(deltaY / LaneHeight);
+            }
             ViewportChanged?.Invoke(this, EventArgs.Empty);
             return;
         }
@@ -964,7 +1132,7 @@ public sealed class TimelineSurface : Control
         }
         else if (point.Y > ActualHeight - edge)
         {
-            if (FirstLane < int.MaxValue)
+            if (FirstLane < MaximumFirstLane)
             {
                 FirstLane++;
                 changed = true;
@@ -983,6 +1151,8 @@ public sealed class TimelineSurface : Control
             IReadOnlyDictionary<MidoraId, int> result = new Dictionary<MidoraId, int>(_velocityEdits);
             _velocityOrigin = null;
             _velocityLastPoint = null;
+            _velocityTopEdgeItemId = null;
+            _velocitySelectionRestricted = false;
             _velocityEdits.Clear();
             ReleaseMouseCapture();
             if (result.Count > 0) VelocityEditCompleted?.Invoke(this, new(result));
@@ -1093,6 +1263,8 @@ public sealed class TimelineSurface : Control
         _rulerDragOrigin = null;
         _velocityOrigin = null;
         _velocityLastPoint = null;
+        _velocityTopEdgeItemId = null;
+        _velocitySelectionRestricted = false;
         _velocityEdits.Clear();
         InvalidateVisual();
         base.OnLostMouseCapture(e);
@@ -1149,8 +1321,16 @@ public sealed class TimelineSurface : Control
         }
         else
         {
-            int lanes = Math.Max(1, (int)Math.Ceiling(ActualHeight / LaneHeight) / 4);
-            FirstLane = e.Delta > 0 ? Math.Max(0, FirstLane - lanes) : checked(FirstLane + lanes);
+            if (SurfaceMode is TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity)
+            {
+                double delta = Math.Max(1d / 256, ValueScrollViewportSize / 8);
+                ValueScrollOffset += e.Delta > 0 ? -delta : delta;
+            }
+            else
+            {
+                int lanes = Math.Max(1, (int)Math.Ceiling(ActualHeight / LaneHeight) / 4);
+                FirstLane += e.Delta > 0 ? -lanes : lanes;
+            }
         }
         ViewportChanged?.Invoke(this, EventArgs.Empty);
         e.Handled = true;
@@ -1395,9 +1575,15 @@ public sealed class TimelineSurface : Control
         context.DrawRoundedRectangle(fill, _borderPen, rectangle, 2, 2);
         context.Pop();
 
+        if (item.Kind == TimelineItemKind.Segment
+            && Snapshot?.SegmentPreviews.TryGetValue(item.Id, out TimelineSegmentPreview? preview) == true)
+        {
+            DrawSegmentPreview(context, rectangle, preview, red);
+        }
+
         if (item.State.HasFlag(TimelineItemState.Selected))
         {
-            context.DrawRoundedRectangle(null, _redPen, rectangle, 2, 2);
+            context.DrawRoundedRectangle(null, _selectionPen, rectangle, 2, 2);
             if (item.State.HasFlag(TimelineItemState.Primary)
                 && rectangle.Width > 4
                 && rectangle.Height > 4)
@@ -1407,9 +1593,34 @@ public sealed class TimelineSurface : Control
                     rectangle.Top + 1,
                     rectangle.Width - 2,
                     rectangle.Height - 2);
-                context.DrawRoundedRectangle(null, _redPen, primary, 1, 1);
+                context.DrawRoundedRectangle(null, _selectionPen, primary, 1, 1);
             }
         }
+    }
+
+    private static void DrawSegmentPreview(
+        DrawingContext context,
+        Rect segmentBounds,
+        TimelineSegmentPreview preview,
+        Brush noteBrush)
+    {
+        if (preview.Notes.Count == 0 || segmentBounds.Width <= 0 || segmentBounds.Height <= 0) return;
+        context.PushClip(new RectangleGeometry(segmentBounds));
+        context.PushOpacity(0.9);
+        double noteHeight = Math.Max(1, Math.Round(segmentBounds.Height / 128d));
+        double pitchTravel = Math.Max(0, segmentBounds.Height - noteHeight);
+        foreach (TimelineSegmentPreviewNote note in preview.Notes)
+        {
+            double left = Math.Round(segmentBounds.Left + note.NormalizedStart * segmentBounds.Width);
+            double right = Math.Round(segmentBounds.Left + note.NormalizedEnd * segmentBounds.Width);
+            double top = Math.Round(segmentBounds.Top + (127 - note.Pitch) / 127d * pitchTravel);
+            context.DrawRectangle(
+                noteBrush,
+                null,
+                new Rect(left, top, Math.Max(1, right - left), noteHeight));
+        }
+        context.Pop();
+        context.Pop();
     }
 
     private void DrawVelocityBar(
@@ -1465,7 +1676,11 @@ public sealed class TimelineSurface : Control
             if (drawLabels)
             {
                 FormattedText label = GetFormattedText(labelText, text, 9, FontWeights.Normal);
-                context.DrawText(label, new Point(Math.Max(2, laneHeaderWidth - label.Width - 4), y - label.Height / 2));
+                double labelY = Math.Clamp(
+                    y - label.Height / 2,
+                    rulerHeight,
+                    Math.Max(rulerHeight, ActualHeight - label.Height));
+                context.DrawText(label, new Point(Math.Max(2, laneHeaderWidth - label.Width - 4), labelY));
             }
             else
             {
@@ -1492,12 +1707,14 @@ public sealed class TimelineSurface : Control
         foreach (TimelineRenderItem item in Snapshot.Items)
         {
             if (item.Kind != TimelineItemKind.Velocity
-                || item.StartTick < minimum
+                || (_velocitySelectionRestricted && !item.State.HasFlag(TimelineItemState.Selected))
+                || item.EndTick <= minimum
                 || item.StartTick > maximum)
             {
                 continue;
             }
-            double ratio = span == 0 ? 1 : (item.StartTick - fromTick) / span;
+            long sampleTick = Math.Clamp(item.StartTick, minimum, maximum);
+            double ratio = span == 0 ? 1 : (sampleTick - fromTick) / span;
             double y = from.Y + (to.Y - from.Y) * Math.Clamp(ratio, 0, 1);
             int velocity = Math.Clamp(
                 (int)Math.Round(
@@ -1507,6 +1724,49 @@ public sealed class TimelineSurface : Control
                 127);
             _velocityEdits[item.Id] = velocity;
         }
+    }
+
+    private void UpdateSingleVelocity(MidoraId id, double y, double rulerHeight)
+    {
+        int velocity = Math.Clamp(
+            (int)Math.Round(ValueYToNormalized(y, rulerHeight) * 127, MidpointRounding.AwayFromZero),
+            1,
+            127);
+        _velocityEdits[id] = velocity;
+    }
+
+    private bool TryHitVelocityTopEdge(
+        Point point,
+        TimelineViewport viewport,
+        out TimelineRenderItem item)
+    {
+        item = default;
+        if (Snapshot is null) return false;
+        double header = GetLaneHeaderWidth();
+        double ruler = GetRulerHeight();
+        for (int index = Snapshot.Items.Count - 1; index >= 0; index--)
+        {
+            TimelineRenderItem candidate = Snapshot.Items[index];
+            if (candidate.Kind != TimelineItemKind.Velocity
+                || (_velocitySelectionRestricted && !candidate.State.HasFlag(TimelineItemState.Selected)))
+            {
+                continue;
+            }
+            double left = header + viewport.TickToX(candidate.StartTick);
+            double right = header + viewport.TickToX(candidate.EndTick);
+            double value = _velocityEdits.TryGetValue(candidate.Id, out int edited)
+                ? edited / 127d
+                : Math.Clamp(candidate.Value, 1d / 127d, 1);
+            double top = NormalizedToValueY(value, ruler);
+            if (point.X >= left
+                && point.X <= Math.Max(left + 3, right)
+                && Math.Abs(point.Y - top) <= 4)
+            {
+                item = candidate;
+                return true;
+            }
+        }
+        return false;
     }
 
     private void DrawCurve(
@@ -1861,6 +2121,16 @@ public sealed class TimelineSurface : Control
 
     private void UpdateHoverCursor(Point point, TimelineViewport viewport)
     {
+        if (SurfaceMode == TimelineSurfaceMode.Velocity)
+        {
+            _velocitySelectionRestricted = Snapshot?.Items.Any(item =>
+                item.Kind == TimelineItemKind.Velocity
+                && item.State.HasFlag(TimelineItemState.Selected)) == true;
+            Cursor = TryHitVelocityTopEdge(point, viewport, out _)
+                ? Cursors.SizeNS
+                : Cursors.Arrow;
+            return;
+        }
         if (ToolMode == TimelineToolMode.Draw)
         {
             Cursor = Cursors.Cross;
@@ -1916,6 +2186,8 @@ public sealed class TimelineSurface : Control
         }
         _valueViewMinimum = Math.Clamp(newMinimum, 0, 1 - newRange);
         _valueViewMaximum = Math.Clamp(newMaximum, _valueViewMinimum + newRange, 1);
+        UpdateValueScrollMetrics();
+        SetCurrentValue(ValueScrollOffsetProperty, Math.Clamp(1 - _valueViewMaximum, 0, ValueScrollMaximum));
         InvalidateVisual();
     }
 
@@ -2020,6 +2292,8 @@ public sealed class TimelineSurface : Control
         _infoPen = FrozenPen(info, 1);
         _textPen = FrozenPen(text, 2);
         _redPen = FrozenPen(red, 1);
+        Brush selection = Brush("Brush.Red.Hover", Color.FromRgb(255, 96, 101));
+        _selectionPen = FrozenPen(selection, 2);
         _editCursorPen = FrozenPen(info, 1, DashStyles.Dash);
         _marqueePen = FrozenPen(info, 1, DashStyles.Dash);
     }

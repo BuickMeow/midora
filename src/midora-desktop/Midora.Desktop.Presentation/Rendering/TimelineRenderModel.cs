@@ -57,6 +57,40 @@ public readonly record struct TimelineRenderItem(
     public string Label { get; init; } = string.Empty;
 }
 
+public readonly record struct TimelineSegmentPreviewNote(
+    double NormalizedStart,
+    double NormalizedEnd,
+    int Pitch);
+
+public sealed class TimelineSegmentPreview
+{
+    public TimelineSegmentPreview(
+        MidoraId segmentId,
+        IEnumerable<TimelineSegmentPreviewNote> notes)
+    {
+        if (segmentId.Value <= 0) throw new ArgumentOutOfRangeException(nameof(segmentId));
+        ArgumentNullException.ThrowIfNull(notes);
+        TimelineSegmentPreviewNote[] materialized = notes.ToArray();
+        foreach (TimelineSegmentPreviewNote note in materialized)
+        {
+            if (!double.IsFinite(note.NormalizedStart)
+                || !double.IsFinite(note.NormalizedEnd)
+                || note.NormalizedStart < 0
+                || note.NormalizedEnd > 1
+                || note.NormalizedEnd <= note.NormalizedStart
+                || note.Pitch is < 0 or > 127)
+            {
+                throw new ArgumentException("A Segment preview note is outside its normalized range.", nameof(notes));
+            }
+        }
+        SegmentId = segmentId;
+        Notes = Array.AsReadOnly(materialized);
+    }
+
+    public MidoraId SegmentId { get; }
+    public IReadOnlyList<TimelineSegmentPreviewNote> Notes { get; }
+}
+
 public readonly record struct TimelineViewport(
     long StartTick,
     long EndTick,
@@ -125,7 +159,8 @@ public sealed class TimelineRenderSnapshot
         string projectionKey,
         IEnumerable<TimelineRenderItem> items,
         IReadOnlyList<string>? laneLabels = null,
-        IReadOnlyList<TimelineLaneState>? laneStates = null)
+        IReadOnlyList<TimelineLaneState>? laneStates = null,
+        IReadOnlyDictionary<MidoraId, TimelineSegmentPreview>? segmentPreviews = null)
     {
         if (semanticRevision < 0)
         {
@@ -156,6 +191,9 @@ public sealed class TimelineRenderSnapshot
         LaneStates = laneStates is null
             ? Array.Empty<TimelineLaneState>()
             : Array.AsReadOnly(laneStates.ToArray());
+        SegmentPreviews = segmentPreviews is null
+            ? new Dictionary<MidoraId, TimelineSegmentPreview>()
+            : new Dictionary<MidoraId, TimelineSegmentPreview>(segmentPreviews);
         Index = new TimelineIntervalIndex(materialized);
     }
 
@@ -164,6 +202,7 @@ public sealed class TimelineRenderSnapshot
     public IReadOnlyList<TimelineRenderItem> Items { get; }
     public IReadOnlyList<string> LaneLabels { get; }
     public IReadOnlyList<TimelineLaneState> LaneStates { get; }
+    public IReadOnlyDictionary<MidoraId, TimelineSegmentPreview> SegmentPreviews { get; }
     public TimelineIntervalIndex Index { get; }
 
     public bool Matches(long semanticRevision, string projectionKey) =>

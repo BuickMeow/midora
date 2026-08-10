@@ -146,28 +146,33 @@
           <RowDefinition Height="38" />
           <RowDefinition Height="*" />
           <RowDefinition Height="22" />
-          <RowDefinition Height="Auto" />
+          <RowDefinition Height="5" />
+          <RowDefinition Height="{Binding BottomEditorRowHeight, Mode=TwoWay}" />
         </Grid.RowDefinitions>
         <Border Style="{StaticResource PanelHeader}">
           <Grid>
             <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
               <TextBlock FontWeight="SemiBold" Text="{Binding Header}" />
               <TextBlock Margin="9,0,0,0" Style="{StaticResource Text.Caption}" Text="{Binding Context}" />
+              <ToggleButton Margin="9,0,0,0" Padding="7,0" Content="Lanes" IsChecked="{Binding IsLowerEditorVisible, Mode=TwoWay}">
+                <ToggleButton.Style><Style TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsSegment}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></ToggleButton.Style>
+              </ToggleButton>
             </StackPanel>
             <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
               <ToggleButton Width="44" Margin="0,0,4,0" Padding="0" Content="Grid" IsChecked="{Binding EditorSettings.GridVisible, Mode=TwoWay}" ToolTip="Show subdivision grid"/>
               <ComboBox Width="92" Height="24" Margin="0,0,4,0" IsEditable="True"
                         ItemsSource="{Binding EditorSettings.SubdivisionPresets}"
                         SelectedItem="{Binding EditorSettings.DisplaySubdivision, Mode=TwoWay}"
-                        Text="{Binding EditorSettings.DisplaySubdivisionText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                        Tag="Display" LostKeyboardFocus="OnSubdivisionComboBoxLostKeyboardFocus"
                         ToolTip="Display subdivision; enter Bar or any positive n in 1/n"/>
-              <TextBlock Margin="2,0,3,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Step"/>
+              <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
+              <ToggleButton Margin="0,0,4,0" Content="Snap" IsChecked="{Binding EditorSettings.SnapEnabled, Mode=TwoWay}"/>
               <ComboBox Width="92" Height="24" Margin="0,0,4,0" IsEditable="True"
                         ItemsSource="{Binding EditorSettings.SubdivisionPresets}"
                         SelectedItem="{Binding EditorSettings.OperationSubdivision, Mode=TwoWay}"
-                        Text="{Binding EditorSettings.OperationSubdivisionText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                        Tag="Operation" LostKeyboardFocus="OnSubdivisionComboBoxLostKeyboardFocus"
                         ToolTip="Operation subdivision; enter any positive n in 1/n"/>
-              <ToggleButton Margin="0,0,4,0" Content="Snap" IsChecked="{Binding EditorSettings.SnapEnabled, Mode=TwoWay}"/>
+              <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
               <TextBlock Margin="3,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Length"/>
               <TextBox Width="58" Height="24" Margin="0,0,4,0" Padding="5,0" Text="{Binding EditorSettings.DefaultLengthTicks, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="Default creation length in ticks"/>
               <StackPanel Margin="0,0,4,0" Orientation="Horizontal">
@@ -175,8 +180,10 @@
                 <TextBlock Margin="3,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Vel"/>
                 <TextBox Width="42" Height="24" Padding="5,0" Text="{Binding EditorSettings.DefaultVelocity, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="Default note velocity (1–127)"/>
               </StackPanel>
+              <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
               <Button Width="26" Height="24" Margin="0,0,2,0" Padding="0" Content="−" ToolTip="Zoom out" Tag="Out" Click="OnTimelineZoomClick"/>
               <Button Width="26" Height="24" Margin="0,0,6,0" Padding="0" Content="+" ToolTip="Zoom in" Tag="In" Click="OnTimelineZoomClick"/>
+              <Border Width="1" Height="18" Margin="0,0,7,0" Background="{StaticResource Brush.Border}"/>
               <ToggleButton Margin="0,0,4,0" Content="Draw" Tag="Draw" IsChecked="{Binding IsDrawTool, Mode=OneWay}" Click="OnTimelineToolClick" />
               <ToggleButton Margin="0,0,4,0" Content="Select" Tag="Select" IsChecked="{Binding IsSelectTool, Mode=OneWay}" Click="OnTimelineToolClick" />
               <ToggleButton Margin="0,0,4,0" Content="Split" Tag="Split" IsChecked="{Binding IsSplitTool, Mode=OneWay}" Click="OnTimelineToolClick"><ToggleButton.Style><Style TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsArrangement}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></ToggleButton.Style></ToggleButton>
@@ -185,6 +192,7 @@
           </Grid>
         </Border>
         <GroupBox Grid.Row="1" Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="{Binding Header}" AutomationProperties.AutomationId="PrimaryTimelineSurface">
+        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <ui:TimelineSurface x:Name="Timeline"
                             Focusable="True"
                             Snapshot="{Binding Snapshot}"
@@ -225,6 +233,10 @@
                              TimeRangeSelected="OnTimelineTimeRangeSelected"
                              SegmentSplitRequested="OnTimelineSegmentSplitRequested"
                               MarqueeCompleted="OnTimelineMarqueeCompleted" />
+          <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding MaximumFirstLane, ElementName=Timeline}" Value="{Binding FirstLane, ElementName=Timeline, Mode=TwoWay}" ViewportSize="1">
+            <ScrollBar.Style><Style TargetType="ScrollBar" BasedOn="{StaticResource {x:Type ScrollBar}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsSegment}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></ScrollBar.Style>
+          </ScrollBar>
+        </Grid>
         </GroupBox>
         <Border Grid.Row="1" Margin="28" Padding="18" HorizontalAlignment="Center" VerticalAlignment="Center" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="4" IsHitTestVisible="False">
           <Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Snapshot.Items.Count}" Value="0"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Border.Style>
@@ -237,22 +249,29 @@
                                     TickSpan="{Binding TickSpan}"
                                     ExtentEndTick="{Binding TimelineExtentEndTick}"/>
         </GroupBox>
-        <TabControl Grid.Row="3" Height="190">
-          <TabControl.Style><Style TargetType="TabControl"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsSegment}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TabControl.Style>
+        <GridSplitter Grid.Row="3" Height="5" HorizontalAlignment="Stretch" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext">
+          <GridSplitter.Style><Style TargetType="GridSplitter" BasedOn="{StaticResource {x:Type GridSplitter}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><MultiDataTrigger><MultiDataTrigger.Conditions><Condition Binding="{Binding IsSegment}" Value="True"/><Condition Binding="{Binding IsLowerEditorVisible}" Value="True"/></MultiDataTrigger.Conditions><Setter Property="Visibility" Value="Visible"/></MultiDataTrigger></Style.Triggers></Style></GridSplitter.Style>
+        </GridSplitter>
+        <TabControl Grid.Row="4">
+          <TabControl.Style><Style TargetType="TabControl" BasedOn="{StaticResource {x:Type TabControl}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsSegment}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TabControl.Style>
           <TabItem Header="Velocity">
-            <ui:TimelineSurface Tag="Velocity" Snapshot="{Binding VelocitySnapshot}" SurfaceMode="Velocity"
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <ui:TimelineSurface x:Name="SegmentVelocityTimeline" Tag="Velocity" Snapshot="{Binding VelocitySnapshot}" SurfaceMode="Velocity"
                                 CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                                 StartTick="{Binding StartTick, Mode=TwoWay}" TickSpan="{Binding TickSpan, Mode=TwoWay}"
                                 FirstLane="0" LaneHeight="160" GridStepTicks="{Binding GridStepTicks}" GridVisible="{Binding GridVisible}"
                                 DisplayGridUsesBars="{Binding EditorSettings.DisplayGridUsesBars}" TimeSignatureMap="{Binding EditorSettings.TimeSignatureMap}"
                                 EditCursorTick="{Binding EditCursorTick}" PlaybackCursorTick="{Binding PlaybackCursorTick}"
                                 VelocityEditCompleted="OnTimelineVelocityEditCompleted"/>
+            <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding ValueScrollMaximum, ElementName=SegmentVelocityTimeline}" Value="{Binding ValueScrollOffset, ElementName=SegmentVelocityTimeline, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SegmentVelocityTimeline}"/>
+            </Grid>
           </TabItem>
           <TabItem Header="Parameter Lane">
             <Grid><Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="*"/></Grid.RowDefinitions>
               <Border Padding="8,0" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1"><Grid><StackPanel VerticalAlignment="Center" Orientation="Horizontal"><TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="LANE"/><ComboBox Width="210" Height="24" ItemsSource="{Binding ParameterLaneLabels}" SelectedIndex="{Binding ActiveParameterLaneIndex, Mode=TwoWay}" DropDownClosed="OnActiveEditorLaneDropDownClosed"/></StackPanel><Button HorizontalAlignment="Right" Height="22" Padding="7,0" Content="Add Lane" Click="OnAddParameterLaneClick"/></Grid></Border>
               <GroupBox Grid.Row="1" Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="Logical Parameter lane" AutomationProperties.AutomationId="LogicalParameterTimelineSurface">
-                <ui:TimelineSurface Tag="ParameterLanes" Snapshot="{Binding ParameterSnapshot}" ContextMenu="{StaticResource TimelineContextMenu}"
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <ui:TimelineSurface x:Name="SegmentParameterTimeline" Tag="ParameterLanes" Snapshot="{Binding ParameterSnapshot}" ContextMenu="{StaticResource TimelineContextMenu}"
                                     CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                                     StartTick="{Binding StartTick, Mode=TwoWay}" TickSpan="{Binding TickSpan, Mode=TwoWay}"
                                     FirstLane="0" LaneHeight="160" GridStepTicks="{Binding GridStepTicks}" OperationStepTicks="{Binding OperationStepTicks}"
@@ -263,11 +282,13 @@
                                     TimeRangeStartTick="{Binding TimeRangeStartTick}" TimeRangeEndTick="{Binding TimeRangeEndTick}"
                                     ItemInvoked="OnTimelineItemInvoked" ItemEditCompleted="OnTimelineItemEditCompleted" BackgroundInvoked="OnTimelineBackgroundInvoked"
                                     LaneHeaderInvoked="OnTimelineLaneHeaderInvoked" RulerClicked="OnTimelineRulerClicked" TimeRangeSelected="OnTimelineTimeRangeSelected" MarqueeCompleted="OnTimelineMarqueeCompleted"/>
+                <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding ValueScrollMaximum, ElementName=SegmentParameterTimeline}" Value="{Binding ValueScrollOffset, ElementName=SegmentParameterTimeline, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SegmentParameterTimeline}"/>
+                </Grid>
               </GroupBox>
             </Grid>
           </TabItem>
         </TabControl>
-        <Border Grid.Row="3" Height="170" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Border Grid.Row="4" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
           <Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsConductor}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Border.Style>
           <Grid><Grid.RowDefinitions><RowDefinition Height="27"/><RowDefinition Height="*"/></Grid.RowDefinitions>
             <Border Padding="8,0" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1"><Grid><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="CONDUCTOR EVENT LIST"/><TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Select to locate · Inspector edits the formal event"/></Grid></Border>
@@ -373,11 +394,25 @@
                           <Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition Height="28"/></Grid.RowDefinitions>
                           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                           <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="Rendered Note and Event Layers" TextTrimming="CharacterEllipsis"/>
-                          <StackPanel Grid.Column="1" Orientation="Horizontal"><ToggleButton Margin="0,0,4,0" Content="Select" IsChecked="{Binding IsSelectTool, Mode=OneWay}" Tag="Select" Click="OnInstrumentTimelineToolClick"/><ToggleButton Margin="0,0,4,0" Content="Draw" IsChecked="{Binding IsDrawTool, Mode=OneWay}" Tag="Draw" Click="OnInstrumentTimelineToolClick"/><ToggleButton Margin="0,0,7,0" Content="Erase" IsChecked="{Binding IsEraseTool, Mode=OneWay}" Tag="Erase" Click="OnInstrumentTimelineToolClick"/><Button Height="24" Margin="0,0,5,0" Content="Add Curve…" Click="OnAddValueCurveClick"/><Button Height="24" Content="Add Event…" Click="OnAddTemplateEventClick"/></StackPanel>
-                          <StackPanel Grid.Row="1" Grid.ColumnSpan="2" HorizontalAlignment="Right" Orientation="Horizontal"><ToggleButton Width="44" Margin="0,0,4,0" Padding="0" Content="Grid" IsChecked="{Binding EditorSettings.GridVisible, Mode=TwoWay}"/><ComboBox Width="90" Height="24" Margin="0,0,4,0" IsEditable="True" ItemsSource="{Binding EditorSettings.SubdivisionPresets}" SelectedItem="{Binding EditorSettings.DisplaySubdivision, Mode=TwoWay}" Text="{Binding EditorSettings.DisplaySubdivisionText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"/><TextBlock Margin="2,0,3,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Step"/><ComboBox Width="90" Height="24" Margin="0,0,4,0" IsEditable="True" ItemsSource="{Binding EditorSettings.SubdivisionPresets}" SelectedItem="{Binding EditorSettings.OperationSubdivision, Mode=TwoWay}" Text="{Binding EditorSettings.OperationSubdivisionText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"/><ToggleButton Margin="0,0,5,0" Content="Snap" IsChecked="{Binding EditorSettings.SnapEnabled, Mode=TwoWay}"/><TextBlock Margin="2,0,3,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Length"/><TextBox Width="56" Height="24" Margin="0,0,5,0" Padding="5,0" Text="{Binding EditorSettings.DefaultLengthTicks, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/><TextBlock Margin="2,0,3,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Vel"/><TextBox Width="42" Height="24" Padding="5,0" Text="{Binding EditorSettings.DefaultVelocity, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+                          <StackPanel Grid.Column="1" Orientation="Horizontal"><Button Height="24" Margin="0,0,5,0" Content="Add Curve…" Click="OnAddValueCurveClick"/><Button Height="24" Content="Add Event…" Click="OnAddTemplateEventClick"/></StackPanel>
+                          <StackPanel Grid.Row="1" Grid.ColumnSpan="2" HorizontalAlignment="Right" Orientation="Horizontal">
+                            <ToggleButton Width="44" Margin="0,0,4,0" Padding="0" Content="Grid" IsChecked="{Binding EditorSettings.GridVisible, Mode=TwoWay}"/>
+                            <ComboBox Width="90" Height="24" Margin="0,0,4,0" IsEditable="True" ItemsSource="{Binding EditorSettings.SubdivisionPresets}" SelectedItem="{Binding EditorSettings.DisplaySubdivision, Mode=TwoWay}" Tag="Display" LostKeyboardFocus="OnSubdivisionComboBoxLostKeyboardFocus"/>
+                            <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
+                            <ToggleButton Margin="0,0,4,0" Content="Snap" IsChecked="{Binding EditorSettings.SnapEnabled, Mode=TwoWay}"/>
+                            <ComboBox Width="90" Height="24" Margin="0,0,4,0" IsEditable="True" ItemsSource="{Binding EditorSettings.SubdivisionPresets}" SelectedItem="{Binding EditorSettings.OperationSubdivision, Mode=TwoWay}" Tag="Operation" LostKeyboardFocus="OnSubdivisionComboBoxLostKeyboardFocus"/>
+                            <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
+                            <TextBlock Margin="2,0,3,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Length"/><TextBox Width="56" Height="24" Margin="0,0,5,0" Padding="5,0" Text="{Binding EditorSettings.DefaultLengthTicks, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                            <TextBlock Margin="2,0,3,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Vel"/><TextBox Width="42" Height="24" Margin="0,0,4,0" Padding="5,0" Text="{Binding EditorSettings.DefaultVelocity, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                            <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
+                            <Button Width="26" Height="24" Margin="0,0,2,0" Padding="0" Content="−" Tag="Out" Click="OnTimelineZoomClick"/><Button Width="26" Height="24" Margin="0,0,6,0" Padding="0" Content="+" Tag="In" Click="OnTimelineZoomClick"/>
+                            <Border Width="1" Height="18" Margin="0,0,7,0" Background="{StaticResource Brush.Border}"/>
+                            <ToggleButton Margin="0,0,4,0" Content="Draw" IsChecked="{Binding IsDrawTool, Mode=OneWay}" Tag="Draw" Click="OnInstrumentTimelineToolClick"/><ToggleButton Margin="0,0,4,0" Content="Select" IsChecked="{Binding IsSelectTool, Mode=OneWay}" Tag="Select" Click="OnInstrumentTimelineToolClick"/><ToggleButton Content="Erase" IsChecked="{Binding IsEraseTool, Mode=OneWay}" Tag="Erase" Click="OnInstrumentTimelineToolClick"/>
+                          </StackPanel>
                         </Grid>
                       </Border>
                       <GroupBox Grid.Row="1" Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="SubVoice note piano roll" AutomationProperties.AutomationId="SubVoiceNoteTimelineSurface">
+                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <ui:TimelineSurface x:Name="SubVoiceNoteTimeline" Tag="SubVoiceNotes" Snapshot="{Binding SubVoiceNoteSnapshot}"
                                             ContextMenu="{StaticResource TimelineContextMenu}"
                                             CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
@@ -394,24 +429,29 @@
                                             BackgroundInvoked="OnTimelineBackgroundInvoked"
                                             LanePreviewPressed="OnTimelineLanePreviewPressed" LanePreviewReleased="OnTimelineLanePreviewReleased"
                                             NotePlacementStarted="OnTimelineNotePlacementStarted" NotePlacementCompleted="OnTimelineNotePlacementCompleted" NotePlacementCancelled="OnTimelineNotePlacementCancelled"/>
+                        <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding MaximumFirstLane, ElementName=SubVoiceNoteTimeline}" Value="{Binding FirstLane, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" ViewportSize="1"/>
+                        </Grid>
                       </GroupBox>
                       <GridSplitter Grid.Row="2" HorizontalAlignment="Stretch"/>
                       <TabControl Grid.Row="3">
-                        <TabItem Header="Velocity"><ui:TimelineSurface Tag="SubVoiceVelocity" Snapshot="{Binding SubVoiceVelocitySnapshot}" SurfaceMode="Velocity"
+                        <TabItem Header="Velocity"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><ui:TimelineSurface x:Name="SubVoiceVelocityTimeline" Tag="SubVoiceVelocity" Snapshot="{Binding SubVoiceVelocitySnapshot}" SurfaceMode="Velocity"
                           CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                           StartTick="{Binding StartTick, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" TickSpan="{Binding TickSpan, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}"
                           FirstLane="0" LaneHeight="128" GridStepTicks="{Binding EditorSettings.DisplayGridStepTicks}" GridVisible="{Binding EditorSettings.GridVisible}"
                           DisplayGridUsesBars="{Binding EditorSettings.DisplayGridUsesBars}" TimeSignatureMap="{Binding EditorSettings.TimeSignatureMap}"
-                          VelocityEditCompleted="OnTimelineVelocityEditCompleted"/></TabItem>
+                          VelocityEditCompleted="OnTimelineVelocityEditCompleted"/><ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding ValueScrollMaximum, ElementName=SubVoiceVelocityTimeline}" Value="{Binding ValueScrollOffset, ElementName=SubVoiceVelocityTimeline, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SubVoiceVelocityTimeline}"/></Grid></TabItem>
                         <TabItem Header="Event / Curve Lane"><Grid><Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                           <Border Padding="8,0" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1"><StackPanel VerticalAlignment="Center" Orientation="Horizontal"><TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="LANE"/><ComboBox Width="260" Height="24" ItemsSource="{Binding RenderLanes}" DisplayMemberPath="Label" SelectedIndex="{Binding ActiveRenderLaneIndex, Mode=TwoWay}" DropDownClosed="OnActiveEditorLaneDropDownClosed"/></StackPanel></Border>
-                          <ui:TimelineSurface x:Name="SubVoiceEventTimeline" Grid.Row="1" Tag="SubVoiceEvents" Snapshot="{Binding SubVoiceEventSnapshot}" ContextMenu="{StaticResource TimelineContextMenu}"
+                          <Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                          <ui:TimelineSurface x:Name="SubVoiceEventTimeline" Tag="SubVoiceEvents" Snapshot="{Binding SubVoiceEventSnapshot}" ContextMenu="{StaticResource TimelineContextMenu}"
                                               CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" SurfaceMode="EventLanes" ToolMode="{Binding ToolMode}"
                                               StartTick="{Binding StartTick, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" TickSpan="{Binding TickSpan, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}"
                                               LaneHeight="128" GridStepTicks="{Binding EditorSettings.DisplayGridStepTicks}" OperationStepTicks="{Binding EditorSettings.EffectiveOperationStepTicks}" GridVisible="{Binding EditorSettings.GridVisible}"
                                               DisplayGridUsesBars="{Binding EditorSettings.DisplayGridUsesBars}" OperationUsesBars="{Binding EditorSettings.EffectiveOperationUsesBars}" TimeSignatureMap="{Binding EditorSettings.TimeSignatureMap}"
                                               ValueAxisMinimum="{Binding ActiveValueMinimum}" ValueAxisMaximum="{Binding ActiveValueMaximum}" ValueAxisIntegral="{Binding ActiveValueIntegral}"
                                               ItemInvoked="OnTimelineItemInvoked" ItemEditCompleted="OnTimelineItemEditCompleted" BackgroundInvoked="OnTimelineBackgroundInvoked" LaneHeaderInvoked="OnTimelineLaneHeaderInvoked"/>
+                          <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding ValueScrollMaximum, ElementName=SubVoiceEventTimeline}" Value="{Binding ValueScrollOffset, ElementName=SubVoiceEventTimeline, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SubVoiceEventTimeline}"/>
+                          </Grid>
                         </Grid></TabItem>
                       </TabControl>
                       <GroupBox Grid.Row="4" Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="SubVoice timeline overview and horizontal scroll">
@@ -652,9 +692,9 @@
           </StackPanel>
           <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal">
             <Button Width="34" Height="32" Style="{StaticResource Button.Icon}" ToolTip="Stop" IsEnabled="{Binding IsPlaybackActive}" Click="OnStopClick"><ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Data="{StaticResource Fluent.Stop20Filled}"/></Button>
-            <Button Width="34" Height="32" Margin="4,0" Style="{StaticResource Button.Primary}" AutomationProperties.Name="Play" ToolTip="{Binding PlaybackUnavailableReason, TargetNullValue=Play}" IsEnabled="{Binding CanPlayback}" Click="OnPlayClick"><ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Foreground="White" Data="{StaticResource Fluent.Play20Filled}"/></Button>
+            <Button Width="34" Height="32" Margin="4,0" Padding="0" Style="{StaticResource Button.Primary}" AutomationProperties.Name="Play" ToolTip="{Binding PlaybackUnavailableReason, TargetNullValue=Play}" IsEnabled="{Binding CanPlayback}" Click="OnPlayClick"><ui:FluentIcon Width="14" Height="14" Margin="1,0,0,0" Foreground="White" Data="{StaticResource Fluent.Play20Filled}"/></Button>
             <ToggleButton Width="34" Height="32" ToolTip="Loop Time Range" IsEnabled="{Binding HasProject}" IsChecked="{Binding IsLoopEnabled, Mode=OneWay}" Click="OnLoopClick"><ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Data="{StaticResource Fluent.RepeatAll20Regular}"/></ToggleButton>
-            <Border Height="32" Margin="9,0,0,0" Padding="9,0" Background="{StaticResource Brush.Surface.0}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3"><StackPanel VerticalAlignment="Center" Orientation="Horizontal"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Mono}" Text="{Binding PositionText}"/><TextBlock Margin="8,0,0,0" VerticalAlignment="Center" Style="{StaticResource Text.Mono}" Text="{Binding TempoText}"/></StackPanel></Border>
+            <Border Height="32" Margin="9,0,0,0" Padding="9,0" Background="{StaticResource Brush.Surface.0}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3"><StackPanel VerticalAlignment="Center" Orientation="Horizontal"><TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.Text.Primary}" Style="{StaticResource Text.Mono}" Text="{Binding PositionText}"/><Border Width="1" Height="14" Margin="8,0" Background="{StaticResource Brush.Border.Strong}"/><TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.Text.Primary}" Style="{StaticResource Text.Mono}" Text="{Binding TempoText}"/></StackPanel></Border>
           </StackPanel>
           <StackPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
             <Button Margin="0,0,4,0" Style="{StaticResource Button.Ghost}" Content="Compile" Click="OnCompileClick" IsEnabled="{Binding CanRunProjectTask}"/>
@@ -783,7 +823,15 @@
         </TabItem>
       </TabControl>
 
-      <Border Grid.Row="7" Padding="9,0" Background="{StaticResource Brush.Black}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0"><Grid><StackPanel VerticalAlignment="Center" Orientation="Horizontal"><Ellipse Width="6" Height="6" Margin="0,0,6,0" Fill="{StaticResource Brush.Success}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding ProjectState}"/><Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding SoundFontState}"/><Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding CompileState}"/><Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding IssueSummary}"/><Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding ActivityText}"/></StackPanel><TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Text="{Binding StatusMessage}" TextTrimming="CharacterEllipsis"><TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}"><Setter Property="Foreground" Value="{StaticResource Brush.Text.Tertiary}"/><Style.Triggers><DataTrigger Binding="{Binding StatusMessageIsError}" Value="True"><Setter Property="Foreground" Value="{StaticResource Brush.Red.Hover}"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></Grid></Border>
+      <Border Grid.Row="7" Padding="9,0" Background="{StaticResource Brush.Black}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Grid>
+          <StackPanel VerticalAlignment="Center" Orientation="Horizontal"><Ellipse Width="6" Height="6" Margin="0,0,6,0" Fill="{StaticResource Brush.Success}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding ProjectState}"/><Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding SoundFontState}"/><Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding CompileState}"/><Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding IssueSummary}"/><Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding ActivityText}"/></StackPanel>
+          <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+            <TextBlock MaxWidth="520" VerticalAlignment="Center" Text="{Binding StatusMessage}" TextTrimming="CharacterEllipsis"><TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}"><Setter Property="Foreground" Value="{StaticResource Brush.Text.Tertiary}"/><Style.Triggers><DataTrigger Binding="{Binding StatusMessageIsError}" Value="True"><Setter Property="Foreground" Value="{StaticResource Brush.Red.Hover}"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+            <Button Height="20" Margin="7,0,0,0" Padding="6,0" Content="已读" Click="OnDismissStatusMessageClick"><Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding HasStatusMessage}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style></Button>
+          </StackPanel>
+        </Grid>
+      </Border>
 
       <Border x:Name="TaskLockOverlay" Grid.RowSpan="8" Panel.ZIndex="1000" Focusable="True"
               Background="#D9101216" IsHitTestVisible="True">

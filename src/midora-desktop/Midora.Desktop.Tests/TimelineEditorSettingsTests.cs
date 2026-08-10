@@ -31,6 +31,17 @@ public sealed class TimelineEditorSettingsTests
     }
 
     [Fact]
+    public void SubdivisionSelectionUsesCompactText()
+    {
+        TimelineSubdivision eighth = TimelineSubdivision.Presets.Single(item =>
+            !item.IsBar && item.Numerator == 1 && item.Denominator == 8);
+
+        Assert.Equal("1/8", eighth.ShortLabel);
+        Assert.Equal("1/8", eighth.ToString());
+        Assert.Equal("Bar", TimelineSubdivision.Presets[0].ToString());
+    }
+
+    [Fact]
     public void ArrangementAndPianoSettingsRemainIndependentWhileSegmentAndSubVoiceShare()
     {
         TimelineEditorSettings arrangement = new();
@@ -78,5 +89,26 @@ public sealed class TimelineEditorSettingsTests
         Assert.Equal(240, settings.DisplayGridStepTicks);
         Assert.Equal(80, settings.OperationStepTicks);
         Assert.Equal(1, settings.EffectiveOperationStepTicks);
+    }
+
+    [Fact]
+    public void SegmentLowerEditorVisibilityAndHeightRemainWorkspaceLocal()
+    {
+        TimelineWorkspaceViewModel segment = new(
+            WorkspaceKey.ForObject(WorkspaceKind.SegmentEditor, new MidoraId(1)),
+            "Segment",
+            TimelineWorkspaceMode.Segment);
+        TimelineWorkspaceViewModel arrangement = new(
+            WorkspaceKey.ForType(WorkspaceKind.Arrangement),
+            "Arrangement",
+            TimelineWorkspaceMode.Arrangement);
+
+        segment.BottomEditorRowHeight = new System.Windows.GridLength(260);
+        segment.IsLowerEditorVisible = false;
+
+        Assert.Equal(0, segment.BottomEditorRowHeight.Value);
+        segment.IsLowerEditorVisible = true;
+        Assert.Equal(260, segment.BottomEditorRowHeight.Value);
+        Assert.Equal(0, arrangement.BottomEditorRowHeight.Value);
     }
 }

@@ -472,6 +472,35 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public async Task ArrangementReusesUnchangedSegmentPreviewAndRebuildsChangedSegmentOnly()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Preview cache",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        LogicalTrack track = Assert.Single(session.Project!.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
+        Segment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(segment.Id, 0, 120, 60, 100));
+        LogicalNote note = Assert.Single(segment.Notes);
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+        TimelineSegmentPreview first = arrangement.Snapshot!.SegmentPreviews[segment.Id];
+
+        session.RefreshWorkspace(arrangement);
+        TimelineSegmentPreview unchanged = arrangement.Snapshot!.SegmentPreviews[segment.Id];
+        session.Execute(ProjectDomainEditCommands.MoveLogicalNotes(segment.Id, [note.Id], 24, 1));
+        TimelineSegmentPreview changed = arrangement.Snapshot!.SegmentPreviews[segment.Id];
+
+        Assert.Same(first, unchanged);
+        Assert.NotSame(first, changed);
+        Assert.Equal(0.05, changed.Notes[0].NormalizedStart, precision: 10);
+        Assert.Equal(61, changed.Notes[0].Pitch);
+    }
+
+    [Fact]
     public async Task SegmentTimelineMapsLocalCursorAndRangeToProjectCoordinates()
     {
         await using DesktopSessionController session = new();

@@ -1967,8 +1967,24 @@ public partial class MainWindow : Window
 
     private void OnTimelineZoomClick(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { Tag: string direction, DataContext: TimelineWorkspaceViewModel workspace }) return;
+        if (sender is not FrameworkElement { Tag: string direction } source) return;
         double factor = direction == "In" ? 0.8 : 1.25;
+        if (source.DataContext is InstrumentWorkspaceViewModel)
+        {
+            TimelineSurface? surface = FindWorkspaceElement<TimelineSurface>("SubVoiceNotes");
+            if (surface is null) return;
+            long nextSpan = Math.Clamp(
+                checked((long)Math.Round(surface.TickSpan * factor, MidpointRounding.AwayFromZero)),
+                16,
+                1L << 50);
+            long centerTick = surface.StartTick <= long.MaxValue - surface.TickSpan / 2
+                ? surface.StartTick + surface.TickSpan / 2
+                : long.MaxValue;
+            surface.TickSpan = nextSpan;
+            surface.StartTick = Math.Max(0, centerTick - nextSpan / 2);
+            return;
+        }
+        if (source.DataContext is not TimelineWorkspaceViewModel workspace) return;
         long span = Math.Clamp(
             checked((long)Math.Round(workspace.TickSpan * factor, MidpointRounding.AwayFromZero)),
             16,
@@ -1978,6 +1994,40 @@ public partial class MainWindow : Window
             : long.MaxValue;
         workspace.TickSpan = span;
         workspace.StartTick = Math.Max(0, center - span / 2);
+    }
+
+    private void OnSubdivisionComboBoxLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is not ComboBox { Tag: string role } comboBox) return;
+        TimelineEditorSettings? settings = comboBox.DataContext switch
+        {
+            TimelineWorkspaceViewModel timeline => timeline.EditorSettings,
+            InstrumentWorkspaceViewModel instrument => instrument.EditorSettings,
+            _ => null
+        };
+        if (settings is null) return;
+        if (TimelineSubdivision.TryParse(comboBox.Text, out TimelineSubdivision parsed))
+        {
+            TimelineSubdivision selection = settings.SubdivisionPresets.FirstOrDefault(candidate =>
+                candidate.IsBar == parsed.IsBar
+                && candidate.Numerator == parsed.Numerator
+                && candidate.Denominator == parsed.Denominator);
+            if (selection == default) selection = parsed;
+            if (string.Equals(role, "Display", StringComparison.Ordinal))
+            {
+                settings.DisplaySubdivision = selection;
+            }
+            else
+            {
+                settings.OperationSubdivision = selection;
+            }
+        }
+        comboBox.SelectedItem = string.Equals(role, "Display", StringComparison.Ordinal)
+            ? settings.DisplaySubdivision
+            : settings.OperationSubdivision;
+        comboBox.Text = string.Equals(role, "Display", StringComparison.Ordinal)
+            ? settings.DisplaySubdivisionText
+            : settings.OperationSubdivisionText;
     }
 
     private void OnTimelineGridDivisionClick(object sender, RoutedEventArgs e)
@@ -3259,6 +3309,9 @@ public partial class MainWindow : Window
     }
 
     private void OnDismissNoticeClick(object sender, RoutedEventArgs e) => _session.Notice = null;
+
+    private void OnDismissStatusMessageClick(object sender, RoutedEventArgs e) =>
+        _session.SetStatusMessage(null);
 
     private void OnDiagnosticDoubleClick(object sender, MouseButtonEventArgs e)
     {

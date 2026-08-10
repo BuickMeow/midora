@@ -60,6 +60,8 @@ Broken or validation state
 Logical Note preview
 ```
 初版必须在 Segment 矩形内显示简化 piano-roll Note Preview，表达音高、相对位置和长度。该预览只用于概览，不允许在 Arrangement 内直接精细编辑 Note。
+
+Preview 使用固定 MIDI pitch `0..127` 的二维投影；Note 最小可见高度为 1 px，位置与边界执行布局取整，Segment 本地 tick 0 的 Note 不得因左边界或可见范围查询而遗漏。Preview 必须在 Arrangement 的手工渲染面内绘制，不得为每个 Note 创建 WPF Control。实现应按 Segment 稳定 ID 与 preview 相关内容指纹复用缓存；缩放、平移、选择或播放指针变化不得重建未变化 Segment 的 preview 内容。
 ### 18.1.5 Segment 重叠
 正式规则：
 ```text
@@ -158,9 +160,11 @@ Delete Lane Data
 ```
 Hide 不删除 Project 数据；Delete Lane Data 删除该 Lane 的用户内容，并按破坏性规则确认。
 
-下部编辑区使用“Velocity + Lane 列表 + 单个活动 Lane 编辑器”，不得把所有参数 Lane 垂直压缩堆叠。Velocity 视图按 Note start tick 绘制柱，高度表示 velocity；左键拖动自由修改经过的柱，右键拖动使用起止点直线插值修改范围内柱，一次完整拖动形成一次 Project Undo，且不得改变 Note 的位置、长度或 pitch。
+下部编辑区使用“Velocity + Lane 列表 + 单个活动 Lane 编辑器”，不得把所有参数 Lane 垂直压缩堆叠。该区域可隐藏、恢复和调整高度；显隐与高度只属于当前 Project Session UI State。
 
-单个参数 Lane 编辑器左侧显示值标尺，右侧显示对应水平参考线；Lane 具有独立于 piano roll 的纵向缩放。参考值密度随纵向缩放调整。Integer 参数由指针纵坐标得到的值必须先按 `AwayFromZero` 取到最近整数，再执行合法范围验证。
+Velocity 视图按 Note start tick 绘制柱，高度表示 velocity。普通左键点击将该时刻横向覆盖的柱设为指针值；左键拖动自由修改经过的柱，右键拖动使用起止点直线插值修改范围内柱。无选择时手势作用于经过的全部柱；存在选择时只作用于经过且已选择的柱。只有拖动单柱顶部边缘时才进入该柱的上下调整并显示 `SizeNS`，柱体及左右边缘使用默认指针。按下时必须立即应用首个值，包括 tick 0；一次完整手势形成一次 Project Undo，且不得改变 Note 的位置、长度或 pitch。
+
+单个参数 Lane 编辑器左侧显示值标尺，右侧显示对应水平参考线；Lane 具有独立于 piano roll 的纵向缩放。参考值密度随纵向缩放调整。纵向缩放、滚轮平移、中键平移和右侧滚动条必须操作同一有界数值视口，标尺随视口更新，不得越过参数合法范围；顶部与底部标签保持在可视区域内。Integer 参数由指针纵坐标得到的值必须先按 `AwayFromZero` 取到最近整数，再执行合法范围验证。
 ### 18.2.6 同步
 Segment 编辑后：
 - Arrangement Note Preview 实时更新；

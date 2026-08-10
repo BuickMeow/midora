@@ -61,6 +61,8 @@ Middle-button Drag  -> pan
 不使用 `Space + Drag` 平移，因为 Space 在 Timeline Context 中用于 Play / Stop。
 同一 Workspace 中共享时间坐标的 Ruler、Lane 和 Canvas 必须同步横向缩放和滚动。
 在 piano roll 左侧 Pitch Ruler 上使用 `Ctrl + Mouse Wheel` 时只改变垂直音高缩放，并以指针下音高为锚点；不得同时改变横向缩放。
+
+Piano Roll 的纵向视口必须限制在 MIDI pitch `0..127`，不得滚动到范围外。Velocity、Parameter 和 Event Lane 的纵向缩放与平移必须限制在其数值范围内；缩放后的滚轮步长按当前可见范围计算，不能使用固定大跨度。上述编辑器右侧必须提供与当前纵向视口双向同步的 Scrollbar。
 ### 20.1.6 工具模式
 通用工具：
 ```text
@@ -1494,6 +1496,10 @@ Project Panel、Inspector、Bottom Panel 和 Active Workspace 均有最小可用
 ### 20.15.4 Toolbar 与 Tabs
 Toolbar 宽度不足时使用 Overflow。
 Workspace Tabs 单行，使用滚动和 Tab List。
+
+Timeline Toolbar 的 Grid / Snap 选择框只显示 `Bar` 或简写分数（例如 `1/8`）；不得因可编辑文本与选择项绑定冲突而显示额外错误色块、空选择或完整说明文字。Arrangement、Segment 和 SubVoice 的顺序统一为 `Grid + 下拉 | Snap + 下拉 | Length [Vel] | - + | 工具`，其中 Arrangement 不显示不适用的 Vel；各组之间显示分割线。
+
+Timeline 选择轮廓使用可辨识的亮红色边框。Piano Roll 白键行使用较亮底色、黑键行使用较暗底色。Disabled Ghost Button 不保留背景或边框。Transport 的位置与 BPM 使用亮色并以竖向分割线分隔；Play 图标不得裁切。Parameter / Event Lane 不显示额外白色外框。数值标尺顶部和底部标签不得被视口裁切。
 ### 20.15.5 Resize 语义
 Resize 只改变视图，不：
 ```text

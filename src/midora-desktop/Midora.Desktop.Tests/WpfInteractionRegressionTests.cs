@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Shell;
 using System.Windows.Threading;
 using Midora.Application;
+using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Interaction;
 using Midora.Domain;
 using Xunit;
@@ -96,6 +97,28 @@ public sealed class WpfInteractionRegressionTests
             Setter setter = Assert.Single(caption.Setters.OfType<Setter>(), item =>
                 item.Property == WindowChrome.IsHitTestVisibleInChromeProperty);
             Assert.Equal(true, setter.Value);
+        });
+    }
+
+    [Fact]
+    public void PianoRollVerticalViewportStaysInsideMidiPitchRange()
+    {
+        RunOnSta(() =>
+        {
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                LaneHeight = 24
+            };
+            surface.Measure(new Size(500, 504));
+            surface.Arrange(new Rect(0, 0, 500, 504));
+
+            surface.FirstLane = int.MaxValue;
+            Assert.Equal(108, surface.MaximumFirstLane);
+            Assert.Equal(108, surface.FirstLane);
+
+            surface.FirstLane = -1;
+            Assert.Equal(0, surface.FirstLane);
         });
     }
 

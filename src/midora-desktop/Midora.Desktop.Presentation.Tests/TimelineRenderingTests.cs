@@ -161,6 +161,38 @@ public sealed class TimelineRenderingTests
         Assert.Equal(item, snapshot.Items[0]);
     }
 
+    [Fact]
+    public void SnapshotCarriesNormalizedSegmentPreviewIncludingLeftBoundary()
+    {
+        MidoraId segmentId = new(8);
+        TimelineSegmentPreview preview = new(segmentId,
+        [
+            new TimelineSegmentPreviewNote(0, 0.25, 60),
+            new TimelineSegmentPreviewNote(0.75, 1, 127)
+        ]);
+        TimelineRenderSnapshot snapshot = new(
+            12,
+            "arrangement",
+            [Item(8, 0, 480, 0, kind: TimelineItemKind.Segment)],
+            ["Track"],
+            segmentPreviews: new Dictionary<MidoraId, TimelineSegmentPreview> { [segmentId] = preview });
+
+        Assert.Same(preview, snapshot.SegmentPreviews[segmentId]);
+        Assert.Equal(0, preview.Notes[0].NormalizedStart);
+        Assert.Equal(127, preview.Notes[1].Pitch);
+    }
+
+    [Fact]
+    public void SegmentPreviewRejectsOutOfRangeProjection()
+    {
+        Assert.Throws<ArgumentException>(() => new TimelineSegmentPreview(
+            new MidoraId(1),
+            [new TimelineSegmentPreviewNote(-0.1, 0.5, 60)]));
+        Assert.Throws<ArgumentException>(() => new TimelineSegmentPreview(
+            new MidoraId(1),
+            [new TimelineSegmentPreviewNote(0, 0.5, 128)]));
+    }
+
     [Theory]
     [InlineData(12, 10, 0, 10)]
     [InlineData(15, 10, -1, 10)]

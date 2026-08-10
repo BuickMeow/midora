@@ -184,12 +184,15 @@ Search queries and filters
 Tree expansion
 Active subpage
 Workspace-local lane height and focus history
+Workspace-local lower editor visibility and height
 Arrangement Grid / Snap session settings
 Shared Segment and SubVoice piano-roll Grid / Snap session settings
 Default Segment creation length
 Shared piano-roll default Note length and velocity
 ```
 关闭或替换 Project 后清除，不跨应用重启恢复。
+
+状态栏 transient message 必须提供直接“已读”操作；该操作只清除当前 transient message，不清除 Diagnostics、不修改 Project，也不创建 Undo。
 ### 17.2.4 Transient Interaction State
 只存在于当前交互：
 ```text

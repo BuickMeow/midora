@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Windows;
 using Midora.Compiler;
 using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Interaction;
@@ -256,6 +257,8 @@ public readonly record struct TimelineSubdivision(
     string Label,
     bool IsBar = false)
 {
+    public string ShortLabel => IsBar ? "Bar" : $"{Numerator}/{Denominator}";
+
     public long ToTicks(int ticksPerQuarterNote, int barNumerator = 4, int barDenominator = 4)
     {
         if (ticksPerQuarterNote <= 0) throw new ArgumentOutOfRangeException(nameof(ticksPerQuarterNote));
@@ -276,7 +279,7 @@ public readonly record struct TimelineSubdivision(
             ticksPerQuarterNote * 4d * Numerator / Denominator)));
     }
 
-    public override string ToString() => Label;
+    public override string ToString() => ShortLabel;
 
     public static bool TryParse(string? text, out TimelineSubdivision value)
     {
@@ -504,6 +507,7 @@ public sealed class TrackSelectionRow(MidoraId id, string name, bool isSelected)
 
 public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
 {
+    private readonly Dictionary<MidoraId, SegmentPreviewCacheEntry> _segmentPreviewCache = [];
     private readonly HashSet<MidoraId> _mutedTrackIds = [];
     private readonly HashSet<MidoraId> _soloTrackIds = [];
     private TimelineRenderSnapshot? _snapshot;
@@ -528,6 +532,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     private double _activeValueMinimum;
     private double _activeValueMaximum = 127;
     private bool _activeValueIntegral = true;
+    private bool _isLowerEditorVisible = true;
+    private double _lowerEditorHeight = 190;
 
     public TimelineWorkspaceViewModel(
         WorkspaceKey key,
@@ -561,6 +567,29 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     public bool IsSegment => Mode == TimelineWorkspaceMode.Segment;
     public bool IsConductor => Mode == TimelineWorkspaceMode.Conductor;
     public bool IsArrangement => Mode == TimelineWorkspaceMode.Arrangement;
+    public bool IsLowerEditorVisible
+    {
+        get => IsSegment && _isLowerEditorVisible;
+        set
+        {
+            if (!IsSegment || !Set(ref _isLowerEditorVisible, value)) return;
+            Raise(nameof(BottomEditorRowHeight));
+        }
+    }
+    public GridLength BottomEditorRowHeight
+    {
+        get => IsConductor
+            ? new GridLength(170)
+            : IsLowerEditorVisible
+                ? new GridLength(_lowerEditorHeight)
+                : new GridLength(0);
+        set
+        {
+            if (!IsSegment || value.GridUnitType != GridUnitType.Pixel) return;
+            double height = Math.Clamp(value.Value, 110, 520);
+            if (!Set(ref _lowerEditorHeight, height, nameof(BottomEditorRowHeight))) return;
+        }
+    }
     public ObservableCollection<ConductorEventRow> ConductorEvents { get; } = [];
     public TimelineSurfaceMode SurfaceMode => Mode switch
     {
@@ -866,11 +895,14 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         RangeStartTick = null;
         RangeEndTick = null;
         List<TimelineRenderItem> items = [];
+        Dictionary<MidoraId, TimelineSegmentPreview> previews = [];
+        HashSet<MidoraId> liveSegmentIds = [];
         for (int trackIndex = 0; trackIndex < project.Tracks.Count; trackIndex++)
         {
             LogicalTrack track = project.Tracks[trackIndex];
             foreach (Segment segment in track.Segments)
             {
+                liveSegmentIds.Add(segment.Id);
                 items.Add(Item(
                     segment.Id,
                     TimelineItemKind.Segment,
@@ -878,28 +910,12 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                     checked(segment.ProjectStartTick + segment.LengthTicks),
                     trackIndex,
                     z: 0));
-                foreach (LogicalNote note in segment.Notes)
-                {
-                    long relative = note.StartTick - segment.ContentOffsetTick;
-                    long start = checked(segment.ProjectStartTick + relative);
-                    long end = checked(start + note.LengthTicks);
-                    long clippedStart = Math.Max(segment.ProjectStartTick, start);
-                    long clippedEnd = Math.Min(
-                        checked(segment.ProjectStartTick + segment.LengthTicks),
-                        end);
-                    if (clippedEnd > clippedStart)
-                    {
-                        items.Add(Item(
-                            note.Id,
-                            TimelineItemKind.LogicalNote,
-                            clippedStart,
-                            clippedEnd,
-                            trackIndex,
-                            z: 1,
-                            extra: TimelineItemState.HitTestDisabled));
-                    }
-                }
+                previews.Add(segment.Id, GetOrCreateSegmentPreview(segment));
             }
+        }
+        foreach (MidoraId staleId in _segmentPreviewCache.Keys.Where(id => !liveSegmentIds.Contains(id)).ToArray())
+        {
+            _segmentPreviewCache.Remove(staleId);
         }
         Context = $"{project.Tracks.Count} logical tracks · {items.Count(item => item.Kind == TimelineItemKind.Segment)} segments";
         Snapshot = new(
@@ -909,9 +925,54 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             project.Tracks.Select(track => TrackDisplayName(project, track)).ToArray(),
             project.Tracks.Select(track =>
                 (_mutedTrackIds.Contains(track.Id) ? TimelineLaneState.Muted : TimelineLaneState.None)
-                | (_soloTrackIds.Contains(track.Id) ? TimelineLaneState.Solo : TimelineLaneState.None)).ToArray());
+                | (_soloTrackIds.Contains(track.Id) ? TimelineLaneState.Solo : TimelineLaneState.None)).ToArray(),
+            previews);
         RulerSnapshot = BuildConductorOverview(project, revision);
     }
+
+    private TimelineSegmentPreview GetOrCreateSegmentPreview(Segment segment)
+    {
+        SegmentPreviewNoteSource[] source = segment.Notes
+            .Select(note => new SegmentPreviewNoteSource(note.StartTick, note.LengthTicks, note.Note))
+            .ToArray();
+        if (_segmentPreviewCache.TryGetValue(segment.Id, out SegmentPreviewCacheEntry? cached)
+            && cached.ContentOffsetTick == segment.ContentOffsetTick
+            && cached.LengthTicks == segment.LengthTicks
+            && cached.Source.AsSpan().SequenceEqual(source))
+        {
+            return cached.Preview;
+        }
+
+        long visibleStart = segment.ContentOffsetTick;
+        long visibleEnd = segment.ContentEndTick;
+        List<TimelineSegmentPreviewNote> notes = new(source.Length);
+        foreach (SegmentPreviewNoteSource note in source)
+        {
+            long noteEnd = checked(note.StartTick + note.LengthTicks);
+            long clippedStart = Math.Max(visibleStart, note.StartTick);
+            long clippedEnd = Math.Min(visibleEnd, noteEnd);
+            if (clippedEnd <= clippedStart) continue;
+            notes.Add(new(
+                (clippedStart - visibleStart) / (double)segment.LengthTicks,
+                (clippedEnd - visibleStart) / (double)segment.LengthTicks,
+                note.Pitch));
+        }
+        TimelineSegmentPreview preview = new(segment.Id, notes);
+        _segmentPreviewCache[segment.Id] = new(
+            segment.ContentOffsetTick,
+            segment.LengthTicks,
+            source,
+            preview);
+        return preview;
+    }
+
+    private readonly record struct SegmentPreviewNoteSource(long StartTick, long LengthTicks, int Pitch);
+
+    private sealed record SegmentPreviewCacheEntry(
+        long ContentOffsetTick,
+        long LengthTicks,
+        SegmentPreviewNoteSource[] Source,
+        TimelineSegmentPreview Preview);
 
     private void RebuildSegment(MidoraProject project, long revision)
     {

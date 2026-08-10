@@ -1904,28 +1904,30 @@ public partial class MainWindow : Window
 
     private void OnTimelineToolClick(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement
+        if (sender is not ToggleButton
             {
                 Tag: string value,
                 DataContext: TimelineWorkspaceViewModel workspace
-            }
+            } button
             || !Enum.TryParse(value, out TimelineToolMode mode))
         {
             return;
         }
         workspace.ToolMode = mode;
+        button.SetCurrentValue(ToggleButton.IsCheckedProperty, true);
     }
 
     private void OnInstrumentTimelineToolClick(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement
+        if (sender is ToggleButton
             {
                 Tag: string value,
                 DataContext: InstrumentWorkspaceViewModel workspace
-            }
+            } button
             && Enum.TryParse(value, out TimelineToolMode mode))
         {
             workspace.ToolMode = mode;
+            button.SetCurrentValue(ToggleButton.IsCheckedProperty, true);
         }
     }
 
@@ -3313,6 +3315,16 @@ public partial class MainWindow : Window
     private void OnDismissStatusMessageClick(object sender, RoutedEventArgs e) =>
         _session.SetStatusMessage(null);
 
+    private void OnStatusMessageDetailsClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.StatusMessage is not string message) return;
+        TextDetailsDialog dialog = new("Status Message Details", message)
+        {
+            Owner = this
+        };
+        dialog.ShowDialog();
+    }
+
     private void OnDiagnosticDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (sender is ListBox { SelectedItem: DiagnosticRow diagnostic })
@@ -4027,6 +4039,14 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        if (Keyboard.Modifiers == ModifierKeys.None
+            && !IsTextEditingFocus()
+            && !IsTransientInputSurfaceOpen()
+            && TryActivateTimelineTool(e.Key))
+        {
+            e.Handled = true;
+            return;
+        }
         if (e.Key == Key.Space
             && Keyboard.Modifiers == ModifierKeys.None
             && (!IsTextEditingFocus() || (_session.IsPlaybackActive && _spaceStartedPlayback))
@@ -4097,6 +4117,29 @@ public partial class MainWindow : Window
             case Key.V: OnPasteClick(this, new RoutedEventArgs()); e.Handled = true; break;
             case Key.A: OnSelectAllClick(this, new RoutedEventArgs()); e.Handled = true; break;
             case Key.D: OnDuplicateClick(this, new RoutedEventArgs()); e.Handled = true; break;
+        }
+    }
+
+    private bool TryActivateTimelineTool(Key key)
+    {
+        TimelineToolMode? mode = key switch
+        {
+            Key.D => TimelineToolMode.Draw,
+            Key.S => TimelineToolMode.Select,
+            Key.E => TimelineToolMode.Erase,
+            _ => null
+        };
+        if (mode is not TimelineToolMode resolved) return false;
+        switch (_session.ActiveWorkspace)
+        {
+            case TimelineWorkspaceViewModel timeline:
+                timeline.ToolMode = resolved;
+                return true;
+            case InstrumentWorkspaceViewModel instrument:
+                instrument.ToolMode = resolved;
+                return true;
+            default:
+                return false;
         }
     }
 

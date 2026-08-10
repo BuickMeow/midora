@@ -102,6 +102,8 @@ Project End Marker 后区域弱化，但仍显示并允许编辑。End Marker �
 无显式 End Marker 时可显示 Natural End 参考，但它不是 Project 对象。
 
 Arrangement Toolbar 必须分别提供可见分割线粒度、操作粒度与 Snap 开关，以及默认 Segment 创建长度（tick，输入即生效）。Draw 模式下，鼠标所在 Track 必须显示按当前操作粒度定位、按默认长度计算的虚线创建预览。若默认长度超出当前可用间隙，创建命令静默缩短为从目标 tick 起可容纳的最大正长度；预览显示实际将提交的长度。不存在正长度空隙时预览为错误色并拒绝创建。该规则只适用于新建 Segment；已有 Segment 的移动和 Resize 仍不得因重叠而被静默缩短。
+
+Arrangement 中只有 Draw 模式允许拖动 Segment 主体或调整边缘；Select 模式仍允许单击和框选，但不得直接移动、Resize 或双击创建 Segment。拖动和 Resize 期间必须显示位置与长度预览，并隐藏同位置的创建预览。工具互斥、指针和快捷键规则见第 20.1.6、20.12 节。
 ---
 ## 18.2 Segment Editor
 ### 18.2.1 布局
@@ -124,16 +126,18 @@ Arrangement Toolbar 必须分别提供可见分割线粒度、操作粒度与 Sn
 Segment Editor 以 Segment local tick 为主，同时可显示映射后的 Project Position。
 不得把 local tick 伪装成 Project `Bar:Beat:Tick`。
 ### 18.2.3 Pitch Ruler
-- 使用钢琴键盘样式；
+- 使用完整白键底板与较短黑键叠层构成的真实横向钢琴键样式；
 - MIDI Note 60 显示为 C4；
-- 黑键使用升号；
-- 初版不在键位上写 MIDI Note 编号；
+- 音名只在每个八度的 C 键显示，其他键不显示音名；
+- 初版不在键位上写 MIDI Note 编号；若其他 UI 必须显示黑键音名，仍使用升号；
 - 鼠标左键按下键位发起 held Preview，松开或取消结束 Gate；
 - 该预览不创建 Project Note，并严格使用第 13.22.7、13.24.5 节的因果 Gate 与当前 Segment 绑定的 Event Instrument。
 ### 18.2.4 Note Editor
 使用 piano roll 编辑 Logical Notes。
 
 新建单个 Logical Note 的放置手势不得启动声音预览。Draw 模式只显示当前 pitch、位置和默认长度的虚线视觉预览；该视觉预览不是 Project 数据。点击已有 Note 时，将该 Note 的长度复制为后续创建的默认 Note 长度，但不修改该 Note。
+
+只有 Draw 模式允许拖动或 Resize Logical Note；Select 模式仍允许单击和框选，但不得直接移动、Resize 或双击创建 Note。移动和 Resize 期间必须显示位置与长度预览，并隐藏创建预览。
 
 Segment Toolbar 必须提供共享 piano-roll 的可见分割线粒度、操作粒度、Snap、默认 Note 长度（tick）与默认 velocity。默认长度和 velocity 独立于 Grid；默认长度允许小于操作粒度。
 
@@ -160,9 +164,9 @@ Delete Lane Data
 ```
 Hide 不删除 Project 数据；Delete Lane Data 删除该 Lane 的用户内容，并按破坏性规则确认。
 
-下部编辑区使用“Velocity + Lane 列表 + 单个活动 Lane 编辑器”，不得把所有参数 Lane 垂直压缩堆叠。该区域可隐藏、恢复和调整高度；显隐与高度只属于当前 Project Session UI State。
+下部编辑区使用“Velocity + Lane 列表 + 单个活动 Lane 编辑器”，不得把所有参数 Lane 垂直压缩堆叠。该区域可隐藏、恢复和调整高度；显隐与高度只属于当前 Project Session UI State。高度分隔条必须位于“Piano Roll + Timeline Overview”整体上部区域与下部编辑区之间；拖动必须实际改变下部编辑区高度，不得只调整固定高度的 Timeline Overview。
 
-Velocity 视图按 Note start tick 绘制柱，高度表示 velocity。普通左键点击将该时刻横向覆盖的柱设为指针值；左键拖动自由修改经过的柱，右键拖动使用起止点直线插值修改范围内柱。无选择时手势作用于经过的全部柱；存在选择时只作用于经过且已选择的柱。只有拖动单柱顶部边缘时才进入该柱的上下调整并显示 `SizeNS`，柱体及左右边缘使用默认指针。按下时必须立即应用首个值，包括 tick 0；一次完整手势形成一次 Project Undo，且不得改变 Note 的位置、长度或 pitch。
+Velocity 视图按 Note start tick 绘制柱，高度表示 velocity；每个柱子的左上角必须显示方形 onset marker，以同时明确 Note start tick 和 velocity 顶点。普通左键点击将该时刻横向覆盖的柱设为指针值；左键拖动自由修改经过的柱，右键拖动使用起止点直线插值修改范围内柱。无选择时手势作用于经过的全部柱；存在选择时只作用于经过且已选择的柱。只有拖动单柱顶部边缘时才进入该柱的上下调整并显示 `SizeNS`，柱体及左右边缘使用默认指针。按下时必须立即应用首个值，包括 tick 0；一次完整手势形成一次 Project Undo，且不得改变 Note 的位置、长度或 pitch。
 
 单个参数 Lane 编辑器左侧显示值标尺，右侧显示对应水平参考线；Lane 具有独立于 piano roll 的纵向缩放。参考值密度随纵向缩放调整。纵向缩放、滚轮平移、中键平移和右侧滚动条必须操作同一有界数值视口，标尺随视口更新，不得越过参数合法范围；顶部与底部标签保持在可视区域内。Integer 参数由指针纵坐标得到的值必须先按 `AwayFromZero` 取到最近整数，再执行合法范围验证。
 ### 18.2.6 同步
@@ -261,6 +265,8 @@ Initial State
 - Program 只显示用户侧 1～128 编号。
 
 SubVoice Timeline 与 Segment Editor 共用当前 Project 会话的 piano-roll Grid / Snap、默认 Note 长度和默认 velocity。下部编辑区同样使用 Velocity 与单个活动事件/曲线 Lane 切换，不保留多 Lane 垂直堆叠模式。
+
+SubVoice Note piano roll 复用第 18.2.3～18.2.4 节的 Pitch Ruler 琴键与 C 音名规则、Draw / Select 直接编辑边界、拖动预览和第 20 章的工具互斥、指针及快捷键规则。
 ### 18.4.3 Initial State
 Initial State 与 tick 0 普通事件严格分离：
 ```text

@@ -50,9 +50,12 @@
 
 ## 2026-08-10 修订摘要
 
+- 明确 Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的 Draw / Select / Split / Erase 互斥工具状态、直接编辑边界、对象命中指针以及移动/Resize transient 预览；Select 不再直接移动、Resize 或双击创建 Segment / Note。
+- 将无修饰键 `D` / `S` / `E` 固定为活动 Timeline Workspace 的 Draw / Select / Erase 快捷键，并明确文本、代码、ComboBox、菜单、Popup、内联编辑和 Modal 的焦点例外；其余单字母工具快捷键仍不注册。
+- 补充 Grid / Snap 显示同步、ComboBox 可编辑文本与 Fluent 下拉图标居中、显式垂直 ScrollBar、Diagnostics 筛选框和 Segment 标题布局验收；固定 Arrangement / Segment Piano Roll / Velocity 的蓝灰色层级与 Velocity onset marker、Segment/SubVoice 真实黑白 Pitch Ruler 与逐八度 C 标签、空 Timeline 无覆盖卡片，以及可复制的 Status Error 详情入口。
 - 明确 Arrangement Segment Note Preview 使用固定 MIDI pitch `0..127`、最小 1 px Note 高度、布局取整和按 Segment 稳定 ID/内容指纹复用的手工渲染缓存；tick 0 Note 不得遗漏。
 - 明确 Velocity 普通点击、自由拖动、右键直线插值、选择集过滤和单柱顶部边缘调整语义；所有手势在按下时立即生效并保持一次手势一次 Undo。
-- 明确 Piano Roll 与数值 Lane 的纵向视口边界、右侧滚动条、随平移更新的标尺和边界标签可见性；Segment 下部编辑区的显隐与高度属于 Project Session UI State。
+- 明确 Piano Roll 与数值 Lane 的纵向视口边界、右侧滚动条、随平移更新的标尺和边界标签可见性；显式滚动条 Thumb 按实际可见范围计算。Segment 下部编辑区的显隐与高度属于 Project Session UI State，其分隔条在完整上部 Timeline 区域与下部编辑区之间调整高度。
 - 补充 Timeline 工具栏、状态栏已读、选择边框、键位明暗、Disabled Ghost Button 和顶部 Transport 信息的 WPF 验收要求。
 
 ## 2026-08-08 修订摘要

@@ -26,10 +26,15 @@
   <Color x:Key="Color.Warning.Subtle">#2A2111</Color>
   <Color x:Key="Color.Info">#62A6F6</Color>
   <Color x:Key="Color.Info.Subtle">#101F31</Color>
-  <Color x:Key="Color.Segment">#4B5864</Color>
+  <Color x:Key="Color.Segment">#424E58</Color>
   <Color x:Key="Color.Segment.Selected">#303B45</Color>
   <Color x:Key="Color.Segment.Selection">#91A6B8</Color>
-  <Color x:Key="Color.Segment.NotePreview">#87939D</Color>
+  <Color x:Key="Color.Segment.NotePreview">#BDC7CF</Color>
+  <Color x:Key="Color.Segment.PianoNote">#A3B2BE</Color>
+  <Color x:Key="Color.Segment.PianoOutside">#020304</Color>
+  <Color x:Key="Color.PianoKey.White">#D4D8DD</Color>
+  <Color x:Key="Color.PianoKey.Black">#15181D</Color>
+  <Color x:Key="Color.PianoKey.Label">#252B33</Color>
   <Color x:Key="Color.Damaged">#C78AFF</Color>
   <Color x:Key="Color.Damaged.Subtle">#24152F</Color>
 
@@ -63,6 +68,11 @@
   <SolidColorBrush x:Key="Brush.Segment.Selected" Color="{StaticResource Color.Segment.Selected}" />
   <SolidColorBrush x:Key="Brush.Segment.Selection" Color="{StaticResource Color.Segment.Selection}" />
   <SolidColorBrush x:Key="Brush.Segment.NotePreview" Color="{StaticResource Color.Segment.NotePreview}" />
+  <SolidColorBrush x:Key="Brush.Segment.PianoNote" Color="{StaticResource Color.Segment.PianoNote}" />
+  <SolidColorBrush x:Key="Brush.Segment.PianoOutside" Color="{StaticResource Color.Segment.PianoOutside}" />
+  <SolidColorBrush x:Key="Brush.PianoKey.White" Color="{StaticResource Color.PianoKey.White}" />
+  <SolidColorBrush x:Key="Brush.PianoKey.Black" Color="{StaticResource Color.PianoKey.Black}" />
+  <SolidColorBrush x:Key="Brush.PianoKey.Label" Color="{StaticResource Color.PianoKey.Label}" />
   <SolidColorBrush x:Key="Brush.Damaged" Color="{StaticResource Color.Damaged}" />
   <SolidColorBrush x:Key="Brush.Damaged.Subtle" Color="{StaticResource Color.Damaged.Subtle}" />
 

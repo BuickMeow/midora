@@ -609,6 +609,7 @@
 
   <Style TargetType="ComboBox">
     <Setter Property="Height" Value="32" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
     <Setter Property="Background" Value="{StaticResource Brush.Surface.0}" />
     <Setter Property="BorderBrush" Value="{StaticResource Brush.Border.Strong}" />
@@ -624,11 +625,6 @@
                     BorderThickness="{TemplateBinding BorderThickness}"
                     CornerRadius="{StaticResource Radius.Small}">
               <Grid>
-                <ContentPresenter Margin="10,0,32,0"
-                                  VerticalAlignment="Center"
-                                  Content="{TemplateBinding SelectionBoxItem}"
-                                  ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
-                                  IsHitTestVisible="False" />
                 <ToggleButton HorizontalAlignment="Stretch"
                               Background="Transparent"
                               BorderThickness="0"
@@ -637,15 +633,46 @@
                   <ToggleButton.Template>
                     <ControlTemplate TargetType="ToggleButton">
                       <Grid Background="Transparent">
-                        <TextBlock Margin="0,0,10,1"
-                                   HorizontalAlignment="Right"
-                                   VerticalAlignment="Center"
-                                   Foreground="{StaticResource Brush.Text.Tertiary}"
-                                   Text="⌄" />
+                        <ui:FluentIcon Width="12"
+                                       Height="12"
+                                       Margin="0,0,9,0"
+                                       HorizontalAlignment="Right"
+                                       VerticalAlignment="Center"
+                                       Foreground="{StaticResource Brush.Text.Tertiary}"
+                                       IsHitTestVisible="False"
+                                       Data="{StaticResource Fluent.ChevronDown20Regular}" />
                       </Grid>
                     </ControlTemplate>
                   </ToggleButton.Template>
                 </ToggleButton>
+                <ContentPresenter x:Name="ContentSite"
+                                  Margin="10,0,32,0"
+                                  VerticalAlignment="Center"
+                                  Content="{TemplateBinding SelectionBoxItem}"
+                                  ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                  IsHitTestVisible="False" />
+                <TextBox x:Name="PART_EditableTextBox"
+                         Height="Auto"
+                         Margin="9,0,32,0"
+                         Padding="0"
+                         VerticalAlignment="Center"
+                         VerticalContentAlignment="Center"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         CaretBrush="{StaticResource Brush.Text.Primary}"
+                         Foreground="{TemplateBinding Foreground}"
+                         IsReadOnly="{TemplateBinding IsReadOnly}"
+                         Visibility="Collapsed">
+                  <TextBox.Template>
+                    <ControlTemplate TargetType="TextBox">
+                      <ScrollViewer x:Name="PART_ContentHost"
+                                    Focusable="False"
+                                    VerticalAlignment="Center"
+                                    HorizontalScrollBarVisibility="Hidden"
+                                    VerticalScrollBarVisibility="Hidden" />
+                    </ControlTemplate>
+                  </TextBox.Template>
+                </TextBox>
               </Grid>
             </Border>
             <Popup x:Name="PART_Popup"
@@ -669,6 +696,10 @@
             </Popup>
           </Grid>
           <ControlTemplate.Triggers>
+            <Trigger Property="IsEditable" Value="True">
+              <Setter TargetName="ContentSite" Property="Visibility" Value="Collapsed" />
+              <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible" />
+            </Trigger>
             <Trigger Property="IsMouseOver" Value="True">
               <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource Brush.Text.Tertiary}" />
             </Trigger>
@@ -825,7 +856,9 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ScrollBar">
-          <Track x:Name="PART_Track" IsDirectionReversed="True">
+          <Track x:Name="PART_Track"
+                 IsDirectionReversed="True"
+                 Orientation="{TemplateBinding Orientation}">
             <Track.DecreaseRepeatButton>
               <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}"
                             Style="{StaticResource ScrollBar.PageButton}" />
@@ -848,7 +881,7 @@
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="ScrollBar">
-              <Track x:Name="PART_Track">
+              <Track x:Name="PART_Track" Orientation="{TemplateBinding Orientation}">
                 <Track.DecreaseRepeatButton>
                   <RepeatButton Command="{x:Static ScrollBar.PageLeftCommand}"
                                 Style="{StaticResource ScrollBar.PageButton}" />

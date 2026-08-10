@@ -1,3 +1,4 @@
+using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Interaction;
 using Midora.Desktop.Presentation.Rendering;
 using Midora.Domain;
@@ -180,6 +181,65 @@ public sealed class TimelineRenderingTests
         Assert.Same(preview, snapshot.SegmentPreviews[segmentId]);
         Assert.Equal(0, preview.Notes[0].NormalizedStart);
         Assert.Equal(127, preview.Notes[1].Pitch);
+    }
+
+    [Theory]
+    [InlineData(TimelineToolMode.Draw, false, null, false, TimelinePointerIntent.Default)]
+    [InlineData(TimelineToolMode.Select, false, null, false, TimelinePointerIntent.Crosshair)]
+    [InlineData(TimelineToolMode.Draw, true, TimelineItemKind.Segment, false, TimelinePointerIntent.Move)]
+    [InlineData(TimelineToolMode.Draw, true, TimelineItemKind.Segment, true, TimelinePointerIntent.ResizeHorizontal)]
+    [InlineData(TimelineToolMode.Split, true, TimelineItemKind.Segment, true, TimelinePointerIntent.Split)]
+    public void DirectTimelinePointerIntentFollowsSelectedTool(
+        TimelineToolMode toolMode,
+        bool hasItem,
+        TimelineItemKind? itemKind,
+        bool nearEdge,
+        TimelinePointerIntent expected)
+    {
+        Assert.Equal(
+            expected,
+            TimelineToolPolicy.GetPointerIntent(
+                toolMode,
+                TimelineSurfaceMode.Arrangement,
+                isInContent: true,
+                hasItem ? itemKind : null,
+                nearEdge));
+    }
+
+    [Fact]
+    public void DirectTimelineEditsAndCreationBelongToDrawToolOnly()
+    {
+        Assert.True(TimelineToolPolicy.CanBeginItemEdit(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.PianoRoll,
+            TimelineItemKind.LogicalNote));
+        Assert.False(TimelineToolPolicy.CanBeginItemEdit(
+            TimelineToolMode.Select,
+            TimelineSurfaceMode.PianoRoll,
+            TimelineItemKind.LogicalNote));
+        Assert.True(TimelineToolPolicy.RequestsBackgroundCreation(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.PianoRoll,
+            clickCount: 1));
+        Assert.False(TimelineToolPolicy.RequestsBackgroundCreation(
+            TimelineToolMode.Select,
+            TimelineSurfaceMode.PianoRoll,
+            clickCount: 2));
+    }
+
+    [Theory]
+    [InlineData(0, false, "C-1")]
+    [InlineData(60, false, "C4")]
+    [InlineData(61, true, null)]
+    [InlineData(72, false, "C5")]
+    [InlineData(127, false, null)]
+    public void PianoKeyPresentationUsesBlackKeysAndLabelsOctaveCOnly(
+        int midiNote,
+        bool expectedBlack,
+        string? expectedLabel)
+    {
+        Assert.Equal(expectedBlack, PianoKeyPresentation.IsBlackKey(midiNote));
+        Assert.Equal(expectedLabel, PianoKeyPresentation.GetOctaveCLabel(midiNote));
     }
 
     [Fact]

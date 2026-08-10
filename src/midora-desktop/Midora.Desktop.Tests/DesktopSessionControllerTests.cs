@@ -608,6 +608,19 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public void StatusMessageRetainsFullErrorTextForDetails()
+    {
+        DesktopSessionController session = new();
+        string message = "Playback failed:\nworker state=Faulted\nfull diagnostic payload";
+
+        session.SetStatusMessage(message, isError: true);
+
+        Assert.Equal(message, session.StatusMessage);
+        Assert.True(session.HasStatusMessage);
+        Assert.True(session.StatusMessageIsError);
+    }
+
+    [Fact]
     public async Task SubVoiceEditorSeparatesRenderedNotesFromEventLanesAndInitialState()
     {
         await using DesktopSessionController session = new();

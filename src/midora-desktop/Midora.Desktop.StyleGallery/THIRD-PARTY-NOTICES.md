@@ -16,6 +16,7 @@ Assets used:
 - `ic_fluent_save_20_regular.svg`
 - `ic_fluent_arrow_undo_20_regular.svg`
 - `ic_fluent_arrow_redo_20_regular.svg`
+- `ic_fluent_chevron_down_20_regular.svg`
 - `ic_fluent_stop_20_filled.svg`
 - `ic_fluent_play_20_filled.svg`
 - `ic_fluent_arrow_repeat_all_20_regular.svg`

@@ -69,9 +69,19 @@ Piano Roll 的纵向视口必须限制在 MIDI pitch `0..127`，不得滚动到�
 Select
 Draw
 Split
+Erase
 ```
 只在支持的编辑器中显示。
 Current Tool 不跨应用重启保存；新 Workspace 默认 Select。
+
+Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的工具按钮必须互斥，且始终恰有一个激活；再次点击当前工具不得清空工具状态。上述直接编辑视图中的工具语义固定为：
+
+- `Draw`：空白处创建；已有 Segment 或 Note 的主体可移动、左右边缘可调整长度或 active crop window；
+- `Select`：单击选择和框选，不直接移动、Resize 或双击创建对象；
+- `Split`：只在支持的对象上执行分割；
+- `Erase`：删除命中的可删除对象。
+
+`Draw` 在空白处使用默认指针，在可直接编辑对象的主体和边缘分别使用移动与水平 Resize 指针；`Select` 使用十字指针，但命中对象时不改变为移动或 Resize 指针；`Split` 命中 Segment 时始终使用文本选择形 I-beam 指针。`Draw` 命中已有对象或执行移动/Resize 时隐藏创建预览；移动/Resize 的 transient 预览必须显示提交后的位置与长度。
 ### 20.1.7 Drag Preview
 拖动必须显示：
 ```text
@@ -1011,6 +1021,8 @@ Remove Object
 [H] Blocking Dialog
 ```
 原则：使用最小充分层级，不对普通字段错误滥用弹窗。
+
+Global Status Bar 允许为布局而省略长文本，但 Error 状态必须同时提供详情入口。详情窗显示该状态消息的完整原文，文本可选择并可通过 `Ctrl+C` 或显式 Copy 操作复制；打开详情不清除状态消息，也不改变 Project。
 ### 20.11.2 Field Validation
 未提交输入错误：
 - 显示在字段附近；
@@ -1172,10 +1184,13 @@ No general-purpose toast system requirement
 | `Shift+F4` | Previous Active Diagnostic | Main Window |
 | `F6` | Next Main UI Region | Main Window |
 | `Shift+F6` | Previous Main UI Region | Main Window |
+| `D` | Draw Tool | Active Arrangement / Segment / SubVoice Timeline Workspace |
+| `S` | Select Tool | Active Arrangement / Segment / SubVoice Timeline Workspace |
+| `E` | Erase Tool | Active Arrangement / Segment / SubVoice Timeline Workspace |
 | `Space` | Play / Stop | Explicit Timeline Context only |
 | `Escape` | Cancel innermost temporary state | Context-sensitive |
 | `Alt+F4` | Close active window / Exit request | Application or active Dialog |
-初版不增加其他默认全局快捷键。
+初版不增加表外的其他默认全局快捷键。
 ### 20.12.2 Ctrl+S
 ```text
 Function Code Editor focus -> Apply Function Draft
@@ -1274,7 +1289,7 @@ Ctrl+M
 Ctrl+Shift+F
 Alt+Left
 Alt+Right
-Letter-only tool shortcuts
+Other letter-only tool shortcuts
 Number-key tool shortcuts
 Global compile shortcut
 Global MIDI Export shortcut
@@ -1282,6 +1297,8 @@ Global Audio Render shortcut
 Global Reset Playback Engine shortcut
 ```
 特别是 `Ctrl+W` 在任何 Workspace、Dialog 或 Project 状态都完全不注册。
+
+`D`、`S`、`E` 是上一表批准的唯一 letter-only tool shortcut。它们只在无修饰键、主窗口无活动 Modal / Popup / Menu / Inline Editing Session，且焦点不在 TextBox、PasswordBox、RichTextBox、ComboBox 或代码编辑器时生效；否则按焦点控件的文本输入或本地交互处理，不得切换背景 Workspace 工具。
 ### 20.12.14 无效快捷键反馈
 可预期的 No Action 不弹窗、不播放声音。
 持续锁定导致命令不可用时，可在 Status Bar 短暂显示原因。
@@ -1497,9 +1514,11 @@ Project Panel、Inspector、Bottom Panel 和 Active Workspace 均有最小可用
 Toolbar 宽度不足时使用 Overflow。
 Workspace Tabs 单行，使用滚动和 Tab List。
 
-Timeline Toolbar 的 Grid / Snap 选择框只显示 `Bar` 或简写分数（例如 `1/8`）；不得因可编辑文本与选择项绑定冲突而显示额外错误色块、空选择或完整说明文字。Arrangement、Segment 和 SubVoice 的顺序统一为 `Grid + 下拉 | Snap + 下拉 | Length [Vel] | - + | 工具`，其中 Arrangement 不显示不适用的 Vel；各组之间显示分割线。
+Timeline Toolbar 的 Grid / Snap 选择框只显示 `Bar` 或简写分数（例如 `1/8`），选择后显示文本必须立即更新并与实际生效值一致；不得因可编辑文本与选择项绑定冲突而显示额外错误色块、空选择或完整说明文字。Arrangement、Segment 和 SubVoice 的顺序统一为 `Grid + 下拉 | Snap + 下拉 | Length [Vel] | - + | 工具`，其中 Arrangement 不显示不适用的 Vel；各组之间显示分割线。
 
-Timeline 选择轮廓使用可辨识的亮红色边框。Piano Roll 白键行使用较亮底色、黑键行使用较暗底色。Disabled Ghost Button 不保留背景或边框。Transport 的位置与 BPM 使用亮色并以竖向分割线分隔；Play 图标不得裁切。Parameter / Event Lane 不显示额外白色外框。数值标尺顶部和底部标签不得被视口裁切。
+Arrangement Segment 使用较深的低饱和蓝灰色；选中 Segment 使用同色系强调边框和更深背景，Note Preview 使用高亮但低饱和的蓝灰色。Segment Piano Roll 的 active range 保留基础键位底色，界外范围进一步压暗；未选中 Note 使用高亮蓝灰色，选中 Note 的红色填充与红色边框保持不变。Velocity 未选中柱使用相同蓝灰色，选中 Note 对应柱使用红色；每个柱子左上角显示方形 onset marker。Piano Roll 白键行使用较亮底色、黑键行使用较暗底色；Segment 与 SubVoice Pitch Ruler 使用完整白键和较短黑键的钢琴外观，并且只在每个八度 C 键显示符合 MIDI 60 = C4 的音名。空 Timeline 不显示覆盖画布的 `No timeline content` 卡片。Disabled Ghost Button 不保留背景或边框。Transport 的位置与 BPM 使用亮色并以竖向分割线分隔；Play 图标不得裁切。Parameter / Event Lane 不显示额外白色外框。数值标尺顶部和底部标签不得被视口裁切。
+
+ComboBox 的可编辑文本和下拉指示必须分别在内容区与按钮区垂直居中；下拉指示使用同一 Fluent 图标体系，不得使用字体符号代替。显式垂直 ScrollBar 的 Track 必须完整铺满可用高度；Thumb 长度必须按当前可见范围相对完整有界范围的比例计算，不得使用与视口无关的固定值。Bottom Panel Diagnostics 的筛选 ComboBox 和 Segment Piano Roll 顶部左侧文本不得裁切或偏离垂直中心。
 ### 20.15.5 Resize 语义
 Resize 只改变视图，不：
 ```text
@@ -1511,6 +1530,8 @@ Switch Workspace
 Commit field edits
 ```
 Pointer Capture 因 Resize 丢失时，取消当前编辑手势并恢复原状态，不创建 Undo。
+
+Segment 下部 Lane 编辑区的分隔条调整下部编辑区与“Piano Roll + Timeline Overview”整体上部区域之间的高度分配；不得把 Timeline Overview 单独作为相邻 Resize 目标。该操作只改变 Project Session UI State，不修改 Project 内容或 Timeline zoom。
 ### 20.15.6 窗口状态持久化
 保存 Normal Window Bounds 和 Maximized State，不恢复 Minimized State。
 显示器或工作区变化时，恢复必须保证 Title Bar 和主窗口可见、可操作。

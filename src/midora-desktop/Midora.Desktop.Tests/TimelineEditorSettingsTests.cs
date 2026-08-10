@@ -1,4 +1,5 @@
 using Midora.Domain;
+using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Interaction;
 using Xunit;
 
@@ -39,6 +40,24 @@ public sealed class TimelineEditorSettingsTests
         Assert.Equal("1/8", eighth.ShortLabel);
         Assert.Equal("1/8", eighth.ToString());
         Assert.Equal("Bar", TimelineSubdivision.Presets[0].ToString());
+    }
+
+    [Fact]
+    public void SubdivisionSelectionUpdatesCompactBindableText()
+    {
+        TimelineEditorSettings settings = new();
+        List<string?> notifications = [];
+        settings.PropertyChanged += (_, args) => notifications.Add(args.PropertyName);
+
+        settings.DisplaySubdivision = TimelineSubdivision.Presets.Single(item =>
+            !item.IsBar && item.Numerator == 1 && item.Denominator == 8);
+        settings.OperationSubdivision = TimelineSubdivision.Presets.Single(item =>
+            !item.IsBar && item.Numerator == 1 && item.Denominator == 24);
+
+        Assert.Equal("1/8", settings.DisplaySubdivisionText);
+        Assert.Equal("1/24", settings.OperationSubdivisionText);
+        Assert.Contains(nameof(TimelineEditorSettings.DisplaySubdivisionText), notifications);
+        Assert.Contains(nameof(TimelineEditorSettings.OperationSubdivisionText), notifications);
     }
 
     [Fact]
@@ -110,5 +129,26 @@ public sealed class TimelineEditorSettingsTests
         segment.IsLowerEditorVisible = true;
         Assert.Equal(260, segment.BottomEditorRowHeight.Value);
         Assert.Equal(0, arrangement.BottomEditorRowHeight.Value);
+    }
+
+    [Fact]
+    public void TimelineToolModeAlwaysExposesExactlyOneActiveTool()
+    {
+        TimelineWorkspaceViewModel workspace = new(
+            WorkspaceKey.ForType(WorkspaceKind.Arrangement),
+            "Arrangement",
+            TimelineWorkspaceMode.Arrangement);
+
+        workspace.ToolMode = TimelineToolMode.Draw;
+        Assert.True(workspace.IsDrawTool);
+        Assert.False(workspace.IsSelectTool);
+        Assert.False(workspace.IsSplitTool);
+        Assert.False(workspace.IsEraseTool);
+
+        workspace.ToolMode = TimelineToolMode.Erase;
+        Assert.True(workspace.IsEraseTool);
+        Assert.False(workspace.IsDrawTool);
+        Assert.False(workspace.IsSelectTool);
+        Assert.False(workspace.IsSplitTool);
     }
 }

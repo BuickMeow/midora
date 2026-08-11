@@ -173,6 +173,60 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void EditingOneSegmentPreservesEveryOtherSegmentPcmKey()
+    {
+        MidoraProject project = CreateProject();
+        LogicalTrack track = project.Tracks[0];
+        MidoraId changedSegmentId = track.Segments[0].Id;
+        Segment unchanged = new(project)
+        {
+            ProjectStartTick = 960,
+            LengthTicks = 960
+        };
+        unchanged.Notes.Add(new LogicalNote(project)
+        {
+            StartTick = 0,
+            LengthTicks = 480,
+            Note = 67,
+            Velocity = 90
+        });
+        track.Segments.Add(unchanged);
+        using ProjectCompilationSession session = new(project);
+        MidiRenderPlan before = session.GetOrCreateRenderPlan(48_000);
+        MidiSegmentRenderPlan unchangedBefore = before.Segments.ToArray()
+            .Single(value => value.SegmentId == unchanged.Id.Value);
+        string keyBefore = MidiSegmentPcmCacheKey.Create(
+            unchangedBefore,
+            before.SampleRate,
+            new string('a', 64),
+            "native-baseline",
+            500);
+
+        ProjectChangeSet changes = new();
+        changes.TrackIds.Add(track.Id);
+        session.ApplyEdit(
+            value => value.Tracks[0].Segments[0].Notes[0].Note = 62,
+            changes);
+        MidiRenderPlan after = session.GetOrCreateRenderPlan(48_000);
+        MidiSegmentRenderPlan unchangedAfter = after.Segments.ToArray()
+            .Single(value => value.SegmentId == unchanged.Id.Value);
+        string keyAfter = MidiSegmentPcmCacheKey.Create(
+            unchangedAfter,
+            after.SampleRate,
+            new string('a', 64),
+            "native-baseline",
+            500);
+
+        Assert.Equal(unchangedBefore.SemanticFingerprint, unchangedAfter.SemanticFingerprint);
+        Assert.Equal(keyBefore, keyAfter);
+        Assert.NotEqual(
+            before.Segments.ToArray().Single(
+                value => value.SegmentId == changedSegmentId.Value).SemanticFingerprint,
+            after.Segments.ToArray().Single(
+                value => value.SegmentId == changedSegmentId.Value).SemanticFingerprint);
+    }
+
+    [Fact]
     public void OfflineTrackProjectionExcludesOtherTrackUnitFragments()
     {
         (MidoraProject project, LogicalTrack secondTrack) = CreateMonitoringRoutingProject();

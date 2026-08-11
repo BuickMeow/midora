@@ -24,7 +24,8 @@ public sealed class AudioCacheSessionStoreTests
         Assert.True(second.AlreadyPresent);
         Assert.True(store.TryReadReusable(key, out byte[] actual));
         Assert.Equal(expected, actual);
-        Assert.Equal(176, store.GetSnapshot().ReusableBytes);
+        Assert.Equal(320, store.GetSnapshot().ReusableBytes);
+        Assert.Equal(1, store.GetSnapshot().PackFileCount);
         Assert.Empty(Directory.GetFiles(
             Path.Combine(store.SessionPath, "reusable"),
             "*.tmp"));
@@ -116,7 +117,7 @@ public sealed class AudioCacheSessionStoreTests
     public void QuotaFullStopsNewRetentionWithoutHidingExistingEntries()
     {
         using TemporaryDirectory root = new();
-        using AudioCacheSessionStore store = new(root.Path, 80);
+        using AudioCacheSessionStore store = new(root.Path, 112);
         string firstKey = AudioCacheSessionStore.ComputeKey([1]);
         string secondKey = AudioCacheSessionStore.ComputeKey([2]);
 
@@ -159,14 +160,168 @@ public sealed class AudioCacheSessionStoreTests
         using AudioCacheSessionStore store = new(root.Path, 4096);
         string key = AudioCacheSessionStore.ComputeKey([9, 8, 7]);
         Assert.True(store.PublishReusable(key, new byte[32]).Published);
-        string path = Path.Combine(store.SessionPath, "reusable", key + ".mcac");
-        File.WriteAllBytes(path, [1, 2, 3]);
+        string path = Directory.GetFiles(
+            Path.Combine(store.SessionPath, "reusable"),
+            "pack-*.mcap").Single();
+        using (FileStream corrupt = new(
+            path,
+            FileMode.Open,
+            FileAccess.Write,
+            FileShare.Read))
+        {
+            corrupt.Position = 16 + 96;
+            corrupt.WriteByte(0xff);
+        }
 
         Assert.False(store.TryReadReusable(key, out _));
-        Assert.False(File.Exists(path));
+        Assert.True(File.Exists(path));
+        Assert.True(store.GetSnapshot().DeadReusableBytes > 0);
         Assert.Equal(
             AudioCacheWarningCode.AudioCacheCorruptAndRebuilt,
             store.GetSnapshot().Warning.Code);
+    }
+
+    [Fact]
+    public void ThousandsOfLogicalEntriesUseOnePackAndOneIndexInsteadOfThousandsOfFiles()
+    {
+        using TemporaryDirectory root = new();
+        using AudioCacheSessionStore store = new(root.Path, 16 * 1024 * 1024);
+
+        for (int index = 0; index < 2_000; index++)
+        {
+            string key = AudioCacheSessionStore.ComputeKey(BitConverter.GetBytes(index));
+            Assert.True(store.PublishReusable(key, new byte[32]).Published);
+        }
+
+        string reusable = Path.Combine(store.SessionPath, "reusable");
+        Assert.Single(Directory.GetFiles(reusable, "pack-*.mcap"));
+        Assert.Single(Directory.GetFiles(reusable, "*.mcix"));
+        Assert.Equal(2, Directory.GetFiles(reusable).Length);
+    }
+
+    [Fact]
+    public void PendingBackgroundBatchIsImmediatelyReusableAndDrainsIntoPack()
+    {
+        using TemporaryDirectory root = new();
+        using AudioCacheSessionStore store = new(root.Path, 1024 * 1024);
+        byte[] expected = Enumerable.Range(0, 64 * 1024)
+            .Select(value => (byte)(value * 17))
+            .ToArray();
+        string key = AudioCacheSessionStore.ComputeKey([4, 5, 6]);
+        AudioCacheSessionStore.AudioRecoverySpool spool =
+            store.CreateRecoverySpool(expected.Length);
+        spool.Stream.Write(expected);
+        spool.Stream.Flush();
+
+        store.QueueReusableBatch(
+            spool,
+            [new AudioCachePublishSlice(key, 0, expected.Length)]);
+
+        using MemoryStream immediate = new();
+        Assert.True(store.TryCopyReusable(key, immediate, out long length));
+        Assert.Equal(expected.Length, length);
+        Assert.Equal(expected, immediate.ToArray());
+        Assert.True(SpinWait.SpinUntil(
+            () => store.GetSnapshot().PendingPublishCount == 0,
+            TimeSpan.FromSeconds(5)));
+        Assert.Equal(0, store.GetSnapshot().WriterBacklogBytes);
+        Assert.Equal(0, store.GetSnapshot().TransientBytes);
+        Assert.True(store.TryReadReusable(key, out byte[] packed));
+        Assert.Equal(expected, packed);
+    }
+
+    [Fact]
+    public void SupersededGenerationRemainsReadableUntilCompactionButIsNotLive()
+    {
+        using TemporaryDirectory root = new();
+        using AudioCacheSessionStore store = new(root.Path, 1024 * 1024);
+        string first = AudioCacheSessionStore.ComputeKey([1, 1]);
+        string second = AudioCacheSessionStore.ComputeKey([2, 2]);
+
+        store.RegisterReusableGeneration("segment:1:2", first);
+        Assert.True(store.PublishReusable(first, new byte[32]).Published);
+        store.RegisterReusableGeneration("segment:1:2", second);
+        Assert.True(store.PublishReusable(second, new byte[64]).Published);
+
+        AudioCacheSessionSnapshot snapshot = store.GetSnapshot();
+        Assert.Equal(64 + (2 * 96), snapshot.ReusableBytes);
+        Assert.True(snapshot.DeadReusableBytes >= 32 + 96);
+        Assert.True(store.TryReadReusable(first, out byte[] oldGeneration));
+        Assert.Equal(32, oldGeneration.Length);
+
+        store.RegisterReusableGeneration("segment:1:2", first);
+        Assert.Equal(32 + 96, store.GetSnapshot().ReusableBytes);
+    }
+
+    [Fact]
+    public void CompactionPublishesNewIndexBeforeRemovingObsoleteGeneration()
+    {
+        using TemporaryDirectory root = new();
+        string reusable = Path.Combine(root.Path, "reusable");
+        using AudioCachePackStore store = new(reusable, 1024 * 1024);
+        string oldKey = AudioCacheSessionStore.ComputeKey([8, 1]);
+        string liveKey = AudioCacheSessionStore.ComputeKey([8, 2]);
+        store.RegisterGeneration("segment:8:9", oldKey);
+        using (MemoryStream oldPayload = new(new byte[64]))
+        {
+            Assert.True(store.Publish(oldKey, oldPayload, 64, segmentCompleted: true).Published);
+        }
+        store.RegisterGeneration("segment:8:9", liveKey);
+        using (MemoryStream livePayload = new(new byte[96]))
+        {
+            Assert.True(store.Publish(liveKey, livePayload, 96, segmentCompleted: true).Published);
+        }
+
+        Assert.True(store.TryCompact(
+            isStopped: true,
+            idleDuration: TimeSpan.Zero,
+            minimumDeadBytes: 1,
+            minimumDeadRatio: 0.01,
+            minimumHeadroomBytes: 0));
+
+        Assert.False(store.TryRead(oldKey, out _));
+        Assert.True(store.TryRead(liveKey, out byte[] live));
+        Assert.Equal(96, live.Length);
+        Assert.Equal(1, store.PackCount);
+        Assert.Equal(0, store.DeadBytes);
+        Assert.True(File.Exists(Path.Combine(reusable, "pack-index.mcix")));
+    }
+
+    [Fact]
+    public void PackRolloverAndCompactionKeepFileCountBounded()
+    {
+        using TemporaryDirectory root = new();
+        using AudioCachePackStore store = new(
+            Path.Combine(root.Path, "reusable"),
+            maximumLiveBytes: 64 * 1024,
+            maximumGenerationBytes: 700);
+        List<string> currentKeys = [];
+        for (int index = 0; index < 20; index++)
+        {
+            string first = AudioCacheSessionStore.ComputeKey(
+                BitConverter.GetBytes(index * 2));
+            string second = AudioCacheSessionStore.ComputeKey(
+                BitConverter.GetBytes((index * 2) + 1));
+            string owner = "segment:" + index;
+            store.RegisterGeneration(owner, first);
+            using (MemoryStream payload = new(new byte[96]))
+            {
+                Assert.True(store.Publish(first, payload, 96, true).Published);
+            }
+            store.RegisterGeneration(owner, second);
+            using (MemoryStream payload = new(new byte[96]))
+            {
+                Assert.True(store.Publish(second, payload, 96, true).Published);
+            }
+            currentKeys.Add(second);
+        }
+        Assert.True(store.PackCount > 1);
+
+        Assert.True(store.TryCompact(true, TimeSpan.Zero, 1, 0.01, 0));
+
+        Assert.Equal(currentKeys.Count, currentKeys.Count(key => store.TryRead(key, out _)));
+        Assert.InRange(store.PackCount, 1, 10);
+        Assert.Equal(0, store.DeadBytes);
     }
 
     [Fact]

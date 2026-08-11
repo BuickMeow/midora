@@ -53,6 +53,14 @@ internal sealed class PlaybackSpanCacheStaging : IDisposable
                 masterSettings.LimiterCeiling,
                 masterSettings.LimiterReleaseMilliseconds,
                 masterSettings.LimiterEnabled));
+        cache.RegisterReusableAudioGeneration(
+            "playback-span:"
+                + plan.SampleRate
+                + ":"
+                + plan.TotalFrameCount
+                + ":"
+                + string.Join(',', plan.SourceIds.ToArray()),
+            key);
         AudioFormat format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
         long payloadLength = checked(
             AudioPcmCachePayload.HeaderByteCount
@@ -113,14 +121,15 @@ internal sealed class PlaybackSpanCacheStaging : IDisposable
         {
             return;
         }
-        using FileStream source = new(
-            FilePath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite,
-            bufferSize: 64 * 1024,
-            FileOptions.SequentialScan);
-        _ = cache.PublishReusableAudio(Key, source, PayloadLength);
+        AudioCacheSessionStore.AudioRecoverySpool? spool =
+            Interlocked.Exchange(ref _spool, null);
+        if (spool is null)
+        {
+            return;
+        }
+        cache.QueueReusableAudioBatch(
+            spool,
+            [new AudioCachePublishSlice(Key, 0, PayloadLength)]);
     }
 
     public void Dispose()

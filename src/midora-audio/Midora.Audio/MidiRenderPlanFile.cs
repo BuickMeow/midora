@@ -6,14 +6,15 @@ namespace Midora.Audio;
 public static class MidiRenderPlanFile
 {
     private const uint Magic = 0x5041444d;
-    private const int Version = 4;
+    private const int Version = 5;
     private const int ChecksumByteCount = 32;
     private const int MaximumFileByteCount = 256 * 1024 * 1024;
     private const int MaximumEventCount = 16 * 1024 * 1024;
-    private const int FixedPayloadByteCount = 36;
+    private const int FixedPayloadByteCount = 40;
     private const int SourceIdByteCount = sizeof(long);
     private const int PortHeaderByteCount = 8;
     private const int UnitFragmentHeaderByteCount = 148;
+    private const int SegmentHeaderByteCount = 120;
     private const int EventByteCount = 16;
 
     public static void Write(string filePath, MidiRenderPlan plan)
@@ -83,6 +84,23 @@ public static class MidiRenderPlanFile
                     writer.Write(item.Message.PackedValue);
                     writer.Write(item.SourceIndex);
                 }
+            }
+            writer.Write(plan.Segments.Length);
+            foreach (MidiSegmentRenderPlan segment in plan.Segments)
+            {
+                writer.Write(segment.TrackId);
+                writer.Write(segment.SegmentId);
+                writer.Write(segment.SourceIndex);
+                writer.Write(0);
+                writer.Write(segment.StartFrame);
+                writer.Write(segment.EndFrame);
+                writer.Write(Convert.FromHexString(segment.SemanticFingerprint));
+                writer.Write(segment.PcmCacheKey is null
+                    ? new byte[32]
+                    : Convert.FromHexString(segment.PcmCacheKey));
+                writer.Write(segment.PcmCachePayloadOffset);
+                writer.Write(segment.PcmCacheHit);
+                writer.Write(new byte[7]);
             }
         }
 
@@ -283,6 +301,61 @@ public static class MidiRenderPlanFile
                     cacheHit);
             }
 
+            int segmentCount = reader.ReadInt32();
+            if (segmentCount is < 0 or > MaximumEventCount
+                || (long)segmentCount * SegmentHeaderByteCount
+                    > payloadLength - stream.Position)
+            {
+                throw new InvalidDataException("The IPC MIDI Segment count is invalid.");
+            }
+            MidiSegmentRenderPlan[] segments = new MidiSegmentRenderPlan[segmentCount];
+            for (int segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++)
+            {
+                long trackId = reader.ReadInt64();
+                long segmentId = reader.ReadInt64();
+                int sourceIndex = reader.ReadInt32();
+                if (reader.ReadInt32() != 0)
+                {
+                    throw new InvalidDataException(
+                        "The IPC MIDI Segment has a non-zero reserved field.");
+                }
+                long startFrame = reader.ReadInt64();
+                long endFrame = reader.ReadInt64();
+                string fingerprint = Convert.ToHexStringLower(reader.ReadBytes(32));
+                if (fingerprint.Length != 64)
+                {
+                    throw new InvalidDataException(
+                        "The IPC MIDI Segment fingerprint is truncated.");
+                }
+                byte[] cacheKeyBytes = reader.ReadBytes(32);
+                if (cacheKeyBytes.Length != 32)
+                {
+                    throw new InvalidDataException(
+                        "The IPC MIDI Segment cache key is truncated.");
+                }
+                bool hasCacheKey = cacheKeyBytes.Any(value => value != 0);
+                string? cacheKey = hasCacheKey
+                    ? Convert.ToHexStringLower(cacheKeyBytes)
+                    : null;
+                long cachePayloadOffset = reader.ReadInt64();
+                bool cacheHit = reader.ReadBoolean();
+                if (reader.ReadBytes(7).Any(value => value != 0))
+                {
+                    throw new InvalidDataException(
+                        "The IPC MIDI Segment cache binding has non-zero reserved fields.");
+                }
+                segments[segmentIndex] = new(
+                    trackId,
+                    segmentId,
+                    sourceIndex,
+                    startFrame,
+                    endFrame,
+                    fingerprint,
+                    cacheKey,
+                    cachePayloadOffset,
+                    cacheHit);
+            }
+
             if (stream.Position != payloadLength)
             {
                 throw new InvalidDataException("The IPC MIDI event plan contains trailing payload data.");
@@ -294,7 +367,8 @@ public static class MidiRenderPlanFile
                 ports,
                 sourceIds,
                 disabledSourceIndices,
-                fragments);
+                fragments,
+                segments);
         }
         catch (Exception exception) when (exception is EndOfStreamException
             or OverflowException
@@ -337,6 +411,7 @@ public static class MidiRenderPlanFile
             + ((long)disabledSourceCount * sizeof(int))
             + ((long)plan.Ports.Length * PortHeaderByteCount)
             + ((long)plan.UnitFragments.Length * UnitFragmentHeaderByteCount)
+            + ((long)plan.Segments.Length * SegmentHeaderByteCount)
             + ((long)totalEventCount * EventByteCount);
         if (payloadByteCount + ChecksumByteCount > MaximumFileByteCount)
         {

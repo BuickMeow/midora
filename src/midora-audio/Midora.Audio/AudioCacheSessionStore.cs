@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
+using System.Runtime.InteropServices;
 
 namespace Midora.Audio;
 
@@ -16,7 +17,8 @@ public enum AudioCacheWarningCode
 {
     None,
     AudioCacheRetentionDisabled,
-    AudioCacheCorruptAndRebuilt
+    AudioCacheCorruptAndRebuilt,
+    AudioCachePerformanceBelowRequirement
 }
 
 public readonly record struct AudioCacheWarning(
@@ -31,13 +33,27 @@ public readonly record struct AudioCacheSessionSnapshot(
     long TransientBytes,
     long PeakTransientBytes,
     AudioCacheRetentionState RetentionState,
-    AudioCacheWarning Warning);
+    AudioCacheWarning Warning,
+    long PhysicalReusableBytes = 0,
+    long DeadReusableBytes = 0,
+    int PackFileCount = 0,
+    long SequentialReadBytesPerSecond = 0,
+    long SequentialWriteBytesPerSecond = 0,
+    bool MeetsStoragePerformanceRequirement = false,
+    long WriterBacklogBytes = 0,
+    int PendingPublishCount = 0,
+    bool CompactionPending = false);
 
 public readonly record struct AudioCachePublishResult(
     bool Published,
     bool AlreadyPresent,
     AudioCacheRetentionState RetentionState,
     AudioCacheWarning Warning);
+
+public readonly record struct AudioCachePublishSlice(
+    string Key,
+    long PayloadOffset,
+    long PayloadLength);
 
 public interface IAudioPcmCacheSessionAccess
 {
@@ -50,9 +66,46 @@ public interface IAudioPcmCacheSessionAccess
         Stream source,
         long payloadLength);
 
+    void QueueReusableAudioBatch(
+        AudioCacheSessionStore.AudioRecoverySpool spool,
+        IReadOnlyList<AudioCachePublishSlice> slices)
+    {
+        ArgumentNullException.ThrowIfNull(spool);
+        ArgumentNullException.ThrowIfNull(slices);
+        spool.ReleaseFileHandleForExternalUse();
+        try
+        {
+            using FileStream source = new(
+                spool.Path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite,
+                bufferSize: 128 * 1024,
+                FileOptions.SequentialScan);
+            foreach (AudioCachePublishSlice slice in slices)
+            {
+                source.Position = slice.PayloadOffset;
+                _ = PublishReusableAudio(slice.Key, source, slice.PayloadLength);
+            }
+        }
+        finally
+        {
+            spool.Dispose();
+        }
+    }
+
     void InvalidateReusableAudio(string key);
 
+    void RegisterReusableAudioGeneration(string owner, string key)
+    {
+    }
+
+    bool TryCompactReusableAudio(bool isStopped, TimeSpan idleDuration) => false;
+
     AudioCacheSessionStore.AudioRecoverySpool CreateTransientAudioSpool(long lengthBytes);
+
+    AudioCacheSessionStore.AudioRecoverySpool CreateSparseTransientAudioSpool(long lengthBytes) =>
+        CreateTransientAudioSpool(lengthBytes);
 
     void DisableReusableAudioRetention(string reason);
 }
@@ -83,12 +136,23 @@ public sealed class AudioCacheSessionStore : IDisposable
     private readonly string _transientPath;
     private readonly long _maximumReusableBytes;
     private readonly FileStream _activeLock;
+    private readonly AudioCachePackStore _packStore;
+    private readonly AudioCacheStorageBenchmarkResult _storageBenchmark;
+    private readonly Queue<PendingPublishBatch> _publishQueue = new();
+    private readonly Dictionary<string, PendingPublishSlice> _pendingPublishes =
+        new(StringComparer.Ordinal);
+    private readonly Thread _publishThread;
     private long _reusableBytes;
     private long _transientBytes;
     private long _peakTransientBytes;
+    private long _pendingPublishBytes;
     private AudioCacheRetentionState _retentionState;
     private AudioCacheWarning _warning;
     private bool _disposed;
+    private bool _publishStopRequested;
+    private bool _compactionRequested;
+    private bool _compactionStopped;
+    private TimeSpan _compactionIdleDuration;
 
     public AudioCacheSessionStore(string rootPath, long maximumReusableBytes)
     {
@@ -111,6 +175,8 @@ public sealed class AudioCacheSessionStore : IDisposable
         _sessionPath = ValidateOwnedSessionPath(_rootPath, Path.Combine(_rootPath, sessionName));
         _reusablePath = Path.Combine(_sessionPath, "reusable");
         _transientPath = Path.Combine(_sessionPath, "transient");
+        FileStream? createdActiveLock = null;
+        AudioCachePackStore? createdPackStore = null;
         try
         {
             Directory.CreateDirectory(_sessionPath);
@@ -120,16 +186,44 @@ public sealed class AudioCacheSessionStore : IDisposable
                 Path.Combine(_sessionPath, ManifestFileName),
                 ManifestMagic + "\n" + sessionName + "\n",
                 new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            _activeLock = new FileStream(
+            createdActiveLock = new FileStream(
                 Path.Combine(_sessionPath, ActiveLockFileName),
                 FileMode.CreateNew,
                 FileAccess.ReadWrite,
                 FileShare.None,
                 bufferSize: 1,
                 FileOptions.WriteThrough);
+            _activeLock = createdActiveLock;
+            createdPackStore = new AudioCachePackStore(
+                _reusablePath,
+                maximumReusableBytes);
+            _packStore = createdPackStore;
+            _storageBenchmark = maximumReusableBytes >= 1024L * 1024 * 1024
+                ? AudioCacheStorageBenchmark.Measure(_transientPath)
+                : AudioCacheStorageBenchmarkResult.NotMeasured;
+            if (maximumReusableBytes != 0
+                && _storageBenchmark != default
+                && !_storageBenchmark.MeetsMinimumRequirement)
+            {
+                _warning = new(
+                    AudioCacheWarningCode.AudioCachePerformanceBelowRequirement,
+                    "The configured audio cache volume is below the supported sequential throughput: "
+                        + $"read {_storageBenchmark.SequentialReadBytesPerSecond / (1024 * 1024)} MiB/s, "
+                        + $"write {_storageBenchmark.SequentialWriteBytesPerSecond / (1024 * 1024)} MiB/s; "
+                        + "Midora requires a local SSD with at least 200 MiB/s read and 100 MiB/s write.");
+            }
+            _publishThread = new Thread(RunPublishQueue)
+            {
+                IsBackground = true,
+                Name = "Midora Audio Pack Writer",
+                Priority = ThreadPriority.BelowNormal
+            };
+            _publishThread.Start();
         }
         catch
         {
+            createdPackStore?.Dispose();
+            createdActiveLock?.Dispose();
             TryDeleteOwnedSession(_rootPath, _sessionPath);
             throw;
         }
@@ -154,7 +248,16 @@ public sealed class AudioCacheSessionStore : IDisposable
                 _transientBytes,
                 _peakTransientBytes,
                 _retentionState,
-                _warning);
+                _warning,
+                _packStore.PhysicalBytes,
+                _packStore.DeadBytes,
+                _packStore.PackCount,
+                _storageBenchmark.SequentialReadBytesPerSecond,
+                _storageBenchmark.SequentialWriteBytesPerSecond,
+                _storageBenchmark.MeetsMinimumRequirement,
+                _pendingPublishBytes,
+                _pendingPublishes.Count,
+                _compactionRequested);
         }
     }
 
@@ -164,8 +267,7 @@ public sealed class AudioCacheSessionStore : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            string finalPath = GetReusableEntryPath(key);
-            if (TryReadEntry(finalPath, out _))
+            if (_packStore.Contains(key))
             {
                 return new(true, true, _retentionState, _warning);
             }
@@ -173,51 +275,30 @@ public sealed class AudioCacheSessionStore : IDisposable
             {
                 return new(false, false, _retentionState, _warning);
             }
-
-            long entryBytes = checked(EntryHeaderSize + (long)payload.Length);
-            if (entryBytes > _maximumReusableBytes - _reusableBytes)
-            {
-                DisableRetention(
-                    AudioCacheRetentionState.DisabledByQuota,
-                    "Reusable audio cache quota is full; new entries will be rendered without retention.");
-                return new(false, false, _retentionState, _warning);
-            }
-
-            string temporaryPath = Path.Combine(
-                _reusablePath,
-                $".{key}.{Guid.NewGuid():N}.tmp");
             try
             {
-                byte[] digest = SHA256.HashData(payload);
-                Span<byte> header = stackalloc byte[EntryHeaderSize];
-                BinaryPrimitives.WriteUInt32LittleEndian(header, EntryMagic);
-                BinaryPrimitives.WriteUInt32LittleEndian(header[4..], EntryVersion);
-                BinaryPrimitives.WriteInt64LittleEndian(header[8..], payload.Length);
-                digest.CopyTo(header[16..]);
-                using (FileStream stream = new(
-                    temporaryPath,
-                    FileMode.CreateNew,
-                    FileAccess.Write,
-                    FileShare.None,
-                    bufferSize: 64 * 1024,
-                    FileOptions.SequentialScan))
+                using MemoryStream source = new(payload.ToArray(), writable: false);
+                AudioCachePackPublishResult result = _packStore.Publish(
+                    key,
+                    source,
+                    payload.Length,
+                    segmentCompleted: true);
+                _reusableBytes = _packStore.LiveBytes;
+                if (result.QuotaFull)
                 {
-                    stream.Write(header);
-                    stream.Write(payload);
-                    stream.Flush(flushToDisk: true);
+                    DisableRetention(
+                        AudioCacheRetentionState.DisabledByQuota,
+                        "Reusable audio cache live-byte quota is full; new entries will be rendered without retention.");
                 }
-                File.Move(temporaryPath, finalPath, overwrite: false);
-                _reusableBytes = checked(_reusableBytes + entryBytes);
-                return new(true, false, _retentionState, _warning);
+                return new(result.Published, result.AlreadyPresent, _retentionState, _warning);
             }
             catch (Exception exception) when (exception is IOException
                 or UnauthorizedAccessException
                 or NotSupportedException)
             {
-                TryDeleteFile(temporaryPath);
                 DisableRetention(
                     AudioCacheRetentionState.DisabledByWriteFailure,
-                    "Reusable audio cache writes failed; new cache misses will be rendered without retention. "
+                    "Reusable audio Pack writes failed; new cache misses will be rendered without retention. "
                         + exception.Message);
                 return new(false, false, _retentionState, _warning);
             }
@@ -230,11 +311,11 @@ public sealed class AudioCacheSessionStore : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            string path = GetReusableEntryPath(key);
-            if (TryReadEntry(path, out payload))
+            if (_packStore.TryRead(key, out payload))
             {
                 return true;
             }
+            CapturePackCorruptionWarning();
             payload = [];
             return false;
         }
@@ -251,7 +332,90 @@ public sealed class AudioCacheSessionStore : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            return TryCopyEntry(GetReusableEntryPath(key), destination, out payloadLength);
+            bool copied = _packStore.TryCopy(key, destination, out payloadLength);
+            if (!copied)
+            {
+                CapturePackCorruptionWarning();
+            }
+            if (copied)
+            {
+                return true;
+            }
+            return TryCopyPendingPublish(key, destination, out payloadLength);
+        }
+    }
+
+    public void QueueReusableBatch(
+        AudioRecoverySpool spool,
+        IReadOnlyList<AudioCachePublishSlice> slices)
+    {
+        ArgumentNullException.ThrowIfNull(spool);
+        ArgumentNullException.ThrowIfNull(slices);
+        AudioCachePublishSlice[] accepted;
+        try
+        {
+            spool.ReleaseFileHandleForExternalUse();
+            lock (_sync)
+            {
+                ObjectDisposedException.ThrowIf(_disposed || _publishStopRequested, this);
+                List<AudioCachePublishSlice> candidates = new(slices.Count);
+                HashSet<string> batchKeys = new(StringComparer.Ordinal);
+                foreach (AudioCachePublishSlice slice in slices)
+                {
+                    ValidateKey(slice.Key);
+                    if (slice.PayloadOffset < 0
+                        || slice.PayloadLength < 0
+                        || slice.PayloadOffset > spool.LengthBytes - slice.PayloadLength)
+                    {
+                        throw new ArgumentOutOfRangeException(nameof(slices));
+                    }
+                    if (!batchKeys.Add(slice.Key)
+                        || _packStore.Contains(slice.Key)
+                        || _pendingPublishes.ContainsKey(slice.Key))
+                    {
+                        continue;
+                    }
+                    long recordLength = AudioCachePackStore.ComputeRecordLength(
+                        slice.PayloadLength);
+                    if (_retentionState != AudioCacheRetentionState.Enabled
+                        || recordLength > _maximumReusableBytes
+                            - _packStore.LiveBytes
+                            - _pendingPublishBytes)
+                    {
+                        DisableRetention(
+                            AudioCacheRetentionState.DisabledByQuota,
+                            "Reusable audio cache live-byte quota is full; new entries will be rendered without retention.");
+                        break;
+                    }
+                    candidates.Add(slice);
+                    _pendingPublishBytes = checked(_pendingPublishBytes + recordLength);
+                }
+                accepted = candidates.ToArray();
+                if (accepted.Length != 0)
+                {
+                    PendingPublishBatch batch = new(spool, accepted);
+                    foreach (AudioCachePublishSlice slice in accepted)
+                    {
+                        _pendingPublishes.Add(
+                            slice.Key,
+                            new PendingPublishSlice(
+                                spool.Path,
+                                slice.PayloadOffset,
+                                slice.PayloadLength));
+                    }
+                    _publishQueue.Enqueue(batch);
+                    Monitor.PulseAll(_sync);
+                }
+            }
+        }
+        catch
+        {
+            spool.Dispose();
+            throw;
+        }
+        if (accepted.Length == 0)
+        {
+            spool.Dispose();
         }
     }
 
@@ -274,8 +438,7 @@ public sealed class AudioCacheSessionStore : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            string finalPath = GetReusableEntryPath(key);
-            if (TryCopyEntry(finalPath, Stream.Null, out _))
+            if (_packStore.Contains(key))
             {
                 return new(true, true, _retentionState, _warning);
             }
@@ -284,66 +447,29 @@ public sealed class AudioCacheSessionStore : IDisposable
                 return new(false, false, _retentionState, _warning);
             }
 
-            long entryBytes = checked(EntryHeaderSize + payloadLength);
-            if (entryBytes > _maximumReusableBytes - _reusableBytes)
-            {
-                DisableRetention(
-                    AudioCacheRetentionState.DisabledByQuota,
-                    "Reusable audio cache quota is full; new entries will be rendered without retention.");
-                return new(false, false, _retentionState, _warning);
-            }
-
-            string temporaryPath = Path.Combine(
-                _reusablePath,
-                $".{key}.{Guid.NewGuid():N}.tmp");
             try
             {
-                using FileStream stream = new(
-                    temporaryPath,
-                    FileMode.CreateNew,
-                    FileAccess.ReadWrite,
-                    FileShare.None,
-                    bufferSize: 64 * 1024,
-                    FileOptions.SequentialScan);
-                stream.Position = EntryHeaderSize;
-                byte[] buffer = new byte[64 * 1024];
-                using IncrementalHash digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-                long remaining = payloadLength;
-                while (remaining != 0)
+                AudioCachePackPublishResult result = _packStore.Publish(
+                    key,
+                    source,
+                    payloadLength,
+                    segmentCompleted: true);
+                _reusableBytes = _packStore.LiveBytes;
+                if (result.QuotaFull)
                 {
-                    int requested = (int)Math.Min(buffer.Length, remaining);
-                    int read = source.Read(buffer, 0, requested);
-                    if (read == 0)
-                    {
-                        throw new EndOfStreamException("The reusable audio cache source is truncated.");
-                    }
-                    digest.AppendData(buffer, 0, read);
-                    stream.Write(buffer, 0, read);
-                    remaining -= read;
+                    DisableRetention(
+                        AudioCacheRetentionState.DisabledByQuota,
+                        "Reusable audio cache live-byte quota is full; new entries will be rendered without retention.");
                 }
-
-                byte[] hash = digest.GetHashAndReset();
-                Span<byte> header = stackalloc byte[EntryHeaderSize];
-                BinaryPrimitives.WriteUInt32LittleEndian(header, EntryMagic);
-                BinaryPrimitives.WriteUInt32LittleEndian(header[4..], EntryVersion);
-                BinaryPrimitives.WriteInt64LittleEndian(header[8..], payloadLength);
-                hash.CopyTo(header[16..]);
-                stream.Position = 0;
-                stream.Write(header);
-                stream.Flush(flushToDisk: true);
-                stream.Dispose();
-                File.Move(temporaryPath, finalPath, overwrite: false);
-                _reusableBytes = checked(_reusableBytes + entryBytes);
-                return new(true, false, _retentionState, _warning);
+                return new(result.Published, result.AlreadyPresent, _retentionState, _warning);
             }
             catch (Exception exception) when (exception is IOException
                 or UnauthorizedAccessException
                 or NotSupportedException)
             {
-                TryDeleteFile(temporaryPath);
                 DisableRetention(
                     AudioCacheRetentionState.DisabledByWriteFailure,
-                    "Reusable audio cache writes failed; new cache misses will be rendered without retention. "
+                    "Reusable audio Pack writes failed; new cache misses will be rendered without retention. "
                         + exception.Message);
                 return new(false, false, _retentionState, _warning);
             }
@@ -356,17 +482,51 @@ public sealed class AudioCacheSessionStore : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            string path = GetReusableEntryPath(key);
-            long length = File.Exists(path) ? new FileInfo(path).Length : 0;
-            TryDeleteFile(path);
-            _reusableBytes = Math.Max(0, _reusableBytes - length);
+            _packStore.Invalidate(key);
+            _reusableBytes = _packStore.LiveBytes;
             _warning = new(
                 AudioCacheWarningCode.AudioCacheCorruptAndRebuilt,
                 "An invalid reusable audio PCM payload was isolated and will be rebuilt.");
         }
     }
 
-    public AudioRecoverySpool CreateRecoverySpool(long lengthBytes)
+    public void RegisterReusableGeneration(string owner, string key)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(owner);
+        ValidateKey(key);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _packStore.RegisterGeneration(owner, key);
+            _reusableBytes = _packStore.LiveBytes;
+        }
+    }
+
+    public bool TryCompactReusable(bool isStopped, TimeSpan idleDuration)
+    {
+        if (idleDuration < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(idleDuration));
+        }
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_publishStopRequested)
+            {
+                return false;
+            }
+            _compactionRequested = true;
+            _compactionStopped |= isStopped;
+            if (idleDuration > _compactionIdleDuration)
+            {
+                _compactionIdleDuration = idleDuration;
+            }
+            Monitor.PulseAll(_sync);
+            return true;
+        }
+    }
+
+    public AudioRecoverySpool CreateRecoverySpool(long lengthBytes, bool sparse = false)
     {
         if (lengthBytes < 0)
         {
@@ -389,6 +549,10 @@ public sealed class AudioCacheSessionStore : IDisposable
                     FileOptions.SequentialScan);
                 try
                 {
+                    if (sparse && OperatingSystem.IsWindows())
+                    {
+                        MarkSparse(stream);
+                    }
                     stream.SetLength(lengthBytes);
                     stream.Position = 0;
                 }
@@ -455,15 +619,198 @@ public sealed class AudioCacheSessionStore : IDisposable
     {
         lock (_sync)
         {
+            if (_disposed || _publishStopRequested)
+            {
+                return;
+            }
+            _publishStopRequested = true;
+            Monitor.PulseAll(_sync);
+        }
+        _publishThread.Join();
+        lock (_sync)
+        {
             if (_disposed)
             {
                 return;
             }
             _disposed = true;
+            _packStore.Dispose();
             _activeLock.Dispose();
             TryDeleteOwnedSession(_rootPath, _sessionPath);
         }
         GC.SuppressFinalize(this);
+    }
+
+    private void RunPublishQueue()
+    {
+        while (true)
+        {
+            PendingPublishBatch? batch = null;
+            bool compact = false;
+            bool compactStopped = false;
+            TimeSpan compactIdle = TimeSpan.Zero;
+            lock (_sync)
+            {
+                while (_publishQueue.Count == 0
+                    && !_compactionRequested
+                    && !_publishStopRequested)
+                {
+                    Monitor.Wait(_sync);
+                }
+                if (_publishQueue.Count != 0)
+                {
+                    batch = _publishQueue.Dequeue();
+                }
+                else if (_compactionRequested)
+                {
+                    compact = true;
+                    compactStopped = _compactionStopped;
+                    compactIdle = _compactionIdleDuration;
+                    _compactionRequested = false;
+                    _compactionStopped = false;
+                    _compactionIdleDuration = TimeSpan.Zero;
+                }
+                else if (_publishStopRequested)
+                {
+                    return;
+                }
+            }
+
+            if (compact)
+            {
+                try
+                {
+                    _ = _packStore.TryCompact(compactStopped, compactIdle);
+                }
+                catch (Exception exception) when (exception is IOException
+                    or UnauthorizedAccessException
+                    or NotSupportedException)
+                {
+                    lock (_sync)
+                    {
+                        DisableRetention(
+                            AudioCacheRetentionState.DisabledByWriteFailure,
+                            "Audio cache Pack compaction failed; new cache misses will be rendered without retention. "
+                                + exception.Message);
+                    }
+                }
+                finally
+                {
+                    lock (_sync)
+                    {
+                        _reusableBytes = _packStore.LiveBytes;
+                    }
+                }
+                continue;
+            }
+            PendingPublishBatch activeBatch = batch
+                ?? throw new InvalidOperationException(
+                    "The audio Pack writer woke without queued work.");
+
+            try
+            {
+                using FileStream source = new(
+                    activeBatch.Spool.Path,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.ReadWrite,
+                    bufferSize: 128 * 1024,
+                    FileOptions.SequentialScan);
+                foreach (AudioCachePublishSlice slice in activeBatch.Slices)
+                {
+                    source.Position = slice.PayloadOffset;
+                    _ = PublishReusable(slice.Key, source, slice.PayloadLength);
+                    CompletePendingPublish(slice);
+                }
+            }
+            catch (Exception exception) when (exception is IOException
+                or UnauthorizedAccessException
+                or NotSupportedException
+                or ObjectDisposedException)
+            {
+                lock (_sync)
+                {
+                    if (!_disposed)
+                    {
+                        DisableRetention(
+                            AudioCacheRetentionState.DisabledByWriteFailure,
+                            "Reusable audio Pack background publishing failed; new cache misses will be rendered without retention. "
+                                + exception.Message);
+                    }
+                }
+            }
+            finally
+            {
+                foreach (AudioCachePublishSlice slice in activeBatch.Slices)
+                {
+                    CompletePendingPublish(slice);
+                }
+                activeBatch.Spool.Dispose();
+            }
+        }
+    }
+
+    private void CompletePendingPublish(AudioCachePublishSlice slice)
+    {
+        lock (_sync)
+        {
+            if (_pendingPublishes.Remove(slice.Key))
+            {
+                _pendingPublishBytes = Math.Max(
+                    0,
+                    _pendingPublishBytes
+                        - AudioCachePackStore.ComputeRecordLength(slice.PayloadLength));
+            }
+        }
+    }
+
+    private bool TryCopyPendingPublish(
+        string key,
+        Stream destination,
+        out long payloadLength)
+    {
+        payloadLength = 0;
+        if (!_pendingPublishes.TryGetValue(key, out PendingPublishSlice pending))
+        {
+            return false;
+        }
+        try
+        {
+            using FileStream source = new(
+                pending.Path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite,
+                bufferSize: 128 * 1024,
+                FileOptions.SequentialScan);
+            source.Position = pending.PayloadOffset;
+            byte[] buffer = new byte[128 * 1024];
+            long remaining = pending.PayloadLength;
+            while (remaining != 0)
+            {
+                int requested = (int)Math.Min(buffer.Length, remaining);
+                int read = source.Read(buffer, 0, requested);
+                if (read == 0)
+                {
+                    throw new EndOfStreamException(
+                        "A pending reusable audio payload is truncated.");
+                }
+                destination.Write(buffer, 0, read);
+                remaining -= read;
+            }
+            payloadLength = pending.PayloadLength;
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or NotSupportedException)
+        {
+            DisableRetention(
+                AudioCacheRetentionState.DisabledByWriteFailure,
+                "A completed pending audio cache payload could not be read. "
+                    + exception.Message);
+            return false;
+        }
     }
 
     private bool TryReadEntry(string path, out byte[] payload)
@@ -628,6 +975,16 @@ public sealed class AudioCacheSessionStore : IDisposable
         _warning = RetentionWarning(message);
     }
 
+    private void CapturePackCorruptionWarning()
+    {
+        if (_packStore.ConsumeCorruptionDetected())
+        {
+            _warning = new(
+                AudioCacheWarningCode.AudioCacheCorruptAndRebuilt,
+                "A corrupt reusable audio Pack record was isolated and will be rebuilt.");
+        }
+    }
+
     private static AudioCacheWarning RetentionWarning(string message) => new(
         AudioCacheWarningCode.AudioCacheRetentionDisabled,
         message);
@@ -774,6 +1131,46 @@ public sealed class AudioCacheSessionStore : IDisposable
             // The caller already reports the primary cache failure.
         }
     }
+
+    private static void MarkSparse(FileStream stream)
+    {
+        const uint FsctlSetSparse = 0x000900c4;
+        if (!DeviceIoControl(
+            stream.SafeFileHandle.DangerousGetHandle(),
+            FsctlSetSparse,
+            IntPtr.Zero,
+            0,
+            IntPtr.Zero,
+            0,
+            out _,
+            IntPtr.Zero))
+        {
+            throw new IOException(
+                "The Segment cache staging file could not be marked sparse.",
+                Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()));
+        }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(
+        IntPtr device,
+        uint controlCode,
+        IntPtr inputBuffer,
+        uint inputBufferSize,
+        IntPtr outputBuffer,
+        uint outputBufferSize,
+        out uint bytesReturned,
+        IntPtr overlapped);
+
+    private readonly record struct PendingPublishSlice(
+        string Path,
+        long PayloadOffset,
+        long PayloadLength);
+
+    private sealed record PendingPublishBatch(
+        AudioRecoverySpool Spool,
+        AudioCachePublishSlice[] Slices);
 
     public sealed class AudioRecoverySpool : IDisposable
     {

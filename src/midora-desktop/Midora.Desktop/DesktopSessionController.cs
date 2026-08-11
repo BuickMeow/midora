@@ -1178,6 +1178,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         SetStatusMessage(null);
         RefreshAll();
         OpenArrangement();
+        AudioCacheWarning cacheWarning = next.Compilation.AudioCacheWarning;
+        if (cacheWarning.Code != AudioCacheWarningCode.None)
+        {
+            SetStatusMessage("Audio cache warning: " + cacheWarning.Message);
+        }
         if (previous is not null)
         {
             await previous.DisposeAsync();
@@ -1468,6 +1473,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 })
             {
                 SetStatusMessage($"Playback failed: {failure.Message}", isError: true);
+            }
+            else if (_context?.Compilation.AudioCacheWarning is
+                { Code: not AudioCacheWarningCode.None } warning)
+            {
+                SetStatusMessage("Audio cache warning: " + warning.Message);
             }
             RefreshProperties();
         });

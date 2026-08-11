@@ -95,7 +95,8 @@ public static class MidiRenderPlanSplicer
             ports,
             spliced.SourceIds,
             spliced.InitiallyDisabledSourceIndices,
-            spliced.UnitFragments);
+            spliced.UnitFragments,
+            spliced.Segments);
     }
 
     public static MidiRenderPlan SpliceAtProducerFrontier(
@@ -169,7 +170,8 @@ public static class MidiRenderPlanSplicer
             ports,
             causalPrefix.SourceIds,
             causalPrefix.InitiallyDisabledSourceIndices,
-            continuation.UnitFragments);
+            continuation.UnitFragments,
+            continuation.Segments);
     }
 
     public static int FindFirstEventAtOrAfter(

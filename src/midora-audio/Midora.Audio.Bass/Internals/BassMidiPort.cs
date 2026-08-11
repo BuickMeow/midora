@@ -8,7 +8,10 @@ using NativeBassMidi = Midora.NativeInterops.BassMidi.BASSMIDI;
 
 namespace Midora.Audio.Bass;
 
-public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallbackSource
+public sealed unsafe class BassMidiRenderer
+    : IMidiRenderer,
+      IPlaybackSpanFallbackSource,
+      IMonitoringResettableRenderSource
 {
     private const int MaximumMidiBatchEventCount = 1_024;
     private const int MaximumPackedMidiBatchByteCount = MaximumMidiBatchEventCount * 3;
@@ -21,6 +24,10 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
     private readonly BassMidiRendererSettings _settings;
     private readonly BassNativeRuntime.Lease? _runtimeLease;
     private readonly UnitState[] _units;
+    private SegmentState[] _segments;
+    private int[][] _segmentIndicesBySource;
+    private int[] _segmentCursorBySource;
+    private int[] _activeSegmentIndexBySource;
     private readonly int[] _unitIndexByCanonicalNumber;
     private readonly bool[] _sourceEnabled;
     private readonly bool[] _sourceCacheBypassed;
@@ -31,10 +38,12 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
     private readonly bool _limiterEnabled;
     private StereoPeakLimiter _limiter;
     private byte* _packedMidiBuffer;
-    private float* _portScratchBuffer;
+    private float* _unitScratchBuffer;
+    private float* _segmentScratchBuffer;
     private float* _outputStagingBuffer;
     private uint _soundFontHandle;
-    private UnitPcmCacheIoBridge? _cacheIo;
+    private SegmentPcmCacheIoBridge? _cacheIo;
+    private ParallelBassMidiDecodeCoordinator? _parallelDecoder;
     private long _positionFrames;
     private long _renderPositionFrames;
     private long _nativeSynthesisFrameCount;
@@ -52,12 +61,17 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
         string soundFontPath,
         BassMidiRendererSettings settings,
         AudioMasterSettings masterSettings,
-        string? cacheStagingPath = null)
+        string? cacheStagingPath = null,
+        int segmentProducerConcurrency = 1)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(masterSettings);
+        if (segmentProducerConcurrency <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(segmentProducerConcurrency));
+        }
 
         if (!File.Exists(soundFontPath))
         {
@@ -74,6 +88,9 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
             masterSettings.LimiterReleaseMilliseconds);
         _fault = AudioRenderFault.None;
         _units = new UnitState[plan.Units.Length];
+        _segments = plan.Segments.ToArray().Select(value => new SegmentState(value)).ToArray();
+        (_segmentIndicesBySource, _segmentCursorBySource, _activeSegmentIndexBySource) =
+            CreateSegmentSchedule(plan.SourceIds.Length, _segments);
         _unitIndexByCanonicalNumber = new int[16 * 16];
         Array.Fill(_unitIndexByCanonicalNumber, -1);
         _sourceEnabled = new bool[plan.SourceIds.Length];
@@ -93,13 +110,24 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
             _packedMidiBuffer = (byte*)NativeMemory.Alloc(MaximumPackedMidiBatchByteCount);
             nuint scratchByteCount = checked(
                 (nuint)DeterministicNativeDecodeFrameCount * 2 * sizeof(float));
-            _portScratchBuffer = (float*)NativeMemory.Alloc(scratchByteCount);
+            _unitScratchBuffer = (float*)NativeMemory.Alloc(checked(
+                scratchByteCount * (nuint)Math.Max(1, _units.Length)));
+            _segmentScratchBuffer = (float*)NativeMemory.Alloc(checked(
+                scratchByteCount * (nuint)Math.Max(1, plan.SourceIds.Length)));
             _outputStagingBuffer = (float*)NativeMemory.Alloc(scratchByteCount);
             OpenCacheStaging(cacheStagingPath);
             CreateSoundFont(soundFontPath);
             PreloadReferencedPresets();
             CreateUnits();
             WarmNativeHotPath();
+            if (_units.Length != 0)
+            {
+                _parallelDecoder = new ParallelBassMidiDecodeCoordinator(
+                    _units.Select(value => value.StreamHandle).ToArray(),
+                    _unitScratchBuffer,
+                    DeterministicNativeDecodeFrameCount,
+                    segmentProducerConcurrency);
+            }
         }
         catch (Exception preparationFailure)
         {
@@ -138,6 +166,9 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
     public bool CacheCaptureInvalidated => _cacheCaptureInvalidated;
 
     internal long NativeSynthesisFrameCountForDiagnostics => _nativeSynthesisFrameCount;
+
+    internal long ParallelDecodeAllocatedBytesForDiagnostics =>
+        _parallelDecoder?.WorkerAllocatedBytes ?? 0;
 
     internal int UnitStreamCountForDiagnostics => _units.Length;
 
@@ -367,6 +398,9 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
                 && _units[i].Fragments[_units[i].FragmentIndex].StartFrame
                     < producerFrontierFrame;
         }
+        _segments = plan.Segments.ToArray().Select(value => new SegmentState(value)).ToArray();
+        (_segmentIndicesBySource, _segmentCursorBySource, _activeSegmentIndexBySource) =
+            CreateSegmentSchedule(plan.SourceIds.Length, _segments);
         _plan = plan;
     }
 
@@ -375,16 +409,16 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (Volatile.Read(ref _pullActive) != 0
             || producerFrontierFrame < 0
-            || producerFrontierFrame > _plan.TotalFrameCount
-            || _positionFrames != 0
-            || _renderPositionFrames != 0
-            || _stagedFrameCount != 0)
+            || producerFrontierFrame > _plan.TotalFrameCount)
         {
             throw new InvalidOperationException(
                 "A playback-span cache fallback requires an unused renderer and a valid producer frontier.");
         }
 
         _limiter.Reset();
+        _cacheCaptureInvalidated |= _positionFrames != 0 || _renderPositionFrames != 0;
+        _stagedFrameOffset = 0;
+        _stagedFrameCount = 0;
         for (int i = 0; i < _units.Length; i++)
         {
             UnitState unit = _units[i];
@@ -399,18 +433,25 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
                 unit.FragmentIndex++;
             }
             unit.FragmentInitialized = false;
-            unit.CachedMuteFadeRemainingFrames = 0;
         }
         _positionFrames = producerFrontierFrame;
         _renderPositionFrames = producerFrontierFrame;
+        Array.Clear(_segmentCursorBySource);
+        Array.Fill(_activeSegmentIndexBySource, -1);
+        UpdateActiveSegmentsAtCurrentFrame();
     }
 
     void IPlaybackSpanFallbackSource.SeekForMonitoringColdStart(
         long producerFrontierFrame) =>
         SeekForMonitoringColdStart(producerFrontierFrame);
 
+    void IMonitoringResettableRenderSource.ResetForMonitoringColdStart(
+        long producerFrontierFrame) =>
+        SeekForMonitoringColdStart(producerFrontierFrame);
+
     private FillOutputResult FillOutputStagingBuffer()
     {
+        UpdateActiveSegmentsAtCurrentFrame();
         if (!ApplyPendingMonitoringCommands()
             || !PrepareFragmentStatesAtCurrentFrame())
         {
@@ -508,15 +549,15 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
     private void OpenCacheStaging(string? cacheStagingPath)
     {
         long requiredLength = 0;
-        foreach (MidiUnitFragmentRenderPlan fragment in _plan.UnitFragments)
+        foreach (MidiSegmentRenderPlan segment in _plan.Segments)
         {
-            if (fragment.PcmCacheKey is null)
+            if (segment.PcmCacheKey is null)
             {
                 continue;
             }
             requiredLength = Math.Max(
                 requiredLength,
-                checked(fragment.PcmCachePayloadOffset + fragment.PcmPayloadByteCount));
+                checked(segment.PcmCachePayloadOffset + segment.PcmPayloadByteCount));
         }
         if (requiredLength == 0)
         {
@@ -525,16 +566,16 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
         if (string.IsNullOrWhiteSpace(cacheStagingPath))
         {
             throw new InvalidDataException(
-                "The render plan contains PCM cache bindings without a staging file.");
+                "The render plan contains Segment PCM cache bindings without a staging file.");
         }
         string path = Path.GetFullPath(cacheStagingPath);
         if (!File.Exists(path) || new FileInfo(path).Length != requiredLength)
         {
             throw new InvalidDataException(
-                "The Unit PCM cache staging file length does not match the render plan.");
+                "The Segment PCM cache staging file length does not match the render plan.");
         }
 
-        _cacheIo = new UnitPcmCacheIoBridge(path, _plan);
+        _cacheIo = new SegmentPcmCacheIoBridge(path, _plan);
     }
 
     private void CreateSoundFont(string soundFontPath)
@@ -652,6 +693,57 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
         }
     }
 
+    private static (int[][] BySource, int[] Cursors, int[] Active) CreateSegmentSchedule(
+        int sourceCount,
+        SegmentState[] segments)
+    {
+        int[][] bySource = new int[sourceCount][];
+        for (int sourceIndex = 0; sourceIndex < sourceCount; sourceIndex++)
+        {
+            int capturedSourceIndex = sourceIndex;
+            bySource[sourceIndex] = segments
+                .Select((value, index) => (value, index))
+                .Where(value => value.value.Plan.SourceIndex == capturedSourceIndex)
+                .OrderBy(value => value.value.Plan.StartFrame)
+                .ThenBy(value => value.value.Plan.SegmentId)
+                .Select(value => value.index)
+                .ToArray();
+        }
+        int[] active = new int[sourceCount];
+        Array.Fill(active, -1);
+        return (bySource, new int[sourceCount], active);
+    }
+
+    private void UpdateActiveSegmentsAtCurrentFrame()
+    {
+        for (int sourceIndex = 0; sourceIndex < _segmentIndicesBySource.Length; sourceIndex++)
+        {
+            int[] schedule = _segmentIndicesBySource[sourceIndex];
+            int cursor = _segmentCursorBySource[sourceIndex];
+            while (cursor < schedule.Length
+                && _segments[schedule[cursor]].Plan.EndFrame <= _renderPositionFrames)
+            {
+                cursor++;
+            }
+            _segmentCursorBySource[sourceIndex] = cursor;
+            _activeSegmentIndexBySource[sourceIndex] = cursor < schedule.Length
+                && _segments[schedule[cursor]].Plan.StartFrame <= _renderPositionFrames
+                ? schedule[cursor]
+                : -1;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private SegmentState? GetActiveSegment(int sourceIndex)
+    {
+        if ((uint)sourceIndex >= (uint)_activeSegmentIndexBySource.Length)
+        {
+            return null;
+        }
+        int index = _activeSegmentIndexBySource[sourceIndex];
+        return index >= 0 ? _segments[index] : null;
+    }
+
     private UnitState CreateUnit(
         MidiUnitRenderPlan plan,
         MidiUnitFragmentRenderPlan[] fragments)
@@ -746,7 +838,7 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
                 ThrowBassPreparationFailure("BASS_MIDI_StreamEvents warm-up");
             }
 
-            uint available = NativeBass.ChannelGetData(unit.StreamHandle, _portScratchBuffer, 0);
+            uint available = NativeBass.ChannelGetData(unit.StreamHandle, _unitScratchBuffer, 0);
             if (available == uint.MaxValue)
             {
                 ThrowBassPreparationFailure("BASS_ChannelGetData warm-up");
@@ -1008,7 +1100,6 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
             {
                 unit.FragmentIndex++;
                 unit.FragmentInitialized = false;
-                unit.CachedMuteFadeRemainingFrames = 0;
             }
             if (unit.FragmentIndex >= unit.Fragments.Length)
             {
@@ -1019,7 +1110,10 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
             {
                 continue;
             }
-            if (fragment.PcmCacheHit && !_sourceCacheBypassed[fragment.SourceIndex])
+            SegmentState? segment = GetActiveSegment(fragment.SourceIndex);
+            if (segment?.Plan.SegmentId == fragment.SegmentId
+                && segment.Plan.PcmCacheHit
+                && !_sourceCacheBypassed[fragment.SourceIndex])
             {
                 unit.FragmentInitialized = true;
                 continue;
@@ -1050,11 +1144,15 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
         {
             return false;
         }
+        SegmentState? segment = fragment is null
+            ? null
+            : GetActiveSegment(fragment.SourceIndex);
         if (fragment is not null
-            && fragment.PcmCacheKey is not null
+            && segment?.Plan.SegmentId == fragment.SegmentId
+            && segment.Plan.PcmCacheKey is not null
             && !_sourceCacheBypassed[fragment.SourceIndex])
         {
-            return !fragment.PcmCacheHit;
+            return !segment.Plan.PcmCacheHit;
         }
         return scheduled.SourceIndex < 0 || _sourceEnabled[scheduled.SourceIndex];
     }
@@ -1075,14 +1173,11 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
 
     private bool HasPcmCacheBindings()
     {
-        for (int i = 0; i < _units.Length; i++)
+        for (int i = 0; i < _segments.Length; i++)
         {
-            foreach (MidiUnitFragmentRenderPlan fragment in _units[i].Fragments)
+            if (_segments[i].Plan.PcmCacheKey is not null)
             {
-                if (fragment.PcmCacheKey is not null)
-                {
-                    return true;
-                }
+                return true;
             }
         }
         return false;
@@ -1094,9 +1189,13 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
         {
             UnitState unit = _units[i];
             MidiUnitFragmentRenderPlan? fragment = GetActiveFragment(unit);
+            SegmentState? segment = fragment is null
+                ? null
+                : GetActiveSegment(fragment.SourceIndex);
             if (fragment is not null
                 && fragment.SourceIndex == sourceIndex
-                && fragment.PcmCacheHit)
+                && segment?.Plan.SegmentId == fragment.SegmentId
+                && segment.Plan.PcmCacheHit)
             {
                 EstablishCanonicalInitialState(unit.StreamHandle);
             }
@@ -1105,18 +1204,12 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
 
     private void ConfigureCachedHitFadeForSource(int sourceIndex, bool enabled)
     {
-        for (int i = 0; i < _units.Length; i++)
+        SegmentState? segment = GetActiveSegment(sourceIndex);
+        if (segment?.Plan.PcmCacheHit == true)
         {
-            UnitState unit = _units[i];
-            MidiUnitFragmentRenderPlan? fragment = GetActiveFragment(unit);
-            if (fragment is not null
-                && fragment.SourceIndex == sourceIndex
-                && fragment.PcmCacheHit)
-            {
-                unit.CachedMuteFadeRemainingFrames = enabled
-                    ? 0
-                    : _cachedMonitoringFadeFrameCount;
-            }
+            segment.CachedMuteFadeRemainingFrames = enabled
+                ? 0
+                : _cachedMonitoringFadeFrameCount;
         }
     }
 
@@ -1126,6 +1219,55 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
         NativeMemory.Clear(destination, checked(sampleCount * sizeof(float)));
         uint requestedByteCount = checked((uint)(sampleCount * sizeof(float)));
 
+        // A Segment stem is accumulated in its source-owned scratch slot. Logical
+        // Track Segments cannot overlap, so one bounded slot per source is enough.
+        for (int sourceIndex = 0; sourceIndex < _activeSegmentIndexBySource.Length; sourceIndex++)
+        {
+            SegmentState? segment = GetActiveSegment(sourceIndex);
+            if (segment?.Plan.PcmCacheKey is null
+                || _sourceCacheBypassed[sourceIndex]
+                || _cacheCaptureInvalidated && !segment.Plan.PcmCacheHit)
+            {
+                continue;
+            }
+            float* segmentScratch = _segmentScratchBuffer
+                + checked(sourceIndex * DeterministicNativeDecodeFrameCount * 2);
+            if (segment.Plan.PcmCacheHit)
+            {
+                if (!CopyCachedPcmToScratch(segment.Plan, segmentScratch, frameCount))
+                {
+                    SetFault(AudioRenderFaultCode.PcmCacheReadFailed, 0, -1);
+                    return false;
+                }
+                bool shouldMix;
+                if (segment.CachedMuteFadeRemainingFrames > 0)
+                {
+                    segment.CachedMuteFadeRemainingFrames = ApplyCachedMuteFade(
+                        new Span<float>(segmentScratch, checked(frameCount * 2)),
+                        segment.CachedMuteFadeRemainingFrames,
+                        _cachedMonitoringFadeFrameCount);
+                    shouldMix = true;
+                }
+                else
+                {
+                    shouldMix = _sourceEnabled[sourceIndex];
+                }
+                if (shouldMix)
+                {
+                    MixScratchInto(destination, segmentScratch, sampleCount);
+                }
+            }
+            else
+            {
+                NativeMemory.Clear(segmentScratch, checked(sampleCount * sizeof(float)));
+            }
+        }
+
+        ParallelBassMidiDecodeCoordinator? decoder = _parallelDecoder;
+        Span<bool> decodeRequired = decoder is null
+            ? Span<bool>.Empty
+            : decoder.Required;
+        decodeRequired.Clear();
         for (int unitIndex = 0; unitIndex < _units.Length; unitIndex++)
         {
             UnitState unit = _units[unitIndex];
@@ -1134,77 +1276,94 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
             {
                 continue;
             }
-            bool cacheActive = fragment?.PcmCacheKey is not null
-                && (!_sourceCacheBypassed[fragment.SourceIndex]
-                    || fragment.PcmCacheHit && unit.CachedMuteFadeRemainingFrames > 0);
-            bool shouldMix;
-            if (cacheActive && fragment!.PcmCacheHit)
+            SegmentState? segment = fragment is null
+                ? null
+                : GetActiveSegment(fragment.SourceIndex);
+            bool cacheActive = fragment is not null
+                && segment?.Plan.SegmentId == fragment.SegmentId
+                && segment.Plan.PcmCacheKey is not null
+                && !_sourceCacheBypassed[fragment.SourceIndex]
+                && (segment.Plan.PcmCacheHit || !_cacheCaptureInvalidated);
+            if (cacheActive && segment!.Plan.PcmCacheHit)
             {
-                if (!CopyCachedPcmToScratch(fragment, frameCount))
-                {
-                    SetFault(AudioRenderFaultCode.PcmCacheReadFailed, 0,
-                        unit.Plan.CanonicalZeroBasedPortNumber);
-                    return false;
-                }
-                if (unit.CachedMuteFadeRemainingFrames > 0)
-                {
-                    unit.CachedMuteFadeRemainingFrames = ApplyCachedMuteFade(
-                        new Span<float>(_portScratchBuffer, checked(frameCount * 2)),
-                        unit.CachedMuteFadeRemainingFrames,
-                        _cachedMonitoringFadeFrameCount);
-                    shouldMix = true;
-                }
-                else
-                {
-                    shouldMix = _sourceEnabled[fragment.SourceIndex];
-                }
+                // The cached Segment stem has already been mixed exactly once above.
+                continue;
             }
-            else
+            decodeRequired[unitIndex] = true;
+        }
+        decoder?.Decode(requestedByteCount);
+
+        for (int unitIndex = 0; unitIndex < _units.Length; unitIndex++)
+        {
+            if (!decodeRequired[unitIndex])
             {
-                uint receivedByteCount = NativeBass.ChannelGetData(
-                    unit.StreamHandle,
-                    _portScratchBuffer,
-                    requestedByteCount);
-
-                if (receivedByteCount == uint.MaxValue)
-                {
-                    int error = NativeBass.ErrorGetCode();
-                    SetFault(
-                        AudioRenderFaultCode.BassMidiDecodeFailed,
-                        error,
-                        unit.Plan.CanonicalZeroBasedPortNumber);
-                    return false;
-                }
-
-                if (receivedByteCount != requestedByteCount)
-                {
-                    SetFault(
-                        AudioRenderFaultCode.BassMidiShortRead,
-                        0,
-                        unit.Plan.CanonicalZeroBasedPortNumber);
-                    return false;
-                }
-                _nativeSynthesisFrameCount += frameCount;
-                if (cacheActive)
-                {
-                    if (!CopyScratchToCachedPcm(fragment!, frameCount))
-                    {
-                        _cacheCaptureInvalidated = true;
-                    }
-                    shouldMix = _sourceEnabled[fragment!.SourceIndex];
-                }
-                else
-                {
-                    shouldMix = true;
-                }
+                continue;
             }
-
-            if (shouldMix)
+            UnitState unit = _units[unitIndex];
+            uint receivedByteCount = decoder!.GetResult(unitIndex);
+            if (receivedByteCount == uint.MaxValue)
             {
-                for (nuint sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++)
-                {
-                    destination[sampleIndex] += _portScratchBuffer[sampleIndex];
-                }
+                SetFault(
+                    AudioRenderFaultCode.BassMidiDecodeFailed,
+                    decoder.GetError(unitIndex),
+                    unit.Plan.CanonicalZeroBasedPortNumber);
+                return false;
+            }
+            if (receivedByteCount != requestedByteCount)
+            {
+                SetFault(
+                    AudioRenderFaultCode.BassMidiShortRead,
+                    0,
+                    unit.Plan.CanonicalZeroBasedPortNumber);
+                return false;
+            }
+            _nativeSynthesisFrameCount += frameCount;
+
+            float* unitScratch = _unitScratchBuffer
+                + checked(unitIndex * DeterministicNativeDecodeFrameCount * 2);
+            MidiUnitFragmentRenderPlan? fragment = GetActiveFragment(unit);
+            SegmentState? segment = fragment is null
+                ? null
+                : GetActiveSegment(fragment.SourceIndex);
+            bool cacheActive = fragment is not null
+                && segment?.Plan.SegmentId == fragment.SegmentId
+                && segment.Plan.PcmCacheKey is not null
+                && !_sourceCacheBypassed[fragment.SourceIndex]
+                && (segment.Plan.PcmCacheHit || !_cacheCaptureInvalidated);
+
+            if (cacheActive)
+            {
+                float* segmentScratch = _segmentScratchBuffer
+                    + checked(fragment!.SourceIndex * DeterministicNativeDecodeFrameCount * 2);
+                MixScratchInto(segmentScratch, unitScratch, sampleCount);
+            }
+            else if (fragment is null
+                || fragment.SourceIndex < 0
+                || _sourceEnabled[fragment.SourceIndex])
+            {
+                MixScratchInto(destination, unitScratch, sampleCount);
+            }
+        }
+
+        for (int sourceIndex = 0; sourceIndex < _activeSegmentIndexBySource.Length; sourceIndex++)
+        {
+            SegmentState? segment = GetActiveSegment(sourceIndex);
+            if (segment?.Plan.PcmCacheKey is null
+                || segment.Plan.PcmCacheHit
+                || _sourceCacheBypassed[sourceIndex]
+                || _cacheCaptureInvalidated)
+            {
+                continue;
+            }
+            float* segmentScratch = _segmentScratchBuffer
+                + checked(sourceIndex * DeterministicNativeDecodeFrameCount * 2);
+            if (!CopyScratchToCachedPcm(segment.Plan, segmentScratch, frameCount))
+            {
+                return false;
+            }
+            if (_sourceEnabled[sourceIndex])
+            {
+                MixScratchInto(destination, segmentScratch, sampleCount);
             }
         }
 
@@ -1236,35 +1395,47 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
         return true;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void MixScratchInto(float* destination, float* source, nuint sampleCount)
+    {
+        for (nuint sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++)
+        {
+            destination[sampleIndex] += source[sampleIndex];
+        }
+    }
+
     private bool PrepareCacheIoForBlock(int frameCount)
     {
-        UnitPcmCacheIoBridge? cacheIo = _cacheIo;
+        SegmentPcmCacheIoBridge? cacheIo = _cacheIo;
         if (cacheIo is null)
         {
             return true;
         }
 
-        bool readsReady = true;
-        for (int unitIndex = 0; unitIndex < _units.Length; unitIndex++)
+        bool ioReady = true;
+        for (int sourceIndex = 0; sourceIndex < _activeSegmentIndexBySource.Length; sourceIndex++)
         {
-            UnitState unit = _units[unitIndex];
-            MidiUnitFragmentRenderPlan? fragment = GetActiveFragment(unit);
-            if (fragment?.PcmCacheKey is null)
+            SegmentState? segment = GetActiveSegment(sourceIndex);
+            if (segment?.Plan.PcmCacheKey is null || _sourceCacheBypassed[sourceIndex])
             {
                 continue;
             }
-            bool cacheActive = !_sourceCacheBypassed[fragment.SourceIndex]
-                || fragment.PcmCacheHit && unit.CachedMuteFadeRemainingFrames > 0;
-            if (!cacheActive)
+            if (segment.Plan.PcmCacheHit)
             {
-                continue;
-            }
-            if (fragment.PcmCacheHit)
-            {
-                readsReady &= cacheIo.IsReadReady(
-                    fragment,
+                ioReady &= cacheIo.IsReadReady(
+                    segment.Plan,
                     _renderPositionFrames,
                     frameCount);
+            }
+            else
+            {
+                if (!_cacheCaptureInvalidated)
+                {
+                    ioReady &= cacheIo.CanWriteFrames(
+                        segment.Plan,
+                        _renderPositionFrames,
+                        frameCount);
+                }
             }
         }
         if (cacheIo.ReadFaulted)
@@ -1276,10 +1447,12 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
         {
             _cacheCaptureInvalidated = true;
         }
-        // Reusable retention is opportunistic. A slow writer must never stall
-        // the realtime producer; RenderFrames invalidates the capture if its
-        // bounded writer ring cannot accept a synthesized block.
-        return readsReady;
+        // The rolling preparation ring absorbs normal writer jitter. Once the
+        // bounded writer backlog is full, synthesis waits at the same frame so
+        // completed Segment generations are not silently discarded and rebuilt
+        // on every playback. The device side reaches controlled Buffering only if
+        // the prepared high-water window is actually exhausted.
+        return ioReady;
     }
 
     internal static int ApplyCachedMuteFade(
@@ -1316,24 +1489,26 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
     }
 
     private bool CopyCachedPcmToScratch(
-        MidiUnitFragmentRenderPlan fragment,
+        MidiSegmentRenderPlan segment,
+        float* destination,
         int frameCount)
     {
         return _cacheIo?.TryReadFrames(
-            fragment,
+            segment,
             _renderPositionFrames,
-            _portScratchBuffer,
+            destination,
             frameCount) == true;
     }
 
     private bool CopyScratchToCachedPcm(
-        MidiUnitFragmentRenderPlan fragment,
+        MidiSegmentRenderPlan segment,
+        float* source,
         int frameCount)
     {
         return _cacheIo?.TryQueueWrite(
-            fragment,
+            segment,
             _renderPositionFrames,
-            _portScratchBuffer,
+            source,
             frameCount) == true;
     }
 
@@ -1348,6 +1523,18 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
     private Exception? ReleaseNativeResources()
     {
         Exception? cleanupFailure = null;
+        if (_parallelDecoder is not null)
+        {
+            try
+            {
+                _parallelDecoder.Dispose();
+            }
+            catch (Exception exception)
+            {
+                cleanupFailure = CombineFailures(cleanupFailure, exception);
+            }
+            _parallelDecoder = null;
+        }
         for (int i = _units.Length - 1; i >= 0; i--)
         {
             UnitState? unit = _units[i];
@@ -1377,10 +1564,16 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
             _soundFontHandle = 0;
         }
 
-        if (_portScratchBuffer != null)
+        if (_unitScratchBuffer != null)
         {
-            NativeMemory.Free(_portScratchBuffer);
-            _portScratchBuffer = null;
+            NativeMemory.Free(_unitScratchBuffer);
+            _unitScratchBuffer = null;
+        }
+
+        if (_segmentScratchBuffer != null)
+        {
+            NativeMemory.Free(_segmentScratchBuffer);
+            _segmentScratchBuffer = null;
         }
 
         if (_outputStagingBuffer != null)
@@ -1463,6 +1656,12 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
         public int FragmentIndex { get; set; }
 
         public bool FragmentInitialized { get; set; }
+
+    }
+
+    private sealed class SegmentState(MidiSegmentRenderPlan plan)
+    {
+        public MidiSegmentRenderPlan Plan { get; } = plan;
 
         public int CachedMuteFadeRemainingFrames { get; set; }
     }

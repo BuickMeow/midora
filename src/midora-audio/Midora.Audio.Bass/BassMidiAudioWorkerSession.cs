@@ -16,7 +16,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
     private readonly Process _process;
     private readonly Thread _monitorThread;
     private readonly IAudioPcmCacheSessionAccess? _audioCache;
-    private readonly AudioUnitCacheStaging? _cacheStaging;
+    private readonly AudioSegmentCacheStaging? _cacheStaging;
     private readonly PlaybackSpanCacheStaging? _playbackSpanCacheStaging;
     private readonly long _totalFrameCount;
     private string? _standardError;
@@ -156,7 +156,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             }
             try
             {
-                _cacheStaging = AudioUnitCacheStaging.Create(
+                _cacheStaging = AudioSegmentCacheStaging.Create(
                     plan,
                     audioCache,
                     soundFontPath,
@@ -170,7 +170,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
                 // Reusable retention is opportunistic. Failure to stage it must not prevent
                 // formal realtime playback; the renderer falls back to live synthesis.
                 audioCache?.DisableReusableAudioRetention(
-                    "Reusable audio cache staging failed; new cache misses will be rendered without retention. "
+                    "Reusable Segment audio cache staging failed; new cache misses will be rendered without retention. "
                         + exception.Message);
                 _cacheStaging = null;
             }
@@ -197,7 +197,9 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
                 bufferingRecoverySpoolPath,
                 bufferingRecoveryMemoryFrameCapacity,
                 _playbackSpanCacheStaging?.FilePath,
-                _playbackSpanCacheStaging?.Hit == true);
+                _playbackSpanCacheStaging?.Hit == true,
+                playbackSpanCacheEnabled,
+                audioCache?.AudioCacheSnapshot?.SequentialWriteBytesPerSecond ?? 0);
             startedProcess = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Could not start the Midora audio worker process.");
             _process = startedProcess;
@@ -499,7 +501,9 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         string? bufferingRecoverySpoolPath,
         long bufferingRecoveryMemoryFrameCapacity,
         string? playbackSpanCacheStagingPath,
-        bool playbackSpanCacheHit)
+        bool playbackSpanCacheHit,
+        bool rollingPreparationEnabled,
+        long measuredCacheWriteBytesPerSecond)
     {
         startInfo.ArgumentList.Add("play");
         startInfo.ArgumentList.Add(controlName);
@@ -521,6 +525,9 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         startInfo.ArgumentList.Add(bufferingRecoveryMemoryFrameCapacity.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(playbackSpanCacheStagingPath ?? string.Empty);
         startInfo.ArgumentList.Add(playbackSpanCacheHit ? "1" : "0");
+        startInfo.ArgumentList.Add(rollingPreparationEnabled ? "1" : "0");
+        startInfo.ArgumentList.Add(
+            measuredCacheWriteBytesPerSecond.ToString(CultureInfo.InvariantCulture));
     }
 
     public void BeginBufferingRecovery(long recoveryEndFrame)
@@ -547,6 +554,9 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
             _audioCache,
             completedRenderFrame,
             _totalFrameCount);
+        _ = _audioCache.TryCompactReusableAudio(
+            isStopped: true,
+            idleDuration: TimeSpan.Zero);
     }
 
     private void WaitUntilPlaybackStarted(TimeSpan timeout)

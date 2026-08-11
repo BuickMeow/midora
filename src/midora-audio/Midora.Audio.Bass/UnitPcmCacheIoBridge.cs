@@ -4,15 +4,113 @@ using System.Runtime.InteropServices;
 
 namespace Midora.Audio.Bass;
 
+// Test-compatibility adapter for the retired Unit-fragment cache bridge. Formal
+// playback no longer constructs this type; it keeps the former low-level I/O
+// tests useful while their coverage is migrated to Segment schedules.
 internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
 {
+    private readonly SegmentPcmCacheIoBridge _inner;
+    private readonly MidiSegmentRenderPlan[] _segmentsByPayloadOffset;
+
+    public UnitPcmCacheIoBridge(string path, MidiRenderPlan plan)
+    {
+        MidiSegmentRenderPlan[] segments = plan.UnitFragments.ToArray()
+            .Select(value => new MidiSegmentRenderPlan(
+                value.TrackId,
+                value.InstanceGroupId,
+                value.SourceIndex,
+                value.StartFrame,
+                value.EndFrame,
+                value.SemanticFingerprint,
+                value.PcmCacheKey,
+                value.PcmCachePayloadOffset,
+                value.PcmCacheHit))
+            .OrderBy(value => value.SourceIndex)
+            .ThenBy(value => value.StartFrame)
+            .ToArray();
+        _segmentsByPayloadOffset = segments
+            .OrderBy(value => value.PcmCachePayloadOffset)
+            .ToArray();
+        MidiRenderPlan compatibility = new(
+            plan.SampleRate,
+            plan.TotalFrameCount,
+            plan.Ports,
+            plan.SourceIds,
+            plan.InitiallyDisabledSourceIndices,
+            unitFragments: [],
+            segments);
+        _inner = new(path, compatibility);
+    }
+
+    public bool ReadFaulted => _inner.ReadFaulted;
+    public bool WriteFaulted => _inner.WriteFaulted;
+
+    public bool TryReadFrames(
+        MidiUnitFragmentRenderPlan fragment,
+        long globalStartFrame,
+        float* destination,
+        int frameCount) => _inner.TryReadFrames(
+            Resolve(fragment), globalStartFrame, destination, frameCount);
+
+    public bool IsReadReady(
+        MidiUnitFragmentRenderPlan fragment,
+        long globalStartFrame,
+        int frameCount) => _inner.IsReadReady(
+            Resolve(fragment), globalStartFrame, frameCount);
+
+    public bool CanWriteFrames(
+        MidiUnitFragmentRenderPlan fragment,
+        long globalStartFrame,
+        int frameCount) => _inner.CanWriteFrames(
+            Resolve(fragment), globalStartFrame, frameCount);
+
+    public bool TryQueueWrite(
+        MidiUnitFragmentRenderPlan fragment,
+        long globalStartFrame,
+        float* source,
+        int frameCount) => _inner.TryQueueWrite(
+            Resolve(fragment), globalStartFrame, source, frameCount);
+
+    public void CompleteWritesAndWait() => _inner.CompleteWritesAndWait();
+
+    public void Dispose() => _inner.Dispose();
+
+    private MidiSegmentRenderPlan Resolve(MidiUnitFragmentRenderPlan fragment)
+    {
+        long payloadOffset = fragment.PcmCachePayloadOffset;
+        int low = 0;
+        int high = _segmentsByPayloadOffset.Length - 1;
+        while (low <= high)
+        {
+            int middle = low + ((high - low) >> 1);
+            MidiSegmentRenderPlan candidate = _segmentsByPayloadOffset[middle];
+            if (candidate.PcmCachePayloadOffset < payloadOffset)
+            {
+                low = middle + 1;
+            }
+            else if (candidate.PcmCachePayloadOffset > payloadOffset)
+            {
+                high = middle - 1;
+            }
+            else
+            {
+                return candidate;
+            }
+        }
+        throw new InvalidOperationException(
+            "The compatibility Unit-fragment has no Segment cache schedule.");
+    }
+}
+
+internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
+{
     private const int ReaderCapacityFrames = 16_384;
-    private const int WriterCapacityFrames = 16_384;
-    private const int WriterFlushThresholdFrames = 4_096;
+    private const int MinimumWriterCapacityFrames = 16_384;
+    private const int WriterFlushThresholdFrames = 16_384;
     private readonly FileStream _file;
     private readonly SafeFileHandle _handle;
-    private readonly ReaderSlot?[] _readers = new ReaderSlot[16 * 16];
-    private readonly WriterSlot?[] _writers = new WriterSlot[16 * 16];
+    private readonly ReaderSlot?[] _readers;
+    private readonly WriterSlot?[] _writers;
     private readonly AudioFormat _format;
     private readonly Thread _thread;
     private int _completionRequested;
@@ -21,43 +119,58 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
     private Exception? _writeFault;
     private bool _disposed;
 
-    public UnitPcmCacheIoBridge(string path, MidiRenderPlan plan)
+    public SegmentPcmCacheIoBridge(string path, MidiRenderPlan plan)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(plan);
         string fullPath = Path.GetFullPath(path);
         _format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
+        _readers = new ReaderSlot?[plan.SourceIds.Length];
+        _writers = new WriterSlot?[plan.SourceIds.Length];
         FileStream? file = null;
         try
         {
-            List<MidiUnitFragmentRenderPlan>?[] hitFragments =
-                new List<MidiUnitFragmentRenderPlan>?[16 * 16];
-            List<MidiUnitFragmentRenderPlan>?[] missFragments =
-                new List<MidiUnitFragmentRenderPlan>?[16 * 16];
-            foreach (MidiUnitFragmentRenderPlan fragment in plan.UnitFragments)
+            List<MidiSegmentRenderPlan>?[] hitFragments =
+                new List<MidiSegmentRenderPlan>?[plan.SourceIds.Length];
+            List<MidiSegmentRenderPlan>?[] missFragments =
+                new List<MidiSegmentRenderPlan>?[plan.SourceIds.Length];
+            foreach (MidiSegmentRenderPlan fragment in plan.Segments)
             {
                 if (fragment.PcmCacheKey is null)
                 {
                     continue;
                 }
-                List<MidiUnitFragmentRenderPlan>?[] destination = fragment.PcmCacheHit
+                List<MidiSegmentRenderPlan>?[] destination = fragment.PcmCacheHit
                     ? hitFragments
                     : missFragments;
-                destination[fragment.CanonicalUnitNumber] ??= [];
-                destination[fragment.CanonicalUnitNumber]!.Add(fragment);
+                destination[fragment.SourceIndex] ??= [];
+                destination[fragment.SourceIndex]!.Add(fragment);
             }
-            for (int unit = 0; unit < hitFragments.Length; unit++)
+            int writerCount = missFragments.Count(value => value is { Count: > 0 });
+            long poolBytes =
+                RollingAudioPreparationPolicy.ComputeRamBlockPoolBytesForCurrentMachine();
+            int writerCapacityFrames = writerCount == 0
+                ? MinimumWriterCapacityFrames
+                : checked((int)Math.Min(
+                    int.MaxValue,
+                    Math.Max(
+                        MinimumWriterCapacityFrames,
+                        poolBytes / writerCount / _format.BytesPerFrame
+                            / RollingAudioPreparationPolicy.SegmentBlockFrameCount
+                            * RollingAudioPreparationPolicy.SegmentBlockFrameCount)));
+            for (int sourceIndex = 0; sourceIndex < hitFragments.Length; sourceIndex++)
             {
-                if (hitFragments[unit] is { Count: > 0 } hits)
+                if (hitFragments[sourceIndex] is { Count: > 0 } hits)
                 {
-                    _readers[unit] = new ReaderSlot(
+                    _readers[sourceIndex] = new ReaderSlot(
                         checked((nuint)ReaderCapacityFrames * (nuint)_format.BytesPerFrame),
                         CreateCacheFragments(hits));
                 }
-                if (missFragments[unit] is { Count: > 0 } misses)
+                if (missFragments[sourceIndex] is { Count: > 0 } misses)
                 {
-                    _writers[unit] = new WriterSlot(
-                        checked((nuint)WriterCapacityFrames * (nuint)_format.BytesPerFrame),
+                    _writers[sourceIndex] = new WriterSlot(
+                        checked((nuint)writerCapacityFrames * (nuint)_format.BytesPerFrame),
+                        writerCapacityFrames,
                         CreateCacheFragments(misses));
                 }
             }
@@ -69,14 +182,14 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
                 bufferSize: 1,
                 FileOptions.RandomAccess);
             _handle = _file.SafeFileHandle;
-            for (int unit = 0; unit < _readers.Length; unit++)
+            for (int sourceIndex = 0; sourceIndex < _readers.Length; sourceIndex++)
             {
-                PrimeReader(_readers[unit]);
+                PrimeReader(_readers[sourceIndex]);
             }
             _thread = new Thread(Run)
             {
                 IsBackground = true,
-                Name = "Midora Unit PCM Cache I/O",
+                Name = "Midora Segment PCM Cache I/O",
                 Priority = ThreadPriority.AboveNormal
             };
             _thread.Start();
@@ -94,7 +207,7 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
     public bool WriteFaulted => Volatile.Read(ref _writeFault) is not null;
 
     public bool TryReadFrames(
-        MidiUnitFragmentRenderPlan fragment,
+        MidiSegmentRenderPlan fragment,
         long globalStartFrame,
         float* destination,
         int frameCount)
@@ -103,7 +216,7 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         {
             return false;
         }
-        ReaderSlot slot = _readers[fragment.CanonicalUnitNumber]!;
+        ReaderSlot slot = _readers[fragment.SourceIndex]!;
         long relativeStart = globalStartFrame - fragment.StartFrame;
         if (!TryResolveStreamPosition(
             slot.FragmentsByPayloadOffset,
@@ -119,12 +232,12 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
     }
 
     public bool IsReadReady(
-        MidiUnitFragmentRenderPlan fragment,
+        MidiSegmentRenderPlan fragment,
         long globalStartFrame,
         int frameCount)
     {
-        ReaderSlot slot = _readers[fragment.CanonicalUnitNumber]
-            ?? throw new InvalidOperationException("A cache-hit Unit has no read-ahead slot.");
+        ReaderSlot slot = _readers[fragment.SourceIndex]
+            ?? throw new InvalidOperationException("A cache-hit Segment has no read-ahead slot.");
         long relativeStart = globalStartFrame - fragment.StartFrame;
         if (!TryResolveStreamPosition(
             slot.FragmentsByPayloadOffset,
@@ -147,7 +260,7 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
     }
 
     public bool CanWriteFrames(
-        MidiUnitFragmentRenderPlan fragment,
+        MidiSegmentRenderPlan fragment,
         long globalStartFrame,
         int frameCount)
     {
@@ -155,8 +268,8 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         {
             return true;
         }
-        WriterSlot slot = _writers[fragment.CanonicalUnitNumber]
-            ?? throw new InvalidOperationException("A cache-miss Unit has no writer slot.");
+        WriterSlot slot = _writers[fragment.SourceIndex]
+            ?? throw new InvalidOperationException("A cache-miss Segment has no writer slot.");
         long relativeStart = globalStartFrame - fragment.StartFrame;
         if (!TryResolveStreamPosition(
             slot.FragmentsByPayloadOffset,
@@ -171,11 +284,11 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
             return false;
         }
         long consumed = Volatile.Read(ref slot.ConsumerPosition);
-        return frameCount <= WriterCapacityFrames - (streamStart - consumed);
+        return frameCount <= slot.CapacityFrames - (streamStart - consumed);
     }
 
     public bool TryQueueWrite(
-        MidiUnitFragmentRenderPlan fragment,
+        MidiSegmentRenderPlan fragment,
         long globalStartFrame,
         float* source,
         int frameCount)
@@ -184,12 +297,12 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         {
             return true;
         }
-        if (source == null || frameCount < 0 || frameCount > WriterCapacityFrames
+        if (source == null || frameCount < 0
             || !CanWriteFrames(fragment, globalStartFrame, frameCount))
         {
             return false;
         }
-        WriterSlot slot = _writers[fragment.CanonicalUnitNumber]!;
+        WriterSlot slot = _writers[fragment.SourceIndex]!;
         long relativeStart = globalStartFrame - fragment.StartFrame;
         if (!TryResolveStreamPosition(
             slot.FragmentsByPayloadOffset,
@@ -299,7 +412,7 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         if (!TryFindCacheFragment(slot.Fragments, consumed, out CacheFragment fragment))
         {
             Volatile.Write(ref _writeFault,
-                new InvalidDataException("A Unit PCM writer position is outside its fragment schedule."));
+                new InvalidDataException("A Segment PCM writer position is outside its cache schedule."));
             return false;
         }
         if (!force && available < WriterFlushThresholdFrames
@@ -307,9 +420,9 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         {
             return false;
         }
-        int index = (int)(consumed % WriterCapacityFrames);
+        int index = (int)(consumed % slot.CapacityFrames);
         int frames = (int)Math.Min(
-            Math.Min(available, WriterCapacityFrames - index),
+            Math.Min(available, slot.CapacityFrames - index),
             fragment.StreamEndFrame - consumed);
         try
         {
@@ -355,7 +468,7 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         if (!TryFindCacheFragment(slot.Fragments, produced, out CacheFragment fragment))
         {
             Volatile.Write(ref _readFault,
-                new InvalidDataException("A Unit PCM reader position is outside its fragment schedule."));
+                new InvalidDataException("A Segment PCM reader position is outside its cache schedule."));
             return false;
         }
         int index = (int)(produced % ReaderCapacityFrames);
@@ -393,7 +506,7 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
                 checked(fileOffset + completed));
             if (read == 0)
             {
-                throw new EndOfStreamException("A staged Unit PCM cache payload ended early.");
+                throw new EndOfStreamException("A staged Segment PCM cache payload ended early.");
             }
             completed += read;
         }
@@ -427,8 +540,8 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         long position,
         int frameCount)
     {
-        int index = (int)(position % WriterCapacityFrames);
-        int first = Math.Min(frameCount, WriterCapacityFrames - index);
+        int index = (int)(position % slot.CapacityFrames);
+        int first = Math.Min(frameCount, slot.CapacityFrames - index);
         NativeMemory.Copy(
             source,
             slot.Buffer + (index * _format.BytesPerFrame),
@@ -473,7 +586,7 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
                 if (ReadFaulted)
                 {
                     throw new InvalidDataException(
-                        "The initial Unit PCM cache read-ahead failed.",
+                        "The initial Segment PCM cache read-ahead failed.",
                         Volatile.Read(ref _readFault));
                 }
                 break;
@@ -482,14 +595,13 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
     }
 
     private static CacheFragment[] CreateCacheFragments(
-        IEnumerable<MidiUnitFragmentRenderPlan> fragments)
+        IEnumerable<MidiSegmentRenderPlan> fragments)
     {
         long streamStart = 0;
         List<CacheFragment> result = [];
-        foreach (MidiUnitFragmentRenderPlan fragment in fragments
+        foreach (MidiSegmentRenderPlan fragment in fragments
             .OrderBy(value => value.StartFrame)
-            .ThenBy(value => value.InstanceGroupId)
-            .ThenBy(value => value.SubVoiceId))
+            .ThenBy(value => value.SegmentId))
         {
             long frameCount = fragment.EndFrame - fragment.StartFrame;
             result.Add(new(
@@ -503,7 +615,7 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
 
     private static bool TryResolveStreamPosition(
         CacheFragment[] fragmentsByPayloadOffset,
-        MidiUnitFragmentRenderPlan fragment,
+        MidiSegmentRenderPlan fragment,
         long relativeStart,
         out long streamPosition)
     {
@@ -545,7 +657,7 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
             if (sorted[i - 1].PayloadOffset == sorted[i].PayloadOffset)
             {
                 throw new InvalidDataException(
-                    "A Unit PCM cache schedule contains duplicate payload offsets.");
+                    "A Segment PCM cache schedule contains duplicate payload offsets.");
             }
         }
         return sorted;
@@ -609,7 +721,7 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
             Buffer = (byte*)NativeMemory.Alloc(byteCount);
             if (Buffer is null)
             {
-                throw new OutOfMemoryException("A Unit PCM read-ahead hot-set could not be allocated.");
+                throw new OutOfMemoryException("A Segment PCM read-ahead hot-set could not be allocated.");
             }
         }
 
@@ -635,18 +747,20 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
 
     private sealed unsafe class WriterSlot : IDisposable
     {
-        public WriterSlot(nuint byteCount, CacheFragment[] fragments)
+        public WriterSlot(nuint byteCount, int capacityFrames, CacheFragment[] fragments)
         {
+            CapacityFrames = capacityFrames;
             Fragments = fragments;
             FragmentsByPayloadOffset = SortByPayloadOffset(fragments);
             Buffer = (byte*)NativeMemory.Alloc(byteCount);
             if (Buffer is null)
             {
-                throw new OutOfMemoryException("A Unit PCM writer hot-set could not be allocated.");
+                throw new OutOfMemoryException("A Segment PCM writer hot-set could not be allocated.");
             }
         }
 
         public byte* Buffer;
+        public int CapacityFrames { get; }
         public CacheFragment[] Fragments { get; }
         public CacheFragment[] FragmentsByPayloadOffset { get; }
         public long ConsumerPosition;

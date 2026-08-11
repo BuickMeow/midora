@@ -86,6 +86,23 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
+    public void ParallelSegmentProducersAreSampleIdenticalToSequentialDecode()
+    {
+        EnsureEnvironment();
+        MidiRenderPlan single = CreateSingleNotePlan(channel: 0, velocity: 20);
+        MidiRenderPlan plan = new(
+            SampleRate,
+            single.TotalFrameCount,
+            [single.Ports[0], new MidiPortRenderPlan(1, single.Ports[0].Events)]);
+
+        float[] sequential = Render(plan, 257, 333, out _, segmentProducerConcurrency: 1);
+        float[] parallel = Render(plan, 257, 333, out _, segmentProducerConcurrency: 4);
+
+        Assert.True(MemoryMarshal.AsBytes(sequential.AsSpan()).SequenceEqual(
+            MemoryMarshal.AsBytes(parallel.AsSpan())));
+    }
+
+    [Fact]
     public void StreamFlagsAlwaysDisableEffectsAndReleaseOnlyOldestMatchingNote()
     {
         BassMidiRendererSettings settings = new(
@@ -113,7 +130,8 @@ public sealed class BassMidiRendererIntegrationTests
             plan,
             SoundFontPath,
             new BassMidiRendererSettings(customVoiceLimit, 256),
-            AudioMasterSettings.LimiterV1);
+            AudioMasterSettings.LimiterV1,
+            segmentProducerConcurrency: 4);
 
         foreach (int port in new[] { 0, 1 })
         {
@@ -571,7 +589,7 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
-    public void ExactRawUnitPcmHitMatchesTheNativeMissWithoutRepeatingBassSynthesis()
+    public void ExactSegmentPcmHitMatchesTheNativeMissWithoutRepeatingBassSynthesis()
     {
         EnsureEnvironment();
         string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
@@ -588,15 +606,15 @@ public sealed class BassMidiRendererIntegrationTests
 
             float[] missSamples;
             long missNativeFrames;
-            using (AudioUnitCacheStaging miss = Assert.IsType<AudioUnitCacheStaging>(
-                AudioUnitCacheStaging.Create(
+            using (AudioSegmentCacheStaging miss = Assert.IsType<AudioSegmentCacheStaging>(
+                AudioSegmentCacheStaging.Create(
                     sourcePlan,
                     cache,
                     SoundFontPath,
                     nativeDirectory,
                     maximumSampleVoices)))
             {
-                Assert.False(miss.Plan.UnitFragments[0].PcmCacheHit);
+                Assert.False(miss.Plan.Segments[0].PcmCacheHit);
                 missSamples = RenderCachePlan(
                     miss.Plan,
                     miss.FilePath,
@@ -607,15 +625,15 @@ public sealed class BassMidiRendererIntegrationTests
 
             float[] hitSamples;
             long hitNativeFrames;
-            using (AudioUnitCacheStaging hit = Assert.IsType<AudioUnitCacheStaging>(
-                AudioUnitCacheStaging.Create(
+            using (AudioSegmentCacheStaging hit = Assert.IsType<AudioSegmentCacheStaging>(
+                AudioSegmentCacheStaging.Create(
                     sourcePlan,
                     cache,
                     SoundFontPath,
                     nativeDirectory,
                     maximumSampleVoices)))
             {
-                Assert.True(hit.Plan.UnitFragments[0].PcmCacheHit);
+                Assert.True(hit.Plan.Segments[0].PcmCacheHit);
                 hitSamples = RenderCachePlan(
                     hit.Plan,
                     hit.FilePath,
@@ -646,7 +664,8 @@ public sealed class BassMidiRendererIntegrationTests
             plan,
             SoundFontPath,
             new BassMidiRendererSettings(500, 256),
-            AudioMasterSettings.LimiterV1);
+            AudioMasterSettings.LimiterV1,
+            segmentProducerConcurrency: 4);
         float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
 
         fixed (float* destination = samples)
@@ -674,6 +693,7 @@ public sealed class BassMidiRendererIntegrationTests
 
         Assert.Equal(256, renderer.UnitStreamCountForDiagnostics);
         Assert.Equal(plan.TotalFrameCount * 256, renderer.NativeSynthesisFrameCountForDiagnostics);
+        Assert.Equal(0, renderer.ParallelDecodeAllocatedBytesForDiagnostics);
         Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
         Assert.Contains(samples, static sample => sample != 0f);
     }
@@ -682,7 +702,8 @@ public sealed class BassMidiRendererIntegrationTests
         MidiRenderPlan plan,
         int internalBlockFrames,
         int pullBlockFrames,
-        out long allocatedBytes)
+        out long allocatedBytes,
+        int segmentProducerConcurrency = 1)
     {
         BassMidiRendererSettings settings = new(
             BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
@@ -691,7 +712,8 @@ public sealed class BassMidiRendererIntegrationTests
             plan,
             SoundFontPath,
             settings,
-            AudioMasterSettings.LimiterV1);
+            AudioMasterSettings.LimiterV1,
+            segmentProducerConcurrency: segmentProducerConcurrency);
 
         float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
         fixed (float* destination = samples)
@@ -766,12 +788,20 @@ public sealed class BassMidiRendererIntegrationTests
             endFrame: 4_096,
             semanticFingerprint: new string('a', 64),
             events);
+        MidiSegmentRenderPlan segment = new(
+            trackId: 1,
+            segmentId: 2,
+            sourceIndex: 0,
+            startFrame: 0,
+            endFrame: 4_096,
+            semanticFingerprint: new string('c', 64));
         return new MidiRenderPlan(
             SampleRate,
             4_096,
             [new MidiPortRenderPlan(0, events)],
             sourceIds: [1],
-            unitFragments: [fragment]);
+            unitFragments: [fragment],
+            segments: [segment]);
     }
 
     private static MidiRenderPlan CreateMaximumUnitPlan()

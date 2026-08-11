@@ -114,13 +114,13 @@ Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domai
 
 正式实时客户端与正式文件客户端都只接受现存的 `.exe` Worker 路径并按绝对路径启动；托管 `.dll` 仅能通过程序集内部的测试入口显式放行，任意其他扩展名始终拒绝。实时 Worker 退出必须同时满足 exit code 0 与共享状态 Stopped/Completed；非零退出、Faulted，或 exit code 0 但仍停留在 Preparing/Playing/Buffering 等非终态，均为任务错误。显式 Stop 也必须在等待进程后校验这两个信号，不能因进程已经退出而跳过失败报告。
 
-冻结计划文件 MDAP v4 在写入任何 payload 前计算 source、disabled source、Port、event、Unit fragment/cache binding 与 SHA-256 的完整有界大小；读取时先用剩余 payload 长度验证计数，再分配对应数组。source ID 使用正 `Int64` little-endian，旧 v3 与其他版本一律拒绝，不迁移单次任务临时文件。Port/fragment record 的 reserved 字段必须为零；即使攻击者重新计算出正确 SHA-256，非零保留位、不可能计数、截断、溢出、非法 Port/MIDI/来源、非法缓存 payload 范围与 trailing payload 仍统一作为 `InvalidDataException` 拒绝，不能进入 Worker 渲染阶段。
+冻结计划文件 MDAP v5 在写入任何 payload 前计算 source、disabled source、Port、event、Unit fragment、Segment/cache binding 与 SHA-256 的完整有界大小；读取时先用剩余 payload 长度验证计数，再分配对应数组。source ID 使用正 `Int64` little-endian，旧 v4 与其他版本一律拒绝，不迁移单次任务临时文件。Port/fragment/Segment record 的 reserved 字段必须为零；即使攻击者重新计算出正确 SHA-256，非零保留位、不可能计数、截断、溢出、非法 Port/MIDI/来源、非法缓存 payload 范围与 trailing payload 仍统一作为 `InvalidDataException` 拒绝，不能进入 Worker 渲染阶段。
 
 共享内存 ABI v4 的 command ring 读写位置必须满足 `0 <= read <= write` 且 `write - read <= 1024`，任何损坏都必须在取模和指针运算前失败。Stop/Monitoring/Held Preview/Buffering Recovery 及其子类型是闭合集；source/Port/message/boolean、CC91/CC93、held plan generation、recovery end frame 和每条 command 的 reserved 字段在写入前整批校验、读取后再次校验，批次失败不得发布前缀。状态枚举与全部非负计数同样在读取边界校验；映射长度、固定 header 和 reserved header 不匹配时 Open 整体失败。Dispose 后的所有状态/发布/命令入口只抛 `ObjectDisposedException`，不得解引用已释放映射。
 
 ABI v2 引入并由当前 ABI v4 保持：固定 header offset 68 是对齐 `Int32 statusSequence`，以单 Writer seqlock 发布整组状态。Writer 必须用 compare-exchange 将偶数序列变为奇数，发布全部字段后以 release 写入下一偶数；并发 Writer 或遗留奇数序列立即作为协议错误。Reader 只接受前后相同的偶数序列，最多无分配重试 1024 次，耗尽则报告 IPC 一致性错误；序列允许 two's-complement wrap。ABI v3 在 offset 88 增加 held preview plan generation；v4 保持 header 布局，在现有 16-byte command record 的 offset 4 通用 64-bit payload 上增加 `BufferingRecoveryPrepare(endFrame)`。Create/Open 只接受 v4，不提供 v1～v3 回退。状态发布与读取热路径、序列 wrap、并发压力和中断 Writer 均由自动门验证。
 
-held Preview 在 ABI v3 引入、当前 ABI v4 保持 `HeldPreviewPause`、`HeldPreviewApplyPlan(generation)`、`HeldPreviewResume` 三条有界命令。Pause 只冻结 Render-Ahead producer，WASAPI 仍消费 ring 内 PCM；主进程把 checksum MDAP v4 计划写入会话私有目录后发布新 generation，Worker 只在 producer frontier 替换未渲染后缀并以状态 generation 确认，随后恢复 producer。计划文件和 generation 都是单次会话运行时状态；实时 PCM 仍不跨进程。
+held Preview 在 ABI v3 引入、当前 ABI v4 保持 `HeldPreviewPause`、`HeldPreviewApplyPlan(generation)`、`HeldPreviewResume` 三条有界命令。Pause 只冻结 Render-Ahead producer，WASAPI 仍消费 ring 内 PCM；主进程把 checksum MDAP v5 计划写入会话私有目录后发布新 generation，Worker 只在 producer frontier 替换未渲染后缀并以状态 generation 确认，随后恢复 producer。计划文件和 generation 都是单次会话运行时状态；实时 PCM 仍不跨进程。
 
 ABI v4 的 `BufferingRecoveryPrepare(endFrame)` 只在 ring 已锁存 Buffering 且已配置 transient recovery spool 时合法。主进程用统一自然小节映射计算 sample-domain `endFrame`；Worker 暂停 producer，在 spool 中完整生成并校验 `[F,endFrame)`，重置 ring 到 `F` 后连续回放该区间，再恢复正常 producer。命令 payload 不携带 tick、拍号或 Project 数据，Worker 不重新解释 Conductor。
 
@@ -187,6 +187,22 @@ miss fragment 同样映射到每 Unit 连续虚拟写流；写 ring 达到 `4,09
 一个实际 canonical Unit route 对应一个干净 1-channel BASSMIDI Stream；同 route 上时间不重叠的 Unit fragment 在精确 Reset 后顺序复用该 Stream。任务持有的 Stream 数等于 canonical 实际分配过的 route 数，也就是该任务的峰值并发 Unit 数，严格不超过 256；不会按 Project 历史 fragment 总数永久创建 Stream。任务结束统一释放，下一任务重新建立干净池，避免跨任务原生状态泄漏。
 
 详细 requirement trace：`misc/Midora-Segment-Unit-Audio-Cache-Requirement-Trace.md`。
+
+## 10.1 ADR-AUDIO-010：Segment 逻辑缓存、代际 Pack 与滚动预准备
+
+产品所有者于 2026-08-11 决定以 Segment 作为可复用 pre-Master/pre-Limiter PCM 的逻辑失效单元。Segment 内部固定划分为 16,384-frame stereo float32 block；block 只承担流式传输、校验、索引和背压，不建立独立文件，也不把缓存身份重新细化为 Note/Instance/SubVoice。一个 Segment 的任意可听输入改变时产生新的完整 Segment generation；未改变 Segment 的 generation 继续命中。
+
+物理存储使用 session-scoped append-only generational Pack。单代最大 2 GiB，完整记录通过 checksum 和索引事务发布；半写记录、未提交索引和旧 generation 不得命中。live cache 默认上限仍为 16 GiB。dead ratio 至少 35% 且 dead bytes 至少 256 MiB 时具备重整资格，只在 Stopped 或持续 idle 10 s 执行，并至少保留 4 GiB 临时 headroom。重整只复制当前 Project 状态引用的 live generations；过时代际回收属于 generation compaction，不是对当前代际做 LRU。
+
+这一点取代 ADR-AUDIO-009 中“旧 key 一律保留到 Project 关闭”的实现决定。现行 SRS 13.19.11 的不驱逐文句需要产品所有者后续同步：当前代际在 Project-open session 内仍不做 LRU，但不再要求无限保留已被新 Project 状态取代的 generation。`.midora`、Undo/Redo、canonical fingerprint 和跨 session 行为均不改变。
+
+实时准备改为滚动水位：Startup 2 s、Low 0.75 s、Resume 2 s、Target High 6 s。开头存在超大 Segment 时，只要求全部活动 Segment 的连续 PCM 达到启动水位，不等待该 Segment 完整结束；随后渲染、Pack writer 与设备消费并行。writer backlog 使用 `clamp(physicalMemory / 64, 128 MiB, 512 MiB)` 的有界 RAM block pool。磁盘持续落后时通过水位进入受控 Buffering，不再以静默失效 capture、下一次重复渲染作为常规背压策略。硬 I/O 失败仍禁用新 retention、保留可继续的现场合成并发布可见 Warning。
+
+初始 producer 并发为 `min(4, max(1, logicalProcessorCount / 2))`，同时限制在启动基准测得 writer bandwidth 的 50% 预算内。group commit 在累计 8 MiB、经过 1 s 或 Segment 完成时触发。正式硬件需求为本地 SSD，最低顺序读 200 MiB/s、写 100 MiB/s；低于门槛必须在诊断中明确报告，不能伪装成音频语义失败。
+
+Stop 立即停止设备输出并禁止开始未来渲染；已完整 block 可由 I/O worker 排空，未完成 block 可丢弃。Project 关闭仍删除本 session 的已知目录。自然小节 underrun recovery、Segment 硬边界、Mute/Solo 运行时过滤、Master/Limiter 顺序和短 Render-Ahead ring 的职责保持不变。
+
+详细 trace：`misc/Midora-Segment-Pack-and-Rolling-Preparation-Requirement-Trace.md`。
 
 ## 11. 验证门
 

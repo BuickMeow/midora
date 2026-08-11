@@ -12,7 +12,15 @@ internal unsafe interface IPlaybackSpanFallbackSource : IAudioRenderSource
     void SeekForMonitoringColdStart(long producerFrontierFrame);
 }
 
-internal sealed unsafe class PlaybackSpanRenderSource : IAudioRenderSource, IDisposable
+internal interface IMonitoringResettableRenderSource
+{
+    void ResetForMonitoringColdStart(long producerFrontierFrame);
+}
+
+internal sealed unsafe class PlaybackSpanRenderSource
+    : IAudioRenderSource,
+      IMonitoringResettableRenderSource,
+      IDisposable
 {
     private const int MonitoringTransitionMilliseconds = 4;
     private readonly IPlaybackSpanFallbackSource _underlying;
@@ -25,6 +33,7 @@ internal sealed unsafe class PlaybackSpanRenderSource : IAudioRenderSource, IDis
     private int _fallbackRequested;
     private int _usingUnderlying;
     private int _transitionRemainingFrames;
+    private int _captureInvalidated;
     private bool _disposed;
 
     public PlaybackSpanRenderSource(
@@ -104,13 +113,32 @@ internal sealed unsafe class PlaybackSpanRenderSource : IAudioRenderSource, IDis
 
     public bool CacheHit => _cacheHit;
 
-    public bool CacheCaptureInvalidated => !_cacheHit && _cacheIo.IsFaulted;
+    public bool CacheCaptureInvalidated => !_cacheHit
+        && (_cacheIo.IsFaulted || Volatile.Read(ref _captureInvalidated) != 0);
 
     public void RequestMonitoringFallback()
     {
         if (_cacheHit && Volatile.Read(ref _usingUnderlying) == 0)
         {
             Volatile.Write(ref _fallbackRequested, 1);
+        }
+    }
+
+    public void ResetForMonitoringColdStart(long producerFrontierFrame)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (producerFrontierFrame < 0 || producerFrontierFrame > _totalFrameCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(producerFrontierFrame));
+        }
+        _underlying.SeekForMonitoringColdStart(producerFrontierFrame);
+        _positionFrames = producerFrontierFrame;
+        _transitionRemainingFrames = 0;
+        Volatile.Write(ref _fallbackRequested, 0);
+        Volatile.Write(ref _usingUnderlying, 1);
+        if (!_cacheHit)
+        {
+            Volatile.Write(ref _captureInvalidated, 1);
         }
     }
 
@@ -131,6 +159,15 @@ internal sealed unsafe class PlaybackSpanRenderSource : IAudioRenderSource, IDis
         }
         if (!_cacheHit)
         {
+            if (Volatile.Read(ref _captureInvalidated) != 0)
+            {
+                AudioPullResult uncached = _underlying.PullFrames(destination, requestedFrameCount);
+                if (uncached.IsValidForRequest(requestedFrameCount))
+                {
+                    _positionFrames += uncached.FrameCount;
+                }
+                return uncached;
+            }
             int targetFrameCount = (int)Math.Min(
                 requestedFrameCount,
                 _totalFrameCount - _positionFrames);

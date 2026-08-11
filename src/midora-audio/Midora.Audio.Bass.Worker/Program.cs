@@ -52,7 +52,7 @@ public static class Program
 
             if (string.Equals(args[0], "play", StringComparison.Ordinal))
             {
-                if (args.Length != 20)
+                if (args.Length != 22)
                 {
                     throw new ArgumentException("Invalid playback argument count.");
                 }
@@ -204,6 +204,20 @@ public static class Program
             throw new InvalidDataException(
                 "A playback-span cache hit requires a staging payload.");
         }
+        bool rollingPreparationEnabled = InitialReleaseAudioWorkerProtocolPolicy.ParseBoolean(
+            args[20],
+            "rollingPreparationEnabled");
+        long measuredCacheWriteBytesPerSecond = ParseInt64(args[21]);
+        if (measuredCacheWriteBytesPerSecond < 0)
+        {
+            throw new InvalidDataException(
+                "The measured cache writer bandwidth cannot be negative.");
+        }
+        int segmentProducerConcurrency =
+            RollingAudioPreparationPolicy.ComputeSegmentProducerConcurrency(
+                Environment.ProcessorCount,
+                plan.SampleRate,
+                measuredCacheWriteBytesPerSecond);
         string planDirectory = Path.GetDirectoryName(planPath)
             ?? throw new InvalidDataException("The render plan path has no parent directory.");
         if (plan.SampleRate != expectedSampleRate)
@@ -217,7 +231,8 @@ public static class Program
             soundFontPath,
             rendererSettings,
             masterSettings,
-            cacheStagingPath);
+            cacheStagingPath,
+            segmentProducerConcurrency);
         using PlaybackSpanRenderSource? playbackSpanSource =
             playbackSpanCacheStagingPath is null
                 ? null
@@ -225,8 +240,16 @@ public static class Program
                     renderer,
                     playbackSpanCacheStagingPath,
                     playbackSpanCacheHit);
-        IAudioRenderSource primaryRenderSource =
+        IAudioRenderSource unpreparedRenderSource =
             (IAudioRenderSource?)playbackSpanSource ?? renderer;
+        using RollingPreparationRenderSource? rollingSource = rollingPreparationEnabled
+            ? new RollingPreparationRenderSource(
+                unpreparedRenderSource,
+                plan.TotalFrameCount,
+                TimeSpan.FromSeconds(30))
+            : null;
+        IAudioRenderSource primaryRenderSource =
+            (IAudioRenderSource?)rollingSource ?? unpreparedRenderSource;
         BufferingRecoveryRenderSource? createdRecoverySource = null;
         Exception? recoveryStorageFailure = null;
         if (bufferingRecoverySpoolPath is not null)
@@ -334,7 +357,7 @@ public static class Program
                         GetRenderPosition(renderer, playbackSpanSource),
                         ring.UnderrunCount,
                         output.CallbackAllocatedBytes,
-                        renderWorker.RenderingThreadAllocatedBytes,
+                        GetRenderingAllocatedBytes(renderWorker, rollingSource, renderer),
                         heldPreviewPlanGeneration);
                     continue;
                 }
@@ -359,7 +382,7 @@ public static class Program
                         GetRenderPosition(renderer, playbackSpanSource),
                         ring.UnderrunCount,
                         output.CallbackAllocatedBytes,
-                        renderWorker.RenderingThreadAllocatedBytes,
+                        GetRenderingAllocatedBytes(renderWorker, rollingSource, renderer),
                         heldPreviewPlanGeneration);
                     continue;
                 }
@@ -413,9 +436,27 @@ public static class Program
                 }
 
                 MidiMonitoringCommand monitoring = command.MonitoringCommand;
-                playbackSpanSource?.RequestMonitoringFallback();
-                renderer.EnqueueMonitoringCommands(
-                    MemoryMarshal.CreateReadOnlySpan(ref monitoring, 1));
+                if (rollingSource is not null)
+                {
+                    renderWorker.PauseAtProducerFrontier(TimeSpan.FromSeconds(5));
+                    try
+                    {
+                        rollingSource.ResetForMonitoringColdStart(
+                            TimeSpan.FromSeconds(5),
+                            () => renderer.EnqueueMonitoringCommands(
+                                MemoryMarshal.CreateReadOnlySpan(ref monitoring, 1)));
+                    }
+                    finally
+                    {
+                        renderWorker.ResumeFromProducerFrontier();
+                    }
+                }
+                else
+                {
+                    playbackSpanSource?.RequestMonitoringFallback();
+                    renderer.EnqueueMonitoringCommands(
+                        MemoryMarshal.CreateReadOnlySpan(ref monitoring, 1));
+                }
             }
 
             if (output.DeviceLost)
@@ -425,6 +466,7 @@ public static class Program
                 // publish a non-fault terminal state that requires an explicit main-process choice.
                 output.Dispose();
                 renderWorker.Stop();
+                rollingSource?.StopPreparation();
                 FinalizeAndMarkCacheCaptures(
                     cacheStagingPath,
                     playbackSpanCacheStagingPath,
@@ -436,7 +478,7 @@ public static class Program
                     GetRenderPosition(renderer, playbackSpanSource),
                     ring.UnderrunCount,
                     output.CallbackAllocatedBytes,
-                    renderWorker.RenderingThreadAllocatedBytes);
+                    GetRenderingAllocatedBytes(renderWorker, rollingSource, renderer));
                 return 0;
             }
 
@@ -461,7 +503,7 @@ public static class Program
                     GetRenderPosition(renderer, playbackSpanSource),
                     ring.UnderrunCount,
                     output.CallbackAllocatedBytes,
-                    renderWorker.RenderingThreadAllocatedBytes,
+                    GetRenderingAllocatedBytes(renderWorker, rollingSource, renderer),
                     heldPreviewPlanGeneration);
                 Thread.Sleep(1);
                 continue;
@@ -479,7 +521,7 @@ public static class Program
                 GetRenderPosition(renderer, playbackSpanSource),
                 ring.UnderrunCount,
                 output.CallbackAllocatedBytes,
-                renderWorker.RenderingThreadAllocatedBytes);
+                GetRenderingAllocatedBytes(renderWorker, rollingSource, renderer));
             if (!stopRequested && !completed)
             {
                 Thread.Sleep(1);
@@ -489,6 +531,7 @@ public static class Program
         control.PublishState(stopRequested ? AudioWorkerState.Stopping : AudioWorkerState.Completed);
         output.Stop(flushOnStop);
         renderWorker.Stop();
+        rollingSource?.StopPreparation();
         FinalizeAndMarkCacheCaptures(
             cacheStagingPath,
             playbackSpanCacheStagingPath,
@@ -500,7 +543,7 @@ public static class Program
             GetRenderPosition(renderer, playbackSpanSource),
             ring.UnderrunCount,
             output.CallbackAllocatedBytes,
-            renderWorker.RenderingThreadAllocatedBytes);
+            GetRenderingAllocatedBytes(renderWorker, rollingSource, renderer));
         return 0;
     }
 
@@ -879,6 +922,14 @@ public static class Program
         BassMidiRenderer renderer,
         PlaybackSpanRenderSource? playbackSpanSource) =>
         playbackSpanSource?.PositionFrames ?? renderer.RenderPositionFrames;
+
+    private static long GetRenderingAllocatedBytes(
+        AudioRenderAheadWorker realtimeWorker,
+        RollingPreparationRenderSource? rollingSource,
+        BassMidiRenderer renderer) => checked(
+            realtimeWorker.RenderingThreadAllocatedBytes
+            + (rollingSource?.RenderingThreadAllocatedBytes ?? 0)
+            + renderer.ParallelDecodeAllocatedBytesForDiagnostics);
 
     private static float ParseSingle(string value) =>
         float.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture);

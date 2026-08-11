@@ -1,17 +1,13 @@
 using Midora.AudioDevice;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace Midora.Audio.Bass;
 
-internal sealed class AudioUnitCacheStaging : IDisposable
+internal sealed class AudioSegmentCacheStaging : IDisposable
 {
-    private static readonly string[] NativeFileNames =
-        ["bass.dll", "bassmidi.dll", "basswasapi.dll"];
     private readonly Entry[] _entries;
     private AudioCacheSessionStore.AudioRecoverySpool? _spool;
 
-    private AudioUnitCacheStaging(
+    private AudioSegmentCacheStaging(
         MidiRenderPlan plan,
         AudioCacheSessionStore.AudioRecoverySpool spool,
         Entry[] entries)
@@ -25,7 +21,7 @@ internal sealed class AudioUnitCacheStaging : IDisposable
     public MidiRenderPlan Plan { get; }
     public string FilePath { get; }
 
-    public static AudioUnitCacheStaging? Create(
+    public static AudioSegmentCacheStaging? Create(
         MidiRenderPlan plan,
         IAudioPcmCacheSessionAccess? cache,
         string soundFontPath,
@@ -33,45 +29,45 @@ internal sealed class AudioUnitCacheStaging : IDisposable
         int maximumSampleVoicesPerUnitStream)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        if (cache is null || plan.UnitFragments.IsEmpty
+        if (cache is null || plan.Segments.IsEmpty
             || cache.AudioCacheSnapshot?.RetentionState
                 == AudioCacheRetentionState.DisabledByPreference)
         {
             return null;
         }
 
-        string soundFontSha256 = HashFile(soundFontPath);
-        string nativeIdentity = ComputeNativeIdentity(nativeDirectory);
+        string soundFontSha256 = AudioUnitCacheStaging.HashFile(soundFontPath);
+        string nativeIdentity = AudioUnitCacheStaging.ComputeNativeIdentity(nativeDirectory);
         AudioFormat format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
         bool retentionEnabled = cache.AudioCacheSnapshot?.RetentionState
             == AudioCacheRetentionState.Enabled;
-        List<Entry> entries = [];
-        MidiUnitFragmentRenderPlan[] fragments = new MidiUnitFragmentRenderPlan[
-            plan.UnitFragments.Length];
         long maximumStagingBytes = 0;
-        foreach (MidiUnitFragmentRenderPlan fragment in plan.UnitFragments)
+        foreach (MidiSegmentRenderPlan segment in plan.Segments)
         {
-            maximumStagingBytes = checked(maximumStagingBytes + fragment.PcmPayloadByteCount);
+            maximumStagingBytes = checked(maximumStagingBytes + segment.PcmPayloadByteCount);
         }
         AudioCacheSessionStore.AudioRecoverySpool spool =
-            cache.CreateTransientAudioSpool(maximumStagingBytes);
-
+            cache.CreateSparseTransientAudioSpool(maximumStagingBytes);
+        List<Entry> entries = [];
+        MidiSegmentRenderPlan[] segments = new MidiSegmentRenderPlan[plan.Segments.Length];
         try
         {
-            byte[] headerBuffer = new byte[AudioPcmCachePayload.HeaderByteCount];
             FileStream staging = (FileStream)spool.Stream;
-            staging.Position = 0;
-            for (int index = 0; index < fragments.Length; index++)
+            byte[] headerBuffer = new byte[AudioPcmCachePayload.HeaderByteCount];
+            for (int index = 0; index < segments.Length; index++)
             {
-                MidiUnitFragmentRenderPlan fragment = plan.UnitFragments[index];
-                string key = MidiUnitPcmCacheKey.Create(
-                    fragment,
+                MidiSegmentRenderPlan segment = plan.Segments[index];
+                string key = MidiSegmentPcmCacheKey.Create(
+                    segment,
                     plan.SampleRate,
                     soundFontSha256,
                     nativeIdentity,
                     maximumSampleVoicesPerUnitStream);
+                cache.RegisterReusableAudioGeneration(
+                    $"segment:{segment.TrackId}:{segment.SegmentId}",
+                    key);
                 long payloadOffset = staging.Position;
-                long expectedLength = fragment.PcmPayloadByteCount;
+                long expectedLength = segment.PcmPayloadByteCount;
                 bool hit = cache.TryCopyReusableAudio(key, staging, out long copiedLength);
                 if (hit && !ValidateCopiedPayload(
                     staging,
@@ -79,41 +75,31 @@ internal sealed class AudioUnitCacheStaging : IDisposable
                     copiedLength,
                     expectedLength,
                     format,
-                    fragment.EndFrame - fragment.StartFrame))
+                    segment.FrameCount))
                 {
                     cache.InvalidateReusableAudio(key);
                     hit = false;
                 }
-
                 if (!hit && !retentionEnabled)
                 {
                     staging.Position = payloadOffset;
                     staging.SetLength(payloadOffset);
-                    fragments[index] = Clone(fragment, null, -1, pcmCacheHit: false);
+                    segments[index] = Clone(segment, null, -1, false);
                     continue;
                 }
-
                 if (!hit)
                 {
                     staging.Position = payloadOffset;
                     staging.SetLength(payloadOffset);
                     Span<byte> header = headerBuffer;
                     header.Clear();
-                    AudioPcmCachePayload.WriteHeader(
-                        header,
-                        format,
-                        fragment.EndFrame - fragment.StartFrame);
+                    AudioPcmCachePayload.WriteHeader(header, format, segment.FrameCount);
                     staging.Write(header);
                     staging.SetLength(checked(payloadOffset + expectedLength));
                 }
                 staging.Position = checked(payloadOffset + expectedLength);
-                fragments[index] = Clone(fragment, key, payloadOffset, hit);
-                entries.Add(new(
-                    key,
-                    payloadOffset,
-                    expectedLength,
-                    fragment.EndFrame,
-                    hit));
+                segments[index] = Clone(segment, key, payloadOffset, hit);
+                entries.Add(new(key, payloadOffset, expectedLength, segment.EndFrame, hit));
             }
             staging.Flush(flushToDisk: true);
         }
@@ -128,24 +114,15 @@ internal sealed class AudioUnitCacheStaging : IDisposable
             spool.Dispose();
             return null;
         }
-
         MidiRenderPlan stagedPlan = new(
             plan.SampleRate,
             plan.TotalFrameCount,
             plan.Ports,
             plan.SourceIds,
             plan.InitiallyDisabledSourceIndices,
-            fragments,
-            plan.Segments);
+            plan.UnitFragments,
+            segments);
         return new(stagedPlan, spool, entries.ToArray());
-    }
-
-    public void Dispose()
-    {
-        AudioCacheSessionStore.AudioRecoverySpool? spool =
-            Interlocked.Exchange(ref _spool, null);
-        spool?.Dispose();
-        TryDelete(FilePath + ".invalidated");
     }
 
     public void PublishCompleted(
@@ -158,45 +135,48 @@ internal sealed class AudioUnitCacheStaging : IDisposable
         {
             return;
         }
-
-        using FileStream source = new(
-            FilePath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite,
-            bufferSize: 64 * 1024,
-            FileOptions.SequentialScan);
-        foreach (Entry entry in _entries)
+        AudioCachePublishSlice[] slices = _entries
+            .Where(entry => !entry.Hit && entry.EndFrame <= completedRenderFrame)
+            .Select(entry => new AudioCachePublishSlice(
+                entry.Key,
+                entry.PayloadOffset,
+                entry.PayloadLength))
+            .ToArray();
+        if (slices.Length == 0)
         {
-            if (entry.Hit || entry.EndFrame > completedRenderFrame)
-            {
-                continue;
-            }
-            source.Position = entry.PayloadOffset;
-            _ = cache.PublishReusableAudio(entry.Key, source, entry.PayloadLength);
+            return;
         }
+        AudioCacheSessionStore.AudioRecoverySpool? spool =
+            Interlocked.Exchange(ref _spool, null);
+        if (spool is null)
+        {
+            return;
+        }
+        cache.QueueReusableAudioBatch(spool, slices);
     }
 
-    private static MidiUnitFragmentRenderPlan Clone(
-        MidiUnitFragmentRenderPlan value,
+    public void Dispose()
+    {
+        AudioCacheSessionStore.AudioRecoverySpool? spool =
+            Interlocked.Exchange(ref _spool, null);
+        spool?.Dispose();
+        TryDelete(FilePath + ".invalidated");
+    }
+
+    private static MidiSegmentRenderPlan Clone(
+        MidiSegmentRenderPlan value,
         string? cacheKey,
         long cacheOffset,
-        bool pcmCacheHit) => new(
-            value.CanonicalZeroBasedPortNumber,
-            value.CanonicalZeroBasedChannelNumber,
+        bool cacheHit) => new(
             value.TrackId,
             value.SegmentId,
-            value.EventInstrumentId,
-            value.InstanceGroupId,
-            value.SubVoiceId,
             value.SourceIndex,
             value.StartFrame,
             value.EndFrame,
             value.SemanticFingerprint,
-            value.Events,
             cacheKey,
             cacheOffset,
-            pcmCacheHit);
+            cacheHit);
 
     private static bool ValidateCopiedPayload(
         FileStream staging,
@@ -226,34 +206,6 @@ internal sealed class AudioUnitCacheStaging : IDisposable
         {
             staging.Position = end;
         }
-    }
-
-    internal static string ComputeNativeIdentity(string nativeDirectory)
-    {
-        using MemoryStream payload = new();
-        using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
-        {
-            writer.Write("MIDORA_BASS_NATIVE_BASELINE_WIN_X64_V1");
-            foreach (string fileName in NativeFileNames)
-            {
-                writer.Write(fileName);
-                writer.Write(HashFile(Path.Combine(nativeDirectory, fileName)));
-            }
-        }
-        return Convert.ToHexStringLower(SHA256.HashData(
-            payload.GetBuffer().AsSpan(0, checked((int)payload.Length))));
-    }
-
-    internal static string HashFile(string path)
-    {
-        using FileStream stream = new(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            bufferSize: 128 * 1024,
-            FileOptions.SequentialScan);
-        return Convert.ToHexStringLower(SHA256.HashData(stream));
     }
 
     private static void TryDelete(string path)

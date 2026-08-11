@@ -423,6 +423,25 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         }
     }
 
+    public void QueueReusableAudioBatch(
+        AudioCacheSessionStore.AudioRecoverySpool spool,
+        IReadOnlyList<AudioCachePublishSlice> slices)
+    {
+        ArgumentNullException.ThrowIfNull(spool);
+        ArgumentNullException.ThrowIfNull(slices);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_audioCacheStore is null)
+            {
+                spool.Dispose();
+                return;
+            }
+            _audioCacheStore.QueueReusableBatch(spool, slices);
+            _audioCacheWarning = _audioCacheStore.GetSnapshot().Warning;
+        }
+    }
+
     public void InvalidateReusableAudio(string key)
     {
         lock (_sync)
@@ -433,6 +452,30 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             {
                 _audioCacheWarning = _audioCacheStore.GetSnapshot().Warning;
             }
+        }
+    }
+
+    public void RegisterReusableAudioGeneration(string owner, string key)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(owner);
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _audioCacheStore?.RegisterReusableGeneration(owner, key);
+            if (_audioCacheStore is not null)
+            {
+                _audioCacheWarning = _audioCacheStore.GetSnapshot().Warning;
+            }
+        }
+    }
+
+    public bool TryCompactReusableAudio(bool isStopped, TimeSpan idleDuration)
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _audioCacheStore?.TryCompactReusable(isStopped, idleDuration) == true;
         }
     }
 
@@ -463,6 +506,22 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
 
     public AudioCacheSessionStore.AudioRecoverySpool CreateTransientAudioSpool(
         long lengthBytes) => CreateBufferingRecoverySpool(lengthBytes);
+
+    public AudioCacheSessionStore.AudioRecoverySpool CreateSparseTransientAudioSpool(
+        long lengthBytes)
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_audioCacheStore is null)
+            {
+                throw new AudioRecoveryStorageUnavailableException(
+                    "The Segment cache staging file cannot be created because the configured cache root is unavailable.",
+                    new IOException(_audioCacheWarning.Message));
+            }
+            return _audioCacheStore.CreateRecoverySpool(lengthBytes, sparse: true);
+        }
+    }
 
     public void DisableReusableAudioRetention(string reason)
     {

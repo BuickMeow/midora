@@ -7,6 +7,7 @@ public sealed class MidiRenderPlan
     private readonly MidiPortRenderPlan[] _ports;
     private readonly MidiUnitRenderPlan[] _units;
     private readonly MidiUnitFragmentRenderPlan[] _unitFragments;
+    private readonly MidiSegmentRenderPlan[] _segments;
     private readonly long[] _sourceIds;
     private readonly int[] _initiallyDisabledSourceIndices;
 
@@ -16,7 +17,8 @@ public sealed class MidiRenderPlan
         ReadOnlySpan<MidiPortRenderPlan> ports,
         ReadOnlySpan<long> sourceIds = default,
         ReadOnlySpan<int> initiallyDisabledSourceIndices = default,
-        ReadOnlySpan<MidiUnitFragmentRenderPlan> unitFragments = default)
+        ReadOnlySpan<MidiUnitFragmentRenderPlan> unitFragments = default,
+        ReadOnlySpan<MidiSegmentRenderPlan> segments = default)
     {
         if (sampleRate <= 0)
         {
@@ -38,11 +40,13 @@ public sealed class MidiRenderPlan
         _ports = ports.ToArray();
         _units = CreateUnitStreamSlots(_ports);
         _unitFragments = unitFragments.ToArray();
+        _segments = segments.ToArray();
         _sourceIds = sourceIds.ToArray();
         _initiallyDisabledSourceIndices = initiallyDisabledSourceIndices.ToArray();
         ValidateSources(_sourceIds, _initiallyDisabledSourceIndices);
         ValidatePorts(_ports, totalFrameCount, _sourceIds.Length);
         ValidateUnitFragments(_unitFragments, totalFrameCount, _sourceIds.Length);
+        ValidateSegments(_segments, _unitFragments, totalFrameCount, _sourceIds.Length);
     }
 
     public int SampleRate { get; }
@@ -54,6 +58,8 @@ public sealed class MidiRenderPlan
     public ReadOnlySpan<MidiUnitRenderPlan> Units => _units;
 
     public ReadOnlySpan<MidiUnitFragmentRenderPlan> UnitFragments => _unitFragments;
+
+    public ReadOnlySpan<MidiSegmentRenderPlan> Segments => _segments;
 
     public ReadOnlySpan<long> SourceIds => _sourceIds;
 
@@ -167,6 +173,63 @@ public sealed class MidiRenderPlan
                     nameof(fragments));
             }
             endByUnit[fragment.CanonicalUnitNumber] = fragment.EndFrame;
+        }
+    }
+
+    private static void ValidateSegments(
+        ReadOnlySpan<MidiSegmentRenderPlan> segments,
+        ReadOnlySpan<MidiUnitFragmentRenderPlan> fragments,
+        long totalFrameCount,
+        int sourceCount)
+    {
+        HashSet<(long TrackId, long SegmentId)> identities = [];
+        Dictionary<int, long> endBySource = [];
+        foreach (MidiSegmentRenderPlan segment in segments)
+        {
+            if (segment.EndFrame > totalFrameCount
+                || segment.SourceIndex >= sourceCount
+                || !identities.Add((segment.TrackId, segment.SegmentId)))
+            {
+                throw new ArgumentException(
+                    "The Segment cache plan contains an invalid boundary, source, or duplicate identity.",
+                    nameof(segments));
+            }
+            if (endBySource.TryGetValue(segment.SourceIndex, out long previousEnd)
+                && segment.StartFrame < previousEnd)
+            {
+                throw new ArgumentException(
+                    "Segments belonging to one render source must not overlap.",
+                    nameof(segments));
+            }
+            endBySource[segment.SourceIndex] = segment.EndFrame;
+        }
+
+        if (segments.IsEmpty)
+        {
+            return;
+        }
+
+        foreach (MidiUnitFragmentRenderPlan fragment in fragments)
+        {
+            MidiSegmentRenderPlan? owner = null;
+            foreach (MidiSegmentRenderPlan segment in segments)
+            {
+                if (segment.TrackId == fragment.TrackId
+                    && segment.SegmentId == fragment.SegmentId)
+                {
+                    owner = segment;
+                    break;
+                }
+            }
+            if (owner is null
+                || owner.SourceIndex != fragment.SourceIndex
+                || fragment.StartFrame < owner.StartFrame
+                || fragment.EndFrame > owner.EndFrame)
+            {
+                throw new ArgumentException(
+                    "Every Unit fragment must be contained by its owning Segment cache plan.",
+                    nameof(segments));
+            }
         }
     }
 }

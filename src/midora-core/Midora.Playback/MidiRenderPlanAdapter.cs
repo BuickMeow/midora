@@ -1,6 +1,8 @@
 using Midora.Audio;
 using Midora.Compiler;
 using Midora.Domain;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Midora.Playback;
 
@@ -100,6 +102,13 @@ public static class MidiRenderPlanAdapter
             .ThenBy(value => value.InstanceGroupId)
             .ThenBy(value => value.SubVoiceId)
             .ToArray();
+        MidiSegmentRenderPlan[] segments = unitFragments
+            .GroupBy(value => (value.TrackId, value.SegmentId, value.SourceIndex))
+            .Select(group => CreateSegmentPlan(group.Key, group.ToArray()))
+            .OrderBy(value => value.SourceIndex)
+            .ThenBy(value => value.StartFrame)
+            .ThenBy(value => value.SegmentId)
+            .ToArray();
         List<MidiPortRenderPlan> ports = [];
         CanonicalMidiEvent[] events = compiled.Events.ToArray();
         for (byte port = 0; port < 16; port++)
@@ -132,7 +141,56 @@ public static class MidiRenderPlanAdapter
             ports.ToArray(),
             sourceIds.Select(value => value.Value).ToArray(),
             initiallyDisabled,
-            unitFragments);
+            unitFragments,
+            segments);
+    }
+
+    private static MidiSegmentRenderPlan CreateSegmentPlan(
+        (long TrackId, long SegmentId, int SourceIndex) identity,
+        MidiUnitFragmentRenderPlan[] fragments)
+    {
+        long startFrame = fragments.Min(value => value.StartFrame);
+        long endFrame = fragments.Max(value => value.EndFrame);
+        using MemoryStream payload = new();
+        using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write("MIDORA_SAMPLE_DOMAIN_SEGMENT_PROJECTION_V1");
+            writer.Write(identity.TrackId);
+            writer.Write(identity.SegmentId);
+            writer.Write(endFrame - startFrame);
+            writer.Write(fragments.Length);
+            foreach (MidiUnitFragmentRenderPlan fragment in fragments
+                .OrderBy(value => value.StartFrame)
+                .ThenBy(value => value.EndFrame)
+                .ThenBy(value => value.EventInstrumentId)
+                .ThenBy(value => value.InstanceGroupId)
+                .ThenBy(value => value.SubVoiceId))
+            {
+                // Physical route is deliberately excluded: the Segment stem is the
+                // deterministic sum of abstract 1-channel Unit projections.
+                writer.Write(fragment.EventInstrumentId);
+                writer.Write(fragment.InstanceGroupId);
+                writer.Write(fragment.SubVoiceId);
+                writer.Write(fragment.StartFrame - startFrame);
+                writer.Write(fragment.EndFrame - startFrame);
+                writer.Write(fragment.SemanticFingerprint);
+                writer.Write(fragment.Events.Length);
+                foreach (ScheduledMidiMessage value in fragment.Events)
+                {
+                    writer.Write(value.SampleFrame - startFrame);
+                    writer.Write(value.Message.PackedValue);
+                }
+            }
+        }
+        string fingerprint = Convert.ToHexStringLower(SHA256.HashData(
+            payload.GetBuffer().AsSpan(0, checked((int)payload.Length))));
+        return new(
+            identity.TrackId,
+            identity.SegmentId,
+            identity.SourceIndex,
+            startFrame,
+            endFrame,
+            fingerprint);
     }
 
     private static ChannelUnitAllocation ResolveAllocation(

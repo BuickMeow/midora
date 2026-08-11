@@ -20,4 +20,8 @@
     <ProjectReference Include="..\..\midora-midi\Midora.Midi\Midora.Midi.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Midora.Application.Tests" />
+  </ItemGroup>
+
 </Project>

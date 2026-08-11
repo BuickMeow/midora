@@ -167,12 +167,44 @@ public sealed unsafe class AudioFrameRingBuffer : IAudioRenderSource, IDisposabl
         return available;
     }
 
+    /// <summary>
+    /// Copies at most <paramref name="maximumFrameCount"/> future frames without
+    /// advancing the consumer. The single producer must be externally paused.
+    /// </summary>
+    public int CopyPrefixFramesTo(float* destination, int maximumFrameCount)
+    {
+        if (_disposed || destination == null || maximumFrameCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maximumFrameCount));
+        }
+        long read = Volatile.Read(ref _readPosition);
+        long write = Volatile.Read(ref _writePosition);
+        int frameCount = Math.Min(checked((int)(write - read)), maximumFrameCount);
+        CopyFromRing(destination, read, frameCount);
+        return frameCount;
+    }
+
     public void ResetBufferedFramesAtReadPosition()
     {
         if (_disposed || !IsBuffering)
         {
             throw new InvalidOperationException(
                 "Buffered frames can only be reset while an underrun is latched.");
+        }
+        long read = Volatile.Read(ref _readPosition);
+        Volatile.Write(ref _writePosition, read);
+    }
+
+    /// <summary>
+    /// Discards prepared future frames while the single producer is externally paused.
+    /// This does not change the consumer position or latch underrun recovery.
+    /// </summary>
+    public void DiscardBufferedFramesAtReadPosition()
+    {
+        if (_disposed || ProducerFaulted)
+        {
+            throw new InvalidOperationException(
+                "Prepared frames cannot be discarded from a disposed or faulted ring.");
         }
         long read = Volatile.Read(ref _readPosition);
         Volatile.Write(ref _writePosition, read);

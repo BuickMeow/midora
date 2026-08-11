@@ -439,7 +439,7 @@ public sealed class ProjectConductorAndSettingsEditCommandsTests
     }
 
     [Fact]
-    public void AudioRenderVoiceChangeAndHistoryClearAllSessionPcmGenerations()
+    public void AudioRenderVoiceChangeAndHistoryPreserveCompletedSessionPcmEntries()
     {
         string cacheRoot = Path.Combine(
             Path.GetTempPath(),
@@ -467,27 +467,26 @@ public sealed class ProjectConductorAndSettingsEditCommandsTests
                 AudioRenderProjectSettings.DefaultSampleVoicesPerUnitStream + 1));
 
             string afterEdit = compilation.AudioCacheSnapshot!.Value.SessionPath;
-            Assert.NotEqual(beforeEdit, afterEdit);
-            Assert.False(Directory.Exists(beforeEdit));
-            Assert.False(compilation.TryReadReusableAudio(key, out _));
+            Assert.Equal(beforeEdit, afterEdit);
+            Assert.True(Directory.Exists(beforeEdit));
+            Assert.True(compilation.TryReadReusableAudio(key, out byte[] afterEditPayload));
+            Assert.Equal([4, 5, 6], afterEditPayload);
             Assert.Equal(canonicalFingerprint, compilation.LastAttempt.Fingerprint);
-            Assert.True(compilation.PublishReusableAudio(key, [7, 8, 9]).Published);
 
             document.Undo();
 
             string afterUndo = compilation.AudioCacheSnapshot!.Value.SessionPath;
-            Assert.NotEqual(afterEdit, afterUndo);
-            Assert.False(Directory.Exists(afterEdit));
-            Assert.False(compilation.TryReadReusableAudio(key, out _));
+            Assert.Equal(afterEdit, afterUndo);
+            Assert.True(compilation.TryReadReusableAudio(key, out byte[] afterUndoPayload));
+            Assert.Equal([4, 5, 6], afterUndoPayload);
             Assert.Equal(canonicalFingerprint, compilation.LastAttempt.Fingerprint);
-            Assert.True(compilation.PublishReusableAudio(key, [10, 11, 12]).Published);
 
             document.Redo();
 
             string afterRedo = compilation.AudioCacheSnapshot!.Value.SessionPath;
-            Assert.NotEqual(afterUndo, afterRedo);
-            Assert.False(Directory.Exists(afterUndo));
-            Assert.False(compilation.TryReadReusableAudio(key, out _));
+            Assert.Equal(afterUndo, afterRedo);
+            Assert.True(compilation.TryReadReusableAudio(key, out byte[] afterRedoPayload));
+            Assert.Equal([4, 5, 6], afterRedoPayload);
             Assert.Equal(canonicalFingerprint, compilation.LastAttempt.Fingerprint);
         }
         finally

@@ -157,7 +157,13 @@ public sealed unsafe class BufferingRecoveryRenderSource : IAudioRenderSource, I
         return tail.Status switch
         {
             AudioPullStatus.Fault => AudioPullResult.Fault(replayed + tail.FrameCount),
-            AudioPullStatus.Buffering => AudioPullResult.Buffering(),
+            // The replay cursor has already advanced. Returning Buffering here would
+            // report zero frames and make the render-ahead worker discard the replayed
+            // prefix, permanently moving the producer source ahead of the ring. A later
+            // recovery that ends at EOS would then fail before its requested endpoint.
+            AudioPullStatus.Buffering => replayed == 0
+                ? AudioPullResult.Buffering()
+                : AudioPullResult.Continue(replayed),
             AudioPullStatus.EndOfStream => AudioPullResult.EndOfStream(replayed + tail.FrameCount),
             _ => AudioPullResult.Continue(replayed + tail.FrameCount)
         };

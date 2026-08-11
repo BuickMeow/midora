@@ -208,6 +208,45 @@ public sealed class AudioFrameRingBufferTests
     }
 
     [Fact]
+    public unsafe void RecoveryReplayPublishesItsPrefixWhenUnderlyingTailIsBuffering()
+    {
+        BufferOnThirdPullSource source = new(totalFrames: 64);
+        using BufferingRecoveryRenderSource recovery = new(
+            source,
+            capacityFrameCount: 32,
+            workFrameCount: 16);
+        using AudioFrameRingBuffer ring = new(source.Format, 16);
+        float* work = stackalloc float[32 * 2];
+
+        Assert.Equal(8, recovery.PullFrames(work, 8).FrameCount);
+        Assert.True(ring.TryWriteFrames(work, 8));
+        Assert.Equal(6, ring.PullFrames(work, 6).FrameCount);
+        Assert.Equal(AudioPullStatus.Buffering, ring.PullFrames(work, 4).Status);
+        recovery.PrepareRecovery(ring, recoveryEndFrame: 20);
+
+        AudioPullResult replay = recovery.PullFrames(work, 16);
+
+        Assert.Equal(AudioPullStatus.Continue, replay.Status);
+        Assert.Equal(14, replay.FrameCount);
+        Assert.Equal(20, source.Position);
+        for (int frame = 0; frame < replay.FrameCount; frame++)
+        {
+            Assert.Equal(6 + frame, work[frame * 2]);
+            Assert.Equal(-(6 + frame), work[(frame * 2) + 1]);
+        }
+
+        AudioPullResult resumed = recovery.PullFrames(work, 4);
+        Assert.Equal(AudioPullStatus.Continue, resumed.Status);
+        Assert.Equal(4, resumed.FrameCount);
+        Assert.Equal(24, source.Position);
+        for (int frame = 0; frame < resumed.FrameCount; frame++)
+        {
+            Assert.Equal(20 + frame, work[frame * 2]);
+            Assert.Equal(-(20 + frame), work[(frame * 2) + 1]);
+        }
+    }
+
+    [Fact]
     public unsafe void RenderAheadWorkerPausesAtAStableProducerFrontierAndResumes()
     {
         CountingSource source = new(1_024);
@@ -297,6 +336,36 @@ public sealed class AudioFrameRingBufferTests
                 destination,
                 checked((nuint)requestedFrameCount * (nuint)Format.BytesPerFrame));
             return AudioPullResult.EndOfStream(requestedFrameCount);
+        }
+    }
+
+    private sealed unsafe class BufferOnThirdPullSource(long totalFrames) : IAudioRenderSource
+    {
+        private long _position;
+        private int _pullCount;
+
+        public AudioFormat Format => new(48_000, 2, AudioSampleFormat.Float32);
+
+        public long Position => Volatile.Read(ref _position);
+
+        public AudioPullResult PullFrames(float* destination, int requestedFrameCount)
+        {
+            if (Interlocked.Increment(ref _pullCount) == 3)
+            {
+                return AudioPullResult.Buffering();
+            }
+
+            int frames = (int)Math.Min(requestedFrameCount, totalFrames - _position);
+            for (int frame = 0; frame < frames; frame++)
+            {
+                destination[frame * 2] = _position + frame;
+                destination[(frame * 2) + 1] = -(_position + frame);
+            }
+
+            _position += frames;
+            return _position == totalFrames
+                ? AudioPullResult.EndOfStream(frames)
+                : AudioPullResult.Continue(frames);
         }
     }
 

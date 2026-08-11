@@ -27,30 +27,41 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         ArgumentNullException.ThrowIfNull(plan);
         string fullPath = Path.GetFullPath(path);
         _format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
+        FileStream? file = null;
         try
         {
-            bool[] hitUnits = new bool[16 * 16];
-            bool[] missUnits = new bool[16 * 16];
+            List<MidiUnitFragmentRenderPlan>?[] hitFragments =
+                new List<MidiUnitFragmentRenderPlan>?[16 * 16];
+            List<MidiUnitFragmentRenderPlan>?[] missFragments =
+                new List<MidiUnitFragmentRenderPlan>?[16 * 16];
             foreach (MidiUnitFragmentRenderPlan fragment in plan.UnitFragments)
             {
-                hitUnits[fragment.CanonicalUnitNumber] |= fragment.PcmCacheHit;
-                missUnits[fragment.CanonicalUnitNumber] |=
-                    fragment.PcmCacheKey is not null && !fragment.PcmCacheHit;
+                if (fragment.PcmCacheKey is null)
+                {
+                    continue;
+                }
+                List<MidiUnitFragmentRenderPlan>?[] destination = fragment.PcmCacheHit
+                    ? hitFragments
+                    : missFragments;
+                destination[fragment.CanonicalUnitNumber] ??= [];
+                destination[fragment.CanonicalUnitNumber]!.Add(fragment);
             }
-            for (int unit = 0; unit < hitUnits.Length; unit++)
+            for (int unit = 0; unit < hitFragments.Length; unit++)
             {
-                if (hitUnits[unit])
+                if (hitFragments[unit] is { Count: > 0 } hits)
                 {
                     _readers[unit] = new ReaderSlot(
-                        checked((nuint)ReaderCapacityFrames * (nuint)_format.BytesPerFrame));
+                        checked((nuint)ReaderCapacityFrames * (nuint)_format.BytesPerFrame),
+                        CreateCacheFragments(hits));
                 }
-                if (missUnits[unit])
+                if (missFragments[unit] is { Count: > 0 } misses)
                 {
                     _writers[unit] = new WriterSlot(
-                        checked((nuint)WriterCapacityFrames * (nuint)_format.BytesPerFrame));
+                        checked((nuint)WriterCapacityFrames * (nuint)_format.BytesPerFrame),
+                        CreateCacheFragments(misses));
                 }
             }
-            _file = new FileStream(
+            _file = file = new FileStream(
                 fullPath,
                 FileMode.Open,
                 FileAccess.ReadWrite,
@@ -58,16 +69,21 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
                 bufferSize: 1,
                 FileOptions.RandomAccess);
             _handle = _file.SafeFileHandle;
+            for (int unit = 0; unit < _readers.Length; unit++)
+            {
+                PrimeReader(_readers[unit]);
+            }
             _thread = new Thread(Run)
             {
                 IsBackground = true,
                 Name = "Midora Unit PCM Cache I/O",
-                Priority = ThreadPriority.BelowNormal
+                Priority = ThreadPriority.AboveNormal
             };
             _thread.Start();
         }
         catch
         {
+            file?.Dispose();
             DisposeBuffers();
             throw;
         }
@@ -89,8 +105,16 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         }
         ReaderSlot slot = _readers[fragment.CanonicalUnitNumber]!;
         long relativeStart = globalStartFrame - fragment.StartFrame;
-        CopyFromReaderRing(slot, destination, relativeStart, frameCount);
-        Volatile.Write(ref slot.ConsumerPosition, relativeStart + frameCount);
+        if (!TryResolveStreamPosition(
+            slot.FragmentsByPayloadOffset,
+            fragment,
+            relativeStart,
+            out long streamStart))
+        {
+            return false;
+        }
+        CopyFromReaderRing(slot, destination, streamStart, frameCount);
+        Volatile.Write(ref slot.ConsumerPosition, streamStart + frameCount);
         return true;
     }
 
@@ -102,17 +126,24 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         ReaderSlot slot = _readers[fragment.CanonicalUnitNumber]
             ?? throw new InvalidOperationException("A cache-hit Unit has no read-ahead slot.");
         long relativeStart = globalStartFrame - fragment.StartFrame;
-        long payloadOffset = checked(
-            fragment.PcmCachePayloadOffset + AudioPcmCachePayload.HeaderByteCount);
-        if (Volatile.Read(ref slot.RequestedPayloadOffset) != payloadOffset)
+        if (!TryResolveStreamPosition(
+            slot.FragmentsByPayloadOffset,
+            fragment,
+            relativeStart,
+            out long streamStart))
         {
-            Volatile.Write(ref slot.RequestedStartFrame, relativeStart);
-            Volatile.Write(ref slot.RequestedTotalFrameCount, fragment.EndFrame - fragment.StartFrame);
-            Volatile.Write(ref slot.RequestedPayloadOffset, payloadOffset);
+            return false;
         }
-        return Volatile.Read(ref slot.ReadyPayloadOffset) == payloadOffset
-            && Volatile.Read(ref slot.ConsumerPosition) == relativeStart
-            && Volatile.Read(ref slot.ProducerPosition) - relativeStart >= frameCount;
+        if (Volatile.Read(ref slot.ConsumerPosition) != streamStart)
+        {
+            if (Volatile.Read(ref slot.RequestedStreamPosition) != streamStart)
+            {
+                Volatile.Write(ref slot.RequestedStreamPosition, streamStart);
+                Interlocked.Increment(ref slot.RequestVersion);
+            }
+            return false;
+        }
+        return Volatile.Read(ref slot.ProducerPosition) - streamStart >= frameCount;
     }
 
     public bool CanWriteFrames(
@@ -127,21 +158,20 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         WriterSlot slot = _writers[fragment.CanonicalUnitNumber]
             ?? throw new InvalidOperationException("A cache-miss Unit has no writer slot.");
         long relativeStart = globalStartFrame - fragment.StartFrame;
-        long payloadOffset = checked(
-            fragment.PcmCachePayloadOffset + AudioPcmCachePayload.HeaderByteCount);
-        if (Volatile.Read(ref slot.RequestedPayloadOffset) != payloadOffset)
+        if (!TryResolveStreamPosition(
+            slot.FragmentsByPayloadOffset,
+            fragment,
+            relativeStart,
+            out long streamStart))
         {
-            Volatile.Write(ref slot.RequestedStartFrame, relativeStart);
-            Volatile.Write(ref slot.RequestedTotalFrameCount, fragment.EndFrame - fragment.StartFrame);
-            Volatile.Write(ref slot.RequestedPayloadOffset, payloadOffset);
+            return false;
         }
-        if (Volatile.Read(ref slot.ReadyPayloadOffset) != payloadOffset
-            || slot.ProducerPosition != relativeStart)
+        if (Volatile.Read(ref slot.ProducerPosition) != streamStart)
         {
             return false;
         }
         long consumed = Volatile.Read(ref slot.ConsumerPosition);
-        return frameCount <= WriterCapacityFrames - (relativeStart - consumed);
+        return frameCount <= WriterCapacityFrames - (streamStart - consumed);
     }
 
     public bool TryQueueWrite(
@@ -160,7 +190,16 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
             return false;
         }
         WriterSlot slot = _writers[fragment.CanonicalUnitNumber]!;
-        long produced = slot.ProducerPosition;
+        long relativeStart = globalStartFrame - fragment.StartFrame;
+        if (!TryResolveStreamPosition(
+            slot.FragmentsByPayloadOffset,
+            fragment,
+            relativeStart,
+            out long streamStart))
+        {
+            return false;
+        }
+        long produced = Volatile.Read(ref slot.ProducerPosition);
         CopyIntoWriterRing(slot, source, produced, frameCount);
         Volatile.Write(ref slot.ProducerPosition, produced + frameCount);
         return true;
@@ -199,13 +238,13 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
             while (true)
             {
                 bool progressed = false;
-                for (int i = 0; i < _writers.Length; i++)
-                {
-                    progressed |= DrainOneWriter(_writers[i]);
-                }
                 for (int i = 0; i < _readers.Length; i++)
                 {
                     progressed |= FillOneReader(_readers[i]);
+                }
+                for (int i = 0; i < _writers.Length; i++)
+                {
+                    progressed |= DrainOneWriter(_writers[i]);
                 }
                 if (Volatile.Read(ref _completionRequested) != 0
                     && WritersAreDrained())
@@ -243,27 +282,9 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
             Volatile.Write(ref slot.ConsumerPosition, Volatile.Read(ref slot.ProducerPosition));
             return false;
         }
-        long requestedOffset = Volatile.Read(ref slot.RequestedPayloadOffset);
-        if (requestedOffset >= 0 && slot.ActivePayloadOffset != requestedOffset)
-        {
-            long oldConsumed = slot.ConsumerPosition;
-            long oldProduced = Volatile.Read(ref slot.ProducerPosition);
-            if (slot.ActivePayloadOffset >= 0 && oldConsumed != oldProduced)
-            {
-                return WriteAvailableFrames(slot, force: true);
-            }
-            Volatile.Write(ref slot.ReadyPayloadOffset, -1);
-            long start = Volatile.Read(ref slot.RequestedStartFrame);
-            slot.ActivePayloadOffset = requestedOffset;
-            slot.TotalFrameCount = Volatile.Read(ref slot.RequestedTotalFrameCount);
-            slot.ConsumerPosition = start;
-            slot.ProducerPosition = start;
-            Volatile.Write(ref slot.ReadyPayloadOffset, requestedOffset);
-        }
         return WriteAvailableFrames(
             slot,
-            force: Volatile.Read(ref _completionRequested) != 0
-                || requestedOffset != slot.ActivePayloadOffset);
+            force: Volatile.Read(ref _completionRequested) != 0);
     }
 
     private bool WriteAvailableFrames(WriterSlot slot, bool force)
@@ -271,14 +292,25 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         long consumed = slot.ConsumerPosition;
         long produced = Volatile.Read(ref slot.ProducerPosition);
         long available = produced - consumed;
-        if (available == 0
-            || !force && available < WriterFlushThresholdFrames
-                && produced != slot.TotalFrameCount)
+        if (available == 0)
+        {
+            return false;
+        }
+        if (!TryFindCacheFragment(slot.Fragments, consumed, out CacheFragment fragment))
+        {
+            Volatile.Write(ref _writeFault,
+                new InvalidDataException("A Unit PCM writer position is outside its fragment schedule."));
+            return false;
+        }
+        if (!force && available < WriterFlushThresholdFrames
+            && produced < fragment.StreamEndFrame)
         {
             return false;
         }
         int index = (int)(consumed % WriterCapacityFrames);
-        int frames = (int)Math.Min(available, WriterCapacityFrames - index);
+        int frames = (int)Math.Min(
+            Math.Min(available, WriterCapacityFrames - index),
+            fragment.StreamEndFrame - consumed);
         try
         {
             RandomAccess.Write(
@@ -286,7 +318,9 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
                 new ReadOnlySpan<byte>(
                     slot.Buffer + (index * _format.BytesPerFrame),
                     checked(frames * _format.BytesPerFrame)),
-                checked(slot.ActivePayloadOffset + (consumed * _format.BytesPerFrame)));
+                checked(fragment.PayloadOffset
+                    + AudioPcmCachePayload.HeaderByteCount
+                    + ((consumed - fragment.StreamStartFrame) * _format.BytesPerFrame)));
         }
         catch (Exception exception)
         {
@@ -302,40 +336,42 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         {
             return false;
         }
-        long requestedOffset = Volatile.Read(ref slot.RequestedPayloadOffset);
-        if (requestedOffset < 0)
+        int requestedVersion = Volatile.Read(ref slot.RequestVersion);
+        if (slot.ActiveRequestVersion != requestedVersion)
         {
-            return false;
-        }
-        if (slot.ActivePayloadOffset != requestedOffset)
-        {
-            Volatile.Write(ref slot.ReadyPayloadOffset, -1);
-            long start = Volatile.Read(ref slot.RequestedStartFrame);
-            slot.ActivePayloadOffset = requestedOffset;
-            slot.TotalFrameCount = Volatile.Read(ref slot.RequestedTotalFrameCount);
-            Volatile.Write(ref slot.ConsumerPosition, start);
-            slot.ProducerPosition = start;
-            Volatile.Write(ref slot.ReadyPayloadOffset, requestedOffset);
+            long requestedPosition = Volatile.Read(ref slot.RequestedStreamPosition);
+            Volatile.Write(ref slot.ConsumerPosition, requestedPosition);
+            slot.ProducerPosition = requestedPosition;
+            slot.ActiveRequestVersion = requestedVersion;
         }
 
         long consumed = Volatile.Read(ref slot.ConsumerPosition);
         long produced = slot.ProducerPosition;
         int free = checked((int)(ReaderCapacityFrames - (produced - consumed)));
-        if (free == 0 || produced == slot.TotalFrameCount)
+        if (free == 0 || produced == slot.TotalStreamFrameCount)
         {
+            return false;
+        }
+        if (!TryFindCacheFragment(slot.Fragments, produced, out CacheFragment fragment))
+        {
+            Volatile.Write(ref _readFault,
+                new InvalidDataException("A Unit PCM reader position is outside its fragment schedule."));
             return false;
         }
         int index = (int)(produced % ReaderCapacityFrames);
         int frames = (int)Math.Min(
-            Math.Min(free, ReaderCapacityFrames - index),
-            slot.TotalFrameCount - produced);
+            Math.Min(Math.Min(free, ReaderCapacityFrames - index),
+                fragment.StreamEndFrame - produced),
+            slot.TotalStreamFrameCount - produced);
         try
         {
             ReadExactly(
                 new Span<byte>(
                     slot.Buffer + (index * _format.BytesPerFrame),
                     checked(frames * _format.BytesPerFrame)),
-                checked(requestedOffset + (produced * _format.BytesPerFrame)));
+                checked(fragment.PayloadOffset
+                    + AudioPcmCachePayload.HeaderByteCount
+                    + ((produced - fragment.StreamStartFrame) * _format.BytesPerFrame)));
             Volatile.Write(ref slot.ProducerPosition, produced + frames);
             return true;
         }
@@ -422,6 +458,128 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         return true;
     }
 
+    private void PrimeReader(ReaderSlot? slot)
+    {
+        if (slot is null)
+        {
+            return;
+        }
+        while (slot.ProducerPosition - Volatile.Read(ref slot.ConsumerPosition)
+            < ReaderCapacityFrames
+            && slot.ProducerPosition < slot.TotalStreamFrameCount)
+        {
+            if (!FillOneReader(slot))
+            {
+                if (ReadFaulted)
+                {
+                    throw new InvalidDataException(
+                        "The initial Unit PCM cache read-ahead failed.",
+                        Volatile.Read(ref _readFault));
+                }
+                break;
+            }
+        }
+    }
+
+    private static CacheFragment[] CreateCacheFragments(
+        IEnumerable<MidiUnitFragmentRenderPlan> fragments)
+    {
+        long streamStart = 0;
+        List<CacheFragment> result = [];
+        foreach (MidiUnitFragmentRenderPlan fragment in fragments
+            .OrderBy(value => value.StartFrame)
+            .ThenBy(value => value.InstanceGroupId)
+            .ThenBy(value => value.SubVoiceId))
+        {
+            long frameCount = fragment.EndFrame - fragment.StartFrame;
+            result.Add(new(
+                fragment.PcmCachePayloadOffset,
+                streamStart,
+                frameCount));
+            streamStart = checked(streamStart + frameCount);
+        }
+        return result.ToArray();
+    }
+
+    private static bool TryResolveStreamPosition(
+        CacheFragment[] fragmentsByPayloadOffset,
+        MidiUnitFragmentRenderPlan fragment,
+        long relativeStart,
+        out long streamPosition)
+    {
+        int low = 0;
+        int high = fragmentsByPayloadOffset.Length - 1;
+        while (low <= high)
+        {
+            int middle = low + ((high - low) >> 1);
+            CacheFragment candidate = fragmentsByPayloadOffset[middle];
+            if (candidate.PayloadOffset < fragment.PcmCachePayloadOffset)
+            {
+                low = middle + 1;
+                continue;
+            }
+            if (candidate.PayloadOffset > fragment.PcmCachePayloadOffset)
+            {
+                high = middle - 1;
+                continue;
+            }
+            if (relativeStart >= 0 && relativeStart <= candidate.FrameCount)
+            {
+                streamPosition = checked(candidate.StreamStartFrame + relativeStart);
+                return true;
+            }
+            break;
+        }
+        streamPosition = 0;
+        return false;
+    }
+
+    private static CacheFragment[] SortByPayloadOffset(CacheFragment[] fragments)
+    {
+        CacheFragment[] sorted = (CacheFragment[])fragments.Clone();
+        Array.Sort(
+            sorted,
+            static (left, right) => left.PayloadOffset.CompareTo(right.PayloadOffset));
+        for (int i = 1; i < sorted.Length; i++)
+        {
+            if (sorted[i - 1].PayloadOffset == sorted[i].PayloadOffset)
+            {
+                throw new InvalidDataException(
+                    "A Unit PCM cache schedule contains duplicate payload offsets.");
+            }
+        }
+        return sorted;
+    }
+
+    private static bool TryFindCacheFragment(
+        CacheFragment[] fragments,
+        long streamPosition,
+        out CacheFragment fragment)
+    {
+        int low = 0;
+        int high = fragments.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (fragments[middle].StreamEndFrame <= streamPosition)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        if (low < fragments.Length
+            && streamPosition >= fragments[low].StreamStartFrame)
+        {
+            fragment = fragments[low];
+            return true;
+        }
+        fragment = default;
+        return false;
+    }
+
     private void DisposeBuffers()
     {
         for (int i = 0; i < _readers.Length; i++)
@@ -433,10 +591,21 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         }
     }
 
+    private readonly record struct CacheFragment(
+        long PayloadOffset,
+        long StreamStartFrame,
+        long FrameCount)
+    {
+        public long StreamEndFrame => checked(StreamStartFrame + FrameCount);
+    }
+
     private sealed unsafe class ReaderSlot : IDisposable
     {
-        public ReaderSlot(nuint byteCount)
+        public ReaderSlot(nuint byteCount, CacheFragment[] fragments)
         {
+            Fragments = fragments;
+            FragmentsByPayloadOffset = SortByPayloadOffset(fragments);
+            TotalStreamFrameCount = fragments[^1].StreamEndFrame;
             Buffer = (byte*)NativeMemory.Alloc(byteCount);
             if (Buffer is null)
             {
@@ -445,12 +614,12 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         }
 
         public byte* Buffer;
-        public long RequestedPayloadOffset = -1;
-        public long RequestedStartFrame;
-        public long RequestedTotalFrameCount;
-        public long ReadyPayloadOffset = -1;
-        public long ActivePayloadOffset = -1;
-        public long TotalFrameCount;
+        public CacheFragment[] Fragments { get; }
+        public CacheFragment[] FragmentsByPayloadOffset { get; }
+        public long TotalStreamFrameCount { get; }
+        public long RequestedStreamPosition;
+        public int RequestVersion;
+        public int ActiveRequestVersion;
         public long ConsumerPosition;
         public long ProducerPosition;
 
@@ -466,8 +635,10 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
 
     private sealed unsafe class WriterSlot : IDisposable
     {
-        public WriterSlot(nuint byteCount)
+        public WriterSlot(nuint byteCount, CacheFragment[] fragments)
         {
+            Fragments = fragments;
+            FragmentsByPayloadOffset = SortByPayloadOffset(fragments);
             Buffer = (byte*)NativeMemory.Alloc(byteCount);
             if (Buffer is null)
             {
@@ -476,12 +647,8 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
         }
 
         public byte* Buffer;
-        public long RequestedPayloadOffset = -1;
-        public long RequestedStartFrame;
-        public long RequestedTotalFrameCount;
-        public long ReadyPayloadOffset = -1;
-        public long ActivePayloadOffset = -1;
-        public long TotalFrameCount;
+        public CacheFragment[] Fragments { get; }
+        public CacheFragment[] FragmentsByPayloadOffset { get; }
         public long ConsumerPosition;
         public long ProducerPosition;
 

@@ -1661,9 +1661,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             Playback?.Dispose();
             Tasks = null;
             Playback = null;
-            Compilation.ConfigureAudioCache(
-                preferences.AudioCache.RootPath,
-                preferences.AudioCache.MaximumReusableBytes);
             CreatePlaybackServices(
                 Compilation,
                 preferences,

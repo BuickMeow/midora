@@ -259,30 +259,57 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
 
     public AudioCacheWarning ResetAudioCacheGenerations()
     {
-        AudioCacheSessionSnapshot? snapshot;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             _samplePlans.Clear();
-            snapshot = _audioCacheStore?.GetSnapshot();
+            AudioCacheSessionSnapshot? snapshot = _audioCacheStore?.GetSnapshot();
             if (snapshot is null)
             {
                 return _audioCacheWarning;
             }
+            _audioCacheWarning = snapshot.Value.Warning;
+            return _audioCacheWarning;
         }
-        return ConfigureAudioCache(
-            snapshot.Value.RootPath,
-            snapshot.Value.MaximumReusableBytes);
     }
 
     public AudioCacheWarning ConfigureAudioCache(string rootPath, long maximumReusableBytes)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
+        string normalizedRootPath;
+        try
+        {
+            normalizedRootPath = Path.GetFullPath(rootPath);
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or ArgumentException
+            or NotSupportedException)
+        {
+            normalizedRootPath = rootPath;
+        }
+
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            AudioCacheSessionSnapshot? current = _audioCacheStore?.GetSnapshot();
+            if (current.HasValue
+                && current.Value.MaximumReusableBytes == maximumReusableBytes
+                && string.Equals(
+                    Path.TrimEndingDirectorySeparator(current.Value.RootPath),
+                    Path.TrimEndingDirectorySeparator(normalizedRootPath),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _audioCacheWarning = current.Value.Warning;
+                return _audioCacheWarning;
+            }
+        }
+
         AudioCacheSessionStore? replacement = null;
         AudioCacheWarning warning = default;
         try
         {
-            replacement = new AudioCacheSessionStore(rootPath, maximumReusableBytes);
+            replacement = new AudioCacheSessionStore(normalizedRootPath, maximumReusableBytes);
             warning = replacement.GetSnapshot().Warning;
         }
         catch (Exception exception) when (exception is IOException

@@ -458,6 +458,7 @@ public sealed class CanonicalMidiFileExporterTests
             [],
             [],
             [],
+            [],
             null);
         return new(
             192,

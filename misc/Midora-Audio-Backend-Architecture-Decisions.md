@@ -172,13 +172,17 @@ Requirement trace：输入为固定版本 BASS/BASSWASAPI、进程全局字符�
 
 缓存是 Project-open-session 范围的磁盘后备存储加有界 RAM hot set，不跨会话，不进入 `.midora`。已完成条目在 Project 打开期间不驱逐；Project 关闭时只删除由版本化 manifest 识别的本 session 目录。默认 root 为 `%LOCALAPPDATA%\Midora\AudioCache`，只接受可写本机绝对路径；reusable quota 默认 16 GiB，允许 0 到 `Int64.MaxValue` bytes。程序只能管理 root 下已知的 `session-*` 子目录，不得递归清空 root 或删除未知文件。
 
+Project 音乐编辑只清除受影响的 sample-plan 派生索引，不重建当前 session cache store。Unit PCM 与 playback span 由完整内容 key 自然形成局部失效；旧 key 在本次 Project-open session 内保留到 Project 关闭，未变化 Segment/Unit 的完整条目继续可复用。只有 cache root 或 reusable quota 实际改变时才替换 session store；重复应用相同缓存偏好必须幂等，不能删除已完成条目。
+
 reusable quota=0、配额满或普通写失败只产生 `AudioCacheRetentionDisabled` Warning，并停止新 reusable 写入；已完成条目继续可读，miss 现渲染。Buffering 的 transient recovery spool 不受 reusable quota 限制，使用后立即删除并单独报告当前/峰值占用。spool 不可用且预留 RAM 不足时在失败 tick 受控停止并报告 `AudioRecoveryStorageUnavailable`，不得退化为短块断续播放。
 
 跨进程 recovery spool 使用显式所有权交接：主进程先创建、定长并计入 session transient 占用，启动 Worker 前关闭本进程文件句柄但继续持有逻辑租约；Worker 在整个活动任务内独占该路径的 memory mapping；Stop/失败清理后由主进程租约删除文件并扣减占用。不得让主进程保留打开句柄再要求 Worker 重新映射同一路径。命令协议同时携带等容量的 RAM fallback 上限，但只在 Worker 的磁盘 mapping 失败时于 Preparing 分配 unmanaged RAM；两种存储都失败才记录结构化 storage failure，并在实际 underrun 请求恢复时受控 Stop。
 
 cache writer 位于专用 I/O 路径。WASAPI callback、BASSMIDI render/mix、ring 搬运热路径不做文件 I/O；完整 tile 写完、checksum/generation 验证通过后才原子发布。损坏条目隔离并重建，不能以半写或旧 generation PCM 命中。
 
-初版 I/O hot-set 固定实现为：最终 playback span 使用一个 `16,384 frames` 顺序 SPSC ring；raw Unit 对本任务实际有 hit/miss 的 canonical Unit 分别使用 `16,384 frames` 读/写 ring，写 ring 达到 `4,096 frames`、片段结束、片段切换或任务完成时由单个低优先级 cache I/O 线程刷盘。最大 256 Unit 时 raw 读/写 hot-set 各最多 32 MiB。实时读前/写后背压返回 `Buffering` 并进入正式自然段恢复；离线渲染在同一 frame 等待 I/O，不推进输出。普通写失败只使当前 capture generation 失效并继续现渲染；已接受 hit 的运行期读取失败不得输出未验证 PCM。
+初版 I/O hot-set 固定实现为：最终 playback span 使用一个 `16,384 frames` 顺序 SPSC ring；raw Unit 对本任务实际有 hit/miss 的 canonical Unit 分别使用 `16,384 frames` 读/写 ring。最大 256 Unit 时 raw 读/写 hot-set 各最多 32 MiB。每个 Unit 的 hit fragment PCM 在 staging 文件中建立连续虚拟 frame 流；Preparing 先填满首个有界读 hot-set，专用 AboveNormal I/O 线程随后按播放顺序跨 fragment 主动预读，且每轮先服务读取、后服务写入。fragment 的独立 header/文件偏移不能导致每个短 fragment 都进行一次 render-thread↔I/O-thread readiness 握手。
+
+miss fragment 同样映射到每 Unit 连续虚拟写流；写 ring 达到 `4,096 frames`、fragment 结束或任务完成时刷盘。reusable capture 是机会性副作用：实时与离线正式渲染都不得因为 writer 初始化、切换、ring 满或普通写失败停在当前 frame；不能无等待入队时只使当前 capture generation 失效，正式 PCM 继续生成。只有已接受 hit 的读取尚未到达时才允许返回 `Buffering`；读取损坏或失败不得输出未验证 PCM。cache-hit 且未进入 monitoring cold-start fallback 的 fragment 不重复建立未被消费的 BASSMIDI 初始状态；一旦 monitoring 要求绕过 PCM，必须先显式恢复干净 stream 状态再合成。
 
 一个实际 canonical Unit route 对应一个干净 1-channel BASSMIDI Stream；同 route 上时间不重叠的 Unit fragment 在精确 Reset 后顺序复用该 Stream。任务持有的 Stream 数等于 canonical 实际分配过的 route 数，也就是该任务的峰值并发 Unit 数，严格不超过 256；不会按 Project 历史 fragment 总数永久创建 Stream。任务结束统一释放，下一任务重新建立干净池，避免跨任务原生状态泄漏。
 

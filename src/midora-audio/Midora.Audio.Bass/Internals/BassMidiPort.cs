@@ -1019,6 +1019,11 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
             {
                 continue;
             }
+            if (fragment.PcmCacheHit && !_sourceCacheBypassed[fragment.SourceIndex])
+            {
+                unit.FragmentInitialized = true;
+                continue;
+            }
             try
             {
                 EstablishCanonicalInitialState(unit.StreamHandle);
@@ -1240,7 +1245,6 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
         }
 
         bool readsReady = true;
-        bool writesReady = true;
         for (int unitIndex = 0; unitIndex < _units.Length; unitIndex++)
         {
             UnitState unit = _units[unitIndex];
@@ -1262,13 +1266,6 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
                     _renderPositionFrames,
                     frameCount);
             }
-            else
-            {
-                writesReady &= cacheIo.CanWriteFrames(
-                    fragment,
-                    _renderPositionFrames,
-                    frameCount);
-            }
         }
         if (cacheIo.ReadFaulted)
         {
@@ -1279,7 +1276,10 @@ public sealed unsafe class BassMidiRenderer : IMidiRenderer, IPlaybackSpanFallba
         {
             _cacheCaptureInvalidated = true;
         }
-        return readsReady && writesReady;
+        // Reusable retention is opportunistic. A slow writer must never stall
+        // the realtime producer; RenderFrames invalidates the capture if its
+        // bounded writer ring cannot accept a synthesized block.
+        return readsReady;
     }
 
     internal static int ApplyCachedMuteFade(

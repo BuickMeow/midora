@@ -570,9 +570,10 @@ public sealed class ApplicationTaskCoordinatorTests
         Assert.Equal("device-1", preferences.Current.RealtimeAudio.PlaybackOutputDeviceId);
         Assert.NotSame(originalPlan, fixture.Session.GetOrCreateRenderPlan(48_000));
         AudioCacheSessionSnapshot replacementCache = fixture.Session.AudioCacheSnapshot!.Value;
-        Assert.NotEqual(originalCache.SessionPath, replacementCache.SessionPath);
-        Assert.False(Directory.Exists(originalCache.SessionPath));
-        Assert.False(fixture.Session.TryReadReusableAudio(key, out _));
+        Assert.Equal(originalCache.SessionPath, replacementCache.SessionPath);
+        Assert.True(Directory.Exists(originalCache.SessionPath));
+        Assert.True(fixture.Session.TryReadReusableAudio(key, out byte[] retainedPayload));
+        Assert.Equal([4, 5, 6], retainedPayload);
         ApplicationPreferencesLoadResult reloaded = new ApplicationPreferencesStore(
             preferencePath).Load();
         Assert.Null(reloaded.Notice);

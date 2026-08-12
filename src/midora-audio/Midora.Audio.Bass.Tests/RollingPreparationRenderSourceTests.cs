@@ -1,4 +1,5 @@
 using Midora.AudioDevice;
+using Midora.Midi;
 using System.Runtime.InteropServices;
 
 namespace Midora.Audio.Bass.Tests;
@@ -97,6 +98,33 @@ public sealed class RollingPreparationRenderSourceTests
     }
 
     [Fact]
+    public unsafe void MonitoringBatchUsesOneColdStartAndReachesUnderlyingBeforeResume()
+    {
+        const int sampleRate = 1_000;
+        using ResettableSource underlying = new(sampleRate, totalFrames: 20_000);
+        using RollingPreparationRenderSource source = new(
+            underlying,
+            totalFrameCount: 20_000,
+            TimeSpan.FromSeconds(5));
+        float* before = stackalloc float[16 * 2];
+        Assert.Equal(16, source.PullFrames(before, 16).FrameCount);
+        MidiMonitoringCommand[] commands =
+        [
+            MidiMonitoringCommand.DisableSource(0),
+            MidiMonitoringCommand.Send(0, MidiMessage.ControlChange(0, 123, 0)),
+            MidiMonitoringCommand.Send(0, MidiMessage.ControlChange(0, 120, 0))
+        ];
+
+        Assert.True(source.TryResetForMonitoringColdStart(
+            TimeSpan.FromSeconds(5),
+            commands,
+            static () => false));
+
+        Assert.Equal(1, underlying.ResetCount);
+        Assert.Equal(commands, underlying.LastMonitoringCommands);
+    }
+
+    [Fact]
     public unsafe void MonitoringResetRestartsProducerThatAlreadyPreparedTheWholeRange()
     {
         const int sampleRate = 1_000;
@@ -174,6 +202,10 @@ public sealed class RollingPreparationRenderSourceTests
 
         public AudioFormat Format { get; } = new(sampleRate, 2, AudioSampleFormat.Float32);
 
+        public int ResetCount { get; private set; }
+
+        public MidiMonitoringCommand[] LastMonitoringCommands { get; private set; } = [];
+
         public AudioPullResult PullFrames(float* destination, int requestedFrameCount)
         {
             int count = (int)Math.Min(requestedFrameCount, totalFrames - _positionFrames);
@@ -188,10 +220,14 @@ public sealed class RollingPreparationRenderSourceTests
                 : AudioPullResult.Continue(count);
         }
 
-        public void ResetForMonitoringColdStart(long producerFrontierFrame)
+        public void ResetForMonitoringColdStart(
+            long producerFrontierFrame,
+            ReadOnlySpan<MidiMonitoringCommand> commands)
         {
             _positionFrames = producerFrontierFrame;
             Interlocked.Increment(ref _generation);
+            ResetCount++;
+            LastMonitoringCommands = commands.ToArray();
         }
 
         public void Dispose()

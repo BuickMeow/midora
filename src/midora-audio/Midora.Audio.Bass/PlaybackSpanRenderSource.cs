@@ -9,12 +9,16 @@ internal unsafe interface IPlaybackSpanFallbackSource : IAudioRenderSource
 
     long TotalFrameCount { get; }
 
-    void SeekForMonitoringColdStart(long producerFrontierFrame);
+    void ResetForMonitoringColdStart(
+        long producerFrontierFrame,
+        ReadOnlySpan<MidiMonitoringCommand> commands);
 }
 
 internal interface IMonitoringResettableRenderSource
 {
-    void ResetForMonitoringColdStart(long producerFrontierFrame);
+    void ResetForMonitoringColdStart(
+        long producerFrontierFrame,
+        ReadOnlySpan<MidiMonitoringCommand> commands);
 }
 
 internal sealed unsafe class PlaybackSpanRenderSource
@@ -124,14 +128,16 @@ internal sealed unsafe class PlaybackSpanRenderSource
         }
     }
 
-    public void ResetForMonitoringColdStart(long producerFrontierFrame)
+    public void ResetForMonitoringColdStart(
+        long producerFrontierFrame,
+        ReadOnlySpan<MidiMonitoringCommand> commands)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (producerFrontierFrame < 0 || producerFrontierFrame > _totalFrameCount)
         {
             throw new ArgumentOutOfRangeException(nameof(producerFrontierFrame));
         }
-        _underlying.SeekForMonitoringColdStart(producerFrontierFrame);
+        _underlying.ResetForMonitoringColdStart(producerFrontierFrame, commands);
         _positionFrames = producerFrontierFrame;
         _transitionRemainingFrames = 0;
         Volatile.Write(ref _fallbackRequested, 0);
@@ -204,7 +210,7 @@ internal sealed unsafe class PlaybackSpanRenderSource
         if (Volatile.Read(ref _usingUnderlying) == 0
             && Volatile.Read(ref _fallbackRequested) != 0)
         {
-            _underlying.SeekForMonitoringColdStart(position);
+            _underlying.ResetForMonitoringColdStart(position, []);
             _transitionRemainingFrames = _transitionFrameCount;
             Volatile.Write(ref _usingUnderlying, 1);
         }

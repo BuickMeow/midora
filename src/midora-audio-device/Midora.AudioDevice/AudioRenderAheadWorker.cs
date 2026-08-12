@@ -85,6 +85,13 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
 
     public void PauseAtProducerFrontier(TimeSpan timeout)
     {
+        _ = TryPauseAtProducerFrontier(timeout, cancellationRequested: null);
+    }
+
+    public bool TryPauseAtProducerFrontier(
+        TimeSpan timeout,
+        Func<bool>? cancellationRequested)
+    {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (timeout <= TimeSpan.Zero)
         {
@@ -98,11 +105,21 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
         {
             throw new InvalidOperationException("The render-ahead producer is already pausing or paused.");
         }
+        if (cancellationRequested?.Invoke() == true)
+        {
+            CancelPauseRequest();
+            return false;
+        }
 
         long timeoutMilliseconds = checked((long)Math.Ceiling(timeout.TotalMilliseconds));
         long deadline = Environment.TickCount64 + timeoutMilliseconds;
         while (!IsPaused)
         {
+            if (cancellationRequested?.Invoke() == true)
+            {
+                CancelPauseRequest();
+                return false;
+            }
             if (IsFinished)
             {
                 Volatile.Write(ref _pauseRequested, 0);
@@ -117,6 +134,7 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
             }
             Thread.Sleep(1);
         }
+        return true;
     }
 
     public void ResumeFromProducerFrontier()
@@ -251,6 +269,15 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
                 ref _renderingThreadAllocatedBytes,
                 GC.GetAllocatedBytesForCurrentThread() - allocatedBeforeRendering);
             Volatile.Write(ref _finished, 1);
+        }
+    }
+
+    private void CancelPauseRequest()
+    {
+        Volatile.Write(ref _pauseRequested, 0);
+        while (IsPaused && !IsFinished)
+        {
+            Thread.Yield();
         }
     }
 }

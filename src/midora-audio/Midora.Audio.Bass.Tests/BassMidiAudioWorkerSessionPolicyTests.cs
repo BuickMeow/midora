@@ -230,6 +230,59 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
     }
 
     [Fact]
+    public void NativeAotRealtimeWorkerStopSupersedesQueuedMonitoringBatch()
+    {
+        string? configured = Environment.GetEnvironmentVariable(
+            "MIDORA_TEST_NATIVE_AOT_REALTIME_WORKER");
+        if (string.IsNullOrWhiteSpace(configured) || !File.Exists(configured))
+        {
+            throw SkipException.ForSkip(
+                "Native AOT monitoring/Stop integration requires MIDORA_TEST_NATIVE_AOT_REALTIME_WORKER.");
+        }
+
+        string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
+        string soundFontPath = NativeAudioIntegrationEnvironment.RequireSoundFontPath();
+        MidiRenderPlan plan = new(
+            48_000,
+            480_000,
+            [new MidiPortRenderPlan(
+                0,
+                [
+                    new(0, MidiMessage.ProgramChange(0, 0), 0),
+                    new(0, MidiMessage.NoteOn(0, 60, 100), 0),
+                    new(470_000, MidiMessage.NoteOff(0, 60, 0), 0)
+                ])],
+            sourceIds: [1]);
+        using BassMidiAudioWorkerSession session = new(
+            plan,
+            soundFontPath,
+            new BassMidiRendererSettings(500, 256),
+            AudioMasterSettings.LimiterV1,
+            renderAheadMilliseconds: 20,
+            deviceBufferRequestMilliseconds: 50,
+            deviceId: null,
+            Path.GetFullPath(configured),
+            nativeDirectory,
+            preparingTimeout: TimeSpan.FromSeconds(30),
+            allowManagedTestWorker: false,
+            playbackSpanCacheEnabled: true);
+
+        MidiMonitoringCommand[] commands = new MidiMonitoringCommand[128];
+        for (int index = 0; index < commands.Length; index++)
+        {
+            commands[index] = (index & 1) == 0
+                ? MidiMonitoringCommand.DisableSource(0)
+                : MidiMonitoringCommand.EnableSource(0);
+        }
+        session.EnqueueMonitoringCommands(commands);
+
+        session.Stop(flush: true, TimeSpan.FromSeconds(5));
+
+        Assert.Equal(AudioWorkerState.Stopped, session.Status.State);
+        Assert.Equal(0, session.Status.FaultCode);
+    }
+
+    [Fact]
     public void NativeAotDesktopPlaybackPipelineCompilesAndConsumesProjectNotes()
     {
         string? configured = Environment.GetEnvironmentVariable(

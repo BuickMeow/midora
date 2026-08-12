@@ -116,7 +116,7 @@ Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domai
 
 冻结计划文件 MDAP v5 在写入任何 payload 前计算 source、disabled source、Port、event、Unit fragment、Segment/cache binding 与 SHA-256 的完整有界大小；读取时先用剩余 payload 长度验证计数，再分配对应数组。source ID 使用正 `Int64` little-endian，旧 v4 与其他版本一律拒绝，不迁移单次任务临时文件。Port/fragment/Segment record 的 reserved 字段必须为零；即使攻击者重新计算出正确 SHA-256，非零保留位、不可能计数、截断、溢出、非法 Port/MIDI/来源、非法缓存 payload 范围与 trailing payload 仍统一作为 `InvalidDataException` 拒绝，不能进入 Worker 渲染阶段。
 
-共享内存 ABI v4 的 command ring 读写位置必须满足 `0 <= read <= write` 且 `write - read <= 1024`，任何损坏都必须在取模和指针运算前失败。Stop/Monitoring/Held Preview/Buffering Recovery 及其子类型是闭合集；source/Port/message/boolean、CC91/CC93、held plan generation、recovery end frame 和每条 command 的 reserved 字段在写入前整批校验、读取后再次校验，批次失败不得发布前缀。状态枚举与全部非负计数同样在读取边界校验；映射长度、固定 header 和 reserved header 不匹配时 Open 整体失败。Dispose 后的所有状态/发布/命令入口只抛 `ObjectDisposedException`，不得解引用已释放映射。
+共享内存 ABI v4 的 command ring 读写位置必须满足 `0 <= read <= write` 且 `write - read <= 1024`，任何损坏都必须在取模和指针运算前失败。Stop/Monitoring/Held Preview/Buffering Recovery 及其子类型是闭合集；source/Port/message/boolean、CC91/CC93、held plan generation、recovery end frame 和每条 command 的 reserved 字段在写入前整批校验、读取后再次校验，批次失败不得发布前缀。状态枚举与全部非负计数同样在读取边界校验；映射长度、固定 header 和 reserved header 不匹配时 Open 整体失败。Dispose 后的所有状态/发布/命令入口只抛 `ObjectDisposedException`，不得解引用已释放映射。Worker 可以按原顺序合并连续 Monitoring records，并在一个稳定 producer frontier 只执行一次 cold start；Stop 终止整个会话，因此允许抢占并丢弃排在它之前、尚未形成可观察输出的 Monitoring/Buffering Recovery records。该调度不改变 ABI v4 的字节布局。
 
 ABI v2 引入并由当前 ABI v4 保持：固定 header offset 68 是对齐 `Int32 statusSequence`，以单 Writer seqlock 发布整组状态。Writer 必须用 compare-exchange 将偶数序列变为奇数，发布全部字段后以 release 写入下一偶数；并发 Writer 或遗留奇数序列立即作为协议错误。Reader 只接受前后相同的偶数序列，最多无分配重试 1024 次，耗尽则报告 IPC 一致性错误；序列允许 two's-complement wrap。ABI v3 在 offset 88 增加 held preview plan generation；v4 保持 header 布局，在现有 16-byte command record 的 offset 4 通用 64-bit payload 上增加 `BufferingRecoveryPrepare(endFrame)`。Create/Open 只接受 v4，不提供 v1～v3 回退。状态发布与读取热路径、序列 wrap、并发压力和中断 Writer 均由自动门验证。
 
@@ -124,7 +124,7 @@ held Preview 在 ABI v3 引入、当前 ABI v4 保持 `HeldPreviewPause`、`Held
 
 ABI v4 的 `BufferingRecoveryPrepare(endFrame)` 只在 ring 已锁存 Buffering 且已配置 transient recovery spool 时合法。主进程用统一自然小节映射计算 sample-domain `endFrame`；Worker 暂停 producer，在 spool 中完整生成并校验 `[F,endFrame)`，重置 ring 到 `F` 后连续回放该区间，再恢复正常 producer。命令 payload 不携带 tick、拍号或 Project 数据，Worker 不重新解释 Conductor。
 
-实时 Worker 启动事务先验证并冻结现存 SF2、Worker 和原生目录的绝对路径，再依次取得私有计划目录、MDAP、共享控制区和子进程；任何一步失败都反向释放已经取得的资源并删除私有计划目录。子进程启动后立即并发排空 stdout/stderr，不能等到 `WaitForExit` 之后才读取而形成重定向管道背压死锁；Preparing 的 Faulted、探测完成和显式 Stop 均须在同一个有界期限内等待退出，逾期强制结束。监控线程自身的异常必须被截获并提升为任务故障，不能越过线程边界成为未处理异常或让父进程无限等待。
+实时 Worker 启动事务先验证并冻结现存 SF2、Worker 和原生目录的绝对路径，再依次取得私有计划目录、MDAP、共享控制区和子进程；任何一步失败都反向释放已经取得的资源并删除私有计划目录。子进程启动后立即并发排空 stdout/stderr，不能等到 `WaitForExit` 之后才读取而形成重定向管道背压死锁；Preparing 的 Faulted、探测完成和显式 Stop 均须在同一个有界期限内等待退出，逾期强制结束。Worker 内等待 producer frontier、Buffering recovery 完整区间或 recovery replay 预填充的循环必须协作检查 Stop，使正常 Stop 不依赖 renderer/cache source 先脱离 Buffering。监控线程自身的异常必须被截获并提升为任务故障，不能越过线程边界成为未处理异常或让父进程无限等待。
 
 Worker 是独立的协议校验边界，不能只信任当前父进程会生成合法命令行。`probe/play/file-probe/file-render` 的文件与目录输入必须是现存的 fully-qualified 路径，文件渲染目标必须是 fully-qualified、父目录现存且尚未占用的新路径；协议布尔只接受精确 `0`/`1`。正式实时与文件模式只接受最大 256-frame 工作块、规定 buffer 值域和 Limiter v1 固定 ceiling/release；文件模式还强制 Limiter enabled 与 8,000～192,000 Hz。MDAP 解析与全部纯托管策略校验必须先于加载原生库，非法输入统一在 Preparing 失败并发布 Faulted。
 

@@ -441,13 +441,21 @@ public sealed unsafe class BassMidiRenderer
         UpdateActiveSegmentsAtCurrentFrame();
     }
 
-    void IPlaybackSpanFallbackSource.SeekForMonitoringColdStart(
-        long producerFrontierFrame) =>
+    void IPlaybackSpanFallbackSource.ResetForMonitoringColdStart(
+        long producerFrontierFrame,
+        ReadOnlySpan<MidiMonitoringCommand> commands)
+    {
         SeekForMonitoringColdStart(producerFrontierFrame);
+        EnqueueMonitoringCommands(commands);
+    }
 
     void IMonitoringResettableRenderSource.ResetForMonitoringColdStart(
-        long producerFrontierFrame) =>
+        long producerFrontierFrame,
+        ReadOnlySpan<MidiMonitoringCommand> commands)
+    {
         SeekForMonitoringColdStart(producerFrontierFrame);
+        EnqueueMonitoringCommands(commands);
+    }
 
     private FillOutputResult FillOutputStagingBuffer()
     {

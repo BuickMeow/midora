@@ -325,6 +325,9 @@ public static class Program
         }
 
         control.PublishPrepared(expectedSampleRate, checked((int)output.ActualBufferFrameCount));
+        MidiMonitoringCommand[] monitoringCommandBatch =
+            new MidiMonitoringCommand[SharedAudioWorkerControl.CommandCapacity];
+        Func<bool> stopCommandPending = control.HasPendingStopCommand;
         output.Start();
         control.PublishState(AudioWorkerState.Playing);
 
@@ -335,6 +338,12 @@ public static class Program
         long heldPreviewPlanGeneration = 0;
         while (!stopRequested && !completed)
         {
+            if (control.TryDequeuePendingStop(out bool prioritizedStopFlush))
+            {
+                stopRequested = true;
+                flushOnStop = prioritizedStopFlush;
+                break;
+            }
             while (control.TryDequeue(out AudioWorkerControlCommand command))
             {
                 if (command.Kind == AudioWorkerControlCommandKind.Stop)
@@ -411,16 +420,51 @@ public static class Program
                         throw new InvalidDataException(
                             "A Buffering recovery command requires a configured spool and latched underrun.");
                     }
-                    renderWorker.PauseAtProducerFrontier(TimeSpan.FromSeconds(5));
-                    recoverySource.PrepareRecovery(
-                        ring,
-                        command.Payload);
-                    renderWorker.ResumeFromProducerFrontier();
+                    if (!renderWorker.TryPauseAtProducerFrontier(
+                            TimeSpan.FromSeconds(5),
+                            stopCommandPending))
+                    {
+                        ConsumePrioritizedStop(
+                            control,
+                            ref stopRequested,
+                            ref flushOnStop);
+                        break;
+                    }
+                    bool recoveryPrepared;
+                    try
+                    {
+                        recoveryPrepared = recoverySource.TryPrepareRecovery(
+                            ring,
+                            command.Payload,
+                            stopCommandPending);
+                    }
+                    finally
+                    {
+                        renderWorker.ResumeFromProducerFrontier();
+                    }
+                    if (!recoveryPrepared)
+                    {
+                        ConsumePrioritizedStop(
+                            control,
+                            ref stopRequested,
+                            ref flushOnStop);
+                        break;
+                    }
                     while (ring.AvailableFrameCount < prefillThreshold
                         && !ring.ProducerCompleted
                         && !ring.ProducerFaulted)
                     {
+                        if (control.TryDequeuePendingStop(out bool recoveryStopFlush))
+                        {
+                            stopRequested = true;
+                            flushOnStop = recoveryStopFlush;
+                            break;
+                        }
                         Thread.Sleep(1);
+                    }
+                    if (stopRequested)
+                    {
+                        break;
                     }
                     if (ring.ProducerFaulted)
                     {
@@ -435,16 +479,43 @@ public static class Program
                     throw new InvalidDataException("The shared audio command kind is invalid.");
                 }
 
-                MidiMonitoringCommand monitoring = command.MonitoringCommand;
+                monitoringCommandBatch[0] = command.MonitoringCommand;
+                _ = control.TryDequeueMonitoringCommands(
+                    monitoringCommandBatch.AsSpan(1),
+                    out int additionalMonitoringCommandCount);
+                ReadOnlySpan<MidiMonitoringCommand> monitoringCommands =
+                    monitoringCommandBatch.AsSpan(0, additionalMonitoringCommandCount + 1);
+                if (control.TryDequeuePendingStop(out bool monitoringStopFlush))
+                {
+                    stopRequested = true;
+                    flushOnStop = monitoringStopFlush;
+                    break;
+                }
                 if (rollingSource is not null)
                 {
-                    renderWorker.PauseAtProducerFrontier(TimeSpan.FromSeconds(5));
+                    if (!renderWorker.TryPauseAtProducerFrontier(
+                            TimeSpan.FromSeconds(5),
+                            stopCommandPending))
+                    {
+                        ConsumePrioritizedStop(
+                            control,
+                            ref stopRequested,
+                            ref flushOnStop);
+                        break;
+                    }
                     try
                     {
-                        rollingSource.ResetForMonitoringColdStart(
-                            TimeSpan.FromSeconds(5),
-                            () => renderer.EnqueueMonitoringCommands(
-                                MemoryMarshal.CreateReadOnlySpan(ref monitoring, 1)));
+                        if (!rollingSource.TryResetForMonitoringColdStart(
+                                TimeSpan.FromSeconds(5),
+                                monitoringCommands,
+                                stopCommandPending))
+                        {
+                            ConsumePrioritizedStop(
+                                control,
+                                ref stopRequested,
+                                ref flushOnStop);
+                            break;
+                        }
                     }
                     finally
                     {
@@ -454,9 +525,13 @@ public static class Program
                 else
                 {
                     playbackSpanSource?.RequestMonitoringFallback();
-                    renderer.EnqueueMonitoringCommands(
-                        MemoryMarshal.CreateReadOnlySpan(ref monitoring, 1));
+                    renderer.EnqueueMonitoringCommands(monitoringCommands);
                 }
+            }
+
+            if (stopRequested)
+            {
+                break;
             }
 
             if (output.DeviceLost)
@@ -545,6 +620,20 @@ public static class Program
             output.CallbackAllocatedBytes,
             GetRenderingAllocatedBytes(renderWorker, rollingSource, renderer));
         return 0;
+    }
+
+    private static void ConsumePrioritizedStop(
+        SharedAudioWorkerControl control,
+        ref bool stopRequested,
+        ref bool flushOnStop)
+    {
+        if (!control.TryDequeuePendingStop(out bool flush))
+        {
+            throw new InvalidOperationException(
+                "A cancelled audio operation has no pending Stop command.");
+        }
+        stopRequested = true;
+        flushOnStop = flush;
     }
 
     private static void FinalizeAndMarkCacheCaptures(

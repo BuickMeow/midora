@@ -247,6 +247,31 @@ public sealed class AudioFrameRingBufferTests
     }
 
     [Fact]
+    public unsafe void RecoveryPreparationCanBeCancelledWhileUnderlyingRemainsBuffering()
+    {
+        AlwaysBufferingSource source = new();
+        using BufferingRecoveryRenderSource recovery = new(
+            source,
+            capacityFrameCount: 32,
+            workFrameCount: 16);
+        using AudioFrameRingBuffer ring = new(source.Format, 16);
+        float* work = stackalloc float[8 * 2];
+        Assert.Equal(AudioPullStatus.Buffering, ring.PullFrames(work, 8).Status);
+        int checks = 0;
+
+        bool prepared = recovery.TryPrepareRecovery(
+            ring,
+            recoveryEndFrame: 16,
+            () => ++checks >= 3);
+
+        Assert.False(prepared);
+        Assert.False(recovery.IsReplaying);
+        Assert.True(ring.IsBuffering);
+        Assert.Equal(0, ring.ReadPositionFrame);
+        Assert.Equal(0, ring.WritePositionFrame);
+    }
+
+    [Fact]
     public unsafe void RenderAheadWorkerPausesAtAStableProducerFrontierAndResumes()
     {
         CountingSource source = new(1_024);
@@ -284,6 +309,32 @@ public sealed class AudioFrameRingBufferTests
         Assert.Throws<InvalidOperationException>(() => worker.PauseAtProducerFrontier(TimeSpan.FromSeconds(1)));
         worker.ResumeFromProducerFrontier();
         Assert.Throws<InvalidOperationException>(() => worker.ResumeFromProducerFrontier());
+    }
+
+    [Fact]
+    public void RenderAheadPauseCanBeCancelledBeforeTheProducerFrontier()
+    {
+        CountingSource source = new(1_024);
+        using AudioFrameRingBuffer ring = new(source.Format, 128);
+        using AudioRenderAheadWorker worker = new(source, ring, 64);
+        worker.Start();
+        Assert.True(SpinWait.SpinUntil(
+            () => ring.AvailableFrameCount == ring.CapacityFrameCount,
+            TimeSpan.FromSeconds(5)));
+
+        Assert.False(worker.TryPauseAtProducerFrontier(
+            TimeSpan.FromSeconds(5),
+            static () => true));
+        Assert.False(worker.IsPaused);
+
+        unsafe
+        {
+            float* consumed = stackalloc float[64 * 2];
+            Assert.Equal(64, ring.PullFrames(consumed, 64).FrameCount);
+        }
+        Assert.True(SpinWait.SpinUntil(
+            () => source.Position > ring.CapacityFrameCount,
+            TimeSpan.FromSeconds(5)));
     }
 
     [Fact]
@@ -436,5 +487,13 @@ public sealed class AudioFrameRingBufferTests
 
         public AudioPullResult PullFrames(float* destination, int requestedFrameCount) =>
             new(0, (AudioPullStatus)byte.MaxValue);
+    }
+
+    private sealed unsafe class AlwaysBufferingSource : IAudioRenderSource
+    {
+        public AudioFormat Format => new(48_000, 2, AudioSampleFormat.Float32);
+
+        public AudioPullResult PullFrames(float* destination, int requestedFrameCount) =>
+            AudioPullResult.Buffering();
     }
 }

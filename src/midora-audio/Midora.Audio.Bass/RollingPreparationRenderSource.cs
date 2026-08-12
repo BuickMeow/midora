@@ -1,4 +1,5 @@
 using Midora.AudioDevice;
+using Midora.Midi;
 using System.Runtime.InteropServices;
 
 namespace Midora.Audio.Bass;
@@ -142,8 +143,28 @@ internal sealed unsafe class RollingPreparationRenderSource : IAudioRenderSource
     public void StopPreparation() => _worker.Stop();
 
     public void ResetForMonitoringColdStart(
+        TimeSpan timeout) =>
+        _ = ResetForMonitoringColdStartCore(
+            timeout,
+            [],
+            cancellationRequested: null);
+
+    public bool TryResetForMonitoringColdStart(
         TimeSpan timeout,
-        Action? afterResetBeforeResume = null)
+        ReadOnlySpan<MidiMonitoringCommand> commands,
+        Func<bool> cancellationRequested)
+    {
+        ArgumentNullException.ThrowIfNull(cancellationRequested);
+        return ResetForMonitoringColdStartCore(
+            timeout,
+            commands,
+            cancellationRequested);
+    }
+
+    private bool ResetForMonitoringColdStartCore(
+        TimeSpan timeout,
+        ReadOnlySpan<MidiMonitoringCommand> commands,
+        Func<bool>? cancellationRequested)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_underlying is not IMonitoringResettableRenderSource resettable)
@@ -151,19 +172,26 @@ internal sealed unsafe class RollingPreparationRenderSource : IAudioRenderSource
             throw new InvalidOperationException(
                 "The rolling preparation source cannot reset its underlying renderer.");
         }
-        _worker.PauseAtProducerFrontier(timeout);
+        if (!_worker.TryPauseAtProducerFrontier(timeout, cancellationRequested))
+        {
+            return false;
+        }
         try
         {
+            if (cancellationRequested?.Invoke() == true)
+            {
+                return false;
+            }
             long frontier = PositionFrames;
             _transitionTotalFrames = _prepared.CopyPrefixFramesTo(
                 _transitionBuffer,
                 _transitionFrameCount);
             _transitionRemainingFrames = _transitionTotalFrames;
             _prepared.DiscardBufferedFramesAtReadPosition();
-            resettable.ResetForMonitoringColdStart(frontier);
+            resettable.ResetForMonitoringColdStart(frontier, commands);
             _ = _worker.RestartCompletedProducerAtPausedFrontier();
-            afterResetBeforeResume?.Invoke();
             Volatile.Write(ref _watermarkBuffering, 0);
+            return true;
         }
         finally
         {

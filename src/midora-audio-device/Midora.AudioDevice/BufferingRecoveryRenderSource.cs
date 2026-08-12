@@ -173,6 +173,23 @@ public sealed unsafe class BufferingRecoveryRenderSource : IAudioRenderSource, I
         AudioFrameRingBuffer ring,
         long recoveryEndFrame)
     {
+        _ = PrepareRecoveryCore(ring, recoveryEndFrame, cancellationRequested: null);
+    }
+
+    public bool TryPrepareRecovery(
+        AudioFrameRingBuffer ring,
+        long recoveryEndFrame,
+        Func<bool> cancellationRequested)
+    {
+        ArgumentNullException.ThrowIfNull(cancellationRequested);
+        return PrepareRecoveryCore(ring, recoveryEndFrame, cancellationRequested);
+    }
+
+    private bool PrepareRecoveryCore(
+        AudioFrameRingBuffer ring,
+        long recoveryEndFrame,
+        Func<bool>? cancellationRequested)
+    {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(ring);
         if (ring.Format != Format || !ring.IsBuffering || IsReplaying)
@@ -198,6 +215,10 @@ public sealed unsafe class BufferingRecoveryRenderSource : IAudioRenderSource, I
         long prepared = copied;
         while (prepared < recoveryFrames)
         {
+            if (cancellationRequested?.Invoke() == true)
+            {
+                return false;
+            }
             int requested = (int)Math.Min(_workFrameCount, recoveryFrames - prepared);
             AudioPullResult result = _underlying.PullFrames(_workBuffer, requested);
             if (result.Status == AudioPullStatus.Buffering && result.FrameCount == 0)
@@ -228,10 +249,16 @@ public sealed unsafe class BufferingRecoveryRenderSource : IAudioRenderSource, I
             }
         }
 
+        if (cancellationRequested?.Invoke() == true)
+        {
+            return false;
+        }
+
         ring.ResetBufferedFramesAtReadPosition();
         _replayPosition = 0;
         _replayFrameCount = recoveryFrames;
         Volatile.Write(ref _replaying, 1);
+        return true;
     }
 
     public void Dispose()

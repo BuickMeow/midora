@@ -407,6 +407,91 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Gives Stop priority over commands that were queued before it. Stop ends the
+    /// active session, so older monitoring/recovery commands no longer have an
+    /// observable result and must not delay shutdown.
+    /// </summary>
+    public bool TryDequeuePendingStop(out bool flush)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        long read = Int64At(CommandReadPositionOffset);
+        long write = Volatile.Read(ref Int64At(CommandWritePositionOffset));
+        ValidateCommandRingPositions(read, write);
+        for (long position = read; position < write; position++)
+        {
+            AudioWorkerControlCommand command = ReadCommand(position);
+            if (command.Kind != AudioWorkerControlCommandKind.Stop)
+            {
+                continue;
+            }
+
+            flush = command.MonitoringCommand.SourceEnabled;
+            Volatile.Write(ref Int64At(CommandReadPositionOffset), position + 1);
+            return true;
+        }
+
+        flush = true;
+        return false;
+    }
+
+    public bool HasPendingStopCommand()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        long read = Int64At(CommandReadPositionOffset);
+        long write = Volatile.Read(ref Int64At(CommandWritePositionOffset));
+        ValidateCommandRingPositions(read, write);
+        for (long position = read; position < write; position++)
+        {
+            if (ReadCommand(position).Kind == AudioWorkerControlCommandKind.Stop)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Dequeues contiguous monitoring commands without consuming the following
+    /// non-monitoring command. A snapshot may contain one or more atomically
+    /// published monitoring changes; their original order is preserved so they
+    /// can share one renderer cold start.
+    /// </summary>
+    public bool TryDequeueMonitoringCommands(
+        Span<MidiMonitoringCommand> destination,
+        out int commandCount)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (destination.IsEmpty)
+        {
+            throw new ArgumentException(
+                "A monitoring dequeue destination must not be empty.",
+                nameof(destination));
+        }
+
+        long read = Int64At(CommandReadPositionOffset);
+        long write = Volatile.Read(ref Int64At(CommandWritePositionOffset));
+        ValidateCommandRingPositions(read, write);
+        commandCount = 0;
+        while (read + commandCount < write
+            && commandCount < destination.Length)
+        {
+            AudioWorkerControlCommand command = ReadCommand(read + commandCount);
+            if (command.Kind != AudioWorkerControlCommandKind.Monitoring)
+            {
+                break;
+            }
+            destination[commandCount++] = command.MonitoringCommand;
+        }
+        if (commandCount == 0)
+        {
+            return false;
+        }
+
+        Volatile.Write(ref Int64At(CommandReadPositionOffset), read + commandCount);
+        return true;
+    }
+
     public void Dispose()
     {
         if (_disposed)

@@ -134,7 +134,9 @@ public sealed class PlaybackSpanRenderSourceTests
                 : AudioPullResult.Continue(frames);
         }
 
-        public void SeekForMonitoringColdStart(long producerFrontierFrame)
+        public void ResetForMonitoringColdStart(
+            long producerFrontierFrame,
+            ReadOnlySpan<MidiMonitoringCommand> commands)
         {
             SeekFrame = producerFrontierFrame;
             _position = producerFrontierFrame;

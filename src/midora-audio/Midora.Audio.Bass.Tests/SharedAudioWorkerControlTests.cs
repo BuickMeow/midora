@@ -86,6 +86,51 @@ public sealed class SharedAudioWorkerControlTests
     }
 
     [Fact]
+    public void MonitoringBatchDequeueStopsAtTheNextControlCommand()
+    {
+        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+        MidiMonitoringCommand[] expected =
+        [
+            MidiMonitoringCommand.DisableSource(1),
+            MidiMonitoringCommand.Send(0, MidiMessage.ControlChange(0, 123, 0)),
+            MidiMonitoringCommand.EnableSource(1)
+        ];
+        Assert.True(producer.TryEnqueueMonitoringCommands(expected));
+        Assert.True(producer.TryEnqueueBufferingRecovery(9_999));
+
+        Span<MidiMonitoringCommand> actual = stackalloc MidiMonitoringCommand[8];
+        Assert.True(consumer.TryDequeueMonitoringCommands(actual, out int commandCount));
+
+        Assert.Equal(expected.Length, commandCount);
+        Assert.True(expected.AsSpan().SequenceEqual(actual[..commandCount]));
+        Assert.True(consumer.TryDequeue(out AudioWorkerControlCommand recovery));
+        Assert.Equal(AudioWorkerControlCommandKind.BufferingRecoveryPrepare, recovery.Kind);
+        Assert.Equal(9_999, recovery.Payload);
+    }
+
+    [Fact]
+    public void PendingStopTakesPriorityOverOlderMonitoringCommands()
+    {
+        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+        Assert.True(producer.TryEnqueueMonitoringCommands(
+        [
+            MidiMonitoringCommand.DisableSource(0),
+            MidiMonitoringCommand.Send(0, MidiMessage.ControlChange(0, 123, 0))
+        ]));
+        Assert.True(producer.TryEnqueueStop(flush: false));
+
+        Assert.True(consumer.HasPendingStopCommand());
+        Assert.True(consumer.TryDequeuePendingStop(out bool flush));
+        Assert.False(flush);
+        Assert.False(consumer.HasPendingStopCommand());
+        Assert.False(consumer.TryDequeue(out _));
+    }
+
+    [Fact]
     public void HeldPreviewStatusPublishesFrontierAndAcknowledgedPlanGenerationAtomically()
     {
         string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";

@@ -137,6 +137,14 @@
 - 依据：实机复现确认离散 LOD bitmap 的 WPF 二次采样会让 1-pixel border 在特定缩放下坍缩，并让相邻 tile 出现不同采样相位。该修正只改变 UI runtime cache 与像素覆盖，不改变 Note/Segment 语义、命中、编辑、持久化或可听结果。
 - 后续边界：此实现吸收了高性能 MIDI 编辑器常见的“语义实例 + 统一最终像素变换”原则，但没有复制或引入 yinhe 的 AGPL 源码，仓库许可证因此不变。若将来改用 GPU instance renderer，需另立 ADR、性能门和许可证审计。
 
+## ADR-UI-021：Piano tile 完整帧保留与原子切换
+
+- 决定：Segment/SubVoice Piano Roll 的 Note 层和缓存 Selection 层分别记录上一组“可视 tile 全部已完成”的 cache key。编辑或精确缩放导致当前可视集合存在未完成 tile 时，继续绘制上一完整集合；当前集合全部可用后一次性切换，禁止在同一过渡帧中混合空白块和零散的新块。
+- 坐标：编辑时旧 tile 保持原比例；缩放时旧 tile 按其原始 device-pixel scale 反算世界 tick/lane 边界，再映射到当前 viewport。该临时映射只持续到精确比例的新 tile 全部完成；稳态仍严格执行 ADR-UI-020 的最终像素 1:1 组合。
+- 资源：完整帧只保存 key，不复制 `BitmapSource` 或像素数组。只有全部 key 仍可从共享 LRU 取得时才使用旧帧；任何一项已回收即退回现有静态背景/当前已就绪块行为，因此不扩大 `256 MiB` raster cache 预算，也不阻塞 UI。
+- 边界：grid、active range、cursor、primary outline 和 transient edit preview 始终使用当前状态；旧帧只是一层短暂视觉替身，不参与 hit test、Selection、Project、Undo/Redo、编译、播放或持久化。Arrangement preview 和 Velocity tile 不在本次改动范围。
+- 依据：异步 tile key 在 Note 编辑和每个精确缩放级别都会轮换；原实现会在新 bitmap 完成前暴露背景，从而产生整块闪烁。保留旧完整集合能消除该空白窗口，同时不触碰 rasterizer、内容指纹、缓存键、后台 worker 或对象命中架构。
+
 ## 小决定审计
 
 以下均是局部、可替换且不改变可听结果/持久化/公共业务接口的小决定，按用户授权采用推荐方案：

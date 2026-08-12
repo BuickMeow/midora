@@ -58,6 +58,14 @@
 - Each preview Note covers two adjacent source rows (edge-clamped). This preserves at least one visible row when the 64-row source is reduced to the normal Arrangement lane height with nearest-neighbor sampling; a one-row source mark can otherwise be skipped completely.
 - These are UI runtime cache rules only. Hit testing continues to use stable IDs and semantic intervals; Project data, Undo/Redo, compilation, playback, export and persistence are unchanged.
 
+### 3.3 Atomic presentation fallback (2026-08-12)
+
+- Segment/SubVoice piano-roll Note and cached Selection layers retain only the cache keys of their last fully available visible frame. They do not copy pixel payloads or create another raster cache.
+- When an edit or exact-scale zoom makes any visible replacement tile unavailable, the layer keeps presenting the previous complete frame instead of exposing a mixture of blank and completed replacement tiles. The replacement becomes visible atomically after every currently visible tile is ready.
+- A previous frame is eligible only for the same projection key and only while every referenced bitmap still exists in the shared LRU. If it is incomplete or evicted, the renderer falls back to the existing partial-current/background behavior rather than blocking the UI or rasterizing Notes synchronously.
+- During a zoom transition, previous exact-scale tiles are temporarily mapped from their original world tick/lane bounds into the current viewport. The completed replacement still obeys ADR-UI-020's exact device-pixel scale and 1:1 composition rule.
+- Hit testing, interaction overlays, cursor, grid and active-range chrome always use the current viewport and semantic snapshot. The fallback is presentation-only and never becomes Project, Selection, Undo/Redo, compilation or persistent state.
+
 ## 4. 验证门
 
 1. `TestProject.midora` 的 Arrangement 稳态绘制不枚举两个极端 Segment 的 43,008 个 Note，只绘制两个已缓存 preview bitmap。
@@ -67,3 +75,4 @@
 5. 命中顺序继续为 `Z → shortest span → stable ID`；marquee 和 Ctrl/Shift/Alt selection 继续使用原始对象。
 6. cache 不超过 256 MiB completed bitmap 预算；Project close/replace 后 completed cache 为零。
 7. Desktop Presentation、Desktop session tests 和 Release solution build 为零 failure、零 warning、零 error。
+8. 编辑或缩放轮换可视 piano tile key 时，在新可视集合全部完成前继续呈现上一完整集合；旧集合仍按世界 tick/lane 边界映射，且不得阻塞 UI 或同步逐 Note rasterize。

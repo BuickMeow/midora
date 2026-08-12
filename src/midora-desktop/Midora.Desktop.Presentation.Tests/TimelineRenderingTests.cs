@@ -634,6 +634,37 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void PreviousExactScaleTileCanRemainWorldAnchoredDuringZoomTransition()
+    {
+        const double previousPixelsPerTickDevice = 1.25;
+        const double previousPixelsPerLaneDevice = 16;
+        TimelineViewport zoomed = new(120, 620, 8, 12, 1_000, 192, 48);
+
+        Rect destination = TimelineRasterPlacement.GetPianoTileCoreDestination(
+            zoomed,
+            previousPixelsPerTickDevice,
+            previousPixelsPerLaneDevice,
+            tileX: 1,
+            tileY: 1,
+            laneHeaderWidth: 52,
+            rulerHeight: 24,
+            laneHeight: 48);
+
+        double tileStartTick = TimelinePianoTileRasterizer.TileSize / previousPixelsPerTickDevice;
+        double tileStartLane = TimelinePianoTileRasterizer.TileSize / previousPixelsPerLaneDevice;
+        Assert.Equal(52 + (tileStartTick - zoomed.StartTick) * zoomed.PixelsPerTick, destination.Left, 8);
+        Assert.Equal(24 + (tileStartLane - zoomed.FirstLane) * zoomed.LaneHeight, destination.Top, 8);
+        Assert.Equal(
+            TimelinePianoTileRasterizer.TileSize / previousPixelsPerTickDevice * zoomed.PixelsPerTick,
+            destination.Width,
+            8);
+        Assert.Equal(
+            TimelinePianoTileRasterizer.TileSize / previousPixelsPerLaneDevice * zoomed.LaneHeight,
+            destination.Height,
+            8);
+    }
+
+    [Fact]
     public void PianoNoteUsesCorrespondingWorldTileAtEveryZoomLevel()
     {
         TimelineRenderSnapshot snapshot = new(1, "segment:1", [Item(1, 300, 310, 2)]);

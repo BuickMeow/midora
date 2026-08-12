@@ -419,6 +419,11 @@ public sealed class TimelineSurface : Control
     private bool _velocitySelectionRestricted;
     private readonly Dictionary<MidoraId, int> _velocityEdits = [];
     private readonly HashSet<TimelineRasterCacheKey> _requestedRasterKeys = [];
+    private readonly List<PianoTileDrawEntry> _pianoTileDrawEntries = new(capacity: 64);
+    private readonly List<PianoTileDrawEntry> _pianoTileFallbackEntries = new(capacity: 64);
+    private readonly List<TimelineRasterCacheKey> _pianoTileVisibleKeys = new(capacity: 64);
+    private PianoRasterFrame? _lastCompletePianoNoteFrame;
+    private PianoRasterFrame? _lastCompletePianoSelectionFrame;
     private double _valueViewMinimum;
     private double _valueViewMaximum = 1;
 
@@ -1773,6 +1778,9 @@ public sealed class TimelineSurface : Control
             rulerHeight,
             Math.Max(0, ActualWidth - laneHeaderWidth),
             Math.Max(0, ActualHeight - rulerHeight));
+        _pianoTileDrawEntries.Clear();
+        _pianoTileVisibleKeys.Clear();
+        bool allVisibleTilesReady = true;
         context.PushClip(new RectangleGeometry(contentBounds));
         for (int ring = 0; ring <= 1; ring++)
         {
@@ -1819,29 +1827,15 @@ public sealed class TimelineSurface : Control
                     {
                         if (visible && bitmap is not null)
                         {
-                            Rect destination = TimelineRasterPlacement.GetPianoTileDestination(
-                                viewport,
-                                actualPixelsPerTickDevice,
-                                actualPixelsPerLaneDevice,
-                                request.TileX,
-                                request.TileY,
-                                laneHeaderWidth,
-                                rulerHeight,
-                                LaneHeight);
-                            Rect coreDestination = TimelineRasterPlacement.GetPianoTileCoreDestination(
-                                viewport,
-                                actualPixelsPerTickDevice,
-                                actualPixelsPerLaneDevice,
-                                request.TileX,
-                                request.TileY,
-                                laneHeaderWidth,
-                                rulerHeight,
-                                LaneHeight);
-                            context.PushClip(new RectangleGeometry(coreDestination));
-                            context.DrawImage(bitmap, destination);
-                            context.Pop();
+                            _pianoTileDrawEntries.Add(new(key, bitmap));
                         }
+                        if (visible) _pianoTileVisibleKeys.Add(key);
                         continue;
+                    }
+                    if (visible)
+                    {
+                        allVisibleTilesReady = false;
+                        _pianoTileVisibleKeys.Add(key);
                     }
                     RequestRaster(
                         key,
@@ -1849,6 +1843,16 @@ public sealed class TimelineSurface : Control
                 }
             }
         }
+        PresentPianoRasterLayer(
+            context,
+            viewport,
+            snapshot.ProjectionKey,
+            actualPixelsPerTickDevice,
+            actualPixelsPerLaneDevice,
+            laneHeaderWidth,
+            rulerHeight,
+            allVisibleTilesReady,
+            ref _lastCompletePianoNoteFrame);
         context.Pop();
     }
 
@@ -1864,6 +1868,7 @@ public sealed class TimelineSurface : Control
         if (Snapshot is not TimelineRenderSnapshot snapshot
             || SelectionSnapshot is not TimelineSelectionSnapshot { Count: > 0 } selection)
         {
+            _lastCompletePianoSelectionFrame = null;
             return;
         }
         DpiScale dpi = VisualTreeHelper.GetDpi(this);
@@ -1891,6 +1896,9 @@ public sealed class TimelineSurface : Control
             rulerHeight,
             Math.Max(0, ActualWidth - laneHeaderWidth),
             Math.Max(0, ActualHeight - rulerHeight));
+        _pianoTileDrawEntries.Clear();
+        _pianoTileVisibleKeys.Clear();
+        bool allVisibleTilesReady = true;
         context.PushClip(new RectangleGeometry(contentBounds));
         for (long tileY = firstTileY; tileY <= lastTileY; tileY++)
         {
@@ -1920,26 +1928,13 @@ public sealed class TimelineSurface : Control
                 {
                     if (bitmap is not null)
                     {
-                        Rect destination = TimelineRasterPlacement.GetPianoTileDestination(
-                            viewport,
-                            actualPixelsPerTickDevice,
-                            actualPixelsPerLaneDevice,
-                            tileX,
-                            tileY,
-                            laneHeaderWidth, rulerHeight, LaneHeight);
-                        Rect coreDestination = TimelineRasterPlacement.GetPianoTileCoreDestination(
-                            viewport,
-                            actualPixelsPerTickDevice,
-                            actualPixelsPerLaneDevice,
-                            tileX,
-                            tileY,
-                            laneHeaderWidth, rulerHeight, LaneHeight);
-                        context.PushClip(new RectangleGeometry(coreDestination));
-                        context.DrawImage(bitmap, destination);
-                        context.Pop();
+                        _pianoTileDrawEntries.Add(new(key, bitmap));
                     }
+                    _pianoTileVisibleKeys.Add(key);
                     continue;
                 }
+                allVisibleTilesReady = false;
+                _pianoTileVisibleKeys.Add(key);
                 long requestTileX = tileX;
                 long requestTileY = tileY;
                 RequestRaster(
@@ -1957,6 +1952,16 @@ public sealed class TimelineSurface : Control
                         outlineColor: outlineColor));
             }
         }
+        PresentPianoRasterLayer(
+            context,
+            viewport,
+            snapshot.ProjectionKey,
+            actualPixelsPerTickDevice,
+            actualPixelsPerLaneDevice,
+            laneHeaderWidth,
+            rulerHeight,
+            allVisibleTilesReady,
+            ref _lastCompletePianoSelectionFrame);
         context.Pop();
 
         if (selection.Primary is MidoraId primaryId
@@ -1977,6 +1982,155 @@ public sealed class TimelineSurface : Control
                     new Rect(bounds.Left + 1, bounds.Top + 1, bounds.Width - 2, bounds.Height - 2));
             }
         }
+    }
+
+    private void PresentPianoRasterLayer(
+        DrawingContext context,
+        TimelineViewport viewport,
+        string projectionKey,
+        double currentPixelsPerTickDevice,
+        double currentPixelsPerLaneDevice,
+        double laneHeaderWidth,
+        double rulerHeight,
+        bool allVisibleTilesReady,
+        ref PianoRasterFrame? lastCompleteFrame)
+    {
+        if (allVisibleTilesReady)
+        {
+            DrawPianoTileEntries(
+                context,
+                viewport,
+                _pianoTileDrawEntries,
+                currentPixelsPerTickDevice,
+                currentPixelsPerLaneDevice,
+                laneHeaderWidth,
+                rulerHeight);
+            if (lastCompleteFrame?.Matches(projectionKey, _pianoTileVisibleKeys) != true)
+            {
+                lastCompleteFrame = new(projectionKey, _pianoTileVisibleKeys.ToArray());
+            }
+            _pianoTileDrawEntries.Clear();
+            return;
+        }
+
+        if (TryDrawCompletePianoFallback(
+                context,
+                viewport,
+                projectionKey,
+                laneHeaderWidth,
+                rulerHeight,
+                lastCompleteFrame))
+        {
+            _pianoTileDrawEntries.Clear();
+            return;
+        }
+
+        DrawPianoTileEntries(
+            context,
+            viewport,
+            _pianoTileDrawEntries,
+            currentPixelsPerTickDevice,
+            currentPixelsPerLaneDevice,
+            laneHeaderWidth,
+            rulerHeight);
+        _pianoTileDrawEntries.Clear();
+    }
+
+    private bool TryDrawCompletePianoFallback(
+        DrawingContext context,
+        TimelineViewport viewport,
+        string projectionKey,
+        double laneHeaderWidth,
+        double rulerHeight,
+        PianoRasterFrame? frame)
+    {
+        if (frame is null
+            || !string.Equals(frame.ProjectionKey, projectionKey, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        _pianoTileFallbackEntries.Clear();
+        foreach (TimelineRasterCacheKey key in frame.Keys)
+        {
+            if (!TimelineRasterCache.Shared.TryGet(key, out BitmapSource? bitmap)
+                || bitmap is null)
+            {
+                _pianoTileFallbackEntries.Clear();
+                return false;
+            }
+            _pianoTileFallbackEntries.Add(new(key, bitmap));
+        }
+
+        foreach (PianoTileDrawEntry entry in _pianoTileFallbackEntries)
+        {
+            double pixelsPerTickDevice = BitConverter.Int64BitsToDouble(entry.Key.HorizontalScaleKey);
+            double pixelsPerLaneDevice = BitConverter.Int64BitsToDouble(entry.Key.VerticalScaleKey);
+            DrawPianoTile(
+                context,
+                viewport,
+                entry,
+                pixelsPerTickDevice,
+                pixelsPerLaneDevice,
+                laneHeaderWidth,
+                rulerHeight);
+        }
+        _pianoTileFallbackEntries.Clear();
+        return true;
+    }
+
+    private void DrawPianoTileEntries(
+        DrawingContext context,
+        TimelineViewport viewport,
+        IReadOnlyList<PianoTileDrawEntry> entries,
+        double pixelsPerTickDevice,
+        double pixelsPerLaneDevice,
+        double laneHeaderWidth,
+        double rulerHeight)
+    {
+        foreach (PianoTileDrawEntry entry in entries)
+        {
+            DrawPianoTile(
+                context,
+                viewport,
+                entry,
+                pixelsPerTickDevice,
+                pixelsPerLaneDevice,
+                laneHeaderWidth,
+                rulerHeight);
+        }
+    }
+
+    private void DrawPianoTile(
+        DrawingContext context,
+        TimelineViewport viewport,
+        PianoTileDrawEntry entry,
+        double pixelsPerTickDevice,
+        double pixelsPerLaneDevice,
+        double laneHeaderWidth,
+        double rulerHeight)
+    {
+        Rect destination = TimelineRasterPlacement.GetPianoTileDestination(
+            viewport,
+            pixelsPerTickDevice,
+            pixelsPerLaneDevice,
+            entry.Key.TileX,
+            entry.Key.TileY,
+            laneHeaderWidth,
+            rulerHeight,
+            LaneHeight);
+        Rect coreDestination = TimelineRasterPlacement.GetPianoTileCoreDestination(
+            viewport,
+            pixelsPerTickDevice,
+            pixelsPerLaneDevice,
+            entry.Key.TileX,
+            entry.Key.TileY,
+            laneHeaderWidth,
+            rulerHeight,
+            LaneHeight);
+        context.PushClip(new RectangleGeometry(coreDestination));
+        context.DrawImage(entry.Bitmap, destination);
+        context.Pop();
     }
 
     private void RequestRaster(TimelineRasterCacheKey key, Func<TimelineRasterBuffer> factory)
@@ -3200,5 +3354,36 @@ public sealed class TimelineSurface : Control
         _dragActivated = false;
         _dragCopyRequested = false;
         Cursor = Cursors.Arrow;
+    }
+
+    private readonly record struct PianoTileDrawEntry(
+        TimelineRasterCacheKey Key,
+        BitmapSource Bitmap);
+
+    private sealed class PianoRasterFrame(
+        string projectionKey,
+        TimelineRasterCacheKey[] keys)
+    {
+        public string ProjectionKey { get; } = projectionKey;
+        public IReadOnlyList<TimelineRasterCacheKey> Keys { get; } = keys;
+
+        public bool Matches(
+            string currentProjectionKey,
+            IReadOnlyList<TimelineRasterCacheKey> currentKeys)
+        {
+            if (!string.Equals(ProjectionKey, currentProjectionKey, StringComparison.Ordinal)
+                || Keys.Count != currentKeys.Count)
+            {
+                return false;
+            }
+            for (int index = 0; index < Keys.Count; index++)
+            {
+                if (Keys[index] != currentKeys[index])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
     }
 }

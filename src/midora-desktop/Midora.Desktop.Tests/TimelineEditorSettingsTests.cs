@@ -92,6 +92,12 @@ public sealed class TimelineEditorSettingsTests
         Assert.False(segmentWorkspace.GridVisible);
         Assert.NotEqual(segmentWorkspace.OperationStepTicks, arrangementWorkspace.OperationStepTicks);
         Assert.True(arrangementWorkspace.GridVisible);
+        Assert.True(arrangement.DisplayGridUsesBars);
+        Assert.Equal("Bar", arrangement.DisplaySubdivisionText);
+        Assert.Equal("1/8", arrangement.OperationSubdivisionText);
+        Assert.Equal(240, arrangement.OperationStepTicks);
+        Assert.False(piano.DisplayGridUsesBars);
+        Assert.Equal("1/4", piano.DisplaySubdivisionText);
         Assert.Equal(480, arrangement.DefaultLengthTicks);
         Assert.Equal(480, piano.DefaultLengthTicks);
     }

@@ -394,6 +394,7 @@ public sealed class TimelineSurface : Control
     private readonly List<TimelineRenderItem> _rulerItems = new(capacity: 64);
     private readonly List<TimelineRenderItem> _hitItems = new(capacity: 16);
     private readonly List<MidoraId> _marqueeIds = new(capacity: 128);
+    private readonly List<TimelineGridLine> _gridLines = new(capacity: 256);
     private Brush? _penBorderBrush;
     private Brush? _penInfoBrush;
     private Brush? _penTextBrush;
@@ -405,6 +406,7 @@ public sealed class TimelineSurface : Control
     private Pen? _redPen;
     private Pen? _selectionPen;
     private Pen? _segmentSelectionPen;
+    private Pen? _beatGridPen;
     private Pen? _editCursorPen;
     private Pen? _marqueePen;
     private readonly Dictionary<string, FormattedText> _textCache = new(StringComparer.Ordinal);
@@ -1849,6 +1851,37 @@ public sealed class TimelineSurface : Control
         double laneHeaderWidth,
         double rulerHeight)
     {
+        if (SurfaceMode == TimelineSurfaceMode.Arrangement
+            && DisplayGridUsesBars
+            && TimeSignatureMap is ProjectTimeSignatureMap timeSignatureMap)
+        {
+            double ticksPerPixel = 1 / viewport.PixelsPerTick;
+            long minimumTickSpacing = ticksPerPixel >= long.MaxValue
+                ? long.MaxValue
+                : Math.Max(1, (long)Math.Ceiling(ticksPerPixel));
+            TimelineGridPresentation.BuildArrangementBarGridLines(
+                viewport.StartTick,
+                viewport.EndTick,
+                timeSignatureMap,
+                _gridLines,
+                minimumTickSpacing);
+            double previousX = double.NaN;
+            foreach (TimelineGridLine line in _gridLines)
+            {
+                double x = laneHeaderWidth + Math.Round(viewport.TickToX(line.Tick)) + 0.5;
+                if (line.Kind == TimelineGridLineKind.Beat && x == previousX)
+                {
+                    continue;
+                }
+                context.DrawLine(
+                    line.Kind == TimelineGridLineKind.Bar ? _borderPen : _beatGridPen,
+                    new Point(x, rulerHeight),
+                    new Point(x, ActualHeight));
+                previousX = x;
+            }
+            return;
+        }
+
         long grid = Math.Max(1, GridStepTicks);
         long first = TimelineGridQuantization.GetGridTickAtOrAfter(
             viewport.StartTick,
@@ -3995,6 +4028,10 @@ public sealed class TimelineSurface : Control
         Brush selection = Brush("Brush.Red.Hover", Color.FromRgb(255, 96, 101));
         _selectionPen = FrozenPen(selection, 2);
         _segmentSelectionPen = FrozenPen(segmentSelection, 2);
+        Brush beatGrid = border.Clone();
+        beatGrid.Opacity = 0.55;
+        beatGrid.Freeze();
+        _beatGridPen = FrozenPen(beatGrid, 1, DashStyles.Dash);
         _editCursorPen = FrozenPen(info, 1, DashStyles.Dash);
         _marqueePen = FrozenPen(info, 1, DashStyles.Dash);
     }

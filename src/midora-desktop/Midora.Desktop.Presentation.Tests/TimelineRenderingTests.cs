@@ -1079,6 +1079,72 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void ArrangementBarGridIncludesDenominatorBeatsAcrossMeterChanges()
+    {
+        MidoraProject project = new(480);
+        project.Conductor.TimeSignatures.Add(new TimeSignatureChange(project, 1_920, 3, 4));
+        project.Conductor.TimeSignatures.Add(new TimeSignatureChange(project, 3_360, 6, 8));
+        ProjectTimeSignatureMap map = new(project);
+        List<TimelineGridLine> lines = [];
+
+        TimelineGridPresentation.BuildArrangementBarGridLines(1_920, 4_800, map, lines);
+
+        Assert.Equal(
+            [
+                new(1_920, TimelineGridLineKind.Bar),
+                new(2_400, TimelineGridLineKind.Beat),
+                new(2_880, TimelineGridLineKind.Beat),
+                new(3_360, TimelineGridLineKind.Bar),
+                new(3_600, TimelineGridLineKind.Beat),
+                new(3_840, TimelineGridLineKind.Beat),
+                new(4_080, TimelineGridLineKind.Beat),
+                new(4_320, TimelineGridLineKind.Beat),
+                new(4_560, TimelineGridLineKind.Beat)
+            ],
+            lines);
+    }
+
+    [Fact]
+    public void ArrangementBarGridMakesTruncatedMeterChangeANewBarBoundary()
+    {
+        MidoraProject project = new(480);
+        project.Conductor.TimeSignatures.Add(new TimeSignatureChange(project, 1_000, 3, 4));
+        ProjectTimeSignatureMap map = new(project);
+        List<TimelineGridLine> lines = [];
+
+        TimelineGridPresentation.BuildArrangementBarGridLines(0, 2_440, map, lines);
+
+        Assert.Equal(
+            [
+                new(0, TimelineGridLineKind.Bar),
+                new(480, TimelineGridLineKind.Beat),
+                new(960, TimelineGridLineKind.Beat),
+                new(1_000, TimelineGridLineKind.Bar),
+                new(1_480, TimelineGridLineKind.Beat),
+                new(1_960, TimelineGridLineKind.Beat)
+            ],
+            lines);
+    }
+
+    [Fact]
+    public void ArrangementBarGridSkipsLinesBelowTheVisibleTickResolution()
+    {
+        MidoraProject project = new(480);
+        ProjectTimeSignatureMap map = new(project);
+        List<TimelineGridLine> lines = [];
+
+        TimelineGridPresentation.BuildArrangementBarGridLines(
+            0,
+            1_920_000,
+            map,
+            lines,
+            minimumTickSpacing: 3_000);
+
+        Assert.Equal(500, lines.Count);
+        Assert.All(lines, line => Assert.Equal(TimelineGridLineKind.Bar, line.Kind));
+    }
+
+    [Fact]
     public void BarDeltaUsesTheBarLengthAtTheTargetTick()
     {
         MidoraProject project = new(480);

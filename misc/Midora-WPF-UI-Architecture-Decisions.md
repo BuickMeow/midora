@@ -193,6 +193,13 @@
 - 原因：共同按最短对象裁剪会使一个短对象限制所有较长对象，无法表达用户请求的批量缩短量。共享请求量加逐对象最小长度饱和既保持非比例批量编辑语义，也使 `100 tick` 与 `20 tick` 对象共同缩短 `60 tick` 时确定地产生 `40 tick` 与 `1 tick`。
 - 边界：一次手势仍只提交一个 Project command 和一个 Undo；不改变对象稳定 ID、编译/canonical 语义、持久化格式或 Snap 来源。该规则只对长度最小值做逐对象饱和，不把重叠、容器边界等结构性错误降级为部分成功。
 
+## ADR-UI-028：Arrangement Bar Grid 的分母拍辅助线
+
+- 决定：Arrangement 在可见 Grid 选择 `Bar` 时继续以实线绘制 Project Time Signature Map 的自然小节边界，并在每个小节内按当前拍号的 `TicksPerBeat` 绘制低强调虚线。拍号变化 tick 无论是否截断前一自然小节，都作为新小节的实线起点；旧小节只绘制变化点之前实际存在的拍边界。
+- 决定：新建 Project 或重置编辑器时，Arrangement 默认 `Grid = Bar`、`Snap = 1/8` 且 Snap 开启。共享的 Piano Roll 设置继续保持既有默认值，Segment/SubVoice Piano Roll、Velocity 和 Event Lane 不增加 Bar 模式拍内虚线。
+- 原因：只显示小节边界时，Arrangement 在 Bar Grid 下缺少拍级定位参照；直接复用正式 `ProjectTimeSignatureMap` 可正确覆盖 `3/4`、`6/8` 与变拍，而不在 UI 建立第二套时间语义。
+- 边界：辅助线只是当前 viewport 的 transient 绘制，不进入 Project、Undo/Redo、`.midora`、编译或输出。初版仍不实现 additive meter、复合拍重音分组或钢琴卷帘同类增强。
+
 ## 小决定审计
 
 以下均是局部、可替换且不改变可听结果/持久化/公共业务接口的小决定，按用户授权采用推荐方案：

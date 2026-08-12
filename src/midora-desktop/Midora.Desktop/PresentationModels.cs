@@ -482,8 +482,13 @@ public sealed class TimelineEditorSettings : ObservableObject
     {
         _ticksPerQuarterNote = Math.Max(1, ticksPerQuarterNote);
         _timeSignatureMap = null;
-        DisplaySubdivision = TimelineSubdivision.Presets.Single(item => !item.IsBar && item.Numerator == 1 && item.Denominator == 4);
-        OperationSubdivision = TimelineSubdivision.Presets.Single(item => !item.IsBar && item.Numerator == 1 && item.Denominator == 16);
+        DisplaySubdivision = arrangement
+            ? TimelineSubdivision.Presets.Single(item => item.IsBar)
+            : TimelineSubdivision.Presets.Single(item => !item.IsBar && item.Numerator == 1 && item.Denominator == 4);
+        OperationSubdivision = TimelineSubdivision.Presets.Single(item =>
+            !item.IsBar
+            && item.Numerator == 1
+            && item.Denominator == (arrangement ? 8 : 16));
         SnapEnabled = true;
         GridVisible = true;
         DefaultLengthTicks = _ticksPerQuarterNote;

@@ -109,6 +109,34 @@
 - 原因：Popup 使用独立 HWND；在其 Click 路由或 TreeView 双击路由尚未退栈时清空/重建 ItemsSource、Tab 或 Workspace，会把 mouse capture、selection 和 measure/arrange 带入重入状态，表现为整个主窗口不再处理输入。
 - 边界：排队只改变 UI 提交时机，不改变 Project command 的原子性、History 顺序、稳定 ID、编译输入或持久化结果。
 
+## ADR-UI-018：分层栅格缓存、离散 LOD 与独立命中
+
+- 决定：Arrangement 的 Segment Note Preview 不再在每帧逐 Note 调用 `DrawingContext`。每个 Segment 以稳定 ID、preview 内容指纹、调色板 revision 和 DPI 为键，生成一张固定分辨率的冻结 `BitmapSource`；缩放、平移、Selection、hover 和播放指针只拉伸或复用该位图，不重建 preview 内容。
+- 坐标不变量：Arrangement preview 始终映射到完整、未按 viewport 裁剪的 Segment 世界矩形，再由可视 Segment 矩形裁剪；平移只能平移该目标矩形，禁止把缓存图像重新拉伸到当前可见切片。piano tile 的 LOD/tile 坐标必须按值绑定到同一个 raster request、cache key 和屏幕目标矩形，后台任务不得捕获随后变化的循环变量。
+- 决定：Segment 与 SubVoice 的 piano roll 共用二维 tile renderer。基础 Note 层以 `256 × 256` device-pixel、Pbgra32 tile 缓存；grid/active range、Selection/primary、hover/drag 和 cursor 保持独立覆盖层。平移复用相同 LOD tile，缩放切换量化的水平/垂直 LOD；小于一个 device pixel 的 Note 以覆盖像素聚合，而命中仍使用原始 Note 区间。
+- 决定：tile 只从不可变 `TimelineRenderSnapshot` 和按 lane/pitch 分桶的 interval index 读取。每个 tile 使用忽略 Selection/Primary 的局部视觉内容指纹；编辑一个 Note 只轮换与该 Note 相交的 tile key，其他 tile 跨 workspace revision 复用。后台最多两个 raster worker，不同 in-flight raster key 最多 64 个；结果携带 projection/tile-content generation，过期结果不得替换当前画面。UI 只在 tile 完成后原子接收冻结 bitmap。
+- 决定：Selection 使用独立、按稳定 ID 查询的不可变 presentation snapshot。单纯 Selection/Primary 变化不得重建 Note 基础 snapshot、interval index、Segment preview 或 piano-roll tile；精确 selection border、selected fill 和 transient gesture 在前景层绘制。
+- 决定：共享 UI raster cache 的内存预算为 `256 MiB`，使用 LRU 回收；可视 tile 外最多预取一圈。缓存只属于当前进程和 Project session，Project 关闭/替换时整体清空，不写磁盘、不进入 `.midora`、Undo/Redo、Project fingerprint 或 Application Preferences。
+- 失败语义：后台 raster 异常记录为 UI runtime trace 并丢弃对应 tile；不得修改 Project、阻塞输入或让过期 bitmap 覆盖新 revision。tile 未就绪只允许暂时显示静态背景与已就绪覆盖层，不允许回退到每帧逐 Note 绘制。
+- 边界：本阶段使用纯 WPF `BitmapSource` 与 CPU 像素栅格，不引入 SkiaSharp、D3DImage 或自建 Direct3D surface。raster backend 保持可替换；只有基准证明纯 WPF 路径仍不能满足正式性能门时，才另行评估 native/GPU backend。
+
+## ADR-UI-019：带保护区的瓦片、批量选择层与定向工作区刷新
+
+- 决定：Piano Roll 的每个 `256 × 256` 核心瓦片在四边各增加 1 device-pixel 保护区；相邻瓦片按相同世界坐标重复栅格化保护区并重叠组合。被瓦片边缘截断的 Note 不生成伪边框，只有 Note 的真实起点、终点和上下边缘生成轮廓，避免瓦片缝隙及长 Note 内部的人工分界线。
+- 决定：Piano Selection 使用独立的 selection-revision 瓦片层；Velocity 的普通与选中柱状统一进入横向瓦片层。Primary、drag、正在编辑的 Velocity 值和 cursor 仍是小规模 transient overlay。大选区不得退回逐 Note WPF primitive 路径。
+- 决定：框选的视觉矩形与最终 interval-index 查询必须共享同一份吸附后 tick/lane 边界；小于半个 operation step 的正向拖动至少覆盖一个完整有效 operation step，不得退化成 1 tick。一次框选通过批量 selection mutation 只推进一次 selection revision。
+- 决定：`ProjectDocumentSession` 分离 History 状态通知与携带 `ProjectChangeSet` 的内容通知。Desktop 只重建受 Track、Event Instrument 或 Conductor 变更影响的 Workspace；保存点等纯 History 变化只刷新状态属性。编辑一个 Track 不得重建其他 Track 的已打开 Segment/SubVoice 大型快照。
+- 边界：正式编译仍保持现有同步、原子和 canonical 结果语义；本决定不把 UI 响应速度问题转化为延迟编译或未验证 Project 状态。
+
+## ADR-UI-020：最终设备像素坐标栅格化，不再缩放 Piano tile
+
+- 修正 ADR-UI-018 的离散 LOD 部分：Piano Roll tile 仍为 `256 × 256` device-pixel 核心和四边 1 device-pixel 保护区，但 tile 必须按当前实际 `devicePixelsPerTick` 与 `devicePixelsPerLane` 生成，并以该精确缩放的 IEEE 754 bit pattern 作为 cache key。WPF 组合阶段只允许 1:1 device-pixel 映射，不再把量化 LOD bitmap 二次放大或缩小。
+- 同一 tick 的左右边界必须由同一表达式直接换算并执行一次最近像素舍入；禁止用 `floor(start)` 与 `ceil(end)` 两套方向相反的规则，也禁止用“已舍入 start + width”推导 end。相邻 Note 的共享 tick 因而得到完全相同的像素边界。
+- 同一 pitch lane 的 top/bottom 必须从全局 lane 边界计算并舍入，再换算到 tile 局部坐标；不得按每个 tile 单独缩放已栅格化的行，从而避免横向 tile 之间发生 1 device-pixel 的纵向相位差。
+- Arrangement Segment preview 继续使用固定 `512 × 64` bitmap，但不再增加并拉伸透明 gutter。normalized start/end 使用相同的最近像素边界规则，bitmap 精确映射到完整 Segment 世界矩形后裁剪。单个 Note 在源 bitmap 中覆盖相邻两行，以避免 `64 px` 预览缩小到常规轨道高度时，最近邻采样完整跳过只有一行的首音符。
+- 依据：实机复现确认离散 LOD bitmap 的 WPF 二次采样会让 1-pixel border 在特定缩放下坍缩，并让相邻 tile 出现不同采样相位。该修正只改变 UI runtime cache 与像素覆盖，不改变 Note/Segment 语义、命中、编辑、持久化或可听结果。
+- 后续边界：此实现吸收了高性能 MIDI 编辑器常见的“语义实例 + 统一最终像素变换”原则，但没有复制或引入 yinhe 的 AGPL 源码，仓库许可证因此不变。若将来改用 GPU instance renderer，需另立 ADR、性能门和许可证审计。
+
 ## 小决定审计
 
 以下均是局部、可替换且不改变可听结果/持久化/公共业务接口的小决定，按用户授权采用推荐方案：

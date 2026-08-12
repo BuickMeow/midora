@@ -2248,17 +2248,26 @@ public sealed class MidoraCompiler : IDisposable
 
     private static List<CanonicalMidiEvent> FoldSameTickStates(List<CanonicalMidiEvent> sorted)
     {
-        Dictionary<(long Tick, byte Port, byte Channel, long Target), long> selectedGroups = [];
+        Dictionary<(byte Port, byte Channel, long Target), long> selectedGroups = [];
         List<CanonicalMidiEvent> reversed = new(sorted.Count);
+        long currentTick = long.MinValue;
         for (int i = sorted.Count - 1; i >= 0; i--)
         {
             CanonicalMidiEvent value = sorted[i];
+            if (value.Tick != currentTick)
+            {
+                selectedGroups.Clear();
+                currentTick = value.Tick;
+            }
             if (value.SemanticTargetKey == long.MinValue)
             {
                 reversed.Add(value);
                 continue;
             }
-            (long, byte, byte, long) key = (value.Tick, value.ZeroBasedPort, value.ZeroBasedChannel, value.SemanticTargetKey);
+            (byte, byte, long) key = (
+                value.ZeroBasedPort,
+                value.ZeroBasedChannel,
+                value.SemanticTargetKey);
             if (!selectedGroups.TryGetValue(key, out long selectedGroup))
             {
                 selectedGroups.Add(key, value.SemanticGroup);
@@ -2269,8 +2278,10 @@ public sealed class MidoraCompiler : IDisposable
                 reversed.Add(value);
             }
         }
+        // This pass only removes entries from an already sorted sequence. Reversing
+        // the backward traversal restores the original canonical order; sorting the
+        // surviving high-volume event list again is both redundant and expensive.
         reversed.Reverse();
-        reversed.Sort(CanonicalComparer.Instance);
         return reversed;
     }
 

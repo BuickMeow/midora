@@ -225,6 +225,7 @@ public abstract class WorkspaceViewModel(
 {
     private string _header = header;
     private int? _activeLane;
+    private TimelineSelectionSnapshot _selectionSnapshot = new(0, [], null);
 
     public WorkspaceKey Key { get; } = key;
     public WorkspaceKind Kind => Key.Kind;
@@ -235,6 +236,11 @@ public abstract class WorkspaceViewModel(
         protected set => Set(ref _header, value);
     }
     public WorkspaceSelection Selection { get; } = new();
+    public TimelineSelectionSnapshot SelectionSnapshot
+    {
+        get => _selectionSnapshot;
+        private set => Set(ref _selectionSnapshot, value);
+    }
     public int? ActiveLane
     {
         get => _activeLane;
@@ -242,6 +248,9 @@ public abstract class WorkspaceViewModel(
     }
 
     public abstract void Rebuild(MidoraProject project, long revision);
+
+    public void RefreshSelectionPresentation() =>
+        SelectionSnapshot = new(Selection.Revision, Selection.Ids, Selection.Primary);
 }
 
 public enum TimelineWorkspaceMode

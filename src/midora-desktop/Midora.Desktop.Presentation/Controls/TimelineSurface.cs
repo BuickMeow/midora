@@ -3,6 +3,7 @@ using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Globalization;
 using Midora.Desktop.Presentation.Interaction;
 using Midora.Desktop.Presentation.Rendering;
@@ -157,6 +158,12 @@ public sealed class TimelineSurface : Control
             null,
             FrameworkPropertyMetadataOptions.AffectsRender,
             OnViewportMetricsChanged));
+
+    public static readonly DependencyProperty SelectionSnapshotProperty = DependencyProperty.Register(
+        nameof(SelectionSnapshot),
+        typeof(TimelineSelectionSnapshot),
+        typeof(TimelineSurface),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
     public static readonly DependencyProperty RulerSnapshotProperty = DependencyProperty.Register(
         nameof(RulerSnapshot),
@@ -411,6 +418,7 @@ public sealed class TimelineSurface : Control
     private MidoraId? _velocityTopEdgeItemId;
     private bool _velocitySelectionRestricted;
     private readonly Dictionary<MidoraId, int> _velocityEdits = [];
+    private readonly HashSet<TimelineRasterCacheKey> _requestedRasterKeys = [];
     private double _valueViewMinimum;
     private double _valueViewMaximum = 1;
 
@@ -422,6 +430,8 @@ public sealed class TimelineSurface : Control
         UseLayoutRounding = true;
         Cursor = Cursors.Arrow;
         FocusVisualStyle = null;
+        RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.NearestNeighbor);
+        RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);
     }
 
     protected override AutomationPeer OnCreateAutomationPeer() =>
@@ -437,6 +447,12 @@ public sealed class TimelineSurface : Control
     {
         get => (TimelineRenderSnapshot?)GetValue(SnapshotProperty);
         set => SetValue(SnapshotProperty, value);
+    }
+
+    public TimelineSelectionSnapshot? SelectionSnapshot
+    {
+        get => (TimelineSelectionSnapshot?)GetValue(SelectionSnapshotProperty);
+        set => SetValue(SelectionSnapshotProperty, value);
     }
 
     public TimelineRenderSnapshot? RulerSnapshot
@@ -763,28 +779,68 @@ public sealed class TimelineSurface : Control
         TimelineRenderSnapshot? snapshot = Snapshot;
         if (snapshot is not null)
         {
-            snapshot.Index.QueryInto(
-                viewport.StartTick,
-                viewport.EndTick,
-                viewport.FirstLane,
-                viewport.LastLaneExclusive,
-                _visibleItems);
-            foreach (TimelineRenderItem item in _visibleItems)
+            if (SurfaceMode == TimelineSurfaceMode.PianoRoll)
             {
-                DrawItem(
+                DrawPianoNoteTiles(
                     drawingContext,
                     viewport,
-                    item,
                     red,
-                    redDark,
-                    info,
                     warning,
-                    segment,
-                    selectedSegment,
-                    segmentNotePreview,
                     segmentPianoNote,
                     laneHeaderWidth,
                     rulerHeight);
+                DrawPianoSelectionOverlay(
+                    drawingContext,
+                    viewport,
+                    redDark,
+                    warning,
+                    red,
+                    laneHeaderWidth,
+                    rulerHeight);
+            }
+            else if (SurfaceMode == TimelineSurfaceMode.Velocity)
+            {
+                DrawVelocityTiles(
+                    drawingContext,
+                    viewport,
+                    segmentPianoNote,
+                    red,
+                    border,
+                    laneHeaderWidth,
+                    rulerHeight);
+                DrawVelocityEditOverlay(
+                    drawingContext,
+                    viewport,
+                    segmentPianoNote,
+                    red,
+                    laneHeaderWidth,
+                    rulerHeight);
+            }
+            else
+            {
+                snapshot.Index.QueryInto(
+                    viewport.StartTick,
+                    viewport.EndTick,
+                    viewport.FirstLane,
+                    viewport.LastLaneExclusive,
+                    _visibleItems);
+                foreach (TimelineRenderItem item in _visibleItems)
+                {
+                    DrawItem(
+                        drawingContext,
+                        viewport,
+                        item,
+                        red,
+                        redDark,
+                        info,
+                        warning,
+                        segment,
+                        selectedSegment,
+                        segmentNotePreview,
+                        segmentPianoNote,
+                        laneHeaderWidth,
+                        rulerHeight);
+                }
             }
         }
 
@@ -809,7 +865,7 @@ public sealed class TimelineSurface : Control
             DrawValueGrid(drawingContext, text, laneHeaderWidth, rulerHeight, drawLabels: true);
         }
         DrawRulerOverview(drawingContext, viewport, text, warning, laneHeaderWidth, rulerHeight);
-        DrawMarquee(drawingContext, info);
+        DrawMarquee(drawingContext, viewport, info);
     }
 
     protected override void OnMouseDown(MouseButtonEventArgs e)
@@ -844,7 +900,7 @@ public sealed class TimelineSurface : Control
             _velocityEdits.Clear();
             _velocitySelectionRestricted = Snapshot?.Items.Any(item =>
                 item.Kind == TimelineItemKind.Velocity
-                && item.State.HasFlag(TimelineItemState.Selected)) == true;
+                && IsSelected(item)) == true;
             _velocityTopEdgeItemId = e.ChangedButton == MouseButton.Left
                 && TryHitVelocityTopEdge(point, viewport, out TimelineRenderItem topEdgeItem)
                 ? topEdgeItem.Id
@@ -953,7 +1009,7 @@ public sealed class TimelineSurface : Control
             if ((Keyboard.Modifiers & ModifierKeys.Alt) != 0 && _hitItems.Count > 1)
             {
                 int primaryIndex = _hitItems.FindIndex(item =>
-                    (item.State & TimelineItemState.Primary) != 0);
+                    IsPrimary(item));
                 hitIndex = primaryIndex < 0 ? 0 : (primaryIndex + 1) % _hitItems.Count;
             }
             TimelineRenderItem hit = _hitItems[hitIndex];
@@ -1081,6 +1137,8 @@ public sealed class TimelineSurface : Control
         base.OnMouseMove(e);
         Point point = e.GetPosition(this);
         _hoverPoint = point;
+        bool hoverChangesVisual = ToolMode == TimelineToolMode.Draw
+            && SurfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll;
         if (_velocityOrigin is Point velocityOrigin
             && (e.LeftButton == MouseButtonState.Pressed || e.RightButton == MouseButtonState.Pressed)
             && TryCreateViewport(out TimelineViewport velocityViewport))
@@ -1187,7 +1245,10 @@ public sealed class TimelineSurface : Control
         {
             UpdateHoverCursor(point, hoverViewport);
         }
-        InvalidateVisual();
+        if (hoverChangesVisual)
+        {
+            InvalidateVisual();
+        }
     }
 
     private void AutoScrollEditGesture(Point point)
@@ -1426,6 +1487,9 @@ public sealed class TimelineSurface : Control
 
     protected override void OnMouseLeave(MouseEventArgs e)
     {
+        bool hoverChangedVisual = _hoverPoint is not null
+            && ToolMode == TimelineToolMode.Draw
+            && SurfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll;
         _hoverPoint = null;
         if (_dragItem is null)
         {
@@ -1434,7 +1498,10 @@ public sealed class TimelineSurface : Control
                 ? ToolMode == TimelineToolMode.Select ? Cursors.Cross : Cursors.Arrow
                 : ToolMode == TimelineToolMode.Draw ? Cursors.Cross : Cursors.Arrow;
         }
-        InvalidateVisual();
+        if (hoverChangedVisual)
+        {
+            InvalidateVisual();
+        }
         base.OnMouseLeave(e);
     }
 
@@ -1499,28 +1566,22 @@ public sealed class TimelineSurface : Control
         {
             return;
         }
-        double laneHeaderWidth = GetLaneHeaderWidth();
-        double rulerHeight = GetRulerHeight();
-        Rect rectangle = new(origin, current);
-        rectangle.Intersect(new Rect(laneHeaderWidth, rulerHeight, viewport.Width, viewport.Height));
-        if (rectangle.Width < 2 && rectangle.Height < 2)
+        if (!TryGetMarqueeBounds(
+                origin,
+                current,
+                viewport,
+                out _,
+                out long start,
+                out long end,
+                out int firstLane,
+                out int lastLaneExclusive))
         {
             MarqueeCompleted?.Invoke(
                 this,
                 new TimelineMarqueeEventArgs(Array.Empty<MidoraId>(), Keyboard.Modifiers));
             return;
         }
-
-        long rawStart = viewport.XToTick(rectangle.Left - laneHeaderWidth);
-        long rawEnd = Math.Max(rawStart + 1, viewport.XToTick(rectangle.Right - laneHeaderWidth));
-        long start = SnapAbsolute(rawStart);
-        long snappedLength = SnapOperationDelta(
-            Math.Max(1, checked(rawEnd - rawStart)),
-            rawEnd);
-        long end = checked(start + Math.Max(1, snappedLength));
-        int firstLane = viewport.YToLane(rectangle.Top - rulerHeight);
-        int lastLane = viewport.YToLane(rectangle.Bottom - rulerHeight);
-        Snapshot.Index.QueryInto(start, end, firstLane, checked(lastLane + 1), _visibleItems);
+        Snapshot.Index.QueryInto(start, end, firstLane, lastLaneExclusive, _visibleItems);
         _marqueeIds.Clear();
         foreach (TimelineRenderItem item in _visibleItems)
         {
@@ -1671,6 +1732,299 @@ public sealed class TimelineSurface : Control
         drawingContext.DrawRectangle(info, null, new Rect(left, 0, Math.Max(1, right - left), 3));
     }
 
+    private void DrawPianoNoteTiles(
+        DrawingContext context,
+        TimelineViewport viewport,
+        Brush subVoiceNoteBrush,
+        Brush warningBrush,
+        Brush segmentNoteBrush,
+        double laneHeaderWidth,
+        double rulerHeight)
+    {
+        if (Snapshot is not TimelineRenderSnapshot snapshot)
+        {
+            return;
+        }
+        DpiScale dpi = VisualTreeHelper.GetDpi(this);
+        double actualPixelsPerTickDevice = viewport.PixelsPerTick * dpi.DpiScaleX;
+        double actualPixelsPerLaneDevice = LaneHeight * dpi.DpiScaleY;
+        long horizontalScaleKey = BitConverter.DoubleToInt64Bits(actualPixelsPerTickDevice);
+        long verticalScaleKey = BitConverter.DoubleToInt64Bits(actualPixelsPerLaneDevice);
+        long firstVisibleTileX = FloorToLong(
+            viewport.StartTick * actualPixelsPerTickDevice / TimelinePianoTileRasterizer.TileSize);
+        long lastVisibleTileX = FloorToLong(
+            Math.Max(viewport.StartTick, viewport.EndTick - 1) * actualPixelsPerTickDevice
+            / TimelinePianoTileRasterizer.TileSize);
+        long firstVisibleTileY = FloorToLong(
+            viewport.FirstLane * actualPixelsPerLaneDevice / TimelinePianoTileRasterizer.TileSize);
+        long lastVisibleTileY = FloorToLong(
+            Math.Max(viewport.FirstLane, viewport.LastLaneExclusive - 1) * actualPixelsPerLaneDevice
+            / TimelinePianoTileRasterizer.TileSize);
+        Color normalColor = GetSolidColor(
+            RangeStartTick is not null && RangeEndTick is not null
+                ? segmentNoteBrush
+                : subVoiceNoteBrush,
+            Color.FromRgb(163, 178, 190));
+        Color warningColor = GetSolidColor(warningBrush, Color.FromRgb(232, 179, 75));
+        int dpiX = checked((int)Math.Round(dpi.DpiScaleX * 1024, MidpointRounding.AwayFromZero));
+        int dpiY = checked((int)Math.Round(dpi.DpiScaleY * 1024, MidpointRounding.AwayFromZero));
+        Rect contentBounds = new(
+            laneHeaderWidth,
+            rulerHeight,
+            Math.Max(0, ActualWidth - laneHeaderWidth),
+            Math.Max(0, ActualHeight - rulerHeight));
+        context.PushClip(new RectangleGeometry(contentBounds));
+        for (int ring = 0; ring <= 1; ring++)
+        {
+            long firstX = Math.Max(0, firstVisibleTileX - ring);
+            long lastX = Math.Max(firstX, lastVisibleTileX + ring);
+            long firstY = Math.Max(0, firstVisibleTileY - ring);
+            long lastY = Math.Max(firstY, lastVisibleTileY + ring);
+            for (long tileY = firstY; tileY <= lastY; tileY++)
+            {
+                for (long tileX = firstX; tileX <= lastX; tileX++)
+                {
+                    bool visible = tileX >= firstVisibleTileX && tileX <= lastVisibleTileX
+                        && tileY >= firstVisibleTileY && tileY <= lastVisibleTileY;
+                    if (ring == 1 && visible)
+                    {
+                        continue;
+                    }
+                    TimelinePianoTileRasterRequest request = new(
+                        snapshot,
+                        actualPixelsPerTickDevice,
+                        actualPixelsPerLaneDevice,
+                        tileX,
+                        tileY,
+                        normalColor,
+                        warningColor);
+                    TimelineRasterCacheKey key = new(
+                        TimelineRasterLayer.PianoNotes,
+                        snapshot.ProjectionKey,
+                        snapshot.GetPianoTileContentFingerprint(
+                            actualPixelsPerTickDevice,
+                            actualPixelsPerLaneDevice,
+                            request.TileX,
+                            request.TileY),
+                        horizontalScaleKey,
+                        verticalScaleKey,
+                        request.TileX,
+                        request.TileY,
+                        ColorToArgb(normalColor),
+                        ColorToArgb(warningColor),
+                        0,
+                        dpiX,
+                        dpiY);
+                    if (TimelineRasterCache.Shared.TryGet(key, out BitmapSource? bitmap))
+                    {
+                        if (visible && bitmap is not null)
+                        {
+                            Rect destination = TimelineRasterPlacement.GetPianoTileDestination(
+                                viewport,
+                                actualPixelsPerTickDevice,
+                                actualPixelsPerLaneDevice,
+                                request.TileX,
+                                request.TileY,
+                                laneHeaderWidth,
+                                rulerHeight,
+                                LaneHeight);
+                            Rect coreDestination = TimelineRasterPlacement.GetPianoTileCoreDestination(
+                                viewport,
+                                actualPixelsPerTickDevice,
+                                actualPixelsPerLaneDevice,
+                                request.TileX,
+                                request.TileY,
+                                laneHeaderWidth,
+                                rulerHeight,
+                                LaneHeight);
+                            context.PushClip(new RectangleGeometry(coreDestination));
+                            context.DrawImage(bitmap, destination);
+                            context.Pop();
+                        }
+                        continue;
+                    }
+                    RequestRaster(
+                        key,
+                        request.Rasterize);
+                }
+            }
+        }
+        context.Pop();
+    }
+
+    private void DrawPianoSelectionOverlay(
+        DrawingContext context,
+        TimelineViewport viewport,
+        Brush selectedBrush,
+        Brush warningBrush,
+        Brush outlineBrush,
+        double laneHeaderWidth,
+        double rulerHeight)
+    {
+        if (Snapshot is not TimelineRenderSnapshot snapshot
+            || SelectionSnapshot is not TimelineSelectionSnapshot { Count: > 0 } selection)
+        {
+            return;
+        }
+        DpiScale dpi = VisualTreeHelper.GetDpi(this);
+        double actualPixelsPerTickDevice = viewport.PixelsPerTick * dpi.DpiScaleX;
+        double actualPixelsPerLaneDevice = LaneHeight * dpi.DpiScaleY;
+        long horizontalScaleKey = BitConverter.DoubleToInt64Bits(actualPixelsPerTickDevice);
+        long verticalScaleKey = BitConverter.DoubleToInt64Bits(actualPixelsPerLaneDevice);
+        long firstTileX = Math.Max(0, FloorToLong(
+            viewport.StartTick * actualPixelsPerTickDevice / TimelinePianoTileRasterizer.TileSize));
+        long lastTileX = Math.Max(firstTileX, FloorToLong(
+            Math.Max(viewport.StartTick, viewport.EndTick - 1) * actualPixelsPerTickDevice
+            / TimelinePianoTileRasterizer.TileSize));
+        long firstTileY = Math.Max(0, FloorToLong(
+            viewport.FirstLane * actualPixelsPerLaneDevice / TimelinePianoTileRasterizer.TileSize));
+        long lastTileY = Math.Max(firstTileY, FloorToLong(
+            Math.Max(viewport.FirstLane, viewport.LastLaneExclusive - 1) * actualPixelsPerLaneDevice
+            / TimelinePianoTileRasterizer.TileSize));
+        Color selectedColor = GetSolidColor(selectedBrush, Color.FromRgb(143, 36, 41));
+        Color warningColor = GetSolidColor(warningBrush, Color.FromRgb(232, 179, 75));
+        Color outlineColor = GetSolidColor(outlineBrush, Color.FromRgb(229, 61, 68));
+        int dpiX = checked((int)Math.Round(dpi.DpiScaleX * 1024, MidpointRounding.AwayFromZero));
+        int dpiY = checked((int)Math.Round(dpi.DpiScaleY * 1024, MidpointRounding.AwayFromZero));
+        Rect contentBounds = new(
+            laneHeaderWidth,
+            rulerHeight,
+            Math.Max(0, ActualWidth - laneHeaderWidth),
+            Math.Max(0, ActualHeight - rulerHeight));
+        context.PushClip(new RectangleGeometry(contentBounds));
+        for (long tileY = firstTileY; tileY <= lastTileY; tileY++)
+        {
+            for (long tileX = firstTileX; tileX <= lastTileX; tileX++)
+            {
+                ulong contentFingerprint = TimelineContentFingerprint.WithSelection(
+                    snapshot.GetPianoTileContentFingerprint(
+                        actualPixelsPerTickDevice,
+                        actualPixelsPerLaneDevice,
+                        tileX,
+                        tileY),
+                    selection.Revision);
+                TimelineRasterCacheKey key = new(
+                    TimelineRasterLayer.PianoSelection,
+                    snapshot.ProjectionKey,
+                    contentFingerprint,
+                    horizontalScaleKey,
+                    verticalScaleKey,
+                    tileX,
+                    tileY,
+                    ColorToArgb(selectedColor),
+                    ColorToArgb(warningColor),
+                    ColorToArgb(outlineColor),
+                    dpiX,
+                    dpiY);
+                if (TimelineRasterCache.Shared.TryGet(key, out BitmapSource? bitmap))
+                {
+                    if (bitmap is not null)
+                    {
+                        Rect destination = TimelineRasterPlacement.GetPianoTileDestination(
+                            viewport,
+                            actualPixelsPerTickDevice,
+                            actualPixelsPerLaneDevice,
+                            tileX,
+                            tileY,
+                            laneHeaderWidth, rulerHeight, LaneHeight);
+                        Rect coreDestination = TimelineRasterPlacement.GetPianoTileCoreDestination(
+                            viewport,
+                            actualPixelsPerTickDevice,
+                            actualPixelsPerLaneDevice,
+                            tileX,
+                            tileY,
+                            laneHeaderWidth, rulerHeight, LaneHeight);
+                        context.PushClip(new RectangleGeometry(coreDestination));
+                        context.DrawImage(bitmap, destination);
+                        context.Pop();
+                    }
+                    continue;
+                }
+                long requestTileX = tileX;
+                long requestTileY = tileY;
+                RequestRaster(
+                    key,
+                    () => TimelinePianoTileRasterizer.Rasterize(
+                        snapshot,
+                        actualPixelsPerTickDevice,
+                        actualPixelsPerLaneDevice,
+                        requestTileX,
+                        requestTileY,
+                        selectedColor,
+                        warningColor,
+                        selection,
+                        selectionOnly: true,
+                        outlineColor: outlineColor));
+            }
+        }
+        context.Pop();
+
+        if (selection.Primary is MidoraId primaryId
+            && snapshot.ItemsById.TryGetValue(primaryId, out TimelineRenderItem primaryItem)
+            && primaryItem.Kind is TimelineItemKind.LogicalNote or TimelineItemKind.TemplateNote
+            && primaryItem.EndTick > viewport.StartTick
+            && primaryItem.StartTick < viewport.EndTick
+            && primaryItem.Lane >= viewport.FirstLane
+            && primaryItem.Lane < viewport.LastLaneExclusive)
+        {
+            Rect bounds = TimelineRasterPlacement.GetUnclippedItemBounds(
+                viewport, primaryItem, laneHeaderWidth, rulerHeight, LaneHeight);
+            if (bounds.Width > 4 && bounds.Height > 4)
+            {
+                context.DrawRectangle(
+                    null,
+                    _selectionPen,
+                    new Rect(bounds.Left + 1, bounds.Top + 1, bounds.Width - 2, bounds.Height - 2));
+            }
+        }
+    }
+
+    private void RequestRaster(TimelineRasterCacheKey key, Func<TimelineRasterBuffer> factory)
+    {
+        if (!_requestedRasterKeys.Add(key))
+        {
+            return;
+        }
+        bool accepted = TimelineRasterCache.Shared.Request(
+            key,
+            factory,
+            Dispatcher,
+            () =>
+            {
+                _requestedRasterKeys.Remove(key);
+                if (Snapshot is TimelineRenderSnapshot snapshot
+                    && string.Equals(snapshot.ProjectionKey, key.ProjectionKey, StringComparison.Ordinal))
+                {
+                    InvalidateVisual();
+                }
+            });
+        if (!accepted)
+        {
+            _requestedRasterKeys.Remove(key);
+        }
+    }
+
+    private static long FloorToLong(double value) => value <= long.MinValue
+        ? long.MinValue
+        : value >= long.MaxValue
+            ? long.MaxValue
+            : (long)Math.Floor(value);
+
+    private static Color GetSolidColor(Brush brush, Color fallback) =>
+        brush is SolidColorBrush solid ? solid.Color : fallback;
+
+    private static uint ColorToArgb(Color color) =>
+        ((uint)color.A << 24) | ((uint)color.R << 16) | ((uint)color.G << 8) | color.B;
+
+    private bool IsSelected(TimelineRenderItem item) =>
+        SelectionSnapshot?.Contains(item.Id)
+        ?? item.State.HasFlag(TimelineItemState.Selected);
+
+    private bool IsPrimary(TimelineRenderItem item) =>
+        SelectionSnapshot is TimelineSelectionSnapshot selection
+            ? selection.Primary == item.Id
+            : item.State.HasFlag(TimelineItemState.Primary);
+
     private void DrawItem(
         DrawingContext context,
         TimelineViewport viewport,
@@ -1717,7 +2071,7 @@ public sealed class TimelineSurface : Control
             return;
         }
 
-        bool selected = item.State.HasFlag(TimelineItemState.Selected);
+        bool selected = IsSelected(item);
         bool isSegmentPianoRoll = SurfaceMode == TimelineSurfaceMode.PianoRoll
             && RangeStartTick is not null
             && RangeEndTick is not null;
@@ -1740,7 +2094,18 @@ public sealed class TimelineSurface : Control
         if (item.Kind == TimelineItemKind.Segment
             && Snapshot?.SegmentPreviews.TryGetValue(item.Id, out TimelineSegmentPreview? preview) == true)
         {
-            DrawSegmentPreview(context, rectangle, preview, segmentNotePreview);
+            Rect fullSegmentBounds = TimelineRasterPlacement.GetUnclippedItemBounds(
+                viewport,
+                item,
+                laneHeaderWidth,
+                rulerHeight,
+                LaneHeight);
+            DrawSegmentPreview(
+                context,
+                rectangle,
+                fullSegmentBounds,
+                preview,
+                segmentNotePreview);
         }
 
         if (selected)
@@ -1749,7 +2114,7 @@ public sealed class TimelineSurface : Control
                 ? _segmentSelectionPen!
                 : _selectionPen!;
             context.DrawRoundedRectangle(null, selectionPen, rectangle, 2, 2);
-            if (item.State.HasFlag(TimelineItemState.Primary)
+            if (IsPrimary(item)
                 && rectangle.Width > 4
                 && rectangle.Height > 4)
             {
@@ -1763,29 +2128,177 @@ public sealed class TimelineSurface : Control
         }
     }
 
-    private static void DrawSegmentPreview(
+    private void DrawSegmentPreview(
         DrawingContext context,
-        Rect segmentBounds,
+        Rect visibleSegmentBounds,
+        Rect fullSegmentBounds,
         TimelineSegmentPreview preview,
         Brush noteBrush)
     {
-        if (preview.Notes.Count == 0 || segmentBounds.Width <= 0 || segmentBounds.Height <= 0) return;
-        context.PushClip(new RectangleGeometry(segmentBounds));
-        context.PushOpacity(0.72);
-        double noteHeight = Math.Max(1, Math.Round(segmentBounds.Height / 128d));
-        double pitchTravel = Math.Max(0, segmentBounds.Height - noteHeight);
-        foreach (TimelineSegmentPreviewNote note in preview.Notes)
+        if (preview.Notes.Count == 0
+            || visibleSegmentBounds.Width <= 0
+            || visibleSegmentBounds.Height <= 0
+            || fullSegmentBounds.Width <= 0
+            || fullSegmentBounds.Height <= 0)
         {
-            double left = Math.Round(segmentBounds.Left + note.NormalizedStart * segmentBounds.Width);
-            double right = Math.Round(segmentBounds.Left + note.NormalizedEnd * segmentBounds.Width);
-            double top = Math.Round(segmentBounds.Top + (127 - note.Pitch) / 127d * pitchTravel);
-            context.DrawRectangle(
-                noteBrush,
-                null,
-                new Rect(left, top, Math.Max(1, right - left), noteHeight));
+            return;
+        }
+        DpiScale dpi = VisualTreeHelper.GetDpi(this);
+        Color noteColor = GetSolidColor(noteBrush, Color.FromRgb(189, 199, 207));
+        TimelineRasterCacheKey key = new(
+            TimelineRasterLayer.ArrangementSegmentPreview,
+            $"segment-preview:{preview.SegmentId.Value}",
+            preview.ContentFingerprint,
+            0,
+            0,
+            preview.SegmentId.Value,
+            0,
+            ColorToArgb(noteColor),
+            0,
+            0,
+            checked((int)Math.Round(dpi.DpiScaleX * 1024, MidpointRounding.AwayFromZero)),
+            checked((int)Math.Round(dpi.DpiScaleY * 1024, MidpointRounding.AwayFromZero)));
+        if (TimelineRasterCache.Shared.TryGet(key, out BitmapSource? bitmap) && bitmap is not null)
+        {
+            context.PushClip(new RectangleGeometry(visibleSegmentBounds));
+            context.DrawImage(bitmap, fullSegmentBounds);
+            context.Pop();
+            return;
+        }
+        if (!_requestedRasterKeys.Add(key)) return;
+        bool accepted = TimelineRasterCache.Shared.Request(
+            key,
+            () => TimelineSegmentPreviewRasterizer.Rasterize(preview, noteColor),
+            Dispatcher,
+            () =>
+            {
+                _requestedRasterKeys.Remove(key);
+                if (Snapshot?.SegmentPreviews.TryGetValue(preview.SegmentId, out TimelineSegmentPreview? current) == true
+                    && current.ContentFingerprint == preview.ContentFingerprint)
+                {
+                    InvalidateVisual();
+                }
+            });
+        if (!accepted)
+        {
+            _requestedRasterKeys.Remove(key);
+        }
+    }
+
+    private void DrawVelocityTiles(
+        DrawingContext context,
+        TimelineViewport viewport,
+        Brush normalBrush,
+        Brush selectedBrush,
+        Brush borderBrush,
+        double laneHeaderWidth,
+        double rulerHeight)
+    {
+        if (Snapshot is not TimelineRenderSnapshot snapshot) return;
+        DpiScale dpi = VisualTreeHelper.GetDpi(this);
+        int horizontalLod = TimelineRasterLod.Quantize(viewport.PixelsPerTick * dpi.DpiScaleX);
+        double lodPixelsPerTick = TimelineRasterLod.GetScale(horizontalLod);
+        long firstTileX = Math.Max(0, FloorToLong(
+            viewport.StartTick * lodPixelsPerTick / TimelineVelocityTileRasterizer.TileSize));
+        long lastTileX = Math.Max(firstTileX, FloorToLong(
+            Math.Max(viewport.StartTick, viewport.EndTick - 1) * lodPixelsPerTick
+            / TimelineVelocityTileRasterizer.TileSize));
+        TimelineSelectionSnapshot? selection = SelectionSnapshot;
+        Color normalColor = GetSolidColor(normalBrush, Color.FromRgb(163, 178, 190));
+        Color selectedColor = GetSolidColor(selectedBrush, Color.FromRgb(229, 61, 68));
+        Color borderColor = GetSolidColor(borderBrush, Color.FromRgb(49, 58, 69));
+        int dpiX = checked((int)Math.Round(dpi.DpiScaleX * 1024, MidpointRounding.AwayFromZero));
+        int dpiY = checked((int)Math.Round(dpi.DpiScaleY * 1024, MidpointRounding.AwayFromZero));
+        double valueRange = Math.Max(1d / 256, _valueViewMaximum - _valueViewMinimum);
+        double contentHeight = Math.Max(1, ActualHeight - rulerHeight);
+        double valueTop = rulerHeight + (_valueViewMaximum - 1) / valueRange * contentHeight;
+        double valueBottom = rulerHeight + _valueViewMaximum / valueRange * contentHeight;
+        Rect contentBounds = new(
+            laneHeaderWidth,
+            rulerHeight,
+            Math.Max(0, ActualWidth - laneHeaderWidth),
+            Math.Max(0, ActualHeight - rulerHeight));
+        context.PushClip(new RectangleGeometry(contentBounds));
+        for (int ring = 0; ring <= 1; ring++)
+        {
+            long firstX = Math.Max(0, firstTileX - ring);
+            long lastX = Math.Max(firstX, lastTileX + ring);
+            for (long tileX = firstX; tileX <= lastX; tileX++)
+            {
+                bool visible = tileX >= firstTileX && tileX <= lastTileX;
+                if (ring == 1 && visible) continue;
+                ulong fingerprint = TimelineVelocityTileRasterizer.ComputeContentFingerprint(
+                    snapshot, selection, horizontalLod, tileX);
+                TimelineRasterCacheKey key = new(
+                    TimelineRasterLayer.VelocityBars,
+                    snapshot.ProjectionKey,
+                    fingerprint,
+                    horizontalLod,
+                    0,
+                    tileX,
+                    0,
+                    ColorToArgb(normalColor),
+                    ColorToArgb(selectedColor),
+                    ColorToArgb(borderColor),
+                    dpiX,
+                    dpiY);
+                if (TimelineRasterCache.Shared.TryGet(key, out BitmapSource? bitmap))
+                {
+                    if (visible && bitmap is not null)
+                    {
+                        Rect destination = TimelineRasterPlacement.GetVelocityTileDestination(
+                            viewport, horizontalLod, tileX, laneHeaderWidth, rulerHeight,
+                            valueTop, valueBottom);
+                        Rect coreDestination = TimelineRasterPlacement.GetVelocityTileCoreDestination(
+                            viewport, horizontalLod, tileX, laneHeaderWidth, rulerHeight,
+                            valueTop, valueBottom);
+                        context.PushClip(new RectangleGeometry(coreDestination));
+                        context.DrawImage(bitmap, destination);
+                        context.Pop();
+                    }
+                    continue;
+                }
+                long requestTileX = tileX;
+                RequestRaster(
+                    key,
+                    () => TimelineVelocityTileRasterizer.Rasterize(
+                        snapshot,
+                        selection,
+                        horizontalLod,
+                        requestTileX,
+                        normalColor,
+                        selectedColor,
+                        borderColor));
+            }
         }
         context.Pop();
-        context.Pop();
+    }
+
+    private void DrawVelocityEditOverlay(
+        DrawingContext context,
+        TimelineViewport viewport,
+        Brush normalBrush,
+        Brush selectedBrush,
+        double laneHeaderWidth,
+        double rulerHeight)
+    {
+        if (Snapshot is not TimelineRenderSnapshot snapshot || _velocityEdits.Count == 0) return;
+        foreach (MidoraId id in _velocityEdits.Keys)
+        {
+            if (snapshot.ItemsById.TryGetValue(id, out TimelineRenderItem item)
+                && item.EndTick > viewport.StartTick
+                && item.StartTick < viewport.EndTick)
+            {
+                DrawVelocityBar(
+                    context,
+                    viewport,
+                    item,
+                    normalBrush,
+                    selectedBrush,
+                    laneHeaderWidth,
+                    rulerHeight);
+            }
+        }
     }
 
     private void DrawVelocityBar(
@@ -1807,7 +2320,7 @@ public sealed class TimelineSurface : Control
         double top = Math.Clamp(Math.Min(valueY, zeroY), rulerHeight, ActualHeight);
         double bottom = Math.Clamp(Math.Max(valueY, zeroY), rulerHeight, ActualHeight);
         Rect bar = new(left, top, width, Math.Max(1, bottom - top));
-        bool selected = item.State.HasFlag(TimelineItemState.Selected);
+        bool selected = IsSelected(item);
         Brush barBrush = selected ? selectedBrush : normalBrush;
         context.PushOpacity(selected ? 0.4 : 0.2);
         context.DrawRectangle(barBrush, null, bar);
@@ -1886,10 +2399,16 @@ public sealed class TimelineSurface : Control
         long minimum = Math.Min(fromTick, toTick);
         long maximum = Math.Max(fromTick, toTick);
         double span = toTick - fromTick;
-        foreach (TimelineRenderItem item in Snapshot.Items)
+        Snapshot.Index.QueryInto(
+            minimum,
+            maximum == long.MaxValue ? long.MaxValue : Math.Max(minimum + 1, maximum + 1),
+            0,
+            1,
+            _visibleItems);
+        foreach (TimelineRenderItem item in _visibleItems)
         {
             if (item.Kind != TimelineItemKind.Velocity
-                || (_velocitySelectionRestricted && !item.State.HasFlag(TimelineItemState.Selected))
+                || (_velocitySelectionRestricted && !IsSelected(item))
                 || item.EndTick <= minimum
                 || item.StartTick > maximum)
             {
@@ -1926,11 +2445,14 @@ public sealed class TimelineSurface : Control
         if (Snapshot is null) return false;
         double header = GetLaneHeaderWidth();
         double ruler = GetRulerHeight();
-        for (int index = Snapshot.Items.Count - 1; index >= 0; index--)
+        long tick = viewport.XToTick(point.X - header);
+        long tolerance = Math.Max(1, (long)Math.Ceiling(4 / viewport.PixelsPerTick));
+        Snapshot.Index.HitTestInto(tick, tolerance, 0, _visibleItems);
+        for (int index = _visibleItems.Count - 1; index >= 0; index--)
         {
-            TimelineRenderItem candidate = Snapshot.Items[index];
+            TimelineRenderItem candidate = _visibleItems[index];
             if (candidate.Kind != TimelineItemKind.Velocity
-                || (_velocitySelectionRestricted && !candidate.State.HasFlag(TimelineItemState.Selected)))
+                || (_velocitySelectionRestricted && !IsSelected(candidate)))
             {
                 continue;
             }
@@ -1994,9 +2516,9 @@ public sealed class TimelineSurface : Control
             : rulerHeight + (item.Lane - viewport.FirstLane) * LaneHeight
               + 4 + (1 - Math.Clamp(item.Value, 0, 1)) * Math.Max(1, LaneHeight - 8);
         context.DrawEllipse(info, _borderPen, new Point(x, y), 4, 4);
-        if (item.State.HasFlag(TimelineItemState.Selected))
+        if (IsSelected(item))
         {
-            context.DrawEllipse(null, item.State.HasFlag(TimelineItemState.Primary) ? _textPen : _infoPen, new Point(x, y), 6, 6);
+            context.DrawEllipse(null, IsPrimary(item) ? _textPen : _infoPen, new Point(x, y), 6, 6);
         }
     }
 
@@ -2311,16 +2833,84 @@ public sealed class TimelineSurface : Control
         return false;
     }
 
-    private void DrawMarquee(DrawingContext context, Brush info)
+    private void DrawMarquee(
+        DrawingContext context,
+        TimelineViewport viewport,
+        Brush info)
     {
         if (_marqueeOrigin is not Point origin || _marqueeCurrent is not Point current)
         {
             return;
         }
+        if (!TryGetMarqueeBounds(
+                origin,
+                current,
+                viewport,
+                out Rect rectangle,
+                out _,
+                out _,
+                out _,
+                out _))
+        {
+            return;
+        }
         context.PushOpacity(0.22);
-        context.DrawRectangle(info, null, new Rect(origin, current));
+        context.DrawRectangle(info, null, rectangle);
         context.Pop();
-        context.DrawRectangle(null, _marqueePen, new Rect(origin, current));
+        context.DrawRectangle(null, _marqueePen, rectangle);
+    }
+
+    private bool TryGetMarqueeBounds(
+        Point origin,
+        Point current,
+        TimelineViewport viewport,
+        out Rect displayBounds,
+        out long startTick,
+        out long endTick,
+        out int firstLane,
+        out int lastLaneExclusive)
+    {
+        double laneHeaderWidth = GetLaneHeaderWidth();
+        double rulerHeight = GetRulerHeight();
+        Rect rawBounds = new(origin, current);
+        rawBounds.Intersect(new Rect(laneHeaderWidth, rulerHeight, viewport.Width, viewport.Height));
+        if (rawBounds.IsEmpty || (rawBounds.Width < 2 && rawBounds.Height < 2))
+        {
+            displayBounds = Rect.Empty;
+            startTick = endTick = 0;
+            firstLane = lastLaneExclusive = 0;
+            return false;
+        }
+
+        long rawStart = viewport.XToTick(rawBounds.Left - laneHeaderWidth);
+        long rawEnd = Math.Max(rawStart + 1, viewport.XToTick(rawBounds.Right - laneHeaderWidth));
+        TimelineGridQuantization.SnappedRange snapped = TimelineGridQuantization.SnapPositiveRange(
+            rawStart,
+            rawEnd,
+            Math.Max(1, OperationStepTicks),
+            OperationUsesBars,
+            TimeSignatureMap);
+        startTick = snapped.StartTick;
+        endTick = snapped.EndTick;
+        if (endTick <= startTick)
+        {
+            displayBounds = Rect.Empty;
+            firstLane = lastLaneExclusive = 0;
+            return false;
+        }
+
+        firstLane = viewport.YToLane(rawBounds.Top - rulerHeight);
+        double inclusiveBottom = Math.Max(rawBounds.Top, Math.BitDecrement(rawBounds.Bottom));
+        int lastLane = viewport.YToLane(inclusiveBottom - rulerHeight);
+        lastLaneExclusive = checked(lastLane + 1);
+        double left = laneHeaderWidth + viewport.TickToX(startTick);
+        double right = laneHeaderWidth + viewport.TickToX(endTick);
+        double top = rulerHeight + (firstLane - viewport.FirstLane) * LaneHeight;
+        double bottom = rulerHeight + (lastLaneExclusive - viewport.FirstLane) * LaneHeight;
+        displayBounds = new Rect(
+            new Point(left, top),
+            new Point(right, bottom));
+        return true;
     }
 
     private void DrawNotePlacementPreview(
@@ -2395,9 +2985,10 @@ public sealed class TimelineSurface : Control
     {
         if (SurfaceMode == TimelineSurfaceMode.Velocity)
         {
-            _velocitySelectionRestricted = Snapshot?.Items.Any(item =>
-                item.Kind == TimelineItemKind.Velocity
-                && item.State.HasFlag(TimelineItemState.Selected)) == true;
+            _velocitySelectionRestricted = SelectionSnapshot?.Count > 0
+                || Snapshot?.Items.Any(static item =>
+                    item.Kind == TimelineItemKind.Velocity
+                    && item.State.HasFlag(TimelineItemState.Selected)) == true;
             Cursor = TryHitVelocityTopEdge(point, viewport, out _)
                 ? Cursors.SizeNS
                 : Cursors.Arrow;

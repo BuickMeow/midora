@@ -19,6 +19,30 @@ public sealed record ProjectEditExecution(
     bool Changed,
     CanonicalCompiledResult CompilationResult);
 
+public sealed class ProjectContentChangedEventArgs : EventArgs
+{
+    public ProjectContentChangedEventArgs(ProjectChangeSet changes)
+    {
+        ArgumentNullException.ThrowIfNull(changes);
+        AffectsEverything = changes.AffectsEverything;
+        AffectsConductor = changes.AffectsConductor;
+        AffectsAudioPcmCacheGeneration = changes.AffectsAudioPcmCacheGeneration;
+        TrackIds = Array.AsReadOnly(changes.TrackIds.Order().ToArray());
+        EventInstrumentIds = Array.AsReadOnly(changes.EventInstrumentIds.Order().ToArray());
+    }
+
+    public bool AffectsEverything { get; }
+    public bool AffectsConductor { get; }
+    public bool AffectsAudioPcmCacheGeneration { get; }
+    public IReadOnlyList<MidoraId> TrackIds { get; }
+    public IReadOnlyList<MidoraId> EventInstrumentIds { get; }
+    public bool IsEmpty => !AffectsEverything
+        && !AffectsConductor
+        && !AffectsAudioPcmCacheGeneration
+        && TrackIds.Count == 0
+        && EventInstrumentIds.Count == 0;
+}
+
 public interface IProjectEditCommand
 {
     string Name { get; }
@@ -239,6 +263,7 @@ public sealed class ProjectDocumentSession
     }
 
     public event EventHandler? HistoryChanged;
+    public event EventHandler<ProjectContentChangedEventArgs>? ContentChanged;
 
     public ProjectEditExecution Execute(IProjectEditCommand command)
     {
@@ -283,7 +308,7 @@ public sealed class ProjectDocumentSession
                 prepared));
             _cursor++;
             _currentStateId = nextStateId;
-            NotifyEditChanged();
+            NotifyEditChanged(prepared.Changes);
             return new(true, result);
         }
     }
@@ -304,7 +329,7 @@ public sealed class ProjectDocumentSession
                 entry.Prepared.Changes);
             _cursor--;
             _currentStateId = entry.BeforeStateId;
-            NotifyEditChanged();
+            NotifyEditChanged(entry.Prepared.Changes);
             return result;
         }
     }
@@ -325,7 +350,7 @@ public sealed class ProjectDocumentSession
                 entry.Prepared.Changes);
             _cursor++;
             _currentStateId = entry.AfterStateId;
-            NotifyEditChanged();
+            NotifyEditChanged(entry.Prepared.Changes);
             return result;
         }
     }
@@ -368,12 +393,14 @@ public sealed class ProjectDocumentSession
         _externalDirtyReasons.Count != 0
         || _baselineStateId != _currentStateId;
 
-    private void NotifyEditChanged()
+    private void NotifyEditChanged(ProjectChangeSet changes)
     {
-        NotifyHistoryChanged(compilationChanged: true);
+        NotifyHistoryChanged(compilationChanged: true, changes);
     }
 
-    private void NotifyHistoryChanged(bool compilationChanged)
+    private void NotifyHistoryChanged(
+        bool compilationChanged,
+        ProjectChangeSet? changes = null)
     {
         _notifying = true;
         try
@@ -381,6 +408,8 @@ public sealed class ProjectDocumentSession
             if (compilationChanged)
             {
                 _compilation.NotifyCompilationChanged();
+                ContentChanged?.Invoke(this, new ProjectContentChangedEventArgs(
+                    changes ?? ProjectChangeSet.Everything));
             }
             HistoryChanged?.Invoke(this, EventArgs.Empty);
         }

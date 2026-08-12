@@ -5,6 +5,7 @@ using Midora.Application;
 using Midora.Audio;
 using Midora.Compiler;
 using Midora.Desktop.Presentation.Interaction;
+using Midora.Desktop.Presentation.Rendering;
 using Midora.Domain;
 using Midora.Persistence;
 using Midora.Playback;
@@ -1090,10 +1091,29 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
         PrepareWorkspaceRuntimeState(workspace);
         workspace.Rebuild(Project, _revision);
+        workspace.RefreshSelectionPresentation();
         if (workspace is TimelineWorkspaceViewModel timeline)
         {
             timeline.UpdatePlaybackCursor(Project, CurrentTick);
         }
+        if (workspace is not DiagnosticsWorkspaceViewModel)
+        {
+            if (ReferenceEquals(workspace, ActiveWorkspace)) _diagnosticScopeWorkspace = workspace;
+            Workspaces.OfType<DiagnosticsWorkspaceViewModel>()
+                .FirstOrDefault()?.SetScope(_diagnosticScopeWorkspace);
+            BottomDiagnosticsViewModel.SetScope(_diagnosticScopeWorkspace);
+        }
+        if (ReferenceEquals(workspace, ActiveWorkspace)) RefreshInspector();
+    }
+
+    public void RefreshWorkspaceSelection(WorkspaceViewModel workspace)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (Project is null || !Workspaces.Contains(workspace))
+        {
+            return;
+        }
+        workspace.RefreshSelectionPresentation();
         if (workspace is not DiagnosticsWorkspaceViewModel)
         {
             if (ReferenceEquals(workspace, ActiveWorkspace)) _diagnosticScopeWorkspace = workspace;
@@ -1109,6 +1129,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ArgumentNullException.ThrowIfNull(workspace);
         if (!Workspaces.Contains(workspace)) return;
         workspace.Selection.Replace(id);
+        workspace.RefreshSelectionPresentation();
         if (ReferenceEquals(workspace, _diagnosticScopeWorkspace))
         {
             Workspaces.OfType<DiagnosticsWorkspaceViewModel>()
@@ -1124,6 +1145,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         if (previous is null) return;
         Unsubscribe(previous);
         _context = null;
+        TimelineRasterCacheSession.Clear();
         Workspaces.Clear();
         _backNavigation.Clear();
         _forwardNavigation.Clear();
@@ -1165,6 +1187,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
         _context = next;
         Subscribe(next);
+        TimelineRasterCacheSession.Clear();
         Workspaces.Clear();
         _backNavigation.Clear();
         _forwardNavigation.Clear();
@@ -1250,6 +1273,77 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
         RefreshProperties();
         RefreshInspector();
+    }
+
+    private void RefreshChanged(ProjectContentChangedEventArgs changes)
+    {
+        if (Project is null) return;
+        if (changes.IsEmpty)
+        {
+            RefreshAll();
+            return;
+        }
+        if (changes.AffectsEverything || changes.AffectsConductor)
+        {
+            _timeSignatureMap = new ProjectTimeSignatureMap(Project);
+        }
+        ArrangementEditorSettings.ConfigureProject(Project, CurrentTick);
+        PianoRollEditorSettings.ConfigureProject(Project, CurrentTick);
+        RefreshDiagnostics();
+        RefreshProjectTree();
+        foreach (WorkspaceViewModel workspace in Workspaces.ToArray())
+        {
+            if (!ObjectStillExists(workspace))
+            {
+                CloseWorkspace(workspace);
+                continue;
+            }
+            if (workspace is DiagnosticsWorkspaceViewModel diagnostics)
+            {
+                diagnostics.Replace(CompilerDiagnostics);
+                continue;
+            }
+            if (!WorkspaceAffected(workspace, changes)) continue;
+            PrepareWorkspaceRuntimeState(workspace);
+            workspace.Rebuild(Project, _revision);
+            if (workspace is TimelineWorkspaceViewModel timeline)
+            {
+                timeline.UpdatePlaybackCursor(Project, CurrentTick);
+            }
+        }
+        RefreshProperties();
+        RefreshInspector();
+    }
+
+    private bool WorkspaceAffected(
+        WorkspaceViewModel workspace,
+        ProjectContentChangedEventArgs changes)
+    {
+        if (changes.AffectsEverything) return true;
+        HashSet<MidoraId> trackIds = changes.TrackIds.ToHashSet();
+        HashSet<MidoraId> instrumentIds = changes.EventInstrumentIds.ToHashSet();
+        return workspace.Kind switch
+        {
+            WorkspaceKind.Arrangement => changes.AffectsConductor
+                || trackIds.Count != 0
+                || instrumentIds.Count != 0,
+            WorkspaceKind.ConductorTrack => changes.AffectsConductor,
+            WorkspaceKind.SegmentEditor => workspace.ObjectId is MidoraId segmentId
+                && TimelineWorkspaceViewModel.FindSegment(Project!, segmentId) is { } located
+                && (trackIds.Contains(located.Track.Id)
+                    || located.Track.EventInstrumentId is MidoraId instrumentId
+                       && instrumentIds.Contains(instrumentId)),
+            WorkspaceKind.EventInstrumentLibrary => instrumentIds.Count != 0,
+            WorkspaceKind.EventInstrumentEditor => workspace.ObjectId is MidoraId eventInstrumentId
+                && instrumentIds.Contains(eventInstrumentId),
+            WorkspaceKind.MappingFunctionEditor => workspace.ObjectId is MidoraId mappingId
+                && Project!.EventInstruments.Any(instrument =>
+                    instrumentIds.Contains(instrument.Id)
+                    && instrument.MappingFunctions.Any(mapping => mapping.Id == mappingId)),
+            WorkspaceKind.ProjectSettings => true,
+            WorkspaceKind.Diagnostics => false,
+            _ => false
+        };
     }
 
     private void RefreshInspector() => InspectorProjection.Rebuild(Inspector, Project, ActiveWorkspace);
@@ -1433,7 +1527,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     private void Subscribe(ProjectContext context)
     {
-        context.Document.HistoryChanged += OnDocumentChanged;
+        context.Document.HistoryChanged += OnDocumentHistoryChanged;
+        context.Document.ContentChanged += OnDocumentContentChanged;
         context.Compilation.CompilationChanged += OnCompilationChanged;
         if (context.Playback is not null)
         {
@@ -1443,7 +1538,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     private void Unsubscribe(ProjectContext context)
     {
-        context.Document.HistoryChanged -= OnDocumentChanged;
+        context.Document.HistoryChanged -= OnDocumentHistoryChanged;
+        context.Document.ContentChanged -= OnDocumentContentChanged;
         context.Compilation.CompilationChanged -= OnCompilationChanged;
         if (context.Playback is not null)
         {
@@ -1451,10 +1547,17 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
     }
 
-    private void OnDocumentChanged(object? sender, EventArgs e) => DispatchModelRefresh(() =>
+    private void OnDocumentHistoryChanged(object? sender, EventArgs e) => DispatchModelRefresh(() =>
+    {
+        RefreshProperties();
+    });
+
+    private void OnDocumentContentChanged(
+        object? sender,
+        ProjectContentChangedEventArgs e) => DispatchModelRefresh(() =>
     {
         _revision++;
-        RefreshAll();
+        RefreshChanged(e);
     });
 
     private void OnCompilationChanged(object? sender, EventArgs e) => DispatchModelRefresh(() =>

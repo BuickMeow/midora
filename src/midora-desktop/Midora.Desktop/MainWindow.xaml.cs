@@ -15,6 +15,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using Midora.Application;
 using Midora.Desktop.Presentation.Controls;
+using Midora.Desktop.Presentation.Interaction;
 using Midora.Desktop.Presentation.Rendering;
 using Midora.Domain;
 using Midora.MidiExport;
@@ -695,7 +696,7 @@ public partial class MainWindow : Window
         if (created.Length == 0) return;
         workspace.Selection.Clear();
         foreach (MidoraId id in created) workspace.Selection.Add(id, makePrimary: false);
-        _session.RefreshWorkspace(workspace);
+        _session.RefreshWorkspaceSelection(workspace);
         return;
 
         MidoraId[] SegmentSelection(MidoraId segmentId)
@@ -1855,7 +1856,7 @@ public partial class MainWindow : Window
         else if ((e.Modifiers & ModifierKeys.Shift) != 0) workspace.Selection.Add(e.Item.Id);
         else if (workspace.Selection.Ids.Contains(e.Item.Id)) workspace.Selection.Add(e.Item.Id);
         else workspace.Selection.Replace(e.Item.Id);
-        _session.RefreshWorkspace(workspace);
+        _session.RefreshWorkspaceSelection(workspace);
         if (sender is TimelineSurface { ToolMode: TimelineToolMode.Draw }
             && e.Item.Kind is TimelineItemKind.LogicalNote or TimelineItemKind.TemplateNote)
         {
@@ -2283,7 +2284,7 @@ public partial class MainWindow : Window
         {
             workspace.StartTick = Math.Max(0, row.Tick - workspace.TickSpan / 4);
         }
-        _session.RefreshWorkspace(workspace);
+        _session.RefreshWorkspaceSelection(workspace);
     }
 
     private void OnInspectorFieldLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -2479,14 +2480,16 @@ public partial class MainWindow : Window
         bool remove = (e.Modifiers & ModifierKeys.Alt) != 0;
         bool toggle = !remove && (e.Modifiers & ModifierKeys.Control) != 0;
         bool add = !remove && !toggle && (e.Modifiers & ModifierKeys.Shift) != 0;
-        if (!remove && !toggle && !add) workspace.Selection.Clear();
-        foreach (MidoraId id in e.ItemIds)
-        {
-            if (remove) workspace.Selection.Remove(id);
-            else if (toggle) workspace.Selection.Toggle(id);
-            else workspace.Selection.Add(id, makePrimary: false);
-        }
-        _session.RefreshWorkspace(workspace);
+        workspace.Selection.ApplyRange(
+            e.ItemIds,
+            remove
+                ? WorkspaceSelectionRangeMode.Remove
+                : toggle
+                    ? WorkspaceSelectionRangeMode.Toggle
+                    : add
+                        ? WorkspaceSelectionRangeMode.Add
+                        : WorkspaceSelectionRangeMode.Replace);
+        _session.RefreshWorkspaceSelection(workspace);
     }
 
     private void OnTimelineRulerClicked(object? sender, TimelineRulerEventArgs e)
@@ -2544,7 +2547,7 @@ public partial class MainWindow : Window
             ShowUnavailable("Select Objects in Time Range", "Create a non-empty Time Range that intersects timeline objects first.");
             return;
         }
-        _session.RefreshWorkspace(workspace);
+        _session.RefreshWorkspaceSelection(workspace);
     }
 
     private void OnClearTimeRangeClick(object sender, RoutedEventArgs e)
@@ -4538,7 +4541,7 @@ public partial class MainWindow : Window
         MidoraId[] ids = candidates.Select(item => item.Id).Distinct().ToArray();
         workspace.Selection.Clear();
         foreach (MidoraId id in ids) workspace.Selection.Add(id, makePrimary: false);
-        _session.RefreshWorkspace(workspace);
+        _session.RefreshWorkspaceSelection(workspace);
     }
 
     private void DuplicateFocusedSelection()

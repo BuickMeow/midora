@@ -36,8 +36,10 @@ public sealed class ProjectDocumentSessionTests
         CanonicalCompiledResult original = compilation.LastAttempt;
         int compilationEvents = 0;
         int historyEvents = 0;
+        List<ProjectContentChangedEventArgs> contentEvents = [];
         compilation.CompilationChanged += (_, _) => compilationEvents++;
         document.HistoryChanged += (_, _) => historyEvents++;
+        document.ContentChanged += (_, args) => contentEvents.Add(args);
 
         ProjectEditExecution edit = document.Execute(SetPitch(track.Id, note.Id, 72));
 
@@ -67,6 +69,8 @@ public sealed class ProjectDocumentSessionTests
         Assert.Equal(edit.CompilationResult.Fingerprint, redone.Fingerprint);
         Assert.Equal(3, compilationEvents);
         Assert.Equal(3, historyEvents);
+        Assert.Equal(3, contentEvents.Count);
+        Assert.All(contentEvents, change => Assert.Contains(track.Id, change.TrackIds));
     }
 
     [Fact]

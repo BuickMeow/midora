@@ -16,6 +16,67 @@ namespace Midora.Desktop.Tests;
 public sealed class DesktopSessionControllerTests
 {
     [Fact]
+    public async Task ProvidedProjectTimelineEditPerformanceProbe()
+    {
+        string? path = Environment.GetEnvironmentVariable("MIDORA_TEST_UI_PERF_PROJECT");
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            return;
+        }
+
+        await using DesktopSessionController session = new();
+        await session.OpenProjectAsync(Path.GetFullPath(path));
+        _ = session.OpenArrangement();
+        Segment[] segments = session.Project!.Tracks.SelectMany(track => track.Segments).ToArray();
+        Segment ordinary = segments.OrderBy(segment => segment.Notes.Count).First(segment => segment.Notes.Count > 0);
+        Segment extreme = segments.OrderByDescending(segment => segment.Notes.Count).First();
+        LogicalNote note = ordinary.Notes[0];
+        System.Diagnostics.Stopwatch? activeProbe = null;
+        double contentRefreshReachedMs = 0;
+        session.Document!.ContentChanged += (_, _) =>
+        {
+            if (activeProbe is not null) contentRefreshReachedMs = activeProbe.Elapsed.TotalMilliseconds;
+        };
+        var baseEdit = System.Diagnostics.Stopwatch.StartNew();
+        activeProbe = baseEdit;
+        ProjectEditExecution baseExecution = session.Execute(ProjectDomainEditCommands.MoveLogicalNotes(
+            ordinary.Id,
+            [note.Id],
+            tickDelta: 1,
+            pitchDelta: 0));
+        baseEdit.Stop();
+        activeProbe = null;
+        double baseContentRefreshReachedMs = contentRefreshReachedMs;
+        session.Undo();
+        TimelineWorkspaceViewModel extremeWorkspace = session.OpenSegment(extreme.Id);
+        TimelineWorkspaceViewModel ordinaryWorkspace = session.OpenSegment(ordinary.Id);
+
+        var refresh = System.Diagnostics.Stopwatch.StartNew();
+        session.RefreshWorkspace(extremeWorkspace);
+        refresh.Stop();
+        var edit = System.Diagnostics.Stopwatch.StartNew();
+        activeProbe = edit;
+        ProjectEditExecution execution = session.Execute(ProjectDomainEditCommands.MoveLogicalNotes(
+            ordinary.Id,
+            [note.Id],
+            tickDelta: 1,
+            pitchDelta: 0));
+        edit.Stop();
+        activeProbe = null;
+        Console.WriteLine(
+            $"[ui-perf] segments={segments.Length}; ordinaryNotes={ordinary.Notes.Count}; "
+            + $"extremeNotes={extreme.Notes.Count}; extremeRefreshMs={refresh.Elapsed.TotalMilliseconds:F1}; "
+            + $"ordinaryEditArrangementOnlyMs={baseEdit.Elapsed.TotalMilliseconds:F1}; "
+            + $"baseContentRefreshReachedMs={baseContentRefreshReachedMs:F1}; "
+            + $"ordinaryEditWithAllWorkspaceRefreshMs={edit.Elapsed.TotalMilliseconds:F1}; "
+            + $"allContentRefreshReachedMs={contentRefreshReachedMs:F1}");
+
+        Assert.True(baseExecution.Changed);
+        Assert.True(execution.Changed);
+        Assert.Same(ordinaryWorkspace, session.ActiveWorkspace);
+    }
+
+    [Fact]
     public async Task EmbeddedSoundFontBackendFailureDoesNotBlockProjectOpen()
     {
         string directory = Path.Combine(
@@ -498,6 +559,64 @@ public sealed class DesktopSessionControllerTests
         Assert.NotSame(first, changed);
         Assert.Equal(0.05, changed.Notes[0].NormalizedStart, precision: 10);
         Assert.Equal(61, changed.Notes[0].Pitch);
+    }
+
+    [Fact]
+    public async Task SelectionOnlyRefreshDoesNotRebuildTimelineSnapshotOrIntervalIndex()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Selection overlay",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        LogicalTrack track = Assert.Single(session.Project!.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
+        Segment segment = Assert.Single(track.Segments);
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+        TimelineRenderSnapshot snapshot = arrangement.Snapshot!;
+        TimelineIntervalIndex index = snapshot.Index;
+
+        arrangement.Selection.Replace(segment.Id);
+        session.RefreshWorkspaceSelection(arrangement);
+
+        Assert.Same(snapshot, arrangement.Snapshot);
+        Assert.Same(index, arrangement.Snapshot!.Index);
+        Assert.True(arrangement.SelectionSnapshot.Contains(segment.Id));
+        Assert.Equal(segment.Id, arrangement.SelectionSnapshot.Primary);
+    }
+
+    [Fact]
+    public async Task TrackEditDoesNotRebuildUnrelatedOpenSegmentWorkspace()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Targeted workspace refresh",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Edited"));
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Unrelated"));
+        LogicalTrack editedTrack = session.Project!.Tracks[0];
+        LogicalTrack unrelatedTrack = session.Project.Tracks[1];
+        session.Execute(ProjectDomainEditCommands.CreateSegment(editedTrack.Id, 0, 480));
+        session.Execute(ProjectDomainEditCommands.CreateSegment(unrelatedTrack.Id, 0, 480));
+        Segment editedSegment = editedTrack.Segments[0];
+        Segment unrelatedSegment = unrelatedTrack.Segments[0];
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(editedSegment.Id, 0, 120, 60, 100));
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(unrelatedSegment.Id, 0, 120, 64, 100));
+        TimelineWorkspaceViewModel unrelatedWorkspace = session.OpenSegment(unrelatedSegment.Id);
+        TimelineRenderSnapshot before = unrelatedWorkspace.Snapshot!;
+        LogicalNote editedNote = editedSegment.Notes[0];
+
+        session.Execute(ProjectDomainEditCommands.MoveLogicalNotes(
+            editedSegment.Id,
+            [editedNote.Id],
+            24,
+            0));
+
+        Assert.Same(before, unrelatedWorkspace.Snapshot);
     }
 
     [Fact]

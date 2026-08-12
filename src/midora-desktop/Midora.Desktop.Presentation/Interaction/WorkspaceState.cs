@@ -43,6 +43,14 @@ public readonly record struct WorkspaceKey(WorkspaceKind Kind, MidoraId? ObjectI
     }
 }
 
+public enum WorkspaceSelectionRangeMode
+{
+    Replace,
+    Add,
+    Toggle,
+    Remove
+}
+
 public sealed class WorkspaceSelection
 {
     private readonly HashSet<MidoraId> _ids = [];
@@ -50,25 +58,37 @@ public sealed class WorkspaceSelection
     public IReadOnlyCollection<MidoraId> Ids => _ids;
     public MidoraId? Primary { get; private set; }
     public MidoraId? Anchor { get; private set; }
+    public long Revision { get; private set; }
 
     public void Replace(MidoraId id)
     {
         Validate(id);
+        if (_ids.Count == 1 && _ids.Contains(id) && Primary == id && Anchor == id)
+        {
+            return;
+        }
         _ids.Clear();
         _ids.Add(id);
         Primary = id;
         Anchor = id;
+        Revision = checked(Revision + 1);
     }
 
     public void Add(MidoraId id, bool makePrimary = true)
     {
         Validate(id);
-        _ids.Add(id);
+        bool changed = _ids.Add(id);
         if (makePrimary || Primary is null)
         {
+            changed |= Primary != id;
             Primary = id;
         }
-        Anchor ??= id;
+        if (Anchor is null)
+        {
+            Anchor = id;
+            changed = true;
+        }
+        if (changed) Revision = checked(Revision + 1);
     }
 
     public void Toggle(MidoraId id)
@@ -87,6 +107,7 @@ public sealed class WorkspaceSelection
         {
             Anchor = Primary;
         }
+        Revision = checked(Revision + 1);
     }
 
     public void Remove(MidoraId id)
@@ -103,13 +124,82 @@ public sealed class WorkspaceSelection
         {
             Anchor = Primary;
         }
+        Revision = checked(Revision + 1);
     }
 
     public void Clear()
     {
+        if (_ids.Count == 0 && Primary is null && Anchor is null)
+        {
+            return;
+        }
         _ids.Clear();
         Primary = null;
         Anchor = null;
+        Revision = checked(Revision + 1);
+    }
+
+    public void ApplyRange(
+        IEnumerable<MidoraId> ids,
+        WorkspaceSelectionRangeMode mode)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        MidoraId[] materialized = ids.Distinct().ToArray();
+        foreach (MidoraId id in materialized) Validate(id);
+        HashSet<MidoraId> before = new(_ids);
+        MidoraId? beforePrimary = Primary;
+        MidoraId? beforeAnchor = Anchor;
+        switch (mode)
+        {
+            case WorkspaceSelectionRangeMode.Replace:
+                _ids.Clear();
+                _ids.UnionWith(materialized);
+                Primary = materialized.Length == 0 ? null : materialized[0];
+                Anchor = Primary;
+                break;
+            case WorkspaceSelectionRangeMode.Add:
+                _ids.UnionWith(materialized);
+                if (Primary is null && materialized.Length != 0)
+                {
+                    Primary = materialized[0];
+                    Anchor ??= Primary;
+                }
+                break;
+            case WorkspaceSelectionRangeMode.Toggle:
+                foreach (MidoraId id in materialized)
+                {
+                    if (!_ids.Remove(id)) _ids.Add(id);
+                }
+                NormalizeEndpoints();
+                break;
+            case WorkspaceSelectionRangeMode.Remove:
+                _ids.ExceptWith(materialized);
+                NormalizeEndpoints();
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mode));
+        }
+        if (!before.SetEquals(_ids) || beforePrimary != Primary || beforeAnchor != Anchor)
+        {
+            Revision = checked(Revision + 1);
+        }
+
+        void NormalizeEndpoints()
+        {
+            if (Primary is MidoraId primary && !_ids.Contains(primary))
+            {
+                Primary = _ids.Count == 0 ? null : _ids.Min();
+            }
+            if (Anchor is MidoraId anchor && !_ids.Contains(anchor))
+            {
+                Anchor = Primary;
+            }
+            if (_ids.Count == 0)
+            {
+                Primary = null;
+                Anchor = null;
+            }
+        }
     }
 
     private static void Validate(MidoraId id)
@@ -148,6 +238,8 @@ public static class TimelineSnap
 
 public static class TimelineGridQuantization
 {
+    public readonly record struct SnappedRange(long StartTick, long EndTick);
+
     public static long SnapAbsolute(
         long tick,
         long fixedStepTicks,
@@ -236,5 +328,45 @@ public static class TimelineGridQuantization
         }
 
         return checked(tick + Math.Max(1, fixedStepTicks));
+    }
+
+    public static SnappedRange SnapPositiveRange(
+        long rawStartTick,
+        long rawEndTick,
+        long fixedStepTicks,
+        bool useBars,
+        ProjectTimeSignatureMap? timeSignatureMap)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(rawStartTick);
+        if (rawEndTick <= rawStartTick)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rawEndTick));
+        }
+        long start = SnapAbsolute(
+            rawStartTick,
+            fixedStepTicks,
+            useBars,
+            timeSignatureMap,
+            0);
+        long length = SnapDelta(
+            checked(rawEndTick - rawStartTick),
+            rawEndTick,
+            fixedStepTicks,
+            useBars,
+            timeSignatureMap);
+        if (length <= 0)
+        {
+            if (useBars && timeSignatureMap is not null)
+            {
+                ProjectBarInfo bar = timeSignatureMap.GetBarContaining(start);
+                length = Math.Max(1, checked(bar.EndTick - bar.StartTick));
+            }
+            else
+            {
+                length = Math.Max(1, fixedStepTicks);
+            }
+        }
+        long end = start > long.MaxValue - length ? long.MaxValue : start + length;
+        return new(start, end);
     }
 }

@@ -105,7 +105,7 @@ Time Range Selection
 Project End Marker 后区域弱化，但仍显示并允许编辑。End Marker 不是右编辑边界。
 无显式 End Marker 时可显示 Natural End 参考，但它不是 Project 对象。
 
-Arrangement Toolbar 必须分别提供可见分割线粒度、操作粒度与 Snap 开关，以及默认 Segment 创建长度（tick，输入即生效）；新建 Project / 重置编辑器时默认可见分割线粒度为 `Bar`、默认操作粒度为 `1/8`、Snap 开启、默认 Segment 创建长度为 `1 × TPQ`。Arrangement 的可见分割线粒度为 `Bar` 时，小节边界使用实线，每个分母拍的内部边界使用低强调虚线；拍线必须读取完整 Project Time Signature Map，因此 `3/4` 每小节显示 2 条四分音符间隔虚线，`6/8` 每小节显示 5 条八分音符间隔虚线，拍号变化 tick 立即作为新的实线小节边界。该拍内虚线增强不应用到 Segment 或 SubVoice 钢琴卷帘。Draw 模式下，鼠标所在 Track 必须显示按当前操作粒度定位、按默认长度计算的虚线创建预览。空白处按下左键后进入 Segment 放置手势：未越过拖动阈值时按默认长度创建；向右拖动时按当前操作粒度实时调整结束 tick，松开后一次性提交。若请求长度超出当前可用间隙，创建命令静默缩短为从目标 tick 起可容纳的最大正长度；预览显示实际将提交的长度。不存在正长度空隙时预览为错误色并拒绝创建。该规则只适用于新建 Segment；已有 Segment 的移动和 Resize 仍不得因重叠而被静默缩短。
+Arrangement Toolbar 必须分别提供可见分割线粒度、操作粒度与 Snap 开关，以及默认 Segment 创建长度（tick，输入即生效）；新建 Project / 重置编辑器时默认可见分割线粒度为 `Bar`、默认操作粒度为 `1/8`、Snap 开启、默认 Segment 创建长度为 `1 × TPQ`。Arrangement 的可见分割线粒度为 `Bar` 时，小节边界使用主实线，每个分母拍的内部边界使用颜色更浅的低强调实线；拍线必须读取完整 Project Time Signature Map，因此 `3/4` 每小节显示 2 条四分音符间隔实线，`6/8` 每小节显示 5 条八分音符间隔实线，拍号变化 tick 立即作为新的主实线小节边界。该拍内辅助线增强不应用到 Segment 或 SubVoice 钢琴卷帘。Draw 模式下，鼠标所在 Track 必须显示按当前操作粒度定位、按默认长度计算的虚线创建预览。空白处按下左键后进入 Segment 放置手势：未越过拖动阈值时按默认长度创建；向右拖动时按当前操作粒度实时调整结束 tick，松开后一次性提交。若请求长度超出当前可用间隙，创建命令静默缩短为从目标 tick 起可容纳的最大正长度；预览显示实际将提交的长度。不存在正长度空隙时预览为错误色并拒绝创建。该规则只适用于新建 Segment；已有 Segment 的移动和 Resize 仍不得因重叠而被静默缩短。
 
 Arrangement 中只有 Draw 模式允许拖动 Segment 主体或调整边缘；Select 模式的单次左键按下始终发起框选，即使起点位于 Segment 上也不得先命中或单独选择该 Segment，并且不得直接移动、Resize 或双击创建 Segment。既有双击导航不受该单击规则影响。拖动和 Resize 期间必须显示位置与长度预览，并隐藏同位置的创建预览。工具互斥、指针和快捷键规则见第 20.1.6、20.12 节。
 

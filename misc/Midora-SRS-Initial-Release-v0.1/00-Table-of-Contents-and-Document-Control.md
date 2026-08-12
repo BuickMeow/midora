@@ -50,7 +50,7 @@
 
 ## 2026-08-12 修订摘要
 
-- Arrangement 新建 Project / 重置编辑器的默认可见 Grid 改为 `Bar`、Snap 操作粒度改为 `1/8`；Bar Grid 按完整 Time Signature Map 以实线绘制小节边界、以低强调虚线绘制分母拍内部边界。Segment/SubVoice 钢琴卷帘不采用该拍内虚线增强。
+- Arrangement 新建 Project / 重置编辑器的默认可见 Grid 改为 `Bar`、Snap 操作粒度改为 `1/8`；Bar Grid 按完整 Time Signature Map 以主实线绘制小节边界、以更浅的低强调实线绘制分母拍内部边界。Segment/SubVoice 钢琴卷帘不采用该拍内辅助线增强。
 - Arrangement Draw 空白放置改为按下并向右拖动确定 Segment 长度，单击使用默认长度；Arrangement 默认 Segment 长度固定为 `1 × TPQ`，相邻 Segment 仍按可用间隙缩短或拒绝。
 - Arrangement Track Header 增加独立 hover / pressed、拖动重排、Rename / Bind / Unbind / Delete / Move Up / Down 菜单、绑定乐器次级标签，以及从 Event Instrument Library 拖放绑定；已有不同绑定必须确认 rebind。
 - 普通 Logical / Template Note 多选移动使用共同 pitch delta，并删除结果 pitch 越出 `0..127` 的个别 Note；移动与删除属于一个 Undo。Note `Ctrl+Drag` 复制仍使用整组共同 clamp，不生成部分副本。

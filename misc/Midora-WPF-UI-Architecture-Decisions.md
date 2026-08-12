@@ -195,9 +195,10 @@
 
 ## ADR-UI-028：Arrangement Bar Grid 的分母拍辅助线
 
-- 决定：Arrangement 在可见 Grid 选择 `Bar` 时继续以实线绘制 Project Time Signature Map 的自然小节边界，并在每个小节内按当前拍号的 `TicksPerBeat` 绘制低强调虚线。拍号变化 tick 无论是否截断前一自然小节，都作为新小节的实线起点；旧小节只绘制变化点之前实际存在的拍边界。
-- 决定：新建 Project 或重置编辑器时，Arrangement 默认 `Grid = Bar`、`Snap = 1/8` 且 Snap 开启。共享的 Piano Roll 设置继续保持既有默认值，Segment/SubVoice Piano Roll、Velocity 和 Event Lane 不增加 Bar 模式拍内虚线。
+- 决定：Arrangement 在可见 Grid 选择 `Bar` 时继续以主实线绘制 Project Time Signature Map 的自然小节边界，并在每个小节内按当前拍号的 `TicksPerBeat` 绘制颜色更浅的低强调实线。拍号变化 tick 无论是否截断前一自然小节，都作为新小节的主实线起点；旧小节只绘制变化点之前实际存在的拍边界。
+- 决定：新建 Project 或重置编辑器时，Arrangement 默认 `Grid = Bar`、`Snap = 1/8` 且 Snap 开启。共享的 Piano Roll 设置继续保持既有默认值，Segment/SubVoice Piano Roll、Velocity 和 Event Lane 不增加 Bar 模式拍内辅助线。
 - 原因：只显示小节边界时，Arrangement 在 Bar Grid 下缺少拍级定位参照；直接复用正式 `ProjectTimeSignatureMap` 可正确覆盖 `3/4`、`6/8` 与变拍，而不在 UI 建立第二套时间语义。
+- 原因：WPF 的虚线会把每条纵向辅助线进一步细分为大量 dash，平移和缩放重绘时开销明显高于实线；使用低不透明度实线保持层级区分，并减少网格绘制成本。
 - 边界：辅助线只是当前 viewport 的 transient 绘制，不进入 Project、Undo/Redo、`.midora`、编译或输出。初版仍不实现 additive meter、复合拍重音分组或钢琴卷帘同类增强。
 
 ## 小决定审计

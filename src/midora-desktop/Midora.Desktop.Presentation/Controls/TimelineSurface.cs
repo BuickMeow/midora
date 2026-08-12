@@ -4029,9 +4029,9 @@ public sealed class TimelineSurface : Control
         _selectionPen = FrozenPen(selection, 2);
         _segmentSelectionPen = FrozenPen(segmentSelection, 2);
         Brush beatGrid = border.Clone();
-        beatGrid.Opacity = 0.55;
+        beatGrid.Opacity = 0.32;
         beatGrid.Freeze();
-        _beatGridPen = FrozenPen(beatGrid, 1, DashStyles.Dash);
+        _beatGridPen = FrozenPen(beatGrid, 1);
         _editCursorPen = FrozenPen(info, 1, DashStyles.Dash);
         _marqueePen = FrozenPen(info, 1, DashStyles.Dash);
     }

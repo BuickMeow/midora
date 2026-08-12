@@ -51,7 +51,7 @@ Display Grid 只控制分割线。Snap 应用 Operation Subdivision；Snap Disab
 
 有效操作步长用于 Marquee 与 Time Range 的开始和长度、Edit Cursor 与 Playback Cursor 定位、Segment / Note 放置位置、Segment / Note Resize 的 delta（而不是最终总长度），以及 Segment / Note Move 的共享 delta（而不是最终绝对位置）。
 
-`Alt` 在 Timeline 对象拖动中临时绕过 Snap，此时有效操作步长为 1 tick。
+Segment、Logical Note 与 Template Note 的 `Alt + Left Drag` 是强制 Move 手势，仍使用当前有效操作步长。需要逐 tick 编辑时关闭 Snap；Alt 不再临时绕过 Snap。
 ### 20.1.5 Zoom 与 Pan
 ```text
 Ctrl + Mouse Wheel  -> horizontal zoom around pointer time
@@ -81,7 +81,7 @@ Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的工具按钮必须�
 - `Split`：只在支持的对象上执行分割；
 - `Erase`：删除命中的可删除对象。
 
-`Draw` 在空白处使用默认指针，在可直接编辑对象的主体和边缘分别使用移动与水平 Resize 指针；`Select` 使用十字指针，但命中对象时不改变为移动或 Resize 指针；`Split` 命中 Segment 时始终使用文本选择形 I-beam 指针。`Draw` 命中已有对象或执行移动/Resize 时隐藏创建预览；移动/Resize 的 transient 预览必须显示提交后的位置与长度。
+`Draw` 在空白处使用默认指针，在可直接编辑对象的主体和边缘分别使用移动与水平 Resize 指针；`Select` 使用十字指针，但命中对象时不改变为移动或 Resize 指针；`Split` 命中 Segment 时始终使用文本选择形 I-beam 指针。`Draw` 悬停在可直接编辑的 Segment、Logical Note 或 Template Note 上时，始终绘制低强调 transient 外轮廓，不要求按住 Alt；该轮廓不得重建或失效基础 raster tile。`Draw` 命中已有对象或执行移动/Resize 时隐藏创建预览；移动/Resize 的 transient 预览必须显示提交后的位置与长度。
 ### 20.1.7 Drag Preview
 拖动必须显示：
 ```text
@@ -334,9 +334,9 @@ View-only Drag
 ```text
 Drag      -> Move
 Ctrl+Drag -> Copy only when target explicitly supports Copy
-Alt       -> temporarily bypass Timeline Snap
+Alt+Drag  -> force the approved alternate gesture for the target
 ```
-Alt 不承担复制或引用语义。
+在 Draw 模式的 Segment、Logical Note 与 Template Note 上，`Alt+Drag` 强制 Move，`Ctrl+Alt+Drag` 强制 Copy+Move；在 Velocity 上，`Alt+Left Drag` 强制自由轨迹。Alt 本身不承担复制或引用语义，且不绕过 Snap。
 ### 20.5.3 Feedback
 拖动反馈显示：
 ```text
@@ -369,6 +369,8 @@ SubVoice Note body Ctrl+Drag      -> copy selected Template Notes
 Segment 全部子对象获得新稳定 ID；Logical Note 获得新稳定 ID；Template Note 及其 Mapping Chain/Step 获得新稳定 ID。跨 Track 不自动重绑或删除 Lane。Note 副本使用一个共同时间/pitch delta，并保持相对时间、音程、长度、velocity、Mapping 与目标设置。成功后只选择副本，一次完整手势只形成一个 Project Undo。
 
 复制意图在 Draw 模式的主体拖动越过阈值时确认；未越过阈值的 `Ctrl+Click` 仍按选择切换处理，边缘 `Ctrl+Drag` 仍是 Resize。时间、pitch 与 Track 越界请求使用选择集共同 clamp；Escape、Pointer Capture 丢失、Segment overlap、选择集不兼容或共同 clamp 后仍非法时整体取消，不创建部分副本。
+
+在上述三类对象上，`Alt+Left Drag` 无视 Body / Resize 边界命中分区并强制 Move；`Ctrl+Alt+Left Drag` 强制 Copy+Move。操作类型、修饰键及复制意图在 Pointer Down 时冻结，拖动途中按下或松开修饰键不得切换语义。强制手势仍按当前 Snap 执行；Resize 继续通过不按 Alt 的普通边界拖动访问。
 #### 20.5.6.2 Event Instrument
 Library 内只支持 Move / Reorder；Duplicate 使用显式命令。
 拖到 Logical Tracks 空白目标表示创建 Track；拖到既有 Track Header 表示绑定该 Track，不移动 Instrument 本身。覆盖已有不同绑定前必须明确确认 rebind。
@@ -1265,9 +1267,13 @@ Shift+F4 -> Previous Active Diagnostic
 使用 Global Active Diagnostics，不受 Bottom Panel 当前搜索隐藏影响。
 ### 20.12.10 Alt
 ```text
-Alt during Timeline Drag -> temporarily bypass Snap
-Alt+F4                  -> system close or task-specific close request
+Alt+Drag on Segment / Note -> force Move regardless of Body / Resize hit region
+Ctrl+Alt+Drag              -> force Copy+Move where Copy Drag is supported
+Alt+Left Drag in Velocity  -> force free trace regardless of direct bar hit
+Alt+F4                     -> system close or task-specific close request
 ```
+Alt 不绕过 Timeline Snap。需要 1 tick 操作粒度时关闭 Snap。
+Alt 已实际参与 Timeline 强制手势时，主窗口必须仅消费该次 Alt KeyUp，并把键盘焦点恢复到发起手势的 Timeline；不得让主菜单因该次释放进入访问模式。未参与 Timeline 手势的普通 Alt、`Alt+F4` 和窗口失焦清理仍按原规则处理。
 初版不定义 Alt-letter Access Keys，也不注册 `Alt+Left / Alt+Right` 导航历史快捷键。
 ### 20.12.11 鼠标修饰键
 ```text
@@ -1276,7 +1282,7 @@ Ctrl+Click  -> toggle
 Shift+Click -> range or add where defined
 Normal Drag -> move or reorder
 Ctrl+Drag   -> copy only where explicitly supported
-Alt+Drag    -> bypass Timeline Snap
+Alt+Drag    -> force the target's approved alternate gesture
 ```
 未支持的复杂组合不猜测用户意图；无法安全解释时 Drop Invalid。
 ### 20.12.12 Backspace

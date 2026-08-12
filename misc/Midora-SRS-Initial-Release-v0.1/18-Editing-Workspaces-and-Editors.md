@@ -109,6 +109,8 @@ Arrangement Toolbar 必须分别提供可见分割线粒度、操作粒度与 Sn
 
 Arrangement 中只有 Draw 模式允许拖动 Segment 主体或调整边缘；Select 模式的单次左键按下始终发起框选，即使起点位于 Segment 上也不得先命中或单独选择该 Segment，并且不得直接移动、Resize 或双击创建 Segment。既有双击导航不受该单击规则影响。拖动和 Resize 期间必须显示位置与长度预览，并隐藏同位置的创建预览。工具互斥、指针和快捷键规则见第 20.1.6、20.12 节。
 
+Draw 模式下，`Alt + Left Drag` 在 Segment 的任意命中位置强制执行 Move，即使指针位于左/右 Resize 边界；`Ctrl + Alt + Left Drag` 强制执行复制并移动。该替代手势仍服从当前 Snap 设置。操作类型及复制意图在按下时冻结，拖动途中改变修饰键不得在 Move、Copy 与 Resize 之间切换。
+
 Draw 模式下在 Segment 主体执行 `Ctrl+Drag` 时，复制当前 Segment 选择集并以一个共同时间/Track delta 放置完整副本；原 Segment 不移动。复制成功后只选择副本，一次完整手势形成一个 Project Undo。
 ---
 ## 18.2 Segment Editor
@@ -147,6 +149,8 @@ Segment Editor 以 Segment local tick 为主，同时可显示映射后的 Proje
 
 Draw 模式下在 Logical Note 主体执行 `Ctrl+Drag` 时，复制当前 Note 选择集并以一个共同时间/pitch delta 放置副本；原 Note 不移动，相对时间、音程、长度和 velocity 保持不变。复制成功后只选择副本，一次完整手势形成一个 Project Undo。边缘 `Ctrl+Drag` 仍按 Resize 处理，不隐式复制。
 
+Draw 模式下，`Alt + Left Drag` 在 Logical Note 的任意命中位置强制执行 Move，`Ctrl + Alt + Left Drag` 强制执行复制并移动；这两种手势均仍服从当前 Snap。操作类型及复制意图在按下时冻结。SubVoice Template Note 复用同一规则。
+
 Segment Toolbar 必须提供共享 piano-roll 的可见分割线粒度、操作粒度、Snap、默认 Note 长度（tick）与默认 velocity。默认长度和 velocity 独立于 Grid；默认长度允许小于操作粒度。
 
 active crop window 外内容：
@@ -180,7 +184,7 @@ Velocity 视图按 Note start tick 绘制固定窄柱，高度表示 velocity；
 
 左键直接按住单柱或其 onset marker 上下拖动时，只调整命中的一个 Note，不显示轨迹；同 tick 重叠柱按上述最上层顺序命中。该单柱 transient 允许只覆盖一个柱，松开时提交。所有 Velocity 手势都不得改变 Note 的位置、长度或 pitch。
 
-`Shift + Left Drag` 必须强制使用自由轨迹手势：起点即使命中单柱或 onset marker，也不得进入单 Note 调整。该修饰键只覆盖 direct-hit 分流，不改变“存在选择时仅作用于已选择 Note”的过滤规则。
+`Alt + Left Drag` 必须强制使用自由轨迹手势：起点即使命中单柱或 onset marker，也不得进入单 Note 调整。该修饰键只覆盖 direct-hit 分流，不改变“存在选择时仅作用于已选择 Note”的过滤规则。
 
 单个参数 Lane 编辑器左侧显示值标尺，右侧显示对应水平参考线；Lane 具有独立于 piano roll 的纵向缩放。参考值密度随纵向缩放调整。纵向缩放、滚轮平移、中键平移和右侧滚动条必须操作同一有界数值视口，标尺随视口更新，不得越过参数合法范围；顶部与底部标签保持在可视区域内。Integer 参数由指针纵坐标得到的值必须先按 `AwayFromZero` 取到最近整数，再执行合法范围验证。
 ### 18.2.6 同步

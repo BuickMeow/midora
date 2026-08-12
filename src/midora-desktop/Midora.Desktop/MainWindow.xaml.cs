@@ -52,6 +52,7 @@ public partial class MainWindow : Window
     private Point? _instrumentListDragStart;
     private MidoraId? _instrumentListDragId;
     private int? _trackHeaderContextLane;
+    private TimelineSurface? _pendingTimelineAltReleaseFocus;
 
     public MainWindow()
     {
@@ -60,7 +61,12 @@ public partial class MainWindow : Window
         SourceInitialized += OnSourceInitialized;
         StateChanged += OnWindowStateChanged;
         PreviewKeyDown += OnPreviewKeyDown;
+        PreviewKeyUp += OnPreviewKeyUp;
         PreviewMouseDown += OnPreviewMouseDownForPlaybackShortcut;
+        Deactivated += OnWindowDeactivated;
+        AddHandler(
+            TimelineSurface.AltGestureConsumedEvent,
+            new RoutedEventHandler(OnTimelineAltGestureConsumed));
         LoadDesktopPreferences();
         _playbackTimer = new(DispatcherPriority.Render)
         {
@@ -3008,11 +3014,9 @@ public partial class MainWindow : Window
         {
             if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline)
             {
-                long snappedDelta = (e.Modifiers & ModifierKeys.Alt) != 0
-                    ? e.TickDelta
-                    : timeline.EditorSettings.SnapDelta(
-                        e.TickDelta,
-                        checked(e.Item.StartTick + e.TickDelta));
+                long snappedDelta = timeline.EditorSettings.SnapDelta(
+                    e.TickDelta,
+                    checked(e.Item.StartTick + e.TickDelta));
                 long snappedTarget = Math.Max(0, checked(e.Item.StartTick + snappedDelta));
                 snappedDelta = checked(snappedTarget - e.Item.StartTick);
                 MidoraId[] selected = timeline.Selection.Ids.Count == 0
@@ -3137,11 +3141,9 @@ public partial class MainWindow : Window
         }
         else
         {
-            long endDelta = (edit.Modifiers & ModifierKeys.Alt) != 0
-                ? edit.TickDelta
-                : workspace.EditorSettings.SnapDelta(
-                    edit.TickDelta,
-                    checked(edit.Item.EndTick + edit.TickDelta));
+            long endDelta = workspace.EditorSettings.SnapDelta(
+                edit.TickDelta,
+                checked(edit.Item.EndTick + edit.TickDelta));
             long newEnd = Math.Max(oldStart + 1, checked(edit.Item.EndTick + endDelta));
             _session.Execute(ProjectDomainEditCommands.SetSegmentWindow(
                 segment.Id,
@@ -3207,11 +3209,9 @@ public partial class MainWindow : Window
                     endDelta: 0));
                 break;
             case TimelineItemEditKind.ResizeEnd:
-                long endDelta = (edit.Modifiers & ModifierKeys.Alt) != 0
-                    ? edit.TickDelta
-                    : ((TimelineWorkspaceViewModel)_session.ActiveWorkspace!).EditorSettings.SnapDelta(
-                        edit.TickDelta,
-                        checked(edit.Item.EndTick + edit.TickDelta));
+                long endDelta = ((TimelineWorkspaceViewModel)_session.ActiveWorkspace!).EditorSettings.SnapDelta(
+                    edit.TickDelta,
+                    checked(edit.Item.EndTick + edit.TickDelta));
                 endDelta = Math.Max(endDelta, notes.Max(item => 1 - item.LengthTicks));
                 _session.Execute(ProjectDomainEditCommands.AdjustLogicalNoteEdges(
                     segmentId,
@@ -3322,13 +3322,11 @@ public partial class MainWindow : Window
             EditValueCurvePoint(workspace, edit);
             return;
         }
-        long snappedDelta = (edit.Modifiers & ModifierKeys.Alt) != 0
-            ? edit.TickDelta
-            : workspace.EditorSettings.SnapDelta(
-                edit.TickDelta,
-                checked((edit.EditKind == TimelineItemEditKind.ResizeEnd
-                    ? checked(template.Tick + Math.Max(1, template.LengthTicks))
-                    : template.Tick) + edit.TickDelta));
+        long snappedDelta = workspace.EditorSettings.SnapDelta(
+            edit.TickDelta,
+            checked((edit.EditKind == TimelineItemEditKind.ResizeEnd
+                ? checked(template.Tick + Math.Max(1, template.LengthTicks))
+                : template.Tick) + edit.TickDelta));
         if (template.Kind == TemplateEventKind.Note)
         {
             TemplateEvent[] selectedNotes = voice.Events
@@ -3443,11 +3441,9 @@ public partial class MainWindow : Window
                 minimum - curve.Points.Single(candidate => candidate.Id == id).Value);
             double maximumValueDelta = selected.Min(id =>
                 maximum - curve.Points.Single(candidate => candidate.Id == id).Value);
-            long requestedTickDelta = (edit.Modifiers & ModifierKeys.Alt) != 0
-                ? edit.TickDelta
-                : workspace.EditorSettings.SnapDelta(
-                    edit.TickDelta,
-                    checked(edit.Item.StartTick + edit.TickDelta));
+            long requestedTickDelta = workspace.EditorSettings.SnapDelta(
+                edit.TickDelta,
+                checked(edit.Item.StartTick + edit.TickDelta));
             long tickDelta = Math.Max(
                 requestedTickDelta,
                 -selected.Min(id => curve.Points.Single(candidate => candidate.Id == id).Tick));
@@ -4347,8 +4343,58 @@ public partial class MainWindow : Window
 
     private void OnExitClick(object sender, RoutedEventArgs e) => Close();
 
+    private void OnTimelineAltGestureConsumed(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is TimelineSurface surface)
+        {
+            _pendingTimelineAltReleaseFocus = surface;
+        }
+        e.Handled = true;
+    }
+
+    private void OnPreviewKeyUp(object sender, KeyEventArgs e)
+    {
+        if (!IsAltKey(e) || _pendingTimelineAltReleaseFocus is not TimelineSurface surface)
+        {
+            return;
+        }
+
+        _pendingTimelineAltReleaseFocus = null;
+        e.Handled = true;
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            new Action(() =>
+            {
+                if (IsActive && surface.IsVisible && surface.IsEnabled && surface.Focusable)
+                {
+                    surface.Focus();
+                }
+            }));
+    }
+
+    private void OnWindowDeactivated(object? sender, EventArgs e)
+    {
+        _pendingTimelineAltReleaseFocus = null;
+    }
+
+    private static bool IsAltKey(KeyEventArgs e)
+    {
+        Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+        return key is Key.LeftAlt or Key.RightAlt;
+    }
+
+    private static bool IsAltF4(KeyEventArgs e)
+    {
+        Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+        return key == Key.F4 && (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
+    }
+
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (IsAltF4(e))
+        {
+            _pendingTimelineAltReleaseFocus = null;
+        }
         if (_session.IsMainWindowTaskLocked)
         {
             DependencyObject? focused = Keyboard.FocusedElement as DependencyObject;

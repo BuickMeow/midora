@@ -56,7 +56,7 @@
 - 正式 Compiler Diagnostic message 统一为英文；Project Panel 的 Error / Warning 计数在每次编译完成时同步刷新。非法 pitch 来源的诊断导航使用安全 lane 投影，不得使应用崩溃。
 - Velocity 视图改为每个 Note 在 start tick 对应一根固定窄柱，柱宽不再表达 Note 长度；顶部使用较大的方形 onset marker，同 tick 多音按高 pitch 覆盖低 pitch。
 - Velocity 自由绘制与直线插值手势在按住期间只显示轻量轨迹，不逐柱重绘或提交；松开时一次性计算、提交并刷新 tile。直接按住单柱或其 marker 上下拖动仍只调整该 Note，并且不显示轨迹。
-- Velocity 增加 `Shift + Left Drag` 强制轨迹手势，无论起点是否命中柱体；Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的 Select 模式改为从单次左键按下点发起框选，不再以单独左键点击命中对象。
+- `Alt + Left Drag` 统一为强制替代手势：Draw 模式的 Segment / Logical Note / Template Note 无视边界命中并强制 Move，`Ctrl + Alt` 强制 Copy+Move；Velocity 无视柱体 direct hit 并强制自由轨迹。操作类型在 Pointer Down 时冻结，Alt 不再绕过 Snap；已消费的 Alt KeyUp 不再激活主菜单并恢复来源 Timeline 焦点，普通 Alt 与 `Alt+F4` 不变。Draw 模式悬停可直接编辑对象时始终显示低强调 transient 外轮廓，不失效 raster tile。Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的 Select 模式仍从单次左键按下点发起框选，不再以单独左键点击命中对象。
 
 ## 2026-08-10 修订摘要
 

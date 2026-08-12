@@ -269,14 +269,86 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
-    public void ShiftLeftForcesVelocityTrace()
+    public void AltLeftForcesVelocityTrace()
     {
-        Assert.True(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Left, ModifierKeys.Shift));
+        Assert.True(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Left, ModifierKeys.Alt));
         Assert.True(TimelineToolPolicy.ForcesVelocityTrace(
             MouseButton.Left,
-            ModifierKeys.Shift | ModifierKeys.Control));
+            ModifierKeys.Alt | ModifierKeys.Control));
         Assert.False(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Left, ModifierKeys.None));
-        Assert.False(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Right, ModifierKeys.Shift));
+        Assert.False(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Left, ModifierKeys.Shift));
+        Assert.False(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Right, ModifierKeys.Alt));
+    }
+
+    [Theory]
+    [InlineData(TimelineSurfaceMode.Arrangement, TimelineItemKind.Segment)]
+    [InlineData(TimelineSurfaceMode.PianoRoll, TimelineItemKind.LogicalNote)]
+    [InlineData(TimelineSurfaceMode.PianoRoll, TimelineItemKind.TemplateNote)]
+    public void AltForcesDirectItemMoveFromEitherResizeEdge(
+        TimelineSurfaceMode surfaceMode,
+        TimelineItemKind itemKind)
+    {
+        Assert.True(TimelineToolPolicy.ForcesItemMove(
+            TimelineToolMode.Draw,
+            surfaceMode,
+            itemKind,
+            ModifierKeys.Alt));
+        Assert.Equal(
+            TimelineItemEditKind.Move,
+            TimelineToolPolicy.ResolveItemEditKind(
+                TimelineToolMode.Draw,
+                surfaceMode,
+                itemKind,
+                ModifierKeys.Alt,
+                isNearStart: true,
+                isNearEnd: false));
+        Assert.Equal(
+            TimelineItemEditKind.Move,
+            TimelineToolPolicy.ResolveItemEditKind(
+                TimelineToolMode.Draw,
+                surfaceMode,
+                itemKind,
+                ModifierKeys.Alt | ModifierKeys.Control,
+                isNearStart: false,
+                isNearEnd: true));
+        Assert.True(TimelineToolPolicy.SupportsCopyDrag(
+            TimelineToolMode.Draw,
+            surfaceMode,
+            itemKind,
+            TimelineItemEditKind.Move));
+        Assert.Equal(
+            TimelinePointerIntent.Move,
+            TimelineToolPolicy.GetPointerIntent(
+                TimelineToolMode.Draw,
+                surfaceMode,
+                isInContent: true,
+                itemKind,
+                isNearHorizontalEdge: true,
+                ModifierKeys.Alt));
+    }
+
+    [Fact]
+    public void AltDoesNotForceMoveOutsideDirectDrawManipulation()
+    {
+        Assert.False(TimelineToolPolicy.ForcesItemMove(
+            TimelineToolMode.Select,
+            TimelineSurfaceMode.Arrangement,
+            TimelineItemKind.Segment,
+            ModifierKeys.Alt));
+        Assert.False(TimelineToolPolicy.ForcesItemMove(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            TimelineItemKind.TemplateEvent,
+            ModifierKeys.Alt));
+        Assert.Equal(
+            TimelineItemEditKind.ResizeStart,
+            TimelineToolPolicy.ResolveItemEditKind(
+                TimelineToolMode.Draw,
+                TimelineSurfaceMode.Arrangement,
+                TimelineItemKind.Segment,
+                ModifierKeys.None,
+                isNearStart: true,
+                isNearEnd: false));
     }
 
     [Theory]

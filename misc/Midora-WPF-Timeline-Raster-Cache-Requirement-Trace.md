@@ -71,7 +71,8 @@
 - Every Note projects to a fixed 3-pixel stem at the Velocity tile's horizontal cache LOD and a 7-pixel square onset marker in the tile source. The raster query interval is start-tick-local; Note length is not part of the visual width.
 - Velocity tile items carry pitch as their visual Z key. Equal-start items rasterize low pitch first and high pitch last; equal pitch uses stable ID order. Hit testing uses the reverse order, so the visible top item is also the direct-edit target.
 - Freehand and straight-line gestures retain only pointer trace points while captured. They do not enumerate touched Notes, grow a per-Note WPF overlay, mutate Project, or invalidate Velocity tiles on MouseMove.
-- `Shift + Left Drag` always selects the freehand trace route before direct stem/marker hit testing; selection-set filtering remains unchanged.
+- `Alt + Left Drag` always selects the freehand trace route before direct stem/marker hit testing; selection-set filtering remains unchanged.
+- Draw-mode Segment / Note hover uses one indexed hit and one transient outline draw. It does not enter a raster key, rebuild a tile, or enumerate the visible Note set.
 - On release, the immutable snapshot/index resolves the trace into one stable-ID → velocity map, which is committed as one Project edit. Direct stem/marker dragging keeps a one-entry transient map and bypasses the trace.
 - The Velocity layer retains the previous complete visible tile-key frame and switches to edited tiles only when the full current visible set is cached. This adds no bitmap copy and remains inside the shared LRU budget.
 
@@ -87,4 +88,4 @@
 8. 编辑或缩放轮换可视 piano tile key 时，在新可视集合全部完成前继续呈现上一完整集合；旧集合仍按世界 tick/lane 边界映射，且不得阻塞 UI 或同步逐 Note rasterize。
 9. 密集 Velocity 自由/直线拖动期间，覆盖层复杂度只与采样后的指针轨迹点数相关，不与已触及 Note 数量相关；松开前不得重建 Velocity tile。
 10. Velocity 柱宽与 Note length 无关；同 tick 多音的 raster 与 direct hit 都必须以高 pitch 为最上层。
-11. `Shift + Left Drag` 从任意 Velocity 内容位置开始时均不得进入 direct single-Note edit；Direct Timeline 的 Select 单次左键从对象内部开始时仍必须形成 marquee，而不得发出单对象选择。
+11. `Alt + Left Drag` 从任意 Velocity 内容位置开始时均不得进入 direct single-Note edit；Direct Timeline 的 Select 单次左键从对象内部开始时仍必须形成 marquee，而不得发出单对象选择。

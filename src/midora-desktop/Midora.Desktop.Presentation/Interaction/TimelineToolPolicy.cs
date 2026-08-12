@@ -30,7 +30,34 @@ public static class TimelineToolPolicy
     public static bool ForcesVelocityTrace(
         MouseButton button,
         ModifierKeys modifiers) =>
-        button == MouseButton.Left && (modifiers & ModifierKeys.Shift) != 0;
+        button == MouseButton.Left && (modifiers & ModifierKeys.Alt) != 0;
+
+    public static bool ForcesItemMove(
+        TimelineToolMode toolMode,
+        TimelineSurfaceMode surfaceMode,
+        TimelineItemKind itemKind,
+        ModifierKeys modifiers) =>
+        (modifiers & ModifierKeys.Alt) != 0
+        && toolMode == TimelineToolMode.Draw
+        && IsDirectEditingSurface(surfaceMode)
+        && IsDirectManipulationItem(itemKind);
+
+    public static TimelineItemEditKind ResolveItemEditKind(
+        TimelineToolMode toolMode,
+        TimelineSurfaceMode surfaceMode,
+        TimelineItemKind itemKind,
+        ModifierKeys modifiers,
+        bool isNearStart,
+        bool isNearEnd)
+    {
+        if (itemKind == TimelineItemKind.LogicalParameterPoint
+            || ForcesItemMove(toolMode, surfaceMode, itemKind, modifiers))
+        {
+            return TimelineItemEditKind.Move;
+        }
+        if (isNearStart) return TimelineItemEditKind.ResizeStart;
+        return isNearEnd ? TimelineItemEditKind.ResizeEnd : TimelineItemEditKind.Move;
+    }
 
     public static bool CanBeginItemEdit(
         TimelineToolMode toolMode,
@@ -65,7 +92,8 @@ public static class TimelineToolPolicy
         TimelineSurfaceMode surfaceMode,
         bool isInContent,
         TimelineItemKind? itemKind,
-        bool isNearHorizontalEdge)
+        bool isNearHorizontalEdge,
+        ModifierKeys modifiers = ModifierKeys.None)
     {
         if (!isInContent) return TimelinePointerIntent.Default;
         if (!IsDirectEditingSurface(surfaceMode))
@@ -89,6 +117,10 @@ public static class TimelineToolPolicy
         if (toolMode != TimelineToolMode.Draw || !IsDirectManipulationItem(itemKind.Value))
         {
             return TimelinePointerIntent.Default;
+        }
+        if (ForcesItemMove(toolMode, surfaceMode, itemKind.Value, modifiers))
+        {
+            return TimelinePointerIntent.Move;
         }
         return isNearHorizontalEdge
             ? TimelinePointerIntent.ResizeHorizontal

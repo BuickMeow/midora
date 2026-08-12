@@ -44,6 +44,8 @@
 
 - 决定：所有自绘表面复用明确状态机：Idle、Pointing、Dragging、Marquee、Drawing、Resizing、Panning、ContextTarget；Pointer capture、Escape、deactivation 和 revision 变化都有确定取消路径。
 - 决定：拖动期间只更新 transient preview；Pointer Up 后通过 Application command 做一次原子提交。Snap 以 Primary Selection 计算一个 shared delta。
+- 决定：Segment / Note 的 `Alt` 强制 Move、`Ctrl+Alt` 强制 Copy+Move，以及 Velocity 的 `Alt` 强制轨迹均在 Pointer Down 时解析并冻结；拖动途中修饰键变化不改变操作类型。Alt 不再承担临时绕过 Snap 的语义。
+- 决定：只有 Timeline 已消费 Alt 强制手势时，主窗口才锁存来源 surface，并在对应 Alt KeyUp 的 preview 阶段阻止主菜单访问模式、随后恢复来源焦点；`Alt+F4`、普通 Alt 和窗口失焦不共享该锁存。Draw hover 外轮廓始终属于单对象 transient overlay，不进入或失效 raster cache。
 - 原因：落实 SRS 20.1、20.3～20.5 的一次手势一次 Undo 和无 partial success。
 
 ## ADR-UI-008：线程与任务边界
@@ -148,7 +150,7 @@
 ## ADR-UI-022：Velocity 固定柱与提交时栅格化
 
 - 决定：Velocity 不再以 Note 的 `[startTick, endTick)` 画等长矩形。每个 Note 只在 start tick 投影当前横向 cache LOD 下固定 3-pixel 窄柱和 tile source 中 7-pixel 的方形 marker；pitch 写入 presentation Z key，同 tick 低 pitch 先画、高 pitch 后画，direct hit 使用相反顺序命中最上层。
-- 手势：空白区域发起的左键自由绘制和右键直线插值在 capture 期间只保存、绘制指针轨迹，不查询并逐柱覆盖 Note。`Shift + Left Drag` 在 direct hit 之前强制选择自由轨迹路线，即使起点命中柱或 marker。MouseUp 才通过不可变 interval index 生成 stable-ID → velocity map，并调用既有批量命令形成一个 Undo。无 Shift 直接按住柱或 marker 时只维护一个 Note 的 transient value，不显示轨迹。
+- 手势：空白区域发起的左键自由绘制和右键直线插值在 capture 期间只保存、绘制指针轨迹，不查询并逐柱覆盖 Note。`Alt + Left Drag` 在 direct hit 之前强制选择自由轨迹路线，即使起点命中柱或 marker。MouseUp 才通过不可变 interval index 生成 stable-ID → velocity map，并调用既有批量命令形成一个 Undo。无 Alt 直接按住柱或 marker 时只维护一个 Note 的 transient value，不显示轨迹。
 - 缓存：MouseMove 不改变 snapshot、Selection revision 或 Velocity tile key。批量命令提交后异步生成新 tile；新可视集合未完整前继续显示上一完整 Velocity frame，完整后原子切换。frame 只引用共享 LRU key，不复制像素。
 - 原因：旧实现虽然只在 MouseUp 提交 Project，但每次 MouseMove 都枚举 `_velocityEdits` 并为所有已触及 Note 调用 WPF rectangle drawing；密集数据下覆盖层成本随手势长度持续增长。轨迹层把拖动期绘制成本改为只与鼠标采样点数相关。
 - 边界：轨迹只是 transient UI state；取消或 capture 丢失不提交。最终 velocity、Selection 过滤、稳定 ID、Project command 原子性和 Undo 语义不变，Note 的 tick、length 与 pitch 不受影响。

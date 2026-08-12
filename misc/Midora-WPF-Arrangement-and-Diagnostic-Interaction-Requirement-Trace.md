@@ -6,7 +6,7 @@
 ## 输入
 
 - 当前 Project 的 TPQ、Logical Track 手工顺序、Segment 区间与 Event Instrument binding。
-- Arrangement 当前 Tool、Grid / Snap、鼠标 placement / drag / context-menu 手势。
+- Arrangement 当前 Tool、Grid / Snap、鼠标 placement / drag / context-menu 手势，以及 Pointer Down 时冻结的 Alt 强制 Move / Ctrl+Alt 强制 Copy+Move 意图。
 - Compiler 最后一次尝试的 Diagnostic 集合与稳定 `SourceReference`。
 - Segment / SubVoice Note 批量移动请求的共同 tick / pitch delta。
 
@@ -15,6 +15,7 @@
 - Segment 创建、Logical Track create / rename / reorder / bind / delete、Logical / Template Note move-or-delete 均通过 `IProjectEditCommand` 修改 Project，并形成一个可 Undo 的提交；具体 Track Header 的 create 插入目标 Track 后方，空白 Header 和其他入口的 create 追加到末尾。
 - Compiler Diagnostic 文本为英文；Project Panel 计数投影自最后一次编译尝试。
 - Track Header 的绑定乐器副标题、hover / pressed、拖动插入线和非法 pitch 的安全 lane 仅为 Presentation 输出。
+- Segment / Note 的 Draw hover 轮廓、Move cursor、Velocity Alt 强制轨迹和“消费一次 Alt KeyUp 后恢复来源 Timeline 焦点”的锁存只属于 transient Presentation state；Alt 不改变 Snap 设置，普通 Alt 菜单访问和 `Alt+F4` 不受影响。
 
 ## 边界与失败条件
 

@@ -167,6 +167,12 @@ public sealed class TimelineItemEditEventArgs(
 
 public sealed class TimelineSurface : Control
 {
+    public static readonly RoutedEvent AltGestureConsumedEvent = EventManager.RegisterRoutedEvent(
+        nameof(AltGestureConsumed),
+        RoutingStrategy.Bubble,
+        typeof(RoutedEventHandler),
+        typeof(TimelineSurface));
+
     public static readonly DependencyProperty SnapshotProperty = DependencyProperty.Register(
         nameof(Snapshot),
         typeof(TimelineRenderSnapshot),
@@ -418,6 +424,7 @@ public sealed class TimelineSurface : Control
     private int _dragCurrentLane;
     private bool _dragActivated;
     private bool _dragCopyRequested;
+    private ModifierKeys _dragModifiers;
     private TimelineLanePreviewEventArgs? _activeLanePreview;
     private long? _notePlacementStartTick;
     private long _notePlacementCurrentTick;
@@ -673,6 +680,11 @@ public sealed class TimelineSurface : Control
     public event EventHandler<TimelineLaneHeaderReorderEventArgs>? LaneHeaderReorderCompleted;
     public event EventHandler<TimelineVelocityEditEventArgs>? VelocityEditCompleted;
     public event EventHandler? ViewportChanged;
+    public event RoutedEventHandler AltGestureConsumed
+    {
+        add => AddHandler(AltGestureConsumedEvent, value);
+        remove => RemoveHandler(AltGestureConsumedEvent, value);
+    }
 
     public double LaneHeaderWidth => GetLaneHeaderWidth();
 
@@ -904,6 +916,7 @@ public sealed class TimelineSurface : Control
         }
 
         DrawDragPreview(drawingContext, viewport, laneHeaderWidth, rulerHeight);
+        DrawDirectManipulationHover(drawingContext, viewport, laneHeaderWidth, rulerHeight);
         DrawCreationHoverPreview(drawingContext, viewport, red, info, laneHeaderWidth, rulerHeight);
         DrawSegmentPlacementPreview(drawingContext, viewport, laneHeaderWidth, rulerHeight);
         DrawNotePlacementPreview(drawingContext, viewport, red, laneHeaderWidth, rulerHeight);
@@ -954,6 +967,9 @@ public sealed class TimelineSurface : Control
             && point.X >= GetLaneHeaderWidth()
             && point.Y >= GetRulerHeight())
         {
+            bool forceTrace = TimelineToolPolicy.ForcesVelocityTrace(
+                e.ChangedButton,
+                Keyboard.Modifiers);
             _velocityOrigin = point;
             _velocityButton = e.ChangedButton;
             _velocityEdits.Clear();
@@ -961,10 +977,14 @@ public sealed class TimelineSurface : Control
                 item.Kind == TimelineItemKind.Velocity
                 && IsSelected(item)) == true;
             _velocityDirectItemId = e.ChangedButton == MouseButton.Left
-                && !TimelineToolPolicy.ForcesVelocityTrace(e.ChangedButton, Keyboard.Modifiers)
+                && !forceTrace
                 && TryHitVelocityBar(point, viewport, out TimelineRenderItem directItem)
                 ? directItem.Id
                 : null;
+            if (forceTrace)
+            {
+                RaiseEvent(new RoutedEventArgs(AltGestureConsumedEvent, this));
+            }
             _velocityTracePoints.Clear();
             if (_velocityDirectItemId is MidoraId directId)
             {
@@ -986,6 +1006,7 @@ public sealed class TimelineSurface : Control
 
         double laneHeaderWidth = GetLaneHeaderWidth();
         double rulerHeight = GetRulerHeight();
+        ModifierKeys modifiers = Keyboard.Modifiers;
         if (point.X >= laneHeaderWidth && point.Y >= 0 && point.Y < rulerHeight)
         {
             long rulerTick = viewport.XToTick(point.X - laneHeaderWidth);
@@ -1082,7 +1103,7 @@ public sealed class TimelineSurface : Control
         if (_hitItems.Count != 0)
         {
             int hitIndex = 0;
-            if ((Keyboard.Modifiers & ModifierKeys.Alt) != 0 && _hitItems.Count > 1)
+            if ((modifiers & ModifierKeys.Alt) != 0 && _hitItems.Count > 1)
             {
                 int primaryIndex = _hitItems.FindIndex(item =>
                     IsPrimary(item));
@@ -1095,7 +1116,7 @@ public sealed class TimelineSurface : Control
                     hit,
                     tick,
                     lane,
-                    Keyboard.Modifiers,
+                    modifiers,
                     e.ClickCount == 2));
             if (CanEdit
                 && ToolMode == TimelineToolMode.Split
@@ -1104,7 +1125,7 @@ public sealed class TimelineSurface : Control
             {
                 SegmentSplitRequested?.Invoke(
                     this,
-                    new TimelineItemEventArgs(hit, tick, lane, Keyboard.Modifiers, isDoubleClick: false));
+                    new TimelineItemEventArgs(hit, tick, lane, modifiers, isDoubleClick: false));
                 e.Handled = true;
                 return;
             }
@@ -1114,21 +1135,30 @@ public sealed class TimelineSurface : Control
             {
                 double left = laneHeaderWidth + viewport.TickToX(hit.StartTick);
                 double right = laneHeaderWidth + viewport.TickToX(hit.EndTick);
-                _dragKind = hit.Kind == TimelineItemKind.LogicalParameterPoint
-                    ? TimelineItemEditKind.Move
-                    : Math.Abs(point.X - left) <= 5
-                    ? TimelineItemEditKind.ResizeStart
-                    : Math.Abs(point.X - right) <= 5
-                        ? TimelineItemEditKind.ResizeEnd
-                        : TimelineItemEditKind.Move;
+                _dragKind = TimelineToolPolicy.ResolveItemEditKind(
+                    ToolMode,
+                    SurfaceMode,
+                    hit.Kind,
+                    modifiers,
+                    isNearStart: Math.Abs(point.X - left) <= 5,
+                    isNearEnd: Math.Abs(point.X - right) <= 5);
+                if (TimelineToolPolicy.ForcesItemMove(
+                        ToolMode,
+                        SurfaceMode,
+                        hit.Kind,
+                        modifiers))
+                {
+                    RaiseEvent(new RoutedEventArgs(AltGestureConsumedEvent, this));
+                }
                 _dragItem = hit;
+                _dragModifiers = modifiers;
                 _dragOrigin = point;
                 _dragOriginTick = tick;
                 _dragOriginLane = lane;
                 _dragCurrentTick = tick;
                 _dragCurrentLane = lane;
                 _dragActivated = false;
-                _dragCopyRequested = (Keyboard.Modifiers & ModifierKeys.Control) != 0
+                _dragCopyRequested = (modifiers & ModifierKeys.Control) != 0
                     && TimelineToolPolicy.SupportsCopyDrag(
                         ToolMode,
                         SurfaceMode,
@@ -1322,7 +1352,7 @@ public sealed class TimelineSurface : Control
                         dragItem,
                         _dragOriginTick,
                         _dragOriginLane,
-                        ModifierKeys.Control,
+                        _dragModifiers,
                         isDoubleClick: false,
                         isCopyDragStart: true));
             }
@@ -1536,7 +1566,7 @@ public sealed class TimelineSurface : Control
                         checked(_dragCurrentTick - _dragOriginTick),
                         checked(_dragCurrentLane - _dragOriginLane),
                         -(e.GetPosition(this).Y - _dragOrigin.Y) / Math.Max(1, LaneHeight),
-                        Keyboard.Modifiers,
+                        _dragModifiers,
                         _dragCopyRequested));
             }
             ClearItemDrag();
@@ -1686,6 +1716,10 @@ public sealed class TimelineSurface : Control
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
+        if (IsAltKey(e))
+        {
+            RefreshHoverIntent();
+        }
         if (e.Key == Key.Escape && _pressedLaneHeader is not null)
         {
             _pressedLaneHeader = null;
@@ -1728,6 +1762,15 @@ public sealed class TimelineSurface : Control
             e.Handled = true;
         }
         base.OnKeyDown(e);
+    }
+
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+        if (IsAltKey(e))
+        {
+            RefreshHoverIntent();
+        }
+        base.OnKeyUp(e);
     }
 
     private bool TryCreateViewport(out TimelineViewport viewport)
@@ -3133,9 +3176,7 @@ public sealed class TimelineSurface : Control
         long snapTarget = _dragKind == TimelineItemEditKind.ResizeEnd
             ? checked(item.EndTick + rawTickDelta)
             : checked(item.StartTick + rawTickDelta);
-        long tickDelta = (Keyboard.Modifiers & ModifierKeys.Alt) != 0
-            ? rawTickDelta
-            : SnapOperationDelta(rawTickDelta, snapTarget);
+        long tickDelta = SnapOperationDelta(rawTickDelta, snapTarget);
         int laneDelta = checked(_dragCurrentLane - _dragOriginLane);
         long start = item.StartTick;
         long end = item.EndTick;
@@ -3169,6 +3210,30 @@ public sealed class TimelineSurface : Control
                 FontWeights.Bold);
             context.DrawText(copyMarker, new Point(rectangle.Left + 4, rectangle.Top + 1));
         }
+    }
+
+    private void DrawDirectManipulationHover(
+        DrawingContext context,
+        TimelineViewport viewport,
+        double laneHeaderWidth,
+        double rulerHeight)
+    {
+        if (_dragItem is not null
+            || !CanEdit
+            || _hoverPoint is not Point pointer
+            || !TryHitTimelineItem(pointer, viewport, out TimelineRenderItem item)
+            || !TimelineToolPolicy.CanBeginItemEdit(ToolMode, SurfaceMode, item.Kind))
+        {
+            return;
+        }
+
+        double left = laneHeaderWidth + viewport.TickToX(item.StartTick);
+        double right = laneHeaderWidth + viewport.TickToX(item.EndTick);
+        double top = rulerHeight + (item.Lane - viewport.FirstLane) * LaneHeight + 2;
+        Rect bounds = new(left, top, Math.Max(2, right - left), Math.Max(3, LaneHeight - 4));
+        context.PushOpacity(0.65);
+        context.DrawRoundedRectangle(null, _marqueePen, bounds, 2, 2);
+        context.Pop();
     }
 
     private void DrawTimelineChrome(
@@ -3660,7 +3725,8 @@ public sealed class TimelineSurface : Control
             SurfaceMode,
             isInContent: true,
             hasItem ? hit.Kind : null,
-            nearEdge);
+            nearEdge,
+            Keyboard.Modifiers);
         Cursor = intent switch
         {
             TimelinePointerIntent.Crosshair => Cursors.Cross,
@@ -3671,6 +3737,21 @@ public sealed class TimelineSurface : Control
             _ => Cursors.Arrow
         };
     }
+
+    private void RefreshHoverIntent()
+    {
+        if (_dragItem is null
+            && _hoverPoint is Point point
+            && TryCreateViewport(out TimelineViewport viewport))
+        {
+            UpdateHoverCursor(point, viewport);
+        }
+        InvalidateVisual();
+    }
+
+    private static bool IsAltKey(KeyEventArgs e) =>
+        e.Key is Key.LeftAlt or Key.RightAlt
+        || e.SystemKey is Key.LeftAlt or Key.RightAlt;
 
     private bool TryHitTimelineItem(
         Point point,
@@ -3845,6 +3926,7 @@ public sealed class TimelineSurface : Control
         _dragItem = null;
         _dragActivated = false;
         _dragCopyRequested = false;
+        _dragModifiers = ModifierKeys.None;
         Cursor = Cursors.Arrow;
     }
 

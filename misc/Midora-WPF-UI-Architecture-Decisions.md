@@ -145,6 +145,35 @@
 - 边界：grid、active range、cursor、primary outline 和 transient edit preview 始终使用当前状态；旧帧只是一层短暂视觉替身，不参与 hit test、Selection、Project、Undo/Redo、编译、播放或持久化。Arrangement preview 和 Velocity tile 不在本次改动范围。
 - 依据：异步 tile key 在 Note 编辑和每个精确缩放级别都会轮换；原实现会在新 bitmap 完成前暴露背景，从而产生整块闪烁。保留旧完整集合能消除该空白窗口，同时不触碰 rasterizer、内容指纹、缓存键、后台 worker 或对象命中架构。
 
+## ADR-UI-022：Velocity 固定柱与提交时栅格化
+
+- 决定：Velocity 不再以 Note 的 `[startTick, endTick)` 画等长矩形。每个 Note 只在 start tick 投影当前横向 cache LOD 下固定 3-pixel 窄柱和 tile source 中 7-pixel 的方形 marker；pitch 写入 presentation Z key，同 tick 低 pitch 先画、高 pitch 后画，direct hit 使用相反顺序命中最上层。
+- 手势：空白区域发起的左键自由绘制和右键直线插值在 capture 期间只保存、绘制指针轨迹，不查询并逐柱覆盖 Note。`Shift + Left Drag` 在 direct hit 之前强制选择自由轨迹路线，即使起点命中柱或 marker。MouseUp 才通过不可变 interval index 生成 stable-ID → velocity map，并调用既有批量命令形成一个 Undo。无 Shift 直接按住柱或 marker 时只维护一个 Note 的 transient value，不显示轨迹。
+- 缓存：MouseMove 不改变 snapshot、Selection revision 或 Velocity tile key。批量命令提交后异步生成新 tile；新可视集合未完整前继续显示上一完整 Velocity frame，完整后原子切换。frame 只引用共享 LRU key，不复制像素。
+- 原因：旧实现虽然只在 MouseUp 提交 Project，但每次 MouseMove 都枚举 `_velocityEdits` 并为所有已触及 Note 调用 WPF rectangle drawing；密集数据下覆盖层成本随手势长度持续增长。轨迹层把拖动期绘制成本改为只与鼠标采样点数相关。
+- 边界：轨迹只是 transient UI state；取消或 capture 丢失不提交。最终 velocity、Selection 过滤、稳定 ID、Project command 原子性和 Undo 语义不变，Note 的 tick、length 与 pitch 不受影响。
+
+## ADR-UI-023：Direct Timeline Select 优先框选
+
+- 决定：Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的 Select 模式在单次左键按下时先于对象 hit test 进入 marquee capture；起点位于 Segment / Note 内部时也不发出 `ItemInvoked`，因此不再提供单对象点击选择。双击仍进入既有对象命中与导航路线。
+- 原因：极端密集对象覆盖画布时，先命中对象会令用户无法从中间位置开始框选。Select 的明确职责改为区域选择；单对象选择仍可在 Draw 模式通过点击完成。
+- 边界：Ctrl / Shift / Alt 仍在 marquee 完成时分别执行 toggle / add / remove；小于 marquee 阈值的普通点击按空范围处理。该决定不改变 Draw、Split、Erase、右键上下文命中、对象编辑、Project 数据或 Undo。
+
+## ADR-UI-024：Arrangement 放置手势与 Track Header 直接操作
+
+- 决定：Arrangement Draw 在空白区域按下时建立 transient Segment placement；未越过阈值使用 `1 × TPQ` 默认长度，向右拖动则按操作粒度改变结束 tick，MouseUp 只提交一次 `CreateSegment`。目标间隙不足时仍沿用新建 Segment 的可用间隙裁剪规则。
+- 决定：Track Header 作为 Timeline 内容以外的独立命中区，维护 hover、pressed 和 reorder transient state；拖动完成只调用正式 `ReorderLogicalTrack`。上下文菜单调用既有 Rename、Bind、Delete 和 Reorder Project command，不另建 UI 业务模型。
+- 决定：Arrangement snapshot 增加只读的 lane secondary label，投影绑定 Event Instrument 当前名称或明确的 Unbound / missing 状态。Event Instrument Library 的拖放 payload 只携带稳定 ID；drop 到 Track Header 调用正式 Bind command，覆盖不同绑定前确认。
+- 边界：Track Header 的 hover、pressed、drag target 和菜单 target 不保存、不进入 Undo；正式 Track order、名称和 binding 仍只属于 Project Content。拖放不移动或复制 Event Instrument。
+
+## ADR-UI-025：Note pitch 越界删除与损坏来源安全投影
+
+- 决定：普通 Logical Note / Template Note 批量移动不再以选择集边界 clamp pitch。领域命令对全部 Note 应用同一请求 delta，删除结果 pitch 越出 `0..127` 的 Note，并移动其余 Note；两部分由一个 prepared command 原子 Apply / Undo，Undo 按原容器索引恢复被删除对象。
+- 决定：复制拖动继续执行共同 pitch clamp，避免改变源对象或产生部分副本。时间负值、非法长度和 velocity 等其他无效结果仍在 mutation 前拒绝。
+- 决定：Presentation 对已损坏 Project 中的非法 Note pitch 使用 `Math.Clamp(pitch, 0, 127)` 计算安全 lane，同时标记 `Invalid`；诊断导航先验证 Segment / Note 稳定 ID 仍存在，再构建 Selection 和 viewport。
+- 原因：用户明确要求移动越界 Note 被丢弃而非存入非法 pitch；持久化损坏或旧缺陷留下的非法对象仍需可诊断、可定位且不能使 WPF projection 构造崩溃。
+- 边界：该规则改变 Project 编辑结果但不改变 Compiler 对非法源数据的 Error，也不允许正式消费者接收非法 Note。删除可 Undo，不产生新稳定 ID。
+
 ## 小决定审计
 
 以下均是局部、可替换且不改变可听结果/持久化/公共业务接口的小决定，按用户授权采用推荐方案：

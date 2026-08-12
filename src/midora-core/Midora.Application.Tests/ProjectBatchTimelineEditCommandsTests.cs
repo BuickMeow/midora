@@ -38,7 +38,7 @@ public sealed class ProjectBatchTimelineEditCommandsTests
     }
 
     [Fact]
-    public void InvalidBatchResultRejectsBeforeAnyMutationOrHistoryEntry()
+    public void MoveDiscardsOnlyNotesThatCrossThePitchBoundaryAndUndoRestoresThem()
     {
         (MidoraProject project, _, Segment segment, LogicalNote first, LogicalNote second) =
             CreateProject();
@@ -47,17 +47,24 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         ProjectDocumentSession document = PersistedDocument(compilation);
         long nextStableId = project.NextStableId;
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => document.Execute(
+        document.Execute(
             ProjectDomainEditCommands.MoveLogicalNotes(
                 segment.Id,
                 [first.Id, second.Id],
                 tickDelta: 10,
-                pitchDelta: 1)));
+                pitchDelta: 1));
+
+        Assert.Equal((10, 61), (first.StartTick, first.Note));
+        Assert.DoesNotContain(second, segment.Notes);
+        Assert.Equal(nextStableId, project.NextStableId);
+        Assert.Single(document.History);
+        AssertMatchesFull(compilation);
+
+        document.Undo();
 
         Assert.Equal((0, 60), (first.StartTick, first.Note));
         Assert.Equal((120, 127), (second.StartTick, second.Note));
-        Assert.Equal(nextStableId, project.NextStableId);
-        Assert.Empty(document.History);
+        Assert.Equal([first, second], segment.Notes);
         Assert.False(document.IsModified);
         AssertMatchesFull(compilation);
     }
@@ -511,6 +518,40 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         document.Undo();
         Assert.Equal((0L, 60), (first.Tick, first.Number));
         Assert.Equal((120L, 64), (second.Tick, second.Number));
+        Assert.False(document.IsModified);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void TemplateNoteMoveDiscardsOnlyNotesThatCrossThePitchBoundaryAndUndoRestoresThem()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument", TemplateLengthTicks = 480 };
+        SubVoice voice = new(project) { Name = "Voice" };
+        TemplateEvent first = TemplateEvent.Note(project, 0, 60, 60, 100);
+        TemplateEvent second = TemplateEvent.Note(project, 120, 90, 127, 80);
+        voice.Events.AddRange([first, second]);
+        instrument.SubVoices.Add(voice);
+        project.EventInstruments.Add(instrument);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.MoveTemplateNotes(
+            instrument.Id,
+            voice.Id,
+            [first.Id, second.Id],
+            tickDelta: 20,
+            pitchDelta: 1));
+
+        Assert.Equal((20L, 61), (first.Tick, first.Number));
+        Assert.DoesNotContain(second, voice.Events);
+        AssertMatchesFull(compilation);
+
+        document.Undo();
+
+        Assert.Equal((0L, 60), (first.Tick, first.Number));
+        Assert.Equal((120L, 127), (second.Tick, second.Number));
+        Assert.Equal([first, second], voice.Events);
         Assert.False(document.IsModified);
         AssertMatchesFull(compilation);
     }

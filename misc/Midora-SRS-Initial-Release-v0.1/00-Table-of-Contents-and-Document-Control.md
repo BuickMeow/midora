@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-08-10**
+> 最近修订日期：**2026-08-12**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -47,6 +47,16 @@
 - **Initial Release Scope** 表示产品范围，不表示文档草稿序号。
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
+
+## 2026-08-12 修订摘要
+
+- Arrangement Draw 空白放置改为按下并向右拖动确定 Segment 长度，单击使用默认长度；Arrangement 默认 Segment 长度固定为 `1 × TPQ`，相邻 Segment 仍按可用间隙缩短或拒绝。
+- Arrangement Track Header 增加独立 hover / pressed、拖动重排、Rename / Bind / Unbind / Delete / Move Up / Down 菜单、绑定乐器次级标签，以及从 Event Instrument Library 拖放绑定；已有不同绑定必须确认 rebind。
+- 普通 Logical / Template Note 多选移动使用共同 pitch delta，并删除结果 pitch 越出 `0..127` 的个别 Note；移动与删除属于一个 Undo。Note `Ctrl+Drag` 复制仍使用整组共同 clamp，不生成部分副本。
+- 正式 Compiler Diagnostic message 统一为英文；Project Panel 的 Error / Warning 计数在每次编译完成时同步刷新。非法 pitch 来源的诊断导航使用安全 lane 投影，不得使应用崩溃。
+- Velocity 视图改为每个 Note 在 start tick 对应一根固定窄柱，柱宽不再表达 Note 长度；顶部使用较大的方形 onset marker，同 tick 多音按高 pitch 覆盖低 pitch。
+- Velocity 自由绘制与直线插值手势在按住期间只显示轻量轨迹，不逐柱重绘或提交；松开时一次性计算、提交并刷新 tile。直接按住单柱或其 marker 上下拖动仍只调整该 Note，并且不显示轨迹。
+- Velocity 增加 `Shift + Left Drag` 强制轨迹手势，无论起点是否命中柱体；Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的 Select 模式改为从单次左键按下点发起框选，不再以单独左键点击命中对象。
 
 ## 2026-08-10 修订摘要
 

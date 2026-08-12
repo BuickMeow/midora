@@ -45,7 +45,7 @@
 - Piano core tile remains `256 × 256`; the actual raster is `258 × 258`, with a 1-pixel world-coordinate gutter on every side. Screen placement includes that gutter and adjacent images overlap.
 - Segment preview keeps a 512-pixel content span mapped directly to the full unclipped Segment bounds. No horizontal source gutter is permitted.
 - Note fill and real object borders are rasterized together. Tile clipping never creates a synthetic note border.
-- Piano selection is a separate cached tile layer. Velocity bars, selection color, outline, and onset marker use a horizontally tiled raster layer; transient edited values remain a bounded overlay.
+- Piano selection is a separate cached tile layer. Velocity stems, selection color, outline, and onset marker use a horizontally tiled raster layer; freehand/line editing uses one bounded trajectory overlay, while direct single-Note adjustment may replace only that one stem transiently.
 - Marquee drawing and hit query share snapped tick/lane bounds. Workspace selection range mutations increment the selection revision once.
 - Project content notifications carry the frozen change scope. Desktop refreshes only affected workspaces and does not rebuild an unrelated extreme Segment after editing another Track.
 
@@ -66,6 +66,15 @@
 - During a zoom transition, previous exact-scale tiles are temporarily mapped from their original world tick/lane bounds into the current viewport. The completed replacement still obeys ADR-UI-020's exact device-pixel scale and 1:1 composition rule.
 - Hit testing, interaction overlays, cursor, grid and active-range chrome always use the current viewport and semantic snapshot. The fallback is presentation-only and never becomes Project, Selection, Undo/Redo, compilation or persistent state.
 
+### 3.4 Velocity stem and deferred-gesture parameters (2026-08-12)
+
+- Every Note projects to a fixed 3-pixel stem at the Velocity tile's horizontal cache LOD and a 7-pixel square onset marker in the tile source. The raster query interval is start-tick-local; Note length is not part of the visual width.
+- Velocity tile items carry pitch as their visual Z key. Equal-start items rasterize low pitch first and high pitch last; equal pitch uses stable ID order. Hit testing uses the reverse order, so the visible top item is also the direct-edit target.
+- Freehand and straight-line gestures retain only pointer trace points while captured. They do not enumerate touched Notes, grow a per-Note WPF overlay, mutate Project, or invalidate Velocity tiles on MouseMove.
+- `Shift + Left Drag` always selects the freehand trace route before direct stem/marker hit testing; selection-set filtering remains unchanged.
+- On release, the immutable snapshot/index resolves the trace into one stable-ID → velocity map, which is committed as one Project edit. Direct stem/marker dragging keeps a one-entry transient map and bypasses the trace.
+- The Velocity layer retains the previous complete visible tile-key frame and switches to edited tiles only when the full current visible set is cached. This adds no bitmap copy and remains inside the shared LRU budget.
+
 ## 4. 验证门
 
 1. `TestProject.midora` 的 Arrangement 稳态绘制不枚举两个极端 Segment 的 43,008 个 Note，只绘制两个已缓存 preview bitmap。
@@ -76,3 +85,6 @@
 6. cache 不超过 256 MiB completed bitmap 预算；Project close/replace 后 completed cache 为零。
 7. Desktop Presentation、Desktop session tests 和 Release solution build 为零 failure、零 warning、零 error。
 8. 编辑或缩放轮换可视 piano tile key 时，在新可视集合全部完成前继续呈现上一完整集合；旧集合仍按世界 tick/lane 边界映射，且不得阻塞 UI 或同步逐 Note rasterize。
+9. 密集 Velocity 自由/直线拖动期间，覆盖层复杂度只与采样后的指针轨迹点数相关，不与已触及 Note 数量相关；松开前不得重建 Velocity tile。
+10. Velocity 柱宽与 Note length 无关；同 tick 多音的 raster 与 direct hit 都必须以高 pitch 为最上层。
+11. `Shift + Left Drag` 从任意 Velocity 内容位置开始时均不得进入 direct single-Note edit；Direct Timeline 的 Select 单次左键从对象内部开始时仍必须形成 marquee，而不得发出单对象选择。

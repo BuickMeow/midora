@@ -3,6 +3,7 @@ using Midora.Desktop.Presentation.Interaction;
 using Midora.Desktop.Presentation.Rendering;
 using Midora.Domain;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -248,6 +249,34 @@ public sealed class TimelineRenderingTests
             TimelineSurfaceMode.PianoRoll,
             TimelineItemKind.TemplateNote,
             TimelineItemEditKind.Move));
+    }
+
+    [Theory]
+    [InlineData(TimelineToolMode.Select, TimelineSurfaceMode.Arrangement, 1, true)]
+    [InlineData(TimelineToolMode.Select, TimelineSurfaceMode.PianoRoll, 1, true)]
+    [InlineData(TimelineToolMode.Select, TimelineSurfaceMode.PianoRoll, 2, false)]
+    [InlineData(TimelineToolMode.Draw, TimelineSurfaceMode.Arrangement, 1, false)]
+    [InlineData(TimelineToolMode.Select, TimelineSurfaceMode.EventLanes, 1, false)]
+    public void DirectTimelineSelectStartsMarqueeBeforeItemHit(
+        TimelineToolMode toolMode,
+        TimelineSurfaceMode surfaceMode,
+        int clickCount,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            TimelineToolPolicy.StartsMarqueeBeforeItemHit(toolMode, surfaceMode, clickCount));
+    }
+
+    [Fact]
+    public void ShiftLeftForcesVelocityTrace()
+    {
+        Assert.True(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Left, ModifierKeys.Shift));
+        Assert.True(TimelineToolPolicy.ForcesVelocityTrace(
+            MouseButton.Left,
+            ModifierKeys.Shift | ModifierKeys.Control));
+        Assert.False(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Left, ModifierKeys.None));
+        Assert.False(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Right, ModifierKeys.Shift));
     }
 
     [Theory]
@@ -615,6 +644,98 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void VelocityTileUsesFixedStemWidthInsteadOfNoteLength()
+    {
+        TimelineRenderItem velocity = Item(1, 10, 220, 0, kind: TimelineItemKind.Velocity)
+            with { Value = 0.5, ZIndex = 60 };
+        TimelineRenderSnapshot snapshot = new(1, "velocity:fixed-width", [velocity]);
+        int lod = TimelineRasterLod.Quantize(1);
+
+        TimelineRasterBuffer raster = TimelineVelocityTileRasterizer.Rasterize(
+            snapshot,
+            selection: null,
+            lod,
+            tileX: 0,
+            Color.FromRgb(163, 178, 190),
+            Color.FromRgb(229, 61, 68),
+            Color.FromRgb(49, 58, 69));
+
+        int startX = TimelineVelocityTileRasterizer.Gutter + 10;
+        Assert.True(Alpha(raster, startX, 180) > 0);
+        Assert.Equal(0, Alpha(raster, TimelineVelocityTileRasterizer.Gutter + 100, 180));
+    }
+
+    [Fact]
+    public void VelocityMarkerIsWiderThanItsStem()
+    {
+        TimelineRenderItem velocity = Item(1, 10, 11, 0, kind: TimelineItemKind.Velocity)
+            with { Value = 0.5, ZIndex = 60 };
+        TimelineRenderSnapshot snapshot = new(1, "velocity:marker", [velocity]);
+        TimelineRasterBuffer raster = TimelineVelocityTileRasterizer.Rasterize(
+            snapshot,
+            selection: null,
+            TimelineRasterLod.Quantize(1),
+            tileX: 0,
+            Color.FromRgb(163, 178, 190),
+            Color.FromRgb(229, 61, 68),
+            Color.FromRgb(49, 58, 69));
+        int centerX = TimelineVelocityTileRasterizer.Gutter + 10;
+        int top = (int)Math.Round(0.5 * (TimelineVelocityTileRasterizer.RasterHeight - 1), MidpointRounding.AwayFromZero);
+        int markerWidth = Enumerable.Range(
+                centerX - TimelineVelocityTileRasterizer.MarkerSize,
+                TimelineVelocityTileRasterizer.MarkerSize * 2 + 1)
+            .Count(x => Alpha(raster, x, top + 2) > 0);
+        int stemWidth = Enumerable.Range(
+                centerX - TimelineVelocityTileRasterizer.MarkerSize,
+                TimelineVelocityTileRasterizer.MarkerSize * 2 + 1)
+            .Count(x => Alpha(raster, x, top + TimelineVelocityTileRasterizer.MarkerSize + 3) > 0);
+
+        Assert.Equal(TimelineVelocityTileRasterizer.MarkerSize, markerWidth);
+        Assert.Equal(TimelineVelocityTileRasterizer.StemWidth, stemWidth);
+        Assert.True(markerWidth > stemWidth);
+    }
+
+    [Fact]
+    public void VelocityTileDrawsHigherPitchOnTopAtTheSameTick()
+    {
+        TimelineRenderItem low = Item(1, 10, 11, 0, kind: TimelineItemKind.Velocity)
+            with { Value = 0.5, ZIndex = 48 };
+        TimelineRenderItem high = Item(2, 10, 11, 0, kind: TimelineItemKind.Velocity)
+            with { Value = 0.5, ZIndex = 84 };
+        TimelineRenderSnapshot snapshot = new(1, "velocity:stacking", [high, low]);
+        TimelineSelectionSnapshot selection = new(1, [low.Id], low.Id);
+        Color normal = Color.FromRgb(10, 80, 160);
+        Color selected = Color.FromRgb(220, 20, 30);
+        TimelineRasterBuffer raster = TimelineVelocityTileRasterizer.Rasterize(
+            snapshot,
+            selection,
+            TimelineRasterLod.Quantize(1),
+            tileX: 0,
+            normal,
+            selected,
+            Color.FromRgb(49, 58, 69));
+        int centerX = TimelineVelocityTileRasterizer.Gutter + 10;
+        int top = (int)Math.Round(0.5 * (TimelineVelocityTileRasterizer.RasterHeight - 1), MidpointRounding.AwayFromZero);
+
+        Assert.Equal(normal, PixelColor(raster, centerX, top + 2));
+    }
+
+    [Fact]
+    public void VelocityTileFingerprintIgnoresUnrelatedSelectionRevision()
+    {
+        TimelineRenderItem velocity = Item(1, 10, 11, 0, kind: TimelineItemKind.Velocity)
+            with { Value = 0.5, ZIndex = 60 };
+        TimelineRenderSnapshot snapshot = new(1, "velocity:selection", [velocity]);
+        TimelineSelectionSnapshot first = new(1, [], null);
+        TimelineSelectionSnapshot later = new(99, [], null);
+        int lod = TimelineRasterLod.Quantize(1);
+
+        Assert.Equal(
+            TimelineVelocityTileRasterizer.ComputeContentFingerprint(snapshot, first, lod, 0),
+            TimelineVelocityTileRasterizer.ComputeContentFingerprint(snapshot, later, lod, 0));
+    }
+
+    [Fact]
     public void PianoTileDestinationRemainsWorldAnchoredWhilePanning()
     {
         TimelineViewport initial = new(0, 1_000, 0, 8, 1_000, 160, 20);
@@ -777,6 +898,16 @@ public sealed class TimelineRenderingTests
 
     private static byte Alpha(TimelineRasterBuffer buffer, int x, int y) =>
         buffer.Pixels[(y * buffer.Width + x) * 4 + 3];
+
+    private static Color PixelColor(TimelineRasterBuffer buffer, int x, int y)
+    {
+        int offset = (y * buffer.Width + x) * 4;
+        return Color.FromArgb(
+            buffer.Pixels[offset + 3],
+            buffer.Pixels[offset + 2],
+            buffer.Pixels[offset + 1],
+            buffer.Pixels[offset]);
+    }
 
     [Fact]
     public void WorkspaceIdentitySeparatesTypeAndObjectWorkspaces()

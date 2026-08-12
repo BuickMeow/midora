@@ -15,14 +15,14 @@
 - Arrangement、Segment Piano Roll 和 SubVoice Piano Roll 的工具按钮互斥且始终恰有一个激活；重复点击当前工具不清空工具状态，新 Workspace 仍默认 Select。
 - Draw 是 Segment / Note 的直接编辑工具：空白处创建，主体拖动，左右边缘 Resize；命中对象或执行直接编辑时隐藏创建预览，并显示提交后的位置与长度。
 - Draw 模式下在 Arrangement Segment、Segment Logical Note 或 SubVoice Template Note 主体执行 `Ctrl+Drag` 时，复制当前选择集并以同一个时间及 Track/pitch delta 放置副本；原对象不移动。复制意图在越过拖动阈值时确认，普通 `Ctrl+Click` 仍切换选择，边缘 `Ctrl+Drag` 仍是 Resize。成功后只选择副本，完整手势形成一个 Project Undo。
-- Select 只负责单击选择和框选，不直接拖动、Resize 或双击创建 Segment / Note。Draw 与 Select 的单击对象都保留选择行为。
+- Select 在 Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 中只通过框选改变对象选择；单次左键按下即使位于 Segment / Note 上也从该点开始框选，不再保留单对象点击选择。Draw 仍保留对象点击选择，并负责直接拖动、Resize 与创建；既有双击导航不受影响。
 - Draw 在空白处使用默认指针，在对象主体和边缘使用移动与水平 Resize 指针；Select 使用十字指针且命中对象时不切换为编辑指针；Split 命中 Segment 时使用 I-beam 指针。
 - 无修饰键 `D`、`S`、`E` 分别切换活动 Timeline Workspace 的 Draw、Select、Erase；文本/代码输入、ComboBox、菜单、Popup、内联编辑和 Modal 优先处理输入，不切换背景工具。
 
 ## 3. 视图与控件验收
 
 - Arrangement Segment 使用更深的低饱和蓝灰色，以提高内部 Note Preview 对比度；Note Preview 使用更亮的蓝灰色，选中 Segment 使用同色系边框和更深背景。Segment Piano Roll active range 保留原界外基础底色，界外范围进一步压暗，未选中 Note 使用更亮的蓝灰色，选中 Note 保留当前红色填充与边框。
-- Velocity 未选中柱使用与 Piano Roll Note 一致的较亮蓝灰色；对应选中 Note 的柱使用红色。每个柱子的左上角绘制略向外凸出的方形 onset marker，明确表示对应 Note 的 start tick 与 velocity 顶点。
+- Velocity 未选中柱使用与 Piano Roll Note 一致的较亮蓝灰色；对应选中 Note 的柱使用红色。该早期“按 Note 长度画柱体”的形状已由 2026-08-12 的 ADR-UI-022 取代：每个 Note 在 start tick 显示固定窄柱与更大的方形 onset marker。
 - Grid / Snap 组合框选择后，显示文本立即更新为实际生效的 `Bar` 或简写分数。
 - ComboBox 下拉指示使用 Fluent System Icons chevron，垂直居中；不使用字体符号。
 - Segment 与 SubVoice Piano Roll 的显式垂直 ScrollBar 必须完整显示 Track / Thumb，并继续与现有纵向视口同步；Thumb 长度按当前可见 pitch 行数相对 MIDI `0..127` 的比例计算，不得使用固定 `ViewportSize`。

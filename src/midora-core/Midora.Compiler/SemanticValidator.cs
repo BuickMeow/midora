@@ -18,16 +18,16 @@ public static class SemanticValidator
         if (project.TicksPerQuarterNote is < MidoraProject.MinimumTicksPerQuarterNote
             or > MidoraProject.MaximumTicksPerQuarterNote)
         {
-            Error("MIDORA1001", "TicksPerQuarterNote 必须位于 1..32767。", projectSource);
+            Error("MIDORA1001", "TicksPerQuarterNote must be in the range 1..32767.", projectSource);
         }
 
         if (request.StartTick < 0 || request.EndTick is < 0 || request.EndTick < request.StartTick)
         {
-            Error("MIDORA1002", "编译范围必须是非负且不反向的 [startTick, endTick)。", projectSource);
+            Error("MIDORA1002", "The compilation range must be a non-negative, non-reversed [startTick, endTick) range.", projectSource);
         }
         if (!Enum.IsDefined(request.Purpose))
         {
-            Error("MIDORA1004", "编译请求的 Compilation Purpose 枚举值非法。", projectSource);
+            Error("MIDORA1004", "The Compilation Purpose value is invalid.", projectSource);
         }
 
         ValidateConductor(project, diagnostics);
@@ -46,14 +46,14 @@ public static class SemanticValidator
             if (!instruments.TryAdd(instrument.Id, instrument)
                 && (request.IncludedTrackIds is null || participates))
             {
-                Error("MIDORA1201", "Event Instrument ID 重复。", source);
+                Error("MIDORA1201", "The Event Instrument ID is duplicated.", source);
             }
             if ((request.IncludedTrackIds is null || participates)
                 && (string.IsNullOrWhiteSpace(instrument.Name)
                     || instrument.Name != instrument.Name.Trim()
                     || !names.Add(instrument.Name)))
             {
-                Error("MIDORA1202", "Event Instrument 名称必须 trim 后非空且忽略大小写唯一。", source);
+                Error("MIDORA1202", "Event Instrument names must be non-empty after trimming and unique ignoring case.", source);
             }
             if (request.IncludedTrackIds is not null && !participates)
             {
@@ -107,7 +107,7 @@ public static class SemanticValidator
         {
             AddError(
                 "MIDORA1005",
-                "编译请求引用了不属于参与编译 Event Instrument 的 SubVoice。",
+                "The compilation request references a SubVoice that does not belong to a participating Event Instrument.",
                 new(),
                 diagnostics);
         }
@@ -144,11 +144,11 @@ public static class SemanticValidator
         SourceReference source = new();
         if (project.Conductor.Tempos.Count(change => change.Tick == 0) != 1)
         {
-            AddError("MIDORA1010", "Conductor 必须在 tick 0 恰好包含一个 Tempo 状态。", source, diagnostics);
+            AddError("MIDORA1010", "The Conductor must contain exactly one Tempo state at tick 0.", source, diagnostics);
         }
         if (project.Conductor.TimeSignatures.Count(change => change.Tick == 0) != 1)
         {
-            AddError("MIDORA1011", "Conductor 必须在 tick 0 恰好包含一个 Time Signature 状态。", source, diagnostics);
+            AddError("MIDORA1011", "The Conductor must contain exactly one Time Signature state at tick 0.", source, diagnostics);
         }
         HashSet<long> tempoTicks = [];
         foreach (TempoChange tempo in project.Conductor.Tempos)
@@ -157,7 +157,7 @@ public static class SemanticValidator
                 || !IsRepresentableTempo(tempo.BeatsPerMinute)
                 || !tempoTicks.Add(tempo.Tick))
             {
-                AddError("MIDORA1012", "Tempo tick 必须非负、BPM 必须为正且同 tick 唯一。", source with { Tick = tempo.Tick }, diagnostics);
+                AddError("MIDORA1012", "Tempo ticks must be non-negative, BPM must be positive, and each tick must contain at most one Tempo change.", source with { Tick = tempo.Tick }, diagnostics);
             }
         }
         HashSet<long> signatureTicks = [];
@@ -170,7 +170,7 @@ public static class SemanticValidator
             {
                 AddError(
                     "MIDORA1013",
-                    "Time Signature 非法或同 tick 重复。",
+                    "The Time Signature is invalid or duplicated at the same tick.",
                     source with { SourceEventId = signature.Id, Tick = signature.Tick },
                     diagnostics);
                 canAnalyzeTimeSignatureBars = false;
@@ -181,8 +181,8 @@ public static class SemanticValidator
             {
                 AddError(
                     "MIDORA1017",
-                    $"Time Signature 分母 {signature.Denominator} 与 TPQ "
-                    + $"{project.TicksPerQuarterNote} 不兼容；4 × TPQ 必须能被分母整除。",
+                    $"Time Signature denominator {signature.Denominator} is incompatible with TPQ "
+                    + $"{project.TicksPerQuarterNote}; 4 × TPQ must be divisible by the denominator.",
                     source with { SourceEventId = signature.Id, Tick = signature.Tick },
                     diagnostics);
                 canAnalyzeTimeSignatureBars = false;
@@ -207,29 +207,29 @@ public static class SemanticValidator
                     diagnostics.Add(new(
                         "MIDORA1018",
                         DiagnosticSeverity.Warning,
-                        $"tick {current.Tick} 的 Time Signature 变化截断了旧小节；"
-                        + "该 tick 立即作为新小节 Beat 1。",
+                        $"The Time Signature change at tick {current.Tick} truncates the previous bar; "
+                        + "that tick immediately becomes beat 1 of a new bar.",
                         source with { SourceEventId = current.Id, Tick = current.Tick }));
                 }
             }
         }
         if (project.Conductor.EndMarkerTick is < 0)
         {
-            AddError("MIDORA1014", "End Marker tick 不得为负。", source, diagnostics);
+            AddError("MIDORA1014", "The End Marker tick must not be negative.", source, diagnostics);
         }
         HashSet<long> keyTicks = [];
         foreach (KeySignatureChange key in project.Conductor.KeySignatures)
         {
             if (key.Tick < 0 || key.SharpsFlats is < -7 or > 7 || !keyTicks.Add(key.Tick))
             {
-                AddError("MIDORA1015", "Key Signature 非法或同 tick 重复。", source with { Tick = key.Tick }, diagnostics);
+                AddError("MIDORA1015", "The Key Signature is invalid or duplicated at the same tick.", source with { Tick = key.Tick }, diagnostics);
             }
         }
         foreach (ProjectMarker marker in project.Conductor.Markers)
         {
             if (marker.Tick < 0)
             {
-                AddError("MIDORA1016", "Marker tick 不得为负；名称允许为空和重复。", source with { Tick = marker.Tick }, diagnostics);
+                AddError("MIDORA1016", "Marker ticks must not be negative; marker names may be empty or duplicated.", source with { Tick = marker.Tick }, diagnostics);
             }
         }
     }
@@ -276,7 +276,7 @@ public static class SemanticValidator
                 || !names.Add(folder.Name))
             {
                 AddError("MIDORA1020",
-                    "Event Instrument Library Folder 必须为单层、名称 trim 后非空且忽略大小写唯一。",
+                    "Event Instrument Library Folders must be one level deep, non-empty after trimming, and unique ignoring case.",
                     new(), diagnostics);
             }
         }
@@ -291,7 +291,7 @@ public static class SemanticValidator
             if (instrument.LibraryFolderId.HasValue && !ids.Contains(instrument.LibraryFolderId.Value))
             {
                 diagnostics.Add(new("MIDORA1021", DiagnosticSeverity.Warning,
-                    "Event Instrument 引用的 Library Folder 不存在；删除 Folder 时应把内容移至 Unfiled。",
+                    "The Event Instrument references a missing Library Folder; deleting a Folder must move its contents to Unfiled.",
                     new(EventInstrumentId: instrument.Id)));
             }
         }
@@ -305,18 +305,18 @@ public static class SemanticValidator
     {
         if (instrument.RootNote is < 0 or > 127 || instrument.TemplateLengthTicks <= 0)
         {
-            AddError("MIDORA1210", "Event Instrument Root Note 或 Template Length 非法。", source, diagnostics);
+            AddError("MIDORA1210", "The Event Instrument Root Note or Template Length is invalid.", source, diagnostics);
         }
         if (instrument.SubVoices.Count is < 1 or > 256)
         {
-            AddError("MIDORA1211", "Event Instrument 必须包含 1–256 个 SubVoice。", source, diagnostics);
+            AddError("MIDORA1211", "An Event Instrument must contain 1–256 SubVoices.", source, diagnostics);
         }
         if (!Enum.IsDefined(instrument.OverlapPolicy)
             || !Enum.IsDefined(instrument.OverlapScope)
             || !Enum.IsDefined(instrument.ShortLifecycle)
             || !Enum.IsDefined(instrument.LongLifecycle))
         {
-            AddError("MIDORA1216", "Event Instrument Overlap 或生命周期枚举值非法。", source, diagnostics);
+            AddError("MIDORA1216", "An Event Instrument overlap or lifecycle value is invalid.", source, diagnostics);
         }
         bool hasLoop = instrument.LoopStartTick.HasValue || instrument.LoopEndTick.HasValue;
         HashSet<MidoraId> envelopeIds = instrument.Envelopes.Select(value => value.Id).ToHashSet();
@@ -329,7 +329,7 @@ public static class SemanticValidator
             if (!functions.TryAdd(function.Id, function) || normalizedName.Length == 0
                 || !functionNames.Add(normalizedName))
             {
-                AddError("MIDORA1273", "Mapping Function ID 与 trim 后名称必须在 Event Instrument 内唯一且非空。", functionSource, diagnostics);
+                AddError("MIDORA1273", "Mapping Function IDs and trimmed names must be non-empty and unique within the Event Instrument.", functionSource, diagnostics);
             }
         }
         bool usesEnvelope = EnumerateMappingSteps(instrument)
@@ -338,15 +338,15 @@ public static class SemanticValidator
             || instrument.LoopStartTick < 0 || instrument.LoopEndTick <= instrument.LoopStartTick
             || instrument.LoopEndTick > instrument.TemplateLengthTicks))
         {
-            AddError("MIDORA1212", "Loop 必须是 Template 内非空的 [loopStart, loopEnd)。", source, diagnostics);
+            AddError("MIDORA1212", "The Loop must be a non-empty [loopStart, loopEnd) range within the Template.", source, diagnostics);
         }
         if ((hasLoop || usesEnvelope) && !instrument.RequiresChannelIsolation)
         {
-            AddError("MIDORA1213", "Loop 和 Envelope 要求 Channel Isolation。", source, diagnostics);
+            AddError("MIDORA1213", "Loop and Envelope require Channel Isolation.", source, diagnostics);
         }
         if (instrument.OverlapPolicy == OverlapPolicy.LetOverlap && !instrument.RequiresChannelIsolation)
         {
-            AddError("MIDORA1215", "Let Overlap 要求 Per-Note Instance Isolation。", source, diagnostics);
+            AddError("MIDORA1215", "Let Overlap requires Per-Note Instance Isolation.", source, diagnostics);
         }
         bool perNoteMapping = EnumerateMappingSteps(instrument).Any(step =>
             IsPerNoteStep(step) || step.Operation == MappingOperation.CustomCSharp
@@ -357,7 +357,7 @@ public static class SemanticValidator
                 .Any(value => value.Kind == TemplateEventKind.Note && HasActiveSteps(value.NumberMappings));
         if (perNoteMapping && !instrument.RequiresChannelIsolation)
         {
-            AddError("MIDORA1214", "依赖单个 Logical Note 上下文的 Mapping 要求 Channel Isolation。", source, diagnostics);
+            AddError("MIDORA1214", "Mappings that depend on an individual Logical Note context require Channel Isolation.", source, diagnostics);
         }
         ValidateState(instrument.InitialState, source, diagnostics);
         HashSet<MidoraId> subVoiceIds = [];
@@ -366,7 +366,7 @@ public static class SemanticValidator
             SourceReference subSource = source with { SubVoiceId = subVoice.Id };
             if (!subVoiceIds.Add(subVoice.Id) || subVoice.RootNoteOverride is < 0 or > 127)
             {
-                AddError("MIDORA1220", "SubVoice ID 重复或 Root Note Override 非法。", subSource, diagnostics);
+                AddError("MIDORA1220", "The SubVoice ID is duplicated or its Root Note Override is invalid.", subSource, diagnostics);
             }
             ValidateState(subVoice.InitialState, subSource, diagnostics);
             HashSet<MidiValueTarget> curveTargets = [];
@@ -375,13 +375,13 @@ public static class SemanticValidator
                 SourceReference curveSource = subSource with { ValueCurveId = curve.Id };
                 if (!curveTargets.Add(curve.Target) || curve.Points.Count == 0)
                 {
-                    AddError("MIDORA1221", "每个 SubVoice 的同一 MIDI target 最多一条非空 Curve。", curveSource, diagnostics);
+                    AddError("MIDORA1221", "Each SubVoice may contain at most one non-empty Curve for the same MIDI target.", curveSource, diagnostics);
                 }
                 ValidateTarget(curve.Target, curveSource, diagnostics);
                 ValidateTargetSettings(curve.TargetSettings, curveSource, diagnostics);
                 if (curve.Target.Kind is MidiValueKind.BankMsb or MidiValueKind.BankLsb or MidiValueKind.Program)
                 {
-                    AddError("MIDORA1223", "Bank 和 Program 不支持 Curve。", curveSource, diagnostics);
+                    AddError("MIDORA1223", "Bank and Program do not support Curves.", curveSource, diagnostics);
                 }
                 long previous = -1;
                 foreach (CurvePoint point in curve.Points.OrderBy(point => point.Tick))
@@ -390,7 +390,7 @@ public static class SemanticValidator
                         || point.Tick == previous || !double.IsFinite(point.Value)
                         || !Enum.IsDefined(point.Interpolation))
                     {
-                        AddError("MIDORA1222", "Curve point 的 tick/value/interpolation 非法或同 tick 重复。", curveSource with { Tick = point.Tick }, diagnostics);
+                        AddError("MIDORA1222", "A Curve point has an invalid tick, value, or interpolation, or is duplicated at the same tick.", curveSource with { Tick = point.Tick }, diagnostics);
                     }
                     double minimum = curve.Target.Kind == MidiValueKind.PitchBend ? -8192 : 0;
                     double maximum = curve.Target.Kind switch
@@ -403,7 +403,7 @@ public static class SemanticValidator
                     if ((point.Value < minimum || point.Value > maximum)
                         && curve.TargetSettings.Overflow == MappingOverflow.Fail)
                     {
-                        AddError("MIDORA1224", "Curve point 超出目标 MIDI 值域。", curveSource with { Tick = point.Tick }, diagnostics);
+                        AddError("MIDORA1224", "A Curve point is outside the target MIDI value range.", curveSource with { Tick = point.Tick }, diagnostics);
                     }
                     previous = point.Tick;
                 }
@@ -416,32 +416,32 @@ public static class SemanticValidator
                     .Concat(ActiveSteps(templateEvent.SecondaryValueMappings));
                 if (templateEvent.Kind != TemplateEventKind.Note && HasActiveSteps(templateEvent.NumberMappings))
                 {
-                    AddError("MIDORA1250", "只有 Note number 是可映射的事件 number；CC/RPN/NRPN number 属于事件身份。",
+                    AddError("MIDORA1250", "Only a Note number is a mappable event number; CC/RPN/NRPN numbers are part of event identity.",
                         subSource with { SourceEventId = templateEvent.Id }, diagnostics);
                 }
                 if (templateEvent.Kind is not TemplateEventKind.Bank and not TemplateEventKind.PitchBendRange
                     && HasActiveSteps(templateEvent.SecondaryValueMappings))
                 {
-                    AddError("MIDORA1251", "该事件类型没有可映射的 secondary value。",
+                    AddError("MIDORA1251", "This event type has no mappable secondary value.",
                         subSource with { SourceEventId = templateEvent.Id }, diagnostics);
                 }
                 if (templateEvent.Kind == TemplateEventKind.Bank
                     && (!templateEvent.HasBankMsb && HasActiveSteps(templateEvent.ValueMappings)
                         || !templateEvent.HasBankLsb && HasActiveSteps(templateEvent.SecondaryValueMappings)))
                 {
-                    AddError("MIDORA1253", "Bank Mapping 只能作用于该事件中实际存在的 MSB/LSB 值。",
+                    AddError("MIDORA1253", "Bank Mapping may only target MSB/LSB values that are present in the event.",
                         subSource with { SourceEventId = templateEvent.Id }, diagnostics);
                 }
                 if (templateEvent.Kind != TemplateEventKind.Note
                     && eventSteps.Any(step => step.Source is MappingSource.TemplateNote or MappingSource.TemplateVelocity))
                 {
-                    AddError("MIDORA1252", "非 Note 事件不得使用 templateNote/templateVelocity Mapping Source。",
+                    AddError("MIDORA1252", "Non-Note events must not use templateNote/templateVelocity Mapping Sources.",
                         subSource with { SourceEventId = templateEvent.Id }, diagnostics);
                 }
                 if (templateEvent.Kind != TemplateEventKind.Note
                     && DeclaresNoteOnlyContext(eventSteps, functions))
                 {
-                    AddError("MIDORA1254", "非 Note 事件的 C# Mapping Function 不得声明 TemplateNote/TemplateVelocity。",
+                    AddError("MIDORA1254", "A C# Mapping Function for a non-Note event must not declare TemplateNote/TemplateVelocity.",
                         subSource with { SourceEventId = templateEvent.Id }, diagnostics);
                 }
                 ValidateMappingReferences(eventSteps,
@@ -451,7 +451,7 @@ public static class SemanticValidator
                     && templateEvent.Tick < instrument.LoopEndTick
                     && templateEvent.Tick + templateEvent.LengthTicks > instrument.LoopEndTick)
                 {
-                    AddError("MIDORA1248", "Loop 内开始的 Note 不得把 NoteOff 延伸到 Loop End 之后。", subSource with { SourceEventId = templateEvent.Id }, diagnostics);
+                    AddError("MIDORA1248", "A Note that starts inside a Loop must not extend its NoteOff beyond the Loop End.", subSource with { SourceEventId = templateEvent.Id }, diagnostics);
                 }
             }
         }
@@ -465,11 +465,11 @@ public static class SemanticValidator
             };
             if (!parameters.ContainsKey(mapping.ParameterId))
             {
-                AddError("MIDORA1230", $"Parameter Mapping 引用了未知参数 '{mapping.ParameterId}'。", mappingSource, diagnostics);
+                AddError("MIDORA1230", $"The Parameter Mapping references unknown parameter '{mapping.ParameterId}'.", mappingSource, diagnostics);
             }
             if (!subVoiceIds.Contains(mapping.SubVoiceId))
             {
-                AddError("MIDORA1235", $"Parameter Mapping 引用了未知 SubVoice '{mapping.SubVoiceId}'。", mappingSource, diagnostics);
+                AddError("MIDORA1235", $"The Parameter Mapping references unknown SubVoice '{mapping.SubVoiceId}'.", mappingSource, diagnostics);
             }
             ValidateTarget(mapping.Target, mappingSource, diagnostics);
             ValidateTargetSettings(mapping.TargetSettings, mappingSource, diagnostics);
@@ -478,12 +478,12 @@ public static class SemanticValidator
             if (ActiveSteps(mapping.Steps)
                 .Any(step => step.Source is MappingSource.TemplateNote or MappingSource.TemplateVelocity))
             {
-                AddError("MIDORA1252", "Logical Parameter Mapping 不得使用 TemplateNote/TemplateVelocity。",
+                AddError("MIDORA1252", "Logical Parameter Mapping must not use TemplateNote/TemplateVelocity.",
                     mappingSource, diagnostics);
             }
             if (DeclaresNoteOnlyContext(ActiveSteps(mapping.Steps), functions))
             {
-                AddError("MIDORA1254", "Logical Parameter C# Mapping Function 不得声明 TemplateNote/TemplateVelocity。",
+                AddError("MIDORA1254", "A Logical Parameter C# Mapping Function must not declare TemplateNote/TemplateVelocity.",
                     mappingSource, diagnostics);
             }
         }
@@ -495,7 +495,7 @@ public static class SemanticValidator
             if (group.Skip(1).Any(value => value.TargetSettings.Rounding != first.TargetSettings.Rounding
                 || value.TargetSettings.Overflow != first.TargetSettings.Overflow))
             {
-                AddError("MIDORA1275", "同一 SubVoice/目标参数的 Logical Parameter Mappings 必须共享取整和最终越界策略。",
+                AddError("MIDORA1275", "Logical Parameter Mappings for the same SubVoice and target parameter must share rounding and final-overflow policies.",
                     source with { SubVoiceId = group.Key.SubVoiceId }, diagnostics);
             }
         }
@@ -508,7 +508,7 @@ public static class SemanticValidator
                 || envelope.StartValue is < 0 or > 1 || envelope.PeakValue is < 0 or > 1
                 || envelope.SustainValue is < 0 or > 1 || envelope.EndValue is < 0 or > 1)
             {
-                AddError("MIDORA1231", "Envelope 时间和值必须有效。",
+                AddError("MIDORA1231", "Envelope times and values must be valid.",
                     source with { EnvelopeId = envelope.Id }, diagnostics);
             }
         }
@@ -519,18 +519,18 @@ public static class SemanticValidator
         SourceReference eventSource = source with { SourceEventId = value.Id, Tick = value.Tick };
         if (!Enum.IsDefined(value.Kind))
         {
-            AddError("MIDORA1249", "Template Event 类型枚举值非法。", eventSource, diagnostics);
+            AddError("MIDORA1249", "The Template Event type value is invalid.", eventSource, diagnostics);
         }
         ValidateTargetSettings(value.NumberTargetSettings, eventSource, diagnostics);
         ValidateTargetSettings(value.ValueTargetSettings, eventSource, diagnostics);
         ValidateTargetSettings(value.SecondaryValueTargetSettings, eventSource, diagnostics);
         if (value.Kind == TemplateEventKind.Note && value.NumberTargetSettings.Overflow != MappingOverflow.Fail)
         {
-            AddError("MIDORA1276", "Note number 的最终越界策略必须为 Fail。", eventSource, diagnostics);
+            AddError("MIDORA1276", "The final-overflow policy for a Note number must be Fail.", eventSource, diagnostics);
         }
         if (value.Tick < 0 || value.Tick >= templateLength)
         {
-            AddError("MIDORA1240", "Template event 必须位于 Template 内。", eventSource, diagnostics);
+            AddError("MIDORA1240", "The Template Event must be within the Template.", eventSource, diagnostics);
         }
         switch (value.Kind)
         {
@@ -539,13 +539,13 @@ public static class SemanticValidator
                     || value.Tick > long.MaxValue - Math.Max(value.LengthTicks, 0)
                     || value.Tick + Math.Max(value.LengthTicks, 0) > templateLength)
                 {
-                    AddError("MIDORA1241", "Template Note 的 length/note/velocity 非法，或 NoteOff 超出 Template Length。", eventSource, diagnostics);
+                    AddError("MIDORA1241", "The Template Note has an invalid length, note, or velocity, or its NoteOff exceeds the Template Length.", eventSource, diagnostics);
                 }
                 break;
             case TemplateEventKind.ControlChange:
                 if (value.Number is < 0 or > 119 || value.Number is 91 or 93 || value.Value is < 0 or > 127)
                 {
-                    AddError("MIDORA1242", "普通 CC 只允许 0–119，且初版禁止 CC91/CC93。", eventSource, diagnostics);
+                    AddError("MIDORA1242", "Ordinary CC numbers must be in 0–119, and CC91/CC93 are prohibited in the initial release.", eventSource, diagnostics);
                 }
                 break;
             case TemplateEventKind.Bank:
@@ -553,32 +553,32 @@ public static class SemanticValidator
                     || value.HasBankMsb && value.Value is < 0 or > 127
                     || value.HasBankLsb && value.SecondaryValue is < 0 or > 127)
                 {
-                    AddError("MIDORA1243", "Bank 必须至少包含 MSB/LSB 之一，存在的值必须在 0–127。", eventSource, diagnostics);
+                    AddError("MIDORA1243", "Bank must contain at least one of MSB/LSB, and each present value must be in 0–127.", eventSource, diagnostics);
                 }
                 break;
             case TemplateEventKind.Program:
                 if (value.Value is < 0 or > 127)
                 {
-                    AddError("MIDORA1244", "Program 必须在 0–127。", eventSource, diagnostics);
+                    AddError("MIDORA1244", "Program must be in 0–127.", eventSource, diagnostics);
                 }
                 break;
             case TemplateEventKind.PitchBend:
                 if (value.Value is < -8192 or > 8191)
                 {
-                    AddError("MIDORA1245", "Pitch Bend 必须在 -8192–8191。", eventSource, diagnostics);
+                    AddError("MIDORA1245", "Pitch Bend must be in -8192–8191.", eventSource, diagnostics);
                 }
                 break;
             case TemplateEventKind.RegisteredParameter:
             case TemplateEventKind.NonRegisteredParameter:
                 if (value.Number is < 0 or > 16383 || value.Value is < 0 or > 16383)
                 {
-                    AddError("MIDORA1246", "RPN/NRPN parameter/data 必须是 14-bit。", eventSource, diagnostics);
+                    AddError("MIDORA1246", "RPN/NRPN parameter and data values must be 14-bit.", eventSource, diagnostics);
                 }
                 break;
             case TemplateEventKind.PitchBendRange:
                 if (value.Value is < 0 or > 127 || value.SecondaryValue is < 0 or > 99)
                 {
-                    AddError("MIDORA1247", "Pitch Bend Range 必须是 0–127 semitones、0–99 cents。", eventSource, diagnostics);
+                    AddError("MIDORA1247", "Pitch Bend Range must use 0–127 semitones and 0–99 cents.", eventSource, diagnostics);
                 }
                 break;
         }
@@ -600,7 +600,7 @@ public static class SemanticValidator
             if (!result.TryAdd(parameter.Id, parameter) || string.IsNullOrWhiteSpace(parameter.Name)
                 || parameter.Name != parameter.Name.Trim() || !names.Add(parameter.Name))
             {
-                AddError("MIDORA1101", "Logical Parameter ID 与 trim 后名称必须在 Event Instrument 内唯一且非空。", parameterSource, diagnostics);
+                AddError("MIDORA1101", "Logical Parameter IDs and trimmed names must be non-empty and unique within the Event Instrument.", parameterSource, diagnostics);
             }
             if (!Enum.IsDefined(parameter.Type)
                 || !double.IsFinite(parameter.Minimum) || !double.IsFinite(parameter.Maximum)
@@ -609,18 +609,18 @@ public static class SemanticValidator
                 || parameter.DisplayMaximum < parameter.DisplayMinimum
                 || parameter.DefaultValue < parameter.Minimum || parameter.DefaultValue > parameter.Maximum)
             {
-                AddError("MIDORA1102", $"Logical Parameter '{parameter.Name}' 的类型、合法范围、显示范围或默认值无效。", parameterSource, diagnostics);
+                AddError("MIDORA1102", $"Logical Parameter '{parameter.Name}' has an invalid type, valid range, display range, or default value.", parameterSource, diagnostics);
             }
             if (parameter.Type == LogicalParameterType.Integer
                 && (parameter.Minimum != Math.Truncate(parameter.Minimum)
                     || parameter.Maximum != Math.Truncate(parameter.Maximum)
                     || parameter.DefaultValue != Math.Truncate(parameter.DefaultValue)))
             {
-                AddError("MIDORA1103", $"Integer 参数 '{parameter.Name}' 的合法范围和默认值必须是整数。", parameterSource, diagnostics);
+                AddError("MIDORA1103", $"Integer parameter '{parameter.Name}' must use integer valid-range bounds and an integer default value.", parameterSource, diagnostics);
             }
             if (parameter.Type == LogicalParameterType.Enum && parameter.EnumItems.Count == 0)
             {
-                AddError("MIDORA1104", $"枚举参数 '{parameter.Name}' 必须至少有一个枚举项。", parameterSource, diagnostics);
+                AddError("MIDORA1104", $"Enum parameter '{parameter.Name}' must contain at least one enum item.", parameterSource, diagnostics);
             }
             if (parameter.Type == LogicalParameterType.Enum)
             {
@@ -634,14 +634,14 @@ public static class SemanticValidator
                         || !enumNames.Add(item.Name) || !enumValues.Add(effectiveValue)
                         || effectiveValue < parameter.Minimum || effectiveValue > parameter.Maximum)
                     {
-                        AddError("MIDORA1105", $"Enum 参数 '{parameter.Name}' 的 item 名称/值非法、重复或超出合法范围。", parameterSource, diagnostics);
+                        AddError("MIDORA1105", $"Enum parameter '{parameter.Name}' contains an invalid, duplicated, or out-of-range item name or value.", parameterSource, diagnostics);
                     }
                 }
                 if (parameter.DefaultValue < int.MinValue || parameter.DefaultValue > int.MaxValue
                     || parameter.DefaultValue != Math.Truncate(parameter.DefaultValue)
                     || !enumValues.Contains((int)parameter.DefaultValue))
                 {
-                    AddError("MIDORA1106", $"Enum 参数 '{parameter.Name}' 的默认值不是有效枚举项。", parameterSource, diagnostics);
+                    AddError("MIDORA1106", $"Enum parameter '{parameter.Name}' has a default value that is not a valid enum item.", parameterSource, diagnostics);
                 }
             }
         }
@@ -672,7 +672,7 @@ public static class SemanticValidator
             }
             if (!participatingTrackIds.Add(track.Id))
             {
-                AddError("MIDORA1301", "Logical Track ID 必须唯一；名称允许为空和重复。", trackSource, diagnostics);
+                AddError("MIDORA1301", "Logical Track IDs must be unique; names may be empty or duplicated.", trackSource, diagnostics);
             }
             EventInstrument? boundInstrument = null;
             bool boundInstrumentIsDamaged = false;
@@ -682,19 +682,19 @@ public static class SemanticValidator
                 boundInstrumentIsDamaged = damagedInstrumentIds.Contains(track.EventInstrumentId.Value);
                 diagnostics.Add(boundInstrumentIsDamaged
                     ? new("MIDORA1305", DiagnosticSeverity.Error,
-                        "Logical Track 绑定的 Event Instrument 已损坏；该 Track 不参与编译。", trackSource with
+                        "The Event Instrument bound to the Logical Track is damaged; the Track is excluded from compilation.", trackSource with
                         {
                             EventInstrumentId = track.EventInstrumentId.Value
                         })
                     : new("MIDORA1303", DiagnosticSeverity.Info,
-                        "Logical Track 的 Event Instrument 引用已断裂；本次按未绑定 Track 处理。", trackSource));
+                        "The Logical Track has a broken Event Instrument reference; it is treated as unbound for this compilation.", trackSource));
             }
             if (request.Purpose == CompilationPurpose.SegmentPreview
                 && boundInstrument is null
                 && !boundInstrumentIsDamaged)
             {
                 AddError("MIDORA1306",
-                    "Segment Preview 要求 Logical Track 绑定一个可用的 Event Instrument。",
+                    "Segment Preview requires the Logical Track to be bound to an available Event Instrument.",
                     trackSource,
                     diagnostics);
             }
@@ -702,7 +702,7 @@ public static class SemanticValidator
                 && track.Segments.Any(segment => segment.Notes.Count != 0 || segment.ParameterLanes.Count != 0))
             {
                 diagnostics.Add(new("MIDORA1304", DiagnosticSeverity.Info,
-                    "未绑定 Event Instrument 的非空 Logical Track 不产生编译输出。", trackSource));
+                    "A non-empty Logical Track without an Event Instrument binding produces no compiled output.", trackSource));
             }
             Dictionary<MidoraId, LogicalParameterDefinition> parameters = [];
             if (boundInstrument is not null)
@@ -725,11 +725,11 @@ public static class SemanticValidator
                     && segment.ContentOffsetTick <= long.MaxValue - segment.LengthTicks;
                 if (!projectRangeRepresentable || !contentRangeRepresentable)
                 {
-                    AddError("MIDORA1310", "Segment 位置、长度、Content Offset 非法或时间范围超出 Int64。", segmentSource, diagnostics);
+                    AddError("MIDORA1310", "The Segment position, length, or Content Offset is invalid, or its time range exceeds Int64.", segmentSource, diagnostics);
                 }
                 if (projectRangeRepresentable && previousEndTick > segment.ProjectStartTick)
                 {
-                    AddError("MIDORA1311", "同一 Logical Track 的 Segment 不得重叠。", segmentSource, diagnostics);
+                    AddError("MIDORA1311", "Segments on the same Logical Track must not overlap.", segmentSource, diagnostics);
                 }
                 if (projectRangeRepresentable)
                 {
@@ -740,12 +740,12 @@ public static class SemanticValidator
                 {
                     if (!laneIds.Add(lane.ParameterId))
                     {
-                        AddError("MIDORA1312", $"Segment 参数 Lane '{lane.ParameterId}' 重复。", segmentSource, diagnostics);
+                        AddError("MIDORA1312", $"Segment parameter Lane '{lane.ParameterId}' is duplicated.", segmentSource, diagnostics);
                     }
                     else if (boundInstrument is not null && !parameters.ContainsKey(lane.ParameterId))
                     {
                         diagnostics.Add(new("MIDORA1314", DiagnosticSeverity.Warning,
-                            $"Segment 参数 Lane '{lane.ParameterId}' 的引用已断裂；数据保留但不参与编译。", segmentSource));
+                            $"Segment parameter Lane '{lane.ParameterId}' has a broken reference; its data is preserved but excluded from compilation.", segmentSource));
                     }
                     long prior = -1;
                     parameters.TryGetValue(lane.ParameterId, out LogicalParameterDefinition? definition);
@@ -754,23 +754,23 @@ public static class SemanticValidator
                         if (point.Tick < 0 || point.Tick == prior || !double.IsFinite(point.Value)
                             || !Enum.IsDefined(point.Interpolation))
                         {
-                            AddError("MIDORA1313", "参数 Lane point 的 tick/value/interpolation 非法或同 tick 重复。", segmentSource with { Tick = point.Tick }, diagnostics);
+                            AddError("MIDORA1313", "A parameter Lane point has an invalid tick, value, or interpolation, or is duplicated at the same tick.", segmentSource with { Tick = point.Tick }, diagnostics);
                         }
                         if (definition is not null)
                         {
                             if (point.Value < definition.Minimum || point.Value > definition.Maximum)
                             {
-                                AddError("MIDORA1315", "参数 Lane point 超出 Logical Parameter 合法范围。", segmentSource with { Tick = point.Tick }, diagnostics);
+                                AddError("MIDORA1315", "A parameter Lane point is outside the Logical Parameter valid range.", segmentSource with { Tick = point.Tick }, diagnostics);
                             }
                             if (definition.Type == LogicalParameterType.Enum
                                 && point.Interpolation != CurveInterpolation.Step)
                             {
-                                AddError("MIDORA1316", "Enum Logical Parameter 只允许阶梯变化。", segmentSource with { Tick = point.Tick }, diagnostics);
+                                AddError("MIDORA1316", "An Enum Logical Parameter only permits stepped changes.", segmentSource with { Tick = point.Tick }, diagnostics);
                             }
                             if (definition.Type == LogicalParameterType.Integer
                                 && point.Value != Math.Truncate(point.Value))
                             {
-                                AddError("MIDORA1317", "Integer Logical Parameter point 必须是整数。",
+                                AddError("MIDORA1317", "An Integer Logical Parameter point must be an integer.",
                                     segmentSource with { Tick = point.Tick }, diagnostics);
                             }
                             if (definition.Type == LogicalParameterType.Enum
@@ -778,7 +778,7 @@ public static class SemanticValidator
                                     || point.Value != Math.Truncate(point.Value)
                                     || !GetEnumValues(definition).Contains((int)point.Value)))
                             {
-                                AddError("MIDORA1318", "Enum Logical Parameter point 必须引用有效枚举值。",
+                                AddError("MIDORA1318", "An Enum Logical Parameter point must reference a valid enum value.",
                                     segmentSource with { Tick = point.Tick }, diagnostics);
                             }
                         }
@@ -793,14 +793,14 @@ public static class SemanticValidator
                         || note.Note is < 0 or > 127 || note.Velocity is < 1 or > 127
                         || note.StartTick > long.MaxValue - Math.Max(note.LengthTicks, 0))
                     {
-                        AddError("MIDORA1320", "Logical Note 位置、长度、note、velocity 非法或时间范围超出 Int64。", noteSource, diagnostics);
+                        AddError("MIDORA1320", "The Logical Note position, length, note, or velocity is invalid, or its time range exceeds Int64.", noteSource, diagnostics);
                     }
                 }
             }
         }
         if (request.IncludedTrackIds is not null && request.IncludedTrackIds.Any(id => !allTrackIds.Contains(id)))
         {
-            AddError("MIDORA1302", "编译请求引用了不存在的 Logical Track。", new(), diagnostics);
+            AddError("MIDORA1302", "The compilation request references a missing Logical Track.", new(), diagnostics);
         }
     }
 
@@ -937,7 +937,7 @@ public static class SemanticValidator
             if (id == default || id.Value >= project.NextStableId || !ids.Add(id))
             {
                 AddError("MIDORA1003",
-                    "正式对象 Stable ID 为空、在 Project 内重复，或不属于当前 Project 的已分配计数器范围。",
+                    "A formal object's Stable ID is empty, duplicated within the Project, or outside the current Project's allocated counter range.",
                     source, diagnostics);
             }
         }
@@ -949,20 +949,20 @@ public static class SemanticValidator
             || state.PitchBend is < -8192 or > 8191 || state.PitchBendRangeSemitones is < 0 or > 127
             || state.PitchBendRangeCents is < 0 or > 99)
         {
-            AddError("MIDORA1250", "Initial State 含非法 MIDI 值。", source, diagnostics);
+            AddError("MIDORA1250", "The Initial State contains an invalid MIDI value.", source, diagnostics);
         }
         foreach ((int controller, int value) in state.Controllers)
         {
             if (controller is < 0 or > 119 || controller is 91 or 93 || value is < 0 or > 127)
             {
-                AddError("MIDORA1251", "Initial State CC 必须为 0–119，值为 0–127，且禁止 CC91/CC93。", source, diagnostics);
+                AddError("MIDORA1251", "Initial State CC numbers must be in 0–119, values in 0–127, and CC91/CC93 are prohibited.", source, diagnostics);
             }
         }
         foreach ((int parameter, int value) in state.RegisteredParameters.Concat(state.NonRegisteredParameters))
         {
             if (parameter is < 0 or > 16383 || value is < 0 or > 16383)
             {
-                AddError("MIDORA1252", "Initial State RPN/NRPN parameter/data 必须是 14-bit。", source, diagnostics);
+                AddError("MIDORA1252", "Initial State RPN/NRPN parameter and data values must be 14-bit.", source, diagnostics);
             }
         }
     }
@@ -977,7 +977,7 @@ public static class SemanticValidator
         };
         if (invalid)
         {
-            AddError("MIDORA1260", "Mapping/Curve target 非法或为被禁止的 CC91/CC93。", source, diagnostics);
+            AddError("MIDORA1260", "The Mapping/Curve target is invalid or uses prohibited CC91/CC93.", source, diagnostics);
         }
     }
 
@@ -988,7 +988,7 @@ public static class SemanticValidator
     {
         if (!Enum.IsDefined(settings.Rounding) || !Enum.IsDefined(settings.Overflow))
         {
-            AddError("MIDORA1277", "整数目标参数的取整或最终越界策略非法。", source, diagnostics);
+            AddError("MIDORA1277", "An integer target parameter has an invalid rounding or final-overflow policy.", source, diagnostics);
         }
     }
 
@@ -1010,11 +1010,11 @@ public static class SemanticValidator
                 || !double.IsFinite(step.TargetMaximum) || step.SourceMaximum < step.SourceMinimum
                 || step.TargetMaximum < step.TargetMinimum)
             {
-                AddError("MIDORA1270", "Mapping step 的枚举配置或数值范围非法。", stepSource, diagnostics);
+                AddError("MIDORA1270", "A Mapping step has an invalid enum configuration or numeric range.", stepSource, diagnostics);
             }
             if (step.Operation == MappingOperation.CustomCSharp && !step.MappingFunctionId.HasValue)
             {
-                AddError("MIDORA1271", "C# Mapping step 缺少 Mapping Function 引用。", stepSource, diagnostics);
+                AddError("MIDORA1271", "A C# Mapping step is missing its Mapping Function reference.", stepSource, diagnostics);
             }
         }
     }
@@ -1059,17 +1059,17 @@ public static class SemanticValidator
             if (step.Source == MappingSource.LogicalParameter
                 && (!step.LogicalParameterId.HasValue || !parameters.ContainsKey(step.LogicalParameterId.Value)))
             {
-                AddError("MIDORA1232", "Mapping step 引用了未知 Logical Parameter ID。", stepSource, diagnostics);
+                AddError("MIDORA1232", "A Mapping step references an unknown Logical Parameter ID.", stepSource, diagnostics);
             }
             if (step.Source == MappingSource.Envelope
                 && (!step.EnvelopeId.HasValue || !envelopes.Contains(step.EnvelopeId.Value)))
             {
-                AddError("MIDORA1233", "Mapping step 引用了未知 Envelope Preset ID。", stepSource, diagnostics);
+                AddError("MIDORA1233", "A Mapping step references an unknown Envelope Preset ID.", stepSource, diagnostics);
             }
             if (step.Operation == MappingOperation.CustomCSharp
                 && (!step.MappingFunctionId.HasValue || !functions.ContainsKey(step.MappingFunctionId.Value)))
             {
-                AddError("MIDORA1234", "Mapping step 引用了未知 Mapping Function ID。", stepSource, diagnostics);
+                AddError("MIDORA1234", "A Mapping step references an unknown Mapping Function ID.", stepSource, diagnostics);
             }
         }
     }

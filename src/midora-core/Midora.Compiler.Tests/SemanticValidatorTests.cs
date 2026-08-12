@@ -517,7 +517,7 @@ public sealed class SemanticValidatorTests
         Assert.Equal(source.Id, error.Source.SourceEventId);
         Assert.Equal(0, error.Source.Tick);
         Assert.Contains("TPQ 1", error.Message, StringComparison.Ordinal);
-        Assert.Contains("分母 8", error.Message, StringComparison.Ordinal);
+        Assert.Contains("denominator 8", error.Message, StringComparison.Ordinal);
 
         MidoraProject truncated = new(480);
         TimeSignatureChange change = new(truncated, 1_000, 3, 4);

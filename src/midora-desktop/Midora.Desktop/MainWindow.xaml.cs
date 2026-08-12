@@ -28,6 +28,7 @@ public partial class MainWindow : Window
 {
     private const string ProjectTreeDragFormat = "Midora.ProjectTreeNode";
     private const string WorkspaceTabDragFormat = "Midora.WorkspaceTab";
+    private const string EventInstrumentDragFormat = "Midora.EventInstrumentId";
     private const int WmGetMinMaxInfo = 0x0024;
     private const uint MonitorDefaultToNearest = 0x00000002;
     private readonly DesktopSessionController _session = new();
@@ -48,6 +49,9 @@ public partial class MainWindow : Window
     private Point? _workspaceTabDragStart;
     private WorkspaceViewModel? _workspaceTabDragWorkspace;
     private bool _spaceStartedPlayback;
+    private Point? _instrumentListDragStart;
+    private MidoraId? _instrumentListDragId;
+    private int? _trackHeaderContextLane;
 
     public MainWindow()
     {
@@ -410,12 +414,26 @@ public partial class MainWindow : Window
 
     private void OnNewTrackClick(object sender, RoutedEventArgs e)
     {
+        QueueCreateLogicalTrack(sender, insertionIndex: null);
+    }
+
+    private void OnTrackHeaderNewTrackClick(object sender, RoutedEventArgs e)
+    {
+        int? insertionIndex = TryGetTrackHeaderContext(out _, out int trackIndex)
+            ? checked(trackIndex + 1)
+            : null;
+        QueueCreateLogicalTrack(sender, insertionIndex);
+    }
+
+    private void QueueCreateLogicalTrack(object sender, int? insertionIndex)
+    {
         RunAfterMenuClosed(sender, () =>
         {
             if (!_session.HasProject) return;
             RunSynchronous("Create Logical Track", () =>
             {
-                _session.Execute(ProjectDomainEditCommands.CreateLogicalTrack());
+                _session.Execute(ProjectDomainEditCommands.CreateLogicalTrack(
+                    insertionIndex: insertionIndex));
                 _session.OpenArrangement();
             });
         });
@@ -932,6 +950,7 @@ public partial class MainWindow : Window
         }
         void Separator() => menu.Items.Add(new Separator());
 
+        Point contextPoint = Mouse.GetPosition(surface);
         double headerWidth = surface.SurfaceMode switch
         {
             TimelineSurfaceMode.Arrangement => 180,
@@ -939,13 +958,29 @@ public partial class MainWindow : Window
             TimelineSurfaceMode.Conductor => 130,
             _ => 0
         };
-        bool isLaneHeader = Mouse.GetPosition(surface).X < headerWidth;
+        bool isLaneHeader = contextPoint.X < headerWidth;
+        if (surface.SurfaceMode == TimelineSurfaceMode.Arrangement)
+        {
+            _trackHeaderContextLane = surface.TryGetArrangementLaneHeader(contextPoint, out int contextLane)
+                ? contextLane
+                : null;
+        }
         if (isLaneHeader)
         {
             switch (surface.SurfaceMode)
             {
                 case TimelineSurfaceMode.Arrangement:
-                    Add("New Logical Track", OnNewTrackClick, enabled: _session.CanEditProject);
+                    bool hasTrack = TryGetTrackHeaderContext(out LogicalTrack contextTrack, out int trackIndex);
+                    Add("Rename…", OnTrackHeaderRenameClick, enabled: _session.CanEditProject && hasTrack);
+                    Add("Bind Event Instrument…", OnTrackHeaderBindClick, enabled: _session.CanEditProject && hasTrack && _session.Project?.EventInstruments.Count > 0);
+                    Add("Unbind", OnTrackHeaderUnbindClick, enabled: _session.CanEditProject && hasTrack && contextTrack.EventInstrumentId is not null);
+                    Separator();
+                    Add("Move Up", OnTrackHeaderMoveUpClick, enabled: _session.CanEditProject && trackIndex > 0);
+                    Add("Move Down", OnTrackHeaderMoveDownClick, enabled: _session.CanEditProject && hasTrack && _session.Project is not null && trackIndex < _session.Project.Tracks.Count - 1);
+                    Separator();
+                    Add("Delete…", OnTrackHeaderDeleteClick, enabled: _session.CanEditProject && hasTrack);
+                    Separator();
+                    Add("New Logical Track", OnTrackHeaderNewTrackClick, enabled: _session.CanEditProject);
                     return;
                 case TimelineSurfaceMode.EventLanes
                     when _session.ActiveWorkspace is TimelineWorkspaceViewModel
@@ -1093,9 +1128,17 @@ public partial class MainWindow : Window
         MidoraId? instrumentId = ReferenceEquals(dialog.SelectedValue, unbound)
             ? null
             : (MidoraId?)dialog.SelectedValue;
-        RunSynchronous(
-            "Bind Logical Track",
-            () => _session.BindLogicalTrack(trackId, instrumentId));
+        LogicalTrack track = _session.Project.Tracks.Single(item => item.Id == trackId);
+        if (instrumentId is MidoraId selectedInstrumentId)
+        {
+            BindTrackToInstrument(track, selectedInstrumentId);
+        }
+        else
+        {
+            RunSynchronous(
+                "Unbind Logical Track",
+                () => _session.BindLogicalTrack(trackId, null));
+        }
     }
 
     private void DeleteSelectedTreeNode()
@@ -1132,6 +1175,111 @@ public partial class MainWindow : Window
                 () => RunSynchronous("Open Event Instrument", () => _session.OpenInstrument(instrument.Id)),
                 DispatcherPriority.Normal);
         }
+    }
+
+    private void OnInstrumentListMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _instrumentListDragStart = e.GetPosition((IInputElement)sender);
+        _instrumentListDragId = FindListBoxItem(e.OriginalSource as DependencyObject)?.DataContext
+            is InstrumentListItem item
+            ? item.Id
+            : null;
+    }
+
+    private static ListBoxItem? FindListBoxItem(DependencyObject? current)
+    {
+        while (current is not null && current is not ListBoxItem)
+        {
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return current as ListBoxItem;
+    }
+
+    private void OnInstrumentListMouseMove(object sender, MouseEventArgs e)
+    {
+        if (sender is not ListBox list
+            || e.LeftButton != MouseButtonState.Pressed
+            || _instrumentListDragStart is not Point start
+            || _instrumentListDragId is not MidoraId instrumentId)
+        {
+            return;
+        }
+        Point current = e.GetPosition(list);
+        if (Math.Abs(current.X - start.X) < SystemParameters.MinimumHorizontalDragDistance
+            && Math.Abs(current.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance)
+        {
+            return;
+        }
+        _instrumentListDragStart = null;
+        _instrumentListDragId = null;
+        DataObject data = new(EventInstrumentDragFormat, instrumentId.Value);
+        DragDrop.DoDragDrop(list, data, DragDropEffects.Link);
+    }
+
+    private void OnTimelineInstrumentDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = TryResolveInstrumentDrop(sender, e, out _, out _)
+            ? DragDropEffects.Link
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnTimelineInstrumentDrop(object sender, DragEventArgs e)
+    {
+        if (!TryResolveInstrumentDrop(sender, e, out LogicalTrack track, out MidoraId instrumentId))
+        {
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+        BindTrackToInstrument(track, instrumentId);
+        e.Effects = DragDropEffects.Link;
+        e.Handled = true;
+    }
+
+    private bool TryResolveInstrumentDrop(
+        object sender,
+        DragEventArgs e,
+        out LogicalTrack track,
+        out MidoraId instrumentId)
+    {
+        track = null!;
+        instrumentId = default;
+        if (sender is not TimelineSurface surface
+            || surface.SurfaceMode != TimelineSurfaceMode.Arrangement
+            || _session.Project is not MidoraProject project
+            || !e.Data.GetDataPresent(EventInstrumentDragFormat)
+            || e.Data.GetData(EventInstrumentDragFormat) is not long rawId
+            || rawId <= 0
+            || !surface.TryGetArrangementLaneHeader(e.GetPosition(surface), out int lane)
+            || (uint)lane >= (uint)project.Tracks.Count)
+        {
+            return false;
+        }
+        MidoraId candidateInstrumentId = new(rawId);
+        if (!project.EventInstruments.Any(item => item.Id == candidateInstrumentId)) return false;
+        instrumentId = candidateInstrumentId;
+        track = project.Tracks[lane];
+        return true;
+    }
+
+    private void BindTrackToInstrument(LogicalTrack track, MidoraId instrumentId)
+    {
+        if (_session.Project is not MidoraProject project) return;
+        EventInstrument? instrument = project.EventInstruments.FirstOrDefault(item => item.Id == instrumentId);
+        if (instrument is null || track.EventInstrumentId == instrumentId) return;
+        if (track.EventInstrumentId is not null
+            && MessageBox.Show(
+                this,
+                $"Rebind Logical Track '{TimelineWorkspaceViewModel.TrackDisplayName(project, track)}' to Event Instrument '{instrument.Name}'?",
+                "Rebind Logical Track",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+        RunSynchronous("Bind Logical Track", () =>
+            _session.Execute(ProjectDomainEditCommands.BindLogicalTrack(track.Id, instrumentId)));
     }
 
     private void OnListBoxRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -2125,6 +2273,122 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnTimelineLaneHeaderContextRequested(object? sender, TimelineLaneHeaderEventArgs e)
+    {
+        _trackHeaderContextLane = e.Lane;
+        if (_session.ActiveWorkspace is WorkspaceViewModel workspace)
+        {
+            workspace.ActiveLane = e.Lane;
+        }
+    }
+
+    private void OnTimelineLaneHeaderReorderCompleted(
+        object? sender,
+        TimelineLaneHeaderReorderEventArgs e)
+    {
+        if (_session.Project is not MidoraProject project
+            || (uint)e.SourceLane >= (uint)project.Tracks.Count
+            || (uint)e.TargetLane >= (uint)project.Tracks.Count)
+        {
+            return;
+        }
+        MidoraId trackId = project.Tracks[e.SourceLane].Id;
+        RunSynchronous("Reorder Logical Track", () =>
+            _session.Execute(ProjectDomainEditCommands.ReorderLogicalTrack(trackId, e.TargetLane)));
+    }
+
+    private bool TryGetTrackHeaderContext(out LogicalTrack track, out int index)
+    {
+        track = null!;
+        index = -1;
+        if (_session.Project is not MidoraProject project
+            || _trackHeaderContextLane is not int lane
+            || (uint)lane >= (uint)project.Tracks.Count)
+        {
+            return false;
+        }
+        index = lane;
+        track = project.Tracks[lane];
+        return true;
+    }
+
+    private void OnTrackHeaderRenameClick(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetTrackHeaderContext(out LogicalTrack track, out _)) return;
+        TextInputDialog dialog = new(
+            "Rename Logical Track",
+            "Enter the Logical Track name.",
+            track.Name)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true) return;
+        RunSynchronous("Rename Logical Track", () =>
+            _session.Execute(ProjectDomainEditCommands.RenameLogicalTrack(track.Id, dialog.Value)));
+    }
+
+    private void OnTrackHeaderBindClick(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetTrackHeaderContext(out LogicalTrack track, out _)
+            || _session.Project is not MidoraProject project)
+        {
+            return;
+        }
+        SelectionDialog dialog = new(
+            "Bind Logical Track",
+            "Select the Event Instrument used by this Logical Track.",
+            project.EventInstruments.Select(instrument => new SelectionDialogItem(
+                instrument.Id,
+                string.IsNullOrWhiteSpace(instrument.Name) ? "Unnamed Event Instrument" : instrument.Name,
+                $"Stable ID {instrument.Id}")))
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() == true && dialog.SelectedValue is MidoraId instrumentId)
+        {
+            BindTrackToInstrument(track, instrumentId);
+        }
+    }
+
+    private void OnTrackHeaderUnbindClick(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetTrackHeaderContext(out LogicalTrack track, out _)) return;
+        RunSynchronous("Unbind Logical Track", () =>
+            _session.Execute(ProjectDomainEditCommands.BindLogicalTrack(track.Id, null)));
+    }
+
+    private void OnTrackHeaderMoveUpClick(object sender, RoutedEventArgs e) => MoveTrackHeader(-1);
+    private void OnTrackHeaderMoveDownClick(object sender, RoutedEventArgs e) => MoveTrackHeader(1);
+
+    private void MoveTrackHeader(int direction)
+    {
+        if (!TryGetTrackHeaderContext(out LogicalTrack track, out int index)
+            || _session.Project is not MidoraProject project)
+        {
+            return;
+        }
+        int target = index + direction;
+        if ((uint)target >= (uint)project.Tracks.Count) return;
+        RunSynchronous("Reorder Logical Track", () =>
+            _session.Execute(ProjectDomainEditCommands.ReorderLogicalTrack(track.Id, target)));
+    }
+
+    private void OnTrackHeaderDeleteClick(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetTrackHeaderContext(out LogicalTrack track, out _)) return;
+        if (MessageBox.Show(
+                this,
+                $"Delete Logical Track '{TimelineWorkspaceViewModel.TrackDisplayName(_session.Project!, track)}' and its {track.Segments.Count} Segment(s)?",
+                "Delete Logical Track",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+        RunSynchronous("Delete Logical Track", () =>
+            _session.Execute(ProjectDomainEditCommands.DeleteLogicalTrack(track.Id, nonEmptyDeletionConfirmed: true)));
+    }
+
     private void OnTimelineLanePreviewPressed(object? sender, TimelineLanePreviewEventArgs e)
     {
         if (sender is TimelineSurface { Tag: "SubVoiceNotes", DataContext: InstrumentWorkspaceViewModel workspace }
@@ -2274,6 +2538,47 @@ public partial class MainWindow : Window
     {
         _notePlacement = null;
         _templateNotePlacement = null;
+    }
+
+    private void OnTimelineSegmentPlacementCompleted(
+        object? sender,
+        TimelineSegmentPlacementEventArgs e)
+    {
+        if (_session.Project is not MidoraProject project
+            || _session.ActiveWorkspace is not TimelineWorkspaceViewModel
+            {
+                Mode: TimelineWorkspaceMode.Arrangement
+            } workspace
+            || (uint)e.Lane >= (uint)project.Tracks.Count)
+        {
+            return;
+        }
+
+        LogicalTrack track = project.Tracks[e.Lane];
+        long end = e.EndTick;
+        long nextStart = track.Segments
+            .Where(item => item.ProjectStartTick > e.StartTick)
+            .Select(item => item.ProjectStartTick)
+            .DefaultIfEmpty(long.MaxValue)
+            .Min();
+        if (track.Segments.Any(item =>
+                e.StartTick >= item.ProjectStartTick
+                && e.StartTick < item.ProjectRange.EndTick))
+        {
+            return;
+        }
+        if (nextStart != long.MaxValue)
+        {
+            end = Math.Min(end, nextStart);
+        }
+        if (end <= e.StartTick) return;
+
+        RunSynchronous("Create Segment", () => ExecuteAndSelectCreated(
+            ProjectDomainEditCommands.CreateSegment(
+                track.Id,
+                e.StartTick,
+                checked(end - e.StartTick)),
+            workspace));
     }
 
     private void OnConductorEventSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2861,10 +3166,12 @@ public partial class MainWindow : Window
             case TimelineItemEditKind.Move:
                 long tickDelta = Math.Max(snappedDelta, -notes.Min(item => item.StartTick));
                 int requestedPitchDelta = -edit.LaneDelta;
-                int pitchDelta = Math.Clamp(
-                    requestedPitchDelta,
-                    -notes.Min(item => item.Note),
-                    127 - notes.Max(item => item.Note));
+                int pitchDelta = edit.CopyRequested
+                    ? Math.Clamp(
+                        requestedPitchDelta,
+                        -notes.Min(item => item.Note),
+                        127 - notes.Max(item => item.Note))
+                    : requestedPitchDelta;
                 MidoraId[] noteIds = notes.Select(item => item.Id).ToArray();
                 if (edit.CopyRequested)
                 {
@@ -3034,10 +3341,12 @@ public partial class MainWindow : Window
                 case TimelineItemEditKind.Move:
                     long tickDelta = Math.Max(snappedDelta, -selectedNotes.Min(item => item.Tick));
                     int requestedPitchDelta = -edit.LaneDelta;
-                    int pitchDelta = Math.Clamp(
-                        requestedPitchDelta,
-                        -selectedNotes.Min(item => item.Number),
-                        127 - selectedNotes.Max(item => item.Number));
+                    int pitchDelta = edit.CopyRequested
+                        ? Math.Clamp(
+                            requestedPitchDelta,
+                            -selectedNotes.Min(item => item.Number),
+                            127 - selectedNotes.Max(item => item.Number))
+                        : requestedPitchDelta;
                     if (edit.CopyRequested)
                     {
                         long firstNewStableId = _session.Project.NextStableId;

@@ -388,6 +388,61 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public async Task CompilationCompletionRefreshesProjectTreeDiagnosticCountsWithoutLag()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Diagnostic counts",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateTimeSignature(100, 4, 4));
+        TimeSignatureChange change = session.Project!.Conductor.TimeSignatures.Single(item => item.Tick == 100);
+        await session.Document!.Compilation.EnsureCurrentCompilationAsync();
+        await WaitUntilAsync(() =>
+            (session.WarningCount > 0 || session.ErrorCount > 0)
+            && session.ProjectTree.Single(item => item.Kind == ProjectTreeNodeKind.Diagnostics).Title
+                == $"Diagnostics ({session.IssueSummary})");
+
+        ProjectTreeNode failedNode = session.ProjectTree.Single(item => item.Kind == ProjectTreeNodeKind.Diagnostics);
+        Assert.Equal($"Diagnostics ({session.IssueSummary})", failedNode.Title);
+        Assert.True(session.WarningCount > 0 || session.ErrorCount > 0);
+
+        session.Execute(ProjectDomainEditCommands.DeleteTimeSignature(change.Id));
+        await session.Document.Compilation.EnsureCurrentCompilationAsync();
+        await WaitUntilAsync(() =>
+            session.WarningCount == 0
+            && session.ErrorCount == 0
+            && session.ProjectTree.Single(item => item.Kind == ProjectTreeNodeKind.Diagnostics).Title
+                == $"Diagnostics ({session.IssueSummary})");
+
+        ProjectTreeNode repairedNode = session.ProjectTree.Single(item => item.Kind == ProjectTreeNodeKind.Diagnostics);
+        Assert.Equal($"Diagnostics ({session.IssueSummary})", repairedNode.Title);
+        Assert.NotEqual(failedNode.Title, repairedNode.Title);
+    }
+
+    [Fact]
+    public async Task ArrangementUsesOneQuarterDefaultAndShowsBoundInstrumentSubtitle()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Arrangement headers",
+            TicksPerQuarterNote = 480,
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Layered Strings"));
+        EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Lead", instrument.Id));
+
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+
+        Assert.Equal(480, arrangement.EditorSettings.DefaultLengthTicks);
+        Assert.Equal("Lead", Assert.Single(arrangement.Snapshot!.LaneLabels));
+        Assert.Equal("Layered Strings", Assert.Single(arrangement.Snapshot.LaneSecondaryLabels));
+    }
+
+    [Fact]
     public async Task ProjectTreeFilterSearchesOnlySpecifiedObjectFieldsAndKeepsAncestors()
     {
         await using DesktopSessionController session = new();
@@ -721,6 +776,72 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public async Task InvalidPitchDiagnosticNavigationUsesSafeLaneAndDoesNotCrash()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Invalid pitch navigation",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        LogicalTrack track = Assert.Single(session.Project!.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
+        Segment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(segment.Id, 0, 120, 60, 100));
+        LogicalNote note = Assert.Single(segment.Notes);
+        note.Note = -4;
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+        session.RefreshWorkspace(arrangement);
+        Assert.Equal(0, Assert.Single(arrangement.Snapshot!.SegmentPreviews[segment.Id].Notes).Pitch);
+        DiagnosticRow diagnostic = new(
+            "Error",
+            "Compile",
+            "MIDORA1320",
+            "Invalid Logical Note.",
+            "Logical Note",
+            true,
+            new SourceReference(
+                TrackId: track.Id,
+                SegmentId: segment.Id,
+                LogicalNoteId: note.Id,
+                Tick: note.StartTick));
+
+        session.NavigateToDiagnostic(diagnostic);
+
+        TimelineWorkspaceViewModel workspace = Assert.IsType<TimelineWorkspaceViewModel>(session.ActiveWorkspace);
+        TimelineRenderItem rendered = Assert.Single(workspace.Snapshot!.Items);
+        Assert.Equal(127, rendered.Lane);
+        Assert.True(rendered.State.HasFlag(TimelineItemState.Invalid));
+        Assert.Equal(note.Id, workspace.Selection.Primary);
+    }
+
+    [Fact]
+    public async Task SegmentVelocityProjectionUsesStartTickWidthAndPitchZOrder()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Velocity projection",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        LogicalTrack track = Assert.Single(session.Project!.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 960));
+        Segment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(segment.Id, 120, 720, 84, 96));
+        LogicalNote note = Assert.Single(segment.Notes);
+
+        TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+        TimelineRenderItem velocity = Assert.Single(workspace.VelocitySnapshot!.Items);
+
+        Assert.Equal(TimelineItemKind.Velocity, velocity.Kind);
+        Assert.Equal(note.StartTick, velocity.StartTick);
+        Assert.Equal(note.StartTick + 1, velocity.EndTick);
+        Assert.Equal(note.Note, velocity.ZIndex);
+    }
+
+    [Fact]
     public async Task ArrangementBuildsReadOnlyConductorOverviewForItsRuler()
     {
         await using DesktopSessionController session = new();
@@ -816,6 +937,28 @@ public sealed class DesktopSessionControllerTests
         Assert.Equal(voice.Id, workspace.ActiveSubVoiceId);
         Assert.Contains("override", workspace.ActiveSubVoiceContext, StringComparison.Ordinal);
         Assert.Contains(workspace.InitialStateEntries, item => item.Target == "CC 7" && item.Value == "100");
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (true)
+        {
+            try
+            {
+                if (condition()) return;
+            }
+            catch (InvalidOperationException)
+            {
+                // The production UI serializes these projections on Dispatcher;
+                // headless tests may observe the short collection replacement window.
+            }
+            if (DateTime.UtcNow >= deadline)
+            {
+                throw new TimeoutException("The expected desktop projection state was not reached.");
+            }
+            await Task.Delay(10);
+        }
     }
 
 }

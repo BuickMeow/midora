@@ -109,16 +109,75 @@ public static partial class ProjectDomainEditCommands
         IReadOnlyCollection<MidoraId> noteIds,
         long tickDelta,
         int pitchDelta) =>
-        PrepareTemplateNoteBatch(
-            "Move template notes",
-            eventInstrumentId,
-            subVoiceId,
-            noteIds,
-            value => value with
+        Command("Move template notes", project =>
+        {
+            ArgumentNullException.ThrowIfNull(noteIds);
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            SubVoice voice = FindSubVoice(instrument, subVoiceId);
+            HashSet<MidoraId> requested = ValidateBatchIds(noteIds, nameof(noteIds), "Template Note");
+            (TemplateEvent Note, int Index)[] selected = voice.Events
+                .Select((item, index) => (Note: item, Index: index))
+                .Where(item => requested.Contains(item.Note.Id))
+                .ToArray();
+            if (selected.Length != requested.Count || selected.Any(item => item.Note.Kind != TemplateEventKind.Note))
+            {
+                throw new ArgumentException(
+                    "Every selected ID must identify a Template Note in the target SubVoice.",
+                    nameof(noteIds));
+            }
+            TemplateEventValue[] old = selected.Select(item => CaptureTemplateEvent(item.Note)).ToArray();
+            TemplateEventValue[] replacement = old.Select(value => value with
             {
                 Tick = checked(value.Tick + tickDelta),
                 Number = checked(value.Number + pitchDelta)
-            });
+            }).ToArray();
+            bool[] discarded = replacement.Select(value => value.Number is < 0 or > 127).ToArray();
+            for (int index = 0; index < selected.Length; index++)
+            {
+                ValidateTemplateEventEdit(
+                    selected[index].Note,
+                    discarded[index] ? replacement[index] with { Number = 0 } : replacement[index]);
+            }
+            long oldTemplateLength = instrument.TemplateLengthTicks;
+            long requiredBoundary = replacement
+                .Where((_, index) => !discarded[index])
+                .Select(value => checked(value.Tick + value.LengthTicks))
+                .DefaultIfEmpty(oldTemplateLength)
+                .Max();
+            long replacementTemplateLength = Math.Max(oldTemplateLength, requiredBoundary);
+            return Prepared(
+                old.Where((value, index) => value != replacement[index]).Any(),
+                EventInstrumentChange(eventInstrumentId),
+                _ =>
+                {
+                    for (int index = 0; index < selected.Length; index++)
+                    {
+                        if (discarded[index])
+                        {
+                            RemoveRequired(voice.Events, selected[index].Note, "Template Note");
+                        }
+                        else
+                        {
+                            SetTemplateEvent(selected[index].Note, replacement[index]);
+                        }
+                    }
+                    instrument.TemplateLengthTicks = replacementTemplateLength;
+                },
+                _ =>
+                {
+                    for (int index = 0; index < selected.Length; index++)
+                    {
+                        SetTemplateEvent(selected[index].Note, old[index]);
+                    }
+                    foreach ((TemplateEvent Note, int Index) value in selected
+                        .Where((_, index) => discarded[index])
+                        .OrderBy(value => value.Index))
+                    {
+                        InsertAt(voice.Events, value.Index, value.Note, "Template Note");
+                    }
+                    instrument.TemplateLengthTicks = oldTemplateLength;
+                });
+        });
 
     public static IProjectEditCommand AdjustTemplateNoteEdges(
         MidoraId eventInstrumentId,

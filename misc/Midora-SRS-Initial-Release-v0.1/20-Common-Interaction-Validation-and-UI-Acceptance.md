@@ -77,7 +77,7 @@ Current Tool 不跨应用重启保存；新 Workspace 默认 Select。
 Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的工具按钮必须互斥，且始终恰有一个激活；再次点击当前工具不得清空工具状态。上述直接编辑视图中的工具语义固定为：
 
 - `Draw`：空白处创建；已有 Segment 或 Note 的主体可移动、左右边缘可调整长度或 active crop window；
-- `Select`：单击选择和框选，不直接移动、Resize 或双击创建对象；
+- `Select`：在 Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 中，单次左键按下始终从当前位置发起框选，即使起点位于对象上也不执行单对象点击选择；不得直接移动、Resize 或双击创建对象；既有双击导航不受该单击规则影响；
 - `Split`：只在支持的对象上执行分割；
 - `Erase`：删除命中的可删除对象。
 
@@ -258,7 +258,7 @@ One user gesture
 -> one valid batch result
 -> one Project Undo operation
 ```
-任一对象不兼容或结果非法时整体拒绝，不允许部分成功。
+任一对象不兼容或结果非法时整体拒绝，不允许部分成功；第 20.4.4 节明确规定的 Note pitch 越界删除属于该移动命令的正式批量结果，不视为静默跳过或部分失败。
 ### 20.4.2 Primary Selection
 Primary Selection 是 Snap、对齐和直接拖动的参考对象。
 批量 Snap：
@@ -278,8 +278,9 @@ Pitch intervals
 Length
 Velocity
 ```
-结果越界时整组受共同合法边界限制。
-拖动任何可移动的 Timeline 选择时，若请求 delta 会使任一对象越过时间、pitch、Track/Lane 或所属容器硬边界，使用一个共同 clamp 后的 delta 使整个选择保持相对关系并贴合边界；不因可安全 clamp 的越界请求弹出错误 Dialog。
+时间、Track/Lane 与所属容器边界仍使用整组共同合法边界。普通移动 Logical Note 或 Template Note 时，pitch 使用用户请求的共同 delta；结果 pitch 小于 0 或大于 127 的 Note 直接从 Project 删除，其余 Note 保持共同 delta 和相对关系继续移动。该删除与移动构成一个原子 Project command 和一个 Undo；Undo 必须按原顺序恢复被删除 Note。不得把越界 Note 存入模型，也不得弹出逐 Note 错误 Dialog。
+
+Note 的 `Ctrl+Drag` 复制仍按第 20.5.6.1 节使用选择集共同 pitch clamp，不删除源对象或生成部分副本。其他可移动 Timeline 选择若请求 delta 越过时间、Track/Lane 或所属容器硬边界，使用共同 clamp 后的 delta 使整个选择贴合边界。
 多选边缘调整采用同一 Edge Delta；初版不做比例时间伸缩。
 ### 20.4.5 数值编辑
 必须区分：
@@ -370,9 +371,9 @@ Segment 全部子对象获得新稳定 ID；Logical Note 获得新稳定 ID；Te
 复制意图在 Draw 模式的主体拖动越过阈值时确认；未越过阈值的 `Ctrl+Click` 仍按选择切换处理，边缘 `Ctrl+Drag` 仍是 Resize。时间、pitch 与 Track 越界请求使用选择集共同 clamp；Escape、Pointer Capture 丢失、Segment overlap、选择集不兼容或共同 clamp 后仍非法时整体取消，不创建部分副本。
 #### 20.5.6.2 Event Instrument
 Library 内只支持 Move / Reorder；Duplicate 使用显式命令。
-拖到 Logical Tracks 表示创建或绑定 Track，不移动 Instrument 本身。
+拖到 Logical Tracks 空白目标表示创建 Track；拖到既有 Track Header 表示绑定该 Track，不移动 Instrument 本身。覆盖已有不同绑定前必须明确确认 rebind。
 #### 20.5.6.3 Logical Track
-只通过拖动重排；初版不使用 Ctrl+Drag Track 复制。
+Track Header 通过拖动重排并显示插入线；初版不使用 Ctrl+Drag Track 复制。Track Header 右键菜单提供 Rename、Bind / Unbind、Delete、Move Up / Down；hover 与 pressed 只属于 transient UI state。
 #### 20.5.6.4 SubVoice、Mapping 等有序结构
 使用插入线重排，保持稳定 ID。
 #### 20.5.6.5 Workspace Tab
@@ -1520,7 +1521,7 @@ Workspace Tabs 单行，使用滚动和 Tab List。
 
 Timeline Toolbar 的 Grid / Snap 选择框只显示 `Bar` 或简写分数（例如 `1/8`），选择后显示文本必须立即更新并与实际生效值一致；不得因可编辑文本与选择项绑定冲突而显示额外错误色块、空选择或完整说明文字。Arrangement、Segment 和 SubVoice 的顺序统一为 `Grid + 下拉 | Snap + 下拉 | Length [Vel] | - + | 工具`，其中 Arrangement 不显示不适用的 Vel；各组之间显示分割线。
 
-Arrangement Segment 使用较深的低饱和蓝灰色；选中 Segment 使用同色系强调边框和更深背景，Note Preview 使用高亮但低饱和的蓝灰色。Segment Piano Roll 的 active range 保留基础键位底色，界外范围进一步压暗；未选中 Note 使用高亮蓝灰色，选中 Note 的红色填充与红色边框保持不变。Velocity 未选中柱使用相同蓝灰色，选中 Note 对应柱使用红色；每个柱子左上角显示方形 onset marker。Piano Roll 白键行使用较亮底色、黑键行使用较暗底色；Segment 与 SubVoice Pitch Ruler 使用完整白键和较短黑键的钢琴外观，并且只在每个八度 C 键显示符合 MIDI 60 = C4 的音名。空 Timeline 不显示覆盖画布的 `No timeline content` 卡片。Disabled Ghost Button 不保留背景或边框。Transport 的位置与 BPM 使用亮色并以竖向分割线分隔；Play 图标不得裁切。Parameter / Event Lane 不显示额外白色外框。数值标尺顶部和底部标签不得被视口裁切。
+Arrangement Segment 使用较深的低饱和蓝灰色；选中 Segment 使用同色系强调边框和更深背景，Note Preview 使用高亮但低饱和的蓝灰色。Segment Piano Roll 的 active range 保留基础键位底色，界外范围进一步压暗；未选中 Note 使用高亮蓝灰色，选中 Note 的红色填充与红色边框保持不变。Velocity 未选中柱使用相同蓝灰色，选中 Note 对应柱使用红色；每个 Note 只在 start tick 显示固定窄柱，柱顶显示明显更宽的方形 onset marker，柱宽不得随 Note 长度变化。Piano Roll 白键行使用较亮底色、黑键行使用较暗底色；Segment 与 SubVoice Pitch Ruler 使用完整白键和较短黑键的钢琴外观，并且只在每个八度 C 键显示符合 MIDI 60 = C4 的音名。空 Timeline 不显示覆盖画布的 `No timeline content` 卡片。Disabled Ghost Button 不保留背景或边框。Transport 的位置与 BPM 使用亮色并以竖向分割线分隔；Play 图标不得裁切。Parameter / Event Lane 不显示额外白色外框。数值标尺顶部和底部标签不得被视口裁切。
 
 ComboBox 的可编辑文本和下拉指示必须分别在内容区与按钮区垂直居中；下拉指示使用同一 Fluent 图标体系，不得使用字体符号代替。显式垂直 ScrollBar 的 Track 必须完整铺满可用高度；Thumb 长度必须按当前可见范围相对完整有界范围的比例计算，不得使用与视口无关的固定值。Bottom Panel Diagnostics 的筛选 ComboBox 和 Segment Piano Roll 顶部左侧文本不得裁切或偏离垂直中心。
 ### 20.15.5 Resize 语义

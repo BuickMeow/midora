@@ -18,6 +18,9 @@ namespace Midora.Desktop;
 
 public sealed class DesktopSessionController : ObservableObject, IAsyncDisposable
 {
+    private readonly object _modelRefreshGate = new();
+    private int _compilerErrorCount;
+    private int _compilerWarningCount;
     private const string SoftwareVersion = "0.1.0-dev";
     private readonly MidoraProjectPackageV1 _packages = new(SoftwareVersion);
     private readonly ProjectCreationCoordinator _creation;
@@ -154,8 +157,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             : _context.Compilation.CompilationState == ProjectCompilationState.Failed
                 ? "The current canonical compilation is not consumable."
                 : null);
-    public int ErrorCount => CompilerDiagnostics.Count(item => item.Severity == "Error");
-    public int WarningCount => CompilerDiagnostics.Count(item => item.Severity == "Warning");
+    public int ErrorCount => _compilerErrorCount;
+    public int WarningCount => _compilerWarningCount;
     public string IssueSummary => _context is null
         ? "No diagnostics"
         : $"{ErrorCount} Errors, {WarningCount} Warnings";
@@ -870,9 +873,19 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         SourceReference source = diagnostic.SourceReference;
         if (source.SegmentId != default)
         {
+            (LogicalTrack Track, Segment Segment)? located = TimelineWorkspaceViewModel.FindSegment(Project, source.SegmentId);
+            if (located is null)
+            {
+                SetStatusMessage("The diagnostic references a Segment that no longer exists.", isError: true);
+                return;
+            }
             TimelineWorkspaceViewModel workspace = OpenSegment(source.SegmentId);
-            MidoraId target = source.LogicalNoteId != default ? source.LogicalNoteId : source.SegmentId;
+            MidoraId target = source.LogicalNoteId != default
+                && located.Value.Segment.Notes.Any(item => item.Id == source.LogicalNoteId)
+                    ? source.LogicalNoteId
+                    : source.SegmentId;
             workspace.Selection.Replace(target);
+            workspace.EditCursorTick = Math.Max(0, source.Tick);
             RefreshWorkspace(workspace);
             return;
         }
@@ -1502,6 +1515,15 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private static bool MatchesProjectTreeFilter(string? value, string query) =>
         query.Length == 0 || (value?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false);
 
+    private void RefreshDiagnosticProjectTreeNode()
+    {
+        ProjectTreeNode? node = ProjectTree.FirstOrDefault(item => item.Kind == ProjectTreeNodeKind.Diagnostics);
+        if (node is not null)
+        {
+            node.Title = $"Diagnostics ({IssueSummary})";
+        }
+    }
+
     private static ProjectTreeNode CreateDamagedNode(
         ProjectTreeNodeKind kind,
         DamagedProjectObject damaged)
@@ -1514,17 +1536,25 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     private void RefreshDiagnostics()
     {
-        CompilerDiagnostics.Clear();
-        if (_context is not null)
+        lock (_modelRefreshGate)
         {
-            bool isCurrent = _context.Compilation.IsCompilationCurrent;
-            foreach (CompilerDiagnostic diagnostic in _context.Compilation.LastAttempt.Diagnostics)
+            DiagnosticRow[] diagnostics = _context is null
+                ? []
+                : _context.Compilation.LastAttempt.Diagnostics
+                    .Select(diagnostic => DiagnosticProjection.FromCompiler(
+                        diagnostic,
+                        _context.Compilation.IsCompilationCurrent))
+                    .ToArray();
+            CompilerDiagnostics.Clear();
+            foreach (DiagnosticRow diagnostic in diagnostics)
             {
-                CompilerDiagnostics.Add(DiagnosticProjection.FromCompiler(diagnostic, isCurrent));
+                CompilerDiagnostics.Add(diagnostic);
             }
+            _compilerErrorCount = diagnostics.Count(item => item.Severity == "Error");
+            _compilerWarningCount = diagnostics.Count(item => item.Severity == "Warning");
+            BottomDiagnosticsViewModel.Replace(diagnostics);
+            BottomDiagnosticsViewModel.SetScope(_diagnosticScopeWorkspace);
         }
-        BottomDiagnosticsViewModel.Replace(CompilerDiagnostics);
-        BottomDiagnosticsViewModel.SetScope(_diagnosticScopeWorkspace);
     }
 
     private bool ObjectStillExists(WorkspaceViewModel workspace)
@@ -1628,6 +1658,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private void OnCompilationChanged(object? sender, EventArgs e) => DispatchModelRefresh(() =>
     {
         RefreshDiagnostics();
+        RefreshDiagnosticProjectTreeNode();
         RefreshProperties();
     });
 
@@ -1655,7 +1686,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ArgumentNullException.ThrowIfNull(refresh);
         if (_uiContext is null)
         {
-            refresh();
+            lock (_modelRefreshGate)
+            {
+                refresh();
+            }
             return;
         }
 

@@ -1,5 +1,6 @@
 using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Rendering;
+using System.Windows.Input;
 
 namespace Midora.Desktop.Presentation.Interaction;
 
@@ -17,6 +18,19 @@ public static class TimelineToolPolicy
 {
     public static bool IsDirectEditingSurface(TimelineSurfaceMode surfaceMode) =>
         surfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll;
+
+    public static bool StartsMarqueeBeforeItemHit(
+        TimelineToolMode toolMode,
+        TimelineSurfaceMode surfaceMode,
+        int clickCount) =>
+        clickCount == 1
+        && toolMode == TimelineToolMode.Select
+        && IsDirectEditingSurface(surfaceMode);
+
+    public static bool ForcesVelocityTrace(
+        MouseButton button,
+        ModifierKeys modifiers) =>
+        button == MouseButton.Left && (modifiers & ModifierKeys.Shift) != 0;
 
     public static bool CanBeginItemEdit(
         TimelineToolMode toolMode,

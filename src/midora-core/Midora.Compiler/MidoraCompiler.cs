@@ -141,7 +141,7 @@ public sealed class MidoraCompiler : IDisposable
         if (endTick < request.StartTick)
         {
             diagnostics.Add(new("MIDORA2001", DiagnosticSeverity.Error,
-                "有效编译结束 tick 早于范围起点。", new(Tick: endTick)));
+                "The effective compilation end tick is earlier than the range start.", new(Tick: endTick)));
             endTick = request.StartTick;
         }
 
@@ -226,7 +226,7 @@ public sealed class MidoraCompiler : IDisposable
                 diagnostics.Add(new(
                     "MIDORA2001",
                     DiagnosticSeverity.Error,
-                    "有效编译结束 tick 早于范围起点。",
+                    "The effective compilation end tick is earlier than the range start.",
                     new(Tick: endTick)));
                 endTick = request.StartTick;
             }
@@ -314,7 +314,7 @@ public sealed class MidoraCompiler : IDisposable
         if (allocation.PeakUnits >= 248)
         {
             diagnostics.Add(new("MIDORA2250", DiagnosticSeverity.Info,
-                $"Channel Unit 峰值为 {allocation.PeakUnits}/256。", new()));
+                $"The Channel Unit peak is {allocation.PeakUnits}/256.", new()));
         }
 
         long resultFingerprint = SourceFingerprint.ForResult(
@@ -671,7 +671,7 @@ public sealed class MidoraCompiler : IDisposable
                 diagnostics.Add(new(
                     "MIDORA1225",
                     DiagnosticSeverity.Info,
-                    "实际参与编译的 SubVoice 没有普通 MIDI 输出内容。",
+                    "A participating SubVoice has no ordinary MIDI output content.",
                     new(binding.Key.TrackId,
                         EventInstrumentId: instrument.Id,
                         SubVoiceId: emptyVoice.Id)));
@@ -809,7 +809,7 @@ public sealed class MidoraCompiler : IDisposable
                 if (conflicts.Length != 0 && instrument.OverlapPolicy == OverlapPolicy.CutNewRejectNew)
                 {
                     diagnostics.Add(new("MIDORA2203", DiagnosticSeverity.Warning,
-                        "新实例与活动实例重叠，按 Cut New / Reject New 策略未生成。",
+                        "The new instance overlaps an active instance and was not generated under the Cut New / Reject New policy.",
                         new(track.Id, segment.Id, note.Id, instrument.Id, Tick: projectStart)));
                     continue;
                 }
@@ -818,7 +818,7 @@ public sealed class MidoraCompiler : IDisposable
                     if (conflicts.Any(value => value.ProjectStartTick == projectStart))
                     {
                         diagnostics.Add(new("MIDORA2204", DiagnosticSeverity.Error,
-                            "Cut Previous 下同 tick 的多个实例没有确定的先后截断语义。",
+                            "Multiple same-tick instances do not have a deterministic truncation order under Cut Previous.",
                             new(track.Id, segment.Id, note.Id, instrument.Id, Tick: projectStart)));
                     }
                     else
@@ -2115,7 +2115,7 @@ public sealed class MidoraCompiler : IDisposable
                     DiagnosticSeverity severity = ordered[i].OverlapPolicy == OverlapPolicy.Reject
                         ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning;
                     diagnostics.Add(new("MIDORA2201", severity,
-                        "Event Instrument Instance 发生受策略约束的重叠。",
+                        "An Event Instrument Instance has a policy-constrained overlap.",
                         new(ordered[j].TrackId, ordered[j].SegmentId, ordered[j].InstanceId,
                             ordered[j].InstrumentId, Tick: ordered[j].StartTick)));
                 }
@@ -2213,7 +2213,7 @@ public sealed class MidoraCompiler : IDisposable
                         relatedInstances.SelectMany(value => value.Voices.Select(voice => voice.SubVoiceId)));
                 }
                 diagnostics.Add(new("MIDORA2202", DiagnosticSeverity.Error,
-                    $"无法为 {count} 个 SubVoice 原子分配 Channel Group；全局上限为 256 Channel Units。",
+                    $"A Channel Group for {count} SubVoices cannot be allocated atomically; the global limit is 256 Channel Units.",
                     new(group.Instances[0].TrackId, group.Instances[0].SegmentId,
                         group.Instances[0].InstanceId, group.Instances[0].InstrumentId, Tick: group.StartTick)));
                 continue;

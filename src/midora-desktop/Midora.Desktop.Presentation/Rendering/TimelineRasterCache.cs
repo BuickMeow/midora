@@ -659,7 +659,9 @@ public static class TimelineSegmentPreviewRasterizer
 public static class TimelineVelocityTileRasterizer
 {
     public const int TileSize = 256;
-    public const int Gutter = 1;
+    public const int StemWidth = 3;
+    public const int MarkerSize = 7;
+    public const int Gutter = MarkerSize / 2 + 1;
     public const int RasterWidth = TileSize + Gutter * 2;
     public const int RasterHeight = 256;
 
@@ -679,15 +681,24 @@ public static class TimelineVelocityTileRasterizer
         long endTick = Math.Max(startTick + 1, CeilingToLong((worldLeft + RasterWidth) / pixelsPerTick));
         List<TimelineRenderItem> candidates = [];
         snapshot.Index.QueryInto(startTick, endTick, 0, 1, candidates);
+        candidates.Sort(static (left, right) =>
+        {
+            int byTick = left.StartTick.CompareTo(right.StartTick);
+            if (byTick != 0) return byTick;
+            int byPitch = left.ZIndex.CompareTo(right.ZIndex);
+            return byPitch != 0 ? byPitch : left.Id.CompareTo(right.Id);
+        });
         byte[] pixels = new byte[RasterWidth * RasterHeight * 4];
         foreach (TimelineRenderItem item in candidates)
         {
             if (item.Kind != TimelineItemKind.Velocity) continue;
             bool selected = selection?.Contains(item.Id)
                 ?? item.State.HasFlag(TimelineItemState.Selected);
-            int rawLeft = (int)Math.Floor(item.StartTick * pixelsPerTick - worldLeft);
-            int rawRight = Math.Max(rawLeft + 3,
-                (int)Math.Ceiling(item.EndTick * pixelsPerTick - worldLeft));
+            int rawCenter = checked((int)Math.Round(
+                item.StartTick * pixelsPerTick - worldLeft,
+                MidpointRounding.AwayFromZero));
+            int rawLeft = rawCenter - StemWidth / 2;
+            int rawRight = rawLeft + StemWidth;
             int left = Math.Clamp(rawLeft, 0, RasterWidth);
             int right = Math.Clamp(rawRight, 0, RasterWidth);
             int top = Math.Clamp(
@@ -704,12 +715,19 @@ public static class TimelineVelocityTileRasterizer
                 drawTop: true,
                 drawRight: rawRight <= RasterWidth,
                 drawBottom: true);
-            int markerRight = Math.Min(RasterWidth, left + 5);
-            int markerBottom = Math.Min(RasterHeight, top + 5);
+            int rawMarkerLeft = rawCenter - MarkerSize / 2;
+            int rawMarkerRight = rawMarkerLeft + MarkerSize;
+            int markerLeft = Math.Clamp(rawMarkerLeft, 0, RasterWidth);
+            int markerRight = Math.Clamp(rawMarkerRight, 0, RasterWidth);
+            int markerBottom = Math.Min(RasterHeight, top + MarkerSize);
             TimelinePianoTileRasterizer.FillRectangle(
-                pixels, RasterWidth, left, top, markerRight, markerBottom, fill, 1);
+                pixels, RasterWidth, markerLeft, top, markerRight, markerBottom, fill, 1);
             TimelinePianoTileRasterizer.DrawRectangleOutline(
-                pixels, RasterWidth, left, top, markerRight, markerBottom, borderColor, 1);
+                pixels, RasterWidth, markerLeft, top, markerRight, markerBottom, borderColor, 1,
+                drawLeft: rawMarkerLeft >= 0,
+                drawTop: true,
+                drawRight: rawMarkerRight <= RasterWidth,
+                drawBottom: true);
         }
         return new(RasterWidth, RasterHeight, pixels, candidates.Count);
     }

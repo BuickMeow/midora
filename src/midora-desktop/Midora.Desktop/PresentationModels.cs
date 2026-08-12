@@ -486,7 +486,7 @@ public sealed class TimelineEditorSettings : ObservableObject
         OperationSubdivision = TimelineSubdivision.Presets.Single(item => !item.IsBar && item.Numerator == 1 && item.Denominator == 16);
         SnapEnabled = true;
         GridVisible = true;
-        DefaultLengthTicks = arrangement ? checked((long)_ticksPerQuarterNote * 4) : _ticksPerQuarterNote;
+        DefaultLengthTicks = _ticksPerQuarterNote;
         DefaultVelocity = 100;
         ConfigureBarDefaults();
         Raise(nameof(TimeSignatureMap));
@@ -937,7 +937,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             project.Tracks.Select(track =>
                 (_mutedTrackIds.Contains(track.Id) ? TimelineLaneState.Muted : TimelineLaneState.None)
                 | (_soloTrackIds.Contains(track.Id) ? TimelineLaneState.Solo : TimelineLaneState.None)).ToArray(),
-            previews);
+            previews,
+            project.Tracks.Select(track => BoundInstrumentDisplayName(project, track)).ToArray());
         RulerSnapshot = BuildConductorOverview(project, revision);
     }
 
@@ -966,7 +967,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             notes.Add(new(
                 (clippedStart - visibleStart) / (double)segment.LengthTicks,
                 (clippedEnd - visibleStart) / (double)segment.LengthTicks,
-                note.Pitch));
+                Math.Clamp(note.Pitch, 0, 127)));
         }
         TimelineSegmentPreview preview = new(segment.Id, notes);
         _segmentPreviewCache[segment.Id] = new(
@@ -1013,13 +1014,16 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 TimelineItemKind.LogicalNote,
                 note.StartTick,
                 checked(note.StartTick + note.LengthTicks),
-                127 - note.Note,
+                127 - Math.Clamp(note.Note, 0, 127),
                 z: 1,
                 value: note.Velocity,
-                extra: note.StartTick < segment.ContentOffsetTick
+                extra: (note.StartTick < segment.ContentOffsetTick
                     || note.StartTick >= segment.ContentEndTick
                     ? TimelineItemState.OutsideActiveRange
-                    : TimelineItemState.None))
+                    : TimelineItemState.None)
+                    | (note.Note is < 0 or > 127
+                        ? TimelineItemState.Invalid
+                        : TimelineItemState.None)))
             .ToArray();
         Snapshot = new(
             revision,
@@ -1033,10 +1037,10 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 note.Id,
                 TimelineItemKind.Velocity,
                 note.StartTick,
-                checked(note.StartTick + Math.Max(1, note.LengthTicks)),
+                checked(note.StartTick + 1),
                 0,
                 note.Velocity / 127d,
-                1,
+                note.Note,
                 Selection.Ids.Contains(note.Id)
                     ? TimelineItemState.Selected
                       | (Selection.Primary == note.Id ? TimelineItemState.Primary : TimelineItemState.None)
@@ -1302,8 +1306,25 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         return $"Logical Track {index}";
     }
 
+    internal static string BoundInstrumentDisplayName(MidoraProject project, LogicalTrack track)
+    {
+        if (track.EventInstrumentId is not MidoraId instrumentId)
+        {
+            return "Unbound";
+        }
+        EventInstrument? instrument = project.EventInstruments.FirstOrDefault(item => item.Id == instrumentId);
+        if (instrument is not null)
+        {
+            return string.IsNullOrWhiteSpace(instrument.Name) ? "Unnamed Event Instrument" : instrument.Name;
+        }
+        return string.IsNullOrWhiteSpace(track.LastBoundEventInstrumentName)
+            ? "Missing Event Instrument"
+            : $"Missing: {track.LastBoundEventInstrumentName}";
+    }
+
     internal static string MidiNoteName(int note)
     {
+        note = Math.Clamp(note, 0, 127);
         string[] names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
         return $"{names[note % 12]}{note / 12 - 1}";
     }
@@ -1735,10 +1756,13 @@ public sealed class InstrumentWorkspaceViewModel(
                     TimelineItemKind.TemplateNote,
                     item.Tick,
                     checked(item.Tick + item.LengthTicks),
-                    127 - item.Number,
+                    127 - Math.Clamp(item.Number, 0, 127),
                     item.Value / 127d,
                     1,
-                    SelectionState(item.Id)));
+                    SelectionState(item.Id)
+                    | (item.Number is < 0 or > 127
+                        ? TimelineItemState.Invalid
+                        : TimelineItemState.None)));
             }
 
             foreach (IGrouping<TemplateEventKind, TemplateEvent> group in activeVoice.Events
@@ -1850,10 +1874,10 @@ public sealed class InstrumentWorkspaceViewModel(
                     item.Id,
                     TimelineItemKind.Velocity,
                     item.Tick,
-                    checked(item.Tick + Math.Max(1, item.LengthTicks)),
+                    checked(item.Tick + 1),
                     0,
                     item.Value / 127d,
-                    1,
+                    item.Number,
                     SelectionState(item.Id)))
                 .ToArray() ?? [],
             ["Velocity"]);

@@ -50,6 +50,10 @@ Mute / Solo 固定可见，属于播放期运行状态：
 - 不影响 MIDI Export；
 - 不影响 Audio Render。
 Track 高度属于 UI 状态；Track 正式顺序属于 Project Content。
+
+Track Header 是独立交互目标。鼠标悬停时使用低强调高亮，按下时背景变暗，松开恢复；该反馈不改变 Project。拖动 Track Header 直接重排正式 Track 顺序，并显示插入位置。右键菜单至少提供 Rename、Bind / Unbind Event Instrument、Delete、Move Up、Move Down 和 New Logical Track。从具体 Track Header 创建 Logical Track 时，新 Track 插入该 Track 的下一位；从 Track Header 空白处或其他创建入口创建时，新 Track 追加到正式顺序末尾。Track display name 下方必须以较暗的次级文字显示当前绑定的 Event Instrument 名称；未绑定或引用断裂时显示明确的 `Unbound` / missing 提示。
+
+Event Instrument Library 中的 Event Instrument 可拖放到既有 Track Header 以建立绑定；若目标 Track 已绑定其他 Event Instrument，提交前必须明确确认 rebind。该拖放不移动或复制 Event Instrument 本身。
 ### 18.1.4 Segment 显示
 Segment 没有名称。矩形显示：
 ```text
@@ -101,9 +105,9 @@ Time Range Selection
 Project End Marker 后区域弱化，但仍显示并允许编辑。End Marker 不是右编辑边界。
 无显式 End Marker 时可显示 Natural End 参考，但它不是 Project 对象。
 
-Arrangement Toolbar 必须分别提供可见分割线粒度、操作粒度与 Snap 开关，以及默认 Segment 创建长度（tick，输入即生效）。Draw 模式下，鼠标所在 Track 必须显示按当前操作粒度定位、按默认长度计算的虚线创建预览。若默认长度超出当前可用间隙，创建命令静默缩短为从目标 tick 起可容纳的最大正长度；预览显示实际将提交的长度。不存在正长度空隙时预览为错误色并拒绝创建。该规则只适用于新建 Segment；已有 Segment 的移动和 Resize 仍不得因重叠而被静默缩短。
+Arrangement Toolbar 必须分别提供可见分割线粒度、操作粒度与 Snap 开关，以及默认 Segment 创建长度（tick，输入即生效）；新建 Project / 重置编辑器时默认 Segment 创建长度为 `1 × TPQ`。Draw 模式下，鼠标所在 Track 必须显示按当前操作粒度定位、按默认长度计算的虚线创建预览。空白处按下左键后进入 Segment 放置手势：未越过拖动阈值时按默认长度创建；向右拖动时按当前操作粒度实时调整结束 tick，松开后一次性提交。若请求长度超出当前可用间隙，创建命令静默缩短为从目标 tick 起可容纳的最大正长度；预览显示实际将提交的长度。不存在正长度空隙时预览为错误色并拒绝创建。该规则只适用于新建 Segment；已有 Segment 的移动和 Resize 仍不得因重叠而被静默缩短。
 
-Arrangement 中只有 Draw 模式允许拖动 Segment 主体或调整边缘；Select 模式仍允许单击和框选，但不得直接移动、Resize 或双击创建 Segment。拖动和 Resize 期间必须显示位置与长度预览，并隐藏同位置的创建预览。工具互斥、指针和快捷键规则见第 20.1.6、20.12 节。
+Arrangement 中只有 Draw 模式允许拖动 Segment 主体或调整边缘；Select 模式的单次左键按下始终发起框选，即使起点位于 Segment 上也不得先命中或单独选择该 Segment，并且不得直接移动、Resize 或双击创建 Segment。既有双击导航不受该单击规则影响。拖动和 Resize 期间必须显示位置与长度预览，并隐藏同位置的创建预览。工具互斥、指针和快捷键规则见第 20.1.6、20.12 节。
 
 Draw 模式下在 Segment 主体执行 `Ctrl+Drag` 时，复制当前 Segment 选择集并以一个共同时间/Track delta 放置完整副本；原 Segment 不移动。复制成功后只选择副本，一次完整手势形成一个 Project Undo。
 ---
@@ -139,7 +143,7 @@ Segment Editor 以 Segment local tick 为主，同时可显示映射后的 Proje
 
 新建单个 Logical Note 的放置手势不得启动声音预览。Draw 模式只显示当前 pitch、位置和默认长度的虚线视觉预览；该视觉预览不是 Project 数据。点击已有 Note 时，将该 Note 的长度复制为后续创建的默认 Note 长度，但不修改该 Note。
 
-只有 Draw 模式允许拖动或 Resize Logical Note；Select 模式仍允许单击和框选，但不得直接移动、Resize 或双击创建 Note。移动和 Resize 期间必须显示位置与长度预览，并隐藏创建预览。
+只有 Draw 模式允许拖动或 Resize Logical Note；Select 模式的单次左键按下始终发起框选，即使起点位于 Note 上也不得先命中或单独选择该 Note，并且不得直接移动、Resize 或双击创建 Note。移动和 Resize 期间必须显示位置与长度预览，并隐藏创建预览。
 
 Draw 模式下在 Logical Note 主体执行 `Ctrl+Drag` 时，复制当前 Note 选择集并以一个共同时间/pitch delta 放置副本；原 Note 不移动，相对时间、音程、长度和 velocity 保持不变。复制成功后只选择副本，一次完整手势形成一个 Project Undo。边缘 `Ctrl+Drag` 仍按 Resize 处理，不隐式复制。
 
@@ -170,7 +174,13 @@ Hide 不删除 Project 数据；Delete Lane Data 删除该 Lane 的用户内容�
 
 下部编辑区使用“Velocity + Lane 列表 + 单个活动 Lane 编辑器”，不得把所有参数 Lane 垂直压缩堆叠。该区域可隐藏、恢复和调整高度；显隐与高度只属于当前 Project Session UI State。高度分隔条必须位于“Piano Roll + Timeline Overview”整体上部区域与下部编辑区之间；拖动必须实际改变下部编辑区高度，不得只调整固定高度的 Timeline Overview。
 
-Velocity 视图按 Note start tick 绘制柱，高度表示 velocity；每个柱子的左上角必须显示方形 onset marker，以同时明确 Note start tick 和 velocity 顶点。普通左键点击将该时刻横向覆盖的柱设为指针值；左键拖动自由修改经过的柱，右键拖动使用起止点直线插值修改范围内柱。无选择时手势作用于经过的全部柱；存在选择时只作用于经过且已选择的柱。只有拖动单柱顶部边缘时才进入该柱的上下调整并显示 `SizeNS`，柱体及左右边缘使用默认指针。按下时必须立即应用首个值，包括 tick 0；一次完整手势形成一次 Project Undo，且不得改变 Note 的位置、长度或 pitch。
+Velocity 视图按 Note start tick 绘制固定窄柱，高度表示 velocity；柱宽不表达 Note 长度，柱顶必须显示明显大于柱宽的方形 onset marker，以同时明确 Note start tick 和 velocity 顶点。同 tick 存在多个 pitch 时，按 pitch 从低到高绘制，使高 pitch 对应柱位于最上层；pitch 相同时按稳定 ID 确定顺序。
+
+左键在空白处按下并拖动形成自由轨迹，右键拖动使用起止点直线轨迹；无选择时手势作用于轨迹经过的全部柱，存在选择时只作用于经过且已选择的柱。按住期间只显示轻量轨迹覆盖层，不逐柱重绘、不更新 Velocity tile，也不提交 Project；松开时根据完整轨迹一次性计算最终值、提交一次 Project Undo，并异步重建受影响 tile。单击而未移动仍以该点作为单点轨迹，包括 tick 0。Escape 或 mouse capture 丢失取消轨迹且不提交。
+
+左键直接按住单柱或其 onset marker 上下拖动时，只调整命中的一个 Note，不显示轨迹；同 tick 重叠柱按上述最上层顺序命中。该单柱 transient 允许只覆盖一个柱，松开时提交。所有 Velocity 手势都不得改变 Note 的位置、长度或 pitch。
+
+`Shift + Left Drag` 必须强制使用自由轨迹手势：起点即使命中单柱或 onset marker，也不得进入单 Note 调整。该修饰键只覆盖 direct-hit 分流，不改变“存在选择时仅作用于已选择 Note”的过滤规则。
 
 单个参数 Lane 编辑器左侧显示值标尺，右侧显示对应水平参考线；Lane 具有独立于 piano roll 的纵向缩放。参考值密度随纵向缩放调整。纵向缩放、滚轮平移、中键平移和右侧滚动条必须操作同一有界数值视口，标尺随视口更新，不得越过参数合法范围；顶部与底部标签保持在可视区域内。Integer 参数由指针纵坐标得到的值必须先按 `AwayFromZero` 取到最近整数，再执行合法范围验证。
 ### 18.2.6 同步
@@ -730,6 +740,8 @@ Context
 Current or Historical Status
 ```
 完整 Details 可显示原因、相关值、可执行的下一步和诊断代码，但不默认暴露原始异常堆栈或内部类名。
+
+正式诊断的 `Message` 使用英文。Project Panel 的 `Diagnostics (N Errors, N Warnings)` 必须在每次后台验证或编译完成事件中，以同一最后尝试结果立即刷新；不得滞后一轮或在当前失败时仍显示前一次计数。
 ### 18.10.6 来源导航
 Source Path 使用稳定 ID 定位并显示最新名称。
 `Go to Source`：
@@ -740,6 +752,7 @@ Source Path 使用稳定 ID 定位并显示最新名称。
 - 不修改 Project。
 来源已删除时显示 Last Known Path，不按名称寻找替代对象。
 多来源问题显示 Primary Source 和 Related Sources。
+来源对象包含非法位置或 pitch 时，导航必须使用安全的显示投影并仍尽量定位该稳定 ID；不得因构建 viewport、lane 或 Selection 而使应用崩溃。
 ### 18.10.7 自动修复
 自动修复只允许同时满足：
 ```text

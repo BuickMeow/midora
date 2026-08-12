@@ -34,12 +34,43 @@ public static partial class ProjectDomainEditCommands
                 value.LengthTicks,
                 checked(value.Note + pitchDelta),
                 value.Velocity)).ToArray();
-            ValidateLogicalNoteBatch(replacement);
-            return PrepareLogicalNoteBatch(
-                segment.Track.Id,
-                selected,
-                old,
-                replacement);
+            bool[] discarded = replacement.Select(value => value.Note is < 0 or > 127).ToArray();
+            for (int index = 0; index < replacement.Length; index++)
+            {
+                LogicalNoteValue value = replacement[index];
+                ValidateLogicalNote(
+                    value.StartTick,
+                    value.LengthTicks,
+                    discarded[index] ? 0 : value.Note,
+                    value.Velocity);
+            }
+            return Prepared(
+                old.Where((value, index) => value != replacement[index]).Any(),
+                TrackChange(segment.Track.Id),
+                _ =>
+                {
+                    for (int index = 0; index < selected.Length; index++)
+                    {
+                        if (discarded[index])
+                        {
+                            RemoveRequired(segment.Segment.Notes, selected[index].Note, "Logical Note");
+                        }
+                        else
+                        {
+                            SetLogicalNote(selected[index].Note, replacement[index]);
+                        }
+                    }
+                },
+                _ =>
+                {
+                    SetLogicalNoteBatch(selected, old);
+                    foreach (SelectedLogicalNote value in selected
+                        .Where((_, index) => discarded[index])
+                        .OrderBy(value => value.Index))
+                    {
+                        InsertAt(segment.Segment.Notes, value.Index, value.Note, "Logical Note");
+                    }
+                });
         });
 
     public static IProjectEditCommand AdjustLogicalNoteEdges(

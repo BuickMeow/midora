@@ -92,7 +92,7 @@ public sealed class TimelineEditorSettingsTests
         Assert.False(segmentWorkspace.GridVisible);
         Assert.NotEqual(segmentWorkspace.OperationStepTicks, arrangementWorkspace.OperationStepTicks);
         Assert.True(arrangementWorkspace.GridVisible);
-        Assert.Equal(1_920, arrangement.DefaultLengthTicks);
+        Assert.Equal(480, arrangement.DefaultLengthTicks);
         Assert.Equal(480, piano.DefaultLengthTicks);
     }
 

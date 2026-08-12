@@ -196,7 +196,8 @@ public sealed class TimelineRenderSnapshot
         IEnumerable<TimelineRenderItem> items,
         IReadOnlyList<string>? laneLabels = null,
         IReadOnlyList<TimelineLaneState>? laneStates = null,
-        IReadOnlyDictionary<MidoraId, TimelineSegmentPreview>? segmentPreviews = null)
+        IReadOnlyDictionary<MidoraId, TimelineSegmentPreview>? segmentPreviews = null,
+        IReadOnlyList<string>? laneSecondaryLabels = null)
     {
         if (semanticRevision < 0)
         {
@@ -227,6 +228,9 @@ public sealed class TimelineRenderSnapshot
         LaneStates = laneStates is null
             ? Array.Empty<TimelineLaneState>()
             : Array.AsReadOnly(laneStates.ToArray());
+        LaneSecondaryLabels = laneSecondaryLabels is null
+            ? Array.Empty<string>()
+            : Array.AsReadOnly(laneSecondaryLabels.Select(static label => label?.Trim() ?? string.Empty).ToArray());
         SegmentPreviews = segmentPreviews is null
             ? new Dictionary<MidoraId, TimelineSegmentPreview>()
             : new Dictionary<MidoraId, TimelineSegmentPreview>(segmentPreviews);
@@ -242,6 +246,7 @@ public sealed class TimelineRenderSnapshot
     public IReadOnlyList<TimelineRenderItem> Items { get; }
     public IReadOnlyList<string> LaneLabels { get; }
     public IReadOnlyList<TimelineLaneState> LaneStates { get; }
+    public IReadOnlyList<string> LaneSecondaryLabels { get; }
     public IReadOnlyDictionary<MidoraId, TimelineSegmentPreview> SegmentPreviews { get; }
     public TimelineIntervalIndex Index { get; }
     public IReadOnlyDictionary<MidoraId, TimelineRenderItem> ItemsById { get; }
@@ -367,9 +372,11 @@ internal static class TimelineContentFingerprint
             Add(ref hash, unchecked((ulong)item.StartTick));
             Add(ref hash, unchecked((ulong)item.EndTick));
             Add(ref hash, unchecked((ulong)BitConverter.DoubleToInt64Bits(item.Value)));
-            Add(ref hash, selection?.Contains(item.Id) == true ? 1UL : 0UL);
+            Add(ref hash, unchecked((ulong)item.ZIndex));
+            bool selected = selection?.Contains(item.Id)
+                ?? item.State.HasFlag(TimelineItemState.Selected);
+            Add(ref hash, selected ? 1UL : 0UL);
         }
-        Add(ref hash, unchecked((ulong)(selection?.Revision ?? 0)));
         return hash;
     }
 

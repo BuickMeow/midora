@@ -232,8 +232,14 @@
                             NotePlacementStarted="OnTimelineNotePlacementStarted"
                             NotePlacementCompleted="OnTimelineNotePlacementCompleted"
                             NotePlacementCancelled="OnTimelineNotePlacementCancelled"
+                            SegmentPlacementCompleted="OnTimelineSegmentPlacementCompleted"
                              LaneHeaderCommandInvoked="OnTimelineLaneHeaderCommandInvoked"
                              LaneHeaderInvoked="OnTimelineLaneHeaderInvoked"
+                             LaneHeaderContextRequested="OnTimelineLaneHeaderContextRequested"
+                             LaneHeaderReorderCompleted="OnTimelineLaneHeaderReorderCompleted"
+                             AllowDrop="True"
+                             DragOver="OnTimelineInstrumentDragOver"
+                             Drop="OnTimelineInstrumentDrop"
                              RulerClicked="OnTimelineRulerClicked"
                              TimeRangeSelected="OnTimelineTimeRangeSelected"
                              SegmentSplitRequested="OnTimelineSegmentSplitRequested"
@@ -317,7 +323,7 @@
           <ComboBox Grid.Column="1" Margin="0,0,6,0" ItemsSource="{Binding SortModes}" SelectedItem="{Binding SortMode}"/>
           <StackPanel Grid.Column="2" Orientation="Horizontal"><Button Margin="0,0,5,0" Content="Duplicate" IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Click="OnDuplicateLibraryInstrumentClick"/><Button Content="Move…" IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Click="OnMoveLibraryInstrumentClick"/></StackPanel>
         </Grid>
-        <ListBox Grid.Row="2" ItemsSource="{Binding Instruments}" SelectedItem="{Binding SelectedInstrument, Mode=TwoWay}" MouseDoubleClick="OnInstrumentListDoubleClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
+        <ListBox x:Name="InstrumentLibraryList" Grid.Row="2" ItemsSource="{Binding Instruments}" SelectedItem="{Binding SelectedInstrument, Mode=TwoWay}" MouseDoubleClick="OnInstrumentListDoubleClick" PreviewMouseLeftButtonDown="OnInstrumentListMouseLeftButtonDown" PreviewMouseMove="OnInstrumentListMouseMove" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
           <ListBox.ContextMenu><ContextMenu><MenuItem Header="Open" Click="OnOpenLibraryInstrumentClick"/><Separator/><MenuItem Header="Duplicate" Click="OnDuplicateLibraryInstrumentClick"/><MenuItem Header="Move to Folder…" Click="OnMoveLibraryInstrumentClick"/><Separator/><MenuItem Header="Delete Event Instrument…" Click="OnDeleteLibraryInstrumentClick"/></ContextMenu></ListBox.ContextMenu>
           <ListBox.ItemTemplate>
             <DataTemplate>

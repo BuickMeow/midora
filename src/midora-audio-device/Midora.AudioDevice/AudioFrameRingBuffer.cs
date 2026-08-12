@@ -148,6 +148,23 @@ public sealed unsafe class AudioFrameRingBuffer : IAudioRenderSource, IDisposabl
         Volatile.Write(ref _producerFaulted, 1);
     }
 
+    /// <summary>
+    /// Opens a new producer generation at an empty, completed frontier. The
+    /// caller must own a stable producer frontier and keep the producer paused.
+    /// </summary>
+    internal void ReopenCompletedProducerAtEmptyFrontier()
+    {
+        if (_disposed
+            || ProducerFaulted
+            || !ProducerCompleted
+            || AvailableFrameCount != 0)
+        {
+            throw new InvalidOperationException(
+                "A producer can only restart at an empty, completed, non-faulted frontier.");
+        }
+        Volatile.Write(ref _producerCompleted, 0);
+    }
+
     public int CopyAvailableFramesTo(float* destination, int destinationFrameCapacity)
     {
         if (_disposed || destination == null || destinationFrameCapacity < 0)

@@ -96,6 +96,46 @@ public sealed class RollingPreparationRenderSourceTests
         Assert.Equal(1.75f, after[6]);
     }
 
+    [Fact]
+    public unsafe void MonitoringResetRestartsProducerThatAlreadyPreparedTheWholeRange()
+    {
+        const int sampleRate = 1_000;
+        const long totalFrames = 1_000;
+        using ResettableSource underlying = new(sampleRate, totalFrames);
+        using RollingPreparationRenderSource source = new(
+            underlying,
+            totalFrames,
+            TimeSpan.FromSeconds(5));
+        Assert.True(SpinWait.SpinUntil(
+            () => source.PreparedFrameCount == totalFrames,
+            TimeSpan.FromSeconds(5)));
+
+        float* before = stackalloc float[16 * 2];
+        Assert.Equal(16, source.PullFrames(before, 16).FrameCount);
+
+        source.ResetForMonitoringColdStart(TimeSpan.FromSeconds(5));
+        Assert.True(SpinWait.SpinUntil(
+            () => source.PreparedFrameCount == totalFrames - 16,
+            TimeSpan.FromSeconds(5)));
+        float* afterFirstReset = stackalloc float[4 * 2];
+        Assert.Equal(4, source.PullFrames(afterFirstReset, 4).FrameCount);
+        Assert.Equal(1f, afterFirstReset[0]);
+        Assert.Equal(1.25f, afterFirstReset[2]);
+        Assert.Equal(1.5f, afterFirstReset[4]);
+        Assert.Equal(1.75f, afterFirstReset[6]);
+
+        source.ResetForMonitoringColdStart(TimeSpan.FromSeconds(5));
+        Assert.True(SpinWait.SpinUntil(
+            () => source.PreparedFrameCount == totalFrames - 20,
+            TimeSpan.FromSeconds(5)));
+        float* afterSecondReset = stackalloc float[4 * 2];
+        Assert.Equal(4, source.PullFrames(afterSecondReset, 4).FrameCount);
+        Assert.Equal(2f, afterSecondReset[0]);
+        Assert.Equal(2.25f, afterSecondReset[2]);
+        Assert.Equal(2.5f, afterSecondReset[4]);
+        Assert.Equal(2.75f, afterSecondReset[6]);
+    }
+
     private sealed unsafe class CountingSource(int sampleRate, long totalFrames)
         : IAudioRenderSource, IDisposable
     {
@@ -151,7 +191,7 @@ public sealed class RollingPreparationRenderSourceTests
         public void ResetForMonitoringColdStart(long producerFrontierFrame)
         {
             _positionFrames = producerFrontierFrame;
-            Volatile.Write(ref _generation, 2);
+            Interlocked.Increment(ref _generation);
         }
 
         public void Dispose()

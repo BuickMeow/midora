@@ -7,11 +7,13 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
     private readonly IAudioRenderSource _source;
     private readonly AudioFrameRingBuffer _destination;
     private readonly int _workFrameCount;
+    private readonly bool _allowRestartAfterEndOfStream;
     private readonly Thread _thread;
     private float* _workBuffer;
     private int _stopRequested;
     private int _pauseRequested;
     private int _paused;
+    private int _waitingForProducerRestart;
     private int _started;
     private int _finished;
     private long _renderingThreadAllocatedBytes;
@@ -21,7 +23,8 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
         IAudioRenderSource source,
         AudioFrameRingBuffer destination,
         int workFrameCount,
-        string threadName = "Midora Audio Render-Ahead")
+        string threadName = "Midora Audio Render-Ahead",
+        bool allowRestartAfterEndOfStream = false)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(destination);
@@ -38,6 +41,7 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
         _source = source;
         _destination = destination;
         _workFrameCount = workFrameCount;
+        _allowRestartAfterEndOfStream = allowRestartAfterEndOfStream;
         _workBuffer = (float*)NativeMemory.Alloc(
             checked((nuint)workFrameCount * (nuint)source.Format.BytesPerFrame));
         _thread = new Thread(Run)
@@ -129,6 +133,34 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
         }
     }
 
+    /// <summary>
+    /// Reopens an opted-in producer after it reached EOS while remaining alive
+    /// for a later source generation. Returns false when the paused producer had
+    /// not reached EOS.
+    /// </summary>
+    public bool RestartCompletedProducerAtPausedFrontier()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_allowRestartAfterEndOfStream)
+        {
+            throw new InvalidOperationException(
+                "This render-ahead producer does not allow an EOS restart.");
+        }
+        if (!IsPaused || Volatile.Read(ref _pauseRequested) == 0)
+        {
+            throw new InvalidOperationException(
+                "A completed producer can only restart at a paused frontier.");
+        }
+        if (Volatile.Read(ref _waitingForProducerRestart) == 0)
+        {
+            return false;
+        }
+
+        _destination.ReopenCompletedProducerAtEmptyFrontier();
+        Volatile.Write(ref _waitingForProducerRestart, 0);
+        return true;
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -164,6 +196,12 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
                     continue;
                 }
 
+                if (Volatile.Read(ref _waitingForProducerRestart) != 0)
+                {
+                    Thread.Sleep(1);
+                    continue;
+                }
+
                 if (_destination.FreeFrameCount < _workFrameCount)
                 {
                     Thread.Sleep(1);
@@ -194,7 +232,11 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
                 if (result.Status == AudioPullStatus.EndOfStream)
                 {
                     _destination.CompleteProducer();
-                    break;
+                    if (!_allowRestartAfterEndOfStream)
+                    {
+                        break;
+                    }
+                    Volatile.Write(ref _waitingForProducerRestart, 1);
                 }
             }
         }

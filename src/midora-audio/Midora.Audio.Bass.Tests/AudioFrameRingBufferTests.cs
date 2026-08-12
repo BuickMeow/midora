@@ -286,6 +286,37 @@ public sealed class AudioFrameRingBufferTests
         Assert.Throws<InvalidOperationException>(() => worker.ResumeFromProducerFrontier());
     }
 
+    [Fact]
+    public unsafe void RestartableRenderAheadWorkerRemainsPauseableAfterEndOfStream()
+    {
+        RestartableCountingSource source = new(totalFramesPerGeneration: 32);
+        using AudioFrameRingBuffer ring = new(source.Format, 64);
+        using AudioRenderAheadWorker worker = new(
+            source,
+            ring,
+            32,
+            allowRestartAfterEndOfStream: true);
+        worker.Start();
+        Assert.True(SpinWait.SpinUntil(
+            () => ring.ProducerCompleted,
+            TimeSpan.FromSeconds(5)));
+        Assert.False(worker.IsFinished);
+
+        float* frames = stackalloc float[32 * 2];
+        Assert.Equal(AudioPullStatus.EndOfStream, ring.PullFrames(frames, 32).Status);
+        worker.PauseAtProducerFrontier(TimeSpan.FromSeconds(5));
+        source.BeginNextGeneration();
+        Assert.True(worker.RestartCompletedProducerAtPausedFrontier());
+        worker.ResumeFromProducerFrontier();
+
+        Assert.True(SpinWait.SpinUntil(
+            () => ring.ProducerCompleted,
+            TimeSpan.FromSeconds(5)));
+        Assert.Equal(AudioPullStatus.EndOfStream, ring.PullFrames(frames, 32).Status);
+        Assert.Equal(2f, frames[0]);
+        Assert.Equal(2f, frames[1]);
+    }
+
     private static unsafe void FillFrames(float* destination, int frameCount, int startValue)
     {
         for (int frame = 0; frame < frameCount; frame++)
@@ -336,6 +367,36 @@ public sealed class AudioFrameRingBufferTests
                 destination,
                 checked((nuint)requestedFrameCount * (nuint)Format.BytesPerFrame));
             return AudioPullResult.EndOfStream(requestedFrameCount);
+        }
+    }
+
+    private sealed unsafe class RestartableCountingSource(long totalFramesPerGeneration)
+        : IAudioRenderSource
+    {
+        private long _position;
+        private int _generation = 1;
+
+        public AudioFormat Format => new(48_000, 2, AudioSampleFormat.Float32);
+
+        public void BeginNextGeneration()
+        {
+            _position = 0;
+            _generation++;
+        }
+
+        public AudioPullResult PullFrames(float* destination, int requestedFrameCount)
+        {
+            int frameCount = (int)Math.Min(
+                requestedFrameCount,
+                totalFramesPerGeneration - _position);
+            for (int index = 0; index < frameCount * Format.ChannelCount; index++)
+            {
+                destination[index] = _generation;
+            }
+            _position += frameCount;
+            return _position == totalFramesPerGeneration
+                ? AudioPullResult.EndOfStream(frameCount)
+                : AudioPullResult.Continue(frameCount);
         }
     }
 

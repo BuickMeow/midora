@@ -163,6 +163,73 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
     }
 
     [Fact]
+    public void NativeAotRealtimeWorkerAppliesRepeatedMonitoringAfterRollingProducerReachedEos()
+    {
+        string? configured = Environment.GetEnvironmentVariable(
+            "MIDORA_TEST_NATIVE_AOT_REALTIME_WORKER");
+        if (string.IsNullOrWhiteSpace(configured) || !File.Exists(configured))
+        {
+            throw SkipException.ForSkip(
+                "Native AOT monitoring integration requires MIDORA_TEST_NATIVE_AOT_REALTIME_WORKER.");
+        }
+
+        string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
+        string soundFontPath = NativeAudioIntegrationEnvironment.RequireSoundFontPath();
+        MidiRenderPlan plan = new(
+            48_000,
+            96_000,
+            [new MidiPortRenderPlan(
+                0,
+                [
+                    new(0, MidiMessage.ProgramChange(0, 0), 0),
+                    new(0, MidiMessage.NoteOn(0, 60, 100), 0),
+                    new(90_000, MidiMessage.NoteOff(0, 60, 0), 0)
+                ])],
+            sourceIds: [1]);
+        using BassMidiAudioWorkerSession session = new(
+            plan,
+            soundFontPath,
+            new BassMidiRendererSettings(500, 256),
+            AudioMasterSettings.LimiterV1,
+            renderAheadMilliseconds: 20,
+            deviceBufferRequestMilliseconds: 50,
+            deviceId: null,
+            Path.GetFullPath(configured),
+            nativeDirectory,
+            preparingTimeout: TimeSpan.FromSeconds(30),
+            allowManagedTestWorker: false,
+            playbackSpanCacheEnabled: true);
+
+        MidiMonitoringCommand[] commands = new MidiMonitoringCommand[16];
+        for (int index = 0; index < commands.Length; index++)
+        {
+            commands[index] = (index & 1) == 0
+                ? MidiMonitoringCommand.DisableSource(0)
+                : MidiMonitoringCommand.EnableSource(0);
+        }
+        session.EnqueueMonitoringCommands(commands);
+
+        long deadline = Environment.TickCount64 + 1_000;
+        AudioWorkerStatus status = session.Status;
+        while (status.RenderPositionFrame < 24_000
+            && status.State is AudioWorkerState.Playing or AudioWorkerState.Buffering
+            && Environment.TickCount64 < deadline)
+        {
+            Thread.Sleep(5);
+            status = session.Status;
+        }
+        Assert.Contains(
+            status.State,
+            new[] { AudioWorkerState.Playing, AudioWorkerState.Buffering });
+        Assert.Equal(0, status.FaultCode);
+        session.Stop(flush: true, TimeSpan.FromSeconds(5));
+        AudioWorkerStatus stopped = session.Status;
+        Assert.Equal(AudioWorkerState.Stopped, stopped.State);
+        Assert.Equal(0, stopped.CallbackAllocatedBytes);
+        Assert.Equal(0, stopped.RenderingAllocatedBytes);
+    }
+
+    [Fact]
     public void NativeAotDesktopPlaybackPipelineCompilesAndConsumesProjectNotes()
     {
         string? configured = Environment.GetEnvironmentVariable(

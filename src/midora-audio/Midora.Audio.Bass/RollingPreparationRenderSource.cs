@@ -58,7 +58,8 @@ internal sealed unsafe class RollingPreparationRenderSource : IAudioRenderSource
             underlying,
             _prepared,
             workFrames,
-            "Midora Rolling Segment Preparation");
+            "Midora Rolling Segment Preparation",
+            allowRestartAfterEndOfStream: true);
         _worker.Start();
 
         int startupFrames = (int)Math.Min(
@@ -160,6 +161,7 @@ internal sealed unsafe class RollingPreparationRenderSource : IAudioRenderSource
             _transitionRemainingFrames = _transitionTotalFrames;
             _prepared.DiscardBufferedFramesAtReadPosition();
             resettable.ResetForMonitoringColdStart(frontier);
+            _ = _worker.RestartCompletedProducerAtPausedFrontier();
             afterResetBeforeResume?.Invoke();
             Volatile.Write(ref _watermarkBuffering, 0);
         }

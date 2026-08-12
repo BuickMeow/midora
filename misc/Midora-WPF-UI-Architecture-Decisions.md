@@ -126,7 +126,7 @@
 
 - 决定：Piano Roll 的每个 `256 × 256` 核心瓦片在四边各增加 1 device-pixel 保护区；相邻瓦片按相同世界坐标重复栅格化保护区并重叠组合。被瓦片边缘截断的 Note 不生成伪边框，只有 Note 的真实起点、终点和上下边缘生成轮廓，避免瓦片缝隙及长 Note 内部的人工分界线。
 - 决定：Piano Selection 使用独立的 selection-revision 瓦片层；Velocity 的普通与选中柱状统一进入横向瓦片层。Primary、drag、正在编辑的 Velocity 值和 cursor 仍是小规模 transient overlay。大选区不得退回逐 Note WPF primitive 路径。
-- 决定：框选的视觉矩形与最终 interval-index 查询必须共享同一份吸附后 tick/lane 边界；小于半个 operation step 的正向拖动至少覆盖一个完整有效 operation step，不得退化成 1 tick。一次框选通过批量 selection mutation 只推进一次 selection revision。
+- 决定：框选的视觉矩形与最终 interval-index 查询必须共享同一份吸附后 tick/lane 边界。时间范围按拖动方向解析：Pointer Down 锚点独立吸附并固定，只吸附移动端；左右方向不足一个 operation step 时均向各自拖动方向覆盖一个完整有效 operation step，不得用吸附后的起点加吸附长度反算固定锚点。一次框选通过批量 selection mutation 只推进一次 selection revision。
 - 决定：`ProjectDocumentSession` 分离 History 状态通知与携带 `ProjectChangeSet` 的内容通知。Desktop 只重建受 Track、Event Instrument 或 Conductor 变更影响的 Workspace；保存点等纯 History 变化只刷新状态属性。编辑一个 Track 不得重建其他 Track 的已打开 Segment/SubVoice 大型快照。
 - 边界：正式编译仍保持现有同步、原子和 canonical 结果语义；本决定不把 UI 响应速度问题转化为延迟编译或未验证 Project 状态。
 
@@ -159,7 +159,7 @@
 
 - 决定：Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的 Select 模式在单次左键按下时先于对象 hit test 进入 marquee capture；起点位于 Segment / Note 内部时也不发出 `ItemInvoked`，因此不再提供单对象点击选择。双击仍进入既有对象命中与导航路线。
 - 原因：极端密集对象覆盖画布时，先命中对象会令用户无法从中间位置开始框选。Select 的明确职责改为区域选择；单对象选择仍可在 Draw 模式通过点击完成。
-- 边界：Ctrl / Shift / Alt 仍在 marquee 完成时分别执行 toggle / add / remove；小于 marquee 阈值的普通点击按空范围处理。该决定不改变 Draw、Split、Erase、右键上下文命中、对象编辑、Project 数据或 Undo。
+- 边界：有效 marquee 的集合运算固定为：无修饰键 Replace、Ctrl Add、Alt Remove、Ctrl+Alt Toggle；Shift 保留为 Add。任一修饰键路径都以现有选择为基础，空选区不改变选择；无修饰键的有效空选区执行 Replace 并清空原选择。小于 marquee 阈值的普通点击只设置 Edit Cursor，不改变 Object Selection。该决定不改变 Draw、Split、Erase、右键上下文命中、对象编辑、Project 数据或 Undo。
 
 ## ADR-UI-024：Arrangement 放置手势与 Track Header 直接操作
 
@@ -175,6 +175,23 @@
 - 决定：Presentation 对已损坏 Project 中的非法 Note pitch 使用 `Math.Clamp(pitch, 0, 127)` 计算安全 lane，同时标记 `Invalid`；诊断导航先验证 Segment / Note 稳定 ID 仍存在，再构建 Selection 和 viewport。
 - 原因：用户明确要求移动越界 Note 被丢弃而非存入非法 pitch；持久化损坏或旧缺陷留下的非法对象仍需可诊断、可定位且不能使 WPF projection 构造崩溃。
 - 边界：该规则改变 Project 编辑结果但不改变 Compiler 对非法源数据的 Error，也不允许正式消费者接收非法 Note。删除可 Undo，不产生新稳定 ID。
+
+## ADR-UI-026：Direct Timeline 边缘命中与 SubVoice Piano Roll 共用契约
+
+- 决定：`TimelineViewport` 明确区分“定位 tick”和“包含 tick”。定位、Snap 与放置继续使用最近 tick；半开区间 hit test 使用对连续世界坐标向下取整的包含 tick。不得把四舍五入后的定位 tick 用作 `[startTick,endTick)` 内容归属，否则高缩放下每个 tick 的后半段会被错误归入右侧对象或空白。
+- 决定：Arrangement Segment、Logical Note 与 Template Note 的 Draw 边缘命中先以固定 `5 DIP` 扩展 interval-index 候选，再在屏幕坐标中解析真实 Start/End 边缘；不得直接用半开区间 `[startTick,endTick)` 的零容差内容命中决定 Resize。共享边界左侧指向左对象 End、右侧指向右对象 Start；精确重合时依次优先 Primary、Selected、End。
+- 决定：Direct Timeline 的 Select 单击仍先进入 marquee capture；Pointer Up 未达到框选阈值时发出背景定位并设置吸附后的 Edit Cursor，保留现有 Object Selection，不恢复单对象点击选择。
+- 决定：Timeline 右键菜单提供 `Deselect All` 与 `Invert Selection`；前者清空当前 Workspace Selection，后者只 Toggle 当前 surface snapshot 中可命中的对象，并保留当前 surface 之外的既有选择。
+- 决定：SubVoice Note Piano Roll 复用 Segment Piano Roll 的 `TimelineSurface` 交互与颜色路径：接入同一 `MarqueeCompleted`、Edit Cursor、Template 有效范围和蓝灰 Note palette；对象种类仍为 `TemplateNote`，编辑继续路由到正式 Template command。
+- 原因：半开区间适合正式范围语义，但视觉 End 边缘本身位于区间外；高缩放时把连续坐标四舍五入成整数 tick，会让一个 tick 的后半段提前归入下一个 tick，形成边缘左侧的命中空洞。SubVoice 缺少事件/状态绑定则会使同一控件产生行为和颜色分叉。
+- 边界：该决定只改变 UI hit resolution、session cursor 和 presentation binding；不改变 Project Note/Segment 范围、稳定 ID、Selection 数据模型、编译、播放、Undo/Redo 或持久化。
+
+## ADR-UI-027：批量边缘调整采用共享请求量与逐对象长度饱和
+
+- 决定：Arrangement Segment、Segment Logical Note 与 SubVoice Template Note 的批量边缘调整使用 Primary 对象吸附后得到的同一个请求 Edge Delta，但不再先按选择集中最短对象的剩余长度共同裁剪 delta。正式 Application command 对每个对象独立计算结果；缩短超过该对象可用长度时，仅该对象在 `1 tick` 处饱和，其他对象继续应用完整请求 delta。
+- 决定：左边缘调整保持每个对象原右边缘不变，右边缘调整保持每个对象原左边缘不变。Segment 左边缘同时按实际应用量更新 `ContentOffsetTick`；时间非负、内容窗口合法、Segment 不重叠和整数溢出等硬约束仍在 mutation 前验证。任一结构性约束失败时整批拒绝，不产生部分修改。
+- 原因：共同按最短对象裁剪会使一个短对象限制所有较长对象，无法表达用户请求的批量缩短量。共享请求量加逐对象最小长度饱和既保持非比例批量编辑语义，也使 `100 tick` 与 `20 tick` 对象共同缩短 `60 tick` 时确定地产生 `40 tick` 与 `1 tick`。
+- 边界：一次手势仍只提交一个 Project command 和一个 Undo；不改变对象稳定 ID、编译/canonical 语义、持久化格式或 Snap 来源。该规则只对长度最小值做逐对象饱和，不把重叠、容器边界等结构性错误降级为部分成功。
 
 ## 小决定审计
 

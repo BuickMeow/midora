@@ -190,22 +190,51 @@ public static partial class ProjectDomainEditCommands
             eventInstrumentId,
             subVoiceId,
             noteIds,
-            value => value with
-            {
-                Tick = checked(value.Tick + startDelta),
-                LengthTicks = checked(value.LengthTicks + endDelta - startDelta)
-            });
+            startDelta,
+            endDelta);
+
+    private static TemplateEventValue AdjustTemplateNoteEdgesSaturated(
+        TemplateEventValue value,
+        long startDelta,
+        long endDelta)
+    {
+        long oldEnd = checked(value.Tick + value.LengthTicks);
+        long requestedStart = checked(value.Tick + startDelta);
+        long requestedEnd = checked(oldEnd + endDelta);
+        long start;
+        long end;
+        if (startDelta != 0 && endDelta == 0)
+        {
+            start = Math.Clamp(requestedStart, 0, checked(oldEnd - 1));
+            end = oldEnd;
+        }
+        else if (startDelta == 0)
+        {
+            start = value.Tick;
+            end = Math.Max(checked(start + 1), requestedEnd);
+        }
+        else
+        {
+            start = Math.Max(0, requestedStart);
+            end = Math.Max(checked(start + 1), requestedEnd);
+        }
+        return value with
+        {
+            Tick = start,
+            LengthTicks = checked(end - start)
+        };
+    }
 
     private static IProjectEditCommand PrepareTemplateNoteBatch(
         string commandName,
         MidoraId eventInstrumentId,
         MidoraId subVoiceId,
         IReadOnlyCollection<MidoraId> noteIds,
-        Func<TemplateEventValue, TemplateEventValue> update) =>
+        long startDelta,
+        long endDelta) =>
         Command(commandName, project =>
         {
             ArgumentNullException.ThrowIfNull(noteIds);
-            ArgumentNullException.ThrowIfNull(update);
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
             HashSet<MidoraId> requested = ValidateBatchIds(noteIds, nameof(noteIds), "Template Note");
@@ -217,7 +246,15 @@ public static partial class ProjectDomainEditCommands
                     nameof(noteIds));
             }
             TemplateEventValue[] old = notes.Select(CaptureTemplateEvent).ToArray();
-            TemplateEventValue[] replacement = old.Select(update).ToArray();
+            long boundedStartDelta = startDelta < 0
+                ? Math.Max(startDelta, -old.Min(value => value.Tick))
+                : startDelta;
+            TemplateEventValue[] replacement = old
+                .Select(value => AdjustTemplateNoteEdgesSaturated(
+                    value,
+                    boundedStartDelta,
+                    endDelta))
+                .ToArray();
             for (int index = 0; index < notes.Length; index++)
             {
                 ValidateTemplateEventEdit(notes[index], replacement[index]);

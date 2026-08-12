@@ -24,6 +24,17 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void ContainmentMappingDoesNotRoundTheLastHalfTickIntoTheNextObject()
+    {
+        TimelineViewport viewport = new(0, 40, 0, 1, 400, 18, 18);
+
+        Assert.Equal(20, viewport.XToTick(196));
+        Assert.Equal(19, viewport.XToContainingTick(196));
+        Assert.Equal(20, viewport.XToContainingTick(200));
+        Assert.Equal(39, viewport.XToContainingTick(400));
+    }
+
+    [Fact]
     public void IntervalIndexFindsLongItemBeginningBeforeViewport()
     {
         TimelineRenderItem[] items =
@@ -266,6 +277,19 @@ public sealed class TimelineRenderingTests
         Assert.Equal(
             expected,
             TimelineToolPolicy.StartsMarqueeBeforeItemHit(toolMode, surfaceMode, clickCount));
+    }
+
+    [Theory]
+    [InlineData(ModifierKeys.None, WorkspaceSelectionRangeMode.Replace)]
+    [InlineData(ModifierKeys.Control, WorkspaceSelectionRangeMode.Add)]
+    [InlineData(ModifierKeys.Alt, WorkspaceSelectionRangeMode.Remove)]
+    [InlineData(ModifierKeys.Control | ModifierKeys.Alt, WorkspaceSelectionRangeMode.Toggle)]
+    [InlineData(ModifierKeys.Shift, WorkspaceSelectionRangeMode.Add)]
+    public void MarqueeModifiersResolveToExplicitSetOperations(
+        ModifierKeys modifiers,
+        WorkspaceSelectionRangeMode expected)
+    {
+        Assert.Equal(expected, TimelineToolPolicy.ResolveMarqueeSelectionMode(modifiers));
     }
 
     [Fact]
@@ -914,6 +938,134 @@ public sealed class TimelineRenderingTests
         Assert.Equal(expectedEnd, range.EndTick);
     }
 
+    [Theory]
+    [InlineData(300, 280, 240, 288)]
+    [InlineData(300, 270, 240, 288)]
+    [InlineData(300, 260, 240, 288)]
+    [InlineData(300, 230, 240, 288)]
+    [InlineData(300, 210, 192, 288)]
+    public void ReverseMarqueeKeepsSnappedAnchorEdgeStable(
+        long rawAnchor,
+        long rawMoving,
+        long expectedStart,
+        long expectedEnd)
+    {
+        TimelineGridQuantization.SnappedRange range = TimelineGridQuantization.SnapRangeFromAnchor(
+            rawAnchor,
+            rawMoving,
+            fixedStepTicks: 48,
+            useBars: false,
+            timeSignatureMap: null);
+
+        Assert.Equal(expectedStart, range.StartTick);
+        Assert.Equal(expectedEnd, range.EndTick);
+    }
+
+    [Theory]
+    [InlineData(100, 110, 96, 144)]
+    [InlineData(100, 120, 96, 144)]
+    [InlineData(100, 130, 96, 144)]
+    [InlineData(100, 170, 96, 192)]
+    public void ForwardMarqueeKeepsSnappedAnchorEdgeStable(
+        long rawAnchor,
+        long rawMoving,
+        long expectedStart,
+        long expectedEnd)
+    {
+        TimelineGridQuantization.SnappedRange range = TimelineGridQuantization.SnapRangeFromAnchor(
+            rawAnchor,
+            rawMoving,
+            fixedStepTicks: 48,
+            useBars: false,
+            timeSignatureMap: null);
+
+        Assert.Equal(expectedStart, range.StartTick);
+        Assert.Equal(expectedEnd, range.EndTick);
+    }
+
+    [Fact]
+    public void ReverseMarqueeAtTickZeroStillProducesAPositiveRange()
+    {
+        TimelineGridQuantization.SnappedRange range = TimelineGridQuantization.SnapRangeFromAnchor(
+            rawAnchorTick: 10,
+            rawMovingTick: 0,
+            fixedStepTicks: 48,
+            useBars: false,
+            timeSignatureMap: null);
+
+        Assert.Equal(0, range.StartTick);
+        Assert.Equal(48, range.EndTick);
+    }
+
+    [Fact]
+    public void ReverseBarMarqueeKeepsTheSnappedAnchorBoundaryStable()
+    {
+        MidoraProject project = new(480);
+        ProjectTimeSignatureMap map = new(project);
+
+        TimelineGridQuantization.SnappedRange nearAnchor = TimelineGridQuantization.SnapRangeFromAnchor(
+            rawAnchorTick: 2_000,
+            rawMovingTick: 1_800,
+            fixedStepTicks: 1,
+            useBars: true,
+            map);
+        TimelineGridQuantization.SnappedRange fartherLeft = TimelineGridQuantization.SnapRangeFromAnchor(
+            rawAnchorTick: 2_000,
+            rawMovingTick: 700,
+            fixedStepTicks: 1,
+            useBars: true,
+            map);
+
+        Assert.Equal(new TimelineGridQuantization.SnappedRange(0, 1_920), nearAnchor);
+        Assert.Equal(new TimelineGridQuantization.SnappedRange(0, 1_920), fartherLeft);
+    }
+
+    [Fact]
+    public void DirectEditHitUsesPointerSideAtAHighlyZoomedSharedBoundary()
+    {
+        TimelineViewport viewport = new(0, 40, 0, 1, 400, 18, 18);
+        TimelineRenderItem left = Item(1, 10, 20, 0);
+        TimelineRenderItem right = Item(2, 20, 30, 0);
+        TimelineIntervalIndex index = new([left, right]);
+        List<TimelineRenderItem> candidates = [];
+        index.HitTestInto(viewport.XToTick(199), 1, 0, candidates);
+
+        int fromLeft = TimelineToolPolicy.FindPreferredDirectEditEdgeCandidate(
+            candidates,
+            viewport,
+            contentX: 199,
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.PianoRoll);
+        int fromRight = TimelineToolPolicy.FindPreferredDirectEditEdgeCandidate(
+            candidates,
+            viewport,
+            contentX: 201,
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.PianoRoll);
+
+        Assert.Equal(left.Id, candidates[fromLeft].Id);
+        Assert.Equal(right.Id, candidates[fromRight].Id);
+    }
+
+    [Fact]
+    public void DirectEditHitIncludesTheHalfOpenRightBoundary()
+    {
+        TimelineViewport viewport = new(0, 40, 0, 1, 400, 18, 18);
+        TimelineRenderItem item = Item(1, 10, 20, 0);
+        TimelineIntervalIndex index = new([item]);
+        List<TimelineRenderItem> candidates = [];
+        index.HitTestInto(tick: 20, toleranceTicks: 1, lane: 0, candidates);
+
+        int hit = TimelineToolPolicy.FindPreferredDirectEditEdgeCandidate(
+            candidates,
+            viewport,
+            contentX: 200,
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.PianoRoll);
+
+        Assert.Equal(item.Id, candidates[hit].Id);
+    }
+
     [Fact]
     public void BarGridFollowsEffectiveTimeSignatureAndTruncatedBoundary()
     {
@@ -966,6 +1118,25 @@ public sealed class TimelineRenderingTests
         Assert.Equal(1, selection.Revision);
         Assert.Equal(ids.Length, selection.Ids.Count);
         Assert.Equal(ids[0], selection.Primary);
+    }
+
+    [Fact]
+    public void WorkspaceSelectionRangeOperationsHaveSetSemantics()
+    {
+        WorkspaceSelection selection = new();
+        selection.ApplyRange([new MidoraId(1), new MidoraId(2)], WorkspaceSelectionRangeMode.Replace);
+
+        selection.ApplyRange([new MidoraId(2), new MidoraId(3)], WorkspaceSelectionRangeMode.Add);
+        Assert.Equal([new MidoraId(1), new MidoraId(2), new MidoraId(3)], selection.Ids.Order());
+
+        selection.ApplyRange([new MidoraId(2), new MidoraId(4)], WorkspaceSelectionRangeMode.Remove);
+        Assert.Equal([new MidoraId(1), new MidoraId(3)], selection.Ids.Order());
+
+        selection.ApplyRange([new MidoraId(1), new MidoraId(4)], WorkspaceSelectionRangeMode.Toggle);
+        Assert.Equal([new MidoraId(3), new MidoraId(4)], selection.Ids.Order());
+
+        selection.ApplyRange([], WorkspaceSelectionRangeMode.Replace);
+        Assert.Empty(selection.Ids);
     }
 
     private static byte Alpha(TimelineRasterBuffer buffer, int x, int y) =>

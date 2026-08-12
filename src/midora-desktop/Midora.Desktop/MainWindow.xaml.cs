@@ -1019,6 +1019,12 @@ public partial class MainWindow : Window
         Separator();
         Add("Delete", OnDeleteWorkspaceSelectionClick, "Delete", canEdit);
         Separator();
+        bool hasSelection = _session.ActiveWorkspace?.Selection.Ids.Count > 0;
+        bool hasInvertibleItems = surface.Snapshot?.Items.Any(static item =>
+            !item.State.HasFlag(TimelineItemState.HitTestDisabled)) == true;
+        Add("Deselect All", OnDeselectAllTimelineObjectsClick, enabled: hasSelection);
+        Add("Invert Selection", OnInvertTimelineSelectionClick, enabled: hasInvertibleItems);
+        Separator();
         Add("Set Time Range from Object Selection", OnSetTimeRangeFromObjectsClick);
         Add("Select Objects in Time Range", OnSelectObjectsInTimeRangeClick);
         Add("Clear Time Range", OnClearTimeRangeClick);
@@ -2796,18 +2802,9 @@ public partial class MainWindow : Window
     private void OnTimelineMarqueeCompleted(object? sender, TimelineMarqueeEventArgs e)
     {
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
-        bool remove = (e.Modifiers & ModifierKeys.Alt) != 0;
-        bool toggle = !remove && (e.Modifiers & ModifierKeys.Control) != 0;
-        bool add = !remove && !toggle && (e.Modifiers & ModifierKeys.Shift) != 0;
         workspace.Selection.ApplyRange(
             e.ItemIds,
-            remove
-                ? WorkspaceSelectionRangeMode.Remove
-                : toggle
-                    ? WorkspaceSelectionRangeMode.Toggle
-                    : add
-                        ? WorkspaceSelectionRangeMode.Add
-                        : WorkspaceSelectionRangeMode.Replace);
+            TimelineToolPolicy.ResolveMarqueeSelectionMode(e.Modifiers));
         _session.RefreshWorkspaceSelection(workspace);
     }
 
@@ -2848,6 +2845,35 @@ public partial class MainWindow : Window
         RunSynchronous("Split Segment", () => ExecuteAndSelectCreated(
             ProjectDomainEditCommands.SplitSegment(e.Item.Id, splitTick), workspace));
     }
+
+    private void OnDeselectAllTimelineObjectsClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
+        workspace.Selection.Clear();
+        _session.RefreshWorkspaceSelection(workspace);
+    }
+
+    private void OnInvertTimelineSelectionClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.ActiveWorkspace is not WorkspaceViewModel workspace
+            || GetTimelineContextSurface(sender) is not TimelineSurface surface
+            || surface.Snapshot is not TimelineRenderSnapshot snapshot)
+        {
+            return;
+        }
+        workspace.Selection.ApplyRange(
+            snapshot.Items
+                .Where(static item => !item.State.HasFlag(TimelineItemState.HitTestDisabled))
+                .Select(static item => item.Id),
+            WorkspaceSelectionRangeMode.Toggle);
+        _session.RefreshWorkspaceSelection(workspace);
+    }
+
+    private static TimelineSurface? GetTimelineContextSurface(object sender) =>
+        sender is MenuItem menuItem
+        && ItemsControl.ItemsControlFromItemContainer(menuItem) is ContextMenu contextMenu
+            ? contextMenu.PlacementTarget as TimelineSurface
+            : null;
 
     private void OnSetTimeRangeFromObjectsClick(object sender, RoutedEventArgs e)
     {
@@ -2962,11 +2988,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_session.ActiveWorkspace is InstrumentWorkspaceViewModel instrument
-            && e.IsDoubleClick
-            && _session.Project is not null
-            && instrument.ObjectId is MidoraId instrumentId)
+        if (_session.ActiveWorkspace is InstrumentWorkspaceViewModel instrument)
         {
+            instrument.EditCursorTick = instrument.EditorSettings.SnapAbsolute(e.Tick);
+            if (!e.IsDoubleClick
+                || _session.Project is null
+                || instrument.ObjectId is not MidoraId instrumentId)
+            {
+                return;
+            }
             EventInstrument source = _session.Project.EventInstruments.Single(item => item.Id == instrumentId);
             if (sender is FrameworkElement { Tag: "SubVoiceNotes" }
                 && instrument.ActiveSubVoiceId is MidoraId noteSubVoiceId)
@@ -3017,15 +3047,23 @@ public partial class MainWindow : Window
                 long snappedDelta = timeline.EditorSettings.SnapDelta(
                     e.TickDelta,
                     checked(e.Item.StartTick + e.TickDelta));
+                long unclampedSnappedDelta = snappedDelta;
                 long snappedTarget = Math.Max(0, checked(e.Item.StartTick + snappedDelta));
-                snappedDelta = checked(snappedTarget - e.Item.StartTick);
+                long nonnegativeSnappedDelta = checked(snappedTarget - e.Item.StartTick);
                 MidoraId[] selected = timeline.Selection.Ids.Count == 0
                     ? [e.Item.Id]
                     : timeline.Selection.Ids.ToArray();
                 switch (timeline.Mode)
                 {
                     case TimelineWorkspaceMode.Arrangement:
-                        EditArrangementItem(timeline, e, selected, snappedTarget, snappedDelta);
+                        EditArrangementItem(
+                            timeline,
+                            e,
+                            selected,
+                            snappedTarget,
+                            e.EditKind == TimelineItemEditKind.ResizeStart
+                                ? unclampedSnappedDelta
+                                : nonnegativeSnappedDelta);
                         break;
                     case TimelineWorkspaceMode.Segment when timeline.ObjectId is MidoraId segmentId:
                         if (e.Item.Kind == TimelineItemKind.LogicalParameterPoint)
@@ -3034,7 +3072,13 @@ public partial class MainWindow : Window
                         }
                         else
                         {
-                            EditLogicalNotes(segmentId, e, selected, snappedDelta);
+                            EditLogicalNotes(
+                                segmentId,
+                                e,
+                                selected,
+                                e.EditKind == TimelineItemEditKind.ResizeStart
+                                    ? unclampedSnappedDelta
+                                    : nonnegativeSnappedDelta);
                         }
                         break;
                     case TimelineWorkspaceMode.Conductor:
@@ -3126,30 +3170,31 @@ public partial class MainWindow : Window
             return;
         }
 
-        long oldStart = segment.ProjectStartTick;
-        long oldEnd = segment.ProjectRange.EndTick;
+        Segment[] selectedSegments = _session.Project!.Tracks
+            .SelectMany(track => track.Segments)
+            .Where(item => selected.Contains(item.Id))
+            .ToArray();
+        if (selectedSegments.Length == 0)
+        {
+            selectedSegments = [segment];
+        }
+        MidoraId[] selectedSegmentIds = selectedSegments.Select(item => item.Id).ToArray();
         if (edit.EditKind == TimelineItemEditKind.ResizeStart)
         {
-            long minimumStart = checked(oldStart - segment.ContentOffsetTick);
-            long newStart = Math.Clamp(snappedTarget, minimumStart, oldEnd - 1);
-            long delta = checked(newStart - oldStart);
-            _session.Execute(ProjectDomainEditCommands.SetSegmentWindow(
-                segment.Id,
-                newStart,
-                checked(oldEnd - newStart),
-                checked(segment.ContentOffsetTick + delta)));
+            _session.Execute(ProjectDomainEditCommands.AdjustSegmentEdges(
+                selectedSegmentIds,
+                startDelta: snappedDelta,
+                endDelta: 0));
         }
         else
         {
             long endDelta = workspace.EditorSettings.SnapDelta(
                 edit.TickDelta,
                 checked(edit.Item.EndTick + edit.TickDelta));
-            long newEnd = Math.Max(oldStart + 1, checked(edit.Item.EndTick + endDelta));
-            _session.Execute(ProjectDomainEditCommands.SetSegmentWindow(
-                segment.Id,
-                oldStart,
-                checked(newEnd - oldStart),
-                segment.ContentOffsetTick));
+            _session.Execute(ProjectDomainEditCommands.AdjustSegmentEdges(
+                selectedSegmentIds,
+                startDelta: 0,
+                endDelta));
         }
     }
 
@@ -3198,10 +3243,9 @@ public partial class MainWindow : Window
                 }
                 break;
             case TimelineItemEditKind.ResizeStart:
-                long startDelta = Math.Clamp(
+                long startDelta = Math.Max(
                     snappedDelta,
-                    -notes.Min(item => item.StartTick),
-                    notes.Min(item => item.LengthTicks - 1));
+                    -notes.Min(item => item.StartTick));
                 _session.Execute(ProjectDomainEditCommands.AdjustLogicalNoteEdges(
                     segmentId,
                     selected,
@@ -3212,7 +3256,6 @@ public partial class MainWindow : Window
                 long endDelta = ((TimelineWorkspaceViewModel)_session.ActiveWorkspace!).EditorSettings.SnapDelta(
                     edit.TickDelta,
                     checked(edit.Item.EndTick + edit.TickDelta));
-                endDelta = Math.Max(endDelta, notes.Max(item => 1 - item.LengthTicks));
                 _session.Execute(ProjectDomainEditCommands.AdjustLogicalNoteEdges(
                     segmentId,
                     selected,
@@ -3367,10 +3410,9 @@ public partial class MainWindow : Window
                     }
                     return;
                 case TimelineItemEditKind.ResizeStart:
-                    long startDelta = Math.Clamp(
+                    long startDelta = Math.Max(
                         snappedDelta,
-                        -selectedNotes.Min(item => item.Tick),
-                        selectedNotes.Min(item => item.LengthTicks - 1));
+                        -selectedNotes.Min(item => item.Tick));
                     _session.Execute(ProjectDomainEditCommands.AdjustTemplateNoteEdges(
                         instrumentId,
                         voice.Id,
@@ -3379,15 +3421,12 @@ public partial class MainWindow : Window
                         endDelta: 0));
                     return;
                 case TimelineItemEditKind.ResizeEnd:
-                    long endDelta = Math.Max(
-                        snappedDelta,
-                        selectedNotes.Max(item => 1 - item.LengthTicks));
                     _session.Execute(ProjectDomainEditCommands.AdjustTemplateNoteEdges(
                         instrumentId,
                         voice.Id,
                         selectedIds,
                         startDelta: 0,
-                        endDelta));
+                        endDelta: snappedDelta));
                     return;
             }
         }

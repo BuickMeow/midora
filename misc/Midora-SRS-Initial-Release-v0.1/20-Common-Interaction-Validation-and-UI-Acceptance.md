@@ -219,6 +219,7 @@ Time Range 不因空白左键自动清除。
 ### 20.3.8 Marquee
 初版支持矩形框选，不要求 Lasso。
 命中规则：与矩形相交即命中。
+启用 Snap 时，框选的 Pointer Down 时间端点独立吸附并在整个手势中保持固定，只对 Pointer Move 端点继续吸附；向左和向右框选必须镜像一致，不得通过“变化中的起点 + 吸附长度”反算固定端点。移动端尚未越过相邻操作边界时，沿拖动方向覆盖至少一个完整有效操作步长。视觉矩形与最终命中查询必须共用该方向化范围。
 ```text
 No modifier -> replace
 Shift       -> add
@@ -281,7 +282,7 @@ Velocity
 时间、Track/Lane 与所属容器边界仍使用整组共同合法边界。普通移动 Logical Note 或 Template Note 时，pitch 使用用户请求的共同 delta；结果 pitch 小于 0 或大于 127 的 Note 直接从 Project 删除，其余 Note 保持共同 delta 和相对关系继续移动。该删除与移动构成一个原子 Project command 和一个 Undo；Undo 必须按原顺序恢复被删除 Note。不得把越界 Note 存入模型，也不得弹出逐 Note 错误 Dialog。
 
 Note 的 `Ctrl+Drag` 复制仍按第 20.5.6.1 节使用选择集共同 pitch clamp，不删除源对象或生成部分副本。其他可移动 Timeline 选择若请求 delta 越过时间、Track/Lane 或所属容器硬边界，使用共同 clamp 后的 delta 使整个选择贴合边界。
-多选边缘调整采用同一 Edge Delta；初版不做比例时间伸缩。
+多选边缘调整采用同一请求 Edge Delta；初版不做比例时间伸缩。缩短时每个对象独立在 `1 tick` 最小长度处饱和：某个较短对象先达到最小长度，不得限制其他较长对象继续应用同一请求 delta。调整左边缘时对象的右边缘保持不变，调整右边缘时对象的左边缘保持不变；时间、内容窗口和 Segment 不重叠等其他硬约束仍须满足，整批提交保持原子性并只产生一个 Undo。
 ### 20.4.5 数值编辑
 必须区分：
 ```text

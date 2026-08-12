@@ -1513,8 +1513,15 @@ public sealed class InstrumentWorkspaceViewModel(
     private bool _isPreviewMuted;
     private bool _isPreviewSoloSelected;
     private InstrumentPreviewMode _previewMode;
+    private long? _editCursorTick;
 
     public TimelineEditorSettings EditorSettings { get; } = editorSettings ?? new TimelineEditorSettings();
+
+    public long? EditCursorTick
+    {
+        get => _editCursorTick;
+        set => Set(ref _editCursorTick, value is null ? null : Math.Max(0, value.Value));
+    }
 
     public string Summary
     {

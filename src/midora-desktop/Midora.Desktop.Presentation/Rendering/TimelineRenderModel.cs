@@ -173,6 +173,21 @@ public readonly record struct TimelineViewport(
         return checked((long)Math.Round(value, MidpointRounding.AwayFromZero));
     }
 
+    public long XToContainingTick(double x)
+    {
+        Validate();
+        if (!double.IsFinite(x))
+        {
+            throw new ArgumentOutOfRangeException(nameof(x));
+        }
+        double clamped = Math.Clamp(x, 0, Math.BitDecrement(Width));
+        double value = StartTick + (clamped / Width * TickLength);
+        return Math.Clamp(
+            checked((long)Math.Floor(value)),
+            StartTick,
+            checked(EndTick - 1));
+    }
+
     public int YToLane(double y)
     {
         Validate();

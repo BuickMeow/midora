@@ -438,6 +438,104 @@ public sealed class ProjectBatchTimelineEditCommandsTests
     }
 
     [Fact]
+    public void LogicalNoteBatchEndResizeSaturatesEachLengthIndependently()
+    {
+        (MidoraProject project, _, Segment segment, LogicalNote first, LogicalNote second) =
+            CreateProject();
+        first.LengthTicks = 100;
+        second.LengthTicks = 20;
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.AdjustLogicalNoteEdges(
+            segment.Id,
+            [first.Id, second.Id],
+            startDelta: 0,
+            endDelta: -60));
+
+        Assert.Equal((40L, 1L), (first.LengthTicks, second.LengthTicks));
+        Assert.Single(document.History);
+        document.Undo();
+        Assert.Equal((100L, 20L), (first.LengthTicks, second.LengthTicks));
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void LogicalNoteBatchStartResizeSaturatesEachLengthIndependently()
+    {
+        (MidoraProject project, _, Segment segment, LogicalNote first, LogicalNote second) =
+            CreateProject();
+        first.StartTick = 100;
+        first.LengthTicks = 100;
+        second.StartTick = 300;
+        second.LengthTicks = 20;
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.AdjustLogicalNoteEdges(
+            segment.Id,
+            [first.Id, second.Id],
+            startDelta: 60,
+            endDelta: 0));
+
+        Assert.Equal((160L, 40L), (first.StartTick, first.LengthTicks));
+        Assert.Equal((319L, 1L), (second.StartTick, second.LengthTicks));
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void SegmentBatchEndResizeSaturatesEachLengthIndependentlyAndUsesOneUndo()
+    {
+        MidoraProject project = new(480);
+        LogicalTrack firstTrack = new(project) { Name = "First" };
+        LogicalTrack secondTrack = new(project) { Name = "Second" };
+        Segment first = new(project) { ProjectStartTick = 0, LengthTicks = 100 };
+        Segment second = new(project) { ProjectStartTick = 0, LengthTicks = 20 };
+        firstTrack.Segments.Add(first);
+        secondTrack.Segments.Add(second);
+        project.Tracks.Add(firstTrack);
+        project.Tracks.Add(secondTrack);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.AdjustSegmentEdges(
+            [first.Id, second.Id],
+            startDelta: 0,
+            endDelta: -60));
+
+        Assert.Equal((40L, 1L), (first.LengthTicks, second.LengthTicks));
+        Assert.Single(document.History);
+        document.Undo();
+        Assert.Equal((100L, 20L), (first.LengthTicks, second.LengthTicks));
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void SegmentBatchStartResizeSaturatesEachLengthIndependently()
+    {
+        MidoraProject project = new(480);
+        LogicalTrack firstTrack = new(project) { Name = "First" };
+        LogicalTrack secondTrack = new(project) { Name = "Second" };
+        Segment first = new(project) { ProjectStartTick = 100, LengthTicks = 100 };
+        Segment second = new(project) { ProjectStartTick = 300, LengthTicks = 20 };
+        firstTrack.Segments.Add(first);
+        secondTrack.Segments.Add(second);
+        project.Tracks.Add(firstTrack);
+        project.Tracks.Add(secondTrack);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.AdjustSegmentEdges(
+            [first.Id, second.Id],
+            startDelta: 60,
+            endDelta: 0));
+
+        Assert.Equal((160L, 40L), (first.ProjectStartTick, first.LengthTicks));
+        Assert.Equal((319L, 1L), (second.ProjectStartTick, second.LengthTicks));
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
     public void VelocityPaintUsesPerNoteValuesAndOneUndoUnit()
     {
         (MidoraProject project, _, Segment segment, LogicalNote first, LogicalNote second) = CreateProject();
@@ -519,6 +617,60 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         Assert.Equal((0L, 60), (first.Tick, first.Number));
         Assert.Equal((120L, 64), (second.Tick, second.Number));
         Assert.False(document.IsModified);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void TemplateNoteBatchEndResizeSaturatesEachLengthIndependently()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument", TemplateLengthTicks = 480 };
+        SubVoice voice = new(project) { Name = "Voice" };
+        TemplateEvent first = TemplateEvent.Note(project, 0, 100, 60, 100);
+        TemplateEvent second = TemplateEvent.Note(project, 120, 20, 64, 80);
+        voice.Events.AddRange([first, second]);
+        instrument.SubVoices.Add(voice);
+        project.EventInstruments.Add(instrument);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.AdjustTemplateNoteEdges(
+            instrument.Id,
+            voice.Id,
+            [first.Id, second.Id],
+            startDelta: 0,
+            endDelta: -60));
+
+        Assert.Equal((40L, 1L), (first.LengthTicks, second.LengthTicks));
+        Assert.Single(document.History);
+        document.Undo();
+        Assert.Equal((100L, 20L), (first.LengthTicks, second.LengthTicks));
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void TemplateNoteBatchStartResizeSaturatesEachLengthIndependently()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument", TemplateLengthTicks = 480 };
+        SubVoice voice = new(project) { Name = "Voice" };
+        TemplateEvent first = TemplateEvent.Note(project, 100, 100, 60, 100);
+        TemplateEvent second = TemplateEvent.Note(project, 300, 20, 64, 80);
+        voice.Events.AddRange([first, second]);
+        instrument.SubVoices.Add(voice);
+        project.EventInstruments.Add(instrument);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.AdjustTemplateNoteEdges(
+            instrument.Id,
+            voice.Id,
+            [first.Id, second.Id],
+            startDelta: 60,
+            endDelta: 0));
+
+        Assert.Equal((160L, 40L), (first.Tick, first.LengthTicks));
+        Assert.Equal((319L, 1L), (second.Tick, second.LengthTicks));
         AssertMatchesFull(compilation);
     }
 

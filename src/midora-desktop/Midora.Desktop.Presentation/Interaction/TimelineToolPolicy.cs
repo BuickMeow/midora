@@ -16,6 +16,8 @@ public enum TimelinePointerIntent
 
 public static class TimelineToolPolicy
 {
+    public const double DirectEditEdgeTolerancePixels = 5;
+
     public static bool IsDirectEditingSurface(TimelineSurfaceMode surfaceMode) =>
         surfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll;
 
@@ -26,6 +28,18 @@ public static class TimelineToolPolicy
         clickCount == 1
         && toolMode == TimelineToolMode.Select
         && IsDirectEditingSurface(surfaceMode);
+
+    public static WorkspaceSelectionRangeMode ResolveMarqueeSelectionMode(
+        ModifierKeys modifiers)
+    {
+        bool control = (modifiers & ModifierKeys.Control) != 0;
+        bool alt = (modifiers & ModifierKeys.Alt) != 0;
+        if (control && alt) return WorkspaceSelectionRangeMode.Toggle;
+        if (alt) return WorkspaceSelectionRangeMode.Remove;
+        return control || (modifiers & ModifierKeys.Shift) != 0
+            ? WorkspaceSelectionRangeMode.Add
+            : WorkspaceSelectionRangeMode.Replace;
+    }
 
     public static bool ForcesVelocityTrace(
         MouseButton button,
@@ -125,6 +139,108 @@ public static class TimelineToolPolicy
         return isNearHorizontalEdge
             ? TimelinePointerIntent.ResizeHorizontal
             : TimelinePointerIntent.Move;
+    }
+
+    public static int FindPreferredDirectEditEdgeCandidate(
+        IReadOnlyList<TimelineRenderItem> candidates,
+        TimelineViewport viewport,
+        double contentX,
+        TimelineToolMode toolMode,
+        TimelineSurfaceMode surfaceMode,
+        TimelineSelectionSnapshot? selection = null,
+        double tolerancePixels = DirectEditEdgeTolerancePixels)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        viewport.Validate();
+        if (!double.IsFinite(contentX)
+            || !double.IsFinite(tolerancePixels)
+            || tolerancePixels < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(contentX));
+        }
+
+        int bestIndex = -1;
+        bool bestIsInteriorSide = false;
+        double bestDistance = double.PositiveInfinity;
+        bool bestIsPrimary = false;
+        bool bestIsSelected = false;
+        bool bestIsEnd = false;
+        for (int index = 0; index < candidates.Count; index++)
+        {
+            TimelineRenderItem candidate = candidates[index];
+            if (!CanBeginItemEdit(toolMode, surfaceMode, candidate.Kind))
+            {
+                continue;
+            }
+
+            Consider(viewport.TickToX(candidate.StartTick), isEnd: false);
+            Consider(viewport.TickToX(candidate.EndTick), isEnd: true);
+
+            void Consider(double edgeX, bool isEnd)
+            {
+                double distance = Math.Abs(contentX - edgeX);
+                if (distance > tolerancePixels)
+                {
+                    return;
+                }
+
+                // At a shared boundary, the pointer side resolves the ambiguity:
+                // left edits the left item's end; right edits the right item's start.
+                // Exact ties prefer current selection, then the ending edge so a
+                // half-open [start,end) interval cannot hide that resize affordance.
+                bool isInteriorSide = isEnd ? contentX <= edgeX : contentX >= edgeX;
+                bool isPrimary = selection?.Primary == candidate.Id
+                    || selection is null && candidate.State.HasFlag(TimelineItemState.Primary);
+                bool isSelected = selection?.Contains(candidate.Id)
+                    ?? candidate.State.HasFlag(TimelineItemState.Selected);
+                if (bestIndex >= 0
+                    && CompareCandidate(
+                        isInteriorSide,
+                        distance,
+                        isPrimary,
+                        isSelected,
+                        isEnd,
+                        bestIsInteriorSide,
+                        bestDistance,
+                        bestIsPrimary,
+                        bestIsSelected,
+                        bestIsEnd) >= 0)
+                {
+                    return;
+                }
+
+                bestIndex = index;
+                bestIsInteriorSide = isInteriorSide;
+                bestDistance = distance;
+                bestIsPrimary = isPrimary;
+                bestIsSelected = isSelected;
+                bestIsEnd = isEnd;
+            }
+        }
+        return bestIndex;
+    }
+
+    private static int CompareCandidate(
+        bool isInteriorSide,
+        double distance,
+        bool isPrimary,
+        bool isSelected,
+        bool isEnd,
+        bool otherIsInteriorSide,
+        double otherDistance,
+        bool otherIsPrimary,
+        bool otherIsSelected,
+        bool otherIsEnd)
+    {
+        int byInteriorSide = otherIsInteriorSide.CompareTo(isInteriorSide);
+        if (byInteriorSide != 0) return byInteriorSide;
+        int byDistance = distance.CompareTo(otherDistance);
+        if (byDistance != 0) return byDistance;
+        int byPrimary = otherIsPrimary.CompareTo(isPrimary);
+        if (byPrimary != 0) return byPrimary;
+        int bySelection = otherIsSelected.CompareTo(isSelected);
+        if (bySelection != 0) return bySelection;
+        return otherIsEnd.CompareTo(isEnd);
     }
 
     private static bool IsDirectManipulationItem(TimelineItemKind itemKind) =>

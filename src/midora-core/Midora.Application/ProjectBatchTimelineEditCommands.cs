@@ -85,16 +85,15 @@ public static partial class ProjectDomainEditCommands
                 segment.Segment,
                 logicalNoteIds);
             LogicalNoteValue[] old = selected.Select(value => Snapshot(value.Note)).ToArray();
-            LogicalNoteValue[] replacement = old.Select(value =>
-            {
-                long start = checked(value.StartTick + startDelta);
-                long end = checked(checked(value.StartTick + value.LengthTicks) + endDelta);
-                return new LogicalNoteValue(
-                    start,
-                    checked(end - start),
-                    value.Note,
-                    value.Velocity);
-            }).ToArray();
+            long boundedStartDelta = startDelta < 0
+                ? Math.Max(startDelta, -old.Min(value => value.StartTick))
+                : startDelta;
+            LogicalNoteValue[] replacement = old
+                .Select(value => AdjustLogicalNoteEdgesSaturated(
+                    value,
+                    boundedStartDelta,
+                    endDelta))
+                .ToArray();
             ValidateLogicalNoteBatch(replacement);
             return PrepareLogicalNoteBatch(
                 segment.Track.Id,
@@ -132,6 +131,119 @@ public static partial class ProjectDomainEditCommands
                 selected,
                 old,
                 replacement);
+        });
+
+    public static IProjectEditCommand AdjustSegmentEdges(
+        IReadOnlyCollection<MidoraId> segmentIds,
+        long startDelta,
+        long endDelta) =>
+        Command("Adjust segment edges", project =>
+        {
+            ArgumentNullException.ThrowIfNull(segmentIds);
+            if (segmentIds.Count == 0)
+            {
+                throw new ArgumentException(
+                    "At least one Segment must be selected.",
+                    nameof(segmentIds));
+            }
+            if (startDelta != 0 && endDelta != 0)
+            {
+                throw new ArgumentException(
+                    "A batch Segment edge edit must adjust exactly one edge.",
+                    nameof(startDelta));
+            }
+
+            HashSet<MidoraId> requested = [];
+            (SegmentLocation Location, SegmentWindow Old)[] selected = segmentIds.Select(id =>
+            {
+                if (id == default || !requested.Add(id))
+                {
+                    throw new ArgumentException(
+                        "Segment selections must contain distinct valid stable IDs.",
+                        nameof(segmentIds));
+                }
+                SegmentLocation location = FindSegment(project, id);
+                SegmentWindow old = new(
+                    location.Segment.ProjectStartTick,
+                    location.Segment.LengthTicks,
+                    location.Segment.ContentOffsetTick);
+                return (location, old);
+            }).ToArray();
+            long minimumBatchStartDelta = selected.Max(value => checked(
+                Math.Max(
+                    0,
+                    value.Old.ProjectStartTick - value.Old.ContentOffsetTick)
+                - value.Old.ProjectStartTick));
+            long boundedStartDelta = startDelta < 0
+                ? Math.Max(startDelta, minimumBatchStartDelta)
+                : startDelta;
+            SegmentEdgeEdit[] edits = selected.Select(value =>
+            {
+                SegmentWindow replacement = AdjustSegmentEdgesSaturated(
+                    value.Old,
+                    boundedStartDelta,
+                    endDelta);
+                ValidateSegmentRange(
+                    replacement.ProjectStartTick,
+                    replacement.LengthTicks,
+                    replacement.ContentOffsetTick);
+                return new SegmentEdgeEdit(value.Location, value.Old, replacement);
+            }).ToArray();
+
+            HashSet<Segment> selectedSegments = edits
+                .Select(value => value.Location.Segment)
+                .ToHashSet();
+            foreach (IGrouping<LogicalTrack, SegmentEdgeEdit> trackEdits in edits
+                .GroupBy(value => value.Location.Track))
+            {
+                SegmentEdgeEdit[] ordered = trackEdits
+                    .OrderBy(value => value.Replacement.ProjectStartTick)
+                    .ThenBy(value => value.Location.Segment.Id)
+                    .ToArray();
+                for (int index = 0; index < ordered.Length; index++)
+                {
+                    TickRange candidate = new(
+                        ordered[index].Replacement.ProjectStartTick,
+                        checked(ordered[index].Replacement.ProjectStartTick
+                            + ordered[index].Replacement.LengthTicks));
+                    if (trackEdits.Key.Segments.Any(existing =>
+                        !selectedSegments.Contains(existing)
+                        && candidate.Intersects(existing.ProjectRange)))
+                    {
+                        throw new InvalidOperationException(
+                            "The Segment batch resize would overlap an existing Segment.");
+                    }
+                    if (index > 0)
+                    {
+                        SegmentWindow previous = ordered[index - 1].Replacement;
+                        long previousEnd = checked(
+                            previous.ProjectStartTick + previous.LengthTicks);
+                        if (previousEnd > candidate.StartTick)
+                        {
+                            throw new InvalidOperationException(
+                                "Segments in the resized batch would overlap each other.");
+                        }
+                    }
+                }
+            }
+
+            return Prepared(
+                edits.Any(value => value.Old != value.Replacement),
+                TrackChange(edits.Select(value => value.Location.Track.Id).Distinct().ToArray()),
+                _ =>
+                {
+                    foreach (SegmentEdgeEdit edit in edits)
+                    {
+                        SetWindow(edit.Location.Segment, edit.Replacement);
+                    }
+                },
+                _ =>
+                {
+                    foreach (SegmentEdgeEdit edit in edits)
+                    {
+                        SetWindow(edit.Location.Segment, edit.Old);
+                    }
+                });
         });
 
     public static IProjectEditCommand SetLogicalNoteValues(
@@ -622,6 +734,65 @@ public static partial class ProjectDomainEditCommands
             _ => SetLogicalNoteBatch(selected, replacement),
             _ => SetLogicalNoteBatch(selected, old));
 
+    private static LogicalNoteValue AdjustLogicalNoteEdgesSaturated(
+        LogicalNoteValue value,
+        long startDelta,
+        long endDelta)
+    {
+        long oldEnd = checked(value.StartTick + value.LengthTicks);
+        long requestedStart = checked(value.StartTick + startDelta);
+        long requestedEnd = checked(oldEnd + endDelta);
+        long start;
+        long end;
+        if (startDelta != 0 && endDelta == 0)
+        {
+            start = Math.Clamp(requestedStart, 0, checked(oldEnd - 1));
+            end = oldEnd;
+        }
+        else if (startDelta == 0)
+        {
+            start = value.StartTick;
+            end = Math.Max(checked(start + 1), requestedEnd);
+        }
+        else
+        {
+            start = Math.Max(0, requestedStart);
+            end = Math.Max(checked(start + 1), requestedEnd);
+        }
+        return value with
+        {
+            StartTick = start,
+            LengthTicks = checked(end - start)
+        };
+    }
+
+    private static SegmentWindow AdjustSegmentEdgesSaturated(
+        SegmentWindow value,
+        long startDelta,
+        long endDelta)
+    {
+        long oldEnd = checked(value.ProjectStartTick + value.LengthTicks);
+        if (startDelta != 0)
+        {
+            long minimumStart = Math.Max(
+                0,
+                checked(value.ProjectStartTick - value.ContentOffsetTick));
+            long requestedStart = checked(value.ProjectStartTick + startDelta);
+            long start = Math.Clamp(requestedStart, minimumStart, checked(oldEnd - 1));
+            long appliedDelta = checked(start - value.ProjectStartTick);
+            return new(
+                start,
+                checked(oldEnd - start),
+                checked(value.ContentOffsetTick + appliedDelta));
+        }
+        long requestedEnd = checked(oldEnd + endDelta);
+        long end = Math.Max(checked(value.ProjectStartTick + 1), requestedEnd);
+        return new(
+            value.ProjectStartTick,
+            checked(end - value.ProjectStartTick),
+            value.ContentOffsetTick);
+    }
+
     private static void SetLogicalNoteBatch(
         SelectedLogicalNote[] selected,
         LogicalNoteValue[] values)
@@ -692,4 +863,8 @@ public static partial class ProjectDomainEditCommands
         Segment Segment,
         int Index,
         long ProjectStartTick);
+    private readonly record struct SegmentEdgeEdit(
+        SegmentLocation Location,
+        SegmentWindow Old,
+        SegmentWindow Replacement);
 }

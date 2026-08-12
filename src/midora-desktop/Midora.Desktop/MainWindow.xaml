@@ -433,10 +433,14 @@
                                             DefaultCreationLengthTicks="{Binding EditorSettings.DefaultLengthTicks}"
                                             DefaultVelocity="{Binding EditorSettings.DefaultVelocity}"
                                             GridVisible="{Binding EditorSettings.GridVisible}"
+                                            EditCursorTick="{Binding EditCursorTick}"
+                                            RangeStartTick="0"
+                                            RangeEndTick="{Binding TemplateLengthTicks}"
                                             ItemInvoked="OnTimelineItemInvoked" ItemEditCompleted="OnTimelineItemEditCompleted"
                                             BackgroundInvoked="OnTimelineBackgroundInvoked"
                                             LanePreviewPressed="OnTimelineLanePreviewPressed" LanePreviewReleased="OnTimelineLanePreviewReleased"
-                                            NotePlacementStarted="OnTimelineNotePlacementStarted" NotePlacementCompleted="OnTimelineNotePlacementCompleted" NotePlacementCancelled="OnTimelineNotePlacementCancelled"/>
+                                            NotePlacementStarted="OnTimelineNotePlacementStarted" NotePlacementCompleted="OnTimelineNotePlacementCompleted" NotePlacementCancelled="OnTimelineNotePlacementCancelled"
+                                            MarqueeCompleted="OnTimelineMarqueeCompleted"/>
                         <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding MaximumFirstLane, ElementName=SubVoiceNoteTimeline}" Value="{Binding FirstLane, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" SmallChange="1" LargeChange="{Binding VisibleLaneCount, ElementName=SubVoiceNoteTimeline}" ViewportSize="{Binding VisibleLaneCount, ElementName=SubVoiceNoteTimeline}"/>
                         </Grid>
                       </GroupBox>
@@ -457,6 +461,7 @@
                                               LaneHeight="128" GridStepTicks="{Binding EditorSettings.DisplayGridStepTicks}" OperationStepTicks="{Binding EditorSettings.EffectiveOperationStepTicks}" GridVisible="{Binding EditorSettings.GridVisible}"
                                               DisplayGridUsesBars="{Binding EditorSettings.DisplayGridUsesBars}" OperationUsesBars="{Binding EditorSettings.EffectiveOperationUsesBars}" TimeSignatureMap="{Binding EditorSettings.TimeSignatureMap}"
                                               ValueAxisMinimum="{Binding ActiveValueMinimum}" ValueAxisMaximum="{Binding ActiveValueMaximum}" ValueAxisIntegral="{Binding ActiveValueIntegral}"
+                                              EditCursorTick="{Binding EditCursorTick}" RangeStartTick="0" RangeEndTick="{Binding TemplateLengthTicks}"
                                               ItemInvoked="OnTimelineItemInvoked" ItemEditCompleted="OnTimelineItemEditCompleted" BackgroundInvoked="OnTimelineBackgroundInvoked" LaneHeaderInvoked="OnTimelineLaneHeaderInvoked"/>
                           <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding ValueScrollMaximum, ElementName=SubVoiceEventTimeline}" Value="{Binding ValueScrollOffset, ElementName=SubVoiceEventTimeline, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SubVoiceEventTimeline}"/>
                           </Grid>

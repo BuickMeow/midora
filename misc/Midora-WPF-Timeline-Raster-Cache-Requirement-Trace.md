@@ -46,7 +46,7 @@
 - Segment preview keeps a 512-pixel content span mapped directly to the full unclipped Segment bounds. No horizontal source gutter is permitted.
 - Note fill and real object borders are rasterized together. Tile clipping never creates a synthetic note border.
 - Piano selection is a separate cached tile layer. Velocity stems, selection color, outline, and onset marker use a horizontally tiled raster layer; freehand/line editing uses one bounded trajectory overlay, while direct single-Note adjustment may replace only that one stem transiently.
-- Marquee drawing and hit query share snapped tick/lane bounds. Workspace selection range mutations increment the selection revision once.
+- Marquee drawing and hit query share directional snapped tick/lane bounds: the independently snapped Pointer Down edge remains fixed, only the moving edge changes, and either drag direction covers at least one operation step. Workspace selection range mutations increment the selection revision once.
 - Project content notifications carry the frozen change scope. Desktop refreshes only affected workspaces and does not rebuild an unrelated extreme Segment after editing another Track.
 
 ### 3.2 Final-pixel correction (2026-08-12)
@@ -76,6 +76,16 @@
 - On release, the immutable snapshot/index resolves the trace into one stable-ID → velocity map, which is committed as one Project edit. Direct stem/marker dragging keeps a one-entry transient map and bypasses the trace.
 - The Velocity layer retains the previous complete visible tile-key frame and switches to edited tiles only when the full current visible set is cached. This adds no bitmap copy and remains inside the shared LRU budget.
 
+### 3.5 Direct-edit edge and SubVoice parity parameters (2026-08-12)
+
+- Timeline pointer positioning and half-open interval containment use separate coordinate conversions. Hit testing floors the continuous world tick into `[startTick,endTick)`; snapping and placement may continue to use nearest-tick rounding.
+- Draw-mode Segment/Note resize uses a `5 DIP` edge affordance. The interval index query expands by the corresponding tick tolerance, while final candidate choice uses current screen coordinates; the half-open semantic interval remains unchanged.
+- At a shared boundary, the pointer side disambiguates End versus Start. Exact ties prefer Primary, then Selected, then End. Hover cursor and Pointer Down use the same resolver.
+- A Select gesture below the marquee threshold sets the snapped Edit Cursor and preserves Object Selection; it does not restore single-object click selection.
+- Completed marquee set operations are `none = Replace`, `Ctrl = Add`, `Alt = Remove`, `Ctrl+Alt = Toggle`; Shift remains an Add alias. Empty modifier-assisted ranges preserve existing selection, while an effective unmodified empty marquee clears it.
+- Timeline context menus expose `Deselect All` for the Workspace and `Invert Selection` for all hit-testable stable IDs in the context surface snapshot.
+- SubVoice Note Piano Roll binds the same marquee completion route, Edit Cursor, active range and blue-gray piano Note palette as Segment Piano Roll. Hit testing remains stable-ID/interval based and `TemplateNote` edits remain domain commands.
+
 ## 4. 验证门
 
 1. `TestProject.midora` 的 Arrangement 稳态绘制不枚举两个极端 Segment 的 43,008 个 Note，只绘制两个已缓存 preview bitmap。
@@ -89,3 +99,9 @@
 9. 密集 Velocity 自由/直线拖动期间，覆盖层复杂度只与采样后的指针轨迹点数相关，不与已触及 Note 数量相关；松开前不得重建 Velocity tile。
 10. Velocity 柱宽与 Note length 无关；同 tick 多音的 raster 与 direct hit 都必须以高 pitch 为最上层。
 11. `Alt + Left Drag` 从任意 Velocity 内容位置开始时均不得进入 direct single-Note edit；Direct Timeline 的 Select 单次左键从对象内部开始时仍必须形成 marquee，而不得发出单对象选择。
+12. 启用 Snap 后，向左框选时右侧 Pointer Down 边界必须在整个手势中保持同一吸附 tick；向右框选时左侧边界同理。预览与最终查询不得发生一个 operation step 的周期性跳动或分歧。
+13. 高缩放下，指针即使换算到对象 `endTick`，仍可命中其右侧 Resize 边缘；相邻对象共享边界时，边界左/右两侧分别命中左对象 End 与右对象 Start。
+14. Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的 Select 短点击只更新 Edit Cursor，不改变 Object Selection；SubVoice 框选必须返回 `TemplateNote` 稳定 ID，并使用与 Segment Piano Roll 相同的 Note palette 路径。
+15. 高缩放下，一个 tick 的后半段仍命中包含该屏幕位置的左侧半开区间对象；不得因最近 tick 四舍五入而提前命中右侧对象或空白。
+16. Ctrl/Alt/Ctrl+Alt marquee 分别执行 Add/Remove/Toggle 集合运算；无修饰键的有效框选执行 Replace，即使结果为空也清空原选择。短点击不清空选择。
+17. `Deselect All` 清空当前 Workspace Selection；`Invert Selection` Toggle 当前右键 surface 的全部可命中对象且保留其他 scope 的选择。

@@ -330,6 +330,68 @@ public static class TimelineGridQuantization
         return checked(tick + Math.Max(1, fixedStepTicks));
     }
 
+    public static long GetPreviousGridTick(
+        long tick,
+        long fixedStepTicks,
+        bool useBars,
+        ProjectTimeSignatureMap? timeSignatureMap)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(tick);
+        if (tick == 0)
+        {
+            return 0;
+        }
+        if (useBars && timeSignatureMap is not null)
+        {
+            return timeSignatureMap.GetBarContaining(tick - 1).StartTick;
+        }
+
+        return Math.Max(0, tick - Math.Max(1, fixedStepTicks));
+    }
+
+    public static SnappedRange SnapRangeFromAnchor(
+        long rawAnchorTick,
+        long rawMovingTick,
+        long fixedStepTicks,
+        bool useBars,
+        ProjectTimeSignatureMap? timeSignatureMap)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(rawAnchorTick);
+        ArgumentOutOfRangeException.ThrowIfNegative(rawMovingTick);
+        bool movesRight = rawMovingTick >= rawAnchorTick;
+        long anchor = SnapAbsolute(
+            rawAnchorTick,
+            fixedStepTicks,
+            useBars,
+            timeSignatureMap,
+            0);
+        long moving = SnapAbsolute(
+            rawMovingTick,
+            fixedStepTicks,
+            useBars,
+            timeSignatureMap,
+            movesRight ? 1 : -1);
+
+        if (movesRight)
+        {
+            long end = moving > anchor
+                ? moving
+                : GetNextGridTick(anchor, fixedStepTicks, useBars, timeSignatureMap);
+            return new(anchor, end);
+        }
+
+        long start = moving < anchor
+            ? moving
+            : GetPreviousGridTick(anchor, fixedStepTicks, useBars, timeSignatureMap);
+        if (start < anchor)
+        {
+            return new(start, anchor);
+        }
+
+        long fallbackEnd = GetNextGridTick(anchor, fixedStepTicks, useBars, timeSignatureMap);
+        return new(anchor, fallbackEnd);
+    }
+
     public static SnappedRange SnapPositiveRange(
         long rawStartTick,
         long rawEndTick,
@@ -342,31 +404,11 @@ public static class TimelineGridQuantization
         {
             throw new ArgumentOutOfRangeException(nameof(rawEndTick));
         }
-        long start = SnapAbsolute(
+        return SnapRangeFromAnchor(
             rawStartTick,
-            fixedStepTicks,
-            useBars,
-            timeSignatureMap,
-            0);
-        long length = SnapDelta(
-            checked(rawEndTick - rawStartTick),
             rawEndTick,
             fixedStepTicks,
             useBars,
             timeSignatureMap);
-        if (length <= 0)
-        {
-            if (useBars && timeSignatureMap is not null)
-            {
-                ProjectBarInfo bar = timeSignatureMap.GetBarContaining(start);
-                length = Math.Max(1, checked(bar.EndTick - bar.StartTick));
-            }
-            else
-            {
-                length = Math.Max(1, fixedStepTicks);
-            }
-        }
-        long end = start > long.MaxValue - length ? long.MaxValue : start + length;
-        return new(start, end);
     }
 }

@@ -1081,7 +1081,12 @@ public sealed class TimelineSurface : Control
         }
         if (pointIsInContent)
         {
-            Snapshot?.Index.HitTestInto(tick, 0, lane, _hitItems);
+            PopulateTimelineHitItems(
+                point,
+                viewport,
+                preferDirectEditEdges: CanEdit
+                    && ToolMode == TimelineToolMode.Draw
+                    && TimelineToolPolicy.IsDirectEditingSurface(SurfaceMode));
             if (_hitItems.Count == 0 && Snapshot is not null)
             {
                 long pointTolerance = Math.Max(1, checked((long)Math.Ceiling(4 / viewport.PixelsPerTick)));
@@ -1102,6 +1107,10 @@ public sealed class TimelineSurface : Control
         }
         if (_hitItems.Count != 0)
         {
+            if (ToolMode == TimelineToolMode.Select && e.ClickCount == 1)
+            {
+                RaiseBackgroundInvoked(point, viewport, isDoubleClick: false);
+            }
             int hitIndex = 0;
             if ((modifiers & ModifierKeys.Alt) != 0 && _hitItems.Count > 1)
             {
@@ -1140,8 +1149,10 @@ public sealed class TimelineSurface : Control
                     SurfaceMode,
                     hit.Kind,
                     modifiers,
-                    isNearStart: Math.Abs(point.X - left) <= 5,
-                    isNearEnd: Math.Abs(point.X - right) <= 5);
+                    isNearStart: Math.Abs(point.X - left)
+                        <= TimelineToolPolicy.DirectEditEdgeTolerancePixels,
+                    isNearEnd: Math.Abs(point.X - right)
+                        <= TimelineToolPolicy.DirectEditEdgeTolerancePixels);
                 if (TimelineToolPolicy.ForcesItemMove(
                         ToolMode,
                         SurfaceMode,
@@ -1252,7 +1263,7 @@ public sealed class TimelineSurface : Control
             return;
         }
         if (point.X < laneHeaderWidth || point.Y < rulerHeight) return;
-        long tick = viewport.XToTick(point.X - laneHeaderWidth);
+        long tick = viewport.XToContainingTick(point.X - laneHeaderWidth);
         int lane = viewport.YToLane(point.Y - rulerHeight);
         Snapshot?.Index.HitTestInto(tick, 0, lane, _hitItems);
         if (_hitItems.Count == 0) return;
@@ -1815,9 +1826,7 @@ public sealed class TimelineSurface : Control
                 out int firstLane,
                 out int lastLaneExclusive))
         {
-            MarqueeCompleted?.Invoke(
-                this,
-                new TimelineMarqueeEventArgs(Array.Empty<MidoraId>(), Keyboard.Modifiers));
+            RaiseBackgroundInvoked(origin, viewport, isDoubleClick: false);
             return;
         }
         Snapshot.Index.QueryInto(start, end, firstLane, lastLaneExclusive, _visibleItems);
@@ -3561,11 +3570,15 @@ public sealed class TimelineSurface : Control
             return false;
         }
 
-        long rawStart = viewport.XToTick(rawBounds.Left - laneHeaderWidth);
-        long rawEnd = Math.Max(rawStart + 1, viewport.XToTick(rawBounds.Right - laneHeaderWidth));
-        TimelineGridQuantization.SnappedRange snapped = TimelineGridQuantization.SnapPositiveRange(
-            rawStart,
-            rawEnd,
+        double contentLeft = laneHeaderWidth;
+        double contentRight = laneHeaderWidth + viewport.Width;
+        long rawAnchor = viewport.XToTick(
+            Math.Clamp(origin.X, contentLeft, contentRight) - laneHeaderWidth);
+        long rawMoving = viewport.XToTick(
+            Math.Clamp(current.X, contentLeft, contentRight) - laneHeaderWidth);
+        TimelineGridQuantization.SnappedRange snapped = TimelineGridQuantization.SnapRangeFromAnchor(
+            Math.Max(0, rawAnchor),
+            Math.Max(0, rawMoving),
             Math.Max(1, OperationStepTicks),
             OperationUsesBars,
             TimeSignatureMap);
@@ -3718,7 +3731,8 @@ public sealed class TimelineSurface : Control
         {
             double left = header + viewport.TickToX(hit.StartTick);
             double right = header + viewport.TickToX(hit.EndTick);
-            nearEdge = Math.Abs(point.X - left) <= 5 || Math.Abs(point.X - right) <= 5;
+            nearEdge = Math.Abs(point.X - left) <= TimelineToolPolicy.DirectEditEdgeTolerancePixels
+                || Math.Abs(point.X - right) <= TimelineToolPolicy.DirectEditEdgeTolerancePixels;
         }
         TimelinePointerIntent intent = TimelineToolPolicy.GetPointerIntent(
             ToolMode,
@@ -3765,9 +3779,12 @@ public sealed class TimelineSurface : Control
             item = default!;
             return false;
         }
-        long tick = viewport.XToTick(point.X - header);
-        int lane = viewport.YToLane(point.Y - ruler);
-        Snapshot.Index.HitTestInto(tick, 0, lane, _hitItems);
+        PopulateTimelineHitItems(
+            point,
+            viewport,
+            preferDirectEditEdges: CanEdit
+                && ToolMode == TimelineToolMode.Draw
+                && TimelineToolPolicy.IsDirectEditingSurface(SurfaceMode));
         if (_hitItems.Count == 0)
         {
             item = default!;
@@ -3775,6 +3792,74 @@ public sealed class TimelineSurface : Control
         }
         item = _hitItems[0];
         return true;
+    }
+
+    private void PopulateTimelineHitItems(
+        Point point,
+        TimelineViewport viewport,
+        bool preferDirectEditEdges)
+    {
+        if (Snapshot is not TimelineRenderSnapshot snapshot)
+        {
+            _hitItems.Clear();
+            return;
+        }
+
+        double header = GetLaneHeaderWidth();
+        double ruler = GetRulerHeight();
+        long tick = viewport.XToContainingTick(point.X - header);
+        int lane = viewport.YToLane(point.Y - ruler);
+        if (preferDirectEditEdges)
+        {
+            long toleranceTicks = Math.Max(
+                1,
+                checked((long)Math.Ceiling(
+                    TimelineToolPolicy.DirectEditEdgeTolerancePixels / viewport.PixelsPerTick)));
+            snapshot.Index.HitTestInto(tick, toleranceTicks, lane, _hitItems);
+            int edgeIndex = TimelineToolPolicy.FindPreferredDirectEditEdgeCandidate(
+                _hitItems,
+                viewport,
+                point.X - header,
+                ToolMode,
+                SurfaceMode,
+                SelectionSnapshot);
+            if (edgeIndex >= 0)
+            {
+                if (edgeIndex != 0)
+                {
+                    (_hitItems[0], _hitItems[edgeIndex]) = (_hitItems[edgeIndex], _hitItems[0]);
+                }
+                return;
+            }
+        }
+
+        snapshot.Index.HitTestInto(tick, 0, lane, _hitItems);
+    }
+
+    private void RaiseBackgroundInvoked(
+        Point point,
+        TimelineViewport viewport,
+        bool isDoubleClick)
+    {
+        double header = GetLaneHeaderWidth();
+        double ruler = GetRulerHeight();
+        long tick = viewport.XToTick(point.X - header);
+        int lane = viewport.YToLane(point.Y - ruler);
+        double laneOffset = Math.Clamp(
+            point.Y - ruler - (lane - viewport.FirstLane) * LaneHeight,
+            0,
+            LaneHeight);
+        double normalizedValue = SurfaceMode is TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity
+            ? ValueYToNormalized(point.Y, ruler)
+            : 1 - laneOffset / Math.Max(1, LaneHeight);
+        BackgroundInvoked?.Invoke(
+            this,
+            new TimelinePointEventArgs(
+                tick,
+                lane,
+                normalizedValue,
+                Keyboard.Modifiers,
+                isDoubleClick));
     }
 
     private void ZoomValueAxis(double pointerY, int wheelDelta, double rulerHeight)

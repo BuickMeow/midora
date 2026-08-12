@@ -13,22 +13,61 @@ public sealed class MidoraCompiler : IDisposable
 
     public CompilerRunTelemetry LastTelemetry { get; private set; }
 
-    public CanonicalCompiledResult CompileFull(MidoraProject project, CompilationRequest? request = null)
+    public CanonicalCompiledResult CompileFull(
+        MidoraProject project,
+        CompilationRequest? request = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(project);
         request ??= new CompilationRequest();
-        return CompileCore(project, request, false, ProjectChangeSet.Everything);
+        return CompileTransactional(
+            project,
+            request,
+            false,
+            ProjectChangeSet.Everything,
+            cancellationToken);
     }
 
     public CanonicalCompiledResult CompileIncremental(
         MidoraProject project,
         ProjectChangeSet changes,
-        CompilationRequest? request = null)
+        CompilationRequest? request = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(changes);
         request ??= new CompilationRequest();
-        return CompileCore(project, request, true, changes);
+        return CompileTransactional(project, request, true, changes, cancellationToken);
+    }
+
+    private CanonicalCompiledResult CompileTransactional(
+        MidoraProject project,
+        CompilationRequest request,
+        bool incremental,
+        ProjectChangeSet changes,
+        CancellationToken cancellationToken)
+    {
+        KeyValuePair<MidoraId, TrackCacheEntry>[] committedCache = _trackCache.ToArray();
+        MidoraProject? committedOwner = _cacheOwner;
+        try
+        {
+            return CompileCore(
+                project,
+                request,
+                incremental,
+                changes,
+                cancellationToken);
+        }
+        catch
+        {
+            _trackCache.Clear();
+            foreach (KeyValuePair<MidoraId, TrackCacheEntry> item in committedCache)
+            {
+                _trackCache.Add(item.Key, item.Value);
+            }
+            _cacheOwner = committedOwner;
+            throw;
+        }
     }
 
     public void ClearCache()
@@ -53,9 +92,11 @@ public sealed class MidoraCompiler : IDisposable
         MidoraProject project,
         CompilationRequest request,
         bool incremental,
-        ProjectChangeSet changes)
+        ProjectChangeSet changes,
+        CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
         if (request.HeldPreviewGateOpen
             && (request.Purpose != CompilationPurpose.EventInstrumentPreview
                 || request.StartTick < 0
@@ -84,10 +125,17 @@ public sealed class MidoraCompiler : IDisposable
             ClearCache();
             _cacheOwner = project;
         }
-        _mapping.SynchronizeFunctions(project.EventInstruments.SelectMany(instrument => instrument.MappingFunctions));
+        cancellationToken.ThrowIfCancellationRequested();
+        _mapping.SynchronizeFunctions(
+            project.EventInstruments.SelectMany(instrument => instrument.MappingFunctions),
+            cancellationToken);
         LastTelemetry = default;
-        List<CompilerDiagnostic> diagnostics = SemanticValidator.Validate(project, request);
-        ValidateMappingFunctions(project, request, diagnostics);
+        List<CompilerDiagnostic> diagnostics = SemanticValidator.Validate(
+            project,
+            request,
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateMappingFunctions(project, request, diagnostics, cancellationToken);
         long naturalEnd = GetNaturalEnd(project, request.IncludedTrackIds);
         long endTick = request.EndTick ?? project.Conductor.EndMarkerTick ?? naturalEnd;
         if (endTick < request.StartTick)
@@ -98,6 +146,7 @@ public sealed class MidoraCompiler : IDisposable
         }
 
         CanonicalConductor conductor = FreezeConductor(project.Conductor, request.StartTick, endTick);
+        cancellationToken.ThrowIfCancellationRequested();
         if (diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
         {
             return Failure(
@@ -134,6 +183,7 @@ public sealed class MidoraCompiler : IDisposable
 
         foreach (LogicalTrack track in selectedTracks)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             TrackExpansion expansion = ExpandTrackIncrementally(
                 project,
                 track,
@@ -141,7 +191,8 @@ public sealed class MidoraCompiler : IDisposable
                 incremental,
                 changes,
                 request.HeldPreviewGateOpen,
-                request.HeldPreviewFinalGateLengthTicks);
+                request.HeldPreviewFinalGateLengthTicks,
+                cancellationToken);
             instances.AddRange(expansion.Instances);
             diagnostics.AddRange(expansion.Diagnostics);
             recompiledTracks += expansion.Recompiled ? 1 : 0;
@@ -200,14 +251,15 @@ public sealed class MidoraCompiler : IDisposable
             .Where(instance => instance.StartTick < endTick && instance.EndTick > request.StartTick)
             .ToList();
         AppendEmptySubVoiceDiagnostics(instances, instruments, diagnostics);
+        cancellationToken.ThrowIfCancellationRequested();
 
         int overlapDiagnosticStart = diagnostics.Count;
-        ValidateOverlap(project, instances, diagnostics);
+        ValidateOverlap(project, instances, diagnostics, cancellationToken);
         bool overlapErrors = diagnostics
             .Skip(overlapDiagnosticStart)
             .Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         int allocationDiagnosticStart = diagnostics.Count;
-        AllocationResult allocation = Allocate(project, instances, diagnostics);
+        AllocationResult allocation = Allocate(project, instances, diagnostics, cancellationToken);
         bool allocationErrors = diagnostics
             .Skip(allocationDiagnosticStart)
             .Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
@@ -246,14 +298,16 @@ public sealed class MidoraCompiler : IDisposable
             instances,
             allocation.Groups,
             allocation.UnitBySubVoice,
-            project.GlobalResetDefaults);
+            project.GlobalResetDefaults,
+            cancellationToken);
         CanonicalMidiEvent[] ranged = ApplyRange(
             allEvents,
             allocation.Allocations,
             request.StartTick,
             endTick,
             project.GlobalResetDefaults,
-            request.HeldPreviewGateOpen);
+            request.HeldPreviewGateOpen,
+            cancellationToken);
         ChannelUnitAllocation[] rangedAllocations = allocation.Allocations
             .Where(value => value.StartTick < endTick && value.EndTick > request.StartTick)
             .ToArray();
@@ -264,7 +318,12 @@ public sealed class MidoraCompiler : IDisposable
         }
 
         long resultFingerprint = SourceFingerprint.ForResult(
-            request.StartTick, endTick, ranged, conductor);
+            request.StartTick,
+            endTick,
+            ranged,
+            conductor,
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         LastTelemetry = telemetry;
         CompilationStatistics successStatistics = CreateStatistics(
             selectedTracks.Count,
@@ -378,11 +437,13 @@ public sealed class MidoraCompiler : IDisposable
     private void ValidateMappingFunctions(
         MidoraProject project,
         CompilationRequest request,
-        List<CompilerDiagnostic> diagnostics)
+        List<CompilerDiagnostic> diagnostics,
+        CancellationToken cancellationToken)
     {
         HashSet<MidoraId> selectedInstrumentIds = SemanticValidator.GetParticipatingInstrumentIds(project, request);
         foreach (EventInstrument instrument in project.EventInstruments)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (request.IncludedTrackIds is not null
                 && !selectedInstrumentIds.Contains(instrument.Id))
             {
@@ -394,7 +455,8 @@ public sealed class MidoraCompiler : IDisposable
                 .ToHashSet();
             foreach (CSharpMappingFunction function in instrument.MappingFunctions)
             {
-                string? error = _mapping.ValidateFunction(function);
+                cancellationToken.ThrowIfCancellationRequested();
+                string? error = _mapping.ValidateFunction(function, cancellationToken);
                 if (error is null)
                 {
                     continue;
@@ -424,9 +486,15 @@ public sealed class MidoraCompiler : IDisposable
         bool incremental,
         ProjectChangeSet changes,
         bool heldPreviewGateOpen,
-        long? heldPreviewFinalGateLengthTicks)
+        long? heldPreviewFinalGateLengthTicks,
+        CancellationToken cancellationToken)
     {
-        long contextFingerprint = SourceFingerprint.ForTrackContext(track, instruments, project);
+        cancellationToken.ThrowIfCancellationRequested();
+        long contextFingerprint = SourceFingerprint.ForTrackContext(
+            track,
+            instruments,
+            project,
+            cancellationToken);
         if (heldPreviewGateOpen || heldPreviewFinalGateLengthTicks.HasValue)
         {
             contextFingerprint ^= heldPreviewGateOpen
@@ -437,7 +505,9 @@ public sealed class MidoraCompiler : IDisposable
         CurrentSegment[] currentSegments = track.Segments
             .OrderBy(value => value.ProjectStartTick)
             .ThenBy(value => value.Id)
-            .Select(value => new CurrentSegment(value, SourceFingerprint.ForSegment(value)))
+            .Select(value => new CurrentSegment(
+                value,
+                SourceFingerprint.ForSegment(value, cancellationToken)))
             .ToArray();
         bool explicitlyDirty = changes.AffectsEverything
             || changes.TrackIds.Contains(track.Id)
@@ -505,6 +575,7 @@ public sealed class MidoraCompiler : IDisposable
 
         while (currentIndex < currentSegments.Length)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             CurrentSegment current = currentSegments[currentIndex];
             ExpansionCheckpoint entryCheckpoint = ExpansionCheckpoint.Create(
                 current.Segment.ProjectStartTick, nextSourceOrder, contextFingerprint);
@@ -514,6 +585,7 @@ public sealed class MidoraCompiler : IDisposable
                 segmentDiagnostics,
                 heldPreviewGateOpen,
                 heldPreviewFinalGateLengthTicks,
+                cancellationToken,
                 out nextSourceOrder);
             newEntries.Add(new SegmentCacheEntry(
                 current.Segment.Id,
@@ -695,6 +767,7 @@ public sealed class MidoraCompiler : IDisposable
         List<CompilerDiagnostic> diagnostics,
         bool heldPreviewGateOpen,
         long? heldPreviewFinalGateLengthTicks,
+        CancellationToken cancellationToken,
         out int nextSourceOrder)
     {
         List<RawInstance> result = [];
@@ -717,6 +790,7 @@ public sealed class MidoraCompiler : IDisposable
                 .ToDictionary(value => value.ParameterId);
             foreach (LogicalNote note in segment.Notes.OrderBy(value => value.StartTick))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (note.StartTick < segment.ContentOffsetTick || note.StartTick >= segment.ContentEndTick)
                 {
                     continue;
@@ -760,7 +834,8 @@ public sealed class MidoraCompiler : IDisposable
                                 previous.SourceOrder,
                                 diagnostics,
                                 heldPreviewGateOpen,
-                                heldPreviewFinalGateLengthTicks);
+                                heldPreviewFinalGateLengthTicks,
+                                cancellationToken);
                             result[previous.ResultIndex] = shortened;
                             previous.Instance = shortened;
                             activePolicyInstances.Remove(previous);
@@ -771,7 +846,8 @@ public sealed class MidoraCompiler : IDisposable
                     project, track, segment, note, instrument, projectStart, gateEnd, segmentEnd,
                     parameterValues, definitions, lanes, functions, instanceSourceOrder, diagnostics,
                     heldPreviewGateOpen,
-                    heldPreviewFinalGateLengthTicks);
+                    heldPreviewFinalGateLengthTicks,
+                    cancellationToken);
                 result.Add(instance);
                 activePolicyInstances.Add(new(
                     result.Count - 1, segment, note, projectStart, segmentEnd,
@@ -810,8 +886,10 @@ public sealed class MidoraCompiler : IDisposable
         int sourceOrder,
         List<CompilerDiagnostic> diagnostics,
         bool heldPreviewGateOpen = false,
-        long? heldPreviewFinalGateLengthTicks = null)
+        long? heldPreviewFinalGateLengthTicks = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         long playbackGateLength = heldPreviewGateOpen ? long.MaxValue : gateEnd - projectStart;
         long mappingGateLength = heldPreviewGateOpen
             ? long.MaxValue
@@ -872,6 +950,7 @@ public sealed class MidoraCompiler : IDisposable
         long sequence = ((long)sourceOrder) << 32;
         for (int voiceIndex = 0; voiceIndex < instrument.SubVoices.Count; voiceIndex++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             SubVoice voice = instrument.SubVoices[voiceIndex];
             SourceReference source = new(track.Id, segment.Id, note.Id, instrument.Id, voice.Id, Tick: projectStart);
             List<RawMidiEvent> events = [];
@@ -897,6 +976,7 @@ public sealed class MidoraCompiler : IDisposable
                 ref sequence);
             foreach (TemplateEvent templateEvent in voice.Events.OrderBy(value => value.Tick))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 foreach (EventOccurrence occurrence in EnumerateOccurrences(
                     instrument,
                     templateEvent.Tick,
@@ -2007,14 +2087,23 @@ public sealed class MidoraCompiler : IDisposable
         _ => 0
     };
 
-    private static void ValidateOverlap(MidoraProject project, List<RawInstance> instances, List<CompilerDiagnostic> diagnostics)
+    private static void ValidateOverlap(
+        MidoraProject project,
+        List<RawInstance> instances,
+        List<CompilerDiagnostic> diagnostics,
+        CancellationToken cancellationToken)
     {
         foreach (IGrouping<(MidoraId TrackId, MidoraId InstrumentId), RawInstance> binding in instances
             .GroupBy(value => (value.TrackId, value.InstrumentId)))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             RawInstance[] ordered = binding.OrderBy(value => value.StartTick).ThenBy(value => value.SourceOrder).ToArray();
             for (int i = 0; i < ordered.Length; i++)
             {
+                if ((i & 255) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
                 for (int j = i + 1; j < ordered.Length && ordered[j].StartTick < ordered[i].EndTick; j++)
                 {
                     bool inScope = ordered[i].OverlapScope == OverlapScope.AnyPitch || ordered[i].Pitch == ordered[j].Pitch;
@@ -2037,12 +2126,14 @@ public sealed class MidoraCompiler : IDisposable
     private static AllocationResult Allocate(
         MidoraProject project,
         List<RawInstance> instances,
-        List<CompilerDiagnostic> diagnostics)
+        List<CompilerDiagnostic> diagnostics,
+        CancellationToken cancellationToken)
     {
         List<AllocationGroup> groups = [];
         foreach (IGrouping<(MidoraId TrackId, MidoraId InstrumentId), RawInstance> binding in instances
             .GroupBy(value => (value.TrackId, value.InstrumentId)))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             RawInstance[] ordered = binding.OrderBy(value => value.StartTick).ThenBy(value => value.SourceOrder).ToArray();
             AllocationGroup? current = null;
             foreach (RawInstance instance in ordered)
@@ -2076,6 +2167,7 @@ public sealed class MidoraCompiler : IDisposable
         ResourceShortageDetails? resourceShortage = null;
         foreach (AllocationGroup group in groups)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             for (int i = active.Count - 1; i >= 0; i--)
             {
                 if (active[i].EndTick <= group.StartTick)
@@ -2152,11 +2244,13 @@ public sealed class MidoraCompiler : IDisposable
         List<RawInstance> instances,
         ReadOnlySpan<AllocationGroup> groups,
         IReadOnlyDictionary<(MidoraId InstanceId, MidoraId SubVoiceId), int> unitByVoice,
-        MidiInitialState resetDefaults)
+        MidiInitialState resetDefaults,
+        CancellationToken cancellationToken)
     {
         List<CanonicalMidiEvent> result = [];
         foreach (RawInstance instance in instances)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             foreach (RawSubVoice voice in instance.Voices)
             {
                 if (!unitByVoice.TryGetValue((instance.InstanceId, voice.SubVoiceId), out int unit))
@@ -2175,6 +2269,7 @@ public sealed class MidoraCompiler : IDisposable
         long cleanupSequence = long.MaxValue / 2;
         foreach (AllocationGroup group in groups)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             RawInstance sourceInstance = group.Instances
                 .OrderByDescending(static value => value.EndTick)
                 .ThenByDescending(static value => value.SourceOrder)
@@ -2243,16 +2338,23 @@ public sealed class MidoraCompiler : IDisposable
         }
 
         result.Sort(CanonicalComparer.Instance);
-        return FoldSameTickStates(result);
+        cancellationToken.ThrowIfCancellationRequested();
+        return FoldSameTickStates(result, cancellationToken);
     }
 
-    private static List<CanonicalMidiEvent> FoldSameTickStates(List<CanonicalMidiEvent> sorted)
+    private static List<CanonicalMidiEvent> FoldSameTickStates(
+        List<CanonicalMidiEvent> sorted,
+        CancellationToken cancellationToken)
     {
         Dictionary<(byte Port, byte Channel, long Target), long> selectedGroups = [];
         List<CanonicalMidiEvent> reversed = new(sorted.Count);
         long currentTick = long.MinValue;
         for (int i = sorted.Count - 1; i >= 0; i--)
         {
+            if ((i & 1023) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             CanonicalMidiEvent value = sorted[i];
             if (value.Tick != currentTick)
             {
@@ -2291,7 +2393,8 @@ public sealed class MidoraCompiler : IDisposable
         long startTick,
         long endTick,
         MidiInitialState resetDefaults,
-        bool suppressEndCleanup = false)
+        bool suppressEndCleanup = false,
+        CancellationToken cancellationToken = default)
     {
         List<CanonicalMidiEvent> result = [];
         Dictionary<(byte Port, byte Channel, long Target), CanonicalStateGroup> state = [];
@@ -2301,13 +2404,19 @@ public sealed class MidoraCompiler : IDisposable
         HashSet<(byte Port, byte Channel)> activeAtStart = [];
         foreach (ChannelUnitAllocation allocation in allocations)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (allocation.StartTick < startTick && allocation.EndTick > startTick)
             {
                 activeAtStart.Add((allocation.ZeroBasedPort, allocation.ZeroBasedChannel));
             }
         }
-        foreach (CanonicalMidiEvent value in source)
+        for (int sourceIndex = 0; sourceIndex < source.Count; sourceIndex++)
         {
+            if ((sourceIndex & 1023) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            CanonicalMidiEvent value = source[sourceIndex];
             MidiMessage message = value.Message;
             if (value.Tick < endTick
                 && message.MessageType == MidiMessageType.NoteOn
@@ -2415,7 +2524,8 @@ public sealed class MidoraCompiler : IDisposable
         if (suppressEndCleanup)
         {
             result.Sort(CanonicalComparer.Instance);
-            return FoldSameTickStates(result).ToArray();
+            cancellationToken.ThrowIfCancellationRequested();
+            return FoldSameTickStates(result, cancellationToken).ToArray();
         }
 
         HashSet<(byte Port, byte Channel)> cleanupChannels = [];
@@ -2482,7 +2592,8 @@ public sealed class MidoraCompiler : IDisposable
             }
         }
         result.Sort(CanonicalComparer.Instance);
-        return FoldSameTickStates(result).ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
+        return FoldSameTickStates(result, cancellationToken).ToArray();
     }
 
     private static void AppendCanonicalReset(
@@ -2922,8 +3033,10 @@ internal static class SourceFingerprint
     public static long ForTrackContext(
         LogicalTrack track,
         IReadOnlyDictionary<MidoraId, EventInstrument> instruments,
-        MidoraProject project)
+        MidoraProject project,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ulong hash = Offset;
         Add(ref hash, project.TicksPerQuarterNote);
         AddState(ref hash, project.GlobalInitialState);
@@ -2933,12 +3046,14 @@ internal static class SourceFingerprint
         if (track.EventInstrumentId.HasValue
             && instruments.TryGetValue(track.EventInstrumentId.Value, out EventInstrument? instrument))
         {
-            AddInstrument(ref hash, instrument);
+            AddInstrument(ref hash, instrument, cancellationToken);
         }
         return unchecked((long)hash);
     }
 
-    public static long ForSegment(Segment segment)
+    public static long ForSegment(
+        Segment segment,
+        CancellationToken cancellationToken = default)
     {
         ulong hash = Offset;
         Add(ref hash, segment.Id);
@@ -2947,6 +3062,7 @@ internal static class SourceFingerprint
         Add(ref hash, segment.ContentOffsetTick);
         foreach (LogicalNote note in segment.Notes)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Add(ref hash, note.Id);
             Add(ref hash, note.StartTick);
             Add(ref hash, note.LengthTicks);
@@ -2955,6 +3071,7 @@ internal static class SourceFingerprint
         }
         foreach (LogicalParameterLane lane in segment.ParameterLanes)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Add(ref hash, lane.Id);
             Add(ref hash, lane.ParameterId);
             foreach (CurvePoint point in lane.Points)
@@ -2972,7 +3089,8 @@ internal static class SourceFingerprint
         long start,
         long end,
         ReadOnlySpan<CanonicalMidiEvent> events,
-        CanonicalConductor conductor)
+        CanonicalConductor conductor,
+        CancellationToken cancellationToken = default)
     {
         ulong hash = Offset;
         Add(ref hash, start);
@@ -3015,8 +3133,13 @@ internal static class SourceFingerprint
             Add(ref hash, value.Tick);
             Add(ref hash, value.Name);
         }
-        foreach (CanonicalMidiEvent value in events)
+        for (int eventIndex = 0; eventIndex < events.Length; eventIndex++)
         {
+            if ((eventIndex & 1023) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            CanonicalMidiEvent value = events[eventIndex];
             Add(ref hash, value.Tick);
             Add(ref hash, value.ZeroBasedPort);
             Add(ref hash, value.ZeroBasedChannel);
@@ -3043,7 +3166,10 @@ internal static class SourceFingerprint
         return unchecked((long)hash);
     }
 
-    private static void AddInstrument(ref ulong hash, EventInstrument instrument)
+    private static void AddInstrument(
+        ref ulong hash,
+        EventInstrument instrument,
+        CancellationToken cancellationToken)
     {
         Add(ref hash, instrument.Id);
         // These display names are part of MappingContextV2 and can therefore affect
@@ -3061,6 +3187,7 @@ internal static class SourceFingerprint
         AddState(ref hash, instrument.InitialState);
         foreach (LogicalParameterDefinition definition in instrument.LogicalParameters.OrderBy(value => value.Id))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Add(ref hash, definition.Id);
             Add(ref hash, definition.Name);
             Add(ref hash, (int)definition.Type);
@@ -3077,6 +3204,7 @@ internal static class SourceFingerprint
         }
         foreach (SubVoice voice in instrument.SubVoices)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Add(ref hash, voice.Id);
             Add(ref hash, voice.Name ?? string.Empty);
             Add(ref hash, voice.RootNoteOverride ?? -1);

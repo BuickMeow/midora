@@ -5,7 +5,10 @@ namespace Midora.Compiler;
 
 public static class SemanticValidator
 {
-    public static List<CompilerDiagnostic> Validate(MidoraProject project, CompilationRequest request)
+    public static List<CompilerDiagnostic> Validate(
+        MidoraProject project,
+        CompilationRequest request,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(request);
@@ -37,6 +40,7 @@ public static class SemanticValidator
         HashSet<MidoraId> participatingInstrumentIds = GetParticipatingInstrumentIds(project, request);
         foreach (EventInstrument instrument in project.EventInstruments)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             SourceReference source = projectSource with { EventInstrumentId = instrument.Id };
             bool participates = participatingInstrumentIds.Contains(instrument.Id);
             if (!instruments.TryAdd(instrument.Id, instrument)
@@ -72,9 +76,11 @@ public static class SemanticValidator
             }
         }
 
-        ValidateTracks(project, request, instruments, diagnostics);
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateTracks(project, request, instruments, diagnostics, cancellationToken);
         ValidateIncludedSubVoices(project, request, diagnostics);
-        ValidateStableIds(project, request, diagnostics);
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateStableIds(project, request, diagnostics, cancellationToken);
         return diagnostics;
 
         void Error(string code, string message, SourceReference source) =>
@@ -646,7 +652,8 @@ public static class SemanticValidator
         MidoraProject project,
         CompilationRequest request,
         IReadOnlyDictionary<MidoraId, EventInstrument> instruments,
-        List<CompilerDiagnostic> diagnostics)
+        List<CompilerDiagnostic> diagnostics,
+        CancellationToken cancellationToken)
     {
         HashSet<MidoraId> allTrackIds = [];
         HashSet<MidoraId> participatingTrackIds = [];
@@ -655,6 +662,7 @@ public static class SemanticValidator
             .ToHashSet();
         foreach (LogicalTrack track in project.Tracks)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             SourceReference trackSource = new(TrackId: track.Id);
             allTrackIds.Add(track.Id);
             if (request.IncludedTrackIds is not null
@@ -707,6 +715,7 @@ public static class SemanticValidator
             long? previousEndTick = null;
             foreach (Segment segment in track.Segments.OrderBy(segment => segment.ProjectStartTick).ThenBy(segment => segment.Id))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 SourceReference segmentSource = trackSource with { SegmentId = segment.Id, Tick = segment.ProjectStartTick };
                 bool projectRangeRepresentable = segment.LengthTicks > 0
                     && segment.ProjectStartTick >= 0
@@ -778,6 +787,7 @@ public static class SemanticValidator
                 }
                 foreach (LogicalNote note in segment.Notes)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     SourceReference noteSource = segmentSource with { LogicalNoteId = note.Id, EventInstrumentId = track.EventInstrumentId ?? default, Tick = note.StartTick };
                     if (note.StartTick < 0 || note.LengthTicks <= 0
                         || note.Note is < 0 or > 127 || note.Velocity is < 1 or > 127
@@ -807,7 +817,8 @@ public static class SemanticValidator
     private static void ValidateStableIds(
         MidoraProject project,
         CompilationRequest request,
-        List<CompilerDiagnostic> diagnostics)
+        List<CompilerDiagnostic> diagnostics,
+        CancellationToken cancellationToken)
     {
         HashSet<MidoraId> ids = [];
         HashSet<MidoraId> participatingInstrumentIds = GetParticipatingInstrumentIds(project, request);
@@ -832,6 +843,7 @@ public static class SemanticValidator
         }
         foreach (EventInstrument instrument in project.EventInstruments)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (request.IncludedTrackIds is not null
                 && !participatingInstrumentIds.Contains(instrument.Id))
             {
@@ -885,6 +897,7 @@ public static class SemanticValidator
         }
         foreach (LogicalTrack track in project.Tracks)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (request.IncludedTrackIds is not null
                 && !request.IncludedTrackIds.Contains(track.Id))
             {
@@ -894,9 +907,14 @@ public static class SemanticValidator
             Add(track.Id, trackSource);
             foreach (Segment segment in track.Segments)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 SourceReference segmentSource = trackSource with { SegmentId = segment.Id, Tick = segment.ProjectStartTick };
                 Add(segment.Id, segmentSource);
-                foreach (LogicalNote note in segment.Notes) Add(note.Id, segmentSource with { LogicalNoteId = note.Id });
+                foreach (LogicalNote note in segment.Notes)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Add(note.Id, segmentSource with { LogicalNoteId = note.Id });
+                }
                 foreach (LogicalParameterLane lane in segment.ParameterLanes)
                 {
                     Add(lane.Id, segmentSource);

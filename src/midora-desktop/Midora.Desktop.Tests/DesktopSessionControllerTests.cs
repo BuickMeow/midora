@@ -26,6 +26,11 @@ public sealed class DesktopSessionControllerTests
 
         await using DesktopSessionController session = new();
         await session.OpenProjectAsync(Path.GetFullPath(path));
+        CanonicalCompiledResult independentFull = new MidoraCompiler().CompileFull(session.Project!);
+        Assert.Equal(independentFull.Fingerprint, session.Document!.Compilation.LastAttempt.Fingerprint);
+        Assert.Equal(
+            independentFull.Events.ToArray(),
+            session.Document.Compilation.LastAttempt.Events.ToArray());
         _ = session.OpenArrangement();
         Segment[] segments = session.Project!.Tracks.SelectMany(track => track.Segments).ToArray();
         Segment ordinary = segments.OrderBy(segment => segment.Notes.Count).First(segment => segment.Notes.Count > 0);
@@ -37,6 +42,15 @@ public sealed class DesktopSessionControllerTests
         {
             if (activeProbe is not null) contentRefreshReachedMs = activeProbe.Elapsed.TotalMilliseconds;
         };
+        TaskCompletionSource<bool> compilationStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        session.Document.Compilation.CompilationChanged += (_, _) =>
+        {
+            if (session.Document.Compilation.CompilationState == ProjectCompilationState.Compiling)
+            {
+                compilationStarted.TrySetResult(true);
+            }
+        };
         var baseEdit = System.Diagnostics.Stopwatch.StartNew();
         activeProbe = baseEdit;
         ProjectEditExecution baseExecution = session.Execute(ProjectDomainEditCommands.MoveLogicalNotes(
@@ -47,7 +61,10 @@ public sealed class DesktopSessionControllerTests
         baseEdit.Stop();
         activeProbe = null;
         double baseContentRefreshReachedMs = contentRefreshReachedMs;
+        await compilationStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var undoDuringCompilation = System.Diagnostics.Stopwatch.StartNew();
         session.Undo();
+        undoDuringCompilation.Stop();
         TimelineWorkspaceViewModel extremeWorkspace = session.OpenSegment(extreme.Id);
         TimelineWorkspaceViewModel ordinaryWorkspace = session.OpenSegment(ordinary.Id);
 
@@ -63,16 +80,41 @@ public sealed class DesktopSessionControllerTests
             pitchDelta: 0));
         edit.Stop();
         activeProbe = null;
+        await session.Document.Compilation.EnsureCurrentCompilationAsync();
+        LogicalNote extremeNote = extreme.Notes[0];
+        TaskCompletionSource<bool> extremeCompilationStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        session.Document.Compilation.CompilationChanged += (_, _) =>
+        {
+            if (session.Document.Compilation.CompilationState == ProjectCompilationState.Compiling)
+            {
+                extremeCompilationStarted.TrySetResult(true);
+            }
+        };
+        ProjectEditExecution extremeExecution = session.Execute(
+            ProjectDomainEditCommands.MoveLogicalNotes(
+                extreme.Id,
+                [extremeNote.Id],
+                tickDelta: 1,
+                pitchDelta: 0));
+        await extremeCompilationStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(10);
+        var extremeUndoDuringCompilation = System.Diagnostics.Stopwatch.StartNew();
+        session.Undo();
+        extremeUndoDuringCompilation.Stop();
         Console.WriteLine(
             $"[ui-perf] segments={segments.Length}; ordinaryNotes={ordinary.Notes.Count}; "
             + $"extremeNotes={extreme.Notes.Count}; extremeRefreshMs={refresh.Elapsed.TotalMilliseconds:F1}; "
             + $"ordinaryEditArrangementOnlyMs={baseEdit.Elapsed.TotalMilliseconds:F1}; "
+            + $"undoWhileCompilingMs={undoDuringCompilation.Elapsed.TotalMilliseconds:F1}; "
             + $"baseContentRefreshReachedMs={baseContentRefreshReachedMs:F1}; "
             + $"ordinaryEditWithAllWorkspaceRefreshMs={edit.Elapsed.TotalMilliseconds:F1}; "
+            + $"extremeUndoWhileCompilingMs={extremeUndoDuringCompilation.Elapsed.TotalMilliseconds:F1}; "
             + $"allContentRefreshReachedMs={contentRefreshReachedMs:F1}");
 
         Assert.True(baseExecution.Changed);
         Assert.True(execution.Changed);
+        Assert.True(extremeExecution.Changed);
         Assert.Same(ordinaryWorkspace, session.ActiveWorkspace);
     }
 

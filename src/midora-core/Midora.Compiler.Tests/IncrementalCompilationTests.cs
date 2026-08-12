@@ -5,6 +5,35 @@ namespace Midora.Compiler.Tests;
 public sealed class IncrementalCompilationTests
 {
     [Fact]
+    public void CanceledIncrementalCompileDoesNotPoisonCommittedCheckpoints()
+    {
+        var fixture = CompilerTestProject.Create();
+        LogicalNote note = CompilerTestProject.AddNote(
+            fixture.Segment,
+            fixture.Instrument,
+            0,
+            480);
+        MidoraCompiler compiler = new();
+        _ = compiler.CompileFull(fixture.Project);
+        LogicalTrack track = fixture.Track;
+        note.Note = 67;
+        ProjectChangeSet changes = new();
+        changes.TrackIds.Add(track.Id);
+        using CancellationTokenSource cancellation = new();
+        cancellation.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(() =>
+            compiler.CompileIncremental(
+                fixture.Project,
+                changes,
+                cancellationToken: cancellation.Token));
+
+        CanonicalCompiledResult incremental = compiler.CompileIncremental(fixture.Project, changes);
+        CanonicalCompiledResult full = new MidoraCompiler().CompileFull(fixture.Project);
+        AssertFormallyEqual(full, incremental);
+    }
+
+    [Fact]
     public void ConductorTimeSignatureWarningMatchesFullCompilation()
     {
         var fixture = CompilerTestProject.Create();

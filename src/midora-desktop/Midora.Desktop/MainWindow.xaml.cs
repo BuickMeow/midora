@@ -334,11 +334,19 @@ public partial class MainWindow : Window
     private void OnSelectAllClick(object sender, RoutedEventArgs e) => SelectAllInFocusedScope();
     private void OnDuplicateClick(object sender, RoutedEventArgs e) => DuplicateFocusedSelection();
 
-    private void OnPlayClick(object sender, RoutedEventArgs e)
+    private async void OnPlayClick(object sender, RoutedEventArgs e)
     {
-        RunSynchronous("Play", () => _session.StartPlayback());
-        _spaceStartedPlayback = true;
-        Dispatcher.BeginInvoke(DispatcherPriority.Input, RestorePlaybackShortcutFocus);
+        try
+        {
+            await _session.StartPlaybackAsync();
+            _spaceStartedPlayback = true;
+        }
+        catch (Exception exception)
+        {
+            _spaceStartedPlayback = false;
+            _session.SetStatusMessage($"Play: {exception.Message}", isError: true);
+        }
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, RestorePlaybackShortcutFocus);
     }
 
     private void OnStopClick(object sender, RoutedEventArgs e)

@@ -81,7 +81,9 @@ public sealed record DiagnosticRow(
         ? "Active"
         : string.Equals(Category, "Runtime", StringComparison.OrdinalIgnoreCase)
             ? "Runtime History"
-            : "Resolved";
+            : string.Equals(Category, "Compile", StringComparison.OrdinalIgnoreCase)
+                ? "Prior Result"
+                : "Resolved";
 }
 
 public enum DesktopTaskLockLevel
@@ -2179,7 +2181,8 @@ public sealed class DiagnosticsWorkspaceViewModel()
     private string _scopeFilter = "Whole Project";
     public ObservableCollection<DiagnosticRow> Diagnostics { get; } = [];
     public IReadOnlyList<string> SeverityFilters { get; } = ["All severities", "Error", "Warning", "Information"];
-    public IReadOnlyList<string> StatusFilters { get; } = ["All statuses", "Active", "Resolved", "Runtime History"];
+    public IReadOnlyList<string> StatusFilters { get; } =
+        ["All statuses", "Active", "Prior Result", "Resolved", "Runtime History"];
     public IReadOnlyList<string> ScopeFilters { get; } = ["Whole Project", "Current Workspace", "Current Selection", "Current Task"];
     public string SearchText
     {
@@ -2287,13 +2290,15 @@ public sealed class DiagnosticsWorkspaceViewModel()
 
 public static class DiagnosticProjection
 {
-    public static DiagnosticRow FromCompiler(CompilerDiagnostic diagnostic) => new(
+    public static DiagnosticRow FromCompiler(
+        CompilerDiagnostic diagnostic,
+        bool isCurrent = true) => new(
         diagnostic.Severity.ToString(),
         "Compile",
         diagnostic.Code,
         diagnostic.Message,
         SourceText(diagnostic.Source),
-        true,
+        isCurrent,
         diagnostic.Source);
 
     private static string SourceText(SourceReference source)

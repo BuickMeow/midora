@@ -43,6 +43,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private bool _isNavigatingHistory;
     private string? _statusMessage;
     private bool _statusMessageIsError;
+    private bool _isPlaybackStartPending;
 
     public DesktopSessionController()
     {
@@ -95,9 +96,15 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             : Document!.IsModified ? "Modified" : "Saved";
     public string CompileState => _context is null
         ? "Not Compiled"
-        : _context.Compilation.LastAttempt.IsConsumable
-            ? "Compile Succeeded"
-            : "Compile Failed";
+        : _context.Compilation.CompilationState switch
+        {
+            ProjectCompilationState.NotCompiled => "Not Compiled",
+            ProjectCompilationState.Outdated => "Compile Result Outdated",
+            ProjectCompilationState.Compiling => "Compiling",
+            ProjectCompilationState.Succeeded => "Compile Succeeded",
+            ProjectCompilationState.Failed => "Compile Failed",
+            _ => "Not Compiled"
+        };
     public string SoundFontState => Project?.SoundFont.Reference is null
         ? "No SoundFont"
         : "SoundFont Configured";
@@ -134,7 +141,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     public bool IsLoopEnabled => _context?.Playback?.LoopRange is not null;
     public bool CanPlayback => _context?.Playback is not null
         && _context.Compilation.EffectiveSoundFontPath is not null
-        && _context.Compilation.LastAttempt.IsConsumable
+        && _context.Compilation.CompilationState is not ProjectCompilationState.Failed
+        && !_isPlaybackStartPending
         && !IsPlaybackActive;
     public bool CanPreview => _context?.Tasks is not null
         && _context.Compilation.EffectiveSoundFontPath is not null
@@ -143,7 +151,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     public string? PlaybackUnavailableReason => _context?.PlaybackUnavailableReason
         ?? (_context?.Compilation.EffectiveSoundFontPath is null
             ? "A verified Project SoundFont is required."
-            : !_context.Compilation.LastAttempt.IsConsumable
+            : _context.Compilation.CompilationState == ProjectCompilationState.Failed
                 ? "The current canonical compilation is not consumable."
                 : null);
     public int ErrorCount => CompilerDiagnostics.Count(item => item.Severity == "Error");
@@ -365,6 +373,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             throw new InvalidOperationException("No Project is open.");
         }
+        _ = _context.Compilation.EnsureCurrentCompilationAsync().GetAwaiter().GetResult();
         using IDisposable editLock = _context.Compilation.AcquireProjectEditLock();
         MidoraProjectFileInformationV1? information = Persistence?.FileInformation;
         return DesktopMidiExportService.Prepare(
@@ -435,8 +444,56 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             throw new InvalidOperationException(
                 PlaybackUnavailableReason ?? "The formal realtime playback backend is unavailable.");
         }
+        CanonicalCompiledResult result = _context.Compilation
+            .EnsureCurrentCompilationAsync()
+            .GetAwaiter()
+            .GetResult();
+        if (!result.IsConsumable)
+        {
+            throw new InvalidOperationException(
+                "The current canonical compilation is not consumable.");
+        }
         _context.Tasks.StartMainPlayback(cursorTick);
         RefreshProperties();
+    }
+
+    public async Task StartPlaybackAsync(
+        long? cursorTick = null,
+        CancellationToken cancellationToken = default)
+    {
+        ProjectContext context = _context
+            ?? throw new InvalidOperationException("No Project is open.");
+        if (context.Tasks is null)
+        {
+            throw new InvalidOperationException(
+                PlaybackUnavailableReason ?? "The formal realtime playback backend is unavailable.");
+        }
+        if (_isPlaybackStartPending)
+        {
+            throw new InvalidOperationException("Playback preparation is already waiting for compilation.");
+        }
+        _isPlaybackStartPending = true;
+        RefreshProperties();
+        try
+        {
+            CanonicalCompiledResult result = await context.Compilation
+                .EnsureCurrentCompilationAsync(cancellationToken);
+            if (!ReferenceEquals(_context, context))
+            {
+                throw new OperationCanceledException("The Project changed while playback was preparing.");
+            }
+            if (!result.IsConsumable)
+            {
+                throw new InvalidOperationException(
+                    "The current canonical compilation is not consumable.");
+            }
+            context.Tasks.StartMainPlayback(cursorTick);
+        }
+        finally
+        {
+            _isPlaybackStartPending = false;
+            RefreshProperties();
+        }
     }
 
     public void StopPlayback()
@@ -622,6 +679,13 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             throw new InvalidOperationException("No Project is open.");
         }
+        CanonicalCompiledResult current = await _context.Compilation
+            .EnsureCurrentCompilationAsync(cancellationToken);
+        if (!current.IsConsumable)
+        {
+            throw new InvalidOperationException(
+                "Audio rendering requires a consumable current canonical compilation.");
+        }
         using IDisposable editLock = _context.Compilation.AcquireProjectEditLock();
         return await DesktopAudioRenderService.PrepareAsync(
             Project,
@@ -663,8 +727,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     public async Task<CanonicalCompiledResult> CompileProjectAsync(CancellationToken cancellationToken = default)
     {
         if (_context is null) throw new InvalidOperationException("No Project is open.");
-        return await Task.Run(
-            () => _context.Compilation.Recompile(new ProjectChangeSet { AffectsEverything = true }),
+        return await _context.Compilation.RecompileAsync(
+            new ProjectChangeSet { AffectsEverything = true },
             cancellationToken);
     }
 
@@ -1453,9 +1517,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         CompilerDiagnostics.Clear();
         if (_context is not null)
         {
+            bool isCurrent = _context.Compilation.IsCompilationCurrent;
             foreach (CompilerDiagnostic diagnostic in _context.Compilation.LastAttempt.Diagnostics)
             {
-                CompilerDiagnostics.Add(DiagnosticProjection.FromCompiler(diagnostic));
+                CompilerDiagnostics.Add(DiagnosticProjection.FromCompiler(diagnostic, isCurrent));
             }
         }
         BottomDiagnosticsViewModel.Replace(CompilerDiagnostics);
@@ -1647,7 +1712,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             ProjectCompilationSession compilation = new(
                 result.Project,
-                result.EffectiveSoundFontPath);
+                result.EffectiveSoundFontPath,
+                executionMode: ProjectCompilationExecutionMode.Background);
             ProjectSoundFontResourceSession? resources = null;
             ProjectSoundFontEditing? editing = null;
             ProjectSoundFontRuntimeSession? runtime = null;
@@ -1700,7 +1766,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             ProjectCompilationSession compilation = new(
                 candidate.Project,
-                candidate.InitialSoundFontState.ResolvedAbsolutePath);
+                candidate.InitialSoundFontState.ResolvedAbsolutePath,
+                executionMode: ProjectCompilationExecutionMode.Background);
             ProjectSoundFontResourceSession? resources = null;
             ProjectSoundFontEditing? editing = null;
             ProjectSoundFontRuntimeSession? runtime = null;

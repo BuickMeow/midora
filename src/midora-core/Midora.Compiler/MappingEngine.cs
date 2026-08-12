@@ -31,18 +31,22 @@ internal sealed class MappingEngine : IDisposable
 {
     private readonly CSharpMappingCompiler _csharp = new();
 
-    public void SynchronizeFunctions(IEnumerable<CSharpMappingFunction> functions) =>
-        _csharp.SynchronizeFunctions(functions);
+    public void SynchronizeFunctions(
+        IEnumerable<CSharpMappingFunction> functions,
+        CancellationToken cancellationToken = default) =>
+        _csharp.SynchronizeFunctions(functions, cancellationToken);
 
     public void ClearCache() => _csharp.Clear();
 
     public void Dispose() => _csharp.Dispose();
 
-    public string? ValidateFunction(CSharpMappingFunction function)
+    public string? ValidateFunction(
+        CSharpMappingFunction function,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            _ = _csharp.GetOrCompile(function);
+            _ = _csharp.GetOrCompile(function, cancellationToken);
             return null;
         }
         catch (Exception exception) when (exception is MappingException or InvalidOperationException)
@@ -257,14 +261,17 @@ internal sealed class CSharpMappingCompiler : IDisposable
     internal int CompilationCount { get; private set; }
     internal int CachedEntryCount => _cache.Count;
 
-    public MappingDelegate GetOrCompile(CSharpMappingFunction function)
+    public MappingDelegate GetOrCompile(
+        CSharpMappingFunction function,
+        CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
         ValidateDefinition(function);
         CacheKey key = CreateKey(function.AbiVersion, function.Body);
         if (!_cache.TryGetValue(key, out CacheEntry? entry))
         {
-            entry = Compile(key, function.Body);
+            entry = Compile(key, function.Body, cancellationToken);
             _cache.Add(key, entry);
             CompilationCount++;
         }
@@ -275,13 +282,16 @@ internal sealed class CSharpMappingCompiler : IDisposable
         return entry.Delegate!;
     }
 
-    public void SynchronizeFunctions(IEnumerable<CSharpMappingFunction> functions)
+    public void SynchronizeFunctions(
+        IEnumerable<CSharpMappingFunction> functions,
+        CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(functions);
         HashSet<CacheKey> live = [];
         foreach (CSharpMappingFunction function in functions.Where(function => function is not null))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 live.Add(CreateKey(function.AbiVersion, function.Body ?? string.Empty));
@@ -375,8 +385,12 @@ internal sealed class CSharpMappingCompiler : IDisposable
         return new(abiVersion, MappingAbiV2.CompilerProfileId, bodyHash);
     }
 
-    private static CacheEntry Compile(CacheKey key, string body)
+    private static CacheEntry Compile(
+        CacheKey key,
+        string body,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         string source = $$"""
             #nullable enable
             using System;
@@ -400,7 +414,7 @@ internal sealed class CSharpMappingCompiler : IDisposable
             SourceText.From(source, Encoding.UTF8),
             parseOptions,
             "mapping-function-v2.cs");
-        CompilationUnitSyntax root = (CompilationUnitSyntax)tree.GetRoot();
+        CompilationUnitSyntax root = (CompilationUnitSyntax)tree.GetRoot(cancellationToken);
         if (root.Members.Count != 1
             || root.Members[0] is not ClassDeclarationSyntax generatedClass
             || generatedClass.Identifier.ValueText != GeneratedTypeName
@@ -427,7 +441,9 @@ internal sealed class CSharpMappingCompiler : IDisposable
                 deterministic: true,
                 concurrentBuild: false));
         using MemoryStream stream = new();
-        Microsoft.CodeAnalysis.Emit.EmitResult result = compilation.Emit(stream);
+        Microsoft.CodeAnalysis.Emit.EmitResult result = compilation.Emit(
+            stream,
+            cancellationToken: cancellationToken);
         if (!result.Success)
         {
             string text = string.Join(Environment.NewLine, result.Diagnostics

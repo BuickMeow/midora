@@ -195,6 +195,37 @@ internal sealed class AudioCachePackStore : IDisposable
         }
     }
 
+    public bool TryGetReadEntry(string key, out ReusableAudioReadEntry? readEntry)
+    {
+        ValidateKey(key);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_entries.TryGetValue(key, out Entry entry))
+            {
+                readEntry = null;
+                return false;
+            }
+            long logicalOffset = 0;
+            ReusableAudioReadExtent[] extents = new ReusableAudioReadExtent[entry.Extents.Length];
+            for (int index = 0; index < entry.Extents.Length; index++)
+            {
+                Extent extent = entry.Extents[index];
+                extents[index] = new(
+                    ReusableAudioReadExtentKind.PackBlock,
+                    GetPackPath(extent.Generation),
+                    logicalOffset,
+                    extent.RecordOffset,
+                    extent.PayloadLength,
+                    index,
+                    entry.Extents.Length);
+                logicalOffset = checked(logicalOffset + extent.PayloadLength);
+            }
+            readEntry = new(key, entry.PayloadLength, extents);
+            return true;
+        }
+    }
+
     public AudioCachePackPublishResult Publish(
         string key,
         Stream source,
@@ -319,30 +350,43 @@ internal sealed class AudioCachePackStore : IDisposable
 
     public void RegisterGeneration(string owner, string key)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(owner);
-        ValidateKey(key);
+        RegisterGenerations([new AudioCacheGenerationBinding(owner, key)]);
+    }
+
+    public void RegisterGenerations(
+        IReadOnlyList<AudioCacheGenerationBinding> bindings)
+    {
+        ArgumentNullException.ThrowIfNull(bindings);
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            _managedKeys.Add(key);
-            if (_generationByOwner.TryGetValue(owner, out string? previous)
-                && !string.Equals(previous, key, StringComparison.Ordinal))
+            foreach (AudioCacheGenerationBinding binding in bindings)
             {
-                _generationByOwner[owner] = key;
-                if (!_generationByOwner.Values.Contains(previous, StringComparer.Ordinal)
-                    && _liveKeys.Remove(previous)
-                    && _entries.TryGetValue(previous, out Entry stale))
+                ArgumentException.ThrowIfNullOrWhiteSpace(binding.Owner);
+                ValidateKey(binding.Key);
+                _managedKeys.Add(binding.Key);
+                if (_generationByOwner.TryGetValue(
+                        binding.Owner,
+                        out string? previous)
+                    && !string.Equals(previous, binding.Key, StringComparison.Ordinal))
                 {
-                    _liveBytes -= stale.RecordLength;
+                    _generationByOwner[binding.Owner] = binding.Key;
+                    if (!_generationByOwner.Values.Contains(previous, StringComparer.Ordinal)
+                        && _liveKeys.Remove(previous)
+                        && _entries.TryGetValue(previous, out Entry stale))
+                    {
+                        _liveBytes -= stale.RecordLength;
+                    }
                 }
-            }
-            else
-            {
-                _generationByOwner[owner] = key;
-            }
-            if (_entries.TryGetValue(key, out Entry current) && _liveKeys.Add(key))
-            {
-                _liveBytes = checked(_liveBytes + current.RecordLength);
+                else
+                {
+                    _generationByOwner[binding.Owner] = binding.Key;
+                }
+                if (_entries.TryGetValue(binding.Key, out Entry current)
+                    && _liveKeys.Add(binding.Key))
+                {
+                    _liveBytes = checked(_liveBytes + current.RecordLength);
+                }
             }
             WriteIndexCheckpoint();
         }

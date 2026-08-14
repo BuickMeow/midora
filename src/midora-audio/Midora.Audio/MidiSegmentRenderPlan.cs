@@ -52,10 +52,11 @@ public sealed class MidiSegmentRenderPlan
         else if (pcmCacheKey.Length != 64
             || pcmCacheKey.Any(value =>
                 value is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))
-            || pcmCachePayloadOffset < 0)
+            || pcmCachePayloadOffset < -2
+            || (pcmCachePayloadOffset < 0 && !pcmCacheHit))
         {
             throw new ArgumentException(
-                "A Segment PCM cache binding requires a lowercase SHA-256 key and non-negative payload offset.",
+                "A Segment PCM cache binding requires a lowercase SHA-256 key and a valid staged or direct-read offset.",
                 nameof(pcmCacheKey));
         }
 

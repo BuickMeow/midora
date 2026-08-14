@@ -2240,6 +2240,13 @@ public sealed class MidoraCompiler : IDisposable
         return new(unitByVoice, groups.ToArray(), allocations.ToArray(), peak, resourceShortage);
     }
 
+    public static CanonicalCompiledResult CreateDefaultPlaybackView(
+        CanonicalCompiledResult fullProjectResult)
+    {
+        ArgumentNullException.ThrowIfNull(fullProjectResult);
+        return fullProjectResult.CreatePlaybackView();
+    }
+
     private static List<CanonicalMidiEvent> MaterializeEvents(
         List<RawInstance> instances,
         ReadOnlySpan<AllocationGroup> groups,

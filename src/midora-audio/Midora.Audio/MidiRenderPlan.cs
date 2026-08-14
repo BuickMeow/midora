@@ -49,6 +49,19 @@ public sealed class MidiRenderPlan
         ValidateSegments(_segments, _unitFragments, totalFrameCount, _sourceIds.Length);
     }
 
+    private MidiRenderPlan(MidiRenderPlan source, int[] initiallyDisabledSourceIndices)
+    {
+        SampleRate = source.SampleRate;
+        TotalFrameCount = source.TotalFrameCount;
+        _ports = source._ports;
+        _units = source._units;
+        _unitFragments = source._unitFragments;
+        _segments = source._segments;
+        _sourceIds = source._sourceIds;
+        _initiallyDisabledSourceIndices = initiallyDisabledSourceIndices;
+        ValidateSources(_sourceIds, _initiallyDisabledSourceIndices);
+    }
+
     public int SampleRate { get; }
 
     public long TotalFrameCount { get; }
@@ -66,6 +79,20 @@ public sealed class MidiRenderPlan
     public ReadOnlySpan<int> InitiallyDisabledSourceIndices => _initiallyDisabledSourceIndices;
 
     public int FindSourceIndex(long sourceId) => Array.IndexOf(_sourceIds, sourceId);
+
+    /// <summary>
+    /// Creates a cheap monitoring-state view over the same immutable render
+    /// schedule. Initial Mute/Solo state must not force the canonical event plan
+    /// to be rebuilt on every playback.
+    /// </summary>
+    public MidiRenderPlan WithInitiallyDisabledSourceIndices(
+        ReadOnlySpan<int> initiallyDisabledSourceIndices)
+    {
+        int[] disabled = initiallyDisabledSourceIndices.ToArray();
+        return disabled.AsSpan().SequenceEqual(_initiallyDisabledSourceIndices)
+            ? this
+            : new MidiRenderPlan(this, disabled);
+    }
 
     private static void ValidateSources(ReadOnlySpan<long> sourceIds, ReadOnlySpan<int> disabledIndices)
     {
@@ -127,19 +154,17 @@ public sealed class MidiRenderPlan
         List<MidiUnitRenderPlan> result = [];
         foreach (MidiPortRenderPlan port in ports)
         {
-            for (byte channel = 0; channel < 16; channel++)
+            List<ScheduledMidiMessage>?[] eventsByChannel = new List<ScheduledMidiMessage>?[16];
+            foreach (ScheduledMidiMessage scheduled in port.Events)
             {
-                List<ScheduledMidiMessage> events = [];
-                foreach (ScheduledMidiMessage scheduled in port.Events)
-                {
-                    if (scheduled.Message.ChannelNumber != channel)
-                    {
-                        continue;
-                    }
-                    uint packed = (scheduled.Message.PackedValue & ~MidiMessage.ChannelNumberMask);
-                    events.Add(scheduled with { Message = MidiMessage.FromPackedValue(packed) });
-                }
-                if (events.Count != 0)
+                byte channel = scheduled.Message.ChannelNumber;
+                List<ScheduledMidiMessage> events = eventsByChannel[channel] ??= [];
+                uint packed = scheduled.Message.PackedValue & ~MidiMessage.ChannelNumberMask;
+                events.Add(scheduled with { Message = MidiMessage.FromPackedValue(packed) });
+            }
+            for (byte channel = 0; channel < eventsByChannel.Length; channel++)
+            {
+                if (eventsByChannel[channel] is { Count: > 0 } events)
                 {
                     result.Add(new(port.ZeroBasedPortNumber, channel, events.ToArray()));
                 }

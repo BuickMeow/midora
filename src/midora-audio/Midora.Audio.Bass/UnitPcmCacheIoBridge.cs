@@ -1,5 +1,7 @@
 using Microsoft.Win32.SafeHandles;
 using Midora.AudioDevice;
+using System.Buffers.Binary;
+using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 
 namespace Midora.Audio.Bass;
@@ -39,7 +41,7 @@ internal sealed unsafe class UnitPcmCacheIoBridge : IDisposable
             plan.InitiallyDisabledSourceIndices,
             unitFragments: [],
             segments);
-        _inner = new(path, compatibility);
+        _inner = new(path, readManifestPath: null, compatibility);
     }
 
     public bool ReadFaulted => _inner.ReadFaulted;
@@ -109,6 +111,7 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
     private const int WriterFlushThresholdFrames = 16_384;
     private readonly FileStream _file;
     private readonly SafeFileHandle _handle;
+    private readonly ReusableAudioPackReader? _directReader;
     private readonly ReaderSlot?[] _readers;
     private readonly WriterSlot?[] _writers;
     private readonly AudioFormat _format;
@@ -119,7 +122,10 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
     private Exception? _writeFault;
     private bool _disposed;
 
-    public SegmentPcmCacheIoBridge(string path, MidiRenderPlan plan)
+    public SegmentPcmCacheIoBridge(
+        string path,
+        string? readManifestPath,
+        MidiRenderPlan plan)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(plan);
@@ -128,8 +134,18 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
         _readers = new ReaderSlot?[plan.SourceIds.Length];
         _writers = new WriterSlot?[plan.SourceIds.Length];
         FileStream? file = null;
+        ReusableAudioPackReader? directReader = null;
         try
         {
+            IReadOnlyDictionary<string, ReusableAudioReadEntry>? directEntries =
+                string.IsNullOrWhiteSpace(readManifestPath)
+                    ? null
+                    : ReusableAudioReadManifest.Read(readManifestPath);
+            if (directEntries is not null)
+            {
+                directReader = new ReusableAudioPackReader(directEntries);
+                _directReader = directReader;
+            }
             List<MidiSegmentRenderPlan>?[] hitFragments =
                 new List<MidiSegmentRenderPlan>?[plan.SourceIds.Length];
             List<MidiSegmentRenderPlan>?[] missFragments =
@@ -182,10 +198,6 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
                 bufferSize: 1,
                 FileOptions.RandomAccess);
             _handle = _file.SafeFileHandle;
-            for (int sourceIndex = 0; sourceIndex < _readers.Length; sourceIndex++)
-            {
-                PrimeReader(_readers[sourceIndex]);
-            }
             _thread = new Thread(Run)
             {
                 IsBackground = true,
@@ -197,12 +209,17 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
         catch
         {
             file?.Dispose();
+            directReader?.Dispose();
             DisposeBuffers();
             throw;
         }
     }
 
     public bool ReadFaulted => Volatile.Read(ref _readFault) is not null;
+
+    internal Exception? ReadFault => _readFault;
+
+    internal string? ReadFaultText => _readFault?.ToString();
 
     public bool WriteFaulted => Volatile.Read(ref _writeFault) is not null;
 
@@ -256,7 +273,17 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
             }
             return false;
         }
-        return Volatile.Read(ref slot.ProducerPosition) - streamStart >= frameCount;
+        if (Volatile.Read(ref slot.ProducerPosition) == streamStart
+            && Volatile.Read(ref slot.RequestVersion) == slot.ActiveRequestVersion)
+        {
+            Volatile.Write(ref slot.RequestedStreamPosition, streamStart);
+            Interlocked.Increment(ref slot.RequestVersion);
+        }
+        if (Volatile.Read(ref slot.ProducerPosition) - streamStart < frameCount)
+        {
+            return false;
+        }
+        return true;
     }
 
     public bool CanWriteFrames(
@@ -341,6 +368,7 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
             _thread.Join();
         }
         _file.Dispose();
+        _directReader?.Dispose();
         DisposeBuffers();
     }
 
@@ -376,7 +404,10 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
         }
         catch (Exception exception)
         {
-            Volatile.Write(ref _writeFault, exception);
+            if (Volatile.Read(ref _readFault) is null)
+            {
+                Volatile.Write(ref _writeFault, exception);
+            }
         }
         finally
         {
@@ -478,13 +509,26 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
             slot.TotalStreamFrameCount - produced);
         try
         {
-            ReadExactly(
-                new Span<byte>(
-                    slot.Buffer + (index * _format.BytesPerFrame),
-                    checked(frames * _format.BytesPerFrame)),
-                checked(fragment.PayloadOffset
-                    + AudioPcmCachePayload.HeaderByteCount
-                    + ((produced - fragment.StreamStartFrame) * _format.BytesPerFrame)));
+            Span<byte> destination = new(
+                slot.Buffer + (index * _format.BytesPerFrame),
+                checked(frames * _format.BytesPerFrame));
+            long payloadRelativeOffset = checked(
+                AudioPcmCachePayload.HeaderByteCount
+                + ((produced - fragment.StreamStartFrame) * _format.BytesPerFrame));
+            if (fragment.CacheKey is not null
+                && _directReader?.Contains(fragment.CacheKey) == true)
+            {
+                _directReader.ReadExactly(
+                    fragment.CacheKey,
+                    payloadRelativeOffset,
+                    destination);
+            }
+            else
+            {
+                ReadExactly(
+                    destination,
+                    checked(fragment.PayloadOffset + payloadRelativeOffset));
+            }
             Volatile.Write(ref slot.ProducerPosition, produced + frames);
             return true;
         }
@@ -571,29 +615,6 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
         return true;
     }
 
-    private void PrimeReader(ReaderSlot? slot)
-    {
-        if (slot is null)
-        {
-            return;
-        }
-        while (slot.ProducerPosition - Volatile.Read(ref slot.ConsumerPosition)
-            < ReaderCapacityFrames
-            && slot.ProducerPosition < slot.TotalStreamFrameCount)
-        {
-            if (!FillOneReader(slot))
-            {
-                if (ReadFaulted)
-                {
-                    throw new InvalidDataException(
-                        "The initial Segment PCM cache read-ahead failed.",
-                        Volatile.Read(ref _readFault));
-                }
-                break;
-            }
-        }
-    }
-
     private static CacheFragment[] CreateCacheFragments(
         IEnumerable<MidiSegmentRenderPlan> fragments)
     {
@@ -606,6 +627,7 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
             long frameCount = fragment.EndFrame - fragment.StartFrame;
             result.Add(new(
                 fragment.PcmCachePayloadOffset,
+                fragment.PcmCacheKey,
                 streamStart,
                 frameCount));
             streamStart = checked(streamStart + frameCount);
@@ -619,6 +641,23 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
         long relativeStart,
         out long streamPosition)
     {
+        if (fragment.PcmCacheKey is not null
+            && fragment.PcmCacheHit
+            && fragment.PcmCachePayloadOffset < 0)
+        {
+            foreach (CacheFragment candidate in fragmentsByPayloadOffset)
+            {
+                if (string.Equals(candidate.CacheKey, fragment.PcmCacheKey, StringComparison.Ordinal)
+                    && relativeStart >= 0
+                    && relativeStart <= candidate.FrameCount)
+                {
+                    streamPosition = checked(candidate.StreamStartFrame + relativeStart);
+                    return true;
+                }
+            }
+            streamPosition = 0;
+            return false;
+        }
         int low = 0;
         int high = fragmentsByPayloadOffset.Length - 1;
         while (low <= high)
@@ -654,7 +693,8 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
             static (left, right) => left.PayloadOffset.CompareTo(right.PayloadOffset));
         for (int i = 1; i < sorted.Length; i++)
         {
-            if (sorted[i - 1].PayloadOffset == sorted[i].PayloadOffset)
+            if (sorted[i - 1].PayloadOffset == sorted[i].PayloadOffset
+                && sorted[i].PayloadOffset >= 0)
             {
                 throw new InvalidDataException(
                     "A Segment PCM cache schedule contains duplicate payload offsets.");
@@ -705,10 +745,215 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
 
     private readonly record struct CacheFragment(
         long PayloadOffset,
+        string? CacheKey,
         long StreamStartFrame,
         long FrameCount)
     {
         public long StreamEndFrame => checked(StreamStartFrame + FrameCount);
+    }
+
+    private sealed class ReusableAudioPackReader : IDisposable
+    {
+        private const uint EntryMagic = 0x4541434d; // MCAE
+        private const int EntryVersion = 2;
+        private const int EntryHeaderSize = 96;
+        private const int MaximumBlockPayloadBytes =
+            RollingAudioPreparationPolicy.SegmentBlockFrameCount * 2 * sizeof(float);
+        private readonly IReadOnlyDictionary<string, ReusableAudioReadEntry> _entries;
+        private readonly Dictionary<string, SafeFileHandle> _handles =
+            new(StringComparer.OrdinalIgnoreCase);
+        private readonly byte[] _blockBuffer = new byte[MaximumBlockPayloadBytes];
+        private readonly byte[] _headerBuffer = new byte[EntryHeaderSize];
+        private readonly byte[] _digestBuffer = new byte[32];
+        private bool _disposed;
+
+        public ReusableAudioPackReader(
+            IReadOnlyDictionary<string, ReusableAudioReadEntry> entries)
+        {
+            _entries = entries;
+            byte[] pcmHeader = new byte[AudioPcmCachePayload.HeaderByteCount];
+            try
+            {
+                foreach (ReusableAudioReadEntry entry in entries.Values)
+                {
+                    foreach (ReusableAudioReadExtent extent in entry.Extents)
+                    {
+                        string fullPath = Path.GetFullPath(extent.Path);
+                        if (_handles.ContainsKey(fullPath))
+                        {
+                            continue;
+                        }
+                        _handles.Add(
+                            fullPath,
+                            File.OpenHandle(
+                                fullPath,
+                                FileMode.Open,
+                                FileAccess.Read,
+                                FileShare.ReadWrite | FileShare.Delete,
+                                FileOptions.RandomAccess));
+                    }
+                    Span<byte> header = pcmHeader;
+                    ReadExactly(entry.Key, 0, header);
+                    long frameCount = AudioPcmCachePayload.ValidateHeader(
+                        header,
+                        new AudioFormat(
+                            BinaryPrimitives.ReadInt32LittleEndian(header[8..]),
+                            BinaryPrimitives.ReadInt32LittleEndian(header[12..]),
+                            (AudioSampleFormat)BinaryPrimitives.ReadInt32LittleEndian(header[16..])));
+                    long expectedLength = checked(
+                        AudioPcmCachePayload.HeaderByteCount
+                        + (frameCount * 2 * sizeof(float)));
+                    if (expectedLength != entry.PayloadLength)
+                    {
+                        throw new InvalidDataException(
+                            "A reusable Segment PCM payload length does not match its header.");
+                    }
+                }
+            }
+            catch
+            {
+                Dispose();
+                throw;
+            }
+        }
+
+        public bool Contains(string key) => _entries.ContainsKey(key);
+
+        public void ReadExactly(string key, long payloadOffset, Span<byte> destination)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_entries.TryGetValue(key, out ReusableAudioReadEntry? entry)
+                || payloadOffset < 0
+                || payloadOffset > entry.PayloadLength - destination.Length)
+            {
+                throw new InvalidDataException(
+                    "A reusable-audio direct read is outside its manifest entry.");
+            }
+
+            int completed = 0;
+            long position = payloadOffset;
+            while (completed < destination.Length)
+            {
+                ReusableAudioReadExtent extent = FindExtent(entry.Extents, position);
+                int relative = checked((int)(position - extent.LogicalOffset));
+                int copied = Math.Min(
+                    destination.Length - completed,
+                    checked((int)(extent.PayloadLength - relative)));
+                if (extent.Kind == ReusableAudioReadExtentKind.RawPayload)
+                {
+                    SafeFileHandle rawHandle = _handles[Path.GetFullPath(extent.Path)];
+                    ReadExactly(
+                        rawHandle,
+                        destination.Slice(completed, copied),
+                        checked(extent.FileOffset + relative));
+                }
+                else
+                {
+                    ReadAndValidatePackExtent(key, entry.PayloadLength, extent);
+                    _blockBuffer.AsSpan(relative, copied).CopyTo(destination[completed..]);
+                }
+                completed += copied;
+                position += copied;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            foreach (SafeFileHandle handle in _handles.Values)
+            {
+                handle.Dispose();
+            }
+            _handles.Clear();
+        }
+
+        private void ReadAndValidatePackExtent(
+            string key,
+            long totalPayloadLength,
+            ReusableAudioReadExtent extent)
+        {
+            SafeFileHandle handle = _handles[Path.GetFullPath(extent.Path)];
+            int payloadLength = checked((int)extent.PayloadLength);
+            Span<byte> header = _headerBuffer;
+            ReadExactly(handle, header, extent.FileOffset);
+            byte[] keyBytes = Convert.FromHexString(key);
+            if (BinaryPrimitives.ReadUInt32LittleEndian(header) != EntryMagic
+                || BinaryPrimitives.ReadInt32LittleEndian(header[4..]) != EntryVersion
+                || BinaryPrimitives.ReadInt32LittleEndian(header[8..]) != extent.BlockIndex
+                || BinaryPrimitives.ReadInt32LittleEndian(header[12..]) != extent.BlockCount
+                || BinaryPrimitives.ReadInt64LittleEndian(header[16..]) != totalPayloadLength
+                || BinaryPrimitives.ReadInt32LittleEndian(header[24..]) != payloadLength
+                || BinaryPrimitives.ReadInt32LittleEndian(header[28..]) != 0
+                || !CryptographicOperations.FixedTimeEquals(header[32..64], keyBytes))
+            {
+                throw new InvalidDataException(
+                    "A reusable-audio Pack block header is invalid.");
+            }
+            ReadExactly(
+                handle,
+                _blockBuffer.AsSpan(0, payloadLength),
+                checked(extent.FileOffset + EntryHeaderSize));
+            SHA256.HashData(
+                _blockBuffer.AsSpan(0, payloadLength),
+                _digestBuffer);
+            if (!CryptographicOperations.FixedTimeEquals(_digestBuffer, header[64..96]))
+            {
+                throw new InvalidDataException(
+                    "A reusable-audio Pack block checksum is invalid.");
+            }
+        }
+
+        private static ReusableAudioReadExtent FindExtent(
+            IReadOnlyList<ReusableAudioReadExtent> extents,
+            long position)
+        {
+            int low = 0;
+            int high = extents.Count;
+            while (low < high)
+            {
+                int middle = low + ((high - low) >> 1);
+                ReusableAudioReadExtent candidate = extents[middle];
+                if (candidate.LogicalOffset + candidate.PayloadLength <= position)
+                {
+                    low = middle + 1;
+                }
+                else
+                {
+                    high = middle;
+                }
+            }
+            if (low >= extents.Count || position < extents[low].LogicalOffset)
+            {
+                throw new InvalidDataException(
+                    "A reusable-audio manifest has a payload gap.");
+            }
+            return extents[low];
+        }
+
+        private static void ReadExactly(
+            SafeFileHandle handle,
+            Span<byte> destination,
+            long fileOffset)
+        {
+            int completed = 0;
+            while (completed < destination.Length)
+            {
+                int read = RandomAccess.Read(
+                    handle,
+                    destination[completed..],
+                    checked(fileOffset + completed));
+                if (read == 0)
+                {
+                    throw new EndOfStreamException(
+                        "A reusable-audio read extent ended early.");
+                }
+                completed += read;
+            }
+        }
     }
 
     private sealed unsafe class ReaderSlot : IDisposable

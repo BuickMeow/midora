@@ -32,7 +32,6 @@ internal sealed unsafe class PlaybackSpanRenderSource
     private readonly bool _cacheHit;
     private readonly long _totalFrameCount;
     private readonly int _transitionFrameCount;
-    private float* _transitionCacheBuffer;
     private long _positionFrames;
     private int _fallbackRequested;
     private int _usingUnderlying;
@@ -88,16 +87,6 @@ internal sealed unsafe class PlaybackSpanRenderSource
                 _totalFrameCount,
                 Format,
                 readMode: cacheHit);
-            if (cacheHit)
-            {
-                _transitionCacheBuffer = (float*)NativeMemory.Alloc(
-                    checked((nuint)_transitionFrameCount * (nuint)Format.BytesPerFrame));
-                if (_transitionCacheBuffer is null)
-                {
-                    throw new OutOfMemoryException(
-                        "The playback-span monitoring transition buffer could not be allocated.");
-                }
-            }
             _cacheIo = cacheIo;
         }
         catch
@@ -216,16 +205,6 @@ internal sealed unsafe class PlaybackSpanRenderSource
         }
         if (Volatile.Read(ref _usingUnderlying) != 0)
         {
-            int cachedTransitionFrames = (int)Math.Min(
-                Math.Min(requestedFrameCount, _transitionRemainingFrames),
-                _totalFrameCount - position);
-            if (cachedTransitionFrames > 0
-                && !_cacheIo.TryReadFrames(_transitionCacheBuffer, cachedTransitionFrames))
-            {
-                return _cacheIo.IsFaulted
-                    ? AudioPullResult.Fault()
-                    : AudioPullResult.Buffering();
-            }
             AudioPullResult rendered = _underlying.PullFrames(destination, requestedFrameCount);
             if (!rendered.IsValidForRequest(requestedFrameCount))
             {
@@ -233,7 +212,7 @@ internal sealed unsafe class PlaybackSpanRenderSource
             }
             if (_transitionRemainingFrames > 0 && rendered.FrameCount > 0)
             {
-                ApplyTransitionFromCachedSpan(destination, rendered.FrameCount);
+                ApplyMonitoringFadeIn(destination, rendered.FrameCount);
             }
             _positionFrames += rendered.FrameCount;
             return rendered;
@@ -260,14 +239,9 @@ internal sealed unsafe class PlaybackSpanRenderSource
         }
         _disposed = true;
         _cacheIo.Dispose();
-        if (_transitionCacheBuffer != null)
-        {
-            NativeMemory.Free(_transitionCacheBuffer);
-            _transitionCacheBuffer = null;
-        }
     }
 
-    private void ApplyTransitionFromCachedSpan(
+    private void ApplyMonitoringFadeIn(
         float* destination,
         int frameCount)
     {
@@ -277,15 +251,13 @@ internal sealed unsafe class PlaybackSpanRenderSource
             {
                 return;
             }
-            float newWeight = 1f - (_transitionRemainingFrames / (float)_transitionFrameCount);
-            float oldWeight = 1f - newWeight;
+            int transitionIndex = _transitionFrameCount - _transitionRemainingFrames;
+            float newWeight = _transitionFrameCount == 1
+                ? 1f
+                : transitionIndex / (float)(_transitionFrameCount - 1);
             int destinationSampleIndex = frameIndex * Format.ChannelCount;
-            destination[destinationSampleIndex] =
-                (_transitionCacheBuffer[frameIndex * Format.ChannelCount] * oldWeight)
-                + (destination[destinationSampleIndex] * newWeight);
-            destination[destinationSampleIndex + 1] =
-                (_transitionCacheBuffer[(frameIndex * Format.ChannelCount) + 1] * oldWeight)
-                + (destination[destinationSampleIndex + 1] * newWeight);
+            destination[destinationSampleIndex] *= newWeight;
+            destination[destinationSampleIndex + 1] *= newWeight;
             _transitionRemainingFrames--;
         }
     }

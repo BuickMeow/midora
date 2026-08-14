@@ -185,6 +185,19 @@ public sealed unsafe class BufferingRecoveryRenderSource : IAudioRenderSource, I
         return PrepareRecoveryCore(ring, recoveryEndFrame, cancellationRequested);
     }
 
+    /// <summary>
+    /// Discards a prepared underrun replay before a paused outer producer
+    /// replaces its monitoring future. The caller must own the producer
+    /// frontier so PullFrames cannot run concurrently.
+    /// </summary>
+    public void DiscardPreparedRecoveryForMonitoring()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _replayPosition = 0;
+        _replayFrameCount = 0;
+        Volatile.Write(ref _replaying, 0);
+    }
+
     private bool PrepareRecoveryCore(
         AudioFrameRingBuffer ring,
         long recoveryEndFrame,

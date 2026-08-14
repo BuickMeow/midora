@@ -52,7 +52,7 @@ public static class Program
 
             if (string.Equals(args[0], "play", StringComparison.Ordinal))
             {
-                if (args.Length != 22)
+                if (args.Length != 23)
                 {
                     throw new ArgumentException("Invalid playback argument count.");
                 }
@@ -175,21 +175,28 @@ public static class Program
                 cacheStagingPath,
                 "Unit PCM cache staging");
         }
-        string? bufferingRecoverySpoolPath = EmptyToNull(args[16]);
+        string? cacheReadManifestPath = EmptyToNull(args[16]);
+        if (cacheReadManifestPath is not null)
+        {
+            cacheReadManifestPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
+                cacheReadManifestPath,
+                "reusable-audio read manifest");
+        }
+        string? bufferingRecoverySpoolPath = EmptyToNull(args[17]);
         if (bufferingRecoverySpoolPath is not null)
         {
             bufferingRecoverySpoolPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
                 bufferingRecoverySpoolPath,
                 "Buffering recovery spool");
         }
-        long bufferingRecoveryMemoryFrameCapacity = ParseInt64(args[17]);
+        long bufferingRecoveryMemoryFrameCapacity = ParseInt64(args[18]);
         if (bufferingRecoveryMemoryFrameCapacity < 0
             || bufferingRecoveryMemoryFrameCapacity > plan.TotalFrameCount)
         {
             throw new InvalidDataException(
                 "The Buffering recovery memory capacity is incompatible with the render plan.");
         }
-        string? playbackSpanCacheStagingPath = EmptyToNull(args[18]);
+        string? playbackSpanCacheStagingPath = EmptyToNull(args[19]);
         if (playbackSpanCacheStagingPath is not null)
         {
             playbackSpanCacheStagingPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
@@ -197,7 +204,7 @@ public static class Program
                 "playback-span cache staging");
         }
         bool playbackSpanCacheHit = InitialReleaseAudioWorkerProtocolPolicy.ParseBoolean(
-            args[19],
+            args[20],
             "playbackSpanCacheHit");
         if (playbackSpanCacheHit && playbackSpanCacheStagingPath is null)
         {
@@ -205,9 +212,9 @@ public static class Program
                 "A playback-span cache hit requires a staging payload.");
         }
         bool rollingPreparationEnabled = InitialReleaseAudioWorkerProtocolPolicy.ParseBoolean(
-            args[20],
+            args[21],
             "rollingPreparationEnabled");
-        long measuredCacheWriteBytesPerSecond = ParseInt64(args[21]);
+        long measuredCacheWriteBytesPerSecond = ParseInt64(args[22]);
         if (measuredCacheWriteBytesPerSecond < 0)
         {
             throw new InvalidDataException(
@@ -232,7 +239,8 @@ public static class Program
             rendererSettings,
             masterSettings,
             cacheStagingPath,
-            segmentProducerConcurrency);
+            segmentProducerConcurrency,
+            cacheReadManifestPath);
         using PlaybackSpanRenderSource? playbackSpanSource =
             playbackSpanCacheStagingPath is null
                 ? null
@@ -299,7 +307,11 @@ public static class Program
             renderAheadMilliseconds);
         using AudioFrameRingBuffer ring = new(renderer.Format, ringCapacityFrames);
         int workFrameCount = InitialReleaseAudioRuntimePolicy.WorkFramesForRingCapacity(ringCapacityFrames);
-        using AudioRenderAheadWorker renderWorker = new(renderSource, ring, workFrameCount);
+        using AudioRenderAheadWorker renderWorker = new(
+            renderSource,
+            ring,
+            workFrameCount,
+            allowRestartAfterEndOfStream: true);
         renderWorker.Start();
 
         int prefillThreshold = ringCapacityFrames * 3 / 4;
@@ -493,21 +505,19 @@ public static class Program
                 }
                 if (rollingSource is not null)
                 {
-                    if (!renderWorker.TryPauseAtProducerFrontier(
-                            TimeSpan.FromSeconds(5),
-                            stopCommandPending))
-                    {
-                        ConsumePrioritizedStop(
-                            control,
-                            ref stopRequested,
-                            ref flushOnStop);
-                        break;
-                    }
+                    // Mute/Solo is an audible-timeline replacement, not merely a
+                    // producer-future replacement. Stop and reset WASAPI first so
+                    // PCM already submitted to the endpoint cannot leak after the
+                    // monitoring command. Rebuild from the best observable audible
+                    // frontier, then restart output only after the new generation is
+                    // prepared.
+                    long consumerFrontierFrame = output.StopAndResetBufferedOutput();
+                    int pendingMonitoringCommandCount = monitoringCommands.Length;
+                    bool outerProducerPaused = false;
                     try
                     {
-                        if (!rollingSource.TryResetForMonitoringColdStart(
+                        if (!renderWorker.TryPauseAtProducerFrontier(
                                 TimeSpan.FromSeconds(5),
-                                monitoringCommands,
                                 stopCommandPending))
                         {
                             ConsumePrioritizedStop(
@@ -516,10 +526,135 @@ public static class Program
                                 ref flushOnStop);
                             break;
                         }
+                        outerProducerPaused = true;
+
+                        while (!stopRequested)
+                        {
+                            try
+                            {
+                                ring.ResetAtFramePosition(consumerFrontierFrame);
+                                recoverySource?.DiscardPreparedRecoveryForMonitoring();
+                                if (!rollingSource.TryResetForMonitoringColdStart(
+                                        consumerFrontierFrame,
+                                        TimeSpan.FromSeconds(5),
+                                        monitoringCommandBatch.AsSpan(
+                                            0,
+                                            pendingMonitoringCommandCount),
+                                        stopCommandPending))
+                                {
+                                    ConsumePrioritizedStop(
+                                        control,
+                                        ref stopRequested,
+                                        ref flushOnStop);
+                                    break;
+                                }
+                                renderWorker.RestartGenerationAtPausedFrontier();
+                            }
+                            finally
+                            {
+                                if (outerProducerPaused)
+                                {
+                                    renderWorker.ResumeFromProducerFrontier();
+                                    outerProducerPaused = false;
+                                }
+                            }
+                            if (stopRequested)
+                            {
+                                break;
+                            }
+
+                            // Mute/Solo may change again while this generation is
+                            // being prepared. Do not finish obsolete generations
+                            // serially: pause at the same audible frontier and fold
+                            // the newer ordered batch into the next replacement.
+                            bool superseded = false;
+                            long refillDeadline = Environment.TickCount64 + 30_000;
+                            while (ring.AvailableFrameCount < prefillThreshold
+                                && !ring.ProducerCompleted
+                                && !ring.ProducerFaulted)
+                            {
+                                if (control.TryDequeuePendingStop(out bool resetStopFlush))
+                                {
+                                    stopRequested = true;
+                                    flushOnStop = resetStopFlush;
+                                    break;
+                                }
+                                if (pendingMonitoringCommandCount < monitoringCommandBatch.Length
+                                    && control.TryDequeueMonitoringCommands(
+                                        monitoringCommandBatch.AsSpan(
+                                            pendingMonitoringCommandCount),
+                                        out int supersedingCommandCount))
+                                {
+                                    pendingMonitoringCommandCount += supersedingCommandCount;
+                                    if (!renderWorker.TryPauseAtProducerFrontier(
+                                            TimeSpan.FromSeconds(5),
+                                            stopCommandPending))
+                                    {
+                                        ConsumePrioritizedStop(
+                                            control,
+                                            ref stopRequested,
+                                            ref flushOnStop);
+                                        break;
+                                    }
+                                    outerProducerPaused = true;
+                                    superseded = true;
+                                    break;
+                                }
+                                if (Environment.TickCount64 >= refillDeadline)
+                                {
+                                    throw new TimeoutException(
+                                        "The monitoring replacement did not refill the render-ahead buffer within 30 seconds.");
+                                }
+                                Thread.Sleep(1);
+                            }
+                            if (stopRequested)
+                            {
+                                break;
+                            }
+                            if (ring.ProducerFaulted)
+                            {
+                                throw new MidoraAudioException(
+                                    "The render-ahead producer faulted while replacing a monitoring future.");
+                            }
+                            if (superseded)
+                            {
+                                continue;
+                            }
+
+                            // Close the interval between satisfying the watermark
+                            // and restarting the endpoint. A command already queued
+                            // here still supersedes the prepared generation.
+                            if (pendingMonitoringCommandCount < monitoringCommandBatch.Length
+                                && control.TryDequeueMonitoringCommands(
+                                    monitoringCommandBatch.AsSpan(
+                                        pendingMonitoringCommandCount),
+                                    out int finalCommandCount))
+                            {
+                                pendingMonitoringCommandCount += finalCommandCount;
+                                if (!renderWorker.TryPauseAtProducerFrontier(
+                                        TimeSpan.FromSeconds(5),
+                                        stopCommandPending))
+                                {
+                                    ConsumePrioritizedStop(
+                                        control,
+                                        ref stopRequested,
+                                        ref flushOnStop);
+                                    break;
+                                }
+                                outerProducerPaused = true;
+                                continue;
+                            }
+
+                            output.Start();
+                            break;
+                        }
                     }
                     finally
                     {
-                        renderWorker.ResumeFromProducerFrontier();
+                        if (outerProducerPaused)
+                        {
+                            renderWorker.ResumeFromProducerFrontier();
+                        }
                     }
                 }
                 else

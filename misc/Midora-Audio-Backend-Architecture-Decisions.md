@@ -118,6 +118,10 @@ Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domai
 
 共享内存 ABI v4 的 command ring 读写位置必须满足 `0 <= read <= write` 且 `write - read <= 1024`，任何损坏都必须在取模和指针运算前失败。Stop/Monitoring/Held Preview/Buffering Recovery 及其子类型是闭合集；source/Port/message/boolean、CC91/CC93、held plan generation、recovery end frame 和每条 command 的 reserved 字段在写入前整批校验、读取后再次校验，批次失败不得发布前缀。状态枚举与全部非负计数同样在读取边界校验；映射长度、固定 header 和 reserved header 不匹配时 Open 整体失败。Dispose 后的所有状态/发布/命令入口只抛 `ObjectDisposedException`，不得解引用已释放映射。Worker 可以按原顺序合并连续 Monitoring records，并在一个稳定 producer frontier 只执行一次 cold start；Stop 终止整个会话，因此允许抢占并丢弃排在它之前、尚未形成可观察输出的 Monitoring/Buffering Recovery records。该调度不改变 ABI v4 的字节布局。
 
+Monitoring cold start 建立干净 BASSMIDI Unit Stream 时，必须在回退事件游标前依次发送 `MIDI_EVENT_NOTESOFF`、`MIDI_EVENT_SOUNDOFF`、`MIDI_EVENT_RESET` 和 melodic `MIDI_EVENT_DEFDRUMS(0)`，并检查每次原生调用。原因是 `MIDI_EVENT_RESET` 只实现 CC121 Reset Controllers，不会释放 Rolling Preparation 已提前提交的未来按键。该修复保持 ABI v4 布局及字段含义与 canonical、MDAP、缓存及持久化格式不变。
+
+主进程生成 Mute/Solo cleanup 与非 Note restore 命令时，以设备已消费 sample frame 映射当前 tick，不以可提前数秒的底层 Render-Ahead frame 解释当前音乐状态；Worker 收到命令后仍在自己的稳定 producer frontier 原子丢弃旧 prepared suffix 并冷启动。两者之间至多保守滞后一个有界 Render-Ahead 区间，不能超前读取尚未播放 Segment 的状态或补发范围前 NoteOn。
+
 ABI v2 引入并由当前 ABI v4 保持：固定 header offset 68 是对齐 `Int32 statusSequence`，以单 Writer seqlock 发布整组状态。Writer 必须用 compare-exchange 将偶数序列变为奇数，发布全部字段后以 release 写入下一偶数；并发 Writer 或遗留奇数序列立即作为协议错误。Reader 只接受前后相同的偶数序列，最多无分配重试 1024 次，耗尽则报告 IPC 一致性错误；序列允许 two's-complement wrap。ABI v3 在 offset 88 增加 held preview plan generation；v4 保持 header 布局，在现有 16-byte command record 的 offset 4 通用 64-bit payload 上增加 `BufferingRecoveryPrepare(endFrame)`。Create/Open 只接受 v4，不提供 v1～v3 回退。状态发布与读取热路径、序列 wrap、并发压力和中断 Writer 均由自动门验证。
 
 held Preview 在 ABI v3 引入、当前 ABI v4 保持 `HeldPreviewPause`、`HeldPreviewApplyPlan(generation)`、`HeldPreviewResume` 三条有界命令。Pause 只冻结 Render-Ahead producer，WASAPI 仍消费 ring 内 PCM；主进程把 checksum MDAP v5 计划写入会话私有目录后发布新 generation，Worker 只在 producer frontier 替换未渲染后缀并以状态 generation 确认，随后恢复 producer。计划文件和 generation 都是单次会话运行时状态；实时 PCM 仍不跨进程。
@@ -203,6 +207,10 @@ miss fragment 同样映射到每 Unit 连续虚拟写流；写 ring 达到 `4,09
 Stop 立即停止设备输出并禁止开始未来渲染；已完整 block 可由 I/O worker 排空，未完成 block 可丢弃。Project 关闭仍删除本 session 的已知目录。自然小节 underrun recovery、Segment 硬边界、Mute/Solo 运行时过滤、Master/Limiter 顺序和短 Render-Ahead ring 的职责保持不变。
 
 详细 trace：`misc/Midora-Segment-Pack-and-Rolling-Preparation-Requirement-Trace.md`。
+
+2026-08-14 性能修正：精确 Segment 命中不再在 Worker 启动前从 Pack 全量复制到 transient staging。主进程批量更新 Segment generation 后，只发布本任务私有的有界只读 manifest；Worker 专用 cache I/O 线程在对应 Segment 实际进入准备窗口时按块读取并校验 Pack，音频热线程仍不执行文件 I/O。尚在后台 Pack writer 队列内的完整 Segment 通过有生命周期租约的原始 spool extent 直接读取，已发布 Pack 在当前播放租约结束前不得重整删除；cache miss 继续写预分配 sparse staging 并后台发布。超过 Target High 6 s 的完整 playback-span 不在启动前物化，交由按需 Segment Pack 命中或现场 miss 路径提供，因此远处 Segment 的数量与 PCM 大小不再决定播放启动等待。Pack 格式、cache key、`.midora` 和正式音频语义均不改变。
+
+2026-08-14 启动修正：默认 `[0, effective Project end)` 播放复用当前完整 canonical 结果的事件、分配、诊断和 fingerprint，只生成 `Playback` consumer context，不能重复执行同一 revision 的语义编译。sample-domain 计划按 `(canonical fingerprint, start, end, actual sample rate)` 缓存在 Project-open session，并在 Project 打开及后台编译发布后由独立任务预热；投影本身不持有 session 编辑锁，过期 generation 不得发布。设备仍在正式启动前重新 Probe，若实际采样率改变则只接受对应 rate 的计划。canonical→sample 投影使用单次 source/Port/Unit 分组，不得按 16 Port、16 Channel 对完整极端事件流反复扫描；这只缩短 Preparing，不截断远处 canonical 事件，不改变滚动 PCM 的 Startup/High 水位、缓存 key、MDAP 或可听结果。
 
 ## 11. 验证门
 

@@ -44,6 +44,11 @@ public interface IRealtimePlaybackBackend : IDisposable
     void SelectOutputDevice(string? deviceId);
 }
 
+public interface ICancellableRealtimePlaybackPreparationBackend
+{
+    int Prepare(CancellationToken cancellationToken);
+}
+
 public interface IHeldPreviewRealtimePlaybackBackend
 {
     long PauseHeldPreviewAtProducerFrontier(TimeSpan timeout);
@@ -111,6 +116,12 @@ public sealed class PlaybackController : IDisposable
     private readonly HashSet<MidoraId> _mutedTracks = [];
     private readonly HashSet<MidoraId> _soloTracks = [];
     private readonly HashSet<MidoraId> _audibleTracks = [];
+    private readonly object _backendPreparationSync = new();
+    private readonly object _prewarmSync = new();
+    private readonly CancellationTokenSource _prewarmCancellation = new();
+    private Task _prewarmTask = Task.CompletedTask;
+    private long _prewarmRequestGeneration;
+    private int _knownSampleRate;
     private CanonicalCompiledResult? _activeResult;
     private MidiRenderPlan? _activePlan;
     private TempoSampleMap? _activeTempoMap;
@@ -138,6 +149,7 @@ public sealed class PlaybackController : IDisposable
             cacheBackend.SetAudioCacheStore(session);
         }
         RebuildAudibleTracks();
+        _session.CompilationChanged += HandleCompilationChangedForPrewarm;
     }
 
     public PlaybackState State { get; private set; } = PlaybackState.Stopped;
@@ -148,6 +160,21 @@ public sealed class PlaybackController : IDisposable
     public HeldPreviewGateEndReport? LastHeldPreviewGateEndReport { get; private set; }
     public TickRange? LoopRange => _loopRange;
     public event EventHandler? StateChanged;
+
+    public void BeginDefaultPlaybackPreparation()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        lock (_prewarmSync)
+        {
+            _prewarmRequestGeneration = checked(_prewarmRequestGeneration + 1);
+            if (_prewarmTask.IsCompleted)
+            {
+                _prewarmTask = Task.Run(
+                    RunDefaultPlaybackPreparationLoop,
+                    _prewarmCancellation.Token);
+            }
+        }
+    }
 
     public long CurrentTick
     {
@@ -319,7 +346,7 @@ public sealed class PlaybackController : IDisposable
                 HeldPreviewWindowSeconds);
             CanonicalCompiledResult compiled = compileOpen(initialWindowEndTick);
             RequireConsumablePreview(compiled);
-            int actualSampleRate = _backend.Prepare();
+            int actualSampleRate = PrepareBackend();
             _session.InvalidateSampleDomainCaches();
             MidiRenderPlan plan = MidiRenderPlanAdapter.CreateRealtime(
                 compiled,
@@ -484,9 +511,11 @@ public sealed class PlaybackController : IDisposable
         }
 
         _backend.SelectOutputDevice(deviceId);
+        Volatile.Write(ref _knownSampleRate, 0);
         _session.InvalidateSampleDomainCaches();
         OutputDeviceSelectionRequired = false;
         LastError = null;
+        BeginDefaultPlaybackPreparation();
     }
 
     public void Seek(long tick)
@@ -666,6 +695,7 @@ public sealed class PlaybackController : IDisposable
         }
         finally
         {
+            Volatile.Write(ref _knownSampleRate, 0);
             _session.InvalidateSampleDomainCaches();
             _activeResult = null;
             _activePlan = null;
@@ -706,6 +736,20 @@ public sealed class PlaybackController : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
+        _session.CompilationChanged -= HandleCompilationChangedForPrewarm;
+        _prewarmCancellation.Cancel();
+        Task prewarmTask;
+        lock (_prewarmSync)
+        {
+            prewarmTask = _prewarmTask;
+        }
+        try
+        {
+            prewarmTask.GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+        }
         if (State != PlaybackState.Stopped)
         {
             try
@@ -718,6 +762,7 @@ public sealed class PlaybackController : IDisposable
             }
         }
         _backend.Dispose();
+        _prewarmCancellation.Dispose();
         _disposed = true;
     }
 
@@ -733,8 +778,8 @@ public sealed class PlaybackController : IDisposable
             ActiveTaskKind = PlaybackTaskKind.MainTimeline;
             SetState(PlaybackState.Preparing);
             string soundFont = RequireEffectiveSoundFont("Playback");
-            int actualSampleRate = _backend.Prepare();
-            _session.InvalidateSampleDomainCaches();
+            WaitForDefaultPlaybackPreparation();
+            int actualSampleRate = PrepareBackend();
             CanonicalCompiledResult compiled = _session.CompileForPlayback(cursorTick, endTick);
             if (!compiled.IsConsumable)
             {
@@ -757,7 +802,10 @@ public sealed class PlaybackController : IDisposable
                 SetState(PlaybackState.Stopped);
                 return;
             }
-            MidiRenderPlan plan = MidiRenderPlanAdapter.CreateRealtime(compiled, actualSampleRate, _audibleTracks);
+            MidiRenderPlan plan = _session.GetOrCreateRealtimeRenderPlan(
+                compiled,
+                actualSampleRate,
+                _audibleTracks);
             PlaybackProjectSettings settings = _session.Project.Playback;
             ConfigureNextBufferingRecovery(compiled, plan);
             SetNextPlaybackCacheMode(RealtimePlaybackCacheMode.UnitPcmAndPlaybackSpan);
@@ -805,7 +853,7 @@ public sealed class PlaybackController : IDisposable
                 throw new InvalidOperationException(string.Join(Environment.NewLine,
                     compiled.Diagnostics.Select(value => $"{value.Code}: {value.Message}")));
             }
-            int actualSampleRate = _backend.Prepare();
+            int actualSampleRate = PrepareBackend();
             _session.InvalidateSampleDomainCaches();
             if (compiled.EndTick <= compiled.StartTick)
             {
@@ -1253,7 +1301,7 @@ public sealed class PlaybackController : IDisposable
         MidiRenderPlan plan = _activePlan
             ?? throw new InvalidOperationException("The active sample-domain playback plan is unavailable.");
         long renderTick = _activeTempoMap!.SampleFrameToTick(
-            _backend.RenderPositionFrames,
+            _backend.PositionFrames,
             compiled.StartTick,
             _backend.ActualSampleRate,
             compiled.EndTick);
@@ -1434,6 +1482,90 @@ public sealed class PlaybackController : IDisposable
             ? new InvalidOperationException(description)
             : new AggregateException(description, cleanupError);
         SetState(PlaybackState.Error);
+    }
+
+    private void HandleCompilationChangedForPrewarm(object? sender, EventArgs eventArgs)
+    {
+        if (_disposed
+            || State != PlaybackState.Stopped
+            || !_session.IsCompilationCurrent
+            || _session.CompilationState != ProjectCompilationState.Succeeded)
+        {
+            return;
+        }
+        BeginDefaultPlaybackPreparation();
+    }
+
+    private void RunDefaultPlaybackPreparationLoop()
+    {
+        CancellationToken cancellationToken = _prewarmCancellation.Token;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            long requestGeneration;
+            lock (_prewarmSync)
+            {
+                requestGeneration = _prewarmRequestGeneration;
+            }
+            try
+            {
+                int sampleRate = Volatile.Read(ref _knownSampleRate);
+                if (sampleRate == 0)
+                {
+                    sampleRate = PrepareBackend(cancellationToken);
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                _session.PrewarmDefaultRealtimeRenderPlan(sampleRate);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Best effort only. Formal preparation and diagnostics still run
+                // synchronously when playback is explicitly requested.
+            }
+            lock (_prewarmSync)
+            {
+                if (requestGeneration == _prewarmRequestGeneration)
+                {
+                    return;
+                }
+            }
+        }
+    }
+
+    private void WaitForDefaultPlaybackPreparation()
+    {
+        Task task;
+        lock (_prewarmSync)
+        {
+            task = _prewarmTask;
+        }
+        try
+        {
+            task.GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException) when (_prewarmCancellation.IsCancellationRequested)
+        {
+            throw new ObjectDisposedException(nameof(PlaybackController));
+        }
+    }
+
+    private int PrepareBackend()
+        => PrepareBackend(CancellationToken.None);
+
+    private int PrepareBackend(CancellationToken cancellationToken)
+    {
+        lock (_backendPreparationSync)
+        {
+            int sampleRate = _backend is ICancellableRealtimePlaybackPreparationBackend cancellable
+                ? cancellable.Prepare(cancellationToken)
+                : _backend.Prepare();
+            Volatile.Write(ref _knownSampleRate, sampleRate);
+            return sampleRate;
+        }
     }
 
     private void EnterOutputDeviceSelectionRequired()

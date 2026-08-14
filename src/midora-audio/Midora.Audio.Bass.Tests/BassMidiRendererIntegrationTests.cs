@@ -589,6 +589,61 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
+    public unsafe void MonitoringColdStartKillsPreRenderedFutureKeysBeforeRewindingTheEventCursor()
+    {
+        EnsureEnvironment();
+        const long sourceId = 7_004;
+        List<ScheduledMidiMessage> events = [];
+        for (byte note = 0; note < 128; note++)
+        {
+            events.Add(new(2_048, MidiMessage.NoteOn(0, note, 100), 0));
+        }
+        for (byte note = 0; note < 128; note++)
+        {
+            events.Add(new(4_096, MidiMessage.NoteOff(0, note, 0), 0));
+        }
+        MidiRenderPlan plan = new(
+            SampleRate,
+            4_608,
+            [new MidiPortRenderPlan(0, events.ToArray())],
+            [sourceId]);
+        using BassMidiRenderer renderer = CreateRenderer(plan, 256);
+        float* samples = stackalloc float[2_304 * 2];
+
+        Assert.Equal(2_304, renderer.PullFrames(samples, 2_304).FrameCount);
+        Assert.Equal(128u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+
+        MidiMonitoringCommand[] monitoringChange =
+        [
+            MidiMonitoringCommand.DisableSource(0),
+            MidiMonitoringCommand.Send(0, MidiMessage.ControlChange(0, 120, 0)),
+            MidiMonitoringCommand.EnableSource(0)
+        ];
+        ((IMonitoringResettableRenderSource)renderer).ResetForMonitoringColdStart(
+            0,
+            monitoringChange);
+
+        Assert.Equal(0u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+        new Span<float>(samples, 1_024 * 2).Fill(float.NaN);
+        Assert.Equal(1_024, renderer.PullFrames(samples, 1_024).FrameCount);
+        Assert.All(
+            new ReadOnlySpan<float>(samples + (256 * 2), 768 * 2).ToArray(),
+            static sample => Assert.Equal(0f, sample));
+        Assert.Equal(0u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+
+        new Span<float>(samples, 1_280 * 2).Clear();
+        Assert.Equal(1_280, renderer.PullFrames(samples, 1_280).FrameCount);
+        Assert.All(
+            new ReadOnlySpan<float>(samples, 1_024 * 2).ToArray(),
+            static sample => Assert.Equal(0f, sample));
+        Assert.Contains(
+            new ReadOnlySpan<float>(samples + (1_024 * 2), 256 * 2).ToArray(),
+            static sample => sample != 0f);
+        Assert.Equal(128u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+        Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
+    }
+
+    [Fact]
     public void ExactSegmentPcmHitMatchesTheNativeMissWithoutRepeatingBassSynthesis()
     {
         EnsureEnvironment();
@@ -597,6 +652,8 @@ public sealed class BassMidiRendererIntegrationTests
             Path.GetTempPath(),
             $"midora-native-unit-cache-{Guid.NewGuid():N}");
         Directory.CreateDirectory(cacheRoot);
+        string manifestDirectory = Path.Combine(cacheRoot, "manifests");
+        Directory.CreateDirectory(manifestDirectory);
         try
         {
             MidiRenderPlan sourcePlan = CreateCacheableSingleNotePlan();
@@ -612,7 +669,8 @@ public sealed class BassMidiRendererIntegrationTests
                     cache,
                     SoundFontPath,
                     nativeDirectory,
-                    maximumSampleVoices)))
+                    maximumSampleVoices,
+                    manifestDirectory)))
             {
                 Assert.False(miss.Plan.Segments[0].PcmCacheHit);
                 missSamples = RenderCachePlan(
@@ -622,6 +680,9 @@ public sealed class BassMidiRendererIntegrationTests
                     out missNativeFrames);
                 miss.PublishCompleted(cache, miss.Plan.TotalFrameCount);
             }
+            Assert.True(SpinWait.SpinUntil(
+                () => store.GetSnapshot().PendingPublishCount == 0,
+                TimeSpan.FromSeconds(5)));
 
             float[] hitSamples;
             long hitNativeFrames;
@@ -631,14 +692,17 @@ public sealed class BassMidiRendererIntegrationTests
                     cache,
                     SoundFontPath,
                     nativeDirectory,
-                    maximumSampleVoices)))
+                    maximumSampleVoices,
+                    manifestDirectory)))
             {
                 Assert.True(hit.Plan.Segments[0].PcmCacheHit);
+                Assert.NotNull(hit.ReadManifestPath);
                 hitSamples = RenderCachePlan(
                     hit.Plan,
                     hit.FilePath,
                     maximumSampleVoices,
-                    out hitNativeFrames);
+                    out hitNativeFrames,
+                    hit.ReadManifestPath);
             }
 
             Assert.Equal(sourcePlan.TotalFrameCount, missNativeFrames);
@@ -650,7 +714,14 @@ public sealed class BassMidiRendererIntegrationTests
         {
             if (Directory.Exists(cacheRoot))
             {
-                Directory.Delete(cacheRoot, recursive: true);
+                try
+                {
+                    Directory.Delete(cacheRoot, recursive: true);
+                }
+                catch (IOException)
+                {
+                    // A system scanner may briefly retain the sparse staging file.
+                }
             }
         }
     }
@@ -856,7 +927,8 @@ public sealed class BassMidiRendererIntegrationTests
         MidiRenderPlan plan,
         string cacheStagingPath,
         int maximumSampleVoices,
-        out long nativeSynthesisFrames)
+        out long nativeSynthesisFrames,
+        string? cacheReadManifestPath = null)
     {
         float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
         using BassMidiRenderer renderer = new(
@@ -864,7 +936,8 @@ public sealed class BassMidiRendererIntegrationTests
             SoundFontPath,
             new BassMidiRendererSettings(maximumSampleVoices, 256),
             AudioMasterSettings.LimiterV1,
-            cacheStagingPath);
+            cacheStagingPath,
+            cacheReadManifestPath: cacheReadManifestPath);
         fixed (float* destination = samples)
         {
             int completed = 0;
@@ -880,7 +953,11 @@ public sealed class BassMidiRendererIntegrationTests
                     Thread.Yield();
                     continue;
                 }
-                Assert.NotEqual(AudioPullStatus.Fault, result.Status);
+                Assert.True(
+                    result.Status != AudioPullStatus.Fault,
+                    renderer.CacheReadFaultTextForDiagnostics
+                        ?? renderer.CacheReadFaultForDiagnostics?.ToString()
+                        ?? renderer.Fault.ToString());
                 Assert.True(result.FrameCount > 0);
                 completed += result.FrameCount;
             }
@@ -900,6 +977,8 @@ public sealed class BassMidiRendererIntegrationTests
             string key,
             Stream destination,
             out long payloadLength) => store.TryCopyReusable(key, destination, out payloadLength);
+        public ReusableAudioReadLease? AcquireReusableAudioReadLease(
+            IReadOnlyList<string> keys) => store.AcquireReusableReadLease(keys);
 
         public AudioCachePublishResult PublishReusableAudio(
             string key,
@@ -911,9 +990,13 @@ public sealed class BassMidiRendererIntegrationTests
         public AudioCacheSessionStore.AudioRecoverySpool CreateTransientAudioSpool(
             long lengthBytes) => store.CreateRecoverySpool(lengthBytes);
 
+        public AudioCacheSessionStore.AudioRecoverySpool CreateSparseTransientAudioSpool(
+            long lengthBytes) => store.CreateRecoverySpool(lengthBytes, sparse: true);
+
         public void DisableReusableAudioRetention(string reason) =>
             store.DisableReusableRetention(reason);
     }
+
 
     private static MidiRenderPlan CreateAllSoundOffComparisonPlan(
         bool includeAllSoundOff,

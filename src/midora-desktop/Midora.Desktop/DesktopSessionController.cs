@@ -1922,6 +1922,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     new AudioMasterSettings(-0.1f, 1f, 50f),
                     TimeSpan.FromSeconds(30)));
                 playback = new(compilation, backend);
+                playback.BeginDefaultPlaybackPreparation();
                 tasks = new(compilation, playback);
                 failure = null;
             }

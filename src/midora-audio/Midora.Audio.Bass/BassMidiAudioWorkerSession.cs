@@ -161,7 +161,8 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
                     audioCache,
                     soundFontPath,
                     bassNativeDirectory,
-                    rendererSettings.MaximumSampleVoicesPerUnitStream);
+                    rendererSettings.MaximumSampleVoicesPerUnitStream,
+                    _ownedTemporaryDirectory);
             }
             catch (Exception exception) when (exception is IOException
                 or UnauthorizedAccessException
@@ -194,6 +195,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
                 masterSettings,
                 plan.SampleRate,
                 _cacheStaging?.FilePath,
+                _cacheStaging?.ReadManifestPath,
                 bufferingRecoverySpoolPath,
                 bufferingRecoveryMemoryFrameCapacity,
                 _playbackSpanCacheStaging?.FilePath,
@@ -247,7 +249,8 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         string bassNativeDirectory,
         string? deviceId,
         int deviceBufferRequestMilliseconds,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
     {
         ValidateCommon(
             workerPath,
@@ -270,6 +273,13 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         long deadline = Environment.TickCount64 + checked((long)timeout.TotalMilliseconds);
         while (true)
         {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                TerminateProcess(process);
+                _ = standardError.GetAwaiter().GetResult();
+                _ = standardOutput.GetAwaiter().GetResult();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
             AudioWorkerStatus status = control.ReadStatus();
             if (status.State == AudioWorkerState.Prepared)
             {
@@ -498,6 +508,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         AudioMasterSettings masterSettings,
         int expectedSampleRate,
         string? cacheStagingPath,
+        string? cacheReadManifestPath,
         string? bufferingRecoverySpoolPath,
         long bufferingRecoveryMemoryFrameCapacity,
         string? playbackSpanCacheStagingPath,
@@ -521,6 +532,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable
         startInfo.ArgumentList.Add(masterSettings.LimiterEnabled ? "1" : "0");
         startInfo.ArgumentList.Add(expectedSampleRate.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(cacheStagingPath ?? string.Empty);
+        startInfo.ArgumentList.Add(cacheReadManifestPath ?? string.Empty);
         startInfo.ArgumentList.Add(bufferingRecoverySpoolPath ?? string.Empty);
         startInfo.ArgumentList.Add(bufferingRecoveryMemoryFrameCapacity.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(playbackSpanCacheStagingPath ?? string.Empty);

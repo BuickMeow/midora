@@ -288,6 +288,85 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void DefaultWholeProjectPlaybackReusesCurrentFullCanonicalResult()
+    {
+        using ProjectCompilationSession session = new(CreateProject());
+        long fullFingerprint = session.LastAttempt.Fingerprint;
+
+        CanonicalCompiledResult first = session.CompileForPlayback(0, null);
+        CanonicalCompiledResult second = session.CompileForPlayback(0, null);
+
+        Assert.Same(first, second);
+        Assert.Equal(CompilationPurpose.Playback, first.Purpose);
+        Assert.Equal(fullFingerprint, first.Fingerprint);
+        Assert.Equal(session.LastAttempt.Events.ToArray(), first.Events.ToArray());
+        Assert.Equal(0, session.PlaybackRangeCompilationCount);
+        Assert.Equal(2, session.PlaybackRangeCacheHitCount);
+    }
+
+    [Fact]
+    public void RepeatedRealtimePlaybackReusesSamplePlanAndOnlyClonesMonitoringState()
+    {
+        MidoraProject project = CreateProject();
+        using ProjectCompilationSession session = new(project);
+        CanonicalCompiledResult compiled = session.CompileForPlayback(0, 960);
+        HashSet<MidoraId> audible = project.Tracks.Select(value => value.Id).ToHashSet();
+
+        MidiRenderPlan first = session.GetOrCreateRealtimeRenderPlan(
+            compiled,
+            48_000,
+            audible);
+        MidiRenderPlan second = session.GetOrCreateRealtimeRenderPlan(
+            compiled,
+            48_000,
+            audible);
+        MidiRenderPlan muted = session.GetOrCreateRealtimeRenderPlan(
+            compiled,
+            48_000,
+            new HashSet<MidoraId>());
+
+        Assert.Same(first, second);
+        Assert.NotSame(first, muted);
+        Assert.Same(first.Ports[0], muted.Ports[0]);
+        Assert.Equal([0], muted.InitiallyDisabledSourceIndices.ToArray());
+
+        session.InvalidateSampleDomainCaches();
+        MidiRenderPlan afterInvalidation = session.GetOrCreateRealtimeRenderPlan(
+            compiled,
+            48_000,
+            audible);
+        Assert.NotSame(first, afterInvalidation);
+    }
+
+    [Fact]
+    public void DefaultPlaybackPreparationWarmsCanonicalAndSampleDomainCachesBeforeStart()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            using ProjectCompilationSession session = new(CreateProject(), soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+
+            controller.BeginDefaultPlaybackPreparation();
+
+            Assert.True(SpinWait.SpinUntil(
+                () => session.PlaybackRangeCacheHitCount >= 1,
+                TimeSpan.FromSeconds(5)));
+            controller.Start();
+
+            Assert.Equal(2, backend.PrepareCount);
+            Assert.Equal(0, session.PlaybackRangeCompilationCount);
+            Assert.NotNull(backend.LastStartedPlan);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void StartStopSeekAreColdStartsAndLockEdits()
     {
         string soundFont = Path.GetTempFileName();
@@ -566,6 +645,36 @@ public sealed class PlaybackTests
                 && value.Message.MessageType == MidiMessageType.ProgramChange);
             Assert.Equal(activeAllocation.ZeroBasedPort, programRestore.ZeroBasedPortNumber);
             Assert.Equal(activeAllocation.ZeroBasedChannel, programRestore.Message.ChannelNumber);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
+    public void MonitoringRestoreUsesConsumedPositionInsteadOfSpeculativeRenderAheadPosition()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            (MidoraProject project, LogicalTrack restoredTrack) = CreateMonitoringRoutingProject();
+            FakeBackend backend = new();
+            using PlaybackController controller = new(new(project, soundFont), backend);
+            controller.Start();
+            backend.PositionFrames = 15_000; // tick 300 at 120 BPM / 48 kHz
+            backend.ExplicitRenderPositionFrames = 45_000; // tick 900 is speculative render-ahead
+
+            controller.SetTrackMuted(restoredTrack.Id, true);
+            int commandCountBeforeRestore = backend.MonitoringCommands.Count;
+            controller.SetTrackMuted(restoredTrack.Id, false);
+
+            MidiMonitoringCommand programRestore = Assert.Single(
+                backend.MonitoringCommands.Skip(commandCountBeforeRestore),
+                value => value.Kind == MidiMonitoringCommandKind.SendMessage
+                    && value.Message.MessageType == MidiMessageType.ProgramChange);
+            Assert.Equal(42, programRestore.Message.Byte1);
             controller.Stop();
         }
         finally

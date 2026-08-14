@@ -225,9 +225,68 @@ public sealed class AudioCacheSessionStoreTests
             () => store.GetSnapshot().PendingPublishCount == 0,
             TimeSpan.FromSeconds(5)));
         Assert.Equal(0, store.GetSnapshot().WriterBacklogBytes);
+        Assert.True(SpinWait.SpinUntil(
+            () => store.GetSnapshot().TransientBytes == 0,
+            TimeSpan.FromSeconds(5)));
         Assert.Equal(0, store.GetSnapshot().TransientBytes);
         Assert.True(store.TryReadReusable(key, out byte[] packed));
         Assert.Equal(expected, packed);
+    }
+
+    [Fact]
+    public void PendingBackgroundBatchCanBeReadThroughALeaseAfterPackPublication()
+    {
+        using TemporaryDirectory root = new();
+        using AudioCacheSessionStore store = new(root.Path, 8 * 1024 * 1024);
+        byte[] expected = Enumerable.Range(0, 4 * 1024 * 1024)
+            .Select(value => (byte)(value * 29))
+            .ToArray();
+        string key = AudioCacheSessionStore.ComputeKey([7, 6, 5]);
+        AudioCacheSessionStore.AudioRecoverySpool spool =
+            store.CreateRecoverySpool(expected.Length);
+        string spoolPath = spool.Path;
+        spool.Stream.Write(expected);
+        spool.Stream.Flush();
+
+        store.QueueReusableBatch(
+            spool,
+            [new AudioCachePublishSlice(key, 0, expected.Length)]);
+        using ReusableAudioReadLease lease = Assert.IsType<ReusableAudioReadLease>(
+            store.AcquireReusableReadLease([key]));
+        ReusableAudioReadEntry entry = lease.Entries[key];
+
+        Assert.Equal(expected.Length, entry.PayloadLength);
+        Assert.All(
+            entry.Extents,
+            extent => Assert.Contains(
+                extent.Kind,
+                new[]
+                {
+                    ReusableAudioReadExtentKind.RawPayload,
+                    ReusableAudioReadExtentKind.PackBlock
+                }));
+        Assert.True(SpinWait.SpinUntil(
+            () => store.GetSnapshot().PendingPublishCount == 0,
+            TimeSpan.FromSeconds(5)));
+        if (entry.Extents[0].Kind == ReusableAudioReadExtentKind.RawPayload)
+        {
+            Assert.True(File.Exists(spoolPath));
+            using FileStream pending = new(
+                entry.Extents[0].Path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            pending.Position = entry.Extents[0].FileOffset;
+            byte[] actual = new byte[expected.Length];
+            pending.ReadExactly(actual);
+            Assert.Equal(expected, actual);
+        }
+
+        lease.Dispose();
+        Assert.True(SpinWait.SpinUntil(
+            () => !File.Exists(spoolPath),
+            TimeSpan.FromSeconds(5)));
+        Assert.Equal(0, store.GetSnapshot().TransientBytes);
     }
 
     [Fact]

@@ -98,6 +98,29 @@ public sealed class PlaybackSpanCacheStagingTests
             first, new string('a', 64), "native", 500, master with { VolumeDecibels = -3f }));
     }
 
+    [Fact]
+    public void LongPlaybackSpanDoesNotMaterializeTheWholeCacheBeforeRollingStartup()
+    {
+        using TemporaryDirectory directory = new();
+        TestInputs inputs = TestInputs.Create(directory.Path);
+        using AudioCacheSessionStore store = new(inputs.CacheRoot, 64 * 1024 * 1024);
+        CacheAccess access = new(store);
+        MidiRenderPlan plan = new(
+            sampleRate: 1_000,
+            totalFrameCount: 60_000,
+            ports: [],
+            sourceIds: [101]);
+
+        Assert.Null(PlaybackSpanCacheStaging.Create(
+            plan,
+            access,
+            inputs.SoundFont,
+            inputs.Native,
+            500,
+            AudioMasterSettings.LimiterV1));
+        Assert.Equal(0, store.GetSnapshot().TransientBytes);
+    }
+
     private static MidiRenderPlan CreatePlan(byte port, byte channel)
     {
         const long sourceId = 101;

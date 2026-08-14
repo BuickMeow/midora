@@ -41,6 +41,17 @@ internal sealed class PlaybackSpanCacheStaging : IDisposable
             return null;
         }
 
+        // A full-span hit currently uses a contiguous async staging stream. Do
+        // not materialize a range larger than the rolling high watermark before
+        // the Worker starts; Segment Pack hits below it remain demand-driven.
+        long maximumDirectStagingFrames = RollingAudioPreparationPolicy.MillisecondsToFrames(
+            plan.SampleRate,
+            RollingAudioPreparationPolicy.TargetHighWatermarkMilliseconds);
+        if (plan.TotalFrameCount > maximumDirectStagingFrames)
+        {
+            return null;
+        }
+
         string soundFontSha256 = AudioUnitCacheStaging.HashFile(soundFontPath);
         string nativeIdentity = AudioUnitCacheStaging.ComputeNativeIdentity(nativeDirectory);
         string key = PlaybackSpanCacheKey.Create(
@@ -117,7 +128,8 @@ internal sealed class PlaybackSpanCacheStaging : IDisposable
         if (Hit
             || Volatile.Read(ref _captureInvalidated) != 0
             || File.Exists(FilePath + ".invalidated")
-            || completedRenderFrame != totalFrameCount)
+            || completedRenderFrame != totalFrameCount
+            || new FileInfo(FilePath).Length < PayloadLength)
         {
             return;
         }

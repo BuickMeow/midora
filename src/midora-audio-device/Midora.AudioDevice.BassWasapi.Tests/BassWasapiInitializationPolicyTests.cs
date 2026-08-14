@@ -160,6 +160,22 @@ public sealed class BassWasapiInitializationPolicyTests
             AudioPullResult.Continue(0), 0));
     }
 
+    [Theory]
+    [InlineData(1_000, 800, 900)]
+    [InlineData(100, 1_600, 0)]
+    [InlineData(0, 0, 0)]
+    public void AudibleFrontierExcludesFramesStillBufferedByWasapi(
+        long submittedFrames,
+        uint bufferedBytes,
+        long expectedAudibleFrames)
+    {
+        Assert.Equal(
+            expectedAudibleFrames,
+            BassWasapiOutputDevice.CalculateAudibleFrameCount(
+                submittedFrames,
+                bufferedBytes));
+    }
+
     [Fact]
     public void OnlySelectedDeviceDisableOrFailureIsADeviceLoss()
     {

@@ -293,6 +293,35 @@ public sealed class CanonicalCompiledResult
     public ReadOnlySpan<CanonicalTempo> Tempos => Conductor.Tempos;
     public ReadOnlySpan<ChannelUnitAllocation> Allocations => _allocations;
     public IReadOnlyList<CompilerDiagnostic> Diagnostics => _diagnostics;
+
+    internal CanonicalCompiledResult CreatePlaybackView()
+    {
+        if (!Context.IsFullProject || Context.StartTick != 0 || !IsConsumable || IsPartial)
+        {
+            throw new InvalidOperationException(
+                "Only a complete consumable full-Project result can be reused as the default playback view.");
+        }
+
+        CompilationRequest request = new()
+        {
+            Purpose = CompilationPurpose.Playback,
+            StartTick = Context.StartTick,
+            TreatWarningsAsErrors = Context.TreatWarningsAsErrors,
+            CollectDebugDiagnostics = Context.CollectDebugDiagnostics
+        };
+        return new CanonicalCompiledResult(
+            TicksPerQuarterNote,
+            new CompilationContextSummary(request, EndTick, Context.EndTickSource),
+            _events,
+            Conductor,
+            _allocations,
+            _diagnostics,
+            IsPartial,
+            IsConsumable,
+            FailureStage,
+            Fingerprint,
+            Statistics);
+    }
 }
 
 public readonly record struct CompilationStatistics(

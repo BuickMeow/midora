@@ -227,6 +227,39 @@ public sealed unsafe class AudioFrameRingBuffer : IAudioRenderSource, IDisposabl
         Volatile.Write(ref _writePosition, read);
     }
 
+    /// <summary>
+    /// Repositions an empty ring at a new absolute consumer frontier. The output
+    /// callback must be stopped and the single producer must be externally paused.
+    /// </summary>
+    public void ResetAtFramePosition(long framePosition)
+    {
+        if (_disposed || ProducerFaulted || framePosition < 0)
+        {
+            throw new InvalidOperationException(
+                "A live, non-faulted ring and a non-negative frontier are required.");
+        }
+
+        Volatile.Write(ref _readPosition, framePosition);
+        Volatile.Write(ref _writePosition, framePosition);
+        Volatile.Write(ref _buffering, 0);
+        Volatile.Write(ref _producerCompleted, 0);
+    }
+
+    /// <summary>
+    /// Latches a controlled silence interval while a paused producer replaces
+    /// its speculative future. Unlike an underrun, this does not increment the
+    /// underrun counter.
+    /// </summary>
+    public void BeginControlledBuffering()
+    {
+        if (_disposed || ProducerFaulted)
+        {
+            throw new InvalidOperationException(
+                "Controlled buffering requires a live, non-faulted ring.");
+        }
+        Volatile.Write(ref _buffering, 1);
+    }
+
     public void ReleaseBuffering()
     {
         if (_disposed || !IsBuffering)

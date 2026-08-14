@@ -1,11 +1,14 @@
 using Midora.AudioDevice.BassWasapi.Settings;
 using Midora.NativeInterops.BassWasapi;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using NativeBass = Midora.NativeInterops.Bass.BASS;
 
 namespace Midora.AudioDevice.BassWasapi.Internals;
 
 public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
 {
+    private const int SubmissionHistoryCapacity = 4_096;
     private AudioOutputDeviceInfo _info;
     private readonly IAudioRenderSource _audioRenderSource;
     private GCHandle _sourceHandle;
@@ -17,6 +20,11 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
     private long _callbackCount;
     private long _callbackAllocatedBytes;
     private long _consumedFrameCount;
+    private readonly SubmissionRecord[] _submissionHistory =
+        new SubmissionRecord[SubmissionHistoryCapacity];
+    private long _submissionSequence;
+    private long _submittedDeviceFrameCount;
+    private long _contentOriginFrame;
     private uint _actualBufferFrameCount;
     private int _cleanupErrorCode;
     private bool _cleanupFaulted;
@@ -92,6 +100,74 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
         }
 
         _isStarted = false;
+    }
+
+    /// <summary>
+    /// Stops callbacks, discards samples already submitted to WASAPI but not yet
+    /// presented by the endpoint, and rewinds the consumer counter to the best
+    /// observable audible frontier. The caller must rebuild its prepared PCM at
+    /// the returned frame before restarting this output.
+    /// </summary>
+    public long StopAndResetBufferedOutput()
+    {
+        ThrowIfDisposed();
+        if (!_isStarted)
+        {
+            return ConsumedFrameCount;
+        }
+
+        SetCurrentDeviceOrThrow();
+        if (0 == BASSWASAPI.Lock(1))
+        {
+            ThrowBassWasapiError("BASS_WASAPI_Lock");
+        }
+
+        Exception? failure = null;
+        long audibleFrameCount = ConsumedFrameCount;
+        try
+        {
+            // The callback cannot advance _consumedFrameCount between these
+            // observations while the device lock is held.
+            uint bufferedByteCount = BASSWASAPI.GetData(null, NativeBass.BASS_DATA_AVAILABLE);
+            if (bufferedByteCount == uint.MaxValue)
+            {
+                ThrowBassWasapiError("BASS_WASAPI_GetData(BASS_DATA_AVAILABLE)");
+            }
+            long submittedDeviceFrameCount = _submittedDeviceFrameCount;
+            if (0 == BASSWASAPI.Stop(1))
+            {
+                ThrowBassWasapiError("BASS_WASAPI_Stop(reset)");
+            }
+
+            _isStarted = false;
+            long audibleDeviceFrameCount = CalculateAudibleFrameCount(
+                submittedDeviceFrameCount,
+                bufferedByteCount);
+            audibleFrameCount = ResolveContentFrameAtDeviceFrontier(
+                audibleDeviceFrameCount);
+            ResetSubmissionHistory(audibleFrameCount);
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+        finally
+        {
+            if (0 == BASSWASAPI.Lock(0))
+            {
+                int error = BassErrorCode();
+                MidoraAudioDeviceException unlockFailure = new(
+                    $"BASS_WASAPI_Lock(unlock) failed with BASS error {error}.");
+                failure = failure is null
+                    ? unlockFailure
+                    : new AggregateException(failure, unlockFailure);
+            }
+        }
+        if (failure is not null)
+        {
+            throw failure;
+        }
+        return audibleFrameCount;
     }
 
     public void Dispose()
@@ -340,7 +416,7 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
                 Interlocked.Exchange(ref device._callbackFaulted, 1);
             }
 
-            Interlocked.Add(ref device._consumedFrameCount, result.FrameCount);
+            device.RecordSubmission(requestedFrames, result.FrameCount);
 
             if (result.FrameCount < requestedFrames)
             {
@@ -374,6 +450,85 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
 
     internal static bool IsValidCallbackPullResult(AudioPullResult result, int requestedFrames) =>
         result.IsValidForRequest(requestedFrames);
+
+    internal static long CalculateAudibleFrameCount(
+        long submittedFrameCount,
+        uint bufferedByteCount)
+    {
+        if (submittedFrameCount < 0
+            || bufferedByteCount % BassWasapiInitializationPolicy.BytesPerFrame != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(bufferedByteCount));
+        }
+
+        long bufferedFrameCount = bufferedByteCount
+            / BassWasapiInitializationPolicy.BytesPerFrame;
+        return Math.Max(0, submittedFrameCount - bufferedFrameCount);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void RecordSubmission(int requestedFrameCount, int contentFrameCount)
+    {
+        long sequence = _submissionSequence;
+        int index = (int)(sequence % SubmissionHistoryCapacity);
+        _submissionHistory[index] = new SubmissionRecord(
+            sequence,
+            _submittedDeviceFrameCount,
+            _consumedFrameCount,
+            requestedFrameCount,
+            contentFrameCount);
+        _submittedDeviceFrameCount += requestedFrameCount;
+        _consumedFrameCount += contentFrameCount;
+        _submissionSequence = sequence + 1;
+    }
+
+    private long ResolveContentFrameAtDeviceFrontier(long deviceFrame)
+    {
+        if (deviceFrame <= 0)
+        {
+            return _contentOriginFrame;
+        }
+        if (deviceFrame >= _submittedDeviceFrameCount)
+        {
+            return _consumedFrameCount;
+        }
+
+        long firstSequence = Math.Max(0, _submissionSequence - SubmissionHistoryCapacity);
+        for (long sequence = _submissionSequence - 1; sequence >= firstSequence; sequence--)
+        {
+            SubmissionRecord record =
+                _submissionHistory[(int)(sequence % SubmissionHistoryCapacity)];
+            if (record.Sequence != sequence || deviceFrame < record.DeviceStartFrame)
+            {
+                continue;
+            }
+            long relativeDeviceFrame = deviceFrame - record.DeviceStartFrame;
+            return record.ContentStartFrame + Math.Min(
+                relativeDeviceFrame,
+                record.ContentFrameCount);
+        }
+
+        // This would require more than 4096 callbacks of endpoint latency. A
+        // conservative rewind is safer than replaying content that may not yet
+        // have reached the endpoint.
+        return _contentOriginFrame;
+    }
+
+    private void ResetSubmissionHistory(long contentOriginFrame)
+    {
+        Array.Clear(_submissionHistory);
+        _submissionSequence = 0;
+        _submittedDeviceFrameCount = 0;
+        _contentOriginFrame = contentOriginFrame;
+        Volatile.Write(ref _consumedFrameCount, contentOriginFrame);
+    }
+
+    private readonly record struct SubmissionRecord(
+        long Sequence,
+        long DeviceStartFrame,
+        long ContentStartFrame,
+        int RequestedFrameCount,
+        int ContentFrameCount);
 
     [UnmanagedCallersOnly]
     private static void BassWasapiNotify(uint notify, uint deviceIndex, void* user)

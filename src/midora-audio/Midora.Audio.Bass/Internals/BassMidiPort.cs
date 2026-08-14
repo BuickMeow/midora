@@ -17,7 +17,6 @@ public sealed unsafe class BassMidiRenderer
     private const int MaximumPackedMidiBatchByteCount = MaximumMidiBatchEventCount * 3;
     private const int MonitoringCommandQueueCapacity = 4_096;
     private const int DeterministicNativeDecodeFrameCount = InitialReleaseAudioRuntimePolicy.WorkFrameCount;
-    private const int CachedMonitoringFadeMilliseconds = 4;
     private const float InitialReleaseInterpolationQuality = 1f;
     private const float InitialReleaseCpuLimit = 0f;
     private MidiRenderPlan _plan;
@@ -31,7 +30,6 @@ public sealed unsafe class BassMidiRenderer
     private readonly int[] _unitIndexByCanonicalNumber;
     private readonly bool[] _sourceEnabled;
     private readonly bool[] _sourceCacheBypassed;
-    private readonly int _cachedMonitoringFadeFrameCount;
     private readonly MidiMonitoringCommand[] _monitoringCommands = new MidiMonitoringCommand[MonitoringCommandQueueCapacity];
     private readonly object _monitoringProducerSync = new();
     private readonly float _masterGain;
@@ -62,7 +60,8 @@ public sealed unsafe class BassMidiRenderer
         BassMidiRendererSettings settings,
         AudioMasterSettings masterSettings,
         string? cacheStagingPath = null,
-        int segmentProducerConcurrency = 1)
+        int segmentProducerConcurrency = 1,
+        string? cacheReadManifestPath = null)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
@@ -95,9 +94,6 @@ public sealed unsafe class BassMidiRenderer
         Array.Fill(_unitIndexByCanonicalNumber, -1);
         _sourceEnabled = new bool[plan.SourceIds.Length];
         _sourceCacheBypassed = new bool[plan.SourceIds.Length];
-        _cachedMonitoringFadeFrameCount = Math.Max(
-            1,
-            checked((plan.SampleRate * CachedMonitoringFadeMilliseconds + 999) / 1000));
         Array.Fill(_sourceEnabled, true);
         foreach (int sourceIndex in plan.InitiallyDisabledSourceIndices)
         {
@@ -115,7 +111,7 @@ public sealed unsafe class BassMidiRenderer
             _segmentScratchBuffer = (float*)NativeMemory.Alloc(checked(
                 scratchByteCount * (nuint)Math.Max(1, plan.SourceIds.Length)));
             _outputStagingBuffer = (float*)NativeMemory.Alloc(scratchByteCount);
-            OpenCacheStaging(cacheStagingPath);
+            OpenCacheStaging(cacheStagingPath, cacheReadManifestPath);
             CreateSoundFont(soundFontPath);
             PreloadReferencedPresets();
             CreateUnits();
@@ -166,6 +162,16 @@ public sealed unsafe class BassMidiRenderer
     public bool CacheCaptureInvalidated => _cacheCaptureInvalidated;
 
     internal long NativeSynthesisFrameCountForDiagnostics => _nativeSynthesisFrameCount;
+
+    internal Exception? CacheReadFaultForDiagnostics =>
+        _lastCacheReadFault ?? _cacheIo?.ReadFault;
+
+    private Exception? _lastCacheReadFault;
+    private string? _lastCacheReadFaultText;
+
+    internal string? CacheReadFaultTextForDiagnostics =>
+        _lastCacheReadFaultText ?? _cacheIo?.ReadFaultText;
+
 
     internal long ParallelDecodeAllocatedBytesForDiagnostics =>
         _parallelDecoder?.WorkerAllocatedBytes ?? 0;
@@ -494,7 +500,9 @@ public sealed unsafe class BassMidiRenderer
         }
         if (!RenderFrames(_outputStagingBuffer, frameCount))
         {
-            return FillOutputResult.Fault;
+            return _fault.Code == AudioRenderFaultCode.None
+                ? FillOutputResult.Buffering
+                : FillOutputResult.Fault;
         }
 
         _stagedFrameOffset = 0;
@@ -554,12 +562,18 @@ public sealed unsafe class BassMidiRenderer
         }
     }
 
-    private void OpenCacheStaging(string? cacheStagingPath)
+    private void OpenCacheStaging(
+        string? cacheStagingPath,
+        string? cacheReadManifestPath)
     {
         long requiredLength = 0;
         foreach (MidiSegmentRenderPlan segment in _plan.Segments)
         {
             if (segment.PcmCacheKey is null)
+            {
+                continue;
+            }
+            if (segment.PcmCacheHit && segment.PcmCachePayloadOffset < 0)
             {
                 continue;
             }
@@ -569,7 +583,10 @@ public sealed unsafe class BassMidiRenderer
         }
         if (requiredLength == 0)
         {
-            return;
+            if (string.IsNullOrWhiteSpace(cacheReadManifestPath))
+            {
+                return;
+            }
         }
         if (string.IsNullOrWhiteSpace(cacheStagingPath))
         {
@@ -583,7 +600,7 @@ public sealed unsafe class BassMidiRenderer
                 "The Segment PCM cache staging file length does not match the render plan.");
         }
 
-        _cacheIo = new SegmentPcmCacheIoBridge(path, _plan);
+        _cacheIo = new SegmentPcmCacheIoBridge(path, cacheReadManifestPath, _plan);
     }
 
     private void CreateSoundFont(string soundFontPath)
@@ -857,22 +874,41 @@ public sealed unsafe class BassMidiRenderer
     private static void EstablishCanonicalInitialState(uint streamHandle)
     {
         const uint channel = 0;
-        if (NativeBassMidi.StreamEvent(
+        // MIDI_EVENT_RESET is CC121: it resets controllers but deliberately does
+        // not release keys. A monitoring cold start can rewind a stream after the
+        // rolling producer has already submitted future NoteOns, so kill both the
+        // sounding voices and pressed-key state before restoring canonical state.
+        SubmitRequiredStreamEvent(
+            streamHandle,
+            channel,
+            NativeBassMidi.MIDI_EVENT_NOTESOFF,
+            "MIDI_EVENT_NOTESOFF");
+        SubmitRequiredStreamEvent(
+            streamHandle,
+            channel,
+            NativeBassMidi.MIDI_EVENT_SOUNDOFF,
+            "MIDI_EVENT_SOUNDOFF");
+        SubmitRequiredStreamEvent(
             streamHandle,
             channel,
             NativeBassMidi.MIDI_EVENT_RESET,
-            0) == 0)
-        {
-            ThrowBassPreparationFailure("BASS_MIDI_StreamEvent(MIDI_EVENT_RESET)");
-        }
-
-        if (NativeBassMidi.StreamEvent(
+            "MIDI_EVENT_RESET");
+        SubmitRequiredStreamEvent(
             streamHandle,
             channel,
             NativeBassMidi.MIDI_EVENT_DEFDRUMS,
-            0) == 0)
+            "MIDI_EVENT_DEFDRUMS");
+    }
+
+    private static void SubmitRequiredStreamEvent(
+        uint streamHandle,
+        uint channel,
+        uint midiEvent,
+        string eventName)
+    {
+        if (NativeBassMidi.StreamEvent(streamHandle, channel, midiEvent, 0) == 0)
         {
-            ThrowBassPreparationFailure("BASS_MIDI_StreamEvent(MIDI_EVENT_DEFDRUMS)");
+            ThrowBassPreparationFailure($"BASS_MIDI_StreamEvent({eventName})");
         }
     }
 
@@ -962,9 +998,6 @@ public sealed unsafe class BassMidiRenderer
                     continue;
                 }
                 _sourceEnabled[command.SourceIndex] = command.SourceEnabled;
-                ConfigureCachedHitFadeForSource(
-                    command.SourceIndex,
-                    command.SourceEnabled);
                 if (!_sourceCacheBypassed[command.SourceIndex])
                 {
                     _sourceCacheBypassed[command.SourceIndex] = true;
@@ -1210,17 +1243,6 @@ public sealed unsafe class BassMidiRenderer
         }
     }
 
-    private void ConfigureCachedHitFadeForSource(int sourceIndex, bool enabled)
-    {
-        SegmentState? segment = GetActiveSegment(sourceIndex);
-        if (segment?.Plan.PcmCacheHit == true)
-        {
-            segment.CachedMuteFadeRemainingFrames = enabled
-                ? 0
-                : _cachedMonitoringFadeFrameCount;
-        }
-    }
-
     private bool RenderFrames(float* destination, int frameCount)
     {
         nuint sampleCount = checked((nuint)frameCount * 2);
@@ -1244,23 +1266,16 @@ public sealed unsafe class BassMidiRenderer
             {
                 if (!CopyCachedPcmToScratch(segment.Plan, segmentScratch, frameCount))
                 {
-                    SetFault(AudioRenderFaultCode.PcmCacheReadFailed, 0, -1);
+                    if (_cacheIo?.ReadFaulted == true)
+                    {
+                        _lastCacheReadFault = _cacheIo.ReadFault;
+                        _lastCacheReadFaultText = _cacheIo.ReadFaultText;
+                        SetFault(AudioRenderFaultCode.PcmCacheReadFailed, 0, -1);
+                        return false;
+                    }
                     return false;
                 }
-                bool shouldMix;
-                if (segment.CachedMuteFadeRemainingFrames > 0)
-                {
-                    segment.CachedMuteFadeRemainingFrames = ApplyCachedMuteFade(
-                        new Span<float>(segmentScratch, checked(frameCount * 2)),
-                        segment.CachedMuteFadeRemainingFrames,
-                        _cachedMonitoringFadeFrameCount);
-                    shouldMix = true;
-                }
-                else
-                {
-                    shouldMix = _sourceEnabled[sourceIndex];
-                }
-                if (shouldMix)
+                if (_sourceEnabled[sourceIndex])
                 {
                     MixScratchInto(destination, segmentScratch, sampleCount);
                 }
@@ -1448,6 +1463,8 @@ public sealed unsafe class BassMidiRenderer
         }
         if (cacheIo.ReadFaulted)
         {
+            _lastCacheReadFault = cacheIo.ReadFault;
+            _lastCacheReadFaultText = cacheIo.ReadFaultText;
             SetFault(AudioRenderFaultCode.PcmCacheReadFailed, 0, -1);
             return false;
         }
@@ -1461,39 +1478,6 @@ public sealed unsafe class BassMidiRenderer
         // on every playback. The device side reaches controlled Buffering only if
         // the prepared high-water window is actually exhausted.
         return ioReady;
-    }
-
-    internal static int ApplyCachedMuteFade(
-        Span<float> interleavedStereo,
-        int remainingFrames,
-        int totalFrames)
-    {
-        if ((interleavedStereo.Length & 1) != 0)
-        {
-            throw new ArgumentException(
-                "Cached monitoring PCM must contain complete stereo frames.",
-                nameof(interleavedStereo));
-        }
-        if (remainingFrames < 0 || totalFrames <= 0 || remainingFrames > totalFrames)
-        {
-            throw new ArgumentOutOfRangeException(nameof(remainingFrames));
-        }
-
-        int frameCount = interleavedStereo.Length / 2;
-        for (int frameIndex = 0; frameIndex < frameCount; frameIndex++)
-        {
-            float gain = remainingFrames > 0
-                ? remainingFrames / (float)totalFrames
-                : 0f;
-            int sampleIndex = frameIndex * 2;
-            interleavedStereo[sampleIndex] *= gain;
-            interleavedStereo[sampleIndex + 1] *= gain;
-            if (remainingFrames > 0)
-            {
-                remainingFrames--;
-            }
-        }
-        return remainingFrames;
     }
 
     private bool CopyCachedPcmToScratch(
@@ -1671,7 +1655,6 @@ public sealed unsafe class BassMidiRenderer
     {
         public MidiSegmentRenderPlan Plan { get; } = plan;
 
-        public int CachedMuteFadeRemainingFrames { get; set; }
     }
 
     private enum FillOutputResult : byte

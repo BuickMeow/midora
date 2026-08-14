@@ -30,6 +30,9 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
     private readonly SemaphoreSlim _compileSignal = new(0, 1);
     private readonly CancellationTokenSource _disposeCancellation = new();
     private readonly Dictionary<(long Fingerprint, int SampleRate), MidiRenderPlan> _samplePlans = [];
+    private readonly Dictionary<
+        (long Fingerprint, long StartTick, long EndTick, int SampleRate),
+        MidiRenderPlan> _realtimePlans = [];
     private readonly Dictionary<(long StartTick, long? EndTick), CanonicalCompiledResult>
         _playbackRangeResults = [];
     private MidoraProject _compilationProject;
@@ -47,6 +50,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
     private long _compiledRevision = -1;
     private long _requestedCompilationGeneration;
     private long _publishedCompilationGeneration = -1;
+    private long _sampleDomainGeneration;
     private bool _compileSignalPending;
     private bool _forceImmediateCompilation;
     private int _editLockCount;
@@ -194,7 +198,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             edit(Project);
             LastAttempt = _compiler.CompileIncremental(Project, changes);
             RecordSynchronousCompilationLocked(changes, sourceChanged: AffectsCompilation(changes));
-            _samplePlans.Clear();
+            ClearSampleDomainCachesCore();
             _playbackRangeResults.Clear();
             if (LastAttempt.IsConsumable)
             {
@@ -237,7 +241,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 edit(Project);
                 LastAttempt = _compiler.CompileIncremental(Project, changes);
                 RecordSynchronousCompilationLocked(changes, sourceChanged: AffectsCompilation(changes));
-                _samplePlans.Clear();
+                ClearSampleDomainCachesCore();
                 _playbackRangeResults.Clear();
                 if (LastAttempt.IsConsumable)
                 {
@@ -254,7 +258,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                     RecordSynchronousCompilationLocked(
                         ProjectChangeSet.Everything,
                         sourceChanged: false);
-                    _samplePlans.Clear();
+                    ClearSampleDomainCachesCore();
                     _playbackRangeResults.Clear();
                     LastSuccessfulResult = LastAttempt.IsConsumable
                         ? LastAttempt
@@ -297,7 +301,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             }
             LastAttempt = _compiler.CompileIncremental(Project, changes);
             RecordSynchronousCompilationLocked(changes, sourceChanged: false);
-            _samplePlans.Clear();
+            ClearSampleDomainCachesCore();
             _playbackRangeResults.Clear();
             if (LastAttempt.IsConsumable)
             {
@@ -333,7 +337,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             _pendingChanges = MergeChanges(_pendingChanges, changes);
             _requestedCompilationGeneration = checked(_requestedCompilationGeneration + 1);
             _activeCompilationCancellation?.Cancel();
-            _samplePlans.Clear();
+            ClearSampleDomainCachesCore();
             _playbackRangeResults.Clear();
             _backgroundCompilationFailure = null;
             SetCompilationStateLocked(ProjectCompilationState.Outdated);
@@ -452,7 +456,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                     SetCompilationStateLocked(ProjectCompilationState.Outdated);
                     ScheduleCompilationLocked(immediate: false);
                 }
-                _samplePlans.Clear();
+                ClearSampleDomainCachesCore();
                 _playbackRangeResults.Clear();
             }
         }
@@ -713,6 +717,18 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                     _playbackRangeCacheHitCount++;
                     return cached;
                 }
+                if (startTick == 0
+                    && endTick is null
+                    && LastAttempt.Context.IsFullProject
+                    && LastAttempt.IsConsumable
+                    && !LastAttempt.IsPartial)
+                {
+                    CanonicalCompiledResult playbackView =
+                        MidoraCompiler.CreateDefaultPlaybackView(LastAttempt);
+                    _playbackRangeResults.Add(key, playbackView);
+                    _playbackRangeCacheHitCount++;
+                    return playbackView;
+                }
             }
 
             CanonicalCompiledResult result = _compiler.CompileIncremental(
@@ -764,13 +780,102 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         }
     }
 
+    public MidiRenderPlan GetOrCreateRealtimeRenderPlan(
+        CanonicalCompiledResult result,
+        int sampleRate,
+        IReadOnlySet<MidoraId> audibleTrackIds)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        ArgumentNullException.ThrowIfNull(audibleTrackIds);
+        if (!result.IsConsumable || result.IsPartial)
+        {
+            throw new ArgumentException(
+                "Only a complete consumable canonical result can produce a realtime plan.",
+                nameof(result));
+        }
+
+        MidiRenderPlan basePlan = GetOrCreateRealtimeBasePlan(result, sampleRate);
+
+        ReadOnlySpan<long> sourceIds = basePlan.SourceIds;
+        int[] disabled = new int[sourceIds.Length];
+        int disabledCount = 0;
+        for (int sourceIndex = 0; sourceIndex < sourceIds.Length; sourceIndex++)
+        {
+            if (!audibleTrackIds.Contains(new MidoraId(sourceIds[sourceIndex])))
+            {
+                disabled[disabledCount++] = sourceIndex;
+            }
+        }
+        return basePlan.WithInitiallyDisabledSourceIndices(
+            disabled.AsSpan(0, disabledCount));
+    }
+
+    public void PrewarmDefaultRealtimeRenderPlan(int sampleRate)
+    {
+        if (sampleRate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        }
+        CanonicalCompiledResult result = CompileForPlayback(0, null);
+        _ = GetOrCreateRealtimeBasePlan(result, sampleRate);
+    }
+
+    private MidiRenderPlan GetOrCreateRealtimeBasePlan(
+        CanonicalCompiledResult result,
+        int sampleRate)
+    {
+        (long Fingerprint, long StartTick, long EndTick, int SampleRate) key =
+            (result.Fingerprint, result.StartTick, result.EndTick, sampleRate);
+        long generation;
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_executionMode == ProjectCompilationExecutionMode.Background
+                && !IsCompilationCurrentCore())
+            {
+                throw new InvalidOperationException(
+                    "The current Project source revision has not finished compiling.");
+            }
+            if (_realtimePlans.TryGetValue(key, out MidiRenderPlan? cached))
+            {
+                return cached;
+            }
+            generation = _sampleDomainGeneration;
+        }
+
+        // Projection is deliberately outside _sync. A very dense Project can
+        // take noticeable CPU time here; background prewarming must never make
+        // an edit wait on this session lock.
+        MidiRenderPlan created = MidiRenderPlanAdapter.CreateRealtime(result, sampleRate);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (generation == _sampleDomainGeneration)
+            {
+                if (_realtimePlans.TryGetValue(key, out MidiRenderPlan? concurrent))
+                {
+                    return concurrent;
+                }
+                _realtimePlans.Add(key, created);
+            }
+            return created;
+        }
+    }
+
     public void InvalidateSampleDomainCaches()
     {
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            _samplePlans.Clear();
+            ClearSampleDomainCachesCore();
         }
+    }
+
+    private void ClearSampleDomainCachesCore()
+    {
+        _samplePlans.Clear();
+        _realtimePlans.Clear();
+        _sampleDomainGeneration = checked(_sampleDomainGeneration + 1);
     }
 
     public AudioCacheWarning ResetAudioCacheGenerations()
@@ -778,7 +883,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            _samplePlans.Clear();
+            ClearSampleDomainCachesCore();
             AudioCacheSessionSnapshot? snapshot = _audioCacheStore?.GetSnapshot();
             if (snapshot is null)
             {
@@ -848,7 +953,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 previous = _audioCacheStore;
                 _audioCacheStore = replacement;
                 _audioCacheWarning = warning;
-                _samplePlans.Clear();
+                ClearSampleDomainCachesCore();
             }
         }
         catch
@@ -939,6 +1044,16 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         }
     }
 
+    public ReusableAudioReadLease? AcquireReusableAudioReadLease(
+        IReadOnlyList<string> keys)
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _audioCacheStore?.AcquireReusableReadLease(keys);
+        }
+    }
+
     public void QueueReusableAudioBatch(
         AudioCacheSessionStore.AudioRecoverySpool spool,
         IReadOnlyList<AudioCachePublishSlice> slices)
@@ -983,6 +1098,16 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             {
                 _audioCacheWarning = _audioCacheStore.GetSnapshot().Warning;
             }
+        }
+    }
+
+    public void RegisterReusableAudioGenerations(
+        IReadOnlyList<AudioCacheGenerationBinding> bindings)
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _audioCacheStore?.RegisterReusableGenerations(bindings);
         }
     }
 
@@ -1087,7 +1212,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 return false;
             }
             EffectiveSoundFontPath = null;
-            _samplePlans.Clear();
+            ClearSampleDomainCachesCore();
             return true;
         }
     }
@@ -1112,7 +1237,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 return false;
             }
             EffectiveSoundFontPath = path;
-            _samplePlans.Clear();
+            ClearSampleDomainCachesCore();
             return true;
         }
     }
@@ -1129,7 +1254,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 return false;
             }
             EffectiveSoundFontPath = null;
-            _samplePlans.Clear();
+            ClearSampleDomainCachesCore();
             return true;
         }
     }
@@ -1226,7 +1351,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
 
         lock (_sync)
         {
-            _samplePlans.Clear();
+            ClearSampleDomainCachesCore();
             _playbackRangeResults.Clear();
             try
             {

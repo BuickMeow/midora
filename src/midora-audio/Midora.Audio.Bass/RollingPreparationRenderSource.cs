@@ -1,6 +1,5 @@
 using Midora.AudioDevice;
 using Midora.Midi;
-using System.Runtime.InteropServices;
 
 namespace Midora.Audio.Bass;
 
@@ -13,10 +12,8 @@ internal sealed unsafe class RollingPreparationRenderSource : IAudioRenderSource
     private readonly int _lowWatermarkFrames;
     private readonly int _resumeWatermarkFrames;
     private readonly int _transitionFrameCount;
-    private float* _transitionBuffer;
     private long _positionFrames;
     private int _watermarkBuffering;
-    private int _transitionTotalFrames;
     private int _transitionRemainingFrames;
     private bool _disposed;
 
@@ -46,13 +43,6 @@ internal sealed unsafe class RollingPreparationRenderSource : IAudioRenderSource
         _transitionFrameCount = RollingAudioPreparationPolicy.MillisecondsToFrames(
             underlying.Format.SampleRate,
             MonitoringTransitionMilliseconds);
-        _transitionBuffer = (float*)NativeMemory.Alloc(
-            checked((nuint)_transitionFrameCount * (nuint)underlying.Format.BytesPerFrame));
-        if (_transitionBuffer is null)
-        {
-            throw new OutOfMemoryException(
-                "The rolling monitoring-transition buffer could not be allocated.");
-        }
         _prepared = new AudioFrameRingBuffer(underlying.Format, highFrames);
         int workFrames = InitialReleaseAudioRuntimePolicy.WorkFramesForRingCapacity(highFrames);
         _worker = new AudioRenderAheadWorker(
@@ -158,13 +148,33 @@ internal sealed unsafe class RollingPreparationRenderSource : IAudioRenderSource
         return ResetForMonitoringColdStartCore(
             timeout,
             commands,
-            cancellationRequested);
+            cancellationRequested,
+            explicitConsumerFrontier: null);
+    }
+
+    public bool TryResetForMonitoringColdStart(
+        long consumerFrontierFrame,
+        TimeSpan timeout,
+        ReadOnlySpan<MidiMonitoringCommand> commands,
+        Func<bool> cancellationRequested)
+    {
+        ArgumentNullException.ThrowIfNull(cancellationRequested);
+        if (consumerFrontierFrame < 0 || consumerFrontierFrame > PositionFrames)
+        {
+            throw new ArgumentOutOfRangeException(nameof(consumerFrontierFrame));
+        }
+        return ResetForMonitoringColdStartCore(
+            timeout,
+            commands,
+            cancellationRequested,
+            consumerFrontierFrame);
     }
 
     private bool ResetForMonitoringColdStartCore(
         TimeSpan timeout,
         ReadOnlySpan<MidiMonitoringCommand> commands,
-        Func<bool>? cancellationRequested)
+        Func<bool>? cancellationRequested,
+        long? explicitConsumerFrontier = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_underlying is not IMonitoringResettableRenderSource resettable)
@@ -182,13 +192,11 @@ internal sealed unsafe class RollingPreparationRenderSource : IAudioRenderSource
             {
                 return false;
             }
-            long frontier = PositionFrames;
-            _transitionTotalFrames = _prepared.CopyPrefixFramesTo(
-                _transitionBuffer,
-                _transitionFrameCount);
-            _transitionRemainingFrames = _transitionTotalFrames;
+            long frontier = explicitConsumerFrontier ?? PositionFrames;
             _prepared.DiscardBufferedFramesAtReadPosition();
             resettable.ResetForMonitoringColdStart(frontier, commands);
+            Volatile.Write(ref _positionFrames, frontier);
+            _transitionRemainingFrames = _transitionFrameCount;
             _ = _worker.RestartCompletedProducerAtPausedFrontier();
             Volatile.Write(ref _watermarkBuffering, 0);
             return true;
@@ -208,17 +216,12 @@ internal sealed unsafe class RollingPreparationRenderSource : IAudioRenderSource
         _disposed = true;
         _worker.Dispose();
         _prepared.Dispose();
-        if (_transitionBuffer != null)
-        {
-            NativeMemory.Free(_transitionBuffer);
-            _transitionBuffer = null;
-        }
     }
 
     private void ApplyMonitoringTransition(float* destination, int frameCount)
     {
         int remaining = _transitionRemainingFrames;
-        int total = _transitionTotalFrames;
+        int total = _transitionFrameCount;
         if (remaining <= 0 || total <= 0)
         {
             return;
@@ -228,16 +231,12 @@ internal sealed unsafe class RollingPreparationRenderSource : IAudioRenderSource
         for (int frameIndex = 0; frameIndex < transitionFrames; frameIndex++)
         {
             int transitionIndex = alreadyConsumed + frameIndex;
-            float newWeight = transitionIndex / (float)total;
-            float oldWeight = 1f - newWeight;
+            float newWeight = total == 1
+                ? 1f
+                : transitionIndex / (float)(total - 1);
             int sampleIndex = frameIndex * Format.ChannelCount;
-            int transitionSampleIndex = transitionIndex * Format.ChannelCount;
-            destination[sampleIndex] =
-                (_transitionBuffer[transitionSampleIndex] * oldWeight)
-                + (destination[sampleIndex] * newWeight);
-            destination[sampleIndex + 1] =
-                (_transitionBuffer[transitionSampleIndex + 1] * oldWeight)
-                + (destination[sampleIndex + 1] * newWeight);
+            destination[sampleIndex] *= newWeight;
+            destination[sampleIndex + 1] *= newWeight;
         }
         _transitionRemainingFrames = remaining - transitionFrames;
     }

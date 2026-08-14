@@ -179,6 +179,29 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Invalidates the current producer generation after its destination has
+    /// been externally reset at a stable paused frontier. Unlike an EOS-only
+    /// restart, this also resumes a generation that was still active when its
+    /// prepared suffix became obsolete.
+    /// </summary>
+    public void RestartGenerationAtPausedFrontier()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_allowRestartAfterEndOfStream)
+        {
+            throw new InvalidOperationException(
+                "This render-ahead producer does not allow a generation restart.");
+        }
+        if (!IsPaused || Volatile.Read(ref _pauseRequested) == 0)
+        {
+            throw new InvalidOperationException(
+                "A producer generation can only restart at a paused frontier.");
+        }
+
+        Volatile.Write(ref _waitingForProducerRestart, 0);
+    }
+
     public void Dispose()
     {
         if (_disposed)

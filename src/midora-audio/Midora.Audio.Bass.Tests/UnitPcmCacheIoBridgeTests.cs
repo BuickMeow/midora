@@ -38,7 +38,7 @@ public sealed class UnitPcmCacheIoBridgeTests
     }
 
     [Fact]
-    public unsafe void InitialReadAheadPrimesDenseTinyFragmentSequenceWithoutBoundaryStalls()
+    public unsafe void DemandReadAheadHandlesDenseTinyFragmentSequenceWithoutBoundaryStalls()
     {
         const int fragmentCount = 512;
         AudioFormat format = new(48_000, 2, AudioSampleFormat.Float32);
@@ -77,11 +77,25 @@ public sealed class UnitPcmCacheIoBridgeTests
         bool allReady = true;
         for (int index = 0; index < fragmentCount; index++)
         {
-            allReady &= bridge.TryReadFrames(
+            WaitUntilReady(
+                bridge,
                 fragments[index],
-                index,
-                output + (index * 2),
-                1);
+                globalFrame: index,
+                frameCount: 1);
+            bool read = false;
+            for (int attempt = 0; attempt < 100_000 && !read; attempt++)
+            {
+                read = bridge.TryReadFrames(
+                    fragments[index],
+                    index,
+                    output + (index * 2),
+                    1);
+                if (!read)
+                {
+                    Thread.Yield();
+                }
+            }
+            allReady &= read;
         }
 
         Assert.True(allReady);

@@ -25,7 +25,8 @@ public sealed class BassWasapiChildPlaybackBackend
     : IRealtimePlaybackBackend,
       IHeldPreviewRealtimePlaybackBackend,
       IRealtimePlaybackCacheBackend,
-      IBufferingRecoveryRealtimePlaybackBackend
+      IBufferingRecoveryRealtimePlaybackBackend,
+      ICancellableRealtimePlaybackPreparationBackend
 {
     private readonly BassWasapiChildPlaybackOptions _options;
     private string? _selectedDeviceId;
@@ -134,6 +135,9 @@ public sealed class BassWasapiChildPlaybackBackend
     }
 
     public int Prepare()
+        => Prepare(CancellationToken.None);
+
+    public int Prepare(CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_session is not null)
@@ -145,7 +149,8 @@ public sealed class BassWasapiChildPlaybackBackend
             _options.BassNativeDirectory,
             _selectedDeviceId,
             _options.DeviceBufferRequestMilliseconds,
-            _options.PreparingTimeout);
+            _options.PreparingTimeout,
+            cancellationToken);
         _actualSampleRate = result.ActualSampleRate;
         _actualDeviceBufferFrameCount = result.ActualDeviceBufferFrameCount;
         return _actualSampleRate;

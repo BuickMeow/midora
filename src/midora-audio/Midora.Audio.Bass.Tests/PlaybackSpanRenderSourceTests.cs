@@ -51,7 +51,7 @@ public sealed class PlaybackSpanRenderSourceTests
     }
 
     [Fact]
-    public unsafe void MonitoringFallbackColdStartsAtFrontierAndCrossfadesFourMilliseconds()
+    public unsafe void MonitoringFallbackColdStartsAtFrontierAndFadesInReplacementOnly()
     {
         const int sampleRate = 1_000;
         const int totalFrames = 12;
@@ -75,11 +75,11 @@ public sealed class PlaybackSpanRenderSourceTests
         Assert.Equal(3, underlying.SeekFrame);
         Assert.Equal([1f, 1f, 1f, 1f, 1f, 1f],
             new ReadOnlySpan<float>(output, 6).ToArray());
-        // At 1 kHz the fixed transition is four frames: old, 75/25, 50/50, 25/75.
-        Assert.Equal(1f, output[6], 6);
-        Assert.Equal(0.5f, output[8], 6);
-        Assert.Equal(0f, output[10], 6);
-        Assert.Equal(-0.5f, output[12], 6);
+        // At 1 kHz the four-frame transition contains no cached old generation.
+        Assert.Equal(0f, output[6], 6);
+        Assert.Equal(-1f / 3f, output[8], 6);
+        Assert.Equal(-2f / 3f, output[10], 6);
+        Assert.Equal(-1f, output[12], 6);
         Assert.Equal(-1f, output[14], 6);
     }
 

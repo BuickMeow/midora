@@ -55,11 +55,18 @@ public readonly record struct AudioCachePublishSlice(
     long PayloadOffset,
     long PayloadLength);
 
+public readonly record struct AudioCacheGenerationBinding(
+    string Owner,
+    string Key);
+
 public interface IAudioPcmCacheSessionAccess
 {
     AudioCacheSessionSnapshot? AudioCacheSnapshot { get; }
 
     bool TryCopyReusableAudio(string key, Stream destination, out long payloadLength);
+
+    ReusableAudioReadLease? AcquireReusableAudioReadLease(
+        IReadOnlyList<string> keys) => null;
 
     AudioCachePublishResult PublishReusableAudio(
         string key,
@@ -98,6 +105,16 @@ public interface IAudioPcmCacheSessionAccess
 
     void RegisterReusableAudioGeneration(string owner, string key)
     {
+    }
+
+    void RegisterReusableAudioGenerations(
+        IReadOnlyList<AudioCacheGenerationBinding> bindings)
+    {
+        ArgumentNullException.ThrowIfNull(bindings);
+        foreach (AudioCacheGenerationBinding binding in bindings)
+        {
+            RegisterReusableAudioGeneration(binding.Owner, binding.Key);
+        }
     }
 
     bool TryCompactReusableAudio(bool isStopped, TimeSpan idleDuration) => false;
@@ -141,6 +158,10 @@ public sealed class AudioCacheSessionStore : IDisposable
     private readonly Queue<PendingPublishBatch> _publishQueue = new();
     private readonly Dictionary<string, PendingPublishSlice> _pendingPublishes =
         new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _pendingReadLeaseCounts =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, AudioRecoverySpool> _deferredPendingSpools =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly Thread _publishThread;
     private long _reusableBytes;
     private long _transientBytes;
@@ -151,6 +172,7 @@ public sealed class AudioCacheSessionStore : IDisposable
     private bool _disposed;
     private bool _publishStopRequested;
     private bool _compactionRequested;
+    private int _activeReusableReadLeaseCount;
     private bool _compactionStopped;
     private TimeSpan _compactionIdleDuration;
 
@@ -345,6 +367,62 @@ public sealed class AudioCacheSessionStore : IDisposable
         }
     }
 
+    public ReusableAudioReadLease? AcquireReusableReadLease(
+        IReadOnlyList<string> keys)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            Dictionary<string, ReusableAudioReadEntry> entries = new(
+                StringComparer.Ordinal);
+            foreach (string key in keys.Distinct(StringComparer.Ordinal))
+            {
+                ValidateKey(key);
+                if (_packStore.TryGetReadEntry(key, out ReusableAudioReadEntry? packEntry))
+                {
+                    entries.Add(key, packEntry!);
+                    continue;
+                }
+                if (_pendingPublishes.TryGetValue(key, out PendingPublishSlice pending))
+                {
+                    entries.Add(
+                        key,
+                        new ReusableAudioReadEntry(
+                            key,
+                            pending.PayloadLength,
+                            [new ReusableAudioReadExtent(
+                                ReusableAudioReadExtentKind.RawPayload,
+                                pending.Path,
+                                LogicalOffset: 0,
+                                pending.PayloadOffset,
+                                pending.PayloadLength,
+                                BlockIndex: 0,
+                                BlockCount: 1)]));
+                }
+            }
+            if (entries.Count == 0)
+            {
+                return null;
+            }
+            string[] leasedPendingPaths = entries.Values
+                .SelectMany(static entry => entry.Extents)
+                .Where(static extent => extent.Kind == ReusableAudioReadExtentKind.RawPayload)
+                .Select(static extent => extent.Path)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            foreach (string path in leasedPendingPaths)
+            {
+                _pendingReadLeaseCounts.TryGetValue(path, out int count);
+                _pendingReadLeaseCounts[path] = checked(count + 1);
+            }
+            _activeReusableReadLeaseCount++;
+            return new ReusableAudioReadLease(
+                entries,
+                () => ReleaseReusableReadLease(leasedPendingPaths));
+        }
+    }
+
     public void QueueReusableBatch(
         AudioRecoverySpool spool,
         IReadOnlyList<AudioCachePublishSlice> slices)
@@ -502,6 +580,18 @@ public sealed class AudioCacheSessionStore : IDisposable
         }
     }
 
+    public void RegisterReusableGenerations(
+        IReadOnlyList<AudioCacheGenerationBinding> bindings)
+    {
+        ArgumentNullException.ThrowIfNull(bindings);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _packStore.RegisterGenerations(bindings);
+            _reusableBytes = _packStore.LiveBytes;
+        }
+    }
+
     public bool TryCompactReusable(bool isStopped, TimeSpan idleDuration)
     {
         if (idleDuration < TimeSpan.Zero)
@@ -627,6 +717,7 @@ public sealed class AudioCacheSessionStore : IDisposable
             Monitor.PulseAll(_sync);
         }
         _publishThread.Join();
+        AudioRecoverySpool[] deferredSpools;
         lock (_sync)
         {
             if (_disposed)
@@ -634,10 +725,16 @@ public sealed class AudioCacheSessionStore : IDisposable
                 return;
             }
             _disposed = true;
-            _packStore.Dispose();
-            _activeLock.Dispose();
-            TryDeleteOwnedSession(_rootPath, _sessionPath);
+            deferredSpools = _deferredPendingSpools.Values.ToArray();
+            _deferredPendingSpools.Clear();
         }
+        foreach (AudioRecoverySpool spool in deferredSpools)
+        {
+            spool.Dispose();
+        }
+        _packStore.Dispose();
+        _activeLock.Dispose();
+        TryDeleteOwnedSession(_rootPath, _sessionPath);
         GC.SuppressFinalize(this);
     }
 
@@ -652,7 +749,7 @@ public sealed class AudioCacheSessionStore : IDisposable
             lock (_sync)
             {
                 while (_publishQueue.Count == 0
-                    && !_compactionRequested
+                    && (!_compactionRequested || _activeReusableReadLeaseCount != 0)
                     && !_publishStopRequested)
                 {
                     Monitor.Wait(_sync);
@@ -661,7 +758,7 @@ public sealed class AudioCacheSessionStore : IDisposable
                 {
                     batch = _publishQueue.Dequeue();
                 }
-                else if (_compactionRequested)
+                else if (_compactionRequested && _activeReusableReadLeaseCount == 0)
                 {
                     compact = true;
                     compactStopped = _compactionStopped;
@@ -745,7 +842,68 @@ public sealed class AudioCacheSessionStore : IDisposable
                 {
                     CompletePendingPublish(slice);
                 }
-                activeBatch.Spool.Dispose();
+                DeferOrDisposePublishedSpool(activeBatch.Spool);
+            }
+        }
+    }
+
+    private void DeferOrDisposePublishedSpool(AudioRecoverySpool spool)
+    {
+        bool defer;
+        lock (_sync)
+        {
+            defer = _pendingReadLeaseCounts.TryGetValue(spool.Path, out int count)
+                && count != 0;
+            if (defer)
+            {
+                _deferredPendingSpools.Add(spool.Path, spool);
+            }
+        }
+        if (!defer)
+        {
+            spool.Dispose();
+        }
+    }
+
+    private void ReleaseReusableReadLease(string[] paths)
+    {
+        List<AudioRecoverySpool>? release = null;
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            if (_activeReusableReadLeaseCount <= 0)
+            {
+                throw new InvalidOperationException(
+                    "A reusable-audio read lease was released without an active owner.");
+            }
+            _activeReusableReadLeaseCount--;
+            foreach (string path in paths)
+            {
+                if (!_pendingReadLeaseCounts.TryGetValue(path, out int count))
+                {
+                    continue;
+                }
+                if (count > 1)
+                {
+                    _pendingReadLeaseCounts[path] = count - 1;
+                    continue;
+                }
+                _pendingReadLeaseCounts.Remove(path);
+                if (_deferredPendingSpools.Remove(path, out AudioRecoverySpool? spool))
+                {
+                    (release ??= []).Add(spool);
+                }
+            }
+            Monitor.PulseAll(_sync);
+        }
+        if (release is not null)
+        {
+            foreach (AudioRecoverySpool spool in release)
+            {
+                spool.Dispose();
             }
         }
     }
@@ -1131,6 +1289,7 @@ public sealed class AudioCacheSessionStore : IDisposable
             // The caller already reports the primary cache failure.
         }
     }
+
 
     private static void MarkSparse(FileStream stream)
     {

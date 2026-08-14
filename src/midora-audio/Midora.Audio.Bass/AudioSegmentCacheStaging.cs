@@ -5,28 +5,35 @@ namespace Midora.Audio.Bass;
 internal sealed class AudioSegmentCacheStaging : IDisposable
 {
     private readonly Entry[] _entries;
+    private ReusableAudioReadLease? _readLease;
     private AudioCacheSessionStore.AudioRecoverySpool? _spool;
 
     private AudioSegmentCacheStaging(
         MidiRenderPlan plan,
         AudioCacheSessionStore.AudioRecoverySpool spool,
-        Entry[] entries)
+        Entry[] entries,
+        ReusableAudioReadLease? readLease,
+        string? readManifestPath)
     {
         Plan = plan;
         _spool = spool;
         FilePath = spool.Path;
         _entries = entries;
+        _readLease = readLease;
+        ReadManifestPath = readManifestPath;
     }
 
     public MidiRenderPlan Plan { get; }
     public string FilePath { get; }
+    public string? ReadManifestPath { get; }
 
     public static AudioSegmentCacheStaging? Create(
         MidiRenderPlan plan,
         IAudioPcmCacheSessionAccess? cache,
         string soundFontPath,
         string nativeDirectory,
-        int maximumSampleVoicesPerUnitStream)
+        int maximumSampleVoicesPerUnitStream,
+        string manifestDirectory)
     {
         ArgumentNullException.ThrowIfNull(plan);
         if (cache is null || plan.Segments.IsEmpty
@@ -41,35 +48,65 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
         AudioFormat format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
         bool retentionEnabled = cache.AudioCacheSnapshot?.RetentionState
             == AudioCacheRetentionState.Enabled;
-        long maximumStagingBytes = 0;
+        string[] keys = new string[plan.Segments.Length];
+        AudioCacheGenerationBinding[] generations =
+            new AudioCacheGenerationBinding[plan.Segments.Length];
+        int keyIndex = 0;
         foreach (MidiSegmentRenderPlan segment in plan.Segments)
         {
-            maximumStagingBytes = checked(maximumStagingBytes + segment.PcmPayloadByteCount);
+            string key = MidiSegmentPcmCacheKey.Create(
+                segment,
+                plan.SampleRate,
+                soundFontSha256,
+                nativeIdentity,
+                maximumSampleVoicesPerUnitStream);
+            keys[keyIndex++] = key;
+            generations[keyIndex - 1] = new(
+                $"segment:{segment.TrackId}:{segment.SegmentId}",
+                key);
         }
+        cache.RegisterReusableAudioGenerations(generations);
+        ReusableAudioReadLease? readLease = cache.AcquireReusableAudioReadLease(keys);
+        long stagingByteLength = 0;
+        for (int index = 0; index < plan.Segments.Length; index++)
+        {
+            MidiSegmentRenderPlan segment = plan.Segments[index];
+            if (readLease?.Entries.TryGetValue(
+                    keys[index],
+                    out ReusableAudioReadEntry? directEntry) != true
+                || directEntry!.PayloadLength != segment.PcmPayloadByteCount)
+            {
+                stagingByteLength = checked(
+                    stagingByteLength + segment.PcmPayloadByteCount);
+            }
+        }
+        List<ReusableAudioReadEntry> directEntries = [];
         AudioCacheSessionStore.AudioRecoverySpool spool =
-            cache.CreateSparseTransientAudioSpool(maximumStagingBytes);
+            cache.CreateSparseTransientAudioSpool(stagingByteLength);
         List<Entry> entries = [];
         MidiSegmentRenderPlan[] segments = new MidiSegmentRenderPlan[plan.Segments.Length];
         try
         {
             FileStream staging = (FileStream)spool.Stream;
             byte[] headerBuffer = new byte[AudioPcmCachePayload.HeaderByteCount];
+            long nextPayloadOffset = 0;
             for (int index = 0; index < segments.Length; index++)
             {
                 MidiSegmentRenderPlan segment = plan.Segments[index];
-                string key = MidiSegmentPcmCacheKey.Create(
-                    segment,
-                    plan.SampleRate,
-                    soundFontSha256,
-                    nativeIdentity,
-                    maximumSampleVoicesPerUnitStream);
-                cache.RegisterReusableAudioGeneration(
-                    $"segment:{segment.TrackId}:{segment.SegmentId}",
-                    key);
-                long payloadOffset = staging.Position;
+                string key = keys[index];
+                long payloadOffset = nextPayloadOffset;
                 long expectedLength = segment.PcmPayloadByteCount;
-                bool hit = cache.TryCopyReusableAudio(key, staging, out long copiedLength);
-                if (hit && !ValidateCopiedPayload(
+                ReusableAudioReadEntry? directEntry = null;
+                bool directHit = readLease is not null
+                    && readLease.Entries.TryGetValue(key, out directEntry)
+                    && directEntry.PayloadLength == expectedLength;
+                bool hit = directHit;
+                long copiedLength = 0;
+                if (!directHit && !retentionEnabled)
+                {
+                    hit = cache.TryCopyReusableAudio(key, staging, out copiedLength);
+                }
+                if (!directHit && hit && !ValidateCopiedPayload(
                     staging,
                     payloadOffset,
                     copiedLength,
@@ -80,6 +117,22 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
                     cache.InvalidateReusableAudio(key);
                     hit = false;
                 }
+                if (directHit)
+                {
+                    directEntries.Add(directEntry!);
+                }
+                if (directHit)
+                {
+                    // Direct Pack hits have no payload in the transient spool.
+                    // The unique negative binding is used only as Segment
+                    // identity by the read-ahead schedule.
+                    long directBinding = -2;
+                    segments[index] = Clone(segment, key, directBinding, true);
+                    entries.Add(new(key, directBinding, expectedLength, segment.EndFrame, true));
+                    continue;
+                }
+                nextPayloadOffset = checked(nextPayloadOffset + expectedLength);
+                staging.Position = payloadOffset;
                 if (!hit && !retentionEnabled)
                 {
                     staging.Position = payloadOffset;
@@ -106,12 +159,14 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
         catch
         {
             spool.Dispose();
+            readLease?.Dispose();
             throw;
         }
 
         if (entries.Count == 0)
         {
             spool.Dispose();
+            readLease?.Dispose();
             return null;
         }
         MidiRenderPlan stagedPlan = new(
@@ -122,7 +177,20 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
             plan.InitiallyDisabledSourceIndices,
             plan.UnitFragments,
             segments);
-        return new(stagedPlan, spool, entries.ToArray());
+        string? readManifestPath = null;
+        if (directEntries.Count != 0)
+        {
+            readManifestPath = Path.Combine(
+                Path.GetFullPath(manifestDirectory),
+                "segment-cache-read.marm");
+            ReusableAudioReadManifest.Write(readManifestPath, directEntries);
+        }
+        return new(
+            stagedPlan,
+            spool,
+            entries.ToArray(),
+            readLease,
+            readManifestPath);
     }
 
     public void PublishCompleted(
@@ -157,6 +225,8 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
 
     public void Dispose()
     {
+        ReusableAudioReadLease? lease = Interlocked.Exchange(ref _readLease, null);
+        lease?.Dispose();
         AudioCacheSessionStore.AudioRecoverySpool? spool =
             Interlocked.Exchange(ref _spool, null);
         spool?.Dispose();

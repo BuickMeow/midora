@@ -163,7 +163,7 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
     }
 
     [Fact]
-    public void NativeAotRealtimeWorkerAppliesRepeatedMonitoringAfterRollingProducerReachedEos()
+    public void NativeAotRealtimeWorkerCoalescesRepeatedMonitoringAndResumesDeviceProgress()
     {
         string? configured = Environment.GetEnvironmentVariable(
             "MIDORA_TEST_NATIVE_AOT_REALTIME_WORKER");
@@ -191,27 +191,44 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
             soundFontPath,
             new BassMidiRendererSettings(500, 256),
             AudioMasterSettings.LimiterV1,
-            renderAheadMilliseconds: 20,
+            renderAheadMilliseconds: 100,
             deviceBufferRequestMilliseconds: 50,
             deviceId: null,
             Path.GetFullPath(configured),
             nativeDirectory,
             preparingTimeout: TimeSpan.FromSeconds(30),
             allowManagedTestWorker: false,
-            playbackSpanCacheEnabled: true);
+            playbackSpanCacheEnabled: false);
 
-        MidiMonitoringCommand[] commands = new MidiMonitoringCommand[16];
-        for (int index = 0; index < commands.Length; index++)
+        long initialProgressDeadline = Environment.TickCount64 + 2_000;
+        AudioWorkerStatus initialStatus = session.Status;
+        while (initialStatus.PositionFrame < 1_024
+            && initialStatus.State is AudioWorkerState.Playing or AudioWorkerState.Buffering
+            && Environment.TickCount64 < initialProgressDeadline)
         {
-            commands[index] = (index & 1) == 0
-                ? MidiMonitoringCommand.DisableSource(0)
-                : MidiMonitoringCommand.EnableSource(0);
+            Thread.Sleep(5);
+            initialStatus = session.Status;
         }
-        session.EnqueueMonitoringCommands(commands);
+        Assert.True(
+            initialStatus.PositionFrame >= 1_024,
+            $"Playback did not begin before the monitoring stress; state={initialStatus.State}; "
+            + $"position={initialStatus.PositionFrame}; render={initialStatus.RenderPositionFrame}.");
+        long positionBeforeMonitoring = initialStatus.PositionFrame;
+        session.EnqueueMonitoringCommands([MidiMonitoringCommand.DisableSource(0)]);
+        Thread.Sleep(2);
+        for (int index = 1; index < 64; index++)
+        {
+            session.EnqueueMonitoringCommands([
+                (index & 1) == 0
+                    ? MidiMonitoringCommand.DisableSource(0)
+                    : MidiMonitoringCommand.EnableSource(0)
+            ]);
+            Thread.Sleep(1);
+        }
 
-        long deadline = Environment.TickCount64 + 1_000;
+        long deadline = Environment.TickCount64 + 5_000;
         AudioWorkerStatus status = session.Status;
-        while (status.RenderPositionFrame < 24_000
+        while (status.PositionFrame <= positionBeforeMonitoring
             && status.State is AudioWorkerState.Playing or AudioWorkerState.Buffering
             && Environment.TickCount64 < deadline)
         {
@@ -222,6 +239,11 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
             status.State,
             new[] { AudioWorkerState.Playing, AudioWorkerState.Buffering });
         Assert.Equal(0, status.FaultCode);
+        Assert.True(
+            status.PositionFrame > positionBeforeMonitoring,
+            $"Playback did not resume after rapid monitoring changes; before={positionBeforeMonitoring}; "
+            + $"after={status.PositionFrame}; render={status.RenderPositionFrame}; state={status.State}; "
+            + $"exit={session.ExitCode}; stderr={session.StandardError}.");
         session.Stop(flush: true, TimeSpan.FromSeconds(5));
         AudioWorkerStatus stopped = session.Status;
         Assert.Equal(AudioWorkerState.Stopped, stopped.State);
@@ -597,6 +619,8 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
             string key,
             Stream destination,
             out long payloadLength) => store.TryCopyReusable(key, destination, out payloadLength);
+        public ReusableAudioReadLease? AcquireReusableAudioReadLease(
+            IReadOnlyList<string> keys) => store.AcquireReusableReadLease(keys);
 
         public AudioCachePublishResult PublishReusableAudio(
             string key,
@@ -607,6 +631,9 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
 
         public AudioCacheSessionStore.AudioRecoverySpool CreateTransientAudioSpool(
             long lengthBytes) => store.CreateRecoverySpool(lengthBytes);
+
+        public AudioCacheSessionStore.AudioRecoverySpool CreateSparseTransientAudioSpool(
+            long lengthBytes) => store.CreateRecoverySpool(lengthBytes, sparse: true);
 
         public void DisableReusableAudioRetention(string reason) =>
             store.DisableReusableRetention(reason);

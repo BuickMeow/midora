@@ -74,6 +74,18 @@ public static partial class ProjectObjectClipboard
                 sourceSubVoiceId,
                 templateEventIds));
 
+    public static ProjectObjectClipboardCutPreparation PrepareCutSubVoice(
+        ProjectDocumentSession document,
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId) =>
+        PrepareCut(
+            document,
+            CopySubVoice(document, eventInstrumentId, subVoiceId),
+            ProjectDomainEditCommands.DeleteSubVoice(
+                eventInstrumentId,
+                subVoiceId,
+                nonEmptyDeletionConfirmed: true));
+
     public static ProjectObjectClipboardCutPreparation PrepareCutValueCurveContent(
         ProjectDocumentSession document,
         MidoraId eventInstrumentId,

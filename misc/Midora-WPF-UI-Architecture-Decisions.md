@@ -201,6 +201,24 @@
 - 原因：WPF 的虚线会把每条纵向辅助线进一步细分为大量 dash，平移和缩放重绘时开销明显高于实线；使用低不透明度实线保持层级区分，并减少网格绘制成本。
 - 边界：辅助线只是当前 viewport 的 transient 绘制，不进入 Project、Undo/Redo、`.midora`、编译或输出。初版仍不实现 additive meter、复合拍重音分组或钢琴卷帘同类增强。
 
+## ADR-UI-029：SubVoice 非 Note MIDI 编辑统一为实际事件点
+
+- 决定：正式 WPF 不再创建或编辑 Value Curve。每一个可见 Event Lane 由精确 `MidiValueTarget` 标识，Lane 中每个可见点直接对应一个 `TemplateEvent`；同 target、同 tick 只保留一个事件点。不同 CC number、RPN / NRPN number 或复合事件字段不得合并为同一 Lane。
+- 决定：直接拖动只维护一个点的 transient value；自由轨迹、`Alt + Left Drag` 强制轨迹和右键直线在捕获期间只绘制 overlay，MouseUp 才把采样 tick 批量 upsert 为 Template Event，并形成一个 Project Undo。轨迹不是 Curve，不进入 Project、Compiler、`.midora` 或 clipboard。
+- 决定：CC 目录冻结为 BASSMIDI 2.4 MIDI implementation chart 与 Midora 合法普通用户事件的交集；CC120～127 不暴露，CC91 / CC93 继续禁止。Bank 与 RPN / NRPN 保留专用事件类型，但官方明确 recognized 的 CC0 / 32 / 6 / 38 / 98～101 仍可按普通 CC 选择。UI 统一显示 `number - name`。
+- 决定：当前底层 Value Curve 类型可以在本轮后续清理中删除，但正式 UI、创建命令和新数据不再依赖它。产品所有者已明确允许开发期破坏旧数据兼容性，因此不增加旧 Curve UI、旧 clipboard 或旧工程迁移分支。
+- 原因：旧的 Add Curve / Add Event 双模型令画面与正式事件不一致，也把不同 target 粗略合并；实际事件点模型使绘制结果、命中、Undo 和 canonical 输入一一对应。
+- 边界：该决定不允许 WPF 直接生成 canonical 事件；Template Event 仍必须经过 Semantic Validation 和 Compiler。Note、Velocity 与 Segment Parameter Curve 不属于本决定范围。
+
+## ADR-UI-030：SubVoice 事件 Mapping 按精确标量目标共享
+
+- 决定：`TemplateEvent` 只保存事件点自身的稳定 ID、tick、类型和值，不再拥有 Number / Value / Secondary Value 三条 Mapping Chain。`SubVoice` 按精确的 `TemplateEventMappingTarget` 拥有共享 Mapping；其身份为事件种类、必要的事件编号以及可映射标量字段。Note 因而分别有 Number 与 Velocity 两个目标，Bank 分别有 MSB / LSB，Pitch Bend Range 分别有 Semitones / Cents；不同 CC、RPN、NRPN number 仍是不同目标。
+- 决定：同一 SubVoice 中，同一精确标量目标无论有多少事件点，只存在一条 Mapping Chain 和一组整数目标设置。删除全部对应事件点不自动删除该共享 Mapping；以后重新创建该类事件继续复用原定义。事件点复制、批量复制和 Timeline clipboard 只复制事件点值，不复制 Mapping。完整 SubVoice 复制则只复制一次共享 Mapping 集合，并确定地重映射其 Parameter、Envelope 与 Mapping Function 引用。
+- 决定：Compiler、Semantic Validator、fingerprint、稳定 ID 审计、持久化和 Mapping 编辑器只枚举 `SubVoice.EventMappings` 一次。编译某个事件点时，根据该点的精确目标查找共享 Mapping，并继续把该事件点稳定 ID写入 canonical source trace；共享所有权不得削弱逐事件诊断定位。
+- 持久化：开发期直接替换 Event Instrument protobuf 模型；`TemplateEventV1` 不再保存三条 Mapping，`SubVoiceV1` 新增共享 Mapping 集合。不提供旧 per-event Mapping 数据迁移或双读分支。
+- 原因：per-event 三链模型使没有 Mapping 的海量事件点也各自分配三个稳定对象，事件点数量增长会线性放大内存、Project 对象图、Mapping 列表、序列化体积和 fingerprint 成本；实际 Mapping 语义属于同一 SubVoice 的事件目标转换规则，不属于单个采样点。
+- 边界：共享键必须保持 ADR-UI-029 的精确 Event Lane 身份；不得为了进一步减少条目而把 CC1 与 CC11、不同 RPN / NRPN 或复合事件的两个字段错误合并。该决定改变源模型和开发期文件格式，但不绕过 canonical compilation，也不改变 Mapping Chain 内步骤顺序和 Mapping ABI。
+
 ## 小决定审计
 
 以下均是局部、可替换且不改变可听结果/持久化/公共业务接口的小决定，按用户授权采用推荐方案：

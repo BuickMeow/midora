@@ -353,15 +353,21 @@ internal static class ProjectCompilationSnapshot
             RootNoteOverride = source.RootNoteOverride
         };
         CopyState(source.InitialState, result.InitialState, cancellationToken);
+        foreach (SubVoiceEventMapping mapping in source.EventMappings)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SubVoiceEventMapping mappingCopy = new(
+                project,
+                mapping.Target,
+                mapping.Steps.Id);
+            CopyTargetSettings(mapping.TargetSettings, mappingCopy.TargetSettings);
+            CopyChain(project, mapping.Steps, mappingCopy.Steps, cancellationToken);
+            result.EventMappings.Add(mappingCopy);
+        }
         foreach (TemplateEvent value in source.Events)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            TemplateEvent eventCopy = new(
-                project,
-                value.Id,
-                value.NumberMappings.Id,
-                value.ValueMappings.Id,
-                value.SecondaryValueMappings.Id)
+            TemplateEvent eventCopy = new(project, value.Id)
             {
                 Kind = value.Kind,
                 Tick = value.Tick,
@@ -373,12 +379,6 @@ internal static class ProjectCompilationSnapshot
                 HasBankLsb = value.HasBankLsb,
                 FollowPitchDelta = value.FollowPitchDelta
             };
-            CopyTargetSettings(value.NumberTargetSettings, eventCopy.NumberTargetSettings);
-            CopyTargetSettings(value.ValueTargetSettings, eventCopy.ValueTargetSettings);
-            CopyTargetSettings(value.SecondaryValueTargetSettings, eventCopy.SecondaryValueTargetSettings);
-            CopyChain(project, value.NumberMappings, eventCopy.NumberMappings, cancellationToken);
-            CopyChain(project, value.ValueMappings, eventCopy.ValueMappings, cancellationToken);
-            CopyChain(project, value.SecondaryValueMappings, eventCopy.SecondaryValueMappings, cancellationToken);
             result.Events.Add(eventCopy);
         }
         foreach (ValueCurve curve in source.Curves)

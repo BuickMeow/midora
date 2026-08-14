@@ -183,19 +183,7 @@ public static partial class ProjectObjectClipboard
             value.SecondaryValue,
             value.HasBankMsb,
             value.HasBankLsb,
-            value.FollowPitchDelta,
-            SnapshotMappingChain(value.NumberMappings),
-            SnapshotMappingChain(value.ValueMappings),
-            SnapshotMappingChain(value.SecondaryValueMappings),
-            new IntegerTargetSettingsClipboardSnapshot(
-                value.NumberTargetSettings.Rounding,
-                value.NumberTargetSettings.Overflow),
-            new IntegerTargetSettingsClipboardSnapshot(
-                value.ValueTargetSettings.Rounding,
-                value.ValueTargetSettings.Overflow),
-            new IntegerTargetSettingsClipboardSnapshot(
-                value.SecondaryValueTargetSettings.Rounding,
-                value.SecondaryValueTargetSettings.Overflow));
+            value.FollowPitchDelta);
 
     private static MappingChainClipboardSnapshot SnapshotMappingChain(MappingChain chain) =>
         new(
@@ -238,13 +226,7 @@ internal sealed record TemplateEventClipboardSnapshot(
     int SecondaryValue,
     bool HasBankMsb,
     bool HasBankLsb,
-    bool FollowPitchDelta,
-    MappingChainClipboardSnapshot NumberMappings,
-    MappingChainClipboardSnapshot ValueMappings,
-    MappingChainClipboardSnapshot SecondaryValueMappings,
-    IntegerTargetSettingsClipboardSnapshot NumberTargetSettings,
-    IntegerTargetSettingsClipboardSnapshot ValueTargetSettings,
-    IntegerTargetSettingsClipboardSnapshot SecondaryValueTargetSettings);
+    bool FollowPitchDelta);
 
 internal sealed record MappingChainClipboardSnapshot(
     bool IsEnabled,
@@ -463,13 +445,7 @@ public static partial class ProjectDomainEditCommands
             snapshot.HasBankLsb,
             snapshot.FollowPitchDelta);
         ValidateTemplateEventCreation(value);
-        ValidateMappingChainClipboard(snapshot.NumberMappings);
-        ValidateMappingChainClipboard(snapshot.ValueMappings);
-        ValidateMappingChainClipboard(snapshot.SecondaryValueMappings);
-        ValidateIntegerTargetSettingsClipboard(snapshot.NumberTargetSettings);
-        ValidateIntegerTargetSettingsClipboard(snapshot.ValueTargetSettings);
-        ValidateIntegerTargetSettingsClipboard(snapshot.SecondaryValueTargetSettings);
-        return new(value, snapshot);
+        return new(value);
     }
 
     private static void ValidateMappingChainClipboard(MappingChainClipboardSnapshot chain)
@@ -478,16 +454,6 @@ public static partial class ProjectDomainEditCommands
         foreach (MappingStepClipboardSnapshot step in chain.Steps)
         {
             ValidateMappingStepValue(ToMappingStepValue(step));
-        }
-    }
-
-    private static void ValidateIntegerTargetSettingsClipboard(
-        IntegerTargetSettingsClipboardSnapshot value)
-    {
-        if (!Enum.IsDefined(value.Rounding) || !Enum.IsDefined(value.Overflow))
-        {
-            throw new InvalidOperationException(
-                "The Template Event target settings clipboard snapshot is invalid.");
         }
     }
 
@@ -555,27 +521,6 @@ public static partial class ProjectDomainEditCommands
     {
         TemplateEvent result = new(project);
         SetTemplateEvent(result, value.Value);
-        ApplyMappingChainClipboard(project, result.NumberMappings, value.Snapshot.NumberMappings);
-        ApplyMappingChainClipboard(project, result.ValueMappings, value.Snapshot.ValueMappings);
-        ApplyMappingChainClipboard(
-            project,
-            result.SecondaryValueMappings,
-            value.Snapshot.SecondaryValueMappings);
-        SetTargetSettings(
-            result.NumberTargetSettings,
-            new(
-                value.Snapshot.NumberTargetSettings.Rounding,
-                value.Snapshot.NumberTargetSettings.Overflow));
-        SetTargetSettings(
-            result.ValueTargetSettings,
-            new(
-                value.Snapshot.ValueTargetSettings.Rounding,
-                value.Snapshot.ValueTargetSettings.Overflow));
-        SetTargetSettings(
-            result.SecondaryValueTargetSettings,
-            new(
-                value.Snapshot.SecondaryValueTargetSettings.Rounding,
-                value.Snapshot.SecondaryValueTargetSettings.Overflow));
         return result;
     }
 
@@ -608,7 +553,5 @@ public static partial class ProjectDomainEditCommands
             value.InputOverflow,
             value.DivideByZero);
 
-    private sealed record TemplateEventClipboardValue(
-        TemplateEventValue Value,
-        TemplateEventClipboardSnapshot Snapshot);
+    private sealed record TemplateEventClipboardValue(TemplateEventValue Value);
 }

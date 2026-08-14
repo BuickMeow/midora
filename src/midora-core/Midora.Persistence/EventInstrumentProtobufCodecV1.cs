@@ -15,6 +15,7 @@ using WireMappingSource = Midora.Persistence.Wire.Proto.V1.MappingSourceV1;
 using WireMidiValueKind = Midora.Persistence.Wire.Proto.V1.MidiValueKindV1;
 using WireShortLifecycle = Midora.Persistence.Wire.Proto.V1.EventInstrumentShortLifecycleV1;
 using WireTemplateEventKind = Midora.Persistence.Wire.Proto.V1.TemplateEventKindV1;
+using WireTemplateEventMappingParameter = Midora.Persistence.Wire.Proto.V1.TemplateEventMappingParameterV1;
 
 namespace Midora.Persistence;
 
@@ -231,6 +232,11 @@ internal static class EventInstrumentProtobufCodecV1
             result.Name = value.Name;
         }
         if (value.RootNoteOverride.HasValue) result.RootNoteOverride = value.RootNoteOverride.Value;
+        result.EventMappings.Add(value.EventMappings
+            .OrderBy(item => item.Target.EventKind)
+            .ThenBy(item => item.Target.EventNumber)
+            .ThenBy(item => item.Target.Parameter)
+            .Select(ToWire));
         result.Events.Add(value.Events.Select(ToWire));
         result.Curves.Add(value.Curves.Select(ToWire));
         return result;
@@ -244,6 +250,7 @@ internal static class EventInstrumentProtobufCodecV1
             RootNoteOverride = value.HasRootNoteOverride ? value.RootNoteOverride : null
         };
         Restore(result.InitialState, value.InitialState!);
+        result.EventMappings.AddRange(value.EventMappings.Select(item => FromWire(project, item)));
         result.Events.AddRange(value.Events.Select(item => FromWire(project, item)));
         result.Curves.AddRange(value.Curves.Select(item => FromWire(project, item)));
         return result;
@@ -260,25 +267,11 @@ internal static class EventInstrumentProtobufCodecV1
         SecondaryValue = value.SecondaryValue,
         HasBankMsb = value.HasBankMsb,
         HasBankLsb = value.HasBankLsb,
-        FollowPitchDelta = value.FollowPitchDelta,
-        NumberMappings = ToWire(value.NumberMappings),
-        ValueMappings = ToWire(value.ValueMappings),
-        SecondaryValueMappings = ToWire(value.SecondaryValueMappings),
-        NumberTargetSettings = ToWire(value.NumberTargetSettings),
-        ValueTargetSettings = ToWire(value.ValueTargetSettings),
-        SecondaryValueTargetSettings = ToWire(value.SecondaryValueTargetSettings)
+        FollowPitchDelta = value.FollowPitchDelta
     };
 
-    private static TemplateEvent FromWire(MidoraProject project, TemplateEventV1 value)
-    {
-        TemplateEvent result = new(
-            project,
-            ProtobufValueCodecV1.FromWire(value.Id, "Template Event ID"),
-            ProtobufValueCodecV1.FromWire(value.NumberMappings!.Id, "Template Event number Mapping Chain ID"),
-            ProtobufValueCodecV1.FromWire(value.ValueMappings!.Id, "Template Event value Mapping Chain ID"),
-            ProtobufValueCodecV1.FromWire(
-                value.SecondaryValueMappings!.Id,
-                "Template Event secondary Mapping Chain ID"))
+    private static TemplateEvent FromWire(MidoraProject project, TemplateEventV1 value) =>
+        new(project, ProtobufValueCodecV1.FromWire(value.Id, "Template Event ID"))
         {
             Kind = (TemplateEventKind)(int)value.Kind,
             Tick = value.Tick,
@@ -290,12 +283,32 @@ internal static class EventInstrumentProtobufCodecV1
             HasBankLsb = value.HasBankLsb,
             FollowPitchDelta = value.FollowPitchDelta
         };
-        Restore(project, result.NumberMappings, value.NumberMappings);
-        Restore(project, result.ValueMappings, value.ValueMappings);
-        Restore(project, result.SecondaryValueMappings, value.SecondaryValueMappings);
-        Restore(result.NumberTargetSettings, value.NumberTargetSettings!);
-        Restore(result.ValueTargetSettings, value.ValueTargetSettings!);
-        Restore(result.SecondaryValueTargetSettings, value.SecondaryValueTargetSettings!);
+
+    private static SubVoiceEventMappingV1 ToWire(SubVoiceEventMapping value) => new()
+    {
+        EventKind = (WireTemplateEventKind)(int)value.Target.EventKind,
+        EventNumber = value.Target.EventNumber,
+        Parameter = (WireTemplateEventMappingParameter)(int)value.Target.Parameter,
+        Steps = ToWire(value.Steps),
+        TargetSettings = ToWire(value.TargetSettings)
+    };
+
+    private static SubVoiceEventMapping FromWire(
+        MidoraProject project,
+        SubVoiceEventMappingV1 value)
+    {
+        TemplateEventMappingTarget target = new(
+            (TemplateEventKind)(int)value.EventKind,
+            value.EventNumber,
+            (TemplateEventMappingParameter)(int)value.Parameter);
+        SubVoiceEventMapping result = new(
+            project,
+            target,
+            ProtobufValueCodecV1.FromWire(
+                value.Steps!.Id,
+                "SubVoice Event Mapping Chain ID"));
+        Restore(project, result.Steps, value.Steps);
+        Restore(result.TargetSettings, value.TargetSettings!);
         return result;
     }
 
@@ -625,8 +638,81 @@ internal static class EventInstrumentProtobufCodecV1
         if (value.InitialState is null) throw new InvalidDataException("SubVoice initialState is required.");
         if (value.HasName) PersistenceValueValidationV1.ValidateShortText(value.Name, "SubVoice name");
         Validate(value.InitialState, "SubVoice initialState");
-        foreach (TemplateEventV1 item in value.Events) Validate(item);
+        HashSet<TemplateEventMappingTarget> targets = [];
+        foreach (SubVoiceEventMappingV1 item in value.EventMappings)
+        {
+            TemplateEventMappingTarget target = Validate(item);
+            if (!targets.Add(target))
+            {
+                throw new InvalidDataException(
+                    "SubVoice eventMappings contain a duplicate target.");
+            }
+        }
+        foreach (TemplateEventV1 item in value.Events)
+        {
+            Validate(item);
+            if (EnumerateRequiredEventMappingTargets(item).Any(target => !targets.Contains(target)))
+            {
+                throw new InvalidDataException(
+                    "SubVoice eventMappings do not cover every Template Event target.");
+            }
+        }
         foreach (ValueCurveV1 item in value.Curves) Validate(item);
+    }
+
+    private static IEnumerable<TemplateEventMappingTarget> EnumerateRequiredEventMappingTargets(
+        TemplateEventV1 value)
+    {
+        TemplateEventKind kind = (TemplateEventKind)(int)value.Kind;
+        switch (kind)
+        {
+            case TemplateEventKind.Note:
+                yield return TemplateEventMappingTarget.Create(
+                    kind,
+                    value.Number,
+                    TemplateEventMappingParameter.Number);
+                yield return TemplateEventMappingTarget.Create(
+                    kind,
+                    value.Number,
+                    TemplateEventMappingParameter.Value);
+                break;
+            case TemplateEventKind.ControlChange:
+            case TemplateEventKind.Program:
+            case TemplateEventKind.PitchBend:
+            case TemplateEventKind.RegisteredParameter:
+            case TemplateEventKind.NonRegisteredParameter:
+                yield return TemplateEventMappingTarget.Create(
+                    kind,
+                    value.Number,
+                    TemplateEventMappingParameter.Value);
+                break;
+            case TemplateEventKind.Bank:
+                if (value.HasBankMsb)
+                {
+                    yield return TemplateEventMappingTarget.Create(
+                        kind,
+                        value.Number,
+                        TemplateEventMappingParameter.Value);
+                }
+                if (value.HasBankLsb)
+                {
+                    yield return TemplateEventMappingTarget.Create(
+                        kind,
+                        value.Number,
+                        TemplateEventMappingParameter.SecondaryValue);
+                }
+                break;
+            case TemplateEventKind.PitchBendRange:
+                yield return TemplateEventMappingTarget.Create(
+                    kind,
+                    value.Number,
+                    TemplateEventMappingParameter.Value);
+                yield return TemplateEventMappingTarget.Create(
+                    kind,
+                    value.Number,
+                    TemplateEventMappingParameter.SecondaryValue);
+                break;
+        }
     }
 
     private static void Validate(TemplateEventV1 value)
@@ -641,12 +727,24 @@ internal static class EventInstrumentProtobufCodecV1
         ProtobufValueCodecV1.Require(value.HasHasBankMsb, "Template Event hasBankMsb");
         ProtobufValueCodecV1.Require(value.HasHasBankLsb, "Template Event hasBankLsb");
         ProtobufValueCodecV1.Require(value.HasFollowPitchDelta, "Template Event followPitchDelta");
-        Validate(value.NumberMappings, "Template Event numberMappings");
-        Validate(value.ValueMappings, "Template Event valueMappings");
-        Validate(value.SecondaryValueMappings, "Template Event secondaryValueMappings");
-        Validate(value.NumberTargetSettings, "Template Event numberTargetSettings");
-        Validate(value.ValueTargetSettings, "Template Event valueTargetSettings");
-        Validate(value.SecondaryValueTargetSettings, "Template Event secondaryValueTargetSettings");
+    }
+
+    private static TemplateEventMappingTarget Validate(SubVoiceEventMappingV1 value)
+    {
+        ProtobufValueCodecV1.Require(value.HasEventKind, "SubVoice Event Mapping eventKind");
+        ProtobufValueCodecV1.Require(value.HasEventNumber, "SubVoice Event Mapping eventNumber");
+        ProtobufValueCodecV1.Require(value.HasParameter, "SubVoice Event Mapping parameter");
+        TemplateEventMappingTarget target = new(
+            (TemplateEventKind)(int)value.EventKind,
+            value.EventNumber,
+            (TemplateEventMappingParameter)(int)value.Parameter);
+        if (!TemplateEventMappingTarget.IsSupported(target))
+        {
+            throw new InvalidDataException("SubVoice Event Mapping target is invalid.");
+        }
+        Validate(value.Steps, "SubVoice Event Mapping steps");
+        Validate(value.TargetSettings, "SubVoice Event Mapping targetSettings");
+        return target;
     }
 
     private static void Validate(ValueCurveV1 value)

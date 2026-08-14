@@ -35,6 +35,32 @@ public sealed class MappingAndLifecycleTests
     }
 
     [Fact]
+    public void SharedSubVoiceEventMappingAppliesToEveryPointOfTheExactTarget()
+    {
+        var fixture = CompilerTestProject.Create();
+        TemplateEvent first = TemplateEvent.ControlChange(fixture.Project, 0, 1, 10);
+        first.ValueMappings.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.Constant,
+            Operation = MappingOperation.Add,
+            Constant = 5
+        });
+        TemplateEvent second = TemplateEvent.ControlChange(fixture.Project, 120, 1, 20);
+        fixture.Voice.Events.AddRange([first, second]);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(result.IsConsumable);
+        CanonicalMidiEvent[] values = result.Events.ToArray().Where(value =>
+            value.Role == CanonicalEventRole.ControlChange
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 1).ToArray();
+        Assert.Equal([15, 25], values.Select(value => (int)value.Message.Byte2).ToArray());
+        Assert.Same(first.ValueMappings, second.ValueMappings);
+    }
+
+    [Fact]
     public void RoundMidpointUsesAwayFromZeroForNegativePitchBend()
     {
         var fixture = CompilerTestProject.Create();

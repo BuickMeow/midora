@@ -21,6 +21,20 @@ public sealed class SemanticValidatorTests
         Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1249");
     }
 
+    [Fact]
+    public void MissingSharedSubVoiceEventMappingIsRejected()
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        fixture.Voice.EventMappings.Clear();
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(result.IsConsumable);
+        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1256");
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

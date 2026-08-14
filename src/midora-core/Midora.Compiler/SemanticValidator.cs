@@ -353,8 +353,10 @@ public static class SemanticValidator
             && step.MappingFunctionId.HasValue
             && functions.TryGetValue(step.MappingFunctionId.Value, out CSharpMappingFunction? function)
             && function.DeclaredContextFields.Any(IsPerNoteContextField))
-            || instrument.SubVoices.SelectMany(value => value.Events)
-                .Any(value => value.Kind == TemplateEventKind.Note && HasActiveSteps(value.NumberMappings));
+            || instrument.SubVoices.SelectMany(value => value.EventMappings)
+                .Any(value => value.Target.EventKind == TemplateEventKind.Note
+                    && value.Target.Parameter == TemplateEventMappingParameter.Number
+                    && HasActiveSteps(value.Steps));
         if (perNoteMapping && !instrument.RequiresChannelIsolation)
         {
             AddError("MIDORA1214", "Mappings that depend on an individual Logical Note context require Channel Isolation.", source, diagnostics);
@@ -408,44 +410,70 @@ public static class SemanticValidator
                     previous = point.Tick;
                 }
             }
+            HashSet<TemplateEventMappingTarget> eventMappingTargets = [];
+            foreach (SubVoiceEventMapping mapping in subVoice.EventMappings)
+            {
+                if (!eventMappingTargets.Add(mapping.Target)
+                    || !IsValidEventMappingTarget(mapping.Target))
+                {
+                    AddError(
+                        "MIDORA1255",
+                        "Each SubVoice event Mapping target must be valid and unique.",
+                        subSource,
+                        diagnostics);
+                }
+                IEnumerable<ValueMappingStep> eventSteps = ActiveSteps(mapping.Steps);
+                if (mapping.Target.EventKind != TemplateEventKind.Note
+                    && eventSteps.Any(step => step.Source is MappingSource.TemplateNote
+                        or MappingSource.TemplateVelocity))
+                {
+                    AddError(
+                        "MIDORA1252",
+                        "Non-Note event Mappings must not use templateNote/templateVelocity Mapping Sources.",
+                        subSource,
+                        diagnostics);
+                }
+                if (mapping.Target.EventKind != TemplateEventKind.Note
+                    && DeclaresNoteOnlyContext(eventSteps, functions))
+                {
+                    AddError(
+                        "MIDORA1254",
+                        "A C# Mapping Function for a non-Note event must not declare TemplateNote/TemplateVelocity.",
+                        subSource,
+                        diagnostics);
+                }
+                ValidateMappings(mapping.Steps, subSource, diagnostics);
+                ValidateTargetSettings(mapping.TargetSettings, subSource, diagnostics);
+                if (mapping.Target.EventKind == TemplateEventKind.Note
+                    && mapping.Target.Parameter == TemplateEventMappingParameter.Number
+                    && mapping.TargetSettings.Overflow != MappingOverflow.Fail)
+                {
+                    AddError(
+                        "MIDORA1276",
+                        "The final-overflow policy for a Note number must be Fail.",
+                        subSource,
+                        diagnostics);
+                }
+                ValidateMappingReferences(
+                    eventSteps,
+                    parameters,
+                    envelopeIds,
+                    functions,
+                    subSource,
+                    diagnostics);
+            }
             foreach (TemplateEvent templateEvent in subVoice.Events)
             {
                 ValidateTemplateEvent(templateEvent, instrument.TemplateLengthTicks, subSource, diagnostics);
-                IEnumerable<ValueMappingStep> eventSteps = ActiveSteps(templateEvent.NumberMappings)
-                    .Concat(ActiveSteps(templateEvent.ValueMappings))
-                    .Concat(ActiveSteps(templateEvent.SecondaryValueMappings));
-                if (templateEvent.Kind != TemplateEventKind.Note && HasActiveSteps(templateEvent.NumberMappings))
+                if (TemplateEventMappingTarget.Enumerate(templateEvent)
+                    .Any(target => !eventMappingTargets.Contains(target)))
                 {
-                    AddError("MIDORA1250", "Only a Note number is a mappable event number; CC/RPN/NRPN numbers are part of event identity.",
-                        subSource with { SourceEventId = templateEvent.Id }, diagnostics);
+                    AddError(
+                        "MIDORA1256",
+                        "The SubVoice is missing a shared Mapping definition for this Template Event target.",
+                        subSource with { SourceEventId = templateEvent.Id },
+                        diagnostics);
                 }
-                if (templateEvent.Kind is not TemplateEventKind.Bank and not TemplateEventKind.PitchBendRange
-                    && HasActiveSteps(templateEvent.SecondaryValueMappings))
-                {
-                    AddError("MIDORA1251", "This event type has no mappable secondary value.",
-                        subSource with { SourceEventId = templateEvent.Id }, diagnostics);
-                }
-                if (templateEvent.Kind == TemplateEventKind.Bank
-                    && (!templateEvent.HasBankMsb && HasActiveSteps(templateEvent.ValueMappings)
-                        || !templateEvent.HasBankLsb && HasActiveSteps(templateEvent.SecondaryValueMappings)))
-                {
-                    AddError("MIDORA1253", "Bank Mapping may only target MSB/LSB values that are present in the event.",
-                        subSource with { SourceEventId = templateEvent.Id }, diagnostics);
-                }
-                if (templateEvent.Kind != TemplateEventKind.Note
-                    && eventSteps.Any(step => step.Source is MappingSource.TemplateNote or MappingSource.TemplateVelocity))
-                {
-                    AddError("MIDORA1252", "Non-Note events must not use templateNote/templateVelocity Mapping Sources.",
-                        subSource with { SourceEventId = templateEvent.Id }, diagnostics);
-                }
-                if (templateEvent.Kind != TemplateEventKind.Note
-                    && DeclaresNoteOnlyContext(eventSteps, functions))
-                {
-                    AddError("MIDORA1254", "A C# Mapping Function for a non-Note event must not declare TemplateNote/TemplateVelocity.",
-                        subSource with { SourceEventId = templateEvent.Id }, diagnostics);
-                }
-                ValidateMappingReferences(eventSteps,
-                    parameters, envelopeIds, functions, subSource with { SourceEventId = templateEvent.Id }, diagnostics);
                 if (hasLoop && templateEvent.Kind == TemplateEventKind.Note
                     && templateEvent.Tick >= instrument.LoopStartTick
                     && templateEvent.Tick < instrument.LoopEndTick
@@ -521,13 +549,6 @@ public static class SemanticValidator
         {
             AddError("MIDORA1249", "The Template Event type value is invalid.", eventSource, diagnostics);
         }
-        ValidateTargetSettings(value.NumberTargetSettings, eventSource, diagnostics);
-        ValidateTargetSettings(value.ValueTargetSettings, eventSource, diagnostics);
-        ValidateTargetSettings(value.SecondaryValueTargetSettings, eventSource, diagnostics);
-        if (value.Kind == TemplateEventKind.Note && value.NumberTargetSettings.Overflow != MappingOverflow.Fail)
-        {
-            AddError("MIDORA1276", "The final-overflow policy for a Note number must be Fail.", eventSource, diagnostics);
-        }
         if (value.Tick < 0 || value.Tick >= templateLength)
         {
             AddError("MIDORA1240", "The Template Event must be within the Template.", eventSource, diagnostics);
@@ -582,9 +603,6 @@ public static class SemanticValidator
                 }
                 break;
         }
-        ValidateMappings(value.NumberMappings, eventSource, diagnostics);
-        ValidateMappings(value.ValueMappings, eventSource, diagnostics);
-        ValidateMappings(value.SecondaryValueMappings, eventSource, diagnostics);
     }
 
     private static Dictionary<MidoraId, LogicalParameterDefinition> ValidateParameterDefinitions(
@@ -868,16 +886,15 @@ public static class SemanticValidator
             {
                 SourceReference voiceSource = instrumentSource with { SubVoiceId = voice.Id };
                 Add(voice.Id, voiceSource);
+                foreach (SubVoiceEventMapping mapping in voice.EventMappings)
+                {
+                    Add(mapping.Steps.Id, voiceSource);
+                    foreach (ValueMappingStep step in mapping.Steps) Add(step.Id, voiceSource);
+                }
                 foreach (TemplateEvent value in voice.Events)
                 {
                     SourceReference eventSource = voiceSource with { SourceEventId = value.Id, Tick = value.Tick };
                     Add(value.Id, eventSource);
-                    Add(value.NumberMappings.Id, eventSource);
-                    Add(value.ValueMappings.Id, eventSource);
-                    Add(value.SecondaryValueMappings.Id, eventSource);
-                    foreach (ValueMappingStep step in value.NumberMappings) Add(step.Id, eventSource);
-                    foreach (ValueMappingStep step in value.ValueMappings) Add(step.Id, eventSource);
-                    foreach (ValueMappingStep step in value.SecondaryValueMappings) Add(step.Id, eventSource);
                 }
                 foreach (ValueCurve curve in voice.Curves)
                 {
@@ -1021,9 +1038,20 @@ public static class SemanticValidator
 
     private static IEnumerable<ValueMappingStep> EnumerateMappingSteps(EventInstrument instrument) =>
         instrument.ParameterMappings.SelectMany(value => ActiveSteps(value.Steps))
-            .Concat(instrument.SubVoices.SelectMany(value => value.Events)
-                .SelectMany(value => ActiveSteps(value.NumberMappings).Concat(ActiveSteps(value.ValueMappings))
-                    .Concat(ActiveSteps(value.SecondaryValueMappings))));
+            .Concat(instrument.SubVoices
+                .SelectMany(value => value.EventMappings)
+                .SelectMany(value => ActiveSteps(value.Steps)));
+
+    private static bool IsValidEventMappingTarget(TemplateEventMappingTarget target) =>
+        TemplateEventMappingTarget.IsSupported(target)
+        && target.EventKind switch
+        {
+            TemplateEventKind.ControlChange =>
+                target.EventNumber is >= 0 and <= 119 and not 91 and not 93,
+            TemplateEventKind.RegisteredParameter or TemplateEventKind.NonRegisteredParameter =>
+                target.EventNumber is >= 0 and <= 16_383,
+            _ => true
+        };
 
     private static IEnumerable<ValueMappingStep> ActiveSteps(MappingChain chain) =>
         chain.IsEnabled ? chain.Where(value => value.IsEnabled) : [];

@@ -158,13 +158,8 @@ public static partial class ProjectDomainEditCommands
     private static IEnumerable<MappingChain> EnumerateMappingChains(
         EventInstrument instrument) =>
         instrument.SubVoices
-            .SelectMany(value => value.Events)
-            .SelectMany(value => new[]
-            {
-                value.NumberMappings,
-                value.ValueMappings,
-                value.SecondaryValueMappings
-            })
+            .SelectMany(value => value.EventMappings)
+            .Select(value => value.Steps)
             .Concat(instrument.ParameterMappings.Select(value => value.Steps));
 
     private static ValueMappingStep FindMappingStep(

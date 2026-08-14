@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Specialized;
 using Midora.Application;
 using Midora.AudioRender;
 using Midora.AudioDevice.Wave;
@@ -932,11 +933,112 @@ public sealed class DesktopSessionControllerTests
         Assert.Equal(63, note.Lane);
         Assert.Equal(80 / 127d, note.Value, 10);
         TimelineRenderItem midiEvent = Assert.Single(workspace.SubVoiceEventSnapshot!.Items);
-        Assert.Equal(TimelineItemKind.TemplateEvent, midiEvent.Kind);
+        Assert.Equal(TimelineItemKind.LogicalParameterPoint, midiEvent.Kind);
         Assert.DoesNotContain(workspace.SubVoiceEventSnapshot.Items, item => item.Kind == TimelineItemKind.TemplateNote);
+        InstrumentRenderLane lane = Assert.Single(workspace.RenderLanes);
+        Assert.Equal(MidiValueTarget.ControlChange(1), lane.Target);
+        Assert.Equal("CC 1 - Modulation Wheel (MSB)", lane.Label);
+        int renderLaneSelectionNotifications = 0;
+        workspace.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(workspace.ActiveRenderLaneIndex))
+            {
+                renderLaneSelectionNotifications++;
+            }
+        };
+        workspace.RenderLanes.CollectionChanged += (_, args) =>
+        {
+            if (args.Action == NotifyCollectionChangedAction.Reset)
+            {
+                workspace.ActiveRenderLaneIndex = -1;
+            }
+        };
+        session.RefreshWorkspace(workspace);
+        Assert.Equal(0, workspace.ActiveRenderLaneIndex);
+        Assert.Equal(2, renderLaneSelectionNotifications);
         Assert.Equal(voice.Id, workspace.ActiveSubVoiceId);
+        Assert.Equal(62, workspace.ActiveRootPitch);
         Assert.Contains("override", workspace.ActiveSubVoiceContext, StringComparison.Ordinal);
-        Assert.Contains(workspace.InitialStateEntries, item => item.Target == "CC 7" && item.Value == "100");
+        Assert.Contains(workspace.InitialStateEntries, item =>
+            item.Target == "CC 7 - Channel Volume (MSB)" && item.Value == "100");
+        workspace.Selection.Clear();
+        session.RefreshWorkspace(workspace);
+        Assert.True(session.Inspector.Fields.Single(item => item.Key == "instrument.isolation").IsBoolean);
+    }
+
+    [Fact]
+    public async Task ActivatingSubVoiceEditorSelectsTheRequestedVoiceAndSwitchesTheInnerSection()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "SubVoice navigation",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+        EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+        session.Execute(ProjectDomainEditCommands.CreateSubVoice(instrument.Id, "Second"));
+        SubVoice second = instrument.SubVoices.Single(value => value.Name == "Second");
+        InstrumentWorkspaceViewModel workspace = session.OpenInstrument(instrument.Id);
+        workspace.ActiveSectionIndex = 0;
+
+        session.ActivateSubVoiceEditor(workspace, second.Id);
+
+        Assert.Equal(second.Id, workspace.Selection.Primary);
+        Assert.Equal(second.Id, workspace.ActiveSubVoiceId);
+        Assert.Equal(1, workspace.ActiveSectionIndex);
+    }
+
+    [Fact]
+    public async Task SegmentParameterChoicesIncludeBoundDefinitionsWithoutExistingLanes()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Empty Parameter Lane",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+        EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalParameter(
+            instrument.Id,
+            "Pressure",
+            LogicalParameterType.Integer,
+            0,
+            127,
+            0,
+            127,
+            0));
+        LogicalParameterDefinition parameter = Assert.Single(instrument.LogicalParameters);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track", instrument.Id));
+        LogicalTrack track = Assert.Single(session.Project.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
+        Segment segment = Assert.Single(track.Segments);
+
+        TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+
+        ParameterLaneOption option = Assert.Single(workspace.ParameterLaneOptions);
+        Assert.Equal(parameter.Id, option.ParameterId);
+        Assert.Null(option.LaneId);
+        Assert.Equal("Pressure · Empty", option.Label);
+        int parameterLaneSelectionNotifications = 0;
+        workspace.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(workspace.ActiveParameterLaneIndex))
+            {
+                parameterLaneSelectionNotifications++;
+            }
+        };
+        workspace.ParameterLaneOptions.CollectionChanged += (_, args) =>
+        {
+            if (args.Action == NotifyCollectionChangedAction.Reset)
+            {
+                workspace.ActiveParameterLaneIndex = -1;
+            }
+        };
+        session.RefreshWorkspace(workspace);
+        Assert.Equal(0, workspace.ActiveParameterLaneIndex);
+        Assert.Equal(2, parameterLaneSelectionNotifications);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

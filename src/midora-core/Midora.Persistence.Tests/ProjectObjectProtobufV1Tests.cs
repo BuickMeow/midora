@@ -44,11 +44,11 @@ public sealed class ProjectObjectProtobufV1Tests
         Assert.Equal(sourceInstrument.SubVoices[0].Id, restoredInstrument.SubVoices[0].Id);
         Assert.Equal(sourceInstrument.SubVoices[0].Events[0].Id, restoredInstrument.SubVoices[0].Events[0].Id);
         Assert.Equal(
-            sourceInstrument.SubVoices[0].Events[0].NumberMappings.Id,
-            restoredInstrument.SubVoices[0].Events[0].NumberMappings.Id);
+            sourceInstrument.SubVoices[0].EventMappings[0].Steps.Id,
+            restoredInstrument.SubVoices[0].EventMappings[0].Steps.Id);
         Assert.Equal(
-            sourceInstrument.SubVoices[0].Events[0].NumberMappings[0].Id,
-            restoredInstrument.SubVoices[0].Events[0].NumberMappings[0].Id);
+            sourceInstrument.SubVoices[0].EventMappings[0].Steps[0].Id,
+            restoredInstrument.SubVoices[0].EventMappings[0].Steps[0].Id);
         Assert.Equal(sourceInstrument.SubVoices[0].Curves[0].Id, restoredInstrument.SubVoices[0].Curves[0].Id);
         Assert.Equal(
             sourceInstrument.SubVoices[0].Curves[0].Points[0].Id,
@@ -66,6 +66,23 @@ public sealed class ProjectObjectProtobufV1Tests
         Assert.Equal(
             sourceTrack.Segments[0].ParameterLanes[0].Points[0].Id,
             restoredTrack.Segments[0].ParameterLanes[0].Points[0].Id);
+    }
+
+    [Fact]
+    public void EventInstrumentRestoreRejectsMissingSharedSubVoiceEventMappings()
+    {
+        MidoraProject project = new(480, CreatedAt);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        SubVoice voice = Assert.Single(instrument.SubVoices);
+        voice.Events.Add(TemplateEvent.Note(project, 0, 120, 60, 100));
+        EventInstrumentV1 wire = EventInstrumentV1.Parser.ParseFrom(
+            EventInstrumentProtobufCodecV1.Serialize(instrument));
+        Assert.NotEmpty(wire.SubVoices[0].EventMappings);
+        wire.SubVoices[0].EventMappings.Clear();
+
+        Assert.Throws<InvalidDataException>(() => EventInstrumentProtobufCodecV1.Restore(
+            new MidoraProject(480, CreatedAt),
+            StrictProtobufWireV1.SerializeDeterministic(wire)));
     }
 
     [Fact]
@@ -392,8 +409,8 @@ public sealed class ProjectObjectProtobufV1Tests
         voice.InitialState.RegisteredParameters.Add(1, 2);
         TemplateEvent templateEvent = TemplateEvent.Bank(project, 10, 3, null);
         templateEvent.FollowPitchDelta = false;
-        templateEvent.NumberMappings.IsEnabled = false;
-        templateEvent.NumberMappings.Add(new ValueMappingStep(project)
+        templateEvent.ValueMappings.IsEnabled = false;
+        templateEvent.ValueMappings.Add(new ValueMappingStep(project)
         {
             Source = MappingSource.LogicalParameter,
             Operation = MappingOperation.CustomCSharp,
@@ -408,8 +425,8 @@ public sealed class ProjectObjectProtobufV1Tests
             InputOverflow = MappingInputOverflow.Extrapolate,
             DivideByZero = DivideByZeroPolicy.TargetDefault
         });
-        templateEvent.NumberTargetSettings.Rounding = MappingRounding.Ceiling;
-        templateEvent.NumberTargetSettings.Overflow = MappingOverflow.Clamp;
+        templateEvent.ValueTargetSettings.Rounding = MappingRounding.Ceiling;
+        templateEvent.ValueTargetSettings.Overflow = MappingOverflow.Clamp;
         voice.Events.Add(templateEvent);
         ValueCurve curve = new(project)
         {

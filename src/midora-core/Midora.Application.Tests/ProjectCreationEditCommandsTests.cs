@@ -487,8 +487,8 @@ public sealed class ProjectCreationEditCommandsTests
         MidoraProject project = new(480);
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
         SubVoice voice = instrument.SubVoices[0];
-        TemplateEvent sourceEvent = TemplateEvent.Note(project, 0, 120, 60, 100);
-        TemplateEvent targetEvent = TemplateEvent.Note(project, 240, 120, 62, 100);
+        TemplateEvent sourceEvent = TemplateEvent.ControlChange(project, 0, 1, 100);
+        TemplateEvent targetEvent = TemplateEvent.ControlChange(project, 240, 11, 100);
         ValueMappingStep sourceStep = new(project)
         {
             Source = MappingSource.Constant,

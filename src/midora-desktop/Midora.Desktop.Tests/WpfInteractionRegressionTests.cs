@@ -129,37 +129,66 @@ public sealed class WpfInteractionRegressionTests
     {
         RunOnSta(() =>
         {
-            ResourceDictionary controls = (ResourceDictionary)System.Windows.Application.LoadComponent(
-                new Uri("/Midora.Desktop.Presentation;component/Themes/Controls.xaml", UriKind.Relative));
             ResourceDictionary icons = (ResourceDictionary)System.Windows.Application.LoadComponent(
                 new Uri("/Midora.Desktop.Presentation;component/Themes/FluentSystemIcons.xaml", UriKind.Relative));
             ResourceDictionary palette = (ResourceDictionary)System.Windows.Application.LoadComponent(
                 new Uri("/Midora.Desktop.Presentation;component/Themes/Palette.xaml", UriKind.Relative));
-            Style combo = Assert.IsType<Style>(controls[typeof(ComboBox)]);
-            Style scrollBar = Assert.IsType<Style>(controls[typeof(ScrollBar)]);
+            System.Windows.Application application = new();
+            application.Resources.MergedDictionaries.Add(palette);
+            application.Resources.MergedDictionaries.Add(icons);
+            ResourceDictionary controls = (ResourceDictionary)System.Windows.Application.LoadComponent(
+                new Uri("/Midora.Desktop.Presentation;component/Themes/Controls.xaml", UriKind.Relative));
+            application.Resources.MergedDictionaries.Add(controls);
+            try
+            {
+                Style combo = Assert.IsType<Style>(controls[typeof(ComboBox)]);
+                Style scrollBar = Assert.IsType<Style>(controls[typeof(ScrollBar)]);
 
-            Assert.Contains(combo.Setters.OfType<Setter>(), setter =>
-                setter.Property == Control.TemplateProperty && setter.Value is ControlTemplate);
-            Assert.Contains(scrollBar.Setters.OfType<Setter>(), setter =>
-                setter.Property == Control.TemplateProperty && setter.Value is ControlTemplate);
-            Assert.Contains(combo.Setters.OfType<Setter>(), setter =>
-                setter.Property == Control.VerticalContentAlignmentProperty
-                && Equals(setter.Value, VerticalAlignment.Center));
-            Assert.IsAssignableFrom<System.Windows.Media.Geometry>(icons["Fluent.ChevronDown20Regular"]);
-            Assert.Equal(
-                System.Windows.Media.Color.FromRgb(66, 78, 88),
-                Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.Segment"]).Color);
-            Assert.Equal(
-                System.Windows.Media.Color.FromRgb(2, 3, 4),
-                Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.Segment.PianoOutside"]).Color);
-            Assert.Equal(
-                System.Windows.Media.Color.FromRgb(189, 199, 207),
-                Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.Segment.NotePreview"]).Color);
-            Assert.Equal(
-                System.Windows.Media.Color.FromRgb(163, 178, 190),
-                Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.Segment.PianoNote"]).Color);
-            Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.PianoKey.White"]);
-            Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.PianoKey.Black"]);
+                Assert.Contains(combo.Setters.OfType<Setter>(), setter =>
+                    setter.Property == Control.TemplateProperty && setter.Value is ControlTemplate);
+                Assert.Contains(scrollBar.Setters.OfType<Setter>(), setter =>
+                    setter.Property == Control.TemplateProperty && setter.Value is ControlTemplate);
+                Assert.Contains(combo.Setters.OfType<Setter>(), setter =>
+                    setter.Property == Control.VerticalContentAlignmentProperty
+                    && Equals(setter.Value, VerticalAlignment.Center));
+
+                ComboBox displayMemberCombo = new()
+                {
+                    DisplayMemberPath = nameof(MidiControlChangeInfo.DisplayName),
+                    ItemsSource = new[] { new MidiControlChangeInfo(1, "Modulation Wheel (MSB)") },
+                    SelectedIndex = 0,
+                    Background = Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.Surface.0"]),
+                    BorderBrush = Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.Border.Strong"]),
+                    Foreground = Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.Text.Primary"])
+                };
+                displayMemberCombo.Style = combo;
+                displayMemberCombo.Measure(new Size(300, 32));
+                displayMemberCombo.Arrange(new Rect(0, 0, 300, 32));
+                displayMemberCombo.ApplyTemplate();
+                ContentPresenter contentSite = Assert.IsType<ContentPresenter>(
+                    displayMemberCombo.Template.FindName("ContentSite", displayMemberCombo));
+                Assert.NotNull(contentSite.ContentTemplateSelector);
+
+                Assert.IsAssignableFrom<System.Windows.Media.Geometry>(icons["Fluent.ChevronDown20Regular"]);
+                Assert.Equal(
+                    System.Windows.Media.Color.FromRgb(66, 78, 88),
+                    Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.Segment"]).Color);
+                Assert.Equal(
+                    System.Windows.Media.Color.FromRgb(2, 3, 4),
+                    Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.Segment.PianoOutside"]).Color);
+                Assert.Equal(
+                    System.Windows.Media.Color.FromRgb(189, 199, 207),
+                    Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.Segment.NotePreview"]).Color);
+                Assert.Equal(
+                    System.Windows.Media.Color.FromRgb(163, 178, 190),
+                    Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.Segment.PianoNote"]).Color);
+                Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.PianoKey.White"]);
+                Assert.IsType<System.Windows.Media.SolidColorBrush>(palette["Brush.PianoKey.Black"]);
+            }
+            finally
+            {
+                application.Shutdown();
+            }
         });
     }
 

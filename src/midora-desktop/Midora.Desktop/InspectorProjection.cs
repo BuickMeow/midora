@@ -325,7 +325,8 @@ internal static class InspectorProjection
                 : "Mixed",
             true,
             same ? InspectorFieldValueState.SameValue : InspectorFieldValueState.Mixed,
-            options);
+            options,
+            typeof(TValue) == typeof(bool));
     }
 
     private sealed record LogicalParameterPointBatch(
@@ -606,7 +607,12 @@ internal static class InspectorProjection
                 if (template.Kind is TemplateEventKind.Note or TemplateEventKind.ControlChange
                     or TemplateEventKind.RegisteredParameter or TemplateEventKind.NonRegisteredParameter)
                 {
-                    fields.Add(Field("template.number", "NUMBER", template.Number));
+                    fields.Add(Field(
+                        "template.number",
+                        template.Kind == TemplateEventKind.ControlChange
+                            ? $"CONTROLLER · {MidiControlChangeCatalog.Format(template.Number)}"
+                            : "NUMBER",
+                        template.Number));
                 }
                 if (template.Kind != TemplateEventKind.Bank || template.HasBankMsb)
                 {
@@ -823,12 +829,9 @@ internal static class InspectorProjection
 
     private static IEnumerable<MappingChain> EnumerateMappingChains(EventInstrument instrument) =>
         instrument.ParameterMappings.Select(item => item.Steps)
-            .Concat(instrument.SubVoices.SelectMany(voice => voice.Events).SelectMany(item => new[]
-            {
-                item.NumberMappings,
-                item.ValueMappings,
-                item.SecondaryValueMappings
-            }));
+            .Concat(instrument.SubVoices
+                .SelectMany(voice => voice.EventMappings)
+                .Select(item => item.Steps));
 
     private readonly record struct MappingStepContext(
         MappingChain Chain,
@@ -861,7 +864,7 @@ internal static class InspectorProjection
 
     private static string FormatMidiTarget(MidiValueTarget target) => target.Kind switch
     {
-        MidiValueKind.ControlChange => $"CC {target.Number}",
+        MidiValueKind.ControlChange => MidiControlChangeCatalog.Format(target.Number),
         MidiValueKind.RegisteredParameter => $"RPN {target.Number}",
         MidiValueKind.NonRegisteredParameter => $"NRPN {target.Number}",
         _ => target.Kind.ToString()
@@ -1006,14 +1009,18 @@ internal static class InspectorProjection
             Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty,
             editable,
             InspectorFieldValueState.SameValue,
-            value.GetType().IsEnum ? Enum.GetNames(value.GetType()) : null);
+            value.GetType().IsEnum ? Enum.GetNames(value.GetType()) : null,
+            value is bool);
 
     private static InspectorField StateField(string key, string label, int? value) =>
         new(key, label, value?.ToString(CultureInfo.InvariantCulture) ?? string.Empty);
 
     private static IEnumerable<InspectorField> ExtraStateFields(string prefix, MidiInitialState state) =>
         state.Controllers.OrderBy(item => item.Key)
-            .Select(item => StateField($"{prefix}.cc.{item.Key}", $"INITIAL CC {item.Key}", item.Value))
+            .Select(item => StateField(
+                $"{prefix}.cc.{item.Key}",
+                $"INITIAL {MidiControlChangeCatalog.Format(item.Key)}",
+                item.Value))
             .Concat(state.RegisteredParameters.OrderBy(item => item.Key)
                 .Select(item => StateField($"{prefix}.rpn.{item.Key}", $"INITIAL RPN {item.Key}", item.Value)))
             .Concat(state.NonRegisteredParameters.OrderBy(item => item.Key)

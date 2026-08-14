@@ -18,6 +18,8 @@ public partial class MidiStateEntryDialog : Window
     {
         InitializeComponent();
         KindBox.ItemsSource = SupportedKinds;
+        ControllerBox.ItemsSource = MidiControlChangeCatalog.EditableControllers;
+        ControllerBox.SelectedIndex = 0;
         KindBox.SelectedIndex = 0;
     }
 
@@ -28,10 +30,24 @@ public partial class MidiStateEntryDialog : Window
     {
         ValidationText.Text = string.Empty;
         if (KindBox.SelectedItem is not MidiValueKind kind
-            || !int.TryParse(NumberBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int number)
             || !int.TryParse(ValueBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
         {
-            ValidationText.Text = "Number and Value must be base-10 integers.";
+            ValidationText.Text = "Value must be a base-10 integer.";
+            return;
+        }
+        int number;
+        if (kind == MidiValueKind.ControlChange)
+        {
+            if (ControllerBox.SelectedItem is not MidiControlChangeInfo controller)
+            {
+                ValidationText.Text = "Select a supported Control Change.";
+                return;
+            }
+            number = controller.Number;
+        }
+        else if (!int.TryParse(NumberBox.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number))
+        {
+            ValidationText.Text = "Parameter Number must be a base-10 integer.";
             return;
         }
         bool valid = kind switch
@@ -51,6 +67,14 @@ public partial class MidiStateEntryDialog : Window
         Target = new MidiValueTarget(kind, number);
         Value = value;
         DialogResult = true;
+    }
+
+    private void OnKindChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        bool controller = KindBox.SelectedItem is MidiValueKind.ControlChange;
+        ControllerBox.Visibility = controller ? Visibility.Visible : Visibility.Collapsed;
+        NumberBox.Visibility = controller ? Visibility.Collapsed : Visibility.Visible;
+        NumberLabel.Text = controller ? "CONTROLLER" : "PARAMETER NUMBER";
     }
 
     private void OnCancelClick(object sender, RoutedEventArgs e) => DialogResult = false;

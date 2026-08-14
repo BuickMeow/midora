@@ -48,6 +48,12 @@ enum TemplateEventKindV1 {
   TEMPLATE_EVENT_KIND_PITCH_BEND_RANGE = 7;
 }
 
+enum TemplateEventMappingParameterV1 {
+  TEMPLATE_EVENT_MAPPING_PARAMETER_NUMBER = 0;
+  TEMPLATE_EVENT_MAPPING_PARAMETER_VALUE = 1;
+  TEMPLATE_EVENT_MAPPING_PARAMETER_SECONDARY_VALUE = 2;
+}
+
 enum CurveInterpolationV1 {
   CURVE_INTERPOLATION_STEP = 0;
   CURVE_INTERPOLATION_LINEAR = 1;
@@ -208,13 +214,16 @@ message TemplateEventV1 {
   bool has_bank_msb = 8;
   bool has_bank_lsb = 9;
   bool follow_pitch_delta = 10;
-  MappingChainV1 number_mappings = 11;
-  MappingChainV1 value_mappings = 12;
-  MappingChainV1 secondary_value_mappings = 13;
-  MidiIntegerTargetSettingsV1 number_target_settings = 14;
-  MidiIntegerTargetSettingsV1 value_target_settings = 15;
-  MidiIntegerTargetSettingsV1 secondary_value_target_settings = 16;
-  reserved 17 to max;
+  reserved 11 to max;
+}
+
+message SubVoiceEventMappingV1 {
+  TemplateEventKindV1 event_kind = 1;
+  int32 event_number = 2;
+  TemplateEventMappingParameterV1 parameter = 3;
+  MappingChainV1 steps = 4;
+  MidiIntegerTargetSettingsV1 target_settings = 5;
+  reserved 6 to max;
 }
 
 message CurvePointV1 {
@@ -240,7 +249,8 @@ message SubVoiceV1 {
   MidiInitialStateV1 initial_state = 4;
   repeated TemplateEventV1 events = 5;
   repeated ValueCurveV1 curves = 6;
-  reserved 7 to max;
+  repeated SubVoiceEventMappingV1 event_mappings = 7;
+  reserved 8 to max;
 }
 
 message InstrumentEnvelopeV1 {

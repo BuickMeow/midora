@@ -735,9 +735,9 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         Assert.Equal([62, 66], copies.Select(item => item.Number));
         Assert.Equal(710, instrument.TemplateLengthTicks);
         Assert.NotEqual(first.Id, copies[0].Id);
-        Assert.NotEqual(first.NumberMappings.Id, copies[0].NumberMappings.Id);
+        Assert.Equal(first.NumberMappings.Id, copies[0].NumberMappings.Id);
         Assert.Single(copies[0].NumberMappings);
-        Assert.NotEqual(first.NumberMappings[0].Id, copies[0].NumberMappings[0].Id);
+        Assert.Same(first.NumberMappings[0], copies[0].NumberMappings[0]);
         Assert.Single(document.History);
         AssertMatchesFull(compilation);
 

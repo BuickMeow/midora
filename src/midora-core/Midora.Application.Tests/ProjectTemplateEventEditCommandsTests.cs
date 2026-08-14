@@ -7,6 +7,37 @@ namespace Midora.Application.Tests;
 public sealed class ProjectTemplateEventEditCommandsTests
 {
     [Fact]
+    public void TemplateEventMappingsAreSharedByExactSubVoiceEventTarget()
+    {
+        MidoraProject project = new(480);
+        SubVoice voice = new(project);
+        TemplateEvent first = TemplateEvent.ControlChange(project, 0, 1, 64);
+        voice.Events.Add(first);
+        long afterFirst = project.NextStableId;
+
+        for (int index = 1; index < 1_000; index++)
+        {
+            voice.Events.Add(TemplateEvent.ControlChange(project, index, 1, index % 128));
+        }
+
+        Assert.Equal(afterFirst + 999, project.NextStableId);
+        Assert.Single(voice.EventMappings);
+        Assert.All(voice.Events, value => Assert.Same(first.ValueMappings, value.ValueMappings));
+
+        TemplateEvent otherController = TemplateEvent.ControlChange(project, 1_100, 11, 100);
+        voice.Events.Add(otherController);
+        Assert.Equal(2, voice.EventMappings.Count);
+        Assert.NotSame(first.ValueMappings, otherController.ValueMappings);
+
+        TemplateEvent firstNote = TemplateEvent.Note(project, 1_200, 120, 60, 100);
+        TemplateEvent secondNote = TemplateEvent.Note(project, 1_440, 120, 64, 90);
+        voice.Events.AddRange([firstNote, secondNote]);
+        Assert.Equal(4, voice.EventMappings.Count);
+        Assert.Same(firstNote.NumberMappings, secondNote.NumberMappings);
+        Assert.Same(firstNote.ValueMappings, secondNote.ValueMappings);
+    }
+
+    [Fact]
     public void TemplateNoteUpdateAutoExtendsLengthPreservesIdentityAndUndoIsExact()
     {
         MidoraProject project = CreateProject();
@@ -170,48 +201,37 @@ public sealed class ProjectTemplateEventEditCommandsTests
     }
 
     [Fact]
-    public void BankCannotDropAnActivelyMappedComponent()
+    public void BankCanDropAComponentWithoutDeletingItsSharedMapping()
     {
         MidoraProject project = CreateProject();
         EventInstrument instrument = project.EventInstruments[0];
         SubVoice voice = instrument.SubVoices[0];
-        TemplateEvent mappedBank = TemplateEvent.Bank(project, 120, 1, 2);
-        mappedBank.ValueMappings.Add(new ValueMappingStep(project));
-        TemplateEvent editableBank = TemplateEvent.Bank(project, 240, 3, 4);
-        editableBank.ValueMappings.Add(new ValueMappingStep(project));
-        editableBank.ValueMappings.IsEnabled = false;
-        voice.Events.AddRange([mappedBank, editableBank]);
+        TemplateEvent bank = TemplateEvent.Bank(project, 120, 1, 2);
+        ValueMappingStep mappingStep = new(project);
+        bank.ValueMappings.Add(mappingStep);
+        voice.Events.Add(bank);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
-
-        Assert.Throws<InvalidOperationException>(() => document.Execute(
-            ProjectDomainEditCommands.UpdateTemplateBank(
-                instrument.Id,
-                voice.Id,
-                mappedBank.Id,
-                tick: 120,
-                bankMsb: null,
-                bankLsb: 2)));
-        Assert.False(document.IsModified);
 
         document.Execute(ProjectDomainEditCommands.UpdateTemplateBank(
             instrument.Id,
             voice.Id,
-            editableBank.Id,
+            bank.Id,
             tick: 600,
             bankMsb: null,
             bankLsb: 127));
 
-        Assert.False(editableBank.HasBankMsb);
-        Assert.True(editableBank.HasBankLsb);
-        Assert.Equal(127, editableBank.SecondaryValue);
+        Assert.False(bank.HasBankMsb);
+        Assert.True(bank.HasBankLsb);
+        Assert.Equal(127, bank.SecondaryValue);
+        Assert.Same(mappingStep, Assert.Single(bank.ValueMappings));
         Assert.Equal(601, instrument.TemplateLengthTicks);
         AssertCurrentCompilationMatchesFull(compilation);
 
         document.Undo();
-        Assert.True(editableBank.HasBankMsb);
-        Assert.True(editableBank.HasBankLsb);
-        Assert.Equal((3, 4), (editableBank.Value, editableBank.SecondaryValue));
+        Assert.True(bank.HasBankMsb);
+        Assert.True(bank.HasBankLsb);
+        Assert.Equal((1, 2), (bank.Value, bank.SecondaryValue));
         Assert.Equal(480, instrument.TemplateLengthTicks);
         Assert.False(document.IsModified);
     }
@@ -244,6 +264,72 @@ public sealed class ProjectTemplateEventEditCommandsTests
         Assert.Same(controller, voice.Events[1]);
         Assert.Equal(nextStableId, project.NextStableId);
         Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void DrawnEventPointsBatchUpsertsExactTargetAsOneUndoUnit()
+    {
+        MidoraProject project = CreateProject();
+        EventInstrument instrument = project.EventInstruments[0];
+        SubVoice voice = instrument.SubVoices[0];
+        TemplateEvent existing = TemplateEvent.ControlChange(project, 120, 11, 30);
+        voice.Events.Add(existing);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.UpsertTemplateEventPoints(
+            instrument.Id,
+            voice.Id,
+            MidiValueTarget.ControlChange(11),
+            [new(120, 64), new(240, 100)]));
+
+        Assert.Equal(64, existing.Value);
+        TemplateEvent created = Assert.Single(voice.Events, value =>
+            value.Kind == TemplateEventKind.ControlChange && value.Tick == 240);
+        Assert.Equal((11, 100), (created.Number, created.Value));
+        Assert.Single(document.History);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+        Assert.Equal(30, existing.Value);
+        Assert.DoesNotContain(created, voice.Events);
+        Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Redo();
+        Assert.Equal(64, existing.Value);
+        Assert.Same(created, voice.Events.Single(value => value.Tick == 240));
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void DrawnBankFieldMergesWithExistingBankEventAndUndoRestoresMissingField()
+    {
+        MidoraProject project = CreateProject();
+        EventInstrument instrument = project.EventInstruments[0];
+        SubVoice voice = instrument.SubVoices[0];
+        TemplateEvent bank = TemplateEvent.Bank(project, 120, null, 9);
+        voice.Events.Add(bank);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.UpsertTemplateEventPoints(
+            instrument.Id,
+            voice.Id,
+            MidiValueTarget.BankMsb,
+            [new(120, 7)]));
+
+        Assert.True(bank.HasBankMsb);
+        Assert.True(bank.HasBankLsb);
+        Assert.Equal((7, 9), (bank.Value, bank.SecondaryValue));
+        Assert.Single(voice.Events, value => value.Kind == TemplateEventKind.Bank);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+        Assert.False(bank.HasBankMsb);
+        Assert.True(bank.HasBankLsb);
+        Assert.Equal(9, bank.SecondaryValue);
         AssertCurrentCompilationMatchesFull(compilation);
     }
 

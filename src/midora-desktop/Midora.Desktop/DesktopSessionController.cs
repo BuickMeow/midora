@@ -1216,6 +1216,21 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         if (ReferenceEquals(workspace, ActiveWorkspace)) RefreshInspector();
     }
 
+    public void ActivateSubVoiceEditor(InstrumentWorkspaceViewModel workspace, MidoraId subVoiceId)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        EventInstrument? instrument = Project?.EventInstruments
+            .FirstOrDefault(value => value.Id == workspace.ObjectId);
+        if (!Workspaces.Contains(workspace)
+            || instrument?.SubVoices.Any(value => value.Id == subVoiceId) != true)
+        {
+            return;
+        }
+        SelectWorkspaceObject(workspace, subVoiceId);
+        RefreshWorkspace(workspace);
+        workspace.ActiveSectionIndex = 1;
+    }
+
     public async Task CloseProjectAsync()
     {
         ProjectContext? previous = _context;

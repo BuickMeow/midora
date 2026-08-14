@@ -86,10 +86,8 @@ public static partial class ProjectDomainEditCommands
     private static IEnumerable<ValueMappingStep> EnumerateMappingSteps(
         EventInstrument instrument) =>
         instrument.SubVoices
-            .SelectMany(value => value.Events)
-            .SelectMany(value => value.NumberMappings
-                .Concat(value.ValueMappings)
-                .Concat(value.SecondaryValueMappings))
+            .SelectMany(value => value.EventMappings)
+            .SelectMany(value => value.Steps)
             .Concat(instrument.ParameterMappings.SelectMany(value => value.Steps));
 
     private static EnvelopeValue CaptureEnvelope(InstrumentEnvelope value) =>

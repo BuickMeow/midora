@@ -144,6 +144,19 @@ public static class EventInstrumentLibrary
             SubVoice copy = new(project) { Name = voice.Name, RootNoteOverride = voice.RootNoteOverride };
             CopyState(voice.InitialState, copy.InitialState);
             voices.Add(voice.Id, copy.Id);
+            foreach (SubVoiceEventMapping mapping in voice.EventMappings)
+            {
+                SubVoiceEventMapping mappingCopy = new(project, mapping.Target);
+                CopyTargetSettings(mapping.TargetSettings, mappingCopy.TargetSettings);
+                CopyChain(
+                    project,
+                    mapping.Steps,
+                    mappingCopy.Steps,
+                    parameters,
+                    functions,
+                    envelopes);
+                copy.EventMappings.Add(mappingCopy);
+            }
             foreach (TemplateEvent value in voice.Events)
             {
                 TemplateEvent eventCopy = new(project)
@@ -158,12 +171,6 @@ public static class EventInstrumentLibrary
                     HasBankLsb = value.HasBankLsb,
                     FollowPitchDelta = value.FollowPitchDelta
                 };
-                CopyTargetSettings(value.NumberTargetSettings, eventCopy.NumberTargetSettings);
-                CopyTargetSettings(value.ValueTargetSettings, eventCopy.ValueTargetSettings);
-                CopyTargetSettings(value.SecondaryValueTargetSettings, eventCopy.SecondaryValueTargetSettings);
-                CopyChain(project, value.NumberMappings, eventCopy.NumberMappings, parameters, functions, envelopes);
-                CopyChain(project, value.ValueMappings, eventCopy.ValueMappings, parameters, functions, envelopes);
-                CopyChain(project, value.SecondaryValueMappings, eventCopy.SecondaryValueMappings, parameters, functions, envelopes);
                 copy.Events.Add(eventCopy);
             }
             foreach (ValueCurve curve in voice.Curves)

@@ -107,6 +107,14 @@ public sealed class TimelineVelocityEditEventArgs(
     public IReadOnlyDictionary<MidoraId, int> Velocities { get; } = velocities;
 }
 
+public sealed class TimelineEventPointEditEventArgs(
+    MidoraId? directItemId,
+    IReadOnlyDictionary<long, double> points) : RoutedEventArgs
+{
+    public MidoraId? DirectItemId { get; } = directItemId;
+    public IReadOnlyDictionary<long, double> Points { get; } = points;
+}
+
 public enum TimelineToolMode
 {
     Select,
@@ -348,6 +356,12 @@ public sealed class TimelineSurface : Control
         typeof(TimelineSurface),
         new FrameworkPropertyMetadata(true, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    public static readonly DependencyProperty HighlightedPitchProperty = DependencyProperty.Register(
+        nameof(HighlightedPitch),
+        typeof(int),
+        typeof(TimelineSurface),
+        new FrameworkPropertyMetadata(-1, FrameworkPropertyMetadataOptions.AffectsRender));
+
     private static readonly DependencyPropertyKey MaximumFirstLanePropertyKey = DependencyProperty.RegisterReadOnly(
         nameof(MaximumFirstLane),
         typeof(int),
@@ -449,6 +463,11 @@ public sealed class TimelineSurface : Control
     private bool _velocitySelectionRestricted;
     private readonly Dictionary<MidoraId, int> _velocityEdits = [];
     private readonly List<Point> _velocityTracePoints = new(capacity: 128);
+    private Point? _eventPointOrigin;
+    private MouseButton _eventPointButton;
+    private MidoraId? _eventPointDirectItemId;
+    private readonly Dictionary<long, double> _eventPointEdits = [];
+    private readonly List<Point> _eventPointTracePoints = new(capacity: 128);
     private int? _hoverLaneHeader;
     private int? _pressedLaneHeader;
     private int _laneHeaderDragTarget;
@@ -661,6 +680,11 @@ public sealed class TimelineSurface : Control
         get => (bool)GetValue(GridVisibleProperty);
         set => SetValue(GridVisibleProperty, value);
     }
+    public int HighlightedPitch
+    {
+        get => (int)GetValue(HighlightedPitchProperty);
+        set => SetValue(HighlightedPitchProperty, value);
+    }
 
     public event EventHandler<TimelineItemEventArgs>? ItemInvoked;
     public event EventHandler<TimelinePointEventArgs>? BackgroundInvoked;
@@ -681,6 +705,7 @@ public sealed class TimelineSurface : Control
     public event EventHandler<TimelineLaneHeaderEventArgs>? LaneHeaderContextRequested;
     public event EventHandler<TimelineLaneHeaderReorderEventArgs>? LaneHeaderReorderCompleted;
     public event EventHandler<TimelineVelocityEditEventArgs>? VelocityEditCompleted;
+    public event EventHandler<TimelineEventPointEditEventArgs>? EventPointEditCompleted;
     public event EventHandler? ViewportChanged;
     public event RoutedEventHandler AltGestureConsumed
     {
@@ -922,6 +947,7 @@ public sealed class TimelineSurface : Control
         DrawCreationHoverPreview(drawingContext, viewport, red, info, laneHeaderWidth, rulerHeight);
         DrawSegmentPlacementPreview(drawingContext, viewport, laneHeaderWidth, rulerHeight);
         DrawNotePlacementPreview(drawingContext, viewport, red, laneHeaderWidth, rulerHeight);
+        DrawEventPointTrace(drawingContext, laneHeaderWidth, rulerHeight);
         DrawCursor(drawingContext, viewport, EditCursorTick, _editCursorPen!, laneHeaderWidth, rulerHeight);
         DrawCursor(drawingContext, viewport, PlaybackCursorTick, _redPen!, laneHeaderWidth, rulerHeight);
         DrawTimelineChrome(
@@ -995,6 +1021,42 @@ public sealed class TimelineSurface : Control
             else
             {
                 _velocityTracePoints.Add(ClampVelocityTracePoint(point));
+            }
+            CaptureMouse();
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
+        if (SurfaceMode == TimelineSurfaceMode.EventLanes
+            && ToolMode == TimelineToolMode.Draw
+            && CanEdit
+            && e.ChangedButton is MouseButton.Left or MouseButton.Right
+            && point.X >= GetLaneHeaderWidth()
+            && point.Y >= GetRulerHeight())
+        {
+            bool forceTrace = e.ChangedButton == MouseButton.Right
+                || (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
+            TimelineRenderItem directItem = default;
+            _eventPointOrigin = point;
+            _eventPointButton = e.ChangedButton;
+            _eventPointEdits.Clear();
+            _eventPointDirectItemId = e.ChangedButton == MouseButton.Left
+                && !forceTrace
+                && TryHitEventPoint(point, viewport, out directItem)
+                ? directItem.Id
+                : null;
+            if (forceTrace && e.ChangedButton == MouseButton.Left)
+            {
+                RaiseEvent(new RoutedEventArgs(AltGestureConsumedEvent, this));
+            }
+            _eventPointTracePoints.Clear();
+            if (_eventPointDirectItemId is not null)
+            {
+                UpdateSingleEventPoint(directItem.StartTick, point.Y, GetRulerHeight());
+            }
+            else
+            {
+                _eventPointTracePoints.Add(ClampEventPointTracePoint(point));
             }
             CaptureMouse();
             InvalidateVisual();
@@ -1253,7 +1315,7 @@ public sealed class TimelineSurface : Control
     protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
     {
         base.OnMouseRightButtonDown(e);
-        if (SurfaceMode == TimelineSurfaceMode.Velocity) return;
+        if (SurfaceMode == TimelineSurfaceMode.Velocity || _eventPointOrigin is not null) return;
         if (!TryCreateViewport(out TimelineViewport viewport)) return;
         Point point = e.GetPosition(this);
         double laneHeaderWidth = GetLaneHeaderWidth();
@@ -1308,6 +1370,21 @@ public sealed class TimelineSurface : Control
             else
             {
                 UpdateVelocityTrace(velocityOrigin, point);
+            }
+            InvalidateVisual();
+            return;
+        }
+        if (_eventPointOrigin is Point eventPointOrigin
+            && (e.LeftButton == MouseButtonState.Pressed || e.RightButton == MouseButtonState.Pressed))
+        {
+            if (_eventPointDirectItemId is MidoraId directId
+                && Snapshot?.ItemsById.TryGetValue(directId, out TimelineRenderItem directItem) == true)
+            {
+                UpdateSingleEventPoint(directItem.StartTick, point.Y, GetRulerHeight());
+            }
+            else
+            {
+                UpdateEventPointTrace(eventPointOrigin, point);
             }
             InvalidateVisual();
             return;
@@ -1504,6 +1581,25 @@ public sealed class TimelineSurface : Control
             e.Handled = true;
             return;
         }
+        if (_eventPointOrigin is not null && e.ChangedButton == _eventPointButton)
+        {
+            if (_eventPointDirectItemId is null && TryCreateViewport(out TimelineViewport eventViewport))
+            {
+                UpdateEventPointTrace(_eventPointOrigin.Value, e.GetPosition(this));
+                BuildEventPointEditsFromTrace(eventViewport);
+            }
+            IReadOnlyDictionary<long, double> result = new Dictionary<long, double>(_eventPointEdits);
+            MidoraId? directItemId = _eventPointDirectItemId;
+            _eventPointOrigin = null;
+            _eventPointDirectItemId = null;
+            _eventPointEdits.Clear();
+            _eventPointTracePoints.Clear();
+            ReleaseMouseCapture();
+            if (result.Count > 0) EventPointEditCompleted?.Invoke(this, new(directItemId, result));
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
         if (e.ChangedButton == MouseButton.Left
             && _notePlacementStartTick is long placementStart)
         {
@@ -1633,6 +1729,10 @@ public sealed class TimelineSurface : Control
         _velocitySelectionRestricted = false;
         _velocityEdits.Clear();
         _velocityTracePoints.Clear();
+        _eventPointOrigin = null;
+        _eventPointDirectItemId = null;
+        _eventPointEdits.Clear();
+        _eventPointTracePoints.Clear();
         _pressedLaneHeader = null;
         _laneHeaderDragActivated = false;
         InvalidateVisual();
@@ -2961,6 +3061,129 @@ public sealed class TimelineSurface : Control
         context.Pop();
     }
 
+    private void DrawEventPointTrace(
+        DrawingContext context,
+        double laneHeaderWidth,
+        double rulerHeight)
+    {
+        if (_eventPointTracePoints.Count == 0) return;
+        Rect contentBounds = new(
+            laneHeaderWidth,
+            rulerHeight,
+            Math.Max(0, ActualWidth - laneHeaderWidth),
+            Math.Max(0, ActualHeight - rulerHeight));
+        context.PushClip(new RectangleGeometry(contentBounds));
+        if (_eventPointTracePoints.Count == 1)
+        {
+            context.DrawEllipse(_selectionPen!.Brush, null, _eventPointTracePoints[0], 2, 2);
+        }
+        else
+        {
+            StreamGeometry geometry = new();
+            using (StreamGeometryContext geometryContext = geometry.Open())
+            {
+                geometryContext.BeginFigure(_eventPointTracePoints[0], isFilled: false, isClosed: false);
+                for (int index = 1; index < _eventPointTracePoints.Count; index++)
+                {
+                    geometryContext.LineTo(_eventPointTracePoints[index], isStroked: true, isSmoothJoin: true);
+                }
+            }
+            geometry.Freeze();
+            context.DrawGeometry(null, _selectionPen, geometry);
+        }
+        context.Pop();
+    }
+
+    private bool TryHitEventPoint(
+        Point point,
+        TimelineViewport viewport,
+        out TimelineRenderItem item)
+    {
+        item = default;
+        if (Snapshot is null) return false;
+        long tick = viewport.XToTick(point.X - GetLaneHeaderWidth());
+        long tolerance = Math.Max(1, checked((long)Math.Ceiling(5 / viewport.PixelsPerTick)));
+        Snapshot.Index.HitTestInto(tick, tolerance, 0, _visibleItems);
+        foreach (TimelineRenderItem candidate in _visibleItems.OrderByDescending(value => value.ZIndex))
+        {
+            if (candidate.Kind != TimelineItemKind.LogicalParameterPoint) continue;
+            double x = GetLaneHeaderWidth() + viewport.TickToX(candidate.StartTick);
+            double y = NormalizedToValueY(candidate.Value, GetRulerHeight());
+            if (Math.Abs(point.X - x) <= 8 && Math.Abs(point.Y - y) <= 8)
+            {
+                item = candidate;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void UpdateSingleEventPoint(long tick, double y, double rulerHeight) =>
+        _eventPointEdits[tick] = Math.Clamp(ValueYToNormalized(y, rulerHeight), 0, 1);
+
+    private void UpdateEventPointTrace(Point origin, Point point)
+    {
+        Point clamped = ClampEventPointTracePoint(point);
+        if (_eventPointButton == MouseButton.Right)
+        {
+            _eventPointTracePoints.Clear();
+            _eventPointTracePoints.Add(ClampEventPointTracePoint(origin));
+            _eventPointTracePoints.Add(clamped);
+            return;
+        }
+        if (_eventPointTracePoints.Count == 0)
+        {
+            _eventPointTracePoints.Add(ClampEventPointTracePoint(origin));
+        }
+        Point previous = _eventPointTracePoints[^1];
+        double deltaX = clamped.X - previous.X;
+        double deltaY = clamped.Y - previous.Y;
+        if (deltaX * deltaX + deltaY * deltaY >= 1)
+        {
+            _eventPointTracePoints.Add(clamped);
+        }
+        else
+        {
+            _eventPointTracePoints[^1] = clamped;
+        }
+    }
+
+    private Point ClampEventPointTracePoint(Point point) => new(
+        Math.Clamp(point.X, GetLaneHeaderWidth(), Math.Max(GetLaneHeaderWidth(), ActualWidth)),
+        Math.Clamp(point.Y, GetRulerHeight(), Math.Max(GetRulerHeight(), ActualHeight)));
+
+    private void BuildEventPointEditsFromTrace(TimelineViewport viewport)
+    {
+        _eventPointEdits.Clear();
+        if (_eventPointTracePoints.Count == 0) return;
+        if (_eventPointTracePoints.Count == 1)
+        {
+            AddEventTraceSample(_eventPointTracePoints[0], viewport);
+            return;
+        }
+        for (int index = 1; index < _eventPointTracePoints.Count; index++)
+        {
+            Point from = _eventPointTracePoints[index - 1];
+            Point to = _eventPointTracePoints[index];
+            int samples = Math.Max(1, checked((int)Math.Ceiling(Math.Abs(to.X - from.X))));
+            for (int sample = 0; sample <= samples; sample++)
+            {
+                double ratio = sample / (double)samples;
+                AddEventTraceSample(new(
+                    from.X + (to.X - from.X) * ratio,
+                    from.Y + (to.Y - from.Y) * ratio), viewport);
+            }
+        }
+    }
+
+    private void AddEventTraceSample(Point point, TimelineViewport viewport)
+    {
+        long tick = SnapAbsolute(viewport.XToTick(point.X - GetLaneHeaderWidth()));
+        if (RangeStartTick is long start && tick < start) return;
+        if (RangeEndTick is long end && tick >= end) return;
+        _eventPointEdits[tick] = Math.Clamp(ValueYToNormalized(point.Y, GetRulerHeight()), 0, 1);
+    }
+
     private void DrawValueGrid(
         DrawingContext context,
         Brush text,
@@ -3446,7 +3669,11 @@ public sealed class TimelineSurface : Control
             }
 
             Rect whiteBounds = new(0, y, laneHeaderWidth, height);
-            context.DrawRectangle(whiteKey, _borderPen, whiteBounds);
+            bool highlighted = midiNote == HighlightedPitch;
+            Brush rootKey = highlighted
+                ? Brush("Brush.PianoKey.Root", Color.FromRgb(188, 112, 116))
+                : whiteKey;
+            context.DrawRectangle(rootKey, _borderPen, whiteBounds);
             if (PianoKeyPresentation.IsBlackKey(midiNote))
             {
                 Rect blackBounds = new(
@@ -3454,7 +3681,12 @@ public sealed class TimelineSurface : Control
                     y + 1,
                     blackKeyWidth,
                     Math.Max(1, height - 2));
-                context.DrawRoundedRectangle(blackKey, _borderPen, blackBounds, 1, 1);
+                context.DrawRoundedRectangle(
+                    highlighted ? Brush("Brush.PianoKey.Root.Dark", Color.FromRgb(116, 61, 65)) : blackKey,
+                    _borderPen,
+                    blackBounds,
+                    1,
+                    1);
                 continue;
             }
 

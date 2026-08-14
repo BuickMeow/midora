@@ -361,7 +361,7 @@ public sealed class ProjectObjectClipboardTests
     }
 
     [Fact]
-    public void SubVoiceTimelinePasteDeepCopiesMappingsAndPreservesExternalReferences()
+    public void SubVoiceTimelinePasteUsesTheTargetSubVoiceSharedMappingDefinition()
     {
         MidoraProject project = new(480);
         EventInstrument instrument = new(project)
@@ -427,17 +427,13 @@ public sealed class ProjectObjectClipboardTests
             editCursorTick: 200));
 
         TemplateEvent copy = Assert.Single(target.Events);
-        ValueMappingStep stepCopy = Assert.Single(copy.ValueMappings);
         Assert.Equal(200, copy.Tick);
         Assert.NotEqual(templateEvent.Id, copy.Id);
         Assert.NotEqual(templateEvent.ValueMappings.Id, copy.ValueMappings.Id);
-        Assert.NotEqual(sourceStep.Id, stepCopy.Id);
         Assert.True(copy.Id.Value >= beforePasteId);
-        Assert.False(copy.ValueMappings.IsEnabled);
-        Assert.Equal(parameter.Id, stepCopy.LogicalParameterId);
-        Assert.Equal(envelope.Id, stepCopy.EnvelopeId);
-        Assert.Equal(function.Id, stepCopy.MappingFunctionId);
-        Assert.Equal((MappingRounding.Floor, MappingOverflow.Clamp),
+        Assert.Empty(copy.ValueMappings);
+        Assert.True(copy.ValueMappings.IsEnabled);
+        Assert.Equal((MappingRounding.Round, MappingOverflow.Fail),
             (copy.ValueTargetSettings.Rounding, copy.ValueTargetSettings.Overflow));
         Assert.Equal(201, instrument.TemplateLengthTicks);
         Assert.Single(document.History);
@@ -448,6 +444,88 @@ public sealed class ProjectObjectClipboardTests
         Assert.Equal(100, instrument.TemplateLengthTicks);
         document.Redo();
         Assert.Same(copy, Assert.Single(target.Events));
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void WholeSubVoicePasteAcrossInstrumentsCopiesAndRemapsMappingDependencies()
+    {
+        MidoraProject project = new(480);
+        EventInstrument sourceInstrument = new(project) { Name = "Source", TemplateLengthTicks = 480 };
+        EventInstrument targetInstrument = new(project) { Name = "Target", TemplateLengthTicks = 480 };
+        LogicalParameterDefinition parameter = new(project)
+        {
+            Name = "Amount",
+            Type = LogicalParameterType.Double,
+            Minimum = 0,
+            Maximum = 1,
+            DisplayMinimum = 0,
+            DisplayMaximum = 1,
+            DefaultValue = 0.5
+        };
+        InstrumentEnvelope envelope = new(project) { Name = "Envelope", AttackTicks = 12 };
+        CSharpMappingFunction function = new(project) { Name = "Function", Body = "return value;" };
+        SubVoice source = new(project) { Name = "Layer", RootNoteOverride = 72 };
+        source.InitialState.Controllers.Add(11, 90);
+        TemplateEvent controller = TemplateEvent.ControlChange(project, 20, 11, 64);
+        ValueMappingStep step = new(project)
+        {
+            Source = MappingSource.LogicalParameter,
+            Operation = MappingOperation.CustomCSharp,
+            LogicalParameterId = parameter.Id,
+            EnvelopeId = envelope.Id,
+            MappingFunctionId = function.Id
+        };
+        controller.ValueMappings.Add(step);
+        source.Events.Add(controller);
+        sourceInstrument.LogicalParameters.Add(parameter);
+        sourceInstrument.Envelopes.Add(envelope);
+        sourceInstrument.MappingFunctions.Add(function);
+        sourceInstrument.SubVoices.Add(source);
+        targetInstrument.SubVoices.Add(new(project) { Name = "Existing" });
+        project.EventInstruments.AddRange([sourceInstrument, targetInstrument]);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+        ProjectObjectClipboardPayload payload = ProjectObjectClipboard.CopySubVoice(
+            document,
+            sourceInstrument.Id,
+            source.Id);
+        long firstCopiedId = project.NextStableId;
+
+        document.Execute(ProjectObjectClipboard.CreatePasteSubVoiceCommand(
+            document,
+            payload,
+            targetInstrument.Id,
+            insertionIndex: 1));
+
+        SubVoice copy = targetInstrument.SubVoices[1];
+        TemplateEvent eventCopy = Assert.Single(copy.Events);
+        ValueMappingStep stepCopy = Assert.Single(eventCopy.ValueMappings);
+        LogicalParameterDefinition parameterCopy = Assert.Single(targetInstrument.LogicalParameters);
+        InstrumentEnvelope envelopeCopy = Assert.Single(targetInstrument.Envelopes);
+        CSharpMappingFunction functionCopy = Assert.Single(targetInstrument.MappingFunctions);
+        Assert.Equal(("Layer", 72), (copy.Name, copy.RootNoteOverride));
+        Assert.Equal(90, copy.InitialState.Controllers[11]);
+        Assert.All(
+            new[] { copy.Id, eventCopy.Id, stepCopy.Id, parameterCopy.Id, envelopeCopy.Id, functionCopy.Id },
+            id => Assert.True(id.Value >= firstCopiedId));
+        Assert.Equal(parameterCopy.Id, stepCopy.LogicalParameterId);
+        Assert.Equal(envelopeCopy.Id, stepCopy.EnvelopeId);
+        Assert.Equal(functionCopy.Id, stepCopy.MappingFunctionId);
+        Assert.NotEqual(parameter.Id, parameterCopy.Id);
+        Assert.Single(document.History);
+        AssertMatchesFull(compilation);
+
+        document.Undo();
+        Assert.Single(targetInstrument.SubVoices);
+        Assert.Empty(targetInstrument.LogicalParameters);
+        Assert.Empty(targetInstrument.Envelopes);
+        Assert.Empty(targetInstrument.MappingFunctions);
+        AssertMatchesFull(compilation);
+
+        document.Redo();
+        Assert.Same(copy, targetInstrument.SubVoices[1]);
+        Assert.Same(parameterCopy, Assert.Single(targetInstrument.LogicalParameters));
         AssertMatchesFull(compilation);
     }
 

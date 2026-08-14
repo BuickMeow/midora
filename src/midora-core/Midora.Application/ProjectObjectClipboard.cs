@@ -9,6 +9,7 @@ public enum ProjectObjectClipboardKind
     LogicalParameterLane,
     LogicalParameterLaneContent,
     SubVoiceTimelineEvents,
+    SubVoice,
     ValueCurveContent,
     MappingChain,
     ConductorEvents

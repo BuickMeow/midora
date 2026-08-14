@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using Midora.Application;
 using Midora.Domain;
 
@@ -169,6 +170,11 @@ public partial class LogicalParameterDefinitionDialog : Window, INotifyPropertyC
         {
             ErrorText.Text = exception.Message;
         }
+    }
+
+    private void OnTitleMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.LeftButton == MouseButtonState.Pressed) DragMove();
     }
 
     private static double ParseDouble(string text, string label)

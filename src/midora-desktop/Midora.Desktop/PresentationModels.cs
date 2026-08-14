@@ -173,9 +173,11 @@ public sealed class InspectorField(
     string value,
     bool isEditable = true,
     InspectorFieldValueState valueState = InspectorFieldValueState.SameValue,
-    IReadOnlyList<string>? options = null) : ObservableObject
+    IReadOnlyList<string>? options = null,
+    bool isBoolean = false) : ObservableObject
 {
     private string _value = value;
+    private bool _booleanValue = bool.TryParse(value, out bool parsed) && parsed;
 
     public string Key { get; } = key;
     public string Label { get; } = label;
@@ -185,10 +187,20 @@ public sealed class InspectorField(
     public bool IsUnavailable => ValueState == InspectorFieldValueState.Unavailable;
     public IReadOnlyList<string> Options { get; } = options ?? [];
     public bool IsChoice => Options.Count > 0;
+    public bool IsBoolean { get; } = isBoolean;
     public string Value
     {
         get => _value;
         set => Set(ref _value, value);
+    }
+    public bool BooleanValue
+    {
+        get => _booleanValue;
+        set
+        {
+            if (!Set(ref _booleanValue, value)) return;
+            Value = value ? bool.TrueString : bool.FalseString;
+        }
     }
 }
 
@@ -513,6 +525,12 @@ public sealed record ConductorEventRow(
     string Type,
     string Value);
 
+public sealed record ParameterLaneOption(
+    MidoraId ParameterId,
+    MidoraId? LaneId,
+    string Label,
+    bool IsBroken = false);
+
 public sealed class TrackSelectionRow(MidoraId id, string name, bool isSelected) : ObservableObject
 {
     private bool _isSelected = isSelected;
@@ -656,12 +674,16 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         get => _velocitySnapshot;
         private set => Set(ref _velocitySnapshot, value);
     }
-    public ObservableCollection<string> ParameterLaneLabels { get; } = [];
+    public ObservableCollection<ParameterLaneOption> ParameterLaneOptions { get; } = [];
     public int ActiveParameterLaneIndex
     {
         get => _activeParameterLaneIndex;
-        set => Set(ref _activeParameterLaneIndex, Math.Max(0, value));
+        set => Set(ref _activeParameterLaneIndex, Math.Max(-1, value));
     }
+    public ParameterLaneOption? GetActiveParameterLaneOption() =>
+        ActiveParameterLaneIndex >= 0 && ActiveParameterLaneIndex < ParameterLaneOptions.Count
+            ? ParameterLaneOptions[ActiveParameterLaneIndex]
+            : null;
     public double ActiveValueMinimum
     {
         get => _activeValueMinimum;
@@ -1057,23 +1079,50 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             : null;
         List<TimelineRenderItem> parameterItems = [];
         List<string> parameterLabels = [];
-        ParameterLaneLabels.Clear();
-        foreach (LogicalParameterLane lane in segment.ParameterLanes)
+        MidoraId? previousParameterId = GetActiveParameterLaneOption()?.ParameterId;
+        ParameterLaneOptions.Clear();
+        if (instrument is not null)
         {
-            LogicalParameterDefinition? definition = instrument?.LogicalParameters
-                .FirstOrDefault(item => item.Id == lane.ParameterId);
-            ParameterLaneLabels.Add(definition?.Name ?? $"Broken parameter {lane.ParameterId.Value}");
+            foreach (LogicalParameterDefinition definition in instrument.LogicalParameters)
+            {
+                LogicalParameterLane? lane = segment.ParameterLanes.FirstOrDefault(
+                    item => item.ParameterId == definition.Id);
+                ParameterLaneOptions.Add(new(
+                    definition.Id,
+                    lane?.Id,
+                    lane is null ? $"{definition.Name} · Empty" : definition.Name));
+            }
         }
-        if (ActiveParameterLaneIndex >= segment.ParameterLanes.Count) ActiveParameterLaneIndex = 0;
+        foreach (LogicalParameterLane lane in segment.ParameterLanes.Where(lane =>
+            instrument?.LogicalParameters.Any(definition => definition.Id == lane.ParameterId) != true))
+        {
+            ParameterLaneOptions.Add(new(
+                lane.ParameterId,
+                lane.Id,
+                $"Broken parameter {lane.ParameterId.Value}",
+                IsBroken: true));
+        }
+        MidoraId? selectedParameterId = Selection.Primary is MidoraId selected
+            ? segment.ParameterLanes.FirstOrDefault(lane =>
+                lane.Id == selected || lane.Points.Any(point => point.Id == selected))?.ParameterId
+            : null;
+        MidoraId? preferredParameterId = selectedParameterId ?? previousParameterId;
+        int preferredIndex = preferredParameterId is MidoraId parameterId
+            ? ParameterLaneOptions.ToList().FindIndex(option => option.ParameterId == parameterId)
+            : -1;
+        ActiveParameterLaneIndex = ParameterLaneOptions.Count == 0
+            ? -1
+            : preferredIndex >= 0
+                ? preferredIndex
+                : Math.Clamp(ActiveParameterLaneIndex, 0, ParameterLaneOptions.Count - 1);
         ActiveValueMinimum = 0;
         ActiveValueMaximum = 127;
         ActiveValueIntegral = true;
-        for (int laneIndex = 0; laneIndex < segment.ParameterLanes.Count; laneIndex++)
+        ParameterLaneOption? activeOption = GetActiveParameterLaneOption();
+        if (activeOption is not null)
         {
-            if (laneIndex != ActiveParameterLaneIndex) continue;
-            LogicalParameterLane lane = segment.ParameterLanes[laneIndex];
             LogicalParameterDefinition? definition = instrument?.LogicalParameters
-                .FirstOrDefault(item => item.Id == lane.ParameterId);
+                .FirstOrDefault(item => item.Id == activeOption.ParameterId);
             if (definition is not null)
             {
                 double minimum = definition.DisplayMinimum;
@@ -1087,8 +1136,11 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 ActiveValueMaximum = maximum;
                 ActiveValueIntegral = definition.Type is LogicalParameterType.Integer or LogicalParameterType.Enum;
             }
-            parameterLabels.Add(definition?.Name ?? $"Broken parameter {lane.ParameterId.Value}");
-            CurvePoint[] points = lane.Points.OrderBy(item => item.Tick).ThenBy(item => item.Id).ToArray();
+            parameterLabels.Add(activeOption.Label);
+            LogicalParameterLane? lane = activeOption.LaneId is MidoraId laneId
+                ? segment.ParameterLanes.FirstOrDefault(item => item.Id == laneId)
+                : null;
+            CurvePoint[] points = lane?.Points.OrderBy(item => item.Tick).ThenBy(item => item.Id).ToArray() ?? [];
             for (int pointIndex = 0; pointIndex < points.Length; pointIndex++)
             {
                 CurvePoint point = points[pointIndex];
@@ -1390,7 +1442,7 @@ public sealed record MappingStepListItem(MidoraId Id, MidoraId ChainId, string O
 public sealed record InstrumentRenderLane(
     MidoraId SubVoiceId,
     string Label,
-    TemplateEventKind? EventKind = null,
+    MidiValueTarget? Target = null,
     MidoraId? ValueCurveId = null);
 
 public sealed record InitialStateListItem(string Target, string Value, string Scope);
@@ -1502,9 +1554,16 @@ public sealed class InstrumentWorkspaceViewModel(
     private OverlapScope _overlapScope;
     private string _loopStartText = string.Empty;
     private string _loopEndText = string.Empty;
+    private string _instrumentNameText = string.Empty;
+    private string _instrumentDescriptionText = string.Empty;
+    private string _instrumentColorText = "#6B7280";
+    private string _instrumentRootNoteText = "60";
+    private string _instrumentTemplateLengthText = "1";
+    private string _instrumentStableIdText = string.Empty;
     private long? _loopStartTick;
     private long? _loopEndTick;
     private long _templateLengthTicks = 1;
+    private int _activeRootPitch = 60;
     private long _scenarioGateLengthTicks = 192;
     private int _scenarioPitch = 60;
     private int _scenarioVelocity = 100;
@@ -1519,8 +1578,15 @@ public sealed class InstrumentWorkspaceViewModel(
     private bool _isPreviewSoloSelected;
     private InstrumentPreviewMode _previewMode;
     private long? _editCursorTick;
+    private int _activeSectionIndex;
 
     public TimelineEditorSettings EditorSettings { get; } = editorSettings ?? new TimelineEditorSettings();
+
+    public int ActiveSectionIndex
+    {
+        get => _activeSectionIndex;
+        set => Set(ref _activeSectionIndex, Math.Clamp(value, 0, 4));
+    }
 
     public long? EditCursorTick
     {
@@ -1556,7 +1622,7 @@ public sealed class InstrumentWorkspaceViewModel(
     public int ActiveRenderLaneIndex
     {
         get => _activeRenderLaneIndex;
-        set => Set(ref _activeRenderLaneIndex, Math.Max(0, value));
+        set => Set(ref _activeRenderLaneIndex, Math.Max(-1, value));
     }
     public double ActiveValueMinimum
     {
@@ -1599,9 +1665,16 @@ public sealed class InstrumentWorkspaceViewModel(
     public OverlapScope OverlapScope { get => _overlapScope; private set => Set(ref _overlapScope, value); }
     public string LoopStartText { get => _loopStartText; set => Set(ref _loopStartText, value ?? string.Empty); }
     public string LoopEndText { get => _loopEndText; set => Set(ref _loopEndText, value ?? string.Empty); }
+    public string InstrumentNameText { get => _instrumentNameText; set => Set(ref _instrumentNameText, value ?? string.Empty); }
+    public string InstrumentDescriptionText { get => _instrumentDescriptionText; set => Set(ref _instrumentDescriptionText, value ?? string.Empty); }
+    public string InstrumentColorText { get => _instrumentColorText; set => Set(ref _instrumentColorText, value ?? string.Empty); }
+    public string InstrumentRootNoteText { get => _instrumentRootNoteText; set => Set(ref _instrumentRootNoteText, value ?? string.Empty); }
+    public string InstrumentTemplateLengthText { get => _instrumentTemplateLengthText; set => Set(ref _instrumentTemplateLengthText, value ?? string.Empty); }
+    public string InstrumentStableIdText { get => _instrumentStableIdText; private set => Set(ref _instrumentStableIdText, value); }
     public long? LoopStartTick { get => _loopStartTick; private set => Set(ref _loopStartTick, value); }
     public long? LoopEndTick { get => _loopEndTick; private set => Set(ref _loopEndTick, value); }
     public long TemplateLengthTicks { get => _templateLengthTicks; private set => Set(ref _templateLengthTicks, Math.Max(1, value)); }
+    public int ActiveRootPitch { get => _activeRootPitch; private set => Set(ref _activeRootPitch, Math.Clamp(value, 0, 127)); }
     public long ScenarioGateLengthTicks { get => _scenarioGateLengthTicks; set => Set(ref _scenarioGateLengthTicks, Math.Max(1, value)); }
     public int ScenarioPitch { get => _scenarioPitch; set => Set(ref _scenarioPitch, Math.Clamp(value, 0, 127)); }
     public int ScenarioVelocity { get => _scenarioVelocity; set => Set(ref _scenarioVelocity, Math.Clamp(value, 1, 127)); }
@@ -1648,7 +1721,8 @@ public sealed class InstrumentWorkspaceViewModel(
     public ObservableCollection<MappingChainListItem> MappingChains { get; } = [];
     public ObservableCollection<MappingStepListItem> MappingSteps { get; } = [];
     public ObservableCollection<InitialStateListItem> InitialStateEntries { get; } = [];
-    public IReadOnlyList<InstrumentRenderLane> RenderLanes { get; private set; } = [];
+    public ObservableCollection<InspectorField> InstrumentInitialStateFields { get; } = [];
+    public ObservableCollection<InstrumentRenderLane> RenderLanes { get; } = [];
 
     public override void Rebuild(MidoraProject project, long revision)
     {
@@ -1661,6 +1735,9 @@ public sealed class InstrumentWorkspaceViewModel(
         MappingChains.Clear();
         MappingSteps.Clear();
         InitialStateEntries.Clear();
+        InstrumentInitialStateFields.Clear();
+        MidiValueTarget? previousTarget = GetRenderLane(ActiveRenderLaneIndex)?.Target;
+        RenderLanes.Clear();
         if (instrument is null)
         {
             Summary = "The Event Instrument no longer exists.";
@@ -1671,11 +1748,17 @@ public sealed class InstrumentWorkspaceViewModel(
             ActiveSubVoiceId = null;
             ActiveSubVoiceName = "Missing SubVoice";
             ActiveSubVoiceContext = "The Event Instrument no longer exists.";
-            RenderLanes = [];
             return;
         }
 
         Header = instrument.Name;
+        InstrumentNameText = instrument.Name;
+        InstrumentDescriptionText = instrument.Description ?? string.Empty;
+        InstrumentColorText = $"#{instrument.Color.Red:X2}{instrument.Color.Green:X2}{instrument.Color.Blue:X2}";
+        InstrumentRootNoteText = instrument.RootNote.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        InstrumentTemplateLengthText = instrument.TemplateLengthTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        InstrumentStableIdText = instrument.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        AddInstrumentInitialStateFields(instrument.InitialState);
         Summary = $"Root {MidiNoteName(instrument.RootNote)} · Template {instrument.TemplateLengthTicks} ticks · {instrument.SubVoices.Count} SubVoices";
         RequiresChannelIsolation = instrument.RequiresChannelIsolation;
         ShortLifecycle = instrument.ShortLifecycle;
@@ -1727,12 +1810,14 @@ public sealed class InstrumentWorkspaceViewModel(
             string voiceName = string.IsNullOrWhiteSpace(voice.Name)
                 ? $"SubVoice {instrument.SubVoices.IndexOf(voice) + 1}"
                 : voice.Name;
-            foreach (TemplateEvent item in voice.Events)
+            foreach (SubVoiceEventMapping mapping in voice.EventMappings
+                .OrderBy(value => value.Target.EventKind)
+                .ThenBy(value => value.Target.EventNumber)
+                .ThenBy(value => value.Target.Parameter))
             {
-                string owner = $"{voiceName} · {item.Kind} @ {item.Tick}";
-                AddMappingChain(item.NumberMappings, $"{owner} · Number");
-                AddMappingChain(item.ValueMappings, $"{owner} · Value");
-                AddMappingChain(item.SecondaryValueMappings, $"{owner} · Secondary");
+                AddMappingChain(
+                    mapping.Steps,
+                    $"{voiceName} · {FormatEventMappingTarget(mapping.Target)}");
             }
         }
         foreach (InstrumentEnvelope envelope in instrument.Envelopes)
@@ -1745,6 +1830,7 @@ public sealed class InstrumentWorkspaceViewModel(
 
         SubVoice? activeVoice = ResolveActiveSubVoice(instrument, Selection.Primary, ActiveSubVoiceId);
         ActiveSubVoiceId = activeVoice?.Id;
+        ActiveRootPitch = activeVoice?.RootNoteOverride ?? instrument.RootNote;
         ActiveSubVoiceName = activeVoice is null
             ? "No SubVoice"
             : string.IsNullOrWhiteSpace(activeVoice.Name)
@@ -1777,88 +1863,63 @@ public sealed class InstrumentWorkspaceViewModel(
                         : TimelineItemState.None)));
             }
 
-            foreach (IGrouping<TemplateEventKind, TemplateEvent> group in activeVoice.Events
+            foreach (IGrouping<MidiValueTarget, (TemplateEvent Event, MidiValueTarget Target)> group in
+                     activeVoice.Events
                          .Where(item => item.Kind != TemplateEventKind.Note)
-                         .GroupBy(item => item.Kind)
-                         .OrderBy(item => item.Key))
+                         .SelectMany(item => TemplateEventMidiTargets.Enumerate(item)
+                             .Select(target => (Event: item, Target: target)))
+                         .GroupBy(item => item.Target)
+                         .OrderBy(item => item.Key.Kind)
+                         .ThenBy(item => item.Key.Number))
             {
                 int eventLane = lanes.Count;
-                lanes.Add(new(activeVoice.Id, FormatEventLane(group.Key), group.Key));
-                foreach (TemplateEvent item in group)
+                lanes.Add(new(activeVoice.Id, TemplateEventMidiTargets.Format(group.Key), group.Key));
+                foreach ((TemplateEvent item, MidiValueTarget laneTarget) in group)
                 {
                     events.Add(new(
                         item.Id,
-                        TimelineItemKind.TemplateEvent,
+                        TimelineItemKind.LogicalParameterPoint,
                         item.Tick,
                         checked(item.Tick + 1),
                         eventLane,
-                        item.Value,
-                        1,
-                        SelectionState(item.Id)));
-                }
-            }
-
-            foreach (ValueCurve curve in activeVoice.Curves.OrderBy(item => item.Id))
-            {
-                int curveLane = lanes.Count;
-                lanes.Add(new(activeVoice.Id, $"{FormatTarget(curve.Target)} · Continuous Curve", ValueCurveId: curve.Id));
-                CurvePoint[] points = curve.Points.OrderBy(item => item.Tick).ThenBy(item => item.Id).ToArray();
-                for (int pointIndex = 0; pointIndex < points.Length; pointIndex++)
-                {
-                    CurvePoint point = points[pointIndex];
-                    TimelineItemState state = SelectionState(point.Id);
-                    if (pointIndex + 1 < points.Length)
-                    {
-                        CurvePoint next = points[pointIndex + 1];
-                        events.Add(new(
-                            point.Id,
-                            TimelineItemKind.LogicalParameterCurve,
-                            point.Tick,
-                            next.Tick,
-                            curveLane,
-                            NormalizeMidiValue(curve.Target, point.Value),
-                            0,
-                            state | TimelineItemState.HitTestDisabled)
-                        {
-                            SecondaryValue = NormalizeMidiValue(curve.Target, next.Value),
-                            Interpolation = point.Interpolation
-                        });
-                    }
-                    events.Add(new(
-                        point.Id,
-                        TimelineItemKind.LogicalParameterPoint,
-                        point.Tick,
-                        checked(point.Tick + 1),
-                        curveLane,
-                        NormalizeMidiValue(curve.Target, point.Value),
+                        NormalizeMidiValue(laneTarget, TemplateEventMidiTargets.GetValue(item, laneTarget)),
                         2,
-                        state)
-                    {
-                        Interpolation = point.Interpolation
-                    });
+                        SelectionState(item.Id)));
                 }
             }
 
             AddInitialStateEntries(activeVoice.InitialState);
         }
 
-        RenderLanes = lanes;
-        if (ActiveRenderLaneIndex >= lanes.Count) ActiveRenderLaneIndex = 0;
+        foreach (InstrumentRenderLane lane in lanes) RenderLanes.Add(lane);
+        MidiValueTarget? selectedTarget = null;
+        if (Selection.Primary is MidoraId selectedEventId
+            && activeVoice?.Events.FirstOrDefault(item => item.Id == selectedEventId) is TemplateEvent selectedEvent)
+        {
+            MidiValueTarget[] selectedTargets = TemplateEventMidiTargets.Enumerate(selectedEvent).ToArray();
+            selectedTarget = previousTarget is MidiValueTarget previous
+                && selectedTargets.Contains(previous)
+                    ? previous
+                    : selectedTargets.FirstOrDefault();
+        }
+        MidiValueTarget? preferredTarget = selectedTarget ?? previousTarget;
+        int preferredLane = preferredTarget is MidiValueTarget target
+            ? lanes.FindIndex(item => item.Target == target)
+            : -1;
+        ActiveRenderLaneIndex = lanes.Count == 0
+            ? -1
+            : preferredLane >= 0
+                ? preferredLane
+                : Math.Clamp(ActiveRenderLaneIndex, 0, lanes.Count - 1);
         ActiveValueMinimum = 0;
         ActiveValueMaximum = 127;
         ActiveValueIntegral = true;
         if (lanes.Count != 0)
         {
             InstrumentRenderLane activeLane = lanes[ActiveRenderLaneIndex];
-            if (activeLane.ValueCurveId is MidoraId activeCurveId && activeVoice is not null)
+            if (activeLane.Target is MidiValueTarget activeTarget)
             {
-                ValueCurve curve = activeVoice.Curves.Single(item => item.Id == activeCurveId);
-                (ActiveValueMinimum, ActiveValueMaximum) = MidiValueRange(curve.Target);
-            }
-            else if (activeLane.EventKind == TemplateEventKind.PitchBend)
-            {
-                ActiveValueMinimum = -8192;
-                ActiveValueMaximum = 8191;
+                (ActiveValueMinimum, ActiveValueMaximum) = MidiValueRange(activeTarget);
             }
         }
         TimelineRenderItem[] activeEvents = lanes.Count == 0
@@ -1915,7 +1976,7 @@ public sealed class InstrumentWorkspaceViewModel(
             Add("Pitch Bend Range Semitones", state.PitchBendRangeSemitones);
             Add("Pitch Bend Range Cents", state.PitchBendRangeCents);
             foreach ((int number, int value) in state.Controllers.OrderBy(item => item.Key))
-                InitialStateEntries.Add(new($"CC {number}", value.ToString(System.Globalization.CultureInfo.InvariantCulture), "SubVoice"));
+                InitialStateEntries.Add(new(MidiControlChangeCatalog.Format(number), value.ToString(System.Globalization.CultureInfo.InvariantCulture), "SubVoice"));
             foreach ((int number, int value) in state.RegisteredParameters.OrderBy(item => item.Key))
                 InitialStateEntries.Add(new($"RPN {number}", value.ToString(System.Globalization.CultureInfo.InvariantCulture), "SubVoice"));
             foreach ((int number, int value) in state.NonRegisteredParameters.OrderBy(item => item.Key))
@@ -1928,6 +1989,28 @@ public sealed class InstrumentWorkspaceViewModel(
                     value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "Not set",
                     "SubVoice"));
             }
+        }
+
+        void AddInstrumentInitialStateFields(MidiInitialState state)
+        {
+            Add("bankMsb", "BANK MSB", state.BankMsb);
+            Add("bankLsb", "BANK LSB", state.BankLsb);
+            Add("program", "PROGRAM (0–127)", state.Program);
+            Add("pitchBend", "PITCH BEND", state.PitchBend);
+            Add("pitchRangeSemitones", "PITCH RANGE SEMITONES", state.PitchBendRangeSemitones);
+            Add("pitchRangeCents", "PITCH RANGE CENTS", state.PitchBendRangeCents);
+            foreach ((int number, int value) in state.Controllers.OrderBy(item => item.Key))
+                Add($"cc.{number}", MidiControlChangeCatalog.Format(number), value);
+            foreach ((int number, int value) in state.RegisteredParameters.OrderBy(item => item.Key))
+                Add($"rpn.{number}", $"RPN {number}", value);
+            foreach ((int number, int value) in state.NonRegisteredParameters.OrderBy(item => item.Key))
+                Add($"nrpn.{number}", $"NRPN {number}", value);
+
+            void Add(string key, string label, int? value) =>
+                InstrumentInitialStateFields.Add(new(
+                    key,
+                    label,
+                    value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty));
         }
 
         void AddMappingChain(MappingChain chain, string owner)
@@ -1968,18 +2051,6 @@ public sealed class InstrumentWorkspaceViewModel(
             : instrument.SubVoices.FirstOrDefault();
     }
 
-    private static string FormatEventLane(TemplateEventKind kind) => kind switch
-    {
-        TemplateEventKind.ControlChange => "CC · Continuous Events",
-        TemplateEventKind.PitchBend => "Pitch Bend · Continuous Events",
-        TemplateEventKind.Program => "Program · Discrete Events (1–128)",
-        TemplateEventKind.Bank => "Bank · Discrete Events",
-        TemplateEventKind.RegisteredParameter => "RPN · Discrete Events",
-        TemplateEventKind.NonRegisteredParameter => "NRPN · Discrete Events",
-        TemplateEventKind.PitchBendRange => "Pitch Bend Range · Discrete Events",
-        _ => kind.ToString()
-    };
-
     internal static (double Minimum, double Maximum) MidiValueRange(MidiValueTarget target) => target.Kind switch
     {
         MidiValueKind.PitchBend => (-8192, 8191),
@@ -2000,13 +2071,34 @@ public sealed class InstrumentWorkspaceViewModel(
         return Math.Clamp((value - minimum) / (maximum - minimum), 0, 1);
     }
 
-    private static string FormatTarget(MidiValueTarget target) => target.Kind switch
+    private static string FormatTarget(MidiValueTarget target) => TemplateEventMidiTargets.Format(target);
+
+    private static string FormatEventMappingTarget(TemplateEventMappingTarget target)
     {
-        MidiValueKind.ControlChange => $"CC {target.Number}",
-        MidiValueKind.RegisteredParameter => $"RPN {target.Number}",
-        MidiValueKind.NonRegisteredParameter => $"NRPN {target.Number}",
-        _ => target.Kind.ToString()
-    };
+        string eventName = target.EventKind switch
+        {
+            TemplateEventKind.Note => "Note",
+            TemplateEventKind.ControlChange => MidiControlChangeCatalog.Format(target.EventNumber),
+            TemplateEventKind.Bank => "Bank",
+            TemplateEventKind.Program => "Program",
+            TemplateEventKind.PitchBend => "Pitch Bend",
+            TemplateEventKind.RegisteredParameter => $"RPN {target.EventNumber}",
+            TemplateEventKind.NonRegisteredParameter => $"NRPN {target.EventNumber}",
+            TemplateEventKind.PitchBendRange => "Pitch Bend Range",
+            _ => target.EventKind.ToString()
+        };
+        string parameter = (target.EventKind, target.Parameter) switch
+        {
+            (TemplateEventKind.Note, TemplateEventMappingParameter.Number) => "Number",
+            (TemplateEventKind.Note, TemplateEventMappingParameter.Value) => "Velocity",
+            (TemplateEventKind.Bank, TemplateEventMappingParameter.Value) => "MSB",
+            (TemplateEventKind.Bank, TemplateEventMappingParameter.SecondaryValue) => "LSB",
+            (TemplateEventKind.PitchBendRange, TemplateEventMappingParameter.Value) => "Semitones",
+            (TemplateEventKind.PitchBendRange, TemplateEventMappingParameter.SecondaryValue) => "Cents",
+            _ => "Value"
+        };
+        return $"{eventName} · {parameter}";
+    }
 
     private static string MidiNoteName(int note) => TimelineWorkspaceViewModel.MidiNoteName(note);
 }
@@ -2177,7 +2269,10 @@ public sealed class SettingsWorkspaceViewModel()
             new($"{prefix}.pitchRangeCents", "PITCH RANGE CENTS", state.PitchBendRangeCents?.ToString() ?? string.Empty)
         ];
         fields.AddRange(state.Controllers.OrderBy(item => item.Key)
-            .Select(item => new InspectorField($"{prefix}.cc.{item.Key}", $"CC {item.Key}", item.Value.ToString())));
+            .Select(item => new InspectorField(
+                $"{prefix}.cc.{item.Key}",
+                MidiControlChangeCatalog.Format(item.Key),
+                item.Value.ToString())));
         fields.AddRange(state.RegisteredParameters.OrderBy(item => item.Key)
             .Select(item => new InspectorField($"{prefix}.rpn.{item.Key}", $"RPN {item.Key}", item.Value.ToString())));
         fields.AddRange(state.NonRegisteredParameters.OrderBy(item => item.Key)

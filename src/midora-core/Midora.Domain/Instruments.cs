@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+
 namespace Midora.Domain;
 
 public enum ShortNoteLifecycle
@@ -40,37 +42,137 @@ public enum TemplateEventKind
     PitchBendRange
 }
 
+public enum TemplateEventMappingParameter
+{
+    Number,
+    Value,
+    SecondaryValue
+}
+
+public readonly record struct TemplateEventMappingTarget(
+    TemplateEventKind EventKind,
+    int EventNumber,
+    TemplateEventMappingParameter Parameter)
+{
+    public static TemplateEventMappingTarget Create(
+        TemplateEventKind eventKind,
+        int eventNumber,
+        TemplateEventMappingParameter parameter) =>
+        new(
+            eventKind,
+            UsesEventNumber(eventKind) ? eventNumber : 0,
+            parameter);
+
+    public static IEnumerable<TemplateEventMappingTarget> Enumerate(TemplateEvent value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        switch (value.Kind)
+        {
+            case TemplateEventKind.Note:
+                yield return Create(value.Kind, value.Number, TemplateEventMappingParameter.Number);
+                yield return Create(value.Kind, value.Number, TemplateEventMappingParameter.Value);
+                break;
+            case TemplateEventKind.ControlChange:
+            case TemplateEventKind.Program:
+            case TemplateEventKind.PitchBend:
+            case TemplateEventKind.RegisteredParameter:
+            case TemplateEventKind.NonRegisteredParameter:
+                yield return Create(value.Kind, value.Number, TemplateEventMappingParameter.Value);
+                break;
+            case TemplateEventKind.Bank:
+                if (value.HasBankMsb)
+                {
+                    yield return Create(value.Kind, value.Number, TemplateEventMappingParameter.Value);
+                }
+                if (value.HasBankLsb)
+                {
+                    yield return Create(
+                        value.Kind,
+                        value.Number,
+                        TemplateEventMappingParameter.SecondaryValue);
+                }
+                break;
+            case TemplateEventKind.PitchBendRange:
+                yield return Create(value.Kind, value.Number, TemplateEventMappingParameter.Value);
+                yield return Create(
+                    value.Kind,
+                    value.Number,
+                    TemplateEventMappingParameter.SecondaryValue);
+                break;
+        }
+    }
+
+    public static bool IsSupported(TemplateEventMappingTarget target) =>
+        Enum.IsDefined(target.EventKind)
+        && Enum.IsDefined(target.Parameter)
+        && target.EventNumber == (UsesEventNumber(target.EventKind) ? target.EventNumber : 0)
+        && target.Parameter switch
+        {
+            TemplateEventMappingParameter.Number => target.EventKind == TemplateEventKind.Note,
+            TemplateEventMappingParameter.Value => true,
+            TemplateEventMappingParameter.SecondaryValue =>
+                target.EventKind is TemplateEventKind.Bank or TemplateEventKind.PitchBendRange,
+            _ => false
+        };
+
+    private static bool UsesEventNumber(TemplateEventKind eventKind) =>
+        eventKind is TemplateEventKind.ControlChange
+            or TemplateEventKind.RegisteredParameter
+            or TemplateEventKind.NonRegisteredParameter;
+}
+
+public sealed class SubVoiceEventMapping
+{
+    public SubVoiceEventMapping(MidoraProject project, TemplateEventMappingTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (!TemplateEventMappingTarget.IsSupported(target))
+        {
+            throw new ArgumentOutOfRangeException(nameof(target));
+        }
+        Target = target;
+        Steps = new MappingChain(project);
+    }
+
+    internal SubVoiceEventMapping(
+        MidoraProject project,
+        TemplateEventMappingTarget target,
+        MidoraId mappingChainId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (!TemplateEventMappingTarget.IsSupported(target))
+        {
+            throw new ArgumentOutOfRangeException(nameof(target));
+        }
+        Target = target;
+        Steps = new MappingChain(project, mappingChainId);
+    }
+
+    public TemplateEventMappingTarget Target { get; }
+    public MappingChain Steps { get; internal set; }
+    public MidiIntegerTargetSettings TargetSettings { get; } = new();
+}
+
 public sealed class TemplateEvent
 {
     public TemplateEvent(MidoraProject project)
     {
         ArgumentNullException.ThrowIfNull(project);
+        _project = project;
         Id = project.AllocateStableId();
-        NumberMappings = new MappingChain(project);
-        ValueMappings = new MappingChain(project);
-        SecondaryValueMappings = new MappingChain(project);
-        NumberTargetSettings = new MidiIntegerTargetSettings();
-        ValueTargetSettings = new MidiIntegerTargetSettings();
-        SecondaryValueTargetSettings = new MidiIntegerTargetSettings();
     }
 
-    internal TemplateEvent(
-        MidoraProject project,
-        MidoraId preservedId,
-        MidoraId numberMappingsId,
-        MidoraId valueMappingsId,
-        MidoraId secondaryValueMappingsId)
+    internal TemplateEvent(MidoraProject project, MidoraId preservedId)
     {
         ArgumentNullException.ThrowIfNull(project);
         if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        _project = project;
         Id = preservedId;
-        NumberMappings = new MappingChain(project, numberMappingsId);
-        ValueMappings = new MappingChain(project, valueMappingsId);
-        SecondaryValueMappings = new MappingChain(project, secondaryValueMappingsId);
-        NumberTargetSettings = new MidiIntegerTargetSettings();
-        ValueTargetSettings = new MidiIntegerTargetSettings();
-        SecondaryValueTargetSettings = new MidiIntegerTargetSettings();
     }
+
+    private readonly MidoraProject _project;
+    private readonly Dictionary<TemplateEventMappingParameter, SubVoiceEventMapping> _detachedMappings = [];
+    private SubVoice? _owner;
 
     public MidoraId Id { get; init; }
     public TemplateEventKind Kind { get; set; }
@@ -82,12 +184,107 @@ public sealed class TemplateEvent
     public bool HasBankMsb { get; internal set; } = true;
     public bool HasBankLsb { get; internal set; } = true;
     public bool FollowPitchDelta { get; set; } = true;
-    public MappingChain NumberMappings { get; internal set; }
-    public MappingChain ValueMappings { get; internal set; }
-    public MappingChain SecondaryValueMappings { get; internal set; }
-    public MidiIntegerTargetSettings NumberTargetSettings { get; }
-    public MidiIntegerTargetSettings ValueTargetSettings { get; }
-    public MidiIntegerTargetSettings SecondaryValueTargetSettings { get; }
+    public MappingChain NumberMappings
+    {
+        get => GetMapping(TemplateEventMappingParameter.Number).Steps;
+        internal set => GetMapping(TemplateEventMappingParameter.Number).Steps = value;
+    }
+
+    public MappingChain ValueMappings
+    {
+        get => GetMapping(TemplateEventMappingParameter.Value).Steps;
+        internal set => GetMapping(TemplateEventMappingParameter.Value).Steps = value;
+    }
+
+    public MappingChain SecondaryValueMappings
+    {
+        get => GetMapping(TemplateEventMappingParameter.SecondaryValue).Steps;
+        internal set => GetMapping(TemplateEventMappingParameter.SecondaryValue).Steps = value;
+    }
+
+    public MidiIntegerTargetSettings NumberTargetSettings =>
+        GetMapping(TemplateEventMappingParameter.Number).TargetSettings;
+
+    public MidiIntegerTargetSettings ValueTargetSettings =>
+        GetMapping(TemplateEventMappingParameter.Value).TargetSettings;
+
+    public MidiIntegerTargetSettings SecondaryValueTargetSettings =>
+        GetMapping(TemplateEventMappingParameter.SecondaryValue).TargetSettings;
+
+    internal void AttachTo(SubVoice owner)
+    {
+        ArgumentNullException.ThrowIfNull(owner);
+        if (_owner is not null && !ReferenceEquals(_owner, owner))
+        {
+            throw new InvalidOperationException(
+                "A Template Event cannot be attached to more than one SubVoice.");
+        }
+        _owner = owner;
+        foreach (SubVoiceEventMapping detached in _detachedMappings.Values)
+        {
+            SubVoiceEventMapping? existing = owner.FindEventMapping(detached.Target);
+            if (existing is null)
+            {
+                owner.EventMappings.Add(detached);
+                continue;
+            }
+            MergeDetachedMapping(existing, detached);
+        }
+        _detachedMappings.Clear();
+    }
+
+    internal void EnsureMappings() => _owner?.EnsureEventMappings(this);
+
+    private SubVoiceEventMapping GetMapping(TemplateEventMappingParameter parameter)
+    {
+        if (_owner is null)
+        {
+            if (_detachedMappings.TryGetValue(parameter, out SubVoiceEventMapping? detached))
+            {
+                return detached;
+            }
+            TemplateEventMappingTarget target = TemplateEventMappingTarget.Create(
+                Kind,
+                Number,
+                parameter);
+            if (!TemplateEventMappingTarget.IsSupported(target))
+            {
+                throw new InvalidOperationException(
+                    "The Template Event does not expose the requested Mapping target.");
+            }
+            detached = new SubVoiceEventMapping(_project, target);
+            _detachedMappings.Add(parameter, detached);
+            return detached;
+        }
+        return _owner.GetOrCreateEventMapping(
+            TemplateEventMappingTarget.Create(Kind, Number, parameter));
+    }
+
+    private static void MergeDetachedMapping(
+        SubVoiceEventMapping existing,
+        SubVoiceEventMapping detached)
+    {
+        bool detachedHasContent = detached.Steps.Count != 0
+            || !detached.Steps.IsEnabled
+            || detached.TargetSettings.Rounding != MappingRounding.Round
+            || detached.TargetSettings.Overflow != MappingOverflow.Fail;
+        if (!detachedHasContent)
+        {
+            return;
+        }
+        bool existingHasContent = existing.Steps.Count != 0
+            || !existing.Steps.IsEnabled
+            || existing.TargetSettings.Rounding != MappingRounding.Round
+            || existing.TargetSettings.Overflow != MappingOverflow.Fail;
+        if (existingHasContent)
+        {
+            throw new InvalidOperationException(
+                "A shared SubVoice event Mapping already exists for this target.");
+        }
+        existing.Steps = detached.Steps;
+        existing.TargetSettings.Rounding = detached.TargetSettings.Rounding;
+        existing.TargetSettings.Overflow = detached.TargetSettings.Overflow;
+    }
 
     public static TemplateEvent Note(
         MidoraProject project,
@@ -178,22 +375,91 @@ public sealed class SubVoice
     public SubVoice(MidoraProject project)
     {
         ArgumentNullException.ThrowIfNull(project);
+        _project = project;
         Id = project.AllocateStableId();
+        Events = new TemplateEventCollection(this);
     }
 
     internal SubVoice(MidoraProject project, MidoraId preservedId)
     {
         ArgumentNullException.ThrowIfNull(project);
         if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        _project = project;
         Id = preservedId;
+        Events = new TemplateEventCollection(this);
     }
+
+    private readonly MidoraProject _project;
 
     public MidoraId Id { get; init; }
     public string? Name { get; set; }
     public int? RootNoteOverride { get; set; }
     public MidiInitialState InitialState { get; } = new();
-    public List<TemplateEvent> Events { get; } = [];
+    public TemplateEventCollection Events { get; }
+    public List<SubVoiceEventMapping> EventMappings { get; } = [];
     public List<ValueCurve> Curves { get; } = [];
+
+    public SubVoiceEventMapping? FindEventMapping(TemplateEventMappingTarget target) =>
+        EventMappings.SingleOrDefault(value => value.Target == target);
+
+    public SubVoiceEventMapping GetOrCreateEventMapping(TemplateEventMappingTarget target)
+    {
+        if (!TemplateEventMappingTarget.IsSupported(target))
+        {
+            throw new ArgumentOutOfRangeException(nameof(target));
+        }
+        SubVoiceEventMapping? existing = FindEventMapping(target);
+        if (existing is not null)
+        {
+            return existing;
+        }
+        SubVoiceEventMapping created = new(_project, target);
+        EventMappings.Add(created);
+        return created;
+    }
+
+    internal void EnsureEventMappings(TemplateEvent value)
+    {
+        foreach (TemplateEventMappingTarget target in TemplateEventMappingTarget.Enumerate(value))
+        {
+            _ = GetOrCreateEventMapping(target);
+        }
+    }
+}
+
+public sealed class TemplateEventCollection : Collection<TemplateEvent>
+{
+    private readonly SubVoice _owner;
+
+    internal TemplateEventCollection(SubVoice owner)
+    {
+        _owner = owner ?? throw new ArgumentNullException(nameof(owner));
+    }
+
+    public void AddRange(IEnumerable<TemplateEvent> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        foreach (TemplateEvent value in values)
+        {
+            Add(value);
+        }
+    }
+
+    protected override void InsertItem(int index, TemplateEvent item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        item.AttachTo(_owner);
+        _owner.EnsureEventMappings(item);
+        base.InsertItem(index, item);
+    }
+
+    protected override void SetItem(int index, TemplateEvent item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        item.AttachTo(_owner);
+        _owner.EnsureEventMappings(item);
+        base.SetItem(index, item);
+    }
 }
 
 public sealed class InstrumentEnvelope

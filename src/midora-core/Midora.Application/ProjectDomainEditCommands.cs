@@ -647,7 +647,7 @@ public static partial class ProjectDomainEditCommands
         segments.Insert(index, segment);
     }
 
-    private static void RequireContains<T>(List<T> values, T value, string objectName)
+    private static void RequireContains<T>(ICollection<T> values, T value, string objectName)
         where T : class
     {
         if (!values.Contains(value))
@@ -656,7 +656,7 @@ public static partial class ProjectDomainEditCommands
         }
     }
 
-    private static void RemoveRequired<T>(List<T> values, T value, string objectName)
+    private static void RemoveRequired<T>(ICollection<T> values, T value, string objectName)
         where T : class
     {
         if (!values.Remove(value))
@@ -665,7 +665,7 @@ public static partial class ProjectDomainEditCommands
         }
     }
 
-    private static void InsertAt<T>(List<T> values, int index, T value, string objectName)
+    private static void InsertAt<T>(IList<T> values, int index, T value, string objectName)
         where T : class
     {
         if ((uint)index > (uint)values.Count)

@@ -474,10 +474,9 @@ public sealed class MidoraCompiler : IDisposable
 
     private static IEnumerable<ValueMappingStep> GetActiveMappingSteps(EventInstrument instrument) =>
         instrument.ParameterMappings.SelectMany(value => ActiveSteps(value.Steps))
-            .Concat(instrument.SubVoices.SelectMany(value => value.Events)
-                .SelectMany(value => ActiveSteps(value.NumberMappings)
-                    .Concat(ActiveSteps(value.ValueMappings))
-                    .Concat(ActiveSteps(value.SecondaryValueMappings))));
+            .Concat(instrument.SubVoices
+                .SelectMany(value => value.EventMappings)
+                .SelectMany(value => ActiveSteps(value.Steps)));
 
     private TrackExpansion ExpandTrackIncrementally(
         MidoraProject project,
@@ -781,6 +780,10 @@ public sealed class MidoraCompiler : IDisposable
             .ToDictionary(value => value.Id);
         Dictionary<MidoraId, CSharpMappingFunction> functions = instrument.MappingFunctions
             .ToDictionary(value => value.Id);
+        Dictionary<TemplateEventMappingTarget, SubVoiceEventMapping>[] eventMappingsByVoice =
+            instrument.SubVoices
+                .Select(voice => voice.EventMappings.ToDictionary(value => value.Target))
+                .ToArray();
         int sourceOrder = initialSourceOrder;
         List<AcceptedInstance> activePolicyInstances = [];
         foreach (Segment segment in new[] { requestedSegment })
@@ -831,6 +834,7 @@ public sealed class MidoraCompiler : IDisposable
                                 project, track, previous.Segment, previous.Note, instrument,
                                 previous.ProjectStartTick, projectStart, previous.SegmentEndTick,
                                 previousParameters, definitions, lanes, functions,
+                                eventMappingsByVoice,
                                 previous.SourceOrder,
                                 diagnostics,
                                 heldPreviewGateOpen,
@@ -844,7 +848,8 @@ public sealed class MidoraCompiler : IDisposable
                 }
                 RawInstance instance = ExpandInstance(
                     project, track, segment, note, instrument, projectStart, gateEnd, segmentEnd,
-                    parameterValues, definitions, lanes, functions, instanceSourceOrder, diagnostics,
+                    parameterValues, definitions, lanes, functions, eventMappingsByVoice,
+                    instanceSourceOrder, diagnostics,
                     heldPreviewGateOpen,
                     heldPreviewFinalGateLengthTicks,
                     cancellationToken);
@@ -883,6 +888,7 @@ public sealed class MidoraCompiler : IDisposable
         IReadOnlyDictionary<MidoraId, LogicalParameterDefinition> definitions,
         IReadOnlyDictionary<MidoraId, LogicalParameterLane> lanes,
         IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions,
+        IReadOnlyList<Dictionary<TemplateEventMappingTarget, SubVoiceEventMapping>> eventMappingsByVoice,
         int sourceOrder,
         List<CompilerDiagnostic> diagnostics,
         bool heldPreviewGateOpen = false,
@@ -952,6 +958,8 @@ public sealed class MidoraCompiler : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             SubVoice voice = instrument.SubVoices[voiceIndex];
+            IReadOnlyDictionary<TemplateEventMappingTarget, SubVoiceEventMapping> eventMappings =
+                eventMappingsByVoice[voiceIndex];
             SourceReference source = new(track.Id, segment.Id, note.Id, instrument.Id, voice.Id, Tick: projectStart);
             List<RawMidiEvent> events = [];
             MidiInitialState state = MergeState(project.GlobalInitialState, instrument.InitialState, voice.InitialState);
@@ -1029,7 +1037,7 @@ public sealed class MidoraCompiler : IDisposable
                     };
                     try
                     {
-                        EmitTemplateEvent(events, templateEvent, tick, gateEnd, actualEnd,
+                        EmitTemplateEvent(events, eventMappings, templateEvent, tick, gateEnd, actualEnd,
                             releaseTriggered, pitchDelta, note.Velocity,
                             context, parametersAtTick, envelopesAtTick, functions,
                             source with
@@ -1088,6 +1096,7 @@ public sealed class MidoraCompiler : IDisposable
 
     private void EmitTemplateEvent(
         List<RawMidiEvent> output,
+        IReadOnlyDictionary<TemplateEventMappingTarget, SubVoiceEventMapping> eventMappings,
         TemplateEvent value,
         long tick,
         long gateEnd,
@@ -1103,10 +1112,22 @@ public sealed class MidoraCompiler : IDisposable
         ref long sequence,
         bool heldPreviewGateOpen)
     {
-        int number = ApplyMappedInt(value.Number, value.NumberMappings, value.NumberTargetSettings,
+        SubVoiceEventMapping? numberMapping = FindEventMapping(
+            eventMappings,
+            value,
+            TemplateEventMappingParameter.Number);
+        SubVoiceEventMapping? valueMapping = FindEventMapping(
+            eventMappings,
+            value,
+            TemplateEventMappingParameter.Value);
+        SubVoiceEventMapping? secondaryMapping = FindEventMapping(
+            eventMappings,
+            value,
+            TemplateEventMappingParameter.SecondaryValue);
+        int number = ApplyMappedInt(value.Number, numberMapping,
             context with { CurrentParameter = MappingTargetParameterV2.Number, TargetOriginalValue = value.Number },
             parameters, envelopes, functions, 0, 127, value.Number, false);
-        int eventValue = ApplyMappedInt(value.Value, value.ValueMappings, value.ValueTargetSettings,
+        int eventValue = ApplyMappedInt(value.Value, valueMapping,
             context with { CurrentParameter = MappingTargetParameterV2.Value, TargetOriginalValue = value.Value },
             parameters, envelopes, functions,
             value.Kind switch
@@ -1118,14 +1139,14 @@ public sealed class MidoraCompiler : IDisposable
             value.Kind is TemplateEventKind.RegisteredParameter or TemplateEventKind.NonRegisteredParameter ? 16383 :
             value.Kind == TemplateEventKind.PitchBend ? 8191 : 127,
             DefaultTemplateValue(value.Kind), true);
-        int secondary = ApplyMappedInt(value.SecondaryValue, value.SecondaryValueMappings, value.SecondaryValueTargetSettings,
+        int secondary = ApplyMappedInt(value.SecondaryValue, secondaryMapping,
             context with { CurrentParameter = MappingTargetParameterV2.SecondaryValue, TargetOriginalValue = value.SecondaryValue },
             parameters, envelopes, functions, 0,
             value.Kind == TemplateEventKind.PitchBendRange ? 99 : 127,
             value.Kind == TemplateEventKind.PitchBendRange ? 0 : value.SecondaryValue, true);
-        SourceReference numberSource = AddFinalMappingStepSource(source, value.NumberMappings);
-        SourceReference valueSource = AddFinalMappingStepSource(source, value.ValueMappings);
-        SourceReference secondarySource = AddFinalMappingStepSource(source, value.SecondaryValueMappings);
+        SourceReference numberSource = AddFinalMappingStepSource(source, numberMapping?.Steps);
+        SourceReference valueSource = AddFinalMappingStepSource(source, valueMapping?.Steps);
+        SourceReference secondarySource = AddFinalMappingStepSource(source, secondaryMapping?.Steps);
         switch (value.Kind)
         {
             case TemplateEventKind.Note:
@@ -1148,8 +1169,8 @@ public sealed class MidoraCompiler : IDisposable
                             : numberSource.EnvelopeId
                     };
                 }
-                SourceReference noteSource = value.NumberMappings.IsEnabled
-                    && value.NumberMappings.Any(step => step.IsEnabled)
+                SourceReference noteSource = numberMapping is { Steps.IsEnabled: true }
+                    && numberMapping.Steps.Any(step => step.IsEnabled)
                     ? numberSource
                     : valueSource;
                 output.Add(RawMidiEvent.NoteOn(tick, number, eventValue, sequence++, noteSource));
@@ -1204,8 +1225,7 @@ public sealed class MidoraCompiler : IDisposable
 
     private int ApplyMappedInt(
         int value,
-        MappingChain steps,
-        MidiIntegerTargetSettings targetSettings,
+        SubVoiceEventMapping? mapping,
         in MappingContextV2 context,
         IReadOnlyDictionary<MidoraId, double> parameters,
         IReadOnlyDictionary<MidoraId, double> envelopes,
@@ -1215,21 +1235,40 @@ public sealed class MidoraCompiler : IDisposable
         int targetDefault,
         bool allowClamp)
     {
-        if (!steps.IsEnabled || steps.Count == 0 || !steps.Any(item => item.IsEnabled))
+        MappingChain? steps = mapping?.Steps;
+        if (steps is null
+            || !steps.IsEnabled
+            || steps.Count == 0
+            || !steps.Any(item => item.IsEnabled))
         {
             return value;
         }
         double result = _mapping.Apply(
             value, steps, context, parameters, envelopes, functions,
-            minimum, maximum, targetDefault, targetSettings.Overflow, allowClamp);
-        return MappingEngine.Round(result, targetSettings.Rounding);
+            minimum, maximum, targetDefault, mapping!.TargetSettings.Overflow, allowClamp);
+        return MappingEngine.Round(result, mapping.TargetSettings.Rounding);
+    }
+
+    private static SubVoiceEventMapping? FindEventMapping(
+        IReadOnlyDictionary<TemplateEventMappingTarget, SubVoiceEventMapping> eventMappings,
+        TemplateEvent value,
+        TemplateEventMappingParameter parameter)
+    {
+        TemplateEventMappingTarget target = TemplateEventMappingTarget.Create(
+            value.Kind,
+            value.Number,
+            parameter);
+        return TemplateEventMappingTarget.IsSupported(target)
+            && eventMappings.TryGetValue(target, out SubVoiceEventMapping? mapping)
+            ? mapping
+            : null;
     }
 
     private static SourceReference AddFinalMappingStepSource(
         SourceReference source,
-        MappingChain chain)
+        MappingChain? chain)
     {
-        ValueMappingStep? step = chain.IsEnabled
+        ValueMappingStep? step = chain is { IsEnabled: true }
             ? chain.LastOrDefault(value => value.IsEnabled)
             : null;
         return step is null
@@ -1632,9 +1671,9 @@ public sealed class MidoraCompiler : IDisposable
         IEnumerable<ValueMappingStep> steps = instrument.ParameterMappings
             .Where(value => value.Steps.IsEnabled)
             .SelectMany(value => value.Steps.Where(step => step.IsEnabled))
-            .Concat(instrument.SubVoices.SelectMany(value => value.Events)
-                .SelectMany(value => ActiveSteps(value.NumberMappings).Concat(ActiveSteps(value.ValueMappings))
-                    .Concat(ActiveSteps(value.SecondaryValueMappings))));
+            .Concat(instrument.SubVoices
+                .SelectMany(value => value.EventMappings)
+                .SelectMany(value => ActiveSteps(value.Steps)));
         foreach (ValueMappingStep step in steps)
         {
             if (step.Source == MappingSource.Envelope && step.EnvelopeId.HasValue)
@@ -3231,12 +3270,17 @@ internal static class SourceFingerprint
                     Add(ref hash, value.HasBankLsb ? 1 : 0);
                 }
                 Add(ref hash, value.FollowPitchDelta ? 1 : 0);
-                AddChain(ref hash, value.NumberMappings);
-                AddTargetSettings(ref hash, value.NumberTargetSettings);
-                AddChain(ref hash, value.ValueMappings);
-                AddTargetSettings(ref hash, value.ValueTargetSettings);
-                AddChain(ref hash, value.SecondaryValueMappings);
-                AddTargetSettings(ref hash, value.SecondaryValueTargetSettings);
+            }
+            foreach (SubVoiceEventMapping mapping in voice.EventMappings
+                .OrderBy(value => value.Target.EventKind)
+                .ThenBy(value => value.Target.EventNumber)
+                .ThenBy(value => value.Target.Parameter))
+            {
+                Add(ref hash, (int)mapping.Target.EventKind);
+                Add(ref hash, mapping.Target.EventNumber);
+                Add(ref hash, (int)mapping.Target.Parameter);
+                AddChain(ref hash, mapping.Steps);
+                AddTargetSettings(ref hash, mapping.TargetSettings);
             }
             foreach (ValueCurve curve in voice.Curves)
             {

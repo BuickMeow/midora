@@ -61,20 +61,6 @@ public static partial class ProjectDomainEditCommands
                         {
                             TemplateEvent copy = new(owner);
                             SetTemplateEvent(copy, replacements[index]);
-                            CopyMappingChain(owner, notes[index].NumberMappings, copy.NumberMappings);
-                            CopyMappingChain(owner, notes[index].ValueMappings, copy.ValueMappings);
-                            CopyMappingChain(owner, notes[index].SecondaryValueMappings, copy.SecondaryValueMappings);
-                            SetTargetSettings(
-                                copy.NumberTargetSettings,
-                                new(notes[index].NumberTargetSettings.Rounding, notes[index].NumberTargetSettings.Overflow));
-                            SetTargetSettings(
-                                copy.ValueTargetSettings,
-                                new(notes[index].ValueTargetSettings.Rounding, notes[index].ValueTargetSettings.Overflow));
-                            SetTargetSettings(
-                                copy.SecondaryValueTargetSettings,
-                                new(
-                                    notes[index].SecondaryValueTargetSettings.Rounding,
-                                    notes[index].SecondaryValueTargetSettings.Overflow));
                             copies[index] = copy;
                         }
                     }

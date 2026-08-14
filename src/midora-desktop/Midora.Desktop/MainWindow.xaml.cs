@@ -998,7 +998,6 @@ public partial class MainWindow : Window
                 case TimelineSurfaceMode.EventLanes
                     when _session.ActiveWorkspace is InstrumentWorkspaceViewModel:
                     Add("Add Template Event…", OnAddTemplateEventClick, enabled: _session.CanEditProject);
-                    Add("Add Value Curve…", OnAddValueCurveClick, enabled: _session.CanEditProject);
                     return;
                 default:
                     menu.IsOpen = false;
@@ -1405,6 +1404,37 @@ public partial class MainWindow : Window
             ProjectDomainEditCommands.DuplicateSubVoice(instrumentId, subVoiceId), workspace));
     }
 
+    private void OnSubVoiceDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not ListBox
+            {
+                DataContext: InstrumentWorkspaceViewModel workspace,
+                SelectedItem: SubVoiceListItem selected
+            }) return;
+        e.Handled = true;
+        _ = Dispatcher.BeginInvoke(() =>
+        {
+            if (!ReferenceEquals(_session.ActiveWorkspace, workspace)) return;
+            _session.ActivateSubVoiceEditor(workspace, selected.Id);
+        }, DispatcherPriority.Normal);
+    }
+
+    private void OnSubVoiceCutClick(object sender, RoutedEventArgs e) =>
+        CutOrCopyProjectSelection(cut: true);
+
+    private void OnSubVoiceCopyClick(object sender, RoutedEventArgs e) =>
+        CutOrCopyProjectSelection(cut: false);
+
+    private void OnSubVoicePasteClick(object sender, RoutedEventArgs e) =>
+        PasteProjectSelection();
+
+    private void OnSubVoiceDeleteClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace
+            || workspace.Selection.Primary is not MidoraId subVoiceId) return;
+        RunSynchronous("Delete SubVoice", () => DeleteInstrumentSelection(workspace, [subVoiceId]));
+    }
+
     private void OnMoveSubVoiceClick(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { Tag: string directionText }
@@ -1439,6 +1469,108 @@ public partial class MainWindow : Window
         }
         RunSynchronous("Change Event Instrument Isolation", () => _session.Execute(
             ProjectDomainEditCommands.UpdateEventInstrumentIsolation(instrumentId, enabled)));
+    }
+
+    private void OnInstrumentConfigurationLostFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is not TextBox { Tag: string field }
+            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace
+            || workspace.ObjectId is not MidoraId instrumentId)
+        {
+            return;
+        }
+        RunSynchronous("Update Event Instrument configuration", () =>
+        {
+            IProjectEditCommand command = field switch
+            {
+                "Name" => ProjectDomainEditCommands.RenameEventInstrument(
+                    instrumentId,
+                    workspace.InstrumentNameText),
+                "Description" => ProjectDomainEditCommands.UpdateEventInstrumentDescription(
+                    instrumentId,
+                    string.IsNullOrWhiteSpace(workspace.InstrumentDescriptionText)
+                        ? null
+                        : workspace.InstrumentDescriptionText),
+                "Color" => ProjectDomainEditCommands.UpdateEventInstrumentColor(
+                    instrumentId,
+                    ParseInstrumentColor(workspace.InstrumentColorText)),
+                "RootNote" => ProjectDomainEditCommands.UpdateEventInstrumentRootNote(
+                    instrumentId,
+                    int.Parse(workspace.InstrumentRootNoteText, NumberStyles.Integer, CultureInfo.InvariantCulture)),
+                "TemplateLength" => ProjectDomainEditCommands.UpdateEventInstrumentTemplateLength(
+                    instrumentId,
+                    long.Parse(workspace.InstrumentTemplateLengthText, NumberStyles.Integer, CultureInfo.InvariantCulture)),
+                _ => throw new InvalidOperationException("Unknown Event Instrument configuration field.")
+            };
+            _session.Execute(command);
+        });
+    }
+
+    private static MidoraColor ParseInstrumentColor(string text)
+    {
+        string value = (text ?? string.Empty).Trim();
+        if (value.StartsWith('#')) value = value[1..];
+        if (value.Length != 6
+            || !byte.TryParse(value.AsSpan(0, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte red)
+            || !byte.TryParse(value.AsSpan(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte green)
+            || !byte.TryParse(value.AsSpan(4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte blue))
+        {
+            throw new FormatException("Color must use #RRGGBB hexadecimal format.");
+        }
+        return new(red, green, blue);
+    }
+
+    private void OnInstrumentInitialStateFieldLostFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is not TextBox { Tag: InspectorField field }
+            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel
+            {
+                ObjectId: MidoraId instrumentId
+            } workspace)
+        {
+            return;
+        }
+        RunSynchronous("Update Event Instrument Initial State", () =>
+        {
+            string text = field.Value.Trim();
+            int? value = text.Length == 0
+                ? null
+                : int.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture);
+            _session.Execute(ProjectDomainEditCommands.UpdateEventInstrumentInitialStateValue(
+                instrumentId,
+                ParseConfigurationMidiTarget(field.Key),
+                value));
+        });
+        _session.RefreshWorkspace(workspace);
+    }
+
+    private static MidiValueTarget ParseConfigurationMidiTarget(string key)
+    {
+        if (key == "bankMsb") return MidiValueTarget.BankMsb;
+        if (key == "bankLsb") return MidiValueTarget.BankLsb;
+        if (key == "program") return MidiValueTarget.Program;
+        if (key == "pitchBend") return MidiValueTarget.PitchBend;
+        if (key == "pitchRangeSemitones") return MidiValueTarget.PitchBendRangeSemitones;
+        if (key == "pitchRangeCents") return MidiValueTarget.PitchBendRangeCents;
+        if (TryNumber("cc.", MidiValueKind.ControlChange, out MidiValueTarget target)
+            || TryNumber("rpn.", MidiValueKind.RegisteredParameter, out target)
+            || TryNumber("nrpn.", MidiValueKind.NonRegisteredParameter, out target))
+        {
+            return target;
+        }
+        throw new InvalidOperationException("Unknown Event Instrument Initial State target.");
+
+        bool TryNumber(string prefix, MidiValueKind kind, out MidiValueTarget result)
+        {
+            result = default;
+            if (!key.StartsWith(prefix, StringComparison.Ordinal)
+                || !int.TryParse(key.AsSpan(prefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out int number))
+            {
+                return false;
+            }
+            result = new(kind, number);
+            return true;
+        }
     }
 
     private void OnInstrumentLifecycleSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1606,9 +1738,12 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true || dialog.Target is not MidiValueTarget target) return;
         RunSynchronous("Add Instrument MIDI State", () =>
         {
-            MidoraId? selectedSubVoice = sender is FrameworkElement { Tag: "ActiveSubVoice" }
-                ? workspace.ActiveSubVoiceId
-                : workspace.Selection.Primary;
+            MidoraId? selectedSubVoice = sender switch
+            {
+                FrameworkElement { Tag: "ActiveSubVoice" } => workspace.ActiveSubVoiceId,
+                FrameworkElement { Tag: "Instrument" } => null,
+                _ => workspace.Selection.Primary
+            };
             if (selectedSubVoice is MidoraId selected
                 && _session.Project!.EventInstruments.Single(item => item.Id == instrumentId)
                     .SubVoices.Any(item => item.Id == selected))
@@ -2271,9 +2406,9 @@ public partial class MainWindow : Window
                 ObjectId: MidoraId segmentId
             } timelineWorkspace
             && TimelineWorkspaceViewModel.FindSegment(project, segmentId) is { } located
-            && (uint)timelineWorkspace.ActiveParameterLaneIndex < (uint)located.Segment.ParameterLanes.Count)
+            && timelineWorkspace.GetActiveParameterLaneOption()?.LaneId is MidoraId activeLaneId)
         {
-            workspace.Selection.Replace(located.Segment.ParameterLanes[timelineWorkspace.ActiveParameterLaneIndex].Id);
+            workspace.Selection.Replace(activeLaneId);
             _session.RefreshWorkspace(workspace);
             return;
         }
@@ -2446,6 +2581,22 @@ public partial class MainWindow : Window
 
     private void OnActiveEditorLaneDropDownClosed(object sender, EventArgs e)
     {
+        if (_session.ActiveWorkspace is TimelineWorkspaceViewModel
+            {
+                Mode: TimelineWorkspaceMode.Segment,
+                ObjectId: MidoraId segmentId
+            } timeline
+            && timeline.GetActiveParameterLaneOption() is ParameterLaneOption
+            {
+                LaneId: null,
+                IsBroken: false
+            } option)
+        {
+            RunSynchronous("Create Logical Parameter Lane", () => ExecuteAndSelectCreated(
+                ProjectDomainEditCommands.CreateLogicalParameterLane(segmentId, option.ParameterId),
+                timeline));
+            return;
+        }
         if (_session.ActiveWorkspace is WorkspaceViewModel workspace)
         {
             _session.RefreshWorkspace(workspace);
@@ -2643,6 +2794,23 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            _session.Inspector.ErrorText = exception.Message;
+        }
+    }
+
+    private void OnInspectorBooleanClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { Tag: InspectorField field }
+            || !field.IsEditable
+            || !field.IsBoolean) return;
+        try
+        {
+            _session.ApplyInspectorField(field);
+            _session.Inspector.ErrorText = null;
+        }
+        catch (Exception exception)
+        {
+            field.BooleanValue = !field.BooleanValue;
             _session.Inspector.ErrorText = exception.Message;
         }
     }
@@ -2942,8 +3110,9 @@ public partial class MainWindow : Window
                         {
                             (LogicalTrack Track, Segment Segment)? location =
                                 TimelineWorkspaceViewModel.FindSegment(_session.Project, segmentId);
-                            if (location is null || timeline.ActiveParameterLaneIndex >= location.Value.Segment.ParameterLanes.Count) return;
-                            LogicalParameterLane lane = location.Value.Segment.ParameterLanes[timeline.ActiveParameterLaneIndex];
+                            if (location is null
+                                || timeline.GetActiveParameterLaneOption()?.LaneId is not MidoraId laneId) return;
+                            LogicalParameterLane lane = location.Value.Segment.ParameterLanes.Single(item => item.Id == laneId);
                             EventInstrument instrument = _session.Project.EventInstruments.Single(
                                 item => item.Id == location.Value.Track.EventInstrumentId);
                             LogicalParameterDefinition definition = instrument.LogicalParameters.Single(
@@ -3016,23 +3185,13 @@ public partial class MainWindow : Window
             InstrumentRenderLane? lane = instrument.GetRenderLane(e.Lane);
             if (lane is null) return;
             long tick = instrument.EditorSettings.SnapAbsolute(e.Tick);
-            if (lane.ValueCurveId is MidoraId curveId)
+            if (lane.Target is MidiValueTarget target)
             {
-                SubVoice voice = source.SubVoices.Single(item => item.Id == lane.SubVoiceId);
-                ValueCurve curve = voice.Curves.Single(item => item.Id == curveId);
-                RunSynchronous("Create Value Curve point", () => ExecuteAndSelectCreated(
-                    ProjectDomainEditCommands.CreateValueCurvePoint(
-                        instrumentId,
-                        voice.Id,
-                        curve.Id,
-                        tick,
-                        InstrumentWorkspaceViewModel.DenormalizeMidiValue(curve.Target, e.NormalizedValue),
-                        CurveInterpolation.Linear), instrument));
-            }
-            else if (lane.EventKind is TemplateEventKind kind)
-            {
-                RunSynchronous($"Create {kind}", () => ExecuteAndSelectCreated(
-                    CreateTemplateEventCommand(instrumentId, lane.SubVoiceId, kind, tick, source.RootNote), instrument));
+                int value = checked((int)InstrumentWorkspaceViewModel.DenormalizeMidiValue(
+                    target,
+                    e.NormalizedValue));
+                RunSynchronous($"Create {TemplateEventMidiTargets.Format(target)}", () => ExecuteAndSelectCreated(
+                    CreateTemplateEventCommand(instrumentId, lane.SubVoiceId, target, tick, value), instrument));
             }
         }
     }
@@ -3092,6 +3251,30 @@ public partial class MainWindow : Window
                 EditTemplateEvent(instrument, e);
             }
         });
+    }
+
+    private void OnTimelineEventPointEditCompleted(object? sender, TimelineEventPointEditEventArgs e)
+    {
+        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace
+            || workspace.ObjectId is not MidoraId instrumentId
+            || workspace.ActiveSubVoiceId is not MidoraId voiceId
+            || workspace.GetRenderLane(workspace.ActiveRenderLaneIndex)?.Target is not MidiValueTarget target
+            || e.Points.Count == 0)
+        {
+            return;
+        }
+        TemplateEventPointEdit[] edits = e.Points
+            .OrderBy(value => value.Key)
+            .Select(value => new TemplateEventPointEdit(
+                value.Key,
+                checked((int)InstrumentWorkspaceViewModel.DenormalizeMidiValue(target, value.Value))))
+            .ToArray();
+        RunSynchronous("Draw Event points", () => _session.Execute(
+            ProjectDomainEditCommands.UpsertTemplateEventPoints(
+                instrumentId,
+                voiceId,
+                target,
+                edits)));
     }
 
     private void EditConductorEvent(MidoraId id, long tick)
@@ -3360,11 +3543,7 @@ public partial class MainWindow : Window
         EventInstrument instrument = _session.Project!.EventInstruments.Single(item => item.Id == instrumentId);
         SubVoice? voice = instrument.SubVoices.FirstOrDefault(item => item.Events.Any(value => value.Id == edit.Item.Id));
         TemplateEvent? template = voice?.Events.FirstOrDefault(item => item.Id == edit.Item.Id);
-        if (voice is null || template is null)
-        {
-            EditValueCurvePoint(workspace, edit);
-            return;
-        }
+        if (voice is null || template is null) return;
         long snappedDelta = workspace.EditorSettings.SnapDelta(
             edit.TickDelta,
             checked((edit.EditKind == TimelineItemEditKind.ResizeEnd
@@ -3429,6 +3608,24 @@ public partial class MainWindow : Window
                         endDelta: snappedDelta));
                     return;
             }
+        }
+        MidiValueTarget? activeTarget = workspace.GetRenderLane(workspace.ActiveRenderLaneIndex)?.Target;
+        if (activeTarget is MidiValueTarget target
+            && TemplateEventMidiTargets.Enumerate(template).Contains(target))
+        {
+            int currentValue = TemplateEventMidiTargets.GetValue(template, target);
+            (double minimum, double maximum) = InstrumentWorkspaceViewModel.MidiValueRange(target);
+            int value = checked((int)Math.Round(
+                Math.Clamp(currentValue + edit.ValueDelta * (maximum - minimum), minimum, maximum),
+                MidpointRounding.AwayFromZero));
+            _session.Execute(UpdateTemplateEventTargetCommand(
+                instrumentId,
+                voice.Id,
+                template,
+                target,
+                template.Tick,
+                value));
+            return;
         }
         long tick = Math.Max(0, checked(template.Tick + snappedDelta));
         long length = template.LengthTicks;
@@ -3503,39 +3700,24 @@ public partial class MainWindow : Window
             || workspace.ObjectId is not MidoraId instrumentId
             || _session.Project is null) return;
         EventInstrument instrument = _session.Project.EventInstruments.Single(item => item.Id == instrumentId);
-        SelectionDialog voiceDialog = new(
-            "Add Template Event",
-            "Select the target SubVoice.",
-            instrument.SubVoices.Select((voice, index) => new SelectionDialogItem(
-                voice.Id,
-                string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {index + 1}" : voice.Name))) { Owner = this };
-        if (voiceDialog.ShowDialog() != true || voiceDialog.SelectedValue is not MidoraId voiceId) return;
-        SelectionDialog kindDialog = new(
-            "Add Template Event",
-            "Select the formal Template Event kind. Exact fields can be edited in Inspector after creation.",
-            Enum.GetValues<TemplateEventKind>().Select(kind => new SelectionDialogItem(kind, kind.ToString()))) { Owner = this };
-        if (kindDialog.ShowDialog() != true || kindDialog.SelectedValue is not TemplateEventKind kind) return;
-        RunSynchronous($"Create {kind}", () => ExecuteAndSelectCreated(
-            CreateTemplateEventCommand(instrumentId, voiceId, kind, 0, instrument.RootNote), workspace));
-    }
-
-    private void OnAddValueCurveClick(object sender, RoutedEventArgs e)
-    {
-        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace
-            || workspace.ObjectId is not MidoraId instrumentId
-            || _session.Project is null) return;
-        EventInstrument instrument = _session.Project.EventInstruments.Single(item => item.Id == instrumentId);
-        SelectionDialog voiceDialog = new(
-            "Add Value Curve",
-            "Select the target SubVoice.",
-            instrument.SubVoices.Select((voice, index) => new SelectionDialogItem(
-                voice.Id,
-                string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {index + 1}" : voice.Name))) { Owner = this };
-        if (voiceDialog.ShowDialog() != true || voiceDialog.SelectedValue is not MidoraId voiceId) return;
-        MidiTargetDialog targetDialog = new("Add Value Curve") { Owner = this };
+        MidoraId? voiceId = workspace.ActiveSubVoiceId;
+        if (voiceId is null)
+        {
+            SelectionDialog voiceDialog = new(
+                "Add Event",
+                "Select the target SubVoice.",
+                instrument.SubVoices.Select((voice, index) => new SelectionDialogItem(
+                    voice.Id,
+                    string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {index + 1}" : voice.Name))) { Owner = this };
+            if (voiceDialog.ShowDialog() != true || voiceDialog.SelectedValue is not MidoraId selectedVoiceId) return;
+            voiceId = selectedVoiceId;
+        }
+        MidiTargetDialog targetDialog = new("Add Event") { Owner = this };
         if (targetDialog.ShowDialog() != true || targetDialog.Result is not MidiValueTarget target) return;
-        RunSynchronous("Create Value Curve", () => ExecuteAndSelectCreated(
-            ProjectDomainEditCommands.CreateValueCurve(instrumentId, voiceId, target), workspace));
+        long tick = workspace.EditorSettings.SnapAbsolute(workspace.EditCursorTick ?? 0);
+        int value = target.Kind == MidiValueKind.PitchBendRangeSemitones ? 2 : 0;
+        RunSynchronous($"Create {TemplateEventMidiTargets.Format(target)}", () => ExecuteAndSelectCreated(
+            CreateTemplateEventCommand(instrumentId, voiceId.Value, target, tick, value), workspace));
     }
 
     private void OnAddParameterMappingClick(object sender, RoutedEventArgs e)
@@ -3676,6 +3858,65 @@ public partial class MainWindow : Window
         TemplateEventKind.PitchBendRange => ProjectDomainEditCommands.CreateTemplatePitchBendRange(
             instrumentId, voiceId, tick, 2, 0),
         _ => throw new InvalidOperationException("Unsupported Template Event kind.")
+    };
+
+    private static IProjectEditCommand CreateTemplateEventCommand(
+        MidoraId instrumentId,
+        MidoraId voiceId,
+        MidiValueTarget target,
+        long tick,
+        int value) => target.Kind switch
+    {
+        MidiValueKind.ControlChange => ProjectDomainEditCommands.CreateTemplateControlChange(
+            instrumentId, voiceId, tick, target.Number, Math.Clamp(value, 0, 127)),
+        MidiValueKind.BankMsb => ProjectDomainEditCommands.CreateTemplateBank(
+            instrumentId, voiceId, tick, Math.Clamp(value, 0, 127), null),
+        MidiValueKind.BankLsb => ProjectDomainEditCommands.CreateTemplateBank(
+            instrumentId, voiceId, tick, null, Math.Clamp(value, 0, 127)),
+        MidiValueKind.Program => ProjectDomainEditCommands.CreateTemplateProgram(
+            instrumentId, voiceId, tick, Math.Clamp(value, 0, 127)),
+        MidiValueKind.PitchBend => ProjectDomainEditCommands.CreateTemplatePitchBend(
+            instrumentId, voiceId, tick, Math.Clamp(value, -8192, 8191)),
+        MidiValueKind.RegisteredParameter => ProjectDomainEditCommands.CreateTemplateRegisteredParameter(
+            instrumentId, voiceId, tick, target.Number, Math.Clamp(value, 0, 16_383)),
+        MidiValueKind.NonRegisteredParameter => ProjectDomainEditCommands.CreateTemplateNonRegisteredParameter(
+            instrumentId, voiceId, tick, target.Number, Math.Clamp(value, 0, 16_383)),
+        MidiValueKind.PitchBendRangeSemitones => ProjectDomainEditCommands.CreateTemplatePitchBendRange(
+            instrumentId, voiceId, tick, Math.Clamp(value, 0, 127), 0),
+        MidiValueKind.PitchBendRangeCents => ProjectDomainEditCommands.CreateTemplatePitchBendRange(
+            instrumentId, voiceId, tick, 2, Math.Clamp(value, 0, 99)),
+        _ => throw new InvalidOperationException("Unsupported MIDI event target.")
+    };
+
+    private static IProjectEditCommand UpdateTemplateEventTargetCommand(
+        MidoraId instrumentId,
+        MidoraId voiceId,
+        TemplateEvent template,
+        MidiValueTarget target,
+        long tick,
+        int value) => target.Kind switch
+    {
+        MidiValueKind.ControlChange => ProjectDomainEditCommands.UpdateTemplateControlChange(
+            instrumentId, voiceId, template.Id, tick, target.Number, value),
+        MidiValueKind.BankMsb => ProjectDomainEditCommands.UpdateTemplateBank(
+            instrumentId, voiceId, template.Id, tick, value,
+            template.HasBankLsb ? template.SecondaryValue : null),
+        MidiValueKind.BankLsb => ProjectDomainEditCommands.UpdateTemplateBank(
+            instrumentId, voiceId, template.Id, tick,
+            template.HasBankMsb ? template.Value : null, value),
+        MidiValueKind.Program => ProjectDomainEditCommands.UpdateTemplateProgram(
+            instrumentId, voiceId, template.Id, tick, value),
+        MidiValueKind.PitchBend => ProjectDomainEditCommands.UpdateTemplatePitchBend(
+            instrumentId, voiceId, template.Id, tick, value),
+        MidiValueKind.RegisteredParameter => ProjectDomainEditCommands.UpdateTemplateRegisteredParameter(
+            instrumentId, voiceId, template.Id, tick, target.Number, value),
+        MidiValueKind.NonRegisteredParameter => ProjectDomainEditCommands.UpdateTemplateNonRegisteredParameter(
+            instrumentId, voiceId, template.Id, tick, target.Number, value),
+        MidiValueKind.PitchBendRangeSemitones => ProjectDomainEditCommands.UpdateTemplatePitchBendRange(
+            instrumentId, voiceId, template.Id, tick, value, template.SecondaryValue),
+        MidiValueKind.PitchBendRangeCents => ProjectDomainEditCommands.UpdateTemplatePitchBendRange(
+            instrumentId, voiceId, template.Id, tick, template.Value, value),
+        _ => throw new InvalidOperationException("Unsupported MIDI event target.")
     };
 
     private async void OnCompileClick(object sender, RoutedEventArgs e)
@@ -4693,6 +4934,23 @@ public partial class MainWindow : Window
                 {
                     EventInstrument instrument = project.EventInstruments.Single(item => item.Id == instrumentId);
                     HashSet<MidoraId> selected = ids.ToHashSet();
+                    if (ids.Length == 1 && instrument.SubVoices.Any(voice => voice.Id == ids[0]))
+                    {
+                        if (cut)
+                        {
+                            ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutSubVoice(
+                                document,
+                                instrumentId,
+                                ids[0]);
+                            payload = prepared.Payload;
+                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                        }
+                        else
+                        {
+                            payload = ProjectObjectClipboard.CopySubVoice(document, instrumentId, ids[0]);
+                        }
+                        break;
+                    }
                     if (ids.Length == 1 && instrumentWorkspace.MappingChains.Any(chain => chain.Id == ids[0]))
                     {
                         if (cut)
@@ -4840,6 +5098,14 @@ public partial class MainWindow : Window
                     ProjectObjectClipboard.CreatePasteConductorEventsCommand(document, payload, cursor),
                 InstrumentWorkspaceViewModel instrumentWorkspace
                     when instrumentWorkspace.ObjectId is MidoraId instrumentId
+                    && payload.Kind == ProjectObjectClipboardKind.SubVoice =>
+                    ProjectObjectClipboard.CreatePasteSubVoiceCommand(
+                        document,
+                        payload,
+                        instrumentId,
+                        ResolveSubVoicePasteIndex(project, instrumentWorkspace, instrumentId)),
+                InstrumentWorkspaceViewModel instrumentWorkspace
+                    when instrumentWorkspace.ObjectId is MidoraId instrumentId
                     && payload.Kind == ProjectObjectClipboardKind.SubVoiceTimelineEvents =>
                     ProjectObjectClipboard.CreatePasteSubVoiceTimelineEventsCommand(
                         document,
@@ -4878,6 +5144,20 @@ public partial class MainWindow : Window
         return project.Tracks[lane].Id;
     }
 
+    private static int ResolveSubVoicePasteIndex(
+        MidoraProject project,
+        InstrumentWorkspaceViewModel workspace,
+        MidoraId instrumentId)
+    {
+        EventInstrument instrument = project.EventInstruments.Single(value => value.Id == instrumentId);
+        if (workspace.Selection.Primary is MidoraId selected)
+        {
+            int index = instrument.SubVoices.FindIndex(value => value.Id == selected);
+            if (index >= 0) return index + 1;
+        }
+        return instrument.SubVoices.Count;
+    }
+
     private static MidoraId ResolveSegmentTargetLane(
         MidoraProject project,
         TimelineWorkspaceViewModel workspace,
@@ -4888,19 +5168,14 @@ public partial class MainWindow : Window
         {
             throw new InvalidOperationException("Create a Logical Parameter Lane before pasting points.");
         }
-        int index = workspace.ActiveLane
-            ?? throw new InvalidOperationException("Select the target Logical Parameter Lane before pasting points.");
-        if ((uint)index >= (uint)located.Value.Segment.ParameterLanes.Count)
-        {
-            throw new InvalidOperationException("The active target is not a Logical Parameter Lane.");
-        }
-        return located.Value.Segment.ParameterLanes[index].Id;
+        return workspace.GetActiveParameterLaneOption()?.LaneId
+            ?? throw new InvalidOperationException("Select an existing Logical Parameter Lane before pasting points.");
     }
 
     private static InstrumentRenderLane ResolveInstrumentTargetLane(InstrumentWorkspaceViewModel workspace) =>
-        workspace.ActiveLane is int lane && workspace.GetRenderLane(lane) is InstrumentRenderLane target
+        workspace.GetRenderLane(workspace.ActiveRenderLaneIndex) is InstrumentRenderLane target
             ? target
-            : throw new InvalidOperationException("Select the target SubVoice event or Value Curve lane before pasting.");
+            : throw new InvalidOperationException("Select the target SubVoice Event Lane before pasting.");
 
     private static MidoraId ResolveMappingChainTarget(InstrumentWorkspaceViewModel workspace)
     {
@@ -5207,12 +5482,9 @@ public partial class MainWindow : Window
 
     private static IEnumerable<MappingChain> EnumerateInstrumentMappingChains(EventInstrument instrument) =>
         instrument.ParameterMappings.Select(item => item.Steps)
-            .Concat(instrument.SubVoices.SelectMany(voice => voice.Events).SelectMany(item => new[]
-            {
-                item.NumberMappings,
-                item.ValueMappings,
-                item.SecondaryValueMappings
-            }));
+            .Concat(instrument.SubVoices
+                .SelectMany(voice => voice.EventMappings)
+                .Select(item => item.Steps));
 
     private static bool IsTextEditingFocus() => Keyboard.FocusedElement is TextBoxBase
         or PasswordBox

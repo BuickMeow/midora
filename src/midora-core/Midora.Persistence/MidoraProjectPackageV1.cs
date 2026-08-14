@@ -1874,12 +1874,13 @@ public sealed class MidoraProjectPackageV1
         foreach (SubVoice voice in instrument.SubVoices)
         {
             yield return voice.Id;
+            foreach (SubVoiceEventMapping mapping in voice.EventMappings)
+            {
+                foreach (MidoraId id in EnumerateMappingChainIds(mapping.Steps)) yield return id;
+            }
             foreach (TemplateEvent templateEvent in voice.Events)
             {
                 yield return templateEvent.Id;
-                foreach (MidoraId id in EnumerateMappingChainIds(templateEvent.NumberMappings)) yield return id;
-                foreach (MidoraId id in EnumerateMappingChainIds(templateEvent.ValueMappings)) yield return id;
-                foreach (MidoraId id in EnumerateMappingChainIds(templateEvent.SecondaryValueMappings)) yield return id;
             }
             foreach (ValueCurve curve in voice.Curves)
             {

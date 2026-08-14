@@ -800,24 +800,21 @@ public static partial class ProjectDomainEditCommands
             RootNoteOverride = source.RootNoteOverride
         };
         CopyMidiInitialState(source.InitialState, copy.InitialState);
+        foreach (SubVoiceEventMapping sourceMapping in source.EventMappings)
+        {
+            SubVoiceEventMapping mappingCopy = new(project, sourceMapping.Target);
+            CopyMappingChain(project, sourceMapping.Steps, mappingCopy.Steps);
+            SetTargetSettings(
+                mappingCopy.TargetSettings,
+                new(
+                    sourceMapping.TargetSettings.Rounding,
+                    sourceMapping.TargetSettings.Overflow));
+            copy.EventMappings.Add(mappingCopy);
+        }
         foreach (TemplateEvent sourceEvent in source.Events)
         {
             TemplateEvent eventCopy = new(project);
             SetTemplateEvent(eventCopy, CaptureTemplateEvent(sourceEvent));
-            CopyMappingChain(project, sourceEvent.NumberMappings, eventCopy.NumberMappings);
-            CopyMappingChain(project, sourceEvent.ValueMappings, eventCopy.ValueMappings);
-            CopyMappingChain(project, sourceEvent.SecondaryValueMappings, eventCopy.SecondaryValueMappings);
-            SetTargetSettings(
-                eventCopy.NumberTargetSettings,
-                new(sourceEvent.NumberTargetSettings.Rounding, sourceEvent.NumberTargetSettings.Overflow));
-            SetTargetSettings(
-                eventCopy.ValueTargetSettings,
-                new(sourceEvent.ValueTargetSettings.Rounding, sourceEvent.ValueTargetSettings.Overflow));
-            SetTargetSettings(
-                eventCopy.SecondaryValueTargetSettings,
-                new(
-                    sourceEvent.SecondaryValueTargetSettings.Rounding,
-                    sourceEvent.SecondaryValueTargetSettings.Overflow));
             copy.Events.Add(eventCopy);
         }
         foreach (ValueCurve sourceCurve in source.Curves)
@@ -873,21 +870,11 @@ public static partial class ProjectDomainEditCommands
     {
         foreach (SubVoice voice in instrument.SubVoices)
         {
-            foreach (TemplateEvent templateEvent in voice.Events)
+            foreach (SubVoiceEventMapping mapping in voice.EventMappings)
             {
-                if (ReferenceEquals(templateEvent.NumberMappings, expected))
+                if (ReferenceEquals(mapping.Steps, expected))
                 {
-                    templateEvent.NumberMappings = replacement;
-                    return;
-                }
-                if (ReferenceEquals(templateEvent.ValueMappings, expected))
-                {
-                    templateEvent.ValueMappings = replacement;
-                    return;
-                }
-                if (ReferenceEquals(templateEvent.SecondaryValueMappings, expected))
-                {
-                    templateEvent.SecondaryValueMappings = replacement;
+                    mapping.Steps = replacement;
                     return;
                 }
             }

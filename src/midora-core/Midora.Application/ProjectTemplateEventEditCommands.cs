@@ -323,12 +323,6 @@ public static partial class ProjectDomainEditCommands
                 {
                     ValidateSevenBit(value.SecondaryValue, nameof(value.SecondaryValue));
                 }
-                if (!value.HasBankMsb && HasActiveSteps(templateEvent.ValueMappings)
-                    || !value.HasBankLsb && HasActiveSteps(templateEvent.SecondaryValueMappings))
-                {
-                    throw new InvalidOperationException(
-                        "A mapped Bank component cannot be removed while its Mapping Chain is active.");
-                }
                 break;
             case TemplateEventKind.Program:
                 ValidateSevenBit(value.Value, nameof(value.Value));
@@ -375,9 +369,6 @@ public static partial class ProjectDomainEditCommands
             throw new ArgumentOutOfRangeException(parameterName);
         }
     }
-
-    private static bool HasActiveSteps(MappingChain chain) =>
-        chain.IsEnabled && chain.Any(value => value.IsEnabled);
 
     private static bool TemplateEventsConflict(
         TemplateEvent candidate,
@@ -435,6 +426,7 @@ public static partial class ProjectDomainEditCommands
         target.HasBankMsb = value.HasBankMsb;
         target.HasBankLsb = value.HasBankLsb;
         target.FollowPitchDelta = value.FollowPitchDelta;
+        target.EnsureMappings();
     }
 
     private sealed record TemplateEventValue(

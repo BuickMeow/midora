@@ -167,6 +167,29 @@ public sealed class MappingAndLifecycleTests
     }
 
     [Fact]
+    public void TriggerVelocityCanDriveNoteVelocityWithoutChannelIsolation()
+    {
+        var fixture = CompilerTestProject.Create();
+        TemplateEvent noteEvent = TemplateEvent.Note(fixture.Project, 0, 120, 60, 27);
+        noteEvent.ValueMappings.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.TriggerVelocity,
+            Operation = MappingOperation.Override
+        });
+        fixture.Voice.Events.Add(noteEvent);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(fixture.Instrument.RequiresChannelIsolation);
+        Assert.True(result.IsConsumable, string.Join(Environment.NewLine,
+            result.Diagnostics.Select(value => value.Message)));
+        CanonicalMidiEvent noteOn = Assert.Single(result.Events.ToArray(),
+            value => value.Role == CanonicalEventRole.NoteOn);
+        Assert.Equal((byte)110, noteOn.Message.Byte2);
+    }
+
+    [Fact]
     public void BuiltInAndCSharpMappingsRunDuringCompilation()
     {
         var fixture = CompilerTestProject.Create();

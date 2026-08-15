@@ -8,7 +8,11 @@ public sealed record SelectionDialogItem(object Value, string Display, string De
 
 public partial class SelectionDialog : Window
 {
-    public SelectionDialog(string title, string prompt, IEnumerable<SelectionDialogItem> options)
+    public SelectionDialog(
+        string title,
+        string prompt,
+        IEnumerable<SelectionDialogItem> options,
+        object? selectedValue = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
         ArgumentNullException.ThrowIfNull(options);
@@ -17,7 +21,14 @@ public partial class SelectionDialog : Window
         Prompt = prompt ?? string.Empty;
         foreach (SelectionDialogItem option in options) Options.Add(option);
         DataContext = this;
-        if (Options.Count != 0) OptionsList.SelectedIndex = 0;
+        if (Options.Count != 0)
+        {
+            int selectedIndex = selectedValue is null
+                ? -1
+                : Options.ToList().FindIndex(option => Equals(option.Value, selectedValue));
+            OptionsList.SelectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
+            OptionsList.ScrollIntoView(OptionsList.SelectedItem);
+        }
     }
 
     public string Prompt { get; }

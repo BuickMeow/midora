@@ -256,6 +256,53 @@ public static partial class ProjectDomainEditCommands
                 _ => SetLogicalParameterMappingTarget(mapping, old));
         });
 
+    public static IProjectEditCommand UpdateLogicalParameterMappingRoute(
+        MidoraId eventInstrumentId,
+        MidoraId mappingId,
+        MidoraId parameterId,
+        MidoraId subVoiceId,
+        MidiValueTarget target) =>
+        Command("Change logical parameter mapping route", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            LogicalParameterMapping mapping = FindLogicalParameterMapping(instrument, mappingId);
+            _ = FindLogicalParameter(instrument, parameterId);
+            _ = FindSubVoice(instrument, subVoiceId);
+            ValidateMidiStateValue(target, value: null);
+
+            MidoraId oldParameterId = mapping.ParameterId;
+            LogicalParameterMappingTarget oldTarget = new(
+                mapping.SubVoiceId,
+                mapping.Target,
+                new(mapping.TargetSettings.Rounding, mapping.TargetSettings.Overflow));
+            LogicalParameterMapping[] peers = instrument.ParameterMappings
+                .Where(value => !ReferenceEquals(value, mapping)
+                    && value.SubVoiceId == subVoiceId
+                    && value.Target == target)
+                .ToArray();
+            IntegerTargetSettingsValue replacementSettings = peers.Length == 0
+                ? oldTarget.Settings
+                : GetSharedTargetSettings(peers);
+            LogicalParameterMappingTarget replacementTarget = new(
+                subVoiceId,
+                target,
+                replacementSettings);
+
+            return Prepared(
+                oldParameterId != parameterId || oldTarget != replacementTarget,
+                EventInstrumentChange(eventInstrumentId),
+                _ =>
+                {
+                    mapping.ParameterId = parameterId;
+                    SetLogicalParameterMappingTarget(mapping, replacementTarget);
+                },
+                _ =>
+                {
+                    mapping.ParameterId = oldParameterId;
+                    SetLogicalParameterMappingTarget(mapping, oldTarget);
+                });
+        });
+
     public static IProjectEditCommand UpdateLogicalParameterMappingTargetSettings(
         MidoraId eventInstrumentId,
         MidoraId mappingId,

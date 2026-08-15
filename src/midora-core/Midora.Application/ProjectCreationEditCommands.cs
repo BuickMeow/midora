@@ -115,6 +115,9 @@ public static partial class ProjectDomainEditCommands
                 value =>
                 {
                     EventInstrument instrument = EventInstrumentLibrary.Create(value, normalized);
+                    _ = SubVoiceMappingConventions.AddDefaultInstanceVelocityMapping(
+                        value,
+                        instrument.SubVoices[0]);
                     instrument.LibraryFolderId = folderId;
                     Move(value.EventInstruments, instrument, index);
                     return instrument;

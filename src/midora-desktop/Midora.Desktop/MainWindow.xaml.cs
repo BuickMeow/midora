@@ -2365,6 +2365,30 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnFollowInstanceVelocityClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox
+            {
+                IsChecked: bool follows,
+                DataContext: InstrumentWorkspaceViewModel
+                {
+                    ObjectId: MidoraId instrumentId,
+                    ActiveSubVoiceId: MidoraId subVoiceId
+                }
+            })
+        {
+            return;
+        }
+
+        RunSynchronous(
+            "Change Follow Instance Velocity",
+            () => _session.Execute(
+                ProjectDomainEditCommands.SetSubVoiceFollowInstanceVelocity(
+                    instrumentId,
+                    subVoiceId,
+                    follows)));
+    }
+
     private void OnSelectInstrumentClick(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement
@@ -2809,7 +2833,7 @@ public partial class MainWindow : Window
                     templatePlacement.SubVoiceId,
                     templatePlacement.StartTick,
                     templateLength,
-                    templatePlacement.Pitch,
+                    e.Pitch,
                     templatePlacement.Velocity),
                 instrumentWorkspace));
             return;
@@ -2827,7 +2851,7 @@ public partial class MainWindow : Window
                 placement.SegmentId,
                 placement.StartTick,
                 length,
-                placement.Pitch,
+                e.Pitch,
                 placement.Velocity),
             workspace));
     }
@@ -3977,6 +4001,95 @@ public partial class MainWindow : Window
                 instrumentId, parameterId, voiceId, target), workspace));
     }
 
+    private void OnEditParameterMappingClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel
+            {
+                ObjectId: MidoraId instrumentId,
+                Selection.Primary: MidoraId mappingId
+            }
+            || _session.Project is not MidoraProject project)
+        {
+            return;
+        }
+        EventInstrument instrument = project.EventInstruments.Single(item => item.Id == instrumentId);
+        LogicalParameterMapping? mapping = instrument.ParameterMappings
+            .FirstOrDefault(item => item.Id == mappingId);
+        if (mapping is null) return;
+
+        SelectionDialog parameterDialog = new(
+            "Edit Logical Parameter Mapping",
+            "Select the source Logical Parameter.",
+            instrument.LogicalParameters.Select(item =>
+                new SelectionDialogItem(item.Id, item.Name, item.Type.ToString())),
+            mapping.ParameterId) { Owner = this };
+        if (parameterDialog.ShowDialog() != true
+            || parameterDialog.SelectedValue is not MidoraId parameterId)
+        {
+            return;
+        }
+        SelectionDialog voiceDialog = new(
+            "Edit Logical Parameter Mapping",
+            "Select the target SubVoice.",
+            instrument.SubVoices.Select((voice, index) => new SelectionDialogItem(
+                voice.Id,
+                string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {index + 1}" : voice.Name)),
+            mapping.SubVoiceId) { Owner = this };
+        if (voiceDialog.ShowDialog() != true
+            || voiceDialog.SelectedValue is not MidoraId voiceId)
+        {
+            return;
+        }
+        MidiTargetDialog targetDialog = new(
+            "Edit Logical Parameter Mapping",
+            mapping.Target) { Owner = this };
+        if (targetDialog.ShowDialog() != true
+            || targetDialog.Result is not MidiValueTarget target)
+        {
+            return;
+        }
+        RunSynchronous(
+            "Edit Logical Parameter Mapping",
+            () => _session.Execute(
+                ProjectDomainEditCommands.UpdateLogicalParameterMappingRoute(
+                    instrumentId,
+                    mapping.Id,
+                    parameterId,
+                    voiceId,
+                    target)));
+    }
+
+    private void OnMoveParameterMappingClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement
+            {
+                Tag: string directionText,
+                DataContext: InstrumentWorkspaceViewModel
+                {
+                    ObjectId: MidoraId instrumentId,
+                    Selection.Primary: MidoraId mappingId
+                }
+            }
+            || !int.TryParse(directionText, out int direction)
+            || _session.Project is not MidoraProject project)
+        {
+            return;
+        }
+        EventInstrument instrument = project.EventInstruments.Single(item => item.Id == instrumentId);
+        LogicalParameterMapping? mapping = instrument.ParameterMappings
+            .FirstOrDefault(item => item.Id == mappingId);
+        if (mapping is null) return;
+        int current = instrument.ParameterMappings.IndexOf(mapping);
+        int target = Math.Clamp(current + direction, 0, instrument.ParameterMappings.Count - 1);
+        RunSynchronous(
+            "Reorder Logical Parameter Mapping",
+            () => _session.Execute(
+                ProjectDomainEditCommands.ReorderLogicalParameterMapping(
+                    instrumentId,
+                    mapping.Id,
+                    target)));
+    }
+
     private void OnAddMappingStepClick(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement
@@ -3991,30 +4104,117 @@ public partial class MainWindow : Window
             ShowUnavailable("Add Mapping Step", "Create a Logical Parameter Mapping or Template Event first.");
             return;
         }
+        if (_session.Project is not MidoraProject project)
+        {
+            return;
+        }
+        EventInstrument instrument = project.EventInstruments.Single(item => item.Id == instrumentId);
+        MidoraId? preferredChainId = workspace.Selection.Primary is MidoraId selectedId
+            ? workspace.MappingChains.FirstOrDefault(chain => chain.Id == selectedId)?.Id
+                ?? workspace.MappingSteps.FirstOrDefault(step => step.Id == selectedId)?.ChainId
+            : null;
         SelectionDialog chainDialog = new(
             "Add Mapping Step",
             "Select the ordered Mapping Chain that will own the new step.",
             workspace.MappingChains.Select(chain => new SelectionDialogItem(
                 chain.Id,
                 chain.Owner,
-                $"{chain.StepCount} existing step(s)"))) { Owner = this };
+                $"{chain.StepCount} existing step(s)")),
+            preferredChainId) { Owner = this };
         if (chainDialog.ShowDialog() != true || chainDialog.SelectedValue is not MidoraId chainId) return;
+        MappingChainEditingContext context = MappingEditingPolicy.Resolve(instrument, chainId);
+        IReadOnlyList<MappingSource> allowedSources = MappingEditingPolicy.AllowedSources(
+            instrument,
+            context);
+        if (allowedSources.Count == 0)
+        {
+            ShowUnavailable(
+                "Add Mapping Step",
+                context.IsNoteNumberMapping && !instrument.RequiresChannelIsolation
+                    ? "A Note Number Mapping Chain requires Per-Note Instance Isolation before steps can be added."
+                    : "No Mapping Source is legal in the selected chain context.");
+            return;
+        }
         SelectionDialog sourceDialog = new(
             "Mapping Source",
             "Select the source read by this step.",
-            Enum.GetValues<MappingSource>().Select(value => new SelectionDialogItem(value, value.ToString()))) { Owner = this };
+            allowedSources.Select(value => new SelectionDialogItem(
+                value,
+                value.ToString(),
+                MappingEditingPolicy.DescribeSource(value)))) { Owner = this };
         if (sourceDialog.ShowDialog() != true || sourceDialog.SelectedValue is not MappingSource source) return;
+        IReadOnlyList<CSharpMappingFunction> allowedFunctions = MappingEditingPolicy.AllowedFunctions(
+            instrument,
+            context);
+        MappingOperation[] allowedOperations = Enum.GetValues<MappingOperation>()
+            .Where(value => value != MappingOperation.CustomCSharp || allowedFunctions.Count != 0)
+            .ToArray();
         SelectionDialog operationDialog = new(
             "Mapping Operation",
-            "Select the operation. Numeric ranges and references remain editable in Inspector.",
-            Enum.GetValues<MappingOperation>().Select(value => new SelectionDialogItem(value, value.ToString()))) { Owner = this };
+            "Select the operation. Numeric ranges remain editable in Inspector.",
+            allowedOperations.Select(value => new SelectionDialogItem(value, value.ToString()))) { Owner = this };
         if (operationDialog.ShowDialog() != true || operationDialog.SelectedValue is not MappingOperation operation) return;
+
+        MidoraId? logicalParameterId = null;
+        MidoraId? envelopeId = null;
+        MidoraId? mappingFunctionId = null;
+        if (source == MappingSource.LogicalParameter)
+        {
+            SelectionDialog referenceDialog = new(
+                "Logical Parameter Source",
+                "Select the Logical Parameter read by this step.",
+                instrument.LogicalParameters.Select(parameter => new SelectionDialogItem(
+                    parameter.Id,
+                    parameter.Name,
+                    parameter.Type.ToString()))) { Owner = this };
+            if (referenceDialog.ShowDialog() != true
+                || referenceDialog.SelectedValue is not MidoraId selectedParameterId)
+            {
+                return;
+            }
+            logicalParameterId = selectedParameterId;
+        }
+        if (source == MappingSource.Envelope)
+        {
+            SelectionDialog referenceDialog = new(
+                "Envelope Source",
+                "Select the Envelope Preset read by this step.",
+                instrument.Envelopes.Select(envelope => new SelectionDialogItem(
+                    envelope.Id,
+                    string.IsNullOrWhiteSpace(envelope.Name) ? "Envelope Preset" : envelope.Name)))
+            { Owner = this };
+            if (referenceDialog.ShowDialog() != true
+                || referenceDialog.SelectedValue is not MidoraId selectedEnvelopeId)
+            {
+                return;
+            }
+            envelopeId = selectedEnvelopeId;
+        }
+        if (operation == MappingOperation.CustomCSharp)
+        {
+            SelectionDialog referenceDialog = new(
+                "C# Mapping Function",
+                "Select a Mapping Function legal in this chain context.",
+                allowedFunctions.Select(function => new SelectionDialogItem(
+                    function.Id,
+                    function.Name,
+                    $"ABI v{function.AbiVersion}"))) { Owner = this };
+            if (referenceDialog.ShowDialog() != true
+                || referenceDialog.SelectedValue is not MidoraId selectedFunctionId)
+            {
+                return;
+            }
+            mappingFunctionId = selectedFunctionId;
+        }
         RunSynchronous("Create Mapping Step", () => ExecuteAndSelectCreated(
             ProjectDomainEditCommands.CreateMappingStep(
                 instrumentId,
                 chainId,
                 source,
-                operation), workspace));
+                operation,
+                logicalParameterId,
+                envelopeId,
+                mappingFunctionId), workspace));
     }
 
     private void OnMoveMappingStepClick(object sender, RoutedEventArgs e)

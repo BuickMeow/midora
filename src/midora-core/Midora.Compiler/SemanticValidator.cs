@@ -348,15 +348,14 @@ public static class SemanticValidator
         {
             AddError("MIDORA1215", "Let Overlap requires Per-Note Instance Isolation.", source, diagnostics);
         }
-        bool perNoteMapping = EnumerateMappingSteps(instrument).Any(step =>
-            IsPerNoteStep(step) || step.Operation == MappingOperation.CustomCSharp
-            && step.MappingFunctionId.HasValue
-            && functions.TryGetValue(step.MappingFunctionId.Value, out CSharpMappingFunction? function)
-            && function.DeclaredContextFields.Any(IsPerNoteContextField))
-            || instrument.SubVoices.SelectMany(value => value.EventMappings)
-                .Any(value => value.Target.EventKind == TemplateEventKind.Note
-                    && value.Target.Parameter == TemplateEventMappingParameter.Number
-                    && HasActiveSteps(value.Steps));
+        bool perNoteMapping = instrument.ParameterMappings.Any(mapping =>
+                ActiveSteps(mapping.Steps).Any(step => RequiresPerNoteIsolation(step, functions)))
+            || instrument.SubVoices.SelectMany(value => value.EventMappings).Any(mapping =>
+                mapping.Target.EventKind == TemplateEventKind.Note
+                    && mapping.Target.Parameter == TemplateEventMappingParameter.Number
+                    && HasActiveSteps(mapping.Steps)
+                || ActiveSteps(mapping.Steps).Any(step =>
+                    RequiresPerNoteIsolation(step, functions, mapping.Target)));
         if (perNoteMapping && !instrument.RequiresChannelIsolation)
         {
             AddError("MIDORA1214", "Mappings that depend on an individual Logical Note context require Channel Isolation.", source, diagnostics);
@@ -1107,6 +1106,28 @@ public static class SemanticValidator
 
     private static bool IsPerNoteStep(ValueMappingStep step) => step.Source is
         MappingSource.TriggerNote or MappingSource.TriggerVelocity or MappingSource.GateLength or MappingSource.PitchDelta;
+
+    private static bool RequiresPerNoteIsolation(
+        ValueMappingStep step,
+        IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions,
+        TemplateEventMappingTarget? target = null)
+    {
+        bool directSourceRequiresIsolation = IsPerNoteStep(step)
+            && !(target.HasValue
+                && IsIsolationFreeTriggerVelocityToNoteVelocity(step, target.Value));
+        bool functionRequiresIsolation = step.Operation == MappingOperation.CustomCSharp
+            && step.MappingFunctionId.HasValue
+            && functions.TryGetValue(step.MappingFunctionId.Value, out CSharpMappingFunction? function)
+            && function.DeclaredContextFields.Any(IsPerNoteContextField);
+        return directSourceRequiresIsolation || functionRequiresIsolation;
+    }
+
+    private static bool IsIsolationFreeTriggerVelocityToNoteVelocity(
+        ValueMappingStep step,
+        TemplateEventMappingTarget target) =>
+        step.Source == MappingSource.TriggerVelocity
+        && target.EventKind == TemplateEventKind.Note
+        && target.Parameter == TemplateEventMappingParameter.Value;
 
     private static bool IsPerNoteContextField(string field) => field is
         nameof(MappingContextV2.TriggerNote) or nameof(MappingContextV2.TriggerVelocity)

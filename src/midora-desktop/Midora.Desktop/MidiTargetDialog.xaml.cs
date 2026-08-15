@@ -8,15 +8,28 @@ namespace Midora.Desktop;
 
 public partial class MidiTargetDialog : Window
 {
-    public MidiTargetDialog(string title = "Select MIDI Target")
+    public MidiTargetDialog(
+        string title = "Select MIDI Target",
+        MidiValueTarget? selectedTarget = null)
     {
         InitializeComponent();
         Title = title;
         DialogTitleText.Text = title;
         KindBox.ItemsSource = Enum.GetValues<MidiValueKind>();
         ControllerBox.ItemsSource = MidiControlChangeCatalog.EditableControllers;
-        ControllerBox.SelectedIndex = 0;
-        KindBox.SelectedItem = MidiValueKind.ControlChange;
+        MidiValueTarget initial = selectedTarget ?? MidiValueTarget.ControlChange(0);
+        KindBox.SelectedItem = initial.Kind;
+        if (initial.Kind == MidiValueKind.ControlChange)
+        {
+            ControllerBox.SelectedItem = MidiControlChangeCatalog.EditableControllers
+                .FirstOrDefault(value => value.Number == initial.Number);
+            if (ControllerBox.SelectedItem is null) ControllerBox.SelectedIndex = 0;
+        }
+        else
+        {
+            ControllerBox.SelectedIndex = 0;
+        }
+        NumberBox.Text = initial.Number.ToString(CultureInfo.InvariantCulture);
     }
 
     public MidiValueTarget? Result { get; private set; }

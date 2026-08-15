@@ -398,6 +398,25 @@ public sealed class SemanticValidatorTests
     }
 
     [Fact]
+    public void TriggerVelocityStillRequiresIsolationForChannelStateTargets()
+    {
+        var fixture = CompilerTestProject.Create();
+        TemplateEvent controller = TemplateEvent.ControlChange(fixture.Project, 0, 1, 64);
+        controller.ValueMappings.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.TriggerVelocity,
+            Operation = MappingOperation.Override
+        });
+        fixture.Voice.Events.Add(controller);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(result.IsConsumable);
+        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1214");
+    }
+
+    [Fact]
     public void ChannelUnitThresholdIsInfoAndHardLimitIsError()
     {
         var near = CompilerTestProject.Create(248);

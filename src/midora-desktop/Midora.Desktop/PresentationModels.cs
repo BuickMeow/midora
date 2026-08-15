@@ -167,6 +167,8 @@ public enum InspectorFieldValueState
     Unavailable
 }
 
+public sealed record InspectorChoiceOption(string Value, string Label);
+
 public sealed class InspectorField(
     string key,
     string label,
@@ -174,7 +176,8 @@ public sealed class InspectorField(
     bool isEditable = true,
     InspectorFieldValueState valueState = InspectorFieldValueState.SameValue,
     IReadOnlyList<string>? options = null,
-    bool isBoolean = false) : ObservableObject
+    bool isBoolean = false,
+    IReadOnlyList<InspectorChoiceOption>? choices = null) : ObservableObject
 {
     private string _value = value;
     private bool _booleanValue = bool.TryParse(value, out bool parsed) && parsed;
@@ -186,7 +189,9 @@ public sealed class InspectorField(
     public bool IsMixed => ValueState == InspectorFieldValueState.Mixed;
     public bool IsUnavailable => ValueState == InspectorFieldValueState.Unavailable;
     public IReadOnlyList<string> Options { get; } = options ?? [];
-    public bool IsChoice => Options.Count > 0;
+    public IReadOnlyList<InspectorChoiceOption> Choices { get; } = choices
+        ?? (options ?? []).Select(option => new InspectorChoiceOption(option, option)).ToArray();
+    public bool IsChoice => Choices.Count > 0;
     public bool IsBoolean { get; } = isBoolean;
     public string Value
     {
@@ -1555,6 +1560,7 @@ public sealed class InstrumentWorkspaceViewModel(
     private MidoraId? _activeSubVoiceId;
     private string _activeSubVoiceName = "No SubVoice";
     private string _activeSubVoiceContext = "Create or select a SubVoice to edit its timeline.";
+    private bool _activeSubVoiceFollowsInstanceVelocity;
     private bool _requiresChannelIsolation;
     private ShortNoteLifecycle _shortLifecycle;
     private LongNoteLifecycle _longLifecycle;
@@ -1675,6 +1681,11 @@ public sealed class InstrumentWorkspaceViewModel(
         get => _activeSubVoiceContext;
         private set => Set(ref _activeSubVoiceContext, value);
     }
+    public bool ActiveSubVoiceFollowsInstanceVelocity
+    {
+        get => _activeSubVoiceFollowsInstanceVelocity;
+        private set => Set(ref _activeSubVoiceFollowsInstanceVelocity, value);
+    }
     public Array ShortLifecycleValues { get; } = Enum.GetValues<ShortNoteLifecycle>();
     public Array LongLifecycleValues { get; } = Enum.GetValues<LongNoteLifecycle>();
     public Array OverlapPolicyValues { get; } = Enum.GetValues<OverlapPolicy>();
@@ -1769,6 +1780,7 @@ public sealed class InstrumentWorkspaceViewModel(
             ActiveSubVoiceId = null;
             ActiveSubVoiceName = "Missing SubVoice";
             ActiveSubVoiceContext = "The Event Instrument no longer exists.";
+            ActiveSubVoiceFollowsInstanceVelocity = false;
             return;
         }
 
@@ -1898,6 +1910,8 @@ public sealed class InstrumentWorkspaceViewModel(
             : $"Root Note {(activeVoice.RootNoteOverride.HasValue ? "override" : "inherited")} · "
               + $"effective {MidiNoteName(activeVoice.RootNoteOverride ?? instrument.RootNote)} · "
               + $"Template {instrument.TemplateLengthTicks} ticks";
+        ActiveSubVoiceFollowsInstanceVelocity = activeVoice is not null
+            && SubVoiceMappingConventions.FollowsInstanceVelocity(activeVoice);
 
         List<TimelineRenderItem> notes = [];
         List<TimelineRenderItem> events = [];

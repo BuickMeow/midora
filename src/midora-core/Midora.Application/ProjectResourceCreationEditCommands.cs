@@ -26,6 +26,7 @@ public static partial class ProjectDomainEditCommands
                         Name = normalizedName,
                         RootNoteOverride = rootNoteOverride
                     };
+                    _ = SubVoiceMappingConventions.AddDefaultInstanceVelocityMapping(value, voice);
                     instrument.SubVoices.Insert(index, voice);
                     return voice;
                 },

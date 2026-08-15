@@ -20,6 +20,151 @@ public static partial class ProjectDomainEditCommands
                 _ => chain.IsEnabled = oldValue);
         });
 
+    public static IProjectEditCommand UpdateMappingChainTargetSettings(
+        MidoraId eventInstrumentId,
+        MidoraId mappingChainId,
+        MappingRounding rounding,
+        MappingOverflow overflow) =>
+        Command("Change mapping chain target settings", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            MappingChainTargetContext context = FindMappingChainTargetContext(
+                instrument,
+                mappingChainId);
+            ValidateIntegerTargetSettings(rounding, overflow);
+            if (context.EventMapping is { Target.EventKind: TemplateEventKind.Note,
+                    Target.Parameter: TemplateEventMappingParameter.Number }
+                && overflow != MappingOverflow.Fail)
+            {
+                throw new ArgumentException(
+                    "Note number cannot use the Clamp final overflow policy.",
+                    nameof(overflow));
+            }
+
+            IntegerTargetSettingsValue replacement = new(rounding, overflow);
+            if (context.ParameterMapping is LogicalParameterMapping parameterMapping)
+            {
+                LogicalParameterMappingSettingsChange[] changes = instrument.ParameterMappings
+                    .Where(value => value.SubVoiceId == parameterMapping.SubVoiceId
+                        && value.Target == parameterMapping.Target)
+                    .Select(value => new LogicalParameterMappingSettingsChange(
+                        value,
+                        new(value.TargetSettings.Rounding, value.TargetSettings.Overflow)))
+                    .ToArray();
+                return Prepared(
+                    changes.Any(value => value.OldValue != replacement),
+                    EventInstrumentChange(eventInstrumentId),
+                    _ => SetLogicalParameterMappingSettings(changes, replacement),
+                    _ => RestoreLogicalParameterMappingSettings(changes));
+            }
+
+            MidiIntegerTargetSettings settings = context.EventMapping!.TargetSettings;
+            IntegerTargetSettingsValue old = new(settings.Rounding, settings.Overflow);
+            return Prepared(
+                old != replacement,
+                EventInstrumentChange(eventInstrumentId),
+                _ => SetTargetSettings(settings, replacement),
+                _ => SetTargetSettings(settings, old));
+        });
+
+    public static IProjectEditCommand SetSubVoiceFollowInstanceVelocity(
+        MidoraId eventInstrumentId,
+        MidoraId subVoiceId,
+        bool followsInstanceVelocity) =>
+        Command("Change SubVoice instance velocity following", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            SubVoice subVoice = FindSubVoice(instrument, subVoiceId);
+            SubVoiceEventMapping? existing = subVoice.FindEventMapping(
+                SubVoiceMappingConventions.NoteVelocityTarget);
+            if (followsInstanceVelocity)
+            {
+                if (SubVoiceMappingConventions.FollowsInstanceVelocity(subVoice))
+                {
+                    return Prepared(
+                        hasChanges: false,
+                        EventInstrumentChange(eventInstrumentId),
+                        _ => { },
+                        _ => { });
+                }
+
+                bool oldChainEnabled = existing?.Steps.IsEnabled ?? true;
+                int mappingIndex = existing is null
+                    ? subVoice.EventMappings.Count
+                    : subVoice.EventMappings.IndexOf(existing);
+                SubVoiceEventMapping? createdMapping = null;
+                ValueMappingStep? createdStep = null;
+                return Prepared(
+                    hasChanges: true,
+                    EventInstrumentChange(eventInstrumentId),
+                    owner =>
+                    {
+                        SubVoiceEventMapping mapping = existing
+                            ?? (createdMapping ??= new(
+                                owner,
+                                SubVoiceMappingConventions.NoteVelocityTarget));
+                        if (!subVoice.EventMappings.Contains(mapping))
+                        {
+                            subVoice.EventMappings.Insert(mappingIndex, mapping);
+                        }
+                        createdStep ??= new ValueMappingStep(owner)
+                        {
+                            Source = MappingSource.TriggerVelocity,
+                            Operation = MappingOperation.Override
+                        };
+                        mapping.Steps.IsEnabled = true;
+                        InsertMappingStepAt(mapping.Steps, 0, createdStep);
+                    },
+                    _ =>
+                    {
+                        SubVoiceEventMapping mapping = existing ?? createdMapping
+                            ?? throw new InvalidOperationException(
+                                "The Note Velocity Mapping was not created before Undo.");
+                        ValueMappingStep step = createdStep
+                            ?? throw new InvalidOperationException(
+                                "The instance velocity Mapping Step was not created before Undo.");
+                        RemoveMappingStepRequired(mapping.Steps, step);
+                        mapping.Steps.IsEnabled = oldChainEnabled;
+                        if (createdMapping is not null)
+                        {
+                            RemoveRequired(
+                                subVoice.EventMappings,
+                                createdMapping,
+                                "Note Velocity Mapping");
+                        }
+                    });
+            }
+
+            if (existing is null || !existing.Steps.IsEnabled)
+            {
+                return Prepared(
+                    hasChanges: false,
+                    EventInstrumentChange(eventInstrumentId),
+                    _ => { },
+                    _ => { });
+            }
+            ValueMappingStep? anchor = existing.Steps.FirstOrDefault(step =>
+                step.IsEnabled
+                && step.Source == MappingSource.TriggerVelocity
+                && step.Operation == MappingOperation.Override);
+            if (anchor is null || !ReferenceEquals(
+                    anchor,
+                    existing.Steps.FirstOrDefault(step => step.IsEnabled)))
+            {
+                return Prepared(
+                    hasChanges: false,
+                    EventInstrumentChange(eventInstrumentId),
+                    _ => { },
+                    _ => { });
+            }
+            int anchorIndex = existing.Steps.IndexOf(anchor);
+            return Prepared(
+                hasChanges: true,
+                EventInstrumentChange(eventInstrumentId),
+                _ => RemoveMappingStepRequired(existing.Steps, anchor),
+                _ => InsertMappingStepAt(existing.Steps, anchorIndex, anchor));
+        });
+
     public static IProjectEditCommand UpdateMappingStepEnabled(
         MidoraId eventInstrumentId,
         MidoraId mappingChainId,
@@ -153,6 +298,29 @@ public static partial class ProjectDomainEditCommands
             _ => throw new InvalidOperationException(
                 "The Mapping Chain stable ID is duplicated in this Event Instrument.")
         };
+    }
+
+    private static MappingChainTargetContext FindMappingChainTargetContext(
+        EventInstrument instrument,
+        MidoraId mappingChainId)
+    {
+        LogicalParameterMapping[] parameterMappings = instrument.ParameterMappings
+            .Where(value => value.Steps.Id == mappingChainId)
+            .ToArray();
+        (SubVoice Voice, SubVoiceEventMapping Mapping)[] eventMappings = instrument.SubVoices
+            .SelectMany(voice => voice.EventMappings
+                .Where(value => value.Steps.Id == mappingChainId)
+                .Select(value => (voice, value)))
+            .ToArray();
+        if (parameterMappings.Length + eventMappings.Length != 1)
+        {
+            _ = FindMappingChain(instrument, mappingChainId);
+            throw new InvalidOperationException(
+                "The Mapping Chain does not have exactly one target owner.");
+        }
+        return parameterMappings.Length == 1
+            ? new(parameterMappings[0].Steps, parameterMappings[0], null, null)
+            : new(eventMappings[0].Mapping.Steps, null, eventMappings[0].Voice, eventMappings[0].Mapping);
     }
 
     private static IEnumerable<MappingChain> EnumerateMappingChains(
@@ -330,4 +498,10 @@ public static partial class ProjectDomainEditCommands
         double TargetMaximum,
         MappingInputOverflow InputOverflow,
         DivideByZeroPolicy DivideByZero);
+
+    private readonly record struct MappingChainTargetContext(
+        MappingChain Chain,
+        LogicalParameterMapping? ParameterMapping,
+        SubVoice? SubVoice,
+        SubVoiceEventMapping? EventMapping);
 }

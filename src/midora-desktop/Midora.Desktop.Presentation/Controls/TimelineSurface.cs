@@ -1484,6 +1484,17 @@ public sealed class TimelineSurface : Control
                 long snappedDelta = SnapOperationDelta(rawDelta, checked(_notePlacementStartTick.Value + rawDelta));
                 _notePlacementCurrentTick = checked(_notePlacementStartTick.Value + Math.Max(1, snappedDelta));
             }
+            int placementLane = placementViewport.YToLane(point.Y - GetRulerHeight());
+            int placementPitch = Math.Clamp(127 - placementLane, 0, 127);
+            if (placementPitch != _notePlacementPitch)
+            {
+                _notePlacementPitch = placementPitch;
+                PitchPreviewRequested?.Invoke(
+                    this,
+                    new TimelinePitchPreviewEventArgs(
+                        _notePlacementPitch,
+                        _notePlacementVelocity));
+            }
             InvalidateVisual();
             return;
         }

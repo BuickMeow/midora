@@ -219,6 +219,22 @@
 - 原因：per-event 三链模型使没有 Mapping 的海量事件点也各自分配三个稳定对象，事件点数量增长会线性放大内存、Project 对象图、Mapping 列表、序列化体积和 fingerprint 成本；实际 Mapping 语义属于同一 SubVoice 的事件目标转换规则，不属于单个采样点。
 - 边界：共享键必须保持 ADR-UI-029 的精确 Event Lane 身份；不得为了进一步减少条目而把 CC1 与 CC11、不同 RPN / NRPN 或复合事件的两个字段错误合并。该决定改变源模型和开发期文件格式，但不绕过 canonical compilation，也不改变 Mapping Chain 内步骤顺序和 Mapping ABI。
 
+## ADR-UI-031：目标感知的 Mapping 编辑与 Instance Velocity 预设
+
+- 决定：Mapping Step 编辑器必须先解析 Mapping Chain 的正式 owner 和精确 target，再生成 Source 与 Mapping Function 候选。Logical Parameter Mapping 不提供 Template Note/Velocity；非 Note 事件链不提供 Template Note/Velocity；无 Per-Note Instance Isolation 时不提供 Envelope、Trigger Note、Gate Length 或 Pitch Delta。无 Isolation 的 Note Number 链不允许添加任何 Step。
+- 决定：无 Isolation 时唯一新增例外是共享 `Note · Velocity` target 可直接读取 `TriggerVelocity`。该值已属于每个 Logical Note 实例的 Mapping Context，并最终写入逐 NoteOn 事件，不占用或改变 Channel Unit 状态；同一 Source 映射到 CC、RPN/NRPN、Program、Pitch、Note Number 或其他 target 时仍要求 Isolation。声明任何 per-note context 的 C# Mapping Function仍要求 Isolation。
+- 决定：`Follow Instance Velocity` 不增加旁路字段或第二套编译语义；它是共享 Note Velocity Mapping Chain 的 UI 预设：首个 enabled Step 为 `TriggerVelocity / Override`。新建 Event Instrument 的默认 SubVoice和显式新建 SubVoice 都生成该预设；关闭时只移除这一个基准 Step，后续自定义 Step 保留。复制、粘贴、持久化和 Undo/Redo继续按普通 Mapping Chain 处理。
+- 决定：Parameter Mapping 的 source、target SubVoice 与 MIDI target 可在创建后修改，完整 route 变更是一个原子 Project command；列表提供正式重排。Mapping Chain Inspector公开 enabled、owner、target、最终 rounding/overflow、step count 与 stable ID；Step 的 Parameter、Envelope 与 Function 引用只通过带显示名称的对象选择器编辑，不要求用户手填 Stable ID。
+- 依据：用户于 2026-08-15 明确批准无 Isolation 的 `TriggerVelocity → Note Velocity`，并要求默认 Follow Instance Velocity。该决定收窄并替代 SRS 9.9 对这一精确 target 的 blanket isolation 要求，也把 SRS 8.53.3 的 fixed template velocity 默认改为新建 SubVoice 默认跟随；未修改 SRS 原文。
+- 边界：本决定不允许共享通道状态随 Note 实例变化，不改变 Channel Unit 分配、overlap、NoteOff 配对、canonical consumer 或 Mapping ABI。损坏/旧数据中的非法组合仍由 Semantic Validator 诊断；UI 过滤不是正式验证的替代品。
+
+## ADR-UI-032：Draw Note 放置期间的纵向 Key 草稿与纯音高试听
+
+- 决定：Segment 与 SubVoice Piano Roll 的 Draw 空白放置共用一个 transient Note draft。Pointer Down 冻结 start tick 和默认 length；水平拖动改变 length，纵向拖动把当前 lane clamp 到 MIDI Key `0..127` 并改变 draft pitch。MouseUp 仅以最终 pitch/length 提交一次正式创建命令。
+- 决定：Pointer Down 以及每次 draft pitch 实际变化时，调用既有独立 pure-Note audition stream；该 stream 先 All Sound Off 再 NoteOn，不读取 Event Instrument、Mapping、Program 或其他事件。Pointer Up、Escape、capture 丢失和取消都执行 NoteOff + All Sound Off。
+- 依据：用户于 2026-08-15 明确要求创建 Note 时可上下拖动改变 Key 并即时试听。该决定替代 SRS 18.2.4 中“新建 Logical Note 不启动声音预览”的旧交互限制；未修改 SRS 原文。
+- 边界：试听只属于 transient interaction，不进入 Project、Undo/Redo、编译、canonical result、缓存或持久化；音频不可用时创建语义不改变。
+
 ## 小决定审计
 
 以下均是局部、可替换且不改变可听结果/持久化/公共业务接口的小决定，按用户授权采用推荐方案：

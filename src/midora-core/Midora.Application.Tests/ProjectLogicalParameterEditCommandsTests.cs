@@ -250,6 +250,46 @@ public sealed class ProjectLogicalParameterEditCommandsTests
     }
 
     [Fact]
+    public void MappingRouteUpdateIsOneAtomicUndoableEdit()
+    {
+        Fixture fixture = CreateFixture();
+        LogicalParameterMapping targetPeer = new(fixture.Project)
+        {
+            ParameterId = fixture.FirstParameter.Id,
+            SubVoiceId = fixture.Voice.Id,
+            Target = MidiValueTarget.ControlChange(2)
+        };
+        targetPeer.TargetSettings.Rounding = MappingRounding.Ceiling;
+        targetPeer.TargetSettings.Overflow = MappingOverflow.Clamp;
+        fixture.Instrument.ParameterMappings.Add(targetPeer);
+        MappingChain chain = fixture.FirstMapping.Steps;
+        using ProjectCompilationSession compilation = new(fixture.Project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.UpdateLogicalParameterMappingRoute(
+            fixture.Instrument.Id,
+            fixture.FirstMapping.Id,
+            fixture.SecondParameter.Id,
+            fixture.Voice.Id,
+            MidiValueTarget.ControlChange(2)));
+
+        Assert.Equal(fixture.SecondParameter.Id, fixture.FirstMapping.ParameterId);
+        Assert.Equal(MidiValueTarget.ControlChange(2), fixture.FirstMapping.Target);
+        Assert.Equal(MappingRounding.Ceiling, fixture.FirstMapping.TargetSettings.Rounding);
+        Assert.Equal(MappingOverflow.Clamp, fixture.FirstMapping.TargetSettings.Overflow);
+        Assert.Same(chain, fixture.FirstMapping.Steps);
+        Assert.Single(document.History);
+
+        document.Undo();
+        Assert.Equal(fixture.FirstParameter.Id, fixture.FirstMapping.ParameterId);
+        Assert.Equal(MidiValueTarget.ControlChange(1), fixture.FirstMapping.Target);
+        Assert.Equal(MappingRounding.Round, fixture.FirstMapping.TargetSettings.Rounding);
+        Assert.Equal(MappingOverflow.Fail, fixture.FirstMapping.TargetSettings.Overflow);
+        Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
     public void MappingTargetSettingsPropagateAcrossSharedTargetAndUndoDistinctValues()
     {
         Fixture fixture = CreateFixture();

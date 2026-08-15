@@ -324,6 +324,128 @@ public sealed class ProjectMappingChainEditCommandsTests
         AssertCurrentCompilationMatchesFull(compilation);
     }
 
+    [Fact]
+    public void ChainInspectorTargetSettingsUpdateTheOwningEventMappingAndUndo()
+    {
+        Fixture fixture = CreateFixture();
+        using ProjectCompilationSession compilation = new(fixture.Project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.UpdateMappingChainTargetSettings(
+            fixture.Instrument.Id,
+            fixture.Chain.Id,
+            MappingRounding.Floor,
+            MappingOverflow.Clamp));
+
+        SubVoiceEventMapping mapping = fixture.Instrument.SubVoices[0].EventMappings
+            .Single(value => value.Steps.Id == fixture.Chain.Id);
+        Assert.Equal(MappingRounding.Floor, mapping.TargetSettings.Rounding);
+        Assert.Equal(MappingOverflow.Clamp, mapping.TargetSettings.Overflow);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+        Assert.Equal(MappingRounding.Round, mapping.TargetSettings.Rounding);
+        Assert.Equal(MappingOverflow.Fail, mapping.TargetSettings.Overflow);
+        Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void ChainInspectorTargetSettingsPropagateAcrossSharedParameterTarget()
+    {
+        Fixture fixture = CreateFixture();
+        LogicalParameterMapping first = new(fixture.Project)
+        {
+            ParameterId = fixture.Parameter.Id,
+            SubVoiceId = fixture.Instrument.SubVoices[0].Id,
+            Target = MidiValueTarget.ControlChange(2)
+        };
+        LogicalParameterMapping second = new(fixture.Project)
+        {
+            ParameterId = fixture.Parameter.Id,
+            SubVoiceId = first.SubVoiceId,
+            Target = first.Target
+        };
+        fixture.Instrument.ParameterMappings.Add(first);
+        fixture.Instrument.ParameterMappings.Add(second);
+        using ProjectCompilationSession compilation = new(fixture.Project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.UpdateMappingChainTargetSettings(
+            fixture.Instrument.Id,
+            first.Steps.Id,
+            MappingRounding.Ceiling,
+            MappingOverflow.Clamp));
+
+        Assert.All(
+            new[] { first, second },
+            mapping =>
+            {
+                Assert.Equal(MappingRounding.Ceiling, mapping.TargetSettings.Rounding);
+                Assert.Equal(MappingOverflow.Clamp, mapping.TargetSettings.Overflow);
+            });
+
+        document.Undo();
+        Assert.All(
+            new[] { first, second },
+            mapping =>
+            {
+                Assert.Equal(MappingRounding.Round, mapping.TargetSettings.Rounding);
+                Assert.Equal(MappingOverflow.Fail, mapping.TargetSettings.Overflow);
+            });
+        Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void FollowInstanceVelocityPresetCanBeDisabledEnabledAndUndone()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        SubVoice voice = Assert.Single(instrument.SubVoices);
+        _ = SubVoiceMappingConventions.AddDefaultInstanceVelocityMapping(project, voice);
+        SubVoiceEventMapping mapping = voice.FindEventMapping(
+            SubVoiceMappingConventions.NoteVelocityTarget)!;
+        ValueMappingStep original = Assert.Single(mapping.Steps);
+        ValueMappingStep custom = new(project)
+        {
+            Source = MappingSource.Constant,
+            Operation = MappingOperation.Add,
+            Constant = -10
+        };
+        mapping.Steps.Add(custom);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        Assert.True(SubVoiceMappingConventions.FollowsInstanceVelocity(voice));
+        document.Execute(ProjectDomainEditCommands.SetSubVoiceFollowInstanceVelocity(
+            instrument.Id,
+            voice.Id,
+            followsInstanceVelocity: false));
+        Assert.False(SubVoiceMappingConventions.FollowsInstanceVelocity(voice));
+        Assert.Same(custom, Assert.Single(mapping.Steps));
+
+        document.Undo();
+        Assert.True(SubVoiceMappingConventions.FollowsInstanceVelocity(voice));
+        Assert.Collection(
+            mapping.Steps,
+            value => Assert.Same(original, value),
+            value => Assert.Same(custom, value));
+
+        document.Execute(ProjectDomainEditCommands.SetSubVoiceFollowInstanceVelocity(
+            instrument.Id,
+            voice.Id,
+            followsInstanceVelocity: false));
+        document.Execute(ProjectDomainEditCommands.SetSubVoiceFollowInstanceVelocity(
+            instrument.Id,
+            voice.Id,
+            followsInstanceVelocity: true));
+        Assert.True(SubVoiceMappingConventions.FollowsInstanceVelocity(voice));
+        Assert.Equal(MappingSource.TriggerVelocity, mapping.Steps[0].Source);
+        Assert.Same(custom, mapping.Steps[1]);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
     private static IProjectEditCommand UpdateFirstStep(
         Fixture fixture,
         MappingSource source = MappingSource.Constant,

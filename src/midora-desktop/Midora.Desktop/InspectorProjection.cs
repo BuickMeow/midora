@@ -132,6 +132,8 @@ internal static class InspectorProjection
                     CreateValueCurvePointEdit(instrument, instrumentWorkspace.Selection.Primary, key, value),
                 _ when key.StartsWith("parameterMapping.", StringComparison.Ordinal) =>
                     CreateParameterMappingEdit(instrument, instrumentWorkspace.Selection.Primary, key, value),
+                _ when key.StartsWith("mappingChain.", StringComparison.Ordinal) =>
+                    CreateMappingChainEdit(instrument, instrumentWorkspace.Selection.Primary, key, value),
                 _ when key.StartsWith("mappingStep.", StringComparison.Ordinal) =>
                     CreateMappingStepEdit(instrument, instrumentWorkspace.Selection.Primary, key, value),
                 _ when key.StartsWith("envelope.", StringComparison.Ordinal) =>
@@ -526,35 +528,149 @@ internal static class InspectorProjection
                 inspector.Replace(
                     "Logical Parameter Mapping",
                     $"{sourceName} → {(targetVoice?.Name ?? mapping.SubVoiceId.ToString())} · {FormatMidiTarget(mapping.Target)}",
-                    [Field("parameterMapping.source", "SOURCE PARAMETER", sourceName, false),
-                     Field("parameterMapping.target", "TARGET", FormatMidiTarget(mapping.Target), false),
+                    [ChoiceField(
+                         "parameterMapping.source",
+                         "SOURCE PARAMETER",
+                         mapping.ParameterId.Value.ToString(CultureInfo.InvariantCulture),
+                         IdChoices(
+                             instrument.LogicalParameters.Select(item => (item.Id, item.Name)),
+                             mapping.ParameterId,
+                             "Missing Logical Parameter")),
+                     ChoiceField(
+                         "parameterMapping.subVoice",
+                         "TARGET SUBVOICE",
+                         mapping.SubVoiceId.Value.ToString(CultureInfo.InvariantCulture),
+                         IdChoices(
+                             instrument.SubVoices.Select((item, index) => (
+                                 item.Id,
+                                 string.IsNullOrWhiteSpace(item.Name)
+                                     ? $"SubVoice {index + 1}"
+                                     : item.Name)),
+                             mapping.SubVoiceId,
+                             "Missing SubVoice")),
+                     Field("parameterMapping.target", "MIDI TARGET · use Edit… to change", FormatMidiTarget(mapping.Target), false),
                      Field("parameterMapping.rounding", "FINAL ROUNDING", mapping.TargetSettings.Rounding),
                      Field("parameterMapping.overflow", "FINAL OVERFLOW", mapping.TargetSettings.Overflow),
                      Field("parameterMapping.steps", "MAPPING CHAIN STEPS", mapping.Steps.Count, false),
                      Field("object.id", "STABLE ID", mapping.Id.Value, false)]);
                 return;
             }
+            if (workspace.MappingChains.Any(item => item.Id == eventId))
+            {
+                MappingChainEditingContext chainContext = MappingEditingPolicy.Resolve(
+                    instrument,
+                    eventId);
+                string owner = workspace.MappingChains.Single(item => item.Id == eventId).Owner;
+                MidiIntegerTargetSettings settings = chainContext.TargetSettings;
+                inspector.Replace(
+                    "Mapping Chain",
+                    owner,
+                    [Field("mappingChain.enabled", "ENABLED", chainContext.Chain.IsEnabled),
+                     Field(
+                         "mappingChain.ownerKind",
+                         "OWNER KIND",
+                         chainContext.IsLogicalParameterMapping
+                             ? "Logical Parameter Mapping"
+                             : "SubVoice Event Mapping",
+                         false),
+                     Field(
+                         "mappingChain.target",
+                         "TARGET",
+                         chainContext.ParameterMapping is LogicalParameterMapping parameterOwner
+                             ? FormatMidiTarget(parameterOwner.Target)
+                             : FormatEventMappingTarget(chainContext.EventMapping!.Target),
+                         false),
+                     Field("mappingChain.rounding", "FINAL ROUNDING", settings.Rounding),
+                     Field("mappingChain.overflow", "FINAL OVERFLOW", settings.Overflow),
+                     Field("mappingChain.steps", "STEP COUNT", chainContext.Chain.Count, false),
+                     Field("object.id", "STABLE ID", chainContext.Chain.Id.Value, false)]);
+                return;
+            }
             if (FindMappingStep(instrument, eventId) is MappingStepContext mappingStep)
             {
                 ValueMappingStep step = mappingStep.Step;
+                MappingChainEditingContext chainContext = MappingEditingPolicy.Resolve(
+                    instrument,
+                    mappingStep.Chain.Id);
+                MappingSource[] sources = MappingEditingPolicy.AllowedSources(instrument, chainContext)
+                    .Append(step.Source)
+                    .Distinct()
+                    .ToArray();
+                MappingOperation[] operations = Enum.GetValues<MappingOperation>()
+                    .Where(value => value != MappingOperation.CustomCSharp
+                        || MappingEditingPolicy.AllowedFunctions(instrument, chainContext).Count != 0
+                        || value == step.Operation)
+                    .ToArray();
+                List<InspectorField> fields =
+                [
+                    Field("mappingStep.enabled", "ENABLED", step.IsEnabled),
+                    ChoiceField(
+                        "mappingStep.source",
+                        "SOURCE",
+                        step.Source.ToString(),
+                        sources.Select(source => new InspectorChoiceOption(
+                            source.ToString(),
+                            source.ToString()))),
+                    ChoiceField(
+                        "mappingStep.operation",
+                        "OPERATION",
+                        step.Operation.ToString(),
+                        operations.Select(operation => new InspectorChoiceOption(
+                            operation.ToString(),
+                            operation.ToString())))
+                ];
+                if (step.Source == MappingSource.LogicalParameter)
+                {
+                    fields.Add(ChoiceField(
+                        "mappingStep.logicalParameter",
+                        "LOGICAL PARAMETER",
+                        step.LogicalParameterId?.Value.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                        OptionalIdChoices(
+                            instrument.LogicalParameters.Select(item => (item.Id, item.Name)),
+                            step.LogicalParameterId,
+                            "Missing Logical Parameter")));
+                }
+                if (step.Source == MappingSource.Envelope)
+                {
+                    fields.Add(ChoiceField(
+                        "mappingStep.envelope",
+                        "ENVELOPE PRESET",
+                        step.EnvelopeId?.Value.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                        OptionalIdChoices(
+                            instrument.Envelopes.Select(item => (
+                                item.Id,
+                                string.IsNullOrWhiteSpace(item.Name) ? "Envelope Preset" : item.Name)),
+                            step.EnvelopeId,
+                            "Missing Envelope")));
+                }
+                if (step.Operation == MappingOperation.CustomCSharp)
+                {
+                    fields.Add(ChoiceField(
+                        "mappingStep.function",
+                        "C# MAPPING FUNCTION",
+                        step.MappingFunctionId?.Value.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                        OptionalIdChoices(
+                            MappingEditingPolicy.AllowedFunctions(instrument, chainContext)
+                                .Select(item => (item.Id, item.Name)),
+                            step.MappingFunctionId,
+                            "Missing or illegal Mapping Function")));
+                }
+                fields.AddRange(
+                [
+                    Field("mappingStep.constant", "CONSTANT", step.Constant),
+                    Field("mappingStep.sourceMinimum", "SOURCE MINIMUM", step.SourceMinimum),
+                    Field("mappingStep.sourceMaximum", "SOURCE MAXIMUM", step.SourceMaximum),
+                    Field("mappingStep.targetMinimum", "TARGET MINIMUM", step.TargetMinimum),
+                    Field("mappingStep.targetMaximum", "TARGET MAXIMUM", step.TargetMaximum),
+                    Field("mappingStep.inputOverflow", "INPUT OVERFLOW", step.InputOverflow),
+                    Field("mappingStep.divideByZero", "DIVIDE BY ZERO", step.DivideByZero),
+                    Field("mappingStep.chain", "CHAIN STABLE ID", mappingStep.Chain.Id.Value, false),
+                    Field("object.id", "STABLE ID", step.Id.Value, false)
+                ]);
                 inspector.Replace(
                     $"Mapping Step {mappingStep.Index + 1}",
                     $"Ordered Mapping Chain {mappingStep.Chain.Id.Value}",
-                    [Field("mappingStep.enabled", "ENABLED", step.IsEnabled),
-                     Field("mappingStep.source", "SOURCE", step.Source),
-                     Field("mappingStep.operation", "OPERATION", step.Operation),
-                     Field("mappingStep.logicalParameter", "LOGICAL PARAMETER STABLE ID", step.LogicalParameterId?.Value.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
-                     Field("mappingStep.envelope", "ENVELOPE STABLE ID", step.EnvelopeId?.Value.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
-                     Field("mappingStep.function", "C# FUNCTION STABLE ID", step.MappingFunctionId?.Value.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
-                     Field("mappingStep.constant", "CONSTANT", step.Constant),
-                     Field("mappingStep.sourceMinimum", "SOURCE MINIMUM", step.SourceMinimum),
-                     Field("mappingStep.sourceMaximum", "SOURCE MAXIMUM", step.SourceMaximum),
-                     Field("mappingStep.targetMinimum", "TARGET MINIMUM", step.TargetMinimum),
-                     Field("mappingStep.targetMaximum", "TARGET MAXIMUM", step.TargetMaximum),
-                     Field("mappingStep.inputOverflow", "INPUT OVERFLOW", step.InputOverflow),
-                     Field("mappingStep.divideByZero", "DIVIDE BY ZERO", step.DivideByZero),
-                     Field("mappingStep.chain", "CHAIN STABLE ID", mappingStep.Chain.Id.Value, false),
-                     Field("object.id", "STABLE ID", step.Id.Value, false)]);
+                    fields);
                 return;
             }
             if (instrument.Envelopes.FirstOrDefault(item => item.Id == eventId) is InstrumentEnvelope envelope)
@@ -765,6 +881,19 @@ internal static class InspectorProjection
             ?? throw new InvalidOperationException("The selected Logical Parameter Mapping no longer exists.");
         return key switch
         {
+            "parameterMapping.source" =>
+                ProjectDomainEditCommands.UpdateLogicalParameterMappingSource(
+                    instrument.Id,
+                    mapping.Id,
+                    NullableId(value, "Logical Parameter")
+                        ?? throw new FormatException("Select a Logical Parameter.")),
+            "parameterMapping.subVoice" =>
+                ProjectDomainEditCommands.UpdateLogicalParameterMappingTarget(
+                    instrument.Id,
+                    mapping.Id,
+                    NullableId(value, "SubVoice")
+                        ?? throw new FormatException("Select a SubVoice."),
+                    mapping.Target),
             "parameterMapping.rounding" or "parameterMapping.overflow" =>
                 ProjectDomainEditCommands.UpdateLogicalParameterMappingTargetSettings(
                     instrument.Id,
@@ -776,6 +905,35 @@ internal static class InspectorProjection
                         ? EnumValue<MappingOverflow>(value, "Final Overflow")
                         : mapping.TargetSettings.Overflow),
             _ => throw new InvalidOperationException("This Logical Parameter Mapping property is read-only.")
+        };
+    }
+
+    private static IProjectEditCommand CreateMappingChainEdit(
+        EventInstrument instrument,
+        MidoraId? selectedId,
+        string key,
+        string value)
+    {
+        MidoraId id = selectedId
+            ?? throw new InvalidOperationException("Select one Mapping Chain first.");
+        MappingChainEditingContext context = MappingEditingPolicy.Resolve(instrument, id);
+        return key switch
+        {
+            "mappingChain.enabled" => ProjectDomainEditCommands.UpdateMappingChainEnabled(
+                instrument.Id,
+                context.Chain.Id,
+                Bool(value, "Enabled")),
+            "mappingChain.rounding" or "mappingChain.overflow" =>
+                ProjectDomainEditCommands.UpdateMappingChainTargetSettings(
+                    instrument.Id,
+                    context.Chain.Id,
+                    key == "mappingChain.rounding"
+                        ? EnumValue<MappingRounding>(value, "Final Rounding")
+                        : context.TargetSettings.Rounding,
+                    key == "mappingChain.overflow"
+                        ? EnumValue<MappingOverflow>(value, "Final Overflow")
+                        : context.TargetSettings.Overflow),
+            _ => throw new InvalidOperationException("This Mapping Chain property is read-only.")
         };
     }
 
@@ -869,6 +1027,19 @@ internal static class InspectorProjection
         MidiValueKind.NonRegisteredParameter => $"NRPN {target.Number}",
         _ => target.Kind.ToString()
     };
+
+    private static string FormatEventMappingTarget(TemplateEventMappingTarget target)
+    {
+        if (target.EventKind == TemplateEventKind.Note)
+        {
+            return target.Parameter == TemplateEventMappingParameter.Number
+                ? "Note · Number"
+                : "Note · Velocity";
+        }
+        return TemplateEventMidiTargets.TryFromMappingTarget(target, out MidiValueTarget midiTarget)
+            ? TemplateEventMidiTargets.Format(midiTarget)
+            : $"{target.EventKind} · {target.Parameter}";
+    }
 
     private static IProjectEditCommand CreateTemplateEventEdit(
         MidoraProject project,
@@ -1011,6 +1182,63 @@ internal static class InspectorProjection
             InspectorFieldValueState.SameValue,
             value.GetType().IsEnum ? Enum.GetNames(value.GetType()) : null,
             value is bool);
+
+    private static InspectorField ChoiceField(
+        string key,
+        string label,
+        string value,
+        IEnumerable<InspectorChoiceOption> choices,
+        bool editable = true) =>
+        new(
+            key,
+            label,
+            value,
+            editable,
+            InspectorFieldValueState.SameValue,
+            options: null,
+            isBoolean: false,
+            choices: choices.ToArray());
+
+    private static IReadOnlyList<InspectorChoiceOption> IdChoices(
+        IEnumerable<(MidoraId Id, string Label)> values,
+        MidoraId current,
+        string missingLabel)
+    {
+        List<InspectorChoiceOption> result = values
+            .Select(value => new InspectorChoiceOption(
+                value.Id.Value.ToString(CultureInfo.InvariantCulture),
+                value.Label))
+            .ToList();
+        string currentValue = current.Value.ToString(CultureInfo.InvariantCulture);
+        if (result.All(value => value.Value != currentValue))
+        {
+            result.Add(new(currentValue, $"{missingLabel} · {currentValue}"));
+        }
+        return result;
+    }
+
+    private static IReadOnlyList<InspectorChoiceOption> OptionalIdChoices(
+        IEnumerable<(MidoraId Id, string Label)> values,
+        MidoraId? current,
+        string missingLabel)
+    {
+        List<InspectorChoiceOption> result =
+        [
+            new(string.Empty, "Select an object…")
+        ];
+        result.AddRange(values.Select(value => new InspectorChoiceOption(
+            value.Id.Value.ToString(CultureInfo.InvariantCulture),
+            value.Label)));
+        if (current is MidoraId currentId)
+        {
+            string currentValue = currentId.Value.ToString(CultureInfo.InvariantCulture);
+            if (result.All(value => value.Value != currentValue))
+            {
+                result.Add(new(currentValue, $"{missingLabel} · {currentValue}"));
+            }
+        }
+        return result;
+    }
 
     private static InspectorField StateField(string key, string label, int? value) =>
         new(key, label, value?.ToString(CultureInfo.InvariantCulture) ?? string.Empty);

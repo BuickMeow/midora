@@ -7,6 +7,24 @@ namespace Midora.Application.Tests;
 public sealed class ProjectCreationEditCommandsTests
 {
     [Fact]
+    public void CreatedEventInstrumentFollowsInstanceVelocityByDefault()
+    {
+        MidoraProject project = new(480);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
+
+        document.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+
+        EventInstrument instrument = Assert.Single(project.EventInstruments);
+        SubVoice voice = Assert.Single(instrument.SubVoices);
+        Assert.True(SubVoiceMappingConventions.FollowsInstanceVelocity(voice));
+        SubVoiceEventMapping mapping = Assert.Single(voice.EventMappings);
+        ValueMappingStep step = Assert.Single(mapping.Steps);
+        Assert.Equal(MappingSource.TriggerVelocity, step.Source);
+        Assert.Equal(MappingOperation.Override, step.Operation);
+    }
+
+    [Fact]
     public void UndoKeepsAllocatorHighWaterRedoKeepsIdentityAndBranchUsesHigherId()
     {
         MidoraProject project = new(480);
@@ -290,6 +308,9 @@ public sealed class ProjectCreationEditCommandsTests
             60,
             100));
         TemplateEvent note = Assert.Single(source.Events);
+        ValueMappingStep followVelocity = Assert.Single(note.ValueMappings);
+        Assert.Equal(MappingSource.TriggerVelocity, followVelocity.Source);
+        Assert.Equal(MappingOperation.Override, followVelocity.Operation);
         document.Execute(ProjectDomainEditCommands.CreateMappingStep(
             instrument.Id,
             note.ValueMappings.Id,
@@ -318,9 +339,11 @@ public sealed class ProjectCreationEditCommandsTests
         Assert.Equal(12, copy.InitialState.Program);
         Assert.NotEqual(note.Id, Assert.Single(copy.Events).Id);
         Assert.NotEqual(note.ValueMappings.Id, copy.Events[0].ValueMappings.Id);
-        Assert.NotEqual(
-            Assert.Single(note.ValueMappings).Id,
-            Assert.Single(copy.Events[0].ValueMappings).Id);
+        Assert.Equal(2, note.ValueMappings.Count);
+        Assert.Equal(2, copy.Events[0].ValueMappings.Count);
+        Assert.All(
+            note.ValueMappings.Zip(copy.Events[0].ValueMappings),
+            pair => Assert.NotEqual(pair.First.Id, pair.Second.Id));
         Assert.NotEqual(curve.Id, Assert.Single(copy.Curves).Id);
         Assert.NotEqual(
             Assert.Single(curve.Points).Id,

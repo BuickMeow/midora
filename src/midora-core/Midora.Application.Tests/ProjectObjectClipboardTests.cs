@@ -830,6 +830,276 @@ public sealed class ProjectObjectClipboardTests
         AssertMatchesFull(compilation);
     }
 
+    [Fact]
+    public void InstrumentDefinitionClipboardCreatesIndependentAtomicCopies()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project)
+        {
+            Name = "Instrument",
+            RequiresChannelIsolation = true
+        };
+        LogicalParameterDefinition parameter = new(project)
+        {
+            Name = "Mode",
+            Type = LogicalParameterType.Enum,
+            Minimum = 0,
+            Maximum = 1,
+            DisplayMinimum = 0,
+            DisplayMaximum = 1,
+            DefaultValue = 0
+        };
+        parameter.EnumItems.AddRange(
+        [
+            new(project) { Name = "Off", Value = 0 },
+            new(project) { Name = "On", Value = 1 }
+        ]);
+        InstrumentEnvelope envelope = new(project)
+        {
+            Name = "Shape",
+            AttackTicks = 12,
+            PeakValue = 0.8,
+            SustainValue = 0.5,
+            ReleaseTicks = 24
+        };
+        CSharpMappingFunction function = new(project)
+        {
+            Name = "Scale",
+            Body = "return value * 2;"
+        };
+        function.DeclaredContextFields.Add("GateLength");
+        instrument.LogicalParameters.Add(parameter);
+        instrument.Envelopes.Add(envelope);
+        instrument.MappingFunctions.Add(function);
+        project.EventInstruments.Add(instrument);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        ProjectObjectClipboardPayload parameterPayload =
+            ProjectObjectClipboard.CopyLogicalParameterDefinition(
+                document,
+                instrument.Id,
+                parameter.Id);
+        ProjectObjectClipboardPayload envelopePayload = ProjectObjectClipboard.CopyEnvelopePreset(
+            document,
+            instrument.Id,
+            envelope.Id);
+        ProjectObjectClipboardPayload functionPayload = ProjectObjectClipboard.CopyMappingFunction(
+            document,
+            instrument.Id,
+            function.Id);
+
+        document.Execute(ProjectObjectClipboard.CreatePasteLogicalParameterDefinitionCommand(
+            document,
+            parameterPayload,
+            instrument.Id));
+        document.Execute(ProjectObjectClipboard.CreatePasteEnvelopePresetCommand(
+            document,
+            envelopePayload,
+            instrument.Id));
+        document.Execute(ProjectObjectClipboard.CreatePasteMappingFunctionCommand(
+            document,
+            functionPayload,
+            instrument.Id));
+
+        LogicalParameterDefinition parameterCopy = instrument.LogicalParameters[1];
+        InstrumentEnvelope envelopeCopy = instrument.Envelopes[1];
+        CSharpMappingFunction functionCopy = instrument.MappingFunctions[1];
+        Assert.Equal("Mode Copy 2", parameterCopy.Name);
+        Assert.Equal(["Off", "On"], parameterCopy.EnumItems.Select(value => value.Name));
+        Assert.NotEqual(parameter.Id, parameterCopy.Id);
+        Assert.All(parameterCopy.EnumItems, value =>
+            Assert.DoesNotContain(parameter.EnumItems, source => source.Id == value.Id));
+        Assert.Equal(("Shape", 12L, 0.8, 0.5, 24L),
+            (envelopeCopy.Name, envelopeCopy.AttackTicks, envelopeCopy.PeakValue,
+                envelopeCopy.SustainValue, envelopeCopy.ReleaseTicks));
+        Assert.NotEqual(envelope.Id, envelopeCopy.Id);
+        Assert.Equal("Scale Copy 2", functionCopy.Name);
+        Assert.Equal(function.Body, functionCopy.Body);
+        Assert.Equal(["GateLength"], functionCopy.DeclaredContextFields);
+        Assert.NotEqual(function.Id, functionCopy.Id);
+        Assert.Equal(3, document.History.Count);
+
+        document.Undo();
+        Assert.Single(instrument.MappingFunctions);
+        document.Redo();
+        Assert.Same(functionCopy, instrument.MappingFunctions[1]);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void MappingItemClipboardReplacesConfigurationAndInsertsOneStep()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument" };
+        LogicalParameterDefinition parameter = new(project)
+        {
+            Name = "Amount",
+            Type = LogicalParameterType.Double,
+            Minimum = 0,
+            Maximum = 1,
+            DisplayMinimum = 0,
+            DisplayMaximum = 1
+        };
+        SubVoice voice = new(project) { Name = "Voice" };
+        LogicalParameterMapping source = new(project)
+        {
+            ParameterId = parameter.Id,
+            SubVoiceId = voice.Id,
+            Target = MidiValueTarget.ControlChange(1)
+        };
+        source.TargetSettings.Rounding = MappingRounding.Floor;
+        source.TargetSettings.Overflow = MappingOverflow.Clamp;
+        ValueMappingStep sourceStep = new(project)
+        {
+            Source = MappingSource.LogicalParameter,
+            Operation = MappingOperation.Remap,
+            LogicalParameterId = parameter.Id,
+            SourceMinimum = 0,
+            SourceMaximum = 1,
+            TargetMinimum = 0,
+            TargetMaximum = 127
+        };
+        source.Steps.Add(sourceStep);
+        LogicalParameterMapping target = new(project)
+        {
+            ParameterId = parameter.Id,
+            SubVoiceId = voice.Id,
+            Target = MidiValueTarget.ControlChange(7)
+        };
+        ValueMappingStep oldTargetStep = new(project);
+        target.Steps.Add(oldTargetStep);
+        instrument.LogicalParameters.Add(parameter);
+        instrument.SubVoices.Add(voice);
+        instrument.ParameterMappings.AddRange([source, target]);
+        project.EventInstruments.Add(instrument);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+        MappingChain oldTargetChain = target.Steps;
+
+        ProjectObjectClipboardPayload mappingPayload =
+            ProjectObjectClipboard.CopyLogicalParameterMapping(
+                document,
+                instrument.Id,
+                source.Id);
+        document.Execute(ProjectObjectClipboard.CreatePasteLogicalParameterMappingCommand(
+            document,
+            mappingPayload,
+            instrument.Id,
+            target.Id,
+            nonEmptyReplacementConfirmed: true));
+
+        Assert.Equal(MidiValueTarget.ControlChange(7), target.Target);
+        Assert.Equal(MappingRounding.Floor, target.TargetSettings.Rounding);
+        Assert.Equal(MappingOverflow.Clamp, target.TargetSettings.Overflow);
+        ValueMappingStep replacedStep = Assert.Single(target.Steps);
+        Assert.NotSame(sourceStep, replacedStep);
+        Assert.Equal(parameter.Id, replacedStep.LogicalParameterId);
+        Assert.NotSame(oldTargetChain, target.Steps);
+
+        ProjectObjectClipboardPayload stepPayload = ProjectObjectClipboard.CopyMappingStep(
+            document,
+            instrument.Id,
+            source.Steps.Id,
+            sourceStep.Id);
+        document.Execute(ProjectObjectClipboard.CreatePasteMappingStepCommand(
+            document,
+            stepPayload,
+            instrument.Id,
+            target.Steps.Id,
+            insertionIndex: 1));
+
+        ValueMappingStep inserted = target.Steps[1];
+        Assert.NotEqual(sourceStep.Id, inserted.Id);
+        Assert.Equal(sourceStep.Operation, inserted.Operation);
+        Assert.Equal(2, target.Steps.Count);
+
+        ProjectObjectClipboardCutPreparation stepCut = ProjectObjectClipboard.PrepareCutMappingStep(
+            document,
+            instrument.Id,
+            target.Steps.Id,
+            inserted.Id);
+        Assert.Same(inserted, target.Steps[1]);
+        document.Execute(stepCut.DeleteAfterSuccessfulClipboardWrite);
+        Assert.Single(target.Steps);
+        document.Undo();
+        Assert.Same(inserted, target.Steps[1]);
+        document.Undo();
+        Assert.Single(target.Steps);
+        document.Undo();
+        Assert.Same(oldTargetChain, target.Steps);
+        document.Redo();
+        Assert.NotSame(oldTargetChain, target.Steps);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void InstrumentDefinitionCutsAreTwoPhaseAndUndoRestoreExactObjects()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project)
+        {
+            Name = "Instrument",
+            RequiresChannelIsolation = true
+        };
+        LogicalParameterDefinition parameter = new(project)
+        {
+            Name = "Amount",
+            Type = LogicalParameterType.Double,
+            Minimum = 0,
+            Maximum = 1,
+            DisplayMinimum = 0,
+            DisplayMaximum = 1
+        };
+        InstrumentEnvelope envelope = new(project) { Name = "Shape" };
+        CSharpMappingFunction function = new(project)
+        {
+            Name = "Identity",
+            Body = "return value;"
+        };
+        instrument.LogicalParameters.Add(parameter);
+        instrument.Envelopes.Add(envelope);
+        instrument.MappingFunctions.Add(function);
+        project.EventInstruments.Add(instrument);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        ProjectObjectClipboardCutPreparation parameterCut =
+            ProjectObjectClipboard.PrepareCutLogicalParameterDefinition(
+                document,
+                instrument.Id,
+                parameter.Id);
+        Assert.Same(parameter, Assert.Single(instrument.LogicalParameters));
+        document.Execute(parameterCut.DeleteAfterSuccessfulClipboardWrite);
+        Assert.Empty(instrument.LogicalParameters);
+        document.Undo();
+        Assert.Same(parameter, Assert.Single(instrument.LogicalParameters));
+
+        ProjectObjectClipboardCutPreparation envelopeCut =
+            ProjectObjectClipboard.PrepareCutEnvelopePreset(
+                document,
+                instrument.Id,
+                envelope.Id);
+        Assert.Same(envelope, Assert.Single(instrument.Envelopes));
+        document.Execute(envelopeCut.DeleteAfterSuccessfulClipboardWrite);
+        Assert.Empty(instrument.Envelopes);
+        document.Undo();
+        Assert.Same(envelope, Assert.Single(instrument.Envelopes));
+
+        ProjectObjectClipboardCutPreparation functionCut =
+            ProjectObjectClipboard.PrepareCutMappingFunction(
+                document,
+                instrument.Id,
+                function.Id);
+        Assert.Same(function, Assert.Single(instrument.MappingFunctions));
+        document.Execute(functionCut.DeleteAfterSuccessfulClipboardWrite);
+        Assert.Empty(instrument.MappingFunctions);
+        document.Undo();
+        Assert.Same(function, Assert.Single(instrument.MappingFunctions));
+        Assert.False(document.IsModified);
+        AssertMatchesFull(compilation);
+    }
+
     private static ProjectDocumentSession PersistedDocument(ProjectCompilationSession compilation)
     {
         ProjectDocumentSession result = new(compilation, ProjectDocumentOrigin.Persisted);

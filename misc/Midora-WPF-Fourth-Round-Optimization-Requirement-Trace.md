@@ -52,3 +52,12 @@
 - Mapping 的正式所有者改为 SubVoice。一个精确事件标量目标只有一条 Mapping Chain：Note Number / Velocity、Bank MSB / LSB、Pitch Bend Range Semitones / Cents 分开；CC、RPN、NRPN 的 number 属于 Lane 身份，因此不同 number 不合并。
 - 新增一千个同一 CC target 的事件点时，除事件点自身稳定 ID 外不得再按点分配 Mapping Chain；Mapping 数量只随精确目标种类增长。编译、校验、Project fingerprint、持久化、SubVoice 完整复制和 Mapping 列表均按共享集合处理。
 - Timeline 事件点 clipboard 不携带 Mapping 定义；粘贴后使用目标 SubVoice 对应的共享 Mapping。完整 SubVoice clipboard 携带且只携带一次共享 Mapping 集合。旧 per-event Mapping protobuf 与 clipboard 负载不保留兼容读取能力。
+
+## 8. 后续修正：Event Instrument 结构栏与 Mapping Function 布局
+
+- Event Instrument 左侧结构栏的 SubVoice、Logical Parameter、Parameter Mapping、Mapping Chain、Mapping Step、Envelope Preset 与 Mapping Function 均提供单项 Cut / Copy / Paste / Delete 右键入口；SubVoice 继续额外保留 Duplicate。
+- 本轮产品要求显式覆盖 SRS 20.3 的异构多选默认：该左侧结构栏在所有类别之间共用一个视觉焦点和一个 Inspector primary，任一次左键或右键命中都执行 Replace，并清除其他结构列表遗留的 `SelectedItem`。时间线、钢琴卷帘和事件点的多选语义不受影响。
+- 定义类 payload 是不可变快照；粘贴 Logical Parameter、Envelope Preset、Mapping Function 时分配全新稳定 ID，并作为单次 Undo 原子提交。Mapping Step 粘贴到目标 Chain 的选中 Step 后方或末尾。Mapping Chain 继续复制/替换有序链内容；不可删除的 Note Chain 同时禁止 Cut。
+- Logical Parameter Mapping 的 target 身份必须保持唯一，因此 Copy / Paste 只把 Target Settings 与 Mapping Chain 配置替换到显式选中的目标 Mapping，不复制其 Parameter / SubVoice / MIDI target 身份，也不创建重复 Mapping。
+- Mapping Chain 的 Delete 直接使用右键命中的 Chain ID，不再依赖其他结构列表残留的 primary；非空 Chain 继续要求确认并按既有正式命令清空，Note Chain 不允许删除。
+- Mapping Function 编辑器显式覆盖通用单行 `TextBox` 的固定 `Height=34`：代码区使用 `Height=Auto`、Stretch 和顶部内容对齐以占满 `*` 行。Find 工具栏改为内容自适应高度，并使用通用 34 px 输入框/按钮，避免固定 40 px 父行加内边距后裁掉底边。

@@ -88,10 +88,11 @@ public sealed class ApplicationTaskCoordinatorTests
     }
 
     [Fact]
-    public void CoordinatorKeepsHeldPreviewExclusiveThroughGateEndAndCancellation()
+    public void InstrumentKeyboardReplacesItsReleasedHeldPreviewWithoutUnlockError()
     {
         using TestContext fixture = TestContext.Create();
         EventInstrument instrument = fixture.Session.Project.EventInstruments[0];
+        MidoraId subVoiceId = instrument.SubVoices[0].Id;
 
         fixture.Coordinator.StartHeldEventInstrumentPreview(
             new EventInstrumentPreviewRequest(instrument.Id, Tempo: 120m));
@@ -102,15 +103,50 @@ public sealed class ApplicationTaskCoordinatorTests
         Assert.Equal(240, report.FinalGateLengthTicks);
         Assert.False(fixture.Playback.IsHeldPreviewGateOpen);
         Assert.Equal(ApplicationTaskKind.EventInstrumentPreview, fixture.Coordinator.ActiveTaskKind);
-        fixture.Coordinator.StopPlayback();
+        Assert.True(fixture.Coordinator.CanReplaceReleasedHeldEventInstrumentKeyboardPreview);
 
         fixture.Coordinator.StartHeldEventInstrumentPreview(
-            new EventInstrumentPreviewRequest(instrument.Id, Tempo: 120m));
+            new EventInstrumentPreviewRequest(
+                instrument.Id,
+                subVoiceId,
+                Pitch: 64,
+                Tempo: 120m));
+
+        Assert.Equal(1, fixture.Backend.StopCount);
+        Assert.Equal(ApplicationTaskKind.SubVoicePreview, fixture.Coordinator.ActiveTaskKind);
+        Assert.True(fixture.Playback.IsHeldPreviewGateOpen);
+        Assert.False(fixture.Coordinator.CanReplaceReleasedHeldEventInstrumentKeyboardPreview);
         fixture.Coordinator.CancelHeldPreview();
 
+        Assert.Equal(2, fixture.Backend.StopCount);
         Assert.Equal(ApplicationTaskKind.None, fixture.Coordinator.ActiveTaskKind);
         Assert.Equal(ApplicationTaskPhase.Idle, fixture.Coordinator.Phase);
         Assert.False(fixture.Session.EditsLocked);
+    }
+
+    [Fact]
+    public void SegmentPitchRulerReleaseIsNotAutoReplacedByInstrumentKeyboardPreview()
+    {
+        using TestContext fixture = TestContext.Create();
+        EventInstrument instrument = fixture.Session.Project.EventInstruments[0];
+        LogicalTrack track = fixture.Session.Project.Tracks[0];
+        Segment segment = track.Segments[0];
+
+        fixture.Coordinator.StartHeldSegmentPitchRulerPreview(
+            track.Id,
+            segment.Id,
+            pitch: 60,
+            velocity: 100,
+            previewTempo: 120m);
+        fixture.Coordinator.EndHeldPreviewGate(120);
+
+        Assert.False(fixture.Coordinator.CanReplaceReleasedHeldEventInstrumentKeyboardPreview);
+        Assert.Throws<InvalidOperationException>(() =>
+            fixture.Coordinator.StartHeldEventInstrumentPreview(
+                new EventInstrumentPreviewRequest(instrument.Id, Pitch: 64, Tempo: 120m)));
+        Assert.Equal(0, fixture.Backend.StopCount);
+
+        fixture.Coordinator.StopPlayback();
     }
 
     [Fact]

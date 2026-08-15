@@ -1,7 +1,7 @@
 # Midora held Preview 因果 Gate 需求追踪
 
 日期：2026-08-07
-状态：非 UI 纵向切片已实施并通过自动回归；交互时延仍需后续 WPF 接线时做人工验收
+状态：非 UI 纵向切片及事件乐器键盘快速重触发已实施并通过自动回归；交互时延仍需人工验收
 关联决定：Q-NUI-011、Q-NUI-022、Q-NUI-031、ADR-AUDIO-005
 需求依据：SRS §9.17.10、§12.2.4、§13.22.7、§13.24.5、§13.30、INV-018、INV-039
 
@@ -18,6 +18,8 @@
 - splice 会根据 causal prefix 重建各 Port/Channel/pitch 的活动 Note 计数，并在 frontier 的后续事件之前插入逐实例 NoteOff；不得提前影响 ring 内 PCM，也不得把同音高重叠压成一次释放。
 - Gate 未结束时使用有界窗口编译，当前内部策略是 8 秒窗口、剩余不多于 4 秒时续接。续接先暂停 producer，再从同一 preview origin 编译下一窗口、替换未渲染后缀并恢复；窗口值是 Q-NUI-031 的小决定，不进入 Project 或公共文件契约。
 - Segment Note 草稿使用 Segment 的 ProjectStart、ContentOffset、参数 Lane、Track 绑定和草稿音高/力度；预览不得把草稿写入 Project。成功 Gate End 后可先释放编辑锁，再提交冻结的 Note；Release/Tail 仍使用已冻结计划继续播放。
+- Event Instrument 编辑器底部虚拟键盘在 Gate End 后继续保留自然 Release/Tail；若用户在该任务自然结束前再次按键，则新按键显式 Stop/Reset 旧的已松键预览，再启动新的 held Gate。该替换只适用于同一 UI 入口，不允许普通播放、普通 Preview、Segment Pitch Ruler 或其他全局任务自动抢占。
+- Event Instrument 编辑器的底部 Preview Panel 默认展开，但仍允许用户折叠；该状态只属于 UI 会话，不写入 Project。
 
 ## 失败条件与清理
 
@@ -37,6 +39,7 @@
 - Compiler：Gate Open 哨兵、Gate End 冻结长度与 producer tick 分离、Segment 草稿时间/参数上下文、无 Project 副作用。
 - Playback/Application：Event Instrument、Pitch Ruler、Note placement 共用入口；因果窗口续接；准确 frontier NoteOff；延迟报告；任务互斥；预览失败与提交隔离。
 - Audio/BASS：producer pause/drain/resume、计划 splice、同音高活动计数、renderer future-plan 替换、ABI v3 引入且由当前 v4 保持的 generation/status、托管与 Native AOT Worker pause/apply/resume 往返。
+- Application/Desktop：已松键的 Event Instrument/SubVoice 键盘预览可被下一键安全替换；Segment Pitch Ruler 及其他任务仍保持互斥；Preview Panel 新建时默认展开。
 - 2026-08-07 专项完整回归：Compiler 224/224、Playback 60/60、Application 238/238、BASS 148/148，0 failure、0 skip。
 
 ## 明确非目标

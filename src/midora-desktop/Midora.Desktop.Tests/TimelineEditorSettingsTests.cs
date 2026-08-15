@@ -95,6 +95,7 @@ public sealed class TimelineEditorSettingsTests
         Assert.Same(piano, segmentWorkspace.EditorSettings);
         Assert.NotSame(piano, instrumentWorkspace.EditorSettings);
         Assert.NotSame(instrumentWorkspace.EditorSettings, instrumentWorkspace.EventLaneEditorSettings);
+        Assert.True(instrumentWorkspace.IsPreviewExpanded);
         Assert.False(segmentWorkspace.GridVisible);
         Assert.NotEqual(segmentWorkspace.OperationStepTicks, arrangementWorkspace.OperationStepTicks);
         Assert.True(arrangementWorkspace.GridVisible);

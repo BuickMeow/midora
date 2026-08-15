@@ -574,7 +574,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             throw new InvalidOperationException(
                 _context?.PlaybackUnavailableReason ?? "Realtime Preview is unavailable.");
         }
-        if (!CanPreview)
+        if (!CanPreview
+            && !_context.Tasks.CanReplaceReleasedHeldEventInstrumentKeyboardPreview)
         {
             throw new InvalidOperationException(
                 PlaybackUnavailableReason ?? "Realtime Preview is currently locked.");

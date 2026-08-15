@@ -1581,7 +1581,7 @@ public sealed class InstrumentWorkspaceViewModel(
     private double _activeValueMinimum;
     private double _activeValueMaximum = 127;
     private bool _activeValueIntegral = true;
-    private bool _isPreviewExpanded;
+    private bool _isPreviewExpanded = true;
     private bool _isPreviewMuted;
     private bool _isPreviewSoloSelected;
     private InstrumentPreviewMode _previewMode;

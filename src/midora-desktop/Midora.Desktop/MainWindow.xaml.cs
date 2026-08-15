@@ -53,6 +53,7 @@ public partial class MainWindow : Window
     private MidoraId? _instrumentListDragId;
     private int? _trackHeaderContextLane;
     private TimelineSurface? _pendingTimelineAltReleaseFocus;
+    private bool _synchronizingInstrumentStructureSelection;
 
     public MainWindow()
     {
@@ -1312,6 +1313,12 @@ public partial class MainWindow : Window
         {
             item.IsSelected = true;
             item.Focus();
+            if (ItemsControl.ItemsControlFromItemContainer(item) is ListBox list
+                && list.DataContext is InstrumentWorkspaceViewModel workspace
+                && TryGetInstrumentStructureItemId(item.DataContext, out _))
+            {
+                SelectInstrumentStructureItem(list, workspace, item.DataContext);
+            }
         }
     }
 
@@ -1427,58 +1434,17 @@ public partial class MainWindow : Window
         }, DispatcherPriority.Normal);
     }
 
-    private void OnSubVoiceCutClick(object sender, RoutedEventArgs e) =>
+    private void OnInstrumentStructureCutClick(object sender, RoutedEventArgs e) =>
         CutOrCopyProjectSelection(cut: true);
 
-    private void OnSubVoiceCopyClick(object sender, RoutedEventArgs e) =>
+    private void OnInstrumentStructureCopyClick(object sender, RoutedEventArgs e) =>
         CutOrCopyProjectSelection(cut: false);
 
-    private void OnSubVoicePasteClick(object sender, RoutedEventArgs e) =>
+    private void OnInstrumentStructurePasteClick(object sender, RoutedEventArgs e) =>
         PasteProjectSelection();
 
-    private void OnMappingChainCopyClick(object sender, RoutedEventArgs e) =>
-        CutOrCopyProjectSelection(cut: false);
-
-    private void OnMappingChainPasteClick(object sender, RoutedEventArgs e) =>
-        PasteProjectSelection();
-
-    private void OnMappingChainDeleteClick(object sender, RoutedEventArgs e)
-    {
-        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel
-            {
-                ObjectId: MidoraId instrumentId,
-                Selection.Primary: MidoraId chainId
-            } workspace)
-        {
-            return;
-        }
-        MappingChainListItem? chain = workspace.MappingChains
-            .FirstOrDefault(value => value.Id == chainId);
-        if (chain is null || !chain.CanDelete) return;
-        bool nonEmpty = chain.StepCount != 0;
-        if (nonEmpty
-            && MessageBox.Show(
-                this,
-                $"Delete all {chain.StepCount} step(s) from '{chain.Owner}'?",
-                "Delete Mapping Chain",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning) != MessageBoxResult.Yes)
-        {
-            return;
-        }
-        RunSynchronous("Delete Mapping Chain", () => _session.Execute(
-            ProjectDomainEditCommands.DeleteMappingChain(
-                instrumentId,
-                chainId,
-                nonEmptyDeletionConfirmed: nonEmpty)));
-    }
-
-    private void OnSubVoiceDeleteClick(object sender, RoutedEventArgs e)
-    {
-        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace
-            || workspace.Selection.Primary is not MidoraId subVoiceId) return;
-        RunSynchronous("Delete SubVoice", () => DeleteInstrumentSelection(workspace, [subVoiceId]));
-    }
+    private void OnInstrumentStructureDeleteClick(object sender, RoutedEventArgs e) =>
+        DeleteWorkspaceSelection();
 
     private void OnMoveSubVoiceClick(object sender, RoutedEventArgs e)
     {
@@ -1754,6 +1720,18 @@ public partial class MainWindow : Window
         return null;
     }
 
+    private static IEnumerable<T> EnumerateDescendants<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int index = 0; index < count; index++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(root, index);
+            if (child is T candidate) yield return candidate;
+            foreach (T nested in EnumerateDescendants<T>(child)) yield return nested;
+        }
+    }
+
     private static long? ParseOptionalTick(string value, string label)
     {
         string trimmed = value.Trim();
@@ -1983,26 +1961,117 @@ public partial class MainWindow : Window
 
     private void OnInstrumentStructureSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace
+        if (_synchronizingInstrumentStructureSelection
+            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace
             || sender is not ListBox list
             || list.SelectedItem is null)
         {
             return;
         }
-        MidoraId? id = list.SelectedItem switch
+        SelectInstrumentStructureItem(list, workspace, list.SelectedItem);
+    }
+
+    private void SelectInstrumentStructureItem(
+        ListBox list,
+        InstrumentWorkspaceViewModel workspace,
+        object item)
+    {
+        if (!TryGetInstrumentStructureItemId(item, out MidoraId selected)) return;
+        _synchronizingInstrumentStructureSelection = true;
+        try
         {
-            SubVoiceListItem item => item.Id,
-            LogicalParameterListItem item => item.Id,
-            MappingFunctionListItem item => item.Id,
-            ParameterMappingListItem item => item.Id,
-            MappingChainListItem item => item.Id,
-            MappingStepListItem item => item.Id,
-            EnvelopeListItem item => item.Id,
+            foreach (ListBox candidate in EnumerateDescendants<ListBox>(WorkspaceTabs))
+            {
+                if (ReferenceEquals(candidate, list)
+                    || !ReferenceEquals(candidate.DataContext, workspace)
+                    || candidate.SelectedItem is null
+                    || !TryGetInstrumentStructureItemId(candidate.SelectedItem, out _))
+                {
+                    continue;
+                }
+                candidate.UnselectAll();
+            }
+        }
+        finally
+        {
+            _synchronizingInstrumentStructureSelection = false;
+        }
+        _session.SelectWorkspaceObject(workspace, selected);
+    }
+
+    private static bool TryGetInstrumentStructureItemId(object? item, out MidoraId id)
+    {
+        MidoraId? candidate = item switch
+        {
+            SubVoiceListItem value => value.Id,
+            LogicalParameterListItem value => value.Id,
+            MappingFunctionListItem value => value.Id,
+            ParameterMappingListItem value => value.Id,
+            MappingChainListItem value => value.Id,
+            MappingStepListItem value => value.Id,
+            EnvelopeListItem value => value.Id,
             _ => null
         };
-        if (id is MidoraId selected)
+        if (candidate is MidoraId resolved)
         {
-            _session.SelectWorkspaceObject(workspace, selected);
+            id = resolved;
+            return true;
+        }
+        id = default;
+        return false;
+    }
+
+    private void ClearInstrumentStructureVisualSelection(InstrumentWorkspaceViewModel workspace)
+    {
+        _synchronizingInstrumentStructureSelection = true;
+        try
+        {
+            foreach (ListBox candidate in EnumerateDescendants<ListBox>(WorkspaceTabs))
+            {
+                if (ReferenceEquals(candidate.DataContext, workspace)
+                    && candidate.SelectedItem is not null
+                    && TryGetInstrumentStructureItemId(candidate.SelectedItem, out _))
+                {
+                    candidate.UnselectAll();
+                }
+            }
+        }
+        finally
+        {
+            _synchronizingInstrumentStructureSelection = false;
+        }
+    }
+
+    private void SetInstrumentStructureVisualSelection(
+        InstrumentWorkspaceViewModel workspace,
+        MidoraId selectedId)
+    {
+        _synchronizingInstrumentStructureSelection = true;
+        try
+        {
+            bool selectedOne = false;
+            foreach (ListBox candidate in EnumerateDescendants<ListBox>(WorkspaceTabs))
+            {
+                if (!ReferenceEquals(candidate.DataContext, workspace)) continue;
+                object? matchingItem = candidate.Items.Cast<object>()
+                    .FirstOrDefault(value =>
+                        TryGetInstrumentStructureItemId(value, out MidoraId id)
+                        && id == selectedId);
+                if (!selectedOne && matchingItem is not null)
+                {
+                    candidate.SelectedItem = matchingItem;
+                    selectedOne = true;
+                }
+                else if (candidate.SelectedItem is not null
+                    && TryGetInstrumentStructureItemId(candidate.SelectedItem, out _))
+                {
+                    candidate.UnselectAll();
+                }
+            }
+        }
+        finally
+        {
+            _synchronizingInstrumentStructureSelection = false;
         }
     }
 
@@ -5107,8 +5176,57 @@ public partial class MainWindow : Window
                         }
                         break;
                     }
+                    if (ids.Length == 1 && instrument.LogicalParameters.Any(value => value.Id == ids[0]))
+                    {
+                        if (cut)
+                        {
+                            ProjectObjectClipboardCutPreparation prepared =
+                                ProjectObjectClipboard.PrepareCutLogicalParameterDefinition(
+                                    document,
+                                    instrumentId,
+                                    ids[0]);
+                            payload = prepared.Payload;
+                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                        }
+                        else
+                        {
+                            payload = ProjectObjectClipboard.CopyLogicalParameterDefinition(
+                                document,
+                                instrumentId,
+                                ids[0]);
+                        }
+                        break;
+                    }
+                    if (ids.Length == 1 && instrument.ParameterMappings.Any(value => value.Id == ids[0]))
+                    {
+                        if (cut)
+                        {
+                            ProjectObjectClipboardCutPreparation prepared =
+                                ProjectObjectClipboard.PrepareCutLogicalParameterMapping(
+                                    document,
+                                    instrumentId,
+                                    ids[0]);
+                            payload = prepared.Payload;
+                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                        }
+                        else
+                        {
+                            payload = ProjectObjectClipboard.CopyLogicalParameterMapping(
+                                document,
+                                instrumentId,
+                                ids[0]);
+                        }
+                        break;
+                    }
                     if (ids.Length == 1 && instrumentWorkspace.MappingChains.Any(chain => chain.Id == ids[0]))
                     {
+                        MappingChainListItem selectedChain = instrumentWorkspace.MappingChains
+                            .Single(chain => chain.Id == ids[0]);
+                        if (cut && !selectedChain.CanDelete)
+                        {
+                            throw new InvalidOperationException(
+                                "The Note Mapping Chain cannot be cut or deleted.");
+                        }
                         if (cut)
                         {
                             ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutMappingChain(
@@ -5121,6 +5239,73 @@ public partial class MainWindow : Window
                         else
                         {
                             payload = ProjectObjectClipboard.CopyMappingChain(document, instrumentId, ids[0]);
+                        }
+                        break;
+                    }
+                    if (ids.Length == 1
+                        && instrumentWorkspace.MappingSteps.FirstOrDefault(value => value.Id == ids[0])
+                            is MappingStepListItem selectedStep)
+                    {
+                        if (cut)
+                        {
+                            ProjectObjectClipboardCutPreparation prepared =
+                                ProjectObjectClipboard.PrepareCutMappingStep(
+                                    document,
+                                    instrumentId,
+                                    selectedStep.ChainId,
+                                    selectedStep.Id);
+                            payload = prepared.Payload;
+                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                        }
+                        else
+                        {
+                            payload = ProjectObjectClipboard.CopyMappingStep(
+                                document,
+                                instrumentId,
+                                selectedStep.ChainId,
+                                selectedStep.Id);
+                        }
+                        break;
+                    }
+                    if (ids.Length == 1 && instrument.Envelopes.Any(value => value.Id == ids[0]))
+                    {
+                        if (cut)
+                        {
+                            ProjectObjectClipboardCutPreparation prepared =
+                                ProjectObjectClipboard.PrepareCutEnvelopePreset(
+                                    document,
+                                    instrumentId,
+                                    ids[0]);
+                            payload = prepared.Payload;
+                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                        }
+                        else
+                        {
+                            payload = ProjectObjectClipboard.CopyEnvelopePreset(
+                                document,
+                                instrumentId,
+                                ids[0]);
+                        }
+                        break;
+                    }
+                    if (ids.Length == 1 && instrument.MappingFunctions.Any(value => value.Id == ids[0]))
+                    {
+                        if (cut)
+                        {
+                            ProjectObjectClipboardCutPreparation prepared =
+                                ProjectObjectClipboard.PrepareCutMappingFunction(
+                                    document,
+                                    instrumentId,
+                                    ids[0]);
+                            payload = prepared.Payload;
+                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                        }
+                        else
+                        {
+                            payload = ProjectObjectClipboard.CopyMappingFunction(
+                                document,
+                                instrumentId,
+                                ids[0]);
                         }
                         break;
                     }
@@ -5157,7 +5342,7 @@ public partial class MainWindow : Window
                         goto ClipboardPayloadReady;
                     }
                     throw new InvalidOperationException(
-                        "Copy or Cut may target Template Events from one SubVoice or points from one Value Curve.");
+                        "Copy or Cut requires one Event Instrument structure item, Template Events from one SubVoice, or points from one Value Curve.");
                 }
                 default:
                     return;
@@ -5171,6 +5356,10 @@ public partial class MainWindow : Window
             {
                 _session.Execute(deleteAfterWrite);
                 workspace.Selection.Clear();
+                if (workspace is InstrumentWorkspaceViewModel visualWorkspace)
+                {
+                    ClearInstrumentStructureVisualSelection(visualWorkspace);
+                }
             }
             _session.SetStatusMessage($"{(cut ? "Cut" : "Copied")} {payload.PlainTextSummary}.");
         });
@@ -5194,6 +5383,7 @@ public partial class MainWindow : Window
                 ? timeline.EditCursorTick ?? 0
                 : 0;
             IProjectEditCommand command;
+            MidoraId? retainedStructureSelection = null;
             if (workspace is InstrumentWorkspaceViewModel chainWorkspace
                 && chainWorkspace.ObjectId is MidoraId chainInstrumentId
                 && payload.Kind == ProjectObjectClipboardKind.MappingChain)
@@ -5216,6 +5406,48 @@ public partial class MainWindow : Window
                     chainInstrumentId,
                     targetChainId,
                     nonEmptyReplacementConfirmed: target.StepCount != 0);
+            }
+            else if (workspace is InstrumentWorkspaceViewModel mappingWorkspace
+                && mappingWorkspace.ObjectId is MidoraId mappingInstrumentId
+                && payload.Kind == ProjectObjectClipboardKind.LogicalParameterMapping)
+            {
+                MidoraId targetMappingId = mappingWorkspace.Selection.Primary is MidoraId selected
+                    && mappingWorkspace.ParameterMappings.Any(value => value.Id == selected)
+                    ? selected
+                    : throw new InvalidOperationException(
+                        "Select a target Logical Parameter Mapping before pasting its configuration.");
+                ParameterMappingListItem target = mappingWorkspace.ParameterMappings
+                    .Single(value => value.Id == targetMappingId);
+                if (target.StepCount != 0
+                    && MessageBox.Show(
+                        this,
+                        $"Replace all {target.StepCount} step(s) in the selected Logical Parameter Mapping?",
+                        "Replace Logical Parameter Mapping",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+                command = ProjectObjectClipboard.CreatePasteLogicalParameterMappingCommand(
+                    document,
+                    payload,
+                    mappingInstrumentId,
+                    targetMappingId,
+                    nonEmptyReplacementConfirmed: target.StepCount != 0);
+                retainedStructureSelection = targetMappingId;
+            }
+            else if (workspace is InstrumentWorkspaceViewModel stepWorkspace
+                && stepWorkspace.ObjectId is MidoraId stepInstrumentId
+                && payload.Kind == ProjectObjectClipboardKind.MappingStep)
+            {
+                (MidoraId ChainId, int InsertionIndex) target =
+                    ResolveMappingStepPasteTarget(stepWorkspace);
+                command = ProjectObjectClipboard.CreatePasteMappingStepCommand(
+                    document,
+                    payload,
+                    stepInstrumentId,
+                    target.ChainId,
+                    target.InsertionIndex);
             }
             else command = workspace switch
             {
@@ -5262,6 +5494,39 @@ public partial class MainWindow : Window
                         ResolveSubVoicePasteIndex(project, instrumentWorkspace, instrumentId)),
                 InstrumentWorkspaceViewModel instrumentWorkspace
                     when instrumentWorkspace.ObjectId is MidoraId instrumentId
+                    && payload.Kind == ProjectObjectClipboardKind.LogicalParameterDefinition =>
+                    ProjectObjectClipboard.CreatePasteLogicalParameterDefinitionCommand(
+                        document,
+                        payload,
+                        instrumentId,
+                        ResolveStructurePasteIndex(
+                            project.EventInstruments.Single(value => value.Id == instrumentId).LogicalParameters,
+                            instrumentWorkspace.Selection.Primary,
+                            value => value.Id)),
+                InstrumentWorkspaceViewModel instrumentWorkspace
+                    when instrumentWorkspace.ObjectId is MidoraId instrumentId
+                    && payload.Kind == ProjectObjectClipboardKind.EnvelopePreset =>
+                    ProjectObjectClipboard.CreatePasteEnvelopePresetCommand(
+                        document,
+                        payload,
+                        instrumentId,
+                        ResolveStructurePasteIndex(
+                            project.EventInstruments.Single(value => value.Id == instrumentId).Envelopes,
+                            instrumentWorkspace.Selection.Primary,
+                            value => value.Id)),
+                InstrumentWorkspaceViewModel instrumentWorkspace
+                    when instrumentWorkspace.ObjectId is MidoraId instrumentId
+                    && payload.Kind == ProjectObjectClipboardKind.MappingFunction =>
+                    ProjectObjectClipboard.CreatePasteMappingFunctionCommand(
+                        document,
+                        payload,
+                        instrumentId,
+                        ResolveStructurePasteIndex(
+                            project.EventInstruments.Single(value => value.Id == instrumentId).MappingFunctions,
+                            instrumentWorkspace.Selection.Primary,
+                            value => value.Id)),
+                InstrumentWorkspaceViewModel instrumentWorkspace
+                    when instrumentWorkspace.ObjectId is MidoraId instrumentId
                     && payload.Kind == ProjectObjectClipboardKind.SubVoiceTimelineEvents =>
                     ProjectObjectClipboard.CreatePasteSubVoiceTimelineEventsCommand(
                         document,
@@ -5278,7 +5543,19 @@ public partial class MainWindow : Window
             };
             long firstNewStableId = project.NextStableId;
             _session.Execute(command);
-            SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
+            if (workspace is InstrumentWorkspaceViewModel structureWorkspace
+                && IsInstrumentStructureClipboardKind(payload.Kind))
+            {
+                SelectInstrumentStructurePasteResult(
+                    structureWorkspace,
+                    payload.Kind,
+                    firstNewStableId,
+                    retainedStructureSelection);
+            }
+            else
+            {
+                SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
+            }
             _session.SetStatusMessage($"Pasted {payload.PlainTextSummary}.");
         });
     }
@@ -5312,6 +5589,88 @@ public partial class MainWindow : Window
             if (index >= 0) return index + 1;
         }
         return instrument.SubVoices.Count;
+    }
+
+    private static int ResolveStructurePasteIndex<T>(
+        IReadOnlyList<T> values,
+        MidoraId? selectedId,
+        Func<T, MidoraId> getId)
+    {
+        if (selectedId is MidoraId selected)
+        {
+            for (int index = 0; index < values.Count; index++)
+            {
+                if (getId(values[index]) == selected) return index + 1;
+            }
+        }
+        return values.Count;
+    }
+
+    private static (MidoraId ChainId, int InsertionIndex) ResolveMappingStepPasteTarget(
+        InstrumentWorkspaceViewModel workspace)
+    {
+        MidoraId selected = workspace.Selection.Primary
+            ?? throw new InvalidOperationException(
+                "Select a target Mapping Chain or Mapping Step before pasting.");
+        MappingStepListItem? step = workspace.MappingSteps
+            .FirstOrDefault(value => value.Id == selected);
+        if (step is not null) return (step.ChainId, step.Index + 1);
+        MappingChainListItem? chain = workspace.MappingChains
+            .FirstOrDefault(value => value.Id == selected);
+        return chain is not null
+            ? (chain.Id, chain.StepCount)
+            : throw new InvalidOperationException(
+                "The current selection is not a Mapping Chain target.");
+    }
+
+    private static bool IsInstrumentStructureClipboardKind(ProjectObjectClipboardKind kind) =>
+        kind is ProjectObjectClipboardKind.SubVoice
+            or ProjectObjectClipboardKind.LogicalParameterDefinition
+            or ProjectObjectClipboardKind.LogicalParameterMapping
+            or ProjectObjectClipboardKind.MappingChain
+            or ProjectObjectClipboardKind.MappingStep
+            or ProjectObjectClipboardKind.EnvelopePreset
+            or ProjectObjectClipboardKind.MappingFunction;
+
+    private void SelectInstrumentStructurePasteResult(
+        InstrumentWorkspaceViewModel workspace,
+        ProjectObjectClipboardKind kind,
+        long firstNewStableId,
+        MidoraId? retainedSelection)
+    {
+        MidoraId? selected = retainedSelection ?? kind switch
+        {
+            ProjectObjectClipboardKind.SubVoice => workspace.SubVoices
+                .Select(value => value.Id).FirstOrDefault(value => value.Value >= firstNewStableId),
+            ProjectObjectClipboardKind.LogicalParameterDefinition => workspace.Parameters
+                .Select(value => value.Id).FirstOrDefault(value => value.Value >= firstNewStableId),
+            ProjectObjectClipboardKind.MappingChain => workspace.MappingChains
+                .Select(value => value.Id).FirstOrDefault(value => value.Value >= firstNewStableId),
+            ProjectObjectClipboardKind.MappingStep => workspace.MappingSteps
+                .Select(value => value.Id).FirstOrDefault(value => value.Value >= firstNewStableId),
+            ProjectObjectClipboardKind.EnvelopePreset => workspace.Envelopes
+                .Select(value => value.Id).FirstOrDefault(value => value.Value >= firstNewStableId),
+            ProjectObjectClipboardKind.MappingFunction => workspace.MappingFunctions
+                .Select(value => value.Id).FirstOrDefault(value => value.Value >= firstNewStableId),
+            _ => null
+        };
+        if (selected is not MidoraId id || id == default)
+        {
+            workspace.Selection.Clear();
+        }
+        else
+        {
+            workspace.Selection.Replace(id);
+        }
+        _session.RefreshWorkspaceSelection(workspace);
+        if (selected is MidoraId selectedId && selectedId != default)
+        {
+            SetInstrumentStructureVisualSelection(workspace, selectedId);
+        }
+        else
+        {
+            ClearInstrumentStructureVisualSelection(workspace);
+        }
     }
 
     private static MidoraId ResolveSegmentTargetLane(
@@ -5512,6 +5871,10 @@ public partial class MainWindow : Window
                     break;
             }
             workspace.Selection.Clear();
+            if (workspace is InstrumentWorkspaceViewModel visualWorkspace)
+            {
+                ClearInstrumentStructureVisualSelection(visualWorkspace);
+            }
         });
     }
 
@@ -5632,6 +5995,28 @@ public partial class MainWindow : Window
                     _session.Execute(ProjectDomainEditCommands.DeleteInstrumentEnvelope(
                         instrumentId, id, referencedDeletionConfirmed: true));
                 }
+                return;
+            }
+            MappingChainListItem? selectedChain = workspace.MappingChains
+                .FirstOrDefault(item => item.Id == id);
+            if (selectedChain is not null)
+            {
+                if (!selectedChain.CanDelete) return;
+                bool nonEmpty = selectedChain.StepCount != 0;
+                if (nonEmpty
+                    && MessageBox.Show(
+                        this,
+                        $"Delete all {selectedChain.StepCount} step(s) from '{selectedChain.Owner}'?",
+                        "Delete Mapping Chain",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+                _session.Execute(ProjectDomainEditCommands.DeleteMappingChain(
+                    instrumentId,
+                    id,
+                    nonEmptyDeletionConfirmed: nonEmpty));
                 return;
             }
             foreach (MappingChain chain in EnumerateInstrumentMappingChains(instrument))

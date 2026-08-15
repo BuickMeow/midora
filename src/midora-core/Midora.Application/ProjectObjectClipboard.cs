@@ -12,6 +12,11 @@ public enum ProjectObjectClipboardKind
     SubVoice,
     ValueCurveContent,
     MappingChain,
+    LogicalParameterDefinition,
+    LogicalParameterMapping,
+    MappingStep,
+    EnvelopePreset,
+    MappingFunction,
     ConductorEvents
 }
 

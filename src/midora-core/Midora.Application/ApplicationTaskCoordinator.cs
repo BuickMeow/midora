@@ -133,6 +133,8 @@ public sealed class ApplicationTaskCoordinator : IDisposable
     private CancellationTokenSource? _activeCancellation;
     private long _generation;
     private bool _preferenceUpdateActive;
+    private bool _activeHeldEventInstrumentKeyboardPreview;
+    private bool _releasedHeldEventInstrumentKeyboardPreview;
     private bool _disposed;
 
     public ApplicationTaskCoordinator(
@@ -196,6 +198,21 @@ public sealed class ApplicationTaskCoordinator : IDisposable
         }
     }
 
+    public bool CanReplaceReleasedHeldEventInstrumentKeyboardPreview
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return !_disposed
+                    && _activeHeldEventInstrumentKeyboardPreview
+                    && _releasedHeldEventInstrumentKeyboardPreview
+                    && _activeTaskKind is ApplicationTaskKind.EventInstrumentPreview
+                        or ApplicationTaskKind.SubVoicePreview;
+            }
+        }
+    }
+
     public void StartMainPlayback(long? cursorTick = null, long? endTick = null) =>
         StartPlaybackTask(
             ApplicationTaskKind.MainPlayback,
@@ -213,12 +230,25 @@ public sealed class ApplicationTaskCoordinator : IDisposable
                 : ApplicationTaskKind.EventInstrumentPreview,
             () => _playback.StartEventInstrumentPreview(request));
 
-    public void StartHeldEventInstrumentPreview(EventInstrumentPreviewRequest request) =>
+    public void StartHeldEventInstrumentPreview(EventInstrumentPreviewRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        StopReleasedHeldEventInstrumentKeyboardPreview();
+        ApplicationTaskKind taskKind = request.SubVoiceId.HasValue
+            ? ApplicationTaskKind.SubVoicePreview
+            : ApplicationTaskKind.EventInstrumentPreview;
         StartPlaybackTask(
-            request.SubVoiceId.HasValue
-                ? ApplicationTaskKind.SubVoicePreview
-                : ApplicationTaskKind.EventInstrumentPreview,
+            taskKind,
             () => _playback.StartHeldEventInstrumentPreview(request));
+        lock (_sync)
+        {
+            if (_activeTaskKind == taskKind)
+            {
+                _activeHeldEventInstrumentKeyboardPreview = true;
+                _releasedHeldEventInstrumentKeyboardPreview = false;
+            }
+        }
+    }
 
     public void StartHeldSegmentPitchRulerPreview(
         MidoraId trackId,
@@ -315,6 +345,7 @@ public sealed class ApplicationTaskCoordinator : IDisposable
 
     public HeldPreviewGateEndReport EndHeldPreviewGate(long? finalGateLengthTicks = null)
     {
+        bool eventInstrumentKeyboardPreview;
         lock (_sync)
         {
             ThrowIfDisposed();
@@ -323,8 +354,22 @@ public sealed class ApplicationTaskCoordinator : IDisposable
             {
                 throw new InvalidOperationException("No held-preview task is active.");
             }
+            eventInstrumentKeyboardPreview = _activeHeldEventInstrumentKeyboardPreview;
         }
-        return _playback.EndHeldPreviewGate(finalGateLengthTicks);
+        HeldPreviewGateEndReport report = _playback.EndHeldPreviewGate(finalGateLengthTicks);
+        if (eventInstrumentKeyboardPreview)
+        {
+            lock (_sync)
+            {
+                if (_activeHeldEventInstrumentKeyboardPreview
+                    && _activeTaskKind is ApplicationTaskKind.EventInstrumentPreview
+                        or ApplicationTaskKind.SubVoicePreview)
+                {
+                    _releasedHeldEventInstrumentKeyboardPreview = true;
+                }
+            }
+        }
+        return report;
     }
 
     public void CancelHeldPreview()
@@ -737,6 +782,27 @@ public sealed class ApplicationTaskCoordinator : IDisposable
         }
     }
 
+    private void StopReleasedHeldEventInstrumentKeyboardPreview()
+    {
+        bool stopReleasedPreview;
+        lock (_sync)
+        {
+            ThrowIfDisposed();
+            stopReleasedPreview = _activeHeldEventInstrumentKeyboardPreview
+                && _releasedHeldEventInstrumentKeyboardPreview
+                && _activeTaskKind is ApplicationTaskKind.EventInstrumentPreview
+                    or ApplicationTaskKind.SubVoicePreview;
+            if (stopReleasedPreview)
+            {
+                _phase = ApplicationTaskPhase.Stopping;
+            }
+        }
+        if (stopReleasedPreview)
+        {
+            _playback.Stop();
+        }
+    }
+
     private TaskAdmission BeginAdmission(
         ApplicationTaskKind taskKind,
         PlaybackCleanupContinuation? continuation)
@@ -933,6 +999,8 @@ public sealed class ApplicationTaskCoordinator : IDisposable
         _activeTaskKind = ApplicationTaskKind.None;
         _phase = finalPhase;
         _lockLevel = ApplicationLockLevel.Normal;
+        _activeHeldEventInstrumentKeyboardPreview = false;
+        _releasedHeldEventInstrumentKeyboardPreview = false;
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);

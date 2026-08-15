@@ -102,6 +102,8 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
 
         string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
         string soundFontPath = NativeAudioIntegrationEnvironment.RequireSoundFontPath();
+        string soundFontSha256 =
+            NativeAudioIntegrationEnvironment.RequireVerifiedSoundFontSha256(soundFontPath);
         MidiRenderPlan plan = new(
             48_000,
             480_000,
@@ -136,7 +138,8 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
                 audioCache: new CacheAccess(cache),
                 bufferingRecoverySpoolPath: recovery.Path,
                 bufferingRecoveryMemoryFrameCapacity: plan.TotalFrameCount,
-                playbackSpanCacheEnabled: true);
+                playbackSpanCacheEnabled: true,
+                verifiedSoundFontSha256: soundFontSha256);
 
             long deadline = Environment.TickCount64 + 2_000;
             AudioWorkerStatus status = session.Status;
@@ -322,7 +325,7 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
             $"midora-desktop-playback-{Guid.NewGuid():N}");
         try
         {
-            MidoraProject project = CreateAudibleProject();
+            MidoraProject project = CreateAudibleProject(soundFontPath);
             using ProjectCompilationSession compilation = new(project, soundFontPath);
             _ = compilation.ConfigureAudioCache(cacheRoot, 16 * 1024 * 1024);
             using BassWasapiChildPlaybackBackend backend = new(new(
@@ -378,7 +381,7 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
             $"midora-repeated-playback-{Guid.NewGuid():N}");
         try
         {
-            MidoraProject project = CreateAudibleProject();
+            MidoraProject project = CreateAudibleProject(soundFontPath);
             using ProjectCompilationSession compilation = new(project, soundFontPath);
             _ = compilation.ConfigureAudioCache(cacheRoot, 16 * 1024 * 1024);
             using BassWasapiChildPlaybackBackend backend = new(new(
@@ -581,9 +584,15 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
 
     private static MidiRenderPlan CreatePlan() => new(48_000, 0, []);
 
-    private static MidoraProject CreateAudibleProject()
+    private static MidoraProject CreateAudibleProject(string soundFontPath)
     {
         MidoraProject project = new(480);
+        string fileName = Path.GetFileName(soundFontPath);
+        project.SoundFont.SetExternal(
+            fileName,
+            fileName,
+            NativeAudioIntegrationEnvironment.RequireVerifiedSoundFontSha256(soundFontPath),
+            new FileInfo(soundFontPath).Length);
         EventInstrument instrument = new(project)
         {
             Name = "Piano",

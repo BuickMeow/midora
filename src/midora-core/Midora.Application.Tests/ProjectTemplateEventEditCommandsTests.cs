@@ -333,6 +333,137 @@ public sealed class ProjectTemplateEventEditCommandsTests
         AssertCurrentCompilationMatchesFull(compilation);
     }
 
+    [Fact]
+    public void EventPointBatchMoveAndCopyAreAtomicAndPreserveTheSharedLaneMapping()
+    {
+        MidoraProject project = CreateProject();
+        EventInstrument instrument = project.EventInstruments[0];
+        SubVoice voice = instrument.SubVoices[0];
+        TemplateEvent first = TemplateEvent.ControlChange(project, 120, 11, 30);
+        TemplateEvent second = TemplateEvent.ControlChange(project, 240, 11, 60);
+        voice.Events.AddRange([first, second]);
+        SubVoiceEventMapping mapping = voice.EventMappings.Single(value =>
+            value.Target == TemplateEventMidiTargets.ToMappingTarget(MidiValueTarget.ControlChange(11)));
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.AdjustSubVoiceEventPoints(
+            instrument.Id,
+            voice.Id,
+            [first.Id, second.Id],
+            MidiValueTarget.ControlChange(11),
+            tickDelta: 60,
+            valueDelta: 5,
+            duplicate: false));
+
+        Assert.Equal([(180L, 35), (300L, 65)],
+            new[] { first, second }.Select(value => (value.Tick, value.Value)).ToArray());
+        Assert.Same(mapping, voice.FindEventMapping(mapping.Target));
+        Assert.Single(document.History);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        long firstCopyId = project.NextStableId;
+        document.Execute(ProjectDomainEditCommands.AdjustSubVoiceEventPoints(
+            instrument.Id,
+            voice.Id,
+            [first.Id, second.Id],
+            MidiValueTarget.ControlChange(11),
+            tickDelta: 480,
+            valueDelta: 0,
+            duplicate: true));
+
+        TemplateEvent[] copies = voice.Events
+            .Where(value => value.Id.Value >= firstCopyId)
+            .OrderBy(value => value.Tick)
+            .ToArray();
+        Assert.Equal([(660L, 35), (780L, 65)],
+            copies.Select(value => (value.Tick, value.Value)).ToArray());
+        Assert.All(copies, value => Assert.Same(mapping.Steps, value.ValueMappings));
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+        Assert.DoesNotContain(voice.Events, value => value.Id.Value >= firstCopyId);
+        document.Undo();
+        Assert.Equal([(120L, 30), (240L, 60)],
+            new[] { first, second }.Select(value => (value.Tick, value.Value)).ToArray());
+        Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void CreatingEventLaneAddsOnlyTheSharedMappingAndNoTickZeroEvent()
+    {
+        MidoraProject project = CreateProject();
+        EventInstrument instrument = project.EventInstruments[0];
+        SubVoice voice = instrument.SubVoices[0];
+        TemplateEvent[] originalEvents = voice.Events.ToArray();
+        TemplateEventMappingTarget target = TemplateEventMidiTargets.ToMappingTarget(
+            MidiValueTarget.ControlChange(74));
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.CreateSubVoiceEventLane(
+            instrument.Id,
+            voice.Id,
+            MidiValueTarget.ControlChange(74)));
+
+        Assert.Equal(originalEvents, voice.Events);
+        Assert.NotNull(voice.FindEventMapping(target));
+        Assert.Single(document.History);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        Assert.Throws<InvalidOperationException>(() => document.Execute(
+            ProjectDomainEditCommands.CreateSubVoiceEventLane(
+                instrument.Id,
+                voice.Id,
+                MidiValueTarget.ControlChange(74))));
+        Assert.Equal(originalEvents, voice.Events);
+        Assert.Single(voice.EventMappings, value => value.Target == target);
+        Assert.Single(document.History);
+
+        document.Undo();
+        Assert.Equal(originalEvents, voice.Events);
+        Assert.Null(voice.FindEventMapping(target));
+        Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void ExplicitEventLaneDeletionRemovesBankComponentAndUndoRestoresExactLane()
+    {
+        MidoraProject project = CreateProject();
+        EventInstrument instrument = project.EventInstruments[0];
+        SubVoice voice = instrument.SubVoices[0];
+        TemplateEvent bank = TemplateEvent.Bank(project, 120, 7, 9);
+        voice.Events.Add(bank);
+        TemplateEventMappingTarget msbTarget = TemplateEventMidiTargets.ToMappingTarget(
+            MidiValueTarget.BankMsb);
+        SubVoiceEventMapping msbMapping = voice.FindEventMapping(msbTarget)!;
+        int mappingIndex = voice.EventMappings.IndexOf(msbMapping);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.DeleteSubVoiceEventLane(
+            instrument.Id,
+            voice.Id,
+            MidiValueTarget.BankMsb,
+            nonEmptyDeletionConfirmed: true));
+
+        Assert.False(bank.HasBankMsb);
+        Assert.True(bank.HasBankLsb);
+        Assert.Null(voice.FindEventMapping(msbTarget));
+        Assert.NotNull(voice.FindEventMapping(TemplateEventMidiTargets.ToMappingTarget(
+            MidiValueTarget.BankLsb)));
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+        Assert.True(bank.HasBankMsb);
+        Assert.True(bank.HasBankLsb);
+        Assert.Same(msbMapping, voice.EventMappings[mappingIndex]);
+        Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
     private static TemplateEvent Event(
         MidoraProject project,
         TemplateEventKind kind,

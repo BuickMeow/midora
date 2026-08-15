@@ -67,6 +67,12 @@ public sealed class TimelineLanePreviewEventArgs(int lane, int pitch, int veloci
     public int Velocity { get; } = velocity;
 }
 
+public sealed class TimelinePitchPreviewEventArgs(int pitch, int velocity) : RoutedEventArgs
+{
+    public int Pitch { get; } = pitch;
+    public int Velocity { get; } = velocity;
+}
+
 public sealed class TimelineNotePlacementEventArgs(
     long startTick,
     long endTick,
@@ -348,7 +354,10 @@ public sealed class TimelineSurface : Control
         nameof(ToolMode),
         typeof(TimelineToolMode),
         typeof(TimelineSurface),
-        new FrameworkPropertyMetadata(TimelineToolMode.Select));
+        new FrameworkPropertyMetadata(
+            TimelineToolMode.Select,
+            FrameworkPropertyMetadataOptions.AffectsRender,
+            OnToolModeChanged));
 
     public static readonly DependencyProperty GridVisibleProperty = DependencyProperty.Register(
         nameof(GridVisible),
@@ -441,6 +450,10 @@ public sealed class TimelineSurface : Control
     private bool _dragActivated;
     private bool _dragCopyRequested;
     private ModifierKeys _dragModifiers;
+    private int _dragPitchPreviewAnchorLane;
+    private int _dragPitchPreviewLastPitch = -1;
+    private int _dragPitchPreviewVelocity;
+    private bool _dragPitchPreviewActive;
     private TimelineLanePreviewEventArgs? _activeLanePreview;
     private long? _notePlacementStartTick;
     private long _notePlacementCurrentTick;
@@ -695,6 +708,8 @@ public sealed class TimelineSurface : Control
     public event EventHandler<TimelineItemEventArgs>? SegmentSplitRequested;
     public event EventHandler<TimelineLanePreviewEventArgs>? LanePreviewPressed;
     public event EventHandler<TimelineLanePreviewEventArgs>? LanePreviewReleased;
+    public event EventHandler<TimelinePitchPreviewEventArgs>? PitchPreviewRequested;
+    public event EventHandler? PitchPreviewReleased;
     public event EventHandler<TimelineNotePlacementEventArgs>? NotePlacementStarted;
     public event EventHandler<TimelineNotePlacementEventArgs>? NotePlacementCompleted;
     public event EventHandler? NotePlacementCancelled;
@@ -746,6 +761,14 @@ public sealed class TimelineSurface : Control
         }
     }
 
+    private static void OnToolModeChanged(
+        DependencyObject dependencyObject,
+        DependencyPropertyChangedEventArgs args)
+    {
+        TimelineSurface surface = (TimelineSurface)dependencyObject;
+        surface.RefreshHoverIntent();
+    }
+
     private static object CoerceFirstLane(DependencyObject dependencyObject, object baseValue)
     {
         TimelineSurface surface = (TimelineSurface)dependencyObject;
@@ -774,7 +797,7 @@ public sealed class TimelineSurface : Control
 
     private void UpdateVerticalViewportMetrics()
     {
-        int visibleLaneCount = ComputeVisibleLaneCount();
+        int visibleLaneCount = ComputeFullyVisibleLaneCount();
         int maximum = Math.Max(0, ComputeTotalLaneCount() - visibleLaneCount);
         SetValue(VisibleLaneCountPropertyKey, visibleLaneCount);
         SetValue(MaximumFirstLanePropertyKey, maximum);
@@ -783,7 +806,18 @@ public sealed class TimelineSurface : Control
     }
 
     private int ComputeMaximumFirstLane() =>
-        Math.Max(0, ComputeTotalLaneCount() - ComputeVisibleLaneCount());
+        Math.Max(0, ComputeTotalLaneCount() - ComputeFullyVisibleLaneCount());
+
+    private int ComputeFullyVisibleLaneCount()
+    {
+        double contentHeight = Math.Max(0, ActualHeight - GetRulerHeight());
+        int visibleLaneCount = LaneHeight > 0 && double.IsFinite(LaneHeight)
+            ? Math.Max(1, (int)Math.Floor(contentHeight / LaneHeight))
+            : 1;
+        return SurfaceMode == TimelineSurfaceMode.PianoRoll
+            ? Math.Min(128, visibleLaneCount)
+            : visibleLaneCount;
+    }
 
     private int ComputeTotalLaneCount()
     {
@@ -799,9 +833,12 @@ public sealed class TimelineSurface : Control
     private int ComputeVisibleLaneCount()
     {
         double contentHeight = Math.Max(0, ActualHeight - GetRulerHeight());
-        return LaneHeight > 0 && double.IsFinite(LaneHeight)
+        int visibleLaneCount = LaneHeight > 0 && double.IsFinite(LaneHeight)
             ? Math.Max(1, (int)Math.Ceiling(contentHeight / LaneHeight))
             : 1;
+        return SurfaceMode == TimelineSurfaceMode.PianoRoll
+            ? Math.Min(128, visibleLaneCount)
+            : visibleLaneCount;
     }
 
     private void UpdateValueScrollMetrics()
@@ -848,14 +885,19 @@ public sealed class TimelineSurface : Control
             double y = rulerHeight + relativeLane * LaneHeight;
             int absoluteLane = viewport.FirstLane + relativeLane;
             bool shaded = SurfaceMode == TimelineSurfaceMode.PianoRoll
-                ? !PianoKeyPresentation.IsBlackKey(127 - absoluteLane)
+                ? absoluteLane is >= 0 and < 128
+                  && !PianoKeyPresentation.IsBlackKey(127 - absoluteLane)
                 : (relativeLane & 1) != 0;
             if (shaded)
             {
                 drawingContext.DrawRectangle(
                     alternate,
                     null,
-                    new Rect(laneHeaderWidth, y, Math.Max(0, ActualWidth - laneHeaderWidth), Math.Min(LaneHeight, ActualHeight - y)));
+                    new Rect(
+                        laneHeaderWidth,
+                        y,
+                        Math.Max(0, ActualWidth - laneHeaderWidth),
+                        Math.Min(LaneHeight, Math.Max(0, rulerHeight + GetLaneContentHeight(viewport) - y))));
             }
             drawingContext.DrawLine(_borderPen, new Point(0, y), new Point(ActualWidth, y));
         }
@@ -995,7 +1037,9 @@ public sealed class TimelineSurface : Control
             && point.X >= GetLaneHeaderWidth()
             && point.Y >= GetRulerHeight())
         {
-            bool forceTrace = TimelineToolPolicy.ForcesVelocityTrace(
+            bool forceTrace = TimelineToolPolicy.ForcesValueTrace(
+                ToolMode,
+                SurfaceMode,
                 e.ChangedButton,
                 Keyboard.Modifiers);
             _velocityOrigin = point;
@@ -1030,39 +1074,40 @@ public sealed class TimelineSurface : Control
         if (SurfaceMode == TimelineSurfaceMode.EventLanes
             && ToolMode == TimelineToolMode.Draw
             && CanEdit
+            && EventPointEditCompleted is not null
             && e.ChangedButton is MouseButton.Left or MouseButton.Right
             && point.X >= GetLaneHeaderWidth()
             && point.Y >= GetRulerHeight())
         {
-            bool forceTrace = e.ChangedButton == MouseButton.Right
-                || (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
             TimelineRenderItem directItem = default;
+            bool forceTrace = TimelineToolPolicy.ForcesValueTrace(
+                ToolMode,
+                SurfaceMode,
+                e.ChangedButton,
+                Keyboard.Modifiers);
+            bool hasDirectItem = e.ChangedButton == MouseButton.Left
+                && !forceTrace
+                && TryHitEventPoint(point, viewport, out directItem);
+            if (hasDirectItem)
+            {
+                goto ContinueDirectTimelineInteraction;
+            }
             _eventPointOrigin = point;
             _eventPointButton = e.ChangedButton;
             _eventPointEdits.Clear();
-            _eventPointDirectItemId = e.ChangedButton == MouseButton.Left
-                && !forceTrace
-                && TryHitEventPoint(point, viewport, out directItem)
-                ? directItem.Id
-                : null;
-            if (forceTrace && e.ChangedButton == MouseButton.Left)
+            _eventPointDirectItemId = null;
+            if (forceTrace)
             {
                 RaiseEvent(new RoutedEventArgs(AltGestureConsumedEvent, this));
             }
             _eventPointTracePoints.Clear();
-            if (_eventPointDirectItemId is not null)
-            {
-                UpdateSingleEventPoint(directItem.StartTick, point.Y, GetRulerHeight());
-            }
-            else
-            {
-                _eventPointTracePoints.Add(ClampEventPointTracePoint(point));
-            }
+            _eventPointTracePoints.Add(ClampEventPointTracePoint(point));
             CaptureMouse();
             InvalidateVisual();
             e.Handled = true;
             return;
         }
+    ContinueDirectTimelineInteraction:
         if (e.ChangedButton != MouseButton.Left)
         {
             return;
@@ -1078,6 +1123,13 @@ public sealed class TimelineSurface : Control
             _rulerDragStartTick = rulerTick;
             _rulerDragCurrentTick = rulerTick;
             CaptureMouse();
+            e.Handled = true;
+            return;
+        }
+        if (SurfaceMode == TimelineSurfaceMode.PianoRoll
+            && !IsInsideLaneContent(viewport, point.Y, rulerHeight))
+        {
+            Cursor = Cursors.Arrow;
             e.Handled = true;
             return;
         }
@@ -1239,6 +1291,7 @@ public sealed class TimelineSurface : Control
                         SurfaceMode,
                         hit.Kind,
                         _dragKind);
+                PrepareDragPitchPreview(hit);
                 CaptureMouse();
             }
         }
@@ -1326,7 +1379,13 @@ public sealed class TimelineSurface : Control
             LaneHeaderContextRequested?.Invoke(this, new(headerLane));
             return;
         }
-        if (point.X < laneHeaderWidth || point.Y < rulerHeight) return;
+        if (point.X < laneHeaderWidth
+            || point.Y < rulerHeight
+            || (SurfaceMode == TimelineSurfaceMode.PianoRoll
+                && !IsInsideLaneContent(viewport, point.Y, rulerHeight)))
+        {
+            return;
+        }
         long tick = viewport.XToContainingTick(point.X - laneHeaderWidth);
         int lane = viewport.YToLane(point.Y - rulerHeight);
         Snapshot?.Index.HitTestInto(tick, 0, lane, _hitItems);
@@ -1359,7 +1418,9 @@ public sealed class TimelineSurface : Control
             return;
         }
         bool hoverChangesVisual = ToolMode == TimelineToolMode.Draw
-            && SurfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll;
+            && SurfaceMode is TimelineSurfaceMode.Arrangement
+                or TimelineSurfaceMode.PianoRoll
+                or TimelineSurfaceMode.EventLanes;
         if (_velocityOrigin is Point velocityOrigin
             && (e.LeftButton == MouseButtonState.Pressed || e.RightButton == MouseButtonState.Pressed))
         {
@@ -1448,9 +1509,12 @@ public sealed class TimelineSurface : Control
             }
             if (_dragActivated)
             {
-                Cursor = _dragKind == TimelineItemEditKind.Move
-                    ? Cursors.SizeAll
-                    : Cursors.SizeWE;
+                UpdateDragPitchPreview();
+                Cursor = dragItem.Kind == TimelineItemKind.LogicalParameterPoint
+                    ? Cursors.SizeNS
+                    : _dragKind == TimelineItemEditKind.Move
+                        ? Cursors.SizeAll
+                        : Cursors.SizeWE;
             }
             InvalidateVisual();
             return;
@@ -1665,6 +1729,7 @@ public sealed class TimelineSurface : Control
         }
         if (e.ChangedButton == MouseButton.Left && _dragItem is TimelineRenderItem item)
         {
+            EndDragPitchPreview();
             if (_dragActivated)
             {
                 ItemEditCompleted?.Invoke(
@@ -1674,7 +1739,9 @@ public sealed class TimelineSurface : Control
                         _dragKind,
                         checked(_dragCurrentTick - _dragOriginTick),
                         checked(_dragCurrentLane - _dragOriginLane),
-                        -(e.GetPosition(this).Y - _dragOrigin.Y) / Math.Max(1, LaneHeight),
+                        item.Kind == TimelineItemKind.LogicalParameterPoint
+                            ? GetDragNormalizedValueDelta(e.GetPosition(this).Y)
+                            : -(e.GetPosition(this).Y - _dragOrigin.Y) / Math.Max(1, LaneHeight),
                         _dragModifiers,
                         _dragCopyRequested));
             }
@@ -1761,6 +1828,11 @@ public sealed class TimelineSurface : Control
             if (SurfaceMode == TimelineSurfaceMode.PianoRoll
                 && pointer.X < GetLaneHeaderWidth())
             {
+                if (!IsInsideLaneContent(viewport, pointer.Y, GetRulerHeight()))
+                {
+                    e.Handled = true;
+                    return;
+                }
                 int anchorLane = viewport.YToLane(pointer.Y - GetRulerHeight());
                 double verticalFactor = e.Delta > 0 ? 1.2 : 1 / 1.2;
                 double oldHeight = LaneHeight;
@@ -1809,7 +1881,9 @@ public sealed class TimelineSurface : Control
     {
         bool hoverChangedVisual = _hoverPoint is not null
             && ToolMode == TimelineToolMode.Draw
-            && SurfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll;
+            && SurfaceMode is TimelineSurfaceMode.Arrangement
+                or TimelineSurfaceMode.PianoRoll
+                or TimelineSurfaceMode.EventLanes;
         hoverChangedVisual |= _hoverLaneHeader is not null;
         _hoverPoint = null;
         _hoverLaneHeader = null;
@@ -1890,16 +1964,21 @@ public sealed class TimelineSurface : Control
     {
         double contentWidth = Math.Max(0, ActualWidth - GetLaneHeaderWidth());
         double contentHeight = Math.Max(0, ActualHeight - GetRulerHeight());
-        int laneCount = LaneHeight > 0 && double.IsFinite(LaneHeight)
-            ? Math.Max(1, (int)Math.Ceiling(contentHeight / LaneHeight))
-            : 1;
+        int firstLane = SurfaceMode == TimelineSurfaceMode.PianoRoll
+            ? Math.Clamp(FirstLane, 0, 127)
+            : Math.Max(0, FirstLane);
+        int laneCount = ComputeVisibleLaneCount();
+        if (SurfaceMode == TimelineSurfaceMode.PianoRoll)
+        {
+            laneCount = Math.Min(laneCount, 128 - firstLane);
+        }
         long span = TickSpan > 0 ? TickSpan : 1;
         long start = Math.Max(0, StartTick);
         long end = start <= long.MaxValue - span ? start + span : long.MaxValue;
         viewport = new(
             start,
             end,
-            Math.Max(0, FirstLane),
+            firstLane,
             laneCount,
             contentWidth,
             contentHeight,
@@ -1910,6 +1989,20 @@ public sealed class TimelineSurface : Control
         }
         viewport.Validate();
         return true;
+    }
+
+    private double GetLaneContentHeight(TimelineViewport viewport) =>
+        SurfaceMode == TimelineSurfaceMode.PianoRoll
+            ? Math.Min(viewport.Height, viewport.LaneCount * viewport.LaneHeight)
+            : viewport.Height;
+
+    private bool IsInsideLaneContent(
+        TimelineViewport viewport,
+        double pointY,
+        double rulerHeight)
+    {
+        double relativeY = pointY - rulerHeight;
+        return relativeY >= 0 && relativeY < GetLaneContentHeight(viewport);
     }
 
     private void CompleteMarquee(Point origin, Point current)
@@ -1933,9 +2026,16 @@ public sealed class TimelineSurface : Control
         }
         Snapshot.Index.QueryInto(start, end, firstLane, lastLaneExclusive, _visibleItems);
         _marqueeIds.Clear();
+        double minimumValueY = Math.Min(origin.Y, current.Y);
+        double maximumValueY = Math.Max(origin.Y, current.Y);
         foreach (TimelineRenderItem item in _visibleItems)
         {
-            if ((item.State & TimelineItemState.HitTestDisabled) == 0)
+            double itemValueY = SurfaceMode == TimelineSurfaceMode.EventLanes
+                ? NormalizedToValueY(item.Value, GetRulerHeight())
+                : 0;
+            if ((item.State & TimelineItemState.HitTestDisabled) == 0
+                && (SurfaceMode != TimelineSurfaceMode.EventLanes
+                    || itemValueY >= minimumValueY && itemValueY <= maximumValueY))
             {
                 _marqueeIds.Add(item.Id);
             }
@@ -1951,6 +2051,7 @@ public sealed class TimelineSurface : Control
         double laneHeaderWidth,
         double rulerHeight)
     {
+        double contentBottom = rulerHeight + GetLaneContentHeight(viewport);
         if (SurfaceMode == TimelineSurfaceMode.Arrangement
             && DisplayGridUsesBars
             && TimeSignatureMap is ProjectTimeSignatureMap timeSignatureMap)
@@ -1976,7 +2077,7 @@ public sealed class TimelineSurface : Control
                 context.DrawLine(
                     line.Kind == TimelineGridLineKind.Bar ? _borderPen : _beatGridPen,
                     new Point(x, rulerHeight),
-                    new Point(x, ActualHeight));
+                    new Point(x, contentBottom));
                 previousX = x;
             }
             return;
@@ -1991,7 +2092,7 @@ public sealed class TimelineSurface : Control
         for (long tick = first; tick < viewport.EndTick;)
         {
             double x = laneHeaderWidth + Math.Round(viewport.TickToX(tick)) + 0.5;
-            context.DrawLine(_borderPen, new Point(x, rulerHeight), new Point(x, ActualHeight));
+            context.DrawLine(_borderPen, new Point(x, rulerHeight), new Point(x, contentBottom));
             if (tick == long.MaxValue)
             {
                 break;
@@ -2059,7 +2160,7 @@ public sealed class TimelineSurface : Control
             laneHeaderWidth + viewport.TickToX(end),
             contentLeft,
             contentRight);
-        double height = Math.Max(0, ActualHeight - rulerHeight);
+        double height = GetLaneContentHeight(viewport);
         context.PushOpacity(0.72);
         if (rangeLeft > contentLeft)
         {
@@ -2105,7 +2206,7 @@ public sealed class TimelineSurface : Control
             left,
             rulerHeight,
             Math.Max(1, right - left),
-            Math.Max(0, ActualHeight - rulerHeight));
+            GetLaneContentHeight(viewport));
         drawingContext.PushOpacity(0.14);
         drawingContext.DrawRectangle(info, null, selection);
         drawingContext.Pop();
@@ -2153,7 +2254,7 @@ public sealed class TimelineSurface : Control
             laneHeaderWidth,
             rulerHeight,
             Math.Max(0, ActualWidth - laneHeaderWidth),
-            Math.Max(0, ActualHeight - rulerHeight));
+            GetLaneContentHeight(viewport));
         _pianoTileDrawEntries.Clear();
         _pianoTileVisibleKeys.Clear();
         bool allVisibleTilesReady = true;
@@ -2271,7 +2372,7 @@ public sealed class TimelineSurface : Control
             laneHeaderWidth,
             rulerHeight,
             Math.Max(0, ActualWidth - laneHeaderWidth),
-            Math.Max(0, ActualHeight - rulerHeight));
+            GetLaneContentHeight(viewport));
         _pianoTileDrawEntries.Clear();
         _pianoTileVisibleKeys.Clear();
         bool allVisibleTilesReady = true;
@@ -3423,7 +3524,10 @@ public sealed class TimelineSurface : Control
             return;
         }
         double x = laneHeaderWidth + Math.Round(viewport.TickToX(value)) + 0.5;
-        context.DrawLine(pen, new Point(x, rulerHeight), new Point(x, ActualHeight));
+        context.DrawLine(
+            pen,
+            new Point(x, rulerHeight),
+            new Point(x, rulerHeight + GetLaneContentHeight(viewport)));
     }
 
     private void DrawDragPreview(
@@ -3442,6 +3546,29 @@ public sealed class TimelineSurface : Control
             ? checked(item.EndTick + rawTickDelta)
             : checked(item.StartTick + rawTickDelta);
         long tickDelta = SnapOperationDelta(rawTickDelta, snapTarget);
+        if (item.Kind == TimelineItemKind.LogicalParameterPoint)
+        {
+            Point current = _hoverPoint ?? _dragOrigin;
+            long pointTick = Math.Max(0, checked(item.StartTick + tickDelta));
+            double normalized = Math.Clamp(
+                item.Value + GetDragNormalizedValueDelta(current.Y),
+                0,
+                1);
+            Point center = new(
+                laneHeaderWidth + viewport.TickToX(pointTick),
+                NormalizedToValueY(normalized, rulerHeight));
+            context.DrawEllipse(null, _marqueePen, center, 5, 5);
+            if (_dragCopyRequested)
+            {
+                FormattedText marker = GetFormattedText(
+                    "+",
+                    Brush("Brush.Text.Primary", Color.FromRgb(241, 243, 245)),
+                    12,
+                    FontWeights.Bold);
+                context.DrawText(marker, new Point(center.X + 5, center.Y - 10));
+            }
+            return;
+        }
         int laneDelta = checked(_dragCurrentLane - _dragOriginLane);
         long start = item.StartTick;
         long end = item.EndTick;
@@ -3486,6 +3613,11 @@ public sealed class TimelineSurface : Control
         if (_dragItem is not null
             || !CanEdit
             || _hoverPoint is not Point pointer
+            || TimelineToolPolicy.ForcesValueTrace(
+                ToolMode,
+                SurfaceMode,
+                MouseButton.Left,
+                Keyboard.Modifiers)
             || !TryHitTimelineItem(pointer, viewport, out TimelineRenderItem item)
             || !TimelineToolPolicy.CanBeginItemEdit(ToolMode, SurfaceMode, item.Kind))
         {
@@ -3493,6 +3625,14 @@ public sealed class TimelineSurface : Control
         }
 
         double left = laneHeaderWidth + viewport.TickToX(item.StartTick);
+        if (item.Kind == TimelineItemKind.LogicalParameterPoint)
+        {
+            double y = NormalizedToValueY(item.Value, rulerHeight);
+            context.PushOpacity(0.65);
+            context.DrawEllipse(null, _marqueePen, new Point(left, y), 5, 5);
+            context.Pop();
+            return;
+        }
         double right = laneHeaderWidth + viewport.TickToX(item.EndTick);
         double top = rulerHeight + (item.Lane - viewport.FirstLane) * LaneHeight + 2;
         Rect bounds = new(left, top, Math.Max(2, right - left), Math.Max(3, LaneHeight - 4));
@@ -3856,14 +3996,26 @@ public sealed class TimelineSurface : Control
             return false;
         }
 
-        firstLane = viewport.YToLane(rawBounds.Top - rulerHeight);
-        double inclusiveBottom = Math.Max(rawBounds.Top, Math.BitDecrement(rawBounds.Bottom));
-        int lastLane = viewport.YToLane(inclusiveBottom - rulerHeight);
-        lastLaneExclusive = checked(lastLane + 1);
+        if (SurfaceMode is TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity)
+        {
+            firstLane = 0;
+            lastLaneExclusive = 1;
+        }
+        else
+        {
+            firstLane = viewport.YToLane(rawBounds.Top - rulerHeight);
+            double inclusiveBottom = Math.Max(rawBounds.Top, Math.BitDecrement(rawBounds.Bottom));
+            int lastLane = viewport.YToLane(inclusiveBottom - rulerHeight);
+            lastLaneExclusive = checked(lastLane + 1);
+        }
         double left = laneHeaderWidth + viewport.TickToX(startTick);
         double right = laneHeaderWidth + viewport.TickToX(endTick);
-        double top = rulerHeight + (firstLane - viewport.FirstLane) * LaneHeight;
-        double bottom = rulerHeight + (lastLaneExclusive - viewport.FirstLane) * LaneHeight;
+        double top = SurfaceMode is TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity
+            ? rawBounds.Top
+            : rulerHeight + (firstLane - viewport.FirstLane) * LaneHeight;
+        double bottom = SurfaceMode is TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity
+            ? rawBounds.Bottom
+            : rulerHeight + (lastLaneExclusive - viewport.FirstLane) * LaneHeight;
         displayBounds = new Rect(
             new Point(left, top),
             new Point(right, bottom));
@@ -3928,8 +4080,33 @@ public sealed class TimelineSurface : Control
             || _hoverPoint is not Point pointer
             || pointer.X < laneHeaderWidth
             || pointer.Y < rulerHeight
-            || SurfaceMode is not (TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll))
+            || (SurfaceMode == TimelineSurfaceMode.PianoRoll
+                && !IsInsideLaneContent(viewport, pointer.Y, rulerHeight))
+            || SurfaceMode is not (TimelineSurfaceMode.Arrangement
+                or TimelineSurfaceMode.PianoRoll
+                or TimelineSurfaceMode.EventLanes))
         {
+            return;
+        }
+        if (SurfaceMode == TimelineSurfaceMode.EventLanes)
+        {
+            if (TimelineToolPolicy.ForcesValueTrace(
+                    ToolMode,
+                    SurfaceMode,
+                    MouseButton.Left,
+                    Keyboard.Modifiers)
+                || TryHitTimelineItem(pointer, viewport, out _))
+            {
+                return;
+            }
+            long pointTick = SnapAbsolute(viewport.XToTick(pointer.X - laneHeaderWidth));
+            double normalized = ValueYToNormalized(pointer.Y, rulerHeight);
+            Point center = new(
+                laneHeaderWidth + viewport.TickToX(pointTick),
+                NormalizedToValueY(normalized, rulerHeight));
+            context.PushOpacity(0.72);
+            context.DrawEllipse(info, _marqueePen, center, 3.5, 3.5);
+            context.Pop();
             return;
         }
         if (TryHitTimelineItem(pointer, viewport, out _)) return;
@@ -3973,7 +4150,11 @@ public sealed class TimelineSurface : Control
                 || Snapshot?.Items.Any(static item =>
                     item.Kind == TimelineItemKind.Velocity
                     && item.State.HasFlag(TimelineItemState.Selected)) == true;
-            if (TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Left, Keyboard.Modifiers))
+            if (TimelineToolPolicy.ForcesValueTrace(
+                    ToolMode,
+                    SurfaceMode,
+                    MouseButton.Left,
+                    Keyboard.Modifiers))
             {
                 Cursor = Cursors.Cross;
                 return;
@@ -3985,9 +4166,21 @@ public sealed class TimelineSurface : Control
         }
         double header = GetLaneHeaderWidth();
         double ruler = GetRulerHeight();
-        if (point.X < header || point.Y < ruler)
+        if (point.X < header
+            || point.Y < ruler
+            || (SurfaceMode == TimelineSurfaceMode.PianoRoll
+                && !IsInsideLaneContent(viewport, point.Y, ruler)))
         {
             Cursor = Cursors.Arrow;
+            return;
+        }
+        if (TimelineToolPolicy.ForcesValueTrace(
+                ToolMode,
+                SurfaceMode,
+                MouseButton.Left,
+                Keyboard.Modifiers))
+        {
+            Cursor = Cursors.Cross;
             return;
         }
         bool hasItem = TryHitTimelineItem(point, viewport, out TimelineRenderItem hit);
@@ -4013,6 +4206,7 @@ public sealed class TimelineSurface : Control
             TimelinePointerIntent.Split => Cursors.IBeam,
             TimelinePointerIntent.Move => Cursors.SizeAll,
             TimelinePointerIntent.ResizeHorizontal => Cursors.SizeWE,
+            TimelinePointerIntent.ResizeVertical => Cursors.SizeNS,
             _ => Cursors.Arrow
         };
     }
@@ -4039,7 +4233,11 @@ public sealed class TimelineSurface : Control
     {
         double header = GetLaneHeaderWidth();
         double ruler = GetRulerHeight();
-        if (point.X < header || point.Y < ruler || Snapshot is null)
+        if (point.X < header
+            || point.Y < ruler
+            || Snapshot is null
+            || (SurfaceMode == TimelineSurfaceMode.PianoRoll
+                && !IsInsideLaneContent(viewport, point.Y, ruler)))
         {
             item = default!;
             return false;
@@ -4050,6 +4248,12 @@ public sealed class TimelineSurface : Control
             preferDirectEditEdges: CanEdit
                 && ToolMode == TimelineToolMode.Draw
                 && TimelineToolPolicy.IsDirectEditingSurface(SurfaceMode));
+        if (SurfaceMode == TimelineSurfaceMode.EventLanes)
+        {
+            _hitItems.RemoveAll(candidate =>
+                candidate.Kind == TimelineItemKind.LogicalParameterPoint
+                && Math.Abs(NormalizedToValueY(candidate.Value, ruler) - point.Y) > 8);
+        }
         if (_hitItems.Count == 0)
         {
             item = default!;
@@ -4073,7 +4277,9 @@ public sealed class TimelineSurface : Control
         double header = GetLaneHeaderWidth();
         double ruler = GetRulerHeight();
         long tick = viewport.XToContainingTick(point.X - header);
-        int lane = viewport.YToLane(point.Y - ruler);
+        int lane = SurfaceMode is TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity
+            ? 0
+            : viewport.YToLane(point.Y - ruler);
         if (preferDirectEditEdges)
         {
             long toleranceTicks = Math.Max(
@@ -4108,6 +4314,11 @@ public sealed class TimelineSurface : Control
     {
         double header = GetLaneHeaderWidth();
         double ruler = GetRulerHeight();
+        if (SurfaceMode == TimelineSurfaceMode.PianoRoll
+            && !IsInsideLaneContent(viewport, point.Y, ruler))
+        {
+            return;
+        }
         long tick = viewport.XToTick(point.X - header);
         int lane = viewport.YToLane(point.Y - ruler);
         double laneOffset = Math.Clamp(
@@ -4172,6 +4383,13 @@ public sealed class TimelineSurface : Control
             _valueViewMaximum - Math.Clamp((y - rulerHeight) / contentHeight, 0, 1) * range,
             0,
             1);
+    }
+
+    private double GetDragNormalizedValueDelta(double currentY)
+    {
+        double rulerHeight = GetRulerHeight();
+        return ValueYToNormalized(currentY, rulerHeight)
+            - ValueYToNormalized(_dragOrigin.Y, rulerHeight);
     }
 
     private long SnapAbsolute(long tick) => TimelineGridQuantization.SnapAbsolute(
@@ -4277,11 +4495,70 @@ public sealed class TimelineSurface : Control
 
     private void ClearItemDrag()
     {
+        EndDragPitchPreview();
         _dragItem = null;
         _dragActivated = false;
         _dragCopyRequested = false;
         _dragModifiers = ModifierKeys.None;
         Cursor = Cursors.Arrow;
+    }
+
+    private void PrepareDragPitchPreview(TimelineRenderItem hit)
+    {
+        _dragPitchPreviewActive = false;
+        _dragPitchPreviewLastPitch = -1;
+        if (SurfaceMode != TimelineSurfaceMode.PianoRoll
+            || _dragKind != TimelineItemEditKind.Move
+            || hit.Kind is not TimelineItemKind.LogicalNote and not TimelineItemKind.TemplateNote)
+        {
+            return;
+        }
+
+        TimelineRenderItem anchor = hit;
+        if (SelectionSnapshot?.Contains(hit.Id) == true && Snapshot is not null)
+        {
+            anchor = Snapshot.Items
+                .Where(item => item.Kind == hit.Kind && SelectionSnapshot.Contains(item.Id))
+                .OrderBy(item => item.StartTick)
+                .ThenBy(item => item.Id.Value)
+                .FirstOrDefault(hit);
+        }
+        _dragPitchPreviewAnchorLane = anchor.Lane;
+        _dragPitchPreviewLastPitch = Math.Clamp(127 - anchor.Lane, 0, 127);
+        double velocity = anchor.Value <= 1d ? anchor.Value * 127d : anchor.Value;
+        _dragPitchPreviewVelocity = Math.Clamp(
+            (int)Math.Round(velocity, MidpointRounding.AwayFromZero),
+            1,
+            127);
+    }
+
+    private void UpdateDragPitchPreview()
+    {
+        if (_dragPitchPreviewLastPitch < 0)
+        {
+            return;
+        }
+        int laneDelta = checked(_dragCurrentLane - _dragOriginLane);
+        int pitch = Math.Clamp(127 - checked(_dragPitchPreviewAnchorLane + laneDelta), 0, 127);
+        if (pitch == _dragPitchPreviewLastPitch)
+        {
+            return;
+        }
+        _dragPitchPreviewLastPitch = pitch;
+        _dragPitchPreviewActive = true;
+        PitchPreviewRequested?.Invoke(
+            this,
+            new TimelinePitchPreviewEventArgs(pitch, _dragPitchPreviewVelocity));
+    }
+
+    private void EndDragPitchPreview()
+    {
+        if (_dragPitchPreviewActive)
+        {
+            _dragPitchPreviewActive = false;
+            PitchPreviewReleased?.Invoke(this, EventArgs.Empty);
+        }
+        _dragPitchPreviewLastPitch = -1;
     }
 
     private readonly record struct PianoTileDrawEntry(

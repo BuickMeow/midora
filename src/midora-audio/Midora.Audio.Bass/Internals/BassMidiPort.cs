@@ -40,6 +40,7 @@ public sealed unsafe class BassMidiRenderer
     private float* _segmentScratchBuffer;
     private float* _outputStagingBuffer;
     private uint _soundFontHandle;
+    private readonly PersistentBassMidiSoundFont? _persistentSoundFont;
     private SegmentPcmCacheIoBridge? _cacheIo;
     private ParallelBassMidiDecodeCoordinator? _parallelDecoder;
     private long _positionFrames;
@@ -62,6 +63,27 @@ public sealed unsafe class BassMidiRenderer
         string? cacheStagingPath = null,
         int segmentProducerConcurrency = 1,
         string? cacheReadManifestPath = null)
+        : this(
+            plan,
+            soundFontPath,
+            settings,
+            masterSettings,
+            cacheStagingPath,
+            segmentProducerConcurrency,
+            cacheReadManifestPath,
+            persistentSoundFont: null)
+    {
+    }
+
+    internal BassMidiRenderer(
+        MidiRenderPlan plan,
+        string soundFontPath,
+        BassMidiRendererSettings settings,
+        AudioMasterSettings masterSettings,
+        string? cacheStagingPath,
+        int segmentProducerConcurrency,
+        string? cacheReadManifestPath,
+        PersistentBassMidiSoundFont? persistentSoundFont)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
@@ -79,6 +101,7 @@ public sealed unsafe class BassMidiRenderer
 
         _plan = plan;
         _settings = settings;
+        _persistentSoundFont = persistentSoundFont;
         _masterGain = MathF.Pow(10f, masterSettings.VolumeDecibels / 20f);
         _limiterEnabled = masterSettings.LimiterEnabled;
         _limiter = new StereoPeakLimiter(
@@ -112,7 +135,14 @@ public sealed unsafe class BassMidiRenderer
                 scratchByteCount * (nuint)Math.Max(1, plan.SourceIds.Length)));
             _outputStagingBuffer = (float*)NativeMemory.Alloc(scratchByteCount);
             OpenCacheStaging(cacheStagingPath, cacheReadManifestPath);
-            CreateSoundFont(soundFontPath);
+            if (_persistentSoundFont is null)
+            {
+                CreateSoundFont(soundFontPath);
+            }
+            else
+            {
+                _soundFontHandle = _persistentSoundFont.Handle;
+            }
             PreloadReferencedPresets();
             CreateUnits();
             WarmNativeHotPath();
@@ -622,6 +652,11 @@ public sealed unsafe class BassMidiRenderer
 
     private void PreloadReferencedPresets(MidiRenderPlan plan)
     {
+        if (_persistentSoundFont is not null)
+        {
+            _persistentSoundFont.EnsureReferencedPresets(plan);
+            return;
+        }
         int[] referencedPresets = CollectReferencedPresetKeys(plan);
         for (int i = 0; i < referencedPresets.Length; i++)
         {
@@ -1544,7 +1579,7 @@ public sealed unsafe class BassMidiRenderer
             }
         }
 
-        if (_soundFontHandle != 0)
+        if (_soundFontHandle != 0 && _persistentSoundFont is null)
         {
             if (NativeBassMidi.FontFree(_soundFontHandle) == 0)
             {
@@ -1560,6 +1595,10 @@ public sealed unsafe class BassMidiRenderer
         {
             NativeMemory.Free(_unitScratchBuffer);
             _unitScratchBuffer = null;
+        }
+        else
+        {
+            _soundFontHandle = 0;
         }
 
         if (_segmentScratchBuffer != null)

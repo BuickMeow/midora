@@ -8,6 +8,41 @@ namespace Midora.Playback.Tests;
 public sealed class PlaybackTests
 {
     [Fact]
+    public void EffectiveSoundFontIdentityChangesWhenVerifiedHashChangesAtTheSamePath()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = CreateProject();
+            string firstSha256 = new('a', 64);
+            string secondSha256 = new('b', 64);
+            project.SoundFont.SetExternal(
+                "project.sf2",
+                "project.sf2",
+                firstSha256,
+                new FileInfo(soundFont).Length);
+            using ProjectCompilationSession session = new(project, soundFont);
+            int changedCount = 0;
+            session.EffectiveSoundFontChanged += (_, _) => changedCount++;
+
+            project.SoundFont.SetExternal(
+                "project.sf2",
+                "project.sf2",
+                secondSha256,
+                new FileInfo(soundFont).Length);
+            session.SetEffectiveSoundFontPath(soundFont);
+
+            Assert.Equal(soundFont, session.EffectiveSoundFontPath);
+            Assert.Equal(secondSha256, session.EffectiveSoundFontSha256);
+            Assert.Equal(1, changedCount);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void ProjectOpenTimeCountsAllActiveSessionTimeAndPausesOnlyForSuspendOrClosing()
     {
         ManualTimeProvider clock = new();

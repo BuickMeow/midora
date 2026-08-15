@@ -77,6 +77,87 @@ public static class MidiControlChangeCatalog
 
 public static class TemplateEventMidiTargets
 {
+    public static TemplateEventMappingTarget ToMappingTarget(MidiValueTarget target) =>
+        target.Kind switch
+        {
+            MidiValueKind.ControlChange => TemplateEventMappingTarget.Create(
+                TemplateEventKind.ControlChange,
+                target.Number,
+                TemplateEventMappingParameter.Value),
+            MidiValueKind.BankMsb => TemplateEventMappingTarget.Create(
+                TemplateEventKind.Bank,
+                0,
+                TemplateEventMappingParameter.Value),
+            MidiValueKind.BankLsb => TemplateEventMappingTarget.Create(
+                TemplateEventKind.Bank,
+                0,
+                TemplateEventMappingParameter.SecondaryValue),
+            MidiValueKind.Program => TemplateEventMappingTarget.Create(
+                TemplateEventKind.Program,
+                0,
+                TemplateEventMappingParameter.Value),
+            MidiValueKind.PitchBend => TemplateEventMappingTarget.Create(
+                TemplateEventKind.PitchBend,
+                0,
+                TemplateEventMappingParameter.Value),
+            MidiValueKind.RegisteredParameter => TemplateEventMappingTarget.Create(
+                TemplateEventKind.RegisteredParameter,
+                target.Number,
+                TemplateEventMappingParameter.Value),
+            MidiValueKind.NonRegisteredParameter => TemplateEventMappingTarget.Create(
+                TemplateEventKind.NonRegisteredParameter,
+                target.Number,
+                TemplateEventMappingParameter.Value),
+            MidiValueKind.PitchBendRangeSemitones => TemplateEventMappingTarget.Create(
+                TemplateEventKind.PitchBendRange,
+                0,
+                TemplateEventMappingParameter.Value),
+            MidiValueKind.PitchBendRangeCents => TemplateEventMappingTarget.Create(
+                TemplateEventKind.PitchBendRange,
+                0,
+                TemplateEventMappingParameter.SecondaryValue),
+            _ => throw new ArgumentOutOfRangeException(nameof(target))
+        };
+
+    public static bool TryFromMappingTarget(
+        TemplateEventMappingTarget target,
+        out MidiValueTarget result)
+    {
+        switch (target)
+        {
+            case { EventKind: TemplateEventKind.ControlChange, Parameter: TemplateEventMappingParameter.Value }:
+                result = MidiValueTarget.ControlChange(target.EventNumber);
+                return true;
+            case { EventKind: TemplateEventKind.Bank, Parameter: TemplateEventMappingParameter.Value }:
+                result = MidiValueTarget.BankMsb;
+                return true;
+            case { EventKind: TemplateEventKind.Bank, Parameter: TemplateEventMappingParameter.SecondaryValue }:
+                result = MidiValueTarget.BankLsb;
+                return true;
+            case { EventKind: TemplateEventKind.Program, Parameter: TemplateEventMappingParameter.Value }:
+                result = MidiValueTarget.Program;
+                return true;
+            case { EventKind: TemplateEventKind.PitchBend, Parameter: TemplateEventMappingParameter.Value }:
+                result = MidiValueTarget.PitchBend;
+                return true;
+            case { EventKind: TemplateEventKind.RegisteredParameter, Parameter: TemplateEventMappingParameter.Value }:
+                result = MidiValueTarget.Rpn(target.EventNumber);
+                return true;
+            case { EventKind: TemplateEventKind.NonRegisteredParameter, Parameter: TemplateEventMappingParameter.Value }:
+                result = MidiValueTarget.Nrpn(target.EventNumber);
+                return true;
+            case { EventKind: TemplateEventKind.PitchBendRange, Parameter: TemplateEventMappingParameter.Value }:
+                result = MidiValueTarget.PitchBendRangeSemitones;
+                return true;
+            case { EventKind: TemplateEventKind.PitchBendRange, Parameter: TemplateEventMappingParameter.SecondaryValue }:
+                result = MidiValueTarget.PitchBendRangeCents;
+                return true;
+            default:
+                result = default;
+                return false;
+        }
+    }
+
     public static IEnumerable<MidiValueTarget> Enumerate(TemplateEvent value)
     {
         ArgumentNullException.ThrowIfNull(value);

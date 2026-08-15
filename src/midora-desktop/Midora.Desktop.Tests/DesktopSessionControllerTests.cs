@@ -938,6 +938,16 @@ public sealed class DesktopSessionControllerTests
         InstrumentRenderLane lane = Assert.Single(workspace.RenderLanes);
         Assert.Equal(MidiValueTarget.ControlChange(1), lane.Target);
         Assert.Equal("CC 1 - Modulation Wheel (MSB)", lane.Label);
+        SubVoiceEventMapping[] noteMappings = voice.EventMappings.Where(item =>
+            item.Target.EventKind == TemplateEventKind.Note).ToArray();
+        SubVoiceEventMapping controlChangeMapping = voice.EventMappings.Single(item =>
+            item.Target == TemplateEventMidiTargets.ToMappingTarget(
+                MidiValueTarget.ControlChange(1)));
+        Assert.NotEmpty(noteMappings);
+        Assert.All(noteMappings, mapping => Assert.False(workspace.MappingChains.Single(item =>
+            item.Id == mapping.Steps.Id).CanDelete));
+        Assert.True(workspace.MappingChains.Single(item =>
+            item.Id == controlChangeMapping.Steps.Id).CanDelete);
         int renderLaneSelectionNotifications = 0;
         workspace.PropertyChanged += (_, args) =>
         {
@@ -961,6 +971,15 @@ public sealed class DesktopSessionControllerTests
         Assert.Contains("override", workspace.ActiveSubVoiceContext, StringComparison.Ordinal);
         Assert.Contains(workspace.InitialStateEntries, item =>
             item.Target == "CC 7 - Channel Volume (MSB)" && item.Value == "100");
+        session.Execute(ProjectDomainEditCommands.DeleteTemplateEvents(
+            instrument.Id,
+            voice.Id,
+            [midiEvent.Id]));
+        session.RefreshWorkspace(workspace);
+        InstrumentRenderLane retainedEmptyLane = Assert.Single(workspace.RenderLanes);
+        Assert.Equal(MidiValueTarget.ControlChange(1), retainedEmptyLane.Target);
+        Assert.NotNull(retainedEmptyLane.EventMappingChainId);
+        Assert.Empty(workspace.SubVoiceEventSnapshot!.Items);
         workspace.Selection.Clear();
         session.RefreshWorkspace(workspace);
         Assert.True(session.Inspector.Fields.Single(item => item.Key == "instrument.isolation").IsBoolean);
@@ -987,6 +1006,72 @@ public sealed class DesktopSessionControllerTests
         Assert.Equal(second.Id, workspace.Selection.Primary);
         Assert.Equal(second.Id, workspace.ActiveSubVoiceId);
         Assert.Equal(1, workspace.ActiveSectionIndex);
+    }
+
+    [Fact]
+    public async Task SelectingOrEditingTemplateNoteKeepsTheActiveMidiEventLane()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "SubVoice lane selection",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+        EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+        session.Execute(ProjectDomainEditCommands.CreateSubVoice(instrument.Id, "Voice"));
+        SubVoice voice = instrument.SubVoices.Single(value => value.Name == "Voice");
+        session.Execute(ProjectDomainEditCommands.CreateTemplateNote(
+            instrument.Id,
+            voice.Id,
+            tick: 48,
+            lengthTicks: 96,
+            note: 64,
+            velocity: 80));
+        session.Execute(ProjectDomainEditCommands.CreateTemplateControlChange(
+            instrument.Id,
+            voice.Id,
+            tick: 72,
+            controller: 1,
+            value: 96));
+        session.Execute(ProjectDomainEditCommands.CreateTemplateControlChange(
+            instrument.Id,
+            voice.Id,
+            tick: 96,
+            controller: 74,
+            value: 64));
+
+        InstrumentWorkspaceViewModel workspace = session.OpenInstrument(instrument.Id);
+        workspace.Selection.Replace(voice.Id);
+        session.RefreshWorkspace(workspace);
+        int desiredLane = workspace.RenderLanes
+            .Select((lane, index) => (lane, index))
+            .Single(value => value.lane.Target == MidiValueTarget.ControlChange(74))
+            .index;
+        workspace.ActiveRenderLaneIndex = desiredLane;
+        workspace.RenderLanes.CollectionChanged += (_, args) =>
+        {
+            if (args.Action == NotifyCollectionChangedAction.Reset)
+            {
+                workspace.ActiveRenderLaneIndex = -1;
+            }
+        };
+
+        TemplateEvent note = voice.Events.Single(value => value.Kind == TemplateEventKind.Note);
+        workspace.Selection.Replace(note.Id);
+        session.Execute(ProjectDomainEditCommands.UpdateTemplateNote(
+            instrument.Id,
+            voice.Id,
+            note.Id,
+            tick: 49,
+            lengthTicks: note.LengthTicks,
+            note: note.Number,
+            velocity: note.Value,
+            followPitchDelta: note.FollowPitchDelta));
+
+        Assert.Equal(
+            MidiValueTarget.ControlChange(74),
+            workspace.GetRenderLane(workspace.ActiveRenderLaneIndex)?.Target);
     }
 
     [Fact]

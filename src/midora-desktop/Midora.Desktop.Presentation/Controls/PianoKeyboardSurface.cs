@@ -86,7 +86,7 @@ public sealed class PianoKeyboardSurface : Control
                 _pressedNote == key.Note ? WhiteHover : WhiteKey,
                 BorderPen,
                 key.Bounds);
-            if (key.Note % 12 == 0 && key.Bounds.Width >= 12)
+            if (key.Note % 12 == 0)
             {
                 if (!_labelCache.TryGetValue(key.Note, out FormattedText? label))
                 {

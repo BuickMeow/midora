@@ -1739,7 +1739,12 @@ public sealed class MidoraProjectPackageV1
             .ToArray();
         foreach (string entryName in GetStableEntryOrder(contentPaths))
         {
-            ZipArchiveEntry entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+            CompressionLevel compressionLevel =
+                entryName.StartsWith("resources/soundfonts/", StringComparison.Ordinal)
+                && entryName.EndsWith(".sf2", StringComparison.OrdinalIgnoreCase)
+                    ? CompressionLevel.NoCompression
+                    : CompressionLevel.Optimal;
+            ZipArchiveEntry entry = archive.CreateEntry(entryName, compressionLevel);
             entry.LastWriteTime = CanonicalZipTimestamp;
             await using Stream target = entry.Open();
             string sourcePath = Path.Combine(contentRoot, entryName.Replace('/', Path.DirectorySeparatorChar));

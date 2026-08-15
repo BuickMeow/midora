@@ -110,7 +110,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
                 cacheStaging = AudioUnitCacheStaging.Create(
                     request.Plan,
                     request.AudioCache,
-                    request.SoundFontPath,
+                    request.SoundFontSha256,
                     _bassNativeDirectory,
                     request.MaximumSampleVoicesPerUnitStream);
             }

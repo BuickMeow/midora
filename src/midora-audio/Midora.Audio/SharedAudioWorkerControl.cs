@@ -31,7 +31,12 @@ public enum AudioWorkerControlCommandKind : byte
     HeldPreviewPause,
     HeldPreviewApplyPlan,
     HeldPreviewResume,
-    BufferingRecoveryPrepare
+    BufferingRecoveryPrepare,
+    PersistentProbe,
+    PersistentStartPlayback,
+    PitchAuditionNoteOn,
+    PitchAuditionNoteOff,
+    PersistentShutdown
 }
 
 public readonly record struct AudioWorkerControlCommand(
@@ -59,7 +64,7 @@ public readonly record struct AudioWorkerStatus(
 [SupportedOSPlatform("windows")]
 public sealed unsafe class SharedAudioWorkerControl : IDisposable
 {
-    public const int ProtocolVersion = 4;
+    public const int ProtocolVersion = 5;
     public const int CommandCapacity = 1_024;
     public const int MaximumStatusReadAttempts = 1_024;
 
@@ -358,6 +363,32 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
             recoveryEndFrame));
     }
 
+    public bool TryEnqueuePersistentProbe(long generation) =>
+        TryEnqueuePersistentCommand(AudioWorkerControlCommandKind.PersistentProbe, generation);
+
+    public bool TryEnqueuePersistentStartPlayback(long generation) =>
+        TryEnqueuePersistentCommand(AudioWorkerControlCommandKind.PersistentStartPlayback, generation);
+
+    public bool TryEnqueuePitchAuditionNoteOn(long generation) =>
+        TryEnqueuePersistentCommand(AudioWorkerControlCommandKind.PitchAuditionNoteOn, generation);
+
+    public bool TryEnqueuePitchAuditionNoteOff(long generation) =>
+        TryEnqueuePersistentCommand(AudioWorkerControlCommandKind.PitchAuditionNoteOff, generation);
+
+    public bool TryEnqueuePersistentShutdown(long generation) =>
+        TryEnqueuePersistentCommand(AudioWorkerControlCommandKind.PersistentShutdown, generation);
+
+    private bool TryEnqueuePersistentCommand(
+        AudioWorkerControlCommandKind kind,
+        long generation)
+    {
+        if (generation <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(generation));
+        }
+        return TryEnqueue(new(kind, default, generation));
+    }
+
     public bool TryEnqueueMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -537,7 +568,12 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         if (command.Kind is AudioWorkerControlCommandKind.HeldPreviewPause
             or AudioWorkerControlCommandKind.HeldPreviewApplyPlan
             or AudioWorkerControlCommandKind.HeldPreviewResume
-            or AudioWorkerControlCommandKind.BufferingRecoveryPrepare)
+            or AudioWorkerControlCommandKind.BufferingRecoveryPrepare
+            or AudioWorkerControlCommandKind.PersistentProbe
+            or AudioWorkerControlCommandKind.PersistentStartPlayback
+            or AudioWorkerControlCommandKind.PitchAuditionNoteOn
+            or AudioWorkerControlCommandKind.PitchAuditionNoteOff
+            or AudioWorkerControlCommandKind.PersistentShutdown)
         {
             *(long*)(target + 4) = command.Payload;
             return;
@@ -594,6 +630,24 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
                     "The audio worker Buffering recovery command payload is invalid.");
             }
             return new(kind, default, recoveryEndFrame);
+        }
+
+        if (kind is AudioWorkerControlCommandKind.PersistentProbe
+            or AudioWorkerControlCommandKind.PersistentStartPlayback
+            or AudioWorkerControlCommandKind.PitchAuditionNoteOn
+            or AudioWorkerControlCommandKind.PitchAuditionNoteOff
+            or AudioWorkerControlCommandKind.PersistentShutdown)
+        {
+            long generation = *(long*)(source + 4);
+            if (monitoringKind != 0
+                || zeroBasedPortNumber != 0
+                || sourceEnabled != 0
+                || generation <= 0)
+            {
+                throw new InvalidDataException(
+                    "The persistent audio worker command payload is invalid.");
+            }
+            return new(kind, default, generation);
         }
 
         if (kind == AudioWorkerControlCommandKind.Stop)

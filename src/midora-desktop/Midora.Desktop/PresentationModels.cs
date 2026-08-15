@@ -598,6 +598,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
 
     public TimelineWorkspaceMode Mode { get; }
     public TimelineEditorSettings EditorSettings { get; }
+    public TimelineEditorSettings LaneEditorSettings { get; } = new();
     public bool IsSegment => Mode == TimelineWorkspaceMode.Segment;
     public bool IsConductor => Mode == TimelineWorkspaceMode.Conductor;
     public bool IsArrangement => Mode == TimelineWorkspaceMode.Arrangement;
@@ -894,6 +895,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     public override void Rebuild(MidoraProject project, long revision)
     {
         EditorSettings.ConfigureProject(project, StartTick);
+        LaneEditorSettings.ConfigureProject(project, StartTick);
         if (!_viewportInitialized)
         {
             TickSpan = Math.Max(TickSpan, checked((long)project.TicksPerQuarterNote * 16));
@@ -1436,14 +1438,20 @@ public sealed record LogicalParameterListItem(MidoraId Id, string Name, string T
 public sealed record MappingFunctionListItem(MidoraId Id, string Name, int AbiVersion);
 public sealed record ParameterMappingListItem(MidoraId Id, string Source, string Target, int StepCount);
 public sealed record EnvelopeListItem(MidoraId Id, string Name, string Summary);
-public sealed record MappingChainListItem(MidoraId Id, string Owner, int StepCount);
+public sealed record MappingChainListItem(
+    MidoraId Id,
+    string Owner,
+    int StepCount,
+    bool CanDelete);
 public sealed record MappingStepListItem(MidoraId Id, MidoraId ChainId, string Owner, int Index, string Summary);
 
 public sealed record InstrumentRenderLane(
     MidoraId SubVoiceId,
     string Label,
     MidiValueTarget? Target = null,
-    MidoraId? ValueCurveId = null);
+    MidoraId? ValueCurveId = null,
+    MidoraId? EventMappingChainId = null,
+    TemplateEventMappingTarget? EventMappingTarget = null);
 
 public sealed record InitialStateListItem(string Target, string Value, string Scope);
 
@@ -1532,12 +1540,12 @@ public sealed class LibraryWorkspaceViewModel()
 
 public sealed class InstrumentWorkspaceViewModel(
     MidoraId instrumentId,
-    string header,
-    TimelineEditorSettings? editorSettings = null)
+    string header)
     : WorkspaceViewModel(
         WorkspaceKey.ForObject(WorkspaceKind.EventInstrumentEditor, instrumentId),
         header)
 {
+    private readonly Dictionary<MidoraId, SubVoiceEditorSettings> _subVoiceEditorSettings = [];
     private string _summary = string.Empty;
     private TimelineRenderSnapshot? _subVoiceSnapshot;
     private TimelineRenderSnapshot? _subVoiceNoteSnapshot;
@@ -1580,7 +1588,20 @@ public sealed class InstrumentWorkspaceViewModel(
     private long? _editCursorTick;
     private int _activeSectionIndex;
 
-    public TimelineEditorSettings EditorSettings { get; } = editorSettings ?? new TimelineEditorSettings();
+    private TimelineEditorSettings _editorSettings = new();
+    private TimelineEditorSettings _eventLaneEditorSettings = new();
+
+    public TimelineEditorSettings EditorSettings
+    {
+        get => _editorSettings;
+        private set => Set(ref _editorSettings, value);
+    }
+
+    public TimelineEditorSettings EventLaneEditorSettings
+    {
+        get => _eventLaneEditorSettings;
+        private set => Set(ref _eventLaneEditorSettings, value);
+    }
 
     public int ActiveSectionIndex
     {
@@ -1803,7 +1824,10 @@ public sealed class InstrumentWorkspaceViewModel(
                 source,
                 $"{targetVoice} · {FormatTarget(mapping.Target)}",
                 mapping.Steps.Count));
-            AddMappingChain(mapping.Steps, $"Parameter · {source} → {targetVoice}");
+            AddMappingChain(
+                mapping.Steps,
+                $"Parameter · {source} → {targetVoice}",
+                canDelete: true);
         }
         foreach (SubVoice voice in instrument.SubVoices)
         {
@@ -1817,7 +1841,8 @@ public sealed class InstrumentWorkspaceViewModel(
             {
                 AddMappingChain(
                     mapping.Steps,
-                    $"{voiceName} · {FormatEventMappingTarget(mapping.Target)}");
+                    $"{voiceName} · {FormatEventMappingTarget(mapping.Target)}",
+                    canDelete: mapping.Target.EventKind != TemplateEventKind.Note);
             }
         }
         foreach (InstrumentEnvelope envelope in instrument.Envelopes)
@@ -1829,6 +1854,38 @@ public sealed class InstrumentWorkspaceViewModel(
         }
 
         SubVoice? activeVoice = ResolveActiveSubVoice(instrument, Selection.Primary, ActiveSubVoiceId);
+        HashSet<MidoraId> liveSubVoiceIds = instrument.SubVoices
+            .Select(value => value.Id)
+            .ToHashSet();
+        foreach (MidoraId staleId in _subVoiceEditorSettings.Keys
+            .Where(value => !liveSubVoiceIds.Contains(value))
+            .ToArray())
+        {
+            _subVoiceEditorSettings.Remove(staleId);
+        }
+        if (activeVoice is not null)
+        {
+            if (!_subVoiceEditorSettings.TryGetValue(
+                    activeVoice.Id,
+                    out SubVoiceEditorSettings? settings))
+            {
+                TimelineEditorSettings piano = new();
+                TimelineEditorSettings eventLane = new();
+                piano.Reset(arrangement: false, project.TicksPerQuarterNote);
+                eventLane.Reset(arrangement: false, project.TicksPerQuarterNote);
+                settings = new(piano, eventLane);
+                _subVoiceEditorSettings.Add(activeVoice.Id, settings);
+            }
+            settings.Piano.ConfigureProject(project, referenceTick: 0);
+            settings.EventLane.ConfigureProject(project, referenceTick: 0);
+            EditorSettings = settings.Piano;
+            EventLaneEditorSettings = settings.EventLane;
+        }
+        else
+        {
+            EditorSettings.ConfigureProject(project, referenceTick: 0);
+            EventLaneEditorSettings.ConfigureProject(project, referenceTick: 0);
+        }
         ActiveSubVoiceId = activeVoice?.Id;
         ActiveRootPitch = activeVoice?.RootNoteOverride ?? instrument.RootNote;
         ActiveSubVoiceName = activeVoice is null
@@ -1863,18 +1920,30 @@ public sealed class InstrumentWorkspaceViewModel(
                         : TimelineItemState.None)));
             }
 
-            foreach (IGrouping<MidiValueTarget, (TemplateEvent Event, MidiValueTarget Target)> group in
-                     activeVoice.Events
-                         .Where(item => item.Kind != TemplateEventKind.Note)
-                         .SelectMany(item => TemplateEventMidiTargets.Enumerate(item)
-                             .Select(target => (Event: item, Target: target)))
-                         .GroupBy(item => item.Target)
-                         .OrderBy(item => item.Key.Kind)
-                         .ThenBy(item => item.Key.Number))
+            List<(SubVoiceEventMapping Mapping, MidiValueTarget Target)> eventLaneMappings = [];
+            foreach (SubVoiceEventMapping mapping in activeVoice.EventMappings)
+            {
+                if (TemplateEventMidiTargets.TryFromMappingTarget(
+                        mapping.Target,
+                        out MidiValueTarget laneMidiTarget))
+                {
+                    eventLaneMappings.Add((mapping, laneMidiTarget));
+                }
+            }
+            foreach ((SubVoiceEventMapping mapping, MidiValueTarget laneMidiTarget) in eventLaneMappings
+                .OrderBy(value => value.Target.Kind)
+                .ThenBy(value => value.Target.Number))
             {
                 int eventLane = lanes.Count;
-                lanes.Add(new(activeVoice.Id, TemplateEventMidiTargets.Format(group.Key), group.Key));
-                foreach ((TemplateEvent item, MidiValueTarget laneTarget) in group)
+                lanes.Add(new(
+                    activeVoice.Id,
+                    TemplateEventMidiTargets.Format(laneMidiTarget),
+                    laneMidiTarget,
+                    EventMappingChainId: mapping.Steps.Id,
+                    EventMappingTarget: mapping.Target));
+                foreach (TemplateEvent item in activeVoice.Events.Where(item =>
+                    item.Kind != TemplateEventKind.Note
+                    && TemplateEventMidiTargets.Enumerate(item).Contains(laneMidiTarget)))
                 {
                     events.Add(new(
                         item.Id,
@@ -1882,7 +1951,9 @@ public sealed class InstrumentWorkspaceViewModel(
                         item.Tick,
                         checked(item.Tick + 1),
                         eventLane,
-                        NormalizeMidiValue(laneTarget, TemplateEventMidiTargets.GetValue(item, laneTarget)),
+                        NormalizeMidiValue(
+                            laneMidiTarget,
+                            TemplateEventMidiTargets.GetValue(item, laneMidiTarget)),
                         2,
                         SelectionState(item.Id)));
                 }
@@ -1897,10 +1968,13 @@ public sealed class InstrumentWorkspaceViewModel(
             && activeVoice?.Events.FirstOrDefault(item => item.Id == selectedEventId) is TemplateEvent selectedEvent)
         {
             MidiValueTarget[] selectedTargets = TemplateEventMidiTargets.Enumerate(selectedEvent).ToArray();
-            selectedTarget = previousTarget is MidiValueTarget previous
-                && selectedTargets.Contains(previous)
-                    ? previous
-                    : selectedTargets.FirstOrDefault();
+            if (selectedTargets.Length != 0)
+            {
+                selectedTarget = previousTarget is MidiValueTarget previous
+                    && selectedTargets.Contains(previous)
+                        ? previous
+                        : selectedTargets[0];
+            }
         }
         MidiValueTarget? preferredTarget = selectedTarget ?? previousTarget;
         int preferredLane = preferredTarget is MidiValueTarget target
@@ -2013,9 +2087,9 @@ public sealed class InstrumentWorkspaceViewModel(
                     value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty));
         }
 
-        void AddMappingChain(MappingChain chain, string owner)
+        void AddMappingChain(MappingChain chain, string owner, bool canDelete)
         {
-            MappingChains.Add(new(chain.Id, owner, chain.Count));
+            MappingChains.Add(new(chain.Id, owner, chain.Count, canDelete));
             for (int index = 0; index < chain.Count; index++)
             {
                 ValueMappingStep step = chain[index];
@@ -2028,6 +2102,10 @@ public sealed class InstrumentWorkspaceViewModel(
             }
         }
     }
+
+    private sealed record SubVoiceEditorSettings(
+        TimelineEditorSettings Piano,
+        TimelineEditorSettings EventLane);
 
     public InstrumentRenderLane? GetRenderLane(int lane) =>
         lane >= 0 && lane < RenderLanes.Count ? RenderLanes[lane] : null;

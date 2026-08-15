@@ -3,6 +3,9 @@ using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shell;
 using System.Windows.Threading;
 using Midora.Application;
@@ -121,6 +124,41 @@ public sealed class WpfInteractionRegressionTests
 
             surface.FirstLane = -1;
             Assert.Equal(0, surface.FirstLane);
+
+            TimelineSurface partialLaneSurface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                LaneHeight = 18
+            };
+            partialLaneSurface.Measure(new Size(500, 500));
+            partialLaneSurface.Arrange(new Rect(0, 0, 500, 500));
+            partialLaneSurface.FirstLane = int.MaxValue;
+
+            Assert.Equal(26, partialLaneSurface.VisibleLaneCount);
+            Assert.Equal(102, partialLaneSurface.MaximumFirstLane);
+            Assert.Equal(102, partialLaneSurface.FirstLane);
+
+            const int width = 500;
+            const int height = 1_112;
+            TimelineSurface oversizedSurface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                Width = width,
+                Height = height
+            };
+            oversizedSurface.Measure(new Size(width, height));
+            oversizedSurface.Arrange(new Rect(0, 0, width, height));
+            oversizedSurface.LaneHeight = 8;
+
+            Assert.Equal(128, oversizedSurface.VisibleLaneCount);
+            Assert.Equal(0, oversizedSurface.MaximumFirstLane);
+            Assert.Equal(0, oversizedSurface.FirstLane);
+
+            RenderTargetBitmap target = new(width, height, 96, 96, PixelFormats.Pbgra32);
+            target.Render(oversizedSurface);
+            byte[] pixel = new byte[4];
+            target.CopyPixels(new Int32Rect(100, height - 8, 1, 1), pixel, 4, 0);
+            Assert.Equal([14, 11, 9, 255], pixel);
         });
     }
 
@@ -151,6 +189,9 @@ public sealed class WpfInteractionRegressionTests
                 Assert.Contains(combo.Setters.OfType<Setter>(), setter =>
                     setter.Property == Control.VerticalContentAlignmentProperty
                     && Equals(setter.Value, VerticalAlignment.Center));
+                Assert.Contains(combo.Setters.OfType<Setter>(), setter =>
+                    setter.Property == ComboBoxWheelSelectionGuard.IsEnabledProperty
+                    && Equals(setter.Value, true));
 
                 ComboBox displayMemberCombo = new()
                 {
@@ -165,9 +206,18 @@ public sealed class WpfInteractionRegressionTests
                 displayMemberCombo.Measure(new Size(300, 32));
                 displayMemberCombo.Arrange(new Rect(0, 0, 300, 32));
                 displayMemberCombo.ApplyTemplate();
+                Assert.True(ComboBoxWheelSelectionGuard.GetIsEnabled(displayMemberCombo));
                 ContentPresenter contentSite = Assert.IsType<ContentPresenter>(
                     displayMemberCombo.Template.FindName("ContentSite", displayMemberCombo));
                 Assert.NotNull(contentSite.ContentTemplateSelector);
+
+                MouseWheelEventArgs closedWheel = new(Mouse.PrimaryDevice, 0, 120)
+                {
+                    RoutedEvent = UIElement.PreviewMouseWheelEvent,
+                    Source = displayMemberCombo
+                };
+                displayMemberCombo.RaiseEvent(closedWheel);
+                Assert.True(closedWheel.Handled);
 
                 Assert.IsAssignableFrom<System.Windows.Media.Geometry>(icons["Fluent.ChevronDown20Regular"]);
                 Assert.Equal(

@@ -267,6 +267,7 @@ public sealed class AudioRenderTaskRunner
                         new(
                             output.Plan,
                             request.SoundFont.FrozenPath,
+                            request.SoundFont.Sha256,
                             temporaryPath,
                             request.MaximumSampleVoicesPerUnitStream,
                             checked((float)request.MasterVolumeDecibels),

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "sdkVersion": "10.0.302",
   "configuration": "Release",
-  "totalTestCount": 1102,
+  "totalTestCount": 1150,
   "projects": [
     {
       "path": "src/midora-common/Midora.Common.Tests/Midora.Common.Tests.csproj",
@@ -10,7 +10,7 @@
     },
     {
       "path": "src/midora-core/Midora.Compiler.Tests/Midora.Compiler.Tests.csproj",
-      "expectedTestCount": 254
+      "expectedTestCount": 257
     },
     {
       "path": "src/midora-core/Midora.MidiExport.Tests/Midora.MidiExport.Tests.csproj",
@@ -18,7 +18,7 @@
     },
     {
       "path": "src/midora-core/Midora.Persistence.Tests/Midora.Persistence.Tests.csproj",
-      "expectedTestCount": 94
+      "expectedTestCount": 95
     },
     {
       "path": "src/midora-core/Midora.AudioRender.Tests/Midora.AudioRender.Tests.csproj",
@@ -26,19 +26,19 @@
     },
     {
       "path": "src/midora-core/Midora.Application.Tests/Midora.Application.Tests.csproj",
-      "expectedTestCount": 290
+      "expectedTestCount": 305
     },
     {
       "path": "src/midora-core/Midora.Playback.Tests/Midora.Playback.Tests.csproj",
-      "expectedTestCount": 81
+      "expectedTestCount": 91
     },
     {
       "path": "src/midora-audio/Midora.Audio.Bass.Tests/Midora.Audio.Bass.Tests.csproj",
-      "expectedTestCount": 193
+      "expectedTestCount": 209
     },
     {
       "path": "src/midora-audio-device/Midora.AudioDevice.BassWasapi.Tests/Midora.AudioDevice.BassWasapi.Tests.csproj",
-      "expectedTestCount": 35
+      "expectedTestCount": 38
     },
     {
       "path": "src/midora-midi/Midora.Midi.Tests/Midora.Midi.Tests.csproj",

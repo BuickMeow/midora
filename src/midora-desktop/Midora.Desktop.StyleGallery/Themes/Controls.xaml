@@ -1,6 +1,7 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+                    xmlns:interaction="clr-namespace:Midora.Desktop.Presentation.Interaction"
                     xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls">
 
   <Style x:Key="{x:Static SystemParameters.FocusVisualStyleKey}"
@@ -608,6 +609,7 @@
   </Style>
 
   <Style TargetType="ComboBox">
+    <Setter Property="interaction:ComboBoxWheelSelectionGuard.IsEnabled" Value="True" />
     <Setter Property="Height" Value="32" />
     <Setter Property="VerticalContentAlignment" Value="Center" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />

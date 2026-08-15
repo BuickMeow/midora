@@ -28,7 +28,7 @@ internal sealed class PlaybackSpanCacheStaging : IDisposable
     public static PlaybackSpanCacheStaging? Create(
         MidiRenderPlan plan,
         IAudioPcmCacheSessionAccess? cache,
-        string soundFontPath,
+        string soundFontSha256,
         string nativeDirectory,
         int maximumSampleVoicesPerUnitStream,
         AudioMasterSettings masterSettings)
@@ -52,7 +52,7 @@ internal sealed class PlaybackSpanCacheStaging : IDisposable
             return null;
         }
 
-        string soundFontSha256 = AudioUnitCacheStaging.HashFile(soundFontPath);
+        AudioUnitCacheStaging.ValidateSoundFontSha256(soundFontSha256);
         string nativeIdentity = AudioUnitCacheStaging.ComputeNativeIdentity(nativeDirectory);
         string key = PlaybackSpanCacheKey.Create(
             plan,

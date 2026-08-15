@@ -57,7 +57,17 @@ public static class Program
                     throw new ArgumentException("Invalid playback argument count.");
                 }
                 control = SharedAudioWorkerControl.Open(args[1]);
-                return RunPlayback(args, control);
+                return RunPlayback(args, control, persistentSoundFont: null, librariesLoaded: false);
+            }
+
+            if (string.Equals(args[0], "realtime-host", StringComparison.Ordinal))
+            {
+                if (args.Length != 5)
+                {
+                    throw new ArgumentException("Invalid persistent realtime host argument count.");
+                }
+                control = SharedAudioWorkerControl.Open(args[1]);
+                return RunPersistentRealtimeHost(args, control);
             }
 
             if (string.Equals(args[0], "file-probe", StringComparison.Ordinal))
@@ -101,7 +111,10 @@ public static class Program
         }
     }
 
-    private static int RunProbe(string[] args, SharedAudioWorkerControl control)
+    private static int RunProbe(
+        string[] args,
+        SharedAudioWorkerControl control,
+        bool librariesLoaded = false)
     {
         control.PublishState(AudioWorkerState.Preparing);
         string nativeDirectory = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingDirectory(
@@ -113,7 +126,10 @@ public static class Program
         {
             throw new InvalidDataException("Device Buffer Request must be 5-200 ms.");
         }
-        LoadBassLibraries(nativeDirectory, includeWasapi: true);
+        if (!librariesLoaded)
+        {
+            LoadBassLibraries(nativeDirectory, includeWasapi: true);
+        }
 
         BassWasapiOutputDeviceFactory factory = new(
             new BassWasapiAudioOutputDeviceSettings(deviceBufferRequestMilliseconds));
@@ -133,7 +149,180 @@ public static class Program
         return 0;
     }
 
-    private static int RunPlayback(string[] args, SharedAudioWorkerControl control)
+    private static int RunPersistentRealtimeHost(
+        string[] args,
+        SharedAudioWorkerControl control)
+    {
+        string exchangeDirectory = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingDirectory(
+            args[2],
+            "persistent exchange");
+        string soundFontPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
+            args[3],
+            "SoundFont");
+        string nativeDirectory = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingDirectory(
+            args[4],
+            "native library");
+        LoadBassLibraries(nativeDirectory, includeWasapi: true);
+        using PersistentBassMidiSoundFont soundFont = new(soundFontPath);
+        using PersistentPitchAudition audition = new(soundFont);
+        control.PublishState(AudioWorkerState.Created);
+        PersistentAudioWorkerExchange.WriteResponse(
+            exchangeDirectory,
+            0,
+            new(true, 0, 0, string.Empty));
+
+        while (true)
+        {
+            if (!control.TryDequeue(out AudioWorkerControlCommand command))
+            {
+                Thread.Sleep(1);
+                continue;
+            }
+
+            if (command.Kind == AudioWorkerControlCommandKind.Stop)
+            {
+                // A Stop can race a naturally completed task's final cleanup.
+                // Once back in the host loop it is stale and safely ignored.
+                continue;
+            }
+
+            long generation = command.Payload;
+            string[] request;
+            try
+            {
+                request = PersistentAudioWorkerExchange.ReadRequest(
+                    exchangeDirectory,
+                    generation);
+            }
+            catch (Exception exception)
+            {
+                PersistentAudioWorkerExchange.WriteResponse(
+                    exchangeDirectory,
+                    generation,
+                    new(false, 0, 0, exception.ToString()));
+                continue;
+            }
+
+            if (command.Kind == AudioWorkerControlCommandKind.PersistentShutdown)
+            {
+                PersistentAudioWorkerExchange.WriteResponse(
+                    exchangeDirectory,
+                    generation,
+                    new(true, 0, 0, string.Empty));
+                return 0;
+            }
+
+            try
+            {
+                switch (command.Kind)
+                {
+                    case AudioWorkerControlCommandKind.PersistentProbe:
+                    {
+                        if (request.Length != 2)
+                        {
+                            throw new InvalidDataException(
+                                "The persistent audio probe request is invalid.");
+                        }
+                        audition.SuspendForFormalPlayback();
+                        string[] probeArgs =
+                            ["probe", control.Name, nativeDirectory, request[0], request[1]];
+                        _ = RunProbe(probeArgs, control, librariesLoaded: true);
+                        AudioWorkerStatus status = control.ReadStatus();
+                        PersistentAudioWorkerExchange.WriteResponse(
+                            exchangeDirectory,
+                            generation,
+                            new(
+                                true,
+                                status.ActualSampleRate,
+                                status.ActualDeviceBufferFrameCount,
+                                string.Empty));
+                        break;
+                    }
+                    case AudioWorkerControlCommandKind.PersistentStartPlayback:
+                        if (request.Length != 23
+                            || !string.Equals(
+                                Path.GetFullPath(request[3]),
+                                Path.GetFullPath(soundFontPath),
+                                StringComparison.OrdinalIgnoreCase)
+                            || !string.Equals(
+                                Path.GetFullPath(request[4]),
+                                Path.GetFullPath(nativeDirectory),
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new InvalidDataException(
+                                "The persistent playback request identity is invalid.");
+                        }
+                        audition.SuspendForFormalPlayback();
+                        // Publish the new generation's Preparing state before exposing the
+                        // acceptance marker. Otherwise the host can observe the previous
+                        // generation's terminal Completed state and return from startup early.
+                        control.PublishState(AudioWorkerState.Preparing);
+                        PersistentAudioWorkerExchange.WriteAcceptance(
+                            exchangeDirectory,
+                            generation);
+                        _ = RunPlayback(
+                            request,
+                            control,
+                            soundFont,
+                            librariesLoaded: true);
+                        PersistentAudioWorkerExchange.WriteResponse(
+                            exchangeDirectory,
+                            generation,
+                            new(true, 0, 0, string.Empty));
+                        break;
+                    case AudioWorkerControlCommandKind.PitchAuditionNoteOn:
+                        if (request.Length != 4)
+                        {
+                            throw new InvalidDataException(
+                                "The pitch audition NoteOn request is invalid.");
+                        }
+                        audition.Begin(
+                            EmptyToNull(request[0]),
+                            ParseInt32(request[1]),
+                            ParseInt32(request[2]),
+                            ParseInt32(request[3]));
+                        PersistentAudioWorkerExchange.WriteResponse(
+                            exchangeDirectory,
+                            generation,
+                            new(true, 0, 0, string.Empty));
+                        break;
+                    case AudioWorkerControlCommandKind.PitchAuditionNoteOff:
+                        if (request.Length != 0)
+                        {
+                            throw new InvalidDataException(
+                                "The pitch audition NoteOff request is invalid.");
+                        }
+                        audition.End();
+                        PersistentAudioWorkerExchange.WriteResponse(
+                            exchangeDirectory,
+                            generation,
+                            new(true, 0, 0, string.Empty));
+                        break;
+                    default:
+                        throw new InvalidDataException(
+                            "The persistent audio worker received an idle-only command in an invalid state.");
+                }
+            }
+            catch (Exception exception)
+            {
+                if (command.Kind == AudioWorkerControlCommandKind.PersistentStartPlayback)
+                {
+                    control.PublishFault(1);
+                }
+                global::System.Console.Error.WriteLine(exception);
+                PersistentAudioWorkerExchange.WriteResponse(
+                    exchangeDirectory,
+                    generation,
+                    new(false, 0, 0, exception.ToString()));
+            }
+        }
+    }
+
+    private static int RunPlayback(
+        string[] args,
+        SharedAudioWorkerControl control,
+        PersistentBassMidiSoundFont? persistentSoundFont,
+        bool librariesLoaded)
     {
         control.PublishState(AudioWorkerState.Preparing);
         string planPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
@@ -231,7 +420,10 @@ public static class Program
         {
             throw new InvalidDataException("The frozen render plan does not match the probed device rate.");
         }
-        LoadBassLibraries(nativeDirectory, includeWasapi: true);
+        if (!librariesLoaded)
+        {
+            LoadBassLibraries(nativeDirectory, includeWasapi: true);
+        }
 
         using BassMidiRenderer renderer = new(
             plan,
@@ -240,7 +432,8 @@ public static class Program
             masterSettings,
             cacheStagingPath,
             segmentProducerConcurrency,
-            cacheReadManifestPath);
+            cacheReadManifestPath,
+            persistentSoundFont);
         using PlaybackSpanRenderSource? playbackSpanSource =
             playbackSpanCacheStagingPath is null
                 ? null
@@ -1258,6 +1451,258 @@ public static class Program
 
         public void Dispose()
         {
+        }
+    }
+
+    private sealed unsafe class PersistentPitchAudition : IDisposable
+    {
+        private readonly PersistentBassMidiSoundFont _soundFont;
+        private uint _streamHandle;
+        private PitchAuditionRenderSource? _source;
+        private BassWasapiOutputDevice? _output;
+        private string? _deviceId;
+        private int _deviceBufferRequestMilliseconds;
+        private int _currentPitch = -1;
+        private bool _disposed;
+
+        public PersistentPitchAudition(PersistentBassMidiSoundFont soundFont) =>
+            _soundFont = soundFont ?? throw new ArgumentNullException(nameof(soundFont));
+
+        public void Begin(
+            string? deviceId,
+            int deviceBufferRequestMilliseconds,
+            int pitch,
+            int velocity)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (deviceBufferRequestMilliseconds is < 5 or > 200)
+            {
+                throw new ArgumentOutOfRangeException(nameof(deviceBufferRequestMilliseconds));
+            }
+            if (pitch is < 0 or > 127 || velocity is < 1 or > 127)
+            {
+                throw new ArgumentOutOfRangeException(nameof(pitch));
+            }
+            EnsureOutput(deviceId, deviceBufferRequestMilliseconds);
+            Submit(NativeBassMidi.MIDI_EVENT_SOUNDOFF, 0, "MIDI_EVENT_SOUNDOFF");
+            Submit(
+                NativeBassMidi.MIDI_EVENT_NOTE,
+                checked((uint)(pitch | (velocity << 8))),
+                "MIDI_EVENT_NOTE(NoteOn)");
+            _currentPitch = pitch;
+        }
+
+        public void End()
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_streamHandle == 0)
+            {
+                return;
+            }
+            if (_currentPitch >= 0)
+            {
+                Submit(
+                    NativeBassMidi.MIDI_EVENT_NOTE,
+                    checked((uint)_currentPitch),
+                    "MIDI_EVENT_NOTE(NoteOff)");
+            }
+            Submit(NativeBassMidi.MIDI_EVENT_SOUNDOFF, 0, "MIDI_EVENT_SOUNDOFF");
+            _currentPitch = -1;
+        }
+
+        public void SuspendForFormalPlayback()
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            End();
+            DisposeOutput();
+        }
+
+        private void EnsureOutput(string? deviceId, int deviceBufferRequestMilliseconds)
+        {
+            bool configurationChanged = _streamHandle != 0
+                && (!string.Equals(_deviceId, deviceId, StringComparison.Ordinal)
+                    || _deviceBufferRequestMilliseconds != deviceBufferRequestMilliseconds);
+            if (configurationChanged)
+            {
+                DisposeOutput();
+                FreeStream();
+            }
+
+            BassWasapiOutputDeviceFactory factory = new(
+                new BassWasapiAudioOutputDeviceSettings(deviceBufferRequestMilliseconds));
+            AudioOutputDeviceInfo device = SelectDevice(factory, deviceId);
+            if (_streamHandle == 0)
+            {
+                CreateStream(device.AudioFormat.SampleRate);
+                _deviceId = deviceId;
+                _deviceBufferRequestMilliseconds = deviceBufferRequestMilliseconds;
+            }
+            if (_output is null)
+            {
+                _output = (BassWasapiOutputDevice)factory.Open(device, _source!);
+                _output.Start();
+            }
+        }
+
+        private void CreateStream(int sampleRate)
+        {
+            uint flags = NativeBass.BASS_SAMPLE_FLOAT
+                | NativeBass.BASS_STREAM_DECODE
+                | NativeBassMidi.BASS_MIDI_NOFX
+                | NativeBassMidi.BASS_MIDI_NOTEOFF1;
+            _streamHandle = NativeBassMidi.StreamCreate(1, flags, checked((uint)sampleRate));
+            if (_streamHandle == 0)
+            {
+                ThrowBass("BASS_MIDI_StreamCreate");
+            }
+            try
+            {
+                NativeBassMidi.BASS_MIDI_FONT font = new()
+                {
+                    font = _soundFont.Handle,
+                    preset = -1,
+                    bank = 0
+                };
+                if (NativeBassMidi.StreamSetFonts(_streamHandle, &font, 1) == 0)
+                {
+                    ThrowBass("BASS_MIDI_StreamSetFonts");
+                }
+                SetAttribute(NativeBassMidi.BASS_ATTRIB_MIDI_SRC, 1f, "BASS_ATTRIB_MIDI_SRC");
+                SetAttribute(NativeBassMidi.BASS_ATTRIB_MIDI_VOICES, 500f, "BASS_ATTRIB_MIDI_VOICES");
+                SetAttribute(NativeBassMidi.BASS_ATTRIB_MIDI_CPU, 0f, "BASS_ATTRIB_MIDI_CPU");
+                Submit(NativeBassMidi.MIDI_EVENT_NOTESOFF, 0, "MIDI_EVENT_NOTESOFF");
+                Submit(NativeBassMidi.MIDI_EVENT_SOUNDOFF, 0, "MIDI_EVENT_SOUNDOFF");
+                Submit(NativeBassMidi.MIDI_EVENT_RESET, 0, "MIDI_EVENT_RESET");
+                Submit(NativeBassMidi.MIDI_EVENT_DEFDRUMS, 0, "MIDI_EVENT_DEFDRUMS");
+                _source = new(_streamHandle, sampleRate);
+            }
+            catch
+            {
+                FreeStream();
+                throw;
+            }
+        }
+
+        private void SetAttribute(uint attribute, float value, string name)
+        {
+            if (NativeBass.ChannelSetAttribute(_streamHandle, attribute, value) == 0)
+            {
+                ThrowBass($"BASS_ChannelSetAttribute({name})");
+            }
+        }
+
+        private void Submit(uint midiEvent, uint parameter, string name)
+        {
+            if (NativeBassMidi.StreamEvent(_streamHandle, 0, midiEvent, parameter) == 0)
+            {
+                ThrowBass($"BASS_MIDI_StreamEvent({name})");
+            }
+        }
+
+        private void DisposeOutput()
+        {
+            BassWasapiOutputDevice? output = _output;
+            _output = null;
+            if (output is null)
+            {
+                return;
+            }
+            output.Stop(flush: true);
+            output.Dispose();
+            if (output.CleanupFaulted)
+            {
+                throw new MidoraAudioDeviceException(
+                    $"Pitch audition WASAPI cleanup failed with BASS error {output.CleanupErrorCode}.");
+            }
+        }
+
+        private void FreeStream()
+        {
+            _source = null;
+            if (_streamHandle != 0 && NativeBass.StreamFree(_streamHandle) == 0)
+            {
+                int error = NativeBass.ErrorGetCode();
+                _streamHandle = 0;
+                throw new MidoraAudioException(
+                    $"BASS_StreamFree for the pitch audition stream failed with BASS error {error}.");
+            }
+            _streamHandle = 0;
+            _currentPitch = -1;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            Exception? failure = null;
+            try
+            {
+                if (_streamHandle != 0)
+                {
+                    if (_currentPitch >= 0)
+                    {
+                        Submit(
+                            NativeBassMidi.MIDI_EVENT_NOTE,
+                            checked((uint)_currentPitch),
+                            "MIDI_EVENT_NOTE(NoteOff)");
+                    }
+                    Submit(NativeBassMidi.MIDI_EVENT_SOUNDOFF, 0, "MIDI_EVENT_SOUNDOFF");
+                }
+                DisposeOutput();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            try
+            {
+                FreeStream();
+            }
+            catch (Exception exception)
+            {
+                failure = failure is null
+                    ? exception
+                    : new AggregateException(failure, exception);
+            }
+            if (failure is not null)
+            {
+                throw failure;
+            }
+        }
+
+        private static void ThrowBass(string operation) =>
+            throw new MidoraAudioException(
+                $"{operation} failed with BASS error {NativeBass.ErrorGetCode()}.");
+
+        private sealed unsafe class PitchAuditionRenderSource(
+            uint streamHandle,
+            int sampleRate) : IAudioRenderSource
+        {
+            public AudioFormat Format { get; } =
+                new(sampleRate, 2, AudioSampleFormat.Float32);
+
+            public AudioPullResult PullFrames(float* destination, int requestedFrameCount)
+            {
+                uint requestedBytes = checked((uint)(requestedFrameCount * Format.BytesPerFrame));
+                uint receivedBytes = NativeBass.ChannelGetData(
+                    streamHandle,
+                    destination,
+                    requestedBytes);
+                if (receivedBytes == uint.MaxValue || receivedBytes > requestedBytes)
+                {
+                    return AudioPullResult.Fault();
+                }
+                if (receivedBytes < requestedBytes)
+                {
+                    NativeMemory.Clear(
+                        (byte*)destination + receivedBytes,
+                        requestedBytes - receivedBytes);
+                }
+                return AudioPullResult.Continue(requestedFrameCount);
+            }
         }
     }
 }

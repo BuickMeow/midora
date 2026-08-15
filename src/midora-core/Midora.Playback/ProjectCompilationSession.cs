@@ -75,6 +75,9 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             : Path.GetFullPath(effectiveSoundFontPath);
         _editingTime = new ProjectEditingTimeSession(project, editingTimeProvider);
         EffectiveSoundFontPath = normalizedSoundFontPath;
+        EffectiveSoundFontSha256 = normalizedSoundFontPath is null
+            ? null
+            : project.SoundFont.Reference?.Sha256;
         try
         {
             _compilationProject = executionMode == ProjectCompilationExecutionMode.Background
@@ -106,6 +109,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
     public MidoraProject Project { get; }
     internal ProjectEditingTimeSession EditingTimeSession => _editingTime;
     public string? EffectiveSoundFontPath { get; private set; }
+    public string? EffectiveSoundFontSha256 { get; private set; }
     public CanonicalCompiledResult LastAttempt { get; private set; }
     public CanonicalCompiledResult? LastSuccessfulResult { get; private set; }
     public CompilerRunTelemetry LastCompilationTelemetry => _compiler.LastTelemetry;
@@ -176,6 +180,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         }
     }
     public event EventHandler? CompilationChanged;
+    public event EventHandler? EffectiveSoundFontChanged;
 
     internal CanonicalCompiledResult ApplyEdit(Action<MidoraProject> edit, ProjectChangeSet changes)
     {
@@ -1184,6 +1189,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
 
     public void SetEffectiveSoundFontPath(string? value)
     {
+        bool changed;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -1192,13 +1198,26 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 throw new InvalidOperationException(
                     "The effective SoundFont cannot change while a Project edit lock is active.");
             }
-            EffectiveSoundFontPath = value is null ? null : Path.GetFullPath(value);
+            string? normalized = value is null ? null : Path.GetFullPath(value);
+            string? sha256 = normalized is null ? null : Project.SoundFont.Reference?.Sha256;
+            changed = !string.Equals(
+                EffectiveSoundFontPath,
+                normalized,
+                StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(
+                    EffectiveSoundFontSha256,
+                    sha256,
+                    StringComparison.Ordinal);
+            EffectiveSoundFontPath = normalized;
+            EffectiveSoundFontSha256 = sha256;
         }
+        if (changed) EffectiveSoundFontChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public bool TryBeginSoundFontVerification(
         ProjectSoundFontReference? expectedReference)
     {
+        bool changed;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -1211,10 +1230,14 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             {
                 return false;
             }
+            changed = EffectiveSoundFontPath is not null
+                || EffectiveSoundFontSha256 is not null;
             EffectiveSoundFontPath = null;
+            EffectiveSoundFontSha256 = null;
             ClearSampleDomainCachesCore();
-            return true;
         }
+        if (changed) EffectiveSoundFontChanged?.Invoke(this, EventArgs.Empty);
+        return true;
     }
 
     public bool TrySetVerifiedSoundFontPath(
@@ -1224,6 +1247,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         ArgumentNullException.ThrowIfNull(expectedReference);
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
         string path = Path.GetFullPath(value);
+        bool changed;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -1236,16 +1260,27 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             {
                 return false;
             }
+            changed = !string.Equals(
+                EffectiveSoundFontPath,
+                path,
+                StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(
+                    EffectiveSoundFontSha256,
+                    expectedReference.Sha256,
+                    StringComparison.Ordinal);
             EffectiveSoundFontPath = path;
+            EffectiveSoundFontSha256 = expectedReference.Sha256;
             ClearSampleDomainCachesCore();
-            return true;
         }
+        if (changed) EffectiveSoundFontChanged?.Invoke(this, EventArgs.Empty);
+        return true;
     }
 
     public bool TryInvalidateSoundFontResource(
         ProjectSoundFontReference expectedReference)
     {
         ArgumentNullException.ThrowIfNull(expectedReference);
+        bool changed;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -1253,10 +1288,14 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             {
                 return false;
             }
+            changed = EffectiveSoundFontPath is not null
+                || EffectiveSoundFontSha256 is not null;
             EffectiveSoundFontPath = null;
+            EffectiveSoundFontSha256 = null;
             ClearSampleDomainCachesCore();
-            return true;
         }
+        if (changed) EffectiveSoundFontChanged?.Invoke(this, EventArgs.Empty);
+        return true;
     }
 
     public long SnapshotTotalEditingTimeMilliseconds()

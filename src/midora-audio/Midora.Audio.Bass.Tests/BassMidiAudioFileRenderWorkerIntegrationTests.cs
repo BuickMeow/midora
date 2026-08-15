@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using Midora.AudioDevice.Wave;
 using Midora.Midi;
 
@@ -54,6 +55,7 @@ public sealed class BassMidiAudioFileRenderWorkerIntegrationTests
             AudioFileRenderWorkerResult rendered = await worker.RenderAsync(new(
                 plan,
                 SoundFontPath,
+                Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(SoundFontPath))),
                 outputPath,
                 BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
                 -0.1f));

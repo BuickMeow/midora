@@ -996,9 +996,17 @@ public partial class MainWindow : Window
                     Add("Add Logical Parameter Lane…", OnAddParameterLaneClick, enabled: _session.CanEditProject);
                     return;
                 case TimelineSurfaceMode.EventLanes
-                    when _session.ActiveWorkspace is InstrumentWorkspaceViewModel:
-                    Add("Add Template Event…", OnAddTemplateEventClick, enabled: _session.CanEditProject);
+                    when _session.ActiveWorkspace is InstrumentWorkspaceViewModel instrumentWorkspace:
+                {
+                    Add("Add Event…", OnAddTemplateEventClick, enabled: _session.CanEditProject);
+                    Add(
+                        "Delete Event Lane…",
+                        OnDeleteSubVoiceEventLaneClick,
+                        enabled: _session.CanEditProject
+                            && instrumentWorkspace.GetRenderLane(
+                                instrumentWorkspace.ActiveRenderLaneIndex)?.EventMappingTarget is not null);
                     return;
+                }
                 default:
                     menu.IsOpen = false;
                     return;
@@ -1427,6 +1435,43 @@ public partial class MainWindow : Window
 
     private void OnSubVoicePasteClick(object sender, RoutedEventArgs e) =>
         PasteProjectSelection();
+
+    private void OnMappingChainCopyClick(object sender, RoutedEventArgs e) =>
+        CutOrCopyProjectSelection(cut: false);
+
+    private void OnMappingChainPasteClick(object sender, RoutedEventArgs e) =>
+        PasteProjectSelection();
+
+    private void OnMappingChainDeleteClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel
+            {
+                ObjectId: MidoraId instrumentId,
+                Selection.Primary: MidoraId chainId
+            } workspace)
+        {
+            return;
+        }
+        MappingChainListItem? chain = workspace.MappingChains
+            .FirstOrDefault(value => value.Id == chainId);
+        if (chain is null || !chain.CanDelete) return;
+        bool nonEmpty = chain.StepCount != 0;
+        if (nonEmpty
+            && MessageBox.Show(
+                this,
+                $"Delete all {chain.StepCount} step(s) from '{chain.Owner}'?",
+                "Delete Mapping Chain",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+        RunSynchronous("Delete Mapping Chain", () => _session.Execute(
+            ProjectDomainEditCommands.DeleteMappingChain(
+                instrumentId,
+                chainId,
+                nonEmptyDeletionConfirmed: nonEmpty)));
+    }
 
     private void OnSubVoiceDeleteClick(object sender, RoutedEventArgs e)
     {
@@ -2306,10 +2351,15 @@ public partial class MainWindow : Window
     private void OnSubdivisionComboBoxLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
         if (sender is not ComboBox { Tag: string role } comboBox) return;
+        bool laneOperation = string.Equals(role, "LaneOperation", StringComparison.Ordinal);
         TimelineEditorSettings? settings = comboBox.DataContext switch
         {
-            TimelineWorkspaceViewModel timeline => timeline.EditorSettings,
-            InstrumentWorkspaceViewModel instrument => instrument.EditorSettings,
+            TimelineWorkspaceViewModel timeline => laneOperation
+                ? timeline.LaneEditorSettings
+                : timeline.EditorSettings,
+            InstrumentWorkspaceViewModel instrument => laneOperation
+                ? instrument.EventLaneEditorSettings
+                : instrument.EditorSettings,
             _ => null
         };
         if (settings is null) return;
@@ -2415,7 +2465,10 @@ public partial class MainWindow : Window
         if (workspace is InstrumentWorkspaceViewModel instrumentWorkspace
             && instrumentWorkspace.GetRenderLane(e.Lane) is InstrumentRenderLane lane)
         {
-            workspace.Selection.Replace(lane.ValueCurveId ?? lane.SubVoiceId);
+            workspace.Selection.Replace(
+                lane.ValueCurveId
+                ?? lane.EventMappingChainId
+                ?? lane.SubVoiceId);
             _session.RefreshWorkspace(workspace);
         }
     }
@@ -2538,49 +2591,14 @@ public partial class MainWindow : Window
 
     private void OnTimelineLanePreviewPressed(object? sender, TimelineLanePreviewEventArgs e)
     {
-        if (sender is TimelineSurface { Tag: "SubVoiceNotes", DataContext: InstrumentWorkspaceViewModel workspace }
-            && workspace.ObjectId is MidoraId instrumentId
-            && workspace.ActiveSubVoiceId is MidoraId subVoiceId)
-        {
-            RunSynchronous("Start SubVoice Pitch Preview", () => _session.StartHeldEventInstrumentPreview(
-                new EventInstrumentPreviewRequest(
-                    instrumentId,
-                    subVoiceId,
-                    e.Pitch,
-                    e.Velocity,
-                    GateLengthTicks: null,
-                    CursorTick: _session.CurrentTick)
-                {
-                    DirectSubVoicePitchPreview = true
-                }));
-            return;
-        }
-        if (_session.Project is not MidoraProject project
-            || _session.ActiveWorkspace is not TimelineWorkspaceViewModel
-            {
-                Mode: TimelineWorkspaceMode.Segment,
-                ObjectId: MidoraId segmentId
-            })
-        {
-            return;
-        }
-        (LogicalTrack Track, Segment Segment)? located = TimelineWorkspaceViewModel.FindSegment(project, segmentId);
-        if (located is null) return;
-        decimal tempo = project.Conductor.Tempos
-            .Where(item => item.Tick <= _session.CurrentTick)
-            .OrderByDescending(item => item.Tick)
-            .Select(item => item.BeatsPerMinute)
-            .FirstOrDefault(120m);
-        RunSynchronous("Start Pitch Ruler Preview", () => _session.StartHeldSegmentPitchRulerPreview(
-            located.Value.Track.Id,
-            segmentId,
-            e.Pitch,
-            e.Velocity,
-            tempo));
+        RunSynchronous(
+            "Start Pitch Audition",
+            () => _session.BeginPitchAudition(e.Pitch, e.Velocity));
     }
 
     private void OnActiveEditorLaneDropDownClosed(object sender, EventArgs e)
     {
+        ComboBox? comboBox = sender as ComboBox;
         if (_session.ActiveWorkspace is TimelineWorkspaceViewModel
             {
                 Mode: TimelineWorkspaceMode.Segment,
@@ -2595,12 +2613,45 @@ public partial class MainWindow : Window
             RunSynchronous("Create Logical Parameter Lane", () => ExecuteAndSelectCreated(
                 ProjectDomainEditCommands.CreateLogicalParameterLane(segmentId, option.ParameterId),
                 timeline));
+            RestoreEditorLaneTimelineFocus(comboBox, timeline);
             return;
         }
         if (_session.ActiveWorkspace is WorkspaceViewModel workspace)
         {
             _session.RefreshWorkspace(workspace);
+            RestoreEditorLaneTimelineFocus(comboBox, workspace);
         }
+    }
+
+    private void RestoreEditorLaneTimelineFocus(
+        ComboBox? comboBox,
+        WorkspaceViewModel workspace)
+    {
+        object? timelineTag = workspace switch
+        {
+            InstrumentWorkspaceViewModel => "SubVoiceEvents",
+            TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Segment } => "ParameterLanes",
+            _ => null
+        };
+        if (comboBox is null || timelineTag is null) return;
+
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            new Action(() =>
+            {
+                if (!IsActive
+                    || !ReferenceEquals(_session.ActiveWorkspace, workspace)
+                    || !comboBox.IsKeyboardFocusWithin)
+                {
+                    return;
+                }
+
+                TimelineSurface? timeline = FindWorkspaceElement<TimelineSurface>(timelineTag);
+                if (timeline is { IsVisible: true, IsEnabled: true, Focusable: true })
+                {
+                    timeline.Focus();
+                }
+            }));
     }
 
     private void OnTimelineVelocityEditCompleted(object? sender, TimelineVelocityEditEventArgs e)
@@ -2631,7 +2682,15 @@ public partial class MainWindow : Window
     }
 
     private void OnTimelineLanePreviewReleased(object? sender, TimelineLanePreviewEventArgs e) =>
-        RunSynchronous("End Pitch Ruler Preview", _session.EndHeldPreviewGate);
+        RunSynchronous("End Pitch Audition", _session.EndPitchAudition);
+
+    private void OnTimelinePitchPreviewRequested(object? sender, TimelinePitchPreviewEventArgs e) =>
+        RunSynchronous(
+            "Update Pitch Audition",
+            () => _session.BeginPitchAudition(e.Pitch, e.Velocity));
+
+    private void OnTimelinePitchPreviewReleased(object? sender, EventArgs e) =>
+        RunSynchronous("End Pitch Audition", _session.EndPitchAudition);
 
     private void OnTimelineNotePlacementStarted(object? sender, TimelineNotePlacementEventArgs e)
     {
@@ -2641,6 +2700,9 @@ public partial class MainWindow : Window
         {
             long templateStart = instrumentWorkspace.EditorSettings.SnapAbsolute(e.StartTick);
             _templateNotePlacement = (instrumentId, subVoiceId, templateStart, e.Pitch, e.Velocity);
+            RunSynchronous(
+                "Start Note Placement Audition",
+                () => _session.BeginPitchAudition(e.Pitch, e.Velocity));
             return;
         }
         if (_session.Project is not MidoraProject project
@@ -2656,10 +2718,14 @@ public partial class MainWindow : Window
         if (located is null) return;
         long start = workspace.EditorSettings.SnapAbsolute(e.StartTick);
         _notePlacement = (segmentId, start, e.Pitch, e.Velocity);
+        RunSynchronous(
+            "Start Note Placement Audition",
+            () => _session.BeginPitchAudition(e.Pitch, e.Velocity));
     }
 
     private void OnTimelineNotePlacementCompleted(object? sender, TimelineNotePlacementEventArgs e)
     {
+        RunSynchronous("End Note Placement Audition", _session.EndPitchAudition);
         if (_templateNotePlacement is { } templatePlacement
             && _session.ActiveWorkspace is InstrumentWorkspaceViewModel instrumentWorkspace)
         {
@@ -2699,6 +2765,7 @@ public partial class MainWindow : Window
 
     private void OnTimelineNotePlacementCancelled(object? sender, EventArgs e)
     {
+        RunSynchronous("End Note Placement Audition", _session.EndPitchAudition);
         _notePlacement = null;
         _templateNotePlacement = null;
     }
@@ -3079,12 +3146,15 @@ public partial class MainWindow : Window
         }
         if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline)
         {
-            timeline.EditCursorTick = timeline.EditorSettings.SnapAbsolute(e.Tick);
-            if (!e.IsDoubleClick || _session.Project is null) return;
             bool parameterSurface = sender is FrameworkElement { Tag: "ParameterLanes" };
+            TimelineEditorSettings activeSettings = parameterSurface
+                ? timeline.LaneEditorSettings
+                : timeline.EditorSettings;
+            timeline.EditCursorTick = activeSettings.SnapAbsolute(e.Tick);
+            if (!e.IsDoubleClick || _session.Project is null) return;
             RunSynchronous("Create timeline object", () =>
             {
-                long snapped = timeline.EditorSettings.SnapAbsolute(e.Tick);
+                long snapped = activeSettings.SnapAbsolute(e.Tick);
                 switch (timeline.Mode)
                 {
                     case TimelineWorkspaceMode.Arrangement:
@@ -3159,7 +3229,11 @@ public partial class MainWindow : Window
 
         if (_session.ActiveWorkspace is InstrumentWorkspaceViewModel instrument)
         {
-            instrument.EditCursorTick = instrument.EditorSettings.SnapAbsolute(e.Tick);
+            bool eventSurface = sender is FrameworkElement { Tag: "SubVoiceEvents" };
+            TimelineEditorSettings activeSettings = eventSurface
+                ? instrument.EventLaneEditorSettings
+                : instrument.EditorSettings;
+            instrument.EditCursorTick = activeSettings.SnapAbsolute(e.Tick);
             if (!e.IsDoubleClick
                 || _session.Project is null
                 || instrument.ObjectId is not MidoraId instrumentId)
@@ -3182,9 +3256,9 @@ public partial class MainWindow : Window
                     instrument));
                 return;
             }
-            InstrumentRenderLane? lane = instrument.GetRenderLane(e.Lane);
+            InstrumentRenderLane? lane = instrument.GetRenderLane(instrument.ActiveRenderLaneIndex);
             if (lane is null) return;
-            long tick = instrument.EditorSettings.SnapAbsolute(e.Tick);
+            long tick = instrument.EventLaneEditorSettings.SnapAbsolute(e.Tick);
             if (lane.Target is MidiValueTarget target)
             {
                 int value = checked((int)InstrumentWorkspaceViewModel.DenormalizeMidiValue(
@@ -3203,7 +3277,10 @@ public partial class MainWindow : Window
         {
             if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline)
             {
-                long snappedDelta = timeline.EditorSettings.SnapDelta(
+                TimelineEditorSettings activeSettings = e.Item.Kind == TimelineItemKind.LogicalParameterPoint
+                    ? timeline.LaneEditorSettings
+                    : timeline.EditorSettings;
+                long snappedDelta = activeSettings.SnapDelta(
                     e.TickDelta,
                     checked(e.Item.StartTick + e.TickDelta));
                 long unclampedSnappedDelta = snappedDelta;
@@ -3544,7 +3621,10 @@ public partial class MainWindow : Window
         SubVoice? voice = instrument.SubVoices.FirstOrDefault(item => item.Events.Any(value => value.Id == edit.Item.Id));
         TemplateEvent? template = voice?.Events.FirstOrDefault(item => item.Id == edit.Item.Id);
         if (voice is null || template is null) return;
-        long snappedDelta = workspace.EditorSettings.SnapDelta(
+        TimelineEditorSettings activeSettings = template.Kind == TemplateEventKind.Note
+            ? workspace.EditorSettings
+            : workspace.EventLaneEditorSettings;
+        long snappedDelta = activeSettings.SnapDelta(
             edit.TickDelta,
             checked((edit.EditKind == TimelineItemEditKind.ResizeEnd
                 ? checked(template.Tick + Math.Max(1, template.LengthTicks))
@@ -3613,18 +3693,42 @@ public partial class MainWindow : Window
         if (activeTarget is MidiValueTarget target
             && TemplateEventMidiTargets.Enumerate(template).Contains(target))
         {
-            int currentValue = TemplateEventMidiTargets.GetValue(template, target);
+            TemplateEvent[] selectedEvents = voice.Events
+                .Where(item => item.Kind != TemplateEventKind.Note
+                    && TemplateEventMidiTargets.Enumerate(item).Contains(target)
+                    && (item.Id == template.Id || workspace.Selection.Ids.Contains(item.Id)))
+                .ToArray();
+            long requestedTickDelta = workspace.EventLaneEditorSettings.SnapDelta(
+                edit.TickDelta,
+                checked(template.Tick + edit.TickDelta));
+            long tickDelta = Math.Max(
+                requestedTickDelta,
+                -selectedEvents.Min(item => item.Tick));
             (double minimum, double maximum) = InstrumentWorkspaceViewModel.MidiValueRange(target);
-            int value = checked((int)Math.Round(
-                Math.Clamp(currentValue + edit.ValueDelta * (maximum - minimum), minimum, maximum),
+            int requestedValueDelta = checked((int)Math.Round(
+                edit.ValueDelta * (maximum - minimum),
                 MidpointRounding.AwayFromZero));
-            _session.Execute(UpdateTemplateEventTargetCommand(
+            int minimumValueDelta = checked((int)Math.Ceiling(
+                minimum - selectedEvents.Min(item => TemplateEventMidiTargets.GetValue(item, target))));
+            int maximumValueDelta = checked((int)Math.Floor(
+                maximum - selectedEvents.Max(item => TemplateEventMidiTargets.GetValue(item, target))));
+            int valueDelta = Math.Clamp(
+                requestedValueDelta,
+                minimumValueDelta,
+                maximumValueDelta);
+            long firstNewStableId = _session.Project.NextStableId;
+            _session.Execute(ProjectDomainEditCommands.AdjustSubVoiceEventPoints(
                 instrumentId,
                 voice.Id,
-                template,
+                selectedEvents.Select(item => item.Id).ToArray(),
                 target,
-                template.Tick,
-                value));
+                tickDelta,
+                valueDelta,
+                edit.CopyRequested));
+            if (edit.CopyRequested)
+            {
+                SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
+            }
             return;
         }
         long tick = Math.Max(0, checked(template.Tick + snappedDelta));
@@ -3714,10 +3818,62 @@ public partial class MainWindow : Window
         }
         MidiTargetDialog targetDialog = new("Add Event") { Owner = this };
         if (targetDialog.ShowDialog() != true || targetDialog.Result is not MidiValueTarget target) return;
-        long tick = workspace.EditorSettings.SnapAbsolute(workspace.EditCursorTick ?? 0);
-        int value = target.Kind == MidiValueKind.PitchBendRangeSemitones ? 2 : 0;
-        RunSynchronous($"Create {TemplateEventMidiTargets.Format(target)}", () => ExecuteAndSelectCreated(
-            CreateTemplateEventCommand(instrumentId, voiceId.Value, target, tick, value), workspace));
+        SubVoice targetVoice = instrument.SubVoices.Single(item => item.Id == voiceId.Value);
+        TemplateEventMappingTarget mappingTarget = TemplateEventMidiTargets.ToMappingTarget(target);
+        if (targetVoice.EventMappings.Any(item => item.Target == mappingTarget))
+        {
+            ShowUnavailable(
+                "Add Event",
+                $"The {TemplateEventMidiTargets.Format(target)} event lane already exists in this SubVoice.");
+            return;
+        }
+        RunSynchronous($"Create {TemplateEventMidiTargets.Format(target)} lane", () =>
+            _session.Execute(ProjectDomainEditCommands.CreateSubVoiceEventLane(
+                instrumentId,
+                voiceId.Value,
+                target)));
+    }
+
+    private void OnDeleteSubVoiceEventLaneClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace
+            || workspace.ObjectId is not MidoraId instrumentId
+            || workspace.GetRenderLane(workspace.ActiveRenderLaneIndex) is not InstrumentRenderLane
+            {
+                Target: MidiValueTarget target,
+                EventMappingTarget: not null
+            } lane
+            || _session.Project?.EventInstruments
+                .SingleOrDefault(value => value.Id == instrumentId)?
+                .SubVoices.SingleOrDefault(value => value.Id == lane.SubVoiceId) is not SubVoice voice)
+        {
+            return;
+        }
+
+        int pointCount = voice.Events.Count(value =>
+            TemplateEventMidiTargets.Enumerate(value).Contains(target));
+        string label = TemplateEventMidiTargets.Format(target);
+        if (MessageBox.Show(
+                this,
+                pointCount == 0
+                    ? $"Delete the '{label}' event lane?"
+                    : $"Delete the '{label}' event lane and its {pointCount} event point(s)?",
+                "Delete SubVoice Event Lane",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        RunSynchronous("Delete SubVoice Event Lane", () =>
+        {
+            _session.Execute(ProjectDomainEditCommands.DeleteSubVoiceEventLane(
+                instrumentId,
+                lane.SubVoiceId,
+                target,
+                nonEmptyDeletionConfirmed: pointCount != 0));
+            workspace.Selection.Clear();
+        });
     }
 
     private void OnAddParameterMappingClick(object sender, RoutedEventArgs e)
@@ -4727,7 +4883,7 @@ public partial class MainWindow : Window
         }
         if (e.Key == Key.Space
             && Keyboard.Modifiers == ModifierKeys.None
-            && (!IsTextEditingFocus() || (_session.IsPlaybackActive && _spaceStartedPlayback))
+            && (!IsPlaybackShortcutInputFocus() || (_session.IsPlaybackActive && _spaceStartedPlayback))
             && !IsTransientInputSurfaceOpen())
         {
             e.Handled = true;
@@ -5269,6 +5425,43 @@ public partial class MainWindow : Window
                     _session.Execute(ProjectDomainEditCommands.DuplicateLogicalNotes(segmentId, ids, segmentId, target));
                     break;
                 }
+                case InstrumentWorkspaceViewModel
+                {
+                    ObjectId: MidoraId instrumentId
+                } instrumentWorkspace:
+                {
+                    InstrumentRenderLane lane = ResolveInstrumentTargetLane(instrumentWorkspace);
+                    MidiValueTarget target = lane.Target
+                        ?? throw new InvalidOperationException(
+                            "Select a SubVoice MIDI Event lane before duplicating event points.");
+                    EventInstrument instrument = project.EventInstruments.Single(value => value.Id == instrumentId);
+                    SubVoice voice = instrument.SubVoices.Single(value => value.Id == lane.SubVoiceId);
+                    HashSet<MidoraId> requested = ids.ToHashSet();
+                    TemplateEvent[] events = voice.Events
+                        .Where(value => requested.Contains(value.Id))
+                        .ToArray();
+                    if (events.Length != ids.Length
+                        || events.Any(value => value.Kind == TemplateEventKind.Note
+                            || !TemplateEventMidiTargets.Enumerate(value).Contains(target)))
+                    {
+                        throw new InvalidOperationException(
+                            "Ctrl+D may duplicate event points from one SubVoice MIDI Event lane only.");
+                    }
+                    long earliest = events.Min(value => value.Tick);
+                    long destination = instrumentWorkspace.EditCursorTick is > 0
+                        ? instrumentWorkspace.EditCursorTick.Value
+                        : checked(events.Max(value => value.Tick)
+                            + Math.Max(1, instrumentWorkspace.EditorSettings.EffectiveOperationStepTicks));
+                    _session.Execute(ProjectDomainEditCommands.AdjustSubVoiceEventPoints(
+                        instrumentId,
+                        voice.Id,
+                        ids,
+                        target,
+                        checked(destination - earliest),
+                        valueDelta: 0,
+                        duplicate: true));
+                    break;
+                }
                 default:
                     throw new InvalidOperationException("The active selection scope does not define Duplicate.");
             }
@@ -5489,6 +5682,28 @@ public partial class MainWindow : Window
     private static bool IsTextEditingFocus() => Keyboard.FocusedElement is TextBoxBase
         or PasswordBox
         or ComboBox;
+
+    private static bool IsPlaybackShortcutInputFocus()
+    {
+        DependencyObject? focused = Keyboard.FocusedElement as DependencyObject;
+        if (focused is TextBoxBase or PasswordBox)
+        {
+            return true;
+        }
+
+        if (focused is ComboBox { IsDropDownOpen: true })
+        {
+            return true;
+        }
+
+        ComboBoxItem? item = focused as ComboBoxItem;
+        if (item is null && focused is Visual or Visual3D)
+        {
+            item = FindVisualAncestor<ComboBoxItem>(focused);
+        }
+        return item is not null
+            && ItemsControl.ItemsControlFromItemContainer(item) is ComboBox { IsDropDownOpen: true };
+    }
 
     private void OnPreviewMouseDownForPlaybackShortcut(object sender, MouseButtonEventArgs e)
     {

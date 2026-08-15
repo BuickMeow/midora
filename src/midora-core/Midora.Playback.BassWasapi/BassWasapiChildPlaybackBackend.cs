@@ -25,12 +25,17 @@ public sealed class BassWasapiChildPlaybackBackend
     : IRealtimePlaybackBackend,
       IHeldPreviewRealtimePlaybackBackend,
       IRealtimePlaybackCacheBackend,
+      IRealtimePlaybackSoundFontBackend,
+      ISimplePitchAuditionRealtimePlaybackBackend,
       IBufferingRecoveryRealtimePlaybackBackend,
       ICancellableRealtimePlaybackPreparationBackend
 {
     private readonly BassWasapiChildPlaybackOptions _options;
     private string? _selectedDeviceId;
-    private BassMidiAudioWorkerSession? _session;
+    private IBassMidiAudioWorkerSession? _session;
+    private PersistentBassMidiAudioWorkerHost? _host;
+    private string? _soundFontPath;
+    private string? _soundFontSha256;
     private IRealtimePlaybackCacheStore? _audioCache;
     private RealtimePlaybackCacheMode _nextPlaybackCacheMode;
     private AudioCacheSessionStore.AudioRecoverySpool? _nextRecoverySpool;
@@ -144,13 +149,35 @@ public sealed class BassWasapiChildPlaybackBackend
         {
             throw new InvalidOperationException("Cannot prepare an active audio worker session.");
         }
-        BassMidiAudioWorkerProbeResult result = BassMidiAudioWorkerSession.Probe(
-            _options.WorkerPath,
-            _options.BassNativeDirectory,
-            _selectedDeviceId,
-            _options.DeviceBufferRequestMilliseconds,
-            _options.PreparingTimeout,
-            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        BassMidiAudioWorkerProbeResult result;
+        try
+        {
+            result = _soundFontPath is null
+                ? BassMidiAudioWorkerSession.Probe(
+                    _options.WorkerPath,
+                    _options.BassNativeDirectory,
+                    _selectedDeviceId,
+                    _options.DeviceBufferRequestMilliseconds,
+                    _options.PreparingTimeout,
+                    cancellationToken)
+                : EnsurePersistentHost().Probe(
+                    _selectedDeviceId,
+                    _options.DeviceBufferRequestMilliseconds);
+        }
+        catch (Exception preparationFailure)
+        {
+            Exception? cleanupFailure = DiscardPersistentHost();
+            if (cleanupFailure is not null)
+            {
+                throw new AggregateException(
+                    "Realtime preparation and persistent Worker cleanup both failed.",
+                    preparationFailure,
+                    cleanupFailure);
+            }
+            throw;
+        }
+        cancellationToken.ThrowIfCancellationRequested();
         _actualSampleRate = result.ActualSampleRate;
         _actualDeviceBufferFrameCount = result.ActualDeviceBufferFrameCount;
         return _actualSampleRate;
@@ -167,6 +194,17 @@ public sealed class BassWasapiChildPlaybackBackend
         if (_session is not null)
         {
             throw new InvalidOperationException("The audio worker is already active.");
+        }
+        string normalizedSoundFontPath = Path.GetFullPath(soundFontPath);
+        if (_soundFontPath is null
+            || _soundFontSha256 is null
+            || !string.Equals(
+                normalizedSoundFontPath,
+                _soundFontPath,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Playback requires the currently verified Project SoundFont identity.");
         }
 
         AudioMasterSettings masterSettings = new(
@@ -189,27 +227,50 @@ public sealed class BassWasapiChildPlaybackBackend
             // Keeping the reservation handle open in this process prevents
             // MemoryMappedFile.CreateFromFile from opening the same path on Windows.
             _activeRecoverySpool?.ReleaseFileHandleForExternalUse();
-            _session = new BassMidiAudioWorkerSession(
+            _session = new PersistentBassMidiAudioWorkerSession(
+                EnsurePersistentHost(),
                 plan,
-                soundFontPath,
+                _soundFontSha256,
                 _options.RendererSettings,
                 masterSettings,
                 _options.RenderAheadMilliseconds,
                 _options.DeviceBufferRequestMilliseconds,
                 _selectedDeviceId,
-                _options.WorkerPath,
-                _options.BassNativeDirectory,
                 _options.PreparingTimeout,
                 cache,
                 _activeRecoverySpool?.Path,
                 _activeRecoveryMemoryFrameCapacity,
                 cacheMode == RealtimePlaybackCacheMode.UnitPcmAndPlaybackSpan);
         }
-        catch
+        catch (Exception startFailure)
         {
-            _activeRecoverySpool?.Dispose();
+            Exception? cleanupFailure = null;
+            try
+            {
+                _host?.Dispose();
+            }
+            catch (Exception exception)
+            {
+                cleanupFailure = exception;
+            }
+            _host = null;
+            try
+            {
+                _activeRecoverySpool?.Dispose();
+            }
+            catch (Exception exception)
+            {
+                cleanupFailure = CombineFailures(cleanupFailure, exception);
+            }
             _activeRecoverySpool = null;
             _activeRecoveryMemoryFrameCapacity = 0;
+            if (cleanupFailure is not null)
+            {
+                throw new AggregateException(
+                    "Realtime playback startup and persistent Worker cleanup both failed.",
+                    startFailure,
+                    cleanupFailure);
+            }
             throw;
         }
     }
@@ -224,6 +285,100 @@ public sealed class BassWasapiChildPlaybackBackend
                 "The audio cache store cannot change while the Worker is active.");
         }
         _audioCache = cacheStore;
+    }
+
+    public void SetSoundFontIdentity(string? soundFontPath, string? verifiedSha256)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if ((soundFontPath is null) != (verifiedSha256 is null))
+        {
+            throw new ArgumentException(
+                "The verified SoundFont path and SHA-256 must both be present or both be absent.");
+        }
+        string? normalizedPath = soundFontPath is null ? null : Path.GetFullPath(soundFontPath);
+        if (verifiedSha256 is not null
+            && (verifiedSha256.Length != 64 || verifiedSha256.Any(character =>
+                character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))))
+        {
+            throw new ArgumentException(
+                "The verified Project SoundFont SHA-256 is invalid.",
+                nameof(verifiedSha256));
+        }
+        if (string.Equals(_soundFontPath, normalizedPath, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(_soundFontSha256, verifiedSha256, StringComparison.Ordinal))
+        {
+            return;
+        }
+        if (_session is not null)
+        {
+            throw new InvalidOperationException(
+                "The Project SoundFont cannot change while realtime audio is active.");
+        }
+
+        _host?.Dispose();
+        _host = null;
+        _soundFontPath = normalizedPath;
+        _soundFontSha256 = verifiedSha256;
+        _actualSampleRate = 0;
+        _actualDeviceBufferFrameCount = 0;
+        if (_soundFontPath is not null)
+        {
+            _ = EnsurePersistentHost();
+        }
+    }
+
+    public void BeginPitchAudition(int pitch, int velocity)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_session is not null)
+        {
+            throw new InvalidOperationException(
+                "Pitch audition is unavailable while realtime playback is active.");
+        }
+        try
+        {
+            EnsurePersistentHost().BeginPitchAudition(
+                _selectedDeviceId,
+                _options.DeviceBufferRequestMilliseconds,
+                pitch,
+                velocity);
+        }
+        catch (Exception auditionFailure)
+        {
+            Exception? cleanupFailure = DiscardPersistentHost();
+            if (cleanupFailure is not null)
+            {
+                throw new AggregateException(
+                    "Pitch audition startup and persistent Worker cleanup both failed.",
+                    auditionFailure,
+                    cleanupFailure);
+            }
+            throw;
+        }
+    }
+
+    public void EndPitchAudition()
+    {
+        if (_disposed || _host is null || _session is not null)
+        {
+            return;
+        }
+        try
+        {
+            _host.EndPitchAudition();
+        }
+        catch (Exception auditionFailure)
+        {
+            Exception? cleanupFailure = DiscardPersistentHost();
+            if (cleanupFailure is not null)
+            {
+                throw new AggregateException(
+                    "Pitch audition cleanup and persistent Worker cleanup both failed.",
+                    auditionFailure,
+                    cleanupFailure);
+            }
+            throw;
+        }
     }
 
     public void SetNextPlaybackCacheMode(RealtimePlaybackCacheMode mode)
@@ -269,7 +424,7 @@ public sealed class BassWasapiChildPlaybackBackend
                 "The complete Buffering recovery interval has no reserved spool.",
                 new IOException("No Buffering recovery spool is active."));
         }
-        BassMidiAudioWorkerSession session = _session
+        IBassMidiAudioWorkerSession session = _session
             ?? throw new InvalidOperationException("The audio worker is not active.");
         session.BeginBufferingRecovery(recoveryEndFrame);
     }
@@ -277,7 +432,7 @@ public sealed class BassWasapiChildPlaybackBackend
     public void ApplyMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        BassMidiAudioWorkerSession session = _session
+        IBassMidiAudioWorkerSession session = _session
             ?? throw new InvalidOperationException("The audio worker is not active.");
         session.EnqueueMonitoringCommands(commands);
     }
@@ -285,7 +440,7 @@ public sealed class BassWasapiChildPlaybackBackend
     public long PauseHeldPreviewAtProducerFrontier(TimeSpan timeout)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        BassMidiAudioWorkerSession session = _session
+        IBassMidiAudioWorkerSession session = _session
             ?? throw new InvalidOperationException("The audio worker is not active.");
         return session.PauseHeldPreviewAtProducerFrontier(timeout);
     }
@@ -296,7 +451,7 @@ public sealed class BassWasapiChildPlaybackBackend
         TimeSpan timeout)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        BassMidiAudioWorkerSession session = _session
+        IBassMidiAudioWorkerSession session = _session
             ?? throw new InvalidOperationException("The audio worker is not active.");
         session.ReplaceHeldPreviewFutureAndResume(plan, producerFrontierFrame, timeout);
     }
@@ -304,14 +459,14 @@ public sealed class BassWasapiChildPlaybackBackend
     public void ResumeHeldPreviewFromProducerFrontier()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        BassMidiAudioWorkerSession session = _session
+        IBassMidiAudioWorkerSession session = _session
             ?? throw new InvalidOperationException("The audio worker is not active.");
         session.ResumeHeldPreviewFromProducerFrontier(_options.PreparingTimeout);
     }
 
     public void Stop(bool flush)
     {
-        BassMidiAudioWorkerSession? session = _session;
+        IBassMidiAudioWorkerSession? session = _session;
         if (session is null)
         {
             return;
@@ -343,7 +498,8 @@ public sealed class BassWasapiChildPlaybackBackend
         }
         if (failure is not null)
         {
-            throw failure;
+            failure = CombineFailures(failure, DiscardPersistentHost());
+            throw failure!;
         }
     }
 
@@ -399,11 +555,13 @@ public sealed class BassWasapiChildPlaybackBackend
             _nextRecoverySpool?.Dispose();
             _nextRecoverySpool = null;
             _nextRecoveryMemoryFrameCapacity = 0;
+            _host?.Dispose();
+            _host = null;
             _disposed = true;
         }
     }
 
-    private Exception? CaptureAndRelease(BassMidiAudioWorkerSession session) =>
+    private Exception? CaptureAndRelease(IBassMidiAudioWorkerSession session) =>
         ExecuteGuaranteedRelease(
             () =>
             {
@@ -426,7 +584,7 @@ public sealed class BassWasapiChildPlaybackBackend
 
     private (AudioWorkerStatus Status, int? ExitCode) ReadCurrentProcessSnapshot()
     {
-        BassMidiAudioWorkerSession? session = _session;
+        IBassMidiAudioWorkerSession? session = _session;
         if (session is null)
         {
             return (_lastStatus, _lastExitCode);
@@ -439,6 +597,37 @@ public sealed class BassWasapiChildPlaybackBackend
         int? exitCode = session.ExitCode;
         AudioWorkerStatus status = session.Status;
         return (status, exitCode);
+    }
+
+    private PersistentBassMidiAudioWorkerHost EnsurePersistentHost()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        string path = _soundFontPath
+            ?? throw new InvalidOperationException("A verified Project SoundFont is required.");
+        return _host ??= new(
+            _options.WorkerPath,
+            _options.BassNativeDirectory,
+            path,
+            _options.PreparingTimeout);
+    }
+
+    private Exception? DiscardPersistentHost()
+    {
+        PersistentBassMidiAudioWorkerHost? host = _host;
+        _host = null;
+        if (host is null)
+        {
+            return null;
+        }
+        try
+        {
+            host.Dispose();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     internal static Exception? ExecuteGuaranteedRelease(

@@ -9,6 +9,7 @@ public sealed record AudioFileRenderWorkerPreparation(
 public sealed record AudioFileRenderWorkerRequest(
     MidiRenderPlan Plan,
     string SoundFontPath,
+    string SoundFontSha256,
     string TemporaryOutputPath,
     int MaximumSampleVoicesPerUnitStream,
     float MasterVolumeDecibels,

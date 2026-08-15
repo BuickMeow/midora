@@ -9,9 +9,9 @@ namespace Midora.Audio.Bass.Tests;
 public sealed class SharedAudioWorkerControlTests
 {
     [Fact]
-    public void CurrentRealtimeControlAbiIsVersionFour()
+    public void CurrentRealtimeControlAbiIsVersionFive()
     {
-        Assert.Equal(4, SharedAudioWorkerControl.ProtocolVersion);
+        Assert.Equal(5, SharedAudioWorkerControl.ProtocolVersion);
     }
 
     [Fact]
@@ -83,6 +83,42 @@ public sealed class SharedAudioWorkerControlTests
         Assert.True(consumer.TryDequeue(out AudioWorkerControlCommand recovery));
         Assert.Equal(AudioWorkerControlCommandKind.BufferingRecoveryPrepare, recovery.Kind);
         Assert.Equal(12_345, recovery.Payload);
+
+        Assert.True(producer.TryEnqueuePersistentProbe(101));
+        Assert.True(producer.TryEnqueuePersistentStartPlayback(102));
+        Assert.True(producer.TryEnqueuePitchAuditionNoteOn(103));
+        Assert.True(producer.TryEnqueuePitchAuditionNoteOff(104));
+        Assert.True(producer.TryEnqueuePersistentShutdown(105));
+        AssertPersistentCommand(
+            consumer,
+            AudioWorkerControlCommandKind.PersistentProbe,
+            101);
+        AssertPersistentCommand(
+            consumer,
+            AudioWorkerControlCommandKind.PersistentStartPlayback,
+            102);
+        AssertPersistentCommand(
+            consumer,
+            AudioWorkerControlCommandKind.PitchAuditionNoteOn,
+            103);
+        AssertPersistentCommand(
+            consumer,
+            AudioWorkerControlCommandKind.PitchAuditionNoteOff,
+            104);
+        AssertPersistentCommand(
+            consumer,
+            AudioWorkerControlCommandKind.PersistentShutdown,
+            105);
+    }
+
+    private static void AssertPersistentCommand(
+        SharedAudioWorkerControl consumer,
+        AudioWorkerControlCommandKind expectedKind,
+        long expectedGeneration)
+    {
+        Assert.True(consumer.TryDequeue(out AudioWorkerControlCommand command));
+        Assert.Equal(expectedKind, command.Kind);
+        Assert.Equal(expectedGeneration, command.Payload);
     }
 
     [Fact]

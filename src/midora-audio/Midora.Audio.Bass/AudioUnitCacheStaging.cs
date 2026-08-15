@@ -28,7 +28,7 @@ internal sealed class AudioUnitCacheStaging : IDisposable
     public static AudioUnitCacheStaging? Create(
         MidiRenderPlan plan,
         IAudioPcmCacheSessionAccess? cache,
-        string soundFontPath,
+        string soundFontSha256,
         string nativeDirectory,
         int maximumSampleVoicesPerUnitStream)
     {
@@ -40,7 +40,7 @@ internal sealed class AudioUnitCacheStaging : IDisposable
             return null;
         }
 
-        string soundFontSha256 = HashFile(soundFontPath);
+        ValidateSoundFontSha256(soundFontSha256);
         string nativeIdentity = ComputeNativeIdentity(nativeDirectory);
         AudioFormat format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
         bool retentionEnabled = cache.AudioCacheSnapshot?.RetentionState
@@ -254,6 +254,18 @@ internal sealed class AudioUnitCacheStaging : IDisposable
             bufferSize: 128 * 1024,
             FileOptions.SequentialScan);
         return Convert.ToHexStringLower(SHA256.HashData(stream));
+    }
+
+    internal static void ValidateSoundFontSha256(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (value.Length != 64 || value.Any(character =>
+                character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
+        {
+            throw new ArgumentException(
+                "The verified Project SoundFont SHA-256 must be 64 lowercase hexadecimal characters.",
+                nameof(value));
+        }
     }
 
     private static void TryDelete(string path)

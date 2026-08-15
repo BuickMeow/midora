@@ -5,6 +5,8 @@ namespace Midora.Audio.Bass.Tests;
 
 public sealed class PlaybackSpanCacheStagingTests
 {
+    private static readonly string SoundFontSha256 = new('a', 64);
+
     [Fact]
     public void CompleteMissPublishesAndSecondStageIsAnExactHit()
     {
@@ -16,7 +18,7 @@ public sealed class PlaybackSpanCacheStagingTests
 
         using (PlaybackSpanCacheStaging first = Assert.IsType<PlaybackSpanCacheStaging>(
             PlaybackSpanCacheStaging.Create(
-                plan, access, inputs.SoundFont, inputs.Native, 500, AudioMasterSettings.LimiterV1)))
+                plan, access, SoundFontSha256, inputs.Native, 500, AudioMasterSettings.LimiterV1)))
         {
             Assert.False(first.Hit);
             using FileStream stream = new(
@@ -37,7 +39,7 @@ public sealed class PlaybackSpanCacheStagingTests
 
         using PlaybackSpanCacheStaging second = Assert.IsType<PlaybackSpanCacheStaging>(
             PlaybackSpanCacheStaging.Create(
-                plan, access, inputs.SoundFont, inputs.Native, 500, AudioMasterSettings.LimiterV1));
+                plan, access, SoundFontSha256, inputs.Native, 500, AudioMasterSettings.LimiterV1));
         Assert.True(second.Hit);
         using FileStream cached = new(
             second.FilePath,
@@ -63,7 +65,7 @@ public sealed class PlaybackSpanCacheStagingTests
 
         using (PlaybackSpanCacheStaging incomplete = Assert.IsType<PlaybackSpanCacheStaging>(
             PlaybackSpanCacheStaging.Create(
-                plan, access, inputs.SoundFont, inputs.Native, 500, AudioMasterSettings.LimiterV1)))
+                plan, access, SoundFontSha256, inputs.Native, 500, AudioMasterSettings.LimiterV1)))
         {
             incompleteKey = incomplete.Key;
             incomplete.PublishCompleted(access, completedRenderFrame: 1, totalFrameCount: 2);
@@ -72,7 +74,7 @@ public sealed class PlaybackSpanCacheStagingTests
 
         using (PlaybackSpanCacheStaging invalidated = Assert.IsType<PlaybackSpanCacheStaging>(
             PlaybackSpanCacheStaging.Create(
-                plan, access, inputs.SoundFont, inputs.Native, 501, AudioMasterSettings.LimiterV1)))
+                plan, access, SoundFontSha256, inputs.Native, 501, AudioMasterSettings.LimiterV1)))
         {
             invalidatedKey = invalidated.Key;
             invalidated.InvalidateCapture();
@@ -114,7 +116,7 @@ public sealed class PlaybackSpanCacheStagingTests
         Assert.Null(PlaybackSpanCacheStaging.Create(
             plan,
             access,
-            inputs.SoundFont,
+            SoundFontSha256,
             inputs.Native,
             500,
             AudioMasterSettings.LimiterV1));

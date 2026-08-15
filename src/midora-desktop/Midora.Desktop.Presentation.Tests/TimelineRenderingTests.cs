@@ -250,6 +250,11 @@ public sealed class TimelineRenderingTests
             TimelineSurfaceMode.Arrangement,
             TimelineItemKind.Segment,
             TimelineItemEditKind.Move));
+        Assert.True(TimelineToolPolicy.SupportsCopyDrag(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            TimelineItemKind.LogicalParameterPoint,
+            TimelineItemEditKind.Move));
         Assert.False(TimelineToolPolicy.SupportsCopyDrag(
             TimelineToolMode.Draw,
             TimelineSurfaceMode.PianoRoll,
@@ -262,12 +267,34 @@ public sealed class TimelineRenderingTests
             TimelineItemEditKind.Move));
     }
 
+    [Fact]
+    public void DrawEventPointUsesVerticalEditPointerUnlessAltForcesTrace()
+    {
+        Assert.Equal(
+            TimelinePointerIntent.ResizeVertical,
+            TimelineToolPolicy.GetPointerIntent(
+                TimelineToolMode.Draw,
+                TimelineSurfaceMode.EventLanes,
+                isInContent: true,
+                TimelineItemKind.LogicalParameterPoint,
+                isNearHorizontalEdge: true));
+        Assert.Equal(
+            TimelinePointerIntent.Crosshair,
+            TimelineToolPolicy.GetPointerIntent(
+                TimelineToolMode.Draw,
+                TimelineSurfaceMode.EventLanes,
+                isInContent: true,
+                TimelineItemKind.LogicalParameterPoint,
+                isNearHorizontalEdge: true,
+                ModifierKeys.Alt));
+    }
+
     [Theory]
     [InlineData(TimelineToolMode.Select, TimelineSurfaceMode.Arrangement, 1, true)]
     [InlineData(TimelineToolMode.Select, TimelineSurfaceMode.PianoRoll, 1, true)]
     [InlineData(TimelineToolMode.Select, TimelineSurfaceMode.PianoRoll, 2, false)]
     [InlineData(TimelineToolMode.Draw, TimelineSurfaceMode.Arrangement, 1, false)]
-    [InlineData(TimelineToolMode.Select, TimelineSurfaceMode.EventLanes, 1, false)]
+    [InlineData(TimelineToolMode.Select, TimelineSurfaceMode.EventLanes, 1, true)]
     public void DirectTimelineSelectStartsMarqueeBeforeItemHit(
         TimelineToolMode toolMode,
         TimelineSurfaceMode surfaceMode,
@@ -293,15 +320,43 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
-    public void AltLeftForcesVelocityTrace()
+    public void AltLeftForcesValueTraceWithoutDirectPointManipulation()
     {
-        Assert.True(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Left, ModifierKeys.Alt));
-        Assert.True(TimelineToolPolicy.ForcesVelocityTrace(
+        Assert.True(TimelineToolPolicy.ForcesValueTrace(
+            TimelineToolMode.Select,
+            TimelineSurfaceMode.Velocity,
+            MouseButton.Left,
+            ModifierKeys.Alt));
+        Assert.True(TimelineToolPolicy.ForcesValueTrace(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
             MouseButton.Left,
             ModifierKeys.Alt | ModifierKeys.Control));
-        Assert.False(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Left, ModifierKeys.None));
-        Assert.False(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Left, ModifierKeys.Shift));
-        Assert.False(TimelineToolPolicy.ForcesVelocityTrace(MouseButton.Right, ModifierKeys.Alt));
+        Assert.False(TimelineToolPolicy.ForcesValueTrace(
+            TimelineToolMode.Select,
+            TimelineSurfaceMode.EventLanes,
+            MouseButton.Left,
+            ModifierKeys.Alt));
+        Assert.False(TimelineToolPolicy.ForcesValueTrace(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            MouseButton.Left,
+            ModifierKeys.None));
+        Assert.False(TimelineToolPolicy.ForcesValueTrace(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            MouseButton.Left,
+            ModifierKeys.Shift));
+        Assert.False(TimelineToolPolicy.ForcesValueTrace(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            MouseButton.Right,
+            ModifierKeys.Alt));
+        Assert.False(TimelineToolPolicy.ForcesValueTrace(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.PianoRoll,
+            MouseButton.Left,
+            ModifierKeys.Alt));
     }
 
     [Theory]
@@ -364,6 +419,20 @@ public sealed class TimelineRenderingTests
             TimelineSurfaceMode.EventLanes,
             TimelineItemKind.TemplateEvent,
             ModifierKeys.Alt));
+        Assert.False(TimelineToolPolicy.ForcesItemMove(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            TimelineItemKind.LogicalParameterPoint,
+            ModifierKeys.Alt));
+        Assert.Equal(
+            TimelinePointerIntent.Crosshair,
+            TimelineToolPolicy.GetPointerIntent(
+                TimelineToolMode.Draw,
+                TimelineSurfaceMode.EventLanes,
+                isInContent: true,
+                TimelineItemKind.LogicalParameterPoint,
+                isNearHorizontalEdge: true,
+                ModifierKeys.Alt));
         Assert.Equal(
             TimelineItemEditKind.ResizeStart,
             TimelineToolPolicy.ResolveItemEditKind(

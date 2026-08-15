@@ -11,6 +11,7 @@ namespace Midora.Audio.Bass.Tests;
 public sealed class BassMidiRendererIntegrationTests
 {
     private const int SampleRate = 48_000;
+    private static readonly string SoundFontSha256 = new('a', 64);
     private static string SoundFontPath =>
         NativeAudioIntegrationEnvironment.RequireSoundFontPath();
 
@@ -667,7 +668,7 @@ public sealed class BassMidiRendererIntegrationTests
                 AudioSegmentCacheStaging.Create(
                     sourcePlan,
                     cache,
-                    SoundFontPath,
+                    SoundFontSha256,
                     nativeDirectory,
                     maximumSampleVoices,
                     manifestDirectory)))
@@ -690,7 +691,7 @@ public sealed class BassMidiRendererIntegrationTests
                 AudioSegmentCacheStaging.Create(
                     sourcePlan,
                     cache,
-                    SoundFontPath,
+                    SoundFontSha256,
                     nativeDirectory,
                     maximumSampleVoices,
                     manifestDirectory)))

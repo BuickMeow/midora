@@ -41,6 +41,7 @@ public sealed class EmbeddedSoundFontPackageV1Tests
             ZipArchiveEntry resourceEntry = Assert.Single(
                 archive.Entries,
                 entry => entry.FullName == packageResourcePath);
+            Assert.Equal(resourceEntry.Length, resourceEntry.CompressedLength);
             await using Stream resource = resourceEntry.Open();
             using MemoryStream bytes = new();
             await resource.CopyToAsync(bytes);

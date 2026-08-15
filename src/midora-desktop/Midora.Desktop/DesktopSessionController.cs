@@ -583,6 +583,19 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         RefreshProperties();
     }
 
+    public void BeginPitchAudition(int pitch, int velocity)
+    {
+        if (!CanPreview)
+        {
+            throw new InvalidOperationException(
+                PlaybackUnavailableReason ?? "Realtime Preview is currently locked.");
+        }
+        (_context?.Playback ?? throw new InvalidOperationException("Realtime Preview is unavailable."))
+            .BeginPitchAudition(pitch, velocity);
+    }
+
+    public void EndPitchAudition() => _context?.Playback?.EndPitchAudition();
+
     public void StartHeldSegmentPitchRulerPreview(
         MidoraId trackId,
         MidoraId segmentId,
@@ -1026,7 +1039,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 static () => new LibraryWorkspaceViewModel()),
             ProjectTreeNodeKind.EventInstrument when node.ObjectId is MidoraId id => GetOrCreate(
                 WorkspaceKey.ForObject(WorkspaceKind.EventInstrumentEditor, id),
-                () => new InstrumentWorkspaceViewModel(id, node.Title, PianoRollEditorSettings)),
+                () => new InstrumentWorkspaceViewModel(id, node.Title)),
             ProjectTreeNodeKind.LogicalTracks or ProjectTreeNodeKind.LogicalTrack => OpenArrangement(),
             ProjectTreeNodeKind.ProjectSettings => GetOrCreate(
                 WorkspaceKey.ForType(WorkspaceKind.ProjectSettings),
@@ -1075,7 +1088,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             ?? throw new InvalidOperationException("The Event Instrument no longer exists.");
         InstrumentWorkspaceViewModel workspace = (InstrumentWorkspaceViewModel)GetOrCreate(
             WorkspaceKey.ForObject(WorkspaceKind.EventInstrumentEditor, instrumentId),
-            () => new InstrumentWorkspaceViewModel(instrumentId, instrument.Name, PianoRollEditorSettings));
+            () => new InstrumentWorkspaceViewModel(instrumentId, instrument.Name));
         ActiveWorkspace = workspace;
         return workspace;
     }

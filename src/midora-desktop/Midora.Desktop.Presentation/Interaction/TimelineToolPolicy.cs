@@ -11,7 +11,8 @@ public enum TimelinePointerIntent
     Erase,
     Split,
     Move,
-    ResizeHorizontal
+    ResizeHorizontal,
+    ResizeVertical
 }
 
 public static class TimelineToolPolicy
@@ -19,7 +20,9 @@ public static class TimelineToolPolicy
     public const double DirectEditEdgeTolerancePixels = 5;
 
     public static bool IsDirectEditingSurface(TimelineSurfaceMode surfaceMode) =>
-        surfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll;
+        surfaceMode is TimelineSurfaceMode.Arrangement
+            or TimelineSurfaceMode.PianoRoll
+            or TimelineSurfaceMode.EventLanes;
 
     public static bool StartsMarqueeBeforeItemHit(
         TimelineToolMode toolMode,
@@ -41,10 +44,16 @@ public static class TimelineToolPolicy
             : WorkspaceSelectionRangeMode.Replace;
     }
 
-    public static bool ForcesVelocityTrace(
+    public static bool ForcesValueTrace(
+        TimelineToolMode toolMode,
+        TimelineSurfaceMode surfaceMode,
         MouseButton button,
         ModifierKeys modifiers) =>
-        button == MouseButton.Left && (modifiers & ModifierKeys.Alt) != 0;
+        button == MouseButton.Left
+        && (modifiers & ModifierKeys.Alt) != 0
+        && (surfaceMode == TimelineSurfaceMode.Velocity
+            || surfaceMode == TimelineSurfaceMode.EventLanes
+                && toolMode == TimelineToolMode.Draw);
 
     public static bool ForcesItemMove(
         TimelineToolMode toolMode,
@@ -53,7 +62,7 @@ public static class TimelineToolPolicy
         ModifierKeys modifiers) =>
         (modifiers & ModifierKeys.Alt) != 0
         && toolMode == TimelineToolMode.Draw
-        && IsDirectEditingSurface(surfaceMode)
+        && surfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll
         && IsDirectManipulationItem(itemKind);
 
     public static TimelineItemEditKind ResolveItemEditKind(
@@ -88,10 +97,12 @@ public static class TimelineToolPolicy
         TimelineItemEditKind editKind) =>
         toolMode == TimelineToolMode.Draw
         && editKind == TimelineItemEditKind.Move
-        && surfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll
-        && itemKind is TimelineItemKind.Segment
-            or TimelineItemKind.LogicalNote
-            or TimelineItemKind.TemplateNote;
+        && ((surfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll
+                && itemKind is TimelineItemKind.Segment
+                    or TimelineItemKind.LogicalNote
+                    or TimelineItemKind.TemplateNote)
+            || (surfaceMode == TimelineSurfaceMode.EventLanes
+                && itemKind == TimelineItemKind.LogicalParameterPoint));
 
     public static bool RequestsBackgroundCreation(
         TimelineToolMode toolMode,
@@ -110,6 +121,14 @@ public static class TimelineToolPolicy
         ModifierKeys modifiers = ModifierKeys.None)
     {
         if (!isInContent) return TimelinePointerIntent.Default;
+        if (ForcesValueTrace(
+                toolMode,
+                surfaceMode,
+                MouseButton.Left,
+                modifiers))
+        {
+            return TimelinePointerIntent.Crosshair;
+        }
         if (!IsDirectEditingSurface(surfaceMode))
         {
             if (toolMode == TimelineToolMode.Draw) return TimelinePointerIntent.Crosshair;
@@ -131,6 +150,10 @@ public static class TimelineToolPolicy
         if (toolMode != TimelineToolMode.Draw || !IsDirectManipulationItem(itemKind.Value))
         {
             return TimelinePointerIntent.Default;
+        }
+        if (itemKind == TimelineItemKind.LogicalParameterPoint)
+        {
+            return TimelinePointerIntent.ResizeVertical;
         }
         if (ForcesItemMove(toolMode, surfaceMode, itemKind.Value, modifiers))
         {
@@ -246,5 +269,6 @@ public static class TimelineToolPolicy
     private static bool IsDirectManipulationItem(TimelineItemKind itemKind) =>
         itemKind is TimelineItemKind.Segment
             or TimelineItemKind.LogicalNote
-            or TimelineItemKind.TemplateNote;
+            or TimelineItemKind.TemplateNote
+            or TimelineItemKind.LogicalParameterPoint;
 }

@@ -71,6 +71,17 @@ public interface IRealtimePlaybackCacheBackend
     void SetNextPlaybackCacheMode(RealtimePlaybackCacheMode mode);
 }
 
+public interface IRealtimePlaybackSoundFontBackend
+{
+    void SetSoundFontIdentity(string? soundFontPath, string? verifiedSha256);
+}
+
+public interface ISimplePitchAuditionRealtimePlaybackBackend
+{
+    void BeginPitchAudition(int pitch, int velocity);
+    void EndPitchAudition();
+}
+
 public enum RealtimePlaybackCacheMode
 {
     Disabled,
@@ -150,6 +161,8 @@ public sealed class PlaybackController : IDisposable
         }
         RebuildAudibleTracks();
         _session.CompilationChanged += HandleCompilationChangedForPrewarm;
+        _session.EffectiveSoundFontChanged += HandleEffectiveSoundFontChanged;
+        RefreshBackendSoundFontIdentity();
     }
 
     public PlaybackState State { get; private set; } = PlaybackState.Stopped;
@@ -233,6 +246,36 @@ public sealed class PlaybackController : IDisposable
             request.SubVoiceId.HasValue
                 ? PlaybackTaskKind.SubVoicePreview
                 : PlaybackTaskKind.EventInstrumentPreview);
+    }
+
+    public void BeginPitchAudition(int pitch, int velocity)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (pitch is < 0 or > 127 || velocity is < 1 or > 127)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pitch));
+        }
+        if (State != PlaybackState.Stopped || ActiveTaskKind != PlaybackTaskKind.None)
+        {
+            throw new InvalidOperationException(
+                "Pitch audition is unavailable while a formal audio task is active.");
+        }
+        _ = RequireEffectiveSoundFont("Pitch audition");
+        if (_backend is not ISimplePitchAuditionRealtimePlaybackBackend auditionBackend)
+        {
+            throw new NotSupportedException(
+                "The selected realtime backend does not support simple pitch audition.");
+        }
+        auditionBackend.BeginPitchAudition(pitch, velocity);
+    }
+
+    public void EndPitchAudition()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_backend is ISimplePitchAuditionRealtimePlaybackBackend auditionBackend)
+        {
+            auditionBackend.EndPitchAudition();
+        }
     }
 
     public void StartHeldEventInstrumentPreview(EventInstrumentPreviewRequest request)
@@ -737,6 +780,7 @@ public sealed class PlaybackController : IDisposable
     {
         if (_disposed) return;
         _session.CompilationChanged -= HandleCompilationChangedForPrewarm;
+        _session.EffectiveSoundFontChanged -= HandleEffectiveSoundFontChanged;
         _prewarmCancellation.Cancel();
         Task prewarmTask;
         lock (_prewarmSync)
@@ -764,6 +808,24 @@ public sealed class PlaybackController : IDisposable
         _backend.Dispose();
         _prewarmCancellation.Dispose();
         _disposed = true;
+    }
+
+    private void HandleEffectiveSoundFontChanged(object? sender, EventArgs e) =>
+        RefreshBackendSoundFontIdentity();
+
+    private void RefreshBackendSoundFontIdentity()
+    {
+        if (_backend is not IRealtimePlaybackSoundFontBackend soundFontBackend)
+        {
+            return;
+        }
+        string? path = _session.EffectiveSoundFontPath;
+        string? sha256 = path is null ? null : _session.EffectiveSoundFontSha256;
+        lock (_backendPreparationSync)
+        {
+            soundFontBackend.SetSoundFontIdentity(path, sha256);
+            Volatile.Write(ref _knownSampleRate, 0);
+        }
     }
 
     private void StartPreparedRange(long cursorTick, long? endTick, bool acquireEditLock)

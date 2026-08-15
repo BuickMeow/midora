@@ -30,7 +30,7 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
     public static AudioSegmentCacheStaging? Create(
         MidiRenderPlan plan,
         IAudioPcmCacheSessionAccess? cache,
-        string soundFontPath,
+        string soundFontSha256,
         string nativeDirectory,
         int maximumSampleVoicesPerUnitStream,
         string manifestDirectory)
@@ -43,7 +43,7 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
             return null;
         }
 
-        string soundFontSha256 = AudioUnitCacheStaging.HashFile(soundFontPath);
+        AudioUnitCacheStaging.ValidateSoundFontSha256(soundFontSha256);
         string nativeIdentity = AudioUnitCacheStaging.ComputeNativeIdentity(nativeDirectory);
         AudioFormat format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
         bool retentionEnabled = cache.AudioCacheSnapshot?.RetentionState

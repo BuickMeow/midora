@@ -1592,6 +1592,7 @@ public sealed class InstrumentWorkspaceViewModel(
     private bool _isPreviewSoloSelected;
     private InstrumentPreviewMode _previewMode;
     private long? _editCursorTick;
+    private MidoraId? _selectedMappingStepId;
     private int _activeSectionIndex;
 
     private TimelineEditorSettings _editorSettings = new();
@@ -1619,6 +1620,12 @@ public sealed class InstrumentWorkspaceViewModel(
     {
         get => _editCursorTick;
         set => Set(ref _editCursorTick, value is null ? null : Math.Max(0, value.Value));
+    }
+
+    public MidoraId? SelectedMappingStepId
+    {
+        get => _selectedMappingStepId;
+        set => Set(ref _selectedMappingStepId, value);
     }
 
     public string Summary
@@ -1772,6 +1779,7 @@ public sealed class InstrumentWorkspaceViewModel(
         RenderLanes.Clear();
         if (instrument is null)
         {
+            SelectedMappingStepId = null;
             Summary = "The Event Instrument no longer exists.";
             SubVoiceSnapshot = new(revision, $"instrument:{ObjectId}", Array.Empty<TimelineRenderItem>());
             SubVoiceNoteSnapshot = new(revision, $"instrument-notes:{ObjectId}", Array.Empty<TimelineRenderItem>());
@@ -1857,6 +1865,12 @@ public sealed class InstrumentWorkspaceViewModel(
                     canDelete: mapping.Target.EventKind != TemplateEventKind.Note);
             }
         }
+
+        if (SelectedMappingStepId is MidoraId selectedStepId
+            && !MappingSteps.Any(value => value.Id == selectedStepId))
+        {
+            SelectedMappingStepId = null;
+        }
         foreach (InstrumentEnvelope envelope in instrument.Envelopes)
         {
             Envelopes.Add(new(
@@ -1934,27 +1948,33 @@ public sealed class InstrumentWorkspaceViewModel(
                         : TimelineItemState.None)));
             }
 
-            List<(SubVoiceEventMapping Mapping, MidiValueTarget Target)> eventLaneMappings = [];
+            Dictionary<MidiValueTarget, SubVoiceEventMapping?> eventLaneMappings = [];
             foreach (SubVoiceEventMapping mapping in activeVoice.EventMappings)
             {
                 if (TemplateEventMidiTargets.TryFromMappingTarget(
                         mapping.Target,
                         out MidiValueTarget laneMidiTarget))
                 {
-                    eventLaneMappings.Add((mapping, laneMidiTarget));
+                    eventLaneMappings[laneMidiTarget] = mapping;
                 }
             }
-            foreach ((SubVoiceEventMapping mapping, MidiValueTarget laneMidiTarget) in eventLaneMappings
-                .OrderBy(value => value.Target.Kind)
-                .ThenBy(value => value.Target.Number))
+            foreach (MidiValueTarget eventTarget in activeVoice.Events
+                .Where(static item => item.Kind != TemplateEventKind.Note)
+                .SelectMany(TemplateEventMidiTargets.Enumerate))
+            {
+                eventLaneMappings.TryAdd(eventTarget, null);
+            }
+            foreach ((MidiValueTarget laneMidiTarget, SubVoiceEventMapping? mapping) in eventLaneMappings
+                .OrderBy(value => value.Key.Kind)
+                .ThenBy(value => value.Key.Number))
             {
                 int eventLane = lanes.Count;
                 lanes.Add(new(
                     activeVoice.Id,
                     TemplateEventMidiTargets.Format(laneMidiTarget),
                     laneMidiTarget,
-                    EventMappingChainId: mapping.Steps.Id,
-                    EventMappingTarget: mapping.Target));
+                    EventMappingChainId: mapping?.Steps.Id,
+                    EventMappingTarget: TemplateEventMidiTargets.ToMappingTarget(laneMidiTarget)));
                 foreach (TemplateEvent item in activeVoice.Events.Where(item =>
                     item.Kind != TemplateEventKind.Note
                     && TemplateEventMidiTargets.Enumerate(item).Contains(laneMidiTarget)))

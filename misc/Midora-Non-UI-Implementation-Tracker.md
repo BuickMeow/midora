@@ -2,7 +2,7 @@
 
 状态：非 UI 源码、托管门与八组真实 SF2 零跳过发布门全部完成
 创建日期：2026-08-06
-最近决策更新：2026-08-08；M-AUD-001～012 已全部通过；Q-NUI-030、Q-NUI-034～Q-NUI-042 已回答；Q-NUI-030 的整数 TPQ/拍号、Bar:Beat:Tick、自然拍网格/Snap 与截断 Warning 已实施；缓存/underrun 主体实现已完成并转入全量门禁。Q-NUI-043～048 为已按推荐实施、待确认的小决定
+最近决策更新：2026-08-15；M-AUD-001～012 已全部通过；Q-NUI-030、Q-NUI-034～Q-NUI-042、Q-NUI-049 已回答；Q-NUI-049 的 MIDI 导出“一 Channel Unit 一 MIDI Track”已实施并通过回归。Q-NUI-043～048 为已按推荐实施、待确认的小决定
 上位规范：`misc/Midora-SRS-Initial-Release-v0.1/`
 问题库：`misc/Midora-Non-UI-Decision-Question-Library.md`
 缓存设计讨论：`misc/Midora-Segment-Compilation-and-Audio-Cache-Design-Discussion-2026-08-08.md`
@@ -15,7 +15,7 @@
 - 包含：Project 领域模型、编辑命令与 Undo/Redo 业务边界、语义验证、全量与增量编译、Canonical Compiled Result、播放与预览控制、MIDI 导出、实时/离线音频链、WASAPI/BASS 原生边界、`.midora` 持久化、非 UI 应用工作流、设置与发布验证门。
 - 排除：WPF 视图、控件、窗口、布局、键鼠交互、DPI 与纯 UI 状态。
 - 人工验证：只把无法由自动测试可靠替代的实际听音、物理设备切换和硬件时延测试集中列入最终手动验收清单。
-- 非目标：继续服从《Midora SRS》第 21 章和 INV-001～INV-038，不扩展初版范围。
+- 非目标：继续服从《Midora SRS》第 21 章和 INV-001～INV-045，不扩展初版范围。
 
 ## 2. 跨系统 Requirement Trace
 
@@ -37,7 +37,7 @@
 | NUI-03 | Semantic Validation 与诊断来源 | 初版非 UI 矩阵已实施，转入全量回归审计 | §3～12、§16.19 | 错误/Warning/Info 来源与稳定排序、显式 Track 作用域、Damaged Instrument、TPQ/拍号组合及截断 Warning 均有自动门 |
 | NUI-04 | Full/Incremental Canonical Compiler | 强增量模型与 §12 逐节矩阵完成；Q-NUI-034/038 的形式化 Segment/Unit fragment、范围结果缓存和因果 Dirty tick 已接入 | §12、INV-009/010/015 | Segment checkpoint + dirty range + state hash；固定种子连续编辑逐字段等价；后续 exact replay 不重复范围编译；同 tick/跨 tick folding 直接门 |
 | NUI-05 | Playback/Preview 非 UI 状态机 | 主状态机、全部 Preview、设备故障、五层缓存、16 四分音符自然段恢复及 spool/RAM fallback 已完成；八组真实 SF2 性能/集成门通过 | §13、§19 | 全状态、自动 Stop、Mute/Solo、设备故障、重复生命周期、Worker tile/span、锁存 Buffering、完整恢复区间和 generation 门 |
-| NUI-06 | MIDI Export 完整工作流 | 初版非 UI 工作流已完成，转入全量回归审计 | §14、§19 | 三模式、routing、README、冻结命名、多文件原子事务、自校验和 VLQ 边界均覆盖 |
+| NUI-06 | MIDI Export 完整工作流 | 初版非 UI 工作流及 Q-NUI-049 的 Unit Track 兼容布局已完成，转入全量回归审计 | §14、§19、INV-045 | 三模式、每个实际 Channel Unit 严格对应一个单 Channel MIDI Track、Unit 跨 Logical Track 复用合并、README、冻结命名、多文件原子事务、自校验和 VLQ 边界均覆盖 |
 | NUI-07 | Audio Render 完整工作流 | 自动化、AOT 文件链与 allocation group 尾音清理完成；相关人工试听全部通过；Q-NUI-036/040/042 的 exact-key Unit PCM 与实时共用 Project session cache，Offline 默认 500；八组真实 SF2 cache hit/miss PCM 等价门通过 | §15、§19 | Whole/Per Track、采样率/长度/RIFF 边界、取消、独立发布、零分配与真实 SF2 缓存复用 |
 | NUI-08 | `.midora` 完整持久化 | 初版开发期 v1 非 UI 契约已完成：单 `long` ID、完整对象图、TPQ/Time Signature 跨文件门、损坏隔离和事务矩阵；转入全量回归审计 | §16、§19 | protobuf 对象图、损坏隔离、Embedded SF2、确定性与事务矩阵 |
 | NUI-09 | BASS/BASSMIDI/WASAPI/Worker | Native AOT、设备故障、每 Unit 1-channel 有界复用、MDAP/ABI v4、raw Unit/final span、专用缓存 I/O、自然段恢复和 RAM fallback 已完成；M-AUD-001～012 及八组真实 SF2 发布门已通过 | §13、§15、INV-018～028 | ABI/版本/生命周期/设备/underrun/IPC/零分配、真实固定 SF2 cache/stream-pool 性能与 PCM 等价门 |
@@ -156,6 +156,7 @@
 | 2026-08-08 | §7～§12 逐节一致性复核 | 每个一级小节映射到正式源码和直接测试组；新增跨 tick 同值不折叠 6 类矩阵、全角色同 tick 顺序和 Note 显式对象顺序 | `Midora-Domain-Compiler-Conformance-Matrix.md`；Compiler 250/250、Application 274/274，0 Skip；未发现新的非 UI 语义缺口 |
 | 2026-08-08 | SF2 提供前的托管/构建/AOT 门 | 6 solution CI Release；9 个纯托管项目 + BASS 无 SF2 子集；固定 BASS manifest、AOT 必需文件、无效 SF2 拒绝；style/analyzer 和本轮文件完整 format；基线总数更新 | 托管 1023/1023、原生无效 SF2 1/1、0 Skip；6 solution 0 warning/0 error；SDK 10.0.302；基线 1053；AOT `artifacts/non-ui-release-gate-cache-final-20260808/worker-win-x64`；`git diff --check` 通过；当时剩余 29 项只缺有效 SF2，随后由下方八组矩阵闭合 |
 | 2026-08-08 | 八组真实 SF2 完整零跳过发布矩阵 | `sDetrimental Concert Grand Piano`、`SGM-V2.01`、`JV1080Ti`、`Ultima C7 Grand II`、`Z-Doc Acoustic Piano Fantasy Mode`、`Roland XP-80`、`Splendid_256`、`minecraft`；每组独立执行固定原生 manifest 校验、locked restore、6 solution Release build、当前 win-x64 Native AOT Worker publish 和 10 项目全量门 | 8 × 1053 = 8424/8424、0 failure、0 skip；80 个 TRX；每组 build 0 warning/0 error；八套 AOT 目录均含 Worker `.exe`、manifest、LICENSE、notices；完整矩阵见 `misc/Midora-SF2-Release-Gate-Matrix-2026-08-08.md` |
+| 2026-08-15 | Q-NUI-049 MIDI 导出 Unit Track 兼容布局 | Whole Project、Per Logical Track、Per Port 均改为按 canonical 原始 `(Port, Channel)` 分组；每个事件 Track 只含一个 Channel Unit；同一 Unit 跨 Logical Track 时段复用时合并；Track 顺序与名称固定；补充双 Channel 拆分、跨 Track Unit 复用及 owner/Unit 布局不一致失败原子性测试 | Core Release build 0 warning/0 error；Common 70、MIDI Export 35、Audio Render 36、Compiler 259、Persistence 95、Playback 91、Application 315，共 901/901 通过；Desktop Release build 0 warning/0 error，Presentation 89 + Desktop 48，共 137/137 通过 |
 
 ## 7. 未解决风险
 

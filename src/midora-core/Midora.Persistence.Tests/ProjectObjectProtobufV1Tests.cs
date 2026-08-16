@@ -69,7 +69,7 @@ public sealed class ProjectObjectProtobufV1Tests
     }
 
     [Fact]
-    public void EventInstrumentRestoreRejectsMissingSharedSubVoiceEventMappings()
+    public void EventInstrumentRestoreRejectsMissingMandatoryNoteMappings()
     {
         MidoraProject project = new(480, CreatedAt);
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
@@ -83,6 +83,35 @@ public sealed class ProjectObjectProtobufV1Tests
         Assert.Throws<InvalidDataException>(() => EventInstrumentProtobufCodecV1.Restore(
             new MidoraProject(480, CreatedAt),
             StrictProtobufWireV1.SerializeDeterministic(wire)));
+    }
+
+    [Fact]
+    public void EventInstrumentRoundTripPreservesDeletedOptionalEventMapping()
+    {
+        MidoraProject project = new(480, CreatedAt);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        SubVoice voice = Assert.Single(instrument.SubVoices);
+        voice.Events.Add(TemplateEvent.ControlChange(project, 0, 11, 127));
+        TemplateEventMappingTarget target = TemplateEventMappingTarget.Create(
+            TemplateEventKind.ControlChange,
+            11,
+            TemplateEventMappingParameter.Value);
+        SubVoiceEventMapping mapping = Assert.Single(
+            voice.EventMappings,
+            value => value.Target == target);
+        Assert.True(voice.EventMappings.Remove(mapping));
+
+        byte[] bytes = EventInstrumentProtobufCodecV1.Serialize(instrument);
+        EventInstrument restored = EventInstrumentProtobufCodecV1.Restore(
+            new MidoraProject(480, CreatedAt),
+            bytes);
+
+        SubVoice restoredVoice = Assert.Single(restored.SubVoices);
+        TemplateEvent restoredEvent = Assert.Single(restoredVoice.Events);
+        Assert.Equal(TemplateEventKind.ControlChange, restoredEvent.Kind);
+        Assert.Equal(11, restoredEvent.Number);
+        Assert.Null(restoredVoice.FindEventMapping(target));
+        Assert.Equal(bytes, EventInstrumentProtobufCodecV1.Serialize(restored));
     }
 
     [Fact]

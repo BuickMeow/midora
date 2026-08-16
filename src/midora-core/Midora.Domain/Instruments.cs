@@ -211,7 +211,7 @@ public sealed class TemplateEvent
     public MidiIntegerTargetSettings SecondaryValueTargetSettings =>
         GetMapping(TemplateEventMappingParameter.SecondaryValue).TargetSettings;
 
-    internal void AttachTo(SubVoice owner)
+    internal bool AttachTo(SubVoice owner)
     {
         ArgumentNullException.ThrowIfNull(owner);
         if (_owner is not null && !ReferenceEquals(_owner, owner))
@@ -219,6 +219,7 @@ public sealed class TemplateEvent
             throw new InvalidOperationException(
                 "A Template Event cannot be attached to more than one SubVoice.");
         }
+        bool newlyAttached = _owner is null;
         _owner = owner;
         foreach (SubVoiceEventMapping detached in _detachedMappings.Values)
         {
@@ -231,9 +232,10 @@ public sealed class TemplateEvent
             MergeDetachedMapping(existing, detached);
         }
         _detachedMappings.Clear();
+        return newlyAttached;
     }
 
-    internal void EnsureMappings() => _owner?.EnsureEventMappings(this);
+    internal void EnsureMappings() => _owner?.EnsureEventMappings(this, createOptional: false);
 
     private SubVoiceEventMapping GetMapping(TemplateEventMappingParameter parameter)
     {
@@ -418,10 +420,19 @@ public sealed class SubVoice
         return created;
     }
 
-    internal void EnsureEventMappings(TemplateEvent value)
+    internal void EnsureEventMappings(TemplateEvent value, bool createOptional)
     {
         foreach (TemplateEventMappingTarget target in TemplateEventMappingTarget.Enumerate(value))
         {
+            bool mandatory = target.EventKind == TemplateEventKind.Note;
+            // Optional non-Note owners are created only for a genuinely new
+            // target. Existing raw events with no owner represent an explicit
+            // Mapping deletion and must remain raw during edits/reinsertion.
+            if (!mandatory && (!createOptional || Events.Any(existing =>
+                    TemplateEventMappingTarget.Enumerate(existing).Contains(target))))
+            {
+                continue;
+            }
             _ = GetOrCreateEventMapping(target);
         }
     }
@@ -430,6 +441,7 @@ public sealed class SubVoice
 public sealed class TemplateEventCollection : Collection<TemplateEvent>
 {
     private readonly SubVoice _owner;
+    private bool _suppressOptionalMappingCreation;
 
     internal TemplateEventCollection(SubVoice owner)
     {
@@ -445,19 +457,53 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
         }
     }
 
+    internal void AddRangeWithoutOptionalMappingCreation(IEnumerable<TemplateEvent> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        bool oldValue = _suppressOptionalMappingCreation;
+        _suppressOptionalMappingCreation = true;
+        try
+        {
+            AddRange(values);
+        }
+        finally
+        {
+            _suppressOptionalMappingCreation = oldValue;
+        }
+    }
+
+    internal void AddWithoutOptionalMappingCreation(TemplateEvent value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        bool oldValue = _suppressOptionalMappingCreation;
+        _suppressOptionalMappingCreation = true;
+        try
+        {
+            Add(value);
+        }
+        finally
+        {
+            _suppressOptionalMappingCreation = oldValue;
+        }
+    }
+
     protected override void InsertItem(int index, TemplateEvent item)
     {
         ArgumentNullException.ThrowIfNull(item);
-        item.AttachTo(_owner);
-        _owner.EnsureEventMappings(item);
+        bool newlyAttached = item.AttachTo(_owner);
+        _owner.EnsureEventMappings(
+            item,
+            createOptional: newlyAttached && !_suppressOptionalMappingCreation);
         base.InsertItem(index, item);
     }
 
     protected override void SetItem(int index, TemplateEvent item)
     {
         ArgumentNullException.ThrowIfNull(item);
-        item.AttachTo(_owner);
-        _owner.EnsureEventMappings(item);
+        bool newlyAttached = item.AttachTo(_owner);
+        _owner.EnsureEventMappings(
+            item,
+            createOptional: newlyAttached && !_suppressOptionalMappingCreation);
         base.SetItem(index, item);
     }
 }

@@ -9,18 +9,23 @@
 ## 9.1 映射系统总体规则
 ### 9.1.1 映射挂载位置
 映射规则挂在具体事件参数上。
-一个映射挂载目标由以下二者定位：
+SubVoice 事件 Mapping 挂载到共享的精确标量目标，由以下内容定位：
 ```text
-eventId
+subVoiceId
+eventKind
+必要的 eventNumber（例如 CC / RPN / NRPN number）
 parameterKey
 ```
 不使用：
 ```text
 tick + 事件类型 + 参数名
+单个事件点 ID
 数组索引
 显示名称
 UI 文本
 ```
+
+同一 SubVoice 内相同精确标量目标的全部事件点共享一个 Mapping Chain；事件点稳定 ID仍用于 canonical 来源追踪和诊断。Logical Parameter Mapping 由其自身稳定 ID、源 Parameter、目标 SubVoice/精确标量目标及显式顺序定位。
 ### 9.1.2 parameterKey
 `parameterKey` 使用强类型枚举 / 路径结构。
 示例：
@@ -57,6 +62,7 @@ PitchBendRange.Cents
 等同于无映射
 使用原始值
 ```
+允许删除的可选 Mapping owner 不存在时也等同于无映射并使用原始值。
 映射链可整体启用 / 禁用。
 禁用映射链：
 ```text
@@ -97,12 +103,16 @@ Mapping Function 是 Event Instrument 级资源
 Mapping Chain 只是引用它
 删除链时仅解除引用
 ```
-删除事件时：
+
+Note Number / Velocity 的共享 Mapping owner 是强制目标，不允许删除；可删除其中的 Step 或禁用 Chain。非 Note `SubVoiceEventMapping` 与 `LogicalParameterMapping` 是可选 owner，删除整条 Chain 时物理移除 owner；非空 Chain 删除必须由用户明确确认，Undo 恢复同一 owner、Chain、Step、引用和顺序。
+
+删除单个事件点时：
 ```text
-事件参数上的映射链随事件一并删除
-Mapping Function 本身保留
-对 Mapping Function 的引用解除
+只删除该事件点
+不自动删除同一精确目标的共享 Mapping
 ```
+
+显式创建一种新的非 Note 事件目标时允许同时创建一次空的可选 Mapping owner；后续事件点编辑、删除/重新插入、编译或打开修复不得静默重建用户已经显式删除的可选 owner。owner 不存在时事件原始值直通。
 ---
 ## 9.2 映射目标范围
 ### 9.2.1 只允许值类参数映射
@@ -169,6 +179,8 @@ Step 2 作用于 Step 1 后的 currentValue
 所有 Step 先算结果再统一求和
 最后取最后一步结果
 ```
+
+对于 CC、Pitch Bend、Program、Bank、RPN/NRPN、Pitch Bend Range 等状态型非 Note 目标，如果 Mapping Chain 使用 Envelope 或其他连续时间源，`originalParameterValue` 不是“当前 tick 必须重新出现的事件点”，而是当前实例内最近一次原始目标值的持有状态；首个原始事件之前使用合并后的 Initial State，仍无覆盖时使用该目标类型默认值。连续 Mapping 不改变原始状态本身，只从该持有值计算当前输出。
 ### 9.3.2 中间值类型
 映射链中间累计值可以是 double。
 规则：
@@ -732,6 +744,8 @@ x = Logical Parameter 的当前有效值
 y = Logical Parameter Mapping 输出值
 ```
 当目标参数在当前 tick 没有原始事件值时，`c` 使用该目标此前最近的有效状态；如果没有此前状态，则使用该目标类型的初始状态 / 默认状态，具体来源由 Initial State、Reset、编译上下文和相关专项章节共同细化。
+
+上述原始目标状态继承同样适用于直接挂在共享非 Note Event Mapping 上的 Envelope/连续 Step。也就是说，仅在 tick 0 写入 CC11=127 后，后续 Envelope 系数 0.5 的基值仍是 127，而不是 0、默认重取值或“无事件”。
 ### 9.8.6 合成示例
 示例：
 ```text
@@ -876,10 +890,10 @@ Per-Note Instance Isolation 关闭时，不依赖逻辑触发上下文的映射�
 删除事件时：
 ```text
 事件对象删除
-事件参数上的映射链随事件一并删除
-Mapping Function 本身保留
-对 Mapping Function 的引用解除
+同一精确目标的共享 Mapping 保留
+其他事件点继续复用该 Mapping
 ```
+只有用户显式删除可选 Mapping owner 时才解除其中的 Mapping Function/Envelope/Logical Parameter 引用；资源对象本身仍保留。删除最后一个事件点也不隐式删除共享 Mapping，因为空 Event Lane 是允许的正式源状态。
 如果该事件未来被其他结构引用，例如诊断书签、映射引用或其他对象引用：
 ```text
 删除前确认

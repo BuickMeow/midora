@@ -660,7 +660,7 @@
               <TextBlock Margin="0,0,0,10" Style="{StaticResource Text.Overline}" Text="PROJECT RESET DEFAULTS"/>
               <ItemsControl ItemTemplate="{StaticResource ProjectSettingFieldTemplate}" ItemsSource="{Binding ResetDefaultFields}"/>
               <Button Margin="0,3,0,7" HorizontalAlignment="Left" Content="Add CC / RPN / NRPN…" Tag="reset" Click="OnAddProjectStateClick"/>
-              <TextBlock Style="{StaticResource Text.Caption}" Text="Blank means no explicit Project reset default for the target." TextWrapping="Wrap"/>
+              <TextBlock Style="{StaticResource Text.Caption}" Text="Applied when a used target is reset after an instance or hard boundary. These values do not provide an Event Instrument's Initial State." TextWrapping="Wrap"/>
             </StackPanel></Border>
           </StackPanel>
         </Grid>

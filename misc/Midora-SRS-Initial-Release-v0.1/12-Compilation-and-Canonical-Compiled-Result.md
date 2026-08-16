@@ -525,6 +525,8 @@ SubVoice Value Curve、Logical Parameter Lane 与 Mapping、Envelope Mapping 等
 因此，线性、指数或其他连续曲线跨越整数目标中点时，变化事件必须落在逐整数 tick 求值后首次得到新最终整数值的 tick。该规则适用于实时播放、预览、MIDI 导出与音频渲染共同消费的 canonical compiled result。
 
 实现允许使用分段分析、跳跃求值、缓存或其他优化，前提是其 canonical 事件、tick、最终整数值、来源追踪和诊断与上述逐整数 tick 参考算法完全一致；误差阈值、自适应采样或其他近似算法不得改变正式结果。
+
+直接 Event Mapping 的 Envelope/连续值求值必须以目标原始 MIDI 状态为持有基值：最近一个原始事件值持续有效，首个原始事件之前从合并 Initial State/default 取得。连续派生输出不能反向覆盖这份原始状态。Release 的最后一个有效整数 tick 必须达到 End Value，之后才进入 NoteOff/Reset 排序。
 ### 12.8.7 多 Mapping 作用同一目标
 多个 Logical Parameter Mapping 作用同一 SubVoice 目标参数时：
 ```text
@@ -634,6 +636,8 @@ Release / Tail 不允许越过 Segment End。
 越界时应在 Segment End 处插入必要实际 MIDI Note Off，然后 Reset。
 ```
 Segment End 裁剪是正常语义，不产生 Warning。
+
+发声 Segment 的 canonical allocation/audio Unit fragment 必须覆盖到 Segment End，使普通 instance NoteOff 之后的 SoundFont 原生 release 仍能进入实时、离线与缓存 PCM。不得把 instance lifecycle end 误作 PCM 硬结束。自然编译范围使用实际生成 instance 所属 Segment 的 Segment End；完全位于 Content Window 外而未生成 instance 的 Segment 不延长范围。
 ### 12.10.3 Project End Marker 与范围结束硬边界
 当 Project End Marker 作为编译范围结束时：
 ```text
@@ -657,17 +661,21 @@ Segment 边界
 用户不需要手动画 Reset。
 Reset 只作用于该 Segment / 实例实际使用或污染过的状态集合，不应无脑重置所有 CC / RPN / NRPN。
 Segment End Reset 只作用于该 Segment 使用过 / 污染过的 Channel Unit 状态，不重置整个 Project。
+
+Project / Global Reset Defaults 只定义实例/硬边界清理后的目标状态，不补充实例开始时缺失的 Initial State。CC120 All Sound Off 不属于普通 Gate/Release/Tail 结束 Reset；它只允许用于 Segment End、Project End Marker/显式范围结束等硬裁剪边界。普通生命周期结束必须依赖精确 NoteOff 与目标 Reset，不能依据同 tick 是否还有其他 Gate 来决定发送 CC120。
 ### 12.10.5 Reset 与 Channel Unit 释放
 Reset 计入 Channel Unit 占用时间。
 规则：
 ```text
 Reset 完成前 Channel Unit 不可释放。
+产生过 Note 的 Segment-owned lane 即使已完成普通 instance Reset，也要保留到 Segment End，以承载原生 release、保证 Segment PCM/Track 运行时归属，并在硬边界安全执行 CC120。
 ```
 同 tick 上，一个实例 Reset 结束，另一个实例开始：
 ```text
 允许复用同一 Channel Unit。
 但必须通过明确语义排序保证旧实例 Reset 先于新实例 Initial State / 用户事件 / Note On。
 ```
+上述同 tick 普通复用只适用于同一 Segment 的保留 lane；跨 Segment 的物理 Unit 复用必须等待前一 Segment End 硬清理完成。
 ### 12.10.6 编译器生成事件标记
 以下事件应标记为编译器生成事件：
 ```text

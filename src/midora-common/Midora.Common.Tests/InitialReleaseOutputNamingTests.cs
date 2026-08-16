@@ -126,30 +126,28 @@ public sealed class InitialReleaseOutputNamingTests
             totalProjectTrackCount: 10);
 
         Assert.Equal("04 - Logical Track 4.wav", Assert.Single(plan.Targets).FileName);
-        Assert.Equal(
-            "Logical Track 4 / Port 3",
-            InitialReleaseOutputNaming.GetEventTrackName(trackName, 4, 3));
     }
 
     [Fact]
-    public void MidiTrackNamePreservesRawUtf8TextAndDoesNotUseFilenameLegalization()
+    public void MidiTrackNameUsesOneBasedPortAndChannelRouting()
     {
         const string rawName = "Cafe\u0301: Lead";
 
-        string trackName = InitialReleaseOutputNaming.GetEventTrackName(rawName, 1, 16);
+        string trackName = InitialReleaseOutputNaming.GetEventTrackName(16, 10);
         OutputFileNamePlan filePlan = InitialReleaseOutputNaming.PlanLogicalTrackMidi(
             [new("track", 1, rawName)],
             totalProjectTrackCount: 1,
             includeReadme: false);
 
-        Assert.Equal("Cafe\u0301: Lead / Port 16", trackName);
+        Assert.Equal("Port 16 / Channel 10", trackName);
         Assert.Equal("01 - Café_ Lead.mid", Assert.Single(filePlan.Targets).FileName);
     }
 
     [Fact]
-    public void MidiConductorAndReadmeNamesAreFixed()
+    public void MidiConductorNameUsesProjectNameWithDefensiveFallback()
     {
-        Assert.Equal("Conductor", InitialReleaseOutputNaming.ConductorTrackName);
+        Assert.Equal("Project Name", InitialReleaseOutputNaming.GetConductorTrackName("Project Name"));
+        Assert.Equal("Conductor", InitialReleaseOutputNaming.GetConductorTrackName(" \t "));
         Assert.Equal("README.md", InitialReleaseOutputNaming.ReadmeFileName);
     }
 
@@ -173,7 +171,16 @@ public sealed class InitialReleaseOutputNamingTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => InitialReleaseOutputNaming.PlanPortMidi([port], includeReadme: false));
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => InitialReleaseOutputNaming.GetEventTrackName("Track", 1, port));
+            () => InitialReleaseOutputNaming.GetEventTrackName(port, 1));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(17)]
+    public void RejectsChannelsOutsideTheInitialReleaseRange(int channel)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => InitialReleaseOutputNaming.GetEventTrackName(1, channel));
     }
 
     [Fact]

@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-08-12**
+> 最近修订日期：**2026-08-16**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -47,6 +47,18 @@
 - **Initial Release Scope** 表示产品范围，不表示文档草稿序号。
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
+
+## 2026-08-16 修订摘要
+
+- SubVoice 的 Note Number / Velocity Mapping 保持强制共享目标；非 Note Event Mapping 与 Logical Parameter Mapping 改为可物理删除的可选 owner。非 Note 事件点继续存在时，缺少 Mapping 表示原始值直通，普通事件编辑不得静默重建已删除 Mapping。
+- 非 Note 状态目标上的 Envelope Mapping 以最近原始事件值或有效 Initial State/default 为持有基值，并按实例/Release 的整数 tick 连续求值；非零 Release 的最后一个有效 tick 达到 End Value 后才进入 NoteOff/Reset。
+- Loop Start 前开始并完整跨越 Loop End 的模板 Note 在循环中保持发声且不重触发；普通 Gate/Release/Tail 结束不发送 CC120，CC120 只用于 Segment End 等明确硬边界。
+- 修正普通 instance 结束后的 SoundFont release：发声 Segment 的 Unit lane 从首次使用持续保留到 Segment End；普通 NoteOff 后的原生 release 继续进入 Segment PCM，只有 Segment End/消费者范围硬边界可以硬裁剪。自然编译范围按实际生成实例所属 Segment End 结束。
+- MIDI Track 0 的 Track Name 改为任务准备时冻结的 Project Name，空白防御性输入回退为 `Conductor`；`Conductor` 仍是 Track 0 的结构角色名称。
+
+## 2026-08-15 修订摘要
+
+- MIDI 导出事件 Track 的组织从 `Logical Track × Port` 改为严格的 `Channel Unit (Port + Channel) × 1 MIDI Track`。同一文件内一个实际有事件的 Unit 只出现一次，每个事件 Track 只含一个 Channel；按原始 Port→Channel 排序，Track Name 固定显示一基 `Port <P> / Channel <C>`。该变化用于兼容不支持单 Track 多 Channel 的 MIDI 编辑器，不改变 canonical 路由或事件语义。
 
 ## 2026-08-12 修订摘要
 

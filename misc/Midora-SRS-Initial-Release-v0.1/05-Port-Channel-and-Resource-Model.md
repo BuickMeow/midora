@@ -173,7 +173,7 @@ Midora 初版最大 Channel Unit 数量为：
 实际使用的 Port / Channel Unit 由编译结果决定。
 ```
 ### 5.3.4 Channel Unit 的生命周期占用
-Event Instrument Instance 在其 Rendered Instance Length 范围内占用其 Channel Group 中的 Channel Unit。
+Event Instrument Instance 在其 Rendered Instance Length 范围内要求独立或共享的 Channel Group。对于产生 Note 的 Segment，为保证精确 NoteOff 后的 SoundFont 原生 release 不被音频 Unit fragment 窗口裁断，编译器还必须把该 Segment 已启用的 Channel Unit lane 保留到 Segment End；同一 Segment 内后续不重叠 instance 可以复用同一保留 lane。
 占用范围由以下后续系统共同决定：
 ```text
 Template Length
@@ -309,8 +309,9 @@ Channel-Wide 状态污染主要在时间重叠或状态未被 Reset 时发生。
 系统级规则：
 ```text
 重叠实例共享同一 Channel Unit 时，必须检查 Channel-Wide 状态污染风险
-非重叠实例只要旧实例已结束并完成必要 Reset，即可复用同一 Channel Unit
-非重叠情况下，不要求必须是同一 Event Instrument 才能复用 Channel Unit
+同一 Segment 内的非重叠实例只要旧实例已结束并完成必要 Reset，即可复用同一保留 Channel Unit lane
+不同 Segment / Track 不得在前一 Segment End 之前取得该保留 lane；否则无法在不误杀新实例的情况下于前一 Segment End 执行 CC120，也无法保持 Track Mute/Solo 与 Segment PCM 的尾音归属
+前一 Segment 已到达 Segment End 后，不要求后续实例必须是同一 Event Instrument 才能复用 Channel Unit
 ```
 因此，本章不采用以下规则：
 ```text
@@ -544,10 +545,12 @@ MIDI 导出必须能够表达编译后的 Port / Channel 结果。
 ```text
 UI 显示编号从 1 开始
 MIDI 内部 Channel 编码使用 0–15
+每个实际有事件的 Channel Unit 严格对应一个 MIDI 事件 Track
+每个 MIDI 事件 Track 严格只包含一个原始 Port / Channel Unit 的 Channel Event
 Program Change 等数据值按 MIDI 标准编码
 Channel 10 melodic 初始化规则应尽量写入导出结果
 按 Port 导出时，每个实际使用 Port 输出为独立 MIDI 文件
-按 Logical Track 导出和整曲导出时，应保留足够信息说明 Port / Channel 语义
+按 Logical Track 导出和整曲导出时，通过 Unit Track Name 与 Port Meta 保留 Port / Channel 语义
 ```
 如果目标播放器不支持或忽略 Port 相关 Meta Event，可能无法正确复现多 Port 语义。该问题由 第 14 章《MIDI 导出》 的导出警告和 Readme 规则细化。
 ---

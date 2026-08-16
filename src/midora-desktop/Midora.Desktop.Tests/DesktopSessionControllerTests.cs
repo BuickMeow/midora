@@ -948,6 +948,22 @@ public sealed class DesktopSessionControllerTests
             item.Id == mapping.Steps.Id).CanDelete));
         Assert.True(workspace.MappingChains.Single(item =>
             item.Id == controlChangeMapping.Steps.Id).CanDelete);
+        session.Execute(ProjectDomainEditCommands.DeleteMappingChain(
+            instrument.Id,
+            controlChangeMapping.Steps.Id,
+            nonEmptyDeletionConfirmed: true));
+        session.RefreshWorkspace(workspace);
+        InstrumentRenderLane rawEventLane = Assert.Single(workspace.RenderLanes);
+        Assert.Equal(MidiValueTarget.ControlChange(1), rawEventLane.Target);
+        Assert.Null(rawEventLane.EventMappingChainId);
+        Assert.Single(workspace.SubVoiceEventSnapshot!.Items);
+        Assert.DoesNotContain(workspace.MappingChains, item =>
+            item.Id == controlChangeMapping.Steps.Id);
+        session.Undo();
+        session.RefreshWorkspace(workspace);
+        Assert.Equal(
+            controlChangeMapping.Steps.Id,
+            Assert.Single(workspace.RenderLanes).EventMappingChainId);
         int renderLaneSelectionNotifications = 0;
         workspace.PropertyChanged += (_, args) =>
         {

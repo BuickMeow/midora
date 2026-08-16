@@ -21,6 +21,7 @@ public sealed class MidiExportReadmeBuilderTests
         Assert.Contains("- Range: \\[120, 480\\)", markdown, StringComparison.Ordinal);
         Assert.Contains("- Midora Port 3 → output Port 1", markdown, StringComparison.Ordinal);
         Assert.Contains("GS and Yamaha XG Normal Part", markdown, StringComparison.Ordinal);
+        Assert.Contains("exactly one original Midora Channel Unit", markdown, StringComparison.Ordinal);
         Assert.Contains("Port 03.mid", markdown, StringComparison.Ordinal);
         Assert.Contains("2026-08-06T12:34:56.1234567Z", markdown, StringComparison.Ordinal);
     }
@@ -76,30 +77,30 @@ public sealed class MidiExportReadmeBuilderTests
         long? startTick = null,
         long? endTick = null,
         IReadOnlyList<MidiExportReadmeDiagnostic>? diagnostics = null) => new()
-    {
-        ProjectName = source.ProjectName,
-        ProjectVersion = source.ProjectVersion,
-        AuthorOrTeam = source.AuthorOrTeam,
-        OriginalWork = source.OriginalWork,
-        Copyright = source.Copyright,
-        Notes = source.Notes,
-        SoundFontDescription = source.SoundFontDescription,
-        Mode = source.Mode,
-        RangeSource = source.RangeSource,
-        StartTick = startTick ?? source.StartTick,
-        EndTick = endTick ?? source.EndTick,
-        Routing = source.Routing,
-        TicksPerQuarterNote = source.TicksPerQuarterNote,
-        TempoEventCount = source.TempoEventCount,
-        TimeSignatureEventCount = source.TimeSignatureEventCount,
-        KeySignatureEventCount = source.KeySignatureEventCount,
-        Tracks = source.Tracks,
-        PortMappings = source.PortMappings,
-        Diagnostics = diagnostics ?? source.Diagnostics,
-        FileNames = source.FileNames,
-        CreatedWithSoftwareVersion = source.CreatedWithSoftwareVersion,
-        LastSavedWithSoftwareVersion = source.LastSavedWithSoftwareVersion,
-        ExportSoftwareVersion = source.ExportSoftwareVersion,
-        ExportedAtUtc = source.ExportedAtUtc
-    };
+        {
+            ProjectName = source.ProjectName,
+            ProjectVersion = source.ProjectVersion,
+            AuthorOrTeam = source.AuthorOrTeam,
+            OriginalWork = source.OriginalWork,
+            Copyright = source.Copyright,
+            Notes = source.Notes,
+            SoundFontDescription = source.SoundFontDescription,
+            Mode = source.Mode,
+            RangeSource = source.RangeSource,
+            StartTick = startTick ?? source.StartTick,
+            EndTick = endTick ?? source.EndTick,
+            Routing = source.Routing,
+            TicksPerQuarterNote = source.TicksPerQuarterNote,
+            TempoEventCount = source.TempoEventCount,
+            TimeSignatureEventCount = source.TimeSignatureEventCount,
+            KeySignatureEventCount = source.KeySignatureEventCount,
+            Tracks = source.Tracks,
+            PortMappings = source.PortMappings,
+            Diagnostics = diagnostics ?? source.Diagnostics,
+            FileNames = source.FileNames,
+            CreatedWithSoftwareVersion = source.CreatedWithSoftwareVersion,
+            LastSavedWithSoftwareVersion = source.LastSavedWithSoftwareVersion,
+            ExportSoftwareVersion = source.ExportSoftwareVersion,
+            ExportedAtUtc = source.ExportedAtUtc
+        };
 }

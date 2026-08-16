@@ -15,35 +15,61 @@ public sealed record MidiExportDiagnostic(
     string Message,
     SourceReference Source = default);
 
+public readonly record struct MidiExportChannelUnit
+{
+    public MidiExportChannelUnit(byte zeroBasedPort, byte zeroBasedChannel)
+    {
+        if (zeroBasedPort > 15)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(zeroBasedPort),
+                "Midora MIDI export ports must be in the zero-based range 0..15.");
+        }
+        if (zeroBasedChannel > 15)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(zeroBasedChannel),
+                "MIDI channels must be in the zero-based range 0..15.");
+        }
+
+        ZeroBasedPort = zeroBasedPort;
+        ZeroBasedChannel = zeroBasedChannel;
+    }
+
+    public byte ZeroBasedPort { get; }
+    public byte ZeroBasedChannel { get; }
+}
+
 public sealed class MidiExportLogicalTrackLayout
 {
-    private readonly Dictionary<byte, string> _eventTrackNamesByPort;
+    private readonly Dictionary<MidiExportChannelUnit, string> _eventTrackNamesByUnit;
 
     public MidiExportLogicalTrackLayout(
         MidoraId trackId,
-        IReadOnlyDictionary<byte, string> eventTrackNamesByPort)
+        IReadOnlyDictionary<MidiExportChannelUnit, string> eventTrackNamesByUnit)
     {
-        ArgumentNullException.ThrowIfNull(eventTrackNamesByPort);
+        ArgumentNullException.ThrowIfNull(eventTrackNamesByUnit);
         if (trackId == default)
         {
             throw new ArgumentOutOfRangeException(nameof(trackId));
         }
-        foreach ((byte port, string name) in eventTrackNamesByPort)
+        foreach ((MidiExportChannelUnit unit, string name) in eventTrackNamesByUnit)
         {
-            if (port > 15)
+            if (unit.ZeroBasedPort > 15 || unit.ZeroBasedChannel > 15)
             {
                 throw new ArgumentOutOfRangeException(
-                    nameof(eventTrackNamesByPort),
-                    "Midora MIDI export ports must be in the zero-based range 0..15.");
+                    nameof(eventTrackNamesByUnit),
+                    "Midora MIDI export Channel Units must use Port and Channel values in the zero-based range 0..15.");
             }
             ArgumentNullException.ThrowIfNull(name);
         }
         TrackId = trackId;
-        _eventTrackNamesByPort = new(eventTrackNamesByPort);
+        _eventTrackNamesByUnit = new(eventTrackNamesByUnit);
     }
 
     public MidoraId TrackId { get; }
-    public IReadOnlyDictionary<byte, string> EventTrackNamesByPort => _eventTrackNamesByPort;
+    public IReadOnlyDictionary<MidiExportChannelUnit, string> EventTrackNamesByUnit =>
+        _eventTrackNamesByUnit;
 }
 
 public sealed class WholeProjectMidiEncodingRequest

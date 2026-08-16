@@ -474,13 +474,17 @@ public sealed class BassMidiRendererIntegrationTests
 
     [Fact]
     [SupportedOSPlatform("windows")]
-    public void CompiledSubVoiceExampleIsSilentAfterEveryAllocationGroupDeClickRamp()
+    public void CompiledSubVoiceExamplePreservesOrdinaryReleaseAndCutsAtSegmentBoundary()
     {
         EnsureEnvironment();
         using MidoraCompiler compiler = new();
         CanonicalCompiledResult compiled = compiler.CompileFull(
             Program.CreateLogicalExample("subvoices"),
-            new CompilationRequest { Purpose = CompilationPurpose.AudioRender });
+            new CompilationRequest
+            {
+                Purpose = CompilationPurpose.AudioRender,
+                EndTick = 3_960
+            });
         CanonicalMidiEvent[] soundOffs = compiled.Events.ToArray()
             .Where(value => value.Message.MessageType == MidiMessageType.ControlChange
                 && value.Message.Byte1 == 120)
@@ -490,24 +494,20 @@ public sealed class BassMidiRendererIntegrationTests
         float[] samples = Render(plan, 2_048, 1_003, out long allocated);
 
         Assert.True(compiled.IsConsumable);
-        Assert.Equal(12, soundOffs.Length);
+        Assert.Equal(3, soundOffs.Length);
+        Assert.All(soundOffs, value => Assert.Equal(3_840, value.Tick));
         Assert.Equal(0, allocated);
-        foreach ((long endTick, long nextStartTick) in new[]
-        {
-            (900L, 960L),
-            (1_860L, 1_920L),
-            (2_820L, 2_880L),
-            (3_780L, 3_840L)
-        })
-        {
-            int firstStableSilentFrame = checked((int)(endTick * 50 + 256));
-            int nextStartFrame = checked((int)(nextStartTick * 50));
-            Assert.All(
-                samples.AsSpan(
-                    firstStableSilentFrame * 2,
-                    (nextStartFrame - firstStableSilentFrame) * 2).ToArray(),
-                static sample => Assert.Equal(0f, sample));
-        }
+        int firstOrdinaryInstanceEndFrame = (900 * 50) + 256;
+        int nextInstanceStartFrame = 960 * 50;
+        Assert.Contains(
+            samples.AsSpan(
+                firstOrdinaryInstanceEndFrame * 2,
+                (nextInstanceStartFrame - firstOrdinaryInstanceEndFrame) * 2).ToArray(),
+            static sample => sample != 0f);
+        int firstStableSilentFrame = (3_840 * 50) + 256;
+        Assert.All(
+            samples.AsSpan(firstStableSilentFrame * 2).ToArray(),
+            static sample => Assert.Equal(0f, sample));
     }
 
     [Fact]
@@ -708,6 +708,11 @@ public sealed class BassMidiRendererIntegrationTests
 
             Assert.Equal(sourcePlan.TotalFrameCount, missNativeFrames);
             Assert.Equal(0, hitNativeFrames);
+            float releasePeak = MaximumAbsoluteSample(
+                missSamples.AsSpan(checked(2_049 * 2)));
+            Assert.True(
+                releasePeak > 0.000_001f,
+                $"The Segment PCM capture discarded the SoundFont release after NoteOff; peak={releasePeak:R}.");
             Assert.True(MemoryMarshal.AsBytes(missSamples.AsSpan()).SequenceEqual(
                 MemoryMarshal.AsBytes(hitSamples.AsSpan())));
         }

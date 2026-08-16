@@ -251,7 +251,8 @@ internal static class EventInstrumentProtobufCodecV1
         };
         Restore(result.InitialState, value.InitialState!);
         result.EventMappings.AddRange(value.EventMappings.Select(item => FromWire(project, item)));
-        result.Events.AddRange(value.Events.Select(item => FromWire(project, item)));
+        result.Events.AddRangeWithoutOptionalMappingCreation(
+            value.Events.Select(item => FromWire(project, item)));
         result.Curves.AddRange(value.Curves.Select(item => FromWire(project, item)));
         return result;
     }
@@ -654,7 +655,7 @@ internal static class EventInstrumentProtobufCodecV1
             if (EnumerateRequiredEventMappingTargets(item).Any(target => !targets.Contains(target)))
             {
                 throw new InvalidDataException(
-                    "SubVoice eventMappings do not cover every Template Event target.");
+                    "SubVoice eventMappings do not cover every mandatory Note Mapping target.");
             }
         }
         foreach (ValueCurveV1 item in value.Curves) Validate(item);
@@ -664,54 +665,16 @@ internal static class EventInstrumentProtobufCodecV1
         TemplateEventV1 value)
     {
         TemplateEventKind kind = (TemplateEventKind)(int)value.Kind;
-        switch (kind)
+        if (kind == TemplateEventKind.Note)
         {
-            case TemplateEventKind.Note:
-                yield return TemplateEventMappingTarget.Create(
-                    kind,
-                    value.Number,
-                    TemplateEventMappingParameter.Number);
-                yield return TemplateEventMappingTarget.Create(
-                    kind,
-                    value.Number,
-                    TemplateEventMappingParameter.Value);
-                break;
-            case TemplateEventKind.ControlChange:
-            case TemplateEventKind.Program:
-            case TemplateEventKind.PitchBend:
-            case TemplateEventKind.RegisteredParameter:
-            case TemplateEventKind.NonRegisteredParameter:
-                yield return TemplateEventMappingTarget.Create(
-                    kind,
-                    value.Number,
-                    TemplateEventMappingParameter.Value);
-                break;
-            case TemplateEventKind.Bank:
-                if (value.HasBankMsb)
-                {
-                    yield return TemplateEventMappingTarget.Create(
-                        kind,
-                        value.Number,
-                        TemplateEventMappingParameter.Value);
-                }
-                if (value.HasBankLsb)
-                {
-                    yield return TemplateEventMappingTarget.Create(
-                        kind,
-                        value.Number,
-                        TemplateEventMappingParameter.SecondaryValue);
-                }
-                break;
-            case TemplateEventKind.PitchBendRange:
-                yield return TemplateEventMappingTarget.Create(
-                    kind,
-                    value.Number,
-                    TemplateEventMappingParameter.Value);
-                yield return TemplateEventMappingTarget.Create(
-                    kind,
-                    value.Number,
-                    TemplateEventMappingParameter.SecondaryValue);
-                break;
+            yield return TemplateEventMappingTarget.Create(
+                kind,
+                value.Number,
+                TemplateEventMappingParameter.Number);
+            yield return TemplateEventMappingTarget.Create(
+                kind,
+                value.Number,
+                TemplateEventMappingParameter.Value);
         }
     }
 

@@ -182,6 +182,11 @@ public sealed class PlaybackTests
         Assert.Equal(project.Tracks[0].Segments[0].Id.Value, fragment.SegmentId);
         Assert.Equal(0, fragment.SourceIndex);
         Assert.Equal(64, fragment.SemanticFingerprint.Length);
+        Assert.Equal(plan.TotalFrameCount, fragment.EndFrame);
+        Assert.Contains(fragment.Events.ToArray(), value =>
+            value.Message.MessageType == MidiMessageType.NoteOff
+            && value.SampleFrame < fragment.EndFrame);
+        Assert.Equal(plan.TotalFrameCount, Assert.Single(plan.Segments.ToArray()).EndFrame);
         Assert.All(
             fragment.Events.ToArray(),
             value => Assert.Equal(0, value.Message.ChannelNumber));

@@ -80,7 +80,7 @@ public sealed class AudioRenderScopedCompilationTests
             });
 
         Assert.True(result.IsConsumable);
-        Assert.Equal(240, result.EndTick);
+        Assert.Equal(480, result.EndTick);
     }
 
     [Fact]

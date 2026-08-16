@@ -71,6 +71,89 @@ public sealed class ProjectDomainEditCommandsTests
     }
 
     [Fact]
+    public async Task BackgroundBindingChangeRebuildsExistingSegmentForTheNewInstrument()
+    {
+        MidoraProject project = CreateProject();
+        LogicalTrack track = Assert.Single(project.Tracks);
+        Assert.Single(track.Segments).ParameterLanes.Clear();
+        EventInstrument originalInstrument = project.EventInstruments[0];
+        EventInstrument replacementInstrument = CreateInstrument(project, "Strings");
+        TemplateEvent replacementNote = Assert.Single(
+            Assert.Single(replacementInstrument.SubVoices).Events,
+            value => value.Kind == TemplateEventKind.Note);
+        replacementNote.Number = 72;
+        using ProjectCompilationSession compilation = new(
+            project,
+            executionMode: ProjectCompilationExecutionMode.Background,
+            backgroundDebounce: TimeSpan.Zero);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+        CanonicalAudioUnitFragment before = Assert.Single(
+            CanonicalAudioUnitProjection.Create(compilation.LastAttempt).Fragments.ToArray());
+
+        document.Execute(ProjectDomainEditCommands.BindLogicalTrack(
+            track.Id,
+            replacementInstrument.Id));
+        CanonicalCompiledResult current = await compilation.EnsureCurrentCompilationAsync();
+
+        CanonicalMidiEvent noteOn = Assert.Single(
+            current.Events.ToArray(),
+            value => value.Role == CanonicalEventRole.NoteOn);
+        Assert.Equal((byte)72, noteOn.Message.Byte1);
+        Assert.Equal(replacementInstrument.Id, noteOn.Source.EventInstrumentId);
+        Assert.NotEqual(originalInstrument.Id, noteOn.Source.EventInstrumentId);
+        CanonicalAudioUnitFragment after = Assert.Single(
+            CanonicalAudioUnitProjection.Create(current).Fragments.ToArray());
+        Assert.Equal(replacementInstrument.Id, after.EventInstrumentId);
+        Assert.NotEqual(before.SemanticFingerprint, after.SemanticFingerprint);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public async Task NewlyCreatedEditedAndBoundInstrumentCompilesWithoutSaveOrReload()
+    {
+        MidoraProject project = new(480);
+        using ProjectCompilationSession compilation = new(
+            project,
+            executionMode: ProjectCompilationExecutionMode.Background,
+            backgroundDebounce: TimeSpan.Zero);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.CreateEventInstrument("Live Instrument"));
+        EventInstrument instrument = Assert.Single(project.EventInstruments);
+        SubVoice voice = Assert.Single(instrument.SubVoices);
+        document.Execute(ProjectDomainEditCommands.CreateTemplateNote(
+            instrument.Id,
+            voice.Id,
+            tick: 0,
+            lengthTicks: 480,
+            note: 67,
+            velocity: 101));
+        document.Execute(ProjectDomainEditCommands.CreateLogicalTrack(
+            "Live Track",
+            instrument.Id));
+        LogicalTrack track = Assert.Single(project.Tracks);
+        document.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
+        Segment segment = Assert.Single(track.Segments);
+        document.Execute(ProjectDomainEditCommands.CreateLogicalNote(
+            segment.Id,
+            startTick: 0,
+            lengthTicks: 480,
+            note: 67,
+            velocity: 101));
+
+        CanonicalCompiledResult current = await compilation.EnsureCurrentCompilationAsync();
+
+        Assert.True(current.IsConsumable);
+        CanonicalMidiEvent noteOn = Assert.Single(
+            current.Events.ToArray(),
+            value => value.Role == CanonicalEventRole.NoteOn);
+        Assert.Equal(instrument.Id, noteOn.Source.EventInstrumentId);
+        Assert.Equal(track.Id, noteOn.Source.TrackId);
+        Assert.Equal(segment.Id, noteOn.Source.SegmentId);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
     public void LogicalTrackReorderAndDeleteRestoreOrderIdentityAndRenderSelection()
     {
         MidoraProject project = CreateProject();

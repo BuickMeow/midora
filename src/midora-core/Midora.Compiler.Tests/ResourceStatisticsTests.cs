@@ -35,6 +35,44 @@ public sealed class ResourceStatisticsTests
     }
 
     [Fact]
+    public void IsolatedInstancesReuseOnlyNonoverlappingSegmentOwnedLanes()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 960);
+        fixture.Instrument.RequiresChannelIsolation = true;
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        LogicalNote first = CompilerTestProject.AddNote(
+            fixture.Segment,
+            fixture.Instrument,
+            0,
+            240);
+        LogicalNote adjacent = CompilerTestProject.AddNote(
+            fixture.Segment,
+            fixture.Instrument,
+            240,
+            240);
+        LogicalNote overlapping = CompilerTestProject.AddNote(
+            fixture.Segment,
+            fixture.Instrument,
+            300,
+            240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+        ChannelUnitAllocation[] allocations = result.Allocations.ToArray();
+
+        Assert.True(result.IsConsumable);
+        Assert.Equal(2, result.Statistics.PeakChannelUnitCount);
+        Assert.Equal(2, allocations.Select(value => value.InstanceGroupId).Distinct().Count());
+        Assert.Equal(2, allocations.Select(value => (value.ZeroBasedPort, value.ZeroBasedChannel)).Distinct().Count());
+        Assert.All(allocations, value => Assert.Equal(960, value.EndTick));
+        Assert.Equal(
+            allocations.Single(value => value.InstanceId == first.Id).InstanceGroupId,
+            allocations.Single(value => value.InstanceId == adjacent.Id).InstanceGroupId);
+        Assert.NotEqual(
+            allocations.Single(value => value.InstanceId == adjacent.Id).InstanceGroupId,
+            allocations.Single(value => value.InstanceId == overlapping.Id).InstanceGroupId);
+    }
+
+    [Fact]
     public void PortStatisticsCountOnlyActuallyUsedPorts()
     {
         var fixture = CompilerTestProject.Create(subVoiceCount: 17);

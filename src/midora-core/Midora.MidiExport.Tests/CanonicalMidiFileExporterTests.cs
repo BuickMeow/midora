@@ -29,13 +29,13 @@ public sealed class CanonicalMidiFileExporterTests
         {
             CompiledResult = compiled,
             ConductorTrackName = "Midora Conductor",
-            LogicalTracks = [Layout(track.Id, 0, "主奏 / Port 1")]
+            LogicalTracks = [Layout(track.Id, 0, "Port 1 / Channel 1")]
         });
         MidiExportEncodingResult second = CanonicalMidiFileExporter.EncodeWholeProject(new()
         {
             CompiledResult = compiled,
             ConductorTrackName = "Midora Conductor",
-            LogicalTracks = [Layout(track.Id, 0, "主奏 / Port 1")]
+            LogicalTracks = [Layout(track.Id, 0, "Port 1 / Channel 1")]
         });
 
         Assert.True(compiled.IsConsumable);
@@ -49,7 +49,7 @@ public sealed class CanonicalMidiFileExporterTests
         Assert.True(Contains(first.FileBytes, [0xff, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08]));
         Assert.True(Contains(first.FileBytes, [0xff, 0x59, 0x02, 0xfe, 0x01]));
         Assert.True(Contains(first.FileBytes, Encoding.UTF8.GetBytes("标记")));
-        Assert.True(Contains(first.FileBytes, Encoding.UTF8.GetBytes("主奏 / Port 1")));
+        Assert.True(Contains(first.FileBytes, Encoding.UTF8.GetBytes("Port 1 / Channel 1")));
         Assert.True(Contains(first.FileBytes, [0xff, 0x21, 0x01, 0x00]));
 
         List<byte[]> exportedMessages = ParseTracks(first.FileBytes)[1].ChannelMessages;
@@ -100,7 +100,7 @@ public sealed class CanonicalMidiFileExporterTests
         {
             CompiledResult = compiled,
             ConductorTrackName = "Conductor",
-            LogicalTracks = [Layout(track.Id, 0, "Track / Port 1")]
+            LogicalTracks = [Layout(track.Id, 0, "Port 1 / Channel 1")]
         });
 
         Assert.True(encoded.Succeeded);
@@ -121,7 +121,7 @@ public sealed class CanonicalMidiFileExporterTests
         {
             CompiledResult = compiled,
             ConductorTrackName = "Conductor",
-            LogicalTracks = [Layout(track.Id, 0, "Track")]
+            LogicalTracks = [Layout(track.Id, 0, "Port 1 / Channel 1")]
         });
 
         Assert.False(encoded.Succeeded);
@@ -141,7 +141,7 @@ public sealed class CanonicalMidiFileExporterTests
         {
             CompiledResult = compiled,
             ConductorTrackName = "Conductor",
-            LogicalTracks = [Layout(trackId, 0, "Track")]
+            LogicalTracks = [Layout(trackId, 0, "Port 1 / Channel 1")]
         });
 
         Assert.False(encoded.Succeeded);
@@ -163,7 +163,7 @@ public sealed class CanonicalMidiFileExporterTests
         {
             CompiledResult = compiled,
             ConductorTrackName = "Conductor",
-            LogicalTracks = [Layout(trackId, 0, "Track")]
+            LogicalTracks = [Layout(trackId, 0, "Port 1 / Channel 10", zeroBasedChannel: 9)]
         });
 
         Assert.True(encoded.Succeeded);
@@ -201,7 +201,11 @@ public sealed class CanonicalMidiFileExporterTests
         {
             CompiledResult = compiled,
             ConductorTrackName = "Conductor",
-            LogicalTracks = [new(trackId, new Dictionary<byte, string> { [0] = "P1", [1] = "P2" })]
+            LogicalTracks = [new(trackId, new Dictionary<MidiExportChannelUnit, string>
+            {
+                [new(0, 0)] = "Port 1 / Channel 1",
+                [new(1, 9)] = "Port 2 / Channel 10"
+            })]
         });
 
         Assert.True(encoded.Succeeded);
@@ -273,7 +277,7 @@ public sealed class CanonicalMidiFileExporterTests
     }
 
     [Fact]
-    public void OrdersEventTracksByLogicalLayoutThenPort()
+    public void OrdersEventTracksByUnitAndMergesAUnitReusedAcrossLogicalTracks()
     {
         MidoraId trackA = MidoraId.FromSequence(1);
         MidoraId trackB = MidoraId.FromSequence(2);
@@ -281,7 +285,8 @@ public sealed class CanonicalMidiFileExporterTests
         [
             SyntheticEvent(trackB, 0, MidiMessage.ControlChange(0, 3, 3), 0),
             SyntheticEvent(trackA, 0, MidiMessage.ControlChange(0, 1, 1), 1),
-            SyntheticEvent(trackB, 1, MidiMessage.ControlChange(0, 2, 2), 2)
+            SyntheticEvent(trackA, 0, MidiMessage.ControlChange(1, 4, 4), 2, zeroBasedChannel: 1),
+            SyntheticEvent(trackB, 1, MidiMessage.ControlChange(0, 2, 2), 3)
         ];
         CanonicalCompiledResult compiled = CreateSyntheticCompiled(events);
 
@@ -291,14 +296,58 @@ public sealed class CanonicalMidiFileExporterTests
             ConductorTrackName = "Conductor",
             LogicalTracks =
             [
-                new(trackB, new Dictionary<byte, string> { [0] = "B0", [1] = "B1" }),
-                new(trackA, new Dictionary<byte, string> { [0] = "A0" })
+                new(trackB, new Dictionary<MidiExportChannelUnit, string>
+                {
+                    [new(0, 0)] = "Port 1 / Channel 1",
+                    [new(1, 0)] = "Port 2 / Channel 1"
+                }),
+                new(trackA, new Dictionary<MidiExportChannelUnit, string>
+                {
+                    [new(0, 0)] = "Port 1 / Channel 1",
+                    [new(0, 1)] = "Port 1 / Channel 2"
+                })
             ]
         });
 
         Assert.True(encoded.Succeeded);
         ParsedTrack[] parsed = ParseTracks(encoded.FileBytes);
-        Assert.Equal(["Conductor", "B0", "B1", "A0"], parsed.Select(GetTrackName));
+        Assert.Equal(
+            ["Conductor", "Port 1 / Channel 1", "Port 1 / Channel 2", "Port 2 / Channel 1"],
+            parsed.Select(GetTrackName));
+        Assert.Equal(2, parsed[1].ChannelEvents.Count);
+        Assert.All(parsed.Skip(1), AssertUsesSingleChannel);
+    }
+
+    [Fact]
+    public void RejectsAUnitMissingFromItsOwnerTrackLayoutEvenWhenAnotherTrackDeclaresIt()
+    {
+        MidoraId trackA = MidoraId.FromSequence(1);
+        MidoraId trackB = MidoraId.FromSequence(2);
+        CanonicalCompiledResult compiled = CreateSyntheticCompiled(
+        [
+            SyntheticEvent(trackA, 0, MidiMessage.NoteOn(0, 60, 100), 0)
+        ]);
+
+        MidiExportEncodingResult encoded = CanonicalMidiFileExporter.EncodeWholeProject(new()
+        {
+            CompiledResult = compiled,
+            ConductorTrackName = "Conductor",
+            LogicalTracks =
+            [
+                new(trackA, new Dictionary<MidiExportChannelUnit, string>
+                {
+                    [new(0, 1)] = "Port 1 / Channel 2"
+                }),
+                new(trackB, new Dictionary<MidiExportChannelUnit, string>
+                {
+                    [new(0, 0)] = "Port 1 / Channel 1"
+                })
+            ]
+        });
+
+        Assert.False(encoded.Succeeded);
+        Assert.Empty(encoded.FileBytes);
+        Assert.Contains(encoded.Diagnostics, value => value.Code == "MIDORA-MIDI-EXPORT-UNIT-LAYOUT");
     }
 
     [Fact]
@@ -314,7 +363,11 @@ public sealed class CanonicalMidiFileExporterTests
         ]);
         MidiExportLogicalTrackLayout layout = new(
             trackId,
-            new Dictionary<byte, string> { [0] = "Track / Port 1", [2] = "Track / Port 3" });
+            new Dictionary<MidiExportChannelUnit, string>
+            {
+                [new(0, 0)] = "Port 1 / Channel 1",
+                [new(2, 1)] = "Port 3 / Channel 2"
+            });
 
         MidiExportEncodingResult encoded = CanonicalMidiFileExporter.EncodeLogicalTrack(new()
         {
@@ -326,12 +379,12 @@ public sealed class CanonicalMidiFileExporterTests
         {
             CompiledResult = CreateSyntheticCompiled([]),
             ConductorTrackName = "Conductor",
-            LogicalTrack = new(trackId, new Dictionary<byte, string>())
+            LogicalTrack = new(trackId, new Dictionary<MidiExportChannelUnit, string>())
         });
 
         Assert.True(encoded.Succeeded);
         ParsedTrack[] tracks = ParseTracks(encoded.FileBytes);
-        Assert.Equal(["Conductor", "Track / Port 1", "Track / Port 3"], tracks.Select(GetTrackName));
+        Assert.Equal(["Conductor", "Port 1 / Channel 1", "Port 3 / Channel 2"], tracks.Select(GetTrackName));
         Assert.Contains(tracks[1].MetaEvents, value =>
             value.Type == StandardMidiFile.MidiPortMetaType && value.Data.SequenceEqual(new byte[] { 0 }));
         Assert.Contains(tracks[2].MetaEvents, value =>
@@ -344,7 +397,7 @@ public sealed class CanonicalMidiFileExporterTests
     }
 
     [Fact]
-    public void PerPortKeepsLogicalTrackOrderAndNormalizesEveryEventTrackToPortOne()
+    public void PerPortOrdersUnitsByChannelAndNormalizesEveryEventTrackToPortOne()
     {
         MidoraId trackA = MidoraId.FromSequence(1);
         MidoraId trackB = MidoraId.FromSequence(2);
@@ -362,8 +415,14 @@ public sealed class CanonicalMidiFileExporterTests
             ZeroBasedOriginalPort = 2,
             LogicalTracks =
             [
-                new(trackB, new Dictionary<byte, string> { [2] = "B / Port 3" }),
-                new(trackA, new Dictionary<byte, string> { [2] = "A / Port 3" })
+                new(trackB, new Dictionary<MidiExportChannelUnit, string>
+                {
+                    [new(2, 1)] = "Port 3 / Channel 2"
+                }),
+                new(trackA, new Dictionary<MidiExportChannelUnit, string>
+                {
+                    [new(2, 0)] = "Port 3 / Channel 1"
+                })
             ]
         });
         MidiExportEncodingResult unused = CanonicalMidiFileExporter.EncodePort(new()
@@ -373,16 +432,17 @@ public sealed class CanonicalMidiFileExporterTests
             ZeroBasedOriginalPort = 15,
             LogicalTracks =
             [
-                new(trackB, new Dictionary<byte, string>()),
-                new(trackA, new Dictionary<byte, string>())
+                new(trackB, new Dictionary<MidiExportChannelUnit, string>()),
+                new(trackA, new Dictionary<MidiExportChannelUnit, string>())
             ]
         });
 
         Assert.True(encoded.Succeeded);
         ParsedTrack[] tracks = ParseTracks(encoded.FileBytes);
-        Assert.Equal(["Conductor", "B / Port 3", "A / Port 3"], tracks.Select(GetTrackName));
+        Assert.Equal(["Conductor", "Port 3 / Channel 1", "Port 3 / Channel 2"], tracks.Select(GetTrackName));
         Assert.All(tracks.Skip(1), track => Assert.Contains(track.MetaEvents, value =>
             value.Type == StandardMidiFile.MidiPortMetaType && value.Data.SequenceEqual(new byte[] { 0 })));
+        Assert.All(tracks.Skip(1), AssertUsesSingleChannel);
         Assert.DoesNotContain(tracks.SelectMany(track => track.ChannelEvents), value => value.Data[1] == 62);
         Assert.False(unused.Succeeded);
         Assert.Contains(unused.Diagnostics, value => value.Code == "MIDORA-MIDI-EXPORT-UNUSED-PORT");
@@ -417,8 +477,15 @@ public sealed class CanonicalMidiFileExporterTests
         return (project, track, instrument, voice);
     }
 
-    private static MidiExportLogicalTrackLayout Layout(MidoraId trackId, byte port, string name) =>
-        new(trackId, new Dictionary<byte, string> { [port] = name });
+    private static MidiExportLogicalTrackLayout Layout(
+        MidoraId trackId,
+        byte port,
+        string name,
+        byte zeroBasedChannel = 0) =>
+        new(trackId, new Dictionary<MidiExportChannelUnit, string>
+        {
+            [new(port, zeroBasedChannel)] = name
+        });
 
     private static CanonicalCompiledResult CreateSyntheticCompiled(
         MidoraId trackId,
@@ -497,6 +564,15 @@ public sealed class CanonicalMidiFileExporterTests
     {
         TimedMetaEvent name = Assert.Single(track.MetaEvents, value => value.Type == StandardMidiFile.TrackNameMetaType);
         return Encoding.UTF8.GetString(name.Data);
+    }
+
+    private static void AssertUsesSingleChannel(ParsedTrack track)
+    {
+        byte[] channels = track.ChannelEvents
+            .Select(value => (byte)(value.Data[0] & 0x0f))
+            .Distinct()
+            .ToArray();
+        Assert.Single(channels);
     }
 
     private static ParsedTrack[] ParseTracks(byte[] file)

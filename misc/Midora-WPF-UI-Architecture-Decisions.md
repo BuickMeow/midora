@@ -213,7 +213,7 @@
 ## ADR-UI-030：SubVoice 事件 Mapping 按精确标量目标共享
 
 - 决定：`TemplateEvent` 只保存事件点自身的稳定 ID、tick、类型和值，不再拥有 Number / Value / Secondary Value 三条 Mapping Chain。`SubVoice` 按精确的 `TemplateEventMappingTarget` 拥有共享 Mapping；其身份为事件种类、必要的事件编号以及可映射标量字段。Note 因而分别有 Number 与 Velocity 两个目标，Bank 分别有 MSB / LSB，Pitch Bend Range 分别有 Semitones / Cents；不同 CC、RPN、NRPN number 仍是不同目标。
-- 决定：同一 SubVoice 中，同一精确标量目标无论有多少事件点，只存在一条 Mapping Chain 和一组整数目标设置。删除全部对应事件点不自动删除该共享 Mapping；以后重新创建该类事件继续复用原定义。事件点复制、批量复制和 Timeline clipboard 只复制事件点值，不复制 Mapping。完整 SubVoice 复制则只复制一次共享 Mapping 集合，并确定地重映射其 Parameter、Envelope 与 Mapping Function 引用。
+- 决定：同一 SubVoice 中，同一精确标量目标无论有多少事件点，最多存在一条 Mapping Chain 和一组整数目标设置。删除全部对应事件点不自动删除该共享 Mapping；以后重新创建该类事件继续复用原定义。用户显式删除非 Note Mapping owner 后，现存原始事件 Lane 仍可见并以原始值直通，普通事件点编辑和同目标新增点不得静默重建 owner；Note Number/Velocity owner 不允许整链删除。事件点复制、批量复制和 Timeline clipboard 只复制事件点值，不复制 Mapping。完整 SubVoice 复制则只复制一次共享 Mapping 集合，并确定地重映射其 Parameter、Envelope 与 Mapping Function 引用。
 - 决定：Compiler、Semantic Validator、fingerprint、稳定 ID 审计、持久化和 Mapping 编辑器只枚举 `SubVoice.EventMappings` 一次。编译某个事件点时，根据该点的精确目标查找共享 Mapping，并继续把该事件点稳定 ID写入 canonical source trace；共享所有权不得削弱逐事件诊断定位。
 - 持久化：开发期直接替换 Event Instrument protobuf 模型；`TemplateEventV1` 不再保存三条 Mapping，`SubVoiceV1` 新增共享 Mapping 集合。不提供旧 per-event Mapping 数据迁移或双读分支。
 - 原因：per-event 三链模型使没有 Mapping 的海量事件点也各自分配三个稳定对象，事件点数量增长会线性放大内存、Project 对象图、Mapping 列表、序列化体积和 fingerprint 成本；实际 Mapping 语义属于同一 SubVoice 的事件目标转换规则，不属于单个采样点。

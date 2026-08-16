@@ -668,7 +668,17 @@ public static partial class ProjectDomainEditCommands
                 .Select((value, index) => new IndexedTemplateEvent(value, index))
                 .Where(value => TemplateEventsConflict(value.Event, replacement))
                 .ToArray();
+            HashSet<TemplateEventMappingTarget> existingTargets = voice.Events
+                .SelectMany(TemplateEventMappingTarget.Enumerate)
+                .ToHashSet();
+            TemplateEventMappingTarget[] optionalMappingTargetsToCreate =
+                EnumerateTemplateEventMappingTargets(replacement)
+                    .Where(target => target.EventKind != TemplateEventKind.Note
+                        && !existingTargets.Contains(target)
+                        && voice.EventMappings.All(mapping => mapping.Target != target))
+                    .ToArray();
             ValidateRestorableTemplateEventConflicts(conflicts);
+            SubVoiceEventMapping[]? createdMappings = null;
             return DeferredCreate(
                 EventInstrumentChange(eventInstrumentId),
                 owner =>
@@ -676,23 +686,107 @@ public static partial class ProjectDomainEditCommands
                     TemplateEvent created = new(owner);
                     SetTemplateEvent(created, replacement);
                     RemoveTemplateEventConflicts(voice, conflicts);
-                    voice.Events.Add(created);
+                    voice.Events.AddWithoutOptionalMappingCreation(created);
+                    createdMappings ??= optionalMappingTargetsToCreate
+                        .Select(target => new SubVoiceEventMapping(owner, target))
+                        .ToArray();
+                    RestoreNewTemplateEventMappings(voice, createdMappings);
                     instrument.TemplateLengthTicks = replacementTemplateLength;
                     return created;
                 },
                 (_, created) =>
                 {
                     RemoveTemplateEventConflicts(voice, conflicts);
-                    voice.Events.Add(created);
+                    voice.Events.AddWithoutOptionalMappingCreation(created);
+                    RestoreNewTemplateEventMappings(
+                        voice,
+                        createdMappings ?? throw new InvalidOperationException(
+                            "Template Event mappings were not prepared before Redo."));
                     instrument.TemplateLengthTicks = replacementTemplateLength;
                 },
                 (_, created) =>
                 {
                     RemoveRequired(voice.Events, created, "Template Event");
+                    foreach (SubVoiceEventMapping mapping in createdMappings ?? [])
+                    {
+                        RemoveRequired(
+                            voice.EventMappings,
+                            mapping,
+                            "SubVoice event Mapping");
+                    }
                     RestoreTemplateEventConflicts(voice, conflicts);
                     instrument.TemplateLengthTicks = oldTemplateLength;
                 });
         });
+
+    private static void RestoreNewTemplateEventMappings(
+        SubVoice voice,
+        IEnumerable<SubVoiceEventMapping> mappings)
+    {
+        foreach (SubVoiceEventMapping mapping in mappings)
+        {
+            if (voice.EventMappings.Any(value => value.Target == mapping.Target))
+            {
+                throw new InvalidOperationException(
+                    "The SubVoice event Mapping target already exists.");
+            }
+            voice.EventMappings.Add(mapping);
+        }
+    }
+
+    private static IEnumerable<TemplateEventMappingTarget> EnumerateTemplateEventMappingTargets(
+        TemplateEventValue value)
+    {
+        switch (value.Kind)
+        {
+            case TemplateEventKind.Note:
+                yield return TemplateEventMappingTarget.Create(
+                    value.Kind,
+                    value.Number,
+                    TemplateEventMappingParameter.Number);
+                yield return TemplateEventMappingTarget.Create(
+                    value.Kind,
+                    value.Number,
+                    TemplateEventMappingParameter.Value);
+                break;
+            case TemplateEventKind.ControlChange:
+            case TemplateEventKind.Program:
+            case TemplateEventKind.PitchBend:
+            case TemplateEventKind.RegisteredParameter:
+            case TemplateEventKind.NonRegisteredParameter:
+                yield return TemplateEventMappingTarget.Create(
+                    value.Kind,
+                    value.Number,
+                    TemplateEventMappingParameter.Value);
+                break;
+            case TemplateEventKind.Bank:
+                if (value.HasBankMsb)
+                {
+                    yield return TemplateEventMappingTarget.Create(
+                        value.Kind,
+                        value.Number,
+                        TemplateEventMappingParameter.Value);
+                }
+                if (value.HasBankLsb)
+                {
+                    yield return TemplateEventMappingTarget.Create(
+                        value.Kind,
+                        value.Number,
+                        TemplateEventMappingParameter.SecondaryValue);
+                }
+                break;
+            case TemplateEventKind.PitchBendRange:
+                yield return TemplateEventMappingTarget.Create(
+                    value.Kind,
+                    value.Number,
+                    TemplateEventMappingParameter.Value);
+                yield return TemplateEventMappingTarget.Create(
+                    value.Kind,
+                    value.Number,
+                    TemplateEventMappingParameter.SecondaryValue);
+                break;
+        }
+    }
 
     private static void ValidateTemplateEventCreation(TemplateEventValue value)
     {

@@ -29,6 +29,7 @@ public sealed class MidiExportCompilationResult
     internal MidiExportCompilationResult(
         MidiExportMode mode,
         MidiExportRoutingStrategy routing,
+        string conductorTrackName,
         CanonicalCompiledResult compiledResult,
         MidiExportLogicalTrackLayout[] layouts,
         MidiExportTrackSnapshot[] tracks,
@@ -36,6 +37,7 @@ public sealed class MidiExportCompilationResult
     {
         Mode = mode;
         Routing = routing;
+        ConductorTrackName = conductorTrackName;
         CompiledResult = compiledResult;
         Layouts = Array.AsReadOnly(layouts);
         Tracks = Array.AsReadOnly(tracks);
@@ -45,6 +47,7 @@ public sealed class MidiExportCompilationResult
     public bool Succeeded => CompiledResult.IsConsumable && !CompiledResult.IsPartial;
     public MidiExportMode Mode { get; }
     public MidiExportRoutingStrategy Routing { get; }
+    public string ConductorTrackName { get; }
     public CanonicalCompiledResult CompiledResult { get; }
     public ReadOnlyCollection<MidiExportLogicalTrackLayout> Layouts { get; }
     public ReadOnlyCollection<MidiExportTrackSnapshot> Tracks { get; }
@@ -115,21 +118,25 @@ public sealed class MidiExportCompilationCoordinator
                 continue;
             }
 
-            byte[] ports = compiled.Allocations.ToArray()
+            MidiExportChannelUnit[] units = compiled.Allocations.ToArray()
                 .Where(allocation => allocation.TrackId == track.Id)
-                .Select(allocation => allocation.ZeroBasedPort)
+                .Select(allocation => new MidiExportChannelUnit(
+                    allocation.ZeroBasedPort,
+                    allocation.ZeroBasedChannel))
                 .Concat(compiled.Events.ToArray()
                     .Where(value => value.Source.TrackId == track.Id)
-                    .Select(value => value.ZeroBasedPort))
+                    .Select(value => new MidiExportChannelUnit(
+                        value.ZeroBasedPort,
+                        value.ZeroBasedChannel)))
                 .Distinct()
-                .Order()
+                .OrderBy(unit => unit.ZeroBasedPort)
+                .ThenBy(unit => unit.ZeroBasedChannel)
                 .ToArray();
-            Dictionary<byte, string> names = ports.ToDictionary(
-                port => port,
-                port => InitialReleaseOutputNaming.GetEventTrackName(
-                    track.Name,
-                    projectDisplayOrder,
-                    port + 1));
+            Dictionary<MidiExportChannelUnit, string> names = units.ToDictionary(
+                unit => unit,
+                unit => InitialReleaseOutputNaming.GetEventTrackName(
+                    unit.ZeroBasedPort + 1,
+                    unit.ZeroBasedChannel + 1));
             layouts.Add(new(track.Id, names));
         }
 
@@ -141,6 +148,8 @@ public sealed class MidiExportCompilationCoordinator
         return new(
             request.Mode,
             request.Routing,
+            InitialReleaseOutputNaming.GetConductorTrackName(
+                request.Project.Metadata.ProjectName),
             compiled,
             layouts.ToArray(),
             trackSnapshots.ToArray(),

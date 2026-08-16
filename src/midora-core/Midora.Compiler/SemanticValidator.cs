@@ -465,11 +465,12 @@ public static class SemanticValidator
             {
                 ValidateTemplateEvent(templateEvent, instrument.TemplateLengthTicks, subSource, diagnostics);
                 if (TemplateEventMappingTarget.Enumerate(templateEvent)
-                    .Any(target => !eventMappingTargets.Contains(target)))
+                    .Any(target => target.EventKind == TemplateEventKind.Note
+                        && !eventMappingTargets.Contains(target)))
                 {
                     AddError(
                         "MIDORA1256",
-                        "The SubVoice is missing a shared Mapping definition for this Template Event target.",
+                        "The SubVoice is missing a mandatory shared Note Mapping definition.",
                         subSource with { SourceEventId = templateEvent.Id },
                         diagnostics);
                 }

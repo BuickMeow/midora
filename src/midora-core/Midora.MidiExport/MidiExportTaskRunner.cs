@@ -128,6 +128,7 @@ public sealed class MidiExportTaskRunner
     {
         MidiExportCompilationResult compilation = request.Compilation;
         CanonicalCompiledResult compiled = compilation.CompiledResult;
+        string conductorTrackName = compilation.ConductorTrackName;
         return compilation.Mode switch
         {
             MidiExportMode.WholeProject => MidiExportArtifactBuilder.BuildWholeProject(
@@ -135,7 +136,7 @@ public sealed class MidiExportTaskRunner
                 new WholeProjectMidiEncodingRequest
                 {
                     CompiledResult = compiled,
-                    ConductorTrackName = InitialReleaseOutputNaming.ConductorTrackName,
+                    ConductorTrackName = conductorTrackName,
                     LogicalTracks = compilation.Layouts
                 },
                 request.Readme),
@@ -146,7 +147,7 @@ public sealed class MidiExportTaskRunner
                     new LogicalTrackMidiEncodingRequest
                     {
                         CompiledResult = compiled,
-                        ConductorTrackName = InitialReleaseOutputNaming.ConductorTrackName,
+                        ConductorTrackName = conductorTrackName,
                         LogicalTrack = layout
                     })),
                 request.Readme),
@@ -156,7 +157,7 @@ public sealed class MidiExportTaskRunner
                     new PortMidiEncodingRequest
                     {
                         CompiledResult = compiled,
-                        ConductorTrackName = InitialReleaseOutputNaming.ConductorTrackName,
+                        ConductorTrackName = conductorTrackName,
                         LogicalTracks = compilation.Layouts,
                         ZeroBasedOriginalPort = port
                     })),

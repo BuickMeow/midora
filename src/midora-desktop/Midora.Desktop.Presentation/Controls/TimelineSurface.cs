@@ -1480,9 +1480,16 @@ public sealed class TimelineSurface : Control
             if (_notePlacementActivated)
             {
                 long rawEnd = placementViewport.XToTick(point.X - GetLaneHeaderWidth());
-                long rawDelta = Math.Max(1, checked(rawEnd - _notePlacementStartTick.Value));
-                long snappedDelta = SnapOperationDelta(rawDelta, checked(_notePlacementStartTick.Value + rawDelta));
-                _notePlacementCurrentTick = checked(_notePlacementStartTick.Value + Math.Max(1, snappedDelta));
+                long startTick = _notePlacementStartTick.Value;
+                long rawDelta = checked(rawEnd - startTick);
+                long snappedDelta = rawDelta <= 0
+                    ? GetMinimumPositiveOperationDelta(startTick)
+                    : SnapOperationDelta(rawDelta, rawEnd);
+                if (snappedDelta <= 0)
+                {
+                    snappedDelta = GetMinimumPositiveOperationDelta(startTick);
+                }
+                _notePlacementCurrentTick = checked(startTick + snappedDelta);
             }
             int placementLane = placementViewport.YToLane(point.Y - GetRulerHeight());
             int placementPitch = Math.Clamp(127 - placementLane, 0, 127);
@@ -4417,6 +4424,16 @@ public sealed class TimelineSurface : Control
             Math.Max(1, OperationStepTicks),
             OperationUsesBars,
             TimeSignatureMap);
+
+    private long GetMinimumPositiveOperationDelta(long startTick)
+    {
+        if (!OperationUsesBars || TimeSignatureMap is null)
+        {
+            return Math.Max(1, OperationStepTicks);
+        }
+        ProjectBarInfo bar = TimeSignatureMap.GetBarContaining(Math.Max(0, startTick));
+        return Math.Max(1, checked(bar.EndTick - startTick));
+    }
 
     private Brush Brush(string key, Color fallback)
     {

@@ -136,14 +136,14 @@ public sealed class BoundaryCleanupTests
             .ToArray();
 
         CanonicalMidiEvent soundOff = Assert.Single(soundOffs);
-        Assert.Equal(360, soundOff.Tick);
+        Assert.Equal(960, soundOff.Tick);
         Assert.DoesNotContain(result.Events.ToArray(), value =>
             value.Tick == 240 && value.Role == CanonicalEventRole.Reset);
         Assert.Single(result.Allocations.ToArray().Select(value => value.InstanceGroupId).Distinct());
     }
 
     [Fact]
-    public void AdjacentAllocationGroupsCleanBeforeTheReplacementStartsOnTheReusedChannel()
+    public void AdjacentAllocationGroupsDoNotInjectAllSoundOffAtGateBoundary()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 960);
         fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
@@ -154,16 +154,44 @@ public sealed class BoundaryCleanupTests
         CanonicalMidiEvent[] atReuse = result.Events.ToArray()
             .Where(value => value.Tick == 240)
             .ToArray();
-        int soundOff = Array.FindIndex(atReuse, value =>
-            value.Message.MessageType == MidiMessageType.ControlChange
-            && value.Message.Byte1 == 120);
         int noteOn = Array.FindIndex(atReuse, value =>
             value.Message.MessageType == MidiMessageType.NoteOn
             && value.Message.Byte2 != 0);
 
-        Assert.True(soundOff >= 0 && soundOff < noteOn);
-        Assert.Equal(atReuse[soundOff].ZeroBasedPort, atReuse[noteOn].ZeroBasedPort);
-        Assert.Equal(atReuse[soundOff].ZeroBasedChannel, atReuse[noteOn].ZeroBasedChannel);
+        Assert.True(noteOn >= 0);
+        Assert.DoesNotContain(atReuse, value =>
+            value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 120);
+    }
+
+    [Fact]
+    public void OrdinaryInstanceEndKeepsItsAudioAllocationAliveUntilSegmentHardEnd()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 960);
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        LogicalNote note = CompilerTestProject.AddNote(
+            fixture.Segment,
+            fixture.Instrument,
+            0,
+            240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+        ChannelUnitAllocation allocation = Assert.Single(result.Allocations.ToArray());
+
+        Assert.Equal(note.Id, allocation.InstanceId);
+        Assert.Equal(0, allocation.StartTick);
+        Assert.Equal(960, allocation.EndTick);
+        Assert.Contains(result.Events.ToArray(), value =>
+            value.Tick == 120
+            && value.Message.MessageType == MidiMessageType.NoteOff);
+        Assert.DoesNotContain(result.Events.ToArray(), value =>
+            value.Tick < 960
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 120);
+        Assert.Contains(result.Events.ToArray(), value =>
+            value.Tick == 960
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 120);
     }
 
     [Fact]

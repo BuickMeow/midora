@@ -1977,6 +1977,7 @@ public partial class MainWindow : Window
         object item)
     {
         if (!TryGetInstrumentStructureItemId(item, out MidoraId selected)) return;
+        workspace.SelectedMappingStepId = item is MappingStepListItem ? selected : null;
         _synchronizingInstrumentStructureSelection = true;
         try
         {
@@ -2023,6 +2024,7 @@ public partial class MainWindow : Window
 
     private void ClearInstrumentStructureVisualSelection(InstrumentWorkspaceViewModel workspace)
     {
+        workspace.SelectedMappingStepId = null;
         _synchronizingInstrumentStructureSelection = true;
         try
         {
@@ -2046,6 +2048,9 @@ public partial class MainWindow : Window
         InstrumentWorkspaceViewModel workspace,
         MidoraId selectedId)
     {
+        workspace.SelectedMappingStepId = workspace.MappingSteps.Any(value => value.Id == selectedId)
+            ? selectedId
+            : null;
         _synchronizingInstrumentStructureSelection = true;
         try
         {
@@ -4225,7 +4230,7 @@ public partial class MainWindow : Window
                 DataContext: InstrumentWorkspaceViewModel
                 {
                     ObjectId: MidoraId instrumentId,
-                    Selection: { Primary: MidoraId stepId }
+                    SelectedMappingStepId: MidoraId stepId
                 } workspace
             }
             || !int.TryParse(directionText, out int direction)
@@ -6206,7 +6211,7 @@ public partial class MainWindow : Window
                 if (nonEmpty
                     && MessageBox.Show(
                         this,
-                        $"Delete all {selectedChain.StepCount} step(s) from '{selectedChain.Owner}'?",
+                        $"Delete Mapping Chain '{selectedChain.Owner}' and its {selectedChain.StepCount} step(s)?",
                         "Delete Mapping Chain",
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Warning) != MessageBoxResult.Yes)

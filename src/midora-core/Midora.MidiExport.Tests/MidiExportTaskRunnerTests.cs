@@ -2,6 +2,7 @@ using Midora.Compiler;
 using Midora.Domain;
 using Midora.Midi;
 using Midora.OutputPlanning;
+using System.Text;
 
 namespace Midora.MidiExport.Tests;
 
@@ -174,6 +175,39 @@ public sealed class MidiExportTaskRunnerTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ConductorTrackUsesTheProjectNameFrozenAtCompilationStart()
+    {
+        using TemporaryDirectory temporary = new();
+        (MidoraProject project, _) = CreateProject();
+        project.Metadata.ProjectName = "Named Midora Project";
+        using MidoraCompiler compiler = new();
+        MidiExportCompilationResult compilation = new MidiExportCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = MidiExportMode.WholeProject,
+            Routing = MidiExportRoutingStrategy.Compact,
+            EndTick = 192
+        });
+        project.Metadata.ProjectName = "Changed After Freeze";
+        string outputDirectory = temporary.PathFor("project-name");
+        MidiExportFrozenOutputPlan plan = MidiExportOutputPlanner.PlanWholeProject(
+            outputDirectory,
+            "Project",
+            null,
+            includeReadme: false);
+
+        MidiExportTaskResult result = await new MidiExportTaskRunner().ExecuteAsync(new()
+        {
+            Compilation = compilation,
+            OutputPlan = plan
+        });
+
+        Assert.Equal(MidiExportTaskStatus.Succeeded, result.Status);
+        byte[] bytes = await File.ReadAllBytesAsync(Path.Combine(outputDirectory, "Project.mid"));
+        Assert.Equal("Named Midora Project", ReadFirstTrackName(bytes));
+    }
+
     private static (MidoraProject Project, LogicalTrack Track) CreateProject()
     {
         MidoraProject project = new(192);
@@ -199,6 +233,19 @@ public sealed class MidiExportTaskRunnerTests
         track.Segments.Add(segment);
         project.Tracks.Add(track);
         return (project, track);
+    }
+
+    private static string ReadFirstTrackName(byte[] bytes)
+    {
+        const int firstTrackOffset = 14;
+        Assert.Equal("MTrk", Encoding.ASCII.GetString(bytes, firstTrackOffset, 4));
+        int cursor = firstTrackOffset + 8;
+        Assert.Equal(0, bytes[cursor++]);
+        Assert.Equal(0xff, bytes[cursor++]);
+        Assert.Equal(StandardMidiFile.TrackNameMetaType, bytes[cursor++]);
+        int length = bytes[cursor++];
+        Assert.True(length < 0x80, "The test Project name should use a one-byte MIDI length.");
+        return Encoding.UTF8.GetString(bytes, cursor, length);
     }
 
     private sealed class TemporaryDirectory : IDisposable

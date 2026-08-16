@@ -237,6 +237,53 @@ public sealed class ProjectTemplateEventEditCommandsTests
     }
 
     [Fact]
+    public void ChangingAnEventToAGenuinelyNewTargetCreatesOnlyThatOptionalMapping()
+    {
+        MidoraProject project = CreateProject();
+        EventInstrument instrument = project.EventInstruments[0];
+        SubVoice voice = instrument.SubVoices[0];
+        TemplateEvent controller = TemplateEvent.ControlChange(project, 120, 1, 64);
+        voice.Events.Add(controller);
+        SubVoiceEventMapping originalMapping = voice.FindEventMapping(
+            TemplateEventMappingTarget.Create(
+                TemplateEventKind.ControlChange,
+                1,
+                TemplateEventMappingParameter.Value))!;
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.UpdateTemplateControlChange(
+            instrument.Id,
+            voice.Id,
+            controller.Id,
+            tick: 120,
+            controller: 11,
+            value: 96));
+
+        SubVoiceEventMapping createdMapping = Assert.Single(
+            voice.EventMappings,
+            value => value.Target == TemplateEventMappingTarget.Create(
+                TemplateEventKind.ControlChange,
+                11,
+                TemplateEventMappingParameter.Value));
+        Assert.Contains(originalMapping, voice.EventMappings);
+        Assert.Equal(4, voice.EventMappings.Count);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+
+        Assert.DoesNotContain(createdMapping, voice.EventMappings);
+        Assert.Same(
+            originalMapping,
+            Assert.Single(voice.EventMappings, value =>
+                value.Target.EventKind == TemplateEventKind.ControlChange));
+        Assert.Equal(3, voice.EventMappings.Count);
+        Assert.Equal(1, controller.Number);
+        Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
     public void TemplateEventDeleteRestoresTheExactObjectAndListPosition()
     {
         MidoraProject project = CreateProject();

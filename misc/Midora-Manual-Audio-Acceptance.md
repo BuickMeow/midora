@@ -3,6 +3,8 @@
 状态：2026-08-07 全部完成；M-AUD-001～012 均通过
 日期：2026-08-06
 
+> 后续状态（2026-08-16）：本文记录的 2026-08-07 allocation-group CC120 行为是历史验收基线，其适用范围已由 ADR-CORE-040 收窄。当前只在 Segment/消费者范围硬边界发送 CC120，普通 Gate/Release/Tail/group 结束不发送；原 192-frame BASSMIDI 实测仍用于证明硬边界清理特性。
+
 首轮不可改写结果快照：`misc/Midora-Manual-Audio-Acceptance-Snapshot-2026-08-07.md`
 
 第二轮不可改写结果快照：`misc/Midora-Manual-Audio-Acceptance-Retest-Snapshot-2026-08-07.md`

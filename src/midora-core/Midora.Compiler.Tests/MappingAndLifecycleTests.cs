@@ -259,6 +259,33 @@ public sealed class MappingAndLifecycleTests
     }
 
     [Fact]
+    public void NoteCoveringEntireLoopSustainsUntilLoopLifecycleEnds()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 1_440);
+        fixture.Instrument.RequiresChannelIsolation = true;
+        fixture.Instrument.LoopStartTick = 120;
+        fixture.Instrument.LoopEndTick = 360;
+        fixture.Voice.Events.Add(TemplateEvent.Note(
+            fixture.Project,
+            tick: 0,
+            lengthTicks: 400,
+            note: 60,
+            velocity: 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 900);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(
+            result.IsConsumable,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(value => value.Message)));
+        Assert.Single(result.Events.ToArray(), value => value.Role == CanonicalEventRole.NoteOn);
+        CanonicalMidiEvent noteOff = Assert.Single(
+            result.Events.ToArray(),
+            value => value.Role == CanonicalEventRole.NoteOff);
+        Assert.Equal(1_020, noteOff.Tick);
+    }
+
+    [Fact]
     public void LongLoopExitsIntoPostLoopTailWithoutStartingNewReleaseNotes()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 1_440);
@@ -278,7 +305,7 @@ public sealed class MappingAndLifecycleTests
             && value.Message.Byte2 == 77);
         Assert.DoesNotContain(result.Events.ToArray(), value => value.Tick >= 900
             && value.Role == CanonicalEventRole.NoteOn);
-        Assert.Contains(result.Allocations.ToArray(), value => value.EndTick == 1_020);
+        Assert.Contains(result.Allocations.ToArray(), value => value.EndTick == 1_440);
     }
 
     [Fact]
@@ -460,7 +487,166 @@ public sealed class MappingAndLifecycleTests
         Assert.Contains(result.Events.ToArray(), value => value.Role == CanonicalEventRole.NoteOff && value.Tick == 300);
         Assert.Contains(result.Events.ToArray(), value => value.Tick == 250
             && value.Message.MessageType == MidiMessageType.ControlChange
-            && value.Message.Byte1 == 11 && value.Message.Byte2 == 64);
+            && value.Message.Byte1 == 11 && value.Message.Byte2 == 63);
+        Assert.Contains(result.Events.ToArray(), value => value.Tick == 299
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 11 && value.Message.Byte2 == 0);
+    }
+
+    [Fact]
+    public void EventEnvelopeMappingUsesHeldOriginalControllerStateDuringRelease()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 600);
+        fixture.Instrument.RequiresChannelIsolation = true;
+        InstrumentEnvelope envelope = new(fixture.Project)
+        {
+            StartValue = 1,
+            PeakValue = 1,
+            SustainValue = 1,
+            EndValue = 0,
+            ReleaseTicks = 100
+        };
+        fixture.Instrument.Envelopes.Add(envelope);
+        TemplateEvent expression = TemplateEvent.ControlChange(
+            fixture.Project,
+            tick: 0,
+            controller: 11,
+            value: 127);
+        expression.ValueMappings.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.Envelope,
+            EnvelopeId = envelope.Id,
+            Operation = MappingOperation.Multiply
+        });
+        expression.ValueTargetSettings.Overflow = MappingOverflow.Clamp;
+        fixture.Voice.Events.Add(expression);
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 400, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 200);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(
+            result.IsConsumable,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(value => value.Message)));
+        Assert.Contains(result.Events.ToArray(), value => value.Tick == 0
+            && value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 127);
+        Assert.Contains(result.Events.ToArray(), value => value.Tick == 250
+            && value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 63);
+        Assert.Contains(result.Events.ToArray(), value => value.Tick == 299
+            && value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 0);
+        Assert.Contains(result.Events.ToArray(), value =>
+            value.Role == CanonicalEventRole.NoteOff && value.Tick == 300);
+    }
+
+    [Fact]
+    public void EventEnvelopeMappingUsesHeldOriginalStateThroughoutAttackAndDecay()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 600);
+        fixture.Instrument.RequiresChannelIsolation = true;
+        InstrumentEnvelope envelope = new(fixture.Project)
+        {
+            StartValue = 0,
+            PeakValue = 1,
+            AttackTicks = 127,
+            HoldTicks = 0,
+            DecayTicks = 127,
+            SustainValue = 0,
+            ReleaseTicks = 0,
+            EndValue = 0
+        };
+        fixture.Instrument.Envelopes.Add(envelope);
+        TemplateEvent expression = TemplateEvent.ControlChange(
+            fixture.Project,
+            tick: 0,
+            controller: 11,
+            value: 127);
+        expression.ValueMappings.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.Envelope,
+            EnvelopeId = envelope.Id,
+            Operation = MappingOperation.Multiply
+        });
+        expression.ValueTargetSettings.Overflow = MappingOverflow.Clamp;
+        fixture.Voice.Events.Add(expression);
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 400, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 300);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(
+            result.IsConsumable,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(value => value.Message)));
+        Assert.Contains(result.Events.ToArray(), value => value.Tick == 64
+            && value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 64);
+        Assert.Contains(result.Events.ToArray(), value => value.Tick == 127
+            && value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 127);
+        Assert.Contains(result.Events.ToArray(), value => value.Tick == 191
+            && value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 63);
+        Assert.Contains(result.Events.ToArray(), value => value.Tick == 254
+            && value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 0);
+    }
+
+    [Fact]
+    public void EventEnvelopeMappingUsesEffectiveInitialStateWithoutAnEventPoint()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 600);
+        fixture.Instrument.RequiresChannelIsolation = true;
+        fixture.Voice.InitialState.Controllers[11] = 100;
+        InstrumentEnvelope envelope = new(fixture.Project)
+        {
+            StartValue = 1,
+            PeakValue = 1,
+            SustainValue = 1,
+            EndValue = 0,
+            ReleaseTicks = 100
+        };
+        fixture.Instrument.Envelopes.Add(envelope);
+        SubVoiceEventMapping mapping = fixture.Voice.GetOrCreateEventMapping(
+            TemplateEventMappingTarget.Create(
+                TemplateEventKind.ControlChange,
+                11,
+                TemplateEventMappingParameter.Value));
+        mapping.Steps.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.Envelope,
+            EnvelopeId = envelope.Id,
+            Operation = MappingOperation.Multiply
+        });
+        mapping.TargetSettings.Overflow = MappingOverflow.Clamp;
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 400, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 200);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(
+            result.IsConsumable,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(value => value.Message)));
+        Assert.Contains(result.Events.ToArray(), value => value.Tick == 0
+            && value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 100);
+        Assert.Contains(result.Events.ToArray(), value => value.Tick == 250
+            && value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 49);
+        Assert.Contains(result.Events.ToArray(), value => value.Tick == 299
+            && value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 0);
     }
 
     [Fact]

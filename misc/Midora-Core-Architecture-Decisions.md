@@ -193,8 +193,8 @@ Requirement trace：
 
 Requirement trace：
 
-- 输入：用途为 `MidiExport`、成功、完整、可消费的 `CanonicalCompiledResult`，以及按 Logical Track 手动顺序提供的显式 Track/Port 名称布局。编码器不读取 Project、播放状态、SoundFont、设备或 Mute/Solo。
-- 正式输出：范围起点重基为 MIDI tick 0 的确定性 SMF Type 1 字节；Track 0 为 Conductor，事件 Track 按 Logical Track 布局顺序再按 Port 排序；所有 Track 在统一相对 `endTick - startTick` 写 EOT。
+- 输入：用途为 `MidiExport`、成功、完整、可消费的 `CanonicalCompiledResult`，以及按原始 Channel Unit 提供的显式 Unit Track Name 布局。编码器不读取 Project、播放状态、SoundFont、设备或 Mute/Solo。
+- 正式输出：范围起点重基为 MIDI tick 0 的确定性 SMF Type 1 字节；Track 0 为 Conductor，每个实际有 Channel Event 的原始 `(Port, Channel)` Unit 严格对应一个事件 Track，按 Port→Channel 排序；所有 Track 在统一相对 `endTick - startTick` 写 EOT。
 - 边界：Channel Event 逐条保持 canonical 子序列和真实 NoteOff velocity 0；RPN/NRPN/Pitch Bend Range 使用 canonical 已展开的标准 CC；导出器不得折叠状态，不得在 canonical 外追加 All Notes Off、All Sound Off、Reset All Controllers 或其他 Channel 清理。Track Name 的最终可见字符串由上层工作流显式提供，编码器不隐藏选择命名模板。
 - 失败条件：非 MidiExport 上下文、不可消费/partial 结果、非法 TPQ、超出四字节 VLQ 的事件间隔、24-bit Tempo 越界、非法 Time/Key Signature、未知 Channel Event、CC91/93、NoteOn velocity 0、非零 NoteOff velocity、路由/来源不一致、Track 布局缺失或自校验失败均整体失败且返回零 partial 字节。
 - 诊断：当前垂直切片区分 canonical consistency 与 encoding 两类结构化诊断；完整工作流实现时再接入统一任务/文件写入诊断，不把异常文本当持久协议。
@@ -220,7 +220,7 @@ Requirement trace：输入是源名称、导出模式、扩展名、父目录和
 
 同一目录的冲突键是 NFC + `OrdinalIgnoreCase`。分配顺序由稳定源顺序和稳定源 key 固定，第一个无后缀，后续使用 ` (2)`、` (3)`……并重新预算；已有文件不参加后缀分配。公共实现 `Midora.OutputPlanning.WindowsOutputFileNamePlanner` 是纯 Preparing 组件，不读取文件系统；无合法 UTF-16、合法化后为空、扩展名契约错误、预算容不下一个完整文本元素或稳定 key 重复均原子失败。
 
-23.2A 固定模板：整曲 MIDI / 音频分别为 `<ProjectStem>.mid` 与 `<ProjectStem>.wav`，ProjectStem 依 Project 名称、当前 `.midora` stem、模式固定 fallback 选择；分 Track 为 `<NN> - <LogicalTrackDisplayName>.mid/.wav`，NN 使用整个 Project 的一基手动顺序且至少两位；逐 Port MIDI 为 `Port <PP>.mid`；Readme 为 `README.md`。MIDI Conductor Track Name 固定 `Conductor`，事件 Track Name 固定 `<原始 Logical Track 名称或 fallback> / Port <P>`，不经过文件名合法化并由编码器严格 UTF-8 编码。多文件模式让用户选择完整输出目录，不自动增加嵌套目录。公共实现 `Midora.OutputPlanning.InitialReleaseOutputNaming` 只生成并合法化候选，不读取文件系统或推断覆盖权限。
+23.2A 固定模板：整曲 MIDI / 音频分别为 `<ProjectStem>.mid` 与 `<ProjectStem>.wav`，ProjectStem 依 Project 名称、当前 `.midora` stem、模式固定 fallback 选择；分 Track 为 `<NN> - <LogicalTrackDisplayName>.mid/.wav`，NN 使用整个 Project 的一基手动顺序且至少两位；逐 Port MIDI 为 `Port <PP>.mid`；Readme 为 `README.md`。MIDI Conductor Track Name 固定 `Conductor`，事件 Track Name 固定为一基 `Port <P> / Channel <C>`，描述原始 Channel Unit；不经过文件名合法化。多文件模式让用户选择完整输出目录，不自动增加嵌套目录。公共实现 `Midora.OutputPlanning.InitialReleaseOutputNaming` 只生成并合法化候选，不读取文件系统或推断覆盖权限。
 
 ## 14. ADR-CORE-012（已接受）：`.midora` v1 基础 Project 包垂直切片
 
@@ -283,7 +283,7 @@ Requirement trace：输入为现有目标、冻结保存快照、manifest 最小
 
 ## 18. ADR-CORE-016（已接受，Q-NUI-003 局部暂停）：MIDI Export 冻结任务与多文件事务
 
-决定：正式任务先以专用 `CompilationPurpose.MidiExport` 和显式 Track 集合生成单一 canonical 快照；Whole Project、Per Logical Track 与 Per Port 只在该 canonical 之上组织文件。Per Track 按 Track owner 过滤但保留该 Track 的全部实际 Port；无音乐输出的有效 Track 仍生成 Conductor-only SMF。Per Port 只为有 canonical 事件的 Port 生成文件，文件内 MIDI Port Meta 固定归一化为 Port 1，Track Name/文件名/Readme 保留原始一基 Port。
+决定：正式任务先以专用 `CompilationPurpose.MidiExport` 和显式 Track 集合生成单一 canonical 快照；Whole Project、Per Logical Track 与 Per Port 只在该 canonical 之上组织文件。每个文件内部严格按原始 Channel Unit 分组：一个实际有事件的 Unit 对应一个且仅一个 MIDI 事件 Track，每个 Track 只包含一个 Channel，按 Port→Channel 排序。Unit 被不同 Logical Track / Instance 在不重叠时段先后复用时仍合并进同一 Track。Per Track 先按 Track owner 过滤再按 Unit 分组；无音乐输出的有效 Track 仍生成 Conductor-only SMF。Per Port 只为有 canonical 事件的 Port 生成文件，文件内 MIDI Port Meta 固定归一化为 Port 1，Track Name/文件名/Readme 保留原始一基 Port。
 
 文件名经公共合法化器形成绝对路径并冻结，同时冻结目标存在状态和一次性覆盖授权。所有 `.mid` 与被请求的 `README.md` 先写入同卷 staging 并完成 SMF Type 1 自校验；缺失目标目录以目录 rename 整体发布，已有目录逐文件原子替换/移动并保留事务备份，任一中途失败按逆序恢复。Finalizing 前允许取消并清理；Finalizing 短暂不可取消。回滚失败保留 staging/backup 路径，发布成功后的清理失败只产生 Warning。
 
@@ -343,7 +343,7 @@ Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复�
 
 第九批命令覆盖既有 C# Mapping Function 的名称、函数体和声明 Context 字段集合更新及删除。ABI 固定为 v1，不暴露编辑入口；函数体按精确文本保存，不 Trim，仅执行有效 Unicode 与 1,048,576 scalar 持久化上限，编译错误按 SRS 允许进入 Project 并由 canonical 诊断。声明字段按 Ordinal 集合冻结和排序，参与 source fingerprint/兼容性而不改变源码缓存键。任何 Step 持有该 Function ID 都视为引用，不受当前 Operation/Enable 状态影响；确认删除后保留断裂 ID，Undo 恢复原对象与引用。
 
-第十批命令覆盖既有 Mapping Chain/Step 的启用状态、Step 全配置、手动排序、Step 删除和整链删除，统一从事件参数与 Logical Parameter Mapping 按稳定 Chain ID 定位。应用层允许 SRS 明确可保存的断裂引用、倒置/空范围和未完成配置，仅拒绝不能可靠持久化的非有限数、空引用 ID 与正常编辑器不应生成的未知枚举；只有启用 Chain 中启用 Step 的错误配置进入 compiler 诊断。v1 对象图和 protobuf 对每个目标强制保存一个只读 Chain 属性，故整链删除以 enabled 空链 sentinel 表示并保留 Chain ID/Target Settings；Undo 恢复原 enabled、原 Step 对象与顺序。Compiler 同时把活动 Step 的未知 Source/Operation/InputOverflow/DivideByZero 纳入 `MIDORA1270`，并让零宽 Remap 按该 Step 的明确 DivideByZero policy 产生目标最大值、目标默认值、0 或失败。直接矩阵测试逐项锁定 12 种内置 Source、除 Custom C# 专项外的 12 种内置 Operation、三种 Remap InputOverflow 和两向 Divide/四种 DivideByZero policy。Q-NUI-008 待确认期间，非空链删除采用显式确认。
+第十批命令覆盖既有 Mapping Chain/Step 的启用状态、Step 全配置、手动排序、Step 删除和整链删除，统一从事件参数与 Logical Parameter Mapping 按稳定 Chain ID 定位。应用层允许 SRS 明确可保存的断裂引用、倒置/空范围和未完成配置，仅拒绝不能可靠持久化的非有限数、空引用 ID 与正常编辑器不应生成的未知枚举；只有启用 Chain 中启用 Step 的错误配置进入 compiler 诊断。该批最初以 enabled 空链 sentinel 表示整链删除并保留 Chain ID/Target Settings；这一开发期表示已由共享 Mapping owner 重构与 ADR-CORE-040 取代：Note owner 强制保留，非 Note Event/Logical Parameter owner 物理删除。Compiler 同时把活动 Step 的未知 Source/Operation/InputOverflow/DivideByZero 纳入 `MIDORA1270`，并让零宽 Remap 按该 Step 的明确 DivideByZero policy 产生目标最大值、目标默认值、0 或失败。直接矩阵测试逐项锁定 12 种内置 Source、除 Custom C# 专项外的 12 种内置 Operation、三种 Remap InputOverflow 和两向 Divide/四种 DivideByZero policy。非空链删除继续采用显式确认。
 
 第十一批命令覆盖不需要批量迁移既有 Lane 的 Logical Parameter Definition 属性、引用保留删除、Logical Parameter Mapping 属性和事件参数 Target Settings。display range 只影响展示，仍进入 History/Modified，但从 Track source fingerprint 排除并使用空 change-set；名称可能影响 MappingContext，default/legal range、Mapping source/target/order/target policy 均失效相关 Instrument。相同 SubVoice/目标的 Logical Parameter Mapping 在显式策略编辑时作为一个共享组同步，Undo 为每个对象恢复原值；移动 Mapping 到现有组采用该组既有一致策略，损坏且不一致的组先拒绝普通移动。删除 Definition 或 Mapping 保留全部外部断裂 ID、内部 Chain/Step 与稳定身份。Compiler 防御未知 Parameter Type 及越界 Enum item。Q-NUI-009 决定前，不实现类型、Enum 模式/数值/顺序/删除或任何需要改写全 Project Lane Point 的 Definition 变更。
 
@@ -516,3 +516,27 @@ Requirement trace：输入为当前 Project、高水位、创建/复制/Split �
 转换统一复用 Q-NUI-007：Double→Integer/Enum 按 Away From Zero；Clamp 先限 legal range，Enum 再选最近已定义值且等距选较小值；Discard 删除转换后不合法点；目标 Enum 的保留点强制 Step。Curve Point 和保留 Enum item 的稳定 ID 不变；新增 Enum item 仅首次 Apply 分配，Undo 高水位不退，Redo 恢复同一 item。Definition、Enum items、所有 Lane 与编译 change set 一次提交/回滚，不允许暴露中间非法对象图。
 
 Requirement trace：输入为当前 Definition、完整目标 Definition/有序 Enum 集合、显式迁移策略、Enum 确认和全 Project Lane；正式输出为稳定 ID 可追踪且 Full/Incremental 等价的新源图。边界是目标 Enum 非空、名称/值/default 合法、existing item ID 属于当前 Definition、失败前尽量零分配、编译失败完整回滚。迁移结果属于 Project 源数据；策略与确认只属于一次命令，不持久化。明确非目标是按名称重绑、静默 Clamp、生成新 Point ID、逐 Lane 留下半迁移状态或保证 Enum 音乐语义等价。
+
+## 42. ADR-CORE-040（已接受）：可选 Mapping owner、状态持有 Envelope 与生命周期硬边界
+
+决定：Note Number / Velocity 的 `SubVoiceEventMapping` 继续作为强制共享目标；非 Note `SubVoiceEventMapping` 与 `LogicalParameterMapping` 是可删除的可选源对象。删除整条 Chain 时移除其 owner，非空删除仍要求一次明确确认，Undo 恢复同一 owner、Chain、Step、引用和顺序。显式新建非 Note 事件时可同时创建其初始可选 Mapping owner；后续点编辑、集合重新插入、编译和打开修复不得把用户已删除的可选 owner 静默重建。owner 不存在或 Chain 为空/禁用时均直接使用原始值。
+
+非 Note MIDI 目标是状态型数据。直接事件 Mapping Chain 含 Envelope Step 时，`originalParameterValue` 使用当前实例内最近一次原始事件值；首个原始事件之前使用合并后的 Project / Event Instrument / SubVoice Initial State，仍无覆盖时使用目标类型默认值。Envelope 在实例及 Release 的左闭右开整数 tick 范围逐 tick 求值，完整链最终整数值不变时抑制重复输出；非零 Release 的最后一个有效 tick 必须已经达到 End Value，随后才允许实际 NoteOff/Reset。该规则与 Logical Parameter Mapping 的 `c` 状态继承一致。
+
+Loop Start 前开始、其模板 Note 生命周期完整跨过 Loop End 的 Note 只发送一次 NoteOn，并保持到 Gate/Release/策略结束；Loop 迭代不重触发该 Note。普通 Gate End、Release End、Tail End或 Channel Unit 普通复用只执行精确 NoteOff 与目标 Reset，不发送 CC120 All Sound Off；CC120 只允许出现在 Segment End 等明确硬裁剪边界及一次性消费者范围硬结束清理。Track 绑定及 Event Instrument 源修订必须进入 Full/Incremental 共同的依赖 fingerprint，不能依赖保存/重开使运行时缓存偶然失效。
+
+Requirement trace：输入为可选/强制 Mapping owner、原始状态事件、Initial State、Envelope、Loop、Gate、Segment 边界、Track 绑定和源修订；正式输出为确定的 canonical MIDI 状态变化、Note 生命周期、Reset/CC120 边界及可逆 Project 源图。失败条件包括活动 Mapping 引用断裂、非法目标/值、映射运行失败、非法 Loop/Envelope 和资源不足；失败不得发布部分 canonical。Mapping owner、Step、Envelope、Loop、Initial/Reset 和绑定属于 Project 源数据；选择、Scenario Preview、canonical、fingerprint 与缓存属于派生/运行时状态。明确非目标是把 Reset Defaults 当作 Initial State、在 Gate End 用 CC120 修复尾音、让所有 Loop Note 自动无限保持、或为开发期旧空链 sentinel 增加兼容分支。
+
+## 43. ADR-CORE-041（已接受）：MIDI Conductor Track Name 冻结为 Project Name
+
+决定：MIDI 导出任务在准备阶段冻结 Project Metadata 中的 Project Name，并将其作为每个产物 Track 0 的 Track Name Meta Event；空或纯空白的防御性输入回退为 `Conductor`。任务准备后即使活动 Project 名称改变，本任务也继续使用冻结值。`Conductor / Meta Track` 仍是结构角色名称，不再作为正常项目的固定用户可见曲名。
+
+Requirement trace：输入为任务准备时 Project Name 和 canonical 导出请求；正式输出为 SMF Type 1 Track 0 的确定 UTF-8 Track Name。边界是所有 Whole/Per Track/Per Port 产物使用同一冻结名称，事件 Track 继续使用 `Port <P> / Channel <C>`，名称不参与文件名合法化、路由或可听语义。Project Name 属于源数据；冻结任务快照属于运行时，不持久化、不回写 Project。明确非目标是把输出文件 stem、Logical Track 名称或结构角色 `Conductor` 重新解释为项目名称。
+
+## 44. ADR-CORE-042（已接受）：Segment-owned Unit lane 与 SoundFont release 连续性
+
+决定：普通 instance lifecycle end 仍只产生精确 NoteOff 与必要目标 Reset，但不能同时结束该 Segment 的音频 Unit fragment。对同一 Track / Event Instrument / Segment，非隔离 instance 共用一个 Segment-owned lane；隔离 instance 按生命周期重叠峰值做确定性 lane coloring，生命周期不重叠的 instance 复用同一 lane。每条实际启用 lane 从首个 instance 起持续到 Segment End，Segment End 才执行 CC120 与最终 Reset并允许跨 Segment 复用。自然编译范围取实际生成 instance 所属 Segment 的最晚 Segment End。
+
+该选择使 BASSMIDI 在普通 NoteOff 后继续解码自然 sample release，且 miss/captured Segment PCM、cache hit、实时播放、离线渲染和 MIDI canonical 共用同一硬边界。它会把资源峰值从“同一 tick 活动 instance 数”提高到“同时处于已启用且尚未到 Segment End 的 lane 数”；这是维持尾音的 Segment/Track 归属、Mute/Solo 可寻址性和 Segment End CC120 安全性的必要代价，超过 256 仍按正式资源不足失败，不能通过提前 SoundOff 降级。
+
+Requirement trace：输入为 instance lifecycle、Segment ID/End、隔离模式、SubVoice、canonical NoteOff/Reset；正式输出为确定的 Segment-owned allocation、覆盖 Segment release horizon 的 Unit fragment、Segment End CC120 和相同的 MIDI route。边界是普通 Reset 先于同 Segment lane 后续 Initial/NoteOn、重叠隔离 instance 仍分 lane、完全未生成 instance 的 Segment 不延长自然范围。Project 源模型不新增字段；allocation、PCM fragment、缓存与 lane coloring 均为编译/运行时派生。明确非目标是猜测 SF2 release 时长、固定增加若干秒 tail、在 Gate End 发 CC120，或把原生 sample release 解释为新的 Event Instrument 生命周期事件。

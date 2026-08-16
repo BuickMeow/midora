@@ -22,7 +22,7 @@ public sealed class SemanticValidatorTests
     }
 
     [Fact]
-    public void MissingSharedSubVoiceEventMappingIsRejected()
+    public void MissingMandatorySharedNoteMappingIsRejected()
     {
         var fixture = CompilerTestProject.Create();
         fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
@@ -33,6 +33,28 @@ public sealed class SemanticValidatorTests
 
         Assert.False(result.IsConsumable);
         Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1256");
+    }
+
+    [Fact]
+    public void MissingNonNoteSharedMappingUsesRawEventValue()
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 0, 11, 83));
+        fixture.Voice.EventMappings.RemoveAll(mapping =>
+            mapping.Target.EventKind == TemplateEventKind.ControlChange);
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(
+            result.IsConsumable,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(value => value.Message)));
+        Assert.Contains(result.Events.ToArray(), value =>
+            value.Tick == 0
+            && value.Message.MessageType == Midora.Midi.MidiMessageType.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 83);
     }
 
     [Theory]
@@ -465,7 +487,7 @@ public sealed class SemanticValidatorTests
         Assert.Contains(overResult.Diagnostics, value => value.Code == "MIDORA2202" && value.Severity == DiagnosticSeverity.Error);
         ResourceShortageDetails shortage = Assert.IsType<ResourceShortageDetails>(
             overResult.Statistics.ResourceShortage);
-        Assert.Equal(new TickRange(0, 480), shortage.Range);
+        Assert.Equal(new TickRange(0, 1_920), shortage.Range);
         Assert.Equal(1, shortage.RequestedChannelUnitCount);
         Assert.Equal(0, shortage.AvailableChannelUnitCount);
         Assert.Equal(2, shortage.TrackIds.Length);

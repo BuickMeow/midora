@@ -1,8 +1,8 @@
 # Midora 初版非 UI 实施决定问题库
 
-状态：Q-NUI-001～Q-NUI-028、Q-NUI-030、Q-NUI-034～Q-NUI-042 的产品答复均已记录；Q-NUI-029、Q-NUI-031～Q-NUI-033、Q-NUI-043～Q-NUI-048 为已按推荐方案实施、待产品确认的小决定；新的 Segment/Unit 音频缓存与 underrun 恢复架构已无剩余大决定阻塞，主体实现完成并进入全量门禁；M-AUD-001～012 全部通过
+状态：Q-NUI-001～Q-NUI-028、Q-NUI-030、Q-NUI-034～Q-NUI-042、Q-NUI-049 的产品答复均已记录；Q-NUI-029、Q-NUI-031～Q-NUI-033、Q-NUI-043～Q-NUI-048 为已按推荐方案实施、待产品确认的小决定；新的 Segment/Unit 音频缓存与 underrun 恢复架构已无剩余大决定阻塞，主体实现完成并进入全量门禁；M-AUD-001～012 全部通过
 创建日期：2026-08-06
-最近更新：2026-08-08
+最近更新：2026-08-16
 关联台账：`misc/Midora-Non-UI-Implementation-Tracker.md`
 
 本文只收录实施“全部非 UI 初版能力”过程中真正需要产品所有者决定、确认或修改的问题。SRS 已规定的事实以及 `misc/Midora-SRS-Code-Conformance-Audit-2026-08-05.md` 中已确认的 1A～25.1A 不重复登记。
@@ -26,7 +26,7 @@
 | Q-NUI-005 | 采用推荐方案：会话内 `nextStableId` 不回退，Redo 恢复原 ID，仅有已撤销瞬态分配造成的计数器空洞不单独保持 Modified。 |
 | Q-NUI-006 | 采用推荐方案；现有 Last Known Instrument Name 维护时机获确认。 |
 | Q-NUI-007 | 采用推荐方案；现有 Lane 重绑定取整、Enum 最近值和插值转换获确认。 |
-| Q-NUI-008 | 采用推荐方案；现有非空 Chain 删除确认及空 Chain sentinel 表示获确认。 |
+| Q-NUI-008 | 2026-08-16 后续决定取代旧空链 sentinel：非空 Chain 删除仍需确认；Note 共享 Mapping owner 强制保留，非 Note Event Mapping 与 Logical Parameter Mapping 删除时物理移除 owner，缺少 owner 表示原始值直通。 |
 | Q-NUI-009 | 采用推荐方案：Definition 结构编辑必须显式迁移并作为单个原子 History entry 处理全部引用 Lane。 |
 | Q-NUI-010 | 采用推荐方案；空 SubVoice 保持静音目标且不产生额外 Info。 |
 | Q-NUI-011 | 采用推荐方案，允许内部共享音频状态快照 ABI 在开发期独立升级。v2 引入 seqlock；Q-NUI-022 的 held Preview 控制引入 v3；Q-NUI-034～035 的完整恢复区间命令使当前版本升至 v4，并继续保持同一 header/seqlock。该 ABI 是内部版本号，因此不适用 Q-NUI-003 的外部 Project 文件开发期版本原则。 |
@@ -44,7 +44,7 @@
 | Q-NUI-023 | 选择备选 A：直接把开发期 v1 的领域、创建与 schema 合法范围收窄为 `1..32767`，拒绝高 TPQ v1。当前处于开发期，没有既有兼容承诺，不创建新版本或迁移。 |
 | Q-NUI-024 | Midora 稳定 ID 的核心值改为单个 C# `long`；不再以 `Guid`、`UInt128` 或两个 `ulong` 承载。Project 范围内的持久化单调递增 ID 足够满足身份需求。 |
 | Q-NUI-025 | 采用推荐方案：合法范围 `1..long.MaxValue`；JSON 使用 canonical 十进制 integer；对象文件名使用无符号、无前导零的十进制 ASCII；protobuf 使用标量 `int64` 并保留各外层字段号；直接重写开发期 v1 契约，不提供 128-bit v1 迁移器。 |
-| Q-NUI-026 | 采用推荐方案 A：allocation group 实际结束时执行精确 NoteOff → CC120 All Sound Off → Project/Global 状态 Reset → Channel Unit 释放/复用。真实 BASSMIDI/SF2 对比已确认 CC120 在 48 kHz 下经过固定 192-frame（4 ms）防爆音衰减后稳定为零，且只影响目标 Channel；正式实现和自动回归已完成，等待人工复听。 |
+| Q-NUI-026 | 2026-08-16 可听语义决定取代原适用范围：普通 Gate/Release/Tail/allocation-group 结束不发送 CC120，只执行精确 NoteOff 与目标 Reset；CC120 仅用于 Segment End 和显式消费者范围结束等硬边界。此前 BASSMIDI 的 192-frame 实测仍作为硬边界实现事实保留。 |
 | Q-NUI-027 | 接受已实施方案：人工 Console 使用显式 `MIDORA_AUDIO_WORKER_PATH` 或标准 `win-x64/publish` Native AOT `.exe`，不存在时失败，绝不回退 managed `.dll`。 |
 | Q-NUI-028 | 活动输出设备播放中被拔出或禁用时，断开当前输出并受控停止；主应用不得因清理异常崩溃，必须要求用户显式重新指定设备，完成选择前不得自动或静默切换到任何设备。非活动设备变化不影响当前播放。 |
 | Q-NUI-030 | 采用推荐方案：直接收紧开发期 v1，要求 Project 中每个 Time Signature 都满足 `4 × TPQ % denominator == 0`；Domain、semantic validation 和 persistence 统一拒绝不兼容组合。按 Q-NUI-003 直接修改 v1，不创建迁移版本。现已实施统一 Project Time Signature Map、可逆 Bar:Beat:Tick、自然拍网格/Snap 和中途截断 Warning。 |
@@ -57,8 +57,20 @@
 | Q-NUI-040 | 采用推荐缓存边界：正式 Project 内容在主时间线、固定 Segment Preview 和 exact-key 离线渲染间复用 raw Unit PCM；草稿及未知 Gate Preview 使用 transient generation。 |
 | Q-NUI-041 | 采用推荐方案：Application Preferences 的默认缓存根目录为 `%LOCALAPPDATA%\Midora\AudioCache`，默认 reusable 上限为 16 GiB，允许 `0..long.MaxValue` bytes，0 禁用 reusable cache；仅允许可写的本机绝对路径，拒绝相对路径和 UNC/network path。Transient Recovery Spool 独立于 reusable 配额并单独透明显示；若磁盘 spool 和预留 RAM 都不可用，则受控 Stop、保留失败 tick 并报告 `AudioRecoveryStorageUnavailable`。 |
 | Q-NUI-042 | 采用推荐方案：Realtime 与 Offline 继续作为两个独立可编辑设置，统一语义为 `Maximum Sample Voices per Unit Stream`；新安装 Realtime 默认 500，新 Project Offline 默认 500。任一值只能在无活动音频任务时提交，并清除当前 Project/session 的全部 PCM/audio cache generations；tick-domain compiler/canonical cache 不失效。开发期 v1 直接修改默认，不创建迁移。 |
+| Q-NUI-049 | 产品所有者要求 MIDI 导出避免单个 MIDI Track 包含多个 Channel：每个实际有事件的 Channel Unit（Port + Channel）在同一文件内严格对应一个事件 Track；同一 Unit 被不同 Logical Track / Instance 先后复用时仍合并为一个 Track。按原始 Port→Channel 排序，Track Name 使用一基 `Port <P> / Channel <C>`。 |
 
 版本判定以产品答复为准：开发期尚未冻结的外部 Project 文件契约直接修订 v1；不得仅因为开发过程中的字段或范围变化创建 v2。内部 ABI 有独立生命周期，Q-NUI-011 明确允许升级。后续冻结时再确定首个正式版本的完整 schema、descriptor 与 golden 资产。Q-NUI-034～Q-NUI-042 已完整冻结新的缓存/underrun、运行时存储和设置边界。
+
+### Q-NUI-049：MIDI 导出每个 Channel Unit 严格对应一个 MIDI Track
+
+- 类型：文件兼容性语义变更；产品所有者已明确确认。
+- 记录日期：2026-08-15。
+- 产品回答：MIDI 导出时避免一个 MIDI Track 出现多个 Channel；将一个 Unit 严格对应一个 Track，因为部分 MIDI 编辑器不支持单 Track 多 Channel。
+- 先前规格与源码事实：SRS §14.3 和编码器按 `Logical Track × Port` 分组，因此同一 Logical Track / Port 内的多个 Channel Unit 会进入同一个事件 Track；Track Name 为 `<LogicalTrackDisplayName> / Port <P>`。
+- 实施判定：Channel Unit 继续定义为 canonical 原始 `(Port, Channel)`。同一文件内，一个实际有 Channel Event 的 Unit 只生成一个事件 Track，每个事件 Track 只包含该 Unit；Unit 被不同 Logical Track / Instance 在不重叠时段先后复用时仍合并。Track 顺序固定为 Port→Channel，Track Name 固定为 `Port <P> / Channel <C>`。Per Logical Track 先做 owner 过滤，Per Port 先做 Port 过滤，再应用同一 Unit 分组。
+- 影响范围：SMF Track 数量、事件 Track Name、Whole/Per Track/Per Port 内部组织、Track 排序、Readme 兼容说明、编码公共契约和 golden / parser 测试；不改变 Project、canonical、Unit 分配、MIDI Channel status、可听语义、Export Settings 或文件命名。
+- 明确取舍：Whole Project / Per Port 文件不再在事件 Track 层保持 Logical Track 拆分；这是实现“一 Unit 一 Track”且处理 Unit 跨 Logical Track 时段复用所必需的结果。Per Logical Track 模式仍通过独立文件保持 Logical Track 边界。
+- 当前实施状态：SRS、ADR、requirement trace、编码器和公共命名契约均已修订；Core Release 构建 0 warning / 0 error，核心解决方案 901/901 测试通过，其中 MIDI Export 35/35。
 
 ### Q-NUI-024：`MidoraId` 改为单个 `long` 的稳定 ID
 
@@ -108,6 +120,7 @@ Q-NUI-026～027 是本轮新增问题；其后 Q-NUI-002～025 的状态、产�
 - 产品回答：2026-08-07，采用推荐方案 A。实施前先验证两点：CC120 是否真正截断 SoundFont 自带 release 并稳定保证目标 Channel 无残余音；CC120 是否只作用于对应 Channel 而不是全局。
 - 实测结论：使用首轮人工验收同一 `test.sf2`、BASSMIDI `2.4.16.0`、48 kHz 对比。仅 NoteOff 的 release 到 24000-frame 测试缓冲末端仍非零；在 frame 6000 加入 CC120 后，最后一个非零 frame 为 6191，即 192 frames / 4 ms 的后端防爆音衰减，frame 6192 起严格全零。双 Channel 同一 Stream 中，目标 Channel 衰减结束后的 PCM 与“只渲染非目标 Channel”的参考逐字节相同，证明 CC120 不是 Stream/全局清理且未改变另一 Channel。官方 BASSMIDI 事件定义也将 `MIDI_EVENT_SOUNDOFF` 标为对应 MIDI controller 120、按 `chan` 参数作用的 Stop all sounds；实测而非文档推断作为本次实现门。
 - 最终处理与提交：编译器已把状态 Reset 从单个 Raw Instance 结束迁移到实际 allocation group 结束；有发声 Note 的每个 group/Channel Unit 按精确 NoteOff → CC120 → 已使用目标 Reset 排序。非隔离重叠组只在最后实例结束时清理；相邻组同 tick 复用时旧组清理先于新组 Initial/NoteOn；硬范围结束使用同序；空 SubVoice 不发 CC120；MIDI exporter 仅忠实编码 canonical。完整发布门 873/873、0 Skip、六个 solution 0 warning/0 error，当前源码 Native AOT Worker 产物为 `artifacts/non-ui-release-gate-q026-20260807`。编译器、MIDI、真实 SF2 PCM 和进程内/Native AOT 子进程逐字节一致回归已通过，等待 M-AUD-002/005/008 人工复听后关闭可听门。
+- 2026-08-16 后续决定：产品所有者明确禁止在普通 Gate End 或 allocation-group 生命周期结束处发送 All Sound Off。ADR-CORE-040 与当前 SRS 已将 CC120 收窄到 Segment End、Project/显式范围结束等硬边界；普通结束只执行精确 NoteOff 与目标 Reset。上面的 2026-08-07 实测结论继续证明 CC120 适合硬边界，但原“每个 group 结束都发送”的适用范围已被取代。
 
 ### Q-NUI-027：人工 Console 的 Native AOT Worker 路径解析
 
@@ -506,22 +519,16 @@ Q-NUI-026～027 是本轮新增问题；其后 Q-NUI-002～025 的状态、产�
 - 产品回答：待填写。
 - 最终处理与提交：待确认后填写。
 
-### Q-NUI-008：删除非空 Mapping Chain 的确认与 v1 空链表示
+### Q-NUI-008：删除非空 Mapping Chain 的确认与可选 owner 表示
 
-- 类型：小决定
-- 状态：已按推荐实施待确认
-- 发现日期：2026-08-06
-- SRS 依据：第 9.1.4～9.1.6、9.10.1、20.4.8、20.14.5 节。
-- 已确认事实：空 Mapping Chain 等同无映射并使用原始值；删除 Mapping Chain 只解除其中对 Mapping Function 等资源的引用，不删除资源；禁用链保留配置。当前已发布 v1 Domain/Protobuf 对每个事件参数以及每条 Logical Parameter Mapping 都要求一个非空 `MappingChain` 对象，属性只读且含稳定 ID，因此不能在不改变 v1 文件契约的前提下把整个 Chain 属性真正设为 null/移除。删除确认决定不持久化。
-- 不确定点：SRS 没有明确单个非空 Mapping Chain 删除是否必须确认，也没有规定当前“永久 Chain 对象”实现应如何表达删除后的 Chain enabled 配置。若只清空 Step 但保留 `IsEnabled = false`，当前声音仍等价，但以后新建/粘贴 Step 可能继承一个用户以为已删除的禁用状态。
-- 影响范围：只影响删除映射链这一局部编辑工作流、删除后的空 Chain sentinel 值和随后再次添加 Step 的默认启用状态；不改变 Chain/Step protobuf 字段、canonical 空链语义、Mapping Function/Envelope/Logical Parameter 资源、输出格式或并发模型。操作可完整 Undo。
-- 推荐方案：删除非空 Chain 要求调用方给出一次显式确认；已确认后清空全部 Step，把永久空 Chain sentinel 的 `IsEnabled` 复位为 `true`，同时保留 Chain 稳定 ID 和目标参数的 Rounding/Overflow 设置。Undo 恢复删除前的 Chain enabled、相同 Step 对象、引用和顺序。删除已空且 enabled 的 Chain 是无操作；删除已空但 disabled 的 Chain 只复位 sentinel 并进入 History。
-- 推荐依据与限制：非空 Chain 可包含多个有序 Step，删除是集中数据损失，单次明确确认与现有非空容器删除命令一致；enabled 空 sentinel 最接近“链不存在后未来重新创建”的默认状态，同时不破坏已发布 v1 必填对象。限制是内存/文件中仍保留不可见 Chain ID，严格说是 v1 表示等价而不是物理删除对象。
-- 备选方案及差异：A. 不要求确认，直接清空并复位 enabled；操作更快但更容易误删整组 Step。B. 要求确认但保留原 `IsEnabled`；Undo 更简单，但未来重新添加 Step 可能意外继续禁用。C. 修改 Domain/Protobuf 允许 nullable/optional Chain 并发布新 schema 版本；能物理表达不存在，但会扩大文件兼容、迁移和公共接口影响，不适合作为本轮局部命令修改。
-- 当前实施状态：已按推荐实现 `DeleteMappingChain`；现有测试覆盖拒绝未确认删除、空 sentinel、资源/ID 保留、同对象同顺序 Undo、禁用状态恢复及 Full/Incremental 等价。
-- 需要产品所有者回答：是否采用推荐方案？如不采用，请选择 A、B 或明确要求另开持久化版本设计；无论选择哪项，删除链都不会级联删除 Mapping Function/Envelope/Logical Parameter 资源。
-- 产品回答：待填写。
-- 最终处理与提交：待确认后填写。
+- 类型：开发期源模型与局部编辑语义决定；已确认并实施。
+- 首次记录：2026-08-06；后续取代决定：2026-08-16。
+- SRS 依据：第 9.1.3～9.1.6、9.8、20.4.8、20.14.5 节；共享 Event Mapping 模型见 ADR-UI-030。
+- 已确认事实：同一 SubVoice 的精确事件标量目标共享 Mapping。Note Number/Velocity 是编译器需要的强制共享 owner；非 Note 事件没有 Mapping 时可以直接输出原始值。Logical Parameter Mapping 本身也是独立可选 owner。删除 Chain 不应删除 Mapping Function、Envelope 或 Logical Parameter 资源。
+- 取代原因：旧实现用 enabled 空链 sentinel 表示“已删除”，因此 Mapping Chains 列表中的非 Note 项始终存在，用户操作表现为无法删除。当前仍处于开发期，产品所有者已明确不要求旧数据兼容，继续保留 sentinel 没有成立的兼容依据。
+- 最终方案：非空 Chain 删除要求一次显式确认。Note Number/Velocity owner 拒绝整链删除；非 Note `SubVoiceEventMapping` 和 `LogicalParameterMapping` 整链删除时物理移除 owner。Undo 恢复同一 owner、Chain、Step、Target Settings、引用和原顺序。事件点不随 Mapping owner 删除；对应 Event Lane 仍从原始事件投影并以原始值直通。普通事件点编辑、重新插入和同目标新增点不得重建已删除 owner；只有显式创建一个此前不存在的事件目标入口时可创建新的空 owner。
+- 影响与边界：改变开发期 Project 对象图和序列化条目数量，不创建旧 sentinel 兼容读取分支；不改变 Note 强制 Mapping、Mapping Function/Envelope/Parameter 生命周期、canonical 唯一消费链或 Mapping ABI。删除与 Undo 进入 Project History，Full/Incremental 必须等价。
+- 自动证据：覆盖非空确认、Note 拒绝、事件/参数 owner 物理删除、相同对象与索引 Undo、删除后事件编辑/新增点保持 raw pass-through、事件 Lane 继续可见，以及 Full/Incremental 等价。
 
 ### Q-NUI-009：Logical Parameter 类型、范围与 Enum 结构变更时的既有 Lane 迁移
 

@@ -738,6 +738,8 @@ Envelope Release 作为映射源时，只在：
 Release Start 到 Release End
 ```
 之间输出映射结果。
+
+该范围采用 `[Release Start, Release End)`。当 `Release > 0` 时，范围内最后一个整数 tick 的 Envelope 值必须已经达到 End Value；实际 MIDI Note Off 与 Reset 发生在 Release End，不得因右开边界导致最后一次输出仍高于 End Value。`Release = 0` 时 Gate End 当刻直接到达 End Value，并进入同 tick 的结束排序。
 ---
 ## 10.13 Envelope 与生命周期策略关系
 ### 10.13.1 Release 可延长 Rendered Instance Length
@@ -908,7 +910,8 @@ SubVoice 不覆盖结束后 Reset Defaults
 Release / Tail 完成
 → 必要 MIDI Note Off
 → Reset
-→ Channel Unit 可释放
+→ 同一 Segment 内可由后续非重叠 instance 复用同一保留 lane
+→ SoundFont 原生 release 继续渲染到自然静音或 Segment End
 ```
 Segment End 强制裁剪时例外：
 ```text
@@ -917,6 +920,8 @@ Segment End
 → Reset
 → Channel Unit 可释放
 ```
+
+产生过 Note 的 lane 在普通 instance 结束时不得因音频 fragment 结束而停止解码、停止混音或执行等价于 All Sound Off 的 Stream 冷重置。该 lane 的正式释放边界是 Segment End；这不把 SoundFont 原生 release 计入 Event Instrument 的 Rendered Instance Length，也不产生新的模板事件。
 ### 10.16.4 All Notes Off
 实例结束时不允许用 All Notes Off 替代精确 Note Off。
 规则：
@@ -1066,6 +1071,8 @@ Segment End 是硬边界。
 | Segment End 强制裁剪 | 硬裁剪边界，不允许 Release 越界，立即 Note Off + Reset |
 ### 10.18.4 Segment End 与 Reset
 Segment End 裁剪或结束实例后，必须进入必要 Reset / Channel Unit 释放流程。
+
+CC120 All Sound Off 是硬清理，不是普通 Gate/Release/Tail 结束手段。普通生命周期结束只执行精确 NoteOff 与必要目标 Reset，不发送 CC120；只有 Segment End 强制裁剪以及消费者显式范围结束等硬边界允许发送 CC120。不得因 Gate End 时“当前没有其他 Gate”而条件性插入 CC120。
 只要实例结束或资源要释放，就必须进入 Reset 语义。
 ### 10.18.5 Segment 末尾 Reset
 承接本规格其他章节大方向需求：

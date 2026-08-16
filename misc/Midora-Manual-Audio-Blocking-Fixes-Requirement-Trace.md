@@ -4,6 +4,8 @@
 日期：2026-08-07
 需求基线：SRS 第 10.15～10.16、12.10～12.11、13.27～13.30、14.13～14.14、15.1、15.4、21.7 章及 INV-009、INV-015、INV-018、INV-019、INV-025、INV-027、INV-028。
 
+> 后续状态（2026-08-16）：本文保留 2026-08-07 的历史根因、BASSMIDI 实测和验收证据，但“每个 allocation group 结束发送 CC120”的产品语义已被 ADR-CORE-040 取代。当前规则是普通 Gate/Release/Tail/group 结束只做精确 NoteOff 与目标 Reset；CC120 只用于 Segment End 和消费者范围结束等硬边界。
+
 ## 1. 输入与正式输出
 
 - 输入是首轮人工快照中的 M-AUD-002/M-AUD-005 可听失败、M-AUD-007～009/011/012 启动阻塞，以及对应的 Project、canonical event、48 kHz PCM 和 Worker 启动路径证据。

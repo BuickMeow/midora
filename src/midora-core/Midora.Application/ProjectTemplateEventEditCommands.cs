@@ -201,6 +201,19 @@ public static partial class ProjectDomainEditCommands
             TemplateEventValue old = CaptureTemplateEvent(templateEvent);
             TemplateEventValue replacement = update(old);
             ValidateTemplateEventEdit(templateEvent, replacement);
+            HashSet<TemplateEventMappingTarget> oldTargets =
+                EnumerateTemplateEventMappingTargets(old).ToHashSet();
+            HashSet<TemplateEventMappingTarget> peerTargets = voice.Events
+                .Where(value => !ReferenceEquals(value, templateEvent))
+                .SelectMany(TemplateEventMappingTarget.Enumerate)
+                .ToHashSet();
+            TemplateEventMappingTarget[] optionalMappingTargetsToCreate =
+                EnumerateTemplateEventMappingTargets(replacement)
+                    .Where(target => target.EventKind != TemplateEventKind.Note
+                        && !oldTargets.Contains(target)
+                        && !peerTargets.Contains(target)
+                        && voice.EventMappings.All(mapping => mapping.Target != target))
+                    .ToArray();
             long requiredBoundary = replacement.Kind == TemplateEventKind.Note
                 ? checked(replacement.Tick + replacement.LengthTicks)
                 : checked(replacement.Tick + 1);
@@ -216,6 +229,7 @@ public static partial class ProjectDomainEditCommands
                 throw new InvalidOperationException(
                     "Conflicting Template Event stable IDs must be unique.");
             }
+            SubVoiceEventMapping[]? createdMappings = null;
             return Prepared(
                 old != replacement
                     || oldTemplateLength != replacementTemplateLength
@@ -229,6 +243,10 @@ public static partial class ProjectDomainEditCommands
                         RequireContains(voice.Events, conflict.Event, "conflicting Template Event");
                     }
                     SetTemplateEvent(templateEvent, replacement);
+                    createdMappings ??= optionalMappingTargetsToCreate
+                        .Select(target => new SubVoiceEventMapping(project, target))
+                        .ToArray();
+                    RestoreNewTemplateEventMappings(voice, createdMappings);
                     for (int index = conflicts.Length - 1; index >= 0; index--)
                     {
                         RemoveRequired(
@@ -257,6 +275,13 @@ public static partial class ProjectDomainEditCommands
                         restoredCount++;
                     }
                     RequireContains(voice.Events, templateEvent, "Template Event");
+                    foreach (SubVoiceEventMapping mapping in createdMappings ?? [])
+                    {
+                        RemoveRequired(
+                            voice.EventMappings,
+                            mapping,
+                            "SubVoice event Mapping");
+                    }
                     SetTemplateEvent(templateEvent, old);
                     instrument.TemplateLengthTicks = oldTemplateLength;
                     foreach (IndexedTemplateEvent conflict in conflicts)

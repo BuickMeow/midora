@@ -18,6 +18,9 @@ public static class InitialReleaseOutputNaming
     public const string WholeProjectMidiFallbackFileName = WholeProjectMidiFallbackStem + ".mid";
     public const string WholeProjectAudioFallbackFileName = WholeProjectAudioFallbackStem + ".wav";
 
+    public static string GetConductorTrackName(string? projectName) =>
+        string.IsNullOrWhiteSpace(projectName) ? ConductorTrackName : projectName;
+
     private const string ReadmeSourceKey = "readme";
     private const long ReadmeSourceOrder = long.MaxValue;
 
@@ -98,15 +101,14 @@ public static class InitialReleaseOutputNaming
     }
 
     public static string GetEventTrackName(
-        string? logicalTrackName,
-        int projectDisplayOrder,
-        int originalOneBasedPort)
+        int originalOneBasedPort,
+        int oneBasedChannel)
     {
         ValidatePort(originalOneBasedPort);
-        string displayName = GetLogicalTrackDisplayName(logicalTrackName, projectDisplayOrder);
+        ValidateChannel(oneBasedChannel);
         return string.Create(
             CultureInfo.InvariantCulture,
-            $"{displayName} / Port {originalOneBasedPort}");
+            $"Port {originalOneBasedPort} / Channel {oneBasedChannel}");
     }
 
     private static OutputFileNamePlan PlanLogicalTracks(
@@ -187,6 +189,14 @@ public static class InitialReleaseOutputNaming
         if (originalOneBasedPort is < 1 or > 16)
         {
             throw new ArgumentOutOfRangeException(nameof(originalOneBasedPort));
+        }
+    }
+
+    private static void ValidateChannel(int oneBasedChannel)
+    {
+        if (oneBasedChannel is < 1 or > 16)
+        {
+            throw new ArgumentOutOfRangeException(nameof(oneBasedChannel));
         }
     }
 }

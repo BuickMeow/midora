@@ -21,7 +21,10 @@ public sealed class MidiExportArtifactBuilderTests
         string output = Path.Combine(Path.GetTempPath(), $"midora-artifact-plan-{Guid.NewGuid():N}");
         MidiExportLogicalTrackLayout layout = new(
             track.Id,
-            new Dictionary<byte, string> { [0] = "Track / Port 1" });
+            new Dictionary<MidiExportChannelUnit, string>
+            {
+                [new(0, 0)] = "Port 1 / Channel 1"
+            });
 
         MidiExportFrozenOutputPlan wholePlan = MidiExportOutputPlanner.PlanWholeProject(
             output,
@@ -88,7 +91,10 @@ public sealed class MidiExportArtifactBuilderTests
             {
                 CompiledResult = playbackResult,
                 ConductorTrackName = "Conductor",
-                LogicalTracks = [new(track.Id, new Dictionary<byte, string> { [0] = "Track" })]
+                LogicalTracks = [new(track.Id, new Dictionary<MidiExportChannelUnit, string>
+                {
+                    [new(0, 0)] = "Port 1 / Channel 1"
+                })]
             });
 
         Assert.False(result.Succeeded);

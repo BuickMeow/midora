@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using Midora.Compiler;
 using Midora.Domain;
 
@@ -37,7 +38,9 @@ public sealed class MidiExportCompilationCoordinatorTests
         Assert.Equal(CompilationPurpose.MidiExport, result.CompiledResult.Purpose);
         MidiExportLogicalTrackLayout layout = Assert.Single(result.Layouts);
         Assert.Equal(selected.Id, layout.TrackId);
-        Assert.Equal("Logical Track 1 / Port 1", Assert.Single(layout.EventTrackNamesByPort).Value);
+        KeyValuePair<MidiExportChannelUnit, string> unitTrack = Assert.Single(layout.EventTrackNamesByUnit);
+        Assert.Equal(new MidiExportChannelUnit(0, 0), unitTrack.Key);
+        Assert.Equal("Port 1 / Channel 1", unitTrack.Value);
         Assert.Equal(new byte[] { 0 }, result.UsedZeroBasedPorts);
         Assert.Collection(
             result.Tracks,
@@ -66,6 +69,42 @@ public sealed class MidiExportCompilationCoordinatorTests
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "MIDORA1302");
     }
 
+    [Fact]
+    public void WholeProjectMergesAChannelUnitReusedBySequentialLogicalTracks()
+    {
+        MidoraProject project = new(192);
+        EventInstrument instrument = CreateInstrument(project);
+        project.EventInstruments.Add(instrument);
+        LogicalTrack first = CreateTrack(project, instrument, "First", note: 60, segmentStartTick: 0);
+        LogicalTrack second = CreateTrack(project, instrument, "Second", note: 62, segmentStartTick: 192);
+        project.Tracks.Add(first);
+        project.Tracks.Add(second);
+        using MidoraCompiler compiler = new();
+        MidiExportCompilationResult compilation = new MidiExportCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = MidiExportMode.WholeProject,
+            Routing = MidiExportRoutingStrategy.Compact,
+            StartTick = 0,
+            EndTick = 384
+        });
+
+        Assert.True(compilation.Succeeded);
+        Assert.Equal(2, compilation.Layouts.Count);
+        Assert.All(compilation.Layouts, layout =>
+            Assert.Equal(new MidiExportChannelUnit(0, 0), Assert.Single(layout.EventTrackNamesByUnit).Key));
+
+        MidiExportEncodingResult encoded = CanonicalMidiFileExporter.EncodeWholeProject(new()
+        {
+            CompiledResult = compilation.CompiledResult,
+            ConductorTrackName = "Conductor",
+            LogicalTracks = compilation.Layouts
+        });
+
+        Assert.True(encoded.Succeeded);
+        Assert.Equal((ushort)2, BinaryPrimitives.ReadUInt16BigEndian(encoded.FileBytes.AsSpan(10, 2)));
+    }
+
     private static EventInstrument CreateInstrument(MidoraProject project)
     {
         EventInstrument instrument = new(project)
@@ -85,10 +124,11 @@ public sealed class MidiExportCompilationCoordinatorTests
         MidoraProject project,
         EventInstrument instrument,
         string name,
-        byte note)
+        byte note,
+        long segmentStartTick = 0)
     {
         LogicalTrack track = new(project) { Name = name, EventInstrumentId = instrument.Id };
-        Segment segment = new(project) { LengthTicks = 192 };
+        Segment segment = new(project) { ProjectStartTick = segmentStartTick, LengthTicks = 192 };
         segment.Notes.Add(new(project)
         {
             LengthTicks = 192,

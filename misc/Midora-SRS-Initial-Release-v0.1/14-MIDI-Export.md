@@ -79,7 +79,7 @@ SMF Type 1
 理由：
 ```text
 Midora 需要保留 Conductor Track / Meta Track。
-Midora 需要表达 Logical Track / Port 拆分关系。
+Midora 需要表达 Conductor 与实际 Channel Unit 的 Track 拆分关系。
 SMF Type 1 更适合多 Track 结构与全局 Meta Track。
 ```
 ### 14.2.2 MIDI division 使用 Project TPQ
@@ -107,20 +107,22 @@ Project TPQ
 Track 组织规则：
 ```text
 Track 0 = Conductor / Meta Track
-后续事件 Track = Logical Track × Port
+后续事件 Track = 实际有 Channel Event 的 Channel Unit（Port + Channel）
 ```
-如果一个 Logical Track 在导出结果中使用 Port 1 和 Port 3，则整曲 `.mid` 中可生成：
+如果导出结果实际使用 Port 1 / Channel 1、Port 1 / Channel 2 和 Port 3 / Channel 1，则整曲 `.mid` 中生成：
 ```text
 Track 0: Conductor / Meta Track
-Track 1: Logical Track A / Port 1
-Track 2: Logical Track A / Port 3
+Track 1: Port 1 / Channel 1
+Track 2: Port 1 / Channel 2
+Track 3: Port 3 / Channel 1
 ```
 整曲事件 Track 排序：
 ```text
-先按 Logical Track 手动排序
-再按 Port 编号排序
+先按原始 Port 编号排序
+再按原始 Channel 编号排序
 ```
-不生成完全无事件的 `Logical Track × Port` 事件 Track。
+同一文件内，一个实际有事件的 Channel Unit 严格只对应一个 MIDI 事件 Track；每个 MIDI 事件 Track 严格只包含该 Unit 的 Channel Event。一个 Unit 被不同 Logical Track / Instance 在不重叠时段先后复用，不得按来源拆成多个 MIDI Track。
+不生成完全无 Channel Event 的 Unit Track。
 Conductor Track 必须存在。
 ### 14.3.2 按 Logical Track 导出
 按 Logical Track 导出时：
@@ -129,11 +131,12 @@ Conductor Track 必须存在。
 每个 .mid 文件都包含 Track 0 Conductor / Meta Track。
 该文件内部可包含一个或多个事件 Track。
 如果该 Logical Track 使用多个 Port，仍然是一个 .mid 文件，而不是每个 Port 一个文件。
+该文件内部按实际使用的 Channel Unit 拆分事件 Track，每个 Unit 一个 Track。
 ```
 该单 Track 文件内部事件 Track 排序：
 ```text
 Track 0 = Conductor / Meta Track
-后续事件 Track 按 Port 编号排序
+后续事件 Track 按原始 Port、再按原始 Channel 编号排序
 ```
 如果某个有效 Track 没有产生任何音乐输出：
 ```text
@@ -150,13 +153,11 @@ Readme / 诊断中说明该 Track 无音乐输出。
 每个 Port 文件内部：
 ```text
 Track 0 = Conductor / Meta Track
-后续事件 Track 按 Logical Track 手动排序
+后续事件 Track = 该原始 Port 内实际有事件的 Channel Unit
+后续事件 Track 按原始 Channel 编号排序
 ```
-按 Port 导出时保留 Logical Track 结构。
-如果某个 Logical Track 在该 Port 没有事件：
-```text
-不生成完全无事件 Track。
-```
+按 Port 导出时不在事件 Track 层保留 Logical Track 拆分；同一 Unit 即使被多个 Logical Track 先后复用，也只生成一个事件 Track。
+不生成完全无 Channel Event 的 Unit Track。
 每个单 Port 文件内部按独立 MIDI 文件处理：
 ```text
 事件写入 Port 1 语义。
@@ -431,12 +432,12 @@ Channel Event 必须写入对应事件 Track。
 导出文件应写入 Track Name Meta Event。
 规则：
 ```text
-Conductor Track 固定为 `Conductor`。
-每个事件 Track 固定为 `<LogicalTrackDisplayName> / Port <P>`。
-P 是原始 Midora 一基 Port 编号 1–16，不补零；按 Port 导出内部路由归一化为 Port 1 时仍写原始 P。
+Conductor Track 使用 MIDI 导出任务准备时冻结的 Project Name；Project Name 为空或纯空白时防御性回退为 `Conductor`。
+每个事件 Track 固定为 `Port <P> / Channel <C>`。
+P 是原始 Midora 一基 Port 编号 1–16，C 是一基 Channel 编号 1–16，均不补零；按 Port 导出内部 Port Meta 归一化为 Port 1 时仍写原始 P/C。
 ```
 
-`LogicalTrackDisplayName` 优先使用原始 Logical Track 名称。名称为空、仅空白或按第 14.17.4 节合法化后为空时，固定使用 `Logical Track <Project 当前一基显示序号>`。Track Name 不经过文件名合法化，不做 NFC、字符替换、截断或冲突后缀处理；文本 Meta 编码器按第 14.10.1 节对该原始可见字符串执行严格 UTF-8 编码，非法 Unicode 必须使导出预检查或编码失败。
+Project Name 和 Unit Track Name 都按严格 UTF-8 写入，不经过文件名合法化，也不回写 Project/Logical Track 名称。任务准备后即使活动 Project Name 改变，本任务仍使用冻结值。Per Logical Track 输出文件名和 Readme 仍使用 `LogicalTrackDisplayName`；一个 Unit 在 Whole Project / Per Port 中可能先后承载不同 Logical Track，因此事件 Track Name 不得冒充单一 Logical Track owner。`Conductor / Meta Track` 是 Track 0 的结构角色名称，不再是正常项目固定写入的用户可见曲名。
 ### 14.8.3 Project 名称、版权和软件标识
 MIDI 文件内部可以写入：
 ```text
@@ -526,6 +527,7 @@ Track Name 中的 Port 信息
 ```text
 每个事件 Track 写 Track Name Meta Event
 每个事件 Track 写 MIDI Port Meta Event
+每个事件 Track 只写一个原始 Channel Unit 的 canonical Channel Event
 不写 Device Name Meta Event
 不写 Program Name Meta Event
 文本类 Meta Event 使用严格 UTF-8
@@ -656,6 +658,7 @@ Reset / 安全清理事件必须排在对应生命周期结束或范围结束的
 或由编译排序保证在同一资源语义内成立
 ```
 导出器不负责把所有同 tick 跨 Track 事件全局线性化为单一顺序。
+同一 Channel Unit 的事件不会被拆到不同 MIDI Track；因此该 Unit 内需要严格先后的事件仍保留 canonical 子序列。
 ### 14.13.4 Running status
 初版兼容档不使用 running status。每个 Channel Event 都必须显式写入 status byte。
 该规则不得改变：
@@ -866,7 +869,7 @@ Project End Marker / 自然结束
 
 `ProjectStem` 按 Project 名称、当前 `.midora` 文件名 stem、固定 `Midora MIDI Export` 的顺序选择第一个非空、非仅空白且按第 14.17.4 节合法化后非空的候选。Windows 保留字符等可合法化内容不是跳过候选的理由；非法 UTF-16 仍使规划失败，不静默改用后续候选。
 
-`NN` 使用该 Track 在整个 Project 当前手动排序中的一基显示序号；不按本次选择重编号，未选 Track 仍占序号，允许跳号。宽度至少两位，并按整个 Project Logical Track 总数的十进制位数增长。`LogicalTrackDisplayName` 的 fallback 与第 14.8.2 节相同。`PP` 是原始一基 Port 编号，固定两位 `01`–`16`。
+`NN` 使用该 Track 在整个 Project 当前手动排序中的一基显示序号；不按本次选择重编号，未选 Track 仍占序号，允许跳号。宽度至少两位，并按整个 Project Logical Track 总数的十进制位数增长。`LogicalTrackDisplayName` 优先使用原始 Logical Track 名称；名称为空、仅空白或按第 14.17.4 节合法化后为空时，固定使用 `Logical Track <Project 当前一基显示序号>`。`PP` 是原始一基 Port 编号，固定两位 `01`–`16`。
 
 以上是进入第 14.17.4 节公共合法化器之前的候选 stem 模板；扩展名为固定系统输入。模板不修改 Project 源名称。
 ### 14.17.2 名称重复
@@ -1012,6 +1015,8 @@ delta time 非负
 End Of Track 存在
 所有 Track 的 End Of Track tick 一致
 每个 Channel Event 都有显式 status byte
+每个事件 Track 的全部 Channel Event 使用同一个 Channel
+同一文件内每个实际 Unit 只对应一个事件 Track
 声明的 Track chunk 长度与实际字节一致
 文件末尾不存在未声明字节
 ```

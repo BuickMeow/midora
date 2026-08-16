@@ -153,6 +153,9 @@ public static class MidiExportReadmeBuilder
         AppendLine(output);
         AppendLine(output, "## Compatibility Boundary");
         AppendLine(output);
+        AppendLine(output, "Each event Track contains exactly one original Midora Channel Unit (Port + Channel), " +
+            "and each used Unit appears in exactly one event Track in that file.");
+        AppendLine(output);
         AppendLine(output, "The files contain standard MIDI 1.0 SMF Type 1 data. Third-party playback may differ " +
             "for multi-Port interpretation, MIDI Port Meta events, Channel 10 vendor initialization, SoundFont " +
             "selection, RPN/NRPN, Pitch Bend Range, and overlapping equal-pitch notes.");

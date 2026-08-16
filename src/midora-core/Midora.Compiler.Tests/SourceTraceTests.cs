@@ -192,10 +192,10 @@ public sealed class SourceTraceTests
     [Fact]
     public void InitialStateAndHardBoundaryCleanupExposeGeneratedOrigins()
     {
-        var fixture = CompilerTestProject.Create();
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
         fixture.Voice.InitialState.Program = 12;
-        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
-        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 10);
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 480, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
 

@@ -49,6 +49,7 @@ public sealed class ProjectMappingChainEditCommandsTests
         AssertController(compilation.LastAttempt, 50);
         Assert.False(document.IsModified);
         AssertCurrentCompilationMatchesFull(compilation);
+
     }
 
     [Fact]
@@ -99,6 +100,7 @@ public sealed class ProjectMappingChainEditCommandsTests
         AssertController(compilation.LastAttempt, 50);
         Assert.False(document.IsModified);
         AssertCurrentCompilationMatchesFull(compilation);
+
     }
 
     [Fact]
@@ -160,10 +162,15 @@ public sealed class ProjectMappingChainEditCommandsTests
     }
 
     [Fact]
-    public void NonEmptyChainDeleteRequiresConfirmationAndUndoRestoresAllSteps()
+    public void NonEmptyEventChainDeleteRemovesOwnerAndUndoRestoresSameOwnerAndSteps()
     {
         Fixture fixture = CreateFixture();
         long nextStableId = fixture.Project.NextStableId;
+        SubVoice voice = Assert.Single(fixture.Instrument.SubVoices);
+        SubVoiceEventMapping mapping = Assert.Single(
+            voice.EventMappings,
+            value => value.Steps.Id == fixture.Chain.Id);
+        int originalIndex = voice.EventMappings.IndexOf(mapping);
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -179,18 +186,46 @@ public sealed class ProjectMappingChainEditCommandsTests
             fixture.Chain.Id,
             nonEmptyDeletionConfirmed: true));
 
-        Assert.Empty(fixture.Chain);
+        Assert.DoesNotContain(mapping, voice.EventMappings);
+        Assert.Collection(
+            fixture.Chain,
+            value => Assert.Same(fixture.FirstStep, value),
+            value => Assert.Same(fixture.SecondStep, value));
         Assert.Equal(nextStableId, fixture.Project.NextStableId);
         AssertController(compilation.LastAttempt, 20);
         AssertCurrentCompilationMatchesFull(compilation);
 
         document.Undo();
+        Assert.Same(mapping, voice.EventMappings[originalIndex]);
         Assert.Collection(
             fixture.Chain,
             value => Assert.Same(fixture.FirstStep, value),
             value => Assert.Same(fixture.SecondStep, value));
         AssertController(compilation.LastAttempt, 50);
         Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Redo();
+        TemplateEvent controller = Assert.Single(
+            voice.Events,
+            value => value.Kind == TemplateEventKind.ControlChange);
+        document.Execute(ProjectDomainEditCommands.UpdateTemplateControlChange(
+            fixture.Instrument.Id,
+            voice.Id,
+            controller.Id,
+            tick: 0,
+            controller: 11,
+            value: 96));
+        document.Execute(ProjectDomainEditCommands.CreateTemplateControlChange(
+            fixture.Instrument.Id,
+            voice.Id,
+            tick: 1,
+            controller: 11,
+            value: 80));
+
+        Assert.DoesNotContain(voice.EventMappings, value => value.Target == mapping.Target);
+        Assert.Equal(2, voice.Events.Count(value => value.Kind == TemplateEventKind.ControlChange));
+        AssertController(compilation.LastAttempt, 96);
         AssertCurrentCompilationMatchesFull(compilation);
     }
 
@@ -263,9 +298,13 @@ public sealed class ProjectMappingChainEditCommandsTests
     }
 
     [Fact]
-    public void DeletingDisabledChainResetsEmptySentinelAndUndoRestoresDisabledState()
+    public void DeletingDisabledEventChainRemovesOwnerAndUndoRestoresDisabledState()
     {
         Fixture fixture = CreateFixture();
+        SubVoice voice = Assert.Single(fixture.Instrument.SubVoices);
+        SubVoiceEventMapping mapping = Assert.Single(
+            voice.EventMappings,
+            value => value.Steps.Id == fixture.Chain.Id);
         fixture.Chain.IsEnabled = false;
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
@@ -275,11 +314,12 @@ public sealed class ProjectMappingChainEditCommandsTests
             fixture.Chain.Id,
             nonEmptyDeletionConfirmed: true));
 
-        Assert.Empty(fixture.Chain);
-        Assert.True(fixture.Chain.IsEnabled);
+        Assert.DoesNotContain(mapping, voice.EventMappings);
+        Assert.False(fixture.Chain.IsEnabled);
         AssertCurrentCompilationMatchesFull(compilation);
 
         document.Undo();
+        Assert.Contains(mapping, voice.EventMappings);
         Assert.False(fixture.Chain.IsEnabled);
         Assert.Collection(
             fixture.Chain,
@@ -322,6 +362,64 @@ public sealed class ProjectMappingChainEditCommandsTests
         Assert.True(mapping.Steps.IsEnabled);
         Assert.False(document.IsModified);
         AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void LogicalParameterMappingChainDeleteRemovesOwnerAndUndoRestoresSameIndex()
+    {
+        Fixture fixture = CreateFixture();
+        LogicalParameterMapping mapping = new(fixture.Project)
+        {
+            ParameterId = fixture.Parameter.Id,
+            SubVoiceId = fixture.Instrument.SubVoices[0].Id,
+            Target = MidiValueTarget.ControlChange(1)
+        };
+        mapping.Steps.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.LogicalParameter,
+            LogicalParameterId = fixture.Parameter.Id,
+            Operation = MappingOperation.Override
+        });
+        fixture.Instrument.ParameterMappings.Add(mapping);
+        int originalIndex = fixture.Instrument.ParameterMappings.IndexOf(mapping);
+        using ProjectCompilationSession compilation = new(fixture.Project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.DeleteMappingChain(
+            fixture.Instrument.Id,
+            mapping.Steps.Id,
+            nonEmptyDeletionConfirmed: true));
+
+        Assert.DoesNotContain(mapping, fixture.Instrument.ParameterMappings);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+
+        Assert.Same(mapping, fixture.Instrument.ParameterMappings[originalIndex]);
+        Assert.Single(mapping.Steps);
+        Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void NoteMappingChainCannotBeDeleted()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        SubVoice voice = Assert.Single(instrument.SubVoices);
+        voice.Events.Add(TemplateEvent.Note(project, 0, 120, 60, 100));
+        SubVoiceEventMapping mapping = voice.FindEventMapping(
+            SubVoiceMappingConventions.NoteVelocityTarget)!;
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        Assert.Throws<InvalidOperationException>(() => document.Execute(
+            ProjectDomainEditCommands.DeleteMappingChain(
+                instrument.Id,
+                mapping.Steps.Id,
+                nonEmptyDeletionConfirmed: true)));
+        Assert.Contains(mapping, voice.EventMappings);
+        Assert.False(document.CanUndo);
     }
 
     [Fact]
@@ -473,7 +571,10 @@ public sealed class ProjectMappingChainEditCommandsTests
 
     private static void AssertController(CanonicalCompiledResult result, byte expected)
     {
-        Assert.True(result.IsConsumable);
+        Assert.True(
+            result.IsConsumable,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(value =>
+                $"{value.Code}: {value.Message}")));
         CanonicalMidiEvent value = Assert.Single(result.Events.ToArray(), item =>
             item.Tick == 0
             && item.Role == CanonicalEventRole.ControlChange

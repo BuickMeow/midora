@@ -269,19 +269,41 @@ public static partial class ProjectDomainEditCommands
         Command("Delete mapping chain", project =>
         {
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
-            MappingChain chain = FindMappingChain(instrument, mappingChainId);
+            MappingChainTargetContext context = FindMappingChainTargetContext(
+                instrument,
+                mappingChainId);
+            MappingChain chain = context.Chain;
             if (chain.Count != 0 && !nonEmptyDeletionConfirmed)
             {
                 throw new InvalidOperationException(
                     "Deleting a non-empty Mapping Chain requires explicit confirmation.");
             }
-            bool oldIsEnabled = chain.IsEnabled;
-            ValueMappingStep[] oldSteps = chain.ToArray();
+            if (context.ParameterMapping is LogicalParameterMapping parameterMapping)
+            {
+                int index = instrument.ParameterMappings.IndexOf(parameterMapping);
+                return Prepared(
+                    hasChanges: true,
+                    EventInstrumentChange(eventInstrumentId),
+                    _ => RemoveMappingOwnerRequired(instrument.ParameterMappings, parameterMapping),
+                    _ => RestoreMappingOwner(instrument.ParameterMappings, index, parameterMapping));
+            }
+            if (context.SubVoice is not SubVoice subVoice
+                || context.EventMapping is not SubVoiceEventMapping eventMapping)
+            {
+                throw new InvalidOperationException(
+                    "The Mapping Chain owner is not supported for deletion.");
+            }
+            if (eventMapping.Target.EventKind == TemplateEventKind.Note)
+            {
+                throw new InvalidOperationException(
+                    "A Note Mapping Chain is a mandatory target and cannot be deleted.");
+            }
+            int eventMappingIndex = subVoice.EventMappings.IndexOf(eventMapping);
             return Prepared(
-                oldSteps.Length != 0 || !oldIsEnabled,
+                hasChanges: true,
                 EventInstrumentChange(eventInstrumentId),
-                _ => ClearMappingChainRequired(chain, oldIsEnabled, oldSteps),
-                _ => RestoreMappingChain(chain, oldIsEnabled, oldSteps));
+                _ => RemoveMappingOwnerRequired(subVoice.EventMappings, eventMapping),
+                _ => RestoreMappingOwner(subVoice.EventMappings, eventMappingIndex, eventMapping));
         });
 
     private static MappingChain FindMappingChain(
@@ -452,37 +474,35 @@ public static partial class ProjectDomainEditCommands
         chain.Insert(index, step);
     }
 
-    private static void ClearMappingChainRequired(
-        MappingChain chain,
-        bool expectedIsEnabled,
-        IReadOnlyCollection<ValueMappingStep> expectedSteps)
+    private static void RemoveMappingOwnerRequired<T>(
+        IList<T> owners,
+        T owner)
+        where T : class
     {
-        if (chain.IsEnabled != expectedIsEnabled
-            || chain.Count != expectedSteps.Count
-            || !chain.SequenceEqual(expectedSteps))
+        if (!owners.Remove(owner))
         {
             throw new InvalidOperationException(
-                "The Mapping Chain changed after the delete command was prepared.");
+                "The Mapping Chain owner is no longer present.");
         }
-        chain.Clear();
-        chain.IsEnabled = true;
     }
 
-    private static void RestoreMappingChain(
-        MappingChain chain,
-        bool oldIsEnabled,
-        IEnumerable<ValueMappingStep> oldSteps)
+    private static void RestoreMappingOwner<T>(
+        IList<T> owners,
+        int index,
+        T owner)
+        where T : class
     {
-        if (!chain.IsEnabled || chain.Count != 0)
+        if ((uint)index > (uint)owners.Count)
         {
             throw new InvalidOperationException(
-                "The deleted Mapping Chain sentinel changed before Undo.");
+                "The original Mapping Chain owner index can no longer be restored.");
         }
-        chain.IsEnabled = oldIsEnabled;
-        foreach (ValueMappingStep step in oldSteps)
+        if (owners.Contains(owner))
         {
-            chain.Add(step);
+            throw new InvalidOperationException(
+                "The deleted Mapping Chain owner is already present.");
         }
+        owners.Insert(index, owner);
     }
 
     private readonly record struct MappingStepValue(

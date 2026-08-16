@@ -218,7 +218,7 @@ public sealed class MidoraCompiler : IDisposable
         if (!request.EndTick.HasValue && !project.Conductor.EndMarkerTick.HasValue)
         {
             endTick = instances
-                .Select(value => value.EndTick)
+                .Select(static value => value.SegmentEndTick)
                 .DefaultIfEmpty(0)
                 .Max();
             if (endTick < request.StartTick)
@@ -1037,6 +1037,11 @@ public sealed class MidoraCompiler : IDisposable
                     };
                     try
                     {
+                        bool sustainAcrossLoop = ShouldSustainNoteAcrossLoop(
+                            instrument,
+                            templateEvent,
+                            playbackGateLength,
+                            shortNote);
                         EmitTemplateEvent(events, eventMappings, templateEvent, tick, gateEnd, actualEnd,
                             releaseTriggered, pitchDelta, note.Velocity,
                             context, parametersAtTick, envelopesAtTick, functions,
@@ -1047,7 +1052,8 @@ public sealed class MidoraCompiler : IDisposable
                                 Origin = SourceOrigin.TemplateEvent
                             },
                             ref sequence,
-                            heldPreviewGateOpen);
+                            heldPreviewGateOpen,
+                            sustainAcrossLoop);
                     }
                     catch (Exception exception) when (exception is MappingException or OverflowException)
                     {
@@ -1065,6 +1071,28 @@ public sealed class MidoraCompiler : IDisposable
                 }
             }
 
+            EmitEnvelopeEventMappings(
+                events,
+                instrument,
+                voice,
+                voiceIndex,
+                segment,
+                note,
+                state,
+                projectStart,
+                gateEnd,
+                actualEnd,
+                playbackGateLength,
+                mappingGateLength,
+                shortNote,
+                releaseStartLocalTick,
+                usedEnvelopeIds,
+                definitions,
+                lanes,
+                functions,
+                source,
+                ref sequence,
+                diagnostics);
             EmitParameterMappings(events, instrument, segment, projectStart, actualEnd, note, pitchDelta,
                 playbackGateLength,
                 mappingGateLength,
@@ -1088,7 +1116,7 @@ public sealed class MidoraCompiler : IDisposable
         }
 
         return new RawInstance(
-            note.Id, track.Id, segment.Id, instrument.Id, note.Note, projectStart, actualEnd,
+            note.Id, track.Id, segment.Id, instrument.Id, note.Note, projectStart, actualEnd, segmentEnd,
             instrument.RequiresChannelIsolation,
             instrument.OverlapPolicy, instrument.OverlapScope,
             sourceOrder, voices);
@@ -1110,7 +1138,8 @@ public sealed class MidoraCompiler : IDisposable
         IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions,
         SourceReference source,
         ref long sequence,
-        bool heldPreviewGateOpen)
+        bool heldPreviewGateOpen,
+        bool sustainAcrossLoop)
     {
         SubVoiceEventMapping? numberMapping = FindEventMapping(
             eventMappings,
@@ -1178,10 +1207,13 @@ public sealed class MidoraCompiler : IDisposable
                     ? long.MaxValue
                     : tick + value.LengthTicks;
                 long naturalOffTick = Math.Min(unclippedNaturalOffTick, actualEnd);
-                long offTick = releaseTriggered && naturalOffTick > gateEnd && actualEnd > gateEnd
+                long offTick = sustainAcrossLoop
                     ? actualEnd
-                    : Math.Min(naturalOffTick, actualEnd);
-                if (!heldPreviewGateOpen || unclippedNaturalOffTick < actualEnd)
+                    : releaseTriggered && naturalOffTick > gateEnd && actualEnd > gateEnd
+                        ? actualEnd
+                        : Math.Min(naturalOffTick, actualEnd);
+                if (!heldPreviewGateOpen
+                    || (!sustainAcrossLoop && unclippedNaturalOffTick < actualEnd))
                 {
                     output.Add(RawMidiEvent.NoteOff(offTick, number, sequence++, noteSource with { Tick = offTick }));
                 }
@@ -1221,6 +1253,26 @@ public sealed class MidoraCompiler : IDisposable
                     ref sequence);
                 break;
         }
+    }
+
+    private static bool ShouldSustainNoteAcrossLoop(
+        EventInstrument instrument,
+        TemplateEvent value,
+        long gateLength,
+        bool shortNote)
+    {
+        if (value.Kind != TemplateEventKind.Note
+            || shortNote
+            || gateLength <= instrument.TemplateLengthTicks
+            || instrument.LongLifecycle != LongNoteLifecycle.HoldLastState
+            || instrument.LoopStartTick is not long loopStart
+            || instrument.LoopEndTick is not long loopEnd
+            || value.Tick >= loopStart
+            || value.Tick >= loopEnd)
+        {
+            return false;
+        }
+        return value.LengthTicks > loopEnd - value.Tick;
     }
 
     private int ApplyMappedInt(
@@ -1482,6 +1534,199 @@ public sealed class MidoraCompiler : IDisposable
         }
     }
 
+    private void EmitEnvelopeEventMappings(
+        List<RawMidiEvent> output,
+        EventInstrument instrument,
+        SubVoice voice,
+        int voiceIndex,
+        Segment segment,
+        LogicalNote note,
+        MidiInitialState initialState,
+        long projectStart,
+        long gateEnd,
+        long actualEnd,
+        long playbackGateLength,
+        long mappingGateLength,
+        bool shortNote,
+        long? releaseStartLocalTick,
+        IReadOnlySet<MidoraId> usedEnvelopeIds,
+        IReadOnlyDictionary<MidoraId, LogicalParameterDefinition> definitions,
+        IReadOnlyDictionary<MidoraId, LogicalParameterLane> lanes,
+        IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions,
+        SourceReference source,
+        ref long sequence,
+        List<CompilerDiagnostic> diagnostics)
+    {
+        int root = voice.RootNoteOverride ?? instrument.RootNote;
+        int pitchDelta = note.Note - root;
+        foreach (SubVoiceEventMapping mapping in voice.EventMappings
+            .Where(static value => value.Steps.IsEnabled
+                && value.Steps.Any(step => step.IsEnabled
+                    && step.Source == MappingSource.Envelope))
+            .OrderBy(static value => value.Target.EventKind)
+            .ThenBy(static value => value.Target.EventNumber)
+            .ThenBy(static value => value.Target.Parameter))
+        {
+            if (!TryGetStatefulEventMappingTarget(mapping.Target, out MidiValueTarget target))
+            {
+                continue;
+            }
+
+            List<EventMappingStatePoint> rawState = [];
+            int eventOrder = 0;
+            foreach (TemplateEvent templateEvent in voice.Events)
+            {
+                int currentEventOrder = eventOrder++;
+                if (!TemplateEventMappingTarget.Enumerate(templateEvent).Contains(mapping.Target))
+                {
+                    continue;
+                }
+                foreach (EventOccurrence occurrence in EnumerateOccurrences(
+                    instrument,
+                    templateEvent.Tick,
+                    playbackGateLength,
+                    shortNote,
+                    actualEnd - projectStart))
+                {
+                    if (occurrence.LocalTick >= actualEnd - projectStart)
+                    {
+                        continue;
+                    }
+                    long tick = projectStart + occurrence.LocalTick;
+                    if (shortNote
+                        && instrument.ShortLifecycle == ShortNoteLifecycle.CutAtNoteOff
+                        && tick >= gateEnd)
+                    {
+                        continue;
+                    }
+                    rawState.Add(new(
+                        occurrence.LocalTick,
+                        GetOriginalEventMappingValue(mapping.Target, templateEvent),
+                        templateEvent.Id,
+                        currentEventOrder));
+                }
+            }
+            rawState.Sort(static (left, right) =>
+            {
+                int byTick = left.LocalTick.CompareTo(right.LocalTick);
+                return byTick != 0 ? byTick : left.EventOrder.CompareTo(right.EventOrder);
+            });
+
+            double currentRawValue = GetInitialTargetValue(initialState, target);
+            MidoraId currentEventId = default;
+            int rawStateIndex = 0;
+            int? previousOutputValue = null;
+            ValueMappingStep? outputStep = mapping.Steps.LastOrDefault(static step => step.IsEnabled);
+            for (long tick = projectStart; tick < actualEnd; tick++)
+            {
+                long localTick = tick - projectStart;
+                while (rawStateIndex < rawState.Count
+                    && rawState[rawStateIndex].LocalTick <= localTick)
+                {
+                    EventMappingStatePoint point = rawState[rawStateIndex++];
+                    currentRawValue = point.Value;
+                    currentEventId = point.SourceEventId;
+                }
+                long contentTick = checked(
+                    segment.ContentOffsetTick + (tick - segment.ProjectStartTick));
+                IReadOnlyDictionary<MidoraId, double> parameters = EvaluateParameters(
+                    definitions,
+                    lanes,
+                    contentTick);
+                IReadOnlyDictionary<MidoraId, double> envelopes = EvaluateEnvelopes(
+                    instrument,
+                    localTick,
+                    releaseStartLocalTick,
+                    usedEnvelopeIds);
+                long templateTick = MapLongTickToTemplate(
+                    instrument,
+                    localTick,
+                    playbackGateLength);
+                MappingContextV2 context = new(
+                    currentRawValue,
+                    note.Note,
+                    note.Velocity,
+                    mappingGateLength,
+                    pitchDelta,
+                    templateTick,
+                    tick,
+                    mapping.Target.EventNumber,
+                    MappingEngine.Round(currentRawValue, MappingRounding.Round))
+                {
+                    CurrentParameter = mapping.Target.Parameter switch
+                    {
+                        TemplateEventMappingParameter.SecondaryValue =>
+                            MappingTargetParameterV2.SecondaryValue,
+                        _ => MappingTargetParameterV2.Value
+                    },
+                    CurrentEventId = currentEventId == default
+                        ? default
+                        : ToMappingId(currentEventId),
+                    CurrentEventKind = ToMappingEventKind(mapping.Target.EventKind),
+                    TargetOriginalValue = currentRawValue,
+                    SegmentLocalTick = contentTick,
+                    TrackId = ToMappingId(source.TrackId),
+                    SegmentId = ToMappingId(source.SegmentId),
+                    SubVoiceId = ToMappingId(voice.Id),
+                    SubVoiceName = voice.Name,
+                    SubVoiceIndex = voiceIndex,
+                    SubVoiceEffectiveRootNote = root,
+                    EventInstrumentId = ToMappingId(instrument.Id),
+                    EventInstrumentName = instrument.Name,
+                    EventInstrumentRootNote = instrument.RootNote
+                };
+                try
+                {
+                    double mapped = _mapping.Apply(
+                        currentRawValue,
+                        mapping.Steps,
+                        context,
+                        parameters,
+                        envelopes,
+                        functions,
+                        TargetMinimum(target),
+                        TargetMaximum(target),
+                        DefaultTargetValue(target),
+                        mapping.TargetSettings.Overflow,
+                        allowClamp: true);
+                    int normalized = NormalizeTargetValue(target, mapped, mapping.TargetSettings);
+                    if (previousOutputValue == normalized)
+                    {
+                        continue;
+                    }
+                    previousOutputValue = normalized;
+                    EmitTarget(output, tick, target, normalized, source with
+                    {
+                        Tick = tick,
+                        SourceEventId = currentEventId,
+                        MappingStepId = outputStep?.Id ?? default,
+                        MappingFunctionId = outputStep?.MappingFunctionId ?? default,
+                        LogicalParameterId = outputStep?.LogicalParameterId ?? default,
+                        EnvelopeId = outputStep?.EnvelopeId ?? default,
+                        Origin = currentEventId == default
+                            ? SourceOrigin.MergedInitialState
+                            : SourceOrigin.TemplateEvent
+                    }, ref sequence);
+                }
+                catch (Exception exception) when (exception is MappingException or OverflowException)
+                {
+                    SourceReference failureSource = source with
+                    {
+                        Tick = tick,
+                        SourceEventId = currentEventId,
+                        Origin = SourceOrigin.TemplateEvent
+                    };
+                    diagnostics.Add(new(
+                        "MIDORA2101",
+                        DiagnosticSeverity.Error,
+                        exception.Message,
+                        AddMappingSource(failureSource, exception)));
+                    break;
+                }
+            }
+        }
+    }
+
     private void EmitParameterMappings(
         List<RawMidiEvent> output,
         EventInstrument instrument,
@@ -1702,7 +1947,7 @@ public sealed class MidoraCompiler : IDisposable
             }
             double value = !releaseStartLocalTick.HasValue || localTick < releaseStartLocalTick.Value
                 ? EnvelopePreReleaseValue(envelope, localTick)
-                : Interpolate(
+                : InterpolateRelease(
                     EnvelopePreReleaseValue(envelope, releaseStartLocalTick.Value),
                     envelope.EndValue,
                     localTick - releaseStartLocalTick.Value,
@@ -1738,6 +1983,11 @@ public sealed class MidoraCompiler : IDisposable
 
     private static double Interpolate(double start, double end, long elapsed, long duration) =>
         duration <= 0 ? end : start + ((end - start) * Math.Clamp(elapsed / (double)duration, 0, 1));
+
+    private static double InterpolateRelease(double start, double end, long elapsed, long duration) =>
+        duration <= 1
+            ? end
+            : Interpolate(start, end, elapsed, duration - 1);
 
     private static long MapLongTickToTemplate(EventInstrument instrument, long localTick, long gateLength)
     {
@@ -1891,6 +2141,88 @@ public sealed class MidoraCompiler : IDisposable
         MidiValueKind.PitchBendRangeSemitones => 2,
         MidiValueKind.PitchBendRangeCents => 0,
         _ => 0
+    };
+
+    private static double GetInitialTargetValue(
+        MidiInitialState state,
+        MidiValueTarget target) => target.Kind switch
+    {
+        MidiValueKind.ControlChange => state.Controllers.TryGetValue(target.Number, out int value)
+            ? value
+            : DefaultTargetValue(target),
+        MidiValueKind.BankMsb => state.BankMsb ?? DefaultTargetValue(target),
+        MidiValueKind.BankLsb => state.BankLsb ?? DefaultTargetValue(target),
+        MidiValueKind.Program => state.Program ?? DefaultTargetValue(target),
+        MidiValueKind.PitchBend => state.PitchBend ?? DefaultTargetValue(target),
+        MidiValueKind.RegisteredParameter => state.RegisteredParameters.TryGetValue(target.Number, out int value)
+            ? value
+            : DefaultTargetValue(target),
+        MidiValueKind.NonRegisteredParameter => state.NonRegisteredParameters.TryGetValue(target.Number, out int value)
+            ? value
+            : DefaultTargetValue(target),
+        MidiValueKind.PitchBendRangeSemitones =>
+            state.PitchBendRangeSemitones ?? DefaultTargetValue(target),
+        MidiValueKind.PitchBendRangeCents =>
+            state.PitchBendRangeCents ?? DefaultTargetValue(target),
+        _ => DefaultTargetValue(target)
+    };
+
+    private static bool TryGetStatefulEventMappingTarget(
+        TemplateEventMappingTarget mappingTarget,
+        out MidiValueTarget target)
+    {
+        switch (mappingTarget)
+        {
+            case { EventKind: TemplateEventKind.ControlChange,
+              Parameter: TemplateEventMappingParameter.Value }:
+                target = MidiValueTarget.ControlChange(mappingTarget.EventNumber);
+                return true;
+            case { EventKind: TemplateEventKind.Bank,
+              Parameter: TemplateEventMappingParameter.Value }:
+                target = MidiValueTarget.BankMsb;
+                return true;
+            case { EventKind: TemplateEventKind.Bank,
+              Parameter: TemplateEventMappingParameter.SecondaryValue }:
+                target = MidiValueTarget.BankLsb;
+                return true;
+            case { EventKind: TemplateEventKind.Program,
+              Parameter: TemplateEventMappingParameter.Value }:
+                target = MidiValueTarget.Program;
+                return true;
+            case { EventKind: TemplateEventKind.PitchBend,
+              Parameter: TemplateEventMappingParameter.Value }:
+                target = MidiValueTarget.PitchBend;
+                return true;
+            case { EventKind: TemplateEventKind.RegisteredParameter,
+              Parameter: TemplateEventMappingParameter.Value }:
+                target = MidiValueTarget.Rpn(mappingTarget.EventNumber);
+                return true;
+            case { EventKind: TemplateEventKind.NonRegisteredParameter,
+              Parameter: TemplateEventMappingParameter.Value }:
+                target = MidiValueTarget.Nrpn(mappingTarget.EventNumber);
+                return true;
+            case { EventKind: TemplateEventKind.PitchBendRange,
+              Parameter: TemplateEventMappingParameter.Value }:
+                target = MidiValueTarget.PitchBendRangeSemitones;
+                return true;
+            case { EventKind: TemplateEventKind.PitchBendRange,
+              Parameter: TemplateEventMappingParameter.SecondaryValue }:
+                target = MidiValueTarget.PitchBendRangeCents;
+                return true;
+            default:
+                target = default;
+                return false;
+        }
+    }
+
+    private static int GetOriginalEventMappingValue(
+        TemplateEventMappingTarget mappingTarget,
+        TemplateEvent value) => mappingTarget.Parameter switch
+    {
+        TemplateEventMappingParameter.Value => value.Value,
+        TemplateEventMappingParameter.SecondaryValue => value.SecondaryValue,
+        TemplateEventMappingParameter.Number => value.Number,
+        _ => throw new ArgumentOutOfRangeException(nameof(mappingTarget))
     };
 
     private static double TargetMinimum(MidiValueTarget target) => target.Kind == MidiValueKind.PitchBend ? -8192 : 0;
@@ -2169,24 +2501,39 @@ public sealed class MidoraCompiler : IDisposable
         CancellationToken cancellationToken)
     {
         List<AllocationGroup> groups = [];
-        foreach (IGrouping<(MidoraId TrackId, MidoraId InstrumentId), RawInstance> binding in instances
-            .GroupBy(value => (value.TrackId, value.InstrumentId)))
+        foreach (IGrouping<(MidoraId TrackId, MidoraId InstrumentId, MidoraId SegmentId), RawInstance> binding in instances
+            .GroupBy(value => (value.TrackId, value.InstrumentId, value.SegmentId)))
         {
             cancellationToken.ThrowIfCancellationRequested();
             RawInstance[] ordered = binding.OrderBy(value => value.StartTick).ThenBy(value => value.SourceOrder).ToArray();
-            AllocationGroup? current = null;
+            if (!ordered[0].Isolated)
+            {
+                AllocationGroup shared = new(ordered[0]);
+                for (int instanceIndex = 1; instanceIndex < ordered.Length; instanceIndex++)
+                {
+                    shared.Add(ordered[instanceIndex]);
+                }
+                groups.Add(shared);
+                continue;
+            }
+
+            List<AllocationGroup> isolatedLanes = [];
             foreach (RawInstance instance in ordered)
             {
-                if (instance.Isolated || current is null || instance.StartTick >= current.EndTick)
+                AllocationGroup? reusable = isolatedLanes
+                    .Where(value => value.LastLifecycleEndTick <= instance.StartTick)
+                    .OrderBy(value => value.SourceOrder)
+                    .FirstOrDefault();
+                if (reusable is null)
                 {
-                    current = new AllocationGroup(instance);
-                    groups.Add(current);
+                    isolatedLanes.Add(new(instance));
                 }
                 else
                 {
-                    current.Add(instance);
+                    reusable.Add(instance);
                 }
             }
+            groups.AddRange(isolatedLanes);
         }
         Dictionary<MidoraId, int> trackOrder = project.Tracks
             .Select((track, index) => (track.Id, index)).ToDictionary(value => value.Id, value => value.index);
@@ -2316,7 +2663,11 @@ public sealed class MidoraCompiler : IDisposable
         foreach (AllocationGroup group in groups)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            RawInstance sourceInstance = group.Instances
+            RawInstance[] orderedInstances = group.Instances
+                .OrderBy(static value => value.StartTick)
+                .ThenBy(static value => value.SourceOrder)
+                .ToArray();
+            RawInstance sourceInstance = orderedInstances
                 .OrderByDescending(static value => value.EndTick)
                 .ThenByDescending(static value => value.SourceOrder)
                 .First();
@@ -2330,62 +2681,130 @@ public sealed class MidoraCompiler : IDisposable
                     continue;
                 }
 
-                RawSubVoice[] groupedVoices = group.Instances
-                    .Select(instance => instance.Voices[voiceIndex])
-                    .ToArray();
-                SourceReference source = new(
-                    sourceInstance.TrackId,
-                    sourceInstance.SegmentId,
-                    sourceInstance.InstanceId,
-                    sourceInstance.InstrumentId,
-                    sourceVoice.SubVoiceId,
-                    Tick: group.EndTick,
-                    Origin: SourceOrigin.ProjectResetDefaults);
-                List<RawMidiEvent> cleanup = [];
-                if (groupedVoices.Any(static voice => voice.HasSoundingNotes))
+                int clusterStartIndex = 0;
+                long clusterEndTick = orderedInstances[0].EndTick;
+                for (int instanceIndex = 1; instanceIndex <= orderedInstances.Length; instanceIndex++)
                 {
-                    cleanup.Add(RawMidiEvent.Control(
-                        group.EndTick,
-                        AllSoundOffController,
-                        0,
-                        CanonicalEventRole.Reset,
-                        cleanupSequence++,
-                        source));
+                    bool continuesCluster = instanceIndex < orderedInstances.Length
+                        && orderedInstances[instanceIndex].StartTick < clusterEndTick;
+                    if (continuesCluster)
+                    {
+                        clusterEndTick = Math.Max(
+                            clusterEndTick,
+                            orderedInstances[instanceIndex].EndTick);
+                        continue;
+                    }
+
+                    if (clusterEndTick < group.EndTick)
+                    {
+                        EmitAllocationCleanup(
+                            result,
+                            orderedInstances.AsSpan(clusterStartIndex, instanceIndex - clusterStartIndex),
+                            voiceIndex,
+                            clusterEndTick,
+                            unit,
+                            resetDefaults,
+                            includeAllSoundOff: false,
+                            ref cleanupSequence);
+                    }
+
+                    if (instanceIndex < orderedInstances.Length)
+                    {
+                        clusterStartIndex = instanceIndex;
+                        clusterEndTick = orderedInstances[instanceIndex].EndTick;
+                    }
                 }
 
-                MidiValueTarget[] usedTargets = groupedVoices
-                    .SelectMany(static voice => voice.UsedTargets)
-                    .Distinct()
-                    .OrderBy(static target => target.Kind)
-                    .ThenBy(static target => target.Number)
-                    .ToArray();
-                EmitReset(
-                    cleanup,
+                EmitAllocationCleanup(
+                    result,
+                    orderedInstances,
+                    voiceIndex,
                     group.EndTick,
-                    usedTargets,
+                    unit,
                     resetDefaults,
-                    source,
+                    includeAllSoundOff: orderedInstances.Any(
+                        instance => instance.Voices[voiceIndex].HasSoundingNotes),
                     ref cleanupSequence);
-                byte channel = (byte)(unit & 15);
-                foreach (RawMidiEvent value in cleanup)
-                {
-                    result.Add(new(
-                        value.Tick,
-                        (byte)(unit >> 4),
-                        channel,
-                        value.ToMidiMessage(channel),
-                        value.Role,
-                        value.Sequence,
-                        value.SemanticTargetKey,
-                        value.SemanticGroup,
-                        value.Source));
-                }
             }
         }
 
         result.Sort(CanonicalComparer.Instance);
         cancellationToken.ThrowIfCancellationRequested();
         return FoldSameTickStates(result, cancellationToken);
+    }
+
+    private static void EmitAllocationCleanup(
+        List<CanonicalMidiEvent> output,
+        ReadOnlySpan<RawInstance> instances,
+        int voiceIndex,
+        long tick,
+        int unit,
+        MidiInitialState resetDefaults,
+        bool includeAllSoundOff,
+        ref long sequence)
+    {
+        RawInstance sourceInstance = instances[0];
+        for (int instanceIndex = 1; instanceIndex < instances.Length; instanceIndex++)
+        {
+            RawInstance candidate = instances[instanceIndex];
+            if (candidate.EndTick > sourceInstance.EndTick
+                || (candidate.EndTick == sourceInstance.EndTick
+                    && candidate.SourceOrder > sourceInstance.SourceOrder))
+            {
+                sourceInstance = candidate;
+            }
+        }
+        RawSubVoice sourceVoice = sourceInstance.Voices[voiceIndex];
+        SourceReference source = new(
+            sourceInstance.TrackId,
+            sourceInstance.SegmentId,
+            sourceInstance.InstanceId,
+            sourceInstance.InstrumentId,
+            sourceVoice.SubVoiceId,
+            Tick: tick,
+            Origin: SourceOrigin.ProjectResetDefaults);
+        List<RawMidiEvent> cleanup = [];
+        if (includeAllSoundOff)
+        {
+            cleanup.Add(RawMidiEvent.Control(
+                tick,
+                AllSoundOffController,
+                0,
+                CanonicalEventRole.Reset,
+                sequence++,
+                source));
+        }
+
+        HashSet<MidiValueTarget> usedTargetSet = [];
+        foreach (RawInstance instance in instances)
+        {
+            usedTargetSet.UnionWith(instance.Voices[voiceIndex].UsedTargets);
+        }
+        MidiValueTarget[] usedTargets = usedTargetSet
+            .OrderBy(static target => target.Kind)
+            .ThenBy(static target => target.Number)
+            .ToArray();
+        EmitReset(
+            cleanup,
+            tick,
+            usedTargets,
+            resetDefaults,
+            source,
+            ref sequence);
+        byte channel = (byte)(unit & 15);
+        foreach (RawMidiEvent value in cleanup)
+        {
+            output.Add(new(
+                value.Tick,
+                (byte)(unit >> 4),
+                channel,
+                value.ToMidiMessage(channel),
+                value.Role,
+                value.Sequence,
+                value.SemanticTargetKey,
+                value.SemanticGroup,
+                value.Source));
+        }
     }
 
     private static List<CanonicalMidiEvent> FoldSameTickStates(
@@ -2874,11 +3293,18 @@ public sealed class MidoraCompiler : IDisposable
         int Pitch,
         long StartTick,
         long EndTick,
+        long SegmentEndTick,
         bool Isolated,
         OverlapPolicy OverlapPolicy,
         OverlapScope OverlapScope,
         int SourceOrder,
         RawSubVoice[] Voices);
+
+    private readonly record struct EventMappingStatePoint(
+        long LocalTick,
+        int Value,
+        MidoraId SourceEventId,
+        int EventOrder);
 
     private sealed record RawSubVoice(
         MidoraId SubVoiceId,
@@ -2964,20 +3390,30 @@ public sealed class MidoraCompiler : IDisposable
         {
             GroupId = instance.InstanceId;
             StartTick = instance.StartTick;
-            EndTick = instance.EndTick;
+            EndTick = instance.SegmentEndTick;
+            LastLifecycleEndTick = instance.EndTick;
             SourceOrder = instance.SourceOrder;
             Instances.Add(instance);
         }
         public MidoraId GroupId { get; }
         public MidoraId TrackId => Instances[0].TrackId;
         public long StartTick { get; }
-        public long EndTick { get; private set; }
+        public long EndTick { get; }
+        public long LastLifecycleEndTick { get; private set; }
         public int SourceOrder { get; }
         public List<RawInstance> Instances { get; } = [];
         public void Add(RawInstance instance)
         {
+            if (instance.TrackId != Instances[0].TrackId
+                || instance.SegmentId != Instances[0].SegmentId
+                || instance.InstrumentId != Instances[0].InstrumentId
+                || instance.SegmentEndTick != EndTick)
+            {
+                throw new InvalidOperationException(
+                    "A Segment-owned allocation lane cannot contain an instance from another binding or Segment.");
+            }
             Instances.Add(instance);
-            EndTick = Math.Max(EndTick, instance.EndTick);
+            LastLifecycleEndTick = Math.Max(LastLifecycleEndTick, instance.EndTick);
         }
     }
 

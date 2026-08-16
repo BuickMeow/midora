@@ -5,7 +5,7 @@
 
 ## 1. 需求依据
 
-- SRS 12.2.4、13.21～13.22：Event Instrument Preview 必须通过临时 Preview CompileContext 和 canonical compiled result，并覆盖 Gate End 后的 Release、Tail 与 Reset。
+- SRS 12.2.4、13.21～13.22：Event Instrument Preview 必须通过临时 Preview CompileContext 和 canonical compiled result，并覆盖 Gate End 后的 Release、Tail，以及 Preview 消费范围硬边界的 Reset；普通 Gate/Release/Tail 结束不执行通用目标 Reset。
 - SRS 12.3：所有编译范围采用可表示的 `[startTick, endTick)`，显式范围边界必须确定。
 - SRS 12.18～12.20：语义错误应形成编译诊断；合法源值不能因实现的中间加法顺序泄漏裸算术异常。
 

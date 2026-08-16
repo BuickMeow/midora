@@ -24,7 +24,7 @@ public sealed class StateAndEditingTests
     }
 
     [Fact]
-    public void ResetTouchesOnlyUsedTargetsAndUsesProjectDefaults()
+    public void HardBoundaryResetTouchesOnlyUsedTargetsAndUsesProjectDefaults()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 480);
         fixture.Project.GlobalResetDefaults.Controllers[11] = 77;
@@ -36,7 +36,7 @@ public sealed class StateAndEditingTests
         CanonicalMidiEvent[] resets = result.Events.ToArray().Where(value => value.Role == CanonicalEventRole.Reset).ToArray();
 
         CanonicalMidiEvent reset = Assert.Single(resets, value =>
-            value.Tick == 240
+            value.Tick == 480
             && value.Message.MessageType == MidiMessageType.ControlChange
             && value.Message.Byte1 == 11);
         Assert.Equal((byte)11, reset.Message.Byte1);
@@ -48,6 +48,133 @@ public sealed class StateAndEditingTests
             && value.Message.Byte2 == 0);
         Assert.DoesNotContain(result.Events.ToArray(), value => value.Message.MessageType == MidiMessageType.ControlChange
             && value.Message.Byte1 is 121 or 123);
+        Assert.DoesNotContain(resets, value => value.Tick == 240);
+    }
+
+    [Fact]
+    public void LaneActivationResetsAUsedTargetBeforeItsFirstLaterEvent()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        fixture.Project.GlobalResetDefaults.Controllers[11] = 77;
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 60, 11, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        LogicalNote note = CompilerTestProject.AddNote(
+            fixture.Segment,
+            fixture.Instrument,
+            0,
+            240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        CanonicalMidiEvent reset = Assert.Single(result.Events.ToArray(), value =>
+            value.Tick == 0
+            && value.Role == CanonicalEventRole.Reset
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 11);
+        Assert.Equal((byte)77, reset.Message.Byte2);
+        Assert.Equal(note.Id, reset.Source.LogicalNoteId);
+        Assert.Equal(SourceOrigin.ProjectResetDefaults, reset.Source.Origin);
+        Assert.Contains(result.Events.ToArray(), value =>
+            value.Tick == 60
+            && value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 100);
+        Assert.DoesNotContain(result.Events.ToArray(), value =>
+            value.Tick == 240
+            && value.Role == CanonicalEventRole.Reset);
+    }
+
+    [Fact]
+    public void AdjacentInstancesResetTheLaneAtEachNonoverlappingReuseBoundary()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 960);
+        fixture.Project.GlobalResetDefaults.Controllers[11] = 77;
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 60, 11, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        LogicalNote first = CompilerTestProject.AddNote(
+            fixture.Segment,
+            fixture.Instrument,
+            0,
+            240);
+        LogicalNote second = CompilerTestProject.AddNote(
+            fixture.Segment,
+            fixture.Instrument,
+            240,
+            240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+        CanonicalMidiEvent[] activationResets = result.Events.ToArray()
+            .Where(value => value.Tick < 960
+                && value.Role == CanonicalEventRole.Reset
+                && value.Message.MessageType == MidiMessageType.ControlChange
+                && value.Message.Byte1 == 11)
+            .ToArray();
+
+        Assert.Equal([0L, 240L], activationResets.Select(value => value.Tick).ToArray());
+        Assert.Equal(
+            [first.Id, second.Id],
+            activationResets.Select(value => value.Source.LogicalNoteId).ToArray());
+        Assert.All(activationResets, value =>
+            Assert.Equal(SourceOrigin.ProjectResetDefaults, value.Source.Origin));
+    }
+
+    [Fact]
+    public void OverlappingSharedInstancesDoNotResetTheLaneAtTheSecondGateStart()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 960);
+        fixture.Project.GlobalResetDefaults.Controllers[11] = 77;
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 60, 11, 100));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        LogicalNote first = CompilerTestProject.AddNote(
+            fixture.Segment,
+            fixture.Instrument,
+            0,
+            240);
+        LogicalNote second = CompilerTestProject.AddNote(
+            fixture.Segment,
+            fixture.Instrument,
+            120,
+            240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+        CanonicalMidiEvent reset = Assert.Single(result.Events.ToArray(), value =>
+            value.Tick < 960
+            && value.Role == CanonicalEventRole.Reset
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 11);
+
+        Assert.Equal(0, reset.Tick);
+        Assert.Equal(first.Id, reset.Source.LogicalNoteId);
+        Assert.DoesNotContain(result.Events.ToArray(), value =>
+            value.Tick == 120
+            && value.Role is CanonicalEventRole.Reset or CanonicalEventRole.InitialState
+            && value.Source.LogicalNoteId == second.Id);
+    }
+
+    [Fact]
+    public void HoldControllerStatePersistsAfterOrdinaryEndUntilSegmentHardBoundary()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 0, 64, 127));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
+        _ = CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.Contains(result.Events.ToArray(), value =>
+            value.Tick == 0
+            && value.Role == CanonicalEventRole.ControlChange
+            && value.Message.Byte1 == 64
+            && value.Message.Byte2 == 127);
+        Assert.DoesNotContain(result.Events.ToArray(), value =>
+            value.Tick == 240
+            && value.Role == CanonicalEventRole.Reset
+            && value.Message.Byte1 == 64);
+        Assert.Contains(result.Events.ToArray(), value =>
+            value.Tick == 480
+            && value.Role == CanonicalEventRole.Reset
+            && value.Message.Byte1 == 64
+            && value.Message.Byte2 == 0);
     }
 
     [Fact]

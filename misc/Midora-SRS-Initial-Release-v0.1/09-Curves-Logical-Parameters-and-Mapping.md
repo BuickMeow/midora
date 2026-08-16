@@ -632,7 +632,7 @@ Project End Marker
 gateLength = Int64.MaxValue
 ```
 
-该值是“Gate 尚未结束”的固定哨兵，不表示一个可持久化、可导出或可作为普通 Logical Note 长度使用的超长 Gate。Mapping Function 必须能够读取该值；编译器、预览消费者和 UI 不得把它夹取、换算或猜测为 `previewGateLength`。Gate End 后，只有尚未渲染的边界及后续 Release / Tail / Reset 使用冻结的实际 Gate Length；已经消费或已经缓冲的结果不回写，也不承诺与事后使用最终 Gate Length 执行一次固定长度编译完全等价。
+该值是“Gate 尚未结束”的固定哨兵，不表示一个可持久化、可导出或可作为普通 Logical Note 长度使用的超长 Gate。Mapping Function 必须能够读取该值；编译器、预览消费者和 UI 不得把它夹取、换算或猜测为 `previewGateLength`。Gate End 后，只有尚未渲染的边界及后续 Release / Tail 使用冻结的实际 Gate Length；已经消费或已经缓冲的结果不回写，也不承诺与事后使用最终 Gate Length 执行一次固定长度编译完全等价。Segment/消费者硬边界的最终 Reset 仍使用已冻结的正式范围。
 
 该哨兵只属于临时 Preview CompileContext，不进入 Project、`.midora`、MIDI 导出、音频文件渲染或普通 canonical compiled result。
 

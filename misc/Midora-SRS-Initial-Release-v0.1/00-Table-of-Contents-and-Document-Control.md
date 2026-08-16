@@ -54,6 +54,7 @@
 - 非 Note 状态目标上的 Envelope Mapping 以最近原始事件值或有效 Initial State/default 为持有基值，并按实例/Release 的整数 tick 连续求值；非零 Release 的最后一个有效 tick 达到 End Value 后才进入 NoteOff/Reset。
 - Loop Start 前开始并完整跨越 Loop End 的模板 Note 在循环中保持发声且不重触发；普通 Gate/Release/Tail 结束不发送 CC120，CC120 只用于 Segment End 等明确硬边界。
 - 修正普通 instance 结束后的 SoundFont release：发声 Segment 的 Unit lane 从首次使用持续保留到 Segment End；普通 NoteOff 后的原生 release 继续进入 Segment PCM，只有 Segment End/消费者范围硬边界可以硬裁剪。自然编译范围按实际生成实例所属 Segment End 结束。
+- 将普通 instance 的通用状态清理从生命周期结束移动到 lane 启用/非重叠复用起点：先按实际目标闭包建立 Reset Defaults，再应用 Initial State、tick 0 用户状态和 NoteOn；普通结束只执行精确 NoteOff，状态保持到下一次 lane 激活或 Segment/消费者硬边界。共享 lane 内仍重叠的后续 Gate 不重复重置。
 - MIDI Track 0 的 Track Name 改为任务准备时冻结的 Project Name，空白防御性输入回退为 `Conductor`；`Conductor` 仍是 Track 0 的结构角色名称。
 
 ## 2026-08-15 修订摘要

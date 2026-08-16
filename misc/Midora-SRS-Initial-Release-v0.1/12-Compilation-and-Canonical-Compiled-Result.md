@@ -526,7 +526,7 @@ SubVoice Value Curve、Logical Parameter Lane 与 Mapping、Envelope Mapping 等
 
 实现允许使用分段分析、跳跃求值、缓存或其他优化，前提是其 canonical 事件、tick、最终整数值、来源追踪和诊断与上述逐整数 tick 参考算法完全一致；误差阈值、自适应采样或其他近似算法不得改变正式结果。
 
-直接 Event Mapping 的 Envelope/连续值求值必须以目标原始 MIDI 状态为持有基值：最近一个原始事件值持续有效，首个原始事件之前从合并 Initial State/default 取得。连续派生输出不能反向覆盖这份原始状态。Release 的最后一个有效整数 tick 必须达到 End Value，之后才进入 NoteOff/Reset 排序。
+直接 Event Mapping 的 Envelope/连续值求值必须以目标原始 MIDI 状态为持有基值：最近一个原始事件值持续有效，首个原始事件之前从合并 Initial State/default 取得。连续派生输出不能反向覆盖这份原始状态。Release 的最后一个有效整数 tick 必须达到 End Value，之后才进入普通 NoteOff 排序；普通 instance 结束不追加通用目标 Reset。
 ### 12.8.7 多 Mapping 作用同一目标
 多个 Logical Parameter Mapping 作用同一 SubVoice 目标参数时：
 ```text
@@ -655,26 +655,27 @@ Project / Global Reset Defaults
 实例实际使用过的状态
 可能污染的状态集合
 Segment 边界
-实例生命周期结束
+lane 首次启用或非重叠复用
 范围硬边界
 ```
 用户不需要手动画 Reset。
 Reset 只作用于该 Segment / 实例实际使用或污染过的状态集合，不应无脑重置所有 CC / RPN / NRPN。
 Segment End Reset 只作用于该 Segment 使用过 / 污染过的 Channel Unit 状态，不重置整个 Project。
 
-Project / Global Reset Defaults 只定义实例/硬边界清理后的目标状态，不补充实例开始时缺失的 Initial State。CC120 All Sound Off 不属于普通 Gate/Release/Tail 结束 Reset；它只允许用于 Segment End、Project End Marker/显式范围结束等硬裁剪边界。普通生命周期结束必须依赖精确 NoteOff 与目标 Reset，不能依据同 tick 是否还有其他 Gate 来决定发送 CC120。
+Project / Global Reset Defaults 定义 lane 激活和硬边界的目标基线。lane 激活时，编译器对该 SubVoice 实际可能使用的状态目标闭包先应用 Reset Defaults，再应用合并 Initial State、用户 tick 0 状态事件和 NoteOn；同目标同 tick 可折叠为唯一最终值。普通 Gate/Release/Tail 结束只依赖精确 NoteOff，不追加通用目标 Reset 或 CC120。CC120 只允许用于 Segment End、Project End Marker/显式范围结束等硬裁剪边界。
 ### 12.10.5 Reset 与 Channel Unit 释放
 Reset 计入 Channel Unit 占用时间。
 规则：
 ```text
 Reset 完成前 Channel Unit 不可释放。
-产生过 Note 的 Segment-owned lane 即使已完成普通 instance Reset，也要保留到 Segment End，以承载原生 release、保证 Segment PCM/Track 运行时归属，并在硬边界安全执行 CC120。
+产生过 Note 的 Segment-owned lane 在普通 instance 结束后保持当前状态并保留到 Segment End，以承载原生 release、保证 Segment PCM/Track 运行时归属，并在硬边界安全执行 CC120。
 ```
-同 tick 上，一个实例 Reset 结束，另一个实例开始：
+同一 Segment 的 lane 在没有仍重叠 instance 后被另一个 instance 非重叠复用：
 ```text
 允许复用同一 Channel Unit。
-但必须通过明确语义排序保证旧实例 Reset 先于新实例 Initial State / 用户事件 / Note On。
+新实例起点必须按 Reset Defaults → Initial State → 用户事件 → Note On 建立状态。
 ```
+共享 lane 内仍有重叠 instance 时，后续 Gate Start 不重复执行 lane 激活 Reset/Initial State；它只能输出自身正式模板、Mapping 与 Note 事件。需要独立 Channel-Wide 起点状态的重叠实例必须使用 Channel Isolation。
 上述同 tick 普通复用只适用于同一 Segment 的保留 lane；跨 Segment 的物理 Unit 复用必须等待前一 Segment End 硬清理完成。
 ### 12.10.6 编译器生成事件标记
 以下事件应标记为编译器生成事件：
@@ -739,9 +740,9 @@ Note Off 先，Note On 后。
 ```text
 Note Off 先，Reset 后。
 ```
-同 tick 上旧实例 Reset 与新实例 Initial State 同时存在：
+同 tick 上旧实例 Note Off、lane 激活 Reset 与新实例 Initial State 同时存在：
 ```text
-旧实例 Reset 先，新实例 Initial State 后。
+旧实例 Note Off 先，lane 激活 Reset 次之，新实例 Initial State 后。
 ```
 ### 12.11.5 同目标参数冲突优先级
 同 tick 上同一 Channel Unit、同一目标参数出现多个最终值时：
@@ -849,10 +850,10 @@ Channel 10 作为普通 melodic Channel Unit 参与该顺序。
 编译器在分配 Channel Group 时：
 ```text
 按编译时间推进。
-释放所有已经完成 Reset 的 Channel Unit。
+释放所有已到达 Segment/消费者硬边界并完成最终 Reset 的 Channel Unit。
 从当前可用 Channel Unit 中选择编号最低的一组。
 按 Event Instrument 内显式 SubVoice 顺序映射到这些 Channel Unit。
-占用到 Rendered Instance Length 和 Reset 完成。
+根据 Rendered Instance Length 做共享/隔离 lane coloring；产生过 Note 的实际 lane 从首次启用占用到 Segment End 最终 Reset 完成。
 ```
 ### 12.14.4 对外 Port 编号紧凑
 对外可见的 compiled result 不应保留无意义 Port 空洞。

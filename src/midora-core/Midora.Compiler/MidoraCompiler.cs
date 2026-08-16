@@ -963,7 +963,16 @@ public sealed class MidoraCompiler : IDisposable
             SourceReference source = new(track.Id, segment.Id, note.Id, instrument.Id, voice.Id, Tick: projectStart);
             List<RawMidiEvent> events = [];
             MidiInitialState state = MergeState(project.GlobalInitialState, instrument.InitialState, voice.InitialState);
+            HashSet<MidiValueTarget> usedTargets = CollectUsedTargets(instrument, voice, state);
             HashSet<MidiValueTarget> tickZeroTargets = GetTickZeroTargets(voice);
+            EmitReset(
+                events,
+                projectStart,
+                usedTargets.Where(static target => target.Kind != MidiValueKind.ControlChange
+                    || target.Number != AllSoundOffController),
+                project.GlobalResetDefaults,
+                source with { Origin = SourceOrigin.ProjectResetDefaults },
+                ref sequence);
             EmitInitialState(
                 events,
                 projectStart,
@@ -1102,7 +1111,6 @@ public sealed class MidoraCompiler : IDisposable
                 lanes,
                 initialParameters,
                 functions, source, ref sequence, diagnostics);
-            HashSet<MidiValueTarget> usedTargets = CollectUsedTargets(instrument, voice, state);
             voices[voiceIndex] = new RawSubVoice(
                 voice.Id,
                 events.ToArray(),
@@ -2641,9 +2649,13 @@ public sealed class MidoraCompiler : IDisposable
         CancellationToken cancellationToken)
     {
         List<CanonicalMidiEvent> result = [];
+        HashSet<MidoraId> laneActivationInstances = GetLaneActivationInstances(
+            groups,
+            cancellationToken);
         foreach (RawInstance instance in instances)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            bool includeLaneActivationState = laneActivationInstances.Contains(instance.InstanceId);
             foreach (RawSubVoice voice in instance.Voices)
             {
                 if (!unitByVoice.TryGetValue((instance.InstanceId, voice.SubVoiceId), out int unit))
@@ -2653,6 +2665,12 @@ public sealed class MidoraCompiler : IDisposable
                 byte channel = (byte)(unit & 15);
                 foreach (RawMidiEvent value in voice.Events)
                 {
+                    if (!includeLaneActivationState
+                        && value.Tick == instance.StartTick
+                        && value.Role is CanonicalEventRole.Reset or CanonicalEventRole.InitialState)
+                    {
+                        continue;
+                    }
                     result.Add(new(value.Tick, (byte)(unit >> 4), channel, value.ToMidiMessage(channel),
                         value.Role, value.Sequence, value.SemanticTargetKey, value.SemanticGroup, value.Source));
                 }
@@ -2681,40 +2699,6 @@ public sealed class MidoraCompiler : IDisposable
                     continue;
                 }
 
-                int clusterStartIndex = 0;
-                long clusterEndTick = orderedInstances[0].EndTick;
-                for (int instanceIndex = 1; instanceIndex <= orderedInstances.Length; instanceIndex++)
-                {
-                    bool continuesCluster = instanceIndex < orderedInstances.Length
-                        && orderedInstances[instanceIndex].StartTick < clusterEndTick;
-                    if (continuesCluster)
-                    {
-                        clusterEndTick = Math.Max(
-                            clusterEndTick,
-                            orderedInstances[instanceIndex].EndTick);
-                        continue;
-                    }
-
-                    if (clusterEndTick < group.EndTick)
-                    {
-                        EmitAllocationCleanup(
-                            result,
-                            orderedInstances.AsSpan(clusterStartIndex, instanceIndex - clusterStartIndex),
-                            voiceIndex,
-                            clusterEndTick,
-                            unit,
-                            resetDefaults,
-                            includeAllSoundOff: false,
-                            ref cleanupSequence);
-                    }
-
-                    if (instanceIndex < orderedInstances.Length)
-                    {
-                        clusterStartIndex = instanceIndex;
-                        clusterEndTick = orderedInstances[instanceIndex].EndTick;
-                    }
-                }
-
                 EmitAllocationCleanup(
                     result,
                     orderedInstances,
@@ -2731,6 +2715,41 @@ public sealed class MidoraCompiler : IDisposable
         result.Sort(CanonicalComparer.Instance);
         cancellationToken.ThrowIfCancellationRequested();
         return FoldSameTickStates(result, cancellationToken);
+    }
+
+    private static HashSet<MidoraId> GetLaneActivationInstances(
+        ReadOnlySpan<AllocationGroup> groups,
+        CancellationToken cancellationToken)
+    {
+        // A Segment-owned lane remains allocated through Segment End, but its
+        // formal state ownership restarts after the preceding instance cluster
+        // no longer overlaps. Followers inside one shared cluster must not reset
+        // channel-wide state underneath instances that are still active.
+        HashSet<MidoraId> result = [];
+        foreach (AllocationGroup group in groups)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RawInstance[] orderedInstances = group.Instances
+                .OrderBy(static value => value.StartTick)
+                .ThenBy(static value => value.SourceOrder)
+                .ToArray();
+            result.Add(orderedInstances[0].InstanceId);
+            long activeClusterEndTick = orderedInstances[0].EndTick;
+            for (int instanceIndex = 1; instanceIndex < orderedInstances.Length; instanceIndex++)
+            {
+                RawInstance instance = orderedInstances[instanceIndex];
+                if (instance.StartTick >= activeClusterEndTick)
+                {
+                    result.Add(instance.InstanceId);
+                    activeClusterEndTick = instance.EndTick;
+                }
+                else
+                {
+                    activeClusterEndTick = Math.Max(activeClusterEndTick, instance.EndTick);
+                }
+            }
+        }
+        return result;
     }
 
     private static void EmitAllocationCleanup(

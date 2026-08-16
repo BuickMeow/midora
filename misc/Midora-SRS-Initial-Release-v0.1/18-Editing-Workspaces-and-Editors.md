@@ -668,7 +668,8 @@ Reset Defaults 必须与以下内容明确区分：
 ```text
 SubVoice Initial State
 Timeline Event
-Instance-end Reset
+Lane activation Reset
+Segment / consumer hard-boundary Reset
 ```
 初版不显示或编辑 `Global Event Scope Defaults`。Note 为逐实例事件；Bank、Program、CC、Pitch Bend、RPN、NRPN 与 Pitch Bend Range 等状态类事件的 Channel-Wide 作用域由各专项章节固定，不提供用户覆盖入口。
 ### 18.9.7 字段提交

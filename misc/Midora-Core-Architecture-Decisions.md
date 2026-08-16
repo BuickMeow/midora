@@ -521,9 +521,9 @@ Requirement trace：输入为当前 Definition、完整目标 Definition/有序 
 
 决定：Note Number / Velocity 的 `SubVoiceEventMapping` 继续作为强制共享目标；非 Note `SubVoiceEventMapping` 与 `LogicalParameterMapping` 是可删除的可选源对象。删除整条 Chain 时移除其 owner，非空删除仍要求一次明确确认，Undo 恢复同一 owner、Chain、Step、引用和顺序。显式新建非 Note 事件时可同时创建其初始可选 Mapping owner；后续点编辑、集合重新插入、编译和打开修复不得把用户已删除的可选 owner 静默重建。owner 不存在或 Chain 为空/禁用时均直接使用原始值。
 
-非 Note MIDI 目标是状态型数据。直接事件 Mapping Chain 含 Envelope Step 时，`originalParameterValue` 使用当前实例内最近一次原始事件值；首个原始事件之前使用合并后的 Project / Event Instrument / SubVoice Initial State，仍无覆盖时使用目标类型默认值。Envelope 在实例及 Release 的左闭右开整数 tick 范围逐 tick 求值，完整链最终整数值不变时抑制重复输出；非零 Release 的最后一个有效 tick 必须已经达到 End Value，随后才允许实际 NoteOff/Reset。该规则与 Logical Parameter Mapping 的 `c` 状态继承一致。
+非 Note MIDI 目标是状态型数据。直接事件 Mapping Chain 含 Envelope Step 时，`originalParameterValue` 使用当前实例内最近一次原始事件值；首个原始事件之前使用合并后的 Project / Event Instrument / SubVoice Initial State，仍无覆盖时使用目标类型默认值。Envelope 在实例及 Release 的左闭右开整数 tick 范围逐 tick 求值，完整链最终整数值不变时抑制重复输出；非零 Release 的最后一个有效 tick 必须已经达到 End Value，随后才允许实际 NoteOff。该规则与 Logical Parameter Mapping 的 `c` 状态继承一致。
 
-Loop Start 前开始、其模板 Note 生命周期完整跨过 Loop End 的 Note 只发送一次 NoteOn，并保持到 Gate/Release/策略结束；Loop 迭代不重触发该 Note。普通 Gate End、Release End、Tail End或 Channel Unit 普通复用只执行精确 NoteOff 与目标 Reset，不发送 CC120 All Sound Off；CC120 只允许出现在 Segment End 等明确硬裁剪边界及一次性消费者范围硬结束清理。Track 绑定及 Event Instrument 源修订必须进入 Full/Incremental 共同的依赖 fingerprint，不能依赖保存/重开使运行时缓存偶然失效。
+Loop Start 前开始、其模板 Note 生命周期完整跨过 Loop End 的 Note 只发送一次 NoteOn，并保持到 Gate/Release/策略结束；Loop 迭代不重触发该 Note。普通 Gate End、Release End、Tail End 只执行精确 NoteOff，不发送目标 Reset 或 CC120 All Sound Off；目标 Reset 移到 lane 启用/非重叠复用起点，CC120 与最终 Reset 只允许出现在 Segment End 等明确硬裁剪边界及一次性消费者范围硬结束清理。Track 绑定及 Event Instrument 源修订必须进入 Full/Incremental 共同的依赖 fingerprint，不能依赖保存/重开使运行时缓存偶然失效。
 
 Requirement trace：输入为可选/强制 Mapping owner、原始状态事件、Initial State、Envelope、Loop、Gate、Segment 边界、Track 绑定和源修订；正式输出为确定的 canonical MIDI 状态变化、Note 生命周期、Reset/CC120 边界及可逆 Project 源图。失败条件包括活动 Mapping 引用断裂、非法目标/值、映射运行失败、非法 Loop/Envelope 和资源不足；失败不得发布部分 canonical。Mapping owner、Step、Envelope、Loop、Initial/Reset 和绑定属于 Project 源数据；选择、Scenario Preview、canonical、fingerprint 与缓存属于派生/运行时状态。明确非目标是把 Reset Defaults 当作 Initial State、在 Gate End 用 CC120 修复尾音、让所有 Loop Note 自动无限保持、或为开发期旧空链 sentinel 增加兼容分支。
 
@@ -535,8 +535,16 @@ Requirement trace：输入为任务准备时 Project Name 和 canonical 导出�
 
 ## 44. ADR-CORE-042（已接受）：Segment-owned Unit lane 与 SoundFont release 连续性
 
-决定：普通 instance lifecycle end 仍只产生精确 NoteOff 与必要目标 Reset，但不能同时结束该 Segment 的音频 Unit fragment。对同一 Track / Event Instrument / Segment，非隔离 instance 共用一个 Segment-owned lane；隔离 instance 按生命周期重叠峰值做确定性 lane coloring，生命周期不重叠的 instance 复用同一 lane。每条实际启用 lane 从首个 instance 起持续到 Segment End，Segment End 才执行 CC120 与最终 Reset并允许跨 Segment 复用。自然编译范围取实际生成 instance 所属 Segment 的最晚 Segment End。
+决定：普通 instance lifecycle end 只产生精确 NoteOff，不产生通用目标 Reset，也不能同时结束该 Segment 的音频 Unit fragment。对同一 Track / Event Instrument / Segment，非隔离 instance 共用一个 Segment-owned lane；隔离 instance 按生命周期重叠峰值做确定性 lane coloring，生命周期不重叠的 instance 复用同一 lane。每条实际启用 lane 从首个 instance 起持续到 Segment End；同 Segment 非重叠复用在新 instance 起点重新建立目标 Reset Defaults/Initial State，Segment End 才执行 CC120 与最终 Reset并允许跨 Segment 复用。自然编译范围取实际生成 instance 所属 Segment 的最晚 Segment End。
 
 该选择使 BASSMIDI 在普通 NoteOff 后继续解码自然 sample release，且 miss/captured Segment PCM、cache hit、实时播放、离线渲染和 MIDI canonical 共用同一硬边界。它会把资源峰值从“同一 tick 活动 instance 数”提高到“同时处于已启用且尚未到 Segment End 的 lane 数”；这是维持尾音的 Segment/Track 归属、Mute/Solo 可寻址性和 Segment End CC120 安全性的必要代价，超过 256 仍按正式资源不足失败，不能通过提前 SoundOff 降级。
 
-Requirement trace：输入为 instance lifecycle、Segment ID/End、隔离模式、SubVoice、canonical NoteOff/Reset；正式输出为确定的 Segment-owned allocation、覆盖 Segment release horizon 的 Unit fragment、Segment End CC120 和相同的 MIDI route。边界是普通 Reset 先于同 Segment lane 后续 Initial/NoteOn、重叠隔离 instance 仍分 lane、完全未生成 instance 的 Segment 不延长自然范围。Project 源模型不新增字段；allocation、PCM fragment、缓存与 lane coloring 均为编译/运行时派生。明确非目标是猜测 SF2 release 时长、固定增加若干秒 tail、在 Gate End 发 CC120，或把原生 sample release 解释为新的 Event Instrument 生命周期事件。
+Requirement trace：输入为 instance lifecycle、Segment ID/End、隔离模式、SubVoice、canonical NoteOff/Reset；正式输出为确定的 Segment-owned allocation、覆盖 Segment release horizon 的 Unit fragment、lane 激活状态、Segment End CC120 和相同的 MIDI route。边界是新一轮非重叠复用的起点 Reset 先于 Initial/NoteOn、仍重叠的共享实例不重复初始化、重叠隔离 instance 仍分 lane、完全未生成 instance 的 Segment 不延长自然范围。Project 源模型不新增字段；allocation、PCM fragment、缓存与 lane coloring 均为编译/运行时派生。明确非目标是猜测 SF2 release 时长、固定增加若干秒 tail、在 Gate End 发 Reset/CC120，或把原生 sample release 解释为新的 Event Instrument 生命周期事件。
+
+## 45. ADR-CORE-043（已接受）：状态 Reset 前移到 lane 激活边界
+
+决定：普通 Gate/Release/Tail 或 instance lifecycle end 只执行精确 NoteOff，保留该 lane 的最终 CC、Bank、Program、Pitch Bend、RPN/NRPN 与 Pitch Bend Range 状态，不追加通用目标 Reset。编译器在 Segment-owned lane 首次启用，或该 lane 没有仍重叠 instance 后被新 instance 非重叠复用时，对该 SubVoice 的实际使用目标闭包先应用 Project Reset Defaults，再应用合并 Initial State、用户 tick 0 状态事件、Mapping 输出与 NoteOn；同目标同 tick 允许折叠为最终有效值。共享 lane 内加入仍重叠 cluster 的后续 Gate 不重复 Reset/Initial State，需要独立 Channel-Wide 起点状态的重叠实例必须使用 Channel Isolation。
+
+Segment End、Project End Marker、显式消费者范围结束及其他正式硬边界仍执行精确 NoteOff、CC120 与最终目标 Reset。CC64 Sustain、CC66 Sostenuto、CC69 Hold 2 等持有型控制器也遵循状态保持规则：若作者希望它们在普通 instance 结束前解除，必须在 Event Instrument 生命周期内显式安排对应事件；编译器不在普通结束处静默插入控制器 Off。该选择让 SoundFont 原生 release 保持 instance 最终状态，避免末尾 Reset 改变仍在衰减的 sample，同时仍由下一次 lane 激活和硬边界保证确定性与安全释放。
+
+Requirement trace：输入为 Reset Defaults、合并 Initial State、SubVoice 实际目标闭包、instance 生命周期/重叠、lane coloring 与硬边界；正式输出为 lane 激活 Reset、Initial/用户状态、精确 NoteOff、Segment/范围最终清理及 Full/Incremental 完全等价 canonical。边界是同 tick 顺序 `NoteOff → lane Reset → Initial/User State → NoteOn`、重叠 shared cluster 不重复初始化、显式范围起点恢复仍取 canonical 持有状态、持有型控制器没有隐式 ordinary-end Off。Project 源模型和持久化格式不新增字段；这些事件、来源、allocation 和缓存 fingerprint 都是编译派生。明确非目标是把 Reset Defaults 改成 Mapping 的原始值来源、在普通结束发送 CC120/CC121/CC123，或用 consumer/UI 状态重新解释 canonical。

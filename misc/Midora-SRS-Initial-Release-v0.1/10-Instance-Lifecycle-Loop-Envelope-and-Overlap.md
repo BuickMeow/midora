@@ -70,7 +70,7 @@ Segment End 强制裁剪点
 `Rendered Instance Length` 是编译后实例实际占用生命周期长度。
 定义：
 ```text
-从 Event Instrument Instance 起点到该实例最后一个有效输出事件、必要 Note Off、Envelope Release、Tail、Reset 前释放流程完成之前的实际生命周期长度。
+从 Event Instrument Instance 起点到该实例最后一个有效输出事件、必要 Note Off、Envelope Release、Tail 完成之前的实际生命周期长度。普通 instance 结束后的 lane 状态保持与后续 lane 激活 Reset 不计入该实例的 Rendered Instance Length。
 ```
 并且：
 ```text
@@ -79,7 +79,7 @@ Rendered Instance Length 不等于 Gate Length
 Rendered Instance Length 是 Channel Unit 资源占用判断的重要输入
 Channel Unit 必须被占用到 Rendered Instance Length 结束
 ```
-实例结束后的 Project / 系统级 Reset 计入 Rendered Instance Length，因为 Channel Unit 在 Reset 完成前不能安全释放。
+Segment/消费者硬边界的最终 Reset 属于 lane/范围清理，不属于普通 instance 的 Rendered Instance Length；Segment-owned lane 可以在该长度结束后继续保留到 Segment End。
 ---
 ## 10.2 短音与长音判定
 ### 10.2.1 短音
@@ -193,7 +193,7 @@ Gate End 之后的新 Note On
 Gate End 后 Tail 模板事件和 Envelope Release 映射输出可以同时存在
 实例尾部应延长到 Tail 最后事件与最晚 Envelope Release 结束点中的较晚者
 实际 MIDI Note Off 应延后到该较晚者之后
-然后进入 Reset
+普通结束后不执行通用目标 Reset；lane 状态保持到下一次非重叠复用激活或硬边界
 ```
 ### 10.4.4 短音截断与必要 Note Off
 当短音策略导致实例提前结束时，系统必须保证不遗留悬挂 Note。
@@ -246,7 +246,7 @@ Gate Length 再长，实例也在 Template Length 结束。
 不因 Gate End 延后
 不因 Envelope Release 超过 Template Length
 实际 MIDI Note Off 在 Template Length 处发生
-然后进入 Reset
+普通结束后 lane 状态保持；下一次非重叠复用由新一轮 lane 激活建立基线，硬边界再执行最终 Reset
 ```
 该策略适合鼓、FX、短促事件乐器等 One-Shot 类长音行为。
 ---
@@ -266,7 +266,7 @@ Release 阶段中：
 Release 期间不允许产生新的 Note On
 Release 期间允许 Tail / Envelope / Logical Parameter 映射输出 / 控制参数继续作用于保持中的 Note
 Release 结束后，再输出实际 MIDI Note Off
-然后进入 Reset / Channel Unit 释放流程
+普通结束后不执行通用目标 Reset，也不释放 Segment-owned lane；下一次非重叠复用在起点重新建立基线，或由硬边界执行最终 Reset / Channel Unit 释放
 ```
 该设计的原因：
 ```text
@@ -739,7 +739,7 @@ Release Start 到 Release End
 ```
 之间输出映射结果。
 
-该范围采用 `[Release Start, Release End)`。当 `Release > 0` 时，范围内最后一个整数 tick 的 Envelope 值必须已经达到 End Value；实际 MIDI Note Off 与 Reset 发生在 Release End，不得因右开边界导致最后一次输出仍高于 End Value。`Release = 0` 时 Gate End 当刻直接到达 End Value，并进入同 tick 的结束排序。
+该范围采用 `[Release Start, Release End)`。当 `Release > 0` 时，范围内最后一个整数 tick 的 Envelope 值必须已经达到 End Value；普通实际 MIDI Note Off 发生在 Release End，不追加通用目标 Reset，不得因右开边界导致最后一次输出仍高于 End Value。`Release = 0` 时 Gate End 当刻直接到达 End Value，并进入同 tick 的结束排序。
 ---
 ## 10.13 Envelope 与生命周期策略关系
 ### 10.13.1 Release 可延长 Rendered Instance Length
@@ -878,46 +878,49 @@ Template Length
 Gate Length
 Loop End
 ```
-### 10.15.5 Reset
-Reset 计入 Rendered Instance Length。
-原因：
-```text
-Channel Unit 在 Reset 完成前不能安全释放
-```
-第 10 章《实例生命周期、Loop、Envelope 与重叠》 只确认 Reset 计入资源占用，不定义 Reset 的具体事件数量、排序和耗时。
+### 10.15.5 Reset 与 Rendered Instance Length
+lane 激活 Reset 发生在启用或非重叠复用实例的开始 tick，不延长 Rendered Instance Length；Segment/消费者硬边界的最终 Reset 属于 lane/范围清理，也不计入普通 instance 的 Rendered Instance Length。
+
+产生过 Note 的 Segment-owned lane 仍须在普通 instance 生命周期结束后保留到 Segment End，并在最终 Reset 完成后才可释放。该额外占用是 lane/Segment 资源语义，不得反向并入单个 instance 的 Rendered Instance Length。
 ---
 ## 10.16 Initial State 与 Reset
 ### 10.16.1 Initial State Defaults
-`Initial State Defaults` 表示实例开始时希望主动写入的默认 MIDI 状态。
+`Initial State Defaults` 表示 lane 激活实例开始时希望主动写入的默认 MIDI 状态。
 规则：
 ```text
-Initial State Defaults 属于实例开始状态注入
+Initial State Defaults 属于 lane 激活实例的开始状态注入
 Initial State Defaults 不影响 Template Length
-Initial State Defaults 在实例开始时输出，因此属于实例生命周期内的有效输出
+Initial State Defaults 在 lane 首次启用或非重叠复用实例开始时输出，因此属于该实例生命周期内的有效输出
 Initial State Defaults 与用户 tick 0 手动画的同类事件冲突时，用户事件优先
+共享 lane 内仍重叠的后续实例不重复输出 Initial State Defaults
 ```
 ### 10.16.2 Reset Defaults
-`Reset Defaults` 表示实例结束、裁剪、Segment 结束或释放 Channel Unit 前恢复安全状态的项目 / 系统级规则。
+`Reset Defaults` 表示 lane 启用/非重叠复用前建立确定性基线，以及裁剪、Segment 结束或释放 Channel Unit 前恢复安全状态的项目 / 系统级规则。
 规则：
 ```text
-实例结束后的 Reset 是 Project / 系统级资源释放语义
-Event Instrument 不覆盖结束后 Reset Defaults
-SubVoice 不覆盖结束后 Reset Defaults
+lane 激活 Reset 与硬边界 Reset 都是 Project / 系统级语义
+Event Instrument 不覆盖 Reset Defaults
+SubVoice 不覆盖 Reset Defaults
+lane 激活只重置该 SubVoice 实际可能使用的状态目标闭包
+lane 激活 Reset 先于 Initial State、用户 tick 0 状态事件与 Note On
+共享 lane 内仍有重叠 instance 时，后续 Gate Start 不重复执行 lane 激活 Reset
 ```
 ### 10.16.3 生命周期层面顺序
 普通生命周期结束顺序为：
 ```text
 Release / Tail 完成
 → 必要 MIDI Note Off
-→ Reset
-→ 同一 Segment 内可由后续非重叠 instance 复用同一保留 lane
+→ 不执行通用 CC / Pitch Bend / RPN / NRPN / Bank / Program Reset
 → SoundFont 原生 release 继续渲染到自然静音或 Segment End
+→ 同一 Segment 内后续非重叠 instance 复用该 lane 时，先执行目标闭包 Reset Defaults
+→ Initial State / 用户 tick 0 状态事件 / Note On
 ```
 Segment End 强制裁剪时例外：
 ```text
 Segment End
 → 立即 MIDI Note Off
-→ Reset
+→ CC120 All Sound Off
+→ 最终目标 Reset
 → Channel Unit 可释放
 ```
 
@@ -931,9 +934,10 @@ All Notes Off 属于 Reset / 安全兜底
 All Notes Off 不替代实例语义 Note Off
 ```
 ### 10.16.5 Reset 优化
-如果编译器认为某个实例没有写任何 Channel-Wide 状态，Reset 可以作为编译优化省略。
+如果编译器确认某个 lane 激活或硬边界没有相关 Channel-Wide 状态目标，目标 Reset 可以省略。同 tick 的 Reset Defaults、Initial State 与用户状态事件可折叠为唯一最终有效值。
 但语义上必须保证：
 ```text
+每次 lane 激活后的状态不依赖历史实例
 Channel Unit 释放后处于项目定义的安全状态
 ```
 具体规则由第 12 章《编译系统与 Canonical Compiled Result》规定。
@@ -1008,7 +1012,7 @@ Warn   -> 产生 Warning；若不存在其他失败条件，重叠实例保留�
 ### 10.17.10 Cut Previous
 `Cut Previous` 表示：
 ```text
-新实例开始时截断旧实例，并让旧实例进入必要释放 / Note Off / Reset 流程。
+新实例开始时截断旧实例，并让旧实例进入必要 Release / Note Off 流程；普通截断结束不追加通用目标 Reset。
 ```
 截断点为：
 ```text
@@ -1072,8 +1076,8 @@ Segment End 是硬边界。
 ### 10.18.4 Segment End 与 Reset
 Segment End 裁剪或结束实例后，必须进入必要 Reset / Channel Unit 释放流程。
 
-CC120 All Sound Off 是硬清理，不是普通 Gate/Release/Tail 结束手段。普通生命周期结束只执行精确 NoteOff 与必要目标 Reset，不发送 CC120；只有 Segment End 强制裁剪以及消费者显式范围结束等硬边界允许发送 CC120。不得因 Gate End 时“当前没有其他 Gate”而条件性插入 CC120。
-只要实例结束或资源要释放，就必须进入 Reset 语义。
+CC120 All Sound Off 是硬清理，不是普通 Gate/Release/Tail 结束手段。普通生命周期结束只执行精确 NoteOff，不执行通用目标 Reset，也不发送 CC120；只有 Segment End 强制裁剪以及消费者显式范围结束等硬边界允许发送 CC120。不得因 Gate End 时“当前没有其他 Gate”而条件性插入 CC120 或目标 Reset。
+普通实例结束不释放 Segment-owned lane；只有 lane 后续非重叠复用时执行新的起点 Reset，或在资源/范围硬边界进入最终 Reset 语义。
 ### 10.18.5 Segment 末尾 Reset
 承接本规格其他章节大方向需求：
 ```text

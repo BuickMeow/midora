@@ -376,23 +376,25 @@ End At Template Length
 必须区分两个概念：
 | 概念 | 归属 | 作用时机 | 作用 |
 |---|---|---|---|
-| Reset Defaults | Project / 系统级 | 实例结束、裁剪、Segment 结束、释放 Channel Unit 前 | 将 Channel Unit 恢复到统一安全状态 |
+| Reset Defaults | Project / 系统级 | Segment 所属 lane 首次激活、非重叠复用激活，以及裁剪、Segment End、消费者范围结束等硬边界 | 在 lane 开始被消费前建立确定基线，并在硬边界完成安全清理 |
 | Initial State Defaults | Event Instrument / SubVoice 可定义 | 实例开始时 | 建立该实例期望的初始 MIDI 状态 |
 ---
-## 8.23 结束后 Reset 的归属
-实例结束后的 Reset 是资源释放语义，不是事件乐器个性语义。
+## 8.23 Lane 激活与硬边界 Reset 的归属
+Reset 是 lane 激活基线或硬边界资源清理语义，不是事件乐器个性语义。
 因此：
 ```text
-Event Instrument 不覆盖结束后 Reset Defaults
-SubVoice 不覆盖结束后 Reset Defaults
-实例结束、裁剪、Segment 结束或释放 Channel Unit 前的 Reset 目标值，应由 Project 级 / 系统级 Reset Defaults 统一管理
+Event Instrument 不覆盖 Project Reset Defaults
+SubVoice 不覆盖 Project Reset Defaults
+Segment 所属 lane 首次激活、非重叠复用激活，以及裁剪、Segment End 或消费者范围结束处的 Reset 目标值，由 Project 级 / 系统级 Reset Defaults 统一管理
+普通 Gate/Release/Tail/instance/allocation-group 结束只执行必要的精确 NoteOff，不执行通用目标 Reset
 ```
 理由：
 ```text
 Channel Unit 是编译器临时分配的资源
 Channel Unit 不属于某个 Event Instrument 或 SubVoice
-Channel Unit 释放后的安全状态应由项目级规则统一决定
-Event Instrument / SubVoice 不应决定 Channel Unit 释放后应回到什么 CC / Pitch Bend / RPN / NRPN 状态
+Lane 激活前的确定基线与硬边界后的安全状态应由项目级规则统一决定
+Event Instrument / SubVoice 不应决定 Channel Unit 应回到什么 CC / Pitch Bend / RPN / NRPN 基线
+普通实例结束不清除仍可能被后续实例有意保持或继续使用的 Channel-Wide 状态
 ```
 不采用以下模型：
 ```text
@@ -438,7 +440,8 @@ Expression = 90
 ```text
 SubVoice 1 实例开始时写入 Expression = 80
 SubVoice 2 实例开始时写入 Expression = 90
-实例结束后统一 Reset 到 Project Reset Defaults
+其 Segment lane 首次激活或非重叠复用激活时，先 Reset 到 Project Reset Defaults
+普通实例结束后不做通用目标 Reset
 ```
 ---
 ## 8.26 Initial State Defaults 支持的事件类型
@@ -459,12 +462,16 @@ Initial State Defaults 写入的事件类型视为该实例使用过。
 因此：
 ```text
 如果 Initial State Defaults 写入某类 Channel-Wide 状态
-则释放 Channel Unit 前需要按 Project Reset Defaults 清理该类型状态
+则该目标进入 Segment lane 的已使用目标闭包
+该 lane 激活时先按 Project Reset Defaults 建立该目标基线
+Segment End 或消费者范围结束等硬边界再按 Project Reset Defaults 清理该目标
 ```
 理由：
 ```text
 开始时主动写入 Channel-Wide 状态，会改变 Channel Unit 状态
-结束时若不清理，会影响后续复用该 Channel Unit 的实例
+激活前若不建立基线，结果会依赖该 Channel Unit 的历史状态
+硬边界若不清理，会让状态越过正式消费范围
+普通实例结束不清理；后续非重叠复用由下一次 lane 激活建立新基线
 ```
 ---
 ## 8.28 Initial State 与用户 tick 0 手动事件冲突
@@ -488,13 +495,16 @@ Expression = 100
 具体“同类事件”的判定规则由 第 9 章《曲线、Logical Parameter 与映射》 / 第 12 章《编译系统与 Canonical Compiled Result》 细化。
 ---
 ## 8.29 Initial State 插入位置
-Initial State Defaults 应插入在实例开始 tick，并且位于该 SubVoice 普通事件之前。
+Initial State Defaults 应插入在该 Segment-owned lane 首次激活或非重叠复用激活的实例开始 tick，并且位于该 SubVoice 普通事件之前。
 系统级语义：
 ```text
-先建立初始状态
+先按目标闭包建立 Project Reset Defaults 基线
+再建立初始状态
 再播放模板事件
 ```
 如果用户在 tick 0 手动画了同类事件，则按上一节规则由用户事件优先，Initial State 同类事件不插入。
+
+共享 lane 内仍有生命周期重叠的后续实例不重新执行 Reset Defaults 或 Initial State；需要独立 Channel-Wide 起点状态的重叠实例必须启用 Channel Isolation。
 ---
 ## 8.30 Initial State 与 Template Length
 Initial State Defaults 不影响 Template Length。
@@ -510,11 +520,12 @@ Template Length 仍由 Event Instrument 普通模板事件与本规格其他章�
 ## 8.31 Reset 与 Initial State 归属澄清
 正式规则：
 ```text
-Event Instrument / SubVoice 不覆盖 Project 级结束后 Reset Defaults。
+Event Instrument / SubVoice 不覆盖 Project 级 Reset Defaults。
 Event Instrument / SubVoice 可拥有实例开始时 Initial State Defaults 入口。
 Reset Defaults 与 Initial State Defaults 是两个不同概念：
-- Reset Defaults 用于实例结束后的资源清理；
+- Reset Defaults 用于 Segment lane 激活前建立确定基线，以及硬边界资源清理；
 - Initial State Defaults 用于实例开始时建立该模板期望的初始 MIDI 状态。
+- 普通 Gate/Release/Tail/instance/allocation-group 结束不执行通用目标 Reset。
 ```
 ---
 ## 8.32 SubVoice 内事件归属

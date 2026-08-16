@@ -43,9 +43,13 @@ Project Source Data
 - A Note that starts before Loop Start and ends after Loop End remains active
   across loop iterations and is released by the lifecycle Gate/Release end.
   Notes wholly inside the loop keep their ordinary repeated NoteOn/NoteOff pairs.
-- Ordinary instance/Gate end performs exact NoteOff and target Reset without
-  CC120. CC120 All Sound Off is reserved for Segment hard end and explicit
-  consumer task/range hard boundaries.
+- Ordinary instance/Gate/Release/Tail end performs exact NoteOff without a
+  general target Reset or CC120. A lane activation or nonoverlapping reuse
+  applies the used-target Reset Defaults before Initial State, user state and
+  NoteOn. A later Gate that joins an already-overlapping shared-lane cluster
+  does not repeat lane initialization. CC120 All Sound Off and final target
+  Reset are reserved for Segment hard end and explicit consumer task/range
+  hard boundaries.
 - A sounding Segment owns each enabled Unit lane through Segment End. Ordinary
   instance NoteOff therefore remains inside the fragment and SoundFont release
   samples continue into realtime, offline and cached PCM; isolated instances
@@ -77,11 +81,13 @@ Project Source Data
   lifecycle-only allocation. Exceeding 256 is a formal resource error; playback
   must not regain capacity by silently hard-cutting release samples.
 - A non-zero Release reaches End Value on the final integer tick contained in
-  its left-closed/right-open interval; NoteOff/Reset follows at Release End.
+  its left-closed/right-open interval; ordinary NoteOff follows at Release End
+  without a general target Reset.
 - Mapping failures remain structured compiler diagnostics with source IDs; a
   failed compile publishes no partial canonical result.
-- Initial State and Reset Defaults remain separate. Reset Defaults do not seed a
-  missing initial target value.
+- Initial State and Reset Defaults remain separate. Reset Defaults establish
+  the MIDI lane baseline at activation, but do not become the Mapping engine's
+  original-value source when the merged Initial State is missing a target.
 - MIDI export continues to fail atomically on invalid canonical input, range,
   path or SMF encoding; the name change does not alter Project source data.
 

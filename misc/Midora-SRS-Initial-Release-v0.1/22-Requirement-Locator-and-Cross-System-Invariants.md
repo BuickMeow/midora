@@ -57,6 +57,7 @@
 | INV-046 | 状态型非 Note Event Mapping 的原始值按最近原始事件或有效 Initial State/default 持有；Envelope/连续源在实例与 Release 的整数 tick 上从该值求值，非零 Release 的最后有效 tick 达到 End Value。普通 Gate/Release/Tail 结束不发送 CC120；CC120 只用于 Segment/消费者范围硬边界。 |
 | INV-047 | Note Number/Velocity Mapping 是强制共享目标；非 Note Event Mapping 与 Logical Parameter Mapping 是可删除 owner。缺少可选 Mapping 表示原始值直通，普通事件编辑和打开修复不得静默重建已删除 owner。 |
 | INV-048 | 发声 Segment 的 Channel Unit lane/audio fragment 从首次使用持续到 Segment End；同 Segment 的非重叠 instance 可复用 lane，但跨 Segment 不得提前复用。普通 instance NoteOff 后的 SoundFont 原生 release 必须进入实时、离线和缓存 PCM，只有 Segment/消费者范围硬边界可以硬裁剪。 |
+| INV-049 | 普通 Gate/Release/Tail 结束只执行精确 NoteOff，不执行通用目标 Reset。lane 首次启用或无重叠 instance 后被非重叠复用时，按实际目标闭包执行 Reset Defaults → Initial State/用户状态 → NoteOn；共享 lane 内仍重叠的后续 Gate 不重复初始化。Segment/消费者范围硬边界仍执行 CC120 与最终目标 Reset。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|

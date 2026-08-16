@@ -163,7 +163,7 @@ Logical Parameters 与 Logical Parameter Mapping 必须深拷贝，并生成新�
 现有 Logical Track 的绑定不因复制而改变
 现有 Event Instrument 的使用不因复制而改变
 ```
-复制应复制哪些内部内容，如 SubVoice、事件曲线、Mapping Function、Logical Parameters、Logical Parameter Mapping、Envelope Preset、Reset 设置、显示颜色、库层组织信息等，由相关相关专项章节或实现层细化。
+复制应复制哪些内部内容，如 SubVoice、事件曲线、Mapping Function、Logical Parameters、Logical Parameter Mapping、Envelope Preset、Initial State Defaults、显示颜色、库层组织信息等，由相关相关专项章节或实现层细化。
 本章只确认复制的集合语义、深拷贝要求和引用语义。
 ---
 ## 7.7 Event Instrument 的删除
@@ -698,7 +698,7 @@ Event Instrument 定义应至少承担以下职责：
 提供实例隔离策略
 提供生命周期策略入口
 提供重叠策略入口
-提供 Reset 策略入口
+提供 Initial State Defaults 入口
 提供 Mapping Function 集合入口
 提供 Envelope Preset 集合入口
 提供诊断定位所需的定义级信息
@@ -785,7 +785,7 @@ Reset 策略
 拥有 Per-Note Instance Isolation 设置
 拥有生命周期策略设置
 拥有 Overlap 策略设置，默认采用 `Reject`
-拥有 Reset 策略入口
+拥有 Initial State Defaults 入口
 Mapping Function 集合可为空
 Logical Parameters 集合可为空
 Logical Parameter Mapping 集合可为空
@@ -1072,25 +1072,22 @@ Cut At Note Off 更接近普通键盘 / 旋律乐器直觉。
 One-Shot / Ignore Note Off 更适合鼓和 FX，但不作为通用默认。
 ```
 ---
-## 7.35 Reset 策略入口
-Event Instrument 定义应包含 Reset 策略入口。
+## 7.35 Initial State 与 Reset 目标闭包
+Event Instrument 定义应包含 Initial State Defaults 入口；Project Reset Defaults 不属于 Event Instrument 定义。
 适用前提：
 ```text
-事件乐器实例结束时，应重置该事件乐器使用过的事件。
-使用过的事件由用户显式事件决定。
-用户添加过至少一个该类型事件值 => 使用过。
-用户删除该类型全部事件值 => 未使用过。
-软件自动隐式补值不扩大使用范围。
-Reset 值可由项目级全局设置定义。
-Event Instrument 或 SubVoice 可覆盖默认 Reset 值。
-建议优先级为 Event Instrument / SubVoice 显式 Reset > Project 全局 Reset 默认值 > 软件内置默认值。
+编译器从 Event Instrument / SubVoice 的 Initial State、显式事件、Mapping 和生命周期输出确定实际状态目标闭包。
+Segment lane 首次激活或非重叠复用激活时，应先按 Project Reset Defaults 为该闭包建立确定基线。
+随后才应用合并 Initial State、用户起点状态和 NoteOn。
+普通 Gate/Release/Tail/instance/allocation-group 结束只执行必要的精确 NoteOff，不执行通用目标 Reset。
+Segment End 和消费者范围结束等硬边界按同一目标闭包执行最终 Reset；需要时还执行 CC120。
 ```
 要求：
 ```text
-Event Instrument 定义允许提供 Reset 覆盖设置。
-默认不创建任何 Event Instrument 级显式 Reset 覆盖。
-默认使用 Project 全局 Reset 默认值与软件内置默认值。
-SubVoice 级 Reset 覆盖入口由 第 8 章《SubVoice 与 MIDI 事件编辑》 / 第 10 章《实例生命周期、Loop、Envelope 与重叠》 继续细化。
+Event Instrument 与 SubVoice 均不得覆盖 Project Reset Defaults。
+Event Instrument 与 SubVoice 可以定义各自的 Initial State Defaults。
+Reset 值只来自 Project Reset Defaults 与软件内置默认值。
+目标闭包、lane 激活和硬边界顺序由第 8、10、12 章细化。
 ```
 本章不定义：
 ```text
@@ -1214,7 +1211,7 @@ Root Note
 Per-Note Instance Isolation
 生命周期策略
 Overlap 策略
-Reset 策略入口
+Initial State Defaults 入口
 Template Length
 Mapping Function 集合
 Envelope Preset 集合
@@ -1225,7 +1222,6 @@ Envelope Preset 集合
 ```text
 Root Note 或音高偏移规则
 特定事件值映射方式
-特定 Reset 覆盖
 特定初始状态或事件内容
 ```
 具体哪些可覆盖，由 第 8 章《SubVoice 与 MIDI 事件编辑》、第 9 章《曲线、Logical Parameter 与映射》、第 10 章《实例生命周期、Loop、Envelope 与重叠》 继续细化。

@@ -144,7 +144,7 @@ Logical Parameters
 Logical Parameter Mapping
 Mapping Function 源码 / 定义入口
 Envelope Presets
-生命周期 / Overlap / Reset 策略入口
+生命周期 / Overlap / Initial State Defaults
 Logical Track
 Segment
 Logical Note
@@ -674,7 +674,7 @@ Envelope Presets
 Per-Note Instance Isolation
 生命周期策略
 Overlap 策略
-Reset 策略入口
+Initial State Defaults
 其他属于 Event Instrument 定义的内容
 ```
 SubVoice 不拆独立文件。

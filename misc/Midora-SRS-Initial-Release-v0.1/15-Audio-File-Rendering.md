@@ -223,7 +223,7 @@ endTick 不包含普通事件
 有效实例输出
 必要 Note Off
 允许范围内的 Release / Tail
-实例结束和资源安全释放所需 Reset
+Segment lane 激活所需 Reset，以及 Segment End / 渲染范围硬边界的资源安全 Reset
 ```
 如果默认自然范围为零，例如空 Project 或 End Marker 位于 tick 0：
 ```text

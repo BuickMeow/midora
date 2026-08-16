@@ -4,7 +4,7 @@
 日期：2026-08-07
 需求基线：SRS 第 10.15～10.16、12.10～12.11、13.27～13.30、14.13～14.14、15.1、15.4、21.7 章及 INV-009、INV-015、INV-018、INV-019、INV-025、INV-027、INV-028。
 
-> 后续状态（2026-08-16）：本文保留 2026-08-07 的历史根因、BASSMIDI 实测和验收证据，但“每个 allocation group 结束发送 CC120”的产品语义已被 ADR-CORE-040 取代。当前规则是普通 Gate/Release/Tail/group 结束只做精确 NoteOff 与目标 Reset；CC120 只用于 Segment End 和消费者范围结束等硬边界。
+> 后续状态（2026-08-16）：本文保留 2026-08-07 的历史根因、BASSMIDI 实测和验收证据，但“每个 allocation group 结束发送 CC120/目标 Reset”的产品语义已被 ADR-CORE-043 取代。当前规则是普通 Gate/Release/Tail/group 结束只做必要的精确 NoteOff；Project Reset Defaults 在 Segment lane 首次激活或非重叠复用激活时建立基线，并只在 Segment End、消费者范围结束等硬边界完成最终清理。CC120 也只用于这些硬边界。
 
 ## 1. 输入与正式输出
 

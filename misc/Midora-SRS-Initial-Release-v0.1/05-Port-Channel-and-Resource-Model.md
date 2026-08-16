@@ -173,7 +173,7 @@ Midora 初版最大 Channel Unit 数量为：
 实际使用的 Port / Channel Unit 由编译结果决定。
 ```
 ### 5.3.4 Channel Unit 的生命周期占用
-Event Instrument Instance 在其 Rendered Instance Length 范围内要求独立或共享的 Channel Group。对于产生 Note 的 Segment，为保证精确 NoteOff 后的 SoundFont 原生 release 不被音频 Unit fragment 窗口裁断，编译器还必须把该 Segment 已启用的 Channel Unit lane 保留到 Segment End；同一 Segment 内后续不重叠 instance 可以复用同一保留 lane。
+Event Instrument Instance 在其 Rendered Instance Length 范围内要求独立或共享的 Channel Group。对于产生 Note 的 Segment，为保证精确 NoteOff 后的 SoundFont 原生 release 不被音频 Unit fragment 窗口裁断，编译器还必须把该 Segment 已启用的 Channel Unit lane 保留到 Segment End；同一 Segment 内后续不重叠 instance 可以复用同一保留 lane，但每次非重叠复用都必须先按目标闭包建立 Reset Defaults 与 Initial State。普通 instance 结束本身不执行通用目标 Reset。
 占用范围由以下后续系统共同决定：
 ```text
 Template Length
@@ -309,7 +309,8 @@ Channel-Wide 状态污染主要在时间重叠或状态未被 Reset 时发生。
 系统级规则：
 ```text
 重叠实例共享同一 Channel Unit 时，必须检查 Channel-Wide 状态污染风险
-同一 Segment 内的非重叠实例只要旧实例已结束并完成必要 Reset，即可复用同一保留 Channel Unit lane
+同一 Segment 内的非重叠实例在旧实例已结束后可以复用同一保留 Channel Unit lane；新实例起点必须先执行 lane 激活 Reset Defaults，再应用 Initial State/用户状态和 NoteOn
+共享 lane 内仍存在重叠实例时，后续 Gate Start 不重复执行 lane 激活 Reset；需要独立 Channel-Wide 起点状态时必须使用 Channel Isolation
 不同 Segment / Track 不得在前一 Segment End 之前取得该保留 lane；否则无法在不误杀新实例的情况下于前一 Segment End 执行 CC120，也无法保持 Track Mute/Solo 与 Segment PCM 的尾音归属
 前一 Segment 已到达 Segment End 后，不要求后续实例必须是同一 Event Instrument 才能复用 Channel Unit
 ```
@@ -578,8 +579,8 @@ Channel 10 melodic 初始化规则应尽量写入导出结果
 20. Channel Group 始终允许跨 Port 分配。
 21. 开启音符实例隔离时，每个逻辑音符生成独立 Event Instrument Instance，并独占一组 Channel Group。
 22. 关闭音符实例隔离时，Channel Group 共享范围仅限同一 Logical Track / Event Instrument Binding 内的重叠音符。
-23. 非重叠实例在旧实例结束并完成必要 Reset 后，可以复用同一 Channel Unit。
-24. Channel-Wide 状态污染主要在时间重叠或 Reset 未完成时考虑。
+23. 非重叠实例在旧实例结束后可以复用同一 Segment-owned Channel Unit lane；新实例起点先执行目标闭包的 lane 激活 Reset/Initial State。
+24. Channel-Wide 状态污染按生命周期重叠、lane 激活初始化和硬边界最终 Reset 共同判断。
 25. 单个 Event Instrument Instance 所需 Channel Unit 超过 256 时编译失败。
 26. 实际所需 Port 数超过 16 时编译失败。
 27. Channel Unit 不足时编译失败。

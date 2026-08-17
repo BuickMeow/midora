@@ -1,5 +1,7 @@
+using Midora.Audio;
 using Midora.Compiler;
 using Midora.Domain;
+using Midora.Midi;
 using Midora.Playback;
 
 namespace Midora.Application.Tests;
@@ -150,6 +152,67 @@ public sealed class ProjectDomainEditCommandsTests
         Assert.Equal(instrument.Id, noteOn.Source.EventInstrumentId);
         Assert.Equal(track.Id, noteOn.Source.TrackId);
         Assert.Equal(segment.Id, noteOn.Source.SegmentId);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public async Task NewlyCreatedInstrumentCanBindAnExistingUnboundSegmentAfterSeparateCompilations()
+    {
+        MidoraProject project = new(480);
+        LogicalTrack track = new(project) { Name = "Existing Track" };
+        Segment segment = new(project) { LengthTicks = 960 };
+        segment.Notes.Add(new LogicalNote(project)
+        {
+            StartTick = 0,
+            LengthTicks = 480,
+            Note = 64,
+            Velocity = 100
+        });
+        track.Segments.Add(segment);
+        project.Tracks.Add(track);
+        using ProjectCompilationSession compilation = new(
+            project,
+            executionMode: ProjectCompilationExecutionMode.Background,
+            backgroundDebounce: TimeSpan.Zero);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.CreateEventInstrument("Created Later"));
+        EventInstrument instrument = Assert.Single(project.EventInstruments);
+        _ = await compilation.EnsureCurrentCompilationAsync();
+
+        SubVoice voice = Assert.Single(instrument.SubVoices);
+        document.Execute(ProjectDomainEditCommands.CreateTemplateNote(
+            instrument.Id,
+            voice.Id,
+            tick: 0,
+            lengthTicks: 480,
+            note: 60,
+            velocity: 100));
+        _ = await compilation.EnsureCurrentCompilationAsync();
+
+        document.Execute(ProjectDomainEditCommands.BindLogicalTrack(track.Id, instrument.Id));
+        CanonicalCompiledResult current = await compilation.EnsureCurrentCompilationAsync();
+
+        Assert.True(current.IsConsumable);
+        CanonicalMidiEvent noteOn = Assert.Single(
+            current.Events.ToArray(),
+            value => value.Role == CanonicalEventRole.NoteOn);
+        Assert.Equal((byte)64, noteOn.Message.Byte1);
+        Assert.Equal(instrument.Id, noteOn.Source.EventInstrumentId);
+        Assert.Equal(track.Id, noteOn.Source.TrackId);
+        Assert.Equal(segment.Id, noteOn.Source.SegmentId);
+        Assert.NotEmpty(CanonicalAudioUnitProjection.Create(current).Fragments.ToArray());
+
+        MidiRenderPlan plan = compilation.GetOrCreateRealtimeRenderPlan(
+            current,
+            sampleRate: 48_000,
+            new HashSet<MidoraId> { track.Id });
+        Assert.NotEmpty(plan.UnitFragments.ToArray());
+        Assert.NotEmpty(plan.Segments.ToArray());
+        Assert.Contains(
+            plan.Ports.ToArray().SelectMany(value => value.Events.ToArray()),
+            value => value.Message.MessageType == MidiMessageType.NoteOn
+                && value.Message.Byte2 > 0);
         AssertCurrentCompilationMatchesFull(compilation);
     }
 

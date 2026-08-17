@@ -4,6 +4,7 @@ namespace Midora.Application;
 
 public enum ProjectObjectClipboardKind
 {
+    EventInstrument,
     Segments,
     LogicalNotes,
     LogicalParameterLane,

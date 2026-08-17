@@ -55,6 +55,7 @@ public readonly record struct TimelineRenderItem(
     public double SecondaryValue { get; init; }
     public CurveInterpolation Interpolation { get; init; } = CurveInterpolation.Linear;
     public string Label { get; init; } = string.Empty;
+    public uint AccentColor { get; init; }
 }
 
 public readonly record struct TimelineSegmentPreviewNote(
@@ -212,7 +213,8 @@ public sealed class TimelineRenderSnapshot
         IReadOnlyList<string>? laneLabels = null,
         IReadOnlyList<TimelineLaneState>? laneStates = null,
         IReadOnlyDictionary<MidoraId, TimelineSegmentPreview>? segmentPreviews = null,
-        IReadOnlyList<string>? laneSecondaryLabels = null)
+        IReadOnlyList<string>? laneSecondaryLabels = null,
+        IReadOnlyList<uint>? laneColors = null)
     {
         if (semanticRevision < 0)
         {
@@ -246,6 +248,9 @@ public sealed class TimelineRenderSnapshot
         LaneSecondaryLabels = laneSecondaryLabels is null
             ? Array.Empty<string>()
             : Array.AsReadOnly(laneSecondaryLabels.Select(static label => label?.Trim() ?? string.Empty).ToArray());
+        LaneColors = laneColors is null
+            ? Array.Empty<uint>()
+            : Array.AsReadOnly(laneColors.ToArray());
         SegmentPreviews = segmentPreviews is null
             ? new Dictionary<MidoraId, TimelineSegmentPreview>()
             : new Dictionary<MidoraId, TimelineSegmentPreview>(segmentPreviews);
@@ -262,6 +267,7 @@ public sealed class TimelineRenderSnapshot
     public IReadOnlyList<string> LaneLabels { get; }
     public IReadOnlyList<TimelineLaneState> LaneStates { get; }
     public IReadOnlyList<string> LaneSecondaryLabels { get; }
+    public IReadOnlyList<uint> LaneColors { get; }
     public IReadOnlyDictionary<MidoraId, TimelineSegmentPreview> SegmentPreviews { get; }
     public TimelineIntervalIndex Index { get; }
     public IReadOnlyDictionary<MidoraId, TimelineRenderItem> ItemsById { get; }
@@ -351,6 +357,7 @@ internal static class TimelineContentFingerprint
             Add(ref hash, unchecked((ulong)contentState));
             Add(ref hash, unchecked((ulong)BitConverter.DoubleToInt64Bits(item.SecondaryValue)));
             Add(ref hash, unchecked((ulong)item.Interpolation));
+            Add(ref hash, item.AccentColor);
         }
         return hash;
     }

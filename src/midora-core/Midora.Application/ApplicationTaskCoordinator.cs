@@ -389,16 +389,28 @@ public sealed class ApplicationTaskCoordinator : IDisposable
 
     public void StopPlayback()
     {
+        bool shouldStop;
         lock (_sync)
         {
             ThrowIfDisposed();
-            if (!IsPlaybackTask(_activeTaskKind))
-            {
-                return;
-            }
-            _phase = ApplicationTaskPhase.Stopping;
+            shouldStop = IsPlaybackTask(_activeTaskKind)
+                || _playback.State is not PlaybackState.Stopped;
+            if (shouldStop && IsPlaybackTask(_activeTaskKind))
+                _phase = ApplicationTaskPhase.Stopping;
         }
+        if (!shouldStop) return;
         _playback.Stop();
+    }
+
+    public void ResetPlaybackEngine()
+    {
+        lock (_sync)
+        {
+            ThrowIfDisposed();
+            if (IsPlaybackTask(_activeTaskKind))
+                _phase = ApplicationTaskPhase.Stopping;
+        }
+        _playback.ResetPlaybackEngine();
     }
 
     public Task<ApplicationTaskExecution<MidiExportTaskResult>> ExecuteMidiExportAsync(
@@ -745,6 +757,19 @@ public sealed class ApplicationTaskCoordinator : IDisposable
         lock (_sync)
         {
             ThrowIfDisposed();
+            if (_activeTaskKind != ApplicationTaskKind.None
+                || _pendingTaskKind != ApplicationTaskKind.None
+                || _preferenceUpdateActive)
+            {
+                throw new InvalidOperationException("Another global application task is already active.");
+            }
+        }
+        // PlaybackController recovers Error by emitting a transient Stopped state.
+        // Recover before registering the new application task so that transition cannot
+        // clear the task which is about to start.
+        if (_playback.State == PlaybackState.Error)
+        {
+            _playback.RecoverFromError();
         }
         if (_soundFontRuntime is not null
             && !_soundFontRuntime.TryConfirmReadyForAudioStart())

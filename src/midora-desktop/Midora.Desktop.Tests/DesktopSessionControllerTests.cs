@@ -145,6 +145,20 @@ public sealed class DesktopSessionControllerTests
             Assert.True(session.HasProject);
             Assert.IsType<EmbeddedProjectSoundFontReference>(session.Project!.SoundFont.Reference);
             Assert.False(session.CanPreview);
+
+            string extractedPath = Path.Combine(directory, "extracted.sf2");
+            await session.ExtractEmbeddedSoundFontAsync(
+                extractedPath,
+                overwriteAuthorized: false);
+            Assert.Equal([1, 2, 3, 4], await File.ReadAllBytesAsync(extractedPath));
+            await Assert.ThrowsAsync<IOException>(() => session.ExtractEmbeddedSoundFontAsync(
+                extractedPath,
+                overwriteAuthorized: false));
+            await File.WriteAllBytesAsync(extractedPath, [9]);
+            await session.ExtractEmbeddedSoundFontAsync(
+                extractedPath,
+                overwriteAuthorized: true);
+            Assert.Equal([1, 2, 3, 4], await File.ReadAllBytesAsync(extractedPath));
         }
         finally
         {
@@ -530,9 +544,16 @@ public sealed class DesktopSessionControllerTests
 
         session.ReorderWorkspace(settings, 0);
 
-        Assert.Equal([settings, arrangement, diagnostics], session.Workspaces);
+        Assert.Equal([arrangement, settings, diagnostics], session.Workspaces);
         Assert.Same(settings, session.ActiveWorkspace);
         Assert.Equal(historyCount, session.Document.History.Count);
+
+        session.ReorderWorkspace(arrangement, 2);
+        session.CloseWorkspace(arrangement);
+
+        Assert.Equal([arrangement, settings, diagnostics], session.Workspaces);
+        Assert.False(arrangement.CanClose);
+        Assert.False(arrangement.CanReorder);
     }
 
     [Fact]
@@ -1140,6 +1161,133 @@ public sealed class DesktopSessionControllerTests
         session.RefreshWorkspace(workspace);
         Assert.Equal(0, workspace.ActiveParameterLaneIndex);
         Assert.Equal(2, parameterLaneSelectionNotifications);
+    }
+
+    [Fact]
+    public async Task SegmentLogicalParameterLaneProjectsOnlyEditablePointSet()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Point-set Parameter Lane",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+        EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalParameter(
+            instrument.Id,
+            "Pressure",
+            LogicalParameterType.Integer,
+            0,
+            127,
+            0,
+            127,
+            0));
+        LogicalParameterDefinition parameter = Assert.Single(instrument.LogicalParameters);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track", instrument.Id));
+        LogicalTrack track = Assert.Single(session.Project.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
+        Segment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalParameterLane(
+            segment.Id,
+            parameter.Id));
+        LogicalParameterLane lane = Assert.Single(segment.ParameterLanes);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalParameterPoint(
+            segment.Id,
+            lane.Id,
+            0,
+            32,
+            CurveInterpolation.Linear));
+        session.Execute(ProjectDomainEditCommands.CreateLogicalParameterPoint(
+            segment.Id,
+            lane.Id,
+            240,
+            96,
+            CurveInterpolation.Linear));
+
+        TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+
+        Assert.Equal(2, workspace.ParameterSnapshot!.Items.Count);
+        Assert.All(workspace.ParameterSnapshot.Items, item =>
+            Assert.Equal(TimelineItemKind.LogicalParameterPoint, item.Kind));
+    }
+
+    [Fact]
+    public async Task EventInstrumentTimelineViewStateIsIndependentAndRetainedPerWorkspace()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Instrument viewport state",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("First"));
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Second"));
+        EventInstrument first = session.Project!.EventInstruments[0];
+        EventInstrument second = session.Project.EventInstruments[1];
+        InstrumentWorkspaceViewModel firstWorkspace = session.OpenInstrument(first.Id);
+        firstWorkspace.TimelineStartTick = 120;
+        firstWorkspace.TimelineTickSpan = 960;
+        firstWorkspace.TimelineFirstLane = 24;
+        firstWorkspace.TimelineLaneHeight = 31;
+        firstWorkspace.NoteEditorRowHeight = new System.Windows.GridLength(7, System.Windows.GridUnitType.Star);
+        firstWorkspace.EventEditorRowHeight = new System.Windows.GridLength(2, System.Windows.GridUnitType.Star);
+        firstWorkspace.ActiveLowerEditorIndex = 1;
+        firstWorkspace.EventValueScrollOffset = 0.35;
+
+        InstrumentWorkspaceViewModel secondWorkspace = session.OpenInstrument(second.Id);
+        secondWorkspace.TimelineStartTick = 480;
+        secondWorkspace.TimelineTickSpan = 1920;
+        secondWorkspace.TimelineFirstLane = 72;
+        secondWorkspace.TimelineLaneHeight = 14;
+        secondWorkspace.ActiveLowerEditorIndex = 0;
+        _ = session.OpenArrangement();
+
+        Assert.Same(firstWorkspace, session.OpenInstrument(first.Id));
+        Assert.Equal(120, firstWorkspace.TimelineStartTick);
+        Assert.Equal(960, firstWorkspace.TimelineTickSpan);
+        Assert.Equal(24, firstWorkspace.TimelineFirstLane);
+        Assert.Equal(31, firstWorkspace.TimelineLaneHeight);
+        Assert.Equal(7, firstWorkspace.NoteEditorRowHeight.Value);
+        Assert.Equal(2, firstWorkspace.EventEditorRowHeight.Value);
+        Assert.Equal(1, firstWorkspace.ActiveLowerEditorIndex);
+        Assert.Equal(0.35, firstWorkspace.EventValueScrollOffset);
+        Assert.Same(secondWorkspace, session.OpenInstrument(second.Id));
+        Assert.Equal(480, secondWorkspace.TimelineStartTick);
+        Assert.Equal(1920, secondWorkspace.TimelineTickSpan);
+        Assert.Equal(72, secondWorkspace.TimelineFirstLane);
+        Assert.Equal(14, secondWorkspace.TimelineLaneHeight);
+        Assert.Equal(0, secondWorkspace.ActiveLowerEditorIndex);
+    }
+
+    [Fact]
+    public async Task ArrangementProjectsBoundInstrumentColorAndConductorUsesLargerLaneScale()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Timeline color",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+        EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+        session.Execute(ProjectDomainEditCommands.UpdateEventInstrumentColor(
+            instrument.Id,
+            new MidoraColor(0x33, 0x66, 0x99)));
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track", instrument.Id));
+        LogicalTrack track = Assert.Single(session.Project.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
+
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+        TimelineRenderItem segment = Assert.Single(arrangement.Snapshot!.Items);
+        ProjectTreeNode conductorNode = session.ProjectTree.Single(value =>
+            value.Kind == ProjectTreeNodeKind.Conductor);
+        TimelineWorkspaceViewModel conductor = Assert.IsType<TimelineWorkspaceViewModel>(
+            session.OpenWorkspace(conductorNode));
+
+        Assert.Equal(0xff336699u, segment.AccentColor);
+        Assert.Equal(0xff336699u, arrangement.Snapshot.LaneColors[0]);
+        Assert.Equal(27, conductor.LaneHeight);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

@@ -12,7 +12,7 @@
   </shell:WindowChrome.WindowChrome>
   <Border BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1">
     <Grid>
-      <Grid.RowDefinitions><RowDefinition Height="38"/><RowDefinition Height="*"/><RowDefinition Height="54"/></Grid.RowDefinitions>
+      <Grid.RowDefinitions><RowDefinition Height="38"/><RowDefinition Height="*"/><RowDefinition Height="58"/></Grid.RowDefinitions>
       <Grid Background="{StaticResource Brush.Black}" MouseLeftButtonDown="OnTitleMouseDown">
         <TextBlock Margin="12,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="Application Preferences"/>
         <Button Width="46" Height="38" HorizontalAlignment="Right" Style="{StaticResource Button.Caption.Close}" ToolTip="Close" Click="OnCancelClick">

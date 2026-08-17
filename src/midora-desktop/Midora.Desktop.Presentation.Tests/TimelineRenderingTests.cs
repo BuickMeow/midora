@@ -178,6 +178,49 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void SnapshotCarriesLaneColorsAndSegmentAccentChangesRenderFingerprint()
+    {
+        TimelineRenderItem plainItem = Item(
+            1,
+            0,
+            480,
+            0,
+            kind: TimelineItemKind.Segment);
+        TimelineRenderItem accentedItem = plainItem with { AccentColor = 0xff336699 };
+        TimelineRenderSnapshot plain = new(12, "arrangement", [plainItem]);
+        TimelineRenderSnapshot accented = new(
+            12,
+            "arrangement",
+            [accentedItem],
+            ["Track"],
+            laneColors: [0xff336699]);
+
+        Assert.Equal(0xff336699u, accented.LaneColors[0]);
+        Assert.NotEqual(plain.ContentFingerprint, accented.ContentFingerprint);
+    }
+
+    [Fact]
+    public void SegmentAccentPaletteNormalizesSourceIntensityWhileRetainingHue()
+    {
+        TimelineAccentPalette brightRed = TimelineAccentPalette.FromArgb(0xffff0000);
+        TimelineAccentPalette darkRed = TimelineAccentPalette.FromArgb(0xff800000);
+        TimelineAccentPalette green = TimelineAccentPalette.FromArgb(0xff00ff00);
+
+        Assert.Equal(brightRed, darkRed);
+        Assert.NotEqual(brightRed, green);
+        Assert.All(
+            new[]
+            {
+                brightRed.Segment,
+                brightRed.SelectedSegment,
+                brightRed.SelectionBorder,
+                brightRed.NotePreview
+            },
+            value => Assert.Equal(byte.MaxValue, value.A));
+        Assert.NotEqual(brightRed.Segment, brightRed.NotePreview);
+    }
+
+    [Fact]
     public void SnapshotCarriesNormalizedSegmentPreviewIncludingLeftBoundary()
     {
         MidoraId segmentId = new(8);
@@ -265,6 +308,45 @@ public sealed class TimelineRenderingTests
             TimelineSurfaceMode.PianoRoll,
             TimelineItemKind.TemplateNote,
             TimelineItemEditKind.Move));
+    }
+
+    [Fact]
+    public void ConductorUsesTheSameDirectDrawAndSelectInteractionPolicy()
+    {
+        Assert.True(TimelineToolPolicy.IsDirectEditingSurface(TimelineSurfaceMode.Conductor));
+        Assert.True(TimelineToolPolicy.RequestsBackgroundCreation(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.Conductor,
+            clickCount: 1));
+        Assert.True(TimelineToolPolicy.StartsMarqueeBeforeItemHit(
+            TimelineToolMode.Select,
+            TimelineSurfaceMode.Conductor,
+            clickCount: 1));
+        Assert.True(TimelineToolPolicy.CanBeginItemEdit(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.Conductor,
+            TimelineItemKind.ConductorEvent));
+        Assert.False(TimelineToolPolicy.CanBeginItemEdit(
+            TimelineToolMode.Select,
+            TimelineSurfaceMode.Conductor,
+            TimelineItemKind.ConductorEvent));
+        Assert.Equal(
+            TimelineItemEditKind.Move,
+            TimelineToolPolicy.ResolveItemEditKind(
+                TimelineToolMode.Draw,
+                TimelineSurfaceMode.Conductor,
+                TimelineItemKind.ConductorEvent,
+                ModifierKeys.None,
+                isNearStart: true,
+                isNearEnd: true));
+        Assert.Equal(
+            TimelinePointerIntent.Move,
+            TimelineToolPolicy.GetPointerIntent(
+                TimelineToolMode.Draw,
+                TimelineSurfaceMode.Conductor,
+                isInContent: true,
+                TimelineItemKind.ConductorEvent,
+                isNearHorizontalEdge: true));
     }
 
     [Fact]

@@ -16,7 +16,7 @@
       <Grid.RowDefinitions>
         <RowDefinition Height="36" />
         <RowDefinition Height="*" />
-        <RowDefinition Height="48" />
+        <RowDefinition Height="58" />
       </Grid.RowDefinitions>
       <Grid Background="{StaticResource Brush.Black}" MouseLeftButtonDown="OnTitleMouseLeftButtonDown">
         <TextBlock Margin="11,0,44,0"
@@ -43,7 +43,7 @@
                VerticalContentAlignment="Top"
                HorizontalScrollBarVisibility="Auto"
                VerticalScrollBarVisibility="Auto" />
-      <Border Grid.Row="2" Padding="12,8"
+      <Border Grid.Row="2" Padding="12,10"
               Background="{StaticResource Brush.Surface.1}"
               BorderBrush="{StaticResource Brush.Border}"
               BorderThickness="0,1,0,0">

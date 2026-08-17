@@ -249,6 +249,8 @@ public abstract class WorkspaceViewModel(
     public WorkspaceKey Key { get; } = key;
     public WorkspaceKind Kind => Key.Kind;
     public MidoraId? ObjectId => Key.ObjectId;
+    public bool CanClose => Kind != WorkspaceKind.Arrangement;
+    public bool CanReorder => Kind != WorkspaceKind.Arrangement;
     public string Header
     {
         get => _header;
@@ -596,7 +598,12 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 Raise(nameof(GridVisible));
             }
         };
-        _laneHeight = mode == TimelineWorkspaceMode.Arrangement ? 56 : 18;
+        _laneHeight = mode switch
+        {
+            TimelineWorkspaceMode.Arrangement => 56,
+            TimelineWorkspaceMode.Conductor => 27,
+            _ => 18
+        };
         _firstLane = mode == TimelineWorkspaceMode.Segment ? 48 : 0;
         _tickSpan = 3072;
     }
@@ -945,6 +952,13 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         for (int trackIndex = 0; trackIndex < project.Tracks.Count; trackIndex++)
         {
             LogicalTrack track = project.Tracks[trackIndex];
+            EventInstrument? boundInstrument = track.EventInstrumentId is MidoraId instrumentId
+                ? project.EventInstruments.FirstOrDefault(value => value.Id == instrumentId)
+                : null;
+            MidoraColor? effectiveColor = track.ColorOverride ?? boundInstrument?.Color;
+            uint accentColor = effectiveColor is MidoraColor color
+                ? ToOpaqueArgb(color)
+                : 0;
             foreach (Segment segment in track.Segments)
             {
                 liveSegmentIds.Add(segment.Id);
@@ -954,7 +968,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                     segment.ProjectStartTick,
                     checked(segment.ProjectStartTick + segment.LengthTicks),
                     trackIndex,
-                    z: 0));
+                    z: 0) with { AccentColor = accentColor });
                 previews.Add(segment.Id, GetOrCreateSegmentPreview(segment));
             }
         }
@@ -972,7 +986,15 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 (_mutedTrackIds.Contains(track.Id) ? TimelineLaneState.Muted : TimelineLaneState.None)
                 | (_soloTrackIds.Contains(track.Id) ? TimelineLaneState.Solo : TimelineLaneState.None)).ToArray(),
             previews,
-            project.Tracks.Select(track => BoundInstrumentDisplayName(project, track)).ToArray());
+            project.Tracks.Select(track => BoundInstrumentDisplayName(project, track)).ToArray(),
+            project.Tracks.Select(track =>
+            {
+                EventInstrument? instrument = track.EventInstrumentId is MidoraId instrumentId
+                    ? project.EventInstruments.FirstOrDefault(value => value.Id == instrumentId)
+                    : null;
+                MidoraColor? color = track.ColorOverride ?? instrument?.Color;
+                return color is MidoraColor value ? ToOpaqueArgb(value) : 0;
+            }).ToArray());
         RulerSnapshot = BuildConductorOverview(project, revision);
     }
 
@@ -1013,6 +1035,9 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     }
 
     private readonly record struct SegmentPreviewNoteSource(long StartTick, long LengthTicks, int Pitch);
+
+    private static uint ToOpaqueArgb(MidoraColor color) =>
+        0xff000000u | ((uint)color.Red << 16) | ((uint)color.Green << 8) | color.Blue;
 
     private sealed record SegmentPreviewCacheEntry(
         long ContentOffsetTick,
@@ -1148,9 +1173,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 ? segment.ParameterLanes.FirstOrDefault(item => item.Id == laneId)
                 : null;
             CurvePoint[] points = lane?.Points.OrderBy(item => item.Tick).ThenBy(item => item.Id).ToArray() ?? [];
-            for (int pointIndex = 0; pointIndex < points.Length; pointIndex++)
+            foreach (CurvePoint point in points)
             {
-                CurvePoint point = points[pointIndex];
                 double normalized = NormalizeParameterValue(definition, point.Value);
                 TimelineItemState state = point.Tick < segment.ContentOffsetTick || point.Tick >= segment.ContentEndTick
                     ? TimelineItemState.OutsideActiveRange
@@ -1158,23 +1182,6 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 if (definition is null) state |= TimelineItemState.Broken;
                 if (Selection.Ids.Contains(point.Id)) state |= TimelineItemState.Selected;
                 if (Selection.Primary == point.Id) state |= TimelineItemState.Primary;
-                if (pointIndex + 1 < points.Length)
-                {
-                    CurvePoint next = points[pointIndex + 1];
-                    parameterItems.Add(new(
-                        point.Id,
-                        TimelineItemKind.LogicalParameterCurve,
-                        point.Tick,
-                        next.Tick,
-                        0,
-                        normalized,
-                        0,
-                        state | TimelineItemState.HitTestDisabled)
-                    {
-                        SecondaryValue = NormalizeParameterValue(definition, next.Value),
-                        Interpolation = point.Interpolation
-                    });
-                }
                 parameterItems.Add(new(
                     point.Id,
                     TimelineItemKind.LogicalParameterPoint,
@@ -1417,9 +1424,23 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             maximum = definition.Maximum;
         }
         double value = minimum + Math.Clamp(normalized, 0, 1) * (maximum - minimum);
-        return definition.Type == LogicalParameterType.Integer
-            ? Math.Round(value, MidpointRounding.AwayFromZero)
-            : value;
+        if (definition.Type == LogicalParameterType.Double)
+        {
+            return value;
+        }
+
+        double integral = Math.Round(value, MidpointRounding.AwayFromZero);
+        if (definition.Type != LogicalParameterType.Enum
+            || !definition.UsesExplicitEnumValues
+            || definition.EnumItems.Count == 0)
+        {
+            return integral;
+        }
+        return definition.EnumItems
+            .OrderBy(item => Math.Abs(item.Value - integral))
+            .ThenBy(item => item.Value)
+            .First()
+            .Value;
     }
 }
 
@@ -1594,6 +1615,15 @@ public sealed class InstrumentWorkspaceViewModel(
     private long? _editCursorTick;
     private MidoraId? _selectedMappingStepId;
     private int _activeSectionIndex;
+    private long _timelineStartTick;
+    private long _timelineTickSpan = 3072;
+    private int _timelineFirstLane = 59;
+    private double _timelineLaneHeight = 18;
+    private GridLength _noteEditorRowHeight = new(5, GridUnitType.Star);
+    private GridLength _eventEditorRowHeight = new(3, GridUnitType.Star);
+    private int _activeLowerEditorIndex;
+    private double _velocityValueScrollOffset;
+    private double _eventValueScrollOffset;
 
     private TimelineEditorSettings _editorSettings = new();
     private TimelineEditorSettings _eventLaneEditorSettings = new();
@@ -1613,7 +1643,69 @@ public sealed class InstrumentWorkspaceViewModel(
     public int ActiveSectionIndex
     {
         get => _activeSectionIndex;
-        set => Set(ref _activeSectionIndex, Math.Clamp(value, 0, 4));
+        set => Set(ref _activeSectionIndex, Math.Clamp(value, 0, 2));
+    }
+
+    public long TimelineStartTick
+    {
+        get => _timelineStartTick;
+        set => Set(ref _timelineStartTick, Math.Max(0, value));
+    }
+
+    public long TimelineTickSpan
+    {
+        get => _timelineTickSpan;
+        set => Set(ref _timelineTickSpan, Math.Max(1, value));
+    }
+
+    public int TimelineFirstLane
+    {
+        get => _timelineFirstLane;
+        set => Set(ref _timelineFirstLane, Math.Clamp(value, 0, 127));
+    }
+
+    public double TimelineLaneHeight
+    {
+        get => _timelineLaneHeight;
+        set => Set(ref _timelineLaneHeight, Math.Clamp(value, 4, 128));
+    }
+
+    public GridLength NoteEditorRowHeight
+    {
+        get => _noteEditorRowHeight;
+        set
+        {
+            if (value.Value <= 0 || !double.IsFinite(value.Value)) return;
+            Set(ref _noteEditorRowHeight, value);
+        }
+    }
+
+    public GridLength EventEditorRowHeight
+    {
+        get => _eventEditorRowHeight;
+        set
+        {
+            if (value.Value <= 0 || !double.IsFinite(value.Value)) return;
+            Set(ref _eventEditorRowHeight, value);
+        }
+    }
+
+    public int ActiveLowerEditorIndex
+    {
+        get => _activeLowerEditorIndex;
+        set => Set(ref _activeLowerEditorIndex, Math.Clamp(value, 0, 1));
+    }
+
+    public double VelocityValueScrollOffset
+    {
+        get => _velocityValueScrollOffset;
+        set => Set(ref _velocityValueScrollOffset, Math.Max(0, value));
+    }
+
+    public double EventValueScrollOffset
+    {
+        get => _eventValueScrollOffset;
+        set => Set(ref _eventValueScrollOffset, Math.Max(0, value));
     }
 
     public long? EditCursorTick
@@ -2308,6 +2400,7 @@ public sealed class SettingsWorkspaceViewModel()
         }
     }
     public bool HasSoundFont => !string.Equals(SoundFont, "No SoundFont Selected", StringComparison.Ordinal);
+    public bool HasEmbeddedSoundFont { get; private set; }
     public string Playback { get => _playback; private set => Set(ref _playback, value); }
     public string AudioRender { get => _audioRender; private set => Set(ref _audioRender, value); }
     public ObservableCollection<InspectorField> GeneralFields { get; } = [];
@@ -2326,6 +2419,8 @@ public sealed class SettingsWorkspaceViewModel()
         SoundFont = project.SoundFont.Reference is null
             ? "No SoundFont Selected"
             : $"{project.SoundFont.Reference.Mode} · {project.SoundFont.Reference.OriginalFileName}";
+        HasEmbeddedSoundFont = project.SoundFont.Reference is EmbeddedProjectSoundFontReference;
+        Raise(nameof(HasEmbeddedSoundFont));
         Playback = $"Master {project.Playback.MasterVolumeDecibels:0.###} dB · Limiter {(project.Playback.LimiterEnabled ? "On" : "Off")}";
         AudioRender = $"{project.AudioRender.Mode} · {project.AudioRender.SampleRate:N0} Hz · {project.AudioRender.MaximumSampleVoicesPerUnitStream:N0} voices / Unit";
         Replace(GeneralFields,

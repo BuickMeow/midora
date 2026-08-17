@@ -125,6 +125,30 @@ public sealed class ApplicationTaskCoordinatorTests
     }
 
     [Fact]
+    public void PlaybackStartedAfterHeldPreviewFaultRemainsStoppable()
+    {
+        using TestContext fixture = TestContext.Create();
+        EventInstrument instrument = fixture.Session.Project.EventInstruments[0];
+        fixture.Coordinator.StartHeldEventInstrumentPreview(
+            new EventInstrumentPreviewRequest(instrument.Id, Tempo: 120m));
+        fixture.Backend.ThrowOnHeldReplacement = true;
+
+        Assert.Throws<InvalidOperationException>(() =>
+            fixture.Coordinator.EndHeldPreviewGate(240));
+        Assert.Equal(PlaybackState.Error, fixture.Playback.State);
+        Assert.Equal(ApplicationTaskKind.None, fixture.Coordinator.ActiveTaskKind);
+
+        fixture.Backend.ThrowOnHeldReplacement = false;
+        fixture.Coordinator.StartMainPlayback();
+
+        Assert.Equal(PlaybackState.Playing, fixture.Playback.State);
+        Assert.Equal(ApplicationTaskKind.MainPlayback, fixture.Coordinator.ActiveTaskKind);
+        fixture.Coordinator.StopPlayback();
+        Assert.Equal(PlaybackState.Stopped, fixture.Playback.State);
+        Assert.Equal(ApplicationTaskKind.None, fixture.Coordinator.ActiveTaskKind);
+    }
+
+    [Fact]
     public void SegmentPitchRulerReleaseIsNotAutoReplacedByInstrumentKeyboardPreview()
     {
         using TestContext fixture = TestContext.Create();
@@ -839,6 +863,7 @@ public sealed class ApplicationTaskCoordinatorTests
         public string? OutputDeviceSelectionReason => null;
         public int StopCount { get; private set; }
         public bool ThrowOnStop { get; set; }
+        public bool ThrowOnHeldReplacement { get; set; }
         public bool HeldProducerPaused { get; private set; }
 
         public int Prepare() => ActualSampleRate;
@@ -863,6 +888,10 @@ public sealed class ApplicationTaskCoordinatorTests
             long producerFrontierFrame,
             TimeSpan timeout)
         {
+            if (ThrowOnHeldReplacement)
+            {
+                throw new InvalidOperationException("Injected held-preview replacement failure.");
+            }
             HeldProducerPaused = false;
         }
 

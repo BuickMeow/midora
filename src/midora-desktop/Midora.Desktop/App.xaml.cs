@@ -39,7 +39,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
-            MessageBox.Show(
+            MessageDialog.Show(
                 $"Midora could not start.\n\n{exception.Message}",
                 "Midora Startup Failed",
                 MessageBoxButton.OK,

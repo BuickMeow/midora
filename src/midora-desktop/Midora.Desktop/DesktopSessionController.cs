@@ -433,6 +433,75 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         RefreshAll();
     }
 
+    public async Task ExtractEmbeddedSoundFontAsync(
+        string destinationPath,
+        bool overwriteAuthorized,
+        CancellationToken cancellationToken = default)
+    {
+        if (_context is null || Project?.SoundFont.Reference is not EmbeddedProjectSoundFontReference reference)
+        {
+            throw new InvalidOperationException("The Project has no embedded SoundFont to extract.");
+        }
+        EmbeddedSoundFontResourceV1 resource = _context.SoundFontResources.CurrentEmbeddedResource
+            ?? throw new InvalidOperationException("The embedded SoundFont runtime resource is unavailable.");
+        if (!resource.IsAvailable
+            || resource.Reference != reference
+            || resource.ResolvedAbsolutePath is not string sourcePath
+            || !File.Exists(sourcePath))
+        {
+            throw new InvalidOperationException(
+                "The embedded SoundFont runtime resource is unavailable or no longer matches the Project.");
+        }
+
+        string destination = Path.GetFullPath(destinationPath);
+        string? directory = Path.GetDirectoryName(destination);
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            throw new DirectoryNotFoundException("The selected destination directory does not exist.");
+        }
+        if (File.Exists(destination) && !overwriteAuthorized)
+        {
+            throw new IOException("The destination file already exists and overwrite was not authorized.");
+        }
+
+        string temporary = Path.Combine(
+            directory,
+            $".{Path.GetFileName(destination)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            await using (FileStream source = new(
+                sourcePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan))
+            await using (FileStream target = new(
+                temporary,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                await source.CopyToAsync(target, 128 * 1024, cancellationToken);
+                await target.FlushAsync(cancellationToken);
+            }
+            File.Move(temporary, destination, overwriteAuthorized);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Best-effort cleanup must not replace the extraction result or its causal error.
+            }
+        }
+    }
+
     public void ClearSoundFont()
     {
         if (_context is null) throw new InvalidOperationException("No Project is open.");
@@ -668,8 +737,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     public void ResetPlaybackEngine()
     {
-        if (_context?.Playback is null) return;
-        _context.Playback.ResetPlaybackEngine();
+        if (_context?.Tasks is null) return;
+        _context.Tasks.ResetPlaybackEngine();
         RefreshProperties();
     }
 
@@ -1142,6 +1211,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     public void CloseWorkspace(WorkspaceViewModel workspace)
     {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (!workspace.CanClose) return;
         int index = Workspaces.IndexOf(workspace);
         if (index < 0) return;
         Workspaces.RemoveAt(index);
@@ -1169,6 +1240,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             throw new ArgumentOutOfRangeException(nameof(newIndex));
         }
+        if (!workspace.CanReorder) return;
+        newIndex = Math.Max(1, newIndex);
         if (oldIndex != newIndex) Workspaces.Move(oldIndex, newIndex);
         ActiveWorkspace = workspace;
     }
@@ -1342,7 +1415,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 diagnostics.SetScope(_diagnosticScopeWorkspace);
             }
         }
-        Workspaces.Add(created);
+        if (created.Kind == WorkspaceKind.Arrangement)
+            Workspaces.Insert(0, created);
+        else
+            Workspaces.Add(created);
         return created;
     }
 

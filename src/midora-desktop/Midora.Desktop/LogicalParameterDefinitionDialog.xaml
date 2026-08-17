@@ -111,7 +111,7 @@
       </StackPanel>
     </ScrollViewer>
 
-    <Border Grid.Row="3" Padding="12" Background="{StaticResource Brush.Surface.1}"
+    <Border Grid.Row="3" MinHeight="58" Padding="12,10" Background="{StaticResource Brush.Surface.1}"
             BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
       <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
         <Button Width="86" Margin="0,0,6,0" IsCancel="True" Content="Cancel"/>

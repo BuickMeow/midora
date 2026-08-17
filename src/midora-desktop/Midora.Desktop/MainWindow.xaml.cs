@@ -54,6 +54,7 @@ public partial class MainWindow : Window
     private int? _trackHeaderContextLane;
     private TimelineSurface? _pendingTimelineAltReleaseFocus;
     private bool _synchronizingInstrumentStructureSelection;
+    private CancellationTokenSource? _instrumentLoopCommitDelay;
 
     public MainWindow()
     {
@@ -112,6 +113,7 @@ public partial class MainWindow : Window
             _windowSource = null;
         }
         _playbackTimer.Stop();
+        Interlocked.Exchange(ref _instrumentLoopCommitDelay, null)?.Cancel();
         await _session.DisposeAsync();
         SaveDesktopPreferences();
         base.OnClosed(e);
@@ -264,7 +266,7 @@ public partial class MainWindow : Window
     {
         if (_session.HasUnsavedDrafts)
         {
-            MessageBoxResult drafts = MessageBox.Show(
+            MessageBoxResult drafts = MessageDialog.Show(
                 this,
                 "Apply all C# Mapping drafts before closing the current Project? Drafts are session UI state and are discarded when the Project closes.",
                 "Unapplied C# Mapping Drafts",
@@ -291,14 +293,14 @@ public partial class MainWindow : Window
         }
         if (_session.HasDamagedProjectObjects)
         {
-            return MessageBox.Show(
+            return MessageDialog.Show(
                 this,
                 "This Project has unsaved changes and damaged object placeholders. Saving is prohibited until every damaged placeholder is deleted. Close and discard the current session changes?",
                 "Discard Unsavable Project Changes",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning) == MessageBoxResult.Yes;
         }
-        MessageBoxResult result = MessageBox.Show(
+        MessageBoxResult result = MessageDialog.Show(
             this,
             "Save changes to the current Project before closing it?",
             "Unsaved Project Changes",
@@ -589,9 +591,18 @@ public partial class MainWindow : Window
         ProjectTreeNode? target = FindVisualAncestor<TreeViewItem>(e.OriginalSource as DependencyObject)?.DataContext
             as ProjectTreeNode;
         DragDropEffects effect = GetProjectTreeDropEffect(source, target);
+        e.Effects = effect;
         e.Handled = true;
         if (source is null || target is null || effect == DragDropEffects.None || _session.Project is null) return;
-
+        if (effect == DragDropEffects.Link)
+        {
+            _ = Dispatcher.BeginInvoke(
+                DispatcherPriority.Input,
+                () => RunSynchronous(
+                    "Project Tree Drag and Drop",
+                    () => ApplyProjectTreeDrop(source, target)));
+            return;
+        }
         RunSynchronous("Project Tree Drag and Drop", () => ApplyProjectTreeDrop(source, target));
     }
 
@@ -664,7 +675,7 @@ public partial class MainWindow : Window
                 {
                     EventInstrument? current = project.EventInstruments.FirstOrDefault(item => item.Id == currentId);
                     EventInstrument replacement = project.EventInstruments.Single(item => item.Id == sourceId);
-                    if (MessageBox.Show(
+                    if (MessageDialog.Show(
                             this,
                             $"Rebind Logical Track '{track.Name}' from '{current?.Name ?? track.LastBoundEventInstrumentName ?? currentId.ToString()}' to '{replacement.Name}'? Existing Segments and Logical Parameter lanes are preserved; incompatible references will be diagnosed and are not repaired automatically.",
                             "Rebind Logical Track",
@@ -786,6 +797,7 @@ public partial class MainWindow : Window
         }
         TabItem? item = FindVisualAncestor<TabItem>(e.OriginalSource as DependencyObject);
         if (item?.DataContext is not WorkspaceViewModel workspace) return;
+        if (!workspace.CanReorder) return;
         _workspaceTabDragStart = e.GetPosition(WorkspaceTabs);
         _workspaceTabDragWorkspace = workspace;
     }
@@ -821,6 +833,7 @@ public partial class MainWindow : Window
         WorkspaceViewModel? target = FindVisualAncestor<TabItem>(e.OriginalSource as DependencyObject)?.DataContext
             as WorkspaceViewModel;
         e.Effects = source is not null
+            && source.CanReorder
             && target is not null
             && !ReferenceEquals(source, target)
             && !_session.IsMainWindowTaskLocked
@@ -856,6 +869,7 @@ public partial class MainWindow : Window
             {
                 selected.BringIntoView();
             }
+            WorkspaceTabs.Focus();
         }, DispatcherPriority.Loaded);
     }
 
@@ -901,6 +915,8 @@ public partial class MainWindow : Window
             case ProjectTreeNodeKind.InstrumentLibrary:
                 Add("New Event Instrument", OnNewInstrumentClick);
                 Add("New Event Instrument Folder", OnNewInstrumentFolderClick);
+                Separator();
+                Add("Paste Event Instrument", OnPasteTreeInstrumentClick, "Ctrl+V");
                 break;
             case ProjectTreeNodeKind.LogicalTracks:
                 Add("New Logical Track", OnNewTrackClick);
@@ -916,9 +932,23 @@ public partial class MainWindow : Window
                 Add("Delete…", OnTreeDeleteClick);
                 break;
             case ProjectTreeNodeKind.EventInstrument:
+                Add("Open", OnTreeOpenClick);
+                Add("Rename", OnTreeRenameClick, "F2");
+                Separator();
+                Add("Copy", OnCopyTreeInstrumentClick, "Ctrl+C");
+                Add("Paste", OnPasteTreeInstrumentClick, "Ctrl+V");
+                Add("Duplicate", OnDuplicateTreeInstrumentClick, "Ctrl+D");
+                Separator();
+                Add("Move Up", OnTreeMoveUpClick);
+                Add("Move Down", OnTreeMoveDownClick);
+                Separator();
+                Add("Delete…", OnTreeDeleteClick);
+                break;
             case ProjectTreeNodeKind.InstrumentFolder:
                 Add("Open", OnTreeOpenClick);
                 Add("Rename", OnTreeRenameClick, "F2");
+                Separator();
+                Add("Paste Event Instrument", OnPasteTreeInstrumentClick, "Ctrl+V");
                 Separator();
                 Add("Move Up", OnTreeMoveUpClick);
                 Add("Move Down", OnTreeMoveDownClick);
@@ -981,6 +1011,9 @@ public partial class MainWindow : Window
                     Add("Rename…", OnTrackHeaderRenameClick, enabled: _session.CanEditProject && hasTrack);
                     Add("Bind Event Instrument…", OnTrackHeaderBindClick, enabled: _session.CanEditProject && hasTrack && _session.Project?.EventInstruments.Count > 0);
                     Add("Unbind", OnTrackHeaderUnbindClick, enabled: _session.CanEditProject && hasTrack && contextTrack.EventInstrumentId is not null);
+                    Separator();
+                    Add("Select All Segments on Track", OnTrackHeaderSelectSegmentsClick, enabled: hasTrack && contextTrack.Segments.Count > 0);
+                    Add("Add Track Segments to Selection", OnTrackHeaderAddSegmentsToSelectionClick, enabled: hasTrack && contextTrack.Segments.Count > 0);
                     Separator();
                     Add("Move Up", OnTrackHeaderMoveUpClick, enabled: _session.CanEditProject && trackIndex > 0);
                     Add("Move Down", OnTrackHeaderMoveDownClick, enabled: _session.CanEditProject && hasTrack && _session.Project is not null && trackIndex < _session.Project.Tracks.Count - 1);
@@ -1179,7 +1212,7 @@ public partial class MainWindow : Window
             _ => null
         };
         if (detail is null) return;
-        if (MessageBox.Show(this, detail, "Delete Project Object", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        if (MessageDialog.Show(this, detail, "Delete Project Object", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
         {
             return;
         }
@@ -1252,9 +1285,17 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
-        BindTrackToInstrument(track, instrumentId);
         e.Effects = DragDropEffects.Link;
         e.Handled = true;
+        MidoraId trackId = track.Id;
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            () =>
+            {
+                LogicalTrack? current = _session.Project?.Tracks
+                    .FirstOrDefault(value => value.Id == trackId);
+                if (current is not null) BindTrackToInstrument(current, instrumentId);
+            });
     }
 
     private bool TryResolveInstrumentDrop(
@@ -1267,6 +1308,7 @@ public partial class MainWindow : Window
         instrumentId = default;
         if (sender is not TimelineSurface surface
             || surface.SurfaceMode != TimelineSurfaceMode.Arrangement
+            || !_session.CanEditProject
             || _session.Project is not MidoraProject project
             || !e.Data.GetDataPresent(EventInstrumentDragFormat)
             || e.Data.GetData(EventInstrumentDragFormat) is not long rawId
@@ -1289,7 +1331,7 @@ public partial class MainWindow : Window
         EventInstrument? instrument = project.EventInstruments.FirstOrDefault(item => item.Id == instrumentId);
         if (instrument is null || track.EventInstrumentId == instrumentId) return;
         if (track.EventInstrumentId is not null
-            && MessageBox.Show(
+            && MessageDialog.Show(
                 this,
                 $"Rebind Logical Track '{TimelineWorkspaceViewModel.TrackDisplayName(project, track)}' to Event Instrument '{instrument.Name}'?",
                 "Rebind Logical Track",
@@ -1344,7 +1386,7 @@ public partial class MainWindow : Window
             return;
         }
         int bindings = project.Tracks.Count(track => track.EventInstrumentId == selected.Id);
-        if (MessageBox.Show(
+        if (MessageDialog.Show(
                 this,
                 $"Delete Event Instrument '{selected.Name}'? {bindings} bound Logical Track(s) will become unbound.",
                 "Delete Event Instrument",
@@ -1368,6 +1410,136 @@ public partial class MainWindow : Window
         }
         RunSynchronous("Duplicate Event Instrument", () =>
             _session.Execute(ProjectDomainEditCommands.DuplicateEventInstrument(selected.Id)));
+    }
+
+    private void OnCopyLibraryInstrumentClick(object sender, RoutedEventArgs e) =>
+        CopySelectedEventInstrument();
+
+    private void OnPasteLibraryInstrumentClick(object sender, RoutedEventArgs e) =>
+        PasteEventInstrumentClipboard();
+
+    private bool CopySelectedEventInstrument()
+    {
+        if (!TryGetSelectedEventInstrumentId(out MidoraId instrumentId))
+        {
+            return false;
+        }
+        return CopyEventInstrument(instrumentId);
+    }
+
+    private bool CopyEventInstrument(MidoraId instrumentId)
+    {
+        if (_session.Document is not ProjectDocumentSession document) return false;
+        RunSynchronous("Copy Event Instrument", () =>
+        {
+            ProjectObjectClipboardPayload payload =
+                ProjectObjectClipboard.CopyEventInstrument(document, instrumentId);
+            Clipboard.SetDataObject(payload.PlainTextSummary, copy: true);
+            _projectClipboard = payload;
+            _clipboardDocument = document;
+            _session.SetStatusMessage($"Copied {payload.PlainTextSummary}.");
+        });
+        return true;
+    }
+
+    private bool PasteEventInstrumentClipboard(bool allowSelectedTreeTarget = false)
+    {
+        if (!_session.CanEditProject
+            || _session.Document is not ProjectDocumentSession document
+            || _session.Project is not MidoraProject project
+            || _projectClipboard is not ProjectObjectClipboardPayload
+                { Kind: ProjectObjectClipboardKind.EventInstrument } payload
+            || !ReferenceEquals(document, _clipboardDocument)
+            || !IsEventInstrumentClipboardTarget(allowSelectedTreeTarget))
+        {
+            return false;
+        }
+        MidoraId? targetFolderId = ResolveEventInstrumentPasteFolder(project);
+        RunSynchronous("Paste Event Instrument", () =>
+        {
+            long firstNewStableId = project.NextStableId;
+            _session.Execute(ProjectObjectClipboard.CreatePasteEventInstrumentCommand(
+                document,
+                payload,
+                targetFolderId));
+            if (_session.ActiveWorkspace is LibraryWorkspaceViewModel library)
+            {
+                library.SelectedInstrument = library.Instruments
+                    .FirstOrDefault(value => value.Id.Value >= firstNewStableId);
+            }
+            _session.SetStatusMessage($"Pasted {payload.PlainTextSummary}.");
+        });
+        return true;
+    }
+
+    private bool TryGetSelectedEventInstrumentId(out MidoraId instrumentId)
+    {
+        if (_session.ActiveWorkspace is LibraryWorkspaceViewModel
+            {
+                SelectedInstrument: InstrumentListItem selected
+            })
+        {
+            instrumentId = selected.Id;
+            return true;
+        }
+        if (ProjectTree.IsKeyboardFocusWithin
+            && ProjectTree.SelectedItem is ProjectTreeNode
+                { Kind: ProjectTreeNodeKind.EventInstrument, ObjectId: MidoraId selectedId })
+        {
+            instrumentId = selectedId;
+            return true;
+        }
+        instrumentId = default;
+        return false;
+    }
+
+    private bool IsEventInstrumentClipboardTarget(bool allowSelectedTreeTarget) =>
+        _session.ActiveWorkspace is LibraryWorkspaceViewModel
+        || (ProjectTree.IsKeyboardFocusWithin || allowSelectedTreeTarget)
+            && ProjectTree.SelectedItem is ProjectTreeNode
+            {
+                Kind: ProjectTreeNodeKind.InstrumentLibrary
+                    or ProjectTreeNodeKind.InstrumentFolder
+                    or ProjectTreeNodeKind.EventInstrument
+            };
+
+    private MidoraId? ResolveEventInstrumentPasteFolder(MidoraProject project)
+    {
+        if (ProjectTree.IsKeyboardFocusWithin && ProjectTree.SelectedItem is ProjectTreeNode node)
+        {
+            if (node.Kind == ProjectTreeNodeKind.InstrumentFolder) return node.ObjectId;
+            if (node.Kind == ProjectTreeNodeKind.EventInstrument
+                && node.ObjectId is MidoraId instrumentId)
+            {
+                return project.EventInstruments
+                    .FirstOrDefault(value => value.Id == instrumentId)?.LibraryFolderId;
+            }
+            if (node.Kind == ProjectTreeNodeKind.InstrumentLibrary) return null;
+        }
+        return null;
+    }
+
+    private void OnCopyTreeInstrumentClick(object sender, RoutedEventArgs e)
+    {
+        if (ProjectTree.SelectedItem is ProjectTreeNode
+            { Kind: ProjectTreeNodeKind.EventInstrument, ObjectId: MidoraId instrumentId })
+        {
+            _ = CopyEventInstrument(instrumentId);
+        }
+    }
+
+    private void OnPasteTreeInstrumentClick(object sender, RoutedEventArgs e) =>
+        _ = PasteEventInstrumentClipboard(allowSelectedTreeTarget: true);
+
+    private void OnDuplicateTreeInstrumentClick(object sender, RoutedEventArgs e)
+    {
+        if (ProjectTree.SelectedItem is not ProjectTreeNode
+            { Kind: ProjectTreeNodeKind.EventInstrument, ObjectId: MidoraId instrumentId })
+        {
+            return;
+        }
+        RunSynchronous("Duplicate Event Instrument", () => _session.Execute(
+            ProjectDomainEditCommands.DuplicateEventInstrument(instrumentId)));
     }
 
     private void OnMoveLibraryInstrumentClick(object sender, RoutedEventArgs e)
@@ -1419,21 +1591,6 @@ public partial class MainWindow : Window
             ProjectDomainEditCommands.DuplicateSubVoice(instrumentId, subVoiceId), workspace));
     }
 
-    private void OnSubVoiceDoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is not ListBox
-            {
-                DataContext: InstrumentWorkspaceViewModel workspace,
-                SelectedItem: SubVoiceListItem selected
-            }) return;
-        e.Handled = true;
-        _ = Dispatcher.BeginInvoke(() =>
-        {
-            if (!ReferenceEquals(_session.ActiveWorkspace, workspace)) return;
-            _session.ActivateSubVoiceEditor(workspace, selected.Id);
-        }, DispatcherPriority.Normal);
-    }
-
     private void OnInstrumentStructureCutClick(object sender, RoutedEventArgs e) =>
         CutOrCopyProjectSelection(cut: true);
 
@@ -1470,16 +1627,23 @@ public partial class MainWindow : Window
 
     private void OnInstrumentIsolationClick(object sender, RoutedEventArgs e)
     {
-        if (sender is not CheckBox { IsChecked: bool enabled }
-            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel { ObjectId: MidoraId instrumentId }
+        if (sender is not CheckBox { IsChecked: bool enabled } checkBox
+            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel
+            {
+                ObjectId: MidoraId instrumentId
+            } workspace
             || _session.Project?.EventInstruments.FirstOrDefault(item => item.Id == instrumentId)
                 is not EventInstrument instrument
             || instrument.RequiresChannelIsolation == enabled)
         {
             return;
         }
-        RunSynchronous("Change Event Instrument Isolation", () => _session.Execute(
-            ProjectDomainEditCommands.UpdateEventInstrumentIsolation(instrumentId, enabled)));
+        if (!RunSynchronous("Change Event Instrument Isolation", () => _session.Execute(
+                ProjectDomainEditCommands.UpdateEventInstrumentIsolation(instrumentId, enabled))))
+        {
+            _session.RefreshWorkspace(workspace);
+            checkBox.GetBindingExpression(ToggleButton.IsCheckedProperty)?.UpdateTarget();
+        }
     }
 
     private void OnInstrumentConfigurationLostFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -1490,7 +1654,7 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Update Event Instrument configuration", () =>
+        if (!RunSynchronous("Update Event Instrument configuration", () =>
         {
             IProjectEditCommand command = field switch
             {
@@ -1502,9 +1666,6 @@ public partial class MainWindow : Window
                     string.IsNullOrWhiteSpace(workspace.InstrumentDescriptionText)
                         ? null
                         : workspace.InstrumentDescriptionText),
-                "Color" => ProjectDomainEditCommands.UpdateEventInstrumentColor(
-                    instrumentId,
-                    ParseInstrumentColor(workspace.InstrumentColorText)),
                 "RootNote" => ProjectDomainEditCommands.UpdateEventInstrumentRootNote(
                     instrumentId,
                     int.Parse(workspace.InstrumentRootNoteText, NumberStyles.Integer, CultureInfo.InvariantCulture)),
@@ -1514,21 +1675,32 @@ public partial class MainWindow : Window
                 _ => throw new InvalidOperationException("Unknown Event Instrument configuration field.")
             };
             _session.Execute(command);
-        });
+        }))
+        {
+            _session.RefreshWorkspace(workspace);
+        }
     }
 
-    private static MidoraColor ParseInstrumentColor(string text)
+    private void OnSelectInstrumentColorClick(object sender, RoutedEventArgs e)
     {
-        string value = (text ?? string.Empty).Trim();
-        if (value.StartsWith('#')) value = value[1..];
-        if (value.Length != 6
-            || !byte.TryParse(value.AsSpan(0, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte red)
-            || !byte.TryParse(value.AsSpan(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte green)
-            || !byte.TryParse(value.AsSpan(4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte blue))
+        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel { ObjectId: MidoraId instrumentId }
+            || _session.Project?.EventInstruments.FirstOrDefault(value => value.Id == instrumentId)
+                is not EventInstrument instrument)
         {
-            throw new FormatException("Color must use #RRGGBB hexadecimal format.");
+            return;
         }
-        return new(red, green, blue);
+        ColorPickerDialog dialog = new(
+            instrument.Color.Red,
+            instrument.Color.Green,
+            instrument.Color.Blue)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true) return;
+        RunSynchronous("Change Event Instrument Color", () => _session.Execute(
+            ProjectDomainEditCommands.UpdateEventInstrumentColor(
+                instrumentId,
+                new MidoraColor(dialog.Red, dialog.Green, dialog.Blue))));
     }
 
     private void OnInstrumentInitialStateFieldLostFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -1586,48 +1758,91 @@ public partial class MainWindow : Window
 
     private void OnInstrumentLifecycleSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (sender is not ComboBox { Tag: string field }
-            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel { ObjectId: MidoraId instrumentId }
+        if (sender is not ComboBox { Tag: string field } comboBox
+            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel
+            {
+                ObjectId: MidoraId instrumentId
+            } workspace
             || _session.Project?.EventInstruments.FirstOrDefault(item => item.Id == instrumentId)
                 is not EventInstrument instrument)
         {
             return;
         }
-        ShortNoteLifecycle shortLifecycle = field == "Short" && ((ComboBox)sender).SelectedItem is ShortNoteLifecycle selectedShort
+        ShortNoteLifecycle shortLifecycle = field == "Short" && comboBox.SelectedItem is ShortNoteLifecycle selectedShort
             ? selectedShort
             : instrument.ShortLifecycle;
-        LongNoteLifecycle longLifecycle = field == "Long" && ((ComboBox)sender).SelectedItem is LongNoteLifecycle selectedLong
+        LongNoteLifecycle longLifecycle = field == "Long" && comboBox.SelectedItem is LongNoteLifecycle selectedLong
             ? selectedLong
             : instrument.LongLifecycle;
         if (shortLifecycle == instrument.ShortLifecycle && longLifecycle == instrument.LongLifecycle) return;
-        RunSynchronous("Change Event Instrument Lifecycle", () => _session.Execute(
-            ProjectDomainEditCommands.UpdateEventInstrumentLifecycle(
-                instrumentId,
-                shortLifecycle,
-                longLifecycle)));
+        if (!RunSynchronous("Change Event Instrument Lifecycle", () => _session.Execute(
+                ProjectDomainEditCommands.UpdateEventInstrumentLifecycle(
+                    instrumentId,
+                    shortLifecycle,
+                    longLifecycle))))
+        {
+            _session.RefreshWorkspace(workspace);
+            comboBox.GetBindingExpression(Selector.SelectedItemProperty)?.UpdateTarget();
+        }
     }
 
     private void OnInstrumentOverlapSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (sender is not ComboBox { Tag: string field }
-            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel { ObjectId: MidoraId instrumentId }
+        if (sender is not ComboBox { Tag: string field } comboBox
+            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel
+            {
+                ObjectId: MidoraId instrumentId
+            } workspace
             || _session.Project?.EventInstruments.FirstOrDefault(item => item.Id == instrumentId)
                 is not EventInstrument instrument)
         {
             return;
         }
-        OverlapPolicy policy = field == "Policy" && ((ComboBox)sender).SelectedItem is OverlapPolicy selectedPolicy
+        OverlapPolicy policy = field == "Policy" && comboBox.SelectedItem is OverlapPolicy selectedPolicy
             ? selectedPolicy
             : instrument.OverlapPolicy;
-        OverlapScope scope = field == "Scope" && ((ComboBox)sender).SelectedItem is OverlapScope selectedScope
+        OverlapScope scope = field == "Scope" && comboBox.SelectedItem is OverlapScope selectedScope
             ? selectedScope
             : instrument.OverlapScope;
         if (policy == instrument.OverlapPolicy && scope == instrument.OverlapScope) return;
-        RunSynchronous("Change Event Instrument Overlap", () => _session.Execute(
-            ProjectDomainEditCommands.UpdateEventInstrumentOverlap(instrumentId, policy, scope)));
+        if (!RunSynchronous("Change Event Instrument Overlap", () => _session.Execute(
+                ProjectDomainEditCommands.UpdateEventInstrumentOverlap(instrumentId, policy, scope))))
+        {
+            _session.RefreshWorkspace(workspace);
+            comboBox.GetBindingExpression(Selector.SelectedItemProperty)?.UpdateTarget();
+        }
     }
 
-    private void OnApplyInstrumentLoopClick(object sender, RoutedEventArgs e)
+    private void OnInstrumentSectionSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(e.OriginalSource, sender) || sender is not TabControl tabs) return;
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            () => tabs.Focus());
+    }
+
+    private void OnInstrumentSectionsLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not TabControl tabs
+            || tabs.Items.OfType<TabItem>().FirstOrDefault(item =>
+                string.Equals(item.Header as string, "Configurations", StringComparison.Ordinal))
+                is not TabItem configurations
+            || tabs.Items.IndexOf(configurations) == 0)
+        {
+            return;
+        }
+        int requestedIndex = tabs.DataContext is InstrumentWorkspaceViewModel workspace
+            ? workspace.ActiveSectionIndex
+            : 0;
+        tabs.Items.Remove(configurations);
+        tabs.Items.Insert(0, configurations);
+        tabs.SelectedIndex = Math.Clamp(requestedIndex, 0, tabs.Items.Count - 1);
+    }
+
+    private void OnInstrumentLoopLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) =>
+        CommitInstrumentLoop();
+
+    private async void OnInstrumentLoopTextChanged(object sender, TextChangedEventArgs e)
     {
         if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel
             {
@@ -1636,12 +1851,118 @@ public partial class MainWindow : Window
         {
             return;
         }
-        RunSynchronous("Change Event Instrument Loop", () =>
+
+        CancellationTokenSource delay = new();
+        CancellationTokenSource? previous = Interlocked.Exchange(
+            ref _instrumentLoopCommitDelay,
+            delay);
+        previous?.Cancel();
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(180), delay.Token);
+            if (delay.IsCancellationRequested
+                || !_session.CanEditProject
+                || _session.Project?.EventInstruments.FirstOrDefault(value => value.Id == instrumentId)
+                    is not EventInstrument instrument
+                || !TryParseCompleteLoop(workspace, instrument, out long? start, out long? end))
+            {
+                return;
+            }
+            ExecuteInstrumentLoopUpdate(workspace, instrumentId, instrument, start, end);
+        }
+        catch (OperationCanceledException) when (delay.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            _ = Interlocked.CompareExchange(
+                ref _instrumentLoopCommitDelay,
+                null,
+                delay);
+            delay.Dispose();
+        }
+    }
+
+    private void OnInstrumentLoopKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        CommitInstrumentLoop();
+        e.Handled = true;
+    }
+
+    private void CommitInstrumentLoop()
+    {
+        CancellationTokenSource? pending = Interlocked.Exchange(
+            ref _instrumentLoopCommitDelay,
+            null);
+        pending?.Cancel();
+        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel
+            {
+                ObjectId: MidoraId instrumentId
+            } workspace
+            || _session.Project?.EventInstruments.FirstOrDefault(value => value.Id == instrumentId)
+                is not EventInstrument instrument)
+        {
+            return;
+        }
+        if (!RunSynchronous("Change Event Instrument Loop", () =>
         {
             long? start = ParseOptionalTick(workspace.LoopStartText, "Loop Start");
             long? end = ParseOptionalTick(workspace.LoopEndText, "Loop End");
-            _session.Execute(ProjectDomainEditCommands.UpdateEventInstrumentLoop(instrumentId, start, end));
-        });
+            if (instrument.LoopStartTick == start && instrument.LoopEndTick == end)
+            {
+                return;
+            }
+            _session.Execute(ProjectDomainEditCommands.UpdateEventInstrumentLoop(
+                instrumentId,
+                start,
+                end));
+        }))
+        {
+            _session.RefreshWorkspace(workspace);
+        }
+    }
+
+    private void ExecuteInstrumentLoopUpdate(
+        InstrumentWorkspaceViewModel workspace,
+        MidoraId instrumentId,
+        EventInstrument instrument,
+        long? start,
+        long? end)
+    {
+        if (instrument.LoopStartTick == start && instrument.LoopEndTick == end) return;
+        if (!RunSynchronous("Change Event Instrument Loop", () => _session.Execute(
+                ProjectDomainEditCommands.UpdateEventInstrumentLoop(instrumentId, start, end))))
+        {
+            _session.RefreshWorkspace(workspace);
+        }
+    }
+
+    private static bool TryParseCompleteLoop(
+        InstrumentWorkspaceViewModel workspace,
+        EventInstrument instrument,
+        out long? start,
+        out long? end)
+    {
+        start = null;
+        end = null;
+        string startText = workspace.LoopStartText.Trim();
+        string endText = workspace.LoopEndText.Trim();
+        if (startText.Length == 0 && endText.Length == 0) return true;
+        if (startText.Length == 0
+            || endText.Length == 0
+            || !long.TryParse(startText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedStart)
+            || !long.TryParse(endText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedEnd)
+            || !instrument.RequiresChannelIsolation
+            || parsedStart < 0
+            || parsedEnd <= parsedStart
+            || parsedEnd > instrument.TemplateLengthTicks)
+        {
+            return false;
+        }
+        start = parsedStart;
+        end = parsedEnd;
+        return true;
     }
 
     private void OnFindMappingClick(object sender, RoutedEventArgs e) => FindNextInMappingEditor();
@@ -1969,6 +2290,11 @@ public partial class MainWindow : Window
             return;
         }
         SelectInstrumentStructureItem(list, workspace, list.SelectedItem);
+        if (list.SelectedItem is SubVoiceListItem selected)
+        {
+            _session.ActivateSubVoiceEditor(workspace, selected.Id);
+            SetInstrumentStructureVisualSelection(workspace, selected.Id);
+        }
     }
 
     private void SelectInstrumentStructureItem(
@@ -2214,7 +2540,7 @@ public partial class MainWindow : Window
 
     private void OnResetAllUiPreferencesClick(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show(
+        if (MessageDialog.Show(
                 this,
                 "Reset all local UI preferences, including panel layout, timeline Snap, and Follow Playback? Audio preferences are not affected.",
                 "Reset All UI Preferences",
@@ -2240,7 +2566,7 @@ public partial class MainWindow : Window
         {
             if (workspace is MappingFunctionWorkspaceViewModel { IsDirty: true } mapping)
             {
-                MessageBoxResult result = MessageBox.Show(
+                MessageBoxResult result = MessageDialog.Show(
                     this,
                     "Apply this C# Mapping draft before closing the Workspace?",
                     "Unapplied C# Mapping Draft",
@@ -2379,19 +2705,23 @@ public partial class MainWindow : Window
                 {
                     ObjectId: MidoraId instrumentId,
                     ActiveSubVoiceId: MidoraId subVoiceId
-                }
-            })
+                } workspace
+            } checkBox)
         {
             return;
         }
 
-        RunSynchronous(
-            "Change Follow Instance Velocity",
-            () => _session.Execute(
-                ProjectDomainEditCommands.SetSubVoiceFollowInstanceVelocity(
-                    instrumentId,
-                    subVoiceId,
-                    follows)));
+        if (!RunSynchronous(
+                "Change Follow Instance Velocity",
+                () => _session.Execute(
+                    ProjectDomainEditCommands.SetSubVoiceFollowInstanceVelocity(
+                        instrumentId,
+                        subVoiceId,
+                        follows))))
+        {
+            _session.RefreshWorkspace(workspace);
+            checkBox.GetBindingExpression(ToggleButton.IsCheckedProperty)?.UpdateTarget();
+        }
     }
 
     private void OnSelectInstrumentClick(object sender, RoutedEventArgs e)
@@ -2655,6 +2985,26 @@ public partial class MainWindow : Window
             _session.Execute(ProjectDomainEditCommands.BindLogicalTrack(track.Id, null)));
     }
 
+    private void OnTrackHeaderSelectSegmentsClick(object sender, RoutedEventArgs e) =>
+        SelectTrackHeaderSegments(WorkspaceSelectionRangeMode.Replace);
+
+    private void OnTrackHeaderAddSegmentsToSelectionClick(object sender, RoutedEventArgs e) =>
+        SelectTrackHeaderSegments(WorkspaceSelectionRangeMode.Add);
+
+    private void SelectTrackHeaderSegments(WorkspaceSelectionRangeMode mode)
+    {
+        if (!TryGetTrackHeaderContext(out LogicalTrack track, out _)
+            || _session.ActiveWorkspace is not TimelineWorkspaceViewModel
+            {
+                Mode: TimelineWorkspaceMode.Arrangement
+            } workspace)
+        {
+            return;
+        }
+        workspace.Selection.ApplyRange(track.Segments.Select(segment => segment.Id), mode);
+        _session.RefreshWorkspaceSelection(workspace);
+    }
+
     private void OnTrackHeaderMoveUpClick(object sender, RoutedEventArgs e) => MoveTrackHeader(-1);
     private void OnTrackHeaderMoveDownClick(object sender, RoutedEventArgs e) => MoveTrackHeader(1);
 
@@ -2674,7 +3024,7 @@ public partial class MainWindow : Window
     private void OnTrackHeaderDeleteClick(object sender, RoutedEventArgs e)
     {
         if (!TryGetTrackHeaderContext(out LogicalTrack track, out _)) return;
-        if (MessageBox.Show(
+        if (MessageDialog.Show(
                 this,
                 $"Delete Logical Track '{TimelineWorkspaceViewModel.TrackDisplayName(_session.Project!, track)}' and its {track.Segments.Count} Segment(s)?",
                 "Delete Logical Track",
@@ -2938,7 +3288,7 @@ public partial class MainWindow : Window
         if (sender is not TextBox textBox) return;
         if (e.Key == Key.Enter)
         {
-            CommitInspectorField(textBox, restoreOnFailure: false);
+            CommitInspectorField(textBox, restoreOnFailure: true);
             e.Handled = true;
         }
         else if (e.Key == Key.Escape)
@@ -2959,6 +3309,10 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            if (_session.ActiveWorkspace is WorkspaceViewModel workspace)
+            {
+                _session.RefreshWorkspaceSelection(workspace);
+            }
             _session.Inspector.ErrorText = exception.Message;
         }
     }
@@ -2975,7 +3329,10 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
-            field.BooleanValue = !field.BooleanValue;
+            if (_session.ActiveWorkspace is WorkspaceViewModel workspace)
+            {
+                _session.RefreshWorkspaceSelection(workspace);
+            }
             _session.Inspector.ErrorText = exception.Message;
         }
     }
@@ -3027,7 +3384,7 @@ public partial class MainWindow : Window
         if (sender is not TextBox textBox) return;
         if (e.Key == Key.Enter)
         {
-            CommitProjectSetting(textBox, restoreOnFailure: false);
+            CommitProjectSetting(textBox, restoreOnFailure: true);
             e.Handled = true;
         }
         else if (e.Key == Key.Escape)
@@ -3054,6 +3411,11 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            if (_session.Workspaces.OfType<SettingsWorkspaceViewModel>().FirstOrDefault()
+                is SettingsWorkspaceViewModel settings)
+            {
+                _session.RefreshWorkspace(settings);
+            }
             _session.SetStatusMessage(exception.Message, isError: true);
         }
     }
@@ -3107,6 +3469,7 @@ public partial class MainWindow : Window
                 binding?.UpdateTarget();
                 textBox.ClearValue(Control.BorderBrushProperty);
                 textBox.ToolTip = exception.Message;
+                _session.SetStatusMessage(exception.Message, isError: true);
             }
             else
             {
@@ -3241,6 +3604,14 @@ public partial class MainWindow : Window
         if (_session.ActiveWorkspace is WorkspaceViewModel activeWorkspace)
         {
             activeWorkspace.ActiveLane = e.Lane;
+            if (sender is TimelineSurface { ToolMode: TimelineToolMode.Select }
+                && !e.IsDoubleClick
+                && e.Modifiers == ModifierKeys.None
+                && activeWorkspace.Selection.Ids.Count != 0)
+            {
+                activeWorkspace.Selection.Clear();
+                _session.RefreshWorkspaceSelection(activeWorkspace);
+            }
         }
         if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline)
         {
@@ -3290,7 +3661,9 @@ public partial class MainWindow : Window
                                 lane.Id,
                                 snapped,
                                 TimelineWorkspaceViewModel.DenormalizeParameterValue(definition, e.NormalizedValue),
-                                CurveInterpolation.Linear), timeline);
+                                definition.Type == LogicalParameterType.Enum
+                                    ? CurveInterpolation.Step
+                                    : CurveInterpolation.Linear), timeline);
                             break;
                         }
                         ExecuteAndSelectCreated(ProjectDomainEditCommands.CreateLogicalNote(
@@ -3430,6 +3803,35 @@ public partial class MainWindow : Window
 
     private void OnTimelineEventPointEditCompleted(object? sender, TimelineEventPointEditEventArgs e)
     {
+        if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline
+            && timeline.Mode == TimelineWorkspaceMode.Segment
+            && timeline.ObjectId is MidoraId segmentId
+            && timeline.GetActiveParameterLaneOption() is ParameterLaneOption option
+            && option.LaneId is MidoraId laneId
+            && _session.Project is MidoraProject project
+            && TimelineWorkspaceViewModel.FindSegment(project, segmentId) is var location
+            && location is not null
+            && location.Value.Track.EventInstrumentId is MidoraId eventInstrumentId
+            && project.EventInstruments.FirstOrDefault(value => value.Id == eventInstrumentId)
+                is EventInstrument eventInstrument
+            && eventInstrument.LogicalParameters.FirstOrDefault(value => value.Id == option.ParameterId)
+                is LogicalParameterDefinition definition
+            && e.Points.Count != 0)
+        {
+            LogicalParameterPointEdit[] pointEdits = e.Points
+                .OrderBy(value => value.Key)
+                .Select(value => new LogicalParameterPointEdit(
+                    value.Key,
+                    TimelineWorkspaceViewModel.DenormalizeParameterValue(definition, value.Value)))
+                .ToArray();
+            RunSynchronous("Draw Logical Parameter points", () => _session.Execute(
+                ProjectDomainEditCommands.UpsertLogicalParameterPoints(
+                    segmentId,
+                    laneId,
+                    pointEdits)));
+            return;
+        }
+
         if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace
             || workspace.ObjectId is not MidoraId instrumentId
             || workspace.ActiveSubVoiceId is not MidoraId voiceId
@@ -3951,7 +4353,7 @@ public partial class MainWindow : Window
         int pointCount = voice.Events.Count(value =>
             TemplateEventMidiTargets.Enumerate(value).Contains(target));
         string label = TemplateEventMidiTargets.Format(target);
-        if (MessageBox.Show(
+        if (MessageDialog.Show(
                 this,
                 pointCount == 0
                     ? $"Delete the '{label}' event lane?"
@@ -4352,7 +4754,6 @@ public partial class MainWindow : Window
     private async void OnCompileClick(object sender, RoutedEventArgs e)
     {
         if (!_session.HasProject) return;
-        OpenTreeWorkspace(ProjectTreeNodeKind.Diagnostics);
         bool completed = await RunOperationAsync(
             "Compile Project",
             async () => _ = await _session.CompileProjectAsync(),
@@ -4360,10 +4761,14 @@ public partial class MainWindow : Window
         if (completed)
         {
             bool failed = _session.ErrorCount != 0;
+            bool hasIssues = failed || _session.WarningCount != 0;
+            if (hasIssues) OpenTreeWorkspace(ProjectTreeNodeKind.Diagnostics);
             _session.SetStatusMessage(
                 failed
                     ? $"Compile completed with {_session.ErrorCount} error(s). Open Diagnostics for details."
-                    : "Compile succeeded. The current canonical result is consumable.",
+                    : hasIssues
+                        ? $"Compile succeeded with {_session.WarningCount} warning(s). Open Diagnostics for details."
+                        : "Compile succeeded. The current canonical result is consumable.",
                 isError: failed);
         }
     }
@@ -4438,7 +4843,7 @@ public partial class MainWindow : Window
             return;
         }
         if (task.LockLevel == DesktopTaskLockLevel.FullApplication
-            && MessageBox.Show(
+            && MessageDialog.Show(
                 this,
                 "Cancel audio rendering? Midora will stop at a safe boundary, finalize cleanup, and will not publish incomplete output files.",
                 "Cancel Audio Rendering",
@@ -4492,7 +4897,7 @@ public partial class MainWindow : Window
             preview += $"\n… and {prepared.OutputPlan.Targets.Count - 16} more target(s)";
         }
         bool overwrite = prepared.OutputPlan.RequiresOverwriteAuthorization;
-        MessageBoxResult confirmation = MessageBox.Show(
+        MessageBoxResult confirmation = MessageDialog.Show(
             this,
             $"Frozen MIDI export paths:\n\n{preview}\n\n" +
             (overwrite
@@ -4519,7 +4924,7 @@ public partial class MainWindow : Window
                     $"{item.Diagnostic.Code}: {item.Diagnostic.Message}"))
                 ?? "MIDI export failed."
         };
-        MessageBox.Show(
+        MessageDialog.Show(
             this,
             resultMessage,
             "MIDI Export",
@@ -4587,7 +4992,7 @@ public partial class MainWindow : Window
                 when (exception.Failure == AudioRenderSoundFontFailure.ExternalHashChangeRequiresConfirmation)
             {
                 _session.CompleteTask(task, "Attention", "External SoundFont identity changed; explicit task-only acceptance is required.");
-                MessageBoxResult accept = MessageBox.Show(
+                MessageBoxResult accept = MessageDialog.Show(
                     this,
                     $"The external Project SoundFont content differs from its stored identity.\n\nCurrent SHA-256: {exception.CurrentSha256}\nCurrent size: {exception.CurrentFileSizeBytes:N0} bytes\n\nUse this changed file for this render only? The Project reference will not be modified.",
                     "External SoundFont Changed",
@@ -4632,7 +5037,7 @@ public partial class MainWindow : Window
                 preview += $"\n… and {prepared.OutputPlan.Targets.Count - 16} more target(s)";
             }
             bool overwrite = prepared.OutputPlan.RequiresOverwriteAuthorization;
-            MessageBoxResult confirmation = MessageBox.Show(
+            MessageBoxResult confirmation = MessageDialog.Show(
                 this,
                 $"Frozen audio render paths:\n\n{preview}\n\n" +
                 (overwrite
@@ -4673,7 +5078,7 @@ public partial class MainWindow : Window
             _session.SetStatusMessage(null);
             if (!completed || result is null) return;
             string message = AudioRenderResultFormatter.Format(result);
-            MessageBox.Show(
+            MessageDialog.Show(
                 this,
                 message,
                 "Audio Render",
@@ -4701,7 +5106,7 @@ public partial class MainWindow : Window
         if (!_session.HasProject) return;
         if (_session.Persistence?.CurrentProjectPath is null)
         {
-            MessageBox.Show(
+            MessageDialog.Show(
                 this,
                 "Save the Project first. External SoundFonts must resolve relative to the Project root or its direct soundfonts directory.",
                 "Use External Project SoundFont",
@@ -4720,10 +5125,39 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OnExtractEmbeddedSoundFontClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.Project?.SoundFont.Reference is not EmbeddedProjectSoundFontReference reference)
+        {
+            return;
+        }
+        SaveFileDialog dialog = new()
+        {
+            Title = "Extract Embedded Project SoundFont",
+            Filter = "SoundFont 2 (*.sf2)|*.sf2|All files (*.*)|*.*",
+            AddExtension = true,
+            DefaultExt = ".sf2",
+            OverwritePrompt = true,
+            InitialDirectory = ExistingRecentDirectory(RecentDirectoryPurpose.SoundFont),
+            FileName = reference.OriginalFileName
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        if (await RunOperationAsync(
+            "Extract Embedded Project SoundFont",
+            cancellationToken => _session.ExtractEmbeddedSoundFontAsync(
+                dialog.FileName,
+                overwriteAuthorized: true,
+                cancellationToken: cancellationToken),
+            canCancel: true))
+        {
+            RecordRecentDirectory(RecentDirectoryPurpose.SoundFont, Path.GetDirectoryName(dialog.FileName));
+        }
+    }
+
     private void OnClearSoundFontClick(object sender, RoutedEventArgs e)
     {
         if (!_session.HasProject) return;
-        if (MessageBox.Show(
+        if (MessageDialog.Show(
                 this,
                 "Clear the Project SoundFont reference? Playback, preview, and audio rendering will become unavailable; editing and MIDI export remain available.",
                 "Clear Project SoundFont",
@@ -4743,7 +5177,7 @@ public partial class MainWindow : Window
         InitialDirectory = ExistingRecentDirectory(RecentDirectoryPurpose.SoundFont)
     };
 
-    private void OnAboutClick(object sender, RoutedEventArgs e) => MessageBox.Show(
+    private void OnAboutClick(object sender, RoutedEventArgs e) => MessageDialog.Show(
         this,
         "Midora 0.1 development build\nWindows Desktop · .NET 10 · win-x64\n\nCopyright (c) 2026 Midora contributors",
         "About Midora",
@@ -4803,13 +5237,21 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RunSynchronous(string title, Action operation)
+    private bool RunSynchronous(string title, Action operation)
     {
-        try { operation(); }
-        catch (Exception exception) { _session.SetStatusMessage($"{title}: {exception.Message}", isError: true); }
+        try
+        {
+            operation();
+            return true;
+        }
+        catch (Exception exception)
+        {
+            _session.SetStatusMessage($"{title}: {exception.Message}", isError: true);
+            return false;
+        }
     }
 
-    private void ShowError(string title, string message) => MessageBox.Show(this, message, title, MessageBoxButton.OK, MessageBoxImage.Error);
+    private void ShowError(string title, string message) => MessageDialog.Show(this, message, title, MessageBoxButton.OK, MessageBoxImage.Error);
 
     private SaveFileDialog CreateProjectSaveDialog(string title) => new()
     {
@@ -4905,7 +5347,7 @@ public partial class MainWindow : Window
         if (sender is not MenuItem { Tag: string path }) return;
         if (!File.Exists(path))
         {
-            if (MessageBox.Show(
+            if (MessageDialog.Show(
                     this,
                     $"This recent Project no longer exists:\n\n{path}\n\nRemove it from the recent list?",
                     "Recent Project Missing",
@@ -5253,6 +5695,11 @@ public partial class MainWindow : Window
 
     private void CutOrCopyProjectSelection(bool cut)
     {
+        if (!cut && TryGetSelectedEventInstrumentId(out _))
+        {
+            _ = CopySelectedEventInstrument();
+            return;
+        }
         if (_session.Document is not ProjectDocumentSession document
             || _session.Project is not MidoraProject project
             || _session.ActiveWorkspace is not WorkspaceViewModel workspace
@@ -5572,6 +6019,11 @@ public partial class MainWindow : Window
 
     private void PasteProjectSelection()
     {
+        if (_projectClipboard?.Kind == ProjectObjectClipboardKind.EventInstrument
+            && PasteEventInstrumentClipboard())
+        {
+            return;
+        }
         if (!_session.CanEditProject
             || _session.Document is not ProjectDocumentSession document
             || _session.Project is not MidoraProject project
@@ -5596,7 +6048,7 @@ public partial class MainWindow : Window
                 MidoraId targetChainId = ResolveMappingChainTarget(chainWorkspace);
                 MappingChainListItem target = chainWorkspace.MappingChains.Single(item => item.Id == targetChainId);
                 if (target.StepCount != 0
-                    && MessageBox.Show(
+                    && MessageDialog.Show(
                         this,
                         $"Replace all {target.StepCount} step(s) in '{target.Owner}' with the copied Mapping Chain?",
                         "Replace Mapping Chain",
@@ -5624,7 +6076,7 @@ public partial class MainWindow : Window
                 ParameterMappingListItem target = mappingWorkspace.ParameterMappings
                     .Single(value => value.Id == targetMappingId);
                 if (target.StepCount != 0
-                    && MessageBox.Show(
+                    && MessageDialog.Show(
                         this,
                         $"Replace all {target.StepCount} step(s) in the selected Logical Parameter Mapping?",
                         "Replace Logical Parameter Mapping",
@@ -5943,6 +6395,12 @@ public partial class MainWindow : Window
 
     private void DuplicateFocusedSelection()
     {
+        if (_session.CanEditProject && TryGetSelectedEventInstrumentId(out MidoraId eventInstrumentId))
+        {
+            RunSynchronous("Duplicate Event Instrument", () => _session.Execute(
+                ProjectDomainEditCommands.DuplicateEventInstrument(eventInstrumentId)));
+            return;
+        }
         if (!_session.CanEditProject
             || _session.Project is not MidoraProject project
             || _session.ActiveWorkspace is not WorkspaceViewModel workspace
@@ -6092,7 +6550,7 @@ public partial class MainWindow : Window
         if (ids.Length == 1
             && location.Value.Segment.ParameterLanes.Any(lane => lane.Id == ids[0]))
         {
-            if (MessageBox.Show(
+            if (MessageDialog.Show(
                     this,
                     "Delete the selected Logical Parameter Lane and all of its points?",
                     "Delete Logical Parameter Lane",
@@ -6137,7 +6595,7 @@ public partial class MainWindow : Window
             MidoraId id = ids[0];
             if (instrument.SubVoices.Any(item => item.Id == id))
             {
-                if (MessageBox.Show(
+                if (MessageDialog.Show(
                         this,
                         "Delete the selected SubVoice, all of its Template Events and Value Curves, and its Logical Parameter Mappings?",
                         "Delete SubVoice",
@@ -6150,7 +6608,7 @@ public partial class MainWindow : Window
             }
             if (instrument.LogicalParameters.Any(item => item.Id == id))
             {
-                if (MessageBox.Show(
+                if (MessageDialog.Show(
                         this,
                         "Delete the selected Logical Parameter and all references to it?",
                         "Delete Logical Parameter",
@@ -6163,7 +6621,7 @@ public partial class MainWindow : Window
             }
             if (instrument.MappingFunctions.Any(item => item.Id == id))
             {
-                if (MessageBox.Show(
+                if (MessageDialog.Show(
                         this,
                         "Delete the selected C# Mapping Function? Existing Mapping Steps that reference it may also be affected.",
                         "Delete C# Mapping Function",
@@ -6176,7 +6634,7 @@ public partial class MainWindow : Window
             }
             if (instrument.ParameterMappings.Any(item => item.Id == id))
             {
-                if (MessageBox.Show(
+                if (MessageDialog.Show(
                         this,
                         "Delete the selected Logical Parameter Mapping and its ordered Mapping Chain?",
                         "Delete Logical Parameter Mapping",
@@ -6190,7 +6648,7 @@ public partial class MainWindow : Window
             }
             if (instrument.Envelopes.Any(item => item.Id == id))
             {
-                if (MessageBox.Show(
+                if (MessageDialog.Show(
                         this,
                         "Delete the selected Envelope Preset? Mapping Steps that reference it will retain a broken stable-ID reference.",
                         "Delete Envelope Preset",
@@ -6209,7 +6667,7 @@ public partial class MainWindow : Window
                 if (!selectedChain.CanDelete) return;
                 bool nonEmpty = selectedChain.StepCount != 0;
                 if (nonEmpty
-                    && MessageBox.Show(
+                    && MessageDialog.Show(
                         this,
                         $"Delete Mapping Chain '{selectedChain.Owner}' and its {selectedChain.StepCount} step(s)?",
                         "Delete Mapping Chain",

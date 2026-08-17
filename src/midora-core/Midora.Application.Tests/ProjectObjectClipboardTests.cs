@@ -7,6 +7,108 @@ namespace Midora.Application.Tests;
 public sealed class ProjectObjectClipboardTests
 {
     [Fact]
+    public void EventInstrumentClipboardIsDeepSnapshotAndPasteRemapsOwnedReferences()
+    {
+        MidoraProject project = new(480);
+        EventInstrumentLibraryFolder folder = EventInstrumentLibrary.CreateFolder(project, "Leads");
+        EventInstrument source = EventInstrumentLibrary.Create(project, "Lead");
+        source.LibraryFolderId = folder.Id;
+        source.Description = "Snapshot description";
+        source.Color = new MidoraColor(21, 91, 173);
+        source.RequiresChannelIsolation = true;
+        SubVoice voice = Assert.Single(source.SubVoices);
+        voice.Name = "Main";
+        voice.Events.Add(TemplateEvent.Note(project, 0, 240, 60, 100));
+        LogicalParameterDefinition parameter = new(project)
+        {
+            Name = "Amount",
+            Type = LogicalParameterType.Double,
+            Minimum = 0,
+            Maximum = 1,
+            DisplayMinimum = 0,
+            DisplayMaximum = 1,
+            DefaultValue = 0.5
+        };
+        InstrumentEnvelope envelope = new(project) { Name = "Shape", PeakValue = 0.75 };
+        CSharpMappingFunction function = new(project)
+        {
+            Name = "Identity",
+            Body = "return value;"
+        };
+        source.LogicalParameters.Add(parameter);
+        source.Envelopes.Add(envelope);
+        source.MappingFunctions.Add(function);
+        LogicalParameterMapping mapping = new(project)
+        {
+            ParameterId = parameter.Id,
+            SubVoiceId = voice.Id,
+            Target = MidiValueTarget.ControlChange(1)
+        };
+        mapping.Steps.Add(new ValueMappingStep(project)
+        {
+            Source = MappingSource.LogicalParameter,
+            Operation = MappingOperation.Override,
+            LogicalParameterId = parameter.Id
+        });
+        mapping.Steps.Add(new ValueMappingStep(project)
+        {
+            Source = MappingSource.Envelope,
+            Operation = MappingOperation.Multiply,
+            EnvelopeId = envelope.Id
+        });
+        mapping.Steps.Add(new ValueMappingStep(project)
+        {
+            Source = MappingSource.CurrentValue,
+            Operation = MappingOperation.CustomCSharp,
+            MappingFunctionId = function.Id
+        });
+        source.ParameterMappings.Add(mapping);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        ProjectObjectClipboardPayload payload = ProjectObjectClipboard.CopyEventInstrument(
+            document,
+            source.Id);
+        parameter.Name = "Mutated after copy";
+        function.Body = "return 0;";
+        long firstPastedId = project.NextStableId;
+
+        document.Execute(ProjectObjectClipboard.CreatePasteEventInstrumentCommand(
+            document,
+            payload));
+
+        EventInstrument copy = project.EventInstruments.Single(value => value.Id != source.Id);
+        Assert.True(copy.Id.Value >= firstPastedId);
+        Assert.Equal("Lead Copy 1", copy.Name);
+        Assert.Equal("Snapshot description", copy.Description);
+        Assert.Equal(source.Color, copy.Color);
+        Assert.Equal(folder.Id, copy.LibraryFolderId);
+        LogicalParameterDefinition parameterCopy = Assert.Single(copy.LogicalParameters);
+        InstrumentEnvelope envelopeCopy = Assert.Single(copy.Envelopes);
+        CSharpMappingFunction functionCopy = Assert.Single(copy.MappingFunctions);
+        SubVoice voiceCopy = Assert.Single(copy.SubVoices);
+        LogicalParameterMapping mappingCopy = Assert.Single(copy.ParameterMappings);
+        Assert.Equal("Amount", parameterCopy.Name);
+        Assert.Equal("return value;", functionCopy.Body);
+        Assert.NotEqual(parameter.Id, parameterCopy.Id);
+        Assert.NotEqual(envelope.Id, envelopeCopy.Id);
+        Assert.NotEqual(function.Id, functionCopy.Id);
+        Assert.NotEqual(voice.Id, voiceCopy.Id);
+        Assert.Equal(parameterCopy.Id, mappingCopy.ParameterId);
+        Assert.Equal(voiceCopy.Id, mappingCopy.SubVoiceId);
+        Assert.Equal(parameterCopy.Id, mappingCopy.Steps[0].LogicalParameterId);
+        Assert.Equal(envelopeCopy.Id, mappingCopy.Steps[1].EnvelopeId);
+        Assert.Equal(functionCopy.Id, mappingCopy.Steps[2].MappingFunctionId);
+        Assert.Single(document.History);
+
+        document.Undo();
+        Assert.DoesNotContain(copy, project.EventInstruments);
+        document.Redo();
+        Assert.Same(copy, project.EventInstruments.Single(value => value.Id == copy.Id));
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
     public void SegmentPayloadIsImmutableDeepSnapshotWithFreshOwnedIds()
     {
         MidoraProject project = new(480);

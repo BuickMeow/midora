@@ -22,7 +22,8 @@ public static class TimelineToolPolicy
     public static bool IsDirectEditingSurface(TimelineSurfaceMode surfaceMode) =>
         surfaceMode is TimelineSurfaceMode.Arrangement
             or TimelineSurfaceMode.PianoRoll
-            or TimelineSurfaceMode.EventLanes;
+            or TimelineSurfaceMode.EventLanes
+            or TimelineSurfaceMode.Conductor;
 
     public static bool StartsMarqueeBeforeItemHit(
         TimelineToolMode toolMode,
@@ -73,7 +74,10 @@ public static class TimelineToolPolicy
         bool isNearStart,
         bool isNearEnd)
     {
-        if (itemKind == TimelineItemKind.LogicalParameterPoint
+        if (itemKind is TimelineItemKind.LogicalParameterPoint
+                or TimelineItemKind.ConductorEvent
+                or TimelineItemKind.Marker
+                or TimelineItemKind.ProjectEndMarker
             || ForcesItemMove(toolMode, surfaceMode, itemKind, modifiers))
         {
             return TimelineItemEditKind.Move;
@@ -154,6 +158,12 @@ public static class TimelineToolPolicy
         if (itemKind == TimelineItemKind.LogicalParameterPoint)
         {
             return TimelinePointerIntent.ResizeVertical;
+        }
+        if (itemKind is TimelineItemKind.ConductorEvent
+                or TimelineItemKind.Marker
+                or TimelineItemKind.ProjectEndMarker)
+        {
+            return TimelinePointerIntent.Move;
         }
         if (ForcesItemMove(toolMode, surfaceMode, itemKind.Value, modifiers))
         {
@@ -270,5 +280,8 @@ public static class TimelineToolPolicy
         itemKind is TimelineItemKind.Segment
             or TimelineItemKind.LogicalNote
             or TimelineItemKind.TemplateNote
-            or TimelineItemKind.LogicalParameterPoint;
+            or TimelineItemKind.LogicalParameterPoint
+            or TimelineItemKind.ConductorEvent
+            or TimelineItemKind.Marker
+            or TimelineItemKind.ProjectEndMarker;
 }

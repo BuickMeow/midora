@@ -64,6 +64,22 @@ public static class EventInstrumentLibrary
     public static EventInstrument Duplicate(MidoraProject project, MidoraId instrumentId, string? requestedName = null)
     {
         EventInstrument source = Find(project, instrumentId);
+        return CopyInto(project, source, requestedName, source.LibraryFolderId);
+    }
+
+    public static EventInstrument CopyInto(
+        MidoraProject project,
+        EventInstrument source,
+        string? requestedName = null,
+        MidoraId? folderId = null)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(source);
+        if (folderId.HasValue
+            && project.EventInstrumentFolders.All(value => value.Id != folderId.Value))
+        {
+            throw new ArgumentOutOfRangeException(nameof(folderId));
+        }
         string name = requestedName is null
             ? GenerateUniqueName(project, $"{source.Name} Copy")
             : ValidateUniqueName(project, requestedName, default);
@@ -76,7 +92,7 @@ public static class EventInstrumentLibrary
             Name = name,
             Description = source.Description,
             Color = source.Color,
-            LibraryFolderId = source.LibraryFolderId,
+            LibraryFolderId = folderId,
             RootNote = source.RootNote,
             TemplateLengthTicks = source.TemplateLengthTicks,
             RequiresChannelIsolation = source.RequiresChannelIsolation,

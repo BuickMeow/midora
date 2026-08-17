@@ -433,6 +433,8 @@ public sealed class TimelineSurface : Control
     private Pen? _editCursorPen;
     private Pen? _marqueePen;
     private readonly Dictionary<string, FormattedText> _textCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<uint, SegmentAccentResources> _segmentAccentResources = [];
+    private readonly Dictionary<uint, SolidColorBrush> _rawAccentBrushes = [];
     private double _cachedPixelsPerDip;
     private Point? _panOrigin;
     private long _panStartTick;
@@ -2689,6 +2691,21 @@ public sealed class TimelineSurface : Control
         double laneHeaderWidth,
         double rulerHeight)
     {
+        if (SurfaceMode == TimelineSurfaceMode.Conductor
+            && item.Kind is TimelineItemKind.ConductorEvent
+                or TimelineItemKind.Marker
+                or TimelineItemKind.ProjectEndMarker)
+        {
+            DrawConductorPoint(
+                context,
+                viewport,
+                item,
+                item.Kind == TimelineItemKind.ProjectEndMarker ? warning : info,
+                redDark,
+                laneHeaderWidth,
+                rulerHeight);
+            return;
+        }
         if (item.Kind == TimelineItemKind.Velocity)
         {
             DrawVelocityBar(
@@ -2711,6 +2728,10 @@ public sealed class TimelineSurface : Control
             DrawCurvePoint(context, viewport, item, info, laneHeaderWidth, rulerHeight);
             return;
         }
+        SegmentAccentResources? accent = item.Kind == TimelineItemKind.Segment
+            && item.AccentColor != 0
+                ? GetSegmentAccentResources(item.AccentColor)
+                : null;
         double left = laneHeaderWidth + Math.Max(-1, viewport.TickToX(item.StartTick));
         double right = laneHeaderWidth + Math.Min(viewport.Width + 1, viewport.TickToX(item.EndTick));
         double top = rulerHeight + (item.Lane - viewport.FirstLane) * LaneHeight + 3;
@@ -2728,7 +2749,9 @@ public sealed class TimelineSurface : Control
             || item.State.HasFlag(TimelineItemState.Broken)
             ? warning
             : item.Kind == TimelineItemKind.Segment
-                ? selected ? selectedSegment : segment
+                ? selected
+                    ? accent?.SelectedSegment ?? selectedSegment
+                    : accent?.Segment ?? segment
             : item.Kind is TimelineItemKind.LogicalNote or TimelineItemKind.TemplateNote
                 ? selected ? redDark : isSegmentPianoRoll ? segmentPianoNote : red
                 : info;
@@ -2754,26 +2777,122 @@ public sealed class TimelineSurface : Control
                 rectangle,
                 fullSegmentBounds,
                 preview,
-                segmentNotePreview);
+                accent?.NotePreview ?? segmentNotePreview);
         }
 
         if (selected)
         {
             Pen selectionPen = item.Kind == TimelineItemKind.Segment
-                ? _segmentSelectionPen!
+                ? accent?.SelectionPen ?? _segmentSelectionPen!
                 : _selectionPen!;
-            context.DrawRoundedRectangle(null, selectionPen, rectangle, 2, 2);
+            Rect selectionBounds = item.Kind == TimelineItemKind.Segment
+                ? InsetRectangle(rectangle, selectionPen.Thickness / 2)
+                : rectangle;
+            context.DrawRoundedRectangle(null, selectionPen, selectionBounds, 2, 2);
             if (IsPrimary(item)
-                && rectangle.Width > 4
-                && rectangle.Height > 4)
+                && selectionBounds.Width > 4
+                && selectionBounds.Height > 4)
             {
-                Rect primary = new(
-                    rectangle.Left + 1,
-                    rectangle.Top + 1,
-                    rectangle.Width - 2,
-                    rectangle.Height - 2);
+                Rect primary = InsetRectangle(selectionBounds, 1);
                 context.DrawRoundedRectangle(null, selectionPen, primary, 1, 1);
             }
+        }
+    }
+
+    private static Rect InsetRectangle(Rect rectangle, double inset)
+    {
+        double effective = Math.Max(0, Math.Min(
+            inset,
+            Math.Min(rectangle.Width, rectangle.Height) / 2));
+        return new Rect(
+            rectangle.Left + effective,
+            rectangle.Top + effective,
+            Math.Max(0, rectangle.Width - effective * 2),
+            Math.Max(0, rectangle.Height - effective * 2));
+    }
+
+    private SegmentAccentResources GetSegmentAccentResources(uint color)
+    {
+        if (_segmentAccentResources.TryGetValue(color, out SegmentAccentResources? existing))
+        {
+            return existing;
+        }
+        if (_segmentAccentResources.Count >= 256) _segmentAccentResources.Clear();
+        TimelineAccentPalette palette = TimelineAccentPalette.FromArgb(color);
+        SolidColorBrush segment = FreezeBrush(palette.Segment);
+        SolidColorBrush selected = FreezeBrush(palette.SelectedSegment);
+        SolidColorBrush preview = FreezeBrush(palette.NotePreview);
+        SolidColorBrush selectionBrush = new(palette.SelectionBorder)
+        {
+            Opacity = 0.6
+        };
+        selectionBrush.Freeze();
+        Pen selectionPen = new(selectionBrush, 1.25)
+        {
+            DashStyle = DashStyles.Solid
+        };
+        selectionPen.Freeze();
+        SegmentAccentResources created = new(segment, selected, preview, selectionPen);
+        _segmentAccentResources.Add(color, created);
+        return created;
+    }
+
+    private SolidColorBrush GetRawAccentBrush(uint color)
+    {
+        if (_rawAccentBrushes.TryGetValue(color, out SolidColorBrush? existing)) return existing;
+        if (_rawAccentBrushes.Count >= 256) _rawAccentBrushes.Clear();
+        SolidColorBrush created = FreezeBrush(Color.FromArgb(
+            (byte)(color >> 24),
+            (byte)(color >> 16),
+            (byte)(color >> 8),
+            (byte)color));
+        _rawAccentBrushes.Add(color, created);
+        return created;
+    }
+
+    private static SolidColorBrush FreezeBrush(Color color)
+    {
+        SolidColorBrush brush = new(color);
+        brush.Freeze();
+        return brush;
+    }
+
+    private void DrawConductorPoint(
+        DrawingContext context,
+        TimelineViewport viewport,
+        TimelineRenderItem item,
+        Brush normalBrush,
+        Brush selectedBrush,
+        double laneHeaderWidth,
+        double rulerHeight)
+    {
+        double x = laneHeaderWidth + viewport.TickToX(item.StartTick);
+        double y = rulerHeight
+            + (item.Lane - viewport.FirstLane + 0.5) * LaneHeight;
+        const double radius = 4.5;
+        if (x + radius < laneHeaderWidth
+            || x - radius > ActualWidth
+            || y + radius < rulerHeight
+            || y - radius > ActualHeight)
+        {
+            return;
+        }
+
+        bool selected = IsSelected(item);
+        context.DrawEllipse(
+            selected ? selectedBrush : normalBrush,
+            _borderPen,
+            new Point(x, y),
+            radius,
+            radius);
+        if (selected)
+        {
+            context.DrawEllipse(
+                null,
+                _selectionPen,
+                new Point(x, y),
+                radius + 2,
+                radius + 2);
         }
     }
 
@@ -3698,6 +3817,7 @@ public sealed class TimelineSurface : Control
             IReadOnlyList<string> labels = Snapshot?.LaneLabels ?? Array.Empty<string>();
             IReadOnlyList<string> secondaryLabels = Snapshot?.LaneSecondaryLabels ?? Array.Empty<string>();
             IReadOnlyList<TimelineLaneState> states = Snapshot?.LaneStates ?? Array.Empty<TimelineLaneState>();
+            IReadOnlyList<uint> laneColors = Snapshot?.LaneColors ?? Array.Empty<uint>();
             Brush secondaryText = Brush("Brush.Text.Tertiary", Color.FromRgb(103, 113, 128));
             Brush hoverBackground = Brush("Brush.Surface.2", Color.FromRgb(20, 24, 30));
             Brush pressedBackground = Brush("Brush.Surface.0", Color.FromRgb(9, 11, 14));
@@ -3717,6 +3837,15 @@ public sealed class TimelineSurface : Control
                         _pressedLaneHeader == lane ? pressedBackground : hoverBackground,
                         null,
                         new Rect(0, laneTop, laneHeaderWidth, LaneHeight));
+                }
+                if (SurfaceMode == TimelineSurfaceMode.Arrangement
+                    && (uint)lane < (uint)laneColors.Count
+                    && laneColors[lane] != 0)
+                {
+                    context.DrawRectangle(
+                        GetRawAccentBrush(laneColors[lane]),
+                        null,
+                        new Rect(0, laneTop, 3, LaneHeight));
                 }
                 FormattedText formatted = GetFormattedText(labels[lane], text, 11, FontWeights.Normal);
                 string secondaryLabel = (uint)lane < (uint)secondaryLabels.Count
@@ -4298,6 +4427,42 @@ public sealed class TimelineSurface : Control
         int lane = SurfaceMode is TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity
             ? 0
             : viewport.YToLane(point.Y - ruler);
+        if (SurfaceMode == TimelineSurfaceMode.Conductor)
+        {
+            const double hitRadius = 8;
+            long toleranceTicks = Math.Max(
+                1,
+                checked((long)Math.Ceiling(hitRadius / viewport.PixelsPerTick)));
+            snapshot.Index.HitTestInto(tick, toleranceTicks, lane, _hitItems);
+            _hitItems.RemoveAll(candidate =>
+            {
+                if (candidate.Kind is not (TimelineItemKind.ConductorEvent
+                    or TimelineItemKind.Marker
+                    or TimelineItemKind.ProjectEndMarker))
+                {
+                    return true;
+                }
+                double candidateX = header + viewport.TickToX(candidate.StartTick);
+                double candidateY = ruler
+                    + (candidate.Lane - viewport.FirstLane + 0.5) * LaneHeight;
+                return Math.Abs(candidateX - point.X) > hitRadius
+                    || Math.Abs(candidateY - point.Y) > hitRadius;
+            });
+            _hitItems.Sort((left, right) =>
+            {
+                bool leftSelected = IsSelected(left);
+                bool rightSelected = IsSelected(right);
+                int bySelection = rightSelected.CompareTo(leftSelected);
+                if (bySelection != 0) return bySelection;
+                double leftDistance = Math.Abs(
+                    header + viewport.TickToX(left.StartTick) - point.X);
+                double rightDistance = Math.Abs(
+                    header + viewport.TickToX(right.StartTick) - point.X);
+                int byDistance = leftDistance.CompareTo(rightDistance);
+                return byDistance != 0 ? byDistance : right.ZIndex.CompareTo(left.ZIndex);
+            });
+            return;
+        }
         if (preferDirectEditEdges)
         {
             long toleranceTicks = Math.Max(
@@ -4505,7 +4670,10 @@ public sealed class TimelineSurface : Control
         _redPen = FrozenPen(red, 1);
         Brush selection = Brush("Brush.Red.Hover", Color.FromRgb(255, 96, 101));
         _selectionPen = FrozenPen(selection, 2);
-        _segmentSelectionPen = FrozenPen(segmentSelection, 2);
+        Brush segmentSelectionOutline = segmentSelection.Clone();
+        segmentSelectionOutline.Opacity *= 0.6;
+        segmentSelectionOutline.Freeze();
+        _segmentSelectionPen = FrozenPen(segmentSelectionOutline, 2);
         Brush beatGrid = border.Clone();
         beatGrid.Opacity = 0.32;
         beatGrid.Freeze();
@@ -4596,6 +4764,12 @@ public sealed class TimelineSurface : Control
     private readonly record struct VelocityTileDrawEntry(
         TimelineRasterCacheKey Key,
         BitmapSource Bitmap);
+
+    private sealed record SegmentAccentResources(
+        SolidColorBrush Segment,
+        SolidColorBrush SelectedSegment,
+        SolidColorBrush NotePreview,
+        Pen SelectionPen);
 
     private sealed class PianoRasterFrame(
         string projectionKey,

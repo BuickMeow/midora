@@ -6,7 +6,6 @@ public sealed record ProjectMetadataSnapshot(
     string AuthorOrTeam,
     string OriginalWork,
     string Copyright,
-    string Notes,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset ModifiedAtUtc,
     long TotalEditingTimeMilliseconds);
@@ -26,7 +25,6 @@ public sealed class ProjectMetadata
     public string AuthorOrTeam { get; set; } = string.Empty;
     public string OriginalWork { get; set; } = string.Empty;
     public string Copyright { get; set; } = string.Empty;
-    public string Notes { get; set; } = string.Empty;
     public DateTimeOffset CreatedAtUtc { get; private set; }
     public DateTimeOffset ModifiedAtUtc { get; private set; }
     public long TotalEditingTimeMilliseconds { get; private set; }
@@ -37,7 +35,6 @@ public sealed class ProjectMetadata
         AuthorOrTeam,
         OriginalWork,
         Copyright,
-        Notes,
         CreatedAtUtc,
         ModifiedAtUtc,
         TotalEditingTimeMilliseconds);
@@ -55,7 +52,6 @@ public sealed class ProjectMetadata
         ArgumentNullException.ThrowIfNull(snapshot.AuthorOrTeam);
         ArgumentNullException.ThrowIfNull(snapshot.OriginalWork);
         ArgumentNullException.ThrowIfNull(snapshot.Copyright);
-        ArgumentNullException.ThrowIfNull(snapshot.Notes);
         if (snapshot.TotalEditingTimeMilliseconds < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(snapshot));
@@ -75,7 +71,6 @@ public sealed class ProjectMetadata
         AuthorOrTeam = snapshot.AuthorOrTeam;
         OriginalWork = snapshot.OriginalWork;
         Copyright = snapshot.Copyright;
-        Notes = snapshot.Notes;
         CreatedAtUtc = createdAtUtc;
         ModifiedAtUtc = modifiedAtUtc;
         TotalEditingTimeMilliseconds = snapshot.TotalEditingTimeMilliseconds;

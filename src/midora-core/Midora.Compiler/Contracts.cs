@@ -334,6 +334,7 @@ public readonly record struct CompilationStatistics(
     public int ParticipatingEventInstrumentCount { get; init; }
     public int ParticipatingSubVoiceCount { get; init; }
     public int UsedPortCount { get; init; }
+    public int NoteOnEventCount { get; init; }
     public ResourceShortageDetails? ResourceShortage { get; init; }
 }
 

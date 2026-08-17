@@ -38,6 +38,19 @@
 - 若切换恰逢 underrun recovery，已准备但尚未播放的 recovery replay 同样属于旧监听 generation，必须在同一暂停前沿作废，不能在 replacement 后重新注入。
 - 4 ms 监听过渡不再把旧监听 generation 的 PCM 交叉混入新输出；新 generation 从零增益淡入。这样已经 Mute/Solo 的未来 Segment 不能通过过渡窗产生短促旧音。
 
+## ADR-MON-004：持续监听切换的静默期与端点恢复确认
+
+- 连续 Mute / Solo 输入先等待 40 ms 静默期再建立 replacement；静默期可被新命令延长，但单次合并最多等待 120 ms。命令仍按共享 ring 中的原顺序应用，Stop 始终抢占。该上限只合并人的快速切换突发，不改变最终监听状态。
+- replacement 达到预填水位后再次经过同一有界静默期；若期间又到达命令，已准备但尚未播放的 generation 立即作废，并在同一 consumer frontier 重建，不能反复启动、停止 WASAPI 来播放中间状态。
+- `BASS_WASAPI_Start` 返回成功只证明调用被接受，不证明 endpoint callback 已恢复。Worker 必须同时确认 `BASS_WASAPI_IsStarted`、至少一次新 callback，以及内容消费位置越过 replacement frontier；2 秒内未确认即受控失败并报告明确诊断，不得继续发布位置不推进的 `Playing`。
+- 以上状态只属于当前播放任务；不修改 Project、canonical result、缓存键或文件格式。
+
+## ADR-MON-005：持久 Worker 播放请求确认协议
+
+- 持久 Worker 对正式播放 generation 的“已接收”确认使用共享内存状态中的单调 generation，并与 `Preparing` 在同一 seqlock publication 中原子发布。
+- 不再创建、轮询或删除 `accepted-<generation>.mawa` 临时文件。旧方案会让 Worker 写入、主进程读取和两端清理竞争同一路径及文件句柄，能够产生真实的跨进程 sharing violation；删除该中间文件即删除竞争资源，而不是吞错或重试。
+- 共享音频 Worker 控制协议由 v5 升至 v6；新增字段只属于本机同版本进程间运行时 ABI，不持久化进 `.midora`。
+
 ## 失败条件与诊断
 
 - 真正的 producer fault、非法并发 pause/restart、非空 ring 重开、超时或 renderer reset 失败仍使当前播放受控失败。
@@ -45,6 +58,7 @@
 - 冷启动前已由 Rolling producer 提交的未来 NoteOn 必须全部失效；切换后不得在其原 tick 之前出现 Gate Start，也不得留下无 Gate End 的持续音。
 - producer 无法在期限内暂停、命令 ring 损坏、renderer reset 失败或 recovery 返回非法结果仍是受控播放故障；仅仅等待缓存 I/O 或 recovery source 暂时返回 Buffering 不是故障，但期间必须允许 Stop 抢占。
 - monitoring replacement 预填也必须有明确期限；若最终 generation 在期限内无法产生恢复输出，则进入受控播放故障，不能永久保持 `Playing` 且位置不推进。
+- endpoint 重启后若未实际恢复 callback 和内容消费，同样必须在 2 秒内进入受控播放故障；仅 `Start` API 返回成功不能解除该门。
 - Stop 抢占成功后以正常 `Stopped` 终态退出，不得误报为 audio worker fault；若 Worker 未在主进程的有界期限内退出，仍由主进程强制终止并报告超时。
 - 运行时失败不修改 Project，不进入 Undo / Redo，也不持久化。
 
@@ -59,6 +73,8 @@
 - restartable producer 在 EOS 后保持可暂停；清空旧 ring、重置底层源、恢复后可再次到达 EOS。
 - 正式 Native AOT Worker 在 Rolling producer 已完整准备短范围后，连续处理交替 Mute/Unmute 命令不得进入 Faulted。
 - 正式 Native AOT Worker 在前一 replacement generation 仍处于预填期时连续收到交替 Mute/Unmute，必须丢弃中间 generation，并在最后一批命令后恢复设备消费位置推进。
+- 交替 Monitoring 突发必须在静默期内合并；端点恢复门必须观察到 callback 与内容位置同时推进，不能只检查 API 返回值或 Worker 状态枚举。
+- 持久 Worker 连续正式播放 generation 的接收确认只能经共享内存原子 generation 完成；交换目录不得再出现 `accepted-*.mawa`。
 - callback 提交记录必须在固定预分配数组内更新、零托管分配；连续 Monitoring reset 的 callback 锁定与 WASAPI reset 不得死锁，最终 callback 分配计数必须仍为零。
 - 原生集成门必须覆盖 128 个未来按键已被预渲染后，在其 tick 之前执行 Disable/Cleanup/Enable 批次并回退事件游标：pressed-key 计数立即归零，允许的 de-click 窗口后保持静音，未来事件不提前。
 - 一次包含多条清理/恢复消息的 monitoring 批次只能触发一次 Rolling cold start，并以原顺序到达底层 renderer。

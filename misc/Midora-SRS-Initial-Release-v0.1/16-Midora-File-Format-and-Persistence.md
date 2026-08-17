@@ -374,7 +374,6 @@ Project 内所有稳定 ID 全局唯一
 项目作者或团队
 Remix 原曲 / 原曲作者或团队
 版权信息
-备注
 创建时间
 修改时间
 工程总耗时
@@ -388,6 +387,7 @@ createdWithSoftwareVersion
 lastSavedWithSoftwareVersion
 对象索引
 软件运行期状态
+编译派生的 Notes / Events 内容统计
 ```
 用户可见项目版本与 `fileFormatVersion` 完全无关。
 用户可见项目版本是自由文本。
@@ -421,7 +421,6 @@ projectVersion
 authorOrTeam
 originalWork
 copyright
-notes
 createdAtUtc
 modifiedAtUtc
 totalEditingTimeMilliseconds

@@ -9,8 +9,7 @@ public static partial class ProjectDomainEditCommands
         string projectVersion,
         string authorOrTeam,
         string originalWork,
-        string copyright,
-        string notes) =>
+        string copyright) =>
         Command("Change project metadata", project =>
         {
             ProjectUserMetadata replacement = new(
@@ -28,9 +27,7 @@ public static partial class ProjectDomainEditCommands
                     nameof(originalWork)),
                 ProjectTextRules.ValidateMetadataText(
                     copyright,
-                    nameof(copyright)),
-                ProjectTextRules.ValidateDescription(notes, nameof(notes))
-                    ?? throw new ArgumentNullException(nameof(notes)));
+                    nameof(copyright)));
             ProjectUserMetadata old = SnapshotUserMetadata(project.Metadata);
             return Prepared(
                 old != replacement,
@@ -59,8 +56,7 @@ public static partial class ProjectDomainEditCommands
             value.ProjectVersion,
             value.AuthorOrTeam,
             value.OriginalWork,
-            value.Copyright,
-            value.Notes);
+            value.Copyright);
 
     private static LogicalTrack FindLogicalTrack(
         MidoraProject project,
@@ -77,7 +73,6 @@ public static partial class ProjectDomainEditCommands
         metadata.AuthorOrTeam = value.AuthorOrTeam;
         metadata.OriginalWork = value.OriginalWork;
         metadata.Copyright = value.Copyright;
-        metadata.Notes = value.Notes;
     }
 
     private readonly record struct ProjectUserMetadata(
@@ -85,6 +80,5 @@ public static partial class ProjectDomainEditCommands
         string ProjectVersion,
         string AuthorOrTeam,
         string OriginalWork,
-        string Copyright,
-        string Notes);
+        string Copyright);
 }

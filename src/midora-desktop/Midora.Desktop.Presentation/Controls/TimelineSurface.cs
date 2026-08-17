@@ -1414,7 +1414,10 @@ public sealed class TimelineSurface : Control
             int nextTarget = headerViewport.YToLane(point.Y - GetRulerHeight());
             int laneCount = Snapshot?.LaneLabels.Count ?? 0;
             _laneHeaderDragTarget = laneCount == 0 ? 0 : Math.Clamp(nextTarget, 0, laneCount - 1);
-            _laneHeaderDragActivated |= Math.Abs(point.Y - _laneHeaderDragOrigin.Y) >= 3;
+            double reorderDeltaX = point.X - _laneHeaderDragOrigin.X;
+            double reorderDeltaY = point.Y - _laneHeaderDragOrigin.Y;
+            _laneHeaderDragActivated |= reorderDeltaX * reorderDeltaX
+                + reorderDeltaY * reorderDeltaY >= 100;
             Cursor = _laneHeaderDragActivated ? Cursors.SizeNS : Cursors.Arrow;
             InvalidateVisual();
             return;

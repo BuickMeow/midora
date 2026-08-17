@@ -453,7 +453,6 @@ Readme 也应记录 Project Metadata 中可用的版权信息和软件版本信�
 Lyric Meta Event
 Cue Point Meta Event
 ```
-不将 Project Metadata 备注写为 Lyric。
 不将普通 Marker 写为 Cue Point。
 不将 Project End Marker 写为 Cue Point。
 ### 14.8.5 Text Meta Event
@@ -762,7 +761,7 @@ README.md
 ### 14.15.4 Readme 内容
 Readme 应记录以下信息：
 ```text
-Project Metadata：项目名称、项目版本、作者、Remix 信息、版权信息、备注等可用元数据
+Project Metadata：项目名称、项目版本、作者、Remix 信息、版权信息等可用元数据
 SoundFont Settings：当前 SoundFont 信息；无 SF2 时注明未选择推荐 SoundFont
 导出模式
 导出范围：startTick、endTick、范围来源、是否 Project End Marker / 自然结束 / 手动范围

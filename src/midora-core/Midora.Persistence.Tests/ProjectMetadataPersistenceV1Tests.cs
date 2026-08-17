@@ -18,7 +18,6 @@ public sealed class ProjectMetadataPersistenceV1Tests
         project.Metadata.AuthorOrTeam = "Team";
         project.Metadata.OriginalWork = "Original";
         project.Metadata.Copyright = "Copyright";
-        project.Metadata.Notes = "Line 1\nLine 2";
         ProjectMetadataSnapshot snapshot = project.Metadata.Snapshot() with
         {
             ModifiedAtUtc = CreatedAt.AddSeconds(1),
@@ -35,7 +34,6 @@ public sealed class ProjectMetadataPersistenceV1Tests
               "authorOrTeam": "Team",
               "originalWork": "Original",
               "copyright": "Copyright",
-              "notes": "Line 1\nLine 2",
               "createdAtUtc": "2026-08-06T01:02:03.0000000Z",
               "modifiedAtUtc": "2026-08-06T01:02:04.0000000Z",
               "totalEditingTimeMilliseconds": 12345
@@ -54,7 +52,6 @@ public sealed class ProjectMetadataPersistenceV1Tests
     {
         string valid = Encoding.UTF8.GetString(MetadataCodecV1.Serialize(
             new ProjectMetadataSnapshot(
-                string.Empty,
                 string.Empty,
                 string.Empty,
                 string.Empty,
@@ -80,7 +77,6 @@ public sealed class ProjectMetadataPersistenceV1Tests
     public void MetadataRejectsModifiedTimeBeforeCreationAndScalarOverflow()
     {
         ProjectMetadataSnapshot reversed = new(
-            string.Empty,
             string.Empty,
             string.Empty,
             string.Empty,

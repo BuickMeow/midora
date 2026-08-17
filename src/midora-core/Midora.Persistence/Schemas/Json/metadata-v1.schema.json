@@ -10,7 +10,6 @@
     "authorOrTeam",
     "originalWork",
     "copyright",
-    "notes",
     "createdAtUtc",
     "modifiedAtUtc",
     "totalEditingTimeMilliseconds"
@@ -33,9 +32,6 @@
     },
     "copyright": {
       "$ref": "common-v1.schema.json#/$defs/metadataText"
-    },
-    "notes": {
-      "$ref": "common-v1.schema.json#/$defs/description"
     },
     "createdAtUtc": {
       "$ref": "common-v1.schema.json#/$defs/utcTimestamp"

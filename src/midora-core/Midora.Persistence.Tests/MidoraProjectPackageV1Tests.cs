@@ -519,7 +519,6 @@ public sealed class MidoraProjectPackageV1Tests
         project.Metadata.AuthorOrTeam = "Midora contributors";
         project.Metadata.OriginalWork = "Original";
         project.Metadata.Copyright = "Copyright";
-        project.Metadata.Notes = "Line 1\nLine 2";
         project.EventInstrumentFolders.Add(new EventInstrumentLibraryFolder(project) { Name = "Strings" });
         project.Conductor.Tempos.Add(new TempoChange(project, 960, 90.5m));
         project.Conductor.TimeSignatures.Add(new TimeSignatureChange(project, 1_920, 3, 4));

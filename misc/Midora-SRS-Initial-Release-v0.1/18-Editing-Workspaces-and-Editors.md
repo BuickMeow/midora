@@ -589,6 +589,15 @@ Reset Defaults
 TPQ 创建 Project 后只读。
 Project Name 可空。Project Version 是用户自由文本，与 File Format Version 严格区分。
 Metadata 普通字段直接提交 Project，不使用 Function Draft 机制。
+General 只读显示：
+```text
+Notes
+Events
+Project Work Time
+TPQ
+```
+`Notes` 与 `Events` 来自最近一次正式全 Project 编译结果：前者显示正 velocity `NoteOn` 数量，后者显示 canonical MIDI channel event 总数；不可消费结果显示 `0`。它们不允许编辑，不持久化，也不进入 Undo / Redo。`Project Work Time` 显示当前持久化累计值加本次打开会话截至刷新瞬间的累计值。
+
 用户 Metadata：
 ```text
 Project Name
@@ -596,13 +605,11 @@ Project Version
 Author or Team
 Original Work
 Copyright
-Notes
 ```
 File Information 只读显示：
 ```text
 Created Time
 Modified Time
-Accumulated Project Time
 Created With Midora
 Last Saved With Midora
 File Format Version

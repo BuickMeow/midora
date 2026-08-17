@@ -280,6 +280,7 @@ public sealed class MidoraCompiler : IDisposable
                 selectedTracks.Count,
                 instances,
                 0,
+                0,
                 allocation);
             AppendDebugDiagnostics(
                 request,
@@ -325,10 +326,12 @@ public sealed class MidoraCompiler : IDisposable
             cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         LastTelemetry = telemetry;
+        int noteOnEventCount = CountNoteOnEvents(ranged);
         CompilationStatistics successStatistics = CreateStatistics(
             selectedTracks.Count,
             instances,
             ranged.Length,
+            noteOnEventCount,
             allocation);
         AppendDebugDiagnostics(
             request,
@@ -382,6 +385,7 @@ public sealed class MidoraCompiler : IDisposable
         int selectedTrackCount,
         IReadOnlyCollection<RawInstance> instances,
         int eventCount,
+        int noteOnEventCount,
         AllocationResult allocation) => new(
             selectedTrackCount,
             instances.Count,
@@ -401,8 +405,22 @@ public sealed class MidoraCompiler : IDisposable
                 .Select(value => value.ZeroBasedPort)
                 .Distinct()
                 .Count(),
+            NoteOnEventCount = noteOnEventCount,
             ResourceShortage = allocation.ResourceShortage
         };
+
+    private static int CountNoteOnEvents(ReadOnlySpan<CanonicalMidiEvent> events)
+    {
+        int count = 0;
+        foreach (CanonicalMidiEvent value in events)
+        {
+            if (value.Message.MessageType == MidiMessageType.NoteOn && value.Message.Byte2 != 0)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
 
     private static void AppendDebugDiagnostics(
         CompilationRequest request,

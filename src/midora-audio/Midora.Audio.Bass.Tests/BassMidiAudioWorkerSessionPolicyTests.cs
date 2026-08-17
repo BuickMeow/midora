@@ -180,13 +180,13 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
         string soundFontPath = NativeAudioIntegrationEnvironment.RequireSoundFontPath();
         MidiRenderPlan plan = new(
             48_000,
-            96_000,
+            480_000,
             [new MidiPortRenderPlan(
                 0,
                 [
                     new(0, MidiMessage.ProgramChange(0, 0), 0),
                     new(0, MidiMessage.NoteOn(0, 60, 100), 0),
-                    new(90_000, MidiMessage.NoteOff(0, 60, 0), 0)
+                    new(470_000, MidiMessage.NoteOff(0, 60, 0), 0)
                 ])],
             sourceIds: [1]);
         using BassMidiAudioWorkerSession session = new(
@@ -217,16 +217,21 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
             $"Playback did not begin before the monitoring stress; state={initialStatus.State}; "
             + $"position={initialStatus.PositionFrame}; render={initialStatus.RenderPositionFrame}.");
         long positionBeforeMonitoring = initialStatus.PositionFrame;
-        session.EnqueueMonitoringCommands([MidiMonitoringCommand.DisableSource(0)]);
-        Thread.Sleep(2);
-        for (int index = 1; index < 64; index++)
+        for (int burst = 0; burst < 8; burst++)
         {
-            session.EnqueueMonitoringCommands([
-                (index & 1) == 0
-                    ? MidiMonitoringCommand.DisableSource(0)
-                    : MidiMonitoringCommand.EnableSource(0)
-            ]);
-            Thread.Sleep(1);
+            for (int index = 0; index < 16; index++)
+            {
+                int ordinal = burst * 16 + index;
+                session.EnqueueMonitoringCommands([
+                    (ordinal & 1) == 0
+                        ? MidiMonitoringCommand.DisableSource(0)
+                        : MidiMonitoringCommand.EnableSource(0)
+                ]);
+                Thread.Sleep(1);
+            }
+            // Exceed the coalescing quiet period so this test exercises repeated
+            // stop/reset/start cycles as well as commands within one burst.
+            Thread.Sleep(60);
         }
 
         long deadline = Environment.TickCount64 + 5_000;
@@ -246,6 +251,16 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
             status.PositionFrame > positionBeforeMonitoring,
             $"Playback did not resume after rapid monitoring changes; before={positionBeforeMonitoring}; "
             + $"after={status.PositionFrame}; render={status.RenderPositionFrame}; state={status.State}; "
+            + $"exit={session.ExitCode}; stderr={session.StandardError}.");
+
+        long firstResumedPosition = status.PositionFrame;
+        Thread.Sleep(250);
+        status = session.Status;
+        Assert.Equal(AudioWorkerState.Playing, status.State);
+        Assert.True(
+            status.PositionFrame > firstResumedPosition,
+            $"Playback resumed only transiently and then stalled; first={firstResumedPosition}; "
+            + $"after={status.PositionFrame}; render={status.RenderPositionFrame}; "
             + $"exit={session.ExitCode}; stderr={session.StandardError}.");
         session.Stop(flush: true, TimeSpan.FromSeconds(5));
         AudioWorkerStatus stopped = session.Status;

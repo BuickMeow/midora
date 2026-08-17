@@ -460,6 +460,7 @@ public sealed class IncrementalCompilationTests
         Assert.Equal(expected.SourceTrackCount, actual.SourceTrackCount);
         Assert.Equal(expected.ExpandedInstanceCount, actual.ExpandedInstanceCount);
         Assert.Equal(expected.EventCount, actual.EventCount);
+        Assert.Equal(expected.NoteOnEventCount, actual.NoteOnEventCount);
         Assert.Equal(expected.PeakChannelUnitCount, actual.PeakChannelUnitCount);
         Assert.Equal(expected.ExpandedSegmentCount, actual.ExpandedSegmentCount);
         Assert.Equal(

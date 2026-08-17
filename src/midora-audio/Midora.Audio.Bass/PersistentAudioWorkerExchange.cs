@@ -103,37 +103,10 @@ internal static class PersistentAudioWorkerExchange
         return true;
     }
 
-    public static void WriteAcceptance(string directory, long generation) =>
-        WriteAtomically(AcceptancePath(directory, generation), writer =>
-        {
-            writer.Write(Magic);
-            writer.Write(Version);
-        });
-
-    public static bool HasAcceptance(string directory, long generation)
-    {
-        string path = AcceptancePath(directory, generation);
-        if (!File.Exists(path))
-        {
-            return false;
-        }
-        using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        using BinaryReader reader = new(stream, Encoding.UTF8, leaveOpen: true);
-        if (reader.ReadInt32() != Magic
-            || reader.ReadInt32() != Version
-            || stream.Position != stream.Length)
-        {
-            throw new InvalidDataException(
-                "The persistent audio worker acceptance marker is invalid.");
-        }
-        return true;
-    }
-
     public static void DeleteExchange(string directory, long generation)
     {
         TryDelete(RequestPath(directory, generation));
         TryDelete(ResponsePath(directory, generation));
-        TryDelete(AcceptancePath(directory, generation));
     }
 
     private static string RequestPath(string directory, long generation) =>
@@ -141,9 +114,6 @@ internal static class PersistentAudioWorkerExchange
 
     private static string ResponsePath(string directory, long generation) =>
         Path.Combine(RequireDirectory(directory), $"response-{generation}.maws");
-
-    private static string AcceptancePath(string directory, long generation) =>
-        Path.Combine(RequireDirectory(directory), $"accepted-{generation}.mawa");
 
     private static string RequireDirectory(string directory)
     {

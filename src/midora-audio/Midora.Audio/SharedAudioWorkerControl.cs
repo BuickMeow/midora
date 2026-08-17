@@ -54,7 +54,8 @@ public readonly record struct AudioWorkerStatus(
     long CallbackAllocatedBytes,
     long RenderingAllocatedBytes,
     int FaultCode,
-    long HeldPreviewPlanGeneration);
+    long HeldPreviewPlanGeneration,
+    long PersistentPlaybackAcceptedGeneration);
 
 /// <summary>
 /// Fixed-version, bounded, allocation-free runtime IPC between the UI process and the audio worker.
@@ -64,7 +65,7 @@ public readonly record struct AudioWorkerStatus(
 [SupportedOSPlatform("windows")]
 public sealed unsafe class SharedAudioWorkerControl : IDisposable
 {
-    public const int ProtocolVersion = 5;
+    public const int ProtocolVersion = 6;
     public const int CommandCapacity = 1_024;
     public const int MaximumStatusReadAttempts = 1_024;
 
@@ -88,7 +89,8 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
     private const int CommandReadPositionOffset = 72;
     private const int CommandWritePositionOffset = 80;
     private const int HeldPreviewPlanGenerationOffset = 88;
-    private const int HeaderReservedOffset = 96;
+    private const int PersistentPlaybackAcceptedGenerationOffset = 96;
+    private const int HeaderReservedOffset = 104;
 
     private readonly MemoryMappedFile _mapping;
     private readonly MemoryMappedViewAccessor _view;
@@ -206,7 +208,8 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
                 Volatile.Read(ref Int64At(CallbackAllocatedBytesOffset)),
                 Volatile.Read(ref Int64At(RenderingAllocatedBytesOffset)),
                 Volatile.Read(ref Int32At(FaultCodeOffset)),
-                Volatile.Read(ref Int64At(HeldPreviewPlanGenerationOffset)));
+                Volatile.Read(ref Int64At(HeldPreviewPlanGenerationOffset)),
+                Volatile.Read(ref Int64At(PersistentPlaybackAcceptedGenerationOffset)));
             int after = Volatile.Read(ref Int32At(StatusSequenceOffset));
             if (before != after || (after & 1) != 0)
             {
@@ -274,6 +277,21 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         Volatile.Write(ref Int64At(CallbackAllocatedBytesOffset), callbackAllocatedBytes);
         Volatile.Write(ref Int64At(RenderingAllocatedBytesOffset), renderingAllocatedBytes);
         Volatile.Write(ref Int32At(StateOffset), (int)state);
+        EndStatusPublication(sequence);
+    }
+
+    public void PublishPersistentPlaybackAcceptance(long generation)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (generation <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(generation));
+        }
+        int sequence = BeginStatusPublication();
+        Volatile.Write(
+            ref Int64At(PersistentPlaybackAcceptedGenerationOffset),
+            generation);
+        Volatile.Write(ref Int32At(StateOffset), (int)AudioWorkerState.Preparing);
         EndStatusPublication(sequence);
     }
 
@@ -783,7 +801,8 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         && status.CallbackAllocatedBytes >= 0
         && status.RenderingAllocatedBytes >= 0
         && status.FaultCode >= 0
-        && status.HeldPreviewPlanGeneration >= 0;
+        && status.HeldPreviewPlanGeneration >= 0
+        && status.PersistentPlaybackAcceptedGeneration >= 0;
 
     private static void ValidateState(AudioWorkerState state)
     {

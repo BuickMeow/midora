@@ -2387,6 +2387,9 @@ public sealed class SettingsWorkspaceViewModel()
     private string _soundFont = string.Empty;
     private string _playback = string.Empty;
     private string _audioRender = string.Empty;
+    private int _compiledNoteOnCount;
+    private int _compiledMidiEventCount;
+    private long _totalEditingTimeMilliseconds;
 
     public string ProjectName { get => _projectName; private set => Set(ref _projectName, value); }
     public string ProjectVersion { get => _projectVersion; private set => Set(ref _projectVersion, value); }
@@ -2429,7 +2432,9 @@ public sealed class SettingsWorkspaceViewModel()
             new("settings.project.author", "AUTHOR / TEAM", project.Metadata.AuthorOrTeam),
             new("settings.project.originalWork", "ORIGINAL WORK", project.Metadata.OriginalWork),
             new("settings.project.copyright", "COPYRIGHT", project.Metadata.Copyright),
-            new("settings.project.notes", "NOTES", project.Metadata.Notes),
+            new("settings.project.noteCount", "NOTES", _compiledNoteOnCount.ToString("N0"), false),
+            new("settings.project.eventCount", "EVENTS", _compiledMidiEventCount.ToString("N0"), false),
+            new("settings.project.totalWorkTime", "PROJECT WORK TIME", FormatDuration(_totalEditingTimeMilliseconds), false),
             new("settings.project.tpq", "TICKS PER QUARTER NOTE", project.TicksPerQuarterNote.ToString(), false));
         Replace(PlaybackFields,
             new("settings.playback.master", "MASTER VOLUME (DB)", project.Playback.MasterVolumeDecibels.ToString(System.Globalization.CultureInfo.InvariantCulture)),
@@ -2462,6 +2467,45 @@ public sealed class SettingsWorkspaceViewModel()
         }
         Replace(InitialStateFields, StateFields("settings.initial", project.GlobalInitialState));
         Replace(ResetDefaultFields, StateFields("settings.reset", project.GlobalResetDefaults));
+    }
+
+    public void UpdateRuntimeInformation(
+        CompilationStatistics statistics,
+        long totalEditingTimeMilliseconds)
+    {
+        if (totalEditingTimeMilliseconds < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(totalEditingTimeMilliseconds));
+        }
+        _compiledNoteOnCount = statistics.NoteOnEventCount;
+        _compiledMidiEventCount = statistics.EventCount;
+        _totalEditingTimeMilliseconds = totalEditingTimeMilliseconds;
+        UpdateReadOnlyField("settings.project.noteCount", _compiledNoteOnCount.ToString("N0"));
+        UpdateReadOnlyField("settings.project.eventCount", _compiledMidiEventCount.ToString("N0"));
+        UpdateReadOnlyField(
+            "settings.project.totalWorkTime",
+            FormatDuration(_totalEditingTimeMilliseconds));
+    }
+
+    private void UpdateReadOnlyField(string key, string value)
+    {
+        InspectorField? field = GeneralFields.FirstOrDefault(item => item.Key == key);
+        if (field is not null)
+        {
+            field.Value = value;
+        }
+    }
+
+    private static string FormatDuration(long milliseconds)
+    {
+        long totalSeconds = milliseconds / 1_000;
+        long days = totalSeconds / 86_400;
+        long hours = totalSeconds / 3_600 % 24;
+        long minutes = totalSeconds / 60 % 60;
+        long seconds = totalSeconds % 60;
+        return days == 0
+            ? $"{hours:00}:{minutes:00}:{seconds:00}"
+            : $"{days:N0}d {hours:00}:{minutes:00}:{seconds:00}";
     }
 
     private static InspectorField[] StateFields(string prefix, MidiInitialState state)

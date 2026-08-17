@@ -20,6 +20,9 @@ public static class Program
     private const int LegacyMonitoringProtocolMagic = 0x4d43444d;
     private const int LegacyMonitoringProtocolVersion = 1;
     private const int MaximumLegacyMonitoringCommandCount = 1_000_000;
+    private const int MonitoringQuiescenceMilliseconds = 40;
+    private const int MonitoringMaximumCoalescingMilliseconds = 120;
+    private const int MonitoringOutputResumeTimeoutMilliseconds = 2_000;
 
     public static unsafe int Main(string[] args)
     {
@@ -253,13 +256,10 @@ public static class Program
                                 "The persistent playback request identity is invalid.");
                         }
                         audition.SuspendForFormalPlayback();
-                        // Publish the new generation's Preparing state before exposing the
-                        // acceptance marker. Otherwise the host can observe the previous
-                        // generation's terminal Completed state and return from startup early.
-                        control.PublishState(AudioWorkerState.Preparing);
-                        PersistentAudioWorkerExchange.WriteAcceptance(
-                            exchangeDirectory,
-                            generation);
+                        // Publish the accepted generation and Preparing state in one
+                        // shared-memory transaction. A file marker would introduce a
+                        // reader/writer/deleter handle race between the two processes.
+                        control.PublishPersistentPlaybackAcceptance(generation);
                         _ = RunPlayback(
                             request,
                             control,
@@ -688,12 +688,14 @@ public static class Program
                 _ = control.TryDequeueMonitoringCommands(
                     monitoringCommandBatch.AsSpan(1),
                     out int additionalMonitoringCommandCount);
-                ReadOnlySpan<MidiMonitoringCommand> monitoringCommands =
-                    monitoringCommandBatch.AsSpan(0, additionalMonitoringCommandCount + 1);
-                if (control.TryDequeuePendingStop(out bool monitoringStopFlush))
+                int pendingMonitoringCommandCount = additionalMonitoringCommandCount + 1;
+                if (!TryCollectMonitoringCommandsUntilQuiescent(
+                        control,
+                        monitoringCommandBatch,
+                        ref pendingMonitoringCommandCount,
+                        ref stopRequested,
+                        ref flushOnStop))
                 {
-                    stopRequested = true;
-                    flushOnStop = monitoringStopFlush;
                     break;
                 }
                 if (rollingSource is not null)
@@ -705,7 +707,6 @@ public static class Program
                     // frontier, then restart output only after the new generation is
                     // prepared.
                     long consumerFrontierFrame = output.StopAndResetBufferedOutput();
-                    int pendingMonitoringCommandCount = monitoringCommands.Length;
                     bool outerProducerPaused = false;
                     try
                     {
@@ -814,16 +815,21 @@ public static class Program
                                 continue;
                             }
 
-                            // Close the interval between satisfying the watermark
-                            // and restarting the endpoint. A command already queued
-                            // here still supersedes the prepared generation.
-                            if (pendingMonitoringCommandCount < monitoringCommandBatch.Length
-                                && control.TryDequeueMonitoringCommands(
-                                    monitoringCommandBatch.AsSpan(
-                                        pendingMonitoringCommandCount),
-                                    out int finalCommandCount))
+                            // Require a short quiet interval before restarting the
+                            // endpoint. Human rapid-toggle bursts then replace one
+                            // audible future instead of repeatedly cycling WASAPI.
+                            int finalPreparedCommandCount = pendingMonitoringCommandCount;
+                            if (!TryCollectMonitoringCommandsUntilQuiescent(
+                                    control,
+                                    monitoringCommandBatch,
+                                    ref pendingMonitoringCommandCount,
+                                    ref stopRequested,
+                                    ref flushOnStop))
                             {
-                                pendingMonitoringCommandCount += finalCommandCount;
+                                break;
+                            }
+                            if (pendingMonitoringCommandCount > finalPreparedCommandCount)
+                            {
                                 if (!renderWorker.TryPauseAtProducerFrontier(
                                         TimeSpan.FromSeconds(5),
                                         stopCommandPending))
@@ -838,7 +844,16 @@ public static class Program
                                 continue;
                             }
 
-                            output.Start();
+                            if (!TryStartOutputAndConfirmMonitoringProgress(
+                                    output,
+                                    ring,
+                                    control,
+                                    consumerFrontierFrame,
+                                    ref stopRequested,
+                                    ref flushOnStop))
+                            {
+                                break;
+                            }
                             break;
                         }
                     }
@@ -853,7 +868,8 @@ public static class Program
                 else
                 {
                     playbackSpanSource?.RequestMonitoringFallback();
-                    renderer.EnqueueMonitoringCommands(monitoringCommands);
+                    renderer.EnqueueMonitoringCommands(
+                        monitoringCommandBatch.AsSpan(0, pendingMonitoringCommandCount));
                 }
             }
 
@@ -962,6 +978,93 @@ public static class Program
         }
         stopRequested = true;
         flushOnStop = flush;
+    }
+
+    private static bool TryCollectMonitoringCommandsUntilQuiescent(
+        SharedAudioWorkerControl control,
+        MidiMonitoringCommand[] destination,
+        ref int commandCount,
+        ref bool stopRequested,
+        ref bool flushOnStop)
+    {
+        long maximumDeadline = Environment.TickCount64
+            + MonitoringMaximumCoalescingMilliseconds;
+        long quietDeadline = Environment.TickCount64
+            + MonitoringQuiescenceMilliseconds;
+        while (commandCount < destination.Length
+            && Environment.TickCount64 < maximumDeadline
+            && Environment.TickCount64 < quietDeadline)
+        {
+            if (control.TryDequeuePendingStop(out bool stopFlush))
+            {
+                stopRequested = true;
+                flushOnStop = stopFlush;
+                return false;
+            }
+            if (control.TryDequeueMonitoringCommands(
+                    destination.AsSpan(commandCount),
+                    out int addedCommandCount))
+            {
+                commandCount += addedCommandCount;
+                quietDeadline = Math.Min(
+                    maximumDeadline,
+                    Environment.TickCount64 + MonitoringQuiescenceMilliseconds);
+                continue;
+            }
+            Thread.Sleep(1);
+        }
+        return true;
+    }
+
+    private static bool TryStartOutputAndConfirmMonitoringProgress(
+        BassWasapiOutputDevice output,
+        AudioFrameRingBuffer ring,
+        SharedAudioWorkerControl control,
+        long consumerFrontierFrame,
+        ref bool stopRequested,
+        ref bool flushOnStop)
+    {
+        long callbackCountBeforeStart = output.CallbackCount;
+        output.Start();
+        if (!output.IsProcessingStarted)
+        {
+            throw new MidoraAudioDeviceException(
+                "BASS_WASAPI_Start returned successfully, but the output device is not processing.");
+        }
+
+        long deadline = Environment.TickCount64
+            + MonitoringOutputResumeTimeoutMilliseconds;
+        while (true)
+        {
+            if (control.TryDequeuePendingStop(out bool stopFlush))
+            {
+                stopRequested = true;
+                flushOnStop = stopFlush;
+                return false;
+            }
+            if (output.DeviceLost || output.CallbackFaulted)
+            {
+                throw new MidoraAudioDeviceException(
+                    "The output device faulted while resuming after a monitoring change.");
+            }
+            if (output.CallbackCount > callbackCountBeforeStart
+                && (output.ConsumedFrameCount > consumerFrontierFrame
+                    || ring.ProducerCompleted && ring.AvailableFrameCount == 0))
+            {
+                return true;
+            }
+            if (!output.IsProcessingStarted)
+            {
+                throw new MidoraAudioDeviceException(
+                    "The output device stopped before consuming the monitoring replacement.");
+            }
+            if (Environment.TickCount64 >= deadline)
+            {
+                throw new TimeoutException(
+                    "The output device did not consume prepared PCM within 2 seconds after a monitoring change.");
+            }
+            Thread.Sleep(1);
+        }
     }
 
     private static void FinalizeAndMarkCacheCaptures(

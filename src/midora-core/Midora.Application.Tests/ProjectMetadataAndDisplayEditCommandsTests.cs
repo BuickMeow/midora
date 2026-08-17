@@ -20,15 +20,13 @@ public sealed class ProjectMetadataAndDisplayEditCommandsTests
             " v1 beta ",
             "Author Team",
             "Original Work",
-            "Copyright line",
-            "Line one\nLine two\tvalue"));
+            "Copyright line"));
 
         Assert.Equal("  Project Name  ", project.Metadata.ProjectName);
         Assert.Equal(" v1 beta ", project.Metadata.ProjectVersion);
         Assert.Equal("Author Team", project.Metadata.AuthorOrTeam);
         Assert.Equal("Original Work", project.Metadata.OriginalWork);
         Assert.Equal("Copyright line", project.Metadata.Copyright);
-        Assert.Equal("Line one\nLine two\tvalue", project.Metadata.Notes);
         Assert.Equal(initial.CreatedAtUtc, project.Metadata.CreatedAtUtc);
         Assert.Equal(initial.ModifiedAtUtc, project.Metadata.ModifiedAtUtc);
         Assert.Equal(fingerprint, compilation.LastAttempt.Fingerprint);
@@ -44,7 +42,6 @@ public sealed class ProjectMetadataAndDisplayEditCommandsTests
         Assert.Equal(initial.AuthorOrTeam, restored.AuthorOrTeam);
         Assert.Equal(initial.OriginalWork, restored.OriginalWork);
         Assert.Equal(initial.Copyright, restored.Copyright);
-        Assert.Equal(initial.Notes, restored.Notes);
         Assert.Equal(initial.CreatedAtUtc, restored.CreatedAtUtc);
         Assert.Equal(initial.ModifiedAtUtc, restored.ModifiedAtUtc);
         Assert.Equal(0, compilation.LastCompilationTelemetry.RecompiledTrackCount);
@@ -60,14 +57,11 @@ public sealed class ProjectMetadataAndDisplayEditCommandsTests
         ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
         string tooLongShortText = string.Concat(Enumerable.Repeat("😀", 257));
         string tooLongMetadataText = new('a', 4_097);
-        string tooLongNotes = new('a', 65_537);
 
         Assert.Throws<ArgumentException>(() => document.Execute(
             Metadata(projectName: tooLongShortText)));
         Assert.Throws<ArgumentException>(() => document.Execute(
             Metadata(authorOrTeam: tooLongMetadataText)));
-        Assert.Throws<ArgumentException>(() => document.Execute(
-            Metadata(notes: tooLongNotes)));
         Assert.Throws<ArgumentException>(() => document.Execute(
             Metadata(projectVersion: "invalid\nversion")));
         Assert.Throws<ArgumentException>(() => document.Execute(
@@ -76,7 +70,7 @@ public sealed class ProjectMetadataAndDisplayEditCommandsTests
             Metadata(originalWork: "\ud800")));
         Assert.Throws<ArgumentNullException>(() => document.Execute(
             ProjectDomainEditCommands.UpdateProjectMetadata(
-                "", "", "", "", "", null!)));
+                "", "", null!, "", "")));
 
         Assert.False(document.CanUndo);
         Assert.False(document.IsModified);
@@ -142,15 +136,13 @@ public sealed class ProjectMetadataAndDisplayEditCommandsTests
         string projectVersion = "",
         string authorOrTeam = "",
         string originalWork = "",
-        string copyright = "",
-        string notes = "") =>
+        string copyright = "") =>
         ProjectDomainEditCommands.UpdateProjectMetadata(
             projectName,
             projectVersion,
             authorOrTeam,
             originalWork,
-            copyright,
-            notes);
+            copyright);
 
     private static MidoraProject CreateProject(out LogicalTrack track)
     {

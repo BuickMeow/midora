@@ -47,6 +47,16 @@ public sealed unsafe class BassWasapiOutputDevice : IAudioOutputDevice
 
     public long CallbackCount => Volatile.Read(ref _callbackCount);
 
+    public bool IsProcessingStarted
+    {
+        get
+        {
+            ThrowIfDisposed();
+            SetCurrentDeviceOrThrow();
+            return BASSWASAPI.IsStarted() != 0;
+        }
+    }
+
     public long CallbackAllocatedBytes => Volatile.Read(ref _callbackAllocatedBytes);
 
     public long ConsumedFrameCount => Volatile.Read(ref _consumedFrameCount);

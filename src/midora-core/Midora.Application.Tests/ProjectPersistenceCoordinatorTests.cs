@@ -81,7 +81,6 @@ public sealed class ProjectPersistenceCoordinatorTests
             "",
             "",
             "",
-            "",
             ""));
         Assert.True(document.IsModified);
 
@@ -114,7 +113,6 @@ public sealed class ProjectPersistenceCoordinatorTests
         _ = await persistence.SaveProjectAsync(current);
         _ = document.Execute(ProjectDomainEditCommands.UpdateProjectMetadata(
             "Copy content",
-            "",
             "",
             "",
             "",

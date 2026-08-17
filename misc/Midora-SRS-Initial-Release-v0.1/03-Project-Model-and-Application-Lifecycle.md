@@ -132,10 +132,11 @@ MIDI 导出输出的是 MIDI 事件数据，不依赖 SF2 加载状态。无 SF2
 | 项目作者或团队 | 必须支持 | 用户可编辑 |
 | Remix 原曲 / 原曲作者或团队 | 必须支持 | 用户可编辑，可为空 |
 | 版权信息 | 必须支持 | 用户可编辑 |
-| 备注 | 必须支持 | 用户可编辑 |
 | 创建时间 | 必须支持 | 只读，一次性，在创建项目瞬间写入 |
 | 修改时间 | 必须支持 | 只读，普通保存或保存副本写出时按对应事务规则更新输出文件 |
 | 工程总耗时 | 必须支持 | 只读，初版按项目打开累计时间自动累计 |
+
+Project Settings 还必须显示只读的 `Notes` 与 `Events` 编译统计。对最近一次正式全 Project 编译的可消费 canonical compiled result，`Notes` 是正 velocity `NoteOn` MIDI 消息数量，`Events` 是 canonical MIDI channel event 序列中的全部事件数量；两者必须直接由同一已冻结事件序列计算，不得重新解释 Project Source Data。不可消费的编译结果没有可供统计的正式事件序列，因此两者均为 `0`。二者不是用户 Metadata，不持久化、不进入 Undo / Redo，也不影响 canonical musical result。
 ### 3.6.2 manifest 系统级文件信息
 Midora 文件仍必须记录：
 ```text

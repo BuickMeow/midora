@@ -260,9 +260,15 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
         long deadline = Environment.TickCount64 + checked((long)Math.Ceiling(timeout.TotalMilliseconds));
         while (true)
         {
-            if (PersistentAudioWorkerExchange.HasAcceptance(_ownedDirectory, generation))
+            AudioWorkerStatus status = _control.ReadStatus();
+            if (status.PersistentPlaybackAcceptedGeneration == generation)
             {
                 return;
+            }
+            if (status.PersistentPlaybackAcceptedGeneration > generation)
+            {
+                throw new InvalidDataException(
+                    "The persistent audio worker acknowledged a future playback generation.");
             }
             if (PersistentAudioWorkerExchange.TryReadResponse(
                     _ownedDirectory,

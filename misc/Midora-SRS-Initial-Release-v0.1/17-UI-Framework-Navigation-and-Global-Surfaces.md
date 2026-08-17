@@ -112,12 +112,12 @@ Tasks
 #### 17.1.3.9 [I] Global Status Bar
 显示：
 ```text
-Project State
 Issues
-SoundFont Resource
 Compile State
-Activity
-Position
+SoundFont Resource
+Project Save State
+Playback State
+Transient Message
 ```
 ### 17.1.4 面板尺寸与折叠
 Project Panel、Inspector 和 Bottom Panel：
@@ -378,6 +378,7 @@ Whole Project / Current Workspace / Current Selection / Current Task
 ```
 用户主动 Compile、Play 或 Preview 失败时，可以自动展开 Diagnostics 并选中首个相关 Error，但不得抢键盘焦点或自动跳转来源。
 后台 Information、Warning 和普通非阻塞 Error 只更新 Badge。
+主动切换到 Diagnostics Workspace 时，键盘焦点必须落在非编辑的 Workspace 表面，不得自动进入搜索框、筛选下拉框或其他命令控件；用户显式点击这些控件后仍按普通输入规则工作。
 ### 17.5.3 Details Tab
 只读扩展信息区，不是第二个 Inspector。通过显式 `Show Details` 更新，不随普通对象单击持续跳动。
 ### 17.5.4 Tasks Tab
@@ -472,10 +473,10 @@ Preference Storage Failed
 ### 17.7.3 Status Bar
 示例格式：
 ```text
-Modified | SoundFont Configured | Compile Outdated | 2 Errors, 3 Warnings                  <Transient Message>
+2 Errors, 3 Warnings | Compile Outdated | SoundFont Configured | Modified | Playing       <Transient Message>
 ```
-SoundFont Resource 位于左侧第二个状态单元。最右侧只用于瞬时消息；非错误消息使用次要文本色，错误消息使用错误色。该区域不得显示 CPU RID 或 .NET 运行时版本。
-Issues 显示 Whole Project 当前诊断计数，不受 Diagnostics 当前搜索和筛选影响。
+左侧状态单元固定按 `Issues → Compile State → SoundFont Resource → Project Save State → Playback State` 排列；Issues 左侧显示同一诊断状态圆点。最右侧只用于瞬时消息；非错误消息使用次要文本色，错误消息使用错误色。该区域不得显示 CPU RID 或 .NET 运行时版本。
+Issues 显示 Whole Project 当前诊断计数，不受 Diagnostics 当前搜索和筛选影响。计数文本是显式导航入口：鼠标悬停时提亮并显示 Hand 指针，单击后激活 Diagnostics Workspace；激活后的键盘焦点仍遵循 17.5.2 的非编辑表面规则。
 Compile State：
 ```text
 Not Compiled

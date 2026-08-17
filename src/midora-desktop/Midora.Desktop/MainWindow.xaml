@@ -136,6 +136,58 @@
     <Style x:Key="WorkspaceTabItemStyle" TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
       <Setter Property="AutomationProperties.Name" Value="{Binding Header}"/>
     </Style>
+    <Style x:Key="Button.PrimaryTransport" TargetType="Button" BasedOn="{StaticResource Button.Base}">
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Background" Value="{StaticResource Brush.Red}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource Brush.Red}"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Chrome" Padding="{TemplateBinding Padding}"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="{StaticResource Radius.Small}">
+              <ContentPresenter x:Name="Content" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <DataTrigger Binding="{Binding IsPlaybackActive}" Value="True">
+                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.Surface.3}"/>
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource Brush.Red}"/>
+                <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}"/>
+              </DataTrigger>
+              <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                  <Condition Binding="{Binding IsPlaybackActive}" Value="False"/>
+                  <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource TemplatedParent}}" Value="True"/>
+                </MultiDataTrigger.Conditions>
+                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.Red.Hover}"/>
+              </MultiDataTrigger>
+              <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                  <Condition Binding="{Binding IsPlaybackActive}" Value="True"/>
+                  <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource TemplatedParent}}" Value="True"/>
+                </MultiDataTrigger.Conditions>
+                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.Surface.4}"/>
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource Brush.Red.Hover}"/>
+              </MultiDataTrigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.Black}"/>
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource Brush.Red.Dark}"/>
+                <Setter TargetName="Content" Property="Margin" Value="0,1,0,-1"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Chrome" Property="Background" Value="Transparent"/>
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{StaticResource Brush.Text.Disabled}"/>
+                <Setter Property="Cursor" Value="Arrow"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
     <Style x:Key="RenderedSurfaceHost" TargetType="GroupBox">
       <Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0"/>
       <Setter Property="BorderThickness" Value="0"/><Setter Property="Background" Value="Transparent"/>
@@ -387,7 +439,12 @@
 
     <DataTemplate DataType="{x:Type local:InstrumentWorkspaceViewModel}">
       <Grid>
-        <Grid.Resources><Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="IsEnabled" Value="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"/></Style></Grid.Resources>
+        <Grid.Resources>
+          <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="IsEnabled" Value="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"/></Style>
+          <Style x:Key="InstrumentProjectTextBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}"><Setter Property="IsEnabled" Value="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"/></Style>
+          <Style x:Key="InstrumentProjectComboBox" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}"><Setter Property="IsEnabled" Value="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"/></Style>
+          <Style x:Key="InstrumentProjectCheckBox" TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}"><Setter Property="IsEnabled" Value="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"/></Style>
+        </Grid.Resources>
         <Grid.RowDefinitions><RowDefinition Height="44"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Border Padding="12,0" Background="{StaticResource Brush.Surface.1}"
                 BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
@@ -432,7 +489,7 @@
             <TabItem x:Name="InstrumentSubVoicesTab" Header="SubVoices">
               <Grid><Grid.RowDefinitions><RowDefinition Height="42"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                 <Border Padding="10,0" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
-                  <Grid><StackPanel VerticalAlignment="Center"><TextBlock FontWeight="SemiBold" Text="{Binding ActiveSubVoiceName}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding ActiveSubVoiceContext}"/></StackPanel><StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal"><CheckBox Margin="0,0,12,0" Content="Follow Instance Velocity" IsChecked="{Binding ActiveSubVoiceFollowsInstanceVelocity, Mode=OneWay}" ToolTip="Use the Logical Note instance velocity as the base of this SubVoice's Note Velocity Mapping" Click="OnFollowInstanceVelocityClick"/><Button Content="Select SubVoice" Click="OnSelectActiveSubVoiceClick"/></StackPanel></Grid>
+                  <Grid><StackPanel VerticalAlignment="Center"><TextBlock FontWeight="SemiBold" Text="{Binding ActiveSubVoiceName}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding ActiveSubVoiceContext}"/></StackPanel><StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal"><CheckBox Margin="0,0,12,0" Style="{StaticResource InstrumentProjectCheckBox}" Content="Follow Instance Velocity" IsChecked="{Binding ActiveSubVoiceFollowsInstanceVelocity, Mode=OneWay}" ToolTip="Use the Logical Note instance velocity as the base of this SubVoice's Note Velocity Mapping" Click="OnFollowInstanceVelocityClick"/><Button Content="Select SubVoice" Click="OnSelectActiveSubVoiceClick"/></StackPanel></Grid>
                 </Border>
                 <TabControl Grid.Row="1">
                   <TabItem Header="Timeline">
@@ -555,36 +612,36 @@
                 <StackPanel>
                   <TextBlock Style="{StaticResource Text.Section}" Text="General"/>
                   <UniformGrid Margin="0,8,0,12" Columns="2">
-                    <StackPanel Margin="0,0,8,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="NAME"/><TextBox Tag="Name" Text="{Binding InstrumentNameText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnInstrumentConfigurationLostFocus"/></StackPanel>
+                    <StackPanel Margin="0,0,8,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="NAME"/><TextBox Style="{StaticResource InstrumentProjectTextBox}" Tag="Name" Text="{Binding InstrumentNameText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnInstrumentConfigurationLostFocus"/></StackPanel>
                     <StackPanel Margin="8,0,0,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="COLOR"/><Button HorizontalContentAlignment="Stretch" Click="OnSelectInstrumentColorClick"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Border Width="12" Height="12" VerticalAlignment="Center" Background="{Binding InstrumentColorText}" BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1"/><TextBlock Grid.Column="1" Margin="7,0,0,0" VerticalAlignment="Center" Text="{Binding InstrumentColorText}"/></Grid></Button></StackPanel>
-                    <StackPanel Margin="0,0,8,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="DESCRIPTION"/><TextBox Tag="Description" Text="{Binding InstrumentDescriptionText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnInstrumentConfigurationLostFocus"/></StackPanel>
+                    <StackPanel Margin="0,0,8,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="DESCRIPTION"/><TextBox Style="{StaticResource InstrumentProjectTextBox}" Tag="Description" Text="{Binding InstrumentDescriptionText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnInstrumentConfigurationLostFocus"/></StackPanel>
                     <StackPanel Margin="8,0,0,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="STABLE ID"/><TextBox IsReadOnly="True" Text="{Binding InstrumentStableIdText, Mode=OneWay}"/></StackPanel>
                   </UniformGrid>
                   <TextBlock Style="{StaticResource Text.Section}" Text="Template"/>
                   <UniformGrid Margin="0,8,0,8" Columns="2">
-                    <StackPanel Margin="0,0,8,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="ROOT NOTE (0–127)"/><TextBox Tag="RootNote" Text="{Binding InstrumentRootNoteText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnInstrumentConfigurationLostFocus"/></StackPanel>
-                    <StackPanel Margin="8,0,0,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="TEMPLATE LENGTH TICKS"/><TextBox Tag="TemplateLength" Text="{Binding InstrumentTemplateLengthText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnInstrumentConfigurationLostFocus"/></StackPanel>
+                    <StackPanel Margin="0,0,8,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="ROOT NOTE (0–127)"/><TextBox Style="{StaticResource InstrumentProjectTextBox}" Tag="RootNote" Text="{Binding InstrumentRootNoteText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnInstrumentConfigurationLostFocus"/></StackPanel>
+                    <StackPanel Margin="8,0,0,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="TEMPLATE LENGTH TICKS"/><TextBox Style="{StaticResource InstrumentProjectTextBox}" Tag="TemplateLength" Text="{Binding InstrumentTemplateLengthText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnInstrumentConfigurationLostFocus"/></StackPanel>
                   </UniformGrid>
                   <Grid Margin="0,0,0,12"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                    <StackPanel><TextBlock Style="{StaticResource PropertyLabel}" Text="LOOP START TICK"/><TextBox Text="{Binding LoopStartText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextChanged="OnInstrumentLoopTextChanged" LostKeyboardFocus="OnInstrumentLoopLostKeyboardFocus" KeyDown="OnInstrumentLoopKeyDown"/></StackPanel>
-                    <StackPanel Grid.Column="2"><TextBlock Style="{StaticResource PropertyLabel}" Text="LOOP END TICK"/><TextBox Text="{Binding LoopEndText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextChanged="OnInstrumentLoopTextChanged" LostKeyboardFocus="OnInstrumentLoopLostKeyboardFocus" KeyDown="OnInstrumentLoopKeyDown"/></StackPanel>
+                    <StackPanel><TextBlock Style="{StaticResource PropertyLabel}" Text="LOOP START TICK"/><TextBox Style="{StaticResource InstrumentProjectTextBox}" Text="{Binding LoopStartText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextChanged="OnInstrumentLoopTextChanged" LostKeyboardFocus="OnInstrumentLoopLostKeyboardFocus" KeyDown="OnInstrumentLoopKeyDown"/></StackPanel>
+                    <StackPanel Grid.Column="2"><TextBlock Style="{StaticResource PropertyLabel}" Text="LOOP END TICK"/><TextBox Style="{StaticResource InstrumentProjectTextBox}" Text="{Binding LoopEndText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextChanged="OnInstrumentLoopTextChanged" LostKeyboardFocus="OnInstrumentLoopLostKeyboardFocus" KeyDown="OnInstrumentLoopKeyDown"/></StackPanel>
                   </Grid>
                   <Grid Margin="0,0,0,8"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Section}" Text="Initial MIDI State"/><Button HorizontalAlignment="Right" Content="Add CC / RPN / NRPN…" Tag="Instrument" Click="OnAddInstrumentStateClick"/></Grid>
                   <TextBlock Margin="0,0,0,8" Style="{StaticResource Text.Caption}" Text="Blank removes an existing value. Program uses the internal 0–127 value." TextWrapping="Wrap"/>
                   <ItemsControl Margin="0,0,0,12" ItemsSource="{Binding InstrumentInitialStateFields}">
-                    <ItemsControl.ItemTemplate><DataTemplate><Grid Margin="0,0,0,6"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Style="{StaticResource PropertyLabel}" Text="{Binding Label}" TextTrimming="CharacterEllipsis"/><TextBox Grid.Column="1" Tag="{Binding}" Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnInstrumentInitialStateFieldLostFocus"/></Grid></DataTemplate></ItemsControl.ItemTemplate>
+                    <ItemsControl.ItemTemplate><DataTemplate><Grid Margin="0,0,0,6"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Style="{StaticResource PropertyLabel}" Text="{Binding Label}" TextTrimming="CharacterEllipsis"/><TextBox Grid.Column="1" Style="{StaticResource InstrumentProjectTextBox}" Tag="{Binding}" Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnInstrumentInitialStateFieldLostFocus"/></Grid></DataTemplate></ItemsControl.ItemTemplate>
                   </ItemsControl>
                   <TextBlock Style="{StaticResource Text.Section}" Text="Routing and Isolation"/>
                   <UniformGrid Margin="0,8,0,0" Columns="2">
-                    <StackPanel Margin="0,0,8,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="OVERLAP POLICY"/><ComboBox ItemsSource="{Binding OverlapPolicyValues}" SelectedItem="{Binding OverlapPolicy, Mode=OneWay}" SelectionChanged="OnInstrumentOverlapSelectionChanged" Tag="Policy"/></StackPanel>
-                    <StackPanel Margin="8,0,0,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="OVERLAP SCOPE"/><ComboBox ItemsSource="{Binding OverlapScopeValues}" SelectedItem="{Binding OverlapScope, Mode=OneWay}" SelectionChanged="OnInstrumentOverlapSelectionChanged" Tag="Scope"/></StackPanel>
+                    <StackPanel Margin="0,0,8,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="OVERLAP POLICY"/><ComboBox Style="{StaticResource InstrumentProjectComboBox}" ItemsSource="{Binding OverlapPolicyValues}" SelectedItem="{Binding OverlapPolicy, Mode=OneWay}" SelectionChanged="OnInstrumentOverlapSelectionChanged" Tag="Policy"/></StackPanel>
+                    <StackPanel Margin="8,0,0,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="OVERLAP SCOPE"/><ComboBox Style="{StaticResource InstrumentProjectComboBox}" ItemsSource="{Binding OverlapScopeValues}" SelectedItem="{Binding OverlapScope, Mode=OneWay}" SelectionChanged="OnInstrumentOverlapSelectionChanged" Tag="Scope"/></StackPanel>
                   </UniformGrid>
-                  <CheckBox Margin="0,1,0,12" Content="Per-Note Instance Isolation" IsChecked="{Binding RequiresChannelIsolation, Mode=OneWay}" Click="OnInstrumentIsolationClick"/>
+                  <CheckBox Margin="0,1,0,12" Style="{StaticResource InstrumentProjectCheckBox}" Content="Per-Note Instance Isolation" IsChecked="{Binding RequiresChannelIsolation, Mode=OneWay}" Click="OnInstrumentIsolationClick"/>
                   <TextBlock Style="{StaticResource Text.Section}" Text="Lifecycle"/>
                   <TextBlock Margin="0,3,0,8" Style="{StaticResource Text.Caption}" Text="The scenario preview is explanatory session state and does not create Project events."/>
                   <UniformGrid Columns="2">
-                    <StackPanel Margin="0,0,8,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="SHORT NOTE STRATEGY"/><ComboBox ItemsSource="{Binding ShortLifecycleValues}" SelectedItem="{Binding ShortLifecycle, Mode=OneWay}" SelectionChanged="OnInstrumentLifecycleSelectionChanged" Tag="Short"/></StackPanel>
-                    <StackPanel Margin="8,0,0,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="LONG NOTE STRATEGY"/><ComboBox ItemsSource="{Binding LongLifecycleValues}" SelectedItem="{Binding LongLifecycle, Mode=OneWay}" SelectionChanged="OnInstrumentLifecycleSelectionChanged" Tag="Long"/></StackPanel>
+                    <StackPanel Margin="0,0,8,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="SHORT NOTE STRATEGY"/><ComboBox Style="{StaticResource InstrumentProjectComboBox}" ItemsSource="{Binding ShortLifecycleValues}" SelectedItem="{Binding ShortLifecycle, Mode=OneWay}" SelectionChanged="OnInstrumentLifecycleSelectionChanged" Tag="Short"/></StackPanel>
+                    <StackPanel Margin="8,0,0,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="LONG NOTE STRATEGY"/><ComboBox Style="{StaticResource InstrumentProjectComboBox}" ItemsSource="{Binding LongLifecycleValues}" SelectedItem="{Binding LongLifecycle, Mode=OneWay}" SelectionChanged="OnInstrumentLifecycleSelectionChanged" Tag="Long"/></StackPanel>
                   </UniformGrid>
                   <Border Style="{StaticResource Card}"><StackPanel>
                     <TextBlock Style="{StaticResource Text.Overline}" Text="SCENARIO PREVIEW"/>
@@ -683,7 +740,7 @@
     </DataTemplate>
 
     <DataTemplate DataType="{x:Type local:DiagnosticsWorkspaceViewModel}">
-      <Grid Margin="8"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="26"/><RowDefinition Height="116"/></Grid.RowDefinitions>
+      <Grid Margin="8" Tag="DiagnosticsWorkspaceFocusTarget" Focusable="True" FocusVisualStyle="{x:Null}"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="26"/><RowDefinition Height="116"/></Grid.RowDefinitions>
       <Grid Margin="0,0,0,6"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="135"/><ColumnDefinition Width="145"/><ColumnDefinition Width="155"/></Grid.ColumnDefinitions>
         <TextBox Margin="0,0,6,0" ToolTip="Search severity, category, code, message, or source" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
         <ComboBox Grid.Column="1" Margin="0,0,6,0" ItemsSource="{Binding SeverityFilters}" SelectedItem="{Binding SeverityFilter}" ToolTip="Severity filter"/>
@@ -772,8 +829,23 @@
           </StackPanel>
           <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal">
             <Button Width="34" Height="32" Style="{StaticResource Button.Icon}" ToolTip="Reset Playback Engine" IsEnabled="{Binding HasProject}" Click="OnResetPlaybackClick"><ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Data="{StaticResource Fluent.Flash20Filled}"/></Button>
-            <Button Width="34" Height="32" Style="{StaticResource Button.Icon}" ToolTip="Stop" IsEnabled="{Binding IsPlaybackActive}" Click="OnStopClick"><ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Data="{StaticResource Fluent.Stop20Filled}"/></Button>
-            <Button Width="34" Height="32" Margin="4,0" Padding="0" Style="{StaticResource Button.Primary}" AutomationProperties.Name="Play" ToolTip="{Binding PlaybackUnavailableReason, TargetNullValue=Play}" IsEnabled="{Binding CanPlayback}" Click="OnPlayClick"><ui:FluentIcon Width="14" Height="14" Margin="1,0,0,0" Foreground="White" Data="{StaticResource Fluent.Play20Filled}"/></Button>
+            <Button Width="34" Height="32" Margin="4,0" Style="{StaticResource Button.PrimaryTransport}"
+                    AutomationProperties.Name="{Binding PrimaryTransportAction}"
+                    ToolTip="{Binding PrimaryTransportToolTip}"
+                    IsEnabled="{Binding CanTogglePlayback}" Click="OnPrimaryTransportClick">
+              <Grid>
+                <ui:FluentIcon Width="14" Height="14" Margin="1,0,0,0"
+                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                               Data="{StaticResource Fluent.Play20Filled}">
+                  <ui:FluentIcon.Style><Style TargetType="ui:FluentIcon" BasedOn="{StaticResource Icon.CommandBar}"><Style.Triggers><DataTrigger Binding="{Binding IsPlaybackActive}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></ui:FluentIcon.Style>
+                </ui:FluentIcon>
+                <ui:FluentIcon Width="14" Height="14"
+                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                               Data="{StaticResource Fluent.Stop20Filled}">
+                  <ui:FluentIcon.Style><Style TargetType="ui:FluentIcon" BasedOn="{StaticResource Icon.CommandBar}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsPlaybackActive}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></ui:FluentIcon.Style>
+                </ui:FluentIcon>
+              </Grid>
+            </Button>
             <ToggleButton Width="34" Height="32" ToolTip="Loop Time Range" IsEnabled="{Binding HasProject}" IsChecked="{Binding IsLoopEnabled, Mode=OneWay}" Click="OnLoopClick"><ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Data="{StaticResource Fluent.RepeatAll20Regular}"/></ToggleButton>
             <Border Height="32" Margin="9,0,0,0" Padding="9,0" Background="{StaticResource Brush.Surface.0}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3"><StackPanel VerticalAlignment="Center" Orientation="Horizontal"><TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.Text.Primary}" Style="{StaticResource Text.Mono}" Text="{Binding PositionText}"/><Border Width="1" Height="14" Margin="8,0" Background="{StaticResource Brush.Border.Strong}"/><TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.Text.Primary}" Style="{StaticResource Text.Mono}" Text="{Binding TempoText}"/></StackPanel></Border>
           </StackPanel>
@@ -822,7 +894,7 @@
         </Grid>
         <GridSplitter x:Name="ProjectPanelSplitter" Grid.Column="1" HorizontalAlignment="Stretch"/>
         <Grid Grid.Column="2">
-          <TabControl x:Name="WorkspaceTabs" Style="{StaticResource SingleLineWorkspaceTabs}" ItemContainerStyle="{StaticResource WorkspaceTabItemStyle}" AutomationProperties.Name="Workspaces" ItemsSource="{Binding Workspaces}" SelectedItem="{Binding ActiveWorkspace, Mode=TwoWay}"
+          <TabControl x:Name="WorkspaceTabs" Style="{StaticResource SingleLineWorkspaceTabs}" ItemContainerStyle="{StaticResource WorkspaceTabItemStyle}" FocusVisualStyle="{x:Null}" AutomationProperties.Name="Workspaces" ItemsSource="{Binding Workspaces}" SelectedItem="{Binding ActiveWorkspace, Mode=TwoWay}"
                       SelectionChanged="OnWorkspaceTabsSelectionChanged"
                       AllowDrop="True" PreviewMouseLeftButtonDown="OnWorkspaceTabsLeftButtonDown" PreviewMouseMove="OnWorkspaceTabsMouseMove" DragOver="OnWorkspaceTabsDragOver" Drop="OnWorkspaceTabsDrop">
             <TabControl.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal"><StackPanel.ContextMenu><ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"><MenuItem Header="Close" IsEnabled="{Binding CanClose}" Click="OnCloseWorkspaceClick"/><MenuItem Header="Close Other Workspaces" Click="OnCloseOtherWorkspacesClick"/></ContextMenu></StackPanel.ContextMenu><TextBlock VerticalAlignment="Center" Text="{Binding Header}"/><Button Width="20" Height="20" Margin="7,0,0,0" Padding="0" Style="{StaticResource Button.Ghost}" ToolTip="Close Workspace" Visibility="{Binding CanClose, Converter={StaticResource BooleanToVisibility}}" Click="OnCloseWorkspaceClick"><ui:FluentIcon Width="10" Height="10" Data="{StaticResource Fluent.Dismiss20Regular}"/></Button></StackPanel></DataTemplate></TabControl.ItemTemplate>
@@ -910,7 +982,43 @@
 
       <Border Grid.Row="7" Padding="9,0" Background="{StaticResource Brush.Black}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
         <Grid>
-          <StackPanel VerticalAlignment="Center" Orientation="Horizontal"><Ellipse Width="6" Height="6" Margin="0,0,6,0" Fill="{StaticResource Brush.Success}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding ProjectState}"/><Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding SoundFontState}"/><Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding CompileState}"/><Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding IssueSummary}"/><Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding ActivityText}"/></StackPanel>
+          <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+            <Ellipse Width="6" Height="6" Margin="0,0,6,0" ToolTip="{Binding IssueSummary}">
+              <Ellipse.Style>
+                <Style TargetType="Ellipse">
+                  <Setter Property="Fill" Value="{StaticResource Brush.Success}"/>
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding HasWarnings}" Value="True"><Setter Property="Fill" Value="{StaticResource Brush.Warning}"/></DataTrigger>
+                    <DataTrigger Binding="{Binding HasErrors}" Value="True"><Setter Property="Fill" Value="{StaticResource Brush.Red}"/></DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </Ellipse.Style>
+            </Ellipse>
+            <TextBlock Background="Transparent"
+                       Cursor="Hand"
+                       Text="{Binding IssueSummary}"
+                       ToolTip="Open Diagnostics"
+                       AutomationProperties.Name="Open Diagnostics"
+                       MouseLeftButtonUp="OnDiagnosticSummaryMouseLeftButtonUp">
+              <TextBlock.Style>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}">
+                  <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}"/>
+                    </Trigger>
+                  </Style.Triggers>
+                </Style>
+              </TextBlock.Style>
+            </TextBlock>
+            <Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/>
+            <TextBlock Style="{StaticResource Text.Caption}" Text="{Binding CompileState}"/>
+            <Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/>
+            <TextBlock Style="{StaticResource Text.Caption}" Text="{Binding SoundFontState}"/>
+            <Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/>
+            <TextBlock Style="{StaticResource Text.Caption}" Text="{Binding ProjectState}"/>
+            <Border Width="1" Height="11" Margin="9,0" Background="{StaticResource Brush.Border}"/>
+            <TextBlock Style="{StaticResource Text.Caption}" Text="{Binding PlaybackState}"/>
+          </StackPanel>
           <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
             <TextBlock MaxWidth="520" VerticalAlignment="Center" Text="{Binding StatusMessage}" TextTrimming="CharacterEllipsis"><TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}"><Setter Property="Foreground" Value="{StaticResource Brush.Text.Tertiary}"/><Style.Triggers><DataTrigger Binding="{Binding StatusMessageIsError}" Value="True"><Setter Property="Foreground" Value="{StaticResource Brush.Red.Hover}"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
             <Button Height="20" Margin="7,0,0,0" Padding="6,0" Content="Details" Click="OnStatusMessageDetailsClick"><Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><MultiDataTrigger><MultiDataTrigger.Conditions><Condition Binding="{Binding HasStatusMessage}" Value="True"/><Condition Binding="{Binding StatusMessageIsError}" Value="True"/></MultiDataTrigger.Conditions><Setter Property="Visibility" Value="Visible"/></MultiDataTrigger></Style.Triggers></Style></Button.Style></Button>

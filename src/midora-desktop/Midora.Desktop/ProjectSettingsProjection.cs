@@ -22,8 +22,7 @@ internal static class ProjectSettingsProjection
                 field.Key == "settings.project.version" ? field.Value : metadata.ProjectVersion,
                 field.Key == "settings.project.author" ? field.Value : metadata.AuthorOrTeam,
                 field.Key == "settings.project.originalWork" ? field.Value : metadata.OriginalWork,
-                field.Key == "settings.project.copyright" ? field.Value : metadata.Copyright,
-                field.Key == "settings.project.notes" ? field.Value : metadata.Notes);
+                field.Key == "settings.project.copyright" ? field.Value : metadata.Copyright);
         }
 
         if (field.Key.StartsWith("settings.playback.", StringComparison.Ordinal))

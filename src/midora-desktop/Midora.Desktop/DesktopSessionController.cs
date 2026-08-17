@@ -147,6 +147,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         && _context.Compilation.CompilationState is not ProjectCompilationState.Failed
         && !_isPlaybackStartPending
         && !IsPlaybackActive;
+    public bool CanTogglePlayback => IsPlaybackActive || CanPlayback;
+    public string PrimaryTransportAction => IsPlaybackActive ? "Stop" : "Play";
+    public string PrimaryTransportToolTip => IsPlaybackActive
+        ? "Stop"
+        : PlaybackUnavailableReason ?? "Play";
     public bool CanPreview => _context?.Tasks is not null
         && _context.Compilation.EffectiveSoundFontPath is not null
         && !IsPlaybackActive
@@ -159,9 +164,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 : null);
     public int ErrorCount => _compilerErrorCount;
     public int WarningCount => _compilerWarningCount;
-    public string IssueSummary => _context is null
-        ? "No diagnostics"
-        : $"{ErrorCount} Errors, {WarningCount} Warnings";
+    public bool HasErrors => ErrorCount > 0;
+    public bool HasWarnings => WarningCount > 0;
+    public string IssueSummary => $"{ErrorCount} Errors, {WarningCount} Warnings";
     public string? Notice
     {
         get => _notice;
@@ -754,6 +759,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         Raise(nameof(IsPlaybackActive));
         Raise(nameof(IsLoopEnabled));
         Raise(nameof(CanPlayback));
+        Raise(nameof(CanTogglePlayback));
+        Raise(nameof(PrimaryTransportAction));
+        Raise(nameof(PrimaryTransportToolTip));
         Raise(nameof(CanPreview));
     }
 
@@ -1270,6 +1278,22 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         if (ReferenceEquals(workspace, ActiveWorkspace)) RefreshInspector();
     }
 
+    public void RefreshProjectRuntimeInformation()
+    {
+        if (_context is null)
+        {
+            return;
+        }
+        CompilationStatistics statistics = _context.Compilation.LastAttempt.Statistics;
+        long totalEditingTimeMilliseconds =
+            _context.Compilation.SnapshotTotalEditingTimeMilliseconds();
+        foreach (SettingsWorkspaceViewModel workspace in
+            Workspaces.OfType<SettingsWorkspaceViewModel>())
+        {
+            workspace.UpdateRuntimeInformation(statistics, totalEditingTimeMilliseconds);
+        }
+    }
+
     public void RefreshWorkspaceSelection(WorkspaceViewModel workspace)
     {
         ArgumentNullException.ThrowIfNull(workspace);
@@ -1536,6 +1560,12 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             timeline.SetTrackMonitoringStates(_mutedTrackIds, _soloTrackIds);
         }
+        if (workspace is SettingsWorkspaceViewModel settings && _context is not null)
+        {
+            settings.UpdateRuntimeInformation(
+                _context.Compilation.LastAttempt.Statistics,
+                _context.Compilation.SnapshotTotalEditingTimeMilliseconds());
+        }
     }
 
     private void RefreshProjectTree()
@@ -1694,10 +1724,15 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         Raise(nameof(PlaybackState));
         Raise(nameof(IsPlaybackActive));
         Raise(nameof(CanPlayback));
+        Raise(nameof(CanTogglePlayback));
+        Raise(nameof(PrimaryTransportAction));
+        Raise(nameof(PrimaryTransportToolTip));
         Raise(nameof(CanPreview));
         Raise(nameof(PlaybackUnavailableReason));
         Raise(nameof(ErrorCount));
         Raise(nameof(WarningCount));
+        Raise(nameof(HasErrors));
+        Raise(nameof(HasWarnings));
         Raise(nameof(IssueSummary));
         Raise(nameof(ActivityText));
         Raise(nameof(ActiveForegroundTask));
@@ -1764,6 +1799,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         RefreshDiagnostics();
         RefreshDiagnosticProjectTreeNode();
+        RefreshProjectRuntimeInformation();
         RefreshProperties();
     });
 

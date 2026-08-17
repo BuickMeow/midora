@@ -42,7 +42,7 @@ public static class MidiExportReadmeFactory
             AuthorOrTeam = project.Metadata.AuthorOrTeam,
             OriginalWork = project.Metadata.OriginalWork,
             Copyright = project.Metadata.Copyright,
-            Notes = project.Metadata.Notes,
+            Notes = string.Empty,
             SoundFontDescription = DescribeSoundFont(project.SoundFont.Reference),
             Mode = compilation.Mode,
             RangeSource = rangeSource,

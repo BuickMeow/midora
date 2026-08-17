@@ -24,14 +24,11 @@ internal sealed class MetadataJsonV1
     public required string Copyright { get; init; }
 
     [JsonPropertyOrder(6)]
-    public required string Notes { get; init; }
-
-    [JsonPropertyOrder(7)]
     public required string CreatedAtUtc { get; init; }
 
-    [JsonPropertyOrder(8)]
+    [JsonPropertyOrder(7)]
     public required string ModifiedAtUtc { get; init; }
 
-    [JsonPropertyOrder(9)]
+    [JsonPropertyOrder(8)]
     public required long TotalEditingTimeMilliseconds { get; init; }
 }

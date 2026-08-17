@@ -39,7 +39,6 @@ internal static class MetadataCodecV1
             AuthorOrTeam = snapshot.AuthorOrTeam,
             OriginalWork = snapshot.OriginalWork,
             Copyright = snapshot.Copyright,
-            Notes = snapshot.Notes,
             CreatedAtUtc = PersistenceContractV1.FormatUtcTimestamp(snapshot.CreatedAtUtc),
             ModifiedAtUtc = PersistenceContractV1.FormatUtcTimestamp(snapshot.ModifiedAtUtc),
             TotalEditingTimeMilliseconds = snapshot.TotalEditingTimeMilliseconds
@@ -67,7 +66,6 @@ internal static class MetadataCodecV1
             Require(value.AuthorOrTeam, "authorOrTeam"),
             Require(value.OriginalWork, "originalWork"),
             Require(value.Copyright, "copyright"),
-            Require(value.Notes, "notes"),
             createdAtUtc,
             modifiedAtUtc,
             value.TotalEditingTimeMilliseconds);
@@ -82,7 +80,6 @@ internal static class MetadataCodecV1
         PersistenceValueValidationV1.ValidateMetadataText(snapshot.AuthorOrTeam, "authorOrTeam");
         PersistenceValueValidationV1.ValidateMetadataText(snapshot.OriginalWork, "originalWork");
         PersistenceValueValidationV1.ValidateMetadataText(snapshot.Copyright, "copyright");
-        PersistenceValueValidationV1.ValidateDescription(snapshot.Notes, "notes");
         PersistenceValueValidationV1.ValidateEditingDuration(
             snapshot.TotalEditingTimeMilliseconds,
             "totalEditingTimeMilliseconds");

@@ -23,8 +23,7 @@ public sealed class ProjectCreationCoordinatorTests
             ProjectVersion = "draft",
             AuthorOrTeam = "Team",
             OriginalWork = "Original",
-            Copyright = "Copyright",
-            Notes = "Notes"
+            Copyright = "Copyright"
         });
 
         MidoraProject project = result.Project;
@@ -43,7 +42,6 @@ public sealed class ProjectCreationCoordinatorTests
         Assert.Equal("Team", project.Metadata.AuthorOrTeam);
         Assert.Equal("Original", project.Metadata.OriginalWork);
         Assert.Equal("Copyright", project.Metadata.Copyright);
-        Assert.Equal("Notes", project.Metadata.Notes);
         Assert.Equal(0, project.Metadata.TotalEditingTimeMilliseconds);
         Assert.Null(project.SoundFont.Reference);
         Assert.Empty(project.EventInstruments);

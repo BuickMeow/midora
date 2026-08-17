@@ -9,9 +9,9 @@ namespace Midora.Audio.Bass.Tests;
 public sealed class SharedAudioWorkerControlTests
 {
     [Fact]
-    public void CurrentRealtimeControlAbiIsVersionFive()
+    public void CurrentRealtimeControlAbiIsVersionSix()
     {
-        Assert.Equal(5, SharedAudioWorkerControl.ProtocolVersion);
+        Assert.Equal(6, SharedAudioWorkerControl.ProtocolVersion);
     }
 
     [Fact]
@@ -192,11 +192,25 @@ public sealed class SharedAudioWorkerControlTests
         Assert.Equal(9, status.HeldPreviewPlanGeneration);
     }
 
+    [Fact]
+    public void PersistentPlaybackAcceptancePublishesGenerationAndPreparingAtomically()
+    {
+        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+
+        producer.PublishPersistentPlaybackAcceptance(37);
+
+        AudioWorkerStatus status = consumer.ReadStatus();
+        Assert.Equal(AudioWorkerState.Preparing, status.State);
+        Assert.Equal(37, status.PersistentPlaybackAcceptedGeneration);
+    }
+
     [Theory]
     [InlineData(0, 0)]
     [InlineData(4, SharedAudioWorkerControl.ProtocolVersion + 1)]
     [InlineData(8, SharedAudioWorkerControl.CommandCapacity - 1)]
-    [InlineData(96, 1)]
+    [InlineData(104, 1)]
     public void OpenRejectsCorruptFixedHeaderAndReservedFields(int offset, int value)
     {
         string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";

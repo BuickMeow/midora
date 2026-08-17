@@ -66,7 +66,6 @@ public sealed record NewProjectCreationRequest
     public string AuthorOrTeam { get; init; } = string.Empty;
     public string OriginalWork { get; init; } = string.Empty;
     public string Copyright { get; init; } = string.Empty;
-    public string Notes { get; init; } = string.Empty;
     public NewProjectPersistenceMode PersistenceMode { get; init; } =
         NewProjectPersistenceMode.CreateUnsaved;
     public string? TargetPath { get; init; }
@@ -303,10 +302,6 @@ public sealed class ProjectCreationCoordinator
             ProjectTextRules.ValidateMetadataText(
                 request.Copyright,
                 nameof(request.Copyright)),
-            ProjectTextRules.ValidateDescription(
-                request.Notes,
-                nameof(request.Notes))
-                ?? throw new ArgumentNullException(nameof(request.Notes)),
             request.PersistenceMode,
             targetPath,
             request.OverwriteAuthorized,
@@ -320,7 +315,6 @@ public sealed class ProjectCreationCoordinator
         metadata.AuthorOrTeam = request.AuthorOrTeam;
         metadata.OriginalWork = request.OriginalWork;
         metadata.Copyright = request.Copyright;
-        metadata.Notes = request.Notes;
     }
 
     private static bool PathsEqual(string left, string right) =>
@@ -336,7 +330,6 @@ public sealed class ProjectCreationCoordinator
         string AuthorOrTeam,
         string OriginalWork,
         string Copyright,
-        string Notes,
         NewProjectPersistenceMode PersistenceMode,
         string? TargetPath,
         bool OverwriteAuthorized,

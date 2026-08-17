@@ -26,6 +26,7 @@ namespace Midora.Desktop;
 
 public partial class MainWindow : Window
 {
+    private const double MinimumUiReorderDragDistance = 10;
     private const string ProjectTreeDragFormat = "Midora.ProjectTreeNode";
     private const string WorkspaceTabDragFormat = "Midora.WorkspaceTab";
     private const string EventInstrumentDragFormat = "Midora.EventInstrumentId";
@@ -55,6 +56,7 @@ public partial class MainWindow : Window
     private TimelineSurface? _pendingTimelineAltReleaseFocus;
     private bool _synchronizingInstrumentStructureSelection;
     private CancellationTokenSource? _instrumentLoopCommitDelay;
+    private long _nextProjectRuntimeInformationRefresh;
 
     public MainWindow()
     {
@@ -368,6 +370,18 @@ public partial class MainWindow : Window
         RunSynchronous("Stop", _session.StopPlayback);
     }
 
+    private void OnPrimaryTransportClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.IsPlaybackActive)
+        {
+            OnStopClick(sender, e);
+        }
+        else
+        {
+            OnPlayClick(sender, e);
+        }
+    }
+
     private void OnLoopClick(object sender, RoutedEventArgs e)
     {
         if (sender is not ToggleButton toggle) return;
@@ -396,6 +410,12 @@ public partial class MainWindow : Window
 
     private void OnPlaybackTimerTick(object? sender, EventArgs e)
     {
+        long now = Environment.TickCount64;
+        if (now >= _nextProjectRuntimeInformationRefresh)
+        {
+            _nextProjectRuntimeInformationRefresh = now + 1_000;
+            _session.RefreshProjectRuntimeInformation();
+        }
         if (!_session.IsPlaybackActive) return;
         try
         {
@@ -561,8 +581,7 @@ public partial class MainWindow : Window
             return;
         }
         Point current = e.GetPosition(ProjectTree);
-        if (Math.Abs(current.X - origin.X) < SystemParameters.MinimumHorizontalDragDistance
-            && Math.Abs(current.Y - origin.Y) < SystemParameters.MinimumVerticalDragDistance)
+        if (!HasReachedUiReorderDragThreshold(origin, current))
         {
             return;
         }
@@ -702,6 +721,19 @@ public partial class MainWindow : Window
         return current as T;
     }
 
+    private static bool HasReachedUiReorderDragThreshold(Point origin, Point current)
+    {
+        double horizontal = current.X - origin.X;
+        double vertical = current.Y - origin.Y;
+        double systemDistance = Math.Sqrt(
+            SystemParameters.MinimumHorizontalDragDistance
+                * SystemParameters.MinimumHorizontalDragDistance
+            + SystemParameters.MinimumVerticalDragDistance
+                * SystemParameters.MinimumVerticalDragDistance);
+        double threshold = Math.Max(MinimumUiReorderDragDistance, systemDistance);
+        return horizontal * horizontal + vertical * vertical >= threshold * threshold;
+    }
+
     private void ExecuteAndSelectCreated(
         IProjectEditCommand command,
         WorkspaceViewModel workspace)
@@ -812,8 +844,7 @@ public partial class MainWindow : Window
             return;
         }
         Point current = e.GetPosition(WorkspaceTabs);
-        if (Math.Abs(current.X - origin.X) < SystemParameters.MinimumHorizontalDragDistance
-            && Math.Abs(current.Y - origin.Y) < SystemParameters.MinimumVerticalDragDistance)
+        if (!HasReachedUiReorderDragThreshold(origin, current))
         {
             return;
         }
@@ -869,7 +900,18 @@ public partial class MainWindow : Window
             {
                 selected.BringIntoView();
             }
-            WorkspaceTabs.Focus();
+            if (_session.ActiveWorkspace is DiagnosticsWorkspaceViewModel)
+            {
+                _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+                {
+                    if (_session.ActiveWorkspace is DiagnosticsWorkspaceViewModel
+                        && FindWorkspaceElement<FrameworkElement>("DiagnosticsWorkspaceFocusTarget")
+                            is { IsVisible: true, IsEnabled: true } focusTarget)
+                    {
+                        focusTarget.Focus();
+                    }
+                });
+            }
         }, DispatcherPriority.Loaded);
     }
 
@@ -1082,6 +1124,26 @@ public partial class MainWindow : Window
         {
             return;
         }
+        if (node.Kind is ProjectTreeNodeKind.LogicalTrack or ProjectTreeNodeKind.EventInstrument)
+        {
+            string kind = node.Kind == ProjectTreeNodeKind.LogicalTrack
+                ? "Logical Track"
+                : "Event Instrument";
+            TextInputDialog dialog = new(
+                $"Rename {kind}",
+                $"Enter the {kind} name.",
+                node.Title)
+            {
+                Owner = this
+            };
+            if (dialog.ShowDialog() == true)
+            {
+                RunSynchronous($"Rename {kind}", () =>
+                    _session.RenameProjectTreeNode(node, dialog.Value));
+            }
+            return;
+        }
+
         node.EditText = node.Title;
         node.IsRenaming = true;
     }
@@ -1633,9 +1695,14 @@ public partial class MainWindow : Window
                 ObjectId: MidoraId instrumentId
             } workspace
             || _session.Project?.EventInstruments.FirstOrDefault(item => item.Id == instrumentId)
-                is not EventInstrument instrument
-            || instrument.RequiresChannelIsolation == enabled)
+                is not EventInstrument instrument)
         {
+            return;
+        }
+        if (instrument.RequiresChannelIsolation == enabled) return;
+        if (!_session.CanEditProject)
+        {
+            checkBox.GetBindingExpression(ToggleButton.IsCheckedProperty)?.UpdateTarget();
             return;
         }
         if (!RunSynchronous("Change Event Instrument Isolation", () => _session.Execute(
@@ -1652,6 +1719,11 @@ public partial class MainWindow : Window
             || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace
             || workspace.ObjectId is not MidoraId instrumentId)
         {
+            return;
+        }
+        if (!_session.CanEditProject)
+        {
+            _session.RefreshWorkspace(workspace);
             return;
         }
         if (!RunSynchronous("Update Event Instrument configuration", () =>
@@ -1683,7 +1755,8 @@ public partial class MainWindow : Window
 
     private void OnSelectInstrumentColorClick(object sender, RoutedEventArgs e)
     {
-        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel { ObjectId: MidoraId instrumentId }
+        if (!_session.CanEditProject
+            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel { ObjectId: MidoraId instrumentId }
             || _session.Project?.EventInstruments.FirstOrDefault(value => value.Id == instrumentId)
                 is not EventInstrument instrument)
         {
@@ -1711,6 +1784,11 @@ public partial class MainWindow : Window
                 ObjectId: MidoraId instrumentId
             } workspace)
         {
+            return;
+        }
+        if (!_session.CanEditProject)
+        {
+            _session.RefreshWorkspace(workspace);
             return;
         }
         RunSynchronous("Update Event Instrument Initial State", () =>
@@ -1775,6 +1853,11 @@ public partial class MainWindow : Window
             ? selectedLong
             : instrument.LongLifecycle;
         if (shortLifecycle == instrument.ShortLifecycle && longLifecycle == instrument.LongLifecycle) return;
+        if (!_session.CanEditProject)
+        {
+            comboBox.GetBindingExpression(Selector.SelectedItemProperty)?.UpdateTarget();
+            return;
+        }
         if (!RunSynchronous("Change Event Instrument Lifecycle", () => _session.Execute(
                 ProjectDomainEditCommands.UpdateEventInstrumentLifecycle(
                     instrumentId,
@@ -1805,6 +1888,11 @@ public partial class MainWindow : Window
             ? selectedScope
             : instrument.OverlapScope;
         if (policy == instrument.OverlapPolicy && scope == instrument.OverlapScope) return;
+        if (!_session.CanEditProject)
+        {
+            comboBox.GetBindingExpression(Selector.SelectedItemProperty)?.UpdateTarget();
+            return;
+        }
         if (!RunSynchronous("Change Event Instrument Overlap", () => _session.Execute(
                 ProjectDomainEditCommands.UpdateEventInstrumentOverlap(instrumentId, policy, scope))))
         {
@@ -1905,6 +1993,11 @@ public partial class MainWindow : Window
         {
             return;
         }
+        if (!_session.CanEditProject)
+        {
+            _session.RefreshWorkspace(workspace);
+            return;
+        }
         if (!RunSynchronous("Change Event Instrument Loop", () =>
         {
             long? start = ParseOptionalTick(workspace.LoopStartText, "Loop Start");
@@ -1931,6 +2024,11 @@ public partial class MainWindow : Window
         long? end)
     {
         if (instrument.LoopStartTick == start && instrument.LoopEndTick == end) return;
+        if (!_session.CanEditProject)
+        {
+            _session.RefreshWorkspace(workspace);
+            return;
+        }
         if (!RunSynchronous("Change Event Instrument Loop", () => _session.Execute(
                 ProjectDomainEditCommands.UpdateEventInstrumentLoop(instrumentId, start, end))))
         {
@@ -2434,6 +2532,13 @@ public partial class MainWindow : Window
     }
 
     private void OnOpenDiagnosticsClick(object sender, RoutedEventArgs e) => OpenTreeWorkspace(ProjectTreeNodeKind.Diagnostics);
+
+    private void OnDiagnosticSummaryMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        OpenTreeWorkspace(ProjectTreeNodeKind.Diagnostics);
+        e.Handled = true;
+    }
+
     private void OnOpenSettingsClick(object sender, RoutedEventArgs e)
     {
         RunAfterMenuClosed(sender, () => OpenTreeWorkspace(ProjectTreeNodeKind.ProjectSettings));
@@ -2708,6 +2813,11 @@ public partial class MainWindow : Window
                 } workspace
             } checkBox)
         {
+            return;
+        }
+        if (!_session.CanEditProject)
+        {
+            checkBox.GetBindingExpression(ToggleButton.IsCheckedProperty)?.UpdateTarget();
             return;
         }
 

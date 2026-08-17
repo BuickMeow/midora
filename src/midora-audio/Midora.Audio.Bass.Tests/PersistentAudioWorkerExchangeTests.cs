@@ -3,7 +3,7 @@ namespace Midora.Audio.Bass.Tests;
 public sealed class PersistentAudioWorkerExchangeTests
 {
     [Fact]
-    public void RequestResponseAndAcceptanceAreGenerationScopedAndRoundTripExactly()
+    public void RequestAndResponseAreGenerationScopedAndRoundTripExactly()
     {
         string directory = Path.Combine(
             Path.GetTempPath(),
@@ -21,11 +21,6 @@ public sealed class PersistentAudioWorkerExchangeTests
             Assert.Equal(
                 expectedArguments,
                 PersistentAudioWorkerExchange.ReadRequest(directory, generation));
-            Assert.False(PersistentAudioWorkerExchange.HasAcceptance(directory, generation));
-
-            PersistentAudioWorkerExchange.WriteAcceptance(directory, generation);
-            Assert.True(PersistentAudioWorkerExchange.HasAcceptance(directory, generation));
-
             PersistentAudioWorkerResponse expected = new(
                 Succeeded: true,
                 ActualSampleRate: 48_000,
@@ -43,7 +38,6 @@ public sealed class PersistentAudioWorkerExchangeTests
                 directory,
                 generation,
                 out _));
-            Assert.False(PersistentAudioWorkerExchange.HasAcceptance(directory, generation));
         }
         finally
         {

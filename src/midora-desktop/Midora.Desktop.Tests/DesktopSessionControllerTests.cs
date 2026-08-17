@@ -386,6 +386,8 @@ public sealed class DesktopSessionControllerTests
     public async Task UnsavedProjectReportsUnsavedAndOpensArrangement()
     {
         await using DesktopSessionController session = new();
+        HashSet<string?> notifications = [];
+        session.PropertyChanged += (_, args) => notifications.Add(args.PropertyName);
 
         await session.CreateProjectAsync(new NewProjectCreationRequest
         {
@@ -400,6 +402,10 @@ public sealed class DesktopSessionControllerTests
         Assert.True(session.CanSaveProject);
         Assert.Equal(5, session.ProjectTree.Count);
         Assert.Equal(WorkspaceKind.Arrangement, session.ActiveWorkspace?.Kind);
+        Assert.Contains(nameof(session.CanPlayback), notifications);
+        Assert.Contains(nameof(session.CanTogglePlayback), notifications);
+        Assert.Contains(nameof(session.PrimaryTransportAction), notifications);
+        Assert.Contains(nameof(session.PrimaryTransportToolTip), notifications);
     }
 
     [Fact]

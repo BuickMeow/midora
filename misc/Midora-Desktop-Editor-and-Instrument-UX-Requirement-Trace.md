@@ -77,3 +77,12 @@
 - The status bar's fixed left sequence is `diagnostic dot + Errors/Warnings → Compile → SoundFont → Save → Playback`; the right side remains reserved for the transient message.
 - Activating the Diagnostics Workspace focuses its non-editing root surface after the content template is loaded. WPF focus fallback must not place the caret in the first search field; an explicit user click can still focus and edit that field normally.
 - The status bar's Errors/Warnings text is an explicit Diagnostics navigation target. It highlights on hover, uses the Hand cursor, and activates the existing Diagnostics Workspace on a left click without introducing a separate navigation path.
+
+## 2026-08-17 explicit Follow Playback interaction increment
+
+- Authority: the product owner's explicit UI interaction request refines the existing Follow Playback behavior in SRS 17.2.2 and 20.1.9. The existing Application Preference remains the only stored setting; no Project source, canonical result, audio semantics, or `.midora` data changes.
+- The global command bar exposes a Follow Playback toggle immediately after Loop. It uses the filled Fluent System Icons right-arrow geometry and remains synchronized with `View > Follow Playback`.
+- Follow applies only while playback/Preview is active and the active Arrangement or Segment timeline has a projected playback cursor. Ordinary follow retains the existing 10%–90% viewport band and places an out-of-band cursor at the 20% viewport anchor.
+- A captured middle-button timeline pan or captured left-button bottom-overview drag is an explicit transient viewport interaction. While captured it suppresses automatic `StartTick` writes; release or lost capture immediately returns the viewport to the current playback cursor's 20% anchor and resumes follow.
+- While those follow conditions hold, mouse-wheel input over the bottom overview is consumed and cannot scroll the horizontal viewport. Follow disabled, playback stopped, non-timeline workspaces, and Segment workspaces that do not contain the playback cursor retain their existing navigation behavior.
+- Failure boundary: a missing projected cursor never moves the viewport. Follow calculations clamp at tick zero and use overflow-safe range arithmetic. The transient capture state is session-only and is neither persisted nor undoable.

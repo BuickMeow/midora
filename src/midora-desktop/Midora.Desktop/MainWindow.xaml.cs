@@ -55,6 +55,7 @@ public partial class MainWindow : Window
     private int? _trackHeaderContextLane;
     private TimelineSurface? _pendingTimelineAltReleaseFocus;
     private bool _synchronizingInstrumentStructureSelection;
+    private bool _followPlaybackViewportInteractionActive;
     private CancellationTokenSource? _instrumentLoopCommitDelay;
     private long _nextProjectRuntimeInformationRefresh;
 
@@ -420,24 +421,87 @@ public partial class MainWindow : Window
         try
         {
             _session.UpdatePlayback();
-            if (_preferences.DesktopUi.FollowPlayback
-                && _session.ActiveWorkspace is TimelineWorkspaceViewModel timeline)
-            {
-                if (timeline.PlaybackCursorTick is not long tick)
-                {
-                    return;
-                }
-                long followStart = checked(timeline.StartTick + timeline.TickSpan / 10);
-                long followEnd = checked(timeline.StartTick + timeline.TickSpan * 9 / 10);
-                if (tick < followStart || tick > followEnd)
-                {
-                    timeline.StartTick = Math.Max(0, checked(tick - timeline.TickSpan / 5));
-                }
-            }
+            FollowActivePlayback(force: false);
         }
         catch (Exception exception)
         {
             ShowError("Playback", exception.Message);
+        }
+    }
+
+    private void FollowActivePlayback(bool force)
+    {
+        if (_session.ActiveWorkspace is not TimelineWorkspaceViewModel timeline)
+        {
+            return;
+        }
+
+        long? startTick = TimelinePlaybackFollowPolicy.ResolveStartTick(
+            _preferences.DesktopUi.FollowPlayback,
+            _session.IsPlaybackActive,
+            _followPlaybackViewportInteractionActive,
+            timeline.StartTick,
+            timeline.TickSpan,
+            timeline.PlaybackCursorTick,
+            force);
+        if (startTick is long resolvedStartTick)
+        {
+            timeline.StartTick = resolvedStartTick;
+        }
+    }
+
+    private bool CanTemporarilySuspendPlaybackFollow() =>
+        _preferences.DesktopUi.FollowPlayback
+        && _session.IsPlaybackActive
+        && _session.ActiveWorkspace is TimelineWorkspaceViewModel { PlaybackCursorTick: not null };
+
+    private void OnFollowViewportPreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        bool beginsExplicitViewportDrag = sender switch
+        {
+            TimelineOverviewSurface => e.ChangedButton == MouseButton.Left,
+            TimelineSurface => e.ChangedButton == MouseButton.Middle,
+            _ => false
+        };
+        if (beginsExplicitViewportDrag && CanTemporarilySuspendPlaybackFollow())
+        {
+            _followPlaybackViewportInteractionActive = true;
+        }
+    }
+
+    private void OnFollowViewportPreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        bool endsExplicitViewportDrag = sender switch
+        {
+            TimelineOverviewSurface => e.ChangedButton == MouseButton.Left,
+            TimelineSurface => e.ChangedButton == MouseButton.Middle,
+            _ => false
+        };
+        if (endsExplicitViewportDrag)
+        {
+            EndFollowPlaybackViewportInteraction();
+        }
+    }
+
+    private void OnFollowViewportLostMouseCapture(object sender, MouseEventArgs e) =>
+        EndFollowPlaybackViewportInteraction();
+
+    private void EndFollowPlaybackViewportInteraction()
+    {
+        if (!_followPlaybackViewportInteractionActive)
+        {
+            return;
+        }
+
+        _followPlaybackViewportInteractionActive = false;
+        FollowActivePlayback(force: true);
+    }
+
+    private void OnFollowOverviewPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (CanTemporarilySuspendPlaybackFollow())
+        {
+            e.Handled = true;
         }
     }
 
@@ -2592,11 +2656,31 @@ public partial class MainWindow : Window
 
     private void OnToggleFollowPlaybackClick(object sender, RoutedEventArgs e)
     {
+        SetFollowPlaybackEnabled(FollowPlaybackMenuItem.IsChecked);
+    }
+
+    private void OnFollowPlaybackToggleClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is ToggleButton toggle)
+        {
+            SetFollowPlaybackEnabled(toggle.IsChecked == true);
+        }
+    }
+
+    private void SetFollowPlaybackEnabled(bool enabled)
+    {
+        _followPlaybackViewportInteractionActive = false;
         _preferences = _preferences with
         {
-            DesktopUi = _preferences.DesktopUi with { FollowPlayback = FollowPlaybackMenuItem.IsChecked }
+            DesktopUi = _preferences.DesktopUi with { FollowPlayback = enabled }
         };
+        FollowPlaybackMenuItem.IsChecked = enabled;
+        FollowPlaybackToggleButton.IsChecked = enabled;
         SaveDesktopPreferences();
+        if (enabled)
+        {
+            FollowActivePlayback(force: true);
+        }
     }
 
     private void OnResetLayoutClick(object sender, RoutedEventArgs e)
@@ -5555,6 +5639,7 @@ public partial class MainWindow : Window
         BottomPanelMenuItem.IsChecked = ui.BottomPanelVisible;
         SnapMenuItem.IsChecked = GetActiveEditorSettings().SnapEnabled;
         FollowPlaybackMenuItem.IsChecked = ui.FollowPlayback;
+        FollowPlaybackToggleButton.IsChecked = ui.FollowPlayback;
 
         ProjectPanelGrid.Visibility = ui.ProjectPanelVisible ? Visibility.Visible : Visibility.Collapsed;
         ProjectPanelSplitter.Visibility = ui.ProjectPanelVisible ? Visibility.Visible : Visibility.Collapsed;

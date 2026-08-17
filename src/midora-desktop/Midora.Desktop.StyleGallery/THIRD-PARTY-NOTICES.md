@@ -19,6 +19,7 @@ Assets used:
 - `ic_fluent_chevron_down_20_regular.svg`
 - `ic_fluent_stop_20_filled.svg`
 - `ic_fluent_play_20_filled.svg`
+- `ic_fluent_arrow_right_20_filled.svg`
 - `ic_fluent_flash_20_filled.svg`
 - `ic_fluent_arrow_repeat_all_20_regular.svg`
 - `ic_fluent_more_horizontal_20_regular.svg`

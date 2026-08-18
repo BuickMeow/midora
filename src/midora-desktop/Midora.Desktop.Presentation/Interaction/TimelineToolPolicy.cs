@@ -33,6 +33,42 @@ public static class TimelineToolPolicy
         && toolMode == TimelineToolMode.Select
         && IsDirectEditingSurface(surfaceMode);
 
+    public static bool DefersControlSelectionToggleForPotentialDrag(
+        TimelineToolMode toolMode,
+        TimelineSurfaceMode surfaceMode,
+        TimelineItemKind itemKind,
+        ModifierKeys modifiers,
+        bool isSelected) =>
+        isSelected
+        && (modifiers & ModifierKeys.Control) != 0
+        && CanBeginItemEdit(toolMode, surfaceMode, itemKind);
+
+    public static (int FirstLane, int LastLaneExclusive) ResolveSemanticMarqueeLaneRange(
+        int anchorLane,
+        TimelineViewport currentViewport,
+        double currentContentY)
+    {
+        currentViewport.Validate();
+        int movingLane = currentViewport.YToLane(currentContentY);
+        return (
+            Math.Min(anchorLane, movingLane),
+            checked(Math.Max(anchorLane, movingLane) + 1));
+    }
+
+    public static (double Minimum, double Maximum) ResolveSemanticMarqueeValueRange(
+        double anchorNormalizedValue,
+        double movingNormalizedValue)
+    {
+        if (!double.IsFinite(anchorNormalizedValue)
+            || !double.IsFinite(movingNormalizedValue))
+        {
+            throw new ArgumentOutOfRangeException(nameof(anchorNormalizedValue));
+        }
+        double anchor = Math.Clamp(anchorNormalizedValue, 0, 1);
+        double moving = Math.Clamp(movingNormalizedValue, 0, 1);
+        return (Math.Min(anchor, moving), Math.Max(anchor, moving));
+    }
+
     public static WorkspaceSelectionRangeMode ResolveMarqueeSelectionMode(
         ModifierKeys modifiers)
     {
@@ -65,6 +101,40 @@ public static class TimelineToolPolicy
         && surfaceMode == TimelineSurfaceMode.EventLanes
         && button == MouseButton.Right
         && (modifiers & ModifierKeys.Shift) != 0;
+
+    public static bool RequestsTimeLockedPointCreation(
+        TimelineToolMode toolMode,
+        TimelineSurfaceMode surfaceMode,
+        MouseButton button,
+        ModifierKeys modifiers) =>
+        toolMode == TimelineToolMode.Draw
+        && surfaceMode == TimelineSurfaceMode.EventLanes
+        && button == MouseButton.Left
+        && (modifiers & ModifierKeys.Shift) != 0;
+
+    public static bool RequestsTimeLockedNotePlacement(
+        TimelineToolMode toolMode,
+        TimelineSurfaceMode surfaceMode,
+        MouseButton button,
+        ModifierKeys modifiers) =>
+        toolMode == TimelineToolMode.Draw
+        && surfaceMode == TimelineSurfaceMode.PianoRoll
+        && button == MouseButton.Left
+        && (modifiers & ModifierKeys.Shift) != 0;
+
+    public static bool RequestsTimeLockedItemMove(
+        TimelineToolMode toolMode,
+        TimelineSurfaceMode surfaceMode,
+        TimelineItemKind itemKind,
+        TimelineItemEditKind editKind,
+        ModifierKeys modifiers) =>
+        toolMode == TimelineToolMode.Draw
+        && editKind == TimelineItemEditKind.Move
+        && (modifiers & ModifierKeys.Shift) != 0
+        && (surfaceMode == TimelineSurfaceMode.PianoRoll
+                && itemKind is TimelineItemKind.LogicalNote or TimelineItemKind.TemplateNote
+            || surfaceMode == TimelineSurfaceMode.EventLanes
+                && itemKind == TimelineItemKind.LogicalParameterPoint);
 
     public static bool ForcesItemMove(
         TimelineToolMode toolMode,

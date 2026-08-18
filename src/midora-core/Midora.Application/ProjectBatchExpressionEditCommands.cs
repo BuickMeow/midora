@@ -198,19 +198,14 @@ public static partial class ProjectDomainEditCommands
                 location.Track.Segments.IndexOf(location.Segment));
             SegmentWindowTransform window = PlanCurvePointBatchWindow(segmentEntry, results);
             ValidateSegmentTransformWindows(project, [window]);
-            ValidateNoCurvePointConflicts(
-                lane.Points,
-                selected,
-                results
-                    .Where(value => value.Replacement is not null)
-                    .Select(value => value.Replacement!)
-                    .ToArray());
-            return PrepareBatchCurvePoints(
-                TrackChange(location.Track.Id),
-                lane.Points,
-                results,
-                "Logical Parameter point",
-                window);
+            return ResolveExactLogicalParameterPointCollisions(
+                PrepareBatchCurvePoints(
+                    TrackChange(location.Track.Id),
+                    lane.Points,
+                    results,
+                    "Logical Parameter point",
+                    window),
+                lane);
         });
 
     public static IProjectEditCommand BatchEditSubVoiceEventPoints(
@@ -272,19 +267,14 @@ public static partial class ProjectDomainEditCommands
                 }
                 return new BatchTemplateEventResult(value, replacement);
             }).ToArray();
-            ValidateNoTemplateEventConflicts(
-                voice,
-                selected,
-                results
-                    .Where(value => value.Replacement is not null)
-                    .Select(value => value.Replacement!)
-                    .ToArray());
-            return PrepareBatchTemplateEventPoints(
-                eventInstrumentId,
-                instrument,
-                voice,
-                selected,
-                results);
+            return ResolveExactSubVoiceEventCollisions(
+                PrepareBatchTemplateEventPoints(
+                    eventInstrumentId,
+                    instrument,
+                    voice,
+                    selected,
+                    results),
+                voice);
         });
 
     private static void ValidateNoteBatchProgram(BatchEditExpressionProgram program)
@@ -741,17 +731,17 @@ public static partial class ProjectDomainEditCommands
 
     private static (double Minimum, double Maximum) MidiEventTargetRange(
         MidiValueTarget target) => target.Kind switch
-    {
-        MidiValueKind.ControlChange when target.Number is >= 0 and <= 119
-            && target.Number is not 91 and not 93 => (0, 127),
-        MidiValueKind.BankMsb or MidiValueKind.BankLsb or MidiValueKind.Program => (0, 127),
-        MidiValueKind.PitchBend => (-8192, 8191),
-        MidiValueKind.RegisteredParameter or MidiValueKind.NonRegisteredParameter
-            when target.Number is >= 0 and <= 16_383 => (0, 16_383),
-        MidiValueKind.PitchBendRangeSemitones => (0, 127),
-        MidiValueKind.PitchBendRangeCents => (0, 99),
-        _ => throw new ArgumentOutOfRangeException(nameof(target))
-    };
+        {
+            MidiValueKind.ControlChange when target.Number is >= 0 and <= 119
+                && target.Number is not 91 and not 93 => (0, 127),
+            MidiValueKind.BankMsb or MidiValueKind.BankLsb or MidiValueKind.Program => (0, 127),
+            MidiValueKind.PitchBend => (-8192, 8191),
+            MidiValueKind.RegisteredParameter or MidiValueKind.NonRegisteredParameter
+                when target.Number is >= 0 and <= 16_383 => (0, 16_383),
+            MidiValueKind.PitchBendRangeSemitones => (0, 127),
+            MidiValueKind.PitchBendRangeCents => (0, 99),
+            _ => throw new ArgumentOutOfRangeException(nameof(target))
+        };
 
     private static long? RoundTickOrDiscard(double value)
     {

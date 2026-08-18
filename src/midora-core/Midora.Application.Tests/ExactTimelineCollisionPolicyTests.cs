@@ -46,7 +46,7 @@ public sealed class ExactTimelineCollisionPolicyTests
     }
 
     [Fact]
-    public void LogicalParameterCreationAndMoveKeepExistingPointAtExactTick()
+    public void LogicalParameterCreationAndMoveReplaceExistingPointAtExactTick()
     {
         MidoraProject project = new(480);
         EventInstrument instrument = new(project) { Name = "Instrument" };
@@ -77,20 +77,28 @@ public sealed class ExactTimelineCollisionPolicyTests
             100,
             0.5,
             CurveInterpolation.Linear));
-        Assert.Equal([incumbent, mover], lane.Points);
+        CurvePoint created = Assert.Single(lane.Points, point => point.Id != mover.Id);
+        Assert.Equal((100L, 0.5), (created.Tick, created.Value));
+        Assert.DoesNotContain(incumbent, lane.Points);
 
         document.Execute(ProjectDomainEditCommands.MoveLogicalParameterPoints(
             segment.Id,
             lane.Id,
             [mover.Id],
             tickDelta: 60));
-        Assert.Same(incumbent, Assert.Single(lane.Points));
+        CurvePoint moved = Assert.Single(lane.Points);
+        Assert.Equal(mover.Id, moved.Id);
+        Assert.Equal((100L, 0.75), (moved.Tick, moved.Value));
 
         document.Undo();
-        Assert.Equal([incumbent, mover], lane.Points);
+        Assert.Contains(created, lane.Points);
+        Assert.Contains(mover, lane.Points);
         Assert.Equal(40, mover.Tick);
         document.Undo();
         Assert.Equal([incumbent, mover], lane.Points);
+        document.Redo();
+        Assert.Contains(created, lane.Points);
+        Assert.DoesNotContain(incumbent, lane.Points);
     }
 
     [Fact]
@@ -199,7 +207,7 @@ public sealed class ExactTimelineCollisionPolicyTests
     }
 
     [Fact]
-    public void BankComponentsUseIndependentExactTargetsAndLaterSameTargetIsDiscarded()
+    public void BankComponentsUseIndependentExactTargetsAndLaterSameTargetReplacesIncumbent()
     {
         MidoraProject project = new(480);
         EventInstrument instrument = new(project) { Name = "Instrument", TemplateLengthTicks = 480 };
@@ -221,7 +229,8 @@ public sealed class ExactTimelineCollisionPolicyTests
             tick: 100,
             bankMsb: null,
             bankLsb: 34));
-        TemplateEvent[] retained = voice.Events.ToArray();
+        TemplateEvent retainedLsb = Assert.Single(voice.Events, value => value.HasBankLsb);
+        TemplateEvent replacedMsb = Assert.Single(voice.Events, value => value.HasBankMsb);
 
         document.Execute(ProjectDomainEditCommands.CreateTemplateBank(
             instrument.Id,
@@ -230,11 +239,50 @@ public sealed class ExactTimelineCollisionPolicyTests
             bankMsb: 56,
             bankLsb: null));
 
-        Assert.Equal(retained, voice.Events);
-        Assert.Contains(voice.Events, value => value.HasBankMsb && !value.HasBankLsb);
-        Assert.Contains(voice.Events, value => !value.HasBankMsb && value.HasBankLsb);
+        TemplateEvent replacementMsb = Assert.Single(voice.Events, value => value.HasBankMsb);
+        Assert.NotSame(replacedMsb, replacementMsb);
+        Assert.Equal(56, replacementMsb.Value);
+        Assert.Contains(retainedLsb, voice.Events);
+        Assert.DoesNotContain(replacedMsb, voice.Events);
         document.Undo();
-        Assert.Equal(retained, voice.Events);
+        Assert.Contains(replacedMsb, voice.Events);
+        Assert.Contains(retainedLsb, voice.Events);
+        Assert.DoesNotContain(replacementMsb, voice.Events);
+        document.Redo();
+        Assert.Contains(replacementMsb, voice.Events);
+        Assert.DoesNotContain(replacedMsb, voice.Events);
+    }
+
+    [Fact]
+    public void MovingTemplateEventPointOntoExistingTargetKeepsMoverAndUndoRestoresBoth()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument", TemplateLengthTicks = 480 };
+        SubVoice voice = new(project) { Name = "Voice" };
+        TemplateEvent incumbent = TemplateEvent.ControlChange(project, 100, 11, 32);
+        TemplateEvent mover = TemplateEvent.ControlChange(project, 40, 11, 96);
+        voice.Events.AddRange([incumbent, mover]);
+        instrument.SubVoices.Add(voice);
+        project.EventInstruments.Add(instrument);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.AdjustSubVoiceEventPoints(
+            instrument.Id,
+            voice.Id,
+            [mover.Id],
+            MidiValueTarget.ControlChange(11),
+            tickDelta: 60,
+            valueDelta: 0,
+            duplicate: false));
+
+        Assert.Same(mover, Assert.Single(voice.Events));
+        Assert.Equal(100, mover.Tick);
+        document.Undo();
+        Assert.Equal([incumbent, mover], voice.Events);
+        Assert.Equal(40, mover.Tick);
+        document.Redo();
+        Assert.Same(mover, Assert.Single(voice.Events));
     }
 
     [Fact]

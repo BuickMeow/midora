@@ -67,7 +67,7 @@ Desktop playback backend
 ```
 
 - 进程启动时加载固定基线 BASS/BASSMIDI/BASSWASAPI 和 SoundFont；每次正式任务只创建任务级 renderer/stream/ring，不重新创建进程或 `BASS_MIDI_FontInit`。
-- 控制 ABI v5 增加 Probe、Start Playback、Pitch NoteOn、Pitch NoteOff、Shutdown 命令；大参数仍使用 generation 隔离的原子文件交换，控制 ring 不承载对象图或 PCM。
+- 控制 ABI v5 最初增加 Probe、Start Playback、Pitch NoteOn、Pitch NoteOff、Shutdown 命令；当前 ABI v7 继续让大参数使用 generation 隔离的原子文件交换，控制 ring 不承载对象图或 PCM，并增加响应发布门与已配置试听流的直接更新命令。
 - Worker 在写入播放接受标记前发布本 generation 的 `Preparing`，防止主进程误读前一 generation 的终态。
 - SF2 变更很少，因此不在同进程内热换 Font：直接结束旧进程并启动新进程，使 Font handle、preset memoization 和试听 stream 同时失效。
 
@@ -92,3 +92,12 @@ Desktop playback backend
 - Pitch Ruler 按下、Note 放置开始：All Sound Off → NoteOn；松开/取消：NoteOff → All Sound Off。
 - Note Move 以当前选择集中最早 tick（稳定 ID 作为平局顺序）的 Note 为试听锚点；只有锚点 pitch 改变时才触发。拖动中每次变化先 All Sound Off，再发送新 NoteOn。
 - 所有 Program/Bank/CC/Mapping/Lifecycle 都被忽略，使用 SoundFont 默认 preset；用途仅为辨认 MIDI key 音高。
+
+## 7. ABI v7 响应发布门与试听热更新（2026-08-18）
+
+- 输入：generation-scoped 的不可变请求/响应文件、共享命令 ring、已经完成首次设备配置的纯音高试听 stream，以及 Piano Roll 拖动产生的 pitch/velocity 更新。
+- 正式输出：正式播放/预览仍只消费 canonical plan；本变更只改变 Desktop 与持久 Worker 的运行时同步，不改变任何可听映射、Project、编译结果、MIDI 导出或 PCM 缓存键。
+- 响应文件采用“先完整写入并原子改名，再在共享状态中发布单调 `PersistentResponseGeneration`”的顺序。主进程在 generation 尚未发布时不得探测或打开 `response-*.maws`；generation 发布后文件视为不可变。缺失已发布 payload、未来 generation、非单调发布或损坏内容都是协议错误，不允许靠吞错或静默重试掩盖。
+- 首次音高试听仍通过 generation 请求同步完成设备、WASAPI 与 BASSMIDI stream 配置，以便把真实配置失败返回调用方。配置成功后的 pitch 变化和 End 使用有界共享 ring 的 `PitchAuditionUpdate` / `PitchAuditionEnd`；它们不创建请求/响应文件，也不让 UI 线程等待磁盘。Worker 按 FIFO 执行 All Sound Off → NoteOn 或 NoteOff → All Sound Off。
+- 正式 Probe/Playback 会销毁试听输出，主进程同步清除“已配置/活动”运行时标志；后续试听再次走一次同步配置。命令 ring 满、Worker 已退出或 Worker 执行直接试听命令失败仍是显式运行时故障，不丢命令后继续。
+- 协议版本由 v6 升至 v7；新增字段与命令只属于同版本本机进程间 ABI，不持久化。SRS §13.30 当前仍以 ABI v4 描述初版控制布局；v6 已由 `Midora-Mute-Solo-Rolling-Preparation-Requirement-Trace.md` 的 ADR-MON-005 引入，本文继续明确记录现行实现与 SRS 文字的版本差异，未修改 SRS 原文。

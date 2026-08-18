@@ -84,9 +84,9 @@ public static partial class ProjectDomainEditCommands
                 ValidateTemplateEventEdit(selected[index].Event, replacements[index]);
             }
 
-            // Same-target, same-tick newcomers are removed at the edit transaction
-            // boundary. Keeping this command free of a preflight rejection lets
-            // drag, copy-drag and paste share the same deterministic policy.
+            // Same-target, same-tick point conflicts are resolved at the edit
+            // transaction boundary. A newcomer from this edit replaces the former
+            // point, so drag, copy-drag and paste share one deterministic policy.
 
             long oldTemplateLength = instrument.TemplateLengthTicks;
             long replacementTemplateLength = Math.Max(

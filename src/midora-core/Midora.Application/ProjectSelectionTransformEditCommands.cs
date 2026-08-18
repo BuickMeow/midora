@@ -364,12 +364,13 @@ public static partial class ProjectDomainEditCommands
                 ticks[index],
                 value.Point.Value,
                 value.Point.Interpolation)).ToArray();
-            ValidateNoCurvePointConflicts(lane.Points, selected, replacement);
-            return PrepareCurvePointReplacementBatch(
-                location.Track.Id,
-                lane.Points,
-                selected,
-                replacement);
+            return ResolveExactLogicalParameterPointCollisions(
+                PrepareCurvePointReplacementBatch(
+                    location.Track.Id,
+                    lane.Points,
+                    selected,
+                    replacement),
+                lane);
         });
 
     private static IProjectEditCommand TransformSubVoiceEventPoints(
@@ -410,10 +411,9 @@ public static partial class ProjectDomainEditCommands
             {
                 ValidateTemplateEventEdit(selected[index].Event, replacement[index]);
             }
-            ValidateNoTemplateEventConflicts(voice, selected, replacement);
             long oldLength = instrument.TemplateLengthTicks;
             long newLength = Math.Max(oldLength, checked(replacement.Max(value => value.Tick) + 1));
-            return Prepared(
+            return ResolveExactSubVoiceEventCollisions(Prepared(
                 selected.Where((value, index) => value.Old != replacement[index]).Any()
                     || oldLength != newLength,
                 EventInstrumentChange(eventInstrumentId),
@@ -432,7 +432,7 @@ public static partial class ProjectDomainEditCommands
                         SetTemplateEvent(value.Event, value.Old);
                     }
                     instrument.TemplateLengthTicks = oldLength;
-                });
+                }), voice);
         });
 
     private static IProjectEditCommand TransformSegments(
@@ -556,24 +556,10 @@ public static partial class ProjectDomainEditCommands
             }
 
             ValidateSegmentTransformWindows(project, windows);
-            foreach (IGrouping<LogicalParameterLane, CurvePointTransform> laneEdits in points
-                .GroupBy(value => value.Lane))
-            {
-                SelectedCurvePoint[] selected = laneEdits
-                    .Select(value => new SelectedCurvePoint(
-                        value.Old,
-                        value.Lane.Points.IndexOf(value.Old)))
-                    .ToArray();
-                ValidateNoCurvePointConflicts(
-                    laneEdits.Key.Points,
-                    selected,
-                    laneEdits.Select(value => value.Replacement).ToArray());
-            }
-
             bool changed = windows.Any(value => value.Old != value.Replacement)
                 || notes.Any(value => value.Discard || value.Old != value.Replacement)
                 || points.Any(value => value.Old != value.Replacement);
-            return ResolveExactLogicalNoteCollisions(Prepared(
+            IPreparedProjectEdit prepared = ResolveExactLogicalNoteCollisions(Prepared(
                 changed,
                 TrackChange(segments.Select(value => value.Track.Id).Distinct().ToArray()),
                 _ =>
@@ -633,39 +619,10 @@ public static partial class ProjectDomainEditCommands
                             "Logical Parameter point");
                     }
                 }), segments.Select(value => value.Segment));
+            return ResolveExactLogicalParameterPointCollisions(
+                prepared,
+                points.Select(value => value.Lane).Distinct());
         });
-
-    private static void ValidateNoCurvePointConflicts(
-        IReadOnlyCollection<CurvePoint> all,
-        IReadOnlyCollection<SelectedCurvePoint> selected,
-        IReadOnlyCollection<CurvePoint> replacement)
-    {
-        HashSet<MidoraId> selectedIds = selected.Select(value => value.Point.Id).ToHashSet();
-        long[] ticks = replacement.Select(value => value.Tick).ToArray();
-        if (ticks.Distinct().Count() != ticks.Length
-            || all.Any(value => !selectedIds.Contains(value.Id) && ticks.Contains(value.Tick)))
-        {
-            throw new InvalidOperationException(
-                "The transformation would overlap event points at the same tick.");
-        }
-    }
-
-    private static void ValidateNoTemplateEventConflicts(
-        SubVoice voice,
-        IReadOnlyCollection<TemplateEventTransformEntry> selected,
-        IReadOnlyList<TemplateEventValue> replacement)
-    {
-        HashSet<MidoraId> selectedIds = selected.Select(value => value.Event.Id).ToHashSet();
-        if (replacement.Any(value => voice.Events.Any(candidate =>
-                !selectedIds.Contains(candidate.Id) && TemplateEventsConflict(candidate, value)))
-            || replacement.Select((left, index) => (left, index)).Any(value =>
-                replacement.Skip(value.index + 1).Any(right =>
-                    TemplateEventValuesConflict(value.left, right))))
-        {
-            throw new InvalidOperationException(
-                "The transformation would overlap SubVoice event points at the same tick.");
-        }
-    }
 
     private static void ValidateSegmentTransformWindows(
         MidoraProject project,

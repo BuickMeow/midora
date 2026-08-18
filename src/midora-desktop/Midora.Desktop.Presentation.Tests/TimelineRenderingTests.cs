@@ -12,6 +12,13 @@ namespace Midora.Desktop.Presentation.Tests;
 public sealed class TimelineRenderingTests
 {
     [Fact]
+    public void PianoRollVerticalZoomMinimumIsFourDips()
+    {
+        Assert.Equal(4, TimelineSurface.MinimumPianoLaneHeight);
+        Assert.Equal(128, TimelineSurface.MaximumPianoLaneHeight);
+    }
+
+    [Fact]
     public void ViewportMapsTicksAndLanesDeterministically()
     {
         TimelineViewport viewport = new(100, 500, 10, 8, 800, 160, 20);
@@ -466,6 +473,50 @@ public sealed class TimelineRenderingTests
             ModifierKeys.Shift));
     }
 
+    [Fact]
+    public void ShiftLocksTimeOnlyForPointCreationAndNoteOrPointMoves()
+    {
+        Assert.True(TimelineToolPolicy.RequestsTimeLockedPointCreation(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            MouseButton.Left,
+            ModifierKeys.Shift));
+        Assert.False(TimelineToolPolicy.RequestsTimeLockedPointCreation(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            MouseButton.Right,
+            ModifierKeys.Shift));
+        Assert.True(TimelineToolPolicy.RequestsTimeLockedNotePlacement(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.PianoRoll,
+            MouseButton.Left,
+            ModifierKeys.Shift | ModifierKeys.Control));
+        Assert.True(TimelineToolPolicy.RequestsTimeLockedItemMove(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.PianoRoll,
+            TimelineItemKind.LogicalNote,
+            TimelineItemEditKind.Move,
+            ModifierKeys.Shift));
+        Assert.True(TimelineToolPolicy.RequestsTimeLockedItemMove(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            TimelineItemKind.LogicalParameterPoint,
+            TimelineItemEditKind.Move,
+            ModifierKeys.Shift | ModifierKeys.Control));
+        Assert.False(TimelineToolPolicy.RequestsTimeLockedItemMove(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.PianoRoll,
+            TimelineItemKind.TemplateNote,
+            TimelineItemEditKind.ResizeEnd,
+            ModifierKeys.Shift));
+        Assert.False(TimelineToolPolicy.RequestsTimeLockedItemMove(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.Arrangement,
+            TimelineItemKind.Segment,
+            TimelineItemEditKind.Move,
+            ModifierKeys.Shift));
+    }
+
     [Theory]
     [InlineData(TimelineSurfaceMode.Arrangement, TimelineItemKind.Segment)]
     [InlineData(TimelineSurfaceMode.PianoRoll, TimelineItemKind.LogicalNote)]
@@ -896,7 +947,8 @@ public sealed class TimelineRenderingTests
     public void VelocityTileBatchesSelectionIntoTheRaster()
     {
         TimelineRenderItem velocity = Item(1, 10, 20, 0, kind: TimelineItemKind.Velocity)
-            with { Value = 0.5 };
+            with
+        { Value = 0.5 };
         TimelineRenderSnapshot snapshot = new(1, "velocity:1", [velocity]);
         TimelineSelectionSnapshot unselected = new(0, [], null);
         TimelineSelectionSnapshot selected = new(1, [velocity.Id], velocity.Id);
@@ -919,7 +971,8 @@ public sealed class TimelineRenderingTests
     public void VelocityTileUsesFixedStemWidthInsteadOfNoteLength()
     {
         TimelineRenderItem velocity = Item(1, 10, 220, 0, kind: TimelineItemKind.Velocity)
-            with { Value = 0.5, ZIndex = 60 };
+            with
+        { Value = 0.5, ZIndex = 60 };
         TimelineRenderSnapshot snapshot = new(1, "velocity:fixed-width", [velocity]);
         int lod = TimelineRasterLod.Quantize(1);
 
@@ -941,7 +994,8 @@ public sealed class TimelineRenderingTests
     public void VelocityMarkerIsWiderThanItsStem()
     {
         TimelineRenderItem velocity = Item(1, 10, 11, 0, kind: TimelineItemKind.Velocity)
-            with { Value = 0.5, ZIndex = 60 };
+            with
+        { Value = 0.5, ZIndex = 60 };
         TimelineRenderSnapshot snapshot = new(1, "velocity:marker", [velocity]);
         TimelineRasterBuffer raster = TimelineVelocityTileRasterizer.Rasterize(
             snapshot,
@@ -971,9 +1025,11 @@ public sealed class TimelineRenderingTests
     public void VelocityTileDrawsHigherPitchOnTopAtTheSameTick()
     {
         TimelineRenderItem low = Item(1, 10, 11, 0, kind: TimelineItemKind.Velocity)
-            with { Value = 0.5, ZIndex = 48 };
+            with
+        { Value = 0.5, ZIndex = 48 };
         TimelineRenderItem high = Item(2, 10, 11, 0, kind: TimelineItemKind.Velocity)
-            with { Value = 0.5, ZIndex = 84 };
+            with
+        { Value = 0.5, ZIndex = 84 };
         TimelineRenderSnapshot snapshot = new(1, "velocity:stacking", [high, low]);
         TimelineSelectionSnapshot selection = new(1, [low.Id], low.Id);
         Color normal = Color.FromRgb(10, 80, 160);
@@ -996,7 +1052,8 @@ public sealed class TimelineRenderingTests
     public void VelocityTileFingerprintIgnoresUnrelatedSelectionRevision()
     {
         TimelineRenderItem velocity = Item(1, 10, 11, 0, kind: TimelineItemKind.Velocity)
-            with { Value = 0.5, ZIndex = 60 };
+            with
+        { Value = 0.5, ZIndex = 60 };
         TimelineRenderSnapshot snapshot = new(1, "velocity:selection", [velocity]);
         TimelineSelectionSnapshot first = new(1, [], null);
         TimelineSelectionSnapshot later = new(99, [], null);
@@ -1011,7 +1068,8 @@ public sealed class TimelineRenderingTests
     public void EventPointTileKeepsPointSizeAcrossTimeAndValueZoom()
     {
         TimelineRenderItem point = Item(
-            1, 10, 11, 0, kind: TimelineItemKind.LogicalParameterPoint) with { Value = 0.5 };
+            1, 10, 11, 0, kind: TimelineItemKind.LogicalParameterPoint) with
+        { Value = 0.5 };
         TimelineRenderSnapshot snapshot = new(1, "event-point:fixed-size", [point]);
         Color normal = Color.FromRgb(98, 166, 246);
         Color primary = Color.FromRgb(241, 243, 245);
@@ -1048,7 +1106,8 @@ public sealed class TimelineRenderingTests
     public void EventPointTileRepeatsPointGutterAcrossHorizontalBoundary()
     {
         TimelineRenderItem point = Item(
-            1, 256, 257, 0, kind: TimelineItemKind.LogicalParameterPoint) with { Value = 0.5 };
+            1, 256, 257, 0, kind: TimelineItemKind.LogicalParameterPoint) with
+        { Value = 0.5 };
         TimelineRenderSnapshot snapshot = new(1, "event-point:gutter", [point]);
         Color normal = Color.FromRgb(98, 166, 246);
         Color primary = Color.FromRgb(241, 243, 245);
@@ -1068,7 +1127,8 @@ public sealed class TimelineRenderingTests
     public void EventPointTileBatchesSelectionAndPrimaryIntoRaster()
     {
         TimelineRenderItem point = Item(
-            1, 10, 11, 0, kind: TimelineItemKind.LogicalParameterPoint) with { Value = 0.5 };
+            1, 10, 11, 0, kind: TimelineItemKind.LogicalParameterPoint) with
+        { Value = 0.5 };
         TimelineRenderSnapshot snapshot = new(1, "event-point:selection", [point]);
         TimelineSelectionSnapshot unselected = new(0, [], null);
         TimelineSelectionSnapshot selected = new(1, [point.Id], point.Id);
@@ -1087,6 +1147,114 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void EventPointSelectionTileContainsOnlySelectedPoints()
+    {
+        TimelineRenderItem selectedPoint = Item(
+            1, 20, 21, 0, kind: TimelineItemKind.LogicalParameterPoint) with
+        { Value = 0.5 };
+        TimelineRenderItem unselectedPoint = Item(
+            2, 80, 81, 0, kind: TimelineItemKind.LogicalParameterPoint) with
+        { Value = 0.5 };
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "event-point:selection-only",
+            [selectedPoint, unselectedPoint]);
+        TimelineSelectionSnapshot selection = new(1, [selectedPoint.Id], selectedPoint.Id);
+        int gutter = TimelineEventPointTileRasterizer.GetGutter(1);
+
+        TimelineRasterBuffer raster = TimelineEventPointTileRasterizer.Rasterize(
+            snapshot,
+            selection,
+            1,
+            256,
+            0,
+            0,
+            1,
+            1,
+            Color.FromRgb(98, 166, 246),
+            Color.FromRgb(241, 243, 245),
+            Color.FromRgb(42, 48, 58),
+            selectionOnly: true);
+
+        Assert.Equal(1, raster.CandidateCount);
+        Assert.True(Alpha(raster, gutter + 20, gutter + 128) > 0);
+        Assert.Equal(0, Alpha(raster, gutter + 80, gutter + 128));
+    }
+
+    [Fact]
+    public void PianoDragPreviewTileUsesOnlyTheBlueOutline()
+    {
+        TimelineRenderItem note = Item(1, 20, 30, 2, kind: TimelineItemKind.LogicalNote);
+        TimelineRenderSnapshot snapshot = new(1, "piano:drag-outline", [note]);
+        TimelineSelectionSnapshot selection = new(1, [note.Id], note.Id);
+        Color blue = Color.FromRgb(98, 166, 246);
+
+        TimelineRasterBuffer raster = TimelinePianoTileRasterizer.Rasterize(
+            snapshot,
+            devicePixelsPerTick: 1,
+            devicePixelsPerLane: 16,
+            tileX: 0,
+            tileY: 0,
+            Colors.Transparent,
+            Colors.Transparent,
+            selection,
+            selectionOnly: true,
+            outlineColor: blue);
+
+        Assert.Equal(1, raster.CandidateCount);
+        Assert.True(Alpha(raster, 20 + TimelinePianoTileRasterizer.Gutter, 35 + TimelinePianoTileRasterizer.Gutter) > 0);
+        Assert.Equal(0, Alpha(raster, 25 + TimelinePianoTileRasterizer.Gutter, 40 + TimelinePianoTileRasterizer.Gutter));
+    }
+
+    [Fact]
+    public void SemanticMarqueeAnchorDoesNotMoveWhenTheViewportScrolls()
+    {
+        TimelineViewport scrolledViewport = new(
+            StartTick: 0,
+            EndTick: 1_000,
+            FirstLane: 40,
+            LaneCount: 20,
+            Width: 1_000,
+            Height: 400,
+            LaneHeight: 20);
+
+        (int firstLane, int lastLaneExclusive) =
+            TimelineToolPolicy.ResolveSemanticMarqueeLaneRange(
+                anchorLane: 12,
+                scrolledViewport,
+                currentContentY: 110);
+
+        Assert.Equal(12, firstLane);
+        Assert.Equal(46, lastLaneExclusive);
+        Assert.Equal(
+            (0.2, 0.8),
+            TimelineToolPolicy.ResolveSemanticMarqueeValueRange(0.8, 0.2));
+    }
+
+    [Fact]
+    public void SelectedControlDragDefersSelectionToggleUntilTheGestureIsKnown()
+    {
+        Assert.True(TimelineToolPolicy.DefersControlSelectionToggleForPotentialDrag(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            TimelineItemKind.LogicalParameterPoint,
+            ModifierKeys.Control,
+            isSelected: true));
+        Assert.False(TimelineToolPolicy.DefersControlSelectionToggleForPotentialDrag(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            TimelineItemKind.LogicalParameterPoint,
+            ModifierKeys.Control,
+            isSelected: false));
+        Assert.False(TimelineToolPolicy.DefersControlSelectionToggleForPotentialDrag(
+            TimelineToolMode.Select,
+            TimelineSurfaceMode.EventLanes,
+            TimelineItemKind.LogicalParameterPoint,
+            ModifierKeys.Control,
+            isSelected: true));
+    }
+
+    [Fact]
     public void EventPointTileCullsDenseOffscreenPopulationBeforeRasterizing()
     {
         TimelineRenderItem[] points = Enumerable.Range(0, 100_000)
@@ -1096,9 +1264,9 @@ public sealed class TimelineRenderingTests
                 index * 4L + 1,
                 0,
                 kind: TimelineItemKind.LogicalParameterPoint) with
-                {
-                    Value = (index % 128) / 127d
-                })
+            {
+                Value = (index % 128) / 127d
+            })
             .ToArray();
         TimelineRenderSnapshot snapshot = new(1, "event-point:dense", points);
 

@@ -78,6 +78,72 @@ public static partial class ProjectDomainEditCommands
                 : ResolveExactLogicalParameterPointCollisions(prepared, lane);
         });
 
+    public static IProjectEditCommand DuplicateLogicalParameterPoints(
+        MidoraId segmentId,
+        MidoraId laneId,
+        IReadOnlyCollection<MidoraId> pointIds,
+        long tickDelta,
+        double valueDelta) =>
+        Command("Duplicate logical parameter points", project =>
+        {
+            if (!double.IsFinite(valueDelta))
+            {
+                throw new ArgumentOutOfRangeException(nameof(valueDelta));
+            }
+            SegmentLocation segment = FindSegment(project, segmentId);
+            LogicalParameterLane lane = FindLogicalParameterLane(segment.Segment, laneId);
+            SelectedCurvePoint[] selected = SelectCurvePoints(lane.Points, pointIds);
+            LogicalParameterDefinition definition = FindBoundLogicalParameter(
+                project,
+                segment.Track,
+                lane.ParameterId);
+            CurvePoint[] replacements = selected.Select(value => new CurvePoint(
+                project,
+                value.Point.Id,
+                checked(value.Point.Tick + tickDelta),
+                value.Point.Value + valueDelta,
+                value.Point.Interpolation)).ToArray();
+            ValidateLogicalParameterPointBatch(
+                definition,
+                lane.Points,
+                selected,
+                replacements);
+
+            int insertionIndex = lane.Points.Count;
+            CurvePoint[]? copies = null;
+            return ResolveExactLogicalParameterPointCollisions(Prepared(
+                hasChanges: true,
+                TrackChange(segment.Track.Id),
+                owner =>
+                {
+                    copies ??= replacements.Select(value => new CurvePoint(
+                        owner,
+                        value.Tick,
+                        value.Value,
+                        value.Interpolation)).ToArray();
+                    for (int index = 0; index < copies.Length; index++)
+                    {
+                        InsertAt(
+                            lane.Points,
+                            insertionIndex + index,
+                            copies[index],
+                            "Logical Parameter point copy");
+                    }
+                },
+                _ =>
+                {
+                    if (copies is null)
+                    {
+                        throw new InvalidOperationException(
+                            "Logical Parameter point copies do not exist before the first Apply.");
+                    }
+                    foreach (CurvePoint copy in copies)
+                    {
+                        RemoveRequired(lane.Points, copy, "Logical Parameter point copy");
+                    }
+                }), lane);
+        });
+
     public static IProjectEditCommand SetLogicalParameterPointValues(
         MidoraId segmentId,
         MidoraId laneId,

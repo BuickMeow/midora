@@ -238,11 +238,13 @@
             <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
               <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding Header}" />
               <TextBlock Margin="9,0,0,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="{Binding Context}" />
-              <ToggleButton Margin="9,0,0,0" Padding="7,0" Content="Lanes" IsChecked="{Binding IsLowerEditorVisible, Mode=TwoWay}">
-                <ToggleButton.Style><Style TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsSegment}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></ToggleButton.Style>
-              </ToggleButton>
             </StackPanel>
             <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+              <StackPanel Orientation="Horizontal">
+                <StackPanel.Style><Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsSegment}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></StackPanel.Style>
+                <ToggleButton Margin="0,0,4,0" Padding="7,0" Content="Lanes" IsChecked="{Binding IsLowerEditorVisible, Mode=TwoWay}"/>
+                <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
+              </StackPanel>
               <ToggleButton Width="44" Margin="0,0,4,0" Padding="0" Content="Grid" IsChecked="{Binding EditorSettings.GridVisible, Mode=TwoWay}" ToolTip="Show subdivision grid"/>
               <ComboBox Width="92" Height="24" Margin="0,0,4,0" IsEditable="True"
                         ItemsSource="{Binding EditorSettings.SubdivisionPresets}"
@@ -377,6 +379,7 @@
                 <Grid>
                   <StackPanel VerticalAlignment="Center" Orientation="Horizontal"><TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="LANE"/><ComboBox Width="260" Height="24" ItemsSource="{Binding ParameterLaneOptions}" DisplayMemberPath="Label" SelectedIndex="{Binding ActiveParameterLaneIndex, Mode=TwoWay}" DropDownClosed="OnActiveEditorLaneDropDownClosed"/></StackPanel>
                   <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+                    <TextBlock MinWidth="112" Margin="0,0,8,0" VerticalAlignment="Center" TextAlignment="Right" Style="{StaticResource Text.Mono}" Text="{Binding PointerPositionText, ElementName=SegmentParameterTimeline}"/>
                     <ToggleButton Margin="0,0,4,0" Content="Snap" IsChecked="{Binding LaneEditorSettings.SnapEnabled, Mode=TwoWay}"/>
                     <ComboBox Width="92" Height="24" Margin="0,0,6,0" IsEditable="True" ItemsSource="{Binding LaneEditorSettings.SubdivisionPresets}" Text="{Binding LaneEditorSettings.OperationSubdivisionText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Tag="LaneOperation" LostKeyboardFocus="OnSubdivisionComboBoxLostKeyboardFocus"/>
                     <Button Height="22" Padding="7,0" Content="Add Lane" Click="OnAddParameterLaneClick"/>
@@ -510,10 +513,12 @@
                 </Border>
                 <TabControl Grid.Row="1">
                   <TabItem Header="Timeline">
-                    <Grid><Grid.RowDefinitions><RowDefinition Height="34"/><RowDefinition Height="{Binding NoteEditorRowHeight, Mode=TwoWay}"/><RowDefinition Height="4"/><RowDefinition Height="{Binding EventEditorRowHeight, Mode=TwoWay}"/><RowDefinition Height="22"/></Grid.RowDefinitions>
+                    <Grid><Grid.RowDefinitions><RowDefinition Height="34"/><RowDefinition Height="*"/><RowDefinition Height="5"/><RowDefinition Height="{Binding BottomEditorRowHeight, Mode=TwoWay}" MinHeight="{Binding BottomEditorMinimumHeight}" MaxHeight="{Binding BottomEditorMaximumHeight}"/></Grid.RowDefinitions>
                       <Border Height="34" Style="{StaticResource PanelHeader}">
                         <Grid>
                           <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+                            <ToggleButton Margin="0,0,4,0" Padding="7,0" Content="Lanes" IsChecked="{Binding IsLowerEditorVisible, Mode=TwoWay}"/>
+                            <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
                             <ToggleButton Width="44" Margin="0,0,4,0" Padding="0" Content="Grid" IsChecked="{Binding EditorSettings.GridVisible, Mode=TwoWay}"/>
                             <ComboBox Width="90" Height="24" Margin="0,0,4,0" IsEditable="True" ItemsSource="{Binding EditorSettings.SubdivisionPresets}" Text="{Binding EditorSettings.DisplaySubdivisionText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Tag="Display" LostKeyboardFocus="OnSubdivisionComboBoxLostKeyboardFocus"/>
                             <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
@@ -529,7 +534,9 @@
                           </StackPanel>
                         </Grid>
                       </Border>
-                      <GroupBox Grid.Row="1" Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="SubVoice note piano roll" AutomationProperties.AutomationId="SubVoiceNoteTimelineSurface">
+                      <Grid Grid.Row="1">
+                        <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="22"/></Grid.RowDefinitions>
+                      <GroupBox Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="SubVoice note piano roll" AutomationProperties.AutomationId="SubVoiceNoteTimelineSurface">
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <ui:TimelineSurface x:Name="SubVoiceNoteTimeline" Tag="SubVoiceNotes" Snapshot="{Binding SubVoiceNoteSnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}"
                                             ContextMenu="{StaticResource TimelineContextMenu}"
@@ -556,8 +563,16 @@
                         <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding MaximumFirstLane, ElementName=SubVoiceNoteTimeline}" Value="{Binding FirstLane, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" SmallChange="1" LargeChange="{Binding VisibleLaneCount, ElementName=SubVoiceNoteTimeline}" ViewportSize="{Binding VisibleLaneCount, ElementName=SubVoiceNoteTimeline}"/>
                         </Grid>
                       </GroupBox>
-                      <GridSplitter Grid.Row="2" HorizontalAlignment="Stretch"/>
-                      <TabControl Grid.Row="3" SelectedIndex="{Binding ActiveLowerEditorIndex, Mode=TwoWay}">
+                      <GroupBox Grid.Row="1" Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="SubVoice timeline overview and horizontal scroll">
+                        <ui:TimelineOverviewSurface Snapshot="{Binding SubVoiceSnapshot}"
+                                                    StartTick="{Binding TimelineStartTick, Mode=TwoWay}"
+                                                    TickSpan="{Binding TimelineTickSpan}"/>
+                      </GroupBox>
+                      </Grid>
+                      <GridSplitter Grid.Row="2" Height="5" HorizontalAlignment="Stretch" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"
+                                    Visibility="{Binding IsLowerEditorVisible, Converter={StaticResource BooleanToVisibility}}"/>
+                      <TabControl Grid.Row="3" SelectedIndex="{Binding ActiveLowerEditorIndex, Mode=TwoWay}"
+                                  Visibility="{Binding IsLowerEditorVisible, Converter={StaticResource BooleanToVisibility}}">
                         <TabItem Header="Velocity"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><ui:TimelineSurface x:Name="SubVoiceVelocityTimeline" Tag="SubVoiceVelocity" Snapshot="{Binding SubVoiceVelocitySnapshot}" SelectionSnapshot="{Binding SelectionSnapshot}" SurfaceMode="Velocity" ValueScrollOffset="{Binding VelocityValueScrollOffset, Mode=TwoWay}"
                           CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                           StartTick="{Binding StartTick, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" TickSpan="{Binding TickSpan, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}"
@@ -569,6 +584,7 @@
                             <Grid>
                               <StackPanel VerticalAlignment="Center" Orientation="Horizontal"><TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="LANE"/><ComboBox Width="300" Height="24" ItemsSource="{Binding RenderLanes}" DisplayMemberPath="Label" SelectedIndex="{Binding ActiveRenderLaneIndex, Mode=TwoWay}" DropDownClosed="OnActiveEditorLaneDropDownClosed"/></StackPanel>
                               <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+                                <TextBlock MinWidth="112" Margin="0,0,8,0" VerticalAlignment="Center" TextAlignment="Right" Style="{StaticResource Text.Mono}" Text="{Binding PointerPositionText, ElementName=SubVoiceEventTimeline}"/>
                                 <ToggleButton Margin="0,0,4,0" Content="Snap" IsChecked="{Binding EventLaneEditorSettings.SnapEnabled, Mode=TwoWay}"/>
                                 <ComboBox Width="90" Height="24" Margin="0,0,6,0" IsEditable="True" ItemsSource="{Binding EventLaneEditorSettings.SubdivisionPresets}" Text="{Binding EventLaneEditorSettings.OperationSubdivisionText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Tag="LaneOperation" LostKeyboardFocus="OnSubdivisionComboBoxLostKeyboardFocus"/>
                                 <Button Height="24" Content="Add Event…" Click="OnAddTemplateEventClick"/>
@@ -589,11 +605,6 @@
                           </Grid>
                         </Grid></TabItem>
                       </TabControl>
-                      <GroupBox Grid.Row="4" Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="SubVoice timeline overview and horizontal scroll">
-                        <ui:TimelineOverviewSurface Snapshot="{Binding SubVoiceSnapshot}"
-                                                    StartTick="{Binding TimelineStartTick, Mode=TwoWay}"
-                                                    TickSpan="{Binding TimelineTickSpan}"/>
-                      </GroupBox>
                     </Grid>
                   </TabItem>
                   <TabItem Header="Initial State">

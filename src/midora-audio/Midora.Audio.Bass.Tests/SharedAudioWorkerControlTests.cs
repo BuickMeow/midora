@@ -9,9 +9,9 @@ namespace Midora.Audio.Bass.Tests;
 public sealed class SharedAudioWorkerControlTests
 {
     [Fact]
-    public void CurrentRealtimeControlAbiIsVersionSix()
+    public void CurrentRealtimeControlAbiIsVersionSeven()
     {
-        Assert.Equal(6, SharedAudioWorkerControl.ProtocolVersion);
+        Assert.Equal(7, SharedAudioWorkerControl.ProtocolVersion);
     }
 
     [Fact]
@@ -89,6 +89,8 @@ public sealed class SharedAudioWorkerControlTests
         Assert.True(producer.TryEnqueuePitchAuditionNoteOn(103));
         Assert.True(producer.TryEnqueuePitchAuditionNoteOff(104));
         Assert.True(producer.TryEnqueuePersistentShutdown(105));
+        Assert.True(producer.TryEnqueuePitchAuditionUpdate(64, 100));
+        Assert.True(producer.TryEnqueuePitchAuditionEnd());
         AssertPersistentCommand(
             consumer,
             AudioWorkerControlCommandKind.PersistentProbe,
@@ -109,6 +111,13 @@ public sealed class SharedAudioWorkerControlTests
             consumer,
             AudioWorkerControlCommandKind.PersistentShutdown,
             105);
+        Assert.True(consumer.TryDequeue(out AudioWorkerControlCommand auditionUpdate));
+        Assert.Equal(AudioWorkerControlCommandKind.PitchAuditionUpdate, auditionUpdate.Kind);
+        Assert.Equal(64, (int)(auditionUpdate.Payload & 0xff));
+        Assert.Equal(100, (int)((auditionUpdate.Payload >> 8) & 0xff));
+        Assert.True(consumer.TryDequeue(out AudioWorkerControlCommand auditionEnd));
+        Assert.Equal(AudioWorkerControlCommandKind.PitchAuditionEnd, auditionEnd.Kind);
+        Assert.Equal(0, auditionEnd.Payload);
     }
 
     private static void AssertPersistentCommand(
@@ -206,11 +215,27 @@ public sealed class SharedAudioWorkerControlTests
         Assert.Equal(37, status.PersistentPlaybackAcceptedGeneration);
     }
 
+    [Fact]
+    public void PersistentResponsePublicationStartsUnpublishedAndAdvancesMonotonically()
+    {
+        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+
+        Assert.Equal(-1, consumer.ReadStatus().PersistentResponseGeneration);
+        producer.PublishPersistentResponse(0);
+        Assert.Equal(0, consumer.ReadStatus().PersistentResponseGeneration);
+        producer.PublishPersistentResponse(5);
+        Assert.Equal(5, consumer.ReadStatus().PersistentResponseGeneration);
+        Assert.Throws<InvalidOperationException>(() => producer.PublishPersistentResponse(5));
+        Assert.Throws<InvalidOperationException>(() => producer.PublishPersistentResponse(4));
+    }
+
     [Theory]
     [InlineData(0, 0)]
     [InlineData(4, SharedAudioWorkerControl.ProtocolVersion + 1)]
     [InlineData(8, SharedAudioWorkerControl.CommandCapacity - 1)]
-    [InlineData(104, 1)]
+    [InlineData(112, 1)]
     public void OpenRejectsCorruptFixedHeaderAndReservedFields(int offset, int value)
     {
         string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
@@ -350,6 +375,7 @@ public sealed class SharedAudioWorkerControlTests
     [InlineData(12, 255L)]
     [InlineData(24, -1L)]
     [InlineData(88, -1L)]
+    [InlineData(104, -2L)]
     public void CorruptStatusStateAndCountersAreRejected(int offset, long value)
     {
         string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
@@ -479,6 +505,32 @@ public sealed class SharedAudioWorkerControlTests
             if (status.PositionFrame != generation)
             {
                 throw new InvalidDataException("Status publication was not visible.");
+            }
+        }
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(0, allocated);
+    }
+
+    [Fact]
+    public void PitchAuditionHotUpdatesAllocateNoManagedMemoryAfterWarmup()
+    {
+        string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+        Assert.True(producer.TryEnqueuePitchAuditionUpdate(64, 100));
+        Assert.True(consumer.TryDequeue(out _));
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int index = 0; index < 10_000; index++)
+        {
+            int pitch = index & 0x7f;
+            if (!producer.TryEnqueuePitchAuditionUpdate(pitch, 100)
+                || !consumer.TryDequeue(out AudioWorkerControlCommand command)
+                || command.Kind != AudioWorkerControlCommandKind.PitchAuditionUpdate
+                || (command.Payload & 0xff) != pitch)
+            {
+                throw new InvalidDataException("Pitch audition command transfer changed its payload.");
             }
         }
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;

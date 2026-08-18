@@ -191,7 +191,37 @@ public sealed class ProjectSelectionTransformEditCommandsTests
     }
 
     [Fact]
-    public void PointTransformRejectsCollisionWithoutPartialMutation()
+    public void SegmentContentScaleUsesLaterPointWhenRoundingCollapsesTicks()
+    {
+        MidoraProject project = new(480);
+        LogicalTrack track = new(project) { Name = "Track" };
+        Segment segment = new(project) { LengthTicks = 100 };
+        LogicalParameterLane lane = new(project) { ParameterId = MidoraId.FromSequence(900_002) };
+        CurvePoint first = new(project, 10, 0.25);
+        CurvePoint second = new(project, 11, 0.75);
+        lane.Points.AddRange([first, second]);
+        segment.ParameterLanes.Add(lane);
+        track.Segments.Add(segment);
+        project.Tracks.Add(track);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.ScaleSegments(
+            [segment.Id],
+            factor: 0.01,
+            SegmentSelectionTransformScope.ExposedContentOnly));
+
+        CurvePoint replacement = Assert.Single(lane.Points);
+        Assert.Equal(second.Id, replacement.Id);
+        Assert.Equal(0, replacement.Tick);
+        document.Undo();
+        Assert.Equal([first, second], lane.Points);
+        document.Redo();
+        Assert.Equal(second.Id, Assert.Single(lane.Points).Id);
+    }
+
+    [Fact]
+    public void PointTransformUsesLaterEditedPointForSameTickCollision()
     {
         MidoraProject project = new(480);
         EventInstrument instrument = new(project) { Name = "Instrument" };
@@ -217,19 +247,23 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
-        Assert.Throws<InvalidOperationException>(() => document.Execute(
-            ProjectDomainEditCommands.ScaleLogicalParameterPoints(
-                segment.Id,
-                lane.Id,
-                [first.Id, second.Id],
-                factor: 2)));
+        document.Execute(ProjectDomainEditCommands.ScaleLogicalParameterPoints(
+            segment.Id,
+            lane.Id,
+            [first.Id, second.Id],
+            factor: 2));
 
+        Assert.Equal([first.Id, second.Id], lane.Points.Select(value => value.Id));
+        Assert.Equal([0L, 20L], lane.Points.Select(value => value.Tick));
+        document.Undo();
+        Assert.Equal([first, second, incumbent], lane.Points);
         Assert.Equal([0L, 10L, 20L], lane.Points.Select(value => value.Tick));
-        Assert.Empty(document.History);
+        document.Redo();
+        Assert.Equal([first.Id, second.Id], lane.Points.Select(value => value.Id));
     }
 
     [Fact]
-    public void SubVoicePointTransformUsesExactTargetAndRejectsCollisionAtomically()
+    public void SubVoicePointTransformUsesExactTargetAndLaterEditedPointWins()
     {
         MidoraProject project = new(480);
         EventInstrument instrument = new(project)
@@ -247,16 +281,18 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
-        Assert.Throws<InvalidOperationException>(() => document.Execute(
-            ProjectDomainEditCommands.ScaleSubVoiceEventPoints(
-                instrument.Id,
-                voice.Id,
-                [first.Id, second.Id],
-                MidiValueTarget.ControlChange(11),
-                factor: 2)));
+        document.Execute(ProjectDomainEditCommands.ScaleSubVoiceEventPoints(
+            instrument.Id,
+            voice.Id,
+            [first.Id, second.Id],
+            MidiValueTarget.ControlChange(11),
+            factor: 2));
 
+        Assert.Equal([first, second], voice.Events);
+        Assert.Equal([0L, 20L], voice.Events.Select(value => value.Tick));
+        document.Undo();
+        Assert.Equal([first, second, incumbent], voice.Events);
         Assert.Equal([0L, 10L, 20L], voice.Events.Select(value => value.Tick));
-        Assert.Empty(document.History);
 
         document.Execute(ProjectDomainEditCommands.FlipSubVoiceEventPointsHorizontal(
             instrument.Id,
@@ -533,7 +569,7 @@ public sealed class ProjectSelectionTransformEditCommandsTests
     }
 
     [Fact]
-    public void LogicalParameterPointBatchRejectsSameTickCollisionAtomically()
+    public void LogicalParameterPointBatchReplacesSameTickIncumbent()
     {
         MidoraProject project = new(480);
         EventInstrument instrument = new(project) { Name = "Instrument" };
@@ -568,19 +604,23 @@ public sealed class ProjectSelectionTransformEditCommandsTests
                 [BatchEditField.Tick] = "10"
             });
 
-        Assert.Throws<InvalidOperationException>(() => document.Execute(
-            ProjectDomainEditCommands.BatchEditLogicalParameterPoints(
-                segment.Id,
-                lane.Id,
-                [second.Id],
-                program)));
+        document.Execute(ProjectDomainEditCommands.BatchEditLogicalParameterPoints(
+            segment.Id,
+            lane.Id,
+            [second.Id],
+            program));
 
-        Assert.Equal([10L, 20L], lane.Points.Select(value => value.Tick));
-        Assert.Empty(document.History);
+        CurvePoint replacement = Assert.Single(lane.Points);
+        Assert.Equal(second.Id, replacement.Id);
+        Assert.Equal(10, replacement.Tick);
+        document.Undo();
+        Assert.Equal([first, second], lane.Points);
+        document.Redo();
+        Assert.Equal(second.Id, Assert.Single(lane.Points).Id);
     }
 
     [Fact]
-    public void SubVoiceEventPointBatchRejectsSameTargetAndTickCollisionAtomically()
+    public void SubVoiceEventPointBatchReplacesSameTargetAndTickIncumbent()
     {
         MidoraProject project = new(480);
         EventInstrument instrument = new(project) { Name = "Instrument" };
@@ -599,16 +639,20 @@ public sealed class ProjectSelectionTransformEditCommandsTests
                 [BatchEditField.Tick] = "10"
             });
 
-        Assert.Throws<InvalidOperationException>(() => document.Execute(
-            ProjectDomainEditCommands.BatchEditSubVoiceEventPoints(
-                instrument.Id,
-                voice.Id,
-                [second.Id],
-                MidiValueTarget.ControlChange(11),
-                program)));
+        document.Execute(ProjectDomainEditCommands.BatchEditSubVoiceEventPoints(
+            instrument.Id,
+            voice.Id,
+            [second.Id],
+            MidiValueTarget.ControlChange(11),
+            program));
 
-        Assert.Equal([10L, 20L], voice.Events.Select(value => value.Tick));
-        Assert.Empty(document.History);
+        Assert.Same(second, Assert.Single(voice.Events));
+        Assert.Equal(10, second.Tick);
+        document.Undo();
+        Assert.Equal([first, second], voice.Events);
+        Assert.Equal(20, second.Tick);
+        document.Redo();
+        Assert.Same(second, Assert.Single(voice.Events));
     }
 
     [Fact]

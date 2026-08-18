@@ -148,7 +148,7 @@ public sealed class WpfInteractionRegressionTests
             };
             oversizedSurface.Measure(new Size(width, height));
             oversizedSurface.Arrange(new Rect(0, 0, width, height));
-            oversizedSurface.LaneHeight = 8;
+            oversizedSurface.LaneHeight = TimelineSurface.MinimumPianoLaneHeight;
 
             Assert.Equal(128, oversizedSurface.VisibleLaneCount);
             Assert.Equal(0, oversizedSurface.MaximumFirstLane);

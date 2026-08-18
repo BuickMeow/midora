@@ -11,8 +11,10 @@ internal enum TimelineRasterLayer
     ArrangementSegmentPreview,
     PianoNotes,
     PianoSelection,
+    PianoDragPreview,
     VelocityBars,
-    EventPoints
+    EventPoints,
+    EventPointSelection
 }
 
 internal readonly record struct TimelineRasterCacheKey(
@@ -558,7 +560,10 @@ public static class TimelinePianoTileRasterizer
             double opacity = selectionOnly
                 ? item.State.HasFlag(TimelineItemState.OutsideActiveRange) ? 0.7 : 0.94
                 : item.State.HasFlag(TimelineItemState.OutsideActiveRange) ? 0.35 : 0.78;
-            FillRectangle(pixels, RasterSize, left, top, right, bottom, color, opacity);
+            if (color.A != 0)
+            {
+                FillRectangle(pixels, RasterSize, left, top, right, bottom, color, opacity);
+            }
             DrawRectangleOutline(
                 pixels,
                 RasterSize,
@@ -789,7 +794,8 @@ public static class TimelineEventPointTileRasterizer
         double dpiScaleY,
         Color normalColor,
         Color primaryColor,
-        Color borderColor)
+        Color borderColor,
+        bool selectionOnly = false)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         if (!double.IsFinite(devicePixelsPerTick) || devicePixelsPerTick <= 0)
@@ -813,6 +819,10 @@ public static class TimelineEventPointTileRasterizer
         List<TimelineRenderItem> candidates = [];
         snapshot.Index.QueryInto(startTick, endTick, 0, 1, candidates);
         candidates.RemoveAll(static item => item.Kind != TimelineItemKind.LogicalParameterPoint);
+        if (selectionOnly)
+        {
+            candidates.RemoveAll(item => selection?.Contains(item.Id) != true);
+        }
 
         byte[] pixels = new byte[checked(width * height * 4)];
         double pointRadiusX = Math.Max(1, PointRadius * dpiScaleX);

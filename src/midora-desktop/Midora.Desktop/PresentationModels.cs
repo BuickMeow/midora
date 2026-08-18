@@ -547,6 +547,13 @@ public sealed class TrackSelectionRow(MidoraId id, string name, bool isSelected)
     public bool IsSelected { get => _isSelected; set => Set(ref _isSelected, value); }
 }
 
+internal static class TimelineLowerEditorLayout
+{
+    public const double DefaultHeight = 190;
+    public const double MinimumHeight = 110;
+    public const double MaximumHeight = 520;
+}
+
 public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
 {
     private readonly Dictionary<MidoraId, SegmentPreviewCacheEntry> _segmentPreviewCache = [];
@@ -575,7 +582,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     private double _activeValueMaximum = 127;
     private bool _activeValueIntegral = true;
     private bool _isLowerEditorVisible = true;
-    private double _lowerEditorHeight = 190;
+    private double _lowerEditorHeight = TimelineLowerEditorLayout.DefaultHeight;
 
     public TimelineWorkspaceViewModel(
         WorkspaceKey key,
@@ -634,7 +641,10 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         set
         {
             if (!IsSegment || value.GridUnitType != GridUnitType.Pixel) return;
-            double height = Math.Clamp(value.Value, 110, 520);
+            double height = Math.Clamp(
+                value.Value,
+                TimelineLowerEditorLayout.MinimumHeight,
+                TimelineLowerEditorLayout.MaximumHeight);
             if (!Set(ref _lowerEditorHeight, height, nameof(BottomEditorRowHeight))) return;
         }
     }
@@ -736,7 +746,12 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     public double LaneHeight
     {
         get => _laneHeight;
-        set => Set(ref _laneHeight, Math.Clamp(value, 8, 128));
+        set => Set(
+            ref _laneHeight,
+            Math.Clamp(
+                value,
+                TimelineSurface.MinimumPianoLaneHeight,
+                TimelineSurface.MaximumPianoLaneHeight));
     }
     public long GridStepTicks => EditorSettings.DisplayGridStepTicks;
     public long OperationStepTicks => EditorSettings.EffectiveOperationStepTicks;
@@ -969,7 +984,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                     segment.ProjectStartTick,
                     checked(segment.ProjectStartTick + segment.LengthTicks),
                     trackIndex,
-                    z: 0) with { AccentColor = accentColor });
+                    z: 0) with
+                { AccentColor = accentColor });
                 previews.Add(segment.Id, GetOrCreateSegmentPreview(segment));
             }
         }
@@ -1620,8 +1636,8 @@ public sealed class InstrumentWorkspaceViewModel(
     private long _timelineTickSpan = 3072;
     private int _timelineFirstLane = 59;
     private double _timelineLaneHeight = 18;
-    private GridLength _noteEditorRowHeight = new(5, GridUnitType.Star);
-    private GridLength _eventEditorRowHeight = new(3, GridUnitType.Star);
+    private bool _isLowerEditorVisible = true;
+    private double _lowerEditorHeight = TimelineLowerEditorLayout.DefaultHeight;
     private int _activeLowerEditorIndex;
     private double _velocityValueScrollOffset;
     private double _eventValueScrollOffset;
@@ -1668,26 +1684,48 @@ public sealed class InstrumentWorkspaceViewModel(
     public double TimelineLaneHeight
     {
         get => _timelineLaneHeight;
-        set => Set(ref _timelineLaneHeight, Math.Clamp(value, 4, 128));
+        set => Set(
+            ref _timelineLaneHeight,
+            Math.Clamp(
+                value,
+                TimelineSurface.MinimumPianoLaneHeight,
+                TimelineSurface.MaximumPianoLaneHeight));
     }
 
-    public GridLength NoteEditorRowHeight
+    public bool IsLowerEditorVisible
     {
-        get => _noteEditorRowHeight;
+        get => _isLowerEditorVisible;
         set
         {
-            if (value.Value <= 0 || !double.IsFinite(value.Value)) return;
-            Set(ref _noteEditorRowHeight, value);
+            if (!Set(ref _isLowerEditorVisible, value)) return;
+            Raise(nameof(BottomEditorRowHeight));
+            Raise(nameof(BottomEditorMinimumHeight));
         }
     }
 
-    public GridLength EventEditorRowHeight
+    public double BottomEditorMinimumHeight => IsLowerEditorVisible
+        ? TimelineLowerEditorLayout.MinimumHeight
+        : 0;
+
+    public double BottomEditorMaximumHeight => TimelineLowerEditorLayout.MaximumHeight;
+
+    public GridLength BottomEditorRowHeight
     {
-        get => _eventEditorRowHeight;
+        get => IsLowerEditorVisible
+            ? new GridLength(_lowerEditorHeight)
+            : new GridLength(0);
         set
         {
-            if (value.Value <= 0 || !double.IsFinite(value.Value)) return;
-            Set(ref _eventEditorRowHeight, value);
+            if (value.GridUnitType != GridUnitType.Pixel
+                || !double.IsFinite(value.Value))
+            {
+                return;
+            }
+            double height = Math.Clamp(
+                value.Value,
+                TimelineLowerEditorLayout.MinimumHeight,
+                TimelineLowerEditorLayout.MaximumHeight);
+            Set(ref _lowerEditorHeight, height, nameof(BottomEditorRowHeight));
         }
     }
 

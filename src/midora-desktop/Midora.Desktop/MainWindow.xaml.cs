@@ -1182,16 +1182,16 @@ public partial class MainWindow : Window
                     return;
                 case TimelineSurfaceMode.EventLanes
                     when _session.ActiveWorkspace is InstrumentWorkspaceViewModel instrumentWorkspace:
-                {
-                    Add("Add Event…", OnAddTemplateEventClick, enabled: _session.CanEditProject);
-                    Add(
-                        "Delete Event Lane…",
-                        OnDeleteSubVoiceEventLaneClick,
-                        enabled: _session.CanEditProject
-                            && instrumentWorkspace.GetRenderLane(
-                                instrumentWorkspace.ActiveRenderLaneIndex)?.EventMappingTarget is not null);
-                    return;
-                }
+                    {
+                        Add("Add Event…", OnAddTemplateEventClick, enabled: _session.CanEditProject);
+                        Add(
+                            "Delete Event Lane…",
+                            OnDeleteSubVoiceEventLaneClick,
+                            enabled: _session.CanEditProject
+                                && instrumentWorkspace.GetRenderLane(
+                                    instrumentWorkspace.ActiveRenderLaneIndex)?.EventMappingTarget is not null);
+                        return;
+                    }
                 default:
                     menu.IsOpen = false;
                     return;
@@ -1677,7 +1677,7 @@ public partial class MainWindow : Window
             || _session.Document is not ProjectDocumentSession document
             || _session.Project is not MidoraProject project
             || _projectClipboard is not ProjectObjectClipboardPayload
-                { Kind: ProjectObjectClipboardKind.EventInstrument } payload
+            { Kind: ProjectObjectClipboardKind.EventInstrument } payload
             || !ReferenceEquals(document, _clipboardDocument)
             || !IsEventInstrumentClipboardTarget(allowSelectedTreeTarget))
         {
@@ -1713,7 +1713,7 @@ public partial class MainWindow : Window
         }
         if (ProjectTree.IsKeyboardFocusWithin
             && ProjectTree.SelectedItem is ProjectTreeNode
-                { Kind: ProjectTreeNodeKind.EventInstrument, ObjectId: MidoraId selectedId })
+            { Kind: ProjectTreeNodeKind.EventInstrument, ObjectId: MidoraId selectedId })
         {
             instrumentId = selectedId;
             return true;
@@ -1883,7 +1883,7 @@ public partial class MainWindow : Window
         if (_logicalTrackShortcutTrackId is MidoraId shortcutTrackId
             && GetFocusedTimelineSurface() is { SurfaceMode: TimelineSurfaceMode.Arrangement }
             && _session.ActiveWorkspace is TimelineWorkspaceViewModel
-                { Mode: TimelineWorkspaceMode.Arrangement })
+            { Mode: TimelineWorkspaceMode.Arrangement })
         {
             int shortcutIndex = project.Tracks.FindIndex(value => value.Id == shortcutTrackId);
             if (shortcutIndex >= 0) return shortcutIndex + 1;
@@ -1917,7 +1917,7 @@ public partial class MainWindow : Window
             && _logicalTrackShortcutTrackId is MidoraId shortcutTrackId
             && GetFocusedTimelineSurface() is { SurfaceMode: TimelineSurfaceMode.Arrangement }
             && _session.ActiveWorkspace is TimelineWorkspaceViewModel
-                { Mode: TimelineWorkspaceMode.Arrangement })
+            { Mode: TimelineWorkspaceMode.Arrangement })
         {
             index = project.Tracks.FindIndex(value => value.Id == shortcutTrackId);
         }
@@ -1945,7 +1945,8 @@ public partial class MainWindow : Window
         SelectionDialog dialog = new(
             "Move Event Instrument",
             $"Choose a folder for '{selected.Name}'. This changes manual library organization only.",
-            options) { Owner = this };
+            options)
+        { Owner = this };
         if (dialog.ShowDialog() != true) return;
         MidoraId? folderId = dialog.SelectedValue is MidoraId id ? id : null;
         RunSynchronous("Move Event Instrument", () => _session.Execute(
@@ -2578,7 +2579,8 @@ public partial class MainWindow : Window
         SelectionDialog typeDialog = new(
             "Create Logical Parameter",
             "Select the formal input type. Initial legal/display ranges use safe defaults and remain editable in Inspector.",
-            Enum.GetValues<LogicalParameterType>().Select(type => new SelectionDialogItem(type, type.ToString()))) { Owner = this };
+            Enum.GetValues<LogicalParameterType>().Select(type => new SelectionDialogItem(type, type.ToString())))
+        { Owner = this };
         if (typeDialog.ShowDialog() != true || typeDialog.SelectedValue is not LogicalParameterType type) return;
         string name = UniqueName("Parameter", instrument.LogicalParameters.Select(item => item.Name));
         double maximum = type == LogicalParameterType.Double ? 1 : 127;
@@ -3049,12 +3051,19 @@ public partial class MainWindow : Window
     {
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
         workspace.ActiveLane = e.Item.Lane;
-        if (e.IsCopyDragStart) workspace.Selection.Add(e.Item.Id);
-        else if ((e.Modifiers & ModifierKeys.Control) != 0) workspace.Selection.Toggle(e.Item.Id);
-        else if ((e.Modifiers & ModifierKeys.Shift) != 0) workspace.Selection.Add(e.Item.Id);
-        else if (workspace.Selection.Ids.Contains(e.Item.Id)) workspace.Selection.Add(e.Item.Id);
-        else workspace.Selection.Replace(e.Item.Id);
-        _session.RefreshWorkspaceSelection(workspace);
+        if (!e.PreserveSelectionForPotentialCopyDrag)
+        {
+            long selectionRevision = workspace.Selection.Revision;
+            if (e.IsCopyDragStart) workspace.Selection.Add(e.Item.Id);
+            else if ((e.Modifiers & ModifierKeys.Control) != 0) workspace.Selection.Toggle(e.Item.Id);
+            else if ((e.Modifiers & ModifierKeys.Shift) != 0) workspace.Selection.Add(e.Item.Id);
+            else if (workspace.Selection.Ids.Contains(e.Item.Id)) workspace.Selection.Add(e.Item.Id);
+            else workspace.Selection.Replace(e.Item.Id);
+            if (workspace.Selection.Revision != selectionRevision)
+            {
+                _session.RefreshWorkspaceSelection(workspace);
+            }
+        }
         if (sender is TimelineSurface { ToolMode: TimelineToolMode.Draw }
             && e.Item.Kind is TimelineItemKind.LogicalNote or TimelineItemKind.TemplateNote)
         {
@@ -4105,82 +4114,82 @@ public partial class MainWindow : Window
                         .Select(static segment => segment.Id)
                         .ToArray());
             case TimelineWorkspaceViewModel
-                {
-                    Mode: TimelineWorkspaceMode.Segment,
-                    ObjectId: MidoraId segmentId
-                } timeline:
             {
-                (LogicalTrack Track, Segment Segment)? location =
-                    TimelineWorkspaceViewModel.FindSegment(project, segmentId);
-                if (location is null) return null;
-                if (string.Equals(surface.Tag as string, "ParameterLanes", StringComparison.Ordinal))
+                Mode: TimelineWorkspaceMode.Segment,
+                ObjectId: MidoraId segmentId
+            } timeline:
                 {
-                    if (timeline.GetActiveParameterLaneOption()?.LaneId is not MidoraId laneId
-                        || location.Value.Segment.ParameterLanes.FirstOrDefault(
-                            lane => lane.Id == laneId) is not LogicalParameterLane lane)
+                    (LogicalTrack Track, Segment Segment)? location =
+                        TimelineWorkspaceViewModel.FindSegment(project, segmentId);
+                    if (location is null) return null;
+                    if (string.Equals(surface.Tag as string, "ParameterLanes", StringComparison.Ordinal))
                     {
-                        return null;
+                        if (timeline.GetActiveParameterLaneOption()?.LaneId is not MidoraId laneId
+                            || location.Value.Segment.ParameterLanes.FirstOrDefault(
+                                lane => lane.Id == laneId) is not LogicalParameterLane lane)
+                        {
+                            return null;
+                        }
+                        return new(
+                            TimelineSelectionObjectKind.LogicalParameterPoints,
+                            lane.Points.Where(point => selected.Contains(point.Id))
+                                .Select(static point => point.Id)
+                                .ToArray(),
+                            segmentId,
+                            laneId,
+                            PointMinimum: timeline.ActiveValueMinimum,
+                            PointMaximum: timeline.ActiveValueMaximum);
                     }
                     return new(
-                        TimelineSelectionObjectKind.LogicalParameterPoints,
-                        lane.Points.Where(point => selected.Contains(point.Id))
-                            .Select(static point => point.Id)
+                        TimelineSelectionObjectKind.LogicalNotes,
+                        location.Value.Segment.Notes
+                            .Where(note => selected.Contains(note.Id))
+                            .Select(static note => note.Id)
                             .ToArray(),
-                        segmentId,
-                        laneId,
-                        PointMinimum: timeline.ActiveValueMinimum,
-                        PointMaximum: timeline.ActiveValueMaximum);
+                        segmentId);
                 }
-                return new(
-                    TimelineSelectionObjectKind.LogicalNotes,
-                    location.Value.Segment.Notes
-                        .Where(note => selected.Contains(note.Id))
-                        .Select(static note => note.Id)
-                        .ToArray(),
-                    segmentId);
-            }
             case InstrumentWorkspaceViewModel
-                {
-                    ObjectId: MidoraId instrumentId,
-                    ActiveSubVoiceId: MidoraId subVoiceId
-                } instrumentWorkspace:
             {
-                EventInstrument? instrument = project.EventInstruments.FirstOrDefault(
-                    value => value.Id == instrumentId);
-                SubVoice? voice = instrument?.SubVoices.FirstOrDefault(value => value.Id == subVoiceId);
-                if (voice is null) return null;
-                if (string.Equals(surface.Tag as string, "SubVoiceNotes", StringComparison.Ordinal))
+                ObjectId: MidoraId instrumentId,
+                ActiveSubVoiceId: MidoraId subVoiceId
+            } instrumentWorkspace:
                 {
-                    return new(
-                        TimelineSelectionObjectKind.TemplateNotes,
-                        voice.Events
-                            .Where(value => value.Kind == TemplateEventKind.Note
-                                && selected.Contains(value.Id))
-                            .Select(static value => value.Id)
-                            .ToArray(),
-                        instrumentId,
-                        subVoiceId);
+                    EventInstrument? instrument = project.EventInstruments.FirstOrDefault(
+                        value => value.Id == instrumentId);
+                    SubVoice? voice = instrument?.SubVoices.FirstOrDefault(value => value.Id == subVoiceId);
+                    if (voice is null) return null;
+                    if (string.Equals(surface.Tag as string, "SubVoiceNotes", StringComparison.Ordinal))
+                    {
+                        return new(
+                            TimelineSelectionObjectKind.TemplateNotes,
+                            voice.Events
+                                .Where(value => value.Kind == TemplateEventKind.Note
+                                    && selected.Contains(value.Id))
+                                .Select(static value => value.Id)
+                                .ToArray(),
+                            instrumentId,
+                            subVoiceId);
+                    }
+                    if (string.Equals(surface.Tag as string, "SubVoiceEvents", StringComparison.Ordinal)
+                        && instrumentWorkspace.GetRenderLane(
+                            instrumentWorkspace.ActiveRenderLaneIndex)?.Target is MidiValueTarget target)
+                    {
+                        return new(
+                            TimelineSelectionObjectKind.SubVoiceEventPoints,
+                            voice.Events
+                                .Where(value => value.Kind != TemplateEventKind.Note
+                                    && selected.Contains(value.Id)
+                                    && TemplateEventMidiTargets.Enumerate(value).Contains(target))
+                                .Select(static value => value.Id)
+                                .ToArray(),
+                            instrumentId,
+                            subVoiceId,
+                            target,
+                            instrumentWorkspace.ActiveValueMinimum,
+                            instrumentWorkspace.ActiveValueMaximum);
+                    }
+                    return null;
                 }
-                if (string.Equals(surface.Tag as string, "SubVoiceEvents", StringComparison.Ordinal)
-                    && instrumentWorkspace.GetRenderLane(
-                        instrumentWorkspace.ActiveRenderLaneIndex)?.Target is MidiValueTarget target)
-                {
-                    return new(
-                        TimelineSelectionObjectKind.SubVoiceEventPoints,
-                        voice.Events
-                            .Where(value => value.Kind != TemplateEventKind.Note
-                                && selected.Contains(value.Id)
-                                && TemplateEventMidiTargets.Enumerate(value).Contains(target))
-                            .Select(static value => value.Id)
-                            .ToArray(),
-                        instrumentId,
-                        subVoiceId,
-                        target,
-                        instrumentWorkspace.ActiveValueMinimum,
-                        instrumentWorkspace.ActiveValueMaximum);
-                }
-                return null;
-            }
             default:
                 return null;
         }
@@ -4903,7 +4912,7 @@ public partial class MainWindow : Window
     private TimelineEditorSettings GetFocusedEditorSettings()
     {
         bool eventLaneFocused = Keyboard.FocusedElement is TimelineSurface
-            { SurfaceMode: TimelineSurfaceMode.EventLanes };
+        { SurfaceMode: TimelineSurfaceMode.EventLanes };
         return _session.ActiveWorkspace switch
         {
             TimelineWorkspaceViewModel timeline when eventLaneFocused => timeline.LaneEditorSettings,
@@ -4948,12 +4957,28 @@ public partial class MainWindow : Window
                 checked(snappedTarget - point.Tick),
                 -selected.Min(id => lane.Points.Single(candidate => candidate.Id == id).Tick))
             : 0;
-        _session.Execute(ProjectDomainEditCommands.AdjustLogicalParameterPoints(
-            segmentId,
-            lane.Id,
-            selected,
-            tickDelta,
-            valueDelta));
+        if (edit.CopyRequested)
+        {
+            long firstNewStableId = _session.Project.NextStableId;
+            _session.Execute(ProjectDomainEditCommands.DuplicateLogicalParameterPoints(
+                segmentId,
+                lane.Id,
+                selected,
+                tickDelta,
+                valueDelta));
+            SelectCreatedWorkspaceObjects(
+                (TimelineWorkspaceViewModel)_session.ActiveWorkspace!,
+                firstNewStableId);
+        }
+        else
+        {
+            _session.Execute(ProjectDomainEditCommands.AdjustLogicalParameterPoints(
+                segmentId,
+                lane.Id,
+                selected,
+                tickDelta,
+                valueDelta));
+        }
     }
 
     private void OnAddParameterLaneClick(object sender, RoutedEventArgs e)
@@ -5192,7 +5217,8 @@ public partial class MainWindow : Window
                 "Select the target SubVoice.",
                 instrument.SubVoices.Select((voice, index) => new SelectionDialogItem(
                     voice.Id,
-                    string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {index + 1}" : voice.Name))) { Owner = this };
+                    string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {index + 1}" : voice.Name)))
+            { Owner = this };
             if (voiceDialog.ShowDialog() != true || voiceDialog.SelectedValue is not MidoraId selectedVoiceId) return;
             voiceId = selectedVoiceId;
         }
@@ -5272,14 +5298,16 @@ public partial class MainWindow : Window
         SelectionDialog parameterDialog = new(
             "Add Logical Parameter Mapping",
             "Select the source Logical Parameter.",
-            instrument.LogicalParameters.Select(item => new SelectionDialogItem(item.Id, item.Name, item.Type.ToString()))) { Owner = this };
+            instrument.LogicalParameters.Select(item => new SelectionDialogItem(item.Id, item.Name, item.Type.ToString())))
+        { Owner = this };
         if (parameterDialog.ShowDialog() != true || parameterDialog.SelectedValue is not MidoraId parameterId) return;
         SelectionDialog voiceDialog = new(
             "Add Logical Parameter Mapping",
             "Select the target SubVoice.",
             instrument.SubVoices.Select((voice, index) => new SelectionDialogItem(
                 voice.Id,
-                string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {index + 1}" : voice.Name))) { Owner = this };
+                string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {index + 1}" : voice.Name)))
+        { Owner = this };
         if (voiceDialog.ShowDialog() != true || voiceDialog.SelectedValue is not MidoraId voiceId) return;
         MidiTargetDialog targetDialog = new("Add Logical Parameter Mapping") { Owner = this };
         if (targetDialog.ShowDialog() != true || targetDialog.Result is not MidiValueTarget target) return;
@@ -5309,7 +5337,8 @@ public partial class MainWindow : Window
             "Select the source Logical Parameter.",
             instrument.LogicalParameters.Select(item =>
                 new SelectionDialogItem(item.Id, item.Name, item.Type.ToString())),
-            mapping.ParameterId) { Owner = this };
+            mapping.ParameterId)
+        { Owner = this };
         if (parameterDialog.ShowDialog() != true
             || parameterDialog.SelectedValue is not MidoraId parameterId)
         {
@@ -5321,7 +5350,8 @@ public partial class MainWindow : Window
             instrument.SubVoices.Select((voice, index) => new SelectionDialogItem(
                 voice.Id,
                 string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {index + 1}" : voice.Name)),
-            mapping.SubVoiceId) { Owner = this };
+            mapping.SubVoiceId)
+        { Owner = this };
         if (voiceDialog.ShowDialog() != true
             || voiceDialog.SelectedValue is not MidoraId voiceId)
         {
@@ -5329,7 +5359,8 @@ public partial class MainWindow : Window
         }
         MidiTargetDialog targetDialog = new(
             "Edit Logical Parameter Mapping",
-            mapping.Target) { Owner = this };
+            mapping.Target)
+        { Owner = this };
         if (targetDialog.ShowDialog() != true
             || targetDialog.Result is not MidiValueTarget target)
         {
@@ -5407,7 +5438,8 @@ public partial class MainWindow : Window
                 chain.Id,
                 chain.Owner,
                 $"{chain.StepCount} existing step(s)")),
-            preferredChainId) { Owner = this };
+            preferredChainId)
+        { Owner = this };
         if (chainDialog.ShowDialog() != true || chainDialog.SelectedValue is not MidoraId chainId) return;
         MappingChainEditingContext context = MappingEditingPolicy.Resolve(instrument, chainId);
         IReadOnlyList<MappingSource> allowedSources = MappingEditingPolicy.AllowedSources(
@@ -5428,7 +5460,8 @@ public partial class MainWindow : Window
             allowedSources.Select(value => new SelectionDialogItem(
                 value,
                 value.ToString(),
-                MappingEditingPolicy.DescribeSource(value)))) { Owner = this };
+                MappingEditingPolicy.DescribeSource(value))))
+        { Owner = this };
         if (sourceDialog.ShowDialog() != true || sourceDialog.SelectedValue is not MappingSource source) return;
         IReadOnlyList<CSharpMappingFunction> allowedFunctions = MappingEditingPolicy.AllowedFunctions(
             instrument,
@@ -5439,7 +5472,8 @@ public partial class MainWindow : Window
         SelectionDialog operationDialog = new(
             "Mapping Operation",
             "Select the operation. Numeric ranges remain editable in Inspector.",
-            allowedOperations.Select(value => new SelectionDialogItem(value, value.ToString()))) { Owner = this };
+            allowedOperations.Select(value => new SelectionDialogItem(value, value.ToString())))
+        { Owner = this };
         if (operationDialog.ShowDialog() != true || operationDialog.SelectedValue is not MappingOperation operation) return;
 
         MidoraId? logicalParameterId = null;
@@ -5453,7 +5487,8 @@ public partial class MainWindow : Window
                 instrument.LogicalParameters.Select(parameter => new SelectionDialogItem(
                     parameter.Id,
                     parameter.Name,
-                    parameter.Type.ToString()))) { Owner = this };
+                    parameter.Type.ToString())))
+            { Owner = this };
             if (referenceDialog.ShowDialog() != true
                 || referenceDialog.SelectedValue is not MidoraId selectedParameterId)
             {
@@ -5485,7 +5520,8 @@ public partial class MainWindow : Window
                 allowedFunctions.Select(function => new SelectionDialogItem(
                     function.Id,
                     function.Name,
-                    $"ABI v{function.AbiVersion}"))) { Owner = this };
+                    $"ABI v{function.AbiVersion}")))
+            { Owner = this };
             if (referenceDialog.ShowDialog() != true
                 || referenceDialog.SelectedValue is not MidoraId selectedFunctionId)
             {
@@ -5552,25 +5588,25 @@ public partial class MainWindow : Window
         TemplateEventKind kind,
         long tick,
         int rootNote) => kind switch
-    {
-        TemplateEventKind.Note => ProjectDomainEditCommands.CreateTemplateNote(
-            instrumentId, voiceId, tick, 48, rootNote, 100),
-        TemplateEventKind.ControlChange => ProjectDomainEditCommands.CreateTemplateControlChange(
-            instrumentId, voiceId, tick, 1, 0),
-        TemplateEventKind.Bank => ProjectDomainEditCommands.CreateTemplateBank(
-            instrumentId, voiceId, tick, 0, 0),
-        TemplateEventKind.Program => ProjectDomainEditCommands.CreateTemplateProgram(
-            instrumentId, voiceId, tick, 0),
-        TemplateEventKind.PitchBend => ProjectDomainEditCommands.CreateTemplatePitchBend(
-            instrumentId, voiceId, tick, 0),
-        TemplateEventKind.RegisteredParameter => ProjectDomainEditCommands.CreateTemplateRegisteredParameter(
-            instrumentId, voiceId, tick, 0, 0),
-        TemplateEventKind.NonRegisteredParameter => ProjectDomainEditCommands.CreateTemplateNonRegisteredParameter(
-            instrumentId, voiceId, tick, 0, 0),
-        TemplateEventKind.PitchBendRange => ProjectDomainEditCommands.CreateTemplatePitchBendRange(
-            instrumentId, voiceId, tick, 2, 0),
-        _ => throw new InvalidOperationException("Unsupported Template Event kind.")
-    };
+        {
+            TemplateEventKind.Note => ProjectDomainEditCommands.CreateTemplateNote(
+                instrumentId, voiceId, tick, 48, rootNote, 100),
+            TemplateEventKind.ControlChange => ProjectDomainEditCommands.CreateTemplateControlChange(
+                instrumentId, voiceId, tick, 1, 0),
+            TemplateEventKind.Bank => ProjectDomainEditCommands.CreateTemplateBank(
+                instrumentId, voiceId, tick, 0, 0),
+            TemplateEventKind.Program => ProjectDomainEditCommands.CreateTemplateProgram(
+                instrumentId, voiceId, tick, 0),
+            TemplateEventKind.PitchBend => ProjectDomainEditCommands.CreateTemplatePitchBend(
+                instrumentId, voiceId, tick, 0),
+            TemplateEventKind.RegisteredParameter => ProjectDomainEditCommands.CreateTemplateRegisteredParameter(
+                instrumentId, voiceId, tick, 0, 0),
+            TemplateEventKind.NonRegisteredParameter => ProjectDomainEditCommands.CreateTemplateNonRegisteredParameter(
+                instrumentId, voiceId, tick, 0, 0),
+            TemplateEventKind.PitchBendRange => ProjectDomainEditCommands.CreateTemplatePitchBendRange(
+                instrumentId, voiceId, tick, 2, 0),
+            _ => throw new InvalidOperationException("Unsupported Template Event kind.")
+        };
 
     private static IProjectEditCommand CreateTemplateEventCommand(
         MidoraId instrumentId,
@@ -5578,27 +5614,27 @@ public partial class MainWindow : Window
         MidiValueTarget target,
         long tick,
         int value) => target.Kind switch
-    {
-        MidiValueKind.ControlChange => ProjectDomainEditCommands.CreateTemplateControlChange(
-            instrumentId, voiceId, tick, target.Number, Math.Clamp(value, 0, 127)),
-        MidiValueKind.BankMsb => ProjectDomainEditCommands.CreateTemplateBank(
-            instrumentId, voiceId, tick, Math.Clamp(value, 0, 127), null),
-        MidiValueKind.BankLsb => ProjectDomainEditCommands.CreateTemplateBank(
-            instrumentId, voiceId, tick, null, Math.Clamp(value, 0, 127)),
-        MidiValueKind.Program => ProjectDomainEditCommands.CreateTemplateProgram(
-            instrumentId, voiceId, tick, Math.Clamp(value, 0, 127)),
-        MidiValueKind.PitchBend => ProjectDomainEditCommands.CreateTemplatePitchBend(
-            instrumentId, voiceId, tick, Math.Clamp(value, -8192, 8191)),
-        MidiValueKind.RegisteredParameter => ProjectDomainEditCommands.CreateTemplateRegisteredParameter(
-            instrumentId, voiceId, tick, target.Number, Math.Clamp(value, 0, 16_383)),
-        MidiValueKind.NonRegisteredParameter => ProjectDomainEditCommands.CreateTemplateNonRegisteredParameter(
-            instrumentId, voiceId, tick, target.Number, Math.Clamp(value, 0, 16_383)),
-        MidiValueKind.PitchBendRangeSemitones => ProjectDomainEditCommands.CreateTemplatePitchBendRange(
-            instrumentId, voiceId, tick, Math.Clamp(value, 0, 127), 0),
-        MidiValueKind.PitchBendRangeCents => ProjectDomainEditCommands.CreateTemplatePitchBendRange(
-            instrumentId, voiceId, tick, 2, Math.Clamp(value, 0, 99)),
-        _ => throw new InvalidOperationException("Unsupported MIDI event target.")
-    };
+        {
+            MidiValueKind.ControlChange => ProjectDomainEditCommands.CreateTemplateControlChange(
+                instrumentId, voiceId, tick, target.Number, Math.Clamp(value, 0, 127)),
+            MidiValueKind.BankMsb => ProjectDomainEditCommands.CreateTemplateBank(
+                instrumentId, voiceId, tick, Math.Clamp(value, 0, 127), null),
+            MidiValueKind.BankLsb => ProjectDomainEditCommands.CreateTemplateBank(
+                instrumentId, voiceId, tick, null, Math.Clamp(value, 0, 127)),
+            MidiValueKind.Program => ProjectDomainEditCommands.CreateTemplateProgram(
+                instrumentId, voiceId, tick, Math.Clamp(value, 0, 127)),
+            MidiValueKind.PitchBend => ProjectDomainEditCommands.CreateTemplatePitchBend(
+                instrumentId, voiceId, tick, Math.Clamp(value, -8192, 8191)),
+            MidiValueKind.RegisteredParameter => ProjectDomainEditCommands.CreateTemplateRegisteredParameter(
+                instrumentId, voiceId, tick, target.Number, Math.Clamp(value, 0, 16_383)),
+            MidiValueKind.NonRegisteredParameter => ProjectDomainEditCommands.CreateTemplateNonRegisteredParameter(
+                instrumentId, voiceId, tick, target.Number, Math.Clamp(value, 0, 16_383)),
+            MidiValueKind.PitchBendRangeSemitones => ProjectDomainEditCommands.CreateTemplatePitchBendRange(
+                instrumentId, voiceId, tick, Math.Clamp(value, 0, 127), 0),
+            MidiValueKind.PitchBendRangeCents => ProjectDomainEditCommands.CreateTemplatePitchBendRange(
+                instrumentId, voiceId, tick, 2, Math.Clamp(value, 0, 99)),
+            _ => throw new InvalidOperationException("Unsupported MIDI event target.")
+        };
 
     private static IProjectEditCommand UpdateTemplateEventTargetCommand(
         MidoraId instrumentId,
@@ -5607,29 +5643,29 @@ public partial class MainWindow : Window
         MidiValueTarget target,
         long tick,
         int value) => target.Kind switch
-    {
-        MidiValueKind.ControlChange => ProjectDomainEditCommands.UpdateTemplateControlChange(
-            instrumentId, voiceId, template.Id, tick, target.Number, value),
-        MidiValueKind.BankMsb => ProjectDomainEditCommands.UpdateTemplateBank(
-            instrumentId, voiceId, template.Id, tick, value,
-            template.HasBankLsb ? template.SecondaryValue : null),
-        MidiValueKind.BankLsb => ProjectDomainEditCommands.UpdateTemplateBank(
-            instrumentId, voiceId, template.Id, tick,
-            template.HasBankMsb ? template.Value : null, value),
-        MidiValueKind.Program => ProjectDomainEditCommands.UpdateTemplateProgram(
-            instrumentId, voiceId, template.Id, tick, value),
-        MidiValueKind.PitchBend => ProjectDomainEditCommands.UpdateTemplatePitchBend(
-            instrumentId, voiceId, template.Id, tick, value),
-        MidiValueKind.RegisteredParameter => ProjectDomainEditCommands.UpdateTemplateRegisteredParameter(
-            instrumentId, voiceId, template.Id, tick, target.Number, value),
-        MidiValueKind.NonRegisteredParameter => ProjectDomainEditCommands.UpdateTemplateNonRegisteredParameter(
-            instrumentId, voiceId, template.Id, tick, target.Number, value),
-        MidiValueKind.PitchBendRangeSemitones => ProjectDomainEditCommands.UpdateTemplatePitchBendRange(
-            instrumentId, voiceId, template.Id, tick, value, template.SecondaryValue),
-        MidiValueKind.PitchBendRangeCents => ProjectDomainEditCommands.UpdateTemplatePitchBendRange(
-            instrumentId, voiceId, template.Id, tick, template.Value, value),
-        _ => throw new InvalidOperationException("Unsupported MIDI event target.")
-    };
+        {
+            MidiValueKind.ControlChange => ProjectDomainEditCommands.UpdateTemplateControlChange(
+                instrumentId, voiceId, template.Id, tick, target.Number, value),
+            MidiValueKind.BankMsb => ProjectDomainEditCommands.UpdateTemplateBank(
+                instrumentId, voiceId, template.Id, tick, value,
+                template.HasBankLsb ? template.SecondaryValue : null),
+            MidiValueKind.BankLsb => ProjectDomainEditCommands.UpdateTemplateBank(
+                instrumentId, voiceId, template.Id, tick,
+                template.HasBankMsb ? template.Value : null, value),
+            MidiValueKind.Program => ProjectDomainEditCommands.UpdateTemplateProgram(
+                instrumentId, voiceId, template.Id, tick, value),
+            MidiValueKind.PitchBend => ProjectDomainEditCommands.UpdateTemplatePitchBend(
+                instrumentId, voiceId, template.Id, tick, value),
+            MidiValueKind.RegisteredParameter => ProjectDomainEditCommands.UpdateTemplateRegisteredParameter(
+                instrumentId, voiceId, template.Id, tick, target.Number, value),
+            MidiValueKind.NonRegisteredParameter => ProjectDomainEditCommands.UpdateTemplateNonRegisteredParameter(
+                instrumentId, voiceId, template.Id, tick, target.Number, value),
+            MidiValueKind.PitchBendRangeSemitones => ProjectDomainEditCommands.UpdateTemplatePitchBendRange(
+                instrumentId, voiceId, template.Id, tick, value, template.SecondaryValue),
+            MidiValueKind.PitchBendRangeCents => ProjectDomainEditCommands.UpdateTemplatePitchBendRange(
+                instrumentId, voiceId, template.Id, tick, template.Value, value),
+            _ => throw new InvalidOperationException("Unsupported MIDI event target.")
+        };
 
     private async void OnCompileClick(object sender, RoutedEventArgs e)
     {
@@ -5746,7 +5782,8 @@ public partial class MainWindow : Window
         MidiExportDialog dialog = new(
             _session.Project!.Export,
             _session.Project.Tracks,
-            initialDirectory) { Owner = this };
+            initialDirectory)
+        { Owner = this };
         if (dialog.ShowDialog() != true || dialog.Options is null) return;
         RecordRecentDirectory(
             RecentDirectoryPurpose.MidiExport,
@@ -6654,284 +6691,284 @@ public partial class MainWindow : Window
             switch (workspace)
             {
                 case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement }:
-                {
-                    MidoraId primary = workspace.Selection.Primary
-                        ?? throw new InvalidOperationException("The Segment selection has no primary object.");
-                    if (cut)
                     {
-                        ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutSegments(
-                            document, ids, primary);
-                        payload = prepared.Payload;
-                        deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                        MidoraId primary = workspace.Selection.Primary
+                            ?? throw new InvalidOperationException("The Segment selection has no primary object.");
+                        if (cut)
+                        {
+                            ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutSegments(
+                                document, ids, primary);
+                            payload = prepared.Payload;
+                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                        }
+                        else payload = ProjectObjectClipboard.CopySegments(document, ids, primary);
+                        break;
                     }
-                    else payload = ProjectObjectClipboard.CopySegments(document, ids, primary);
-                    break;
-                }
                 case TimelineWorkspaceViewModel
                 {
                     Mode: TimelineWorkspaceMode.Segment,
                     ObjectId: MidoraId segmentId
                 }:
-                {
-                    (LogicalTrack Track, Segment Segment)? location =
-                        TimelineWorkspaceViewModel.FindSegment(project, segmentId);
-                    if (location is null) throw new InvalidOperationException("The Segment no longer exists.");
-                    HashSet<MidoraId> selected = ids.ToHashSet();
-                    if (ids.Length == 1
-                        && location.Value.Segment.ParameterLanes.Any(lane => lane.Id == ids[0]))
                     {
-                        if (cut)
+                        (LogicalTrack Track, Segment Segment)? location =
+                            TimelineWorkspaceViewModel.FindSegment(project, segmentId);
+                        if (location is null) throw new InvalidOperationException("The Segment no longer exists.");
+                        HashSet<MidoraId> selected = ids.ToHashSet();
+                        if (ids.Length == 1
+                            && location.Value.Segment.ParameterLanes.Any(lane => lane.Id == ids[0]))
                         {
-                            ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutLogicalParameterLane(
-                                document,
-                                segmentId,
-                                ids[0]);
-                            payload = prepared.Payload;
-                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                        }
-                        else
-                        {
-                            payload = ProjectObjectClipboard.CopyLogicalParameterLane(document, segmentId, ids[0]);
-                        }
-                        break;
-                    }
-                    MidoraId[] notes = location.Value.Segment.Notes
-                        .Where(item => selected.Contains(item.Id)).Select(item => item.Id).ToArray();
-                    if (notes.Length == ids.Length)
-                    {
-                        if (cut)
-                        {
-                            ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutLogicalNotes(
-                                document, segmentId, notes);
-                            payload = prepared.Payload;
-                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                        }
-                        else payload = ProjectObjectClipboard.CopyLogicalNotes(document, segmentId, notes);
-                        break;
-                    }
-                    LogicalParameterLane[] lanes = location.Value.Segment.ParameterLanes
-                        .Where(lane => lane.Points.Any(point => selected.Contains(point.Id))).ToArray();
-                    if (lanes.Length != 1
-                        || lanes[0].Points.Count(point => selected.Contains(point.Id)) != ids.Length)
-                    {
-                        throw new InvalidOperationException(
-                            "Copy or Cut may target Logical Notes or points from one Logical Parameter Lane, not a mixed selection.");
-                    }
-                    if (cut)
-                    {
-                        ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutLogicalParameterLaneContent(
-                            document, segmentId, lanes[0].Id, ids);
-                        payload = prepared.Payload;
-                        deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                    }
-                    else payload = ProjectObjectClipboard.CopyLogicalParameterLaneContent(
-                        document, segmentId, lanes[0].Id, ids);
-                    break;
-                }
-                case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Conductor }:
-                {
-                    if (project.Conductor.EndMarker is ProjectEndMarker end && ids.Contains(end.Id))
-                    {
-                        throw new InvalidOperationException("The Project End Marker is excluded from Project Clipboard operations.");
-                    }
-                    if (cut)
-                    {
-                        ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutConductorEvents(document, ids);
-                        payload = prepared.Payload;
-                        deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                    }
-                    else payload = ProjectObjectClipboard.CopyConductorEvents(document, ids);
-                    break;
-                }
-                case InstrumentWorkspaceViewModel instrumentWorkspace when instrumentWorkspace.ObjectId is MidoraId instrumentId:
-                {
-                    EventInstrument instrument = project.EventInstruments.Single(item => item.Id == instrumentId);
-                    HashSet<MidoraId> selected = ids.ToHashSet();
-                    if (ids.Length == 1 && instrument.SubVoices.Any(voice => voice.Id == ids[0]))
-                    {
-                        if (cut)
-                        {
-                            ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutSubVoice(
-                                document,
-                                instrumentId,
-                                ids[0]);
-                            payload = prepared.Payload;
-                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                        }
-                        else
-                        {
-                            payload = ProjectObjectClipboard.CopySubVoice(document, instrumentId, ids[0]);
-                        }
-                        break;
-                    }
-                    if (ids.Length == 1 && instrument.LogicalParameters.Any(value => value.Id == ids[0]))
-                    {
-                        if (cut)
-                        {
-                            ProjectObjectClipboardCutPreparation prepared =
-                                ProjectObjectClipboard.PrepareCutLogicalParameterDefinition(
+                            if (cut)
+                            {
+                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutLogicalParameterLane(
                                     document,
-                                    instrumentId,
+                                    segmentId,
                                     ids[0]);
-                            payload = prepared.Payload;
-                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                                payload = prepared.Payload;
+                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            else
+                            {
+                                payload = ProjectObjectClipboard.CopyLogicalParameterLane(document, segmentId, ids[0]);
+                            }
+                            break;
                         }
-                        else
+                        MidoraId[] notes = location.Value.Segment.Notes
+                            .Where(item => selected.Contains(item.Id)).Select(item => item.Id).ToArray();
+                        if (notes.Length == ids.Length)
                         {
-                            payload = ProjectObjectClipboard.CopyLogicalParameterDefinition(
-                                document,
-                                instrumentId,
-                                ids[0]);
+                            if (cut)
+                            {
+                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutLogicalNotes(
+                                    document, segmentId, notes);
+                                payload = prepared.Payload;
+                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            else payload = ProjectObjectClipboard.CopyLogicalNotes(document, segmentId, notes);
+                            break;
                         }
-                        break;
-                    }
-                    if (ids.Length == 1 && instrument.ParameterMappings.Any(value => value.Id == ids[0]))
-                    {
-                        if (cut)
-                        {
-                            ProjectObjectClipboardCutPreparation prepared =
-                                ProjectObjectClipboard.PrepareCutLogicalParameterMapping(
-                                    document,
-                                    instrumentId,
-                                    ids[0]);
-                            payload = prepared.Payload;
-                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
-                        }
-                        else
-                        {
-                            payload = ProjectObjectClipboard.CopyLogicalParameterMapping(
-                                document,
-                                instrumentId,
-                                ids[0]);
-                        }
-                        break;
-                    }
-                    if (ids.Length == 1 && instrumentWorkspace.MappingChains.Any(chain => chain.Id == ids[0]))
-                    {
-                        MappingChainListItem selectedChain = instrumentWorkspace.MappingChains
-                            .Single(chain => chain.Id == ids[0]);
-                        if (cut && !selectedChain.CanDelete)
+                        LogicalParameterLane[] lanes = location.Value.Segment.ParameterLanes
+                            .Where(lane => lane.Points.Any(point => selected.Contains(point.Id))).ToArray();
+                        if (lanes.Length != 1
+                            || lanes[0].Points.Count(point => selected.Contains(point.Id)) != ids.Length)
                         {
                             throw new InvalidOperationException(
-                                "The Note Mapping Chain cannot be cut or deleted.");
+                                "Copy or Cut may target Logical Notes or points from one Logical Parameter Lane, not a mixed selection.");
                         }
                         if (cut)
                         {
-                            ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutMappingChain(
-                                document,
-                                instrumentId,
-                                ids[0]);
+                            ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutLogicalParameterLaneContent(
+                                document, segmentId, lanes[0].Id, ids);
                             payload = prepared.Payload;
                             deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
                         }
-                        else
-                        {
-                            payload = ProjectObjectClipboard.CopyMappingChain(document, instrumentId, ids[0]);
-                        }
+                        else payload = ProjectObjectClipboard.CopyLogicalParameterLaneContent(
+                            document, segmentId, lanes[0].Id, ids);
                         break;
                     }
-                    if (ids.Length == 1
-                        && instrumentWorkspace.MappingSteps.FirstOrDefault(value => value.Id == ids[0])
-                            is MappingStepListItem selectedStep)
+                case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Conductor }:
                     {
+                        if (project.Conductor.EndMarker is ProjectEndMarker end && ids.Contains(end.Id))
+                        {
+                            throw new InvalidOperationException("The Project End Marker is excluded from Project Clipboard operations.");
+                        }
                         if (cut)
                         {
-                            ProjectObjectClipboardCutPreparation prepared =
-                                ProjectObjectClipboard.PrepareCutMappingStep(
+                            ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutConductorEvents(document, ids);
+                            payload = prepared.Payload;
+                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                        }
+                        else payload = ProjectObjectClipboard.CopyConductorEvents(document, ids);
+                        break;
+                    }
+                case InstrumentWorkspaceViewModel instrumentWorkspace when instrumentWorkspace.ObjectId is MidoraId instrumentId:
+                    {
+                        EventInstrument instrument = project.EventInstruments.Single(item => item.Id == instrumentId);
+                        HashSet<MidoraId> selected = ids.ToHashSet();
+                        if (ids.Length == 1 && instrument.SubVoices.Any(voice => voice.Id == ids[0]))
+                        {
+                            if (cut)
+                            {
+                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutSubVoice(
+                                    document,
+                                    instrumentId,
+                                    ids[0]);
+                                payload = prepared.Payload;
+                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            else
+                            {
+                                payload = ProjectObjectClipboard.CopySubVoice(document, instrumentId, ids[0]);
+                            }
+                            break;
+                        }
+                        if (ids.Length == 1 && instrument.LogicalParameters.Any(value => value.Id == ids[0]))
+                        {
+                            if (cut)
+                            {
+                                ProjectObjectClipboardCutPreparation prepared =
+                                    ProjectObjectClipboard.PrepareCutLogicalParameterDefinition(
+                                        document,
+                                        instrumentId,
+                                        ids[0]);
+                                payload = prepared.Payload;
+                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            else
+                            {
+                                payload = ProjectObjectClipboard.CopyLogicalParameterDefinition(
+                                    document,
+                                    instrumentId,
+                                    ids[0]);
+                            }
+                            break;
+                        }
+                        if (ids.Length == 1 && instrument.ParameterMappings.Any(value => value.Id == ids[0]))
+                        {
+                            if (cut)
+                            {
+                                ProjectObjectClipboardCutPreparation prepared =
+                                    ProjectObjectClipboard.PrepareCutLogicalParameterMapping(
+                                        document,
+                                        instrumentId,
+                                        ids[0]);
+                                payload = prepared.Payload;
+                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            else
+                            {
+                                payload = ProjectObjectClipboard.CopyLogicalParameterMapping(
+                                    document,
+                                    instrumentId,
+                                    ids[0]);
+                            }
+                            break;
+                        }
+                        if (ids.Length == 1 && instrumentWorkspace.MappingChains.Any(chain => chain.Id == ids[0]))
+                        {
+                            MappingChainListItem selectedChain = instrumentWorkspace.MappingChains
+                                .Single(chain => chain.Id == ids[0]);
+                            if (cut && !selectedChain.CanDelete)
+                            {
+                                throw new InvalidOperationException(
+                                    "The Note Mapping Chain cannot be cut or deleted.");
+                            }
+                            if (cut)
+                            {
+                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutMappingChain(
+                                    document,
+                                    instrumentId,
+                                    ids[0]);
+                                payload = prepared.Payload;
+                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            else
+                            {
+                                payload = ProjectObjectClipboard.CopyMappingChain(document, instrumentId, ids[0]);
+                            }
+                            break;
+                        }
+                        if (ids.Length == 1
+                            && instrumentWorkspace.MappingSteps.FirstOrDefault(value => value.Id == ids[0])
+                                is MappingStepListItem selectedStep)
+                        {
+                            if (cut)
+                            {
+                                ProjectObjectClipboardCutPreparation prepared =
+                                    ProjectObjectClipboard.PrepareCutMappingStep(
+                                        document,
+                                        instrumentId,
+                                        selectedStep.ChainId,
+                                        selectedStep.Id);
+                                payload = prepared.Payload;
+                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            else
+                            {
+                                payload = ProjectObjectClipboard.CopyMappingStep(
                                     document,
                                     instrumentId,
                                     selectedStep.ChainId,
                                     selectedStep.Id);
-                            payload = prepared.Payload;
-                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            break;
                         }
-                        else
+                        if (ids.Length == 1 && instrument.Envelopes.Any(value => value.Id == ids[0]))
                         {
-                            payload = ProjectObjectClipboard.CopyMappingStep(
-                                document,
-                                instrumentId,
-                                selectedStep.ChainId,
-                                selectedStep.Id);
-                        }
-                        break;
-                    }
-                    if (ids.Length == 1 && instrument.Envelopes.Any(value => value.Id == ids[0]))
-                    {
-                        if (cut)
-                        {
-                            ProjectObjectClipboardCutPreparation prepared =
-                                ProjectObjectClipboard.PrepareCutEnvelopePreset(
+                            if (cut)
+                            {
+                                ProjectObjectClipboardCutPreparation prepared =
+                                    ProjectObjectClipboard.PrepareCutEnvelopePreset(
+                                        document,
+                                        instrumentId,
+                                        ids[0]);
+                                payload = prepared.Payload;
+                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            else
+                            {
+                                payload = ProjectObjectClipboard.CopyEnvelopePreset(
                                     document,
                                     instrumentId,
                                     ids[0]);
-                            payload = prepared.Payload;
-                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            break;
                         }
-                        else
+                        if (ids.Length == 1 && instrument.MappingFunctions.Any(value => value.Id == ids[0]))
                         {
-                            payload = ProjectObjectClipboard.CopyEnvelopePreset(
-                                document,
-                                instrumentId,
-                                ids[0]);
-                        }
-                        break;
-                    }
-                    if (ids.Length == 1 && instrument.MappingFunctions.Any(value => value.Id == ids[0]))
-                    {
-                        if (cut)
-                        {
-                            ProjectObjectClipboardCutPreparation prepared =
-                                ProjectObjectClipboard.PrepareCutMappingFunction(
+                            if (cut)
+                            {
+                                ProjectObjectClipboardCutPreparation prepared =
+                                    ProjectObjectClipboard.PrepareCutMappingFunction(
+                                        document,
+                                        instrumentId,
+                                        ids[0]);
+                                payload = prepared.Payload;
+                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            else
+                            {
+                                payload = ProjectObjectClipboard.CopyMappingFunction(
                                     document,
                                     instrumentId,
                                     ids[0]);
-                            payload = prepared.Payload;
-                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            break;
                         }
-                        else
+                        SubVoice[] voices = instrument.SubVoices
+                            .Where(voice => voice.Events.Any(item => selected.Contains(item.Id))).ToArray();
+                        if (voices.Length == 1
+                            && voices[0].Events.Count(item => selected.Contains(item.Id)) == ids.Length)
                         {
-                            payload = ProjectObjectClipboard.CopyMappingFunction(
-                                document,
-                                instrumentId,
-                                ids[0]);
-                        }
-                        break;
-                    }
-                    SubVoice[] voices = instrument.SubVoices
-                        .Where(voice => voice.Events.Any(item => selected.Contains(item.Id))).ToArray();
-                    if (voices.Length == 1
-                        && voices[0].Events.Count(item => selected.Contains(item.Id)) == ids.Length)
-                    {
-                        if (cut)
-                        {
-                            ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutSubVoiceTimelineEvents(
+                            if (cut)
+                            {
+                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutSubVoiceTimelineEvents(
+                                    document, instrumentId, voices[0].Id, ids);
+                                payload = prepared.Payload;
+                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            else payload = ProjectObjectClipboard.CopySubVoiceTimelineEvents(
                                 document, instrumentId, voices[0].Id, ids);
-                            payload = prepared.Payload;
-                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            break;
                         }
-                        else payload = ProjectObjectClipboard.CopySubVoiceTimelineEvents(
-                            document, instrumentId, voices[0].Id, ids);
-                        break;
-                    }
-                    foreach (SubVoice voice in instrument.SubVoices)
-                    {
-                        ValueCurve? curve = voice.Curves.FirstOrDefault(
-                            candidate => candidate.Points.Any(point => selected.Contains(point.Id)));
-                        if (curve is null || curve.Points.Count(point => selected.Contains(point.Id)) != ids.Length) continue;
-                        if (cut)
+                        foreach (SubVoice voice in instrument.SubVoices)
                         {
-                            ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutValueCurveContent(
+                            ValueCurve? curve = voice.Curves.FirstOrDefault(
+                                candidate => candidate.Points.Any(point => selected.Contains(point.Id)));
+                            if (curve is null || curve.Points.Count(point => selected.Contains(point.Id)) != ids.Length) continue;
+                            if (cut)
+                            {
+                                ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutValueCurveContent(
+                                    document, instrumentId, voice.Id, curve.Id, ids);
+                                payload = prepared.Payload;
+                                deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            }
+                            else payload = ProjectObjectClipboard.CopyValueCurveContent(
                                 document, instrumentId, voice.Id, curve.Id, ids);
-                            payload = prepared.Payload;
-                            deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
+                            goto ClipboardPayloadReady;
                         }
-                        else payload = ProjectObjectClipboard.CopyValueCurveContent(
-                            document, instrumentId, voice.Id, curve.Id, ids);
-                        goto ClipboardPayloadReady;
+                        throw new InvalidOperationException(
+                            "Copy or Cut requires one Event Instrument structure item, Template Events from one SubVoice, or points from one Value Curve.");
                     }
-                    throw new InvalidOperationException(
-                        "Copy or Cut requires one Event Instrument structure item, Template Events from one SubVoice, or points from one Value Curve.");
-                }
                 default:
                     return;
             }
@@ -7365,74 +7402,74 @@ public partial class MainWindow : Window
             switch (workspace)
             {
                 case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement } arrangement:
-                {
-                    MidoraId primary = workspace.Selection.Primary!.Value;
-                    (LogicalTrack Track, Segment Segment) located = TimelineWorkspaceViewModel.FindSegment(project, primary)
-                        ?? throw new InvalidOperationException("The primary Segment no longer exists.");
-                    long target = cursor == 0
-                        ? checked(located.Segment.ProjectStartTick + located.Segment.LengthTicks)
-                        : cursor;
-                    _session.Execute(ProjectDomainEditCommands.DuplicateSegments(
-                        ids, primary, ResolveArrangementTargetTrack(project, arrangement), target));
-                    break;
-                }
+                    {
+                        MidoraId primary = workspace.Selection.Primary!.Value;
+                        (LogicalTrack Track, Segment Segment) located = TimelineWorkspaceViewModel.FindSegment(project, primary)
+                            ?? throw new InvalidOperationException("The primary Segment no longer exists.");
+                        long target = cursor == 0
+                            ? checked(located.Segment.ProjectStartTick + located.Segment.LengthTicks)
+                            : cursor;
+                        _session.Execute(ProjectDomainEditCommands.DuplicateSegments(
+                            ids, primary, ResolveArrangementTargetTrack(project, arrangement), target));
+                        break;
+                    }
                 case TimelineWorkspaceViewModel
                 {
                     Mode: TimelineWorkspaceMode.Segment,
                     ObjectId: MidoraId segmentId
                 }:
-                {
-                    (LogicalTrack Track, Segment Segment) located = TimelineWorkspaceViewModel.FindSegment(project, segmentId)
-                        ?? throw new InvalidOperationException("The Segment no longer exists.");
-                    HashSet<MidoraId> selected = ids.ToHashSet();
-                    LogicalNote[] notes = located.Segment.Notes.Where(item => selected.Contains(item.Id)).ToArray();
-                    if (notes.Length != ids.Length)
                     {
-                        throw new InvalidOperationException("Ctrl+D currently duplicates Logical Notes in the Segment note scope.");
+                        (LogicalTrack Track, Segment Segment) located = TimelineWorkspaceViewModel.FindSegment(project, segmentId)
+                            ?? throw new InvalidOperationException("The Segment no longer exists.");
+                        HashSet<MidoraId> selected = ids.ToHashSet();
+                        LogicalNote[] notes = located.Segment.Notes.Where(item => selected.Contains(item.Id)).ToArray();
+                        if (notes.Length != ids.Length)
+                        {
+                            throw new InvalidOperationException("Ctrl+D currently duplicates Logical Notes in the Segment note scope.");
+                        }
+                        long target = cursor == 0
+                            ? checked(notes.Min(item => item.StartTick) + Math.Max(1, notes.Max(item => item.LengthTicks)))
+                            : cursor;
+                        _session.Execute(ProjectDomainEditCommands.DuplicateLogicalNotes(segmentId, ids, segmentId, target));
+                        break;
                     }
-                    long target = cursor == 0
-                        ? checked(notes.Min(item => item.StartTick) + Math.Max(1, notes.Max(item => item.LengthTicks)))
-                        : cursor;
-                    _session.Execute(ProjectDomainEditCommands.DuplicateLogicalNotes(segmentId, ids, segmentId, target));
-                    break;
-                }
                 case InstrumentWorkspaceViewModel
                 {
                     ObjectId: MidoraId instrumentId
                 } instrumentWorkspace:
-                {
-                    InstrumentRenderLane lane = ResolveInstrumentTargetLane(instrumentWorkspace);
-                    MidiValueTarget target = lane.Target
-                        ?? throw new InvalidOperationException(
-                            "Select a SubVoice MIDI Event lane before duplicating event points.");
-                    EventInstrument instrument = project.EventInstruments.Single(value => value.Id == instrumentId);
-                    SubVoice voice = instrument.SubVoices.Single(value => value.Id == lane.SubVoiceId);
-                    HashSet<MidoraId> requested = ids.ToHashSet();
-                    TemplateEvent[] events = voice.Events
-                        .Where(value => requested.Contains(value.Id))
-                        .ToArray();
-                    if (events.Length != ids.Length
-                        || events.Any(value => value.Kind == TemplateEventKind.Note
-                            || !TemplateEventMidiTargets.Enumerate(value).Contains(target)))
                     {
-                        throw new InvalidOperationException(
-                            "Ctrl+D may duplicate event points from one SubVoice MIDI Event lane only.");
+                        InstrumentRenderLane lane = ResolveInstrumentTargetLane(instrumentWorkspace);
+                        MidiValueTarget target = lane.Target
+                            ?? throw new InvalidOperationException(
+                                "Select a SubVoice MIDI Event lane before duplicating event points.");
+                        EventInstrument instrument = project.EventInstruments.Single(value => value.Id == instrumentId);
+                        SubVoice voice = instrument.SubVoices.Single(value => value.Id == lane.SubVoiceId);
+                        HashSet<MidoraId> requested = ids.ToHashSet();
+                        TemplateEvent[] events = voice.Events
+                            .Where(value => requested.Contains(value.Id))
+                            .ToArray();
+                        if (events.Length != ids.Length
+                            || events.Any(value => value.Kind == TemplateEventKind.Note
+                                || !TemplateEventMidiTargets.Enumerate(value).Contains(target)))
+                        {
+                            throw new InvalidOperationException(
+                                "Ctrl+D may duplicate event points from one SubVoice MIDI Event lane only.");
+                        }
+                        long earliest = events.Min(value => value.Tick);
+                        long destination = instrumentWorkspace.EditCursorTick is > 0
+                            ? instrumentWorkspace.EditCursorTick.Value
+                            : checked(events.Max(value => value.Tick)
+                                + Math.Max(1, instrumentWorkspace.EditorSettings.EffectiveOperationStepTicks));
+                        _session.Execute(ProjectDomainEditCommands.AdjustSubVoiceEventPoints(
+                            instrumentId,
+                            voice.Id,
+                            ids,
+                            target,
+                            checked(destination - earliest),
+                            valueDelta: 0,
+                            duplicate: true));
+                        break;
                     }
-                    long earliest = events.Min(value => value.Tick);
-                    long destination = instrumentWorkspace.EditCursorTick is > 0
-                        ? instrumentWorkspace.EditCursorTick.Value
-                        : checked(events.Max(value => value.Tick)
-                            + Math.Max(1, instrumentWorkspace.EditorSettings.EffectiveOperationStepTicks));
-                    _session.Execute(ProjectDomainEditCommands.AdjustSubVoiceEventPoints(
-                        instrumentId,
-                        voice.Id,
-                        ids,
-                        target,
-                        checked(destination - earliest),
-                        valueDelta: 0,
-                        duplicate: true));
-                    break;
-                }
                 default:
                     throw new InvalidOperationException("The active selection scope does not define Duplicate.");
             }
@@ -7708,7 +7745,7 @@ public partial class MainWindow : Window
         TimelineSurface? surface = FindVisualAncestor<TimelineSurface>(source);
         if (surface is { SurfaceMode: TimelineSurfaceMode.Arrangement }
             && _session.ActiveWorkspace is TimelineWorkspaceViewModel
-                { Mode: TimelineWorkspaceMode.Arrangement }
+            { Mode: TimelineWorkspaceMode.Arrangement }
             && _session.Project is MidoraProject project
             && surface.TryGetArrangementLaneHeader(e.GetPosition(surface), out int lane)
             && (uint)lane < (uint)project.Tracks.Count)
@@ -7733,7 +7770,7 @@ public partial class MainWindow : Window
         || _logicalTrackShortcutTrackId is not null
         && GetFocusedTimelineSurface() is { SurfaceMode: TimelineSurfaceMode.Arrangement }
         && _session.ActiveWorkspace is TimelineWorkspaceViewModel
-            { Mode: TimelineWorkspaceMode.Arrangement };
+        { Mode: TimelineWorkspaceMode.Arrangement };
 
     private static TimelineSurface? GetFocusedTimelineSurface() =>
         FindVisualAncestor<TimelineSurface>(Keyboard.FocusedElement as DependencyObject);

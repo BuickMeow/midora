@@ -1295,8 +1295,8 @@ public sealed class DesktopSessionControllerTests
         firstWorkspace.TimelineTickSpan = 960;
         firstWorkspace.TimelineFirstLane = 24;
         firstWorkspace.TimelineLaneHeight = 31;
-        firstWorkspace.NoteEditorRowHeight = new System.Windows.GridLength(7, System.Windows.GridUnitType.Star);
-        firstWorkspace.EventEditorRowHeight = new System.Windows.GridLength(2, System.Windows.GridUnitType.Star);
+        firstWorkspace.BottomEditorRowHeight = new System.Windows.GridLength(260);
+        firstWorkspace.IsLowerEditorVisible = false;
         firstWorkspace.ActiveLowerEditorIndex = 1;
         firstWorkspace.EventValueScrollOffset = 0.35;
 
@@ -1313,8 +1313,9 @@ public sealed class DesktopSessionControllerTests
         Assert.Equal(960, firstWorkspace.TimelineTickSpan);
         Assert.Equal(24, firstWorkspace.TimelineFirstLane);
         Assert.Equal(31, firstWorkspace.TimelineLaneHeight);
-        Assert.Equal(7, firstWorkspace.NoteEditorRowHeight.Value);
-        Assert.Equal(2, firstWorkspace.EventEditorRowHeight.Value);
+        Assert.Equal(0, firstWorkspace.BottomEditorRowHeight.Value);
+        firstWorkspace.IsLowerEditorVisible = true;
+        Assert.Equal(260, firstWorkspace.BottomEditorRowHeight.Value);
         Assert.Equal(1, firstWorkspace.ActiveLowerEditorIndex);
         Assert.Equal(0.35, firstWorkspace.EventValueScrollOffset);
         Assert.Same(secondWorkspace, session.OpenInstrument(second.Id));

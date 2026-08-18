@@ -362,7 +362,7 @@ public sealed class ProjectCreationEditCommandsTests
     }
 
     [Fact]
-    public void TemplateCreationAtOccupiedTargetDiscardsNewEventAndKeepsExisting()
+    public void TemplateCreationAtOccupiedTargetReplacesExistingEvent()
     {
         MidoraProject project = new(480);
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
@@ -379,8 +379,9 @@ public sealed class ProjectCreationEditCommandsTests
             7,
             100));
 
-        Assert.Same(existing, Assert.Single(voice.Events));
-        Assert.Equal(20, existing.Value);
+        TemplateEvent created = Assert.Single(voice.Events);
+        Assert.NotSame(existing, created);
+        Assert.Equal(100, created.Value);
         long highWater = project.NextStableId;
         AssertMatchesFull(compilation);
 
@@ -388,7 +389,7 @@ public sealed class ProjectCreationEditCommandsTests
         Assert.Same(existing, Assert.Single(voice.Events));
         Assert.Equal(highWater, project.NextStableId);
         document.Redo();
-        Assert.Same(existing, Assert.Single(voice.Events));
+        Assert.Same(created, Assert.Single(voice.Events));
         Assert.Equal(highWater, project.NextStableId);
         AssertMatchesFull(compilation);
     }

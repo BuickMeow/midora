@@ -5,9 +5,11 @@ namespace Midora.Application;
 
 /// <summary>
 /// Resolves exact timeline-key collisions at the Project edit transaction boundary.
-/// Existing occupants win; when all occupants moved or were created by the same edit,
-/// stable collection order wins. The policy deliberately does not treat duration
-/// overlap at different start ticks as a collision.
+/// Logical/Template Notes keep the existing occupant at an exact start-tick/key.
+/// Logical Parameter and Template MIDI points instead keep the last newcomer from
+/// the current edit, so a moved or newly drawn point replaces the former value.
+/// The policy deliberately does not treat duration overlap at different start ticks
+/// as a collision and does not clean unrelated pre-existing damage.
 /// </summary>
 internal static class ExactTimelineCollisionPolicy
 {
@@ -86,6 +88,29 @@ internal static class ExactTimelineCollisionPolicy
             CollisionCandidate[] incumbents = occupants
                 .Where(candidate => baseline.Contains(candidate.Id, group.Key))
                 .ToArray();
+            if (UsesLaterPointEditWins(group.Key.Scope))
+            {
+                CollisionCandidate[] newcomers = occupants
+                    .Where(candidate => !baseline.Contains(candidate.Id, group.Key))
+                    .ToArray();
+                if (newcomers.Length == 0)
+                {
+                    // Do not turn an unrelated pre-existing collision into an
+                    // implicit cleanup edit.
+                    continue;
+                }
+
+                CollisionCandidate pointWinner = newcomers[^1];
+                foreach (CollisionCandidate candidate in occupants)
+                {
+                    if (!ReferenceEquals(candidate, pointWinner))
+                    {
+                        discarded.Add(candidate);
+                    }
+                }
+                continue;
+            }
+
             CollisionCandidate winner = incumbents.Length != 0
                 ? incumbents[0]
                 : occupants[0];
@@ -105,6 +130,10 @@ internal static class ExactTimelineCollisionPolicy
             .ToArray();
         return removals;
     }
+
+    private static bool UsesLaterPointEditWins(CollisionScope scope) =>
+        scope is CollisionScope.LogicalParameterPoint
+            or CollisionScope.TemplateEventPoint;
 
     private static IEnumerable<CollisionCandidate> EnumerateCandidates(CollisionScopeSet scopes)
     {

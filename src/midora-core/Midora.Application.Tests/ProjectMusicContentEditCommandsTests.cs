@@ -155,7 +155,10 @@ public sealed class ProjectMusicContentEditCommandsTests
             480,
             7,
             CurveInterpolation.Linear));
-        Assert.Same(blocker, Assert.Single(lane.Points));
+        CurvePoint collisionReplacement = Assert.Single(lane.Points);
+        Assert.Equal(point.Id, collisionReplacement.Id);
+        Assert.Equal((480L, 7d), (collisionReplacement.Tick, collisionReplacement.Value));
+        Assert.DoesNotContain(blocker, lane.Points);
         document.Undo();
         Assert.Equal([point, blocker], lane.Points);
         Assert.Throws<ArgumentOutOfRangeException>(() => document.Execute(

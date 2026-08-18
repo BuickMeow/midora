@@ -212,6 +212,16 @@ Stop 立即停止设备输出并禁止开始未来渲染；已完整 block 可�
 
 2026-08-14 启动修正：默认 `[0, effective Project end)` 播放复用当前完整 canonical 结果的事件、分配、诊断和 fingerprint，只生成 `Playback` consumer context，不能重复执行同一 revision 的语义编译。sample-domain 计划按 `(canonical fingerprint, start, end, actual sample rate)` 缓存在 Project-open session，并在 Project 打开及后台编译发布后由独立任务预热；投影本身不持有 session 编辑锁，过期 generation 不得发布。设备仍在正式启动前重新 Probe，若实际采样率改变则只接受对应 rate 的计划。canonical→sample 投影使用单次 source/Port/Unit 分组，不得按 16 Port、16 Channel 对完整极端事件流反复扫描；这只缩短 Preparing，不截断远处 canonical 事件，不改变滚动 PCM 的 Startup/High 水位、缓存 key、MDAP 或可听结果。
 
+## 10.2 ADR-AUDIO-011：持久 Worker 响应发布代际与纯音高试听直接命令
+
+决定：共享音频控制 ABI v7 在 header offset 104 增加单调 `PersistentResponseGeneration`，reserved 区从 offset 112 开始。Worker 必须先关闭临时响应写句柄并将完整 payload 原子发布为 `response-<generation>.maws`，随后才在 seqlock 状态快照中发布该 generation；Desktop 只在观察到相等 generation 后读取一次不可变 payload。这样删除了“看到文件名即尝试打开”造成的跨进程 writer/reader sharing violation，而不是用重试隐藏竞争。未来 generation、已发布但缺失 payload、非单调 generation 和协议版本不匹配全部受控失败。
+
+首次 pure pitch audition 仍使用 generation 文件请求完成输出设备配置。输出已经配置后，pitch/value 更新和结束改用有界、固定 16-byte command record 的 `PitchAuditionUpdate` / `PitchAuditionEnd`，不得创建 response 文件或同步阻塞 WPF Pointer Move。直接命令仍按 FIFO 与后续 Probe/Playback 排序；Probe/Playback 销毁 audition output 后双方清除配置状态。ring 满、Worker 退出或原生命令失败是显式故障，不静默丢弃或重试。
+
+Requirement trace：输入是持久 Worker 的 generation 请求、共享控制状态及纯音高试听手势；输出是不可变响应或有序瞬时试听命令。边界是正式播放/held Preview 继续消费 canonical，首次设备配置仍同步，热更新只在已配置的专用试听流上执行。故障诊断保留完整 Worker stderr/响应文本；所有 generation、响应门、试听活动标志和命令只属于运行时，不写入 Project、Undo/Redo、缓存或 `.midora`。明确非目标是改变 Event Instrument、Mapping、Program/Bank/CC、正式预览或 MIDI/音频导出语义。
+
+SRS §13.30 仍写明 ABI v4；现行 v6 已由 ADR-MON-005 实施，本决定把当前 ABI 提升为 v7 并记录差异，不修改 SRS 原文。自动验证必须覆盖 v7-only open、响应 generation 初值/单调性/损坏字段拒绝、直接试听命令 round-trip、共享状态零分配，以及正式 Native AOT 环境下连续 pitch update/end 与响应文件竞争压力。
+
 ## 11. 验证门
 
 - 相同事件计划以不同工作 block（含非 2 次幂）渲染必须逐 sample 相同。

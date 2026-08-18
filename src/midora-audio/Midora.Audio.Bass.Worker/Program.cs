@@ -169,7 +169,8 @@ public static class Program
         using PersistentBassMidiSoundFont soundFont = new(soundFontPath);
         using PersistentPitchAudition audition = new(soundFont);
         control.PublishState(AudioWorkerState.Created);
-        PersistentAudioWorkerExchange.WriteResponse(
+        PublishPersistentResponse(
+            control,
             exchangeDirectory,
             0,
             new(true, 0, 0, string.Empty));
@@ -189,6 +190,31 @@ public static class Program
                 continue;
             }
 
+            if (command.Kind is AudioWorkerControlCommandKind.PitchAuditionUpdate
+                or AudioWorkerControlCommandKind.PitchAuditionEnd)
+            {
+                try
+                {
+                    if (command.Kind == AudioWorkerControlCommandKind.PitchAuditionUpdate)
+                    {
+                        int pitch = (int)(command.Payload & 0xff);
+                        int velocity = (int)((command.Payload >> 8) & 0xff);
+                        audition.Update(pitch, velocity);
+                    }
+                    else
+                    {
+                        audition.End();
+                    }
+                }
+                catch (Exception exception)
+                {
+                    global::System.Console.Error.WriteLine(exception);
+                    control.PublishFault(1);
+                    return 1;
+                }
+                continue;
+            }
+
             long generation = command.Payload;
             string[] request;
             try
@@ -199,7 +225,8 @@ public static class Program
             }
             catch (Exception exception)
             {
-                PersistentAudioWorkerExchange.WriteResponse(
+                PublishPersistentResponse(
+                    control,
                     exchangeDirectory,
                     generation,
                     new(false, 0, 0, exception.ToString()));
@@ -208,7 +235,8 @@ public static class Program
 
             if (command.Kind == AudioWorkerControlCommandKind.PersistentShutdown)
             {
-                PersistentAudioWorkerExchange.WriteResponse(
+                PublishPersistentResponse(
+                    control,
                     exchangeDirectory,
                     generation,
                     new(true, 0, 0, string.Empty));
@@ -220,27 +248,28 @@ public static class Program
                 switch (command.Kind)
                 {
                     case AudioWorkerControlCommandKind.PersistentProbe:
-                    {
-                        if (request.Length != 2)
                         {
-                            throw new InvalidDataException(
-                                "The persistent audio probe request is invalid.");
+                            if (request.Length != 2)
+                            {
+                                throw new InvalidDataException(
+                                    "The persistent audio probe request is invalid.");
+                            }
+                            audition.SuspendForFormalPlayback();
+                            string[] probeArgs =
+                                ["probe", control.Name, nativeDirectory, request[0], request[1]];
+                            _ = RunProbe(probeArgs, control, librariesLoaded: true);
+                            AudioWorkerStatus status = control.ReadStatus();
+                            PublishPersistentResponse(
+                                control,
+                                exchangeDirectory,
+                                generation,
+                                new(
+                                    true,
+                                    status.ActualSampleRate,
+                                    status.ActualDeviceBufferFrameCount,
+                                    string.Empty));
+                            break;
                         }
-                        audition.SuspendForFormalPlayback();
-                        string[] probeArgs =
-                            ["probe", control.Name, nativeDirectory, request[0], request[1]];
-                        _ = RunProbe(probeArgs, control, librariesLoaded: true);
-                        AudioWorkerStatus status = control.ReadStatus();
-                        PersistentAudioWorkerExchange.WriteResponse(
-                            exchangeDirectory,
-                            generation,
-                            new(
-                                true,
-                                status.ActualSampleRate,
-                                status.ActualDeviceBufferFrameCount,
-                                string.Empty));
-                        break;
-                    }
                     case AudioWorkerControlCommandKind.PersistentStartPlayback:
                         if (request.Length != 23
                             || !string.Equals(
@@ -265,7 +294,8 @@ public static class Program
                             control,
                             soundFont,
                             librariesLoaded: true);
-                        PersistentAudioWorkerExchange.WriteResponse(
+                        PublishPersistentResponse(
+                            control,
                             exchangeDirectory,
                             generation,
                             new(true, 0, 0, string.Empty));
@@ -281,7 +311,8 @@ public static class Program
                             ParseInt32(request[1]),
                             ParseInt32(request[2]),
                             ParseInt32(request[3]));
-                        PersistentAudioWorkerExchange.WriteResponse(
+                        PublishPersistentResponse(
+                            control,
                             exchangeDirectory,
                             generation,
                             new(true, 0, 0, string.Empty));
@@ -293,7 +324,8 @@ public static class Program
                                 "The pitch audition NoteOff request is invalid.");
                         }
                         audition.End();
-                        PersistentAudioWorkerExchange.WriteResponse(
+                        PublishPersistentResponse(
+                            control,
                             exchangeDirectory,
                             generation,
                             new(true, 0, 0, string.Empty));
@@ -310,12 +342,23 @@ public static class Program
                     control.PublishFault(1);
                 }
                 global::System.Console.Error.WriteLine(exception);
-                PersistentAudioWorkerExchange.WriteResponse(
+                PublishPersistentResponse(
+                    control,
                     exchangeDirectory,
                     generation,
                     new(false, 0, 0, exception.ToString()));
             }
         }
+    }
+
+    private static void PublishPersistentResponse(
+        SharedAudioWorkerControl control,
+        string exchangeDirectory,
+        long generation,
+        PersistentAudioWorkerResponse response)
+    {
+        PersistentAudioWorkerExchange.WriteResponse(exchangeDirectory, generation, response);
+        control.PublishPersistentResponse(generation);
     }
 
     private static int RunPlayback(
@@ -1587,6 +1630,21 @@ public static class Program
                 throw new ArgumentOutOfRangeException(nameof(pitch));
             }
             EnsureOutput(deviceId, deviceBufferRequestMilliseconds);
+            Update(pitch, velocity);
+        }
+
+        public void Update(int pitch, int velocity)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (pitch is < 0 or > 127 || velocity is < 1 or > 127)
+            {
+                throw new ArgumentOutOfRangeException(nameof(pitch));
+            }
+            if (_streamHandle == 0 || _output is null)
+            {
+                throw new InvalidOperationException(
+                    "The pitch audition output is not initialized.");
+            }
             Submit(NativeBassMidi.MIDI_EVENT_SOUNDOFF, 0, "MIDI_EVENT_SOUNDOFF");
             Submit(
                 NativeBassMidi.MIDI_EVENT_NOTE,

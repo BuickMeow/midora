@@ -45,6 +45,9 @@
 - 决定：所有自绘表面复用明确状态机：Idle、Pointing、Dragging、Marquee、Drawing、Resizing、Panning、ContextTarget；Pointer capture、Escape、deactivation 和 revision 变化都有确定取消路径。
 - 决定：拖动期间只更新 transient preview；Pointer Up 后通过 Application command 做一次原子提交。Snap 以 Primary Selection 计算一个 shared delta。
 - 决定：Segment / Note 的 `Alt` 强制 Move、`Ctrl+Alt` 强制 Copy+Move，以及 Velocity 的 `Alt` 强制轨迹均在 Pointer Down 时解析并冻结；拖动途中修饰键变化不改变操作类型。Alt 不再承担临时绕过 Snap 的语义。
+- 决定：Piano Roll Note 放置、Note Move/Copy-Move 与 Event/Parameter Point Move/Copy-Move 的 `Shift` 固定时间轴语义同样只在 Pointer Down 解析并冻结。Note 放置保持默认 length，Note/Point Move 的 tick delta 固定为零；Event Lane 空白处 `Shift + Left Drag` 只创建起点 tick 的一个 Point，纵向仍可调整 value。既有 `Shift + Right Drag` 水平线继续固定起点 value。
+- 决定：Note 与 Event/Parameter Point 的选择集 Move/Copy-Move/Resize transient preview 显示全部相关选择对象，而不是只显示 Primary。Move 优先复用已缓存 Selection raster 并做一次二维变换；缓存未就绪或 Resize 时，只查询会变换到当前 viewport 的对象并合并为一个冻结 `StreamGeometry`，不得为每个对象建立 WPF `Shape` 或逐项 `Draw*` 热路径。
+- 决定：Logical Parameter Point 的 Ctrl+拖动必须调用独立原子复制命令并分配新稳定 ID；不允许 UI 显示 Copy-Move 预览而 Pointer Up 实际移动原对象。复制结果的同 tick 冲突仍由 ADR-UI-033 的 point later-wins 规则统一处理。
 - 决定：只有 Timeline 已消费 Alt 强制手势时，主窗口才锁存来源 surface，并在对应 Alt KeyUp 的 preview 阶段阻止主菜单访问模式、随后恢复来源焦点；`Alt+F4`、普通 Alt 和窗口失焦不共享该锁存。Draw hover 外轮廓始终属于单对象 transient overlay，不进入或失效 raster cache。
 - 原因：落实 SRS 20.1、20.3～20.5 的一次手势一次 Undo 和无 partial success。
 
@@ -237,9 +240,9 @@
 
 ## ADR-UI-033：选择集变换、精确起点冲突与受限批量表达式
 
-- 决定：普通 Note、Logical Parameter Point 与 SubVoice MIDI Event Point 编辑统一在 `ProjectDocumentSession` 的 prepared-edit 边界处理“同 owner、同精确 target、同 start tick”冲突。编辑前已经占据目标键的对象是 incumbent；新建或移动到该键的 later object 被静默删除。若同一手势内多个 newcomer 相撞，则按 owner 集合的稳定顺序保留第一个。不同 start tick 的 Note gate overlap 不属于该规则，继续由 Event Instrument 配置和 Compiler 诊断决定。
+- 决定：普通 Note、Logical Parameter Point 与 SubVoice MIDI Event Point 编辑统一在 `ProjectDocumentSession` 的 prepared-edit 边界处理“同 owner、同精确 target、同 start tick”冲突，但按对象类型采用不同策略。Logical/Template Note 保持 incumbent 优先：新建或移动到既有精确 tick+key 的 later Note 静默删除，同一手势的多个 newcomer 按 owner 稳定顺序保留第一个。Logical Parameter Point 与 SubVoice MIDI Event Point 改为本次编辑优先：只要当前手势产生 newcomer，就删除目标 tick 的 incumbent，并在多个 newcomer 中保留 owner 稳定顺序的最后一个。不同 start tick 的 Note gate overlap 不属于该规则，继续由 Event Instrument 配置和 Compiler 诊断决定。
 - 性能边界：prepared edit 必须显式登记实际触及的 Segment、Logical Parameter Lane 或 SubVoice；事务层只扫描这些 owner，不得在每次编辑后扫描整个 Project。未被本次编辑造成的既有损坏冲突保持原样，交由现有验证与诊断处理。
-- 明确例外：Horizontal Flip / Scale / Batch Edit 若会令 Segment window、Logical Parameter Point 或 SubVoice MIDI Event Point 重叠，则在 Apply 前整批拒绝。Note transform 即使形成 gate overlap也不拒绝；精确同 tick + key 仍应用 newcomer 删除规则。Segment Join 依照同一规则保留左侧/先到对象。
+- 变换边界：Horizontal Flip / Scale / Batch Edit 与直接拖动使用相同的精确冲突策略；Logical Parameter Point 与 SubVoice MIDI Event Point 不因同 tick 重叠而拒绝整批操作，而是在 Apply 后保留本次编辑中 owner 稳定顺序最后的 newcomer。Segment window 重叠仍在 Apply 前整批拒绝。Note transform 即使形成 gate overlap 也不拒绝；精确同 tick + key 仍应用 newcomer 删除规则。Segment Join 依照同一规则保留左侧/先到对象。
 - Segment 左边缘：向左 resize 在 `ContentOffsetTick` 足够时只改变 Segment window；若继续向左会令 offset 小于零，则把 Segment 内全部 Note 和 Parameter Point 同量右移，使暴露与未暴露内容的 Project 绝对位置不变。Project tick 0、同轨 Segment 不重叠和至少 1 tick 长度仍是硬边界。
 - 选择集操作：Segment、Logical/Template Note、Logical Parameter Point 与 SubVoice MIDI Event Point 的 Flip、Scale、Transpose 与 Batch Edit 均由 Application 原子命令完成。Segment 内容操作只处理与当前暴露 `[ContentOffsetTick, ContentEndTick)` 相交的对象；隐藏对象不被变换。删除越界 Note 仍可 Undo。
 - 表达式：Batch Edit 的 `=` 语法使用独立 collectible ALC 编译，但只允许数值/布尔运算、条件表达式、double cast 和 `System.Math`；拒绝语句、赋值、对象创建、任意 API 与循环。`v1/p1/k1/g1/t1` 依赖以静态 DAG 排序，直接或间接环均在提交前拒绝；一次整批求值共享 10 秒上限。所有整数结果采用 `AwayFromZero`，目标字段再执行明确的 clamp/delete 规则。
@@ -251,6 +254,7 @@
 
 - 决定：Segment Logical Parameter 与 SubVoice MIDI Event 的自由轨迹和右键直线不再按屏幕像素密度产生事件点。MouseUp 时将 transient 指针轨迹投影到有效 Operation Grid：Snap 关闭时步长严格为 `1 tick`；Snap 开启时逐个使用当前 Operation Subdivision，`Bar` 依照 Project Time Signature Map 枚举实际小节边界。轨迹反向经过同一 tick 时以后经过的值覆盖先前值。
 - 决定：`Shift + Right Drag` 在 Pointer Down 时冻结为水平直线手势，纵值固定为起点值，横向范围仍由起终点和有效 Operation Grid 决定。普通 Right Drag 继续执行起终点线性插值；Left Drag 继续执行分段自由轨迹。所有路线只在 MouseUp 提交一组 point upsert 和一个 Undo。
+- 决定：Event/Parameter Lane 工具栏在 Snap 左侧显示当前可提交坐标 `(tick, value)`；tick 使用当前 Operation Grid，value 使用 Lane 的正式显示范围与整数/连续格式。`Shift + Right Drag` 期间 value 始终显示 Pointer Down 冻结的水平线常量；`Shift + Left Drag` 期间 tick 始终显示 Pointer Down 冻结的单点 tick。
 - 决定：焦点位于支持选择集变换的 TimelineSurface 且不在文本编辑、Popup 或 Menu 时，`Ctrl+Q`、`Ctrl+T`、`Ctrl+E` 分别调用现有 Scale、Transpose、Batch Edit 命令。命令上下文在按键发生时从当前焦点 surface 与稳定 ID selection 重新解析，不复用上一次右键菜单目标；不支持的对象类型或空选择执行 No Action。
 - 依据：产品所有者于 2026-08-18 明确要求逐 Tick/Snap Tick 轨迹、水平线修饰手势和三项快捷键。快捷键决定明确替代 SRS 20.12.1/20.12.13 中未登记且明确排除 `Ctrl+Q`、`Ctrl+E` 的旧初版表；SRS 原文未修改。
 - 边界：指针轨迹、快捷键目标和 Dialog draft 都是 transient/session UI state。正式点仍通过 Application command 进入 Project，编译与消费者链路不变；本决定不增加 Curve 对象、不改变 `.midora` 格式或 canonical 语义。
@@ -261,8 +265,25 @@
 - 坐标：横向 tile 使用当前精确 `devicePixelsPerTick`，纵向 tile 使用当前精确 `devicePixelsPerNormalizedValue`；两者的 IEEE 754 bit pattern 都进入 cache key。普通点固定为半径 `4 DIP`，Selection ring 固定为半径 `6 DIP`，先换算到设备像素再栅格化。稳定画面按 1:1 设备像素组合，时间缩放和值轴缩放不得改变 point glyph 的最终视觉尺寸。
 - 缓存：点内容使用当前不可变 snapshot 的内容指纹，Selection/Primary revision 同时进入 tile generation；因此大选区也不得退回逐点 WPF overlay。编辑或 Selection 改变后，只有当前可视与预取 tile 在后台重建；相同比例下新集合未完整前可沿用上一完整 frame，完成后原子切换。
 - 即时层：hover、当前单点拖动、创建预览、自由轨迹/直线和 marquee 保持小规模 transient vector overlay。命中、框选与最终 edit 继续读取原始稳定 ID、tick/value 和 interval index，bitmap 不参与 hit test，也不成为 Project 数据。
+- 选择集拖动：Point Move/Copy-Move 使用独立 `EventPointSelection` 透明 tile，仅栅格化当前稳定 ID Selection，并在手势中以共享 tick/value delta 做一次屏幕变换。未完成 tile 不阻塞 UI，暂时回退为“viewport 反查 + 单个冻结 StreamGeometry”；不得恢复逐 Point WPF 绘制。Note Move 同理优先平移既有 Piano Selection tile；Note Resize 因各对象最小 1 tick 饱和不同，使用可视候选合并几何。
 - 失败与边界：tile 失败沿用 ADR-UI-018 的 runtime trace/丢弃语义，不阻塞输入、不回退逐点绘制。缓存只属于 UI session，不写入 `.midora`、Undo/Redo、编译结果或 Application Preferences；本决定不改变 Logical Parameter/MIDI Event 语义、插值、持久化或 canonical consumer。
 - 依据：产品所有者于 2026-08-18 报告 MIDI Event 与 Logical Parameter 点稍多即出现明显卡顿，并明确要求参照 Velocity 缓存且任何缩放下点尺寸不变。
+
+## ADR-UI-036：世界坐标框选、蓝色目标轮廓与 Copy-Move Selection 冻结
+
+- 决定：Select marquee 的 Pointer Down 锚点以实际 tick + lane/normalized value 保存，不保存成随 viewport 解释的屏幕矩形。滚轮或其他会话内 viewport 变化后，起点重新投影，终点从当前 pointer 与当前 viewport 求值；显示与 MouseUp 查询调用同一范围解析。
+- 决定：Note Move/Copy-Move 的完整 Selection 目标预览使用独立透明 `PianoDragPreview` tile，只绘制 `Brush.Info` 蓝色实线外轮廓；Resize fallback 的合并 geometry 使用同一 Pen。源 Note 继续由普通/Selection tile 绘制，不能把目标预览画成已提交 Note。
+- 决定：已选对象上的 Ctrl Pointer Down 不立即 Toggle Selection。若手势未越过 3 DIP 阈值，Pointer Up 才执行一次 Ctrl Click Toggle；若进入 Copy-Move，则整个手势保持原 Selection revision，直接平移相同的 selection-only raster。该规则消除大 Point Selection 在复制拖动开始时的两次全层失效。
+- 决定：Piano Roll lane height 下限为 4 DIP。128 个 MIDI lane 仍是硬边界，额外可视高度显示空白。
+- 性能边界：Note 的横/纵向选择集预览都必须是 tile 共享变换或单一合并 geometry。纵向变调试听走持久 Worker 的非阻塞直接命令，不允许 Pointer Move 同步等待 response 文件；音频协议失败仍显式报告，不能静默丢弃。
+- 归属：marquee anchor、deferred Ctrl click、drag-preview tile、试听活动状态和 viewport 均为 session/runtime state，不进入 Project、Undo/Redo、canonical、缓存持久化或 `.midora`。本决定不改变最终编辑命令、碰撞规则或可听映射。
+
+## ADR-UI-037：SubVoice 下方事件编辑器与世界坐标选框裁剪
+
+- 决定：SubVoice Timeline 与 Segment Timeline 使用同一垂直布局顺序：主钢琴卷帘、共享水平 overview/scroll、splitter、下方 Lane 编辑器。SubVoice 工具栏左侧提供 `Lanes` toggle；关闭时只折叠下方 Velocity/Event Lane 编辑器，水平导航仍保持可用。
+- 决定：SubVoice 下方编辑器由旧的 Star 比例改为 Workspace-local pixel height，默认 `190 DIP`，范围与 Segment 一致为 `110..520 DIP`。拖动 splitter 的目标值在 ViewModel 边界 clamp；toggle 只改变 session 可见性，恢复时继续使用此前高度。
+- 决定：Select marquee 保持未裁剪的世界坐标投影矩形；绘制时对 lane content viewport 执行 clip。不得先把矩形与 viewport 求交后再绘制完整边框，因为这种做法会在实际边缘已经出界时，于 viewport 边缘制造一条假的虚线边界。
+- 归属：下方编辑器可见性、高度、当前 Lane tab、timeline viewport 与 marquee 均为每个 Workspace 的 session UI state，不进入 Project、Undo/Redo、canonical、编译、输出或 `.midora`。本决定不改变上回已确定的世界坐标框选范围和 MouseUp 命中结果。
 
 ## 小决定审计
 

@@ -366,14 +366,15 @@ public sealed class ProjectBatchTimelineEditCommandsTests
             tickDelta: 50));
         Assert.Equal([80L, 100L], lane.Points.Select(value => value.Tick));
         Assert.Contains(lane.Points, value => value.Id == first.Id);
-        Assert.DoesNotContain(lane.Points, value => value.Id == second.Id);
-        Assert.Contains(lane.Points, value => value.Id == unselected.Id);
+        Assert.Contains(lane.Points, value => value.Id == second.Id);
+        Assert.DoesNotContain(lane.Points, value => value.Id == unselected.Id);
         Assert.Equal(nextStableId, project.NextStableId);
         Assert.Equal(3, document.History.Count);
 
         document.Undo();
         Assert.Equal([30L, 50L, 100L], lane.Points.Select(value => value.Tick));
         Assert.Contains(lane.Points, value => value.Id == second.Id);
+        Assert.Contains(lane.Points, value => value.Id == unselected.Id);
 
         document.Undo();
         Assert.Equal([2d, 4d, 6d], lane.Points.Select(value => value.Value));
@@ -861,6 +862,58 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         Assert.Equal([10L, 30L], lane.Points.Select(value => value.Tick));
         Assert.Equal([2d, 4d], lane.Points.Select(value => value.Value));
         Assert.False(document.IsModified);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void LogicalParameterPointCopyDragIsAtomicAndRedoReusesCopies()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument" };
+        LogicalParameterDefinition parameter = new(project)
+        {
+            Name = "Amount",
+            Type = LogicalParameterType.Double,
+            Minimum = 0,
+            Maximum = 10
+        };
+        instrument.LogicalParameters.Add(parameter);
+        project.EventInstruments.Add(instrument);
+        LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
+        Segment segment = new(project) { LengthTicks = 480 };
+        LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
+        CurvePoint first = new(project, 10, 2);
+        CurvePoint second = new(project, 30, 4);
+        lane.Points.AddRange([first, second]);
+        segment.ParameterLanes.Add(lane);
+        track.Segments.Add(segment);
+        project.Tracks.Add(track);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+        long firstCopyId = project.NextStableId;
+
+        document.Execute(ProjectDomainEditCommands.DuplicateLogicalParameterPoints(
+            segment.Id,
+            lane.Id,
+            [second.Id, first.Id],
+            tickDelta: 100,
+            valueDelta: 1.5));
+
+        CurvePoint[] copies = lane.Points
+            .Where(value => value.Id.Value >= firstCopyId)
+            .OrderBy(value => value.Tick)
+            .ToArray();
+        Assert.Equal([(110L, 3.5), (130L, 5.5)],
+            copies.Select(value => (value.Tick, value.Value)).ToArray());
+        Assert.Equal([first, second], lane.Points.Take(2));
+        Assert.Single(document.History);
+        AssertMatchesFull(compilation);
+
+        document.Undo();
+        Assert.Equal([first, second], lane.Points);
+        Assert.False(document.IsModified);
+        document.Redo();
+        Assert.Equal(copies, lane.Points.Skip(2));
         AssertMatchesFull(compilation);
     }
 

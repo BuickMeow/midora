@@ -185,6 +185,26 @@ public sealed class TimelineEditorSettingsTests
     }
 
     [Fact]
+    public void InstrumentLowerEditorUsesTheSamePixelBoundsAsSegment()
+    {
+        InstrumentWorkspaceViewModel workspace = new(new MidoraId(1), "Instrument");
+
+        workspace.BottomEditorRowHeight = new System.Windows.GridLength(10);
+        Assert.Equal(TimelineLowerEditorLayout.MinimumHeight, workspace.BottomEditorRowHeight.Value);
+        Assert.Equal(TimelineLowerEditorLayout.MinimumHeight, workspace.BottomEditorMinimumHeight);
+
+        workspace.BottomEditorRowHeight = new System.Windows.GridLength(800);
+        Assert.Equal(TimelineLowerEditorLayout.MaximumHeight, workspace.BottomEditorRowHeight.Value);
+        Assert.Equal(TimelineLowerEditorLayout.MaximumHeight, workspace.BottomEditorMaximumHeight);
+
+        workspace.IsLowerEditorVisible = false;
+        Assert.Equal(0, workspace.BottomEditorRowHeight.Value);
+        Assert.Equal(0, workspace.BottomEditorMinimumHeight);
+        workspace.IsLowerEditorVisible = true;
+        Assert.Equal(TimelineLowerEditorLayout.MaximumHeight, workspace.BottomEditorRowHeight.Value);
+    }
+
+    [Fact]
     public void TimelineToolModeAlwaysExposesExactlyOneActiveTool()
     {
         TimelineWorkspaceViewModel workspace = new(

@@ -86,6 +86,29 @@
 - Timeline context menus expose `Deselect All` for the Workspace and `Invert Selection` for all hit-testable stable IDs in the context surface snapshot.
 - SubVoice Note Piano Roll binds the same marquee completion route, Edit Cursor, active range and blue-gray piano Note palette as Segment Piano Roll. Hit testing remains stable-ID/interval based and `TemplateNote` edits remain domain commands.
 
+### 3.6 Selection-set drag preview and Event Lane pointer readout (2026-08-18)
+
+- Note 与 Event/Parameter Point 的 Move/Copy-Move/Note Resize 在拖动期间显示全部相关 Selection 的目标位置；Pointer Up 前不修改 Project，仍只提交一个正式命令和一个 Undo。
+- Logical Parameter Point 的 Ctrl+拖动使用独立的原子复制命令创建新稳定 ID，不能只显示复制预览却在提交时移动原对象；同 tick 结果继续交给统一 later-wins point collision policy。
+- Note Move 优先把已完成的 Piano Selection tile 作为一个缓存图层做共享 tick/lane 平移。Event/Parameter Point Move 使用独立 selection-only point tile 做共享 tick/value 平移。缓存未完成或 Note Resize 时，只通过 interval index 查询变换后会落入当前 viewport 的对象，并把全部轮廓合并为一个冻结 `StreamGeometry`；禁止逐对象 WPF `Shape`、Binding 或 `DrawRectangle/DrawEllipse` 热路径。
+- `Shift` 时间锁定在 Pointer Down 冻结：Note 放置保持默认 length，Note 与 Point Move/Copy-Move 的 tick delta 为零；Event Lane 空白 `Shift + Left Drag` 只生成一个 tick 的 Point。`Shift + Right Drag` 继续生成水平直线并冻结 value。
+- Event/Parameter Lane 的 `(t, y)` 读数属于 transient UI state。tick 显示当前 Operation Grid 的目标 tick，y 映射到当前正式显示值域；水平线手势期间 y 固定为起点常量。该读数、预览 geometry/tile 和修饰键锁存均不进入 Project、Undo/Redo、编译或持久化。
+
+### 3.7 Semantic marquee、可辨识拖动预览与交互热路径（2026-08-18）
+
+- Select marquee 在 Pointer Down 时冻结实际 tick、MIDI lane 或 normalized event value；显示矩形和最终查询每帧都把该世界坐标锚点投影到当前 viewport。滚轮改变 `FirstLane` / value viewport 后，起点不得跟随旧屏幕像素漂移，终点使用当前 pointer 在新 viewport 下对应的实际 tick/lane/value。
+- Note Move/Copy-Move 的 selection-only tile 使用透明填充和 `Brush.Info` 蓝色 1 px 实线轮廓，与 Note Resize 的合并 geometry 共用同一视觉 token；原始 Note 层保持不变，以便明确区分源对象和目标预览。
+- 已选对象上的 Ctrl Pointer Down 先冻结 Selection revision。只有未越过拖动阈值的 Ctrl Click 才在 Pointer Up 执行 Toggle；一旦进入 Copy-Move，Selection 不做 remove/add 往返，也不触发两次大 Selection tile generation。普通 Move 与 Copy-Move 使用同一 selection-only point/note tile 路线。
+- Piano Roll 纵向最小 lane height 从 8 DIP 调整为 4 DIP；超过 128 键所需高度的剩余区域继续为空白，MIDI key 仍严格 clamp 到 `0..127`。
+- Note 纵向拖动的纯音高试听热更新不得等待 generation 响应文件；其运行时协议详见 `Midora-Persistent-Audio-Worker-Event-Lanes-and-Pitch-Audition-Design.md` §7。该优化不把音频状态写进 UI raster cache，也不改变 Project edit 提交时机。
+
+### 3.8 SubVoice Lane 布局与选框视觉裁剪（2026-08-18）
+
+- SubVoice 工具栏的 `Lanes` toggle 仅控制下方 Velocity/Event Lane 区域；水平 overview/scroll 固定位于 Piano Roll 与下方 Lane 区域之间，关闭 Lane 后仍可导航时间视口。
+- SubVoice Lane 高度与 Segment 共用 `110..520 DIP` pixel clamp，默认 `190 DIP`。高度和可见性是 Instrument Workspace-local session state，切换其他 Workspace 后不得串用，也不得持久化到 Project。
+- Marquee 的语义矩形不能先 `Intersect` 成 viewport 矩形后再描边。保留实际投影边界并在 DrawingContext 上施加 lane-content clip，使出界的真实边缘不可见，同时避免在 viewport 顶/底/左右制造合成边框。
+- 本节只改变布局和 transient 绘制。框选最终使用的 tick/lane/value 范围、Selection 集合运算、tile cache、正式 Project edit 和消费者链路均不变。
+
 ## 4. 验证门
 
 1. `TestProject.midora` 的 Arrangement 稳态绘制不枚举两个极端 Segment 的 43,008 个 Note，只绘制两个已缓存 preview bitmap。
@@ -105,3 +128,13 @@
 15. 高缩放下，一个 tick 的后半段仍命中包含该屏幕位置的左侧半开区间对象；不得因最近 tick 四舍五入而提前命中右侧对象或空白。
 16. Ctrl/Alt/Ctrl+Alt marquee 分别执行 Add/Remove/Toggle 集合运算；无修饰键的有效框选执行 Replace，即使结果为空也清空原选择。短点击不清空选择。
 17. `Deselect All` 清空当前 Workspace Selection；`Invert Selection` Toggle 当前右键 surface 的全部可命中对象且保留其他 scope 的选择。
+18. 大 Selection 的 Move/Copy-Move 预览不得逐对象发出 WPF drawing primitive；已缓存 Selection tile 可用时每层只做共享二维变换，fallback/Resize 每帧最多提交一个合并 geometry。
+19. `Shift` 在 Pointer Down 后冻结时间锁定：Note 创建不改 length，Note/Point Move 不改 tick；Event Lane `Shift + Left Drag` 只提交一个 Point，`Shift + Right Drag` 的 `(t, y)` 读数 y 始终等于起点常量。
+20. Logical/Template Note 的精确 tick+key 冲突仍删除 newcomer；Logical Parameter/SubVoice MIDI Point 的同 target+tick 冲突改为 newcomer 覆盖 incumbent，且 Undo/Redo 恢复各自原对象和值。
+21. 框选期间滚动 lane/value viewport 后，Pointer Down 的实际 tick/lane/value 保持不变；终点按当前 pointer 在新 viewport 下重新换算，预览矩形与 MouseUp 查询必须一致。
+22. Note Move/Copy-Move 目标只显示蓝色实线轮廓；透明内部不得遮盖或伪装成已提交 Note，跨 tile 边界不得增加伪边框。
+23. 已选 Point/Note 的 Ctrl Copy-Move 从 Pointer Down 到 MouseUp 不改变 Selection revision；未形成拖动的 Ctrl Click 仍只 Toggle 一次。
+24. 已配置音高试听流上的每次 pitch 变化不得同步读取/写入 `response-*.maws`；纵向拖动 UI 成本不随跨进程文件 I/O 延迟增长。
+25. Piano Roll lane height 可缩小到 4 DIP；任意 viewport 高度仍不得生成 key `<0` 或 `>127`。
+26. SubVoice 的水平 overview/scroll 必须位于 Piano Roll 与下方 Lane 编辑器之间；`Lanes` 关闭后 Lane 行高度为 0，重新开启时恢复此前已 clamp 的 `110..520 DIP` 高度。
+27. 框选实际上边界/下边界滚出 lane viewport 后，相应虚线不得重新出现在 viewport 边缘；滚回后边界位置必须仍由原 tick/lane/value 投影得到，最终 Selection 结果不变。

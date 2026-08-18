@@ -36,7 +36,9 @@ public enum AudioWorkerControlCommandKind : byte
     PersistentStartPlayback,
     PitchAuditionNoteOn,
     PitchAuditionNoteOff,
-    PersistentShutdown
+    PersistentShutdown,
+    PitchAuditionUpdate,
+    PitchAuditionEnd
 }
 
 public readonly record struct AudioWorkerControlCommand(
@@ -55,7 +57,8 @@ public readonly record struct AudioWorkerStatus(
     long RenderingAllocatedBytes,
     int FaultCode,
     long HeldPreviewPlanGeneration,
-    long PersistentPlaybackAcceptedGeneration);
+    long PersistentPlaybackAcceptedGeneration,
+    long PersistentResponseGeneration);
 
 /// <summary>
 /// Fixed-version, bounded, allocation-free runtime IPC between the UI process and the audio worker.
@@ -65,7 +68,7 @@ public readonly record struct AudioWorkerStatus(
 [SupportedOSPlatform("windows")]
 public sealed unsafe class SharedAudioWorkerControl : IDisposable
 {
-    public const int ProtocolVersion = 6;
+    public const int ProtocolVersion = 7;
     public const int CommandCapacity = 1_024;
     public const int MaximumStatusReadAttempts = 1_024;
 
@@ -90,7 +93,8 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
     private const int CommandWritePositionOffset = 80;
     private const int HeldPreviewPlanGenerationOffset = 88;
     private const int PersistentPlaybackAcceptedGenerationOffset = 96;
-    private const int HeaderReservedOffset = 104;
+    private const int PersistentResponseGenerationOffset = 104;
+    private const int HeaderReservedOffset = 112;
 
     private readonly MemoryMappedFile _mapping;
     private readonly MemoryMappedViewAccessor _view;
@@ -132,6 +136,7 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
             result.Int32At(MagicOffset) = Magic;
             result.Int32At(VersionOffset) = ProtocolVersion;
             result.Int32At(CapacityOffset) = CommandCapacity;
+            result.Int64At(PersistentResponseGenerationOffset) = -1;
             return result;
         }
         catch
@@ -209,7 +214,8 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
                 Volatile.Read(ref Int64At(RenderingAllocatedBytesOffset)),
                 Volatile.Read(ref Int32At(FaultCodeOffset)),
                 Volatile.Read(ref Int64At(HeldPreviewPlanGenerationOffset)),
-                Volatile.Read(ref Int64At(PersistentPlaybackAcceptedGenerationOffset)));
+                Volatile.Read(ref Int64At(PersistentPlaybackAcceptedGenerationOffset)),
+                Volatile.Read(ref Int64At(PersistentResponseGenerationOffset)));
             int after = Volatile.Read(ref Int32At(StatusSequenceOffset));
             if (before != after || (after & 1) != 0)
             {
@@ -292,6 +298,24 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
             ref Int64At(PersistentPlaybackAcceptedGenerationOffset),
             generation);
         Volatile.Write(ref Int32At(StateOffset), (int)AudioWorkerState.Preparing);
+        EndStatusPublication(sequence);
+    }
+
+    public void PublishPersistentResponse(long generation)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (generation < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(generation));
+        }
+        long previous = Volatile.Read(ref Int64At(PersistentResponseGenerationOffset));
+        if (generation <= previous)
+        {
+            throw new InvalidOperationException(
+                "Persistent audio worker response generations must increase monotonically.");
+        }
+        int sequence = BeginStatusPublication();
+        Volatile.Write(ref Int64At(PersistentResponseGenerationOffset), generation);
         EndStatusPublication(sequence);
     }
 
@@ -392,6 +416,19 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
 
     public bool TryEnqueuePitchAuditionNoteOff(long generation) =>
         TryEnqueuePersistentCommand(AudioWorkerControlCommandKind.PitchAuditionNoteOff, generation);
+
+    public bool TryEnqueuePitchAuditionUpdate(int pitch, int velocity)
+    {
+        if (pitch is < 0 or > 127 || velocity is < 1 or > 127)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pitch));
+        }
+        long payload = (long)(uint)pitch | ((long)(uint)velocity << 8);
+        return TryEnqueue(new(AudioWorkerControlCommandKind.PitchAuditionUpdate, default, payload));
+    }
+
+    public bool TryEnqueuePitchAuditionEnd() =>
+        TryEnqueue(new(AudioWorkerControlCommandKind.PitchAuditionEnd, default));
 
     public bool TryEnqueuePersistentShutdown(long generation) =>
         TryEnqueuePersistentCommand(AudioWorkerControlCommandKind.PersistentShutdown, generation);
@@ -591,7 +628,9 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
             or AudioWorkerControlCommandKind.PersistentStartPlayback
             or AudioWorkerControlCommandKind.PitchAuditionNoteOn
             or AudioWorkerControlCommandKind.PitchAuditionNoteOff
-            or AudioWorkerControlCommandKind.PersistentShutdown)
+            or AudioWorkerControlCommandKind.PersistentShutdown
+            or AudioWorkerControlCommandKind.PitchAuditionUpdate
+            or AudioWorkerControlCommandKind.PitchAuditionEnd)
         {
             *(long*)(target + 4) = command.Payload;
             return;
@@ -666,6 +705,38 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
                     "The persistent audio worker command payload is invalid.");
             }
             return new(kind, default, generation);
+        }
+
+        if (kind == AudioWorkerControlCommandKind.PitchAuditionUpdate)
+        {
+            long payload = *(long*)(source + 4);
+            int pitch = (int)(payload & 0xff);
+            int velocity = (int)((payload >> 8) & 0xff);
+            if (monitoringKind != 0
+                || zeroBasedPortNumber != 0
+                || sourceEnabled != 0
+                || pitch is < 0 or > 127
+                || velocity is < 1 or > 127
+                || (payload >> 16) != 0)
+            {
+                throw new InvalidDataException(
+                    "The pitch audition update command payload is invalid.");
+            }
+            return new(kind, default, payload);
+        }
+
+        if (kind == AudioWorkerControlCommandKind.PitchAuditionEnd)
+        {
+            long payload = *(long*)(source + 4);
+            if (monitoringKind != 0
+                || zeroBasedPortNumber != 0
+                || sourceEnabled != 0
+                || payload != 0)
+            {
+                throw new InvalidDataException(
+                    "The pitch audition end command payload is invalid.");
+            }
+            return new(kind, default);
         }
 
         if (kind == AudioWorkerControlCommandKind.Stop)
@@ -802,7 +873,8 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         && status.RenderingAllocatedBytes >= 0
         && status.FaultCode >= 0
         && status.HeldPreviewPlanGeneration >= 0
-        && status.PersistentPlaybackAcceptedGeneration >= 0;
+        && status.PersistentPlaybackAcceptedGeneration >= 0
+        && status.PersistentResponseGeneration >= -1;
 
     private static void ValidateState(AudioWorkerState state)
     {

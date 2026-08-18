@@ -17,6 +17,10 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
     private readonly TimeSpan _defaultTimeout;
     private long _nextGeneration;
     private long _activePlaybackGeneration;
+    private bool _pitchAuditionConfigured;
+    private bool _pitchAuditionActive;
+    private string? _pitchAuditionDeviceId;
+    private int _pitchAuditionDeviceBufferRequestMilliseconds;
     private bool _disposed;
 
     public PersistentBassMidiAudioWorkerHost(
@@ -111,6 +115,7 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
                 _control.TryEnqueuePersistentProbe);
             PersistentAudioWorkerResponse response = WaitForResponse(generation, _defaultTimeout);
             CompleteExchange(generation);
+            ResetPitchAuditionConfiguration();
             if (!response.Succeeded)
             {
                 throw new MidoraAudioDeviceException(response.Error);
@@ -129,6 +134,7 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
                 _control.TryEnqueuePersistentStartPlayback);
             _activePlaybackGeneration = generation;
             WaitForPlaybackAcceptance(generation, _defaultTimeout);
+            ResetPitchAuditionConfiguration();
             return generation;
         }
     }
@@ -158,10 +164,7 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
                 return;
             }
             long generation = _activePlaybackGeneration;
-            if (!PersistentAudioWorkerExchange.TryReadResponse(
-                    _ownedDirectory,
-                    generation,
-                    out _)
+            if (_control.ReadStatus().PersistentResponseGeneration < generation
                 && !_control.TryEnqueueStop())
             {
                 throw new InvalidOperationException(
@@ -183,35 +186,76 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(pitch));
         }
-        ExecuteIdleCommand(
-            [
-                deviceId ?? string.Empty,
-                deviceBufferRequestMilliseconds.ToString(CultureInfo.InvariantCulture),
-                pitch.ToString(CultureInfo.InvariantCulture),
-                velocity.ToString(CultureInfo.InvariantCulture)
-            ],
-            _control.TryEnqueuePitchAuditionNoteOn);
-    }
-
-    public void EndPitchAudition() => ExecuteIdleCommand(
-        [],
-        _control.TryEnqueuePitchAuditionNoteOff);
-
-    private void ExecuteIdleCommand(
-        IReadOnlyList<string> arguments,
-        Func<long, bool> enqueue)
-    {
         lock (_sync)
         {
             RequireIdle();
-            long generation = BeginRequest(arguments, enqueue);
+            if (_process.HasExited)
+            {
+                throw WorkerExitedException();
+            }
+            if (_pitchAuditionConfigured
+                && string.Equals(_pitchAuditionDeviceId, deviceId, StringComparison.Ordinal)
+                && _pitchAuditionDeviceBufferRequestMilliseconds
+                    == deviceBufferRequestMilliseconds)
+            {
+                if (!_control.TryEnqueuePitchAuditionUpdate(pitch, velocity))
+                {
+                    throw new InvalidOperationException(
+                        "The persistent audio worker command ring is full while updating pitch audition.");
+                }
+                _pitchAuditionActive = true;
+                return;
+            }
+
+            long generation = BeginRequest(
+                [
+                    deviceId ?? string.Empty,
+                    deviceBufferRequestMilliseconds.ToString(CultureInfo.InvariantCulture),
+                    pitch.ToString(CultureInfo.InvariantCulture),
+                    velocity.ToString(CultureInfo.InvariantCulture)
+                ],
+                _control.TryEnqueuePitchAuditionNoteOn);
             PersistentAudioWorkerResponse response = WaitForResponse(generation, _defaultTimeout);
             CompleteExchange(generation);
             if (!response.Succeeded)
             {
                 throw new MidoraAudioException(response.Error);
             }
+            _pitchAuditionConfigured = true;
+            _pitchAuditionActive = true;
+            _pitchAuditionDeviceId = deviceId;
+            _pitchAuditionDeviceBufferRequestMilliseconds = deviceBufferRequestMilliseconds;
         }
+    }
+
+    public void EndPitchAudition()
+    {
+        lock (_sync)
+        {
+            RequireIdle();
+            if (!_pitchAuditionActive)
+            {
+                return;
+            }
+            if (_process.HasExited)
+            {
+                throw WorkerExitedException();
+            }
+            if (!_control.TryEnqueuePitchAuditionEnd())
+            {
+                throw new InvalidOperationException(
+                    "The persistent audio worker command ring is full while ending pitch audition.");
+            }
+            _pitchAuditionActive = false;
+        }
+    }
+
+    private void ResetPitchAuditionConfiguration()
+    {
+        _pitchAuditionConfigured = false;
+        _pitchAuditionActive = false;
+        _pitchAuditionDeviceId = null;
+        _pitchAuditionDeviceBufferRequestMilliseconds = 0;
     }
 
     private long BeginRequest(IReadOnlyList<string> arguments, Func<long, bool> enqueue)
@@ -236,12 +280,23 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
         long deadline = Environment.TickCount64 + checked((long)Math.Ceiling(timeout.TotalMilliseconds));
         while (true)
         {
-            if (PersistentAudioWorkerExchange.TryReadResponse(
-                _ownedDirectory,
-                generation,
-                out PersistentAudioWorkerResponse response))
+            AudioWorkerStatus status = _control.ReadStatus();
+            if (status.PersistentResponseGeneration == generation)
             {
+                if (!PersistentAudioWorkerExchange.TryReadResponse(
+                        _ownedDirectory,
+                        generation,
+                        out PersistentAudioWorkerResponse response))
+                {
+                    throw new InvalidDataException(
+                        "The persistent audio worker published a response without its immutable payload.");
+                }
                 return response;
+            }
+            if (status.PersistentResponseGeneration > generation)
+            {
+                throw new InvalidDataException(
+                    "The persistent audio worker published a future response generation.");
             }
             if (_process.HasExited)
             {
@@ -270,17 +325,27 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
                 throw new InvalidDataException(
                     "The persistent audio worker acknowledged a future playback generation.");
             }
-            if (PersistentAudioWorkerExchange.TryReadResponse(
-                    _ownedDirectory,
-                    generation,
-                    out PersistentAudioWorkerResponse response))
+            if (status.PersistentResponseGeneration == generation)
             {
+                if (!PersistentAudioWorkerExchange.TryReadResponse(
+                        _ownedDirectory,
+                        generation,
+                        out PersistentAudioWorkerResponse response))
+                {
+                    throw new InvalidDataException(
+                        "The persistent audio worker published a response without its immutable payload.");
+                }
                 _activePlaybackGeneration = 0;
                 CompleteExchange(generation);
                 throw new MidoraAudioException(
                     response.Succeeded
                         ? "The persistent audio worker completed without accepting the playback task."
                         : response.Error);
+            }
+            if (status.PersistentResponseGeneration > generation)
+            {
+                throw new InvalidDataException(
+                    "The persistent audio worker published a future response generation.");
             }
             if (_process.HasExited)
             {

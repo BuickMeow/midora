@@ -53,11 +53,31 @@ public partial class MainWindow : Window
     private Point? _instrumentListDragStart;
     private MidoraId? _instrumentListDragId;
     private int? _trackHeaderContextLane;
+    private MidoraId? _logicalTrackShortcutTrackId;
     private TimelineSurface? _pendingTimelineAltReleaseFocus;
     private bool _synchronizingInstrumentStructureSelection;
     private bool _followPlaybackViewportInteractionActive;
     private CancellationTokenSource? _instrumentLoopCommitDelay;
     private long _nextProjectRuntimeInformationRefresh;
+    private TimelineSelectionOperationContext? _timelineSelectionOperationContext;
+
+    private enum TimelineSelectionObjectKind
+    {
+        Segments,
+        LogicalNotes,
+        LogicalParameterPoints,
+        TemplateNotes,
+        SubVoiceEventPoints
+    }
+
+    private sealed record TimelineSelectionOperationContext(
+        TimelineSelectionObjectKind Kind,
+        MidoraId[] Ids,
+        MidoraId? OwnerId = null,
+        MidoraId? SecondaryId = null,
+        MidiValueTarget? MidiTarget = null,
+        double PointMinimum = 0,
+        double PointMaximum = 127);
 
     public MainWindow()
     {
@@ -956,6 +976,7 @@ public partial class MainWindow : Window
     private void OnWorkspaceTabsSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!ReferenceEquals(e.OriginalSource, WorkspaceTabs)) return;
+        _logicalTrackShortcutTrackId = null;
         SnapMenuItem.IsChecked = GetActiveEditorSettings().SnapEnabled;
         Dispatcher.BeginInvoke(() =>
         {
@@ -1008,9 +1029,18 @@ public partial class MainWindow : Window
     {
         if (sender is not ContextMenu menu || ProjectTree.SelectedItem is not ProjectTreeNode node) return;
         menu.Items.Clear();
-        void Add(string header, RoutedEventHandler handler, string? gesture = null)
+        void Add(
+            string header,
+            RoutedEventHandler handler,
+            string? gesture = null,
+            bool enabled = true)
         {
-            MenuItem item = new() { Header = header, InputGestureText = gesture ?? string.Empty };
+            MenuItem item = new()
+            {
+                Header = header,
+                InputGestureText = gesture ?? string.Empty,
+                IsEnabled = enabled
+            };
             item.Click += handler;
             menu.Items.Add(item);
         }
@@ -1026,11 +1056,21 @@ public partial class MainWindow : Window
                 break;
             case ProjectTreeNodeKind.LogicalTracks:
                 Add("New Logical Track", OnNewTrackClick);
+                Separator();
+                Add(
+                    "Paste Logical Track",
+                    OnPasteTreeLogicalTrackClick,
+                    "Ctrl+V",
+                    CanPasteLogicalTrack());
                 break;
             case ProjectTreeNodeKind.LogicalTrack:
-                Add("Open", OnTreeOpenClick);
                 Add("Rename", OnTreeRenameClick, "F2");
                 Add("Bind Event Instrument…", OnTreeBindInstrumentClick);
+                Separator();
+                Add("Cut", OnCutTreeLogicalTrackClick, "Ctrl+X", _session.CanEditProject);
+                Add("Copy", OnCopyTreeLogicalTrackClick, "Ctrl+C");
+                Add("Paste", OnPasteTreeLogicalTrackClick, "Ctrl+V", CanPasteLogicalTrack());
+                Add("Duplicate", OnDuplicateTreeLogicalTrackClick, "Ctrl+D", _session.CanEditProject);
                 Separator();
                 Add("Move Up", OnTreeMoveUpClick);
                 Add("Move Down", OnTreeMoveDownClick);
@@ -1118,6 +1158,11 @@ public partial class MainWindow : Window
                     Add("Bind Event Instrument…", OnTrackHeaderBindClick, enabled: _session.CanEditProject && hasTrack && _session.Project?.EventInstruments.Count > 0);
                     Add("Unbind", OnTrackHeaderUnbindClick, enabled: _session.CanEditProject && hasTrack && contextTrack.EventInstrumentId is not null);
                     Separator();
+                    Add("Cut", OnTrackHeaderCutClick, "Ctrl+X", _session.CanEditProject && hasTrack);
+                    Add("Copy", OnTrackHeaderCopyClick, "Ctrl+C", hasTrack);
+                    Add("Paste", OnTrackHeaderPasteClick, "Ctrl+V", _session.CanEditProject && CanPasteLogicalTrack());
+                    Add("Duplicate", OnTrackHeaderDuplicateClick, "Ctrl+D", _session.CanEditProject && hasTrack);
+                    Separator();
                     Add("Select All Segments on Track", OnTrackHeaderSelectSegmentsClick, enabled: hasTrack && contextTrack.Segments.Count > 0);
                     Add("Add Track Segments to Selection", OnTrackHeaderAddSegmentsToSelectionClick, enabled: hasTrack && contextTrack.Segments.Count > 0);
                     Separator();
@@ -1172,6 +1217,64 @@ public partial class MainWindow : Window
         Add("Deselect All", OnDeselectAllTimelineObjectsClick, enabled: hasSelection);
         Add("Invert Selection", OnInvertTimelineSelectionClick, enabled: hasInvertibleItems);
         Separator();
+        _timelineSelectionOperationContext = ResolveTimelineSelectionOperationContext(surface);
+        TimelineSelectionOperationContext? operationContext = _timelineSelectionOperationContext;
+        if (operationContext is not null)
+        {
+            bool hasOperationSelection = operationContext.Ids.Length != 0;
+            if (operationContext.Kind == TimelineSelectionObjectKind.Segments)
+            {
+                MenuItem flipHorizontal = new()
+                {
+                    Header = "Flip Horizontal",
+                    IsEnabled = canEdit && hasOperationSelection
+                };
+                MenuItem exposedOnly = new() { Header = "Exposed Content Only" };
+                exposedOnly.Click += OnFlipSegmentsExposedContentHorizontalClick;
+                flipHorizontal.Items.Add(exposedOnly);
+                MenuItem contentAndSegments = new() { Header = "Exposed Content and Segments" };
+                contentAndSegments.Click += OnFlipSegmentsAndContentHorizontalClick;
+                flipHorizontal.Items.Add(contentAndSegments);
+                menu.Items.Add(flipHorizontal);
+            }
+            else
+            {
+                Add(
+                    "Flip Horizontal",
+                    OnFlipSelectionHorizontalClick,
+                    enabled: canEdit && hasOperationSelection);
+            }
+            if (operationContext.Kind is TimelineSelectionObjectKind.Segments
+                or TimelineSelectionObjectKind.LogicalNotes
+                or TimelineSelectionObjectKind.TemplateNotes)
+            {
+                Add(
+                    "Flip Vertical",
+                    OnFlipSelectionVerticalClick,
+                    enabled: canEdit && hasOperationSelection);
+            }
+            Add(
+                "Scale…",
+                OnScaleSelectionClick,
+                "Ctrl+Q",
+                enabled: canEdit && hasOperationSelection);
+            if (operationContext.Kind is TimelineSelectionObjectKind.Segments
+                or TimelineSelectionObjectKind.LogicalNotes
+                or TimelineSelectionObjectKind.TemplateNotes)
+            {
+                Add(
+                    "Transpose…",
+                    OnTransposeSelectionClick,
+                    "Ctrl+T",
+                    enabled: canEdit && hasOperationSelection);
+            }
+            Add(
+                "Batch Edit…",
+                OnBatchEditSelectionClick,
+                "Ctrl+E",
+                enabled: canEdit && hasOperationSelection);
+            Separator();
+        }
         Add("Set Time Range from Object Selection", OnSetTimeRangeFromObjectsClick);
         Add("Select Objects in Time Range", OnSelectObjectsInTimeRangeClick);
         Add("Clear Time Range", OnClearTimeRangeClick);
@@ -1666,6 +1769,164 @@ public partial class MainWindow : Window
         }
         RunSynchronous("Duplicate Event Instrument", () => _session.Execute(
             ProjectDomainEditCommands.DuplicateEventInstrument(instrumentId)));
+    }
+
+    private void OnCutTreeLogicalTrackClick(object sender, RoutedEventArgs e) =>
+        CutOrCopySelectedLogicalTrack(cut: true, requireTreeSelection: true);
+
+    private void OnCopyTreeLogicalTrackClick(object sender, RoutedEventArgs e) =>
+        CutOrCopySelectedLogicalTrack(cut: false, requireTreeSelection: true);
+
+    private void OnPasteTreeLogicalTrackClick(object sender, RoutedEventArgs e) =>
+        PasteLogicalTrackClipboard(ResolveLogicalTrackPasteIndex(preferTreeSelection: true));
+
+    private void OnDuplicateTreeLogicalTrackClick(object sender, RoutedEventArgs e)
+    {
+        if (ProjectTree.SelectedItem is not ProjectTreeNode
+            { Kind: ProjectTreeNodeKind.LogicalTrack, ObjectId: MidoraId trackId })
+        {
+            return;
+        }
+        RunSynchronous("Duplicate Logical Track", () => _session.Execute(
+            ProjectDomainEditCommands.DuplicateLogicalTrack(trackId)));
+    }
+
+    private bool CutOrCopySelectedLogicalTrack(bool cut, bool requireTreeSelection = false)
+    {
+        if (!TryGetSelectedLogicalTrack(out LogicalTrack? track, out _, requireTreeSelection)
+            || _session.Document is not ProjectDocumentSession document
+            || cut && !_session.CanEditProject)
+        {
+            return false;
+        }
+        RunSynchronous(cut ? "Cut Logical Track" : "Copy Logical Track", () =>
+        {
+            ProjectObjectClipboardPayload payload;
+            IProjectEditCommand? delete = null;
+            if (cut)
+            {
+                ProjectObjectClipboardCutPreparation preparation =
+                    ProjectObjectClipboard.PrepareCutLogicalTrack(document, track.Id);
+                payload = preparation.Payload;
+                delete = preparation.DeleteAfterSuccessfulClipboardWrite;
+            }
+            else
+            {
+                payload = ProjectObjectClipboard.CopyLogicalTrack(document, track.Id);
+            }
+            Clipboard.SetDataObject(payload.PlainTextSummary, copy: true);
+            _projectClipboard = payload;
+            _clipboardDocument = document;
+            if (delete is not null)
+            {
+                _session.Execute(delete);
+            }
+            _session.SetStatusMessage($"{(cut ? "Cut" : "Copied")} {payload.PlainTextSummary}.");
+        });
+        return true;
+    }
+
+    private bool CanPasteLogicalTrack() =>
+        _session.CanEditProject
+        && _session.Document is ProjectDocumentSession document
+        && _projectClipboard is { Kind: ProjectObjectClipboardKind.LogicalTrack }
+        && ReferenceEquals(document, _clipboardDocument);
+
+    private bool PasteLogicalTrackClipboard(int insertionIndex)
+    {
+        if (!CanPasteLogicalTrack()
+            || _session.Document is not ProjectDocumentSession document
+            || _projectClipboard is not ProjectObjectClipboardPayload payload
+            || _session.Project is not MidoraProject project)
+        {
+            return false;
+        }
+        int targetIndex = Math.Clamp(insertionIndex, 0, project.Tracks.Count);
+        RunSynchronous("Paste Logical Track", () =>
+        {
+            _session.Execute(ProjectObjectClipboard.CreatePasteLogicalTrackCommand(
+                document,
+                payload,
+                targetIndex));
+            _session.SetStatusMessage($"Pasted {payload.PlainTextSummary}.");
+        });
+        return true;
+    }
+
+    private int ResolveLogicalTrackPasteIndex(
+        bool preferTreeSelection = false,
+        bool preferTrackHeaderContext = false)
+    {
+        if (_session.Project is not MidoraProject project)
+        {
+            return 0;
+        }
+        if ((preferTreeSelection || ProjectTree.IsKeyboardFocusWithin)
+            && ProjectTree.SelectedItem is ProjectTreeNode treeNode)
+        {
+            if (treeNode is { Kind: ProjectTreeNodeKind.LogicalTrack, ObjectId: MidoraId trackId })
+            {
+                int index = project.Tracks.FindIndex(value => value.Id == trackId);
+                if (index >= 0) return index + 1;
+            }
+            if (treeNode.Kind == ProjectTreeNodeKind.LogicalTracks)
+            {
+                return project.Tracks.Count;
+            }
+        }
+        if (preferTrackHeaderContext
+            && _trackHeaderContextLane is int contextLane
+            && (uint)contextLane < (uint)project.Tracks.Count)
+        {
+            return contextLane + 1;
+        }
+        if (_logicalTrackShortcutTrackId is MidoraId shortcutTrackId
+            && GetFocusedTimelineSurface() is { SurfaceMode: TimelineSurfaceMode.Arrangement }
+            && _session.ActiveWorkspace is TimelineWorkspaceViewModel
+                { Mode: TimelineWorkspaceMode.Arrangement })
+        {
+            int shortcutIndex = project.Tracks.FindIndex(value => value.Id == shortcutTrackId);
+            if (shortcutIndex >= 0) return shortcutIndex + 1;
+        }
+        if (_session.ActiveWorkspace is TimelineWorkspaceViewModel
+            { Mode: TimelineWorkspaceMode.Arrangement, ActiveLane: int activeLane })
+        {
+            return Math.Clamp(activeLane + 1, 0, project.Tracks.Count);
+        }
+        return project.Tracks.Count;
+    }
+
+    private bool TryGetSelectedLogicalTrack(
+        out LogicalTrack track,
+        out int index,
+        bool requireTreeSelection = false)
+    {
+        track = null!;
+        index = -1;
+        if (_session.Project is not MidoraProject project)
+        {
+            return false;
+        }
+        if (ProjectTree.SelectedItem is ProjectTreeNode
+            { Kind: ProjectTreeNodeKind.LogicalTrack, ObjectId: MidoraId trackId }
+            && (ProjectTree.IsKeyboardFocusWithin || requireTreeSelection))
+        {
+            index = project.Tracks.FindIndex(value => value.Id == trackId);
+        }
+        else if (!requireTreeSelection
+            && _logicalTrackShortcutTrackId is MidoraId shortcutTrackId
+            && GetFocusedTimelineSurface() is { SurfaceMode: TimelineSurfaceMode.Arrangement }
+            && _session.ActiveWorkspace is TimelineWorkspaceViewModel
+                { Mode: TimelineWorkspaceMode.Arrangement })
+        {
+            index = project.Tracks.FindIndex(value => value.Id == shortcutTrackId);
+        }
+        if ((uint)index >= (uint)project.Tracks.Count)
+        {
+            return false;
+        }
+        track = project.Tracks[index];
+        return true;
     }
 
     private void OnMoveLibraryInstrumentClick(object sender, RoutedEventArgs e)
@@ -3071,6 +3332,11 @@ public partial class MainWindow : Window
             return;
         }
         workspace.ActiveLane = e.Lane;
+        if (workspace is TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement }
+            && (uint)e.Lane < (uint)project.Tracks.Count)
+        {
+            _logicalTrackShortcutTrackId = project.Tracks[e.Lane].Id;
+        }
         if (sender is TimelineSurface { Tag: "ParameterLanes" }
             && workspace is TimelineWorkspaceViewModel
             {
@@ -3101,6 +3367,12 @@ public partial class MainWindow : Window
         if (_session.ActiveWorkspace is WorkspaceViewModel workspace)
         {
             workspace.ActiveLane = e.Lane;
+            if (workspace is TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement }
+                && _session.Project is MidoraProject project
+                && (uint)e.Lane < (uint)project.Tracks.Count)
+            {
+                _logicalTrackShortcutTrackId = project.Tracks[e.Lane].Id;
+            }
         }
     }
 
@@ -3117,6 +3389,7 @@ public partial class MainWindow : Window
         MidoraId trackId = project.Tracks[e.SourceLane].Id;
         RunSynchronous("Reorder Logical Track", () =>
             _session.Execute(ProjectDomainEditCommands.ReorderLogicalTrack(trackId, e.TargetLane)));
+        _logicalTrackShortcutTrackId = trackId;
     }
 
     private bool TryGetTrackHeaderContext(out LogicalTrack track, out int index)
@@ -3177,6 +3450,59 @@ public partial class MainWindow : Window
         if (!TryGetTrackHeaderContext(out LogicalTrack track, out _)) return;
         RunSynchronous("Unbind Logical Track", () =>
             _session.Execute(ProjectDomainEditCommands.BindLogicalTrack(track.Id, null)));
+    }
+
+    private void OnTrackHeaderCutClick(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetTrackHeaderContext(out LogicalTrack track, out _)) return;
+        CutOrCopyLogicalTrack(track, cut: true);
+    }
+
+    private void OnTrackHeaderCopyClick(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetTrackHeaderContext(out LogicalTrack track, out _)) return;
+        CutOrCopyLogicalTrack(track, cut: false);
+    }
+
+    private void OnTrackHeaderPasteClick(object sender, RoutedEventArgs e) =>
+        PasteLogicalTrackClipboard(ResolveLogicalTrackPasteIndex(preferTrackHeaderContext: true));
+
+    private void OnTrackHeaderDuplicateClick(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetTrackHeaderContext(out LogicalTrack track, out _)) return;
+        RunSynchronous("Duplicate Logical Track", () => _session.Execute(
+            ProjectDomainEditCommands.DuplicateLogicalTrack(track.Id)));
+    }
+
+    private void CutOrCopyLogicalTrack(LogicalTrack track, bool cut)
+    {
+        ArgumentNullException.ThrowIfNull(track);
+        if (_session.Document is not ProjectDocumentSession document
+            || cut && !_session.CanEditProject)
+        {
+            return;
+        }
+        RunSynchronous(cut ? "Cut Logical Track" : "Copy Logical Track", () =>
+        {
+            ProjectObjectClipboardPayload payload;
+            IProjectEditCommand? delete = null;
+            if (cut)
+            {
+                ProjectObjectClipboardCutPreparation preparation =
+                    ProjectObjectClipboard.PrepareCutLogicalTrack(document, track.Id);
+                payload = preparation.Payload;
+                delete = preparation.DeleteAfterSuccessfulClipboardWrite;
+            }
+            else
+            {
+                payload = ProjectObjectClipboard.CopyLogicalTrack(document, track.Id);
+            }
+            Clipboard.SetDataObject(payload.PlainTextSummary, copy: true);
+            _projectClipboard = payload;
+            _clipboardDocument = document;
+            if (delete is not null) _session.Execute(delete);
+            _session.SetStatusMessage($"{(cut ? "Cut" : "Copied")} {payload.PlainTextSummary}.");
+        });
     }
 
     private void OnTrackHeaderSelectSegmentsClick(object sender, RoutedEventArgs e) =>
@@ -3759,6 +4085,354 @@ public partial class MainWindow : Window
         _session.RefreshWorkspaceSelection(workspace);
     }
 
+    private TimelineSelectionOperationContext? ResolveTimelineSelectionOperationContext(
+        TimelineSurface surface)
+    {
+        if (_session.Project is not MidoraProject project
+            || _session.ActiveWorkspace is not WorkspaceViewModel workspace)
+        {
+            return null;
+        }
+        HashSet<MidoraId> selected = workspace.Selection.Ids.ToHashSet();
+        switch (workspace)
+        {
+            case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement }:
+                return new(
+                    TimelineSelectionObjectKind.Segments,
+                    project.Tracks
+                        .SelectMany(static track => track.Segments)
+                        .Where(segment => selected.Contains(segment.Id))
+                        .Select(static segment => segment.Id)
+                        .ToArray());
+            case TimelineWorkspaceViewModel
+                {
+                    Mode: TimelineWorkspaceMode.Segment,
+                    ObjectId: MidoraId segmentId
+                } timeline:
+            {
+                (LogicalTrack Track, Segment Segment)? location =
+                    TimelineWorkspaceViewModel.FindSegment(project, segmentId);
+                if (location is null) return null;
+                if (string.Equals(surface.Tag as string, "ParameterLanes", StringComparison.Ordinal))
+                {
+                    if (timeline.GetActiveParameterLaneOption()?.LaneId is not MidoraId laneId
+                        || location.Value.Segment.ParameterLanes.FirstOrDefault(
+                            lane => lane.Id == laneId) is not LogicalParameterLane lane)
+                    {
+                        return null;
+                    }
+                    return new(
+                        TimelineSelectionObjectKind.LogicalParameterPoints,
+                        lane.Points.Where(point => selected.Contains(point.Id))
+                            .Select(static point => point.Id)
+                            .ToArray(),
+                        segmentId,
+                        laneId,
+                        PointMinimum: timeline.ActiveValueMinimum,
+                        PointMaximum: timeline.ActiveValueMaximum);
+                }
+                return new(
+                    TimelineSelectionObjectKind.LogicalNotes,
+                    location.Value.Segment.Notes
+                        .Where(note => selected.Contains(note.Id))
+                        .Select(static note => note.Id)
+                        .ToArray(),
+                    segmentId);
+            }
+            case InstrumentWorkspaceViewModel
+                {
+                    ObjectId: MidoraId instrumentId,
+                    ActiveSubVoiceId: MidoraId subVoiceId
+                } instrumentWorkspace:
+            {
+                EventInstrument? instrument = project.EventInstruments.FirstOrDefault(
+                    value => value.Id == instrumentId);
+                SubVoice? voice = instrument?.SubVoices.FirstOrDefault(value => value.Id == subVoiceId);
+                if (voice is null) return null;
+                if (string.Equals(surface.Tag as string, "SubVoiceNotes", StringComparison.Ordinal))
+                {
+                    return new(
+                        TimelineSelectionObjectKind.TemplateNotes,
+                        voice.Events
+                            .Where(value => value.Kind == TemplateEventKind.Note
+                                && selected.Contains(value.Id))
+                            .Select(static value => value.Id)
+                            .ToArray(),
+                        instrumentId,
+                        subVoiceId);
+                }
+                if (string.Equals(surface.Tag as string, "SubVoiceEvents", StringComparison.Ordinal)
+                    && instrumentWorkspace.GetRenderLane(
+                        instrumentWorkspace.ActiveRenderLaneIndex)?.Target is MidiValueTarget target)
+                {
+                    return new(
+                        TimelineSelectionObjectKind.SubVoiceEventPoints,
+                        voice.Events
+                            .Where(value => value.Kind != TemplateEventKind.Note
+                                && selected.Contains(value.Id)
+                                && TemplateEventMidiTargets.Enumerate(value).Contains(target))
+                            .Select(static value => value.Id)
+                            .ToArray(),
+                        instrumentId,
+                        subVoiceId,
+                        target,
+                        instrumentWorkspace.ActiveValueMinimum,
+                        instrumentWorkspace.ActiveValueMaximum);
+                }
+                return null;
+            }
+            default:
+                return null;
+        }
+    }
+
+    private void OnFlipSegmentsExposedContentHorizontalClick(object sender, RoutedEventArgs e) =>
+        ExecuteHorizontalFlip(SegmentSelectionTransformScope.ExposedContentOnly);
+
+    private void OnFlipSegmentsAndContentHorizontalClick(object sender, RoutedEventArgs e) =>
+        ExecuteHorizontalFlip(SegmentSelectionTransformScope.ExposedContentAndSegments);
+
+    private void OnFlipSelectionHorizontalClick(object sender, RoutedEventArgs e) =>
+        ExecuteHorizontalFlip(SegmentSelectionTransformScope.ExposedContentOnly);
+
+    private void ExecuteHorizontalFlip(SegmentSelectionTransformScope segmentScope)
+    {
+        if (_timelineSelectionOperationContext is not { Ids.Length: > 0 } context) return;
+        RunSynchronous("Flip Selection Horizontally", () => ExecuteSelectionOperation(context.Kind switch
+        {
+            TimelineSelectionObjectKind.Segments => ProjectDomainEditCommands.FlipSegmentsHorizontal(
+                context.Ids,
+                segmentScope),
+            TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.FlipLogicalNotesHorizontal(
+                context.OwnerId!.Value,
+                context.Ids),
+            TimelineSelectionObjectKind.LogicalParameterPoints =>
+                ProjectDomainEditCommands.FlipLogicalParameterPointsHorizontal(
+                    context.OwnerId!.Value,
+                    context.SecondaryId!.Value,
+                    context.Ids),
+            TimelineSelectionObjectKind.TemplateNotes => ProjectDomainEditCommands.FlipTemplateNotesHorizontal(
+                context.OwnerId!.Value,
+                context.SecondaryId!.Value,
+                context.Ids),
+            TimelineSelectionObjectKind.SubVoiceEventPoints =>
+                ProjectDomainEditCommands.FlipSubVoiceEventPointsHorizontal(
+                    context.OwnerId!.Value,
+                    context.SecondaryId!.Value,
+                    context.Ids,
+                    context.MidiTarget!.Value),
+            _ => throw new ArgumentOutOfRangeException()
+        }));
+    }
+
+    private void OnFlipSelectionVerticalClick(object sender, RoutedEventArgs e)
+    {
+        if (_timelineSelectionOperationContext is not { Ids.Length: > 0 } context) return;
+        RunSynchronous("Flip Selection Vertically", () => ExecuteSelectionOperation(context.Kind switch
+        {
+            TimelineSelectionObjectKind.Segments =>
+                ProjectDomainEditCommands.FlipSegmentsVertical(context.Ids),
+            TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.FlipLogicalNotesVertical(
+                context.OwnerId!.Value,
+                context.Ids),
+            TimelineSelectionObjectKind.TemplateNotes => ProjectDomainEditCommands.FlipTemplateNotesVertical(
+                context.OwnerId!.Value,
+                context.SecondaryId!.Value,
+                context.Ids),
+            _ => throw new InvalidOperationException(
+                "Vertical flip is unavailable for the current selection type.")
+        }));
+    }
+
+    private void OnScaleSelectionClick(object sender, RoutedEventArgs e)
+    {
+        if (_timelineSelectionOperationContext is not { Ids.Length: > 0 } context
+            || _session.Project is not MidoraProject project)
+        {
+            return;
+        }
+        long currentLength = GetTimelineSelectionSpan(project, context);
+        if (currentLength <= 0)
+        {
+            ShowUnavailable(
+                "Scale Selection",
+                "The selection must span more than one Tick before it can be scaled.");
+            return;
+        }
+        ScaleSelectionDialog dialog = new(
+            currentLength,
+            context.Kind == TimelineSelectionObjectKind.Segments)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true) return;
+        RunSynchronous("Scale Selection", () => ExecuteSelectionOperation(context.Kind switch
+        {
+            TimelineSelectionObjectKind.Segments => ProjectDomainEditCommands.ScaleSegments(
+                context.Ids,
+                dialog.ScaleFactor,
+                dialog.Scope),
+            TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.ScaleLogicalNotes(
+                context.OwnerId!.Value,
+                context.Ids,
+                dialog.ScaleFactor),
+            TimelineSelectionObjectKind.LogicalParameterPoints =>
+                ProjectDomainEditCommands.ScaleLogicalParameterPoints(
+                    context.OwnerId!.Value,
+                    context.SecondaryId!.Value,
+                    context.Ids,
+                    dialog.ScaleFactor),
+            TimelineSelectionObjectKind.TemplateNotes => ProjectDomainEditCommands.ScaleTemplateNotes(
+                context.OwnerId!.Value,
+                context.SecondaryId!.Value,
+                context.Ids,
+                dialog.ScaleFactor),
+            TimelineSelectionObjectKind.SubVoiceEventPoints =>
+                ProjectDomainEditCommands.ScaleSubVoiceEventPoints(
+                    context.OwnerId!.Value,
+                    context.SecondaryId!.Value,
+                    context.Ids,
+                    context.MidiTarget!.Value,
+                    dialog.ScaleFactor),
+            _ => throw new ArgumentOutOfRangeException()
+        }));
+    }
+
+    private void OnTransposeSelectionClick(object sender, RoutedEventArgs e)
+    {
+        if (_timelineSelectionOperationContext is not { Ids.Length: > 0 } context) return;
+        TransposeSelectionDialog dialog = new() { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        RunSynchronous("Transpose Selection", () => ExecuteSelectionOperation(context.Kind switch
+        {
+            TimelineSelectionObjectKind.Segments =>
+                ProjectDomainEditCommands.TransposeSegments(context.Ids, dialog.Semitones),
+            TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.TransposeLogicalNotes(
+                context.OwnerId!.Value,
+                context.Ids,
+                dialog.Semitones),
+            TimelineSelectionObjectKind.TemplateNotes => ProjectDomainEditCommands.TransposeTemplateNotes(
+                context.OwnerId!.Value,
+                context.SecondaryId!.Value,
+                context.Ids,
+                dialog.Semitones),
+            _ => throw new InvalidOperationException(
+                "Transpose is unavailable for the current selection type.")
+        }));
+    }
+
+    private void OnBatchEditSelectionClick(object sender, RoutedEventArgs e)
+    {
+        if (_timelineSelectionOperationContext is not { Ids.Length: > 0 } context) return;
+        bool pointContext = context.Kind is TimelineSelectionObjectKind.LogicalParameterPoints
+            or TimelineSelectionObjectKind.SubVoiceEventPoints;
+        BatchEditDialog dialog = new(
+            pointContext ? BatchEditPresetKind.Event : BatchEditPresetKind.Note,
+            context.PointMinimum,
+            context.PointMaximum)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true || dialog.Program is not BatchEditExpressionProgram program)
+        {
+            return;
+        }
+        using (program)
+        {
+            RunSynchronous("Batch Edit Selection", () => ExecuteSelectionOperation(context.Kind switch
+            {
+                TimelineSelectionObjectKind.Segments =>
+                    ProjectDomainEditCommands.BatchEditSegmentExposedNotes(context.Ids, program),
+                TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.BatchEditLogicalNotes(
+                    context.OwnerId!.Value,
+                    context.Ids,
+                    program),
+                TimelineSelectionObjectKind.LogicalParameterPoints =>
+                    ProjectDomainEditCommands.BatchEditLogicalParameterPoints(
+                        context.OwnerId!.Value,
+                        context.SecondaryId!.Value,
+                        context.Ids,
+                        program),
+                TimelineSelectionObjectKind.TemplateNotes => ProjectDomainEditCommands.BatchEditTemplateNotes(
+                    context.OwnerId!.Value,
+                    context.SecondaryId!.Value,
+                    context.Ids,
+                    program),
+                TimelineSelectionObjectKind.SubVoiceEventPoints =>
+                    ProjectDomainEditCommands.BatchEditSubVoiceEventPoints(
+                        context.OwnerId!.Value,
+                        context.SecondaryId!.Value,
+                        context.Ids,
+                        context.MidiTarget!.Value,
+                        program),
+                _ => throw new ArgumentOutOfRangeException()
+            }));
+        }
+    }
+
+    private void ExecuteSelectionOperation(IProjectEditCommand command)
+    {
+        WorkspaceViewModel workspace = _session.ActiveWorkspace
+            ?? throw new InvalidOperationException(
+                "A selection operation requires an active Workspace.");
+        _session.ExecutePreservingWorkspaceSelection(command, workspace);
+    }
+
+    private static long GetTimelineSelectionSpan(
+        MidoraProject project,
+        TimelineSelectionOperationContext context)
+    {
+        HashSet<MidoraId> ids = context.Ids.ToHashSet();
+        return context.Kind switch
+        {
+            TimelineSelectionObjectKind.Segments => RangeSpan(project.Tracks
+                .SelectMany(static track => track.Segments)
+                .Where(segment => ids.Contains(segment.Id))
+                .Select(static segment => (
+                    Start: segment.ProjectStartTick,
+                    End: segment.ProjectRange.EndTick))),
+            TimelineSelectionObjectKind.LogicalNotes => RangeSpan(
+                TimelineWorkspaceViewModel.FindSegment(project, context.OwnerId)!.Value.Segment.Notes
+                    .Where(note => ids.Contains(note.Id))
+                    .Select(static note => (
+                        Start: note.StartTick,
+                        End: checked(note.StartTick + note.LengthTicks)))),
+            TimelineSelectionObjectKind.TemplateNotes => RangeSpan(project.EventInstruments
+                .Single(value => value.Id == context.OwnerId)
+                .SubVoices.Single(value => value.Id == context.SecondaryId)
+                .Events.Where(value => value.Kind == TemplateEventKind.Note && ids.Contains(value.Id))
+                .Select(static value => (
+                    Start: value.Tick,
+                    End: checked(value.Tick + value.LengthTicks)))),
+            TimelineSelectionObjectKind.LogicalParameterPoints => PointSpan(
+                TimelineWorkspaceViewModel.FindSegment(project, context.OwnerId)!.Value.Segment
+                    .ParameterLanes.Single(value => value.Id == context.SecondaryId)
+                    .Points.Where(value => ids.Contains(value.Id))
+                    .Select(static value => value.Tick)),
+            TimelineSelectionObjectKind.SubVoiceEventPoints => PointSpan(project.EventInstruments
+                .Single(value => value.Id == context.OwnerId)
+                .SubVoices.Single(value => value.Id == context.SecondaryId)
+                .Events.Where(value => ids.Contains(value.Id))
+                .Select(static value => value.Tick)),
+            _ => throw new ArgumentOutOfRangeException()
+        };
+
+        static long RangeSpan(IEnumerable<(long Start, long End)> source)
+        {
+            (long Start, long End)[] values = source.ToArray();
+            return values.Length == 0
+                ? 0
+                : checked(values.Max(static value => value.End)
+                    - values.Min(static value => value.Start));
+        }
+
+        static long PointSpan(IEnumerable<long> source)
+        {
+            long[] values = source.ToArray();
+            return values.Length == 0 ? 0 : checked(values.Max() - values.Min());
+        }
+    }
+
     private static TimelineSurface? GetTimelineContextSurface(object sender) =>
         sender is MenuItem menuItem
         && ItemsControl.ItemsControlFromItemContainer(menuItem) is ContextMenu contextMenu
@@ -4225,6 +4899,18 @@ public partial class MainWindow : Window
         InstrumentWorkspaceViewModel instrument => instrument.EditorSettings,
         _ => _session.ArrangementEditorSettings
     };
+
+    private TimelineEditorSettings GetFocusedEditorSettings()
+    {
+        bool eventLaneFocused = Keyboard.FocusedElement is TimelineSurface
+            { SurfaceMode: TimelineSurfaceMode.EventLanes };
+        return _session.ActiveWorkspace switch
+        {
+            TimelineWorkspaceViewModel timeline when eventLaneFocused => timeline.LaneEditorSettings,
+            InstrumentWorkspaceViewModel instrument when eventLaneFocused => instrument.EventLaneEditorSettings,
+            _ => GetActiveEditorSettings()
+        };
+    }
 
     private void EditLogicalParameterPoint(
         MidoraId segmentId,
@@ -5840,6 +6526,13 @@ public partial class MainWindow : Window
             }
             return;
         }
+        if (Keyboard.Modifiers == ModifierKeys.Control
+            && !IsTransientInputSurfaceOpen()
+            && TryInvokeTimelineSelectionOperationShortcut(e.Key))
+        {
+            e.Handled = true;
+            return;
+        }
         switch (e.Key)
         {
             case Key.F when !shift && _session.ActiveWorkspace is MappingFunctionWorkspaceViewModel:
@@ -5865,8 +6558,52 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool TryInvokeTimelineSelectionOperationShortcut(Key key)
+    {
+        if (key is not (Key.Q or Key.T or Key.E)
+            || GetFocusedTimelineSurface() is not TimelineSurface surface)
+        {
+            return false;
+        }
+
+        _timelineSelectionOperationContext = ResolveTimelineSelectionOperationContext(surface);
+        if (!_session.CanEditProject
+            || _timelineSelectionOperationContext is not { Ids.Length: > 0 } context)
+        {
+            return true;
+        }
+
+        switch (key)
+        {
+            case Key.Q:
+                OnScaleSelectionClick(this, new RoutedEventArgs());
+                break;
+            case Key.T when context.Kind is TimelineSelectionObjectKind.Segments
+                or TimelineSelectionObjectKind.LogicalNotes
+                or TimelineSelectionObjectKind.TemplateNotes:
+                OnTransposeSelectionClick(this, new RoutedEventArgs());
+                break;
+            case Key.E:
+                OnBatchEditSelectionClick(this, new RoutedEventArgs());
+                break;
+        }
+        return true;
+    }
+
     private bool TryActivateTimelineTool(Key key)
     {
+        if (key == Key.A)
+        {
+            if (_session.ActiveWorkspace is not (TimelineWorkspaceViewModel
+                or InstrumentWorkspaceViewModel))
+            {
+                return false;
+            }
+            TimelineEditorSettings settings = GetFocusedEditorSettings();
+            settings.SnapEnabled = !settings.SnapEnabled;
+            SnapMenuItem.IsChecked = settings.SnapEnabled;
+            return true;
+        }
         TimelineToolMode? mode = key switch
         {
             Key.D => TimelineToolMode.Draw,
@@ -5890,6 +6627,10 @@ public partial class MainWindow : Window
 
     private void CutOrCopyProjectSelection(bool cut)
     {
+        if (CutOrCopySelectedLogicalTrack(cut))
+        {
+            return;
+        }
         if (!cut && TryGetSelectedEventInstrumentId(out _))
         {
             _ = CopySelectedEventInstrument();
@@ -6214,6 +6955,12 @@ public partial class MainWindow : Window
 
     private void PasteProjectSelection()
     {
+        if (_projectClipboard?.Kind == ProjectObjectClipboardKind.LogicalTrack
+            && IsLogicalTrackShortcutContext()
+            && PasteLogicalTrackClipboard(ResolveLogicalTrackPasteIndex()))
+        {
+            return;
+        }
         if (_projectClipboard?.Kind == ProjectObjectClipboardKind.EventInstrument
             && PasteEventInstrumentClipboard())
         {
@@ -6590,6 +7337,13 @@ public partial class MainWindow : Window
 
     private void DuplicateFocusedSelection()
     {
+        if (_session.CanEditProject
+            && TryGetSelectedLogicalTrack(out LogicalTrack logicalTrack, out _))
+        {
+            RunSynchronous("Duplicate Logical Track", () => _session.Execute(
+                ProjectDomainEditCommands.DuplicateLogicalTrack(logicalTrack.Id)));
+            return;
+        }
         if (_session.CanEditProject && TryGetSelectedEventInstrumentId(out MidoraId eventInstrumentId))
         {
             RunSynchronous("Duplicate Event Instrument", () => _session.Execute(
@@ -6951,6 +7705,20 @@ public partial class MainWindow : Window
     private void OnPreviewMouseDownForPlaybackShortcut(object sender, MouseButtonEventArgs e)
     {
         DependencyObject? source = e.OriginalSource as DependencyObject;
+        TimelineSurface? surface = FindVisualAncestor<TimelineSurface>(source);
+        if (surface is { SurfaceMode: TimelineSurfaceMode.Arrangement }
+            && _session.ActiveWorkspace is TimelineWorkspaceViewModel
+                { Mode: TimelineWorkspaceMode.Arrangement }
+            && _session.Project is MidoraProject project
+            && surface.TryGetArrangementLaneHeader(e.GetPosition(surface), out int lane)
+            && (uint)lane < (uint)project.Tracks.Count)
+        {
+            _logicalTrackShortcutTrackId = project.Tracks[lane].Id;
+        }
+        else
+        {
+            _logicalTrackShortcutTrackId = null;
+        }
         if (_spaceStartedPlayback
             && (FindVisualAncestor<TextBoxBase>(source) is not null
                 || FindVisualAncestor<PasswordBox>(source) is not null
@@ -6959,6 +7727,16 @@ public partial class MainWindow : Window
             _spaceStartedPlayback = false;
         }
     }
+
+    private bool IsLogicalTrackShortcutContext() =>
+        ProjectTree.IsKeyboardFocusWithin
+        || _logicalTrackShortcutTrackId is not null
+        && GetFocusedTimelineSurface() is { SurfaceMode: TimelineSurfaceMode.Arrangement }
+        && _session.ActiveWorkspace is TimelineWorkspaceViewModel
+            { Mode: TimelineWorkspaceMode.Arrangement };
+
+    private static TimelineSurface? GetFocusedTimelineSurface() =>
+        FindVisualAncestor<TimelineSurface>(Keyboard.FocusedElement as DependencyObject);
 
     private void RestorePlaybackShortcutFocus()
     {

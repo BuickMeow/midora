@@ -56,6 +56,16 @@ public static class TimelineToolPolicy
             || surfaceMode == TimelineSurfaceMode.EventLanes
                 && toolMode == TimelineToolMode.Draw);
 
+    public static bool RequestsHorizontalValueTrace(
+        TimelineToolMode toolMode,
+        TimelineSurfaceMode surfaceMode,
+        MouseButton button,
+        ModifierKeys modifiers) =>
+        toolMode == TimelineToolMode.Draw
+        && surfaceMode == TimelineSurfaceMode.EventLanes
+        && button == MouseButton.Right
+        && (modifiers & ModifierKeys.Shift) != 0;
+
     public static bool ForcesItemMove(
         TimelineToolMode toolMode,
         TimelineSurfaceMode surfaceMode,

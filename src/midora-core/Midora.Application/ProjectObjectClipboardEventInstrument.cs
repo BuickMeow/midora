@@ -80,6 +80,7 @@ public static partial class ProjectDomainEditCommands
                             snapshot,
                             requestedName: null,
                             folderId);
+                        RemoveLaterExactTimelineCollisions(copy);
                         Move(owner.EventInstruments, copy, index);
                         return;
                     }

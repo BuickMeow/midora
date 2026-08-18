@@ -151,6 +151,7 @@ public static partial class ProjectDomainEditCommands
                         value,
                         source.Id,
                         normalized);
+                    RemoveLaterExactTimelineCollisions(copy);
                     Move(value.EventInstruments, copy, index);
                     return copy;
                 },
@@ -270,7 +271,7 @@ public static partial class ProjectDomainEditCommands
             ValidateLogicalNote(startTick, lengthTicks, note, velocity);
             int index = insertionIndex ?? segment.Segment.Notes.Count;
             ValidateInsertionIndex(index, segment.Segment.Notes.Count, nameof(insertionIndex));
-            return DeferredCreate(
+            return ResolveExactLogicalNoteCollisions(DeferredCreate(
                 TrackChange(segment.Track.Id),
                 value =>
                 {
@@ -292,7 +293,7 @@ public static partial class ProjectDomainEditCommands
                 (_, logicalNote) => RemoveRequired(
                     segment.Segment.Notes,
                     logicalNote,
-                    "Logical Note"));
+                    "Logical Note")), segment.Segment);
         });
 
     public static IProjectEditCommand CreateLogicalParameterLane(
@@ -350,17 +351,12 @@ public static partial class ProjectDomainEditCommands
             {
                 throw new ArgumentOutOfRangeException(nameof(interpolation));
             }
-            if (lane.Points.Any(candidate => candidate.Tick == tick))
-            {
-                throw new InvalidOperationException(
-                    "Only one Logical Parameter point is allowed at a tick.");
-            }
             LogicalParameterDefinition definition = FindBoundLogicalParameter(
                 project,
                 segment.Track,
                 lane.ParameterId);
             ValidatePointValue(definition, value, interpolation);
-            return DeferredCreate(
+            return ResolveExactLogicalParameterPointCollisions(DeferredCreate(
                 TrackChange(segment.Track.Id),
                 owner =>
                 {
@@ -369,7 +365,8 @@ public static partial class ProjectDomainEditCommands
                     return point;
                 },
                 (_, point) => InsertCurvePoint(lane.Points, point),
-                (_, point) => RemoveRequired(lane.Points, point, "Logical Parameter point"));
+                (_, point) => RemoveRequired(lane.Points, point, "Logical Parameter point")),
+                lane);
         });
 
     public static IProjectEditCommand CreateTempo(long tick, decimal beatsPerMinute) =>
@@ -570,10 +567,10 @@ public static partial class ProjectDomainEditCommands
 
     private static void InsertCurvePoint(List<CurvePoint> points, CurvePoint point)
     {
-        if (points.Any(value => value.Id == point.Id || value.Tick == point.Tick))
+        if (points.Any(value => value.Id == point.Id))
         {
             throw new InvalidOperationException(
-                "The Logical Parameter point ID or tick is already present.");
+                "The Logical Parameter point ID is already present.");
         }
         int index = points.FindIndex(value =>
             value.Tick > point.Tick

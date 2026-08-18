@@ -14,15 +14,25 @@ public static class SegmentEditing
             LengthTicks = source.LengthTicks,
             ContentOffsetTick = source.ContentOffsetTick
         };
+        HashSet<(long Tick, int Key)> noteStarts = [];
         foreach (LogicalNote note in source.Notes)
         {
+            if (!noteStarts.Add((note.StartTick, note.Note)))
+            {
+                continue;
+            }
             result.Notes.Add(CloneNote(project, note, note.LengthTicks, preserveId: false));
         }
         foreach (LogicalParameterLane lane in source.ParameterLanes)
         {
             LogicalParameterLane copy = new(project) { ParameterId = lane.ParameterId };
+            HashSet<long> pointTicks = [];
             foreach (CurvePoint point in lane.Points)
             {
+                if (!pointTicks.Add(point.Tick))
+                {
+                    continue;
+                }
                 copy.Points.Add(new(project, point.Tick, point.Value, point.Interpolation));
             }
             result.ParameterLanes.Add(copy);
@@ -69,11 +79,12 @@ public static class SegmentEditing
             ContentOffsetTick = checked(joinedStart - joinedContentOrigin)
         };
 
+        HashSet<(long Tick, int Key)> noteStarts = [];
         AppendNotes(left, leftContentOrigin);
         AppendNotes(right, rightContentOrigin);
         Dictionary<MidoraId, (MidoraId LaneId, Dictionary<long, CurvePoint> Points)> lanes = [];
         AppendLanes(left, leftContentOrigin, preferIncomingAtSameTick: false);
-        AppendLanes(right, rightContentOrigin, preferIncomingAtSameTick: true);
+        AppendLanes(right, rightContentOrigin, preferIncomingAtSameTick: false);
         foreach ((MidoraId parameterId, (MidoraId laneId, Dictionary<long, CurvePoint> points)) in lanes
             .OrderBy(value => value.Key))
         {
@@ -88,8 +99,13 @@ public static class SegmentEditing
             foreach (LogicalNote note in source.Notes)
             {
                 long absoluteTick = checked(sourceOrigin + note.StartTick);
+                long joinedTick = checked(absoluteTick - joinedContentOrigin);
+                if (!noteStarts.Add((joinedTick, note.Note)))
+                {
+                    continue;
+                }
                 LogicalNote copy = CloneNote(project, note, note.LengthTicks);
-                copy.StartTick = checked(absoluteTick - joinedContentOrigin);
+                copy.StartTick = joinedTick;
                 result.Notes.Add(copy);
             }
         }

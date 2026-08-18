@@ -28,11 +28,11 @@ public static partial class ProjectDomainEditCommands
                 logicalNote.Note,
                 logicalNote.Velocity);
             LogicalNoteValue replacement = new(startTick, lengthTicks, note, velocity);
-            return Prepared(
+            return ResolveExactLogicalNoteCollisions(Prepared(
                 old != replacement,
                 TrackChange(segment.Track.Id),
                 _ => SetLogicalNote(logicalNote, replacement),
-                _ => SetLogicalNote(logicalNote, old));
+                _ => SetLogicalNote(logicalNote, old)), segment.Segment);
         });
 
     public static IProjectEditCommand DeleteLogicalNote(
@@ -157,22 +157,18 @@ public static partial class ProjectDomainEditCommands
             {
                 throw new ArgumentOutOfRangeException(nameof(interpolation));
             }
-            if (lane.Points.Any(candidate => candidate.Id != pointId && candidate.Tick == tick))
-            {
-                throw new InvalidOperationException(
-                    "Only one Logical Parameter point is allowed at a tick.");
-            }
             LogicalParameterDefinition definition = FindBoundLogicalParameter(
                 project,
                 segment.Track,
                 lane.ParameterId);
             ValidatePointValue(definition, value, interpolation);
             CurvePoint replacement = new(project, point.Id, tick, value, interpolation);
-            return Prepared(
+            return ResolveExactLogicalParameterPointCollisions(Prepared(
                 point != replacement,
                 TrackChange(segment.Track.Id),
                 _ => ReplaceRequired(lane.Points, point, replacement, "Logical Parameter point"),
-                _ => ReplaceRequired(lane.Points, replacement, point, "Logical Parameter point"));
+                _ => ReplaceRequired(lane.Points, replacement, point, "Logical Parameter point")),
+                lane);
         });
 
     public static IProjectEditCommand DeleteLogicalParameterPoint(

@@ -282,7 +282,7 @@ public sealed class ProjectDocumentSession
             IPreparedProjectEdit sourcePrepared = command.Prepare(Project)
                 ?? throw new InvalidOperationException(
                     "A Project edit command returned no prepared edit.");
-            FrozenPreparedProjectEdit prepared = FreezePreparedEdit(sourcePrepared);
+            FrozenPreparedProjectEdit prepared = FreezePreparedEdit(Project, sourcePrepared);
             if (!prepared.HasChanges)
             {
                 return new(false, _compilation.LastAttempt);
@@ -398,6 +398,17 @@ public sealed class ProjectDocumentSession
         NotifyHistoryChanged(compilationChanged: true, changes);
     }
 
+    public long CurrentStateId
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _currentStateId;
+            }
+        }
+    }
+
     private void NotifyHistoryChanged(
         bool compilationChanged,
         ProjectChangeSet? changes = null)
@@ -428,8 +439,11 @@ public sealed class ProjectDocumentSession
         }
     }
 
-    private static FrozenPreparedProjectEdit FreezePreparedEdit(IPreparedProjectEdit prepared)
+    private static FrozenPreparedProjectEdit FreezePreparedEdit(
+        MidoraProject project,
+        IPreparedProjectEdit prepared)
     {
+        ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(prepared.Changes);
         ProjectChangeSet changes = new()
         {
@@ -440,7 +454,9 @@ public sealed class ProjectDocumentSession
         };
         changes.TrackIds.UnionWith(prepared.Changes.TrackIds);
         changes.EventInstrumentIds.UnionWith(prepared.Changes.EventInstrumentIds);
-        return new(prepared, changes);
+        return new(
+            ExactTimelineCollisionPolicy.Wrap(project, prepared),
+            changes);
     }
 
     private sealed record HistoryEntry(

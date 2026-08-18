@@ -321,7 +321,6 @@ public static partial class ProjectDomainEditCommands
             SubVoice voice = FindSubVoice(instrument, targetSubVoiceId);
             TemplateEventClipboardValue[] values = snapshot.Events.Select(value =>
                 PrepareTemplateEventClipboardValue(value, editCursorTick)).ToArray();
-            ValidateTemplateEventClipboardConflicts(voice, values);
             long oldTemplateLength = instrument.TemplateLengthTicks;
             long replacementTemplateLength = Math.Max(
                 oldTemplateLength,
@@ -329,7 +328,7 @@ public static partial class ProjectDomainEditCommands
                     ? checked(value.Value.Tick + value.Value.LengthTicks)
                     : checked(value.Value.Tick + 1)));
             TemplateEvent[]? copies = null;
-            return Prepared(
+            return ResolveExactSubVoiceEventCollisions(Prepared(
                 hasChanges: true,
                 EventInstrumentChange(targetEventInstrumentId),
                 owner =>
@@ -351,7 +350,7 @@ public static partial class ProjectDomainEditCommands
                         RemoveRequired(voice.Events, value, "pasted Template Event");
                     }
                     instrument.TemplateLengthTicks = oldTemplateLength;
-                });
+                }), voice);
         });
 
     internal static IProjectEditCommand PasteValueCurveContentClipboard(
@@ -455,64 +454,6 @@ public static partial class ProjectDomainEditCommands
         {
             ValidateMappingStepValue(ToMappingStepValue(step));
         }
-    }
-
-    private static void ValidateTemplateEventClipboardConflicts(
-        SubVoice target,
-        IReadOnlyList<TemplateEventClipboardValue> values)
-    {
-        foreach (TemplateEventClipboardValue value in values)
-        {
-            if (target.Events.Any(candidate => TemplateEventsConflict(candidate, value.Value)))
-            {
-                throw new InvalidOperationException(
-                    "A pasted Template Event conflicts with the target SubVoice.");
-            }
-        }
-        for (int index = 0; index < values.Count; index++)
-        {
-            for (int otherIndex = index + 1; otherIndex < values.Count; otherIndex++)
-            {
-                if (TemplateClipboardEventsConflict(
-                    values[index].Value,
-                    values[otherIndex].Value))
-                {
-                    throw new InvalidOperationException(
-                        "Pasted Template Events conflict with each other.");
-                }
-            }
-        }
-    }
-
-    private static bool TemplateClipboardEventsConflict(
-        TemplateEventValue left,
-        TemplateEventValue right)
-    {
-        if (left.Tick != right.Tick
-            || left.Kind == TemplateEventKind.Note
-            || right.Kind == TemplateEventKind.Note)
-        {
-            return false;
-        }
-        bool leftPitchBendRange = left.Kind == TemplateEventKind.PitchBendRange
-            || left.Kind == TemplateEventKind.RegisteredParameter && left.Number == 0;
-        bool rightPitchBendRange = right.Kind == TemplateEventKind.PitchBendRange
-            || right.Kind == TemplateEventKind.RegisteredParameter && right.Number == 0;
-        if (leftPitchBendRange && rightPitchBendRange)
-        {
-            return true;
-        }
-        if (left.Kind != right.Kind)
-        {
-            return false;
-        }
-        return left.Kind switch
-        {
-            TemplateEventKind.ControlChange => left.Number == right.Number,
-            TemplateEventKind.RegisteredParameter or TemplateEventKind.NonRegisteredParameter =>
-                left.Number == right.Number,
-            _ => true
-        };
     }
 
     private static TemplateEvent CreateTemplateEventClipboardCopy(

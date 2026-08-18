@@ -5,6 +5,7 @@ namespace Midora.Application;
 public enum ProjectObjectClipboardKind
 {
     EventInstrument,
+    LogicalTrack,
     Segments,
     LogicalNotes,
     LogicalParameterLane,
@@ -46,6 +47,30 @@ public sealed class ProjectObjectClipboardPayload
 
 public static partial class ProjectObjectClipboard
 {
+    public static ProjectObjectClipboardPayload CopyLogicalTrack(
+        ProjectDocumentSession document,
+        MidoraId logicalTrackId)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        LogicalTrack track = document.Project.Tracks.SingleOrDefault(value => value.Id == logicalTrackId)
+            ?? throw new ArgumentOutOfRangeException(nameof(logicalTrackId));
+        LogicalTrackClipboardSnapshot snapshot = new(
+            track.Name,
+            track.EventInstrumentId,
+            track.LastBoundEventInstrumentName,
+            track.ColorOverride,
+            track.Segments.Select(segment => SnapshotSegment(
+                segment,
+                trackOffset: 0,
+                startOffset: segment.ProjectStartTick)).ToArray());
+        return new(
+            document.ClipboardSessionIdentity,
+            ProjectObjectClipboardKind.LogicalTrack,
+            1,
+            "1 Logical Track",
+            new LogicalTrackClipboardData(snapshot));
+    }
+
     public static ProjectObjectClipboardPayload CopySegments(
         ProjectDocumentSession document,
         IReadOnlyCollection<MidoraId> segmentIds,
@@ -159,6 +184,20 @@ public static partial class ProjectObjectClipboard
             editCursorTick);
     }
 
+    public static IProjectEditCommand CreatePasteLogicalTrackCommand(
+        ProjectDocumentSession targetDocument,
+        ProjectObjectClipboardPayload payload,
+        int insertionIndex)
+    {
+        LogicalTrackClipboardData data = RequirePayload<LogicalTrackClipboardData>(
+            targetDocument,
+            payload,
+            ProjectObjectClipboardKind.LogicalTrack);
+        return ProjectDomainEditCommands.PasteLogicalTrackClipboard(
+            data.Track,
+            insertionIndex);
+    }
+
     public static IProjectEditCommand CreatePasteLogicalNotesCommand(
         ProjectDocumentSession targetDocument,
         ProjectObjectClipboardPayload payload,
@@ -247,6 +286,14 @@ public static partial class ProjectObjectClipboard
 }
 
 internal abstract record ProjectObjectClipboardData;
+internal sealed record LogicalTrackClipboardData(
+    LogicalTrackClipboardSnapshot Track) : ProjectObjectClipboardData;
+internal sealed record LogicalTrackClipboardSnapshot(
+    string Name,
+    MidoraId? EventInstrumentId,
+    string? LastBoundEventInstrumentName,
+    MidoraColor? ColorOverride,
+    SegmentClipboardSnapshot[] Segments);
 internal sealed record SegmentClipboardData(
     SegmentClipboardSnapshot[] Segments) : ProjectObjectClipboardData;
 internal sealed record LogicalNoteClipboardData(
@@ -273,6 +320,51 @@ internal sealed record CurvePointClipboardSnapshot(
 
 public static partial class ProjectDomainEditCommands
 {
+    internal static IProjectEditCommand PasteLogicalTrackClipboard(
+        LogicalTrackClipboardSnapshot snapshot,
+        int insertionIndex) =>
+        Command("Paste logical track", project =>
+        {
+            ArgumentNullException.ThrowIfNull(snapshot);
+            ValidateInsertionIndex(insertionIndex, project.Tracks.Count, nameof(insertionIndex));
+            LogicalTrack? copy = null;
+            return Prepared(
+                hasChanges: true,
+                EverythingChange(),
+                owner =>
+                {
+                    if (copy is null)
+                    {
+                        bool bindingExists = snapshot.EventInstrumentId is MidoraId instrumentId
+                            && owner.EventInstruments.Any(value => value.Id == instrumentId);
+                        copy = new LogicalTrack(owner)
+                        {
+                            Name = ProjectTextRules.NormalizeShortText(
+                                snapshot.Name,
+                                allowEmpty: true,
+                                nameof(snapshot)),
+                            EventInstrumentId = bindingExists ? snapshot.EventInstrumentId : null,
+                            LastBoundEventInstrumentName = snapshot.LastBoundEventInstrumentName,
+                            ColorOverride = snapshot.ColorOverride
+                        };
+                        foreach (SegmentClipboardSnapshot segment in snapshot.Segments)
+                        {
+                            Segment created = CreateSegmentFromClipboard(
+                                owner,
+                                segment,
+                                segment.StartOffset);
+                            InsertSegmentByTime(copy.Segments, created);
+                        }
+                    }
+                    InsertAt(owner.Tracks, insertionIndex, copy, "pasted Logical Track");
+                },
+                owner => RemoveRequired(
+                    owner.Tracks,
+                    copy ?? throw new InvalidOperationException(
+                        "The pasted Logical Track does not exist before Undo."),
+                    "pasted Logical Track"));
+        });
+
     internal static IProjectEditCommand PasteSegmentClipboard(
         IReadOnlyList<SegmentClipboardSnapshot> snapshots,
         MidoraId activeTargetTrackId,
@@ -362,7 +454,7 @@ public static partial class ProjectDomainEditCommands
             ValidateLogicalNoteBatch(values);
             LogicalNote[]? copies = null;
             int insertionIndex = target.Segment.Notes.Count;
-            return Prepared(
+            return ResolveExactLogicalNoteCollisions(Prepared(
                 hasChanges: true,
                 TrackChange(target.Track.Id),
                 owner =>
@@ -397,7 +489,7 @@ public static partial class ProjectDomainEditCommands
                     {
                         RemoveRequired(target.Segment.Notes, copy, "pasted Logical Note");
                     }
-                });
+                }), target.Segment);
         });
 
     private static Segment CreateSegmentFromClipboard(
@@ -411,9 +503,14 @@ public static partial class ProjectDomainEditCommands
             LengthTicks = snapshot.LengthTicks,
             ContentOffsetTick = snapshot.ContentOffsetTick
         };
+        HashSet<(long Tick, int Key)> noteStarts = [];
         foreach (LogicalNoteClipboardSnapshot value in snapshot.Notes)
         {
             ValidateLogicalNote(value.StartOffset, value.LengthTicks, value.Note, value.Velocity);
+            if (!noteStarts.Add((value.StartOffset, value.Note)))
+            {
+                continue;
+            }
             result.Notes.Add(new LogicalNote(project)
             {
                 StartTick = value.StartOffset,
@@ -425,8 +522,13 @@ public static partial class ProjectDomainEditCommands
         foreach (LogicalParameterLaneClipboardSnapshot value in snapshot.ParameterLanes)
         {
             LogicalParameterLane lane = new(project) { ParameterId = value.ParameterId };
+            HashSet<long> pointTicks = [];
             foreach (CurvePointClipboardSnapshot point in value.Points)
             {
+                if (!pointTicks.Add(point.Tick))
+                {
+                    continue;
+                }
                 lane.Points.Add(new CurvePoint(
                     project,
                     point.Tick,

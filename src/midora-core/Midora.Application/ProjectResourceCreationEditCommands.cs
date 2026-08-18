@@ -52,6 +52,7 @@ public static partial class ProjectDomainEditCommands
                 value =>
                 {
                     SubVoice copy = CloneSubVoice(value, source, normalizedName);
+                    RemoveLaterExactTimelineCollisions(copy);
                     instrument.SubVoices.Insert(index, copy);
                     return copy;
                 },
@@ -664,10 +665,6 @@ public static partial class ProjectDomainEditCommands
                 : checked(replacement.Tick + 1);
             long oldTemplateLength = instrument.TemplateLengthTicks;
             long replacementTemplateLength = Math.Max(oldTemplateLength, requiredBoundary);
-            IndexedTemplateEvent[] conflicts = voice.Events
-                .Select((value, index) => new IndexedTemplateEvent(value, index))
-                .Where(value => TemplateEventsConflict(value.Event, replacement))
-                .ToArray();
             HashSet<TemplateEventMappingTarget> existingTargets = voice.Events
                 .SelectMany(TemplateEventMappingTarget.Enumerate)
                 .ToHashSet();
@@ -677,15 +674,13 @@ public static partial class ProjectDomainEditCommands
                         && !existingTargets.Contains(target)
                         && voice.EventMappings.All(mapping => mapping.Target != target))
                     .ToArray();
-            ValidateRestorableTemplateEventConflicts(conflicts);
             SubVoiceEventMapping[]? createdMappings = null;
-            return DeferredCreate(
+            return ResolveExactSubVoiceEventCollisions(DeferredCreate(
                 EventInstrumentChange(eventInstrumentId),
                 owner =>
                 {
                     TemplateEvent created = new(owner);
                     SetTemplateEvent(created, replacement);
-                    RemoveTemplateEventConflicts(voice, conflicts);
                     voice.Events.AddWithoutOptionalMappingCreation(created);
                     createdMappings ??= optionalMappingTargetsToCreate
                         .Select(target => new SubVoiceEventMapping(owner, target))
@@ -696,7 +691,6 @@ public static partial class ProjectDomainEditCommands
                 },
                 (_, created) =>
                 {
-                    RemoveTemplateEventConflicts(voice, conflicts);
                     voice.Events.AddWithoutOptionalMappingCreation(created);
                     RestoreNewTemplateEventMappings(
                         voice,
@@ -714,9 +708,8 @@ public static partial class ProjectDomainEditCommands
                             mapping,
                             "SubVoice event Mapping");
                     }
-                    RestoreTemplateEventConflicts(voice, conflicts);
                     instrument.TemplateLengthTicks = oldTemplateLength;
-                });
+                }), voice);
         });
 
     private static void RestoreNewTemplateEventMappings(
@@ -846,41 +839,6 @@ public static partial class ProjectDomainEditCommands
         if (value.Kind != TemplateEventKind.Note && value.Tick == long.MaxValue)
         {
             throw new ArgumentOutOfRangeException(nameof(value));
-        }
-    }
-
-    private static void ValidateRestorableTemplateEventConflicts(
-        IReadOnlyCollection<IndexedTemplateEvent> conflicts)
-    {
-        if (conflicts.Select(value => value.Event.Id).Distinct().Count() != conflicts.Count)
-        {
-            throw new InvalidOperationException(
-                "Conflicting Template Event stable IDs must be unique.");
-        }
-    }
-
-    private static void RemoveTemplateEventConflicts(
-        SubVoice voice,
-        IEnumerable<IndexedTemplateEvent> conflicts)
-    {
-        IndexedTemplateEvent[] frozen = conflicts.ToArray();
-        foreach (IndexedTemplateEvent conflict in frozen)
-        {
-            RequireContains(voice.Events, conflict.Event, "conflicting Template Event");
-        }
-        for (int index = frozen.Length - 1; index >= 0; index--)
-        {
-            RemoveRequired(voice.Events, frozen[index].Event, "conflicting Template Event");
-        }
-    }
-
-    private static void RestoreTemplateEventConflicts(
-        SubVoice voice,
-        IEnumerable<IndexedTemplateEvent> conflicts)
-    {
-        foreach (IndexedTemplateEvent conflict in conflicts)
-        {
-            InsertAt(voice.Events, conflict.Index, conflict.Event, "conflicting Template Event");
         }
     }
 

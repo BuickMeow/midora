@@ -29,11 +29,13 @@ public static partial class ProjectDomainEditCommands
                 lane.Points,
                 selected,
                 replacement);
-            return PrepareCurvePointReplacementBatch(
-                segment.Track.Id,
-                lane.Points,
-                selected,
-                replacement);
+            return ResolveExactLogicalParameterPointCollisions(
+                PrepareCurvePointReplacementBatch(
+                    segment.Track.Id,
+                    lane.Points,
+                    selected,
+                    replacement),
+                lane);
         });
 
     public static IProjectEditCommand AdjustLogicalParameterPoints(
@@ -66,11 +68,14 @@ public static partial class ProjectDomainEditCommands
                 lane.Points,
                 selected,
                 replacement);
-            return PrepareCurvePointReplacementBatch(
+            IPreparedProjectEdit prepared = PrepareCurvePointReplacementBatch(
                 segment.Track.Id,
                 lane.Points,
                 selected,
                 replacement);
+            return tickDelta == 0
+                ? prepared
+                : ResolveExactLogicalParameterPointCollisions(prepared, lane);
         });
 
     public static IProjectEditCommand SetLogicalParameterPointValues(
@@ -155,11 +160,14 @@ public static partial class ProjectDomainEditCommands
                 lane.Points,
                 selected,
                 replacement);
-            return PrepareCurvePointReplacementBatch(
+            IPreparedProjectEdit prepared = PrepareCurvePointReplacementBatch(
                 segment.Track.Id,
                 lane.Points,
                 selected,
                 replacement);
+            return tick is null
+                ? prepared
+                : ResolveExactLogicalParameterPointCollisions(prepared, lane);
         });
 
     public static IProjectEditCommand DeleteLogicalParameterPoints(
@@ -448,14 +456,8 @@ public static partial class ProjectDomainEditCommands
             }
             ValidatePointValue(definition, point.Value, point.Interpolation);
         }
-        HashSet<MidoraId> selectedIds = selected.Select(value => value.Point.Id).ToHashSet();
-        long[] ticks = replacement.Select(value => value.Tick).ToArray();
-        if (ticks.Distinct().Count() != ticks.Length
-            || allPoints.Any(value => !selectedIds.Contains(value.Id) && ticks.Contains(value.Tick)))
-        {
-            throw new InvalidOperationException(
-                "The Logical Parameter point batch would create duplicate point ticks.");
-        }
+        // Exact same-lane tick collisions are resolved transactionally by
+        // ExactTimelineCollisionPolicy. Duration overlap is not involved here.
     }
 
     private static void ValidateValueCurvePointBatch(

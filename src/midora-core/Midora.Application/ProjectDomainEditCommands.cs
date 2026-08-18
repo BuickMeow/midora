@@ -73,11 +73,16 @@ public static partial class ProjectDomainEditCommands
             LogicalTrack track = FindTrack(project, trackId);
             int oldIndex = project.Tracks.IndexOf(track);
             ValidateExistingIndex(newIndex, project.Tracks.Count, nameof(newIndex));
+            LogicalTrack[] before = project.Tracks.ToArray();
+            List<LogicalTrack> reordered = before.ToList();
+            reordered.RemoveAt(oldIndex);
+            reordered.Insert(newIndex, track);
+            LogicalTrack[] after = reordered.ToArray();
             return Prepared(
                 oldIndex != newIndex,
                 EverythingChange(),
-                value => Move(value.Tracks, track, newIndex),
-                value => Move(value.Tracks, track, oldIndex));
+                value => ReplaceLogicalTrackOrder(value.Tracks, before, after),
+                value => ReplaceLogicalTrackOrder(value.Tracks, after, before));
         });
 
     public static IProjectEditCommand DeleteLogicalTrack(
@@ -480,6 +485,36 @@ public static partial class ProjectDomainEditCommands
         Action<MidoraProject> undo) =>
         new DelegatePreparedEdit(hasChanges, changes, apply, undo);
 
+    private static IPreparedProjectEdit ResolveExactLogicalNoteCollisions(
+        IPreparedProjectEdit source,
+        Segment segment) =>
+        ExactTimelineCollisionPolicy.Scope(source, logicalNoteSegments: [segment]);
+
+    private static IPreparedProjectEdit ResolveExactLogicalNoteCollisions(
+        IPreparedProjectEdit source,
+        IEnumerable<Segment> segments) =>
+        ExactTimelineCollisionPolicy.Scope(source, logicalNoteSegments: segments);
+
+    private static IPreparedProjectEdit ResolveExactLogicalParameterPointCollisions(
+        IPreparedProjectEdit source,
+        LogicalParameterLane lane) =>
+        ExactTimelineCollisionPolicy.Scope(source, logicalParameterLanes: [lane]);
+
+    private static IPreparedProjectEdit ResolveExactLogicalParameterPointCollisions(
+        IPreparedProjectEdit source,
+        IEnumerable<LogicalParameterLane> lanes) =>
+        ExactTimelineCollisionPolicy.Scope(source, logicalParameterLanes: lanes);
+
+    private static IPreparedProjectEdit ResolveExactSubVoiceEventCollisions(
+        IPreparedProjectEdit source,
+        SubVoice subVoice) =>
+        ExactTimelineCollisionPolicy.Scope(source, subVoices: [subVoice]);
+
+    private static IPreparedProjectEdit ResolveExactValueCurvePointCollisions(
+        IPreparedProjectEdit source,
+        ValueCurve valueCurve) =>
+        ExactTimelineCollisionPolicy.Scope(source, valueCurves: [valueCurve]);
+
     private static IPreparedProjectEdit DeferredCreate<T>(
         ProjectChangeSet changes,
         Func<MidoraProject, T> createAndAttach,
@@ -632,6 +667,20 @@ public static partial class ProjectDomainEditCommands
         }
         values.RemoveAt(currentIndex);
         values.Insert(targetIndex, value);
+    }
+
+    private static void ReplaceLogicalTrackOrder(
+        List<LogicalTrack> tracks,
+        IReadOnlyList<LogicalTrack> expectedCurrent,
+        IReadOnlyList<LogicalTrack> replacement)
+    {
+        if (!tracks.SequenceEqual(expectedCurrent, ReferenceEqualityComparer.Instance))
+        {
+            throw new InvalidOperationException(
+                "Logical Track membership changed while applying a reorder operation.");
+        }
+        tracks.Clear();
+        tracks.AddRange(replacement);
     }
 
     private static void InsertSegmentByTime(List<Segment> segments, Segment segment)

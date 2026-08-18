@@ -362,7 +362,7 @@ public sealed class ProjectCreationEditCommandsTests
     }
 
     [Fact]
-    public void TemplateCreationReplacesSameTargetAndUndoRestoresExactEvent()
+    public void TemplateCreationAtOccupiedTargetDiscardsNewEventAndKeepsExisting()
     {
         MidoraProject project = new(480);
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
@@ -379,9 +379,8 @@ public sealed class ProjectCreationEditCommandsTests
             7,
             100));
 
-        TemplateEvent replacement = Assert.Single(voice.Events);
-        Assert.NotSame(existing, replacement);
-        Assert.Equal(100, replacement.Value);
+        Assert.Same(existing, Assert.Single(voice.Events));
+        Assert.Equal(20, existing.Value);
         long highWater = project.NextStableId;
         AssertMatchesFull(compilation);
 
@@ -389,7 +388,7 @@ public sealed class ProjectCreationEditCommandsTests
         Assert.Same(existing, Assert.Single(voice.Events));
         Assert.Equal(highWater, project.NextStableId);
         document.Redo();
-        Assert.Same(replacement, Assert.Single(voice.Events));
+        Assert.Same(existing, Assert.Single(voice.Events));
         Assert.Equal(highWater, project.NextStableId);
         AssertMatchesFull(compilation);
     }

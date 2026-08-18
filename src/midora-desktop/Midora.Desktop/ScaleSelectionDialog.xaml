@@ -1,0 +1,47 @@
+<Window x:Class="Midora.Desktop.ScaleSelectionDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls;assembly=Midora.Desktop.Presentation"
+        Width="470" Height="330" MinWidth="430" MinHeight="300"
+        Background="{StaticResource Brush.Surface.0}" WindowStyle="None"
+        ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False" UseLayoutRounding="True" SnapsToDevicePixels="True">
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight="36" CornerRadius="0" GlassFrameThickness="0"
+                        ResizeBorderThickness="0" UseAeroCaptionButtons="False"/>
+  </shell:WindowChrome.WindowChrome>
+  <Border BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid>
+      <Grid.RowDefinitions><RowDefinition Height="36"/><RowDefinition Height="*"/><RowDefinition Height="60"/></Grid.RowDefinitions>
+      <Grid Background="{StaticResource Brush.Black}" MouseLeftButtonDown="OnTitleMouseLeftButtonDown">
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="Scale Selection"/>
+        <Button Width="46" Height="36" HorizontalAlignment="Right" Style="{StaticResource Button.Caption.Close}" Click="OnCancelClick"><ui:FluentIcon Style="{StaticResource Icon.WindowControl}" Data="{StaticResource WindowControl.Close}"/></Button>
+      </Grid>
+      <Grid Grid.Row="1" Margin="14,12">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="54"/></Grid.ColumnDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <TextBlock VerticalAlignment="Center" Text="Current Length"/>
+        <TextBox Grid.Column="1" IsReadOnly="True" Text="{Binding CurrentLength, Mode=OneWay}"/>
+        <TextBlock Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center" Text="Ticks"/>
+        <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="Adjusted Length"/>
+        <TextBox x:Name="AdjustedLengthBox" Grid.Row="2" Grid.Column="1" Text="{Binding AdjustedLengthText, UpdateSourceTrigger=PropertyChanged}" TextChanged="OnAdjustedLengthTextChanged"/>
+        <TextBlock Grid.Row="2" Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center" Text="Ticks"/>
+        <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="Factor"/>
+        <Grid Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2"><Grid.ColumnDefinitions><ColumnDefinition Width="118"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <ComboBox x:Name="FactorModeBox" SelectedIndex="0" SelectionChanged="OnFactorChanged"><ComboBoxItem Content="Multiply"/><ComboBoxItem Content="Divide"/></ComboBox>
+          <TextBox x:Name="FactorBox" Grid.Column="2" Text="{Binding FactorText, UpdateSourceTrigger=PropertyChanged}" TextChanged="OnFactorChanged"/>
+        </Grid>
+        <TextBlock x:Name="ScopeLabel" Grid.Row="6" VerticalAlignment="Center" Text="Scope"/>
+        <ComboBox x:Name="ScopeBox" Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" SelectedIndex="0">
+          <ComboBoxItem Content="Exposed Content Only"/>
+          <ComboBoxItem Content="Exposed Content and Segments"/>
+        </ComboBox>
+        <TextBlock x:Name="ValidationText" Grid.Row="7" Grid.ColumnSpan="3" Margin="0,10,0,0" Foreground="{StaticResource Brush.Red.Hover}" TextWrapping="Wrap"/>
+      </Grid>
+      <Border Grid.Row="2" Padding="12,10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal"><Button Width="84" Margin="0,0,6,0" Content="Cancel" IsCancel="True" Click="OnCancelClick"/><Button Width="84" Style="{StaticResource Button.Primary}" Content="Apply" IsDefault="True" Click="OnAcceptClick"/></StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

@@ -58,6 +58,7 @@ public sealed class ProjectTreeNode(
     public string Subtitle { get; } = subtitle;
     public bool IsDamaged => Kind is ProjectTreeNodeKind.DamagedEventInstrument
         or ProjectTreeNodeKind.DamagedLogicalTrack;
+    public bool IsInstrumentFolder => Kind == ProjectTreeNodeKind.InstrumentFolder;
     public string Title
     {
         get => _title;

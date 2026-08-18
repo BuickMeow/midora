@@ -131,7 +131,7 @@ public sealed class DomainEditingTests
     }
 
     [Fact]
-    public void SegmentDuplicateAndJoinPreserveContentCoordinatesAndRightPointWins()
+    public void SegmentDuplicateAndJoinPreserveContentCoordinatesAndEarlierPointWins()
     {
         MidoraProject project = new(480);
         MidoraId parameterId = project.AllocateStableId();
@@ -160,7 +160,39 @@ public sealed class DomainEditingTests
         Assert.Equal([leftNote.Id, rightNote.Id], joined.Notes.Select(value => value.Id).ToArray());
         CurvePoint merged = Assert.Single(joined.ParameterLanes[0].Points);
         Assert.Equal(220, merged.Tick);
-        Assert.Equal(2, merged.Value);
+        Assert.Equal(1, merged.Value);
+    }
+
+    [Fact]
+    public void SegmentDuplicateDropsLaterExactStartAndPointCollisions()
+    {
+        MidoraProject project = new(480);
+        Segment source = new(project) { LengthTicks = 480 };
+        source.Notes.Add(new LogicalNote(project)
+        {
+            StartTick = 20,
+            LengthTicks = 40,
+            Note = 60,
+            Velocity = 80
+        });
+        source.Notes.Add(new LogicalNote(project)
+        {
+            StartTick = 20,
+            LengthTicks = 90,
+            Note = 60,
+            Velocity = 120
+        });
+        LogicalParameterLane lane = new(project) { ParameterId = project.AllocateStableId() };
+        lane.Points.Add(new CurvePoint(project, 30, 0.25));
+        lane.Points.Add(new CurvePoint(project, 30, 0.75));
+        source.ParameterLanes.Add(lane);
+
+        Segment duplicate = SegmentEditing.Duplicate(project, source);
+
+        LogicalNote note = Assert.Single(duplicate.Notes);
+        Assert.Equal((40L, 80), (note.LengthTicks, note.Velocity));
+        CurvePoint point = Assert.Single(Assert.Single(duplicate.ParameterLanes).Points);
+        Assert.Equal(0.25, point.Value);
     }
 
     [Fact]

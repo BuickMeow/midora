@@ -235,6 +235,35 @@
 - 依据：用户于 2026-08-15 明确要求创建 Note 时可上下拖动改变 Key 并即时试听。该决定替代 SRS 18.2.4 中“新建 Logical Note 不启动声音预览”的旧交互限制；未修改 SRS 原文。
 - 边界：试听只属于 transient interaction，不进入 Project、Undo/Redo、编译、canonical result、缓存或持久化；音频不可用时创建语义不改变。
 
+## ADR-UI-033：选择集变换、精确起点冲突与受限批量表达式
+
+- 决定：普通 Note、Logical Parameter Point 与 SubVoice MIDI Event Point 编辑统一在 `ProjectDocumentSession` 的 prepared-edit 边界处理“同 owner、同精确 target、同 start tick”冲突。编辑前已经占据目标键的对象是 incumbent；新建或移动到该键的 later object 被静默删除。若同一手势内多个 newcomer 相撞，则按 owner 集合的稳定顺序保留第一个。不同 start tick 的 Note gate overlap 不属于该规则，继续由 Event Instrument 配置和 Compiler 诊断决定。
+- 性能边界：prepared edit 必须显式登记实际触及的 Segment、Logical Parameter Lane 或 SubVoice；事务层只扫描这些 owner，不得在每次编辑后扫描整个 Project。未被本次编辑造成的既有损坏冲突保持原样，交由现有验证与诊断处理。
+- 明确例外：Horizontal Flip / Scale / Batch Edit 若会令 Segment window、Logical Parameter Point 或 SubVoice MIDI Event Point 重叠，则在 Apply 前整批拒绝。Note transform 即使形成 gate overlap也不拒绝；精确同 tick + key 仍应用 newcomer 删除规则。Segment Join 依照同一规则保留左侧/先到对象。
+- Segment 左边缘：向左 resize 在 `ContentOffsetTick` 足够时只改变 Segment window；若继续向左会令 offset 小于零，则把 Segment 内全部 Note 和 Parameter Point 同量右移，使暴露与未暴露内容的 Project 绝对位置不变。Project tick 0、同轨 Segment 不重叠和至少 1 tick 长度仍是硬边界。
+- 选择集操作：Segment、Logical/Template Note、Logical Parameter Point 与 SubVoice MIDI Event Point 的 Flip、Scale、Transpose 与 Batch Edit 均由 Application 原子命令完成。Segment 内容操作只处理与当前暴露 `[ContentOffsetTick, ContentEndTick)` 相交的对象；隐藏对象不被变换。删除越界 Note 仍可 Undo。
+- 表达式：Batch Edit 的 `=` 语法使用独立 collectible ALC 编译，但只允许数值/布尔运算、条件表达式、double cast 和 `System.Math`；拒绝语句、赋值、对象创建、任意 API 与循环。`v1/p1/k1/g1/t1` 依赖以静态 DAG 排序，直接或间接环均在提交前拒绝；一次整批求值共享 10 秒上限。所有整数结果采用 `AwayFromZero`，目标字段再执行明确的 clamp/delete 规则。
+- UI 会话：批量操作前后的 Selection/Primary Selection 按 Project history state ID 建立 session bookmark。操作后不存在的 ID 由 workspace projection 清除；Undo 回到旧 state 时恢复被删除对象原有选择，Redo 再恢复新 state 的选择。bookmark 不进入 Project、`.midora`、canonical fingerprint 或普通 Undo payload。
+- 预设：Note 与 Event Batch preset 分别平铺在 `%LOCALAPPDATA%\Midora\Presets\NoteBatchPresets` 和 `EventBatchPresets`，每个 preset 是一个独立 JSON。它们属于应用本机资源，不是 Application Preferences，也不进入 Project；撞名拒绝，损坏的独立文件只在当次列表中隔离省略。
+- 依据：产品所有者于 2026-08-18 明确批准 Logical Track clipboard、精确冲突静默删除、批量选择变换与批量表达式工作流。该决定收窄并替代 SRS 20.6.5 对 Logical Track 普通 clipboard 的排除，以及与精确 newcomer 冲突失败相抵触的旧交互文本；SRS 原文未修改。
+
+## ADR-UI-034：事件轨迹按音乐时间网格采样与焦点敏感批量快捷键
+
+- 决定：Segment Logical Parameter 与 SubVoice MIDI Event 的自由轨迹和右键直线不再按屏幕像素密度产生事件点。MouseUp 时将 transient 指针轨迹投影到有效 Operation Grid：Snap 关闭时步长严格为 `1 tick`；Snap 开启时逐个使用当前 Operation Subdivision，`Bar` 依照 Project Time Signature Map 枚举实际小节边界。轨迹反向经过同一 tick 时以后经过的值覆盖先前值。
+- 决定：`Shift + Right Drag` 在 Pointer Down 时冻结为水平直线手势，纵值固定为起点值，横向范围仍由起终点和有效 Operation Grid 决定。普通 Right Drag 继续执行起终点线性插值；Left Drag 继续执行分段自由轨迹。所有路线只在 MouseUp 提交一组 point upsert 和一个 Undo。
+- 决定：焦点位于支持选择集变换的 TimelineSurface 且不在文本编辑、Popup 或 Menu 时，`Ctrl+Q`、`Ctrl+T`、`Ctrl+E` 分别调用现有 Scale、Transpose、Batch Edit 命令。命令上下文在按键发生时从当前焦点 surface 与稳定 ID selection 重新解析，不复用上一次右键菜单目标；不支持的对象类型或空选择执行 No Action。
+- 依据：产品所有者于 2026-08-18 明确要求逐 Tick/Snap Tick 轨迹、水平线修饰手势和三项快捷键。快捷键决定明确替代 SRS 20.12.1/20.12.13 中未登记且明确排除 `Ctrl+Q`、`Ctrl+E` 的旧初版表；SRS 原文未修改。
+- 边界：指针轨迹、快捷键目标和 Dialog draft 都是 transient/session UI state。正式点仍通过 Application command 进入 Project，编译与消费者链路不变；本决定不增加 Curve 对象、不改变 `.midora` 格式或 canonical 语义。
+
+## ADR-UI-035：事件点二维栅格瓦片与固定设备尺寸
+
+- 决定：Segment Logical Parameter 与 SubVoice MIDI Event 的已提交点集不再由 `TimelineSurface.OnRender` 逐点调用 WPF `DrawEllipse`。两者共用 `256 × 256` device-pixel 核心二维 tile、DPI 感知保护区、既有 `256 MiB` LRU 和后台 raster worker；UI 线程只组合当前可视 tile 并预取外围一圈。
+- 坐标：横向 tile 使用当前精确 `devicePixelsPerTick`，纵向 tile 使用当前精确 `devicePixelsPerNormalizedValue`；两者的 IEEE 754 bit pattern 都进入 cache key。普通点固定为半径 `4 DIP`，Selection ring 固定为半径 `6 DIP`，先换算到设备像素再栅格化。稳定画面按 1:1 设备像素组合，时间缩放和值轴缩放不得改变 point glyph 的最终视觉尺寸。
+- 缓存：点内容使用当前不可变 snapshot 的内容指纹，Selection/Primary revision 同时进入 tile generation；因此大选区也不得退回逐点 WPF overlay。编辑或 Selection 改变后，只有当前可视与预取 tile 在后台重建；相同比例下新集合未完整前可沿用上一完整 frame，完成后原子切换。
+- 即时层：hover、当前单点拖动、创建预览、自由轨迹/直线和 marquee 保持小规模 transient vector overlay。命中、框选与最终 edit 继续读取原始稳定 ID、tick/value 和 interval index，bitmap 不参与 hit test，也不成为 Project 数据。
+- 失败与边界：tile 失败沿用 ADR-UI-018 的 runtime trace/丢弃语义，不阻塞输入、不回退逐点绘制。缓存只属于 UI session，不写入 `.midora`、Undo/Redo、编译结果或 Application Preferences；本决定不改变 Logical Parameter/MIDI Event 语义、插值、持久化或 canonical consumer。
+- 依据：产品所有者于 2026-08-18 报告 MIDI Event 与 Logical Parameter 点稍多即出现明显卡顿，并明确要求参照 Velocity 缓存且任何缩放下点尺寸不变。
+
 ## 小决定审计
 
 以下均是局部、可替换且不改变可听结果/持久化/公共业务接口的小决定，按用户授权采用推荐方案：

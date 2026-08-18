@@ -219,61 +219,24 @@ public static partial class ProjectDomainEditCommands
                 : checked(replacement.Tick + 1);
             long oldTemplateLength = instrument.TemplateLengthTicks;
             long replacementTemplateLength = Math.Max(oldTemplateLength, requiredBoundary);
-            IndexedTemplateEvent[] conflicts = voice.Events
-                .Select((value, index) => new IndexedTemplateEvent(value, index))
-                .Where(value => !ReferenceEquals(value.Event, templateEvent)
-                    && TemplateEventsConflict(value.Event, replacement))
-                .ToArray();
-            if (conflicts.Select(value => value.Event.Id).Distinct().Count() != conflicts.Length)
-            {
-                throw new InvalidOperationException(
-                    "Conflicting Template Event stable IDs must be unique.");
-            }
             SubVoiceEventMapping[]? createdMappings = null;
-            return Prepared(
+            return ResolveExactSubVoiceEventCollisions(Prepared(
                 old != replacement
                     || oldTemplateLength != replacementTemplateLength
-                    || conflicts.Length != 0,
+                    || optionalMappingTargetsToCreate.Length != 0,
                 EventInstrumentChange(eventInstrumentId),
                 _ =>
                 {
                     RequireContains(voice.Events, templateEvent, "Template Event");
-                    foreach (IndexedTemplateEvent conflict in conflicts)
-                    {
-                        RequireContains(voice.Events, conflict.Event, "conflicting Template Event");
-                    }
                     SetTemplateEvent(templateEvent, replacement);
                     createdMappings ??= optionalMappingTargetsToCreate
                         .Select(target => new SubVoiceEventMapping(project, target))
                         .ToArray();
                     RestoreNewTemplateEventMappings(voice, createdMappings);
-                    for (int index = conflicts.Length - 1; index >= 0; index--)
-                    {
-                        RemoveRequired(
-                            voice.Events,
-                            conflicts[index].Event,
-                            "conflicting Template Event");
-                    }
                     instrument.TemplateLengthTicks = replacementTemplateLength;
                 },
                 _ =>
                 {
-                    if (conflicts.Any(conflict => voice.Events.Any(
-                        value => value.Id == conflict.Event.Id)))
-                    {
-                        throw new InvalidOperationException(
-                            "A replaced Template Event stable ID is already present.");
-                    }
-                    int restoredCount = 0;
-                    foreach (IndexedTemplateEvent conflict in conflicts)
-                    {
-                        if ((uint)conflict.Index > (uint)(voice.Events.Count + restoredCount))
-                        {
-                            throw new InvalidOperationException(
-                                "A replaced Template Event index can no longer be restored.");
-                        }
-                        restoredCount++;
-                    }
                     RequireContains(voice.Events, templateEvent, "Template Event");
                     foreach (SubVoiceEventMapping mapping in createdMappings ?? [])
                     {
@@ -284,15 +247,7 @@ public static partial class ProjectDomainEditCommands
                     }
                     SetTemplateEvent(templateEvent, old);
                     instrument.TemplateLengthTicks = oldTemplateLength;
-                    foreach (IndexedTemplateEvent conflict in conflicts)
-                    {
-                        InsertAt(
-                            voice.Events,
-                            conflict.Index,
-                            conflict.Event,
-                            "conflicting Template Event");
-                    }
-                });
+                }), voice);
         });
 
     private static TemplateEvent FindTemplateEvent(SubVoice voice, MidoraId templateEventId) =>
@@ -407,25 +362,15 @@ public static partial class ProjectDomainEditCommands
         {
             return false;
         }
-        bool candidatePitchBendRange = candidate.Kind == TemplateEventKind.PitchBendRange
-            || candidate.Kind == TemplateEventKind.RegisteredParameter && candidate.Number == 0;
-        bool replacementPitchBendRange = replacement.Kind == TemplateEventKind.PitchBendRange
-            || replacement.Kind == TemplateEventKind.RegisteredParameter && replacement.Number == 0;
-        if (candidatePitchBendRange && replacementPitchBendRange)
-        {
-            return true;
-        }
-        if (candidate.Kind != replacement.Kind)
-        {
-            return false;
-        }
-        return replacement.Kind switch
-        {
-            TemplateEventKind.ControlChange => candidate.Number == replacement.Number,
-            TemplateEventKind.RegisteredParameter or TemplateEventKind.NonRegisteredParameter =>
-                candidate.Number == replacement.Number,
-            _ => true
-        };
+        return TemplateEventExactCollision.Conflicts(
+            candidate.Kind,
+            candidate.Number,
+            candidate.HasBankMsb,
+            candidate.HasBankLsb,
+            replacement.Kind,
+            replacement.Number,
+            replacement.HasBankMsb,
+            replacement.HasBankLsb);
     }
 
     private static TemplateEventValue CaptureTemplateEvent(TemplateEvent value) =>

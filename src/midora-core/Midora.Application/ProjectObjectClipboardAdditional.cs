@@ -289,8 +289,7 @@ public static partial class ProjectDomainEditCommands
             CurvePointClipboardValue[] values = PrepareLogicalParameterPoints(
                 definition,
                 snapshot.Points,
-                editCursorTick,
-                existingPoints: []);
+                editCursorTick);
             LogicalParameterLane? copy = null;
             int insertionIndex = target.Segment.ParameterLanes.Count;
             return Prepared(
@@ -350,10 +349,9 @@ public static partial class ProjectDomainEditCommands
             CurvePointClipboardValue[] values = PrepareLogicalParameterPoints(
                 definition,
                 snapshot.Points,
-                editCursorTick,
-                lane.Points);
+                editCursorTick);
             CurvePoint[]? copies = null;
-            return Prepared(
+            return ResolveExactLogicalParameterPointCollisions(Prepared(
                 hasChanges: true,
                 TrackChange(target.Track.Id),
                 owner =>
@@ -376,7 +374,7 @@ public static partial class ProjectDomainEditCommands
                     {
                         RemoveRequired(lane.Points, point, "pasted Logical Parameter point");
                     }
-                });
+                }), lane);
         });
 
     internal static IProjectEditCommand PasteConductorEventsClipboard(
@@ -440,21 +438,15 @@ public static partial class ProjectDomainEditCommands
     private static CurvePointClipboardValue[] PrepareLogicalParameterPoints(
         LogicalParameterDefinition definition,
         IEnumerable<CurvePointClipboardSnapshot> snapshots,
-        long editCursorTick,
-        IReadOnlyCollection<CurvePoint> existingPoints)
+        long editCursorTick)
     {
+        HashSet<long> pointTicks = [];
         CurvePointClipboardValue[] values = snapshots.Select(value =>
         {
             long tick = checked(editCursorTick + value.Tick);
             ValidatePointValue(definition, value.Value, value.Interpolation);
             return new CurvePointClipboardValue(tick, value.Value, value.Interpolation);
-        }).ToArray();
-        if (values.Select(value => value.Tick).Distinct().Count() != values.Length
-            || values.Any(value => existingPoints.Any(point => point.Tick == value.Tick)))
-        {
-            throw new InvalidOperationException(
-                "Pasted Logical Parameter points would create duplicate point ticks.");
-        }
+        }).Where(value => pointTicks.Add(value.Tick)).ToArray();
         return values;
     }
 

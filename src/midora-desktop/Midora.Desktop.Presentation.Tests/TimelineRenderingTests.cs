@@ -441,6 +441,31 @@ public sealed class TimelineRenderingTests
             ModifierKeys.Alt));
     }
 
+    [Fact]
+    public void ShiftRightRequestsHorizontalTraceOnlyInDrawEventLanes()
+    {
+        Assert.True(TimelineToolPolicy.RequestsHorizontalValueTrace(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            MouseButton.Right,
+            ModifierKeys.Shift));
+        Assert.False(TimelineToolPolicy.RequestsHorizontalValueTrace(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            MouseButton.Right,
+            ModifierKeys.None));
+        Assert.False(TimelineToolPolicy.RequestsHorizontalValueTrace(
+            TimelineToolMode.Select,
+            TimelineSurfaceMode.EventLanes,
+            MouseButton.Right,
+            ModifierKeys.Shift));
+        Assert.False(TimelineToolPolicy.RequestsHorizontalValueTrace(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.Velocity,
+            MouseButton.Right,
+            ModifierKeys.Shift));
+    }
+
     [Theory]
     [InlineData(TimelineSurfaceMode.Arrangement, TimelineItemKind.Segment)]
     [InlineData(TimelineSurfaceMode.PianoRoll, TimelineItemKind.LogicalNote)]
@@ -983,6 +1008,118 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void EventPointTileKeepsPointSizeAcrossTimeAndValueZoom()
+    {
+        TimelineRenderItem point = Item(
+            1, 10, 11, 0, kind: TimelineItemKind.LogicalParameterPoint) with { Value = 0.5 };
+        TimelineRenderSnapshot snapshot = new(1, "event-point:fixed-size", [point]);
+        Color normal = Color.FromRgb(98, 166, 246);
+        Color primary = Color.FromRgb(241, 243, 245);
+        Color border = Color.FromRgb(42, 48, 58);
+
+        TimelineRasterBuffer initial = TimelineEventPointTileRasterizer.Rasterize(
+            snapshot, null, 1, 256, 0, 0, 1, 1, normal, primary, border);
+        TimelineRasterBuffer zoomed = TimelineEventPointTileRasterizer.Rasterize(
+            snapshot, null, 8, 768, 0, 1, 1, 1, normal, primary, border);
+
+        Assert.Equal(OpaqueSize(initial), OpaqueSize(zoomed));
+        Assert.Equal((8, 8), OpaqueSize(initial));
+    }
+
+    [Fact]
+    public void EventPointTilePlacementKeepsOneToOneDeviceSizeAcrossViewZoom()
+    {
+        TimelineViewport initial = new(0, 256, 0, 1, 256, 256, 20);
+        TimelineViewport zoomed = new(0, 32, 0, 1, 256, 256, 20);
+
+        Rect initialDestination = TimelineRasterPlacement.GetEventPointTileDestination(
+            initial, 1, 256, 0, 0, 52, 20, 0, 1, 1, 1);
+        Rect zoomedDestination = TimelineRasterPlacement.GetEventPointTileDestination(
+            zoomed, 8, 1_024, 0, 1, 52, 20, 0.25, 0.5, 1, 1);
+
+        Assert.Equal(
+            TimelineEventPointTileRasterizer.GetRasterSize(1),
+            initialDestination.Width);
+        Assert.Equal(initialDestination.Width, zoomedDestination.Width);
+        Assert.Equal(initialDestination.Height, zoomedDestination.Height);
+    }
+
+    [Fact]
+    public void EventPointTileRepeatsPointGutterAcrossHorizontalBoundary()
+    {
+        TimelineRenderItem point = Item(
+            1, 256, 257, 0, kind: TimelineItemKind.LogicalParameterPoint) with { Value = 0.5 };
+        TimelineRenderSnapshot snapshot = new(1, "event-point:gutter", [point]);
+        Color normal = Color.FromRgb(98, 166, 246);
+        Color primary = Color.FromRgb(241, 243, 245);
+        Color border = Color.FromRgb(42, 48, 58);
+        int gutter = TimelineEventPointTileRasterizer.GetGutter(1);
+
+        TimelineRasterBuffer left = TimelineEventPointTileRasterizer.Rasterize(
+            snapshot, null, 1, 256, 0, 0, 1, 1, normal, primary, border);
+        TimelineRasterBuffer right = TimelineEventPointTileRasterizer.Rasterize(
+            snapshot, null, 1, 256, 1, 0, 1, 1, normal, primary, border);
+
+        Assert.True(Alpha(left, gutter + 255, gutter + 128) > 0);
+        Assert.True(Alpha(right, gutter, gutter + 128) > 0);
+    }
+
+    [Fact]
+    public void EventPointTileBatchesSelectionAndPrimaryIntoRaster()
+    {
+        TimelineRenderItem point = Item(
+            1, 10, 11, 0, kind: TimelineItemKind.LogicalParameterPoint) with { Value = 0.5 };
+        TimelineRenderSnapshot snapshot = new(1, "event-point:selection", [point]);
+        TimelineSelectionSnapshot unselected = new(0, [], null);
+        TimelineSelectionSnapshot selected = new(1, [point.Id], point.Id);
+        Color normal = Color.FromRgb(10, 80, 160);
+        Color primary = Color.FromRgb(230, 240, 250);
+        Color border = Color.FromRgb(20, 25, 30);
+
+        TimelineRasterBuffer normalRaster = TimelineEventPointTileRasterizer.Rasterize(
+            snapshot, unselected, 1, 256, 0, 0, 1, 1, normal, primary, border);
+        TimelineRasterBuffer selectedRaster = TimelineEventPointTileRasterizer.Rasterize(
+            snapshot, selected, 1, 256, 0, 0, 1, 1, normal, primary, border);
+
+        Assert.False(normalRaster.Pixels.SequenceEqual(selectedRaster.Pixels));
+        Assert.Equal((8, 8), OpaqueSize(normalRaster));
+        Assert.Equal((12, 12), OpaqueSize(selectedRaster));
+    }
+
+    [Fact]
+    public void EventPointTileCullsDenseOffscreenPopulationBeforeRasterizing()
+    {
+        TimelineRenderItem[] points = Enumerable.Range(0, 100_000)
+            .Select(index => Item(
+                index + 1L,
+                index * 4L,
+                index * 4L + 1,
+                0,
+                kind: TimelineItemKind.LogicalParameterPoint) with
+                {
+                    Value = (index % 128) / 127d
+                })
+            .ToArray();
+        TimelineRenderSnapshot snapshot = new(1, "event-point:dense", points);
+
+        TimelineRasterBuffer raster = TimelineEventPointTileRasterizer.Rasterize(
+            snapshot,
+            null,
+            1,
+            256,
+            tileX: 100,
+            tileY: 0,
+            dpiScaleX: 1,
+            dpiScaleY: 1,
+            Color.FromRgb(98, 166, 246),
+            Color.FromRgb(241, 243, 245),
+            Color.FromRgb(42, 48, 58));
+
+        Assert.InRange(raster.CandidateCount, 60, 70);
+        Assert.Contains(raster.Pixels.Where((_, index) => index % 4 == 3), alpha => alpha > 0);
+    }
+
+    [Fact]
     public void PianoTileDestinationRemainsWorldAnchoredWhilePanning()
     {
         TimelineViewport initial = new(0, 1_000, 0, 8, 1_000, 160, 20);
@@ -1367,6 +1504,28 @@ public sealed class TimelineRenderingTests
             buffer.Pixels[offset + 2],
             buffer.Pixels[offset + 1],
             buffer.Pixels[offset]);
+    }
+
+    private static (int Width, int Height) OpaqueSize(TimelineRasterBuffer buffer)
+    {
+        int left = buffer.Width;
+        int top = buffer.Height;
+        int right = -1;
+        int bottom = -1;
+        for (int y = 0; y < buffer.Height; y++)
+        {
+            for (int x = 0; x < buffer.Width; x++)
+            {
+                if (Alpha(buffer, x, y) == 0) continue;
+                left = Math.Min(left, x);
+                top = Math.Min(top, y);
+                right = Math.Max(right, x);
+                bottom = Math.Max(bottom, y);
+            }
+        }
+        return right < left || bottom < top
+            ? (0, 0)
+            : (right - left + 1, bottom - top + 1);
     }
 
     [Fact]

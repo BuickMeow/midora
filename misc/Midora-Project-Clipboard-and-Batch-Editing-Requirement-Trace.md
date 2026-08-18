@@ -36,11 +36,16 @@
 
 ## 5. 明确未包含内容
 
-- Event Instrument、Logical Track、SubVoice Definition、Logical Parameter Definition、Mapping Function Definition、Project Settings 和 SoundFont 不进入普通 Clipboard；继续使用 Duplicate 或专用命令。
+- 本节记录 2026-08-07 的原始边界；Event Instrument 与 Logical Track 后续已由产品所有者分别明确批准进入会话内 Clipboard。其更新边界见 `Midora-Desktop-Editor-and-Instrument-UX-Requirement-Trace.md`，其余 Project Settings 和 SoundFont 等对象仍不进入普通 Clipboard。
 - 不支持跨 Project、跨应用重启、外部文件/文本猜测导入、内部 Clipboard 历史或多槽。
 - Q-NUI-030 尚未决定前，不实现拍网格 Snap。当前批量命令接收 UI 已算出的共享 delta，未伪造 Grid 语义。
 
-## 6. 自动证据
+## 6. 2026-08-18 扩展
+
+- Logical Track Cut/Copy/Paste/Duplicate 使用深快照；复制所有 Segment、隐藏 Note、Logical Parameter Lane/Point、颜色覆盖与有效 Event Instrument binding。Paste/duplicate 为全部 owned object 分配新稳定 ID，并在明确目标 Track 之后插入；Cut 仍先成功写 Windows Clipboard，再执行独立删除命令。
+- 精确同 tick 冲突和选择集 Flip/Scale/Transpose/表达式 Batch Edit 的正式边界见 ADR-UI-033。该扩展不改变 Clipboard 的同一 `ProjectDocumentSession` 身份限制，也不把 payload 或 Selection 写入 `.midora`。
+
+## 7. 自动证据
 
 - `ProjectBatchTimelineEditCommandsTests`：10 项，覆盖 Note/Segment/Parameter Point 的原子批量语义、非法整批拒绝、一个 Undo、跨 Track 相对映射与 Full/Incremental oracle。
 - `ProjectObjectClipboardTests`：12 项，覆盖全部 8 类 payload kind、深快照、fresh ID、外部引用、exact target、跨会话拒绝、全部 8 类 Cut 两阶段、Conductor 冲突与 Mapping Chain。

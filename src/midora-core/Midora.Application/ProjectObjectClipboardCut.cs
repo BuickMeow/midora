@@ -8,6 +8,16 @@ public sealed record ProjectObjectClipboardCutPreparation(
 
 public static partial class ProjectObjectClipboard
 {
+    public static ProjectObjectClipboardCutPreparation PrepareCutLogicalTrack(
+        ProjectDocumentSession document,
+        MidoraId logicalTrackId) =>
+        PrepareCut(
+            document,
+            CopyLogicalTrack(document, logicalTrackId),
+            ProjectDomainEditCommands.DeleteLogicalTrack(
+                logicalTrackId,
+                nonEmptyDeletionConfirmed: true));
+
     public static ProjectObjectClipboardCutPreparation PrepareCutSegments(
         ProjectDocumentSession document,
         IReadOnlyCollection<MidoraId> segmentIds,

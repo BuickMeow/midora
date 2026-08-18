@@ -173,8 +173,8 @@ public sealed class ProjectTemplateEventEditCommandsTests
             controller: 1,
             value: 99));
 
-        Assert.DoesNotContain(controllerConflict, voice.Events);
-        Assert.Contains(controllerTarget, voice.Events);
+        Assert.Contains(controllerConflict, voice.Events);
+        Assert.DoesNotContain(controllerTarget, voice.Events);
         AssertCurrentCompilationMatchesFull(compilation);
 
         document.Undo();
@@ -189,8 +189,8 @@ public sealed class ProjectTemplateEventEditCommandsTests
             semitones: 12,
             cents: 50));
 
-        Assert.DoesNotContain(rpnZero, voice.Events);
-        Assert.Contains(pitchBendRange, voice.Events);
+        Assert.Contains(rpnZero, voice.Events);
+        Assert.DoesNotContain(pitchBendRange, voice.Events);
         Assert.Equal(nextStableId, project.NextStableId);
         AssertCurrentCompilationMatchesFull(compilation);
 

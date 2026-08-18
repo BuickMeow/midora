@@ -44,7 +44,7 @@ public static partial class ProjectDomainEditCommands
                     discarded[index] ? 0 : value.Note,
                     value.Velocity);
             }
-            return Prepared(
+            return ResolveExactLogicalNoteCollisions(Prepared(
                 old.Where((value, index) => value != replacement[index]).Any(),
                 TrackChange(segment.Track.Id),
                 _ =>
@@ -70,7 +70,7 @@ public static partial class ProjectDomainEditCommands
                     {
                         InsertAt(segment.Segment.Notes, value.Index, value.Note, "Logical Note");
                     }
-                });
+                }), segment.Segment);
         });
 
     public static IProjectEditCommand AdjustLogicalNoteEdges(
@@ -95,11 +95,14 @@ public static partial class ProjectDomainEditCommands
                     endDelta))
                 .ToArray();
             ValidateLogicalNoteBatch(replacement);
-            return PrepareLogicalNoteBatch(
+            IPreparedProjectEdit prepared = PrepareLogicalNoteBatch(
                 segment.Track.Id,
                 selected,
                 old,
                 replacement);
+            return startDelta == 0
+                ? prepared
+                : ResolveExactLogicalNoteCollisions(prepared, segment.Segment);
         });
 
     public static IProjectEditCommand SetLogicalNoteVelocities(
@@ -169,25 +172,38 @@ public static partial class ProjectDomainEditCommands
                     location.Segment.ContentOffsetTick);
                 return (location, old);
             }).ToArray();
-            long minimumBatchStartDelta = selected.Max(value => checked(
-                Math.Max(
-                    0,
-                    value.Old.ProjectStartTick - value.Old.ContentOffsetTick)
-                - value.Old.ProjectStartTick));
+            long minimumBatchStartDelta = -selected.Min(value => value.Old.ProjectStartTick);
             long boundedStartDelta = startDelta < 0
                 ? Math.Max(startDelta, minimumBatchStartDelta)
                 : startDelta;
             SegmentEdgeEdit[] edits = selected.Select(value =>
             {
-                SegmentWindow replacement = AdjustSegmentEdgesSaturated(
+                SegmentEdgeAdjustment adjustment = AdjustSegmentEdgesSaturated(
                     value.Old,
                     boundedStartDelta,
                     endDelta);
+                SegmentWindow replacement = adjustment.Window;
                 ValidateSegmentRange(
                     replacement.ProjectStartTick,
                     replacement.LengthTicks,
                     replacement.ContentOffsetTick);
-                return new SegmentEdgeEdit(value.Location, value.Old, replacement);
+                if (adjustment.ContentShift != 0)
+                {
+                    foreach (LogicalNote note in value.Location.Segment.Notes)
+                    {
+                        _ = checked(note.StartTick + adjustment.ContentShift);
+                    }
+                    foreach (CurvePoint point in value.Location.Segment.ParameterLanes
+                        .SelectMany(lane => lane.Points))
+                    {
+                        _ = checked(point.Tick + adjustment.ContentShift);
+                    }
+                }
+                return new SegmentEdgeEdit(
+                    value.Location,
+                    value.Old,
+                    replacement,
+                    adjustment.ContentShift);
             }).ToArray();
 
             HashSet<Segment> selectedSegments = edits
@@ -234,6 +250,7 @@ public static partial class ProjectDomainEditCommands
                 {
                     foreach (SegmentEdgeEdit edit in edits)
                     {
+                        ShiftSegmentContent(project, edit.Location.Segment, edit.ContentShift);
                         SetWindow(edit.Location.Segment, edit.Replacement);
                     }
                 },
@@ -242,6 +259,7 @@ public static partial class ProjectDomainEditCommands
                     foreach (SegmentEdgeEdit edit in edits)
                     {
                         SetWindow(edit.Location.Segment, edit.Old);
+                        ShiftSegmentContent(project, edit.Location.Segment, -edit.ContentShift);
                     }
                 });
         });
@@ -275,11 +293,14 @@ public static partial class ProjectDomainEditCommands
                 note ?? item.Note,
                 velocity ?? item.Velocity)).ToArray();
             ValidateLogicalNoteBatch(replacement);
-            return PrepareLogicalNoteBatch(
+            IPreparedProjectEdit prepared = PrepareLogicalNoteBatch(
                 segment.Track.Id,
                 selected,
                 old,
                 replacement);
+            return startTick is null && note is null
+                ? prepared
+                : ResolveExactLogicalNoteCollisions(prepared, segment.Segment);
         });
 
     public static IProjectEditCommand AlignLogicalNotes(
@@ -322,11 +343,14 @@ public static partial class ProjectDomainEditCommands
                 _ => throw new ArgumentOutOfRangeException(nameof(alignment))
             }).ToArray();
             ValidateLogicalNoteBatch(replacement);
-            return PrepareLogicalNoteBatch(
+            IPreparedProjectEdit prepared = PrepareLogicalNoteBatch(
                 segment.Track.Id,
                 selected,
                 old,
                 replacement);
+            return alignment == LogicalNoteAlignment.Length
+                ? prepared
+                : ResolveExactLogicalNoteCollisions(prepared, segment.Segment);
         });
 
     public static IProjectEditCommand DeleteLogicalNotes(
@@ -402,7 +426,7 @@ public static partial class ProjectDomainEditCommands
             ValidateLogicalNoteBatch(snapshots);
             LogicalNote[]? copies = null;
             int insertionIndex = target.Segment.Notes.Count;
-            return Prepared(
+            return ResolveExactLogicalNoteCollisions(Prepared(
                 hasChanges: true,
                 TrackChange(source.Track.Id, target.Track.Id),
                 owner =>
@@ -437,7 +461,7 @@ public static partial class ProjectDomainEditCommands
                     {
                         RemoveRequired(target.Segment.Notes, copy, "Logical Note copy");
                     }
-                });
+                }), target.Segment);
         });
 
     public static IProjectEditCommand MoveSegments(
@@ -766,7 +790,7 @@ public static partial class ProjectDomainEditCommands
         };
     }
 
-    private static SegmentWindow AdjustSegmentEdgesSaturated(
+    private static SegmentEdgeAdjustment AdjustSegmentEdgesSaturated(
         SegmentWindow value,
         long startDelta,
         long endDelta)
@@ -774,23 +798,53 @@ public static partial class ProjectDomainEditCommands
         long oldEnd = checked(value.ProjectStartTick + value.LengthTicks);
         if (startDelta != 0)
         {
-            long minimumStart = Math.Max(
-                0,
-                checked(value.ProjectStartTick - value.ContentOffsetTick));
             long requestedStart = checked(value.ProjectStartTick + startDelta);
-            long start = Math.Clamp(requestedStart, minimumStart, checked(oldEnd - 1));
+            long start = Math.Clamp(requestedStart, 0, checked(oldEnd - 1));
             long appliedDelta = checked(start - value.ProjectStartTick);
+            long requestedContentOffset = checked(value.ContentOffsetTick + appliedDelta);
+            long contentShift = requestedContentOffset < 0
+                ? checked(-requestedContentOffset)
+                : 0;
             return new(
-                start,
-                checked(oldEnd - start),
-                checked(value.ContentOffsetTick + appliedDelta));
+                new SegmentWindow(
+                    start,
+                    checked(oldEnd - start),
+                    Math.Max(0, requestedContentOffset)),
+                contentShift);
         }
         long requestedEnd = checked(oldEnd + endDelta);
         long end = Math.Max(checked(value.ProjectStartTick + 1), requestedEnd);
         return new(
-            value.ProjectStartTick,
-            checked(end - value.ProjectStartTick),
-            value.ContentOffsetTick);
+            new SegmentWindow(
+                value.ProjectStartTick,
+                checked(end - value.ProjectStartTick),
+                value.ContentOffsetTick),
+            ContentShift: 0);
+    }
+
+    private static void ShiftSegmentContent(
+        MidoraProject project,
+        Segment segment,
+        long tickDelta)
+    {
+        if (tickDelta == 0) return;
+        foreach (LogicalNote note in segment.Notes)
+        {
+            note.StartTick = checked(note.StartTick + tickDelta);
+        }
+        foreach (LogicalParameterLane lane in segment.ParameterLanes)
+        {
+            for (int index = 0; index < lane.Points.Count; index++)
+            {
+                CurvePoint point = lane.Points[index];
+                lane.Points[index] = new CurvePoint(
+                    project,
+                    point.Id,
+                    checked(point.Tick + tickDelta),
+                    point.Value,
+                    point.Interpolation);
+            }
+        }
     }
 
     private static void SetLogicalNoteBatch(
@@ -866,5 +920,9 @@ public static partial class ProjectDomainEditCommands
     private readonly record struct SegmentEdgeEdit(
         SegmentLocation Location,
         SegmentWindow Old,
-        SegmentWindow Replacement);
+        SegmentWindow Replacement,
+        long ContentShift);
+    private readonly record struct SegmentEdgeAdjustment(
+        SegmentWindow Window,
+        long ContentShift);
 }

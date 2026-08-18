@@ -250,6 +250,30 @@ public sealed class ProjectDomainEditCommandsTests
     }
 
     [Fact]
+    public void LogicalTrackReorderMovesExactlyOneTrackInSixTrackProject()
+    {
+        MidoraProject project = new(480);
+        LogicalTrack[] tracks = Enumerable.Range(0, 6)
+            .Select(index => new LogicalTrack(project) { Name = $"Track {index + 1}" })
+            .ToArray();
+        project.Tracks.AddRange(tracks);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.ReorderLogicalTrack(tracks[4].Id, 1));
+
+        Assert.Equal(
+            [tracks[0], tracks[4], tracks[1], tracks[2], tracks[3], tracks[5]],
+            project.Tracks);
+        document.Undo();
+        Assert.Equal(tracks, project.Tracks);
+        document.Redo();
+        Assert.Equal(
+            [tracks[0], tracks[4], tracks[1], tracks[2], tracks[3], tracks[5]],
+            project.Tracks);
+    }
+
+    [Fact]
     public void EventInstrumentRenameIsValidatedAndUpdatesBoundLastKnownNameReversibly()
     {
         MidoraProject project = CreateProject();
@@ -527,6 +551,14 @@ public sealed class ProjectDomainEditCommandsTests
         LogicalParameterLane leftLane = left.ParameterLanes[0];
         leftLane.Points.Clear();
         leftLane.Points.Add(new CurvePoint(project, 960, 0.25));
+        LogicalNote leftHidden = new(project)
+        {
+            StartTick = 960,
+            LengthTicks = 120,
+            Note = 67,
+            Velocity = 70
+        };
+        left.Notes.Add(leftHidden);
         Segment right = new(project)
         {
             ProjectStartTick = 960,
@@ -554,10 +586,11 @@ public sealed class ProjectDomainEditCommandsTests
         Assert.Equal(left.Id, joined.Id);
         Assert.Equal(0, joined.ProjectStartTick);
         Assert.Equal(1_440, joined.LengthTicks);
-        Assert.Contains(joined.Notes, value => value.Id == right.Notes[0].Id && value.StartTick == 960);
+        Assert.Contains(joined.Notes, value => value.Id == leftHidden.Id && value.StartTick == 960);
+        Assert.DoesNotContain(joined.Notes, value => value.Id == right.Notes[0].Id);
         LogicalParameterLane joinedLane = Assert.Single(joined.ParameterLanes);
         CurvePoint point = Assert.Single(joinedLane.Points, value => value.Tick == 960);
-        Assert.Equal(0.75, point.Value);
+        Assert.Equal(0.25, point.Value);
         Assert.Equal(nextStableId, project.NextStableId);
         AssertCurrentCompilationMatchesFull(compilation);
 

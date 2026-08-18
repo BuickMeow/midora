@@ -148,14 +148,16 @@ public sealed class ProjectMusicContentEditCommandsTests
                 0,
                 7.5,
                 CurveInterpolation.Linear)));
-        Assert.Throws<InvalidOperationException>(() => document.Execute(
-            ProjectDomainEditCommands.UpdateLogicalParameterPoint(
-                segment.Id,
-                lane.Id,
-                point.Id,
-                480,
-                7,
-                CurveInterpolation.Linear)));
+        document.Execute(ProjectDomainEditCommands.UpdateLogicalParameterPoint(
+            segment.Id,
+            lane.Id,
+            point.Id,
+            480,
+            7,
+            CurveInterpolation.Linear));
+        Assert.Same(blocker, Assert.Single(lane.Points));
+        document.Undo();
+        Assert.Equal([point, blocker], lane.Points);
         Assert.Throws<ArgumentOutOfRangeException>(() => document.Execute(
             ProjectDomainEditCommands.UpdateLogicalParameterPoint(
                 segment.Id,

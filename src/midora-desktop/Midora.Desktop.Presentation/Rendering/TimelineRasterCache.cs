@@ -11,7 +11,8 @@ internal enum TimelineRasterLayer
     ArrangementSegmentPreview,
     PianoNotes,
     PianoSelection,
-    VelocityBars
+    VelocityBars,
+    EventPoints
 }
 
 internal readonly record struct TimelineRasterCacheKey(
@@ -247,6 +248,109 @@ public static class TimelineRasterPlacement
             valueTop,
             TimelineVelocityTileRasterizer.TileSize / lodPixelsPerTick * viewport.PixelsPerTick,
             valueBottom - valueTop);
+    }
+
+    public static Rect GetEventPointTileDestination(
+        TimelineViewport viewport,
+        double devicePixelsPerTick,
+        double devicePixelsPerValue,
+        long tileX,
+        long tileY,
+        double laneHeaderWidth,
+        double rulerHeight,
+        double valueMinimum,
+        double valueMaximum,
+        double dpiScaleX,
+        double dpiScaleY)
+    {
+        ValidateEventPointPlacement(
+            viewport,
+            devicePixelsPerTick,
+            devicePixelsPerValue,
+            laneHeaderWidth,
+            rulerHeight,
+            valueMinimum,
+            valueMaximum,
+            dpiScaleX,
+            dpiScaleY);
+        int gutterX = TimelineEventPointTileRasterizer.GetGutter(dpiScaleX);
+        int gutterY = TimelineEventPointTileRasterizer.GetGutter(dpiScaleY);
+        double valueRange = valueMaximum - valueMinimum;
+        double contentHeight = Math.Max(1, viewport.Height);
+        double worldLeft = tileX * TimelineEventPointTileRasterizer.TileSize - gutterX;
+        double worldTop = tileY * TimelineEventPointTileRasterizer.TileSize - gutterY;
+        double sourceTopValue = 1 - worldTop / devicePixelsPerValue;
+        return new(
+            laneHeaderWidth
+                + (worldLeft / devicePixelsPerTick - viewport.StartTick) * viewport.PixelsPerTick,
+            rulerHeight + (valueMaximum - sourceTopValue) / valueRange * contentHeight,
+            TimelineEventPointTileRasterizer.GetRasterSize(dpiScaleX)
+                / devicePixelsPerTick * viewport.PixelsPerTick,
+            TimelineEventPointTileRasterizer.GetRasterSize(dpiScaleY)
+                / devicePixelsPerValue / valueRange * contentHeight);
+    }
+
+    public static Rect GetEventPointTileCoreDestination(
+        TimelineViewport viewport,
+        double devicePixelsPerTick,
+        double devicePixelsPerValue,
+        long tileX,
+        long tileY,
+        double laneHeaderWidth,
+        double rulerHeight,
+        double valueMinimum,
+        double valueMaximum,
+        double dpiScaleX,
+        double dpiScaleY)
+    {
+        ValidateEventPointPlacement(
+            viewport,
+            devicePixelsPerTick,
+            devicePixelsPerValue,
+            laneHeaderWidth,
+            rulerHeight,
+            valueMinimum,
+            valueMaximum,
+            dpiScaleX,
+            dpiScaleY);
+        double valueRange = valueMaximum - valueMinimum;
+        double contentHeight = Math.Max(1, viewport.Height);
+        double worldLeft = tileX * TimelineEventPointTileRasterizer.TileSize;
+        double worldTop = tileY * TimelineEventPointTileRasterizer.TileSize;
+        double sourceTopValue = 1 - worldTop / devicePixelsPerValue;
+        return new(
+            laneHeaderWidth
+                + (worldLeft / devicePixelsPerTick - viewport.StartTick) * viewport.PixelsPerTick,
+            rulerHeight + (valueMaximum - sourceTopValue) / valueRange * contentHeight,
+            TimelineEventPointTileRasterizer.TileSize
+                / devicePixelsPerTick * viewport.PixelsPerTick,
+            TimelineEventPointTileRasterizer.TileSize
+                / devicePixelsPerValue / valueRange * contentHeight);
+    }
+
+    private static void ValidateEventPointPlacement(
+        TimelineViewport viewport,
+        double devicePixelsPerTick,
+        double devicePixelsPerValue,
+        double laneHeaderWidth,
+        double rulerHeight,
+        double valueMinimum,
+        double valueMaximum,
+        double dpiScaleX,
+        double dpiScaleY)
+    {
+        viewport.Validate();
+        if (!double.IsFinite(devicePixelsPerTick) || devicePixelsPerTick <= 0
+            || !double.IsFinite(devicePixelsPerValue) || devicePixelsPerValue <= 0
+            || !double.IsFinite(laneHeaderWidth) || laneHeaderWidth < 0
+            || !double.IsFinite(rulerHeight) || rulerHeight < 0
+            || !double.IsFinite(valueMinimum) || !double.IsFinite(valueMaximum)
+            || valueMinimum < 0 || valueMaximum > 1 || valueMaximum <= valueMinimum
+            || !double.IsFinite(dpiScaleX) || dpiScaleX <= 0
+            || !double.IsFinite(dpiScaleY) || dpiScaleY <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(devicePixelsPerTick));
+        }
     }
 }
 
@@ -654,6 +758,165 @@ public static class TimelineSegmentPreviewRasterizer
 
     private static int RoundNormalizedBoundary(double value) =>
         checked((int)Math.Floor(value * ContentWidth + 0.5));
+}
+
+public static class TimelineEventPointTileRasterizer
+{
+    public const int TileSize = 256;
+    public const double PointRadius = 4;
+    public const double SelectionRadius = 6;
+
+    public static int GetGutter(double dpiScale)
+    {
+        if (!double.IsFinite(dpiScale) || dpiScale <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(dpiScale));
+        }
+        return checked((int)Math.Ceiling(SelectionRadius * dpiScale) + 1);
+    }
+
+    public static int GetRasterSize(double dpiScale) =>
+        checked(TileSize + GetGutter(dpiScale) * 2);
+
+    public static TimelineRasterBuffer Rasterize(
+        TimelineRenderSnapshot snapshot,
+        TimelineSelectionSnapshot? selection,
+        double devicePixelsPerTick,
+        double devicePixelsPerValue,
+        long tileX,
+        long tileY,
+        double dpiScaleX,
+        double dpiScaleY,
+        Color normalColor,
+        Color primaryColor,
+        Color borderColor)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (!double.IsFinite(devicePixelsPerTick) || devicePixelsPerTick <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(devicePixelsPerTick));
+        }
+        if (!double.IsFinite(devicePixelsPerValue) || devicePixelsPerValue <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(devicePixelsPerValue));
+        }
+        int gutterX = GetGutter(dpiScaleX);
+        int gutterY = GetGutter(dpiScaleY);
+        int width = checked(TileSize + gutterX * 2);
+        int height = checked(TileSize + gutterY * 2);
+        double worldLeft = tileX * (double)TileSize - gutterX;
+        double worldTop = tileY * (double)TileSize - gutterY;
+        long startTick = Math.Max(0, FloorToLong(worldLeft / devicePixelsPerTick));
+        long endTick = Math.Max(
+            startTick + 1,
+            CeilingToLong((worldLeft + width) / devicePixelsPerTick));
+        List<TimelineRenderItem> candidates = [];
+        snapshot.Index.QueryInto(startTick, endTick, 0, 1, candidates);
+        candidates.RemoveAll(static item => item.Kind != TimelineItemKind.LogicalParameterPoint);
+
+        byte[] pixels = new byte[checked(width * height * 4)];
+        double pointRadiusX = Math.Max(1, PointRadius * dpiScaleX);
+        double pointRadiusY = Math.Max(1, PointRadius * dpiScaleY);
+        double selectionRadiusX = Math.Max(pointRadiusX + 1, SelectionRadius * dpiScaleX);
+        double selectionRadiusY = Math.Max(pointRadiusY + 1, SelectionRadius * dpiScaleY);
+        double outlineX = Math.Max(1, dpiScaleX);
+        double outlineY = Math.Max(1, dpiScaleY);
+        foreach (TimelineRenderItem item in candidates)
+        {
+            double worldY = (1 - Math.Clamp(item.Value, 0, 1)) * devicePixelsPerValue;
+            double centerX = item.StartTick * devicePixelsPerTick - worldLeft;
+            double centerY = worldY - worldTop;
+            if (centerX + selectionRadiusX < 0 || centerX - selectionRadiusX >= width
+                || centerY + selectionRadiusY < 0 || centerY - selectionRadiusY >= height)
+            {
+                continue;
+            }
+
+            bool selected = selection?.Contains(item.Id)
+                ?? item.State.HasFlag(TimelineItemState.Selected);
+            bool primary = selection is not null
+                ? selection.Primary == item.Id
+                : item.State.HasFlag(TimelineItemState.Primary);
+            if (selected)
+            {
+                FillEllipse(
+                    pixels,
+                    width,
+                    height,
+                    centerX,
+                    centerY,
+                    selectionRadiusX,
+                    selectionRadiusY,
+                    primary ? primaryColor : normalColor);
+            }
+            FillEllipse(
+                pixels,
+                width,
+                height,
+                centerX,
+                centerY,
+                pointRadiusX,
+                pointRadiusY,
+                borderColor);
+            FillEllipse(
+                pixels,
+                width,
+                height,
+                centerX,
+                centerY,
+                Math.Max(0.5, pointRadiusX - outlineX),
+                Math.Max(0.5, pointRadiusY - outlineY),
+                normalColor);
+        }
+        return new(width, height, pixels, candidates.Count);
+    }
+
+    private static void FillEllipse(
+        byte[] pixels,
+        int width,
+        int height,
+        double centerX,
+        double centerY,
+        double radiusX,
+        double radiusY,
+        Color color)
+    {
+        int left = Math.Max(0, checked((int)Math.Floor(centerX - radiusX)));
+        int right = Math.Min(width, checked((int)Math.Ceiling(centerX + radiusX)));
+        int top = Math.Max(0, checked((int)Math.Floor(centerY - radiusY)));
+        int bottom = Math.Min(height, checked((int)Math.Ceiling(centerY + radiusY)));
+        byte alpha = color.A;
+        byte blue = Premultiply(color.B, alpha);
+        byte green = Premultiply(color.G, alpha);
+        byte red = Premultiply(color.R, alpha);
+        for (int y = top; y < bottom; y++)
+        {
+            double normalizedY = (y + 0.5 - centerY) / radiusY;
+            double normalizedYSquared = normalizedY * normalizedY;
+            if (normalizedYSquared > 1) continue;
+            int offset = checked((y * width + left) * 4);
+            for (int x = left; x < right; x++, offset += 4)
+            {
+                double normalizedX = (x + 0.5 - centerX) / radiusX;
+                if (normalizedX * normalizedX + normalizedYSquared > 1) continue;
+                pixels[offset] = blue;
+                pixels[offset + 1] = green;
+                pixels[offset + 2] = red;
+                pixels[offset + 3] = alpha;
+            }
+        }
+    }
+
+    private static byte Premultiply(byte value, byte alpha) =>
+        (byte)((value * alpha + 127) / 255);
+
+    private static long FloorToLong(double value) => value <= long.MinValue
+        ? long.MinValue
+        : value >= long.MaxValue ? long.MaxValue : (long)Math.Floor(value);
+
+    private static long CeilingToLong(double value) => value <= long.MinValue
+        ? long.MinValue
+        : value >= long.MaxValue ? long.MaxValue : (long)Math.Ceiling(value);
 }
 
 public static class TimelineVelocityTileRasterizer

@@ -30,6 +30,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private readonly HashSet<MidoraId> _soloTrackIds = [];
     private readonly List<WorkspaceKey> _backNavigation = [];
     private readonly List<WorkspaceKey> _forwardNavigation = [];
+    private readonly Dictionary<long, Dictionary<WorkspaceKey, WorkspaceSelectionBookmark>>
+        _workspaceSelectionHistory = [];
     private readonly SynchronizationContext? _uiContext =
         SynchronizationContext.Current is DispatcherSynchronizationContext dispatcherContext
             ? dispatcherContext
@@ -844,6 +846,36 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         return result;
     }
 
+    public ProjectEditExecution ExecutePreservingWorkspaceSelection(
+        IProjectEditCommand command,
+        WorkspaceViewModel workspace)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        ArgumentNullException.ThrowIfNull(workspace);
+        ProjectDocumentSession document = Document
+            ?? throw new InvalidOperationException("No Project is open.");
+        if (!Workspaces.Contains(workspace))
+        {
+            throw new InvalidOperationException(
+                "The selection-preserving edit target is not an open Workspace.");
+        }
+
+        long beforeStateId = document.CurrentStateId;
+        WorkspaceSelectionBookmark before = CaptureSelection(workspace.Selection);
+        ProjectEditExecution result = Execute(command);
+        if (!result.Changed)
+        {
+            return result;
+        }
+
+        StoreSelection(beforeStateId, workspace.Key, before);
+        StoreSelection(
+            document.CurrentStateId,
+            workspace.Key,
+            CaptureSelection(workspace.Selection));
+        return result;
+    }
+
     public void ApplyInspectorField(InspectorField field)
     {
         ArgumentNullException.ThrowIfNull(field);
@@ -1091,6 +1123,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         if (!CanEditProject) return;
         if (Document?.CanUndo != true) return;
         Document.Undo();
+        RestoreWorkspaceSelections(Document.CurrentStateId);
     }
 
     public void Redo()
@@ -1098,6 +1131,50 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         if (!CanEditProject) return;
         if (Document?.CanRedo != true) return;
         Document.Redo();
+        RestoreWorkspaceSelections(Document.CurrentStateId);
+    }
+
+    private static WorkspaceSelectionBookmark CaptureSelection(WorkspaceSelection selection) =>
+        new(selection.Ids.ToArray(), selection.Primary);
+
+    private void StoreSelection(
+        long stateId,
+        WorkspaceKey workspaceKey,
+        WorkspaceSelectionBookmark bookmark)
+    {
+        if (!_workspaceSelectionHistory.TryGetValue(
+                stateId,
+                out Dictionary<WorkspaceKey, WorkspaceSelectionBookmark>? byWorkspace))
+        {
+            byWorkspace = [];
+            _workspaceSelectionHistory.Add(stateId, byWorkspace);
+        }
+        byWorkspace[workspaceKey] = bookmark;
+    }
+
+    private void RestoreWorkspaceSelections(long stateId)
+    {
+        if (!_workspaceSelectionHistory.TryGetValue(
+                stateId,
+                out Dictionary<WorkspaceKey, WorkspaceSelectionBookmark>? byWorkspace))
+        {
+            return;
+        }
+        foreach ((WorkspaceKey key, WorkspaceSelectionBookmark bookmark) in byWorkspace)
+        {
+            WorkspaceViewModel? workspace = Workspaces.FirstOrDefault(value => value.Key == key);
+            if (workspace is null) continue;
+            workspace.Selection.Clear();
+            foreach (MidoraId id in bookmark.Ids.Where(id => id != bookmark.Primary))
+            {
+                workspace.Selection.Add(id, makePrimary: false);
+            }
+            if (bookmark.Primary is MidoraId primary)
+            {
+                workspace.Selection.Add(primary, makePrimary: true);
+            }
+            RefreshWorkspaceSelection(workspace);
+        }
     }
 
     public WorkspaceViewModel OpenWorkspace(ProjectTreeNode node)
@@ -1352,6 +1429,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         Workspaces.Clear();
         _backNavigation.Clear();
         _forwardNavigation.Clear();
+        _workspaceSelectionHistory.Clear();
         _diagnosticScopeWorkspace = null;
         ProjectTree.Clear();
         CompilerDiagnostics.Clear();
@@ -1394,6 +1472,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         Workspaces.Clear();
         _backNavigation.Clear();
         _forwardNavigation.Clear();
+        _workspaceSelectionHistory.Clear();
         ActiveWorkspace = null;
         _revision = 1;
         _timeSignatureMap = new(Project!);
@@ -1580,6 +1659,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             ProjectTree.Add(new(ProjectTreeNodeKind.Conductor, "Conductor Track"));
         }
         ProjectTreeNode library = new(ProjectTreeNodeKind.InstrumentLibrary, "Event Instrument Library");
+        HashSet<MidoraId> validFolderIds = Project.EventInstrumentFolders
+            .Select(folder => folder.Id)
+            .ToHashSet();
         foreach (EventInstrumentLibraryFolder folder in Project.EventInstrumentFolders)
         {
             EventInstrument[] instruments = Project.EventInstruments
@@ -1595,7 +1677,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             if (!filtered || folderMatches || folderNode.Children.Count != 0) library.Children.Add(folderNode);
         }
         foreach (EventInstrument instrument in Project.EventInstruments.Where(item =>
-                     item.LibraryFolderId is null && MatchesProjectTreeFilter(item.Name, query)))
+                     (item.LibraryFolderId is null
+                         || !validFolderIds.Contains(item.LibraryFolderId.Value))
+                     && MatchesProjectTreeFilter(item.Name, query)))
         {
             library.Children.Add(new(ProjectTreeNodeKind.EventInstrument, instrument.Name, instrument.Id));
         }
@@ -1841,6 +1925,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         // re-entrancy from Click, Popup, and double-click routes.
         _uiContext.Post(static state => ((Action)state!).Invoke(), refresh);
     }
+
+    private sealed record WorkspaceSelectionBookmark(
+        IReadOnlyList<MidoraId> Ids,
+        MidoraId? Primary);
 
     private sealed class ProjectContext : IAsyncDisposable
     {

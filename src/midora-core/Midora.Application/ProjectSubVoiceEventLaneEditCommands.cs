@@ -84,19 +84,9 @@ public static partial class ProjectDomainEditCommands
                 ValidateTemplateEventEdit(selected[index].Event, replacements[index]);
             }
 
-            HashSet<MidoraId> selectedIds = selected.Select(value => value.Event.Id).ToHashSet();
-            IEnumerable<TemplateEvent> unchanged = duplicate
-                ? voice.Events
-                : voice.Events.Where(value => !selectedIds.Contains(value.Id));
-            if (replacements.Any(replacement => unchanged.Any(candidate =>
-                    TemplateEventsConflict(candidate, replacement)))
-                || replacements.Select((left, index) => (left, index)).Any(value =>
-                    replacements.Skip(value.index + 1).Any(right =>
-                        TemplateEventValuesConflict(value.left, right))))
-            {
-                throw new InvalidOperationException(
-                    "The moved SubVoice event points would conflict at the same tick.");
-            }
+            // Same-target, same-tick newcomers are removed at the edit transaction
+            // boundary. Keeping this command free of a preflight rejection lets
+            // drag, copy-drag and paste share the same deterministic policy.
 
             long oldTemplateLength = instrument.TemplateLengthTicks;
             long replacementTemplateLength = Math.Max(
@@ -104,7 +94,7 @@ public static partial class ProjectDomainEditCommands
                 replacements.Max(value => checked(value.Tick + 1)));
             int insertionIndex = voice.Events.Count;
             TemplateEvent[]? copies = null;
-            return Prepared(
+            IPreparedProjectEdit prepared = Prepared(
                 duplicate || selected.Where((value, index) => value.Original != replacements[index]).Any(),
                 EventInstrumentChange(eventInstrumentId),
                 owner =>
@@ -161,6 +151,9 @@ public static partial class ProjectDomainEditCommands
                     }
                     instrument.TemplateLengthTicks = oldTemplateLength;
                 });
+            return duplicate || tickDelta != 0
+                ? ResolveExactSubVoiceEventCollisions(prepared, voice)
+                : prepared;
         });
 
     public static IProjectEditCommand DeleteSubVoiceEventLane(
@@ -292,24 +285,14 @@ public static partial class ProjectDomainEditCommands
         {
             return false;
         }
-        bool leftPitchBendRange = left.Kind == TemplateEventKind.PitchBendRange
-            || left.Kind == TemplateEventKind.RegisteredParameter && left.Number == 0;
-        bool rightPitchBendRange = right.Kind == TemplateEventKind.PitchBendRange
-            || right.Kind == TemplateEventKind.RegisteredParameter && right.Number == 0;
-        if (leftPitchBendRange && rightPitchBendRange)
-        {
-            return true;
-        }
-        if (left.Kind != right.Kind)
-        {
-            return false;
-        }
-        return left.Kind switch
-        {
-            TemplateEventKind.ControlChange => left.Number == right.Number,
-            TemplateEventKind.RegisteredParameter or TemplateEventKind.NonRegisteredParameter =>
-                left.Number == right.Number,
-            _ => true
-        };
+        return TemplateEventExactCollision.Conflicts(
+            left.Kind,
+            left.Number,
+            left.HasBankMsb,
+            left.HasBankLsb,
+            right.Kind,
+            right.Number,
+            right.HasBankMsb,
+            right.HasBankLsb);
     }
 }

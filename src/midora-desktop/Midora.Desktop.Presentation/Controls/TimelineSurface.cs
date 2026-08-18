@@ -480,6 +480,7 @@ public sealed class TimelineSurface : Control
     private readonly List<Point> _velocityTracePoints = new(capacity: 128);
     private Point? _eventPointOrigin;
     private MouseButton _eventPointButton;
+    private bool _eventPointHorizontalTrace;
     private MidoraId? _eventPointDirectItemId;
     private readonly Dictionary<long, double> _eventPointEdits = [];
     private readonly List<Point> _eventPointTracePoints = new(capacity: 128);
@@ -498,6 +499,10 @@ public sealed class TimelineSurface : Control
     private readonly List<VelocityTileDrawEntry> _velocityTileFallbackEntries = new(capacity: 32);
     private readonly List<TimelineRasterCacheKey> _velocityTileVisibleKeys = new(capacity: 32);
     private VelocityRasterFrame? _lastCompleteVelocityFrame;
+    private readonly List<EventPointTileDrawEntry> _eventPointTileDrawEntries = new(capacity: 32);
+    private readonly List<EventPointTileDrawEntry> _eventPointTileFallbackEntries = new(capacity: 32);
+    private readonly List<TimelineRasterCacheKey> _eventPointTileVisibleKeys = new(capacity: 32);
+    private EventPointRasterFrame? _lastCompleteEventPointFrame;
     private double _valueViewMinimum;
     private double _valueViewMaximum = 1;
 
@@ -958,6 +963,17 @@ public sealed class TimelineSurface : Control
                     laneHeaderWidth,
                     rulerHeight);
             }
+            else if (SurfaceMode == TimelineSurfaceMode.EventLanes)
+            {
+                DrawEventPointTiles(
+                    drawingContext,
+                    viewport,
+                    info,
+                    text,
+                    border,
+                    laneHeaderWidth,
+                    rulerHeight);
+            }
             else
             {
                 snapshot.Index.QueryInto(
@@ -1096,6 +1112,11 @@ public sealed class TimelineSurface : Control
             }
             _eventPointOrigin = point;
             _eventPointButton = e.ChangedButton;
+            _eventPointHorizontalTrace = TimelineToolPolicy.RequestsHorizontalValueTrace(
+                ToolMode,
+                SurfaceMode,
+                e.ChangedButton,
+                Keyboard.Modifiers);
             _eventPointEdits.Clear();
             _eventPointDirectItemId = null;
             if (forceTrace)
@@ -1678,6 +1699,7 @@ public sealed class TimelineSurface : Control
             IReadOnlyDictionary<long, double> result = new Dictionary<long, double>(_eventPointEdits);
             MidoraId? directItemId = _eventPointDirectItemId;
             _eventPointOrigin = null;
+            _eventPointHorizontalTrace = false;
             _eventPointDirectItemId = null;
             _eventPointEdits.Clear();
             _eventPointTracePoints.Clear();
@@ -1820,6 +1842,7 @@ public sealed class TimelineSurface : Control
         _velocityEdits.Clear();
         _velocityTracePoints.Clear();
         _eventPointOrigin = null;
+        _eventPointHorizontalTrace = false;
         _eventPointDirectItemId = null;
         _eventPointEdits.Clear();
         _eventPointTracePoints.Clear();
@@ -3199,6 +3222,309 @@ public sealed class TimelineSurface : Control
         context.Pop();
     }
 
+    private void DrawEventPointTiles(
+        DrawingContext context,
+        TimelineViewport viewport,
+        Brush normalBrush,
+        Brush primaryBrush,
+        Brush borderBrush,
+        double laneHeaderWidth,
+        double rulerHeight)
+    {
+        if (Snapshot is not TimelineRenderSnapshot snapshot || snapshot.Items.Count == 0)
+        {
+            _lastCompleteEventPointFrame = null;
+            return;
+        }
+
+        DpiScale dpi = VisualTreeHelper.GetDpi(this);
+        int dpiX = checked((int)Math.Round(dpi.DpiScaleX * 1024, MidpointRounding.AwayFromZero));
+        int dpiY = checked((int)Math.Round(dpi.DpiScaleY * 1024, MidpointRounding.AwayFromZero));
+        double rasterDpiScaleX = dpiX / 1024d;
+        double rasterDpiScaleY = dpiY / 1024d;
+        double devicePixelsPerTick = viewport.PixelsPerTick * dpi.DpiScaleX;
+        double valueRange = Math.Max(1d / 256, _valueViewMaximum - _valueViewMinimum);
+        double contentHeight = Math.Max(1, ActualHeight - rulerHeight);
+        double devicePixelsPerValue = contentHeight * dpi.DpiScaleY / valueRange;
+        long horizontalScaleKey = BitConverter.DoubleToInt64Bits(devicePixelsPerTick);
+        long verticalScaleKey = BitConverter.DoubleToInt64Bits(devicePixelsPerValue);
+        long firstVisibleTileX = Math.Max(0, FloorToLong(
+            viewport.StartTick * devicePixelsPerTick / TimelineEventPointTileRasterizer.TileSize));
+        long lastVisibleTileX = Math.Max(firstVisibleTileX, FloorToLong(
+            Math.Max(viewport.StartTick, viewport.EndTick - 1) * devicePixelsPerTick
+            / TimelineEventPointTileRasterizer.TileSize));
+        double visibleWorldTop = (1 - _valueViewMaximum) * devicePixelsPerValue;
+        double visibleWorldBottom = (1 - _valueViewMinimum) * devicePixelsPerValue;
+        long firstVisibleTileY = Math.Max(0, FloorToLong(
+            visibleWorldTop / TimelineEventPointTileRasterizer.TileSize));
+        long lastVisibleTileY = Math.Max(firstVisibleTileY, FloorToLong(
+            Math.BitDecrement(visibleWorldBottom) / TimelineEventPointTileRasterizer.TileSize));
+        TimelineSelectionSnapshot? selection = SelectionSnapshot;
+        ulong contentFingerprint = TimelineContentFingerprint.WithSelection(
+            snapshot.ContentFingerprint,
+            selection?.Revision ?? snapshot.SemanticRevision);
+        Color normalColor = GetSolidColor(normalBrush, Color.FromRgb(98, 166, 246));
+        Color primaryColor = GetSolidColor(primaryBrush, Color.FromRgb(241, 243, 245));
+        Color borderColor = GetSolidColor(borderBrush, Color.FromRgb(42, 48, 58));
+        Rect contentBounds = new(
+            laneHeaderWidth,
+            rulerHeight,
+            Math.Max(0, ActualWidth - laneHeaderWidth),
+            Math.Max(0, ActualHeight - rulerHeight));
+        _eventPointTileDrawEntries.Clear();
+        _eventPointTileVisibleKeys.Clear();
+        bool allVisibleTilesReady = true;
+        context.PushClip(new RectangleGeometry(contentBounds));
+        for (int ring = 0; ring <= 1; ring++)
+        {
+            long firstX = Math.Max(0, firstVisibleTileX - ring);
+            long lastX = Math.Max(firstX, lastVisibleTileX + ring);
+            long firstY = Math.Max(0, firstVisibleTileY - ring);
+            long lastY = Math.Max(firstY, lastVisibleTileY + ring);
+            for (long tileY = firstY; tileY <= lastY; tileY++)
+            {
+                for (long tileX = firstX; tileX <= lastX; tileX++)
+                {
+                    bool visible = tileX >= firstVisibleTileX && tileX <= lastVisibleTileX
+                        && tileY >= firstVisibleTileY && tileY <= lastVisibleTileY;
+                    if (ring == 1 && visible) continue;
+                    TimelineRasterCacheKey key = new(
+                        TimelineRasterLayer.EventPoints,
+                        snapshot.ProjectionKey,
+                        contentFingerprint,
+                        horizontalScaleKey,
+                        verticalScaleKey,
+                        tileX,
+                        tileY,
+                        ColorToArgb(normalColor),
+                        ColorToArgb(primaryColor),
+                        ColorToArgb(borderColor),
+                        dpiX,
+                        dpiY);
+                    if (TimelineRasterCache.Shared.TryGet(key, out BitmapSource? bitmap))
+                    {
+                        if (visible && bitmap is not null)
+                        {
+                            _eventPointTileDrawEntries.Add(new(key, bitmap));
+                        }
+                        if (visible) _eventPointTileVisibleKeys.Add(key);
+                        continue;
+                    }
+                    if (visible)
+                    {
+                        allVisibleTilesReady = false;
+                        _eventPointTileVisibleKeys.Add(key);
+                    }
+                    long requestTileX = tileX;
+                    long requestTileY = tileY;
+                    RequestRaster(
+                        key,
+                        () => TimelineEventPointTileRasterizer.Rasterize(
+                            snapshot,
+                            selection,
+                            devicePixelsPerTick,
+                            devicePixelsPerValue,
+                            requestTileX,
+                            requestTileY,
+                            rasterDpiScaleX,
+                            rasterDpiScaleY,
+                            normalColor,
+                            primaryColor,
+                            borderColor));
+                }
+            }
+        }
+        PresentEventPointRasterLayer(
+            context,
+            viewport,
+            snapshot.ProjectionKey,
+            devicePixelsPerTick,
+            devicePixelsPerValue,
+            laneHeaderWidth,
+            rulerHeight,
+            rasterDpiScaleX,
+            rasterDpiScaleY,
+            allVisibleTilesReady);
+        context.Pop();
+    }
+
+    private void PresentEventPointRasterLayer(
+        DrawingContext context,
+        TimelineViewport viewport,
+        string projectionKey,
+        double devicePixelsPerTick,
+        double devicePixelsPerValue,
+        double laneHeaderWidth,
+        double rulerHeight,
+        double dpiScaleX,
+        double dpiScaleY,
+        bool allVisibleTilesReady)
+    {
+        if (allVisibleTilesReady)
+        {
+            DrawEventPointTileEntries(
+                context,
+                viewport,
+                _eventPointTileDrawEntries,
+                devicePixelsPerTick,
+                devicePixelsPerValue,
+                laneHeaderWidth,
+                rulerHeight,
+                dpiScaleX,
+                dpiScaleY);
+            if (_lastCompleteEventPointFrame?.Matches(projectionKey, _eventPointTileVisibleKeys) != true)
+            {
+                _lastCompleteEventPointFrame = new(
+                    projectionKey,
+                    _eventPointTileVisibleKeys.ToArray());
+            }
+            _eventPointTileDrawEntries.Clear();
+            return;
+        }
+
+        if (TryDrawCompleteEventPointFallback(
+                context,
+                viewport,
+                projectionKey,
+                laneHeaderWidth,
+                rulerHeight,
+                BitConverter.DoubleToInt64Bits(devicePixelsPerTick),
+                BitConverter.DoubleToInt64Bits(devicePixelsPerValue),
+                checked((int)Math.Round(dpiScaleX * 1024, MidpointRounding.AwayFromZero)),
+                checked((int)Math.Round(dpiScaleY * 1024, MidpointRounding.AwayFromZero))))
+        {
+            _eventPointTileDrawEntries.Clear();
+            return;
+        }
+
+        DrawEventPointTileEntries(
+            context,
+            viewport,
+            _eventPointTileDrawEntries,
+            devicePixelsPerTick,
+            devicePixelsPerValue,
+            laneHeaderWidth,
+            rulerHeight,
+            dpiScaleX,
+            dpiScaleY);
+        _eventPointTileDrawEntries.Clear();
+    }
+
+    private bool TryDrawCompleteEventPointFallback(
+        DrawingContext context,
+        TimelineViewport viewport,
+        string projectionKey,
+        double laneHeaderWidth,
+        double rulerHeight,
+        long horizontalScaleKey,
+        long verticalScaleKey,
+        int dpiX,
+        int dpiY)
+    {
+        if (_lastCompleteEventPointFrame is not EventPointRasterFrame frame
+            || !string.Equals(frame.ProjectionKey, projectionKey, StringComparison.Ordinal)
+            || frame.Keys.Count == 0
+            || frame.Keys[0].HorizontalScaleKey != horizontalScaleKey
+            || frame.Keys[0].VerticalScaleKey != verticalScaleKey
+            || frame.Keys[0].DpiX != dpiX
+            || frame.Keys[0].DpiY != dpiY)
+        {
+            return false;
+        }
+        _eventPointTileFallbackEntries.Clear();
+        foreach (TimelineRasterCacheKey key in frame.Keys)
+        {
+            if (!TimelineRasterCache.Shared.TryGet(key, out BitmapSource? bitmap)
+                || bitmap is null)
+            {
+                _eventPointTileFallbackEntries.Clear();
+                return false;
+            }
+            _eventPointTileFallbackEntries.Add(new(key, bitmap));
+        }
+        foreach (EventPointTileDrawEntry entry in _eventPointTileFallbackEntries)
+        {
+            DrawEventPointTile(
+                context,
+                viewport,
+                entry,
+                BitConverter.Int64BitsToDouble(entry.Key.HorizontalScaleKey),
+                BitConverter.Int64BitsToDouble(entry.Key.VerticalScaleKey),
+                laneHeaderWidth,
+                rulerHeight,
+                entry.Key.DpiX / 1024d,
+                entry.Key.DpiY / 1024d);
+        }
+        _eventPointTileFallbackEntries.Clear();
+        return true;
+    }
+
+    private void DrawEventPointTileEntries(
+        DrawingContext context,
+        TimelineViewport viewport,
+        IReadOnlyList<EventPointTileDrawEntry> entries,
+        double devicePixelsPerTick,
+        double devicePixelsPerValue,
+        double laneHeaderWidth,
+        double rulerHeight,
+        double dpiScaleX,
+        double dpiScaleY)
+    {
+        foreach (EventPointTileDrawEntry entry in entries)
+        {
+            DrawEventPointTile(
+                context,
+                viewport,
+                entry,
+                devicePixelsPerTick,
+                devicePixelsPerValue,
+                laneHeaderWidth,
+                rulerHeight,
+                dpiScaleX,
+                dpiScaleY);
+        }
+    }
+
+    private void DrawEventPointTile(
+        DrawingContext context,
+        TimelineViewport viewport,
+        EventPointTileDrawEntry entry,
+        double devicePixelsPerTick,
+        double devicePixelsPerValue,
+        double laneHeaderWidth,
+        double rulerHeight,
+        double dpiScaleX,
+        double dpiScaleY)
+    {
+        Rect destination = TimelineRasterPlacement.GetEventPointTileDestination(
+            viewport,
+            devicePixelsPerTick,
+            devicePixelsPerValue,
+            entry.Key.TileX,
+            entry.Key.TileY,
+            laneHeaderWidth,
+            rulerHeight,
+            _valueViewMinimum,
+            _valueViewMaximum,
+            dpiScaleX,
+            dpiScaleY);
+        Rect coreDestination = TimelineRasterPlacement.GetEventPointTileCoreDestination(
+            viewport,
+            devicePixelsPerTick,
+            devicePixelsPerValue,
+            entry.Key.TileX,
+            entry.Key.TileY,
+            laneHeaderWidth,
+            rulerHeight,
+            _valueViewMinimum,
+            _valueViewMaximum,
+            dpiScaleX,
+            dpiScaleY);
+        context.PushClip(new RectangleGeometry(coreDestination));
+        context.DrawImage(entry.Bitmap, destination);
+        context.Pop();
+    }
+
     private void DrawVelocityEditOverlay(
         DrawingContext context,
         TimelineViewport viewport,
@@ -3367,8 +3693,13 @@ public sealed class TimelineSurface : Control
         Point clamped = ClampEventPointTracePoint(point);
         if (_eventPointButton == MouseButton.Right)
         {
+            Point clampedOrigin = ClampEventPointTracePoint(origin);
+            if (_eventPointHorizontalTrace)
+            {
+                clamped = new Point(clamped.X, clampedOrigin.Y);
+            }
             _eventPointTracePoints.Clear();
-            _eventPointTracePoints.Add(ClampEventPointTracePoint(origin));
+            _eventPointTracePoints.Add(clampedOrigin);
             _eventPointTracePoints.Add(clamped);
             return;
         }
@@ -3395,34 +3726,27 @@ public sealed class TimelineSurface : Control
 
     private void BuildEventPointEditsFromTrace(TimelineViewport viewport)
     {
-        _eventPointEdits.Clear();
-        if (_eventPointTracePoints.Count == 0) return;
-        if (_eventPointTracePoints.Count == 1)
+        TimelineValueTracePoint[] trace = new TimelineValueTracePoint[_eventPointTracePoints.Count];
+        double header = GetLaneHeaderWidth();
+        double ruler = GetRulerHeight();
+        for (int index = 0; index < _eventPointTracePoints.Count; index++)
         {
-            AddEventTraceSample(_eventPointTracePoints[0], viewport);
-            return;
+            Point point = _eventPointTracePoints[index];
+            double contentX = Math.Clamp(point.X - header, 0, viewport.Width);
+            double tick = viewport.StartTick
+                + contentX / viewport.Width * viewport.TickLength;
+            trace[index] = new(
+                tick,
+                Math.Clamp(ValueYToNormalized(point.Y, ruler), 0, 1));
         }
-        for (int index = 1; index < _eventPointTracePoints.Count; index++)
-        {
-            Point from = _eventPointTracePoints[index - 1];
-            Point to = _eventPointTracePoints[index];
-            int samples = Math.Max(1, checked((int)Math.Ceiling(Math.Abs(to.X - from.X))));
-            for (int sample = 0; sample <= samples; sample++)
-            {
-                double ratio = sample / (double)samples;
-                AddEventTraceSample(new(
-                    from.X + (to.X - from.X) * ratio,
-                    from.Y + (to.Y - from.Y) * ratio), viewport);
-            }
-        }
-    }
-
-    private void AddEventTraceSample(Point point, TimelineViewport viewport)
-    {
-        long tick = SnapAbsolute(viewport.XToTick(point.X - GetLaneHeaderWidth()));
-        if (RangeStartTick is long start && tick < start) return;
-        if (RangeEndTick is long end && tick >= end) return;
-        _eventPointEdits[tick] = Math.Clamp(ValueYToNormalized(point.Y, GetRulerHeight()), 0, 1);
+        TimelineValueTraceSampler.SampleInto(
+            trace,
+            _eventPointEdits,
+            Math.Max(1, OperationStepTicks),
+            OperationUsesBars,
+            TimeSignatureMap,
+            RangeStartTick,
+            RangeEndTick);
     }
 
     private void DrawValueGrid(
@@ -4768,6 +5092,10 @@ public sealed class TimelineSurface : Control
         TimelineRasterCacheKey Key,
         BitmapSource Bitmap);
 
+    private readonly record struct EventPointTileDrawEntry(
+        TimelineRasterCacheKey Key,
+        BitmapSource Bitmap);
+
     private sealed record SegmentAccentResources(
         SolidColorBrush Segment,
         SolidColorBrush SelectedSegment,
@@ -4802,6 +5130,33 @@ public sealed class TimelineSurface : Control
     }
 
     private sealed class VelocityRasterFrame(
+        string projectionKey,
+        TimelineRasterCacheKey[] keys)
+    {
+        public string ProjectionKey { get; } = projectionKey;
+        public IReadOnlyList<TimelineRasterCacheKey> Keys { get; } = keys;
+
+        public bool Matches(
+            string currentProjectionKey,
+            IReadOnlyList<TimelineRasterCacheKey> currentKeys)
+        {
+            if (!string.Equals(ProjectionKey, currentProjectionKey, StringComparison.Ordinal)
+                || Keys.Count != currentKeys.Count)
+            {
+                return false;
+            }
+            for (int index = 0; index < Keys.Count; index++)
+            {
+                if (Keys[index] != currentKeys[index])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    private sealed class EventPointRasterFrame(
         string projectionKey,
         TimelineRasterCacheKey[] keys)
     {

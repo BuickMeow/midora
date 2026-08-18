@@ -359,15 +359,21 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         AssertMatchesFull(compilation);
 
         long nextStableId = project.NextStableId;
-        Assert.Throws<InvalidOperationException>(() => document.Execute(
-            ProjectDomainEditCommands.MoveLogicalParameterPoints(
-                segment.Id,
-                lane.Id,
-                [first.Id, second.Id],
-                tickDelta: 50)));
-        Assert.Equal([30L, 50L, 100L], lane.Points.Select(value => value.Tick));
+        document.Execute(ProjectDomainEditCommands.MoveLogicalParameterPoints(
+            segment.Id,
+            lane.Id,
+            [first.Id, second.Id],
+            tickDelta: 50));
+        Assert.Equal([80L, 100L], lane.Points.Select(value => value.Tick));
+        Assert.Contains(lane.Points, value => value.Id == first.Id);
+        Assert.DoesNotContain(lane.Points, value => value.Id == second.Id);
+        Assert.Contains(lane.Points, value => value.Id == unselected.Id);
         Assert.Equal(nextStableId, project.NextStableId);
-        Assert.Equal(2, document.History.Count);
+        Assert.Equal(3, document.History.Count);
+
+        document.Undo();
+        Assert.Equal([30L, 50L, 100L], lane.Points.Select(value => value.Tick));
+        Assert.Contains(lane.Points, value => value.Id == second.Id);
 
         document.Undo();
         Assert.Equal([2d, 4d, 6d], lane.Points.Select(value => value.Value));
@@ -533,6 +539,67 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         Assert.Equal((160L, 40L), (first.ProjectStartTick, first.LengthTicks));
         Assert.Equal((319L, 1L), (second.ProjectStartTick, second.LengthTicks));
         AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void SegmentStartResizeExpandsPastSourceZeroWithoutDiscardingHiddenContent()
+    {
+        MidoraProject project = new(480);
+        LogicalTrack track = new(project) { Name = "Track" };
+        Segment segment = new(project)
+        {
+            ProjectStartTick = 100,
+            LengthTicks = 100,
+            ContentOffsetTick = 20
+        };
+        LogicalNote hidden = new(project)
+        {
+            StartTick = 0,
+            LengthTicks = 10,
+            Note = 48,
+            Velocity = 80
+        };
+        LogicalNote exposed = new(project)
+        {
+            StartTick = 30,
+            LengthTicks = 10,
+            Note = 60,
+            Velocity = 90
+        };
+        LogicalParameterLane lane = new(project) { ParameterId = MidoraId.FromSequence(900_010) };
+        CurvePoint hiddenPoint = new(project, 5, 0.25);
+        CurvePoint exposedPoint = new(project, 40, 0.75);
+        lane.Points.AddRange([hiddenPoint, exposedPoint]);
+        segment.Notes.AddRange([hidden, exposed]);
+        segment.ParameterLanes.Add(lane);
+        track.Segments.Add(segment);
+        project.Tracks.Add(track);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.AdjustSegmentEdges(
+            [segment.Id],
+            startDelta: -50,
+            endDelta: 0));
+
+        Assert.Equal((50L, 150L, 0L), (
+            segment.ProjectStartTick,
+            segment.LengthTicks,
+            segment.ContentOffsetTick));
+        Assert.Equal((30L, 60L), (hidden.StartTick, exposed.StartTick));
+        Assert.Equal([35L, 70L], lane.Points.Select(value => value.Tick));
+        Assert.Equal(80, segment.ProjectStartTick + hidden.StartTick - segment.ContentOffsetTick);
+        Assert.Equal(110, segment.ProjectStartTick + exposed.StartTick - segment.ContentOffsetTick);
+
+        document.Undo();
+        Assert.Equal((100L, 100L, 20L), (
+            segment.ProjectStartTick,
+            segment.LengthTicks,
+            segment.ContentOffsetTick));
+        Assert.Equal((0L, 30L), (hidden.StartTick, exposed.StartTick));
+        Assert.Equal([5L, 40L], lane.Points.Select(value => value.Tick));
+        document.Redo();
+        Assert.Equal([35L, 70L], lane.Points.Select(value => value.Tick));
     }
 
     [Fact]

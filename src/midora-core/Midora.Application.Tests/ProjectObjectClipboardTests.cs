@@ -7,6 +7,76 @@ namespace Midora.Application.Tests;
 public sealed class ProjectObjectClipboardTests
 {
     [Fact]
+    public void LogicalTrackClipboardDeepCopiesContentAndPreservesValidBinding()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument" };
+        project.EventInstruments.Add(instrument);
+        LogicalTrack source = new(project)
+        {
+            Name = "Source",
+            EventInstrumentId = instrument.Id,
+            LastBoundEventInstrumentName = instrument.Name,
+            ColorOverride = new MidoraColor(40, 80, 120)
+        };
+        Segment segment = new(project)
+        {
+            ProjectStartTick = 120,
+            LengthTicks = 240,
+            ContentOffsetTick = 20
+        };
+        LogicalNote note = new(project)
+        {
+            StartTick = 30,
+            LengthTicks = 60,
+            Note = 65,
+            Velocity = 95
+        };
+        segment.Notes.Add(note);
+        source.Segments.Add(segment);
+        LogicalTrack peer = new(project) { Name = "Peer" };
+        project.Tracks.AddRange([source, peer]);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        ProjectObjectClipboardPayload payload = ProjectObjectClipboard.CopyLogicalTrack(
+            document,
+            source.Id);
+        source.Name = "Changed after copy";
+        note.Note = 12;
+
+        document.Execute(ProjectObjectClipboard.CreatePasteLogicalTrackCommand(
+            document,
+            payload,
+            insertionIndex: 1));
+
+        LogicalTrack copy = project.Tracks[1];
+        Assert.Equal("Source", copy.Name);
+        Assert.Equal(instrument.Id, copy.EventInstrumentId);
+        Assert.Equal(source.ColorOverride, copy.ColorOverride);
+        Assert.NotEqual(source.Id, copy.Id);
+        Segment segmentCopy = Assert.Single(copy.Segments);
+        LogicalNote noteCopy = Assert.Single(segmentCopy.Notes);
+        Assert.NotEqual(segment.Id, segmentCopy.Id);
+        Assert.NotEqual(note.Id, noteCopy.Id);
+        Assert.Equal((120L, 240L, 20L), (
+            segmentCopy.ProjectStartTick,
+            segmentCopy.LengthTicks,
+            segmentCopy.ContentOffsetTick));
+        Assert.Equal((30L, 60L, 65, 95), (
+            noteCopy.StartTick,
+            noteCopy.LengthTicks,
+            noteCopy.Note,
+            noteCopy.Velocity));
+
+        document.Undo();
+        Assert.Equal([source, peer], project.Tracks);
+        document.Redo();
+        Assert.Same(copy, project.Tracks[1]);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
     public void EventInstrumentClipboardIsDeepSnapshotAndPasteRemapsOwnedReferences()
     {
         MidoraProject project = new(480);

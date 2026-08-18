@@ -491,6 +491,65 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public async Task ProjectTreeKeepsInstrumentWithDanglingFolderReferenceVisibleAsUnfiled()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Dangling folder",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Missing Folder Instrument"));
+        EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+        instrument.LibraryFolderId = MidoraId.FromSequence(999_999);
+
+        session.ProjectTreeSearchText = "missing folder";
+
+        ProjectTreeNode library = Assert.Single(session.ProjectTree);
+        Assert.Equal(ProjectTreeNodeKind.InstrumentLibrary, library.Kind);
+        ProjectTreeNode node = Assert.Single(library.Children);
+        Assert.Equal(ProjectTreeNodeKind.EventInstrument, node.Kind);
+        Assert.Equal(instrument.Id, node.ObjectId);
+    }
+
+    [Fact]
+    public async Task SelectionTransformUndoRestoresIdsOfNotesDeletedByTheTransform()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Selection history",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        LogicalTrack track = Assert.Single(session.Project!.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
+        Segment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(segment.Id, 0, 120, 60, 100));
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(segment.Id, 120, 120, 70, 100));
+        LogicalNote retained = segment.Notes[0];
+        LogicalNote discarded = segment.Notes[1];
+        TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+        workspace.Selection.Add(retained.Id, makePrimary: false);
+        workspace.Selection.Add(discarded.Id, makePrimary: true);
+        session.RefreshWorkspaceSelection(workspace);
+
+        session.ExecutePreservingWorkspaceSelection(
+            ProjectDomainEditCommands.TransposeLogicalNotes(
+                segment.Id,
+                [retained.Id, discarded.Id],
+                semitones: 64),
+            workspace);
+
+        Assert.Equal([retained.Id], workspace.Selection.Ids);
+        session.Undo();
+        Assert.Equal([retained.Id, discarded.Id], workspace.Selection.Ids);
+        Assert.Equal(discarded.Id, workspace.Selection.Primary);
+        session.Redo();
+        Assert.Equal([retained.Id], workspace.Selection.Ids);
+    }
+
+    [Fact]
     public async Task NavigationHistoryAndTaskLockLevelsAreIndependent()
     {
         await using DesktopSessionController session = new();

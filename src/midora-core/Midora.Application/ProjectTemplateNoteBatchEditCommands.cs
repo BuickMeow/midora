@@ -49,7 +49,7 @@ public static partial class ProjectDomainEditCommands
             long replacementTemplateLength = Math.Max(oldTemplateLength, requiredBoundary);
             int insertionIndex = voice.Events.Count;
             TemplateEvent[]? copies = null;
-            return Prepared(
+            return ResolveExactSubVoiceEventCollisions(Prepared(
                 hasChanges: true,
                 EventInstrumentChange(eventInstrumentId),
                 owner =>
@@ -86,7 +86,7 @@ public static partial class ProjectDomainEditCommands
                         RemoveRequired(voice.Events, copy, "Template Note copy");
                     }
                     instrument.TemplateLengthTicks = oldTemplateLength;
-                });
+                }), voice);
         });
 
     public static IProjectEditCommand MoveTemplateNotes(
@@ -131,7 +131,7 @@ public static partial class ProjectDomainEditCommands
                 .DefaultIfEmpty(oldTemplateLength)
                 .Max();
             long replacementTemplateLength = Math.Max(oldTemplateLength, requiredBoundary);
-            return Prepared(
+            return ResolveExactSubVoiceEventCollisions(Prepared(
                 old.Where((value, index) => value != replacement[index]).Any(),
                 EventInstrumentChange(eventInstrumentId),
                 _ =>
@@ -162,7 +162,7 @@ public static partial class ProjectDomainEditCommands
                         InsertAt(voice.Events, value.Index, value.Note, "Template Note");
                     }
                     instrument.TemplateLengthTicks = oldTemplateLength;
-                });
+                }), voice);
         });
 
     public static IProjectEditCommand AdjustTemplateNoteEdges(
@@ -248,7 +248,7 @@ public static partial class ProjectDomainEditCommands
             long oldTemplateLength = instrument.TemplateLengthTicks;
             long requiredBoundary = replacement.Max(value => checked(value.Tick + value.LengthTicks));
             long replacementTemplateLength = Math.Max(oldTemplateLength, requiredBoundary);
-            return Prepared(
+            IPreparedProjectEdit prepared = Prepared(
                 old.Where((value, index) => value != replacement[index]).Any()
                     || oldTemplateLength != replacementTemplateLength,
                 EventInstrumentChange(eventInstrumentId),
@@ -262,5 +262,8 @@ public static partial class ProjectDomainEditCommands
                     for (int index = 0; index < notes.Length; index++) SetTemplateEvent(notes[index], old[index]);
                     instrument.TemplateLengthTicks = oldTemplateLength;
                 });
+            return startDelta == 0
+                ? prepared
+                : ResolveExactSubVoiceEventCollisions(prepared, voice);
         });
 }

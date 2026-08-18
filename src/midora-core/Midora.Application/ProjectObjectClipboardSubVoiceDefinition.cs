@@ -345,6 +345,7 @@ public static partial class ProjectDomainEditCommands
                 curve.Points.Add(new(project, point.Tick, point.Value, point.Interpolation));
             result.Curves.Add(curve);
         }
+        RemoveLaterExactTimelineCollisions(result);
         return result;
     }
 

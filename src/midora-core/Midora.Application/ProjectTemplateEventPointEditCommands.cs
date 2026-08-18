@@ -39,7 +39,6 @@ public static partial class ProjectDomainEditCommands
                 TemplateEvent? current = FindTemplateEventForTarget(voice, target, edit.Tick);
                 if (current is null)
                 {
-                    EnsureNoCrossTargetConflict(voice, target, edit.Tick);
                     additions.Add(edit);
                 }
                 else
@@ -55,7 +54,7 @@ public static partial class ProjectDomainEditCommands
             bool existingChanges = existing.Any(value =>
                 !TemplateEventMidiTargets.Enumerate(value.Event).Contains(target)
                 || TemplateEventMidiTargets.GetValue(value.Event, target) != value.Value);
-            return Prepared(
+            return ResolveExactSubVoiceEventCollisions(Prepared(
                 existingChanges || additions.Count != 0 || oldTemplateLength != replacementTemplateLength,
                 EventInstrumentChange(eventInstrumentId),
                 owner =>
@@ -95,7 +94,7 @@ public static partial class ProjectDomainEditCommands
                         SetTemplateEvent(edit.Event, edit.OldValue);
                     }
                     instrument.TemplateLengthTicks = oldTemplateLength;
-                });
+                }), voice);
         });
 
     private static TemplateEvent? FindTemplateEventForTarget(
@@ -114,22 +113,6 @@ public static partial class ProjectDomainEditCommands
             _ => candidates.SingleOrDefault(value =>
                 TemplateEventMidiTargets.Enumerate(value).Contains(target))
         };
-    }
-
-    private static void EnsureNoCrossTargetConflict(SubVoice voice, MidiValueTarget target, long tick)
-    {
-        bool pitchBendRangeTarget = target.Kind is MidiValueKind.PitchBendRangeSemitones
-            or MidiValueKind.PitchBendRangeCents;
-        bool conflict = voice.Events.Any(value => value.Tick == tick
-            && (pitchBendRangeTarget
-                ? value.Kind == TemplateEventKind.RegisteredParameter && value.Number == 0
-                : target.Kind == MidiValueKind.RegisteredParameter && target.Number == 0
-                    && value.Kind == TemplateEventKind.PitchBendRange));
-        if (conflict)
-        {
-            throw new InvalidOperationException(
-                "Pitch Bend Range and RPN 0 cannot both occupy the same SubVoice tick.");
-        }
     }
 
     private static void ValidateTemplateEventPoint(MidiValueTarget target, TemplateEventPointEdit point)

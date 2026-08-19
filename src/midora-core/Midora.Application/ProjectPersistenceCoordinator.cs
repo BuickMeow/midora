@@ -103,7 +103,9 @@ public sealed class ProjectPersistenceCoordinator
         {
             MidoraProject project = _document.Project;
             if (project.DamagedEventInstruments.Count != 0
-                || project.DamagedLogicalTracks.Count != 0)
+                || project.DamagedLogicalTracks.Count != 0
+                || project.DamagedMidiChannelRoots.Count != 0
+                || project.DamagedPureMidiTracks.Count != 0)
             {
                 return false;
             }
@@ -234,7 +236,9 @@ public sealed class ProjectPersistenceCoordinator
     private void RequireNoDamagedProjectObjects()
     {
         if (_document.Project.DamagedEventInstruments.Count != 0
-            || _document.Project.DamagedLogicalTracks.Count != 0)
+            || _document.Project.DamagedLogicalTracks.Count != 0
+            || _document.Project.DamagedMidiChannelRoots.Count != 0
+            || _document.Project.DamagedPureMidiTracks.Count != 0)
         {
             throw new ProjectPersistenceUnavailableException(
                 ProjectPersistenceUnavailability.DamagedProjectObjects,

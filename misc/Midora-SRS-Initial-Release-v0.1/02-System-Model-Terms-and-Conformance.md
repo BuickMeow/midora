@@ -15,24 +15,30 @@ Project Source Data
     -> Canonical Compiled Result
     -> Playback / Preview / MIDI Export / Audio Rendering
 ```
-Project 是唯一完整工作上下文。Event Instrument Library、Logical Tracks、Conductor Track、SoundFont Settings 和各类 Project Settings 均属于 Project。播放、预览、MIDI 导出与音频渲染不得各自重新解释 Project 语义。
+Project 是唯一完整工作上下文。Conductor Track、混排的 Event Instrument / MIDI Channel Root 父节点、它们各自的 Logical / Pure MIDI child Tracks、SoundFont Settings 和各类 Project Settings 均属于 Project。Event Instrument Library 只可作为内部稳定 ID 索引，不是第二套可见层级或顺序。播放、预览、MIDI 导出与音频渲染不得各自重新解释 Project 语义。
 ## 2.2 核心对象关系
 ```text
 Project
 ├─ Project Settings and Metadata
 ├─ Conductor Track
-├─ Event Instrument Library
-│  └─ Event Instrument
+├─ Arrangement Parents (explicit mixed order)
+│  ├─ Event Instrument
 │     ├─ SubVoice
 │     ├─ Logical Parameters
 │     ├─ Logical Parameter Mappings
 │     ├─ Mapping Functions
 │     ├─ Envelope Presets
-│     └─ Lifecycle / Overlap / Isolation policies
-├─ Logical Tracks
-│  └─ Segment
-│     ├─ Logical Notes
-│     └─ Logical Parameter Lanes
+│     ├─ Lifecycle / Overlap / Isolation policies
+│     └─ Logical Tracks (explicit child order)
+│        └─ Logical Segment
+│           ├─ Logical Notes
+│           └─ Logical Parameter Lanes
+│  └─ MIDI Channel Root
+│     └─ Pure MIDI Tracks (explicit child order)
+│        └─ Midi Segment
+│           ├─ Direct MIDI Notes
+│           ├─ Direct MIDI Channel Events
+│           └─ Opaque Imported Events
 ├─ Global Reset Defaults
 ├─ Global Event Scope Defaults
 ├─ Playback Settings
@@ -52,6 +58,8 @@ Project
 Port 1–16
 Channel 1–16
 Logical Track 1–N
+MIDI Channel Root 1–N
+Pure MIDI Track 1–N
 SubVoice 1–N
 Program 1–128
 ```
@@ -106,10 +114,16 @@ MIDI 数据内部按 MIDI 1.0 标准使用 0-based 编码。UI 不得暴露 0-ba
 | 指挥轨道 | Conductor Track | 固定存在的全局音乐事件轨道 |
 | 事件乐器 | Event Instrument | 可复用的、带时间维度的 MIDI 事件模板 |
 | 事件乐器实例 | Event Instrument Instance | Logical Note 触发后生成的编译期实例 |
-| 事件乐器库 | Event Instrument Library | Project 内 Event Instrument 定义集合 |
+| 事件乐器库 | Event Instrument Library | Project 内 Event Instrument 的内部稳定 ID 索引；不构成可见 Workspace、Folder 或独立顺序 |
 | 子声部 | SubVoice | Event Instrument 内具有独立事件归属和 Channel Unit 资源语义的结构 |
-| 逻辑轨道 | Logical Track | 用户编曲使用的高层轨道 |
-| 片段 | Segment | Logical Track 时间线上的有效范围容器 |
+| 编曲父节点 | Arrangement Parent | 混排在 Conductor 后的 Event Instrument 或 MIDI Channel Root |
+| 逻辑轨道 | Logical Track | 必须属于一个 Event Instrument 的高层编曲子轨道 |
+| MIDI 通道根 | MIDI Channel Root | 一个或多个 Pure MIDI Track 共享的 Channel Unit、Channel 状态、路由、模式与硬边界容器 |
+| 纯 MIDI 轨道 | Pure MIDI Track | 直接保存 MIDI Note / Channel Event、必须属于一个 MIDI Channel Root 的编曲轨道 |
+| 逻辑片段 | Logical Segment | Logical Track 时间线上的有效范围容器 |
+| MIDI 片段 | Midi Segment | Pure MIDI Track 时间线上的直接 MIDI 内容有效范围容器 |
+| 直接 MIDI 音符 | Direct MIDI Note | 一对可编辑 NoteOn/NoteOff 及其 start、gate、key、on/off velocity |
+| Opaque 导入事件 | Opaque Imported Event | 从 SMF 保留、初版不解释 payload、可随 Track/Segment 重新导出的 SysEx 或 Meta 事件 |
 | 逻辑音符 | Logical Note | 触发 Event Instrument Instance 的高层 Note |
 | 逻辑参数 | Logical Parameter | Event Instrument 暴露给 Segment 的外部控制接口 |
 | 逻辑参数映射 | Logical Parameter Mapping | Logical Parameter 到 SubVoice 非 Note 事件参数的映射线路 |

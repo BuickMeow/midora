@@ -30,6 +30,7 @@ public sealed unsafe class BassMidiRenderer
     private readonly int[] _unitIndexByCanonicalNumber;
     private readonly bool[] _sourceEnabled;
     private readonly bool[] _sourceCacheBypassed;
+    private int[][] _cacheOwnerIndicesBySource;
     private readonly MidiMonitoringCommand[] _monitoringCommands = new MidiMonitoringCommand[MonitoringCommandQueueCapacity];
     private readonly object _monitoringProducerSync = new();
     private readonly float _masterGain;
@@ -117,10 +118,20 @@ public sealed unsafe class BassMidiRenderer
         Array.Fill(_unitIndexByCanonicalNumber, -1);
         _sourceEnabled = new bool[plan.SourceIds.Length];
         _sourceCacheBypassed = new bool[plan.SourceIds.Length];
+        _cacheOwnerIndicesBySource = CreateCacheOwnerMap(
+            plan.SourceIds.Length,
+            plan.UnitFragments);
         Array.Fill(_sourceEnabled, true);
         foreach (int sourceIndex in plan.InitiallyDisabledSourceIndices)
         {
             _sourceEnabled[sourceIndex] = false;
+            // A merged Pure MIDI Root cache can contain events from this child
+            // source. Monitoring-dependent playback must synthesize the filtered
+            // event set instead of replaying that unfiltered PCM.
+            foreach (int cacheOwnerIndex in _cacheOwnerIndicesBySource[sourceIndex])
+            {
+                _sourceCacheBypassed[cacheOwnerIndex] = true;
+            }
         }
         _runtimeLease = BassNativeRuntime.Acquire();
 
@@ -437,6 +448,9 @@ public sealed unsafe class BassMidiRenderer
         _segments = plan.Segments.ToArray().Select(value => new SegmentState(value)).ToArray();
         (_segmentIndicesBySource, _segmentCursorBySource, _activeSegmentIndexBySource) =
             CreateSegmentSchedule(plan.SourceIds.Length, _segments);
+        _cacheOwnerIndicesBySource = CreateCacheOwnerMap(
+            plan.SourceIds.Length,
+            plan.UnitFragments);
         _plan = plan;
     }
 
@@ -458,7 +472,7 @@ public sealed unsafe class BassMidiRenderer
         for (int i = 0; i < _units.Length; i++)
         {
             UnitState unit = _units[i];
-            EstablishCanonicalInitialState(unit.StreamHandle);
+            EstablishCanonicalInitialState(unit.StreamHandle, unit.IsPercussion);
             unit.EventIndex = MidiRenderPlanSplicer.FindFirstEventAtOrAfter(
                 unit.Plan.Events,
                 producerFrontierFrame);
@@ -774,6 +788,38 @@ public sealed unsafe class BassMidiRenderer
         return (bySource, new int[sourceCount], active);
     }
 
+    private static int[][] CreateCacheOwnerMap(
+        int sourceCount,
+        ReadOnlySpan<MidiUnitFragmentRenderPlan> fragments)
+    {
+        MidiUnitFragmentRenderPlan[] frozenFragments = fragments.ToArray();
+        int[][] result = new int[sourceCount][];
+        for (int sourceIndex = 0; sourceIndex < sourceCount; sourceIndex++)
+        {
+            HashSet<int> owners = [];
+            foreach (MidiUnitFragmentRenderPlan fragment in frozenFragments)
+            {
+                if (fragment.SourceIndex == sourceIndex)
+                {
+                    owners.Add(fragment.SourceIndex);
+                    continue;
+                }
+
+                foreach (ScheduledMidiMessage scheduled in fragment.Events)
+                {
+                    if (scheduled.SourceIndex == sourceIndex)
+                    {
+                        owners.Add(fragment.SourceIndex);
+                        break;
+                    }
+                }
+            }
+
+            result[sourceIndex] = owners.Order().ToArray();
+        }
+        return result;
+    }
+
     private void UpdateActiveSegmentsAtCurrentFrame()
     {
         for (int sourceIndex = 0; sourceIndex < _segmentIndicesBySource.Length; sourceIndex++)
@@ -854,9 +900,15 @@ public sealed unsafe class BassMidiRenderer
                 ThrowBassPreparationFailure("BASS_ChannelSetAttribute(BASS_ATTRIB_MIDI_CPU)");
             }
 
-            EstablishCanonicalInitialState(streamHandle);
+            bool isPercussion = fragments.Length != 0 && fragments[0].IsPercussion;
+            if (fragments.Any(value => value.IsPercussion != isPercussion))
+            {
+                throw new InvalidDataException(
+                    "One canonical Channel Unit cannot mix melodic and percussion fragments.");
+            }
+            EstablishCanonicalInitialState(streamHandle, isPercussion);
 
-            return new UnitState(plan, streamHandle, fragments);
+            return new UnitState(plan, streamHandle, fragments, isPercussion);
         }
         catch (Exception creationFailure)
         {
@@ -906,7 +958,7 @@ public sealed unsafe class BassMidiRenderer
         }
     }
 
-    private static void EstablishCanonicalInitialState(uint streamHandle)
+    private static void EstablishCanonicalInitialState(uint streamHandle, bool isPercussion)
     {
         const uint channel = 0;
         // MIDI_EVENT_RESET is CC121: it resets controllers but deliberately does
@@ -932,16 +984,18 @@ public sealed unsafe class BassMidiRenderer
             streamHandle,
             channel,
             NativeBassMidi.MIDI_EVENT_DEFDRUMS,
-            "MIDI_EVENT_DEFDRUMS");
+            "MIDI_EVENT_DEFDRUMS",
+            isPercussion ? 1u : 0u);
     }
 
     private static void SubmitRequiredStreamEvent(
         uint streamHandle,
         uint channel,
         uint midiEvent,
-        string eventName)
+        string eventName,
+        uint parameter = 0)
     {
-        if (NativeBassMidi.StreamEvent(streamHandle, channel, midiEvent, 0) == 0)
+        if (NativeBassMidi.StreamEvent(streamHandle, channel, midiEvent, parameter) == 0)
         {
             ThrowBassPreparationFailure($"BASS_MIDI_StreamEvent({eventName})");
         }
@@ -1033,11 +1087,16 @@ public sealed unsafe class BassMidiRenderer
                     continue;
                 }
                 _sourceEnabled[command.SourceIndex] = command.SourceEnabled;
-                if (!_sourceCacheBypassed[command.SourceIndex])
+                foreach (int cacheOwnerIndex in _cacheOwnerIndicesBySource[command.SourceIndex])
                 {
-                    _sourceCacheBypassed[command.SourceIndex] = true;
+                    if (_sourceCacheBypassed[cacheOwnerIndex])
+                    {
+                        continue;
+                    }
+
+                    _sourceCacheBypassed[cacheOwnerIndex] = true;
                     _cacheCaptureInvalidated |= HasPcmCacheBindings();
-                    ResetCachedHitStreamsForSource(command.SourceIndex);
+                    ResetCachedHitStreamsForSource(cacheOwnerIndex);
                 }
             }
             else
@@ -1196,7 +1255,7 @@ public sealed unsafe class BassMidiRenderer
             }
             try
             {
-                EstablishCanonicalInitialState(unit.StreamHandle);
+                EstablishCanonicalInitialState(unit.StreamHandle, unit.IsPercussion);
                 unit.FragmentInitialized = true;
             }
             catch (MidoraAudioException)
@@ -1273,7 +1332,7 @@ public sealed unsafe class BassMidiRenderer
                 && segment?.Plan.SegmentId == fragment.SegmentId
                 && segment.Plan.PcmCacheHit)
             {
-                EstablishCanonicalInitialState(unit.StreamHandle);
+                EstablishCanonicalInitialState(unit.StreamHandle, unit.IsPercussion);
             }
         }
     }
@@ -1674,7 +1733,8 @@ public sealed unsafe class BassMidiRenderer
     private sealed class UnitState(
         MidiUnitRenderPlan plan,
         uint streamHandle,
-        MidiUnitFragmentRenderPlan[] fragments)
+        MidiUnitFragmentRenderPlan[] fragments,
+        bool isPercussion)
     {
         public MidiUnitRenderPlan Plan { get; set; } = plan;
 
@@ -1687,6 +1747,8 @@ public sealed unsafe class BassMidiRenderer
         public int FragmentIndex { get; set; }
 
         public bool FragmentInitialized { get; set; }
+
+        public bool IsPercussion { get; set; } = isPercussion;
 
     }
 

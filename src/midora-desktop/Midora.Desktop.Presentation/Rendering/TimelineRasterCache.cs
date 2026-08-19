@@ -8,7 +8,9 @@ namespace Midora.Desktop.Presentation.Rendering;
 
 internal enum TimelineRasterLayer
 {
-    ArrangementSegmentPreview,
+    ArrangementSegmentNotePreview,
+    ArrangementSegmentEventPreview,
+    ArrangementConductorPreview,
     PianoNotes,
     PianoSelection,
     PianoDragPreview,
@@ -522,7 +524,9 @@ public static class TimelinePianoTileRasterizer
         byte[] pixels = new byte[RasterSize * RasterSize * 4];
         foreach (TimelineRenderItem item in candidates)
         {
-            if (item.Kind is not (TimelineItemKind.LogicalNote or TimelineItemKind.TemplateNote))
+            if (item.Kind is not (TimelineItemKind.LogicalNote
+                or TimelineItemKind.DirectMidiNote
+                or TimelineItemKind.TemplateNote))
             {
                 continue;
             }
@@ -720,11 +724,158 @@ public static class TimelinePianoTileRasterizer
 
 public static class TimelineSegmentPreviewRasterizer
 {
+    private const ulong FingerprintOffset = 14695981039346656037UL;
+    private const ulong FingerprintPrime = 1099511628211UL;
+    public const int TileSize = 256;
     public const int ContentWidth = 512;
     public const int Width = ContentWidth;
     public const int Height = 64;
 
-    public static TimelineRasterBuffer Rasterize(TimelineSegmentPreview preview, Color noteColor)
+    public static TimelineRasterBuffer RasterizeNoteTile(
+        TimelineSegmentPreview preview,
+        double deviceSegmentWidth,
+        int deviceHeight,
+        long tileX,
+        Color noteColor)
+    {
+        ArgumentNullException.ThrowIfNull(preview);
+        ValidateTileArguments(deviceSegmentWidth, deviceHeight, tileX);
+        byte[] pixels = new byte[checked(TileSize * deviceHeight * 4)];
+        (long tileLeft, long tileRight, long totalWidth) = GetTilePixelRange(
+            deviceSegmentWidth,
+            tileX);
+        List<TimelineSegmentPreviewNote> candidates = [];
+        QueryNoteCandidates(preview, deviceSegmentWidth, tileLeft, tileRight, candidates);
+        int rendered = 0;
+        foreach (TimelineSegmentPreviewNote note in candidates)
+        {
+            (long left, long right) = GetNotePixelRange(note, deviceSegmentWidth, totalWidth);
+            if (right <= tileLeft || left >= tileRight) continue;
+            int localLeft = checked((int)Math.Clamp(left - tileLeft, 0, TileSize));
+            int localRight = checked((int)Math.Clamp(right - tileLeft, 0, TileSize));
+            if (localRight <= localLeft) continue;
+            int top = Math.Clamp(
+                (int)Math.Round(
+                    (127 - note.Pitch) / 127d * (deviceHeight - 1),
+                    MidpointRounding.AwayFromZero),
+                0,
+                deviceHeight - 1);
+            int bottom = Math.Min(deviceHeight, top + 2);
+            if (bottom - top < 2)
+            {
+                top = Math.Max(0, bottom - 2);
+            }
+            TimelinePianoTileRasterizer.FillRectangle(
+                pixels,
+                TileSize,
+                localLeft,
+                top,
+                localRight,
+                bottom,
+                noteColor,
+                0.72);
+            rendered++;
+        }
+        return new(TileSize, deviceHeight, pixels, rendered);
+    }
+
+    public static TimelineRasterBuffer RasterizeEventTile(
+        TimelineSegmentPreview preview,
+        double deviceSegmentWidth,
+        int deviceHeight,
+        long tileX,
+        Color eventColor)
+    {
+        ArgumentNullException.ThrowIfNull(preview);
+        ValidateTileArguments(deviceSegmentWidth, deviceHeight, tileX);
+        byte[] pixels = new byte[checked(TileSize * deviceHeight * 4)];
+        (long tileLeft, long tileRight, long totalWidth) = GetTilePixelRange(
+            deviceSegmentWidth,
+            tileX);
+        SortedDictionary<long, double> columns = CollectEventColumns(
+            preview,
+            deviceSegmentWidth,
+            tileLeft,
+            tileRight,
+            totalWidth);
+        foreach ((long worldColumn, double normalizedValue) in columns)
+        {
+            int x = checked((int)(worldColumn - tileLeft));
+            int top = Math.Clamp(
+                (int)Math.Floor((1 - normalizedValue) * deviceHeight),
+                0,
+                deviceHeight - 1);
+            TimelinePianoTileRasterizer.FillRectangle(
+                pixels,
+                TileSize,
+                x,
+                top,
+                x + 1,
+                deviceHeight,
+                eventColor,
+                0.5);
+        }
+        return new(TileSize, deviceHeight, pixels, columns.Count);
+    }
+
+    public static ulong ComputeNoteTileContentFingerprint(
+        TimelineSegmentPreview preview,
+        double deviceSegmentWidth,
+        long tileX)
+    {
+        ArgumentNullException.ThrowIfNull(preview);
+        ValidateTileArguments(deviceSegmentWidth, 1, tileX);
+        (long tileLeft, long tileRight, long totalWidth) = GetTilePixelRange(
+            deviceSegmentWidth,
+            tileX);
+        List<TimelineSegmentPreviewNote> candidates = [];
+        QueryNoteCandidates(preview, deviceSegmentWidth, tileLeft, tileRight, candidates);
+        ulong hash = FingerprintOffset;
+        foreach (TimelineSegmentPreviewNote note in candidates)
+        {
+            (long left, long right) = GetNotePixelRange(note, deviceSegmentWidth, totalWidth);
+            if (right <= tileLeft || left >= tileRight) continue;
+            AddFingerprint(ref hash, unchecked((ulong)left));
+            AddFingerprint(ref hash, unchecked((ulong)right));
+            AddFingerprint(ref hash, unchecked((ulong)note.Pitch));
+        }
+        return hash;
+    }
+
+    public static ulong ComputeEventTileContentFingerprint(
+        TimelineSegmentPreview preview,
+        double deviceSegmentWidth,
+        long tileX)
+    {
+        ArgumentNullException.ThrowIfNull(preview);
+        ValidateTileArguments(deviceSegmentWidth, 1, tileX);
+        (long tileLeft, long tileRight, long totalWidth) = GetTilePixelRange(
+            deviceSegmentWidth,
+            tileX);
+        SortedDictionary<long, double> columns = CollectEventColumns(
+            preview,
+            deviceSegmentWidth,
+            tileLeft,
+            tileRight,
+            totalWidth);
+        ulong hash = FingerprintOffset;
+        foreach ((long worldColumn, double normalizedValue) in columns)
+        {
+            AddFingerprint(ref hash, unchecked((ulong)worldColumn));
+            AddFingerprint(
+                ref hash,
+                unchecked((ulong)BitConverter.DoubleToInt64Bits(normalizedValue)));
+        }
+        return hash;
+    }
+
+    public static TimelineRasterBuffer Rasterize(TimelineSegmentPreview preview, Color noteColor) =>
+        Rasterize(preview, noteColor, Colors.Transparent);
+
+    public static TimelineRasterBuffer Rasterize(
+        TimelineSegmentPreview preview,
+        Color noteColor,
+        Color eventColor)
     {
         ArgumentNullException.ThrowIfNull(preview);
         byte[] pixels = new byte[Width * Height * 4];
@@ -758,11 +909,136 @@ public static class TimelineSegmentPreviewRasterizer
                 noteColor,
                 0.72);
         }
-        return new(Width, Height, pixels, preview.Notes.Count);
+        // Direct MIDI events intentionally sit above the Note preview. At 50% opacity,
+        // dense Note material remains readable while event activity is still visible.
+        foreach (TimelineSegmentPreviewEvent value in preview.Events)
+        {
+            int x = Math.Clamp(
+                RoundNormalizedBoundary(value.NormalizedTick),
+                0,
+                ContentWidth - 1);
+            int top = Math.Clamp(
+                (int)Math.Floor((1 - value.NormalizedValue) * Height),
+                0,
+                Height - 1);
+            TimelinePianoTileRasterizer.FillRectangle(
+                pixels,
+                Width,
+                x,
+                top,
+                Math.Min(Width, x + 1),
+                Height,
+                eventColor,
+                0.5);
+        }
+        return new(Width, Height, pixels, checked(preview.Notes.Count + preview.Events.Count));
     }
 
     private static int RoundNormalizedBoundary(double value) =>
         checked((int)Math.Floor(value * ContentWidth + 0.5));
+
+    private static void ValidateTileArguments(
+        double deviceSegmentWidth,
+        int deviceHeight,
+        long tileX)
+    {
+        if (!double.IsFinite(deviceSegmentWidth)
+            || deviceSegmentWidth <= 0
+            || deviceSegmentWidth > long.MaxValue - TileSize)
+        {
+            throw new ArgumentOutOfRangeException(nameof(deviceSegmentWidth));
+        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(deviceHeight);
+        ArgumentOutOfRangeException.ThrowIfNegative(tileX);
+        _ = checked(tileX * TileSize);
+    }
+
+    private static (long TileLeft, long TileRight, long TotalWidth) GetTilePixelRange(
+        double deviceSegmentWidth,
+        long tileX)
+    {
+        long tileLeft = checked(tileX * TileSize);
+        long tileRight = checked(tileLeft + TileSize);
+        long totalWidth = Math.Max(1, checked((long)Math.Ceiling(deviceSegmentWidth)));
+        return (tileLeft, tileRight, totalWidth);
+    }
+
+    private static void QueryNoteCandidates(
+        TimelineSegmentPreview preview,
+        double deviceSegmentWidth,
+        long tileLeft,
+        long tileRight,
+        List<TimelineSegmentPreviewNote> destination)
+    {
+        double normalizedStart = Math.Max(0, (tileLeft - 1d) / deviceSegmentWidth);
+        double normalizedEnd = Math.Min(1, (tileRight + 1d) / deviceSegmentWidth);
+        preview.QueryNotes(normalizedStart, normalizedEnd, destination);
+    }
+
+    private static void QueryEventCandidates(
+        TimelineSegmentPreview preview,
+        double deviceSegmentWidth,
+        long tileLeft,
+        long tileRight,
+        List<TimelineSegmentPreviewEvent> destination)
+    {
+        double normalizedStart = Math.Max(0, (tileLeft - 1d) / deviceSegmentWidth);
+        double normalizedEnd = Math.Min(
+            Math.BitIncrement(1d),
+            (tileRight + 1d) / deviceSegmentWidth);
+        preview.QueryEvents(normalizedStart, normalizedEnd, destination);
+    }
+
+    private static (long Left, long Right) GetNotePixelRange(
+        TimelineSegmentPreviewNote note,
+        double deviceSegmentWidth,
+        long totalWidth)
+    {
+        long left = Math.Clamp(
+            RoundDeviceBoundary(note.NormalizedStart, deviceSegmentWidth),
+            0,
+            totalWidth - 1);
+        long right = Math.Clamp(
+            Math.Max(left + 1, RoundDeviceBoundary(note.NormalizedEnd, deviceSegmentWidth)),
+            1,
+            totalWidth);
+        return (left, right);
+    }
+
+    private static SortedDictionary<long, double> CollectEventColumns(
+        TimelineSegmentPreview preview,
+        double deviceSegmentWidth,
+        long tileLeft,
+        long tileRight,
+        long totalWidth)
+    {
+        List<TimelineSegmentPreviewEvent> candidates = [];
+        QueryEventCandidates(preview, deviceSegmentWidth, tileLeft, tileRight, candidates);
+        SortedDictionary<long, double> columns = [];
+        foreach (TimelineSegmentPreviewEvent value in candidates)
+        {
+            long x = Math.Clamp(
+                RoundDeviceBoundary(value.NormalizedTick, deviceSegmentWidth),
+                0,
+                totalWidth - 1);
+            if (x < tileLeft || x >= tileRight) continue;
+            if (!columns.TryGetValue(x, out double maximum)
+                || value.NormalizedValue > maximum)
+            {
+                columns[x] = value.NormalizedValue;
+            }
+        }
+        return columns;
+    }
+
+    private static long RoundDeviceBoundary(double normalized, double deviceSegmentWidth) =>
+        checked((long)Math.Floor(normalized * deviceSegmentWidth + 0.5));
+
+    private static void AddFingerprint(ref ulong hash, ulong value)
+    {
+        hash ^= value;
+        hash *= FingerprintPrime;
+    }
 }
 
 public static class TimelineEventPointTileRasterizer
@@ -818,7 +1094,10 @@ public static class TimelineEventPointTileRasterizer
             CeilingToLong((worldLeft + width) / devicePixelsPerTick));
         List<TimelineRenderItem> candidates = [];
         snapshot.Index.QueryInto(startTick, endTick, 0, 1, candidates);
-        candidates.RemoveAll(static item => item.Kind != TimelineItemKind.LogicalParameterPoint);
+        candidates.RemoveAll(static item => item.Kind is not (
+            TimelineItemKind.LogicalParameterPoint
+                or TimelineItemKind.DirectMidiEvent
+                or TimelineItemKind.OpaqueMidiEvent));
         if (selectionOnly)
         {
             candidates.RemoveAll(item => selection?.Contains(item.Id) != true);
@@ -881,7 +1160,7 @@ public static class TimelineEventPointTileRasterizer
         return new(width, height, pixels, candidates.Count);
     }
 
-    private static void FillEllipse(
+    internal static void FillEllipse(
         byte[] pixels,
         int width,
         int height,
@@ -927,6 +1206,164 @@ public static class TimelineEventPointTileRasterizer
     private static long CeilingToLong(double value) => value <= long.MinValue
         ? long.MinValue
         : value >= long.MaxValue ? long.MaxValue : (long)Math.Ceiling(value);
+}
+
+public static class TimelineConductorTileRasterizer
+{
+    private const ulong FingerprintOffset = 14695981039346656037UL;
+    private const ulong FingerprintPrime = 1099511628211UL;
+    public const int TileSize = 256;
+    public const double PointRadius = 4;
+    public const double OutlineThickness = 1;
+
+    public static int GetGutter(double dpiScaleX)
+    {
+        if (!double.IsFinite(dpiScaleX) || dpiScaleX <= 0)
+            throw new ArgumentOutOfRangeException(nameof(dpiScaleX));
+        return checked((int)Math.Ceiling((PointRadius + OutlineThickness) * dpiScaleX) + 1);
+    }
+
+    public static TimelineRasterBuffer Rasterize(
+        TimelineRenderSnapshot snapshot,
+        double devicePixelsPerTick,
+        double deviceLaneHeight,
+        long tileX,
+        double dpiScaleX,
+        double dpiScaleY,
+        Color fallbackColor,
+        Color borderColor)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (!double.IsFinite(devicePixelsPerTick) || devicePixelsPerTick <= 0)
+            throw new ArgumentOutOfRangeException(nameof(devicePixelsPerTick));
+        if (!double.IsFinite(deviceLaneHeight) || deviceLaneHeight <= 0)
+            throw new ArgumentOutOfRangeException(nameof(deviceLaneHeight));
+        int gutterX = GetGutter(dpiScaleX);
+        int gutterY = checked((int)Math.Ceiling((PointRadius + OutlineThickness) * dpiScaleY) + 1);
+        int width = checked(TileSize + gutterX * 2);
+        int height = checked(Math.Max(1, (int)Math.Ceiling(deviceLaneHeight)) + gutterY * 2);
+        double worldLeft = tileX * (double)TileSize - gutterX;
+        ConductorTilePoint[] points = CollectPoints(
+            snapshot,
+            devicePixelsPerTick,
+            tileX,
+            dpiScaleX);
+
+        byte[] pixels = new byte[checked(width * height * 4)];
+        double radiusX = Math.Max(1, PointRadius * dpiScaleX);
+        double radiusY = Math.Max(1, PointRadius * dpiScaleY);
+        double outlineX = Math.Max(0.5, OutlineThickness * dpiScaleX);
+        double outlineY = Math.Max(0.5, OutlineThickness * dpiScaleY);
+        foreach (ConductorTilePoint point in points)
+        {
+            double centerX = point.DeviceColumn - worldLeft;
+            double normalizedY = 0.2 + Math.Clamp(point.Type, 0, 3) * 0.15;
+            double centerY = gutterY + normalizedY * deviceLaneHeight;
+            if (centerX + radiusX < 0 || centerX - radiusX >= width) continue;
+            Color fill = point.AccentColor == 0
+                ? fallbackColor
+                : Color.FromArgb(
+                    (byte)(point.AccentColor >> 24),
+                    (byte)(point.AccentColor >> 16),
+                    (byte)(point.AccentColor >> 8),
+                    (byte)point.AccentColor);
+            TimelineEventPointTileRasterizer.FillEllipse(
+                pixels, width, height, centerX, centerY, radiusX, radiusY, borderColor);
+            TimelineEventPointTileRasterizer.FillEllipse(
+                pixels, width, height, centerX, centerY,
+                Math.Max(0.5, radiusX - outlineX),
+                Math.Max(0.5, radiusY - outlineY),
+                fill);
+        }
+        return new(width, height, pixels, points.Length);
+    }
+
+    public static ulong ComputeContentFingerprint(
+        TimelineRenderSnapshot snapshot,
+        double devicePixelsPerTick,
+        long tileX,
+        double dpiScaleX)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (!double.IsFinite(devicePixelsPerTick) || devicePixelsPerTick <= 0)
+            throw new ArgumentOutOfRangeException(nameof(devicePixelsPerTick));
+        ArgumentOutOfRangeException.ThrowIfNegative(tileX);
+        ConductorTilePoint[] points = CollectPoints(
+            snapshot,
+            devicePixelsPerTick,
+            tileX,
+            dpiScaleX);
+        ulong hash = FingerprintOffset;
+        foreach (ConductorTilePoint point in points)
+        {
+            AddFingerprint(ref hash, unchecked((ulong)point.DeviceColumn));
+            AddFingerprint(ref hash, unchecked((ulong)point.Type));
+            AddFingerprint(ref hash, point.AccentColor);
+        }
+        return hash;
+    }
+
+    private static ConductorTilePoint[] CollectPoints(
+        TimelineRenderSnapshot snapshot,
+        double devicePixelsPerTick,
+        long tileX,
+        double dpiScaleX)
+    {
+        int gutterX = GetGutter(dpiScaleX);
+        double worldLeft = tileX * (double)TileSize - gutterX;
+        double worldRight = worldLeft + TileSize + gutterX * 2;
+        long startTick = Math.Max(0, FloorToLong(worldLeft / devicePixelsPerTick));
+        long endTick = Math.Max(
+            startTick + 1,
+            CeilingToLong(worldRight / devicePixelsPerTick));
+        List<TimelineRenderItem> candidates = [];
+        snapshot.Index.QueryInto(startTick, endTick, 0, 1, candidates);
+        Dictionary<(long DeviceColumn, int Type), ConductorTilePoint> aggregated = [];
+        foreach (TimelineRenderItem item in candidates)
+        {
+            if (item.Kind is not (TimelineItemKind.ConductorEvent or TimelineItemKind.Marker))
+            {
+                continue;
+            }
+            long deviceColumn = checked((long)Math.Round(
+                item.StartTick * devicePixelsPerTick,
+                MidpointRounding.AwayFromZero));
+            if (deviceColumn + PointRadius * dpiScaleX < worldLeft
+                || deviceColumn - PointRadius * dpiScaleX >= worldRight)
+            {
+                continue;
+            }
+            (long, int) key = (deviceColumn, item.ZIndex);
+            ConductorTilePoint point = new(deviceColumn, item.ZIndex, item.AccentColor);
+            if (!aggregated.TryGetValue(key, out ConductorTilePoint existing)
+                || point.AccentColor < existing.AccentColor)
+            {
+                aggregated[key] = point;
+            }
+        }
+        return aggregated.Values
+            .OrderBy(value => value.Type)
+            .ThenBy(value => value.DeviceColumn)
+            .ThenBy(value => value.AccentColor)
+            .ToArray();
+    }
+
+    private static long FloorToLong(double value) => value <= long.MinValue
+        ? long.MinValue : value >= long.MaxValue ? long.MaxValue : (long)Math.Floor(value);
+
+    private static long CeilingToLong(double value) => value <= long.MinValue
+        ? long.MinValue : value >= long.MaxValue ? long.MaxValue : (long)Math.Ceiling(value);
+
+    private static void AddFingerprint(ref ulong hash, ulong value)
+    {
+        hash ^= value;
+        hash *= FingerprintPrime;
+    }
+
+    private readonly record struct ConductorTilePoint(
+        long DeviceColumn,
+        int Type,
+        uint AccentColor);
 }
 
 public static class TimelineVelocityTileRasterizer

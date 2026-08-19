@@ -210,6 +210,32 @@ public sealed class ProjectPersistenceCoordinatorTests
     }
 
     [Fact]
+    public async Task DamagedPureMidiPlaceholderAlsoBlocksSave()
+    {
+        using TemporaryDirectory temporary = new();
+        MidoraProjectPackageV1 packages = new("1.0.0");
+        MidoraProject project = new(192);
+        project.DamagedMidiChannelRoots.Add(new(
+            project.AllocateStableId(),
+            "Damaged Root",
+            "midi-channel-roots/damaged.pb",
+            "broken",
+            0));
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = new(compilation);
+        ProjectPersistenceCoordinator persistence = new(document, packages);
+
+        Assert.False(persistence.CanSaveProject);
+        ProjectPersistenceUnavailableException failure =
+            await Assert.ThrowsAsync<ProjectPersistenceUnavailableException>(() =>
+                persistence.SaveProjectAsync(temporary.PathFor("blocked-midi.midora")));
+
+        Assert.Equal(
+            ProjectPersistenceUnavailability.DamagedProjectObjects,
+            failure.Unavailability);
+    }
+
+    [Fact]
     public async Task EmbeddedSoundFontProviderParticipatesInSaveReadinessAndPackageWrite()
     {
         using TemporaryDirectory temporary = new();

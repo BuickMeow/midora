@@ -361,6 +361,20 @@ internal static class InspectorProjection
                      Field("object.id", "STABLE ID", segment.Id.Value, false)]);
                 return;
             }
+            if (TimelineWorkspaceViewModel.FindMidiSegment(project, segmentId) is { } midiLocation)
+            {
+                MidiSegment segment = midiLocation.Segment;
+                inspector.Replace(
+                    "MIDI Segment",
+                    string.IsNullOrWhiteSpace(midiLocation.Track.Name)
+                        ? "Unnamed MIDI Track"
+                        : midiLocation.Track.Name,
+                    [Field("midiSegment.start", "PROJECT START TICK", segment.ProjectStartTick, false),
+                     Field("midiSegment.length", "LENGTH TICKS", segment.LengthTicks, false),
+                     Field("midiSegment.offset", "CONTENT OFFSET TICK", segment.ContentOffsetTick, false),
+                     Field("object.id", "STABLE ID", segment.Id.Value, false)]);
+                return;
+            }
         }
 
         if (workspace.Mode == TimelineWorkspaceMode.Segment)
@@ -411,6 +425,72 @@ internal static class InspectorProjection
                     [Field("segment.start", "PROJECT START TICK", segment.ProjectStartTick),
                      Field("segment.length", "LENGTH TICKS", segment.LengthTicks),
                      Field("segment.offset", "CONTENT OFFSET TICK", segment.ContentOffsetTick)]);
+                return;
+            }
+
+            if (TimelineWorkspaceViewModel.FindMidiSegment(project, workspace.ObjectId) is { } midiLocation)
+            {
+                MidiSegment segment = midiLocation.Segment;
+                if (selectedId is MidoraId midiObjectId)
+                {
+                    if (segment.Notes.FirstOrDefault(item => item.Id == midiObjectId)
+                        is DirectMidiNote note)
+                    {
+                        inspector.Replace(
+                            "Direct MIDI Note",
+                            $"{TimelineWorkspaceViewModel.MidiNoteName(note.Key)} in {workspace.Header}",
+                            [Field("midiNote.start", "START TICK", note.StartTick, false),
+                             Field("midiNote.length", "LENGTH TICKS", note.LengthTicks, false),
+                             Field("midiNote.key", "KEY NUMBER", note.Key, false),
+                             Field("midiNote.onVelocity", "NOTE ON VELOCITY", note.NoteOnVelocity, false),
+                             Field("midiNote.offVelocity", "NOTE OFF VELOCITY", note.NoteOffVelocity, false),
+                             Field("midiNote.onOrder", "NOTE ON ORDER", note.NoteOnOrder, false),
+                             Field("midiNote.offOrder", "NOTE OFF ORDER", note.NoteOffOrder, false),
+                             Field("object.id", "STABLE ID", note.Id.Value, false)]);
+                        return;
+                    }
+                    if (segment.ChannelEvents.FirstOrDefault(item => item.Id == midiObjectId)
+                        is DirectMidiChannelEvent channelEvent)
+                    {
+                        inspector.Replace(
+                            "Direct MIDI Event",
+                            TimelineWorkspaceViewModel.DirectMidiLaneLabel(
+                                TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(channelEvent)),
+                            [Field("midiEvent.tick", "TICK", channelEvent.Tick, false),
+                             Field("midiEvent.kind", "EVENT KIND", channelEvent.Kind, false),
+                             Field("midiEvent.data1", "DATA 1", channelEvent.Data1, false),
+                             Field("midiEvent.data2", "DATA 2", channelEvent.Data2, false),
+                             Field("midiEvent.order", "TRACK EVENT ORDER", channelEvent.Order, false),
+                             Field("object.id", "STABLE ID", channelEvent.Id.Value, false)]);
+                        return;
+                    }
+                    if (segment.OpaqueEvents.FirstOrDefault(item => item.Id == midiObjectId)
+                        is OpaqueMidiEvent opaque)
+                    {
+                        string payloadPreview = Convert.ToHexString(
+                            opaque.Payload.AsSpan(0, Math.Min(opaque.Payload.Length, 256)));
+                        if (opaque.Payload.Length > 256) payloadPreview += "…";
+                        inspector.Replace(
+                            "Imported MIDI Event",
+                            TimelineWorkspaceViewModel.OpaqueMidiEventLabel(opaque),
+                            [Field("opaqueMidi.tick", "TICK", opaque.Tick, false),
+                             Field("opaqueMidi.kind", "EVENT KIND", opaque.Kind, false),
+                             Field("opaqueMidi.metaType", "META TYPE", $"0x{opaque.MetaType:X2}", false),
+                             Field("opaqueMidi.payloadLength", "PAYLOAD BYTES", opaque.Payload.Length, false),
+                             Field("opaqueMidi.payload", "PAYLOAD HEX PREVIEW", payloadPreview, false),
+                             Field("opaqueMidi.order", "TRACK EVENT ORDER", opaque.Order, false),
+                             Field("object.id", "STABLE ID", opaque.Id.Value, false)]);
+                        return;
+                    }
+                }
+                inspector.Replace(
+                    "MIDI Segment Window",
+                    string.IsNullOrWhiteSpace(midiLocation.Track.Name)
+                        ? "Unnamed MIDI Track"
+                        : midiLocation.Track.Name,
+                    [Field("midiSegment.start", "PROJECT START TICK", segment.ProjectStartTick, false),
+                     Field("midiSegment.length", "LENGTH TICKS", segment.LengthTicks, false),
+                     Field("midiSegment.offset", "CONTENT OFFSET TICK", segment.ContentOffsetTick, false)]);
                 return;
             }
         }

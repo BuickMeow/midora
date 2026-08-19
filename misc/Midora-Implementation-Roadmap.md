@@ -6,12 +6,16 @@
 > 现状提示（2026-08-08）：本文后续“当前进度/尚未实现”描述保留为历史路线记录，已经过时；不得据此判定源码缺口。当前权威实施状态见 `misc/Midora-Non-UI-Implementation-Tracker.md`，§7～§12 逐节证据见 `misc/Midora-Domain-Compiler-Conformance-Matrix.md`。
 >
 > UI 阶段现状（2026-08-08）：正式 `Midora.Desktop`、共享 `Midora.Desktop.Presentation` 及其测试项目已经建立。主窗口、Project 生命周期、工作区、Inspector、Diagnostics/Tasks、Preferences、MIDI/Audio 输出工作流和第 18 章主要编辑器已接入正式 Domain/Application/Compiler/consumer 入口；Arrangement、Segment、SubVoice、Logical Parameter 和 Conductor 的大量对象编辑采用专用渲染表面。Style Gallery 继续作为同一共享主题的视觉样例，不是生产依赖。当前 UI 需求映射与验证证据见 `misc/Midora-WPF-UI-Requirement-Trace.md`，架构决定见 `misc/Midora-WPF-UI-Architecture-Decisions.md`。
+>
+> 规格修订提示（2026-08-18）：SRS 第 23 章已把 Pure MIDI Track 与 SMF Import 纳入初版，并限缩了本文关于“全部 Channel 10 melodic”“CC91/CC93 全局拒绝”“Logical-only Track/EOT”的旧描述。本文正文仍作为 2026-08-08 历史路线记录；现行实现与验证状态见 `misc/Midora-Pure-MIDI-Tracks-and-SMF-Import-Requirement-Trace.md`，规范仍以第 23 章、INV-050～INV-057 和 ADR-PMIDI-001～008 为准。
+>
+> Arrangement 修订提示（2026-08-18）：SRS 第 24 章已用 Conductor-first mixed parent/child Arrangement 取代 Project Panel、Library Folder、Unbound Track 和独立全局 Track/Root 顺序，并新增 Pure MIDI event-on-note / Conductor point 概览缓存。现行实现与验证状态见 `misc/Midora-Arrangement-Hierarchy-and-Preview-Requirement-Trace.md`；规范仍以第 24 章、INV-058～INV-064、ADR-CORE-045、ADR-UI-039～040 与 ADR-PMIDI-009 为准，本文旧 UI/Library 描述仅是历史记录。
 
 ## 1. 审阅范围
 
 已审阅：
 
-- `misc/Midora-SRS-Initial-Release-v0.1/` 下 00～22 共 23 份 Markdown SRS。
+- `misc/Midora-SRS-Initial-Release-v0.1/` 下 00～24 共 25 份 Markdown SRS。
 - `src/` 下现有 solution、project、非生成 C# 源码与 BASS native 获取脚本。
 - Un4seen 官方 BASS、BASSMIDI、BASSWASAPI 文档及当前授权页。
 

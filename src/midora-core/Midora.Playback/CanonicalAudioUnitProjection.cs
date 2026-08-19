@@ -25,6 +25,8 @@ public sealed class CanonicalAudioUnitFragment
         MidoraId eventInstrumentId,
         MidoraId instanceGroupId,
         MidoraId subVoiceId,
+        MidoraId midiChannelRootId,
+        MidiChannelMode channelMode,
         long groupStartTick,
         long groupEndTick,
         long effectiveStartTick,
@@ -36,6 +38,8 @@ public sealed class CanonicalAudioUnitFragment
         EventInstrumentId = eventInstrumentId;
         InstanceGroupId = instanceGroupId;
         SubVoiceId = subVoiceId;
+        MidiChannelRootId = midiChannelRootId;
+        ChannelMode = channelMode;
         GroupStartTick = groupStartTick;
         GroupEndTick = groupEndTick;
         EffectiveStartTick = effectiveStartTick;
@@ -49,6 +53,8 @@ public sealed class CanonicalAudioUnitFragment
     public MidoraId EventInstrumentId { get; }
     public MidoraId InstanceGroupId { get; }
     public MidoraId SubVoiceId { get; }
+    public MidoraId MidiChannelRootId { get; }
+    public MidiChannelMode ChannelMode { get; }
     public long GroupStartTick { get; }
     public long GroupEndTick { get; }
     public long EffectiveStartTick { get; }
@@ -67,6 +73,8 @@ public sealed class CanonicalAudioUnitFragment
             writer.Write(fragment.EventInstrumentId.Value);
             writer.Write(fragment.InstanceGroupId.Value);
             writer.Write(fragment.SubVoiceId.Value);
+            writer.Write(fragment.MidiChannelRootId.Value);
+            writer.Write((int)fragment.ChannelMode);
             writer.Write(fragment.GroupEndTick - fragment.GroupStartTick);
             writer.Write(fragment.EffectiveStartTick - fragment.GroupStartTick);
             writer.Write(fragment.EffectiveEndTick - fragment.GroupStartTick);
@@ -100,6 +108,10 @@ public sealed class CanonicalAudioUnitFragment
         writer.Write(source.MappingFunctionId.Value);
         writer.Write(source.ValueCurveId.Value);
         writer.Write(source.EnvelopeId.Value);
+        writer.Write(source.MidiChannelRootId.Value);
+        writer.Write(source.PureMidiTrackId.Value);
+        writer.Write(source.MidiSegmentId.Value);
+        writer.Write(source.DirectMidiObjectId.Value);
         writer.Write((byte)source.Origin);
     }
 }
@@ -186,6 +198,16 @@ public sealed class CanonicalAudioUnitProjection
             return exact;
         }
 
+        if (value.Source.MidiChannelRootId != default)
+        {
+            return builders.SingleOrDefault(candidate =>
+                candidate.MidiChannelRootId == value.Source.MidiChannelRootId
+                && candidate.ZeroBasedPort == value.ZeroBasedPort
+                && candidate.ZeroBasedChannel == value.ZeroBasedChannel
+                && value.Tick >= candidate.EffectiveStartTick
+                && value.Tick <= candidate.EffectiveEndTick);
+        }
+
         FragmentBuilder[] candidates = builders
             .Where(candidate =>
                 candidate.ZeroBasedPort == value.ZeroBasedPort
@@ -218,6 +240,8 @@ public sealed class CanonicalAudioUnitProjection
             EventInstrumentId = allocation.EventInstrumentId;
             InstanceGroupId = allocation.InstanceGroupId;
             SubVoiceId = allocation.SubVoiceId;
+            MidiChannelRootId = allocation.MidiChannelRootId;
+            ChannelMode = allocation.ChannelMode;
             GroupStartTick = allocation.StartTick;
             GroupEndTick = allocation.EndTick;
             EffectiveStartTick = Math.Max(allocation.StartTick, compilationStartTick);
@@ -231,6 +255,8 @@ public sealed class CanonicalAudioUnitProjection
         public MidoraId EventInstrumentId { get; }
         public MidoraId InstanceGroupId { get; }
         public MidoraId SubVoiceId { get; }
+        public MidoraId MidiChannelRootId { get; }
+        public MidiChannelMode ChannelMode { get; }
         public long GroupStartTick { get; }
         public long GroupEndTick { get; }
         public long EffectiveStartTick { get; }
@@ -246,6 +272,8 @@ public sealed class CanonicalAudioUnitProjection
                 || EventInstrumentId != value.EventInstrumentId
                 || InstanceGroupId != value.InstanceGroupId
                 || SubVoiceId != value.SubVoiceId
+                || MidiChannelRootId != value.MidiChannelRootId
+                || ChannelMode != value.ChannelMode
                 || GroupStartTick != value.StartTick
                 || GroupEndTick != value.EndTick
                 || ZeroBasedPort != value.ZeroBasedPort
@@ -262,6 +290,8 @@ public sealed class CanonicalAudioUnitProjection
             EventInstrumentId,
             InstanceGroupId,
             SubVoiceId,
+            MidiChannelRootId,
+            ChannelMode,
             GroupStartTick,
             GroupEndTick,
             EffectiveStartTick,

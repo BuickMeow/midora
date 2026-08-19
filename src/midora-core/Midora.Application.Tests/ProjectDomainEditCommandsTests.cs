@@ -66,9 +66,10 @@ public sealed class ProjectDomainEditCommandsTests
         Assert.Equal("Historical", track.LastBoundEventInstrumentName);
         AssertCurrentCompilationMatchesFull(compilation);
 
-        document.Execute(ProjectDomainEditCommands.BindLogicalTrack(track.Id, null));
-        Assert.Null(track.EventInstrumentId);
-        Assert.Equal("Piano", track.LastBoundEventInstrumentName);
+        Assert.Throws<InvalidOperationException>(() => document.Execute(
+            ProjectDomainEditCommands.BindLogicalTrack(track.Id, null)));
+        Assert.Equal(project.EventInstruments[0].Id, track.EventInstrumentId);
+        Assert.Equal("Historical", track.LastBoundEventInstrumentName);
         AssertCurrentCompilationMatchesFull(compilation);
     }
 
@@ -156,10 +157,16 @@ public sealed class ProjectDomainEditCommandsTests
     }
 
     [Fact]
-    public async Task NewlyCreatedInstrumentCanBindAnExistingUnboundSegmentAfterSeparateCompilations()
+    public async Task NewlyCreatedInstrumentCanReceiveAnExistingSegmentTrackAfterSeparateCompilations()
     {
         MidoraProject project = new(480);
-        LogicalTrack track = new(project) { Name = "Existing Track" };
+        EventInstrument original = CreateInstrument(project, "Original");
+        LogicalTrack track = new(project)
+        {
+            Name = "Existing Track",
+            EventInstrumentId = original.Id,
+            LastBoundEventInstrumentName = original.Name
+        };
         Segment segment = new(project) { LengthTicks = 960 };
         segment.Notes.Add(new LogicalNote(project)
         {
@@ -170,6 +177,7 @@ public sealed class ProjectDomainEditCommandsTests
         });
         track.Segments.Add(segment);
         project.Tracks.Add(track);
+        original.LogicalTrackIds.Add(track.Id);
         using ProjectCompilationSession compilation = new(
             project,
             executionMode: ProjectCompilationExecutionMode.Background,
@@ -177,7 +185,9 @@ public sealed class ProjectDomainEditCommandsTests
         ProjectDocumentSession document = PersistedDocument(compilation);
 
         document.Execute(ProjectDomainEditCommands.CreateEventInstrument("Created Later"));
-        EventInstrument instrument = Assert.Single(project.EventInstruments);
+        EventInstrument instrument = Assert.Single(
+            project.EventInstruments,
+            value => value.Name == "Created Later");
         _ = await compilation.EnsureCurrentCompilationAsync();
 
         SubVoice voice = Assert.Single(instrument.SubVoices);
@@ -221,17 +231,24 @@ public sealed class ProjectDomainEditCommandsTests
     {
         MidoraProject project = CreateProject();
         LogicalTrack first = project.Tracks[0];
-        LogicalTrack second = new(project) { Name = "Second" };
+        EventInstrument parent = project.EventInstruments[0];
+        LogicalTrack second = new(project)
+        {
+            Name = "Second",
+            EventInstrumentId = parent.Id,
+            LastBoundEventInstrumentName = parent.Name
+        };
         project.Tracks.Add(second);
+        parent.LogicalTrackIds.Add(second.Id);
         project.AudioRender.ExplicitLogicalTrackIds.Add(first.Id);
         long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
         document.Execute(ProjectDomainEditCommands.ReorderLogicalTrack(first.Id, 1));
-        Assert.Equal([second, first], project.Tracks);
+        Assert.Equal([second.Id, first.Id], parent.LogicalTrackIds);
         document.Undo();
-        Assert.Equal([first, second], project.Tracks);
+        Assert.Equal([first.Id, second.Id], parent.LogicalTrackIds);
 
         Assert.Throws<InvalidOperationException>(() => document.Execute(
             ProjectDomainEditCommands.DeleteLogicalTrack(first.Id, nonEmptyDeletionConfirmed: false)));
@@ -253,24 +270,31 @@ public sealed class ProjectDomainEditCommandsTests
     public void LogicalTrackReorderMovesExactlyOneTrackInSixTrackProject()
     {
         MidoraProject project = new(480);
+        EventInstrument parent = CreateInstrument(project, "Parent");
         LogicalTrack[] tracks = Enumerable.Range(0, 6)
-            .Select(index => new LogicalTrack(project) { Name = $"Track {index + 1}" })
+            .Select(index => new LogicalTrack(project)
+            {
+                Name = $"Track {index + 1}",
+                EventInstrumentId = parent.Id,
+                LastBoundEventInstrumentName = parent.Name
+            })
             .ToArray();
         project.Tracks.AddRange(tracks);
+        parent.LogicalTrackIds.AddRange(tracks.Select(value => value.Id));
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
         document.Execute(ProjectDomainEditCommands.ReorderLogicalTrack(tracks[4].Id, 1));
 
         Assert.Equal(
-            [tracks[0], tracks[4], tracks[1], tracks[2], tracks[3], tracks[5]],
-            project.Tracks);
+            [tracks[0].Id, tracks[4].Id, tracks[1].Id, tracks[2].Id, tracks[3].Id, tracks[5].Id],
+            parent.LogicalTrackIds);
         document.Undo();
-        Assert.Equal(tracks, project.Tracks);
+        Assert.Equal(tracks.Select(value => value.Id), parent.LogicalTrackIds);
         document.Redo();
         Assert.Equal(
-            [tracks[0], tracks[4], tracks[1], tracks[2], tracks[3], tracks[5]],
-            project.Tracks);
+            [tracks[0].Id, tracks[4].Id, tracks[1].Id, tracks[2].Id, tracks[3].Id, tracks[5].Id],
+            parent.LogicalTrackIds);
     }
 
     [Fact]
@@ -324,12 +348,15 @@ public sealed class ProjectDomainEditCommandsTests
             referencedDeletionConfirmed: true));
 
         Assert.Equal([second], project.EventInstruments);
-        Assert.Null(track.EventInstrumentId);
-        Assert.Equal("Piano", track.LastBoundEventInstrumentName);
+        Assert.DoesNotContain(track, project.Tracks);
+        Assert.DoesNotContain(
+            new ArrangementParentReference(ArrangementParentKind.EventInstrument, first.Id),
+            project.ArrangementParents);
         AssertCurrentCompilationMatchesFull(compilation);
 
         document.Undo();
         Assert.Same(first, project.EventInstruments[0]);
+        Assert.Contains(track, project.Tracks);
         Assert.Equal(first.Id, track.EventInstrumentId);
         Assert.Equal("Exact Old Snapshot", track.LastBoundEventInstrumentName);
         Assert.Equal(nextStableId, project.NextStableId);
@@ -383,12 +410,16 @@ public sealed class ProjectDomainEditCommandsTests
         long originalFingerprint = compilation.LastAttempt.Fingerprint;
 
         document.Execute(ProjectDomainEditCommands.ReorderEventInstrument(first.Id, 1));
-        Assert.Equal([second, first], project.EventInstruments);
+        Assert.Equal(
+            [second.Id, first.Id],
+            project.ArrangementParents.Select(value => value.ParentId));
         Assert.True(document.IsModified);
         Assert.Equal(originalFingerprint, compilation.LastAttempt.Fingerprint);
 
         document.Undo();
-        Assert.Equal([first, second], project.EventInstruments);
+        Assert.Equal(
+            [first.Id, second.Id],
+            project.ArrangementParents.Select(value => value.ParentId));
         Assert.False(document.IsModified);
         AssertCurrentCompilationMatchesFull(compilation);
     }
@@ -406,6 +437,10 @@ public sealed class ProjectDomainEditCommandsTests
             "broken",
             1);
         project.DamagedEventInstruments.Add(damagedInstrument);
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.EventInstrument,
+            damagedInstrumentId));
+        project.EventInstruments[0].LogicalTrackIds.Remove(track.Id);
         track.EventInstrumentId = damagedInstrumentId;
         track.LastBoundEventInstrumentName = "Old";
         MidoraId damagedTrackId = project.AllocateStableId();
@@ -425,17 +460,74 @@ public sealed class ProjectDomainEditCommandsTests
         document.Execute(ProjectDomainEditCommands.DeleteDamagedLogicalTrack(damagedTrackId));
         Assert.Empty(project.DamagedEventInstruments);
         Assert.Empty(project.DamagedLogicalTracks);
-        Assert.Null(track.EventInstrumentId);
-        Assert.Equal("Damaged Piano", track.LastBoundEventInstrumentName);
+        Assert.DoesNotContain(track, project.Tracks);
         Assert.DoesNotContain(damagedTrackId, project.AudioRender.ExplicitLogicalTrackIds);
 
         document.Undo();
         document.Undo();
         Assert.Same(damagedInstrument, project.DamagedEventInstruments[0]);
         Assert.Same(damagedTrack, project.DamagedLogicalTracks[0]);
+        Assert.Contains(track, project.Tracks);
         Assert.Equal(damagedInstrumentId, track.EventInstrumentId);
         Assert.Equal("Old", track.LastBoundEventInstrumentName);
         Assert.Contains(damagedTrackId, project.AudioRender.ExplicitLogicalTrackIds);
+        Assert.Equal(nextStableId, project.NextStableId);
+        Assert.False(document.IsModified);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void DamagedMidiRootDeletionCascadesAndUndoRestoresRetainedSubtree()
+    {
+        MidoraProject project = CreateProject();
+        MidoraId damagedRootId = project.AllocateStableId();
+        PureMidiTrack retainedTrack = new(project)
+        {
+            Name = "Retained MIDI Track",
+            MidiChannelRootId = damagedRootId
+        };
+        retainedTrack.Segments.Add(new MidiSegment(project)
+        {
+            LengthTicks = 480
+        });
+        MidoraId damagedTrackId = project.AllocateStableId();
+        DamagedProjectObject damagedTrack = new(
+            damagedTrackId,
+            "Damaged MIDI Track",
+            "pure-midi-tracks/damaged.pb",
+            "broken child",
+            1,
+            damagedRootId);
+        DamagedProjectObject damagedRoot = new(
+            damagedRootId,
+            "Damaged Root",
+            "midi-channel-roots/damaged.pb",
+            "broken parent",
+            project.ArrangementParents.Count,
+            ChildIds: Array.AsReadOnly(new[] { retainedTrack.Id, damagedTrackId }));
+        project.PureMidiTracks.Add(retainedTrack);
+        project.DamagedPureMidiTracks.Add(damagedTrack);
+        project.DamagedMidiChannelRoots.Add(damagedRoot);
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.MidiChannelRoot,
+            damagedRootId));
+        long nextStableId = project.NextStableId;
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.DeleteDamagedMidiChannelRoot(damagedRootId));
+
+        Assert.DoesNotContain(retainedTrack, project.PureMidiTracks);
+        Assert.Empty(project.DamagedPureMidiTracks);
+        Assert.Empty(project.DamagedMidiChannelRoots);
+        Assert.DoesNotContain(project.ArrangementParents, value => value.ParentId == damagedRootId);
+
+        document.Undo();
+
+        Assert.Same(retainedTrack, Assert.Single(project.PureMidiTracks, value => value.Id == retainedTrack.Id));
+        Assert.Same(damagedTrack, Assert.Single(project.DamagedPureMidiTracks));
+        Assert.Same(damagedRoot, Assert.Single(project.DamagedMidiChannelRoots));
+        Assert.Contains(project.ArrangementParents, value => value.ParentId == damagedRootId);
         Assert.Equal(nextStableId, project.NextStableId);
         Assert.False(document.IsModified);
         AssertCurrentCompilationMatchesFull(compilation);
@@ -634,6 +726,7 @@ public sealed class ProjectDomainEditCommandsTests
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
         project.Tracks.Add(track);
+        instrument.LogicalTrackIds.Add(track.Id);
         return project;
     }
 
@@ -649,6 +742,9 @@ public sealed class ProjectDomainEditCommandsTests
         voice.Events.Add(TemplateEvent.Note(project, 0, 480, 60, 100));
         instrument.SubVoices.Add(voice);
         project.EventInstruments.Add(instrument);
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.EventInstrument,
+            instrument.Id));
         return instrument;
     }
 

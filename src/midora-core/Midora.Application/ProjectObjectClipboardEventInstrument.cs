@@ -18,12 +18,26 @@ public static partial class ProjectObjectClipboard
             source,
             source.Name,
             folderId: null);
+        Dictionary<MidoraId, LogicalTrack> tracks = document.Project.Tracks.ToDictionary(value => value.Id);
+        LogicalTrackClipboardSnapshot[] childTracks = source.LogicalTrackIds
+            .Where(tracks.ContainsKey)
+            .Select(id => tracks[id])
+            .Select(track => new LogicalTrackClipboardSnapshot(
+                track.Name,
+                track.EventInstrumentId,
+                track.LastBoundEventInstrumentName,
+                track.ColorOverride,
+                track.Segments.Select(segment => SnapshotSegment(
+                    segment,
+                    trackOffset: 0,
+                    startOffset: segment.ProjectStartTick)).ToArray()))
+            .ToArray();
         return new(
             document.ClipboardSessionIdentity,
             ProjectObjectClipboardKind.EventInstrument,
             1,
             $"Event Instrument: {source.Name}",
-            new EventInstrumentClipboardData(snapshot, source.LibraryFolderId));
+            new EventInstrumentClipboardData(snapshot, childTracks));
     }
 
     public static IProjectEditCommand CreatePasteEventInstrumentCommand(
@@ -36,38 +50,31 @@ public static partial class ProjectObjectClipboard
             targetDocument,
             payload,
             ProjectObjectClipboardKind.EventInstrument);
-        MidoraId? folderId = targetFolderId
-            ?? (data.SourceFolderId is MidoraId sourceFolderId
-                && targetDocument.Project.EventInstrumentFolders.Any(value => value.Id == sourceFolderId)
-                    ? sourceFolderId
-                    : null);
         return ProjectDomainEditCommands.PasteEventInstrumentClipboard(
             data.Snapshot,
-            folderId,
+            data.Tracks,
             insertionIndex);
     }
 }
 
 internal sealed record EventInstrumentClipboardData(
     EventInstrument Snapshot,
-    MidoraId? SourceFolderId) : ProjectObjectClipboardData;
+    LogicalTrackClipboardSnapshot[] Tracks) : ProjectObjectClipboardData;
 
 public static partial class ProjectDomainEditCommands
 {
     internal static IProjectEditCommand PasteEventInstrumentClipboard(
         EventInstrument snapshot,
-        MidoraId? folderId,
+        IReadOnlyList<LogicalTrackClipboardSnapshot> trackSnapshots,
         int? insertionIndex) =>
         Command("Paste event instrument", project =>
         {
             ArgumentNullException.ThrowIfNull(snapshot);
-            if (folderId.HasValue)
-            {
-                _ = FindFolder(project, folderId.Value);
-            }
-            int index = insertionIndex ?? project.EventInstruments.Count;
-            ValidateInsertionIndex(index, project.EventInstruments.Count, nameof(insertionIndex));
+            ArgumentNullException.ThrowIfNull(trackSnapshots);
+            int index = insertionIndex ?? project.ArrangementParents.Count;
+            ValidateInsertionIndex(index, project.ArrangementParents.Count, nameof(insertionIndex));
             EventInstrument? copy = null;
+            LogicalTrack[]? trackCopies = null;
             return Prepared(
                 hasChanges: true,
                 EverythingChange(),
@@ -79,18 +86,57 @@ public static partial class ProjectDomainEditCommands
                             owner,
                             snapshot,
                             requestedName: null,
-                            folderId);
+                            folderId: null);
                         RemoveLaterExactTimelineCollisions(copy);
-                        Move(owner.EventInstruments, copy, index);
-                        return;
+                        trackCopies = trackSnapshots.Select(trackSnapshot =>
+                        {
+                            LogicalTrack track = new(owner)
+                            {
+                                Name = trackSnapshot.Name,
+                                EventInstrumentId = copy.Id,
+                                LastBoundEventInstrumentName = copy.Name,
+                                ColorOverride = trackSnapshot.ColorOverride
+                            };
+                            foreach (SegmentClipboardSnapshot segment in trackSnapshot.Segments)
+                            {
+                                InsertSegmentByTime(
+                                    track.Segments,
+                                    CreateSegmentFromClipboard(owner, segment, segment.StartOffset));
+                            }
+                            return track;
+                        }).ToArray();
                     }
-                    EnsureEventInstrumentIdAvailable(owner, copy.Id);
-                    InsertAt(owner.EventInstruments, index, copy, "pasted Event Instrument");
+                    else
+                    {
+                        EnsureEventInstrumentIdAvailable(owner, copy.Id);
+                        owner.EventInstruments.Add(copy);
+                    }
+                    foreach (LogicalTrack track in trackCopies ?? [])
+                    {
+                        EnsureLogicalTrackIdAvailable(owner, track.Id);
+                        owner.Tracks.Add(track);
+                        copy.LogicalTrackIds.Add(track.Id);
+                    }
+                    InsertAt(
+                        owner.ArrangementParents,
+                        index,
+                        new ArrangementParentReference(ArrangementParentKind.EventInstrument, copy.Id),
+                        "pasted Event Instrument parent");
                 },
-                owner => RemoveRequired(
-                    owner.EventInstruments,
-                    copy ?? throw new InvalidOperationException(
-                        "The pasted Event Instrument does not exist before Apply."),
-                    "pasted Event Instrument"));
+                owner =>
+                {
+                    EventInstrument value = copy ?? throw new InvalidOperationException(
+                        "The pasted Event Instrument does not exist before Apply.");
+                    RemoveRequired(
+                        owner.ArrangementParents,
+                        new ArrangementParentReference(ArrangementParentKind.EventInstrument, value.Id),
+                        "pasted Event Instrument parent");
+                    foreach (LogicalTrack track in trackCopies ?? [])
+                    {
+                        RemoveRequired(value.LogicalTrackIds, track.Id, "pasted Logical Track reference");
+                        RemoveRequired(owner.Tracks, track, "pasted Logical Track");
+                    }
+                    RemoveRequired(owner.EventInstruments, value, "pasted Event Instrument");
+                });
         });
 }

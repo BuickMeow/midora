@@ -102,6 +102,208 @@ public sealed class ProjectSelectionTransformEditCommandsTests
     }
 
     [Fact]
+    public void DirectMidiNoteTransformsMatchPianoRollSemanticsAndPreserveNoteOffVelocity()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = new(project) { Name = "Root" };
+        PureMidiTrack track = new(project) { Name = "Track", MidiChannelRootId = root.Id };
+        MidiSegment segment = new(project) { LengthTicks = 480 };
+        DirectMidiNote first = new(project)
+        {
+            StartTick = 10,
+            LengthTicks = 20,
+            Key = 60,
+            NoteOnVelocity = 100,
+            NoteOffVelocity = 17,
+            NoteOnOrder = 1,
+            NoteOffOrder = 2
+        };
+        DirectMidiNote second = new(project)
+        {
+            StartTick = 50,
+            LengthTicks = 10,
+            Key = 64,
+            NoteOnVelocity = 80,
+            NoteOffVelocity = 29,
+            NoteOnOrder = 3,
+            NoteOffOrder = 4
+        };
+        segment.Notes.AddRange([first, second]);
+        track.Segments.Add(segment);
+        root.MidiTrackIds.Add(track.Id);
+        project.MidiChannelRoots.Add(root);
+        project.PureMidiTracks.Add(track);
+        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.FlipDirectMidiNotesHorizontal(
+            segment.Id,
+            [first.Id, second.Id]));
+        Assert.Equal((40L, 10L), (first.StartTick, second.StartTick));
+        Assert.Equal((17, 29), (first.NoteOffVelocity, second.NoteOffVelocity));
+        document.Undo();
+
+        document.Execute(ProjectDomainEditCommands.FlipDirectMidiNotesVertical(
+            segment.Id,
+            [first.Id, second.Id]));
+        Assert.Equal((64, 60), (first.Key, second.Key));
+        document.Undo();
+
+        document.Execute(ProjectDomainEditCommands.ScaleDirectMidiNotes(
+            segment.Id,
+            [first.Id, second.Id],
+            factor: 2));
+        Assert.Equal((10L, 90L), (first.StartTick, second.StartTick));
+        Assert.Equal((40L, 20L), (first.LengthTicks, second.LengthTicks));
+        document.Undo();
+
+        using (BatchEditExpressionProgram program = BatchEditExpressionProgram.Compile(
+            new Dictionary<BatchEditField, string?>
+            {
+                [BatchEditField.Velocity] = "+10",
+                [BatchEditField.KeyNumber] = "+1",
+                [BatchEditField.Gate] = "*2",
+                [BatchEditField.Tick] = "+5"
+            }))
+        {
+            document.Execute(ProjectDomainEditCommands.BatchEditDirectMidiNotes(
+                segment.Id,
+                [first.Id, second.Id],
+                program));
+        }
+        Assert.Equal((15L, 55L), (first.StartTick, second.StartTick));
+        Assert.Equal((40L, 20L), (first.LengthTicks, second.LengthTicks));
+        Assert.Equal((61, 65), (first.Key, second.Key));
+        Assert.Equal((110, 90), (first.NoteOnVelocity, second.NoteOnVelocity));
+        Assert.Equal((17, 29), (first.NoteOffVelocity, second.NoteOffVelocity));
+        document.Undo();
+
+        document.Execute(ProjectDomainEditCommands.TransposeDirectMidiNotes(
+            segment.Id,
+            [first.Id, second.Id],
+            semitones: 64));
+        Assert.Same(first, Assert.Single(segment.Notes));
+        Assert.Equal(124, first.Key);
+        document.Undo();
+        Assert.Equal([first, second], segment.Notes);
+    }
+
+    [Fact]
+    public void DirectMidiEventTransformsPreserveSameTickDuplicates()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = new(project) { Name = "Root" };
+        PureMidiTrack track = new(project) { Name = "Track", MidiChannelRootId = root.Id };
+        MidiSegment segment = new(project) { LengthTicks = 480 };
+        DirectMidiChannelEvent first = new(project)
+        {
+            Tick = 10,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 11,
+            Data2 = 20,
+            Order = 1
+        };
+        DirectMidiChannelEvent second = new(project)
+        {
+            Tick = 20,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 11,
+            Data2 = 80,
+            Order = 2
+        };
+        DirectMidiChannelEvent incumbent = new(project)
+        {
+            Tick = 30,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 11,
+            Data2 = 100,
+            Order = 3
+        };
+        segment.ChannelEvents.AddRange([first, second, incumbent]);
+        track.Segments.Add(segment);
+        root.MidiTrackIds.Add(track.Id);
+        project.MidiChannelRoots.Add(root);
+        project.PureMidiTracks.Add(track);
+        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.ScaleDirectMidiEventPoints(
+            segment.Id,
+            [first.Id, second.Id],
+            factor: 2));
+
+        Assert.Equal([10L, 30L, 30L], segment.ChannelEvents.Select(value => value.Tick));
+        Assert.Equal([first, second, incumbent], segment.ChannelEvents);
+        document.Undo();
+        Assert.Equal([10L, 20L, 30L], segment.ChannelEvents.Select(value => value.Tick));
+
+        using BatchEditExpressionProgram program = BatchEditExpressionProgram.Compile(
+            new Dictionary<BatchEditField, string?>
+            {
+                [BatchEditField.PointValue] = "*2",
+                [BatchEditField.Tick] = "30"
+            });
+        document.Execute(ProjectDomainEditCommands.BatchEditDirectMidiEventPoints(
+            segment.Id,
+            [first.Id, second.Id],
+            program));
+
+        Assert.Equal(3, segment.ChannelEvents.Count);
+        Assert.All(segment.ChannelEvents, value => Assert.Equal(30, value.Tick));
+        Assert.Equal((40, 127), (first.Data2, second.Data2));
+        document.Undo();
+        Assert.Equal([first, second, incumbent], segment.ChannelEvents);
+    }
+
+    [Fact]
+    public void DirectMidiNoteTransformPreservesAnExistingExactStartAndKeyGroup()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = new(project) { Name = "Root" };
+        PureMidiTrack track = new(project) { Name = "Track", MidiChannelRootId = root.Id };
+        MidiSegment segment = new(project) { LengthTicks = 480 };
+        DirectMidiNote first = new(project)
+        {
+            StartTick = 10,
+            LengthTicks = 20,
+            Key = 60,
+            NoteOnVelocity = 100
+        };
+        DirectMidiNote second = new(project)
+        {
+            StartTick = 10,
+            LengthTicks = 40,
+            Key = 60,
+            NoteOnVelocity = 80
+        };
+        segment.Notes.AddRange([first, second]);
+        track.Segments.Add(segment);
+        root.MidiTrackIds.Add(track.Id);
+        project.MidiChannelRoots.Add(root);
+        project.PureMidiTracks.Add(track);
+        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.MoveDirectMidiNotes(
+            segment.Id,
+            [first.Id, second.Id],
+            tickDelta: 10,
+            keyDelta: 1));
+
+        Assert.Equal([first, second], segment.Notes);
+        Assert.All(segment.Notes, value =>
+        {
+            Assert.Equal(20, value.StartTick);
+            Assert.Equal(61, value.Key);
+        });
+        document.Undo();
+        Assert.Equal([first, second], segment.Notes);
+    }
+
+    [Fact]
     public void SegmentTransformsIgnoreHiddenContentAndCanMirrorSegmentWindows()
     {
         MidoraProject project = new(480);
@@ -185,6 +387,110 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         document.Undo();
 
         document.Execute(ProjectDomainEditCommands.TransposeSegments([first.Id], semitones: 60));
+        Assert.Same(hidden, Assert.Single(first.Notes));
+        document.Undo();
+        Assert.Equal([hidden, exposed], first.Notes);
+    }
+
+    [Fact]
+    public void MidiSegmentTransformsPreserveHiddenAndOpaqueContentAndUndoExactly()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = new(project) { Name = "Root" };
+        PureMidiTrack track = new(project) { Name = "Track", MidiChannelRootId = root.Id };
+        MidiSegment first = new(project)
+        {
+            ProjectStartTick = 100,
+            LengthTicks = 100,
+            ContentOffsetTick = 50
+        };
+        DirectMidiNote hidden = new(project)
+        {
+            StartTick = 10,
+            LengthTicks = 10,
+            Key = 30,
+            NoteOnVelocity = 80
+        };
+        DirectMidiNote exposed = new(project)
+        {
+            StartTick = 60,
+            LengthTicks = 10,
+            Key = 70,
+            NoteOnVelocity = 90
+        };
+        DirectMidiChannelEvent hiddenEvent = new(project)
+        {
+            Tick = 40,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 1,
+            Data2 = 10
+        };
+        DirectMidiChannelEvent exposedEvent = new(project)
+        {
+            Tick = 70,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 1,
+            Data2 = 20
+        };
+        OpaqueMidiEvent hiddenOpaque = new(project)
+        {
+            Tick = 45,
+            Kind = OpaqueMidiEventKind.Meta,
+            MetaType = 1,
+            Payload = [1]
+        };
+        OpaqueMidiEvent exposedOpaque = new(project)
+        {
+            Tick = 80,
+            Kind = OpaqueMidiEventKind.Meta,
+            MetaType = 1,
+            Payload = [2]
+        };
+        first.Notes.AddRange([hidden, exposed]);
+        first.ChannelEvents.AddRange([hiddenEvent, exposedEvent]);
+        first.OpaqueEvents.AddRange([hiddenOpaque, exposedOpaque]);
+        MidiSegment second = new(project)
+        {
+            ProjectStartTick = 300,
+            LengthTicks = 50
+        };
+        track.Segments.AddRange([first, second]);
+        root.MidiTrackIds.Add(track.Id);
+        project.MidiChannelRoots.Add(root);
+        project.PureMidiTracks.Add(track);
+        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.FlipMidiSegmentsHorizontal(
+            [first.Id],
+            SegmentSelectionTransformScope.ExposedContentOnly));
+        Assert.Equal((10L, 130L), (hidden.StartTick, exposed.StartTick));
+        Assert.Equal((40L, 129L), (hiddenEvent.Tick, exposedEvent.Tick));
+        Assert.Equal((45L, 119L), (hiddenOpaque.Tick, exposedOpaque.Tick));
+        Assert.Equal(100, first.ProjectStartTick);
+        document.Undo();
+
+        document.Execute(ProjectDomainEditCommands.FlipMidiSegmentsHorizontal(
+            [first.Id, second.Id],
+            SegmentSelectionTransformScope.ExposedContentAndSegments));
+        Assert.Equal((250L, 100L), (first.ProjectStartTick, second.ProjectStartTick));
+        document.Undo();
+        Assert.Equal((100L, 300L), (first.ProjectStartTick, second.ProjectStartTick));
+        Assert.Equal((60L, 70L, 80L), (exposed.StartTick, exposedEvent.Tick, exposedOpaque.Tick));
+
+        document.Execute(ProjectDomainEditCommands.ScaleMidiSegments(
+            [first.Id],
+            factor: 2,
+            SegmentSelectionTransformScope.ExposedContentOnly));
+        Assert.Equal((10L, 70L, 90L, 110L), (
+            hidden.StartTick,
+            exposed.StartTick,
+            exposedEvent.Tick,
+            exposedOpaque.Tick));
+        document.Undo();
+
+        document.Execute(ProjectDomainEditCommands.TransposeMidiSegments([first.Id], semitones: 60));
         Assert.Same(hidden, Assert.Single(first.Notes));
         document.Undo();
         Assert.Equal([hidden, exposed], first.Notes);

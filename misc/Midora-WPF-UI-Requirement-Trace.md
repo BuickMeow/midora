@@ -1,6 +1,6 @@
 # Midora WPF UI Requirement Trace
 
-状态：正式实现基线
+状态：既有正式实现基线；2026-08-18 第 24 章 mixed Arrangement hierarchy / preview 修订尚待实施，旧 Project Panel/Library 证据不再表示当前符合
 创建日期：2026-08-08
 适用范围：`src/midora-desktop/` 正式 WPF 主应用、共享呈现基础设施及 UI 自动验收
 
@@ -9,7 +9,7 @@
 - `AGENTS.md`：仓库主线、初版范围、音频边界、验证门及已批准视觉基线。
 - `misc/Midora-SRS-Initial-Release-v0.1/00-Table-of-Contents-and-Document-Control.md`：规格控制。
 - `misc/Midora-SRS-Initial-Release-v0.1/22-Requirement-Locator-and-Cross-System-Invariants.md`：跨系统不变量。
-- SRS 第 17、18、20 章：UI 框架、编辑器、通用交互和验收边界。
+- SRS 第 17、18、20、24 章：UI 框架、编辑器、通用交互、Arrangement 层级/概览和验收边界。
 - SRS 第 3、13、19 章：Project 生命周期、播放/预览、文件和任务工作流。
 - 其余 SRS 专项章节：UI 只呈现和编辑其正式模型，不另建业务语义。
 - `misc/Midora-WPF-Style-Gallery-Requirement-Trace.md`：已通过人工视觉检查的黑红暗色主题和控件基线。
@@ -21,19 +21,17 @@
 | 范围 | 正式输入 | UI 输出/行为 | 主要依据 | 验收重点 |
 |---|---|---|---|---|
 | 应用生命周期 | 启动参数、单实例转发、Project create/open result | 单持久主窗口；无 Project 空状态；第二次启动转发 | 3.3；17.1；19.1～19.4；20.10.4 | 单实例、候选打开失败不替换当前 Project、关闭 guard |
-| 主窗口 | 当前 Project、会话状态、任务状态 | Title、八个固定一级菜单、Command Bar、Project Panel、Workspace Tabs、Inspector、Bottom Panel、Status Bar | 17.1、17.7；20.15 | 最小尺寸、最大化工作区、Toolbar overflow、无全局二维滚动 |
+| 主窗口 | 当前 Project、会话状态、任务状态 | Title、八个固定一级菜单、Command Bar、Workspace Tabs、Inspector、Bottom Panel、Status Bar；无 Project Panel | 17.1、17.7、24.7；20.15 | 最小尺寸、最大化工作区、Toolbar overflow、Arrangement 常驻第一 Tab |
 | 状态所有权 | Project、Preferences、Session、Transient | 四类状态分别存储；只有 Project edit 进入统一 History | 3.10～3.12；17.2；20.14 | `.midora` 无 UI 状态；Preference 失败不影响 Project |
 | 命令路由 | 焦点、Selection、锁定级别、Modal | 同一命令服务于菜单、Toolbar、Context Menu 和快捷键；焦点优先 | 19.10；20.2、20.7、20.12 | 文本焦点不误删对象；Ctrl+S/Undo/Clipboard 按上下文路由 |
 | Workspace | 类型或对象稳定 ID | 类型唯一、对象 ID 唯一、单行 Tab、会话内次序/焦点恢复 | 17.3 | 重复打开激活已有 Tab；对象删除自动关闭；Draft guard |
-| Project Panel | 正式 Project 顶层结构 | 五个固定根；受限搜索；稳定排序；打开/绑定导航 | 17.6；20.9.6 | 不展开完整对象图；搜索期间禁用正式拖动 |
 | Inspector | Active Workspace Primary Selection | 单选、多选共同字段、值来源、验证和 Go to Source | 17.4；20.3～20.4 | 本地字段缓冲；一次手势一次 Undo；Broken 不按名称修复 |
-| Arrangement | Logical Tracks、Segments、Conductor 概览、runtime Mute/Solo | 自绘 Track/Segment timeline、简化 note preview、工具、拖动、框选和范围 | 18.1；20.1、20.3～20.5 | 同 Track 不重叠；跨 Track 原子；大量 Segment 只渲染可视范围 |
+| Arrangement | Conductor、mixed Event Instrument/Root parents、child Tracks、Segments、runtime parent/child Mute/Solo | 常驻两级自绘 timeline、subtree commands、Note preview、Pure MIDI event-on-note preview、Conductor point preview | 18.1；24；20.1、20.3～20.5 | 唯一 parent ownership；Event 在 Note 上层 50%；极端内容可视 tile/局部失效 |
 | Segment Editor | Segment local notes/lanes、绑定 Instrument、Project Tempo context | 自绘 piano roll、Pitch Ruler、Logical Parameter lanes、crop 外弱化内容 | 13.22.7、13.24.5；18.2；20.1 | local/project time 不混淆；held preview 清理；预览失败不阻止合法放置 |
 | SubVoice Editor | SubVoice template events、Initial State、effective Root Note | 自绘 note/event lanes；独立 Initial State；高级事件语义呈现 | 8；18.4 | 不展开 RPN/NRPN CC；空 lane 不持久化；大量事件可视裁剪 |
 | Event Instrument | Instrument/Structure/Lifecycle/preview inputs | 一个对象 Workspace、四个 section、折叠 Preview、虚拟键盘 | 7～10；13.21～13.23；18.3～18.6 | Preview 走 canonical 管线；不暴露 Port/Channel；Incompatible 保留 |
 | Mapping/Function | Logical Parameter、Mapping Chain、Applied source、Draft | 有序 Mapping 编辑、单值测试、独立代码草稿和 Draft 诊断 | 9；18.5；20.12.2～20.12.3 | Global Save 不 Apply；关闭/切换/退出处理 Draft |
 | Conductor | Tempo/Time Signature/Key/Marker/End Marker | 自绘 lanes、同步事件列表、稳定 ID 密集 Marker 命中 | 4；18.7；20.13.3 | Tempo 离散；End Marker 特殊；不移动内容 tick |
-| Library | Folder/Instrument 手动顺序和引用 | Folder、list/card 虚拟化集合、搜索、Duplicate、引用影响 | 18.8；20.8～20.10 | 单层 Folder；搜索/临时排序不改正式顺序 |
 | Settings/Preferences | Project settings、Application preferences、runtime device info | 七个 Project pages；独立 Preference pages；只读 Derived 数据 | 17.2；18.9；20.14 | 非法值不 clamp；设备/音频设置仅 Stopped 提交 |
 | Diagnostics/Tasks | 正式 Diagnostics、Task snapshot/history | Bottom compact view 和完整 Workspace 共用身份；Details 显式更新 | 17.5；18.10；20.11 | 后台刷新不抢焦点/Selection；历史诊断不决定当前任务 |
 | New/Open/Save | Application coordinators、Windows picker selection | Owned modal configuration/progress/result；失败原子 | 19.1～19.4 | Save 事务不可取消；Damaged 时禁用；Save Copy 不改当前状态 |
@@ -115,7 +113,7 @@
 
 问题输入：
 
-- Project Panel 或 Event Instrument Library 中的 Create Event Instrument、Create Folder、Create Logical Track；
+- （历史输入，已由第 24 章取代）Project Panel 或 Event Instrument Library 中的 Create Event Instrument、Create Folder、Create Logical Track；
 - Project Tree 的双击/Enter/Context Menu 打开，包括 Conductor Track；
 - Embedded / External Project SoundFont 选择及其后台复制、SHA-256、原生 Worker loadability 校验；
 - 使用自定义 WindowChrome 的 owned dialogs 标题栏 Close；
@@ -123,7 +121,7 @@
 
 要求输出：
 
-- 一次用户命令只产生一次正式 Project edit；创建结果按稳定 ID 进入正式模型、History、Project Tree 和对应 Workspace；
+- 一次用户命令只产生一次正式 Project edit；创建结果按稳定 ID 进入正式模型、History 和对应 Workspace；第 24 章实施后外层投影只进入 Arrangement parent/child hierarchy；
 - Popup/Menu/DoubleClick 当前输入路由先完成，随后才允许重建 ItemsSource-backed collection 或切换 Workspace；
 - 所有 WPF `ObservableCollection`、Workspace、Inspector、Diagnostics 和属性通知只在其 Dispatcher 上刷新；后台 SoundFont 提交不得直接触碰 WPF 投影；
 - SoundFont 长操作显示模态任务状态并允许 Cancel；取消在正式 Project edit 前生效，不留下部分 SoundFont 选择；

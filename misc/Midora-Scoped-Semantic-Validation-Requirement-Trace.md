@@ -1,7 +1,9 @@
 # Midora 显式 Track 编译诊断作用域 Requirement Trace
 
-状态：已实现并通过正式非 UI 发布门。
+状态：历史实施追踪；scoped validation 原则仍有效，但 Library Folder 参与规则已由 SRS 第 24 章和 ADR-CORE-045 取代。
 日期：2026-08-06
+
+> 当前显式 Track 编译的结构依赖闭包必须包含其唯一 Event Instrument/Root parent，并验证 mixed parent union 与 parent-child 三方一致性；不再验证 Folder/Unfiled/Library order。本文中的 Folder 断裂用例只保留为旧实现证据。
 
 上位规范：《Midora SRS》§12.6.3、§12.18、§12.19，INV-009、INV-010、INV-015。
 

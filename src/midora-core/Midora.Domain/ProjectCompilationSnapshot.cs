@@ -41,6 +41,17 @@ internal static class ProjectCompilationSnapshot
             cancellationToken.ThrowIfCancellationRequested();
             result.DamagedLogicalTracks.Add(damaged);
         }
+        foreach (DamagedProjectObject damaged in source.DamagedMidiChannelRoots)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            result.DamagedMidiChannelRoots.Add(damaged);
+        }
+        foreach (DamagedProjectObject damaged in source.DamagedPureMidiTracks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            result.DamagedPureMidiTracks.Add(damaged);
+        }
+        result.ArrangementParents.AddRange(source.ArrangementParents);
         foreach (EventInstrument instrument in source.EventInstruments)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -50,6 +61,16 @@ internal static class ProjectCompilationSnapshot
         {
             cancellationToken.ThrowIfCancellationRequested();
             result.Tracks.Add(CloneTrack(result, track, cancellationToken));
+        }
+        foreach (MidiChannelRoot root in source.MidiChannelRoots)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            result.MidiChannelRoots.Add(CloneMidiChannelRoot(result, root));
+        }
+        foreach (PureMidiTrack track in source.PureMidiTracks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            result.PureMidiTracks.Add(ClonePureMidiTrack(result, track, cancellationToken));
         }
 
         result.RestoreNextStableId(source.NextStableId);
@@ -94,6 +115,34 @@ internal static class ProjectCompilationSnapshot
                 value => CloneTrack(snapshot, value, cancellationToken),
                 cancellationToken);
         }
+        if (changes.MidiChannelRootIds.Count != 0)
+        {
+            SynchronizeByStableId(
+                snapshot.MidiChannelRoots,
+                source.MidiChannelRoots,
+                changes.MidiChannelRootIds,
+                value => CloneMidiChannelRoot(snapshot, value),
+                cancellationToken);
+        }
+        HashSet<MidoraId> changedPureMidiTrackIds = [.. changes.PureMidiTrackIds];
+        if (changes.MidiChannelRootIds.Count != 0)
+        {
+            changedPureMidiTrackIds.UnionWith(source.PureMidiTracks
+                .Where(value => changes.MidiChannelRootIds.Contains(value.MidiChannelRootId))
+                .Select(value => value.Id));
+            changedPureMidiTrackIds.UnionWith(snapshot.PureMidiTracks
+                .Where(value => changes.MidiChannelRootIds.Contains(value.MidiChannelRootId))
+                .Select(value => value.Id));
+        }
+        if (changedPureMidiTrackIds.Count != 0)
+        {
+            SynchronizeByStableId(
+                snapshot.PureMidiTracks,
+                source.PureMidiTracks,
+                changedPureMidiTrackIds,
+                value => ClonePureMidiTrack(snapshot, value, cancellationToken),
+                cancellationToken);
+        }
 
         snapshot.RestoreNextStableId(source.NextStableId);
         return snapshot;
@@ -111,6 +160,8 @@ internal static class ProjectCompilationSnapshot
         {
             EventInstrument instrument => instrument.Id,
             LogicalTrack track => track.Id,
+            MidiChannelRoot root => root.Id,
+            PureMidiTrack track => track.Id,
             _ => throw new InvalidOperationException("Unsupported compilation snapshot object.")
         };
 
@@ -240,6 +291,88 @@ internal static class ProjectCompilationSnapshot
         return result;
     }
 
+    private static MidiChannelRoot CloneMidiChannelRoot(
+        MidoraProject project,
+        MidiChannelRoot source)
+    {
+        MidiChannelRoot result = new(project, source.Id)
+        {
+            Name = source.Name,
+            RoutingMode = source.RoutingMode,
+            FixedZeroBasedPort = source.FixedZeroBasedPort,
+            FixedZeroBasedChannel = source.FixedZeroBasedChannel,
+            ChannelMode = source.ChannelMode
+        };
+        result.MidiTrackIds.AddRange(source.MidiTrackIds);
+        return result;
+    }
+
+    private static PureMidiTrack ClonePureMidiTrack(
+        MidoraProject project,
+        PureMidiTrack source,
+        CancellationToken cancellationToken)
+    {
+        PureMidiTrack result = new(project, source.Id)
+        {
+            Name = source.Name,
+            MidiChannelRootId = source.MidiChannelRootId,
+            Color = source.Color
+        };
+        foreach (MidiSegment segment in source.Segments)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            MidiSegment segmentCopy = new(project, segment.Id)
+            {
+                ProjectStartTick = segment.ProjectStartTick,
+                LengthTicks = segment.LengthTicks,
+                ContentOffsetTick = segment.ContentOffsetTick
+            };
+            for (int index = 0; index < segment.Notes.Count; index++)
+            {
+                if ((index & 0xff) == 0) cancellationToken.ThrowIfCancellationRequested();
+                DirectMidiNote note = segment.Notes[index];
+                segmentCopy.Notes.Add(new DirectMidiNote(project, note.Id)
+                {
+                    StartTick = note.StartTick,
+                    LengthTicks = note.LengthTicks,
+                    Key = note.Key,
+                    NoteOnVelocity = note.NoteOnVelocity,
+                    NoteOffVelocity = note.NoteOffVelocity,
+                    NoteOnOrder = note.NoteOnOrder,
+                    NoteOffOrder = note.NoteOffOrder
+                });
+            }
+            for (int index = 0; index < segment.ChannelEvents.Count; index++)
+            {
+                if ((index & 0xff) == 0) cancellationToken.ThrowIfCancellationRequested();
+                DirectMidiChannelEvent value = segment.ChannelEvents[index];
+                segmentCopy.ChannelEvents.Add(new DirectMidiChannelEvent(project, value.Id)
+                {
+                    Tick = value.Tick,
+                    Kind = value.Kind,
+                    Data1 = value.Data1,
+                    Data2 = value.Data2,
+                    Order = value.Order
+                });
+            }
+            for (int index = 0; index < segment.OpaqueEvents.Count; index++)
+            {
+                if ((index & 0xff) == 0) cancellationToken.ThrowIfCancellationRequested();
+                OpaqueMidiEvent value = segment.OpaqueEvents[index];
+                segmentCopy.OpaqueEvents.Add(new OpaqueMidiEvent(project, value.Id)
+                {
+                    Tick = value.Tick,
+                    Kind = value.Kind,
+                    MetaType = value.MetaType,
+                    Payload = [.. value.Payload],
+                    Order = value.Order
+                });
+            }
+            result.Segments.Add(segmentCopy);
+        }
+        return result;
+    }
+
     private static EventInstrument CloneInstrument(
         MidoraProject project,
         EventInstrument source,
@@ -261,6 +394,7 @@ internal static class ProjectCompilationSnapshot
             LoopStartTick = source.LoopStartTick,
             LoopEndTick = source.LoopEndTick
         };
+        result.LogicalTrackIds.AddRange(source.LogicalTrackIds);
         CopyState(source.InitialState, result.InitialState, cancellationToken);
 
         foreach (LogicalParameterDefinition definition in source.LogicalParameters)

@@ -82,6 +82,12 @@ Undo / Redo 栈
 ├─ logical-tracks/
 │  ├─ lt_<id>.pb
 │  └─ ...
+├─ midi-channel-roots/
+│  ├─ mcr_<id>.pb
+│  └─ ...
+├─ midi-tracks/
+│  ├─ mt_<id>.pb
+│  └─ ...
 └─ resources/
    └─ soundfonts/
       └─ <resourceId>.sf2
@@ -105,6 +111,8 @@ settings/global-event-scope-defaults.json
 settings/
 event-instruments/
 logical-tracks/
+midi-channel-roots/
+midi-tracks/
 resources/soundfonts/
 ```
 Event Instrument 对象文件路径模板：
@@ -114,6 +122,11 @@ event-instruments/ei_<id>.pb
 Logical Track 对象文件路径模板：
 ```text
 logical-tracks/lt_<id>.pb
+```
+MIDI Channel Root 与 Pure MIDI Track 对象文件路径模板：
+```text
+midi-channel-roots/mcr_<id>.pb
+midi-tracks/mt_<id>.pb
 ```
 `.pb` 扩展名固定表示 protobuf 对象文件。
 初版允许未来通过新的 `fileFormatVersion` / `schemaVersion` 增加新的顶层目录或结构性文件类型。但旧版软件遇到过新的版本时应拒绝打开，而不是忽略。
@@ -149,6 +162,11 @@ Logical Track
 Segment
 Logical Note
 Logical Parameter Lane / Point / Curve
+MIDI Channel Root
+Pure MIDI Track
+Midi Segment
+Direct MIDI Note / Channel Event
+Opaque imported event payload
 裁剪窗口
 大量事件数据
 大量曲线数据
@@ -196,8 +214,7 @@ conductor-track.json
 ```text
 决定 Event Instrument / Logical Track 是否属于 Project
 保存 Event Instrument / Logical Track 用户排序
-保存 Event Instrument Library 文件夹分组
-保存 Logical Track 集合结构
+保存 Arrangement mixed parent/child 结构
 保存 Project 级 ID 生成状态
 保存用户作品元数据
 保存具体 Project 语义对象索引
@@ -303,20 +320,20 @@ manifest 自身不通过额外 manifest hash 校验。manifest 自身依赖 Zip 
 ```text
 Project 顶层结构关系
 Project 级 ID 生成状态
-Event Instrument Library 集合索引
-Event Instrument 顺序
-Event Instrument 文件夹分组
+Arrangement parent tagged union 的混排顺序
+Event Instrument Index（由 Arrangement parents 派生）
 Event Instrument ID 到文件路径映射
 Event Instrument 名称快照
-Logical Track 集合索引
-Logical Track 顺序
+各 Event Instrument 的 ordered Logical Track child 索引
 Logical Track ID 到文件路径映射
 Logical Track 名称快照
+MIDI Channel Root 索引、文件路径与名称快照；Root 顺序由 mixed parent order 过滤得到
+Pure MIDI Track 集合索引、Root 内顺序、文件路径与名称快照
 settings 文件引用，包括 audio-render-settings.json
 metadata 文件引用
 conductor-track 文件引用
 ```
-`project.json` 是决定哪些 Event Instrument / Logical Track 属于当前 Project 的唯一权威语义索引。
+`project.json` 是决定哪些 Event Instrument / Logical Track / MIDI Channel Root / Pure MIDI Track 属于当前 Project，以及 parent kind、mixed order 与 child order 的唯一顶层权威索引。parent/child 对象文件中的双向引用必须与其完全一致。
 `project.json` 还必须明确当前 Project 顶层包含 `Audio Render Settings`，并通过固定结构约定或显式引用关联 `settings/audio-render-settings.json`。具体字段形式由最终 JSON Schema 定义。
 ### 16.5.2 Project ID
 初版不引入独立稳定 Project ID。
@@ -349,7 +366,7 @@ Project 内所有稳定 ID 全局唯一
 同类型内唯一但跨类型可重复
 ```
 ### 16.5.4 名称快照
-`project.json` 保存 Event Instrument / Logical Track 的最小显示名快照。
+`project.json` 保存 Event Instrument / Logical Track / MIDI Channel Root / Pure MIDI Track 的最小显示名快照。
 用途：
 ```text
 索引显示
@@ -464,7 +481,7 @@ TPQ 是 Project 语义，不是文件格式语义。
 开发期 v1 还要求 `conductor-track.json` 中每个 Time Signature 满足 `4 × ticksPerQuarterNote % denominator == 0`。这是 project settings 与 Conductor 之间的跨文件一致性约束；读取和保存均必须校验，不创建新 schemaVersion、fileFormatVersion 或迁移器。
 ### 16.7.3 export-settings.json
 保存 Project 默认导出设置。
-开发期 v1 固定保存：导出模式、范围策略、仅在 Manual Range 时存在的 start/end tick、Track 选择策略、Routing、Readme 开关与 Warning-as-error 开关。新 Project 默认 Whole Project / Project Default Range / All Valid Logical Tracks / Compact / Include Readme / 不把 Warning 当 Error。显式 Track 具体稳定 ID 不进入该 settings 文件。
+开发期当前格式固定保存：导出模式、范围策略、仅在 Manual Range 时存在的 start/end tick、Track 选择策略、Routing、Readme 开关与 Warning-as-error 开关。新 Project 默认 Whole Project / Project Default Range / All Valid Logical and Pure MIDI Tracks / Compact / Include Readme / 不把 Warning 当 Error。显式 Track 具体稳定 ID 不进入该 settings 文件。
 一次性导出参数不保存进 Project，除非用户明确将其保存为默认 Export Settings。
 不保存：
 ```text
@@ -502,8 +519,8 @@ Mute / Solo
 默认渲染模式：Whole Mix / Per Logical Track
 默认范围模式：Project Default Range / Manual Range
 可选默认 startTick / endTick
-默认 Track 选择策略：All Valid Logical Tracks / Explicit Logical Track IDs
-显式 Logical Track 稳定 ID 集合
+默认 Track 选择策略：All Valid Logical and Pure MIDI Tracks / Explicit Track IDs
+显式 Logical Track / Pure MIDI Track 稳定 ID 集合
 有限命名偏好
 默认文件采样率：8,000–192,000 Hz 整数，默认 48,000 Hz
 默认 Offline Maximum Sample Voices per Unit Stream：1–16,777,216 整数，默认 500
@@ -541,7 +558,7 @@ SHA-256
 ```text
 Mode = Whole Mix
 Range = Project Default Range
-Track Selection = All Valid Logical Tracks
+Track Selection = All Valid Logical and Pure MIDI Tracks
 Format = RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float
 Sample Rate = 48,000 Hz
 Offline Maximum Sample Voices per Unit Stream = 500
@@ -674,21 +691,22 @@ Per-Note Instance Isolation
 生命周期策略
 Overlap 策略
 Initial State Defaults
+ordered child Logical Track stable IDs
 其他属于 Event Instrument 定义的内容
 ```
 SubVoice 不拆独立文件。
 Mapping Function 源码 / 定义保存于对应 Event Instrument `.pb` 内。
 每个 Mapping Function 定义必须保存 `abiVersion`、函数体源码和声明的 Context 字段集合。初版新建函数固定写 `abiVersion = 2`；未知 ABI 可以作为源数据打开和保留，但实际参与编译时按 Mapping Function 编译错误处理。编译产物、参考程序集、AssemblyLoadContext 状态和缓存不得写入 `.midora`。
 Logical Parameter Definition 保存于对应 Event Instrument `.pb` 内。
-### 16.9.3 Library 集合结构
-Event Instrument Library 的集合级信息保存于 `project.json`，包括：
+### 16.9.3 Arrangement parent 与 Event Instrument Index
+Event Instrument 的集合级信息保存于 `project.json`，包括：
 ```text
-Event Instrument 顺序
-文件夹分组
-库内显示结构
+Arrangement parent tagged union 中的位置
 对象 ID 到文件路径映射
 损坏占位需要的名称快照
 ```
+Event Instrument protobuf 同时保存 ordered child Logical Track stable IDs；Logical Track protobuf 保存唯一 parent Event Instrument ID。三方索引必须一致。初版不保存 Event Instrument Folder、Unfiled、独立 Library 顺序或 Library Workspace 状态。
+
 Event Instrument 颜色属于 Event Instrument 定义级元数据，保存于对应 `.pb` 内。
 ### 16.9.4 删除后保存
 用户删除 Event Instrument 后保存：
@@ -718,8 +736,7 @@ Logical Track `.pb` 保存该 Track 本体完整内容，包括：
 schemaVersion
 Track 名称
 颜色覆盖
-Event Instrument 绑定 ID
-最近一次绑定 Event Instrument 名称提示
+唯一 parent Event Instrument ID
 Segment 集合
 Segment 内 Logical Note
 Logical Parameter Lane / Point / Curve
@@ -730,7 +747,7 @@ Segment 裁剪窗口
 Segment 不拆独立文件。
 Logical Parameter Lane 属于 Segment / Logical Track 编曲内容，保存于对应 Logical Track `.pb` 内。
 ### 16.10.3 Track 改绑 / 断裂参数 Lane
-如果 Event Instrument 被删除、Track 取消绑定或 Track 改绑，Track 中已有 Logical Parameter Lane 可能变为断裂 / 不适用。
+Logical Track 跨 Event Instrument 改绑后，Track 中已有 Logical Parameter Lane 可能变为断裂 / 不适用。
 保存时：
 ```text
 仍保存这些 Logical Parameter Lane 数据。
@@ -739,16 +756,15 @@ Logical Parameter Lane 属于 Segment / Logical Track 编曲内容，保存于�
 不移到 project.json。
 ```
 后续由 UI / 诊断处理。
-### 16.10.4 Track 集合结构
-Logical Track 集合级信息保存于 `project.json`，包括：
+### 16.10.4 Track child 结构
+Logical Track 集合级信息按 parent Event Instrument 保存于 `project.json`，包括：
 ```text
-Track 顺序
+parent 内 Track child 顺序
 对象 ID 到文件路径映射
 损坏占位需要的名称快照
 ```
 Logical Track 颜色覆盖保存于对应 `.pb` 内。
-Event Instrument 绑定 ID 保存于对应 Logical Track `.pb` 内。
-最近一次绑定 Event Instrument 名称提示保存于对应 Logical Track `.pb` 内。
+唯一 parent Event Instrument ID 保存于对应 Logical Track `.pb` 内，并必须与 Event Instrument ordered child references、`project.json` 一致。
 ### 16.10.5 删除后保存
 用户删除 Logical Track 后保存：
 ```text
@@ -773,6 +789,8 @@ Logical Track 名称允许重复。
 ```text
 ei_<id>.pb
 lt_<id>.pb
+mcr_<id>.pb
+mt_<id>.pb
 ```
 其中 `<id>` 必须使用 16.13.2 规定的无符号、无前导零十进制 ASCII。
 ### 16.11.3 对象内部 ID 与类型
@@ -819,6 +837,8 @@ conductor-track.json
 settings/*.json
 event-instruments/*.pb
 logical-tracks/*.pb
+midi-channel-roots/*.pb
+midi-tracks/*.pb
 未来新增结构性文件
 ```
 schemaVersion 必须同时保存于：
@@ -1355,11 +1375,7 @@ Track 保留绑定 ID。
 保存后从 project.json 索引移除。
 保存后不写出原损坏 .pb 文件。
 ```
-删除损坏 Event Instrument 占位后，引用它的 Logical Track：
-```text
-变为未指定 Event Instrument。
-保留最近一次绑定名称提示。
-```
+删除损坏 Event Instrument parent 占位时，必须确认并原子级联其全部 Logical Track children；不得生成未指定 Track。
 删除损坏 Logical Track 占位后：
 ```text
 从 Track 索引中移除。
@@ -1642,6 +1658,8 @@ manifest lastSavedWithSoftwareVersion 写为当前软件版本。
 Project 视为已修改 / 已迁移未保存状态。
 ```
 对于首次引入 Audio Render Settings 的旧格式迁移，允许创建明确默认值；但当前格式中必需的 `settings/audio-render-settings.json` 缺失不得伪装成普通旧格式迁移。迁移结果必须符合当前严格 schema。
+
+Pure MIDI Track / SMF Import 引入时仍处于未发布开发期，采用破坏性文件格式替换：此前开发期 `.midora` 格式不提供自动迁移、兼容读取或兼容编译路径。实现必须提升对应 `fileFormatVersion`、JSON schema 与 protobuf descriptor 基线，并明确拒绝旧开发格式；不得根据缺失 Root/Track 字段猜测默认模型。该开发期例外不改变未来已发布格式必须走显式迁移评审的原则。
 ### 16.24.2 保存旧版本项目
 用户点击普通保存时：
 ```text
@@ -1685,6 +1703,8 @@ conductor-track.json
 settings/*.json
 event-instruments/*.pb
 logical-tracks/*.pb
+midi-channel-roots/*.pb
+midi-tracks/*.pb
 resources/soundfonts/*.sf2
 ```
 但由于 manifest 需要记录所有文件 hash，实际内容生成顺序为：
@@ -1693,9 +1713,9 @@ resources/soundfonts/*.sf2
 最后生成 manifest。
 再按稳定 Zip entry 顺序打包。
 ```
-Event Instrument / Logical Track 对象文件写出顺序：
+Event Instrument / Logical Track / MIDI Channel Root / Pure MIDI Track 对象文件写出顺序：
 ```text
-按 project.json 中的显式顺序。
+按 project.json 中各集合的显式顺序；Pure MIDI Track 按 Root 显式顺序，再按 Root 内 Track 显式顺序。
 ```
 ### 16.25.2 时间戳
 Zip entry 时间戳应统一写固定值或规范化值，避免同内容多次保存产生无意义差异。
@@ -1714,7 +1734,7 @@ SF2 不应默认视为已压缩资源。大量 SF2 内部采样可能是原始 P
 系统语义上不要求每个 entry 必须压缩；具体压缩方式属实现细节。
 manifest 不记录压缩等级。
 ### 16.25.4 并行序列化
-保存时允许并行序列化 Event Instrument / Logical Track 等对象到临时目录。
+保存时允许并行序列化 Event Instrument / Logical Track / MIDI Channel Root / Pure MIDI Track 等对象到临时目录。
 但并行只影响执行计划，不得影响：
 ```text
 最终文件内容
@@ -1878,4 +1898,67 @@ BASSMIDI Stream 状态
 C# Mapping Function 编译由后续诊断、编译、播放或导出流程触发。
 SoundFont 实际加载由播放、预览或音频渲染触发。
 打开时可以检查外部 SF2 文件存在性与 last known hash，但不加载到 BASSMIDI。
+---
+
+## 16.30 Pure MIDI 对象持久化
+
+### 16.30.1 文件粒度
+
+每个 MIDI Channel Root 使用一个 `midi-channel-roots/mcr_<id>.pb`；每个 Pure MIDI Track 使用一个 `midi-tracks/mt_<id>.pb`。Midi Segment 与其 Direct MIDI Note/Event、raw Note message 和 opaque imported event 均内嵌在所属 Pure MIDI Track 文件，不按 Segment 或事件拆文件。
+
+### 16.30.2 Root 文件
+
+Root protobuf 至少保存：
+
+```text
+Stable ID / object kind / schemaVersion
+Display Name
+Routing Mode
+Fixed Port / Channel when applicable
+Channel Mode: Melodic | Percussion
+ordered child Pure MIDI Track stable IDs
+```
+
+`project.json` 保存 Arrangement mixed parent tagged union、Root path、名称快照和每个 Root 的 child Track 索引/顺序；Root 的正式相对顺序由 mixed parent list 过滤 Root 得到，不另存第二套全局 Root 顺序。Root 文件、Pure MIDI Track 的 parent Root ID 与 `project.json` 必须完全一致；缺失、重复、跨 Root 多重归属、循环/自引用或顺序不一致均按结构损坏处理，不能按名称、Port.Channel 或目录扫描修复。
+
+### 16.30.3 Pure MIDI Track 文件
+
+Pure MIDI Track protobuf 至少保存：
+
+```text
+Stable ID / object kind / schemaVersion
+parent Root stable ID
+Display Name / optional color
+Midi Segment collection
+Segment Content Window and hidden content
+Direct MIDI Note including NoteOn/NoteOff velocities and endpoint order
+Direct MIDI Channel Event including explicit same-tick order
+unpaired raw Note messages
+opaque imported SysEx/Meta type, payload, tick and order
+source-import hints that are explicitly part of the current schema
+```
+
+源 MTrk chunk 布局、Running Status 是否被使用、原 delta-time 编码宽度和原始文件字节不持久化；这些不属于语义 round-trip 保证。
+
+### 16.30.4 严格边界与损坏隔离
+
+Direct/opaque payload 的事件类型、长度、VLQ 可表示范围、MIDI data byte、tick、稳定 ID 和总计数必须在分配大对象前做有界校验。未知 protobuf 字段仍按本章严格 schema 拒绝，不能借“opaque event”保存未知 Midora wire 字段。
+
+Root 或 Pure MIDI Track 文件损坏时，可以按 Logical Track 的既有原则形成对应损坏占位并允许用户删除；只要任一此类占位仍存在就禁止覆盖保存，以免永久丢失无法读取的对象。删除 Root 占位必须同时显式处理其已索引 child Track，占位关系不得静默改挂到其他 Root。
+
+### 16.30.5 不保存派生结果
+
+以下内容不得写入 `.midora`：
+
+```text
+Auto Root 当前编译获配的 Port.Channel
+Root 活动连通区间
+Execution/SMF Track Projection
+Root checkpoint / state hash
+normalized MidiSegment fragment
+Root PCM/cache pack
+import preview/candidate and source-file absolute path
+```
+
+Fixed Root 的用户 Port.Channel、Root Channel Mode、Root/Track 显式顺序、Track EOT 所需 Segment 尾部范围和 opaque payload 是源数据，必须持久化。
 ---

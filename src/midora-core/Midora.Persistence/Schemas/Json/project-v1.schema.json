@@ -9,9 +9,7 @@
     "metadataPath",
     "conductorTrackPath",
     "settings",
-    "eventInstrumentFolders",
-    "eventInstruments",
-    "logicalTracks"
+    "arrangementParents"
   ],
   "properties": {
     "schemaVersion": { "$ref": "common-v1.schema.json#/$defs/schemaVersion" },
@@ -19,17 +17,9 @@
     "metadataPath": { "const": "metadata.json" },
     "conductorTrackPath": { "const": "conductor-track.json" },
     "settings": { "$ref": "#/$defs/settingsPaths" },
-    "eventInstrumentFolders": {
+    "arrangementParents": {
       "type": "array",
-      "items": { "$ref": "#/$defs/folderIndex" }
-    },
-    "eventInstruments": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/eventInstrumentIndex" }
-    },
-    "logicalTracks": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/logicalTrackIndex" }
+      "items": { "$ref": "#/$defs/arrangementParent" }
     }
   },
   "$defs": {
@@ -55,38 +45,35 @@
         "globalEventScopeDefaults": { "const": "settings/global-event-scope-defaults.json" }
       }
     },
-    "folderIndex": {
+    "arrangementParent": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "name"],
+      "required": ["kind", "id", "path", "nameSnapshot", "children"],
       "properties": {
-        "id": { "$ref": "common-v1.schema.json#/$defs/stableId" },
-        "name": { "$ref": "common-v1.schema.json#/$defs/requiredShortText" }
-      }
-    },
-    "eventInstrumentIndex": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "path", "nameSnapshot"],
-      "properties": {
+        "kind": { "enum": ["event-instrument", "midi-channel-root"] },
         "id": { "$ref": "common-v1.schema.json#/$defs/stableId" },
         "path": {
           "type": "string",
-          "pattern": "^event-instruments/ei_[1-9][0-9]*\\.pb$"
+          "pattern": "^(event-instruments/ei_|midi-channel-roots/mcr_)[1-9][0-9]*\\.pb$"
         },
-        "nameSnapshot": { "$ref": "common-v1.schema.json#/$defs/shortText" },
-        "folderId": { "$ref": "common-v1.schema.json#/$defs/stableId" }
+        "nameSnapshot": { "$ref": "common-v1.schema.json#/$defs/requiredShortText" },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/arrangementChild" }
+        }
       }
     },
-    "logicalTrackIndex": {
+    "arrangementChild": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "path", "nameSnapshot"],
+      "required": ["kind", "id", "parentId", "path", "nameSnapshot"],
       "properties": {
+        "kind": { "enum": ["logical-track", "pure-midi-track"] },
         "id": { "$ref": "common-v1.schema.json#/$defs/stableId" },
+        "parentId": { "$ref": "common-v1.schema.json#/$defs/stableId" },
         "path": {
           "type": "string",
-          "pattern": "^logical-tracks/lt_[1-9][0-9]*\\.pb$"
+          "pattern": "^(logical-tracks/lt_|midi-tracks/mt_)[1-9][0-9]*\\.pb$"
         },
         "nameSnapshot": { "$ref": "common-v1.schema.json#/$defs/shortText" }
       }

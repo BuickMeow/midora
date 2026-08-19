@@ -28,11 +28,12 @@ public sealed class ProjectCreationEditCommandsTests
     public void UndoKeepsAllocatorHighWaterRedoKeepsIdentityAndBranchUsesHigherId()
     {
         MidoraProject project = new(480);
+        EventInstrument instrument = CreateInstrument(project, "Instrument");
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
         long before = project.NextStableId;
 
-        document.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Created"));
+        document.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Created", instrument.Id));
         LogicalTrack created = Assert.Single(project.Tracks);
         long afterCreate = project.NextStableId;
 
@@ -69,7 +70,7 @@ public sealed class ProjectCreationEditCommandsTests
     public void InstrumentAndTrackDuplicationAreDeepStableAndUndoable()
     {
         MidoraProject project = new(480);
-        EventInstrument source = EventInstrumentLibrary.Create(project, "Source");
+        EventInstrument source = CreateInstrument(project, "Source");
         LogicalParameterDefinition parameter = new(project)
         {
             Name = "Amount",
@@ -96,6 +97,7 @@ public sealed class ProjectCreationEditCommandsTests
         });
         track.Segments.Add(segment);
         project.Tracks.Add(track);
+        source.LogicalTrackIds.Add(track.Id);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
 
@@ -108,7 +110,8 @@ public sealed class ProjectCreationEditCommandsTests
         Assert.Equal(source.Id, track.EventInstrumentId);
 
         document.Execute(ProjectDomainEditCommands.DuplicateLogicalTrack(track.Id));
-        LogicalTrack trackCopy = project.Tracks[1];
+        LogicalTrack trackCopy = project.Tracks.Single(value =>
+            value.Id != track.Id && value.EventInstrumentId == source.Id);
         Assert.NotEqual(track.Id, trackCopy.Id);
         Assert.Equal(track.EventInstrumentId, trackCopy.EventInstrumentId);
         Assert.NotEqual(segment.Id, trackCopy.Segments[0].Id);
@@ -131,7 +134,7 @@ public sealed class ProjectCreationEditCommandsTests
         document.Redo();
         document.Redo();
         Assert.Equal(copyInstrumentId, project.EventInstruments[1].Id);
-        Assert.Equal(copyTrackId, project.Tracks[1].Id);
+        Assert.Contains(project.Tracks, value => value.Id == copyTrackId);
         Assert.Equal(highWater, project.NextStableId);
         AssertMatchesFull(compilation);
     }
@@ -140,7 +143,7 @@ public sealed class ProjectCreationEditCommandsTests
     public void SegmentContentCreationAndSplitPreserveIdsAndExactUndo()
     {
         MidoraProject project = new(480);
-        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        EventInstrument instrument = CreateInstrument(project, "Instrument");
         LogicalParameterDefinition parameter = new(project)
         {
             Name = "Value",
@@ -157,6 +160,7 @@ public sealed class ProjectCreationEditCommandsTests
             LastBoundEventInstrumentName = instrument.Name
         };
         project.Tracks.Add(track);
+        instrument.LogicalTrackIds.Add(track.Id);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
 
@@ -263,13 +267,14 @@ public sealed class ProjectCreationEditCommandsTests
     public void InvalidCreationIsRejectedBeforeAllocatingStableId()
     {
         MidoraProject project = new(480);
-        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        EventInstrument instrument = CreateInstrument(project, "Instrument");
         LogicalTrack track = new(project)
         {
             Name = "Track",
             EventInstrumentId = instrument.Id
         };
         project.Tracks.Add(track);
+        instrument.LogicalTrackIds.Add(track.Id);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
         long highWater = project.NextStableId;
@@ -279,7 +284,10 @@ public sealed class ProjectCreationEditCommandsTests
         Assert.Throws<ArgumentException>(() => document.Execute(
             ProjectDomainEditCommands.CreateEventInstrumentFolder("Unfiled")));
         Assert.Throws<ArgumentOutOfRangeException>(() => document.Execute(
-            ProjectDomainEditCommands.CreateLogicalTrack("Track", insertionIndex: 2)));
+            ProjectDomainEditCommands.CreateLogicalTrack(
+                "Track",
+                instrument.Id,
+                insertionIndex: 2)));
 
         Assert.Equal(highWater, project.NextStableId);
         Assert.Empty(document.History);
@@ -290,7 +298,7 @@ public sealed class ProjectCreationEditCommandsTests
     public void SubVoiceTemplateAndCurveCreationAreDeepUndoableAndDeterministic()
     {
         MidoraProject project = new(480);
-        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        EventInstrument instrument = CreateInstrument(project, "Instrument");
         instrument.RequiresChannelIsolation = true;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
@@ -365,7 +373,7 @@ public sealed class ProjectCreationEditCommandsTests
     public void TemplateCreationAtOccupiedTargetReplacesExistingEvent()
     {
         MidoraProject project = new(480);
-        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        EventInstrument instrument = CreateInstrument(project, "Instrument");
         SubVoice voice = instrument.SubVoices[0];
         TemplateEvent existing = TemplateEvent.ControlChange(project, 0, 7, 20);
         voice.Events.Add(existing);
@@ -398,7 +406,7 @@ public sealed class ProjectCreationEditCommandsTests
     public void ParameterMappingEnvelopeAndFunctionCreationUseOneHistoryProtocol()
     {
         MidoraProject project = new(480);
-        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        EventInstrument instrument = CreateInstrument(project, "Instrument");
         instrument.RequiresChannelIsolation = true;
         SubVoice voice = instrument.SubVoices[0];
         using ProjectCompilationSession compilation = new(project);
@@ -467,7 +475,7 @@ public sealed class ProjectCreationEditCommandsTests
     public void RepeatedLaneCreationIsNoOpAndDoesNotAllocateIdentity()
     {
         MidoraProject project = new(480);
-        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        EventInstrument instrument = CreateInstrument(project, "Instrument");
         LogicalParameterDefinition parameter = new(project)
         {
             Name = "Value",
@@ -485,6 +493,7 @@ public sealed class ProjectCreationEditCommandsTests
         Segment segment = new(project) { ProjectStartTick = 0, LengthTicks = 480 };
         track.Segments.Add(segment);
         project.Tracks.Add(track);
+        instrument.LogicalTrackIds.Add(track.Id);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
 
@@ -508,7 +517,7 @@ public sealed class ProjectCreationEditCommandsTests
     public void MappingChainPasteAllocatesNewChainAndStepsAndUndoRestoresTarget()
     {
         MidoraProject project = new(480);
-        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        EventInstrument instrument = CreateInstrument(project, "Instrument");
         SubVoice voice = instrument.SubVoices[0];
         TemplateEvent sourceEvent = TemplateEvent.ControlChange(project, 0, 1, 100);
         TemplateEvent targetEvent = TemplateEvent.ControlChange(project, 240, 11, 100);
@@ -566,6 +575,15 @@ public sealed class ProjectCreationEditCommandsTests
         Assert.Same(pastedStep, Assert.Single(pasted));
         Assert.Equal(highWater, project.NextStableId);
         AssertMatchesFull(compilation);
+    }
+
+    private static EventInstrument CreateInstrument(MidoraProject project, string name)
+    {
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, name);
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.EventInstrument,
+            instrument.Id));
+        return instrument;
     }
 
     private static void AssertMatchesFull(ProjectCompilationSession compilation)

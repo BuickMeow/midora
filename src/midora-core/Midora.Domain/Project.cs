@@ -254,6 +254,11 @@ public sealed class MidoraProject
     public List<EventInstrumentLibraryFolder> EventInstrumentFolders { get; } = [];
     public List<LogicalTrack> Tracks { get; } = [];
     public List<DamagedProjectObject> DamagedLogicalTracks { get; } = [];
+    public List<ArrangementParentReference> ArrangementParents { get; } = [];
+    public List<MidiChannelRoot> MidiChannelRoots { get; } = [];
+    public List<DamagedProjectObject> DamagedMidiChannelRoots { get; } = [];
+    public List<PureMidiTrack> PureMidiTracks { get; } = [];
+    public List<DamagedProjectObject> DamagedPureMidiTracks { get; } = [];
     public PlaybackProjectSettings Playback { get; } = new();
     public ExportProjectSettings Export { get; } = new();
     public AudioRenderProjectSettings AudioRender { get; } = new();
@@ -305,7 +310,9 @@ public sealed record DamagedProjectObject(
     string NameSnapshot,
     string PackagePath,
     string Error,
-    int OriginalIndex);
+    int OriginalIndex,
+    MidoraId? ParentId = null,
+    IReadOnlyList<MidoraId>? ChildIds = null);
 
 public sealed class EventInstrumentLibraryFolder
 {
@@ -334,4 +341,6 @@ public sealed class ProjectChangeSet
     public bool AffectsAudioPcmCacheGeneration { get; init; }
     public HashSet<MidoraId> TrackIds { get; } = [];
     public HashSet<MidoraId> EventInstrumentIds { get; } = [];
+    public HashSet<MidoraId> MidiChannelRootIds { get; } = [];
+    public HashSet<MidoraId> PureMidiTrackIds { get; } = [];
 }

@@ -74,6 +74,20 @@ public sealed class MidiExportCompilationCoordinator
         }
 
         HashSet<MidoraId>? selected = request.SelectedTrackIds?.ToHashSet();
+        LogicalTrack[] logicalTracks = request.Project.ArrangementParents.Count == 0
+            ? request.Project.Tracks.ToArray()
+            : request.Project.LogicalTracksInArrangementOrder().ToArray();
+        if (request.Mode == MidiExportMode.PerLogicalTrack
+            && selected is not null
+            && request.Project.PureMidiTracks.Any(track => selected.Contains(track.Id)))
+        {
+            throw new ArgumentException(
+                "Per Logical Track export cannot include Pure MIDI Track IDs.",
+                nameof(request));
+        }
+        HashSet<MidoraId>? selectedForCompilation = request.Mode == MidiExportMode.PerLogicalTrack
+            ? selected ?? logicalTracks.Select(track => track.Id).ToHashSet()
+            : selected;
         CanonicalCompiledResult compiled = _compiler.CompileFull(
             request.Project,
             new CompilationRequest
@@ -81,7 +95,7 @@ public sealed class MidiExportCompilationCoordinator
                 Purpose = CompilationPurpose.MidiExport,
                 StartTick = request.StartTick,
                 EndTick = request.EndTick,
-                IncludedTrackIds = selected,
+                IncludedTrackIds = selectedForCompilation,
                 TreatWarningsAsErrors = request.TreatWarningsAsErrors
             });
 
@@ -90,9 +104,9 @@ public sealed class MidiExportCompilationCoordinator
             .ToHashSet();
         List<MidiExportTrackSnapshot> trackSnapshots = [];
         List<MidiExportLogicalTrackLayout> layouts = [];
-        for (int index = 0; index < request.Project.Tracks.Count; index++)
+        for (int index = 0; index < logicalTracks.Length; index++)
         {
-            LogicalTrack track = request.Project.Tracks[index];
+            LogicalTrack track = logicalTracks[index];
             bool selectedForTask = selected is null || selected.Contains(track.Id);
             bool bound = track.EventInstrumentId.HasValue
                 && instrumentIds.Contains(track.EventInstrumentId.Value);
@@ -140,8 +154,28 @@ public sealed class MidiExportCompilationCoordinator
             layouts.Add(new(track.Id, names));
         }
 
+        if (request.Mode != MidiExportMode.PerLogicalTrack)
+        {
+            PureMidiTrack[] pureTracks = request.Project.PureMidiTracksInArrangementOrder().ToArray();
+            for (int index = 0; index < pureTracks.Length; index++)
+            {
+                PureMidiTrack track = pureTracks[index];
+                bool participates = selected is null || selected.Contains(track.Id);
+                trackSnapshots.Add(new(
+                    track.Id,
+                    track.Id.ToString(),
+                    logicalTracks.Length + index + 1,
+                    string.IsNullOrWhiteSpace(track.Name) ? $"MIDI Track {index + 1}" : track.Name,
+                    participates,
+                    participates ? null : "Not selected"));
+            }
+        }
+
         byte[] usedPorts = compiled.Events.ToArray()
             .Select(value => value.ZeroBasedPort)
+            .Concat(compiled.SmfTracks.ToArray()
+                .Where(value => value.Kind == CanonicalSmfTrackKind.PureMidiTrack)
+                .Select(value => value.ZeroBasedPort))
             .Distinct()
             .Order()
             .ToArray();

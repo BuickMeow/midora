@@ -1,27 +1,27 @@
 # Midora 初版非 UI 实施台账
 
-状态：非 UI 源码、托管门与八组真实 SF2 零跳过发布门全部完成
+状态：既有 Logical/Event Instrument 非 UI 基线与八组真实 SF2 发布门已完成；2026-08-18 纳入初版的 Pure MIDI Track / SMF Import 及 mixed Arrangement parent/child 领域格式尚待实现
 创建日期：2026-08-06
-最近决策更新：2026-08-15；M-AUD-001～012 已全部通过；Q-NUI-030、Q-NUI-034～Q-NUI-042、Q-NUI-049 已回答；Q-NUI-049 的 MIDI 导出“一 Channel Unit 一 MIDI Track”已实施并通过回归。Q-NUI-043～048 为已按推荐实施、待确认的小决定
+最近决策更新：2026-08-18；M-AUD-001～012 已全部通过；既有 Q-NUI-049 的“一 Channel Unit 一 MIDI Track”实现现在只代表 Logical/Event Instrument 基线。Pure MIDI Track / SMF Import 与新 parent/child ownership 的正式新增范围见 SRS 第 23～24 章、INV-050～INV-064、ADR-PMIDI-001～009 与 ADR-CORE-045，当前尚未实现
 上位规范：`misc/Midora-SRS-Initial-Release-v0.1/`
 问题库：`misc/Midora-Non-UI-Decision-Question-Library.md`
 缓存设计讨论：`misc/Midora-Segment-Compilation-and-Audio-Cache-Design-Discussion-2026-08-08.md`
 八组 SF2 发布门矩阵：`misc/Midora-SF2-Release-Gate-Matrix-2026-08-08.md`
 
-本文用于跨任务、跨上下文持续记录 Midora 初版全部非 UI 能力的实施范围、需求追踪、验证证据和剩余风险。它不是 SRS；通常与 SRS 冲突时以 SRS 为准。对于问题库中已经由产品所有者明确批准、且目的就是修改现行 SRS 的决定，问题库构成变更授权；实施前必须先把对应 SRS/ADR 修订到一致，不能在规范仍冲突时直接改代码。
+本文用于跨任务、跨上下文持续记录 Midora 初版非 UI 能力的实施范围、需求追踪、验证证据和剩余风险。它不是 SRS；通常与 SRS 冲突时以 SRS 为准。2026-08-18 之前的“全部完成”、Channel 10 melodic、CC91/CC93 全链路拒绝、Unit Track 与统一 EOT 记录只描述既有 Logical/Event Instrument 实现，不证明第 23 章已经实现。对于问题库中已经由产品所有者明确批准、且目的就是修改现行 SRS 的决定，问题库构成变更授权；实施前必须先把对应 SRS/ADR 修订到一致，不能在规范仍冲突时直接改代码。
 
 ## 1. 总体范围
 
 - 包含：Project 领域模型、编辑命令与 Undo/Redo 业务边界、语义验证、全量与增量编译、Canonical Compiled Result、播放与预览控制、MIDI 导出、实时/离线音频链、WASAPI/BASS 原生边界、`.midora` 持久化、非 UI 应用工作流、设置与发布验证门。
 - 排除：WPF 视图、控件、窗口、布局、键鼠交互、DPI 与纯 UI 状态。
 - 人工验证：只把无法由自动测试可靠替代的实际听音、物理设备切换和硬件时延测试集中列入最终手动验收清单。
-- 非目标：继续服从《Midora SRS》第 21 章和 INV-001～INV-045，不扩展初版范围。
+- 非目标：继续服从《Midora SRS》第 21 章和 INV-001～INV-064；第 23～24 章已经正式扩展/改写初版范围，不得再把 Pure MIDI Track、SMF Import 或 mixed Arrangement ownership 当作外部需求。
 
 ## 2. 跨系统 Requirement Trace
 
 - 输入：完整 Project Source Data、CompileContext、应用偏好、已验证 SoundFont 资源状态、冻结输出计划，以及被消费者接受的 Canonical Compiled Result。
 - 正式输出：确定性的 canonical tick-domain 结果；由其唯一派生的播放/预览计划、SMF Type 1 文件、float32 stereo RIFF/WAVE 文件和 `.midora` 源数据包。
-- 边界：稳定 ID 是身份；范围统一为 `[startTick, endTick)`；最多 16 Port × 16 Channel；Channel 10 melodic；CC91/CC93 全链路拒绝；消费者不重新解释 Project 语义。
+- 边界：稳定 ID 是身份；范围统一为 `[startTick, endTick)`；最多 16 Port × 16 Channel；Logical Channel 10 melodic，Pure MIDI Root 使用正式 mode；SubVoice 拒绝 CC91/CC93，Pure MIDI 保留且音频忽略其效果；消费者不重新解释 Project 语义。
 - 失败条件：结构、引用、值域、映射、生命周期、资源、文件完整性、原生后端或发布事务失败必须归入明确阶段；失败/partial canonical 结果不可消费。
 - 诊断：保留 Error/Warning/Info/Debug 原级别、稳定来源和阶段；Warning-as-error 只影响成功判定；`Channel Unit >= 248` 固定为 Info。
 - 持久化归属：`.midora` 只保存源数据；canonical、缓存、诊断、Undo/Redo、Mute/Solo、设备、播放位置、任务与 UI 状态不持久化。
@@ -157,6 +157,7 @@
 | 2026-08-08 | SF2 提供前的托管/构建/AOT 门 | 6 solution CI Release；9 个纯托管项目 + BASS 无 SF2 子集；固定 BASS manifest、AOT 必需文件、无效 SF2 拒绝；style/analyzer 和本轮文件完整 format；基线总数更新 | 托管 1023/1023、原生无效 SF2 1/1、0 Skip；6 solution 0 warning/0 error；SDK 10.0.302；基线 1053；AOT `artifacts/non-ui-release-gate-cache-final-20260808/worker-win-x64`；`git diff --check` 通过；当时剩余 29 项只缺有效 SF2，随后由下方八组矩阵闭合 |
 | 2026-08-08 | 八组真实 SF2 完整零跳过发布矩阵 | `sDetrimental Concert Grand Piano`、`SGM-V2.01`、`JV1080Ti`、`Ultima C7 Grand II`、`Z-Doc Acoustic Piano Fantasy Mode`、`Roland XP-80`、`Splendid_256`、`minecraft`；每组独立执行固定原生 manifest 校验、locked restore、6 solution Release build、当前 win-x64 Native AOT Worker publish 和 10 项目全量门 | 8 × 1053 = 8424/8424、0 failure、0 skip；80 个 TRX；每组 build 0 warning/0 error；八套 AOT 目录均含 Worker `.exe`、manifest、LICENSE、notices；完整矩阵见 `misc/Midora-SF2-Release-Gate-Matrix-2026-08-08.md` |
 | 2026-08-15 | Q-NUI-049 MIDI 导出 Unit Track 兼容布局 | Whole Project、Per Logical Track、Per Port 均改为按 canonical 原始 `(Port, Channel)` 分组；每个事件 Track 只含一个 Channel Unit；同一 Unit 跨 Logical Track 时段复用时合并；Track 顺序与名称固定；补充双 Channel 拆分、跨 Track Unit 复用及 owner/Unit 布局不一致失败原子性测试 | Core Release build 0 warning/0 error；Common 70、MIDI Export 35、Audio Render 36、Compiler 259、Persistence 95、Playback 91、Application 315，共 901/901 通过；Desktop Release build 0 warning/0 error，Presentation 89 + Desktop 48，共 137/137 通过 |
+| 2026-08-19 | Pure MIDI / SMF Import / Arrangement hierarchy 全链 | Root/Track/Segment/direct/opaque domain；Format 0/1 TPQN reader、Running Status、Port/Channel split 与新 Project 事务；Fixed/Auto Root allocation、Root lifecycle、独立 SMF MTrk；开发期 v1 持久化重写；Root 共享 1-channel audio Unit；Conductor-first 两级 Arrangement 与 tiled Note/Event/Conductor previews | Core 991/991、MIDI 20/20、Desktop 183/183；重新发布当前源码的 win-x64 Native AOT Worker 后 BASS 213/213、Audio Render 36/36；全部 0 failure / 0 skip。未执行 computer-use 或人工 UI/听感验收 |
 
 ## 7. 未解决风险
 

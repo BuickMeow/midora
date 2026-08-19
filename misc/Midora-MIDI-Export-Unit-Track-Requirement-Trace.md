@@ -1,7 +1,9 @@
-# Midora MIDI 导出 Channel Unit / MIDI Track Requirement Trace
+# Midora Logical/Event Instrument MIDI 导出 Channel Unit / MIDI Track Requirement Trace
 
-状态：已实现并通过自动验证
+状态：历史增量已实现；**全局范围已由 2026-08-18 Pure MIDI 决定取代，现仅适用于 Logical/Event Instrument Unit MTrk**
 日期：2026-08-15
+
+2026-08-18 范围修订：本文下文的“一 Unit 一 Track”、Port→Channel 排序、`Port <P> / Channel <C>` 名称与统一 EOT，只约束 Logical/Event Instrument 输出。Pure MIDI Track 必须按 `misc/Midora-Pure-MIDI-Tracks-and-SMF-Import-Requirement-Trace.md`、SRS 第 23 章与 ADR-PMIDI-007，一用户 Track 一 MTrk；同 Root 多 MTrk 可共享 Unit，并保留 Track 名称、Root/Track 顺序和自身 EOT。若下文未显式写出限定词，`Unit` / `事件 Track` 均解释为 Logical/Event Instrument Unit / MTrk。
 
 ## 1. 输入
 

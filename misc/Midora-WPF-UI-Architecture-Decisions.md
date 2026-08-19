@@ -164,12 +164,12 @@
 - 原因：极端密集对象覆盖画布时，先命中对象会令用户无法从中间位置开始框选。Select 的明确职责改为区域选择；单对象选择仍可在 Draw 模式通过点击完成。
 - 边界：有效 marquee 的集合运算固定为：无修饰键 Replace、Ctrl Add、Alt Remove、Ctrl+Alt Toggle；Shift 保留为 Add。任一修饰键路径都以现有选择为基础，空选区不改变选择；无修饰键的有效空选区执行 Replace 并清空原选择。小于 marquee 阈值的普通点击只设置 Edit Cursor，不改变 Object Selection。该决定不改变 Draw、Split、Erase、右键上下文命中、对象编辑、Project 数据或 Undo。
 
-## ADR-UI-024：Arrangement 放置手势与 Track Header 直接操作
+## ADR-UI-024（层级、Unbound 与 Library 拖放部分已由 ADR-UI-039 取代）：Arrangement 放置手势与 Track Header 直接操作
 
 - 决定：Arrangement Draw 在空白区域按下时建立 transient Segment placement；未越过阈值使用 `1 × TPQ` 默认长度，向右拖动则按操作粒度改变结束 tick，MouseUp 只提交一次 `CreateSegment`。目标间隙不足时仍沿用新建 Segment 的可用间隙裁剪规则。
 - 决定：Track Header 作为 Timeline 内容以外的独立命中区，维护 hover、pressed 和 reorder transient state；拖动完成只调用正式 `ReorderLogicalTrack`。上下文菜单调用既有 Rename、Bind、Delete 和 Reorder Project command，不另建 UI 业务模型。
-- 决定：Arrangement snapshot 增加只读的 lane secondary label，投影绑定 Event Instrument 当前名称或明确的 Unbound / missing 状态。Event Instrument Library 的拖放 payload 只携带稳定 ID；drop 到 Track Header 调用正式 Bind command，覆盖不同绑定前确认。
-- 边界：Track Header 的 hover、pressed、drag target 和菜单 target 不保存、不进入 Undo；正式 Track order、名称和 binding 仍只属于 Project Content。拖放不移动或复制 Event Instrument。
+- 历史决定：Arrangement snapshot 曾增加绑定 Event Instrument 名称或 Unbound / missing 状态，并允许从 Event Instrument Library 拖放绑定。ADR-UI-039 与 ADR-CORE-045 已删除可见 Library、Unbound 状态和独立 Track order；当前 Arrangement 必须投影 mixed parent union 及其 children，跨 Event Instrument 拖动 Logical Track 走原子 rebind review。
+- 仍有效边界：Track Header 的 hover、pressed、drag target 和菜单 target 不保存、不进入 Undo；正式名称、父子顺序和所有权只属于 Project Content。
 
 ## ADR-UI-025：Note pitch 越界删除与损坏来源安全投影
 
@@ -208,7 +208,7 @@
 
 - 决定：正式 WPF 不再创建或编辑 Value Curve。每一个可见 Event Lane 由精确 `MidiValueTarget` 标识，Lane 中每个可见点直接对应一个 `TemplateEvent`；同 target、同 tick 只保留一个事件点。不同 CC number、RPN / NRPN number 或复合事件字段不得合并为同一 Lane。
 - 决定：直接拖动只维护一个点的 transient value；自由轨迹、`Alt + Left Drag` 强制轨迹和右键直线在捕获期间只绘制 overlay，MouseUp 才把采样 tick 批量 upsert 为 Template Event，并形成一个 Project Undo。轨迹不是 Curve，不进入 Project、Compiler、`.midora` 或 clipboard。
-- 决定：CC 目录冻结为 BASSMIDI 2.4 MIDI implementation chart 与 Midora 合法普通用户事件的交集；CC120～127 不暴露，CC91 / CC93 继续禁止。Bank 与 RPN / NRPN 保留专用事件类型，但官方明确 recognized 的 CC0 / 32 / 6 / 38 / 98～101 仍可按普通 CC 选择。UI 统一显示 `number - name`。
+- 决定：本 ADR 的 CC 目录只约束 Event Instrument/SubVoice。该目录冻结为 BASSMIDI 2.4 MIDI implementation chart 与 SubVoice 合法普通用户事件的交集；CC120～127 不暴露，CC91 / CC93 继续禁止。Bank 与 RPN / NRPN 保留专用事件类型，但官方明确 recognized 的 CC0 / 32 / 6 / 38 / 98～101 仍可按普通 CC 选择。UI 统一显示 `number - name`。Pure MIDI Event Lane 按 SRS 第 23 章提供完整 Channel Voice Event，不受本目录限缩。
 - 决定：当前底层 Value Curve 类型可以在本轮后续清理中删除，但正式 UI、创建命令和新数据不再依赖它。产品所有者已明确允许开发期破坏旧数据兼容性，因此不增加旧 Curve UI、旧 clipboard 或旧工程迁移分支。
 - 原因：旧的 Add Curve / Add Event 双模型令画面与正式事件不一致，也把不同 target 粗略合并；实际事件点模型使绘制结果、命中、Undo 和 canonical 输入一一对应。
 - 边界：该决定不允许 WPF 直接生成 canonical 事件；Template Event 仍必须经过 Semantic Validation 和 Compiler。Note、Velocity 与 Segment Parameter Curve 不属于本决定范围。
@@ -284,6 +284,31 @@
 - 决定：SubVoice 下方编辑器由旧的 Star 比例改为 Workspace-local pixel height，默认 `190 DIP`，范围与 Segment 一致为 `110..520 DIP`。拖动 splitter 的目标值在 ViewModel 边界 clamp；toggle 只改变 session 可见性，恢复时继续使用此前高度。
 - 决定：Select marquee 保持未裁剪的世界坐标投影矩形；绘制时对 lane content viewport 执行 clip。不得先把矩形与 viewport 求交后再绘制完整边框，因为这种做法会在实际边缘已经出界时，于 viewport 边缘制造一条假的虚线边界。
 - 归属：下方编辑器可见性、高度、当前 Lane tab、timeline viewport 与 marquee 均为每个 Workspace 的 session UI state，不进入 Project、Undo/Redo、canonical、编译、输出或 `.midora`。本决定不改变上回已确定的世界坐标框选范围和 MouseUp 命中结果。
+
+## ADR-UI-038：Pure MIDI 复用 Timeline 核心并以 adapter 隔离领域语义
+
+- 决定：Arrangement、Piano Roll、Velocity Lane、Point/Event Lane、Grid/Snap、tile cache、hit testing 和通用手势继续使用同一套高性能 presentation/interaction engine；Logical Segment、SubVoice 与 Midi Segment 只通过各自 adapter 提供不可变查询、选择身份、预览投影和原子 Application command。不得复制第三套 TimelineSurface 或把 Pure MIDI 事件转换成 Logical Parameter / Template Event。
+- 决定：Pure MIDI Track Header 显示 MIDI 图标并位于明确的 MIDI Channel Root 分组内。Root 提供 Auto/Fixed route、Port.Channel、Melodic/Percussion 与 child Track 管理入口；Pure MIDI Track 不显示 Event Instrument Bind/Unbind。Root 与 child Track 重排都使用既有控件拖动阈值和 UI 状态样式，但 Track 顺序提交后属于正式音乐语义。
+- 决定：Midi Segment Editor 的 Piano Roll 与 Velocity Lane 沿用 Logical Segment 的视觉和手势；下方 Event Lane 使用完整 MIDI 1.0 Channel Voice 事件目录。CC91/93、CC120～127、Poly Pressure 与 Channel Pressure 在该 adapter 中合法；ADR-UI-029 的受限目录只适用于 Event Instrument/SubVoice。Opaque imported SysEx/Meta 仅在 Event List/Inspector 查看、移动和删除，不提供自由 payload 编辑器。
+- 决定：共享 UI 核心不得重建 Root 生命周期、Unit 路由、跨 Track 总序、SMF Track 拓扑或 Reset。所有正式结果仍经 Project command、Semantic Validation、Compiler 与 canonical；SMF 打开工作流使用 detached candidate 与 Level 3 modal lock。
+- 依据：产品所有者于 2026-08-18 接受 Pure MIDI Track 与 SMF 导入方案。正式领域、缓存、持久化与导出决定见 SRS 第 23 章、INV-050～INV-057 与 ADR-PMIDI-001～008。
+- 边界：viewport、lane height、selection、tile、drag overlay 和 import review draft 属于 session/runtime；Root/Track/Segment/direct/opaque 对象属于 Project。修复共享交互或性能缺陷必须对全部 adapter 做契约回归，但不要求三套复制实现。
+
+## ADR-UI-039：删除 Project Panel，并由 Conductor-first 两级 Arrangement 统一外层导航
+
+- 决定：主窗口删除左侧 Project Panel；Arrangement 固定为第一 Tab、常驻、不可关闭和不可重排。其行结构固定为 Conductor、混排 Event Instrument/Root parents、展开后的对应 child Tracks。父节点 Timeline 侧留白但继续绘制 Grid；展开只由左侧 disclosure target 触发。
+- 决定：Arrangement Toolbar 左侧 `Add` Fluent icon 与主菜单 Project 提供 New Event Instrument / New MIDI Channel Root。Event Instrument Header 双击打开 Editor；parent/child Header 提供完整 context menu、drag threshold、插入线、层级移动、复制和删除。Logical Track 不显示 Unbind，所在 Event Instrument 就是绑定。
+- 决定：Event Instrument/Root 与 child Tracks 各有独立 runtime Mute/Solo。父 Solo 存在时忽略 child Solo；否则 child Solo 使用全局 Track 规则；两层 Mute 始终过滤。开关视觉状态不得改写另一层状态。
+- 归属：mixed/child order 和 parent ownership 通过 Application command 进入 Project；expand、viewport、selection、focus、drag state 和 Mute/Solo 属于 session/runtime。Project Settings 与 Diagnostics 继续由菜单、Bottom Panel/Status Bar 打开。
+- 依据：产品所有者于 2026-08-18 确认移除 Project Panel、两级混排层级、整体 parent 操作、`Duplicate Instrument Only` 和层级 Mute/Solo。正式语义见 SRS 第 24 章、INV-058～062 与 ADR-CORE-045。
+
+## ADR-UI-040：Pure MIDI event-on-note 概览与 Conductor point 概览使用独立瓦片层
+
+- 决定：Pure MIDI Segment 的 Direct Note 与 non-Note event 使用独立稳定 tile layers。Event 线统一颜色、位于 Note 上层、透明度固定 50%、宽度至少 1 device pixel；7-bit/Pitch Bend 按正式范围归一化高度，无标量 opaque event 使用 full-height presence line。缩小时同 device-pixel column 取最大高度，不能用重复叠画提高亮度。
+- 决定：Conductor Arrangement row 不创建 Segment，直接用固定 device-size 圆点显示 event；不同类型使用稳定不同颜色和固定纵向 band，Project End Marker 保持专用线。缩小时按 tile/column/type 聚合。
+- 缓存：两种概览使用可视 tick 查询、空间索引、device-pixel tile、内容 fingerprint、DPI/style/transform key 与局部失效。Pure MIDI Note/Event 分开失效；Grid、cursor、selection、hover/drag overlay 不进入稳定 tile。UI 线程只组合可视 tiles，不得为对象创建 WPF Controls，也不得在 tile 失败时回退逐对象绘制。
+- 边界：bitmap/LOD 只属于 session presentation，不参与 hit test、Project、Undo、编译、canonical 或导出。命中和导航始终读取稳定 ID/index。Logical Segment 不增加 non-Note event preview。
+- 依据：产品所有者明确更正 Event 线应在 Note 上层并使用 50% 透明度，以便密集内容同时可读。正式视觉与验收见 SRS 第 24.8～24.9 节、INV-063～064。
 
 ## 小决定审计
 

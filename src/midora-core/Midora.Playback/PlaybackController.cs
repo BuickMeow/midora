@@ -126,6 +126,8 @@ public sealed class PlaybackController : IDisposable
     private readonly IRealtimePlaybackBackend _backend;
     private readonly HashSet<MidoraId> _mutedTracks = [];
     private readonly HashSet<MidoraId> _soloTracks = [];
+    private readonly HashSet<MidoraId> _mutedParents = [];
+    private readonly HashSet<MidoraId> _soloParents = [];
     private readonly HashSet<MidoraId> _audibleTracks = [];
     private readonly object _backendPreparationSync = new();
     private readonly object _prewarmSync = new();
@@ -810,6 +812,42 @@ public sealed class PlaybackController : IDisposable
         _disposed = true;
     }
 
+    public void SetArrangementParentMuted(MidoraId parentId, bool muted)
+    {
+        EnsureArrangementParentExists(parentId);
+        bool changed = muted ? _mutedParents.Add(parentId) : _mutedParents.Remove(parentId);
+        if (!changed) return;
+        try
+        {
+            ApplyMonitoringChange();
+        }
+        catch
+        {
+            if (muted) _mutedParents.Remove(parentId);
+            else _mutedParents.Add(parentId);
+            RebuildAudibleTracks();
+            throw;
+        }
+    }
+
+    public void SetArrangementParentSolo(MidoraId parentId, bool solo)
+    {
+        EnsureArrangementParentExists(parentId);
+        bool changed = solo ? _soloParents.Add(parentId) : _soloParents.Remove(parentId);
+        if (!changed) return;
+        try
+        {
+            ApplyMonitoringChange();
+        }
+        catch
+        {
+            if (solo) _soloParents.Remove(parentId);
+            else _soloParents.Add(parentId);
+            RebuildAudibleTracks();
+            throw;
+        }
+    }
+
     private void HandleEffectiveSoundFontChanged(object? sender, EventArgs e) =>
         RefreshBackendSoundFontIdentity();
 
@@ -1381,12 +1419,22 @@ public sealed class PlaybackController : IDisposable
         {
             throw new InvalidOperationException("A monitoring cold-start state could not be compiled.");
         }
+        ChannelUnitAllocation[] activeAllocations = compiled.Allocations.ToArray()
+            .Where(value => value.StartTick <= renderTick && value.EndTick > renderTick)
+            .ToArray();
         Dictionary<(MidoraId TrackId, MidoraId InstanceId, MidoraId SubVoiceId), ChannelUnitAllocation>
-            activeRouting = compiled.Allocations.ToArray()
+            activeLogicalRouting = activeAllocations
+                .Where(value => value.MidiChannelRootId == default)
                 .Where(value => value.StartTick <= renderTick && value.EndTick > renderTick)
                 .ToDictionary(
                     value => (value.TrackId, value.InstanceId, value.SubVoiceId),
                     value => value);
+        Dictionary<MidoraId, ChannelUnitAllocation> activeRootRouting = activeAllocations
+            .Where(value => value.MidiChannelRootId != default)
+            .GroupBy(value => value.MidiChannelRootId)
+            .ToDictionary(
+                value => value.Key,
+                value => value.OrderBy(item => item.StartTick).ThenBy(item => item.EndTick).First());
 
         List<MidiMonitoringCommand> commands = [];
         foreach (MidoraId trackId in newlyDisabled)
@@ -1407,11 +1455,18 @@ public sealed class PlaybackController : IDisposable
                     && value.Role == CanonicalEventRole.RangeRestore
                     && value.Source.TrackId == trackId)
                 {
-                    var routingKey = (
-                        value.Source.TrackId,
-                        value.Source.LogicalNoteId,
-                        value.Source.SubVoiceId);
-                    if (!activeRouting.TryGetValue(routingKey, out ChannelUnitAllocation activeAllocation))
+                    ChannelUnitAllocation activeAllocation;
+                    bool routed = value.Source.MidiChannelRootId != default
+                        ? activeRootRouting.TryGetValue(
+                            value.Source.MidiChannelRootId,
+                            out activeAllocation)
+                        : activeLogicalRouting.TryGetValue(
+                            (
+                                value.Source.TrackId,
+                                value.Source.LogicalNoteId,
+                                value.Source.SubVoiceId),
+                            out activeAllocation);
+                    if (!routed)
                     {
                         throw new InvalidOperationException(
                             "A monitoring restore event could not be routed to its active canonical Channel Unit.");
@@ -1445,33 +1500,44 @@ public sealed class PlaybackController : IDisposable
         MidoraId trackId,
         long tick)
     {
-        HashSet<(byte Port, byte Channel)> channels = compiled.Allocations.ToArray()
-            .Where(value => value.TrackId == trackId && value.StartTick <= tick && value.EndTick > tick)
-            .Select(value => (value.ZeroBasedPort, value.ZeroBasedChannel))
-            .ToHashSet();
-        foreach ((byte port, byte channel) in channels.OrderBy(value => value.Port).ThenBy(value => value.Channel))
+        Dictionary<(byte Port, byte Channel, byte Key), int> activeNotes = [];
+        foreach (CanonicalMidiEvent value in compiled.Events)
         {
-            commands.Add(MidiMonitoringCommand.Send(port, MidiMessage.ControlChange(channel, 123, 0)));
-            commands.Add(MidiMonitoringCommand.Send(port, MidiMessage.ControlChange(channel, 120, 0)));
-            commands.Add(MidiMonitoringCommand.Send(port, MidiMessage.ControlChange(channel, 121, 0)));
-
-            ChannelUnitAllocation allocation = compiled.Allocations.ToArray()
-                .Where(value => value.TrackId == trackId
-                    && value.ZeroBasedPort == port
-                    && value.ZeroBasedChannel == channel
-                    && value.StartTick <= tick
-                    && value.EndTick > tick)
-                .OrderBy(value => value.EndTick)
-                .First();
-            long cleanupTick = Math.Min(allocation.EndTick, compiled.EndTick);
-            foreach (CanonicalMidiEvent reset in compiled.Events.ToArray()
-                .Where(value => value.Tick == cleanupTick
-                    && value.ZeroBasedPort == port
-                    && value.ZeroBasedChannel == channel
-                    && value.Role == CanonicalEventRole.Reset)
-                .OrderBy(value => value.StableOrder))
+            if (value.Tick >= tick || value.Source.TrackId != trackId)
             {
-                commands.Add(MidiMonitoringCommand.Send(port, reset.Message));
+                continue;
+            }
+            MidiMessage message = value.Message;
+            bool noteOn = message.MessageType == MidiMessageType.NoteOn && message.Byte2 != 0;
+            bool noteOff = message.MessageType == MidiMessageType.NoteOff
+                || message.MessageType == MidiMessageType.NoteOn && message.Byte2 == 0;
+            if (!noteOn && !noteOff) continue;
+            var key = (value.ZeroBasedPort, value.ZeroBasedChannel, message.Byte1);
+            activeNotes.TryGetValue(key, out int count);
+            if (noteOn)
+            {
+                activeNotes[key] = checked(count + 1);
+            }
+            else if (count > 1)
+            {
+                activeNotes[key] = count - 1;
+            }
+            else
+            {
+                activeNotes.Remove(key);
+            }
+        }
+
+        foreach (((byte port, byte channel, byte key), int count) in activeNotes
+            .OrderBy(value => value.Key.Port)
+            .ThenBy(value => value.Key.Channel)
+            .ThenBy(value => value.Key.Key))
+        {
+            for (int index = 0; index < count; index++)
+            {
+                commands.Add(MidiMonitoringCommand.Send(
+                    port,
+                    MidiMessage.NoteOff(channel, key, 0)));
             }
         }
     }
@@ -1479,21 +1545,61 @@ public sealed class PlaybackController : IDisposable
     private void RebuildAudibleTracks()
     {
         _audibleTracks.Clear();
-        bool hasSolo = _soloTracks.Count != 0;
-        foreach (LogicalTrack track in _session.Project.Tracks)
+        bool hasParentSolo = _soloParents.Count != 0;
+        bool hasChildSolo = !hasParentSolo && _soloTracks.Count != 0;
+        foreach ((MidoraId ParentId, MidoraId TrackId) child in EnumerateArrangementChildren())
         {
-            if (!_mutedTracks.Contains(track.Id) && (!hasSolo || _soloTracks.Contains(track.Id)))
+            bool audible = hasParentSolo
+                ? _soloParents.Contains(child.ParentId)
+                    && !_mutedParents.Contains(child.ParentId)
+                    && !_mutedTracks.Contains(child.TrackId)
+                : hasChildSolo
+                    ? _soloTracks.Contains(child.TrackId)
+                        && !_mutedParents.Contains(child.ParentId)
+                        && !_mutedTracks.Contains(child.TrackId)
+                    : !_mutedParents.Contains(child.ParentId)
+                        && !_mutedTracks.Contains(child.TrackId);
+            if (audible)
             {
-                _audibleTracks.Add(track.Id);
+                _audibleTracks.Add(child.TrackId);
+            }
+        }
+    }
+
+    private IEnumerable<(MidoraId ParentId, MidoraId TrackId)> EnumerateArrangementChildren()
+    {
+        MidoraProject project = _session.Project;
+        foreach (EventInstrument instrument in project.EventInstrumentsInOrder())
+        {
+            foreach (MidoraId trackId in instrument.LogicalTrackIds)
+            {
+                yield return (instrument.Id, trackId);
+            }
+        }
+        foreach (MidiChannelRoot root in project.MidiChannelRootsInOrder())
+        {
+            foreach (MidoraId trackId in root.MidiTrackIds)
+            {
+                yield return (root.Id, trackId);
             }
         }
     }
 
     private void EnsureTrackExists(MidoraId trackId)
     {
-        if (!_session.Project.Tracks.Any(value => value.Id == trackId))
+        if (!_session.Project.Tracks.Any(value => value.Id == trackId)
+            && !_session.Project.PureMidiTracks.Any(value => value.Id == trackId))
         {
             throw new ArgumentOutOfRangeException(nameof(trackId));
+        }
+    }
+
+    private void EnsureArrangementParentExists(MidoraId parentId)
+    {
+        if (!_session.Project.EventInstruments.Any(value => value.Id == parentId)
+            && !_session.Project.MidiChannelRoots.Any(value => value.Id == parentId))
+        {
+            throw new ArgumentOutOfRangeException(nameof(parentId));
         }
     }
 

@@ -11,7 +11,7 @@
 音频文件渲染系统必须消费 `canonical compiled result`。
 不得：
 ```text
-直接读取 Logical Track / Segment / Event Instrument 并自行展开
+直接读取 Logical Track / Pure MIDI Track / Segment / Event Instrument 并自行展开
 重新计算 Logical Parameter Mapping
 重新决定生命周期、Release、Tail 或 Reset
 重新决定 Port / Channel / Channel Unit 分配
@@ -37,7 +37,7 @@ Audio Render CompileContext
 ```text
 渲染模式
 渲染 tick 范围
-参与渲染的 Logical Track 稳定 ID 集合或全部有效 Track 策略
+参与渲染的 Logical Track / Pure MIDI Track 稳定 ID 集合或全部有效 Track 策略
 整曲 / 单 Track 输出上下文
 Project End Marker 默认范围策略
 Warning 导致编译失败策略
@@ -83,27 +83,29 @@ Per Logical Track / 按 Logical Track 分轨渲染
 一次渲染任务只能选择其中一种，不允许在同一次任务中同时输出整曲和分轨。
 初版不支持按 Port 分轨。
 ### 15.2.1 整曲混音
-整曲模式把用户显式选择的全部有效 Logical Track 混合为一个 WAV。
+整曲模式把用户显式选择的全部有效 Logical Track 与 Pure MIDI Track 混合为一个 WAV。
 默认选择：
 ```text
-全部有效 Logical Track
+全部有效 Logical Track 与 Pure MIDI Track
 ```
 如果没有选择任何有效 Track：
 ```text
 不允许进入正式 Preparing / Rendering。
-提示至少选择一条有效 Logical Track。
+提示至少选择一条有效 Track。
 ```
 ### 15.2.2 按 Logical Track 分轨
 分轨模式中：
 ```text
 每条被选择且有效的 Logical Track 生成一个独立 WAV。
-各 Track 按 Project 当前手动排序依次处理。
+各 Track 按 Arrangement mixed parent order 展平 Event Instrument children 后的 Logical Track 顺序依次处理。
 每条 Track 使用独立 Audio Render CompileContext。
 每条 Track 独立编译、分配 Channel Unit、创建干净后端状态并执行完整输出链。
 不要求保留整曲编译中的 Port / Channel 编号。
 ```
 所有分轨使用同一渲染范围和同一最终采样长度。
-### 15.2.3 Track 选择与绑定状态
+
+Per Logical Track 模式仍只生成 Logical Track 文件；Pure MIDI Track 不产生独立 WAV，但其选择状态保持以便切回 Whole Mix。Pure MIDI 分轨音频不是本次 Pure MIDI/SMF 需求的一部分；Whole Mix、实时播放和正式 MIDI 导出必须完整包含被选择 Pure MIDI Track。
+### 15.2.3 Track 选择与父节点状态
 Track Mute / Solo 不影响音频文件渲染。
 显式 Track 选择是唯一决定因素：
 ```text
@@ -111,17 +113,7 @@ Track Mute / Solo 不影响音频文件渲染。
 未选择的 Solo Track 不渲染。
 Mute / Solo 不与 Track 选择取交集。
 ```
-未指定 Event Instrument 的 Track：
-```text
-不产生正式输出文件。
-显示 Info。
-不算输出失败。
-```
-如果全部所选 Track 都未指定 Event Instrument：
-```text
-没有有效输出目标。
-不进入正式渲染任务。
-```
+Logical Track 必须有唯一 Event Instrument parent。parent/child 结构错误或 Damaged Parent Placeholder 使渲染准备失败；不得静默忽略为无输出 Track。
 已绑定但没有发声音频的 Track仍是有效目标：
 ```text
 整曲模式中贡献静音。
@@ -351,13 +343,13 @@ Windows 应用音量混音器
 ### 15.7.2 BASSMIDI 与 SF2
 初版使用与播放一致的 BASSMIDI / SF2 发声语义。
 文件渲染由第 13.30 节规定的同一个 `win-x64` Native AOT 音频子进程执行，不允许用其他 CPU 架构或 JIT Worker 生成正式文件。
-本次 compiled result 必须先完成全局 Port / Channel 分配，再确定性派生 Segment/抽象 Unit 音频投影。每个 Unit 使用独立、干净的 1-channel BASSMIDI Stream 语义；实际 native Stream 可由有界 pool 复用。
+本次 compiled result 必须先完成全局 Port / Channel 分配，再从 Execution Projection 确定性派生 Logical Segment/Unit 与 Pure MIDI Root 音频投影。每个 Unit/Root 使用独立、干净的 1-channel BASSMIDI Stream 语义；同 Root 子 Track 必须先合并，不能逐 Track 合成后求和。实际 native Stream 可由有界 pool 复用。
 所有 Unit 使用 Project 的同一个 SF2。
 每个 Stream 必须完成：
 ```text
 干净初始化
 SF2 加载
-Channel 10 melodic 初始化
+按 canonical Unit descriptor 建立 Melodic/Percussion mode；Logical Channel 10 强制 Melodic
 BASS_MIDI_NOFX 启用
 BASS_MIDI_NOTEOFF1 启用
 BASS_ATTRIB_MIDI_SRC = 1
@@ -368,7 +360,7 @@ BASS_ATTRIB_MIDI_CPU = 0
 compiled result 所需初始状态应用
 ```
 
-文件渲染后端不得接受 CC91 / CC93。发现这些事件时，当前 compiled result 视为不一致并导致任务级 Error。
+Event Instrument/SubVoice 路径出现 CC91 / CC93 仍表示 compiled result 不一致并导致任务级 Error。Pure MIDI Track 的合法 CC91 / CC93 必须被计划接受；由于 `BASS_MIDI_NOFX`，文件音频投影确定性忽略其 Reverb/Chorus 效果，不产生诊断。opaque imported SysEx/Meta 不送入 synth。
 ### 15.7.3 不共享活动播放状态
 音频渲染不得继承：
 ```text
@@ -540,9 +532,9 @@ Midora Render
 ```
 序号规则：
 ```text
-使用整个 Project 的当前手动排序序号。
+使用整个 Project 按 mixed parent order、再按 parent 内 child order 展平后的当前显示序号。
 不只对本次选中的 Track 重新编号。
-未绑定或未选中的 Track 仍占用 UI 显示序号。
+未选中的 Track 仍占用 UI 显示序号。
 允许输出序号跳号。
 根据整个 Project Track 数动态增加补零宽度，至少两位。
 Track 排序变化后，下次渲染使用新序号。
@@ -748,7 +740,7 @@ Cancelled
 | Completed With Errors | 多输出任务中至少一个正式输出成功、至少一个正式输出失败。 |
 | Failed | 整曲唯一输出失败；分轨全部正式输出失败；或任务级公共前置失败。 |
 | Cancelled | 用户确认取消，不论此前是否已有完整成功文件。 |
-未绑定 Track 被忽略只产生 Info，不算正式输出失败。
+Track 缺少唯一合法 parent 属于 Project 结构 Error，并在任务级公共前置阶段阻止渲染；不得忽略后继续。
 Warning 本身不触发 `Completed With Errors`。
 ---
 ## 15.14 渲染任务与模态锁定
@@ -969,7 +961,7 @@ Mapping Function 或源对象
 | 计划文件超过 RIFF/WAVE 大小上限 | Preparing Error，整个任务不开始 |
 | Channel Unit 峰值达到 248 | 编译 Info，不受 Warning-as-error 影响 |
 | 全静音检测结果 | Info |
-| 未绑定 Track 被忽略 | Info |
+| Track 缺少、重复或引用错误类型的 parent | Preparing Error，整个任务不开始 |
 | 外部 SF2 hash 变化 | 资源 Warning，可确认后继续 |
 | 正式输出成功但临时文件残留 | 文件系统 Warning |
 | Warning 存在但所有正式输出成功 | 顶层仍为 Completed |
@@ -1102,7 +1094,7 @@ Audio Render Settings
 默认范围模式
 可选默认手动 startTick / endTick
 默认 Track 选择策略
-显式 Logical Track 稳定 ID 集合
+显式 Logical Track / Pure MIDI Track 稳定 ID 集合
 有限的文件命名偏好
 固定格式字段
 默认文件采样率
@@ -1137,7 +1129,7 @@ Little-endian
 ```text
 Mode = Whole Mix
 Range = Project Default Range
-Track Selection = All Valid Logical Tracks
+Track Selection = All Valid Logical and Pure MIDI Tracks
 Format = RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float
 Sample Rate = 48,000 Hz
 Offline Maximum Sample Voices per Unit Stream = 500
@@ -1158,12 +1150,12 @@ Project 内容缩短后，超出自然结束的手动范围仍合法，超出部
 ### 15.20.5 Track 选择策略
 至少支持：
 ```text
-All Valid Logical Tracks
-Explicit Logical Track IDs
+All Valid Logical and Pure MIDI Tracks
+Explicit Track IDs
 ```
-显式选择基于 Logical Track 稳定 ID，不依赖名称或排序。
+显式选择基于 Logical Track / Pure MIDI Track 稳定 ID，不依赖名称或排序。
 显式集合允许为空，但实际开始渲染时因没有有效目标而被阻止。
-包含未绑定 Track 的 ID 可以保留，渲染时忽略并显示 Info。
+Track 缺少、重复或引用错误类型的 parent 时 Project 不可正式消费；渲染必须失败并定位结构诊断，不得保留后静默忽略。
 已删除 Track ID 应在打开或编辑设置时移除并规范化。
 如果这种规范化来自旧格式迁移或损坏引用修复，应按迁移 / 修复规则决定是否标记 Project 已修改，并向用户说明；不得伪装成用户编辑。
 ### 15.20.6 Track 编辑与 Undo / Redo
@@ -1249,7 +1241,7 @@ Project 顶层结构必须明确包含 Audio Render Settings 的存在语义，�
 ```text
 Whole Mix
 Project Default Range
-All Valid Logical Tracks
+All Valid Logical and Pure MIDI Tracks
 RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float
 Sample Rate = 48,000 Hz
 Offline Maximum Sample Voices per Unit Stream = 500

@@ -207,16 +207,15 @@ public sealed class PersistenceContractV1Tests
         EventInstrumentLibraryFolder folder = EventInstrumentLibrary.CreateFolder(project, "Folder");
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
         instrument.LibraryFolderId = folder.Id;
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.EventInstrument,
+            instrument.Id));
 
         using JsonDocument projectJson = JsonDocument.Parse(ProjectCodecV1.Serialize(project));
         JsonElement root = projectJson.RootElement;
         Assert.Equal(JsonValueKind.Number, root.GetProperty("nextStableId").ValueKind);
         Assert.Equal(JsonValueKind.Number,
-            root.GetProperty("eventInstrumentFolders")[0].GetProperty("id").ValueKind);
-        Assert.Equal(JsonValueKind.Number,
-            root.GetProperty("eventInstruments")[0].GetProperty("id").ValueKind);
-        Assert.Equal(JsonValueKind.Number,
-            root.GetProperty("eventInstruments")[0].GetProperty("folderId").ValueKind);
+            root.GetProperty("arrangementParents")[0].GetProperty("id").ValueKind);
 
         using JsonDocument conductorJson = JsonDocument.Parse(ConductorTrackCodecV1.Serialize(project));
         Assert.Equal(JsonValueKind.Number,

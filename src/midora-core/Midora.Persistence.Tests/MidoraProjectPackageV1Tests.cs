@@ -36,8 +36,7 @@ public sealed class MidoraProjectPackageV1Tests
         Assert.Equal("Round Trip", opened.Project.Metadata.ProjectName);
         Assert.Equal(CreatedAt, opened.Project.Metadata.CreatedAtUtc);
         Assert.Equal(SavedAt, opened.Project.Metadata.ModifiedAtUtc);
-        Assert.Single(opened.Project.EventInstrumentFolders);
-        Assert.Equal("Strings", opened.Project.EventInstrumentFolders[0].Name);
+        Assert.Empty(opened.Project.EventInstrumentFolders);
         Assert.Equal(2, opened.Project.Conductor.Tempos.Count);
         Assert.Equal(2, opened.Project.Conductor.TimeSignatures.Count);
         Assert.Single(opened.Project.Conductor.KeySignatures);
@@ -519,7 +518,6 @@ public sealed class MidoraProjectPackageV1Tests
         project.Metadata.AuthorOrTeam = "Midora contributors";
         project.Metadata.OriginalWork = "Original";
         project.Metadata.Copyright = "Copyright";
-        project.EventInstrumentFolders.Add(new EventInstrumentLibraryFolder(project) { Name = "Strings" });
         project.Conductor.Tempos.Add(new TempoChange(project, 960, 90.5m));
         project.Conductor.TimeSignatures.Add(new TimeSignatureChange(project, 1_920, 3, 4));
         project.Conductor.KeySignatures.Add(new KeySignatureChange(project, 0, -2, true));

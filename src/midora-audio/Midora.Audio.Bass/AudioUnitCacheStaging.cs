@@ -196,7 +196,9 @@ internal sealed class AudioUnitCacheStaging : IDisposable
             value.Events,
             cacheKey,
             cacheOffset,
-            pcmCacheHit);
+            pcmCacheHit,
+            value.MidiChannelRootId,
+            value.IsPercussion);
 
     private static bool ValidateCopiedPayload(
         FileStream staging,

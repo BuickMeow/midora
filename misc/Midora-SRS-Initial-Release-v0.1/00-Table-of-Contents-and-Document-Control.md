@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-08-16**
+> 最近修订日期：**2026-08-19**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -41,12 +41,32 @@
 20. [通用交互、验证与 UI 验收边界](20-Common-Interaction-Validation-and-UI-Acceptance.md)
 21. [初版范围边界、实现自由度与变更控制](21-Initial-Release-Scope-Boundaries-and-Change-Control.md)
 22. [主题索引与跨系统不变量](22-Requirement-Locator-and-Cross-System-Invariants.md)
+23. [Pure MIDI Track 与 Standard MIDI File 导入](23-Pure-MIDI-Tracks-and-SMF-Import.md)
+24. [Arrangement 层级、父子轨道与概览渲染](24-Arrangement-Hierarchy-and-Preview.md)
 
 ## 文档版本规则
 
 - **Initial Release Scope** 表示产品范围，不表示文档草稿序号。
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
+
+## 2026-08-19 修订摘要
+
+- `Open MIDI as New Project` 在 detached candidate 验证前增加确定性导入兼容归一化：缺失 tick 0 Tempo / Time Signature 时分别补齐 120 BPM / 4/4，同 tick 重复 Tempo 按源 MTrk 与事件顺序使用后来者。
+- SMF Track Name 缺失、trim 后为空或非严格 UTF-8 不再使整个导入失败；非法名称事件被丢弃，需要的 Pure MIDI Track 获得确定性回退名称。所有兼容处理只进入一次性、可复制的导入报告，不放松 Project 内部不变量或导出的严格 UTF-8 要求。
+
+## 2026-08-18 修订摘要
+
+- Arrangement 改为 `Conductor → 混排的 Event Instrument / MIDI Channel Root → 各自 child Track` 两级正式结构；删除 Project Panel、可见 Event Instrument Library Workspace、Library Folder、独立全局 Track/Root 顺序和 Unbound Logical Track。Event Instrument / Root 的混排顺序及 parent/child 关系进入 Project、Undo/Redo 和严格持久化索引。
+- Event Instrument / Root 支持携带完整 subtree 的复制、剪切、粘贴与 Duplicate；Root 副本强制改为 Auto。Event Instrument 另提供 `Duplicate Instrument Only`；删除 non-empty parent 必须确认并原子级联 child。Logical Track 跨 Event Instrument 继续执行 rebind 影响审查，Pure MIDI Track 可跨 Root 移动。
+- 父节点与 child Track 各自拥有独立运行期 Mute/Solo；父 Solo 激活时忽略 child Solo，父/child Mute 始终生效。Logical Note 与 Direct MIDI Note 允许只按共同字段跨类型复制；Direct NoteOff Velocity 在 Direct 数据链和 SMF 中继续保留。
+- Pure MIDI Segment 概览增加独立缓存的 non-Note event 线层：event 线位于 Note 图形上层、统一 50% 透明度、至少 1 device pixel，并按值归一化高度。Conductor 第一行直接显示按类型着色、固定设备尺寸的圆点概览；两者都采用可视分块缓存、空间索引与局部失效，不以 WPF Control 堆对象。
+- 增加 `MIDI Channel Root → Pure MIDI Track → Midi Segment` 正式模型。一个 Root 固定表达一个共享 Channel Unit、Channel-wide 状态、Melodic/Percussion 模式和 Root 活动连通区间；子 Segment End 只关闭自身 Note，Root 连通区间结束才执行 CC120 与最终 Reset。
+- 增加 Root `Auto` / `Fixed(Port, Channel)` 路由。Fixed Root 先预留、非空 Auto Root 后按显式 Root 顺序低号分配、Logical/Event Instrument 分配必须绕开全部 Root Unit；Root Units 与 Logical 峰值合计仍受 256 Unit 上限约束。
+- Pure MIDI Track 使用直接 MIDI Note 与完整 Channel Voice Event；允许 CC91 / CC93、Channel Mode、Poly Pressure 与 Channel Pressure。Event Instrument SubVoice 的创建/Mapping 面保持受限；BASSMIDI 继续启用 `NOFX`，因此 CC91 / CC93 保留到 canonical/SMF，但不产生 Midora Reverb/Chorus 听感。
+- 增加 SMF Format 0 / 1、TPQN division 的 `Open MIDI as New Project`。导入支持 Running Status、单 MTrk 多 Channel、MIDI Port 中途变化和 opaque SysEx/Meta 保留；按 effective Port.Channel 拆为 Root/Track，不提供导入当前 Project、Format 2 或 SMPTE division。
+- SMF Type 1 导出改为同时保存 Pure MIDI Track 拓扑与 Logical Unit 拓扑：每个 Pure MIDI Track 独立单 Channel MTrk 并保留名称、顺序和自身 EOT；Logical 内容继续一 Unit 一 MTrk。Root 精确往返使用可忽略的版本化 Midora Sequencer-Specific Meta，跨 MTrk 同 tick 顺序风险在导出阶段汇总 Warning。
+- Canonical Compiled Result 增加 Unit execution projection 与 SMF Track projection；音频与缓存按 Root 合并，禁止同 Root 子 Track 分别合成后求和。`.midora` 新增 Root/Track protobuf 对象文件，作为开发期破坏性格式修订，不提供旧布局迁移或兼容读取。
 
 ## 2026-08-16 修订摘要
 
@@ -65,9 +85,9 @@
 
 - Arrangement 新建 Project / 重置编辑器的默认可见 Grid 改为 `Bar`、Snap 操作粒度改为 `1/8`；Bar Grid 按完整 Time Signature Map 以主实线绘制小节边界、以更浅的低强调实线绘制分母拍内部边界。Segment/SubVoice 钢琴卷帘不采用该拍内辅助线增强。
 - Arrangement Draw 空白放置改为按下并向右拖动确定 Segment 长度，单击使用默认长度；Arrangement 默认 Segment 长度固定为 `1 × TPQ`，相邻 Segment 仍按可用间隙缩短或拒绝。
-- Arrangement Track Header 增加独立 hover / pressed、拖动重排、Rename / Bind / Unbind / Delete / Move Up / Down 菜单、绑定乐器次级标签，以及从 Event Instrument Library 拖放绑定；已有不同绑定必须确认 rebind。
+- Arrangement Track Header 曾增加独立 hover / pressed、拖动重排与 Bind / Unbind；其中交互反馈和 rebind 确认继续有效，但 Library 拖放、Unbind 与平铺 Track 菜单已由 2026-08-18 的两级 Arrangement parent/child 模型取代。
 - 普通 Logical / Template Note 多选移动使用共同 pitch delta，并删除结果 pitch 越出 `0..127` 的个别 Note；移动与删除属于一个 Undo。Note `Ctrl+Drag` 复制仍使用整组共同 clamp，不生成部分副本。
-- 正式 Compiler Diagnostic message 统一为英文；Project Panel 的 Error / Warning 计数在每次编译完成时同步刷新。非法 pitch 来源的诊断导航使用安全 lane 投影，不得使应用崩溃。
+- 正式 Compiler Diagnostic message 统一为英文；Error / Warning 计数在每次编译完成时同步刷新（其显示入口已于 2026-08-18 从删除的 Project Panel 收敛到 Status Bar）。非法 pitch 来源的诊断导航使用安全 lane 投影，不得使应用崩溃。
 - Velocity 视图改为每个 Note 在 start tick 对应一根固定窄柱，柱宽不再表达 Note 长度；顶部使用较大的方形 onset marker，同 tick 多音按高 pitch 覆盖低 pitch。
 - Velocity 自由绘制与直线插值手势在按住期间只显示轻量轨迹，不逐柱重绘或提交；松开时一次性计算、提交并刷新 tile。直接按住单柱或其 marker 上下拖动仍只调整该 Note，并且不显示轨迹。
 - `Alt + Left Drag` 统一为强制替代手势：Draw 模式的 Segment / Logical Note / Template Note 无视边界命中并强制 Move，`Ctrl + Alt` 强制 Copy+Move；Velocity 无视柱体 direct hit 并强制自由轨迹。操作类型在 Pointer Down 时冻结，Alt 不再绕过 Snap；已消费的 Alt KeyUp 不再激活主菜单并恢复来源 Timeline 焦点，普通 Alt 与 `Alt+F4` 不变。Draw 模式悬停可直接编辑对象时始终显示低强调 transient 外轮廓，不失效 raster tile。Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的 Select 模式仍从单次左键按下点发起框选，不再以单独左键点击命中对象。
@@ -101,9 +121,9 @@
 ## 2026-08-06 修订摘要
 
 - Midora 初版产品定位固定为免费、开源、非商业软件，Midora 自有源代码采用根目录 `LICENSE` 中未经自定义修改的标准 MIT License，版权署名为 `Copyright (c) 2026 Midora contributors`；项目自身非商业不限制下游商业使用。该定位不把 BASS/BASSMIDI/BASSWASAPI 纳入 Midora 的开源许可证；正式发布仍须按实际主体、收入方式、平台、分发方式和届时有效条款执行许可核验并提供第三方声明。
-- MIDI 导出的 Channel 10 melodic 初始化固定为：每个实际相关事件 Track 在相对 tick 0 按 GS→XG 写入两条 Normal Part SysEx，使用固定默认设备编号，不发送任何 GS/XG/GM Reset，也不改写 canonical Bank/Program；Readme 必须说明不识别 vendor SysEx 的兼容边界。
+- MIDI 导出的 Channel 10 melodic 初始化固定为：每个 Logical Channel 10 Unit MTrk 与 Melodic Channel 10 Pure MIDI MTrk 在相对 tick 0 按 GS→XG 写入两条 Normal Part SysEx；Percussion Root MTrk 不写。初始化使用固定默认设备编号，不发送任何 GS/XG/GM Reset，也不改写 canonical Bank/Program；Readme 必须说明不识别 vendor SysEx 的兼容边界。
 - MIDI 导出与音频文件渲染统一使用确定性 Windows 安全文件名合法化和冲突检测；精确算法固定为 NFC、固定不安全字符集合、设备保留名前缀 `_`、255 UTF-16 code unit、text-element 安全截断、NFC + OrdinalIgnoreCase 冲突键和稳定 ` (n)` 后缀。任务开始前必须预览并冻结全部最终路径，源名称不被修改，已有目标不参与后缀分配且仍需明确覆盖授权。整曲、分 Track、逐 Port、Readme 与 MIDI Track Name 模板已经固定，多文件模式不自动增加嵌套目录。
-- MIDI 导出兼容档固定为 SMF Type 1、无 Running Status、严格 UTF-8 文本 Meta、事件 Track 的 Track Name + MIDI Port 最小组合、CC0→CC32→Program、Time Signature `cc=24` / `bb=8`、Tempo 十进制换算后一次 `AwayFromZero`，并禁止导出器在 canonical 之外追加 Channel 清理；所有 Track 的 EOT 对齐统一 endTick。
+- MIDI 导出兼容档固定为 SMF Type 1、显式 status（不使用 Running Status）、严格 UTF-8 文本 Meta、Track Name + MIDI Port 最小组合、CC0→CC32→Program、Time Signature `cc=24` / `bb=8`、Tempo 十进制换算后一次 `AwayFromZero`，并禁止导出器在 canonical 之外追加 Channel 清理；Conductor/Logical Unit 使用统一 endTick，Pure MIDI Track 保留自身 EOT。SMF 导入单独支持合法 Running Status。
 - 工程总耗时固定按 Project 成功打开后的完整会话时间累计，包含空闲、最小化、失焦、Buffering、导出和渲染；系统睡眠 / 休眠及关闭流程暂停。当前会话使用单调时钟，自动累计不单独标记 Project Modified，也不影响编译语义。
 - Project 外部 SoundFont 固定为项目根目录或直属 `soundfonts/` 的相对 SF2；路径精确大小写优先、唯一 ignore-case 回退并警告、歧义拒绝。原始字节 SHA-256 只在用户明确绑定/接受时更新，被动变化不修改 Project；内嵌资源的 settings/manifest/hash 必须一致。
 - 初版持久化兼容基线固定为 JSON Schema Draft 2020-12、内部版本化 `System.Text.Json` source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 与 Grpc.Tools 2.83.0；严格拒绝重复/未知 JSON 属性和未知 protobuf tag，已发布 schema 以 descriptor/golden bytes 锁定。
@@ -126,7 +146,7 @@
 - 初版 Envelope Preset 统一为第 10.11 节规定的固定 ADSR-like 结构；第 18.6.5 节编辑器不得扩展为任意有序点或曲线段模型。
 - `Channel Unit >= 248` 的诊断级别统一为 `Info`，不受“Warning 视为 Error”策略影响。
 - Segment Split 必须为右侧 Segment 保留或生成必要参数起点状态，维持参数状态及相关曲线在分割前后的听感；不改变跨分割点 Logical Note 的提前结束规则。
-- 正式 BASSMIDI 后端启用 `BASS_MIDI_NOFX`，初版不支持 Reverb / Chorus，也不允许 CC91 / CC93。
+- 正式 BASSMIDI 后端启用 `BASS_MIDI_NOFX`，初版不承诺 Reverb / Chorus 音频效果。Event Instrument/SubVoice 不允许创建或映射 CC91 / CC93；Pure MIDI Track 允许保留、编译和导出它们，音频投影确定性忽略其效果且不报错。
 - 正式 BASSMIDI 后端启用 `BASS_MIDI_NOTEOFF1`；同 Port、Channel、pitch 的重叠 Note 实例按 FIFO 逐个释放，Cut Previous 的释放重叠与硬边界 Reset 必须保持精确 NoteOff 配对。
 - 正式 BASSMIDI Stream 固定使用 8-point sinc 和 CPU 属性 `0`，并在 Preparing 预加载计划引用的 SF2 presets；Realtime/Offline Maximum Sample Voices per Unit Stream 分别配置，默认均为 `500`，同一任务所有 Unit Stream 使用同一冻结值。
 - 实时播放跟随所选输出设备的实际采样率；音频文件渲染使用用户选择的 `8,000–192,000 Hz` 整数采样率。

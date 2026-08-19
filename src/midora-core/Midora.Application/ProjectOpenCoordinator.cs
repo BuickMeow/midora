@@ -49,7 +49,9 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
     public ProjectSoundFontRuntimeSnapshot InitialSoundFontState { get; }
     public bool HasDamagedProjectObjects =>
         Project.DamagedEventInstruments.Count != 0
-        || Project.DamagedLogicalTracks.Count != 0;
+        || Project.DamagedLogicalTracks.Count != 0
+        || Project.DamagedMidiChannelRoots.Count != 0
+        || Project.DamagedPureMidiTracks.Count != 0;
     public bool CanSaveProject => !HasDamagedProjectObjects
         && IsEmbeddedSoundFontReadyForSave();
 

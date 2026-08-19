@@ -59,13 +59,14 @@ public sealed class StandardMidiFileTests
     }
 
     [Fact]
-    public void RejectsNonTqpDivisionAndUnequalTrackEnds()
+    public void RejectsNonTpqnDivisionAndAllowsPerTrackEnds()
     {
         Assert.Throws<MidoraMidiException>(() => StandardMidiFile.EncodeType1(0, [new(0, [])]));
         Assert.Throws<MidoraMidiException>(() => StandardMidiFile.EncodeType1(32_768, [new(0, [])]));
-        Assert.Throws<MidoraMidiException>(() => StandardMidiFile.EncodeType1(
+        byte[] result = StandardMidiFile.EncodeType1(
             192,
-            [new StandardMidiFileTrack(0, []), new StandardMidiFileTrack(1, [])]));
+            [new StandardMidiFileTrack(0, []), new StandardMidiFileTrack(1, [])]);
+        StandardMidiFile.ValidateType1(result);
     }
 
     [Fact]
@@ -106,6 +107,42 @@ public sealed class StandardMidiFileTests
     {
         Assert.Throws<EncoderFallbackException>(() =>
             StandardMidiFileEvent.Text(0, StandardMidiFile.TrackNameMetaType, "\ud800"));
+    }
+
+    [Fact]
+    public void ParsesFormatZeroRunningStatusAndPreservesSourceOrder()
+    {
+        byte[] source = Hex(
+            "4d54686400000006000000010060"
+            + "4d54726b0000000e"
+            + "00903c64103e6e103c0000ff2f00");
+
+        ParsedStandardMidiFile result = StandardMidiFile.ParseType0Or1(source);
+
+        Assert.Equal((ushort)0, result.Format);
+        Assert.Equal(96, result.TicksPerQuarterNote);
+        ParsedStandardMidiFileTrack track = Assert.Single(result.Tracks);
+        Assert.Equal(32, track.EndTick);
+        Assert.Equal(3, track.Events.Count);
+        Assert.Equal([0L, 16L, 32L], track.Events.Select(value => value.Tick).ToArray());
+        Assert.Equal([0L, 1L, 2L], track.Events.Select(value => value.Order).ToArray());
+        Assert.Equal((byte)62, track.Events[1].Message.Byte1);
+        Assert.Equal(MidiMessageType.NoteOn, track.Events[2].Message.MessageType);
+        Assert.Equal((byte)0, track.Events[2].Message.Byte2);
+    }
+
+    [Fact]
+    public void MetaEventClearsRunningStatus()
+    {
+        byte[] source = Hex(
+            "4d54686400000006000000010060"
+            + "4d54726b00000010"
+            + "00903c6400ff030141003e6e00ff2f00");
+
+        MidoraMidiException error = Assert.Throws<MidoraMidiException>(
+            () => StandardMidiFile.ParseType0Or1(source));
+
+        Assert.Contains("Running Status", error.Message, StringComparison.Ordinal);
     }
 
     private static byte[] Hex(string value) =>

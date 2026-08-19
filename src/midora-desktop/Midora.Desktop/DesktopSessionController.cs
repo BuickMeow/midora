@@ -13,6 +13,7 @@ using Midora.MidiExport;
 using Midora.AudioRender;
 using Midora.Audio.Bass;
 using Midora.Playback.BassWasapi;
+using Midora.Midi;
 
 namespace Midora.Desktop;
 
@@ -28,6 +29,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private readonly CSharpMappingDraftCompiler _mappingDraftCompiler = new();
     private readonly HashSet<MidoraId> _mutedTrackIds = [];
     private readonly HashSet<MidoraId> _soloTrackIds = [];
+    private readonly HashSet<MidoraId> _mutedArrangementParentIds = [];
+    private readonly HashSet<MidoraId> _soloArrangementParentIds = [];
     private readonly List<WorkspaceKey> _backNavigation = [];
     private readonly List<WorkspaceKey> _forwardNavigation = [];
     private readonly Dictionary<long, Dictionary<WorkspaceKey, WorkspaceSelectionBookmark>>
@@ -65,7 +68,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     public bool CanStartForegroundTask => !IsForegroundTaskRunning && !IsPlaybackActive;
     public bool CanRunProjectTask => HasProject && CanStartForegroundTask;
     public bool HasDamagedProjectObjects => Project is not null
-        && (Project.DamagedEventInstruments.Count != 0 || Project.DamagedLogicalTracks.Count != 0);
+        && (Project.DamagedEventInstruments.Count != 0
+            || Project.DamagedLogicalTracks.Count != 0
+            || Project.DamagedMidiChannelRoots.Count != 0
+            || Project.DamagedPureMidiTracks.Count != 0);
     public bool CanSaveProject => HasProject && !IsForegroundTaskRunning && !HasDamagedProjectObjects;
     public bool CanUseContextMenus => !IsMainWindowTaskLocked;
     public bool CanNavigateBack => _backNavigation.Any(key => Workspaces.Any(item => item.Key == key));
@@ -115,6 +121,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         : "SoundFont Configured";
     public bool IsTrackMuted(MidoraId trackId) => _mutedTrackIds.Contains(trackId);
     public bool IsTrackSolo(MidoraId trackId) => _soloTrackIds.Contains(trackId);
+    public bool IsArrangementParentMuted(MidoraId parentId) =>
+        _mutedArrangementParentIds.Contains(parentId);
+    public bool IsArrangementParentSolo(MidoraId parentId) =>
+        _soloArrangementParentIds.Contains(parentId);
     public long CurrentTick => _context?.Playback?.CurrentTick ?? 0;
     public string TempoText
     {
@@ -347,6 +357,92 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 await candidate.DisposeAsync();
             }
         }
+    }
+
+    public async Task<IReadOnlyList<MidiProjectImportDiagnostic>> ImportMidiAsNewProjectAsync(
+        string path,
+        IReadOnlyDictionary<byte, byte>? zeroBasedPortMapping = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        string fullPath = Path.GetFullPath(path);
+        byte[] file = await ReadMidiImportFileAsync(fullPath, cancellationToken);
+        return await ImportMidiBytesAsNewProjectAsync(
+            file,
+            Path.GetFileNameWithoutExtension(fullPath),
+            zeroBasedPortMapping,
+            cancellationToken);
+    }
+
+    internal async Task<IReadOnlyList<MidiProjectImportDiagnostic>> ImportMidiBytesAsNewProjectAsync(
+        byte[] file,
+        string projectName,
+        IReadOnlyDictionary<byte, byte>? zeroBasedPortMapping = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        ArgumentNullException.ThrowIfNull(projectName);
+        MidiProjectImportResult imported = await Task.Run(
+            () => MidiProjectImportService.Import(
+                file,
+                projectName,
+                zeroBasedPortMapping,
+                cancellationToken),
+            cancellationToken);
+        return await AdoptMidiImportAsNewProjectAsync(imported, cancellationToken);
+    }
+
+    internal async Task<IReadOnlyList<MidiProjectImportDiagnostic>> AdoptMidiImportAsNewProjectAsync(
+        MidiProjectImportResult imported,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(imported);
+        cancellationToken.ThrowIfCancellationRequested();
+        NewProjectCreationResult adopted = _creation.AdoptImportedProject(imported.Project);
+        ProjectContext? next = null;
+        try
+        {
+            next = ProjectContext.FromCreation(_packages, adopted);
+            adopted = null!;
+            await ActivateAsync(next);
+            next = null;
+            return imported.Diagnostics;
+        }
+        finally
+        {
+            if (next is not null) await next.DisposeAsync();
+            if (adopted is not null) await adopted.DisposeAsync();
+        }
+    }
+
+    internal static async Task<byte[]> ReadMidiImportFileAsync(
+        string path,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        string fullPath = Path.GetFullPath(path);
+        await using FileStream stream = new(
+            fullPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 64 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        long length = stream.Length;
+        if (length > StandardMidiFile.MaximumImportFileByteCount)
+        {
+            throw new MidoraMidiException(
+                $"SMF input exceeds the bounded {StandardMidiFile.MaximumImportFileByteCount}-byte admission limit.");
+        }
+        byte[] result = GC.AllocateUninitializedArray<byte>((int)length);
+        await stream.ReadExactlyAsync(result, cancellationToken);
+        byte[] growthProbe = new byte[1];
+        if (await stream.ReadAsync(growthProbe, cancellationToken) != 0)
+        {
+            throw new IOException(
+                "The MIDI file changed while it was being read; retry the import after the writer has finished.");
+        }
+        return result;
     }
 
     public async Task SaveProjectAsync(
@@ -612,11 +708,23 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         SetTrackMonitoringState(trackId, solo, isSolo: true);
     }
 
+    public void SetArrangementParentMuted(MidoraId parentId, bool muted)
+    {
+        SetArrangementParentMonitoringState(parentId, muted, isSolo: false);
+    }
+
+    public void SetArrangementParentSolo(MidoraId parentId, bool solo)
+    {
+        SetArrangementParentMonitoringState(parentId, solo, isSolo: true);
+    }
+
     private void SetTrackMonitoringState(MidoraId trackId, bool enabled, bool isSolo)
     {
-        if (Project?.Tracks.Any(track => track.Id == trackId) != true)
+        if (Project is not MidoraProject project
+            || (!project.Tracks.Any(track => track.Id == trackId)
+                && !project.PureMidiTracks.Any(track => track.Id == trackId)))
         {
-            throw new InvalidOperationException("The Logical Track no longer exists.");
+            throw new InvalidOperationException("The Arrangement Track no longer exists.");
         }
         HashSet<MidoraId> states = isSolo ? _soloTrackIds : _mutedTrackIds;
         bool wasEnabled = states.Contains(trackId);
@@ -632,6 +740,43 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             if (wasEnabled) states.Add(trackId);
             else states.Remove(trackId);
+            throw;
+        }
+        foreach (TimelineWorkspaceViewModel workspace in Workspaces
+                     .OfType<TimelineWorkspaceViewModel>()
+                     .Where(item => item.Mode == TimelineWorkspaceMode.Arrangement))
+        {
+            RefreshWorkspace(workspace);
+        }
+    }
+
+    private void SetArrangementParentMonitoringState(
+        MidoraId parentId,
+        bool enabled,
+        bool isSolo)
+    {
+        if (Project is not MidoraProject project
+            || (!project.EventInstruments.Any(value => value.Id == parentId)
+                && !project.MidiChannelRoots.Any(value => value.Id == parentId)))
+        {
+            throw new InvalidOperationException("The Arrangement parent no longer exists.");
+        }
+        HashSet<MidoraId> states = isSolo
+            ? _soloArrangementParentIds
+            : _mutedArrangementParentIds;
+        bool wasEnabled = states.Contains(parentId);
+        if (wasEnabled == enabled) return;
+        if (enabled) states.Add(parentId);
+        else states.Remove(parentId);
+        try
+        {
+            if (isSolo) _context?.Playback?.SetArrangementParentSolo(parentId, enabled);
+            else _context?.Playback?.SetArrangementParentMuted(parentId, enabled);
+        }
+        catch
+        {
+            if (wasEnabled) states.Add(parentId);
+            else states.Remove(parentId);
             throw;
         }
         foreach (TimelineWorkspaceViewModel workspace in Workspaces
@@ -984,6 +1129,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             foreach (MidoraId trackId in _mutedTrackIds) _context.Playback.SetTrackMuted(trackId, true);
             foreach (MidoraId trackId in _soloTrackIds) _context.Playback.SetTrackSolo(trackId, true);
+            foreach (MidoraId parentId in _mutedArrangementParentIds)
+                _context.Playback.SetArrangementParentMuted(parentId, true);
+            foreach (MidoraId parentId in _soloArrangementParentIds)
+                _context.Playback.SetArrangementParentSolo(parentId, true);
             _context.Playback.StateChanged += OnPlaybackStateChanged;
         }
         RefreshProperties();
@@ -1440,6 +1589,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         _mappingDraftCompiler.Clear();
         _mutedTrackIds.Clear();
         _soloTrackIds.Clear();
+        _mutedArrangementParentIds.Clear();
+        _soloArrangementParentIds.Clear();
         foreach (DesktopTaskViewModel task in TaskHistory) task.Dispose();
         TaskHistory.Clear();
         ActiveWorkspace = null;
@@ -1461,6 +1612,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         _mappingDraftCompiler.Clear();
         _mutedTrackIds.Clear();
         _soloTrackIds.Clear();
+        _mutedArrangementParentIds.Clear();
+        _soloArrangementParentIds.Clear();
         ProjectContext? previous = _context;
         if (previous is not null)
         {
@@ -1607,17 +1760,24 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         if (changes.AffectsEverything) return true;
         HashSet<MidoraId> trackIds = changes.TrackIds.ToHashSet();
         HashSet<MidoraId> instrumentIds = changes.EventInstrumentIds.ToHashSet();
+        HashSet<MidoraId> rootIds = changes.MidiChannelRootIds.ToHashSet();
+        HashSet<MidoraId> pureTrackIds = changes.PureMidiTrackIds.ToHashSet();
         return workspace.Kind switch
         {
             WorkspaceKind.Arrangement => changes.AffectsConductor
                 || trackIds.Count != 0
-                || instrumentIds.Count != 0,
+                || instrumentIds.Count != 0
+                || rootIds.Count != 0
+                || pureTrackIds.Count != 0,
             WorkspaceKind.ConductorTrack => changes.AffectsConductor,
             WorkspaceKind.SegmentEditor => workspace.ObjectId is MidoraId segmentId
-                && TimelineWorkspaceViewModel.FindSegment(Project!, segmentId) is { } located
-                && (trackIds.Contains(located.Track.Id)
-                    || located.Track.EventInstrumentId is MidoraId instrumentId
-                       && instrumentIds.Contains(instrumentId)),
+                && (TimelineWorkspaceViewModel.FindSegment(Project!, segmentId) is { } located
+                    && (trackIds.Contains(located.Track.Id)
+                        || located.Track.EventInstrumentId is MidoraId instrumentId
+                           && instrumentIds.Contains(instrumentId))
+                    || TimelineWorkspaceViewModel.FindMidiSegment(Project!, segmentId) is { } midi
+                    && (pureTrackIds.Contains(midi.Track.Id)
+                        || rootIds.Contains(midi.Track.MidiChannelRootId))),
             WorkspaceKind.EventInstrumentLibrary => instrumentIds.Count != 0,
             WorkspaceKind.EventInstrumentEditor => workspace.ObjectId is MidoraId eventInstrumentId
                 && instrumentIds.Contains(eventInstrumentId),
@@ -1637,7 +1797,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         if (workspace is TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement } timeline)
         {
-            timeline.SetTrackMonitoringStates(_mutedTrackIds, _soloTrackIds);
+            timeline.SetTrackMonitoringStates(
+                _mutedTrackIds,
+                _soloTrackIds,
+                _mutedArrangementParentIds,
+                _soloArrangementParentIds);
         }
         if (workspace is SettingsWorkspaceViewModel settings && _context is not null)
         {

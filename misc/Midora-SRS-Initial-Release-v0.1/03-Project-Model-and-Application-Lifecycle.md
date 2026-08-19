@@ -8,9 +8,9 @@
 
 ## 3.1 Project 的定义
 Midora Project 是用户在 Midora 中进行完整工作的最高层单位。
-一个 Project 不是普通文件夹，也不是单个乐器定义，而是包含项目级设置、事件乐器库、逻辑轨道、片段、全局音乐事件、Reset 默认值、播放设置、MIDI 导出设置、音频渲染设置和 SoundFont 设置的完整上下文。
+一个 Project 不是普通文件夹，也不是单个乐器定义，而是包含项目级设置、唯一 Conductor、混排的 Event Instrument / MIDI Channel Root 父节点、它们各自的 Logical / Pure MIDI child Tracks、两类 Segment、全局音乐事件、Reset 默认值、播放设置、MIDI 导出设置、音频渲染设置和 SoundFont 设置的完整上下文。
 编译、播放、预览、渲染和 MIDI 导出均以 Project 为上下文。
-单独的 Event Instrument、Logical Track 或 Segment 不构成完整项目上下文。
+单独的 Event Instrument、Logical Track、MIDI Channel Root、Pure MIDI Track 或 Segment 不构成完整项目上下文。
 ---
 ## 3.2 Project 的必要组成
 每个有效 Midora Project 必须包含以下顶层对象或集合：
@@ -19,8 +19,8 @@ Midora Project 是用户在 Midora 中进行完整工作的最高层单位。
 | Project Settings | 是 | 否 | 项目级设置入口 |
 | Project Metadata | 是 | 否 | 项目元数据 |
 | Conductor Track | 是 | 否 | 固定全局音乐事件轨道 |
-| Event Instrument Library | 是 | 否 | 当前项目内事件乐器集合 |
-| Logical Tracks | 是 | 否 | 当前项目内逻辑轨道集合，可为空 |
+| Arrangement Parents | 是 | 否 | Event Instrument / MIDI Channel Root 的混排有序集合，可为空 |
+| Event Instrument Index | 是 | 否 | 从 Arrangement parent 派生的稳定 ID 查找索引，不拥有独立顺序 |
 | Global Reset Defaults | 是 | 否 | 项目级 Reset 默认值 |
 | Global Event Scope Defaults | 是 | 否 | 初版不可编辑的版本化空 marker；事件作用域由各正式事件语义固定 |
 | Export Settings | 是 | 否 | MIDI 导出默认设置 |
@@ -29,9 +29,10 @@ Midora Project 是用户在 Midora 中进行完整工作的最高层单位。
 | SoundFont Settings | 是 | 否 | 初版项目级单一 SF2 设置，可为空状态 |
 说明：
 - 顶层对象必须存在，不代表其中必须已有用户内容。
-- Event Instrument Library 可以为空。
-- Logical Tracks 集合可以为空。
-- Audio Render Settings 必须存在，初版默认使用 Whole Mix、Project Default Range、All Valid Logical Tracks，以及普通 RIFF/WAVE / 48 kHz / Stereo / IEEE 32-bit Float；采样率可由用户在合法范围内修改。
+- Arrangement Parents 可以为空。
+- 每个 Logical Track 必须且只能属于一个 Event Instrument；每个 Pure MIDI Track 必须且只能属于一个 Root。
+- 不存在独立顶层 Logical Track 集合、独立 Root 顺序或 Unbound Logical Track。
+- Audio Render Settings 必须存在，初版默认使用 Whole Mix、Project Default Range、All Valid Logical and Pure MIDI Tracks，以及普通 RIFF/WAVE / 48 kHz / Stereo / IEEE 32-bit Float；采样率可由用户在合法范围内修改。
 - SoundFont Settings 必须存在，但可以处于“未选择 SF2”状态。
 - Conductor Track 必须存在，且创建新项目时至少包含默认 Tempo 与默认拍号。
 ---
@@ -72,8 +73,8 @@ Midora Project 是用户在 Midora 中进行完整工作的最高层单位。
 Project Settings
 Project Metadata
 Conductor Track
-空 Event Instrument Library
-空 Logical Tracks 集合
+空 Arrangement Parents 集合
+空 Event Instrument Index
 Global Reset Defaults
 Global Event Scope Defaults
 Export Settings
@@ -90,12 +91,10 @@ Time Signature = 4/4
 ```
 Conductor Track 应允许用户自由插入 Tempo、Time Signature 等全局音乐事件，以实现变速和变拍。
 Conductor Track 具体事件编辑规则由 第 4 章《时间、Conductor Track 与全局音乐事件》 细化。
-### 3.4.2 Event Instrument Library 默认状态
-新项目创建一个空 Event Instrument Library。
-初版不创建默认 Event Instrument。
-### 3.4.3 Logical Tracks 默认状态
-新项目默认无 Logical Track。
-用户需要主动创建 Logical Track。
+### 3.4.2 Arrangement Parents 默认状态
+新项目创建空 Arrangement Parents 与由其派生的空 Event Instrument Index。初版不创建默认 Event Instrument 或 MIDI Channel Root。
+### 3.4.3 Track 默认状态
+新项目默认无 Logical Track 或 Pure MIDI Track。用户必须先创建 Event Instrument 或 MIDI Channel Root，再从该父节点创建对应 child Track。
 初版不创建默认 Track，也不创建默认 Segment。
 ### 3.4.4 SoundFont 默认状态
 创建项目时可以不选择 SF2。
@@ -195,9 +194,11 @@ Beautiful Pad
 Beautiful Pad
 ```
 这两个 Logical Track 可以引用同一个 Event Instrument，但它们的运行状态互不影响。
+### 3.7.3A Arrangement 父节点与 Pure MIDI Track 名称
+MIDI Channel Root 与 Pure MIDI Track 名称允许重复，均不构成身份。Event Instrument / Root 的混排父节点顺序、各 Event Instrument 内 Logical Track 顺序和各 Root 内 Pure MIDI Track 顺序属于正式源数据；Pure MIDI Track 的重排可能改变同 Root 的同 tick 事件顺序，因此属于音乐语义编辑。完整顺序见第 24 章。
 ### 3.7.4 Segment 名称
 Segment 不持有名称。
-Segment 是 Logical Track 上一段可以放置音符和事件的有效时间范围。
+Logical Segment 是 Logical Track 上一段可以放置 Logical Note 和 Logical Parameter 的有效时间范围；Midi Segment 是 Pure MIDI Track 上保存 Direct MIDI Note、Channel Event 与 opaque imported event 的有效范围。
 在 Logical Track / Segment 层，初版“事件”主要指 Logical Parameter Lane / Point / Curve，而不是直接裸 MIDI CC / Pitch Bend / RPN / NRPN。
 Segment 内的 Logical Parameter 数据属于 Project 内容。保存、复制、移动、分割、连接 Segment 时，Logical Parameter Lane / Point / Curve 应随 Segment 保留。
 Segment 不是 FL Studio 中 Pattern 的等价概念。
@@ -212,11 +213,11 @@ Segment 可以被用户进行以下操作：
 分割成两段
 两个相邻 Segment 连接成一段
 ```
-Segment 的关键语义是：
+Logical Segment 的关键语义是：
 ```text
 每个 Segment 末尾都会将该 Segment 使用过的事件全部 Reset
 ```
-Segment 的详细编辑和裁剪规则由 `第 11 章《Logical Track、Segment 与编曲语义》` 细化。
+Midi Segment 不能独立执行会影响同 Root sibling Track 的 Channel-wide Reset；它在 End 只关闭自身 Note，Root 活动连通区间结束才执行完整 Root Reset。两类 Segment 的详细编辑、裁剪与边界规则分别由第 11 章和第 23 章细化。
 ### 3.7.5 Envelope Preset 名称
 Envelope Preset 名称可选，且允许重复。
 Envelope Preset 的作用范围在 Event Instrument 内部。
@@ -230,33 +231,12 @@ Mapping Function 的具体内容、映射目标、编辑方式和编译行为由
 初版只需要保存当前项目的 Export Settings。
 如果未来导出系统需要支持多个导出配置方案，再在 第 14 章《MIDI 导出》 或实现设计阶段补充 Export Preset。
 ---
-## 3.8 Logical Track 的事件乐器绑定状态
-Logical Track 可以处于以下事件乐器绑定状态之一：
-```text
-已指定 Event Instrument
-未指定 Event Instrument
-```
-因此，Logical Track 应支持以下操作：
-```text
-指定 Event Instrument
-取消指定 Event Instrument
-替换 Event Instrument
-```
-### 3.8.1 删除被引用 Event Instrument 时的行为
-当某个 Event Instrument 被删除，且存在 Logical Track 正在引用它时：
-```text
-引用该 Event Instrument 的 Logical Track 自动变为未指定 Event Instrument 状态
-```
-该 Logical Track 应保留最近一次绑定的 Event Instrument 名称，仅用于 UI 提示，不参与编译。
-具体显示位置和显示方式推迟到 UI 章节细化。
-项目仍然可以保存。
-项目仍然可以编译。
-该 Logical Track 上已有的音符、Segment 和事件数据仍然保留在项目文件中。
-### 3.8.2 未指定 Event Instrument 的编译行为
-如果 Logical Track 未指定 Event Instrument，则编译时忽略该 Logical Track 的音符和事件。
-播放、预览和渲染时亦如此。
-该 Logical Track 在项目数据中仍然存在。
-如果未指定 Event Instrument 的 Logical Track 包含音符或事件，应只在编译诊断中列为信息，不算警告，不导致编译失败。
+## 3.8 Logical Track 的 Event Instrument 父节点
+Logical Track 必须且只能属于一个 Event Instrument；该父子关系就是唯一绑定，不存在正常的未指定、取消绑定或 Unbound 状态。
+
+Logical Track 可在 Event Instrument 内重排，也可通过第 24.3.3 节的影响审查原子移动到另一个 Event Instrument。改绑保留 Track 内容与稳定 ID；失败时保持原父子关系。删除包含 Logical Track 的 Event Instrument 必须确认并级联删除完整 subtree，一个操作形成一个 Undo；不得把 child 降级为未指定状态。
+
+打开时如单个 Event Instrument 文件损坏，但 `project.json` 的父子索引仍能可信确定 subtree，则使用同位置 Damaged Parent Placeholder 保留归属并禁止保存；无法可信确定唯一父节点时 Project 打开失败。
 ---
 ## 3.9 项目保存、打开与关闭
 ### 3.9.1 保存
@@ -266,10 +246,13 @@ Project 必须支持普通保存。
 Project Settings
 Project Metadata
 Conductor Track
-Event Instrument Library
+Arrangement parent order and Event Instrument index
 Event Instrument definitions
 Logical Tracks
 Segments
+MIDI Channel Roots
+Pure MIDI Tracks
+Midi Segments and direct/opaque MIDI events
 Global Reset Defaults
 Global Event Scope Defaults
 Playback Settings
@@ -414,9 +397,11 @@ Project 应维护未保存修改状态。
 修改 Project Metadata 中的用户可编辑项
 修改 Conductor Track
 新建、删除、重命名、编辑 Event Instrument
-修改 Event Instrument Library
+重排 Event Instrument / MIDI Channel Root 混合父节点
 新建、删除、重命名、编辑 Logical Track
-指定、取消指定、替换 Logical Track 的 Event Instrument
+在 Event Instrument 内重排或跨 Event Instrument 改绑 Logical Track
+新建、删除、重命名、重排或编辑 MIDI Channel Root / Pure MIDI Track
+修改 Root Auto/Fixed Route 或 Melodic/Percussion Mode
 新建、删除、移动、缩放、分割、连接、编辑 Segment
 修改 Global Reset Defaults
 修改 SoundFont Settings
@@ -510,15 +495,17 @@ Project 应维护未保存修改状态。
 Project 是编译器的完整输入上下文。
 编译器不应只依赖某个孤立对象完成完整编译。
 初版中，空项目允许编译。
-未指定 Event Instrument 的 Logical Track 在编译中被忽略。
 编译至少需要读取：
 ```text
 Project Settings
 Project Metadata 中可能影响导出的信息
 Conductor Track
-Event Instrument Library
-Logical Tracks
+Arrangement parent/child hierarchy and Event Instrument index
+Logical Tracks and their parent Event Instruments
 Segments
+MIDI Channel Roots
+Pure MIDI Tracks
+Midi Segments / Direct MIDI Notes / Channel Events / Opaque Imported Events
 Global Reset Defaults
 Global Event Scope Defaults
 Event Instrument definitions
@@ -548,7 +535,7 @@ Playback Settings
 Conductor Track
 canonical compiled result
 Port / Channel / Channel Unit 规则
-Channel 10 melodic 初始化规则
+Logical Channel 10 melodic 与 Pure MIDI Root Melodic/Percussion 规则
 C# 映射运行结果
 ```
 音频文件渲染还必须依赖固定存在的：
@@ -559,7 +546,7 @@ Audio Render Settings
 ```text
 Whole Mix / Per Logical Track 默认模式
 Project Default Range / Manual Range 默认范围策略
-All Valid Logical Tracks / Explicit Logical Track IDs 默认选择策略
+All Valid Logical and Pure MIDI Tracks / Explicit Track IDs 默认选择策略
 普通 RIFF/WAVE / Stereo / IEEE 32-bit Float 固定格式字段
 默认文件采样率，合法范围 8,000–192,000 Hz
 有限命名偏好
@@ -575,12 +562,14 @@ MIDI 导出系统以当前 Project 为导出上下文。
 导出至少依赖：
 ```text
 Conductor Track
-Logical Tracks
-Event Instrument Library
+Logical Tracks and their parent Event Instruments
+MIDI Channel Roots and their child Pure MIDI Tracks
+Pure MIDI Tracks
+Arrangement parent order and Event Instrument index
 Export Settings
 Reset 规则
 Port / Channel 分配结果
-Channel 10 melodic 初始化规则
+Channel 10 Melodic/Percussion 初始化规则
 SoundFont Settings 中用于 Readme 的信息
 ```
 无 SF2 状态下允许 MIDI 导出，且不需要因为无 SF2 额外显示导出前警告。
@@ -595,9 +584,9 @@ SoundFont Settings 中用于 Readme 的信息
 3. 每个 Project 必须有且只有一个 Conductor Track。
 4. Conductor Track 不可删除。
 5. 新 Project 的 Conductor Track 默认 Tempo 为 120 BPM，默认拍号为 4/4。
-6. 每个 Project 必须有且只有一个 Event Instrument Library。
-7. 新 Project 默认 Event Instrument Library 为空。
-8. 新 Project 默认无 Logical Track。
+6. 每个 Project 必须有且只有一个有序 Arrangement Parents 集合；Event Instrument index 由该集合派生，不拥有独立顺序。
+7. 新 Project 默认 Arrangement Parents 为空。
+8. 新 Project 默认无 Event Instrument、Logical Track、MIDI Channel Root 或 Pure MIDI Track。
 9. 初版一个 Project 只使用一个 SF2。
 10. 创建项目时可以不选择 SF2。
 11. 无 SF2 状态下不创建 BASSMIDI 实例。
@@ -608,27 +597,28 @@ SoundFont Settings 中用于 Readme 的信息
 16. 初版不保存 UI 视图状态。
 17. 初版不做自动保存。
 18. 初版不做崩溃恢复。
-19. 初版不提供扫描式 Project Repair Mode；无法建立可信 Project Object Graph 的结构性损坏必须打开失败，但 第 16 章《.midora 文件格式与持久化》 明确允许隔离的单个 Event Instrument / Logical Track 损坏可形成 Damaged Placeholder。
+19. 初版不提供扫描式 Project Repair Mode；无法建立可信 Project Object Graph 的结构性损坏必须打开失败，但第 16、23、24 章明确允许隔离的单个 Event Instrument / Logical Track / MIDI Channel Root / Pure MIDI Track 损坏可形成 Damaged Placeholder。
 20. Event Instrument 名称在当前 Project 内必须唯一。
-21. Logical Track 名称允许重复。
+21. Logical Track、MIDI Channel Root 与 Pure MIDI Track 名称允许重复；混合 parent order 与 parent 内 Track order 属于 Project 源数据。
 22. Segment 不持有名称。
 23. Mapping Function 名称必填，且在单个 Event Instrument 内不可重复。
 24. 初版不做 Export Preset。
 25. 每个 Project 必须有且只有一个 Audio Render Settings，且不可删除。
-26. 新 Project 默认音频渲染模式为 Whole Mix、默认范围为 Project Default Range、默认 Track 选择为 All Valid Logical Tracks。
+26. 新 Project 默认音频渲染模式为 Whole Mix、默认范围为 Project Default Range、默认 Track 选择为 All Valid Logical and Pure MIDI Tracks。
 27. 初版音频文件输出普通 RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float；采样率为用户选择的 8,000–192,000 Hz 整数，新 Project 默认 48,000 Hz。
 28. Track Mute / Solo 不影响音频文件渲染成品。
 29. 音频渲染产物、缓存和任务状态不属于 Project 源数据。
 30. 内部引用必须基于稳定 ID，不得依赖名称。
-31. 删除被引用 Event Instrument 时，相关 Logical Track 自动变为未指定 Event Instrument，并保留最近一次绑定的 Event Instrument 名称作为 UI 提示信息。
-32. 未指定 Event Instrument 的 Logical Track 在编译、播放、预览、渲染中被忽略
-未指定 Event Instrument 的 Logical Track 中已有 Logical Parameter Lane 数据保留，但显示为断裂 / 不适用，不参与编译，但项目数据保留。
-33. 未指定 Event Instrument 且包含音符或事件的 Logical Track，只在编译诊断中列为信息，不算警告。
+31. 每个 Logical Track 必须且只能属于一个 Event Instrument；不允许 Unbound/Unassigned 正常状态。
+32. 删除包含 Logical Track 的 Event Instrument 必须确认并原子级联整个 subtree，不得留下孤儿。
+33. Logical Track 跨 Event Instrument 移动必须保留内容和稳定 ID，并按第 24 章原子提交 rebind。
 34. 初版应提供完整的全项目统一撤销 / 重做框架。
 35. 初版不提供传统 Save As，只提供普通保存与 Save Copy。
 36. Save Copy 不改变当前 Project 路径、Modified 状态或 Undo / Redo History。
 37. 只要 Project 中存在 Damaged Placeholder，普通保存和 Save Copy 均必须禁止。
 38. 未知或孤立包文件不形成 Project 对象，不创建 Damaged Placeholder，也不阻止保存；再次保存时不予保留。
+39. Pure MIDI Track 必须属于一个 MIDI Channel Root；Root/Track/Segment/Direct Event 的完整语义按第 23 章执行。
+40. 初版支持以 SMF Format 0 / 1、TPQN division 打开为新的未保存 Project，不支持导入当前 Project。
 ### 3.18.2 警告情况
 以下情况应产生项目级或跨系统警告，具体严重程度由统一诊断规则确定：
 1. 当前 SF2 缺失或无法访问，且用户尝试播放、预览或音频渲染；

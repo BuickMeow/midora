@@ -12,6 +12,7 @@ public sealed class ProjectObjectClipboardTests
         MidoraProject project = new(480);
         EventInstrument instrument = new(project) { Name = "Instrument" };
         project.EventInstruments.Add(instrument);
+        project.ArrangementParents.Add(new(ArrangementParentKind.EventInstrument, instrument.Id));
         LogicalTrack source = new(project)
         {
             Name = "Source",
@@ -34,8 +35,14 @@ public sealed class ProjectObjectClipboardTests
         };
         segment.Notes.Add(note);
         source.Segments.Add(segment);
-        LogicalTrack peer = new(project) { Name = "Peer" };
+        LogicalTrack peer = new(project)
+        {
+            Name = "Peer",
+            EventInstrumentId = instrument.Id,
+            LastBoundEventInstrumentName = instrument.Name
+        };
         project.Tracks.AddRange([source, peer]);
+        instrument.LogicalTrackIds.AddRange([source.Id, peer.Id]);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -48,9 +55,10 @@ public sealed class ProjectObjectClipboardTests
         document.Execute(ProjectObjectClipboard.CreatePasteLogicalTrackCommand(
             document,
             payload,
+            targetEventInstrumentId: instrument.Id,
             insertionIndex: 1));
 
-        LogicalTrack copy = project.Tracks[1];
+        LogicalTrack copy = project.Tracks.Single(value => value.Id != source.Id && value.Id != peer.Id);
         Assert.Equal("Source", copy.Name);
         Assert.Equal(instrument.Id, copy.EventInstrumentId);
         Assert.Equal(source.ColorOverride, copy.ColorOverride);
@@ -72,7 +80,8 @@ public sealed class ProjectObjectClipboardTests
         document.Undo();
         Assert.Equal([source, peer], project.Tracks);
         document.Redo();
-        Assert.Same(copy, project.Tracks[1]);
+        Assert.Same(copy, project.Tracks[^1]);
+        Assert.Equal([source.Id, copy.Id, peer.Id], instrument.LogicalTrackIds);
         AssertMatchesFull(compilation);
     }
 
@@ -82,6 +91,9 @@ public sealed class ProjectObjectClipboardTests
         MidoraProject project = new(480);
         EventInstrumentLibraryFolder folder = EventInstrumentLibrary.CreateFolder(project, "Leads");
         EventInstrument source = EventInstrumentLibrary.Create(project, "Lead");
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.EventInstrument,
+            source.Id));
         source.LibraryFolderId = folder.Id;
         source.Description = "Snapshot description";
         source.Color = new MidoraColor(21, 91, 173);
@@ -152,7 +164,7 @@ public sealed class ProjectObjectClipboardTests
         Assert.Equal("Lead Copy 1", copy.Name);
         Assert.Equal("Snapshot description", copy.Description);
         Assert.Equal(source.Color, copy.Color);
-        Assert.Equal(folder.Id, copy.LibraryFolderId);
+        Assert.Null(copy.LibraryFolderId);
         LogicalParameterDefinition parameterCopy = Assert.Single(copy.LogicalParameters);
         InstrumentEnvelope envelopeCopy = Assert.Single(copy.Envelopes);
         CSharpMappingFunction functionCopy = Assert.Single(copy.MappingFunctions);

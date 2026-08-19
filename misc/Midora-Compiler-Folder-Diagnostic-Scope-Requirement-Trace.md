@@ -1,7 +1,9 @@
 # Midora 编译器 Library Folder 诊断作用域 Requirement Trace
 
-状态：已实现并通过完整非 UI 发布门  
+状态：历史实现记录；其 Library Folder 正式模型已由 SRS 第 24 章、INV-058/INV-062 与 ADR-CORE-045 取代，不得作为当前实现需求
 上位规范：SRS 7.12–7.15、12.6.3、12.17、22 INV-003/INV-009
+
+> 本文保留 2026-08-06 的测试证据。当前开发格式已删除 Event Instrument Folder、Unfiled、Library manual order 及对应诊断作用域；现行编译器必须验证 mixed parent union、父级有序 child references 与 child parent ID 的三方一致性。
 
 ## 范围
 

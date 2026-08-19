@@ -67,25 +67,9 @@ internal static class ProjectCodecV1
                 GlobalResetDefaults = MidoraPackagePathsV1.GlobalResetDefaults,
                 GlobalEventScopeDefaults = MidoraPackagePathsV1.GlobalEventScopeDefaults
             },
-            EventInstrumentFolders = project.EventInstrumentFolders.Select(folder =>
-                new ProjectFolderIndexJsonV1 { Id = new StableIdJsonV1(folder.Id.Value), Name = folder.Name }).ToArray(),
-            EventInstruments = project.EventInstruments.Select(instrument =>
-                new ProjectObjectIndexJsonV1
-                {
-                    Id = new StableIdJsonV1(instrument.Id.Value),
-                    Path = $"event-instruments/ei_{instrument.Id}.pb",
-                    NameSnapshot = instrument.Name,
-                    FolderId = instrument.LibraryFolderId is MidoraId folderId
-                        ? new StableIdJsonV1(folderId.Value)
-                        : null
-                }).ToArray(),
-            LogicalTracks = project.Tracks.Select(track =>
-                new ProjectObjectIndexJsonV1
-                {
-                    Id = new StableIdJsonV1(track.Id.Value),
-                    Path = $"logical-tracks/lt_{track.Id}.pb",
-                    NameSnapshot = track.Name
-                }).ToArray()
+            ArrangementParents = project.ArrangementParents
+                .Select(parent => CreateParentIndex(project, parent))
+                .ToArray()
         };
         Validate(value);
         return StrictJsonV1.SerializeWithFinalLf(
@@ -125,46 +109,125 @@ internal static class ProjectCodecV1
         RequirePath(value.Settings.GlobalEventScopeDefaults, MidoraPackagePathsV1.GlobalEventScopeDefaults,
             "settings.globalEventScopeDefaults");
 
-        if (value.EventInstrumentFolders is null || value.EventInstruments is null || value.LogicalTracks is null)
+        if (value.ArrangementParents is null)
         {
-            throw new InvalidDataException("project.json index arrays cannot be null.");
+            throw new InvalidDataException("project.json arrangementParents cannot be null.");
         }
         HashSet<StableIdJsonV1> ids = [];
-        HashSet<string> folderNames = new(StringComparer.OrdinalIgnoreCase);
-        foreach (ProjectFolderIndexJsonV1 folder in value.EventInstrumentFolders)
+        foreach (ArrangementParentIndexJsonV1 parent in value.ArrangementParents)
         {
-            RequireIndexId(folder?.Id, "eventInstrumentFolders.id", ids);
+            if (parent is null
+                || parent.Kind is not "event-instrument" and not "midi-channel-root")
+            {
+                throw new InvalidDataException("project.json contains an invalid Arrangement parent kind.");
+            }
+            StableIdJsonV1 parentId = RequireIndexId(parent.Id, "arrangementParents.id", ids);
+            string expectedParentPath = parent.Kind == "event-instrument"
+                ? $"event-instruments/ei_{parentId}.pb"
+                : $"midi-channel-roots/mcr_{parentId}.pb";
+            RequireObjectPath(parent.Path, expectedParentPath, "arrangementParents.path");
             PersistenceValueValidationV1.ValidateShortText(
-                folder!.Name, "eventInstrumentFolders.name", allowEmpty: false);
-            if (string.Equals(folder.Name.Trim(), "Unfiled", StringComparison.OrdinalIgnoreCase)
-                || !folderNames.Add(folder.Name.Trim()))
+                parent.NameSnapshot,
+                "arrangementParents.nameSnapshot",
+                allowEmpty: false);
+            if (parent.Children is null)
             {
-                throw new InvalidDataException("project.json Event Instrument folder names are invalid or duplicated.");
+                throw new InvalidDataException("project.json Arrangement parent children cannot be null.");
+            }
+            string expectedChildKind = parent.Kind == "event-instrument"
+                ? "logical-track"
+                : "pure-midi-track";
+            foreach (ArrangementChildIndexJsonV1 child in parent.Children)
+            {
+                if (child is null || child.Kind != expectedChildKind || child.ParentId != parentId)
+                {
+                    throw new InvalidDataException(
+                        "project.json Arrangement child kind or parentId is inconsistent.");
+                }
+                StableIdJsonV1 childId = RequireIndexId(
+                    child.Id,
+                    "arrangementParents.children.id",
+                    ids);
+                string expectedChildPath = child.Kind == "logical-track"
+                    ? $"logical-tracks/lt_{childId}.pb"
+                    : $"midi-tracks/mt_{childId}.pb";
+                RequireObjectPath(
+                    child.Path,
+                    expectedChildPath,
+                    "arrangementParents.children.path");
+                PersistenceValueValidationV1.ValidateShortText(
+                    child.NameSnapshot,
+                    "arrangementParents.children.nameSnapshot");
             }
         }
-        HashSet<StableIdJsonV1> folderIds = value.EventInstrumentFolders
-            .Select(folder => folder.Id)
-            .ToHashSet();
-        foreach (ProjectObjectIndexJsonV1 instrument in value.EventInstruments)
+    }
+
+    private static ArrangementParentIndexJsonV1 CreateParentIndex(
+        MidoraProject project,
+        ArrangementParentReference parent)
+    {
+        return parent.Kind switch
         {
-            StableIdJsonV1 id = RequireIndexId(instrument?.Id, "eventInstruments.id", ids);
-            RequireObjectPath(instrument!.Path, $"event-instruments/ei_{id}.pb", "eventInstruments.path");
-            PersistenceValueValidationV1.ValidateShortText(instrument.NameSnapshot, "eventInstruments.nameSnapshot");
-            if (instrument.FolderId is StableIdJsonV1 folderId && !folderIds.Contains(folderId))
-            {
-                throw new InvalidDataException("project.json Event Instrument folderId is invalid.");
-            }
-        }
-        foreach (ProjectObjectIndexJsonV1 track in value.LogicalTracks)
+            ArrangementParentKind.EventInstrument => CreateEventInstrumentIndex(
+                project,
+                project.EventInstruments.Single(value => value.Id == parent.ParentId)),
+            ArrangementParentKind.MidiChannelRoot => CreateMidiChannelRootIndex(
+                project,
+                project.MidiChannelRoots.Single(value => value.Id == parent.ParentId)),
+            _ => throw new InvalidDataException("Unknown Arrangement parent kind.")
+        };
+    }
+
+    private static ArrangementParentIndexJsonV1 CreateEventInstrumentIndex(
+        MidoraProject project,
+        EventInstrument instrument)
+    {
+        Dictionary<MidoraId, LogicalTrack> tracks = project.Tracks.ToDictionary(value => value.Id);
+        return new ArrangementParentIndexJsonV1
         {
-            StableIdJsonV1 id = RequireIndexId(track?.Id, "logicalTracks.id", ids);
-            RequireObjectPath(track!.Path, $"logical-tracks/lt_{id}.pb", "logicalTracks.path");
-            PersistenceValueValidationV1.ValidateShortText(track.NameSnapshot, "logicalTracks.nameSnapshot");
-            if (track.FolderId is not null)
+            Kind = "event-instrument",
+            Id = new StableIdJsonV1(instrument.Id.Value),
+            Path = $"event-instruments/ei_{instrument.Id}.pb",
+            NameSnapshot = instrument.Name,
+            Children = instrument.LogicalTrackIds.Select(id =>
             {
-                throw new InvalidDataException("project.json Logical Track index cannot contain folderId.");
-            }
-        }
+                LogicalTrack track = tracks[id];
+                return new ArrangementChildIndexJsonV1
+                {
+                    Kind = "logical-track",
+                    Id = new StableIdJsonV1(track.Id.Value),
+                    ParentId = new StableIdJsonV1(instrument.Id.Value),
+                    Path = $"logical-tracks/lt_{track.Id}.pb",
+                    NameSnapshot = track.Name
+                };
+            }).ToArray()
+        };
+    }
+
+    private static ArrangementParentIndexJsonV1 CreateMidiChannelRootIndex(
+        MidoraProject project,
+        MidiChannelRoot root)
+    {
+        Dictionary<MidoraId, PureMidiTrack> tracks = project.PureMidiTracks.ToDictionary(value => value.Id);
+        return new ArrangementParentIndexJsonV1
+        {
+            Kind = "midi-channel-root",
+            Id = new StableIdJsonV1(root.Id.Value),
+            Path = $"midi-channel-roots/mcr_{root.Id}.pb",
+            NameSnapshot = root.Name,
+            Children = root.MidiTrackIds.Select(id =>
+            {
+                PureMidiTrack track = tracks[id];
+                return new ArrangementChildIndexJsonV1
+                {
+                    Kind = "pure-midi-track",
+                    Id = new StableIdJsonV1(track.Id.Value),
+                    ParentId = new StableIdJsonV1(root.Id.Value),
+                    Path = $"midi-tracks/mt_{track.Id}.pb",
+                    NameSnapshot = track.Name
+                };
+            }).ToArray()
+        };
     }
 
     private static StableIdJsonV1 RequireIndexId(

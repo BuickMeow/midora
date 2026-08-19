@@ -22,6 +22,9 @@ public enum TimelineItemKind
 {
     Segment,
     LogicalNote,
+    DirectMidiNote,
+    DirectMidiEvent,
+    OpaqueMidiEvent,
     LogicalParameterPoint,
     LogicalParameterCurve,
     TemplateNote,
@@ -40,6 +43,29 @@ public enum TimelineLaneState
     Muted = 1 << 0,
     Solo = 1 << 1
 }
+
+public enum ArrangementLaneKind
+{
+    Conductor,
+    EventInstrument,
+    MidiChannelRoot,
+    LogicalTrack,
+    PureMidiTrack,
+    DamagedEventInstrument,
+    DamagedMidiChannelRoot,
+    DamagedLogicalTrack,
+    DamagedPureMidiTrack
+}
+
+public readonly record struct ArrangementLaneDescriptor(
+    int Lane,
+    ArrangementLaneKind Kind,
+    MidoraId? ObjectId,
+    MidoraId? ParentId,
+    int Depth,
+    bool IsExpanded,
+    bool HasChildren,
+    bool CanContainSegments);
 
 public readonly record struct TimelineRenderItem(
     MidoraId Id,
@@ -63,11 +89,22 @@ public readonly record struct TimelineSegmentPreviewNote(
     double NormalizedEnd,
     int Pitch);
 
+public readonly record struct TimelineSegmentPreviewEvent(
+    double NormalizedTick,
+    double NormalizedValue);
+
 public sealed class TimelineSegmentPreview
 {
+    private readonly TimelineSegmentPreviewNote[] _notes;
+    private readonly double[] _noteMaximumEndPrefix;
+    private readonly TimelineSegmentPreviewEvent[] _events;
+    private readonly object _tileFingerprintGate = new();
+    private readonly Dictionary<SegmentPreviewTileFingerprintKey, ulong> _tileFingerprints = [];
+
     public TimelineSegmentPreview(
         MidoraId segmentId,
-        IEnumerable<TimelineSegmentPreviewNote> notes)
+        IEnumerable<TimelineSegmentPreviewNote> notes,
+        IEnumerable<TimelineSegmentPreviewEvent>? events = null)
     {
         if (segmentId.Value <= 0) throw new ArgumentOutOfRangeException(nameof(segmentId));
         ArgumentNullException.ThrowIfNull(notes);
@@ -84,14 +121,180 @@ public sealed class TimelineSegmentPreview
                 throw new ArgumentException("A Segment preview note is outside its normalized range.", nameof(notes));
             }
         }
+        Array.Sort(materialized, static (left, right) =>
+        {
+            int value = left.NormalizedStart.CompareTo(right.NormalizedStart);
+            if (value != 0) return value;
+            value = left.NormalizedEnd.CompareTo(right.NormalizedEnd);
+            return value != 0 ? value : left.Pitch.CompareTo(right.Pitch);
+        });
         SegmentId = segmentId;
-        Notes = Array.AsReadOnly(materialized);
-        ContentFingerprint = TimelineContentFingerprint.ForSegmentPreview(materialized);
+        _notes = materialized;
+        _noteMaximumEndPrefix = new double[materialized.Length];
+        double maximumEnd = 0;
+        for (int index = 0; index < materialized.Length; index++)
+        {
+            maximumEnd = Math.Max(maximumEnd, materialized[index].NormalizedEnd);
+            _noteMaximumEndPrefix[index] = maximumEnd;
+        }
+        Notes = Array.AsReadOnly(_notes);
+        TimelineSegmentPreviewEvent[] materializedEvents = events?.ToArray() ?? [];
+        foreach (TimelineSegmentPreviewEvent value in materializedEvents)
+        {
+            if (!double.IsFinite(value.NormalizedTick)
+                || !double.IsFinite(value.NormalizedValue)
+                || value.NormalizedTick < 0
+                || value.NormalizedTick > 1
+                || value.NormalizedValue < 0
+                || value.NormalizedValue > 1)
+            {
+                throw new ArgumentException(
+                    "A Segment preview event is outside its normalized range.",
+                    nameof(events));
+            }
+        }
+        Array.Sort(materializedEvents, static (left, right) =>
+        {
+            int value = left.NormalizedTick.CompareTo(right.NormalizedTick);
+            return value != 0 ? value : left.NormalizedValue.CompareTo(right.NormalizedValue);
+        });
+        _events = materializedEvents;
+        Events = Array.AsReadOnly(_events);
+        NoteContentFingerprint = TimelineContentFingerprint.ForSegmentPreviewNotes(_notes);
+        EventContentFingerprint = TimelineContentFingerprint.ForSegmentPreviewEvents(_events);
+        ContentFingerprint = TimelineContentFingerprint.Combine(
+            NoteContentFingerprint,
+            EventContentFingerprint);
     }
 
     public MidoraId SegmentId { get; }
     public IReadOnlyList<TimelineSegmentPreviewNote> Notes { get; }
+    public IReadOnlyList<TimelineSegmentPreviewEvent> Events { get; }
+    public ulong NoteContentFingerprint { get; }
+    public ulong EventContentFingerprint { get; }
     public ulong ContentFingerprint { get; }
+
+    internal void QueryNotes(
+        double normalizedStart,
+        double normalizedEnd,
+        List<TimelineSegmentPreviewNote> destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (!double.IsFinite(normalizedStart)
+            || !double.IsFinite(normalizedEnd)
+            || normalizedEnd <= normalizedStart)
+        {
+            return;
+        }
+        int first = FirstPrefixEndGreaterThan(normalizedStart);
+        int lastExclusive = FirstNoteStartAtOrAfter(normalizedEnd);
+        for (int index = first; index < lastExclusive; index++)
+        {
+            TimelineSegmentPreviewNote note = _notes[index];
+            if (note.NormalizedEnd > normalizedStart)
+            {
+                destination.Add(note);
+            }
+        }
+    }
+
+    internal void QueryEvents(
+        double normalizedStart,
+        double normalizedEnd,
+        List<TimelineSegmentPreviewEvent> destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (!double.IsFinite(normalizedStart)
+            || !double.IsFinite(normalizedEnd)
+            || normalizedEnd <= normalizedStart)
+        {
+            return;
+        }
+        int first = FirstEventAtOrAfter(normalizedStart);
+        int lastExclusive = FirstEventAtOrAfter(normalizedEnd);
+        for (int index = first; index < lastExclusive; index++)
+        {
+            destination.Add(_events[index]);
+        }
+    }
+
+    internal ulong GetTileContentFingerprint(
+        bool eventLayer,
+        double deviceSegmentWidth,
+        long tileX)
+    {
+        if (!double.IsFinite(deviceSegmentWidth) || deviceSegmentWidth <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(deviceSegmentWidth));
+        }
+        ArgumentOutOfRangeException.ThrowIfNegative(tileX);
+        SegmentPreviewTileFingerprintKey key = new(
+            eventLayer,
+            BitConverter.DoubleToInt64Bits(deviceSegmentWidth),
+            tileX);
+        lock (_tileFingerprintGate)
+        {
+            if (_tileFingerprints.TryGetValue(key, out ulong fingerprint))
+            {
+                return fingerprint;
+            }
+            fingerprint = eventLayer
+                ? TimelineSegmentPreviewRasterizer.ComputeEventTileContentFingerprint(
+                    this,
+                    deviceSegmentWidth,
+                    tileX)
+                : TimelineSegmentPreviewRasterizer.ComputeNoteTileContentFingerprint(
+                    this,
+                    deviceSegmentWidth,
+                    tileX);
+            _tileFingerprints.Add(key, fingerprint);
+            return fingerprint;
+        }
+    }
+
+    private int FirstPrefixEndGreaterThan(double value)
+    {
+        int low = 0;
+        int high = _noteMaximumEndPrefix.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (_noteMaximumEndPrefix[middle] <= value) low = middle + 1;
+            else high = middle;
+        }
+        return low;
+    }
+
+    private int FirstNoteStartAtOrAfter(double value)
+    {
+        int low = 0;
+        int high = _notes.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (_notes[middle].NormalizedStart < value) low = middle + 1;
+            else high = middle;
+        }
+        return low;
+    }
+
+    private int FirstEventAtOrAfter(double value)
+    {
+        int low = 0;
+        int high = _events.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (_events[middle].NormalizedTick < value) low = middle + 1;
+            else high = middle;
+        }
+        return low;
+    }
+
+    private readonly record struct SegmentPreviewTileFingerprintKey(
+        bool EventLayer,
+        long DeviceSegmentWidthKey,
+        long TileX);
 }
 
 public sealed class TimelineSelectionSnapshot
@@ -205,6 +408,8 @@ public sealed class TimelineRenderSnapshot
 {
     private readonly object _pianoTileFingerprintGate = new();
     private readonly Dictionary<PianoTileFingerprintKey, ulong> _pianoTileFingerprints = [];
+    private readonly object _conductorTileFingerprintGate = new();
+    private readonly Dictionary<ConductorTileFingerprintKey, ulong> _conductorTileFingerprints = [];
 
     public TimelineRenderSnapshot(
         long semanticRevision,
@@ -214,7 +419,8 @@ public sealed class TimelineRenderSnapshot
         IReadOnlyList<TimelineLaneState>? laneStates = null,
         IReadOnlyDictionary<MidoraId, TimelineSegmentPreview>? segmentPreviews = null,
         IReadOnlyList<string>? laneSecondaryLabels = null,
-        IReadOnlyList<uint>? laneColors = null)
+        IReadOnlyList<uint>? laneColors = null,
+        IReadOnlyList<ArrangementLaneDescriptor>? arrangementLanes = null)
     {
         if (semanticRevision < 0)
         {
@@ -254,11 +460,15 @@ public sealed class TimelineRenderSnapshot
         SegmentPreviews = segmentPreviews is null
             ? new Dictionary<MidoraId, TimelineSegmentPreview>()
             : new Dictionary<MidoraId, TimelineSegmentPreview>(segmentPreviews);
+        ArrangementLanes = arrangementLanes is null
+            ? Array.Empty<ArrangementLaneDescriptor>()
+            : Array.AsReadOnly(arrangementLanes.ToArray());
         Index = new TimelineIntervalIndex(materialized);
         ItemsById = materialized
             .GroupBy(static item => item.Id)
             .ToDictionary(static group => group.Key, static group => group.OrderByDescending(item => item.ZIndex).First());
         ContentFingerprint = TimelineContentFingerprint.ForRenderItems(materialized);
+        ConductorPreviewFingerprint = TimelineContentFingerprint.ForConductorPreview(materialized);
     }
 
     public long SemanticRevision { get; }
@@ -269,9 +479,11 @@ public sealed class TimelineRenderSnapshot
     public IReadOnlyList<string> LaneSecondaryLabels { get; }
     public IReadOnlyList<uint> LaneColors { get; }
     public IReadOnlyDictionary<MidoraId, TimelineSegmentPreview> SegmentPreviews { get; }
+    public IReadOnlyList<ArrangementLaneDescriptor> ArrangementLanes { get; }
     public TimelineIntervalIndex Index { get; }
     public IReadOnlyDictionary<MidoraId, TimelineRenderItem> ItemsById { get; }
     public ulong ContentFingerprint { get; }
+    public ulong ConductorPreviewFingerprint { get; }
 
     public bool Matches(long semanticRevision, string projectionKey) =>
         SemanticRevision == semanticRevision
@@ -321,6 +533,36 @@ public sealed class TimelineRenderSnapshot
         long VerticalScaleKey,
         long TileX,
         long TileY);
+
+    internal ulong GetConductorTileContentFingerprint(
+        double devicePixelsPerTick,
+        long tileX,
+        double dpiScaleX)
+    {
+        ConductorTileFingerprintKey key = new(
+            BitConverter.DoubleToInt64Bits(devicePixelsPerTick),
+            tileX,
+            BitConverter.DoubleToInt64Bits(dpiScaleX));
+        lock (_conductorTileFingerprintGate)
+        {
+            if (_conductorTileFingerprints.TryGetValue(key, out ulong fingerprint))
+            {
+                return fingerprint;
+            }
+            fingerprint = TimelineConductorTileRasterizer.ComputeContentFingerprint(
+                this,
+                devicePixelsPerTick,
+                tileX,
+                dpiScaleX);
+            _conductorTileFingerprints.Add(key, fingerprint);
+            return fingerprint;
+        }
+    }
+
+    private readonly record struct ConductorTileFingerprintKey(
+        long HorizontalScaleKey,
+        long TileX,
+        long DpiScaleXKey);
 }
 
 internal static class TimelineContentFingerprint
@@ -328,7 +570,16 @@ internal static class TimelineContentFingerprint
     private const ulong Offset = 14695981039346656037UL;
     private const ulong Prime = 1099511628211UL;
 
-    public static ulong ForSegmentPreview(IEnumerable<TimelineSegmentPreviewNote> notes)
+    public static ulong ForSegmentPreview(
+        IEnumerable<TimelineSegmentPreviewNote> notes,
+        IEnumerable<TimelineSegmentPreviewEvent>? events = null)
+    {
+        return Combine(
+            ForSegmentPreviewNotes(notes),
+            ForSegmentPreviewEvents(events ?? []));
+    }
+
+    public static ulong ForSegmentPreviewNotes(IEnumerable<TimelineSegmentPreviewNote> notes)
     {
         ulong hash = Offset;
         foreach (TimelineSegmentPreviewNote note in notes)
@@ -337,6 +588,25 @@ internal static class TimelineContentFingerprint
             Add(ref hash, unchecked((ulong)BitConverter.DoubleToInt64Bits(note.NormalizedEnd)));
             Add(ref hash, unchecked((ulong)note.Pitch));
         }
+        return hash;
+    }
+
+    public static ulong ForSegmentPreviewEvents(IEnumerable<TimelineSegmentPreviewEvent> events)
+    {
+        ulong hash = Offset;
+        foreach (TimelineSegmentPreviewEvent value in events)
+        {
+            Add(ref hash, unchecked((ulong)BitConverter.DoubleToInt64Bits(value.NormalizedTick)));
+            Add(ref hash, unchecked((ulong)BitConverter.DoubleToInt64Bits(value.NormalizedValue)));
+        }
+        return hash;
+    }
+
+    public static ulong Combine(ulong first, ulong second)
+    {
+        ulong hash = Offset;
+        Add(ref hash, first);
+        Add(ref hash, second);
         return hash;
     }
 
@@ -362,12 +632,33 @@ internal static class TimelineContentFingerprint
         return hash;
     }
 
+    public static ulong ForConductorPreview(IEnumerable<TimelineRenderItem> items)
+    {
+        ulong hash = Offset;
+        foreach (TimelineRenderItem item in items)
+        {
+            if (item.Kind is not (TimelineItemKind.ConductorEvent
+                or TimelineItemKind.Marker
+                or TimelineItemKind.ProjectEndMarker))
+            {
+                continue;
+            }
+            Add(ref hash, unchecked((ulong)item.Kind));
+            Add(ref hash, unchecked((ulong)item.StartTick));
+            Add(ref hash, unchecked((ulong)item.ZIndex));
+            Add(ref hash, item.AccentColor);
+        }
+        return hash;
+    }
+
     public static ulong ForPianoTileItems(IEnumerable<TimelineRenderItem> items)
     {
         ulong hash = Offset;
         foreach (TimelineRenderItem item in items)
         {
-            if (item.Kind is not (TimelineItemKind.LogicalNote or TimelineItemKind.TemplateNote))
+            if (item.Kind is not (TimelineItemKind.LogicalNote
+                or TimelineItemKind.DirectMidiNote
+                or TimelineItemKind.TemplateNote))
             {
                 continue;
             }

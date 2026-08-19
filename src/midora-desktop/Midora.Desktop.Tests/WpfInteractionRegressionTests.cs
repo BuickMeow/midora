@@ -35,6 +35,9 @@ public sealed class WpfInteractionRegressionTests
                     ProjectName = "WPF refresh",
                     PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
                 }));
+                session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+                EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+                DrainDispatcher();
 
                 ProjectTreeNode tracks = session.ProjectTree.Single(
                     item => item.Kind == ProjectTreeNodeKind.LogicalTracks);
@@ -43,7 +46,7 @@ public sealed class WpfInteractionRegressionTests
                 session.ProjectTree.CollectionChanged += (_, _) =>
                     collectionChangeThreads.Add(Environment.CurrentManagedThreadId);
 
-                session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+                session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track", instrument.Id));
 
                 Assert.Single(session.Project!.Tracks);
                 Assert.Empty(tracks.Children);
@@ -58,11 +61,11 @@ public sealed class WpfInteractionRegressionTests
 
                 collectionChangeThreads.Clear();
                 PumpUntil(Task.Run(() =>
-                    session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"))));
+                    session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Background Instrument"))));
                 DrainDispatcher();
                 ProjectTreeNode library = session.ProjectTree.Single(
                     item => item.Kind == ProjectTreeNodeKind.InstrumentLibrary);
-                Assert.Contains(library.Children, item => item.Title == "Instrument");
+                Assert.Contains(library.Children, item => item.Title == "Background Instrument");
                 Assert.NotEmpty(collectionChangeThreads);
                 Assert.All(collectionChangeThreads, threadId =>
                     Assert.Equal(dispatcherThreadId, threadId));
@@ -73,7 +76,6 @@ public sealed class WpfInteractionRegressionTests
                     session.ProjectTree.Single(item => item.Kind == ProjectTreeNodeKind.InstrumentLibrary).Children,
                     item => item.Title == "Folder");
 
-                EventInstrument instrument = Assert.Single(session.Project.EventInstruments);
                 Assert.IsType<InstrumentWorkspaceViewModel>(session.OpenInstrument(instrument.Id));
                 Assert.Equal(
                     WorkspaceKind.ConductorTrack,

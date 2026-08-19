@@ -240,6 +240,20 @@ public sealed class ProjectCreationCoordinator
         }
     }
 
+    public NewProjectCreationResult AdoptImportedProject(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        return new(
+            project,
+            ProjectDocumentOrigin.Unsaved,
+            currentProjectPath: null,
+            fileInformation: null,
+            effectiveSoundFontPath: null,
+            usedCaseInsensitiveSoundFontPathFallback: false,
+            embeddedSoundFontResource: null,
+            Array.Empty<MidoraPackageDiagnosticV1>());
+    }
+
     private static ValidatedRequest ValidateRequest(NewProjectCreationRequest request)
     {
         if (request.TicksPerQuarterNote is < MidoraProject.MinimumTicksPerQuarterNote

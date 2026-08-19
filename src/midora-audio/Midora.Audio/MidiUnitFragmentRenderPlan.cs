@@ -19,7 +19,9 @@ public sealed class MidiUnitFragmentRenderPlan
         ReadOnlySpan<ScheduledMidiMessage> events,
         string? pcmCacheKey = null,
         long pcmCachePayloadOffset = -1,
-        bool pcmCacheHit = false)
+        bool pcmCacheHit = false,
+        long midiChannelRootId = 0,
+        bool isPercussion = false)
     {
         if (canonicalZeroBasedPortNumber >= 16)
         {
@@ -29,8 +31,13 @@ public sealed class MidiUnitFragmentRenderPlan
         {
             throw new ArgumentOutOfRangeException(nameof(canonicalZeroBasedChannelNumber));
         }
-        if (trackId <= 0 || segmentId <= 0 || eventInstrumentId <= 0
-            || instanceGroupId <= 0 || subVoiceId <= 0)
+        bool logicalIdentity = midiChannelRootId == 0
+            && trackId > 0 && segmentId > 0 && eventInstrumentId > 0
+            && instanceGroupId > 0 && subVoiceId > 0;
+        bool pureMidiIdentity = midiChannelRootId > 0
+            && trackId > 0 && segmentId > 0 && eventInstrumentId == 0
+            && instanceGroupId > 0 && subVoiceId > 0;
+        if (!logicalIdentity && !pureMidiIdentity)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(trackId),
@@ -85,6 +92,8 @@ public sealed class MidiUnitFragmentRenderPlan
         PcmCacheKey = pcmCacheKey;
         PcmCachePayloadOffset = pcmCachePayloadOffset;
         PcmCacheHit = pcmCacheHit;
+        MidiChannelRootId = midiChannelRootId;
+        IsPercussion = isPercussion;
         _events = events.ToArray();
         ValidateEvents(_events);
     }
@@ -105,6 +114,8 @@ public sealed class MidiUnitFragmentRenderPlan
     public string? PcmCacheKey { get; }
     public long PcmCachePayloadOffset { get; }
     public bool PcmCacheHit { get; }
+    public long MidiChannelRootId { get; }
+    public bool IsPercussion { get; }
     public ReadOnlySpan<ScheduledMidiMessage> Events => _events;
 
     public long PcmPayloadByteCount => checked(
@@ -121,10 +132,10 @@ public sealed class MidiUnitFragmentRenderPlan
                 || value.SampleFrame > EndFrame
                 || i != 0 && value.SampleFrame < previous
                 || value.Message.ChannelNumber != 0
-                || value.SourceIndex != SourceIndex)
+                || value.SourceIndex < 0)
             {
                 throw new ArgumentException(
-                    "Unit fragment events must be ordered, channel 0, source-consistent, and inside the fragment boundary.",
+                    "Unit fragment events must be ordered, use channel 0, carry a valid source, and stay inside the fragment boundary.",
                     nameof(events));
             }
             previous = value.SampleFrame;

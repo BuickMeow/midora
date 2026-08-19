@@ -4,7 +4,7 @@
 > 规格版本：**v0.1**  
 > 适用产品范围：**Midora 初版**
 
-本章定义 Arrangement、Segment、Event Instrument、SubVoice、Mapping、Lifecycle、Conductor、Library、Settings 和 Diagnostics 等主要工作区的职责与布局。
+本章定义 Arrangement、Segment、Event Instrument、SubVoice、Mapping、Lifecycle、Conductor、Settings 和 Diagnostics 等主要工作区的职责与布局。初版不再提供独立 Event Instrument Library Workspace。
 
 ## 18.1 Arrangement Workspace
 ### 18.1.1 布局
@@ -25,25 +25,28 @@
 ### 18.1.2 职责
 Arrangement 只负责：
 ```text
-Logical Track order and visibility
+Conductor-first Event Instrument / MIDI Channel Root mixed parent order
+Event Instrument→Logical Track and Root→Pure MIDI Track hierarchy
+parent/child order, visibility, rebind and routing
 Segment creation, movement, copy, crop, split and deletion
 Project timeline navigation
 Segment-level arrangement overview
-Track Mute and Solo runtime controls
+parent and child Track Mute/Solo runtime controls
 ```
-Logical Note 和 Logical Parameter 细节进入 Segment Editor。
+Logical Note/Parameter 与 Direct MIDI Note/Event 的细节进入对应 Segment Editor。
 Tempo、Time Signature、Key Signature、Marker 和 Project End Marker 只显示概览；精确编辑进入 Conductor Track Editor。
 ### 18.1.3 Track Header
 显示：
 ```text
-Track display name
-Bound Event Instrument or Unassigned
+parent/Track display name
+Event Instrument / Root parent summary
+Pure MIDI Track 的 MIDI 类型标识
 Track color
 Mute
 Solo
 Track validation summary
 ```
-Mute / Solo 固定可见，属于播放期运行状态：
+parent 与 child 的 Mute / Solo 固定可见，属于播放期运行状态：
 - 不保存；
 - 不进入 Undo / Redo；
 - 不标记 Project Modified；
@@ -51,9 +54,9 @@ Mute / Solo 固定可见，属于播放期运行状态：
 - 不影响 Audio Render。
 Track 高度属于 UI 状态；Track 正式顺序属于 Project Content。
 
-Track Header 是独立交互目标。鼠标悬停时使用低强调高亮，按下时背景变暗，松开恢复；该反馈不改变 Project。拖动 Track Header 直接重排正式 Track 顺序，并显示插入位置。右键菜单至少提供 Rename、Bind / Unbind Event Instrument、Delete、Move Up、Move Down 和 New Logical Track。从具体 Track Header 创建 Logical Track 时，新 Track 插入该 Track 的下一位；从 Track Header 空白处或其他创建入口创建时，新 Track 追加到正式顺序末尾。Track display name 下方必须以较暗的次级文字显示当前绑定的 Event Instrument 名称；未绑定或引用断裂时显示明确的 `Unbound` / missing 提示。
+Header 是独立交互目标。鼠标悬停时使用低强调高亮，按下时背景变暗，松开恢复；越过通用拖动阈值后才开始重排并显示准确插入线。Event Instrument / Root 是可混排 parent Header；Logical / Pure MIDI Track 是带统一缩进的 child Header。父节点右侧不承载 Segment，但 Grid/Bar 线连续绘制。完整 Header 字段、菜单、复制删除、拖动和层级见第 24.3～24.7 节。
 
-Event Instrument Library 中的 Event Instrument 可拖放到既有 Track Header 以建立绑定；若目标 Track 已绑定其他 Event Instrument，提交前必须明确确认 rebind。该拖放不移动或复制 Event Instrument 本身。
+Logical Track 不显示 Bind/Unbind，所在 Event Instrument parent 即唯一绑定；拖到另一个 Event Instrument 执行 rebind 审查。Pure MIDI Track 名称左侧必须显示 MIDI 图标，可跨 Root 移动。Event Instrument/Root parent 与 child Track 的 Mute/Solo 相互独立。
 ### 18.1.4 Segment 显示
 Segment 没有名称。矩形显示：
 ```text
@@ -62,15 +65,18 @@ Content summary
 Active crop window
 Broken or validation state
 Logical Note preview
+或 Direct MIDI Note preview
 ```
 初版必须在 Segment 矩形内显示简化 piano-roll Note Preview，表达音高、相对位置和长度。该预览只用于概览，不允许在 Arrangement 内直接精细编辑 Note。
 
 Preview 使用固定 MIDI pitch `0..127` 的二维投影；Note 最小可见高度为 1 px，位置与边界执行布局取整，Segment 本地 tick 0 的 Note 不得因左边界或可见范围查询而遗漏。Preview 必须在 Arrangement 的手工渲染面内绘制，不得为每个 Note 创建 WPF Control。实现应按 Segment 稳定 ID 与 preview 相关内容指纹复用缓存；缩放、平移、选择或播放指针变化不得重建未变化 Segment 的 preview 内容。
+
+Pure MIDI Segment 还必须在 Note 上层绘制独立缓存的 non-Note event 线，统一 50% 透明度、最小 1 device pixel，并按正式事件值域归一化高度；Logical Segment 不绘制该层。详细 LOD、同列聚合、裁剪和独立失效规则见第 24.8 节。
 ### 18.1.5 Segment 重叠
 正式规则：
 ```text
-Same Logical Track      -> Segment overlap is not allowed
-Different Logical Tracks -> time overlap is allowed
+Same owning Track        -> Segment overlap is not allowed
+Different Tracks         -> time overlap is allowed
 Adjacent Segments       -> allowed; no automatic join
 ```
 移动、复制、粘贴、绘制或调整边界若造成同一 Track Segment 重叠：
@@ -80,7 +86,7 @@ Adjacent Segments       -> allowed; no automatic join
 - 不移动邻近 Segment；
 - 不寻找最近空位；
 - 不自动创建 Track。
-该规则只约束 Segment 容器，不等同于 Logical Note 或编译后 Event Instrument Instance 的重叠规则。
+该规则只约束 Segment 容器，不等同于 Logical Note、Direct MIDI Note 或编译后 Event Instrument Instance 的重叠规则。
 ### 18.1.6 Segment 操作
 ```text
 Drag body  -> move Segment
@@ -88,7 +94,7 @@ Drag edge  -> change active crop window
 Ctrl+Drag  -> copy Segment when target is valid
 Split Tool -> split at target tick
 ```
-Segment 可纵向移动到其他 Logical Track。跨 Track 时保留所有 Note、Lane、Broken / Inapplicable 数据和 crop 外内容；不得自动匹配、修复或删除 Logical Parameter Lane。
+Logical Segment 可纵向移动到其他 Logical Track，保留所有 Note、Lane、Broken / Inapplicable 数据和 crop 外内容；不得自动匹配、修复或删除 Logical Parameter Lane。Midi Segment 可移动到其他 Pure MIDI Track，包括跨 Root，并保留全部 direct/opaque 数据；目标 Track 不得重叠。两类 Segment 之间不允许隐式移动或转换。
 ### 18.1.7 Timeline
 支持：
 ```text
@@ -113,7 +119,7 @@ Draw 模式下，`Alt + Left Drag` 在 Segment 的任意命中位置强制执行
 
 Draw 模式下在 Segment 主体执行 `Ctrl+Drag` 时，复制当前 Segment 选择集并以一个共同时间/Track delta 放置完整副本；原 Segment 不移动。复制成功后只选择副本，一次完整手势形成一个 Project Undo。
 ---
-## 18.2 Segment Editor
+## 18.2 共享 Segment Editor
 ### 18.2.1 布局
 ```text
 +--------------------------------------------------------------------------+
@@ -131,7 +137,7 @@ Draw 模式下在 Segment 主体执行 `Ctrl+Drag` 时，复制当前 Segment �
 +--------------------------------------------------------------------------+
 ```
 ### 18.2.2 时间坐标
-Segment Editor 以 Segment local tick 为主，同时可显示映射后的 Project Position。
+Logical Segment Editor 与 Midi Segment Editor 均以 Segment local tick 为主，同时可显示映射后的 Project Position。
 不得把 local tick 伪装成 Project `Bar:Beat:Tick`。
 ### 18.2.3 Pitch Ruler
 - 使用完整白键底板与较短黑键叠层构成的真实横向钢琴键样式；
@@ -141,7 +147,7 @@ Segment Editor 以 Segment local tick 为主，同时可显示映射后的 Proje
 - 鼠标左键按下键位发起 held Preview，松开或取消结束 Gate；
 - 该预览不创建 Project Note，并严格使用第 13.22.7、13.24.5 节的因果 Gate 与当前 Segment 绑定的 Event Instrument。
 ### 18.2.4 Note Editor
-使用 piano roll 编辑 Logical Notes。
+使用共享 piano roll 编辑 Logical Note 或 Direct MIDI Note；数据访问、命令提交和诊断通过领域 adapter 区分，不得复制第三套渲染/命中测试/选择/手势实现。
 
 新建单个 Logical Note 的放置手势不得启动声音预览。Draw 模式只显示当前 pitch、位置和默认长度的虚线视觉预览；该视觉预览不是 Project 数据。点击已有 Note 时，将该 Note 的长度复制为后续创建的默认 Note 长度，但不修改该 Note。
 
@@ -193,6 +199,12 @@ Segment 编辑后：
 - Inspector 显示当前 Note、Point、Lane 或 Segment 摘要；
 - 相关 Validation 和 Diagnostics 更新；
 - 一次用户手势形成一次 Project Undo。
+
+### 18.2.7 Logical 与 Pure MIDI 变体
+
+Logical Segment 变体的下部 Lane 编辑 Logical Parameter，并通过 Track 绑定的 Event Instrument 解释 Note。Pure MIDI 变体的 Velocity 直接编辑 Direct MIDI NoteOn velocity，下部 Event Lane 直接编辑完整 Channel Voice Event；不显示 Logical Parameter 或 Event Instrument 绑定控件。
+
+Pure MIDI 的 opaque SysEx/Meta 只在 Event List/Inspector 中查看、移动和删除，不提供自由 payload 编辑。两种变体必须共享 Grid/Snap/zoom/pan/scroll、tile cache、临时编辑覆盖层、批量选择与 Segment Content Window 行为；修复共享交互缺陷不得要求分别修改复制实现。
 ---
 ## 18.3 Event Instrument Editor 总体框架
 ### 18.3.1 布局
@@ -484,83 +496,14 @@ Project End Marker 使用贯穿 Lane 的特殊竖线：
 ### 18.7.5 Event List
 Event List 与 Timeline Selection 同步。
 播放期间允许查看和导航，不允许编辑 Conductor 事件。
+
+### 18.7.6 Arrangement 概览
+
+Conductor 在 Arrangement 第一行直接按 absolute Project tick 显示事件圆点，不使用 Segment。不同类型使用稳定不同颜色，Project End Marker 保持专用竖线。极端内容必须使用固定 device-size glyph、可视 tile、按 event type/device-pixel column 聚合和局部失效；完整规则见第 24.9 节。
 ---
-## 18.8 Event Instrument Library Workspace
-### 18.8.1 布局
-```text
-+--------------------------------------------------------------------------+
-| [A] Library Toolbar                                                      |
-+----------------------+---------------------------------------------------+
-| [B] Folder Panel   | [C] Instrument Collection                         |
-+----------------------+---------------------------------------------------+
-| [D] Summary Panel                                                        |
-+--------------------------------------------------------------------------+
-| [E] Usage and Validation Panel                                           |
-+--------------------------------------------------------------------------+
-```
-### 18.8.2 Library 功能
-支持：
-```text
-Search by Instrument or Folder name
-One-level folders
-Manual order
-Instrument colors
-List and card views
-Create
-Duplicate
-Rename
-Delete
-Preview
-Show references
-```
-List / Cards 视图属于 Application Preference。
-### 18.8.3 Folder
-初版只支持单层 Folder：
-```text
-Event Instrument Library
-├─ Unfiled
-├─ Folder A
-├─ Folder B
-└─ Folder C
-```
-不支持 Subfolder。
-Folder 名称：
-- 必填；
-- Library 内唯一；
-- 去除首尾空白；
-- 大小写不敏感比较。
-`Unfiled` 是固定系统节点，不可重命名、删除或移动。
-初版 Folder 不支持颜色。
-删除 Folder：
-```text
-Move contained Event Instruments to Unfiled
-Delete only the Folder object
-```
-不删除内部 Event Instrument。
-### 18.8.4 手动排序与临时排序
-Library 的正式手动顺序属于 Project Content。
-临时按名称或状态排序只改变当前视图，不修改 Project。
-搜索或临时排序期间禁用拖动正式排序。
-### 18.8.5 Duplicate
-Event Instrument Duplicate 是深拷贝：
-- 生成新 Event Instrument 稳定 ID；
-- 所有内部用户对象生成新稳定 ID；
-- 内部引用重映射；
-- 后续编辑互不影响；
-- 一次 Duplicate 形成一次 Project Undo。
-### 18.8.6 Delete
-删除 Event Instrument 时必须显示引用影响：
-- 引用 Track 变为 Unassigned；
-- Track、Segment、Note 和 Logical Parameter Lane 数据保留；
-- Last Known Instrument Name 保留；
-- 不按名称重绑；
-- Broken / Inapplicable Lane 数据保留。
-未引用本身不是 Warning。未引用 Event Instrument 内部错误不阻止整曲编译，但 Library 中仍显示其验证状态。
-### 18.8.7 Drag
-Event Instrument 在 Library 内拖动只用于 Move / Reorder；Duplicate 使用显式命令，不使用 Ctrl+Drag。
-拖到 Arrangement 空 Track 区域可创建绑定 Track。
-拖到已有 Track 时必须确认重绑影响。
-初版不要求拖到时间线空白处同时创建 Track 和 Segment。
+## 18.8 Event Instrument Library Workspace（删除）
+
+初版不提供该 Workspace、Folder Panel、Unfiled、List/Card Library 或独立 Library order。Event Instrument 作为 Arrangement parent 的创建、打开、排序、复制、删除、颜色摘要、验证状态和 child Logical Track 管理由常驻 Arrangement 统一承担，见第 24 章。Event Instrument 详细定义仍在对象 Editor 中编辑。
 ---
 ## 18.9 Project Settings Workspace
 ### 18.9.1 布局
@@ -753,7 +696,7 @@ Current or Historical Status
 ```
 完整 Details 可显示原因、相关值、可执行的下一步和诊断代码，但不默认暴露原始异常堆栈或内部类名。
 
-正式诊断的 `Message` 使用英文。Project Panel 的 `Diagnostics (N Errors, N Warnings)` 必须在每次后台验证或编译完成事件中，以同一最后尝试结果立即刷新；不得滞后一轮或在当前失败时仍显示前一次计数。
+正式诊断的 `Message` 使用英文。Status Bar 的 `N Errors, N Warnings` 必须在每次后台验证或编译完成事件中，以同一最后尝试结果立即刷新；不得滞后一轮或在当前失败时仍显示前一次计数。
 ### 18.10.6 来源导航
 Source Path 使用稳定 ID 定位并显示最新名称。
 `Go to Source`：

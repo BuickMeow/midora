@@ -42,17 +42,10 @@ internal static class LogicalTrackProtobufCodecV1
             Id = ProtobufValueCodecV1.ToWire(value.Id),
             Name = value.Name
         };
-        if (value.EventInstrumentId.HasValue)
-        {
-            result.EventInstrumentId = ProtobufValueCodecV1.ToWire(value.EventInstrumentId.Value);
-        }
-        if (value.LastBoundEventInstrumentName is not null)
-        {
-            PersistenceValueValidationV1.ValidateShortText(
-                value.LastBoundEventInstrumentName,
-                "Logical Track last bound Event Instrument name");
-            result.LastBoundEventInstrumentName = value.LastBoundEventInstrumentName;
-        }
+        result.EventInstrumentId = ProtobufValueCodecV1.ToWire(
+            value.EventInstrumentId
+            ?? throw new InvalidDataException(
+                "A Logical Track must have an Event Instrument parent."));
         if (value.ColorOverride.HasValue)
         {
             result.ColorOverride = ProtobufValueCodecV1.ToWire(value.ColorOverride.Value);
@@ -66,12 +59,9 @@ internal static class LogicalTrackProtobufCodecV1
         LogicalTrack result = new(project, ProtobufValueCodecV1.FromWire(value.Id, "Logical Track ID"))
         {
             Name = value.Name,
-            EventInstrumentId = !value.HasEventInstrumentId
-                ? null
-                : ProtobufValueCodecV1.FromWire(value.EventInstrumentId, "Logical Track Event Instrument ID"),
-            LastBoundEventInstrumentName = value.HasLastBoundEventInstrumentName
-                ? value.LastBoundEventInstrumentName
-                : null,
+            EventInstrumentId = ProtobufValueCodecV1.FromWire(
+                value.EventInstrumentId,
+                "Logical Track Event Instrument ID"),
             ColorOverride = value.ColorOverride is null
                 ? null
                 : ProtobufValueCodecV1.FromWire(value.ColorOverride, "Logical Track color override")
@@ -161,16 +151,9 @@ internal static class LogicalTrackProtobufCodecV1
         }
         _ = ProtobufValueCodecV1.FromWire(value.Id, "Logical Track ID");
         PersistenceValueValidationV1.ValidateShortText(value.Name, "Logical Track name");
-        if (value.HasEventInstrumentId)
-        {
-            _ = ProtobufValueCodecV1.FromWire(value.EventInstrumentId, "Logical Track Event Instrument ID");
-        }
-        if (value.HasLastBoundEventInstrumentName)
-        {
-            PersistenceValueValidationV1.ValidateShortText(
-                value.LastBoundEventInstrumentName,
-                "Logical Track last bound Event Instrument name");
-        }
+        _ = ProtobufValueCodecV1.FromWire(
+            value.EventInstrumentId,
+            "Logical Track Event Instrument ID");
         if (value.ColorOverride is not null)
         {
             _ = ProtobufValueCodecV1.FromWire(value.ColorOverride, "Logical Track color override");

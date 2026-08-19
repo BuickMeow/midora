@@ -670,7 +670,9 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         changes.AffectsEverything
         || changes.AffectsConductor
         || changes.TrackIds.Count != 0
-        || changes.EventInstrumentIds.Count != 0;
+        || changes.EventInstrumentIds.Count != 0
+        || changes.MidiChannelRootIds.Count != 0
+        || changes.PureMidiTrackIds.Count != 0;
 
     private static ProjectChangeSet CloneChanges(ProjectChangeSet source)
     {
@@ -682,6 +684,8 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         };
         result.TrackIds.UnionWith(source.TrackIds);
         result.EventInstrumentIds.UnionWith(source.EventInstrumentIds);
+        result.MidiChannelRootIds.UnionWith(source.MidiChannelRootIds);
+        result.PureMidiTrackIds.UnionWith(source.PureMidiTrackIds);
         return result;
     }
 
@@ -700,6 +704,10 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         result.TrackIds.UnionWith(right.TrackIds);
         result.EventInstrumentIds.UnionWith(left.EventInstrumentIds);
         result.EventInstrumentIds.UnionWith(right.EventInstrumentIds);
+        result.MidiChannelRootIds.UnionWith(left.MidiChannelRootIds);
+        result.MidiChannelRootIds.UnionWith(right.MidiChannelRootIds);
+        result.PureMidiTrackIds.UnionWith(left.PureMidiTrackIds);
+        result.PureMidiTrackIds.UnionWith(right.PureMidiTrackIds);
         return result;
     }
 
@@ -802,11 +810,21 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         MidiRenderPlan basePlan = GetOrCreateRealtimeBasePlan(result, sampleRate);
 
         ReadOnlySpan<long> sourceIds = basePlan.SourceIds;
+        // A Root source owns the shared lifecycle and final Unit mix; child Track
+        // sources carry the actual monitoring filters. Disabling the Root would
+        // discard the complete Pure MIDI Unit after synthesis.
+        HashSet<long> rootSourceIds = basePlan.UnitFragments
+            .ToArray()
+            .Where(fragment => fragment.MidiChannelRootId > 0)
+            .Select(fragment => fragment.MidiChannelRootId)
+            .ToHashSet();
         int[] disabled = new int[sourceIds.Length];
         int disabledCount = 0;
         for (int sourceIndex = 0; sourceIndex < sourceIds.Length; sourceIndex++)
         {
-            if (!audibleTrackIds.Contains(new MidoraId(sourceIds[sourceIndex])))
+            long sourceId = sourceIds[sourceIndex];
+            if (!rootSourceIds.Contains(sourceId)
+                && !audibleTrackIds.Contains(new MidoraId(sourceId)))
             {
                 disabled[disabledCount++] = sourceIndex;
             }

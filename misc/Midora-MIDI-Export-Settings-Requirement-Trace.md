@@ -9,7 +9,7 @@
 
 - 输入：用户明确保存为 Project Defaults 的 MIDI Export 参数，或 `.midora` v1 `settings/export-settings.json`。
 - 正式输出：Mode、Range、Track Selection 策略、Routing、Include Readme、Treat Warnings As Errors 的完整 Project 默认快照。
-- 默认：Whole Project / Project Default Range / All Valid Logical Tracks / Compact / Readme 开 / Warning-as-error 关。
+- 默认：Whole Project / Project Default Range / All Valid Logical and Pure MIDI Tracks / Compact / Readme 开 / Warning-as-error 关。
 
 ## 边界、失败与诊断
 

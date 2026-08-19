@@ -20,7 +20,11 @@ public enum SourceOrigin
     MergedInitialState,
     ProjectResetDefaults,
     RangeRestore,
-    CompilerBoundaryCleanup
+    CompilerBoundaryCleanup,
+    DirectMidiNote,
+    DirectMidiChannelEvent,
+    OpaqueMidiEvent,
+    MidiChannelRootLifecycle
 }
 
 public readonly record struct SourceReference(
@@ -37,7 +41,12 @@ public readonly record struct SourceReference(
     MidoraId MappingFunctionId = default,
     MidoraId ValueCurveId = default,
     MidoraId EnvelopeId = default,
-    SourceOrigin Origin = SourceOrigin.Unspecified);
+    SourceOrigin Origin = SourceOrigin.Unspecified,
+    MidoraId MidiChannelRootId = default,
+    MidoraId PureMidiTrackId = default,
+    MidoraId MidiSegmentId = default,
+    MidoraId DirectMidiObjectId = default,
+    MidoraId ExportTrackId = default);
 
 public sealed record CompilerDiagnostic(
     string Code,
@@ -157,7 +166,9 @@ public enum CanonicalEventRole : byte
     ControlChange = 7,
     PitchBend = 8,
     LogicalParameter = 9,
-    NoteOn = 10
+    NoteOn = 10,
+    DirectMidi = 11,
+    RootBoundaryCleanup = 12
 }
 
 public readonly record struct CanonicalMidiEvent(
@@ -169,7 +180,10 @@ public readonly record struct CanonicalMidiEvent(
     long StableOrder,
     long SemanticTargetKey,
     long SemanticGroup,
-    SourceReference Source);
+    SourceReference Source,
+    MidoraId ExportTrackId = default,
+    int SmfTrackOrder = int.MaxValue,
+    long SmfEventOrder = long.MaxValue);
 
 public readonly record struct ChannelUnitAllocation(
     MidoraId TrackId,
@@ -181,7 +195,41 @@ public readonly record struct ChannelUnitAllocation(
     long StartTick,
     long EndTick,
     byte ZeroBasedPort,
-    byte ZeroBasedChannel);
+    byte ZeroBasedChannel,
+    MidoraId MidiChannelRootId = default,
+    MidoraId PureMidiTrackId = default,
+    MidiChannelMode ChannelMode = MidiChannelMode.Melodic);
+
+public enum CanonicalSmfTrackKind
+{
+    PureMidiTrack,
+    LogicalChannelUnit
+}
+
+public readonly record struct CanonicalSmfTrackDescriptor(
+    MidoraId ExportTrackId,
+    CanonicalSmfTrackKind Kind,
+    string Name,
+    byte ZeroBasedPort,
+    byte ZeroBasedChannel,
+    long EndTick,
+    MidoraId MidiChannelRootId = default,
+    MidoraId SourceTrackId = default,
+    MidiChannelMode ChannelMode = MidiChannelMode.Melodic,
+    string MidiChannelRootName = "",
+    int MidiChannelRootOrder = -1,
+    int SourceTrackOrder = -1,
+    MidiChannelRootRoutingMode RoutingMode = MidiChannelRootRoutingMode.Auto);
+
+public readonly record struct CanonicalOpaqueMidiEvent(
+    MidoraId ExportTrackId,
+    long Tick,
+    OpaqueMidiEventKind Kind,
+    byte MetaType,
+    ReadOnlyMemory<byte> Payload,
+    long StableOrder,
+    SourceReference Source,
+    int SmfTrackOrder = int.MaxValue);
 
 public readonly record struct CanonicalTempo(
     MidoraId SourceId,
@@ -248,6 +296,8 @@ public sealed class CanonicalCompiledResult
     private readonly CanonicalMidiEvent[] _events;
     private readonly ChannelUnitAllocation[] _allocations;
     private readonly CompilerDiagnostic[] _diagnostics;
+    private readonly CanonicalSmfTrackDescriptor[] _smfTracks;
+    private readonly CanonicalOpaqueMidiEvent[] _opaqueMidiEvents;
 
     internal CanonicalCompiledResult(
         int ticksPerQuarterNote,
@@ -260,7 +310,9 @@ public sealed class CanonicalCompiledResult
         bool isConsumable,
         CompilationFailureStage? failureStage,
         long fingerprint,
-        CompilationStatistics statistics)
+        CompilationStatistics statistics,
+        CanonicalSmfTrackDescriptor[]? smfTracks = null,
+        CanonicalOpaqueMidiEvent[]? opaqueMidiEvents = null)
     {
         TicksPerQuarterNote = ticksPerQuarterNote;
         Context = context ?? throw new ArgumentNullException(nameof(context));
@@ -276,6 +328,8 @@ public sealed class CanonicalCompiledResult
         FailureStage = failureStage;
         Fingerprint = fingerprint;
         Statistics = statistics;
+        _smfTracks = smfTracks ?? [];
+        _opaqueMidiEvents = opaqueMidiEvents ?? [];
     }
 
     public int TicksPerQuarterNote { get; }
@@ -293,6 +347,8 @@ public sealed class CanonicalCompiledResult
     public ReadOnlySpan<CanonicalTempo> Tempos => Conductor.Tempos;
     public ReadOnlySpan<ChannelUnitAllocation> Allocations => _allocations;
     public IReadOnlyList<CompilerDiagnostic> Diagnostics => _diagnostics;
+    public ReadOnlySpan<CanonicalSmfTrackDescriptor> SmfTracks => _smfTracks;
+    public ReadOnlySpan<CanonicalOpaqueMidiEvent> OpaqueMidiEvents => _opaqueMidiEvents;
 
     internal CanonicalCompiledResult CreatePlaybackView()
     {
@@ -320,7 +376,9 @@ public sealed class CanonicalCompiledResult
             IsConsumable,
             FailureStage,
             Fingerprint,
-            Statistics);
+            Statistics,
+            _smfTracks,
+            _opaqueMidiEvents);
     }
 }
 
@@ -336,6 +394,9 @@ public readonly record struct CompilationStatistics(
     public int UsedPortCount { get; init; }
     public int NoteOnEventCount { get; init; }
     public ResourceShortageDetails? ResourceShortage { get; init; }
+    public int ReservedMidiRootUnitCount { get; init; }
+    public int AllocatedMidiRootUnitCount { get; init; }
+    public int LogicalPeakChannelUnitCount { get; init; }
 }
 
 public sealed class ResourceShortageDetails

@@ -623,15 +623,6 @@ public sealed class MidoraProjectPackageV1
             _timeProvider.GetUtcNow());
         MidiStateCodecV1.Restore(project.GlobalInitialState, projectSettings.GlobalInitialState);
 
-        foreach (ProjectFolderIndexJsonV1 folder in projectIndex.EventInstrumentFolders)
-        {
-            project.EventInstrumentFolders.Add(new EventInstrumentLibraryFolder(
-                ParseId(folder.Id, "project.json folder ID"))
-            {
-                Name = folder.Name
-            });
-        }
-
         await RestoreProjectObjectsAsync(
             project,
             projectIndex,
@@ -831,6 +822,18 @@ public sealed class MidoraProjectPackageV1
                 $"logical-tracks/lt_{track.Id}.pb",
                 LogicalTrackProtobufCodecV1.Serialize(track));
         }
+        foreach (MidiChannelRoot root in project.MidiChannelRoots)
+        {
+            content.Add(
+                $"midi-channel-roots/mcr_{root.Id}.pb",
+                MidiChannelRootProtobufCodecV1.Serialize(root));
+        }
+        foreach (PureMidiTrack track in project.PureMidiTracks)
+        {
+            content.Add(
+                $"midi-tracks/mt_{track.Id}.pb",
+                PureMidiTrackProtobufCodecV1.Serialize(track));
+        }
         EmbeddedProjectSoundFontReference? embeddedReference =
             project.SoundFont.Reference as EmbeddedProjectSoundFontReference;
         string? embeddedPath = embeddedReference is null
@@ -872,7 +875,10 @@ public sealed class MidoraProjectPackageV1
 
     private static void ValidateSupportedProject(MidoraProject project)
     {
-        if (project.DamagedEventInstruments.Count != 0 || project.DamagedLogicalTracks.Count != 0)
+        if (project.DamagedEventInstruments.Count != 0
+            || project.DamagedLogicalTracks.Count != 0
+            || project.DamagedMidiChannelRoots.Count != 0
+            || project.DamagedPureMidiTracks.Count != 0)
         {
             throw new InvalidDataException(
                 "Projects containing damaged object placeholders cannot be saved.");
@@ -884,10 +890,6 @@ public sealed class MidoraProjectPackageV1
         }
 
         HashSet<MidoraId> ids = [];
-        foreach (EventInstrumentLibraryFolder folder in project.EventInstrumentFolders)
-        {
-            AddId(folder.Id, project.NextStableId, ids, "Event Instrument folder");
-        }
         foreach (MidoraId id in EnumerateConductorIds(project.Conductor))
         {
             AddId(id, project.NextStableId, ids, "Conductor event");
@@ -904,6 +906,17 @@ public sealed class MidoraProjectPackageV1
             foreach (MidoraId id in EnumerateLogicalTrackIds(track))
             {
                 AddId(id, project.NextStableId, ids, "Logical Track object");
+            }
+        }
+        foreach (MidiChannelRoot root in project.MidiChannelRoots)
+        {
+            AddId(root.Id, project.NextStableId, ids, "MIDI Channel Root");
+        }
+        foreach (PureMidiTrack track in project.PureMidiTracks)
+        {
+            foreach (MidoraId id in EnumeratePureMidiTrackIds(track))
+            {
+                AddId(id, project.NextStableId, ids, "Pure MIDI Track object");
             }
         }
         if (project.SoundFont.Reference is EmbeddedProjectSoundFontReference embedded)
@@ -1209,12 +1222,13 @@ public sealed class MidoraProjectPackageV1
         IReadOnlyDictionary<string, ManifestFileEntryJsonV1> manifestIndex,
         ProjectJsonV1 projectIndex)
     {
-        HashSet<string> referencedPaths = projectIndex.EventInstruments
+        HashSet<string> referencedPaths = projectIndex.ArrangementParents
             .Select(value => value.Path)
-            .Concat(projectIndex.LogicalTracks.Select(value => value.Path))
+            .Concat(projectIndex.ArrangementParents.SelectMany(value => value.Children.Select(child => child.Path)))
             .ToHashSet(StringComparer.Ordinal);
         foreach (ManifestFileEntryJsonV1 item in manifestIndex.Values
-            .Where(value => value.Kind is "event-instrument-pb" or "logical-track-pb")
+            .Where(value => value.Kind is "event-instrument-pb" or "logical-track-pb"
+                or "midi-channel-root-pb" or "pure-midi-track-pb")
             .Where(value => !referencedPaths.Contains(value.Path))
             .OrderBy(value => value.Path, StringComparer.Ordinal))
         {
@@ -1409,13 +1423,20 @@ public sealed class MidoraProjectPackageV1
         ICollection<MidoraPackageDiagnosticV1> diagnostics,
         CancellationToken cancellationToken)
     {
-        for (int objectIndex = 0; objectIndex < projectIndex.EventInstruments.Length; objectIndex++)
+        for (int parentIndex = 0; parentIndex < projectIndex.ArrangementParents.Length; parentIndex++)
         {
-            ProjectObjectIndexJsonV1 item = projectIndex.EventInstruments[objectIndex];
-            MidoraId expectedId = ParseId(item.Id, "project.json Event Instrument ID");
+            ArrangementParentIndexJsonV1 parent = projectIndex.ArrangementParents[parentIndex];
+            MidoraId expectedParentId = ParseId(parent.Id, "project.json Arrangement parent ID");
+            ArrangementParentKind parentKind = parent.Kind == "event-instrument"
+                ? ArrangementParentKind.EventInstrument
+                : ArrangementParentKind.MidiChannelRoot;
+            project.ArrangementParents.Add(new(parentKind, expectedParentId));
+            string parentManifestKind = parentKind == ArrangementParentKind.EventInstrument
+                ? "event-instrument-pb"
+                : "midi-channel-root-pb";
             ObjectPayloadV1 payload = await ReadObjectPayloadAsync(
-                item.Path,
-                "event-instrument-pb",
+                parent.Path,
+                parentManifestKind,
                 entries,
                 manifestIndex,
                 targetPath,
@@ -1423,102 +1444,150 @@ public sealed class MidoraProjectPackageV1
             if (payload.Bytes is null)
             {
                 AddDamagedObject(
-                    project.DamagedEventInstruments,
-                    expectedId,
-                    item,
-                    objectIndex,
+                    parentKind == ArrangementParentKind.EventInstrument
+                        ? project.DamagedEventInstruments
+                        : project.DamagedMidiChannelRoots,
+                    expectedParentId,
+                    parent.NameSnapshot,
+                    parent.Path,
+                    parentIndex,
                     payload.Error!,
-                    diagnostics);
-                continue;
+                    diagnostics,
+                    childIds: parent.Children.Select(value => ParseId(
+                        value.Id,
+                        "project.json Arrangement child ID")).ToArray());
             }
-
-            try
+            else
             {
-                EventInstrument instrument = EventInstrumentProtobufCodecV1.Restore(project, payload.Bytes);
-                if (instrument.Id != expectedId)
+                try
+                {
+                    if (parentKind == ArrangementParentKind.EventInstrument)
+                    {
+                        EventInstrument instrument = EventInstrumentProtobufCodecV1.Restore(
+                            project,
+                            payload.Bytes);
+                        if (instrument.Id != expectedParentId
+                            || !instrument.LogicalTrackIds.SequenceEqual(
+                                parent.Children.Select(value => ParseId(
+                                    value.Id,
+                                    "project.json Logical Track ID"))))
+                        {
+                            throw new InvalidDataException(
+                                "The Event Instrument identity or child order does not match project.json.");
+                        }
+                        project.EventInstruments.Add(instrument);
+                    }
+                    else
+                    {
+                        MidiChannelRoot root = MidiChannelRootProtobufCodecV1.Restore(
+                            project,
+                            payload.Bytes);
+                        if (root.Id != expectedParentId
+                            || !root.MidiTrackIds.SequenceEqual(
+                                parent.Children.Select(value => ParseId(
+                                    value.Id,
+                                    "project.json Pure MIDI Track ID"))))
+                        {
+                            throw new InvalidDataException(
+                                "The MIDI Channel Root identity or child order does not match project.json.");
+                        }
+                        project.MidiChannelRoots.Add(root);
+                    }
+                }
+                catch (ProtobufObjectHeaderExceptionV1 exception)
+                {
+                    throw StructureFailure(targetPath, parent.Path, exception.Message, exception);
+                }
+                catch (InvalidDataException exception)
                 {
                     AddDamagedObject(
-                        project.DamagedEventInstruments,
-                        expectedId,
-                        item,
-                        objectIndex,
-                        "The Event Instrument internal ID does not match project.json.",
-                        diagnostics);
-                    continue;
+                        parentKind == ArrangementParentKind.EventInstrument
+                            ? project.DamagedEventInstruments
+                            : project.DamagedMidiChannelRoots,
+                        expectedParentId,
+                        parent.NameSnapshot,
+                        parent.Path,
+                        parentIndex,
+                        exception.Message,
+                        diagnostics,
+                        childIds: parent.Children.Select(value => ParseId(
+                            value.Id,
+                            "project.json Arrangement child ID")).ToArray());
                 }
-                instrument.LibraryFolderId = item.FolderId is null
-                    ? null
-                    : ParseId(item.FolderId, "project.json Event Instrument folder ID");
-                project.EventInstruments.Add(instrument);
-            }
-            catch (ProtobufObjectHeaderExceptionV1 exception)
-            {
-                throw StructureFailure(targetPath, item.Path, exception.Message, exception);
-            }
-            catch (InvalidDataException exception)
-            {
-                AddDamagedObject(
-                    project.DamagedEventInstruments,
-                    expectedId,
-                    item,
-                    objectIndex,
-                    exception.Message,
-                    diagnostics);
-            }
-        }
-
-        for (int objectIndex = 0; objectIndex < projectIndex.LogicalTracks.Length; objectIndex++)
-        {
-            ProjectObjectIndexJsonV1 item = projectIndex.LogicalTracks[objectIndex];
-            MidoraId expectedId = ParseId(item.Id, "project.json Logical Track ID");
-            ObjectPayloadV1 payload = await ReadObjectPayloadAsync(
-                item.Path,
-                "logical-track-pb",
-                entries,
-                manifestIndex,
-                targetPath,
-                cancellationToken).ConfigureAwait(false);
-            if (payload.Bytes is null)
-            {
-                AddDamagedObject(
-                    project.DamagedLogicalTracks,
-                    expectedId,
-                    item,
-                    objectIndex,
-                    payload.Error!,
-                    diagnostics);
-                continue;
             }
 
-            try
+            for (int childIndex = 0; childIndex < parent.Children.Length; childIndex++)
             {
-                LogicalTrack track = LogicalTrackProtobufCodecV1.Restore(project, payload.Bytes);
-                if (track.Id != expectedId)
+                ArrangementChildIndexJsonV1 child = parent.Children[childIndex];
+                MidoraId expectedChildId = ParseId(
+                    child.Id,
+                    "project.json Arrangement child ID");
+                bool logical = child.Kind == "logical-track";
+                ObjectPayloadV1 childPayload = await ReadObjectPayloadAsync(
+                    child.Path,
+                    logical ? "logical-track-pb" : "pure-midi-track-pb",
+                    entries,
+                    manifestIndex,
+                    targetPath,
+                    cancellationToken).ConfigureAwait(false);
+                if (childPayload.Bytes is null)
                 {
                     AddDamagedObject(
-                        project.DamagedLogicalTracks,
-                        expectedId,
-                        item,
-                        objectIndex,
-                        "The Logical Track internal ID does not match project.json.",
-                        diagnostics);
+                        logical ? project.DamagedLogicalTracks : project.DamagedPureMidiTracks,
+                        expectedChildId,
+                        child.NameSnapshot,
+                        child.Path,
+                        childIndex,
+                        childPayload.Error!,
+                        diagnostics,
+                        parentId: expectedParentId);
                     continue;
                 }
-                project.Tracks.Add(track);
-            }
-            catch (ProtobufObjectHeaderExceptionV1 exception)
-            {
-                throw StructureFailure(targetPath, item.Path, exception.Message, exception);
-            }
-            catch (InvalidDataException exception)
-            {
-                AddDamagedObject(
-                    project.DamagedLogicalTracks,
-                    expectedId,
-                    item,
-                    objectIndex,
-                    exception.Message,
-                    diagnostics);
+                try
+                {
+                    if (logical)
+                    {
+                        LogicalTrack track = LogicalTrackProtobufCodecV1.Restore(
+                            project,
+                            childPayload.Bytes);
+                        if (track.Id != expectedChildId
+                            || track.EventInstrumentId != expectedParentId)
+                        {
+                            throw new InvalidDataException(
+                                "The Logical Track identity or parent does not match project.json.");
+                        }
+                        project.Tracks.Add(track);
+                    }
+                    else
+                    {
+                        PureMidiTrack track = PureMidiTrackProtobufCodecV1.Restore(
+                            project,
+                            childPayload.Bytes);
+                        if (track.Id != expectedChildId
+                            || track.MidiChannelRootId != expectedParentId)
+                        {
+                            throw new InvalidDataException(
+                                "The Pure MIDI Track identity or parent does not match project.json.");
+                        }
+                        project.PureMidiTracks.Add(track);
+                    }
+                }
+                catch (ProtobufObjectHeaderExceptionV1 exception)
+                {
+                    throw StructureFailure(targetPath, child.Path, exception.Message, exception);
+                }
+                catch (InvalidDataException exception)
+                {
+                    AddDamagedObject(
+                        logical ? project.DamagedLogicalTracks : project.DamagedPureMidiTracks,
+                        expectedChildId,
+                        child.NameSnapshot,
+                        child.Path,
+                        childIndex,
+                        exception.Message,
+                        diagnostics,
+                        parentId: expectedParentId);
+                }
             }
         }
     }
@@ -1562,18 +1631,28 @@ public sealed class MidoraProjectPackageV1
     private static void AddDamagedObject(
         ICollection<DamagedProjectObject> target,
         MidoraId id,
-        ProjectObjectIndexJsonV1 item,
+        string nameSnapshot,
+        string packagePath,
         int originalIndex,
         string error,
-        ICollection<MidoraPackageDiagnosticV1> diagnostics)
+        ICollection<MidoraPackageDiagnosticV1> diagnostics,
+        MidoraId? parentId = null,
+        IReadOnlyList<MidoraId>? childIds = null)
     {
-        target.Add(new(id, item.NameSnapshot, item.Path, error, originalIndex));
+        target.Add(new(
+            id,
+            nameSnapshot,
+            packagePath,
+            error,
+            originalIndex,
+            parentId,
+            childIds is null ? null : Array.AsReadOnly(childIds.ToArray())));
         diagnostics.Add(new(
             MidoraPackageDiagnosticSeverityV1.Error,
             MidoraPackageDiagnosticCategoryV1.FileDamage,
             "MIDORA-PERSIST-DAMAGED-OBJECT",
             $"The object could not be loaded and is represented by a damaged placeholder. {error}",
-            item.Path));
+            packagePath));
     }
 
     private sealed record ObjectPayloadV1(byte[]? Bytes, string? Error);
@@ -1790,13 +1869,16 @@ public sealed class MidoraProjectPackageV1
         _ when path.StartsWith("settings/", StringComparison.Ordinal) => "settings-json",
         _ when path.StartsWith("event-instruments/", StringComparison.Ordinal) => "event-instrument-pb",
         _ when path.StartsWith("logical-tracks/", StringComparison.Ordinal) => "logical-track-pb",
+        _ when path.StartsWith("midi-channel-roots/", StringComparison.Ordinal) => "midi-channel-root-pb",
+        _ when path.StartsWith("midi-tracks/", StringComparison.Ordinal) => "pure-midi-track-pb",
         _ when path.StartsWith("resources/soundfonts/", StringComparison.Ordinal) => "embedded-resource",
         _ => throw new InvalidDataException($"No v1 manifest kind is defined for '{path}'.")
     };
 
     private static bool IsKnownKind(string kind) => kind is
         "core-json" or "settings-json" or "conductor-json" or
-        "event-instrument-pb" or "logical-track-pb" or "embedded-resource";
+        "event-instrument-pb" or "logical-track-pb" or
+        "midi-channel-root-pb" or "pure-midi-track-pb" or "embedded-resource";
 
     private static void ValidateLoadedStableIds(
         ProjectJsonV1 projectIndex,
@@ -1806,10 +1888,6 @@ public sealed class MidoraProjectPackageV1
         long nextStableId)
     {
         HashSet<MidoraId> ids = [];
-        foreach (ProjectFolderIndexJsonV1 folder in projectIndex.EventInstrumentFolders)
-        {
-            AddId(ParseId(folder.Id, "project.json folder ID"), nextStableId, ids, "Event Instrument folder");
-        }
         if (conductor is not null)
         {
             foreach (MidoraId id in EnumerateConductorIds(conductor))
@@ -1818,39 +1896,58 @@ public sealed class MidoraProjectPackageV1
             }
         }
         Dictionary<MidoraId, EventInstrument> instruments = project.EventInstruments.ToDictionary(value => value.Id);
+        Dictionary<MidoraId, LogicalTrack> tracks = project.Tracks.ToDictionary(value => value.Id);
+        Dictionary<MidoraId, MidiChannelRoot> roots = project.MidiChannelRoots.ToDictionary(value => value.Id);
+        Dictionary<MidoraId, PureMidiTrack> midiTracks = project.PureMidiTracks.ToDictionary(value => value.Id);
         HashSet<MidoraId> damagedInstrumentIds = project.DamagedEventInstruments.Select(value => value.Id).ToHashSet();
-        foreach (ProjectObjectIndexJsonV1 item in projectIndex.EventInstruments)
+        HashSet<MidoraId> damagedTrackIds = project.DamagedLogicalTracks.Select(value => value.Id).ToHashSet();
+        HashSet<MidoraId> damagedRootIds = project.DamagedMidiChannelRoots.Select(value => value.Id).ToHashSet();
+        HashSet<MidoraId> damagedMidiTrackIds = project.DamagedPureMidiTracks.Select(value => value.Id).ToHashSet();
+        foreach (ArrangementParentIndexJsonV1 parent in projectIndex.ArrangementParents)
         {
-            MidoraId id = ParseId(item.Id, "project.json Event Instrument ID");
-            AddId(id, nextStableId, ids, "Event Instrument");
-            if (instruments.TryGetValue(id, out EventInstrument? instrument))
+            MidoraId parentId = ParseId(parent.Id, "project.json Arrangement parent ID");
+            AddId(parentId, nextStableId, ids, "Arrangement parent");
+            if (parent.Kind == "event-instrument"
+                && instruments.TryGetValue(parentId, out EventInstrument? instrument))
             {
                 foreach (MidoraId nestedId in EnumerateEventInstrumentIds(instrument).Skip(1))
                 {
                     AddId(nestedId, nextStableId, ids, "Event Instrument nested object");
                 }
             }
-            else if (!damagedInstrumentIds.Contains(id))
+            else if (parent.Kind == "midi-channel-root" && !roots.ContainsKey(parentId)
+                && !damagedRootIds.Contains(parentId)
+                || parent.Kind == "event-instrument" && !instruments.ContainsKey(parentId)
+                && !damagedInstrumentIds.Contains(parentId))
             {
-                throw new InvalidDataException("An indexed Event Instrument was neither loaded nor isolated as damaged.");
+                throw new InvalidDataException(
+                    "An indexed Arrangement parent was neither loaded nor isolated as damaged.");
             }
-        }
-        Dictionary<MidoraId, LogicalTrack> tracks = project.Tracks.ToDictionary(value => value.Id);
-        HashSet<MidoraId> damagedTrackIds = project.DamagedLogicalTracks.Select(value => value.Id).ToHashSet();
-        foreach (ProjectObjectIndexJsonV1 item in projectIndex.LogicalTracks)
-        {
-            MidoraId id = ParseId(item.Id, "project.json Logical Track ID");
-            AddId(id, nextStableId, ids, "Logical Track");
-            if (tracks.TryGetValue(id, out LogicalTrack? track))
+            foreach (ArrangementChildIndexJsonV1 child in parent.Children)
             {
-                foreach (MidoraId nestedId in EnumerateLogicalTrackIds(track).Skip(1))
+                MidoraId childId = ParseId(child.Id, "project.json Arrangement child ID");
+                AddId(childId, nextStableId, ids, "Arrangement child");
+                if (child.Kind == "logical-track" && tracks.TryGetValue(childId, out LogicalTrack? track))
                 {
-                    AddId(nestedId, nextStableId, ids, "Logical Track nested object");
+                    foreach (MidoraId nestedId in EnumerateLogicalTrackIds(track).Skip(1))
+                    {
+                        AddId(nestedId, nextStableId, ids, "Logical Track nested object");
+                    }
                 }
-            }
-            else if (!damagedTrackIds.Contains(id))
-            {
-                throw new InvalidDataException("An indexed Logical Track was neither loaded nor isolated as damaged.");
+                else if (child.Kind == "pure-midi-track"
+                    && midiTracks.TryGetValue(childId, out PureMidiTrack? midiTrack))
+                {
+                    foreach (MidoraId nestedId in EnumeratePureMidiTrackIds(midiTrack).Skip(1))
+                    {
+                        AddId(nestedId, nextStableId, ids, "Pure MIDI Track nested object");
+                    }
+                }
+                else if (child.Kind == "logical-track" && !damagedTrackIds.Contains(childId)
+                    || child.Kind == "pure-midi-track" && !damagedMidiTrackIds.Contains(childId))
+                {
+                    throw new InvalidDataException(
+                        "An indexed Arrangement child was neither loaded nor isolated as damaged.");
+                }
             }
         }
         if (soundFont is EmbeddedProjectSoundFontReference embedded)
@@ -1920,6 +2017,21 @@ public sealed class MidoraProjectPackageV1
                 yield return lane.Id;
                 foreach (CurvePoint point in lane.Points) yield return point.Id;
             }
+        }
+    }
+
+    private static IEnumerable<MidoraId> EnumeratePureMidiTrackIds(PureMidiTrack track)
+    {
+        yield return track.Id;
+        foreach (MidiSegment segment in track.Segments)
+        {
+            yield return segment.Id;
+            foreach (DirectMidiNote note in segment.Notes) yield return note.Id;
+            foreach (DirectMidiChannelEvent directEvent in segment.ChannelEvents)
+            {
+                yield return directEvent.Id;
+            }
+            foreach (OpaqueMidiEvent opaque in segment.OpaqueEvents) yield return opaque.Id;
         }
     }
 

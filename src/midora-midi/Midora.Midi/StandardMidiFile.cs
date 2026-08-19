@@ -79,7 +79,7 @@ public sealed class StandardMidiFileTrack
     public IReadOnlyList<StandardMidiFileEvent> Events => _events;
 }
 
-public static class StandardMidiFile
+public static partial class StandardMidiFile
 {
     public const byte TextMetaType = 0x01;
     public const byte CopyrightMetaType = 0x02;
@@ -108,12 +108,6 @@ public static class StandardMidiFile
                 $"SMF Type 1 track count must be in the range 1..{ushort.MaxValue}, but was {tracks.Count}.");
         }
 
-        long commonEndTick = tracks[0].EndTick;
-        if (commonEndTick < 0)
-        {
-            throw new MidoraMidiException("SMF track End Of Track tick cannot be negative.");
-        }
-
         using MemoryStream output = new();
         WriteAscii(output, "MThd"u8);
         WriteUInt32BigEndian(output, 6);
@@ -127,9 +121,9 @@ public static class StandardMidiFile
             {
                 throw new MidoraMidiException("SMF track collection cannot contain null.");
             }
-            if (track.EndTick != commonEndTick)
+            if (track.EndTick < 0)
             {
-                throw new MidoraMidiException("All Midora SMF tracks must end at the same tick.");
+                throw new MidoraMidiException("SMF track End Of Track tick cannot be negative.");
             }
 
             byte[] trackBytes = EncodeTrack(track);
@@ -160,7 +154,6 @@ public static class StandardMidiFile
             throw new MidoraMidiException("The file is not a supported TPQ-based SMF Type 1 file.");
         }
 
-        long? commonEndTick = null;
         for (int trackIndex = 0; trackIndex < trackCount; trackIndex++)
         {
             RequireChunkId(file, ref position, "MTrk"u8);
@@ -226,11 +219,6 @@ public static class StandardMidiFile
             {
                 throw new MidoraMidiException("Every SMF track must contain End Of Track.");
             }
-            if (commonEndTick.HasValue && commonEndTick.Value != absoluteTick)
-            {
-                throw new MidoraMidiException("All Midora SMF tracks must have a common End Of Track tick.");
-            }
-            commonEndTick = absoluteTick;
         }
 
         if (position != file.Length)

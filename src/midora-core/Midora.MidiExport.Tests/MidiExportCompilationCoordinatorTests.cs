@@ -105,6 +105,87 @@ public sealed class MidiExportCompilationCoordinatorTests
         Assert.Equal((ushort)2, BinaryPrimitives.ReadUInt16BigEndian(encoded.FileBytes.AsSpan(10, 2)));
     }
 
+    [Fact]
+    public void PureMidiSelectionAndEmptyTrackDescriptorParticipateInPerPortExport()
+    {
+        MidoraProject project = new(192);
+        MidiChannelRoot root = new(project)
+        {
+            Name = "Empty Root",
+            RoutingMode = MidiChannelRootRoutingMode.Fixed,
+            FixedZeroBasedPort = 3,
+            FixedZeroBasedChannel = 5,
+            ChannelMode = MidiChannelMode.Melodic
+        };
+        PureMidiTrack track = new(project)
+        {
+            Name = "Empty MIDI Track",
+            MidiChannelRootId = root.Id
+        };
+        project.MidiChannelRoots.Add(root);
+        project.PureMidiTracks.Add(track);
+        root.MidiTrackIds.Add(track.Id);
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.MidiChannelRoot,
+            root.Id));
+
+        using MidoraCompiler compiler = new();
+        MidiExportCompilationResult compilation = new MidiExportCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = MidiExportMode.PerPort,
+            Routing = MidiExportRoutingStrategy.Preserve,
+            SelectedTrackIds = new HashSet<MidoraId> { track.Id }
+        });
+
+        Assert.True(compilation.Succeeded, string.Join(Environment.NewLine, compilation.Diagnostics));
+        MidiExportTrackSnapshot snapshot = Assert.Single(compilation.Tracks);
+        Assert.Equal(track.Id, snapshot.TrackId);
+        Assert.True(snapshot.Participates);
+        Assert.Equal(new byte[] { 3 }, compilation.UsedZeroBasedPorts);
+        Assert.Single(compilation.CompiledResult.SmfTracks.ToArray());
+
+        MidiExportEncodingResult encoded = CanonicalMidiFileExporter.EncodePort(new()
+        {
+            CompiledResult = compilation.CompiledResult,
+            ConductorTrackName = "Empty",
+            ZeroBasedOriginalPort = 3,
+            LogicalTracks = compilation.Layouts
+        });
+        Assert.True(encoded.Succeeded, string.Join(Environment.NewLine, encoded.Diagnostics));
+        Assert.Equal((ushort)2, BinaryPrimitives.ReadUInt16BigEndian(encoded.FileBytes.AsSpan(10, 2)));
+    }
+
+    [Fact]
+    public void PerLogicalTrackModeRejectsPureMidiTrackSelection()
+    {
+        MidoraProject project = new(192);
+        MidiChannelRoot root = new(project) { Name = "Root" };
+        PureMidiTrack track = new(project)
+        {
+            Name = "MIDI Track",
+            MidiChannelRootId = root.Id
+        };
+        project.MidiChannelRoots.Add(root);
+        project.PureMidiTracks.Add(track);
+        root.MidiTrackIds.Add(track.Id);
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.MidiChannelRoot,
+            root.Id));
+        using MidoraCompiler compiler = new();
+
+        ArgumentException error = Assert.Throws<ArgumentException>(() =>
+            new MidiExportCompilationCoordinator(compiler).Compile(new()
+            {
+                Project = project,
+                Mode = MidiExportMode.PerLogicalTrack,
+                Routing = MidiExportRoutingStrategy.Compact,
+                SelectedTrackIds = new HashSet<MidoraId> { track.Id }
+            }));
+
+        Assert.Contains("Pure MIDI Track", error.Message, StringComparison.Ordinal);
+    }
+
     private static EventInstrument CreateInstrument(MidoraProject project)
     {
         EventInstrument instrument = new(project)

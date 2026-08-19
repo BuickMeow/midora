@@ -724,6 +724,63 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void ArrangementParentSoloTakesPriorityWhileParentAndChildMuteRemainIndependent()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            (MidoraProject project, LogicalTrack secondTrack) = CreateMonitoringRoutingProject();
+            LogicalTrack firstTrack = project.Tracks.Single(track => track.Id != secondTrack.Id);
+            MidoraId secondParentId = secondTrack.EventInstrumentId!.Value;
+            FakeBackend backend = new();
+            using PlaybackController controller = new(new(project, soundFont), backend);
+
+            controller.SetTrackSolo(firstTrack.Id, true);
+            controller.SetArrangementParentSolo(secondParentId, true);
+            controller.SetTrackMuted(secondTrack.Id, true);
+            controller.Start();
+
+            MidiRenderPlan firstPlan = Assert.IsType<MidiRenderPlan>(backend.LastStartedPlan);
+            Assert.Contains(
+                firstPlan.FindSourceIndex(firstTrack.Id.Value),
+                firstPlan.InitiallyDisabledSourceIndices.ToArray());
+            Assert.Contains(
+                firstPlan.FindSourceIndex(secondTrack.Id.Value),
+                firstPlan.InitiallyDisabledSourceIndices.ToArray());
+            controller.Stop();
+
+            controller.SetTrackMuted(secondTrack.Id, false);
+            controller.Start();
+            MidiRenderPlan secondPlan = Assert.IsType<MidiRenderPlan>(backend.LastStartedPlan);
+            Assert.Contains(
+                secondPlan.FindSourceIndex(firstTrack.Id.Value),
+                secondPlan.InitiallyDisabledSourceIndices.ToArray());
+            Assert.DoesNotContain(
+                secondPlan.FindSourceIndex(secondTrack.Id.Value),
+                secondPlan.InitiallyDisabledSourceIndices.ToArray());
+            controller.Stop();
+
+            controller.SetArrangementParentSolo(secondParentId, false);
+            controller.SetArrangementParentMuted(secondParentId, true);
+            controller.SetTrackSolo(firstTrack.Id, false);
+            controller.SetTrackSolo(secondTrack.Id, true);
+            controller.Start();
+            MidiRenderPlan thirdPlan = Assert.IsType<MidiRenderPlan>(backend.LastStartedPlan);
+            Assert.Contains(
+                thirdPlan.FindSourceIndex(firstTrack.Id.Value),
+                thirdPlan.InitiallyDisabledSourceIndices.ToArray());
+            Assert.Contains(
+                thirdPlan.FindSourceIndex(secondTrack.Id.Value),
+                thirdPlan.InitiallyDisabledSourceIndices.ToArray());
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void StartWithoutExplicitTickUsesStoppedCursor()
     {
         string soundFont = Path.GetTempFileName();
@@ -1678,6 +1735,9 @@ public sealed class PlaybackTests
         voice.Events.Add(TemplateEvent.Note(project, 0, 480, 60, 100));
         instrument.SubVoices.Add(voice);
         project.EventInstruments.Add(instrument);
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.EventInstrument,
+            instrument.Id));
         LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
         Segment segment = new(project) { LengthTicks = 960 };
         segment.Notes.Add(new LogicalNote(project)
@@ -1688,6 +1748,7 @@ public sealed class PlaybackTests
         });
         track.Segments.Add(segment);
         project.Tracks.Add(track);
+        instrument.LogicalTrackIds.Add(track.Id);
         return project;
     }
 
@@ -1706,6 +1767,9 @@ public sealed class PlaybackTests
         firstVoice.Events.Add(TemplateEvent.Note(project, 0, 480, 60, 100));
         firstInstrument.SubVoices.Add(firstVoice);
         project.EventInstruments.Add(firstInstrument);
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.EventInstrument,
+            firstInstrument.Id));
         LogicalTrack firstTrack = new(project)
         {
             Name = "First",
@@ -1721,6 +1785,7 @@ public sealed class PlaybackTests
         });
         firstTrack.Segments.Add(firstSegment);
         project.Tracks.Add(firstTrack);
+        firstInstrument.LogicalTrackIds.Add(firstTrack.Id);
 
         EventInstrument restoredInstrument = new(project)
         {
@@ -1734,6 +1799,9 @@ public sealed class PlaybackTests
         restoredVoice.Events.Add(TemplateEvent.Note(project, 0, 480, 60, 100));
         restoredInstrument.SubVoices.Add(restoredVoice);
         project.EventInstruments.Add(restoredInstrument);
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.EventInstrument,
+            restoredInstrument.Id));
         LogicalTrack restoredTrack = new(project)
         {
             Name = "Restored",
@@ -1749,6 +1817,7 @@ public sealed class PlaybackTests
         });
         restoredTrack.Segments.Add(restoredSegment);
         project.Tracks.Add(restoredTrack);
+        restoredInstrument.LogicalTrackIds.Add(restoredTrack.Id);
 
         return (project, restoredTrack);
     }

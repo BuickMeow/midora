@@ -4,7 +4,7 @@
 > 规格版本：**v0.1**  
 > 适用产品范围：**Midora 初版**
 
-本章定义高层 Project 语义到标准 MIDI 1.0 事件语义的唯一转换管线，涵盖 CompileContext、范围恢复、实例展开、资源分配、排序、诊断、缓存、增量编译和消费者边界。
+本章定义高层 Project 语义到标准 MIDI 1.0 事件语义的唯一转换管线，涵盖 Logical/Event Instrument 展开、Pure MIDI 直接事件归一化、CompileContext、范围恢复、资源分配、排序、诊断、缓存、增量编译和消费者边界。Pure MIDI Track 的专项模型和 SMF Track 投影由第 23 章细化。
 
 ## 12.1 编译系统核心原则
 ### 12.1.1 Canonical compiled result
@@ -89,7 +89,7 @@ MIDI 导出语义
 ```text
 编译类型
 tick 范围
-Track 选择集合
+Logical Track / Pure MIDI Track 选择集合
 是否全项目编译
 是否播放编译
 是否预览编译
@@ -340,21 +340,9 @@ Project End Marker：
 ```
 Project End Marker 不删除 Project 内容。
 ---
-## 12.6 Logical Track 与 Segment 过滤
-### 12.6.1 未指定 Event Instrument 的 Logical Track
-未指定 Event Instrument 的 Logical Track：
-```text
-不生成 Event Instrument Instance
-不占用 Channel Unit
-不参与播放、预览、渲染或 MIDI 输出
-```
-如果包含 Segment、Logical Note 或 Logical Parameter Lane：
-```text
-产生 Info
-不产生 Warning
-不导致编译失败
-```
-Event Instrument 引用断裂的 Track 应自动视为未指定 Event Instrument。
+## 12.6 Track 与 Segment 过滤
+### 12.6.1 Logical Track 父节点验证
+每个 Logical Track 必须且只能属于一个 Event Instrument。缺少 parent、多个 parent、parent kind 错误或 parent/child 索引不一致是结构 Error，不能生成 Canonical Compiled Result；不得把该 Track 降级为未指定并忽略。Damaged Parent Placeholder 保留导航与数据隔离，但其 subtree 不允许正式编译。
 ### 12.6.2 Mute / Solo
 canonical compiled result 默认忽略 Mute / Solo 状态。
 规则：
@@ -367,18 +355,19 @@ MIDI 导出和音频文件渲染必须使用显式 Track 选择，而不是隐�
 ### 12.6.3 Track 选择集合
 当 CompileContext 显式选择 Track 集合时：
 ```text
-本次编译只为被选择 Track 生成实例、事件和资源占用。
+本次编译只为被选择 Logical Track / Pure MIDI Track 生成实例、事件和资源占用。
 未选择 Track 不参与本次编译诊断。
 全项目诊断仍应检查全部 Track。
 Conductor Track 仍进入结果。
 ```
+选择同一 Root 的部分 Pure MIDI Track 时，本次执行投影只合并被选择 Track 的事件，并根据这些 Track 的 Segment 重新建立本次上下文的 Root 活动连通区间；不得从未选择 Track 偷取状态事件。全项目正式编译仍包含全部有效 Track。
 ### 12.6.4 Segment 重叠
-同一 Logical Track 内 Segment 不允许重叠。
+同一 Logical Track 内 Logical Segment、同一 Pure MIDI Track 内 Midi Segment 均不允许重叠。
 如果打开 Project 或编译时发现同一 Track 内 Segment 重叠：
 ```text
 编译失败，并定位到冲突 Segment。
 ```
-不同 Logical Track 的 Segment 可以重叠并正常编译。
+不同 Track 的 Segment 可以重叠并正常编译，包括同一 MIDI Channel Root 的不同 Pure MIDI Track。
 ### 12.6.5 Segment 裁剪窗口
 Logical Note start 在 Segment 有效裁剪窗口外：
 ```text
@@ -395,6 +384,8 @@ Logical Note length <= 0：
 ```text
 非法，编译失败，并定位到 Logical Note。
 ```
+
+Pure MIDI Track 的 Midi Segment 使用相同 Content Window 与裁剪规则，但内部对象是 Direct MIDI Note / Direct MIDI Event；其直接编译、未配对 raw Note 和 opaque event 规则以第 23.5～23.9 节为准。
 ---
 ## 12.7 Event Instrument Instance 生成
 ### 12.7.1 触发源
@@ -696,6 +687,12 @@ Project End Marker 裁剪
 显式范围结束裁剪
 ```
 因硬裁剪生成的补充 Note Off 应标记为裁剪生成。
+
+### 12.10.7 Pure MIDI Root 生命周期
+
+第 12.10.1～12.10.5 节描述 Logical/Event Instrument lane 的 Initial State、Reset 与释放。Pure MIDI 路径不得在每个子 Midi Segment End 独立执行 Channel-wide Reset。
+
+Pure MIDI 编译必须先对同一 Root 的全部已选择 Segment 求活动连通区间：子 Segment End 只精确关闭该 Segment 拥有的活动 Note，不重置共享 CC/Bank/Program/Pitch/RPN/NRPN，也不杀死 sibling Track 的 Note；只有 Root 活动连通区间结束、Project End Marker 或消费者范围结束才执行 Root 级精确 NoteOff、CC120、最终 Reset 和 Unit 释放。完整规则见第 23.7 节。
 ---
 ## 12.11 同 tick 语义排序
 ### 12.11.1 系统级排序原则
@@ -772,6 +769,12 @@ Note On / Note Off 不允许像 CC 一样按同目标最终值折叠。
 Note 事件具有配对和生命周期语义。
 不能按普通状态事件处理。
 ```
+
+### 12.11.7 Pure MIDI 原始事件顺序
+
+第 12.11.1～12.11.5 节的状态优先级和同目标折叠适用于 Logical/Event Instrument 展开结果与编译器生成事件，不得用于重排或折叠 Pure MIDI 原始事件。
+
+同一 Root 的 Pure MIDI 原始事件总顺序固定为 `absolute tick → Pure MIDI Track explicit order → event explicit order`。同 tick、同类型、同控制器或互相冲突的重复事件均须保留；编译器生成的 Root 初始化/硬边界事件按明确 canonical role 插入。见第 23.4.2、23.6.3 和 23.9.3 节。
 ---
 ## 12.12 跨 tick 事件折叠优化边界
 第 12.8.6 节规定的连续值源重复值抑制属于离散化定义的一部分：未变化的逐 tick 候选值不会生成 canonical 事件，不属于本节所称的跨 tick 事件折叠。
@@ -845,18 +848,21 @@ Port 2 / Channel 1
 ...
 Port 16 / Channel 16
 ```
-Channel 10 作为普通 melodic Channel Unit 参与该顺序。
+Channel 10 参与同一 Unit 编号顺序。Logical/Event Instrument 使用它时必须为 melodic；Pure MIDI Root 使用它时由 Root 的 Melodic/Percussion 模式决定。
 ### 12.14.3 分配基本规则
-编译器在分配 Channel Group 时：
+编译器必须先按第 23.8 节完成 Pure MIDI Root 分配，再分配 Logical/Event Instrument Channel Group：
 ```text
-按编译时间推进。
+验证并保留全部 Fixed Root 的精确 Unit；空 Fixed Root 也保留。
+按 Root 显式顺序把每个非空 Auto Root 分配到最低未保留 Unit；空 Auto Root 不分配。
+一个 Root 在本次 CompileContext 内固定占用同一 Unit，不与 Logical instance 做时间复用。
+然后按编译时间推进 Logical/Event Instrument 分配。
 释放所有已到达 Segment/消费者硬边界并完成最终 Reset 的 Channel Unit。
 从当前可用 Channel Unit 中选择编号最低的一组。
 按 Event Instrument 内显式 SubVoice 顺序映射到这些 Channel Unit。
 根据 Rendered Instance Length 做共享/隔离 lane coloring；产生过 Note 的实际 lane 从首次启用占用到 Segment End 最终 Reset 完成。
 ```
-### 12.14.4 对外 Port 编号紧凑
-对外可见的 compiled result 不应保留无意义 Port 空洞。
+### 12.14.4 对外 Port 编号与固定路由
+没有 Fixed Root 时，对外可见的自动分配结果不应保留无意义 Port 空洞。
 例如：
 ```text
 如果本次编译上下文最多只需要 1 个 Port，则只使用 Port 1。
@@ -869,9 +875,8 @@ Port 1 使用
 Port 2 空
 Port 3 使用
 ```
-除非未来引入以下初版外功能：
+Fixed Root 是初版正式功能；它可以有意保留 Port / Channel 空洞。任何 Compact Routing 都不得移动 Fixed Root，Auto Root 与 Logical allocation 必须绕开固定 Unit。以下项目仍属于初版外功能：
 ```text
-用户显式固定 Port
 外部设备路由
 多 SF2
 每 Port 独立设置
@@ -950,6 +955,8 @@ Voice Steal
 ### 12.15.2 硬失败条件
 以下情况为 Error：
 ```text
+两个 Fixed Root 指向同一 Unit。
+Root 分配与 Logical/Event Instrument 峰值组合后超过 256 Units。
 单个 Event Instrument Instance 所需 Channel Unit 超过 256。
 任一 tick 同时占用 Channel Unit 超过 256。
 无法为某个 Channel Group 原子分配完整 Channel Unit。
@@ -980,11 +987,13 @@ Info
 compiled result 应记录：
 ```text
 Channel Unit 峰值使用量
+Fixed / Auto Root 保留与分配数量
+Logical/Event Instrument 峰值及二者 combined peak
 Port 使用数量
 每个 Event Instrument Instance 的 Channel Group 占用区间
 每个 Channel Unit 的占用区间
 资源不足失败 tick / 范围
-相关 Logical Track / Segment / Logical Note / Event Instrument / SubVoice 数量
+相关 MIDI Channel Root / Pure MIDI Track / Midi Segment / Direct Event，以及 Logical Track / Segment / Logical Note / Event Instrument / SubVoice 数量
 ```
 具体字段结构由实现设计确定。
 资源不足 Error 应尽量定位到导致峰值或失败的实例集合，而不是只提示“资源不足”。
@@ -1044,6 +1053,8 @@ Port / Channel Unit 归属
 资源统计
 是否可消费
 是否 partial result
+Execution Projection
+冻结的 SMF Track Projection / descriptor
 ```
 ### 12.17.1 按 Port / Channel Unit 组织
 最终结果应能明确定位每个 MIDI / 高级事件属于哪个：
@@ -1071,6 +1082,12 @@ Logical Parameter Mapping
 Mapping Function
 Initial State Defaults
 Global Reset Defaults
+MIDI Channel Root
+Pure MIDI Track
+Midi Segment
+Direct MIDI Note / Event
+Opaque imported event
+ExportTrackId
 编译器生成原因
 ```
 来源追踪用于：
@@ -1104,6 +1121,10 @@ Track 选择
 是否音频渲染准备
 Warning 失败策略
 ```
+
+### 12.17.6 执行投影与 SMF Track 投影
+
+同一 canonical 事件集必须冻结两个一致投影：按 Channel Unit/Root 合并并形成总序的 Execution Projection，供播放和音频渲染消费；按 `ExportTrackId` 保留 Pure MIDI Track 拓扑的 SMF Track Projection，供 MIDI 导出消费。SMF Track descriptor 至少冻结 Track Name、顺序、Port/Channel、Root mode、EOT 与事件归属；导出器不得回读 Project 重新推断。详见第 23.9.2 节。
 ---
 ## 12.18 语义验证阶段
 ### 12.18.1 先验证再展开
@@ -1127,7 +1148,7 @@ Logical Note length <= 0
 同一 Track 内 Segment 重叠
 实际输出 MIDI Note number 越界
 基础 MIDI 参数非法
-出现初版明确不支持的 CC91 / CC93
+Event Instrument/SubVoice 数据或 Mapping 目标中出现该路径明确不支持的 CC91 / CC93
 映射后值非法且未配置合法处理策略
 Mapping Function 编译错误并被实际使用
 Mapping Function 运行时异常
@@ -1169,7 +1190,7 @@ Info 的系统级含义：
 ```
 例如：
 ```text
-未指定 Event Instrument 的 Track 含内容但被忽略。
+Damaged Parent Placeholder 下的内容未进入正式编译。
 Channel Unit 峰值达到 248。
 ```
 ### 12.19.5 Debug
@@ -1369,6 +1390,10 @@ Conductor Track 修改必须使相关全局状态、范围上下文、播放 / �
 Time Signature 修改还必须使 Project `Bar:Beat:Tick`、自然小节/拍网格和 Snap 派生映射失效，并重新计算中途截断 Warning。
 是否导致 Channel Unit 事件流整体重编，取决于修改是否影响本次编译范围、硬边界或输出 Meta Event。
 ```
+
+#### 12.21.6.5 修改 Pure MIDI 数据
+
+修改 Direct MIDI Note/Event、opaque payload、Midi Segment 或 Pure MIDI Track 顺序时，Dirty 起点至少回退到该 Root 中最早可能受影响的 Segment/Root checkpoint。修改 Root routing/mode 或子 Track 归属时，必须重建该 Root 分配和生命周期，并在需要时使后续 Logical allocation 重编，直到完整状态收敛。
 ### 12.21.7 增量编译不保证局部不变
 用户只改了前面一个 Note，后面很远的 Port / Channel 分配也可能变化。
 这不是 bug。
@@ -1492,14 +1517,16 @@ Project Metadata 不影响音乐编译语义。
 用户显示信息
 ```
 ### 12.22.9 Track 名称、颜色、排序
-Track 名称 / 颜色不影响音乐语义。
-Track 排序不改变音乐语义，但可能影响：
+Track 名称 / 颜色不影响音乐语义，但 Pure MIDI Track 名称影响冻结 SMF Track descriptor 与导出结果。
+Logical Track 排序通常不改变音乐语义，但可能影响：
 ```text
 确定性输出辅助顺序
 诊断显示顺序
 同 tick tie-breaker
 ```
 因此是否失效 canonical compiled result 由实现设计细化。
+
+Pure MIDI Track 排序是 Root 内同 tick 合并顺序的正式语义，必须使该 Root 的 canonical、SMF 投影和相关音频缓存失效。Direct MIDI Note/Event、Midi Segment 和 Root mode/routing 的缓存失效、checkpoint 收敛与 Root PCM key 以第 23.10 节为准。
 ---
 ## 12.23 输出消费者边界
 ### 12.23.1 播放系统
@@ -1522,7 +1549,7 @@ Track 命名
 字节编码
 导出格式整理
 ```
-但不得改变编译语义。
+但不得改变编译语义，也不得回读 Project 重新推断 Pure MIDI Track 拓扑、Root 归属、Track EOT 或同 tick 顺序。
 ### 12.23.3 音频渲染器
 音频渲染应使用与播放一致的 compiled result 语义。
 播放与音频渲染的差异只应体现在：

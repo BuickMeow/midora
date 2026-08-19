@@ -3,6 +3,8 @@
 状态：Q-NUI-034～Q-NUI-042 已确认；canonical range cache、Unit 投影/键、session cache store、Preferences、MDAP v4、正式 Worker/离线 Worker 的 Unit PCM 命中发布、post-Limiter playback span、整段 Buffering 恢复、RAM fallback 及有界缓存 I/O hot-set 已接入；八组真实固定 BASS/SF2 的 PCM 等价与极端性能门已通过
 日期：2026-08-08
 
+2026-08-18 范围修订：本文已实施的 Segment/Unit PCM 路线继续描述 Logical/Event Instrument 基线。Pure MIDI 同 Root 子 Track 不能分别合成后求和，必须按 SRS 第 23.10 节和 ADR-PMIDI-005 增加 Root merge/checkpoint/PCM 层；本文的既有通过状态不代表该新增路径已实现。
+
 ## 1. 输入
 
 - 当前 Project semantic revision、编译用途、冻结的 `[startTick, endTick)`、Track/Preview 选择与 held Gate 参数。

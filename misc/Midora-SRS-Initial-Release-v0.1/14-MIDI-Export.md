@@ -11,7 +11,7 @@
 MIDI 导出系统必须消费 `canonical compiled result`。
 规则：
 ```text
-MIDI 导出系统不得直接读取 Logical Track / Segment / Event Instrument 并自行解释音乐语义。
+MIDI 导出系统不得直接读取 Logical Track / Pure MIDI Track / Segment / Event Instrument 并自行解释音乐语义或 Track 拓扑。
 MIDI 导出系统不得重新计算 Logical Parameter Mapping。
 MIDI 导出系统不得重新决定生命周期、Reset、Channel Group 或 Port / Channel Unit 分配语义。
 MIDI 导出系统不得为了性能绕过编译系统。
@@ -107,22 +107,20 @@ Project TPQ
 Track 组织规则：
 ```text
 Track 0 = Conductor / Meta Track
-后续事件 Track = 实际有 Channel Event 的 Channel Unit（Port + Channel）
+随后 = 每个被选择 Pure MIDI Track 的独立单 Channel MTrk
+最后 = Logical/Event Instrument 实际有 Channel Event 的 Channel Unit MTrk
 ```
-如果导出结果实际使用 Port 1 / Channel 1、Port 1 / Channel 2 和 Port 3 / Channel 1，则整曲 `.mid` 中生成：
+整曲事件 Track 排序固定为：
 ```text
-Track 0: Conductor / Meta Track
-Track 1: Port 1 / Channel 1
-Track 2: Port 1 / Channel 2
-Track 3: Port 3 / Channel 1
+Conductor
+→ Pure MIDI Root explicit order
+→ Root 内 Pure MIDI Track explicit order
+→ Logical Unit 原始 Port
+→ Logical Unit Channel
 ```
-整曲事件 Track 排序：
-```text
-先按原始 Port 编号排序
-再按原始 Channel 编号排序
-```
-同一文件内，一个实际有事件的 Channel Unit 严格只对应一个 MIDI 事件 Track；每个 MIDI 事件 Track 严格只包含该 Unit 的 Channel Event。一个 Unit 被不同 Logical Track / Instance 在不重叠时段先后复用，不得按来源拆成多个 MIDI Track。
-不生成完全无 Channel Event 的 Unit Track。
+同一 Pure MIDI Root 的多个 Track 可以共享一个 Port.Channel，但必须保持为多个 MTrk；每个 Pure MIDI MTrk 只包含其 canonical `ExportTrackId` 的事件。Logical/Event Instrument 路径继续保持同一文件内每个实际 Unit 一个 MTrk；一个 Logical Unit 被不同 Logical Track / Instance 先后复用时不得按来源拆分。
+
+被选择且结构有效的空 Pure MIDI Track 可以生成只含结构 Meta 与 EOT 的 MTrk，以保留用户 Track 结构；Logical Unit 不生成完全无 Channel Event 的 MTrk。
 Conductor Track 必须存在。
 ### 14.3.2 按 Logical Track 导出
 按 Logical Track 导出时：
@@ -143,20 +141,22 @@ Track 0 = Conductor / Meta Track
 仍生成结构有效的空音乐内容 MIDI。
 Readme / 诊断中说明该 Track 无音乐输出。
 ```
+
+`Per Logical Track` 是既有 Logical/Event Instrument 专用模式：Pure MIDI Track 不在该模式中生成文件，也不得被复制进每个 Logical Track 文件。需要单独导出某条 Pure MIDI Track 时，使用 `Whole Project` 并显式只选择所需 Pure MIDI Track；该单文件仍保持标准的 Conductor + 独立 Pure MIDI MTrk 结构。
 ### 14.3.3 按 Port 导出
 按 Port 导出时：
 ```text
-每个本次导出上下文实际使用的 Port 生成一个 .mid 文件。
+每个本次导出上下文实际包含 Channel Event 或被选择 Pure MIDI Track descriptor 的 Port 生成一个 .mid 文件。
 不固定生成 16 个文件。
 不为未使用 Port 生成空文件。
 ```
 每个 Port 文件内部：
 ```text
 Track 0 = Conductor / Meta Track
-后续事件 Track = 该原始 Port 内实际有事件的 Channel Unit
-后续事件 Track 按原始 Channel 编号排序
+随后 = 该原始 Port 内的 Pure MIDI Track，按 Root/Track 显式顺序
+最后 = 该原始 Port 内 Logical/Event Instrument 实际有事件的 Unit，按原始 Channel 编号
 ```
-按 Port 导出时不在事件 Track 层保留 Logical Track 拆分；同一 Unit 即使被多个 Logical Track 先后复用，也只生成一个事件 Track。
+按 Port 导出时不在事件 Track 层保留 Logical Track 拆分；同一 Logical Unit 即使被多个 Logical Track 先后复用，也只生成一个事件 Track。Pure MIDI Track 拆分、名称和相对顺序必须保留。
 不生成完全无 Channel Event 的 Unit Track。
 每个单 Port 文件内部按独立 MIDI 文件处理：
 ```text
@@ -296,13 +296,15 @@ Key Signature 是全局状态型 Meta Event，因此范围起点应恢复当前�
 ---
 ## 14.6 Track 选择
 ### 14.6.1 默认 Track 选择
-MIDI 导出默认选择：
+`Whole Project` 与 `Per Port` 默认选择：
 ```text
 所有有效 Logical Track
+所有有效 Pure MIDI Track
 ```
-未指定 Event Instrument 的 Logical Track 不参与导出。
-### 14.6.2 显式选择 Logical Track
-导出设置允许用户勾选要导出的 Logical Track。
+`Per Logical Track` 默认且只能选择所有有效 Logical Track；Pure MIDI Track 不属于该模式的候选集合。
+Damaged Parent Placeholder subtree 不参与导出并阻止正式任务；正常 Logical Track 不允许缺少 Event Instrument parent。
+### 14.6.2 显式选择 Track
+`Whole Project` 与 `Per Port` 允许用户勾选要导出的 Logical Track 与 Pure MIDI Track；`Per Logical Track` 只允许勾选 Logical Track。切换模式时可以保留不适用于当前模式的临时勾选状态以便切回，但当前任务的冻结 Track 集合不得包含该模式不支持的类型。
 用户取消勾选某个 Track 后：
 ```text
 该 Track 不参与本次导出编译。
@@ -312,15 +314,10 @@ MIDI 导出默认选择：
 Readme 记录即可。
 ```
 Track 选择集合会影响本次导出 CompileContext 的资源需求和 Port / Channel Unit 分配。
-### 14.6.3 未指定 Event Instrument 的 Track
-未指定 Event Instrument 但包含内容的 Logical Track：
-```text
-不参与导出。
-在导出诊断中列为 Info。
-不导致导出失败。
-不生成空 Track。
-不将 Logical Note 导出为普通 MIDI Note。
-```
+
+选择同一 Root 的部分 Pure MIDI Track 不得自动带入未选择 sibling Track；Root 生命周期与状态按本次被选择集合重新建立。Fixed Root 的路由仍必须保留。
+### 14.6.3 Logical Track 父节点错误
+Logical Track 无唯一 Event Instrument parent 是结构 Error，导出准备失败。Damaged Parent Placeholder subtree 不得生成空 Track 或把 Logical Note 直接当作普通 MIDI Note 导出。
 ### 14.6.4 Mute / Solo 不影响导出
 MIDI 导出不受当前临时 Mute / Solo 状态影响。
 Mute / Solo 是实时监听状态，不是成品输出选择。
@@ -359,6 +356,9 @@ Compact Routing 允许：
 ```
 Compact Routing 不允许：
 ```text
+移动或重映射 Fixed MIDI Channel Root
+把同一 Pure MIDI Root 拆到多个 Unit
+合并两个不同 Root
 改变导出模式要求的文件 / Track 组织结构
 改变 Logical Track 输出顺序
 改变生命周期、Reset、Overlap 或同 tick 语义排序
@@ -433,11 +433,12 @@ Channel Event 必须写入对应事件 Track。
 规则：
 ```text
 Conductor Track 使用 MIDI 导出任务准备时冻结的 Project Name；Project Name 为空或纯空白时防御性回退为 `Conductor`。
-每个事件 Track 固定为 `Port <P> / Channel <C>`。
-P 是原始 Midora 一基 Port 编号 1–16，C 是一基 Channel 编号 1–16，均不补零；按 Port 导出内部 Port Meta 归一化为 Port 1 时仍写原始 P/C。
+每个 Logical/Event Instrument Unit Track 固定为 `Port <P> / Channel <C>`。
+每个 Pure MIDI 事件 Track 使用 canonical descriptor 中冻结的用户 Track Name；为空或纯空白时回退为 `MIDI Track <N>`。
+上述 Unit Track 名称中的 P 是原始 Midora 一基 Port 编号 1–16，C 是一基 Channel 编号 1–16，均不补零；按 Port 导出内部 Port Meta 归一化为 Port 1 时仍写原始 P/C。
 ```
 
-Project Name 和 Unit Track Name 都按严格 UTF-8 写入，不经过文件名合法化，也不回写 Project/Logical Track 名称。任务准备后即使活动 Project Name 改变，本任务仍使用冻结值。Per Logical Track 输出文件名和 Readme 仍使用 `LogicalTrackDisplayName`；一个 Unit 在 Whole Project / Per Port 中可能先后承载不同 Logical Track，因此事件 Track Name 不得冒充单一 Logical Track owner。`Conductor / Meta Track` 是 Track 0 的结构角色名称，不再是正常项目固定写入的用户可见曲名。
+Project Name、Pure MIDI Track Name 和 Unit Track Name 都按严格 UTF-8 写入，不经过文件名合法化，也不回写 Project/Track 名称。任务准备后即使活动 Project Name 改变，本任务仍使用冻结值。Per Logical Track 输出文件名和 Readme 仍使用 `LogicalTrackDisplayName`；一个 Logical Unit 在 Whole Project / Per Port 中可能先后承载不同 Logical Track，因此该 Unit Track Name 不得冒充单一 Logical Track owner。`Conductor / Meta Track` 是 Track 0 的结构角色名称，不再是正常项目固定写入的用户可见曲名。
 ### 14.8.3 Project 名称、版权和软件标识
 MIDI 文件内部可以写入：
 ```text
@@ -464,6 +465,12 @@ Midora 生成信息
 ```
 不将完整 Readme 内容同步写入 MIDI Text Meta Event。
 Readme 可能较长，MIDI Text 只写必要简短非语义信息。
+
+### 14.8.6 Midora Pure MIDI 结构 Meta
+
+Pure MIDI MTrk 可在 tick 0 写版本化 Sequencer-Specific Meta，以保存 Root/Track Stable ID、Root 名称、从 Arrangement mixed parent order 过滤得到的 Root 顺序、Track child 顺序、Routing Mode 和 Channel Mode。它必须有固定 magic/version、有界长度和严格校验，不得影响播放，也不得替代标准 Track Name、MIDI Port 与 Channel status。标准 Track Name 只写 Pure MIDI child Track 名称，不写 Root 名称。
+
+其他软件可以安全忽略或删除该 Meta。重新导入时仅在 payload 合法且与标准事件结构一致时采用；否则按 Port.Channel 与 MTrk 顺序退化重建，不得因此拒绝原本合法的 SMF。SMF 没有标准 Root/folder 层级，Midora 只保证平级 Pure MIDI MTrk 的名称、顺序与独立性。
 ---
 ## 14.9 Conductor 事件导出
 ### 14.9.1 Tempo
@@ -514,8 +521,8 @@ Project End Marker：
 ```
 ---
 ## 14.10 Port / Device 信息
-### 14.10.1 整曲导出与按 Logical Track 导出
-整曲导出和按 Logical Track 导出中，导出器应写入必要 Port 信息，例如：
+### 14.10.1 整曲导出与按 Track 导出
+整曲导出和按 Track 导出中，导出器应写入必要 Port 信息，例如：
 ```text
 Port Number
 Device Name
@@ -526,7 +533,7 @@ Track Name 中的 Port 信息
 ```text
 每个事件 Track 写 Track Name Meta Event
 每个事件 Track 写 MIDI Port Meta Event
-每个事件 Track 只写一个原始 Channel Unit 的 canonical Channel Event
+每个事件 Track 只写一个原始 Channel Unit 的 canonical Channel Event；同一 Root 的多个 Pure MIDI Track 可共享该 Unit
 不写 Device Name Meta Event
 不写 Program Name Meta Event
 文本类 Meta Event 使用严格 UTF-8
@@ -549,9 +556,9 @@ Channel 10 melodic 初始化
 SoundFont 相关说明
 ```
 ---
-## 14.11 Channel 10 melodic 初始化
+## 14.11 Channel 10 模式初始化
 ### 14.11.1 必须写入必要初始化
-MIDI 导出应写入必要的 Midora 内置 Channel 10 melodic 初始化事件。
+MIDI 导出应在需要 melodic Channel 10 的事件 Track 中写入必要的 Midora 内置 Channel 10 melodic 初始化事件。
 该初始化属于系统生成内容，不表示用户可以自由编辑 SysEx。
 初版仍然不开放用户自由 SysEx。
 
@@ -566,8 +573,9 @@ GS 在前，XG 在后
 使用上述固定默认 Device ID / Device Number 字节
 不得发送 GS Reset、XG System On / Reset 或 GM Reset
 不得借初始化改写 canonical Bank / Program
-只对实际包含 Channel 10 canonical Channel Event 的事件 Track 写入
+只对实际包含 Channel 10 canonical Channel Event 的 Logical Unit Track，或 Melodic Pure MIDI Root Track 写入
 每个相关事件 Track 各写一次 GS 和 XG 初始化
+Percussion Pure MIDI Root Track 不写入这些 Normal Part SysEx
 不使用 Channel 10 的事件 Track 不写入这些 SysEx
 Conductor Track 永远不写入这些 SysEx
 ```
@@ -630,13 +638,11 @@ RPN / NRPN / Pitch Bend Range 等 Midora 高级事件必须展开为标准 MIDI 
 具体 CC 展开字节序列由实现设计阶段定义。
 ### 14.12.5 CC91 / CC93
 
-初版不支持 Reverb / Chorus Send，因此 MIDI 导出不得写出 CC91 或 CC93。
+Event Instrument/SubVoice 路径不得产生 CC91 或 CC93。Pure MIDI Track 的 canonical 事件允许包含 CC91 / CC93，MIDI 导出必须按冻结 Track/tick/order 原样写出，不得因为正式 BASSMIDI 音频路径启用 `BASS_MIDI_NOFX` 而删除或报错。
 
-正常情况下语义验证和编译阶段已经拒绝包含它们的 Project；导出器如果仍在 canonical compiled result 中发现 CC91 / CC93，必须把它视为 compiled result 一致性 Error，不得静默删除后继续发布文件。
-
-### 14.12.6 自由 SysEx 边界
-初版不允许用户自由 SysEx。
-但系统可写入内置必要初始化事件，例如 Channel 10 melodic 相关初始化。
+### 14.12.6 SysEx 与 opaque Meta 边界
+初版不允许用户创建或任意编辑自由 SysEx payload。
+但系统可写入内置必要初始化事件；从 SMF 导入并保存为 Pure MIDI opaque event 的合法 SysEx/Meta 必须按 canonical descriptor 原样重新导出。导出器不得解释其业务含义。具体范围见第 23.6.5、23.12.6 节。
 ---
 ## 14.13 同 tick 排序与编码优化边界
 ### 14.13.1 状态恢复事件与用户事件
@@ -650,14 +656,14 @@ Reset / 安全清理事件必须排在对应生命周期结束或范围结束的
 不得抢在仍应输出的普通事件之前。
 具体同 tick 细表由实现设计阶段定义。
 ### 14.13.3 跨 MIDI Track 顺序
-不同 MIDI Track 之间不赋予严格音乐顺序语义。
+SMF 不提供可移植的跨 MIDI Track 严格音乐总顺序。Midora canonical 对同一 Root 的 Pure MIDI 原始事件仍具有确定执行顺序，但第三方播放器未必按同一跨 MTrk tie 顺序消费。
 需要严格先后关系的事件应：
 ```text
 位于同一 MIDI Track
 或由编译排序保证在同一资源语义内成立
 ```
 导出器不负责把所有同 tick 跨 Track 事件全局线性化为单一顺序。
-同一 Channel Unit 的事件不会被拆到不同 MIDI Track；因此该 Unit 内需要严格先后的事件仍保留 canonical 子序列。
+Logical/Event Instrument 同一 Unit 的事件不会被拆到不同 MIDI Track。Pure MIDI Root 可以有多个共享 Unit 的 MTrk；导出预检查必须按第 23.12.7 节检测跨 MTrk 同 tick 的顺序敏感组合，并按 Root 产生汇总 Warning，不得移动 tick、合并 Track 或静默改序。
 ### 14.13.4 Running status
 初版兼容档不使用 running status。每个 Channel Event 都必须显式写入 status byte。
 该规则不得改变：
@@ -684,16 +690,9 @@ Port / Channel 分配
 ---
 ## 14.14 End Of Track 与导出末尾清理
 ### 14.14.1 End Of Track 位置
-所有 MIDI Track 的 End Of Track 写到导出范围：
-```text
-endTick
-```
-包括：
-```text
-Conductor Track
-事件 Track
-```
-这样可以保证文件总长度一致。
+Conductor Track 与 Logical Unit Track 的 End Of Track 写到统一导出 `endTick`。Pure MIDI Track 使用其冻结 Track descriptor 的自身结束位置，以保留 Midi Segment 尾部空白；非零范围导出时先相对 `startTick` 重基并 clamp 到请求范围。
+
+文件总长度由全部 MTrk 的最大 EOT 决定。结构有效的空 Pure MIDI Track 可以在 tick 0 写 EOT；不要求所有 Track 的 EOT tick 一致。
 如果：
 ```text
 endTick == startTick
@@ -829,7 +828,7 @@ Readme 不用于还原路由语义。
 ```text
 Mode = Whole Project
 Range = Project Default Range
-Track Selection = All Valid Logical Tracks
+Track Selection = All Valid Logical and Pure MIDI Tracks
 Routing = Compact
 Include Readme = true
 Treat Warnings As Errors = false
@@ -983,6 +982,7 @@ UI 可表现为正式导出前的预检查阶段。
 ```text
 Conductor Track
 Logical Track / Segment / Logical Note
+MIDI Channel Root / Pure MIDI Track / Midi Segment / Direct MIDI Event
 Logical Parameter Lane
 Event Instrument / SubVoice / Mapping / Lifecycle
 SoundFont Settings 中会影响 Readme / 导出说明的信息
@@ -1009,13 +1009,15 @@ MIDI 编码完成后需要基本自校验。
 ```text
 文件头
 Track 数
+MThd 声明的 Track 数必须可由 unsigned 16-bit `ntrks` 表示；超出时任务在写文件前失败
 delta time 非负
 事件可编码
-End Of Track 存在
-所有 Track 的 End Of Track tick 一致
+每个 Track 恰有一个合法 End Of Track
+Conductor/Logical Unit EOT 与统一 endTick 一致，Pure MIDI EOT 与冻结 descriptor 一致
 每个 Channel Event 都有显式 status byte
 每个事件 Track 的全部 Channel Event 使用同一个 Channel
-同一文件内每个实际 Unit 只对应一个事件 Track
+Logical/Event Instrument 同一实际 Unit 只对应一个事件 Track
+每个 Pure MIDI ExportTrackId 恰对应一个 MTrk；共享 Root Unit 的多个 MTrk 保持独立
 声明的 Track chunk 长度与实际字节一致
 文件末尾不存在未声明字节
 ```
@@ -1192,6 +1194,8 @@ SoundFont 选择
 非 GM SF2
 播放器自身对 RPN / NRPN / Pitch Bend Range 的解释
 不同播放器的同 pitch 重叠 Note 配对策略
+同一 Pure MIDI Root 跨 MTrk 的同 tick 消费顺序
+第三方软件是否保留 Midora Sequencer-Specific Meta
 ```
 Readme 应明确说明该兼容边界。
 MIDI 导出不依赖：

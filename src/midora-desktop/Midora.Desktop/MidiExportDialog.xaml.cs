@@ -11,13 +11,15 @@ namespace Midora.Desktop;
 
 public partial class MidiExportDialog : Window
 {
+    private readonly List<(TrackSelectionRow Row, bool IsPureMidi)> _allTrackRows = [];
+
     public MidiExportDialog(
         ExportProjectSettings settings,
-        IEnumerable<LogicalTrack> tracks,
+        MidoraProject project,
         string? initialDirectory)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        ArgumentNullException.ThrowIfNull(tracks);
+        ArgumentNullException.ThrowIfNull(project);
         InitializeComponent();
         ModeBox.ItemsSource = Enum.GetValues<MidiExportMode>();
         RoutingBox.ItemsSource = Enum.GetValues<MidiExportRoutingStrategy>();
@@ -35,15 +37,27 @@ public partial class MidiExportDialog : Window
         ReadmeCheck.IsChecked = settings.IncludeReadme;
         WarningsCheck.IsChecked = settings.TreatWarningsAsErrors;
         SelectedTracksCheck.IsChecked = settings.TrackSelectionMode == ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart;
-        LogicalTrack[] trackArray = tracks.ToArray();
-        for (int index = 0; index < trackArray.Length; index++)
+        LogicalTrack[] logicalTracks = project.ArrangementParents.Count == 0
+            ? project.Tracks.ToArray()
+            : project.LogicalTracksInArrangementOrder().ToArray();
+        for (int index = 0; index < logicalTracks.Length; index++)
         {
-            LogicalTrack track = trackArray[index];
-            TrackRows.Add(new(
+            LogicalTrack track = logicalTracks[index];
+            _allTrackRows.Add((new(
                 track.Id,
-                string.IsNullOrWhiteSpace(track.Name) ? $"Logical Track {index + 1}" : track.Name,
-                isSelected: true));
+                $"Logical · {(string.IsNullOrWhiteSpace(track.Name) ? $"Logical Track {index + 1}" : track.Name)}",
+                isSelected: true), false));
         }
+        PureMidiTrack[] pureMidiTracks = project.PureMidiTracksInArrangementOrder().ToArray();
+        for (int index = 0; index < pureMidiTracks.Length; index++)
+        {
+            PureMidiTrack track = pureMidiTracks[index];
+            _allTrackRows.Add((new(
+                track.Id,
+                $"MIDI · {(string.IsNullOrWhiteSpace(track.Name) ? $"MIDI Track {index + 1}" : track.Name)}",
+                isSelected: true), true));
+        }
+        RefreshTrackRows();
         OutputDirectoryBox.Text = initialDirectory ?? string.Empty;
         DataContext = this;
     }
@@ -74,6 +88,27 @@ public partial class MidiExportDialog : Window
         if (RoutingBox is not null)
         {
             RoutingBox.IsEnabled = ModeBox.SelectedItem is not MidiExportMode.PerPort;
+        }
+        RefreshTrackRows();
+    }
+
+    private void RefreshTrackRows()
+    {
+        if (ModeBox is null || SelectedTracksCheck is null)
+        {
+            return;
+        }
+        bool logicalOnly = ModeBox.SelectedItem is MidiExportMode.PerLogicalTrack;
+        SelectedTracksCheck.Content = logicalOnly
+            ? "Use only the checked Logical Tracks"
+            : "Use only the checked Tracks";
+        TrackRows.Clear();
+        foreach ((TrackSelectionRow row, bool isPureMidi) in _allTrackRows)
+        {
+            if (!logicalOnly || !isPureMidi)
+            {
+                TrackRows.Add(row);
+            }
         }
     }
 
@@ -107,7 +142,9 @@ public partial class MidiExportDialog : Window
             : null;
         if (selectedTrackIds is { Count: 0 })
         {
-            ValidationText.Text = "Check at least one Logical Track, or disable explicit Track selection.";
+            ValidationText.Text = ModeBox.SelectedItem is MidiExportMode.PerLogicalTrack
+                ? "Check at least one Logical Track, or disable explicit Track selection."
+                : "Check at least one Track, or disable explicit Track selection.";
             return;
         }
         Options = new(

@@ -32,7 +32,7 @@ Port 1–16
 ```text
 Project 概念上最多支持 16 个 Port
 用户不负责创建或删除 Port
-Port 由编译器 / 资源系统按实际需要动态使用
+Port 由编译器 / 资源系统按实际需要使用；Pure MIDI Fixed Root 可以显式引用其中的 Port.Channel，但不创建新的 Port
 UI 与编译结果只应呈现实际使用或当前操作上下文需要呈现的 Port
 空闲 Port 不应导致常驻 BASSMIDI 实例
 当实际需要超过 16 个 Port 时，编译失败
@@ -42,7 +42,7 @@ UI 与编译结果只应呈现实际使用或当前操作上下文需要呈现�
 避免用户管理底层 Port 创建数量
 避免 16 个 BASSMIDI 实例和 16 份音色库常驻内存
 保持最多 16 Ports 的 MIDI 1.0 资源上限
-让编译器承担 Port 使用判断
+让编译器承担 Logical/Auto Root 的 Port 使用判断，同时尊重 Fixed Root 预留
 ```
 ### 5.1.4 动态 Port 分配带来的实现设计问题
 Port 按需动态使用会带来后续编译与播放设计问题，包括但不限于：
@@ -56,7 +56,7 @@ Port 按需动态使用会带来后续编译与播放设计问题，包括但不
 这些问题必须在 第 12 章《编译系统与 Canonical Compiled Result》 编译系统、第 13 章《播放与预览》 播放系统以及实现设计设计中仔细设计。
 本章只确认以下系统级原则：
 ```text
-Port 数按需动态使用
+Port 数按需动态使用，Fixed Root 引用的 Port 视为已预留使用
 Port 数判断属于编译 / 播放上下文解析的重要职责
 初版不得为了简化实现而强制 16 个 BASSMIDI 实例常驻
 初版不得把 Port 创建 / 删除责任交给用户
@@ -107,29 +107,19 @@ Port 2 / Channel 5
 ```
 不是同一个资源。
 任何 Channel-Wide 状态都只污染同一个 Port 内同一个 Channel，不跨 Port 污染。
-### 5.2.3 Channel 10 melodic 强制规则
-Midora 不采用 GM / GS 中 Channel 10 默认作为鼓通道的约定。
-在 Midora 中：
+### 5.2.3 Channel 10 的 Melodic / Percussion 规则
+Midora 不再对全部数据强制单一 Channel 10 模式，而是按来源明确区分：
+
 ```text
-所有 Port 的 Channel 10 都是普通旋律通道
+Logical Track / Event Instrument allocation -> Channel 10 始终显式初始化为 Melodic
+Pure MIDI Root                          -> 由 Root 的 Melodic / Percussion 源字段决定
+SMF import Channel 10 Root              -> 默认 Percussion
 ```
-该规则强制执行：
-```text
-不允许关闭
-不允许某个 Port 例外
-不允许某个 Event Instrument 例外
-不允许用户把 Channel 10 改成 drum mode
-不允许通过自由 SysEx 绕过，因为初版不支持自由 SysEx
-```
+
+同一个 Channel Unit 不能同时属于 Logical allocation 与 Pure MIDI Root，因此模式不会在同一 Unit 上产生歧义。初版仍不允许 Event Instrument/SubVoice 通过 SysEx 将其获配 Channel 10 改为 drum mode；导入后 opaque SysEx 的保留不构成 Event Instrument 自由 SysEx 编辑。
+
 ### 5.2.4 Channel 10 的资源分配地位
-Channel 10 在资源分配中作为普通可用 Channel Unit。
-即：
-```text
-所有 Port 的 Channel 10 都参与自动分配
-Channel 10 不保留作鼓通道
-Channel 10 不保留作特殊系统通道
-用户不能选择是否让 Channel 10 参与分配
-```
+Channel 10 继续作为 256 Unit 池中的普通地址参与 Root 预留、Auto Root 分配和 Logical 分配。它不被系统全局保留为鼓通道；只有占用该 Unit 的 Pure MIDI Root 可以把该 Root 的合成/导出模式设为 Percussion。
 ---
 ## 5.3 Channel Unit 需求
 ### 5.3.1 Channel Unit 的定义
@@ -157,20 +147,22 @@ Midora 初版最大 Channel Unit 数量为：
 ```
 不允许 Voice Steal。
 不允许自动删除、截短或降级用户内容来规避资源不足。
-### 5.3.3 Channel Unit 可用性
-初版不允许用户禁用 Port 或 Channel Unit。
+### 5.3.3 Channel Unit 可用性与 Root 预留
+初版不允许用户禁用 Port 或 Channel Unit，但允许 Pure MIDI Fixed Root 显式预留一个 Port.Channel。
 系统级规则为：
 ```text
 所有最多 256 个 Channel Units 都属于编译器可用资源池
 用户不能禁用整个 Port
 用户不能禁用单个 Channel Unit
-用户不能把某个 Channel Unit 保留为专用通道
+Fixed Root 先预留其精确 Channel Unit
+非空 Auto Root 随后按 Root 顺序取得最低未预留 Unit
+Logical/Event Instrument 分配只使用剩余 Unit
 ```
 说明：
 ```text
 当前规则不等于 256 个 Channel Units 都会在运行时常驻。
 它只表示它们都是编译器可用的潜在资源。
-实际使用的 Port / Channel Unit 由编译结果决定。
+实际使用的 Port / Channel Unit 由 Root 源路由和编译结果共同决定。
 ```
 ### 5.3.4 Channel Unit 的生命周期占用
 Event Instrument Instance 在其 Rendered Instance Length 范围内要求独立或共享的 Channel Group。对于产生 Note 的 Segment，为保证精确 NoteOff 后的 SoundFont 原生 release 不被音频 Unit fragment 窗口裁断，编译器还必须把该 Segment 已启用的 Channel Unit lane 保留到 Segment End；同一 Segment 内后续不重叠 instance 可以复用同一保留 lane，但每次非重叠复用都必须先按目标闭包建立 Reset Defaults 与 Initial State。普通 instance 结束本身不执行通用目标 Reset。
@@ -300,8 +292,8 @@ All Sound Off
 All Notes Off
 Reset All Controllers
 ```
-CC91（Reverb Send）与 CC93（Chorus Send）在初版中完全不支持，不属于可提交、可映射或可编译的 Channel-Wide 事件。
-其中某些事件是否允许用户在 Event Instrument 中直接编辑，由 第 9 章《曲线、Logical Parameter 与映射》 或实现设计阶段细化。
+CC91（Reverb Send）与 CC93（Chorus Send）属于合法 Channel-Wide 事件：Pure MIDI Track 可以创建、导入、编译和导出它们。Event Instrument/SubVoice 的创建与 Mapping 面仍不开放 CC91/CC93；正式 BASSMIDI 音频路径继续使用 `NOFX`，因此不呈现其 Reverb/Chorus 效果。
+其中某些事件是否允许用户在 Event Instrument 中直接编辑，由第 8～9 章细化；Pure MIDI Track 的完整 Channel Voice 面由第 23 章固定。
 本章只定义：一旦某事件被视为 Channel-Wide，它就会影响 Channel Unit 共享安全性。
 初版不允许用户编辑事件作用域表。
 ### 5.5.3 Channel-Wide 状态污染的时间条件
@@ -384,7 +376,7 @@ Note → Event 映射
 Logical Track / Event Instrument Binding 是更符合直觉的运行状态边界
 ```
 ---
-## 5.7 空项目、无 SF2、未指定 Event Instrument 与资源系统
+## 5.7 空项目、无 SF2、父节点损坏与资源系统
 ### 5.7.1 空项目
 空项目允许编译。
 空项目没有 Event Instrument Instance，因此通常不需要分配 Channel Group。
@@ -406,10 +398,8 @@ Logical Track / Event Instrument Binding 是更符合直觉的运行状态边界
 无 SF2 不影响 MIDI 导出
 无 SF2 只影响播放、预览和音频渲染
 ```
-### 5.7.3 未指定 Event Instrument 的 Logical Track
-未指定 Event Instrument 的 Logical Track 在编译、播放、预览、渲染中被忽略。
-因此它不产生 Event Instrument Instance，也不占用 Channel Unit。
-如果其包含音符或事件，只在编译诊断中列为信息，不算警告。
+### 5.7.3 Logical Track 父节点错误
+Logical Track 必须且只能属于一个 Event Instrument。无 parent、多个 parent 或 parent kind 错误是结构 Error，不得通过忽略 Track 继续编译。Damaged Parent Placeholder subtree 不进入正式编译，因此不分配 Channel Unit，但这仍是损坏 Error，不是 Unbound Info。
 ---
 ## 5.8 资源不足、警告与失败规则
 ### 5.8.1 资源不足
@@ -465,14 +455,16 @@ Midora 不支持 Voice Steal。
 ```
 第 12 章《编译系统与 Canonical Compiled Result》、第 15 章《音频文件渲染》和 UI 章节必须把 `>= 248 Channel Units` 显示为 `Info`，不应重新引入 80% / 95% 双阈值，除非修订本章或更高层需求。
 ### 5.8.4 资源使用量计算口径
-资源使用量按整曲任一 tick 的峰值同时占用 Channel Unit 数计算。
+资源使用量按“Root 全局预留/分配数 + 整曲任一 tick 的 Logical/Event Instrument 峰值同时占用数”计算。
 计算口径：
 ```text
-ResourceUsage = PeakSimultaneouslyOccupiedChannelUnits / 256
+CombinedPeakChannelUnits = AllocatedRootUnits + PeakLogicalUnits
+ResourceUsage = CombinedPeakChannelUnits / 256
 ```
 其中：
 ```text
-PeakSimultaneouslyOccupiedChannelUnits = 整曲任一 tick 同时占用的最大 Channel Unit 数
+AllocatedRootUnits = 全部 Fixed Roots + 含可编译内容的 Auto Roots
+PeakLogicalUnits = 整曲任一 tick 同时占用的最大 Logical/Event Instrument Channel Unit 数
 ```
 不采用以下口径作为初版资源 Info 依据：
 ```text
@@ -487,6 +479,7 @@ PeakSimultaneouslyOccupiedChannelUnits = 整曲任一 tick 同时占用的最大
 理论最小所需 Channel Unit 数
 当前峰值冲突位置
 导致峰值的相关 Logical Track / Segment / Event Instrument / Note
+相关 MIDI Channel Root / Pure MIDI Track / Midi Segment
 可用 Channel Unit 数量
 是否因为单实例 SubVoice 数超过上限
 是否因为跨 Port 后仍无法满足资源需求
@@ -504,8 +497,11 @@ PeakSimultaneouslyOccupiedChannelUnits = 整曲任一 tick 同时占用的最大
 按需动态使用 Port
 不把 Port 创建 / 删除责任交给用户
 不强制 16 个 Port 常驻
-遵守 Channel 10 melodic 强制规则
-把 Channel 10 作为普通可用 Channel Unit
+先验证并预留 Fixed MIDI Channel Roots
+再按显式 Root 顺序分配非空 Auto Roots
+Logical/Event Instrument 分配绕开全部 Root Unit
+Logical 路径的 Channel 10 强制 melodic；Pure MIDI Root 遵守其 Melodic/Percussion Mode
+把 Channel 10 作为普通可寻址 Channel Unit
 不允许用户手动指定 Event Instrument / SubVoice 固定使用某个 Port 或 Channel
 不允许用户禁用 Port / Channel Unit
 遵守 Channel-Wide 状态污染规则
@@ -516,7 +512,7 @@ PeakSimultaneouslyOccupiedChannelUnits = 整曲任一 tick 同时占用的最大
 始终允许跨 Port 分配 Channel Group
 资源不足时编译失败
 不支持 Voice Steal
-按峰值同时占用 Channel Unit 数计算资源使用量
+按 Root 全局预留/分配数加 Logical 峰值占用计算组合资源使用量
 Channel Unit 使用量 >= 248 时产生资源使用量 Info
 ```
 具体编译阶段、扫描顺序、排序规则、分配启发式、回溯策略、动态 Port 数判断、增量编译稳定策略或失败定位算法，由 第 12 章《编译系统与 Canonical Compiled Result》 和实现设计阶段细化。
@@ -527,7 +523,8 @@ Channel Unit 使用量 >= 248 时产生资源使用量 Info
 ```text
 每个实际使用的抽象 Channel Unit 使用独立的 1-channel BASSMIDI Stream 语义
 空闲 Unit 不应强制创建 BASSMIDI Stream
-canonical MIDI Channel 10 对应的 Unit 也必须按 melodic 初始化
+Logical/Event Instrument canonical Channel 10 Unit 必须按 melodic 初始化
+Pure MIDI Root Unit 必须按 Root 的 Melodic/Percussion Mode 初始化；不得对 Percussion Root 无条件执行 melodic 初始化
 同一 Port 内的 Channel-Wide 状态按编译结果生效
 不同 Port 的同号 Channel 不互相污染
 ```
@@ -546,10 +543,11 @@ MIDI 导出必须能够表达编译后的 Port / Channel 结果。
 ```text
 UI 显示编号从 1 开始
 MIDI 内部 Channel 编码使用 0–15
-每个实际有事件的 Channel Unit 严格对应一个 MIDI 事件 Track
-每个 MIDI 事件 Track 严格只包含一个原始 Port / Channel Unit 的 Channel Event
+Logical/Event Instrument 输出中，每个实际有事件的 Channel Unit 严格对应一个 MIDI 事件 Track
+Pure MIDI 输出中，每个 Pure MIDI Track 严格对应一个单 Channel MIDI 事件 Track；同 Root 的多个 Track 可以共享一个 Port.Channel
+每个 MIDI 事件 Track 仍严格只包含一个 Port.Channel 的 Channel Event
 Program Change 等数据值按 MIDI 标准编码
-Channel 10 melodic 初始化规则应尽量写入导出结果
+Logical Channel 10 与 Melodic Pure MIDI Root 的 Normal Part 初始化写入导出结果；Percussion Root 不写
 按 Port 导出时，每个实际使用 Port 输出为独立 MIDI 文件
 按 Logical Track 导出和整曲导出时，通过 Unit Track Name 与 Port Meta 保留 Port / Channel 语义
 ```
@@ -568,8 +566,8 @@ Channel 10 melodic 初始化规则应尽量写入导出结果
 9. 所有最多 256 个 Channel Units 都属于编译器潜在可用资源池。
 10. UI 显示 Port / Channel 编号从 1 开始。
 11. MIDI 内部 Channel 编码按标准使用 0–15。
-12. 所有 Port 的 Channel 10 都强制作为普通旋律通道。
-13. Channel 10 作为普通可用 Channel Unit 参与分配。
+12. Logical/Event Instrument 分配到 Channel 10 时强制作为普通旋律通道；Pure MIDI Root 按自身 Melodic/Percussion Mode 使用 Channel 10。
+13. Channel 10 作为普通可寻址 Channel Unit 参与 Root 预留、Auto Root 或 Logical 分配。
 14. 初版 Note On / Note Off 非 Channel-Wide，其余 Channel 状态类事件默认 Channel-Wide。
 15. 初版不允许用户编辑事件作用域表。
 16. 初版每条 SubVoice 在一次 Event Instrument Instance 中占用一个 Channel Unit。
@@ -589,8 +587,12 @@ Channel 10 melodic 初始化规则应尽量写入导出结果
 30. Channel Unit 使用量大于等于 248 时产生资源使用量 Info；该 Info 不受“Warning 视为 Error”策略影响。
 31. 无 SF2 不影响 MIDI 编译和资源分配语义。
 32. 无 SF2 只影响播放、预览和音频渲染。
-33. 未指定 Event Instrument 的 Logical Track 不产生 Event Instrument Instance，不占用 Channel Unit。
+33. Logical Track 必须有唯一 Event Instrument parent；Damaged Parent Placeholder subtree 不产生 Event Instrument Instance 或 Channel Unit。
 34. Conductor Track 不参与 Channel Unit 分配。
+35. 每个 Pure MIDI Track 必须属于一个 MIDI Channel Root；一个 Root 对应一个 Unit，一个 Unit 不得属于两个 Root。
+36. Fixed Root 先预留精确 Unit；Fixed 冲突为 Error；非空 Auto Root 后按显式 Root 顺序低号分配。
+37. Fixed Root 即使为空也保留 Unit；空 Auto Root 不分配 Unit；所有已分配 Root Unit 在本次 CompileContext 内不得与 Logical instance 时间复用。
+38. Root Units 数量与 Logical/Event Instrument 峰值占用之和不得超过 256。
 ### 5.12.2 Info 情况
 以下情况应产生资源系统相关 Info：
 ```text
@@ -609,6 +611,9 @@ Channel 10 melodic 初始化规则应尽量写入导出结果
 | 重叠共享会导致 Channel-Wide 状态污染，且无安全替代分配 | 编译失败 |
 | 用户尝试手动固定 Event Instrument / SubVoice 到某个 Port / Channel | 阻止操作 |
 | 用户尝试禁用 Port 或 Channel Unit | 阻止操作 |
-| 用户尝试将 Channel 10 设为 drum mode | 阻止操作或项目规则错误 |
-| 用户尝试通过自由 SysEx 绕过 Channel 10 melodic 规则 | 初版不支持自由 SysEx，应阻止 |
+| Event Instrument/SubVoice 尝试把获配 Channel 10 改为 drum mode | 阻止操作或项目规则错误 |
+| Pure MIDI Root 使用合法 Percussion Mode | 允许；按第 23 章编译、播放和导出 |
+| 两个 Fixed MIDI Channel Root 指向同一 Port.Channel | 编译失败 |
+| Root 预留/分配数加 Logical 峰值超过 256 | 编译失败 |
+| 用户尝试通过 Event Instrument 自由 SysEx 绕过其 melodic 规则 | 初版不支持该编辑入口，应阻止 |
 ---

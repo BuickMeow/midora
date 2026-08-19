@@ -103,7 +103,7 @@ public static class MidiExportReadmeBuilder
             request.KeySignatureEventCount.ToString(CultureInfo.InvariantCulture));
 
         AppendLine(output);
-        AppendLine(output, "## Logical Tracks");
+        AppendLine(output, "## Track Selection");
         AppendLine(output);
         foreach (MidiExportReadmeTrack track in request.Tracks
             .OrderBy(track => track.ProjectDisplayOrder)

@@ -132,9 +132,11 @@ public static class TimelineToolPolicy
         && editKind == TimelineItemEditKind.Move
         && (modifiers & ModifierKeys.Shift) != 0
         && (surfaceMode == TimelineSurfaceMode.PianoRoll
-                && itemKind is TimelineItemKind.LogicalNote or TimelineItemKind.TemplateNote
+                && itemKind is TimelineItemKind.LogicalNote or TimelineItemKind.DirectMidiNote or TimelineItemKind.TemplateNote
             || surfaceMode == TimelineSurfaceMode.EventLanes
-                && itemKind == TimelineItemKind.LogicalParameterPoint);
+                && itemKind is TimelineItemKind.LogicalParameterPoint
+                    or TimelineItemKind.DirectMidiEvent
+                    or TimelineItemKind.OpaqueMidiEvent);
 
     public static bool ForcesItemMove(
         TimelineToolMode toolMode,
@@ -155,6 +157,8 @@ public static class TimelineToolPolicy
         bool isNearEnd)
     {
         if (itemKind is TimelineItemKind.LogicalParameterPoint
+                or TimelineItemKind.DirectMidiEvent
+                or TimelineItemKind.OpaqueMidiEvent
                 or TimelineItemKind.ConductorEvent
                 or TimelineItemKind.Marker
                 or TimelineItemKind.ProjectEndMarker
@@ -184,9 +188,12 @@ public static class TimelineToolPolicy
         && ((surfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll
                 && itemKind is TimelineItemKind.Segment
                     or TimelineItemKind.LogicalNote
+                    or TimelineItemKind.DirectMidiNote
                     or TimelineItemKind.TemplateNote)
             || (surfaceMode == TimelineSurfaceMode.EventLanes
-                && itemKind == TimelineItemKind.LogicalParameterPoint));
+                && itemKind is TimelineItemKind.LogicalParameterPoint
+                    or TimelineItemKind.DirectMidiEvent
+                    or TimelineItemKind.OpaqueMidiEvent));
 
     public static bool RequestsBackgroundCreation(
         TimelineToolMode toolMode,
@@ -235,9 +242,13 @@ public static class TimelineToolPolicy
         {
             return TimelinePointerIntent.Default;
         }
-        if (itemKind == TimelineItemKind.LogicalParameterPoint)
+        if (itemKind is TimelineItemKind.LogicalParameterPoint or TimelineItemKind.DirectMidiEvent)
         {
             return TimelinePointerIntent.ResizeVertical;
+        }
+        if (itemKind == TimelineItemKind.OpaqueMidiEvent)
+        {
+            return TimelinePointerIntent.Move;
         }
         if (itemKind is TimelineItemKind.ConductorEvent
                 or TimelineItemKind.Marker
@@ -359,8 +370,11 @@ public static class TimelineToolPolicy
     private static bool IsDirectManipulationItem(TimelineItemKind itemKind) =>
         itemKind is TimelineItemKind.Segment
             or TimelineItemKind.LogicalNote
+            or TimelineItemKind.DirectMidiNote
             or TimelineItemKind.TemplateNote
             or TimelineItemKind.LogicalParameterPoint
+            or TimelineItemKind.DirectMidiEvent
+            or TimelineItemKind.OpaqueMidiEvent
             or TimelineItemKind.ConductorEvent
             or TimelineItemKind.Marker
             or TimelineItemKind.ProjectEndMarker;

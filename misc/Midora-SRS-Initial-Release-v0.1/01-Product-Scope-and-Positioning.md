@@ -37,9 +37,9 @@ Midora 初版的产品定位固定为：
 ---
 ## 1.2 软件定位
 ### 1.2.1 Midora 是什么
-Midora 是一个 Windows 桌面端 MIDI 1.0 事件乐器编曲、编译、播放与导出工具。
+Midora 是一个 Windows 桌面端 MIDI 1.0 事件乐器与 Pure MIDI Track 编曲、编译、播放、SMF 导入与导出工具。
 它的核心目标是：
-> 允许用户通过纯 MIDI 事件设计“事件乐器”，并在更高层的逻辑轨道中复用这些事件乐器进行编曲。软件负责将这些高级逻辑编译为标准 MIDI 1.0 数据。
+> 允许用户通过纯 MIDI 事件设计“事件乐器”，在更高层的 Logical Track 中复用这些事件乐器，也允许在 MIDI Channel Root 下直接编辑 Pure MIDI Track；软件把两条主线统一编译为标准 MIDI 1.0 数据并支持打开 SMF Format 0 / 1。
 Midora 的核心不是传统意义上的音色设计，而是：
 ```text
 纯 MIDI 事件
@@ -51,13 +51,15 @@ Midora 的核心不是传统意义上的音色设计，而是：
 + 自动 Reset
 + 预渲染式播放
 + 标准 MIDI 导出
++ 标准 MIDI Format 0 / 1 导入
++ Pure MIDI Track 直接编曲
 ```
 
 在满足音乐语义、确定性、文件兼容和资源安全边界的前提下，Midora 的实现优先追求时间性能。时间性能与空间占用冲突时，允许使用更多但有明确上限的内存换取更快的编译、播放准备和音频渲染；不得以性能为由改变正式结果或省略错误检查。
 ### 1.2.2 Midora 不是什么
 Midora 不是：
 * DAW
-* 普通 MIDI 编辑器
+* 以任意设备协议、音频轨、插件或完整制谱能力为目标的通用 DAW / 全功能 MIDI 工作站
 * MIDI 2.0 工具
 * GM 编曲工具
 * 鼓机
@@ -98,17 +100,20 @@ Midora 的目标就是把这种工作从“手动复制 MIDI 事件”提升为�
 → 编译为标准 MIDI 1.0 数据
 ```
 ### 1.3.2 核心抽象
-Midora 不让用户直接在底层 MIDI Track + Channel 上完成全部工作，而是提供更高层抽象：
+Midora 同时提供高层 Event Instrument 抽象与受 Root/Segment 边界约束的直接 MIDI 编曲主线：
 ```text
 事件乐器 / Event Instrument
 逻辑轨道 / Logical Track
-片段 / Segment
+MIDI 通道根 / MIDI Channel Root
+纯 MIDI 轨道 / Pure MIDI Track
+逻辑片段 / Logical Segment
+MIDI 片段 / Midi Segment
 逻辑参数 / Logical Parameter
 逻辑参数映射 / Logical Parameter Mapping
 事件乐器实例 / Event Instrument Instance
 编译器 / Compiler
 ```
-用户主要操作：
+Logical 主线的主要操作：
 ```text
 创建事件乐器
 在事件乐器中设计 MIDI 事件
@@ -125,6 +130,8 @@ Midora 不让用户直接在底层 MIDI Track + Channel 上完成全部工作，
 * 事件尾巴何时被裁剪
 * Reset 应该在哪里插入
 这些由 Midora 编译器负责。
+
+Pure MIDI 主线中，用户直接编辑 Note 与完整 MIDI 1.0 Channel Voice Event；Root 明确承担共享 Port.Channel、Melodic/Percussion、Channel 状态与硬边界。该主线不经过 Event Instrument、Mapping 或 Logical Parameter，但仍必须经过统一 semantic validation、canonical compilation、播放/渲染和导出管线。
 此外，Event Instrument 可以向 Logical Track / Segment 暴露一组 Logical Parameters。用户在 Segment 中编辑这些参数的时间变化，用于完成 Mod、Expression、Pitch Bend、滤波控制等编曲层动态控制。Logical Parameter 不是裸 MIDI CC / Pitch Bend / RPN / NRPN 编辑，而是 Event Instrument 暴露的有限外部控制接口。
 ---
 ## 1.4 平台与技术边界
@@ -172,12 +179,12 @@ MIDI 2.0
 * FluidSynth 后端
 * XSynth 后端
 * 传统 MIDI OUT 实时发送
-* 自由 SysEx 编辑
+* 自由 SysEx / 任意 Meta payload 创建与字节编辑；SMF 导入的 opaque SysEx / Meta 只读保留和重新导出不属于该排除项
 * 每 Port 独立 SF2
 * 程序级全局事件乐器库
 * 反向同步 MIDI 到 Midora 抽象层
 * Voice Steal
-* Channel 10 drum mode
+* Logical Track / Event Instrument 分配路径的 Channel 10 drum mode；Pure MIDI Root 的显式 Percussion 模式按第 23 章支持
 * GM 假设
 * 冻结事件乐器实例
 * 传统逻辑轨道 Automation 曲线
@@ -192,7 +199,8 @@ Midora 是一个面向 MIDI 1.0 的事件乐器编译环境。
 ```text
 项目级事件乐器库
 逻辑轨道
-Segment
+MIDI Channel Root 与 Pure MIDI Track
+Logical Segment 与 Midi Segment
 事件乐器实例
 SubVoice
 音符实例隔离
@@ -202,6 +210,7 @@ Reset 策略
 Port / Channel 自动分配
 预渲染播放
 多模式 MIDI 导出
+SMF Format 0 / 1 导入
 ```
 让用户能够用纯 MIDI 事件设计可复用的“事件乐器”，并在逻辑层进行编曲。
 Midora 不试图替代 DAW，也不试图成为通用 MIDI 播放器。
@@ -209,4 +218,4 @@ Midora 不试图替代 DAW，也不试图成为通用 MIDI 播放器。
 > 把难以维护、难以复用、容易冲突的 MIDI 事件堆，提升为可设计、可复用、可编译、可预渲染、可导出的事件乐器系统。
 ---
 ## 1.7 一句话定义
-> Midora 是一个使用 MIDI 1.0 事件构建“事件乐器”的 Windows 桌面编曲与编译工具，它让用户在逻辑轨道中调用这些事件乐器进行创作，并由软件自动完成 Port / Channel 分配、事件展开、生命周期处理、Reset、预渲染播放和 MIDI 导出。
+> Midora 是一个面向 MIDI 1.0 的 Windows 桌面编曲与编译工具：它既允许在 Logical Track 中调用 Event Instrument，也允许在 MIDI Channel Root 下直接编写 Pure MIDI Track，并统一完成确定性 Port/Channel 分配、生命周期、Reset、SMF 导入导出和预渲染播放。

@@ -1,11 +1,132 @@
 using System.Diagnostics;
 using Midora.Compiler;
 using Midora.Domain;
+using Midora.Midi;
 
 namespace Midora.Playback.Tests;
 
 public sealed class ProjectCompilationSessionBackgroundTests
 {
+    [Fact]
+    public async Task BackgroundSnapshotIncludesAndSynchronizesPureMidiBranch()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = new(project)
+        {
+            Name = "Root",
+            RoutingMode = MidiChannelRootRoutingMode.Auto,
+            ChannelMode = MidiChannelMode.Melodic
+        };
+        PureMidiTrack track = new(project)
+        {
+            Name = "MIDI Track",
+            MidiChannelRootId = root.Id
+        };
+        MidiSegment segment = new(project)
+        {
+            LengthTicks = 480
+        };
+        DirectMidiNote note = new(project)
+        {
+            StartTick = 0,
+            LengthTicks = 120,
+            Key = 60,
+            NoteOnVelocity = 100,
+            NoteOffVelocity = 31,
+            NoteOnOrder = 10,
+            NoteOffOrder = 20
+        };
+        segment.Notes.Add(note);
+        track.Segments.Add(segment);
+        root.MidiTrackIds.Add(track.Id);
+        project.MidiChannelRoots.Add(root);
+        project.PureMidiTracks.Add(track);
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.MidiChannelRoot,
+            root.Id));
+        using ProjectCompilationSession session = new(
+            project,
+            executionMode: ProjectCompilationExecutionMode.Background,
+            backgroundDebounce: TimeSpan.Zero);
+
+        Assert.Contains(
+            session.LastAttempt.Events.ToArray(),
+            value => value.Role == CanonicalEventRole.DirectMidi
+                && value.Message.MessageType == MidiMessageType.NoteOn
+                && value.Message.Byte1 == 60);
+
+        ProjectChangeSet changes = new();
+        changes.PureMidiTrackIds.Add(track.Id);
+        _ = session.ApplyEdit(_ => note.Key = 65, changes);
+
+        CanonicalCompiledResult current = await session.EnsureCurrentCompilationAsync();
+        CanonicalCompiledResult full = new MidoraCompiler().CompileFull(project);
+
+        Assert.Equal(full.Events.ToArray(), current.Events.ToArray());
+        Assert.Equal(full.SmfTracks.ToArray(), current.SmfTracks.ToArray());
+        Assert.Equal(full.OpaqueMidiEvents.ToArray(), current.OpaqueMidiEvents.ToArray());
+        Assert.Equal(full.Fingerprint, current.Fingerprint);
+        Assert.Contains(
+            current.Events.ToArray(),
+            value => value.Role == CanonicalEventRole.DirectMidi
+                && value.Message.MessageType == MidiMessageType.NoteOn
+                && value.Message.Byte1 == 65);
+
+        ProjectChangeSet rootChanges = new();
+        rootChanges.MidiChannelRootIds.Add(root.Id);
+        _ = session.ApplyEdit(_ =>
+        {
+            root.RoutingMode = MidiChannelRootRoutingMode.Fixed;
+            root.FixedZeroBasedPort = 2;
+            root.FixedZeroBasedChannel = 3;
+        }, rootChanges);
+
+        current = await session.EnsureCurrentCompilationAsync();
+        full = new MidoraCompiler().CompileFull(project);
+
+        Assert.Equal(full.Events.ToArray(), current.Events.ToArray());
+        Assert.Equal(full.Fingerprint, current.Fingerprint);
+        Assert.All(current.Events.ToArray(), value =>
+        {
+            Assert.Equal((byte)2, value.ZeroBasedPort);
+            Assert.Equal((byte)3, value.ZeroBasedChannel);
+        });
+
+        ProjectChangeSet hierarchyChanges = new();
+        hierarchyChanges.MidiChannelRootIds.Add(root.Id);
+        _ = session.ApplyEdit(value =>
+        {
+            PureMidiTrack addedTrack = new(value)
+            {
+                Name = "Added MIDI Track",
+                MidiChannelRootId = root.Id
+            };
+            MidiSegment addedSegment = new(value)
+            {
+                ProjectStartTick = 480,
+                LengthTicks = 240
+            };
+            addedSegment.ChannelEvents.Add(new DirectMidiChannelEvent(value)
+            {
+                Tick = 0,
+                Kind = DirectMidiChannelEventKind.ControlChange,
+                Data1 = 11,
+                Data2 = 80,
+                Order = 100
+            });
+            addedTrack.Segments.Add(addedSegment);
+            value.PureMidiTracks.Add(addedTrack);
+            root.MidiTrackIds.Add(addedTrack.Id);
+        }, hierarchyChanges);
+
+        current = await session.EnsureCurrentCompilationAsync();
+        full = new MidoraCompiler().CompileFull(project);
+
+        Assert.Equal(full.Events.ToArray(), current.Events.ToArray());
+        Assert.Equal(full.SmfTracks.ToArray(), current.SmfTracks.ToArray());
+        Assert.Equal(full.Fingerprint, current.Fingerprint);
+    }
+
     [Fact]
     public async Task BackgroundEditPublishesOnlyTheCurrentSourceRevision()
     {

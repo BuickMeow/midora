@@ -1,6 +1,7 @@
 using Midora.Audio;
 using Midora.Compiler;
 using Midora.Domain;
+using Midora.Midi;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -67,6 +68,10 @@ public static class MidiRenderPlanAdapter
             {
                 sourceIdSet.Add(value.TrackId);
             }
+            if (value.MidiChannelRootId != default)
+            {
+                sourceIdSet.Add(value.MidiChannelRootId);
+            }
         }
         MidoraId[] sourceIds = sourceIdSet.OrderBy(value => value).ToArray();
         Dictionary<MidoraId, int> sourceIndices = new(sourceIds.Length);
@@ -75,11 +80,16 @@ public static class MidiRenderPlanAdapter
             sourceIndices.Add(sourceIds[i], i);
         }
         List<int> initiallyDisabledBuilder = [];
+        HashSet<MidoraId> rootSourceIds = allocations
+            .Where(value => value.MidiChannelRootId != default)
+            .Select(value => value.MidiChannelRootId)
+            .ToHashSet();
         if (preserveFilteredTrackEvents && audibleTrackIds is not null)
         {
             for (int sourceIndex = 0; sourceIndex < sourceIds.Length; sourceIndex++)
             {
-                if (!audibleTrackIds.Contains(sourceIds[sourceIndex]))
+                if (!rootSourceIds.Contains(sourceIds[sourceIndex])
+                    && !audibleTrackIds.Contains(sourceIds[sourceIndex]))
                 {
                     initiallyDisabledBuilder.Add(sourceIndex);
                 }
@@ -112,20 +122,26 @@ public static class MidiRenderPlanAdapter
                 throw new InvalidDataException(
                     "A canonical audio Unit fragment has no physical allocation.");
             }
-            int sourceIndex = sourceIndices[fragment.TrackId];
+            int sourceIndex = fragment.MidiChannelRootId != default
+                ? sourceIndices[fragment.MidiChannelRootId]
+                : sourceIndices[fragment.TrackId];
             ReadOnlySpan<CanonicalAudioUnitEvent> fragmentEvents = fragment.Events;
-            ScheduledMidiMessage[] scheduledFragmentEvents =
-                new ScheduledMidiMessage[fragmentEvents.Length];
+            List<ScheduledMidiMessage> scheduledFragmentEvents = new(fragmentEvents.Length);
             for (int eventIndex = 0; eventIndex < fragmentEvents.Length; eventIndex++)
             {
                 CanonicalAudioUnitEvent value = fragmentEvents[eventIndex];
-                scheduledFragmentEvents[eventIndex] = new(
+                if (!IsSupportedByInitialReleaseAudioProjection(value.Message))
+                {
+                    continue;
+                }
+
+                scheduledFragmentEvents.Add(new(
                     map.TickToSampleFrame(
                         fragment.GroupStartTick + value.RelativeTick,
                         compiled.StartTick,
                         sampleRate),
                     value.Message,
-                    sourceIndex);
+                    ResolveMonitoringSourceIndex(value.Source, sourceIndices, sourceIndex)));
             }
             unitFragmentBuilder.Add(new MidiUnitFragmentRenderPlan(
                 allocation.ZeroBasedPort,
@@ -139,7 +155,9 @@ public static class MidiRenderPlanAdapter
                 map.TickToSampleFrame(fragment.EffectiveStartTick, compiled.StartTick, sampleRate),
                 map.TickToSampleFrame(fragment.EffectiveEndTick, compiled.StartTick, sampleRate),
                 fragment.SemanticFingerprint,
-                scheduledFragmentEvents));
+                scheduledFragmentEvents.ToArray(),
+                midiChannelRootId: fragment.MidiChannelRootId.Value,
+                isPercussion: fragment.ChannelMode == MidiChannelMode.Percussion));
         }
         MidiUnitFragmentRenderPlan[] unitFragments = unitFragmentBuilder
             .OrderBy(value => value.CanonicalUnitNumber)
@@ -157,6 +175,11 @@ public static class MidiRenderPlanAdapter
         List<ScheduledMidiMessage>?[] eventsByPort = new List<ScheduledMidiMessage>?[16];
         foreach (CanonicalMidiEvent value in events)
         {
+            if (!IsSupportedByInitialReleaseAudioProjection(value.Message))
+            {
+                continue;
+            }
+
             bool hasTrack = value.Source.TrackId != default;
             if (!preserveFilteredTrackEvents && audibleTrackIds is not null
                 && hasTrack && !audibleTrackIds.Contains(value.Source.TrackId))
@@ -166,7 +189,7 @@ public static class MidiRenderPlanAdapter
             List<ScheduledMidiMessage> scheduled = eventsByPort[value.ZeroBasedPort]
                 ??= [];
             long frame = map.TickToSampleFrame(value.Tick, compiled.StartTick, sampleRate);
-            int sourceIndex = hasTrack ? sourceIndices[value.Source.TrackId] : -1;
+            int sourceIndex = ResolveMonitoringSourceIndex(value.Source, sourceIndices, -1);
             scheduled.Add(new(frame, value.Message, sourceIndex));
         }
         List<MidiPortRenderPlan> ports = [];
@@ -233,6 +256,25 @@ public static class MidiRenderPlanAdapter
             startFrame,
             endFrame,
             fingerprint);
+    }
+
+    private static bool IsSupportedByInitialReleaseAudioProjection(MidiMessage message)
+        => message.MessageType != MidiMessageType.ControlChange
+            || message.Byte1 is not (91 or 93);
+
+    private static int ResolveMonitoringSourceIndex(
+        SourceReference source,
+        IReadOnlyDictionary<MidoraId, int> sourceIndices,
+        int fallback)
+    {
+        if (source.Origin == SourceOrigin.MidiChannelRootLifecycle
+            && source.MidiChannelRootId != default)
+        {
+            return sourceIndices[source.MidiChannelRootId];
+        }
+        return source.TrackId != default
+            ? sourceIndices[source.TrackId]
+            : fallback;
     }
 
 }

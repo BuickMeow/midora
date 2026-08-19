@@ -1,0 +1,101 @@
+edition = "2024";
+
+package midora.persistence.v1;
+
+import "Schemas/Proto/midora-common-v1.proto";
+
+option csharp_namespace = "Midora.Persistence.Wire.Proto.V1";
+option features.field_presence = EXPLICIT;
+
+enum MidiChannelRootRoutingModeV1 {
+  MIDI_CHANNEL_ROOT_ROUTING_MODE_AUTO = 0;
+  MIDI_CHANNEL_ROOT_ROUTING_MODE_FIXED = 1;
+}
+
+enum MidiChannelModeV1 {
+  MIDI_CHANNEL_MODE_MELODIC = 0;
+  MIDI_CHANNEL_MODE_PERCUSSION = 1;
+}
+
+message MidiChannelRootV1 {
+  uint32 schema_version = 1;
+  string object_type = 2;
+  int64 id = 3;
+  string name = 4;
+  MidiChannelRootRoutingModeV1 routing_mode = 5;
+  uint32 fixed_zero_based_port = 6;
+  uint32 fixed_zero_based_channel = 7;
+  MidiChannelModeV1 channel_mode = 8;
+  repeated int64 midi_track_ids = 9;
+  reserved 10 to max;
+}
+
+enum DirectMidiChannelEventKindV1 {
+  DIRECT_MIDI_CHANNEL_EVENT_KIND_NOTE_OFF = 0;
+  DIRECT_MIDI_CHANNEL_EVENT_KIND_NOTE_ON = 1;
+  DIRECT_MIDI_CHANNEL_EVENT_KIND_POLYPHONIC_KEY_PRESSURE = 2;
+  DIRECT_MIDI_CHANNEL_EVENT_KIND_CONTROL_CHANGE = 3;
+  DIRECT_MIDI_CHANNEL_EVENT_KIND_PROGRAM_CHANGE = 4;
+  DIRECT_MIDI_CHANNEL_EVENT_KIND_CHANNEL_PRESSURE = 5;
+  DIRECT_MIDI_CHANNEL_EVENT_KIND_PITCH_BEND = 6;
+}
+
+enum OpaqueMidiEventKindV1 {
+  OPAQUE_MIDI_EVENT_KIND_META = 0;
+  OPAQUE_MIDI_EVENT_KIND_SYSTEM_EXCLUSIVE = 1;
+  OPAQUE_MIDI_EVENT_KIND_SYSTEM_EXCLUSIVE_CONTINUATION = 2;
+}
+
+message DirectMidiNoteV1 {
+  int64 id = 1;
+  int64 start_tick = 2;
+  int64 length_ticks = 3;
+  int32 key = 4;
+  int32 note_on_velocity = 5;
+  int32 note_off_velocity = 6;
+  int64 note_on_order = 7;
+  int64 note_off_order = 8;
+  reserved 9 to max;
+}
+
+message DirectMidiChannelEventV1 {
+  int64 id = 1;
+  int64 tick = 2;
+  DirectMidiChannelEventKindV1 kind = 3;
+  int32 data1 = 4;
+  int32 data2 = 5;
+  int64 order = 6;
+  reserved 7 to max;
+}
+
+message OpaqueMidiEventV1 {
+  int64 id = 1;
+  int64 tick = 2;
+  OpaqueMidiEventKindV1 kind = 3;
+  uint32 meta_type = 4;
+  bytes payload = 5;
+  int64 order = 6;
+  reserved 7 to max;
+}
+
+message MidiSegmentV1 {
+  int64 id = 1;
+  int64 project_start_tick = 2;
+  int64 length_ticks = 3;
+  int64 content_offset_tick = 4;
+  repeated DirectMidiNoteV1 notes = 5;
+  repeated DirectMidiChannelEventV1 channel_events = 6;
+  repeated OpaqueMidiEventV1 opaque_events = 7;
+  reserved 8 to max;
+}
+
+message PureMidiTrackV1 {
+  uint32 schema_version = 1;
+  string object_type = 2;
+  int64 id = 3;
+  string name = 4;
+  int64 midi_channel_root_id = 5;
+  RgbColor color = 6;
+  repeated MidiSegmentV1 segments = 7;
+  reserved 8 to max;
+}

@@ -21,13 +21,7 @@ internal sealed class ProjectJsonV1
     public required ProjectSettingsPathsJsonV1 Settings { get; init; }
 
     [JsonPropertyOrder(5)]
-    public required ProjectFolderIndexJsonV1[] EventInstrumentFolders { get; init; }
-
-    [JsonPropertyOrder(6)]
-    public required ProjectObjectIndexJsonV1[] EventInstruments { get; init; }
-
-    [JsonPropertyOrder(7)]
-    public required ProjectObjectIndexJsonV1[] LogicalTracks { get; init; }
+    public required ArrangementParentIndexJsonV1[] ArrangementParents { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -56,30 +50,41 @@ internal sealed class ProjectSettingsPathsJsonV1
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-internal sealed class ProjectFolderIndexJsonV1
+internal sealed class ArrangementParentIndexJsonV1
 {
     [JsonPropertyOrder(0)]
-    public required StableIdJsonV1 Id { get; init; }
+    public required string Kind { get; init; }
 
     [JsonPropertyOrder(1)]
-    public required string Name { get; init; }
+    public required StableIdJsonV1 Id { get; init; }
+
+    [JsonPropertyOrder(2)]
+    public required string Path { get; init; }
+
+    [JsonPropertyOrder(3)]
+    public required string NameSnapshot { get; init; }
+
+    [JsonPropertyOrder(4)]
+    public required ArrangementChildIndexJsonV1[] Children { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-internal sealed class ProjectObjectIndexJsonV1
+internal sealed class ArrangementChildIndexJsonV1
 {
     [JsonPropertyOrder(0)]
-    public required StableIdJsonV1 Id { get; init; }
+    public required string Kind { get; init; }
 
     [JsonPropertyOrder(1)]
-    public required string Path { get; init; }
+    public required StableIdJsonV1 Id { get; init; }
 
     [JsonPropertyOrder(2)]
-    public required string NameSnapshot { get; init; }
+    public required StableIdJsonV1 ParentId { get; init; }
 
     [JsonPropertyOrder(3)]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public StableIdJsonV1? FolderId { get; init; }
+    public required string Path { get; init; }
+
+    [JsonPropertyOrder(4)]
+    public required string NameSnapshot { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

@@ -5,9 +5,15 @@ namespace Midora.Application;
 public enum ProjectObjectClipboardKind
 {
     EventInstrument,
+    MidiChannelRoot,
     LogicalTrack,
+    PureMidiTrack,
     Segments,
+    MidiSegments,
     LogicalNotes,
+    DirectMidiNotes,
+    DirectMidiEvents,
+    OpaqueMidiEvents,
     LogicalParameterLane,
     LogicalParameterLaneContent,
     SubVoiceTimelineEvents,
@@ -187,6 +193,7 @@ public static partial class ProjectObjectClipboard
     public static IProjectEditCommand CreatePasteLogicalTrackCommand(
         ProjectDocumentSession targetDocument,
         ProjectObjectClipboardPayload payload,
+        MidoraId targetEventInstrumentId,
         int insertionIndex)
     {
         LogicalTrackClipboardData data = RequirePayload<LogicalTrackClipboardData>(
@@ -195,6 +202,7 @@ public static partial class ProjectObjectClipboard
             ProjectObjectClipboardKind.LogicalTrack);
         return ProjectDomainEditCommands.PasteLogicalTrackClipboard(
             data.Track,
+            targetEventInstrumentId,
             insertionIndex);
     }
 
@@ -322,11 +330,13 @@ public static partial class ProjectDomainEditCommands
 {
     internal static IProjectEditCommand PasteLogicalTrackClipboard(
         LogicalTrackClipboardSnapshot snapshot,
+        MidoraId targetEventInstrumentId,
         int insertionIndex) =>
         Command("Paste logical track", project =>
         {
             ArgumentNullException.ThrowIfNull(snapshot);
-            ValidateInsertionIndex(insertionIndex, project.Tracks.Count, nameof(insertionIndex));
+            EventInstrument target = FindEventInstrument(project, targetEventInstrumentId);
+            ValidateInsertionIndex(insertionIndex, target.LogicalTrackIds.Count, nameof(insertionIndex));
             LogicalTrack? copy = null;
             return Prepared(
                 hasChanges: true,
@@ -335,16 +345,14 @@ public static partial class ProjectDomainEditCommands
                 {
                     if (copy is null)
                     {
-                        bool bindingExists = snapshot.EventInstrumentId is MidoraId instrumentId
-                            && owner.EventInstruments.Any(value => value.Id == instrumentId);
                         copy = new LogicalTrack(owner)
                         {
                             Name = ProjectTextRules.NormalizeShortText(
                                 snapshot.Name,
                                 allowEmpty: true,
                                 nameof(snapshot)),
-                            EventInstrumentId = bindingExists ? snapshot.EventInstrumentId : null,
-                            LastBoundEventInstrumentName = snapshot.LastBoundEventInstrumentName,
+                            EventInstrumentId = target.Id,
+                            LastBoundEventInstrumentName = target.Name,
                             ColorOverride = snapshot.ColorOverride
                         };
                         foreach (SegmentClipboardSnapshot segment in snapshot.Segments)
@@ -356,13 +364,16 @@ public static partial class ProjectDomainEditCommands
                             InsertSegmentByTime(copy.Segments, created);
                         }
                     }
-                    InsertAt(owner.Tracks, insertionIndex, copy, "pasted Logical Track");
+                    owner.Tracks.Add(copy);
+                    InsertAt(target.LogicalTrackIds, insertionIndex, copy.Id, "pasted Logical Track reference");
                 },
-                owner => RemoveRequired(
-                    owner.Tracks,
-                    copy ?? throw new InvalidOperationException(
-                        "The pasted Logical Track does not exist before Undo."),
-                    "pasted Logical Track"));
+                owner =>
+                {
+                    LogicalTrack value = copy ?? throw new InvalidOperationException(
+                        "The pasted Logical Track does not exist before Undo.");
+                    RemoveRequired(target.LogicalTrackIds, value.Id, "pasted Logical Track reference");
+                    RemoveRequired(owner.Tracks, value, "pasted Logical Track");
+                });
         });
 
     internal static IProjectEditCommand PasteSegmentClipboard(

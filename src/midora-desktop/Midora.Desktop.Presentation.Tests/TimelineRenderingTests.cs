@@ -305,6 +305,15 @@ public sealed class TimelineRenderingTests
             TimelineSurfaceMode.EventLanes,
             TimelineItemKind.LogicalParameterPoint,
             TimelineItemEditKind.Move));
+        Assert.True(TimelineToolPolicy.CanBeginItemEdit(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            TimelineItemKind.DirectMidiEvent));
+        Assert.True(TimelineToolPolicy.SupportsCopyDrag(
+            TimelineToolMode.Draw,
+            TimelineSurfaceMode.EventLanes,
+            TimelineItemKind.OpaqueMidiEvent,
+            TimelineItemEditKind.Move));
         Assert.False(TimelineToolPolicy.SupportsCopyDrag(
             TimelineToolMode.Draw,
             TimelineSurfaceMode.PianoRoll,
@@ -661,6 +670,146 @@ public sealed class TimelineRenderingTests
         Assert.Equal(21_504, raster.CandidateCount);
         Assert.Equal(TimelineSegmentPreviewRasterizer.Width * TimelineSegmentPreviewRasterizer.Height * 4, raster.Pixels.Length);
         Assert.Contains(raster.Pixels.Where((_, index) => index % 4 == 3), alpha => alpha > 0);
+    }
+
+    [Fact]
+    public void SegmentPreviewTilesInvalidateOnlyTheEditedLayerAndAffectedTile()
+    {
+        TimelineSegmentPreview original = new(
+            new MidoraId(132),
+            [new TimelineSegmentPreviewNote(0.1, 0.2, 60)],
+            [new TimelineSegmentPreviewEvent(0.1, 0.5)]);
+        TimelineSegmentPreview noteEdited = new(
+            new MidoraId(132),
+            [new TimelineSegmentPreviewNote(0.1, 0.2, 61)],
+            [new TimelineSegmentPreviewEvent(0.1, 0.5)]);
+        TimelineSegmentPreview eventEdited = new(
+            new MidoraId(132),
+            [new TimelineSegmentPreviewNote(0.1, 0.2, 60)],
+            [new TimelineSegmentPreviewEvent(0.1, 0.75)]);
+        const double deviceWidth = 1_024;
+
+        Assert.NotEqual(
+            TimelineSegmentPreviewRasterizer.ComputeNoteTileContentFingerprint(
+                original, deviceWidth, tileX: 0),
+            TimelineSegmentPreviewRasterizer.ComputeNoteTileContentFingerprint(
+                noteEdited, deviceWidth, tileX: 0));
+        Assert.Equal(
+            TimelineSegmentPreviewRasterizer.ComputeNoteTileContentFingerprint(
+                original, deviceWidth, tileX: 3),
+            TimelineSegmentPreviewRasterizer.ComputeNoteTileContentFingerprint(
+                noteEdited, deviceWidth, tileX: 3));
+        Assert.Equal(
+            TimelineSegmentPreviewRasterizer.ComputeEventTileContentFingerprint(
+                original, deviceWidth, tileX: 0),
+            TimelineSegmentPreviewRasterizer.ComputeEventTileContentFingerprint(
+                noteEdited, deviceWidth, tileX: 0));
+        Assert.Equal(
+            TimelineSegmentPreviewRasterizer.ComputeNoteTileContentFingerprint(
+                original, deviceWidth, tileX: 0),
+            TimelineSegmentPreviewRasterizer.ComputeNoteTileContentFingerprint(
+                eventEdited, deviceWidth, tileX: 0));
+        Assert.NotEqual(
+            TimelineSegmentPreviewRasterizer.ComputeEventTileContentFingerprint(
+                original, deviceWidth, tileX: 0),
+            TimelineSegmentPreviewRasterizer.ComputeEventTileContentFingerprint(
+                eventEdited, deviceWidth, tileX: 0));
+    }
+
+    [Fact]
+    public void SegmentEventTileAggregatesOneLinePerDeviceColumnAtMaximumHeight()
+    {
+        TimelineSegmentPreview preview = new(
+            new MidoraId(132),
+            [],
+            [
+                new TimelineSegmentPreviewEvent(0.1, 0.25),
+                new TimelineSegmentPreviewEvent(0.1001, 0.75)
+            ]);
+
+        TimelineRasterBuffer raster = TimelineSegmentPreviewRasterizer.RasterizeEventTile(
+            preview,
+            deviceSegmentWidth: 100,
+            deviceHeight: 100,
+            tileX: 0,
+            Color.FromRgb(229, 61, 68));
+
+        Assert.Equal(1, raster.CandidateCount);
+        Assert.Equal(0, Alpha(raster, 10, 10));
+        Assert.True(Alpha(raster, 10, 25) > 0);
+        Assert.Equal(0, Alpha(raster, 9, 80));
+        Assert.Equal(0, Alpha(raster, 11, 80));
+    }
+
+    [Fact]
+    public void ConductorPreviewUsesLocalTileFingerprintsAndAggregatesSameTypeColumns()
+    {
+        TimelineRenderItem near = Item(
+            1, 10, 11, 0, kind: TimelineItemKind.ConductorEvent) with
+        { ZIndex = 0, AccentColor = 0xffe5484d };
+        TimelineRenderItem duplicate = Item(
+            2, 10, 11, 0, kind: TimelineItemKind.ConductorEvent) with
+        { ZIndex = 0, AccentColor = 0xffe5484d };
+        TimelineRenderItem far = Item(
+            3, 600, 601, 0, kind: TimelineItemKind.Marker) with
+        { ZIndex = 3, AccentColor = 0xffe8b34b };
+        TimelineRenderSnapshot original = new(
+            1,
+            "arrangement",
+            [near, duplicate, far]);
+        TimelineRenderSnapshot editedFar = new(
+            2,
+            "arrangement",
+            [near, duplicate, far with { StartTick = 610, EndTick = 611 }]);
+
+        Assert.Equal(
+            TimelineConductorTileRasterizer.ComputeContentFingerprint(
+                original, 1, tileX: 0, dpiScaleX: 1),
+            TimelineConductorTileRasterizer.ComputeContentFingerprint(
+                editedFar, 1, tileX: 0, dpiScaleX: 1));
+        Assert.NotEqual(
+            TimelineConductorTileRasterizer.ComputeContentFingerprint(
+                original, 1, tileX: 2, dpiScaleX: 1),
+            TimelineConductorTileRasterizer.ComputeContentFingerprint(
+                editedFar, 1, tileX: 2, dpiScaleX: 1));
+
+        TimelineRasterBuffer tile = TimelineConductorTileRasterizer.Rasterize(
+            original,
+            devicePixelsPerTick: 1,
+            deviceLaneHeight: 50,
+            tileX: 0,
+            dpiScaleX: 1,
+            dpiScaleY: 1,
+            Color.FromRgb(98, 166, 246),
+            Color.FromRgb(42, 48, 58));
+        Assert.Equal(1, tile.CandidateCount);
+    }
+
+    [Fact]
+    public void ConductorStableTileExcludesProjectEndMarker()
+    {
+        TimelineRenderSnapshot withEnd = new(
+            1,
+            "arrangement",
+            [Item(1, 10, 11, 0, kind: TimelineItemKind.ProjectEndMarker)]);
+        TimelineRenderSnapshot empty = new(1, "arrangement", []);
+
+        Assert.Equal(
+            TimelineConductorTileRasterizer.ComputeContentFingerprint(
+                empty, 1, tileX: 0, dpiScaleX: 1),
+            TimelineConductorTileRasterizer.ComputeContentFingerprint(
+                withEnd, 1, tileX: 0, dpiScaleX: 1));
+        Assert.Equal(
+            0,
+            TimelineConductorTileRasterizer.Rasterize(
+                withEnd,
+                devicePixelsPerTick: 1,
+                deviceLaneHeight: 50,
+                tileX: 0,
+                dpiScaleX: 1,
+                dpiScaleY: 1,
+                Color.FromRgb(98, 166, 246),
+                Color.FromRgb(42, 48, 58)).CandidateCount);
     }
 
     [Fact]

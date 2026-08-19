@@ -459,8 +459,11 @@ public sealed class DesktopSessionControllerTests
         TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
 
         Assert.Equal(480, arrangement.EditorSettings.DefaultLengthTicks);
-        Assert.Equal("Lead", Assert.Single(arrangement.Snapshot!.LaneLabels));
-        Assert.Equal("Layered Strings", Assert.Single(arrangement.Snapshot.LaneSecondaryLabels));
+        TimelineRenderSnapshot snapshot = Assert.IsType<TimelineRenderSnapshot>(arrangement.Snapshot);
+        Assert.Equal(["Conductor", "Layered Strings", "Lead"], snapshot.LaneLabels);
+        ArrangementLaneDescriptor logicalTrackLane = Assert.Single(snapshot.ArrangementLanes, value =>
+            value.Kind == ArrangementLaneKind.LogicalTrack);
+        Assert.Equal("Layered Strings", snapshot.LaneSecondaryLabels[logicalTrackLane.Lane]);
     }
 
     [Fact]
@@ -473,13 +476,18 @@ public sealed class DesktopSessionControllerTests
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
         session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Strings"));
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Lead"));
+        CreateLogicalTrack(session, "Lead");
 
         session.ProjectTreeSearchText = "string";
 
-        ProjectTreeNode library = Assert.Single(session.ProjectTree);
+        Assert.Equal(2, session.ProjectTree.Count);
+        ProjectTreeNode library = session.ProjectTree.Single(value =>
+            value.Kind == ProjectTreeNodeKind.InstrumentLibrary);
         Assert.Equal(ProjectTreeNodeKind.InstrumentLibrary, library.Kind);
         Assert.Equal("Strings", Assert.Single(library.Children).Title);
+        ProjectTreeNode matchingTracks = session.ProjectTree.Single(value =>
+            value.Kind == ProjectTreeNodeKind.LogicalTracks);
+        Assert.Equal("Lead", Assert.Single(matchingTracks.Children).Title);
 
         session.ProjectTreeSearchText = "lead";
         ProjectTreeNode tracks = Assert.Single(session.ProjectTree);
@@ -521,7 +529,7 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Selection history",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        CreateLogicalTrack(session, "Track");
         LogicalTrack track = Assert.Single(session.Project!.Tracks);
         session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
         Segment segment = Assert.Single(track.Segments);
@@ -630,7 +638,7 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Inspector",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        CreateLogicalTrack(session, "Track");
         LogicalTrack track = Assert.Single(session.Project!.Tracks);
         session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
         Segment segment = Assert.Single(track.Segments);
@@ -669,7 +677,7 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Time Range",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        CreateLogicalTrack(session, "Track");
         LogicalTrack track = Assert.Single(session.Project!.Tracks);
         session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 240, 480));
         Segment segment = Assert.Single(track.Segments);
@@ -700,7 +708,7 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Timeline state",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        CreateLogicalTrack(session, "Track");
         LogicalTrack track = Assert.Single(session.Project!.Tracks);
         session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
         Segment segment = Assert.Single(track.Segments);
@@ -725,7 +733,7 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Preview cache",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        CreateLogicalTrack(session, "Track");
         LogicalTrack track = Assert.Single(session.Project!.Tracks);
         session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
         Segment segment = Assert.Single(track.Segments);
@@ -754,7 +762,7 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Selection overlay",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        CreateLogicalTrack(session, "Track");
         LogicalTrack track = Assert.Single(session.Project!.Tracks);
         session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
         Segment segment = Assert.Single(track.Segments);
@@ -780,8 +788,8 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Targeted workspace refresh",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Edited"));
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Unrelated"));
+        CreateLogicalTrack(session, "Edited");
+        CreateLogicalTrack(session, "Unrelated");
         LogicalTrack editedTrack = session.Project!.Tracks[0];
         LogicalTrack unrelatedTrack = session.Project.Tracks[1];
         session.Execute(ProjectDomainEditCommands.CreateSegment(editedTrack.Id, 0, 480));
@@ -812,7 +820,7 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Segment coordinates",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        CreateLogicalTrack(session, "Track");
         LogicalTrack track = Assert.Single(session.Project!.Tracks);
         session.Execute(ProjectDomainEditCommands.CreateSegment(
             track.Id,
@@ -841,7 +849,7 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Segment note range state",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        CreateLogicalTrack(session, "Track");
         LogicalTrack track = Assert.Single(session.Project!.Tracks);
         session.Execute(ProjectDomainEditCommands.CreateSegment(
             track.Id,
@@ -871,7 +879,7 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Invalid pitch navigation",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        CreateLogicalTrack(session, "Track");
         LogicalTrack track = Assert.Single(session.Project!.Tracks);
         session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
         Segment segment = Assert.Single(track.Segments);
@@ -912,7 +920,7 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Velocity projection",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track"));
+        CreateLogicalTrack(session, "Track");
         LogicalTrack track = Assert.Single(session.Project!.Tracks);
         session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 960));
         Segment segment = Assert.Single(track.Segments);
@@ -943,13 +951,14 @@ public sealed class DesktopSessionControllerTests
 
         TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
 
-        Assert.NotNull(arrangement.RulerSnapshot);
-        Assert.True(arrangement.RulerSnapshot.Items.Count >= 3);
-        Assert.All(arrangement.RulerSnapshot.Items, item =>
+        TimelineRenderSnapshot snapshot = Assert.IsType<TimelineRenderSnapshot>(arrangement.Snapshot);
+        Assert.Null(arrangement.RulerSnapshot);
+        Assert.True(snapshot.Items.Count >= 3);
+        Assert.All(snapshot.Items, item =>
             Assert.True(item.State.HasFlag(TimelineItemState.HitTestDisabled)));
-        Assert.Contains(arrangement.RulerSnapshot.Items, item => item.Label.Contains("132.5 BPM", StringComparison.Ordinal));
-        Assert.Contains(arrangement.RulerSnapshot.Items, item => item.Label == "3/4");
-        Assert.Contains(arrangement.RulerSnapshot.Items, item => item.Label == "Verse");
+        Assert.Contains(snapshot.Items, item => item.Label.Contains("132.5 BPM", StringComparison.Ordinal));
+        Assert.Contains(snapshot.Items, item => item.Label == "3/4");
+        Assert.Contains(snapshot.Items, item => item.Label == "Verse");
     }
 
     [Fact]
@@ -1345,15 +1354,180 @@ public sealed class DesktopSessionControllerTests
         session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
 
         TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
-        TimelineRenderItem segment = Assert.Single(arrangement.Snapshot!.Items);
+        TimelineRenderSnapshot snapshot = Assert.IsType<TimelineRenderSnapshot>(arrangement.Snapshot);
+        TimelineRenderItem segment = Assert.Single(snapshot.Items, value => value.Kind == TimelineItemKind.Segment);
         ProjectTreeNode conductorNode = session.ProjectTree.Single(value =>
             value.Kind == ProjectTreeNodeKind.Conductor);
         TimelineWorkspaceViewModel conductor = Assert.IsType<TimelineWorkspaceViewModel>(
             session.OpenWorkspace(conductorNode));
 
         Assert.Equal(0xff336699u, segment.AccentColor);
-        Assert.Equal(0xff336699u, arrangement.Snapshot.LaneColors[0]);
+        Assert.Equal(0xff336699u, snapshot.LaneColors[segment.Lane]);
         Assert.Equal(27, conductor.LaneHeight);
+    }
+
+    [Fact]
+    public async Task MidiImportActivatesOneDetachedProjectCandidate()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Previous",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        StandardMidiFileTrack source = new(
+            240,
+            [
+                StandardMidiFileEvent.Text(
+                    0,
+                    StandardMidiFile.TrackNameMetaType,
+                    "Imported Track"),
+                StandardMidiFileEvent.ChannelVoice(
+                    0,
+                    MidiMessage.NoteOn(0, 60, 100)),
+                StandardMidiFileEvent.ChannelVoice(
+                    120,
+                    MidiMessage.NoteOff(0, 60, 23))
+            ]);
+        byte[] file = StandardMidiFile.EncodeType1(192, [source]);
+
+        IReadOnlyList<MidiProjectImportDiagnostic> diagnostics =
+            await session.ImportMidiBytesAsNewProjectAsync(file, "Imported Project");
+
+        Assert.DoesNotContain(diagnostics, value => value.Severity == DiagnosticSeverity.Warning);
+        Assert.Equal("Imported Project", session.Project!.Metadata.ProjectName);
+        Assert.Equal(192, session.Project.TicksPerQuarterNote);
+        MidiChannelRoot root = Assert.Single(session.Project.MidiChannelRoots);
+        PureMidiTrack track = Assert.Single(session.Project.PureMidiTracks);
+        Assert.Equal(root.Id, track.MidiChannelRootId);
+        Assert.Equal("Imported Track", track.Name);
+        Assert.Equal(23, Assert.Single(Assert.Single(track.Segments).Notes).NoteOffVelocity);
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+        Assert.Equal(
+            [
+                ArrangementLaneKind.Conductor,
+                ArrangementLaneKind.MidiChannelRoot,
+                ArrangementLaneKind.PureMidiTrack
+            ],
+            arrangement.Snapshot!.ArrangementLanes.Select(value => value.Kind));
+    }
+
+    [Fact]
+    public async Task ArrangementAndInspectorProjectPureMidiHierarchyAndOpaqueDetails()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Pure MIDI UI",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateMidiChannelRoot("Root"));
+        MidiChannelRoot root = Assert.Single(session.Project!.MidiChannelRoots);
+        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrack(root.Id, "MIDI Track"));
+        PureMidiTrack track = Assert.Single(session.Project.PureMidiTracks);
+        session.Execute(ProjectDomainEditCommands.CreateMidiSegment(track.Id, 0, 480));
+        MidiSegment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateDirectMidiNote(
+            segment.Id,
+            startTick: 0,
+            lengthTicks: 120,
+            key: 60,
+            noteOnVelocity: 100));
+        session.Execute(ProjectDomainEditCommands.CreateDirectMidiChannelEvent(
+            segment.Id,
+            tick: 32,
+            DirectMidiChannelEventKind.ControlChange,
+            data1: 11,
+            data2: 96));
+        session.Execute(ProjectDomainEditCommands.CreateDirectMidiChannelEvent(
+            segment.Id,
+            tick: 48,
+            DirectMidiChannelEventKind.NoteOn,
+            data1: 67,
+            data2: 80));
+        OpaqueMidiEvent opaque = new(session.Project)
+        {
+            Tick = 64,
+            Kind = OpaqueMidiEventKind.Meta,
+            MetaType = 0x01,
+            Payload = [0xde, 0xad, 0xbe, 0xef],
+            Order = 99
+        };
+        segment.OpaqueEvents.Add(opaque);
+
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+        session.RefreshWorkspace(arrangement);
+        TimelineRenderSnapshot arrangementSnapshot = Assert.IsType<TimelineRenderSnapshot>(
+            arrangement.Snapshot);
+        Assert.Equal(
+            [ArrangementLaneKind.Conductor, ArrangementLaneKind.MidiChannelRoot, ArrangementLaneKind.PureMidiTrack],
+            arrangementSnapshot.ArrangementLanes.Select(value => value.Kind));
+        TimelineSegmentPreview preview = Assert.Single(arrangementSnapshot.SegmentPreviews).Value;
+        Assert.Single(preview.Notes);
+        // Unpaired raw Note messages stay editable in the Event Lane/Inspector,
+        // but the Arrangement overlay is reserved for non-Note MIDI events.
+        Assert.Equal(2, preview.Events.Count);
+
+        TimelineWorkspaceViewModel editor = session.OpenSegment(segment.Id);
+        editor.Selection.Replace(opaque.Id);
+        session.RefreshWorkspace(editor);
+
+        Assert.Equal("Imported MIDI Event", session.Inspector.Title);
+        Assert.Equal("DEADBEEF", session.Inspector.Fields.Single(
+            value => value.Key == "opaqueMidi.payload").Value);
+        Assert.Equal("4", session.Inspector.Fields.Single(
+            value => value.Key == "opaqueMidi.payloadLength").Value);
+    }
+
+    [Fact]
+    public void ArrangementKeepsDamagedParentAndChildPlaceholdersVisibleInFormalOrder()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = new(project) { Name = "Instrument" };
+        MidoraId damagedTrackId = project.AllocateStableId();
+        instrument.LogicalTrackIds.Add(damagedTrackId);
+        project.EventInstruments.Add(instrument);
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.EventInstrument,
+            instrument.Id));
+        project.DamagedLogicalTracks.Add(new(
+            damagedTrackId,
+            "Broken Track",
+            "logical-tracks/broken.pb",
+            "track payload is damaged",
+            0,
+            instrument.Id));
+        MidoraId damagedRootId = project.AllocateStableId();
+        project.DamagedMidiChannelRoots.Add(new(
+            damagedRootId,
+            "Broken Root",
+            "midi-channel-roots/broken.pb",
+            "root payload is damaged",
+            1,
+            ChildIds: Array.AsReadOnly(Array.Empty<MidoraId>())));
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.MidiChannelRoot,
+            damagedRootId));
+        TimelineEditorSettings settings = new();
+        settings.Reset(arrangement: true, project.TicksPerQuarterNote);
+        TimelineWorkspaceViewModel workspace = new(
+            WorkspaceKey.ForType(WorkspaceKind.Arrangement),
+            "Arrangement",
+            TimelineWorkspaceMode.Arrangement,
+            settings);
+
+        workspace.Rebuild(project, revision: 1);
+
+        Assert.Equal(
+            [
+                ArrangementLaneKind.Conductor,
+                ArrangementLaneKind.EventInstrument,
+                ArrangementLaneKind.DamagedLogicalTrack,
+                ArrangementLaneKind.DamagedMidiChannelRoot
+            ],
+            workspace.Snapshot!.ArrangementLanes.Select(value => value.Kind));
+        Assert.Contains("[Damaged] Broken Track", workspace.Snapshot.LaneLabels);
+        Assert.Contains("[Damaged] Broken Root", workspace.Snapshot.LaneLabels);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
@@ -1376,6 +1550,19 @@ public sealed class DesktopSessionControllerTests
             }
             await Task.Delay(10);
         }
+    }
+
+    private static void CreateLogicalTrack(
+        DesktopSessionController session,
+        string name)
+    {
+        if (session.Project!.EventInstruments.Count == 0)
+        {
+            session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Test Instrument"));
+        }
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack(
+            name,
+            session.Project.EventInstruments[0].Id));
     }
 
 }

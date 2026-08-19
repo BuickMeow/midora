@@ -26,22 +26,26 @@ public static partial class ProjectDomainEditCommands
         Command("Change logical track binding", project =>
         {
             LogicalTrack track = FindTrack(project, trackId);
-            EventInstrument? target = eventInstrumentId.HasValue
-                ? FindEventInstrument(project, eventInstrumentId.Value)
-                : null;
+            if (!eventInstrumentId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "A Logical Track cannot be detached from its Event Instrument parent.");
+            }
+            EventInstrument target = FindEventInstrument(project, eventInstrumentId.Value);
+            EventInstrument source = track.EventInstrumentId is MidoraId sourceId
+                ? FindEventInstrument(project, sourceId)
+                : throw new InvalidOperationException(
+                    "The Logical Track has no Event Instrument parent.");
+            int sourceIndex = source.LogicalTrackIds.IndexOf(track.Id);
+            if (sourceIndex < 0)
+            {
+                throw new InvalidOperationException(
+                    "The Logical Track is missing from its Event Instrument child order.");
+            }
+            int targetIndex = target.LogicalTrackIds.Count;
             MidoraId? oldInstrumentId = track.EventInstrumentId;
             string? oldLastBoundName = track.LastBoundEventInstrumentName;
-            string? newLastBoundName = target?.Name;
-            if (target is null && oldInstrumentId.HasValue)
-            {
-                newLastBoundName = project.EventInstruments
-                    .FirstOrDefault(value => value.Id == oldInstrumentId.Value)?.Name
-                    ?? oldLastBoundName;
-            }
-            else if (target is null)
-            {
-                newLastBoundName = oldLastBoundName;
-            }
+            string newLastBoundName = target.Name;
 
             ProjectChangeSet changes = TrackChange(trackId);
             if (oldInstrumentId.HasValue)
@@ -57,11 +61,21 @@ public static partial class ProjectDomainEditCommands
                 changes,
                 _ =>
                 {
-                    track.EventInstrumentId = eventInstrumentId;
+                    if (!ReferenceEquals(source, target))
+                    {
+                        RemoveRequired(source.LogicalTrackIds, track.Id, "Logical Track reference");
+                        target.LogicalTrackIds.Insert(targetIndex, track.Id);
+                    }
+                    track.EventInstrumentId = target.Id;
                     track.LastBoundEventInstrumentName = newLastBoundName;
                 },
                 _ =>
                 {
+                    if (!ReferenceEquals(source, target))
+                    {
+                        RemoveRequired(target.LogicalTrackIds, track.Id, "Logical Track reference");
+                        source.LogicalTrackIds.Insert(sourceIndex, track.Id);
+                    }
                     track.EventInstrumentId = oldInstrumentId;
                     track.LastBoundEventInstrumentName = oldLastBoundName;
                 });
@@ -71,18 +85,64 @@ public static partial class ProjectDomainEditCommands
         Command("Reorder logical track", project =>
         {
             LogicalTrack track = FindTrack(project, trackId);
-            int oldIndex = project.Tracks.IndexOf(track);
-            ValidateExistingIndex(newIndex, project.Tracks.Count, nameof(newIndex));
-            LogicalTrack[] before = project.Tracks.ToArray();
-            List<LogicalTrack> reordered = before.ToList();
-            reordered.RemoveAt(oldIndex);
-            reordered.Insert(newIndex, track);
-            LogicalTrack[] after = reordered.ToArray();
+            EventInstrument parent = track.EventInstrumentId is MidoraId parentId
+                ? FindEventInstrument(project, parentId)
+                : throw new InvalidOperationException(
+                    "The Logical Track has no Event Instrument parent.");
+            int oldIndex = parent.LogicalTrackIds.IndexOf(track.Id);
+            if (oldIndex < 0)
+            {
+                throw new InvalidOperationException(
+                    "The Logical Track is missing from its Event Instrument child order.");
+            }
+            ValidateExistingIndex(newIndex, parent.LogicalTrackIds.Count, nameof(newIndex));
             return Prepared(
                 oldIndex != newIndex,
                 EverythingChange(),
-                value => ReplaceLogicalTrackOrder(value.Tracks, before, after),
-                value => ReplaceLogicalTrackOrder(value.Tracks, after, before));
+                _ => Move(parent.LogicalTrackIds, track.Id, newIndex),
+                _ => Move(parent.LogicalTrackIds, track.Id, oldIndex));
+        });
+
+    public static IProjectEditCommand MoveLogicalTrack(
+        MidoraId trackId,
+        MidoraId targetEventInstrumentId,
+        int targetIndex) =>
+        Command("Move logical track", project =>
+        {
+            LogicalTrack track = FindTrack(project, trackId);
+            EventInstrument source = track.EventInstrumentId is MidoraId sourceId
+                ? FindEventInstrument(project, sourceId)
+                : throw new InvalidOperationException(
+                    "The Logical Track has no Event Instrument parent.");
+            EventInstrument target = FindEventInstrument(project, targetEventInstrumentId);
+            int sourceIndex = source.LogicalTrackIds.IndexOf(track.Id);
+            if (sourceIndex < 0)
+            {
+                throw new InvalidOperationException(
+                    "The Logical Track is missing from its Event Instrument child order.");
+            }
+            int targetCount = ReferenceEquals(source, target)
+                ? target.LogicalTrackIds.Count - 1
+                : target.LogicalTrackIds.Count;
+            ValidateInsertionIndex(targetIndex, targetCount, nameof(targetIndex));
+            string? oldLastBoundName = track.LastBoundEventInstrumentName;
+            return Prepared(
+                !ReferenceEquals(source, target) || sourceIndex != targetIndex,
+                EverythingChange(),
+                _ =>
+                {
+                    RemoveRequired(source.LogicalTrackIds, track.Id, "Logical Track reference");
+                    target.LogicalTrackIds.Insert(targetIndex, track.Id);
+                    track.EventInstrumentId = target.Id;
+                    track.LastBoundEventInstrumentName = target.Name;
+                },
+                _ =>
+                {
+                    RemoveRequired(target.LogicalTrackIds, track.Id, "Logical Track reference");
+                    source.LogicalTrackIds.Insert(sourceIndex, track.Id);
+                    track.EventInstrumentId = source.Id;
+                    track.LastBoundEventInstrumentName = oldLastBoundName;
+                });
         });
 
     public static IProjectEditCommand DeleteLogicalTrack(
@@ -97,12 +157,23 @@ public static partial class ProjectDomainEditCommands
                     "Deleting a non-empty Logical Track requires explicit confirmation.");
             }
             int originalIndex = project.Tracks.IndexOf(track);
+            EventInstrument parent = track.EventInstrumentId is MidoraId parentId
+                ? FindEventInstrument(project, parentId)
+                : throw new InvalidOperationException(
+                    "The Logical Track has no Event Instrument parent.");
+            int childIndex = parent.LogicalTrackIds.IndexOf(track.Id);
+            if (childIndex < 0)
+            {
+                throw new InvalidOperationException(
+                    "The Logical Track is missing from its Event Instrument child order.");
+            }
             bool wasExplicitlySelected = project.AudioRender.ExplicitLogicalTrackIds.Contains(trackId);
             return Prepared(
                 hasChanges: true,
                 EverythingChange(),
                 value =>
                 {
+                    RemoveRequired(parent.LogicalTrackIds, track.Id, "Logical Track reference");
                     RemoveRequired(value.Tracks, track, "Logical Track");
                     value.AudioRender.ExplicitLogicalTrackIds.Remove(trackId);
                 },
@@ -110,6 +181,7 @@ public static partial class ProjectDomainEditCommands
                 {
                     EnsureLogicalTrackIdAvailable(value, trackId);
                     InsertAt(value.Tracks, originalIndex, track, "Logical Track");
+                    InsertAt(parent.LogicalTrackIds, childIndex, track.Id, "Logical Track reference");
                     if (wasExplicitlySelected)
                     {
                         value.AudioRender.ExplicitLogicalTrackIds.Add(trackId);
@@ -159,13 +231,21 @@ public static partial class ProjectDomainEditCommands
         Command("Reorder event instrument", project =>
         {
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
-            int oldIndex = project.EventInstruments.IndexOf(instrument);
-            ValidateExistingIndex(newIndex, project.EventInstruments.Count, nameof(newIndex));
+            ArrangementParentReference parent = new(
+                ArrangementParentKind.EventInstrument,
+                instrument.Id);
+            int oldIndex = project.ArrangementParents.IndexOf(parent);
+            if (oldIndex < 0)
+            {
+                throw new InvalidOperationException(
+                    "The Event Instrument is missing from the Arrangement parent order.");
+            }
+            ValidateExistingIndex(newIndex, project.ArrangementParents.Count, nameof(newIndex));
             return Prepared(
                 oldIndex != newIndex,
-                NoCompilationChange(),
-                value => Move(value.EventInstruments, instrument, newIndex),
-                value => Move(value.EventInstruments, instrument, oldIndex));
+                EverythingChange(),
+                value => Move(value.ArrangementParents, parent, newIndex),
+                value => Move(value.ArrangementParents, parent, oldIndex));
         });
 
     public static IProjectEditCommand MoveEventInstrumentToFolder(
@@ -192,29 +272,38 @@ public static partial class ProjectDomainEditCommands
         Command("Delete event instrument", project =>
         {
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
-            InstrumentBinding[] bindings = project.Tracks
-                .Where(value => value.EventInstrumentId == eventInstrumentId)
-                .Select(value => new InstrumentBinding(
-                    value,
-                    value.EventInstrumentId,
-                    value.LastBoundEventInstrumentName))
+            LogicalTrack[] children = instrument.LogicalTrackIds
+                .Select(id => FindTrack(project, id))
                 .ToArray();
-            if (bindings.Length != 0 && !referencedDeletionConfirmed)
+            if (children.Length != 0 && !referencedDeletionConfirmed)
             {
                 throw new InvalidOperationException(
-                    "Deleting a referenced Event Instrument requires explicit confirmation.");
+                    "Deleting a non-empty Event Instrument subtree requires explicit confirmation.");
             }
             int originalIndex = project.EventInstruments.IndexOf(instrument);
+            ArrangementParentReference parent = new(
+                ArrangementParentKind.EventInstrument,
+                instrument.Id);
+            int parentIndex = project.ArrangementParents.IndexOf(parent);
+            if (parentIndex < 0)
+            {
+                throw new InvalidOperationException(
+                    "The Event Instrument is missing from the Arrangement parent order.");
+            }
+            Dictionary<MidoraId, int> trackIndices = children.ToDictionary(
+                value => value.Id,
+                value => project.Tracks.IndexOf(value));
             return Prepared(
                 hasChanges: true,
                 EverythingChange(),
                 value =>
                 {
                     RequireContains(value.EventInstruments, instrument, "Event Instrument");
-                    foreach (InstrumentBinding binding in bindings)
+                    RemoveRequired(value.ArrangementParents, parent, "Arrangement parent");
+                    foreach (LogicalTrack child in children)
                     {
-                        binding.Track.LastBoundEventInstrumentName = instrument.Name;
-                        binding.Track.EventInstrumentId = null;
+                        RemoveRequired(value.Tracks, child, "Logical Track");
+                        value.AudioRender.ExplicitLogicalTrackIds.Remove(child.Id);
                     }
                     value.EventInstruments.Remove(instrument);
                 },
@@ -226,7 +315,15 @@ public static partial class ProjectDomainEditCommands
                         originalIndex,
                         instrument,
                         "Event Instrument");
-                    RestoreBindings(bindings);
+                    InsertAt(value.ArrangementParents, parentIndex, parent, "Arrangement parent");
+                    foreach (LogicalTrack child in children.OrderBy(value => trackIndices[value.Id]))
+                    {
+                        InsertAt(
+                            value.Tracks,
+                            Math.Clamp(trackIndices[child.Id], 0, value.Tracks.Count),
+                            child,
+                            "Logical Track");
+                    }
                 });
         });
 
@@ -304,19 +401,20 @@ public static partial class ProjectDomainEditCommands
             DamagedProjectObject placeholder = project.DamagedEventInstruments
                 .SingleOrDefault(value => value.Id == placeholderId)
                 ?? throw new ArgumentOutOfRangeException(nameof(placeholderId));
-            DamagedInstrumentBindingSnapshot[] bindings = project.Tracks
-                .Where(value => value.EventInstrumentId == placeholderId)
-                .Select(value => new DamagedInstrumentBindingSnapshot(
-                    value.Id,
-                    value.EventInstrumentId,
-                    value.LastBoundEventInstrumentName))
-                .ToArray();
-            DamagedEventInstrumentDeletion deletion = new(placeholder, bindings);
+            DamagedEventInstrumentDeletion? deletion = null;
             return Prepared(
                 hasChanges: true,
                 EverythingChange(),
-                value => DamagedProjectObjectEditing.DeleteEventInstrument(value, placeholderId),
-                value => DamagedProjectObjectEditing.UndoDeleteEventInstrument(value, deletion));
+                value =>
+                {
+                    DamagedEventInstrumentDeletion applied =
+                        DamagedProjectObjectEditing.DeleteEventInstrument(value, placeholderId);
+                    deletion ??= applied;
+                },
+                value => DamagedProjectObjectEditing.UndoDeleteEventInstrument(
+                    value,
+                    deletion ?? throw new InvalidOperationException(
+                        "The damaged Event Instrument deletion was not applied.")));
         });
 
     public static IProjectEditCommand DeleteDamagedLogicalTrack(MidoraId placeholderId) =>
@@ -325,14 +423,20 @@ public static partial class ProjectDomainEditCommands
             DamagedProjectObject placeholder = project.DamagedLogicalTracks
                 .SingleOrDefault(value => value.Id == placeholderId)
                 ?? throw new ArgumentOutOfRangeException(nameof(placeholderId));
-            DamagedLogicalTrackDeletion deletion = new(
-                placeholder,
-                project.AudioRender.ExplicitLogicalTrackIds.Contains(placeholderId));
+            DamagedLogicalTrackDeletion? deletion = null;
             return Prepared(
                 hasChanges: true,
                 EverythingChange(),
-                value => DamagedProjectObjectEditing.DeleteLogicalTrack(value, placeholderId),
-                value => DamagedProjectObjectEditing.UndoDeleteLogicalTrack(value, deletion));
+                value =>
+                {
+                    DamagedLogicalTrackDeletion applied =
+                        DamagedProjectObjectEditing.DeleteLogicalTrack(value, placeholderId);
+                    deletion ??= applied;
+                },
+                value => DamagedProjectObjectEditing.UndoDeleteLogicalTrack(
+                    value,
+                    deletion ?? throw new InvalidOperationException(
+                        "The damaged Logical Track deletion was not applied.")));
         });
 
     public static IProjectEditCommand MoveSegment(
@@ -658,7 +762,6 @@ public static partial class ProjectDomainEditCommands
     }
 
     private static void Move<T>(List<T> values, T value, int targetIndex)
-        where T : class
     {
         int currentIndex = values.IndexOf(value);
         if (currentIndex < 0)
@@ -706,7 +809,6 @@ public static partial class ProjectDomainEditCommands
     }
 
     private static void RemoveRequired<T>(ICollection<T> values, T value, string objectName)
-        where T : class
     {
         if (!values.Remove(value))
         {
@@ -715,7 +817,6 @@ public static partial class ProjectDomainEditCommands
     }
 
     private static void InsertAt<T>(IList<T> values, int index, T value, string objectName)
-        where T : class
     {
         if ((uint)index > (uint)values.Count)
         {

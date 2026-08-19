@@ -146,7 +146,7 @@ Bank MSB / LSB
 RPN / NRPN Data Entry
 Pitch Bend Range semitone / cents
 ```
-当目标事件是 CC 时，CC number 仍由事件身份固定；CC91 与 CC93 不是合法事件或映射目标。发现对 CC91 / CC93 的 Mapping Chain 或 Logical Parameter Mapping 时，语义验证必须产生 Error。
+当 Event Instrument/SubVoice Mapping 的目标事件是 CC 时，CC number 仍由事件身份固定；CC91 与 CC93 不是该路径的合法事件或映射目标。发现对 CC91 / CC93 的 Mapping Chain 或 Logical Parameter Mapping 时，语义验证必须产生 Error。该限制不适用于第 23 章 Pure MIDI Track 中不经过 Mapping 的直接 CC 事件。
 ### 9.2.3 Program / Bank 映射边界
 Program value 允许映射。
 规则：

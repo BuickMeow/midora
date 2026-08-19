@@ -78,6 +78,7 @@ internal static class EventInstrumentProtobufCodecV1
         result.Envelopes.Add(value.Envelopes.Select(ToWire));
         result.MappingFunctions.Add(value.MappingFunctions.Select(ToWire));
         result.ParameterMappings.Add(value.ParameterMappings.Select(ToWire));
+        result.LogicalTrackIds.Add(value.LogicalTrackIds.Select(ProtobufValueCodecV1.ToWire));
         return result;
     }
 
@@ -104,6 +105,8 @@ internal static class EventInstrumentProtobufCodecV1
         result.Envelopes.AddRange(value.Envelopes.Select(item => FromWire(project, item)));
         result.MappingFunctions.AddRange(value.MappingFunctions.Select(item => FromWire(project, item)));
         result.ParameterMappings.AddRange(value.ParameterMappings.Select(item => FromWire(project, item)));
+        result.LogicalTrackIds.AddRange(value.LogicalTrackIds.Select(
+            item => ProtobufValueCodecV1.FromWire(item, "Event Instrument Logical Track ID")));
         return result;
     }
 
@@ -586,6 +589,16 @@ internal static class EventInstrumentProtobufCodecV1
         foreach (InstrumentEnvelopeV1 item in value.Envelopes) Validate(item);
         foreach (CSharpMappingFunctionV1 item in value.MappingFunctions) Validate(item);
         foreach (LogicalParameterMappingV1 item in value.ParameterMappings) Validate(item);
+        HashSet<MidoraId> logicalTrackIds = [];
+        foreach (long item in value.LogicalTrackIds)
+        {
+            MidoraId id = ProtobufValueCodecV1.FromWire(item, "Event Instrument Logical Track ID");
+            if (!logicalTrackIds.Add(id))
+            {
+                throw new InvalidDataException(
+                    "Event Instrument logicalTrackIds contain a duplicate.");
+            }
+        }
     }
 
     private static void Validate(MidiInitialStateV1 value, string fieldName)

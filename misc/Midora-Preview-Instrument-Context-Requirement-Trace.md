@@ -1,7 +1,9 @@
 # Preview Event Instrument 上下文完整性需求追踪
 
-状态：已实现  
+状态：历史实现记录；其 Library Folder 上下文规则已由 SRS 第 24 章与 ADR-CORE-045 取代，不得作为当前 Preview 依赖
 日期：2026-08-06
+
+> 当前 Preview 仍必须复制完整的 Event Instrument 正式定义上下文，但不再存在 Folder/Unfiled/Library order。本文只保留旧实现的回归历史。
 
 ## 1. 需求依据
 

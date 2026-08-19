@@ -566,6 +566,7 @@ public sealed class EventInstrument
     public long? LoopStartTick { get; set; }
     public long? LoopEndTick { get; set; }
     public MidiInitialState InitialState { get; } = new();
+    public List<MidoraId> LogicalTrackIds { get; } = [];
     public List<LogicalParameterDefinition> LogicalParameters { get; } = [];
     public List<SubVoice> SubVoices { get; } = [];
     public List<InstrumentEnvelope> Envelopes { get; } = [];

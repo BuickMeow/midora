@@ -4,7 +4,7 @@ using Midora.Midi;
 
 namespace Midora.Compiler;
 
-public sealed class MidoraCompiler : IDisposable
+public sealed partial class MidoraCompiler : IDisposable
 {
     private readonly Dictionary<MidoraId, TrackCacheEntry> _trackCache = [];
     private readonly MappingEngine _mapping = new();
@@ -174,6 +174,9 @@ public sealed class MidoraCompiler : IDisposable
         IReadOnlyList<LogicalTrack> selectedTracks = project.Tracks
             .Where(track => request.IncludedTrackIds is null || request.IncludedTrackIds.Contains(track.Id))
             .ToArray();
+        IReadOnlyList<PureMidiTrack> selectedPureMidiTracks = project.PureMidiTracks
+            .Where(track => request.IncludedTrackIds is null || request.IncludedTrackIds.Contains(track.Id))
+            .ToArray();
 
         HashSet<MidoraId> liveTrackIds = project.Tracks.Select(track => track.Id).ToHashSet();
         foreach (MidoraId cachedId in _trackCache.Keys.Where(id => !liveTrackIds.Contains(id)).ToArray())
@@ -217,10 +220,9 @@ public sealed class MidoraCompiler : IDisposable
 
         if (!request.EndTick.HasValue && !project.Conductor.EndMarkerTick.HasValue)
         {
-            endTick = instances
-                .Select(static value => value.SegmentEndTick)
-                .DefaultIfEmpty(0)
-                .Max();
+            endTick = Math.Max(
+                instances.Select(static value => value.SegmentEndTick).DefaultIfEmpty(0).Max(),
+                GetPureMidiNaturalEnd(project, request.IncludedTrackIds));
             if (endTick < request.StartTick)
             {
                 diagnostics.Add(new(
@@ -232,6 +234,20 @@ public sealed class MidoraCompiler : IDisposable
             }
             conductor = FreezeConductor(project.Conductor, request.StartTick, endTick);
         }
+
+        PureMidiPlan pureMidiPlan = BuildPureMidiPlan(
+            project,
+            request,
+            request.StartTick,
+            endTick,
+            cancellationToken);
+        AppendPureMidiExportCompatibilityDiagnostics(
+            pureMidiPlan,
+            request,
+            request.StartTick,
+            endTick,
+            diagnostics,
+            cancellationToken);
 
         bool expansionErrors = diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
 
@@ -259,7 +275,12 @@ public sealed class MidoraCompiler : IDisposable
             .Skip(overlapDiagnosticStart)
             .Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         int allocationDiagnosticStart = diagnostics.Count;
-        AllocationResult allocation = Allocate(project, instances, diagnostics, cancellationToken);
+        AllocationResult allocation = Allocate(
+            project,
+            instances,
+            pureMidiPlan,
+            diagnostics,
+            cancellationToken);
         bool allocationErrors = diagnostics
             .Skip(allocationDiagnosticStart)
             .Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
@@ -277,11 +298,12 @@ public sealed class MidoraCompiler : IDisposable
                         : CompilationFailureStage.WarningPolicy;
             LastTelemetry = telemetry;
             CompilationStatistics failureStatistics = CreateStatistics(
-                selectedTracks.Count,
+                selectedTracks.Count + selectedPureMidiTracks.Count,
                 instances,
                 0,
                 0,
-                allocation);
+                allocation,
+                pureMidiPlan);
             AppendDebugDiagnostics(
                 request,
                 endTick,
@@ -301,6 +323,13 @@ public sealed class MidoraCompiler : IDisposable
             allocation.UnitBySubVoice,
             project.GlobalResetDefaults,
             cancellationToken);
+        allEvents.AddRange(MaterializePureMidiEvents(
+            pureMidiPlan,
+            allocation.UnitByRoot,
+            project.GlobalResetDefaults,
+            cancellationToken));
+        allEvents.Sort(CanonicalComparer.Instance);
+        allEvents = FoldSameTickStates(allEvents, cancellationToken);
         CanonicalMidiEvent[] ranged = ApplyRange(
             allEvents,
             allocation.Allocations,
@@ -309,6 +338,11 @@ public sealed class MidoraCompiler : IDisposable
             project.GlobalResetDefaults,
             request.HeldPreviewGateOpen,
             cancellationToken);
+        ranged = AssignPureMidiRangeBoundaryOwnership(
+            ranged,
+            pureMidiPlan,
+            allocation.UnitByRoot,
+            endTick);
         ChannelUnitAllocation[] rangedAllocations = allocation.Allocations
             .Where(value => value.StartTick < endTick && value.EndTick > request.StartTick)
             .ToArray();
@@ -318,21 +352,28 @@ public sealed class MidoraCompiler : IDisposable
                 $"The Channel Unit peak is {allocation.PeakUnits}/256.", new()));
         }
 
+        CanonicalSmfTrackDescriptor[] smfTracks = FreezeSmfTrackDescriptors(
+            pureMidiPlan,
+            allocation.UnitByRoot);
+        CanonicalOpaqueMidiEvent[] opaqueMidiEvents = pureMidiPlan.OpaqueEvents;
         long resultFingerprint = SourceFingerprint.ForResult(
             request.StartTick,
             endTick,
             ranged,
             conductor,
+            smfTracks,
+            opaqueMidiEvents,
             cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         LastTelemetry = telemetry;
         int noteOnEventCount = CountNoteOnEvents(ranged);
         CompilationStatistics successStatistics = CreateStatistics(
-            selectedTracks.Count,
+            selectedTracks.Count + selectedPureMidiTracks.Count,
             instances,
             ranged.Length,
             noteOnEventCount,
-            allocation);
+            allocation,
+            pureMidiPlan);
         AppendDebugDiagnostics(
             request,
             endTick,
@@ -343,7 +384,9 @@ public sealed class MidoraCompiler : IDisposable
             project.TicksPerQuarterNote, CreateContextSummary(project, request, endTick),
             ranged, conductor, rangedAllocations, diagnostics.ToArray(),
             false, true, null, resultFingerprint,
-            successStatistics);
+            successStatistics,
+            smfTracks,
+            opaqueMidiEvents);
     }
 
     private static CanonicalCompiledResult Failure(
@@ -378,15 +421,17 @@ public sealed class MidoraCompiler : IDisposable
 
     private static int CountSelectedTracks(MidoraProject project, CompilationRequest request) =>
         request.IncludedTrackIds is null
-            ? project.Tracks.Count
-            : project.Tracks.Count(track => request.IncludedTrackIds.Contains(track.Id));
+            ? project.Tracks.Count + project.PureMidiTracks.Count
+            : project.Tracks.Count(track => request.IncludedTrackIds.Contains(track.Id))
+                + project.PureMidiTracks.Count(track => request.IncludedTrackIds.Contains(track.Id));
 
     private static CompilationStatistics CreateStatistics(
         int selectedTrackCount,
         IReadOnlyCollection<RawInstance> instances,
         int eventCount,
         int noteOnEventCount,
-        AllocationResult allocation) => new(
+        AllocationResult allocation,
+        PureMidiPlan? pureMidiPlan = null) => new(
             selectedTrackCount,
             instances.Count,
             eventCount,
@@ -406,7 +451,10 @@ public sealed class MidoraCompiler : IDisposable
                 .Distinct()
                 .Count(),
             NoteOnEventCount = noteOnEventCount,
-            ResourceShortage = allocation.ResourceShortage
+            ResourceShortage = allocation.ResourceShortage,
+            ReservedMidiRootUnitCount = allocation.ReservedRootUnitCount,
+            AllocatedMidiRootUnitCount = allocation.AllocatedRootUnitCount,
+            LogicalPeakChannelUnitCount = allocation.LogicalPeakUnits
         };
 
     private static int CountNoteOnEvents(ReadOnlySpan<CanonicalMidiEvent> events)
@@ -2523,6 +2571,7 @@ public sealed class MidoraCompiler : IDisposable
     private static AllocationResult Allocate(
         MidoraProject project,
         List<RawInstance> instances,
+        PureMidiPlan pureMidiPlan,
         List<CompilerDiagnostic> diagnostics,
         CancellationToken cancellationToken)
     {
@@ -2561,8 +2610,12 @@ public sealed class MidoraCompiler : IDisposable
             }
             groups.AddRange(isolatedLanes);
         }
-        Dictionary<MidoraId, int> trackOrder = project.Tracks
+        Dictionary<MidoraId, int> trackOrder = project.LogicalTracksInArrangementOrder()
             .Select((track, index) => (track.Id, index)).ToDictionary(value => value.Id, value => value.index);
+        foreach (LogicalTrack track in project.Tracks)
+        {
+            trackOrder.TryAdd(track.Id, trackOrder.Count);
+        }
         groups.Sort((left, right) =>
         {
             int byStart = left.StartTick.CompareTo(right.StartTick);
@@ -2572,10 +2625,69 @@ public sealed class MidoraCompiler : IDisposable
         });
 
         bool[] used = new bool[256];
+        Dictionary<MidoraId, int> unitByRoot = [];
+        int reservedRootUnitCount = 0;
+        foreach (MidiChannelRoot root in pureMidiPlan.Roots
+            .Where(value => value.ParticipatesInRequest
+                && value.Root.RoutingMode == MidiChannelRootRoutingMode.Fixed)
+            .Select(value => value.Root))
+        {
+            int unit = (root.FixedZeroBasedPort * 16) + root.FixedZeroBasedChannel;
+            if (used[unit])
+            {
+                continue;
+            }
+            used[unit] = true;
+            unitByRoot.Add(root.Id, unit);
+            reservedRootUnitCount++;
+        }
+        foreach (PureMidiRootPlan rootPlan in pureMidiPlan.Roots
+            .Where(value => value.Root.RoutingMode == MidiChannelRootRoutingMode.Auto
+                && value.HasParticipatingSegments))
+        {
+            int unit = Array.FindIndex(used, static value => !value);
+            if (unit < 0)
+            {
+                diagnostics.Add(new(
+                    "MIDORA2203",
+                    DiagnosticSeverity.Error,
+                    "A non-empty Auto MIDI Channel Root cannot be allocated; the global limit is 256 Channel Units.",
+                    new(MidiChannelRootId: rootPlan.Root.Id)));
+                continue;
+            }
+            used[unit] = true;
+            unitByRoot.Add(rootPlan.Root.Id, unit);
+        }
         List<ActiveAllocation> active = [];
         Dictionary<(MidoraId InstanceId, MidoraId SubVoiceId), int> unitByVoice = [];
         List<ChannelUnitAllocation> allocations = [];
-        int peak = 0;
+        foreach (PureMidiRootPlan rootPlan in pureMidiPlan.Roots)
+        {
+            if (!unitByRoot.TryGetValue(rootPlan.Root.Id, out int unit))
+            {
+                continue;
+            }
+            foreach (PureMidiRootInterval interval in rootPlan.Intervals)
+            {
+                allocations.Add(new(
+                    interval.StartOwnerTrackId,
+                    interval.StartOwnerSegmentId,
+                    default,
+                    interval.GroupId,
+                    interval.GroupId,
+                    rootPlan.Root.Id,
+                    interval.StartTick,
+                    interval.EndTick,
+                    checked((byte)(unit >> 4)),
+                    checked((byte)(unit & 15)),
+                    rootPlan.Root.Id,
+                    interval.StartOwnerTrackId,
+                    rootPlan.Root.ChannelMode));
+            }
+        }
+        int rootUnitCount = unitByRoot.Count;
+        int peak = rootUnitCount;
+        int logicalPeak = 0;
         ResourceShortageDetails? resourceShortage = null;
         foreach (AllocationGroup group in groups)
         {
@@ -2635,7 +2747,9 @@ public sealed class MidoraCompiler : IDisposable
                 used[unit] = true;
             }
             active.Add(new(group, units));
-            peak = Math.Max(peak, used.Count(value => value));
+            int activeLogicalCount = active.Sum(value => value.Units.Length);
+            logicalPeak = Math.Max(logicalPeak, activeLogicalCount);
+            peak = Math.Max(peak, rootUnitCount + activeLogicalCount);
             foreach (RawInstance instance in group.Instances)
             {
                 for (int i = 0; i < instance.Voices.Length; i++)
@@ -2649,7 +2763,16 @@ public sealed class MidoraCompiler : IDisposable
                 }
             }
         }
-        return new(unitByVoice, groups.ToArray(), allocations.ToArray(), peak, resourceShortage);
+        return new(
+            unitByVoice,
+            unitByRoot,
+            groups.ToArray(),
+            allocations.ToArray(),
+            peak,
+            logicalPeak,
+            reservedRootUnitCount,
+            rootUnitCount,
+            resourceShortage);
     }
 
     public static CanonicalCompiledResult CreateDefaultPlaybackView(
@@ -2863,7 +2986,8 @@ public sealed class MidoraCompiler : IDisposable
                 selectedGroups.Clear();
                 currentTick = value.Tick;
             }
-            if (value.SemanticTargetKey == long.MinValue)
+            if (value.SemanticTargetKey == long.MinValue
+                || value.Role == CanonicalEventRole.DirectMidi)
             {
                 reversed.Add(value);
                 continue;
@@ -2971,6 +3095,27 @@ public sealed class MidoraCompiler : IDisposable
             }
             if (value.Tick >= endTick)
             {
+                if (value.Tick == endTick
+                    && value.Role == CanonicalEventRole.DirectMidi
+                    && value.ExportTrackId != default
+                    && (message.MessageType == MidiMessageType.NoteOff
+                        || message.MessageType == MidiMessageType.NoteOn && message.Byte2 == 0))
+                {
+                    // A Direct MIDI Note endpoint is source data, including its
+                    // NoteOff velocity. Keep that exact endpoint at the hard
+                    // range boundary instead of replacing it with the generic
+                    // velocity-0 cleanup below.
+                    result.Add(value);
+                    (byte, byte, byte) key = (
+                        value.ZeroBasedPort,
+                        value.ZeroBasedChannel,
+                        message.Byte1);
+                    if (activeNotes.TryGetValue(key, out Queue<SourceReference>? sources)
+                        && sources.Count > 0)
+                    {
+                        _ = sources.Dequeue();
+                    }
+                }
                 continue;
             }
             result.Add(value);
@@ -3193,6 +3338,46 @@ public sealed class MidoraCompiler : IDisposable
             {
                 if (segment.Notes.Count != 0
                     && segment.ProjectStartTick >= 0 && segment.LengthTicks > 0
+                    && segment.ProjectStartTick <= long.MaxValue - segment.LengthTicks)
+                {
+                    end = Math.Max(end, segment.ProjectStartTick + segment.LengthTicks);
+                }
+            }
+        }
+        foreach (PureMidiTrack track in project.PureMidiTracks)
+        {
+            if (includedTrackIds is not null && !includedTrackIds.Contains(track.Id))
+            {
+                continue;
+            }
+            foreach (MidiSegment segment in track.Segments)
+            {
+                if (segment.ProjectStartTick >= 0
+                    && segment.LengthTicks > 0
+                    && segment.ProjectStartTick <= long.MaxValue - segment.LengthTicks)
+                {
+                    end = Math.Max(end, segment.ProjectStartTick + segment.LengthTicks);
+                }
+            }
+        }
+        return end;
+    }
+
+    private static long GetPureMidiNaturalEnd(
+        MidoraProject project,
+        IReadOnlySet<MidoraId>? includedTrackIds)
+    {
+        long end = 0;
+        foreach (PureMidiTrack track in project.PureMidiTracks)
+        {
+            if (includedTrackIds is not null && !includedTrackIds.Contains(track.Id))
+            {
+                continue;
+            }
+            foreach (MidiSegment segment in track.Segments)
+            {
+                if (segment.ProjectStartTick >= 0
+                    && segment.LengthTicks > 0
                     && segment.ProjectStartTick <= long.MaxValue - segment.LengthTicks)
                 {
                     end = Math.Max(end, segment.ProjectStartTick + segment.LengthTicks);
@@ -3460,9 +3645,13 @@ public sealed class MidoraCompiler : IDisposable
     }
     private sealed record AllocationResult(
         Dictionary<(MidoraId InstanceId, MidoraId SubVoiceId), int> UnitBySubVoice,
+        Dictionary<MidoraId, int> UnitByRoot,
         AllocationGroup[] Groups,
         ChannelUnitAllocation[] Allocations,
         int PeakUnits,
+        int LogicalPeakUnits,
+        int ReservedRootUnitCount,
+        int AllocatedRootUnitCount,
         ResourceShortageDetails? ResourceShortage);
 
     private static MappingStableIdV2 ToMappingId(MidoraId id) => new(id.Value);
@@ -3530,6 +3719,16 @@ public sealed class MidoraCompiler : IDisposable
             value = x.Source.ValueCurveId.CompareTo(y.Source.ValueCurveId);
             if (value != 0) return value;
             value = x.Source.EnvelopeId.CompareTo(y.Source.EnvelopeId);
+            if (value != 0) return value;
+            value = x.Source.MidiChannelRootId.CompareTo(y.Source.MidiChannelRootId);
+            if (value != 0) return value;
+            value = x.Source.PureMidiTrackId.CompareTo(y.Source.PureMidiTrackId);
+            if (value != 0) return value;
+            value = x.Source.MidiSegmentId.CompareTo(y.Source.MidiSegmentId);
+            if (value != 0) return value;
+            value = x.Source.DirectMidiObjectId.CompareTo(y.Source.DirectMidiObjectId);
+            if (value != 0) return value;
+            value = x.ExportTrackId.CompareTo(y.ExportTrackId);
             if (value != 0) return value;
             value = x.SemanticTargetKey.CompareTo(y.SemanticTargetKey);
             if (value != 0) return value;
@@ -3609,6 +3808,8 @@ internal static class SourceFingerprint
         long end,
         ReadOnlySpan<CanonicalMidiEvent> events,
         CanonicalConductor conductor,
+        ReadOnlySpan<CanonicalSmfTrackDescriptor> smfTracks = default,
+        ReadOnlySpan<CanonicalOpaqueMidiEvent> opaqueMidiEvents = default,
         CancellationToken cancellationToken = default)
     {
         ulong hash = Offset;
@@ -3652,6 +3853,35 @@ internal static class SourceFingerprint
             Add(ref hash, value.Tick);
             Add(ref hash, value.Name);
         }
+        foreach (CanonicalSmfTrackDescriptor value in smfTracks)
+        {
+            Add(ref hash, value.ExportTrackId);
+            Add(ref hash, (int)value.Kind);
+            Add(ref hash, value.Name);
+            Add(ref hash, value.ZeroBasedPort);
+            Add(ref hash, value.ZeroBasedChannel);
+            Add(ref hash, value.EndTick);
+            Add(ref hash, value.MidiChannelRootId);
+            Add(ref hash, value.SourceTrackId);
+            Add(ref hash, (int)value.ChannelMode);
+            Add(ref hash, value.MidiChannelRootName);
+            Add(ref hash, value.MidiChannelRootOrder);
+            Add(ref hash, value.SourceTrackOrder);
+            Add(ref hash, (int)value.RoutingMode);
+        }
+        foreach (CanonicalOpaqueMidiEvent value in opaqueMidiEvents)
+        {
+            Add(ref hash, value.ExportTrackId);
+            Add(ref hash, value.Tick);
+            Add(ref hash, (int)value.Kind);
+            Add(ref hash, value.MetaType);
+            foreach (byte item in value.Payload.Span)
+            {
+                Add(ref hash, item);
+            }
+            Add(ref hash, value.StableOrder);
+            Add(ref hash, value.SmfTrackOrder);
+        }
         for (int eventIndex = 0; eventIndex < events.Length; eventIndex++)
         {
             if ((eventIndex & 1023) == 0)
@@ -3681,6 +3911,13 @@ internal static class SourceFingerprint
             Add(ref hash, value.Source.ValueCurveId);
             Add(ref hash, value.Source.EnvelopeId);
             Add(ref hash, (int)value.Source.Origin);
+            Add(ref hash, value.Source.MidiChannelRootId);
+            Add(ref hash, value.Source.PureMidiTrackId);
+            Add(ref hash, value.Source.MidiSegmentId);
+            Add(ref hash, value.Source.DirectMidiObjectId);
+            Add(ref hash, value.ExportTrackId);
+            Add(ref hash, value.SmfTrackOrder);
+            Add(ref hash, value.SmfEventOrder);
         }
         return unchecked((long)hash);
     }

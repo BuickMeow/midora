@@ -9,7 +9,7 @@
 ### 1.1 输入
 
 - 正式音乐语义只能来自 Canonical Compiled Result。
-- 音频后端接收 Preparing 阶段冻结的、由成功 canonical 确定性派生的抽象 Unit 绝对 sample-frame MIDI 事件；同一 Unit 内同 frame 的事件保持 Canonical Compiled Result 的稳定顺序。物理 Port/Channel 仍保留在 canonical 中，但不进入 Unit PCM 身份。
+- 音频后端接收 Preparing 阶段冻结的、由成功 canonical Execution Projection 确定性派生的抽象 Unit/Root 绝对 sample-frame MIDI 事件与 Channel Mode descriptor；同一 Unit 内同 frame 的事件保持 canonical 稳定顺序。物理 Port/Channel 仍保留在 canonical 中，但不单独构成 PCM 身份。
 - 输入同时包含精确总 frame 数、目标采样率、单个 Project SoundFont、Playback Master Volume 和版本化 Limiter 参数。
 - tick / absolute-seconds 到整数 sample frame 的转换不属于 BASSMIDI、WASAPI 或 WAVE 输出端职责。
 
@@ -21,14 +21,14 @@
 
 ### 1.3 边界
 
-- Canonical 最多 16 个实际 Port、每 Port 16 个 melodic Channel；canonical Channel 10 显式为 melodic。音频投影把任一 canonical channel 归一化为 1-channel stream 的 channel 0。
+- Canonical 最多 16 个实际 Port、每 Port 16 Channels。Logical/Event Instrument Unit 的 Channel 10 为 melodic；Pure MIDI Root 使用显式 Melodic/Percussion mode。音频投影把任一 canonical Unit 归一化为 1-channel stream 的 channel 0，并显式建立 descriptor mode。
 - 所有缓冲和接口以 frame 为单位；格式中显式携带 sample rate、channel count 和 sample format。
 - 实时采样率使用设备初始化后报告的实际采样率；文件采样率为 8,000–192,000 Hz 的任意整数。
 - 渲染严格生成请求范围的精确 frame 数；范围结束无 effect tail。
 
 ### 1.4 失败条件与诊断
 
-- Preparing 拒绝无效/缺失 SoundFont、非法 Port/Channel、负 frame、越界或乱序事件、CC91/CC93、非法采样率、非法总长度和不可由 RIFF 表示的目标。
+- Preparing 拒绝无效/缺失 SoundFont、非法 Port/Channel/mode、负 frame、越界或乱序事件、Event Instrument 路径非法 CC91/CC93、非法采样率、非法总长度和不可由 RIFF 表示的目标。合法 Pure MIDI CC91/CC93 不失败，正式 NOFX synth 路径忽略其效果。
 - Rendering 将 BASS/BASSMIDI/BASSWASAPI 原生失败、短读、非有限样本、设备丢失、IPC 故障和文件写入失败记录为结构化故障码；活动音频线程只写入预分配状态，不构造异常、字符串或集合。
 - Finalizing 在非音频线程把故障码转换为用户诊断，包含阶段、原生函数、原生错误码，以及可用时的 Port、frame 和目标路径。
 - 整曲单输出失败使任务失败；分轨任务按 SRS 15.13 允许各文件独立成功或失败。失败输出的临时文件不得发布为最终结果。
@@ -43,7 +43,7 @@
 ### 1.6 明确非目标
 
 - 后端不解释 Project、Event Instrument、Mapping、Lifecycle、Segment、tempo 或资源分配规则。
-- 初版不支持 Reverb、Chorus、CC91、CC93、effect tail、语义级 Voice Stealing 策略、传统 MIDI OUT、MIDI 2.0、多 SoundFont、SFZ/DLS、录音或用户可见的进程拓扑切换。已确认的 BASSMIDI sample voice 资源上限不属于语义级 Voice Stealing。
+- 初版不提供 Reverb/Chorus 音频效果、effect tail、语义级 Voice Stealing 策略、传统 MIDI OUT、MIDI 2.0、多 SoundFont、SFZ/DLS、录音或用户可见的进程拓扑切换。Pure MIDI CC91/CC93 只保留 MIDI 文件语义；opaque imported SysEx/Meta 不送入 synth。已确认的 BASSMIDI sample voice 资源上限不属于语义级 Voice Stealing。
 
 ## 2. ADR-AUDIO-001：绝对 sample-frame 消费协议
 
@@ -78,7 +78,7 @@
 - 只有全局 canonical 成功后才派生抽象 Unit 音频投影；每个 Unit 以 1-channel stream 语义渲染，flags 固定包含 `BASS_SAMPLE_FLOAT | BASS_STREAM_DECODE | BASS_MIDI_NOFX | BASS_MIDI_NOTEOFF1`。
 - Native stream 由有界 pool 按需创建和复用；不得为 Project 中每个 Unit 永久持有 stream。复用前必须完成精确 NoteOff、CC120、Reset、状态重建和当前 SF2/采样率/voice policy 复核。
 - stream 采样率直接等于本次实时设备实际采样率或文件目标采样率。
-- Unit stream 的 channel 0 由统一例程显式建立为 melodic，并应用 Reset 后的规范初始值和正式 SoundFont；canonical Channel 10 不借用 BASSMIDI 默认鼓语义。
+- Unit stream 的 channel 0 由统一例程先清除旧 state/mode，再按 canonical descriptor 显式建立为 Melodic 或 Percussion，并应用 Reset 后的规范初始值和正式 SoundFont；物理 Channel 10 的 BASSMIDI 默认鼓语义不得替代 descriptor。
 - SoundFont handle 在 pool stream 间共享，并晚于所有 stream 释放。
 - 同一 frame 的 MIDI 消息紧凑打包后立即批量提交；提交和 `ChannelGetData` 都检查返回值并立即捕获当前线程 BASS error code。
 - 活动阶段不执行 sample loading、路径转换或托管内存分配。
@@ -116,9 +116,9 @@ Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domai
 
 冻结计划文件 MDAP v5 在写入任何 payload 前计算 source、disabled source、Port、event、Unit fragment、Segment/cache binding 与 SHA-256 的完整有界大小；读取时先用剩余 payload 长度验证计数，再分配对应数组。source ID 使用正 `Int64` little-endian，旧 v4 与其他版本一律拒绝，不迁移单次任务临时文件。Port/fragment/Segment record 的 reserved 字段必须为零；即使攻击者重新计算出正确 SHA-256，非零保留位、不可能计数、截断、溢出、非法 Port/MIDI/来源、非法缓存 payload 范围与 trailing payload 仍统一作为 `InvalidDataException` 拒绝，不能进入 Worker 渲染阶段。
 
-共享内存 ABI v4 的 command ring 读写位置必须满足 `0 <= read <= write` 且 `write - read <= 1024`，任何损坏都必须在取模和指针运算前失败。Stop/Monitoring/Held Preview/Buffering Recovery 及其子类型是闭合集；source/Port/message/boolean、CC91/CC93、held plan generation、recovery end frame 和每条 command 的 reserved 字段在写入前整批校验、读取后再次校验，批次失败不得发布前缀。状态枚举与全部非负计数同样在读取边界校验；映射长度、固定 header 和 reserved header 不匹配时 Open 整体失败。Dispose 后的所有状态/发布/命令入口只抛 `ObjectDisposedException`，不得解引用已释放映射。Worker 可以按原顺序合并连续 Monitoring records，并在一个稳定 producer frontier 只执行一次 cold start；Stop 终止整个会话，因此允许抢占并丢弃排在它之前、尚未形成可观察输出的 Monitoring/Buffering Recovery records。该调度不改变 ABI v4 的字节布局。
+共享内存 ABI v4 的 command ring 读写位置必须满足 `0 <= read <= write` 且 `write - read <= 1024`，任何损坏都必须在取模和指针运算前失败。Stop/Monitoring/Held Preview/Buffering Recovery 及其子类型是闭合集；source/Port/message/boolean、路径与 mode 相符的 CC91/CC93 合法性、held plan generation、recovery end frame 和每条 command 的 reserved 字段在写入前整批校验、读取后再次校验，批次失败不得发布前缀。Event Instrument/SubVoice 命令仍拒绝 CC91/CC93；Pure MIDI 执行命令必须允许并按 `NOFX` 音频语义忽略其效果。状态枚举与全部非负计数同样在读取边界校验；映射长度、固定 header 和 reserved header 不匹配时 Open 整体失败。Dispose 后的所有状态/发布/命令入口只抛 `ObjectDisposedException`，不得解引用已释放映射。Worker 可以按原顺序合并连续 Monitoring records，并在一个稳定 producer frontier 只执行一次 cold start；Stop 终止整个会话，因此允许抢占并丢弃排在它之前、尚未形成可观察输出的 Monitoring/Buffering Recovery records。该调度不改变 ABI v4 的字节布局。
 
-Monitoring cold start 建立干净 BASSMIDI Unit Stream 时，必须在回退事件游标前依次发送 `MIDI_EVENT_NOTESOFF`、`MIDI_EVENT_SOUNDOFF`、`MIDI_EVENT_RESET` 和 melodic `MIDI_EVENT_DEFDRUMS(0)`，并检查每次原生调用。原因是 `MIDI_EVENT_RESET` 只实现 CC121 Reset Controllers，不会释放 Rolling Preparation 已提前提交的未来按键。该修复保持 ABI v4 布局及字段含义与 canonical、MDAP、缓存及持久化格式不变。
+Monitoring cold start 建立干净 BASSMIDI Unit Stream 时，必须在回退事件游标前依次发送 `MIDI_EVENT_NOTESOFF`、`MIDI_EVENT_SOUNDOFF`、`MIDI_EVENT_RESET`，再按 canonical descriptor 发送 Melodic `MIDI_EVENT_DEFDRUMS(0)` 或正式 Percussion mode 初始化，并检查每次原生调用。原因是 `MIDI_EVENT_RESET` 只实现 CC121 Reset Controllers，不会释放 Rolling Preparation 已提前提交的未来按键，也不能替代 Root mode。该修复保持 ABI v4 布局及字段含义与 canonical、MDAP、缓存及持久化格式不变；新增 mode 字段/版本由 ADR-AUDIO-012 和 Pure MIDI 实施变更单独冻结。
 
 主进程生成 Mute/Solo cleanup 与非 Note restore 命令时，以设备已消费 sample frame 映射当前 tick，不以可提前数秒的底层 Render-Ahead frame 解释当前音乐状态；Worker 收到命令后仍在自己的稳定 producer frontier 原子丢弃旧 prepared suffix 并冷启动。两者之间至多保守滞后一个有界 Render-Ahead 区间，不能超前读取尚未播放 Segment 的状态或补发范围前 NoteOn。
 
@@ -170,9 +170,9 @@ Requirement trace：输入为固定版本 BASS/BASSWASAPI、进程全局字符�
 
 ## 10. ADR-AUDIO-009：五层 session 音频缓存与恢复存储
 
-决定采用五层结构：canonical range cache、编译器内部 Segment/Unit fragment cache、pre-Master/pre-Limiter Segment/Unit PCM tile cache、post-sum/Master/Limiter playback span cache、精确 Render-Ahead ring。缓存只能位于 canonical 之后或编译器内部，不得成为新的正式语义来源。
+决定采用分层结构：canonical range cache、编译器内部 Logical Segment/Unit fragment 与 Pure MidiSegment/Root checkpoint cache、pre-Master/pre-Limiter Unit/Root PCM tile cache、post-sum/Master/Limiter playback span cache、精确 Render-Ahead ring。缓存只能位于 canonical 之后或编译器内部，不得成为新的正式语义来源。
 
-相同 semantic revision、CompileContext、范围和完整渲染 key 的 exact replay，若 reusable entry 完整有效，则不得再次执行语义编译或 BASSMIDI 合成。Segment/Unit PCM key 必须包含 Segment/Unit fingerprint、cold-start context、SF2 hash、Tempo 投影、采样率/格式、固定 native 基线、voice policy 与 renderer version；playback span key 另包含 audible set、Master、Limiter、范围起点和 Limiter 状态。
+相同 semantic revision、CompileContext、范围和完整渲染 key 的 exact replay，若 reusable entry 完整有效，则不得再次执行语义编译或 BASSMIDI 合成。Logical Segment/Unit PCM key 必须包含既有 fingerprint；Pure MIDI Root PCM key 必须包含 Root composite/start-state/mode fingerprint；二者均包含 SF2 hash、Tempo 投影、采样率/格式、固定 native 基线、voice policy 与 renderer version。playback span key 另包含 audible set、Master、Limiter、范围起点和 Limiter 状态。
 
 缓存是 Project-open-session 范围的磁盘后备存储加有界 RAM hot set，不跨会话，不进入 `.midora`。已完成条目在 Project 打开期间不驱逐；Project 关闭时只删除由版本化 manifest 识别的本 session 目录。默认 root 为 `%LOCALAPPDATA%\Midora\AudioCache`，只接受可写本机绝对路径；reusable quota 默认 16 GiB，允许 0 到 `Int64.MaxValue` bytes。程序只能管理 root 下已知的 `session-*` 子目录，不得递归清空 root 或删除未知文件。
 
@@ -222,16 +222,24 @@ Requirement trace：输入是持久 Worker 的 generation 请求、共享控制�
 
 SRS §13.30 仍写明 ABI v4；现行 v6 已由 ADR-MON-005 实施，本决定把当前 ABI 提升为 v7 并记录差异，不修改 SRS 原文。自动验证必须覆盖 v7-only open、响应 generation 初值/单调性/损坏字段拒绝、直接试听命令 round-trip、共享状态零分配，以及正式 Native AOT 环境下连续 pitch update/end 与响应文件竞争压力。
 
+## 10.3 ADR-AUDIO-012（已接受）：Pure MIDI Root 单流合成与 Root PCM cache
+
+决定：同一 MIDI Channel Root 的全部 Pure MIDI Tracks 必须先在 canonical Execution Projection 中按 `tick → Track order → event order` 合并，再进入一个抽象 1-channel BASSMIDI stream；不得逐 Track 独立合成后求和。stream mode 服从 Root Melodic/Percussion descriptor。Pure MIDI 音频缓存使用 normalized MidiSegment fragment → Root merged checkpoint → Root raw PCM generation；编辑只 dirty 所属 Root 的最早 causal tick，完整 state/active Note/allocation/suffix dependency 收敛后可复用旧后缀，其他 Root 与 Logical Unit 不连带失效。
+
+合法 Pure MIDI CC91/CC93 保留在 canonical/SMF 投影，但 `BASS_MIDI_NOFX` 音频执行不解释其效果；opaque imported SysEx/Meta 不送入 synth。播放中 child Track Mute/Solo 通过来源追踪在稳定 producer frontier 精确关闭该来源 Note 并重建未来 Root suffix，不允许向整个 Root 发送 CC120、卡在 Playing 或保留旧 prepared suffix。
+
+Requirement trace：输入为 Root Execution Projection、Channel Mode、Root lifecycle/checkpoint、SF2/Tempo/sample/native/voice profile 与 audible source set；正式输出为一个 Root PCM 流或结构化失败。Root mode/source/cache descriptor 属于 canonical/运行时；Root 源字段属于 Project；PCM/checkpoint 不进 `.midora`。详细领域和导出决定见 `misc/Midora-Pure-MIDI-Tracks-and-SMF-Import-Architecture-Decisions.md`。
+
 ## 11. 验证门
 
 - 相同事件计划以不同工作 block（含非 2 次幂）渲染必须逐 sample 相同。
 - 验证事件前静音、事件 frame 起音、真实 NoteOff velocity 0、同 tick 顺序、同音高重叠、Reset、硬结束和总 frame 数。
-- 验证 Unit 拆分、稳定求和、canonical Channel 10 melodic 投影、统一 SF2、NOFX 和 CC91/CC93 全路径拒绝。
+- 验证 Unit/Root 拆分、稳定求和、Logical Channel 10 melodic、Pure Root Melodic/Percussion、统一 SF2、NOFX、SubVoice CC91/CC93 拒绝与 Pure MIDI CC91/CC93 音频忽略。
 - 固定 win-x64 ABI 快照必须验证正式使用的 BASS/BASSMIDI/BASSWASAPI C 结构大小与字段偏移、pointer/function-pointer/handle 宽度、精确 LibraryImport DLL/entry point、BOOL/handle 返回宽度和 Windows x64 统一默认调用 ABI；不能只靠“真实调用没有崩溃”推断声明正确。
 - Limiter 验证峰值、左右联动、release 连续性、Reset 和 block-size 不变性。
 - Rendering/Playing/Buffering 活动线程在预热后使用线程分配计数器验证零托管堆分配。
 - WAVE 验证 8,000、44,100、48,000、192,000 和自定义采样率，以及 RIFF/fmt/fact/data 大小、frame 对齐、上限拒绝、取消和原子发布。
 - WASAPI 验证短读、underrun/Buffering、设备移除、连续 start/stop、不同 callback block 和 callback 异常边界。
-- 缓存验证 exact replay 零重复编译/合成、Segment 局部失效、quota=0/满/写失败、损坏隔离、spool 失败、Project 关闭清理、未知文件保留和设备同格式 raw PCM 复用。
+- 缓存验证 exact replay 零重复编译/合成、Logical Segment 与 Pure Root 局部失效、Root checkpoint 收敛、同 Root 不做 per-Track synth、quota=0/满/写失败、损坏隔离、spool 失败、Project 关闭清理、未知文件保留和设备同格式 raw PCM 复用。
 - 子进程验证 Native AOT 发布、协议版本、损坏输入、命令 ring wrap、背压、进程退出、超时、吞吐、运行时 IPC 零分配和包含 IPC 的端到端延迟。
 - 原生基线验证正式 manifest schema、三个精确 hash、完整运行时版本、缺失/多余/篡改文件拒绝、开发候选隔离，以及正式发布目录确实包含被校验的 DLL 与 manifest。

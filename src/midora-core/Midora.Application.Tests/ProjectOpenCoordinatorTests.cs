@@ -157,6 +157,9 @@ public sealed class ProjectOpenCoordinatorTests
         EventInstrument instrument = EventInstrumentLibrary.Create(
             source,
             "Damaged");
+        source.ArrangementParents.Add(new(
+            ArrangementParentKind.EventInstrument,
+            instrument.Id));
         string path = temporary.PathFor("Damaged.midora");
         _ = await packages.SaveProjectAsync(source, path);
         DeleteEntry(path, $"event-instruments/ei_{instrument.Id}.pb");

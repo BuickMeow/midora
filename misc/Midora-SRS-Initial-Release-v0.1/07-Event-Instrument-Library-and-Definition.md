@@ -4,24 +4,21 @@
 > 规格版本：**v0.1**  
 > 适用产品范围：**Midora 初版**
 
-本章合并规定 Event Instrument Library 的集合行为与 Event Instrument 定义本体，覆盖身份、命名、创建、复制、删除、引用、最小合法结构、Root Note、Template Length、策略入口、描述和颜色等。
+本章规定 Event Instrument 的定义本体与内部稳定 ID 索引，覆盖身份、命名、创建、复制、删除、最小合法结构、Root Note、Template Length、策略入口、描述和颜色等。Event Instrument 作为 Arrangement parent 的所有权、child Logical Track、混排顺序、完整 subtree 复制删除和 UI 入口由第 24 章定义。
 
-## 7.1 Event Instrument Library 系统级定义
-每个 Project 必须有且只有一个 `Event Instrument Library`。
-Event Instrument Library 是 Project 内 Event Instrument 定义的唯一归属集合。
-系统级含义：
+## 7.1 Event Instrument 索引与 Arrangement 归属
+每个 Event Instrument 是当前 Project 的一个顶层 Arrangement parent，并拥有零个或多个有序 Logical Track children。Project 可以维护唯一的 `Event Instrument Index` 供稳定 ID 查找；旧称 `Event Instrument Library` 在本章仅指该内部索引。
+
 ```text
-Event Instrument 定义属于当前 Project
-Event Instrument Library 可为空
-Event Instrument Library 本身固定存在
-Event Instrument Library 本身不可删除
-Event Instrument Library 不属于 Conductor Track
-Event Instrument Library 不属于 Logical Track
-Event Instrument Library 不属于 SoundFont Settings
-Event Instrument Library 不直接产生声音
-Event Instrument Library 不直接占用 Port / Channel / Channel Unit
+Event Instrument Index 可为空；
+Index 不可作为用户对象删除；
+Index 不拥有独立手动顺序、Folder 或 Workspace；
+Event Instrument 的正式顺序来自 Arrangement mixed parent order；
+Event Instrument 不直接占用 Port / Channel / Channel Unit；
+只有其 child Logical Track 的有效 Segment 触发才生成 Event Instrument Instance。
 ```
-Event Instrument Library 的内容只有在被 Logical Track 绑定并在 Segment 中产生有效触发内容时，才会通过编译系统生成 Event Instrument Instance，并进一步参与资源分配、播放、预览、渲染或 MIDI 导出。
+
+第 7 章中任何旧式 “Library” 表述均不得解释为可见 Project Panel、Library Workspace、文件夹分组或独立排序。
 ---
 ## 7.2 Event Instrument 定义的归属与身份
 ### 7.2.1 Project 内归属
@@ -74,29 +71,17 @@ KICK
 ```
 名称显示时是否保留用户输入的大小写由 UI 和实现层细化；但用于唯一性判断时，必须采用大小写不敏感并去除首尾空白后的结果。
 ---
-## 7.3 新项目默认库状态
-新 Project 默认创建一个空 Event Instrument Library。
-新 Project 不创建默认 Event Instrument。
-新 Project 不创建默认 Logical Track。
-因此新 Project 的初始状态为：
-```text
-Event Instrument Library 存在但为空
-没有任何 Event Instrument 定义
-没有任何 Logical Track 引用 Event Instrument
-项目仍可保存
-项目仍可编译
-项目仍可 MIDI 导出
-无 SF2 时仍不能播放、预览或音频渲染
-```
-空 Event Instrument Library 不应作为错误、警告或信息诊断。
+## 7.3 新项目默认状态
+新 Project 的 Arrangement parent list 和 Event Instrument Index 为空，不创建默认 Event Instrument 或 Logical Track。该状态可保存、编译和 MIDI 导出；无 SF2 时仍不能播放、预览或音频渲染。空 Index 不产生诊断。
 ---
 ## 7.4 Event Instrument 的创建
-用户应能在 Event Instrument Library 中创建新的 Event Instrument。
+用户应能从 Arrangement `Add` 菜单或 Project 菜单创建新的 Event Instrument parent。
 初版不支持库层草稿 Event Instrument。
 创建 Event Instrument 时，系统应自动生成一个最小合法 Event Instrument，后续再由用户编辑。
 创建 Event Instrument 应满足：
 ```text
-新 Event Instrument 属于当前 Project 的 Event Instrument Library
+新 Event Instrument 追加到当前 Project 的 Arrangement mixed parent order
+新 Event Instrument 的 Logical Track child list 为空
 新 Event Instrument 获得新的稳定 ID
 新 Event Instrument 拥有唯一用户可见名称
 新 Event Instrument 不是草稿对象
@@ -168,50 +153,19 @@ Logical Parameters 与 Logical Parameter Mapping 必须深拷贝，并生成新�
 ---
 ## 7.7 Event Instrument 的删除
 用户应能删除 Event Instrument。
-### 7.7.1 删除未被引用的 Event Instrument
-当被删除的 Event Instrument 未被任何 Logical Track 引用时：
-```text
-从 Event Instrument Library 中移除该 Event Instrument
-项目进入已修改状态
-操作进入撤销 / 重做
-```
-### 7.7.2 删除被引用的 Event Instrument
-当被删除的 Event Instrument 正被一个或多个 Logical Track 引用时，应遵守 第 3 章《Project 模型与应用生命周期》 规则：
-```text
-引用该 Event Instrument 的 Logical Track 自动变为未指定 Event Instrument 状态
-相关 Logical Track 保留最近一次绑定的 Event Instrument 名称，仅用于 UI 提示，不参与编译
-相关 Logical Track 上已有音符、Segment、Logical Parameter Lane 和事件数据保留
-项目仍可保存
-项目仍可编译
-未指定 Event Instrument 的 Logical Track 在编译、播放、预览、渲染中被忽略
-如果未指定 Event Instrument 的 Logical Track 包含内容，只在编译诊断中列为信息，不算警告
-```
-删除被引用 Event Instrument 前必须要求用户确认，并显示受影响 Logical Track 列表。
-该列表应至少让用户知道：
-```text
-哪些 Logical Track 当前引用该 Event Instrument
-删除后这些 Logical Track 会变为未指定 Event Instrument 状态
-这些 Logical Track 的现有内容不会被删除，但不会参与编译、播放、预览或渲染
-这些 Logical Track 中的 Logical Parameter Lane 数据不会被删除，但会变为不适用，除非用户后续重新绑定 Event Instrument 并修复参数 Lane
-```
-初版不提供删除时同步改绑到其他 Event Instrument 的操作。
-因此初版删除被引用 Event Instrument 的行为固定为：
-```text
-确认删除
-删除 Event Instrument
-受影响 Logical Track 统一变为未指定 Event Instrument
-不执行自动替代绑定
-```
+空 Event Instrument parent 可直接删除。包含一个或多个 Logical Track child 的 Event Instrument 必须先显示明确确认，列出将被级联删除的 Track 和主要内容摘要；确认后原子删除完整 subtree，并以一个 Project Undo 恢复或重做。取消或失败时不得删除任何对象。
+
+删除不得产生 Unbound/Unassigned Logical Track、隐藏 orphan collection 或孤立对象文件。若用户希望保留 Track，必须先通过第 24.3.3 节把它们移动/改绑到其他 Event Instrument。
 ---
 ## 7.8 Logical Track 对 Event Instrument 的引用
-Logical Track 使用 Event Instrument 时，是引用 Event Instrument Library 中的 Event Instrument 定义。
+Logical Track 必须作为 Event Instrument 的 child 使用该定义；child parent stable ID 与 parent ordered child reference 共同形成唯一绑定。
 引用关系应满足：
 ```text
 引用基于稳定 ID
 名称变化不影响引用
 多个 Logical Track 可以引用同一个 Event Instrument
-一个 Logical Track 同一时间最多绑定一个 Event Instrument
-Logical Track 可以取消绑定并进入未指定 Event Instrument 状态
+一个 Logical Track 必须且只能属于一个 Event Instrument
+Logical Track 不允许取消绑定进入未指定状态
 替换绑定不会删除 Logical Track 内容
 ```
 多个 Logical Track 即使引用同一个 Event Instrument，也不共享运行状态。
@@ -304,77 +258,15 @@ Event Instrument Library 应能定位到无效 Event Instrument
 具体“实际参与编译”的精确定义由 第 12 章《编译系统与 Canonical Compiled Result》 继续细化。
 无效 Event Instrument 的错误分类、警告等级、定位和修复入口由 第 7 章《Event Instrument Library 与 Event Instrument 定义》、第 9 章《曲线、Logical Parameter 与映射》、第 12 章《编译系统与 Canonical Compiled Result》、第 15 章《音频文件渲染》 继续细化。
 ---
-## 7.12 打开项目时的 Event Instrument 引用断裂
-打开 Project 时，如果某个 Logical Track 引用的 Event Instrument ID 无法在当前 Event Instrument Library 中解析，系统应允许 Project 打开。
-处理规则：
-```text
-该 Logical Track 自动变为未指定 Event Instrument 状态
-该 Logical Track 保留可用的最近绑定 Event Instrument 名称，仅用于 UI 提示
-该 Logical Track / Segment 中已有 Logical Parameter Lane 数据保留，但因 Track 未指定 Event Instrument 而不适用
-Project 打开时弹出警告
-Project 不因该引用断裂直接打开失败
-```
-该规则适用于“引用断裂但项目对象图仍可安全降级”的场景。
-如果项目结构存在更严重损坏，例如 Event Instrument Library 缺失、存在多个 Event Instrument Library、对象图无法安全解析或文件格式不可识别，则仍应按 第 3 章《Project 模型与应用生命周期》 的项目损坏规则打开失败。
-打开时弹出的警告应明确说明：
-```text
-哪些 Logical Track 的 Event Instrument 引用无法解析
-这些 Logical Track 已变为未指定 Event Instrument
-这些 Logical Track 的内容仍保留
-这些 Logical Track 在编译、播放、预览、渲染中会被忽略
-```
-具体弹窗文案、是否可跳转、是否合并多条警告，由 第 15 章《音频文件渲染》 和 第 17～20 章的 UI 与交互规格 细化。
+## 7.12 打开项目时的 Event Instrument 父对象损坏
+打开 Project 时，Logical Track parent ID、Event Instrument ordered child reference 与 `project.json` mixed parent index 必须一致。单个 Event Instrument 对象文件损坏但索引仍能可信确定 subtree 时，系统可在原位置创建 Damaged Parent Placeholder，保留 child 归属并禁止普通保存；不得把 Logical Track 改成未指定状态。
+
+如果父子关系本身缺失、重复、多重归属或互相矛盾，无法确定唯一 parent，则 Project 打开失败。打开诊断必须列出 parent/child stable ID、损坏文件和受影响 subtree；不得按名称自动重绑。
 ---
-## 7.13 Event Instrument Library 组织与显示
-初版 Event Instrument Library 应提供比纯平铺列表更完整的基础组织能力。
-初版必须支持：
-```text
-查看 Event Instrument 列表
-创建 Event Instrument
-重命名 Event Instrument
-复制 Event Instrument
-删除 Event Instrument
-选择某个 Event Instrument 进行编辑
-为 Logical Track 选择 Event Instrument
-定位被诊断命中的 Event Instrument
-用户手动排序
-文件夹分组
-为 Event Instrument 设定颜色
-按名称搜索
-显示 Event Instrument 被哪些 Logical Track 使用
-显示 Event Instrument 错误 / 警告状态
-```
-### 7.13.1 手动排序
-Event Instrument Library 初版支持用户手动排序。
-手动排序属于项目内容，而不是临时 UI 状态。
-因此：
-```text
-手动排序应保存进 Project
-手动排序应进入撤销 / 重做
-手动排序应使 Project 进入已修改状态
-```
-具体排序数据结构、拖拽交互和排序冲突处理由 第 16 章《.midora 文件格式与持久化》、第 17～20 章的 UI 与交互规格 或实现层细化。
-### 7.13.2 文件夹分组
-Event Instrument Library 初版支持文件夹分组。
-文件夹分组用于项目内组织 Event Instrument，不改变 Event Instrument 的对象身份、编译语义或 Logical Track 绑定关系。
-系统级规则：
-```text
-文件夹分组属于项目内容
-文件夹分组应保存进 Project
-创建、删除、重命名、移动文件夹应进入撤销 / 重做
-移动 Event Instrument 到文件夹或调整文件夹内顺序应进入撤销 / 重做
-文件夹分组变化应使 Project 进入已修改状态
-```
-以下细节本章不固定：
-```text
-是否允许多级文件夹
-是否允许同名文件夹
-文件夹颜色
-文件夹展开 / 折叠状态是否保存
-拖拽移动的具体交互
-```
-其中展开 / 折叠状态如仅为临时 UI 状态，初版不应保存进 Project。
-### 7.13.3 Event Instrument 颜色
+## 7.13 Event Instrument 组织与显示
+Event Instrument 只在 Arrangement mixed parent order 中组织和显示。初版不提供可见 Event Instrument Library Workspace、Folder/Unfiled 分组、独立 Library 顺序或 Library 搜索面板。创建、重命名、完整 subtree copy/delete、`Duplicate Instrument Only`、编辑器打开、诊断定位和 child Track 管理均从 Arrangement Header 或通用导航入口执行，详见第 24 章。
+
+### 7.13.1 Event Instrument 颜色
 初版支持为 Event Instrument 设定颜色。
 该颜色是 Event Instrument 的项目内显示主色，可在 Logical Track 等其他位置作为主色使用。
 系统级规则：
@@ -388,25 +280,6 @@ Event Instrument Library 初版支持文件夹分组。
 修改颜色应使 Project 进入已修改状态
 ```
 具体颜色值格式、默认颜色、调色板、自动配色、与 Logical Track 自定义颜色的优先级，由 第 11 章《Logical Track、Segment 与编曲语义》、第 16 章《.midora 文件格式与持久化》、第 17～20 章的 UI 与交互规格 或实现设计阶段细化。
-### 7.13.4 名称搜索
-初版支持按名称搜索 Event Instrument。
-搜索属于临时 UI 操作。
-因此：
-```text
-搜索关键字不保存进 Project
-临时搜索不进入撤销 / 重做
-临时搜索不使 Project 进入已修改状态
-```
-初版不要求支持：
-```text
-按备注搜索
-按使用状态筛选
-按错误状态筛选
-按颜色筛选
-标签搜索
-全文搜索
-```
-如果未来 UI 需要提供错误状态定位或未使用状态显示，应作为库面板显示能力或诊断跳转能力，而不是本规格规定的搜索语义。
 ---
 ## 7.14 Event Instrument Library 与 SoundFont 的关系
 Event Instrument Library 不管理 SF2。
@@ -451,42 +324,39 @@ SubVoice 不允许手动指定固定 Port / Channel
 一个 Event Instrument 被多个 Logical Track 引用时，不意味着这些引用共享 Channel Group。
 运行隔离边界由 Logical Track / Event Instrument Binding 和后续编译规则共同决定。
 ---
-## 7.16 Event Instrument Library 与编译系统的关系
-编译器需要读取 Event Instrument Library。
-编译器至少需要从 Event Instrument Library 中解析：
+## 7.16 Event Instrument Index 与编译系统的关系
+编译器从正式 Arrangement parent/child 结构和 Event Instrument Index 解析：
 ```text
-Logical Track 当前绑定的 Event Instrument 定义
+Logical Track 唯一 parent Event Instrument 定义
 Event Instrument 稳定 ID
 Event Instrument 用户可见名称，用于诊断定位
 Event Instrument 内部定义内容，由 第 7 章《Event Instrument Library 与 Event Instrument 定义》 实现设计确定
 ```
-编译器不应因为 Event Instrument Library 为空而失败。
-如果 Logical Track 未指定 Event Instrument，则按 第 3 章《Project 模型与应用生命周期》 规则忽略该 Logical Track。
-如果 Logical Track 引用的 Event Instrument ID 在打开 Project 时无法解析，应按本章第 16 节降级为未指定 Event Instrument，并在打开时警告。
+编译器不应因为没有 Event Instrument parent 而失败。Logical Track 无 parent、多个 parent 或错误 kind 是结构 Error，不得作为可忽略 Track 降级。
 如果被实际编译使用的 Event Instrument 无效，则编译失败。
-如果未引用 Event Instrument 存在内部错误，则不阻止整曲编译，但应在诊断中显示为警告。
+如果没有 child 触发参与当前编译的 Event Instrument 存在内部错误，则不阻止整曲编译，但应在诊断中显示为警告。
 ---
-## 7.17 Event Instrument Library 与播放、预览、音频渲染的关系
+## 7.17 Event Instrument 与播放、预览、音频渲染的关系
 播放、预览和音频渲染依赖编译结果。
-Event Instrument Library 通过编译结果间接影响播放、预览和音频渲染。
+Event Instrument 定义通过其 child Logical Track 编译结果间接影响播放、预览和音频渲染。
 系统级规则：
 ```text
 修改 Event Instrument 定义会影响后续播放、预览、渲染和 MIDI 导出结果
-删除 Event Instrument 会使相关 Logical Track 变为未指定状态，从而不再发声
-未引用 Event Instrument 不影响整曲播放、渲染和 MIDI 导出
-无 SF2 状态下仍可编辑 Event Instrument Library，但不能播放、预览或音频渲染
+删除 Event Instrument 会级联删除其 child Logical Track subtree
+没有 child Track 的 Event Instrument 不影响整曲播放、渲染和 MIDI 导出
+无 SF2 状态下仍可编辑 Event Instrument，但不能播放、预览或音频渲染
 ```
 Event Instrument 预览 / 试听能力属于播放系统和 UI 工作流的交叉内容。
 要求：
 ```text
-Event Instrument Library 应提供 Event Instrument 预览入口
+Event Instrument Editor / Arrangement Header 应提供 Event Instrument 预览或导航入口
 具体预览行为由 第 13 章《播放与预览》 / 第 17～20 章的 UI 与交互规格 细化
 预览必须仍遵守 SoundFont 可用性、编译规则、资源分配规则和 C# 映射错误处理规则
 ```
 具体预览触发方式、默认试听音高、试听长度、是否创建临时 Logical Track / Segment，由 第 13 章《播放与预览》 和 第 17～20 章的 UI 与交互规格 细化。
 ---
-## 7.18 Event Instrument Library 与 MIDI 导出的关系
-MIDI 导出不直接导出 Event Instrument Library 本身。
+## 7.18 Event Instrument 与 MIDI 导出的关系
+MIDI 导出不直接导出 Event Instrument 定义本身。
 MIDI 导出导出的是：
 ```text
 Event Instrument 被 Logical Track 触发后编译出的标准 MIDI 事件
@@ -499,8 +369,8 @@ MIDI 导出 Readme 可记录实际参与导出的 Event Instrument 名称列表�
 但这不是 MIDI 事件语义的一部分。
 ```
 ---
-## 7.19 Event Instrument Library 与撤销 / 重做、项目修改状态
-Event Instrument Library 的编辑属于项目可撤销编辑行为。
+## 7.19 Event Instrument 与撤销 / 重做、项目修改状态
+Event Instrument parent 与定义编辑属于项目可撤销编辑行为。
 以下操作应进入全项目统一撤销 / 重做框架：
 ```text
 创建 Event Instrument
@@ -509,45 +379,38 @@ Event Instrument Library 的编辑属于项目可撤销编辑行为。
 复制 Event Instrument
 编辑 Event Instrument 定义
 修改 Event Instrument 颜色
-修改库内手动排序
-创建、删除、重命名、移动文件夹
-移动 Event Instrument 到文件夹
-从文件夹移出 Event Instrument
+修改 Arrangement mixed parent order
+添加、删除、移动或重排 child Logical Track
 批量删除 Event Instrument，如初版支持
 ```
 以下操作应使 Project 进入已修改状态：
 ```text
-Event Instrument Library 内容发生变化
+Arrangement parent/child 内容发生变化
 Event Instrument 定义发生变化
 Event Instrument 名称发生变化
 Event Instrument 颜色发生变化
-Event Instrument 排序发生变化
-Event Instrument 文件夹归属发生变化
-库文件夹结构发生变化
+Event Instrument 在 mixed parent order 中的位置发生变化
 Event Instrument 与 Logical Track 绑定关系发生变化
 ```
 以下操作不应使 Project 进入已修改状态：
 ```text
 临时选择某个 Event Instrument
-临时展开 / 折叠库列表，如初版不保存该状态
-临时搜索库列表
-临时筛选库列表
+临时展开 / 折叠 Event Instrument parent
 临时预览 / 试听
-临时调整库面板宽度
 ```
 初版不保存 UI 视图状态。
 因此必须区分：
 ```text
-项目内容：排序、文件夹分组、颜色，应保存并影响修改状态
-UI 临时状态：搜索关键字、展开折叠、选中项、面板宽度，不应保存，不影响修改状态
+项目内容：mixed parent order、child order/ownership、定义与颜色，应保存并影响修改状态
+UI 临时状态：展开折叠、选中项和 viewport，不应保存，不影响修改状态
 ```
 ---
 ## 7.20 错误、警告与信息诊断
 ### 7.20.1 错误 / 操作失败
 以下情况应作为错误或导致操作失败：
 ```text
-Project 缺失 Event Instrument Library
-Project 存在多个 Event Instrument Library
+Project 缺失或重复 Arrangement parent index
+Logical Track parent 缺失、重复或 kind 错误
 Event Instrument 名称为空
 Event Instrument 名称与当前 Project 内其他 Event Instrument 冲突
 Event Instrument 名称经过去除首尾空白后为空
@@ -557,21 +420,12 @@ Event Instrument 名称经过去除首尾空白后为空
 用户尝试创建程序级全局 Event Instrument Library，初版不支持
 ```
 ### 7.20.2 打开项目警告
-以下情况应在打开 Project 时产生警告：
-```text
-Logical Track 引用的 Event Instrument ID 无法解析，但项目可安全降级打开
-```
-处理结果为：
-```text
-相关 Logical Track 自动变为未指定 Event Instrument
-保留可用的最近绑定 Event Instrument 名称
-打开时提示用户
-```
+单个 Event Instrument 对象文件损坏、但 parent/child 索引仍可信并已创建 Damaged Parent Placeholder 时产生打开 Warning。父子关系本身不可信时打开失败。
 ### 7.20.3 警告
 以下情况可作为警告或后续由第 15 章《音频文件渲染》规定的诊断来源：
 ```text
-删除被引用 Event Instrument 将导致若干 Logical Track 变为未指定状态
-未引用 Event Instrument 存在内部错误，但当前未参与编译
+删除 non-empty Event Instrument 的确认摘要
+没有 child 触发参与当前编译的 Event Instrument 存在内部错误
 Event Instrument 内部问题可能影响后续绑定或预览
 ```
 其中：
@@ -583,97 +437,60 @@ Event Instrument 未被任何 Logical Track 使用，不应默认作为诊断
 ### 7.20.4 信息
 以下情况可作为信息或 UI 状态提示：
 ```text
-Event Instrument Library 为空
+Arrangement 中没有 Event Instrument
 Event Instrument 是项目级定义，不是 SF2 preset
-修改 Event Instrument 会影响所有引用处
-如需变体，应创建副本再修改
-删除被引用 Event Instrument 后，相关 Logical Track 会变为未指定状态
-未指定 Event Instrument 的 Logical Track 在编译、播放、预览、渲染中被忽略
+修改 Event Instrument 会影响其全部 child Logical Track
+如需只复制定义，应使用 Duplicate Instrument Only
 Event Instrument 颜色只作为 UI 主色，不影响 MIDI 语义
 ```
 ---
 ## 7.21 规则、限制与失败条件
 ### 7.21.1 强制规则
-1. 每个 Project 必须有且只有一个 Event Instrument Library。
-2. Event Instrument Library 是 Project 的必要顶层集合。
-3. Event Instrument Library 本身不可删除。
-4. 新 Project 默认 Event Instrument Library 为空。
-5. 新 Project 不创建默认 Event Instrument。
-6. Event Instrument 定义只属于当前 Project。
-7. 初版不做程序级全局 Event Instrument Library。
-8. 初版不做跨项目导入 / 导出 Event Instrument。
-9. 初版不提供项目模板。
-10. Event Instrument 必须拥有内部稳定 ID。
-11. 内部引用必须基于稳定 ID，不得依赖用户可见名称。
-12. Event Instrument 名称在当前 Project 内必须唯一。
-13. Event Instrument 名称不能为空。
-14. Event Instrument 名称唯一性比较大小写不敏感，并去除首尾空白。
-15. 创建 Event Instrument 时不允许草稿状态。
-16. 创建 Event Instrument 时系统自动生成最小合法 Event Instrument。
-17. 新建 Event Instrument 时系统自动生成唯一名称。
-18. 初版支持复制 Event Instrument。
-19. 复制 Event Instrument 必须是深拷贝。
-20. 复制 Event Instrument 必须产生新的稳定 ID。
-21. 复制 Event Instrument 不影响现有 Event Instrument 的使用。
-22. 复制 Event Instrument 不自动改绑现有 Logical Track。
-23. 删除被引用 Event Instrument 前必须确认，并显示受影响 Logical Track 列表。
-24. 删除被引用 Event Instrument 后，相关 Logical Track 自动变为未指定 Event Instrument。
-25. 删除被引用 Event Instrument 后，相关 Logical Track 保留最近一次绑定名称，仅用于 UI 提示，不参与编译。
-26. 初版删除被引用 Event Instrument 时不提供同步改绑到其他 Event Instrument 的操作。
-27. 修改 Event Instrument 定义后，所有引用处自动使用最新定义。
-28. 初版不做 Frozen / 冻结实例功能。
-29. 被多个 Logical Track 使用的 Event Instrument，应显示使用数量和具体 Logical Track 列表。
-30. 被多个 Logical Track 使用本身不产生警告。
-31. 未被任何 Logical Track 引用的 Event Instrument 本身不产生诊断。
-32. 未引用但内部有错误的 Event Instrument 不阻止整曲编译。
-33. 未引用但内部有错误的 Event Instrument 应在诊断中显示为警告。
-34. 被实际编译使用的 Event Instrument 错误导致编译失败。
-35. 打开 Project 时，如 Logical Track 引用的 Event Instrument ID 无法解析且可安全降级，应允许打开。
-36. 引用断裂的 Logical Track 自动变为未指定 Event Instrument，并保留可用的最近绑定名称。
-37. 打开 Project 时发现 Event Instrument 引用断裂，应弹出警告。
-38. 初版 Event Instrument Library 支持用户手动排序。
-39. 初版 Event Instrument Library 支持文件夹分组。
-40. 初版支持为 Event Instrument 设定颜色。
-41. Event Instrument 颜色可在 Logical Track 等其他位置作为主色使用。
-42. Event Instrument 颜色不影响编译、播放、预览、渲染或 MIDI 导出语义。
-43. 初版 Event Instrument Library 支持按名称搜索。
-44. 初版是否支持备注 / 描述字段推迟到 第 7 章《Event Instrument Library 与 Event Instrument 定义》 决定。
-45. Event Instrument Library 应提供 Event Instrument 预览入口。
-46. 具体预览行为由 第 13 章《播放与预览》 / 第 17～20 章的 UI 与交互规格 细化。
-47. Event Instrument 不绑定独立 SF2。
-48. Event Instrument 不允许手动指定固定 Port 或 Channel。
-49. Event Instrument Library 本身不占用 Channel Unit。
-50. Event Instrument 定义仅在被 Logical Track 有效使用并参与编译时才进入资源分配。
+1. 每个 Event Instrument 必须是 Arrangement mixed parent list 中的一个 parent，并拥有唯一稳定 ID。
+2. Event Instrument Index 只用于稳定 ID 查找，不拥有独立 Workspace、Folder 或手动顺序。
+3. 新 Project 默认不创建 Event Instrument。
+4. Event Instrument 定义只属于当前 Project；初版不做程序级全局 Library 或项目模板。
+5. Event Instrument 名称必填、Project 内大小写不敏感唯一，并去除首尾空白后比较。
+6. 创建 Event Instrument 时系统自动生成最小合法定义、唯一名称与空 Logical Track child list。
+7. 普通 Copy/Paste/Duplicate 深拷贝 Event Instrument 及完整 Logical Track subtree；`Duplicate Instrument Only` 只深拷贝定义，全部新对象使用新稳定 ID 并重映射内部引用。
+8. 删除包含 child Track 的 Event Instrument 前必须确认；确认后原子级联 subtree，不得生成 Unbound Track。
+9. 每个 Logical Track 必须且只能属于一个 Event Instrument；跨 Event Instrument 移动按第 24 章 rebind 规则提交。
+10. 修改 Event Instrument 定义后，其全部 child Logical Track 自动使用最新定义；初版不做 Frozen 定义。
+11. 空 Event Instrument parent 本身不产生诊断；其内部错误在未实际编译使用时为 Warning，实际使用时为 Error。
+12. 单个 Event Instrument 文件损坏且父子索引可信时使用 Damaged Parent Placeholder；父子关系无法唯一确定时打开失败，不得按名称重绑或降级为 Unbound。
+13. 初版支持 Event Instrument 颜色；颜色可供 child Track/Segment UI 使用，但不影响编译、播放、预览、渲染、导出或资源分配。
+14. Event Instrument 预览入口位于其编辑器/Arrangement 导航；具体行为由第 13、18、20、24 章定义。
+15. Event Instrument 不绑定独立 SF2，不允许手动指定固定 Port/Channel，定义本身不占用 Channel Unit。
+16. Event Instrument 只有在 child Logical Track 的有效 Segment 触发参与编译时才进入资源分配。
 ### 7.21.2 警告情况
 以下情况应产生警告或诊断入口：
 ```text
-删除被引用 Event Instrument 将导致若干 Logical Track 变为未指定状态
-打开项目时发现 Logical Track 引用的 Event Instrument ID 无法解析，但已安全降级
-未引用 Event Instrument 存在内部错误，但当前未参与编译
+删除 non-empty Event Instrument 前显示将级联删除的 Logical Track 摘要（确认 UI，不是编译 Warning）
+单个 Event Instrument 对象文件损坏但已用 Damaged Parent Placeholder 安全隔离
+空 child list 的 Event Instrument 存在内部错误但当前未参与编译
 ```
 ### 7.21.3 信息情况
 以下情况可作为信息或 UI 状态提示：
 ```text
-Event Instrument Library 为空
+Arrangement 中没有 Event Instrument
 Event Instrument 是项目级定义，不是 SF2 preset
-修改 Event Instrument 会影响所有引用处
-如需变体，应创建副本再修改
-删除被引用 Event Instrument 后，相关 Logical Track 会变为未指定状态
-未指定 Event Instrument 的 Logical Track 在编译、播放、预览、渲染中被忽略
+修改 Event Instrument 会影响其全部 child Logical Track
+如需仅复制定义而不复制 Track，应使用 Duplicate Instrument Only
 Event Instrument 颜色只作为 UI 主色，不影响 MIDI 语义
 ```
 ### 7.21.4 失败条件
 以下情况应导致相应操作失败：
 | 场景 | 失败结果 |
 |---|---|
-| Project 缺失 Event Instrument Library | 打开失败或项目结构错误 |
-| Project 存在多个 Event Instrument Library | 打开失败或项目结构错误 |
+| Project 缺失或重复 Arrangement parent index | 打开失败或项目结构错误 |
+| Logical Track 无 parent、多个 parent 或 parent kind 错误 | 打开失败或结构编辑失败 |
 | 创建或重命名 Event Instrument 时名称为空 | 操作失败 |
 | 创建或重命名 Event Instrument 时名称与现有名称冲突 | 操作失败 |
 | 被实际编译使用的 Event Instrument 定义非法 | 编译失败 |
 | 被实际编译使用的 Event Instrument 中 C# 映射无法编译 | 编译失败 |
 | 用户尝试跨项目导入 / 导出 Event Instrument | 操作失败 |
 | 用户尝试创建程序级全局 Event Instrument Library | 操作失败 |
+| 未确认即删除 non-empty Event Instrument | 操作取消，不修改 Project |
 | 无有效 SF2 时尝试 Event Instrument 预览 | 预览失败或入口禁用 |
 ---
 ## 7.22 Event Instrument 定义本体
@@ -681,7 +498,7 @@ Event Instrument 定义是 Project 内的可复用 MIDI 事件模板。
 系统级含义：
 ```text
 Event Instrument 定义属于当前 Project
-Event Instrument 定义存在于 Event Instrument Library 中
+Event Instrument 定义存在于 Arrangement mixed parent list，并可由内部 Event Instrument Index 查找
 Event Instrument 定义不是 SF2 preset
 Event Instrument 定义不是 SoundFont 资源
 Event Instrument 定义不是 Logical Track
@@ -728,21 +545,15 @@ Event Instrument 定义应至少承担以下职责：
 | Reset 策略 | 是，限入口和覆盖层级 | 具体插入顺序由 第 10 章《实例生命周期、Loop、Envelope 与重叠》 / 第 12 章《编译系统与 Canonical Compiled Result》 细化。 |
 | 预览配置 | 否，原则入口可承接 | 具体预览音高、长度、行为由 第 13 章《播放与预览》 / 第 17～20 章的 UI 与交互规格 细化。 |
 ---
-## 7.24 Event Instrument 与 Library 的边界
-`Event Instrument Library` 负责集合管理。
-它处理：
+## 7.24 Event Instrument 定义、Index 与 Arrangement 的边界
+`Event Instrument Index` 只处理：
 ```text
-创建 Event Instrument
-删除 Event Instrument
-复制 Event Instrument
-重命名 Event Instrument
-稳定 ID 与名称管理
-排序
-文件夹分组
-搜索
-引用统计
-删除时影响 Logical Track 的处理
+稳定 ID 查找
+名称唯一性校验
+诊断定位辅助
 ```
+创建、删除、复制、重命名、混排顺序、Logical Track child 管理和 subtree 影响由第 24 章的 Arrangement parent 命令处理；Index 不拥有 Folder、独立顺序或可见 Workspace。
+
 `Event Instrument` 定义本体负责模板语义。
 它处理：
 ```text

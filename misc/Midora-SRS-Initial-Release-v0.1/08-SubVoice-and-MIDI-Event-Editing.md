@@ -1118,27 +1118,25 @@ Control Change 基础范围：
 CC number: 0–127
 CC value: 0–127
 ```
-但普通用户可编辑 CC 排除 Channel Mode Message、CC91 与 CC93。
+但普通 SubVoice 用户事件编辑入口排除 Channel Mode Message、CC91 与 CC93。该限制只约束 Event Instrument / SubVoice 语义，不约束第 23 章定义的 Pure MIDI Track 直接 MIDI 事件。
 
 ### 8.54.2 Reverb / Chorus 边界
 
-初版不支持：
+Event Instrument / SubVoice 不支持创建或映射到：
 ```text
 CC91 / Reverb Send Level
 CC93 / Chorus Send Level
 ```
 
-它们不得出现在：
+它们不得出现在 Event Instrument 语义路径中的：
 ```text
 SubVoice Initial State
 SubVoice 时间线离散点或曲线
 Logical Parameter Mapping 目标
-已提交 Project 数据
-canonical compiled result
-MIDI 导出
+SubVoice 源数据
 ```
 
-用户输入、粘贴、导入或迁移数据中发现 CC91 / CC93 时，必须报告语义 Error，不得静默忽略、Clamp 或改写为其他 CC。
+向 SubVoice 输入或粘贴 CC91 / CC93 时必须拒绝该编辑，不得静默忽略、Clamp 或改写为其他 CC。SMF 导入不得把这类事件强制转换成 SubVoice 事件，而应按第 23 章将其保存在 Pure MIDI Track 中；Pure MIDI Track 的 CC91 / CC93 必须进入 canonical compiled result 并由 MIDI 导出原样写出。正式 BASSMIDI 音频路径仍启用 `BASS_MIDI_NOFX`，因此不得把这些控制器解释为 Midora 音频效果承诺。
 
 ### 8.54.3 Channel Mode Message 边界
 CC 120–127 属于 Channel Mode Message 范围，例如：

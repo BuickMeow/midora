@@ -309,5 +309,6 @@ message EventInstrumentV1 {
   repeated InstrumentEnvelopeV1 envelopes = 19;
   repeated CSharpMappingFunctionV1 mapping_functions = 20;
   repeated LogicalParameterMappingV1 parameter_mappings = 21;
-  reserved 22 to max;
+  repeated int64 logical_track_ids = 22;
+  reserved 23 to max;
 }

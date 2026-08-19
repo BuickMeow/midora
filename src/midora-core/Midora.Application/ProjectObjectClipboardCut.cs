@@ -8,6 +8,16 @@ public sealed record ProjectObjectClipboardCutPreparation(
 
 public static partial class ProjectObjectClipboard
 {
+    public static ProjectObjectClipboardCutPreparation PrepareCutEventInstrument(
+        ProjectDocumentSession document,
+        MidoraId eventInstrumentId) =>
+        PrepareCut(
+            document,
+            CopyEventInstrument(document, eventInstrumentId),
+            ProjectDomainEditCommands.DeleteEventInstrument(
+                eventInstrumentId,
+                referencedDeletionConfirmed: true));
+
     public static ProjectObjectClipboardCutPreparation PrepareCutLogicalTrack(
         ProjectDocumentSession document,
         MidoraId logicalTrackId) =>
@@ -17,6 +27,58 @@ public static partial class ProjectObjectClipboard
             ProjectDomainEditCommands.DeleteLogicalTrack(
                 logicalTrackId,
                 nonEmptyDeletionConfirmed: true));
+
+    public static ProjectObjectClipboardCutPreparation PrepareCutMidiChannelRoot(
+        ProjectDocumentSession document,
+        MidoraId rootId) =>
+        PrepareCut(
+            document,
+            CopyMidiChannelRoot(document, rootId),
+            ProjectDomainEditCommands.DeleteMidiChannelRoot(rootId, nonEmptyDeletionConfirmed: true));
+
+    public static ProjectObjectClipboardCutPreparation PrepareCutPureMidiTrack(
+        ProjectDocumentSession document,
+        MidoraId trackId) =>
+        PrepareCut(
+            document,
+            CopyPureMidiTrack(document, trackId),
+            ProjectDomainEditCommands.DeletePureMidiTrack(trackId, nonEmptyDeletionConfirmed: true));
+
+    public static ProjectObjectClipboardCutPreparation PrepareCutMidiSegments(
+        ProjectDocumentSession document,
+        IReadOnlyCollection<MidoraId> segmentIds,
+        MidoraId primarySegmentId) =>
+        PrepareCut(
+            document,
+            CopyMidiSegments(document, segmentIds, primarySegmentId),
+            ProjectDomainEditCommands.DeleteMidiSegments(segmentIds));
+
+    public static ProjectObjectClipboardCutPreparation PrepareCutDirectMidiNotes(
+        ProjectDocumentSession document,
+        MidoraId segmentId,
+        IReadOnlyCollection<MidoraId> noteIds) =>
+        PrepareCut(
+            document,
+            CopyDirectMidiNotes(document, segmentId, noteIds),
+            ProjectDomainEditCommands.DeleteDirectMidiNotes(segmentId, noteIds));
+
+    public static ProjectObjectClipboardCutPreparation PrepareCutDirectMidiEvents(
+        ProjectDocumentSession document,
+        MidoraId segmentId,
+        IReadOnlyCollection<MidoraId> eventIds) =>
+        PrepareCut(
+            document,
+            CopyDirectMidiEvents(document, segmentId, eventIds),
+            ProjectDomainEditCommands.DeleteDirectMidiEvents(segmentId, eventIds));
+
+    public static ProjectObjectClipboardCutPreparation PrepareCutOpaqueMidiEvents(
+        ProjectDocumentSession document,
+        MidoraId segmentId,
+        IReadOnlyCollection<MidoraId> eventIds) =>
+        PrepareCut(
+            document,
+            CopyOpaqueMidiEvents(document, segmentId, eventIds),
+            ProjectDomainEditCommands.DeleteOpaqueMidiEvents(segmentId, eventIds));
 
     public static ProjectObjectClipboardCutPreparation PrepareCutSegments(
         ProjectDocumentSession document,

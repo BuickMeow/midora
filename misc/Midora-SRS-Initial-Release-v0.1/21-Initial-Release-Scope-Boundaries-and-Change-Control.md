@@ -12,6 +12,8 @@
 创建和打开 Project
 设计 Event Instrument 与 SubVoice MIDI 事件
 在 Logical Track / Segment 中编写 Logical Notes 与 Logical Parameters
+创建 MIDI Channel Root，并在 Pure MIDI Track / Midi Segment 中直接编辑 MIDI Notes 与 Channel Events
+把 SMF 1.0 Format 0/1、TPQN `.mid` 原子打开为新的未保存 Project
 执行确定性编译与资源分配
 使用 Project 级 SF2 进行播放和预览
 导出标准 MIDI 1.0 SMF Type 1
@@ -27,7 +29,7 @@ x86 Windows、Arm64 Windows 或 AnyCPU 发布包
 MIDI 2.0
 DAW、音频录制、音频轨、VST/VSTi 宿主
 MPE 或 MIDI 2.0 per-note controllers
-自由 SysEx 编辑
+自由 SysEx / 任意 Meta payload 创建与字节编辑；不包括从 SMF 导入后按 opaque payload 保存、移动、删除和重新导出
 程序级全局 Event Instrument Library
 跨 Project Event Instrument 导入、导出或实时引用
 多 Project 同时打开
@@ -40,6 +42,7 @@ SFZ、DLS、Kontakt、LV2 等声音资源
 纯键盘完整工作流、屏幕阅读器和 Access Keys
 多主题、高对比度主题、额外交互音效
 非 100% DPI 的专项验收承诺
+SMF Format 2、SMPTE division、Import MIDI into Current Project、字节级 MIDI round-trip
 ```
 各专项章节列出的更细禁止项同样属于正式范围，不因未在本章重复而失效。
 ## 21.3 实现设计自由度
@@ -81,6 +84,8 @@ JSON Schema、protobuf .proto 的其他最终字段名、字段号与代码生�
 产品达到初版范围至少要求：
 ```text
 所有强制 Project 对象和编辑流程可用
+Pure MIDI Root/Track/Segment 可编辑、可保存、可编译、可播放并保持独立 SMF MTrk 拓扑导出
+Format 0/1 + TPQN、Running Status、多 Channel MTrk、MIDI Port 与 opaque event 导入通过兼容/畸形输入测试
 核心对象可保存并无损重新打开
 全量编译在相同输入下确定一致
 播放、预览、MIDI 导出、音频渲染共享同一编译语义

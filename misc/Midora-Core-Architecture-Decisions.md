@@ -8,7 +8,7 @@
 
 ### 1.1 输入
 
-- 正式输入是完整的内存 Project：TPQ、Conductor Track、Event Instrument Library、SubVoice、模板事件、Mapping、Logical Parameter、Lifecycle、Loop、Envelope、Overlap、Global Initial/Reset Defaults、Logical Track、Segment、Logical Note 和参数 Lane。
+- 正式输入是完整的内存 Project：TPQ、Conductor Track、Event Instrument Library、SubVoice、Mapping/Lifecycle、Global Defaults、Logical Track/Segment/Note/Parameter，以及 MIDI Channel Root、Pure MIDI Track、Midi Segment、Direct/Raw/Opaque MIDI Event。
 - 每个正式对象用 Project 内稳定 ID 标识；显示名称、列表位置、tick、Port 和 Channel 不构成身份。
 - 编译请求还包含 `[startTick, endTick)`、Track 选择、用途和 Warning-as-error 策略。
 - SoundFont、输出设备、设备实际采样率、Master/Limiter 和实时 buffer 不改变 tick-domain canonical MIDI 语义。
@@ -16,14 +16,14 @@
 ### 1.2 正式输出
 
 - `CanonicalCompiledResult` 是播放与本轮离线试听的唯一音乐语义输入。
-- 结果冻结保存 Conductor 状态、按稳定顺序排列的 Channel 事件、Port/Channel Unit 分配、资源占用、来源追踪、诊断、统计、CompileContext、可消费性和 partial 标记。
+- 结果冻结保存 Conductor 状态、按稳定顺序排列的 Channel 事件、Port/Channel Unit 分配、Root lifecycle、Execution Projection、SMF Track Projection、资源占用、来源追踪、诊断、统计、CompileContext、可消费性和 partial 标记。
 - 音频适配层只把 canonical tick 事件经 Tempo Map 映射到绝对 sample-frame，并生成现有 `MidiRenderPlan`；它不得重新解释 Event Instrument、Mapping、Lifecycle、Segment 或资源分配。
 
 ### 1.3 边界
 
 - tick 使用 `Int64`，TPQ 在 Project 创建后固定；所有范围使用 `[startTick, endTick)`。
 - 单 Project 最多 16 Ports × 16 Channels；每个有输出的 Event Instrument Instance 按 SubVoice 数原子分配 Channel Group，低编号优先，允许跨 Port，不做 Voice Stealing。
-- 每个 Port 的 Channel 10 都是 melodic；CC91/CC93 在源模型验证阶段为 Error，不能进入 canonical result。
+- Logical/Event Instrument 获配的 Channel 10 为 melodic；Pure MIDI Root 的 Channel 10 服从显式 Melodic/Percussion mode。CC91/CC93 在 Event Instrument/SubVoice 路径为 Error，在 Pure MIDI 路径合法并进入 canonical/SMF 投影。
 - Segment End、显式编译 end 和作为默认范围的 Project End Marker 是硬边界：立即精确 NoteOff，再 Reset，不允许 Release/Tail 越界。
 - 范围起点恢复必要非 Note 状态，但不重触发范围前已经开始的 Note。
 
@@ -38,8 +38,8 @@
 ### 1.5 诊断
 
 - 诊断级别为 Error、Warning、Info、Debug；Warning-as-error 只改变本次成功判定，不改写诊断级别。
-- 诊断尽量携带 Track、Segment、Logical Note、Event Instrument、SubVoice、模板事件、Mapping、tick 和资源上下文；初版 Project 本身没有稳定 Project ID。
-- 未绑定 Event Instrument 的非空 Track 为 Info；断裂参数 Lane 为 Warning；CC91/CC93、非法实际输出和资源不足为 Error。
+- 诊断尽量携带 Root、Track、Segment、Direct/Logical Note/Event、Event Instrument、SubVoice、Mapping、tick、source MTrk/offset 和资源上下文；初版 Project 本身没有稳定 Project ID。
+- 未绑定 Event Instrument 的非空 Logical Track 为 Info；断裂参数 Lane 为 Warning；Event Instrument 路径 CC91/CC93、非法实际输出、Root route 冲突和资源不足为 Error。合法 Pure MIDI CC91/CC93 不产生诊断。
 
 ### 1.6 持久化归属
 
@@ -187,24 +187,24 @@ Requirement trace：
 
 `metadata.json` v1 同时冻结项目名称、用户版本、作者/团队、原作、版权、备注、UTC 创建 / 修改时间和总耗时字段。会话内部保留 100 ns `TimeSpan` tick 余数，生成持久快照时向下取完整毫秒；重复取快照不会重复累计同一区间，系统墙钟校时不改变累计值。
 
-## 12. ADR-CORE-010（已接受，21A/22A）：SMF Type 1 兼容编码档
+## 12. ADR-CORE-010（已接受，21A/22A；Pure MIDI 拓扑部分由 ADR-PMIDI-007 取代）：SMF Type 1 兼容编码档
 
 决定：初版 `.mid` 编码固定使用 SMF Type 1 和 Project TPQ。Tempo 以十进制 `60,000,000 / BPM` 计算，并只对最终 microseconds-per-quarter-note 执行一次 `AwayFromZero`；舍入结果超出 `1..0xFFFFFF` 时整体失败。Time Signature 固定写 `cc=24`、`bb=8`。同 tick 的 Bank/Program 字节顺序固定为 CC0、CC32、Program Change。所有文本 Meta 使用严格 UTF-8；事件 Track 只写 Track Name 与 MIDI Port Meta，不写 Device Name / Program Name。每个 Channel Event 都显式写 status byte，不使用 Running Status。
 
 Requirement trace：
 
-- 输入：用途为 `MidiExport`、成功、完整、可消费的 `CanonicalCompiledResult`，以及按原始 Channel Unit 提供的显式 Unit Track Name 布局。编码器不读取 Project、播放状态、SoundFont、设备或 Mute/Solo。
-- 正式输出：范围起点重基为 MIDI tick 0 的确定性 SMF Type 1 字节；Track 0 为 Conductor，每个实际有 Channel Event 的原始 `(Port, Channel)` Unit 严格对应一个事件 Track，按 Port→Channel 排序；所有 Track 在统一相对 `endTick - startTick` 写 EOT。
+- 输入：用途为 `MidiExport`、成功、完整、可消费且已冻结 SMF Track Projection 的 `CanonicalCompiledResult`。编码器不读取 Project、播放状态、SoundFont、设备或 Mute/Solo。
+- 正式输出：范围起点重基为 MIDI tick 0 的确定性 SMF Type 1 字节；Track 0 为 Conductor，随后为 Pure MIDI ExportTrack MTrks，再为 Logical Unit MTrks。Logical Unit 仍一 Unit 一 Track、按 Port→Channel；Pure MIDI 一 Track 一 MTrk、按 Root/Track 顺序并使用自身 EOT。
 - 边界：Channel Event 逐条保持 canonical 子序列和真实 NoteOff velocity 0；RPN/NRPN/Pitch Bend Range 使用 canonical 已展开的标准 CC；导出器不得折叠状态，不得在 canonical 外追加 All Notes Off、All Sound Off、Reset All Controllers 或其他 Channel 清理。Track Name 的最终可见字符串由上层工作流显式提供，编码器不隐藏选择命名模板。
-- 失败条件：非 MidiExport 上下文、不可消费/partial 结果、非法 TPQ、超出四字节 VLQ 的事件间隔、24-bit Tempo 越界、非法 Time/Key Signature、未知 Channel Event、CC91/93、NoteOn velocity 0、非零 NoteOff velocity、路由/来源不一致、Track 布局缺失或自校验失败均整体失败且返回零 partial 字节。
+- 失败条件：非 MidiExport 上下文、不可消费/partial 结果、非法 TPQ、超出四字节 VLQ 的事件间隔、24-bit Tempo 越界、非法 Time/Key Signature、未知 Channel Event、Event Instrument 路径非法 CC91/93、非法 Note 编码、路由/来源不一致、Track descriptor 缺失或自校验失败均整体失败且返回零 partial 字节。合法 Pure MIDI CC91/93 和 NoteOff velocity `0..127` 必须可编码。
 - 诊断：当前垂直切片区分 canonical consistency 与 encoding 两类结构化诊断；完整工作流实现时再接入统一任务/文件写入诊断，不把异常文本当持久协议。
 - 持久化归属：SMF 是导出产物，不进入 `.midora`；Track 可见名称布局和输出路径是本次工作流快照。受文件命名决定影响的 Export Settings schema 仍未发布。
 - 运行时归属：SMF 组织、字节编码和读取后自校验属于 MIDI 导出 Preparing/Encoding；不进入 compiler canonical 语义，也不进入音频 Worker。
 - 明确非目标：本增量不实现按 Logical Track/按 Port 多文件模式、Compact Routing、Readme、临时目录原子发布、覆盖确认、取消/进度、最终文件命名模板和完整 WPF 工作流。
 
-编码完成后必须重新解析并检查 MThd、MTrk 数量与长度、显式 status、可编码 delta、单个最终 EOT、所有 Track EOT tick 一致和文件末尾无额外字节。低层 `StandardMidiFile` 已提供 Type 1 writer/validator；正式消费者 `CanonicalMidiFileExporter` 只接受 canonical 结果。
+编码完成后必须重新解析并检查 MThd、MTrk 数量与长度、显式 status、可编码 delta、每个 MTrk 恰有一个最终 EOT、EOT 与各冻结 descriptor 一致和文件末尾无额外字节。低层 `StandardMidiFile` 提供 Type 1 writer/validator；正式消费者只接受 canonical 结果。
 
-22A 已固定 Channel 10 melodic 兼容档。每个实际包含 Channel 10 canonical 事件的事件 Track 在相对 tick 0、Track Name 与 MIDI Port Meta 之后、全部 canonical Channel Event 之前，分别写一次 Roland GS Normal Part `F0 41 10 42 12 40 10 15 00 1B F7` 和 Yamaha XG Normal Part `F0 43 10 4C 08 09 07 00 F7`，顺序为 GS→XG。编码器不得发送 GS Reset、XG System On/Reset、GM Reset，不得替换或补写 canonical Bank/Program；不相关事件 Track 与 Conductor 不写这些 SysEx。
+22A 已固定 Channel 10 melodic 兼容档。每个 Logical Channel 10 Unit MTrk 与 Melodic Channel 10 Pure MIDI MTrk，在相对 tick 0、Track Name/MIDI Port/结构 Meta 之后、全部 canonical Channel Event 之前，分别写一次 Roland GS Normal Part `F0 41 10 42 12 40 10 15 00 1B F7` 和 Yamaha XG Normal Part `F0 43 10 4C 08 09 07 00 F7`，顺序为 GS→XG。Percussion Root MTrk 不写；编码器不得发送 GS/XG/GM Reset 或替换 canonical Bank/Program。
 
 这些消息采用厂商文档中的默认 Device ID / Device Number。接收方不识别 vendor SysEx 或使用不同设备编号时仍可能把 Channel 10 当鼓通道，Readme 必须说明该兼容边界。该选择依据 [Roland M-GS64 MIDI Implementation](https://cdn.roland.com/assets/media/pdf/M-GS64_OM.pdf) 的 `40 1x 15 USE FOR RHYTHM PART` 和 [Yamaha XG MIDI Data Format](https://uk.yamaha.com/en/download/files/2090960) 的 `08 nn 07 PART MODE`；外部资料用于确认 wire 定义，不替代 SRS。
 
@@ -283,11 +283,11 @@ Requirement trace：输入为现有目标、冻结保存快照、manifest 最小
 
 ## 18. ADR-CORE-016（已接受，Q-NUI-003 局部暂停）：MIDI Export 冻结任务与多文件事务
 
-决定：正式任务先以专用 `CompilationPurpose.MidiExport` 和显式 Track 集合生成单一 canonical 快照；Whole Project、Per Logical Track 与 Per Port 只在该 canonical 之上组织文件。每个文件内部严格按原始 Channel Unit 分组：一个实际有事件的 Unit 对应一个且仅一个 MIDI 事件 Track，每个 Track 只包含一个 Channel，按 Port→Channel 排序。Unit 被不同 Logical Track / Instance 在不重叠时段先后复用时仍合并进同一 Track。Per Track 先按 Track owner 过滤再按 Unit 分组；无音乐输出的有效 Track 仍生成 Conductor-only SMF。Per Port 只为有 canonical 事件的 Port 生成文件，文件内 MIDI Port Meta 固定归一化为 Port 1，Track Name/文件名/Readme 保留原始一基 Port。
+决定：正式任务先以专用 `CompilationPurpose.MidiExport` 和显式 Track 集合生成单一 canonical 快照；Whole Project、Per Logical Track 与 Per Port 只在该 canonical 之上组织文件。对 Logical/Event Instrument 输出，每个文件内部严格按原始 Channel Unit 分组：一个实际有事件的 Unit 对应一个且仅一个 MIDI 事件 Track，每个 Track 只包含一个 Channel，按 Port→Channel 排序。Unit 被不同 Logical Track / Instance 在不重叠时段先后复用时仍合并进同一 Track。Per Logical Track 先按 Track owner 过滤再按 Unit 分组；无音乐输出的有效 Logical Track 仍生成 Conductor-only SMF。Per Port 只为有 canonical 事件的 Port 生成文件，文件内 MIDI Port Meta 固定归一化为 Port 1，Track Name/文件名/Readme 保留原始一基 Port。Pure MIDI Track 的 Whole Project 拓扑后来由 ADR-CORE-044 / ADR-PMIDI-007 扩展为一用户 Track 一 MTrk；本段的一 Unit 一 MTrk 约束不适用于该路径。
 
 文件名经公共合法化器形成绝对路径并冻结，同时冻结目标存在状态和一次性覆盖授权。所有 `.mid` 与被请求的 `README.md` 先写入同卷 staging 并完成 SMF Type 1 自校验；缺失目标目录以目录 rename 整体发布，已有目录逐文件原子替换/移动并保留事务备份，任一中途失败按逆序恢复。Finalizing 前允许取消并清理；Finalizing 短暂不可取消。回滚失败保留 staging/backup 路径，发布成功后的清理失败只产生 Warning。
 
-Requirement trace：输入为冻结 Project/Track/范围/Routing/Warning 参数、canonical、原始名称、Project/file metadata、软件版本、输出目录和覆盖授权；正式输出为固定模板 SMF Type 1 文件及可选 `README.md`，或不含 partial 成功文件的失败/取消报告。边界包括同 tick canonical 顺序、统一 EOT、Channel 10 GS→XG、Per Port 文件级 Port 归一化、目标出现竞态和 Readme 同事务。编码、自校验、staging、publish、rollback、cleanup 均有独立阶段；任务状态、绝对路径、缓存、诊断和导出时间不进入 Project。明确非目标是读取播放 buffer/Mute/Solo、在导出器中重算语义、静默覆盖新出现目标或自动修改 Project Export Settings。
+Requirement trace：输入为冻结 Project/Track/范围/Routing/Warning 参数、canonical、原始名称、Project/file metadata、软件版本、输出目录和覆盖授权；正式输出为固定模板 SMF Type 1 文件及可选 `README.md`，或不含 partial 成功文件的失败/取消报告。边界包括同 tick canonical 顺序、Logical/Conductor 统一 EOT、Pure MIDI 自身 EOT、按 mode 决定的 Channel 10 GS→XG、Per Port 文件级 Port 归一化、目标出现竞态和 Readme 同事务。编码、自校验、staging、publish、rollback、cleanup 均有独立阶段；任务状态、绝对路径、缓存、诊断和导出时间不进入 Project。明确非目标是读取播放 buffer/Mute/Solo、在导出器中重算语义、静默覆盖新出现目标或自动修改 Project Export Settings。
 
 当前编译器的确定性 Channel Unit 分配本身从 Port 1/Channel 1 起使用最低空闲单元，因此 Compact 对当前 canonical 分配是同形映射；Preserve 保持该导出 CompileContext 的同一分配，二者均不由编码器重分配音乐事件。若未来 Project 引入可持久化显式路由，必须在编译上下文内实现并重新证明 Compact 等价，不能把语义分配下放给文件写入器。
 
@@ -315,7 +315,7 @@ Requirement trace：输入为当前应用/播放状态、一个任务请求、Pr
 
 Q-NUI-004 只涉及 SRS 未固定的本机表示：当前实现使用 `%LOCALAPPDATA%\Midora\preferences-v1.json`、source-generated UTF-8 JSON v1、1 MiB 读取上限和同目录原子替换。该选择不影响 `.midora`、可听语义或跨机器文件兼容；产品所有者若选择其他本机存储，可替换 store 而不改变协调器或偏好领域契约。
 
-## 21. ADR-CORE-019（已接受，Q-NUI-005 局部暂停）：Project History 与编译事务
+## 21. ADR-CORE-019（已接受，Q-NUI-005 局部暂停；Folder/Unbound/独立排序部分已由 ADR-CORE-045 取代）：Project History 与编译事务
 
 决定：初版使用每 Project 一个、跨编辑器统一的线性 History。正式 Project 编辑先只读 Prepare，再以 `Apply/Undo` 可逆动作和冻结 `ProjectChangeSet` 进入 `ProjectCompilationSession`；每次 Execute、Undo、Redo 都在同一 Project Edit Lock 边界内完成源变更和 Incremental Compile。语义错误可以形成不可消费 canonical 并进入 History；基础设施异常必须反向恢复源数据并 Full Compile 校验，不得留下“源已变但 History 未记录”的半事务。
 
@@ -325,7 +325,7 @@ Modified 不使用简单“Undo cursor 是否为零”。每个会话历史状�
 
 Requirement trace：输入为 Project、来源状态、可逆 command、保存成功和 external dirty reason；正式输出为全 Project History、操作名称、Modified/关闭保护和同步 canonical。边界是单线性分支、无操作不建历史、Project Edit Lock 排他和 command change-set 冻结。失败时恢复源并 Full Compile；rollback 再失败必须聚合报告。History/state ID/反向对象不持久化、不影响 canonical fingerprint；Project 源本身照常持久化。明确非目标是 Draft/文本本地 Undo、WPF focus routing、历史持久化、autosave/crash recovery，以及 Q-NUI-005 决定前所有会分配新稳定 ID 的 Undo 命令。
 
-首批具体命令采用同一约束：Prepare 完成引用、名称、确认、时间范围、重叠和可恢复索引校验；Apply/Undo 复用原对象与原稳定 ID。Track/Instrument/Folder/Damaged Placeholder 删除、Track 绑定/排序、Library 组织和 Segment 移动/裁剪/删除/连接已经接入。Last Known Instrument Name 在显式绑定时更新为目标当前名称、显式取消绑定时保留最近可用名称、Instrument 重命名时同步更新当前绑定 Track 的快照；撤销恢复此前精确值。该快照只用于断裂提示，不参与按名称匹配或正式编译引用。
+首批具体命令采用同一约束：Prepare 完成引用、名称、确认、时间范围、重叠和可恢复索引校验；Apply/Undo 复用原对象与原稳定 ID。此处原有的 Track/Instrument/Folder/Damaged Placeholder、显式取消绑定、Library 组织和独立排序命令矩阵只记录当时实现；当前 Project 所有权、父子移动、级联删除和排序以 ADR-CORE-045 为准，Folder、Unbound、独立 Library/global child order 均不再是正式模型。Last Known Instrument Name 的旧维护规则同样只保留为历史证据，不得据此恢复 Unbound 工作流。
 
 Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复原记录对象；tick 0 Tempo/Time Signature、同 tick 唯一性及 SMF Tempo 可表示性在 Prepare 阶段阻止非法输入。Playback 与 Audio Render Settings 以整组快照原子替换；它们进入 Project History/Modified，但使用空 compilation change-set，canonical 保持不变，下一次播放/渲染任务从正式 Project Settings 冻结实际参数。
 
@@ -337,7 +337,7 @@ Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复�
 
 第六批命令覆盖既有 Value Curve 的 Target Settings、Point 更新/删除和整条 Curve 删除。Point 仍以稳定 ID 定位，更新使用同 ID 的不可变记录替换，移动超过 Template Length 时按 `tick + 1` 半开边界原子延长；Target Overflow 为 Fail 时拒绝超值域基础点，为 Clamp 时允许保存并由 canonical 归一化。删除 Curve 只移除曲线对象，不触碰同目标离散事件。Compiler 修正首点前语义：事件曲线在第一个点之前不输出隐式 0，点集在本次编译准备期排序一次后复用，最后一点之后仍由 MIDI Channel 状态自然保持。
 
-第七批命令把 Project Initial、Project Reset、Event Instrument Initial 与 SubVoice Initial 的单目标更新统一到 `MidiValueTarget`。Null 表示删除该层 override；字典目标必须区分“缺失”与数值 0，Undo 恢复此前精确存在性和值。CC91/CC93、Channel Mode、未知/不匹配 target identity 与原始值越界在 Prepare 阶段拒绝；Project 级变化使全部编译范围失效，Instrument/SubVoice 级变化只失效相关 Instrument。Initial State 不扩展 Template Length，Reset 仍只允许 Project 级。Compiler 同时把未定义 `MidiValueKind` 纳入 `MIDORA1260`，避免未知枚举以 number 0 绕过目标验证。
+第七批命令把 Project Initial、Project Reset、Event Instrument Initial 与 SubVoice Initial 的单目标更新统一到 `MidiValueTarget`。Null 表示删除该层 override；字典目标必须区分“缺失”与数值 0，Undo 恢复此前精确存在性和值。该 Initial/Reset/Mapping 目标面中的 CC91/CC93、Channel Mode、未知/不匹配 target identity 与原始值越界在 Prepare 阶段拒绝；此限制不适用于 Pure MIDI Track 的直接事件。Project 级变化使全部编译范围失效，Instrument/SubVoice 级变化只失效相关 Instrument。Initial State 不扩展 Template Length，Reset 仍只允许 Project 级。Compiler 同时把未定义 `MidiValueKind` 纳入 `MIDORA1260`，避免未知枚举以 number 0 绕过目标验证。
 
 第八批命令覆盖既有 Envelope Preset 的全 ADSR-like 快照更新与删除。Isolation 关闭时按 SRS restricted data 规则拒绝普通编辑，但允许删除作为修复入口。删除引用判定覆盖事件参数和 Logical Parameter Mapping 中的全部 Step，不因 Chain/Step 禁用而忽略持久引用；被引用删除要求显式确认，且只移除 Envelope 对象，故 Step 保留原 Envelope ID 并形成可持久化的正式断裂引用。Undo 恢复同一 Envelope 对象、原索引和完整数值，不影响 Template Length 或稳定 ID 计数器。
 
@@ -495,7 +495,7 @@ Requirement trace：输入为新建请求和 `settings/project-settings.json` �
 
 ## 39. ADR-CORE-037（已接受，Q-NUI-003）：Project MIDI Export Settings 开发期 v1 完整快照
 
-决定：`ExportProjectSettings` 保存 Mode、Range、Track Selection 策略、Routing、Include Readme 与 Treat Warnings As Errors。默认固定为 Whole Project、Project Default Range、All Valid Logical Tracks、Compact、`includeReadme=true`、`treatWarningsAsErrors=false`。Manual Range 才保存成对且满足 `0 <= startTick < endTick` 的边界。Explicit 策略只表示任务开始时要求显式选择，不持久化具体 Track ID；该集合与输出/覆盖路径继续只属于一次性冻结任务。
+决定：`ExportProjectSettings` 保存 Mode、Range、Track Selection 策略、Routing、Include Readme 与 Treat Warnings As Errors。默认固定为 Whole Project、Project Default Range、All Valid Logical and Pure MIDI Tracks、Compact、`includeReadme=true`、`treatWarningsAsErrors=false`。Manual Range 才保存成对且满足 `0 <= startTick < endTick` 的边界。Explicit 策略只表示任务开始时要求显式选择，不持久化具体 Track ID；该集合与输出/覆盖路径继续只属于一次性冻结任务。
 
 开发期 `export-settings.json` v1 直接增加必填字段，不创建 v2 或 v1→v2 迁移器。缺失、hash 不符或字段损坏仍服从 ordinary settings 恢复规则：用上述当前默认值恢复，产生 Error 并标记 Modified。设置变更由单个 History 命令原子执行和撤销，因其只影响未来 MIDI Export 请求而使用空 compilation change set，不改变当前 canonical fingerprint。
 
@@ -548,3 +548,21 @@ Requirement trace：输入为 instance lifecycle、Segment ID/End、隔离模式
 Segment End、Project End Marker、显式消费者范围结束及其他正式硬边界仍执行精确 NoteOff、CC120 与最终目标 Reset。CC64 Sustain、CC66 Sostenuto、CC69 Hold 2 等持有型控制器也遵循状态保持规则：若作者希望它们在普通 instance 结束前解除，必须在 Event Instrument 生命周期内显式安排对应事件；编译器不在普通结束处静默插入控制器 Off。该选择让 SoundFont 原生 release 保持 instance 最终状态，避免末尾 Reset 改变仍在衰减的 sample，同时仍由下一次 lane 激活和硬边界保证确定性与安全释放。
 
 Requirement trace：输入为 Reset Defaults、合并 Initial State、SubVoice 实际目标闭包、instance 生命周期/重叠、lane coloring 与硬边界；正式输出为 lane 激活 Reset、Initial/用户状态、精确 NoteOff、Segment/范围最终清理及 Full/Incremental 完全等价 canonical。边界是同 tick 顺序 `NoteOff → lane Reset → Initial/User State → NoteOn`、重叠 shared cluster 不重复初始化、显式范围起点恢复仍取 canonical 持有状态、持有型控制器没有隐式 ordinary-end Off。Project 源模型和持久化格式不新增字段；这些事件、来源、allocation 和缓存 fingerprint 都是编译派生。明确非目标是把 Reset Defaults 改成 Mapping 的原始值来源、在普通结束发送 CC120/CC121/CC123，或用 consumer/UI 状态重新解释 canonical。
+
+## 46. ADR-CORE-044（已接受）：Pure MIDI Root、双 canonical 投影与 SMF 导入/拓扑保留
+
+决定：采用 `MIDI Channel Root → Pure MIDI Track → Midi Segment → Direct MIDI Event` 作为与 Logical/Event Instrument 并列的正式源路径。Root 是 Channel Unit/Channel-wide state/lifecycle/cache 身份，Track 是编辑与 SMF MTrk 身份。Fixed Roots、非空 Auto Roots、Logical groups 按固定阶段分配；Root 活动连通区间结束才执行 Root 级 CC120/Reset。Canonical 从同一事件集冻结 Execution Projection 与 SMF Track Projection；SMF Import/Export、Root 合成/缓存、破坏性开发格式和共享 UI adapter 的完整决定见 `misc/Midora-Pure-MIDI-Tracks-and-SMF-Import-Architecture-Decisions.md` 的 ADR-PMIDI-001～008。
+
+本 ADR 明确限缩 ADR-CORE-010：Logical/Event Instrument 继续一 Unit 一 MTrk 并使用统一 endTick；Pure MIDI 则一用户 Track 一 MTrk，同 Root 多 MTrk 可共享 Port.Channel 并保留名称、顺序和自身 EOT。合法 Pure MIDI CC91/CC93 进入 canonical 与 SMF，`BASS_MIDI_NOFX` 音频投影不解释其效果。导入读取 Running Status，导出继续显式 status。
+
+Requirement trace：输入为 Root/Track/Segment/direct/opaque 源数据、Logical 源数据、CompileContext、SMF import bytes 和 export request；正式输出为确定 Unit allocation、Root lifecycle、双 canonical 投影、原子新 Project 或保持 Track 拓扑的 SMF Type 1。边界和失败条件以 SRS 第 23 章及 INV-050～INV-057 为准；源对象进入 `.midora`，allocation/projection/checkpoint/PCM/import candidate 均不持久化。明确非目标是 Import into Current Project、Format 2、SMPTE division、字节级 round-trip、per-Track synth 或把 Pure MIDI 转换为 Event Instrument。
+
+## 47. ADR-CORE-045（已接受）：Arrangement mixed parent union 是唯一外层所有权
+
+决定：Project 不再分别保存可见 Event Instrument Library order、全局 Logical Track order 与 Root order，而是保存一个有序 tagged union：`Event Instrument | MIDI Channel Root`。每个 Event Instrument 直接拥有有序 Logical Track children；每个 Root 直接拥有有序 Pure MIDI Track children。Conductor 是固定唯一第一对象，不进入 union。Logical Track 不允许 Unbound；跨 Event Instrument 移动就是保留 Track stable ID/content 的原子 rebind。
+
+父节点普通 Copy/Paste/Duplicate 深拷贝完整 subtree 并重映射全部新稳定 ID；Root 副本强制 Auto。Event Instrument 另提供只复制定义、child list 为空的 `Duplicate Instrument Only`。删除 non-empty parent 必须确认并原子级联 children；不得留下孤儿或未指定 Track。Root 分配/SMF 顺序从 mixed union 过滤 Root 得到；Logical 展示/命名辅助顺序按 parent 后 child 展平，不成为资源抢占优先级。
+
+持久化使用 `project.json` parent tagged union、parent ordered child references 与 child parent ID 三方严格一致的模型。旧 Event Instrument Folder、Library manual order、global child order、Unbound Track 和 Project Panel 字段从开发格式中删除。单 parent 文件损坏但关系索引可信时保留原位置 Damaged Parent Placeholder；关系不可信时打开失败。产品/SRS 仍为 v0.1，内部 schema/descriptor/file-format 基线破坏性替换，不提供旧开发布局迁移或双写。
+
+Requirement trace：输入为 mixed parent/child Project graph、稳定 ID allocator、copy/delete/rebind request 与 persistence index；正式输出为确定顺序、唯一 parent ownership、原子 command result 和严格可重开包。失败条件包括无/多 parent、kind 不匹配、引用未重映射、Fixed Root copy 冲突、未确认级联删除和无法可信恢复关系；失败不发布部分 Project。顺序、ownership 与源对象进入 `.midora`；selection、expand、clipboard、Mute/Solo 与 UI cache 不持久化。明确非目标是可见 Library Workspace、Folder、Unbound Track、按名称修复、旧开发格式兼容或让 UI 层另建所有权。

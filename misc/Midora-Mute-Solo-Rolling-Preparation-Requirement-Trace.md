@@ -2,6 +2,8 @@
 
 状态：2026-08-14，已实施。本文记录运行时 producer 生命周期与冷启动原生流清理修复，不修改 SRS。
 
+2026-08-18 范围修订：本文的现有实现证据只覆盖 Logical/Event Instrument melodic Unit。Pure MIDI Root 冷启动必须按 canonical descriptor 建立 Melodic/Percussion mode，并按来源重建同 Root 后缀；不得无条件发送 melodic `DEFDRUMS(0)` 或向整个 Root 发送 CC120。新增语义见 SRS 第 23.13.3 节和 ADR-PMIDI-005。
+
 需求依据：《Midora SRS》§12.6.2、§13.10、§13.19.9～13.19.10、§13.30，以及 INV-011、INV-018、INV-024、INV-042。
 
 ## 输入与正式输出
@@ -29,7 +31,7 @@
 ## ADR-MON-003：预渲染原生按键清理与监听前沿
 
 - Rolling Preparation 可以在当前播放位置之前把未来 Gate Start 提交给 BASSMIDI Unit Stream。回退事件游标之前必须把该 Stream 恢复为真正的干净状态；`MIDI_EVENT_RESET` 仅对应 CC121 Reset Controllers，不能单独承担清音。
-- 每次建立 canonical 初始状态固定按 `MIDI_EVENT_NOTESOFF` → `MIDI_EVENT_SOUNDOFF` → `MIDI_EVENT_RESET` → `MIDI_EVENT_DEFDRUMS(0)` 执行并逐项检查返回值。前两项分别清除 pressed-key 实例与全部发声，后两项恢复控制器和 Channel 10 melodic 状态；之后才允许事件游标回退并恢复非 Note 状态。
+- 每次建立 Logical/Event Instrument canonical 初始状态固定按 `MIDI_EVENT_NOTESOFF` → `MIDI_EVENT_SOUNDOFF` → `MIDI_EVENT_RESET` → `MIDI_EVENT_DEFDRUMS(0)` 执行并逐项检查返回值。前两项分别清除 pressed-key 实例与全部发声，后两项恢复控制器和 Logical melodic 状态；Pure MIDI Root 必须把最后一步替换为 descriptor 指定的 Melodic/Percussion mode。之后才允许事件游标回退并恢复非 Note 状态。
 - 本决定不改变 canonical result、MDAP、共享内存 ABI v4 字节布局或字段含义、缓存 key 或持久化格式；只修正原生 Stream 清理顺序。主进程现有监听恢复 tick 仍是近似观察值；当前缺陷的确定性根因与修复均在 Worker 冷启动实际采用的 producer frontier 和原生流状态之内。
 - 主进程编译 Mute/Solo 非 Note 恢复状态和选择 canonical routing 时使用已消费的设备位置，不使用可提前数秒的底层 Render-Ahead 位置；这样不会在播放指针尚未到达某 Segment 时读取该 Segment 的未来状态。Worker 仍在自己的稳定 producer frontier 丢弃和重建未播放后缀。
 - Worker 的正式替换边界进一步固定为外层设备 ring 的已消费 frame：先锁存受控 Buffering 并丢弃外层未消费尾部，再让 rolling 层丢弃自身尾部并从同一 frame 重建。外层 producer 也采用可重启 EOS 待命态，避免短项目或深度预准备后快速切换触发 `The render-ahead producer is not active`。

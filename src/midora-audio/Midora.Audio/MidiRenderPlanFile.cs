@@ -6,14 +6,14 @@ namespace Midora.Audio;
 public static class MidiRenderPlanFile
 {
     private const uint Magic = 0x5041444d;
-    private const int Version = 5;
+    private const int Version = 6;
     private const int ChecksumByteCount = 32;
     private const int MaximumFileByteCount = 256 * 1024 * 1024;
     private const int MaximumEventCount = 16 * 1024 * 1024;
     private const int FixedPayloadByteCount = 40;
     private const int SourceIdByteCount = sizeof(long);
     private const int PortHeaderByteCount = 8;
-    private const int UnitFragmentHeaderByteCount = 148;
+    private const int UnitFragmentHeaderByteCount = 164;
     private const int SegmentHeaderByteCount = 120;
     private const int EventByteCount = 16;
 
@@ -67,6 +67,9 @@ public static class MidiRenderPlanFile
                 writer.Write(fragment.EventInstrumentId);
                 writer.Write(fragment.InstanceGroupId);
                 writer.Write(fragment.SubVoiceId);
+                writer.Write(fragment.MidiChannelRootId);
+                writer.Write(fragment.IsPercussion);
+                writer.Write(new byte[7]);
                 writer.Write(fragment.SourceIndex);
                 writer.Write(fragment.StartFrame);
                 writer.Write(fragment.EndFrame);
@@ -241,6 +244,13 @@ public static class MidiRenderPlanFile
                 long eventInstrumentId = reader.ReadInt64();
                 long instanceGroupId = reader.ReadInt64();
                 long subVoiceId = reader.ReadInt64();
+                long midiChannelRootId = reader.ReadInt64();
+                bool isPercussion = reader.ReadBoolean();
+                if (reader.ReadBytes(7).Any(value => value != 0))
+                {
+                    throw new InvalidDataException(
+                        "The IPC MIDI Unit fragment mode has non-zero reserved fields.");
+                }
                 int sourceIndex = reader.ReadInt32();
                 long startFrame = reader.ReadInt64();
                 long endFrame = reader.ReadInt64();
@@ -298,7 +308,9 @@ public static class MidiRenderPlanFile
                     events,
                     cacheKey,
                     cachePayloadOffset,
-                    cacheHit);
+                    cacheHit,
+                    midiChannelRootId,
+                    isPercussion);
             }
 
             int segmentCount = reader.ReadInt32();

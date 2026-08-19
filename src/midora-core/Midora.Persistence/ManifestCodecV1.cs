@@ -11,7 +11,9 @@ internal static class ManifestCodecV1
         "settings-json",
         "conductor-json",
         "event-instrument-pb",
-        "logical-track-pb"
+        "logical-track-pb",
+        "midi-channel-root-pb",
+        "pure-midi-track-pb"
     };
 
     public static ManifestJsonV1 Parse(ReadOnlySpan<byte> utf8)

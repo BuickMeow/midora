@@ -488,6 +488,8 @@ Q-NUI-026～027 是本轮新增问题；其后 Q-NUI-002～025 的状态、产�
 
 ### Q-NUI-006：正常绑定期间 Last Known Instrument Name 的维护时机
 
+> 历史问题：SRS 第 24 章与 ADR-CORE-045 已删除 Unbound、显式取消绑定和独立 Library 绑定工作流。跨 Event Instrument 移动 Logical Track 仍是原子 rebind，但 Track 在任何正式状态下都必须有且只有一个 Event Instrument parent；本问题不得用于恢复可持久化 Unbound 或旧 Last Known Name 模型。
+
 - 类型：小决定
 - 状态：已按推荐实施待确认
 - 发现日期：2026-08-06

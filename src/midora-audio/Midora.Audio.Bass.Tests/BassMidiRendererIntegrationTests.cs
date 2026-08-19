@@ -1,6 +1,7 @@
 using Midora.AudioDevice;
 using Midora.Audio.Bass.Tests.Console;
 using Midora.Compiler;
+using Midora.Domain;
 using Midora.Midi;
 using Midora.Playback;
 using System.Runtime.InteropServices;
@@ -14,6 +15,62 @@ public sealed class BassMidiRendererIntegrationTests
     private static readonly string SoundFontSha256 = new('a', 64);
     private static string SoundFontPath =>
         NativeAudioIntegrationEnvironment.RequireSoundFontPath();
+
+    [Fact]
+    public void PureMidiProjectSessionProducesAudiblePcm()
+    {
+        EnsureEnvironment();
+        MidoraProject project = new(480);
+        MidiChannelRoot root = new(project)
+        {
+            Name = "MIDI Root",
+            RoutingMode = MidiChannelRootRoutingMode.Auto,
+            ChannelMode = MidiChannelMode.Melodic
+        };
+        PureMidiTrack track = new(project)
+        {
+            Name = "MIDI Track",
+            MidiChannelRootId = root.Id
+        };
+        MidiSegment segment = new(project)
+        {
+            ProjectStartTick = 0,
+            LengthTicks = 480
+        };
+        segment.Notes.Add(new DirectMidiNote(project)
+        {
+            StartTick = 0,
+            LengthTicks = 240,
+            Key = 60,
+            NoteOnVelocity = 100,
+            NoteOffVelocity = 0,
+            NoteOnOrder = 0,
+            NoteOffOrder = 1
+        });
+        track.Segments.Add(segment);
+        root.MidiTrackIds.Add(track.Id);
+        project.MidiChannelRoots.Add(root);
+        project.PureMidiTracks.Add(track);
+        project.ArrangementParents.Add(new(
+            ArrangementParentKind.MidiChannelRoot,
+            root.Id));
+
+        using ProjectCompilationSession session = new(project);
+        CanonicalCompiledResult compiled = session.CompileForPlayback(0, null);
+        Assert.True(compiled.IsConsumable, string.Join(Environment.NewLine, compiled.Diagnostics));
+        MidiRenderPlan plan = session.GetOrCreateRealtimeRenderPlan(
+            compiled,
+            SampleRate,
+            new HashSet<MidoraId> { track.Id });
+
+        float[] samples = Render(
+            plan,
+            internalBlockFrames: 256,
+            pullBlockFrames: 257,
+            out _);
+
+        Assert.Contains(samples, static sample => sample != 0f);
+    }
 
     [Fact]
     public void ProducesIdenticalSamplesAcrossDifferentBlocksWithinConfiguredVoiceLimit()
@@ -733,6 +790,86 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
+    public void InitiallyMutedPureMidiChildBypassesMergedRootPcmCache()
+    {
+        EnsureEnvironment();
+        string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
+        string cacheRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"midora-native-muted-root-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cacheRoot);
+        string manifestDirectory = Path.Combine(cacheRoot, "manifests");
+        Directory.CreateDirectory(manifestDirectory);
+        try
+        {
+            MidiRenderPlan sourcePlan = CreateCacheablePureMidiRootPlan();
+            using AudioCacheSessionStore store = new(cacheRoot, 1024 * 1024);
+            CacheAccess cache = new(store);
+            const int maximumSampleVoices = 500;
+
+            float[] sourceSamples;
+            using (AudioSegmentCacheStaging miss = Assert.IsType<AudioSegmentCacheStaging>(
+                AudioSegmentCacheStaging.Create(
+                    sourcePlan,
+                    cache,
+                    SoundFontSha256,
+                    nativeDirectory,
+                    maximumSampleVoices,
+                    manifestDirectory)))
+            {
+                sourceSamples = RenderCachePlan(
+                    miss.Plan,
+                    miss.FilePath,
+                    maximumSampleVoices,
+                    out _);
+                miss.PublishCompleted(cache, miss.Plan.TotalFrameCount);
+            }
+            Assert.Contains(sourceSamples, static sample => sample != 0f);
+            Assert.True(SpinWait.SpinUntil(
+                () => store.GetSnapshot().PendingPublishCount == 0,
+                TimeSpan.FromSeconds(5)));
+
+            MidiRenderPlan mutedPlan = sourcePlan.WithInitiallyDisabledSourceIndices([1]);
+            float[] mutedSamples;
+            long mutedNativeFrames;
+            using (AudioSegmentCacheStaging hit = Assert.IsType<AudioSegmentCacheStaging>(
+                AudioSegmentCacheStaging.Create(
+                    mutedPlan,
+                    cache,
+                    SoundFontSha256,
+                    nativeDirectory,
+                    maximumSampleVoices,
+                    manifestDirectory)))
+            {
+                Assert.True(hit.Plan.Segments[0].PcmCacheHit);
+                mutedSamples = RenderCachePlan(
+                    hit.Plan,
+                    hit.FilePath,
+                    maximumSampleVoices,
+                    out mutedNativeFrames,
+                    hit.ReadManifestPath);
+            }
+
+            Assert.Equal(sourcePlan.TotalFrameCount, mutedNativeFrames);
+            Assert.All(mutedSamples, static sample => Assert.Equal(0f, sample));
+        }
+        finally
+        {
+            if (Directory.Exists(cacheRoot))
+            {
+                try
+                {
+                    Directory.Delete(cacheRoot, recursive: true);
+                }
+                catch (IOException)
+                {
+                    // A system scanner may briefly retain the sparse staging file.
+                }
+            }
+        }
+    }
+
+    [Fact]
     public unsafe void MaximumCanonicalUnitCountUses256StreamsWithoutHotPathAllocation()
     {
         EnsureEnvironment();
@@ -877,6 +1014,51 @@ public sealed class BassMidiRendererIntegrationTests
             4_096,
             [new MidiPortRenderPlan(0, events)],
             sourceIds: [1],
+            unitFragments: [fragment],
+            segments: [segment]);
+    }
+
+    private static MidiRenderPlan CreateCacheablePureMidiRootPlan()
+    {
+        ScheduledMidiMessage[] portEvents =
+        [
+            new(0, MidiMessage.ProgramChange(0, 0), 0),
+            new(256, MidiMessage.NoteOn(0, 60, 80), 1),
+            new(2_048, MidiMessage.NoteOff(0, 60, 0), 1)
+        ];
+        ScheduledMidiMessage[] fragmentEvents =
+        [
+            new(0, MidiMessage.ProgramChange(0, 0), 0),
+            new(256, MidiMessage.NoteOn(0, 60, 80), 1),
+            new(2_048, MidiMessage.NoteOff(0, 60, 0), 1)
+        ];
+        MidiUnitFragmentRenderPlan fragment = new(
+            0,
+            0,
+            trackId: 101,
+            segmentId: 102,
+            eventInstrumentId: 0,
+            instanceGroupId: 102,
+            subVoiceId: 100,
+            sourceIndex: 0,
+            startFrame: 0,
+            endFrame: 4_096,
+            semanticFingerprint: new string('d', 64),
+            fragmentEvents,
+            midiChannelRootId: 100,
+            isPercussion: false);
+        MidiSegmentRenderPlan segment = new(
+            trackId: 101,
+            segmentId: 102,
+            sourceIndex: 0,
+            startFrame: 0,
+            endFrame: 4_096,
+            semanticFingerprint: new string('e', 64));
+        return new MidiRenderPlan(
+            SampleRate,
+            4_096,
+            [new MidiPortRenderPlan(0, portEvents)],
+            sourceIds: [100, 101],
             unitFragments: [fragment],
             segments: [segment]);
     }

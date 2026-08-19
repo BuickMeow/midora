@@ -4,7 +4,7 @@
 > 规格版本：**v0.1**  
 > 适用产品范围：**Midora 初版**
 
-本章定义单主窗口、全局框架、Project Panel、Workspace Tabs、Inspector、Bottom Panel、状态栏、Notice 和 UI 状态所有权。
+本章定义单主窗口、全局框架、Workspace Tabs、Inspector、Bottom Panel、状态栏、Notice 和 UI 状态所有权。初版不再提供左侧 Project Panel；外层对象导航与层级编辑统一进入常驻 Arrangement，见第 24 章。
 
 ## 17.1 全局界面架构
 ### 17.1.1 单主窗口
@@ -37,15 +37,15 @@ Tray mode
 | [B] Main Menu                                                            |
 +--------------------------------------------------------------------------+
 | [C] Global Command Bar and Transport                                     |
-+------------------+--------------------------------------+----------------+
-| [D] Project      | [E] Workspace Tabs                  | [G] Inspector  |
-|     Panel        +--------------------------------------+                |
-|                  | [F] Active Workspace                 |                |
-|                  |                                      |                |
-+------------------+--------------------------------------+----------------+
-| [H] Bottom Panel: Diagnostics | Details | Tasks                          |
++--------------------------------------------------------+----------------+
+| [D] Workspace Tabs                                     | [F] Inspector  |
++--------------------------------------------------------+                |
+| [E] Active Workspace                                   |                |
+|                                                        |                |
++--------------------------------------------------------+----------------+
+| [G] Bottom Panel: Diagnostics | Details | Tasks                          |
 +--------------------------------------------------------------------------+
-| [I] Global Status Bar                                                    |
+| [H] Global Status Bar                                                    |
 +--------------------------------------------------------------------------+
 ```
 ### 17.1.3 区域职责
@@ -75,6 +75,7 @@ Compile
 Export
 Help
 ```
+`Project` 菜单必须提供 `New Event Instrument` 与 `New MIDI Channel Root`，与 Arrangement Toolbar 左侧 `Add` 菜单调用同一 Project command。
 #### 17.1.3.3 [C] Global Command Bar and Transport
 常驻入口：
 ```text
@@ -87,29 +88,21 @@ Audio Render
 Global context and task state
 ```
 Global Undo / Redo 永远操作 Project History。Global Save 永远执行 Save Project。
-#### 17.1.3.4 [D] Project Panel
-固定顶层节点：
-```text
-Conductor Track
-Event Instrument Library
-Logical Tracks
-Project Settings
-Diagnostics
-```
-#### 17.1.3.5 [E] Workspace Tabs
+#### 17.1.3.4 [D] Workspace Tabs
 中央编辑区域使用多 Workspace Tab。同一功能 Workspace 按类型唯一；对象 Workspace 按稳定 ID 唯一。
-#### 17.1.3.6 [F] Active Workspace
+Arrangement 固定为第一个 Tab、常驻、不可关闭、不可重排。它提供 Conductor、Event Instrument / Root 和 child Track 的唯一外层层级入口。
+#### 17.1.3.5 [E] Active Workspace
 承载当前编辑器或完整功能 Workspace。
-#### 17.1.3.7 [G] Inspector
+#### 17.1.3.6 [F] Inspector
 显示 Active Workspace 的 Primary Selection 或 Workspace Context Object。
-#### 17.1.3.8 [H] Bottom Panel
+#### 17.1.3.7 [G] Bottom Panel
 固定 Tab：
 ```text
 Diagnostics
 Details
 Tasks
 ```
-#### 17.1.3.9 [I] Global Status Bar
+#### 17.1.3.8 [H] Global Status Bar
 显示：
 ```text
 Issues
@@ -120,7 +113,7 @@ Playback State
 Transient Message
 ```
 ### 17.1.4 面板尺寸与折叠
-Project Panel、Inspector 和 Bottom Panel：
+Inspector 和 Bottom Panel：
 - 可调整尺寸；
 - 可折叠；
 - 有最小可用尺寸；
@@ -149,7 +142,7 @@ Reset Defaults
 保存于当前 Windows 用户本机，跨 Project 共享：
 ```text
 Normal window bounds and maximized state
-Project Panel and Inspector width and collapsed state
+Inspector width and collapsed state
 Bottom Panel height, state and last active tab
 Major splitters
 Follow Playback preference
@@ -225,7 +218,6 @@ Compiled result and playback buffer
 固定功能 Workspace 按类型唯一，例如：
 ```text
 Arrangement
-Event Instrument Library
 Project Settings
 Diagnostics
 Conductor Track
@@ -243,7 +235,6 @@ Mapping Function Editor
 使用用户可识别语义：
 ```text
 Arrangement
-Event Instrument Library
 Project Settings
 Diagnostics
 <Instrument Name>
@@ -265,7 +256,7 @@ Discard Draft
 Cancel
 ```
 对象被删除后，其 Workspace 自动关闭；Undo 恢复对象时不自动重开。
-Workspace 使用可见关闭按钮和 Tab Context Menu 关闭。初版不为关闭 Workspace 注册默认快捷键。
+Workspace 使用可见关闭按钮和 Tab Context Menu 关闭。初版不为关闭 Workspace 注册默认快捷键。Arrangement 隐藏关闭按钮，Tab Context Menu 的 Close 禁用，并始终固定为第一项。
 ### 17.3.5 Tab Strip
 - 单行显示；
 - 支持滚动；
@@ -295,7 +286,7 @@ Back / Forward 是 UI 导航历史，不是 Project Undo / Redo。初版提供�
 ### 17.4.2 上下文
 Inspector 默认跟随 Active Workspace 的 Primary Selection。初版不提供 Pin Inspector。
 无子对象选择时显示 Workspace Context Object。
-Project Panel、Diagnostics、Tasks 和其他辅助区域的选择不自动替换 Active Workspace 的 Inspector 上下文；只有明确导航或激活对应 Workspace 后才更新。
+Diagnostics、Tasks 和其他辅助区域的选择不自动替换 Active Workspace 的 Inspector 上下文；只有明确导航或激活对应 Workspace 后才更新。
 ### 17.4.3 单选与多选
 单选显示：
 ```text
@@ -393,57 +384,13 @@ Task History：
 单击 Diagnostic 不自动改变 Workspace Selection。只有 `Go to Source` 才导航并更新 Inspector。
 Global Notice 被关闭或折叠时，不清除对应 Diagnostic 或 Task。
 ---
-## 17.6 Project Panel
-### 17.6.1 定位
-Project Panel 是 Project 语义导航树，不是 `.midora` ZIP 浏览器。
-### 17.6.2 固定结构
-```text
-Conductor Track
-Event Instrument Library
-Logical Tracks
-Project Settings
-Diagnostics
-```
-顶层节点不可删除、重命名、重排或建立自定义顶层分组。
-只展开 Event Instrument Library 和 Logical Tracks；不展开完整 SubVoice、Mapping、Envelope、Segment、Note 或 Diagnostic 对象图。
-### 17.6.3 选择与打开
-```text
-Single Click       -> select navigation node
-Double Click/Enter -> open or activate Workspace
-```
-Tree Selection 与 Workspace Content Selection 独立。Project Panel 单击不直接替换 Inspector。
-### 17.6.4 Filter
-Project Panel 只搜索：
-```text
-Event Instrument Name
-Library Folder Name
-Logical Track Name
-Last Known Instrument Name
-```
-不搜索内部 Note、Segment、SubVoice、Mapping、Envelope 或诊断消息。
-筛选保持正式排序；筛选期间禁用拖动排序和绑定拖放。
-匹配子对象时显示必要祖先；清除筛选后恢复筛选前的 Tree 展开状态。
-### 17.6.5 Event Instrument 节点
-显示：
-```text
-Color
-Usage count
-Validation state
-Unused state
-```
-Unused 不是 Warning。
-Instrument 可拖到 Logical Tracks 区创建绑定 Track；拖到已有 Track 时必须显示重绑影响并确认。
-### 17.6.6 Logical Track 节点
-顺序与 Arrangement 完全一致。
-Project Panel 不复制 Arrangement 的 Mute / Solo。
-未绑定 Track 显示：
-```text
-Unassigned
-Last Known Instrument Name
-```
-Last Known Name 不构成有效引用，也不按名称自动恢复绑定。
-### 17.6.7 播放期间
-允许浏览、筛选、打开 Workspace、查看引用和诊断；禁止创建、删除、重命名、排序和绑定修改。
+## 17.6 外层对象导航
+
+初版删除 Project Panel。Conductor、Event Instrument / MIDI Channel Root、Logical / Pure MIDI Track 的创建、排序、父子关系、打开与 context menu 全部统一到常驻 Arrangement，完整规则见第 24 章。
+
+Project Settings 继续从主菜单 `Project` 打开；Diagnostics 可从主菜单、Bottom Panel 和 Status Bar Issues 导航；删除 Project Panel 不删除任何功能 Workspace。
+
+播放期间允许在 Arrangement 浏览、展开/折叠父节点、打开 Workspace 和查看诊断；Project 编辑锁仍禁止创建、删除、重命名、排序、复制与 rebind。展开折叠、选择和 viewport 是 session state。
 ---
 ## 17.7 Global Command Bar、Notice Bar 与 Status Bar
 ### 17.7.1 Global Command Bar

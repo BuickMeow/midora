@@ -29,6 +29,8 @@ public sealed class ProjectContentChangedEventArgs : EventArgs
         AffectsAudioPcmCacheGeneration = changes.AffectsAudioPcmCacheGeneration;
         TrackIds = Array.AsReadOnly(changes.TrackIds.Order().ToArray());
         EventInstrumentIds = Array.AsReadOnly(changes.EventInstrumentIds.Order().ToArray());
+        MidiChannelRootIds = Array.AsReadOnly(changes.MidiChannelRootIds.Order().ToArray());
+        PureMidiTrackIds = Array.AsReadOnly(changes.PureMidiTrackIds.Order().ToArray());
     }
 
     public bool AffectsEverything { get; }
@@ -36,11 +38,15 @@ public sealed class ProjectContentChangedEventArgs : EventArgs
     public bool AffectsAudioPcmCacheGeneration { get; }
     public IReadOnlyList<MidoraId> TrackIds { get; }
     public IReadOnlyList<MidoraId> EventInstrumentIds { get; }
+    public IReadOnlyList<MidoraId> MidiChannelRootIds { get; }
+    public IReadOnlyList<MidoraId> PureMidiTrackIds { get; }
     public bool IsEmpty => !AffectsEverything
         && !AffectsConductor
         && !AffectsAudioPcmCacheGeneration
         && TrackIds.Count == 0
-        && EventInstrumentIds.Count == 0;
+        && EventInstrumentIds.Count == 0
+        && MidiChannelRootIds.Count == 0
+        && PureMidiTrackIds.Count == 0;
 }
 
 public interface IProjectEditCommand
@@ -122,6 +128,8 @@ public sealed class ProjectPropertyEditCommand<T> : IProjectEditCommand
         };
         result.TrackIds.UnionWith(source.TrackIds);
         result.EventInstrumentIds.UnionWith(source.EventInstrumentIds);
+        result.MidiChannelRootIds.UnionWith(source.MidiChannelRootIds);
+        result.PureMidiTrackIds.UnionWith(source.PureMidiTrackIds);
         return result;
     }
 }
@@ -454,6 +462,8 @@ public sealed class ProjectDocumentSession
         };
         changes.TrackIds.UnionWith(prepared.Changes.TrackIds);
         changes.EventInstrumentIds.UnionWith(prepared.Changes.EventInstrumentIds);
+        changes.MidiChannelRootIds.UnionWith(prepared.Changes.MidiChannelRootIds);
+        changes.PureMidiTrackIds.UnionWith(prepared.Changes.PureMidiTrackIds);
         return new(
             ExactTimelineCollisionPolicy.Wrap(project, prepared),
             changes);

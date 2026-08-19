@@ -1,0 +1,775 @@
+# 第 23 章 Pure MIDI Track 与 Standard MIDI File 导入
+
+> 文档：**Midora Software Requirements Specification — Initial Release Scope**  
+> 规格版本：**v0.1**  
+> 适用产品范围：**Midora 初版**
+
+本章定义 MIDI Channel Root、Pure MIDI Track、Midi Segment、直接 MIDI 事件、SMF Format 0 / 1 导入、SMF Track 结构保留、Root 级编译/音频/缓存语义，以及它们与现有 Logical Track 主线的边界。本章是 Pure MIDI 数据的专项规范；与旧章节的宽泛 Logical-only 描述冲突时，以本章及第 22 章修订后的不变量为准。
+
+## 23.1 功能范围与主线
+
+Midora 初版正式支持两条并列编曲主线：
+
+```text
+Logical Track
+→ Logical Segment
+→ Logical Note / Logical Parameter
+→ Event Instrument expansion
+→ canonical MIDI
+
+Pure MIDI Track
+→ Midi Segment
+→ direct MIDI Note / Channel Event
+→ canonical MIDI
+```
+
+两条主线必须共同遵守：
+
+```text
+Project Source Data
+→ Semantic Validation
+→ Compilation
+→ Canonical Compiled Result
+→ Playback / Preview / MIDI Export / Audio Rendering
+```
+
+Pure MIDI Track 不绕过 semantic validation 或 canonical；消费者不得直接读取 Midi Segment 重新解释事件、路由、Reset、顺序或 Track 拓扑。
+
+## 23.2 Project 对象关系
+
+Project 的 Pure MIDI branch 位于第 24 章 mixed Arrangement parent list 中：
+
+```text
+Project
+└─ Arrangement Parents (mixed Event Instrument / Root order)
+   └─ MIDI Channel Root
+      └─ Pure MIDI Tracks
+         └─ Pure MIDI Track
+            └─ Midi Segments
+               ├─ Direct MIDI Notes
+               ├─ Direct MIDI Channel Events
+               └─ Opaque Imported Events
+```
+
+`MIDI Channel Root`、`Pure MIDI Track` 和 `Midi Segment` 都必须拥有 Project 内全局唯一的稳定 ID。名称、显示顺序、Port、Channel、tick 和源 MTrk index 都不得替代身份。
+
+## 23.3 MIDI Channel Root
+
+### 23.3.1 定义
+
+MIDI Channel Root 是一组 Pure MIDI Track 的必选父容器。它本身不保存 Note、普通 Channel Event 或 Segment；它定义这些子 Track 共享的：
+
+```text
+Channel Unit identity
+Channel-wide state
+Root lifecycle
+routing policy
+Melodic / Percussion mode
+audio synthesis stream
+Root-level cache and reset boundary
+```
+
+一个 Root 在一次 CompileContext 中最多对应一个 Channel Unit；一个 Channel Unit 也不得同时属于两个 Root。
+
+### 23.3.2 Root 字段
+
+Root 至少保存：
+
+```text
+Stable ID
+Display Name
+Routing Mode: Auto | Fixed
+Fixed Port / Channel when Routing Mode = Fixed
+Channel Mode: Melodic | Percussion
+Explicit ordered child MidiTrack references
+```
+
+Root 名称允许重复，不参与路由或身份判断。Root 顺序从第 24 章 Arrangement mixed parent order 过滤所有 Root 得到，不另存第二套顺序；该相对顺序参与确定性分配、SMF Track 排列和诊断显示。
+
+### 23.3.3 路由模式
+
+`Fixed` Root 必须保存合法的一基用户 Port `1..16` 与 Channel `1..16`；内部 wire 编码仍为 0-based。两个 Fixed Root 指向同一 Port.Channel 时 semantic validation 失败。
+
+`Auto` Root 不保存历史分配结果。编译器根据当前 Project、CompileContext、Root 顺序和低号优先规则确定 Unit；重新打开、Full Compile 与等价 Incremental Compile 必须得到相同结果。
+
+### 23.3.4 Channel Mode
+
+`Melodic` 与 `Percussion` 是 Root 的正式源语义：
+
+```text
+Melodic   -> audio stream 显式关闭默认 drum part；导出到 Channel 10 时写规定的 Normal Part 初始化
+Percussion -> audio stream 建立 percussion/drum part；导出到 Channel 10 时不得写 Normal Part 初始化
+```
+
+Logical/Event Instrument 分配路径继续把所有获配 Channel 10 Unit 显式初始化为 melodic。只有 Pure MIDI Root 可以选择 Percussion；从 SMF 导入的 Channel 10 Root 默认是 Percussion，其他 Channel 默认是 Melodic。
+
+## 23.4 Pure MIDI Track
+
+### 23.4.1 定义与内容
+
+Pure MIDI Track 是用户可见、可命名、可排序并可独立导出为 SMF MTrk 的直接 MIDI 编曲轨道。它必须属于一个 Root，并保存：
+
+```text
+Stable ID
+Display Name
+Optional Color
+Explicit order within Root
+Midi Segment collection
+```
+
+Pure MIDI Track 不绑定 Event Instrument，不保存 Logical Parameter Lane，且不生成 Event Instrument Instance。
+
+### 23.4.2 顺序语义
+
+Root 内 Track 顺序是正式音乐语义的一部分。同一 Root 的事件合并顺序固定为：
+
+```text
+absolute tick
+→ Pure MIDI Track explicit order
+→ event explicit order within that Track
+```
+
+因此重排 Pure MIDI Track 必须标记 Project Modified、进入 Undo/Redo、使相关 canonical/cache 失效，并可能改变同 tick 冲突的可听结果。稳定 ID 只能作完全不可区分输入的确定性兜底，不能替代显式顺序。
+
+### 23.4.3 Mute / Solo
+
+Pure MIDI Track 的 Mute / Solo 与 Logical Track 相同，属于运行期监听状态：
+
+```text
+not persisted
+not undoable
+does not mark Modified
+does not change canonical source semantics
+does not affect MIDI Export or Audio Render
+```
+
+Root parent 另有独立 Mute/Solo，且不改写 child 状态。父 Solo/child Solo 的候选集合严格使用第 24.5 节三分支规则。
+
+Root 级共享 Channel 状态意味着单独 Mute 某个子 Track 可能改变其他子 Track 在监听时收到的共享状态；播放层必须按 canonical 来源追踪执行受控过滤和恢复，不得修改 Project 或重新分配 Root Unit。
+
+## 23.5 Midi Segment
+
+### 23.5.1 与 Logical Segment 共用的容器规则
+
+Midi Segment 与 Logical Segment 共用以下正式语义：
+
+```text
+stable identity
+[startTick, endTick) range
+local tick coordinate
+active crop/content window
+hidden content retention
+move / copy / resize / split / join / delete
+same-Track non-overlap
+Project End / consumer range clipping
+single Project Undo per atomic gesture
+```
+
+同一 Pure MIDI Track 内的 Midi Segment 不得重叠；不同 Pure MIDI Track 的 Segment 可以重叠，包括同一 Root 内的 Track。相邻 Segment 合法，不自动连接。
+
+Midi Segment 可在 Pure MIDI Track 之间移动或复制；目标 Track 不得产生 Segment 重叠。跨 Root 移动会将其直接 MIDI 内容归属到目标 Root 的 Unit，但不得改写事件值或把内容转换成 Logical 数据。Logical Segment 与 Midi Segment 之间不提供隐式移动、粘贴或转换。
+
+### 23.5.2 Segment 内容
+
+Midi Segment 保存：
+
+```text
+Direct MIDI Notes
+Direct MIDI Channel Events
+Opaque imported SysEx / Meta events that belong to this source Track
+hidden content outside the active crop window
+explicit same-tick order
+```
+
+Velocity Lane 直接编辑 NoteOn velocity。底部 Event Lane 直接编辑 MIDI Channel Event，而不是 Logical Parameter。Piano Roll Note 与正式 NoteOn/NoteOff 对一对应，不触发 Event Instrument Mapping。
+
+### 23.5.3 创建与 Track End
+
+用户创建 Midi Segment 时使用 Arrangement 的共享 Segment 创建规则。SMF 导入产生的非空 Track 默认创建一个：
+
+```text
+[0, source MTrk End Of Track tick)
+```
+
+Segment 长度保留源 MTrk 尾部空白。源 MTrk 的 EOT 为 0 或拆分后完全无可归属内容时，可以保留空 Pure MIDI Track 而不创建零长度 Segment。
+
+## 23.6 Direct MIDI Note 与事件
+
+### 23.6.1 Direct MIDI Note
+
+Direct MIDI Note 至少保存：
+
+```text
+Stable ID
+local start tick
+positive gate length
+key 0..127
+NoteOn velocity 1..127
+NoteOff velocity 0..127
+explicit ordering identity for both endpoints
+```
+
+同 Root、同 Track 或跨 Track 的同 key Note 重叠均允许。Canonical 和音频后端继续按同 Port.Channel.key 的 FIFO 规则逐个配对 NoteOff。
+
+导入时 `Note On velocity = 0` 按 MIDI 1.0 语义规范化为 NoteOff velocity 0；Midora 不承诺保留其原始 wire 表达。
+
+Direct MIDI Note 在 Pure MIDI 数据链的移动、Resize、复制、canonical SMF projection 和导出中必须保留 NoteOff velocity，即使当前 BASS 后端不使用它。与 Logical Note 跨类型剪贴板时只转换 relative tick、gate、key 与 NoteOn/instance velocity：Logical→Direct 将 NoteOff velocity 设为 0；Direct→Logical 丢弃 NoteOff velocity。详见第 24.6 节。
+
+### 23.6.2 Channel Voice Event 范围
+
+Pure MIDI Track Event Lane 与编译器必须支持完整 MIDI 1.0 Channel Voice 面：
+
+```text
+Note Off / Note On
+Polyphonic Key Pressure
+Control Change 0..127, including Channel Mode
+Program Change
+Channel Pressure
+Pitch Bend
+```
+
+Note 编辑优先使用 Direct MIDI Note 对象；无法成对表达的原始 Note message 以 raw direct event 保留。
+
+CC91 / CC93、CC120..127、Polyphonic Key Pressure 与 Channel Pressure 在 Pure MIDI Track 中均可创建、编辑、编译和导出，不产生“不受支持”诊断。Event Instrument SubVoice 的创建、Mapping、Initial/Reset target 面仍按第 8～10 章的受限集合执行，不因 Pure MIDI 支持而自动扩大。
+
+### 23.6.3 原始顺序与重复事件
+
+Pure MIDI 数据不得采用 Logical/Event Instrument 的同目标最终值折叠。以下内容均允许并必须保留：
+
+```text
+same tick + same kind duplicates
+same tick + same controller duplicates
+same key overlapping Notes
+cross-Track conflicting state writes
+raw RPN / NRPN CC sequences
+Channel Mode commands
+```
+
+同一 Track 内按显式事件顺序输出；跨 Track 按 23.4.2 合并。后写入事件的运行结果由 MIDI Channel 状态自然决定，编译器不得静默删除、覆盖或重新排序。
+
+### 23.6.4 未配对 Note message
+
+SMF 导入按源 MTrk、effective Port、Channel、key 使用 FIFO 尝试配对 NoteOn/NoteOff。无法配对的 NoteOff 或到 EOT 仍未关闭的 NoteOn：
+
+```text
+must be preserved as raw direct Note message
+must not be dropped
+must not receive an invented gate
+must produce one aggregated import Warning per affected source Track
+```
+
+Piano Roll 只把成功配对的 Note 显示为长度矩形；raw Note message 在 Event List/Inspector 中显示并可删除或移动。
+
+### 23.6.5 Opaque imported events
+
+以下内容允许从 SMF 导入并按原始 payload 与 Track/tick/order 保存：
+
+```text
+F0 / F7 SysEx events
+unmapped text/meta events
+lyrics / cue / device / program name metadata
+sequencer-specific metadata
+unknown but structurally valid SMF meta event types
+```
+
+初版不提供自由 SysEx 或任意 Meta payload 创建/字节编辑。Opaque event 可以查看、选择、移动、删除、随 Segment 操作和重新导出；其 payload 不得被解释成 Event Instrument、Mapping 或 Channel 分配指令。
+
+Tempo、Time Signature、Key Signature、Marker 等已由 Midora 正式建模的全局 Meta 必须导入 Conductor Track，不作为 opaque Track event 重复保存。Track Name、MIDI Port 与 End Of Track 是结构信息，分别进入 Track/Root/Segment 结构。
+
+## 23.7 Root 活动连通区间与 Reset
+
+### 23.7.1 活动连通区间
+
+对一个 Root，把所有子 Track 当前参与编译的 Segment `[startTick, endTick)` 求并集。没有正 tick 间隙的连续并集区间称为 Root 活动连通区间；一个 Segment 在 tick `T` 结束而另一个在同一 tick `T` 开始时，Root 不经过空闲状态，二者属于同一连通区间。
+
+Root 活动连通区间是一个真正的 MIDI Channel 生命周期。
+
+### 23.7.2 区间开始
+
+Root 从空闲进入活动时，编译器必须在任何用户 Direct Event/NoteOn 之前建立该 Root 的确定初始状态。初始化来源包括 Project Reset Defaults、Root Channel Mode 及范围恢复所需状态；不得在 Root 已活动时因另一个子 Segment 开始而重复执行 Channel-wide 初始化。
+
+### 23.7.3 子 Segment 结束
+
+子 Segment 到达 End 时：
+
+```text
+close every still-active Note owned by that Segment exactly
+do not send CC120 solely because this child Segment ended
+do not reset shared CC/Bank/Program/Pitch/RPN/NRPN state
+do not kill Notes owned by sibling Tracks
+```
+
+该 Segment 内已经发生的 Channel 状态继续作为 Root 共享状态，直到后续事件覆盖或 Root 生命周期结束。
+
+### 23.7.4 Root 区间结束
+
+当同一 tick 聚合全部 Segment End/Start 后确认 Root 不再有活动 Segment时，执行：
+
+```text
+precise NoteOff for every remaining active Root Note
+CC120 All Sound Off at the hard boundary
+final Reset for state targets used/polluted by this Root interval
+release the audio/cache lifecycle for that interval
+```
+
+Project End Marker、显式消费者 range end 和 Stop/Reset Playback Engine 仍是更高层硬边界。
+
+### 23.7.5 SMF 生命周期事件归属
+
+Root 级生成事件必须具有确定的 SMF 输出 Track 归属，不得额外创建用户未请求的 Root Control MTrk：
+
+```text
+interval-start generated events
+→ lowest-order child Track whose Segment starts the interval
+
+interval-end generated events
+→ lowest-order child Track whose Segment ends the interval
+
+project/range final Root cleanup
+→ lowest-order participating child Track at that boundary
+```
+
+该归属只组织 SMF MTrk；Unit 执行投影仍按完整 Root 顺序消费全部事件。
+
+## 23.8 Channel Unit 分配
+
+### 23.8.1 分配顺序
+
+每次编译必须按以下固定阶段分配：
+
+```text
+1. validate all Fixed Roots and reserve their exact Units
+2. allocate every non-empty Auto Root in explicit Root order to the lowest unreserved Unit
+3. allocate Logical/Event Instrument Channel Groups from the remaining Units
+4. fail atomically if any Root or Logical allocation cannot be satisfied
+```
+
+Fixed Root 即使为空也保留其 Unit，因为固定路由表达用户明确占用意图。没有任何可编译内容的 Auto Root 不分配 Unit。非空 Auto Root 一旦分配，在本次 CompileContext 的整个范围内保持同一 Unit；不得与 Logical instance 做时间复用。
+
+### 23.8.2 容量与统计
+
+资源硬上限仍为 256 Units。有效需求是：
+
+```text
+globally reserved/allocated Root Units
++ peak simultaneously occupied Logical/Event Instrument Units
+```
+
+超过 256、Fixed 冲突或 Auto 分配失败均为 Error。资源统计必须分别报告 Root reserved/allocated count、Logical peak 和 combined peak；combined peak `>= 248` 仍只产生既有 Info。
+
+### 23.8.3 Compact / Preserve Routing
+
+Fixed Root 在任何导出 Routing 模式下都不得改址。Auto Root 与 Logical allocation 可以按 CompileContext 重新确定性紧凑分配，但必须绕开 Fixed Root，并保持同一 Root 只对应一个 Unit。`Preserve Routing` 保持本次正式编译的结果；任何无法保持语义等价的 Compact 请求整体失败。
+
+## 23.9 编译与 Canonical Compiled Result
+
+### 23.9.1 Pure MIDI 编译
+
+Pure MIDI Track 编译不执行：
+
+```text
+Event Instrument expansion
+Logical Parameter Mapping
+Mapping Function
+Template lifecycle
+Per-Note Instance Isolation
+SubVoice allocation
+```
+
+它只执行 Segment crop/边界、Direct Note materialization、raw event validation、Root merge、范围状态恢复、Root lifecycle、Unit allocation、source tracing 和 canonical freeze。
+
+### 23.9.2 两个正式投影
+
+Canonical Compiled Result 必须从同一事件集提供两个一致的正式投影：
+
+```text
+Execution Projection
+  group by Channel Unit / Root
+  total order by tick and canonical order
+  consumed by playback and audio render
+
+SMF Track Projection
+  group by ExportTrackId
+  preserve Pure MIDI Track topology
+  consumed by MIDI Export
+```
+
+每个 canonical event 至少能追踪：
+
+```text
+Port / Channel Unit
+absolute tick
+execution order
+ExportTrackId
+source Root / MidiTrack / MidiSegment / direct object
+compiler-generated reason when applicable
+```
+
+导出器不得读取 Project 重新推断 Track Name、Root membership、EOT 或事件归属；这些必须由 canonical 的冻结 SMF Track descriptor 提供。
+
+### 23.9.3 排序边界
+
+Logical/Event Instrument 事件继续遵守第 8、11、12 章的状态准备和生命周期排序。Pure MIDI 原始事件保留 23.4.2、23.6.3 的显式顺序；不得用 Logical 状态优先级重排它们。
+
+编译器生成的范围恢复、Root 初始化和硬边界清理事件按明确 canonical role 插入，并不得改变同 Track 其余原始事件的相对顺序。
+
+### 23.9.4 Full / Incremental 等价
+
+Pure MIDI Track 顺序、Root 路由/模式、Segment 内容和 opaque payload 都必须进入 canonical fingerprint。Full 与 Incremental 对同一输入必须生成相同：
+
+```text
+Unit assignment
+Root lifecycle intervals
+event bytes and order
+ExportTrack descriptors
+diagnostics
+resource statistics
+```
+
+## 23.10 编译与音频缓存
+
+### 23.10.1 不允许按子 Track 独立合成
+
+同 Root 子 Track 共享一个 MIDI Channel 的 Program/CC/Pitch/voice 状态。不得把各子 Track 分别送入独立 synth stream 后混音；该做法会改变共享 Channel 语义。
+
+### 23.10.2 缓存层次
+
+Pure MIDI 路径使用：
+
+```text
+MidiSegment normalized event fragment cache
+Root merged event/checkpoint cache
+pre-Master/pre-Limiter Root raw PCM tile/cache pack
+post-sum playback span cache
+Render-Ahead ring
+```
+
+Root PCM key 至少包括 Root composite fingerprint、start-state fingerprint、Channel Mode、SF2 hash、Tempo projection、sample rate/format、native baseline、voice policy 和 renderer version。
+
+### 23.10.3 失效与收敛
+
+编辑 MidiSegment 只使其 normalized fragment 和对应 Root 从最早受影响 tick 起 dirty。Root merge、canonical、PCM 与 playback span 向后重新计算；当新旧 Root checkpoint 的完整 Channel state、active Note multiset、event suffix dependency 和 allocation state hash 相等且后续 source 未变时，可以复用旧后缀。
+
+其他 Root 和未受影响 Logical Unit 的完整缓存不得仅因一个 MidiSegment 编辑而失效。最坏情况下允许重算该 Root 到 CompileContext 结束，但不得通过保留历史错误状态换取命中。
+
+## 23.11 SMF 导入
+
+### 23.11.1 支持范围
+
+初版只接受：
+
+```text
+Standard MIDI File Format 0 or Format 1
+MIDI 1.0 events
+positive TPQN division 1..32767
+```
+
+明确拒绝：
+
+```text
+Format 2
+SMPTE division
+MIDI 2.0 UMP / MIDI Clip
+malformed or truncated chunks/events
+unsafe sizes or counts beyond implementation's documented bounded admission limits
+```
+
+### 23.11.2 Running Status
+
+读取器必须支持合法 Running Status。状态只在当前 MTrk 内有效；首个依赖 status 的 data byte、错误 data-byte 数量、非法 status 延续或跨 MTrk 继承均导致导入失败。Meta/SysEx 对 Running Status 的清除行为必须符合 SMF 1.0 解析规则。
+
+导入后不保存“本事件原来是否省略 status”这一 wire 表达；Project 保存的是语义事件。Midora 的 SMF 导出继续为每个 Channel Event 显式写 status byte。
+
+### 23.11.3 多 Channel MTrk 拆分
+
+导入器不得因一个源 MTrk 含多个 Channel 而拒绝文件。它必须维护每个源 MTrk 的当前有效 MIDI Port，并按：
+
+```text
+(effective Port, Channel)
+```
+
+把 Channel Event 拆到对应 Root / Pure MIDI Track。源 Track 内 Port 变化后的事件使用变化后的 effective Port。缺少 Port Meta 时使用内部 Port 0（UI Port 1）。
+
+Format 0 的单 MTrk 可由此产生多个 Pure MIDI Track；Format 1 的多 Channel MTrk 同样拆分。拆分后的 Track 顺序按源 MTrk 顺序，再按该 MTrk 中 `(Port, Channel)` 首次出现顺序；名称使用源 Track Name，并追加确定的 Port/Channel 区分后缀。
+
+无 Channel 的 opaque SysEx/Meta 不得因拆分而复制。对每个 `(source MTrk, effective Port)`，这类事件按原顺序归属到该源 MTrk 在同 Port 首次出现的派生 Pure MIDI Track；若该 Port 没有 Channel bucket，但仍有必须保留的 opaque 内容，则创建一个 structure-only Pure MIDI Track。Structure-only Track 挂到该 Port 已存在的最低 Channel Root；若该 Port 尚无 Root，则建立 `Fixed(Port, Channel 1) / Melodic` Root。它自身不产生 Channel Event，但仍服从 Fixed Root 预留规则。
+
+Format 1 的 MTrk 0 若在提取 Conductor 与结构 Meta 后没有剩余 Channel/opaque 内容，只由 Conductor Track 表达，不额外创建空 Pure MIDI Track。其他源 MTrk 若需要保留空 Track 名称/EOT，则按前述 structure-only 规则使用默认或当时有效 Port；不得丢弃、复制到所有拆分 Track 或虚构 Channel Event。
+
+### 23.11.4 Root 创建与 Port 映射
+
+同一有效 `(Port, Channel)` 的导入 Track 进入同一个 Root。源 Port `0..15` 可直接建立 Fixed Root；Channel 10 Root 默认 Percussion。
+
+如果源 Port 超出 Midora 范围、Port 标识无法一一映射或结果超过 16 Ports / 256 Roots，必须在提交新 Project 前显示显式 Port Mapping/冲突 Review。用户可以建立一对一合法映射或取消；不得 modulo、clamp、静默合并两个源 Port 或部分导入。
+
+### 23.11.5 Conductor 与 Track Meta
+
+以下事件正式映射到 Conductor Track：
+
+```text
+Tempo
+Time Signature
+Key Signature
+Marker
+```
+
+Track Name 用作 Pure MIDI Track 名称。MIDI Port 与 EOT 用于 Root/Segment 结构。其他结构合法 Meta/SysEx 按 23.6.5 与 23.11.3 的 single-owner 规则保存为 opaque event。
+
+为了在不放松 Midora Project 内部契约的前提下接受常见外部 SMF，导入器必须在 detached candidate 进入 semantic validation 前执行以下确定性兼容归一化：
+
+```text
+没有 tick 0 Tempo
+  -> 显式添加 120 BPM
+
+没有 tick 0 Time Signature
+  -> 显式添加 4/4
+
+同 tick 存在多个 Tempo
+  -> 按 source MTrk index，再按该 MTrk 内原事件顺序排序，只保留最后一个
+
+Track Name 缺失、trim 后为空或所有 Track Name 都无法按严格 UTF-8 解码
+  -> 使用 `MIDI Track N`，N 为一基 source MTrk index
+  -> 同一 source MTrk 拆分为多个派生 Track 时追加确定的 Port/Channel 后缀
+```
+
+重复 Tempo 的“后来者”只由源 MTrk 与原事件顺序决定，不得依赖集合枚举、稳定 ID 分配或导入时并发。值完全相同的重复 Tempo 被作为冗余项移除并记录 `Info`；值不同时因可听 Tempo 被改变而记录 `Warning`。Time Signature 与 Key Signature 的同 tick 冲突仍使用既有 semantic validation，本节不将它们静默覆盖。
+
+单个 Track Name Meta Event 不是严格 UTF-8 时，只丢弃该名称事件；不使用 Unicode 替换字符，不将非法原始字节保存为 opaque event，也不因此拒绝整个 MIDI 文件。同一 MTrk 内仍有可用 Track Name 时按原顺序使用最后一个可用值；否则使用上述回退名称。该放宽仅适用于导入的 Track Name；Marker 等其他已建模文本 Meta 的非法编码仍是导入失败，SMF 导出仍只产生严格 UTF-8。
+
+上述补全、去重、丢弃与回退命名不进入 Project、Undo/Redo 或 Compiler Diagnostics。它们只进入当次导入任务的结构化 `Info` / `Warning` 报告；成功提交 Project 后，UI 必须显示一份汇总且可复制的报告。
+
+### 23.11.6 新 Project 事务
+
+`Open MIDI as New Project`：
+
+```text
+run the common Project Switch Guard
+parse and validate the entire source into a detached candidate
+use source TPQN exactly
+derive Project Name from source file stem
+create Roots / Tracks / Segments / Conductor atomically
+commit only after all mapping and validation succeeds
+open the new Project as unsaved
+leave Project SoundFont unconfigured
+```
+
+失败或取消时保留当前 Project，不暴露 partial candidate，不产生 Undo entry。初版不提供“Import MIDI into Current Project”。
+
+## 23.12 SMF 导出
+
+### 23.12.1 固定格式
+
+Midora 仍只导出 SMF Type 1、Project TPQ、严格 UTF-8 文本 Meta，并为每个 Channel Event 显式写 status byte。Running Status 只属于导入兼容能力；导出不提供开关。
+
+### 23.12.2 Track 拓扑
+
+每个导出文件：
+
+```text
+MTrk 0 = Conductor / Meta Track
+then every selected Pure MIDI Track as one independent single-channel MTrk
+then Logical/Event Instrument output as one MTrk per actual Channel Unit
+```
+
+Pure MIDI MTrk 顺序固定为 Root explicit order → child Track explicit order。Logical Unit MTrk 继续按原始 Port→Channel 排序。一个 Pure MIDI MTrk 只含其 canonical `ExportTrackId` 的事件；同 Root 的多个 MTrk 可以共享 Port.Channel。
+
+该拓扑适用于 Whole Project 与 Per Port。既有 `Per Logical Track` 模式保持为 Logical/Event Instrument 专用，不复制 Pure MIDI Track；单独导出某条 Pure MIDI Track 使用 Whole Project + 显式 Track 选择。
+
+Conductor、被选择 Pure MIDI Track 与实际 Logical Unit MTrk 的合计数量必须可由 SMF MThd 的 unsigned 16-bit `ntrks` 表示；超出时导出在创建 staging 文件前整体失败，不得合并用户 Track 规避上限。
+
+### 23.12.3 Track Name、Port 与 Root metadata
+
+Pure MIDI MTrk 的 Track Name 必须是冻结 canonical descriptor 中的用户 Track 名称，不得改成 `Port P / Channel C`。每个 MTrk 写对应 Root 的 MIDI Port Meta，Channel status 使用该 Root 的 Channel。
+
+为了在 Midora 间精确往返，Pure MIDI MTrk 在 tick 0 可以写版本化 Midora Sequencer-Specific Meta，保存 Root/Track Stable ID、Root Name/Order、Track Order、Routing Mode 和 Channel Mode。该 Meta：
+
+```text
+must not affect playback
+must be safely ignorable by other software
+must use a versioned bounded binary payload
+must not replace standard Track Name / Port / Channel representation
+```
+
+重新导入时优先使用合法且一致的 Midora metadata；缺失、被外部软件删除或不一致时，退化为按有效 Port.Channel 和 MTrk 顺序重建 Root，不得因此拒绝一个本来合法的标准 MIDI 文件。
+
+SMF 没有可移植的 Root/folder 嵌套结构。Midora 只能保证其他软件看到独立、命名、有序的平级 MTrk；不得承诺第三方 UI 显示 Root 文件夹。
+
+### 23.12.4 End Of Track
+
+Pure MIDI MTrk 的 EOT 使用该 Track 在冻结导出范围内的自身结束位置，保留 Midi Segment 尾部空白；不再强制与所有其他 MTrk 对齐。Conductor 与 Logical Unit MTrk 继续使用导出任务统一 endTick。整个文件长度由所有 MTrk 的最大 EOT 决定。
+
+非零范围导出时，所有输出 tick 相对 startTick 重基；Pure MIDI Track EOT 必须 clamp 到该 Track 与请求范围的交集并保持非负。结构有效的空 Track 可以在 tick 0 写 EOT。
+
+### 23.12.5 Channel 10 初始化
+
+以下事件 Track 在 Track Name、MIDI Port 和 Midora metadata 后、canonical Channel Event 前写既有 GS→XG Normal Part 初始化：
+
+```text
+Logical Unit MTrk whose Unit channel is Channel 10
+Pure MIDI MTrk whose Root is Melodic and routed to Channel 10
+```
+
+Percussion Root 的 Channel 10 MTrk 不得写 Normal Part 初始化。初始化不改写 canonical Bank/Program，也不发送 GM/GS/XG Reset。
+
+### 23.12.6 Direct events 与 opaque events
+
+Pure MIDI MTrk 原样编码 canonical 中的完整 Channel Voice Event，包括 CC91、CC93、Channel Pressure、Poly Pressure 和 Channel Mode。合法 opaque SysEx/Meta 按冻结 payload、tick 和 Track 内顺序重新导出；导出器不得把 opaque payload 解释为 Midora 业务对象。
+
+### 23.12.7 跨 MTrk 同 tick 兼容 Warning
+
+Midora 内部执行顺序是确定的，但 SMF 不提供跨 MTrk 的可移植总顺序。导出预检查必须检测同 Root 不同 MTrk 在同 tick 的顺序敏感组合，例如：
+
+```text
+same target conflicting state writes
+Bank / Program / Reset versus NoteOn
+same Port.Channel.key NoteOff versus NoteOn
+Channel Mode command versus sibling events
+```
+
+检测到时按 Root 产生一条汇总、非阻塞 Warning，包含计数和首个位置。不得移动事件、插入 tick 偏移、合并 Track 或拒绝编译。Warning-as-error 只在用户明确启用该既有导出策略时阻止导出。
+
+### 23.12.8 Round-trip 边界
+
+正式保证：
+
+```text
+single-channel Type 1 source MTrk -> preserve separate Track, name, order and Track End
+Midora-created Pure MIDI Track -> preserve the same properties
+multiple MTrks on one Root -> remain multiple MTrks
+```
+
+不保证：
+
+```text
+byte-identical output
+original Running Status decisions
+original chunk byte layout
+Type 0 remains Type 0
+multi-channel source MTrk remains one MTrk
+third-party retention of Midora private metadata
+identical cross-MTrk tie ordering in every player
+```
+
+## 23.13 播放、预览与音频渲染
+
+### 23.13.1 Root/Unit synth 语义
+
+一个 Root 的所有子 Track 必须合并进入一个抽象 1-channel synth stream；不得每 Track 独立合成后求和。Logical Unit 与 Root Unit 仍按稳定顺序求和，再应用 Playback Master Volume 与全局 Limiter。
+
+Stream 创建、重建和复用前必须按 canonical Unit 的 Channel Mode 建立 Melodic 或 Percussion 状态；不能无条件执行 melodic `DEFDRUMS(0)`。
+
+### 23.13.2 CC91 / CC93 与 opaque SysEx
+
+正式 BASSMIDI Stream 继续启用 `BASS_MIDI_NOFX | BASS_MIDI_NOTEOFF1`。Pure MIDI canonical 中的 CC91 / CC93 在 MIDI 文件语义中保留，但 Midora 实时/离线音频投影确定性忽略其 Reverb/Chorus 效果，不产生诊断，也不改变缓存键以外的正式 MIDI 结果。
+
+初版音频消费者不解释或发送任意 opaque imported SysEx/Meta。它们继续存在于 Project/canonical SMF 投影并可重新导出；因此 Midora 音频试听不承诺复现依赖未知 SysEx 的外部设备行为。
+
+### 23.13.3 Mute / Solo
+
+播放中的 Pure MIDI Track Mute 必须关闭该来源当前活动 Note，并阻止其后续来源事件；不得向整个 Root 发送 CC120 或 Reset。解除 Mute/Solo 时，播放层按当前 canonical frontier 恢复该 Track 必需的非 Note 来源状态并重新路由到活动 Root Unit，但不补发范围前 NoteOn。共享 Channel 状态可能使监听结果受被过滤 Track 的状态事件影响；这属于运行期监听，不改写成品输出。
+
+## 23.14 UI 与编辑器复用
+
+### 23.14.1 Arrangement
+
+Arrangement 固定显示 Conductor 第一行，并以可混排 parent Header 显示 Event Instrument 与 Root；展开 Root 后显示连续、有显式 child order 的 Pure MIDI Tracks。Pure MIDI Track 名称左侧显示 MIDI 图标；Root 名称、Auto/Fixed route、Port.Channel 和 Melodic/Percussion 必须有明确可编辑入口。完整层级见第 24 章。
+
+Track Header 的 hover/pressed、重排、Rename、Copy/Cut/Paste/Duplicate、Delete、Mute/Solo 与 Segment 操作复用既有样式和交互。Root 与 child 的 Mute/Solo 相互独立；Event Instrument binding 命令不显示在 Pure MIDI Track 菜单。
+
+Pure MIDI Segment 除 Direct Note preview 外，还在 Note 上层绘制统一颜色、50% 透明度的 non-Note event 线；两层独立缓存和局部失效。Conductor 第一行使用独立缓存的按类型着色圆点概览。完整视觉、LOD 与性能边界见第 24.8～24.9 节。
+
+### 23.14.2 共享 Segment/Piano Roll
+
+不得从头复制第三套 Timeline 编辑器。实现应抽取并复用：
+
+```text
+Arrangement Segment rendering and gestures
+Piano Roll rendering / hit testing / selection / note gestures
+Velocity Lane
+point/event Lane
+Grid / Snap / zoom / pan / scroll
+tile cache and transient overlay
+```
+
+Logical Segment、SubVoice 与 Midi Segment 通过数据/命令 adapter 提供不同领域对象和提交规则。修复共享视觉或手势缺陷时不得要求在三套复制代码中分别修复。
+
+### 23.14.3 Midi Segment Editor
+
+Midi Segment Editor 的上部 Piano Roll 与 Velocity 交互和 Logical Segment Editor 一致；下部 Lane 直接选择 MIDI Channel Event 类型。完整 Channel Voice Event 可创建；opaque imported event 只在 Event List/Inspector 中查看、移动、删除，不提供自由 payload 编辑器。
+
+Root/Track/Grid/Snap/Lane 高度等视图状态仍属于 Project Session UI State，不进入 `.midora`。
+
+## 23.15 持久化
+
+`.midora` 必须分别保存 Root 与 Track：
+
+```text
+midi-channel-roots/mcr_<id>.pb
+midi-tracks/mt_<id>.pb
+```
+
+Root 文件保存 Root 字段与有序 Track 引用；Track 文件保存 Track 字段、Midi Segment、Direct Note/Event、opaque payload 与顺序。`project.json` 以 Arrangement parent tagged union 保存混排父节点，并建立 Root/Track 路径、父子关系与名称快照；Root 相对顺序由该 union 过滤得到。manifest、project index、文件名、对象内部 ID/type 必须严格一致。
+
+本次变更属于开发期破坏性格式修订。旧开发期 `.midora` 布局不提供兼容读取、迁移或双写；schema、protobuf descriptor 和 golden bytes 必须作为同一当前基线整体重建。产品版本名称不因该开发期格式修订自动改变。
+
+Root 或 Track 单对象损坏可形成 Damaged Placeholder；损坏 Root 下正常 Track 必须保留可定位索引但不参与编译，直到用户删除损坏 Root/相关对象。只要存在任何 Damaged Placeholder，继续遵守禁止 Save/Save Copy 的规则。
+
+## 23.16 诊断与失败原子性
+
+诊断必须能够定位：
+
+```text
+MIDI Channel Root
+Pure MIDI Track
+Midi Segment
+Direct Note/Event
+source MTrk index and byte offset during import
+effective Port/Channel
+absolute and local tick
+ExportTrackId
+```
+
+Root 固定路由冲突、资源超限、Track 内 Segment 重叠、事件值域/结构非法、SMF 解析失败和导出 MTrk 数超出 MThd `ntrks` 表示范围为 Error。跨 MTrk 同 tick 兼容风险只属于导出 Warning。合法 CC91/CC93、同 key Note overlap、同 tick direct duplicates 和多 Track 共享 Root 不产生编译诊断。
+
+导入、编译、保存和导出都必须失败原子：失败不得提交 partial Project、partial canonical、partial package 或 partial `.mid`。
+
+## 23.17 明确非目标
+
+初版不支持：
+
+```text
+SMF Format 2
+SMPTE time division
+Import MIDI into Current Project
+MIDI 2.0 / UMP / MIDI Clip
+free-form SysEx or arbitrary Meta byte editing
+portable folder hierarchy in third-party SMF editors
+byte-identical SMF round-trip
+conversion between Pure MIDI Track and Logical Track/Event Instrument
+one SoundFont per Root/Track/Port
+traditional realtime MIDI OUT
+```
+
+## 23.18 验证门
+
+实现至少必须覆盖：
+
+```text
+Format 0/1 + TPQN import golden files
+Running Status state-machine and malformed input corpus
+multi-channel MTrk and mid-Track Port changes
+opaque Meta/SysEx preservation
+FIFO Note pairing and unmatched raw Note preservation
+Root fixed/auto allocation and 256 Unit boundaries
+Melodic/Percussion Channel 10 audio/export behavior
+Root connected lifecycle and child Segment boundary isolation
+same-Root overlapping Tracks and deterministic order
+Full/Incremental equivalence under unordered collection input
+Root checkpoint convergence and localized PCM cache invalidation
+Pure MIDI Track name/order/EOT SMF export
+Midora private metadata present/stripped re-import
+explicit-status export and semantic—not byte—round trip
+cross-MTrk order-sensitive warning
+strict persistence schema/descriptor/golden bytes and damaged placeholders
+shared Timeline performance with dense Notes/events
+```

@@ -4,7 +4,7 @@
 > 规格版本：**v0.1**  
 > 适用产品范围：**Midora 初版**
 
-本章定义 New/Open/Save/Save Copy、MIDI Export、Audio Render 的配置、进度、结果、确认层级和模态锁定交互。
+本章定义 New/Open/Save/Save Copy、Open MIDI as New Project、MIDI Export、Audio Render 的配置、进度、结果、确认层级和模态锁定交互。
 
 ## 19.1 New Project Dialog
 ### 19.1.1 布局
@@ -50,8 +50,9 @@ Time Signature 4/4 at tick 0
 Key Signature Unspecified
 No Marker
 No Project End Marker
-Empty Event Instrument Library
+Empty Arrangement parent list
 No Logical Track
+No MIDI Channel Root or Pure MIDI Track
 No Segment
 No default Event Instrument
 No selected SoundFont unless explicitly chosen
@@ -95,6 +96,7 @@ Stop
 ```text
 New Project
 Open Project
+Open MIDI as New Project
 Recent Projects
 Close Project
 Save Project
@@ -103,7 +105,7 @@ Exit
 ```
 初版没有传统 Save As。
 ### 19.2.2 通用 Project Switch Guard
-用于 New、Open、Close 和 Exit：
+用于 New、Open Project、Open MIDI as New Project、Close 和 Exit：
 ```text
 1. Stop active playback or preview
 2. Complete playback cleanup
@@ -388,9 +390,9 @@ MIDI Export 允许零长度范围。
 - 恢复必要非 Note 状态；
 - 不补发范围前已经发生的 Note On。
 ### 19.5.4 Tracks
-默认选择所有有效 Logical Tracks。
+Whole Project 与 Per Port 默认选择所有有效 Logical Tracks 与 Pure MIDI Tracks；Per Logical Track 默认且只能选择 Logical Tracks。Pure MIDI Track 不得被复制进每个 Logical Track 输出文件；单独导出 Pure MIDI Track 使用 Whole Project + 显式选择。
 Mute / Solo 被忽略。成品由显式 Track Selection 决定。
-未指定 Event Instrument 的 Track 不产生正式输出，并以 Information 呈现。
+Damaged Parent Placeholder subtree 不产生正式输出，并以结构 Error 呈现；正常 Logical Track 不允许缺少 Event Instrument parent。
 ### 19.5.5 Routing
 ```text
 Compact
@@ -551,7 +553,7 @@ endTick 是硬音频边界：
 - 必要 Note Off / Reset 不延长 WAV；
 - 范围外输出为零。
 ### 19.7.5 Tracks
-默认选择全部有效 Logical Tracks。
+Whole Mix 默认选择全部有效 Logical Tracks 与 Pure MIDI Tracks；Per Logical Track 只输出被选择的 Logical Tracks，Pure MIDI 选择保持但不生成独立 WAV。
 Mute / Solo 被忽略。
 Whole Mix 使用单一整体 CompileContext。
 Per Logical Track：
@@ -721,7 +723,7 @@ Starting a configured Export or Render after Review
 需要确认：
 ```text
 Delete object containing substantial data
-Delete referenced Event Instrument
+Delete non-empty Event Instrument / MIDI Channel Root subtree
 Delete all Lane events
 Replace Track Event Instrument binding
 Close or switch with Function Draft
@@ -733,10 +735,10 @@ Reset all UI preferences
 初版不提供破坏性确认的 `Do Not Ask Again`。
 ### 19.9.4 删除 Event Instrument
 必须说明：
-- 引用 Track 变 Unassigned；
-- Segment、Note 和 Lane 数据保留；
-- Lane 可能 Broken / Inapplicable；
-- 不按名称重绑。
+- 将级联删除的 child Logical Tracks 与主要内容摘要；
+- 确认后整个 subtree 作为一个 Undo 原子删除；
+- 不生成 Unbound Track、不自动改绑、不留下孤立对象；
+- 若要保留 Track，用户必须先取消并移动/改绑 Track。
 ### 19.9.5 Track Binding 替换
 必须显示 Logical Parameter Lane 影响摘要。
 ### 19.9.6 任务错误
@@ -814,6 +816,7 @@ Audio Render Configuration
 Confirmation Dialog
 Blocking Error Dialog
 Open Progress
+MIDI Import Review / Progress
 Save Progress
 Save Copy Progress
 MIDI Export Progress
@@ -854,6 +857,7 @@ Event Instrument Preview
 SubVoice Preview
 Explicit Compile
 Open Project
+Open MIDI as New Project
 Save Project
 Save Copy
 MIDI Export
@@ -867,6 +871,7 @@ Save Project
 Save Copy
 New Project
 Open Project
+Open MIDI as New Project
 Close Project
 Exit
 MIDI Export
@@ -917,4 +922,52 @@ Playback > Reset Playback Engine
 - MIDI Export 或 Audio Render 模态期间不可用。
 ### 19.10.17 不排队
 除“先 Stop 后继续”这一明确流程外，初版不排队命令。
+---
+
+## 19.11 Open MIDI as New Project
+
+### 19.11.1 入口与范围
+
+File 菜单的 `Open MIDI as New Project` 使用独立 `.mid` 文件选择器。它只接受第 23.11 节规定的 SMF Format 0/1、MIDI 1.0、TPQN 文件；不得把 `.mid` 交给 `.midora` Open Project 包读取器，也不提供 `Import MIDI into Current Project`。
+
+### 19.11.2 事务流程
+
+流程固定为：
+
+```text
+Common Project Switch Guard
+→ parse all chunks/events into a detached bounded candidate
+→ validate SMF structure and Running Status
+→ demultiplex source MTrks by effective Port.Channel
+→ build Conductor / Roots / Pure MIDI Tracks / Midi Segments
+→ show Port Mapping / conflict review only when required
+→ validate the complete candidate
+→ atomically replace the active Project
+```
+
+在最后提交前，当前 Project 保持在内存中且不可操作；失败、取消、映射冲突未解决或用户关闭 Review 时保留原 Project 并保持 Stopped，不暴露 partial candidate，不产生 Undo entry。
+
+### 19.11.3 Port Mapping Review
+
+仅当源 Port 无法直接一一映射到 Midora 的 `0..15`、存在冲突或将超过 256 Roots 时显示 Review。Review 必须列出源 MTrk、源 Port、Channel、目标 Root/Port.Channel、Track 数和冲突原因；用户只能建立合法一对一映射或取消。不得 modulo、clamp、静默合并源 Port，也不得部分导入。
+
+### 19.11.4 成功结果
+
+成功后：
+
+```text
+Project TPQ = source TPQN exactly
+Project Name = source file stem
+Project has no .midora save path
+Project is treated as an unsaved new Project
+Project SoundFont is unconfigured
+Arrangement opens as the permanent first workspace
+all imported source data is one initial state, not Undo history
+```
+
+关闭或切换该 Project 时，即使用户未做额外编辑，也必须提示保存为 `.midora`。源 `.mid` 路径不成为 Project 保存路径；保存不得覆盖源 MIDI 文件。
+
+### 19.11.5 进度、诊断与锁定
+
+解析、候选构建、Review 和提交使用 Level 3 Main Window Modal Lock，并计入单一活动任务集合。进度至少显示当前 chunk/MTrk、解析字节、已发现 Root/Track 数与汇总 Warning；结构 Error 必须包含源 MTrk index 和 byte offset。Running Status、Track 拆分、opaque event、Note 配对和 Warning 聚合细则见第 23.11、23.16 节。
 ---

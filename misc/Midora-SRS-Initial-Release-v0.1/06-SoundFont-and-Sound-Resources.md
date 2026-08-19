@@ -314,7 +314,7 @@ MIDI 导出结构
 所有实际使用 Unit Stream 使用同一个 SF2
 空闲 Unit 不创建 BASSMIDI Stream
 空闲 Unit 不单独加载 SF2
-canonical MIDI Channel 10 对应的 Unit 也初始化为 melodic
+Logical/Event Instrument 的 canonical Channel 10 Unit 初始化为 melodic；Pure MIDI Root 按正式 Melodic/Percussion descriptor 初始化
 所有正式 Stream 启用 BASS_MIDI_NOFX
 实时 Stream 按输出设备实际采样率创建，文件渲染 Stream 按本次文件采样率创建
 选择、替换、取消 SF2 或发现影响声音结果的 SF2 变化后，相关播放 / 预览 / 渲染缓存立即失效
@@ -373,7 +373,7 @@ Program Change value 0–127
 ```text
 Program 1 = Acoustic Grand Piano
 Program 33 = Acoustic Bass
-Channel 10 = Drum Kit
+仅凭物理 Channel 10 推断 Drum Kit；Pure MIDI Root 的 Percussion descriptor 才能显式建立该模式
 ```
 ### 6.12.2 Program Change 与 SF2
 Program Change 是 MIDI 事件。

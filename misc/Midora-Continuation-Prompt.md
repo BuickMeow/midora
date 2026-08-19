@@ -28,6 +28,10 @@ D:\Programing\midora
    D:\Programing\midora\AGENTS.md
    D:\Programing\midora\misc\Midora-SRS-Initial-Release-v0.1\00-Table-of-Contents-and-Document-Control.md
    D:\Programing\midora\misc\Midora-SRS-Initial-Release-v0.1\22-Requirement-Locator-and-Cross-System-Invariants.md
+   D:\Programing\midora\misc\Midora-SRS-Initial-Release-v0.1\23-Pure-MIDI-Tracks-and-SMF-Import.md
+   D:\Programing\midora\misc\Midora-SRS-Initial-Release-v0.1\24-Arrangement-Hierarchy-and-Preview.md
+   D:\Programing\midora\misc\Midora-Pure-MIDI-Tracks-and-SMF-Import-Architecture-Decisions.md
+   D:\Programing\midora\misc\Midora-Arrangement-Hierarchy-and-Preview-Requirement-Trace.md
    D:\Programing\midora\misc\Midora-Non-UI-Implementation-Tracker.md
    D:\Programing\midora\misc\Midora-Non-UI-Decision-Question-Library.md
    D:\Programing\midora\misc\Midora-Domain-Compiler-Conformance-Matrix.md
@@ -38,7 +42,7 @@ D:\Programing\midora
    D:\Programing\midora\misc\Midora-Manual-Audio-Acceptance.md
    D:\Programing\midora\misc\Midora-Implementation-Roadmap.md
 
-2. 再完整读取与用户新任务直接相关的 SRS 章节。若下一阶段是 WPF，至少读取第 17、18、20 章，以及第 3、13、19 章中与应用生命周期、播放、任务工作流有关的部分。
+2. 再完整读取与用户新任务直接相关的 SRS 章节。若下一阶段是 WPF，至少读取第 17、18、20、24 章，以及第 3、13、19 章中与应用生命周期、播放、任务工作流有关的部分。
 
 3. 需求和记录的权威顺序：
 
@@ -196,8 +200,8 @@ Project Source Data
 
 8. MIDI：
 
-   - SMF Type 1，Tempo/Time Signature/Bank/Program/UTF-8/Running Status/EOT 规则见 AGENTS.md。
-   - Channel 10 必须 melodic；相关 Track 在 tick 0 写 GS→XG Normal Part SysEx，不发送 Reset。
+   - SMF Type 1 导出与 SMF Format 0/1 导入的 Tempo/Time Signature/Bank/Program/UTF-8/Running Status/EOT/Track 拓扑规则见 AGENTS.md 与 SRS 第 23 章。
+   - Logical Channel 10 必须 melodic；Pure MIDI Root 使用显式 Melodic/Percussion mode。仅 Logical Channel 10 与 Melodic Pure MIDI Channel 10 MTrk 在 tick 0 写 GS→XG Normal Part SysEx，不发送 Reset。
    - 单 delta 超过 0x0FFFFFFF 时结构化失败，不插入 Meta spacer。
 
 9. 持久化：
@@ -250,8 +254,8 @@ Q-NUI-034～Q-NUI-042 已确认并完整实施：
 
 1. BASS 是实现细节，不得泄漏进 Domain/Compiler。
 2. 所有实际 Port 使用同一个有效 Project SF2。无有效 SF2 可打开、编译、MIDI 导出，但禁止播放、Preview、Audio Render。
-3. 所有正式 stream 使用 BASS_MIDI_NOFX | BASS_MIDI_NOTEOFF1；完整拒绝 CC91/CC93。
-4. Channel 10 显式 melodic；同 Port/Channel/pitch Note 按 FIFO 逐个 NoteOff。
+3. 所有正式 stream 使用 BASS_MIDI_NOFX | BASS_MIDI_NOTEOFF1；Event Instrument/SubVoice 拒绝 CC91/CC93，Pure MIDI 保留它们且音频投影不解释其效果。
+4. Logical Channel 10 显式 melodic；Pure MIDI Root 按 descriptor 建立 Melodic/Percussion；同 Port/Channel/pitch Note 按 FIFO 逐个 NoteOff。
 5. 固定 BASS_ATTRIB_MIDI_SRC=1、BASS_ATTRIB_MIDI_CPU=0。
 6. Preparing 用 BASS_MIDI_FontLoad 预加载引用 preset/fallback，不在实时事件 stream 调 StreamLoadSamples。
 7. 正式链为 Unit/Port stereo 确定性求和 → Playback Master Volume → 单全局 Limiter → WASAPI；Preview 同链。离线语义相同但不依赖物理设备。

@@ -105,7 +105,11 @@ public sealed class NewProjectCreationResult : IDisposable, IAsyncDisposable
     public EmbeddedSoundFontResourceV1? EmbeddedSoundFontResource { get; }
     public IReadOnlyList<MidoraPackageDiagnosticV1> Diagnostics { get; }
 
-    public void Dispose() => EmbeddedSoundFontResource?.Dispose();
+    public void Dispose()
+    {
+        EmbeddedSoundFontResource?.Dispose();
+        Project.Dispose();
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -113,6 +117,7 @@ public sealed class NewProjectCreationResult : IDisposable, IAsyncDisposable
         {
             await EmbeddedSoundFontResource.DisposeAsync().ConfigureAwait(false);
         }
+        Project.Dispose();
     }
 }
 
@@ -252,6 +257,52 @@ public sealed class ProjectCreationCoordinator
             usedCaseInsensitiveSoundFontPathFallback: false,
             embeddedSoundFontResource: null,
             Array.Empty<MidoraPackageDiagnosticV1>());
+    }
+
+    public async Task<NewProjectCreationResult> AdoptImportedProjectAsync(
+        MidoraProject project,
+        string? defaultEmbeddedSoundFontPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (defaultEmbeddedSoundFontPath is null)
+        {
+            return AdoptImportedProject(project);
+        }
+
+        string selectedPath = Path.GetFullPath(defaultEmbeddedSoundFontPath);
+        EmbeddedSoundFontResourceV1? embeddedResource = null;
+        try
+        {
+            embeddedResource = await SoundFontBindingV1.BindEmbeddedAsync(
+                project,
+                selectedPath,
+                cancellationToken).ConfigureAwait(false);
+            string effectiveSoundFontPath = embeddedResource.ResolvedAbsolutePath
+                ?? throw new InvalidOperationException(
+                    "A newly imported Embedded SoundFont has no runtime path.");
+            await _soundFontValidator.ValidateAsync(
+                effectiveSoundFontPath,
+                cancellationToken).ConfigureAwait(false);
+            return new(
+                project,
+                ProjectDocumentOrigin.Unsaved,
+                currentProjectPath: null,
+                fileInformation: null,
+                effectiveSoundFontPath,
+                usedCaseInsensitiveSoundFontPathFallback: false,
+                embeddedResource,
+                Array.Empty<MidoraPackageDiagnosticV1>());
+        }
+        catch
+        {
+            if (embeddedResource is not null)
+            {
+                await embeddedResource.DisposeAsync().ConfigureAwait(false);
+            }
+            throw;
+        }
     }
 
     private static ValidatedRequest ValidateRequest(NewProjectCreationRequest request)

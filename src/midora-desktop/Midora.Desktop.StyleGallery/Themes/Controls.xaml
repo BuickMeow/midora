@@ -617,6 +617,7 @@
     <Setter Property="BorderBrush" Value="{StaticResource Brush.Border.Strong}" />
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+    <Setter Property="MaxDropDownHeight" Value="260" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ComboBox">
@@ -686,16 +687,20 @@
                    Placement="Bottom"
                    PopupAnimation="Fade">
               <Border MinWidth="{Binding ActualWidth, ElementName=Root}"
-                      MaxHeight="260"
+                      MaxHeight="{TemplateBinding MaxDropDownHeight}"
                       Margin="0,3,0,0"
-                      Padding="4"
+                      ClipToBounds="True"
                       Background="{StaticResource Brush.Surface.2}"
                       BorderBrush="{StaticResource Brush.Border.Strong}"
                       BorderThickness="1"
                       CornerRadius="{StaticResource Radius.Medium}">
-                <ScrollViewer CanContentScroll="True">
-                  <ItemsPresenter />
-                </ScrollViewer>
+                <Grid Margin="4">
+                  <ScrollViewer CanContentScroll="True"
+                                HorizontalScrollBarVisibility="Disabled"
+                                VerticalScrollBarVisibility="Auto">
+                    <ItemsPresenter />
+                  </ScrollViewer>
+                </Grid>
               </Border>
             </Popup>
           </Grid>

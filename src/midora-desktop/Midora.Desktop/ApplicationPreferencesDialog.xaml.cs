@@ -65,6 +65,7 @@ public partial class ApplicationPreferencesDialog : Window
         CacheRootBox.Text = preferences.AudioCache.RootPath;
         CacheQuotaBox.Text = (preferences.AudioCache.MaximumReusableBytes / BytesPerGibibyte)
             .ToString("0.###", CultureInfo.InvariantCulture);
+        DefaultSoundFontBox.Text = preferences.DefaultEmbeddedSoundFontPath ?? string.Empty;
     }
 
     private void OnBrowseCacheClick(object sender, RoutedEventArgs e)
@@ -79,6 +80,27 @@ public partial class ApplicationPreferencesDialog : Window
             CacheRootBox.Text = dialog.FolderName;
         }
     }
+
+    private void OnBrowseDefaultSoundFontClick(object sender, RoutedEventArgs e)
+    {
+        OpenFileDialog dialog = new()
+        {
+            Title = "Select Default Embedded SoundFont",
+            Filter = "SoundFont 2 (*.sf2)|*.sf2|All files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false,
+            InitialDirectory = File.Exists(DefaultSoundFontBox.Text)
+                ? Path.GetDirectoryName(DefaultSoundFontBox.Text)
+                : null
+        };
+        if (dialog.ShowDialog(this) == true)
+        {
+            DefaultSoundFontBox.Text = dialog.FileName;
+        }
+    }
+
+    private void OnClearDefaultSoundFontClick(object sender, RoutedEventArgs e) =>
+        DefaultSoundFontBox.Text = string.Empty;
 
     private void OnRestoreDefaultsClick(object sender, RoutedEventArgs e)
     {
@@ -122,8 +144,17 @@ public partial class ApplicationPreferencesDialog : Window
                     renderAhead,
                     deviceRequest,
                     voices),
-                AudioCache = new AudioCachePreferences(CacheRootBox.Text, quotaBytes).Normalize()
+                AudioCache = new AudioCachePreferences(CacheRootBox.Text, quotaBytes).Normalize(),
+                DefaultEmbeddedSoundFontPath = string.IsNullOrWhiteSpace(DefaultSoundFontBox.Text)
+                    ? null
+                    : Path.GetFullPath(DefaultSoundFontBox.Text)
             };
+            if (Result.DefaultEmbeddedSoundFontPath is string defaultSoundFont
+                && !File.Exists(defaultSoundFont))
+            {
+                ShowValidation("The default embedded SoundFont file does not exist.");
+                return;
+            }
             Result.Validate();
             DialogResult = true;
         }

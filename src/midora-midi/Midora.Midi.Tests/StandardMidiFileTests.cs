@@ -145,6 +145,72 @@ public sealed class StandardMidiFileTests
         Assert.Contains("Running Status", error.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void StreamingScanMatchesParsedTicksAndRunningStatusWithoutWholeFileGraph()
+    {
+        byte[] source = Hex(
+            "4d54686400000006000000010060"
+            + "4d54726b00000016"
+            + "00ff03045465737400903c64103e6e103c0000ff2f00");
+        CollectingStreamVisitor visitor = new(readPayloads: true);
+
+        StandardMidiFileStreamResult result = StandardMidiFile.ScanType0Or1(
+            new MemoryStream(source, writable: false),
+            visitor);
+
+        Assert.Equal((ushort)0, result.Header.Format);
+        Assert.Equal(96, result.Header.TicksPerQuarterNote);
+        Assert.Equal(4, result.EventCount);
+        Assert.Equal([0L, 0L, 16L, 32L], visitor.Events.Select(value => value.Tick));
+        Assert.Equal("Test", Encoding.UTF8.GetString(visitor.Events[0].Data.Span));
+        Assert.Equal((byte)62, visitor.Events[2].Message.Byte1);
+        Assert.Equal(32, Assert.Single(result.Tracks).EndTick);
+    }
+
+    [Fact]
+    public void StreamingScanCanSkipOpaquePayloadWithoutAllocatingIt()
+    {
+        byte[] source = StandardMidiFile.EncodeType1(
+            192,
+            [new StandardMidiFileTrack(0, [StandardMidiFileEvent.Meta(0, 0x7f, new byte[4096])])]);
+        CollectingStreamVisitor visitor = new(readPayloads: false);
+
+        StandardMidiFileStreamResult result = StandardMidiFile.ScanType0Or1(
+            new MemoryStream(source, writable: false),
+            visitor);
+
+        StreamedStandardMidiFileEvent value = Assert.Single(visitor.Events);
+        Assert.False(value.PayloadWasRead);
+        Assert.True(value.Data.IsEmpty);
+        Assert.Equal(4096, value.DataLength);
+        Assert.Equal(4096, result.PayloadByteCount);
+    }
+
+    private sealed class CollectingStreamVisitor(bool readPayloads) : IStandardMidiFileStreamVisitor
+    {
+        public List<StreamedStandardMidiFileEvent> Events { get; } = [];
+
+        public void OnHeader(StandardMidiFileStreamHeader header)
+        {
+        }
+
+        public void OnTrackStart(int sourceTrackIndex, long chunkByteCount)
+        {
+        }
+
+        public bool ShouldReadPayload(
+            int sourceTrackIndex,
+            StandardMidiFileEventKind kind,
+            byte type,
+            int payloadByteCount) => readPayloads;
+
+        public void OnEvent(in StreamedStandardMidiFileEvent value) => Events.Add(value);
+
+        public void OnTrackEnd(StandardMidiFileStreamTrackResult result)
+        {
+        }
+    }
+
     private static byte[] Hex(string value) =>
         Convert.FromHexString(value.ToUpper(CultureInfo.InvariantCulture));
 }

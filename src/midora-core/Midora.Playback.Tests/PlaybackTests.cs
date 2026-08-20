@@ -1621,9 +1621,14 @@ public sealed class PlaybackTests
             Assert.Equal(frozenTick, controller.CurrentTick);
             Assert.True(session.AudioCacheSnapshot!.Value.TransientBytes > 0);
 
+            backend.RenderPositionFrames = backend.PositionFrames
+                + ((backend.RecoveryEndFrame - backend.PositionFrames) / 2);
+            Assert.InRange(controller.BufferingProgress!.Value, 0.49, 0.51);
+
             backend.IsBuffering = false;
             controller.Update();
             Assert.Equal(PlaybackState.Playing, controller.State);
+            Assert.Null(controller.BufferingProgress);
             controller.Stop();
             Assert.Equal(0, session.AudioCacheSnapshot!.Value.TransientBytes);
         }
@@ -1959,7 +1964,7 @@ public sealed class PlaybackTests
 
         public int ActualSampleRate => 48_000;
         public long PositionFrames { get; set; }
-        public long RenderPositionFrames => PositionFrames;
+        public long RenderPositionFrames { get; set; }
         public bool IsBuffering { get; set; }
         public bool IsCompleted => false;
         public bool IsFaulted => false;
@@ -1986,6 +1991,7 @@ public sealed class PlaybackTests
             _activeMemoryFrameCapacity = _nextMemoryFrameCapacity;
             _nextMemoryFrameCapacity = 0;
             PositionFrames = 0;
+            RenderPositionFrames = 0;
             IsBuffering = false;
         }
 

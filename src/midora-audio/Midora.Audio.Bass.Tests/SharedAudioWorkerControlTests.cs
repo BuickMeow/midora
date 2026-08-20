@@ -37,6 +37,21 @@ public sealed class SharedAudioWorkerControlTests
     }
 
     [Fact]
+    public void BufferingRecoveryProgressKeepsConsumerFrozenAndPublishesPreparedFrontier()
+    {
+        string name = $"Midora.Audio.Control.Recovery.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+
+        producer.PublishBufferingRecoveryProgress(4_800, 7_200);
+
+        AudioWorkerStatus status = consumer.ReadStatus();
+        Assert.Equal(AudioWorkerState.Buffering, status.State);
+        Assert.Equal(4_800, status.PositionFrame);
+        Assert.Equal(7_200, status.RenderPositionFrame);
+    }
+
+    [Fact]
     public void FixedSharedMemoryAbiTransfersStatusAndCommands()
     {
         string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";

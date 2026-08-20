@@ -1581,4 +1581,65 @@ Track 选择
 所有额外内存必须有明确所有权、上限、失效键和释放时机
 不得用无界缓存或依赖历史缓存的结果换取速度
 ```
+
+## 12.25 极端规模 Canonical 分页契约
+
+### 12.25.1 逻辑结果与物理布局分离
+
+Canonical Compiled Result 继续表示一个确定的正式事件集，以及从该事件集冻结的 Execution Projection 与 SMF Track Projection。该契约不要求：
+
+```text
+all events in one contiguous managed array
+one full SourceReference value copied into every event record
+one duplicated event array per projection / Port / Unit / fragment
+random access by materializing the complete result
+```
+
+Pure MIDI 极端内容必须使用延迟 canonical range source。成功编译冻结 source pack identity、overlay generation、Root allocation/lifecycle、aggregate count、SMF Track descriptor、音频 fragment descriptor和 preset summary；正式 consumer在请求范围时才生成有界 event pages。实现允许在 consumer page内保存紧凑来源身份，而不复制完整 Project 对象图。逻辑枚举结果、来源定位和同 tick顺序必须与逐事件 Canonical 参考模型完全相同。
+
+Logical/Event Instrument 内容可以继续使用紧凑内存数组，但与 paged Pure MIDI 合并时必须通过确定性 merge形成一个逻辑总序，不能把 Pure MIDI 全量复制回连续数组。Execution、SMF与UI可以使用针对各自所需字段的不同紧凑 consumer record；它们必须来自同一正式 range source，不能重新解释语义。
+
+### 12.25.2 Page 边界与有界内存
+
+Pure MIDI consumer page 与有界排序必须满足：
+
+```text
+maximum 16,384 emitted event records per consumer page
+maximum 131,072 compact fixed records per in-memory sort run
+maximum 64 input runs in one merge pass
+monotonic formal event order in emitted pages
+```
+
+排序 run超过内存边界时必须写入 session私有临时文件，并通过最多64路的多轮归并得到正式顺序；不得为一个极密时间窗创建无限数量的同时打开 reader buffer。临时文件是运行时工作区，不是 canonical持久化，不得进入 `.midora`。取消、截断、extent溢出或临时I/O失败必须终止当前 consumer枚举并清理工作区。
+
+Immutable source pages共用第16.30节的每Project `64 MiB decoded` LRU。初版不建立第二份全Project canonical decoded LRU；consumer page、sort run buffer、最多64个reader batch和输出页在枚举结束后释放。cache miss或sort spill只能改变耗时，不能改变fingerprint、诊断或事件顺序。
+
+### 12.25.3 流式编译与 fingerprint
+
+Pure MIDI source pages提供按Segment/kind/tick bounds查询的value cursor；source物理顺序不作为canonical顺序。编译器使用有界cursor、固定sort run与多轮外部merge完成crop、Root merge、range restore、lifecycle boundary、Execution/SMF projection和consumer freeze；不得创建与总Note/Event数等长的pending list、paired-order set、第二份排序数组或per-event builder lookup。
+
+用于播放的 `.mpk` 派生索引必须分别保存按正式端点顺序局部有序的 NoteOn、NoteOff 与 Channel Event pages；每个 endpoint page 最多 16,384 records。Track 内查询通过页目录裁剪并对相交的局部有序 page runs 做有界 k-way merge，跨 Track/Root 再按 canonical key 做有界 merge；不得为每个 250 ms 播放窗口重新扫描全部“可能与窗口相交”的原始 Note pages。该索引只改变物理查询路径，不改变 source record、same-tick order、FIFO NoteOff 或 canonical fingerprint。
+
+中途起播的状态恢复必须使用有界 Channel-state checkpoint suffix 与按端点索引查询的 active-note集合。NoteOn endpoint目录必须携带页内最大Note end tick；active-note查询只解码满足`minimumStart < cursor < maximumEnd`的候选endpoint页，并在局部有序页内二分start边界，不得读取普通Note页。Checkpoint 间隔不得超过 16,384 个 Channel Event；恢复成本可与候选endpoint页、实际仍活动 Note 数及最后一个 checkpoint 后的事件数相关，但不得与 Segment 起点到光标之间的全部历史 Note/Event 数线性相关。
+
+Canonical/source-aware fingerprint必须增量写入hash state，禁止先把完整事件流写入`MemoryStream`或byte array。它必须包含编译范围、Tempo map、Root/Track/Segment身份与顺序、source pack content fingerprint、content window、overlay generation/tombstone及正式reset defaults。Source page checksum只能用于已经通过pack验证的immutable source；排序run/page边界不得进入音乐语义或使相同内容产生不同结果。
+
+### 12.25.4 Snapshot 与增量编译
+
+Project compilation snapshot 对 immutable Pure MIDI base pages只复制 page-root descriptor/ref-count，不复制记录。编辑采用 copy-on-write overlay；snapshot 冻结当时 base generation、tombstone 与 overlay generation。改变一个对象不得深拷贝所属 Track 的其余 pages。
+
+Checkpoint、dirty range 与 state-hash 收敛继续服从 §12.21。Page 是物理重算/复用单元，不是新的音乐边界；跨 page 的 Note FIFO、Channel state、Root lifecycle 与同 tick order 必须连续。
+
+### 12.25.5 Consumer range API
+
+Canonical 必须提供只读范围 cursor，至少能按以下条件组合查询：
+
+```text
+[startTick, endTick)
+Execution Unit / Root
+SMF ExportTrackId
+source Track filter used by runtime Mute/Solo
+```
+
+范围 cursor 在起点前读取由 checkpoint 指明的最小状态上下文，并在 endTick 停止。播放、MIDI 导出和音频渲染不得以调用全结果 `ToArray()` 作为准备步骤；需要整曲顺序输出的消费者应逐页顺序枚举。
 ---

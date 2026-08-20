@@ -206,6 +206,7 @@ public sealed record ApplicationPreferences(
     ApplicationRecentDirectories RecentDirectories)
 {
     public DesktopUiPreferences DesktopUi { get; init; } = DesktopUiPreferences.Default;
+    public string? DefaultEmbeddedSoundFontPath { get; init; }
 
     public static ApplicationPreferences Default { get; } =
         new(
@@ -227,6 +228,9 @@ public sealed record ApplicationPreferences(
         ValidateDirectory(RecentDirectories.SoundFont);
         ValidateDirectory(RecentDirectories.MidiExport);
         ValidateDirectory(RecentDirectories.AudioRender);
+        ValidateOptionalLocalFilePath(
+            DefaultEmbeddedSoundFontPath,
+            nameof(DefaultEmbeddedSoundFontPath));
     }
 
     internal static string? NormalizeDirectory(string? directory)
@@ -256,6 +260,34 @@ public sealed record ApplicationPreferences(
                 nameof(directory));
         }
         _ = Path.GetFullPath(directory);
+    }
+
+    internal static string? NormalizeOptionalLocalFilePath(string? path)
+    {
+        if (path is null)
+        {
+            return null;
+        }
+        ValidateOptionalLocalFilePath(path, nameof(path));
+        return Path.GetFullPath(path);
+    }
+
+    private static void ValidateOptionalLocalFilePath(string? path, string parameterName)
+    {
+        if (path is null)
+        {
+            return;
+        }
+        if (path.Length == 0
+            || !Path.IsPathFullyQualified(path)
+            || path.StartsWith("\\\\", StringComparison.Ordinal)
+            || path.StartsWith("//", StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "The default embedded SoundFont must be null or a fully-qualified local file path.",
+                parameterName);
+        }
+        _ = Path.GetFullPath(path);
     }
 }
 

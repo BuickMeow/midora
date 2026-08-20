@@ -317,32 +317,45 @@ public sealed partial class MidoraCompiler : IDisposable
                 failureStatistics);
         }
 
+        bool usesPagedPureMidi = pureMidiPlan.Roots
+            .SelectMany(value => value.Tracks)
+            .SelectMany(value => value.Segments)
+            .Any(value => value.UsesPagedContent);
         List<CanonicalMidiEvent> allEvents = MaterializeEvents(
             instances,
             allocation.Groups,
             allocation.UnitBySubVoice,
             project.GlobalResetDefaults,
             cancellationToken);
-        allEvents.AddRange(MaterializePureMidiEvents(
-            pureMidiPlan,
-            allocation.UnitByRoot,
-            project.GlobalResetDefaults,
-            cancellationToken));
+        if (!usesPagedPureMidi)
+        {
+            allEvents.AddRange(MaterializePureMidiEvents(
+                pureMidiPlan,
+                allocation.UnitByRoot,
+                project.GlobalResetDefaults,
+                cancellationToken));
+        }
         allEvents.Sort(CanonicalComparer.Instance);
         allEvents = FoldSameTickStates(allEvents, cancellationToken);
+        ChannelUnitAllocation[] rangeSourceAllocations = usesPagedPureMidi
+            ? allocation.Allocations.Where(value => value.MidiChannelRootId == default).ToArray()
+            : allocation.Allocations;
         CanonicalMidiEvent[] ranged = ApplyRange(
             allEvents,
-            allocation.Allocations,
+            rangeSourceAllocations,
             request.StartTick,
             endTick,
             project.GlobalResetDefaults,
             request.HeldPreviewGateOpen,
             cancellationToken);
-        ranged = AssignPureMidiRangeBoundaryOwnership(
-            ranged,
-            pureMidiPlan,
-            allocation.UnitByRoot,
-            endTick);
+        if (!usesPagedPureMidi)
+        {
+            ranged = AssignPureMidiRangeBoundaryOwnership(
+                ranged,
+                pureMidiPlan,
+                allocation.UnitByRoot,
+                endTick);
+        }
         ChannelUnitAllocation[] rangedAllocations = allocation.Allocations
             .Where(value => value.StartTick < endTick && value.EndTick > request.StartTick)
             .ToArray();
@@ -356,6 +369,15 @@ public sealed partial class MidoraCompiler : IDisposable
             pureMidiPlan,
             allocation.UnitByRoot);
         CanonicalOpaqueMidiEvent[] opaqueMidiEvents = pureMidiPlan.OpaqueEvents;
+        ICanonicalMidiEventPageSource? pagedEventSource = usesPagedPureMidi
+            ? new PureMidiPagedCanonicalSource(
+                pureMidiPlan,
+                allocation.UnitByRoot,
+                project.GlobalResetDefaults,
+                request.StartTick,
+                endTick,
+                cancellationToken)
+            : null;
         long resultFingerprint = SourceFingerprint.ForResult(
             request.StartTick,
             endTick,
@@ -364,13 +386,21 @@ public sealed partial class MidoraCompiler : IDisposable
             smfTracks,
             opaqueMidiEvents,
             cancellationToken);
+        if (pagedEventSource is not null)
+        {
+            resultFingerprint = SourceFingerprint.CombinePaged(
+                resultFingerprint,
+                pagedEventSource.ContentFingerprint);
+        }
         cancellationToken.ThrowIfCancellationRequested();
         LastTelemetry = telemetry;
-        int noteOnEventCount = CountNoteOnEvents(ranged);
+        long noteOnEventCount = checked(
+            CountNoteOnEvents(ranged) + (pagedEventSource?.NoteOnEventCount ?? 0));
+        long eventCount = checked(ranged.LongLength + (pagedEventSource?.EventCount ?? 0));
         CompilationStatistics successStatistics = CreateStatistics(
             selectedTracks.Count + selectedPureMidiTracks.Count,
             instances,
-            ranged.Length,
+            eventCount,
             noteOnEventCount,
             allocation,
             pureMidiPlan);
@@ -386,7 +416,8 @@ public sealed partial class MidoraCompiler : IDisposable
             false, true, null, resultFingerprint,
             successStatistics,
             smfTracks,
-            opaqueMidiEvents);
+            opaqueMidiEvents,
+            pagedEventSource);
     }
 
     private static CanonicalCompiledResult Failure(
@@ -428,8 +459,8 @@ public sealed partial class MidoraCompiler : IDisposable
     private static CompilationStatistics CreateStatistics(
         int selectedTrackCount,
         IReadOnlyCollection<RawInstance> instances,
-        int eventCount,
-        int noteOnEventCount,
+        long eventCount,
+        long noteOnEventCount,
         AllocationResult allocation,
         PureMidiPlan? pureMidiPlan = null) => new(
             selectedTrackCount,
@@ -457,9 +488,9 @@ public sealed partial class MidoraCompiler : IDisposable
             LogicalPeakChannelUnitCount = allocation.LogicalPeakUnits
         };
 
-    private static int CountNoteOnEvents(ReadOnlySpan<CanonicalMidiEvent> events)
+    private static long CountNoteOnEvents(ReadOnlySpan<CanonicalMidiEvent> events)
     {
-        int count = 0;
+        long count = 0;
         foreach (CanonicalMidiEvent value in events)
         {
             if (value.Message.MessageType == MidiMessageType.NoteOn && value.Message.Byte2 != 0)
@@ -2220,26 +2251,26 @@ public sealed partial class MidoraCompiler : IDisposable
     private static double GetInitialTargetValue(
         MidiInitialState state,
         MidiValueTarget target) => target.Kind switch
-    {
-        MidiValueKind.ControlChange => state.Controllers.TryGetValue(target.Number, out int value)
-            ? value
-            : DefaultTargetValue(target),
-        MidiValueKind.BankMsb => state.BankMsb ?? DefaultTargetValue(target),
-        MidiValueKind.BankLsb => state.BankLsb ?? DefaultTargetValue(target),
-        MidiValueKind.Program => state.Program ?? DefaultTargetValue(target),
-        MidiValueKind.PitchBend => state.PitchBend ?? DefaultTargetValue(target),
-        MidiValueKind.RegisteredParameter => state.RegisteredParameters.TryGetValue(target.Number, out int value)
-            ? value
-            : DefaultTargetValue(target),
-        MidiValueKind.NonRegisteredParameter => state.NonRegisteredParameters.TryGetValue(target.Number, out int value)
-            ? value
-            : DefaultTargetValue(target),
-        MidiValueKind.PitchBendRangeSemitones =>
-            state.PitchBendRangeSemitones ?? DefaultTargetValue(target),
-        MidiValueKind.PitchBendRangeCents =>
-            state.PitchBendRangeCents ?? DefaultTargetValue(target),
-        _ => DefaultTargetValue(target)
-    };
+        {
+            MidiValueKind.ControlChange => state.Controllers.TryGetValue(target.Number, out int value)
+                ? value
+                : DefaultTargetValue(target),
+            MidiValueKind.BankMsb => state.BankMsb ?? DefaultTargetValue(target),
+            MidiValueKind.BankLsb => state.BankLsb ?? DefaultTargetValue(target),
+            MidiValueKind.Program => state.Program ?? DefaultTargetValue(target),
+            MidiValueKind.PitchBend => state.PitchBend ?? DefaultTargetValue(target),
+            MidiValueKind.RegisteredParameter => state.RegisteredParameters.TryGetValue(target.Number, out int value)
+                ? value
+                : DefaultTargetValue(target),
+            MidiValueKind.NonRegisteredParameter => state.NonRegisteredParameters.TryGetValue(target.Number, out int value)
+                ? value
+                : DefaultTargetValue(target),
+            MidiValueKind.PitchBendRangeSemitones =>
+                state.PitchBendRangeSemitones ?? DefaultTargetValue(target),
+            MidiValueKind.PitchBendRangeCents =>
+                state.PitchBendRangeCents ?? DefaultTargetValue(target),
+            _ => DefaultTargetValue(target)
+        };
 
     private static bool TryGetStatefulEventMappingTarget(
         TemplateEventMappingTarget mappingTarget,
@@ -2247,40 +2278,67 @@ public sealed partial class MidoraCompiler : IDisposable
     {
         switch (mappingTarget)
         {
-            case { EventKind: TemplateEventKind.ControlChange,
-              Parameter: TemplateEventMappingParameter.Value }:
+            case
+            {
+                EventKind: TemplateEventKind.ControlChange,
+                Parameter: TemplateEventMappingParameter.Value
+            }:
                 target = MidiValueTarget.ControlChange(mappingTarget.EventNumber);
                 return true;
-            case { EventKind: TemplateEventKind.Bank,
-              Parameter: TemplateEventMappingParameter.Value }:
+            case
+            {
+                EventKind: TemplateEventKind.Bank,
+                Parameter: TemplateEventMappingParameter.Value
+            }:
                 target = MidiValueTarget.BankMsb;
                 return true;
-            case { EventKind: TemplateEventKind.Bank,
-              Parameter: TemplateEventMappingParameter.SecondaryValue }:
+            case
+            {
+                EventKind: TemplateEventKind.Bank,
+                Parameter: TemplateEventMappingParameter.SecondaryValue
+            }:
                 target = MidiValueTarget.BankLsb;
                 return true;
-            case { EventKind: TemplateEventKind.Program,
-              Parameter: TemplateEventMappingParameter.Value }:
+            case
+            {
+                EventKind: TemplateEventKind.Program,
+                Parameter: TemplateEventMappingParameter.Value
+            }:
                 target = MidiValueTarget.Program;
                 return true;
-            case { EventKind: TemplateEventKind.PitchBend,
-              Parameter: TemplateEventMappingParameter.Value }:
+            case
+            {
+                EventKind: TemplateEventKind.PitchBend,
+                Parameter: TemplateEventMappingParameter.Value
+            }:
                 target = MidiValueTarget.PitchBend;
                 return true;
-            case { EventKind: TemplateEventKind.RegisteredParameter,
-              Parameter: TemplateEventMappingParameter.Value }:
+            case
+            {
+                EventKind: TemplateEventKind.RegisteredParameter,
+                Parameter: TemplateEventMappingParameter.Value
+            }:
                 target = MidiValueTarget.Rpn(mappingTarget.EventNumber);
                 return true;
-            case { EventKind: TemplateEventKind.NonRegisteredParameter,
-              Parameter: TemplateEventMappingParameter.Value }:
+            case
+            {
+                EventKind: TemplateEventKind.NonRegisteredParameter,
+                Parameter: TemplateEventMappingParameter.Value
+            }:
                 target = MidiValueTarget.Nrpn(mappingTarget.EventNumber);
                 return true;
-            case { EventKind: TemplateEventKind.PitchBendRange,
-              Parameter: TemplateEventMappingParameter.Value }:
+            case
+            {
+                EventKind: TemplateEventKind.PitchBendRange,
+                Parameter: TemplateEventMappingParameter.Value
+            }:
                 target = MidiValueTarget.PitchBendRangeSemitones;
                 return true;
-            case { EventKind: TemplateEventKind.PitchBendRange,
-              Parameter: TemplateEventMappingParameter.SecondaryValue }:
+            case
+            {
+                EventKind: TemplateEventKind.PitchBendRange,
+                Parameter: TemplateEventMappingParameter.SecondaryValue
+            }:
                 target = MidiValueTarget.PitchBendRangeCents;
                 return true;
             default:
@@ -2292,12 +2350,12 @@ public sealed partial class MidoraCompiler : IDisposable
     private static int GetOriginalEventMappingValue(
         TemplateEventMappingTarget mappingTarget,
         TemplateEvent value) => mappingTarget.Parameter switch
-    {
-        TemplateEventMappingParameter.Value => value.Value,
-        TemplateEventMappingParameter.SecondaryValue => value.SecondaryValue,
-        TemplateEventMappingParameter.Number => value.Number,
-        _ => throw new ArgumentOutOfRangeException(nameof(mappingTarget))
-    };
+        {
+            TemplateEventMappingParameter.Value => value.Value,
+            TemplateEventMappingParameter.SecondaryValue => value.SecondaryValue,
+            TemplateEventMappingParameter.Number => value.Number,
+            _ => throw new ArgumentOutOfRangeException(nameof(mappingTarget))
+        };
 
     private static double TargetMinimum(MidiValueTarget target) => target.Kind == MidiValueKind.PitchBend ? -8192 : 0;
     private static double TargetMaximum(MidiValueTarget target) => target.Kind switch
@@ -3694,6 +3752,16 @@ public sealed partial class MidoraCompiler : IDisposable
             if (value != 0) return value;
             value = x.ZeroBasedChannel.CompareTo(y.ZeroBasedChannel);
             if (value != 0) return value;
+            if (x.Role == CanonicalEventRole.DirectMidi
+                && y.Role == CanonicalEventRole.DirectMidi)
+            {
+                value = x.SmfTrackOrder.CompareTo(y.SmfTrackOrder);
+                if (value != 0) return value;
+                value = x.SmfEventOrder.CompareTo(y.SmfEventOrder);
+                if (value != 0) return value;
+                value = DirectEndpointOrder(x.Message).CompareTo(DirectEndpointOrder(y.Message));
+                if (value != 0) return value;
+            }
             value = x.StableOrder.CompareTo(y.StableOrder);
             if (value != 0) return value;
             value = x.Source.TrackId.CompareTo(y.Source.TrackId);
@@ -3739,6 +3807,12 @@ public sealed partial class MidoraCompiler : IDisposable
             value = x.Source.Tick.CompareTo(y.Source.Tick);
             if (value != 0) return value;
             return x.Source.Origin.CompareTo(y.Source.Origin);
+
+            static int DirectEndpointOrder(MidiMessage message) =>
+                message.MessageType == MidiMessageType.NoteOff
+                    || message.MessageType == MidiMessageType.NoteOn && message.Byte2 == 0
+                        ? 0
+                        : 1;
         }
     }
 }
@@ -3919,6 +3993,15 @@ internal static class SourceFingerprint
             Add(ref hash, value.SmfTrackOrder);
             Add(ref hash, value.SmfEventOrder);
         }
+        return unchecked((long)hash);
+    }
+
+    public static long CombinePaged(long canonicalFingerprint, string pageFingerprint)
+    {
+        ArgumentNullException.ThrowIfNull(pageFingerprint);
+        ulong hash = Offset;
+        Add(ref hash, canonicalFingerprint);
+        Add(ref hash, pageFingerprint);
         return unchecked((long)hash);
     }
 

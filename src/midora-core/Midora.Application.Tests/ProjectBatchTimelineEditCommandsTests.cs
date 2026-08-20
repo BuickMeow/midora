@@ -220,6 +220,57 @@ public sealed class ProjectBatchTimelineEditCommandsTests
     }
 
     [Fact]
+    public void MidiSegmentBatchMovePreservesArrangementTrackOffsets()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = new(project) { Name = "Root" };
+        project.MidiChannelRoots.Add(root);
+        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        PureMidiTrack targetPrimary = AddMidiTrack("Target 1");
+        PureMidiTrack targetSecondary = AddMidiTrack("Target 2");
+        PureMidiTrack sourcePrimary = AddMidiTrack("Source 1");
+        PureMidiTrack sourceSecondary = AddMidiTrack("Source 2");
+        MidiSegment first = new(project) { ProjectStartTick = 100, LengthTicks = 60 };
+        MidiSegment second = new(project) { ProjectStartTick = 200, LengthTicks = 60 };
+        sourcePrimary.Segments.Add(first);
+        sourceSecondary.Segments.Add(second);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.MoveMidiSegments(
+            [second.Id, first.Id],
+            first.Id,
+            targetPrimary.Id,
+            newPrimaryStartTick: 300));
+
+        Assert.Empty(sourcePrimary.Segments);
+        Assert.Empty(sourceSecondary.Segments);
+        Assert.Equal([first], targetPrimary.Segments);
+        Assert.Equal([second], targetSecondary.Segments);
+        Assert.Equal((300L, 400L), (first.ProjectStartTick, second.ProjectStartTick));
+        Assert.Single(document.History);
+
+        document.Undo();
+        Assert.Equal([first], sourcePrimary.Segments);
+        Assert.Equal([second], sourceSecondary.Segments);
+        Assert.Empty(targetPrimary.Segments);
+        Assert.Empty(targetSecondary.Segments);
+        Assert.Equal((100L, 200L), (first.ProjectStartTick, second.ProjectStartTick));
+
+        PureMidiTrack AddMidiTrack(string name)
+        {
+            PureMidiTrack track = new(project)
+            {
+                Name = name,
+                MidiChannelRootId = root.Id
+            };
+            project.PureMidiTracks.Add(track);
+            root.MidiTrackIds.Add(track.Id);
+            return track;
+        }
+    }
+
+    [Fact]
     public void SegmentBatchOverlapRejectsWithoutMovingAnySource()
     {
         MidoraProject project = new(480);

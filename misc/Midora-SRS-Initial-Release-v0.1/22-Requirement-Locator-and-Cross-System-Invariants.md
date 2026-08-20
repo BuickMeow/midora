@@ -64,7 +64,7 @@
 | INV-053 | Canonical Compiled Result 必须从同一事件集冻结 Execution Projection 与 SMF Track Projection；消费者不得回读 Project 重建 Pure MIDI Track Name、Root membership、EOT、事件归属或顺序。 |
 | INV-054 | `Open MIDI as New Project` 只接受 SMF 1.0 Format 0/1 + TPQN，支持合法 Running Status、MIDI Port 和源 MTrk 多 Channel 拆分；导入边界在验证前对缺失 tick 0 Tempo/Time Signature、同 tick 重复 Tempo 和不可用 Track Name 执行第 23.11.5 节的确定性兼容归一化；候选必须 detached 且原子提交，失败保留当前 Project，初版不支持 Import into Current Project。 |
 | INV-055 | SMF 导出固定 Type 1 且不使用 Running Status；Track 顺序为 Conductor → Pure MIDI Tracks（Root/Track 顺序）→ Logical Unit Tracks（Port/Channel 顺序）。同 Root 跨 Pure MTrk 的顺序敏感同 tick 组合产生汇总 Warning，不得为兼容性改 tick、合并 Track 或改序。 |
-| INV-056 | `.midora` 分别以 `midi-channel-roots/mcr_<id>.pb` 和 `midi-tracks/mt_<id>.pb` 保存 Root/Track，Midi Segment 与 direct/opaque 数据内嵌 Track；Auto 分配、canonical 投影、checkpoint 和 PCM 不持久化。本次未发布开发格式为破坏性替换，不提供旧开发格式迁移或双写。 |
+| INV-056 | `.midora` 分别以 `midi-channel-roots/mcr_<id>.pb`、`midi-tracks/mt_<id>.pb` 与单 Track `midi-content/mt_<id>.mpk` 保存 Root/Track metadata 和 Direct/Opaque source pages；Auto 分配、canonical 投影、运行期 checkpoint 和 PCM 不持久化。本次未发布开发格式为破坏性替换，不提供旧开发格式迁移或双写。 |
 | INV-057 | SMF 多 Channel/Port MTrk 拆分时，每个 opaque SysEx/Meta 必须恰好归属一个同 source MTrk/effective Port 的派生 Track，不得复制或丢弃；无 Channel bucket 但必须保留 opaque/空结构时创建确定的 structure-only Track，纯 Conductor 的 Format 1 MTrk 0 除外。 |
 | INV-058 | Arrangement 的正式层级固定为唯一 Conductor 第一行，以及可混排的 Event Instrument / MIDI Channel Root 父节点；每个 Logical Track 必须且只能属于一个 Event Instrument，每个 Pure MIDI Track 必须且只能属于一个 Root。不存在可见 Library Folder、独立全局 child Track 顺序或 Unbound Logical Track。 |
 | INV-059 | 父节点 Copy/Paste/Duplicate 必须深拷贝完整 subtree、生成并重映射全部新稳定 ID；Root 副本强制 Auto。`Duplicate Instrument Only` 只复制定义。删除 non-empty parent 必须确认并以一个 Undo 原子级联 child，失败不得留下孤儿。 |
@@ -73,6 +73,14 @@
 | INV-062 | `.midora` 以有序 tagged Arrangement parent union 与 parent/child 双向稳定 ID 引用保存新层级；Event Instrument Folder、独立 Library/Logical/Root 顺序、Unbound 状态和 Project Panel 状态不得持久化。索引不能可信确定唯一父子关系时打开失败，不得静默降级。 |
 | INV-063 | Pure MIDI Segment 概览的 Note 与 non-Note event 使用独立手工渲染缓存；event 线固定绘制在 Note 上层、透明度 50%、最小宽度 1 device pixel，并按正式值域归一化高度。概览 tile/LOD 不得成为命中、编译或导出语义来源。 |
 | INV-064 | Conductor 在 Arrangement 固定第一行直接显示按事件类型着色、固定 device-size 的圆点概览，不使用 Segment；极端内容必须用可视 tile、按类型/像素列聚合与局部失效，Project End Marker 仍是专用竖线。 |
+| INV-065 | Pure MIDI source 使用 immutable out-of-core pages 与 copy-on-write edit overlay；正常打开、编译、播放准备和 UI 浏览的常驻内存由活动页/可见范围决定，而不得与 Project 总 Direct Note/Event 数线性增长。页必须同时受 record count 与 decoded bytes 双重上限约束，并有明确 owner、checksum、generation、LRU 上限和释放时机。 |
+| INV-066 | Canonical Compiled Result 的“一个正式事件集、Execution/SMF 两个冻结投影”是逻辑契约，不是连续数组契约。Pure MIDI 实现必须允许共享 immutable source pages、延迟 canonical range source、紧凑 consumer pages 与有界外部归并；任何正式消费者不得以全量 `ToArray()` 或第二套逐事件对象图作为入口。 |
+| INV-067 | 实时播放的滚动准备必须覆盖 source/canonical range query、tick→sample event batches、IPC committed-prefix publication 与 PCM 水位。启动只等待当前光标的状态恢复和 Startup 2 s 连续窗口；超过 Target High 6 s 的远处事件不得被完整物化、hash、复制或传给 Worker 后才允许播放。 |
+| INV-068 | 音频 IPC 的容量边界由 24-byte 追加事件记录、最多 16,384-record producer/reader batch、262,144-record Worker ring 和单调 committed prefix 定义，不按整 Project event count 或整计划文件大小定义。合法超大 Project 通过一个 session 私有事件文件与 seqlock control 增量传输；committed prefix大于ring时必须以最后已装载record frame公布排他的partial safe frontier，使renderer可推进并释放ring但不得越过不完整同frame后缀。截断、倒序、非法 committed snapshot、越界或 producer fault必须显式失败；reader/renderer不得互锁，也不能静默截断或提高无界上限。 |
+| INV-069 | Pure MIDI Arrangement/Piano Roll/Velocity/Event Lane 的正式 UI 数据入口是按 tick/pitch/lane 的范围查询与 LOD 聚合。打开视图、平移或缩放不得建立全 Segment render item array、全量 ID dictionary 或全量 interval index；命中与编辑必须查询 source/index，不能从 bitmap 反推语义。 |
+| INV-070 | Exact Root/Unit PCM 命中必须在 canonical/source range query 前抑制该 owner 覆盖范围内的 MIDI event demand；混合命中只生产 miss owner。Monitoring 使缓存失效时须从实际可听 frame 追加并原子发布新的 event generation，旧 generation 在 Worker 显式 Seek 前保持可读；切换后对本次 playback generation 单调保持 synthesis bypass，不得留下已跳过事件的未来缺口，也不得改变 Mute/Solo 或可听语义。 |
+| INV-071 | Pure MIDI source pack 的播放端点索引由局部有序、最多 16,384-record 的 NoteOn/NoteOff/Channel pages 构成；NoteOn目录携带页内最大end tick。窗口查询使用目录裁剪、有界 k-way merge、Channel-state checkpoint和只读取候选endpoint页的active-note查询，不得反复扫描从Segment起点到光标的全部历史或全部相交原始Note page。索引是 source 的确定性派生物，不能改变 canonical fingerprint与事件顺序。 |
+| INV-072 | Reusable PCM miss 必须以16,384-frame block直接顺序写入generation journal；仅完整、结构校验通过的generation可原子进入可命中索引。未完成/损坏journal只形成不可命中的dead bytes并由重整回收，不得将部分PCM block当作可恢复的SoundFont/BASS voice状态。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|
@@ -81,7 +89,7 @@
 | Project、保存入口、修改状态 | 第 3 章 |
 | tick、TPQ、Tempo、拍号、Marker | 第 4 章 |
 | Port、Channel Unit、资源不足 | 第 5 章 |
-| SF2、无 SF2、资源引用 | 第 6 章 |
+| SF2、无 SF2、资源引用、新建 Project 默认 Embedded SF2 本机偏好 | 第 6、17、19 章 |
 | Event Instrument 定义与内部索引 | 第 7、24 章 |
 | SubVoice、Note/CC/RPN 等事件 | 第 8 章 |
 | Logical Parameter、映射和 C# 函数 | 第 9 章 |
@@ -94,11 +102,12 @@
 | `.midora` package、schema、损坏与事务 | 第 16 章 |
 | 主窗口、导航和全局面板 | 第 17、24 章 |
 | 各编辑器工作区 | 第 18、24 章 |
-| New/Open/Open MIDI as New Project/Save/Export/Render 工作流 | 第 19、23 章 |
+| New/Open/Open MIDI as New Project/Save/Export/Render 工作流 | 第 17、19、23 章 |
 | 选择、拖放、验证、快捷键和 UI 验收 | 第 20 章 |
 | 初版排除项、实现自由度和变更控制 | 第 21 章 |
 | MIDI Channel Root、Pure MIDI Track、Midi Segment、SMF 导入、Running Status、Pure MIDI 导出拓扑 | 第 23 章 |
 | Arrangement 两级父子结构、父子复制删除、层级 Mute/Solo、跨类型 Note 剪贴板、Pure MIDI/Conductor 概览缓存 | 第 24 章 |
+| 极端 Pure MIDI page pack、分页 canonical、滚动事件 IPC、范围查询 UI | 第 12、13、16、18、23、24 章 |
 ## 22.3 推荐引用方式
 在讨论、设计记录、Issue 和代码评审中，应使用：
 ```text

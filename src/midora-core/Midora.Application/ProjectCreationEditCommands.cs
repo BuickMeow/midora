@@ -17,7 +17,7 @@ public static partial class ProjectDomainEditCommands
             }
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId.Value);
             string normalizedName = ProjectTextRules.NormalizeShortText(
-                name ?? instrument.Name,
+                name ?? "Logical Track",
                 allowEmpty: true,
                 nameof(name));
             int childIndex = insertionIndex ?? instrument.LogicalTrackIds.Count;

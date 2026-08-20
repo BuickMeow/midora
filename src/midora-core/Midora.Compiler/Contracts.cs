@@ -185,6 +185,163 @@ public readonly record struct CanonicalMidiEvent(
     int SmfTrackOrder = int.MaxValue,
     long SmfEventOrder = long.MaxValue);
 
+public sealed class CanonicalMidiEventPage
+{
+    public const int MaximumRecordCount = 16_384;
+    private readonly CanonicalMidiEvent[] _events;
+
+    public CanonicalMidiEventPage(CanonicalMidiEvent[] events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+        if (events.Length is <= 0 or > MaximumRecordCount)
+            throw new ArgumentOutOfRangeException(nameof(events));
+        _events = events;
+        StartTick = events[0].Tick;
+        EndTick = events[^1].Tick == long.MaxValue ? long.MaxValue : events[^1].Tick + 1;
+    }
+
+    public long StartTick { get; }
+    public long EndTick { get; }
+    public ReadOnlyMemory<CanonicalMidiEvent> Events => _events;
+    public IReadOnlyList<CanonicalMidiEvent> Items => _events;
+}
+
+public interface ICanonicalMidiEventPageSource
+{
+    long EventCount { get; }
+    long NoteOnEventCount { get; }
+    string ContentFingerprint { get; }
+
+    IEnumerable<CanonicalMidiEventPage> QueryPages(
+        long startTick,
+        long endTick,
+        bool includeStateAtStart,
+        CancellationToken cancellationToken = default);
+}
+
+public readonly record struct CanonicalMidiRenderEvent(
+    long Tick,
+    byte ZeroBasedPort,
+    MidiMessage Message,
+    MidoraId TrackId,
+    MidoraId MonitoringSourceId);
+
+public sealed class CanonicalMidiRenderEventPage
+{
+    public const int MaximumRecordCount = 16_384;
+    private readonly CanonicalMidiRenderEvent[] _events;
+
+    public CanonicalMidiRenderEventPage(CanonicalMidiRenderEvent[] events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+        if (events.Length is <= 0 or > MaximumRecordCount)
+            throw new ArgumentOutOfRangeException(nameof(events));
+        _events = events;
+    }
+
+    public IReadOnlyList<CanonicalMidiRenderEvent> Items => _events;
+}
+
+public interface ICanonicalMidiRenderPageSource
+{
+    IEnumerable<CanonicalMidiRenderEventPage> QueryRenderPages(
+        long startTick,
+        long endTick,
+        bool includeStateAtStart,
+        CancellationToken cancellationToken = default);
+}
+
+public interface ICanonicalDemandFilteredMidiRenderPageSource
+{
+    IEnumerable<CanonicalMidiRenderEventPage> QueryRenderPages(
+        long startTick,
+        long endTick,
+        bool includeStateAtStart,
+        IReadOnlySet<MidoraId> demandedMonitoringSourceIds,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed class CanonicalOpaqueMidiEventPage
+{
+    public const int MaximumRecordCount = 16_384;
+    private readonly CanonicalOpaqueMidiEvent[] _events;
+
+    public CanonicalOpaqueMidiEventPage(CanonicalOpaqueMidiEvent[] events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+        if (events.Length is <= 0 or > MaximumRecordCount)
+            throw new ArgumentOutOfRangeException(nameof(events));
+        _events = events;
+    }
+
+    public ReadOnlyMemory<CanonicalOpaqueMidiEvent> Events => _events;
+    public IReadOnlyList<CanonicalOpaqueMidiEvent> Items => _events;
+}
+
+public readonly record struct CanonicalSmfTrackChannelEvent(
+    MidoraId ExportTrackId,
+    long Tick,
+    byte ZeroBasedPort,
+    byte ZeroBasedChannel,
+    MidiMessage Message,
+    CanonicalEventRole Role,
+    long EventOrder,
+    MidoraId SourceObjectId);
+
+public sealed class CanonicalSmfTrackChannelEventPage
+{
+    public const int MaximumRecordCount = 16_384;
+    private readonly CanonicalSmfTrackChannelEvent[] _events;
+
+    public CanonicalSmfTrackChannelEventPage(CanonicalSmfTrackChannelEvent[] events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+        if (events.Length is <= 0 or > MaximumRecordCount)
+            throw new ArgumentOutOfRangeException(nameof(events));
+        _events = events;
+    }
+
+    public IReadOnlyList<CanonicalSmfTrackChannelEvent> Items => _events;
+}
+
+public interface ICanonicalSmfTrackPageSource
+{
+    IEnumerable<CanonicalSmfTrackChannelEventPage> QueryTrackChannelEventPages(
+        MidoraId exportTrackId,
+        long startTick,
+        long endTick,
+        CancellationToken cancellationToken = default);
+
+    IEnumerable<CanonicalOpaqueMidiEventPage> QueryTrackOpaqueEventPages(
+        MidoraId exportTrackId,
+        long startTick,
+        long endTick,
+        CancellationToken cancellationToken = default);
+}
+
+public readonly record struct CanonicalMidiPresetReference(
+    byte ZeroBasedPort,
+    byte ZeroBasedChannel,
+    byte Bank,
+    byte Program);
+
+public sealed record CanonicalPureMidiAudioFragmentDescriptor(
+    MidoraId MidiChannelRootId,
+    MidoraId GroupId,
+    long StartTick,
+    long EndTick,
+    byte ZeroBasedPort,
+    byte ZeroBasedChannel,
+    MidiChannelMode ChannelMode,
+    string SemanticFingerprint,
+    IReadOnlyList<MidoraId> ContributingTrackIds);
+
+public interface ICanonicalPureMidiAudioMetadataSource
+{
+    IReadOnlyList<CanonicalPureMidiAudioFragmentDescriptor> PureMidiAudioFragments { get; }
+    IReadOnlyList<CanonicalMidiPresetReference> PureMidiPresetReferences { get; }
+}
+
 public readonly record struct ChannelUnitAllocation(
     MidoraId TrackId,
     MidoraId SegmentId,
@@ -298,6 +455,10 @@ public sealed class CanonicalCompiledResult
     private readonly CompilerDiagnostic[] _diagnostics;
     private readonly CanonicalSmfTrackDescriptor[] _smfTracks;
     private readonly CanonicalOpaqueMidiEvent[] _opaqueMidiEvents;
+    private readonly ICanonicalMidiEventPageSource? _pagedEventSource;
+    private readonly ICanonicalMidiRenderPageSource? _pagedRenderSource;
+    private readonly ICanonicalSmfTrackPageSource? _pagedSmfTrackSource;
+    private readonly ICanonicalPureMidiAudioMetadataSource? _pureMidiAudioMetadataSource;
 
     internal CanonicalCompiledResult(
         int ticksPerQuarterNote,
@@ -312,7 +473,8 @@ public sealed class CanonicalCompiledResult
         long fingerprint,
         CompilationStatistics statistics,
         CanonicalSmfTrackDescriptor[]? smfTracks = null,
-        CanonicalOpaqueMidiEvent[]? opaqueMidiEvents = null)
+        CanonicalOpaqueMidiEvent[]? opaqueMidiEvents = null,
+        ICanonicalMidiEventPageSource? pagedEventSource = null)
     {
         TicksPerQuarterNote = ticksPerQuarterNote;
         Context = context ?? throw new ArgumentNullException(nameof(context));
@@ -330,6 +492,10 @@ public sealed class CanonicalCompiledResult
         Statistics = statistics;
         _smfTracks = smfTracks ?? [];
         _opaqueMidiEvents = opaqueMidiEvents ?? [];
+        _pagedEventSource = pagedEventSource;
+        _pagedRenderSource = pagedEventSource as ICanonicalMidiRenderPageSource;
+        _pagedSmfTrackSource = pagedEventSource as ICanonicalSmfTrackPageSource;
+        _pureMidiAudioMetadataSource = pagedEventSource as ICanonicalPureMidiAudioMetadataSource;
     }
 
     public int TicksPerQuarterNote { get; }
@@ -344,11 +510,156 @@ public sealed class CanonicalCompiledResult
     public CompilationStatistics Statistics { get; }
     public CanonicalConductor Conductor { get; }
     public ReadOnlySpan<CanonicalMidiEvent> Events => _events;
+    public bool HasPagedEvents => _pagedEventSource is not null;
+    public long TotalEventCount => checked(_events.LongLength + (_pagedEventSource?.EventCount ?? 0));
+    public long TotalNoteOnEventCount => checked(
+        CountNoteOns(_events) + (_pagedEventSource?.NoteOnEventCount ?? 0));
     public ReadOnlySpan<CanonicalTempo> Tempos => Conductor.Tempos;
     public ReadOnlySpan<ChannelUnitAllocation> Allocations => _allocations;
     public IReadOnlyList<CompilerDiagnostic> Diagnostics => _diagnostics;
     public ReadOnlySpan<CanonicalSmfTrackDescriptor> SmfTracks => _smfTracks;
     public ReadOnlySpan<CanonicalOpaqueMidiEvent> OpaqueMidiEvents => _opaqueMidiEvents;
+    public IReadOnlyList<CanonicalPureMidiAudioFragmentDescriptor> PureMidiAudioFragments =>
+        _pureMidiAudioMetadataSource?.PureMidiAudioFragments ?? [];
+    public IReadOnlyList<CanonicalMidiPresetReference> PureMidiPresetReferences =>
+        _pureMidiAudioMetadataSource?.PureMidiPresetReferences ?? [];
+
+    public IEnumerable<CanonicalMidiEventPage> QueryEventPages(
+        long startTick,
+        long endTick,
+        bool includeStateAtStart = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (startTick < StartTick || endTick > EndTick || endTick <= startTick)
+            throw new ArgumentOutOfRangeException(nameof(startTick));
+
+        IEnumerable<CanonicalMidiEvent> inMemory = _events
+            .Where(value => value.Tick >= startTick
+                && (value.Tick < endTick || endTick == EndTick && value.Tick == endTick));
+        IEnumerable<CanonicalMidiEvent> paged = _pagedEventSource is null
+            ? []
+            : _pagedEventSource.QueryPages(
+                    startTick,
+                    endTick,
+                    includeStateAtStart,
+                    cancellationToken)
+                .SelectMany(value => value.Items);
+        using IEnumerator<CanonicalMidiEvent> left = inMemory.GetEnumerator();
+        using IEnumerator<CanonicalMidiEvent> right = paged.GetEnumerator();
+        bool hasLeft = left.MoveNext();
+        bool hasRight = right.MoveNext();
+        List<CanonicalMidiEvent> page = new(CanonicalMidiEventPage.MaximumRecordCount);
+        while (hasLeft || hasRight)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            bool takeLeft = !hasRight || hasLeft && Compare(left.Current, right.Current) <= 0;
+            page.Add(takeLeft ? left.Current : right.Current);
+            if (takeLeft) hasLeft = left.MoveNext();
+            else hasRight = right.MoveNext();
+            if (page.Count == CanonicalMidiEventPage.MaximumRecordCount)
+            {
+                yield return new(page.ToArray());
+                page.Clear();
+            }
+        }
+        if (page.Count != 0) yield return new(page.ToArray());
+    }
+
+    public IEnumerable<CanonicalMidiEventPage> QueryPagedEventPages(
+        long startTick,
+        long endTick,
+        bool includeStateAtStart = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (startTick < StartTick || endTick > EndTick || endTick <= startTick)
+            throw new ArgumentOutOfRangeException(nameof(startTick));
+        return _pagedEventSource?.QueryPages(
+                startTick,
+                endTick,
+                includeStateAtStart,
+                cancellationToken)
+            ?? [];
+    }
+
+    public IEnumerable<CanonicalMidiRenderEventPage> QueryMidiRenderEventPages(
+        long startTick,
+        long endTick,
+        bool includeStateAtStart = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (startTick < StartTick || endTick > EndTick || endTick <= startTick)
+            throw new ArgumentOutOfRangeException(nameof(startTick));
+        return _pagedRenderSource?.QueryRenderPages(
+                startTick,
+                endTick,
+                includeStateAtStart,
+                cancellationToken)
+            ?? [];
+    }
+
+    public IEnumerable<CanonicalMidiRenderEventPage> QueryMidiRenderEventPages(
+        long startTick,
+        long endTick,
+        bool includeStateAtStart,
+        IReadOnlySet<MidoraId> demandedMonitoringSourceIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(demandedMonitoringSourceIds);
+        if (startTick < StartTick || endTick > EndTick || endTick <= startTick)
+            throw new ArgumentOutOfRangeException(nameof(startTick));
+        if (_pagedRenderSource is ICanonicalDemandFilteredMidiRenderPageSource filtered)
+        {
+            return filtered.QueryRenderPages(
+                startTick,
+                endTick,
+                includeStateAtStart,
+                demandedMonitoringSourceIds,
+                cancellationToken);
+        }
+        return _pagedRenderSource?.QueryRenderPages(
+                startTick,
+                endTick,
+                includeStateAtStart,
+                cancellationToken)
+            ?? [];
+    }
+
+    public IEnumerable<CanonicalSmfTrackChannelEventPage> QuerySmfTrackChannelEventPages(
+        MidoraId exportTrackId,
+        CancellationToken cancellationToken = default)
+    {
+        if (exportTrackId == default) throw new ArgumentOutOfRangeException(nameof(exportTrackId));
+        IEnumerable<CanonicalSmfTrackChannelEvent> inMemory = _events
+            .Where(value => value.ExportTrackId == exportTrackId)
+            .Select(ToSmfTrackEvent);
+        IEnumerable<CanonicalSmfTrackChannelEvent> paged = _pagedSmfTrackSource is null
+            ? []
+            : _pagedSmfTrackSource.QueryTrackChannelEventPages(
+                    exportTrackId,
+                    StartTick,
+                    EndTick,
+                    cancellationToken)
+                .SelectMany(value => value.Items);
+        return PageSmf(Merge(inMemory, paged, CompareSmf), cancellationToken);
+    }
+
+    public IEnumerable<CanonicalOpaqueMidiEventPage> QuerySmfTrackOpaqueEventPages(
+        MidoraId exportTrackId,
+        CancellationToken cancellationToken = default)
+    {
+        if (exportTrackId == default) throw new ArgumentOutOfRangeException(nameof(exportTrackId));
+        IEnumerable<CanonicalOpaqueMidiEvent> inMemory = _opaqueMidiEvents
+            .Where(value => value.ExportTrackId == exportTrackId);
+        IEnumerable<CanonicalOpaqueMidiEvent> paged = _pagedSmfTrackSource is null
+            ? []
+            : _pagedSmfTrackSource.QueryTrackOpaqueEventPages(
+                    exportTrackId,
+                    StartTick,
+                    EndTick,
+                    cancellationToken)
+                .SelectMany(value => value.Items);
+        return PageOpaque(Merge(inMemory, paged, CompareOpaque), cancellationToken);
+    }
 
     internal CanonicalCompiledResult CreatePlaybackView()
     {
@@ -378,21 +689,174 @@ public sealed class CanonicalCompiledResult
             Fingerprint,
             Statistics,
             _smfTracks,
-            _opaqueMidiEvents);
+            _opaqueMidiEvents,
+            _pagedEventSource);
+    }
+
+    private static long CountNoteOns(ReadOnlySpan<CanonicalMidiEvent> events)
+    {
+        long result = 0;
+        foreach (CanonicalMidiEvent value in events)
+            if (value.Message.MessageType == MidiMessageType.NoteOn && value.Message.Byte2 != 0)
+                result++;
+        return result;
+    }
+
+    private static int Compare(CanonicalMidiEvent x, CanonicalMidiEvent y)
+    {
+        int value = x.Tick.CompareTo(y.Tick);
+        if (value != 0) return value;
+        value = x.Role.CompareTo(y.Role);
+        if (value != 0) return value;
+        value = x.ZeroBasedPort.CompareTo(y.ZeroBasedPort);
+        if (value != 0) return value;
+        value = x.ZeroBasedChannel.CompareTo(y.ZeroBasedChannel);
+        if (value != 0) return value;
+        if (x.Role == CanonicalEventRole.DirectMidi
+            && y.Role == CanonicalEventRole.DirectMidi)
+        {
+            value = x.SmfTrackOrder.CompareTo(y.SmfTrackOrder);
+            if (value != 0) return value;
+            value = x.SmfEventOrder.CompareTo(y.SmfEventOrder);
+            if (value != 0) return value;
+        }
+        value = x.StableOrder.CompareTo(y.StableOrder);
+        if (value != 0) return value;
+        value = x.Source.TrackId.CompareTo(y.Source.TrackId);
+        if (value != 0) return value;
+        value = x.Source.SegmentId.CompareTo(y.Source.SegmentId);
+        if (value != 0) return value;
+        value = x.Source.DirectMidiObjectId.CompareTo(y.Source.DirectMidiObjectId);
+        if (value != 0) return value;
+        value = x.ExportTrackId.CompareTo(y.ExportTrackId);
+        if (value != 0) return value;
+        value = x.SemanticTargetKey.CompareTo(y.SemanticTargetKey);
+        if (value != 0) return value;
+        value = x.SemanticGroup.CompareTo(y.SemanticGroup);
+        if (value != 0) return value;
+        return x.Message.PackedValue.CompareTo(y.Message.PackedValue);
+    }
+
+    private static int CompareOpaque(CanonicalOpaqueMidiEvent x, CanonicalOpaqueMidiEvent y)
+    {
+        int value = x.Tick.CompareTo(y.Tick);
+        if (value != 0) return value;
+        value = x.StableOrder.CompareTo(y.StableOrder);
+        if (value != 0) return value;
+        value = x.SmfTrackOrder.CompareTo(y.SmfTrackOrder);
+        if (value != 0) return value;
+        return x.Source.DirectMidiObjectId.CompareTo(y.Source.DirectMidiObjectId);
+    }
+
+    private static CanonicalSmfTrackChannelEvent ToSmfTrackEvent(CanonicalMidiEvent value) => new(
+        value.ExportTrackId,
+        value.Tick,
+        value.ZeroBasedPort,
+        value.ZeroBasedChannel,
+        value.Message,
+        value.Role,
+        value.SmfEventOrder,
+        value.Source.DirectMidiObjectId);
+
+    private static int CompareSmf(
+        CanonicalSmfTrackChannelEvent x,
+        CanonicalSmfTrackChannelEvent y)
+    {
+        int value = x.Tick.CompareTo(y.Tick);
+        if (value != 0) return value;
+        value = x.EventOrder.CompareTo(y.EventOrder);
+        if (value != 0) return value;
+        value = SmfKindOrder(x.Role).CompareTo(SmfKindOrder(y.Role));
+        if (value != 0) return value;
+        return x.SourceObjectId.CompareTo(y.SourceObjectId);
+
+        static int SmfKindOrder(CanonicalEventRole role) => role switch
+        {
+            CanonicalEventRole.Reset => 0,
+            CanonicalEventRole.RootBoundaryCleanup => 2,
+            _ => 1
+        };
+    }
+
+    private static IEnumerable<T> Merge<T>(
+        IEnumerable<T> leftSource,
+        IEnumerable<T> rightSource,
+        Func<T, T, int> compare)
+    {
+        using IEnumerator<T> left = leftSource.GetEnumerator();
+        using IEnumerator<T> right = rightSource.GetEnumerator();
+        bool hasLeft = left.MoveNext();
+        bool hasRight = right.MoveNext();
+        while (hasLeft || hasRight)
+        {
+            bool takeLeft = !hasRight || hasLeft && compare(left.Current, right.Current) <= 0;
+            yield return takeLeft ? left.Current : right.Current;
+            if (takeLeft) hasLeft = left.MoveNext();
+            else hasRight = right.MoveNext();
+        }
+    }
+
+    private static IEnumerable<CanonicalMidiEventPage> Page(
+        IEnumerable<CanonicalMidiEvent> source,
+        CancellationToken cancellationToken)
+    {
+        List<CanonicalMidiEvent> page = new(CanonicalMidiEventPage.MaximumRecordCount);
+        foreach (CanonicalMidiEvent value in source)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            page.Add(value);
+            if (page.Count != CanonicalMidiEventPage.MaximumRecordCount) continue;
+            yield return new(page.ToArray());
+            page.Clear();
+        }
+        if (page.Count != 0) yield return new(page.ToArray());
+    }
+
+    private static IEnumerable<CanonicalSmfTrackChannelEventPage> PageSmf(
+        IEnumerable<CanonicalSmfTrackChannelEvent> source,
+        CancellationToken cancellationToken)
+    {
+        List<CanonicalSmfTrackChannelEvent> page = new(
+            CanonicalSmfTrackChannelEventPage.MaximumRecordCount);
+        foreach (CanonicalSmfTrackChannelEvent value in source)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            page.Add(value);
+            if (page.Count != CanonicalSmfTrackChannelEventPage.MaximumRecordCount) continue;
+            yield return new(page.ToArray());
+            page.Clear();
+        }
+        if (page.Count != 0) yield return new(page.ToArray());
+    }
+
+    private static IEnumerable<CanonicalOpaqueMidiEventPage> PageOpaque(
+        IEnumerable<CanonicalOpaqueMidiEvent> source,
+        CancellationToken cancellationToken)
+    {
+        List<CanonicalOpaqueMidiEvent> page = new(CanonicalOpaqueMidiEventPage.MaximumRecordCount);
+        foreach (CanonicalOpaqueMidiEvent value in source)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            page.Add(value);
+            if (page.Count != CanonicalOpaqueMidiEventPage.MaximumRecordCount) continue;
+            yield return new(page.ToArray());
+            page.Clear();
+        }
+        if (page.Count != 0) yield return new(page.ToArray());
     }
 }
 
 public readonly record struct CompilationStatistics(
     int SourceTrackCount,
     int ExpandedInstanceCount,
-    int EventCount,
+    long EventCount,
     int PeakChannelUnitCount)
 {
     public int ExpandedSegmentCount { get; init; }
     public int ParticipatingEventInstrumentCount { get; init; }
     public int ParticipatingSubVoiceCount { get; init; }
     public int UsedPortCount { get; init; }
-    public int NoteOnEventCount { get; init; }
+    public long NoteOnEventCount { get; init; }
     public ResourceShortageDetails? ResourceShortage { get; init; }
     public int ReservedMidiRootUnitCount { get; init; }
     public int AllocatedMidiRootUnitCount { get; init; }

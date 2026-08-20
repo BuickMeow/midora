@@ -7,13 +7,15 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
     private readonly Entry[] _entries;
     private ReusableAudioReadLease? _readLease;
     private AudioCacheSessionStore.AudioRecoverySpool? _spool;
+    private string? _journalDirectory;
 
     private AudioSegmentCacheStaging(
         MidiRenderPlan plan,
         AudioCacheSessionStore.AudioRecoverySpool spool,
         Entry[] entries,
         ReusableAudioReadLease? readLease,
-        string? readManifestPath)
+        string? readManifestPath,
+        string? journalDirectory)
     {
         Plan = plan;
         _spool = spool;
@@ -21,6 +23,7 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
         _entries = entries;
         _readLease = readLease;
         ReadManifestPath = readManifestPath;
+        _journalDirectory = journalDirectory;
     }
 
     public MidiRenderPlan Plan { get; }
@@ -48,6 +51,8 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
         AudioFormat format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
         bool retentionEnabled = cache.AudioCacheSnapshot?.RetentionState
             == AudioCacheRetentionState.Enabled;
+        bool usePackJournal = retentionEnabled
+            && cache.SupportsReusableAudioPackJournals;
         string[] keys = new string[plan.Segments.Length];
         AudioCacheGenerationBinding[] generations =
             new AudioCacheGenerationBinding[plan.Segments.Length];
@@ -71,10 +76,11 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
         for (int index = 0; index < plan.Segments.Length; index++)
         {
             MidiSegmentRenderPlan segment = plan.Segments[index];
-            if (readLease?.Entries.TryGetValue(
+            if (!usePackJournal
+                && (readLease?.Entries.TryGetValue(
                     keys[index],
                     out ReusableAudioReadEntry? directEntry) != true
-                || directEntry!.PayloadLength != segment.PcmPayloadByteCount)
+                    || directEntry!.PayloadLength != segment.PcmPayloadByteCount))
             {
                 stagingByteLength = checked(
                     stagingByteLength + segment.PcmPayloadByteCount);
@@ -140,7 +146,7 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
                     segments[index] = Clone(segment, null, -1, false);
                     continue;
                 }
-                if (!hit)
+                if (!hit && !usePackJournal)
                 {
                     staging.Position = payloadOffset;
                     staging.SetLength(payloadOffset);
@@ -176,7 +182,12 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
             plan.SourceIds,
             plan.InitiallyDisabledSourceIndices,
             plan.UnitFragments,
-            segments);
+            segments,
+            plan.UnitDescriptors,
+            plan.EventPageProvider,
+            plan.EventStreamDescriptor,
+            plan.CacheSourceBindings,
+            plan.ReferencedPresetKeys);
         string? readManifestPath = null;
         if (directEntries.Count != 0)
         {
@@ -185,12 +196,19 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
                 "segment-cache-read.marm");
             ReusableAudioReadManifest.Write(readManifestPath, directEntries);
         }
+        string? journalDirectory = null;
+        if (usePackJournal && entries.Any(static entry => !entry.Hit))
+        {
+            journalDirectory = AudioCachePackJournal.GetDirectoryPath(spool.Path);
+            Directory.CreateDirectory(journalDirectory);
+        }
         return new(
             stagedPlan,
             spool,
             entries.ToArray(),
             readLease,
-            readManifestPath);
+            readManifestPath,
+            journalDirectory);
     }
 
     public void PublishCompleted(
@@ -220,6 +238,15 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
         {
             return;
         }
+        string? journalDirectory = Interlocked.Exchange(ref _journalDirectory, null);
+        if (journalDirectory is not null)
+        {
+            cache.AdoptReusableAudioPackJournals(
+                spool,
+                journalDirectory,
+                slices.Select(static slice => slice.Key).ToArray());
+            return;
+        }
         cache.QueueReusableAudioBatch(spool, slices);
     }
 
@@ -230,6 +257,8 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
         AudioCacheSessionStore.AudioRecoverySpool? spool =
             Interlocked.Exchange(ref _spool, null);
         spool?.Dispose();
+        string? journalDirectory = Interlocked.Exchange(ref _journalDirectory, null);
+        TryDeleteDirectory(journalDirectory);
         TryDelete(FilePath + ".invalidated");
     }
 
@@ -283,6 +312,27 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
         try
         {
             File.Delete(path);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private static void TryDeleteDirectory(string? path)
+    {
+        if (path is null)
+        {
+            return;
+        }
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
         }
         catch (IOException)
         {

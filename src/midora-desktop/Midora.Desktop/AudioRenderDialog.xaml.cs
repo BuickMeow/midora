@@ -14,12 +14,12 @@ public partial class AudioRenderDialog : Window
 
     public AudioRenderDialog(
         AudioRenderProjectSettings settings,
-        IEnumerable<LogicalTrack> tracks,
+        MidoraProject project,
         string initialDirectory,
         string suggestedWholeMixName)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        ArgumentNullException.ThrowIfNull(tracks);
+        ArgumentNullException.ThrowIfNull(project);
         InitializeComponent();
         _suggestedWholeMixName = suggestedWholeMixName;
         ModeBox.ItemsSource = Enum.GetValues<AudioRenderMode>();
@@ -29,15 +29,27 @@ public partial class AudioRenderDialog : Window
         StartTickBox.Text = (settings.ManualStartTick ?? 0).ToString(CultureInfo.InvariantCulture);
         EndTickBox.Text = settings.ManualEndTick?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         SelectedTracksCheck.IsChecked = settings.TrackSelectionMode == ProjectTrackSelectionMode.ExplicitLogicalTrackIds;
-        LogicalTrack[] trackArray = tracks.ToArray();
+        LogicalTrack[] trackArray = project.LogicalTracksInArrangementOrder().ToArray();
         for (int index = 0; index < trackArray.Length; index++)
         {
             LogicalTrack track = trackArray[index];
             TrackRows.Add(new(
                 track.Id,
-                string.IsNullOrWhiteSpace(track.Name) ? $"Logical Track {index + 1}" : track.Name,
+                "Logical · " + (string.IsNullOrWhiteSpace(track.Name) ? $"Logical Track {index + 1}" : track.Name),
                 settings.TrackSelectionMode != ProjectTrackSelectionMode.ExplicitLogicalTrackIds
-                    || settings.ExplicitLogicalTrackIds.Contains(track.Id)));
+                    || settings.ExplicitLogicalTrackIds.Contains(track.Id),
+                isPureMidi: false));
+        }
+        PureMidiTrack[] midiTrackArray = project.PureMidiTracksInArrangementOrder().ToArray();
+        for (int index = 0; index < midiTrackArray.Length; index++)
+        {
+            PureMidiTrack track = midiTrackArray[index];
+            TrackRows.Add(new(
+                track.Id,
+                "MIDI · " + (string.IsNullOrWhiteSpace(track.Name) ? $"MIDI Track {index + 1}" : track.Name),
+                settings.TrackSelectionMode != ProjectTrackSelectionMode.ExplicitLogicalTrackIds
+                    || settings.ExplicitLogicalTrackIds.Contains(track.Id),
+                isPureMidi: true));
         }
         OutputPathBox.Text = settings.Mode == AudioRenderMode.WholeMix
             ? Path.Combine(initialDirectory, suggestedWholeMixName)
@@ -56,6 +68,11 @@ public partial class AudioRenderDialog : Window
     private void OnModeChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (OutputPathBox is null || ModeBox.SelectedItem is not AudioRenderMode mode) return;
+        System.ComponentModel.ICollectionView trackView =
+            System.Windows.Data.CollectionViewSource.GetDefaultView(TrackRows);
+        trackView.Filter = value => value is TrackSelectionRow row
+            && (mode == AudioRenderMode.WholeMix || !row.IsPureMidi);
+        trackView.Refresh();
         string directory = mode == AudioRenderMode.WholeMix
             ? Path.GetDirectoryName(OutputPathBox.Text) ?? string.Empty
             : File.Exists(OutputPathBox.Text)
@@ -128,16 +145,22 @@ public partial class AudioRenderDialog : Window
             ValidationText.Text = "Maximum sample voices must be an integer from 1 through 16,777,216.";
             return;
         }
+        AudioRenderMode mode = (AudioRenderMode)ModeBox.SelectedItem;
         HashSet<MidoraId>? selectedTrackIds = SelectedTracksCheck.IsChecked == true
-            ? TrackRows.Where(item => item.IsSelected).Select(item => item.Id).ToHashSet()
+            ? TrackRows
+                .Where(item => item.IsSelected && (mode == AudioRenderMode.WholeMix || !item.IsPureMidi))
+                .Select(item => item.Id)
+                .ToHashSet()
             : null;
         if (selectedTrackIds is { Count: 0 })
         {
-            ValidationText.Text = "Check at least one Logical Track, or disable explicit Track selection.";
+            ValidationText.Text = mode == AudioRenderMode.WholeMix
+                ? "Check at least one Logical or Pure MIDI Track, or disable explicit Track selection."
+                : "Check at least one Logical Track, or disable explicit Track selection.";
             return;
         }
         Options = new(
-            (AudioRenderMode)ModeBox.SelectedItem,
+            mode,
             OutputPathBox.Text,
             start,
             end,

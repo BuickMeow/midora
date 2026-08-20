@@ -15,6 +15,8 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
     private readonly string _ownedTemporaryDirectory;
     private readonly SharedAudioFrameRingBuffer _ring;
     private readonly int _producerWorkFrameCount;
+    private readonly long _totalFrameCount;
+    private readonly MidiRenderEventStreamProducer? _eventStreamProducer;
     private Process? _process;
     private Thread? _monitorThread;
     private readonly BassMidiChildConsumptionMode _consumptionMode;
@@ -79,6 +81,7 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
         string mapName = $"Midora.Audio.{Guid.NewGuid():N}";
         string controlPipeName = $"Midora.Audio.Control.{Guid.NewGuid():N}";
         AudioFormat format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
+        _totalFrameCount = plan.TotalFrameCount;
         int capacityFrames = InitialReleaseAudioRuntimePolicy.BufferMillisecondsToFrameCapacity(
             plan.SampleRate,
             ipcAudioBufferMilliseconds);
@@ -88,6 +91,13 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
         try
         {
             Directory.CreateDirectory(_ownedTemporaryDirectory);
+            _eventStreamProducer = MidiRenderEventStreamProducer.Create(
+                plan,
+                _ownedTemporaryDirectory);
+            if (_eventStreamProducer is not null)
+            {
+                plan = plan.WithEventStreamDescriptor(_eventStreamProducer.Descriptor);
+            }
             string planPath = Path.Combine(_ownedTemporaryDirectory, "compiled-audio-plan.mdap");
             MidiRenderPlanFile.Write(planPath, plan);
             createdRing = SharedAudioFrameRingBuffer.Create(mapName, format, capacityFrames);
@@ -145,6 +155,7 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
             }
 
             createdRing?.Dispose();
+            _eventStreamProducer?.Dispose();
             ReleaseControlPipe();
             CleanupOwnedTemporaryDirectory();
             throw;
@@ -201,6 +212,13 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
             return;
         }
 
+        _eventStreamProducer?.ApplyMonitoringCommands(
+            commands,
+            Math.Clamp(
+                _ring.ProducedFrameCount - _ring.AvailableFrameCount,
+                0,
+                _totalFrameCount));
+
         lock (_controlWriteSync)
         {
             try
@@ -255,6 +273,7 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
         _process?.Dispose();
         ReleaseControlPipe();
         _ring.Dispose();
+        _eventStreamProducer?.Dispose();
         CleanupOwnedTemporaryDirectory();
     }
 

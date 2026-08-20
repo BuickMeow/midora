@@ -86,10 +86,18 @@ public sealed class PureMidiTrack
 
 public sealed class MidiSegment
 {
+    private readonly DirectMidiNoteCollection _notes;
+    private readonly DirectMidiChannelEventCollection _channelEvents;
+    private readonly OpaqueMidiEventCollection _opaqueEvents;
+    private IPureMidiSegmentContentSource? _pagedContentSource;
+
     public MidiSegment(MidoraProject project)
     {
         ArgumentNullException.ThrowIfNull(project);
         Id = project.AllocateStableId();
+        _notes = new(project);
+        _channelEvents = new(project);
+        _opaqueEvents = new(project);
     }
 
     internal MidiSegment(MidoraProject project, MidoraId preservedId)
@@ -97,22 +105,78 @@ public sealed class MidiSegment
         ArgumentNullException.ThrowIfNull(project);
         if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
         Id = preservedId;
+        _notes = new(project);
+        _channelEvents = new(project);
+        _opaqueEvents = new(project);
     }
 
     public MidoraId Id { get; init; }
     public long ProjectStartTick { get; set; }
     public long LengthTicks { get; set; }
     public long ContentOffsetTick { get; set; }
-    public List<DirectMidiNote> Notes { get; } = [];
-    public List<DirectMidiChannelEvent> ChannelEvents { get; } = [];
-    public List<OpaqueMidiEvent> OpaqueEvents { get; } = [];
+    public DirectMidiNoteCollection Notes => _notes;
+    public DirectMidiChannelEventCollection ChannelEvents => _channelEvents;
+    public OpaqueMidiEventCollection OpaqueEvents => _opaqueEvents;
 
     public TickRange ProjectRange => new(ProjectStartTick, checked(ProjectStartTick + LengthTicks));
     public long ContentEndTick => checked(ContentOffsetTick + LengthTicks);
+
+    public bool UsesPagedContent => _notes.HasPagedSource
+        || _channelEvents.HasPagedSource
+        || _opaqueEvents.HasPagedSource;
+
+    public void AttachPagedContent(IPureMidiSegmentContentSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (_notes.Count != 0 || _channelEvents.Count != 0 || _opaqueEvents.Count != 0)
+        {
+            throw new InvalidOperationException(
+                "Paged MIDI content can only be attached before editable records are added.");
+        }
+
+        _pagedContentSource = source;
+        _notes.AttachSource(source);
+        _channelEvents.AttachSource(source);
+        _opaqueEvents.AttachSource(source);
+    }
+
+    public string? PagedContentFingerprint => _pagedContentSource?.ContentFingerprint;
+
+    internal PureMidiContentPack? TryGetPristineContentPack()
+    {
+        if (!_notes.IsPristinePagedSource
+            || !_channelEvents.IsPristinePagedSource
+            || !_opaqueEvents.IsPristinePagedSource
+            || !ReferenceEquals(_notes.PagedSource, _channelEvents.PagedSource)
+            || !ReferenceEquals(_notes.PagedSource, _opaqueEvents.PagedSource))
+        {
+            return null;
+        }
+
+        return (_pagedContentSource as IPureMidiContentPackSegmentSource)?.Owner;
+    }
+
+    internal void CloneContentTo(MidiSegment target, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        target._pagedContentSource = _pagedContentSource;
+        _notes.CloneTo(target._notes, cancellationToken);
+        _channelEvents.CloneTo(target._channelEvents, cancellationToken);
+        _opaqueEvents.CloneTo(target._opaqueEvents, cancellationToken);
+    }
 }
 
 public sealed class DirectMidiNote
 {
+    private IDirectMidiNoteChangeSink? _changeSink;
+    private long _startTick;
+    private long _lengthTicks;
+    private int _key = 60;
+    private int _noteOnVelocity = 100;
+    private int _noteOffVelocity;
+    private long _noteOnOrder;
+    private long _noteOffOrder;
+
     public DirectMidiNote(MidoraProject project)
     {
         ArgumentNullException.ThrowIfNull(project);
@@ -127,13 +191,17 @@ public sealed class DirectMidiNote
     }
 
     public MidoraId Id { get; init; }
-    public long StartTick { get; set; }
-    public long LengthTicks { get; set; }
-    public int Key { get; set; } = 60;
-    public int NoteOnVelocity { get; set; } = 100;
-    public int NoteOffVelocity { get; set; }
-    public long NoteOnOrder { get; set; }
-    public long NoteOffOrder { get; set; }
+    public long StartTick { get => _startTick; set { _startTick = value; Changed(); } }
+    public long LengthTicks { get => _lengthTicks; set { _lengthTicks = value; Changed(); } }
+    public int Key { get => _key; set { _key = value; Changed(); } }
+    public int NoteOnVelocity { get => _noteOnVelocity; set { _noteOnVelocity = value; Changed(); } }
+    public int NoteOffVelocity { get => _noteOffVelocity; set { _noteOffVelocity = value; Changed(); } }
+    public long NoteOnOrder { get => _noteOnOrder; set { _noteOnOrder = value; Changed(); } }
+    public long NoteOffOrder { get => _noteOffOrder; set { _noteOffOrder = value; Changed(); } }
+
+    internal void SetChangeSink(IDirectMidiNoteChangeSink? value) => _changeSink = value;
+
+    private void Changed() => _changeSink?.OnChanged(this);
 }
 
 public enum DirectMidiChannelEventKind
@@ -149,6 +217,13 @@ public enum DirectMidiChannelEventKind
 
 public sealed class DirectMidiChannelEvent
 {
+    private IDirectMidiChannelEventChangeSink? _changeSink;
+    private long _tick;
+    private DirectMidiChannelEventKind _kind;
+    private int _data1;
+    private int _data2;
+    private long _order;
+
     public DirectMidiChannelEvent(MidoraProject project)
     {
         ArgumentNullException.ThrowIfNull(project);
@@ -163,11 +238,15 @@ public sealed class DirectMidiChannelEvent
     }
 
     public MidoraId Id { get; init; }
-    public long Tick { get; set; }
-    public DirectMidiChannelEventKind Kind { get; set; }
-    public int Data1 { get; set; }
-    public int Data2 { get; set; }
-    public long Order { get; set; }
+    public long Tick { get => _tick; set { _tick = value; Changed(); } }
+    public DirectMidiChannelEventKind Kind { get => _kind; set { _kind = value; Changed(); } }
+    public int Data1 { get => _data1; set { _data1 = value; Changed(); } }
+    public int Data2 { get => _data2; set { _data2 = value; Changed(); } }
+    public long Order { get => _order; set { _order = value; Changed(); } }
+
+    internal void SetChangeSink(IDirectMidiChannelEventChangeSink? value) => _changeSink = value;
+
+    private void Changed() => _changeSink?.OnChanged(this);
 }
 
 public enum OpaqueMidiEventKind
@@ -179,6 +258,13 @@ public enum OpaqueMidiEventKind
 
 public sealed class OpaqueMidiEvent
 {
+    private IOpaqueMidiEventChangeSink? _changeSink;
+    private long _tick;
+    private OpaqueMidiEventKind _kind;
+    private byte _metaType;
+    private byte[] _payload = [];
+    private long _order;
+
     public OpaqueMidiEvent(MidoraProject project)
     {
         ArgumentNullException.ThrowIfNull(project);
@@ -193,11 +279,15 @@ public sealed class OpaqueMidiEvent
     }
 
     public MidoraId Id { get; init; }
-    public long Tick { get; set; }
-    public OpaqueMidiEventKind Kind { get; set; }
-    public byte MetaType { get; set; }
-    public byte[] Payload { get; set; } = [];
-    public long Order { get; set; }
+    public long Tick { get => _tick; set { _tick = value; Changed(); } }
+    public OpaqueMidiEventKind Kind { get => _kind; set { _kind = value; Changed(); } }
+    public byte MetaType { get => _metaType; set { _metaType = value; Changed(); } }
+    public byte[] Payload { get => _payload; set { _payload = value ?? throw new ArgumentNullException(nameof(value)); Changed(); } }
+    public long Order { get => _order; set { _order = value; Changed(); } }
+
+    internal void SetChangeSink(IOpaqueMidiEventChangeSink? value) => _changeSink = value;
+
+    private void Changed() => _changeSink?.OnChanged(this);
 }
 
 public static class ArrangementHierarchy

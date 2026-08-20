@@ -467,6 +467,20 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public async Task PositionTickFieldUsesTheProjectTpqDigitCount()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Wide TPQ",
+            TicksPerQuarterNote = 1_920,
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+
+        Assert.EndsWith(" : 0000", session.PositionText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ProjectTreeFilterSearchesOnlySpecifiedObjectFieldsAndKeepsAncestors()
     {
         await using DesktopSessionController session = new();
@@ -838,6 +852,96 @@ public sealed class DesktopSessionControllerTests
         Assert.Equal(300, workspace.PlaybackCursorTick);
         workspace.UpdatePlaybackCursor(session.Project, 100);
         Assert.Null(workspace.PlaybackCursorTick);
+    }
+
+    [Fact]
+    public async Task OpeningSegmentCentersItsViewportOnArrangementEditCursor()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Segment open cursor",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        CreateLogicalTrack(session, "Track");
+        LogicalTrack track = Assert.Single(session.Project!.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(
+            track.Id,
+            projectStartTick: 5_000,
+            lengthTicks: 20_000,
+            contentOffsetTick: 1_000));
+        Segment segment = Assert.Single(track.Segments);
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+        arrangement.EditCursorTick = 14_000;
+
+        TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+
+        const long expectedLocalTick = 10_000;
+        Assert.Equal(expectedLocalTick, workspace.EditCursorTick);
+        Assert.Equal(expectedLocalTick - (workspace.TickSpan / 2), workspace.StartTick);
+
+        arrangement.EditCursorTick = 18_000;
+        session.ActiveWorkspace = arrangement;
+        workspace.StartTick = 0;
+        Assert.Same(workspace, session.OpenSegment(segment.Id));
+        const long reopenedLocalTick = 14_000;
+        Assert.Equal(reopenedLocalTick, workspace.EditCursorTick);
+        Assert.Equal(reopenedLocalTick - (workspace.TickSpan / 2), workspace.StartTick);
+    }
+
+    [Fact]
+    public async Task OpeningSegmentDoesNotMoveViewportForArrangementCursorOutsideSegment()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Segment open cursor outside",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        CreateLogicalTrack(session, "Track");
+        LogicalTrack track = Assert.Single(session.Project!.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(
+            track.Id,
+            projectStartTick: 5_000,
+            lengthTicks: 20_000,
+            contentOffsetTick: 1_000));
+        Segment segment = Assert.Single(track.Segments);
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+        arrangement.EditCursorTick = 25_000;
+
+        TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+
+        Assert.Null(workspace.EditCursorTick);
+        Assert.Equal(0, workspace.StartTick);
+    }
+
+    [Fact]
+    public async Task OpeningPureMidiSegmentCentersItsViewportOnArrangementEditCursor()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "MIDI Segment open cursor",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateMidiChannelRoot("Root"));
+        MidiChannelRoot root = Assert.Single(session.Project!.MidiChannelRoots);
+        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrack(root.Id, "MIDI Track"));
+        PureMidiTrack track = Assert.Single(session.Project.PureMidiTracks);
+        session.Execute(ProjectDomainEditCommands.CreateMidiSegment(
+            track.Id,
+            projectStartTick: 7_000,
+            lengthTicks: 20_000,
+            contentOffsetTick: 2_000));
+        MidiSegment segment = Assert.Single(track.Segments);
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+        arrangement.EditCursorTick = 17_000;
+
+        TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+
+        const long expectedLocalTick = 12_000;
+        Assert.Equal(expectedLocalTick, workspace.EditCursorTick);
+        Assert.Equal(expectedLocalTick - (workspace.TickSpan / 2), workspace.StartTick);
     }
 
     [Fact]
@@ -1462,6 +1566,9 @@ public sealed class DesktopSessionControllerTests
         Assert.Equal(
             [ArrangementLaneKind.Conductor, ArrangementLaneKind.MidiChannelRoot, ArrangementLaneKind.PureMidiTrack],
             arrangementSnapshot.ArrangementLanes.Select(value => value.Kind));
+        ArrangementLaneDescriptor rootLane = arrangementSnapshot.ArrangementLanes.Single(value =>
+            value.Kind == ArrangementLaneKind.MidiChannelRoot);
+        Assert.Equal("Auto Melodic 1 Tracks", arrangementSnapshot.LaneSecondaryLabels[rootLane.Lane]);
         TimelineSegmentPreview preview = Assert.Single(arrangementSnapshot.SegmentPreviews).Value;
         Assert.Single(preview.Notes);
         // Unpaired raw Note messages stay editable in the Event Lane/Inspector,
@@ -1477,6 +1584,43 @@ public sealed class DesktopSessionControllerTests
             value => value.Key == "opaqueMidi.payload").Value);
         Assert.Equal("4", session.Inspector.Fields.Single(
             value => value.Key == "opaqueMidi.payloadLength").Value);
+    }
+
+    [Fact]
+    public async Task EditingPureMidiSegmentKeepsItsEditorWorkspaceOpen()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Pure MIDI editor lifetime",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateMidiChannelRoot("Root"));
+        MidiChannelRoot root = Assert.Single(session.Project!.MidiChannelRoots);
+        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrack(root.Id, "MIDI Track"));
+        PureMidiTrack track = Assert.Single(session.Project.PureMidiTracks);
+        session.Execute(ProjectDomainEditCommands.CreateMidiSegment(track.Id, 0, 480));
+        MidiSegment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateDirectMidiNote(
+            segment.Id,
+            startTick: 0,
+            lengthTicks: 120,
+            key: 60,
+            noteOnVelocity: 100));
+        DirectMidiNote note = Assert.Single(segment.Notes);
+        TimelineWorkspaceViewModel editor = session.OpenSegment(segment.Id);
+
+        session.Execute(ProjectDomainEditCommands.MoveDirectMidiNotes(
+            segment.Id,
+            [note.Id],
+            tickDelta: 24,
+            keyDelta: 1));
+
+        Assert.Contains(editor, session.Workspaces);
+        Assert.Same(editor, session.OpenSegment(segment.Id));
+        Assert.True(editor.Snapshot!.TryGetItem(note.Id, out TimelineRenderItem rendered));
+        Assert.Equal(24, rendered.StartTick);
+        Assert.Equal(127 - 61, rendered.Lane);
     }
 
     [Fact]

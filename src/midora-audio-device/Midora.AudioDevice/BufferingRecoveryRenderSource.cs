@@ -10,6 +10,7 @@ public sealed unsafe class BufferingRecoveryRenderSource : IAudioRenderSource, I
     private readonly MemoryMappedViewAccessor? _view;
     private readonly long _capacityFrameCount;
     private readonly int _workFrameCount;
+    private readonly Action<long, long>? _recoveryProgress;
     private readonly bool _ownsFrameMemory;
     private byte* _acquiredPointer;
     private byte* _frames;
@@ -22,7 +23,8 @@ public sealed unsafe class BufferingRecoveryRenderSource : IAudioRenderSource, I
     public BufferingRecoveryRenderSource(
         IAudioRenderSource underlying,
         string spoolPath,
-        int workFrameCount)
+        int workFrameCount,
+        Action<long, long>? recoveryProgress = null)
     {
         _underlying = underlying ?? throw new ArgumentNullException(nameof(underlying));
         ArgumentException.ThrowIfNullOrWhiteSpace(spoolPath);
@@ -40,6 +42,7 @@ public sealed unsafe class BufferingRecoveryRenderSource : IAudioRenderSource, I
 
         _capacityFrameCount = byteLength / underlying.Format.BytesPerFrame;
         _workFrameCount = workFrameCount;
+        _recoveryProgress = recoveryProgress;
         MemoryMappedFile? mapping = null;
         MemoryMappedViewAccessor? view = null;
         byte* acquiredPointer = null;
@@ -77,7 +80,8 @@ public sealed unsafe class BufferingRecoveryRenderSource : IAudioRenderSource, I
     public BufferingRecoveryRenderSource(
         IAudioRenderSource underlying,
         long capacityFrameCount,
-        int workFrameCount)
+        int workFrameCount,
+        Action<long, long>? recoveryProgress = null)
     {
         _underlying = underlying ?? throw new ArgumentNullException(nameof(underlying));
         underlying.Format.Validate();
@@ -92,6 +96,7 @@ public sealed unsafe class BufferingRecoveryRenderSource : IAudioRenderSource, I
 
         _capacityFrameCount = capacityFrameCount;
         _workFrameCount = workFrameCount;
+        _recoveryProgress = recoveryProgress;
         nuint byteLength = checked((nuint)capacityFrameCount
             * (nuint)underlying.Format.BytesPerFrame);
         _frames = (byte*)NativeMemory.Alloc(byteLength);
@@ -226,6 +231,7 @@ public sealed unsafe class BufferingRecoveryRenderSource : IAudioRenderSource, I
                 "The producer frontier is beyond the requested recovery endpoint.");
         }
         long prepared = copied;
+        _recoveryProgress?.Invoke(failureFrame, checked(failureFrame + prepared));
         while (prepared < recoveryFrames)
         {
             if (cancellationRequested?.Invoke() == true)
@@ -255,6 +261,7 @@ public sealed unsafe class BufferingRecoveryRenderSource : IAudioRenderSource, I
                 _frames + checked(prepared * Format.BytesPerFrame),
                 checked((nuint)result.FrameCount * (nuint)Format.BytesPerFrame));
             prepared += result.FrameCount;
+            _recoveryProgress?.Invoke(failureFrame, checked(failureFrame + prepared));
             if (result.Status == AudioPullStatus.EndOfStream && prepared != recoveryFrames)
             {
                 throw new EndOfStreamException(

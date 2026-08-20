@@ -503,7 +503,8 @@ public static class Program
                 createdRecoverySource = new BufferingRecoveryRenderSource(
                     primaryRenderSource,
                     bufferingRecoverySpoolPath,
-                    InitialReleaseAudioRuntimePolicy.WorkFrameCount);
+                    InitialReleaseAudioRuntimePolicy.WorkFrameCount,
+                    control.PublishBufferingRecoveryProgress);
             }
             catch (Exception exception) when (exception is IOException
                 or UnauthorizedAccessException
@@ -523,7 +524,8 @@ public static class Program
                 createdRecoverySource = new BufferingRecoveryRenderSource(
                     primaryRenderSource,
                     bufferingRecoveryMemoryFrameCapacity,
-                    InitialReleaseAudioRuntimePolicy.WorkFrameCount);
+                    InitialReleaseAudioRuntimePolicy.WorkFrameCount,
+                    control.PublishBufferingRecoveryProgress);
             }
             catch (Exception exception) when (exception is OutOfMemoryException
                 or OverflowException)
@@ -741,7 +743,9 @@ public static class Program
                 {
                     break;
                 }
-                if (rollingSource is not null)
+                bool requiresMonitoringColdStart = rollingSource is not null
+                    || plan.EventStreamDescriptor is not null;
+                if (requiresMonitoringColdStart)
                 {
                     // Mute/Solo is an audible-timeline replacement, not merely a
                     // producer-future replacement. Stop and reset WASAPI first so
@@ -771,13 +775,39 @@ public static class Program
                             {
                                 ring.ResetAtFramePosition(consumerFrontierFrame);
                                 recoverySource?.DiscardPreparedRecoveryForMonitoring();
-                                if (!rollingSource.TryResetForMonitoringColdStart(
+                                ReadOnlySpan<MidiMonitoringCommand> pendingCommands =
+                                    monitoringCommandBatch.AsSpan(
+                                        0,
+                                        pendingMonitoringCommandCount);
+                                bool resetCompleted;
+                                if (rollingSource is not null)
+                                {
+                                    resetCompleted = rollingSource.TryResetForMonitoringColdStart(
                                         consumerFrontierFrame,
                                         TimeSpan.FromSeconds(5),
-                                        monitoringCommandBatch.AsSpan(
-                                            0,
-                                            pendingMonitoringCommandCount),
-                                        stopCommandPending))
+                                        pendingCommands,
+                                        stopCommandPending);
+                                }
+                                else
+                                {
+                                    if (stopCommandPending())
+                                    {
+                                        resetCompleted = false;
+                                    }
+                                    else if (unpreparedRenderSource is IMonitoringResettableRenderSource resettable)
+                                    {
+                                        resettable.ResetForMonitoringColdStart(
+                                            consumerFrontierFrame,
+                                            pendingCommands);
+                                        resetCompleted = true;
+                                    }
+                                    else
+                                    {
+                                        throw new InvalidOperationException(
+                                            "The streamed MIDI event renderer cannot perform a monitoring cold start.");
+                                    }
+                                }
+                                if (!resetCompleted)
                                 {
                                     ConsumePrioritizedStop(
                                         control,

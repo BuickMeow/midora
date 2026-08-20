@@ -10,6 +10,9 @@ public sealed class MidiRenderPlan
     private readonly MidiSegmentRenderPlan[] _segments;
     private readonly long[] _sourceIds;
     private readonly int[] _initiallyDisabledSourceIndices;
+    private readonly MidiRenderUnitDescriptor[] _unitDescriptors;
+    private readonly MidiRenderCacheSourceBinding[] _cacheSourceBindings;
+    private readonly int[] _referencedPresetKeys;
 
     public MidiRenderPlan(
         int sampleRate,
@@ -18,7 +21,12 @@ public sealed class MidiRenderPlan
         ReadOnlySpan<long> sourceIds = default,
         ReadOnlySpan<int> initiallyDisabledSourceIndices = default,
         ReadOnlySpan<MidiUnitFragmentRenderPlan> unitFragments = default,
-        ReadOnlySpan<MidiSegmentRenderPlan> segments = default)
+        ReadOnlySpan<MidiSegmentRenderPlan> segments = default,
+        ReadOnlySpan<MidiRenderUnitDescriptor> unitDescriptors = default,
+        IMidiRenderEventPageProvider? eventPageProvider = null,
+        MidiRenderEventStreamDescriptor? eventStreamDescriptor = null,
+        ReadOnlySpan<MidiRenderCacheSourceBinding> cacheSourceBindings = default,
+        ReadOnlySpan<int> referencedPresetKeys = default)
     {
         if (sampleRate <= 0)
         {
@@ -38,12 +46,22 @@ public sealed class MidiRenderPlan
         SampleRate = sampleRate;
         TotalFrameCount = totalFrameCount;
         _ports = ports.ToArray();
-        _units = CreateUnitStreamSlots(_ports);
+        _unitDescriptors = unitDescriptors.ToArray();
+        ValidateUnitDescriptors(_unitDescriptors);
+        _units = CreateUnitStreamSlots(_ports, _unitDescriptors);
         _unitFragments = unitFragments.ToArray();
         _segments = segments.ToArray();
         _sourceIds = sourceIds.ToArray();
         _initiallyDisabledSourceIndices = initiallyDisabledSourceIndices.ToArray();
+        _cacheSourceBindings = cacheSourceBindings.ToArray();
+        _referencedPresetKeys = referencedPresetKeys.IsEmpty
+            ? CollectReferencedPresetKeys(_ports)
+            : referencedPresetKeys.ToArray();
+        EventPageProvider = eventPageProvider;
+        EventStreamDescriptor = eventStreamDescriptor;
         ValidateSources(_sourceIds, _initiallyDisabledSourceIndices);
+        ValidateCacheSourceBindings(_cacheSourceBindings, _sourceIds.Length);
+        ValidateReferencedPresetKeys(_referencedPresetKeys);
         ValidatePorts(_ports, totalFrameCount, _sourceIds.Length);
         ValidateUnitFragments(_unitFragments, totalFrameCount, _sourceIds.Length);
         ValidateSegments(_segments, _unitFragments, totalFrameCount, _sourceIds.Length);
@@ -59,6 +77,11 @@ public sealed class MidiRenderPlan
         _segments = source._segments;
         _sourceIds = source._sourceIds;
         _initiallyDisabledSourceIndices = initiallyDisabledSourceIndices;
+        _unitDescriptors = source._unitDescriptors;
+        _cacheSourceBindings = source._cacheSourceBindings;
+        _referencedPresetKeys = source._referencedPresetKeys;
+        EventPageProvider = source.EventPageProvider;
+        EventStreamDescriptor = source.EventStreamDescriptor;
         ValidateSources(_sourceIds, _initiallyDisabledSourceIndices);
     }
 
@@ -78,6 +101,16 @@ public sealed class MidiRenderPlan
 
     public ReadOnlySpan<int> InitiallyDisabledSourceIndices => _initiallyDisabledSourceIndices;
 
+    public ReadOnlySpan<MidiRenderUnitDescriptor> UnitDescriptors => _unitDescriptors;
+
+    public ReadOnlySpan<MidiRenderCacheSourceBinding> CacheSourceBindings => _cacheSourceBindings;
+
+    public ReadOnlySpan<int> ReferencedPresetKeys => _referencedPresetKeys;
+
+    public IMidiRenderEventPageProvider? EventPageProvider { get; }
+
+    public MidiRenderEventStreamDescriptor? EventStreamDescriptor { get; }
+
     public int FindSourceIndex(long sourceId) => Array.IndexOf(_sourceIds, sourceId);
 
     /// <summary>
@@ -92,6 +125,80 @@ public sealed class MidiRenderPlan
         return disabled.AsSpan().SequenceEqual(_initiallyDisabledSourceIndices)
             ? this
             : new MidiRenderPlan(this, disabled);
+    }
+
+    public MidiRenderPlan WithEventStreamDescriptor(MidiRenderEventStreamDescriptor descriptor)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        return new MidiRenderPlan(
+            SampleRate,
+            TotalFrameCount,
+            _ports,
+            _sourceIds,
+            _initiallyDisabledSourceIndices,
+            _unitFragments,
+            _segments,
+            _unitDescriptors,
+            EventPageProvider,
+            descriptor,
+            _cacheSourceBindings,
+            _referencedPresetKeys);
+    }
+
+    private static int[] CollectReferencedPresetKeys(ReadOnlySpan<MidiPortRenderPlan> ports)
+    {
+        bool[] referenced = new bool[128 * 128];
+        referenced[0] = true;
+        Span<byte> banks = stackalloc byte[16];
+        Span<byte> programs = stackalloc byte[16];
+        foreach (MidiPortRenderPlan port in ports)
+        {
+            banks.Clear();
+            programs.Clear();
+            foreach (ScheduledMidiMessage scheduled in port.Events)
+            {
+                MidiMessage message = scheduled.Message;
+                int channel = message.ChannelNumber;
+                if (message.MessageType == MidiMessageType.ControlChange && message.Byte1 == 0)
+                    banks[channel] = message.Byte2;
+                else if (message.MessageType == MidiMessageType.ProgramChange)
+                    programs[channel] = message.Byte1;
+                else if (message.MessageType == MidiMessageType.NoteOn && message.Byte2 != 0)
+                    referenced[(banks[channel] << 7) | programs[channel]] = true;
+            }
+        }
+        return Enumerable.Range(0, referenced.Length).Where(index => referenced[index]).ToArray();
+    }
+
+    private static void ValidateCacheSourceBindings(
+        ReadOnlySpan<MidiRenderCacheSourceBinding> bindings,
+        int sourceCount)
+    {
+        HashSet<(int Source, int Owner)> seen = [];
+        foreach (MidiRenderCacheSourceBinding value in bindings)
+        {
+            if ((uint)value.SourceIndex >= (uint)sourceCount
+                || (uint)value.CacheOwnerSourceIndex >= (uint)sourceCount
+                || !seen.Add((value.SourceIndex, value.CacheOwnerSourceIndex)))
+            {
+                throw new ArgumentException(
+                    "Cache source bindings must be unique and reference the source table.",
+                    nameof(bindings));
+            }
+        }
+    }
+
+    private static void ValidateReferencedPresetKeys(ReadOnlySpan<int> keys)
+    {
+        int previous = -1;
+        foreach (int value in keys)
+        {
+            if (value is < 0 or >= 128 * 128 || value <= previous)
+                throw new ArgumentException(
+                    "Referenced MIDI preset keys must be unique, ordered, and in range.",
+                    nameof(keys));
+            previous = value;
+        }
     }
 
     private static void ValidateSources(ReadOnlySpan<long> sourceIds, ReadOnlySpan<int> disabledIndices)
@@ -149,9 +256,11 @@ public sealed class MidiRenderPlan
         }
     }
 
-    private static MidiUnitRenderPlan[] CreateUnitStreamSlots(ReadOnlySpan<MidiPortRenderPlan> ports)
+    private static MidiUnitRenderPlan[] CreateUnitStreamSlots(
+        ReadOnlySpan<MidiPortRenderPlan> ports,
+        ReadOnlySpan<MidiRenderUnitDescriptor> descriptors)
     {
-        List<MidiUnitRenderPlan> result = [];
+        Dictionary<int, MidiUnitRenderPlan> result = [];
         foreach (MidiPortRenderPlan port in ports)
         {
             List<ScheduledMidiMessage>?[] eventsByChannel = new List<ScheduledMidiMessage>?[16];
@@ -166,11 +275,32 @@ public sealed class MidiRenderPlan
             {
                 if (eventsByChannel[channel] is { Count: > 0 } events)
                 {
-                    result.Add(new(port.ZeroBasedPortNumber, channel, events.ToArray()));
+                    MidiUnitRenderPlan plan = new(port.ZeroBasedPortNumber, channel, events.ToArray());
+                    result.Add(plan.CanonicalUnitNumber, plan);
                 }
             }
         }
-        return result.ToArray();
+        foreach (MidiRenderUnitDescriptor descriptor in descriptors)
+        {
+            result.TryAdd(
+                descriptor.CanonicalUnitNumber,
+                new MidiUnitRenderPlan(
+                    descriptor.ZeroBasedPortNumber,
+                    descriptor.ZeroBasedChannelNumber,
+                    []));
+        }
+        return result.Values.OrderBy(value => value.CanonicalUnitNumber).ToArray();
+    }
+
+    private static void ValidateUnitDescriptors(ReadOnlySpan<MidiRenderUnitDescriptor> descriptors)
+    {
+        Span<bool> seen = stackalloc bool[256];
+        foreach (MidiRenderUnitDescriptor value in descriptors)
+        {
+            if (seen[value.CanonicalUnitNumber])
+                throw new ArgumentException("MIDI render Unit descriptors must be unique.", nameof(descriptors));
+            seen[value.CanonicalUnitNumber] = true;
+        }
     }
 
     private static void ValidateUnitFragments(

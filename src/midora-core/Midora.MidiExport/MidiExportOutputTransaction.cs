@@ -24,17 +24,41 @@ public enum MidiExportOutputItemState
 
 public sealed class MidiExportPreparedArtifact
 {
-    private readonly byte[] _content;
+    private readonly Action<Stream> _writer;
+    private byte[]? _content;
 
     public MidiExportPreparedArtifact(string sourceKey, ReadOnlySpan<byte> content)
     {
         ArgumentException.ThrowIfNullOrEmpty(sourceKey);
         SourceKey = sourceKey;
         _content = content.ToArray();
+        _writer = output => output.Write(_content);
+    }
+
+    internal MidiExportPreparedArtifact(string sourceKey, Action<Stream> writer)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(sourceKey);
+        SourceKey = sourceKey;
+        _writer = writer ?? throw new ArgumentNullException(nameof(writer));
     }
 
     public string SourceKey { get; }
-    public ReadOnlyMemory<byte> Content => _content;
+
+    public ReadOnlyMemory<byte> Content
+    {
+        get
+        {
+            if (_content is null)
+            {
+                using MemoryStream output = new();
+                _writer(output);
+                _content = output.ToArray();
+            }
+            return _content;
+        }
+    }
+
+    internal void WriteTo(Stream output) => _writer(output);
 }
 
 public sealed record MidiExportOutputItemResult(
@@ -171,10 +195,15 @@ public sealed class MidiExportOutputTransaction
                     _faultInjector.ThrowIfRequested(
                         MidiExportOutputFaultPoint.BeforeArtifactWrite,
                         stagedPath);
-                    await File.WriteAllBytesAsync(
+                    await using FileStream staged = new(
                         stagedPath,
-                        bySourceKey[target.SourceKey].Content,
-                        cancellationToken).ConfigureAwait(false);
+                        FileMode.CreateNew,
+                        FileAccess.Write,
+                        FileShare.None,
+                        256 * 1024,
+                        FileOptions.SequentialScan);
+                    bySourceKey[target.SourceKey].WriteTo(staged);
+                    await staged.FlushAsync(cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException)
@@ -183,7 +212,10 @@ public sealed class MidiExportOutputTransaction
             }
             catch (Exception exception) when (exception is IOException
                 or UnauthorizedAccessException
-                or NotSupportedException)
+                or NotSupportedException
+                or MidoraMidiException
+                or ArgumentException
+                or OverflowException)
             {
                 throw Failure(
                     MidiExportOutputStage.Staging,
@@ -205,9 +237,14 @@ public sealed class MidiExportOutputTransaction
                     string stagedPath = Path.Combine(stagingDirectory, target.FileName);
                     if (target.FileName.EndsWith(".mid", StringComparison.OrdinalIgnoreCase))
                     {
-                        StandardMidiFile.ValidateType1(await File.ReadAllBytesAsync(
+                        await using FileStream staged = new(
                             stagedPath,
-                            cancellationToken).ConfigureAwait(false));
+                            FileMode.Open,
+                            FileAccess.Read,
+                            FileShare.Read,
+                            256 * 1024,
+                            FileOptions.SequentialScan);
+                        StandardMidiFile.ValidateType1(staged, cancellationToken);
                     }
                 }
             }

@@ -103,8 +103,8 @@ public sealed class TimelineEditorSettingsTests
         Assert.Equal("Bar", arrangement.DisplaySubdivisionText);
         Assert.Equal("1/8", arrangement.OperationSubdivisionText);
         Assert.Equal(240, arrangement.OperationStepTicks);
-        Assert.False(piano.DisplayGridUsesBars);
-        Assert.Equal("1/4", piano.DisplaySubdivisionText);
+        Assert.True(piano.DisplayGridUsesBars);
+        Assert.Equal("Bar", piano.DisplaySubdivisionText);
         Assert.Equal(480, arrangement.DefaultLengthTicks);
         Assert.Equal(480, piano.DefaultLengthTicks);
 
@@ -118,7 +118,7 @@ public sealed class TimelineEditorSettingsTests
 
         Assert.NotSame(firstPiano, instrumentWorkspace.EditorSettings);
         Assert.NotSame(firstEventLane, instrumentWorkspace.EventLaneEditorSettings);
-        Assert.Equal("1/4", instrumentWorkspace.EditorSettings.DisplaySubdivisionText);
+        Assert.Equal("Bar", instrumentWorkspace.EditorSettings.DisplaySubdivisionText);
         Assert.Equal("1/16", instrumentWorkspace.EditorSettings.OperationSubdivisionText);
         Assert.Equal("1/16", instrumentWorkspace.EventLaneEditorSettings.OperationSubdivisionText);
 

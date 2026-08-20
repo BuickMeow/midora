@@ -731,6 +731,7 @@ public sealed class BassMidiRendererIntegrationTests
                     manifestDirectory)))
             {
                 Assert.False(miss.Plan.Segments[0].PcmCacheHit);
+                Assert.Equal(0, new FileInfo(miss.FilePath).Length);
                 missSamples = RenderCachePlan(
                     miss.Plan,
                     miss.FilePath,
@@ -983,6 +984,7 @@ public sealed class BassMidiRendererIntegrationTests
 
     private static MidiRenderPlan CreateCacheableSingleNotePlan()
     {
+        const long totalFrameCount = 20_001;
         ScheduledMidiMessage[] events =
         [
             new(0, MidiMessage.ProgramChange(0, 0), 0),
@@ -999,7 +1001,7 @@ public sealed class BassMidiRendererIntegrationTests
             subVoiceId: 5,
             sourceIndex: 0,
             startFrame: 0,
-            endFrame: 4_096,
+            endFrame: totalFrameCount,
             semanticFingerprint: new string('a', 64),
             events);
         MidiSegmentRenderPlan segment = new(
@@ -1007,11 +1009,11 @@ public sealed class BassMidiRendererIntegrationTests
             segmentId: 2,
             sourceIndex: 0,
             startFrame: 0,
-            endFrame: 4_096,
+            endFrame: totalFrameCount,
             semanticFingerprint: new string('c', 64));
         return new MidiRenderPlan(
             SampleRate,
-            4_096,
+            totalFrameCount,
             [new MidiPortRenderPlan(0, events)],
             sourceIds: [1],
             unitFragments: [fragment],
@@ -1160,6 +1162,8 @@ public sealed class BassMidiRendererIntegrationTests
     private sealed class CacheAccess(AudioCacheSessionStore store) : IAudioPcmCacheSessionAccess
     {
         public AudioCacheSessionSnapshot? AudioCacheSnapshot => store.GetSnapshot();
+        public bool SupportsReusableAudioPackJournals =>
+            store.SupportsReusableAudioPackJournals;
 
         public bool TryCopyReusableAudio(
             string key,
@@ -1180,6 +1184,15 @@ public sealed class BassMidiRendererIntegrationTests
 
         public AudioCacheSessionStore.AudioRecoverySpool CreateSparseTransientAudioSpool(
             long lengthBytes) => store.CreateRecoverySpool(lengthBytes, sparse: true);
+
+        public void AdoptReusableAudioPackJournals(
+            AudioCacheSessionStore.AudioRecoverySpool spool,
+            string journalDirectory,
+            IReadOnlyCollection<string> completedKeys) =>
+            store.AdoptReusableAudioPackJournals(
+                spool,
+                journalDirectory,
+                completedKeys);
 
         public void DisableReusableAudioRetention(string reason) =>
             store.DisableReusableRetention(reason);

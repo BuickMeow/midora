@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using System.Windows.Threading;
 using Midora.Application;
@@ -52,6 +53,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private string? _statusMessage;
     private bool _statusMessageIsError;
     private bool _isPlaybackStartPending;
+    private long _displayCurrentTick;
+    private TempoChange[] _orderedTempoChanges = [];
+    private int _activeTempoIndex = -1;
+    private long _tempoLookupTick = -1;
+    private string _tempoText = "— BPM";
 
     public DesktopSessionController()
     {
@@ -125,30 +131,41 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         _mutedArrangementParentIds.Contains(parentId);
     public bool IsArrangementParentSolo(MidoraId parentId) =>
         _soloArrangementParentIds.Contains(parentId);
-    public long CurrentTick => _context?.Playback?.CurrentTick ?? 0;
-    public string TempoText
-    {
-        get
-        {
-            TempoChange? tempo = Project?.Conductor.Tempos
-                .Where(item => item.Tick <= Math.Max(0, CurrentTick))
-                .OrderByDescending(item => item.Tick)
-                .FirstOrDefault();
-            return tempo is null
-                ? "— BPM"
-                : $"{tempo.BeatsPerMinute:0.00} BPM";
-        }
-    }
+    public long CurrentTick => _displayCurrentTick;
+    public string TempoText => _tempoText;
     public string PositionText
     {
         get
         {
             if (_timeSignatureMap is null) return "—";
             ProjectMusicalPosition position = _timeSignatureMap.GetPosition(Math.Max(0, CurrentTick));
-            return $"{position.Bar:D4} : {position.Beat:D2} : {position.TickOffset:D3}";
+            int tickDigits = Math.Max(
+                1,
+                (Project?.TicksPerQuarterNote ?? 1)
+                    .ToString(CultureInfo.InvariantCulture)
+                    .Length);
+            string tickOffset = position.TickOffset.ToString(
+                $"D{tickDigits}",
+                CultureInfo.InvariantCulture);
+            return $"{position.Bar:D4} : {position.Beat:D2} : {tickOffset}";
         }
     }
     public PlaybackState PlaybackState => _context?.Playback?.State ?? PlaybackState.Stopped;
+    public bool IsBuffering => PlaybackState == PlaybackState.Buffering;
+    public string PlaybackStatusText
+    {
+        get
+        {
+            if (!IsBuffering)
+            {
+                return PlaybackState.ToString();
+            }
+            double? progress = _context?.Playback?.BufferingProgress;
+            return progress.HasValue
+                ? $"Buffering ({Math.Clamp((int)Math.Floor(progress.Value * 100d), 0, 100)}%)"
+                : "Buffering";
+        }
+    }
     public bool IsPlaybackActive => PlaybackState is PlaybackState.Preparing
         or PlaybackState.Playing
         or PlaybackState.Buffering
@@ -362,16 +379,22 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     public async Task<IReadOnlyList<MidiProjectImportDiagnostic>> ImportMidiAsNewProjectAsync(
         string path,
         IReadOnlyDictionary<byte, byte>? zeroBasedPortMapping = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? defaultEmbeddedSoundFontPath = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         string fullPath = Path.GetFullPath(path);
-        byte[] file = await ReadMidiImportFileAsync(fullPath, cancellationToken);
-        return await ImportMidiBytesAsNewProjectAsync(
-            file,
-            Path.GetFileNameWithoutExtension(fullPath),
-            zeroBasedPortMapping,
+        MidiProjectImportResult imported = await Task.Run(
+            () => MidiProjectImportService.ImportFile(
+                fullPath,
+                Path.GetFileNameWithoutExtension(fullPath),
+                zeroBasedPortMapping,
+                cancellationToken),
             cancellationToken);
+        return await AdoptMidiImportAsNewProjectAsync(
+            imported,
+            cancellationToken,
+            defaultEmbeddedSoundFontPath);
     }
 
     internal async Task<IReadOnlyList<MidiProjectImportDiagnostic>> ImportMidiBytesAsNewProjectAsync(
@@ -394,16 +417,30 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     internal async Task<IReadOnlyList<MidiProjectImportDiagnostic>> AdoptMidiImportAsNewProjectAsync(
         MidiProjectImportResult imported,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? defaultEmbeddedSoundFontPath = null)
     {
         ArgumentNullException.ThrowIfNull(imported);
         cancellationToken.ThrowIfCancellationRequested();
-        NewProjectCreationResult adopted = _creation.AdoptImportedProject(imported.Project);
+        NewProjectCreationResult adopted;
+        try
+        {
+            adopted = await _creation.AdoptImportedProjectAsync(
+                imported.Project,
+                defaultEmbeddedSoundFontPath,
+                cancellationToken);
+        }
+        catch
+        {
+            imported.Project.Dispose();
+            throw;
+        }
         ProjectContext? next = null;
         try
         {
             next = ProjectContext.FromCreation(_packages, adopted);
             adopted = null!;
+            await next.RefreshSoundFontAsync(cancellationToken);
             await ActivateAsync(next);
             next = null;
             return imported.Diagnostics;
@@ -454,9 +491,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             throw new InvalidOperationException("No Project is open.");
         }
-        await Persistence.SaveProjectAsync(
-            firstSavePath,
-            overwriteAuthorized,
+        await Task.Run(
+            () => Persistence.SaveProjectAsync(
+                firstSavePath,
+                overwriteAuthorized,
+                cancellationToken),
             cancellationToken);
         RefreshAll();
     }
@@ -470,7 +509,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             throw new InvalidOperationException("No Project is open.");
         }
-        await Persistence.SaveCopyAsync(path, overwriteAuthorized, cancellationToken);
+        await Task.Run(
+            () => Persistence.SaveCopyAsync(path, overwriteAuthorized, cancellationToken),
+            cancellationToken);
     }
 
     public PreparedDesktopMidiExport PrepareMidiExport(DesktopMidiExportOptions options)
@@ -898,11 +939,21 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         if (_context?.Playback is null) return;
         _context.Playback.Update();
-        RefreshTimelinePlaybackCursors();
-        Raise(nameof(CurrentTick));
-        Raise(nameof(TempoText));
-        Raise(nameof(PositionText));
+        bool tickChanged = CapturePlaybackTick();
+        bool tempoChanged = UpdateTempoForTick(_displayCurrentTick);
+        RefreshTimelinePlaybackCursors(_displayCurrentTick);
+        if (tickChanged)
+        {
+            Raise(nameof(CurrentTick));
+            Raise(nameof(PositionText));
+        }
+        if (tempoChanged)
+        {
+            Raise(nameof(TempoText));
+        }
         Raise(nameof(PlaybackState));
+        Raise(nameof(IsBuffering));
+        Raise(nameof(PlaybackStatusText));
         Raise(nameof(IsPlaybackActive));
         Raise(nameof(IsLoopEnabled));
         Raise(nameof(CanPlayback));
@@ -1382,8 +1433,48 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 "Segment",
                 TimelineWorkspaceMode.Segment,
                 PianoRollEditorSettings));
+        CenterSegmentEditorOnArrangementCursor(workspace, segmentId);
         ActiveWorkspace = workspace;
         return workspace;
+    }
+
+    private void CenterSegmentEditorOnArrangementCursor(
+        TimelineWorkspaceViewModel workspace,
+        MidoraId segmentId)
+    {
+        if (Project is null
+            || ActiveWorkspace is not TimelineWorkspaceViewModel
+            {
+                Mode: TimelineWorkspaceMode.Arrangement
+            } arrangement)
+        {
+            return;
+        }
+        if (arrangement.EditCursorTick is not long projectTick)
+        {
+            return;
+        }
+
+        (long ProjectStartTick, long LengthTicks, long ContentOffsetTick)? segment =
+            TimelineWorkspaceViewModel.FindSegment(Project, segmentId) is { } logical
+                ? (logical.Segment.ProjectStartTick, logical.Segment.LengthTicks, logical.Segment.ContentOffsetTick)
+                : TimelineWorkspaceViewModel.FindMidiSegment(Project, segmentId) is { } midi
+                    ? (midi.Segment.ProjectStartTick, midi.Segment.LengthTicks, midi.Segment.ContentOffsetTick)
+                    : null;
+        if (segment is null)
+        {
+            return;
+        }
+        long projectEndTick = checked(segment.Value.ProjectStartTick + segment.Value.LengthTicks);
+        if (projectTick < segment.Value.ProjectStartTick || projectTick >= projectEndTick)
+        {
+            return;
+        }
+
+        long localTick = checked(
+            segment.Value.ContentOffsetTick + (projectTick - segment.Value.ProjectStartTick));
+        workspace.EditCursorTick = localTick;
+        workspace.CenterViewportOnTick(localTick);
     }
 
     public InstrumentWorkspaceViewModel OpenInstrument(MidoraId instrumentId)
@@ -1596,6 +1687,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ActiveWorkspace = null;
         _revision = 0;
         _timeSignatureMap = null;
+        _displayCurrentTick = 0;
+        _orderedTempoChanges = [];
+        _activeTempoIndex = -1;
+        _tempoLookupTick = -1;
+        _tempoText = "— BPM";
         SetStatusMessage(null);
         RefreshProperties();
         await previous.DisposeAsync();
@@ -1620,6 +1716,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             Unsubscribe(previous);
         }
         _context = next;
+        _displayCurrentTick = next.Playback?.CurrentTick ?? 0;
         Subscribe(next);
         TimelineRasterCacheSession.Clear();
         Workspaces.Clear();
@@ -1680,7 +1777,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     private void RefreshAll()
     {
+        CapturePlaybackTick();
         _timeSignatureMap = Project is null ? null : new ProjectTimeSignatureMap(Project);
+        RebuildTempoLookup();
         if (Project is not null)
         {
             ArrangementEditorSettings.ConfigureProject(Project, CurrentTick);
@@ -1724,6 +1823,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         if (changes.AffectsEverything || changes.AffectsConductor)
         {
             _timeSignatureMap = new ProjectTimeSignatureMap(Project);
+            RebuildTempoLookup();
         }
         ArrangementEditorSettings.ConfigureProject(Project, CurrentTick);
         PianoRollEditorSettings.ConfigureProject(Project, CurrentTick);
@@ -1945,7 +2045,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         if (Project is null || workspace.ObjectId is not MidoraId id) return true;
         return workspace.Kind switch
         {
-            WorkspaceKind.SegmentEditor => TimelineWorkspaceViewModel.FindSegment(Project, id) is not null,
+            WorkspaceKind.SegmentEditor =>
+                TimelineWorkspaceViewModel.FindSegment(Project, id) is not null
+                || TimelineWorkspaceViewModel.FindMidiSegment(Project, id) is not null,
             WorkspaceKind.EventInstrumentEditor => Project.EventInstruments.Any(item => item.Id == id),
             WorkspaceKind.MappingFunctionEditor => Project.EventInstruments.Any(
                 instrument => instrument.MappingFunctions.Any(function => function.Id == id)),
@@ -1955,7 +2057,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     private void RefreshProperties()
     {
-        RefreshTimelinePlaybackCursors();
+        CapturePlaybackTick();
+        UpdateTempoForTick(_displayCurrentTick);
+        RefreshTimelinePlaybackCursors(_displayCurrentTick);
         Raise(nameof(HasProject));
         Raise(nameof(Document));
         Raise(nameof(Project));
@@ -1970,6 +2074,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         Raise(nameof(CurrentTick));
         Raise(nameof(TempoText));
         Raise(nameof(PlaybackState));
+        Raise(nameof(IsBuffering));
+        Raise(nameof(PlaybackStatusText));
         Raise(nameof(IsPlaybackActive));
         Raise(nameof(CanPlayback));
         Raise(nameof(CanTogglePlayback));
@@ -1995,17 +2101,91 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         Raise(nameof(CanUseContextMenus));
     }
 
-    private void RefreshTimelinePlaybackCursors()
+    private void RefreshTimelinePlaybackCursors() =>
+        RefreshTimelinePlaybackCursors(_displayCurrentTick);
+
+    private void RefreshTimelinePlaybackCursors(long currentTick)
     {
         if (Project is null)
         {
             return;
         }
-        long currentTick = CurrentTick;
         foreach (TimelineWorkspaceViewModel timeline in Workspaces.OfType<TimelineWorkspaceViewModel>())
         {
             timeline.UpdatePlaybackCursor(Project, currentTick);
         }
+    }
+
+    private bool CapturePlaybackTick()
+    {
+        long next = Math.Max(0, _context?.Playback?.CurrentTick ?? 0);
+        if (_displayCurrentTick == next)
+        {
+            return false;
+        }
+        _displayCurrentTick = next;
+        return true;
+    }
+
+    private void RebuildTempoLookup()
+    {
+        _orderedTempoChanges = Project?.Conductor.Tempos
+            .OrderBy(static value => value.Tick)
+            .ToArray()
+            ?? [];
+        _activeTempoIndex = -1;
+        _tempoLookupTick = -1;
+        UpdateTempoForTick(_displayCurrentTick, force: true);
+    }
+
+    private bool UpdateTempoForTick(long tick, bool force = false)
+    {
+        tick = Math.Max(0, tick);
+        int previousTempoIndex = _activeTempoIndex;
+        if (_orderedTempoChanges.Length == 0)
+        {
+            _activeTempoIndex = -1;
+        }
+        else if (tick >= _tempoLookupTick && _activeTempoIndex >= -1)
+        {
+            while (_activeTempoIndex + 1 < _orderedTempoChanges.Length
+                && _orderedTempoChanges[_activeTempoIndex + 1].Tick <= tick)
+            {
+                _activeTempoIndex++;
+            }
+        }
+        else
+        {
+            int low = 0;
+            int high = _orderedTempoChanges.Length;
+            while (low < high)
+            {
+                int middle = low + ((high - low) >> 1);
+                if (_orderedTempoChanges[middle].Tick <= tick)
+                {
+                    low = middle + 1;
+                }
+                else
+                {
+                    high = middle;
+                }
+            }
+            _activeTempoIndex = low - 1;
+        }
+        _tempoLookupTick = tick;
+        if (!force && previousTempoIndex == _activeTempoIndex)
+        {
+            return false;
+        }
+        string next = _activeTempoIndex < 0
+            ? "— BPM"
+            : $"{_orderedTempoChanges[_activeTempoIndex].BeatsPerMinute:0.00} BPM";
+        if (string.Equals(_tempoText, next, StringComparison.Ordinal))
+        {
+            return false;
+        }
+        _tempoText = next;
+        return true;
     }
 
     private void Subscribe(ProjectContext context)
@@ -2063,7 +2243,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 SetStatusMessage($"Playback failed: {failure.Message}", isError: true);
             }
             else if (_context?.Compilation.AudioCacheWarning is
-                { Code: not AudioCacheWarningCode.None } warning)
+            { Code: not AudioCacheWarningCode.None } warning)
             {
                 SetStatusMessage("Audio cache warning: " + warning.Message);
             }

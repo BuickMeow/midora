@@ -6,7 +6,7 @@ namespace Midora.Audio;
 public static class MidiRenderPlanFile
 {
     private const uint Magic = 0x5041444d;
-    private const int Version = 6;
+    private const int Version = 8;
     private const int ChecksumByteCount = 32;
     private const int MaximumFileByteCount = 256 * 1024 * 1024;
     private const int MaximumEventCount = 16 * 1024 * 1024;
@@ -16,6 +16,7 @@ public static class MidiRenderPlanFile
     private const int UnitFragmentHeaderByteCount = 164;
     private const int SegmentHeaderByteCount = 120;
     private const int EventByteCount = 16;
+    private const int UnitDescriptorByteCount = 4;
 
     public static void Write(string filePath, MidiRenderPlan plan)
     {
@@ -41,6 +42,21 @@ public static class MidiRenderPlanFile
             {
                 writer.Write(sourceIndex);
             }
+            writer.Write(plan.UnitDescriptors.Length);
+            foreach (MidiRenderUnitDescriptor unit in plan.UnitDescriptors)
+            {
+                writer.Write(unit.ZeroBasedPortNumber);
+                writer.Write(unit.ZeroBasedChannelNumber);
+                writer.Write((ushort)0);
+            }
+            writer.Write(plan.CacheSourceBindings.Length);
+            foreach (MidiRenderCacheSourceBinding binding in plan.CacheSourceBindings)
+            {
+                writer.Write(binding.SourceIndex);
+                writer.Write(binding.CacheOwnerSourceIndex);
+            }
+            writer.Write(plan.ReferencedPresetKeys.Length);
+            foreach (int key in plan.ReferencedPresetKeys) writer.Write(key);
 
             foreach (MidiPortRenderPlan port in plan.Ports)
             {
@@ -104,6 +120,12 @@ public static class MidiRenderPlanFile
                 writer.Write(segment.PcmCachePayloadOffset);
                 writer.Write(segment.PcmCacheHit);
                 writer.Write(new byte[7]);
+            }
+            writer.Write(plan.EventStreamDescriptor is not null);
+            if (plan.EventStreamDescriptor is MidiRenderEventStreamDescriptor streamDescriptor)
+            {
+                writer.Write(streamDescriptor.ControlMapName);
+                writer.Write(Path.GetFullPath(streamDescriptor.DataFilePath));
             }
         }
 
@@ -189,6 +211,43 @@ public static class MidiRenderPlanFile
             {
                 disabledSourceIndices[sourceIndex] = reader.ReadInt32();
             }
+
+            int unitDescriptorCount = reader.ReadInt32();
+            if (unitDescriptorCount is < 0 or > 256
+                || (long)unitDescriptorCount * UnitDescriptorByteCount > payloadLength - stream.Position)
+            {
+                throw new InvalidDataException("The IPC MIDI Unit descriptor count is invalid.");
+            }
+            MidiRenderUnitDescriptor[] unitDescriptors = new MidiRenderUnitDescriptor[unitDescriptorCount];
+            for (int index = 0; index < unitDescriptorCount; index++)
+            {
+                byte port = reader.ReadByte();
+                byte channel = reader.ReadByte();
+                if (reader.ReadUInt16() != 0)
+                    throw new InvalidDataException("An IPC MIDI Unit descriptor has non-zero reserved data.");
+                unitDescriptors[index] = new(port, channel);
+            }
+
+            int cacheBindingCount = reader.ReadInt32();
+            if (cacheBindingCount is < 0 or > MaximumEventCount
+                || (long)cacheBindingCount * (sizeof(int) * 2) > payloadLength - stream.Position)
+            {
+                throw new InvalidDataException("The IPC cache source-binding count is invalid.");
+            }
+            MidiRenderCacheSourceBinding[] cacheSourceBindings =
+                new MidiRenderCacheSourceBinding[cacheBindingCount];
+            for (int index = 0; index < cacheSourceBindings.Length; index++)
+                cacheSourceBindings[index] = new(reader.ReadInt32(), reader.ReadInt32());
+
+            int referencedPresetCount = reader.ReadInt32();
+            if (referencedPresetCount is < 0 or > 128 * 128
+                || (long)referencedPresetCount * sizeof(int) > payloadLength - stream.Position)
+            {
+                throw new InvalidDataException("The IPC referenced-preset count is invalid.");
+            }
+            int[] referencedPresetKeys = new int[referencedPresetCount];
+            for (int index = 0; index < referencedPresetKeys.Length; index++)
+                referencedPresetKeys[index] = reader.ReadInt32();
 
             MidiPortRenderPlan[] ports = new MidiPortRenderPlan[portCount];
             int totalEventCount = 0;
@@ -368,6 +427,17 @@ public static class MidiRenderPlanFile
                     cacheHit);
             }
 
+            MidiRenderEventStreamDescriptor? eventStreamDescriptor = null;
+            bool hasEventStream = reader.ReadBoolean();
+            if (hasEventStream)
+            {
+                string controlMapName = reader.ReadString();
+                string dataFilePath = reader.ReadString();
+                if (controlMapName.Length > 512 || dataFilePath.Length > 32_767)
+                    throw new InvalidDataException("The IPC rolling MIDI event stream descriptor is invalid.");
+                eventStreamDescriptor = new(controlMapName, dataFilePath);
+            }
+
             if (stream.Position != payloadLength)
             {
                 throw new InvalidDataException("The IPC MIDI event plan contains trailing payload data.");
@@ -380,7 +450,11 @@ public static class MidiRenderPlanFile
                 sourceIds,
                 disabledSourceIndices,
                 fragments,
-                segments);
+                segments,
+                unitDescriptors,
+                eventStreamDescriptor: eventStreamDescriptor,
+                cacheSourceBindings: cacheSourceBindings,
+                referencedPresetKeys: referencedPresetKeys);
         }
         catch (Exception exception) when (exception is EndOfStreamException
             or OverflowException
@@ -394,6 +468,11 @@ public static class MidiRenderPlanFile
     {
         int sourceCount = plan.SourceIds.Length;
         int disabledSourceCount = plan.InitiallyDisabledSourceIndices.Length;
+        if (plan.EventPageProvider is not null && plan.EventStreamDescriptor is null)
+        {
+            throw new InvalidDataException(
+                "A paged MIDI render plan must be attached to a rolling event stream before IPC serialization.");
+        }
         if (sourceCount > MaximumEventCount)
         {
             throw new InvalidDataException("The IPC MIDI event plan exceeds its bounded source limit.");
@@ -421,10 +500,24 @@ public static class MidiRenderPlanFile
         long payloadByteCount = FixedPayloadByteCount
             + ((long)sourceCount * SourceIdByteCount)
             + ((long)disabledSourceCount * sizeof(int))
+            + sizeof(int)
+            + ((long)plan.UnitDescriptors.Length * UnitDescriptorByteCount)
+            + sizeof(int)
+            + ((long)plan.CacheSourceBindings.Length * sizeof(int) * 2)
+            + sizeof(int)
+            + ((long)plan.ReferencedPresetKeys.Length * sizeof(int))
             + ((long)plan.Ports.Length * PortHeaderByteCount)
             + ((long)plan.UnitFragments.Length * UnitFragmentHeaderByteCount)
             + ((long)plan.Segments.Length * SegmentHeaderByteCount)
-            + ((long)totalEventCount * EventByteCount);
+            + ((long)totalEventCount * EventByteCount)
+            + 1;
+        if (plan.EventStreamDescriptor is MidiRenderEventStreamDescriptor descriptor)
+        {
+            payloadByteCount = checked(payloadByteCount
+                + System.Text.Encoding.UTF8.GetByteCount(descriptor.ControlMapName)
+                + System.Text.Encoding.UTF8.GetByteCount(descriptor.DataFilePath)
+                + 10);
+        }
         if (payloadByteCount + ChecksumByteCount > MaximumFileByteCount)
         {
             throw new InvalidDataException("The IPC MIDI event plan exceeds its bounded byte limit.");

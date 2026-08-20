@@ -7,6 +7,20 @@ namespace Midora.Application.Tests;
 public sealed class ProjectCreationEditCommandsTests
 {
     [Fact]
+    public void LogicalTrackWithoutAnExplicitNameUsesTheNeutralDefault()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = CreateInstrument(project, "Named Instrument");
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
+
+        document.Execute(ProjectDomainEditCommands.CreateLogicalTrack(
+            eventInstrumentId: instrument.Id));
+
+        Assert.Equal("Logical Track", Assert.Single(project.Tracks).Name);
+    }
+
+    [Fact]
     public void CreatedEventInstrumentFollowsInstanceVelocityByDefault()
     {
         MidoraProject project = new(480);

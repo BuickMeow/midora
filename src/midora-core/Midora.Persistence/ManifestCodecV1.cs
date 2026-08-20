@@ -13,7 +13,8 @@ internal static class ManifestCodecV1
         "event-instrument-pb",
         "logical-track-pb",
         "midi-channel-root-pb",
-        "pure-midi-track-pb"
+        "pure-midi-track-pb",
+        "pure-midi-content-pack"
     };
 
     public static ManifestJsonV1 Parse(ReadOnlySpan<byte> utf8)

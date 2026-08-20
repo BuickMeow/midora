@@ -103,6 +103,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         Directory.CreateDirectory(ownedDirectory);
         string planPath = Path.Combine(ownedDirectory, "compiled-audio-plan.mdap");
         AudioUnitCacheStaging? cacheStaging = null;
+        MidiRenderEventStreamProducer? eventStreamProducer = null;
         try
         {
             try
@@ -124,6 +125,11 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
                         + exception.Message);
             }
             MidiRenderPlan plan = cacheStaging?.Plan ?? request.Plan;
+            eventStreamProducer = MidiRenderEventStreamProducer.Create(plan, ownedDirectory);
+            if (eventStreamProducer is not null)
+            {
+                plan = plan.WithEventStreamDescriptor(eventStreamProducer.Descriptor);
+            }
             MidiRenderPlanFile.Write(planPath, plan);
             using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
                 $"Midora.Audio.FileRender.{Guid.NewGuid():N}");
@@ -158,6 +164,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         }
         finally
         {
+            eventStreamProducer?.Dispose();
             cacheStaging?.Dispose();
             CleanupOwnedDirectory(ownedDirectory);
         }

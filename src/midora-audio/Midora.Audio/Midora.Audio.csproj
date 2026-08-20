@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Midora.Application.Tests" />
+    <InternalsVisibleTo Include="Midora.Audio.Bass" />
   </ItemGroup>
 
 </Project>

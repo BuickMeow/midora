@@ -42,7 +42,9 @@ public readonly record struct AudioCacheSessionSnapshot(
     bool MeetsStoragePerformanceRequirement = false,
     long WriterBacklogBytes = 0,
     int PendingPublishCount = 0,
-    bool CompactionPending = false);
+    bool CompactionPending = false,
+    long JournalPublishedEntryCount = 0,
+    long JournalPublishedLiveBytes = 0);
 
 public readonly record struct AudioCachePublishResult(
     bool Published,
@@ -99,6 +101,17 @@ public interface IAudioPcmCacheSessionAccess
         {
             spool.Dispose();
         }
+    }
+
+    bool SupportsReusableAudioPackJournals => false;
+
+    void AdoptReusableAudioPackJournals(
+        AudioCacheSessionStore.AudioRecoverySpool spool,
+        string journalDirectory,
+        IReadOnlyCollection<string> completedKeys)
+    {
+        throw new NotSupportedException(
+            "This audio cache session does not support direct Pack journal adoption.");
     }
 
     void InvalidateReusableAudio(string key);
@@ -167,6 +180,8 @@ public sealed class AudioCacheSessionStore : IDisposable
     private long _transientBytes;
     private long _peakTransientBytes;
     private long _pendingPublishBytes;
+    private long _journalPublishedEntryCount;
+    private long _journalPublishedLiveBytes;
     private AudioCacheRetentionState _retentionState;
     private AudioCacheWarning _warning;
     private bool _disposed;
@@ -253,6 +268,7 @@ public sealed class AudioCacheSessionStore : IDisposable
 
     public string RootPath => _rootPath;
     public string SessionPath => _sessionPath;
+    public bool SupportsReusableAudioPackJournals => true;
 
     public static string ComputeKey(ReadOnlySpan<byte> canonicalKeyBytes) =>
         Convert.ToHexStringLower(SHA256.HashData(canonicalKeyBytes));
@@ -279,7 +295,9 @@ public sealed class AudioCacheSessionStore : IDisposable
                 _storageBenchmark.MeetsMinimumRequirement,
                 _pendingPublishBytes,
                 _pendingPublishes.Count,
-                _compactionRequested);
+                _compactionRequested,
+                _journalPublishedEntryCount,
+                _journalPublishedLiveBytes);
         }
     }
 
@@ -493,6 +511,71 @@ public sealed class AudioCacheSessionStore : IDisposable
         }
         if (accepted.Length == 0)
         {
+            spool.Dispose();
+        }
+    }
+
+    public void AdoptReusableAudioPackJournals(
+        AudioRecoverySpool spool,
+        string journalDirectory,
+        IReadOnlyCollection<string> completedKeys)
+    {
+        ArgumentNullException.ThrowIfNull(spool);
+        ArgumentException.ThrowIfNullOrWhiteSpace(journalDirectory);
+        ArgumentNullException.ThrowIfNull(completedKeys);
+        string expectedDirectory = AudioCachePackJournal.GetDirectoryPath(spool.Path);
+        string fullDirectory = Path.GetFullPath(journalDirectory);
+        if (!string.Equals(
+            expectedDirectory,
+            fullDirectory,
+            StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "The Pack journal directory does not belong to the supplied transient spool.",
+                nameof(journalDirectory));
+        }
+
+        spool.ReleaseFileHandleForExternalUse();
+        try
+        {
+            lock (_sync)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (_retentionState != AudioCacheRetentionState.Enabled)
+                {
+                    return;
+                }
+                try
+                {
+                    AudioCachePackJournalAdoptionResult result =
+                        _packStore.AdoptJournalDirectory(fullDirectory, completedKeys);
+                    _reusableBytes = _packStore.LiveBytes;
+                    _journalPublishedEntryCount = checked(
+                        _journalPublishedEntryCount + result.PublishedEntryCount);
+                    _journalPublishedLiveBytes = checked(
+                        _journalPublishedLiveBytes + result.PublishedLiveBytes);
+                    if (result.QuotaFull)
+                    {
+                        DisableRetention(
+                            AudioCacheRetentionState.DisabledByQuota,
+                            "Reusable audio cache live-byte quota is full; new entries will be rendered without retention.");
+                    }
+                }
+                catch (Exception exception) when (exception is IOException
+                    or UnauthorizedAccessException
+                    or InvalidDataException
+                    or NotSupportedException)
+                {
+                    DisableRetention(
+                        AudioCacheRetentionState.DisabledByWriteFailure,
+                        "A completed reusable audio Pack journal could not be adopted. "
+                            + exception.Message);
+                }
+            }
+        }
+        finally
+        {
+            TryDeleteDirectory(fullDirectory);
             spool.Dispose();
         }
     }
@@ -1287,6 +1370,23 @@ public sealed class AudioCacheSessionStore : IDisposable
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             // The caller already reports the primary cache failure.
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 

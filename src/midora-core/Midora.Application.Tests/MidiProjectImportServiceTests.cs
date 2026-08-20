@@ -392,6 +392,66 @@ public sealed class MidiProjectImportServiceTests
     }
 
     [Fact]
+    public void DuplicateTimeAndKeySignaturesUseLastSourceOrderAndRemainValid()
+    {
+        StandardMidiFileTrack conductor = new(
+            120,
+            [
+                StandardMidiFileEvent.Meta(
+                    0,
+                    StandardMidiFile.SetTempoMetaType,
+                    [0x07, 0xa1, 0x20]),
+                StandardMidiFileEvent.Meta(
+                    0,
+                    StandardMidiFile.TimeSignatureMetaType,
+                    [4, 2, 24, 8]),
+                StandardMidiFileEvent.Meta(
+                    0,
+                    StandardMidiFile.KeySignatureMetaType,
+                    [0, 0])
+            ]);
+        StandardMidiFileTrack source = new(
+            120,
+            [
+                StandardMidiFileEvent.Meta(
+                    0,
+                    StandardMidiFile.TimeSignatureMetaType,
+                    [4, 2, 24, 8]),
+                StandardMidiFileEvent.Meta(
+                    0,
+                    StandardMidiFile.TimeSignatureMetaType,
+                    [3, 2, 24, 8]),
+                StandardMidiFileEvent.Meta(
+                    0,
+                    StandardMidiFile.KeySignatureMetaType,
+                    [0, 0]),
+                StandardMidiFileEvent.Meta(
+                    0,
+                    StandardMidiFile.KeySignatureMetaType,
+                    [1, 1]),
+                StandardMidiFileEvent.ChannelVoice(0, MidiMessage.NoteOn(0, 60, 100)),
+                StandardMidiFileEvent.ChannelVoice(120, MidiMessage.NoteOff(0, 60, 0))
+            ]);
+
+        MidiProjectImportResult result = MidiProjectImportService.Import(
+            StandardMidiFile.EncodeType1(480, [conductor, source]),
+            "Conductor Compatibility");
+
+        TimeSignatureChange timeSignature = Assert.Single(result.Project.Conductor.TimeSignatures);
+        Assert.Equal((3, 4), (timeSignature.Numerator, timeSignature.Denominator));
+        KeySignatureChange keySignature = Assert.Single(result.Project.Conductor.KeySignatures);
+        Assert.Equal((1, true), (keySignature.SharpsFlats, keySignature.IsMinor));
+        Assert.Contains(result.Diagnostics, value =>
+            value.Code == "MIDORA-MIDI-IMPORT-DUPLICATE-TIME-SIGNATURE"
+            && value.Severity == DiagnosticSeverity.Warning);
+        Assert.Contains(result.Diagnostics, value =>
+            value.Code == "MIDORA-MIDI-IMPORT-DUPLICATE-KEY-SIGNATURE"
+            && value.Severity == DiagnosticSeverity.Warning);
+        using MidoraCompiler compiler = new();
+        Assert.True(compiler.CompileFull(result.Project).IsConsumable);
+    }
+
+    [Fact]
     public void InvalidAndBlankTrackNamesAreDiscardedAndReceiveDeterministicFallbacks()
     {
         StandardMidiFileTrack conductor = new(

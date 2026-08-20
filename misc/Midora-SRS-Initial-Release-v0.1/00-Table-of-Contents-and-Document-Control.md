@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-08-19**
+> 最近修订日期：**2026-08-20**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -50,8 +50,28 @@
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
 
+## 2026-08-20 修订摘要
+
+- Application Preferences 增加可清空的 Default Embedded SoundFont 本机路径，只用于 `New Project` 与 `Open MIDI as New Project`。有效文件按 Embedded snapshot 流程复制、哈希和验证；路径不进入 `.midora`，启动时缺失自动清空，任务开始时缺失按未设置处理。
+- 播放期间 `Project` 一级菜单和 `Project Settings` 保持可用，只禁用受编辑锁约束的 `New Event Instrument` / `New MIDI Channel Root` 等命令；Status Bar 的 `Playing` 使用绿色文本。
+- Arrangement 与共享 piano roll 的可见 Grid 固定为 Bar/分母拍子线，Ruler 显示一基小节号；Segment local tick 通过 Project offset 对齐完整 Time Signature Map，极端水平缩小时按 device-pixel 密度上限跳过不可辨识竖线。
+- Arrangement parent 右侧改为不响应 Draw 的纯黑内容区；整个 Header 可单击折叠，空间不足时隐藏摘要。可变行高滚动保证最后一行完整位于 Overview 上方，创建按钮在播放/编辑锁期间禁用。
+- piano roll 纵向缩放固定为不小于 3 的整数 device pixels/key，Note 顶边与 Key 上分割线重合且总高度等于 Key 高度。Pure MIDI Segment 的 Overview 通过 page summary 聚合音符密度，Add Lane 使用分步目标选择器并支持全部 CC 0..127 的统一名称格式。
+
 ## 2026-08-19 修订摘要
 
+- Exact Root/Unit PCM 命中现在必须在 source range query 前建立 demand schedule；完整命中范围跳过对应 MIDI page 查询、排序和 IPC，混合命中仅生产 miss owner。Monitoring 使 cache bypass 后，rolling event stream 必须从实际可听 frame 发布新的 append-only generation，Worker 显式 Seek 后才切换到该 suffix；旧 generation 在切换完成前仍保持可读，并为本次 playback generation 单调保持 synthesis。
+- Pure MIDI content pack 增加局部有序的 NoteOn、NoteOff 与 Channel endpoint pages，以及中途起播使用的 Channel-state checkpoint/active-note 查询；窗口消费使用有界 k-way merge，不再反复扫描巨型 Segment 的历史 Note pages。本次为开发期破坏性 pack version 替换。
+- Reusable PCM miss 改为把16,384-frame blocks直接顺序追加到generation journal；完整 generation 原子提交，未完成 journal 保持不可命中并由重整回收，删除完整 sparse spool 到 Pack 的二次 payload 复制。
+- 播放 UI 每个timer tick冻结一次CurrentTick，Tempo使用有序数组与递增/二分索引且只在实际变化时通知；播放指针移入独立轻量overlay，不再因30 Hz指针更新使Timeline内容层完整重绘。
+- SoundFont 策略保持持久 `BASS_MIDI_FONT_MMAP` 与只预载计划引用 Preset；不把完整 SF2 复制到私有内存，也不默认解码全部 `.mpk` 到 RAM。
+- Pure MIDI 极端规模基线改为 out-of-core page pack：Direct Note/Event/opaque source、canonical execution/SMF projection 与音频 sample-domain event plan 均不得要求整 Project 连续数组或按对象逐项常驻；页同时受 record count 与 decoded byte count 双重限制，页缓存必须有界。
+- `Open MIDI as New Project` 改为两遍流式读取与事务性 page-pack 构建，不得先把完整 `.mid`、全部 parsed events、全部配对集合和完整 imported Project 的第二份深拷贝同时驻留内存。开发期 `.midora` Pure MIDI Track 格式改为小型 protobuf 元数据加单 Track page pack，不提供旧开发格式兼容读取。
+- Canonical 保持一个正式事件集和两个冻结投影，但物理表示允许共享 immutable pages、descriptor/index 与去重来源表；Full/Incremental 等价比较的是逻辑事件序列、投影、诊断与 fingerprint，不要求连续数组或对象布局相同。
+- 实时播放的 rolling preparation 前移到 canonical→sample 事件计划和 IPC：启动只发布当前光标恢复状态与 Startup 2 s 窗口，随后按 Low 0.75 s / Target High 6 s 水位请求页面；远处 Segment/事件数量不得决定启动等待。IPC 以有界 page generation 传输，删除整项目 MDAP event-count/file-size 作为正常项目容量上限的做法。
+- Pure MIDI Arrangement preview、Piano Roll、Velocity 与 Event Lane 必须通过 source page range query/LOD 聚合读取可见范围；不得为打开视图建立全 Segment `TimelineRenderItem[]`、全 ID dictionary 或全量 interval tree。编辑使用 immutable base pages + copy-on-write overlay，并只失效相交页/tile。
+- rolling event reader 在单个committed窗口超过固定ring时必须公布排他的partial safe frontier，使renderer可推进至最后已装载record frame并分批排空同frame事件；不得因reader等待ring空间、renderer等待完整窗口而形成永久Buffering。
+- 从Arrangement显式打开Segment时，若Edit Cursor位于该Segment的Project范围内，Logical/Pure MIDI Segment Editor统一映射到local tick并将该位置水平居中；仅切换已有Tab时仍保留原viewport。
 - `Open MIDI as New Project` 在 detached candidate 验证前增加确定性导入兼容归一化：缺失 tick 0 Tempo / Time Signature 时分别补齐 120 BPM / 4/4，同 tick 重复 Tempo 按源 MTrk 与事件顺序使用后来者。
 - SMF Track Name 缺失、trim 后为空或非严格 UTF-8 不再使整个导入失败；非法名称事件被丢弃，需要的 Pure MIDI Track 获得确定性回退名称。所有兼容处理只进入一次性、可复制的导入报告，不放松 Project 内部不变量或导出的严格 UTF-8 要求。
 

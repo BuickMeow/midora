@@ -11,6 +11,7 @@ using System.Windows.Threading;
 using Midora.Application;
 using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Interaction;
+using Midora.Desktop.Presentation.Rendering;
 using Midora.Domain;
 using Xunit;
 
@@ -162,6 +163,81 @@ public sealed class WpfInteractionRegressionTests
             target.CopyPixels(new Int32Rect(100, height - 8, 1, 1), pixel, 4, 0);
             Assert.Equal([14, 11, 9, 255], pixel);
         });
+    }
+
+    [Fact]
+    public void OptInImportedPagedMidiRendersThroughTheWpfTimelineSurface()
+    {
+        string? path = Environment.GetEnvironmentVariable("MIDORA_UI_SAMPLE_MIDI_PATH");
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        MidiProjectImportResult imported = MidiProjectImportService.ImportFile(
+            Path.GetFullPath(path),
+            Path.GetFileNameWithoutExtension(path));
+        try
+        {
+            MidiSegment segment = imported.Project.PureMidiTracks
+                .SelectMany(track => track.Segments)
+                .First(candidate => candidate.Notes.Count != 0);
+            DirectMidiNoteValue first = segment.Notes.QueryValues(
+                    segment.ContentOffsetTick,
+                    segment.ContentEndTick)
+                .First();
+            TimelineWorkspaceViewModel workspace = new(
+                WorkspaceKey.ForObject(WorkspaceKind.SegmentEditor, segment.Id),
+                "MIDI Segment",
+                TimelineWorkspaceMode.Segment);
+            workspace.Rebuild(imported.Project, revision: 1);
+
+            RunOnSta(() =>
+            {
+                const int width = 800;
+                const int height = 260;
+                int noteLane = 127 - first.Key;
+                long startTick = Math.Max(
+                    segment.ContentOffsetTick,
+                    first.StartTick - Math.Min(16, first.StartTick));
+                long tickSpan = Math.Max(64, checked(first.LengthTicks + 32));
+                TimelineSurface surface = new()
+                {
+                    SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                    StartTick = startTick,
+                    TickSpan = tickSpan,
+                    FirstLane = Math.Max(0, noteLane - 4),
+                    LaneHeight = 18,
+                    RangeStartTick = segment.ContentOffsetTick,
+                    RangeEndTick = segment.ContentEndTick,
+                    GridVisible = false
+                };
+                surface.Measure(new Size(width, height));
+                surface.Arrange(new Rect(0, 0, width, height));
+                TimelineRasterCacheSession.Clear();
+
+                RenderTargetBitmap target = new(width, height, 96, 96, PixelFormats.Pbgra32);
+                target.Render(surface);
+                byte[] baseline = new byte[width * height * 4];
+                target.CopyPixels(baseline, width * 4, 0);
+
+                surface.Snapshot = workspace.Snapshot;
+                bool changed = false;
+                for (int attempt = 0; attempt < 200 && !changed; attempt++)
+                {
+                    DrainDispatcher();
+                    Thread.Sleep(5);
+                    target = new(width, height, 96, 96, PixelFormats.Pbgra32);
+                    target.Render(surface);
+                    byte[] actual = new byte[baseline.Length];
+                    target.CopyPixels(actual, width * 4, 0);
+                    changed = !actual.AsSpan().SequenceEqual(baseline);
+                }
+
+                Assert.True(changed, "The source-backed MIDI Note tiles never reached the WPF surface.");
+            });
+        }
+        finally
+        {
+            imported.Project.Dispose();
+        }
     }
 
     [Fact]

@@ -54,7 +54,7 @@ parent 与 child 的 Mute / Solo 固定可见，属于播放期运行状态：
 - 不影响 Audio Render。
 Track 高度属于 UI 状态；Track 正式顺序属于 Project Content。
 
-Header 是独立交互目标。鼠标悬停时使用低强调高亮，按下时背景变暗，松开恢复；越过通用拖动阈值后才开始重排并显示准确插入线。Event Instrument / Root 是可混排 parent Header；Logical / Pure MIDI Track 是带统一缩进的 child Header。父节点右侧不承载 Segment，但 Grid/Bar 线连续绘制。完整 Header 字段、菜单、复制删除、拖动和层级见第 24.3～24.7 节。
+Header 是独立交互目标。鼠标悬停时使用低强调高亮，按下时背景变暗，松开恢复；越过通用拖动阈值后才开始重排并显示准确插入线。Event Instrument / Root 是可混排 parent Header；Logical / Pure MIDI Track 是带统一缩进的 child Header。父节点右侧不承载 Segment，以不透明纯黑覆盖 Grid/Bar 层且不响应 Draw 创建或预览。完整 Header 字段、菜单、复制删除、拖动和层级见第 24.3～24.7 节。
 
 Logical Track 不显示 Bind/Unbind，所在 Event Instrument parent 即唯一绑定；拖到另一个 Event Instrument 执行 rebind 审查。Pure MIDI Track 名称左侧必须显示 MIDI 图标，可跨 Root 移动。Event Instrument/Root parent 与 child Track 的 Mute/Solo 相互独立。
 ### 18.1.4 Segment 显示
@@ -111,7 +111,7 @@ Time Range Selection
 Project End Marker 后区域弱化，但仍显示并允许编辑。End Marker 不是右编辑边界。
 无显式 End Marker 时可显示 Natural End 参考，但它不是 Project 对象。
 
-Arrangement Toolbar 必须分别提供可见分割线粒度、操作粒度与 Snap 开关，以及默认 Segment 创建长度（tick，输入即生效）；新建 Project / 重置编辑器时默认可见分割线粒度为 `Bar`、默认操作粒度为 `1/8`、Snap 开启、默认 Segment 创建长度为 `1 × TPQ`。Arrangement 的可见分割线粒度为 `Bar` 时，小节边界使用主实线，每个分母拍的内部边界使用颜色更浅的低强调实线；拍线必须读取完整 Project Time Signature Map，因此 `3/4` 每小节显示 2 条四分音符间隔实线，`6/8` 每小节显示 5 条八分音符间隔实线，拍号变化 tick 立即作为新的主实线小节边界。该拍内辅助线增强不应用到 Segment 或 SubVoice 钢琴卷帘。Draw 模式下，鼠标所在 Track 必须显示按当前操作粒度定位、按默认长度计算的虚线创建预览。空白处按下左键后进入 Segment 放置手势：未越过拖动阈值时按默认长度创建；向右拖动时按当前操作粒度实时调整结束 tick，松开后一次性提交。若请求长度超出当前可用间隙，创建命令静默缩短为从目标 tick 起可容纳的最大正长度；预览显示实际将提交的长度。不存在正长度空隙时预览为错误色并拒绝创建。该规则只适用于新建 Segment；已有 Segment 的移动和 Resize 仍不得因重叠而被静默缩短。
+Arrangement Toolbar 提供 Grid 开关，但不提供可见 Grid 粒度选择；启用时固定使用 `Bar`。操作粒度与 Snap 仍独立可选，并提供默认 Segment 创建长度（tick，输入即生效）；新建 Project / 重置编辑器时默认操作粒度为 `1/8`、Snap 开启、默认 Segment 创建长度为 `1 × TPQ`。小节边界使用主实线，每个分母拍的内部边界使用颜色更浅的低强调实线；拍线必须读取完整 Project Time Signature Map，因此 `3/4` 每小节显示 2 条四分音符间隔实线，`6/8` 每小节显示 5 条八分音符间隔实线，拍号变化 tick 立即作为新的主实线小节边界。极端水平缩小时必须按 device-pixel 最小间距聚合/跳过不可辨识的竖线，绘制成本不得随不可见的小节或拍数量线性增长。顶部 Timeline Ruler 显示一基小节号而非原始 tick。Draw 模式下，鼠标所在 Track 必须显示按当前操作粒度定位、按默认长度计算的虚线创建预览。空白处按下左键后进入 Segment 放置手势：未越过拖动阈值时按默认长度创建；向右拖动时按当前操作粒度实时调整结束 tick，松开后一次性提交。若请求长度超出当前可用间隙，创建命令静默缩短为从目标 tick 起可容纳的最大正长度；预览显示实际将提交的长度。不存在正长度空隙时预览为错误色并拒绝创建。该规则只适用于新建 Segment；已有 Segment 的移动和 Resize 仍不得因重叠而被静默缩短。
 
 Arrangement 中只有 Draw 模式允许拖动 Segment 主体或调整边缘；Select 模式的单次左键按下始终发起框选，即使起点位于 Segment 上也不得先命中或单独选择该 Segment，并且不得直接移动、Resize 或双击创建 Segment。既有双击导航不受该单击规则影响。拖动和 Resize 期间必须显示位置与长度预览，并隐藏同位置的创建预览。工具互斥、指针和快捷键规则见第 20.1.6、20.12 节。
 
@@ -125,7 +125,7 @@ Draw 模式下在 Segment 主体执行 `Ctrl+Drag` 时，复制当前 Segment �
 +--------------------------------------------------------------------------+
 | [A] Segment Toolbar                                                      |
 +--------------------------------------------------------------------------+
-| [B] Segment Summary                                                      |
+| [B] Segment Toolbar Continuation                                         |
 +-------------+------------------------------------------------------------+
 | [D] Pitch   | [C] Local Timeline Header                                 |
 |     Ruler   +------------------------------------------------------------+
@@ -137,8 +137,9 @@ Draw 模式下在 Segment 主体执行 `Ctrl+Drag` 时，复制当前 Segment �
 +--------------------------------------------------------------------------+
 ```
 ### 18.2.2 时间坐标
-Logical Segment Editor 与 Midi Segment Editor 均以 Segment local tick 为主，同时可显示映射后的 Project Position。
-不得把 local tick 伪装成 Project `Bar:Beat:Tick`。
+Logical Segment Editor 与 Midi Segment Editor 均以 Segment local tick 作为编辑、命中和命令坐标；左上角不重复显示 `(MIDI) Segment: <Name> @ <Tick>` 摘要。Timeline Ruler 可以把 local tick 通过 `ProjectStartTick - ContentOffsetTick` 映射到正式 Project Time Signature Map，并显示对应的一基小节号，但不得改变 local tick 数据语义或把 local tick 本身伪装成 Project `Bar:Beat:Tick`。
+
+用户从 Arrangement 显式打开 Logical 或 Pure MIDI Segment 时，若 Arrangement Edit Cursor 位于该 Segment 的 Project 范围 `[ProjectStartTick, ProjectStartTick + LengthTicks)`，Segment Editor 必须把它映射为 `ContentOffsetTick + (EditCursorTick - ProjectStartTick)` 的local edit cursor，并把该位置水平置于当前viewport中央；靠近local tick 0而无法严格居中时只允许把viewport起点clamp到0。该规则同样适用于显式重新打开已有Segment Tab；仅通过Tab切换返回既有编辑器时保留原viewport。Arrangement Edit Cursor不在Segment范围内时不得因此改动Segment Editor的既有viewport。
 ### 18.2.3 Pitch Ruler
 - 使用完整白键底板与较短黑键叠层构成的真实横向钢琴键样式；
 - MIDI Note 60 显示为 C4；
@@ -158,6 +159,10 @@ Draw 模式下在 Logical Note 主体执行 `Ctrl+Drag` 时，复制当前 Note 
 Draw 模式下，`Alt + Left Drag` 在 Logical Note 的任意命中位置强制执行 Move，`Ctrl + Alt + Left Drag` 强制执行复制并移动；这两种手势均仍服从当前 Snap。操作类型及复制意图在按下时冻结。SubVoice Template Note 复用同一规则。
 
 Segment Toolbar 必须提供共享 piano-roll 的可见分割线粒度、操作粒度、Snap、默认 Note 长度（tick）与默认 velocity。默认长度和 velocity 独立于 Grid；默认长度允许小于操作粒度。
+
+共享 piano roll 的 Grid 与 Arrangement 一样只提供开关、不提供可见粒度选择；启用时固定使用 `Bar`，小节主线与每个分母拍的低强调子线必须通过上述 local→Project 映射与 Arrangement 精确对齐。SubVoice local tick 0 直接按 Project tick 0 的 Time Signature Map 显示。水平极端缩小时执行相同的 device-pixel 密度上限。顶部 Ruler 显示小节号。
+
+piano roll 的每 Key 高度 `N` 固定为 device-pixel 整数，`N >= 3`；纵向缩放每一步只改变该整数。Note 的顶部 1 device pixel border 精确覆盖所在 Key 的上分割线，Note 总高度精确为 `N`，底部 border 停在下一条分割线前一 device pixel。左右 border、上下 border 与至少一 device pixel fill 在最小纵向缩放下均必须可辨；DPI 换算不得重新引入半像素高度或跨 Key 漂移。
 
 active crop window 外内容：
 - 保留；
@@ -204,7 +209,15 @@ Segment 编辑后：
 
 Logical Segment 变体的下部 Lane 编辑 Logical Parameter，并通过 Track 绑定的 Event Instrument 解释 Note。Pure MIDI 变体的 Velocity 直接编辑 Direct MIDI NoteOn velocity，下部 Event Lane 直接编辑完整 Channel Voice Event；不显示 Logical Parameter 或 Event Instrument 绑定控件。
 
+Pure MIDI `Add Lane` 使用与 SubVoice `Add Event` 一致的分步目标选择器，不得平铺数百个条目。Pure MIDI 允许选择 MIDI 1.0 的全部 CC `0..127`；已被 BASSMIDI 名称表识别者统一显示为 `CC <n> - <Name>`，未识别者显示为 `CC <n>`。活动 Event Lane 下拉框使用同一格式。
+
 Pure MIDI 的 opaque SysEx/Meta 只在 Event List/Inspector 中查看、移动和删除，不提供自由 payload 编辑。两种变体必须共享 Grid/Snap/zoom/pan/scroll、tile cache、临时编辑覆盖层、批量选择与 Segment Content Window 行为；修复共享交互缺陷不得要求分别修改复制实现。
+
+Pure MIDI 变体打开 Segment 时不得把全部 Direct Note/Event 转换为 `TimelineRenderItem[]`，也不得建立全量 `ItemsById` dictionary 或全 Segment interval tree。共享 Timeline 必须接受 range-query provider：piano roll 按可见 tick/pitch、Velocity/Event Lane 按可见 tick/active target 请求 source pages，并只为可见 tile 与当前 selection/edit overlay创建瞬时值记录。选择大量对象允许使用 page-local bitmap/range selection descriptor；只有 Inspector、剪贴板或实际 edit command 需要的对象才按 ID 读取。
+
+缩放/平移只能改变查询窗口和 tile 组合；不得触发全 Segment 枚举或重新计算全内容 fingerprint。Page checksum + page-local generation 构成 tile fingerprint 输入，编辑只更新 overlay generation 并失效与修改 tick/pitch/lane 相交的 tiles。
+
+Pure MIDI Segment 的水平 Overview 必须显示 Direct Note 时间密度。对于 paged content，Overview 只能使用页级 minimum/maximum tick、record count 和小型编辑增量聚合到有界 device columns；不得为了生成竖线概览解码或枚举全部 Direct Note。
 ---
 ## 18.3 Event Instrument Editor 总体框架
 ### 18.3.1 布局
@@ -220,6 +233,7 @@ Pure MIDI 的 opaque SysEx/Meta 只在 Event List/Inspector 中查看、移动�
 | [F] Preview Panel                                                       |
 +--------------------------------------------------------------------------+
 ```
+Instrument Header 的标题与摘要使用同一水平行：标题在左、摘要在右或紧随其后；保留各自既有字体层级，不以两行增加固定 Header 高度。
 内部固定分区：
 ```text
 Overview

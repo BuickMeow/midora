@@ -18,6 +18,21 @@ public static class TimelineGridPresentation
         ProjectTimeSignatureMap timeSignatureMap,
         List<TimelineGridLine> destination,
         long minimumTickSpacing = 1)
+        => BuildBarGridLines(
+            startTick,
+            endTick,
+            timeSignatureMap,
+            destination,
+            minimumTickSpacing,
+            projectTickOffset: 0);
+
+    public static void BuildBarGridLines(
+        long startTick,
+        long endTick,
+        ProjectTimeSignatureMap timeSignatureMap,
+        List<TimelineGridLine> destination,
+        long minimumTickSpacing = 1,
+        long projectTickOffset = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(startTick);
         ArgumentNullException.ThrowIfNull(timeSignatureMap);
@@ -29,43 +44,68 @@ public static class TimelineGridPresentation
             return;
         }
 
-        ProjectBarInfo bar = timeSignatureMap.GetBarContaining(startTick);
-        long nextEligibleTick = startTick;
-        while (bar.StartTick < endTick)
+        long localStart = startTick;
+        if (projectTickOffset < 0)
         {
-            if (bar.StartTick >= nextEligibleTick)
+            long firstNonNegativeProjectTick = projectTickOffset == long.MinValue
+                ? long.MaxValue
+                : -projectTickOffset;
+            localStart = Math.Max(localStart, firstNonNegativeProjectTick);
+        }
+        if (localStart >= endTick)
+        {
+            return;
+        }
+        long projectStart = SaturatingAddSigned(localStart, projectTickOffset);
+        long projectEnd = SaturatingAddSigned(endTick, projectTickOffset);
+        if (projectEnd <= projectStart)
+        {
+            return;
+        }
+
+        ProjectBarInfo bar = timeSignatureMap.GetBarContaining(projectStart);
+        long nextEligibleTick = localStart;
+        while (bar.StartTick < projectEnd)
+        {
+            long localBarTick = checked(bar.StartTick - projectTickOffset);
+            if (localBarTick >= nextEligibleTick)
             {
-                destination.Add(new(bar.StartTick, TimelineGridLineKind.Bar));
-                nextEligibleTick = SaturatingAdd(bar.StartTick, minimumTickSpacing);
+                destination.Add(new(localBarTick, TimelineGridLineKind.Bar));
+                nextEligibleTick = SaturatingAdd(localBarTick, minimumTickSpacing);
             }
 
             for (int beat = 1; beat < bar.Numerator; beat++)
             {
-                long beatTick = checked(bar.StartTick + (long)beat * bar.TicksPerBeat);
-                if (beatTick >= bar.EndTick || beatTick >= endTick)
+                long projectBeatTick = checked(bar.StartTick + (long)beat * bar.TicksPerBeat);
+                if (projectBeatTick >= bar.EndTick || projectBeatTick >= projectEnd)
                 {
                     break;
                 }
-                if (beatTick >= nextEligibleTick)
+                long localBeatTick = checked(projectBeatTick - projectTickOffset);
+                if (localBeatTick >= nextEligibleTick)
                 {
-                    destination.Add(new(beatTick, TimelineGridLineKind.Beat));
-                    nextEligibleTick = SaturatingAdd(beatTick, minimumTickSpacing);
+                    destination.Add(new(localBeatTick, TimelineGridLineKind.Beat));
+                    nextEligibleTick = SaturatingAdd(localBeatTick, minimumTickSpacing);
                 }
             }
 
-            if (bar.EndTick <= bar.StartTick || bar.EndTick >= endTick)
+            if (bar.EndTick <= bar.StartTick || bar.EndTick >= projectEnd)
             {
                 break;
             }
             long nextBarTick = bar.EndTick;
-            if (nextBarTick < nextEligibleTick)
+            long nextEligibleProjectTick = SaturatingAddSigned(
+                nextEligibleTick,
+                projectTickOffset);
+            if (nextBarTick < nextEligibleProjectTick)
             {
-                ProjectBarInfo containing = timeSignatureMap.GetBarContaining(nextEligibleTick);
-                nextBarTick = containing.StartTick >= nextEligibleTick
+                ProjectBarInfo containing = timeSignatureMap.GetBarContaining(
+                    nextEligibleProjectTick);
+                nextBarTick = containing.StartTick >= nextEligibleProjectTick
                     ? containing.StartTick
                     : containing.EndTick;
             }
-            if (nextBarTick >= endTick)
+            if (nextBarTick >= projectEnd)
             {
                 break;
             }
@@ -75,4 +115,11 @@ public static class TimelineGridPresentation
 
     private static long SaturatingAdd(long value, long increment) =>
         value > long.MaxValue - increment ? long.MaxValue : value + increment;
+
+    private static long SaturatingAddSigned(long value, long increment)
+    {
+        if (increment > 0 && value > long.MaxValue - increment) return long.MaxValue;
+        if (increment < 0 && value < long.MinValue - increment) return long.MinValue;
+        return value + increment;
+    }
 }

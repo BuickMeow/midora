@@ -112,6 +112,7 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
     private readonly FileStream _file;
     private readonly SafeFileHandle _handle;
     private readonly ReusableAudioPackReader? _directReader;
+    private readonly AudioCachePackJournalWriter? _journalWriter;
     private readonly ReaderSlot?[] _readers;
     private readonly WriterSlot?[] _writers;
     private readonly AudioFormat _format;
@@ -135,8 +136,11 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
         _writers = new WriterSlot?[plan.SourceIds.Length];
         FileStream? file = null;
         ReusableAudioPackReader? directReader = null;
+        AudioCachePackJournalWriter? journalWriter = null;
         try
         {
+            string journalDirectory = AudioCachePackJournal.GetDirectoryPath(fullPath);
+            bool usePackJournal = Directory.Exists(journalDirectory);
             IReadOnlyDictionary<string, ReusableAudioReadEntry>? directEntries =
                 string.IsNullOrWhiteSpace(readManifestPath)
                     ? null
@@ -187,8 +191,37 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
                     _writers[sourceIndex] = new WriterSlot(
                         checked((nuint)writerCapacityFrames * (nuint)_format.BytesPerFrame),
                         writerCapacityFrames,
-                        CreateCacheFragments(misses));
+                        CreateCacheFragments(misses),
+                        usePackJournal);
                 }
+            }
+            if (usePackJournal)
+            {
+                journalWriter = new AudioCachePackJournalWriter(journalDirectory);
+                Span<byte> pcmHeader = stackalloc byte[AudioPcmCachePayload.HeaderByteCount];
+                HashSet<string> initializedKeys = new(StringComparer.Ordinal);
+                foreach (MidiSegmentRenderPlan fragment in plan.Segments)
+                {
+                    if (fragment.PcmCacheKey is null
+                        || fragment.PcmCacheHit
+                        || !initializedKeys.Add(fragment.PcmCacheKey))
+                    {
+                        continue;
+                    }
+                    pcmHeader.Clear();
+                    AudioPcmCachePayload.WriteHeader(
+                        pcmHeader,
+                        _format,
+                        fragment.FrameCount);
+                    journalWriter.WriteBlock(
+                        fragment.PcmCacheKey!,
+                        blockIndex: 0,
+                        checked((int)AudioCachePackStore.ComputeBlockCount(
+                            fragment.PcmPayloadByteCount)),
+                        fragment.PcmPayloadByteCount,
+                        pcmHeader);
+                }
+                _journalWriter = journalWriter;
             }
             _file = file = new FileStream(
                 fullPath,
@@ -210,6 +243,7 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
         {
             file?.Dispose();
             directReader?.Dispose();
+            journalWriter?.Dispose();
             DisposeBuffers();
             throw;
         }
@@ -369,6 +403,7 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
         }
         _file.Dispose();
         _directReader?.Dispose();
+        _journalWriter?.Dispose();
         DisposeBuffers();
     }
 
@@ -399,7 +434,14 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
             }
             if (!WriteFaulted)
             {
-                _file.Flush(flushToDisk: true);
+                if (_journalWriter is not null)
+                {
+                    _journalWriter.Complete();
+                }
+                else
+                {
+                    _file.Flush(flushToDisk: true);
+                }
             }
         }
         catch (Exception exception)
@@ -445,6 +487,14 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
             Volatile.Write(ref _writeFault,
                 new InvalidDataException("A Segment PCM writer position is outside its cache schedule."));
             return false;
+        }
+        if (_journalWriter is not null)
+        {
+            return WriteAvailableFramesToJournal(
+                slot,
+                fragment,
+                consumed,
+                available);
         }
         if (!force && available < WriterFlushThresholdFrames
             && produced < fragment.StreamEndFrame)
@@ -613,6 +663,94 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
             }
         }
         return true;
+    }
+
+    private bool WriteAvailableFramesToJournal(
+        WriterSlot slot,
+        CacheFragment fragment,
+        long consumed,
+        long available)
+    {
+        if (fragment.CacheKey is null || slot.JournalBlockBuffer is null)
+        {
+            Volatile.Write(ref _writeFault,
+                new InvalidDataException("A journaled Segment PCM writer has no cache identity."));
+            return false;
+        }
+        if (!string.Equals(
+            slot.ActiveJournalKey,
+            fragment.CacheKey,
+            StringComparison.Ordinal))
+        {
+            if (slot.JournalBufferedBytes != 0)
+            {
+                Volatile.Write(ref _writeFault,
+                    new InvalidDataException("A Segment PCM journal changed entries with a partial block."));
+                return false;
+            }
+            slot.ActiveJournalKey = fragment.CacheKey;
+            slot.NextJournalBlockIndex = 1;
+        }
+
+        int ringIndex = (int)(consumed % slot.CapacityFrames);
+        int availableBlockFrames =
+            (AudioCachePackStore.BlockPayloadBytes - slot.JournalBufferedBytes)
+                / _format.BytesPerFrame;
+        int frames = checked((int)Math.Min(
+            Math.Min(
+                Math.Min(available, slot.CapacityFrames - ringIndex),
+                fragment.StreamEndFrame - consumed),
+            availableBlockFrames));
+        if (frames <= 0)
+        {
+            Volatile.Write(ref _writeFault,
+                new InvalidDataException("A Segment PCM journal block made no forward progress."));
+            return false;
+        }
+        try
+        {
+            int byteCount = checked(frames * _format.BytesPerFrame);
+            new ReadOnlySpan<byte>(
+                    slot.Buffer + (ringIndex * _format.BytesPerFrame),
+                    byteCount)
+                .CopyTo(slot.JournalBlockBuffer.AsSpan(slot.JournalBufferedBytes));
+            slot.JournalBufferedBytes += byteCount;
+            long nextConsumed = consumed + frames;
+            bool fragmentCompleted = nextConsumed == fragment.StreamEndFrame;
+            if (slot.JournalBufferedBytes == AudioCachePackStore.BlockPayloadBytes
+                || fragmentCompleted)
+            {
+                long payloadLength = checked(
+                    AudioPcmCachePayload.HeaderByteCount
+                    + (fragment.FrameCount * _format.BytesPerFrame));
+                int blockCount = checked((int)AudioCachePackStore.ComputeBlockCount(payloadLength));
+                _journalWriter!.WriteBlock(
+                    fragment.CacheKey,
+                    slot.NextJournalBlockIndex++,
+                    blockCount,
+                    payloadLength,
+                    slot.JournalBlockBuffer.AsSpan(0, slot.JournalBufferedBytes));
+                slot.JournalBufferedBytes = 0;
+                if (fragmentCompleted)
+                {
+                    if (slot.NextJournalBlockIndex != blockCount)
+                    {
+                        throw new InvalidDataException(
+                            "A completed Segment PCM journal has an unexpected block count.");
+                    }
+                    slot.ActiveJournalKey = null;
+                    slot.NextJournalBlockIndex = 0;
+                }
+            }
+            Volatile.Write(ref slot.ConsumerPosition, nextConsumed);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            Volatile.Write(ref _writeFault, exception);
+            Volatile.Write(ref slot.ConsumerPosition, consumed + frames);
+            return true;
+        }
     }
 
     private static CacheFragment[] CreateCacheFragments(
@@ -992,11 +1130,18 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
 
     private sealed unsafe class WriterSlot : IDisposable
     {
-        public WriterSlot(nuint byteCount, int capacityFrames, CacheFragment[] fragments)
+        public WriterSlot(
+            nuint byteCount,
+            int capacityFrames,
+            CacheFragment[] fragments,
+            bool usePackJournal)
         {
             CapacityFrames = capacityFrames;
             Fragments = fragments;
             FragmentsByPayloadOffset = SortByPayloadOffset(fragments);
+            JournalBlockBuffer = usePackJournal
+                ? new byte[AudioCachePackStore.BlockPayloadBytes]
+                : null;
             Buffer = (byte*)NativeMemory.Alloc(byteCount);
             if (Buffer is null)
             {
@@ -1008,6 +1153,10 @@ internal sealed unsafe class SegmentPcmCacheIoBridge : IDisposable
         public int CapacityFrames { get; }
         public CacheFragment[] Fragments { get; }
         public CacheFragment[] FragmentsByPayloadOffset { get; }
+        public byte[]? JournalBlockBuffer { get; }
+        public string? ActiveJournalKey { get; set; }
+        public int JournalBufferedBytes { get; set; }
+        public int NextJournalBlockIndex { get; set; }
         public long ConsumerPosition;
         public long ProducerPosition;
 

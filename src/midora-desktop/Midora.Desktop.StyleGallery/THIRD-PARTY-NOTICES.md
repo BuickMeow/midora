@@ -25,6 +25,7 @@ Assets used:
 - `ic_fluent_more_horizontal_20_regular.svg`
 - `ic_fluent_search_20_regular.svg`
 - `ic_fluent_music_note_2_20_regular.svg`
+- `ic_fluent_music_note_1_20_regular.svg`
 - `ic_fluent_folder_20_regular.svg`
 - `ic_fluent_document_20_regular.svg`
 - `ic_fluent_settings_20_regular.svg`
@@ -34,6 +35,12 @@ Assets used:
 - `ic_fluent_checkmark_circle_20_regular.svg`
 - `ic_fluent_arrow_fit_20_regular.svg`
 - `ic_fluent_re_order_dots_vertical_20_regular.svg`
+- `ic_fluent_wrench_20_regular.svg`
+- `ic_fluent_midi_20_regular.svg`
+- `ic_fluent_guitar_20_regular.svg`
+- `ic_fluent_arrow_expand_all_20_regular.svg`
+- `ic_fluent_arrow_collapse_all_20_regular.svg`
+- `ic_fluent_movies_and_tv_20_regular.svg`
 
 MIT License
 

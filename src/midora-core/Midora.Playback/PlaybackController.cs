@@ -151,6 +151,8 @@ public sealed class PlaybackController : IDisposable
     private bool _releaseEditLockAtHeldGateEnd;
     private AudioRecoveryStorageUnavailableException? _recoveryStorageFailure;
     private bool _bufferingRecoveryRequested;
+    private long _bufferingRecoveryStartFrame = -1;
+    private long _bufferingRecoveryEndFrame = -1;
     private bool _disposed;
 
     public PlaybackController(ProjectCompilationSession session, IRealtimePlaybackBackend backend)
@@ -174,6 +176,25 @@ public sealed class PlaybackController : IDisposable
     public bool IsHeldPreviewGateOpen => _heldPreviewGateOpen;
     public HeldPreviewGateEndReport? LastHeldPreviewGateEndReport { get; private set; }
     public TickRange? LoopRange => _loopRange;
+    public double? BufferingProgress
+    {
+        get
+        {
+            if (State != PlaybackState.Buffering
+                || !_bufferingRecoveryRequested
+                || _bufferingRecoveryStartFrame < 0
+                || _bufferingRecoveryEndFrame <= _bufferingRecoveryStartFrame)
+            {
+                return null;
+            }
+            long preparedThroughFrame = Math.Clamp(
+                _backend.RenderPositionFrames,
+                _bufferingRecoveryStartFrame,
+                _bufferingRecoveryEndFrame);
+            return (double)(preparedThroughFrame - _bufferingRecoveryStartFrame)
+                / (_bufferingRecoveryEndFrame - _bufferingRecoveryStartFrame);
+        }
+    }
     public event EventHandler? StateChanged;
 
     public void BeginDefaultPlaybackPreparation()
@@ -656,6 +677,8 @@ public sealed class PlaybackController : IDisposable
             return;
         }
         _bufferingRecoveryRequested = false;
+        _bufferingRecoveryStartFrame = -1;
+        _bufferingRecoveryEndFrame = -1;
         if (_heldPreviewGateOpen)
         {
             ExtendHeldPreviewWindowIfNeeded();
@@ -1238,6 +1261,8 @@ public sealed class PlaybackController : IDisposable
         MidiRenderPlan plan)
     {
         _bufferingRecoveryRequested = false;
+        _bufferingRecoveryStartFrame = -1;
+        _bufferingRecoveryEndFrame = -1;
         _recoveryStorageFailure = null;
         if (_backend is not IBufferingRecoveryRealtimePlaybackBackend recoveryBackend)
         {
@@ -1326,6 +1351,8 @@ public sealed class PlaybackController : IDisposable
                 throw new InvalidDataException(
                     "The natural Buffering recovery interval did not advance a sample frame.");
             }
+            _bufferingRecoveryStartFrame = failureFrame;
+            _bufferingRecoveryEndFrame = recoveryEndFrame;
             recoveryBackend.BeginBufferingRecovery(recoveryEndFrame);
             _bufferingRecoveryRequested = true;
             return true;
@@ -1362,6 +1389,8 @@ public sealed class PlaybackController : IDisposable
         ActiveTaskKind = PlaybackTaskKind.None;
         ReleaseEditLock();
         _bufferingRecoveryRequested = false;
+        _bufferingRecoveryStartFrame = -1;
+        _bufferingRecoveryEndFrame = -1;
         LastError = cleanupError is null
             ? failure
             : new AggregateException(

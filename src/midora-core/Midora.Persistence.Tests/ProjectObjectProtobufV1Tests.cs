@@ -436,15 +436,18 @@ public sealed class ProjectObjectProtobufV1Tests
             root.Id));
 
         byte[] rootBytes = MidiChannelRootProtobufCodecV1.Serialize(root);
-        byte[] trackBytes = PureMidiTrackProtobufCodecV1.Serialize(track);
+        string contentPackPath = MidoraPackagePathsV1.PureMidiContentPack(track.Id);
+        byte[] trackBytes = PureMidiTrackProtobufCodecV1.Serialize(track, contentPackPath);
         MidiChannelRoot restoredRoot = MidiChannelRootProtobufCodecV1.Restore(
             new MidoraProject(480, CreatedAt),
             rootBytes);
-        PureMidiTrack restoredTrack = PureMidiTrackProtobufCodecV1.Restore(
+        RestoredPureMidiTrackV1 restored = PureMidiTrackProtobufCodecV1.Restore(
             new MidoraProject(480, CreatedAt),
             trackBytes);
+        PureMidiTrack restoredTrack = restored.Track;
+        Assert.Equal(contentPackPath, restored.ContentPackPath);
         Assert.Equal(rootBytes, MidiChannelRootProtobufCodecV1.Serialize(restoredRoot));
-        Assert.Equal(trackBytes, PureMidiTrackProtobufCodecV1.Serialize(restoredTrack));
+        Assert.Equal(trackBytes, PureMidiTrackProtobufCodecV1.Serialize(restoredTrack, contentPackPath));
 
         MidoraProjectPackageV1 packages = CreateService();
         await packages.SaveCopyAsync(project, firstPath);
@@ -525,7 +528,9 @@ public sealed class ProjectObjectProtobufV1Tests
         byte[] instrumentBytes = EventInstrumentProtobufCodecV1.Serialize(instrument);
         byte[] trackBytes = LogicalTrackProtobufCodecV1.Serialize(track);
         byte[] rootBytes = MidiChannelRootProtobufCodecV1.Serialize(root);
-        byte[] midiTrackBytes = PureMidiTrackProtobufCodecV1.Serialize(midiTrack);
+        byte[] midiTrackBytes = PureMidiTrackProtobufCodecV1.Serialize(
+            midiTrack,
+            MidoraPackagePathsV1.PureMidiContentPack(midiTrack.Id));
 
         string instrumentBase64 = Convert.ToBase64String(instrumentBytes);
         string trackBase64 = Convert.ToBase64String(trackBytes);
@@ -538,7 +543,7 @@ public sealed class ProjectObjectProtobufV1Tests
         const string expectedRootBase64 =
             "CAESEW1pZGktY2hhbm5lbC1yb290GAYiBFJvb3QoADAAOABAAEoBBw==";
         const string expectedMidiTrackBase64 =
-            "CAESD3B1cmUtbWlkaS10cmFjaxgHIgRNSURJKAY=";
+            "CAESD3B1cmUtbWlkaS10cmFjaxgHIgRNSURJKAZCFW1pZGktY29udGVudC9tdF83Lm1waw==";
         Assert.True(string.Equals(expectedInstrumentBase64, instrumentBase64, StringComparison.Ordinal),
             $"Event Instrument golden mismatch. Actual={instrumentBase64}");
         Assert.True(string.Equals(expectedTrackBase64, trackBase64, StringComparison.Ordinal),

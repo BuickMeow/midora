@@ -20,6 +20,9 @@ internal static class MidoraPackagePathsV1
     public static string EmbeddedSoundFont(MidoraId resourceId) =>
         $"resources/soundfonts/{resourceId}.sf2";
 
+    public static string PureMidiContentPack(MidoraId trackId) =>
+        $"midi-content/mt_{trackId}.mpk";
+
     public static readonly string[] FixedContentPaths =
     [
         Project,

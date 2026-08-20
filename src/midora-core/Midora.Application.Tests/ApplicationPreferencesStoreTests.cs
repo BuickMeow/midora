@@ -20,6 +20,7 @@ public sealed class ApplicationPreferencesStoreTests
         Assert.Equal(
             AudioCachePreferences.DefaultMaximumReusableBytes,
             result.Preferences.AudioCache.MaximumReusableBytes);
+        Assert.Null(result.Preferences.DefaultEmbeddedSoundFontPath);
     }
 
     [Fact]
@@ -36,7 +37,10 @@ public sealed class ApplicationPreferencesStoreTests
                 Path.Combine(directory.Path, "save"),
                 Path.Combine(directory.Path, "sf2"),
                 Path.Combine(directory.Path, "midi"),
-                Path.Combine(directory.Path, "audio")));
+                Path.Combine(directory.Path, "audio")))
+        {
+            DefaultEmbeddedSoundFontPath = Path.Combine(directory.Path, "default.sf2")
+        };
 
         Assert.True(store.Save(preferences).Succeeded);
         byte[] first = File.ReadAllBytes(path);
@@ -165,6 +169,22 @@ public sealed class ApplicationPreferencesStoreTests
 
         Assert.Throws<ArgumentException>(() => store.Save(invalid));
         Assert.False(File.Exists(store.FilePath));
+    }
+
+    [Fact]
+    public void DefaultEmbeddedSoundFontRejectsRelativeAndUncPaths()
+    {
+        ApplicationPreferences relative = ApplicationPreferences.Default with
+        {
+            DefaultEmbeddedSoundFontPath = "relative.sf2"
+        };
+        ApplicationPreferences unc = ApplicationPreferences.Default with
+        {
+            DefaultEmbeddedSoundFontPath = @"\\server\share\default.sf2"
+        };
+
+        Assert.Throws<ArgumentException>(relative.Validate);
+        Assert.Throws<ArgumentException>(unc.Validate);
     }
 
     [Theory]

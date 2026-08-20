@@ -1117,6 +1117,10 @@ Segment/Unit raw PCM 位于 Mute/Solo、Playback Master Volume 与 Limiter 之�
 
 相同 Project semantic revision、CompileContext、范围和完整 cache key 的 exact replay 命中时，不得再次进行语义编译或 BASSMIDI 合成。跨范围复用必须把范围冷启动上下文纳入 key；不得把含范围前持续 Note 的连续 PCM 切片冒充从中途冷启动的结果。
 
+精确 Root/Unit PCM 命中还必须在 rolling event producer 查询 canonical/source pages 之前形成 source demand schedule。完整由 exact PCM 覆盖的 owner 在相应 frame range 内不得查询、排序或通过 IPC 发送其 MIDI events；混合 hit/miss 只为 miss owner 生产事件。Mute/Solo/monitoring 一旦使某个 cached owner 需要实时重建，必须从命令生效时的实际可听 frame 重建事件 suffix，并在本次 playback generation 后续保持 synthesis bypass；不得因过早丢弃事件而产生不可恢复的未来缺口。
+
+上述重建不得截断正在被 Worker 读取的 event stream。Producer 必须把新 suffix 追加为新的 event generation，并原子发布 generation ID、base record offset、committed count 与 through frame；旧 generation 在 Worker 显式 Seek 到新 generation 前继续可读。Reader 发现 generation 已变化时必须停止装载旧 suffix 的新增记录，只有在 Seek 获得同一代的稳定快照后才能清空 ring 并切换。这样 Monitoring 即使发生在 producer 已因 exact PCM 命中而跳过数秒事件之后，也必须从可听 frame 恢复完整 MIDI 需求，不能把已跳过区间留成静音缺口。
+
 缓存失效至少服从：
 ```text
 Segment 内容：从最早可证明 causal dirty tick 起；无法证明时从 Segment 有效起点起。
@@ -1153,6 +1157,10 @@ Buffering 完整恢复区间使用独立于 reusable quota 的 transient recover
 
 完整 tile 写完并校验 checksum/generation 后才原子发布。WASAPI callback、BASSMIDI render/mix、ring 搬运线程不得做 cache 文件 I/O。损坏或半写 entry 必须隔离并重建，不能作为命中。
 
+缓存 miss 的 PCM 以 16,384-frame block 直接顺序追加到当前 reusable generation journal；不得先形成完整随机写 sparse spool，再为发布复制一遍完整 payload。每个 block 在追加前计算并写入 checksum，journal 结构、block index/count/length 与 completed-key集合经校验后，完整 generation 通过同卷原子移动和索引提交变为可命中 Pack。未完成 generation、缺失/重复 block、任务取消或崩溃留下的文件只是不在索引内的 dead/orphan bytes，由后续重整回收；任何部分 block 均不得单独命中或被解释为可恢复 BASS voice state。
+
+播放期间允许 journal writer 对专用非音频线程施加有界背压以保证稳定产生缓存；WASAPI callback与BASS native decode线程仍不得直接做磁盘 I/O。必须分别记录 journal 已提交 entry/live bytes、cache read wait 与 cache write wait，使事件生产落后、缓存读取等待和缓存写入背压可区分。
+
 ### 13.19.12 约 200 ms 性能基准
 
 实时播放和预览的端到端延迟以约 200 ms 作为性能测试基准。测试路径尽量覆盖：
@@ -1174,6 +1182,49 @@ Render-Ahead 和设备 buffer
 超过基准不自动阻止播放
 应记录测试失败、性能回归或运行期性能诊断
 ```
+
+### 13.19.13 滚动事件准备与 IPC 水位
+
+§13.19.1 的“预调度”包括 canonical range cursor、tick→sample 投影和跨进程滚动事件流，不只包括最终 PCM。实时播放不得先建立、hash、写出或让 Worker 读取整个播放范围的 sample-domain event plan 后才开始填充 Render-Ahead PCM。
+
+固定水位为：
+
+```text
+Startup window     2.00 seconds from the current playback cursor
+Low watermark      0.75 seconds of verified future event coverage
+Resume watermark   2.00 seconds
+Target High        6.00 seconds
+```
+
+Preparing 只等待：
+
+```text
+the range-start non-Note state restore/checkpoint
+every active Unit/Root committed event record needed through Startup
+the existing Startup PCM requirement
+```
+
+随后 canonical range reader、sample projection、rolling event producer、Worker event consumer、BASSMIDI renderer、Pack writer与设备消费并行滚动。一个超长Segment只需要其开头窗口；距离当前光标超过Target High的Segment数量、Note数量、event数量和source page bytes不得决定启动等待。
+
+初版 rolling event transport固定为每个session一个append-only data file和一个named memory-mapped control block。Data record固定24 bytes：
+
+```text
+Int64 sampleFrame
+UInt32 packed MIDI message
+Int32 monitoring source index
+Byte zero-based Port
+7 reserved zero bytes
+```
+
+主进程每次只查询250 ms sample窗口，以最多16,384 records的writer batch顺序追加；写完并flush当前窗口后，才通过control block的single-writer seqlock原子发布`committedRecordCount / committedThroughFrame / state`。偶数sequence表示稳定snapshot，奇数表示发布中；Reader只接受前后相同的偶数sequence。Worker不得读取`committedRecordCount`以外的文件后缀，也不得把`committedThroughFrame`与旧record count组合。
+
+Worker reader使用262,144-record固定ring，并以最多16,384-record batch填充。只有已加载全部当前committed prefix时，reader才能把`SafeThroughFrame`推进到published through frame；若当前committed prefix大于ring可用容量，reader必须把最后一条已装载record的frame作为单调递增的partial safe frontier。该partial frontier是排他的PCM边界：它只证明更早frame的全部事件已装载；renderer可以推进到该frame并在Buffering期间分批提交该frame当前已装载的事件以释放ring，但在完整同frame后缀装载且safe frontier继续前进前，不得生成该frame及其后的PCM。该规则也适用于单个250 ms committed窗口超过整个ring的情况，reader和renderer不得因等待完整窗口与等待ring空间而互锁。缺失/截断record、倒序frame、非法Port/message/source、损坏control snapshot或producer fault是结构化任务故障。
+
+Data file只属于session临时存储，允许随实际访问/播放过的事件范围线性增长，但文件数固定为一；停止/释放session后删除。磁盘空间或I/O失败不得静默丢事件。Seek在已提交prefix按frame二分定位；未访问的远处Project事件不提前写入。该transport不把整Project事件数写入MDAP，也不把固定整文件byte/event上限作为Project容量限制。
+
+当事件生产暂时落后时，producer必须在尚未消费的安全frontier等待并按既有Buffering规则处理。离线音频渲染和MIDI导出可以顺序跑完整范围，但同样必须通过range cursor与有界外部merge消费，不得回退到整项目数组。
+
+rolling producer 必须记录 queried window、emitted record、完全被 exact PCM 抑制的 window/source 数、produced/requested through frame 与 producer lag。指标只用于运行期诊断，不进入 Project、canonical fingerprint 或缓存 key。
 ---
 ## 13.20 播放运行期提示与资源概要
 以下内容属于播放运行期状态 / 性能提示，不进入 Project 编译诊断：
@@ -1525,6 +1576,8 @@ Playing、Preview Playing、Buffering 与 Rendering 的命令 / 状态 IPC 热�
 IPC 延迟和吞吐量计入 §13.19.12 的约 200 ms 性能基准。
 子进程异常退出时，当前播放 / 预览进入 Error 并完成主进程侧资源清理；允许通过 Reset Playback Engine 重建子进程。
 ```
+
+“接收冻结的 canonical compiled result”允许通过 §13.19.13 的 committed append-only event stream按窗口传输。MDAP整计划文件只允许用于有界预览、测试或兼容的小计划；实时整项目播放不得把一个固定整文件byte/event limit当作Project容量上限，也不得在每次播放前重复序列化并读取全部远处事件。持久Worker只消费当前session已提交prefix；主进程从当前光标窗口按需继续查询canonical range source。
 
 共享控制 ABI v2 引入、当前 ABI v4 保持的 Worker 状态快照采用单 Writer seqlock。固定 header offset 68 的对齐 `Int32 statusSequence` 是状态发布代号：稳定状态必须为偶数；Writer 在发布 State、Fault、Position、Render Position、Underrun、callback/render-thread allocation、设备变化标志及 held preview plan generation 的完整集合前，以原子 compare-exchange 把当前偶数改为奇数，全部字段写完后再以 release 语义发布下一偶数。并发 Writer 或前一次发布中断形成的奇数序列属于协议故障，不能继续覆盖。
 

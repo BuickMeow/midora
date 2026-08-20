@@ -96,7 +96,12 @@ public static class MidiRenderPlanSplicer
             spliced.SourceIds,
             spliced.InitiallyDisabledSourceIndices,
             spliced.UnitFragments,
-            spliced.Segments);
+            spliced.Segments,
+            spliced.UnitDescriptors,
+            spliced.EventPageProvider,
+            spliced.EventStreamDescriptor,
+            spliced.CacheSourceBindings,
+            spliced.ReferencedPresetKeys);
     }
 
     public static MidiRenderPlan SpliceAtProducerFrontier(
@@ -171,7 +176,12 @@ public static class MidiRenderPlanSplicer
             causalPrefix.SourceIds,
             causalPrefix.InitiallyDisabledSourceIndices,
             continuation.UnitFragments,
-            continuation.Segments);
+            continuation.Segments,
+            continuation.UnitDescriptors,
+            continuation.EventPageProvider,
+            continuation.EventStreamDescriptor,
+            continuation.CacheSourceBindings,
+            continuation.ReferencedPresetKeys);
     }
 
     public static int FindFirstEventAtOrAfter(

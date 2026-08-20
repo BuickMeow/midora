@@ -107,6 +107,38 @@ public sealed class AudioUnitCacheStagingTests
         Assert.False(File.Exists(stagingPath));
     }
 
+    [Fact]
+    public void RollingEventProviderDoesNotDisableReusableUnitStaging()
+    {
+        using TemporaryDirectory directory = new();
+        string cacheRoot = Path.Combine(directory.Path, "cache");
+        string native = Path.Combine(directory.Path, "native");
+        Directory.CreateDirectory(native);
+        _ = WriteFile(native, "bass.dll", [2]);
+        _ = WriteFile(native, "bassmidi.dll", [3]);
+        _ = WriteFile(native, "basswasapi.dll", [4]);
+        MidiRenderPlan original = CreatePlan(0, 0);
+        MidiRenderPlan rolling = new(
+            original.SampleRate,
+            original.TotalFrameCount,
+            original.Ports,
+            original.SourceIds,
+            original.InitiallyDisabledSourceIndices,
+            original.UnitFragments,
+            original.Segments,
+            original.UnitDescriptors,
+            eventPageProvider: new EmptyEventPageProvider());
+        using AudioCacheSessionStore store = new(cacheRoot, 4096);
+        CacheAccess access = new(store);
+
+        using AudioUnitCacheStaging staging = Assert.IsType<AudioUnitCacheStaging>(
+            AudioUnitCacheStaging.Create(
+                rolling, access, SoundFontSha256, native, 500));
+
+        Assert.Same(rolling.EventPageProvider, staging.Plan.EventPageProvider);
+        Assert.NotNull(staging.Plan.UnitFragments[0].PcmCacheKey);
+    }
+
     private static MidiRenderPlan CreatePlan(byte port, byte channel)
     {
         const long sourceId = 101;
@@ -159,6 +191,14 @@ public sealed class AudioUnitCacheStagingTests
             string key,
             Stream destination,
             out long payloadLength) => store.TryCopyReusable(key, destination, out payloadLength);
+    }
+
+    private sealed class EmptyEventPageProvider : IMidiRenderEventPageProvider
+    {
+        public IEnumerable<ScheduledPortMidiMessage> Query(
+            long startFrame,
+            long endFrame,
+            CancellationToken cancellationToken = default) => [];
     }
 
     private sealed class TemporaryDirectory : IDisposable

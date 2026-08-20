@@ -1077,6 +1077,42 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         }
     }
 
+    public bool SupportsReusableAudioPackJournals
+    {
+        get
+        {
+            lock (_sync)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                return _audioCacheStore?.SupportsReusableAudioPackJournals == true;
+            }
+        }
+    }
+
+    public void AdoptReusableAudioPackJournals(
+        AudioCacheSessionStore.AudioRecoverySpool spool,
+        string journalDirectory,
+        IReadOnlyCollection<string> completedKeys)
+    {
+        ArgumentNullException.ThrowIfNull(spool);
+        ArgumentException.ThrowIfNullOrWhiteSpace(journalDirectory);
+        ArgumentNullException.ThrowIfNull(completedKeys);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_audioCacheStore is null)
+            {
+                spool.Dispose();
+                return;
+            }
+            _audioCacheStore.AdoptReusableAudioPackJournals(
+                spool,
+                journalDirectory,
+                completedKeys);
+            _audioCacheWarning = _audioCacheStore.GetSnapshot().Warning;
+        }
+    }
+
     public void QueueReusableAudioBatch(
         AudioCacheSessionStore.AudioRecoverySpool spool,
         IReadOnlyList<AudioCachePublishSlice> slices)

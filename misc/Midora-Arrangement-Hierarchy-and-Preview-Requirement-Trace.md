@@ -1,6 +1,6 @@
 # Midora Arrangement Hierarchy and Preview Requirement Trace
 
-状态：2026-08-19 已实施并通过自动回归；WPF 实机视觉与拖放验收待产品所有者执行。  
+状态：2026-08-20 已实施并通过自动回归；WPF 实机视觉与拖放验收待产品所有者执行。
 正式依据：SRS 第 24 章、INV-058～INV-064、ADR-CORE-045、ADR-UI-039～040、ADR-PMIDI-009。
 
 ## 1. 输入
@@ -95,4 +95,38 @@ old development-format migration or dual write
 - Pure MIDI Segment 预览使用独立 Note/Event device-pixel tiles；event 线固定在 Note 上层、50% opacity、最小一设备像素宽，并按列聚合。Conductor 使用按事件类型着色的固定像素 point tiles，Project End Marker 单独绘制。
 - 预览缓存 key 包含内容 fingerprint、viewport/DPI/style/layer，Note/Event 独立失效；hit testing 继续使用 tick/key/value 空间索引，不读取 bitmap。
 
-自动证据：Presentation 123/123、Desktop 60/60；Core 中 hierarchy、clipboard、persistence、compiler、playback 与 MIDI export 相关测试随 `midora-core.slnx` 991/991 一并通过。未执行 computer-use、截图 golden 或人工拖放/高 DPI 验收。
+## 11. Arrangement 紧凑布局与交互增量（2026-08-20）
+
+- 父节点采用独立的缩放后紧凑行高；Header 使用较亮 Surface，右侧内容区以纯黑不透明覆盖 Bar/Grid 层。Conductor 与 child Track 继续使用完整音乐行高。
+- Header 宽度扩展；Root 次级摘要压缩为 `Auto <Mode> <N> Tracks` / `P.<Port> Ch.<Channel> <Mode> <N> Tracks`；Logical 与 Pure MIDI Track 使用不同 Fluent 图标。
+- Header 区域 `Ctrl + Wheel` 调整垂直缩放。可变行高的绘制、命中、滚动范围、选择、拖放和播放光标 overlay 共用同一累计行偏移。
+- 父节点拖放预览与提交都规范化到顶层父节点边界；空白处右键只使用当前 hit test，不复用旧 Header 上下文。
+- 工具栏新增 Expand All / Collapse All，并移除重复静态标题。展开状态仍只属当前 Project session。
+- 本轮输入为 Project Arrangement projection、viewport 和鼠标交互；输出仅为 UI 行布局、命中与会话展开状态，不改变 Project/canonical/导出/音频语义。布局和展开状态不持久化，缩放受既有 session-state 边界约束。
+
+## 12. 固定 Bar 网格、父行命中与极端内容增量（2026-08-20）
+
+- Arrangement 和共享 piano roll 的可见 Grid 固定为 `Bar`；Toolbar 只保留 Grid 开关，不再暴露显示粒度选择。主线来自完整 Time Signature Map，每个分母拍绘制低强调子线；Ruler 显示一基小节号。Segment local tick 通过 `ProjectStartTick - ContentOffsetTick` 映射到 Project 拍号图，保证与 Arrangement 对齐。
+- 极端水平缩小时按最小 device-pixel 间距跳过不可辨识的 Bar/beat 竖线，绘制工作量由可视宽度约束，不随不可见 tick 数量线性增长。
+- 父节点右侧纯黑内容区不响应 Draw 创建、hover 创建预览或 Segment 命中；单击父 Header 任意非 Mute/Solo 区域即可展开/折叠。行高不足时隐藏次级摘要而不裁切文本。
+- Arrangement 的最大垂直滚动位置按累计可变行高计算，最后一行完整停在水平 Overview 上方。播放或其他编辑锁期间红色 Fluent `+` 禁用。
+- Pure MIDI Segment 的水平 Overview 通过 page summary/range provider 聚合 Note density，不要求解码整个 Segment 或建立全量 render item array；普通 materialized source 继续走既有 bounded-column 聚合。
+- piano roll 的每 Key 高度被量化为不小于 3 的 device-pixel 整数；Note 顶边精确覆盖 Key 上分割线，总高度等于该 Key 高度，保证最小缩放下边框和填充均可辨。
+- 本增量只改变 UI 投影、LOD 与会话 viewport；不改变 tick、Note、Segment、Time Signature、canonical、缓存音频或持久化语义。
+
+自动证据：Presentation 129/129、Desktop 68/68；Core `midora-core.slnx` 1020/1020（含 Application 389/389）全部通过。未执行 computer-use、截图 golden 或人工拖放/高 DPI 验收。
+
+## 13. Segment 几何、概览导航与对象识别增量（2026-08-20）
+
+- Arrangement 的 Logical/Pure MIDI Segment（含边框）使用所属 child Track 的完整可见行高，顶边和底边分别贴合相邻轨道分割线；不改变 Segment 的 tick 边界、命中范围或缓存预览内容。
+- Arrangement parent 内容区在 Draw 和 Select 等全部工具模式下都不启动 Segment 创建、对象拖动或 marquee 预览；parent Header 的折叠、菜单和排序交互保持独立。
+- MIDI Segment 批量移动/复制以 primary Track 为锚点，按 Pure MIDI Track 的 Arrangement 相对顺序逐轨映射目标并逐目标 Track 验证 overlap。选区跨多个 Track 时不再把所有 Segment 错误汇入 primary 目标 Track；越过可用 Track 范围或真实重叠仍原子拒绝。
+- Segment 水平 Overview 的 Note density 只统计 NoteOn 起点；长 Gate 不再把 Note 起点之后的空白列伪装成持续存在的 Note。分页 pack、materialized overlay 与普通新建内容使用同一投影语义。
+- Overview 不再在 viewport thumb 左缘绘制固定红线。Playback cursor 使用红色实线、Edit cursor 使用蓝色虚线，按完整 overview extent 映射；tick 不在可表示范围时不绘制。
+- Arrangement Header 图标和 Workspace Tab 图标统一使用已固定 revision 的 Fluent System Icons：Conductor/Wrench、Pure MIDI/MIDI、Logical/Music Note 2、Event Instrument/Guitar、Settings、Arrangement/Movies and TV。Track Header 以 20×20 原始坐标直接平移绘制，不再二次缩放到分数 device pixel；Toolbar `+` 使用 20×20 像素取整布局和有边框圆角按钮，展开/折叠使用 Arrow Expand All / Arrow Collapse All。
+- Segment Workspace 内部左侧重复标题隐藏，但右侧 context 明细保留；Tab Header 继续展示 `Segment: <Name> @ <Tick>` 或 `MIDI Segment: <Name> @ <Tick>`。
+- ComboBox popup 以 `MaxDropDownHeight` 参与实际 measure，并把 ScrollViewer 留在有界 Border 内，避免长 Controller 列表的垂直 ScrollBar thumb 被 popup 底边裁切。
+
+本增量的 Project 输入只有 Segment 所属 Track、tick/length 与 Direct Note 起点；正式 Project 输出只发生于明确的批量移动/复制命令。图标、标题、overview density/cursor 和 popup 尺寸均为 UI runtime，不持久化。明确非目标是从 overview bitmap 反推命中、改变 Note Gate、放宽 Segment overlap 不变量或改变 canonical/audio 语义。音频运行期 Monitoring 代际修复另见 ADR-AUDIO-016。
+
+自动证据：Application 390/390、Presentation 130/130、Desktop 69/69；event-stream/rolling 24/24；分页持久 Worker 的 Disable→Enable 持续推进用例分别通过托管测试 Worker 与本轮重新发布的正式 win-x64 Native AOT Worker。Desktop Release build 为 0 warning / 0 error。未执行 computer-use 或 WPF 实机视觉验收。

@@ -2,8 +2,6 @@ using Google.Protobuf;
 using Midora.Domain;
 using Midora.Persistence.Wire.Proto.V1;
 using WireChannelMode = Midora.Persistence.Wire.Proto.V1.MidiChannelModeV1;
-using WireDirectEventKind = Midora.Persistence.Wire.Proto.V1.DirectMidiChannelEventKindV1;
-using WireOpaqueEventKind = Midora.Persistence.Wire.Proto.V1.OpaqueMidiEventKindV1;
 using WireRoutingMode = Midora.Persistence.Wire.Proto.V1.MidiChannelRootRoutingModeV1;
 
 namespace Midora.Persistence;
@@ -101,16 +99,18 @@ internal static class PureMidiTrackProtobufCodecV1
 {
     public const string ObjectType = "pure-midi-track";
 
-    public static byte[] Serialize(PureMidiTrack value)
+    public static byte[] Serialize(PureMidiTrack value, string contentPackPath)
     {
         ArgumentNullException.ThrowIfNull(value);
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentPackPath);
         PureMidiTrackV1 wire = new()
         {
             SchemaVersion = PersistenceContractV1.SchemaVersion,
             ObjectType = ObjectType,
             Id = ProtobufValueCodecV1.ToWire(value.Id),
             Name = value.Name,
-            MidiChannelRootId = ProtobufValueCodecV1.ToWire(value.MidiChannelRootId)
+            MidiChannelRootId = ProtobufValueCodecV1.ToWire(value.MidiChannelRootId),
+            ContentPackPath = contentPackPath
         };
         if (value.Color.HasValue)
         {
@@ -121,7 +121,7 @@ internal static class PureMidiTrackProtobufCodecV1
         return StrictProtobufWireV1.SerializeDeterministic(wire);
     }
 
-    public static PureMidiTrack Restore(MidoraProject project, ReadOnlySpan<byte> bytes)
+    public static RestoredPureMidiTrackV1 Restore(MidoraProject project, ReadOnlySpan<byte> bytes)
     {
         ArgumentNullException.ThrowIfNull(project);
         try
@@ -142,7 +142,7 @@ internal static class PureMidiTrackProtobufCodecV1
                     : ProtobufValueCodecV1.FromWire(wire.Color, "Pure MIDI Track color")
             };
             result.Segments.AddRange(wire.Segments.Select(value => FromWire(project, value)));
-            return result;
+            return new(result, wire.ContentPackPath);
         }
         catch (InvalidProtocolBufferException exception)
         {
@@ -159,9 +159,6 @@ internal static class PureMidiTrackProtobufCodecV1
             LengthTicks = value.LengthTicks,
             ContentOffsetTick = value.ContentOffsetTick
         };
-        result.Notes.Add(value.Notes.Select(ToWire));
-        result.ChannelEvents.Add(value.ChannelEvents.Select(ToWire));
-        result.OpaqueEvents.Add(value.OpaqueEvents.Select(ToWire));
         return result;
     }
 
@@ -175,80 +172,8 @@ internal static class PureMidiTrackProtobufCodecV1
             LengthTicks = value.LengthTicks,
             ContentOffsetTick = value.ContentOffsetTick
         };
-        result.Notes.AddRange(value.Notes.Select(item => FromWire(project, item)));
-        result.ChannelEvents.AddRange(value.ChannelEvents.Select(item => FromWire(project, item)));
-        result.OpaqueEvents.AddRange(value.OpaqueEvents.Select(item => FromWire(project, item)));
         return result;
     }
-
-    private static DirectMidiNoteV1 ToWire(DirectMidiNote value) => new()
-    {
-        Id = ProtobufValueCodecV1.ToWire(value.Id),
-        StartTick = value.StartTick,
-        LengthTicks = value.LengthTicks,
-        Key = value.Key,
-        NoteOnVelocity = value.NoteOnVelocity,
-        NoteOffVelocity = value.NoteOffVelocity,
-        NoteOnOrder = value.NoteOnOrder,
-        NoteOffOrder = value.NoteOffOrder
-    };
-
-    private static DirectMidiNote FromWire(MidoraProject project, DirectMidiNoteV1 value) => new(
-        project,
-        ProtobufValueCodecV1.FromWire(value.Id, "Direct MIDI Note ID"))
-    {
-        StartTick = value.StartTick,
-        LengthTicks = value.LengthTicks,
-        Key = value.Key,
-        NoteOnVelocity = value.NoteOnVelocity,
-        NoteOffVelocity = value.NoteOffVelocity,
-        NoteOnOrder = value.NoteOnOrder,
-        NoteOffOrder = value.NoteOffOrder
-    };
-
-    private static DirectMidiChannelEventV1 ToWire(DirectMidiChannelEvent value) => new()
-    {
-        Id = ProtobufValueCodecV1.ToWire(value.Id),
-        Tick = value.Tick,
-        Kind = (WireDirectEventKind)(int)value.Kind,
-        Data1 = value.Data1,
-        Data2 = value.Data2,
-        Order = value.Order
-    };
-
-    private static DirectMidiChannelEvent FromWire(
-        MidoraProject project,
-        DirectMidiChannelEventV1 value) => new(
-        project,
-        ProtobufValueCodecV1.FromWire(value.Id, "Direct MIDI Event ID"))
-        {
-            Tick = value.Tick,
-            Kind = (DirectMidiChannelEventKind)(int)value.Kind,
-            Data1 = value.Data1,
-            Data2 = value.Data2,
-            Order = value.Order
-        };
-
-    private static OpaqueMidiEventV1 ToWire(OpaqueMidiEvent value) => new()
-    {
-        Id = ProtobufValueCodecV1.ToWire(value.Id),
-        Tick = value.Tick,
-        Kind = (WireOpaqueEventKind)(int)value.Kind,
-        MetaType = value.MetaType,
-        Payload = ByteString.CopyFrom(value.Payload),
-        Order = value.Order
-    };
-
-    private static OpaqueMidiEvent FromWire(MidoraProject project, OpaqueMidiEventV1 value) => new(
-        project,
-        ProtobufValueCodecV1.FromWire(value.Id, "Opaque MIDI Event ID"))
-    {
-        Tick = value.Tick,
-        Kind = (OpaqueMidiEventKind)(int)value.Kind,
-        MetaType = checked((byte)value.MetaType),
-        Payload = value.Payload.ToByteArray(),
-        Order = value.Order
-    };
 
     private static void Validate(PureMidiTrackV1 value)
     {
@@ -263,7 +188,12 @@ internal static class PureMidiTrackProtobufCodecV1
         }
         _ = ProtobufValueCodecV1.FromWire(value.Id, "Pure MIDI Track ID");
         _ = ProtobufValueCodecV1.FromWire(value.MidiChannelRootId, "Pure MIDI Track Root ID");
+        ProtobufValueCodecV1.Require(value.HasContentPackPath, "Pure MIDI Track contentPackPath");
         PersistenceValueValidationV1.ValidateShortText(value.Name, "Pure MIDI Track name");
+        string expectedPackPath = MidoraPackagePathsV1.PureMidiContentPack(
+            ProtobufValueCodecV1.FromWire(value.Id, "Pure MIDI Track ID"));
+        if (!string.Equals(value.ContentPackPath, expectedPackPath, StringComparison.Ordinal))
+            throw new InvalidDataException("Pure MIDI Track contentPackPath is not canonical for its stable ID.");
         if (value.Color is not null)
         {
             _ = ProtobufValueCodecV1.FromWire(value.Color, "Pure MIDI Track color");
@@ -280,38 +210,7 @@ internal static class PureMidiTrackProtobufCodecV1
         ProtobufValueCodecV1.Require(value.HasProjectStartTick, "MIDI Segment projectStartTick");
         ProtobufValueCodecV1.Require(value.HasLengthTicks, "MIDI Segment lengthTicks");
         ProtobufValueCodecV1.Require(value.HasContentOffsetTick, "MIDI Segment contentOffsetTick");
-        foreach (DirectMidiNoteV1 note in value.Notes)
-        {
-            _ = ProtobufValueCodecV1.FromWire(note.Id, "Direct MIDI Note ID");
-            ProtobufValueCodecV1.Require(note.HasStartTick, "Direct MIDI Note startTick");
-            ProtobufValueCodecV1.Require(note.HasLengthTicks, "Direct MIDI Note lengthTicks");
-            ProtobufValueCodecV1.Require(note.HasKey, "Direct MIDI Note key");
-            ProtobufValueCodecV1.Require(note.HasNoteOnVelocity, "Direct MIDI Note NoteOn velocity");
-            ProtobufValueCodecV1.Require(note.HasNoteOffVelocity, "Direct MIDI Note NoteOff velocity");
-            ProtobufValueCodecV1.Require(note.HasNoteOnOrder, "Direct MIDI Note NoteOn order");
-            ProtobufValueCodecV1.Require(note.HasNoteOffOrder, "Direct MIDI Note NoteOff order");
-        }
-        foreach (DirectMidiChannelEventV1 directEvent in value.ChannelEvents)
-        {
-            _ = ProtobufValueCodecV1.FromWire(directEvent.Id, "Direct MIDI Event ID");
-            ProtobufValueCodecV1.Require(directEvent.HasTick, "Direct MIDI Event tick");
-            ProtobufValueCodecV1.Require(directEvent.HasKind, "Direct MIDI Event kind");
-            ProtobufValueCodecV1.Require(directEvent.HasData1, "Direct MIDI Event data1");
-            ProtobufValueCodecV1.Require(directEvent.HasData2, "Direct MIDI Event data2");
-            ProtobufValueCodecV1.Require(directEvent.HasOrder, "Direct MIDI Event order");
-        }
-        foreach (OpaqueMidiEventV1 opaque in value.OpaqueEvents)
-        {
-            _ = ProtobufValueCodecV1.FromWire(opaque.Id, "Opaque MIDI Event ID");
-            ProtobufValueCodecV1.Require(opaque.HasTick, "Opaque MIDI Event tick");
-            ProtobufValueCodecV1.Require(opaque.HasKind, "Opaque MIDI Event kind");
-            ProtobufValueCodecV1.Require(opaque.HasMetaType, "Opaque MIDI Event Meta type");
-            ProtobufValueCodecV1.Require(opaque.HasPayload, "Opaque MIDI Event payload");
-            ProtobufValueCodecV1.Require(opaque.HasOrder, "Opaque MIDI Event order");
-            if (opaque.MetaType > byte.MaxValue)
-            {
-                throw new InvalidDataException("Opaque MIDI Event Meta type is outside one byte.");
-            }
-        }
     }
 }
+
+internal sealed record RestoredPureMidiTrackV1(PureMidiTrack Track, string ContentPackPath);

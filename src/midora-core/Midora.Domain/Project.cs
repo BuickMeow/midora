@@ -180,12 +180,14 @@ public sealed class AudioRenderProjectSettings
     public int MaximumSampleVoicesPerUnitStream { get; set; } = DefaultSampleVoicesPerUnitStream;
 }
 
-public sealed class MidoraProject
+public sealed class MidoraProject : IDisposable
 {
     public const int MinimumTicksPerQuarterNote = 1;
     public const int MaximumTicksPerQuarterNote = 32_767;
 
     private long _nextStableId;
+    private readonly List<IDisposable> _runtimeResources = [];
+    private int _disposeStarted;
 
     public MidoraProject(int ticksPerQuarterNote)
         : this(ticksPerQuarterNote, TimeProvider.System.GetUtcNow())
@@ -273,6 +275,32 @@ public sealed class MidoraProject
         MidoraId result = MidoraId.FromSequence(_nextStableId);
         _nextStableId++;
         return result;
+    }
+
+    public void RegisterRuntimeResource(IDisposable resource)
+    {
+        ArgumentNullException.ThrowIfNull(resource);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeStarted) != 0, this);
+        _runtimeResources.Add(resource);
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposeStarted, 1) != 0) return;
+        List<Exception>? failures = null;
+        for (int index = _runtimeResources.Count - 1; index >= 0; index--)
+        {
+            try
+            {
+                _runtimeResources[index].Dispose();
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(exception);
+            }
+        }
+        _runtimeResources.Clear();
+        if (failures is not null) throw new AggregateException(failures);
     }
 
     internal void RestoreNextStableId(long nextStableId)

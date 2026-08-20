@@ -1,6 +1,7 @@
 using System.IO.MemoryMappedFiles;
 using System.Text;
 using Midora.Audio;
+using Midora.AudioDevice;
 
 namespace Midora.Application.Tests;
 
@@ -49,6 +50,63 @@ public sealed class AudioCacheSessionStoreTests
         Assert.True(store.TryCopyReusable(key, copied, out long copiedLength));
         Assert.Equal(expected.Length, copiedLength);
         Assert.Equal(expected, copied.ToArray());
+    }
+
+    [Fact]
+    public void CompletedPackJournalIsAdoptedWithoutPayloadCopy()
+    {
+        using TemporaryDirectory root = new();
+        using AudioCacheSessionStore store = new(root.Path, 4 * 1024 * 1024);
+        string key = AudioCacheSessionStore.ComputeKey([3, 1, 4, 1, 5, 9]);
+        store.RegisterReusableGeneration("segment:journal", key);
+        AudioFormat format = new(48_000, 2, AudioSampleFormat.Float32);
+        float[] samples = Enumerable.Range(0, 40_000)
+            .Select(static value => (float)(value % 997) / 997)
+            .ToArray();
+        byte[] expected = AudioPcmCachePayload.Encode(format, samples);
+
+        using AudioCacheSessionStore.AudioRecoverySpool spool =
+            store.CreateRecoverySpool(expected.Length, sparse: true);
+        string journalDirectory = AudioCachePackJournal.GetDirectoryPath(spool.Path);
+        Directory.CreateDirectory(journalDirectory);
+        int blockCount = checked((int)AudioCachePackStore.ComputeBlockCount(expected.Length));
+        using (AudioCachePackJournalWriter writer = new(journalDirectory))
+        {
+            writer.WriteBlock(
+                key,
+                0,
+                blockCount,
+                expected.Length,
+                expected.AsSpan(0, AudioPcmCachePayload.HeaderByteCount));
+            int sourceOffset = AudioPcmCachePayload.HeaderByteCount;
+            for (int blockIndex = 1; blockIndex < blockCount; blockIndex++)
+            {
+                int length = Math.Min(
+                    AudioCachePackStore.BlockPayloadBytes,
+                    expected.Length - sourceOffset);
+                writer.WriteBlock(
+                    key,
+                    blockIndex,
+                    blockCount,
+                    expected.Length,
+                    expected.AsSpan(sourceOffset, length));
+                sourceOffset += length;
+            }
+            writer.Complete();
+        }
+
+        store.AdoptReusableAudioPackJournals(spool, journalDirectory, [key]);
+
+        Assert.False(Directory.Exists(journalDirectory));
+        Assert.True(store.TryReadReusable(key, out byte[] actual));
+        Assert.Equal(expected, actual);
+        Assert.Equal(
+            AudioCachePackStore.ComputeRecordLength(expected.Length),
+            store.GetSnapshot().ReusableBytes);
+        Assert.Equal(1, store.GetSnapshot().JournalPublishedEntryCount);
+        Assert.Equal(
+            AudioCachePackStore.ComputeRecordLength(expected.Length),
+            store.GetSnapshot().JournalPublishedLiveBytes);
     }
 
     [Fact]

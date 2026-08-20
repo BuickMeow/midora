@@ -11,6 +11,7 @@ internal sealed class PersistentBassMidiAudioWorkerSession : IBassMidiAudioWorke
     private readonly IAudioPcmCacheSessionAccess? _audioCache;
     private readonly AudioSegmentCacheStaging? _cacheStaging;
     private readonly PlaybackSpanCacheStaging? _playbackSpanCacheStaging;
+    private readonly MidiRenderEventStreamProducer? _eventStreamProducer;
     private readonly long _generation;
     private readonly long _totalFrameCount;
     private string? _standardError;
@@ -63,6 +64,7 @@ internal sealed class PersistentBassMidiAudioWorkerSession : IBassMidiAudioWorke
         Directory.CreateDirectory(_ownedTemporaryDirectory);
         try
         {
+            if (plan.EventPageProvider is not null) playbackSpanCacheEnabled = false;
             if (playbackSpanCacheEnabled)
             {
                 try
@@ -103,6 +105,11 @@ internal sealed class PersistentBassMidiAudioWorkerSession : IBassMidiAudioWorke
                         + exception.Message);
             }
             plan = _cacheStaging?.Plan ?? plan;
+            _eventStreamProducer = MidiRenderEventStreamProducer.Create(
+                plan,
+                _ownedTemporaryDirectory);
+            if (_eventStreamProducer is not null)
+                plan = plan.WithEventStreamDescriptor(_eventStreamProducer.Descriptor);
             string planPath = Path.Combine(_ownedTemporaryDirectory, "compiled-audio-plan.mdap");
             MidiRenderPlanFile.Write(planPath, plan);
             string[] arguments = BuildPlaybackArguments(
@@ -150,6 +157,7 @@ internal sealed class PersistentBassMidiAudioWorkerSession : IBassMidiAudioWorke
             }
             _cacheStaging?.Dispose();
             _playbackSpanCacheStaging?.Dispose();
+            _eventStreamProducer?.Dispose();
             CleanupOwnedTemporaryDirectory();
             if (cleanupFailure is not null)
             {
@@ -169,6 +177,17 @@ internal sealed class PersistentBassMidiAudioWorkerSession : IBassMidiAudioWorke
     public void EnqueueMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        AudioWorkerStatus status = Status;
+        // Status.PositionFrame is callback-consumed rather than guaranteed audible.
+        // Rewind by the complete device buffer so the newly published event
+        // generation always begins at or before the Worker's exact audible
+        // frontier. The Worker then seeks forward to that exact frontier.
+        long conservativeRewindFrame = Math.Max(
+            0,
+            status.PositionFrame - status.ActualDeviceBufferFrameCount);
+        _eventStreamProducer?.ApplyMonitoringCommands(
+            commands,
+            Math.Clamp(conservativeRewindFrame, 0, _totalFrameCount));
         if (!_host.Control.TryEnqueueMonitoringCommands(commands))
         {
             throw new InvalidOperationException("The bounded audio worker command ring is full.");
@@ -296,6 +315,7 @@ internal sealed class PersistentBassMidiAudioWorkerSession : IBassMidiAudioWorke
             _disposed = true;
             _cacheStaging?.Dispose();
             _playbackSpanCacheStaging?.Dispose();
+            _eventStreamProducer?.Dispose();
             CleanupOwnedTemporaryDirectory();
         }
     }

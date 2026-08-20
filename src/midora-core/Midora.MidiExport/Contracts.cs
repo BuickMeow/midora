@@ -96,13 +96,44 @@ public sealed class PortMidiEncodingRequest
 
 public sealed class MidiExportEncodingResult
 {
+    private readonly Action<Stream>? _writer;
+    private byte[]? _fileBytes;
+
     internal MidiExportEncodingResult(byte[] fileBytes, MidiExportDiagnostic[] diagnostics)
     {
-        FileBytes = fileBytes;
+        _fileBytes = fileBytes ?? throw new ArgumentNullException(nameof(fileBytes));
         Diagnostics = diagnostics;
     }
 
-    public bool Succeeded => FileBytes.Length != 0 && Diagnostics.Count == 0;
-    public byte[] FileBytes { get; }
+    internal MidiExportEncodingResult(Action<Stream> writer, MidiExportDiagnostic[] diagnostics)
+    {
+        _writer = writer ?? throw new ArgumentNullException(nameof(writer));
+        Diagnostics = diagnostics;
+    }
+
+    public bool Succeeded => Diagnostics.Count == 0
+        && (_writer is not null || _fileBytes is { Length: > 0 });
+    public byte[] FileBytes
+    {
+        get
+        {
+            if (_fileBytes is not null) return _fileBytes;
+            using MemoryStream output = new();
+            _writer!(output);
+            _fileBytes = output.ToArray();
+            return _fileBytes;
+        }
+    }
     public IReadOnlyList<MidiExportDiagnostic> Diagnostics { get; }
+
+    internal void WriteTo(Stream output)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        if (_writer is not null)
+        {
+            _writer(output);
+            return;
+        }
+        output.Write(_fileBytes!);
+    }
 }

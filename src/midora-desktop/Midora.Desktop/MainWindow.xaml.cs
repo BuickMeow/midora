@@ -153,8 +153,9 @@ public partial class MainWindow : Window
         if (!StopPlaybackForProjectCommand("New Project") || !await ConfirmCloseCurrentProjectAsync()) return;
         NewProjectDialog dialog = new(ExistingRecentDirectory(RecentDirectoryPurpose.SaveAndSaveCopy)) { Owner = this };
         if (dialog.ShowDialog() != true || dialog.Request is null) return;
-        if (await RunOperationAsync("Create Project", () => _session.CreateProjectAsync(dialog.Request))
-            && dialog.Request.TargetPath is string targetPath)
+        NewProjectCreationRequest request = ApplyDefaultEmbeddedSoundFont(dialog.Request);
+        if (await RunOperationAsync("Create Project", () => _session.CreateProjectAsync(request))
+            && request.TargetPath is string targetPath)
         {
             RecordRecentDirectory(RecentDirectoryPurpose.SaveAndSaveCopy, Path.GetDirectoryName(targetPath));
             RecordRecentProject(targetPath);
@@ -820,7 +821,7 @@ public partial class MainWindow : Window
                 return;
             case (ProjectTreeNodeKind.EventInstrument, ProjectTreeNodeKind.LogicalTracks):
                 EventInstrument instrument = project.EventInstruments.Single(item => item.Id == sourceId);
-                _session.Execute(ProjectDomainEditCommands.CreateLogicalTrack(instrument.Name, sourceId));
+                _session.Execute(ProjectDomainEditCommands.CreateLogicalTrack(eventInstrumentId: sourceId));
                 return;
             case (ProjectTreeNodeKind.EventInstrument, ProjectTreeNodeKind.LogicalTrack)
                 when target.ObjectId is MidoraId targetTrackId:
@@ -1186,13 +1187,7 @@ public partial class MainWindow : Window
         void Separator() => menu.Items.Add(new Separator());
 
         Point contextPoint = Mouse.GetPosition(surface);
-        double headerWidth = surface.SurfaceMode switch
-        {
-            TimelineSurfaceMode.Arrangement => 180,
-            TimelineSurfaceMode.PianoRoll or TimelineSurfaceMode.EventLanes or TimelineSurfaceMode.Velocity => 52,
-            TimelineSurfaceMode.Conductor => 130,
-            _ => 0
-        };
+        double headerWidth = surface.LaneHeaderWidth;
         bool isLaneHeader = contextPoint.X < headerWidth;
         if (surface.SurfaceMode == TimelineSurfaceMode.Arrangement)
         {
@@ -1276,7 +1271,7 @@ public partial class MainWindow : Window
                         Mode: TimelineWorkspaceMode.Segment
                     }:
                     bool isMidiEventLane = _session.ActiveWorkspace is TimelineWorkspaceViewModel
-                        { ObjectId: MidoraId laneSegmentId }
+                    { ObjectId: MidoraId laneSegmentId }
                         && _session.Project is MidoraProject laneProject
                         && TimelineWorkspaceViewModel.FindMidiSegment(laneProject, laneSegmentId) is not null;
                     Add(
@@ -1654,7 +1649,7 @@ public partial class MainWindow : Window
             || !surface.TryGetArrangementLaneHeader(e.GetPosition(surface), out int lane)
             || _session.ActiveWorkspace is not TimelineWorkspaceViewModel arrangement
             || arrangement.GetArrangementLane(lane) is not
-                { Kind: ArrangementLaneKind.LogicalTrack, ObjectId: MidoraId logicalTrackId })
+            { Kind: ArrangementLaneKind.LogicalTrack, ObjectId: MidoraId logicalTrackId })
         {
             return false;
         }
@@ -3535,6 +3530,13 @@ public partial class MainWindow : Window
                 _arrangementHeaderShortcut = null;
                 _logicalTrackShortcutTrackId = null;
             }
+            if (arrangementLane.Kind is ArrangementLaneKind.EventInstrument
+                or ArrangementLaneKind.MidiChannelRoot)
+            {
+                if (arrangement.ToggleArrangementParentExpanded(e.Lane))
+                    _session.RefreshWorkspace(arrangement);
+                return;
+            }
         }
         if (sender is TimelineSurface { Tag: "ParameterLanes" }
             && workspace is TimelineWorkspaceViewModel
@@ -3568,6 +3570,28 @@ public partial class MainWindow : Window
             menu.IsOpen = true;
             e.Handled = true;
         }
+    }
+
+    private void OnArrangementExpandAllClick(object sender, RoutedEventArgs e) =>
+        SetAllArrangementParentsExpanded(sender, expanded: true);
+
+    private void OnArrangementCollapseAllClick(object sender, RoutedEventArgs e) =>
+        SetAllArrangementParentsExpanded(sender, expanded: false);
+
+    private void SetAllArrangementParentsExpanded(object sender, bool expanded)
+    {
+        if (sender is not FrameworkElement
+            {
+                DataContext: TimelineWorkspaceViewModel
+                {
+                    Mode: TimelineWorkspaceMode.Arrangement
+                } workspace
+            })
+        {
+            return;
+        }
+        if (workspace.SetAllArrangementParentsExpanded(expanded))
+            _session.RefreshWorkspace(workspace);
     }
 
     private void OnNewMidiRootClick(object sender, RoutedEventArgs e)
@@ -3618,18 +3642,6 @@ public partial class MainWindow : Window
         };
         if (dialog.ShowDialog(this) != true) return;
 
-        byte[] file;
-        try
-        {
-            file = await DesktopSessionController.ReadMidiImportFileAsync(dialog.FileName);
-        }
-        catch (Exception exception)
-        {
-            ShowError("Open MIDI as New Project", exception.Message);
-            return;
-        }
-
-        string projectName = Path.GetFileNameWithoutExtension(dialog.FileName);
         IReadOnlyDictionary<byte, byte>? portMap = null;
         IReadOnlyList<MidiProjectImportDiagnostic>? diagnostics = null;
         while (true)
@@ -3638,11 +3650,11 @@ public partial class MainWindow : Window
             bool succeeded = await RunOperationAsync(
                 "Open MIDI as New Project",
                 async cancellationToken => diagnostics =
-                    await _session.ImportMidiBytesAsNewProjectAsync(
-                        file,
-                        projectName,
+                    await _session.ImportMidiAsNewProjectAsync(
+                        dialog.FileName,
                         portMap,
-                        cancellationToken),
+                        cancellationToken,
+                        GetAvailableDefaultEmbeddedSoundFontPath()),
                 canCancel: true,
                 handledException: exception =>
                 {
@@ -3926,7 +3938,7 @@ public partial class MainWindow : Window
         {
             return false;
         }
-        int? lane = _trackHeaderContextLane ?? workspace.ActiveLane;
+        int? lane = _trackHeaderContextLane;
         if (lane is not int laneIndex || workspace.GetArrangementLane(laneIndex) is not { } value)
             return false;
         descriptor = value;
@@ -4631,7 +4643,7 @@ public partial class MainWindow : Window
                 Mode: TimelineWorkspaceMode.Arrangement
             } workspace
             || workspace.GetArrangementLane(e.Lane) is not
-                { CanContainSegments: true, ObjectId: MidoraId trackId } lane)
+            { CanContainSegments: true, ObjectId: MidoraId trackId } lane)
         {
             return;
         }
@@ -4975,7 +4987,7 @@ public partial class MainWindow : Window
             return;
         }
         workspace.Selection.ApplyRange(
-            snapshot.Items
+            snapshot.EnumerateAllItems()
                 .Where(static item => !item.State.HasFlag(TimelineItemState.HitTestDisabled))
                 .Select(static item => item.Id),
             WorkspaceSelectionRangeMode.Toggle);
@@ -6317,37 +6329,12 @@ public partial class MainWindow : Window
             {
                 return;
             }
-            List<SelectionDialogItem> midiOptions =
-            [
-                new(new DirectMidiEventLaneTarget(DirectMidiChannelEventKind.PitchBend, 0), "Pitch Bend"),
-                new(new DirectMidiEventLaneTarget(DirectMidiChannelEventKind.ProgramChange, 0), "Program Change"),
-                new(new DirectMidiEventLaneTarget(DirectMidiChannelEventKind.ChannelPressure, 0), "Channel Pressure")
-            ];
-            midiOptions.AddRange(Enumerable.Range(0, 128).Select(number => new SelectionDialogItem(
-                new DirectMidiEventLaneTarget(DirectMidiChannelEventKind.ControlChange, number),
-                $"Control Change {number}",
-                $"CC {number}")));
-            midiOptions.AddRange(Enumerable.Range(0, 128).Select(key => new SelectionDialogItem(
-                new DirectMidiEventLaneTarget(DirectMidiChannelEventKind.PolyphonicKeyPressure, key),
-                $"Polyphonic Key Pressure {key}",
-                TimelineWorkspaceViewModel.MidiNoteName(key))));
-            midiOptions.AddRange(Enumerable.Range(0, 128).Select(key => new SelectionDialogItem(
-                new DirectMidiEventLaneTarget(DirectMidiChannelEventKind.NoteOn, key),
-                $"Raw Note On {key}",
-                TimelineWorkspaceViewModel.MidiNoteName(key))));
-            midiOptions.AddRange(Enumerable.Range(0, 128).Select(key => new SelectionDialogItem(
-                new DirectMidiEventLaneTarget(DirectMidiChannelEventKind.NoteOff, key),
-                $"Raw Note Off {key}",
-                TimelineWorkspaceViewModel.MidiNoteName(key))));
-            SelectionDialog midiDialog = new(
-                "Add MIDI Event Lane",
-                "Select a MIDI Channel event target. All MIDI 1.0 controller numbers are available.",
-                midiOptions)
+            DirectMidiLaneTargetDialog midiDialog = new()
             {
                 Owner = this
             };
             if (midiDialog.ShowDialog() == true
-                && midiDialog.SelectedValue is DirectMidiEventLaneTarget target)
+                && midiDialog.Result is DirectMidiEventLaneTarget target)
             {
                 workspace.AddDirectMidiLaneTarget(target);
                 _session.RefreshWorkspace(workspace);
@@ -7236,7 +7223,7 @@ public partial class MainWindow : Window
             currentStem);
         AudioRenderDialog dialog = new(
             _session.Project.AudioRender,
-            _session.Project.Tracks,
+            _session.Project,
             initialDirectory,
             suggested)
         {
@@ -7667,6 +7654,16 @@ public partial class MainWindow : Window
     {
         ApplicationPreferencesLoadResult loaded = _preferenceStore.Load();
         _preferences = loaded.Preferences;
+        if (_preferences.DefaultEmbeddedSoundFontPath is string defaultSoundFontPath
+            && !File.Exists(defaultSoundFontPath))
+        {
+            _preferences = _preferences with { DefaultEmbeddedSoundFontPath = null };
+            ApplicationPreferencesSaveResult cleared = _preferenceStore.Save(_preferences);
+            if (!cleared.Succeeded && cleared.Notice is not null)
+            {
+                _session.SetStatusMessage(cleared.Notice.Message, isError: true);
+            }
+        }
         DesktopUiPreferences ui = _preferences.DesktopUi;
         Width = ui.MainWindowWidth;
         Height = ui.MainWindowHeight;
@@ -7693,6 +7690,29 @@ public partial class MainWindow : Window
             _session.SetStatusMessage(loaded.Notice.Message, isError: true);
         }
     }
+
+    private NewProjectCreationRequest ApplyDefaultEmbeddedSoundFont(
+        NewProjectCreationRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        string? defaultPath = GetAvailableDefaultEmbeddedSoundFontPath();
+        if (request.SoundFont.Mode != NewProjectSoundFontMode.None
+            || defaultPath is null)
+        {
+            return request;
+        }
+        return request with
+        {
+            SoundFont = new NewProjectSoundFontSelection(
+                NewProjectSoundFontMode.Embedded,
+                defaultPath)
+        };
+    }
+
+    private string? GetAvailableDefaultEmbeddedSoundFontPath() =>
+        _preferences.DefaultEmbeddedSoundFontPath is string path && File.Exists(path)
+            ? path
+            : null;
 
     private void SaveDesktopPreferences()
     {
@@ -8873,7 +8893,7 @@ public partial class MainWindow : Window
         {
             return;
         }
-        IEnumerable<TimelineRenderItem> candidates = surface.Snapshot.Items
+        IEnumerable<TimelineRenderItem> candidates = surface.Snapshot.EnumerateAllItems()
             .Where(item => (item.State & TimelineItemState.HitTestDisabled) == 0);
         if (workspace.ActiveLane is int lane
             && (surface.Tag as string) == "ParameterLanes")
@@ -8937,7 +8957,7 @@ public partial class MainWindow : Window
                                 ? checked(midi.Segment.ProjectStartTick + midi.Segment.LengthTicks)
                                 : cursor;
                             MidoraId targetTrackId = arrangement.GetArrangementLane(arrangement.ActiveLane ?? -1) is
-                                { Kind: ArrangementLaneKind.PureMidiTrack, ObjectId: MidoraId activeTrackId }
+                            { Kind: ArrangementLaneKind.PureMidiTrack, ObjectId: MidoraId activeTrackId }
                                     ? activeTrackId
                                     : midi.Track.Id;
                             _session.Execute(ProjectDomainEditCommands.DuplicateMidiSegments(
@@ -9323,7 +9343,7 @@ public partial class MainWindow : Window
             { Mode: TimelineWorkspaceMode.Arrangement }
             && surface.TryGetArrangementLaneHeader(e.GetPosition(surface), out int lane)
             && ((TimelineWorkspaceViewModel)_session.ActiveWorkspace).GetArrangementLane(lane) is
-                { ObjectId: MidoraId arrangementObjectId } arrangementLane)
+            { ObjectId: MidoraId arrangementObjectId } arrangementLane)
         {
             _arrangementHeaderShortcut = (arrangementLane.Kind, arrangementObjectId);
             _logicalTrackShortcutTrackId = arrangementLane.Kind == ArrangementLaneKind.LogicalTrack

@@ -56,7 +56,11 @@ public sealed record MidoraProjectOpenResultV1(
 {
     public EmbeddedSoundFontResourceV1? EmbeddedSoundFontResource { get; init; }
 
-    public void Dispose() => EmbeddedSoundFontResource?.Dispose();
+    public void Dispose()
+    {
+        EmbeddedSoundFontResource?.Dispose();
+        Project.Dispose();
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -64,6 +68,7 @@ public sealed record MidoraProjectOpenResultV1(
         {
             await EmbeddedSoundFontResource.DisposeAsync().ConfigureAwait(false);
         }
+        Project.Dispose();
     }
 }
 
@@ -308,15 +313,9 @@ public sealed class MidoraProjectPackageV1
             fileInformation?.CreatedWithSoftwareVersion ?? _softwareVersion,
             _softwareVersion);
 
-        PackageContentV1 content;
         try
         {
             ValidateSupportedProject(project);
-            content = BuildContent(
-                project,
-                metadata,
-                outputFileInformation,
-                embeddedSoundFontResource);
         }
         catch (Exception exception) when (exception is InvalidDataException
             or ArgumentException
@@ -337,6 +336,7 @@ public sealed class MidoraProjectPackageV1
             : null;
         bool publishAttempted = false;
         List<MidoraPackageDiagnosticV1> cleanupDiagnostics = [];
+        PackageContentV1? content = null;
 
         try
         {
@@ -368,6 +368,28 @@ public sealed class MidoraProjectPackageV1
                 File.SetAttributes(
                     temporaryDirectory,
                     File.GetAttributes(temporaryDirectory) | FileAttributes.Hidden);
+                try
+                {
+                    content = BuildContent(
+                        project,
+                        metadata,
+                        outputFileInformation,
+                        embeddedSoundFontResource,
+                        temporaryDirectory,
+                        knownPureMidiPackEntries: null,
+                        cancellationToken);
+                }
+                catch (Exception exception) when (exception is InvalidDataException
+                    or ArgumentException
+                    or OverflowException)
+                {
+                    throw new MidoraPackageExceptionV1(
+                        MidoraPackageStageV1.Serialization,
+                        "The current Project cannot be serialized as the supported v1 package slice.",
+                        targetPath: target,
+                        temporaryPath: temporaryDirectory,
+                        innerException: exception);
+                }
                 await WriteContentDirectoryAsync(temporaryDirectory, content, cancellationToken)
                     .ConfigureAwait(false);
                 _faultInjector.ThrowIfRequested(
@@ -415,13 +437,17 @@ public sealed class MidoraProjectPackageV1
                         reopened.Project,
                         reopened.Project.Metadata.Snapshot(),
                         reopened.FileInformation,
-                        reopened.EmbeddedSoundFontResource);
+                        reopened.EmbeddedSoundFontResource,
+                        contentRoot: null,
+                        content.PureMidiPackEntries,
+                        cancellationToken);
                     RequireEqualContent(content.MemoryFiles, reopenedContent.MemoryFiles);
                 }
             }
             catch (Exception exception) when (exception is IOException
                 or UnauthorizedAccessException
-                or NotSupportedException)
+                or NotSupportedException
+                or InvalidDataException)
             {
                 throw new MidoraPackageExceptionV1(
                     MidoraPackageStageV1.SelfValidation,
@@ -621,180 +647,193 @@ public sealed class MidoraProjectPackageV1
             projectSettings.TicksPerQuarterNote,
             storedNextStableId,
             _timeProvider.GetUtcNow());
-        MidiStateCodecV1.Restore(project.GlobalInitialState, projectSettings.GlobalInitialState);
-
-        await RestoreProjectObjectsAsync(
-            project,
-            projectIndex,
-            entries,
-            index,
-            path,
-            diagnostics,
-            cancellationToken).ConfigureAwait(false);
-
-        ProjectSoundFontReference? soundFont = await RestoreOrdinarySettingsAsync(
-            MidoraPackagePathsV1.SoundFontSettings,
-            bytes => SoundFontSettingsCodecV1.Parse(bytes),
-            entries, index, path, diagnostics, cancellationToken,
-            () => isModified = true).ConfigureAwait(false);
-        project.SoundFont.Restore(soundFont);
-        diagnostics.AddRange(CollectOrphanEmbeddedResourceDiagnostics(index, soundFont));
-
-        bool conductorFallback = false;
+        PureMidiContentPackExtractionV1 pureMidiContent = new(project);
         try
         {
-            byte[]? conductorBytes = await TryReadValidatedAsync(
-                MidoraPackagePathsV1.ConductorTrack, "conductor-json", entries, index, path, cancellationToken)
+            MidiStateCodecV1.Restore(project.GlobalInitialState, projectSettings.GlobalInitialState);
+
+            await RestoreProjectObjectsAsync(
+                project,
+                projectIndex,
+                entries,
+                index,
+                path,
+                diagnostics,
+                pureMidiContent,
+                cancellationToken).ConfigureAwait(false);
+
+            ProjectSoundFontReference? soundFont = await RestoreOrdinarySettingsAsync(
+                MidoraPackagePathsV1.SoundFontSettings,
+                bytes => SoundFontSettingsCodecV1.Parse(bytes),
+                entries, index, path, diagnostics, cancellationToken,
+                () => isModified = true).ConfigureAwait(false);
+            project.SoundFont.Restore(soundFont);
+            diagnostics.AddRange(CollectOrphanEmbeddedResourceDiagnostics(index, soundFont));
+
+            bool conductorFallback = false;
+            try
+            {
+                byte[]? conductorBytes = await TryReadValidatedAsync(
+                    MidoraPackagePathsV1.ConductorTrack, "conductor-json", entries, index, path, cancellationToken)
+                    .ConfigureAwait(false);
+                if (conductorBytes is null) throw new InvalidDataException("conductor-track.json is missing.");
+                ConductorTrackCodecV1.Restore(project, ConductorTrackCodecV1.Parse(conductorBytes));
+            }
+            catch (Exception exception) when (exception is InvalidDataException
+                or System.Text.Json.JsonException
+                or MidoraPackageExceptionV1
+            {
+                Stage: MidoraPackageStageV1.HashValidation or MidoraPackageStageV1.Structure
+            })
+            {
+                conductorFallback = true;
+                AddRecoveryDiagnostic(diagnostics, MidoraPackagePathsV1.ConductorTrack, exception.Message);
+                isModified = true;
+            }
+
+            ValidateLoadedStableIds(
+                projectIndex,
+                project,
+                conductorFallback ? null : project.Conductor,
+                soundFont,
+                storedNextStableId);
+            project.RestoreNextStableId(storedNextStableId);
+            if (conductorFallback)
+            {
+                try
+                {
+                    project.Conductor.Tempos.Add(new TempoChange(project, 0, 120m));
+                    project.Conductor.TimeSignatures.Add(new TimeSignatureChange(project, 0, 4, 4));
+                }
+                catch (InvalidOperationException exception)
+                {
+                    throw StructureFailure(
+                        path,
+                        MidoraPackagePathsV1.ConductorTrack,
+                        "The damaged Conductor Track cannot be replaced because the stable ID space is exhausted.",
+                        exception);
+                }
+            }
+
+            byte[]? metadataBytes = await TryReadValidatedAsync(
+                MidoraPackagePathsV1.Metadata, "core-json", entries, index, path, cancellationToken)
                 .ConfigureAwait(false);
-            if (conductorBytes is null) throw new InvalidDataException("conductor-track.json is missing.");
-            ConductorTrackCodecV1.Restore(project, ConductorTrackCodecV1.Parse(conductorBytes));
-        }
-        catch (Exception exception) when (exception is InvalidDataException
-            or System.Text.Json.JsonException
-            or MidoraPackageExceptionV1
-        {
-            Stage: MidoraPackageStageV1.HashValidation or MidoraPackageStageV1.Structure
-        })
-        {
-            conductorFallback = true;
-            AddRecoveryDiagnostic(diagnostics, MidoraPackagePathsV1.ConductorTrack, exception.Message);
-            isModified = true;
-        }
+            if (metadataBytes is null)
+            {
+                AddRecoveryDiagnostic(diagnostics, MidoraPackagePathsV1.Metadata, "metadata.json is missing.");
+                isModified = true;
+            }
+            else
+            {
+                try
+                {
+                    MetadataCodecV1.Restore(project.Metadata, metadataBytes);
+                }
+                catch (Exception exception) when (exception is InvalidDataException or System.Text.Json.JsonException)
+                {
+                    throw StructureFailure(path, MidoraPackagePathsV1.Metadata, "metadata.json is present but invalid.", exception);
+                }
+            }
 
-        ValidateLoadedStableIds(
-            projectIndex,
-            project,
-            conductorFallback ? null : project.Conductor,
-            soundFont,
-            storedNextStableId);
-        project.RestoreNextStableId(storedNextStableId);
-        if (conductorFallback)
-        {
+            ExportSettingsJsonV1? export = await RestoreOrdinarySettingsAsync(
+                MidoraPackagePathsV1.ExportSettings,
+                bytes => ExportSettingsCodecV1.Parse(bytes),
+                entries, index, path, diagnostics, cancellationToken,
+                () => isModified = true).ConfigureAwait(false);
+            if (export is not null) ExportSettingsCodecV1.Restore(project.Export, export);
+
+            PlaybackSettingsJsonV1? playback = await RestoreOrdinarySettingsAsync(
+                MidoraPackagePathsV1.PlaybackSettings,
+                bytes => PlaybackSettingsCodecV1.Parse(bytes),
+                entries, index, path, diagnostics, cancellationToken,
+                () => isModified = true).ConfigureAwait(false);
+            if (playback is not null) PlaybackSettingsCodecV1.Restore(project.Playback, playback);
+
+            byte[] audioRenderBytes = await ReadRequiredValidatedAsync(
+                MidoraPackagePathsV1.AudioRenderSettings, "settings-json", entries, index, path, cancellationToken)
+                .ConfigureAwait(false);
             try
             {
-                project.Conductor.Tempos.Add(new TempoChange(project, 0, 120m));
-                project.Conductor.TimeSignatures.Add(new TimeSignatureChange(project, 0, 4, 4));
-            }
-            catch (InvalidOperationException exception)
-            {
-                throw StructureFailure(
-                    path,
-                    MidoraPackagePathsV1.ConductorTrack,
-                    "The damaged Conductor Track cannot be replaced because the stable ID space is exhausted.",
-                    exception);
-            }
-        }
-
-        byte[]? metadataBytes = await TryReadValidatedAsync(
-            MidoraPackagePathsV1.Metadata, "core-json", entries, index, path, cancellationToken)
-            .ConfigureAwait(false);
-        if (metadataBytes is null)
-        {
-            AddRecoveryDiagnostic(diagnostics, MidoraPackagePathsV1.Metadata, "metadata.json is missing.");
-            isModified = true;
-        }
-        else
-        {
-            try
-            {
-                MetadataCodecV1.Restore(project.Metadata, metadataBytes);
+                AudioRenderSettingsJsonV1 audio = AudioRenderSettingsCodecV1.Parse(audioRenderBytes);
+                AudioRenderSettingsCodecV1.Restore(project.AudioRender, audio);
+                HashSet<MidoraId> trackIds = project.Tracks.Select(track => track.Id)
+                    .Concat(project.DamagedLogicalTracks.Select(track => track.Id))
+                    .ToHashSet();
+                MidoraId[] missingTrackIds = project.AudioRender.ExplicitLogicalTrackIds
+                    .Where(id => !trackIds.Contains(id))
+                    .ToArray();
+                if (missingTrackIds.Length != 0)
+                {
+                    project.AudioRender.ExplicitLogicalTrackIds.ExceptWith(missingTrackIds);
+                    AddRecoveryDiagnostic(
+                        diagnostics,
+                        MidoraPackagePathsV1.AudioRenderSettings,
+                        "Explicit Track IDs not present in the Project were removed.");
+                    isModified = true;
+                }
             }
             catch (Exception exception) when (exception is InvalidDataException or System.Text.Json.JsonException)
             {
-                throw StructureFailure(path, MidoraPackagePathsV1.Metadata, "metadata.json is present but invalid.", exception);
-            }
-        }
-
-        ExportSettingsJsonV1? export = await RestoreOrdinarySettingsAsync(
-            MidoraPackagePathsV1.ExportSettings,
-            bytes => ExportSettingsCodecV1.Parse(bytes),
-            entries, index, path, diagnostics, cancellationToken,
-            () => isModified = true).ConfigureAwait(false);
-        if (export is not null) ExportSettingsCodecV1.Restore(project.Export, export);
-
-        PlaybackSettingsJsonV1? playback = await RestoreOrdinarySettingsAsync(
-            MidoraPackagePathsV1.PlaybackSettings,
-            bytes => PlaybackSettingsCodecV1.Parse(bytes),
-            entries, index, path, diagnostics, cancellationToken,
-            () => isModified = true).ConfigureAwait(false);
-        if (playback is not null) PlaybackSettingsCodecV1.Restore(project.Playback, playback);
-
-        byte[] audioRenderBytes = await ReadRequiredValidatedAsync(
-            MidoraPackagePathsV1.AudioRenderSettings, "settings-json", entries, index, path, cancellationToken)
-            .ConfigureAwait(false);
-        try
-        {
-            AudioRenderSettingsJsonV1 audio = AudioRenderSettingsCodecV1.Parse(audioRenderBytes);
-            AudioRenderSettingsCodecV1.Restore(project.AudioRender, audio);
-            HashSet<MidoraId> trackIds = project.Tracks.Select(track => track.Id)
-                .Concat(project.DamagedLogicalTracks.Select(track => track.Id))
-                .ToHashSet();
-            MidoraId[] missingTrackIds = project.AudioRender.ExplicitLogicalTrackIds
-                .Where(id => !trackIds.Contains(id))
-                .ToArray();
-            if (missingTrackIds.Length != 0)
-            {
-                project.AudioRender.ExplicitLogicalTrackIds.ExceptWith(missingTrackIds);
-                AddRecoveryDiagnostic(
-                    diagnostics,
+                throw StructureFailure(
+                    path,
                     MidoraPackagePathsV1.AudioRenderSettings,
-                    "Explicit Track IDs not present in the Project were removed.");
-                isModified = true;
+                    "Required current-format Audio Render Settings are invalid.",
+                    exception);
             }
-        }
-        catch (Exception exception) when (exception is InvalidDataException or System.Text.Json.JsonException)
-        {
-            throw StructureFailure(
-                path,
-                MidoraPackagePathsV1.AudioRenderSettings,
-                "Required current-format Audio Render Settings are invalid.",
-                exception);
-        }
 
-        GlobalResetDefaultsJsonV1? reset = await RestoreOrdinarySettingsAsync(
-            MidoraPackagePathsV1.GlobalResetDefaults,
-            bytes => GlobalResetDefaultsCodecV1.Parse(bytes),
-            entries, index, path, diagnostics, cancellationToken,
-            () => isModified = true).ConfigureAwait(false);
-        if (reset is not null) MidiStateCodecV1.Restore(project.GlobalResetDefaults, reset.State);
+            GlobalResetDefaultsJsonV1? reset = await RestoreOrdinarySettingsAsync(
+                MidoraPackagePathsV1.GlobalResetDefaults,
+                bytes => GlobalResetDefaultsCodecV1.Parse(bytes),
+                entries, index, path, diagnostics, cancellationToken,
+                () => isModified = true).ConfigureAwait(false);
+            if (reset is not null) MidiStateCodecV1.Restore(project.GlobalResetDefaults, reset.State);
 
-        _ = await RestoreOrdinarySettingsAsync(
-            MidoraPackagePathsV1.GlobalEventScopeDefaults,
-            bytes =>
+            _ = await RestoreOrdinarySettingsAsync(
+                MidoraPackagePathsV1.GlobalEventScopeDefaults,
+                bytes =>
+                {
+                    GlobalEventScopeDefaultsCodecV1.Parse(bytes);
+                    return true;
+                },
+                entries, index, path, diagnostics, cancellationToken,
+                () => isModified = true).ConfigureAwait(false);
+
+            EmbeddedSoundFontResourceV1? embeddedSoundFontResource = soundFont is
+                EmbeddedProjectSoundFontReference embedded
+                    ? await RestoreEmbeddedSoundFontResourceAsync(
+                        embedded,
+                        entries,
+                        index,
+                        diagnostics,
+                        cancellationToken).ConfigureAwait(false)
+                    : null;
+
+            return new MidoraProjectOpenResultV1(
+                project,
+                new MidoraProjectFileInformationV1(
+                    manifest.CreatedWithSoftwareVersion,
+                    manifest.LastSavedWithSoftwareVersion),
+                isModified,
+                diagnostics)
             {
-                GlobalEventScopeDefaultsCodecV1.Parse(bytes);
-                return true;
-            },
-            entries, index, path, diagnostics, cancellationToken,
-            () => isModified = true).ConfigureAwait(false);
-
-        EmbeddedSoundFontResourceV1? embeddedSoundFontResource = soundFont is
-            EmbeddedProjectSoundFontReference embedded
-                ? await RestoreEmbeddedSoundFontResourceAsync(
-                    embedded,
-                    entries,
-                    index,
-                    diagnostics,
-                    cancellationToken).ConfigureAwait(false)
-                : null;
-
-        return new MidoraProjectOpenResultV1(
-            project,
-            new MidoraProjectFileInformationV1(
-                manifest.CreatedWithSoftwareVersion,
-                manifest.LastSavedWithSoftwareVersion),
-            isModified,
-            diagnostics)
+                EmbeddedSoundFontResource = embeddedSoundFontResource
+            };
+        }
+        catch
         {
-            EmbeddedSoundFontResource = embeddedSoundFontResource
-        };
+            project.Dispose();
+            throw;
+        }
     }
 
     private static PackageContentV1 BuildContent(
         MidoraProject project,
         ProjectMetadataSnapshot metadata,
         MidoraProjectFileInformationV1 fileInformation,
-        EmbeddedSoundFontResourceV1? embeddedSoundFontResource)
+        EmbeddedSoundFontResourceV1? embeddedSoundFontResource,
+        string? contentRoot,
+        IReadOnlyList<ManifestFileEntryJsonV1>? knownPureMidiPackEntries,
+        CancellationToken cancellationToken)
     {
         Dictionary<string, byte[]> content = new(StringComparer.Ordinal)
         {
@@ -830,9 +869,34 @@ public sealed class MidoraProjectPackageV1
         }
         foreach (PureMidiTrack track in project.PureMidiTracks)
         {
+            string contentPackPath = MidoraPackagePathsV1.PureMidiContentPack(track.Id);
             content.Add(
                 $"midi-tracks/mt_{track.Id}.pb",
-                PureMidiTrackProtobufCodecV1.Serialize(track));
+                PureMidiTrackProtobufCodecV1.Serialize(track, contentPackPath));
+        }
+        ManifestFileEntryJsonV1[] pureMidiPackEntries;
+        if (knownPureMidiPackEntries is not null)
+        {
+            pureMidiPackEntries = knownPureMidiPackEntries
+                .OrderBy(value => value.Path, StringComparer.Ordinal)
+                .ToArray();
+            string[] expected = project.PureMidiTracks
+                .Select(value => MidoraPackagePathsV1.PureMidiContentPack(value.Id))
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
+            if (!pureMidiPackEntries.Select(value => value.Path).SequenceEqual(expected))
+                throw new InvalidDataException("Pure MIDI content-pack entries do not match Project tracks.");
+        }
+        else
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(contentRoot);
+            pureMidiPackEntries = project.PureMidiTracks
+                .OrderBy(value => value.Id)
+                .Select(track => PureMidiContentPackPersistenceV1.Materialize(
+                    track,
+                    contentRoot,
+                    cancellationToken))
+                .ToArray();
         }
         EmbeddedProjectSoundFontReference? embeddedReference =
             project.SoundFont.Reference as EmbeddedProjectSoundFontReference;
@@ -846,6 +910,7 @@ public sealed class MidoraProjectPackageV1
             SchemaVersion = PersistenceContractV1.SchemaVersion,
             Sha256 = Convert.ToHexStringLower(SHA256.HashData(item.Value))
         })
+            .Concat(pureMidiPackEntries)
             .Concat(embeddedReference is null
                 ? []
                 :
@@ -870,7 +935,12 @@ public sealed class MidoraProjectPackageV1
             Files = manifestFiles
         };
         content.Add(MidoraPackagePathsV1.Manifest, ManifestCodecV1.Serialize(manifest));
-        return new(content, embeddedPath, embeddedReference, embeddedSoundFontResource);
+        return new(
+            content,
+            pureMidiPackEntries,
+            embeddedPath,
+            embeddedReference,
+            embeddedSoundFontResource);
     }
 
     private static void ValidateSupportedProject(MidoraProject project)
@@ -889,7 +959,7 @@ public sealed class MidoraProjectPackageV1
             throw new InvalidDataException("Audio Render Settings reference a Logical Track absent from the Project.");
         }
 
-        HashSet<MidoraId> ids = [];
+        StableIdSetV1 ids = new();
         foreach (MidoraId id in EnumerateConductorIds(project.Conductor))
         {
             AddId(id, project.NextStableId, ids, "Conductor event");
@@ -1225,10 +1295,15 @@ public sealed class MidoraProjectPackageV1
         HashSet<string> referencedPaths = projectIndex.ArrangementParents
             .Select(value => value.Path)
             .Concat(projectIndex.ArrangementParents.SelectMany(value => value.Children.Select(child => child.Path)))
+            .Concat(projectIndex.ArrangementParents
+                .SelectMany(value => value.Children)
+                .Where(value => value.Kind == "pure-midi-track")
+                .Select(value => MidoraPackagePathsV1.PureMidiContentPack(
+                    ParseId(value.Id, "project.json Pure MIDI Track ID"))))
             .ToHashSet(StringComparer.Ordinal);
         foreach (ManifestFileEntryJsonV1 item in manifestIndex.Values
             .Where(value => value.Kind is "event-instrument-pb" or "logical-track-pb"
-                or "midi-channel-root-pb" or "pure-midi-track-pb")
+                or "midi-channel-root-pb" or "pure-midi-track-pb" or "pure-midi-content-pack")
             .Where(value => !referencedPaths.Contains(value.Path))
             .OrderBy(value => value.Path, StringComparer.Ordinal))
         {
@@ -1236,7 +1311,7 @@ public sealed class MidoraProjectPackageV1
                 MidoraPackageDiagnosticSeverityV1.Information,
                 MidoraPackageDiagnosticCategoryV1.FileFormat,
                 "MIDORA-PERSIST-INFO-ORPHAN-OBJECT",
-                "The manifest object entry is not referenced by project.json and will not be preserved on save.",
+                "The manifest object/content entry is not referenced by project.json and will not be preserved on save.",
                 item.Path);
         }
     }
@@ -1421,6 +1496,7 @@ public sealed class MidoraProjectPackageV1
         IReadOnlyDictionary<string, ManifestFileEntryJsonV1> manifestIndex,
         string targetPath,
         ICollection<MidoraPackageDiagnosticV1> diagnostics,
+        PureMidiContentPackExtractionV1 pureMidiContent,
         CancellationToken cancellationToken)
     {
         for (int parentIndex = 0; parentIndex < projectIndex.ArrangementParents.Length; parentIndex++)
@@ -1560,15 +1636,22 @@ public sealed class MidoraProjectPackageV1
                     }
                     else
                     {
-                        PureMidiTrack track = PureMidiTrackProtobufCodecV1.Restore(
+                        RestoredPureMidiTrackV1 restored = PureMidiTrackProtobufCodecV1.Restore(
                             project,
                             childPayload.Bytes);
+                        PureMidiTrack track = restored.Track;
                         if (track.Id != expectedChildId
                             || track.MidiChannelRootId != expectedParentId)
                         {
                             throw new InvalidDataException(
                                 "The Pure MIDI Track identity or parent does not match project.json.");
                         }
+                        await pureMidiContent.AttachAsync(
+                            track,
+                            restored.ContentPackPath,
+                            entries,
+                            manifestIndex,
+                            cancellationToken).ConfigureAwait(false);
                         project.PureMidiTracks.Add(track);
                     }
                 }
@@ -1821,6 +1904,8 @@ public sealed class MidoraProjectPackageV1
             CompressionLevel compressionLevel =
                 entryName.StartsWith("resources/soundfonts/", StringComparison.Ordinal)
                 && entryName.EndsWith(".sf2", StringComparison.OrdinalIgnoreCase)
+                || entryName.StartsWith("midi-content/", StringComparison.Ordinal)
+                && entryName.EndsWith(".mpk", StringComparison.OrdinalIgnoreCase)
                     ? CompressionLevel.NoCompression
                     : CompressionLevel.Optimal;
             ZipArchiveEntry entry = archive.CreateEntry(entryName, compressionLevel);
@@ -1871,6 +1956,7 @@ public sealed class MidoraProjectPackageV1
         _ when path.StartsWith("logical-tracks/", StringComparison.Ordinal) => "logical-track-pb",
         _ when path.StartsWith("midi-channel-roots/", StringComparison.Ordinal) => "midi-channel-root-pb",
         _ when path.StartsWith("midi-tracks/", StringComparison.Ordinal) => "pure-midi-track-pb",
+        _ when path.StartsWith("midi-content/", StringComparison.Ordinal) => "pure-midi-content-pack",
         _ when path.StartsWith("resources/soundfonts/", StringComparison.Ordinal) => "embedded-resource",
         _ => throw new InvalidDataException($"No v1 manifest kind is defined for '{path}'.")
     };
@@ -1878,7 +1964,8 @@ public sealed class MidoraProjectPackageV1
     private static bool IsKnownKind(string kind) => kind is
         "core-json" or "settings-json" or "conductor-json" or
         "event-instrument-pb" or "logical-track-pb" or
-        "midi-channel-root-pb" or "pure-midi-track-pb" or "embedded-resource";
+        "midi-channel-root-pb" or "pure-midi-track-pb" or
+        "pure-midi-content-pack" or "embedded-resource";
 
     private static void ValidateLoadedStableIds(
         ProjectJsonV1 projectIndex,
@@ -1887,7 +1974,7 @@ public sealed class MidoraProjectPackageV1
         ProjectSoundFontReference? soundFont,
         long nextStableId)
     {
-        HashSet<MidoraId> ids = [];
+        StableIdSetV1 ids = new();
         if (conductor is not null)
         {
             foreach (MidoraId id in EnumerateConductorIds(conductor))
@@ -2035,11 +2122,36 @@ public sealed class MidoraProjectPackageV1
         }
     }
 
-    private static void AddId(MidoraId id, long nextStableId, ISet<MidoraId> ids, string source)
+    private static void AddId(MidoraId id, long nextStableId, StableIdSetV1 ids, string source)
     {
         if (id == default || id.Value >= nextStableId || !ids.Add(id))
         {
             throw new InvalidDataException($"{source} stable ID is zero, duplicated, or not below nextStableId.");
+        }
+    }
+
+    private sealed class StableIdSetV1
+    {
+        private const int BlockBitShift = 20;
+        private const int BitsPerBlock = 1 << BlockBitShift;
+        private const int WordsPerBlock = BitsPerBlock / 64;
+        private readonly Dictionary<long, ulong[]> _blocks = [];
+
+        public bool Add(MidoraId id)
+        {
+            long value = id.Value;
+            long blockIndex = value >> BlockBitShift;
+            int bitInBlock = (int)(value & (BitsPerBlock - 1));
+            if (!_blocks.TryGetValue(blockIndex, out ulong[]? block))
+            {
+                block = new ulong[WordsPerBlock];
+                _blocks.Add(blockIndex, block);
+            }
+            int wordIndex = bitInBlock >> 6;
+            ulong mask = 1UL << (bitInBlock & 63);
+            if ((block[wordIndex] & mask) != 0) return false;
+            block[wordIndex] |= mask;
+            return true;
         }
     }
 
@@ -2155,6 +2267,7 @@ public sealed class MidoraProjectPackageV1
 
     private sealed record PackageContentV1(
         Dictionary<string, byte[]> MemoryFiles,
+        IReadOnlyList<ManifestFileEntryJsonV1> PureMidiPackEntries,
         string? EmbeddedPackagePath,
         EmbeddedProjectSoundFontReference? EmbeddedReference,
         EmbeddedSoundFontResourceV1? EmbeddedResource);

@@ -25,6 +25,12 @@ public sealed class TimelineOverviewSurface : Control
     public static readonly DependencyProperty ExtentEndTickProperty = DependencyProperty.Register(
         nameof(ExtentEndTick), typeof(long), typeof(TimelineOverviewSurface),
         new FrameworkPropertyMetadata(3072L, FrameworkPropertyMetadataOptions.AffectsRender));
+    public static readonly DependencyProperty PlaybackCursorTickProperty = DependencyProperty.Register(
+        nameof(PlaybackCursorTick), typeof(long?), typeof(TimelineOverviewSurface),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+    public static readonly DependencyProperty EditCursorTickProperty = DependencyProperty.Register(
+        nameof(EditCursorTick), typeof(long?), typeof(TimelineOverviewSurface),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
     private readonly int[] _density = new int[2048];
     private TimelineRenderSnapshot? _cachedSnapshot;
@@ -35,8 +41,11 @@ public sealed class TimelineOverviewSurface : Control
     private double _dragOffset;
     private Brush? _cachedBorderBrush;
     private Brush? _cachedInfoBrush;
+    private Brush? _cachedRedBrush;
     private Pen? _borderPen;
     private Pen? _infoPen;
+    private Pen? _playbackCursorPen;
+    private Pen? _editCursorPen;
 
     public TimelineOverviewSurface()
     {
@@ -82,6 +91,18 @@ public sealed class TimelineOverviewSurface : Control
         set => SetValue(ExtentEndTickProperty, Math.Max(1, value));
     }
 
+    public long? PlaybackCursorTick
+    {
+        get => (long?)GetValue(PlaybackCursorTickProperty);
+        set => SetValue(PlaybackCursorTickProperty, value);
+    }
+
+    public long? EditCursorTick
+    {
+        get => (long?)GetValue(EditCursorTickProperty);
+        set => SetValue(EditCursorTickProperty, value);
+    }
+
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
@@ -89,7 +110,7 @@ public sealed class TimelineOverviewSurface : Control
         Brush border = ResourceBrush("Brush.Border", Color.FromRgb(42, 48, 58));
         Brush info = ResourceBrush("Brush.Info", Color.FromRgb(98, 166, 246));
         Brush red = ResourceBrush("Brush.Red", Color.FromRgb(229, 72, 77));
-        EnsurePens(border, info);
+        EnsurePens(border, info, red);
         drawingContext.DrawRectangle(surface, _borderPen, new Rect(0, 0, ActualWidth, ActualHeight));
         if (ActualWidth <= 2 || ActualHeight <= 2) return;
 
@@ -112,7 +133,8 @@ public sealed class TimelineOverviewSurface : Control
         drawingContext.DrawRoundedRectangle(info, null, thumb, 2, 2);
         drawingContext.Pop();
         drawingContext.DrawRoundedRectangle(null, _infoPen, thumb, 2, 2);
-        drawingContext.DrawRectangle(red, null, new Rect(thumb.Left, 1, 1, Math.Max(0, ActualHeight - 2)));
+        DrawCursor(drawingContext, PlaybackCursorTick, extent, _playbackCursorPen);
+        DrawCursor(drawingContext, EditCursorTick, extent, _editCursorPen);
     }
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
@@ -209,10 +231,10 @@ public sealed class TimelineOverviewSurface : Control
         _cachedExtent = extent;
         _cachedWidth = width;
         if (Snapshot is null || width == 0) return;
-        foreach (TimelineRenderItem item in Snapshot.Items)
+        Snapshot.AccumulateOverviewDensity(extent, _density.AsSpan(0, width));
+        for (int x = 0; x < width; x++)
         {
-            int x = Math.Clamp((int)(item.StartTick / (double)extent * width), 0, width - 1);
-            int count = ++_density[x];
+            int count = _density[x];
             if (count > _maximumDensity) _maximumDensity = count;
         }
     }
@@ -220,15 +242,35 @@ public sealed class TimelineOverviewSurface : Control
     private static long SafeAdd(long left, long right) =>
         left > long.MaxValue - right ? long.MaxValue : left + right;
 
-    private void EnsurePens(Brush border, Brush info)
+    private void DrawCursor(DrawingContext context, long? tick, long extent, Pen? pen)
     {
-        if (ReferenceEquals(border, _cachedBorderBrush) && ReferenceEquals(info, _cachedInfoBrush)) return;
+        if (tick is not long value || value < 0 || value > extent || pen is null) return;
+        double contentWidth = Math.Max(0, ActualWidth - 2);
+        if (contentWidth <= 0) return;
+        double rawX = 1 + value / (double)extent * contentWidth;
+        double x = Math.Clamp(Math.Floor(rawX) + 0.5, 1.5, Math.Max(1.5, ActualWidth - 1.5));
+        context.DrawLine(pen, new Point(x, 1), new Point(x, Math.Max(1, ActualHeight - 1)));
+    }
+
+    private void EnsurePens(Brush border, Brush info, Brush red)
+    {
+        if (ReferenceEquals(border, _cachedBorderBrush)
+            && ReferenceEquals(info, _cachedInfoBrush)
+            && ReferenceEquals(red, _cachedRedBrush)) return;
         _cachedBorderBrush = border;
         _cachedInfoBrush = info;
+        _cachedRedBrush = red;
         _borderPen = new Pen(border, 1);
         _infoPen = new Pen(info, 1);
+        _playbackCursorPen = new Pen(red, 1);
+        _editCursorPen = new Pen(info, 1)
+        {
+            DashStyle = DashStyles.Dash
+        };
         if (_borderPen.CanFreeze) _borderPen.Freeze();
         if (_infoPen.CanFreeze) _infoPen.Freeze();
+        if (_playbackCursorPen.CanFreeze) _playbackCursorPen.Freeze();
+        if (_editCursorPen.CanFreeze) _editCursorPen.Freeze();
     }
 
     private static Brush ResourceBrush(string key, Color fallback)

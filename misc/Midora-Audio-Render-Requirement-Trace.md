@@ -7,7 +7,7 @@
 
 - 当前内存 `MidoraProject` 的冻结语义视图；不重新读取磁盘 `.midora`。
 - 专用 `AudioRender` / `LogicalTrackAudioRender` `CompilationRequest`，范围为 `[startTick, endTick)`。
-- Whole Mix 的选中有效 Track 集合，或 Per Logical Track 的逐 Track 独立集合。
+- Whole Mix 的选中有效 Logical / Pure MIDI Track 集合，或 Per Logical Track 的逐 Logical Track 独立集合。
 - 已解析且完成任务级验证的 SF2 绝对运行时路径及其冻结资源身份。
 - Project 当前正式生效的 Playback Master Volume；文件渲染强制使用 Limiter v1。
 - 本次冻结的 8,000～192,000 Hz 整数采样率和每 Stream 1～16,777,216 的离线 sample voice 上限。
@@ -65,3 +65,9 @@
 - 已由纯自动测试覆盖：Whole/Per Track、空 SubVoice 静音目标、范围与 Tempo 映射、五类采样率、RIFF 上限、覆盖竞态、取消、部分成功、WAVE 校验、临时/备份事务和稳定诊断。
 - 正式 `win-x64` Native AOT publish 已按仓库 manifest 逐文件验证操作员提供的 BASS DLL；AOT `.exe` 已通过外部固定 DLL 目录的精确句柄解析、非静音文件渲染和零分配集成测试。
 - 尚待统一验收的是最终集中人工试听，以及 NUI-09/NUI-11 的实时 WASAPI 硬件、压力、延迟和正式分发 notices；它们不改变本工作流的 canonical/事务契约。
+
+## Pure MIDI Whole Mix 修正（2026-08-20）
+
+- Whole Mix 目标发现、显式 Track 选择和自然范围同时纳入有效 Pure MIDI Tracks；纯 MIDI-only Project 不再错误返回 `NO-TARGETS`，其范围由所选 Direct MIDI Segment 内容与既有显式范围规则决定。
+- `Per Logical Track` 保持仅 Logical Track，UI 在该模式下不把 Pure MIDI Track 伪装为可独立渲染目标。
+- 输入仍是冻结 Project source 与正式 compilation request；输出仍只来自 canonical compiled result。该修正不建立 per-Pure-Track synth 语义，也不改变同 Root 单流合成、缓存身份、命名、WAVE 事务或持久化格式。

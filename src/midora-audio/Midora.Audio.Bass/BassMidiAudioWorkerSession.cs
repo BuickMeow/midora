@@ -18,6 +18,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
     private readonly IAudioPcmCacheSessionAccess? _audioCache;
     private readonly AudioSegmentCacheStaging? _cacheStaging;
     private readonly PlaybackSpanCacheStaging? _playbackSpanCacheStaging;
+    private readonly MidiRenderEventStreamProducer? _eventStreamProducer;
     private readonly long _totalFrameCount;
     private string? _standardError;
     private int _exitCode = int.MinValue;
@@ -189,6 +190,13 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
                 _cacheStaging = null;
             }
             plan = _cacheStaging?.Plan ?? plan;
+            _eventStreamProducer = MidiRenderEventStreamProducer.Create(
+                plan,
+                _ownedTemporaryDirectory);
+            if (_eventStreamProducer is not null)
+            {
+                plan = plan.WithEventStreamDescriptor(_eventStreamProducer.Descriptor);
+            }
             string planPath = Path.Combine(_ownedTemporaryDirectory, "compiled-audio-plan.mdap");
             MidiRenderPlanFile.Write(planPath, plan);
             createdControl = SharedAudioWorkerControl.Create(
@@ -244,6 +252,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
             createdControl?.Dispose();
             _cacheStaging?.Dispose();
             _playbackSpanCacheStaging?.Dispose();
+            _eventStreamProducer?.Dispose();
             CleanupOwnedTemporaryDirectory(_ownedTemporaryDirectory);
             throw;
         }
@@ -337,6 +346,9 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
     public void EnqueueMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        _eventStreamProducer?.ApplyMonitoringCommands(
+            commands,
+            Math.Clamp(Status.PositionFrame, 0, _totalFrameCount));
         if (!commands.IsEmpty)
         {
             _playbackSpanCacheStaging?.InvalidateCapture();
@@ -467,6 +479,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
         _control.Dispose();
         _cacheStaging?.Dispose();
         _playbackSpanCacheStaging?.Dispose();
+        _eventStreamProducer?.Dispose();
         CleanupOwnedTemporaryDirectory(_ownedTemporaryDirectory);
     }
 

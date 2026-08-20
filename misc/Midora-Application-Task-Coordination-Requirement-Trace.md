@@ -2,13 +2,13 @@
 
 状态：已实现并完成自动化验证
 
-日期：2026-08-06
+日期：2026-08-20
 
 上位规范：SRS 第 3.12、13.5、13.14、14.18、15.14、17.2.2、19.2、19.10、20.14 节及 INV-004、INV-005、INV-018、INV-024、INV-037。
 
 ## 1. 输入与正式输出
 
-- 输入：当前 `ProjectCompilationSession`、`PlaybackController`、一个待执行的全局任务、任务取消请求、Project 切换时的 Function Draft/未保存状态决策、New Project 的创建参数/SF2/首次目标、Open Project 候选路径、Save/Save Copy 的 package/路径/覆盖授权、成功激活的持久化 Project 路径，以及当前 Windows 用户的 Application Preferences/Recent Projects 本机状态。
+- 输入：当前 `ProjectCompilationSession`、`PlaybackController`、一个待执行的全局任务、任务取消请求、Project 切换时的 Function Draft/未保存状态决策、New Project 的创建参数/SF2/首次目标、Open MIDI as New Project 候选、Open Project 候选路径、Save/Save Copy 的 package/路径/覆盖授权、成功激活的持久化 Project 路径，以及当前 Windows 用户的 Application Preferences/Recent Projects 本机状态。
 - 正式输出：唯一活动任务的种类、阶段与锁级别；结构化完成/取消/失败/忙碌/播放清理风险结果；一次性清理风险 continuation；Project 切换保护结果；仅在完整验证/首次发布成功后返回的 New Project 候选；仅在严格读取完成后返回且拥有诊断/Embedded 资源的 Open Project 候选；Save/Save Copy 后与磁盘一致的 current path/file information/Document 保存基线；已验证并自动保存的本机偏好快照；成功激活后显式记录的有界 Recent Projects MRU。
 - MIDI Export 与 Audio Render 在取得应用任务锁和 Project 编辑锁后才调用 request factory，因此 canonical、SF2、参数与最终路径快照在正式任务开始点冻结。
 - 本层不产生音乐语义；播放、MIDI 导出和音频渲染继续只消费各自现有的 canonical 派生入口。
@@ -47,7 +47,7 @@
 
 ## 4. 偏好归属与失效规则
 
-- 当前非 UI 范围保存：System Default/输出设备 ID、Render-Ahead 20–2000 ms（默认 100）、Device Buffer Request 5–200 ms（默认 50）、Realtime Maximum Sample Voices per Stream 1–16,777,216（默认 750），以及 Open、Save/Save Copy、SoundFont、MIDI Export、Audio Render 五类 picker 最近目录。
+- 当前保存：System Default/输出设备 ID、Render-Ahead 20–2000 ms（默认 100）、Device Buffer Request 5–200 ms（默认 50）、Realtime Maximum Sample Voices per Stream 1–16,777,216（默认 750）、可选的 Default Embedded SoundFont 本机绝对文件路径，以及 Open、Save/Save Copy、SoundFont、MIDI Export、Audio Render 五类 picker 最近目录。
 - 音频偏好只允许在 Playback `Stopped` 且无其他应用任务时提交；非法值不提交、不静默 Clamp。
 - 音频偏好实际变化后立即清除 sample-domain 计划并发出 `RealtimeAudioPreferencesChanged`，由未来应用 composition 重建实时 Worker/设备连接；当前任务的冻结值不被中途改写。
 - 最近目录只作为对应 picker 起点；必须是完全限定目录，可被清空，不进入 Project，也不转换为默认导出路径。
@@ -71,3 +71,18 @@
 - New Project 默认图、Unsaved/Persisted 语义、Metadata/TPQ、External/Embedded SF2、覆盖、竞态、资源清理、严格重开和提交前不累计工程时间。
 - Open Project 的 `.midora`/`.zip`、无长期文件占用、恢复 Modified、未知 entry、Damaged Placeholder、Embedded/External SF2、候选资源释放、取消/阻断失败和同 Project 工厂约束。
 - Recent Projects 的 MRU/大小写去重/10 项淘汰、严格/有界 JSON、确定性往返、离线路径保留、原子写失败保持、移除和清空。
+- Default Embedded SoundFont 的绝对本机路径验证、显式清空、确定性 JSON 往返、启动时缺失自动清空、任务开始前二次缺失降级，以及 New Project / Open MIDI as New Project 的 Embedded snapshot/验证/失败资源释放。
+
+## 7. Task overlay 展示增量（2026-08-20）
+
+- Task overlay 不再展示内部 `LockLevel`（例如 `MainWindow`）。没有可靠数值进度的任务使用真实 indeterminate 动画；可靠数值进度继续使用 determinate bar。
+- Cancel 行只在任务声明 `CanCancel` 时存在。Save / Save Copy 的事务阶段按既定原子性保持不可取消，因此 UI 隐藏 Cancel，而不是显示一个无响应按钮。
+- Save / Save Copy 的序列化、自校验、压缩与文件事务在后台工作线程运行；WPF Dispatcher 只负责 overlay、命令锁和完成后的视图刷新，使 indeterminate 动画和窗口消息泵在大型 Project 保存期间继续响应。该线程迁移不放宽 Project 编辑锁，也不改变保存事务的不可取消阶段。
+- 本增量只改变运行时任务展示，不改变任务 admission、锁、取消 token、持久化事务或失败原子性；Task 状态仍不进入 Project、Undo/Redo 或 `.midora`。
+
+## 8. 新建 Project 默认 Embedded SoundFont（2026-08-20）
+
+- Application Preferences 可保存一个可清空的本机 SF2 绝对文件路径；不接受相对路径或 UNC 路径。该路径只属于当前 Windows 用户的本机偏好，不进入 Project、Undo/Redo、canonical 或 `.midora`。
+- 该偏好只作用于未显式选择其他 SoundFont 的 `New Project` 和 `Open MIDI as New Project`。创建流程复用正式 Embedded 导入：流式复制到 Project 会话拥有的临时资源，同时计算完整 SHA-256，再执行 BASSMIDI loadability validation；成功候选持有独立 snapshot，源文件后续变化不改写当前 Project。
+- 应用启动时若路径不存在则自动清空并原子保存偏好；每次创建任务开始前再次检查，竞态缺失视为未配置并保持新 Project 无 SoundFont。其他读取、权限、格式或 loadability 错误仍显式失败，不把损坏文件静默降级为空。
+- MIDI 导入候选先 detached 完成；默认 SF2 绑定和验证也在替换当前 Project 前完成。失败时释放候选 Project 与 Embedded 临时资源，保持原 Project 不变。

@@ -141,15 +141,38 @@ public sealed class AudioRenderCompilationCoordinator
             }
         }
 
-        AudioRenderTrackSnapshot[] participating = tracks
+        AudioRenderTrackSnapshot[] participatingLogicalTracks = tracks
             .Where(value => value.Participates)
             .ToArray();
-        if (participating.Length == 0)
+        HashSet<MidoraId> rootIds = request.Project.MidiChannelRoots
+            .Select(value => value.Id)
+            .ToHashSet();
+        HashSet<MidoraId> damagedRootIds = request.Project.DamagedMidiChannelRoots
+            .Select(value => value.Id)
+            .ToHashSet();
+        MidoraId[] participatingPureMidiTrackIds = request.Mode == AudioRenderMode.WholeMix
+            ? request.Project.PureMidiTracks
+                .Where(track => selected is null || selected.Contains(track.Id))
+                .Where(track => rootIds.Contains(track.MidiChannelRootId)
+                    || damagedRootIds.Contains(track.MidiChannelRootId))
+                .Select(track => track.Id)
+                .ToArray()
+            : [];
+        bool hasTarget = request.Mode switch
+        {
+            AudioRenderMode.WholeMix => participatingLogicalTracks.Length != 0
+                || participatingPureMidiTrackIds.Length != 0,
+            AudioRenderMode.PerLogicalTrack => participatingLogicalTracks.Length != 0,
+            _ => throw new ArgumentOutOfRangeException(nameof(request.Mode))
+        };
+        if (!hasTarget)
         {
             diagnostics.Add(new(
                 "MIDORA-AUDIO-RENDER-NO-TARGETS",
                 AudioRenderDiagnosticSeverity.Error,
-                "At least one selected Logical Track with a valid Event Instrument binding is required."));
+                request.Mode == AudioRenderMode.WholeMix
+                    ? "At least one selected Logical Track or Pure MIDI Track with a valid parent is required."
+                    : "At least one selected Logical Track with a valid Event Instrument binding is required."));
             return new(
                 request.Mode,
                 request.StartTick,
@@ -161,8 +184,12 @@ public sealed class AudioRenderCompilationCoordinator
 
         List<AudioRenderCompilationItem> items = request.Mode switch
         {
-            AudioRenderMode.WholeMix => CompileWholeMix(request, participating),
-            AudioRenderMode.PerLogicalTrack => CompileLogicalTracks(request, participating),
+            AudioRenderMode.WholeMix => CompileWholeMix(
+                request,
+                participatingLogicalTracks
+                    .Select(value => value.TrackId)
+                    .Concat(participatingPureMidiTrackIds)),
+            AudioRenderMode.PerLogicalTrack => CompileLogicalTracks(request, participatingLogicalTracks),
             _ => throw new ArgumentOutOfRangeException(nameof(request.Mode))
         };
         long[] successfulEndTicks = items
@@ -199,12 +226,12 @@ public sealed class AudioRenderCompilationCoordinator
 
     private List<AudioRenderCompilationItem> CompileWholeMix(
         AudioRenderCompilationRequest request,
-        AudioRenderTrackSnapshot[] tracks)
+        IEnumerable<MidoraId> trackIds)
     {
         CanonicalCompiledResult compiled = Compile(
             request,
             CompilationPurpose.AudioRender,
-            tracks.Select(value => value.TrackId),
+            trackIds,
             request.EndTick);
         return [new(WholeMixSourceKey, null, compiled)];
     }

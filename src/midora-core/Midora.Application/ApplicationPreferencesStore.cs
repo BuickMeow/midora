@@ -87,6 +87,9 @@ public sealed class ApplicationPreferencesStore
                     ApplicationPreferences.NormalizeDirectory(recentDirectories.MidiExport),
                     ApplicationPreferences.NormalizeDirectory(recentDirectories.AudioRender)))
             {
+                DefaultEmbeddedSoundFontPath =
+                    ApplicationPreferences.NormalizeOptionalLocalFilePath(
+                        dto.DefaultEmbeddedSoundFontPath),
                 DesktopUi = desktop is null
                     ? DesktopUiPreferences.Default
                     : new DesktopUiPreferences(
@@ -156,6 +159,7 @@ public sealed class ApplicationPreferencesStore
                     preferences.RealtimeAudio.MaximumSampleVoicesPerUnitStream,
                 AudioCacheRootPath = preferences.AudioCache.RootPath,
                 MaximumReusableAudioCacheBytes = preferences.AudioCache.MaximumReusableBytes,
+                DefaultEmbeddedSoundFontPath = preferences.DefaultEmbeddedSoundFontPath,
                 RecentDirectories = new ApplicationRecentDirectoriesJsonV1
                 {
                     OpenProject = preferences.RecentDirectories.OpenProject,
@@ -267,6 +271,9 @@ internal sealed class ApplicationPreferencesJsonV1
 
     [JsonPropertyOrder(8)]
     public DesktopUiPreferencesJsonV1? DesktopUi { get; set; }
+
+    [JsonPropertyOrder(9)]
+    public string? DefaultEmbeddedSoundFontPath { get; set; }
 }
 
 internal sealed class DesktopUiPreferencesJsonV1

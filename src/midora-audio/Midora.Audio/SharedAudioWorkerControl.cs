@@ -286,6 +286,28 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         EndStatusPublication(sequence);
     }
 
+    /// <summary>
+    /// Publishes deterministic Buffering-recovery progress without changing the
+    /// shared-memory ABI. PositionFrame remains the frozen consumer frontier and
+    /// RenderPositionFrame becomes the absolute prepared recovery frontier until
+    /// normal runtime status publication resumes.
+    /// </summary>
+    public void PublishBufferingRecoveryProgress(
+        long positionFrame,
+        long preparedThroughFrame)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (positionFrame < 0 || preparedThroughFrame < positionFrame)
+        {
+            throw new ArgumentOutOfRangeException(nameof(preparedThroughFrame));
+        }
+        int sequence = BeginStatusPublication();
+        Volatile.Write(ref Int64At(PositionFrameOffset), positionFrame);
+        Volatile.Write(ref Int64At(RenderPositionFrameOffset), preparedThroughFrame);
+        Volatile.Write(ref Int32At(StateOffset), (int)AudioWorkerState.Buffering);
+        EndStatusPublication(sequence);
+    }
+
     public void PublishPersistentPlaybackAcceptance(long generation)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

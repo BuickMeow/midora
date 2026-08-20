@@ -327,47 +327,7 @@ internal static class ProjectCompilationSnapshot
                 LengthTicks = segment.LengthTicks,
                 ContentOffsetTick = segment.ContentOffsetTick
             };
-            for (int index = 0; index < segment.Notes.Count; index++)
-            {
-                if ((index & 0xff) == 0) cancellationToken.ThrowIfCancellationRequested();
-                DirectMidiNote note = segment.Notes[index];
-                segmentCopy.Notes.Add(new DirectMidiNote(project, note.Id)
-                {
-                    StartTick = note.StartTick,
-                    LengthTicks = note.LengthTicks,
-                    Key = note.Key,
-                    NoteOnVelocity = note.NoteOnVelocity,
-                    NoteOffVelocity = note.NoteOffVelocity,
-                    NoteOnOrder = note.NoteOnOrder,
-                    NoteOffOrder = note.NoteOffOrder
-                });
-            }
-            for (int index = 0; index < segment.ChannelEvents.Count; index++)
-            {
-                if ((index & 0xff) == 0) cancellationToken.ThrowIfCancellationRequested();
-                DirectMidiChannelEvent value = segment.ChannelEvents[index];
-                segmentCopy.ChannelEvents.Add(new DirectMidiChannelEvent(project, value.Id)
-                {
-                    Tick = value.Tick,
-                    Kind = value.Kind,
-                    Data1 = value.Data1,
-                    Data2 = value.Data2,
-                    Order = value.Order
-                });
-            }
-            for (int index = 0; index < segment.OpaqueEvents.Count; index++)
-            {
-                if ((index & 0xff) == 0) cancellationToken.ThrowIfCancellationRequested();
-                OpaqueMidiEvent value = segment.OpaqueEvents[index];
-                segmentCopy.OpaqueEvents.Add(new OpaqueMidiEvent(project, value.Id)
-                {
-                    Tick = value.Tick,
-                    Kind = value.Kind,
-                    MetaType = value.MetaType,
-                    Payload = [.. value.Payload],
-                    Order = value.Order
-                });
-            }
+            segment.CloneContentTo(segmentCopy, cancellationToken);
             result.Segments.Add(segmentCopy);
         }
         return result;

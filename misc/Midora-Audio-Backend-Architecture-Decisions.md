@@ -114,7 +114,7 @@ Preparing 通过固定版本的二进制计划格式传递冻结的 sample-domai
 
 正式实时客户端与正式文件客户端都只接受现存的 `.exe` Worker 路径并按绝对路径启动；托管 `.dll` 仅能通过程序集内部的测试入口显式放行，任意其他扩展名始终拒绝。实时 Worker 退出必须同时满足 exit code 0 与共享状态 Stopped/Completed；非零退出、Faulted，或 exit code 0 但仍停留在 Preparing/Playing/Buffering 等非终态，均为任务错误。显式 Stop 也必须在等待进程后校验这两个信号，不能因进程已经退出而跳过失败报告。
 
-冻结计划文件 MDAP v5 在写入任何 payload 前计算 source、disabled source、Port、event、Unit fragment、Segment/cache binding 与 SHA-256 的完整有界大小；读取时先用剩余 payload 长度验证计数，再分配对应数组。source ID 使用正 `Int64` little-endian，旧 v4 与其他版本一律拒绝，不迁移单次任务临时文件。Port/fragment/Segment record 的 reserved 字段必须为零；即使攻击者重新计算出正确 SHA-256，非零保留位、不可能计数、截断、溢出、非法 Port/MIDI/来源、非法缓存 payload 范围与 trailing payload 仍统一作为 `InvalidDataException` 拒绝，不能进入 Worker 渲染阶段。
+冻结计划文件当前为 MDAP v8。它在写入任何 payload 前计算 source、disabled source、Port、内嵌 event、Unit fragment、Segment/cache binding、Root source binding、preset summary、rolling event-stream descriptor 与 SHA-256 的完整有界大小；读取时先用剩余 payload 长度验证计数，再分配对应数组。source ID 使用正 `Int64` little-endian，其他版本一律拒绝，不迁移单次任务临时文件。Port/fragment/Segment/Root-binding record 的 reserved 字段必须为零；即使攻击者重新计算出正确 SHA-256，非零保留位、不可能计数、截断、溢出、非法 Port/MIDI/来源、非法缓存 payload 范围、非法 rolling descriptor 与 trailing payload 仍统一作为 `InvalidDataException` 拒绝，不能进入 Worker 渲染阶段。极端 Project 的完整事件集不内嵌进 MDAP；v8 只携带其有界描述符并交给滚动事件流。
 
 共享内存 ABI v4 的 command ring 读写位置必须满足 `0 <= read <= write` 且 `write - read <= 1024`，任何损坏都必须在取模和指针运算前失败。Stop/Monitoring/Held Preview/Buffering Recovery 及其子类型是闭合集；source/Port/message/boolean、路径与 mode 相符的 CC91/CC93 合法性、held plan generation、recovery end frame 和每条 command 的 reserved 字段在写入前整批校验、读取后再次校验，批次失败不得发布前缀。Event Instrument/SubVoice 命令仍拒绝 CC91/CC93；Pure MIDI 执行命令必须允许并按 `NOFX` 音频语义忽略其效果。状态枚举与全部非负计数同样在读取边界校验；映射长度、固定 header 和 reserved header 不匹配时 Open 整体失败。Dispose 后的所有状态/发布/命令入口只抛 `ObjectDisposedException`，不得解引用已释放映射。Worker 可以按原顺序合并连续 Monitoring records，并在一个稳定 producer frontier 只执行一次 cold start；Stop 终止整个会话，因此允许抢占并丢弃排在它之前、尚未形成可观察输出的 Monitoring/Buffering Recovery records。该调度不改变 ABI v4 的字节布局。
 
@@ -124,7 +124,7 @@ Monitoring cold start 建立干净 BASSMIDI Unit Stream 时，必须在回退事
 
 ABI v2 引入并由当前 ABI v4 保持：固定 header offset 68 是对齐 `Int32 statusSequence`，以单 Writer seqlock 发布整组状态。Writer 必须用 compare-exchange 将偶数序列变为奇数，发布全部字段后以 release 写入下一偶数；并发 Writer 或遗留奇数序列立即作为协议错误。Reader 只接受前后相同的偶数序列，最多无分配重试 1024 次，耗尽则报告 IPC 一致性错误；序列允许 two's-complement wrap。ABI v3 在 offset 88 增加 held preview plan generation；v4 保持 header 布局，在现有 16-byte command record 的 offset 4 通用 64-bit payload 上增加 `BufferingRecoveryPrepare(endFrame)`。Create/Open 只接受 v4，不提供 v1～v3 回退。状态发布与读取热路径、序列 wrap、并发压力和中断 Writer 均由自动门验证。
 
-held Preview 在 ABI v3 引入、当前 ABI v4 保持 `HeldPreviewPause`、`HeldPreviewApplyPlan(generation)`、`HeldPreviewResume` 三条有界命令。Pause 只冻结 Render-Ahead producer，WASAPI 仍消费 ring 内 PCM；主进程把 checksum MDAP v5 计划写入会话私有目录后发布新 generation，Worker 只在 producer frontier 替换未渲染后缀并以状态 generation 确认，随后恢复 producer。计划文件和 generation 都是单次会话运行时状态；实时 PCM 仍不跨进程。
+held Preview 在 ABI v3 引入、当前 ABI v4 保持 `HeldPreviewPause`、`HeldPreviewApplyPlan(generation)`、`HeldPreviewResume` 三条有界命令。Pause 只冻结 Render-Ahead producer，WASAPI 仍消费 ring 内 PCM；主进程把 checksum MDAP v8 计划写入会话私有目录后发布新 generation，Worker 只在 producer frontier 替换未渲染后缀并以状态 generation 确认，随后恢复 producer。计划文件和 generation 都是单次会话运行时状态；实时 PCM 仍不跨进程。
 
 ABI v4 的 `BufferingRecoveryPrepare(endFrame)` 只在 ring 已锁存 Buffering 且已配置 transient recovery spool 时合法。主进程用统一自然小节映射计算 sample-domain `endFrame`；Worker 暂停 producer，在 spool 中完整生成并校验 `[F,endFrame)`，重置 ring 到 `F` 后连续回放该区间，再恢复正常 producer。命令 payload 不携带 tick、拍号或 Project 数据，Worker 不重新解释 Conductor。
 
@@ -229,6 +229,48 @@ SRS §13.30 仍写明 ABI v4；现行 v6 已由 ADR-MON-005 实施，本决定�
 合法 Pure MIDI CC91/CC93 保留在 canonical/SMF 投影，但 `BASS_MIDI_NOFX` 音频执行不解释其效果；opaque imported SysEx/Meta 不送入 synth。播放中 child Track Mute/Solo 通过来源追踪在稳定 producer frontier 精确关闭该来源 Note 并重建未来 Root suffix，不允许向整个 Root 发送 CC120、卡在 Playing 或保留旧 prepared suffix。
 
 Requirement trace：输入为 Root Execution Projection、Channel Mode、Root lifecycle/checkpoint、SF2/Tempo/sample/native/voice profile 与 audible source set；正式输出为一个 Root PCM 流或结构化失败。Root mode/source/cache descriptor 属于 canonical/运行时；Root 源字段属于 Project；PCM/checkpoint 不进 `.midora`。详细领域和导出决定见 `misc/Midora-Pure-MIDI-Tracks-and-SMF-Import-Architecture-Decisions.md`。
+
+## 10.4 ADR-AUDIO-013（已接受）：Paged event plan 与滚动 IPC publication
+
+决定把 ADR-AUDIO-010 的滚动水位前移到 canonical→sample投影和跨进程event transport。实时播放只为当前光标恢复状态与Startup 2 s窗口生成sample-domain records；随后按Low 0.75 s、Resume 2 s、Target High 6 s滚动。远处Segment/事件不在启动前全量投影、hash、写MDAP或由Worker `ReadAllBytes`。
+
+初版采用每session一个append-only fixed-record data file：24-byte record保存frame、packed message、source index和Port；主进程按250 ms canonical窗口、16,384-record batch追加。Named MMF control以single-writer seqlock原子发布committed record count、through frame和state；Worker只读取稳定snapshot覆盖的prefix，并以262,144-record固定ring背压消费。一次merge最多64个sort-run reader；同frame顺序保持canonical，batch、sort-run和文件extent都不建立Reset、stream或缓存边界。producer落后只能在未消费frontier进入受控Buffering，不能截断或跳过。若一个committed窗口大于ring，reader必须先公布最后已装载record frame这一排他的partial safe frontier，使renderer能推进至该frame、分批排空current-frame事件并释放ring；只有整个committed prefix装载后才能公布published through frame，完整同frame后缀安全前不得生成该frame及其后的PCM。等待完整committed窗口与等待ring空间不得形成互锁。
+
+Worker 的事件边界计算必须先消费当前 render frame 的全部滚动事件，再读取下一未消费事件并决定本次 native decode block 的末端。滚动 reader 只暴露下一条未消费记录；若先读取边界，当前 frame 的记录会遮住同一工作 block 内稍后的记录，renderer 会越过该记录并在下一轮把它误判为迟到事件。每个工作 block 还必须受 committed `SafeThroughFrame` 约束；只有完成上述顺序后仍出现小于当前 render frame 的记录，才属于正式的倒序/协议故障。
+
+现有MDAP整计划文件保留给小型preview、golden与离线兼容入口，但其整计划aggregate limit不再定义正常Project容量。Seek在已提交prefix按frame二分，并让producer继续请求新窗口；monitoring在稳定producer frontier重建未来输出。Preset preload使用source/canonical摘要，不扫描每个NoteOn。Event data file允许按已访问范围线性增长，但每session文件数固定，释放session时删除。
+
+理由是当前滚动PCM之前仍存在整项目 `Events.ToArray`、audio projection重复、全计划hash/serialize、Worker `ReadAllBytes`与preset全扫描，因此远处黑MIDI仍线性增加启动时间，并在MDAP边界直接失败。滚动IPC把容量限制从整Project改为有界working set，同时保留零分配audio hot path；event-file I/O与record解析只发生在专用producer/reader线程。
+
+验证必须覆盖远处event数量不影响Startup、sort/batch边界同frame order、seek/loop/mute-solo、committed snapshot一致性、截断/倒序/producer fault、超过一整个ring的同frame背压、Native AOT worker以及1M/10M/100M级plan的bounded memory。详细trace：`misc/Midora-Extreme-MIDI-Scalability-Requirement-Trace.md`。
+
+## 10.5 ADR-AUDIO-014（已接受）：Exact PCM demand suppression 与直接 Pack journal
+
+缓存查询必须先于rolling event source query建立`source → cache owner → frame interval` demand schedule。完整exact PCM hit的owner在覆盖窗口内不查询canonical/source page、不排序也不写IPC event；混合hit/miss只生产miss owner。运行期Monitoring命令先使相关cache owner永久进入本次playback generation的synthesis bypass，再从实际可听frame重建事件suffix。Producer以append-only generation发布新suffix的generation ID、base record offset、committed count和through frame；旧generation在Worker显式Seek切换前保持可读，reader发现代际变化后不再把旧suffix新增record装入ring。这样即使producer已因PCM命中跳过数秒事件，也不会留下未来缺口或重新回到旧PCM generation。Demand优化不得改变canonical、Mute/Solo或cache key。
+
+缓存miss不再写完整随机访问sparse spool后复制进Pack。专用cache I/O bridge把stereo float32 PCM按16,384-frame block顺序追加到generation journal，每个block携带既有96-byte header与SHA-256；2 GiB record边界轮换Pack文件。Generation完成时只扫描header/extent、验证completed key的block连续性并以同卷move采用文件，然后原子发布内存索引；payload checksum由writer在append前计算、reader在命中读取时再次验证，不为发布重新读取或复制全部payload。崩溃、取消和不完整key只留下不可达dead blocks，由既有代际重整回收。
+
+专用cache线程允许有界等待SSD来保证缓存最终写入；callback与native decode仍不做文件I/O。诊断分别记录event queried/emitted/suppressed/lag、cache read/write wait、journal adopted entries/live bytes。SoundFont继续使用持久MMAP与引用Preset预载，本ADR不增加Preload All或完整`.mpk`常驻内存模式。
+
+验证覆盖全PCM hit零source query/零BASS synthesis、mixed hit/miss、Monitoring后单调bypass、在已抑制prefix之后从可听frame发布并读取新generation、journal多block/短尾/损坏/取消/配额、采用后byte-exact读取、原生BASS第二次播放PCM一致且synthesis frames为零。
+
+## 10.6 ADR-AUDIO-015（已接受）：Buffering recovery 的有界进度发布
+
+决定：在 `Buffering` recovery 区间内复用现有共享状态快照中的 `PositionFrame` 与 `RenderPositionFrame`，分别发布冻结的 consumer frame 和已连续准备到的绝对 frame；不增加 IPC 布局、版本或单独进度消息。Desktop 在进入 recovery 时冻结同一目标 frontier，只在共享状态仍为 `Buffering` 时计算 `clamp((prepared-start)/(target-start), 0, 1)`。Worker 完成恢复并发布 `Playing` 后，该字段解释立即回到既有播放位置/渲染位置语义。
+
+发布发生在 recovery source 已实际复制或渲染出新的连续 PCM 后；数值必须单调且不得超过冻结目标。回调使用预先绑定的 method group，不在 Playing/Buffering 热路径分配托管对象、等待 UI 或执行额外 I/O。目标区间退化、快照不一致或状态已经离开 Buffering 时，UI 不显示百分比，而不是猜测进度。
+
+该进度只用于状态栏与 transport spinner，不参与 producer 水位、恢复完成判定、canonical、音频缓存或任何可听结果。它属于当前 playback runtime，不进入 Project、Undo/Redo、日志协议或 `.midora`。验证覆盖起点、中间、完成、状态退出清除、seqlock snapshot 一致性与恢复热路径零分配。
+
+## 10.7 ADR-AUDIO-016（已接受）：Paged event stream 的 Monitoring 代际冷启动
+
+问题根因：极端 Pure MIDI Project 使用 `EventPageProvider → MidiRenderEventStreamProducer → EventStreamDescriptor` 分页传输事件，并关闭整段 playback-span staging，因此 Worker 不一定存在 `RollingPreparationRenderSource`。旧实现却只在存在该 rolling source 时执行 Mute/Solo cold start；主进程已经发布新的 event-stream generation，Worker 仅更新 BASS renderer 的 source enable 状态而没有让 `MidiRenderEventStreamReader` Seek 到新 generation。旧 generation 的 ring/PCM 消耗完后，renderer 无法读取新后缀，表现为播放先继续数秒，再永久停在 `Buffering 0%`，而非 BASS、磁盘或 canonical 编译失败。
+
+决定：Monitoring 是否需要 cold start 由“存在 rolling PCM source **或** 存在 paged event-stream descriptor”决定，不能以 `RollingPreparationRenderSource` 是否存在代理整个滚动链。对 paged direct path，主进程必须先按新的 audible-source demand 发布 append-only event generation，再发布有序 Monitoring command；producer generation 的起点必须保守地不晚于可听 frontier。当前主进程用共享状态的 callback-consumed frame 减去完整实际设备 buffer frame 数作为 rewind 下界；Worker 随后以 `StopAndResetBufferedOutput()` 得到的精确可观察可听 frame 向前 Seek，因此保守前缀只会被跳过，不能形成 generation 缺口。
+
+Worker 收到 Monitoring 后固定执行：停止并 reset WASAPI 已提交 PCM → 暂停外层 Render-Ahead producer → 把 PCM ring 重置到可听 frontier → 丢弃旧 recovery → 对 rolling source 或直接 `IMonitoringResettableRenderSource` 执行干净 stream reset、来源状态应用和 event reader generation Seek → 重启 producer generation并达到预填充水位 → 重启输出。快速连续切换继续在同一可听 frontier 合并；Stop 可抢占。新 generation 发布、Seek、refill 或原生 reset 任一步失败都必须成为显式播放故障，禁止静默重试、继续消费不匹配 generation 或维持假的 Playing 状态。
+
+Requirement trace：输入为 canonical source table、当前 parent/child Mute/Solo 推导出的 Monitoring commands、event-stream generation 和设备可听 frontier；正式输出为同一播放任务内从该 frontier 开始、只包含最新 audible set 的连续 PCM，或结构化故障。generation、rewind frame、ring/reset 状态都只属于 runtime，不进入 Project、canonical fingerprint、PCM cache key、Undo/Redo 或 `.midora`。本决定不改变 Mute/Solo 语义、Logical rolling path、SMF/音频文件输出或共享 ABI 字节布局。
 
 ## 11. 验证门
 

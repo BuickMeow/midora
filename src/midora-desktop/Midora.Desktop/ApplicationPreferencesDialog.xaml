@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls;assembly=Midora.Desktop.Presentation"
-        Title="Application Preferences" Width="720" Height="650" MinWidth="620" MinHeight="560"
+        Title="Application Preferences" Width="720" Height="720" MinWidth="620" MinHeight="620"
         WindowStyle="None" ResizeMode="CanResize" WindowStartupLocation="CenterOwner"
         Background="{StaticResource Brush.Surface.0}" SnapsToDevicePixels="True" UseLayoutRounding="True">
   <shell:WindowChrome.WindowChrome>
@@ -47,6 +47,12 @@
           <TextBlock Margin="0,12,0,0" Style="{StaticResource Text.Overline}" Text="MAXIMUM REUSABLE CACHE (GiB)"/>
           <TextBox x:Name="CacheQuotaBox" Width="190" Margin="0,5,0,0" HorizontalAlignment="Left"/>
           <TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="0 disables reusable audio-cache retention. Transient recovery storage is separate." TextWrapping="Wrap"/>
+
+          <Border Height="1" Margin="0,18" Background="{StaticResource Brush.Border}"/>
+          <TextBlock Style="{StaticResource Text.Section}" Text="New Project SoundFont"/>
+          <TextBlock Margin="0,5,0,14" Style="{StaticResource Text.Caption}" Text="Optionally embed this local SF2 automatically when creating a Project or opening MIDI as a new Project. Clear the path to leave new Projects without a SoundFont." TextWrapping="Wrap"/>
+          <TextBlock Style="{StaticResource Text.Overline}" Text="DEFAULT EMBEDDED SF2"/>
+          <Grid Margin="0,5,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox x:Name="DefaultSoundFontBox" IsReadOnly="True"/><Button Grid.Column="1" Width="82" Margin="7,0,0,0" Content="Browse…" Click="OnBrowseDefaultSoundFontClick"/><Button Grid.Column="2" Width="72" Margin="7,0,0,0" Content="Clear" Click="OnClearDefaultSoundFontClick"/></Grid>
 
           <Border x:Name="ValidationBorder" Margin="0,18,0,0" Padding="9" Background="{StaticResource Brush.Red.Subtle}" BorderBrush="{StaticResource Brush.Red}" BorderThickness="1" CornerRadius="3" Visibility="Collapsed">
             <TextBlock x:Name="ValidationText" Foreground="{StaticResource Brush.Red.Hover}" TextWrapping="Wrap"/>

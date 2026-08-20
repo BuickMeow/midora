@@ -136,7 +136,12 @@ internal sealed class AudioUnitCacheStaging : IDisposable
             plan.SourceIds,
             plan.InitiallyDisabledSourceIndices,
             fragments,
-            plan.Segments);
+            plan.Segments,
+            plan.UnitDescriptors,
+            plan.EventPageProvider,
+            plan.EventStreamDescriptor,
+            plan.CacheSourceBindings,
+            plan.ReferencedPresetKeys);
         return new(stagedPlan, spool, entries.ToArray());
     }
 

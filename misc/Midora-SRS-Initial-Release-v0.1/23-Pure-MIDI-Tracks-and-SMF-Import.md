@@ -527,12 +527,15 @@ Track Name 用作 Pure MIDI Track 名称。MIDI Port 与 EOT 用于 Root/Segment
 同 tick 存在多个 Tempo
   -> 按 source MTrk index，再按该 MTrk 内原事件顺序排序，只保留最后一个
 
+同 tick 存在多个 Time Signature 或多个 Key Signature
+  -> 各类型分别按 source MTrk index，再按该 MTrk 内原事件顺序排序，只保留最后一个
+
 Track Name 缺失、trim 后为空或所有 Track Name 都无法按严格 UTF-8 解码
   -> 使用 `MIDI Track N`，N 为一基 source MTrk index
   -> 同一 source MTrk 拆分为多个派生 Track 时追加确定的 Port/Channel 后缀
 ```
 
-重复 Tempo 的“后来者”只由源 MTrk 与原事件顺序决定，不得依赖集合枚举、稳定 ID 分配或导入时并发。值完全相同的重复 Tempo 被作为冗余项移除并记录 `Info`；值不同时因可听 Tempo 被改变而记录 `Warning`。Time Signature 与 Key Signature 的同 tick 冲突仍使用既有 semantic validation，本节不将它们静默覆盖。
+Tempo、Time Signature 与 Key Signature 的“后来者”只由源 MTrk 与原事件顺序决定，不得依赖集合枚举、稳定 ID 分配或导入时并发。每种类型内，值完全相同的同 tick 重复项作为冗余项移除并记录一条汇总 `Info`；存在不同值时因正式 Conductor 状态被改变而记录一条汇总 `Warning`。该归一化只发生在外部 SMF 导入边界，不放松 Midora Project 内部“同 tick 单一正式状态”的 semantic validation。
 
 单个 Track Name Meta Event 不是严格 UTF-8 时，只丢弃该名称事件；不使用 Unicode 替换字符，不将非法原始字节保存为 opaque event，也不因此拒绝整个 MIDI 文件。同一 MTrk 内仍有可用 Track Name 时按原顺序使用最后一个可用值；否则使用上述回退名称。该放宽仅适用于导入的 Track Name；Marker 等其他已建模文本 Meta 的非法编码仍是导入失败，SMF 导出仍只产生严格 UTF-8。
 
@@ -544,7 +547,10 @@ Track Name 缺失、trim 后为空或所有 Track Name 都无法按严格 UTF-8 
 
 ```text
 run the common Project Switch Guard
-parse and validate the entire source into a detached candidate
+pass 1: stream-parse structure/conductor/Port/Channel summaries into a detached import plan
+perform Port Mapping Review when required
+pass 2: stream-parse channel records directly into transactional source page-pack builders
+validate the detached paged candidate without materializing all records
 use source TPQN exactly
 derive Project Name from source file stem
 create Roots / Tracks / Segments / Conductor atomically
@@ -554,6 +560,8 @@ leave Project SoundFont unconfigured
 ```
 
 失败或取消时保留当前 Project，不暴露 partial candidate，不产生 Undo entry。初版不提供“Import MIDI into Current Project”。
+
+导入不得调用 `File.ReadAllBytes`、不得保留完整 parsed-event graph，也不得同时保留全量 channel-event lists、paired-order hash set、Direct object graph 和其 compilation snapshot。两遍读取必须对同一冻结文件 identity/length 使用只读句柄或在遍间复核 identity/length/last-write；源文件中途改变时导入失败。Note pairing 按每个 source MTrk/Port/Channel/key 的有界 active FIFO 完成；已完成记录按固定 page 大小排序/写入，跨 page 总序由 page descriptor 与 k-way merge 保证。
 
 ## 23.12 SMF 导出
 
@@ -773,3 +781,54 @@ cross-MTrk order-sensitive warning
 strict persistence schema/descriptor/golden bytes and damaged placeholders
 shared Timeline performance with dense Notes/events
 ```
+
+## 23.19 极端规模 source pages 与范围消费
+
+### 23.19.1 Source data 物理表示
+
+`MIDI Channel Root → Pure MIDI Track → Midi Segment → Direct MIDI Note/Event` 的领域关系保持不变。Pure MIDI Track 的 record body 物理上使用第 16.30 节定义的 immutable page pack；对象 class/list 只允许用于小型新建内容、当前编辑 overlay 或兼容测试，不能作为导入大文件后的唯一正式存储。
+
+每个 Midi Segment 必须提供不分配全量对象的 value cursor：
+
+```text
+EnumerateNotes / EnumerateChannelEvents / EnumerateOpaqueEvents
+QueryNotesIntersecting(startTick, endTick, optional pitch range)
+QueryEvents(startTick, endTick, optional event target)
+TryGetByStableId
+aggregate count / tick bounds / content fingerprint
+```
+
+查询合并 immutable base、replacement/new overlay 与 tombstone，返回正式逻辑顺序。ID lookup 使用 page ID bounds 和 overlay index，不允许建立与整个项目 record 数等长的 managed dictionary。
+
+### 23.19.2 内存与临时存储边界
+
+导入、打开、编译、播放准备、MIDI 导出、音频渲染和 UI 浏览的常驻 managed memory 必须由：
+
+```text
+number of Roots/Tracks/Segments
+active Note FIFO
+bounded source/canonical/IPC page caches
+current edit overlay and selection
+visible UI tiles/ranges
+```
+
+决定，而不是由 Project 总 Note/Event 数线性决定。允许 source backing 与 canonical/runtime packs 使用本地 SSD；文件数量按 Project/Track/generation 有界，禁止每 page/Note 一个文件。磁盘不足、page checksum 失败或无法建立 transaction backing 是显式、失败原子的导入/打开/编译错误。
+
+### 23.19.3 范围编译与远处内容
+
+Full Compile 可以顺序访问全部 source pages以冻结完整 canonical generation，但不得一次物化全部记录。Playback range cursor 只读取当前起点 checkpoint 和请求水位覆盖的 pages；远处 Pure MIDI Segment 的 record count 不得影响播放 Startup 准备。MIDI Export 与 Audio Render 顺序消费完整 pages，并用有界前瞻/回压控制内存。
+
+### 23.19.4 性能与规模验证
+
+除小型 semantic golden 外，自动/基准验证至少包含合成的 1M、10M、100M Direct Note 数据，验证：
+
+```text
+peak managed bytes remain within documented page-cache + overlay budget
+no whole-file byte[] and no whole-project event/object array
+range query cost follows intersecting pages, not total Project records
+playback Startup event preparation is independent of far-future record count
+page-boundary FIFO/order/range-restore equivalence
+cancel/fault leaves no published partial pack/project/canonical generation
+```
+
+产品验收样本可使用更高规模文件，但测试名称必须报告输入 record 数、pack bytes、import/compile/startup elapsed、peak working set、peak managed heap、page hit/miss 与 IPC in-flight peak；未执行的规模不得宣称通过。

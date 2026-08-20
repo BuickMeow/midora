@@ -1137,7 +1137,10 @@ public static class SemanticValidator
                     Tick = segment.ProjectStartTick
                 };
                 Add(segment.Id, segmentSource);
-                foreach (DirectMidiNote note in segment.Notes)
+                IEnumerable<DirectMidiNote> stableIdNotes = segment.UsesPagedContent
+                    ? segment.Notes.EditedItems
+                    : segment.Notes;
+                foreach (DirectMidiNote note in stableIdNotes)
                 {
                     Add(note.Id, segmentSource with
                     {
@@ -1146,7 +1149,10 @@ public static class SemanticValidator
                         Origin = SourceOrigin.DirectMidiNote
                     });
                 }
-                foreach (DirectMidiChannelEvent directEvent in segment.ChannelEvents)
+                IEnumerable<DirectMidiChannelEvent> stableIdChannelEvents = segment.UsesPagedContent
+                    ? segment.ChannelEvents.EditedItems
+                    : segment.ChannelEvents;
+                foreach (DirectMidiChannelEvent directEvent in stableIdChannelEvents)
                 {
                     Add(directEvent.Id, segmentSource with
                     {
@@ -1155,7 +1161,10 @@ public static class SemanticValidator
                         Origin = SourceOrigin.DirectMidiChannelEvent
                     });
                 }
-                foreach (OpaqueMidiEvent opaque in segment.OpaqueEvents)
+                IEnumerable<OpaqueMidiEvent> stableIdOpaqueEvents = segment.UsesPagedContent
+                    ? segment.OpaqueEvents.EditedItems
+                    : segment.OpaqueEvents;
+                foreach (OpaqueMidiEvent opaque in stableIdOpaqueEvents)
                 {
                     Add(opaque.Id, segmentSource with
                     {
@@ -1412,7 +1421,10 @@ public static class SemanticValidator
                 {
                     previousEndTick = segment.ProjectStartTick + segment.LengthTicks;
                 }
-                foreach (DirectMidiNote note in segment.Notes)
+                IEnumerable<DirectMidiNote> notesToValidate = segment.UsesPagedContent
+                    ? segment.Notes.EditedItems
+                    : segment.Notes;
+                foreach (DirectMidiNote note in notesToValidate)
                 {
                     if (note.StartTick < 0
                         || note.LengthTicks <= 0
@@ -1435,7 +1447,10 @@ public static class SemanticValidator
                             diagnostics);
                     }
                 }
-                foreach (DirectMidiChannelEvent directEvent in segment.ChannelEvents)
+                IEnumerable<DirectMidiChannelEvent> channelEventsToValidate = segment.UsesPagedContent
+                    ? segment.ChannelEvents.EditedItems
+                    : segment.ChannelEvents;
+                foreach (DirectMidiChannelEvent directEvent in channelEventsToValidate)
                 {
                     bool oneByte = directEvent.Kind is DirectMidiChannelEventKind.ProgramChange
                         or DirectMidiChannelEventKind.ChannelPressure;
@@ -1458,7 +1473,10 @@ public static class SemanticValidator
                             diagnostics);
                     }
                 }
-                foreach (OpaqueMidiEvent opaque in segment.OpaqueEvents)
+                IEnumerable<OpaqueMidiEvent> opaqueEventsToValidate = segment.UsesPagedContent
+                    ? segment.OpaqueEvents.EditedItems
+                    : segment.OpaqueEvents;
+                foreach (OpaqueMidiEvent opaque in opaqueEventsToValidate)
                 {
                     if (opaque.Tick < 0
                         || !Enum.IsDefined(opaque.Kind)

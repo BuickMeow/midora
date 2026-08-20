@@ -294,6 +294,30 @@ public sealed class ProjectCreationCoordinatorTests
     }
 
     [Fact]
+    public async Task ImportedProjectCanAdoptConfiguredEmbeddedSoundFont()
+    {
+        using TemporaryDirectory temporary = new();
+        string soundFont = temporary.PathFor("Default.sf2");
+        await File.WriteAllBytesAsync(soundFont, [7, 6, 5, 4]);
+        RecordingValidator validator = new();
+        ProjectCreationCoordinator coordinator = CreateCoordinator(validator);
+        MidoraProject imported = new(480);
+
+        NewProjectCreationResult result = await coordinator.AdoptImportedProjectAsync(
+            imported,
+            soundFont);
+        string runtimePath = result.EffectiveSoundFontPath!;
+
+        Assert.Same(imported, result.Project);
+        Assert.IsType<EmbeddedProjectSoundFontReference>(result.Project.SoundFont.Reference);
+        Assert.True(result.EmbeddedSoundFontResource!.IsAvailable);
+        Assert.Equal([runtimePath], validator.ValidatedPaths);
+
+        await result.DisposeAsync();
+        Assert.False(File.Exists(runtimePath));
+    }
+
+    [Fact]
     public async Task EmbeddedCreateAndSavePublishesResourceAndRemainsReopenable()
     {
         using TemporaryDirectory temporary = new();

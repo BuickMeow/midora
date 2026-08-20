@@ -75,7 +75,7 @@ Compile
 Export
 Help
 ```
-`Project` 菜单必须提供 `New Event Instrument` 与 `New MIDI Channel Root`，与 Arrangement Toolbar 左侧 `Add` 菜单调用同一 Project command。
+`Project` 菜单必须提供 `New Event Instrument` 与 `New MIDI Channel Root`，与 Arrangement Toolbar 左侧 `Add` 菜单调用同一 Project command。播放或前台任务持有 Project 编辑锁时，`Project` 一级菜单本身仍保持可用，`Project Settings` 仍可打开；只禁用其中会创建 Project 对象的两个 `New...` 项及其他受编辑锁约束的命令。
 #### 17.1.3.3 [C] Global Command Bar and Transport
 常驻入口：
 ```text
@@ -155,6 +155,7 @@ Device Buffer Request
 Realtime Maximum Sample Voices per Unit Stream
 Audio Cache Root
 Maximum Reusable Audio Cache Bytes
+Optional default local SF2 path for new Projects
 ```
 这些状态：
 - 不进入 Project Undo / Redo；
@@ -163,6 +164,8 @@ Maximum Reusable Audio Cache Bytes
 - 不做账号、云端或设备同步。
 
 设备实际采样率、实际 buffer、callback period、当前设备枚举结果和 IPC 运行状态属于 Derived / Runtime Data，不作为 Application Preference 保存。音频缓存的 reusable 当前占用、transient 当前/峰值、session 目录、retention 状态与 Warning 同样是运行时派生状态；只保存配置 root 和 reusable byte quota。
+
+默认 SF2 路径只用于 `New Project` 与 `Open MIDI as New Project`：若路径在任务开始时仍指向可读本机文件，新 Project 使用 Embedded SoundFont 流程建立独立资源快照；它不是新 Project 的 external reference，也不得把绝对路径写入 `.midora`。偏好允许显式清空。应用启动时若文件不存在，必须自动清空该偏好；任务开始时再次发现文件不存在时视同未设置，新 Project 保持无 SoundFont。用户在新建对话框中显式选择其他 SoundFont 模式时，显式选择优先。
 ### 17.2.3 Project Session UI State
 只存在于当前 Project 会话：
 ```text
@@ -375,6 +378,7 @@ Whole Project / Current Workspace / Current Selection / Current Task
 ### 17.5.4 Tasks Tab
 显示当前和最近运行期任务，但不复制 MIDI Export 或 Audio Render 模态窗口的完整控制能力。
 只有任务明确支持安全取消时才显示 Cancel。
+模态 Task overlay 不显示内部 lock-level/debug 名称。任务没有可报告的确定总量时，进度条必须使用真实的 indeterminate 动画，不能以永久全填充伪装进度；只有任务提供可靠的当前值与总量时才显示 determinate 进度。Save / Save Copy 在持久化事务开始后不可安全取消，因此不得显示一个不可响应的 Cancel 控件。
 Task History：
 - 不属于 Project；
 - 不保存；
@@ -403,6 +407,8 @@ Compile
 MIDI Export
 Audio Render
 ```
+
+播放位置文本的 Tick-in-beat 字段使用 Project TPQ 十进制位数作为最小零填充宽度；例如 TPQ `1920` 使用四位 Tick 字段。该字段宽度不得因播放中的 Tick 值跨越固定三位边界而左右抖动。
 ### 17.7.2 Global Notice Bar
 只用于持续、重要且影响全局工作流，或必须由用户关注才能继续的状态：
 ```text
@@ -423,6 +429,7 @@ Preference Storage Failed
 2 Errors, 3 Warnings | Compile Outdated | SoundFont Configured | Modified | Playing       <Transient Message>
 ```
 左侧状态单元固定按 `Issues → Compile State → SoundFont Resource → Project Save State → Playback State` 排列；Issues 左侧显示同一诊断状态圆点。最右侧只用于瞬时消息；非错误消息使用次要文本色，错误消息使用错误色。该区域不得显示 CPU RID 或 .NET 运行时版本。
+`Playing` 使用成功/绿色文本；`Buffering` 使用纯黄色文本并可附带有界进度百分比。颜色只表达运行状态，不改变 Transport 可用性。
 Issues 显示 Whole Project 当前诊断计数，不受 Diagnostics 当前搜索和筛选影响。计数文本是显式导航入口：鼠标悬停时提亮并显示 Hand 指针，单击后激活 Diagnostics Workspace；激活后的键盘焦点仍遵循 17.5.2 的非编辑表面规则。
 Compile State：
 ```text
@@ -444,4 +451,5 @@ Exporting
 Rendering
 ```
 Buffering 是播放状态，不自动显示为 Error。
+Buffering 状态文本使用纯黄色。只有音频后端提供同一 recovery 区间内单调、可验证的已准备 frame 与目标 frame 时，才追加 `(<N>%)`；不得根据经过时间猜测百分比。`100%` 表示该 recovery 区间准备完成并即将恢复 Playing。Buffering 期间主播放/停止按钮继续执行 Stop，但图标显示动态加载指示；恢复 Playing、Stopped 或 Error 后立即恢复停止/播放图标。
 ---

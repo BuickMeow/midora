@@ -10,14 +10,14 @@ internal sealed class AudioCachePackStore : IDisposable
     internal const long MinimumCompactionDeadBytes = 256L * 1024 * 1024;
     internal const double MinimumCompactionDeadRatio = 0.35;
     internal const long MinimumCompactionHeadroomBytes = 4L * 1024 * 1024 * 1024;
-    private const uint PackMagic = 0x5041434d; // MCAP
-    private const uint EntryMagic = 0x4541434d; // MCAE
+    internal const uint PackMagic = 0x5041434d; // MCAP
+    internal const uint EntryMagic = 0x4541434d; // MCAE
     private const uint IndexMagic = 0x5849434d; // MCIX
-    private const int Version = 2;
-    private const int PackHeaderSize = 16;
-    private const int BlockPayloadBytes =
+    internal const int Version = 2;
+    internal const int PackHeaderSize = 16;
+    internal const int BlockPayloadBytes =
         RollingAudioPreparationPolicy.SegmentBlockFrameCount * 2 * sizeof(float);
-    private const int EntryHeaderSize = 4 + 4 + 4 + 4 + 8 + 4 + 4 + 32 + 32;
+    internal const int EntryHeaderSize = 4 + 4 + 4 + 4 + 8 + 4 + 4 + 32 + 32;
     private const long GroupCommitBytes = 8L * 1024 * 1024;
     private static readonly TimeSpan GroupCommitInterval = TimeSpan.FromSeconds(1);
     private readonly object _sync = new();
@@ -115,7 +115,7 @@ internal sealed class AudioCachePackStore : IDisposable
         return checked(payloadLength + (blockCount * EntryHeaderSize));
     }
 
-    private static long ComputeBlockCount(long payloadLength)
+    internal static long ComputeBlockCount(long payloadLength)
     {
         if (payloadLength <= AudioPcmCachePayload.HeaderByteCount)
         {
@@ -345,6 +345,110 @@ internal sealed class AudioCachePackStore : IDisposable
             _liveBytes = checked(_liveBytes + recordLength);
             WriteIndexCheckpoint();
             return new(true, false, false);
+        }
+    }
+
+    internal AudioCachePackJournalAdoptionResult AdoptJournalDirectory(
+        string journalDirectory,
+        IReadOnlyCollection<string> completedKeys)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(journalDirectory);
+        ArgumentNullException.ThrowIfNull(completedKeys);
+        string directory = Path.GetFullPath(journalDirectory);
+        HashSet<string> completed = new(completedKeys, StringComparer.Ordinal);
+        foreach (string key in completed)
+        {
+            ValidateKey(key);
+        }
+
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            string[] journalPaths = Directory.Exists(directory)
+                ? Directory.EnumerateFiles(
+                        directory,
+                        AudioCachePackJournal.JournalFilePattern)
+                    .OrderBy(static path => path, StringComparer.Ordinal)
+                    .ToArray()
+                : [];
+            if (journalPaths.Length == 0 || completed.Count == 0)
+            {
+                return new(0, 0, false);
+            }
+
+            Dictionary<string, JournalEntryBuilder> builders = new(StringComparer.Ordinal);
+            for (int fileIndex = 0; fileIndex < journalPaths.Length; fileIndex++)
+            {
+                ScanJournal(journalPaths[fileIndex], fileIndex, completed, builders);
+            }
+
+            List<JournalEntryBuilder> accepted = [];
+            long addedLiveBytes = 0;
+            foreach (string key in completed.OrderBy(static value => value, StringComparer.Ordinal))
+            {
+                if (_entries.ContainsKey(key)
+                    || _managedKeys.Contains(key)
+                        && !_generationByOwner.Values.Contains(key, StringComparer.Ordinal))
+                {
+                    continue;
+                }
+                if (!builders.TryGetValue(key, out JournalEntryBuilder? builder)
+                    || !builder.IsComplete)
+                {
+                    throw new InvalidDataException(
+                        "A completed Segment PCM journal entry is incomplete.");
+                }
+                accepted.Add(builder);
+                addedLiveBytes = checked(addedLiveBytes + builder.RecordLength);
+            }
+            if (accepted.Count == 0)
+            {
+                return new(0, 0, false);
+            }
+            if (addedLiveBytes > _maximumLiveBytes - _liveBytes)
+            {
+                return new(0, 0, true);
+            }
+
+            HashSet<int> referencedFiles = accepted
+                .SelectMany(static entry => entry.Extents)
+                .Select(static extent => extent.FileIndex)
+                .ToHashSet();
+            Dictionary<int, int> adoptedGenerations = [];
+            long addedPhysicalBytes = 0;
+            foreach (int fileIndex in referencedFiles.Order())
+            {
+                string sourcePath = journalPaths[fileIndex];
+                int generation = checked(++_currentGeneration);
+                RewritePackGeneration(sourcePath, generation);
+                string destinationPath = GetPackPath(generation);
+                File.Move(sourcePath, destinationPath);
+                adoptedGenerations.Add(fileIndex, generation);
+                addedPhysicalBytes = checked(
+                    addedPhysicalBytes + new FileInfo(destinationPath).Length);
+            }
+
+            foreach (JournalEntryBuilder builder in accepted)
+            {
+                Extent[] extents = new Extent[builder.Extents.Length];
+                for (int blockIndex = 0; blockIndex < extents.Length; blockIndex++)
+                {
+                    JournalExtent source = builder.Extents[blockIndex];
+                    extents[blockIndex] = new(
+                        adoptedGenerations[source.FileIndex],
+                        source.RecordOffset,
+                        source.PayloadLength,
+                        source.RecordLength);
+                }
+                _entries.Add(
+                    builder.Key,
+                    new Entry(builder.PayloadLength, builder.RecordLength, extents));
+                _liveKeys.Add(builder.Key);
+            }
+            _liveBytes = checked(_liveBytes + addedLiveBytes);
+            _physicalBytes = checked(_physicalBytes + addedPhysicalBytes);
+            WriteIndexCheckpoint();
+            return new(accepted.Count, addedLiveBytes, false);
         }
     }
 
@@ -737,7 +841,7 @@ internal sealed class AudioCachePackStore : IDisposable
     private void CreatePack(int generation) =>
         CreatePackFile(GetPackPath(generation), generation).Dispose();
 
-    private static FileStream CreatePackFile(string path, int generation)
+    internal static FileStream CreatePackFile(string path, int generation)
     {
         FileStream stream = new(
             path,
@@ -754,6 +858,109 @@ internal sealed class AudioCachePackStore : IDisposable
         stream.Write(header);
         stream.Flush(flushToDisk: true);
         return stream;
+    }
+
+    private static void ScanJournal(
+        string path,
+        int fileIndex,
+        HashSet<string> completedKeys,
+        Dictionary<string, JournalEntryBuilder> builders)
+    {
+        using FileStream stream = new(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 64 * 1024,
+            FileOptions.SequentialScan);
+        Span<byte> packHeader = stackalloc byte[PackHeaderSize];
+        stream.ReadExactly(packHeader);
+        if (BinaryPrimitives.ReadUInt32LittleEndian(packHeader) != PackMagic
+            || BinaryPrimitives.ReadInt32LittleEndian(packHeader[4..]) != Version
+            || BinaryPrimitives.ReadInt32LittleEndian(packHeader[8..]) != 0
+            || BinaryPrimitives.ReadInt32LittleEndian(packHeader[12..]) != 0)
+        {
+            throw new InvalidDataException("A reusable audio Pack journal header is invalid.");
+        }
+
+        byte[] entryHeaderBuffer = new byte[EntryHeaderSize];
+        while (stream.Position != stream.Length)
+        {
+            long recordOffset = stream.Position;
+            if (stream.Length - recordOffset < EntryHeaderSize)
+            {
+                throw new InvalidDataException("A reusable audio Pack journal record is truncated.");
+            }
+            Span<byte> header = entryHeaderBuffer;
+            stream.ReadExactly(header);
+            int blockIndex = BinaryPrimitives.ReadInt32LittleEndian(header[8..]);
+            int blockCount = BinaryPrimitives.ReadInt32LittleEndian(header[12..]);
+            long payloadLength = BinaryPrimitives.ReadInt64LittleEndian(header[16..]);
+            int blockPayloadLength = BinaryPrimitives.ReadInt32LittleEndian(header[24..]);
+            if (BinaryPrimitives.ReadUInt32LittleEndian(header) != EntryMagic
+                || BinaryPrimitives.ReadInt32LittleEndian(header[4..]) != Version
+                || BinaryPrimitives.ReadInt32LittleEndian(header[28..]) != 0
+                || payloadLength <= 0
+                || blockCount != ComputeBlockCount(payloadLength)
+                || blockIndex < 0
+                || blockIndex >= blockCount
+                || blockPayloadLength != ComputeExpectedBlockPayloadLength(
+                    payloadLength,
+                    blockIndex)
+                || blockPayloadLength > stream.Length - stream.Position)
+            {
+                throw new InvalidDataException("A reusable audio Pack journal record header is invalid.");
+            }
+            string key = Convert.ToHexStringLower(header[32..64]);
+            if (completedKeys.Contains(key))
+            {
+                if (!builders.TryGetValue(key, out JournalEntryBuilder? builder))
+                {
+                    builder = new(key, payloadLength, blockCount);
+                    builders.Add(key, builder);
+                }
+                builder.Add(
+                    blockIndex,
+                    payloadLength,
+                    blockCount,
+                    new(
+                        fileIndex,
+                        recordOffset,
+                        blockPayloadLength,
+                        checked(EntryHeaderSize + blockPayloadLength)));
+            }
+            stream.Position = checked(stream.Position + blockPayloadLength);
+        }
+    }
+
+    private static int ComputeExpectedBlockPayloadLength(long payloadLength, int blockIndex)
+    {
+        if (blockIndex == 0)
+        {
+            return checked((int)Math.Min(AudioPcmCachePayload.HeaderByteCount, payloadLength));
+        }
+        long pcmOffset = checked((long)(blockIndex - 1) * BlockPayloadBytes);
+        long remaining = checked(
+            payloadLength - AudioPcmCachePayload.HeaderByteCount - pcmOffset);
+        return remaining <= 0
+            ? -1
+            : checked((int)Math.Min(BlockPayloadBytes, remaining));
+    }
+
+    private static void RewritePackGeneration(string path, int generation)
+    {
+        using FileStream stream = new(
+            path,
+            FileMode.Open,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 1,
+            FileOptions.WriteThrough);
+        Span<byte> value = stackalloc byte[sizeof(int)];
+        BinaryPrimitives.WriteInt32LittleEndian(value, generation);
+        stream.Position = 8;
+        stream.Write(value);
+        stream.Flush(flushToDisk: true);
     }
 
     private void WriteIndexCheckpoint()
@@ -805,7 +1012,7 @@ internal sealed class AudioCachePackStore : IDisposable
     private static string GetPackFileName(int generation) =>
         $"pack-{generation:D8}.mcap";
 
-    private static void ValidateKey(string key)
+    internal static void ValidateKey(string key)
     {
         ArgumentNullException.ThrowIfNull(key);
         if (key.Length != 64
@@ -827,9 +1034,55 @@ internal sealed class AudioCachePackStore : IDisposable
         long RecordOffset,
         int PayloadLength,
         long RecordLength);
+
+    private sealed class JournalEntryBuilder
+    {
+        private long _recordLength;
+
+        public JournalEntryBuilder(string key, long payloadLength, int blockCount)
+        {
+            Key = key;
+            PayloadLength = payloadLength;
+            Extents = new JournalExtent[blockCount];
+        }
+
+        public string Key { get; }
+        public long PayloadLength { get; }
+        public JournalExtent[] Extents { get; }
+        public long RecordLength => _recordLength;
+        public bool IsComplete => Extents.All(static value => value.RecordLength != 0);
+
+        public void Add(
+            int blockIndex,
+            long payloadLength,
+            int blockCount,
+            JournalExtent extent)
+        {
+            if (payloadLength != PayloadLength
+                || blockCount != Extents.Length
+                || Extents[blockIndex].RecordLength != 0)
+            {
+                throw new InvalidDataException(
+                    "A reusable audio Pack journal entry has inconsistent or duplicate blocks.");
+            }
+            Extents[blockIndex] = extent;
+            _recordLength = checked(_recordLength + extent.RecordLength);
+        }
+    }
+
+    private readonly record struct JournalExtent(
+        int FileIndex,
+        long RecordOffset,
+        int PayloadLength,
+        long RecordLength);
 }
 
 internal readonly record struct AudioCachePackPublishResult(
     bool Published,
     bool AlreadyPresent,
+    bool QuotaFull);
+
+internal readonly record struct AudioCachePackJournalAdoptionResult(
+    int PublishedEntryCount,
+    long PublishedLiveBytes,
     bool QuotaFull);

@@ -107,51 +107,83 @@ public static partial class ProjectDomainEditCommands
             MidiSegmentSelection primary = selected.SingleOrDefault(value => value.Segment.Id == primarySegmentId);
             if (primary.Segment is null)
                 throw new ArgumentException("The primary MIDI Segment must be selected.", nameof(primarySegmentId));
-            PureMidiTrack target = FindPureMidiTrack(project, targetTrackId);
+            PureMidiTrack[] orderedTracks = project.PureMidiTracksInArrangementOrder().ToArray();
+            Dictionary<PureMidiTrack, int> trackIndexes = new(ReferenceEqualityComparer.Instance);
+            for (int index = 0; index < orderedTracks.Length; index++)
+                trackIndexes.Add(orderedTracks[index], index);
+            if (!trackIndexes.TryGetValue(primary.Track, out int primaryTrackIndex))
+                throw new InvalidOperationException("The primary MIDI Track is not present in Arrangement order.");
+            PureMidiTrack targetPrimaryTrack = FindPureMidiTrack(project, targetTrackId);
+            if (!trackIndexes.TryGetValue(targetPrimaryTrack, out int targetPrimaryTrackIndex))
+                throw new InvalidOperationException("The target MIDI Track is not present in Arrangement order.");
             long delta = checked(newPrimaryStartTick - primary.Segment.ProjectStartTick);
-            (MidiSegmentSelection Source, long Start)[] placements = selected
-                .Select(value => (value, checked(value.Segment.ProjectStartTick + delta)))
-                .ToArray();
-            if (placements.Any(value => value.Start < 0))
-                throw new InvalidOperationException("The MIDI Segment move would cross tick 0.");
+            MidiSegmentBatchPlacement[] placements = selected.Select(value =>
+            {
+                if (!trackIndexes.TryGetValue(value.Track, out int sourceTrackIndex))
+                    throw new InvalidOperationException("A selected MIDI Track is not present in Arrangement order.");
+                int targetTrackIndex = checked(
+                    targetPrimaryTrackIndex + sourceTrackIndex - primaryTrackIndex);
+                if ((uint)targetTrackIndex >= (uint)orderedTracks.Length)
+                {
+                    throw new InvalidOperationException(
+                        "The MIDI Segment batch cannot preserve its relative Track offsets at the target.");
+                }
+                long start = checked(value.Segment.ProjectStartTick + delta);
+                if (start < 0)
+                    throw new InvalidOperationException("The MIDI Segment move would cross tick 0.");
+                return new MidiSegmentBatchPlacement(value, orderedTracks[targetTrackIndex], start);
+            }).ToArray();
             HashSet<MidiSegment> moving = duplicate
                 ? []
                 : selected.Select(value => value.Segment).ToHashSet();
-            ValidateMidiSegmentPlacements(target, placements, moving);
+            ValidateMidiSegmentPlacements(placements, moving);
             MidiSegment[]? copies = null;
             return Prepared(
                 true,
-                PureMidiTrackChange(selected.Select(value => value.Track.Id).Append(target.Id).Distinct().ToArray()),
+                PureMidiTrackChange(placements
+                    .SelectMany(value => new[] { value.Source.Track.Id, value.TargetTrack.Id })
+                    .Distinct()
+                    .ToArray()),
                 owner =>
                 {
                     if (duplicate)
                     {
-                        copies ??= placements.Select(value => CloneMidiSegment(owner, value.Source.Segment, value.Start)).ToArray();
-                        foreach (MidiSegment copy in copies) InsertMidiSegmentByTime(target.Segments, copy);
+                        copies ??= placements.Select(value =>
+                            CloneMidiSegment(owner, value.Source.Segment, value.Start)).ToArray();
+                        for (int index = 0; index < copies.Length; index++)
+                            InsertMidiSegmentByTime(placements[index].TargetTrack.Segments, copies[index]);
                         return;
                     }
                     foreach (MidiSegmentSelection value in selected)
                         RemoveRequired(value.Track.Segments, value.Segment, "MIDI Segment");
-                    foreach ((MidiSegmentSelection source, long start) in placements)
+                    foreach (MidiSegmentBatchPlacement placement in placements)
                     {
-                        source.Segment.ProjectStartTick = start;
-                        InsertMidiSegmentByTime(target.Segments, source.Segment);
+                        placement.Source.Segment.ProjectStartTick = placement.Start;
+                        InsertMidiSegmentByTime(placement.TargetTrack.Segments, placement.Source.Segment);
                     }
                 },
                 _ =>
                 {
                     if (duplicate)
                     {
-                        foreach (MidiSegment copy in copies ?? [])
-                            RemoveRequired(target.Segments, copy, "MIDI Segment copy");
+                        for (int index = 0; index < (copies?.Length ?? 0); index++)
+                            RemoveRequired(
+                                placements[index].TargetTrack.Segments,
+                                copies![index],
+                                "MIDI Segment copy");
                         return;
                     }
+                    foreach (MidiSegmentBatchPlacement placement in placements)
+                        RemoveRequired(
+                            placement.TargetTrack.Segments,
+                            placement.Source.Segment,
+                            "MIDI Segment");
                     foreach (MidiSegmentSelection value in selected)
-                        RemoveRequired(target.Segments, value.Segment, "MIDI Segment");
-                    foreach (MidiSegmentSelection value in selected.OrderBy(value => value.Index))
-                    {
                         value.Segment.ProjectStartTick = value.OriginalStartTick;
-                        InsertAt(value.Track.Segments, value.Index, value.Segment, "MIDI Segment");
+                    foreach (IGrouping<PureMidiTrack, MidiSegmentSelection> group in selected.GroupBy(value => value.Track))
+                    {
+                        foreach (MidiSegmentSelection value in group.OrderBy(value => value.Index))
+                            InsertAt(value.Track.Segments, value.Index, value.Segment, "MIDI Segment");
                     }
                 });
         });
@@ -626,16 +658,24 @@ public static partial class ProjectDomainEditCommands
     }
 
     private static void ValidateMidiSegmentPlacements(
-        PureMidiTrack target,
-        IReadOnlyCollection<(MidiSegmentSelection Source, long Start)> placements,
+        IReadOnlyCollection<MidiSegmentBatchPlacement> placements,
         HashSet<MidiSegment> moving)
     {
-        TickRange[] ranges = placements.Select(value => new TickRange(
-            value.Start,
-            checked(value.Start + value.Source.Segment.LengthTicks))).OrderBy(value => value.StartTick).ToArray();
-        if (ranges.Zip(ranges.Skip(1)).Any(value => value.First.EndTick > value.Second.StartTick)
-            || target.Segments.Where(value => !moving.Contains(value)).Any(existing => ranges.Any(range => range.Intersects(existing.ProjectRange))))
-            throw new InvalidOperationException("The MIDI Segment edit would create an overlap.");
+        foreach (IGrouping<PureMidiTrack, MidiSegmentBatchPlacement> group in placements.GroupBy(value => value.TargetTrack))
+        {
+            TickRange[] ranges = group.Select(value => new TickRange(
+                value.Start,
+                checked(value.Start + value.Source.Segment.LengthTicks)))
+                .OrderBy(value => value.StartTick)
+                .ToArray();
+            if (ranges.Zip(ranges.Skip(1)).Any(value => value.First.EndTick > value.Second.StartTick)
+                || group.Key.Segments
+                    .Where(value => !moving.Contains(value))
+                    .Any(existing => ranges.Any(range => range.Intersects(existing.ProjectRange))))
+            {
+                throw new InvalidOperationException("The MIDI Segment edit would create an overlap.");
+            }
+        }
     }
 
     private static void ValidateMidiSegmentEdgeEdits(MidiSegmentEdgeEdit[] edits)
@@ -785,6 +825,10 @@ public static partial class ProjectDomainEditCommands
         MidiSegment Segment,
         int Index,
         long OriginalStartTick);
+    private readonly record struct MidiSegmentBatchPlacement(
+        MidiSegmentSelection Source,
+        PureMidiTrack TargetTrack,
+        long Start);
     private readonly record struct MidiSegmentEdgeEdit(
         MidiSegmentSelection Selection,
         SegmentWindow Old,

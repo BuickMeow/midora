@@ -44,9 +44,12 @@ public sealed unsafe class BassMidiRenderer
     private readonly PersistentBassMidiSoundFont? _persistentSoundFont;
     private SegmentPcmCacheIoBridge? _cacheIo;
     private ParallelBassMidiDecodeCoordinator? _parallelDecoder;
+    private MidiRenderEventStreamReader? _eventStreamReader;
     private long _positionFrames;
     private long _renderPositionFrames;
     private long _nativeSynthesisFrameCount;
+    private long _cacheReadWaitCount;
+    private long _cacheWriteWaitCount;
     private AudioRenderFault _fault;
     private int _stagedFrameOffset;
     private int _stagedFrameCount;
@@ -120,7 +123,8 @@ public sealed unsafe class BassMidiRenderer
         _sourceCacheBypassed = new bool[plan.SourceIds.Length];
         _cacheOwnerIndicesBySource = CreateCacheOwnerMap(
             plan.SourceIds.Length,
-            plan.UnitFragments);
+            plan.UnitFragments,
+            plan.CacheSourceBindings);
         Array.Fill(_sourceEnabled, true);
         foreach (int sourceIndex in plan.InitiallyDisabledSourceIndices)
         {
@@ -146,6 +150,10 @@ public sealed unsafe class BassMidiRenderer
                 scratchByteCount * (nuint)Math.Max(1, plan.SourceIds.Length)));
             _outputStagingBuffer = (float*)NativeMemory.Alloc(scratchByteCount);
             OpenCacheStaging(cacheStagingPath, cacheReadManifestPath);
+            if (plan.EventStreamDescriptor is MidiRenderEventStreamDescriptor eventStreamDescriptor)
+            {
+                _eventStreamReader = new(eventStreamDescriptor);
+            }
             if (_persistentSoundFont is null)
             {
                 CreateSoundFont(soundFontPath);
@@ -203,6 +211,8 @@ public sealed unsafe class BassMidiRenderer
     public bool CacheCaptureInvalidated => _cacheCaptureInvalidated;
 
     internal long NativeSynthesisFrameCountForDiagnostics => _nativeSynthesisFrameCount;
+    internal long CacheReadWaitCountForDiagnostics => _cacheReadWaitCount;
+    internal long CacheWriteWaitCountForDiagnostics => _cacheWriteWaitCount;
 
     internal Exception? CacheReadFaultForDiagnostics =>
         _lastCacheReadFault ?? _cacheIo?.ReadFault;
@@ -450,7 +460,8 @@ public sealed unsafe class BassMidiRenderer
             CreateSegmentSchedule(plan.SourceIds.Length, _segments);
         _cacheOwnerIndicesBySource = CreateCacheOwnerMap(
             plan.SourceIds.Length,
-            plan.UnitFragments);
+            plan.UnitFragments,
+            plan.CacheSourceBindings);
         _plan = plan;
     }
 
@@ -486,6 +497,7 @@ public sealed unsafe class BassMidiRenderer
         }
         _positionFrames = producerFrontierFrame;
         _renderPositionFrames = producerFrontierFrame;
+        _eventStreamReader?.Seek(producerFrontierFrame);
         Array.Clear(_segmentCursorBySource);
         Array.Fill(_activeSegmentIndexBySource, -1);
         UpdateActiveSegmentsAtCurrentFrame();
@@ -509,9 +521,44 @@ public sealed unsafe class BassMidiRenderer
 
     private FillOutputResult FillOutputStagingBuffer()
     {
+        MidiRenderEventStreamReader? streamReader = _eventStreamReader;
+        if (streamReader is not null)
+        {
+            long lookAheadFrames = RollingAudioPreparationPolicy.MillisecondsToFrames(
+                _plan.SampleRate,
+                RollingAudioPreparationPolicy.TargetHighWatermarkMilliseconds);
+            long demand = _renderPositionFrames > _plan.TotalFrameCount - Math.Min(
+                    _plan.TotalFrameCount,
+                    lookAheadFrames)
+                ? _plan.TotalFrameCount
+                : _renderPositionFrames + lookAheadFrames;
+            streamReader.RequestThrough(demand);
+            if (streamReader.IsFaulted)
+            {
+                SetFault(AudioRenderFaultCode.InvalidPullRequest, 0, -1);
+                return FillOutputResult.Fault;
+            }
+        }
         UpdateActiveSegmentsAtCurrentFrame();
         if (!ApplyPendingMonitoringCommands()
             || !PrepareFragmentStatesAtCurrentFrame())
+        {
+            return FillOutputResult.Fault;
+        }
+
+        if (streamReader is not null
+            && !streamReader.IsCompleted
+            && streamReader.SafeThroughFrame <= _renderPositionFrames)
+        {
+            return SubmitEventsAtCurrentFrame()
+                ? FillOutputResult.Buffering
+                : FillOutputResult.Fault;
+        }
+
+        // Streaming plans expose only the next unread event. Consume every event
+        // at the current frame before asking for the next boundary; otherwise the
+        // current event hides a later event inside the same native decode block.
+        if (!SubmitEventsAtCurrentFrame())
         {
             return FillOutputResult.Fault;
         }
@@ -526,6 +573,12 @@ public sealed unsafe class BassMidiRenderer
         {
             frameCount = (int)Math.Min(frameCount, nextEventFrame - _renderPositionFrames);
         }
+        if (streamReader is not null && !streamReader.IsCompleted)
+        {
+            frameCount = (int)Math.Min(
+                frameCount,
+                Math.Max(0, streamReader.SafeThroughFrame - _renderPositionFrames));
+        }
 
         if (frameCount <= 0)
         {
@@ -537,10 +590,6 @@ public sealed unsafe class BassMidiRenderer
             return _fault.Code == AudioRenderFaultCode.None
                 ? FillOutputResult.Buffering
                 : FillOutputResult.Fault;
-        }
-        if (!SubmitEventsAtCurrentFrame())
-        {
-            return FillOutputResult.Fault;
         }
         if (!RenderFrames(_outputStagingBuffer, frameCount))
         {
@@ -638,7 +687,11 @@ public sealed unsafe class BassMidiRenderer
                 "The render plan contains Segment PCM cache bindings without a staging file.");
         }
         string path = Path.GetFullPath(cacheStagingPath);
-        if (!File.Exists(path) || new FileInfo(path).Length != requiredLength)
+        bool usesPackJournal = Directory.Exists(
+            AudioCachePackJournal.GetDirectoryPath(path));
+        long expectedStagingLength = usesPackJournal ? 0 : requiredLength;
+        if (!File.Exists(path)
+            || new FileInfo(path).Length != expectedStagingLength)
         {
             throw new InvalidDataException(
                 "The Segment PCM cache staging file length does not match the render plan.");
@@ -702,52 +755,7 @@ public sealed unsafe class BassMidiRenderer
     internal static int[] CollectReferencedPresetKeys(MidiRenderPlan plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        bool[] referenced = new bool[128 * 128];
-        int count = 0;
-        Span<byte> banks = stackalloc byte[16];
-        Span<byte> programs = stackalloc byte[16];
-        foreach (MidiPortRenderPlan port in plan.Ports)
-        {
-            banks.Clear();
-            programs.Clear();
-            foreach (ScheduledMidiMessage scheduled in port.Events)
-            {
-                MidiMessage message = scheduled.Message;
-                int channel = message.ChannelNumber;
-                if (message.MessageType == MidiMessageType.ControlChange && message.Byte1 == 0)
-                {
-                    banks[channel] = message.Byte2;
-                    continue;
-                }
-                if (message.MessageType == MidiMessageType.ProgramChange)
-                {
-                    programs[channel] = message.Byte1;
-                    continue;
-                }
-                if (message.MessageType != MidiMessageType.NoteOn || message.Byte2 == 0)
-                {
-                    continue;
-                }
-
-                int key = (banks[channel] << 7) | programs[channel];
-                if (!referenced[key])
-                {
-                    referenced[key] = true;
-                    count++;
-                }
-            }
-        }
-
-        int[] result = new int[count];
-        int resultIndex = 0;
-        for (int key = 0; key < referenced.Length; key++)
-        {
-            if (referenced[key])
-            {
-                result[resultIndex++] = key;
-            }
-        }
-        return result;
+        return plan.ReferencedPresetKeys.ToArray();
     }
 
     private void CreateUnits()
@@ -790,13 +798,17 @@ public sealed unsafe class BassMidiRenderer
 
     private static int[][] CreateCacheOwnerMap(
         int sourceCount,
-        ReadOnlySpan<MidiUnitFragmentRenderPlan> fragments)
+        ReadOnlySpan<MidiUnitFragmentRenderPlan> fragments,
+        ReadOnlySpan<MidiRenderCacheSourceBinding> bindings)
     {
         MidiUnitFragmentRenderPlan[] frozenFragments = fragments.ToArray();
         int[][] result = new int[sourceCount][];
         for (int sourceIndex = 0; sourceIndex < sourceCount; sourceIndex++)
         {
             HashSet<int> owners = [];
+            foreach (MidiRenderCacheSourceBinding binding in bindings)
+                if (binding.SourceIndex == sourceIndex)
+                    owners.Add(binding.CacheOwnerSourceIndex);
             foreach (MidiUnitFragmentRenderPlan fragment in frozenFragments)
             {
                 if (fragment.SourceIndex == sourceIndex)
@@ -1067,6 +1079,72 @@ public sealed unsafe class BassMidiRenderer
             }
         }
 
+        return SubmitStreamingEventsAtCurrentFrame();
+    }
+
+    private bool SubmitStreamingEventsAtCurrentFrame()
+    {
+        MidiRenderEventStreamReader? reader = _eventStreamReader;
+        if (reader is null) return true;
+        while (reader.TryPeek(out ScheduledPortMidiMessage next))
+        {
+            if (next.Scheduled.SampleFrame < _renderPositionFrames)
+            {
+                SetFault(
+                    AudioRenderFaultCode.BassMidiEventSubmissionFailed,
+                    0,
+                    next.ZeroBasedPortNumber);
+                return false;
+            }
+            if (next.Scheduled.SampleFrame != _renderPositionFrames) return true;
+
+            int canonicalUnitNumber = next.ZeroBasedPortNumber * 16
+                + next.Scheduled.Message.ChannelNumber;
+            int unitIndex = _unitIndexByCanonicalNumber[canonicalUnitNumber];
+            if (unitIndex < 0)
+            {
+                SetFault(
+                    AudioRenderFaultCode.BassMidiEventSubmissionFailed,
+                    0,
+                    next.ZeroBasedPortNumber);
+                return false;
+            }
+            UnitState unit = _units[unitIndex];
+            int batchCount = 0;
+            int packedByteCount = 0;
+            while (batchCount < MaximumMidiBatchEventCount
+                && reader.TryPeek(out next)
+                && next.Scheduled.SampleFrame == _renderPositionFrames
+                && next.ZeroBasedPortNumber * 16 + next.Scheduled.Message.ChannelNumber
+                    == canonicalUnitNumber)
+            {
+                _ = reader.TryDequeue(out ScheduledPortMidiMessage scheduledPort);
+                ScheduledMidiMessage canonical = scheduledPort.Scheduled;
+                MidiMessage unitMessage = MidiMessage.FromPackedValue(
+                    canonical.Message.PackedValue & ~MidiMessage.ChannelNumberMask);
+                ScheduledMidiMessage scheduled = canonical with { Message = unitMessage };
+                if (!ShouldSubmitScheduledEvent(unit, scheduled)) continue;
+                _packedMidiBuffer[packedByteCount++] = unitMessage.Byte0;
+                _packedMidiBuffer[packedByteCount++] = unitMessage.Byte1;
+                if (unitMessage.Length == 3)
+                    _packedMidiBuffer[packedByteCount++] = unitMessage.Byte2;
+                batchCount++;
+            }
+            if (batchCount == 0) continue;
+            uint submitted = NativeBassMidi.StreamEvents(
+                unit.StreamHandle,
+                NativeBassMidi.BASS_MIDI_EVENTS_RAW | NativeBassMidi.BASS_MIDI_EVENTS_NORSTATUS,
+                _packedMidiBuffer,
+                (uint)packedByteCount);
+            if (submitted == uint.MaxValue)
+            {
+                SetFault(
+                    AudioRenderFaultCode.BassMidiEventSubmissionFailed,
+                    NativeBass.ErrorGetCode(),
+                    unit.Plan.CanonicalZeroBasedPortNumber);
+                return false;
+            }
+        }
         return true;
     }
 
@@ -1196,7 +1274,11 @@ public sealed unsafe class BassMidiRenderer
                 result = Math.Min(result, events[index].SampleFrame);
             }
         }
-
+        if (_eventStreamReader?.TryPeek(out ScheduledPortMidiMessage streaming) == true
+            && streaming.Scheduled.SampleFrame > _renderPositionFrames)
+        {
+            result = Math.Min(result, streaming.Scheduled.SampleFrame);
+        }
         return result;
     }
 
@@ -1530,6 +1612,8 @@ public sealed unsafe class BassMidiRenderer
         }
 
         bool ioReady = true;
+        bool readWaited = false;
+        bool writeWaited = false;
         for (int sourceIndex = 0; sourceIndex < _activeSegmentIndexBySource.Length; sourceIndex++)
         {
             SegmentState? segment = GetActiveSegment(sourceIndex);
@@ -1539,19 +1623,23 @@ public sealed unsafe class BassMidiRenderer
             }
             if (segment.Plan.PcmCacheHit)
             {
-                ioReady &= cacheIo.IsReadReady(
+                bool ready = cacheIo.IsReadReady(
                     segment.Plan,
                     _renderPositionFrames,
                     frameCount);
+                ioReady &= ready;
+                readWaited |= !ready;
             }
             else
             {
                 if (!_cacheCaptureInvalidated)
                 {
-                    ioReady &= cacheIo.CanWriteFrames(
+                    bool ready = cacheIo.CanWriteFrames(
                         segment.Plan,
                         _renderPositionFrames,
                         frameCount);
+                    ioReady &= ready;
+                    writeWaited |= !ready;
                 }
             }
         }
@@ -1565,6 +1653,14 @@ public sealed unsafe class BassMidiRenderer
         if (cacheIo.WriteFaulted)
         {
             _cacheCaptureInvalidated = true;
+        }
+        if (readWaited)
+        {
+            _cacheReadWaitCount++;
+        }
+        if (writeWaited)
+        {
+            _cacheWriteWaitCount++;
         }
         // The rolling preparation ring absorbs normal writer jitter. Once the
         // bounded writer backlog is full, synthesis waits at the same frame so
@@ -1609,6 +1705,18 @@ public sealed unsafe class BassMidiRenderer
     private Exception? ReleaseNativeResources()
     {
         Exception? cleanupFailure = null;
+        if (_eventStreamReader is not null)
+        {
+            try
+            {
+                _eventStreamReader.Dispose();
+            }
+            catch (Exception exception)
+            {
+                cleanupFailure = CombineFailures(cleanupFailure, exception);
+            }
+            _eventStreamReader = null;
+        }
         if (_parallelDecoder is not null)
         {
             try

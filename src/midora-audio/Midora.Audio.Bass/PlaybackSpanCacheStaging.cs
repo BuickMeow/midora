@@ -36,7 +36,10 @@ internal sealed class PlaybackSpanCacheStaging : IDisposable
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(masterSettings);
         AudioCacheSessionSnapshot? snapshot = cache?.AudioCacheSnapshot;
-        if (cache is null || snapshot?.RetentionState == AudioCacheRetentionState.DisabledByPreference)
+        if (cache is null
+            || plan.EventPageProvider is not null
+            || plan.EventStreamDescriptor is not null
+            || snapshot?.RetentionState == AudioCacheRetentionState.DisabledByPreference)
         {
             return null;
         }

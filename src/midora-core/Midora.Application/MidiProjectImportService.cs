@@ -21,15 +21,31 @@ public sealed class MidiProjectImportResult
 {
     internal MidiProjectImportResult(
         MidoraProject project,
-        MidiProjectImportDiagnostic[] diagnostics)
+        MidiProjectImportDiagnostic[] diagnostics,
+        MidiProjectImportMetrics? metrics = null)
     {
         Project = project;
         Diagnostics = diagnostics;
+        Metrics = metrics;
     }
 
     public MidoraProject Project { get; }
     public IReadOnlyList<MidiProjectImportDiagnostic> Diagnostics { get; }
+    public MidiProjectImportMetrics? Metrics { get; }
 }
+
+public sealed record MidiProjectImportMetrics(
+    long SourceFileBytes,
+    long ScannedEventCount,
+    long ScannedPayloadBytes,
+    long ImportedNoteCount,
+    long ImportedDirectEventCount,
+    int ContentPageCount,
+    long ContentPackBytes,
+    TimeSpan FirstPassElapsed,
+    TimeSpan SecondPassElapsed,
+    long ManagedHeapBytesAfterImport,
+    long WorkingSetBytesAfterImport);
 
 public sealed class MidiImportPortMappingRequiredException : IOException
 {
@@ -42,7 +58,7 @@ public sealed class MidiImportPortMappingRequiredException : IOException
     public IReadOnlyList<byte> SourcePorts { get; }
 }
 
-public static class MidiProjectImportService
+public static partial class MidiProjectImportService
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static ReadOnlySpan<byte> RolandGsChannel10NormalPart =>
@@ -507,12 +523,22 @@ public static class MidiProjectImportService
         project.Conductor.KeySignatures.Clear();
         project.Conductor.Markers.Clear();
         Dictionary<long, ImportedTempo> temposByTick = [];
+        Dictionary<long, ImportedTimeSignature> timeSignaturesByTick = [];
+        Dictionary<long, ImportedKeySignature> keySignaturesByTick = [];
         int identicalTempoDuplicateCount = 0;
         int conflictingTempoDuplicateCount = 0;
         HashSet<long> identicalTempoDuplicateTicks = [];
         HashSet<long> conflictingTempoDuplicateTicks = [];
         ImportedTempo? firstIdenticalTempoDuplicate = null;
         (ImportedTempo Previous, ImportedTempo Replacement)? firstConflictingTempoDuplicate = null;
+        int timeSignatureDuplicateCount = 0;
+        int conflictingTimeSignatureDuplicateCount = 0;
+        HashSet<long> timeSignatureDuplicateTicks = [];
+        ImportedConductorDuplicate? firstTimeSignatureDuplicate = null;
+        int keySignatureDuplicateCount = 0;
+        int conflictingKeySignatureDuplicateCount = 0;
+        HashSet<long> keySignatureDuplicateTicks = [];
+        ImportedConductorDuplicate? firstKeySignatureDuplicate = null;
         foreach (TrackScan scan in scans.OrderBy(value => value.Track.SourceTrackIndex))
         {
             foreach (ParsedStandardMidiFileEvent value in scan.ConductorEvents
@@ -561,19 +587,57 @@ public static class MidiProjectImportService
                             throw new InvalidDataException(
                                 $"SMF MTrk {scan.Track.SourceTrackIndex} has an unrepresentable Time Signature denominator at byte {value.SourceByteOffset}.");
                         }
-                        project.Conductor.TimeSignatures.Add(new(
-                            project,
+                        ImportedTimeSignature importedTimeSignature = new(
                             value.Tick,
                             data[0],
-                            checked(1 << data[1])));
+                            checked(1 << data[1]),
+                            scan.Track.SourceTrackIndex,
+                            value.Order,
+                            value.SourceByteOffset);
+                        if (timeSignaturesByTick.TryGetValue(
+                            value.Tick,
+                            out ImportedTimeSignature previousTimeSignature))
+                        {
+                            timeSignatureDuplicateCount++;
+                            timeSignatureDuplicateTicks.Add(value.Tick);
+                            if (previousTimeSignature.Numerator != importedTimeSignature.Numerator
+                                || previousTimeSignature.Denominator != importedTimeSignature.Denominator)
+                            {
+                                conflictingTimeSignatureDuplicateCount++;
+                            }
+                            firstTimeSignatureDuplicate ??= new(
+                                value.Tick,
+                                scan.Track.SourceTrackIndex,
+                                value.SourceByteOffset);
+                        }
+                        timeSignaturesByTick[value.Tick] = importedTimeSignature;
                         break;
                     case StandardMidiFile.KeySignatureMetaType:
                         RequireLength(scan, value, 2, "Key Signature");
-                        project.Conductor.KeySignatures.Add(new(
-                            project,
+                        ImportedKeySignature importedKeySignature = new(
                             value.Tick,
                             unchecked((sbyte)data[0]),
-                            data[1] != 0));
+                            data[1] != 0,
+                            scan.Track.SourceTrackIndex,
+                            value.Order,
+                            value.SourceByteOffset);
+                        if (keySignaturesByTick.TryGetValue(
+                            value.Tick,
+                            out ImportedKeySignature previousKeySignature))
+                        {
+                            keySignatureDuplicateCount++;
+                            keySignatureDuplicateTicks.Add(value.Tick);
+                            if (previousKeySignature.SharpsFlats != importedKeySignature.SharpsFlats
+                                || previousKeySignature.IsMinor != importedKeySignature.IsMinor)
+                            {
+                                conflictingKeySignatureDuplicateCount++;
+                            }
+                            firstKeySignatureDuplicate ??= new(
+                                value.Tick,
+                                scan.Track.SourceTrackIndex,
+                                value.SourceByteOffset);
+                        }
+                        keySignaturesByTick[value.Tick] = importedKeySignature;
                         break;
                     case StandardMidiFile.MarkerMetaType:
                         project.Conductor.Markers.Add(new(
@@ -588,6 +652,22 @@ public static class MidiProjectImportService
         {
             project.Conductor.Tempos.Add(new(project, value.Tick, value.BeatsPerMinute));
         }
+        foreach (ImportedTimeSignature value in timeSignaturesByTick.Values.OrderBy(value => value.Tick))
+        {
+            project.Conductor.TimeSignatures.Add(new(
+                project,
+                value.Tick,
+                value.Numerator,
+                value.Denominator));
+        }
+        foreach (ImportedKeySignature value in keySignaturesByTick.Values.OrderBy(value => value.Tick))
+        {
+            project.Conductor.KeySignatures.Add(new(
+                project,
+                value.Tick,
+                value.SharpsFlats,
+                value.IsMinor));
+        }
         if (!temposByTick.ContainsKey(0))
         {
             project.Conductor.Tempos.Insert(0, new(project, 0, 120m));
@@ -596,7 +676,7 @@ public static class MidiProjectImportService
                 DiagnosticSeverity.Info,
                 "The source had no Set Tempo event at tick 0; Midora added an explicit 120 BPM Tempo state."));
         }
-        if (!project.Conductor.TimeSignatures.Any(value => value.Tick == 0))
+        if (!timeSignaturesByTick.ContainsKey(0))
         {
             project.Conductor.TimeSignatures.Insert(0, new(project, 0, 4, 4));
             diagnostics.Add(new(
@@ -633,6 +713,22 @@ public static class MidiProjectImportService
                 replacement.SourceByteOffset,
                 replacement.Tick));
         }
+        AppendConductorDuplicateDiagnostic(
+            diagnostics,
+            "TIME-SIGNATURE",
+            "Time Signature",
+            timeSignatureDuplicateCount,
+            conflictingTimeSignatureDuplicateCount,
+            timeSignatureDuplicateTicks.Count,
+            firstTimeSignatureDuplicate);
+        AppendConductorDuplicateDiagnostic(
+            diagnostics,
+            "KEY-SIGNATURE",
+            "Key Signature",
+            keySignatureDuplicateCount,
+            conflictingKeySignatureDuplicateCount,
+            keySignatureDuplicateTicks.Count,
+            firstKeySignatureDuplicate);
     }
 
     private static void ImportBucketEvents(
@@ -860,6 +956,32 @@ public static class MidiProjectImportService
     private static string FormatBpm(decimal value) =>
         value.ToString("0.######", CultureInfo.InvariantCulture);
 
+    private static void AppendConductorDuplicateDiagnostic(
+        ICollection<MidiProjectImportDiagnostic> diagnostics,
+        string codeStem,
+        string displayName,
+        int duplicateCount,
+        int conflictingCount,
+        int tickCount,
+        ImportedConductorDuplicate? firstDuplicate)
+    {
+        if (duplicateCount == 0) return;
+        ImportedConductorDuplicate first = firstDuplicate
+            ?? throw new InvalidOperationException(
+                $"A duplicate {displayName} count has no source event.");
+        diagnostics.Add(new(
+            $"MIDORA-MIDI-IMPORT-DUPLICATE-{codeStem}",
+            conflictingCount == 0 ? DiagnosticSeverity.Info : DiagnosticSeverity.Warning,
+            $"Resolved {duplicateCount} duplicate {displayName} event(s) at {tickCount} tick position(s) "
+            + "by retaining the last event in source MTrk/event order. "
+            + (conflictingCount == 0
+                ? "All discarded duplicates had the same value."
+                : $"{conflictingCount} discarded event(s) conflicted with the value retained at their tick."),
+            first.SourceTrackIndex,
+            first.SourceByteOffset,
+            first.Tick));
+    }
+
     private static bool TryParseMidoraMetadata(
         ReadOnlySpan<byte> data,
         out MidoraTrackMetadata? metadata)
@@ -980,6 +1102,27 @@ public static class MidiProjectImportService
         decimal BeatsPerMinute,
         int SourceTrackIndex,
         long SourceOrder,
+        int SourceByteOffset);
+
+    private readonly record struct ImportedTimeSignature(
+        long Tick,
+        int Numerator,
+        int Denominator,
+        int SourceTrackIndex,
+        long SourceOrder,
+        int SourceByteOffset);
+
+    private readonly record struct ImportedKeySignature(
+        long Tick,
+        int SharpsFlats,
+        bool IsMinor,
+        int SourceTrackIndex,
+        long SourceOrder,
+        int SourceByteOffset);
+
+    private readonly record struct ImportedConductorDuplicate(
+        long Tick,
+        int SourceTrackIndex,
         int SourceByteOffset);
 
     private sealed record MidoraTrackMetadata(

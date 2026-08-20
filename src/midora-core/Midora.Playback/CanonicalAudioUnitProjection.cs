@@ -127,7 +127,9 @@ public sealed class CanonicalAudioUnitProjection
 
     public ReadOnlySpan<CanonicalAudioUnitFragment> Fragments => _fragments;
 
-    public static CanonicalAudioUnitProjection Create(CanonicalCompiledResult compiled)
+    public static CanonicalAudioUnitProjection Create(
+        CanonicalCompiledResult compiled,
+        IEnumerable<CanonicalMidiEvent>? eventSubset = null)
     {
         ArgumentNullException.ThrowIfNull(compiled);
         if (!compiled.IsConsumable || compiled.IsPartial)
@@ -154,7 +156,8 @@ public sealed class CanonicalAudioUnitProjection
             byInstance.Add((allocation.InstanceId, allocation.SubVoiceId), builder);
         }
 
-        foreach (CanonicalMidiEvent value in compiled.Events)
+        IEnumerable<CanonicalMidiEvent> events = eventSubset ?? compiled.Events.ToArray();
+        foreach (CanonicalMidiEvent value in events)
         {
             FragmentBuilder? builder = ResolveBuilder(value, byInstance, builders.Values);
             if (builder is null)

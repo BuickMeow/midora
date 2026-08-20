@@ -128,7 +128,7 @@ public static class MidiExportArtifactBuilder
                     diagnostic)));
                 continue;
             }
-            artifacts.Add(new(sourceKey, result.FileBytes));
+            artifacts.Add(new(sourceKey, result.WriteTo));
         }
         if (diagnostics.Count != 0)
         {

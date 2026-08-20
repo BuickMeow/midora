@@ -88,6 +88,9 @@ Undo / Redo 栈
 ├─ midi-tracks/
 │  ├─ mt_<id>.pb
 │  └─ ...
+├─ midi-content/
+│  ├─ mt_<id>.mpk
+│  └─ ...
 └─ resources/
    └─ soundfonts/
       └─ <resourceId>.sf2
@@ -113,6 +116,7 @@ event-instruments/
 logical-tracks/
 midi-channel-roots/
 midi-tracks/
+midi-content/
 resources/soundfonts/
 ```
 Event Instrument 对象文件路径模板：
@@ -127,8 +131,9 @@ MIDI Channel Root 与 Pure MIDI Track 对象文件路径模板：
 ```text
 midi-channel-roots/mcr_<id>.pb
 midi-tracks/mt_<id>.pb
+midi-content/mt_<id>.mpk
 ```
-`.pb` 扩展名固定表示 protobuf 对象文件。
+`.pb` 扩展名固定表示 protobuf 对象文件；`.mpk` 表示第 16.30 节定义的、单 Pure MIDI Track 一个文件的版本化 immutable source page pack。它不是 canonical、编译缓存或音频缓存。
 初版允许未来通过新的 `fileFormatVersion` / `schemaVersion` 增加新的顶层目录或结构性文件类型。但旧版软件遇到过新的版本时应拒绝打开，而不是忽略。
 ---
 ## 16.3 JSON 与 protobuf 持久化策略
@@ -172,6 +177,8 @@ Opaque imported event payload
 大量曲线数据
 ```
 protobuf 是初版重数据的默认二进制序列化格式。
+
+Pure MIDI Track 的身份、Segment 元数据和 content-pack 路径仍使用 protobuf；page directory、aggregate count、tick / Stable ID bounds 与 Direct Note/Event/opaque payload 的大规模记录体固定放入 `midi-content/mt_<id>.mpk`。该例外用于流式打开、范围查询和有界内存，不能把 page pack 当作派生缓存或允许其脱离 Track protobuf 独立存在。
 初版 protobuf 兼容基线固定为：
 ```text
 protobuf Edition 2024
@@ -1212,6 +1219,7 @@ Project 成功打开并反序列化到内存后：
 不应长期占用原 .midora 文件。
 打开完成后释放文件句柄。
 ```
+Pure MIDI page pack 必须从 Zip entry 顺序流式复制到本次 Project session 私有的只读 backing file，再关闭原 `.midora`。不得为了满足本条而把完整 `.mpk` 解压到托管 byte array。session backing file 只承载已持久化 source bytes，Project 关闭时删除；它不属于 audio cache，也不改变 `.midora` 的唯一持久源身份。
 打开 / 反序列化过程中可以短暂占用文件，以避免读到半修改状态。
 打开后如果外部程序修改原 `.midora` 文件：
 ```text
@@ -1705,6 +1713,7 @@ event-instruments/*.pb
 logical-tracks/*.pb
 midi-channel-roots/*.pb
 midi-tracks/*.pb
+midi-content/*.mpk
 resources/soundfonts/*.sf2
 ```
 但由于 manifest 需要记录所有文件 hash，实际内容生成顺序为：
@@ -1904,7 +1913,9 @@ SoundFont 实际加载由播放、预览或音频渲染触发。
 
 ### 16.30.1 文件粒度
 
-每个 MIDI Channel Root 使用一个 `midi-channel-roots/mcr_<id>.pb`；每个 Pure MIDI Track 使用一个 `midi-tracks/mt_<id>.pb`。Midi Segment 与其 Direct MIDI Note/Event、raw Note message 和 opaque imported event 均内嵌在所属 Pure MIDI Track 文件，不按 Segment 或事件拆文件。
+每个 MIDI Channel Root 使用一个 `midi-channel-roots/mcr_<id>.pb`。每个 Pure MIDI Track 使用一个小型 `midi-tracks/mt_<id>.pb` 和一个 `midi-content/mt_<id>.mpk`。Track protobuf 保存身份、父 Root、显示字段、Segment 元数据及 content-pack 路径；page-range descriptor 与 Direct MIDI Note/Event、raw Note message 和 opaque imported event 的 immutable source records 均由 page pack 保存。
+
+不得按 Segment、page 或 event 建立独立 Zip entry；一个 Track 无论多少页都只有一个 `.mpk`，以控制本地/包内文件数量。无任何 source record 的 Track 仍写一个合法空 pack，使索引关系保持单一。
 
 ### 16.30.2 Root 文件
 
@@ -1929,20 +1940,35 @@ Pure MIDI Track protobuf 至少保存：
 Stable ID / object kind / schemaVersion
 parent Root stable ID
 Display Name / optional color
-Midi Segment collection
-Segment Content Window and hidden content
-Direct MIDI Note including NoteOn/NoteOff velocities and endpoint order
-Direct MIDI Channel Event including explicit same-tick order
-unpaired raw Note messages
-opaque imported SysEx/Meta type, payload, tick and order
-source-import hints that are explicitly part of the current schema
+Midi Segment metadata collection
+content-pack relative path
 ```
+
+Pack format version、byte length、完整文件 SHA-256 不重复写入 Track protobuf：format version 位于 `.mpk` header；byte length 与完整 entry SHA-256 由 `manifest.json` 的严格文件清单冻结；per-Segment Note/Event/Opaque page ranges、aggregate counts 与 source bounds 位于 `.mpk` directory。三者必须交叉校验，不能以其中任一项覆盖另一个不一致项。
+
+`.mpk` page record必须完整保存 Direct MIDI Note 的 NoteOn/NoteOff velocity 与 endpoint order、Direct MIDI Channel Event 的显式同 tick order、未配对 raw Note message，以及 opaque SysEx/Meta type/payload/tick/order。Source record page 按 kind 分流，并同时满足：
+
+```text
+maximum 65,536 records per page
+maximum 4 MiB decoded page payload
+per-page first/last tick and stable-ID bounds
+per-page decoded length, stored length and SHA-256
+deterministic internal compression
+```
+
+当前开发期 pack 格式还必须从相同正式 source records 派生并保存 NoteOn endpoint、NoteOff endpoint 与 Channel Event endpoint pages。Endpoint page 按正式 tick/order key 局部有序、每页最多 16,384 records，并保存足以做目录裁剪和 bounded k-way merge 的 tick bounds；NoteOn endpoint目录还必须保存页内最大Note end tick，使active-note恢复只解码`minimumStart < cursor < maximumEnd`的候选endpoint页而不读取普通Note页。原始 source page 的 65,536-record / 4 MiB 双重上限不因此改变。Reader 必须交叉验证 endpoint record 与所属 Segment/source record 的身份、范围、数量和 checksum；派生索引损坏时拒绝该 pack，不得退回每窗口全量扫描并继续正式播放。
+
+这是首版冻结前的破坏性开发格式替换：当前 reader 只接受带 endpoint index 的现行 pack version，拒绝旧 pack version，不提供双读、迁移或静默重建后覆盖旧 Project。
+
+Pack header/directory/footer、整数编码、compression profile、checksum coverage 和 entry order 必须版本化并有 golden bytes。完整 Track pack 的逻辑顺序由 Segment order、record kind 和各 page 内正式 record order定义；物理 page 边界不得成为 MIDI 语义边界。
 
 源 MTrk chunk 布局、Running Status 是否被使用、原 delta-time 编码宽度和原始文件字节不持久化；这些不属于语义 round-trip 保证。
 
 ### 16.30.4 严格边界与损坏隔离
 
-Direct/opaque payload 的事件类型、长度、VLQ 可表示范围、MIDI data byte、tick、稳定 ID 和总计数必须在分配大对象前做有界校验。未知 protobuf 字段仍按本章严格 schema 拒绝，不能借“opaque event”保存未知 Midora wire 字段。
+Track protobuf、manifest entry 与 pack directory 必须先完成 bounded validation，再打开或解码 record page。Direct/opaque payload 的事件类型、长度、MIDI data byte、tick、稳定 ID、page count、record count、stored/decoded bytes、offset arithmetic、checksum 和非重叠 extent 必须在分配 page buffer 前校验。未知 protobuf 字段仍按本章严格 schema 拒绝，不能借“opaque event”保存未知 Midora wire 字段。
+
+打开成功后只保留 immutable pack descriptor、copy-on-write overlay 和默认最多 `64 MiB decoded bytes` 的共享 LRU page cache；禁止把所有 pages、所有 ID 或所有 records 建立第二份全量内存索引。Stable ID lookup 依靠有序 page ID bounds 与小型 overlay index。
 
 Root 或 Pure MIDI Track 文件损坏时，可以按 Logical Track 的既有原则形成对应损坏占位并允许用户删除；只要任一此类占位仍存在就禁止覆盖保存，以免永久丢失无法读取的对象。删除 Root 占位必须同时显式处理其已索引 child Track，占位关系不得静默改挂到其他 Root。
 
@@ -1961,4 +1987,10 @@ import preview/candidate and source-file absolute path
 ```
 
 Fixed Root 的用户 Port.Channel、Root Channel Mode、Root/Track 显式顺序、Track EOT 所需 Segment 尾部范围和 opaque payload 是源数据，必须持久化。
+
+### 16.30.6 保存与 copy-on-write overlay
+
+编辑 loaded/imported Pure MIDI record 时，Project session 在 immutable base pages 上记录 replacement/new record 与 tombstone overlay；Undo/Redo 冻结 overlay generation，不复制 base pack。保存时按正式顺序流式合并 base pages 与 overlay，写入新的临时 `.mpk`，校验 Track protobuf、manifest hash、pack directory 与 page checksums 后再参与 §16.22 的 package 原子发布。保存成功后允许把新 pack 提升为 session 的只读 base generation；失败继续保留旧 base 与 overlay，不得部分提交。
+
+Track Copy/Duplicate 可以在内存中共享 immutable base extents，但保存输出必须为副本自己的确定 `.mpk` 和新稳定 ID 记录；不得持久化跨 Track 文件引用。
 ---

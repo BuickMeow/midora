@@ -71,6 +71,100 @@ public sealed class AudioRenderCompilationCoordinatorTests
     }
 
     [Fact]
+    public void WholeMixRendersPureMidiOnlyProjectAndUsesItsNaturalRange()
+    {
+        MidoraProject project = new(192);
+        MidiChannelRoot root = new(project)
+        {
+            Name = "Piano",
+            RoutingMode = MidiChannelRootRoutingMode.Auto,
+            ChannelMode = MidiChannelMode.Melodic
+        };
+        PureMidiTrack track = new(project)
+        {
+            Name = "Imported Track",
+            MidiChannelRootId = root.Id
+        };
+        MidiSegment segment = new(project)
+        {
+            ProjectStartTick = 384,
+            LengthTicks = 768
+        };
+        segment.Notes.Add(new(project)
+        {
+            StartTick = 0,
+            LengthTicks = 384,
+            Key = 60,
+            NoteOnVelocity = 100
+        });
+        track.Segments.Add(segment);
+        root.MidiTrackIds.Add(track.Id);
+        project.MidiChannelRoots.Add(root);
+        project.PureMidiTracks.Add(track);
+        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        using MidoraCompiler compiler = new();
+
+        AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = AudioRenderMode.WholeMix
+        });
+
+        AudioRenderCompilationItem item = Assert.Single(result.Items);
+        Assert.True(item.Succeeded, string.Join(Environment.NewLine, item.Diagnostics));
+        Assert.True(result.HasRenderableOutput);
+        Assert.Equal(1152, result.EndTick);
+        Assert.Contains(item.CompiledResult.Events.ToArray(), value =>
+            value.Role == CanonicalEventRole.DirectMidi
+            && value.Source.PureMidiTrackId == track.Id);
+    }
+
+    [Fact]
+    public void WholeMixExplicitSelectionCanSelectOnlyPureMidiTrack()
+    {
+        MidoraProject project = AudioRenderTestProject.Create(("Logical", 192, 60));
+        EventInstrument instrument = Assert.Single(project.EventInstruments);
+        instrument.LogicalTrackIds.Add(project.Tracks[0].Id);
+        project.ArrangementParents.Add(new(ArrangementParentKind.EventInstrument, instrument.Id));
+        MidiChannelRoot root = new(project)
+        {
+            Name = "Root",
+            RoutingMode = MidiChannelRootRoutingMode.Auto,
+            ChannelMode = MidiChannelMode.Melodic
+        };
+        PureMidiTrack track = new(project) { Name = "MIDI", MidiChannelRootId = root.Id };
+        MidiSegment segment = new(project) { LengthTicks = 384 };
+        segment.Notes.Add(new(project)
+        {
+            LengthTicks = 192,
+            Key = 72,
+            NoteOnVelocity = 90
+        });
+        track.Segments.Add(segment);
+        root.MidiTrackIds.Add(track.Id);
+        project.MidiChannelRoots.Add(root);
+        project.PureMidiTracks.Add(track);
+        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        using MidoraCompiler compiler = new();
+
+        AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
+        {
+            Project = project,
+            Mode = AudioRenderMode.WholeMix,
+            SelectedTrackIds = new HashSet<MidoraId> { track.Id }
+        });
+
+        AudioRenderCompilationItem item = Assert.Single(result.Items);
+        Assert.True(item.Succeeded, string.Join(Environment.NewLine, item.Diagnostics));
+        Assert.Contains(item.CompiledResult.Events.ToArray(), value =>
+            value.Role == CanonicalEventRole.DirectMidi
+            && value.Source.PureMidiTrackId == track.Id);
+        Assert.DoesNotContain(item.CompiledResult.Events.ToArray(), value =>
+            value.Role == CanonicalEventRole.NoteOn
+            && value.Source.TrackId == project.Tracks[0].Id);
+    }
+
+    [Fact]
     public void BoundEmptyInstrumentRemainsSilentTargetWithCommonRange()
     {
         MidoraProject project = AudioRenderTestProject.Create(("Audible", 192, 60));

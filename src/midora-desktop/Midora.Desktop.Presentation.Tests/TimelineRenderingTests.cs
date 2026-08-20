@@ -2,20 +2,115 @@ using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Interaction;
 using Midora.Desktop.Presentation.Rendering;
 using Midora.Domain;
+using System.Runtime.ExceptionServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace Midora.Desktop.Presentation.Tests;
 
 public sealed class TimelineRenderingTests
 {
     [Fact]
-    public void PianoRollVerticalZoomMinimumIsFourDips()
+    public void PlaybackCursorInvalidatesOnlyItsLightweightOverlay()
     {
-        Assert.Equal(4, TimelineSurface.MinimumPianoLaneHeight);
+        FrameworkPropertyMetadata surfaceMetadata = Assert.IsType<FrameworkPropertyMetadata>(
+            TimelineSurface.PlaybackCursorTickProperty.GetMetadata(typeof(TimelineSurface)));
+        FrameworkPropertyMetadata overlayMetadata = Assert.IsType<FrameworkPropertyMetadata>(
+            TimelinePlaybackCursorOverlay.PlaybackCursorTickProperty.GetMetadata(
+                typeof(TimelinePlaybackCursorOverlay)));
+
+        Assert.False(surfaceMetadata.AffectsRender);
+        Assert.True(overlayMetadata.AffectsRender);
+    }
+
+    [Fact]
+    public void OverviewPlaybackAndEditCursorsInvalidateTheOverview()
+    {
+        FrameworkPropertyMetadata playbackMetadata = Assert.IsType<FrameworkPropertyMetadata>(
+            TimelineOverviewSurface.PlaybackCursorTickProperty.GetMetadata(
+                typeof(TimelineOverviewSurface)));
+        FrameworkPropertyMetadata editMetadata = Assert.IsType<FrameworkPropertyMetadata>(
+            TimelineOverviewSurface.EditCursorTickProperty.GetMetadata(
+                typeof(TimelineOverviewSurface)));
+
+        Assert.True(playbackMetadata.AffectsRender);
+        Assert.True(editMetadata.AffectsRender);
+    }
+
+    [Fact]
+    public void PianoRollVerticalZoomMinimumIsThreeDevicePixels()
+    {
+        Assert.Equal(3, TimelineSurface.MinimumPianoLaneHeight);
         Assert.Equal(128, TimelineSurface.MaximumPianoLaneHeight);
+    }
+
+    [Fact]
+    public void ArrangementScrollMaximumKeepsTheLastVariableHeightRowVisible()
+    {
+        RunOnSta(() =>
+        {
+            MidoraId populatedParent = new(5);
+            TimelineRenderSnapshot snapshot = new(
+                1,
+                "arrangement:variable-row-scroll",
+                [],
+                Enumerable.Range(0, 8).Select(index => $"Lane {index}").ToArray(),
+                arrangementLanes:
+                [
+                    new(0, ArrangementLaneKind.Conductor, null, null, 0, true, false, false),
+                    new(1, ArrangementLaneKind.EventInstrument, new MidoraId(2), null, 0, false, false, false),
+                    new(2, ArrangementLaneKind.MidiChannelRoot, new MidoraId(3), null, 0, false, false, false),
+                    new(3, ArrangementLaneKind.EventInstrument, new MidoraId(4), null, 0, false, false, false),
+                    new(4, ArrangementLaneKind.EventInstrument, populatedParent, null, 0, true, true, false),
+                    new(5, ArrangementLaneKind.LogicalTrack, new MidoraId(6), populatedParent, 1, false, false, true),
+                    new(6, ArrangementLaneKind.LogicalTrack, new MidoraId(7), populatedParent, 1, false, false, true),
+                    new(7, ArrangementLaneKind.LogicalTrack, new MidoraId(8), populatedParent, 1, false, false, true)
+                ]);
+            TimelineSurface surface = new()
+            {
+                Snapshot = snapshot,
+                SurfaceMode = TimelineSurfaceMode.Arrangement,
+                LaneHeight = 60,
+                TickSpan = 1_920
+            };
+
+            Grid host = new();
+            host.Children.Add(surface);
+            host.Measure(new Size(800, 200));
+            host.Arrange(new Rect(0, 0, 800, 200));
+
+            Assert.Equal(200, surface.ActualHeight);
+            surface.LaneHeight = 61;
+            Assert.Equal(6, surface.MaximumFirstLane);
+            surface.FirstLane = surface.MaximumFirstLane;
+            Assert.Equal(6, surface.FirstLane);
+        });
+    }
+
+    [Fact]
+    public void PianoNoteBoundsOccupyTheWholePixelAlignedKeyRow()
+    {
+        TimelineViewport viewport = new(0, 100, 4, 8, 400, 24, 3);
+        TimelineRenderItem note = Item(
+            1,
+            10,
+            20,
+            5,
+            kind: TimelineItemKind.DirectMidiNote);
+
+        Rect bounds = TimelineRasterPlacement.GetUnclippedItemBounds(
+            viewport,
+            note,
+            laneHeaderWidth: 52,
+            rulerHeight: 24,
+            laneHeight: 3);
+
+        Assert.Equal(27, bounds.Top);
+        Assert.Equal(3, bounds.Height);
     }
 
     [Fact]
@@ -997,6 +1092,33 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void PianoTileCanUseABrighterNormalOutlineThanItsFill()
+    {
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "segment:swapped-note-colors",
+            [Item(1, 10, 30, 2)]);
+        Color darkFill = Color.FromRgb(68, 75, 80);
+        Color brightOutline = Color.FromRgb(163, 178, 190);
+
+        TimelineRasterBuffer raster = TimelinePianoTileRasterizer.Rasterize(
+            snapshot,
+            devicePixelsPerTick: 4,
+            devicePixelsPerLane: 16,
+            tileX: 0,
+            tileY: 0,
+            darkFill,
+            Color.FromRgb(232, 179, 75),
+            normalOutlineColor: brightOutline);
+
+        Color outline = PixelColor(raster, 41, 40);
+        Color fill = PixelColor(raster, 60, 40);
+        Assert.True(outline.R > fill.R);
+        Assert.True(outline.G > fill.G);
+        Assert.True(outline.B > fill.B);
+    }
+
+    [Fact]
     public void PianoTileUsesTheSameRoundedBoundaryForAdjacentNotesAtExactScale()
     {
         TimelineRenderSnapshot snapshot = new(
@@ -1055,6 +1177,35 @@ public sealed class TimelineRenderingTests
             Color.FromRgb(189, 199, 207));
 
         Assert.True(Alpha(raster, 0, 33) > 0);
+    }
+
+    [Fact]
+    public void SourceBackedSegmentPreviewReportsAndRasterizesContentWithoutMaterializingArrays()
+    {
+        TimelineSegmentPreview preview = new(
+            new MidoraId(1),
+            new TestSegmentPreviewSource());
+
+        Assert.Empty(preview.Notes);
+        Assert.Empty(preview.Events);
+        Assert.True(preview.HasNoteContent);
+        Assert.True(preview.HasEventContent);
+
+        TimelineRasterBuffer notes = TimelineSegmentPreviewRasterizer.RasterizeNoteTile(
+            preview,
+            deviceSegmentWidth: 512,
+            deviceHeight: 64,
+            tileX: 0,
+            Color.FromRgb(189, 199, 207));
+        TimelineRasterBuffer events = TimelineSegmentPreviewRasterizer.RasterizeEventTile(
+            preview,
+            deviceSegmentWidth: 512,
+            deviceHeight: 64,
+            tileX: 0,
+            Color.FromRgb(229, 61, 68));
+
+        Assert.Equal(1, notes.CandidateCount);
+        Assert.Equal(1, events.CandidateCount);
     }
 
     [Fact]
@@ -1732,6 +1883,30 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void SegmentBarGridMapsLocalTicksBackToProjectBars()
+    {
+        MidoraProject project = new(480);
+        project.Conductor.TimeSignatures.Add(new TimeSignatureChange(project, 1_000, 3, 4));
+        ProjectTimeSignatureMap map = new(project);
+        List<TimelineGridLine> lines = [];
+
+        TimelineGridPresentation.BuildBarGridLines(
+            startTick: 100,
+            endTick: 1_540,
+            map,
+            lines,
+            projectTickOffset: 900);
+
+        Assert.Equal(
+            [
+                new(100, TimelineGridLineKind.Bar),
+                new(580, TimelineGridLineKind.Beat),
+                new(1_060, TimelineGridLineKind.Beat)
+            ],
+            lines);
+    }
+
+    [Fact]
     public void ArrangementBarGridSkipsLinesBelowTheVisibleTickResolution()
     {
         MidoraProject project = new(480);
@@ -1876,4 +2051,60 @@ public sealed class TimelineRenderingTests
             0,
             z,
             TimelineItemState.None);
+
+    private sealed class TestSegmentPreviewSource : ITimelineSegmentPreviewSource
+    {
+        public bool HasNoteContent => true;
+        public bool HasEventContent => true;
+        public ulong NoteContentFingerprint => 1;
+        public ulong EventContentFingerprint => 2;
+
+        public void QueryNotes(
+            double normalizedStart,
+            double normalizedEnd,
+            List<TimelineSegmentPreviewNote> destination)
+        {
+            if (normalizedStart <= 0.25 && normalizedEnd > 0.25)
+                destination.Add(new(0.25, 0.5, 60));
+        }
+
+        public void QueryEvents(
+            double normalizedStart,
+            double normalizedEnd,
+            List<TimelineSegmentPreviewEvent> destination)
+        {
+            if (normalizedStart <= 0.25 && normalizedEnd > 0.25)
+                destination.Add(new(0.25, 0.75));
+        }
+    }
+
+    private static void RunOnSta(Action action)
+    {
+        Exception? failure = null;
+        Thread thread = new(() =>
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromSeconds(30)))
+        {
+            throw new TimeoutException("The WPF timeline test did not complete.");
+        }
+        if (failure is not null)
+        {
+            ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+    }
 }

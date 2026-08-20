@@ -33,7 +33,7 @@ public enum TimelineItemKind
     Marker,
     ProjectEndMarker,
     LifecycleBoundary
-    ,Velocity
+    , Velocity
 }
 
 [Flags]
@@ -93,11 +93,62 @@ public readonly record struct TimelineSegmentPreviewEvent(
     double NormalizedTick,
     double NormalizedValue);
 
+public interface ITimelineSegmentPreviewSource
+{
+    bool HasNoteContent { get; }
+    bool HasEventContent { get; }
+    ulong NoteContentFingerprint { get; }
+    ulong EventContentFingerprint { get; }
+    void QueryNotes(
+        double normalizedStart,
+        double normalizedEnd,
+        List<TimelineSegmentPreviewNote> destination);
+    void QueryEvents(
+        double normalizedStart,
+        double normalizedEnd,
+        List<TimelineSegmentPreviewEvent> destination);
+
+    void VisitNotes(
+        double normalizedStart,
+        double normalizedEnd,
+        Action<TimelineSegmentPreviewNote> visitor)
+    {
+        ArgumentNullException.ThrowIfNull(visitor);
+        List<TimelineSegmentPreviewNote> values = [];
+        QueryNotes(normalizedStart, normalizedEnd, values);
+        foreach (TimelineSegmentPreviewNote value in values) visitor(value);
+    }
+
+    void VisitEvents(
+        double normalizedStart,
+        double normalizedEnd,
+        Action<TimelineSegmentPreviewEvent> visitor)
+    {
+        ArgumentNullException.ThrowIfNull(visitor);
+        List<TimelineSegmentPreviewEvent> values = [];
+        QueryEvents(normalizedStart, normalizedEnd, values);
+        foreach (TimelineSegmentPreviewEvent value in values) visitor(value);
+    }
+
+    ulong GetTileContentFingerprint(
+        bool eventLayer,
+        double deviceSegmentWidth,
+        long tileX)
+    {
+        ulong content = eventLayer ? EventContentFingerprint : NoteContentFingerprint;
+        ulong transform = TimelineContentFingerprint.Combine(
+            unchecked((ulong)BitConverter.DoubleToInt64Bits(deviceSegmentWidth)),
+            unchecked((ulong)tileX));
+        return TimelineContentFingerprint.Combine(content, transform);
+    }
+}
+
 public sealed class TimelineSegmentPreview
 {
     private readonly TimelineSegmentPreviewNote[] _notes;
     private readonly double[] _noteMaximumEndPrefix;
     private readonly TimelineSegmentPreviewEvent[] _events;
+    private readonly ITimelineSegmentPreviewSource? _source;
     private readonly object _tileFingerprintGate = new();
     private readonly Dictionary<SegmentPreviewTileFingerprintKey, ulong> _tileFingerprints = [];
 
@@ -162,6 +213,27 @@ public sealed class TimelineSegmentPreview
         Events = Array.AsReadOnly(_events);
         NoteContentFingerprint = TimelineContentFingerprint.ForSegmentPreviewNotes(_notes);
         EventContentFingerprint = TimelineContentFingerprint.ForSegmentPreviewEvents(_events);
+        HasNoteContent = _notes.Length != 0;
+        HasEventContent = _events.Length != 0;
+        ContentFingerprint = TimelineContentFingerprint.Combine(
+            NoteContentFingerprint,
+            EventContentFingerprint);
+    }
+
+    public TimelineSegmentPreview(MidoraId segmentId, ITimelineSegmentPreviewSource source)
+    {
+        if (segmentId.Value <= 0) throw new ArgumentOutOfRangeException(nameof(segmentId));
+        _source = source ?? throw new ArgumentNullException(nameof(source));
+        SegmentId = segmentId;
+        _notes = [];
+        _noteMaximumEndPrefix = [];
+        _events = [];
+        Notes = Array.Empty<TimelineSegmentPreviewNote>();
+        Events = Array.Empty<TimelineSegmentPreviewEvent>();
+        HasNoteContent = source.HasNoteContent;
+        HasEventContent = source.HasEventContent;
+        NoteContentFingerprint = source.NoteContentFingerprint;
+        EventContentFingerprint = source.EventContentFingerprint;
         ContentFingerprint = TimelineContentFingerprint.Combine(
             NoteContentFingerprint,
             EventContentFingerprint);
@@ -170,6 +242,8 @@ public sealed class TimelineSegmentPreview
     public MidoraId SegmentId { get; }
     public IReadOnlyList<TimelineSegmentPreviewNote> Notes { get; }
     public IReadOnlyList<TimelineSegmentPreviewEvent> Events { get; }
+    public bool HasNoteContent { get; }
+    public bool HasEventContent { get; }
     public ulong NoteContentFingerprint { get; }
     public ulong EventContentFingerprint { get; }
     public ulong ContentFingerprint { get; }
@@ -184,6 +258,11 @@ public sealed class TimelineSegmentPreview
             || !double.IsFinite(normalizedEnd)
             || normalizedEnd <= normalizedStart)
         {
+            return;
+        }
+        if (_source is not null)
+        {
+            _source.QueryNotes(normalizedStart, normalizedEnd, destination);
             return;
         }
         int first = FirstPrefixEndGreaterThan(normalizedStart);
@@ -210,12 +289,65 @@ public sealed class TimelineSegmentPreview
         {
             return;
         }
+        if (_source is not null)
+        {
+            _source.QueryEvents(normalizedStart, normalizedEnd, destination);
+            return;
+        }
         int first = FirstEventAtOrAfter(normalizedStart);
         int lastExclusive = FirstEventAtOrAfter(normalizedEnd);
         for (int index = first; index < lastExclusive; index++)
         {
             destination.Add(_events[index]);
         }
+    }
+
+    internal void VisitNotes(
+        double normalizedStart,
+        double normalizedEnd,
+        Action<TimelineSegmentPreviewNote> visitor)
+    {
+        ArgumentNullException.ThrowIfNull(visitor);
+        if (!double.IsFinite(normalizedStart)
+            || !double.IsFinite(normalizedEnd)
+            || normalizedEnd <= normalizedStart)
+        {
+            return;
+        }
+        if (_source is not null)
+        {
+            _source.VisitNotes(normalizedStart, normalizedEnd, visitor);
+            return;
+        }
+        int first = FirstPrefixEndGreaterThan(normalizedStart);
+        int lastExclusive = FirstNoteStartAtOrAfter(normalizedEnd);
+        for (int index = first; index < lastExclusive; index++)
+        {
+            TimelineSegmentPreviewNote note = _notes[index];
+            if (note.NormalizedEnd > normalizedStart) visitor(note);
+        }
+    }
+
+    internal void VisitEvents(
+        double normalizedStart,
+        double normalizedEnd,
+        Action<TimelineSegmentPreviewEvent> visitor)
+    {
+        ArgumentNullException.ThrowIfNull(visitor);
+        if (!double.IsFinite(normalizedStart)
+            || !double.IsFinite(normalizedEnd)
+            || normalizedEnd <= normalizedStart)
+        {
+            return;
+        }
+        if (_source is not null)
+        {
+            _source.VisitEvents(normalizedStart, normalizedEnd, visitor);
+            return;
+        }
+        int first = FirstEventAtOrAfter(normalizedStart);
+        int lastExclusive = FirstEventAtOrAfter(normalizedEnd);
+        for (int index = first; index < lastExclusive; index++) visitor(_events[index]);
     }
 
     internal ulong GetTileContentFingerprint(
@@ -238,15 +370,17 @@ public sealed class TimelineSegmentPreview
             {
                 return fingerprint;
             }
-            fingerprint = eventLayer
-                ? TimelineSegmentPreviewRasterizer.ComputeEventTileContentFingerprint(
-                    this,
-                    deviceSegmentWidth,
-                    tileX)
-                : TimelineSegmentPreviewRasterizer.ComputeNoteTileContentFingerprint(
-                    this,
-                    deviceSegmentWidth,
-                    tileX);
+            fingerprint = _source is not null
+                ? _source.GetTileContentFingerprint(eventLayer, deviceSegmentWidth, tileX)
+                : eventLayer
+                    ? TimelineSegmentPreviewRasterizer.ComputeEventTileContentFingerprint(
+                        this,
+                        deviceSegmentWidth,
+                        tileX)
+                    : TimelineSegmentPreviewRasterizer.ComputeNoteTileContentFingerprint(
+                        this,
+                        deviceSegmentWidth,
+                        tileX);
             _tileFingerprints.Add(key, fingerprint);
             return fingerprint;
         }
@@ -295,6 +429,40 @@ public sealed class TimelineSegmentPreview
         bool EventLayer,
         long DeviceSegmentWidthKey,
         long TileX);
+}
+
+public interface ITimelineRenderItemSource
+{
+    long Count { get; }
+    long MaximumEndTick { get; }
+    ulong ContentFingerprint { get; }
+
+    void QueryInto(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        List<TimelineRenderItem> destination);
+
+    void VisitInto(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        Action<TimelineRenderItem> visitor)
+    {
+        ArgumentNullException.ThrowIfNull(visitor);
+        List<TimelineRenderItem> values = [];
+        QueryInto(startTick, endTick, firstLane, lastLaneExclusive, values);
+        foreach (TimelineRenderItem value in values) visitor(value);
+    }
+
+    bool TryGetById(MidoraId id, out TimelineRenderItem item);
+    IEnumerable<TimelineRenderItem> EnumerateAll();
+
+    void AccumulateOverviewDensity(long extent, Span<int> destination)
+    {
+    }
 }
 
 public sealed class TimelineSelectionSnapshot
@@ -410,6 +578,7 @@ public sealed class TimelineRenderSnapshot
     private readonly Dictionary<PianoTileFingerprintKey, ulong> _pianoTileFingerprints = [];
     private readonly object _conductorTileFingerprintGate = new();
     private readonly Dictionary<ConductorTileFingerprintKey, ulong> _conductorTileFingerprints = [];
+    private readonly ITimelineRenderItemSource? _itemSource;
 
     public TimelineRenderSnapshot(
         long semanticRevision,
@@ -420,7 +589,8 @@ public sealed class TimelineRenderSnapshot
         IReadOnlyDictionary<MidoraId, TimelineSegmentPreview>? segmentPreviews = null,
         IReadOnlyList<string>? laneSecondaryLabels = null,
         IReadOnlyList<uint>? laneColors = null,
-        IReadOnlyList<ArrangementLaneDescriptor>? arrangementLanes = null)
+        IReadOnlyList<ArrangementLaneDescriptor>? arrangementLanes = null,
+        ITimelineRenderItemSource? itemSource = null)
     {
         if (semanticRevision < 0)
         {
@@ -444,6 +614,7 @@ public sealed class TimelineRenderSnapshot
 
         SemanticRevision = semanticRevision;
         ProjectionKey = projectionKey.Trim();
+        _itemSource = itemSource;
         Items = Array.AsReadOnly(materialized);
         LaneLabels = laneLabels is null
             ? Array.Empty<string>()
@@ -467,7 +638,9 @@ public sealed class TimelineRenderSnapshot
         ItemsById = materialized
             .GroupBy(static item => item.Id)
             .ToDictionary(static group => group.Key, static group => group.OrderByDescending(item => item.ZIndex).First());
-        ContentFingerprint = TimelineContentFingerprint.ForRenderItems(materialized);
+        ContentFingerprint = TimelineContentFingerprint.Combine(
+            TimelineContentFingerprint.ForRenderItems(materialized),
+            itemSource?.ContentFingerprint ?? 0);
         ConductorPreviewFingerprint = TimelineContentFingerprint.ForConductorPreview(materialized);
     }
 
@@ -484,6 +657,88 @@ public sealed class TimelineRenderSnapshot
     public IReadOnlyDictionary<MidoraId, TimelineRenderItem> ItemsById { get; }
     public ulong ContentFingerprint { get; }
     public ulong ConductorPreviewFingerprint { get; }
+    public long TotalItemCount => checked(Items.Count + (_itemSource?.Count ?? 0));
+    public long MaximumEndTick => Math.Max(
+        Items.Count == 0 ? 0 : Items.Max(value => value.EndTick),
+        _itemSource?.MaximumEndTick ?? 0);
+
+    public void AccumulateOverviewDensity(long extent, Span<int> destination)
+    {
+        if (extent <= 0) throw new ArgumentOutOfRangeException(nameof(extent));
+        if (destination.IsEmpty) return;
+        foreach (TimelineRenderItem item in Items)
+        {
+            int x = Math.Clamp((int)(item.StartTick / (double)extent * destination.Length), 0, destination.Length - 1);
+            if (destination[x] < int.MaxValue) destination[x]++;
+        }
+        _itemSource?.AccumulateOverviewDensity(extent, destination);
+    }
+
+    public void QueryInto(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        List<TimelineRenderItem> destination)
+    {
+        Index.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, destination);
+        _itemSource?.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, destination);
+    }
+
+    internal void VisitInto(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        Action<TimelineRenderItem> visitor)
+    {
+        ArgumentNullException.ThrowIfNull(visitor);
+        List<TimelineRenderItem> materialized = [];
+        Index.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, materialized);
+        foreach (TimelineRenderItem value in materialized) visitor(value);
+        _itemSource?.VisitInto(
+            startTick,
+            endTick,
+            firstLane,
+            lastLaneExclusive,
+            visitor);
+    }
+
+    internal bool HasExternalItemSource => _itemSource is not null;
+    internal ulong ExternalItemSourceFingerprint => _itemSource?.ContentFingerprint ?? 0;
+
+    public void HitTestInto(
+        long tick,
+        long toleranceTicks,
+        int lane,
+        List<TimelineRenderItem> destination)
+    {
+        if (tick < 0 || toleranceTicks < 0 || lane < 0)
+            throw new ArgumentOutOfRangeException(nameof(tick));
+        long start = Math.Max(0, tick - Math.Min(tick, toleranceTicks));
+        long end = tick > long.MaxValue - toleranceTicks - 1
+            ? long.MaxValue
+            : tick + toleranceTicks + 1;
+        QueryInto(start, end, lane, checked(lane + 1), destination);
+        destination.RemoveAll(static item =>
+            item.State.HasFlag(TimelineItemState.HitTestDisabled));
+        destination.Sort(static (x, y) =>
+        {
+            int value = y.ZIndex.CompareTo(x.ZIndex);
+            if (value != 0) return value;
+            value = x.Length.CompareTo(y.Length);
+            return value != 0 ? value : x.Id.CompareTo(y.Id);
+        });
+    }
+
+    public bool TryGetItem(MidoraId id, out TimelineRenderItem item)
+    {
+        if (ItemsById.TryGetValue(id, out item)) return true;
+        return _itemSource?.TryGetById(id, out item) == true;
+    }
+
+    public IEnumerable<TimelineRenderItem> EnumerateAllItems() =>
+        _itemSource is null ? Items : Items.Concat(_itemSource.EnumerateAll());
 
     public bool Matches(long semanticRevision, string projectionKey) =>
         SemanticRevision == semanticRevision

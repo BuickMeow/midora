@@ -216,15 +216,15 @@ each mixed parent row
     zero or more child Track rows when expanded
 ```
 
-父节点行比普通 Track 行紧凑，因为父节点不承载 Segment。父节点只在左侧 Header 提供展开箭头、名称、摘要、Mute/Solo 与 context menu；右侧 Timeline 内容区保持留白和非交互，但 Bar/Grid 线必须连续绘制，不能制造断层。
+父节点行比普通 Track 行紧凑，因为父节点不承载 Segment；其高度随 Arrangement 垂直缩放变化，但始终按小于 Track 行的固定比例显示。父节点只在左侧 Header 提供展开箭头、名称、摘要、Mute/Solo 与 context menu。父节点 Header 使用比 child Track / Conductor Header 稍亮的 Surface 色；右侧 Timeline 内容区使用不透明纯黑完整覆盖当前可见宽度，使 Bar/Grid 线在父节点行不可见。播放/编辑指针等瞬时 overlay 可以继续绘制在黑色覆盖层上，但父节点右侧不得响应 Draw 创建、hover 创建预览或 Segment 命中。父节点缩放到无法完整容纳标题与摘要两行时，自动隐藏摘要并保留完整标题，不得裁切摘要残片。
 
-Event Instrument 与 Root child Track 使用相同的二级缩进；所有 Header 的右边界保持对齐。Pure MIDI Track 名称左侧显示 MIDI 图标。Event Instrument Header 显示名称和定义状态；Root Header 显示名称、`Auto`/`Fixed`、Fixed 时的 Port.Channel，以及 `Melodic`/`Percussion`。
+Event Instrument 与 Root child Track 使用相同的二级缩进；所有 Header 的右边界保持对齐，并为名称与次级摘要保留足够的固定宽度。Pure MIDI Track 名称左侧显示 MIDI 图标；Logical Track 显示与其可明确区分的 Logical/Music 图标。Event Instrument Header 显示名称和定义状态；Root Header 显示名称，次级摘要固定为 `Auto <Mode> <N> Tracks` 或 `P.<Port> Ch.<Channel> <Mode> <N> Tracks`，其中 `<Mode>` 为 `Melodic` 或 `Percussion`。
 
 Logical Track Header 不再显示 Bind/Unbind；它位于当前 Event Instrument 下即表示唯一绑定。可以显示父 Event Instrument 的次级摘要。MIDI Track Header 显示其 Track 名称和 MIDI 图标，不重复 Root 名称。
 
 ### 24.7.3 打开与菜单
 
-双击 Event Instrument Header 打开或激活该 Event Instrument Editor。双击 child Track 或 Segment 使用既有 Arrangement/Segment 导航语义。展开/折叠只由左侧 disclosure target 触发，双击 Header 不应意外折叠。
+单击 Event Instrument / Root Header 的任意非命令区域即展开或折叠该父节点；disclosure 图标只是同一命令的视觉提示，不是唯一 hit target。双击 Event Instrument Header 打开或激活该 Event Instrument Editor，且双击路径不得额外执行两次折叠。双击 child Track 或 Segment 使用既有 Arrangement/Segment 导航语义。
 
 Event Instrument 菜单至少包含：
 
@@ -254,6 +254,12 @@ Delete
 Logical/Pure MIDI Track 菜单至少包含既有的 Copy/Cut/Paste/Duplicate/Rename/Delete/Move、选择其全部 Segment（替换或追加）和适用的 Segment 命令。Logical Track 菜单不提供 Unbind；Pure MIDI Track 菜单不提供 Event Instrument binding。
 
 通用快捷键：`Ctrl+C`、`Ctrl+X`、`Ctrl+V`、`Ctrl+D`、`F2`、`Delete` 按当前 Header 焦点和兼容目标路由。命令不得依赖已经失效的 Project Panel selection。
+
+Arrangement 工具栏在红色 Fluent `+` 创建菜单之后提供 `Expand All` 与 `Collapse All` 图标按钮；图标使用批准的 Fluent System Icons 且采用可辨识的亮色。`+` 在播放或其他 Project 编辑锁期间禁用。工具栏不重复显示静态 `Arrangement` 标题。`Ctrl + Mouse Wheel` 仅在指针位于 Header 区域时调整 Arrangement 行的垂直缩放；普通滚轮和 Timeline 内容区既有缩放/滚动语义不改变。垂直滚动到最大值时最后一行必须完整露出在水平 Overview/滚动条上方，不得被其覆盖。
+
+Arrangement Grid 仅提供启用开关；启用时固定按完整 Time Signature Map 绘制 Bar 主线和分母拍低强调子线，Ruler 显示一基小节号。极端水平缩小时采用 device-pixel 最小间距跳过不可辨识的竖线，保证绘制工作量受可视宽度约束。
+
+拖动 Event Instrument / Root 父节点时，插入预览线只能位于顶层父节点之间，不得落在任何 child Track 边界；最终重排与预览必须使用同一规范化目标。Header context menu 的目标必须来自本次右键按下位置的即时 hit test：右键空白处必须打开 Arrangement 空白菜单，不得复用上一次点击或右键过的隐式 Header 目标。该要求不引入父/子 Header 单选视觉状态。
 
 ## 24.8 Pure MIDI Segment 概览
 
@@ -307,6 +313,8 @@ Segment 移动、选择、播放指针、Grid、普通 pan 不重建未变化内
 cache key 至少包含：Segment 稳定 ID、相应内容 fingerprint、精确 tick-to-device transform/LOD、DPI 与 style revision。Grid、play/edit cursor、selection outline、hover 和 drag preview 不得烘焙进稳定内容 tile。
 
 在极端内容下，UI 线程只组合可见 tile 和少量 transient overlay；后台 tile 失败不得阻塞输入或回退到逐对象 WPF 绘制。对象命中和编辑使用原始稳定 ID 及空间索引，不从 bitmap 反推对象。
+
+概览 source 不能是为整个 Segment 复制生成的 normalized Note/Event array。Rasterizer 必须直接查询与目标 tile 的 normalized/tick 范围相交的 immutable source pages，并在读取页时完成 device-column LOD 聚合。Cache entry 只保存 tile bitmap、page/generation fingerprint 与小型 descriptor；Segment 拥有数千万对象时，首次进入 Arrangement 仍不得建立逐对象 preview cache。
 
 ## 24.9 Conductor Arrangement 概览
 

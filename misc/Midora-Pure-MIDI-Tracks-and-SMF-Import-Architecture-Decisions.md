@@ -294,3 +294,47 @@ Pure MIDI Segment preview 的 non-Note event 使用独立缓存层，绘制在 N
 - parent/child Mute-Solo 快速切换与 Root state recovery；
 - Direct NoteOff velocity round-trip；
 - event-above-note 50% screenshot golden、tile invalidation 与百万事件基准。
+
+## 11. ADR-PMIDI-010（已接受）：Out-of-core source pack、paged canonical 与 range-query UI
+
+### 决定
+
+Pure MIDI 的领域层级和语义不变，但大量 Direct records 不再由 `List<class>` 作为唯一物理表示。每个 Pure MIDI Track 持有一个 immutable source page pack；每个 Midi Segment 以 page ranges + copy-on-write overlay 表达 Note/Event/opaque 内容。默认 page 上限为 65,536 records 与 4 MiB decoded payload，任一先到即封页；默认 decoded source-page LRU 为 64 MiB。Stable ID lookup 使用 page ID bounds 与小型 overlay index，不建立全 Project ID dictionary。
+
+`.midora` 使用小型 `midi-tracks/mt_<id>.pb` + 单 Track `midi-content/mt_<id>.mpk`。后者内部有版本化 header/directory、deterministic compressed pages、per-page checksum 与 footer；不按 page 建 Zip entry。打开时顺序复制 pack 到 session backing file后释放原 Zip；保存时流式合并 base + overlay 到新 pack，并参与既有临时包—自校验—原子替换事务。本次仍是开发期破坏性格式，不读旧 direct-record-in-protobuf 布局。
+
+SMF 导入固定两遍流式解析：第一遍只冻结结构、Conductor、Port/Channel bucket、EOT 与 metadata plan；第二遍直接进行 FIFO Note pairing并写 transactional page builders。禁止 `File.ReadAllBytes`、完整 parsed graph、全量 paired-order set和导入后第二份 Pure MIDI 深拷贝。
+
+Canonical对Pure MIDI保留延迟range source、aggregate metadata与source-aware fingerprint；Execution/SMF/audio各自从同一正式source生成最多16,384 records的紧凑consumer pages。非有序source通过131,072-record固定sort run、session临时文件和最多64-way多轮merge形成逻辑总序，不建立全Project canonical arrays。Project compilation snapshot分享immutable source page root并冻结overlay generation。UI preview/piano/Velocity/event lanes直接使用tick/pitch/target range query与page-local LOD，不建立全Segment render-item arrays/indexes。
+
+### 理由
+
+当前逐对象 source、deep snapshot、pending/final canonical arrays、audio projection copies 与 full Timeline snapshot 会把同一 MIDI record同时放大为多份 80～224 byte 托管记录。其峰值与总事件数线性增长，7M Note 已达到约 10～20 GiB，并使 164M 样本不可行。仅扩大 array/IPC 限制既不能控制内存，也不能解除远处事件对播放启动的阻塞。
+
+Page pack 保留 SSD 顺序吞吐优势，同时把常驻内存约束为活动 FIFO、页面缓存、可见 tiles 与编辑 overlay。单 Track 一个 pack避免 page-per-file；immutable base + COW 使 snapshot/Undo不复制未修改内容。
+
+### 拒绝方案
+
+- 只提高 `MaximumImportEventCount`、MDAP 256 MiB或16M event limit；
+- 把 `DirectMidiNote` 改成较小 class/struct但仍全量复制到 canonical/UI/IPC；
+- 一个 Segment 一个巨大 protobuf repeated field并用 `ParseFrom` 整体反序列化；
+- 每 page/Segment 一个本地文件；
+- 仅对 bitmap 做 tile cache，而 source snapshot仍全量对象化。
+
+### 后果与验证
+
+已引入source pack codec、流式importer、延迟paged compiler result、range cursor、bounded external sorter、UI data provider与破坏性persistence golden。大规模操作仍可能按用户明确选择读取整个范围，但必须顺序分页并有进度/取消，不能回退到一次性数组。详细trace与实测数据：`misc/Midora-Extreme-MIDI-Scalability-Requirement-Trace.md`。
+
+## 12. ADR-PMIDI-011（已接受）：播放端点索引与有界中途状态恢复
+
+### 决定
+
+`MIDMPK3` v3在原始Note/Event/Opaque source pages之外，确定性写入每Segment局部有序的NoteOn endpoint、NoteOff endpoint和Channel Event endpoint pages。原始source page继续使用最多65,536 records或4 MiB decoded的双重上限；endpoint page固定最多16,384 records。每个NoteOn endpoint page另保存该页Note的最大end tick，组成用于active-note查询的页级interval index。Reader只接受v3，旧开发期v1/v2直接拒绝，不提供迁移或运行期回退扫描。
+
+Track内按tick查询先用目录bounds裁剪相交endpoint pages，再对page-local sorted runs做`PriorityQueue`有界k-way merge；跨Track/Root继续由canonical merge保持正式same-tick key。中途起播的Channel状态按每16,384个Channel Event建立checkpoint，恢复时只扫描最近checkpoint后缀；active Notes只解码满足`minimumStart < cursor < maximumEnd`的NoteOn endpoint pages并在页内二分start边界，不触碰普通Note page，也不从Segment起点重扫全部历史Note。
+
+### 理由与边界
+
+原始Note page的bounds同时覆盖最早NoteOn与最晚NoteOff。一个长Note会使同一页在大量250 ms窗口内持续“相交”，导致重复解压、扫描和外部排序；中途起播也会从巨型Segment起点回扫。端点索引用可控的pack空间放大换取顺序读取、稳定producer吞吐和有界冷启动。索引是source records的确定性物理派生物，不进入音乐语义、fingerprint或编辑身份；损坏时必须拒绝pack，不能静默使用慢路径掩盖损坏。
+
+验证覆盖跨endpoint page同tick顺序、NoteOn/Off边界、Channel checkpoint前后等价、active-note恢复且不读取普通Note page、正常source page上限保持65,536、v1/v2拒绝、1M/18M/164M样本常驻内存与启动窗口查询。

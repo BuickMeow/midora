@@ -11,6 +11,28 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+function Get-Sha256Hex {
+    param(
+        [Parameter(Mandatory)]
+        [string]$LiteralPath
+    )
+
+    $stream = [System.IO.File]::OpenRead($LiteralPath)
+    try {
+        $algorithm = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hashBytes = $algorithm.ComputeHash($stream)
+        }
+        finally {
+            $algorithm.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+    return [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
+}
+
 $resolvedDirectory = [System.IO.Path]::GetFullPath($Directory)
 $installedManifestPath = Join-Path $resolvedDirectory "native-manifest.json"
 $baselineManifestPath = Join-Path $PSScriptRoot "bass-native-baseline.win-x64.json"
@@ -74,7 +96,7 @@ foreach ($entry in $manifest.files) {
         throw "BASS native file does not exist: $filePath"
     }
 
-    $actualHash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = Get-Sha256Hex -LiteralPath $filePath
     if ($actualHash -ne $expectedHash) {
         throw "BASS native SHA-256 mismatch for $fileName."
     }

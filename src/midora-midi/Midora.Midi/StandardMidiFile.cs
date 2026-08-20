@@ -79,6 +79,21 @@ public sealed class StandardMidiFileTrack
     public IReadOnlyList<StandardMidiFileEvent> Events => _events;
 }
 
+public sealed class StandardMidiFileTrackSource
+{
+    public StandardMidiFileTrackSource(
+        long endTick,
+        IEnumerable<StandardMidiFileEvent> events)
+    {
+        if (endTick < 0) throw new ArgumentOutOfRangeException(nameof(endTick));
+        EndTick = endTick;
+        Events = events ?? throw new ArgumentNullException(nameof(events));
+    }
+
+    public long EndTick { get; }
+    public IEnumerable<StandardMidiFileEvent> Events { get; }
+}
+
 public static partial class StandardMidiFile
 {
     public const byte TextMetaType = 0x01;
@@ -97,6 +112,27 @@ public static partial class StandardMidiFile
         IReadOnlyList<StandardMidiFileTrack> tracks)
     {
         ArgumentNullException.ThrowIfNull(tracks);
+        StandardMidiFileTrackSource[] sources = tracks
+            .Select(track => track is null
+                ? throw new MidoraMidiException("SMF track collection cannot contain null.")
+                : new StandardMidiFileTrackSource(track.EndTick, track.Events))
+            .ToArray();
+        using MemoryStream output = new();
+        WriteType1(output, ticksPerQuarterNote, sources);
+        byte[] result = output.ToArray();
+        ValidateType1(result);
+        return result;
+    }
+
+    public static void WriteType1(
+        Stream output,
+        int ticksPerQuarterNote,
+        IReadOnlyList<StandardMidiFileTrackSource> tracks)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(tracks);
+        if (!output.CanWrite || !output.CanSeek)
+            throw new ArgumentException("SMF output must be writable and seekable.", nameof(output));
         if (ticksPerQuarterNote is < 1 or > 0x7fff)
         {
             throw new MidoraMidiException(
@@ -108,14 +144,13 @@ public static partial class StandardMidiFile
                 $"SMF Type 1 track count must be in the range 1..{ushort.MaxValue}, but was {tracks.Count}.");
         }
 
-        using MemoryStream output = new();
         WriteAscii(output, "MThd"u8);
         WriteUInt32BigEndian(output, 6);
         WriteUInt16BigEndian(output, 1);
         WriteUInt16BigEndian(output, checked((ushort)tracks.Count));
         WriteUInt16BigEndian(output, checked((ushort)ticksPerQuarterNote));
 
-        foreach (StandardMidiFileTrack track in tracks)
+        foreach (StandardMidiFileTrackSource track in tracks)
         {
             if (track is null)
             {
@@ -126,15 +161,19 @@ public static partial class StandardMidiFile
                 throw new MidoraMidiException("SMF track End Of Track tick cannot be negative.");
             }
 
-            byte[] trackBytes = EncodeTrack(track);
             WriteAscii(output, "MTrk"u8);
-            WriteUInt32BigEndian(output, checked((uint)trackBytes.Length));
-            output.Write(trackBytes);
+            long lengthOffset = output.Position;
+            WriteUInt32BigEndian(output, 0);
+            long contentOffset = output.Position;
+            WriteTrack(output, track.EndTick, track.Events);
+            long endOffset = output.Position;
+            long byteCount = checked(endOffset - contentOffset);
+            if (byteCount > uint.MaxValue)
+                throw new MidoraMidiException("SMF track chunk exceeds the 32-bit chunk length limit.");
+            output.Position = lengthOffset;
+            WriteUInt32BigEndian(output, checked((uint)byteCount));
+            output.Position = endOffset;
         }
-
-        byte[] result = output.ToArray();
-        ValidateType1(result);
-        return result;
     }
 
     public static void ValidateType1(ReadOnlySpan<byte> file)
@@ -227,18 +266,20 @@ public static partial class StandardMidiFile
         }
     }
 
-    private static byte[] EncodeTrack(StandardMidiFileTrack track)
+    private static void WriteTrack(
+        Stream output,
+        long endTick,
+        IEnumerable<StandardMidiFileEvent> events)
     {
-        using MemoryStream output = new();
         long previousTick = 0;
         Span<byte> messageBuffer = stackalloc byte[3];
-        foreach (StandardMidiFileEvent value in track.Events)
+        foreach (StandardMidiFileEvent value in events)
         {
             if (value.Tick < previousTick)
             {
                 throw new MidoraMidiException("SMF track events must be supplied in nondecreasing tick order.");
             }
-            if (value.Tick > track.EndTick)
+            if (value.Tick > endTick)
             {
                 throw new MidoraMidiException("SMF event tick cannot be later than End Of Track.");
             }
@@ -275,13 +316,8 @@ public static partial class StandardMidiFile
             }
         }
 
-        WriteVariableLength(output, track.EndTick - previousTick);
+        WriteVariableLength(output, endTick - previousTick);
         output.Write([0xff, EndOfTrackMetaType, 0x00]);
-        if (output.Length > uint.MaxValue)
-        {
-            throw new MidoraMidiException("SMF track chunk exceeds the 32-bit chunk length limit.");
-        }
-        return output.ToArray();
     }
 
     private static void WriteVariableLength(Stream output, long value)

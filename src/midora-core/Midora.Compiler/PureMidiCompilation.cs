@@ -50,12 +50,6 @@ public sealed partial class MidoraCompiler
         CanonicalEventRole Role,
         long SemanticTargetKey);
 
-    private readonly record struct PureMidiCompatibilityEvent(
-        long Tick,
-        int TrackOrder,
-        MidoraId TrackId,
-        MidiMessage Message);
-
     private static PureMidiPlan BuildPureMidiPlan(
         MidoraProject project,
         CompilationRequest request,
@@ -137,9 +131,16 @@ public sealed partial class MidoraCompiler
             rootOrder++;
         }
 
-        // Opaque events are frozen here because they do not participate in the
-        // execution projection, but their Track/tick/order identity is canonical.
-        foreach (PureMidiRootPlan rootPlan in roots)
+        bool usesPagedContent = roots
+            .SelectMany(value => value.Tracks)
+            .SelectMany(value => value.Segments)
+            .Any(value => value.UsesPagedContent);
+
+        // Small in-memory Projects freeze opaque events here. Paged Projects keep
+        // them in the immutable source pack and project them by SMF Track on demand.
+        foreach (PureMidiRootPlan rootPlan in usesPagedContent
+            ? Enumerable.Empty<PureMidiRootPlan>()
+            : roots)
         {
             foreach (PureMidiTrackPlan trackPlan in rootPlan.Tracks)
             {
@@ -216,14 +217,20 @@ public sealed partial class MidoraCompiler
         foreach (PureMidiRootPlan rootPlan in plan.Roots)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            List<PureMidiCompatibilityEvent> events = [];
+            // Cross-MTrk ordering loss is impossible when the Root exports one MTrk.
+            // This is also the dominant imported-MIDI case and must not materialize
+            // two compatibility records for every Note in an extreme Track.
+            if (rootPlan.Tracks.Length < 2) continue;
+            using BoundedCanonicalSmfEventSorter sorter = new();
             foreach (PureMidiTrackPlan trackPlan in rootPlan.Tracks)
             {
                 foreach (MidiSegment segment in trackPlan.Segments)
                 {
                     long contentEnd = checked(segment.ContentOffsetTick + segment.LengthTicks);
                     long segmentEnd = checked(segment.ProjectStartTick + segment.LengthTicks);
-                    foreach (DirectMidiNote note in segment.Notes)
+                    foreach (DirectMidiNoteValue note in segment.Notes.QueryValues(
+                        segment.ContentOffsetTick,
+                        contentEnd))
                     {
                         if (note.StartTick < segment.ContentOffsetTick || note.StartTick >= contentEnd)
                         {
@@ -239,15 +246,19 @@ public sealed partial class MidoraCompiler
                             MidiMessage.NoteOn(
                                 0,
                                 checked((byte)note.Key),
-                                checked((byte)note.NoteOnVelocity)));
+                                checked((byte)note.NoteOnVelocity)),
+                            note.Id);
                         Add(
                             absoluteEnd,
                             MidiMessage.NoteOff(
                                 0,
                                 checked((byte)note.Key),
-                                checked((byte)note.NoteOffVelocity)));
+                                checked((byte)note.NoteOffVelocity)),
+                            note.Id);
                     }
-                    foreach (DirectMidiChannelEvent value in segment.ChannelEvents)
+                    foreach (DirectMidiChannelEventValue value in segment.ChannelEvents.QueryValues(
+                        segment.ContentOffsetTick,
+                        contentEnd))
                     {
                         if (value.Tick < segment.ContentOffsetTick || value.Tick >= contentEnd)
                         {
@@ -255,98 +266,174 @@ public sealed partial class MidoraCompiler
                         }
                         long absoluteTick = checked(
                             segment.ProjectStartTick + value.Tick - segment.ContentOffsetTick);
-                        Add(absoluteTick, ToMidiMessage(value, channel: 0));
+                        Add(absoluteTick, ToMidiMessage(value, channel: 0), value.Id);
                     }
 
-                    void Add(long tick, MidiMessage message)
+                    void Add(long tick, MidiMessage message, MidoraId objectId)
                     {
                         if (tick < startTick || tick > endTick)
                         {
                             return;
                         }
-                        events.Add(new(
-                            tick,
-                            trackPlan.TrackOrder,
+                        sorter.Add(new(
                             trackPlan.Track.Id,
-                            message));
+                            tick,
+                            0,
+                            0,
+                            message,
+                            CanonicalEventRole.DirectMidi,
+                            trackPlan.TrackOrder,
+                            objectId));
                     }
                 }
             }
 
-            int conflictCount = 0;
             long? firstTick = null;
-            foreach (IGrouping<long, PureMidiCompatibilityEvent> tickGroup in events
-                .GroupBy(value => value.Tick)
-                .OrderBy(value => value.Key))
+            long currentTick = long.MinValue;
+            PureMidiCompatibilityTickState tickState = new();
+            foreach (CanonicalSmfTrackChannelEvent value in sorter
+                .ReadPages(cancellationToken)
+                .SelectMany(page => page.Items))
             {
-                PureMidiCompatibilityEvent[] values = tickGroup
-                    .OrderBy(value => value.TrackOrder)
-                    .ToArray();
-                for (int leftIndex = 0; leftIndex < values.Length; leftIndex++)
+                if (value.Tick != currentTick)
                 {
-                    for (int rightIndex = leftIndex + 1; rightIndex < values.Length; rightIndex++)
-                    {
-                        PureMidiCompatibilityEvent left = values[leftIndex];
-                        PureMidiCompatibilityEvent right = values[rightIndex];
-                        if (left.TrackId == right.TrackId
-                            || !IsCrossTrackOrderSensitive(left.Message, right.Message))
-                        {
-                            continue;
-                        }
-                        conflictCount++;
-                        firstTick ??= tickGroup.Key;
-                    }
+                    currentTick = value.Tick;
+                    tickState.Reset();
                 }
+                if (!tickState.Add(value.ExportTrackId, value.Message)) continue;
+                firstTick = value.Tick;
+                break;
             }
-            if (conflictCount == 0)
+            if (!firstTick.HasValue)
             {
                 continue;
             }
             diagnostics.Add(new(
                 "MIDORA2251",
                 DiagnosticSeverity.Warning,
-                $"MIDI Channel Root '{rootPlan.Root.Name}' has {conflictCount} cross-Track same-tick order-sensitive event combination(s); the first is at tick {firstTick}. SMF players may not preserve Midora's cross-MTrk order.",
-                new(MidiChannelRootId: rootPlan.Root.Id, Tick: firstTick!.Value)));
+                $"MIDI Channel Root '{rootPlan.Root.Name}' has cross-Track same-tick order-sensitive events; the first combination is at tick {firstTick}. SMF players may not preserve Midora's cross-MTrk order.",
+                new(MidiChannelRootId: rootPlan.Root.Id, Tick: firstTick.Value)));
         }
     }
 
-    private static bool IsCrossTrackOrderSensitive(MidiMessage left, MidiMessage right)
+    private sealed class PureMidiCompatibilityTickState
     {
-        if (IsChannelMode(left) || IsChannelMode(right))
+        private readonly TrackWitness[] _noteOns = new TrackWitness[128];
+        private readonly TrackWitness[] _noteOffs = new TrackWitness[128];
+        private readonly Dictionary<int, StateTargetWitness> _stateTargets = [];
+        private TrackWitness _any;
+        private TrackWitness _channelMode;
+        private TrackWitness _bankProgramOrReset;
+        private TrackWitness _anyNoteOn;
+
+        public void Reset()
         {
-            return true;
+            _any = default;
+            _channelMode = default;
+            _bankProgramOrReset = default;
+            _anyNoteOn = default;
+            Array.Clear(_noteOns);
+            Array.Clear(_noteOffs);
+            _stateTargets.Clear();
         }
-        if ((IsBankProgramOrReset(left) && IsNoteOn(right))
-            || (IsBankProgramOrReset(right) && IsNoteOn(left)))
+
+        public bool Add(MidoraId trackId, MidiMessage message)
         {
-            return true;
+            bool channelMode = IsChannelModeMessage(message);
+            bool bankProgramOrReset = IsBankProgramOrResetMessage(message);
+            bool noteOn = IsNoteOnMessage(message);
+            bool noteOff = IsNoteOffMessage(message);
+            if (channelMode ? _any.HasOther(trackId) : _channelMode.HasOther(trackId))
+                return true;
+            if (bankProgramOrReset && _anyNoteOn.HasOther(trackId)
+                || noteOn && _bankProgramOrReset.HasOther(trackId))
+            {
+                return true;
+            }
+            if (noteOn && _noteOffs[message.Byte1].HasOther(trackId)
+                || noteOff && _noteOns[message.Byte1].HasOther(trackId))
+            {
+                return true;
+            }
+            if (TryGetDirectStateTarget(message, out int target))
+            {
+                if (!_stateTargets.TryGetValue(target, out StateTargetWitness? witness))
+                {
+                    witness = new();
+                    _stateTargets.Add(target, witness);
+                }
+                if (witness.Add(trackId, message.PackedValue)) return true;
+            }
+
+            _any.Add(trackId);
+            if (channelMode) _channelMode.Add(trackId);
+            if (bankProgramOrReset) _bankProgramOrReset.Add(trackId);
+            if (noteOn)
+            {
+                _anyNoteOn.Add(trackId);
+                _noteOns[message.Byte1].Add(trackId);
+            }
+            if (noteOff) _noteOffs[message.Byte1].Add(trackId);
+            return false;
         }
-        if ((IsNoteOn(left) && IsNoteOff(right)
-                || IsNoteOff(left) && IsNoteOn(right))
-            && left.Byte1 == right.Byte1)
-        {
-            return true;
-        }
-        return TryGetDirectStateTarget(left, out int leftTarget)
-            && TryGetDirectStateTarget(right, out int rightTarget)
-            && leftTarget == rightTarget
-            && left.PackedValue != right.PackedValue;
-
-        static bool IsNoteOn(MidiMessage value) =>
-            value.MessageType == MidiMessageType.NoteOn && value.Byte2 != 0;
-
-        static bool IsNoteOff(MidiMessage value) =>
-            value.MessageType == MidiMessageType.NoteOff
-            || value.MessageType == MidiMessageType.NoteOn && value.Byte2 == 0;
-
-        static bool IsChannelMode(MidiMessage value) =>
-            value.MessageType == MidiMessageType.ControlChange && value.Byte1 >= 120;
-
-        static bool IsBankProgramOrReset(MidiMessage value) =>
-            value.MessageType == MidiMessageType.ProgramChange
-            || value.MessageType == MidiMessageType.ControlChange
-                && (value.Byte1 is 0 or 32 or 121 || value.Byte1 >= 120);
     }
+
+    private struct TrackWitness
+    {
+        private MidoraId _firstTrackId;
+        private bool _hasMultipleTracks;
+
+        public bool HasOther(MidoraId trackId) => _firstTrackId != default
+            && (_hasMultipleTracks || _firstTrackId != trackId);
+
+        public void Add(MidoraId trackId)
+        {
+            if (_firstTrackId == default) _firstTrackId = trackId;
+            else if (_firstTrackId != trackId) _hasMultipleTracks = true;
+        }
+    }
+
+    private sealed class StateTargetWitness
+    {
+        private MidoraId _firstTrackId;
+        private uint _firstValue;
+        private bool _firstTrackHasMultipleValues;
+        private bool _hasMultipleTracks;
+
+        public bool Add(MidoraId trackId, uint value)
+        {
+            if (_firstTrackId == default)
+            {
+                _firstTrackId = trackId;
+                _firstValue = value;
+                return false;
+            }
+            if (_hasMultipleTracks) return value != _firstValue;
+            if (trackId == _firstTrackId)
+            {
+                _firstTrackHasMultipleValues |= value != _firstValue;
+                return false;
+            }
+            if (_firstTrackHasMultipleValues || value != _firstValue) return true;
+            _hasMultipleTracks = true;
+            return false;
+        }
+    }
+
+    private static bool IsNoteOnMessage(MidiMessage value) =>
+        value.MessageType == MidiMessageType.NoteOn && value.Byte2 != 0;
+
+    private static bool IsNoteOffMessage(MidiMessage value) =>
+        value.MessageType == MidiMessageType.NoteOff
+        || value.MessageType == MidiMessageType.NoteOn && value.Byte2 == 0;
+
+    private static bool IsChannelModeMessage(MidiMessage value) =>
+        value.MessageType == MidiMessageType.ControlChange && value.Byte1 >= 120;
+
+    private static bool IsBankProgramOrResetMessage(MidiMessage value) =>
+        value.MessageType == MidiMessageType.ProgramChange
+        || value.MessageType == MidiMessageType.ControlChange
+            && (value.Byte1 is 0 or 32 or 121 || value.Byte1 >= 120);
 
     private static bool TryGetDirectStateTarget(MidiMessage value, out int target)
     {
@@ -796,6 +883,26 @@ public sealed partial class MidoraCompiler
     }
 
     private static MidiMessage ToMidiMessage(DirectMidiChannelEvent value, byte channel) =>
+        value.Kind switch
+        {
+            DirectMidiChannelEventKind.NoteOff => MidiMessage.NoteOff(
+                channel, checked((byte)value.Data1), checked((byte)value.Data2)),
+            DirectMidiChannelEventKind.NoteOn => MidiMessage.NoteOn(
+                channel, checked((byte)value.Data1), checked((byte)value.Data2)),
+            DirectMidiChannelEventKind.PolyphonicKeyPressure => MidiMessage.PolyphonicKeyPressure(
+                channel, checked((byte)value.Data1), checked((byte)value.Data2)),
+            DirectMidiChannelEventKind.ControlChange => MidiMessage.ControlChange(
+                channel, checked((byte)value.Data1), checked((byte)value.Data2)),
+            DirectMidiChannelEventKind.ProgramChange => MidiMessage.ProgramChange(
+                channel, checked((byte)value.Data1)),
+            DirectMidiChannelEventKind.ChannelPressure => MidiMessage.ChannelPressure(
+                channel, checked((byte)value.Data1)),
+            DirectMidiChannelEventKind.PitchBend => MidiMessage.PitchWheelChange(
+                channel, checked((ushort)((value.Data2 << 7) | value.Data1))),
+            _ => throw new InvalidDataException($"Unsupported direct MIDI event kind {value.Kind}.")
+        };
+
+    private static MidiMessage ToMidiMessage(DirectMidiChannelEventValue value, byte channel) =>
         value.Kind switch
         {
             DirectMidiChannelEventKind.NoteOff => MidiMessage.NoteOff(

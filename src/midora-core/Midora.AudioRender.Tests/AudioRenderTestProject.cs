@@ -21,11 +21,10 @@ internal static class AudioRenderTestProject
 
         foreach ((string name, long lengthTicks, byte note) in tracks)
         {
-            LogicalTrack track = new(project)
-            {
+            LogicalTrack track = new(project) {
                 Name = name,
-                EventInstrumentId = instrument.Id
             };
+            ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
             Segment segment = new(project) { LengthTicks = lengthTicks };
             segment.Notes.Add(new(project)
             {
@@ -34,7 +33,6 @@ internal static class AudioRenderTestProject
                 Velocity = 100
             });
             track.Segments.Add(segment);
-            project.Tracks.Add(track);
         }
         return project;
     }

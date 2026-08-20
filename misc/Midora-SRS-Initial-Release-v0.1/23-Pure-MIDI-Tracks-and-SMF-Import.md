@@ -37,18 +37,17 @@ Pure MIDI Track 不绕过 semantic validation 或 canonical；消费者不得直
 
 ## 23.2 Project 对象关系
 
-Project 的 Pure MIDI branch 位于第 24 章 mixed Arrangement parent list 中：
+Project 的 Pure MIDI Track 位于第 24 章 global mixed Arrangement track list 中：
 
 ```text
 Project
-└─ Arrangement Parents (mixed Event Instrument / Root order)
-   └─ MIDI Channel Root
-      └─ Pure MIDI Tracks
-         └─ Pure MIDI Track
-            └─ Midi Segments
-               ├─ Direct MIDI Notes
-               ├─ Direct MIDI Channel Events
-               └─ Opaque Imported Events
+├─ MIDI Channel Roots (internal, non-empty shared execution identities)
+└─ Arrangement Tracks (mixed Logical / Pure MIDI order)
+   └─ Pure MIDI Track → Root ID
+      └─ Midi Segments
+         ├─ Direct MIDI Notes
+         ├─ Direct MIDI Channel Events
+         └─ Opaque Imported Events
 ```
 
 `MIDI Channel Root`、`Pure MIDI Track` 和 `Midi Segment` 都必须拥有 Project 内全局唯一的稳定 ID。名称、显示顺序、Port、Channel、tick 和源 MTrk index 都不得替代身份。
@@ -57,7 +56,7 @@ Project
 
 ### 23.3.1 定义
 
-MIDI Channel Root 是一组 Pure MIDI Track 的必选父容器。它本身不保存 Note、普通 Channel Event 或 Segment；它定义这些子 Track 共享的：
+MIDI Channel Root 是一组 Pure MIDI Track 的必选内部共享执行身份。它不占 Arrangement 行，也不保存 Note、普通 Channel Event 或 Segment；它定义这些成员 Track 共享的：
 
 ```text
 Channel Unit identity
@@ -81,10 +80,10 @@ Display Name
 Routing Mode: Auto | Fixed
 Fixed Port / Channel when Routing Mode = Fixed
 Channel Mode: Melodic | Percussion
-Explicit ordered child MidiTrack references
+不保存 child order；成员由 Track 的 Root ID 反向索引
 ```
 
-Root 名称允许重复，不参与路由或身份判断。Root 顺序从第 24 章 Arrangement mixed parent order 过滤所有 Root 得到，不另存第二套顺序；该相对顺序参与确定性分配、SMF Track 排列和诊断显示。
+Root 名称允许重复，不参与路由或身份判断。Root 必须至少有一个成员 Track；最后一个成员移出或删除时必须与 Root 原子删除。Root 的确定顺序取其成员在 global Arrangement order 中的最早位置，再以 stable ID 作最终兜底；不得保存第二套 child/global order。
 
 ### 23.3.3 路由模式
 
@@ -143,9 +142,7 @@ does not change canonical source semantics
 does not affect MIDI Export or Audio Render
 ```
 
-Root parent 另有独立 Mute/Solo，且不改写 child 状态。父 Solo/child Solo 的候选集合严格使用第 24.5 节三分支规则。
-
-Root 级共享 Channel 状态意味着单独 Mute 某个子 Track 可能改变其他子 Track 在监听时收到的共享状态；播放层必须按 canonical 来源追踪执行受控过滤和恢复，不得修改 Project 或重新分配 Root Unit。
+Root 源数据不保存 Mute/Solo。Arrangement 中可见的 shared Root block 可按第 24.9 节拥有独立 group Mute/Solo 运行时状态，且不得改写成员 Track 开关。Root 级共享 Channel 状态意味着单独 Mute 某个成员 Track 可能改变其他成员在监听时收到的共享状态；播放层必须按 canonical 来源追踪执行受控过滤和恢复，不得修改 Project 或重新分配 Root Unit。
 
 ## 23.5 Midi Segment
 
@@ -339,12 +336,12 @@ project/range final Root cleanup
 
 ```text
 1. validate all Fixed Roots and reserve their exact Units
-2. allocate every non-empty Auto Root in explicit Root order to the lowest unreserved Unit
+2. allocate every Auto Root with participating Segment content in earliest-member global Track order to the lowest unreserved Unit
 3. allocate Logical/Event Instrument Channel Groups from the remaining Units
 4. fail atomically if any Root or Logical allocation cannot be satisfied
 ```
 
-Fixed Root 即使为空也保留其 Unit，因为固定路由表达用户明确占用意图。没有任何可编译内容的 Auto Root 不分配 Unit。非空 Auto Root 一旦分配，在本次 CompileContext 的整个范围内保持同一 Unit；不得与 Logical instance 做时间复用。
+结构上不允许空 Root。纳入本次 CompileContext 的 Fixed Root 即使成员 Track 没有可编译内容也保留其精确 Unit，因为固定路由表达明确占用意图；没有任何参与 Segment 内容的 Auto Root 不分配 Unit。Auto Root 一旦分配，在本次 CompileContext 的整个范围内保持同一 Unit；不得与 Logical instance 做时间复用。
 
 ### 23.8.2 容量与统计
 
@@ -579,7 +576,7 @@ then every selected Pure MIDI Track as one independent single-channel MTrk
 then Logical/Event Instrument output as one MTrk per actual Channel Unit
 ```
 
-Pure MIDI MTrk 顺序固定为 Root explicit order → child Track explicit order。Logical Unit MTrk 继续按原始 Port→Channel 排序。一个 Pure MIDI MTrk 只含其 canonical `ExportTrackId` 的事件；同 Root 的多个 MTrk 可以共享 Port.Channel。
+Pure MIDI MTrk 顺序固定为 global Arrangement order 过滤 Pure MIDI Track 的结果。Logical Unit MTrk 继续按实际 Port→Channel 排序。一个 Pure MIDI MTrk 只含其 canonical `ExportTrackId` 的事件；同 Root 的多个 MTrk 可以共享 Port.Channel。该规则保证 SMF 导入形成的 Track 顺序可在导出时保持。
 
 该拓扑适用于 Whole Project 与 Per Port。既有 `Per Logical Track` 模式保持为 Logical/Event Instrument 专用，不复制 Pure MIDI Track；单独导出某条 Pure MIDI Track 使用 Whole Project + 显式 Track 选择。
 
@@ -589,7 +586,7 @@ Conductor、被选择 Pure MIDI Track 与实际 Logical Unit MTrk 的合计数�
 
 Pure MIDI MTrk 的 Track Name 必须是冻结 canonical descriptor 中的用户 Track 名称，不得改成 `Port P / Channel C`。每个 MTrk 写对应 Root 的 MIDI Port Meta，Channel status 使用该 Root 的 Channel。
 
-为了在 Midora 间精确往返，Pure MIDI MTrk 在 tick 0 可以写版本化 Midora Sequencer-Specific Meta，保存 Root/Track Stable ID、Root Name/Order、Track Order、Routing Mode 和 Channel Mode。该 Meta：
+为了在 Midora 间精确往返，Pure MIDI MTrk 在 tick 0 可以写版本化 Midora Sequencer-Specific Meta，保存 Root/Track Stable ID、Root Name、Root membership、global Arrangement Track position、Routing Mode 和 Channel Mode。该 Meta：
 
 ```text
 must not affect playback
@@ -680,9 +677,9 @@ Stream 创建、重建和复用前必须按 canonical Unit 的 Channel Mode 建�
 
 ### 23.14.1 Arrangement
 
-Arrangement 固定显示 Conductor 第一行，并以可混排 parent Header 显示 Event Instrument 与 Root；展开 Root 后显示连续、有显式 child order 的 Pure MIDI Tracks。Pure MIDI Track 名称左侧显示 MIDI 图标；Root 名称、Auto/Fixed route、Port.Channel 和 Melodic/Percussion 必须有明确可编辑入口。完整层级见第 24 章。
+Arrangement 固定显示 Conductor 第一行，随后按一个 global mixed order 平铺 Logical / Pure MIDI Track。Pure MIDI Track 名称左侧显示 MIDI 图标；Fixed Root 在 UI 中表现为 Track 的 Port.Channel / mode 属性，不显示 Root 行；共享 Auto Root 的连续成员以 brace block 表示并可整体移动、加入或拆出。完整规则见第 24 章。
 
-Track Header 的 hover/pressed、重排、Rename、Copy/Cut/Paste/Duplicate、Delete、Mute/Solo 与 Segment 操作复用既有样式和交互。Root 与 child 的 Mute/Solo 相互独立；Event Instrument binding 命令不显示在 Pure MIDI Track 菜单。
+Track Header 的 hover/pressed、重排、Rename、Copy/Cut/Paste/Duplicate、Delete、Mute/Solo 与 Segment 操作复用既有样式和交互。Root 不显示独立 Header 或 Mute/Solo；Event Instrument binding 命令不显示在 Pure MIDI Track 菜单。
 
 Pure MIDI Segment 除 Direct Note preview 外，还在 Note 上层绘制统一颜色、50% 透明度的 non-Note event 线；两层独立缓存和局部失效。Conductor 第一行使用独立缓存的按类型着色圆点概览。完整视觉、LOD 与性能边界见第 24.8～24.9 节。
 
@@ -716,7 +713,7 @@ midi-channel-roots/mcr_<id>.pb
 midi-tracks/mt_<id>.pb
 ```
 
-Root 文件保存 Root 字段与有序 Track 引用；Track 文件保存 Track 字段、Midi Segment、Direct Note/Event、opaque payload 与顺序。`project.json` 以 Arrangement parent tagged union 保存混排父节点，并建立 Root/Track 路径、父子关系与名称快照；Root 相对顺序由该 union 过滤得到。manifest、project index、文件名、对象内部 ID/type 必须严格一致。
+Root 文件只保存共享路由字段，不保存有序 Track 引用；Track 文件保存 parent Root ID、Track 字段、Midi Segment、Direct Note/Event、opaque payload 与顺序。`project.json` 保存 global Arrangement track tagged union，并分别建立 Root/Track 路径与名称快照；Root 成员由 Track 引用反向建立。manifest、project index、文件名、对象内部 ID/type 必须严格一致；空 Root、重复 Track、断裂 Root 引用或第二套 child order 均按结构损坏处理。
 
 本次变更属于开发期破坏性格式修订。旧开发期 `.midora` 布局不提供兼容读取、迁移或双写；schema、protobuf descriptor 和 golden bytes 必须作为同一当前基线整体重建。产品版本名称不因该开发期格式修订自动改变。
 

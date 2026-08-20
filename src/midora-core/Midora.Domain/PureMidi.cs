@@ -1,29 +1,33 @@
 namespace Midora.Domain;
 
-public enum ArrangementParentKind
+public enum ArrangementTrackKind
 {
-    EventInstrument,
-    MidiChannelRoot
+    LogicalTrack,
+    PureMidiTrack
 }
 
-public readonly record struct ArrangementParentReference
+/// <summary>
+/// The one authoritative user-visible Arrangement order after the fixed
+/// Conductor row. Usage and Root identities never occupy rows in this list.
+/// </summary>
+public readonly record struct ArrangementTrackReference
 {
-    public ArrangementParentReference(ArrangementParentKind kind, MidoraId parentId)
+    public ArrangementTrackReference(ArrangementTrackKind kind, MidoraId trackId)
     {
         if (!Enum.IsDefined(kind))
         {
             throw new ArgumentOutOfRangeException(nameof(kind));
         }
-        if (parentId == default)
+        if (trackId == default)
         {
-            throw new ArgumentOutOfRangeException(nameof(parentId));
+            throw new ArgumentOutOfRangeException(nameof(trackId));
         }
         Kind = kind;
-        ParentId = parentId;
+        TrackId = trackId;
     }
 
-    public ArrangementParentKind Kind { get; }
-    public MidoraId ParentId { get; }
+    public ArrangementTrackKind Kind { get; }
+    public MidoraId TrackId { get; }
 }
 
 public enum MidiChannelRootRoutingMode
@@ -59,7 +63,6 @@ public sealed class MidiChannelRoot
     public byte FixedZeroBasedPort { get; set; }
     public byte FixedZeroBasedChannel { get; set; }
     public MidiChannelMode ChannelMode { get; set; }
-    public List<MidoraId> MidiTrackIds { get; } = [];
 }
 
 public sealed class PureMidiTrack
@@ -295,47 +298,47 @@ public static class ArrangementHierarchy
     public static IEnumerable<EventInstrument> EventInstrumentsInOrder(this MidoraProject project)
     {
         ArgumentNullException.ThrowIfNull(project);
-        Dictionary<MidoraId, EventInstrument> byId = project.EventInstruments
-            .GroupBy(value => value.Id)
-            .ToDictionary(value => value.Key, value => value.First());
-        foreach (ArrangementParentReference parent in project.ArrangementParents)
+        foreach (EventInstrument instrument in project.EventInstruments)
         {
-            if (parent.Kind == ArrangementParentKind.EventInstrument
-                && byId.TryGetValue(parent.ParentId, out EventInstrument? instrument))
-            {
-                yield return instrument;
-            }
+            yield return instrument;
         }
     }
 
     public static IEnumerable<MidiChannelRoot> MidiChannelRootsInOrder(this MidoraProject project)
     {
         ArgumentNullException.ThrowIfNull(project);
-        Dictionary<MidoraId, MidiChannelRoot> byId = project.MidiChannelRoots
+        Dictionary<MidoraId, MidiChannelRoot> roots = project.MidiChannelRoots
             .GroupBy(value => value.Id)
             .ToDictionary(value => value.Key, value => value.First());
-        foreach (ArrangementParentReference parent in project.ArrangementParents)
+        HashSet<MidoraId> emitted = [];
+        Dictionary<MidoraId, PureMidiTrack> tracks = project.PureMidiTracks
+            .GroupBy(value => value.Id)
+            .ToDictionary(value => value.Key, value => value.First());
+        foreach (ArrangementTrackReference reference in project.ArrangementTracks)
         {
-            if (parent.Kind == ArrangementParentKind.MidiChannelRoot
-                && byId.TryGetValue(parent.ParentId, out MidiChannelRoot? root))
+            if (reference.Kind != ArrangementTrackKind.PureMidiTrack
+                || !tracks.TryGetValue(reference.TrackId, out PureMidiTrack? track)
+                || !emitted.Add(track.MidiChannelRootId)
+                || !roots.TryGetValue(track.MidiChannelRootId, out MidiChannelRoot? root))
             {
-                yield return root;
+                continue;
             }
+            yield return root;
         }
     }
 
     public static IEnumerable<LogicalTrack> LogicalTracksInArrangementOrder(this MidoraProject project)
     {
         ArgumentNullException.ThrowIfNull(project);
-        Dictionary<MidoraId, LogicalTrack> tracks = project.Tracks.ToDictionary(value => value.Id);
-        foreach (EventInstrument instrument in project.EventInstrumentsInOrder())
+        Dictionary<MidoraId, LogicalTrack> orderedTracks = project.Tracks
+            .GroupBy(value => value.Id)
+            .ToDictionary(value => value.Key, value => value.First());
+        foreach (ArrangementTrackReference reference in project.ArrangementTracks)
         {
-            foreach (MidoraId trackId in instrument.LogicalTrackIds)
+            if (reference.Kind == ArrangementTrackKind.LogicalTrack
+                && orderedTracks.TryGetValue(reference.TrackId, out LogicalTrack? track))
             {
-                if (tracks.TryGetValue(trackId, out LogicalTrack? track))
-                {
-                    yield return track;
-                }
+                yield return track;
             }
         }
     }
@@ -343,16 +346,68 @@ public static class ArrangementHierarchy
     public static IEnumerable<PureMidiTrack> PureMidiTracksInArrangementOrder(this MidoraProject project)
     {
         ArgumentNullException.ThrowIfNull(project);
-        Dictionary<MidoraId, PureMidiTrack> tracks = project.PureMidiTracks.ToDictionary(value => value.Id);
-        foreach (MidiChannelRoot root in project.MidiChannelRootsInOrder())
+        Dictionary<MidoraId, PureMidiTrack> orderedTracks = project.PureMidiTracks
+            .GroupBy(value => value.Id)
+            .ToDictionary(value => value.Key, value => value.First());
+        foreach (ArrangementTrackReference reference in project.ArrangementTracks)
         {
-            foreach (MidoraId trackId in root.MidiTrackIds)
+            if (reference.Kind == ArrangementTrackKind.PureMidiTrack
+                && orderedTracks.TryGetValue(reference.TrackId, out PureMidiTrack? track))
             {
-                if (tracks.TryGetValue(trackId, out PureMidiTrack? track))
-                {
-                    yield return track;
-                }
+                yield return track;
             }
         }
+    }
+
+    public static IEnumerable<ArrangementTrackReference> TracksInArrangementOrder(
+        this MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        foreach (ArrangementTrackReference reference in project.ArrangementTracks)
+        {
+            yield return reference;
+        }
+    }
+
+    public static EventInstrumentUsage? FindEventInstrumentUsage(
+        this MidoraProject project,
+        LogicalTrack track) =>
+        track.EventInstrumentUsageId is MidoraId usageId
+            ? project.EventInstrumentUsages.FirstOrDefault(value => value.Id == usageId)
+            : null;
+
+    public static EventInstrument? FindEventInstrumentDefinition(
+        this MidoraProject project,
+        LogicalTrack track)
+    {
+        MidoraId? instrumentId = project.ResolveEventInstrumentDefinitionId(track);
+        return instrumentId is MidoraId id
+            ? project.EventInstruments.FirstOrDefault(value => value.Id == id)
+            : null;
+    }
+
+    public static MidoraId? ResolveEventInstrumentDefinitionId(
+        this MidoraProject project,
+        LogicalTrack track)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(track);
+        return project.FindEventInstrumentUsage(track)?.EventInstrumentId;
+    }
+
+    public static IEnumerable<LogicalTrack> LogicalTracksForUsage(
+        this MidoraProject project,
+        MidoraId usageId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        return project.Tracks.Where(value => value.EventInstrumentUsageId == usageId);
+    }
+
+    public static IEnumerable<PureMidiTrack> PureMidiTracksForRoot(
+        this MidoraProject project,
+        MidoraId rootId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        return project.PureMidiTracks.Where(value => value.MidiChannelRootId == rootId);
     }
 }

@@ -26,8 +26,7 @@ message MidiChannelRootV1 {
   uint32 fixed_zero_based_port = 6;
   uint32 fixed_zero_based_channel = 7;
   MidiChannelModeV1 channel_mode = 8;
-  repeated int64 midi_track_ids = 9;
-  reserved 10 to max;
+  reserved 9 to max;
 }
 
 enum DirectMidiChannelEventKindV1 {

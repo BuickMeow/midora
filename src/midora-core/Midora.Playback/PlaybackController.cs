@@ -126,8 +126,8 @@ public sealed class PlaybackController : IDisposable
     private readonly IRealtimePlaybackBackend _backend;
     private readonly HashSet<MidoraId> _mutedTracks = [];
     private readonly HashSet<MidoraId> _soloTracks = [];
-    private readonly HashSet<MidoraId> _mutedParents = [];
-    private readonly HashSet<MidoraId> _soloParents = [];
+    private readonly HashSet<MidoraId> _mutedSharedGroups = [];
+    private readonly HashSet<MidoraId> _soloSharedGroups = [];
     private readonly HashSet<MidoraId> _audibleTracks = [];
     private readonly object _backendPreparationSync = new();
     private readonly object _prewarmSync = new();
@@ -340,7 +340,7 @@ public sealed class PlaybackController : IDisposable
             ?? throw new ArgumentOutOfRangeException(nameof(trackId));
         Segment segment = track.Segments.FirstOrDefault(value => value.Id == segmentId)
             ?? throw new ArgumentOutOfRangeException(nameof(segmentId));
-        MidoraId instrumentId = track.EventInstrumentId
+        MidoraId instrumentId = _session.Project.ResolveEventInstrumentDefinitionId(track)
             ?? throw new InvalidOperationException(
                 "Pitch Ruler preview requires a bound Event Instrument.");
         if (!_session.Project.EventInstruments.Any(value => value.Id == instrumentId))
@@ -835,10 +835,12 @@ public sealed class PlaybackController : IDisposable
         _disposed = true;
     }
 
-    public void SetArrangementParentMuted(MidoraId parentId, bool muted)
+    public void SetSharedGroupMuted(MidoraId sharedGroupId, bool muted)
     {
-        EnsureArrangementParentExists(parentId);
-        bool changed = muted ? _mutedParents.Add(parentId) : _mutedParents.Remove(parentId);
+        EnsureSharedGroupExists(sharedGroupId);
+        bool changed = muted
+            ? _mutedSharedGroups.Add(sharedGroupId)
+            : _mutedSharedGroups.Remove(sharedGroupId);
         if (!changed) return;
         try
         {
@@ -846,17 +848,19 @@ public sealed class PlaybackController : IDisposable
         }
         catch
         {
-            if (muted) _mutedParents.Remove(parentId);
-            else _mutedParents.Add(parentId);
+            if (muted) _mutedSharedGroups.Remove(sharedGroupId);
+            else _mutedSharedGroups.Add(sharedGroupId);
             RebuildAudibleTracks();
             throw;
         }
     }
 
-    public void SetArrangementParentSolo(MidoraId parentId, bool solo)
+    public void SetSharedGroupSolo(MidoraId sharedGroupId, bool solo)
     {
-        EnsureArrangementParentExists(parentId);
-        bool changed = solo ? _soloParents.Add(parentId) : _soloParents.Remove(parentId);
+        EnsureSharedGroupExists(sharedGroupId);
+        bool changed = solo
+            ? _soloSharedGroups.Add(sharedGroupId)
+            : _soloSharedGroups.Remove(sharedGroupId);
         if (!changed) return;
         try
         {
@@ -864,8 +868,8 @@ public sealed class PlaybackController : IDisposable
         }
         catch
         {
-            if (solo) _soloParents.Remove(parentId);
-            else _soloParents.Add(parentId);
+            if (solo) _soloSharedGroups.Remove(sharedGroupId);
+            else _soloSharedGroups.Add(sharedGroupId);
             RebuildAudibleTracks();
             throw;
         }
@@ -1574,42 +1578,31 @@ public sealed class PlaybackController : IDisposable
     private void RebuildAudibleTracks()
     {
         _audibleTracks.Clear();
-        bool hasParentSolo = _soloParents.Count != 0;
-        bool hasChildSolo = !hasParentSolo && _soloTracks.Count != 0;
-        foreach ((MidoraId ParentId, MidoraId TrackId) child in EnumerateArrangementChildren())
+        MidoraProject project = _session.Project;
+        HashSet<MidoraId> existingGroups = project.EventInstrumentUsages
+            .Select(value => value.Id)
+            .Concat(project.MidiChannelRoots.Select(value => value.Id))
+            .ToHashSet();
+        _mutedSharedGroups.IntersectWith(existingGroups);
+        _soloSharedGroups.IntersectWith(existingGroups);
+        bool hasSharedGroupSolo = _soloSharedGroups.Count != 0;
+        bool hasTrackSolo = !hasSharedGroupSolo && _soloTracks.Count != 0;
+        foreach (ArrangementTrackReference track in project.TracksInArrangementOrder())
         {
-            bool audible = hasParentSolo
-                ? _soloParents.Contains(child.ParentId)
-                    && !_mutedParents.Contains(child.ParentId)
-                    && !_mutedTracks.Contains(child.TrackId)
-                : hasChildSolo
-                    ? _soloTracks.Contains(child.TrackId)
-                        && !_mutedParents.Contains(child.ParentId)
-                        && !_mutedTracks.Contains(child.TrackId)
-                    : !_mutedParents.Contains(child.ParentId)
-                        && !_mutedTracks.Contains(child.TrackId);
+            if (!TryResolveSharedGroupId(project, track, out MidoraId sharedGroupId))
+            {
+                // Empty unbound Logical Tracks are legal creation shells but have
+                // no runtime monitoring identity until a Usage is assigned.
+                continue;
+            }
+            bool audible = !_mutedTracks.Contains(track.TrackId)
+                && !_mutedSharedGroups.Contains(sharedGroupId)
+                && (hasSharedGroupSolo
+                    ? _soloSharedGroups.Contains(sharedGroupId)
+                    : !hasTrackSolo || _soloTracks.Contains(track.TrackId));
             if (audible)
             {
-                _audibleTracks.Add(child.TrackId);
-            }
-        }
-    }
-
-    private IEnumerable<(MidoraId ParentId, MidoraId TrackId)> EnumerateArrangementChildren()
-    {
-        MidoraProject project = _session.Project;
-        foreach (EventInstrument instrument in project.EventInstrumentsInOrder())
-        {
-            foreach (MidoraId trackId in instrument.LogicalTrackIds)
-            {
-                yield return (instrument.Id, trackId);
-            }
-        }
-        foreach (MidiChannelRoot root in project.MidiChannelRootsInOrder())
-        {
-            foreach (MidoraId trackId in root.MidiTrackIds)
-            {
-                yield return (root.Id, trackId);
+                _audibleTracks.Add(track.TrackId);
             }
         }
     }
@@ -1623,12 +1616,35 @@ public sealed class PlaybackController : IDisposable
         }
     }
 
-    private void EnsureArrangementParentExists(MidoraId parentId)
+    private static bool TryResolveSharedGroupId(
+        MidoraProject project,
+        ArrangementTrackReference track,
+        out MidoraId sharedGroupId)
     {
-        if (!_session.Project.EventInstruments.Any(value => value.Id == parentId)
-            && !_session.Project.MidiChannelRoots.Any(value => value.Id == parentId))
+        if (track.Kind == ArrangementTrackKind.LogicalTrack)
         {
-            throw new ArgumentOutOfRangeException(nameof(parentId));
+            MidoraId? usageId = project.Tracks
+                .Single(value => value.Id == track.TrackId)
+                .EventInstrumentUsageId;
+            sharedGroupId = usageId ?? default;
+            return usageId.HasValue;
+        }
+        if (track.Kind == ArrangementTrackKind.PureMidiTrack)
+        {
+            sharedGroupId = project.PureMidiTracks
+                .Single(value => value.Id == track.TrackId)
+                .MidiChannelRootId;
+            return true;
+        }
+        throw new InvalidOperationException("Unknown Arrangement Track kind.");
+    }
+
+    private void EnsureSharedGroupExists(MidoraId sharedGroupId)
+    {
+        if (!_session.Project.EventInstrumentUsages.Any(value => value.Id == sharedGroupId)
+            && !_session.Project.MidiChannelRoots.Any(value => value.Id == sharedGroupId))
+        {
+            throw new ArgumentOutOfRangeException(nameof(sharedGroupId));
         }
     }
 

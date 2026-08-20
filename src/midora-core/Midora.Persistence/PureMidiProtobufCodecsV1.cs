@@ -24,7 +24,6 @@ internal static class MidiChannelRootProtobufCodecV1
             FixedZeroBasedChannel = value.FixedZeroBasedChannel,
             ChannelMode = (WireChannelMode)(int)value.ChannelMode
         };
-        wire.MidiTrackIds.Add(value.MidiTrackIds.Select(ProtobufValueCodecV1.ToWire));
         Validate(wire);
         return StrictProtobufWireV1.SerializeDeterministic(wire);
     }
@@ -47,8 +46,6 @@ internal static class MidiChannelRootProtobufCodecV1
                 FixedZeroBasedChannel = checked((byte)wire.FixedZeroBasedChannel),
                 ChannelMode = (MidiChannelMode)(int)wire.ChannelMode
             };
-            result.MidiTrackIds.AddRange(wire.MidiTrackIds.Select(
-                value => ProtobufValueCodecV1.FromWire(value, "MIDI Channel Root Track ID")));
             return result;
         }
         catch (InvalidProtocolBufferException exception)
@@ -83,14 +80,6 @@ internal static class MidiChannelRootProtobufCodecV1
             || value.FixedZeroBasedChannel > 15)
         {
             throw new InvalidDataException("MIDI Channel Root routing fields are invalid.");
-        }
-        HashSet<MidoraId> ids = [];
-        foreach (long item in value.MidiTrackIds)
-        {
-            if (!ids.Add(ProtobufValueCodecV1.FromWire(item, "MIDI Channel Root Track ID")))
-            {
-                throw new InvalidDataException("MIDI Channel Root Track IDs contain a duplicate.");
-            }
         }
     }
 }

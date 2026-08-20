@@ -8,7 +8,7 @@
 
 ## 3.1 Project 的定义
 Midora Project 是用户在 Midora 中进行完整工作的最高层单位。
-一个 Project 不是普通文件夹，也不是单个乐器定义，而是包含项目级设置、唯一 Conductor、混排的 Event Instrument / MIDI Channel Root 父节点、它们各自的 Logical / Pure MIDI child Tracks、两类 Segment、全局音乐事件、Reset 默认值、播放设置、MIDI 导出设置、音频渲染设置和 SoundFont 设置的完整上下文。
+一个 Project 不是普通文件夹，也不是单个乐器定义，而是包含项目级设置、唯一 Conductor、有序 Event Instrument Definitions、内部非空 Usage / MIDI Channel Roots、混排的 Logical / Pure MIDI Arrangement Tracks、两类 Segment、全局音乐事件、Reset 默认值、播放设置、MIDI 导出设置、音频渲染设置和 SoundFont 设置的完整上下文。
 编译、播放、预览、渲染和 MIDI 导出均以 Project 为上下文。
 单独的 Event Instrument、Logical Track、MIDI Channel Root、Pure MIDI Track 或 Segment 不构成完整项目上下文。
 ---
@@ -19,8 +19,10 @@ Midora Project 是用户在 Midora 中进行完整工作的最高层单位。
 | Project Settings | 是 | 否 | 项目级设置入口 |
 | Project Metadata | 是 | 否 | 项目元数据 |
 | Conductor Track | 是 | 否 | 固定全局音乐事件轨道 |
-| Arrangement Parents | 是 | 否 | Event Instrument / MIDI Channel Root 的混排有序集合，可为空 |
-| Event Instrument Index | 是 | 否 | 从 Arrangement parent 派生的稳定 ID 查找索引，不拥有独立顺序 |
+| Arrangement Track Order | 是 | 否 | Logical / Pure MIDI Track 的唯一混排 tagged 顺序，可为空 |
+| Event Instrument Definition Index | 是 | 否 | Definition 的独立有序索引，可为空，不拥有 Track |
+| Event Instrument Usage Index | 是 | 否 | 无名称共享执行身份；每个 Usage 非空并引用一个 Definition，可为空 |
+| MIDI Channel Root Index | 是 | 否 | Pure MIDI 共享执行身份；每个 Root 非空，可为空 |
 | Global Reset Defaults | 是 | 否 | 项目级 Reset 默认值 |
 | Global Event Scope Defaults | 是 | 否 | 初版不可编辑的版本化空 marker；事件作用域由各正式事件语义固定 |
 | Export Settings | 是 | 否 | MIDI 导出默认设置 |
@@ -29,9 +31,9 @@ Midora Project 是用户在 Midora 中进行完整工作的最高层单位。
 | SoundFont Settings | 是 | 否 | 初版项目级单一 SF2 设置，可为空状态 |
 说明：
 - 顶层对象必须存在，不代表其中必须已有用户内容。
-- Arrangement Parents 可以为空。
-- 每个 Logical Track 必须且只能属于一个 Event Instrument；每个 Pure MIDI Track 必须且只能属于一个 Root。
-- 不存在独立顶层 Logical Track 集合、独立 Root 顺序或 Unbound Logical Track。
+- Arrangement Track Order 与 Definition Index 都可以为空。
+- 每个 Pure MIDI Track 必须且只能引用一个 Root。Logical Track 可以是无内容、无 Usage 的待指定空壳；一旦包含 Segment/Note/Parameter 内容，就必须且只能引用一个 Usage。
+- Definition 顺序、Usage/Root membership 与混排 Track 顺序彼此独立；Definition/Root 不保存第二套 child order。
 - Audio Render Settings 必须存在，初版默认使用 Whole Mix、Project Default Range、All Valid Logical and Pure MIDI Tracks，以及普通 RIFF/WAVE / 48 kHz / Stereo / IEEE 32-bit Float；采样率可由用户在合法范围内修改。
 - SoundFont Settings 必须存在，但可以处于“未选择 SF2”状态。
 - Conductor Track 必须存在，且创建新项目时至少包含默认 Tempo 与默认拍号。
@@ -73,8 +75,8 @@ Midora Project 是用户在 Midora 中进行完整工作的最高层单位。
 Project Settings
 Project Metadata
 Conductor Track
-空 Arrangement Parents 集合
-空 Event Instrument Index
+空 Arrangement Track Order
+空 Event Instrument Definition / Usage / MIDI Channel Root Index
 Global Reset Defaults
 Global Event Scope Defaults
 Export Settings
@@ -91,10 +93,10 @@ Time Signature = 4/4
 ```
 Conductor Track 应允许用户自由插入 Tempo、Time Signature 等全局音乐事件，以实现变速和变拍。
 Conductor Track 具体事件编辑规则由 第 4 章《时间、Conductor Track 与全局音乐事件》 细化。
-### 3.4.2 Arrangement Parents 默认状态
-新项目创建空 Arrangement Parents 与由其派生的空 Event Instrument Index。初版不创建默认 Event Instrument 或 MIDI Channel Root。
+### 3.4.2 Arrangement 与 Definition 默认状态
+新项目创建空 Arrangement Track Order、空 Event Instrument Definition Index、空 Usage Index 与空 MIDI Channel Root Index。初版不创建默认 Event Instrument Definition、Usage 或 Root。
 ### 3.4.3 Track 默认状态
-新项目默认无 Logical Track 或 Pure MIDI Track。用户必须先创建 Event Instrument 或 MIDI Channel Root，再从该父节点创建对应 child Track。
+新项目默认无 Logical Track 或 Pure MIDI Track。用户可以直接创建未指定 Usage 的空 Logical Track、选择或新建 Definition 后创建独立 Usage + Logical Track，或通过 MIDI Track 创建流程原子建立非空 Root + 首条 Pure MIDI Track；不存在仅创建空 Root 的结果。
 初版不创建默认 Track，也不创建默认 Segment。
 ### 3.4.4 SoundFont 默认状态
 创建项目时可以不选择 SF2。
@@ -231,12 +233,12 @@ Mapping Function 的具体内容、映射目标、编辑方式和编译行为由
 初版只需要保存当前项目的 Export Settings。
 如果未来导出系统需要支持多个导出配置方案，再在 第 14 章《MIDI 导出》 或实现设计阶段补充 Export Preset。
 ---
-## 3.8 Logical Track 的 Event Instrument 父节点
-Logical Track 必须且只能属于一个 Event Instrument；该父子关系就是唯一绑定，不存在正常的未指定、取消绑定或 Unbound 状态。
+## 3.8 Logical Track、Usage 与 Definition
+Logical Track 通过可空 Usage ID 间接引用 Event Instrument Definition。无 Usage 只允许作为没有任何音乐内容的待指定空壳；它不分配 Unit、不参与正式编译，也不产生“未绑定”诊断。非空 Logical Track 无 Usage 是结构 Error。
 
-Logical Track 可在 Event Instrument 内重排，也可通过第 24.3.3 节的影响审查原子移动到另一个 Event Instrument。改绑保留 Track 内容与稳定 ID；失败时保持原父子关系。删除包含 Logical Track 的 Event Instrument 必须确认并级联删除完整 subtree，一个操作形成一个 Undo；不得把 child 降级为未指定状态。
+新建带乐器 Track 默认创建独立 Usage；用户显式执行 `Share Instrument State With...` 或拖入 Shared block 后，多个 Track 才共享同一 Usage。改绑 Definition、加入/离开 Usage、全局重排及空 Usage 清理必须作为一个失败原子 Undo，保留 Track 内容与稳定 ID。
 
-打开时如单个 Event Instrument 文件损坏，但 `project.json` 的父子索引仍能可信确定 subtree，则使用同位置 Damaged Parent Placeholder 保留归属并禁止保存；无法可信确定唯一父节点时 Project 打开失败。
+Definition 可在没有任何 Usage/Track 时独立存在。删除 Track 或最后 Usage 绝不删除 Definition；删除仍被 Usage 引用的 Definition必须阻止。单个 Definition、Usage 或 Logical Track 文件损坏时的隔离、索引可信度与保存禁止规则由第 16、24 章规定；不得按名称静默修复引用。
 ---
 ## 3.9 项目保存、打开与关闭
 ### 3.9.1 保存
@@ -246,8 +248,9 @@ Project 必须支持普通保存。
 Project Settings
 Project Metadata
 Conductor Track
-Arrangement parent order and Event Instrument index
-Event Instrument definitions
+Arrangement global Track order
+Event Instrument Definition and Usage indexes
+Event Instrument definitions and usages
 Logical Tracks
 Segments
 MIDI Channel Roots
@@ -500,8 +503,8 @@ Project 是编译器的完整输入上下文。
 Project Settings
 Project Metadata 中可能影响导出的信息
 Conductor Track
-Arrangement parent/child hierarchy and Event Instrument index
-Logical Tracks and their parent Event Instruments
+Arrangement global Track order and Event Instrument Definition/Usage indexes
+Logical Tracks and their optional Usage/Definition references
 Segments
 MIDI Channel Roots
 Pure MIDI Tracks
@@ -562,10 +565,10 @@ MIDI 导出系统以当前 Project 为导出上下文。
 导出至少依赖：
 ```text
 Conductor Track
-Logical Tracks and their parent Event Instruments
-MIDI Channel Roots and their child Pure MIDI Tracks
+Logical Tracks and their Usage/Definition references
+MIDI Channel Roots and their member Pure MIDI Tracks
 Pure MIDI Tracks
-Arrangement parent order and Event Instrument index
+Arrangement global Track order and Event Instrument Definition/Usage indexes
 Export Settings
 Reset 规则
 Port / Channel 分配结果
@@ -584,8 +587,8 @@ SoundFont Settings 中用于 Readme 的信息
 3. 每个 Project 必须有且只有一个 Conductor Track。
 4. Conductor Track 不可删除。
 5. 新 Project 的 Conductor Track 默认 Tempo 为 120 BPM，默认拍号为 4/4。
-6. 每个 Project 必须有且只有一个有序 Arrangement Parents 集合；Event Instrument index 由该集合派生，不拥有独立顺序。
-7. 新 Project 默认 Arrangement Parents 为空。
+6. 每个 Project 必须有且只有一个有序 Arrangement Track tagged 集合，以及彼此正交的有序 Definition / Usage / Root indexes。
+7. 新 Project 的 Arrangement Track、Definition、Usage 与 Root indexes 默认均为空。
 8. 新 Project 默认无 Event Instrument、Logical Track、MIDI Channel Root 或 Pure MIDI Track。
 9. 初版一个 Project 只使用一个 SF2。
 10. 创建项目时可以不选择 SF2。
@@ -599,7 +602,7 @@ SoundFont Settings 中用于 Readme 的信息
 18. 初版不做崩溃恢复。
 19. 初版不提供扫描式 Project Repair Mode；无法建立可信 Project Object Graph 的结构性损坏必须打开失败，但第 16、23、24 章明确允许隔离的单个 Event Instrument / Logical Track / MIDI Channel Root / Pure MIDI Track 损坏可形成 Damaged Placeholder。
 20. Event Instrument 名称在当前 Project 内必须唯一。
-21. Logical Track、MIDI Channel Root 与 Pure MIDI Track 名称允许重复；混合 parent order 与 parent 内 Track order 属于 Project 源数据。
+21. Logical Track、MIDI Channel Root 与 Pure MIDI Track 名称允许重复；global mixed Track order 与独立 Definition order 属于 Project 源数据。
 22. Segment 不持有名称。
 23. Mapping Function 名称必填，且在单个 Event Instrument 内不可重复。
 24. 初版不做 Export Preset。
@@ -609,9 +612,9 @@ SoundFont Settings 中用于 Readme 的信息
 28. Track Mute / Solo 不影响音频文件渲染成品。
 29. 音频渲染产物、缓存和任务状态不属于 Project 源数据。
 30. 内部引用必须基于稳定 ID，不得依赖名称。
-31. 每个 Logical Track 必须且只能属于一个 Event Instrument；不允许 Unbound/Unassigned 正常状态。
-32. 删除包含 Logical Track 的 Event Instrument 必须确认并原子级联整个 subtree，不得留下孤儿。
-33. Logical Track 跨 Event Instrument 移动必须保留内容和稳定 ID，并按第 24 章原子提交 rebind。
+31. 无内容 Logical Track 可以不引用 Usage；含音乐内容的 Logical Track 必须且只能引用一个有效 Usage，该 Usage 必须引用一个有效 Definition。
+32. Usage 必须非空，最后成员离开时同事务删除；Definition 可以零 Usage，删除 Track/Usage 不得删除 Definition，被引用 Definition 不得删除。
+33. Logical Track 的 Definition rebind、Usage share/independent 与 global order 变更必须保留内容和稳定 ID，并按第 24 章原子提交。
 34. 初版应提供完整的全项目统一撤销 / 重做框架。
 35. 初版不提供传统 Save As，只提供普通保存与 Save Copy。
 36. Save Copy 不改变当前 Project 路径、Modified 状态或 Undo / Redo History。

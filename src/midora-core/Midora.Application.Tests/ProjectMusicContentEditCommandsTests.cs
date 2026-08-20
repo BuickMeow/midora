@@ -278,7 +278,7 @@ public sealed class ProjectMusicContentEditCommandsTests
                 enumSemanticWarningAcknowledged: false)));
 
         segment.ParameterLanes.Remove(duplicate);
-        track.EventInstrumentId = null;
+        track.EventInstrumentUsageId = null;
         Assert.Throws<InvalidOperationException>(() => document.Execute(
             ProjectDomainEditCommands.UpdateLogicalParameterPoint(
                 segment.Id,
@@ -366,11 +366,10 @@ public sealed class ProjectMusicContentEditCommandsTests
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
 
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 960 };
         segment.Notes.Add(new LogicalNote(project)
         {
@@ -382,7 +381,6 @@ public sealed class ProjectMusicContentEditCommandsTests
         lane.Points.Add(new CurvePoint(project, 0, 0.5));
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         return project;
     }
 

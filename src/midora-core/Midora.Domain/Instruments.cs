@@ -555,7 +555,6 @@ public sealed class EventInstrument
     public required string Name { get; set; }
     public string? Description { get; set; }
     public MidoraColor Color { get; set; } = MidoraColor.DefaultInstrument;
-    public MidoraId? LibraryFolderId { get; set; }
     public int RootNote { get; set; } = 60;
     public long TemplateLengthTicks { get; set; }
     public bool RequiresChannelIsolation { get; set; }
@@ -566,10 +565,34 @@ public sealed class EventInstrument
     public long? LoopStartTick { get; set; }
     public long? LoopEndTick { get; set; }
     public MidiInitialState InitialState { get; } = new();
-    public List<MidoraId> LogicalTrackIds { get; } = [];
     public List<LogicalParameterDefinition> LogicalParameters { get; } = [];
     public List<SubVoice> SubVoices { get; } = [];
     public List<InstrumentEnvelope> Envelopes { get; } = [];
     public List<CSharpMappingFunction> MappingFunctions { get; } = [];
     public List<LogicalParameterMapping> ParameterMappings { get; } = [];
+}
+
+/// <summary>
+/// A materialized Event Instrument execution identity. The object has no user
+/// visible name: it exists solely to let one or more Logical Tracks share one
+/// stateful compiled Channel Unit while other usages of the same Definition
+/// remain isolated.
+/// </summary>
+public sealed class EventInstrumentUsage
+{
+    public EventInstrumentUsage(MidoraProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Id = project.AllocateStableId();
+    }
+
+    internal EventInstrumentUsage(MidoraProject project, MidoraId preservedId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
+        Id = preservedId;
+    }
+
+    public MidoraId Id { get; init; }
+    public MidoraId EventInstrumentId { get; set; }
 }

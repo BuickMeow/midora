@@ -49,16 +49,19 @@ public sealed class ProjectCreationEditCommandsTests
 
         document.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Created", instrument.Id));
         LogicalTrack created = Assert.Single(project.Tracks);
+        EventInstrumentUsage usage = Assert.Single(project.EventInstrumentUsages);
         long afterCreate = project.NextStableId;
 
-        Assert.Equal(before, created.Id.Value);
-        Assert.Equal(before + 1, afterCreate);
+        Assert.Equal(before, usage.Id.Value);
+        Assert.Equal(before + 1, created.Id.Value);
+        Assert.Equal(before + 2, afterCreate);
         Assert.True(document.IsModified);
         AssertMatchesFull(compilation);
 
         document.Undo();
 
         Assert.Empty(project.Tracks);
+        Assert.Empty(project.EventInstrumentUsages);
         Assert.Equal(afterCreate, project.NextStableId);
         Assert.False(document.IsModified);
         Assert.True(document.CanRedo);
@@ -67,12 +70,13 @@ public sealed class ProjectCreationEditCommandsTests
         document.Redo();
 
         Assert.Same(created, Assert.Single(project.Tracks));
+        Assert.Same(usage, Assert.Single(project.EventInstrumentUsages));
         Assert.Equal(afterCreate, project.NextStableId);
         AssertMatchesFull(compilation);
 
         document.Undo();
-        document.Execute(ProjectDomainEditCommands.CreateEventInstrumentFolder("Folder"));
-        EventInstrumentLibraryFolder branch = Assert.Single(project.EventInstrumentFolders);
+        document.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Branch"));
+        LogicalTrack branch = Assert.Single(project.Tracks);
 
         Assert.False(document.CanRedo);
         Assert.True(branch.Id.Value > created.Id.Value);
@@ -95,12 +99,11 @@ public sealed class ProjectCreationEditCommandsTests
         };
         source.LogicalParameters.Add(parameter);
         source.SubVoices[0].Events.Add(TemplateEvent.Note(project, 0, 120, 60, 100));
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = source.Id,
             LastBoundEventInstrumentName = source.Name
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, source.Id);
         Segment segment = new(project) { ProjectStartTick = 0, LengthTicks = 480 };
         segment.Notes.Add(new LogicalNote(project)
         {
@@ -110,8 +113,6 @@ public sealed class ProjectCreationEditCommandsTests
             Velocity = 90
         });
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
-        source.LogicalTrackIds.Add(track.Id);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
 
@@ -121,13 +122,14 @@ public sealed class ProjectCreationEditCommandsTests
         Assert.NotEqual(source.SubVoices[0].Id, instrumentCopy.SubVoices[0].Id);
         Assert.NotEqual(source.SubVoices[0].Events[0].Id, instrumentCopy.SubVoices[0].Events[0].Id);
         Assert.NotEqual(parameter.Id, instrumentCopy.LogicalParameters[0].Id);
-        Assert.Equal(source.Id, track.EventInstrumentId);
+        Assert.Equal(source.Id, project.ResolveEventInstrumentDefinitionId(track));
 
         document.Execute(ProjectDomainEditCommands.DuplicateLogicalTrack(track.Id));
         LogicalTrack trackCopy = project.Tracks.Single(value =>
-            value.Id != track.Id && value.EventInstrumentId == source.Id);
+            value.Id != track.Id
+            && project.ResolveEventInstrumentDefinitionId(value) == source.Id);
         Assert.NotEqual(track.Id, trackCopy.Id);
-        Assert.Equal(track.EventInstrumentId, trackCopy.EventInstrumentId);
+        Assert.Equal(track.EventInstrumentUsageId, trackCopy.EventInstrumentUsageId);
         Assert.NotEqual(segment.Id, trackCopy.Segments[0].Id);
         Assert.NotEqual(segment.Notes[0].Id, trackCopy.Segments[0].Notes[0].Id);
         trackCopy.Segments[0].Notes[0].Note = 72;
@@ -167,14 +169,11 @@ public sealed class ProjectCreationEditCommandsTests
             DefaultValue = 0
         };
         instrument.LogicalParameters.Add(parameter);
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id,
             LastBoundEventInstrumentName = instrument.Name
         };
-        project.Tracks.Add(track);
-        instrument.LogicalTrackIds.Add(track.Id);
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
 
@@ -282,21 +281,16 @@ public sealed class ProjectCreationEditCommandsTests
     {
         MidoraProject project = new(480);
         EventInstrument instrument = CreateInstrument(project, "Instrument");
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id
         };
-        project.Tracks.Add(track);
-        instrument.LogicalTrackIds.Add(track.Id);
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
         long highWater = project.NextStableId;
 
         Assert.Throws<ArgumentOutOfRangeException>(() => document.Execute(
             ProjectDomainEditCommands.CreateSegment(track.Id, -1, 480)));
-        Assert.Throws<ArgumentException>(() => document.Execute(
-            ProjectDomainEditCommands.CreateEventInstrumentFolder("Unfiled")));
         Assert.Throws<ArgumentOutOfRangeException>(() => document.Execute(
             ProjectDomainEditCommands.CreateLogicalTrack(
                 "Track",
@@ -499,15 +493,12 @@ public sealed class ProjectCreationEditCommandsTests
             DefaultValue = 0
         };
         instrument.LogicalParameters.Add(parameter);
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { ProjectStartTick = 0, LengthTicks = 480 };
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
-        instrument.LogicalTrackIds.Add(track.Id);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
 
@@ -594,9 +585,6 @@ public sealed class ProjectCreationEditCommandsTests
     private static EventInstrument CreateInstrument(MidoraProject project, string name)
     {
         EventInstrument instrument = EventInstrumentLibrary.Create(project, name);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.EventInstrument,
-            instrument.Id));
         return instrument;
     }
 

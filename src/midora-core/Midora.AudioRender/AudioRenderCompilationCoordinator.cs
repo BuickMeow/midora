@@ -100,14 +100,15 @@ public sealed class AudioRenderCompilationCoordinator
             .ToHashSet();
         List<AudioRenderTrackSnapshot> tracks = [];
         List<AudioRenderDiagnostic> diagnostics = [];
-        for (int index = 0; index < request.Project.Tracks.Count; index++)
+        LogicalTrack[] logicalTracks = request.Project.LogicalTracksInArrangementOrder().ToArray();
+        for (int index = 0; index < logicalTracks.Length; index++)
         {
-            LogicalTrack track = request.Project.Tracks[index];
+            LogicalTrack track = logicalTracks[index];
             bool selectedForTask = selected is null || selected.Contains(track.Id);
-            bool bound = track.EventInstrumentId.HasValue
-                && instrumentIds.Contains(track.EventInstrumentId.Value);
-            bool damagedBinding = track.EventInstrumentId.HasValue
-                && damagedInstrumentIds.Contains(track.EventInstrumentId.Value);
+            MidoraId? instrumentId = request.Project.ResolveEventInstrumentDefinitionId(track);
+            bool bound = instrumentId.HasValue && instrumentIds.Contains(instrumentId.Value);
+            bool damagedBinding = instrumentId.HasValue
+                && damagedInstrumentIds.Contains(instrumentId.Value);
             bool participates = selectedForTask && (bound || damagedBinding);
             int displayOrder = index + 1;
             string displayName = InitialReleaseOutputNaming.GetLogicalTrackDisplayName(

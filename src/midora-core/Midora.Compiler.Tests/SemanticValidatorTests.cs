@@ -470,7 +470,8 @@ public sealed class SemanticValidatorTests
             over.Instrument,
             0,
             480);
-        LogicalTrack secondTrack = new(over.Project) { Name = "Second", EventInstrumentId = second.Id };
+        LogicalTrack secondTrack = new(over.Project) { Name = "Second"};
+        ProjectGraphConstruction.AddIndependentLogicalTrack(over.Project, secondTrack, second.Id);
         Segment secondSegment = new(over.Project) { LengthTicks = 1_920 };
         CompilerTestProject.RegisterSegment(over.Project, secondSegment);
         LogicalNote secondOverLimitNote = CompilerTestProject.AddNote(
@@ -479,7 +480,6 @@ public sealed class SemanticValidatorTests
             0,
             480);
         secondTrack.Segments.Add(secondSegment);
-        over.Project.Tracks.Add(secondTrack);
         CanonicalCompiledResult overResult = new MidoraCompiler().CompileFull(over.Project);
         Assert.False(overResult.IsConsumable);
         Assert.True(overResult.IsPartial);
@@ -614,16 +614,18 @@ public sealed class SemanticValidatorTests
     }
 
     [Fact]
-    public void UnboundNonEmptyTrackProducesInfoAndNoOutput()
+    public void UnboundNonEmptyTrackIsRejectedByTheFlatArrangementInvariant()
     {
         var fixture = CompilerTestProject.Create();
-        fixture.Track.EventInstrumentId = null;
+        fixture.Track.EventInstrumentUsageId = null;
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
 
-        Assert.True(result.IsConsumable);
-        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1304" && value.Severity == DiagnosticSeverity.Info);
+        Assert.False(result.IsConsumable);
+        Assert.Contains(result.Diagnostics, value =>
+            value.Code == "MIDORA1412"
+            && value.Severity == DiagnosticSeverity.Error);
         Assert.Empty(result.Events.ToArray());
     }
 

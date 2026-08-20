@@ -68,8 +68,9 @@ public static partial class ProjectDomainEditCommands
             }
             SegmentLocation segment = FindSegment(project, segmentId);
             LogicalParameterLane lane = FindLogicalParameterLane(segment.Segment, laneId);
-            EventInstrument instrument = segment.Track.EventInstrumentId.HasValue
-                ? FindEventInstrument(project, segment.Track.EventInstrumentId.Value)
+            MidoraId? instrumentId = project.ResolveEventInstrumentDefinitionId(segment.Track);
+            EventInstrument instrument = instrumentId.HasValue
+                ? FindEventInstrument(project, instrumentId.Value)
                 : throw new InvalidOperationException(
                     "A Logical Parameter Lane can only be rebound on a bound Logical Track.");
             LogicalParameterDefinition definition = instrument.LogicalParameters
@@ -252,8 +253,9 @@ public static partial class ProjectDomainEditCommands
         LogicalTrack track,
         MidoraId parameterId)
     {
-        EventInstrument instrument = track.EventInstrumentId.HasValue
-            ? FindEventInstrument(project, track.EventInstrumentId.Value)
+        MidoraId? instrumentId = project.ResolveEventInstrumentDefinitionId(track);
+        EventInstrument instrument = instrumentId.HasValue
+            ? FindEventInstrument(project, instrumentId.Value)
             : throw new InvalidOperationException(
                 "A broken Logical Parameter Lane cannot be edited until it is rebound.");
         return instrument.LogicalParameters.SingleOrDefault(value => value.Id == parameterId)

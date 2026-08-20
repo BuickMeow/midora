@@ -252,7 +252,8 @@ public static partial class Program
         EventInstrument piano = CreatePianoInstrument(project, "分段旋律", 480, ShortNoteLifecycle.CutAtNoteOff);
         piano.SubVoices[0].Events.Add(TemplateEvent.Note(project, 0, 430, 60, 102));
         project.EventInstruments.Add(piano);
-        LogicalTrack track = new(project) { Name = "两个相邻 Segment", EventInstrumentId = piano.Id };
+        LogicalTrack track = new(project) { Name = "两个相邻 Segment"};
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, piano.Id);
         Segment left = new(project) { ProjectStartTick = 0, LengthTicks = 1_920, ContentOffsetTick = 0 };
         AddNotes(project, left, 0, [60, 64, 67, 72], 360);
         Segment right = new(project) { ProjectStartTick = 1_920, LengthTicks = 1_920, ContentOffsetTick = 480 };
@@ -266,7 +267,6 @@ public static partial class Program
         AddNotes(project, right, 480, [71, 67, 64, 60], 360);
         track.Segments.Add(left);
         track.Segments.Add(right);
-        project.Tracks.Add(track);
         return project;
     }
 
@@ -320,7 +320,8 @@ public static partial class Program
             piano.ParameterMappings.Add(expression);
         }
         project.EventInstruments.Add(piano);
-        LogicalTrack track = new(project) { Name = "参数自动化", EventInstrumentId = piano.Id };
+        LogicalTrack track = new(project) { Name = "参数自动化"};
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, piano.Id);
         Segment segment = new(project) { LengthTicks = 3_840 };
         LogicalParameterLane lane = new(project) { ParameterId = expressionParameter.Id };
         lane.Points.Add(new(project, 0, 0.25));
@@ -329,7 +330,6 @@ public static partial class Program
         segment.ParameterLanes.Add(lane);
         AddNotes(project, segment, 0, [48, 53, 55, 48], 900, spacing: 960);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         return project;
     }
 
@@ -346,7 +346,8 @@ public static partial class Program
         piano.SubVoices[0].Events.Add(TemplateEvent.Note(project, 120, 100, 60, 92));
         piano.SubVoices[0].Events.Add(TemplateEvent.Note(project, 240, 100, 67, 84));
         project.EventInstruments.Add(piano);
-        LogicalTrack track = new(project) { Name = "Tempo + Loop", EventInstrumentId = piano.Id };
+        LogicalTrack track = new(project) { Name = "Tempo + Loop"};
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, piano.Id);
         Segment segment = new(project) { LengthTicks = 4_800 };
         segment.Notes.Add(new LogicalNote(project)
         {
@@ -363,7 +364,6 @@ public static partial class Program
             Velocity = 100
         });
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         return project;
     }
 

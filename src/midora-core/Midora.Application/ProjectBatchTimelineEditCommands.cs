@@ -670,7 +670,10 @@ public static partial class ProjectDomainEditCommands
                 SegmentLocation location = FindSegment(project, id);
                 return new SelectedSegment(
                     location,
-                    project.Tracks.IndexOf(location.Track));
+                    FindArrangementTrackIndex(
+                        project,
+                        ArrangementTrackKind.LogicalTrack,
+                        location.Track.Id));
             })
             .OrderBy(value => value.TrackIndex)
             .ThenBy(value => value.Location.Segment.ProjectStartTick)
@@ -685,18 +688,26 @@ public static partial class ProjectDomainEditCommands
                 nameof(primarySegmentId));
         }
         LogicalTrack targetPrimaryTrack = FindTrack(project, targetPrimaryTrackId);
-        int targetPrimaryTrackIndex = project.Tracks.IndexOf(targetPrimaryTrack);
+        int targetPrimaryTrackIndex = FindArrangementTrackIndex(
+            project,
+            ArrangementTrackKind.LogicalTrack,
+            targetPrimaryTrack.Id);
+        EnsureLogicalTrackCanContainContent(project, targetPrimaryTrack);
         long tickDelta = checked(
             newPrimaryStartTick - primary.Location.Segment.ProjectStartTick);
         SegmentBatchPlacement[] placements = selected.Select(value =>
         {
             int targetTrackIndex = checked(
                 targetPrimaryTrackIndex + value.TrackIndex - primary.TrackIndex);
-            if ((uint)targetTrackIndex >= (uint)project.Tracks.Count)
+            if ((uint)targetTrackIndex >= (uint)project.ArrangementTracks.Count
+                || project.ArrangementTracks[targetTrackIndex] is not
+                    { Kind: ArrangementTrackKind.LogicalTrack } targetReference)
             {
                 throw new InvalidOperationException(
-                    "The Segment batch cannot preserve its relative Track offsets at the target.");
+                    "The Segment batch cannot preserve its relative Arrangement lane offsets at the target.");
             }
+            LogicalTrack targetTrack = FindTrack(project, targetReference.TrackId);
+            EnsureLogicalTrackCanContainContent(project, targetTrack);
             long start = checked(value.Location.Segment.ProjectStartTick + tickDelta);
             ValidateSegmentRange(
                 start,
@@ -704,7 +715,7 @@ public static partial class ProjectDomainEditCommands
                 value.Location.Segment.ContentOffsetTick);
             return new SegmentBatchPlacement(
                 value.Location,
-                project.Tracks[targetTrackIndex],
+                targetTrack,
                 start);
         }).ToArray();
 

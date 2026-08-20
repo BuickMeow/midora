@@ -74,9 +74,7 @@ public sealed class MidiExportCompilationCoordinator
         }
 
         HashSet<MidoraId>? selected = request.SelectedTrackIds?.ToHashSet();
-        LogicalTrack[] logicalTracks = request.Project.ArrangementParents.Count == 0
-            ? request.Project.Tracks.ToArray()
-            : request.Project.LogicalTracksInArrangementOrder().ToArray();
+        LogicalTrack[] logicalTracks = request.Project.LogicalTracksInArrangementOrder().ToArray();
         if (request.Mode == MidiExportMode.PerLogicalTrack
             && selected is not null
             && request.Project.PureMidiTracks.Any(track => selected.Contains(track.Id)))
@@ -108,8 +106,8 @@ public sealed class MidiExportCompilationCoordinator
         {
             LogicalTrack track = logicalTracks[index];
             bool selectedForTask = selected is null || selected.Contains(track.Id);
-            bool bound = track.EventInstrumentId.HasValue
-                && instrumentIds.Contains(track.EventInstrumentId.Value);
+            MidoraId? instrumentId = request.Project.ResolveEventInstrumentDefinitionId(track);
+            bool bound = instrumentId.HasValue && instrumentIds.Contains(instrumentId.Value);
             bool participates = selectedForTask && bound;
             int projectDisplayOrder = index + 1;
             string displayName = InitialReleaseOutputNaming.GetLogicalTrackDisplayName(

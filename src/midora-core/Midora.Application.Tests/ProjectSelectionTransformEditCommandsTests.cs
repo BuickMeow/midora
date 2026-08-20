@@ -130,10 +130,9 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         };
         segment.Notes.AddRange([first, second]);
         track.Segments.Add(segment);
-        root.MidiTrackIds.Add(track.Id);
         project.MidiChannelRoots.Add(root);
         project.PureMidiTracks.Add(track);
-        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -222,10 +221,9 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         };
         segment.ChannelEvents.AddRange([first, second, incumbent]);
         track.Segments.Add(segment);
-        root.MidiTrackIds.Add(track.Id);
         project.MidiChannelRoots.Add(root);
         project.PureMidiTracks.Add(track);
-        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -280,10 +278,9 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         };
         segment.Notes.AddRange([first, second]);
         track.Segments.Add(segment);
-        root.MidiTrackIds.Add(track.Id);
         project.MidiChannelRoots.Add(root);
         project.PureMidiTracks.Add(track);
-        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -307,7 +304,9 @@ public sealed class ProjectSelectionTransformEditCommandsTests
     public void SegmentTransformsIgnoreHiddenContentAndCanMirrorSegmentWindows()
     {
         MidoraProject project = new(480);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
         LogicalTrack track = new(project) { Name = "Track" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment first = new(project)
         {
             ProjectStartTick = 100,
@@ -341,7 +340,6 @@ public sealed class ProjectSelectionTransformEditCommandsTests
             ContentOffsetTick = 0
         };
         track.Segments.AddRange([first, second]);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -455,10 +453,9 @@ public sealed class ProjectSelectionTransformEditCommandsTests
             LengthTicks = 50
         };
         track.Segments.AddRange([first, second]);
-        root.MidiTrackIds.Add(track.Id);
         project.MidiChannelRoots.Add(root);
         project.PureMidiTracks.Add(track);
-        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -500,7 +497,9 @@ public sealed class ProjectSelectionTransformEditCommandsTests
     public void SegmentContentScaleUsesLaterPointWhenRoundingCollapsesTicks()
     {
         MidoraProject project = new(480);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
         LogicalTrack track = new(project) { Name = "Track" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 100 };
         LogicalParameterLane lane = new(project) { ParameterId = MidoraId.FromSequence(900_002) };
         CurvePoint first = new(project, 10, 0.25);
@@ -508,7 +507,6 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         lane.Points.AddRange([first, second]);
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -540,7 +538,8 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
+        LogicalTrack track = new(project) { Name = "Track"};
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
         CurvePoint first = new(project, 0, 0.1);
@@ -549,7 +548,6 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         lane.Points.AddRange([first, second, incumbent]);
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -706,7 +704,9 @@ public sealed class ProjectSelectionTransformEditCommandsTests
     public void BatchEditRoundsBeforeTickBoundaryAndDeletesArbitrarilyLargeKeys()
     {
         MidoraProject project = new(480);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
         LogicalTrack track = new(project) { Name = "Track" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalNote note = new(project)
         {
@@ -717,7 +717,6 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         };
         segment.Notes.Add(note);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
         using BatchEditExpressionProgram nearZeroTick = BatchEditExpressionProgram.Compile(
@@ -757,7 +756,9 @@ public sealed class ProjectSelectionTransformEditCommandsTests
     public void SegmentNoteBatchTickCanExpandLeftWithoutMovingHiddenContent()
     {
         MidoraProject project = new(480);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
         LogicalTrack track = new(project) { Name = "Track" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project)
         {
             ProjectStartTick = 100,
@@ -780,7 +781,6 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         };
         segment.Notes.AddRange([hidden, selected]);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
         using BatchEditExpressionProgram program = BatchEditExpressionProgram.Compile(
@@ -828,11 +828,10 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment blocker = new(project)
         {
             ProjectStartTick = 40,
@@ -849,7 +848,6 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         lane.Points.Add(point);
         segment.ParameterLanes.Add(lane);
         track.Segments.AddRange([blocker, segment]);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
         using BatchEditExpressionProgram program = BatchEditExpressionProgram.Compile(
@@ -888,11 +886,10 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
         CurvePoint first = new(project, 10, 0.25);
@@ -900,7 +897,6 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         lane.Points.AddRange([first, second]);
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
         using BatchEditExpressionProgram program = BatchEditExpressionProgram.Compile(
@@ -1016,7 +1012,9 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         CreateLogicalNoteProject()
     {
         MidoraProject project = new(480);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
         LogicalTrack track = new(project) { Name = "Track" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalNote first = new(project)
         {
@@ -1034,7 +1032,6 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         };
         segment.Notes.AddRange([first, second]);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         return (project, segment, first, second);
     }
 

@@ -30,8 +30,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private readonly CSharpMappingDraftCompiler _mappingDraftCompiler = new();
     private readonly HashSet<MidoraId> _mutedTrackIds = [];
     private readonly HashSet<MidoraId> _soloTrackIds = [];
-    private readonly HashSet<MidoraId> _mutedArrangementParentIds = [];
-    private readonly HashSet<MidoraId> _soloArrangementParentIds = [];
+    private readonly HashSet<MidoraId> _mutedSharedGroupIds = [];
+    private readonly HashSet<MidoraId> _soloSharedGroupIds = [];
     private readonly List<WorkspaceKey> _backNavigation = [];
     private readonly List<WorkspaceKey> _forwardNavigation = [];
     private readonly Dictionary<long, Dictionary<WorkspaceKey, WorkspaceSelectionBookmark>>
@@ -127,10 +127,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         : "SoundFont Configured";
     public bool IsTrackMuted(MidoraId trackId) => _mutedTrackIds.Contains(trackId);
     public bool IsTrackSolo(MidoraId trackId) => _soloTrackIds.Contains(trackId);
-    public bool IsArrangementParentMuted(MidoraId parentId) =>
-        _mutedArrangementParentIds.Contains(parentId);
-    public bool IsArrangementParentSolo(MidoraId parentId) =>
-        _soloArrangementParentIds.Contains(parentId);
+    public bool IsSharedGroupMuted(MidoraId sharedGroupId) =>
+        _mutedSharedGroupIds.Contains(sharedGroupId);
+    public bool IsSharedGroupSolo(MidoraId sharedGroupId) =>
+        _soloSharedGroupIds.Contains(sharedGroupId);
     public long CurrentTick => _displayCurrentTick;
     public string TempoText => _tempoText;
     public string PositionText
@@ -749,14 +749,14 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         SetTrackMonitoringState(trackId, solo, isSolo: true);
     }
 
-    public void SetArrangementParentMuted(MidoraId parentId, bool muted)
+    public void SetSharedGroupMuted(MidoraId sharedGroupId, bool muted)
     {
-        SetArrangementParentMonitoringState(parentId, muted, isSolo: false);
+        SetSharedGroupMonitoringState(sharedGroupId, muted, isSolo: false);
     }
 
-    public void SetArrangementParentSolo(MidoraId parentId, bool solo)
+    public void SetSharedGroupSolo(MidoraId sharedGroupId, bool solo)
     {
-        SetArrangementParentMonitoringState(parentId, solo, isSolo: true);
+        SetSharedGroupMonitoringState(sharedGroupId, solo, isSolo: true);
     }
 
     private void SetTrackMonitoringState(MidoraId trackId, bool enabled, bool isSolo)
@@ -791,33 +791,33 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
     }
 
-    private void SetArrangementParentMonitoringState(
-        MidoraId parentId,
+    private void SetSharedGroupMonitoringState(
+        MidoraId sharedGroupId,
         bool enabled,
         bool isSolo)
     {
         if (Project is not MidoraProject project
-            || (!project.EventInstruments.Any(value => value.Id == parentId)
-                && !project.MidiChannelRoots.Any(value => value.Id == parentId)))
+            || (!project.EventInstrumentUsages.Any(value => value.Id == sharedGroupId)
+                && !project.MidiChannelRoots.Any(value => value.Id == sharedGroupId)))
         {
-            throw new InvalidOperationException("The Arrangement parent no longer exists.");
+            throw new InvalidOperationException("The shared Track group no longer exists.");
         }
         HashSet<MidoraId> states = isSolo
-            ? _soloArrangementParentIds
-            : _mutedArrangementParentIds;
-        bool wasEnabled = states.Contains(parentId);
+            ? _soloSharedGroupIds
+            : _mutedSharedGroupIds;
+        bool wasEnabled = states.Contains(sharedGroupId);
         if (wasEnabled == enabled) return;
-        if (enabled) states.Add(parentId);
-        else states.Remove(parentId);
+        if (enabled) states.Add(sharedGroupId);
+        else states.Remove(sharedGroupId);
         try
         {
-            if (isSolo) _context?.Playback?.SetArrangementParentSolo(parentId, enabled);
-            else _context?.Playback?.SetArrangementParentMuted(parentId, enabled);
+            if (isSolo) _context?.Playback?.SetSharedGroupSolo(sharedGroupId, enabled);
+            else _context?.Playback?.SetSharedGroupMuted(sharedGroupId, enabled);
         }
         catch
         {
-            if (wasEnabled) states.Add(parentId);
-            else states.Remove(parentId);
+            if (wasEnabled) states.Add(sharedGroupId);
+            else states.Remove(sharedGroupId);
             throw;
         }
         foreach (TimelineWorkspaceViewModel workspace in Workspaces
@@ -1180,10 +1180,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             foreach (MidoraId trackId in _mutedTrackIds) _context.Playback.SetTrackMuted(trackId, true);
             foreach (MidoraId trackId in _soloTrackIds) _context.Playback.SetTrackSolo(trackId, true);
-            foreach (MidoraId parentId in _mutedArrangementParentIds)
-                _context.Playback.SetArrangementParentMuted(parentId, true);
-            foreach (MidoraId parentId in _soloArrangementParentIds)
-                _context.Playback.SetArrangementParentSolo(parentId, true);
+            foreach (MidoraId sharedGroupId in _mutedSharedGroupIds)
+                _context.Playback.SetSharedGroupMuted(sharedGroupId, true);
+            foreach (MidoraId sharedGroupId in _soloSharedGroupIds)
+                _context.Playback.SetSharedGroupSolo(sharedGroupId, true);
             _context.Playback.StateChanged += OnPlaybackStateChanged;
         }
         RefreshProperties();
@@ -1255,7 +1255,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             ProjectTreeNodeKind.LogicalTrack => ProjectDomainEditCommands.RenameLogicalTrack(id, name),
             ProjectTreeNodeKind.EventInstrument => ProjectDomainEditCommands.RenameEventInstrument(id, name),
-            ProjectTreeNodeKind.InstrumentFolder => ProjectDomainEditCommands.RenameEventInstrumentFolder(id, name),
             _ => throw new InvalidOperationException("This Project node cannot be renamed.")
         };
         Execute(command);
@@ -1275,9 +1274,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             ProjectTreeNodeKind.EventInstrument => ProjectDomainEditCommands.ReorderEventInstrument(
                 id,
                 Math.Clamp(Project.EventInstruments.FindIndex(item => item.Id == id) + Math.Sign(direction), 0, Project.EventInstruments.Count - 1)),
-            ProjectTreeNodeKind.InstrumentFolder => ProjectDomainEditCommands.ReorderEventInstrumentFolder(
-                id,
-                Math.Clamp(Project.EventInstrumentFolders.FindIndex(item => item.Id == id) + Math.Sign(direction), 0, Project.EventInstrumentFolders.Count - 1)),
             _ => throw new InvalidOperationException("This Project node cannot be reordered.")
         };
         Execute(command);
@@ -1292,7 +1288,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             ProjectTreeNodeKind.LogicalTrack => ProjectDomainEditCommands.ReorderLogicalTrack(id, newIndex),
             ProjectTreeNodeKind.EventInstrument => ProjectDomainEditCommands.ReorderEventInstrument(id, newIndex),
-            ProjectTreeNodeKind.InstrumentFolder => ProjectDomainEditCommands.ReorderEventInstrumentFolder(id, newIndex),
             _ => throw new InvalidOperationException("This Project node cannot be reordered.")
         };
         Execute(command);
@@ -1307,7 +1302,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             ProjectTreeNodeKind.LogicalTrack => ProjectDomainEditCommands.DeleteLogicalTrack(id, confirmed),
             ProjectTreeNodeKind.EventInstrument => ProjectDomainEditCommands.DeleteEventInstrument(id, confirmed),
-            ProjectTreeNodeKind.InstrumentFolder => ProjectDomainEditCommands.DeleteEventInstrumentFolder(id),
             ProjectTreeNodeKind.DamagedEventInstrument => ProjectDomainEditCommands.DeleteDamagedEventInstrument(id),
             ProjectTreeNodeKind.DamagedLogicalTrack => ProjectDomainEditCommands.DeleteDamagedLogicalTrack(id),
             _ => throw new InvalidOperationException("This Project node cannot be deleted.")
@@ -1680,8 +1674,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         _mappingDraftCompiler.Clear();
         _mutedTrackIds.Clear();
         _soloTrackIds.Clear();
-        _mutedArrangementParentIds.Clear();
-        _soloArrangementParentIds.Clear();
+        _mutedSharedGroupIds.Clear();
+        _soloSharedGroupIds.Clear();
         foreach (DesktopTaskViewModel task in TaskHistory) task.Dispose();
         TaskHistory.Clear();
         ActiveWorkspace = null;
@@ -1708,8 +1702,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         _mappingDraftCompiler.Clear();
         _mutedTrackIds.Clear();
         _soloTrackIds.Clear();
-        _mutedArrangementParentIds.Clear();
-        _soloArrangementParentIds.Clear();
+        _mutedSharedGroupIds.Clear();
+        _soloSharedGroupIds.Clear();
         ProjectContext? previous = _context;
         if (previous is not null)
         {
@@ -1873,7 +1867,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             WorkspaceKind.SegmentEditor => workspace.ObjectId is MidoraId segmentId
                 && (TimelineWorkspaceViewModel.FindSegment(Project!, segmentId) is { } located
                     && (trackIds.Contains(located.Track.Id)
-                        || located.Track.EventInstrumentId is MidoraId instrumentId
+                        || Project!.ResolveEventInstrumentDefinitionId(located.Track) is MidoraId instrumentId
                            && instrumentIds.Contains(instrumentId))
                     || TimelineWorkspaceViewModel.FindMidiSegment(Project!, segmentId) is { } midi
                     && (pureTrackIds.Contains(midi.Track.Id)
@@ -1900,8 +1894,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             timeline.SetTrackMonitoringStates(
                 _mutedTrackIds,
                 _soloTrackIds,
-                _mutedArrangementParentIds,
-                _soloArrangementParentIds);
+                _mutedSharedGroupIds,
+                _soloSharedGroupIds);
         }
         if (workspace is SettingsWorkspaceViewModel settings && _context is not null)
         {
@@ -1923,27 +1917,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             ProjectTree.Add(new(ProjectTreeNodeKind.Conductor, "Conductor Track"));
         }
         ProjectTreeNode library = new(ProjectTreeNodeKind.InstrumentLibrary, "Event Instrument Library");
-        HashSet<MidoraId> validFolderIds = Project.EventInstrumentFolders
-            .Select(folder => folder.Id)
-            .ToHashSet();
-        foreach (EventInstrumentLibraryFolder folder in Project.EventInstrumentFolders)
-        {
-            EventInstrument[] instruments = Project.EventInstruments
-                .Where(item => item.LibraryFolderId == folder.Id)
-                .ToArray();
-            bool folderMatches = MatchesProjectTreeFilter(folder.Name, query);
-            ProjectTreeNode folderNode = new(ProjectTreeNodeKind.InstrumentFolder, folder.Name, folder.Id);
-            foreach (EventInstrument instrument in instruments.Where(item =>
-                         folderMatches || MatchesProjectTreeFilter(item.Name, query)))
-            {
-                folderNode.Children.Add(new(ProjectTreeNodeKind.EventInstrument, instrument.Name, instrument.Id));
-            }
-            if (!filtered || folderMatches || folderNode.Children.Count != 0) library.Children.Add(folderNode);
-        }
         foreach (EventInstrument instrument in Project.EventInstruments.Where(item =>
-                     (item.LibraryFolderId is null
-                         || !validFolderIds.Contains(item.LibraryFolderId.Value))
-                     && MatchesProjectTreeFilter(item.Name, query)))
+                     MatchesProjectTreeFilter(item.Name, query)))
         {
             library.Children.Add(new(ProjectTreeNodeKind.EventInstrument, instrument.Name, instrument.Id));
         }
@@ -1960,9 +1935,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ProjectTreeNode tracks = new(ProjectTreeNodeKind.LogicalTracks, "Logical Tracks");
         foreach (LogicalTrack track in Project.Tracks)
         {
-            EventInstrument? bound = track.EventInstrumentId is MidoraId instrumentId
-                ? Project.EventInstruments.FirstOrDefault(item => item.Id == instrumentId)
-                : null;
+            EventInstrument? bound = Project.FindEventInstrumentDefinition(track);
             string boundName = bound is null
                 ? track.LastBoundEventInstrumentName ?? string.Empty
                 : bound.Name;

@@ -4,27 +4,6 @@ namespace Midora.Application;
 
 public static partial class ProjectObjectClipboard
 {
-    public static ProjectObjectClipboardPayload CopyMidiChannelRoot(
-        ProjectDocumentSession document,
-        MidoraId rootId)
-    {
-        ArgumentNullException.ThrowIfNull(document);
-        MidiChannelRoot root = document.Project.MidiChannelRoots.SingleOrDefault(value => value.Id == rootId)
-            ?? throw new ArgumentOutOfRangeException(nameof(rootId));
-        Dictionary<MidoraId, PureMidiTrack> tracks = document.Project.PureMidiTracks.ToDictionary(value => value.Id);
-        PureMidiTrackClipboardSnapshot[] children = root.MidiTrackIds
-            .Select(id => tracks.TryGetValue(id, out PureMidiTrack? track)
-                ? SnapshotPureMidiTrack(track)
-                : throw new InvalidOperationException("The MIDI Channel Root references a missing MIDI Track."))
-            .ToArray();
-        return new(
-            document.ClipboardSessionIdentity,
-            ProjectObjectClipboardKind.MidiChannelRoot,
-            1,
-            $"MIDI Channel Root: {root.Name}",
-            new MidiChannelRootClipboardData(root.Name, root.ChannelMode, children));
-    }
-
     public static ProjectObjectClipboardPayload CopyPureMidiTrack(
         ProjectDocumentSession document,
         MidoraId trackId)
@@ -32,12 +11,18 @@ public static partial class ProjectObjectClipboard
         ArgumentNullException.ThrowIfNull(document);
         PureMidiTrack track = document.Project.PureMidiTracks.SingleOrDefault(value => value.Id == trackId)
             ?? throw new ArgumentOutOfRangeException(nameof(trackId));
+        MidiChannelRoot root = document.Project.MidiChannelRoots.SingleOrDefault(
+            value => value.Id == track.MidiChannelRootId)
+            ?? throw new InvalidOperationException(
+                "The copied Pure MIDI Track references a missing MIDI Channel Root.");
         return new(
             document.ClipboardSessionIdentity,
             ProjectObjectClipboardKind.PureMidiTrack,
             1,
             "1 MIDI Track",
-            new PureMidiTrackClipboardData(SnapshotPureMidiTrack(track)));
+            new PureMidiTrackClipboardData(
+                SnapshotPureMidiTrack(track),
+                SnapshotMidiRoute(root)));
     }
 
     public static ProjectObjectClipboardPayload CopyMidiSegments(
@@ -163,16 +148,6 @@ public static partial class ProjectObjectClipboard
             new OpaqueMidiEventClipboardData(snapshots));
     }
 
-    public static IProjectEditCommand CreatePasteMidiChannelRootCommand(
-        ProjectDocumentSession document,
-        ProjectObjectClipboardPayload payload,
-        int insertionIndex)
-    {
-        MidiChannelRootClipboardData data = RequirePayload<MidiChannelRootClipboardData>(
-            document, payload, ProjectObjectClipboardKind.MidiChannelRoot);
-        return ProjectDomainEditCommands.PasteMidiChannelRootClipboard(data, insertionIndex);
-    }
-
     public static IProjectEditCommand CreatePastePureMidiTrackCommand(
         ProjectDocumentSession document,
         ProjectObjectClipboardPayload payload,
@@ -181,7 +156,27 @@ public static partial class ProjectObjectClipboard
     {
         PureMidiTrackClipboardData data = RequirePayload<PureMidiTrackClipboardData>(
             document, payload, ProjectObjectClipboardKind.PureMidiTrack);
-        return ProjectDomainEditCommands.PastePureMidiTrackClipboard(data.Track, rootId, insertionIndex);
+        return ProjectDomainEditCommands.PastePureMidiTrackClipboard(
+            data.Track,
+            data.Route,
+            rootId,
+            insertionIndex);
+    }
+
+    public static IProjectEditCommand CreatePastePureMidiTrackIndependentCommand(
+        ProjectDocumentSession document,
+        ProjectObjectClipboardPayload payload,
+        int insertionIndex)
+    {
+        PureMidiTrackClipboardData data = RequirePayload<PureMidiTrackClipboardData>(
+            document,
+            payload,
+            ProjectObjectClipboardKind.PureMidiTrack);
+        return ProjectDomainEditCommands.PastePureMidiTrackClipboard(
+            data.Track,
+            data.Route,
+            targetRootId: null,
+            insertionIndex);
     }
 
     public static IProjectEditCommand CreatePasteMidiSegmentsCommand(
@@ -283,15 +278,24 @@ public static partial class ProjectObjectClipboard
             segment.OpaqueEvents.Select(value => new OpaqueMidiEventClipboardSnapshot(
                 value.Tick, value.Kind, value.MetaType, value.Payload.ToArray(), value.Order)).ToArray());
 
+    private static MidiRouteClipboardSnapshot SnapshotMidiRoute(MidiChannelRoot root) => new(
+        root.Name,
+        root.RoutingMode,
+        root.FixedZeroBasedPort,
+        root.FixedZeroBasedChannel,
+        root.ChannelMode);
+
     private static (PureMidiTrack Track, MidiSegment Segment, int TrackIndex) FindMidiSegmentForClipboard(
         MidoraProject project,
         MidoraId segmentId)
     {
         (PureMidiTrack Track, MidiSegment Segment, int TrackIndex)? result = null;
-        PureMidiTrack[] tracks = project.PureMidiTracksInArrangementOrder().ToArray();
-        for (int trackIndex = 0; trackIndex < tracks.Length; trackIndex++)
+        foreach (PureMidiTrack track in project.PureMidiTracks)
         {
-            PureMidiTrack track = tracks[trackIndex];
+            int trackIndex = ProjectDomainEditCommands.FindArrangementTrackIndex(
+                project,
+                ArrangementTrackKind.PureMidiTrack,
+                track.Id);
             foreach (MidiSegment segment in track.Segments)
             {
                 if (segment.Id != segmentId) continue;
@@ -303,11 +307,15 @@ public static partial class ProjectObjectClipboard
     }
 }
 
-internal sealed record MidiChannelRootClipboardData(
+internal sealed record PureMidiTrackClipboardData(
+    PureMidiTrackClipboardSnapshot Track,
+    MidiRouteClipboardSnapshot Route) : ProjectObjectClipboardData;
+internal sealed record MidiRouteClipboardSnapshot(
     string Name,
-    MidiChannelMode ChannelMode,
-    PureMidiTrackClipboardSnapshot[] Tracks) : ProjectObjectClipboardData;
-internal sealed record PureMidiTrackClipboardData(PureMidiTrackClipboardSnapshot Track) : ProjectObjectClipboardData;
+    MidiChannelRootRoutingMode RoutingMode,
+    byte FixedZeroBasedPort,
+    byte FixedZeroBasedChannel,
+    MidiChannelMode ChannelMode);
 internal sealed record PureMidiTrackClipboardSnapshot(
     string Name,
     MidoraColor? Color,
@@ -348,74 +356,107 @@ internal sealed record OpaqueMidiEventClipboardSnapshot(
 
 public static partial class ProjectDomainEditCommands
 {
-    internal static IProjectEditCommand PasteMidiChannelRootClipboard(
-        MidiChannelRootClipboardData data,
-        int insertionIndex) =>
-        Command("Paste MIDI Channel Root", project =>
-        {
-            ArgumentNullException.ThrowIfNull(data);
-            ValidateInsertionIndex(insertionIndex, project.ArrangementParents.Count, nameof(insertionIndex));
-            MidiChannelRoot? root = null;
-            PureMidiTrack[]? tracks = null;
-            return Prepared(true, EverythingChange(), owner =>
-            {
-                if (root is null)
-                {
-                    root = new(owner)
-                    {
-                        Name = ProjectTextRules.NormalizeShortText(data.Name, false, nameof(data)),
-                        RoutingMode = MidiChannelRootRoutingMode.Auto,
-                        ChannelMode = data.ChannelMode
-                    };
-                    tracks = data.Tracks.Select(value => CreatePureMidiTrackFromClipboard(owner, value, root.Id)).ToArray();
-                }
-                EnsureMidiChannelRootIdAvailable(owner, root.Id);
-                owner.MidiChannelRoots.Add(root);
-                foreach (PureMidiTrack track in tracks ?? [])
-                {
-                    EnsurePureMidiTrackIdAvailable(owner, track.Id);
-                    owner.PureMidiTracks.Add(track);
-                    root.MidiTrackIds.Add(track.Id);
-                }
-                InsertAt(owner.ArrangementParents, insertionIndex,
-                    new ArrangementParentReference(ArrangementParentKind.MidiChannelRoot, root.Id),
-                    "pasted MIDI Channel Root parent");
-            }, owner =>
-            {
-                MidiChannelRoot value = root ?? throw new InvalidOperationException("The pasted MIDI Channel Root does not exist.");
-                RemoveRequired(owner.ArrangementParents,
-                    new ArrangementParentReference(ArrangementParentKind.MidiChannelRoot, value.Id),
-                    "pasted MIDI Channel Root parent");
-                foreach (PureMidiTrack track in tracks ?? [])
-                {
-                    RemoveRequired(value.MidiTrackIds, track.Id, "pasted MIDI Track reference");
-                    RemoveRequired(owner.PureMidiTracks, track, "pasted MIDI Track");
-                }
-                RemoveRequired(owner.MidiChannelRoots, value, "pasted MIDI Channel Root");
-            });
-        });
-
     internal static IProjectEditCommand PastePureMidiTrackClipboard(
         PureMidiTrackClipboardSnapshot snapshot,
-        MidoraId rootId,
+        MidiRouteClipboardSnapshot route,
+        MidoraId? targetRootId,
         int insertionIndex) =>
         Command("Paste Pure MIDI Track", project =>
         {
-            MidiChannelRoot root = FindMidiChannelRoot(project, rootId);
-            ValidateInsertionIndex(insertionIndex, root.MidiTrackIds.Count, nameof(insertionIndex));
+            MidiChannelRoot? targetRoot = targetRootId is MidoraId rootId
+                ? FindMidiChannelRoot(project, rootId)
+                : route.RoutingMode == MidiChannelRootRoutingMode.Fixed
+                    ? project.MidiChannelRoots.SingleOrDefault(value =>
+                        value.RoutingMode == MidiChannelRootRoutingMode.Fixed
+                        && value.FixedZeroBasedPort == route.FixedZeroBasedPort
+                        && value.FixedZeroBasedChannel == route.FixedZeroBasedChannel)
+                    : null;
+            if (targetRoot is not null
+                && targetRoot.RoutingMode == MidiChannelRootRoutingMode.Fixed
+                && targetRoot.ChannelMode != route.ChannelMode
+                && targetRootId is null)
+            {
+                throw new InvalidOperationException(
+                    "The copied Fixed route conflicts with the existing Channel Mode.");
+            }
+            ValidateInsertionIndex(
+                insertionIndex,
+                project.ArrangementTracks.Count,
+                nameof(insertionIndex));
+            int trackIndex = insertionIndex;
+            if (targetRoot is { RoutingMode: MidiChannelRootRoutingMode.Auto })
+            {
+                int first = project.ArrangementTracks.FindIndex(reference =>
+                    reference.Kind == ArrangementTrackKind.PureMidiTrack
+                    && FindPureMidiTrack(project, reference.TrackId).MidiChannelRootId == targetRoot.Id);
+                int last = project.ArrangementTracks.FindLastIndex(reference =>
+                    reference.Kind == ArrangementTrackKind.PureMidiTrack
+                    && FindPureMidiTrack(project, reference.TrackId).MidiChannelRootId == targetRoot.Id);
+                if (first < 0)
+                {
+                    throw new InvalidOperationException(
+                        "The target Auto MIDI Channel has no Arrangement member.");
+                }
+                if (trackIndex < first || trackIndex > last + 1)
+                {
+                    trackIndex = last + 1;
+                }
+            }
             PureMidiTrack? copy = null;
-            return Prepared(true, RootChange(root.Id), owner =>
-            {
-                copy ??= CreatePureMidiTrackFromClipboard(owner, snapshot, root.Id);
-                EnsurePureMidiTrackIdAvailable(owner, copy.Id);
-                owner.PureMidiTracks.Add(copy);
-                InsertAt(root.MidiTrackIds, insertionIndex, copy.Id, "pasted Pure MIDI Track reference");
-            }, owner =>
-            {
-                PureMidiTrack value = copy ?? throw new InvalidOperationException("The pasted Pure MIDI Track does not exist.");
-                RemoveRequired(root.MidiTrackIds, value.Id, "pasted Pure MIDI Track reference");
-                RemoveRequired(owner.PureMidiTracks, value, "pasted Pure MIDI Track");
-            });
+            MidiChannelRoot? createdRoot = null;
+            return Prepared(
+                true,
+                EverythingChange(),
+                owner =>
+                {
+                    if (targetRoot is null && createdRoot is null)
+                    {
+                        createdRoot = new(owner)
+                        {
+                            Name = ProjectTextRules.NormalizeShortText(
+                                route.Name,
+                                allowEmpty: false,
+                                nameof(route)),
+                            RoutingMode = route.RoutingMode,
+                            FixedZeroBasedPort = route.FixedZeroBasedPort,
+                            FixedZeroBasedChannel = route.FixedZeroBasedChannel,
+                            ChannelMode = route.ChannelMode
+                        };
+                    }
+                    MidiChannelRoot root = targetRoot ?? createdRoot!;
+                    if (createdRoot is not null && !owner.MidiChannelRoots.Contains(createdRoot))
+                    {
+                        EnsureMidiChannelRootIdAvailable(owner, createdRoot.Id);
+                        owner.MidiChannelRoots.Add(createdRoot);
+                    }
+                    copy ??= CreatePureMidiTrackFromClipboard(owner, snapshot, root.Id);
+                    EnsurePureMidiTrackIdAvailable(owner, copy.Id);
+                    copy.MidiChannelRootId = root.Id;
+                    owner.PureMidiTracks.Add(copy);
+                    InsertAt(
+                        owner.ArrangementTracks,
+                        trackIndex,
+                        new ArrangementTrackReference(
+                            ArrangementTrackKind.PureMidiTrack,
+                            copy.Id),
+                        "pasted Arrangement Track reference");
+                },
+                owner =>
+                {
+                    PureMidiTrack value = copy ?? throw new InvalidOperationException(
+                        "The pasted Pure MIDI Track does not exist.");
+                    RemoveRequired(
+                        owner.ArrangementTracks,
+                        new ArrangementTrackReference(
+                            ArrangementTrackKind.PureMidiTrack,
+                            value.Id),
+                        "pasted Arrangement Track reference");
+                    RemoveRequired(owner.PureMidiTracks, value, "pasted Pure MIDI Track");
+                    if (createdRoot is not null)
+                    {
+                        RemoveRequired(owner.MidiChannelRoots, createdRoot, "MIDI Channel Root");
+                    }
+                });
         });
 
     internal static IProjectEditCommand PasteMidiSegmentClipboard(
@@ -426,19 +467,21 @@ public static partial class ProjectDomainEditCommands
         {
             if (snapshots.Count == 0 || editCursorTick < 0) throw new ArgumentOutOfRangeException(nameof(editCursorTick));
             PureMidiTrack primary = FindPureMidiTrack(project, targetTrackId);
-            PureMidiTrack[] arrangedTracks = project.PureMidiTracksInArrangementOrder().ToArray();
-            int primaryIndex = Array.IndexOf(arrangedTracks, primary);
-            if (primaryIndex < 0)
-            {
-                throw new InvalidOperationException(
-                    "The target MIDI Track is missing from the Arrangement hierarchy.");
-            }
+            int primaryIndex = FindArrangementTrackIndex(
+                project,
+                ArrangementTrackKind.PureMidiTrack,
+                primary.Id);
             var placements = snapshots.Select(snapshot =>
             {
                 int index = checked(primaryIndex + snapshot.TrackOffset);
-                if ((uint)index >= (uint)arrangedTracks.Length)
-                    throw new InvalidOperationException("The MIDI Segment clipboard cannot preserve its relative Track offsets.");
-                PureMidiTrack track = arrangedTracks[index];
+                if ((uint)index >= (uint)project.ArrangementTracks.Count
+                    || project.ArrangementTracks[index] is not
+                        { Kind: ArrangementTrackKind.PureMidiTrack } targetReference)
+                {
+                    throw new InvalidOperationException(
+                        "The MIDI Segment clipboard cannot preserve its relative Arrangement lane offsets.");
+                }
+                PureMidiTrack track = FindPureMidiTrack(project, targetReference.TrackId);
                 long start = checked(editCursorTick + snapshot.StartOffset);
                 EnsureNoMidiSegmentOverlap(track, null, start, snapshot.LengthTicks);
                 return (Snapshot: snapshot, Track: track, Start: start);

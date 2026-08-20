@@ -90,7 +90,7 @@ Global context and task state
 Global Undo / Redo 永远操作 Project History。Global Save 永远执行 Save Project。
 #### 17.1.3.4 [D] Workspace Tabs
 中央编辑区域使用多 Workspace Tab。同一功能 Workspace 按类型唯一；对象 Workspace 按稳定 ID 唯一。
-Arrangement 固定为第一个 Tab、常驻、不可关闭、不可重排。它提供 Conductor、Event Instrument / Root 和 child Track 的唯一外层层级入口。
+Arrangement 固定为第一个 Tab、常驻、不可关闭、不可重排。它提供 Conductor 与 Logical / Pure MIDI Track 的唯一全局平铺顺序入口，并可切换显示独立的 Event Instruments 管理栏。
 #### 17.1.3.5 [E] Active Workspace
 承载当前编辑器或完整功能 Workspace。
 #### 17.1.3.6 [F] Inspector
@@ -390,11 +390,11 @@ Global Notice 被关闭或折叠时，不清除对应 Diagnostic 或 Task。
 ---
 ## 17.6 外层对象导航
 
-初版删除 Project Panel。Conductor、Event Instrument / MIDI Channel Root、Logical / Pure MIDI Track 的创建、排序、父子关系、打开与 context menu 全部统一到常驻 Arrangement，完整规则见第 24 章。
+初版删除 Project Panel。Conductor、Logical / Pure MIDI Track 的创建、全局排序、共享组操作、打开与 context menu 全部统一到常驻 Arrangement；Event Instrument Definition 由 Arrangement 内可切换的 Event Instruments 管理栏维护。Usage 与 Root 是内部共享执行身份，不占独立时间线行。完整规则见第 24 章。
 
 Project Settings 继续从主菜单 `Project` 打开；Diagnostics 可从主菜单、Bottom Panel 和 Status Bar Issues 导航；删除 Project Panel 不删除任何功能 Workspace。
 
-播放期间允许在 Arrangement 浏览、展开/折叠父节点、打开 Workspace 和查看诊断；Project 编辑锁仍禁止创建、删除、重命名、排序、复制与 rebind。展开折叠、选择和 viewport 是 session state。
+播放期间允许在 Arrangement 浏览、切换 Event Instruments 管理栏、打开 Workspace 和查看诊断；Project 编辑锁仍禁止创建、删除、重命名、排序、复制与共享组改绑。管理栏可见性、选择和 viewport 是 session state。
 ---
 ## 17.7 Global Command Bar、Notice Bar 与 Status Bar
 ### 17.7.1 Global Command Bar

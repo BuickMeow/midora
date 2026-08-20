@@ -117,8 +117,7 @@ public static class CanonicalMidiFileExporter
                 .Where(value => value.Kind == CanonicalSmfTrackKind.PureMidiTrack
                     && includePureMidiTracks
                     && (!includedPort.HasValue || value.ZeroBasedPort == includedPort.Value))
-                .OrderBy(value => value.MidiChannelRootOrder)
-                .ThenBy(value => value.SourceTrackOrder)
+                .OrderBy(value => value.SourceTrackOrder)
                 .ToArray();
             Dictionary<MidoraId, CanonicalSmfTrackDescriptor> pureById = pureDescriptors
                 .ToDictionary(value => value.ExportTrackId);
@@ -285,8 +284,7 @@ public static class CanonicalMidiFileExporter
                 .Where(value => value.Kind == CanonicalSmfTrackKind.PureMidiTrack
                     && includePureMidiTracks
                     && (!includedPort.HasValue || value.ZeroBasedPort == includedPort.Value))
-                .OrderBy(value => value.MidiChannelRootOrder)
-                .ThenBy(value => value.SourceTrackOrder)
+                .OrderBy(value => value.SourceTrackOrder)
                 .ToArray();
             HashSet<MidoraId> pureTrackIds = pureDescriptors
                 .Select(value => value.ExportTrackId)

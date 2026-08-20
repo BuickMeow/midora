@@ -1,12 +1,12 @@
 # Midora Pure MIDI Tracks and SMF Import Requirement Trace
 
-状态：2026-08-19 已实施并通过自动回归；WPF 实机交互与真实外部 MIDI 兼容矩阵待产品验收
-日期：2026-08-18（2026-08-19 更新实施状态）
+状态：2026-08-20 已按平铺 Arrangement / 非空内部 Root 破坏性修订；WPF 实机交互与真实外部 MIDI 兼容矩阵待产品验收
+日期：2026-08-18（2026-08-20 更新当前结构）
 上位规范：`misc/Midora-SRS-Initial-Release-v0.1/23-Pure-MIDI-Tracks-and-SMF-Import.md`、`24-Arrangement-Hierarchy-and-Preview.md`
 
 ## 1. 输入
 
-- 完整 Project，包括 Conductor Track、Event Instrument / MIDI Channel Root mixed parents、各自 child Tracks、两类 Segment、Project Settings 与单一 Project SoundFont。
+- 完整 Project，包括 Conductor Track、global mixed Logical/Pure MIDI Track order、内部非空 MIDI Channel Roots、Event Instrument Definitions/Usages、两类 Segment、Project Settings 与单一 Project SoundFont。
 - 纯 MIDI 数据源包括直接 MIDI Note、完整 MIDI 1.0 Channel Voice Event、导入后只读保留的 opaque SysEx / Meta Event、显式 Track 顺序与 Segment 暴露范围。
 - SMF 导入输入仅限 Format 0 / 1、TPQN division；读取器必须支持 Running Status、MIDI Port Meta 与单个源 MTrk 内的多 Channel 数据。
 - 外部 SMF 可缺失 tick 0 Tempo / Time Signature，可在同 tick 包含多个 Tempo，Track Name 也可缺失、空白或不是严格 UTF-8；这些差异只在导入边界归一化，不成为 Project 源数据的宽松表示。
@@ -16,7 +16,7 @@
 ## 2. 正式输出
 
 - 纯 MIDI Track 直接形成 canonical Channel Event，不经过 Event Instrument、Mapping 或 Logical Parameter 解释。
-- 每个非空或显式固定的 MIDI Channel Root 确定对应一个 Channel Unit；同 Root 的所有 Pure MIDI Track 在执行投影中按 `tick → Track 顺序 → Track 内事件顺序` 合并。
+- 每个参与编译的非空 MIDI Channel Root 确定对应一个 Channel Unit；同 Root 的所有 Pure MIDI Track 在执行投影中按 `tick → global Arrangement Track order → Track 内事件顺序` 合并。
 - Canonical Compiled Result 同时保存确定的 Unit 执行投影和 SMF 输出 Track 拓扑；播放、音频渲染和 MIDI 导出仍只消费 canonical。
 - SMF 导出保持 Pure MIDI Track 的独立 MTrk、名称、顺序和自身 EOT；Logical 内容继续按 Channel Unit 组织 MTrk。
 - Whole Project 与 Per Port 保持 Pure MIDI Track 拓扑；既有 Per Logical Track 模式只输出 Logical/Event Instrument。单独导出 Pure MIDI Track 使用 Whole Project 的显式选择。
@@ -29,7 +29,7 @@
 - 一个 MIDI Channel Root 是共享 Channel 状态、Unit 路由和音频硬边界；子 Track Segment 的并集活动连通区间构成一次 Root Channel 生命周期。
 - 子 Segment 结束只精确关闭自身活动 Note；只有 Root 活动连通区间结束、Project End 或消费者范围结束才执行 Root 级 CC120 / Reset。
 - 同一 Pure MIDI Track 内 Segment 不得重叠；不同 Track（包括同 Root）可以重叠。
-- Root 路由为 `Auto` 或 `Fixed(Port, Channel)`；固定 Root 先预留，Auto Root 后分配，Logical 资源分配必须绕开全部 Root Unit。
+- Root 路由为 `Auto` 或 `Fixed(Port, Channel)`；固定 Root 先预留，含参与 Segment 内容的 Auto Root 按最早成员 global order 分配，Logical Usage 资源分配必须绕开全部 Root Unit。
 - MIDI Channel Root 可为 `Melodic` 或 `Percussion`。Logical/Event Instrument 路径继续按 melodic 语义使用其获配 Channel 10；导入的 Channel 10 Root 默认是 Percussion。
 - Pure MIDI Project 源数据、canonical 与 MIDI 导出允许完整 Channel Voice Event，包括 CC91 / CC93；Event Instrument SubVoice 的创建入口仍保持既有受限事件面。音频后端继续使用 `BASS_MIDI_NOFX`，CC91 / CC93 不产生 Midora Reverb / Chorus 听感。
 - SMF 导出继续显式写 status byte，不启用 Running Status；导入—导出不承诺字节级、Running Status 或原始 chunk 布局一致。
@@ -51,13 +51,13 @@
 
 ## 6. 持久化归属
 
-- MIDI Channel Root、Pure MIDI Track、Midi Segment、直接事件、mixed parent/child 顺序、路由模式、Channel Mode、opaque imported event 和 Midora Stable ID 属于 Project 源数据。
-- `.midora` 使用独立 Root 与 Track protobuf 对象文件并由 `project.json` 的 Arrangement parent tagged union 建立严格索引；Root 顺序从 mixed union 过滤得到。旧开发期布局不构成本次破坏性修订的兼容读取承诺。
+- MIDI Channel Root、Pure MIDI Track、Midi Segment、直接事件、global mixed Track order、Track→Root membership、路由模式、Channel Mode、opaque imported event 和 Midora Stable ID 属于 Project 源数据。
+- `.midora` 使用独立 Root 与 Track protobuf 对象文件，并由 `project.json` 的 global Arrangement Track tagged union 建立严格索引；Root 的相对次序从最早成员 Track 派生，不保存第二套 child order。旧开发期布局不构成本次破坏性修订的兼容读取承诺。
 - Canonical、SMF 导入解析状态、兼容归一化报告、Root merge checkpoint、PCM cache、诊断、导出 Track plan 和 UI 会话状态不进入 `.midora`。
 
 ## 7. 运行时归属
 
-- Root parent 与 Pure MIDI Track child 的 Mute/Solo 相互独立且只属运行期，按 SRS 24.5 计算；不改变 Project、canonical、MIDI 导出或音频文件渲染。
+- Shared Root 与 Pure MIDI Track 的 Mute/Solo 相互独立且只属运行期，按 SRS 24.5 计算；不改变 Project、canonical、MIDI 导出或音频文件渲染。
 - 音频按 Root/Unit 使用一个共享 MIDI Channel 状态流；不得把同 Root 子 Track 分别合成后再求和。
 - 缓存分为 MidiSegment 事件片段、Root merge/checkpoint、Root raw PCM tile、playback span 与 Render-Ahead ring；编辑只从最早 dirty tick 向后失效到状态 hash 收敛。
 - Sequencer-Specific Meta、冻结导出拓扑、输出路径和跨 Track 兼容 Warning 只属于导入/导出任务或 canonical 派生数据。
@@ -79,19 +79,19 @@
 - Root 活动连通区间、同 tick Segment 交接、子 Segment Note 精确关闭、Root 最终 Reset、同 Root 跨 Track 重叠 Note FIFO。
 - Full/Incremental 等价、集合乱序输入、Track reorder 改变正式顺序、dirty-range 状态收敛与 Root PCM cache 命中。
 - Pure MIDI Track 名称/顺序/EOT、Logical Unit Track、Midora Sequencer-Specific Meta、explicit status、跨 Track warning 和重新导入结构恢复。
-- mixed parent filtered Root order、subtree duplicate Forced-Auto、hierarchical Mute/Solo、Direct NoteOff velocity 与跨类型 Note clipboard。
+- global Track order 派生 Root order、最后成员离开时删除 Root、Shared/Track Mute-Solo、Direct NoteOff velocity 与跨类型 Note clipboard。
 - event-above-note 50% preview、Conductor point preview、可视 tile/局部失效与极端内容性能。
 - `.midora` 严格 schema、descriptor/golden bytes、Root/Track 损坏隔离、确定性 ZIP 与破坏性开发期格式拒绝。
 
 ## 10. 实施结果（2026-08-19）
 
-- Domain/Application 已实现 MIDI Channel Root、Pure MIDI Track、Midi Segment、Direct Note/Channel Event、opaque imported event、混合父节点顺序、父子所有权、Root/Track/Segment 编辑、跨类型 Note clipboard、Root subtree clipboard 与 Forced-Auto duplicate。
+- Domain/Application 已实现 MIDI Channel Root、Pure MIDI Track、Midi Segment、Direct Note/Channel Event、opaque imported event、global mixed Track order、Track→Root membership、Root/Track/Segment 编辑、跨类型 Note clipboard 与原子 share/detach/reorder。
 - SMF reader/importer 已实现 Format 0/1、TPQN、Running Status、Track 内动态 MIDI Port、多 Channel MTrk 拆分、explicit Port Mapping、FIFO Note 配对、未配对 Note 原样保留、opaque single-owner、Conductor 提取以及 Midora 私有 Meta 的可忽略结构恢复。
 - Compiler/canonical 已实现 Fixed Root 预留、参与作用域的 Auto Root 分配、Logical 绕开 Root、Root 内 Track 总序、活动连通区间、子 Segment 精确 Note 关闭、Root 硬边界 Reset、独立 SMF Track descriptor、来源追踪、统计与 fingerprint。
 - MIDI Export 已实现 Pure MIDI 独立 MTrk、名称/顺序/自身 EOT、Whole Project/Per Port 拓扑、显式 status、Midora 私有 Meta、跨 MTrk 同 tick 兼容性 Warning；Per Logical Track 明确拒绝 Pure MIDI Track ID。
-- Playback/Audio 已把同 Root 子 Track 合并到同一个 1-channel Unit stream，并实现 parent/child 独立 Mute/Solo、Melodic/Percussion Channel Mode 与 NOFX 下 CC91/CC93 的音频投影过滤；canonical 与 MIDI 导出仍原样保留这些事件。
-- Persistence 已直接改写开发期 v1 schema/protobuf/package 结构，不提供旧开发期布局迁移或双读；Root/Track 文件、mixed parent index、损坏隔离、deterministic round-trip 与 descriptor/golden 均有回归。
-- WPF 已提供 `Open MIDI as New Project`、Port Mapping review、两级 Arrangement、Root/Track 创建与编辑、Pure MIDI Segment Piano Roll/Event Lane、MIDI Track 图标，以及独立 Note/Event/Conductor tiled preview。
+- Playback/Audio 已把同 Root 成员 Track 合并到同一个 1-channel Unit stream，并实现 Shared Root/Track 独立 Mute/Solo、Melodic/Percussion Channel Mode 与 NOFX 下 CC91/CC93 的音频投影过滤；canonical 与 MIDI 导出仍原样保留这些事件。
+- Persistence 已直接改写开发期 v1 schema/protobuf/package 结构，不提供旧开发期布局迁移或双读；Root/Track 文件、global Track index、损坏隔离、deterministic round-trip 与 descriptor/golden 均有回归。
+- WPF 已提供 `Open MIDI as New Project`、Port Mapping review、平铺 Arrangement、Fixed route property、Auto Shared brace、Track 创建与编辑、Pure MIDI Segment Piano Roll/Event Lane、MIDI Track 图标，以及独立 Note/Event/Conductor tiled preview。
 
 自动证据：`midora-core.slnx` 996/996、`midora-midi.slnx` 20/20、Desktop 60/60 + Presentation 123/123；重新发布当前源码的 `win-x64` Native AOT Worker 后，`Midora.Audio.Bass.Tests` 213/213、`Midora.AudioRender.Tests` 36/36。以上均为 0 failure、0 skip；Desktop 本轮因正在运行的 Midora 锁定默认 Release 目录，改用独立 artifacts 目录完成同源码构建和 60/60 回归。未执行 computer-use 或人工 WPF/听感验收。
 

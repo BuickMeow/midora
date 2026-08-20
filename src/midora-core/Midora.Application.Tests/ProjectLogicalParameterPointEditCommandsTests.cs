@@ -94,16 +94,14 @@ public sealed class ProjectLogicalParameterPointEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         return new(project, parameter, segment, lane);
     }
 

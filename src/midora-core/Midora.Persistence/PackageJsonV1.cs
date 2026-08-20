@@ -21,7 +21,16 @@ internal sealed class ProjectJsonV1
     public required ProjectSettingsPathsJsonV1 Settings { get; init; }
 
     [JsonPropertyOrder(5)]
-    public required ArrangementParentIndexJsonV1[] ArrangementParents { get; init; }
+    public required ProjectObjectIndexJsonV1[] EventInstruments { get; init; }
+
+    [JsonPropertyOrder(6)]
+    public required EventInstrumentUsageIndexJsonV1[] EventInstrumentUsages { get; init; }
+
+    [JsonPropertyOrder(7)]
+    public required ProjectObjectIndexJsonV1[] MidiChannelRoots { get; init; }
+
+    [JsonPropertyOrder(8)]
+    public required ArrangementTrackIndexJsonV1[] ArrangementTracks { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -50,26 +59,33 @@ internal sealed class ProjectSettingsPathsJsonV1
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-internal sealed class ArrangementParentIndexJsonV1
+internal sealed class ProjectObjectIndexJsonV1
 {
     [JsonPropertyOrder(0)]
-    public required string Kind { get; init; }
-
-    [JsonPropertyOrder(1)]
     public required StableIdJsonV1 Id { get; init; }
 
-    [JsonPropertyOrder(2)]
+    [JsonPropertyOrder(1)]
     public required string Path { get; init; }
 
-    [JsonPropertyOrder(3)]
+    [JsonPropertyOrder(2)]
     public required string NameSnapshot { get; init; }
-
-    [JsonPropertyOrder(4)]
-    public required ArrangementChildIndexJsonV1[] Children { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-internal sealed class ArrangementChildIndexJsonV1
+internal sealed class EventInstrumentUsageIndexJsonV1
+{
+    [JsonPropertyOrder(0)]
+    public required StableIdJsonV1 Id { get; init; }
+
+    [JsonPropertyOrder(1)]
+    public required string Path { get; init; }
+
+    [JsonPropertyOrder(2)]
+    public required StableIdJsonV1 EventInstrumentId { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed class ArrangementTrackIndexJsonV1
 {
     [JsonPropertyOrder(0)]
     public required string Kind { get; init; }
@@ -78,13 +94,13 @@ internal sealed class ArrangementChildIndexJsonV1
     public required StableIdJsonV1 Id { get; init; }
 
     [JsonPropertyOrder(2)]
-    public required StableIdJsonV1 ParentId { get; init; }
-
-    [JsonPropertyOrder(3)]
     public required string Path { get; init; }
 
-    [JsonPropertyOrder(4)]
+    [JsonPropertyOrder(3)]
     public required string NameSnapshot { get; init; }
+
+    [JsonPropertyOrder(4)]
+    public required StableIdJsonV1? SharedGroupId { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

@@ -1,12 +1,12 @@
 # Midora Project History、Modified 与 Undo/Redo Requirement Trace
 
-状态：历史实施追踪；History 核心事务仍有效，但 Folder、Unbound、独立 Library/global Track order 与旧删除语义已由 SRS 第 24 章和 ADR-CORE-045 取代
+状态：历史实施追踪；History 核心事务仍有效，但 Folder、旧 Library/mixed-parent order 与旧删除语义已由 SRS 第 24 章和 ADR-CORE-046 取代
 
 日期：2026-08-06
 
 上位规范：SRS 第 3.9～3.12、16.19.4～16.19.5、16.27、19.1～19.4、19.10、20.8、20.12 节及 INV-002、INV-005、INV-010、INV-037。
 
-> 本文的命令矩阵记录分层所有权改造前的实现证据。当前 Event Instrument/Root subtree 的复制、移动、级联删除、Undo/Redo 与稳定 ID 规则以 SRS 24.7～24.9、INV-059 和 ADR-CORE-045 为准；不得恢复 Folder、Unbound 或独立排序模型。
+> 本文的命令矩阵记录旧所有权实现证据。当前 Definition、Usage/Root membership、global Track order、共享块移动、Undo/Redo 与稳定 ID 规则以 SRS 24.7～24.9、INV-059 和 ADR-CORE-046 为准；不得恢复 Folder、可见 parent subtree 或第二套 Track 顺序。
 
 ## 1. 输入与正式输出
 

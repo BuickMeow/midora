@@ -48,12 +48,11 @@ public sealed class BassMidiRendererIntegrationTests
             NoteOffOrder = 1
         });
         track.Segments.Add(segment);
-        root.MidiTrackIds.Add(track.Id);
-        project.MidiChannelRoots.Add(root);
-        project.PureMidiTracks.Add(track);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            root.Id));
+        ProjectGraphConstruction.AddPureMidiTrack(
+            project,
+            root,
+            track,
+            addRoot: true);
 
         using ProjectCompilationSession session = new(project);
         CanonicalCompiledResult compiled = session.CompileForPlayback(0, null);

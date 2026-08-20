@@ -1,5 +1,7 @@
 # Midora Desktop Editor and Event Instrument UX Requirement Trace
 
+状态：历史增量实现记录。本文中涉及 Project Panel、Project tree、Event Instrument Folder、Unfiled、`LibraryFolderId`、Logical Track 直接绑定 Event Instrument，以及旧 Track order 的条款，均已由 SRS 第 24 章、INV-058～064/073～074、ADR-CORE-046 与 ADR-UI-041 取代，不得作为当前模型或 UI 要求。其余未冲突的点集编辑、颜色、对话框和交互记录仍可作为回归历史。
+
 ## Scope and authority
 
 - Product-owner request dated 2026-08-17: point-set Logical Parameter editing, Event Instrument clipboard/duplicate support, per-instrument editor session state, color editing and timeline color projection, consistent selection/conductor interaction, custom dialogs, English UI, configuration fixes, and binding/playback reliability.

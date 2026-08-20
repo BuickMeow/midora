@@ -39,7 +39,7 @@ message LogicalTrackV1 {
   string object_type = 2;
   int64 id = 3;
   string name = 4;
-  int64 event_instrument_id = 5;
+  int64 event_instrument_usage_id = 5;
   reserved 6;
   RgbColor color_override = 7;
   repeated SegmentV1 segments = 8;

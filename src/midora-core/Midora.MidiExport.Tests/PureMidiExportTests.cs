@@ -27,7 +27,6 @@ public sealed class PureMidiExportTests
             };
             PureMidiTrack track = AddTrack(project, root, "Paged Track", 384);
             project.MidiChannelRoots.Add(root);
-            project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
             MidiSegment segment = track.Segments[0];
             string packPath = Path.Combine(directory, "track.mpk");
             using PureMidiContentPackWriter writer = new(packPath);
@@ -93,7 +92,6 @@ public sealed class PureMidiExportTests
             ChannelMode = MidiChannelMode.Melodic
         };
         project.MidiChannelRoots.Add(root);
-        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
         PureMidiTrack shortTrack = AddTrack(project, root, "Short", 240);
         PureMidiTrack longTrack = AddTrack(project, root, "Long", 960);
         MidiSegment shortSegment = shortTrack.Segments[0];
@@ -159,7 +157,6 @@ public sealed class PureMidiExportTests
             FixedZeroBasedChannel = 0
         };
         project.MidiChannelRoots.Add(root);
-        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
         PureMidiTrack track = AddTrack(project, root, "Boundary", 120);
         track.Segments[0].Notes.Add(new(project)
         {
@@ -201,7 +198,7 @@ public sealed class PureMidiExportTests
         };
         track.Segments.Add(new(project) { LengthTicks = length });
         project.PureMidiTracks.Add(track);
-        root.MidiTrackIds.Add(track.Id);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         return track;
     }
 

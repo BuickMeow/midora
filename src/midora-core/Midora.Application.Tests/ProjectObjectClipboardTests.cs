@@ -12,14 +12,12 @@ public sealed class ProjectObjectClipboardTests
         MidoraProject project = new(480);
         EventInstrument instrument = new(project) { Name = "Instrument" };
         project.EventInstruments.Add(instrument);
-        project.ArrangementParents.Add(new(ArrangementParentKind.EventInstrument, instrument.Id));
-        LogicalTrack source = new(project)
-        {
+        LogicalTrack source = new(project) {
             Name = "Source",
-            EventInstrumentId = instrument.Id,
             LastBoundEventInstrumentName = instrument.Name,
             ColorOverride = new MidoraColor(40, 80, 120)
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, source, instrument.Id);
         Segment segment = new(project)
         {
             ProjectStartTick = 120,
@@ -35,14 +33,11 @@ public sealed class ProjectObjectClipboardTests
         };
         segment.Notes.Add(note);
         source.Segments.Add(segment);
-        LogicalTrack peer = new(project)
-        {
+        LogicalTrack peer = new(project) {
             Name = "Peer",
-            EventInstrumentId = instrument.Id,
             LastBoundEventInstrumentName = instrument.Name
         };
-        project.Tracks.AddRange([source, peer]);
-        instrument.LogicalTrackIds.AddRange([source.Id, peer.Id]);
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, peer, instrument.Id);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -60,7 +55,7 @@ public sealed class ProjectObjectClipboardTests
 
         LogicalTrack copy = project.Tracks.Single(value => value.Id != source.Id && value.Id != peer.Id);
         Assert.Equal("Source", copy.Name);
-        Assert.Equal(instrument.Id, copy.EventInstrumentId);
+        Assert.Equal(instrument.Id, project.ResolveEventInstrumentDefinitionId(copy));
         Assert.Equal(source.ColorOverride, copy.ColorOverride);
         Assert.NotEqual(source.Id, copy.Id);
         Segment segmentCopy = Assert.Single(copy.Segments);
@@ -81,7 +76,9 @@ public sealed class ProjectObjectClipboardTests
         Assert.Equal([source, peer], project.Tracks);
         document.Redo();
         Assert.Same(copy, project.Tracks[^1]);
-        Assert.Equal([source.Id, copy.Id, peer.Id], instrument.LogicalTrackIds);
+        Assert.Equal(
+            [source.Id, copy.Id, peer.Id],
+            project.LogicalTracksInArrangementOrder().Select(value => value.Id));
         AssertMatchesFull(compilation);
     }
 
@@ -89,12 +86,7 @@ public sealed class ProjectObjectClipboardTests
     public void EventInstrumentClipboardIsDeepSnapshotAndPasteRemapsOwnedReferences()
     {
         MidoraProject project = new(480);
-        EventInstrumentLibraryFolder folder = EventInstrumentLibrary.CreateFolder(project, "Leads");
         EventInstrument source = EventInstrumentLibrary.Create(project, "Lead");
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.EventInstrument,
-            source.Id));
-        source.LibraryFolderId = folder.Id;
         source.Description = "Snapshot description";
         source.Color = new MidoraColor(21, 91, 173);
         source.RequiresChannelIsolation = true;
@@ -164,7 +156,6 @@ public sealed class ProjectObjectClipboardTests
         Assert.Equal("Lead Copy 1", copy.Name);
         Assert.Equal("Snapshot description", copy.Description);
         Assert.Equal(source.Color, copy.Color);
-        Assert.Null(copy.LibraryFolderId);
         LogicalParameterDefinition parameterCopy = Assert.Single(copy.LogicalParameters);
         InstrumentEnvelope envelopeCopy = Assert.Single(copy.Envelopes);
         CSharpMappingFunction functionCopy = Assert.Single(copy.MappingFunctions);
@@ -196,7 +187,7 @@ public sealed class ProjectObjectClipboardTests
         MidoraProject project = new(480);
         LogicalTrack sourceTrack = new(project) { Name = "Source" };
         LogicalTrack targetTrack = new(project) { Name = "Target" };
-        project.Tracks.AddRange([sourceTrack, targetTrack]);
+        AddIndependentLogicalTracks(project, sourceTrack, targetTrack);
         MidoraId externalParameterId = MidoraId.FromSequence(900_000);
         Segment source = new(project)
         {
@@ -265,8 +256,12 @@ public sealed class ProjectObjectClipboardTests
         LogicalTrack targetSecondary = new(project) { Name = "Target 2" };
         LogicalTrack sourcePrimary = new(project) { Name = "Source 1" };
         LogicalTrack sourceSecondary = new(project) { Name = "Source 2" };
-        project.Tracks.AddRange(
-            [targetPrimary, targetSecondary, sourcePrimary, sourceSecondary]);
+        AddIndependentLogicalTracks(
+            project,
+            targetPrimary,
+            targetSecondary,
+            sourcePrimary,
+            sourceSecondary);
         Segment first = new(project) { ProjectStartTick = 100, LengthTicks = 60 };
         Segment second = new(project) { ProjectStartTick = 220, LengthTicks = 60 };
         sourcePrimary.Segments.Add(first);
@@ -297,7 +292,7 @@ public sealed class ProjectObjectClipboardTests
         LogicalTrack target = new(project) { Name = "Target" };
         LogicalTrack sourcePrimary = new(project) { Name = "Source 1" };
         LogicalTrack sourceSecondary = new(project) { Name = "Source 2" };
-        project.Tracks.AddRange([sourcePrimary, sourceSecondary, target]);
+        AddIndependentLogicalTracks(project, sourcePrimary, sourceSecondary, target);
         Segment first = new(project) { ProjectStartTick = 100, LengthTicks = 60 };
         Segment second = new(project) { ProjectStartTick = 220, LengthTicks = 60 };
         sourcePrimary.Segments.Add(first);
@@ -327,7 +322,9 @@ public sealed class ProjectObjectClipboardTests
     public void LogicalNotePayloadSurvivesCutAndEachPasteAllocatesNewIds()
     {
         MidoraProject project = new(480);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
         LogicalTrack track = new(project) { Name = "Track" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment source = new(project) { LengthTicks = 480 };
         Segment target = new(project) { ProjectStartTick = 480, LengthTicks = 480 };
         LogicalNote first = new(project)
@@ -346,7 +343,6 @@ public sealed class ProjectObjectClipboardTests
         };
         source.Notes.AddRange([first, second]);
         track.Segments.AddRange([source, target]);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
         ProjectObjectClipboardPayload payload = ProjectObjectClipboard.CopyLogicalNotes(
@@ -386,7 +382,7 @@ public sealed class ProjectObjectClipboardTests
         LogicalTrack sourceTrack = new(sourceProject) { Name = "Source" };
         Segment sourceSegment = new(sourceProject) { LengthTicks = 100 };
         sourceTrack.Segments.Add(sourceSegment);
-        sourceProject.Tracks.Add(sourceTrack);
+        AddIndependentLogicalTracks(sourceProject, sourceTrack);
         using ProjectCompilationSession sourceCompilation = new(sourceProject);
         ProjectDocumentSession sourceDocument = PersistedDocument(sourceCompilation);
         ProjectObjectClipboardPayload payload = ProjectObjectClipboard.CopySegments(
@@ -428,11 +424,10 @@ public sealed class ProjectObjectClipboardTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment source = new(project) { LengthTicks = 480 };
         Segment target = new(project) { ProjectStartTick = 480, LengthTicks = 480 };
         LogicalParameterLane sourceLane = new(project) { ParameterId = parameter.Id };
@@ -441,7 +436,6 @@ public sealed class ProjectObjectClipboardTests
         sourceLane.Points.AddRange([first, second]);
         source.ParameterLanes.Add(sourceLane);
         track.Segments.AddRange([source, target]);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -786,7 +780,9 @@ public sealed class ProjectObjectClipboardTests
     public void CutPreparationDoesNotDeleteUntilClipboardWriteSucceeds()
     {
         MidoraProject project = new(480);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
         LogicalTrack track = new(project) { Name = "Track" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment source = new(project) { LengthTicks = 480 };
         Segment target = new(project) { ProjectStartTick = 480, LengthTicks = 480 };
         LogicalNote note = new(project)
@@ -798,7 +794,6 @@ public sealed class ProjectObjectClipboardTests
         };
         source.Notes.Add(note);
         track.Segments.AddRange([source, target]);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -920,19 +915,17 @@ public sealed class ProjectObjectClipboardTests
         instrument.SubVoices.Add(voice);
         project.EventInstruments.Add(instrument);
 
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id,
             LastBoundEventInstrumentName = instrument.Name
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
         CurvePoint lanePoint = new(project, 30, 0.75);
         lane.Points.Add(lanePoint);
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
 
         ProjectMarker marker = new(project, 120, "Marker");
         project.Conductor.Markers.Add(marker);
@@ -1289,6 +1282,17 @@ public sealed class ProjectObjectClipboardTests
         ProjectDocumentSession result = new(compilation, ProjectDocumentOrigin.Persisted);
         result.MarkSaveSucceeded();
         return result;
+    }
+
+    private static void AddIndependentLogicalTracks(
+        MidoraProject project,
+        params LogicalTrack[] tracks)
+    {
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        foreach (LogicalTrack track in tracks)
+        {
+            ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
+        }
     }
 
     private static void AssertMatchesFull(ProjectCompilationSession compilation)

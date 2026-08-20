@@ -15,7 +15,6 @@ public partial class MidiChannelRootSettingsDialog : Window
         ChannelModeBox.ItemsSource = Enum.GetValues<MidiChannelMode>();
         PortBox.ItemsSource = Enumerable.Range(1, 16);
         ChannelBox.ItemsSource = Enumerable.Range(1, 16);
-        NameBox.Text = root.Name;
         RoutingModeBox.SelectedItem = root.RoutingMode;
         PortBox.SelectedItem = checked((int)root.FixedZeroBasedPort + 1);
         ChannelBox.SelectedItem = checked((int)root.FixedZeroBasedChannel + 1);
@@ -23,7 +22,6 @@ public partial class MidiChannelRootSettingsDialog : Window
         UpdateRouteControls();
     }
 
-    public string RootName { get; private set; } = string.Empty;
     public MidiChannelRootRoutingMode RoutingMode { get; private set; }
     public int OneBasedPort { get; private set; }
     public int OneBasedChannel { get; private set; }
@@ -45,8 +43,6 @@ public partial class MidiChannelRootSettingsDialog : Window
     {
         try
         {
-            string name = NameBox.Text.Trim();
-            if (name.Length == 0) throw new InvalidOperationException("Name must not be empty.");
             if (RoutingModeBox.SelectedItem is not MidiChannelRootRoutingMode routingMode)
                 throw new InvalidOperationException("Select a routing mode.");
             if (PortBox.SelectedItem is not int port)
@@ -55,7 +51,6 @@ public partial class MidiChannelRootSettingsDialog : Window
                 throw new InvalidOperationException("Select a MIDI Channel.");
             if (ChannelModeBox.SelectedItem is not MidiChannelMode channelMode)
                 throw new InvalidOperationException("Select a channel mode.");
-            RootName = name;
             RoutingMode = routingMode;
             OneBasedPort = port;
             OneBasedChannel = channel;

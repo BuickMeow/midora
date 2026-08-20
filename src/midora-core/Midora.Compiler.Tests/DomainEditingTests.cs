@@ -107,25 +107,22 @@ public sealed class DomainEditingTests
     }
 
     [Fact]
-    public void DeletingReferencedInstrumentRequiresConfirmationAndPreservesTrackData()
+    public void DeletingReferencedInstrumentIsRejectedAndPreservesTrackData()
     {
         MidoraProject project = new(480);
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Bound");
-        LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
+        LogicalTrack track = new(project) { Name = "Track"};
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         segment.Notes.Add(new LogicalNote(project) { LengthTicks = 120 });
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
 
         _ = Assert.Throws<InvalidOperationException>(() =>
             EventInstrumentLibrary.Delete(project, instrument.Id, referencedDeletionConfirmed: false));
-        IReadOnlyList<LogicalTrack> affected = EventInstrumentLibrary.Delete(
-            project,
-            instrument.Id,
-            referencedDeletionConfirmed: true);
+        _ = Assert.Throws<InvalidOperationException>(() =>
+            EventInstrumentLibrary.Delete(project, instrument.Id, referencedDeletionConfirmed: true));
 
-        Assert.Equal([track], affected);
-        Assert.Null(track.EventInstrumentId);
+        Assert.Equal(instrument.Id, project.ResolveEventInstrumentDefinitionId(track));
         Assert.Equal("Bound", track.LastBoundEventInstrumentName);
         Assert.Single(track.Segments[0].Notes);
     }
@@ -273,20 +270,4 @@ public sealed class DomainEditingTests
         Assert.Equal(long.MaxValue, project.NextStableId);
     }
 
-    [Fact]
-    public void DeletingFolderMovesContainedInstrumentsToUnfiled()
-    {
-        MidoraProject project = new(480);
-        EventInstrumentLibraryFolder folder = EventInstrumentLibrary.CreateFolder(project, "  Keys  ");
-        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Piano");
-        instrument.LibraryFolderId = folder.Id;
-
-        IReadOnlyList<EventInstrument> moved = EventInstrumentLibrary.DeleteFolder(project, folder.Id);
-
-        Assert.Equal("Keys", folder.Name);
-        Assert.Equal([instrument], moved);
-        Assert.Null(instrument.LibraryFolderId);
-        Assert.Empty(project.EventInstrumentFolders);
-        Assert.Throws<ArgumentException>(() => EventInstrumentLibrary.CreateFolder(project, "Unfiled"));
-    }
 }

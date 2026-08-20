@@ -154,10 +154,9 @@ public sealed class PureMidiContentPackTests
                 MidiChannelRootId = root.Id
             };
             track.Segments.Add(segment);
-            root.MidiTrackIds.Add(track.Id);
             project.MidiChannelRoots.Add(root);
             project.PureMidiTracks.Add(track);
-            project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+            project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
             MidoraId firstNoteId = project.AllocateStableId();
             MidoraId secondNoteId = project.AllocateStableId();
             MidoraId channelEventId = project.AllocateStableId();

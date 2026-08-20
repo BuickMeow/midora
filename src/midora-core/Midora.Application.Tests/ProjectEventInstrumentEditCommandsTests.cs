@@ -276,11 +276,10 @@ public sealed class ProjectEventInstrumentEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 960 };
         segment.Notes.Add(new LogicalNote(project)
         {
@@ -289,7 +288,6 @@ public sealed class ProjectEventInstrumentEditCommandsTests
             Velocity = 100
         });
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         return project;
     }
 

@@ -1,6 +1,6 @@
 # Midora WPF Arrangement and Diagnostic Interaction Requirement Trace
 
-状态：2026-08-12 历史实现证据；2026-08-18 第 24 章已取代平铺 Logical Track、Project Panel 计数和 Bind/Unbind 入口，当前不得据此证明新 mixed parent/child Arrangement 已实现
+状态：2026-08-12 历史实现证据；2026-08-20 第 24 章已取代旧 Project Panel、Bind/Unbind 与 2026-08-18 mixed parent/child Arrangement，当前不得据此证明 flat Arrangement / Shared Usage 已实现
 日期：2026-08-12
 
 ## 输入

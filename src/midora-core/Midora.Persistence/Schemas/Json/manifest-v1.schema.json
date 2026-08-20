@@ -86,6 +86,7 @@
                   "settings-json",
                   "conductor-json",
                   "event-instrument-pb",
+                  "event-instrument-usage-pb",
                   "logical-track-pb"
                 ]
               }

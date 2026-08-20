@@ -65,7 +65,19 @@ public readonly record struct ArrangementLaneDescriptor(
     int Depth,
     bool IsExpanded,
     bool HasChildren,
-    bool CanContainSegments);
+    bool CanContainSegments)
+{
+    /// <summary>
+    /// Invisible state-sharing identity. For Logical Tracks this is an Event
+    /// Instrument Usage; for Pure MIDI Tracks this is a MIDI Channel Root.
+    /// </summary>
+    public MidoraId? SharedGroupId { get; init; }
+
+    public bool IsSharedGroup { get; init; }
+    public bool IsSharedGroupStart { get; init; }
+    public bool IsSharedGroupEnd { get; init; }
+    public int SharedGroupMemberCount { get; init; }
+}
 
 public readonly record struct TimelineRenderItem(
     MidoraId Id,

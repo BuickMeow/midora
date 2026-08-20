@@ -25,28 +25,28 @@
 ### 18.1.2 职责
 Arrangement 只负责：
 ```text
-Conductor-first Event Instrument / MIDI Channel Root mixed parent order
-Event Instrument→Logical Track and Root→Pure MIDI Track hierarchy
-parent/child order, visibility, rebind and routing
+Conductor-first global mixed Logical / Pure MIDI Track order
+Event Instrument Usage / MIDI Channel Root shared execution membership
+Track order, shared-block presentation, rebind and routing
 Segment creation, movement, copy, crop, split and deletion
 Project timeline navigation
 Segment-level arrangement overview
-parent and child Track Mute/Solo runtime controls
+Track Mute/Solo runtime controls
 ```
 Logical Note/Parameter 与 Direct MIDI Note/Event 的细节进入对应 Segment Editor。
 Tempo、Time Signature、Key Signature、Marker 和 Project End Marker 只显示概览；精确编辑进入 Conductor Track Editor。
 ### 18.1.3 Track Header
 显示：
 ```text
-parent/Track display name
-Event Instrument / Root parent summary
+Track display name
+Event Instrument Definition or MIDI route summary
 Pure MIDI Track 的 MIDI 类型标识
 Track color
 Mute
 Solo
 Track validation summary
 ```
-parent 与 child 的 Mute / Solo 固定可见，属于播放期运行状态：
+Track 的 Mute / Solo 固定可见，属于播放期运行状态：
 - 不保存；
 - 不进入 Undo / Redo；
 - 不标记 Project Modified；
@@ -54,9 +54,9 @@ parent 与 child 的 Mute / Solo 固定可见，属于播放期运行状态：
 - 不影响 Audio Render。
 Track 高度属于 UI 状态；Track 正式顺序属于 Project Content。
 
-Header 是独立交互目标。鼠标悬停时使用低强调高亮，按下时背景变暗，松开恢复；越过通用拖动阈值后才开始重排并显示准确插入线。Event Instrument / Root 是可混排 parent Header；Logical / Pure MIDI Track 是带统一缩进的 child Header。父节点右侧不承载 Segment，以不透明纯黑覆盖 Grid/Bar 层且不响应 Draw 创建或预览。完整 Header 字段、菜单、复制删除、拖动和层级见第 24.3～24.7 节。
+Header 是独立交互目标。鼠标悬停时使用低强调高亮，按下时背景变暗，松开恢复；越过通用拖动阈值后才开始重排并显示准确插入线。全部 Logical / Pure MIDI Track 平铺且右侧承载 Segment。连续共享 Auto Root 或共享 Usage 的 Track 在 Header 左侧以 brace gutter 表示一个共享块；Fixed route 只作为 Pure MIDI Track 的路由属性呈现。完整 Header 字段、菜单、复制删除、拖动、加入/移出共享组和命中区见第 24.3～24.7 节。
 
-Logical Track 不显示 Bind/Unbind，所在 Event Instrument parent 即唯一绑定；拖到另一个 Event Instrument 执行 rebind 审查。Pure MIDI Track 名称左侧必须显示 MIDI 图标，可跨 Root 移动。Event Instrument/Root parent 与 child Track 的 Mute/Solo 相互独立。
+Logical Track 可处于未绑定空壳状态，也可绑定独立或共享 Event Instrument Usage；Header 菜单提供选择 Definition、共享状态与拆分为独立 Usage。Pure MIDI Track 名称左侧必须显示 MIDI 图标；Header 菜单与拖放可改变 Auto 共享组或 Fixed route。Track Mute/Solo 不改变 Usage/Root 源数据。
 ### 18.1.4 Segment 显示
 Segment 没有名称。矩形显示：
 ```text
@@ -515,9 +515,9 @@ Event List 与 Timeline Selection 同步。
 
 Conductor 在 Arrangement 第一行直接按 absolute Project tick 显示事件圆点，不使用 Segment。不同类型使用稳定不同颜色，Project End Marker 保持专用竖线。极端内容必须使用固定 device-size glyph、可视 tile、按 event type/device-pixel column 聚合和局部失效；完整规则见第 24.9 节。
 ---
-## 18.8 Event Instrument Library Workspace（删除）
+## 18.8 Event Instruments 管理栏
 
-初版不提供该 Workspace、Folder Panel、Unfiled、List/Card Library 或独立 Library order。Event Instrument 作为 Arrangement parent 的创建、打开、排序、复制、删除、颜色摘要、验证状态和 child Logical Track 管理由常驻 Arrangement 统一承担，见第 24 章。Event Instrument 详细定义仍在对象 Editor 中编辑。
+初版不提供独立 Library Workspace、Folder、Unfiled 或 Card Library。Arrangement 顶部左侧使用 `< Event Instruments` / `> Event Instruments` 按钮切换左侧管理栏；该栏按独立 Definition order 浏览、创建、复制、粘贴、Duplicate、删除、重命名、编辑和排序 Event Instrument Definition，并提供 `Add Logical Track Using This Instrument`。Definition 可没有任何 Usage；删除仍被 Usage 引用的 Definition 必须拒绝。Event Instrument 详细内容在对象 Editor 中编辑，完整规则见第 24 章。
 ---
 ## 18.9 Project Settings Workspace
 ### 18.9.1 布局

@@ -5,7 +5,6 @@ namespace Midora.Application;
 public enum ProjectObjectClipboardKind
 {
     EventInstrument,
-    MidiChannelRoot,
     LogicalTrack,
     PureMidiTrack,
     Segments,
@@ -60,9 +59,10 @@ public static partial class ProjectObjectClipboard
         ArgumentNullException.ThrowIfNull(document);
         LogicalTrack track = document.Project.Tracks.SingleOrDefault(value => value.Id == logicalTrackId)
             ?? throw new ArgumentOutOfRangeException(nameof(logicalTrackId));
+        EventInstrumentUsage? usage = document.Project.FindEventInstrumentUsage(track);
         LogicalTrackClipboardSnapshot snapshot = new(
             track.Name,
-            track.EventInstrumentId,
+            usage?.EventInstrumentId,
             track.LastBoundEventInstrumentName,
             track.ColorOverride,
             track.Segments.Select(segment => SnapshotSegment(
@@ -203,6 +203,43 @@ public static partial class ProjectObjectClipboard
         return ProjectDomainEditCommands.PasteLogicalTrackClipboard(
             data.Track,
             targetEventInstrumentId,
+            targetUsageId: null,
+            insertionIndex);
+    }
+
+    public static IProjectEditCommand CreatePasteLogicalTrackIntoUsageCommand(
+        ProjectDocumentSession targetDocument,
+        ProjectObjectClipboardPayload payload,
+        MidoraId targetUsageId,
+        int insertionIndex)
+    {
+        LogicalTrackClipboardData data = RequirePayload<LogicalTrackClipboardData>(
+            targetDocument,
+            payload,
+            ProjectObjectClipboardKind.LogicalTrack);
+        EventInstrumentUsage usage = targetDocument.Project.EventInstrumentUsages
+            .SingleOrDefault(value => value.Id == targetUsageId)
+            ?? throw new ArgumentOutOfRangeException(nameof(targetUsageId));
+        return ProjectDomainEditCommands.PasteLogicalTrackClipboard(
+            data.Track,
+            usage.EventInstrumentId,
+            usage.Id,
+            insertionIndex);
+    }
+
+    public static IProjectEditCommand CreatePasteLogicalTrackIndependentCommand(
+        ProjectDocumentSession targetDocument,
+        ProjectObjectClipboardPayload payload,
+        int insertionIndex)
+    {
+        LogicalTrackClipboardData data = RequirePayload<LogicalTrackClipboardData>(
+            targetDocument,
+            payload,
+            ProjectObjectClipboardKind.LogicalTrack);
+        return ProjectDomainEditCommands.PasteLogicalTrackClipboard(
+            data.Track,
+            data.Track.EventInstrumentId,
+            targetUsageId: null,
             insertionIndex);
     }
 
@@ -252,9 +289,12 @@ public static partial class ProjectObjectClipboard
         int TrackIndex) FindSegment(MidoraProject project, MidoraId segmentId)
     {
         (LogicalTrack Track, Segment Segment, int TrackIndex)? result = null;
-        for (int trackIndex = 0; trackIndex < project.Tracks.Count; trackIndex++)
+        foreach (LogicalTrack track in project.Tracks)
         {
-            LogicalTrack track = project.Tracks[trackIndex];
+            int trackIndex = ProjectDomainEditCommands.FindArrangementTrackIndex(
+                project,
+                ArrangementTrackKind.LogicalTrack,
+                track.Id);
             foreach (Segment segment in track.Segments)
             {
                 if (segment.Id != segmentId)
@@ -330,14 +370,52 @@ public static partial class ProjectDomainEditCommands
 {
     internal static IProjectEditCommand PasteLogicalTrackClipboard(
         LogicalTrackClipboardSnapshot snapshot,
-        MidoraId targetEventInstrumentId,
+        MidoraId? targetEventInstrumentId,
+        MidoraId? targetUsageId,
         int insertionIndex) =>
         Command("Paste logical track", project =>
         {
             ArgumentNullException.ThrowIfNull(snapshot);
-            EventInstrument target = FindEventInstrument(project, targetEventInstrumentId);
-            ValidateInsertionIndex(insertionIndex, target.LogicalTrackIds.Count, nameof(insertionIndex));
+            EventInstrument? target = targetEventInstrumentId is MidoraId definitionId
+                ? FindEventInstrument(project, definitionId)
+                : null;
+            EventInstrumentUsage? sharedUsage = targetUsageId is MidoraId usageId
+                ? project.EventInstrumentUsages.SingleOrDefault(value => value.Id == usageId)
+                    ?? throw new ArgumentOutOfRangeException(nameof(targetUsageId))
+                : null;
+            if (sharedUsage is not null
+                && (target is null || sharedUsage.EventInstrumentId != target.Id))
+            {
+                throw new InvalidOperationException(
+                    "The target Event Instrument Usage does not use the selected Definition.");
+            }
+            if (target is null && snapshot.Segments.Length != 0)
+            {
+                throw new InvalidOperationException(
+                    "A pasted Logical Track with content requires an Event Instrument Definition.");
+            }
+            ValidateInsertionIndex(insertionIndex, project.ArrangementTracks.Count, nameof(insertionIndex));
+            int trackIndex = insertionIndex;
+            if (sharedUsage is not null)
+            {
+                int first = project.ArrangementTracks.FindIndex(reference =>
+                    reference.Kind == ArrangementTrackKind.LogicalTrack
+                    && FindTrack(project, reference.TrackId).EventInstrumentUsageId == sharedUsage.Id);
+                int last = project.ArrangementTracks.FindLastIndex(reference =>
+                    reference.Kind == ArrangementTrackKind.LogicalTrack
+                    && FindTrack(project, reference.TrackId).EventInstrumentUsageId == sharedUsage.Id);
+                if (first < 0)
+                {
+                    throw new InvalidOperationException(
+                        "The target Event Instrument Usage has no Arrangement member.");
+                }
+                if (trackIndex < first || trackIndex > last + 1)
+                {
+                    trackIndex = last + 1;
+                }
+            }
             LogicalTrack? copy = null;
+            EventInstrumentUsage? createdUsage = null;
             return Prepared(
                 hasChanges: true,
                 EverythingChange(),
@@ -345,14 +423,19 @@ public static partial class ProjectDomainEditCommands
                 {
                     if (copy is null)
                     {
+                        if (target is not null && sharedUsage is null)
+                        {
+                            createdUsage = new(owner) { EventInstrumentId = target.Id };
+                        }
                         copy = new LogicalTrack(owner)
                         {
                             Name = ProjectTextRules.NormalizeShortText(
                                 snapshot.Name,
                                 allowEmpty: true,
                                 nameof(snapshot)),
-                            EventInstrumentId = target.Id,
-                            LastBoundEventInstrumentName = target.Name,
+                            EventInstrumentUsageId = sharedUsage?.Id ?? createdUsage?.Id,
+                            LastBoundEventInstrumentName = target?.Name
+                                ?? snapshot.LastBoundEventInstrumentName,
                             ColorOverride = snapshot.ColorOverride
                         };
                         foreach (SegmentClipboardSnapshot segment in snapshot.Segments)
@@ -364,15 +447,41 @@ public static partial class ProjectDomainEditCommands
                             InsertSegmentByTime(copy.Segments, created);
                         }
                     }
+                    else
+                    {
+                        if (createdUsage is not null)
+                        {
+                            EnsureEventInstrumentUsageIdAvailable(owner, createdUsage.Id);
+                        }
+                        EnsureLogicalTrackIdAvailable(owner, copy.Id);
+                    }
+                    if (createdUsage is not null)
+                    {
+                        owner.EventInstrumentUsages.Add(createdUsage);
+                    }
                     owner.Tracks.Add(copy);
-                    InsertAt(target.LogicalTrackIds, insertionIndex, copy.Id, "pasted Logical Track reference");
+                    InsertAt(
+                        owner.ArrangementTracks,
+                        trackIndex,
+                        new ArrangementTrackReference(ArrangementTrackKind.LogicalTrack, copy.Id),
+                        "pasted Arrangement Track reference");
                 },
                 owner =>
                 {
                     LogicalTrack value = copy ?? throw new InvalidOperationException(
                         "The pasted Logical Track does not exist before Undo.");
-                    RemoveRequired(target.LogicalTrackIds, value.Id, "pasted Logical Track reference");
+                    RemoveRequired(
+                        owner.ArrangementTracks,
+                        new ArrangementTrackReference(ArrangementTrackKind.LogicalTrack, value.Id),
+                        "pasted Arrangement Track reference");
                     RemoveRequired(owner.Tracks, value, "pasted Logical Track");
+                    if (createdUsage is not null)
+                    {
+                        RemoveRequired(
+                            owner.EventInstrumentUsages,
+                            createdUsage,
+                            "Event Instrument Usage");
+                    }
                 });
         });
 
@@ -389,20 +498,28 @@ public static partial class ProjectDomainEditCommands
                     snapshots.Count == 0 ? nameof(snapshots) : nameof(editCursorTick));
             }
             LogicalTrack primaryTrack = FindTrack(project, activeTargetTrackId);
-            int primaryTrackIndex = project.Tracks.IndexOf(primaryTrack);
+            EnsureLogicalTrackCanContainContent(project, primaryTrack);
+            int primaryTrackIndex = FindArrangementTrackIndex(
+                project,
+                ArrangementTrackKind.LogicalTrack,
+                primaryTrack.Id);
             SegmentClipboardPlacement[] placements = snapshots.Select(snapshot =>
             {
                 int targetIndex = checked(primaryTrackIndex + snapshot.TrackOffset);
-                if ((uint)targetIndex >= (uint)project.Tracks.Count)
+                if ((uint)targetIndex >= (uint)project.ArrangementTracks.Count
+                    || project.ArrangementTracks[targetIndex] is not
+                        { Kind: ArrangementTrackKind.LogicalTrack } targetReference)
                 {
                     throw new InvalidOperationException(
-                        "The Segment clipboard payload cannot preserve its relative Track offsets at the target.");
+                        "The Segment clipboard payload cannot preserve its relative Arrangement lane offsets at the target.");
                 }
+                LogicalTrack targetTrack = FindTrack(project, targetReference.TrackId);
+                EnsureLogicalTrackCanContainContent(project, targetTrack);
                 long start = checked(editCursorTick + snapshot.StartOffset);
                 ValidateSegmentRange(start, snapshot.LengthTicks, snapshot.ContentOffsetTick);
                 return new SegmentClipboardPlacement(
                     snapshot,
-                    project.Tracks[targetIndex],
+                    targetTrack,
                     start);
             }).ToArray();
             ValidateClipboardSegmentPlacements(placements);

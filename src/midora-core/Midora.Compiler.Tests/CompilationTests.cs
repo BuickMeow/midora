@@ -272,11 +272,10 @@ public sealed class CompilationTests
             TemplateEvent.Note(fixture.Project, 0, 120, 67, 90));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 240);
 
-        LogicalTrack secondTrack = new(fixture.Project)
-        {
+        LogicalTrack secondTrack = new(fixture.Project) {
             Name = "Second",
-            EventInstrumentId = fixture.Instrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(fixture.Project, secondTrack, fixture.Instrument.Id);
         Segment secondSegment = new(fixture.Project)
         {
             ProjectStartTick = 480,
@@ -284,7 +283,6 @@ public sealed class CompilationTests
         };
         CompilerTestProject.RegisterSegment(fixture.Project, secondSegment);
         secondTrack.Segments.Add(secondSegment);
-        fixture.Project.Tracks.Add(secondTrack);
         CompilerTestProject.AddNote(secondSegment, fixture.Instrument, 0, 240, 65);
 
         CompilationRequest firstRequest = new()
@@ -482,7 +480,7 @@ public sealed class CompilationTests
         LogicalTrack replacement = new(fixture.Project)
         {
             Name = fixture.Track.Name,
-            EventInstrumentId = fixture.Track.EventInstrumentId
+            EventInstrumentUsageId = fixture.Track.EventInstrumentUsageId
         };
         replacement.Segments.Add(fixture.Segment);
         fixture.Project.Tracks[0] = replacement;
@@ -545,6 +543,50 @@ public sealed class CompilationTests
         Assert.Single(allocations.Select(value => value.InstanceGroupId).Distinct());
         Assert.Single(allocations.Select(value => (value.ZeroBasedPort, value.ZeroBasedChannel)).Distinct());
         Assert.Equal(2, result.Events.ToArray().Count(value => value.Role == CanonicalEventRole.NoteOn));
+    }
+
+    [Fact]
+    public void SharedUsageAcrossTracksUsesOneConnectedLifecycleAndOneOverlapDomain()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 480);
+        fixture.Instrument.OverlapPolicy = OverlapPolicy.Warn;
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 240, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480, 60);
+        LogicalTrack secondTrack = new(fixture.Project)
+        {
+            Name = "Second",
+            EventInstrumentUsageId = fixture.Track.EventInstrumentUsageId
+        };
+        Segment secondSegment = new(fixture.Project)
+        {
+            ProjectStartTick = 240,
+            LengthTicks = 480
+        };
+        secondTrack.Segments.Add(secondSegment);
+        fixture.Project.Tracks.Add(secondTrack);
+        fixture.Project.ArrangementTracks.Add(new(
+            ArrangementTrackKind.LogicalTrack,
+            secondTrack.Id));
+        CompilerTestProject.RegisterSegment(fixture.Project, secondSegment);
+        CompilerTestProject.AddNote(secondSegment, fixture.Instrument, 0, 480, 60);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(result.IsConsumable);
+        Assert.Equal(1, result.Statistics.PeakChannelUnitCount);
+        CompilerDiagnostic overlap = Assert.Single(
+            result.Diagnostics,
+            value => value.Code == "MIDORA2201");
+        Assert.Equal(secondTrack.Id, overlap.Source.TrackId);
+        ChannelUnitAllocation[] allocations = result.Allocations.ToArray();
+        Assert.Equal(2, allocations.Length);
+        Assert.Single(allocations.Select(value => value.InstanceGroupId).Distinct());
+        Assert.All(allocations, value =>
+        {
+            Assert.Equal(fixture.Track.EventInstrumentUsageId, value.EventInstrumentUsageId);
+            Assert.Equal(0, value.StartTick);
+            Assert.Equal(720, value.EndTick);
+        });
     }
 
     [Theory]

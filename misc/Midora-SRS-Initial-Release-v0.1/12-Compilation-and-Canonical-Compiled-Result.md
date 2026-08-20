@@ -341,8 +341,8 @@ Project End Marker：
 Project End Marker 不删除 Project 内容。
 ---
 ## 12.6 Track 与 Segment 过滤
-### 12.6.1 Logical Track 父节点验证
-每个 Logical Track 必须且只能属于一个 Event Instrument。缺少 parent、多个 parent、parent kind 错误或 parent/child 索引不一致是结构 Error，不能生成 Canonical Compiled Result；不得把该 Track 降级为未指定并忽略。Damaged Parent Placeholder 保留导航与数据隔离，但其 subtree 不允许正式编译。
+### 12.6.1 Logical Track Usage 验证
+空且未绑定的 Logical Track 不参与编译且不产生诊断。有 Segment/Note/Parameter 内容的 Logical Track 必须且只能引用一个有效、非空 Event Instrument Usage；Usage 必须引用一个有效 Definition。缺少/重复 owner、Usage 为空、kind 错误或索引不一致是结构 Error，不能生成 Canonical Compiled Result。
 ### 12.6.2 Mute / Solo
 canonical compiled result 默认忽略 Mute / Solo 状态。
 规则：
@@ -368,6 +368,7 @@ Conductor Track 仍进入结果。
 编译失败，并定位到冲突 Segment。
 ```
 不同 Track 的 Segment 可以重叠并正常编译，包括同一 MIDI Channel Root 的不同 Pure MIDI Track。
+同一 Event Instrument Usage 的不同 Logical Track Segment 也可以重叠；它们的并集决定 Usage 活动连通区间，Overlap Policy 在整个 Usage 内验证。
 ### 12.6.5 Segment 裁剪窗口
 Logical Note start 在 Segment 有效裁剪窗口外：
 ```text
@@ -693,6 +694,10 @@ Project End Marker 裁剪
 第 12.10.1～12.10.5 节描述 Logical/Event Instrument lane 的 Initial State、Reset 与释放。Pure MIDI 路径不得在每个子 Midi Segment End 独立执行 Channel-wide Reset。
 
 Pure MIDI 编译必须先对同一 Root 的全部已选择 Segment 求活动连通区间：子 Segment End 只精确关闭该 Segment 拥有的活动 Note，不重置共享 CC/Bank/Program/Pitch/RPN/NRPN，也不杀死 sibling Track 的 Note；只有 Root 活动连通区间结束、Project End Marker 或消费者范围结束才执行 Root 级精确 NoteOff、CC120、最终 Reset 和 Unit 释放。完整规则见第 23.7 节。
+
+### 12.10.8 Event Instrument Usage 生命周期
+
+未启用逐音符隔离时，编译器必须对同一 Usage 的全部已选择 Logical Segment 求活动连通区间，并按 SubVoice 共享 Channel Unit。子 Segment End 只精确关闭该 Segment 的 Instance/Note；Usage 连通区间结束才做 Usage 级 CC120、最终 Reset 和释放。启用逐音符隔离时 Unit 仍按实例分配，但 Overlap、来源与 dirty owner 继续属于 Usage。
 ---
 ## 12.11 同 tick 语义排序
 ### 12.11.1 系统级排序原则
@@ -774,7 +779,9 @@ Note 事件具有配对和生命周期语义。
 
 第 12.11.1～12.11.5 节的状态优先级和同目标折叠适用于 Logical/Event Instrument 展开结果与编译器生成事件，不得用于重排或折叠 Pure MIDI 原始事件。
 
-同一 Root 的 Pure MIDI 原始事件总顺序固定为 `absolute tick → Pure MIDI Track explicit order → event explicit order`。同 tick、同类型、同控制器或互相冲突的重复事件均须保留；编译器生成的 Root 初始化/硬边界事件按明确 canonical role 插入。见第 23.4.2、23.6.3 和 23.9.3 节。
+同一 Root 的 Pure MIDI 原始事件总顺序固定为 `absolute tick → global Arrangement Track order → event explicit order`。同 tick、同类型、同控制器或互相冲突的重复事件均须保留；编译器生成的 Root 初始化/硬边界事件按明确 canonical role 插入。见第 23.4.2、23.6.3 和 23.9.3 节。
+
+同一 Event Instrument Usage 的 Logical 事件在 canonical role/sequence 规则内，以 global Arrangement Track order 作为跨 Track 稳定次序；不得依赖集合遍历或后台完成顺序。
 ---
 ## 12.12 跨 tick 事件折叠优化边界
 第 12.8.6 节规定的连续值源重复值抑制属于离散化定义的一部分：未变化的逐 tick 候选值不会生成 canonical 事件，不属于本节所称的跨 tick 事件折叠。
@@ -852,10 +859,10 @@ Channel 10 参与同一 Unit 编号顺序。Logical/Event Instrument 使用它�
 ### 12.14.3 分配基本规则
 编译器必须先按第 23.8 节完成 Pure MIDI Root 分配，再分配 Logical/Event Instrument Channel Group：
 ```text
-验证并保留全部 Fixed Root 的精确 Unit；空 Fixed Root 也保留。
-按 Root 显式顺序把每个非空 Auto Root 分配到最低未保留 Unit；空 Auto Root 不分配。
+验证全部非空 Fixed Root 的精确 Unit；结构上不允许空 Root。
+按最早成员 global Arrangement Track order 把每个含参与 Segment 内容的 Auto Root 分配到最低未保留 Unit。
 一个 Root 在本次 CompileContext 内固定占用同一 Unit，不与 Logical instance 做时间复用。
-然后按编译时间推进 Logical/Event Instrument 分配。
+然后按编译时间推进 Logical Event Instrument Usage 分配。
 释放所有已到达 Segment/消费者硬边界并完成最终 Reset 的 Channel Unit。
 从当前可用 Channel Unit 中选择编号最低的一组。
 按 Event Instrument 内显式 SubVoice 顺序映射到这些 Channel Unit。
@@ -1393,7 +1400,9 @@ Time Signature 修改还必须使 Project `Bar:Beat:Tick`、自然小节/拍网�
 
 #### 12.21.6.5 修改 Pure MIDI 数据
 
-修改 Direct MIDI Note/Event、opaque payload、Midi Segment 或 Pure MIDI Track 顺序时，Dirty 起点至少回退到该 Root 中最早可能受影响的 Segment/Root checkpoint。修改 Root routing/mode 或子 Track 归属时，必须重建该 Root 分配和生命周期，并在需要时使后续 Logical allocation 重编，直到完整状态收敛。
+修改 Direct MIDI Note/Event、opaque payload、Midi Segment 或 global Pure MIDI Track 顺序时，Dirty 起点至少回退到该 Root 中最早可能受影响的 Segment/Root checkpoint。修改 Root routing/mode 或 Track 归属时，必须重建该 Root 分配和生命周期，并在需要时使后续 Logical allocation 重编，直到完整状态收敛。
+
+修改 Logical Track/Segment、Usage membership 或其 Definition 时，Dirty 起点至少回退到该 Usage 最早可能受影响的 checkpoint；只有共享状态和活动 Note 集收敛后才能复用后缀。不得无条件使其他 Usage/Root 失效。
 ### 12.21.7 增量编译不保证局部不变
 用户只改了前面一个 Note，后面很远的 Port / Channel 分配也可能变化。
 这不是 bug。

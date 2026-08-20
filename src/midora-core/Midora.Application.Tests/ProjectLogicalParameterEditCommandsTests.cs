@@ -493,11 +493,10 @@ public sealed class ProjectLogicalParameterEditCommandsTests
         instrument.ParameterMappings.Add(firstMapping);
         instrument.ParameterMappings.Add(secondMapping);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         segment.Notes.Add(new LogicalNote(project)
         {
@@ -510,7 +509,6 @@ public sealed class ProjectLogicalParameterEditCommandsTests
         lane.Points.Add(new CurvePoint(project, 120, 8));
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         return new(
             project,
             instrument,

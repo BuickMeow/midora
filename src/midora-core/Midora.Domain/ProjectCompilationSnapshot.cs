@@ -23,14 +23,6 @@ internal static class ProjectCompilationSnapshot
         CopyState(source.GlobalInitialState, result.GlobalInitialState, cancellationToken);
         CopyState(source.GlobalResetDefaults, result.GlobalResetDefaults, cancellationToken);
 
-        foreach (EventInstrumentLibraryFolder folder in source.EventInstrumentFolders)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            result.EventInstrumentFolders.Add(new EventInstrumentLibraryFolder(folder.Id)
-            {
-                Name = folder.Name
-            });
-        }
         foreach (DamagedProjectObject damaged in source.DamagedEventInstruments)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -40,6 +32,11 @@ internal static class ProjectCompilationSnapshot
         {
             cancellationToken.ThrowIfCancellationRequested();
             result.DamagedLogicalTracks.Add(damaged);
+        }
+        foreach (DamagedProjectObject damaged in source.DamagedEventInstrumentUsages)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            result.DamagedEventInstrumentUsages.Add(damaged);
         }
         foreach (DamagedProjectObject damaged in source.DamagedMidiChannelRoots)
         {
@@ -51,11 +48,16 @@ internal static class ProjectCompilationSnapshot
             cancellationToken.ThrowIfCancellationRequested();
             result.DamagedPureMidiTracks.Add(damaged);
         }
-        result.ArrangementParents.AddRange(source.ArrangementParents);
+        result.ArrangementTracks.AddRange(source.ArrangementTracks);
         foreach (EventInstrument instrument in source.EventInstruments)
         {
             cancellationToken.ThrowIfCancellationRequested();
             result.EventInstruments.Add(CloneInstrument(result, instrument, cancellationToken));
+        }
+        foreach (EventInstrumentUsage usage in source.EventInstrumentUsages)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            result.EventInstrumentUsages.Add(CloneEventInstrumentUsage(result, usage));
         }
         foreach (LogicalTrack track in source.Tracks)
         {
@@ -106,6 +108,15 @@ internal static class ProjectCompilationSnapshot
                 value => CloneInstrument(snapshot, value, cancellationToken),
                 cancellationToken);
         }
+        if (changes.EventInstrumentUsageIds.Count != 0)
+        {
+            SynchronizeByStableId(
+                snapshot.EventInstrumentUsages,
+                source.EventInstrumentUsages,
+                changes.EventInstrumentUsageIds,
+                value => CloneEventInstrumentUsage(snapshot, value),
+                cancellationToken);
+        }
         if (changes.TrackIds.Count != 0)
         {
             SynchronizeByStableId(
@@ -144,6 +155,15 @@ internal static class ProjectCompilationSnapshot
                 cancellationToken);
         }
 
+        if (changes.TrackIds.Count != 0
+            || changes.EventInstrumentUsageIds.Count != 0
+            || changes.MidiChannelRootIds.Count != 0
+            || changes.PureMidiTrackIds.Count != 0)
+        {
+            snapshot.ArrangementTracks.Clear();
+            snapshot.ArrangementTracks.AddRange(source.ArrangementTracks);
+        }
+
         snapshot.RestoreNextStableId(source.NextStableId);
         return snapshot;
     }
@@ -159,6 +179,7 @@ internal static class ProjectCompilationSnapshot
         static MidoraId IdOf(T value) => value switch
         {
             EventInstrument instrument => instrument.Id,
+            EventInstrumentUsage usage => usage.Id,
             LogicalTrack track => track.Id,
             MidiChannelRoot root => root.Id,
             PureMidiTrack track => track.Id,
@@ -246,7 +267,7 @@ internal static class ProjectCompilationSnapshot
         LogicalTrack result = new(project, source.Id)
         {
             Name = source.Name,
-            EventInstrumentId = source.EventInstrumentId,
+            EventInstrumentUsageId = source.EventInstrumentUsageId,
             LastBoundEventInstrumentName = source.LastBoundEventInstrumentName,
             ColorOverride = source.ColorOverride
         };
@@ -291,11 +312,19 @@ internal static class ProjectCompilationSnapshot
         return result;
     }
 
+    private static EventInstrumentUsage CloneEventInstrumentUsage(
+        MidoraProject project,
+        EventInstrumentUsage source) =>
+        new(project, source.Id)
+        {
+            EventInstrumentId = source.EventInstrumentId
+        };
+
     private static MidiChannelRoot CloneMidiChannelRoot(
         MidoraProject project,
         MidiChannelRoot source)
     {
-        MidiChannelRoot result = new(project, source.Id)
+        return new(project, source.Id)
         {
             Name = source.Name,
             RoutingMode = source.RoutingMode,
@@ -303,8 +332,6 @@ internal static class ProjectCompilationSnapshot
             FixedZeroBasedChannel = source.FixedZeroBasedChannel,
             ChannelMode = source.ChannelMode
         };
-        result.MidiTrackIds.AddRange(source.MidiTrackIds);
-        return result;
     }
 
     private static PureMidiTrack ClonePureMidiTrack(
@@ -343,7 +370,6 @@ internal static class ProjectCompilationSnapshot
             Name = source.Name,
             Description = source.Description,
             Color = source.Color,
-            LibraryFolderId = source.LibraryFolderId,
             RootNote = source.RootNote,
             TemplateLengthTicks = source.TemplateLengthTicks,
             RequiresChannelIsolation = source.RequiresChannelIsolation,
@@ -354,7 +380,6 @@ internal static class ProjectCompilationSnapshot
             LoopStartTick = source.LoopStartTick,
             LoopEndTick = source.LoopEndTick
         };
-        result.LogicalTrackIds.AddRange(source.LogicalTrackIds);
         CopyState(source.InitialState, result.InitialState, cancellationToken);
 
         foreach (LogicalParameterDefinition definition in source.LogicalParameters)

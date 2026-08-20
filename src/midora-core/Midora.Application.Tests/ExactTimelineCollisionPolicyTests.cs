@@ -9,7 +9,9 @@ public sealed class ExactTimelineCollisionPolicyTests
     public void MovingLogicalNoteOntoExistingExactKeyDiscardsMoverAndUndoRestoresIt()
     {
         MidoraProject project = new(480);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
         LogicalTrack track = new(project) { Name = "Track" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalNote incumbent = new(project)
         {
@@ -27,7 +29,6 @@ public sealed class ExactTimelineCollisionPolicyTests
         };
         segment.Notes.AddRange([incumbent, mover]);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -59,7 +60,8 @@ public sealed class ExactTimelineCollisionPolicyTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
+        LogicalTrack track = new(project) { Name = "Track"};
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
         CurvePoint incumbent = new(project, 100, 0.25);
@@ -67,7 +69,6 @@ public sealed class ExactTimelineCollisionPolicyTests
         lane.Points.AddRange([incumbent, mover]);
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 
@@ -146,7 +147,9 @@ public sealed class ExactTimelineCollisionPolicyTests
     public void ScopedCollisionResolutionDoesNotCleanUnrelatedPreexistingCollisions()
     {
         MidoraProject project = new(480);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
         LogicalTrack track = new(project) { Name = "Track" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment unrelated = new(project)
         {
             ProjectStartTick = 0,
@@ -189,7 +192,6 @@ public sealed class ExactTimelineCollisionPolicyTests
         };
         edited.Notes.AddRange([incumbent, mover]);
         track.Segments.AddRange([unrelated, edited]);
-        project.Tracks.Add(track);
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
 

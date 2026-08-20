@@ -265,38 +265,21 @@ public sealed class PreviewCompilerTests
         Assert.DoesNotContain(result.Diagnostics, value => value.Code == "MIDORA1303");
     }
 
-    [Fact]
-    public void PreviewContextsPreserveSelectedInstrumentLibraryFolderIdentity()
-    {
-        var fixture = CompilerTestProject.Create(segmentLength: 480);
-        EventInstrumentLibraryFolder folder = new(fixture.Project) { Name = "Folder" };
-        fixture.Project.EventInstrumentFolders.Add(folder);
-        fixture.Instrument.LibraryFolderId = folder.Id;
-        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120, 64);
-
-        CanonicalCompiledResult instrumentPreview = new PreviewCompiler().CompileEventInstrument(
-            fixture.Project,
-            new EventInstrumentPreviewRequest(fixture.Instrument.Id));
-        CanonicalCompiledResult segmentPreview = new PreviewCompiler().CompileSegment(
-            fixture.Project,
-            fixture.Track.Id,
-            fixture.Segment.Id);
-
-        Assert.True(instrumentPreview.IsConsumable);
-        Assert.True(segmentPreview.IsConsumable);
-        Assert.DoesNotContain(instrumentPreview.Diagnostics, value => value.Code == "MIDORA1021");
-        Assert.DoesNotContain(segmentPreview.Diagnostics, value => value.Code == "MIDORA1021");
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void SegmentPreviewRejectsUnboundAndBrokenInstrumentBindings(bool brokenReference)
     {
         var fixture = CompilerTestProject.Create(segmentLength: 480);
-        fixture.Track.EventInstrumentId = brokenReference
-            ? fixture.Project.AllocateStableId()
-            : null;
+        if (brokenReference)
+        {
+            fixture.Project.FindEventInstrumentUsage(fixture.Track)!.EventInstrumentId =
+                fixture.Project.AllocateStableId();
+        }
+        else
+        {
+            fixture.Track.EventInstrumentUsageId = null;
+        }
 
         CanonicalCompiledResult result = new PreviewCompiler().CompileSegment(
             fixture.Project,

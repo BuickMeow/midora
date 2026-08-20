@@ -78,6 +78,7 @@ public sealed class PureMidiCompilationTests
     {
         MidoraProject project = new(480);
         MidiChannelRoot fixedRoot = AddRoot(project, fixedChannel: 0, MidiChannelMode.Melodic);
+        _ = AddTrack(project, fixedRoot, "Fixed Track");
         MidiChannelRoot autoRoot = new(project)
         {
             Name = "Auto",
@@ -85,7 +86,6 @@ public sealed class PureMidiCompilationTests
             ChannelMode = MidiChannelMode.Melodic
         };
         project.MidiChannelRoots.Add(autoRoot);
-        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, autoRoot.Id));
         PureMidiTrack track = AddTrack(project, autoRoot, "Auto Track");
         AddSegment(project, track, 0, 120).Notes.Add(NewNote(project, 0, 60, 64));
 
@@ -105,10 +105,6 @@ public sealed class PureMidiCompilationTests
     public void LogicalAllocationAlsoBypassesFixedAndParticipatingAutoRoots()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 240);
-        fixture.Project.ArrangementParents.Add(new(
-            ArrangementParentKind.EventInstrument,
-            fixture.Instrument.Id));
-        fixture.Instrument.LogicalTrackIds.Add(fixture.Track.Id);
         fixture.Voice.Events.Add(TemplateEvent.Note(
             fixture.Project,
             0,
@@ -121,6 +117,7 @@ public sealed class PureMidiCompilationTests
             fixture.Project,
             fixedChannel: 0,
             MidiChannelMode.Melodic);
+        _ = AddTrack(fixture.Project, fixedRoot, "Fixed Track");
         MidiChannelRoot autoRoot = new(fixture.Project)
         {
             Name = "Auto",
@@ -128,9 +125,6 @@ public sealed class PureMidiCompilationTests
             ChannelMode = MidiChannelMode.Melodic
         };
         fixture.Project.MidiChannelRoots.Add(autoRoot);
-        fixture.Project.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            autoRoot.Id));
         PureMidiTrack midiTrack = AddTrack(fixture.Project, autoRoot, "Auto Track");
         AddSegment(fixture.Project, midiTrack, 0, 120).Notes.Add(
             NewNote(fixture.Project, 0, 120, 64));
@@ -158,10 +152,6 @@ public sealed class PureMidiCompilationTests
     public void ExplicitLogicalTrackScopeDoesNotReserveAnExcludedFixedRoot()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 240);
-        fixture.Project.ArrangementParents.Add(new(
-            ArrangementParentKind.EventInstrument,
-            fixture.Instrument.Id));
-        fixture.Instrument.LogicalTrackIds.Add(fixture.Track.Id);
         fixture.Voice.Events.Add(TemplateEvent.Note(
             fixture.Project,
             0,
@@ -300,7 +290,6 @@ public sealed class PureMidiCompilationTests
             ChannelMode = mode
         };
         project.MidiChannelRoots.Add(root);
-        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
         return root;
     }
 
@@ -315,7 +304,7 @@ public sealed class PureMidiCompilationTests
             MidiChannelRootId = root.Id
         };
         project.PureMidiTracks.Add(track);
-        root.MidiTrackIds.Add(track.Id);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         return track;
     }
 

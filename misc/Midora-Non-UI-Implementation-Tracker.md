@@ -1,8 +1,8 @@
 # Midora 初版非 UI 实施台账
 
-状态：既有 Logical/Event Instrument 非 UI 基线与八组真实 SF2 发布门已完成；2026-08-18 纳入初版的 Pure MIDI Track / SMF Import 及 mixed Arrangement parent/child 领域格式尚待实现
+状态：历史实施追踪；顶部“尚待实现”判断已过时。2026-08-20 当前 flat Arrangement / Shared Usage 状态见对应 requirement trace、ADR-CORE-046 与最新测试结果。
 创建日期：2026-08-06
-最近决策更新：2026-08-18；M-AUD-001～012 已全部通过；既有 Q-NUI-049 的“一 Channel Unit 一 MIDI Track”实现现在只代表 Logical/Event Instrument 基线。Pure MIDI Track / SMF Import 与新 parent/child ownership 的正式新增范围见 SRS 第 23～24 章、INV-050～INV-064、ADR-PMIDI-001～009 与 ADR-CORE-045，当前尚未实现
+最近结构决策更新：2026-08-20；Pure MIDI Track / SMF Import 已实施，2026-08-18 parent/child ownership 又被 global mixed Track order、Event Instrument Usage 与非空内部 Root 取代。正式范围见 SRS 第 23～24 章、INV-050～064、INV-073～074、ADR-PMIDI-001～009 与 ADR-CORE-046。
 上位规范：`misc/Midora-SRS-Initial-Release-v0.1/`
 问题库：`misc/Midora-Non-UI-Decision-Question-Library.md`
 缓存设计讨论：`misc/Midora-Segment-Compilation-and-Audio-Cache-Design-Discussion-2026-08-08.md`

@@ -125,7 +125,8 @@ public sealed class MidiExportArtifactBuilderTests
         voice.Events.Add(TemplateEvent.Note(project, 0, 96, 60, 100));
         instrument.SubVoices.Add(voice);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
+        LogicalTrack track = new(project) { Name = "Track"};
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 192 };
         segment.Notes.Add(new(project)
         {
@@ -135,7 +136,6 @@ public sealed class MidiExportArtifactBuilderTests
             Velocity = 100
         });
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         return (project, track);
     }
 }

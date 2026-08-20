@@ -244,6 +244,7 @@ public sealed class CanonicalAudioUnitProjection
             InstanceGroupId = allocation.InstanceGroupId;
             SubVoiceId = allocation.SubVoiceId;
             MidiChannelRootId = allocation.MidiChannelRootId;
+            EventInstrumentUsageId = allocation.EventInstrumentUsageId;
             ChannelMode = allocation.ChannelMode;
             GroupStartTick = allocation.StartTick;
             GroupEndTick = allocation.EndTick;
@@ -259,6 +260,7 @@ public sealed class CanonicalAudioUnitProjection
         public MidoraId InstanceGroupId { get; }
         public MidoraId SubVoiceId { get; }
         public MidoraId MidiChannelRootId { get; }
+        public MidoraId EventInstrumentUsageId { get; }
         public MidiChannelMode ChannelMode { get; }
         public long GroupStartTick { get; }
         public long GroupEndTick { get; }
@@ -270,12 +272,14 @@ public sealed class CanonicalAudioUnitProjection
 
         public void ValidateCompatible(ChannelUnitAllocation value)
         {
-            if (TrackId != value.TrackId
-                || SegmentId != value.SegmentId
+            bool sharedLogicalUsage = EventInstrumentUsageId != default;
+            if ((!sharedLogicalUsage
+                    && (TrackId != value.TrackId || SegmentId != value.SegmentId))
                 || EventInstrumentId != value.EventInstrumentId
                 || InstanceGroupId != value.InstanceGroupId
                 || SubVoiceId != value.SubVoiceId
                 || MidiChannelRootId != value.MidiChannelRootId
+                || EventInstrumentUsageId != value.EventInstrumentUsageId
                 || ChannelMode != value.ChannelMode
                 || GroupStartTick != value.StartTick
                 || GroupEndTick != value.EndTick

@@ -12,7 +12,7 @@ public sealed class AudioRenderCompilationCoordinatorTests
             ("Piano", 192, 60),
             ("Strings", 384, 64));
         LogicalTrack unbound = new(project) { Name = "Unbound" };
-        project.Tracks.Add(unbound);
+        ProjectGraphConstruction.AddUnboundLogicalTrack(project, unbound);
         using MidoraCompiler compiler = new();
 
         AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
@@ -98,10 +98,9 @@ public sealed class AudioRenderCompilationCoordinatorTests
             NoteOnVelocity = 100
         });
         track.Segments.Add(segment);
-        root.MidiTrackIds.Add(track.Id);
         project.MidiChannelRoots.Add(root);
         project.PureMidiTracks.Add(track);
-        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         using MidoraCompiler compiler = new();
 
         AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
@@ -124,8 +123,6 @@ public sealed class AudioRenderCompilationCoordinatorTests
     {
         MidoraProject project = AudioRenderTestProject.Create(("Logical", 192, 60));
         EventInstrument instrument = Assert.Single(project.EventInstruments);
-        instrument.LogicalTrackIds.Add(project.Tracks[0].Id);
-        project.ArrangementParents.Add(new(ArrangementParentKind.EventInstrument, instrument.Id));
         MidiChannelRoot root = new(project)
         {
             Name = "Root",
@@ -141,10 +138,9 @@ public sealed class AudioRenderCompilationCoordinatorTests
             NoteOnVelocity = 90
         });
         track.Segments.Add(segment);
-        root.MidiTrackIds.Add(track.Id);
         project.MidiChannelRoots.Add(root);
         project.PureMidiTracks.Add(track);
-        project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         using MidoraCompiler compiler = new();
 
         AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
@@ -177,11 +173,10 @@ public sealed class AudioRenderCompilationCoordinatorTests
         SubVoice emptyVoice = new(project) { Name = "Empty Voice" };
         emptyInstrument.SubVoices.Add(emptyVoice);
         project.EventInstruments.Add(emptyInstrument);
-        LogicalTrack silentTrack = new(project)
-        {
+        LogicalTrack silentTrack = new(project) {
             Name = "Silent",
-            EventInstrumentId = emptyInstrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, silentTrack, emptyInstrument.Id);
         Segment silentSegment = new(project) { LengthTicks = 384 };
         silentSegment.Notes.Add(new(project)
         {
@@ -190,7 +185,6 @@ public sealed class AudioRenderCompilationCoordinatorTests
             Velocity = 100
         });
         silentTrack.Segments.Add(silentSegment);
-        project.Tracks.Add(silentTrack);
         using MidoraCompiler compiler = new();
 
         AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
@@ -250,6 +244,7 @@ public sealed class AudioRenderCompilationCoordinatorTests
             1));
         LogicalTrack damagedTrack = CreateDamagedTrack(project, damagedInstrumentId);
         project.Tracks.Add(damagedTrack);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.LogicalTrack, damagedTrack.Id));
         using MidoraCompiler compiler = new();
 
         AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
@@ -290,6 +285,7 @@ public sealed class AudioRenderCompilationCoordinatorTests
             1));
         LogicalTrack damagedTrack = CreateDamagedTrack(project, damagedInstrumentId);
         project.Tracks.Add(damagedTrack);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.LogicalTrack, damagedTrack.Id));
         using MidoraCompiler compiler = new();
 
         AudioRenderCompilationResult result = new AudioRenderCompilationCoordinator(compiler).Compile(new()
@@ -336,10 +332,15 @@ public sealed class AudioRenderCompilationCoordinatorTests
         MidoraProject project,
         MidoraId damagedInstrumentId)
     {
+        EventInstrumentUsage usage = new(project)
+        {
+            EventInstrumentId = damagedInstrumentId
+        };
+        project.EventInstrumentUsages.Add(usage);
         LogicalTrack track = new(project)
         {
             Name = "Damaged Track",
-            EventInstrumentId = damagedInstrumentId
+            EventInstrumentUsageId = usage.Id
         };
         Segment segment = new(project) { LengthTicks = 192 };
         segment.Notes.Add(new(project)

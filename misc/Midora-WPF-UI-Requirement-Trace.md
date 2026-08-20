@@ -1,6 +1,6 @@
 # Midora WPF UI Requirement Trace
 
-状态：既有正式实现基线；2026-08-18 第 24 章 mixed Arrangement hierarchy / preview 修订尚待实施，旧 Project Panel/Library 证据不再表示当前符合
+状态：既有正式实现基线；2026-08-20 第 24 章已破坏性修订为 flat Arrangement / Shared Usage，旧 Project Panel、Library tree 与 mixed parent hierarchy 证据不再表示当前符合
 创建日期：2026-08-08
 适用范围：`src/midora-desktop/` 正式 WPF 主应用、共享呈现基础设施及 UI 自动验收
 
@@ -26,7 +26,7 @@
 | 命令路由 | 焦点、Selection、锁定级别、Modal | 同一命令服务于菜单、Toolbar、Context Menu 和快捷键；焦点优先 | 19.10；20.2、20.7、20.12 | 文本焦点不误删对象；Ctrl+S/Undo/Clipboard 按上下文路由 |
 | Workspace | 类型或对象稳定 ID | 类型唯一、对象 ID 唯一、单行 Tab、会话内次序/焦点恢复 | 17.3 | 重复打开激活已有 Tab；对象删除自动关闭；Draft guard |
 | Inspector | Active Workspace Primary Selection | 单选、多选共同字段、值来源、验证和 Go to Source | 17.4；20.3～20.4 | 本地字段缓冲；一次手势一次 Undo；Broken 不按名称修复 |
-| Arrangement | Conductor、mixed Event Instrument/Root parents、child Tracks、Segments、runtime parent/child Mute/Solo | 常驻两级自绘 timeline、subtree commands、Note preview、Pure MIDI event-on-note preview、Conductor point preview | 18.1；24；20.1、20.3～20.5 | 唯一 parent ownership；Event 在 Note 上层 50%；极端内容可视 tile/局部失效 |
+| Arrangement | Conductor、global mixed Tracks、Definition index、Usage/Root membership、Segments、runtime Shared/Track Mute/Solo | 常驻平铺自绘 timeline、Shared brace/Fixed route property、Definition 管理栏、Note preview、Pure MIDI event-on-note preview、Conductor point preview | 18.1；24；20.1、20.3～20.5 | global order 唯一；Event 在 Note 上层 50%；极端内容可视 tile/局部失效 |
 | Segment Editor | Segment local notes/lanes、绑定 Instrument、Project Tempo context | 自绘 piano roll、Pitch Ruler、Logical Parameter lanes、crop 外弱化内容 | 13.22.7、13.24.5；18.2；20.1 | local/project time 不混淆；held preview 清理；预览失败不阻止合法放置 |
 | SubVoice Editor | SubVoice template events、Initial State、effective Root Note | 自绘 note/event lanes；独立 Initial State；高级事件语义呈现 | 8；18.4 | 不展开 RPN/NRPN CC；空 lane 不持久化；大量事件可视裁剪 |
 | Event Instrument | Instrument/Structure/Lifecycle/preview inputs | 一个对象 Workspace、四个 section、折叠 Preview、虚拟键盘 | 7～10；13.21～13.23；18.3～18.6 | Preview 走 canonical 管线；不暴露 Port/Channel；Incompatible 保留 |
@@ -121,7 +121,7 @@
 
 要求输出：
 
-- 一次用户命令只产生一次正式 Project edit；创建结果按稳定 ID 进入正式模型、History 和对应 Workspace；第 24 章实施后外层投影只进入 Arrangement parent/child hierarchy；
+- 一次用户命令只产生一次正式 Project edit；创建结果按稳定 ID 进入正式模型、History 和对应 Workspace；第 24 章实施后外层投影只进入 global mixed Arrangement Track order、Definition index 与内部 Usage/Root membership；
 - Popup/Menu/DoubleClick 当前输入路由先完成，随后才允许重建 ItemsSource-backed collection 或切换 Workspace；
 - 所有 WPF `ObservableCollection`、Workspace、Inspector、Diagnostics 和属性通知只在其 Dispatcher 上刷新；后台 SoundFont 提交不得直接触碰 WPF 投影；
 - SoundFont 长操作显示模态任务状态并允许 Cancel；取消在正式 Project edit 前生效，不留下部分 SoundFont 选择；

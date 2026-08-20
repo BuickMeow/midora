@@ -551,13 +551,13 @@ Requirement trace：输入为 Reset Defaults、合并 Initial State、SubVoice �
 
 ## 46. ADR-CORE-044（已接受）：Pure MIDI Root、双 canonical 投影与 SMF 导入/拓扑保留
 
-决定：采用 `MIDI Channel Root → Pure MIDI Track → Midi Segment → Direct MIDI Event` 作为与 Logical/Event Instrument 并列的正式源路径。Root 是 Channel Unit/Channel-wide state/lifecycle/cache 身份，Track 是编辑与 SMF MTrk 身份。Fixed Roots、非空 Auto Roots、Logical groups 按固定阶段分配；Root 活动连通区间结束才执行 Root 级 CC120/Reset。Canonical 从同一事件集冻结 Execution Projection 与 SMF Track Projection；SMF Import/Export、Root 合成/缓存、破坏性开发格式和共享 UI adapter 的完整决定见 `misc/Midora-Pure-MIDI-Tracks-and-SMF-Import-Architecture-Decisions.md` 的 ADR-PMIDI-001～008。
+决定：采用 `MIDI Channel Root → Pure MIDI Track → Midi Segment → Direct MIDI Event` 作为与 Logical/Event Instrument 并列的正式源路径。Root 是 Channel Unit/Channel-wide state/lifecycle/cache 身份，Track 是编辑与 SMF MTrk 身份。Fixed Roots、含参与 Segment 内容的 Auto Roots、Logical Usage groups 按固定阶段分配；Root 活动连通区间结束才执行 Root 级 CC120/Reset。Canonical 从同一事件集冻结 Execution Projection 与 SMF Track Projection；SMF Import/Export、Root 合成/缓存、破坏性开发格式和共享 UI adapter 的完整决定见 `misc/Midora-Pure-MIDI-Tracks-and-SMF-Import-Architecture-Decisions.md` 的 ADR-PMIDI-001～008，global order/非空 owner 修订见 ADR-CORE-046。
 
 本 ADR 明确限缩 ADR-CORE-010：Logical/Event Instrument 继续一 Unit 一 MTrk 并使用统一 endTick；Pure MIDI 则一用户 Track 一 MTrk，同 Root 多 MTrk 可共享 Port.Channel 并保留名称、顺序和自身 EOT。合法 Pure MIDI CC91/CC93 进入 canonical 与 SMF，`BASS_MIDI_NOFX` 音频投影不解释其效果。导入读取 Running Status，导出继续显式 status。
 
 Requirement trace：输入为 Root/Track/Segment/direct/opaque 源数据、Logical 源数据、CompileContext、SMF import bytes 和 export request；正式输出为确定 Unit allocation、Root lifecycle、双 canonical 投影、原子新 Project 或保持 Track 拓扑的 SMF Type 1。边界和失败条件以 SRS 第 23 章及 INV-050～INV-057 为准；源对象进入 `.midora`，allocation/projection/checkpoint/PCM/import candidate 均不持久化。明确非目标是 Import into Current Project、Format 2、SMPTE division、字节级 round-trip、per-Track synth 或把 Pure MIDI 转换为 Event Instrument。
 
-## 47. ADR-CORE-045（已接受）：Arrangement mixed parent union 是唯一外层所有权
+## 47. ADR-CORE-045（已被 ADR-CORE-046 取代）：Arrangement mixed parent union 是唯一外层所有权
 
 决定：Project 不再分别保存可见 Event Instrument Library order、全局 Logical Track order 与 Root order，而是保存一个有序 tagged union：`Event Instrument | MIDI Channel Root`。每个 Event Instrument 直接拥有有序 Logical Track children；每个 Root 直接拥有有序 Pure MIDI Track children。Conductor 是固定唯一第一对象，不进入 union。Logical Track 不允许 Unbound；跨 Event Instrument 移动就是保留 Track stable ID/content 的原子 rebind。
 
@@ -566,3 +566,13 @@ Requirement trace：输入为 Root/Track/Segment/direct/opaque 源数据、Logic
 持久化使用 `project.json` parent tagged union、parent ordered child references 与 child parent ID 三方严格一致的模型。旧 Event Instrument Folder、Library manual order、global child order、Unbound Track 和 Project Panel 字段从开发格式中删除。单 parent 文件损坏但关系索引可信时保留原位置 Damaged Parent Placeholder；关系不可信时打开失败。产品/SRS 仍为 v0.1，内部 schema/descriptor/file-format 基线破坏性替换，不提供旧开发布局迁移或双写。
 
 Requirement trace：输入为 mixed parent/child Project graph、稳定 ID allocator、copy/delete/rebind request 与 persistence index；正式输出为确定顺序、唯一 parent ownership、原子 command result 和严格可重开包。失败条件包括无/多 parent、kind 不匹配、引用未重映射、Fixed Root copy 冲突、未确认级联删除和无法可信恢复关系；失败不发布部分 Project。顺序、ownership 与源对象进入 `.midora`；selection、expand、clipboard、Mute/Solo 与 UI cache 不持久化。明确非目标是可见 Library Workspace、Folder、Unbound Track、按名称修复、旧开发格式兼容或让 UI 层另建所有权。
+
+本历史决定建立的可见 parent/child 树、parent order、parent subtree clipboard 与 Logical Track 必须直接属于 Definition 的规则，已由 ADR-CORE-046 全部取代；不得据此恢复旧开发格式或旧 UI。
+
+## 48. ADR-CORE-046（已接受）：平铺 Arrangement、Event Instrument Usage 与非空内部 Root
+
+决定：Project 的唯一可见编曲顺序改为 Conductor 后的 global mixed `Logical Track | Pure MIDI Track` tagged order。Event Instrument Definition 作为独立有序资产保存；无名称、具稳定 ID 的 Event Instrument Usage 引用一个 Definition，并可由多条 Logical Track 共同引用。MIDI Channel Root 与 Usage 都是不可见的共享执行、状态、生命周期与缓存身份；最后一个成员离开时必须在同一原子命令中删除，Definition 不随 Track 删除。Logical Track 可以作为无内容的未绑定 shell 存在，但在取得 Usage 前不得保存 Segment 或其他音乐内容。
+
+Fixed Root 的 Port.Channel 只在 Root 上有一份权威值，但 UI 将其表现为 Track 路由属性；同 Fixed Root 成员可在 global order 中分散。多成员 Auto Root 和多成员 Usage 必须各自连续，并作为可整体拖放的 Shared block。SMF 导入按源 MTrk 顺序建立 global order；SMF 导出按该 global order 过滤 Pure MIDI Tracks。Clipboard Copy/Cut 后 Paste 都创建新稳定 ID；只有正式 drag/move 重排与换组保留被移动对象的 ID。完整决定、候选方案和验证门见 `misc/Midora-Flat-Arrangement-and-Shared-Usage-Architecture-Decisions.md`。
+
+Requirement trace：输入为 Definition index、Usage/Root membership、global Track order、Segment 内容、路由/共享编辑和 SMF Track order；正式输出为唯一可见顺序、确定的共享 Unit/lifecycle、原子成员变更、确定 SMF 顺序和严格可重开包。失败条件包括空 Usage/Root、断裂引用、非连续 Shared Usage/Auto Root、重复 Fixed route、带内容的未绑定 Logical Track、kind 不匹配与部分提交；失败不得发布部分 Project。Definition、Usage、Root、Track、global order 和 membership 属于 Project 源数据；selection、brace hover、drag target、Mute/Solo 和 tile cache 属于 runtime/session。明确非目标是空 Fixed Root UI、可见 parent 行、第二次命名 Usage、旧 `.midora` 兼容或按名称修复关系。

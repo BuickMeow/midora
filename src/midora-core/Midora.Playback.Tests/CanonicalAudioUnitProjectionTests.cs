@@ -20,9 +20,6 @@ public sealed class CanonicalAudioUnitProjectionTests
             ChannelMode = MidiChannelMode.Percussion
         };
         project.MidiChannelRoots.Add(root);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            root.Id));
         PureMidiTrack first = AddMidiTrack(project, root, "First", startTick: 0, key: 36);
         PureMidiTrack second = AddMidiTrack(project, root, "Second", startTick: 240, key: 38);
 
@@ -57,9 +54,6 @@ public sealed class CanonicalAudioUnitProjectionTests
             ChannelMode = MidiChannelMode.Melodic
         };
         project.MidiChannelRoots.Add(root);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            root.Id));
         PureMidiTrack owner = AddMidiTrack(project, root, "Owner", startTick: 0, key: 60);
         PureMidiTrack audible = AddMidiTrack(project, root, "Audible", startTick: 0, key: 64);
         using MidoraCompiler compiler = new();
@@ -97,9 +91,6 @@ public sealed class CanonicalAudioUnitProjectionTests
             ChannelMode = MidiChannelMode.Melodic
         };
         project.MidiChannelRoots.Add(root);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            root.Id));
         PureMidiTrack track = AddMidiTrack(project, root, "Track", startTick: 0, key: 60);
         using ProjectCompilationSession session = new(project);
         CanonicalCompiledResult compiled = session.CompileForPlayback(0, null);
@@ -137,9 +128,6 @@ public sealed class CanonicalAudioUnitProjectionTests
             ChannelMode = MidiChannelMode.Melodic
         };
         project.MidiChannelRoots.Add(root);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            root.Id));
         PureMidiTrack track = AddMidiTrack(project, root, "Track", startTick: 0, key: 60);
         track.Segments[0].ChannelEvents.Add(new DirectMidiChannelEvent(project)
         {
@@ -194,8 +182,11 @@ public sealed class CanonicalAudioUnitProjectionTests
             pitch: 72);
         project.EventInstruments.Remove(blockerInstrument);
         project.EventInstruments.Insert(0, blockerInstrument);
-        project.Tracks.Remove(blockerTrack);
-        project.Tracks.Insert(0, blockerTrack);
+        ArrangementTrackReference blockerReference = new(
+            ArrangementTrackKind.LogicalTrack,
+            blockerTrack.Id);
+        project.ArrangementTracks.Remove(blockerReference);
+        project.ArrangementTracks.Insert(0, blockerReference);
 
         CanonicalCompiledResult after = compiler.CompileFull(project);
         CanonicalAudioUnitFragment moved = CanonicalAudioUnitProjection.Create(after).Fragments
@@ -264,11 +255,10 @@ public sealed class CanonicalAudioUnitProjectionTests
         voice.Events.Add(TemplateEvent.Note(project, 0, 480, pitch, 100));
         instrument.SubVoices.Add(voice);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = $"Track {pitch}",
-            EventInstrumentId = instrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         segment.Notes.Add(new LogicalNote(project)
         {
@@ -277,7 +267,6 @@ public sealed class CanonicalAudioUnitProjectionTests
             Velocity = 100
         });
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         return (instrument, track, segment);
     }
 
@@ -310,7 +299,7 @@ public sealed class CanonicalAudioUnitProjectionTests
         });
         track.Segments.Add(segment);
         project.PureMidiTracks.Add(track);
-        root.MidiTrackIds.Add(track.Id);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         return track;
     }
 }

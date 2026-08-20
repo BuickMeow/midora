@@ -3,41 +3,47 @@ namespace Midora.Domain;
 public sealed record DamagedLogicalTrackSnapshot(
     LogicalTrack Track,
     int ProjectIndex,
+    int ArrangementIndex,
     bool WasExplicitlySelectedForAudioRender);
 
 public sealed record DamagedPureMidiTrackSnapshot(
     PureMidiTrack Track,
-    int ProjectIndex);
+    int ProjectIndex,
+    int ArrangementIndex);
 
 public sealed record DamagedChildPlaceholderSnapshot(
     DamagedProjectObject Placeholder,
+    int ArrangementIndex,
     bool WasExplicitlySelectedForAudioRender = false);
+
+public sealed record DamagedUsageSnapshot(EventInstrumentUsage Usage, int ProjectIndex);
 
 public sealed record DamagedEventInstrumentDeletion(
     DamagedProjectObject Placeholder,
-    int ArrangementParentIndex,
+    IReadOnlyList<DamagedUsageSnapshot> RemovedUsages,
+    IReadOnlyList<DamagedProjectObject> RemovedDamagedUsages,
     IReadOnlyList<DamagedLogicalTrackSnapshot> RemovedTracks,
     IReadOnlyList<DamagedChildPlaceholderSnapshot> RemovedDamagedTracks);
 
 public sealed record DamagedMidiChannelRootDeletion(
     DamagedProjectObject Placeholder,
-    int ArrangementParentIndex,
     IReadOnlyList<DamagedPureMidiTrackSnapshot> RemovedTracks,
     IReadOnlyList<DamagedChildPlaceholderSnapshot> RemovedDamagedTracks);
 
 public sealed record DamagedLogicalTrackDeletion(
     DamagedProjectObject Placeholder,
-    bool WasExplicitlySelectedForAudioRender,
-    MidoraId? EventInstrumentId,
-    int ChildIndex,
-    DamagedProjectObject? DamagedParentBefore);
+    int ArrangementIndex,
+    bool WasExplicitlySelectedForAudioRender);
 
 public sealed record DamagedPureMidiTrackDeletion(
     DamagedProjectObject Placeholder,
-    MidoraId? MidiChannelRootId,
-    int ChildIndex,
-    DamagedProjectObject? DamagedParentBefore);
+    int ArrangementIndex);
 
+/// <summary>
+/// Recovery edits for the current flat Arrangement package format. These
+/// operations deliberately use the authoritative Usage/Root references and
+/// global Arrangement Track order; the removed tree model is not reconstructed.
+/// </summary>
 public static class DamagedProjectObjectEditing
 {
     public static DamagedEventInstrumentDeletion DeleteEventInstrument(
@@ -49,44 +55,35 @@ public static class DamagedProjectObjectEditing
             project.DamagedEventInstruments,
             placeholderId,
             nameof(placeholderId));
-        ArrangementParentReference parent = new(
-            ArrangementParentKind.EventInstrument,
-            placeholderId);
-        int parentIndex = RequireParentIndex(project, parent, "Event Instrument");
-        HashSet<MidoraId> indexedChildren = placeholder.ChildIds?.ToHashSet() ?? [];
-        DamagedLogicalTrackSnapshot[] affectedTracks = project.Tracks
-            .Where(value => value.EventInstrumentId == placeholderId
-                || indexedChildren.Contains(value.Id))
-            .Select(value => new DamagedLogicalTrackSnapshot(
+        DamagedUsageSnapshot[] usages = project.EventInstrumentUsages
+            .Where(value => value.EventInstrumentId == placeholderId)
+            .Select(value => new DamagedUsageSnapshot(
                 value,
-                project.Tracks.IndexOf(value),
-                project.AudioRender.ExplicitLogicalTrackIds.Contains(value.Id)))
+                project.EventInstrumentUsages.IndexOf(value)))
             .ToArray();
-        DamagedChildPlaceholderSnapshot[] affectedDamagedTracks = project.DamagedLogicalTracks
-            .Where(value => value.ParentId == placeholderId
-                || indexedChildren.Contains(value.Id))
-            .Select(value => new DamagedChildPlaceholderSnapshot(
-                value,
-                project.AudioRender.ExplicitLogicalTrackIds.Contains(value.Id)))
+        DamagedProjectObject[] damagedUsages = project.DamagedEventInstrumentUsages
+            .Where(value => value.ParentId == placeholderId)
+            .ToArray();
+        HashSet<MidoraId> usageIds = usages.Select(value => value.Usage.Id)
+            .Concat(damagedUsages.Select(value => value.Id))
+            .ToHashSet();
+        DamagedLogicalTrackSnapshot[] tracks = project.Tracks
+            .Where(value => value.EventInstrumentUsageId is MidoraId usageId
+                && usageIds.Contains(usageId))
+            .Select(value => Snapshot(project, value))
+            .ToArray();
+        DamagedChildPlaceholderSnapshot[] damagedTracks = project.DamagedLogicalTracks
+            .Where(value => value.ParentId is MidoraId usageId && usageIds.Contains(usageId))
+            .Select(value => Snapshot(project, value, ArrangementTrackKind.LogicalTrack))
             .ToArray();
 
-        project.ArrangementParents.RemoveAt(parentIndex);
-        foreach (DamagedLogicalTrackSnapshot snapshot in affectedTracks)
-        {
-            _ = project.Tracks.Remove(snapshot.Track);
-            project.AudioRender.ExplicitLogicalTrackIds.Remove(snapshot.Track.Id);
-        }
-        foreach (DamagedChildPlaceholderSnapshot snapshot in affectedDamagedTracks)
-        {
-            _ = project.DamagedLogicalTracks.Remove(snapshot.Placeholder);
-            project.AudioRender.ExplicitLogicalTrackIds.Remove(snapshot.Placeholder.Id);
-        }
+        RemoveLogicalTracks(project, tracks, damagedTracks);
+        foreach (DamagedUsageSnapshot usage in usages)
+            _ = project.EventInstrumentUsages.Remove(usage.Usage);
+        foreach (DamagedProjectObject usage in damagedUsages)
+            _ = project.DamagedEventInstrumentUsages.Remove(usage);
         _ = project.DamagedEventInstruments.Remove(placeholder);
-        return new(
-            placeholder,
-            parentIndex,
-            affectedTracks,
-            affectedDamagedTracks);
+        return new(placeholder, usages, damagedUsages, tracks, damagedTracks);
     }
 
     public static void UndoDeleteEventInstrument(
@@ -95,41 +92,21 @@ public static class DamagedProjectObjectEditing
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(deletion);
-        EnsureParentIdAvailable(project, deletion.Placeholder.Id);
-        foreach (DamagedLogicalTrackSnapshot snapshot in deletion.RemovedTracks)
-        {
-            EnsureLogicalTrackIdAvailable(project, snapshot.Track.Id);
-        }
-        foreach (DamagedChildPlaceholderSnapshot snapshot in deletion.RemovedDamagedTracks)
-        {
-            EnsureLogicalTrackIdAvailable(project, snapshot.Placeholder.Id);
-        }
-
+        EnsureDefinitionIdAvailable(project, deletion.Placeholder.Id);
         AddSorted(project.DamagedEventInstruments, deletion.Placeholder);
-        project.ArrangementParents.Insert(
-            Math.Clamp(deletion.ArrangementParentIndex, 0, project.ArrangementParents.Count),
-            new ArrangementParentReference(
-                ArrangementParentKind.EventInstrument,
-                deletion.Placeholder.Id));
-        foreach (DamagedLogicalTrackSnapshot snapshot in deletion.RemovedTracks
-            .OrderBy(value => value.ProjectIndex))
+        foreach (DamagedUsageSnapshot snapshot in deletion.RemovedUsages.OrderBy(value => value.ProjectIndex))
         {
-            project.Tracks.Insert(
-                Math.Clamp(snapshot.ProjectIndex, 0, project.Tracks.Count),
-                snapshot.Track);
-            if (snapshot.WasExplicitlySelectedForAudioRender)
-            {
-                project.AudioRender.ExplicitLogicalTrackIds.Add(snapshot.Track.Id);
-            }
+            EnsureUsageIdAvailable(project, snapshot.Usage.Id);
+            project.EventInstrumentUsages.Insert(
+                Math.Clamp(snapshot.ProjectIndex, 0, project.EventInstrumentUsages.Count),
+                snapshot.Usage);
         }
-        foreach (DamagedChildPlaceholderSnapshot snapshot in deletion.RemovedDamagedTracks)
+        foreach (DamagedProjectObject usage in deletion.RemovedDamagedUsages)
         {
-            AddSorted(project.DamagedLogicalTracks, snapshot.Placeholder);
-            if (snapshot.WasExplicitlySelectedForAudioRender)
-            {
-                project.AudioRender.ExplicitLogicalTrackIds.Add(snapshot.Placeholder.Id);
-            }
+            EnsureUsageIdAvailable(project, usage.Id);
+            AddSorted(project.DamagedEventInstrumentUsages, usage);
         }
+        RestoreLogicalTracks(project, deletion.RemovedTracks, deletion.RemovedDamagedTracks);
     }
 
     public static DamagedMidiChannelRootDeletion DeleteMidiChannelRoot(
@@ -141,39 +118,18 @@ public static class DamagedProjectObjectEditing
             project.DamagedMidiChannelRoots,
             placeholderId,
             nameof(placeholderId));
-        ArrangementParentReference parent = new(
-            ArrangementParentKind.MidiChannelRoot,
-            placeholderId);
-        int parentIndex = RequireParentIndex(project, parent, "MIDI Channel Root");
-        HashSet<MidoraId> indexedChildren = placeholder.ChildIds?.ToHashSet() ?? [];
-        DamagedPureMidiTrackSnapshot[] affectedTracks = project.PureMidiTracks
-            .Where(value => value.MidiChannelRootId == placeholderId
-                || indexedChildren.Contains(value.Id))
-            .Select(value => new DamagedPureMidiTrackSnapshot(
-                value,
-                project.PureMidiTracks.IndexOf(value)))
+        DamagedPureMidiTrackSnapshot[] tracks = project.PureMidiTracks
+            .Where(value => value.MidiChannelRootId == placeholderId)
+            .Select(value => Snapshot(project, value))
             .ToArray();
-        DamagedChildPlaceholderSnapshot[] affectedDamagedTracks = project.DamagedPureMidiTracks
-            .Where(value => value.ParentId == placeholderId
-                || indexedChildren.Contains(value.Id))
-            .Select(value => new DamagedChildPlaceholderSnapshot(value))
+        DamagedChildPlaceholderSnapshot[] damagedTracks = project.DamagedPureMidiTracks
+            .Where(value => value.ParentId == placeholderId)
+            .Select(value => Snapshot(project, value, ArrangementTrackKind.PureMidiTrack))
             .ToArray();
 
-        project.ArrangementParents.RemoveAt(parentIndex);
-        foreach (DamagedPureMidiTrackSnapshot snapshot in affectedTracks)
-        {
-            _ = project.PureMidiTracks.Remove(snapshot.Track);
-        }
-        foreach (DamagedChildPlaceholderSnapshot snapshot in affectedDamagedTracks)
-        {
-            _ = project.DamagedPureMidiTracks.Remove(snapshot.Placeholder);
-        }
+        RemovePureMidiTracks(project, tracks, damagedTracks);
         _ = project.DamagedMidiChannelRoots.Remove(placeholder);
-        return new(
-            placeholder,
-            parentIndex,
-            affectedTracks,
-            affectedDamagedTracks);
+        return new(placeholder, tracks, damagedTracks);
     }
 
     public static void UndoDeleteMidiChannelRoot(
@@ -182,33 +138,9 @@ public static class DamagedProjectObjectEditing
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(deletion);
-        EnsureParentIdAvailable(project, deletion.Placeholder.Id);
-        foreach (DamagedPureMidiTrackSnapshot snapshot in deletion.RemovedTracks)
-        {
-            EnsurePureMidiTrackIdAvailable(project, snapshot.Track.Id);
-        }
-        foreach (DamagedChildPlaceholderSnapshot snapshot in deletion.RemovedDamagedTracks)
-        {
-            EnsurePureMidiTrackIdAvailable(project, snapshot.Placeholder.Id);
-        }
-
+        EnsureRootIdAvailable(project, deletion.Placeholder.Id);
         AddSorted(project.DamagedMidiChannelRoots, deletion.Placeholder);
-        project.ArrangementParents.Insert(
-            Math.Clamp(deletion.ArrangementParentIndex, 0, project.ArrangementParents.Count),
-            new ArrangementParentReference(
-                ArrangementParentKind.MidiChannelRoot,
-                deletion.Placeholder.Id));
-        foreach (DamagedPureMidiTrackSnapshot snapshot in deletion.RemovedTracks
-            .OrderBy(value => value.ProjectIndex))
-        {
-            project.PureMidiTracks.Insert(
-                Math.Clamp(snapshot.ProjectIndex, 0, project.PureMidiTracks.Count),
-                snapshot.Track);
-        }
-        foreach (DamagedChildPlaceholderSnapshot snapshot in deletion.RemovedDamagedTracks)
-        {
-            AddSorted(project.DamagedPureMidiTracks, snapshot.Placeholder);
-        }
+        RestorePureMidiTracks(project, deletion.RemovedTracks, deletion.RemovedDamagedTracks);
     }
 
     public static DamagedLogicalTrackDeletion DeleteLogicalTrack(
@@ -220,31 +152,12 @@ public static class DamagedProjectObjectEditing
             project.DamagedLogicalTracks,
             placeholderId,
             nameof(placeholderId));
-        EventInstrument? parent = project.EventInstruments.SingleOrDefault(value =>
-            value.LogicalTrackIds.Contains(placeholderId));
-        int childIndex = parent?.LogicalTrackIds.IndexOf(placeholderId) ?? placeholder.OriginalIndex;
-        DamagedProjectObject? damagedParent = parent is null && placeholder.ParentId is MidoraId parentId
-            ? project.DamagedEventInstruments.SingleOrDefault(value => value.Id == parentId)
-            : null;
-        if (parent is not null)
-        {
-            parent.LogicalTrackIds.RemoveAt(childIndex);
-        }
-        else if (damagedParent is not null)
-        {
-            ReplaceDamagedParent(
-                project.DamagedEventInstruments,
-                damagedParent,
-                RemoveChild(damagedParent, placeholderId));
-        }
+        ArrangementTrackReference reference = new(ArrangementTrackKind.LogicalTrack, placeholderId);
+        int arrangementIndex = project.ArrangementTracks.IndexOf(reference);
+        if (arrangementIndex >= 0) project.ArrangementTracks.RemoveAt(arrangementIndex);
         _ = project.DamagedLogicalTracks.Remove(placeholder);
-        bool wasSelected = project.AudioRender.ExplicitLogicalTrackIds.Remove(placeholderId);
-        return new(
-            placeholder,
-            wasSelected,
-            parent?.Id ?? damagedParent?.Id ?? placeholder.ParentId,
-            childIndex,
-            damagedParent);
+        bool selected = project.AudioRender.ExplicitLogicalTrackIds.Remove(placeholderId);
+        return new(placeholder, arrangementIndex, selected);
     }
 
     public static void UndoDeleteLogicalTrack(
@@ -255,28 +168,14 @@ public static class DamagedProjectObjectEditing
         ArgumentNullException.ThrowIfNull(deletion);
         EnsureLogicalTrackIdAvailable(project, deletion.Placeholder.Id);
         AddSorted(project.DamagedLogicalTracks, deletion.Placeholder);
-        if (deletion.DamagedParentBefore is not null)
+        if (deletion.ArrangementIndex >= 0)
         {
-            DamagedProjectObject current = project.DamagedEventInstruments.Single(value =>
-                value.Id == deletion.DamagedParentBefore.Id);
-            ReplaceDamagedParent(
-                project.DamagedEventInstruments,
-                current,
-                deletion.DamagedParentBefore);
-        }
-        else if (deletion.EventInstrumentId is MidoraId parentId)
-        {
-            EventInstrument parent = project.EventInstruments.SingleOrDefault(value => value.Id == parentId)
-                ?? throw new InvalidOperationException(
-                    "The parent Event Instrument no longer exists.");
-            parent.LogicalTrackIds.Insert(
-                Math.Clamp(deletion.ChildIndex, 0, parent.LogicalTrackIds.Count),
-                deletion.Placeholder.Id);
+            project.ArrangementTracks.Insert(
+                Math.Clamp(deletion.ArrangementIndex, 0, project.ArrangementTracks.Count),
+                new(ArrangementTrackKind.LogicalTrack, deletion.Placeholder.Id));
         }
         if (deletion.WasExplicitlySelectedForAudioRender)
-        {
             project.AudioRender.ExplicitLogicalTrackIds.Add(deletion.Placeholder.Id);
-        }
     }
 
     public static DamagedPureMidiTrackDeletion DeletePureMidiTrack(
@@ -288,29 +187,11 @@ public static class DamagedProjectObjectEditing
             project.DamagedPureMidiTracks,
             placeholderId,
             nameof(placeholderId));
-        MidiChannelRoot? parent = project.MidiChannelRoots.SingleOrDefault(value =>
-            value.MidiTrackIds.Contains(placeholderId));
-        int childIndex = parent?.MidiTrackIds.IndexOf(placeholderId) ?? placeholder.OriginalIndex;
-        DamagedProjectObject? damagedParent = parent is null && placeholder.ParentId is MidoraId parentId
-            ? project.DamagedMidiChannelRoots.SingleOrDefault(value => value.Id == parentId)
-            : null;
-        if (parent is not null)
-        {
-            parent.MidiTrackIds.RemoveAt(childIndex);
-        }
-        else if (damagedParent is not null)
-        {
-            ReplaceDamagedParent(
-                project.DamagedMidiChannelRoots,
-                damagedParent,
-                RemoveChild(damagedParent, placeholderId));
-        }
+        ArrangementTrackReference reference = new(ArrangementTrackKind.PureMidiTrack, placeholderId);
+        int arrangementIndex = project.ArrangementTracks.IndexOf(reference);
+        if (arrangementIndex >= 0) project.ArrangementTracks.RemoveAt(arrangementIndex);
         _ = project.DamagedPureMidiTracks.Remove(placeholder);
-        return new(
-            placeholder,
-            parent?.Id ?? damagedParent?.Id ?? placeholder.ParentId,
-            childIndex,
-            damagedParent);
+        return new(placeholder, arrangementIndex);
     }
 
     public static void UndoDeletePureMidiTrack(
@@ -321,24 +202,142 @@ public static class DamagedProjectObjectEditing
         ArgumentNullException.ThrowIfNull(deletion);
         EnsurePureMidiTrackIdAvailable(project, deletion.Placeholder.Id);
         AddSorted(project.DamagedPureMidiTracks, deletion.Placeholder);
-        if (deletion.DamagedParentBefore is not null)
+        if (deletion.ArrangementIndex >= 0)
         {
-            DamagedProjectObject current = project.DamagedMidiChannelRoots.Single(value =>
-                value.Id == deletion.DamagedParentBefore.Id);
-            ReplaceDamagedParent(
-                project.DamagedMidiChannelRoots,
-                current,
-                deletion.DamagedParentBefore);
+            project.ArrangementTracks.Insert(
+                Math.Clamp(deletion.ArrangementIndex, 0, project.ArrangementTracks.Count),
+                new(ArrangementTrackKind.PureMidiTrack, deletion.Placeholder.Id));
         }
-        else if (deletion.MidiChannelRootId is MidoraId rootId)
+    }
+
+    private static DamagedLogicalTrackSnapshot Snapshot(MidoraProject project, LogicalTrack track) =>
+        new(
+            track,
+            project.Tracks.IndexOf(track),
+            project.ArrangementTracks.IndexOf(new(ArrangementTrackKind.LogicalTrack, track.Id)),
+            project.AudioRender.ExplicitLogicalTrackIds.Contains(track.Id));
+
+    private static DamagedPureMidiTrackSnapshot Snapshot(MidoraProject project, PureMidiTrack track) =>
+        new(
+            track,
+            project.PureMidiTracks.IndexOf(track),
+            project.ArrangementTracks.IndexOf(new(ArrangementTrackKind.PureMidiTrack, track.Id)));
+
+    private static DamagedChildPlaceholderSnapshot Snapshot(
+        MidoraProject project,
+        DamagedProjectObject placeholder,
+        ArrangementTrackKind kind) =>
+        new(
+            placeholder,
+            project.ArrangementTracks.IndexOf(new(kind, placeholder.Id)),
+            kind == ArrangementTrackKind.LogicalTrack
+                && project.AudioRender.ExplicitLogicalTrackIds.Contains(placeholder.Id));
+
+    private static void RemoveLogicalTracks(
+        MidoraProject project,
+        IEnumerable<DamagedLogicalTrackSnapshot> tracks,
+        IEnumerable<DamagedChildPlaceholderSnapshot> damagedTracks)
+    {
+        foreach (DamagedLogicalTrackSnapshot snapshot in tracks)
         {
-            MidiChannelRoot root = project.MidiChannelRoots.SingleOrDefault(value => value.Id == rootId)
-                ?? throw new InvalidOperationException(
-                    "The parent MIDI Channel Root no longer exists.");
-            root.MidiTrackIds.Insert(
-                Math.Clamp(deletion.ChildIndex, 0, root.MidiTrackIds.Count),
-                deletion.Placeholder.Id);
+            _ = project.Tracks.Remove(snapshot.Track);
+            project.ArrangementTracks.Remove(
+                new(ArrangementTrackKind.LogicalTrack, snapshot.Track.Id));
+            project.AudioRender.ExplicitLogicalTrackIds.Remove(snapshot.Track.Id);
         }
+        foreach (DamagedChildPlaceholderSnapshot snapshot in damagedTracks)
+        {
+            _ = project.DamagedLogicalTracks.Remove(snapshot.Placeholder);
+            project.ArrangementTracks.Remove(
+                new(ArrangementTrackKind.LogicalTrack, snapshot.Placeholder.Id));
+            project.AudioRender.ExplicitLogicalTrackIds.Remove(snapshot.Placeholder.Id);
+        }
+    }
+
+    private static void RestoreLogicalTracks(
+        MidoraProject project,
+        IEnumerable<DamagedLogicalTrackSnapshot> tracks,
+        IEnumerable<DamagedChildPlaceholderSnapshot> damagedTracks)
+    {
+        foreach (DamagedLogicalTrackSnapshot snapshot in tracks.OrderBy(value => value.ProjectIndex))
+        {
+            EnsureLogicalTrackIdAvailable(project, snapshot.Track.Id);
+            project.Tracks.Insert(Math.Clamp(snapshot.ProjectIndex, 0, project.Tracks.Count), snapshot.Track);
+            RestoreArrangementReference(
+                project,
+                snapshot.ArrangementIndex,
+                new(ArrangementTrackKind.LogicalTrack, snapshot.Track.Id));
+            if (snapshot.WasExplicitlySelectedForAudioRender)
+                project.AudioRender.ExplicitLogicalTrackIds.Add(snapshot.Track.Id);
+        }
+        foreach (DamagedChildPlaceholderSnapshot snapshot in damagedTracks)
+        {
+            EnsureLogicalTrackIdAvailable(project, snapshot.Placeholder.Id);
+            AddSorted(project.DamagedLogicalTracks, snapshot.Placeholder);
+            RestoreArrangementReference(
+                project,
+                snapshot.ArrangementIndex,
+                new(ArrangementTrackKind.LogicalTrack, snapshot.Placeholder.Id));
+            if (snapshot.WasExplicitlySelectedForAudioRender)
+                project.AudioRender.ExplicitLogicalTrackIds.Add(snapshot.Placeholder.Id);
+        }
+    }
+
+    private static void RemovePureMidiTracks(
+        MidoraProject project,
+        IEnumerable<DamagedPureMidiTrackSnapshot> tracks,
+        IEnumerable<DamagedChildPlaceholderSnapshot> damagedTracks)
+    {
+        foreach (DamagedPureMidiTrackSnapshot snapshot in tracks)
+        {
+            _ = project.PureMidiTracks.Remove(snapshot.Track);
+            project.ArrangementTracks.Remove(
+                new(ArrangementTrackKind.PureMidiTrack, snapshot.Track.Id));
+        }
+        foreach (DamagedChildPlaceholderSnapshot snapshot in damagedTracks)
+        {
+            _ = project.DamagedPureMidiTracks.Remove(snapshot.Placeholder);
+            project.ArrangementTracks.Remove(
+                new(ArrangementTrackKind.PureMidiTrack, snapshot.Placeholder.Id));
+        }
+    }
+
+    private static void RestorePureMidiTracks(
+        MidoraProject project,
+        IEnumerable<DamagedPureMidiTrackSnapshot> tracks,
+        IEnumerable<DamagedChildPlaceholderSnapshot> damagedTracks)
+    {
+        foreach (DamagedPureMidiTrackSnapshot snapshot in tracks.OrderBy(value => value.ProjectIndex))
+        {
+            EnsurePureMidiTrackIdAvailable(project, snapshot.Track.Id);
+            project.PureMidiTracks.Insert(
+                Math.Clamp(snapshot.ProjectIndex, 0, project.PureMidiTracks.Count),
+                snapshot.Track);
+            RestoreArrangementReference(
+                project,
+                snapshot.ArrangementIndex,
+                new(ArrangementTrackKind.PureMidiTrack, snapshot.Track.Id));
+        }
+        foreach (DamagedChildPlaceholderSnapshot snapshot in damagedTracks)
+        {
+            EnsurePureMidiTrackIdAvailable(project, snapshot.Placeholder.Id);
+            AddSorted(project.DamagedPureMidiTracks, snapshot.Placeholder);
+            RestoreArrangementReference(
+                project,
+                snapshot.ArrangementIndex,
+                new(ArrangementTrackKind.PureMidiTrack, snapshot.Placeholder.Id));
+        }
+    }
+
+    private static void RestoreArrangementReference(
+        MidoraProject project,
+        int index,
+        ArrangementTrackReference reference)
+    {
+        if (index < 0) return;
+        if (project.ArrangementTracks.Any(value => value.TrackId == reference.TrackId))
+            throw new InvalidOperationException("The damaged Arrangement Track is already present.");
+        project.ArrangementTracks.Insert(Math.Clamp(index, 0, project.ArrangementTracks.Count), reference);
     }
 
     private static DamagedProjectObject RequirePlaceholder(
@@ -348,78 +347,46 @@ public static class DamagedProjectObjectEditing
         placeholders.FirstOrDefault(value => value.Id == id)
         ?? throw new ArgumentOutOfRangeException(parameterName);
 
-    private static int RequireParentIndex(
-        MidoraProject project,
-        ArrangementParentReference parent,
-        string kind)
-    {
-        int index = project.ArrangementParents.IndexOf(parent);
-        return index >= 0
-            ? index
-            : throw new InvalidOperationException(
-                $"The damaged {kind} is missing from the Arrangement parent order.");
-    }
-
-    private static void EnsureParentIdAvailable(MidoraProject project, MidoraId id)
+    private static void EnsureDefinitionIdAvailable(MidoraProject project, MidoraId id)
     {
         if (project.EventInstruments.Any(value => value.Id == id)
-            || project.DamagedEventInstruments.Any(value => value.Id == id)
-            || project.MidiChannelRoots.Any(value => value.Id == id)
+            || project.DamagedEventInstruments.Any(value => value.Id == id))
+            throw new InvalidOperationException("The damaged Event Instrument ID is already present.");
+    }
+
+    private static void EnsureUsageIdAvailable(MidoraProject project, MidoraId id)
+    {
+        if (project.EventInstrumentUsages.Any(value => value.Id == id)
+            || project.DamagedEventInstrumentUsages.Any(value => value.Id == id))
+            throw new InvalidOperationException("The damaged Event Instrument Usage ID is already present.");
+    }
+
+    private static void EnsureRootIdAvailable(MidoraProject project, MidoraId id)
+    {
+        if (project.MidiChannelRoots.Any(value => value.Id == id)
             || project.DamagedMidiChannelRoots.Any(value => value.Id == id))
-        {
-            throw new InvalidOperationException("The damaged Arrangement parent ID is already present.");
-        }
+            throw new InvalidOperationException("The damaged MIDI Channel Root ID is already present.");
     }
 
     private static void EnsureLogicalTrackIdAvailable(MidoraProject project, MidoraId id)
     {
         if (project.Tracks.Any(value => value.Id == id)
             || project.DamagedLogicalTracks.Any(value => value.Id == id))
-        {
             throw new InvalidOperationException("The damaged Logical Track ID is already present.");
-        }
     }
 
     private static void EnsurePureMidiTrackIdAvailable(MidoraProject project, MidoraId id)
     {
         if (project.PureMidiTracks.Any(value => value.Id == id)
             || project.DamagedPureMidiTracks.Any(value => value.Id == id))
-        {
             throw new InvalidOperationException("The damaged Pure MIDI Track ID is already present.");
-        }
     }
 
-    private static void AddSorted(
-        List<DamagedProjectObject> target,
-        DamagedProjectObject value)
+    private static void AddSorted(List<DamagedProjectObject> target, DamagedProjectObject value)
     {
         target.Add(value);
-        target.Sort((left, right) =>
-            left.OriginalIndex != right.OriginalIndex
-                ? left.OriginalIndex.CompareTo(right.OriginalIndex)
-                : left.Id.CompareTo(right.Id));
-    }
-
-    private static DamagedProjectObject RemoveChild(
-        DamagedProjectObject parent,
-        MidoraId childId) =>
-        parent.ChildIds is null
-            ? parent
-            : parent with
-            {
-                ChildIds = Array.AsReadOnly(parent.ChildIds.Where(value => value != childId).ToArray())
-            };
-
-    private static void ReplaceDamagedParent(
-        List<DamagedProjectObject> target,
-        DamagedProjectObject before,
-        DamagedProjectObject after)
-    {
-        int index = target.IndexOf(before);
-        if (index < 0)
-        {
-            throw new InvalidOperationException("The damaged Arrangement parent no longer exists.");
-        }
-        target[index] = after;
+        target.Sort((left, right) => left.OriginalIndex != right.OriginalIndex
+            ? left.OriginalIndex.CompareTo(right.OriginalIndex)
+            : left.Id.CompareTo(right.Id));
     }
 }

@@ -157,10 +157,7 @@ public static partial class MidiProjectImportService
         HashSet<int> fallbackNameSourceTracks = [];
         int fallbackNameTrackCount = 0;
         ImportBucket[] orderedBuckets = buckets.Values
-            .OrderBy(value => value.Scan.MidoraMetadata is null ? 1 : 0)
-            .ThenBy(value => value.Scan.MidoraMetadata?.RootOrder ?? value.Key.SourceTrackIndex)
-            .ThenBy(value => value.Scan.MidoraMetadata?.TrackOrder ?? 0)
-            .ThenBy(value => value.Key.SourceTrackIndex)
+            .OrderBy(value => value.Key.SourceTrackIndex)
             .ThenBy(value => value.FirstOrder)
             .ThenBy(value => value.Key.SourcePort)
             .ThenBy(value => value.Key.Channel)
@@ -190,9 +187,6 @@ public static partial class MidiProjectImportService
                 };
                 roots.Add(route, root);
                 project.MidiChannelRoots.Add(root);
-                project.ArrangementParents.Add(new(
-                    ArrangementParentKind.MidiChannelRoot,
-                    root.Id));
             }
 
             bool usesFallbackName = string.IsNullOrWhiteSpace(bucket.Scan.TrackName);
@@ -213,7 +207,9 @@ public static partial class MidiProjectImportService
                 MidiChannelRootId = root.Id
             };
             project.PureMidiTracks.Add(track);
-            root.MidiTrackIds.Add(track.Id);
+            project.ArrangementTracks.Add(new(
+                ArrangementTrackKind.PureMidiTrack,
+                track.Id));
 
             if (bucket.Scan.Track.EndTick <= 0)
             {

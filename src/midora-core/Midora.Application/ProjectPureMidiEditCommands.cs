@@ -4,50 +4,92 @@ namespace Midora.Application;
 
 public static partial class ProjectDomainEditCommands
 {
-    public static IProjectEditCommand CreateMidiChannelRoot(
-        string? name = null,
+    public static IProjectEditCommand CreatePureMidiTrackWithNewRoot(
+        string? trackName = null,
+        MidiChannelRootRoutingMode routingMode = MidiChannelRootRoutingMode.Auto,
+        int oneBasedPort = 1,
+        int oneBasedChannel = 1,
+        MidiChannelMode channelMode = MidiChannelMode.Melodic,
         int? insertionIndex = null) =>
-        Command("Create MIDI Channel Root", project =>
+        Command("Create raw MIDI track", project =>
         {
-            string normalized = ProjectTextRules.NormalizeShortText(
-                name ?? "MIDI Channel Root",
-                allowEmpty: false,
-                nameof(name));
-            int parentIndex = insertionIndex ?? project.ArrangementParents.Count;
-            ValidateInsertionIndex(parentIndex, project.ArrangementParents.Count, nameof(insertionIndex));
-            return DeferredCreate(
+            if (!Enum.IsDefined(routingMode)) throw new ArgumentOutOfRangeException(nameof(routingMode));
+            if (!Enum.IsDefined(channelMode)) throw new ArgumentOutOfRangeException(nameof(channelMode));
+            if (oneBasedPort is < 1 or > 16) throw new ArgumentOutOfRangeException(nameof(oneBasedPort));
+            if (oneBasedChannel is < 1 or > 16) throw new ArgumentOutOfRangeException(nameof(oneBasedChannel));
+            string normalizedTrackName = ProjectTextRules.NormalizeShortText(
+                trackName ?? "MIDI Track",
+                allowEmpty: true,
+                nameof(trackName));
+            int trackIndex = insertionIndex ?? project.ArrangementTracks.Count;
+            ValidateInsertionIndex(trackIndex, project.ArrangementTracks.Count, nameof(insertionIndex));
+            MidiChannelRoot? existingFixed = routingMode == MidiChannelRootRoutingMode.Fixed
+                ? project.MidiChannelRoots.SingleOrDefault(value =>
+                    value.RoutingMode == MidiChannelRootRoutingMode.Fixed
+                    && value.FixedZeroBasedPort == oneBasedPort - 1
+                    && value.FixedZeroBasedChannel == oneBasedChannel - 1)
+                : null;
+            if (existingFixed is not null && existingFixed.ChannelMode != channelMode)
+            {
+                throw new InvalidOperationException(
+                    "The selected Fixed Port.Channel already exists with a different Channel Mode.");
+            }
+            MidiChannelRoot? createdRoot = null;
+            PureMidiTrack? createdTrack = null;
+            return Prepared(
+                true,
                 EverythingChange(),
                 value =>
                 {
-                    MidiChannelRoot root = new(value)
+                    if (existingFixed is null && createdRoot is null)
                     {
-                        Name = normalized,
-                        RoutingMode = MidiChannelRootRoutingMode.Auto,
-                        ChannelMode = MidiChannelMode.Melodic
-                    };
-                    value.MidiChannelRoots.Add(root);
-                    value.ArrangementParents.Insert(
-                        parentIndex,
-                        new(ArrangementParentKind.MidiChannelRoot, root.Id));
-                    return root;
+                        createdRoot = new(value)
+                        {
+                            Name = routingMode == MidiChannelRootRoutingMode.Fixed
+                                ? $"Port {oneBasedPort} Channel {oneBasedChannel}"
+                                : "MIDI Channel",
+                            RoutingMode = routingMode,
+                            FixedZeroBasedPort = checked((byte)(oneBasedPort - 1)),
+                            FixedZeroBasedChannel = checked((byte)(oneBasedChannel - 1)),
+                            ChannelMode = channelMode
+                        };
+                    }
+                    MidiChannelRoot root = existingFixed ?? createdRoot!;
+                    if (createdRoot is not null && !value.MidiChannelRoots.Contains(createdRoot))
+                    {
+                        EnsureMidiChannelRootIdAvailable(value, createdRoot.Id);
+                        value.MidiChannelRoots.Add(createdRoot);
+                    }
+                    if (createdTrack is null)
+                    {
+                        createdTrack = new(value)
+                        {
+                            Name = normalizedTrackName,
+                            MidiChannelRootId = root.Id
+                        };
+                    }
+                    else
+                    {
+                        EnsurePureMidiTrackIdAvailable(value, createdTrack.Id);
+                    }
+                    value.PureMidiTracks.Add(createdTrack);
+                    value.ArrangementTracks.Insert(
+                        trackIndex,
+                        new(ArrangementTrackKind.PureMidiTrack, createdTrack.Id));
                 },
-                (value, root) =>
-                {
-                    EnsureMidiChannelRootIdAvailable(value, root.Id);
-                    value.MidiChannelRoots.Add(root);
-                    InsertAt(
-                        value.ArrangementParents,
-                        parentIndex,
-                        new ArrangementParentReference(ArrangementParentKind.MidiChannelRoot, root.Id),
-                        "Arrangement parent");
-                },
-                (value, root) =>
+                value =>
                 {
                     RemoveRequired(
-                        value.ArrangementParents,
-                        new ArrangementParentReference(ArrangementParentKind.MidiChannelRoot, root.Id),
-                        "Arrangement parent");
-                    RemoveRequired(value.MidiChannelRoots, root, "MIDI Channel Root");
+                        value.ArrangementTracks,
+                        new ArrangementTrackReference(
+                            ArrangementTrackKind.PureMidiTrack,
+                            createdTrack!.Id),
+                        "Arrangement Track reference");
+                    RemoveRequired(value.PureMidiTracks, createdTrack!, "Pure MIDI Track");
+                    if (createdRoot is not null)
+                    {
+                        RemoveRequired(value.MidiChannelRoots, createdRoot, "MIDI Channel Root");
+                    }
                 });
         });
 
@@ -69,14 +111,51 @@ public static partial class ProjectDomainEditCommands
             if (!Enum.IsDefined(channelMode)) throw new ArgumentOutOfRangeException(nameof(channelMode));
             if (oneBasedPort is < 1 or > 16) throw new ArgumentOutOfRangeException(nameof(oneBasedPort));
             if (oneBasedChannel is < 1 or > 16) throw new ArgumentOutOfRangeException(nameof(oneBasedChannel));
-            if (routingMode == MidiChannelRootRoutingMode.Fixed
-                && project.MidiChannelRoots.Any(value => value.Id != rootId
+            MidiChannelRoot? existingFixed = routingMode == MidiChannelRootRoutingMode.Fixed
+                ? project.MidiChannelRoots.SingleOrDefault(value => value.Id != rootId
                     && value.RoutingMode == MidiChannelRootRoutingMode.Fixed
                     && value.FixedZeroBasedPort == oneBasedPort - 1
-                    && value.FixedZeroBasedChannel == oneBasedChannel - 1))
+                    && value.FixedZeroBasedChannel == oneBasedChannel - 1)
+                : null;
+            if (existingFixed is not null && existingFixed.ChannelMode != channelMode)
             {
                 throw new InvalidOperationException(
-                    "Another Fixed MIDI Channel Root already owns the selected Port.Channel.");
+                    "The selected Fixed Port.Channel already exists with a different Channel Mode.");
+            }
+            PureMidiTrack[] members = project.PureMidiTracks
+                .Where(value => value.MidiChannelRootId == root.Id)
+                .ToArray();
+            if (members.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    "A MIDI Channel Root cannot be configured without a Track member.");
+            }
+            HashSet<MidoraId> memberIds = members.Select(value => value.Id).ToHashSet();
+            ArrangementTrackReference[] beforeOrder = project.ArrangementTracks.ToArray();
+            ArrangementTrackReference[] afterOrder = beforeOrder;
+            if (existingFixed is null && routingMode == MidiChannelRootRoutingMode.Auto)
+            {
+                ArrangementTrackReference[] memberReferences = beforeOrder
+                    .Where(value => value.Kind == ArrangementTrackKind.PureMidiTrack
+                        && memberIds.Contains(value.TrackId))
+                    .ToArray();
+                if (memberReferences.Length != members.Length)
+                {
+                    throw new InvalidOperationException(
+                        "A MIDI Channel member is missing from the Arrangement Track order.");
+                }
+                int firstOriginalIndex = beforeOrder
+                    .Select((value, index) => (value, index))
+                    .Where(value => memberReferences.Contains(value.value))
+                    .Min(value => value.index);
+                List<ArrangementTrackReference> gathered = beforeOrder
+                    .Where(value => !memberReferences.Contains(value))
+                    .ToList();
+                int insertionIndex = beforeOrder
+                    .Take(firstOriginalIndex)
+                    .Count(value => !memberReferences.Contains(value));
+                gathered.InsertRange(insertionIndex, memberReferences);
+                afterOrder = gathered.ToArray();
             }
             RootConfiguration before = new(
                 root.Name,
@@ -90,146 +169,227 @@ public static partial class ProjectDomainEditCommands
                 checked((byte)(oneBasedPort - 1)),
                 checked((byte)(oneBasedChannel - 1)),
                 channelMode);
+            int rootIndex = project.MidiChannelRoots.IndexOf(root);
+            bool mergeIntoExistingFixed = existingFixed is not null;
             return Prepared(
-                before != after,
-                RootChange(rootId),
-                _ => ApplyRootConfiguration(root, after),
-                _ => ApplyRootConfiguration(root, before));
-        });
-
-    public static IProjectEditCommand ReorderArrangementParent(MidoraId parentId, int newIndex) =>
-        Command("Reorder Arrangement parent", project =>
-        {
-            int oldIndex = project.ArrangementParents.FindIndex(value => value.ParentId == parentId);
-            if (oldIndex < 0) throw new ArgumentOutOfRangeException(nameof(parentId));
-            ValidateExistingIndex(newIndex, project.ArrangementParents.Count, nameof(newIndex));
-            ArrangementParentReference parent = project.ArrangementParents[oldIndex];
-            return Prepared(
-                oldIndex != newIndex,
-                EverythingChange(),
-                value => Move(value.ArrangementParents, parent, newIndex),
-                value => Move(value.ArrangementParents, parent, oldIndex));
-        });
-
-    public static IProjectEditCommand DuplicateMidiChannelRoot(MidoraId rootId, string? name = null) =>
-        Command("Duplicate MIDI Channel Root", project =>
-        {
-            MidiChannelRoot source = FindMidiChannelRoot(project, rootId);
-            string normalized = ProjectTextRules.NormalizeShortText(
-                name ?? $"{source.Name} Copy",
-                allowEmpty: false,
-                nameof(name));
-            ArrangementParentReference sourceReference = new(
-                ArrangementParentKind.MidiChannelRoot,
-                source.Id);
-            int parentIndex = project.ArrangementParents.IndexOf(sourceReference) + 1;
-            if (parentIndex == 0)
-            {
-                throw new InvalidOperationException(
-                    "The MIDI Channel Root is missing from the Arrangement parent order.");
-            }
-            List<PureMidiTrack> createdTracks = [];
-            return DeferredCreate(
+                before != after || mergeIntoExistingFixed || !beforeOrder.SequenceEqual(afterOrder),
                 EverythingChange(),
                 value =>
                 {
-                    MidiChannelRoot copy = new(value)
+                    if (mergeIntoExistingFixed)
                     {
-                        Name = normalized,
-                        RoutingMode = MidiChannelRootRoutingMode.Auto,
-                        FixedZeroBasedPort = source.FixedZeroBasedPort,
-                        FixedZeroBasedChannel = source.FixedZeroBasedChannel,
-                        ChannelMode = source.ChannelMode
-                    };
-                    value.MidiChannelRoots.Add(copy);
-                    foreach (MidoraId trackId in source.MidiTrackIds)
-                    {
-                        PureMidiTrack trackCopy = ClonePureMidiTrack(
-                            value,
-                            FindPureMidiTrack(value, trackId),
-                            copy.Id);
-                        value.PureMidiTracks.Add(trackCopy);
-                        copy.MidiTrackIds.Add(trackCopy.Id);
-                        createdTracks.Add(trackCopy);
+                        foreach (PureMidiTrack member in members)
+                        {
+                            member.MidiChannelRootId = existingFixed!.Id;
+                        }
+                        RemoveRequired(value.MidiChannelRoots, root, "MIDI Channel Root");
                     }
-                    value.ArrangementParents.Insert(
-                        parentIndex,
-                        new(ArrangementParentKind.MidiChannelRoot, copy.Id));
-                    return copy;
+                    else
+                    {
+                        ApplyRootConfiguration(root, after);
+                    }
+                    if (!beforeOrder.SequenceEqual(afterOrder))
+                    {
+                        ReplaceArrangementOrder(value, beforeOrder, afterOrder);
+                    }
                 },
-                (value, copy) =>
+                value =>
                 {
-                    EnsureMidiChannelRootIdAvailable(value, copy.Id);
-                    value.MidiChannelRoots.Add(copy);
-                    foreach (PureMidiTrack track in createdTracks)
+                    if (!beforeOrder.SequenceEqual(afterOrder))
                     {
-                        EnsurePureMidiTrackIdAvailable(value, track.Id);
-                        value.PureMidiTracks.Add(track);
+                        ReplaceArrangementOrder(value, afterOrder, beforeOrder);
                     }
-                    InsertAt(
-                        value.ArrangementParents,
-                        parentIndex,
-                        new ArrangementParentReference(ArrangementParentKind.MidiChannelRoot, copy.Id),
-                        "Arrangement parent");
-                },
-                (value, copy) =>
-                {
-                    RemoveRequired(
-                        value.ArrangementParents,
-                        new ArrangementParentReference(ArrangementParentKind.MidiChannelRoot, copy.Id),
-                        "Arrangement parent");
-                    foreach (PureMidiTrack track in createdTracks)
+                    if (mergeIntoExistingFixed)
                     {
-                        RemoveRequired(value.PureMidiTracks, track, "Pure MIDI Track");
+                        InsertAt(value.MidiChannelRoots, rootIndex, root, "MIDI Channel Root");
+                        foreach (PureMidiTrack member in members)
+                        {
+                            member.MidiChannelRootId = root.Id;
+                        }
                     }
-                    RemoveRequired(value.MidiChannelRoots, copy, "MIDI Channel Root");
+                    else
+                    {
+                        ApplyRootConfiguration(root, before);
+                    }
                 });
         });
 
-    public static IProjectEditCommand DeleteMidiChannelRoot(
-        MidoraId rootId,
-        bool nonEmptyDeletionConfirmed) =>
-        Command("Delete MIDI Channel Root", project =>
+    /// <summary>
+    /// Changes the route presented on one Pure MIDI Track. The Root remains the
+    /// single authority, so a shared source Root is split and an existing Fixed
+    /// destination Root is reused instead of copying route fields onto the Track.
+    /// </summary>
+    public static IProjectEditCommand ConfigurePureMidiTrackRoute(
+        MidoraId trackId,
+        MidiChannelRootRoutingMode routingMode,
+        int oneBasedPort,
+        int oneBasedChannel,
+        MidiChannelMode channelMode) =>
+        Command("Configure MIDI Track route", project =>
         {
-            MidiChannelRoot root = FindMidiChannelRoot(project, rootId);
-            PureMidiTrack[] children = root.MidiTrackIds
-                .Select(id => FindPureMidiTrack(project, id))
+            if (!Enum.IsDefined(routingMode)) throw new ArgumentOutOfRangeException(nameof(routingMode));
+            if (!Enum.IsDefined(channelMode)) throw new ArgumentOutOfRangeException(nameof(channelMode));
+            if (oneBasedPort is < 1 or > 16) throw new ArgumentOutOfRangeException(nameof(oneBasedPort));
+            if (oneBasedChannel is < 1 or > 16) throw new ArgumentOutOfRangeException(nameof(oneBasedChannel));
+
+            PureMidiTrack track = FindPureMidiTrack(project, trackId);
+            MidiChannelRoot sourceRoot = FindMidiChannelRoot(project, track.MidiChannelRootId);
+            PureMidiTrack[] sourceMembers = project.PureMidiTracks
+                .Where(value => value.MidiChannelRootId == sourceRoot.Id)
                 .ToArray();
-            if (children.Length != 0 && !nonEmptyDeletionConfirmed)
+            if (sourceMembers.Length == 0)
             {
                 throw new InvalidOperationException(
-                    "Deleting a non-empty MIDI Channel Root subtree requires explicit confirmation.");
+                    "A MIDI Channel Root cannot be configured without a Track member.");
             }
-            int rootRepositoryIndex = project.MidiChannelRoots.IndexOf(root);
-            ArrangementParentReference parent = new(ArrangementParentKind.MidiChannelRoot, root.Id);
-            int parentIndex = project.ArrangementParents.IndexOf(parent);
-            Dictionary<MidoraId, int> trackIndices = children.ToDictionary(
-                value => value.Id,
-                value => project.PureMidiTracks.IndexOf(value));
+
+            byte targetPort = checked((byte)(oneBasedPort - 1));
+            byte targetChannel = checked((byte)(oneBasedChannel - 1));
+            MidiChannelRoot? existingFixed = routingMode == MidiChannelRootRoutingMode.Fixed
+                ? project.MidiChannelRoots.SingleOrDefault(value =>
+                    value.RoutingMode == MidiChannelRootRoutingMode.Fixed
+                    && value.FixedZeroBasedPort == targetPort
+                    && value.FixedZeroBasedChannel == targetChannel)
+                : null;
+            if (existingFixed is not null && existingFixed.ChannelMode != channelMode)
+            {
+                if (existingFixed.Id == sourceRoot.Id && sourceMembers.Length > 1)
+                {
+                    throw new InvalidOperationException(
+                        "The selected Port.Channel is shared. Use Shared MIDI Route Settings to change its Channel Mode for all members.");
+                }
+                if (existingFixed.Id != sourceRoot.Id)
+                {
+                    throw new InvalidOperationException(
+                        "The selected Fixed Port.Channel already exists with a different Channel Mode.");
+                }
+            }
+
+            bool sameRoute = sourceRoot.RoutingMode == routingMode
+                && sourceRoot.ChannelMode == channelMode
+                && (routingMode == MidiChannelRootRoutingMode.Auto
+                    || sourceRoot.FixedZeroBasedPort == targetPort
+                        && sourceRoot.FixedZeroBasedChannel == targetChannel);
+            if (sameRoute)
+            {
+                return Prepared(false, NoCompilationChange(), _ => { }, _ => { });
+            }
+
+            RootConfiguration before = new(
+                sourceRoot.Name,
+                sourceRoot.RoutingMode,
+                sourceRoot.FixedZeroBasedPort,
+                sourceRoot.FixedZeroBasedChannel,
+                sourceRoot.ChannelMode);
+            RootConfiguration after = new(
+                routingMode == MidiChannelRootRoutingMode.Fixed
+                    ? $"Port {oneBasedPort} Channel {oneBasedChannel}"
+                    : "MIDI Channel",
+                routingMode,
+                targetPort,
+                targetChannel,
+                channelMode);
+
+            // A singleton Root can keep its identity unless it is merging into an
+            // already existing Fixed Root.
+            if (sourceMembers.Length == 1
+                && (existingFixed is null || existingFixed.Id == sourceRoot.Id))
+            {
+                return Prepared(
+                    before != after,
+                    EverythingChange(),
+                    _ => ApplyRootConfiguration(sourceRoot, after),
+                    _ => ApplyRootConfiguration(sourceRoot, before));
+            }
+
+            if (existingFixed?.Id == sourceRoot.Id)
+            {
+                throw new InvalidOperationException(
+                    "The selected Port.Channel already belongs to this shared MIDI route.");
+            }
+
+            ArrangementTrackReference reference = new(
+                ArrangementTrackKind.PureMidiTrack,
+                track.Id);
+            ArrangementTrackReference[] beforeOrder = project.ArrangementTracks.ToArray();
+            int currentIndex = project.ArrangementTracks.IndexOf(reference);
+            if (currentIndex < 0)
+            {
+                throw new InvalidOperationException(
+                    "The Pure MIDI Track is missing from the Arrangement Track order.");
+            }
+            bool leavesSharedAuto = sourceRoot.RoutingMode == MidiChannelRootRoutingMode.Auto
+                && sourceMembers.Length > 1;
+            ArrangementTrackReference[] afterOrder = leavesSharedAuto
+                ? MoveReferenceOutsideGroup(
+                    project,
+                    beforeOrder,
+                    reference,
+                    currentIndex,
+                    sourceRoot.Id)
+                : beforeOrder;
+            EnsureFormalGroupContiguity(
+                project,
+                afterOrder,
+                reference,
+                existingFixed?.Id);
+
+            int sourceRootIndex = project.MidiChannelRoots.IndexOf(sourceRoot);
+            bool removeSourceRoot = sourceMembers.Length == 1;
+            MidiChannelRoot? createdRoot = null;
             return Prepared(
-                hasChanges: true,
+                true,
                 EverythingChange(),
                 value =>
                 {
-                    RemoveRequired(value.ArrangementParents, parent, "Arrangement parent");
-                    foreach (PureMidiTrack child in children)
+                    MidiChannelRoot destination;
+                    if (existingFixed is not null)
                     {
-                        RemoveRequired(value.PureMidiTracks, child, "Pure MIDI Track");
+                        destination = existingFixed;
                     }
-                    RemoveRequired(value.MidiChannelRoots, root, "MIDI Channel Root");
+                    else
+                    {
+                        if (createdRoot is null)
+                        {
+                            createdRoot = new(value) { Name = after.Name };
+                            ApplyRootConfiguration(createdRoot, after);
+                        }
+                        else
+                        {
+                            EnsureMidiChannelRootIdAvailable(value, createdRoot.Id);
+                        }
+                        value.MidiChannelRoots.Add(createdRoot);
+                        destination = createdRoot;
+                    }
+                    track.MidiChannelRootId = destination.Id;
+                    if (removeSourceRoot)
+                    {
+                        RemoveRequired(value.MidiChannelRoots, sourceRoot, "MIDI Channel Root");
+                    }
+                    if (!beforeOrder.SequenceEqual(afterOrder))
+                    {
+                        ReplaceArrangementOrder(value, beforeOrder, afterOrder);
+                    }
                 },
                 value =>
                 {
-                    EnsureMidiChannelRootIdAvailable(value, root.Id);
-                    InsertAt(value.MidiChannelRoots, rootRepositoryIndex, root, "MIDI Channel Root");
-                    InsertAt(value.ArrangementParents, parentIndex, parent, "Arrangement parent");
-                    foreach (PureMidiTrack child in children.OrderBy(value => trackIndices[value.Id]))
+                    if (!beforeOrder.SequenceEqual(afterOrder))
                     {
+                        ReplaceArrangementOrder(value, afterOrder, beforeOrder);
+                    }
+                    if (removeSourceRoot)
+                    {
+                        EnsureMidiChannelRootIdAvailable(value, sourceRoot.Id);
                         InsertAt(
-                            value.PureMidiTracks,
-                            Math.Clamp(trackIndices[child.Id], 0, value.PureMidiTracks.Count),
-                            child,
-                            "Pure MIDI Track");
+                            value.MidiChannelRoots,
+                            sourceRootIndex,
+                            sourceRoot,
+                            "MIDI Channel Root");
+                    }
+                    track.MidiChannelRootId = sourceRoot.Id;
+                    if (createdRoot is not null)
+                    {
+                        RemoveRequired(value.MidiChannelRoots, createdRoot, "MIDI Channel Root");
                     }
                 });
         });
@@ -266,8 +426,24 @@ public static partial class ProjectDomainEditCommands
                 name ?? "MIDI Track",
                 allowEmpty: true,
                 nameof(name));
-            int childIndex = insertionIndex ?? root.MidiTrackIds.Count;
-            ValidateInsertionIndex(childIndex, root.MidiTrackIds.Count, nameof(insertionIndex));
+            int requestedIndex = insertionIndex ?? project.ArrangementTracks.Count;
+            ValidateInsertionIndex(requestedIndex, project.ArrangementTracks.Count, nameof(insertionIndex));
+            int trackIndex = requestedIndex;
+            if (root.RoutingMode == MidiChannelRootRoutingMode.Auto)
+            {
+                int first = project.ArrangementTracks.FindIndex(reference =>
+                    reference.Kind == ArrangementTrackKind.PureMidiTrack
+                    && FindPureMidiTrack(project, reference.TrackId).MidiChannelRootId == root.Id);
+                int last = project.ArrangementTracks.FindLastIndex(reference =>
+                    reference.Kind == ArrangementTrackKind.PureMidiTrack
+                    && FindPureMidiTrack(project, reference.TrackId).MidiChannelRootId == root.Id);
+                if (first >= 0 && (insertionIndex is null
+                    || requestedIndex < first
+                    || requestedIndex > last + 1))
+                {
+                    trackIndex = last + 1;
+                }
+            }
             return DeferredCreate(
                 RootChange(root.Id),
                 value =>
@@ -278,18 +454,27 @@ public static partial class ProjectDomainEditCommands
                         MidiChannelRootId = root.Id
                     };
                     value.PureMidiTracks.Add(track);
-                    root.MidiTrackIds.Insert(childIndex, track.Id);
+                    value.ArrangementTracks.Insert(
+                        trackIndex,
+                        new(ArrangementTrackKind.PureMidiTrack, track.Id));
                     return track;
                 },
                 (value, track) =>
                 {
                     EnsurePureMidiTrackIdAvailable(value, track.Id);
                     value.PureMidiTracks.Add(track);
-                    InsertAt(root.MidiTrackIds, childIndex, track.Id, "Pure MIDI Track reference");
+                    InsertAt(
+                        value.ArrangementTracks,
+                        trackIndex,
+                        new ArrangementTrackReference(ArrangementTrackKind.PureMidiTrack, track.Id),
+                        "Arrangement Track reference");
                 },
                 (value, track) =>
                 {
-                    RemoveRequired(root.MidiTrackIds, track.Id, "Pure MIDI Track reference");
+                    RemoveRequired(
+                        value.ArrangementTracks,
+                        new ArrangementTrackReference(ArrangementTrackKind.PureMidiTrack, track.Id),
+                        "Arrangement Track reference");
                     RemoveRequired(value.PureMidiTracks, track, "Pure MIDI Track");
                 });
         });
@@ -316,30 +501,83 @@ public static partial class ProjectDomainEditCommands
             PureMidiTrack track = FindPureMidiTrack(project, trackId);
             MidiChannelRoot source = FindMidiChannelRoot(project, track.MidiChannelRootId);
             MidiChannelRoot target = FindMidiChannelRoot(project, targetRootId);
-            int sourceIndex = source.MidiTrackIds.IndexOf(track.Id);
+            ArrangementTrackReference reference = new(ArrangementTrackKind.PureMidiTrack, track.Id);
+            int sourceIndex = project.ArrangementTracks.IndexOf(reference);
             if (sourceIndex < 0)
             {
                 throw new InvalidOperationException(
-                    "The Pure MIDI Track is missing from its Root child order.");
+                    "The Pure MIDI Track is missing from the Arrangement Track order.");
             }
-            int targetCount = ReferenceEquals(source, target)
-                ? target.MidiTrackIds.Count - 1
-                : target.MidiTrackIds.Count;
-            ValidateInsertionIndex(targetIndex, targetCount, nameof(targetIndex));
+            ValidateExistingIndex(targetIndex, project.ArrangementTracks.Count, nameof(targetIndex));
+            ArrangementTrackReference[] beforeOrder = project.ArrangementTracks.ToArray();
+            ArrangementTrackReference[] afterOrder;
+            if (ReferenceEquals(source, target))
+            {
+                afterOrder = MoveReference(beforeOrder, reference, targetIndex);
+                EnsureFormalGroupContiguity(project, afterOrder);
+            }
+            else if (target.RoutingMode == MidiChannelRootRoutingMode.Auto)
+            {
+                List<ArrangementTrackReference> after = beforeOrder
+                    .Where(value => value != reference)
+                    .ToList();
+                int lastTargetMember = after.FindLastIndex(value =>
+                    value.Kind == ArrangementTrackKind.PureMidiTrack
+                    && FindPureMidiTrack(project, value.TrackId).MidiChannelRootId == target.Id);
+                if (lastTargetMember < 0)
+                {
+                    throw new InvalidOperationException(
+                        "The target Auto MIDI Channel has no Arrangement member.");
+                }
+                after.Insert(lastTargetMember + 1, reference);
+                afterOrder = after.ToArray();
+                EnsureFormalGroupContiguity(project, afterOrder, reference, target.Id);
+            }
+            else
+            {
+                bool leavesSharedAutoRoot = source.RoutingMode == MidiChannelRootRoutingMode.Auto
+                    && project.PureMidiTracks.Count(value => value.MidiChannelRootId == source.Id) > 1;
+                afterOrder = leavesSharedAutoRoot
+                    ? MoveReferenceOutsideGroup(
+                        project,
+                        beforeOrder,
+                        reference,
+                        targetIndex,
+                        source.Id)
+                    : MoveReference(beforeOrder, reference, targetIndex);
+                EnsureFormalGroupContiguity(
+                    project,
+                    afterOrder,
+                    reference,
+                    target.Id);
+            }
             MidoraId sourceRootId = source.Id;
+            int sourceRootIndex = project.MidiChannelRoots.IndexOf(source);
+            bool removeSourceRoot = !ReferenceEquals(source, target)
+                && project.PureMidiTracks.Count(value => value.MidiChannelRootId == source.Id) == 1;
             return Prepared(
                 !ReferenceEquals(source, target) || sourceIndex != targetIndex,
-                RootChange(source.Id, target.Id),
-                _ =>
+                EverythingChange(),
+                value =>
                 {
-                    RemoveRequired(source.MidiTrackIds, track.Id, "Pure MIDI Track reference");
-                    target.MidiTrackIds.Insert(targetIndex, track.Id);
                     track.MidiChannelRootId = target.Id;
+                    ReplaceArrangementOrder(value, beforeOrder, afterOrder);
+                    if (removeSourceRoot)
+                    {
+                        RemoveRequired(value.MidiChannelRoots, source, "MIDI Channel Root");
+                    }
                 },
-                _ =>
+                value =>
                 {
-                    RemoveRequired(target.MidiTrackIds, track.Id, "Pure MIDI Track reference");
-                    source.MidiTrackIds.Insert(sourceIndex, track.Id);
+                    ReplaceArrangementOrder(value, afterOrder, beforeOrder);
+                    if (removeSourceRoot)
+                    {
+                        InsertAt(
+                            value.MidiChannelRoots,
+                            sourceRootIndex,
+                            source,
+                            "MIDI Channel Root");
+                    }
                     track.MidiChannelRootId = sourceRootId;
                 });
         });
@@ -349,11 +587,12 @@ public static partial class ProjectDomainEditCommands
         {
             PureMidiTrack source = FindPureMidiTrack(project, trackId);
             MidiChannelRoot root = FindMidiChannelRoot(project, source.MidiChannelRootId);
-            int childIndex = root.MidiTrackIds.IndexOf(source.Id) + 1;
-            if (childIndex == 0)
+            int trackIndex = project.ArrangementTracks.IndexOf(
+                new(ArrangementTrackKind.PureMidiTrack, source.Id)) + 1;
+            if (trackIndex == 0)
             {
                 throw new InvalidOperationException(
-                    "The Pure MIDI Track is missing from its Root child order.");
+                    "The Pure MIDI Track is missing from the Arrangement Track order.");
             }
             string normalized = ProjectTextRules.NormalizeShortText(
                 name ?? $"{source.Name} Copy",
@@ -366,18 +605,27 @@ public static partial class ProjectDomainEditCommands
                     PureMidiTrack copy = ClonePureMidiTrack(value, source, root.Id);
                     copy.Name = normalized;
                     value.PureMidiTracks.Add(copy);
-                    root.MidiTrackIds.Insert(childIndex, copy.Id);
+                    value.ArrangementTracks.Insert(
+                        trackIndex,
+                        new(ArrangementTrackKind.PureMidiTrack, copy.Id));
                     return copy;
                 },
                 (value, copy) =>
                 {
                     EnsurePureMidiTrackIdAvailable(value, copy.Id);
                     value.PureMidiTracks.Add(copy);
-                    InsertAt(root.MidiTrackIds, childIndex, copy.Id, "Pure MIDI Track reference");
+                    InsertAt(
+                        value.ArrangementTracks,
+                        trackIndex,
+                        new ArrangementTrackReference(ArrangementTrackKind.PureMidiTrack, copy.Id),
+                        "Arrangement Track reference");
                 },
                 (value, copy) =>
                 {
-                    RemoveRequired(root.MidiTrackIds, copy.Id, "Pure MIDI Track reference");
+                    RemoveRequired(
+                        value.ArrangementTracks,
+                        new ArrangementTrackReference(ArrangementTrackKind.PureMidiTrack, copy.Id),
+                        "Arrangement Track reference");
                     RemoveRequired(value.PureMidiTracks, copy, "Pure MIDI Track");
                 });
         });
@@ -395,20 +643,42 @@ public static partial class ProjectDomainEditCommands
             }
             MidiChannelRoot root = FindMidiChannelRoot(project, track.MidiChannelRootId);
             int repositoryIndex = project.PureMidiTracks.IndexOf(track);
-            int childIndex = root.MidiTrackIds.IndexOf(track.Id);
+            ArrangementTrackReference reference = new(ArrangementTrackKind.PureMidiTrack, track.Id);
+            int arrangementIndex = project.ArrangementTracks.IndexOf(reference);
+            if (arrangementIndex < 0)
+            {
+                throw new InvalidOperationException(
+                    "The Pure MIDI Track is missing from the Arrangement Track order.");
+            }
+            int rootIndex = project.MidiChannelRoots.IndexOf(root);
+            bool removeRoot = project.PureMidiTracks.Count(
+                value => value.MidiChannelRootId == root.Id) == 1;
             return Prepared(
                 hasChanges: true,
-                RootChange(root.Id),
+                EverythingChange(),
                 value =>
                 {
-                    RemoveRequired(root.MidiTrackIds, track.Id, "Pure MIDI Track reference");
+                    RemoveRequired(value.ArrangementTracks, reference, "Arrangement Track reference");
                     RemoveRequired(value.PureMidiTracks, track, "Pure MIDI Track");
+                    if (removeRoot)
+                    {
+                        RemoveRequired(value.MidiChannelRoots, root, "MIDI Channel Root");
+                    }
                 },
                 value =>
                 {
+                    if (removeRoot)
+                    {
+                        EnsureMidiChannelRootIdAvailable(value, root.Id);
+                        InsertAt(value.MidiChannelRoots, rootIndex, root, "MIDI Channel Root");
+                    }
                     EnsurePureMidiTrackIdAvailable(value, track.Id);
                     InsertAt(value.PureMidiTracks, repositoryIndex, track, "Pure MIDI Track");
-                    InsertAt(root.MidiTrackIds, childIndex, track.Id, "Pure MIDI Track reference");
+                    InsertAt(
+                        value.ArrangementTracks,
+                        arrangementIndex,
+                        reference,
+                        "Arrangement Track reference");
                 });
         });
 

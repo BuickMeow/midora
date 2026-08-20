@@ -2,43 +2,6 @@ namespace Midora.Domain;
 
 public static class EventInstrumentLibrary
 {
-    public static EventInstrumentLibraryFolder CreateFolder(MidoraProject project, string name)
-    {
-        ArgumentNullException.ThrowIfNull(project);
-        EventInstrumentLibraryFolder result = new(project)
-        {
-            Name = ValidateFolderName(project, name, default)
-        };
-        project.EventInstrumentFolders.Add(result);
-        return result;
-    }
-
-    public static void RenameFolder(MidoraProject project, MidoraId folderId, string name)
-    {
-        ArgumentNullException.ThrowIfNull(project);
-        EventInstrumentLibraryFolder folder = project.EventInstrumentFolders
-            .FirstOrDefault(value => value.Id == folderId)
-            ?? throw new ArgumentOutOfRangeException(nameof(folderId));
-        folder.Name = ValidateFolderName(project, name, folderId);
-    }
-
-    public static IReadOnlyList<EventInstrument> DeleteFolder(MidoraProject project, MidoraId folderId)
-    {
-        ArgumentNullException.ThrowIfNull(project);
-        EventInstrumentLibraryFolder folder = project.EventInstrumentFolders
-            .FirstOrDefault(value => value.Id == folderId)
-            ?? throw new ArgumentOutOfRangeException(nameof(folderId));
-        EventInstrument[] movedToUnfiled = project.EventInstruments
-            .Where(value => value.LibraryFolderId == folderId)
-            .ToArray();
-        foreach (EventInstrument instrument in movedToUnfiled)
-        {
-            instrument.LibraryFolderId = null;
-        }
-        _ = project.EventInstrumentFolders.Remove(folder);
-        return movedToUnfiled;
-    }
-
     public static EventInstrument Create(MidoraProject project, string? requestedName = null)
     {
         ArgumentNullException.ThrowIfNull(project);
@@ -64,22 +27,16 @@ public static class EventInstrumentLibrary
     public static EventInstrument Duplicate(MidoraProject project, MidoraId instrumentId, string? requestedName = null)
     {
         EventInstrument source = Find(project, instrumentId);
-        return CopyInto(project, source, requestedName, source.LibraryFolderId);
+        return CopyInto(project, source, requestedName);
     }
 
     public static EventInstrument CopyInto(
         MidoraProject project,
         EventInstrument source,
-        string? requestedName = null,
-        MidoraId? folderId = null)
+        string? requestedName = null)
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(source);
-        if (folderId.HasValue
-            && project.EventInstrumentFolders.All(value => value.Id != folderId.Value))
-        {
-            throw new ArgumentOutOfRangeException(nameof(folderId));
-        }
         string name = requestedName is null
             ? GenerateUniqueName(project, $"{source.Name} Copy")
             : ValidateUniqueName(project, requestedName, default);
@@ -92,7 +49,6 @@ public static class EventInstrumentLibrary
             Name = name,
             Description = source.Description,
             Color = source.Color,
-            LibraryFolderId = folderId,
             RootNote = source.RootNote,
             TemplateLengthTicks = source.TemplateLengthTicks,
             RequiresChannelIsolation = source.RequiresChannelIsolation,
@@ -224,18 +180,16 @@ public static class EventInstrumentLibrary
         bool referencedDeletionConfirmed)
     {
         EventInstrument instrument = Find(project, instrumentId);
-        LogicalTrack[] affected = project.Tracks.Where(value => value.EventInstrumentId == instrumentId).ToArray();
-        if (affected.Length != 0 && !referencedDeletionConfirmed)
+        EventInstrumentUsage[] usages = project.EventInstrumentUsages
+            .Where(value => value.EventInstrumentId == instrumentId)
+            .ToArray();
+        if (usages.Length != 0)
         {
-            throw new InvalidOperationException("Deleting a referenced Event Instrument requires explicit confirmation.");
-        }
-        foreach (LogicalTrack track in affected)
-        {
-            track.LastBoundEventInstrumentName = instrument.Name;
-            track.EventInstrumentId = null;
+            throw new InvalidOperationException(
+                "A referenced Event Instrument Definition cannot be deleted. Remove or rebind all usages first.");
         }
         _ = project.EventInstruments.Remove(instrument);
-        return affected;
+        return [];
     }
 
     private static EventInstrument Find(MidoraProject project, MidoraId id) =>
@@ -268,24 +222,6 @@ public static class EventInstrumentLibrary
                 return candidate;
             }
         }
-    }
-
-    internal static string ValidateFolderName(MidoraProject project, string name, MidoraId excludedId)
-    {
-        ArgumentNullException.ThrowIfNull(project);
-        string normalized = ProjectTextRules.NormalizeShortText(
-            name,
-            allowEmpty: false,
-            nameof(name));
-        if (string.Equals(normalized, "Unfiled", StringComparison.OrdinalIgnoreCase)
-            || project.EventInstrumentFolders.Any(value => value.Id != excludedId
-                && string.Equals(value.Name.Trim(), normalized, StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new ArgumentException(
-                "Folder names must be non-empty, unique ignoring case, and cannot use the reserved Unfiled name.",
-                nameof(name));
-        }
-        return normalized;
     }
 
     private static void CopyChain(

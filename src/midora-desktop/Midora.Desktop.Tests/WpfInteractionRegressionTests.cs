@@ -71,12 +71,6 @@ public sealed class WpfInteractionRegressionTests
                 Assert.All(collectionChangeThreads, threadId =>
                     Assert.Equal(dispatcherThreadId, threadId));
 
-                session.Execute(ProjectDomainEditCommands.CreateEventInstrumentFolder("Folder"));
-                DrainDispatcher();
-                Assert.Contains(
-                    session.ProjectTree.Single(item => item.Kind == ProjectTreeNodeKind.InstrumentLibrary).Children,
-                    item => item.Title == "Folder");
-
                 Assert.IsType<InstrumentWorkspaceViewModel>(session.OpenInstrument(instrument.Id));
                 Assert.Equal(
                     WorkspaceKind.ConductorTrack,

@@ -46,7 +46,8 @@ public readonly record struct SourceReference(
     MidoraId PureMidiTrackId = default,
     MidoraId MidiSegmentId = default,
     MidoraId DirectMidiObjectId = default,
-    MidoraId ExportTrackId = default);
+    MidoraId ExportTrackId = default,
+    MidoraId EventInstrumentUsageId = default);
 
 public sealed record CompilerDiagnostic(
     string Code,
@@ -355,7 +356,8 @@ public readonly record struct ChannelUnitAllocation(
     byte ZeroBasedChannel,
     MidoraId MidiChannelRootId = default,
     MidoraId PureMidiTrackId = default,
-    MidiChannelMode ChannelMode = MidiChannelMode.Melodic);
+    MidiChannelMode ChannelMode = MidiChannelMode.Melodic,
+    MidoraId EventInstrumentUsageId = default);
 
 public enum CanonicalSmfTrackKind
 {
@@ -712,11 +714,11 @@ public sealed class CanonicalCompiledResult
         if (value != 0) return value;
         value = x.ZeroBasedChannel.CompareTo(y.ZeroBasedChannel);
         if (value != 0) return value;
+        value = x.SmfTrackOrder.CompareTo(y.SmfTrackOrder);
+        if (value != 0) return value;
         if (x.Role == CanonicalEventRole.DirectMidi
             && y.Role == CanonicalEventRole.DirectMidi)
         {
-            value = x.SmfTrackOrder.CompareTo(y.SmfTrackOrder);
-            if (value != 0) return value;
             value = x.SmfEventOrder.CompareTo(y.SmfEventOrder);
             if (value != 0) return value;
         }

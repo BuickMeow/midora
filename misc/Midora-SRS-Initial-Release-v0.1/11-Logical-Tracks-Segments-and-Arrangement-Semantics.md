@@ -4,20 +4,20 @@
 > 规格版本：**v0.1**  
 > 适用产品范围：**Midora 初版**
 
-本章定义高层编曲对象、Event Instrument 绑定、Segment 裁剪窗口、Logical Note、Logical Parameter Lane、Segment 操作、Mute/Solo 运行状态和局部预览入口。
+本章定义高层编曲对象、Event Instrument Usage 绑定、Segment 裁剪窗口、Logical Note、Logical Parameter Lane、Segment 操作、Mute/Solo 运行状态和局部预览入口。全局平铺顺序与共享 Usage 以第 24 章为准。
 
 ## 11.1 Logical Track 系统级定义
 Logical Track 是用户编曲时间线上的高层轨道。
 系统级规则：
 ```text
 Logical Track 属于 Project
-Logical Track 必须且只能位于一个 Event Instrument 的 ordered child list 中
+Logical Track 必须在 global Arrangement Track Order 中恰好出现一次
 Logical Track 不属于 Conductor Track
 Logical Track 不直接代表 MIDI Track
 Logical Track 不直接代表 MIDI Channel
 Logical Track 不直接代表 MIDI Port
-Logical Track 通过绑定 Event Instrument 解释其 Segment 内容
-Logical Track 不允许处于 Unbound / Unassigned 状态
+Logical Track 通过 Event Instrument Usage 间接引用 Definition 并解释 Segment 内容
+空壳 Logical Track 允许暂时未指定 Usage；有内容时必须绑定 Usage
 ```
 Logical Track 负责承载：
 ```text
@@ -25,7 +25,7 @@ Segment
 Track 显示名称
 Track 显示颜色 / 颜色覆盖
 Track 排序
-唯一 parent Event Instrument stable ID
+可空的唯一 Event Instrument Usage stable ID
 ```
 Logical Track 本身不直接持有 Note / Trigger。
 Track Mute / Solo 不属于 Project 持久内容。它们是 第 13 章《播放与预览》 播放系统确认的临时播放监听状态，由运行期会话持有，不保存进 Project，不进入 Undo / Redo，不标记 Project 已修改。
@@ -53,7 +53,7 @@ Track 级直接 Note 或直接参数 Lane 不在初版范围内
 Logical Track 名称允许重复。
 创建 Logical Track 时：
 ```text
-只能从某个 Event Instrument parent 创建，并默认使用其名称作为 Track 名称
+普通 New Logical Track 创建名为 `Logical Track` 的未绑定空壳；New Logical Track with Instrument 创建独立 Usage 并绑定所选 Definition
 ```
 Track 名称不是内部身份。
 ### 11.2.3 颜色
@@ -67,13 +67,13 @@ Logical Track 可设置自己的显示颜色覆盖
 ```
 ---
 ## 11.3 Logical Track 与 Event Instrument 绑定
-Logical Track 必须且只能属于一个 Event Instrument；parent 关系就是唯一绑定。
+Logical Track 通过一个可空 Usage ID 表达绑定；Usage 唯一引用 Event Instrument Definition。多个 Track 可以引用同一 Usage并共享状态，不同 Usage 即使引用同一 Definition 也相互独立。
 ### 11.3.1 创建时绑定
-当用户在已有 Event Instrument 选中状态下创建 Logical Track：
+当用户使用 `New Logical Track with Instrument...` 或 `Add Logical Track Using This Instrument` 创建 Track：
 ```text
-默认绑定当前选中的 Event Instrument
+创建新的无名称独立 Usage并绑定所选 Event Instrument Definition
 ```
-没有 Event Instrument parent 上下文时不得创建 Logical Track。
+`New Logical Track` 可以创建未绑定空壳，但指定 Usage 前禁止创建/粘贴 Segment 内容。
 ### 11.3.2 改绑
 当用户把已有内容的 Logical Track 改绑到另一个 Event Instrument：
 ```text
@@ -84,7 +84,7 @@ Logical Track 必须且只能属于一个 Event Instrument；parent 关系就是
 不自动按名称匹配新 Event Instrument 参数
 ```
 ### 11.3.3 跨 Event Instrument 改绑
-Logical Track 不提供取消绑定。拖到其他 Event Instrument 时执行第 24.3.3 节的影响审查和原子 parent 变更；保留全部 Track/Segment 内容与稳定 ID，失败时保持原 parent。
+Logical Track 可以 `Make Independent`、`Share Instrument State With...` 或更换 Definition。它们执行第 24.3、24.7 节的影响审查和原子 Usage 变更；保留全部 Track/Segment 内容与稳定 ID，失败时保持原 Usage。
 ---
 ## 11.4 Logical Track 创建、删除、复制、排序
 ### 11.4.1 空 Track
@@ -110,7 +110,7 @@ Logical Track 允许没有任何 Segment。
 ```text
 深拷贝 Track 内 Segment、Logical Note、Logical Parameter Lane、裁剪窗口与其他 Track 内容
 新 Track 获得新的稳定 ID
-新 Track 默认插入同一个 parent Event Instrument 的 child list
+Duplicate Track 默认插入源 Track 后并保留同一 Usage；空白 Paste 默认创建独立 Usage
 Segment、Logical Note、Lane、点、曲线等对象生成新的稳定 ID
 Event Instrument 定义不复制
 ```
@@ -120,14 +120,14 @@ Event Instrument 定义不复制
 但 Logical Track 名称本身不强制唯一
 ```
 ### 11.4.4 排序
-初版支持在 parent Event Instrument 内手动排序 Logical Track，也支持按第 24 章跨 Event Instrument 移动。
+初版支持在混合 Logical/Pure MIDI 的 global Arrangement Track Order 中手动排序 Logical Track，并按第 24 章通过拖放改变 Usage。
 排序规则：
 ```text
 Track 顺序保存进 Project
 排序进入全项目撤销 / 重做
 排序使 Project 进入已修改状态
 ```
-Logical Track child 顺序不直接影响 Event Instrument 展开或资源抢占语义。
+global Track order 决定可见顺序和同 Usage 跨 Track 同 tick 次序，但不作为资源抢占优先级。
 Track 顺序可用于：
 ```text
 UI 显示
@@ -148,11 +148,11 @@ Mute / Solo 不进入 Undo / Redo。
 Mute / Solo 切换不标记 Project 已修改。
 Mute / Solo 切换不属于编辑 Project。
 关闭 Project 或打开新 Project 后，Mute / Solo 状态全部丢弃。
-新建或打开 Project 后，所有 Event Instrument parent 与 Track 默认 Mute = false，Solo = false。
+新建或打开 Project 后，所有 Track 与共享 Usage/Root group 默认 Mute = false，Solo = false。
 ```
 因此，第 11 章《Logical Track、Segment 与编曲语义》 中 Logical Track 的持久数据不应包含 Mute / Solo 状态。
 ### 11.5.2 播放监听语义
-Event Instrument parent 与 Logical Track 各自拥有独立 Mute/Solo。核心语义按第 24.5 节执行：父 Solo 存在时只考虑未 Mute 的 Solo 父并忽略所有 child Solo；否则 child Solo 存在时使用全局 child Solo；最后统一应用 parent/child Mute。Mute 始终胜过 Solo。
+Logical Track 与共享 Usage/Root block 可以拥有独立 Mute/Solo，且 group 开关不得改写成员 Track 开关。核心过滤与来源精确恢复按第 24.9 节执行；Mute 始终胜过同层 Solo。
 具体播放中切换 Mute / Solo 时的状态恢复、活动声音清理、恢复事件过滤、Channel Unit 清理范围等由 第 13 章《播放与预览》定义。
 ### 11.5.3 与 Project 保存、撤销和诊断的关系
 Mute / Solo 不属于 Project 内容，因此：
@@ -705,8 +705,8 @@ Segment 编辑器中可编辑的参数 Lane 列表来自：
 已绑定该 Event Instrument 的 Track / Segment 可立即看到新参数 Lane 入口
 但不自动创建 Lane 数据
 ```
-### 11.14.5 父 Event Instrument 损坏
-Logical Track 不允许缺少 parent。父 Event Instrument 使用 Damaged Parent Placeholder 时，已有 Lane 数据以只读/损坏状态保留并禁止正式编译；不得把该状态表述为 Unbound，也不得允许新增 Lane。父子索引不可信时 Project 打开失败。
+### 11.14.5 Definition / Usage 损坏或未指定
+无内容 Logical Track 可以没有 Usage；此时没有参数 Lane 创建入口。已有内容的 Track 必须拥有有效 Usage 与 Definition。Definition/Usage 使用 Damaged Placeholder 时，已有 Lane 数据以只读损坏状态保留并禁止正式编译；引用索引不可信时 Project 打开失败。
 ---
 ## 11.15 Logical Parameter Lane 状态继承
 ### 11.15.1 稀疏状态继承规则
@@ -1190,8 +1190,8 @@ Segment 起点 Reset 边界语义
 具体算法由第 13 章《播放与预览》规定。
 ---
 ## 11.23 诊断入口
-### 11.23.1 Logical Track 父节点错误
-Logical Track 无 parent、多个 parent 或 parent kind 错误属于结构 Error，打开或结构编辑必须失败；不得降级为 Information 或可忽略 Track。
+### 11.23.1 Logical Track Usage / Definition 错误
+有内容 Logical Track 无 Usage、Usage/Definition 引用缺失或 kind 错误属于结构 Error，打开或结构编辑必须失败；无内容且无 Usage 的合法空壳不产生诊断。
 ### 11.23.2 临时 Mute / Solo 过滤状态下的 Track 内部错误
 处于临时 Mute / Solo 监听过滤状态的 Track 内部错误：
 ```text

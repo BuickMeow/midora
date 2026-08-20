@@ -17,10 +17,15 @@ public sealed class DamagedPlaceholderCompilationTests
             "instruments/damaged.pb",
             "hash mismatch",
             1));
+        EventInstrumentUsage damagedUsage = new(fixture.Project)
+        {
+            EventInstrumentId = damagedInstrumentId
+        };
+        fixture.Project.EventInstrumentUsages.Add(damagedUsage);
         LogicalTrack damagedTrack = new(fixture.Project)
         {
             Name = "Damaged binding",
-            EventInstrumentId = damagedInstrumentId
+            EventInstrumentUsageId = damagedUsage.Id
         };
         Segment damagedSegment = new(fixture.Project) { LengthTicks = 480 };
         damagedSegment.Notes.Add(new LogicalNote(fixture.Project)
@@ -31,6 +36,9 @@ public sealed class DamagedPlaceholderCompilationTests
         });
         damagedTrack.Segments.Add(damagedSegment);
         fixture.Project.Tracks.Add(damagedTrack);
+        fixture.Project.ArrangementTracks.Add(new(
+            ArrangementTrackKind.LogicalTrack,
+            damagedTrack.Id));
 
         CanonicalCompiledResult wholeProject = new MidoraCompiler().CompileFull(
             fixture.Project,
@@ -65,7 +73,7 @@ public sealed class DamagedPlaceholderCompilationTests
     {
         var fixture = CompilerTestProject.Create(segmentLength: 480);
         MidoraId missingInstrumentId = MidoraId.FromSequence(fixture.Project.NextStableId + 100);
-        fixture.Track.EventInstrumentId = missingInstrumentId;
+        fixture.Project.FindEventInstrumentUsage(fixture.Track)!.EventInstrumentId = missingInstrumentId;
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
 
         CanonicalCompiledResult result = new MidoraCompiler().CompileFull(
@@ -130,12 +138,10 @@ public sealed class DamagedPlaceholderCompilationTests
         };
         excludedInstrument.SubVoices.Add(new SubVoice(fixture.Project));
         fixture.Project.EventInstruments.Add(excludedInstrument);
-        LogicalTrack excludedTrack = new(fixture.Project)
-        {
+        LogicalTrack excludedTrack = new(fixture.Project) {
             Name = "Excluded",
-            EventInstrumentId = excludedInstrument.Id
         };
-        fixture.Project.Tracks.Add(excludedTrack);
+        ProjectGraphConstruction.AddIndependentLogicalTrack(fixture.Project, excludedTrack, excludedInstrument.Id);
         fixture.Project.DamagedEventInstruments.Add(new(
             excludedInstrument.Id,
             "Damaged Instrument",

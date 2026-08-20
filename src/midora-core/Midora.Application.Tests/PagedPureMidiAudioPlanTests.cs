@@ -37,11 +37,10 @@ public sealed class PagedPureMidiAudioPlanTests
                 LengthTicks = 384,
                 ContentOffsetTick = 0
             };
-            root.MidiTrackIds.Add(track.Id);
             track.Segments.Add(segment);
             project.MidiChannelRoots.Add(root);
             project.PureMidiTracks.Add(track);
-            project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+            project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
 
             string packPath = Path.Combine(directory, "track.mpk");
             using PureMidiContentPackWriter writer = new(packPath);

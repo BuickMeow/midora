@@ -31,17 +31,7 @@ public static class SemanticValidator
         }
 
         ValidateConductor(project, diagnostics);
-        bool usesArrangementHierarchy = project.ArrangementParents.Count != 0
-            || project.MidiChannelRoots.Count != 0
-            || project.PureMidiTracks.Count != 0;
-        if (usesArrangementHierarchy)
-        {
-            ValidateArrangementHierarchy(project, diagnostics, cancellationToken);
-        }
-        else
-        {
-            ValidateFolders(project, request, diagnostics);
-        }
+        ValidateArrangementHierarchy(project, diagnostics, cancellationToken);
         ValidateState(project.GlobalInitialState, projectSource, diagnostics);
         ValidateState(project.GlobalResetDefaults, projectSource, diagnostics);
 
@@ -131,24 +121,16 @@ public static class SemanticValidator
         HashSet<MidoraId> result = [];
         foreach (LogicalTrack track in project.Tracks)
         {
-            if (!track.EventInstrumentId.HasValue
+            MidoraId? instrumentId = ResolveEventInstrumentId(project, track);
+            if (!instrumentId.HasValue
                 || request.IncludedTrackIds is not null && !request.IncludedTrackIds.Contains(track.Id))
             {
                 continue;
             }
-            result.Add(track.EventInstrumentId.Value);
+            result.Add(instrumentId.Value);
         }
         return result;
     }
-
-    private static HashSet<MidoraId> GetReferencedFolderIds(
-        MidoraProject project,
-        IReadOnlySet<MidoraId> participatingInstrumentIds) =>
-        project.EventInstruments
-            .Where(instrument => participatingInstrumentIds.Contains(instrument.Id)
-                && instrument.LibraryFolderId.HasValue)
-            .Select(instrument => instrument.LibraryFolderId!.Value)
-            .ToHashSet();
 
     private static void ValidateConductor(MidoraProject project, List<CompilerDiagnostic> diagnostics)
     {
@@ -262,50 +244,6 @@ public static class SemanticValidator
         }
         decimal rounded = decimal.Round(exact, 0, MidpointRounding.AwayFromZero);
         return rounded is >= 1m and <= 16_777_215m;
-    }
-
-    private static void ValidateFolders(
-        MidoraProject project,
-        CompilationRequest request,
-        List<CompilerDiagnostic> diagnostics)
-    {
-        HashSet<MidoraId> participatingInstrumentIds = GetParticipatingInstrumentIds(project, request);
-        HashSet<MidoraId>? referencedFolderIds = request.IncludedTrackIds is null
-            ? null
-            : GetReferencedFolderIds(project, participatingInstrumentIds);
-        HashSet<MidoraId> ids = [];
-        HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
-        foreach (EventInstrumentLibraryFolder folder in project.EventInstrumentFolders)
-        {
-            if (referencedFolderIds is not null && !referencedFolderIds.Contains(folder.Id))
-            {
-                continue;
-            }
-            if (!ids.Add(folder.Id) || string.IsNullOrWhiteSpace(folder.Name)
-                || folder.Name != folder.Name.Trim()
-                || string.Equals(folder.Name, "Unfiled", StringComparison.OrdinalIgnoreCase)
-                || !names.Add(folder.Name))
-            {
-                AddError("MIDORA1020",
-                    "Event Instrument Library Folders must be one level deep, non-empty after trimming, and unique ignoring case.",
-                    new(), diagnostics);
-            }
-        }
-
-        foreach (EventInstrument instrument in project.EventInstruments)
-        {
-            if (request.IncludedTrackIds is not null
-                && !participatingInstrumentIds.Contains(instrument.Id))
-            {
-                continue;
-            }
-            if (instrument.LibraryFolderId.HasValue && !ids.Contains(instrument.LibraryFolderId.Value))
-            {
-                diagnostics.Add(new("MIDORA1021", DiagnosticSeverity.Warning,
-                    "The Event Instrument references a missing Library Folder; deleting a Folder must move its contents to Unfiled.",
-                    new(EventInstrumentId: instrument.Id)));
-            }
-        }
     }
 
     private static void ValidateInstrument(
@@ -624,6 +562,9 @@ public static class SemanticValidator
         Dictionary<MidoraId, EventInstrument> instruments = project.EventInstruments
             .GroupBy(value => value.Id)
             .ToDictionary(value => value.Key, value => value.First());
+        Dictionary<MidoraId, EventInstrumentUsage> usages = project.EventInstrumentUsages
+            .GroupBy(value => value.Id)
+            .ToDictionary(value => value.Key, value => value.First());
         Dictionary<MidoraId, MidiChannelRoot> roots = project.MidiChannelRoots
             .GroupBy(value => value.Id)
             .ToDictionary(value => value.Key, value => value.First());
@@ -633,48 +574,118 @@ public static class SemanticValidator
         Dictionary<MidoraId, PureMidiTrack> midiTracks = project.PureMidiTracks
             .GroupBy(value => value.Id)
             .ToDictionary(value => value.Key, value => value.First());
-        HashSet<MidoraId> parentIds = [];
-        foreach (ArrangementParentReference parent in project.ArrangementParents)
+
+        HashSet<(ArrangementTrackKind Kind, MidoraId Id)> ordered = [];
+        for (int index = 0; index < project.ArrangementTracks.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            bool exists = parent.Kind switch
+            ArrangementTrackReference reference = project.ArrangementTracks[index];
+            bool exists = reference.Kind switch
             {
-                ArrangementParentKind.EventInstrument => instruments.ContainsKey(parent.ParentId),
-                ArrangementParentKind.MidiChannelRoot => roots.ContainsKey(parent.ParentId),
+                ArrangementTrackKind.LogicalTrack => logicalTracks.ContainsKey(reference.TrackId),
+                ArrangementTrackKind.PureMidiTrack => midiTracks.ContainsKey(reference.TrackId),
                 _ => false
             };
-            if (!exists || !parentIds.Add(parent.ParentId))
+            if (!exists || !ordered.Add((reference.Kind, reference.TrackId)))
             {
                 AddError(
                     "MIDORA1401",
-                    "The Arrangement parent order contains a missing, duplicated, or kind-mismatched parent.",
-                    parent.Kind == ArrangementParentKind.EventInstrument
-                        ? new(EventInstrumentId: parent.ParentId)
-                        : new(MidiChannelRootId: parent.ParentId),
+                    "The global Arrangement Track order contains a missing, duplicated, or kind-mismatched Track.",
+                    reference.Kind == ArrangementTrackKind.LogicalTrack
+                        ? new(TrackId: reference.TrackId)
+                        : new(PureMidiTrackId: reference.TrackId),
                     diagnostics);
             }
         }
-        foreach (EventInstrument instrument in project.EventInstruments)
+        foreach (LogicalTrack track in project.Tracks)
         {
-            if (!project.ArrangementParents.Contains(
-                new ArrangementParentReference(ArrangementParentKind.EventInstrument, instrument.Id)))
+            if (!ordered.Contains((ArrangementTrackKind.LogicalTrack, track.Id)))
             {
                 AddError(
                     "MIDORA1402",
-                    "Every Event Instrument must appear exactly once in the Arrangement parent order.",
-                    new(EventInstrumentId: instrument.Id),
+                    "Every Logical Track must appear exactly once in the global Arrangement Track order.",
+                    new(TrackId: track.Id),
                     diagnostics);
             }
         }
-        foreach (MidiChannelRoot root in project.MidiChannelRoots)
+        foreach (PureMidiTrack track in project.PureMidiTracks)
         {
-            SourceReference rootSource = new(MidiChannelRootId: root.Id);
-            if (!project.ArrangementParents.Contains(
-                new ArrangementParentReference(ArrangementParentKind.MidiChannelRoot, root.Id)))
+            if (!ordered.Contains((ArrangementTrackKind.PureMidiTrack, track.Id)))
             {
                 AddError(
                     "MIDORA1403",
-                    "Every MIDI Channel Root must appear exactly once in the Arrangement parent order.",
+                    "Every Pure MIDI Track must appear exactly once in the global Arrangement Track order.",
+                    new(PureMidiTrackId: track.Id),
+                    diagnostics);
+            }
+        }
+
+        foreach (EventInstrumentUsage usage in project.EventInstrumentUsages)
+        {
+            SourceReference usageSource = new(
+                EventInstrumentId: usage.EventInstrumentId,
+                EventInstrumentUsageId: usage.Id);
+            // A missing or damaged Definition is retained as a recoverable broken
+            // reference. Participating Tracks report MIDORA1303/MIDORA1305 below;
+            // unrelated scoped consumers must not be poisoned by that damage.
+            if (!project.Tracks.Any(value => value.EventInstrumentUsageId == usage.Id))
+            {
+                AddError(
+                    "MIDORA1411",
+                    "An Event Instrument Usage must have at least one Logical Track member.",
+                    usageSource,
+                    diagnostics);
+            }
+        }
+        foreach (LogicalTrack track in project.Tracks)
+        {
+            bool hasContent = track.Segments.Count != 0;
+            if (track.EventInstrumentUsageId is not MidoraId usageId)
+            {
+                if (hasContent)
+                {
+                    AddError(
+                        "MIDORA1412",
+                        "An unbound Logical Track must be an empty shell before it can carry musical content.",
+                        new(TrackId: track.Id),
+                        diagnostics);
+                }
+                continue;
+            }
+            if (!usages.TryGetValue(usageId, out EventInstrumentUsage? usage))
+            {
+                AddError(
+                    "MIDORA1413",
+                    "A Logical Track references a missing Event Instrument Usage.",
+                    new(TrackId: track.Id, EventInstrumentUsageId: usageId),
+                    diagnostics);
+                continue;
+            }
+        }
+
+        ValidateContiguousGroup(
+            project,
+            project.Tracks
+                .Where(value => value.EventInstrumentUsageId.HasValue)
+                .GroupBy(value => value.EventInstrumentUsageId!.Value)
+                .Where(value => value.Count() > 1)
+                .Select(value => (value.Key, value.Select(track => track.Id).ToHashSet())),
+            "MIDORA1415",
+            "Logical Tracks sharing one Event Instrument Usage must be contiguous in the global Arrangement order.",
+            diagnostics,
+            groupIsMidiRoot: false);
+
+        foreach (MidiChannelRoot root in project.MidiChannelRoots)
+        {
+            SourceReference rootSource = new(MidiChannelRootId: root.Id);
+            PureMidiTrack[] members = project.PureMidiTracks
+                .Where(value => value.MidiChannelRootId == root.Id)
+                .ToArray();
+            if (members.Length == 0)
+            {
+                AddError(
+                    "MIDORA1420",
+                    "A MIDI Channel Root must have at least one Pure MIDI Track member.",
                     rootSource,
                     diagnostics);
             }
@@ -686,9 +697,20 @@ public static class SemanticValidator
                 || root.FixedZeroBasedChannel > 15)
             {
                 AddError(
-                    "MIDORA1404",
+                    "MIDORA1421",
                     "A MIDI Channel Root has an invalid name, routing mode, channel mode, Port, or Channel.",
                     rootSource,
+                    diagnostics);
+            }
+        }
+        foreach (PureMidiTrack track in project.PureMidiTracks)
+        {
+            if (!roots.ContainsKey(track.MidiChannelRootId))
+            {
+                AddError(
+                    "MIDORA1422",
+                    "A Pure MIDI Track references a missing MIDI Channel Root.",
+                    new(MidiChannelRootId: track.MidiChannelRootId, PureMidiTrackId: track.Id),
                     diagnostics);
             }
         }
@@ -700,67 +722,56 @@ public static class SemanticValidator
             foreach (MidiChannelRoot root in collision)
             {
                 AddError(
-                    "MIDORA1405",
+                    "MIDORA1423",
                     "Fixed MIDI Channel Roots cannot own the same Port.Channel.",
                     new(MidiChannelRootId: root.Id),
                     diagnostics);
             }
         }
+        ValidateContiguousGroup(
+            project,
+            project.MidiChannelRoots
+                .Where(value => value.RoutingMode == MidiChannelRootRoutingMode.Auto)
+                .Select(value => (
+                    value.Id,
+                    project.PureMidiTracks
+                        .Where(track => track.MidiChannelRootId == value.Id)
+                        .Select(track => track.Id)
+                        .ToHashSet()))
+                .Where(value => value.Item2.Count > 1),
+            "MIDORA1424",
+            "Pure MIDI Tracks sharing one Auto Root must be contiguous in the global Arrangement order.",
+            diagnostics,
+            groupIsMidiRoot: true);
+    }
 
-        HashSet<MidoraId> logicalChildren = [];
-        foreach (EventInstrument instrument in project.EventInstruments)
+    private static void ValidateContiguousGroup(
+        MidoraProject project,
+        IEnumerable<(MidoraId GroupId, HashSet<MidoraId> TrackIds)> groups,
+        string code,
+        string message,
+        List<CompilerDiagnostic> diagnostics,
+        bool groupIsMidiRoot)
+    {
+        Dictionary<MidoraId, int> positions = project.ArrangementTracks
+            .Select((value, index) => (value.TrackId, index))
+            .GroupBy(value => value.TrackId)
+            .ToDictionary(value => value.Key, value => value.First().index);
+        foreach ((MidoraId groupId, HashSet<MidoraId> trackIds) in groups)
         {
-            foreach (MidoraId trackId in instrument.LogicalTrackIds)
-            {
-                if (!logicalTracks.TryGetValue(trackId, out LogicalTrack? track)
-                    || !logicalChildren.Add(trackId)
-                    || track.EventInstrumentId != instrument.Id)
-                {
-                    AddError(
-                        "MIDORA1410",
-                        "Event Instrument child order and Logical Track parent references must be unique and bidirectionally consistent.",
-                        new(TrackId: trackId, EventInstrumentId: instrument.Id),
-                        diagnostics);
-                }
-            }
-        }
-        foreach (LogicalTrack track in project.Tracks)
-        {
-            if (!logicalChildren.Contains(track.Id))
+            int[] members = trackIds
+                .Where(positions.ContainsKey)
+                .Select(value => positions[value])
+                .Order()
+                .ToArray();
+            if (members.Length > 1 && members[^1] - members[0] + 1 != members.Length)
             {
                 AddError(
-                    "MIDORA1411",
-                    "Every Logical Track must belong to exactly one Event Instrument.",
-                    new(TrackId: track.Id, EventInstrumentId: track.EventInstrumentId ?? default),
-                    diagnostics);
-            }
-        }
-
-        HashSet<MidoraId> pureChildren = [];
-        foreach (MidiChannelRoot root in project.MidiChannelRoots)
-        {
-            foreach (MidoraId trackId in root.MidiTrackIds)
-            {
-                if (!midiTracks.TryGetValue(trackId, out PureMidiTrack? track)
-                    || !pureChildren.Add(trackId)
-                    || track.MidiChannelRootId != root.Id)
-                {
-                    AddError(
-                        "MIDORA1420",
-                        "MIDI Channel Root child order and Pure MIDI Track parent references must be unique and bidirectionally consistent.",
-                        new(MidiChannelRootId: root.Id, PureMidiTrackId: trackId),
-                        diagnostics);
-                }
-            }
-        }
-        foreach (PureMidiTrack track in project.PureMidiTracks)
-        {
-            if (!pureChildren.Contains(track.Id))
-            {
-                AddError(
-                    "MIDORA1421",
-                    "Every Pure MIDI Track must belong to exactly one MIDI Channel Root.",
-                    new(MidiChannelRootId: track.MidiChannelRootId, PureMidiTrackId: track.Id),
+                    code,
+                    message,
+                    groupIsMidiRoot
+                        ? new(MidiChannelRootId: groupId)
+                        : new(EventInstrumentUsageId: groupId),
                     diagnostics);
             }
         }
@@ -855,15 +866,17 @@ public static class SemanticValidator
             }
             EventInstrument? boundInstrument = null;
             bool boundInstrumentIsDamaged = false;
-            if (track.EventInstrumentId.HasValue
-                && !instruments.TryGetValue(track.EventInstrumentId.Value, out boundInstrument))
+            MidoraId? resolvedInstrumentId = ResolveEventInstrumentId(project, track);
+            if (resolvedInstrumentId.HasValue
+                && !instruments.TryGetValue(resolvedInstrumentId.Value, out boundInstrument))
             {
-                boundInstrumentIsDamaged = damagedInstrumentIds.Contains(track.EventInstrumentId.Value);
+                boundInstrumentIsDamaged = damagedInstrumentIds.Contains(resolvedInstrumentId.Value);
                 diagnostics.Add(boundInstrumentIsDamaged
                     ? new("MIDORA1305", DiagnosticSeverity.Error,
                         "The Event Instrument bound to the Logical Track is damaged; the Track is excluded from compilation.", trackSource with
                         {
-                            EventInstrumentId = track.EventInstrumentId.Value
+                            EventInstrumentId = resolvedInstrumentId.Value,
+                            EventInstrumentUsageId = track.EventInstrumentUsageId ?? default
                         })
                     : new("MIDORA1303", DiagnosticSeverity.Info,
                         "The Logical Track has a broken Event Instrument reference; it is treated as unbound for this compilation.", trackSource));
@@ -967,7 +980,13 @@ public static class SemanticValidator
                 foreach (LogicalNote note in segment.Notes)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    SourceReference noteSource = segmentSource with { LogicalNoteId = note.Id, EventInstrumentId = track.EventInstrumentId ?? default, Tick = note.StartTick };
+                    SourceReference noteSource = segmentSource with
+                    {
+                        LogicalNoteId = note.Id,
+                        EventInstrumentId = resolvedInstrumentId ?? default,
+                        EventInstrumentUsageId = track.EventInstrumentUsageId ?? default,
+                        Tick = note.StartTick
+                    };
                     if (note.StartTick < 0 || note.LengthTicks <= 0
                         || note.Note is < 0 or > 127 || note.Velocity is < 1 or > 127
                         || note.StartTick > long.MaxValue - Math.Max(note.LengthTicks, 0))
@@ -1003,9 +1022,6 @@ public static class SemanticValidator
     {
         HashSet<MidoraId> ids = [];
         HashSet<MidoraId> participatingInstrumentIds = GetParticipatingInstrumentIds(project, request);
-        HashSet<MidoraId>? referencedFolderIds = request.IncludedTrackIds is null
-            ? null
-            : GetReferencedFolderIds(project, participatingInstrumentIds);
         foreach (TempoChange value in project.Conductor.Tempos) Add(value.Id, new(Tick: value.Tick));
         foreach (TimeSignatureChange value in project.Conductor.TimeSignatures) Add(value.Id, new(Tick: value.Tick));
         foreach (KeySignatureChange value in project.Conductor.KeySignatures) Add(value.Id, new(Tick: value.Tick));
@@ -1013,14 +1029,6 @@ public static class SemanticValidator
         if (project.Conductor.EndMarker is not null)
         {
             Add(project.Conductor.EndMarker.Id, new(Tick: project.Conductor.EndMarker.Tick));
-        }
-        foreach (EventInstrumentLibraryFolder folder in project.EventInstrumentFolders)
-        {
-            if (referencedFolderIds is not null && !referencedFolderIds.Contains(folder.Id))
-            {
-                continue;
-            }
-            Add(folder.Id, new());
         }
         foreach (EventInstrument instrument in project.EventInstruments)
         {
@@ -1516,6 +1524,10 @@ public static class SemanticValidator
         step.Source == MappingSource.TriggerVelocity
         && target.EventKind == TemplateEventKind.Note
         && target.Parameter == TemplateEventMappingParameter.Value;
+
+    private static MidoraId? ResolveEventInstrumentId(
+        MidoraProject project,
+        LogicalTrack track) => project.ResolveEventInstrumentDefinitionId(track);
 
     private static bool IsPerNoteContextField(string field) => field is
         nameof(MappingContextV2.TriggerNote) or nameof(MappingContextV2.TriggerVelocity)

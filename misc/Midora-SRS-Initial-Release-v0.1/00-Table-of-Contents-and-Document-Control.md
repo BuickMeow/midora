@@ -42,7 +42,7 @@
 21. [初版范围边界、实现自由度与变更控制](21-Initial-Release-Scope-Boundaries-and-Change-Control.md)
 22. [主题索引与跨系统不变量](22-Requirement-Locator-and-Cross-System-Invariants.md)
 23. [Pure MIDI Track 与 Standard MIDI File 导入](23-Pure-MIDI-Tracks-and-SMF-Import.md)
-24. [Arrangement 层级、父子轨道与概览渲染](24-Arrangement-Hierarchy-and-Preview.md)
+24. [Arrangement 平铺轨道、共享执行组与概览渲染](24-Arrangement-Hierarchy-and-Preview.md)
 
 ## 文档版本规则
 
@@ -52,10 +52,13 @@
 
 ## 2026-08-20 修订摘要
 
+- Arrangement 从可见 parent/child 树替换为 `Conductor + global mixed Track order`。Event Instrument Definition 独立有序保存；新增无名称 Event Instrument Usage 作为可被多条 Logical Track 共享的执行/状态/生命周期身份。Shared Usage 与 Auto Root 以连续大括号 block 表现，Fixed Root 作为 Track route 属性表现且 members 可分散。
+- 所有 Usage/Root 必须非空；最后成员 Track 离开时 owner 在同一个 Undo 中自动删除。Event Instrument Definition 可以零 Usage，删除 Track 永不删除 Definition。Fixed Root 不再提供空 Root 创建/预留入口。
+- Pure MIDI SMF 投影和同 Root 同 tick 顺序改用 global Arrangement Track order；普通 SMF 导入保持源 MTrk 顺序。Logical shared Usage 在未启用逐音符隔离时按跨 Track Segment 活动连通区间共享 Channel state 与 Unit，成员 Segment End 不做 Usage 级 reset。
 - Application Preferences 增加可清空的 Default Embedded SoundFont 本机路径，只用于 `New Project` 与 `Open MIDI as New Project`。有效文件按 Embedded snapshot 流程复制、哈希和验证；路径不进入 `.midora`，启动时缺失自动清空，任务开始时缺失按未设置处理。
 - 播放期间 `Project` 一级菜单和 `Project Settings` 保持可用，只禁用受编辑锁约束的 `New Event Instrument` / `New MIDI Channel Root` 等命令；Status Bar 的 `Playing` 使用绿色文本。
 - Arrangement 与共享 piano roll 的可见 Grid 固定为 Bar/分母拍子线，Ruler 显示一基小节号；Segment local tick 通过 Project offset 对齐完整 Time Signature Map，极端水平缩小时按 device-pixel 密度上限跳过不可辨识竖线。
-- Arrangement parent 右侧改为不响应 Draw 的纯黑内容区；整个 Header 可单击折叠，空间不足时隐藏摘要。可变行高滚动保证最后一行完整位于 Overview 上方，创建按钮在播放/编辑锁期间禁用。
+- 2026-08-19 的 parent-row 遮罩与折叠 UI 已被本次平铺 Arrangement 取代；Track 行直接承载内容，Shared Usage / Auto Root 只以 header gutter 大括号和显式 drop target 表现，不再占空白时间线行。
 - piano roll 纵向缩放固定为不小于 3 的整数 device pixels/key，Note 顶边与 Key 上分割线重合且总高度等于 Key 高度。Pure MIDI Segment 的 Overview 通过 page summary 聚合音符密度，Add Lane 使用分步目标选择器并支持全部 CC 0..127 的统一名称格式。
 
 ## 2026-08-19 修订摘要
@@ -75,7 +78,7 @@
 - `Open MIDI as New Project` 在 detached candidate 验证前增加确定性导入兼容归一化：缺失 tick 0 Tempo / Time Signature 时分别补齐 120 BPM / 4/4，同 tick 重复 Tempo 按源 MTrk 与事件顺序使用后来者。
 - SMF Track Name 缺失、trim 后为空或非严格 UTF-8 不再使整个导入失败；非法名称事件被丢弃，需要的 Pure MIDI Track 获得确定性回退名称。所有兼容处理只进入一次性、可复制的导入报告，不放松 Project 内部不变量或导出的严格 UTF-8 要求。
 
-## 2026-08-18 修订摘要
+## 2026-08-18 修订摘要（其中 Arrangement 树与 Root 顺序已由 2026-08-20 修订取代）
 
 - Arrangement 改为 `Conductor → 混排的 Event Instrument / MIDI Channel Root → 各自 child Track` 两级正式结构；删除 Project Panel、可见 Event Instrument Library Workspace、Library Folder、独立全局 Track/Root 顺序和 Unbound Logical Track。Event Instrument / Root 的混排顺序及 parent/child 关系进入 Project、Undo/Redo 和严格持久化索引。
 - Event Instrument / Root 支持携带完整 subtree 的复制、剪切、粘贴与 Duplicate；Root 副本强制改为 Auto。Event Instrument 另提供 `Duplicate Instrument Only`；删除 non-empty parent 必须确认并原子级联 child。Logical Track 跨 Event Instrument 继续执行 rebind 影响审查，Pure MIDI Track 可跨 Root 移动。
@@ -105,7 +108,7 @@
 
 - Arrangement 新建 Project / 重置编辑器的默认可见 Grid 改为 `Bar`、Snap 操作粒度改为 `1/8`；Bar Grid 按完整 Time Signature Map 以主实线绘制小节边界、以更浅的低强调实线绘制分母拍内部边界。Segment/SubVoice 钢琴卷帘不采用该拍内辅助线增强。
 - Arrangement Draw 空白放置改为按下并向右拖动确定 Segment 长度，单击使用默认长度；Arrangement 默认 Segment 长度固定为 `1 × TPQ`，相邻 Segment 仍按可用间隙缩短或拒绝。
-- Arrangement Track Header 曾增加独立 hover / pressed、拖动重排与 Bind / Unbind；其中交互反馈和 rebind 确认继续有效，但 Library 拖放、Unbind 与平铺 Track 菜单已由 2026-08-18 的两级 Arrangement parent/child 模型取代。
+- Arrangement Track Header 曾增加独立 hover / pressed、拖动重排与 Bind / Unbind；其中交互反馈继续有效，层级、绑定与拖放语义先由 2026-08-18 两级模型取代，并最终由 2026-08-20 的 global flat Track order + Usage/Root shared block 模型再次取代。
 - 普通 Logical / Template Note 多选移动使用共同 pitch delta，并删除结果 pitch 越出 `0..127` 的个别 Note；移动与删除属于一个 Undo。Note `Ctrl+Drag` 复制仍使用整组共同 clamp，不生成部分副本。
 - 正式 Compiler Diagnostic message 统一为英文；Error / Warning 计数在每次编译完成时同步刷新（其显示入口已于 2026-08-18 从删除的 Project Panel 收敛到 Status Bar）。非法 pitch 来源的诊断导航使用安全 lane 投影，不得使应用崩溃。
 - Velocity 视图改为每个 Note 在 start tick 对应一根固定窄柱，柱宽不再表达 Note 长度；顶部使用较大的方形 onset marker，同 tick 多音按高 pitch 覆盖低 pitch。

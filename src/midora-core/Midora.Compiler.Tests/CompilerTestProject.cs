@@ -24,10 +24,20 @@ internal static class CompilerTestProject
             instrument.SubVoices.Add(new SubVoice(project) { Name = $"Voice {i + 1}" });
         }
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
+        EventInstrumentUsage usage = new(project)
+        {
+            EventInstrumentId = instrument.Id
+        };
+        project.EventInstrumentUsages.Add(usage);
+        LogicalTrack track = new(project)
+        {
+            Name = "Track",
+            EventInstrumentUsageId = usage.Id
+        };
         Segment segment = new(project) { ProjectStartTick = 0, LengthTicks = segmentLength };
         track.Segments.Add(segment);
         project.Tracks.Add(track);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.LogicalTrack, track.Id));
         ProjectsBySegment.Add(segment, project);
         return (project, track, segment, instrument, instrument.SubVoices[0]);
     }

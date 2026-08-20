@@ -32,7 +32,7 @@ Port 1–16
 ```text
 Project 概念上最多支持 16 个 Port
 用户不负责创建或删除 Port
-Port 由编译器 / 资源系统按实际需要使用；Pure MIDI Fixed Root 可以显式引用其中的 Port.Channel，但不创建新的 Port
+Port 由编译器 / 资源系统按实际需要使用；非空 Pure MIDI Fixed Root 可以显式引用其中的 Port.Channel，但不创建新的 Port
 UI 与编译结果只应呈现实际使用或当前操作上下文需要呈现的 Port
 空闲 Port 不应导致常驻 BASSMIDI 实例
 当实际需要超过 16 个 Port 时，编译失败
@@ -42,7 +42,7 @@ UI 与编译结果只应呈现实际使用或当前操作上下文需要呈现�
 避免用户管理底层 Port 创建数量
 避免 16 个 BASSMIDI 实例和 16 份音色库常驻内存
 保持最多 16 Ports 的 MIDI 1.0 资源上限
-让编译器承担 Logical/Auto Root 的 Port 使用判断，同时尊重 Fixed Root 预留
+让编译器承担 Logical Usage/Auto Root 的 Port 使用判断，同时尊重非空 Fixed Root 固定路由
 ```
 ### 5.1.4 动态 Port 分配带来的实现设计问题
 Port 按需动态使用会带来后续编译与播放设计问题，包括但不限于：
@@ -56,7 +56,7 @@ Port 按需动态使用会带来后续编译与播放设计问题，包括但不
 这些问题必须在 第 12 章《编译系统与 Canonical Compiled Result》 编译系统、第 13 章《播放与预览》 播放系统以及实现设计设计中仔细设计。
 本章只确认以下系统级原则：
 ```text
-Port 数按需动态使用，Fixed Root 引用的 Port 视为已预留使用
+Port 数按需动态使用，非空 Fixed Root 引用的 Port 视为已使用
 Port 数判断属于编译 / 播放上下文解析的重要职责
 初版不得为了简化实现而强制 16 个 BASSMIDI 实例常驻
 初版不得把 Port 创建 / 删除责任交给用户
@@ -148,14 +148,14 @@ Midora 初版最大 Channel Unit 数量为：
 不允许 Voice Steal。
 不允许自动删除、截短或降级用户内容来规避资源不足。
 ### 5.3.3 Channel Unit 可用性与 Root 预留
-初版不允许用户禁用 Port 或 Channel Unit，但允许 Pure MIDI Fixed Root 显式预留一个 Port.Channel。
+初版不允许用户禁用 Port 或 Channel Unit。Fixed Port.Channel 只能随至少一条 Pure MIDI Track 存在，不提供空 Unit 预留。
 系统级规则为：
 ```text
 所有最多 256 个 Channel Units 都属于编译器可用资源池
 用户不能禁用整个 Port
 用户不能禁用单个 Channel Unit
 Fixed Root 先预留其精确 Channel Unit
-非空 Auto Root 随后按 Root 顺序取得最低未预留 Unit
+含参与 Segment 内容的 Auto Root 随后按最早成员的 global Arrangement Track order 取得最低未预留 Unit
 Logical/Event Instrument 分配只使用剩余 Unit
 ```
 说明：
@@ -398,8 +398,8 @@ Logical Track / Event Instrument Binding 是更符合直觉的运行状态边界
 无 SF2 不影响 MIDI 导出
 无 SF2 只影响播放、预览和音频渲染
 ```
-### 5.7.3 Logical Track 父节点错误
-Logical Track 必须且只能属于一个 Event Instrument。无 parent、多个 parent 或 parent kind 错误是结构 Error，不得通过忽略 Track 继续编译。Damaged Parent Placeholder subtree 不进入正式编译，因此不分配 Channel Unit，但这仍是损坏 Error，不是 Unbound Info。
+### 5.7.3 Logical Track Usage 错误
+有内容的 Logical Track 必须且只能引用一个有效 Event Instrument Usage，Usage 必须非空且引用一个有效 Definition。空壳未绑定 Track 不参与编译且不产生诊断；有内容无 Usage、空 Usage或 kind/Definition 错误是结构 Error。
 ---
 ## 5.8 资源不足、警告与失败规则
 ### 5.8.1 资源不足
@@ -463,7 +463,7 @@ ResourceUsage = CombinedPeakChannelUnits / 256
 ```
 其中：
 ```text
-AllocatedRootUnits = 全部 Fixed Roots + 含可编译内容的 Auto Roots
+AllocatedRootUnits = 全部非空 Fixed Roots + 含可编译内容的 Auto Roots
 PeakLogicalUnits = 整曲任一 tick 同时占用的最大 Logical/Event Instrument Channel Unit 数
 ```
 不采用以下口径作为初版资源 Info 依据：
@@ -498,7 +498,7 @@ PeakLogicalUnits = 整曲任一 tick 同时占用的最大 Logical/Event Instrum
 不把 Port 创建 / 删除责任交给用户
 不强制 16 个 Port 常驻
 先验证并预留 Fixed MIDI Channel Roots
-再按显式 Root 顺序分配非空 Auto Roots
+再按最早成员的 global Arrangement Track order 分配含参与 Segment 内容的 Auto Roots
 Logical/Event Instrument 分配绕开全部 Root Unit
 Logical 路径的 Channel 10 强制 melodic；Pure MIDI Root 遵守其 Melodic/Percussion Mode
 把 Channel 10 作为普通可寻址 Channel Unit
@@ -576,7 +576,7 @@ Logical Channel 10 与 Melodic Pure MIDI Root 的 Normal Part 初始化写入导
 19. Channel Group 分配必须原子成功或整体失败。
 20. Channel Group 始终允许跨 Port 分配。
 21. 开启音符实例隔离时，每个逻辑音符生成独立 Event Instrument Instance，并独占一组 Channel Group。
-22. 关闭音符实例隔离时，Channel Group 共享范围仅限同一 Logical Track / Event Instrument Binding 内的重叠音符。
+22. 关闭音符实例隔离时，Channel Group 共享范围固定为同一 Event Instrument Usage 的活动连通区间；可跨该 Usage 的多条 Logical Track。
 23. 非重叠实例在旧实例结束后可以复用同一 Segment-owned Channel Unit lane；新实例起点先执行目标闭包的 lane 激活 Reset/Initial State。
 24. Channel-Wide 状态污染按生命周期重叠、lane 激活初始化和硬边界最终 Reset 共同判断。
 25. 单个 Event Instrument Instance 所需 Channel Unit 超过 256 时编译失败。
@@ -587,11 +587,11 @@ Logical Channel 10 与 Melodic Pure MIDI Root 的 Normal Part 初始化写入导
 30. Channel Unit 使用量大于等于 248 时产生资源使用量 Info；该 Info 不受“Warning 视为 Error”策略影响。
 31. 无 SF2 不影响 MIDI 编译和资源分配语义。
 32. 无 SF2 只影响播放、预览和音频渲染。
-33. Logical Track 必须有唯一 Event Instrument parent；Damaged Parent Placeholder subtree 不产生 Event Instrument Instance 或 Channel Unit。
+33. 无内容 Logical Track 可以不指定 Usage且不分配资源；含内容 Logical Track 必须引用唯一有效 Usage/Definition。Damaged Definition/Usage/Track Placeholder 不产生 Event Instrument Instance 或 Channel Unit。
 34. Conductor Track 不参与 Channel Unit 分配。
 35. 每个 Pure MIDI Track 必须属于一个 MIDI Channel Root；一个 Root 对应一个 Unit，一个 Unit 不得属于两个 Root。
-36. Fixed Root 先预留精确 Unit；Fixed 冲突为 Error；非空 Auto Root 后按显式 Root 顺序低号分配。
-37. Fixed Root 即使为空也保留 Unit；空 Auto Root 不分配 Unit；所有已分配 Root Unit 在本次 CompileContext 内不得与 Logical instance 时间复用。
+36. 纳入 CompileContext 的非空 Fixed Root 先占用精确 Unit；Fixed 冲突为 Error；含参与 Segment 内容的 Auto Root 后按最早成员 global Track order 低号分配。
+37. Root/Usage 均不得为空；所有已分配 Root Unit 在本次 CompileContext 内不得与 Logical Usage/instance 时间复用。
 38. Root Units 数量与 Logical/Event Instrument 峰值占用之和不得超过 256。
 ### 5.12.2 Info 情况
 以下情况应产生资源系统相关 Info：

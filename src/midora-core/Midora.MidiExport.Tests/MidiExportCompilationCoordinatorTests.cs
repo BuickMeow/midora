@@ -15,12 +15,7 @@ public sealed class MidiExportCompilationCoordinatorTests
         LogicalTrack selected = CreateTrack(project, instrument, "", note: 60);
         LogicalTrack notSelected = CreateTrack(project, instrument, "Other", note: 62);
         LogicalTrack unbound = new(project) { Name = "Unbound" };
-        Segment unboundSegment = new(project) { LengthTicks = 192 };
-        unboundSegment.Notes.Add(new(project) { LengthTicks = 96, Note = 64, Velocity = 100 });
-        unbound.Segments.Add(unboundSegment);
-        project.Tracks.Add(selected);
-        project.Tracks.Add(notSelected);
-        project.Tracks.Add(unbound);
+        ProjectGraphConstruction.AddUnboundLogicalTrack(project, unbound);
         using MidoraCompiler compiler = new();
         MidiExportCompilationCoordinator coordinator = new(compiler);
 
@@ -47,8 +42,9 @@ public sealed class MidiExportCompilationCoordinatorTests
             track => Assert.True(track.Participates),
             track => Assert.Equal("Not selected", track.ExclusionReason),
             track => Assert.Equal("No valid Event Instrument binding", track.ExclusionReason));
-        Assert.Contains(result.Diagnostics, diagnostic =>
-            diagnostic.Code == "MIDORA1304" && diagnostic.Severity == DiagnosticSeverity.Info);
+        Assert.DoesNotContain(result.Diagnostics, diagnostic =>
+            diagnostic.Source.TrackId == unbound.Id
+            && diagnostic.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
@@ -77,8 +73,6 @@ public sealed class MidiExportCompilationCoordinatorTests
         project.EventInstruments.Add(instrument);
         LogicalTrack first = CreateTrack(project, instrument, "First", note: 60, segmentStartTick: 0);
         LogicalTrack second = CreateTrack(project, instrument, "Second", note: 62, segmentStartTick: 192);
-        project.Tracks.Add(first);
-        project.Tracks.Add(second);
         using MidoraCompiler compiler = new();
         MidiExportCompilationResult compilation = new MidiExportCompilationCoordinator(compiler).Compile(new()
         {
@@ -124,10 +118,7 @@ public sealed class MidiExportCompilationCoordinatorTests
         };
         project.MidiChannelRoots.Add(root);
         project.PureMidiTracks.Add(track);
-        root.MidiTrackIds.Add(track.Id);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            root.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
 
         using MidoraCompiler compiler = new();
         MidiExportCompilationResult compilation = new MidiExportCompilationCoordinator(compiler).Compile(new()
@@ -168,10 +159,7 @@ public sealed class MidiExportCompilationCoordinatorTests
         };
         project.MidiChannelRoots.Add(root);
         project.PureMidiTracks.Add(track);
-        root.MidiTrackIds.Add(track.Id);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            root.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         using MidoraCompiler compiler = new();
 
         ArgumentException error = Assert.Throws<ArgumentException>(() =>
@@ -208,7 +196,8 @@ public sealed class MidiExportCompilationCoordinatorTests
         byte note,
         long segmentStartTick = 0)
     {
-        LogicalTrack track = new(project) { Name = name, EventInstrumentId = instrument.Id };
+        LogicalTrack track = new(project) { Name = name};
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { ProjectStartTick = segmentStartTick, LengthTicks = 192 };
         segment.Notes.Add(new(project)
         {

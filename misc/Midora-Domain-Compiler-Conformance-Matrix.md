@@ -1,6 +1,6 @@
 # Midora §7～§12 非 UI 领域与编译一致性矩阵
 
-状态：2026-08-08 对当时的 Logical/Event Instrument §7～§12 基线逐节复核完成。2026-08-18 新增的 Pure MIDI Track / SMF Import、mixed Arrangement parent/child ownership、Root 分配/生命周期和双 canonical 投影尚未实现或纳入本矩阵；本文不得用来证明 SRS 第 23～24 章已符合。本文是需求追踪记录，不替代 SRS。
+状态：2026-08-08 的历史 Logical/Event Instrument §7～§12 复核矩阵。其“尚未实现”和 mixed parent/child 描述已过时；2026-08-20 当前结构见 flat Arrangement trace、ADR-CORE-046 与本轮自动测试，本文不得用来判定第 23～24 章当前符合性。
 
 ## 1. Requirement trace
 

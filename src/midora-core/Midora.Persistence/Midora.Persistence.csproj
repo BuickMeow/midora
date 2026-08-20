@@ -19,6 +19,9 @@
     <Protobuf Include="Schemas\Proto\midora-logical-track-v1.proto"
               GrpcServices="None"
               AdditionalProtocArguments="--csharp_opt=internal_access" />
+    <Protobuf Include="Schemas\Proto\midora-event-instrument-usage-v1.proto"
+              GrpcServices="None"
+              AdditionalProtocArguments="--csharp_opt=internal_access" />
     <Protobuf Include="Schemas\Proto\midora-pure-midi-v1.proto"
               GrpcServices="None"
               AdditionalProtocArguments="--csharp_opt=internal_access" />

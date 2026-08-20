@@ -220,7 +220,9 @@ public sealed class PlaybackTests
         MidoraId changedSegmentId = track.Segments[0].Id;
         Segment unchanged = new(project)
         {
-            ProjectStartTick = 960,
+            // A gap creates a distinct Usage lifecycle/cache fragment. Adjacent
+            // Segments intentionally share one Usage fragment in the flat model.
+            ProjectStartTick = 1_200,
             LengthTicks = 960
         };
         unchanged.Notes.Add(new LogicalNote(project)
@@ -724,19 +726,19 @@ public sealed class PlaybackTests
     }
 
     [Fact]
-    public void ArrangementParentSoloTakesPriorityWhileParentAndChildMuteRemainIndependent()
+    public void SharedGroupSoloTakesPriorityWhileGroupAndTrackMuteRemainIndependent()
     {
         string soundFont = Path.GetTempFileName();
         try
         {
             (MidoraProject project, LogicalTrack secondTrack) = CreateMonitoringRoutingProject();
             LogicalTrack firstTrack = project.Tracks.Single(track => track.Id != secondTrack.Id);
-            MidoraId secondParentId = secondTrack.EventInstrumentId!.Value;
+            MidoraId secondGroupId = secondTrack.EventInstrumentUsageId!.Value;
             FakeBackend backend = new();
             using PlaybackController controller = new(new(project, soundFont), backend);
 
             controller.SetTrackSolo(firstTrack.Id, true);
-            controller.SetArrangementParentSolo(secondParentId, true);
+            controller.SetSharedGroupSolo(secondGroupId, true);
             controller.SetTrackMuted(secondTrack.Id, true);
             controller.Start();
 
@@ -760,8 +762,8 @@ public sealed class PlaybackTests
                 secondPlan.InitiallyDisabledSourceIndices.ToArray());
             controller.Stop();
 
-            controller.SetArrangementParentSolo(secondParentId, false);
-            controller.SetArrangementParentMuted(secondParentId, true);
+            controller.SetSharedGroupSolo(secondGroupId, false);
+            controller.SetSharedGroupMuted(secondGroupId, true);
             controller.SetTrackSolo(firstTrack.Id, false);
             controller.SetTrackSolo(secondTrack.Id, true);
             controller.Start();
@@ -949,7 +951,7 @@ public sealed class PlaybackTests
         try
         {
             MidoraProject project = CreateProject();
-            project.Tracks[0].EventInstrumentId = null;
+            project.Tracks[0].EventInstrumentUsageId = null;
             ProjectCompilationSession session = new(project, soundFont);
             FakeBackend backend = new();
             using PlaybackController controller = new(session, backend);
@@ -1272,7 +1274,7 @@ public sealed class PlaybackTests
             Assert.Equal(noteCount, segment.Notes.Count);
             controller.CancelHeldPreview();
 
-            track.EventInstrumentId = null;
+            track.EventInstrumentUsageId = null;
             Assert.Throws<InvalidOperationException>(() =>
                 controller.StartHeldSegmentPitchRulerPreview(
                     track.Id,
@@ -1740,10 +1742,8 @@ public sealed class PlaybackTests
         voice.Events.Add(TemplateEvent.Note(project, 0, 480, 60, 100));
         instrument.SubVoices.Add(voice);
         project.EventInstruments.Add(instrument);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.EventInstrument,
-            instrument.Id));
-        LogicalTrack track = new(project) { Name = "Track", EventInstrumentId = instrument.Id };
+        LogicalTrack track = new(project) { Name = "Track"};
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 960 };
         segment.Notes.Add(new LogicalNote(project)
         {
@@ -1752,8 +1752,6 @@ public sealed class PlaybackTests
             Velocity = 100
         });
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
-        instrument.LogicalTrackIds.Add(track.Id);
         return project;
     }
 
@@ -1772,14 +1770,10 @@ public sealed class PlaybackTests
         firstVoice.Events.Add(TemplateEvent.Note(project, 0, 480, 60, 100));
         firstInstrument.SubVoices.Add(firstVoice);
         project.EventInstruments.Add(firstInstrument);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.EventInstrument,
-            firstInstrument.Id));
-        LogicalTrack firstTrack = new(project)
-        {
+        LogicalTrack firstTrack = new(project) {
             Name = "First",
-            EventInstrumentId = firstInstrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, firstTrack, firstInstrument.Id);
         Segment firstSegment = new(project) { LengthTicks = 960 };
         firstSegment.Notes.Add(new LogicalNote(project)
         {
@@ -1789,8 +1783,6 @@ public sealed class PlaybackTests
             Velocity = 100
         });
         firstTrack.Segments.Add(firstSegment);
-        project.Tracks.Add(firstTrack);
-        firstInstrument.LogicalTrackIds.Add(firstTrack.Id);
 
         EventInstrument restoredInstrument = new(project)
         {
@@ -1804,14 +1796,10 @@ public sealed class PlaybackTests
         restoredVoice.Events.Add(TemplateEvent.Note(project, 0, 480, 60, 100));
         restoredInstrument.SubVoices.Add(restoredVoice);
         project.EventInstruments.Add(restoredInstrument);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.EventInstrument,
-            restoredInstrument.Id));
-        LogicalTrack restoredTrack = new(project)
-        {
+        LogicalTrack restoredTrack = new(project) {
             Name = "Restored",
-            EventInstrumentId = restoredInstrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, restoredTrack, restoredInstrument.Id);
         Segment restoredSegment = new(project) { LengthTicks = 960 };
         restoredSegment.Notes.Add(new LogicalNote(project)
         {
@@ -1821,8 +1809,6 @@ public sealed class PlaybackTests
             Velocity = 100
         });
         restoredTrack.Segments.Add(restoredSegment);
-        project.Tracks.Add(restoredTrack);
-        restoredInstrument.LogicalTrackIds.Add(restoredTrack.Id);
 
         return (project, restoredTrack);
     }

@@ -231,7 +231,6 @@
       <Border x:Name="TreeChrome" Padding="4,3" Background="Transparent" CornerRadius="3">
         <Grid>
           <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <ui:FluentIcon x:Name="TreeFolderIcon" Width="14" Height="14" Margin="0,0,6,0" VerticalAlignment="Center" Visibility="Collapsed" Data="{StaticResource Fluent.Folder20Regular}"/>
           <TextBlock x:Name="TreeTitle" Grid.Column="1" Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
           <TextBlock Grid.Column="2" Margin="8,0,0,0" Style="{StaticResource Text.Caption}" Text="{Binding Subtitle}" TextTrimming="CharacterEllipsis"/>
           <TextBox x:Name="TreeRename" Margin="-3,-2" Padding="3,1" Visibility="Collapsed"
@@ -252,9 +251,6 @@
         <DataTrigger Binding="{Binding IsDamaged}" Value="True">
           <Setter TargetName="TreeTitle" Property="Foreground" Value="{StaticResource Brush.Red.Hover}"/>
         </DataTrigger>
-        <DataTrigger Binding="{Binding IsInstrumentFolder}" Value="True">
-          <Setter TargetName="TreeFolderIcon" Property="Visibility" Value="Visible"/>
-        </DataTrigger>
       </HierarchicalDataTemplate.Triggers>
     </HierarchicalDataTemplate>
 
@@ -269,18 +265,19 @@
         <Border Style="{StaticResource PanelHeader}">
           <Grid>
             <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
-              <Button Width="26" Height="24" Margin="0,0,7,0" Padding="0" ToolTip="Add Arrangement parent" IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Click="OnArrangementAddClick">
+              <ToggleButton Height="24" Margin="0,0,7,0" Padding="7,0" ToolTip="Show or hide Event Instruments" IsChecked="{Binding IsEventInstrumentPaneVisible, Mode=TwoWay}">
+                <ToggleButton.Style><Style TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsArrangement}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></ToggleButton.Style>
+                <StackPanel Orientation="Horizontal">
+                  <ui:FluentIcon Width="12" Height="12" Margin="0,0,5,0">
+                    <ui:FluentIcon.Style><Style TargetType="ui:FluentIcon" BasedOn="{StaticResource Icon.Stepper}"><Setter Property="Data" Value="{StaticResource Fluent.ChevronLeft20Regular}"/><Style.Triggers><DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource AncestorType={x:Type ToggleButton}}}" Value="False"><Setter Property="Data" Value="{StaticResource Fluent.ChevronRight20Regular}"/></DataTrigger></Style.Triggers></Style></ui:FluentIcon.Style>
+                  </ui:FluentIcon>
+                  <TextBlock VerticalAlignment="Center" Text="Event Instruments"/>
+                </StackPanel>
+              </ToggleButton>
+              <Button Width="26" Height="24" Margin="0,0,7,0" Padding="0" ToolTip="Add Track" IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Click="OnArrangementAddClick">
                 <Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.Base}"><Setter Property="Visibility" Value="Collapsed"/><Setter Property="Foreground" Value="{StaticResource Brush.Red}"/><Style.Triggers><DataTrigger Binding="{Binding IsArrangement}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style>
-                <Button.ContextMenu><ContextMenu><MenuItem Header="New Event Instrument" Click="OnNewInstrumentClick"/><MenuItem Header="New MIDI Channel Root" Click="OnNewMidiRootClick"/></ContextMenu></Button.ContextMenu>
+                <Button.ContextMenu><ContextMenu><MenuItem Header="New Logical Track" Click="OnNewTrackClick"/><MenuItem Header="New Logical Track with Instrument…" Click="OnNewTrackWithInstrumentClick"/><Separator/><MenuItem Header="New Raw MIDI Track…" Click="OnNewRawMidiTrackClick"/></ContextMenu></Button.ContextMenu>
                 <ui:FluentIcon Style="{StaticResource Icon.Stepper}" Width="20" Height="20" SnapsToDevicePixels="True" UseLayoutRounding="True" Data="{StaticResource Fluent.Add20Regular}"/>
-              </Button>
-              <Button Width="26" Height="24" Margin="0,0,4,0" Padding="0" ToolTip="Expand all Arrangement parents" Click="OnArrangementExpandAllClick">
-                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.Icon}"><Setter Property="Visibility" Value="Collapsed"/><Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}"/><Style.Triggers><DataTrigger Binding="{Binding IsArrangement}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style>
-                <ui:FluentIcon Style="{StaticResource Icon.Stepper}" Width="16" Height="16" Data="{StaticResource Fluent.ArrowExpandAll20Regular}"/>
-              </Button>
-              <Button Width="26" Height="24" Margin="0,0,7,0" Padding="0" ToolTip="Collapse all Arrangement parents" Click="OnArrangementCollapseAllClick">
-                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.Icon}"><Setter Property="Visibility" Value="Collapsed"/><Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}"/><Style.Triggers><DataTrigger Binding="{Binding IsArrangement}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style>
-                <ui:FluentIcon Style="{StaticResource Icon.Stepper}" Width="16" Height="16" Data="{StaticResource Fluent.ArrowCollapseAll20Regular}"/>
               </Button>
               <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding Header}">
                 <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding IsArrangement}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger><DataTrigger Binding="{Binding IsSegment}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
@@ -321,11 +318,26 @@
           </Grid>
         </Border>
         <Grid Grid.Row="1">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="{Binding EventInstrumentPaneWidth}"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
           <Grid.RowDefinitions>
             <RowDefinition Height="*" />
             <RowDefinition Height="22" />
           </Grid.RowDefinitions>
-        <GroupBox Grid.Row="0" Margin="0,0,0,1" ClipToBounds="True" Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="{Binding Header}" AutomationProperties.AutomationId="PrimaryTimelineSurface">
+          <Border Grid.RowSpan="2" Margin="0,0,1,0" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,1,0">
+            <Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><MultiDataTrigger><MultiDataTrigger.Conditions><Condition Binding="{Binding IsArrangement}" Value="True"/><Condition Binding="{Binding IsEventInstrumentPaneVisible}" Value="True"/></MultiDataTrigger.Conditions><Setter Property="Visibility" Value="Visible"/></MultiDataTrigger></Style.Triggers></Style></Border.Style>
+            <Grid>
+              <Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+              <Border Padding="9,0" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1"><Grid><TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Event Instruments"/><Button Width="24" Height="22" HorizontalAlignment="Right" Padding="0" ToolTip="New Event Instrument" IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Click="OnNewInstrumentClick"><ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.Add20Regular}"/></Button></Grid></Border>
+              <ListBox Grid.Row="1" Padding="5" Background="Transparent" BorderThickness="0" ItemsSource="{Binding EventInstrumentBrowser}" MouseDoubleClick="OnEventInstrumentBrowserDoubleClick" PreviewMouseLeftButtonDown="OnInstrumentListMouseLeftButtonDown" MouseMove="OnInstrumentListMouseMove" PreviewMouseRightButtonDown="OnEventInstrumentBrowserRightButtonDown" AllowDrop="True" DragOver="OnEventInstrumentBrowserDragOver" DragLeave="OnEventInstrumentBrowserDragLeave" Drop="OnEventInstrumentBrowserDrop" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                <ListBox.ItemTemplate><DataTemplate><Grid Margin="4,3"><Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Grid.Row="1" Style="{StaticResource Text.Caption}" Text="{Binding Detail}" TextTrimming="CharacterEllipsis"/></Grid></DataTemplate></ListBox.ItemTemplate>
+                <ListBox.ContextMenu><ContextMenu DataContext="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource Self}}"><MenuItem Header="Edit" Click="OnEventInstrumentBrowserEditClick"/><MenuItem Header="Add Logical Track Using This Instrument" Click="OnEventInstrumentBrowserAddTrackClick"/><Separator/><MenuItem Header="Cut" Click="OnEventInstrumentBrowserCutClick"/><MenuItem Header="Copy" Click="OnEventInstrumentBrowserCopyClick"/><MenuItem Header="Paste" Click="OnEventInstrumentBrowserPasteClick"/><MenuItem Header="Duplicate" Click="OnEventInstrumentBrowserDuplicateClick"/><Separator/><MenuItem Header="Rename…" Click="OnEventInstrumentBrowserRenameClick"/><MenuItem Header="Move Up" Click="OnEventInstrumentBrowserMoveUpClick"/><MenuItem Header="Move Down" Click="OnEventInstrumentBrowserMoveDownClick"/><Separator/><MenuItem Header="Delete…" Click="OnEventInstrumentBrowserDeleteClick"/></ContextMenu></ListBox.ContextMenu>
+              </ListBox>
+            </Grid>
+          </Border>
+        <GroupBox Grid.Column="1" Grid.Row="0" Margin="0,0,0,1" ClipToBounds="True" Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="{Binding Header}" AutomationProperties.AutomationId="PrimaryTimelineSurface">
         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <ui:TimelineSurface x:Name="Timeline"
                             Focusable="True"
@@ -373,6 +385,7 @@
                              LaneHeaderReorderCompleted="OnTimelineLaneHeaderReorderCompleted"
                              AllowDrop="True"
                              DragOver="OnTimelineInstrumentDragOver"
+                             DragLeave="OnTimelineInstrumentDragLeave"
                              Drop="OnTimelineInstrumentDrop"
                              RulerClicked="OnTimelineRulerClicked"
                              TimeRangeSelected="OnTimelineTimeRangeSelected"
@@ -391,7 +404,7 @@
           </ScrollBar>
         </Grid>
         </GroupBox>
-        <GroupBox Grid.Row="1" Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="Timeline overview and horizontal scroll" AutomationProperties.AutomationId="PrimaryTimelineOverview">
+        <GroupBox Grid.Column="1" Grid.Row="1" Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="Timeline overview and horizontal scroll" AutomationProperties.AutomationId="PrimaryTimelineOverview">
         <ui:TimelineOverviewSurface
                                     Snapshot="{Binding Snapshot}"
                                     StartTick="{Binding StartTick, Mode=TwoWay}"
@@ -489,28 +502,26 @@
         <Grid Margin="0,0,0,10">
           <TextBlock Style="{StaticResource Text.Title}" Text="Event Instrument Library" />
           <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
-            <Button Margin="0,0,5,0" Content="New Folder" Click="OnNewInstrumentFolderClick" />
             <Button Style="{StaticResource Button.Primary}" Content="New Instrument" Click="OnNewInstrumentClick" />
           </StackPanel>
         </Grid>
         <Grid Grid.Row="1" Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="130"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <TextBox Margin="0,0,6,0" ToolTip="Filter by instrument name, folder, or status" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
+          <TextBox Margin="0,0,6,0" ToolTip="Filter by instrument name or status" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
           <ComboBox Grid.Column="1" Margin="0,0,6,0" ItemsSource="{Binding SortModes}" SelectedItem="{Binding SortMode}"/>
-          <StackPanel Grid.Column="2" Orientation="Horizontal"><Button Margin="0,0,5,0" Content="Copy" Click="OnCopyLibraryInstrumentClick"/><Button Margin="0,0,5,0" Content="Paste" IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Click="OnPasteLibraryInstrumentClick"/><Button Margin="0,0,5,0" Content="Duplicate" IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Click="OnDuplicateLibraryInstrumentClick"/><Button Content="Move…" IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Click="OnMoveLibraryInstrumentClick"/></StackPanel>
+          <StackPanel Grid.Column="2" Orientation="Horizontal"><Button Margin="0,0,5,0" Content="Copy" Click="OnCopyLibraryInstrumentClick"/><Button Margin="0,0,5,0" Content="Paste" IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Click="OnPasteLibraryInstrumentClick"/><Button Content="Duplicate" IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Click="OnDuplicateLibraryInstrumentClick"/></StackPanel>
         </Grid>
         <ListBox x:Name="InstrumentLibraryList" Grid.Row="2" ItemsSource="{Binding Instruments}" SelectedItem="{Binding SelectedInstrument, Mode=TwoWay}" MouseDoubleClick="OnInstrumentListDoubleClick" PreviewMouseLeftButtonDown="OnInstrumentListMouseLeftButtonDown" PreviewMouseMove="OnInstrumentListMouseMove" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
-          <ListBox.ContextMenu><ContextMenu><MenuItem Header="Open" Click="OnOpenLibraryInstrumentClick"/><Separator/><MenuItem Header="Copy" InputGestureText="Ctrl+C" Click="OnCopyLibraryInstrumentClick"/><MenuItem Header="Paste" InputGestureText="Ctrl+V" Click="OnPasteLibraryInstrumentClick"/><MenuItem Header="Duplicate" InputGestureText="Ctrl+D" Click="OnDuplicateLibraryInstrumentClick"/><MenuItem Header="Move to Folder…" Click="OnMoveLibraryInstrumentClick"/><Separator/><MenuItem Header="Delete Event Instrument…" Click="OnDeleteLibraryInstrumentClick"/></ContextMenu></ListBox.ContextMenu>
+          <ListBox.ContextMenu><ContextMenu><MenuItem Header="Open" Click="OnOpenLibraryInstrumentClick"/><Separator/><MenuItem Header="Copy" InputGestureText="Ctrl+C" Click="OnCopyLibraryInstrumentClick"/><MenuItem Header="Paste" InputGestureText="Ctrl+V" Click="OnPasteLibraryInstrumentClick"/><MenuItem Header="Duplicate" InputGestureText="Ctrl+D" Click="OnDuplicateLibraryInstrumentClick"/><Separator/><MenuItem Header="Delete Event Instrument…" Click="OnDeleteLibraryInstrumentClick"/></ContextMenu></ListBox.ContextMenu>
           <ListBox.ItemTemplate>
             <DataTemplate>
               <Grid>
                 <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="2*"/><ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="2*"/>
                   <ColumnDefinition Width="90"/><ColumnDefinition Width="100"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
-                <TextBlock Grid.Column="1" Style="{StaticResource Text.Muted}" Text="{Binding Folder}" />
-                <TextBlock Grid.Column="2" Style="{StaticResource Text.Mono}" Text="{Binding UsageCount, StringFormat={}Used {0}}" />
-                <TextBlock Grid.Column="3" Foreground="{StaticResource Brush.Success}" Text="{Binding Status}" />
+                <TextBlock Grid.Column="1" Style="{StaticResource Text.Mono}" Text="{Binding UsageCount, StringFormat={}Used {0}}" />
+                <TextBlock Grid.Column="2" Foreground="{StaticResource Brush.Success}" Text="{Binding Status}" />
               </Grid>
             </DataTemplate>
           </ListBox.ItemTemplate>
@@ -894,7 +905,7 @@
           <MenuItem Header="File"><MenuItem Header="New Project…" InputGestureText="Ctrl+N" Click="OnNewProjectClick"/><MenuItem Header="Open Project…" InputGestureText="Ctrl+O" Click="OnOpenProjectClick"/><MenuItem Header="Open MIDI as New Project…" Click="OnOpenMidiAsNewProjectClick"/><MenuItem x:Name="RecentProjectsMenu" Header="Open Recent" SubmenuOpened="OnRecentProjectsSubmenuOpened"/><Separator/><MenuItem Header="Save Project" InputGestureText="Ctrl+S" IsEnabled="{Binding CanSaveProject}" Click="OnSaveProjectClick"/><MenuItem Header="Save Copy…" IsEnabled="{Binding CanSaveProject}" Click="OnSaveCopyClick"/><Separator/><MenuItem Header="Close Project" Click="OnCloseProjectClick"/><MenuItem Header="Exit" Click="OnExitClick"/></MenuItem>
           <MenuItem Header="Edit"><MenuItem Header="Undo" InputGestureText="Ctrl+Z" IsEnabled="{Binding CanEditProject}" Click="OnUndoClick"/><MenuItem Header="Redo" InputGestureText="Ctrl+Y" IsEnabled="{Binding CanEditProject}" Click="OnRedoClick"/><Separator/><MenuItem Header="Cut" InputGestureText="Ctrl+X" IsEnabled="{Binding CanEditProject}" Click="OnCutClick"/><MenuItem Header="Copy" InputGestureText="Ctrl+C" IsEnabled="{Binding HasProject}" Click="OnCopyClick"/><MenuItem Header="Paste" InputGestureText="Ctrl+V" IsEnabled="{Binding CanEditProject}" Click="OnPasteClick"/><MenuItem Header="Select All" InputGestureText="Ctrl+A" IsEnabled="{Binding HasProject}" Click="OnSelectAllClick"/><MenuItem Header="Duplicate Selection" InputGestureText="Ctrl+D" IsEnabled="{Binding CanEditProject}" Click="OnDuplicateClick"/><Separator/><MenuItem Header="Application Preferences…" IsEnabled="{Binding CanStartForegroundTask}" Click="OnApplicationPreferencesClick"/></MenuItem>
           <MenuItem Header="View"><MenuItem Header="Arrangement" Click="OnOpenArrangementClick"/><MenuItem Header="Diagnostics" Click="OnOpenDiagnosticsClick"/><Separator/><MenuItem x:Name="ProjectPanelMenuItem" Header="Project Panel" Visibility="Collapsed" IsCheckable="True" Click="OnToggleProjectPanelClick"/><MenuItem x:Name="InspectorMenuItem" Header="Inspector" IsCheckable="True" Click="OnToggleInspectorClick"/><MenuItem x:Name="BottomPanelMenuItem" Header="Bottom Panel" IsCheckable="True" Click="OnToggleBottomPanelClick"/><Separator/><MenuItem x:Name="SnapMenuItem" Header="Snap to Grid" IsCheckable="True" Click="OnToggleSnapClick"/><MenuItem x:Name="FollowPlaybackMenuItem" Header="Follow Playback" IsCheckable="True" Click="OnToggleFollowPlaybackClick"/><Separator/><MenuItem Header="Reset Layout" Click="OnResetLayoutClick"/><MenuItem Header="Reset Editor View Preferences" Click="OnResetEditorPreferencesClick"/><MenuItem Header="Reset All UI Preferences…" Click="OnResetAllUiPreferencesClick"/></MenuItem>
-          <MenuItem Header="Project" IsEnabled="{Binding HasProject}"><MenuItem Header="New Event Instrument" IsEnabled="{Binding CanEditProject}" Click="OnNewInstrumentClick"/><MenuItem Header="New MIDI Channel Root" IsEnabled="{Binding CanEditProject}" Click="OnNewMidiRootClick"/><Separator/><MenuItem Header="Project Settings" Click="OnOpenSettingsClick"/></MenuItem>
+          <MenuItem Header="Project" IsEnabled="{Binding HasProject}"><MenuItem Header="New Event Instrument" IsEnabled="{Binding CanEditProject}" Click="OnNewInstrumentClick"/><Separator/><MenuItem Header="New Logical Track" IsEnabled="{Binding CanEditProject}" Click="OnNewTrackClick"/><MenuItem Header="New Logical Track with Instrument…" IsEnabled="{Binding CanEditProject}" Click="OnNewTrackWithInstrumentClick"/><MenuItem Header="New Raw MIDI Track…" IsEnabled="{Binding CanEditProject}" Click="OnNewRawMidiTrackClick"/><Separator/><MenuItem Header="Project Settings" Click="OnOpenSettingsClick"/></MenuItem>
           <MenuItem Header="Playback"><MenuItem Header="Play" InputGestureText="Space" IsEnabled="{Binding CanPlayback}" Click="OnPlayClick"/><MenuItem Header="Stop" InputGestureText="Space" IsEnabled="{Binding IsPlaybackActive}" Click="OnStopClick"/><Separator/><MenuItem Header="Reset Playback Engine" Click="OnResetPlaybackClick"/></MenuItem>
           <MenuItem Header="Compile" IsEnabled="{Binding CanRunProjectTask}"><MenuItem Header="Compile Project" Click="OnCompileClick"/></MenuItem>
           <MenuItem Header="Export" IsEnabled="{Binding CanRunProjectTask}"><MenuItem Header="MIDI Export…" Click="OnMidiExportClick"/><MenuItem Header="Audio Export…" Click="OnAudioRenderClick"/></MenuItem>
@@ -979,7 +990,7 @@
         <Grid.ColumnDefinitions><ColumnDefinition x:Name="ProjectPanelColumn" Width="0" MinWidth="0"/><ColumnDefinition x:Name="ProjectSplitterColumn" Width="0"/><ColumnDefinition Width="*" MinWidth="500"/><ColumnDefinition x:Name="InspectorSplitterColumn" Width="4"/><ColumnDefinition x:Name="InspectorColumn" Width="270" MinWidth="220" MaxWidth="420"/></Grid.ColumnDefinitions>
         <Grid x:Name="ProjectPanelGrid" Visibility="Collapsed" Background="{StaticResource Brush.Surface.1}">
           <Grid.RowDefinitions><RowDefinition Height="34"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <Border Style="{StaticResource PanelHeader}"><Grid><TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Project"/><ToggleButton x:Name="NewProjectItemButton" Width="26" Height="24" HorizontalAlignment="Right" Padding="0" AutomationProperties.Name="New Project item" ToolTip="New Project item" IsChecked="{Binding IsOpen, ElementName=NewProjectItemPopup, Mode=TwoWay}"><ui:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Add20Regular}"/></ToggleButton><Popup x:Name="NewProjectItemPopup" Placement="Bottom" PlacementTarget="{Binding ElementName=NewProjectItemButton}" StaysOpen="False" AllowsTransparency="True"><Border MinWidth="230" Padding="4" Background="{StaticResource Brush.Surface.2}" BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1" CornerRadius="{StaticResource Radius.Medium}"><StackPanel><StackPanel.Resources><Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}"><Setter Property="Height" Value="28"/><Setter Property="Padding" Value="12,0"/><Setter Property="HorizontalContentAlignment" Value="Left"/><Setter Property="BorderThickness" Value="0"/></Style></StackPanel.Resources><Button Content="New Logical Track" Click="OnNewTrackClick"/><Button Content="New Event Instrument" Click="OnNewInstrumentClick"/><Button Content="New Event Instrument Folder" Click="OnNewInstrumentFolderClick"/></StackPanel></Border></Popup></Grid></Border>
+          <Border Style="{StaticResource PanelHeader}"><Grid><TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Project"/><ToggleButton x:Name="NewProjectItemButton" Width="26" Height="24" HorizontalAlignment="Right" Padding="0" AutomationProperties.Name="New Project item" ToolTip="New Project item" IsChecked="{Binding IsOpen, ElementName=NewProjectItemPopup, Mode=TwoWay}"><ui:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Add20Regular}"/></ToggleButton><Popup x:Name="NewProjectItemPopup" Placement="Bottom" PlacementTarget="{Binding ElementName=NewProjectItemButton}" StaysOpen="False" AllowsTransparency="True"><Border MinWidth="230" Padding="4" Background="{StaticResource Brush.Surface.2}" BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1" CornerRadius="{StaticResource Radius.Medium}"><StackPanel><StackPanel.Resources><Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}"><Setter Property="Height" Value="28"/><Setter Property="Padding" Value="12,0"/><Setter Property="HorizontalContentAlignment" Value="Left"/><Setter Property="BorderThickness" Value="0"/></Style></StackPanel.Resources><Button Content="New Logical Track" Click="OnNewTrackClick"/><Button Content="New Event Instrument" Click="OnNewInstrumentClick"/></StackPanel></Border></Popup></Grid></Border>
           <TextBox Grid.Row="1" Margin="7,7,7,3" ToolTip="Filter Event Instruments, folders, Logical Tracks, and last known instrument names" Text="{Binding ProjectTreeSearchText, UpdateSourceTrigger=PropertyChanged}"/>
           <TreeView x:Name="ProjectTree" Grid.Row="2" Padding="6" Background="Transparent" BorderThickness="0"
                     AutomationProperties.Name="Project navigation"

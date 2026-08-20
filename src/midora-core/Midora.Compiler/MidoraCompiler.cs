@@ -171,10 +171,10 @@ public sealed partial class MidoraCompiler : IDisposable
         int reusedSegments = 0;
         int stateConvergences = 0;
         long? earliestDirtyTick = null;
-        IReadOnlyList<LogicalTrack> selectedTracks = project.Tracks
+        IReadOnlyList<LogicalTrack> selectedTracks = project.LogicalTracksInArrangementOrder()
             .Where(track => request.IncludedTrackIds is null || request.IncludedTrackIds.Contains(track.Id))
             .ToArray();
-        IReadOnlyList<PureMidiTrack> selectedPureMidiTracks = project.PureMidiTracks
+        IReadOnlyList<PureMidiTrack> selectedPureMidiTracks = project.PureMidiTracksInArrangementOrder()
             .Where(track => request.IncludedTrackIds is null || request.IncludedTrackIds.Contains(track.Id))
             .ToArray();
 
@@ -322,6 +322,7 @@ public sealed partial class MidoraCompiler : IDisposable
             .SelectMany(value => value.Segments)
             .Any(value => value.UsesPagedContent);
         List<CanonicalMidiEvent> allEvents = MaterializeEvents(
+            project,
             instances,
             allocation.Groups,
             allocation.UnitBySubVoice,
@@ -607,7 +608,8 @@ public sealed partial class MidoraCompiler : IDisposable
             .ToArray();
         bool explicitlyDirty = changes.AffectsEverything
             || changes.TrackIds.Contains(track.Id)
-            || changes.EventInstrumentIds.Any(id => TrackReferences(track, id));
+            || changes.EventInstrumentUsageIds.Contains(track.EventInstrumentUsageId ?? default)
+            || changes.EventInstrumentIds.Any(id => TrackReferences(project, track, id));
         _trackCache.TryGetValue(track.Id, out TrackCacheEntry? cached);
         bool hasCompatibleCache = incremental
             && cached is not null
@@ -867,8 +869,12 @@ public sealed partial class MidoraCompiler : IDisposable
         out int nextSourceOrder)
     {
         List<RawInstance> result = [];
-        if (!track.EventInstrumentId.HasValue
-            || !instruments.TryGetValue(track.EventInstrumentId.Value, out EventInstrument? instrument))
+        if (!TryResolveEventInstrument(
+                project,
+                track,
+                instruments,
+                out EventInstrument instrument,
+                out _))
         {
             nextSourceOrder = initialSourceOrder;
             return [];
@@ -1057,7 +1063,14 @@ public sealed partial class MidoraCompiler : IDisposable
             SubVoice voice = instrument.SubVoices[voiceIndex];
             IReadOnlyDictionary<TemplateEventMappingTarget, SubVoiceEventMapping> eventMappings =
                 eventMappingsByVoice[voiceIndex];
-            SourceReference source = new(track.Id, segment.Id, note.Id, instrument.Id, voice.Id, Tick: projectStart);
+            SourceReference source = new(
+                track.Id,
+                segment.Id,
+                note.Id,
+                instrument.Id,
+                voice.Id,
+                Tick: projectStart,
+                EventInstrumentUsageId: track.EventInstrumentUsageId ?? default);
             List<RawMidiEvent> events = [];
             MidiInitialState state = MergeState(project.GlobalInitialState, instrument.InitialState, voice.InitialState);
             HashSet<MidiValueTarget> usedTargets = CollectUsedTargets(instrument, voice, state);
@@ -1220,8 +1233,9 @@ public sealed partial class MidoraCompiler : IDisposable
                 events.Any(static value => value.Kind == RawMessageKind.NoteOn && value.Data2 != 0));
         }
 
+        MidoraId usageId = track.EventInstrumentUsageId ?? track.Id;
         return new RawInstance(
-            note.Id, track.Id, segment.Id, instrument.Id, note.Note, projectStart, actualEnd, segmentEnd,
+            note.Id, track.Id, segment.Id, instrument.Id, usageId, note.Note, projectStart, actualEnd, segmentEnd,
             instrument.RequiresChannelIsolation,
             instrument.OverlapPolicy, instrument.OverlapScope,
             sourceOrder, voices);
@@ -2590,14 +2604,65 @@ public sealed partial class MidoraCompiler : IDisposable
         _ => 0
     };
 
+    private static LogicalUsageInterval[] BuildLogicalUsageIntervals(
+        MidoraProject project,
+        IReadOnlyCollection<RawInstance> instances,
+        CancellationToken cancellationToken)
+    {
+        HashSet<MidoraId> participatingUsageIds = instances
+            .Where(value => !value.Isolated)
+            .Select(value => value.UsageId)
+            .ToHashSet();
+        Dictionary<MidoraId, int> trackOrder = project.LogicalTracksInArrangementOrder()
+            .Select((track, index) => (track.Id, index))
+            .ToDictionary(value => value.Id, value => value.index);
+        List<LogicalUsageInterval> result = [];
+        foreach (IGrouping<MidoraId, (LogicalTrack Track, Segment Segment)> usageSegments in project.Tracks
+            .SelectMany(track => track.Segments.Select(segment => (Track: track, Segment: segment)))
+            .Where(value => value.Segment.LengthTicks > 0)
+            .GroupBy(value => value.Track.EventInstrumentUsageId ?? value.Track.Id)
+            .Where(value => participatingUsageIds.Contains(value.Key)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            (LogicalTrack Track, Segment Segment)[] ordered = usageSegments
+                .OrderBy(value => value.Segment.ProjectStartTick)
+                .ThenBy(value => trackOrder.GetValueOrDefault(value.Track.Id, int.MaxValue))
+                .ThenBy(value => value.Segment.Id)
+                .ToArray();
+            if (ordered.Length == 0)
+            {
+                continue;
+            }
+            MidoraId groupId = ordered[0].Segment.Id;
+            long start = ordered[0].Segment.ProjectStartTick;
+            long end = checked(start + ordered[0].Segment.LengthTicks);
+            for (int index = 1; index < ordered.Length; index++)
+            {
+                Segment segment = ordered[index].Segment;
+                long segmentEnd = checked(segment.ProjectStartTick + segment.LengthTicks);
+                if (segment.ProjectStartTick <= end)
+                {
+                    end = Math.Max(end, segmentEnd);
+                    continue;
+                }
+                result.Add(new(usageSegments.Key, groupId, start, end));
+                groupId = segment.Id;
+                start = segment.ProjectStartTick;
+                end = segmentEnd;
+            }
+            result.Add(new(usageSegments.Key, groupId, start, end));
+        }
+        return result.ToArray();
+    }
+
     private static void ValidateOverlap(
         MidoraProject project,
         List<RawInstance> instances,
         List<CompilerDiagnostic> diagnostics,
         CancellationToken cancellationToken)
     {
-        foreach (IGrouping<(MidoraId TrackId, MidoraId InstrumentId), RawInstance> binding in instances
-            .GroupBy(value => (value.TrackId, value.InstrumentId)))
+        foreach (IGrouping<(MidoraId UsageId, MidoraId InstrumentId), RawInstance> binding in instances
+            .GroupBy(value => (value.UsageId, value.InstrumentId)))
         {
             cancellationToken.ThrowIfCancellationRequested();
             RawInstance[] ordered = binding.OrderBy(value => value.StartTick).ThenBy(value => value.SourceOrder).ToArray();
@@ -2634,22 +2699,57 @@ public sealed partial class MidoraCompiler : IDisposable
         CancellationToken cancellationToken)
     {
         List<AllocationGroup> groups = [];
+        Dictionary<MidoraId, LogicalUsageInterval[]> intervalsByUsage =
+            BuildLogicalUsageIntervals(project, instances, cancellationToken)
+                .GroupBy(value => value.UsageId)
+                .ToDictionary(value => value.Key, value => value.ToArray());
+
+        foreach (IGrouping<(MidoraId UsageId, MidoraId InstrumentId), RawInstance> binding in instances
+            .Where(value => !value.Isolated)
+            .GroupBy(value => (value.UsageId, value.InstrumentId)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RawInstance[] ordered = binding.OrderBy(value => value.StartTick).ThenBy(value => value.SourceOrder).ToArray();
+            if (!intervalsByUsage.TryGetValue(binding.Key.UsageId, out LogicalUsageInterval[]? intervals))
+            {
+                intervals = ordered
+                    .Select(value => new LogicalUsageInterval(
+                        value.UsageId,
+                        value.SegmentId,
+                        value.StartTick,
+                        value.SegmentEndTick))
+                    .ToArray();
+            }
+            foreach (LogicalUsageInterval interval in intervals)
+            {
+                RawInstance[] members = ordered
+                    .Where(value => value.StartTick >= interval.StartTick
+                        && value.StartTick < interval.EndTick)
+                    .ToArray();
+                if (members.Length == 0)
+                {
+                    continue;
+                }
+                AllocationGroup shared = new(
+                    members[0],
+                    interval.GroupId,
+                    interval.StartTick,
+                    interval.EndTick,
+                    isSharedUsageGroup: true);
+                for (int instanceIndex = 1; instanceIndex < members.Length; instanceIndex++)
+                {
+                    shared.Add(members[instanceIndex]);
+                }
+                groups.Add(shared);
+            }
+        }
+
         foreach (IGrouping<(MidoraId TrackId, MidoraId InstrumentId, MidoraId SegmentId), RawInstance> binding in instances
+            .Where(value => value.Isolated)
             .GroupBy(value => (value.TrackId, value.InstrumentId, value.SegmentId)))
         {
             cancellationToken.ThrowIfCancellationRequested();
             RawInstance[] ordered = binding.OrderBy(value => value.StartTick).ThenBy(value => value.SourceOrder).ToArray();
-            if (!ordered[0].Isolated)
-            {
-                AllocationGroup shared = new(ordered[0]);
-                for (int instanceIndex = 1; instanceIndex < ordered.Length; instanceIndex++)
-                {
-                    shared.Add(ordered[instanceIndex]);
-                }
-                groups.Add(shared);
-                continue;
-            }
-
             List<AllocationGroup> isolatedLanes = [];
             foreach (RawInstance instance in ordered)
             {
@@ -2817,7 +2917,8 @@ public sealed partial class MidoraCompiler : IDisposable
                     unitByVoice[(instance.InstanceId, voice.SubVoiceId)] = unit;
                     allocations.Add(new(instance.TrackId, instance.SegmentId, instance.InstrumentId, instance.InstanceId,
                         group.GroupId, voice.SubVoiceId,
-                        group.StartTick, group.EndTick, (byte)(unit >> 4), (byte)(unit & 15)));
+                        group.StartTick, group.EndTick, (byte)(unit >> 4), (byte)(unit & 15),
+                        EventInstrumentUsageId: instance.UsageId));
                 }
             }
         }
@@ -2841,6 +2942,7 @@ public sealed partial class MidoraCompiler : IDisposable
     }
 
     private static List<CanonicalMidiEvent> MaterializeEvents(
+        MidoraProject project,
         List<RawInstance> instances,
         ReadOnlySpan<AllocationGroup> groups,
         IReadOnlyDictionary<(MidoraId InstanceId, MidoraId SubVoiceId), int> unitByVoice,
@@ -2848,6 +2950,14 @@ public sealed partial class MidoraCompiler : IDisposable
         CancellationToken cancellationToken)
     {
         List<CanonicalMidiEvent> result = [];
+        HashSet<MidoraId> logicalTrackIds = project.Tracks
+            .Select(value => value.Id)
+            .ToHashSet();
+        Dictionary<MidoraId, int> arrangementTrackOrder = project.TracksInArrangementOrder()
+            .Select((value, index) => (value.TrackId, index))
+            .Where(value => logicalTrackIds.Contains(value.TrackId))
+            .GroupBy(value => value.TrackId)
+            .ToDictionary(value => value.Key, value => value.First().index);
         HashSet<MidoraId> laneActivationInstances = GetLaneActivationInstances(
             groups,
             cancellationToken);
@@ -2871,7 +2981,10 @@ public sealed partial class MidoraCompiler : IDisposable
                         continue;
                     }
                     result.Add(new(value.Tick, (byte)(unit >> 4), channel, value.ToMidiMessage(channel),
-                        value.Role, value.Sequence, value.SemanticTargetKey, value.SemanticGroup, value.Source));
+                        value.Role, value.Sequence, value.SemanticTargetKey, value.SemanticGroup, value.Source,
+                        SmfTrackOrder: arrangementTrackOrder.GetValueOrDefault(
+                            instance.TrackId,
+                            int.MaxValue)));
                 }
             }
         }
@@ -2907,6 +3020,9 @@ public sealed partial class MidoraCompiler : IDisposable
                     resetDefaults,
                     includeAllSoundOff: orderedInstances.Any(
                         instance => instance.Voices[voiceIndex].HasSoundingNotes),
+                    arrangementTrackOrder.GetValueOrDefault(
+                        sourceInstance.TrackId,
+                        int.MaxValue),
                     ref cleanupSequence);
             }
         }
@@ -2959,6 +3075,7 @@ public sealed partial class MidoraCompiler : IDisposable
         int unit,
         MidiInitialState resetDefaults,
         bool includeAllSoundOff,
+        int arrangementTrackOrder,
         ref long sequence)
     {
         RawInstance sourceInstance = instances[0];
@@ -3021,7 +3138,8 @@ public sealed partial class MidoraCompiler : IDisposable
                 value.Sequence,
                 value.SemanticTargetKey,
                 value.SemanticGroup,
-                value.Source));
+                value.Source,
+                SmfTrackOrder: arrangementTrackOrder));
         }
     }
 
@@ -3505,8 +3623,34 @@ public sealed partial class MidoraCompiler : IDisposable
         return result.ToArray();
     }
 
-    private static bool TrackReferences(LogicalTrack track, MidoraId instrumentId) =>
-        track.EventInstrumentId == instrumentId;
+    private static bool TrackReferences(
+        MidoraProject project,
+        LogicalTrack track,
+        MidoraId instrumentId) =>
+        ResolveEventInstrumentId(project, track) == instrumentId;
+
+    private static MidoraId? ResolveEventInstrumentId(
+        MidoraProject project,
+        LogicalTrack track) => project.ResolveEventInstrumentDefinitionId(track);
+
+    private static bool TryResolveEventInstrument(
+        MidoraProject project,
+        LogicalTrack track,
+        IReadOnlyDictionary<MidoraId, EventInstrument> instruments,
+        out EventInstrument instrument,
+        out MidoraId usageId)
+    {
+        usageId = track.EventInstrumentUsageId ?? track.Id;
+        MidoraId? instrumentId = ResolveEventInstrumentId(project, track);
+        if (instrumentId is MidoraId id
+            && instruments.TryGetValue(id, out EventInstrument? resolved))
+        {
+            instrument = resolved;
+            return true;
+        }
+        instrument = null!;
+        return false;
+    }
 
     private readonly record struct CurrentSegment(Segment Segment, long SourceFingerprint);
 
@@ -3570,6 +3714,7 @@ public sealed partial class MidoraCompiler : IDisposable
         MidoraId TrackId,
         MidoraId SegmentId,
         MidoraId InstrumentId,
+        MidoraId UsageId,
         int Pitch,
         long StartTick,
         long EndTick,
@@ -3591,6 +3736,12 @@ public sealed partial class MidoraCompiler : IDisposable
         RawMidiEvent[] Events,
         MidiValueTarget[] UsedTargets,
         bool HasSoundingNotes);
+
+    private readonly record struct LogicalUsageInterval(
+        MidoraId UsageId,
+        MidoraId GroupId,
+        long StartTick,
+        long EndTick);
 
     private sealed class AcceptedInstance(
         int resultIndex,
@@ -3667,12 +3818,28 @@ public sealed partial class MidoraCompiler : IDisposable
     private sealed class AllocationGroup
     {
         public AllocationGroup(RawInstance instance)
+            : this(
+                instance,
+                instance.InstanceId,
+                instance.StartTick,
+                instance.SegmentEndTick,
+                isSharedUsageGroup: false)
         {
-            GroupId = instance.InstanceId;
-            StartTick = instance.StartTick;
-            EndTick = instance.SegmentEndTick;
+        }
+
+        public AllocationGroup(
+            RawInstance instance,
+            MidoraId groupId,
+            long startTick,
+            long endTick,
+            bool isSharedUsageGroup)
+        {
+            GroupId = groupId;
+            StartTick = startTick;
+            EndTick = endTick;
             LastLifecycleEndTick = instance.EndTick;
             SourceOrder = instance.SourceOrder;
+            IsSharedUsageGroup = isSharedUsageGroup;
             Instances.Add(instance);
         }
         public MidoraId GroupId { get; }
@@ -3681,16 +3848,21 @@ public sealed partial class MidoraCompiler : IDisposable
         public long EndTick { get; }
         public long LastLifecycleEndTick { get; private set; }
         public int SourceOrder { get; }
+        public bool IsSharedUsageGroup { get; }
         public List<RawInstance> Instances { get; } = [];
         public void Add(RawInstance instance)
         {
-            if (instance.TrackId != Instances[0].TrackId
-                || instance.SegmentId != Instances[0].SegmentId
-                || instance.InstrumentId != Instances[0].InstrumentId
-                || instance.SegmentEndTick != EndTick)
+            if (instance.InstrumentId != Instances[0].InstrumentId
+                || instance.UsageId != Instances[0].UsageId
+                || !IsSharedUsageGroup
+                    && (instance.TrackId != Instances[0].TrackId
+                        || instance.SegmentId != Instances[0].SegmentId
+                        || instance.SegmentEndTick != EndTick)
+                || IsSharedUsageGroup
+                    && (instance.StartTick < StartTick || instance.StartTick >= EndTick))
             {
                 throw new InvalidOperationException(
-                    "A Segment-owned allocation lane cannot contain an instance from another binding or Segment.");
+                    "An allocation lane cannot contain an instance outside its binding or lifecycle interval.");
             }
             Instances.Add(instance);
             LastLifecycleEndTick = Math.Max(LastLifecycleEndTick, instance.EndTick);
@@ -3752,11 +3924,11 @@ public sealed partial class MidoraCompiler : IDisposable
             if (value != 0) return value;
             value = x.ZeroBasedChannel.CompareTo(y.ZeroBasedChannel);
             if (value != 0) return value;
+            value = x.SmfTrackOrder.CompareTo(y.SmfTrackOrder);
+            if (value != 0) return value;
             if (x.Role == CanonicalEventRole.DirectMidi
                 && y.Role == CanonicalEventRole.DirectMidi)
             {
-                value = x.SmfTrackOrder.CompareTo(y.SmfTrackOrder);
-                if (value != 0) return value;
                 value = x.SmfEventOrder.CompareTo(y.SmfEventOrder);
                 if (value != 0) return value;
                 value = DirectEndpointOrder(x.Message).CompareTo(DirectEndpointOrder(y.Message));
@@ -3834,9 +4006,11 @@ internal static class SourceFingerprint
         AddState(ref hash, project.GlobalInitialState);
         AddState(ref hash, project.GlobalResetDefaults);
         Add(ref hash, track.Id);
-        Add(ref hash, track.EventInstrumentId ?? default);
-        if (track.EventInstrumentId.HasValue
-            && instruments.TryGetValue(track.EventInstrumentId.Value, out EventInstrument? instrument))
+        Add(ref hash, track.EventInstrumentUsageId ?? default);
+        MidoraId? eventInstrumentId = project.ResolveEventInstrumentDefinitionId(track);
+        Add(ref hash, eventInstrumentId ?? default);
+        if (eventInstrumentId.HasValue
+            && instruments.TryGetValue(eventInstrumentId.Value, out EventInstrument? instrument))
         {
             AddInstrument(ref hash, instrument, cancellationToken);
         }

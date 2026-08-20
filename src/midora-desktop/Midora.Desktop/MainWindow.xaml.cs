@@ -53,7 +53,10 @@ public partial class MainWindow : Window
     private bool _spaceStartedPlayback;
     private Point? _instrumentListDragStart;
     private MidoraId? _instrumentListDragId;
+    private ListBoxItem? _instrumentBrowserDropContainer;
+    private bool _instrumentBrowserDropAfter;
     private int? _trackHeaderContextLane;
+    private MidoraId? _arrangementSharedGroupContextId;
     private MidoraId? _logicalTrackShortcutTrackId;
     private (ArrangementLaneKind Kind, MidoraId Id)? _arrangementHeaderShortcut;
     private TimelineSurface? _pendingTimelineAltReleaseFocus;
@@ -539,9 +542,15 @@ public partial class MainWindow : Window
 
     private void OnTrackHeaderNewTrackClick(object sender, RoutedEventArgs e)
     {
-        int? insertionIndex = TryGetTrackHeaderContext(out _, out int trackIndex)
-            ? checked(trackIndex + 1)
-            : null;
+        int? insertionIndex = null;
+        if (_session.Project is MidoraProject project
+            && _session.ActiveWorkspace is TimelineWorkspaceViewModel arrangement
+            && _trackHeaderContextLane is int lane
+            && arrangement.GetArrangementLane(lane) is { ObjectId: MidoraId trackId })
+        {
+            int currentIndex = project.ArrangementTracks.FindIndex(value => value.TrackId == trackId);
+            if (currentIndex >= 0) insertionIndex = currentIndex + 1;
+        }
         QueueCreateLogicalTrack(sender, insertionIndex);
     }
 
@@ -550,68 +559,60 @@ public partial class MainWindow : Window
         RunAfterMenuClosed(sender, () =>
         {
             if (!_session.HasProject) return;
-            MidoraId? parentId = ResolveLogicalTrackCreationParent();
-            if (parentId is null) return;
-            EventInstrument parent = _session.Project!.EventInstruments.Single(value => value.Id == parentId);
-            int targetIndex = Math.Clamp(
-                insertionIndex ?? parent.LogicalTrackIds.Count,
-                0,
-                parent.LogicalTrackIds.Count);
             RunSynchronous("Create Logical Track", () =>
             {
                 _session.Execute(ProjectDomainEditCommands.CreateLogicalTrack(
-                    eventInstrumentId: parentId,
-                    insertionIndex: targetIndex));
+                    insertionIndex: insertionIndex));
                 _session.OpenArrangement();
             });
         });
     }
 
-    private MidoraId? ResolveLogicalTrackCreationParent()
-    {
-        if (_session.Project is not MidoraProject project || project.EventInstruments.Count == 0)
-        {
-            ShowUnavailable("Create Logical Track", "Create an Event Instrument first.");
-            return null;
-        }
-        if (_session.ActiveWorkspace is TimelineWorkspaceViewModel
-            {
-                Mode: TimelineWorkspaceMode.Arrangement
-            } arrangement
-            && _trackHeaderContextLane is int lane
-            && arrangement.GetArrangementLane(lane) is ArrangementLaneDescriptor descriptor)
-        {
-            if (descriptor.Kind == ArrangementLaneKind.EventInstrument
-                && descriptor.ObjectId is MidoraId instrumentId)
-                return instrumentId;
-            if (descriptor.Kind == ArrangementLaneKind.LogicalTrack
-                && descriptor.ParentId is MidoraId parentId)
-                return parentId;
-        }
-        if (project.EventInstruments.Count == 1) return project.EventInstruments[0].Id;
-        SelectionDialog dialog = new(
-            "Create Logical Track",
-            "Select the parent Event Instrument.",
-            project.EventInstrumentsInOrder().Select(value => new SelectionDialogItem(
-                value.Id,
-                string.IsNullOrWhiteSpace(value.Name) ? "Unnamed Event Instrument" : value.Name,
-                $"{value.LogicalTrackIds.Count} Logical Track(s)")))
-        {
-            Owner = this
-        };
-        return dialog.ShowDialog() == true && dialog.SelectedValue is MidoraId selected
-            ? selected
-            : null;
-    }
-
-    private void OnNewInstrumentFolderClick(object sender, RoutedEventArgs e)
+    private void OnNewTrackWithInstrumentClick(object sender, RoutedEventArgs e)
     {
         RunAfterMenuClosed(sender, () =>
         {
-            if (!_session.HasProject) return;
-            string name = UniqueFolderName();
-            RunSynchronous("Create Event Instrument Folder", () =>
-                _session.Execute(ProjectDomainEditCommands.CreateEventInstrumentFolder(name)));
+            if (_session.Project is not MidoraProject project) return;
+            NewLogicalTrackWithInstrumentDialog dialog = new(project.EventInstruments)
+            {
+                Owner = this
+            };
+            if (dialog.ShowDialog() != true) return;
+            if (dialog.CreatesInstrument)
+            {
+                RunSynchronous("Create Logical Track with Event Instrument", () =>
+                {
+                    _session.Execute(
+                        ProjectDomainEditCommands.CreateLogicalTrackWithNewEventInstrument(
+                            dialog.NewInstrumentName));
+                    _session.OpenInstrument(project.EventInstruments[^1].Id);
+                });
+            }
+            else if (dialog.ExistingInstrumentId is MidoraId instrumentId)
+            {
+                RunSynchronous("Create Logical Track", () =>
+                    _session.Execute(ProjectDomainEditCommands.CreateLogicalTrack(
+                        eventInstrumentId: instrumentId)));
+            }
+            _session.OpenArrangement();
+        });
+    }
+
+    private void OnNewRawMidiTrackClick(object sender, RoutedEventArgs e)
+    {
+        RunAfterMenuClosed(sender, () =>
+        {
+            if (_session.Project is not MidoraProject project) return;
+            NewRawMidiTrackDialog dialog = new(project.MidiChannelRoots) { Owner = this };
+            if (dialog.ShowDialog() != true) return;
+            RunSynchronous("Create Raw MIDI Track", () =>
+                _session.Execute(ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot(
+                    dialog.TrackName,
+                    dialog.RoutingMode,
+                    dialog.OneBasedPort,
+                    dialog.OneBasedChannel,
+                    dialog.ChannelMode)));
+            _session.OpenArrangement();
         });
     }
 
@@ -640,20 +641,6 @@ public partial class MainWindow : Window
         NewProjectItemPopup.IsOpen = false;
         NewProjectItemButton.IsChecked = false;
         _ = Dispatcher.BeginInvoke(action, DispatcherPriority.Normal);
-    }
-
-    private string UniqueFolderName()
-    {
-        const string basis = "New Folder";
-        HashSet<string> names = _session.Project!.EventInstrumentFolders
-            .Select(folder => folder.Name)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (!names.Contains(basis)) return basis;
-        for (int suffix = 2; ; suffix++)
-        {
-            string candidate = $"{basis} {suffix}";
-            if (!names.Contains(candidate)) return candidate;
-        }
     }
 
     private void OnProjectTreeDoubleClick(object sender, MouseButtonEventArgs e)
@@ -697,8 +684,7 @@ public partial class MainWindow : Window
         TreeViewItem? item = FindVisualAncestor<TreeViewItem>(e.OriginalSource as DependencyObject);
         if (item?.DataContext is not ProjectTreeNode node
             || node.Kind is not (ProjectTreeNodeKind.LogicalTrack
-                or ProjectTreeNodeKind.EventInstrument
-                or ProjectTreeNodeKind.InstrumentFolder))
+                or ProjectTreeNodeKind.EventInstrument))
         {
             return;
         }
@@ -774,10 +760,7 @@ public partial class MainWindow : Window
         return (source.Kind, target.Kind) switch
         {
             (ProjectTreeNodeKind.LogicalTrack, ProjectTreeNodeKind.LogicalTrack) => DragDropEffects.Move,
-            (ProjectTreeNodeKind.InstrumentFolder, ProjectTreeNodeKind.InstrumentFolder) => DragDropEffects.Move,
             (ProjectTreeNodeKind.EventInstrument, ProjectTreeNodeKind.EventInstrument) => DragDropEffects.Move,
-            (ProjectTreeNodeKind.EventInstrument, ProjectTreeNodeKind.InstrumentFolder
-                or ProjectTreeNodeKind.InstrumentLibrary) => DragDropEffects.Move,
             (ProjectTreeNodeKind.EventInstrument, ProjectTreeNodeKind.LogicalTrack
                 or ProjectTreeNodeKind.LogicalTracks) => DragDropEffects.Link,
             _ => DragDropEffects.None
@@ -800,24 +783,11 @@ public partial class MainWindow : Window
                     source,
                     project.Tracks.FindIndex(item => item.Id == targetTrackId));
                 return;
-            case (ProjectTreeNodeKind.InstrumentFolder, ProjectTreeNodeKind.InstrumentFolder)
-                when target.ObjectId is MidoraId targetFolderId:
-                _session.ReorderProjectTreeNode(
-                    source,
-                    project.EventInstrumentFolders.FindIndex(item => item.Id == targetFolderId));
-                return;
             case (ProjectTreeNodeKind.EventInstrument, ProjectTreeNodeKind.EventInstrument)
                 when target.ObjectId is MidoraId targetInstrumentId:
                 _session.ReorderProjectTreeNode(
                     source,
                     project.EventInstruments.FindIndex(item => item.Id == targetInstrumentId));
-                return;
-            case (ProjectTreeNodeKind.EventInstrument, ProjectTreeNodeKind.InstrumentFolder)
-                when target.ObjectId is MidoraId folderId:
-                _session.Execute(ProjectDomainEditCommands.MoveEventInstrumentToFolder(sourceId, folderId));
-                return;
-            case (ProjectTreeNodeKind.EventInstrument, ProjectTreeNodeKind.InstrumentLibrary):
-                _session.Execute(ProjectDomainEditCommands.MoveEventInstrumentToFolder(sourceId, null));
                 return;
             case (ProjectTreeNodeKind.EventInstrument, ProjectTreeNodeKind.LogicalTracks):
                 EventInstrument instrument = project.EventInstruments.Single(item => item.Id == sourceId);
@@ -826,7 +796,8 @@ public partial class MainWindow : Window
             case (ProjectTreeNodeKind.EventInstrument, ProjectTreeNodeKind.LogicalTrack)
                 when target.ObjectId is MidoraId targetTrackId:
                 LogicalTrack track = project.Tracks.Single(item => item.Id == targetTrackId);
-                if (track.EventInstrumentId is MidoraId currentId && currentId != sourceId)
+                if (project.ResolveEventInstrumentDefinitionId(track) is MidoraId currentId
+                    && currentId != sourceId)
                 {
                     EventInstrument? current = project.EventInstruments.FirstOrDefault(item => item.Id == currentId);
                     EventInstrument replacement = project.EventInstruments.Single(item => item.Id == sourceId);
@@ -1103,7 +1074,6 @@ public partial class MainWindow : Window
         {
             case ProjectTreeNodeKind.InstrumentLibrary:
                 Add("New Event Instrument", OnNewInstrumentClick);
-                Add("New Event Instrument Folder", OnNewInstrumentFolderClick);
                 Separator();
                 Add("Paste Event Instrument", OnPasteTreeInstrumentClick, "Ctrl+V");
                 break;
@@ -1143,17 +1113,6 @@ public partial class MainWindow : Window
                 Separator();
                 Add("Delete…", OnTreeDeleteClick);
                 break;
-            case ProjectTreeNodeKind.InstrumentFolder:
-                Add("Open", OnTreeOpenClick);
-                Add("Rename", OnTreeRenameClick, "F2");
-                Separator();
-                Add("Paste Event Instrument", OnPasteTreeInstrumentClick, "Ctrl+V");
-                Separator();
-                Add("Move Up", OnTreeMoveUpClick);
-                Add("Move Down", OnTreeMoveDownClick);
-                Separator();
-                Add("Delete…", OnTreeDeleteClick);
-                break;
             case ProjectTreeNodeKind.DamagedEventInstrument:
             case ProjectTreeNodeKind.DamagedLogicalTrack:
                 Add("Delete damaged placeholder…", OnTreeDeleteClick);
@@ -1173,7 +1132,7 @@ public partial class MainWindow : Window
         }
 
         menu.Items.Clear();
-        void Add(string header, RoutedEventHandler handler, string? gesture = null, bool enabled = true)
+        MenuItem Add(string header, RoutedEventHandler handler, string? gesture = null, bool enabled = true)
         {
             MenuItem item = new()
             {
@@ -1183,6 +1142,7 @@ public partial class MainWindow : Window
             };
             item.Click += handler;
             menu.Items.Add(item);
+            return item;
         }
         void Separator() => menu.Items.Add(new Separator());
 
@@ -1194,6 +1154,11 @@ public partial class MainWindow : Window
             _trackHeaderContextLane = surface.TryGetArrangementLaneHeader(contextPoint, out int contextLane)
                 ? contextLane
                 : null;
+            _arrangementSharedGroupContextId = surface.TryGetArrangementSharedGroupHeaderTarget(
+                    contextPoint,
+                    out MidoraId sharedGroupId)
+                ? sharedGroupId
+                : null;
         }
         if (isLaneHeader)
         {
@@ -1202,8 +1167,10 @@ public partial class MainWindow : Window
                 case TimelineSurfaceMode.Arrangement:
                     if (!TryGetArrangementHeaderContext(out ArrangementLaneDescriptor header))
                     {
-                        Add("New Event Instrument", OnNewInstrumentClick, enabled: _session.CanEditProject);
-                        Add("New MIDI Channel Root", OnNewMidiRootClick, enabled: _session.CanEditProject);
+                        Add("New Logical Track", OnNewTrackClick, enabled: _session.CanEditProject);
+                        Add("New Logical Track with Instrument…", OnNewTrackWithInstrumentClick,
+                            enabled: _session.CanEditProject);
+                        Add("New MIDI Track…", OnNewRawMidiTrackClick, enabled: _session.CanEditProject);
                         return;
                     }
                     if (header.Kind is ArrangementLaneKind.DamagedEventInstrument
@@ -1218,15 +1185,70 @@ public partial class MainWindow : Window
                         return;
                     }
                     bool editable = _session.CanEditProject && header.Kind != ArrangementLaneKind.Conductor;
-                    if (header.Kind is ArrangementLaneKind.Conductor or ArrangementLaneKind.EventInstrument)
-                        Add("Open", OnArrangementHeaderOpenClick, enabled: header.Kind == ArrangementLaneKind.Conductor || header.ObjectId is not null);
+                    if (_arrangementSharedGroupContextId is MidoraId groupId)
+                    {
+                        if (header.SharedGroupMemberCount > 1)
+                        {
+                            MenuItem muteGroup = Add(
+                                "Mute Shared Group",
+                                OnArrangementSharedGroupMuteClick,
+                                enabled: true);
+                            muteGroup.IsCheckable = true;
+                            muteGroup.IsChecked = _session.IsSharedGroupMuted(groupId);
+                            MenuItem soloGroup = Add(
+                                "Solo Shared Group",
+                                OnArrangementSharedGroupSoloClick,
+                                enabled: true);
+                            soloGroup.IsCheckable = true;
+                            soloGroup.IsChecked = _session.IsSharedGroupSolo(groupId);
+                        }
+                        if (header.Kind == ArrangementLaneKind.LogicalTrack)
+                        {
+                            Add(
+                                "Change Event Instrument for Shared Group…",
+                                OnArrangementSharedGroupInstrumentClick,
+                                enabled: editable && _session.Project?.EventInstruments.Count > 0);
+                        }
+                        else if (header.Kind == ArrangementLaneKind.PureMidiTrack)
+                        {
+                            Add("Shared MIDI Route Settings…", OnArrangementSharedRootSettingsClick, enabled: editable);
+                        }
+                        if (header.IsSharedGroup)
+                        {
+                            (bool groupUp, bool groupDown) = ArrangementSharedGroupMoveAvailability(groupId);
+                            Add("Move Shared Group Up", OnArrangementSharedGroupMoveUpClick,
+                                enabled: editable && groupUp);
+                            Add("Move Shared Group Down", OnArrangementSharedGroupMoveDownClick,
+                                enabled: editable && groupDown);
+                            Add(
+                                "Make All Tracks Independent",
+                                OnArrangementSharedGroupMakeIndependentClick,
+                                enabled: editable);
+                        }
+                        Separator();
+                        if (header.IsSharedGroup) return;
+                    }
+                    if (header.Kind == ArrangementLaneKind.Conductor)
+                        Add("Open", OnArrangementHeaderOpenClick);
                     if (header.Kind != ArrangementLaneKind.Conductor)
                         Add("Rename…", OnArrangementHeaderRenameClick, "F2", editable);
                     if (header.Kind == ArrangementLaneKind.LogicalTrack)
+                    {
                         Add("Change Event Instrument…", OnTrackHeaderBindClick,
-                            enabled: editable && _session.Project?.EventInstruments.Count > 1);
-                    if (header.Kind == ArrangementLaneKind.MidiChannelRoot)
-                        Add("Settings…", OnArrangementRootSettingsClick, enabled: editable);
+                            enabled: editable && _session.Project?.EventInstruments.Count > 0);
+                        Add("Share Instrument State With…", OnLogicalTrackShareStateClick,
+                            enabled: editable && _session.Project?.Tracks.Count > 1);
+                        Add("Make Independent", OnLogicalTrackMakeIndependentClick,
+                            enabled: editable && header.IsSharedGroup);
+                    }
+                    if (header.Kind == ArrangementLaneKind.PureMidiTrack)
+                    {
+                        Add("MIDI Route Settings…", OnArrangementTrackRouteSettingsClick, enabled: editable);
+                        Add("Share MIDI Channel With…", OnMidiTrackShareChannelClick,
+                            enabled: editable && _session.Project?.PureMidiTracks.Count > 1);
+                        Add("Make Independent", OnMidiTrackMakeIndependentClick,
+                            enabled: editable && header.IsSharedGroup);
+                    }
                     if (header.Kind != ArrangementLaneKind.Conductor) Separator();
                     if (header.Kind != ArrangementLaneKind.Conductor)
                     {
@@ -1235,8 +1257,13 @@ public partial class MainWindow : Window
                         Add("Paste", OnArrangementHeaderPasteClick, "Ctrl+V",
                             _session.CanEditProject && CanPasteArrangementHeader(header));
                         Add("Duplicate", OnArrangementHeaderDuplicateClick, "Ctrl+D", editable);
-                        if (header.Kind == ArrangementLaneKind.EventInstrument)
-                            Add("Duplicate Instrument Only", OnArrangementHeaderDuplicateInstrumentOnlyClick, enabled: editable);
+                        if (header.Kind == ArrangementLaneKind.LogicalTrack)
+                        {
+                            Add(
+                                "Duplicate Instrument Only",
+                                OnArrangementHeaderDuplicateInstrumentOnlyClick,
+                                enabled: editable && header.ParentId.HasValue);
+                        }
                         Separator();
                     }
                     if (header.Kind is ArrangementLaneKind.LogicalTrack or ArrangementLaneKind.PureMidiTrack)
@@ -1255,14 +1282,12 @@ public partial class MainWindow : Window
                         Add("Delete…", OnArrangementHeaderDeleteClick, enabled: editable);
                         Separator();
                     }
-                    if (header.Kind is ArrangementLaneKind.EventInstrument or ArrangementLaneKind.LogicalTrack)
-                        Add("New Logical Track", OnTrackHeaderNewTrackClick, enabled: _session.CanEditProject);
-                    else if (header.Kind is ArrangementLaneKind.MidiChannelRoot or ArrangementLaneKind.PureMidiTrack)
-                        Add("New MIDI Track", OnArrangementHeaderNewMidiTrackClick, enabled: _session.CanEditProject);
-                    else
+                    if (header.Kind == ArrangementLaneKind.Conductor)
                     {
-                        Add("New Event Instrument", OnNewInstrumentClick, enabled: _session.CanEditProject);
-                        Add("New MIDI Channel Root", OnNewMidiRootClick, enabled: _session.CanEditProject);
+                        Add("New Logical Track", OnNewTrackClick, enabled: _session.CanEditProject);
+                        Add("New Logical Track with Instrument…", OnNewTrackWithInstrumentClick,
+                            enabled: _session.CanEditProject);
+                        Add("New MIDI Track…", OnNewRawMidiTrackClick, enabled: _session.CanEditProject);
                     }
                     return;
                 case TimelineSurfaceMode.EventLanes
@@ -1390,33 +1415,25 @@ public partial class MainWindow : Window
     {
         if (ProjectTree.SelectedItem is not ProjectTreeNode node
             || node.Kind is not (ProjectTreeNodeKind.LogicalTrack
-                or ProjectTreeNodeKind.EventInstrument
-                or ProjectTreeNodeKind.InstrumentFolder))
+                or ProjectTreeNodeKind.EventInstrument))
         {
             return;
         }
-        if (node.Kind is ProjectTreeNodeKind.LogicalTrack or ProjectTreeNodeKind.EventInstrument)
+        string kind = node.Kind == ProjectTreeNodeKind.LogicalTrack
+            ? "Logical Track"
+            : "Event Instrument";
+        TextInputDialog dialog = new(
+            $"Rename {kind}",
+            $"Enter the {kind} name.",
+            node.Title)
         {
-            string kind = node.Kind == ProjectTreeNodeKind.LogicalTrack
-                ? "Logical Track"
-                : "Event Instrument";
-            TextInputDialog dialog = new(
-                $"Rename {kind}",
-                $"Enter the {kind} name.",
-                node.Title)
-            {
-                Owner = this
-            };
-            if (dialog.ShowDialog() == true)
-            {
-                RunSynchronous($"Rename {kind}", () =>
-                    _session.RenameProjectTreeNode(node, dialog.Value));
-            }
-            return;
+            Owner = this
+        };
+        if (dialog.ShowDialog() == true)
+        {
+            RunSynchronous($"Rename {kind}", () =>
+                _session.RenameProjectTreeNode(node, dialog.Value));
         }
-
-        node.EditText = node.Title;
-        node.IsRenaming = true;
     }
 
     private void OnTreeRenameLoaded(object sender, RoutedEventArgs e)
@@ -1535,9 +1552,7 @@ public partial class MainWindow : Window
             ProjectTreeNodeKind.LogicalTrack when node.ObjectId is MidoraId id =>
                 $"Delete Logical Track '{node.Title}' and its {_session.Project.Tracks.Single(item => item.Id == id).Segments.Count} Segment(s)?",
             ProjectTreeNodeKind.EventInstrument when node.ObjectId is MidoraId id =>
-                $"Delete Event Instrument '{node.Title}'? {_session.Project.Tracks.Count(item => item.EventInstrumentId == id)} bound Logical Track(s) will become unbound.",
-            ProjectTreeNodeKind.InstrumentFolder when node.ObjectId is MidoraId id =>
-                $"Delete folder '{node.Title}'? {_session.Project.EventInstruments.Count(item => item.LibraryFolderId == id)} contained Event Instrument(s) will be moved to Unfiled.",
+                $"Delete Event Instrument '{node.Title}'? {_session.Project.EventInstrumentUsages.Count(item => item.EventInstrumentId == id)} usage(s) still reference it.",
             ProjectTreeNodeKind.DamagedEventInstrument =>
                 $"Permanently remove damaged Event Instrument placeholder '{node.Title}' from the Project? Bound Logical Tracks will become unbound and retain the last known instrument name. This operation is undoable until the Project closes.",
             ProjectTreeNodeKind.DamagedLogicalTrack =>
@@ -1566,10 +1581,12 @@ public partial class MainWindow : Window
     private void OnInstrumentListMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         _instrumentListDragStart = e.GetPosition((IInputElement)sender);
-        _instrumentListDragId = FindListBoxItem(e.OriginalSource as DependencyObject)?.DataContext
-            is InstrumentListItem item
-            ? item.Id
-            : null;
+        _instrumentListDragId = FindListBoxItem(e.OriginalSource as DependencyObject)?.DataContext switch
+        {
+            InstrumentListItem item => item.Id,
+            EventInstrumentBrowserRow row => row.Id,
+            _ => null
+        };
     }
 
     private static ListBoxItem? FindListBoxItem(DependencyObject? current)
@@ -1591,28 +1608,204 @@ public partial class MainWindow : Window
             return;
         }
         Point current = e.GetPosition(list);
-        if (Math.Abs(current.X - start.X) < SystemParameters.MinimumHorizontalDragDistance
-            && Math.Abs(current.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance)
+        if (!HasReachedUiReorderDragThreshold(start, current))
         {
             return;
         }
         _instrumentListDragStart = null;
         _instrumentListDragId = null;
         DataObject data = new(EventInstrumentDragFormat, instrumentId.Value);
-        DragDrop.DoDragDrop(list, data, DragDropEffects.Link);
+        DragDrop.DoDragDrop(list, data, DragDropEffects.Link | DragDropEffects.Move);
+    }
+
+    private void OnEventInstrumentBrowserDragOver(object sender, DragEventArgs e)
+    {
+        ListBoxItem? targetContainer = null;
+        bool insertAfter = false;
+        bool accepted = false;
+        if (sender is ListBox list)
+        {
+            accepted = TryResolveEventInstrumentBrowserDrop(
+                list,
+                e,
+                out _,
+                out _,
+                out targetContainer,
+                out insertAfter);
+        }
+        if (accepted)
+        {
+            SetEventInstrumentBrowserDropPreview(targetContainer, insertAfter);
+        }
+        else
+        {
+            ClearEventInstrumentBrowserDropPreview();
+        }
+        e.Effects = accepted ? DragDropEffects.Move : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnEventInstrumentBrowserDragLeave(object sender, DragEventArgs e)
+    {
+        ClearEventInstrumentBrowserDropPreview();
+        e.Handled = true;
+    }
+
+    private void OnEventInstrumentBrowserDrop(object sender, DragEventArgs e)
+    {
+        MidoraId instrumentId = default;
+        int targetIndex = -1;
+        bool accepted = false;
+        if (sender is ListBox list)
+        {
+            accepted = TryResolveEventInstrumentBrowserDrop(
+                list,
+                e,
+                out instrumentId,
+                out targetIndex,
+                out _,
+                out _);
+        }
+        ClearEventInstrumentBrowserDropPreview();
+        e.Effects = accepted ? DragDropEffects.Move : DragDropEffects.None;
+        e.Handled = true;
+        if (!accepted) return;
+        RunSynchronous("Move Event Instrument", () => _session.Execute(
+            ProjectDomainEditCommands.ReorderEventInstrument(instrumentId, targetIndex)));
+    }
+
+    private bool TryResolveEventInstrumentBrowserDrop(
+        ListBox list,
+        DragEventArgs e,
+        out MidoraId instrumentId,
+        out int targetIndex,
+        out ListBoxItem? targetContainer,
+        out bool insertAfter)
+    {
+        instrumentId = default;
+        targetIndex = -1;
+        targetContainer = null;
+        insertAfter = false;
+        if (!_session.CanEditProject
+            || _session.Project is not MidoraProject project
+            || FindVisualAncestor<ScrollBar>(e.OriginalSource as DependencyObject) is not null
+            || !e.Data.GetDataPresent(EventInstrumentDragFormat)
+            || e.Data.GetData(EventInstrumentDragFormat) is not long rawId
+            || rawId <= 0)
+        {
+            return false;
+        }
+        MidoraId candidate = new(rawId);
+        int sourceIndex = project.EventInstruments.FindIndex(value => value.Id == candidate);
+        if (sourceIndex < 0) return false;
+
+        int boundaryIndex;
+        targetContainer = FindListBoxItem(e.OriginalSource as DependencyObject);
+        if (targetContainer?.DataContext is EventInstrumentBrowserRow targetRow)
+        {
+            int itemIndex = project.EventInstruments.FindIndex(value => value.Id == targetRow.Id);
+            if (itemIndex < 0) return false;
+            insertAfter = e.GetPosition(targetContainer).Y >= targetContainer.ActualHeight / 2;
+            boundaryIndex = itemIndex + (insertAfter ? 1 : 0);
+        }
+        else
+        {
+            Point point = e.GetPosition(list);
+            if (point.Y < 0 || point.Y >= list.ActualHeight) return false;
+            boundaryIndex = project.EventInstruments.Count;
+            if (project.EventInstruments.Count != 0
+                && list.ItemContainerGenerator.ContainerFromIndex(0) is ListBoxItem first)
+            {
+                double firstTop = first.TranslatePoint(new Point(0, 0), list).Y;
+                if (point.Y < firstTop)
+                {
+                    boundaryIndex = 0;
+                    targetContainer = first;
+                    insertAfter = false;
+                }
+                else if (list.ItemContainerGenerator.ContainerFromIndex(
+                             project.EventInstruments.Count - 1) is ListBoxItem last)
+                {
+                    targetContainer = last;
+                    insertAfter = true;
+                }
+            }
+        }
+
+        if (boundaryIndex > sourceIndex) boundaryIndex--;
+        instrumentId = candidate;
+        targetIndex = Math.Clamp(boundaryIndex, 0, project.EventInstruments.Count - 1);
+        return true;
+    }
+
+    private void SetEventInstrumentBrowserDropPreview(
+        ListBoxItem? targetContainer,
+        bool insertAfter)
+    {
+        if (ReferenceEquals(_instrumentBrowserDropContainer, targetContainer)
+            && _instrumentBrowserDropAfter == insertAfter)
+        {
+            return;
+        }
+        ClearEventInstrumentBrowserDropPreview();
+        _instrumentBrowserDropContainer = targetContainer;
+        _instrumentBrowserDropAfter = insertAfter;
+        if (targetContainer is null) return;
+        targetContainer.SetResourceReference(Control.BorderBrushProperty, "Brush.Info");
+        targetContainer.BorderThickness = insertAfter
+            ? new Thickness(0, 0, 0, 2)
+            : new Thickness(0, 2, 0, 0);
+    }
+
+    private void ClearEventInstrumentBrowserDropPreview()
+    {
+        if (_instrumentBrowserDropContainer is not null)
+        {
+            _instrumentBrowserDropContainer.ClearValue(Control.BorderBrushProperty);
+            _instrumentBrowserDropContainer.ClearValue(Control.BorderThicknessProperty);
+        }
+        _instrumentBrowserDropContainer = null;
+        _instrumentBrowserDropAfter = false;
     }
 
     private void OnTimelineInstrumentDragOver(object sender, DragEventArgs e)
     {
-        e.Effects = TryResolveInstrumentDrop(sender, e, out _, out _)
-            ? DragDropEffects.Link
-            : DragDropEffects.None;
+        bool accepted = TryResolveInstrumentDrop(
+            sender,
+            e,
+            out LogicalTrack? track,
+            out _,
+            out int? insertionIndex);
+        if (sender is TimelineSurface surface)
+        {
+            surface.SetExternalArrangementInsertionPreview(
+                accepted && track is null ? insertionIndex : null);
+        }
+        e.Effects = accepted ? DragDropEffects.Link : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnTimelineInstrumentDragLeave(object sender, DragEventArgs e)
+    {
+        if (sender is TimelineSurface surface)
+        {
+            surface.SetExternalArrangementInsertionPreview(null);
+        }
         e.Handled = true;
     }
 
     private void OnTimelineInstrumentDrop(object sender, DragEventArgs e)
     {
-        if (!TryResolveInstrumentDrop(sender, e, out LogicalTrack track, out MidoraId instrumentId))
+        if (sender is TimelineSurface surface)
+        {
+            surface.SetExternalArrangementInsertionPreview(null);
+        }
+        if (!TryResolveInstrumentDrop(
+                sender,
+                e,
+                out LogicalTrack? track,
+                out MidoraId instrumentId,
+                out int? insertionIndex))
         {
             e.Effects = DragDropEffects.None;
             e.Handled = true;
@@ -1620,25 +1813,38 @@ public partial class MainWindow : Window
         }
         e.Effects = DragDropEffects.Link;
         e.Handled = true;
-        MidoraId trackId = track.Id;
+        MidoraId? trackId = track?.Id;
+        int? trackInsertionIndex = insertionIndex;
         _ = Dispatcher.BeginInvoke(
             DispatcherPriority.Input,
             () =>
             {
-                LogicalTrack? current = _session.Project?.Tracks
-                    .FirstOrDefault(value => value.Id == trackId);
-                if (current is not null) BindTrackToInstrument(current, instrumentId);
+                if (trackId is MidoraId existingTrackId)
+                {
+                    LogicalTrack? current = _session.Project?.Tracks
+                        .FirstOrDefault(value => value.Id == existingTrackId);
+                    if (current is not null) BindTrackToInstrument(current, instrumentId);
+                }
+                else
+                {
+                    RunSynchronous("Create Logical Track", () => _session.Execute(
+                        ProjectDomainEditCommands.CreateLogicalTrack(
+                            eventInstrumentId: instrumentId,
+                            insertionIndex: trackInsertionIndex)));
+                }
             });
     }
 
     private bool TryResolveInstrumentDrop(
         object sender,
         DragEventArgs e,
-        out LogicalTrack track,
-        out MidoraId instrumentId)
+        out LogicalTrack? track,
+        out MidoraId instrumentId,
+        out int? insertionIndex)
     {
-        track = null!;
+        track = null;
         instrumentId = default;
+        insertionIndex = null;
         if (sender is not TimelineSurface surface
             || surface.SurfaceMode != TimelineSurfaceMode.Arrangement
             || !_session.CanEditProject
@@ -1646,26 +1852,36 @@ public partial class MainWindow : Window
             || !e.Data.GetDataPresent(EventInstrumentDragFormat)
             || e.Data.GetData(EventInstrumentDragFormat) is not long rawId
             || rawId <= 0
-            || !surface.TryGetArrangementLaneHeader(e.GetPosition(surface), out int lane)
-            || _session.ActiveWorkspace is not TimelineWorkspaceViewModel arrangement
-            || arrangement.GetArrangementLane(lane) is not
-            { Kind: ArrangementLaneKind.LogicalTrack, ObjectId: MidoraId logicalTrackId })
+            || _session.ActiveWorkspace is not TimelineWorkspaceViewModel arrangement)
         {
             return false;
         }
         MidoraId candidateInstrumentId = new(rawId);
         if (!project.EventInstruments.Any(item => item.Id == candidateInstrumentId)) return false;
         instrumentId = candidateInstrumentId;
-        track = project.Tracks.FirstOrDefault(value => value.Id == logicalTrackId)!;
-        return track is not null;
+        Point point = e.GetPosition(surface);
+        if (surface.TryGetArrangementLaneHeader(point, out int lane)
+            && arrangement.GetArrangementLane(lane) is
+            { Kind: ArrangementLaneKind.LogicalTrack, ObjectId: MidoraId logicalTrackId })
+        {
+            track = project.Tracks.FirstOrDefault(value => value.Id == logicalTrackId);
+            return track is not null;
+        }
+        if (!surface.TryGetArrangementTrackInsertionIndex(point, out int candidateInsertionIndex))
+        {
+            return false;
+        }
+        insertionIndex = Math.Clamp(candidateInsertionIndex, 0, project.ArrangementTracks.Count);
+        return true;
     }
 
     private void BindTrackToInstrument(LogicalTrack track, MidoraId instrumentId)
     {
         if (_session.Project is not MidoraProject project) return;
         EventInstrument? instrument = project.EventInstruments.FirstOrDefault(item => item.Id == instrumentId);
-        if (instrument is null || track.EventInstrumentId == instrumentId) return;
-        if (track.EventInstrumentId is not null
+        MidoraId? currentInstrumentId = project.ResolveEventInstrumentDefinitionId(track);
+        if (instrument is null || currentInstrumentId == instrumentId) return;
+        if (currentInstrumentId is not null
             && MessageDialog.Show(
                 this,
                 $"Rebind Logical Track '{TimelineWorkspaceViewModel.TrackDisplayName(project, track)}' to Event Instrument '{instrument.Name}'?",
@@ -1720,10 +1936,11 @@ public partial class MainWindow : Window
         {
             return;
         }
-        int bindings = project.Tracks.Count(track => track.EventInstrumentId == selected.Id);
+        int bindings = project.EventInstrumentUsages.Count(
+            usage => usage.EventInstrumentId == selected.Id);
         if (MessageDialog.Show(
                 this,
-                $"Delete Event Instrument '{selected.Name}'? {bindings} bound Logical Track(s) will become unbound.",
+                $"Delete Event Instrument '{selected.Name}'? {bindings} usage(s) still reference it.",
                 "Delete Event Instrument",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning) != MessageBoxResult.Yes)
@@ -1789,14 +2006,12 @@ public partial class MainWindow : Window
         {
             return false;
         }
-        MidoraId? targetFolderId = ResolveEventInstrumentPasteFolder(project);
         RunSynchronous("Paste Event Instrument", () =>
         {
             long firstNewStableId = project.NextStableId;
             _session.Execute(ProjectObjectClipboard.CreatePasteEventInstrumentCommand(
                 document,
-                payload,
-                targetFolderId));
+                payload));
             if (_session.ActiveWorkspace is LibraryWorkspaceViewModel library)
             {
                 library.SelectedInstrument = library.Instruments
@@ -1834,25 +2049,8 @@ public partial class MainWindow : Window
             && ProjectTree.SelectedItem is ProjectTreeNode
             {
                 Kind: ProjectTreeNodeKind.InstrumentLibrary
-                    or ProjectTreeNodeKind.InstrumentFolder
                     or ProjectTreeNodeKind.EventInstrument
             };
-
-    private MidoraId? ResolveEventInstrumentPasteFolder(MidoraProject project)
-    {
-        if (ProjectTree.IsKeyboardFocusWithin && ProjectTree.SelectedItem is ProjectTreeNode node)
-        {
-            if (node.Kind == ProjectTreeNodeKind.InstrumentFolder) return node.ObjectId;
-            if (node.Kind == ProjectTreeNodeKind.EventInstrument
-                && node.ObjectId is MidoraId instrumentId)
-            {
-                return project.EventInstruments
-                    .FirstOrDefault(value => value.Id == instrumentId)?.LibraryFolderId;
-            }
-            if (node.Kind == ProjectTreeNodeKind.InstrumentLibrary) return null;
-        }
-        return null;
-    }
 
     private void OnCopyTreeInstrumentClick(object sender, RoutedEventArgs e)
     {
@@ -1947,21 +2145,22 @@ public partial class MainWindow : Window
         {
             return false;
         }
-        (MidoraId ParentId, int Index)? target = ResolveLogicalTrackPasteTarget(project);
-        if (target is null) return false;
+        MidoraId? targetInstrumentId = ResolveLogicalTrackPasteTarget(project);
+        if (targetInstrumentId is null) return false;
+        int targetIndex = Math.Clamp(insertionIndex, 0, project.ArrangementTracks.Count);
         RunSynchronous("Paste Logical Track", () =>
         {
             _session.Execute(ProjectObjectClipboard.CreatePasteLogicalTrackCommand(
                 document,
                 payload,
-                target.Value.ParentId,
-                target.Value.Index));
+                targetInstrumentId.Value,
+                targetIndex));
             _session.SetStatusMessage($"Pasted {payload.PlainTextSummary}.");
         });
         return true;
     }
 
-    private (MidoraId ParentId, int Index)? ResolveLogicalTrackPasteTarget(MidoraProject project)
+    private MidoraId? ResolveLogicalTrackPasteTarget(MidoraProject project)
     {
         if (_session.ActiveWorkspace is TimelineWorkspaceViewModel
             {
@@ -1972,28 +2171,34 @@ public partial class MainWindow : Window
             if (lane is int laneIndex
                 && arrangement.GetArrangementLane(laneIndex) is ArrangementLaneDescriptor descriptor)
             {
-                MidoraId? parentId = descriptor.Kind == ArrangementLaneKind.EventInstrument
-                    ? descriptor.ObjectId
-                    : descriptor.Kind == ArrangementLaneKind.LogicalTrack
-                        ? descriptor.ParentId
-                        : null;
-                if (parentId is MidoraId id
-                    && project.EventInstruments.FirstOrDefault(value => value.Id == id) is EventInstrument parent)
+                if (descriptor.Kind == ArrangementLaneKind.LogicalTrack
+                    && descriptor.ParentId is MidoraId id
+                    && project.EventInstruments.Any(value => value.Id == id))
                 {
-                    int index = descriptor.Kind == ArrangementLaneKind.LogicalTrack
-                        && descriptor.ObjectId is MidoraId trackId
-                            ? Math.Max(0, parent.LogicalTrackIds.IndexOf(trackId) + 1)
-                            : parent.LogicalTrackIds.Count;
-                    return (id, index);
+                    return id;
                 }
             }
         }
         if (project.EventInstruments.Count == 1)
-            return (project.EventInstruments[0].Id, project.EventInstruments[0].LogicalTrackIds.Count);
-        MidoraId? selected = ResolveLogicalTrackCreationParent();
-        if (selected is not MidoraId selectedParentId) return null;
-        EventInstrument target = project.EventInstruments.Single(value => value.Id == selectedParentId);
-        return (selectedParentId, target.LogicalTrackIds.Count);
+            return project.EventInstruments[0].Id;
+        if (project.EventInstruments.Count == 0)
+        {
+            ShowUnavailable("Paste Logical Track", "Create an Event Instrument first.");
+            return null;
+        }
+        SelectionDialog dialog = new(
+            "Paste Logical Track",
+            "Select the Event Instrument Definition for the pasted independent usage.",
+            project.EventInstruments.Select(value => new SelectionDialogItem(
+                value.Id,
+                string.IsNullOrWhiteSpace(value.Name) ? "Unnamed Event Instrument" : value.Name,
+                $"Stable ID {value.Id}")))
+        {
+            Owner = this
+        };
+        return dialog.ShowDialog() == true && dialog.SelectedValue is MidoraId selected
+            ? selected
+            : null;
     }
 
     private int ResolveLogicalTrackPasteIndex(
@@ -2009,34 +2214,40 @@ public partial class MainWindow : Window
         {
             if (treeNode is { Kind: ProjectTreeNodeKind.LogicalTrack, ObjectId: MidoraId trackId })
             {
-                int index = project.Tracks.FindIndex(value => value.Id == trackId);
+                int index = project.ArrangementTracks.FindIndex(value => value.TrackId == trackId);
                 if (index >= 0) return index + 1;
             }
             if (treeNode.Kind == ProjectTreeNodeKind.LogicalTracks)
             {
-                return project.Tracks.Count;
+                return project.ArrangementTracks.Count;
             }
         }
         if (preferTrackHeaderContext
             && _trackHeaderContextLane is int contextLane
-            && (uint)contextLane < (uint)project.Tracks.Count)
+            && _session.ActiveWorkspace is TimelineWorkspaceViewModel arrangement
+            && arrangement.GetArrangementLane(contextLane) is { ObjectId: MidoraId contextTrackId })
         {
-            return contextLane + 1;
+            int index = project.ArrangementTracks.FindIndex(value => value.TrackId == contextTrackId);
+            if (index >= 0) return index + 1;
         }
         if (_logicalTrackShortcutTrackId is MidoraId shortcutTrackId
             && GetFocusedTimelineSurface() is { SurfaceMode: TimelineSurfaceMode.Arrangement }
             && _session.ActiveWorkspace is TimelineWorkspaceViewModel
             { Mode: TimelineWorkspaceMode.Arrangement })
         {
-            int shortcutIndex = project.Tracks.FindIndex(value => value.Id == shortcutTrackId);
+            int shortcutIndex = project.ArrangementTracks.FindIndex(value => value.TrackId == shortcutTrackId);
             if (shortcutIndex >= 0) return shortcutIndex + 1;
         }
         if (_session.ActiveWorkspace is TimelineWorkspaceViewModel
-            { Mode: TimelineWorkspaceMode.Arrangement, ActiveLane: int activeLane })
+            { Mode: TimelineWorkspaceMode.Arrangement, ActiveLane: int activeLane } timeline)
         {
-            return Math.Clamp(activeLane + 1, 0, project.Tracks.Count);
+            ArrangementLaneDescriptor? lane = timeline.GetArrangementLane(activeLane);
+            int index = lane?.ObjectId is MidoraId activeTrackId
+                ? project.ArrangementTracks.FindIndex(value => value.TrackId == activeTrackId)
+                : -1;
+            return index < 0 ? project.ArrangementTracks.Count : index + 1;
         }
-        return project.Tracks.Count;
+        return project.ArrangementTracks.Count;
     }
 
     private bool TryGetSelectedLogicalTrack(
@@ -2070,30 +2281,6 @@ public partial class MainWindow : Window
         }
         track = project.Tracks[index];
         return true;
-    }
-
-    private void OnMoveLibraryInstrumentClick(object sender, RoutedEventArgs e)
-    {
-        if (_session.Project is not MidoraProject project
-            || _session.ActiveWorkspace is not LibraryWorkspaceViewModel
-            {
-                SelectedInstrument: InstrumentListItem selected
-            })
-        {
-            return;
-        }
-        List<SelectionDialogItem> options = [new("unfiled", "Unfiled", "Top-level library")];
-        options.AddRange(project.EventInstrumentFolders.Select(folder =>
-            new SelectionDialogItem(folder.Id, folder.Name, "Event Instrument folder")));
-        SelectionDialog dialog = new(
-            "Move Event Instrument",
-            $"Choose a folder for '{selected.Name}'. This changes manual library organization only.",
-            options)
-        { Owner = this };
-        if (dialog.ShowDialog() != true) return;
-        MidoraId? folderId = dialog.SelectedValue is MidoraId id ? id : null;
-        RunSynchronous("Move Event Instrument", () => _session.Execute(
-            ProjectDomainEditCommands.MoveEventInstrumentToFolder(selected.Id, folderId)));
     }
 
     private void OnAddSubVoiceClick(object sender, RoutedEventArgs e)
@@ -3463,12 +3650,7 @@ public partial class MainWindow : Window
         }
         ArrangementLaneDescriptor? lane = workspace.GetArrangementLane(e.Lane);
         if (lane is null) return;
-        if (e.Command == TimelineLaneHeaderCommand.ToggleExpanded)
-        {
-            if (workspace.ToggleArrangementParentExpanded(e.Lane))
-                _session.RefreshWorkspace(workspace);
-            return;
-        }
+        if (e.Command == TimelineLaneHeaderCommand.ToggleExpanded) return;
         if (lane.Value.ObjectId is not MidoraId objectId
             || lane.Value.Kind == ArrangementLaneKind.Conductor)
         {
@@ -3478,21 +3660,7 @@ public partial class MainWindow : Window
             e.Command == TimelineLaneHeaderCommand.ToggleMute ? "Toggle Mute" : "Toggle Solo",
             () =>
             {
-                bool isParent = lane.Value.Kind is ArrangementLaneKind.EventInstrument
-                    or ArrangementLaneKind.MidiChannelRoot;
-                if (isParent && e.Command == TimelineLaneHeaderCommand.ToggleMute)
-                {
-                    _session.SetArrangementParentMuted(
-                        objectId,
-                        !_session.IsArrangementParentMuted(objectId));
-                }
-                else if (isParent)
-                {
-                    _session.SetArrangementParentSolo(
-                        objectId,
-                        !_session.IsArrangementParentSolo(objectId));
-                }
-                else if (e.Command == TimelineLaneHeaderCommand.ToggleMute)
+                if (e.Command == TimelineLaneHeaderCommand.ToggleMute)
                 {
                     _session.SetTrackMuted(objectId, !_session.IsTrackMuted(objectId));
                 }
@@ -3515,9 +3683,7 @@ public partial class MainWindow : Window
         if (workspace is TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement } arrangement
             && arrangement.GetArrangementLane(e.Lane) is { ObjectId: MidoraId arrangementObjectId } arrangementLane)
         {
-            if (arrangementLane.Kind is ArrangementLaneKind.EventInstrument
-                or ArrangementLaneKind.MidiChannelRoot
-                or ArrangementLaneKind.LogicalTrack
+            if (arrangementLane.Kind is ArrangementLaneKind.LogicalTrack
                 or ArrangementLaneKind.PureMidiTrack)
             {
                 _arrangementHeaderShortcut = (arrangementLane.Kind, arrangementObjectId);
@@ -3529,13 +3695,6 @@ public partial class MainWindow : Window
             {
                 _arrangementHeaderShortcut = null;
                 _logicalTrackShortcutTrackId = null;
-            }
-            if (arrangementLane.Kind is ArrangementLaneKind.EventInstrument
-                or ArrangementLaneKind.MidiChannelRoot)
-            {
-                if (arrangement.ToggleArrangementParentExpanded(e.Lane))
-                    _session.RefreshWorkspace(arrangement);
-                return;
             }
         }
         if (sender is TimelineSurface { Tag: "ParameterLanes" }
@@ -3572,39 +3731,185 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnArrangementExpandAllClick(object sender, RoutedEventArgs e) =>
-        SetAllArrangementParentsExpanded(sender, expanded: true);
+    private static EventInstrumentBrowserRow? EventInstrumentBrowserRowFrom(object sender) =>
+        sender switch
+        {
+            ListBox { SelectedItem: EventInstrumentBrowserRow row } => row,
+            FrameworkElement { DataContext: EventInstrumentBrowserRow row } => row,
+            _ => null
+        };
 
-    private void OnArrangementCollapseAllClick(object sender, RoutedEventArgs e) =>
-        SetAllArrangementParentsExpanded(sender, expanded: false);
-
-    private void SetAllArrangementParentsExpanded(object sender, bool expanded)
+    private void OnEventInstrumentBrowserRightButtonDown(
+        object sender,
+        MouseButtonEventArgs e)
     {
-        if (sender is not FrameworkElement
-            {
-                DataContext: TimelineWorkspaceViewModel
-                {
-                    Mode: TimelineWorkspaceMode.Arrangement
-                } workspace
-            })
+        if (sender is not ListBox list) return;
+        DependencyObject? current = e.OriginalSource as DependencyObject;
+        while (current is not null && current is not ListBoxItem)
+        {
+            current = VisualTreeHelper.GetParent(current);
+        }
+        if (current is ListBoxItem item)
+        {
+            list.SelectedItem = item.DataContext;
+        }
+        else
+        {
+            list.SelectedItem = null;
+        }
+    }
+
+    private void OnEventInstrumentBrowserDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        EventInstrumentBrowserRow? row = EventInstrumentBrowserRowFrom(sender);
+        if (row is null) return;
+        e.Handled = true;
+        _session.OpenInstrument(row.Id);
+    }
+
+    private void OnEventInstrumentBrowserEditClick(object sender, RoutedEventArgs e)
+    {
+        EventInstrumentBrowserRow? row = EventInstrumentBrowserRowFrom(sender);
+        if (row is not null) _session.OpenInstrument(row.Id);
+    }
+
+    private void OnEventInstrumentBrowserAddTrackClick(object sender, RoutedEventArgs e)
+    {
+        EventInstrumentBrowserRow? row = EventInstrumentBrowserRowFrom(sender);
+        if (row is null) return;
+        RunSynchronous("Create Logical Track", () =>
+            _session.Execute(ProjectDomainEditCommands.CreateLogicalTrack(
+                eventInstrumentId: row.Id)));
+    }
+
+    private void OnEventInstrumentBrowserDuplicateClick(object sender, RoutedEventArgs e)
+    {
+        EventInstrumentBrowserRow? row = EventInstrumentBrowserRowFrom(sender);
+        if (row is null) return;
+        RunSynchronous("Duplicate Event Instrument", () =>
+            _session.Execute(ProjectDomainEditCommands.DuplicateEventInstrumentOnly(row.Id)));
+    }
+
+    private void OnEventInstrumentBrowserCopyClick(object sender, RoutedEventArgs e) =>
+        CopyEventInstrumentBrowserItem(sender, cut: false);
+
+    private void OnEventInstrumentBrowserCutClick(object sender, RoutedEventArgs e) =>
+        CopyEventInstrumentBrowserItem(sender, cut: true);
+
+    private void CopyEventInstrumentBrowserItem(object sender, bool cut)
+    {
+        EventInstrumentBrowserRow? row = EventInstrumentBrowserRowFrom(sender);
+        if (row is null
+            || _session.Document is not ProjectDocumentSession document
+            || cut && (!_session.CanEditProject || row.UsageCount != 0))
         {
             return;
         }
-        if (workspace.SetAllArrangementParentsExpanded(expanded))
-            _session.RefreshWorkspace(workspace);
+        RunSynchronous(cut ? "Cut Event Instrument" : "Copy Event Instrument", () =>
+        {
+            ProjectObjectClipboardPayload payload;
+            IProjectEditCommand? delete = null;
+            if (cut)
+            {
+                ProjectObjectClipboardCutPreparation prepared =
+                    ProjectObjectClipboard.PrepareCutEventInstrument(document, row.Id);
+                payload = prepared.Payload;
+                delete = prepared.DeleteAfterSuccessfulClipboardWrite;
+            }
+            else
+            {
+                payload = ProjectObjectClipboard.CopyEventInstrument(document, row.Id);
+            }
+            Clipboard.SetDataObject(payload.PlainTextSummary, copy: true);
+            _projectClipboard = payload;
+            _clipboardDocument = document;
+            if (delete is not null) _session.Execute(delete);
+            _session.SetStatusMessage($"{(cut ? "Cut" : "Copied")} {payload.PlainTextSummary}.");
+        });
     }
 
-    private void OnNewMidiRootClick(object sender, RoutedEventArgs e)
+    private void OnEventInstrumentBrowserPasteClick(object sender, RoutedEventArgs e)
     {
-        RunAfterMenuClosed(sender, () =>
-        {
-            if (!_session.HasProject) return;
-            RunSynchronous("Create MIDI Channel Root", () =>
+        if (!_session.CanEditProject
+            || _session.Project is not MidoraProject project
+            || _session.Document is not ProjectDocumentSession document
+            || _projectClipboard is not ProjectObjectClipboardPayload
             {
-                _session.Execute(ProjectDomainEditCommands.CreateMidiChannelRoot());
-                _session.OpenArrangement();
-            });
-        });
+                Kind: ProjectObjectClipboardKind.EventInstrument
+            } payload
+            || !ReferenceEquals(document, _clipboardDocument))
+        {
+            return;
+        }
+        EventInstrumentBrowserRow? row = EventInstrumentBrowserRowFrom(sender);
+        int insertionIndex = row is null
+            ? project.EventInstruments.Count
+            : project.EventInstruments.FindIndex(value => value.Id == row.Id) + 1;
+        RunSynchronous("Paste Event Instrument", () => _session.Execute(
+            ProjectObjectClipboard.CreatePasteEventInstrumentCommand(
+                document,
+                payload,
+                insertionIndex: insertionIndex)));
+    }
+
+    private void OnEventInstrumentBrowserMoveUpClick(object sender, RoutedEventArgs e) =>
+        MoveEventInstrumentBrowserItem(sender, -1);
+
+    private void OnEventInstrumentBrowserMoveDownClick(object sender, RoutedEventArgs e) =>
+        MoveEventInstrumentBrowserItem(sender, 1);
+
+    private void MoveEventInstrumentBrowserItem(object sender, int direction)
+    {
+        EventInstrumentBrowserRow? row = EventInstrumentBrowserRowFrom(sender);
+        if (row is null || _session.Project is not MidoraProject project) return;
+        int index = project.EventInstruments.FindIndex(value => value.Id == row.Id);
+        int target = index + direction;
+        if (target < 0 || target >= project.EventInstruments.Count) return;
+        RunSynchronous("Move Event Instrument", () => _session.Execute(
+            ProjectDomainEditCommands.ReorderEventInstrument(row.Id, target)));
+    }
+
+    private void OnEventInstrumentBrowserRenameClick(object sender, RoutedEventArgs e)
+    {
+        EventInstrumentBrowserRow? row = EventInstrumentBrowserRowFrom(sender);
+        if (row is null) return;
+        TextInputDialog dialog = new(
+            "Rename Event Instrument",
+            "Enter the Event Instrument name.",
+            row.Name)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true) return;
+        RunSynchronous("Rename Event Instrument", () =>
+            _session.Execute(ProjectDomainEditCommands.RenameEventInstrument(row.Id, dialog.Value)));
+    }
+
+    private void OnEventInstrumentBrowserDeleteClick(object sender, RoutedEventArgs e)
+    {
+        EventInstrumentBrowserRow? row = EventInstrumentBrowserRowFrom(sender);
+        if (row is null) return;
+        if (row.UsageCount != 0)
+        {
+            MessageDialog.Show(
+                this,
+                "This Event Instrument is still referenced by one or more usages. Remove or rebind those Logical Tracks first.",
+                "Delete Event Instrument",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+        if (MessageDialog.Show(
+                this,
+                $"Delete Event Instrument '{row.Name}'?",
+                "Delete Event Instrument",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+        RunSynchronous("Delete Event Instrument", () =>
+            _session.Execute(ProjectDomainEditCommands.DeleteEventInstrument(row.Id, false)));
     }
 
     private void OnTimelineLaneHeaderDoubleInvoked(object? sender, TimelineLaneHeaderEventArgs e)
@@ -3796,35 +4101,43 @@ public partial class MainWindow : Window
         {
             return;
         }
-        if (source.Kind is ArrangementLaneKind.EventInstrument or ArrangementLaneKind.MidiChannelRoot
-            && source.ObjectId is MidoraId parentId)
+        if (source.ObjectId is not MidoraId sourceTrackId
+            || source.Kind is not (ArrangementLaneKind.LogicalTrack
+                or ArrangementLaneKind.PureMidiTrack))
         {
-            MidoraId? targetParentId = target.Kind is ArrangementLaneKind.EventInstrument
-                or ArrangementLaneKind.MidiChannelRoot
-                    ? target.ObjectId
-                    : target.ParentId;
-            int targetIndex = targetParentId is MidoraId targetId
-                ? project.ArrangementParents.FindIndex(value => value.ParentId == targetId)
-                : project.ArrangementParents.Count - 1;
-            if (targetIndex >= 0)
-            {
-                RunSynchronous("Reorder Arrangement Parent", () =>
-                    _session.Execute(ProjectDomainEditCommands.ReorderArrangementParent(parentId, targetIndex)));
-            }
             return;
         }
-        if (source.Kind == ArrangementLaneKind.LogicalTrack
-            && source.ObjectId is MidoraId logicalTrackId
-            && ResolveLogicalDropTarget(project, target, out MidoraId targetInstrumentId, out int logicalIndex))
+
+        ArrangementTrackReference sourceReference = project.ArrangementTracks
+            .Single(value => value.TrackId == sourceTrackId);
+        if (e.MovesWholeGroup && source is { IsSharedGroup: true, SharedGroupId: MidoraId groupId })
         {
-            if (source.ParentId is MidoraId sourceInstrumentId
-                && sourceInstrumentId != targetInstrumentId)
+            ArrangementTrackReference? targetReference = target.ObjectId is MidoraId wholeGroupTargetTrackId
+                ? project.ArrangementTracks.FirstOrDefault(value => value.TrackId == wholeGroupTargetTrackId)
+                : project.ArrangementTracks.FirstOrDefault(value => value.TrackId != sourceTrackId
+                    && (value.Kind != sourceReference.Kind
+                        || ResolveDescriptorSharedGroup(workspace, value.TrackId) != groupId));
+            if (targetReference is not ArrangementTrackReference targetValue || targetValue == default) return;
+            RunSynchronous("Move Shared Track Group", () =>
+                _session.Execute(ProjectDomainEditCommands.MoveArrangementSharedGroup(
+                    groupId,
+                    sourceReference.Kind,
+                    targetValue.TrackId,
+                    target.Kind == ArrangementLaneKind.Conductor ? false : e.InsertsAfterTarget)));
+            return;
+        }
+
+        if (e.JoinsTargetGroup && target.ObjectId is MidoraId groupTargetTrackId)
+        {
+            if (source.Kind == ArrangementLaneKind.LogicalTrack
+                && source.ParentId != target.ParentId)
             {
-                LogicalTrack movingTrack = project.Tracks.Single(value => value.Id == logicalTrackId);
-                EventInstrument targetInstrument = project.EventInstruments.Single(value => value.Id == targetInstrumentId);
+                LogicalTrack movingTrack = project.Tracks.Single(value => value.Id == sourceTrackId);
+                EventInstrument targetInstrument = project.EventInstruments.Single(
+                    value => value.Id == target.ParentId);
                 if (MessageDialog.Show(
                         this,
-                        $"Move Logical Track '{TimelineWorkspaceViewModel.TrackDisplayName(project, movingTrack)}' to Event Instrument '{targetInstrument.Name}' and change its binding?",
+                        $"Move Logical Track '{TimelineWorkspaceViewModel.TrackDisplayName(project, movingTrack)}' into the shared state group using Event Instrument '{targetInstrument.Name}' and change its binding?",
                         "Change Event Instrument",
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Question) != MessageBoxResult.Yes)
@@ -3832,85 +4145,49 @@ public partial class MainWindow : Window
                     return;
                 }
             }
-            RunSynchronous("Move Logical Track", () =>
-                _session.Execute(ProjectDomainEditCommands.MoveLogicalTrack(
-                    logicalTrackId,
-                    targetInstrumentId,
-                    logicalIndex)));
-            _logicalTrackShortcutTrackId = logicalTrackId;
+            RunSynchronous("Join Shared Track Group", () =>
+                _session.Execute(ProjectDomainEditCommands.MoveArrangementTrackIntoSharedGroup(
+                    sourceTrackId,
+                    groupTargetTrackId)));
+            _logicalTrackShortcutTrackId = source.Kind == ArrangementLaneKind.LogicalTrack
+                ? sourceTrackId
+                : null;
             return;
         }
-        if (source.Kind == ArrangementLaneKind.PureMidiTrack
-            && source.ObjectId is MidoraId midiTrackId
-            && ResolveMidiDropTarget(project, target, out MidoraId targetRootId, out int midiIndex))
+
+        int sourceIndex = project.ArrangementTracks.IndexOf(sourceReference);
+        int finalIndex;
+        if (target.Kind == ArrangementLaneKind.Conductor || target.ObjectId is not MidoraId targetTrackId)
         {
-            RunSynchronous("Move MIDI Track", () =>
-                _session.Execute(ProjectDomainEditCommands.MovePureMidiTrack(
-                    midiTrackId,
-                    targetRootId,
-                    midiIndex)));
+            finalIndex = 0;
         }
+        else
+        {
+            int targetIndex = project.ArrangementTracks.FindIndex(value => value.TrackId == targetTrackId);
+            if (targetIndex < 0) return;
+            int targetAfterRemoval = targetIndex - (sourceIndex < targetIndex ? 1 : 0);
+            finalIndex = targetAfterRemoval + (e.InsertsAfterTarget ? 1 : 0);
+            finalIndex = Math.Clamp(finalIndex, 0, project.ArrangementTracks.Count - 1);
+        }
+
+        bool remainsInSameSharedGroup = !e.DetachesFromSourceGroup
+            && source.IsSharedGroup
+            && target.SharedGroupId == source.SharedGroupId;
+        IProjectEditCommand command = remainsInSameSharedGroup
+            || (!source.IsSharedGroup && !e.DetachesFromSourceGroup)
+            ? ProjectDomainEditCommands.MoveArrangementTrack(sourceTrackId, finalIndex)
+            : ProjectDomainEditCommands.MoveArrangementTrackOutsideSharedGroup(sourceTrackId, finalIndex);
+        RunSynchronous("Move Arrangement Track", () => _session.Execute(command));
+        _logicalTrackShortcutTrackId = source.Kind == ArrangementLaneKind.LogicalTrack
+            ? sourceTrackId
+            : null;
     }
 
-    private static bool ResolveLogicalDropTarget(
-        MidoraProject project,
-        ArrangementLaneDescriptor target,
-        out MidoraId parentId,
-        out int index)
-    {
-        parentId = default;
-        index = 0;
-        if (target.Kind == ArrangementLaneKind.EventInstrument
-            && target.ObjectId is MidoraId instrumentId)
-        {
-            EventInstrument? parent = project.EventInstruments.FirstOrDefault(value => value.Id == instrumentId);
-            if (parent is null) return false;
-            parentId = parent.Id;
-            index = parent.LogicalTrackIds.Count;
-            return true;
-        }
-        if (target.Kind == ArrangementLaneKind.LogicalTrack
-            && target.ParentId is MidoraId targetParentId
-            && target.ObjectId is MidoraId targetTrackId)
-        {
-            EventInstrument? parent = project.EventInstruments.FirstOrDefault(value => value.Id == targetParentId);
-            if (parent is null) return false;
-            parentId = parent.Id;
-            index = Math.Max(0, parent.LogicalTrackIds.IndexOf(targetTrackId));
-            return true;
-        }
-        return false;
-    }
-
-    private static bool ResolveMidiDropTarget(
-        MidoraProject project,
-        ArrangementLaneDescriptor target,
-        out MidoraId parentId,
-        out int index)
-    {
-        parentId = default;
-        index = 0;
-        if (target.Kind == ArrangementLaneKind.MidiChannelRoot
-            && target.ObjectId is MidoraId rootId)
-        {
-            MidiChannelRoot? parent = project.MidiChannelRoots.FirstOrDefault(value => value.Id == rootId);
-            if (parent is null) return false;
-            parentId = parent.Id;
-            index = parent.MidiTrackIds.Count;
-            return true;
-        }
-        if (target.Kind == ArrangementLaneKind.PureMidiTrack
-            && target.ParentId is MidoraId targetParentId
-            && target.ObjectId is MidoraId targetTrackId)
-        {
-            MidiChannelRoot? parent = project.MidiChannelRoots.FirstOrDefault(value => value.Id == targetParentId);
-            if (parent is null) return false;
-            parentId = parent.Id;
-            index = Math.Max(0, parent.MidiTrackIds.IndexOf(targetTrackId));
-            return true;
-        }
-        return false;
-    }
+    private static MidoraId? ResolveDescriptorSharedGroup(
+        TimelineWorkspaceViewModel workspace,
+        MidoraId trackId) => workspace.Snapshot?.ArrangementLanes
+        .FirstOrDefault(value => value.ObjectId == trackId)
+        .SharedGroupId;
 
     private bool TryGetTrackHeaderContext(out LogicalTrack track, out int index)
     {
@@ -3919,14 +4196,14 @@ public partial class MainWindow : Window
         if (_session.Project is not MidoraProject project
             || !TryGetArrangementHeaderContext(out ArrangementLaneDescriptor lane)
             || lane.Kind != ArrangementLaneKind.LogicalTrack
-            || lane.ObjectId is not MidoraId trackId
-            || lane.ParentId is not MidoraId parentId)
+            || lane.ObjectId is not MidoraId trackId)
         {
             return false;
         }
         track = project.Tracks.SingleOrDefault(value => value.Id == trackId)!;
-        EventInstrument? parent = project.EventInstruments.SingleOrDefault(value => value.Id == parentId);
-        index = parent?.LogicalTrackIds.IndexOf(trackId) ?? -1;
+        index = project.ArrangementTracks.FindIndex(value =>
+            value.Kind == ArrangementTrackKind.LogicalTrack
+            && value.TrackId == trackId);
         return track is not null && index >= 0;
     }
 
@@ -3960,25 +4237,39 @@ public partial class MainWindow : Window
     {
         if (_session.Project is not MidoraProject project || descriptor.ObjectId is not MidoraId id)
             return (false, false);
-        if (descriptor.Kind is ArrangementLaneKind.EventInstrument or ArrangementLaneKind.MidiChannelRoot)
+        ArrangementTrackKind kind = descriptor.Kind switch
         {
-            int index = project.ArrangementParents.FindIndex(value => value.ParentId == id);
-            return (index > 0, index >= 0 && index < project.ArrangementParents.Count - 1);
-        }
-        if (descriptor.Kind == ArrangementLaneKind.LogicalTrack && descriptor.ParentId is MidoraId instrumentId)
-        {
-            List<MidoraId>? ids = project.EventInstruments.FirstOrDefault(value => value.Id == instrumentId)?.LogicalTrackIds;
-            int index = ids?.IndexOf(id) ?? -1;
-            return (index > 0, ids is not null && index >= 0 && index < ids.Count - 1);
-        }
-        if (descriptor.Kind == ArrangementLaneKind.PureMidiTrack && descriptor.ParentId is MidoraId rootId)
-        {
-            List<MidoraId>? ids = project.MidiChannelRoots.FirstOrDefault(value => value.Id == rootId)?.MidiTrackIds;
-            int index = ids?.IndexOf(id) ?? -1;
-            return (index > 0, ids is not null && index >= 0 && index < ids.Count - 1);
-        }
-        return (false, false);
+            ArrangementLaneKind.LogicalTrack => ArrangementTrackKind.LogicalTrack,
+            ArrangementLaneKind.PureMidiTrack => ArrangementTrackKind.PureMidiTrack,
+            _ => (ArrangementTrackKind)(-1)
+        };
+        int index = Enum.IsDefined(kind)
+            ? project.ArrangementTracks.FindIndex(value => value.Kind == kind && value.TrackId == id)
+            : -1;
+        return (index > 0, index >= 0 && index < project.ArrangementTracks.Count - 1);
     }
+
+    private (bool Up, bool Down) ArrangementSharedGroupMoveAvailability(MidoraId groupId)
+    {
+        if (_session.Project is not MidoraProject project) return (false, false);
+        int first = project.ArrangementTracks.FindIndex(value =>
+            ArrangementTrackBelongsToSharedGroup(project, value, groupId));
+        int last = project.ArrangementTracks.FindLastIndex(value =>
+            ArrangementTrackBelongsToSharedGroup(project, value, groupId));
+        return (first > 0, last >= 0 && last < project.ArrangementTracks.Count - 1);
+    }
+
+    private static bool ArrangementTrackBelongsToSharedGroup(
+        MidoraProject project,
+        ArrangementTrackReference reference,
+        MidoraId groupId) => reference.Kind switch
+    {
+        ArrangementTrackKind.LogicalTrack => project.Tracks.Single(
+            value => value.Id == reference.TrackId).EventInstrumentUsageId == groupId,
+        ArrangementTrackKind.PureMidiTrack => project.PureMidiTracks.Single(
+            value => value.Id == reference.TrackId).MidiChannelRootId == groupId,
+        _ => false
+    };
 
     private bool CanPasteArrangementHeader(ArrangementLaneDescriptor descriptor)
     {
@@ -3990,9 +4281,8 @@ public partial class MainWindow : Window
         }
         return payload.Kind switch
         {
-            ProjectObjectClipboardKind.EventInstrument or ProjectObjectClipboardKind.MidiChannelRoot => true,
-            ProjectObjectClipboardKind.LogicalTrack => descriptor.Kind is ArrangementLaneKind.EventInstrument or ArrangementLaneKind.LogicalTrack,
-            ProjectObjectClipboardKind.PureMidiTrack => descriptor.Kind is ArrangementLaneKind.MidiChannelRoot or ArrangementLaneKind.PureMidiTrack,
+            ProjectObjectClipboardKind.LogicalTrack => descriptor.Kind == ArrangementLaneKind.LogicalTrack,
+            ProjectObjectClipboardKind.PureMidiTrack => descriptor.Kind == ArrangementLaneKind.PureMidiTrack,
             _ => false
         };
     }
@@ -4002,8 +4292,6 @@ public partial class MainWindow : Window
         if (!TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)) return;
         if (descriptor.Kind == ArrangementLaneKind.Conductor)
             _session.OpenWorkspace(new ProjectTreeNode(ProjectTreeNodeKind.Conductor, "Conductor Track"));
-        else if (descriptor.Kind == ArrangementLaneKind.EventInstrument && descriptor.ObjectId is MidoraId id)
-            _session.OpenInstrument(id);
     }
 
     private void OnArrangementHeaderRenameClick(object sender, RoutedEventArgs e)
@@ -4016,8 +4304,6 @@ public partial class MainWindow : Window
         }
         string current = descriptor.Kind switch
         {
-            ArrangementLaneKind.EventInstrument => project.EventInstruments.Single(value => value.Id == id).Name,
-            ArrangementLaneKind.MidiChannelRoot => project.MidiChannelRoots.Single(value => value.Id == id).Name,
             ArrangementLaneKind.LogicalTrack => project.Tracks.Single(value => value.Id == id).Name,
             ArrangementLaneKind.PureMidiTrack => project.PureMidiTracks.Single(value => value.Id == id).Name,
             _ => string.Empty
@@ -4028,39 +4314,273 @@ public partial class MainWindow : Window
         {
             IProjectEditCommand command = descriptor.Kind switch
             {
-                ArrangementLaneKind.EventInstrument => ProjectDomainEditCommands.RenameEventInstrument(id, dialog.Value),
                 ArrangementLaneKind.LogicalTrack => ProjectDomainEditCommands.RenameLogicalTrack(id, dialog.Value),
                 ArrangementLaneKind.PureMidiTrack => ProjectDomainEditCommands.RenamePureMidiTrack(id, dialog.Value),
-                ArrangementLaneKind.MidiChannelRoot => RenameMidiRoot(project, id, dialog.Value),
                 _ => throw new InvalidOperationException("The selected Arrangement row cannot be renamed.")
             };
             _session.Execute(command);
         });
     }
 
-    private static IProjectEditCommand RenameMidiRoot(MidoraProject project, MidoraId id, string name)
-    {
-        MidiChannelRoot root = project.MidiChannelRoots.Single(value => value.Id == id);
-        return ProjectDomainEditCommands.ConfigureMidiChannelRoot(
-            root.Id, name, root.RoutingMode,
-            root.FixedZeroBasedPort + 1, root.FixedZeroBasedChannel + 1, root.ChannelMode);
-    }
-
-    private void OnArrangementRootSettingsClick(object sender, RoutedEventArgs e)
+    private void OnArrangementTrackRouteSettingsClick(object sender, RoutedEventArgs e)
     {
         if (_session.Project is not MidoraProject project
             || !TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)
-            || descriptor is not { Kind: ArrangementLaneKind.MidiChannelRoot, ObjectId: MidoraId id })
+            || descriptor is not
+            {
+                Kind: ArrangementLaneKind.PureMidiTrack,
+                ObjectId: MidoraId trackId,
+                ParentId: MidoraId rootId
+            })
         {
             return;
         }
-        MidiChannelRoot root = project.MidiChannelRoots.Single(value => value.Id == id);
+        MidiChannelRoot root = project.MidiChannelRoots.Single(value => value.Id == rootId);
         MidiChannelRootSettingsDialog dialog = new(root) { Owner = this };
         if (dialog.ShowDialog() != true) return;
-        RunSynchronous("Configure MIDI Channel Root", () => _session.Execute(
-            ProjectDomainEditCommands.ConfigureMidiChannelRoot(
-                id, dialog.RootName, dialog.RoutingMode,
+        RunSynchronous("Configure MIDI Route", () => _session.Execute(
+            ProjectDomainEditCommands.ConfigurePureMidiTrackRoute(
+                trackId, dialog.RoutingMode,
                 dialog.OneBasedPort, dialog.OneBasedChannel, dialog.ChannelMode)));
+    }
+
+    private void OnArrangementSharedRootSettingsClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.Project is not MidoraProject project
+            || _arrangementSharedGroupContextId is not MidoraId rootId
+            || project.MidiChannelRoots.SingleOrDefault(value => value.Id == rootId)
+                is not MidiChannelRoot root)
+        {
+            return;
+        }
+        int members = project.PureMidiTracks.Count(value => value.MidiChannelRootId == root.Id);
+        if (members > 1
+            && MessageDialog.Show(
+                this,
+                $"This route is shared by {members} MIDI Tracks. Apply the settings to all members?",
+                "Shared MIDI Route",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+        MidiChannelRootSettingsDialog dialog = new(root) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        RunSynchronous("Configure Shared MIDI Route", () => _session.Execute(
+            ProjectDomainEditCommands.ConfigureMidiChannelRoot(
+                root.Id,
+                root.Name,
+                dialog.RoutingMode,
+                dialog.OneBasedPort,
+                dialog.OneBasedChannel,
+                dialog.ChannelMode)));
+    }
+
+    private void OnArrangementSharedGroupMuteClick(object sender, RoutedEventArgs e)
+    {
+        if (_arrangementSharedGroupContextId is not MidoraId groupId) return;
+        RunSynchronous("Toggle Shared Group Mute", () =>
+            _session.SetSharedGroupMuted(groupId, !_session.IsSharedGroupMuted(groupId)));
+    }
+
+    private void OnArrangementSharedGroupSoloClick(object sender, RoutedEventArgs e)
+    {
+        if (_arrangementSharedGroupContextId is not MidoraId groupId) return;
+        RunSynchronous("Toggle Shared Group Solo", () =>
+            _session.SetSharedGroupSolo(groupId, !_session.IsSharedGroupSolo(groupId)));
+    }
+
+    private void OnArrangementSharedGroupInstrumentClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.Project is not MidoraProject project
+            || _arrangementSharedGroupContextId is not MidoraId usageId
+            || project.EventInstrumentUsages.SingleOrDefault(value => value.Id == usageId)
+                is not EventInstrumentUsage usage)
+        {
+            return;
+        }
+        SelectionDialog dialog = new(
+            "Change Shared Event Instrument",
+            "Select the Event Instrument Definition used by every Track in this shared state group.",
+            project.EventInstruments.Select(instrument => new SelectionDialogItem(
+                instrument.Id,
+                string.IsNullOrWhiteSpace(instrument.Name)
+                    ? "Unnamed Event Instrument"
+                    : instrument.Name,
+                instrument.Id == usage.EventInstrumentId
+                    ? "Current definition"
+                    : $"Stable ID {instrument.Id}")))
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true
+            || dialog.SelectedValue is not MidoraId eventInstrumentId
+            || eventInstrumentId == usage.EventInstrumentId)
+        {
+            return;
+        }
+        RunSynchronous("Change Shared Event Instrument", () => _session.Execute(
+            ProjectDomainEditCommands.RebindEventInstrumentUsage(usage.Id, eventInstrumentId)));
+    }
+
+    private void OnArrangementSharedGroupMoveUpClick(object sender, RoutedEventArgs e) =>
+        MoveArrangementSharedGroup(-1);
+
+    private void OnArrangementSharedGroupMoveDownClick(object sender, RoutedEventArgs e) =>
+        MoveArrangementSharedGroup(1);
+
+    private void MoveArrangementSharedGroup(int direction)
+    {
+        if (_session.Project is not MidoraProject project
+            || _arrangementSharedGroupContextId is not MidoraId groupId
+            || !TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor))
+        {
+            return;
+        }
+        ArrangementTrackKind kind = descriptor.Kind switch
+        {
+            ArrangementLaneKind.LogicalTrack => ArrangementTrackKind.LogicalTrack,
+            ArrangementLaneKind.PureMidiTrack => ArrangementTrackKind.PureMidiTrack,
+            _ => throw new InvalidOperationException("The selected row has no movable shared group.")
+        };
+        int first = project.ArrangementTracks.FindIndex(value =>
+            value.Kind == kind && ArrangementTrackBelongsToSharedGroup(project, value, groupId));
+        int last = project.ArrangementTracks.FindLastIndex(value =>
+            value.Kind == kind && ArrangementTrackBelongsToSharedGroup(project, value, groupId));
+        int targetIndex = direction < 0 ? first - 1 : last + 1;
+        if (first < 0 || (uint)targetIndex >= (uint)project.ArrangementTracks.Count) return;
+        ArrangementTrackReference target = project.ArrangementTracks[targetIndex];
+        RunSynchronous("Move Shared Track Group", () => _session.Execute(
+            ProjectDomainEditCommands.MoveArrangementSharedGroup(
+                groupId,
+                kind,
+                target.TrackId,
+                insertAfter: direction > 0)));
+    }
+
+    private void OnArrangementSharedGroupMakeIndependentClick(object sender, RoutedEventArgs e)
+    {
+        if (_arrangementSharedGroupContextId is not MidoraId groupId
+            || !TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor))
+        {
+            return;
+        }
+        ArrangementTrackKind kind = descriptor.Kind switch
+        {
+            ArrangementLaneKind.LogicalTrack => ArrangementTrackKind.LogicalTrack,
+            ArrangementLaneKind.PureMidiTrack => ArrangementTrackKind.PureMidiTrack,
+            _ => throw new InvalidOperationException("The selected row has no shared Track group.")
+        };
+        RunSynchronous("Make Shared Tracks Independent", () => _session.Execute(
+            ProjectDomainEditCommands.MakeArrangementSharedGroupIndependent(groupId, kind)));
+    }
+
+    private void OnLogicalTrackShareStateClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.Project is not MidoraProject project
+            || !TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)
+            || descriptor is not { Kind: ArrangementLaneKind.LogicalTrack, ObjectId: MidoraId trackId })
+        {
+            return;
+        }
+        LogicalTrack source = project.Tracks.Single(value => value.Id == trackId);
+        SelectionDialog dialog = new(
+            "Share Instrument State",
+            "Select the Logical Track whose Event Instrument state should be shared.",
+            project.LogicalTracksInArrangementOrder()
+                .Where(value => value.Id != source.Id
+                    && value.EventInstrumentUsageId.HasValue)
+                .Select(value => new SelectionDialogItem(
+                    value.Id,
+                    TimelineWorkspaceViewModel.TrackDisplayName(project, value),
+                    TimelineWorkspaceViewModel.BoundInstrumentDisplayName(project, value))))
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true || dialog.SelectedValue is not MidoraId targetTrackId)
+            return;
+        LogicalTrack target = project.Tracks.Single(value => value.Id == targetTrackId);
+        if (project.ResolveEventInstrumentDefinitionId(source)
+            != project.ResolveEventInstrumentDefinitionId(target)
+            && MessageDialog.Show(
+                this,
+                "The selected Track uses a different Event Instrument. Change the binding and join its shared state group?",
+                "Change Event Instrument",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+        RunSynchronous("Share Instrument State", () => _session.Execute(
+            ProjectDomainEditCommands.MoveArrangementTrackIntoSharedGroup(
+                source.Id,
+                target.Id)));
+    }
+
+    private void OnLogicalTrackMakeIndependentClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.Project is not MidoraProject project
+            || !TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)
+            || descriptor is not { Kind: ArrangementLaneKind.LogicalTrack, ObjectId: MidoraId trackId })
+        {
+            return;
+        }
+        int index = project.ArrangementTracks.FindIndex(value => value.TrackId == trackId);
+        RunSynchronous("Make Logical Track Independent", () => _session.Execute(
+            ProjectDomainEditCommands.MoveArrangementTrackOutsideSharedGroup(trackId, index)));
+    }
+
+    private void OnMidiTrackShareChannelClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.Project is not MidoraProject project
+            || !TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)
+            || descriptor is not { Kind: ArrangementLaneKind.PureMidiTrack, ObjectId: MidoraId trackId })
+        {
+            return;
+        }
+        PureMidiTrack source = project.PureMidiTracks.Single(value => value.Id == trackId);
+        SelectionDialog dialog = new(
+            "Share MIDI Channel",
+            "Select a MIDI Track whose Channel state and route should be shared.",
+            project.PureMidiTracksInArrangementOrder()
+                .Where(value => value.Id != source.Id)
+                .Select(value =>
+                {
+                    MidiChannelRoot root = project.MidiChannelRoots.Single(
+                        root => root.Id == value.MidiChannelRootId);
+                    string route = root.RoutingMode == MidiChannelRootRoutingMode.Auto
+                        ? $"Auto · {root.ChannelMode}"
+                        : $"P{root.FixedZeroBasedPort + 1} Ch{root.FixedZeroBasedChannel + 1} · {root.ChannelMode}";
+                    return new SelectionDialogItem(value.Id, value.Name, route);
+                }))
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true || dialog.SelectedValue is not MidoraId targetTrackId)
+            return;
+        PureMidiTrack target = project.PureMidiTracks.Single(value => value.Id == targetTrackId);
+        MidiChannelRoot targetRoot = project.MidiChannelRoots.Single(
+            value => value.Id == target.MidiChannelRootId);
+        IProjectEditCommand command = targetRoot.RoutingMode == MidiChannelRootRoutingMode.Auto
+            ? ProjectDomainEditCommands.MoveArrangementTrackIntoSharedGroup(source.Id, target.Id)
+            : ProjectDomainEditCommands.MovePureMidiTrack(
+                source.Id,
+                targetRoot.Id,
+                project.ArrangementTracks.FindIndex(value => value.TrackId == source.Id));
+        RunSynchronous("Share MIDI Channel", () => _session.Execute(command));
+    }
+
+    private void OnMidiTrackMakeIndependentClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.Project is not MidoraProject project
+            || !TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)
+            || descriptor is not { Kind: ArrangementLaneKind.PureMidiTrack, ObjectId: MidoraId trackId })
+        {
+            return;
+        }
+        int index = project.ArrangementTracks.FindIndex(value => value.TrackId == trackId);
+        RunSynchronous("Make MIDI Track Independent", () => _session.Execute(
+            ProjectDomainEditCommands.MoveArrangementTrackOutsideSharedGroup(trackId, index)));
     }
 
     private void OnArrangementHeaderCutClick(object sender, RoutedEventArgs e) => CopyArrangementHeader(cut: true);
@@ -4083,8 +4603,6 @@ public partial class MainWindow : Window
             {
                 ProjectObjectClipboardCutPreparation prepared = descriptor.Kind switch
                 {
-                    ArrangementLaneKind.EventInstrument => ProjectObjectClipboard.PrepareCutEventInstrument(document, id),
-                    ArrangementLaneKind.MidiChannelRoot => ProjectObjectClipboard.PrepareCutMidiChannelRoot(document, id),
                     ArrangementLaneKind.LogicalTrack => ProjectObjectClipboard.PrepareCutLogicalTrack(document, id),
                     ArrangementLaneKind.PureMidiTrack => ProjectObjectClipboard.PrepareCutPureMidiTrack(document, id),
                     _ => throw new InvalidOperationException("The selected Arrangement row cannot be cut.")
@@ -4096,8 +4614,6 @@ public partial class MainWindow : Window
             {
                 payload = descriptor.Kind switch
                 {
-                    ArrangementLaneKind.EventInstrument => ProjectObjectClipboard.CopyEventInstrument(document, id),
-                    ArrangementLaneKind.MidiChannelRoot => ProjectObjectClipboard.CopyMidiChannelRoot(document, id),
                     ArrangementLaneKind.LogicalTrack => ProjectObjectClipboard.CopyLogicalTrack(document, id),
                     ArrangementLaneKind.PureMidiTrack => ProjectObjectClipboard.CopyPureMidiTrack(document, id),
                     _ => throw new InvalidOperationException("The selected Arrangement row cannot be copied.")
@@ -4126,10 +4642,6 @@ public partial class MainWindow : Window
         {
             IProjectEditCommand command = payload.Kind switch
             {
-                ProjectObjectClipboardKind.EventInstrument => ProjectObjectClipboard.CreatePasteEventInstrumentCommand(
-                    document, payload, insertionIndex: ResolveArrangementParentInsertionIndex(project, descriptor)),
-                ProjectObjectClipboardKind.MidiChannelRoot => ProjectObjectClipboard.CreatePasteMidiChannelRootCommand(
-                    document, payload, ResolveArrangementParentInsertionIndex(project, descriptor)),
                 ProjectObjectClipboardKind.LogicalTrack => CreateLogicalTrackHeaderPasteCommand(document, payload, project, descriptor),
                 ProjectObjectClipboardKind.PureMidiTrack => CreatePureMidiTrackHeaderPasteCommand(document, payload, project, descriptor),
                 _ => throw new InvalidOperationException("The clipboard object cannot be pasted at this Arrangement row.")
@@ -4139,29 +4651,25 @@ public partial class MainWindow : Window
         });
     }
 
-    private static int ResolveArrangementParentInsertionIndex(MidoraProject project, ArrangementLaneDescriptor descriptor)
-    {
-        MidoraId? parentId = descriptor.Kind is ArrangementLaneKind.EventInstrument or ArrangementLaneKind.MidiChannelRoot
-            ? descriptor.ObjectId : descriptor.ParentId;
-        int index = parentId is MidoraId id
-            ? project.ArrangementParents.FindIndex(value => value.ParentId == id)
-            : project.ArrangementParents.Count - 1;
-        return Math.Clamp(index + 1, 0, project.ArrangementParents.Count);
-    }
-
     private static IProjectEditCommand CreateLogicalTrackHeaderPasteCommand(
         ProjectDocumentSession document,
         ProjectObjectClipboardPayload payload,
         MidoraProject project,
         ArrangementLaneDescriptor descriptor)
     {
-        MidoraId parentId = descriptor.Kind == ArrangementLaneKind.EventInstrument
-            ? descriptor.ObjectId!.Value : descriptor.ParentId!.Value;
-        EventInstrument parent = project.EventInstruments.Single(value => value.Id == parentId);
-        int index = descriptor.Kind == ArrangementLaneKind.LogicalTrack
-            ? parent.LogicalTrackIds.IndexOf(descriptor.ObjectId!.Value) + 1
-            : parent.LogicalTrackIds.Count;
-        return ProjectObjectClipboard.CreatePasteLogicalTrackCommand(document, payload, parentId, index);
+        LogicalTrack target = project.Tracks.Single(
+            value => value.Id == descriptor.ObjectId!.Value);
+        int index = ArrangementInsertionAfterTargetGroup(project, target.Id);
+        return target.EventInstrumentUsageId is MidoraId usageId
+            ? ProjectObjectClipboard.CreatePasteLogicalTrackIntoUsageCommand(
+                document,
+                payload,
+                usageId,
+                index)
+            : ProjectObjectClipboard.CreatePasteLogicalTrackIndependentCommand(
+                document,
+                payload,
+                index);
     }
 
     private static IProjectEditCommand CreatePureMidiTrackHeaderPasteCommand(
@@ -4170,13 +4678,46 @@ public partial class MainWindow : Window
         MidoraProject project,
         ArrangementLaneDescriptor descriptor)
     {
-        MidoraId parentId = descriptor.Kind == ArrangementLaneKind.MidiChannelRoot
-            ? descriptor.ObjectId!.Value : descriptor.ParentId!.Value;
-        MidiChannelRoot parent = project.MidiChannelRoots.Single(value => value.Id == parentId);
-        int index = descriptor.Kind == ArrangementLaneKind.PureMidiTrack
-            ? parent.MidiTrackIds.IndexOf(descriptor.ObjectId!.Value) + 1
-            : parent.MidiTrackIds.Count;
-        return ProjectObjectClipboard.CreatePastePureMidiTrackCommand(document, payload, parentId, index);
+        PureMidiTrack target = project.PureMidiTracks.Single(
+            value => value.Id == descriptor.ObjectId!.Value);
+        MidiChannelRoot root = project.MidiChannelRoots.Single(
+            value => value.Id == target.MidiChannelRootId);
+        int index = root.RoutingMode == MidiChannelRootRoutingMode.Auto
+            ? ArrangementInsertionAfterTargetGroup(project, target.Id)
+            : project.ArrangementTracks.FindIndex(value => value.TrackId == target.Id) + 1;
+        return ProjectObjectClipboard.CreatePastePureMidiTrackCommand(
+            document,
+            payload,
+            root.Id,
+            index);
+    }
+
+    private static int ArrangementInsertionAfterTargetGroup(
+        MidoraProject project,
+        MidoraId targetTrackId)
+    {
+        ArrangementTrackReference target = project.ArrangementTracks.Single(
+            value => value.TrackId == targetTrackId);
+        MidoraId? groupId = target.Kind switch
+        {
+            ArrangementTrackKind.LogicalTrack => project.Tracks.Single(
+                value => value.Id == targetTrackId).EventInstrumentUsageId,
+            ArrangementTrackKind.PureMidiTrack => project.PureMidiTracks.Single(
+                value => value.Id == targetTrackId).MidiChannelRootId,
+            _ => null
+        };
+        if (groupId is null)
+        {
+            return project.ArrangementTracks.IndexOf(target) + 1;
+        }
+        int last = project.ArrangementTracks.FindLastIndex(reference =>
+            reference.Kind == target.Kind
+            && (reference.Kind == ArrangementTrackKind.LogicalTrack
+                ? project.Tracks.Single(track => track.Id == reference.TrackId)
+                    .EventInstrumentUsageId == groupId
+                : project.PureMidiTracks.Single(track => track.Id == reference.TrackId)
+                    .MidiChannelRootId == groupId));
+        return last + 1;
     }
 
     private void OnArrangementHeaderDuplicateClick(object sender, RoutedEventArgs e) => DuplicateArrangementHeader(instrumentOnly: false);
@@ -4186,15 +4727,31 @@ public partial class MainWindow : Window
     {
         if (!TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)
             || descriptor.ObjectId is not MidoraId id) return;
-        RunSynchronous("Duplicate Arrangement Object", () => _session.Execute(descriptor.Kind switch
+        RunSynchronous("Duplicate Arrangement Object", () =>
         {
-            ArrangementLaneKind.EventInstrument when instrumentOnly => ProjectDomainEditCommands.DuplicateEventInstrumentOnly(id),
-            ArrangementLaneKind.EventInstrument => ProjectDomainEditCommands.DuplicateEventInstrument(id),
-            ArrangementLaneKind.MidiChannelRoot => ProjectDomainEditCommands.DuplicateMidiChannelRoot(id),
-            ArrangementLaneKind.LogicalTrack => ProjectDomainEditCommands.DuplicateLogicalTrack(id),
-            ArrangementLaneKind.PureMidiTrack => ProjectDomainEditCommands.DuplicatePureMidiTrack(id),
-            _ => throw new InvalidOperationException("The selected Arrangement row cannot be duplicated.")
-        }));
+            IProjectEditCommand command;
+            if (instrumentOnly)
+            {
+                if (descriptor.Kind != ArrangementLaneKind.LogicalTrack
+                    || descriptor.ParentId is not MidoraId eventInstrumentId)
+                {
+                    throw new InvalidOperationException(
+                        "The selected Arrangement row has no Event Instrument to duplicate.");
+                }
+                command = ProjectDomainEditCommands.DuplicateEventInstrumentOnly(eventInstrumentId);
+            }
+            else
+            {
+                command = descriptor.Kind switch
+                {
+                    ArrangementLaneKind.LogicalTrack => ProjectDomainEditCommands.DuplicateLogicalTrack(id),
+                    ArrangementLaneKind.PureMidiTrack => ProjectDomainEditCommands.DuplicatePureMidiTrack(id),
+                    _ => throw new InvalidOperationException(
+                        "The selected Arrangement row cannot be duplicated.")
+                };
+            }
+            _session.Execute(command);
+        });
     }
 
     private void OnArrangementHeaderMoveUpClick(object sender, RoutedEventArgs e) => MoveArrangementHeader(-1);
@@ -4205,25 +4762,17 @@ public partial class MainWindow : Window
         if (_session.Project is not MidoraProject project
             || !TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)
             || descriptor.ObjectId is not MidoraId id) return;
-        IProjectEditCommand command;
-        if (descriptor.Kind is ArrangementLaneKind.EventInstrument or ArrangementLaneKind.MidiChannelRoot)
-        {
-            int index = project.ArrangementParents.FindIndex(value => value.ParentId == id);
-            command = ProjectDomainEditCommands.ReorderArrangementParent(id, index + direction);
-        }
-        else if (descriptor.Kind == ArrangementLaneKind.LogicalTrack && descriptor.ParentId is MidoraId instrumentId)
-        {
-            EventInstrument parent = project.EventInstruments.Single(value => value.Id == instrumentId);
-            int index = parent.LogicalTrackIds.IndexOf(id);
-            command = ProjectDomainEditCommands.MoveLogicalTrack(id, instrumentId, index + direction);
-        }
-        else if (descriptor.Kind == ArrangementLaneKind.PureMidiTrack && descriptor.ParentId is MidoraId rootId)
-        {
-            MidiChannelRoot parent = project.MidiChannelRoots.Single(value => value.Id == rootId);
-            int index = parent.MidiTrackIds.IndexOf(id);
-            command = ProjectDomainEditCommands.MovePureMidiTrack(id, rootId, index + direction);
-        }
-        else return;
+        int index = project.ArrangementTracks.FindIndex(value => value.TrackId == id);
+        int targetIndex = index + direction;
+        if (index < 0 || targetIndex < 0 || targetIndex >= project.ArrangementTracks.Count) return;
+        ArrangementTrackReference target = project.ArrangementTracks[targetIndex];
+        MidoraId? sourceGroup = descriptor.SharedGroupId;
+        MidoraId? targetGroup = _session.ActiveWorkspace is TimelineWorkspaceViewModel workspace
+            ? ResolveDescriptorSharedGroup(workspace, target.TrackId)
+            : null;
+        IProjectEditCommand command = descriptor.IsSharedGroup && sourceGroup != targetGroup
+            ? ProjectDomainEditCommands.MoveArrangementTrackOutsideSharedGroup(id, targetIndex)
+            : ProjectDomainEditCommands.MoveArrangementTrack(id, targetIndex);
         RunSynchronous("Move Arrangement Object", () => _session.Execute(command));
     }
 
@@ -4234,8 +4783,6 @@ public partial class MainWindow : Window
             || descriptor.ObjectId is not MidoraId id) return;
         string message = descriptor.Kind switch
         {
-            ArrangementLaneKind.EventInstrument => $"Delete Event Instrument '{project.EventInstruments.Single(value => value.Id == id).Name}' and its complete Logical Track subtree?",
-            ArrangementLaneKind.MidiChannelRoot => $"Delete MIDI Channel Root '{project.MidiChannelRoots.Single(value => value.Id == id).Name}' and its complete MIDI Track subtree?",
             ArrangementLaneKind.LogicalTrack => $"Delete Logical Track '{project.Tracks.Single(value => value.Id == id).Name}' and all of its Segments?",
             ArrangementLaneKind.PureMidiTrack => $"Delete MIDI Track '{project.PureMidiTracks.Single(value => value.Id == id).Name}' and all of its Segments?",
             ArrangementLaneKind.DamagedEventInstrument => "Delete this damaged Event Instrument placeholder and its retained Logical Track subtree?",
@@ -4248,8 +4795,6 @@ public partial class MainWindow : Window
                 MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         RunSynchronous("Delete Arrangement Object", () => _session.Execute(descriptor.Kind switch
         {
-            ArrangementLaneKind.EventInstrument => ProjectDomainEditCommands.DeleteEventInstrument(id, true),
-            ArrangementLaneKind.MidiChannelRoot => ProjectDomainEditCommands.DeleteMidiChannelRoot(id, true),
             ArrangementLaneKind.LogicalTrack => ProjectDomainEditCommands.DeleteLogicalTrack(id, true),
             ArrangementLaneKind.PureMidiTrack => ProjectDomainEditCommands.DeletePureMidiTrack(id, true),
             ArrangementLaneKind.DamagedEventInstrument => ProjectDomainEditCommands.DeleteDamagedEventInstrument(id),
@@ -4264,12 +4809,16 @@ public partial class MainWindow : Window
     {
         if (_session.Project is not MidoraProject project
             || !TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)) return;
-        MidoraId rootId = descriptor.Kind == ArrangementLaneKind.MidiChannelRoot
-            ? descriptor.ObjectId!.Value : descriptor.ParentId!.Value;
+        if (descriptor is not
+            {
+                Kind: ArrangementLaneKind.PureMidiTrack,
+                ObjectId: MidoraId trackId,
+                ParentId: MidoraId rootId
+            }) return;
         MidiChannelRoot root = project.MidiChannelRoots.Single(value => value.Id == rootId);
-        int index = descriptor.Kind == ArrangementLaneKind.PureMidiTrack
-            ? root.MidiTrackIds.IndexOf(descriptor.ObjectId!.Value) + 1
-            : root.MidiTrackIds.Count;
+        int index = root.RoutingMode == MidiChannelRootRoutingMode.Auto
+            ? ArrangementInsertionAfterTargetGroup(project, trackId)
+            : project.ArrangementTracks.FindIndex(value => value.TrackId == trackId) + 1;
         RunSynchronous("Create MIDI Track", () => _session.Execute(
             ProjectDomainEditCommands.CreatePureMidiTrack(rootId, insertionIndex: index)));
     }
@@ -5560,8 +6109,10 @@ public partial class MainWindow : Window
                             }
                             if (timeline.GetActiveParameterLaneOption()?.LaneId is not MidoraId laneId) return;
                             LogicalParameterLane lane = location.Value.Segment.ParameterLanes.Single(item => item.Id == laneId);
-                            EventInstrument instrument = _session.Project.EventInstruments.Single(
-                                item => item.Id == location.Value.Track.EventInstrumentId);
+                            EventInstrument instrument = _session.Project.FindEventInstrumentDefinition(
+                                location.Value.Track)
+                                ?? throw new InvalidOperationException(
+                                    "The Logical Track is not bound to an Event Instrument Usage.");
                             LogicalParameterDefinition definition = instrument.LogicalParameters.Single(
                                 item => item.Id == lane.ParameterId);
                             ExecuteAndSelectCreated(ProjectDomainEditCommands.CreateLogicalParameterPoint(
@@ -5773,7 +6324,7 @@ public partial class MainWindow : Window
             && _session.Project is MidoraProject project
             && TimelineWorkspaceViewModel.FindSegment(project, segmentId) is var location
             && location is not null
-            && location.Value.Track.EventInstrumentId is MidoraId eventInstrumentId
+            && project.ResolveEventInstrumentDefinitionId(location.Value.Track) is MidoraId eventInstrumentId
             && project.EventInstruments.FirstOrDefault(value => value.Id == eventInstrumentId)
                 is EventInstrument eventInstrument
             && eventInstrument.LogicalParameters.FirstOrDefault(value => value.Id == option.ParameterId)
@@ -5862,27 +6413,34 @@ public partial class MainWindow : Window
         Segment segment = location.Value.Segment;
         if (edit.EditKind == TimelineItemEditKind.Move)
         {
-            var locatedSelection = _session.Project!.Tracks
-                .SelectMany((track, lane) => track.Segments
+            Segment[] locatedSelection = _session.Project!.Tracks
+                .SelectMany(track => track.Segments
                     .Where(item => selected.Contains(item.Id))
-                    .Select(item => (Segment: item, Lane: lane)))
+                    .Select(item => item))
                 .ToArray();
-            long minimumStart = locatedSelection.Min(item => item.Segment.ProjectStartTick);
+            if (locatedSelection.Length == 0)
+            {
+                locatedSelection = [segment];
+            }
+            MidoraId[] movingSegmentIds = locatedSelection.Select(item => item.Id).ToArray();
+            long minimumStart = locatedSelection.Min(item => item.ProjectStartTick);
             long clampedDelta = Math.Max(snappedDelta, -minimumStart);
-            int minimumLane = locatedSelection.Min(item => item.Lane);
-            int maximumLane = locatedSelection.Max(item => item.Lane);
-            int laneDelta = Math.Clamp(
-                edit.LaneDelta,
-                -minimumLane,
-                _session.Project.Tracks.Count - 1 - maximumLane);
-            int targetLane = checked(edit.Item.Lane + laneDelta);
+            int targetLane = Math.Clamp(
+                checked(edit.Item.Lane + edit.LaneDelta),
+                0,
+                Math.Max(0, workspace.Snapshot!.ArrangementLanes.Count - 1));
+            ArrangementLaneDescriptor? target = workspace.GetArrangementLane(targetLane);
+            if (target is not
+                { Kind: ArrangementLaneKind.LogicalTrack, ObjectId: MidoraId targetTrackId })
+            {
+                return;
+            }
             snappedTarget = checked(edit.Item.StartTick + clampedDelta);
-            MidoraId targetTrackId = _session.Project.Tracks[targetLane].Id;
             if (edit.CopyRequested)
             {
                 long firstNewStableId = _session.Project.NextStableId;
                 _session.Execute(ProjectDomainEditCommands.DuplicateSegments(
-                    selected,
+                    movingSegmentIds,
                     edit.Item.Id,
                     targetTrackId,
                     snappedTarget));
@@ -5891,7 +6449,7 @@ public partial class MainWindow : Window
             else
             {
                 _session.Execute(ProjectDomainEditCommands.MoveSegments(
-                    selected,
+                    movingSegmentIds,
                     edit.Item.Id,
                     targetTrackId,
                     snappedTarget));
@@ -6267,8 +6825,9 @@ public partial class MainWindow : Window
             .FirstOrDefault(item => item.Points.Any(point => point.Id == edit.Item.Id));
         CurvePoint? point = lane?.Points.FirstOrDefault(item => item.Id == edit.Item.Id);
         if (lane is null || point is null) return;
-        EventInstrument instrument = _session.Project.EventInstruments.Single(
-            item => item.Id == location.Value.Track.EventInstrumentId);
+        EventInstrument instrument = _session.Project.FindEventInstrumentDefinition(location.Value.Track)
+            ?? throw new InvalidOperationException(
+                "The Logical Track is not bound to an Event Instrument Usage.");
         LogicalParameterDefinition definition = instrument.LogicalParameters.Single(item => item.Id == lane.ParameterId);
         double normalized = TimelineWorkspaceViewModel.NormalizeParameterValue(definition, point.Value);
         double value = TimelineWorkspaceViewModel.DenormalizeParameterValue(
@@ -6344,7 +6903,8 @@ public partial class MainWindow : Window
             }
             return;
         }
-        if (location.Value.Track.EventInstrumentId is not MidoraId instrumentId)
+        if (_session.Project.ResolveEventInstrumentDefinitionId(location.Value.Track)
+            is not MidoraId instrumentId)
         {
             ShowUnavailable("Add Logical Parameter Lane", "Bind this Logical Track to an Event Instrument first.");
             return;
@@ -8717,11 +9277,11 @@ public partial class MainWindow : Window
         {
             return activeTrackId;
         }
-        return project.EventInstrumentsInOrder()
-            .SelectMany(value => value.LogicalTrackIds)
-            .FirstOrDefault(id => project.Tracks.Any(track => track.Id == id)) is MidoraId first && first != default
-                ? first
-                : project.Tracks[0].Id;
+        return project.TracksInArrangementOrder()
+            .FirstOrDefault(value => value.Kind == ArrangementTrackKind.LogicalTrack) is
+                { TrackId: var first } && first != default
+                    ? first
+                    : project.Tracks[0].Id;
     }
 
     private static MidoraId ResolveArrangementTargetMidiTrack(
@@ -8740,11 +9300,11 @@ public partial class MainWindow : Window
         {
             return activeTrackId;
         }
-        return project.MidiChannelRootsInOrder()
-            .SelectMany(value => value.MidiTrackIds)
-            .FirstOrDefault(id => project.PureMidiTracks.Any(track => track.Id == id)) is MidoraId first && first != default
-                ? first
-                : project.PureMidiTracks[0].Id;
+        return project.TracksInArrangementOrder()
+            .FirstOrDefault(value => value.Kind == ArrangementTrackKind.PureMidiTrack) is
+                { TrackId: var first } && first != default
+                    ? first
+                    : project.PureMidiTracks[0].Id;
     }
 
     private static int ResolveSubVoicePasteIndex(

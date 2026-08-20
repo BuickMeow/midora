@@ -373,12 +373,12 @@ Segment 全部子对象获得新稳定 ID；Logical Note 获得新稳定 ID；Te
 复制意图在 Draw 模式的主体拖动越过阈值时确认；未越过阈值的 `Ctrl+Click` 仍按选择切换处理，边缘 `Ctrl+Drag` 仍是 Resize。时间、pitch 与 Track 越界请求使用选择集共同 clamp；Escape、Pointer Capture 丢失、Segment overlap、选择集不兼容或共同 clamp 后仍非法时整体取消，不创建部分副本。
 
 在上述三类对象上，`Alt+Left Drag` 无视 Body / Resize 边界命中分区并强制 Move；`Ctrl+Alt+Left Drag` 强制 Copy+Move。操作类型、修饰键及复制意图在 Pointer Down 时冻结，拖动途中按下或松开修饰键不得切换语义。强制手势仍按当前 Snap 执行；Resize 继续通过不按 Alt 的普通边界拖动访问。
-#### 20.5.6.2 Event Instrument / MIDI Channel Root parent
-两类 parent 在 Arrangement mixed parent list 中拖动重排并携带完整 child subtree。复制使用显式 Copy/Paste/Duplicate；Root 副本强制 Auto，Event Instrument 另提供 `Duplicate Instrument Only`。父节点不得拖到 child 层级。
-#### 20.5.6.3 Logical Track
-Track Header 越过通用阈值后通过拖动重排并显示插入线；初版不使用 Ctrl+Drag Track 复制。Logical Track 可在 parent 内重排或拖到另一个 Event Instrument 并执行 rebind 审查；菜单不提供 Unbind。hover 与 pressed 只属于 transient UI state。
+#### 20.5.6.2 Event Instrument Definition Browser
+Event Instruments pane 内的 Definition 越过通用阈值后只重排独立 Definition order，不移动任何 Track/Usage。拖 Definition 到 Arrangement 全局 gap 会原子创建独立 Usage + Logical Track；拖动取消或失败不创建对象。Definition Copy/Paste/Duplicate 只复制定义本体。
+#### 20.5.6.3 Arrangement Track 与 Shared block
+Track Header 越过通用阈值后在唯一 global mixed Track order 中拖动；初版不使用 Ctrl+Drag Track 复制。Logical 与 Pure MIDI Track 不能互相加入共享组。
 
-Pure MIDI Track Header 使用相同拖动阈值和插入线，可在 Root 内重排或显式拖到另一个 Root；菜单不显示 Event Instrument binding。MIDI Channel Root 作为 mixed parent 重排，移动时携带完整 child Track 集合。
+Shared Usage / Auto Root block 的 brace 是整体移动 hit target；Track body、上下约 8 DIP 外部插入区、singleton Instrument/Auto chip 与 Fixed route chip 的加入/脱离语义、hysteresis、失败原子性按第 24.7 节执行。不同 Definition 的 Logical 加入显示不同颜色预览并执行 rebind 审查。Fixed Root 不显示 brace且成员可分散。hover、pressed、join outline 与插入线只属于 transient UI state。
 #### 20.5.6.4 SubVoice、Mapping 等有序结构
 使用插入线重排，保持稳定 ID。
 #### 20.5.6.5 Workspace Tab
@@ -430,16 +430,15 @@ Clipboard 是 Copy 时的不可变快照。
 - Broken Reference 保留原 ID 和 Last Known Name。
 不按名称自动修复。
 
-上述规则适用于 Copy payload。第 24 章定义的 parent/child Track Cut/Paste 是同一 Project 内结构移动，恢复原 stable IDs；不得套用 Copy 的新 ID 规则。
+上述规则同样适用于 Cut 先写入的快照；Cut 后 Paste 创建新稳定 ID。只有 Header/brace 拖动这种单一原子 Move 保留原 stable ID；Cut、Paste 各自是独立 Undo，且 Undo Cut 后仍然 Paste 时不得制造 ID 冲突。
 ### 20.6.5 初版支持的普通对象
 ```text
 Segment
 Logical Note
 Direct MIDI Note / Channel Event / opaque imported event
-Event Instrument parent subtree
-MIDI Channel Root parent subtree
-Logical Track subtree
-Pure MIDI Track subtree
+Event Instrument Definition
+Logical Track（含 Segment 内容及 Usage/Definition binding snapshot）
+Pure MIDI Track（含 Segment 内容及 route snapshot）
 Logical Parameter Lane, Point and Curve content
 SubVoice timeline events
 Ordinary Conductor events
@@ -483,7 +482,7 @@ Lane Content
 跨 SubVoice Paste 初版仅限同一个 Event Instrument，并保持合法 Mapping Function 外部引用。
 ### 20.6.10 Cut
 Cut = 成功写入 Clipboard 后删除源对象。
-普通内容的 Cut + Paste 是 Delete + Create，不保持对象身份。Event Instrument/Root parent subtree 与 Logical/Pure child Track 的 Cut/Paste 是结构移动，必须保持原对象及 subtree stable IDs；失败时保留原位置。
+Cut + Paste 是 snapshot + Delete + Create，不保持对象身份；Definition/Logical Track/Pure MIDI Track 也遵循该规则。Header/brace Drag Move 才保持原对象及 owner stable IDs，并在一个失败原子 Undo 中完成；失败时保留原位置。
 Cut 和 Paste 分别形成独立 Undo；Clipboard 本身不受 Undo 影响。
 ### 20.6.11 Timeline 对齐
 Timeline Payload 最早 tick 对齐 Edit Cursor；`Paste Here` 使用右键位置。
@@ -532,7 +531,7 @@ Hover、Inspector 刷新或后台诊断更新不得改变命令目标。
 ### 20.7.5 Hide 与 Disabled
 语义完全无关的命令隐藏。
 通常存在但因播放、锁定、剪贴板或对象状态暂时不可用的命令保持可见并 Disabled，必要时说明原因。
-Conductor 固定行不显示 Delete / Rename；Event Instrument / Root parent 是可重命名、可删除的普通 Project 对象。
+Conductor 固定行不显示 Delete / Rename；Arrangement 仅有 Logical/Pure MIDI Track 行。Definition 的重命名/删除位于 Event Instruments pane；Usage/Root 没有独立 Rename/Delete UI。
 ### 20.7.6 非唯一入口
 重要功能不能只存在于 Context Menu，例如：
 ```text
@@ -563,7 +562,7 @@ Task and playback lock
 使用具体名称：
 ```text
 Delete Event Instrument
-Remove Instrument Binding
+Change Instrument / Make Independent
 Delete All Lane Events
 Reset Property to Inherited
 Clear Runtime History
@@ -574,10 +573,9 @@ Clear Runtime History
 ```text
 Open
 Preview
-New Logical Track
+Add Logical Track Using This Instrument
 Copy / Cut / Paste
 Duplicate
-Duplicate Instrument Only
 Rename
 Show References
 Show Details
@@ -589,15 +587,18 @@ Delete
 Open Instrument
 Copy / Cut / Paste
 Duplicate
+Duplicate Instrument Only
 Rename
 Change Instrument
+Share Instrument State With
+Make Independent
 Move Up / Move Down
 Show Details
 Delete
 ```
-`Change Instrument` 表示原子移动到另一个 Event Instrument parent；不得提供 Unbind。
-#### 20.7.10.2.1 MIDI Channel Root / Pure MIDI Track
-Root 菜单至少提供 New Pure MIDI Track、Copy/Cut/Paste、Duplicate、Rename、Settings（Routing/Port.Channel/Channel Mode）、Move Up/Down、Show Details、Delete。Pure MIDI Track 菜单至少提供 Copy/Cut/Paste、Duplicate、Rename、Move Up/Down、Move to Root、Show Details、Delete；不得显示 Event Instrument binding 命令。
+`Change Instrument` 原子修改当前 Usage 的 Definition；未绑定空壳可通过该入口建立独立 Usage。`Share Instrument State With` 与 `Make Independent` 显式改变 Usage membership；不提供独立可见 Usage 管理器。
+#### 20.7.10.2.1 Pure MIDI Track / Shared group
+Pure MIDI Track 菜单至少提供 Copy/Cut/Paste、Duplicate、Rename、MIDI Route Settings、Share MIDI Channel With、Make Independent、Move Up/Down、Show Details、Delete；不得显示 Event Instrument binding 命令。共享 brace 菜单提供 group Mute/Solo、Shared Route/Instrument Settings、Move Shared Group 与 Make All Tracks Independent。Root 不显示独立菜单。
 #### 20.7.10.3 Segment
 ```text
 Open in Segment Editor
@@ -856,8 +857,8 @@ Enter with no selected result -> no automatic open
 Down -> first visible result
 Up   -> last visible result
 ```
-### 20.9.6 Arrangement 层级搜索
-初版不提供 Project Panel 或 Event Instrument Library 搜索。未来如为 Arrangement 添加本地层级筛选，必须保持 parent/child 正式顺序、显示匹配 child 的必要 parent，并在筛选期间禁用正式重排与跨 parent drag；该未来筛选仍只属于 session state。
+### 20.9.6 Arrangement / Definition 搜索
+初版不提供 Project Panel。Event Instruments pane 当前可不提供搜索；未来加入本地筛选时，只能过滤独立 Definition order 的视觉投影，不得改变 global Arrangement Track order、Usage/Root membership 或正式拖放目标。筛选文本只属于 session state。
 ### 20.9.7 Diagnostics Search
 匹配：
 ```text
@@ -928,11 +929,12 @@ Project 打开期间 Arrangement 常驻且不可关闭，因此不存在“无 W
 ### 20.10.6 Arrangement 无 Track
 ```text
 No Tracks
-Create an event instrument or MIDI channel root to begin.
-[ Create Event Instrument ]
-[ Create MIDI Channel Root ]
+Create a Logical or MIDI Track to begin.
+[ New Logical Track ]
+[ New Logical Track with Instrument ]
+[ New MIDI Track ]
 ```
-Logical Track 必须从 Event Instrument parent 创建；Pure MIDI Track 必须从 Root 创建。
+Logical Track 可以作为无内容、无 Usage 的空壳创建，也可与独立 Usage/Definition 原子创建。Pure MIDI Track 创建时必须同时创建或加入一个非空 Root；没有只创建空 Root 的入口。
 ### 20.10.7 没有 Event Instrument
 ```text
 No Event Instruments
@@ -946,7 +948,7 @@ Track Timeline 内显示紧凑提示，不覆盖整个 Arrangement。
 No segments
 Double-click or use Draw to create
 ```
-Logical Track 不存在未绑定空状态；若 parent 关系损坏，显示可定位的结构 Error 并禁止普通编辑，不得把它表现成可继续使用的空绑定提示。
+无内容、无 Usage 的 Logical Track 显示可操作的 `No Event Instrument` 空状态，并禁止创建/粘贴音乐内容，直到指定 Definition。若已有内容却无有效 Usage/Definition，则显示可定位的结构 Error 并禁止普通编辑。
 ### 20.10.9 Segment 无内容
 Note 区与 Parameter 区分别显示自己的空状态。
 如果 Event Instrument 无 Logical Parameter：
@@ -1218,7 +1220,7 @@ Project 对象区域使用 Project Clipboard 命令。
 ### 20.12.5 Ctrl+D、Delete、F2
 只针对当前焦点区域。
 Text / Code Editor 不触发 Project Duplicate、Delete 或 Rename。
-F2 在 Segment、Project End Marker、Conductor 固定行、Damaged Placeholder、多选或文本编辑器中 No Action。Event Instrument / Root parent 与 child Track 支持 F2 Rename。
+F2 在 Segment、Project End Marker、Conductor 固定行、Damaged Placeholder、多选或文本编辑器中 No Action。Event Instruments pane 的 Definition 与 Arrangement Logical/Pure MIDI Track 支持 F2 Rename；Usage/Root 不可直接重命名。
 ### 20.12.6 Space
 主窗口没有活动 Modal、Popup、Menu 或本地编辑会话，且焦点不在 TextBox、PasswordBox、RichTextBox 或代码编辑器时：
 ```text
@@ -1691,7 +1693,7 @@ Compile 和 MIDI Export 不依赖 SF2 加载。
 7. 批量编辑、Paste 和 Drag 的 Project 修改保持原子；
 8. Broken 和 Damaged 数据不被静默删除或按名称修复；
 9. MIDI Export 和 Audio Render 显示各自不同的结果原子性；
-10. 无 SF2、空 Arrangement parent list、空 parent child list、空 Track 和空 Segment 均显示为合法空状态；
+10. 无 SF2、空 Definition Index、空 Arrangement Track order、合法无 Usage 空壳 Track、空 Track 和空 Segment 均显示为合法空状态；
 11. 状态和错误不只依赖颜色；
 12. 后台更新不抢焦点或改变 Selection；
 13. `.midora` 不保存 UI View State；

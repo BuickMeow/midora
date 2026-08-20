@@ -91,7 +91,7 @@ Root 本身不保存普通时间线事件。它定义所有 child Tracks 共享�
 
 ### 后果
 
-Root 内 Track 重排是可听语义变更；Track Mute/Solo 必须按来源精确过滤，不能清空整个 Root Unit。UI 必须明确展示 Root 与 child Tracks。
+Root 成员 Track 重排是可听语义变更；Track Mute/Solo 必须按来源精确过滤，不能清空整个 Root Unit。UI 依 ADR-UI-041 展示 global Track order、Fixed route property 或 Auto Shared brace，不再显示 Root parent row。
 
 ## 3. ADR-PMIDI-002（已接受）：活动连通区间定义 Root 生命周期
 
@@ -123,7 +123,7 @@ Root 内 Track 重排是可听语义变更；Track Mute/Solo 必须按来源精�
 
 ```text
 validate and reserve all Fixed Roots
-→ allocate every non-empty Auto Root in explicit Root order to the lowest free Unit
+→ allocate every participating Auto Root by its earliest member global Track order to the lowest free Unit
 → allocate Logical/Event Instrument groups from remaining Units
 ```
 
@@ -272,26 +272,26 @@ UI 不复制第三套 Timeline。Arrangement Segment、piano roll、Velocity、p
 - 三种 piano roll adapter 的共同行为/性能契约测试；
 - 数百万 direct notes/events 的可视区域渲染、命中测试和编辑提交基准。
 
-## 10. ADR-PMIDI-009（已接受）：Root 纳入 mixed Arrangement parent，并保留可逆 SMF 子轨结构
+## 10. ADR-PMIDI-009（已被 ADR-CORE-046 取代）：Root 纳入 mixed Arrangement parent
 
 ### 决定
 
-Root 不再拥有独立 Project-global order 字段；其相对顺序从 `Event Instrument | MIDI Channel Root` mixed Arrangement parent union 过滤得到。Root 仍保存 ordered Pure MIDI Track children，且标准 SMF Track Name 只使用 child Track 名称。版本化 Midora Sequencer-Specific Meta 可以保存 Root name、filtered order、routing/mode 与 child order，用于 Midora→MIDI→Midora 恢复；普通 MIDI consumer 可忽略。
+该旧决策曾规定 mixed parent tree，现由 `Midora-Flat-Arrangement-and-Shared-Usage-Architecture-Decisions.md` 的 ADR-CORE-046 取代。当前 Root 不占 Arrangement 行、不保存 child order；Pure MIDI Track 通过 Root ID 表示共享 Channel Unit，global mixed Track order 是唯一可见顺序。标准 SMF Track Name 仍只使用 Track 名称；版本化 Midora Sequencer-Specific Meta 可保存 Root stable ID/routing/mode 与成员关系，用于 Midora→MIDI→Midora 恢复，普通 MIDI consumer 可忽略。
 
-Root 普通 Copy/Paste/Duplicate 携带完整 child subtree 并把副本 route 强制为 Auto；Cut/drag 保留 stable IDs。Root/child 各自有 runtime Mute/Solo，播放候选按 SRS 24.5 三分支生成。Logical Note 与 Direct Note 跨剪贴板只转换共同字段；Direct NoteOff velocity 在 Direct→Direct、canonical SMF projection 与 export 中保留。
+当前没有可见 Root subtree clipboard。Pure MIDI Track Copy/Cut 后 Paste 创建新 Track 与新稳定 ID；需要独立 route 时建立新 Auto Root，加入既有 shared route 时由明确成员命令处理。只有 drag/move 保留 Track stable ID。Shared Root brace 与 Track 各自有 runtime Mute/Solo；Logical Note 与 Direct Note 跨剪贴板只转换共同字段，Direct NoteOff velocity 在 Direct→Direct、canonical SMF projection 与 export 中保留。
 
 Pure MIDI Segment preview 的 non-Note event 使用独立缓存层，绘制在 Note 上层且固定 50% opacity；它只表达可视摘要，不改写 Root execution order。Conductor preview 使用另一个按 type 聚合的 point tile layer。
 
 ### 理由
 
-唯一 mixed parent order 消除 Project Panel/Arrangement 双重顺序，且过滤 Root 后仍能维持确定分配与 SMF Track order。标准 child Track Name 尊重跨软件工作流；私有 Meta 保留 Midora 层级但不污染普通结构。独立 overview layers 使极端 MIDI 内容可见时仍保持 UI 性能，又不把 bitmap 变成领域模型。
+唯一 global Track order 消除 parent/child tree 与 SMF 源 Track 顺序的冲突；标准 Track Name 尊重跨软件工作流，私有 Meta 保留 Midora Root 共享身份但不污染普通结构。独立 overview layers 使极端 MIDI 内容可见时仍保持 UI 性能，又不把 bitmap 变成领域模型。
 
 ### 后果与验证
 
 - 更新 project JSON/protobuf descriptor/golden bytes，旧开发布局明确拒绝；
 - Root allocation/export tests 使用 filtered mixed order；
 - deep-copy ID/reference remap 与 Fixed→Auto 回归；
-- parent/child Mute-Solo 快速切换与 Root state recovery；
+- Shared Root/Track Mute-Solo 快速切换与 Root state recovery；
 - Direct NoteOff velocity round-trip；
 - event-above-note 50% screenshot golden、tile invalidation 与百万事件基准。
 

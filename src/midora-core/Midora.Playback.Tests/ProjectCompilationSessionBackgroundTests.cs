@@ -38,12 +38,9 @@ public sealed class ProjectCompilationSessionBackgroundTests
         };
         segment.Notes.Add(note);
         track.Segments.Add(segment);
-        root.MidiTrackIds.Add(track.Id);
         project.MidiChannelRoots.Add(root);
         project.PureMidiTracks.Add(track);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            root.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         using ProjectCompilationSession session = new(
             project,
             executionMode: ProjectCompilationExecutionMode.Background,
@@ -116,7 +113,7 @@ public sealed class ProjectCompilationSessionBackgroundTests
             });
             addedTrack.Segments.Add(addedSegment);
             value.PureMidiTracks.Add(addedTrack);
-            root.MidiTrackIds.Add(addedTrack.Id);
+            value.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, addedTrack.Id));
         }, hierarchyChanges);
 
         current = await session.EnsureCurrentCompilationAsync();
@@ -335,11 +332,10 @@ public sealed class ProjectCompilationSessionBackgroundTests
         voice.Events.Add(TemplateEvent.Note(project, 0, 120, 60, 100));
         instrument.SubVoices.Add(voice);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project)
         {
             LengthTicks = noteCount * 120L
@@ -355,7 +351,6 @@ public sealed class ProjectCompilationSessionBackgroundTests
             });
         }
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         return (project, track, segment.Notes[0], segment.Notes[1]);
     }
 }

@@ -107,31 +107,38 @@ public static partial class ProjectDomainEditCommands
             MidiSegmentSelection primary = selected.SingleOrDefault(value => value.Segment.Id == primarySegmentId);
             if (primary.Segment is null)
                 throw new ArgumentException("The primary MIDI Segment must be selected.", nameof(primarySegmentId));
-            PureMidiTrack[] orderedTracks = project.PureMidiTracksInArrangementOrder().ToArray();
-            Dictionary<PureMidiTrack, int> trackIndexes = new(ReferenceEqualityComparer.Instance);
-            for (int index = 0; index < orderedTracks.Length; index++)
-                trackIndexes.Add(orderedTracks[index], index);
-            if (!trackIndexes.TryGetValue(primary.Track, out int primaryTrackIndex))
-                throw new InvalidOperationException("The primary MIDI Track is not present in Arrangement order.");
+            int primaryTrackIndex = FindArrangementTrackIndex(
+                project,
+                ArrangementTrackKind.PureMidiTrack,
+                primary.Track.Id);
             PureMidiTrack targetPrimaryTrack = FindPureMidiTrack(project, targetTrackId);
-            if (!trackIndexes.TryGetValue(targetPrimaryTrack, out int targetPrimaryTrackIndex))
-                throw new InvalidOperationException("The target MIDI Track is not present in Arrangement order.");
+            int targetPrimaryTrackIndex = FindArrangementTrackIndex(
+                project,
+                ArrangementTrackKind.PureMidiTrack,
+                targetPrimaryTrack.Id);
             long delta = checked(newPrimaryStartTick - primary.Segment.ProjectStartTick);
             MidiSegmentBatchPlacement[] placements = selected.Select(value =>
             {
-                if (!trackIndexes.TryGetValue(value.Track, out int sourceTrackIndex))
-                    throw new InvalidOperationException("A selected MIDI Track is not present in Arrangement order.");
+                int sourceTrackIndex = FindArrangementTrackIndex(
+                    project,
+                    ArrangementTrackKind.PureMidiTrack,
+                    value.Track.Id);
                 int targetTrackIndex = checked(
                     targetPrimaryTrackIndex + sourceTrackIndex - primaryTrackIndex);
-                if ((uint)targetTrackIndex >= (uint)orderedTracks.Length)
+                if ((uint)targetTrackIndex >= (uint)project.ArrangementTracks.Count
+                    || project.ArrangementTracks[targetTrackIndex] is not
+                        { Kind: ArrangementTrackKind.PureMidiTrack } targetReference)
                 {
                     throw new InvalidOperationException(
-                        "The MIDI Segment batch cannot preserve its relative Track offsets at the target.");
+                        "The MIDI Segment batch cannot preserve its relative Arrangement lane offsets at the target.");
                 }
                 long start = checked(value.Segment.ProjectStartTick + delta);
                 if (start < 0)
                     throw new InvalidOperationException("The MIDI Segment move would cross tick 0.");
-                return new MidiSegmentBatchPlacement(value, orderedTracks[targetTrackIndex], start);
+                return new MidiSegmentBatchPlacement(
+                    value,
+                    FindPureMidiTrack(project, targetReference.TrackId),
+                    start);
             }).ToArray();
             HashSet<MidiSegment> moving = duplicate
                 ? []

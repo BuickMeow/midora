@@ -9,7 +9,7 @@
 >
 > 规格修订提示（2026-08-18）：SRS 第 23 章已把 Pure MIDI Track 与 SMF Import 纳入初版，并限缩了本文关于“全部 Channel 10 melodic”“CC91/CC93 全局拒绝”“Logical-only Track/EOT”的旧描述。本文正文仍作为 2026-08-08 历史路线记录；现行实现与验证状态见 `misc/Midora-Pure-MIDI-Tracks-and-SMF-Import-Requirement-Trace.md`，规范仍以第 23 章、INV-050～INV-057 和 ADR-PMIDI-001～008 为准。
 >
-> Arrangement 修订提示（2026-08-18）：SRS 第 24 章已用 Conductor-first mixed parent/child Arrangement 取代 Project Panel、Library Folder、Unbound Track 和独立全局 Track/Root 顺序，并新增 Pure MIDI event-on-note / Conductor point 概览缓存。现行实现与验证状态见 `misc/Midora-Arrangement-Hierarchy-and-Preview-Requirement-Trace.md`；规范仍以第 24 章、INV-058～INV-064、ADR-CORE-045、ADR-UI-039～040 与 ADR-PMIDI-009 为准，本文旧 UI/Library 描述仅是历史记录。
+> Arrangement 修订提示（2026-08-20）：SRS 第 24 章已用 Conductor-first global mixed Track order、Event Instrument Definition 管理栏、内部 Event Instrument Usage/MIDI Channel Root 与 Shared brace 取代 2026-08-18 的可见 mixed parent/child tree。现行实现与验证状态见 `misc/Midora-Arrangement-Hierarchy-and-Preview-Requirement-Trace.md`；规范以第 24 章、INV-058～064、INV-073～074、ADR-CORE-046、ADR-UI-040～041 与 ADR-PMIDI-009 的取代说明为准，本文旧 UI/Library 描述仅是历史记录。
 
 ## 1. 审阅范围
 

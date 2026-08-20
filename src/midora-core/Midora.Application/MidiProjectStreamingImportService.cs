@@ -291,10 +291,7 @@ public static partial class MidiProjectImportService
             buckets.Add(key, new(key, track, long.MaxValue));
         }
         return buckets.Values
-            .OrderBy(value => value.Track.AcceptedMetadata is null ? 1 : 0)
-            .ThenBy(value => value.Track.AcceptedMetadata?.RootOrder ?? value.Key.SourceTrackIndex)
-            .ThenBy(value => value.Track.AcceptedMetadata?.TrackOrder ?? 0)
-            .ThenBy(value => value.Key.SourceTrackIndex)
+            .OrderBy(value => value.Key.SourceTrackIndex)
             .ThenBy(value => value.FirstOrder)
             .ThenBy(value => value.Key.SourcePort)
             .ThenBy(value => value.Key.Channel)
@@ -337,7 +334,6 @@ public static partial class MidiProjectImportService
                 };
                 roots.Add(route, root);
                 project.MidiChannelRoots.Add(root);
-                project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
             }
             bool fallback = string.IsNullOrWhiteSpace(bucket.Track.TrackName);
             string baseName = fallback
@@ -353,7 +349,9 @@ public static partial class MidiProjectImportService
                 : $"{baseName} [Port {targetPort + 1}, Channel {bucket.Key.Channel + 1}]";
             PureMidiTrack track = new(project) { Name = name, MidiChannelRootId = root.Id };
             project.PureMidiTracks.Add(track);
-            root.MidiTrackIds.Add(track.Id);
+            project.ArrangementTracks.Add(new(
+                ArrangementTrackKind.PureMidiTrack,
+                track.Id));
             MidiSegment? segment = null;
             PureMidiContentPackWriter? writer = null;
             if (bucket.Track.EndTick > 0)

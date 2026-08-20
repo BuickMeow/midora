@@ -9,7 +9,10 @@
     "metadataPath",
     "conductorTrackPath",
     "settings",
-    "arrangementParents"
+    "eventInstruments",
+    "eventInstrumentUsages",
+    "midiChannelRoots",
+    "arrangementTracks"
   ],
   "properties": {
     "schemaVersion": { "$ref": "common-v1.schema.json#/$defs/schemaVersion" },
@@ -17,9 +20,21 @@
     "metadataPath": { "const": "metadata.json" },
     "conductorTrackPath": { "const": "conductor-track.json" },
     "settings": { "$ref": "#/$defs/settingsPaths" },
-    "arrangementParents": {
+    "eventInstruments": {
       "type": "array",
-      "items": { "$ref": "#/$defs/arrangementParent" }
+      "items": { "$ref": "#/$defs/projectObject" }
+    },
+    "eventInstrumentUsages": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/eventInstrumentUsage" }
+    },
+    "midiChannelRoots": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/projectObject" }
+    },
+    "arrangementTracks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/arrangementTrack" }
     }
   },
   "$defs": {
@@ -45,37 +60,50 @@
         "globalEventScopeDefaults": { "const": "settings/global-event-scope-defaults.json" }
       }
     },
-    "arrangementParent": {
+    "projectObject": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "id", "path", "nameSnapshot", "children"],
+      "required": ["id", "path", "nameSnapshot"],
       "properties": {
-        "kind": { "enum": ["event-instrument", "midi-channel-root"] },
         "id": { "$ref": "common-v1.schema.json#/$defs/stableId" },
         "path": {
           "type": "string",
           "pattern": "^(event-instruments/ei_|midi-channel-roots/mcr_)[1-9][0-9]*\\.pb$"
         },
-        "nameSnapshot": { "$ref": "common-v1.schema.json#/$defs/requiredShortText" },
-        "children": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/arrangementChild" }
-        }
+        "nameSnapshot": { "$ref": "common-v1.schema.json#/$defs/requiredShortText" }
       }
     },
-    "arrangementChild": {
+    "eventInstrumentUsage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "id", "parentId", "path", "nameSnapshot"],
+      "required": ["id", "path", "eventInstrumentId"],
+      "properties": {
+        "id": { "$ref": "common-v1.schema.json#/$defs/stableId" },
+        "path": {
+          "type": "string",
+          "pattern": "^event-instrument-usages/eiu_[1-9][0-9]*\\.pb$"
+        },
+        "eventInstrumentId": { "$ref": "common-v1.schema.json#/$defs/stableId" }
+      }
+    },
+    "arrangementTrack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "path", "nameSnapshot", "sharedGroupId"],
       "properties": {
         "kind": { "enum": ["logical-track", "pure-midi-track"] },
         "id": { "$ref": "common-v1.schema.json#/$defs/stableId" },
-        "parentId": { "$ref": "common-v1.schema.json#/$defs/stableId" },
         "path": {
           "type": "string",
           "pattern": "^(logical-tracks/lt_|midi-tracks/mt_)[1-9][0-9]*\\.pb$"
         },
-        "nameSnapshot": { "$ref": "common-v1.schema.json#/$defs/shortText" }
+        "nameSnapshot": { "$ref": "common-v1.schema.json#/$defs/shortText" },
+        "sharedGroupId": {
+          "anyOf": [
+            { "$ref": "common-v1.schema.json#/$defs/stableId" },
+            { "type": "null" }
+          ]
+        }
       }
     }
   }

@@ -37,9 +37,7 @@ public partial class MidiExportDialog : Window
         ReadmeCheck.IsChecked = settings.IncludeReadme;
         WarningsCheck.IsChecked = settings.TreatWarningsAsErrors;
         SelectedTracksCheck.IsChecked = settings.TrackSelectionMode == ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart;
-        LogicalTrack[] logicalTracks = project.ArrangementParents.Count == 0
-            ? project.Tracks.ToArray()
-            : project.LogicalTracksInArrangementOrder().ToArray();
+        LogicalTrack[] logicalTracks = project.LogicalTracksInArrangementOrder().ToArray();
         for (int index = 0; index < logicalTracks.Length; index++)
         {
             LogicalTrack track = logicalTracks[index];

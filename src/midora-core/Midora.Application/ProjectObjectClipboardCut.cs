@@ -28,14 +28,6 @@ public static partial class ProjectObjectClipboard
                 logicalTrackId,
                 nonEmptyDeletionConfirmed: true));
 
-    public static ProjectObjectClipboardCutPreparation PrepareCutMidiChannelRoot(
-        ProjectDocumentSession document,
-        MidoraId rootId) =>
-        PrepareCut(
-            document,
-            CopyMidiChannelRoot(document, rootId),
-            ProjectDomainEditCommands.DeleteMidiChannelRoot(rootId, nonEmptyDeletionConfirmed: true));
-
     public static ProjectObjectClipboardCutPreparation PrepareCutPureMidiTrack(
         ProjectDocumentSession document,
         MidoraId trackId) =>

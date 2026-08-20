@@ -36,7 +36,6 @@ public sealed class MidoraProjectPackageV1Tests
         Assert.Equal("Round Trip", opened.Project.Metadata.ProjectName);
         Assert.Equal(CreatedAt, opened.Project.Metadata.CreatedAtUtc);
         Assert.Equal(SavedAt, opened.Project.Metadata.ModifiedAtUtc);
-        Assert.Empty(opened.Project.EventInstrumentFolders);
         Assert.Equal(2, opened.Project.Conductor.Tempos.Count);
         Assert.Equal(2, opened.Project.Conductor.TimeSignatures.Count);
         Assert.Single(opened.Project.Conductor.KeySignatures);

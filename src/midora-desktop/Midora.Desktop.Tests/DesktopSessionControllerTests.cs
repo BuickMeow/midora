@@ -204,7 +204,7 @@ public sealed class DesktopSessionControllerTests
         EventInstrument instrument = Assert.Single(session.Project.EventInstruments);
         MidoraId subVoiceId = Assert.Single(instrument.SubVoices).Id;
         (LogicalTrack Track, Segment Segment) segmentContext = session.Project.Tracks
-            .Where(track => track.EventInstrumentId == instrument.Id)
+            .Where(track => session.Project.FindEventInstrumentDefinition(track)?.Id == instrument.Id)
             .SelectMany(track => track.Segments.Select(segment => (Track: track, Segment: segment)))
             .First();
         (string Name, Action Start)[] previewPaths =
@@ -443,7 +443,7 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
-    public async Task ArrangementUsesOneQuarterDefaultAndShowsBoundInstrumentSubtitle()
+    public async Task FlatArrangementUsesOneQuarterDefaultAndShowsBoundInstrumentSubtitle()
     {
         await using DesktopSessionController session = new();
         await session.CreateProjectAsync(new NewProjectCreationRequest
@@ -460,7 +460,7 @@ public sealed class DesktopSessionControllerTests
 
         Assert.Equal(480, arrangement.EditorSettings.DefaultLengthTicks);
         TimelineRenderSnapshot snapshot = Assert.IsType<TimelineRenderSnapshot>(arrangement.Snapshot);
-        Assert.Equal(["Conductor", "Layered Strings", "Lead"], snapshot.LaneLabels);
+        Assert.Equal(["Conductor", "Lead"], snapshot.LaneLabels);
         ArrangementLaneDescriptor logicalTrackLane = Assert.Single(snapshot.ArrangementLanes, value =>
             value.Kind == ArrangementLaneKind.LogicalTrack);
         Assert.Equal("Layered Strings", snapshot.LaneSecondaryLabels[logicalTrackLane.Lane]);
@@ -510,28 +510,6 @@ public sealed class DesktopSessionControllerTests
 
         session.ProjectTreeSearchText = "diagnostic";
         Assert.Empty(session.ProjectTree);
-    }
-
-    [Fact]
-    public async Task ProjectTreeKeepsInstrumentWithDanglingFolderReferenceVisibleAsUnfiled()
-    {
-        await using DesktopSessionController session = new();
-        await session.CreateProjectAsync(new NewProjectCreationRequest
-        {
-            ProjectName = "Dangling folder",
-            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
-        });
-        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Missing Folder Instrument"));
-        EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
-        instrument.LibraryFolderId = MidoraId.FromSequence(999_999);
-
-        session.ProjectTreeSearchText = "missing folder";
-
-        ProjectTreeNode library = Assert.Single(session.ProjectTree);
-        Assert.Equal(ProjectTreeNodeKind.InstrumentLibrary, library.Kind);
-        ProjectTreeNode node = Assert.Single(library.Children);
-        Assert.Equal(ProjectTreeNodeKind.EventInstrument, node.Kind);
-        Assert.Equal(instrument.Id, node.ObjectId);
     }
 
     [Fact]
@@ -924,9 +902,8 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "MIDI Segment open cursor",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateMidiChannelRoot("Root"));
-        MidiChannelRoot root = Assert.Single(session.Project!.MidiChannelRoots);
-        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrack(root.Id, "MIDI Track"));
+        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot("MIDI Track"));
+        _ = Assert.Single(session.Project!.MidiChannelRoots);
         PureMidiTrack track = Assert.Single(session.Project.PureMidiTracks);
         session.Execute(ProjectDomainEditCommands.CreateMidiSegment(
             track.Id,
@@ -1510,7 +1487,6 @@ public sealed class DesktopSessionControllerTests
         Assert.Equal(
             [
                 ArrangementLaneKind.Conductor,
-                ArrangementLaneKind.MidiChannelRoot,
                 ArrangementLaneKind.PureMidiTrack
             ],
             arrangement.Snapshot!.ArrangementLanes.Select(value => value.Kind));
@@ -1525,9 +1501,8 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Pure MIDI UI",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateMidiChannelRoot("Root"));
+        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot("MIDI Track"));
         MidiChannelRoot root = Assert.Single(session.Project!.MidiChannelRoots);
-        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrack(root.Id, "MIDI Track"));
         PureMidiTrack track = Assert.Single(session.Project.PureMidiTracks);
         session.Execute(ProjectDomainEditCommands.CreateMidiSegment(track.Id, 0, 480));
         MidiSegment segment = Assert.Single(track.Segments);
@@ -1564,11 +1539,11 @@ public sealed class DesktopSessionControllerTests
         TimelineRenderSnapshot arrangementSnapshot = Assert.IsType<TimelineRenderSnapshot>(
             arrangement.Snapshot);
         Assert.Equal(
-            [ArrangementLaneKind.Conductor, ArrangementLaneKind.MidiChannelRoot, ArrangementLaneKind.PureMidiTrack],
+            [ArrangementLaneKind.Conductor, ArrangementLaneKind.PureMidiTrack],
             arrangementSnapshot.ArrangementLanes.Select(value => value.Kind));
-        ArrangementLaneDescriptor rootLane = arrangementSnapshot.ArrangementLanes.Single(value =>
-            value.Kind == ArrangementLaneKind.MidiChannelRoot);
-        Assert.Equal("Auto Melodic 1 Tracks", arrangementSnapshot.LaneSecondaryLabels[rootLane.Lane]);
+        ArrangementLaneDescriptor trackLane = arrangementSnapshot.ArrangementLanes.Single(value =>
+            value.Kind == ArrangementLaneKind.PureMidiTrack);
+        Assert.Equal("Auto Melodic", arrangementSnapshot.LaneSecondaryLabels[trackLane.Lane]);
         TimelineSegmentPreview preview = Assert.Single(arrangementSnapshot.SegmentPreviews).Value;
         Assert.Single(preview.Notes);
         // Unpaired raw Note messages stay editable in the Event Lane/Inspector,
@@ -1595,9 +1570,8 @@ public sealed class DesktopSessionControllerTests
             ProjectName = "Pure MIDI editor lifetime",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
-        session.Execute(ProjectDomainEditCommands.CreateMidiChannelRoot("Root"));
-        MidiChannelRoot root = Assert.Single(session.Project!.MidiChannelRoots);
-        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrack(root.Id, "MIDI Track"));
+        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot("MIDI Track"));
+        _ = Assert.Single(session.Project!.MidiChannelRoots);
         PureMidiTrack track = Assert.Single(session.Project.PureMidiTracks);
         session.Execute(ProjectDomainEditCommands.CreateMidiSegment(track.Id, 0, 480));
         MidiSegment segment = Assert.Single(track.Segments);
@@ -1624,34 +1598,29 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
-    public void ArrangementKeepsDamagedParentAndChildPlaceholdersVisibleInFormalOrder()
+    public void ArrangementKeepsDamagedTrackPlaceholdersVisibleInFormalOrder()
     {
         MidoraProject project = new(480);
-        EventInstrument instrument = new(project) { Name = "Instrument" };
         MidoraId damagedTrackId = project.AllocateStableId();
-        instrument.LogicalTrackIds.Add(damagedTrackId);
-        project.EventInstruments.Add(instrument);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.EventInstrument,
-            instrument.Id));
         project.DamagedLogicalTracks.Add(new(
             damagedTrackId,
             "Broken Track",
             "logical-tracks/broken.pb",
             "track payload is damaged",
-            0,
-            instrument.Id));
-        MidoraId damagedRootId = project.AllocateStableId();
-        project.DamagedMidiChannelRoots.Add(new(
-            damagedRootId,
-            "Broken Root",
-            "midi-channel-roots/broken.pb",
-            "root payload is damaged",
-            1,
-            ChildIds: Array.AsReadOnly(Array.Empty<MidoraId>())));
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            damagedRootId));
+            0));
+        MidoraId damagedMidiTrackId = project.AllocateStableId();
+        project.DamagedPureMidiTracks.Add(new(
+            damagedMidiTrackId,
+            "Broken MIDI Track",
+            "pure-midi-tracks/broken.pb",
+            "track payload is damaged",
+            1));
+        project.ArrangementTracks.Add(new(
+            ArrangementTrackKind.LogicalTrack,
+            damagedTrackId));
+        project.ArrangementTracks.Add(new(
+            ArrangementTrackKind.PureMidiTrack,
+            damagedMidiTrackId));
         TimelineEditorSettings settings = new();
         settings.Reset(arrangement: true, project.TicksPerQuarterNote);
         TimelineWorkspaceViewModel workspace = new(
@@ -1665,13 +1634,12 @@ public sealed class DesktopSessionControllerTests
         Assert.Equal(
             [
                 ArrangementLaneKind.Conductor,
-                ArrangementLaneKind.EventInstrument,
                 ArrangementLaneKind.DamagedLogicalTrack,
-                ArrangementLaneKind.DamagedMidiChannelRoot
+                ArrangementLaneKind.DamagedPureMidiTrack
             ],
             workspace.Snapshot!.ArrangementLanes.Select(value => value.Kind));
         Assert.Contains("[Damaged] Broken Track", workspace.Snapshot.LaneLabels);
-        Assert.Contains("[Damaged] Broken Root", workspace.Snapshot.LaneLabels);
+        Assert.Contains("[Damaged] Broken MIDI Track", workspace.Snapshot.LaneLabels);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

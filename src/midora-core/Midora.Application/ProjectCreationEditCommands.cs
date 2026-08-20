@@ -10,42 +10,126 @@ public static partial class ProjectDomainEditCommands
         int? insertionIndex = null) =>
         Command("Create logical track", project =>
         {
-            if (!eventInstrumentId.HasValue)
-            {
-                throw new InvalidOperationException(
-                    "A Logical Track must be created under an Event Instrument.");
-            }
-            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId.Value);
+            EventInstrument? instrument = eventInstrumentId is MidoraId instrumentId
+                ? FindEventInstrument(project, instrumentId)
+                : null;
             string normalizedName = ProjectTextRules.NormalizeShortText(
                 name ?? "Logical Track",
                 allowEmpty: true,
                 nameof(name));
-            int childIndex = insertionIndex ?? instrument.LogicalTrackIds.Count;
-            ValidateInsertionIndex(childIndex, instrument.LogicalTrackIds.Count, nameof(insertionIndex));
+            int trackIndex = insertionIndex ?? project.ArrangementTracks.Count;
+            ValidateInsertionIndex(trackIndex, project.ArrangementTracks.Count, nameof(insertionIndex));
+            EventInstrumentUsage? createdUsage = null;
             return DeferredCreate(
                 EverythingChange(),
                 value =>
                 {
+                    if (instrument is not null)
+                    {
+                        createdUsage = new(value) { EventInstrumentId = instrument.Id };
+                        value.EventInstrumentUsages.Add(createdUsage);
+                    }
                     LogicalTrack track = new(value)
                     {
                         Name = normalizedName,
-                        EventInstrumentId = instrument.Id,
-                        LastBoundEventInstrumentName = instrument.Name
+                        EventInstrumentUsageId = createdUsage?.Id,
+                        LastBoundEventInstrumentName = instrument?.Name
                     };
                     value.Tracks.Add(track);
-                    instrument.LogicalTrackIds.Insert(childIndex, track.Id);
+                    value.ArrangementTracks.Insert(
+                        trackIndex,
+                        new(ArrangementTrackKind.LogicalTrack, track.Id));
                     return track;
                 },
                 (value, track) =>
                 {
                     EnsureLogicalTrackIdAvailable(value, track.Id);
+                    if (createdUsage is not null)
+                    {
+                        EnsureEventInstrumentUsageIdAvailable(value, createdUsage.Id);
+                        value.EventInstrumentUsages.Add(createdUsage);
+                    }
                     value.Tracks.Add(track);
-                    InsertAt(instrument.LogicalTrackIds, childIndex, track.Id, "Logical Track reference");
+                    InsertAt(
+                        value.ArrangementTracks,
+                        trackIndex,
+                        new ArrangementTrackReference(ArrangementTrackKind.LogicalTrack, track.Id),
+                        "Arrangement Track reference");
                 },
                 (value, track) =>
                 {
-                    RemoveRequired(instrument.LogicalTrackIds, track.Id, "Logical Track reference");
+                    RemoveRequired(
+                        value.ArrangementTracks,
+                        new ArrangementTrackReference(ArrangementTrackKind.LogicalTrack, track.Id),
+                        "Arrangement Track reference");
                     RemoveRequired(value.Tracks, track, "Logical Track");
+                    if (createdUsage is not null)
+                    {
+                        RemoveRequired(value.EventInstrumentUsages, createdUsage, "Event Instrument Usage");
+                    }
+                });
+        });
+
+    public static IProjectEditCommand CreateLogicalTrackWithNewEventInstrument(
+        string eventInstrumentName,
+        string? trackName = null,
+        int? insertionIndex = null) =>
+        Command("Create logical track with Event Instrument", project =>
+        {
+            string normalizedInstrumentName = EventInstrumentLibrary.ValidateUniqueName(
+                project,
+                eventInstrumentName,
+                default);
+            string normalizedTrackName = ProjectTextRules.NormalizeShortText(
+                trackName ?? "Logical Track",
+                allowEmpty: true,
+                nameof(trackName));
+            int trackIndex = insertionIndex ?? project.ArrangementTracks.Count;
+            ValidateInsertionIndex(trackIndex, project.ArrangementTracks.Count, nameof(insertionIndex));
+            EventInstrument? instrument = null;
+            EventInstrumentUsage? usage = null;
+            LogicalTrack? track = null;
+            return Prepared(
+                true,
+                EverythingChange(),
+                value =>
+                {
+                    if (instrument is null)
+                    {
+                        instrument = EventInstrumentLibrary.Create(value, normalizedInstrumentName);
+                        _ = SubVoiceMappingConventions.AddDefaultInstanceVelocityMapping(
+                            value,
+                            instrument.SubVoices[0]);
+                        usage = new(value) { EventInstrumentId = instrument.Id };
+                        track = new(value)
+                        {
+                            Name = normalizedTrackName,
+                            EventInstrumentUsageId = usage.Id,
+                            LastBoundEventInstrumentName = instrument.Name
+                        };
+                    }
+                    else
+                    {
+                        EnsureEventInstrumentIdAvailable(value, instrument.Id);
+                        value.EventInstruments.Add(instrument);
+                        EnsureEventInstrumentUsageIdAvailable(value, usage!.Id);
+                        EnsureLogicalTrackIdAvailable(value, track!.Id);
+                    }
+                    value.EventInstrumentUsages.Add(usage!);
+                    value.Tracks.Add(track!);
+                    value.ArrangementTracks.Insert(
+                        trackIndex,
+                        new(ArrangementTrackKind.LogicalTrack, track!.Id));
+                },
+                value =>
+                {
+                    RemoveRequired(
+                        value.ArrangementTracks,
+                        new ArrangementTrackReference(ArrangementTrackKind.LogicalTrack, track!.Id),
+                        "Arrangement Track reference");
+                    RemoveRequired(value.Tracks, track!, "Logical Track");
+                    RemoveRequired(value.EventInstrumentUsages, usage!, "Event Instrument Usage");
+                    RemoveRequired(value.EventInstruments, instrument!, "Event Instrument");
                 });
         });
 
@@ -59,15 +143,12 @@ public static partial class ProjectDomainEditCommands
                 name ?? $"{source.Name} Copy",
                 allowEmpty: true,
                 nameof(name));
-            EventInstrument instrument = source.EventInstrumentId is MidoraId instrumentId
-                ? FindEventInstrument(project, instrumentId)
-                : throw new InvalidOperationException(
-                    "A Logical Track without an Event Instrument parent cannot be duplicated.");
-            int childIndex = instrument.LogicalTrackIds.IndexOf(source.Id) + 1;
-            if (childIndex == 0)
+            int trackIndex = project.ArrangementTracks.IndexOf(
+                new(ArrangementTrackKind.LogicalTrack, source.Id)) + 1;
+            if (trackIndex == 0)
             {
                 throw new InvalidOperationException(
-                    "The Logical Track is missing from its Event Instrument child order.");
+                    "The Logical Track is missing from the Arrangement Track order.");
             }
             return DeferredCreate(
                 EverythingChange(),
@@ -75,66 +156,41 @@ public static partial class ProjectDomainEditCommands
                 {
                     LogicalTrack copy = CloneLogicalTrack(value, source, copyName);
                     value.Tracks.Add(copy);
-                    instrument.LogicalTrackIds.Insert(childIndex, copy.Id);
+                    value.ArrangementTracks.Insert(
+                        trackIndex,
+                        new(ArrangementTrackKind.LogicalTrack, copy.Id));
                     return copy;
                 },
                 (value, copy) =>
                 {
                     EnsureLogicalTrackIdAvailable(value, copy.Id);
                     value.Tracks.Add(copy);
-                    InsertAt(instrument.LogicalTrackIds, childIndex, copy.Id, "Logical Track reference");
+                    InsertAt(
+                        value.ArrangementTracks,
+                        trackIndex,
+                        new ArrangementTrackReference(ArrangementTrackKind.LogicalTrack, copy.Id),
+                        "Arrangement Track reference");
                 },
                 (value, copy) =>
                 {
-                    RemoveRequired(instrument.LogicalTrackIds, copy.Id, "Logical Track reference");
+                    RemoveRequired(
+                        value.ArrangementTracks,
+                        new ArrangementTrackReference(ArrangementTrackKind.LogicalTrack, copy.Id),
+                        "Arrangement Track reference");
                     RemoveRequired(value.Tracks, copy, "Logical Track");
                 });
         });
 
-    public static IProjectEditCommand CreateEventInstrumentFolder(
-        string name,
-        int? insertionIndex = null) =>
-        Command("Create event instrument folder", project =>
-        {
-            string normalized = EventInstrumentLibrary.ValidateFolderName(project, name, default);
-            int index = insertionIndex ?? project.EventInstrumentFolders.Count;
-            ValidateInsertionIndex(index, project.EventInstrumentFolders.Count, nameof(insertionIndex));
-            return DeferredCreate(
-                NoCompilationChange(),
-                value =>
-                {
-                    EventInstrumentLibraryFolder folder =
-                        EventInstrumentLibrary.CreateFolder(value, normalized);
-                    Move(value.EventInstrumentFolders, folder, index);
-                    return folder;
-                },
-                (value, folder) =>
-                {
-                    EnsureFolderIdAvailable(value, folder.Id);
-                    InsertAt(value.EventInstrumentFolders, index, folder, "Event Instrument folder");
-                },
-                (value, folder) => RemoveRequired(
-                    value.EventInstrumentFolders,
-                    folder,
-                    "Event Instrument folder"));
-        });
-
     public static IProjectEditCommand CreateEventInstrument(
         string? name = null,
-        MidoraId? folderId = null,
         int? insertionIndex = null) =>
         Command("Create event instrument", project =>
         {
-            if (folderId.HasValue)
-            {
-                throw new InvalidOperationException(
-                    "Event Instrument folders are not part of the Arrangement hierarchy.");
-            }
             string? normalized = name is null
                 ? null
                 : EventInstrumentLibrary.ValidateUniqueName(project, name, default);
-            int parentIndex = insertionIndex ?? project.ArrangementParents.Count;
-            ValidateInsertionIndex(parentIndex, project.ArrangementParents.Count, nameof(insertionIndex));
+            int definitionIndex = insertionIndex ?? project.EventInstruments.Count;
+            ValidateInsertionIndex(definitionIndex, project.EventInstruments.Count, nameof(insertionIndex));
             return DeferredCreate(
                 EverythingChange(),
                 value =>
@@ -143,31 +199,16 @@ public static partial class ProjectDomainEditCommands
                     _ = SubVoiceMappingConventions.AddDefaultInstanceVelocityMapping(
                         value,
                         instrument.SubVoices[0]);
-                    value.ArrangementParents.Insert(
-                        parentIndex,
-                        new(ArrangementParentKind.EventInstrument, instrument.Id));
+                    Move(value.EventInstruments, instrument, definitionIndex);
                     return instrument;
                 },
                 (value, instrument) =>
                 {
                     EnsureEventInstrumentIdAvailable(value, instrument.Id);
-                    value.EventInstruments.Add(instrument);
-                    InsertAt(
-                        value.ArrangementParents,
-                        parentIndex,
-                        new ArrangementParentReference(
-                            ArrangementParentKind.EventInstrument,
-                            instrument.Id),
-                        "Arrangement parent");
+                    InsertAt(value.EventInstruments, definitionIndex, instrument, "Event Instrument");
                 },
                 (value, instrument) =>
                 {
-                    RemoveRequired(
-                        value.ArrangementParents,
-                        new ArrangementParentReference(
-                            ArrangementParentKind.EventInstrument,
-                            instrument.Id),
-                        "Arrangement parent");
                     RemoveRequired(value.EventInstruments, instrument, "Event Instrument");
                 });
         });
@@ -175,31 +216,28 @@ public static partial class ProjectDomainEditCommands
     public static IProjectEditCommand DuplicateEventInstrument(
         MidoraId eventInstrumentId,
         string? name = null) =>
-        DuplicateEventInstrumentCore(eventInstrumentId, name, includeTracks: true);
+        DuplicateEventInstrumentCore(eventInstrumentId, name);
 
     public static IProjectEditCommand DuplicateEventInstrumentOnly(
         MidoraId eventInstrumentId,
         string? name = null) =>
-        DuplicateEventInstrumentCore(eventInstrumentId, name, includeTracks: false);
+        DuplicateEventInstrumentCore(eventInstrumentId, name);
 
     private static IProjectEditCommand DuplicateEventInstrumentCore(
         MidoraId eventInstrumentId,
-        string? name,
-        bool includeTracks) =>
-        Command(includeTracks ? "Duplicate event instrument" : "Duplicate instrument only", project =>
+        string? name) =>
+        Command("Duplicate event instrument", project =>
         {
             EventInstrument source = FindEventInstrument(project, eventInstrumentId);
             string? normalized = name is null
                 ? null
                 : EventInstrumentLibrary.ValidateUniqueName(project, name, default);
-            int parentIndex = project.ArrangementParents.IndexOf(
-                new(ArrangementParentKind.EventInstrument, source.Id)) + 1;
-            if (parentIndex == 0)
+            int definitionIndex = project.EventInstruments.IndexOf(source) + 1;
+            if (definitionIndex == 0)
             {
                 throw new InvalidOperationException(
-                    "The Event Instrument is missing from the Arrangement parent order.");
+                    "The Event Instrument is missing from the Definition order.");
             }
-            List<LogicalTrack> createdTracks = [];
             return DeferredCreate(
                 EverythingChange(),
                 value =>
@@ -209,53 +247,16 @@ public static partial class ProjectDomainEditCommands
                         source.Id,
                         normalized);
                     RemoveLaterExactTimelineCollisions(copy);
-                    if (includeTracks)
-                    {
-                        foreach (MidoraId trackId in source.LogicalTrackIds)
-                        {
-                            LogicalTrack sourceTrack = FindTrack(value, trackId);
-                            LogicalTrack trackCopy = CloneLogicalTrack(value, sourceTrack, sourceTrack.Name);
-                            trackCopy.EventInstrumentId = copy.Id;
-                            trackCopy.LastBoundEventInstrumentName = copy.Name;
-                            value.Tracks.Add(trackCopy);
-                            copy.LogicalTrackIds.Add(trackCopy.Id);
-                            createdTracks.Add(trackCopy);
-                        }
-                    }
-                    value.ArrangementParents.Insert(
-                        parentIndex,
-                        new(ArrangementParentKind.EventInstrument, copy.Id));
+                    Move(value.EventInstruments, copy, definitionIndex);
                     return copy;
                 },
                 (value, copy) =>
                 {
                     EnsureEventInstrumentIdAvailable(value, copy.Id);
-                    value.EventInstruments.Add(copy);
-                    foreach (LogicalTrack track in createdTracks)
-                    {
-                        EnsureLogicalTrackIdAvailable(value, track.Id);
-                        value.Tracks.Add(track);
-                    }
-                    InsertAt(
-                        value.ArrangementParents,
-                        parentIndex,
-                        new ArrangementParentReference(
-                            ArrangementParentKind.EventInstrument,
-                            copy.Id),
-                        "Arrangement parent");
+                    InsertAt(value.EventInstruments, definitionIndex, copy, "Event Instrument");
                 },
                 (value, copy) =>
                 {
-                    RemoveRequired(
-                        value.ArrangementParents,
-                        new ArrangementParentReference(
-                            ArrangementParentKind.EventInstrument,
-                            copy.Id),
-                        "Arrangement parent");
-                    foreach (LogicalTrack track in createdTracks)
-                    {
-                        RemoveRequired(value.Tracks, track, "Logical Track");
-                    }
                     RemoveRequired(value.EventInstruments, copy, "Event Instrument");
                 });
         });
@@ -268,6 +269,7 @@ public static partial class ProjectDomainEditCommands
         Command("Create segment", project =>
         {
             LogicalTrack track = FindTrack(project, trackId);
+            EnsureLogicalTrackCanContainContent(project, track);
             ValidateSegmentRange(projectStartTick, lengthTicks, contentOffsetTick);
             EnsureNoSegmentOverlap(track, null, projectStartTick, lengthTicks);
             return DeferredCreate(
@@ -295,6 +297,7 @@ public static partial class ProjectDomainEditCommands
         {
             SegmentLocation source = FindSegment(project, segmentId);
             LogicalTrack target = FindTrack(project, targetTrackId);
+            EnsureLogicalTrackCanContainContent(project, target);
             ValidateSegmentRange(
                 newProjectStartTick,
                 source.Segment.LengthTicks,
@@ -648,7 +651,7 @@ public static partial class ProjectDomainEditCommands
         LogicalTrack copy = new(project)
         {
             Name = name,
-            EventInstrumentId = source.EventInstrumentId,
+            EventInstrumentUsageId = source.EventInstrumentUsageId,
             LastBoundEventInstrumentName = source.LastBoundEventInstrumentName,
             ColorOverride = source.ColorOverride
         };

@@ -123,7 +123,7 @@ public sealed class MidiProjectImportServiceTests
     }
 
     [Fact]
-    public void MidoraPrivateMetadataRestoresAutoRootEmptyTrackAndSourceOrdering()
+    public void MidoraPrivateMetadataRestoresAutoRootAndEmptyTrackWithoutOverridingSmfOrder()
     {
         MidoraProject source = new(480);
         MidiChannelRoot root = new(source)
@@ -133,7 +133,6 @@ public sealed class MidiProjectImportServiceTests
             ChannelMode = MidiChannelMode.Melodic
         };
         source.MidiChannelRoots.Add(root);
-        source.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
         PureMidiTrack first = AddTrack(source, root, "First");
         PureMidiTrack empty = AddTrack(source, root, "Empty");
         first.Segments[0].Notes.Add(new(source)
@@ -175,9 +174,10 @@ public sealed class MidiProjectImportServiceTests
         Assert.Equal(MidiChannelRootRoutingMode.Auto, importedRoot.RoutingMode);
         Assert.Equal(MidiChannelMode.Melodic, importedRoot.ChannelMode);
         Assert.Equal(
-            ["First", "Empty"],
-            importedRoot.MidiTrackIds
-                .Select(id => imported.Project.PureMidiTracks.Single(track => track.Id == id).Name)
+            ["Empty", "First"],
+            imported.Project.PureMidiTracksInArrangementOrder()
+                .Where(track => track.MidiChannelRootId == importedRoot.Id)
+                .Select(track => track.Name)
                 .ToArray());
         PureMidiTrack importedEmpty = imported.Project.PureMidiTracks.Single(
             track => track.Name == "Empty");
@@ -197,7 +197,6 @@ public sealed class MidiProjectImportServiceTests
             ChannelMode = MidiChannelMode.Melodic
         };
         source.MidiChannelRoots.Add(root);
-        source.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
         PureMidiTrack track = AddTrack(source, root, "Channel 10 Track");
         track.Segments[0].Notes.Add(new(source)
         {
@@ -527,7 +526,7 @@ public sealed class MidiProjectImportServiceTests
         };
         track.Segments.Add(new(project) { LengthTicks = 960 });
         project.PureMidiTracks.Add(track);
-        root.MidiTrackIds.Add(track.Id);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         return track;
     }
 

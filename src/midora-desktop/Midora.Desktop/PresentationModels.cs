@@ -33,7 +33,6 @@ public enum ProjectTreeNodeKind
 {
     Conductor,
     InstrumentLibrary,
-    InstrumentFolder,
     EventInstrument,
     DamagedEventInstrument,
     LogicalTracks,
@@ -58,7 +57,6 @@ public sealed class ProjectTreeNode(
     public string Subtitle { get; } = subtitle;
     public bool IsDamaged => Kind is ProjectTreeNodeKind.DamagedEventInstrument
         or ProjectTreeNodeKind.DamagedLogicalTrack;
-    public bool IsInstrumentFolder => Kind == ProjectTreeNodeKind.InstrumentFolder;
     public string Title
     {
         get => _title;
@@ -592,6 +590,18 @@ public sealed class TrackSelectionRow(
     public bool IsSelected { get => _isSelected; set => Set(ref _isSelected, value); }
 }
 
+public sealed record EventInstrumentBrowserRow(
+    MidoraId Id,
+    string Name,
+    int UsageCount,
+    int TrackCount)
+{
+    public string Detail => UsageCount == 0
+        ? "Unused"
+        : $"{UsageCount} usage{(UsageCount == 1 ? string.Empty : "s")} · "
+            + $"{TrackCount} track{(TrackCount == 1 ? string.Empty : "s")}";
+}
+
 internal static class TimelineLowerEditorLayout
 {
     public const double DefaultHeight = 190;
@@ -604,9 +614,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     private readonly Dictionary<MidoraId, SegmentPreviewCacheEntry> _segmentPreviewCache = [];
     private readonly HashSet<MidoraId> _mutedTrackIds = [];
     private readonly HashSet<MidoraId> _soloTrackIds = [];
-    private readonly HashSet<MidoraId> _mutedArrangementParentIds = [];
-    private readonly HashSet<MidoraId> _soloArrangementParentIds = [];
-    private readonly HashSet<MidoraId> _collapsedArrangementParentIds = [];
+    private readonly HashSet<MidoraId> _mutedSharedGroupIds = [];
+    private readonly HashSet<MidoraId> _soloSharedGroupIds = [];
     private readonly HashSet<DirectMidiEventLaneTarget> _directMidiLaneTargets = [];
     private TimelineRenderSnapshot? _snapshot;
     private TimelineRenderSnapshot? _rulerSnapshot;
@@ -633,6 +642,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     private bool _activeValueIntegral = true;
     private bool _isLowerEditorVisible = true;
     private double _lowerEditorHeight = TimelineLowerEditorLayout.DefaultHeight;
+    private bool _isEventInstrumentPaneVisible = true;
 
     public TimelineWorkspaceViewModel(
         WorkspaceKey key,
@@ -699,6 +709,19 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         }
     }
     public ObservableCollection<ConductorEventRow> ConductorEvents { get; } = [];
+    public ObservableCollection<EventInstrumentBrowserRow> EventInstrumentBrowser { get; } = [];
+    public bool IsEventInstrumentPaneVisible
+    {
+        get => IsArrangement && _isEventInstrumentPaneVisible;
+        set
+        {
+            if (!IsArrangement || !Set(ref _isEventInstrumentPaneVisible, value)) return;
+            Raise(nameof(EventInstrumentPaneWidth));
+        }
+    }
+    public GridLength EventInstrumentPaneWidth => IsEventInstrumentPaneVisible
+        ? new GridLength(238)
+        : new GridLength(0);
     public TimelineSurfaceMode SurfaceMode => Mode switch
     {
         TimelineWorkspaceMode.Arrangement => TimelineSurfaceMode.Arrangement,
@@ -854,8 +877,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     public void SetTrackMonitoringStates(
         IEnumerable<MidoraId> mutedTrackIds,
         IEnumerable<MidoraId> soloTrackIds,
-        IEnumerable<MidoraId>? mutedArrangementParentIds = null,
-        IEnumerable<MidoraId>? soloArrangementParentIds = null)
+        IEnumerable<MidoraId>? mutedSharedGroupIds = null,
+        IEnumerable<MidoraId>? soloSharedGroupIds = null)
     {
         ArgumentNullException.ThrowIfNull(mutedTrackIds);
         ArgumentNullException.ThrowIfNull(soloTrackIds);
@@ -863,49 +886,18 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         _mutedTrackIds.UnionWith(mutedTrackIds);
         _soloTrackIds.Clear();
         _soloTrackIds.UnionWith(soloTrackIds);
-        _mutedArrangementParentIds.Clear();
-        if (mutedArrangementParentIds is not null)
-            _mutedArrangementParentIds.UnionWith(mutedArrangementParentIds);
-        _soloArrangementParentIds.Clear();
-        if (soloArrangementParentIds is not null)
-            _soloArrangementParentIds.UnionWith(soloArrangementParentIds);
+        _mutedSharedGroupIds.Clear();
+        if (mutedSharedGroupIds is not null)
+            _mutedSharedGroupIds.UnionWith(mutedSharedGroupIds);
+        _soloSharedGroupIds.Clear();
+        if (soloSharedGroupIds is not null)
+            _soloSharedGroupIds.UnionWith(soloSharedGroupIds);
     }
 
     public ArrangementLaneDescriptor? GetArrangementLane(int lane)
     {
         if (Snapshot is null || (uint)lane >= (uint)Snapshot.ArrangementLanes.Count) return null;
         return Snapshot.ArrangementLanes[lane];
-    }
-
-    public bool ToggleArrangementParentExpanded(int lane)
-    {
-        ArrangementLaneDescriptor? descriptor = GetArrangementLane(lane);
-        if (descriptor is not { ObjectId: MidoraId parentId, HasChildren: true }
-            || descriptor.Value.Kind is not (ArrangementLaneKind.EventInstrument
-                or ArrangementLaneKind.MidiChannelRoot))
-        {
-            return false;
-        }
-        if (!_collapsedArrangementParentIds.Add(parentId))
-            _collapsedArrangementParentIds.Remove(parentId);
-        return true;
-    }
-
-    public bool SetAllArrangementParentsExpanded(bool expanded)
-    {
-        if (Snapshot is null) return false;
-        MidoraId[] parentIds = Snapshot.ArrangementLanes
-            .Where(value => value.Kind is ArrangementLaneKind.EventInstrument
-                or ArrangementLaneKind.MidiChannelRoot)
-            .Where(value => value.ObjectId.HasValue)
-            .Select(value => value.ObjectId!.Value)
-            .ToArray();
-        int oldCount = _collapsedArrangementParentIds.Count;
-        if (expanded)
-            _collapsedArrangementParentIds.ExceptWith(parentIds);
-        else
-            _collapsedArrangementParentIds.UnionWith(parentIds);
-        return oldCount != _collapsedArrangementParentIds.Count;
     }
 
     public void ResetViewport()
@@ -1105,15 +1097,17 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         void AddLane(
             ArrangementLaneKind kind,
             MidoraId? objectId,
-            MidoraId? parentId,
-            int depth,
+            MidoraId? ownerId,
             string label,
             string secondary,
             uint color,
             TimelineLaneState state,
-            bool isExpanded,
-            bool hasChildren,
-            bool canContainSegments)
+            bool canContainSegments,
+            MidoraId? sharedGroupId = null,
+            bool isSharedGroup = false,
+            bool isSharedGroupStart = false,
+            bool isSharedGroupEnd = false,
+            int sharedGroupMemberCount = 0)
         {
             int lane = labels.Count;
             labels.Add(label);
@@ -1124,29 +1118,36 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 lane,
                 kind,
                 objectId,
-                parentId,
-                depth,
-                isExpanded,
-                hasChildren,
-                canContainSegments));
+                ownerId,
+                0,
+                true,
+                false,
+                canContainSegments)
+            {
+                SharedGroupId = sharedGroupId,
+                IsSharedGroup = isSharedGroup,
+                IsSharedGroupStart = isSharedGroupStart,
+                IsSharedGroupEnd = isSharedGroupEnd,
+                SharedGroupMemberCount = sharedGroupMemberCount
+            });
         }
 
         AddLane(
             ArrangementLaneKind.Conductor,
             null,
             null,
-            0,
             "Conductor",
             "Tempo · Meter · Key · Markers",
             0,
             TimelineLaneState.None,
-            true,
-            false,
             false);
         TimelineRenderSnapshot conductor = BuildConductorOverview(project, revision);
         items.AddRange(conductor.Items);
 
         Dictionary<MidoraId, EventInstrument> instruments = project.EventInstruments
+            .GroupBy(value => value.Id)
+            .ToDictionary(group => group.Key, group => group.First());
+        Dictionary<MidoraId, EventInstrumentUsage> usages = project.EventInstrumentUsages
             .GroupBy(value => value.Id)
             .ToDictionary(group => group.Key, group => group.First());
         Dictionary<MidoraId, MidiChannelRoot> roots = project.MidiChannelRoots
@@ -1171,202 +1172,179 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             .GroupBy(value => value.Id)
             .ToDictionary(group => group.Key, group => group.First());
 
-        foreach (ArrangementParentReference parent in project.ArrangementParents)
+        Dictionary<MidoraId, int> usageMemberCounts = project.Tracks
+            .Where(value => value.EventInstrumentUsageId.HasValue)
+            .GroupBy(value => value.EventInstrumentUsageId!.Value)
+            .ToDictionary(value => value.Key, value => value.Count());
+        Dictionary<MidoraId, int> rootMemberCounts = project.PureMidiTracks
+            .GroupBy(value => value.MidiChannelRootId)
+            .ToDictionary(value => value.Key, value => value.Count());
+        ArrangementTrackReference[] order = project.TracksInArrangementOrder().ToArray();
+
+        (MidoraId? Id, bool Shared, int Count) GroupInfo(ArrangementTrackReference reference)
         {
-            if (parent.Kind == ArrangementParentKind.EventInstrument
-                && instruments.TryGetValue(parent.ParentId, out EventInstrument? instrument))
+            if (reference.Kind == ArrangementTrackKind.LogicalTrack
+                && logicalTracks.TryGetValue(reference.TrackId, out LogicalTrack? logical)
+                && logical.EventInstrumentUsageId is MidoraId usageId)
             {
-                MidoraId[] childIds = instrument.LogicalTrackIds.ToArray();
-                bool expanded = !_collapsedArrangementParentIds.Contains(instrument.Id);
-                uint parentColor = instrument.Color is MidoraColor instrumentColor
-                    ? ToOpaqueArgb(instrumentColor)
+                int count = usageMemberCounts.GetValueOrDefault(usageId);
+                return (usageId, count > 1, count);
+            }
+            if (reference.Kind == ArrangementTrackKind.PureMidiTrack
+                && midiTracks.TryGetValue(reference.TrackId, out PureMidiTrack? midi)
+                && roots.TryGetValue(midi.MidiChannelRootId, out MidiChannelRoot? root))
+            {
+                int count = rootMemberCounts.GetValueOrDefault(root.Id);
+                return (root.Id, root.RoutingMode == MidiChannelRootRoutingMode.Auto && count > 1, count);
+            }
+            return (null, false, 0);
+        }
+
+        for (int orderIndex = 0; orderIndex < order.Length; orderIndex++)
+        {
+            ArrangementTrackReference reference = order[orderIndex];
+            (MidoraId? groupId, bool shared, int groupCount) = GroupInfo(reference);
+            bool groupStart = shared && (orderIndex == 0 || GroupInfo(order[orderIndex - 1]).Id != groupId);
+            bool groupEnd = shared && (orderIndex == order.Length - 1 || GroupInfo(order[orderIndex + 1]).Id != groupId);
+
+            if (reference.Kind == ArrangementTrackKind.LogicalTrack
+                && logicalTracks.TryGetValue(reference.TrackId, out LogicalTrack? track))
+            {
+                EventInstrumentUsage? usage = track.EventInstrumentUsageId is MidoraId usageId
+                    && usages.TryGetValue(usageId, out EventInstrumentUsage? foundUsage)
+                        ? foundUsage
+                        : null;
+                EventInstrument? instrument = usage is not null
+                    && instruments.TryGetValue(usage.EventInstrumentId, out EventInstrument? foundInstrument)
+                        ? foundInstrument
+                        : project.FindEventInstrumentDefinition(track);
+                uint instrumentColor = instrument?.Color is MidoraColor color
+                    ? ToOpaqueArgb(color)
                     : 0;
+                uint accentColor = track.ColorOverride is MidoraColor overrideColor
+                    ? ToOpaqueArgb(overrideColor)
+                    : instrumentColor;
+                string definitionName = instrument is null
+                    ? "Unbound"
+                    : string.IsNullOrWhiteSpace(instrument.Name)
+                        ? "Unnamed Event Instrument"
+                        : instrument.Name;
+                string secondary = shared
+                    ? $"{definitionName} · Shared state · {groupCount} tracks"
+                    : instrument is null ? "Unbound · Empty track only" : definitionName;
+                int lane = labels.Count;
                 AddLane(
-                    ArrangementLaneKind.EventInstrument,
-                    instrument.Id,
-                    null,
-                    0,
-                    string.IsNullOrWhiteSpace(instrument.Name) ? "Unnamed Event Instrument" : instrument.Name,
-                    $"Event Instrument · {childIds.Length} track{(childIds.Length == 1 ? string.Empty : "s")}",
-                    parentColor,
-                    ParentMonitoringState(instrument.Id),
-                    expanded,
-                    childIds.Length != 0,
-                    false);
-                if (!expanded) continue;
-                foreach (MidoraId childId in childIds)
+                    ArrangementLaneKind.LogicalTrack,
+                    track.Id,
+                    instrument?.Id,
+                    string.IsNullOrWhiteSpace(track.Name) ? "Logical Track" : track.Name,
+                    secondary,
+                    accentColor,
+                    TrackMonitoringState(track.Id),
+                    true,
+                    groupId,
+                    shared,
+                    groupStart,
+                    groupEnd,
+                    groupCount);
+                foreach (Segment segment in track.Segments)
                 {
-                    if (!logicalTracks.TryGetValue(childId, out LogicalTrack? track))
-                    {
-                        if (damagedLogicalTracks.TryGetValue(childId, out DamagedProjectObject? damaged))
-                        {
-                            AddLane(
-                                ArrangementLaneKind.DamagedLogicalTrack,
-                                damaged.Id,
-                                instrument.Id,
-                                1,
-                                $"[Damaged] {DisplayDamagedName(damaged)}",
-                                damaged.Error,
-                                0xffe9414d,
-                                TimelineLaneState.None,
-                                true,
-                                false,
-                                false);
-                        }
-                        continue;
-                    }
-                    uint accentColor = track.ColorOverride is MidoraColor overrideColor
-                        ? ToOpaqueArgb(overrideColor)
-                        : parentColor;
-                    int lane = labels.Count;
-                    AddLane(
-                        ArrangementLaneKind.LogicalTrack,
-                        track.Id,
-                        instrument.Id,
-                        1,
-                        TrackDisplayName(project, track),
-                        string.IsNullOrWhiteSpace(instrument.Name) ? "Unnamed Event Instrument" : instrument.Name,
-                        accentColor,
-                        TrackMonitoringState(track.Id),
-                        true,
-                        false,
-                        true);
-                    foreach (Segment segment in track.Segments)
-                    {
-                        liveSegmentIds.Add(segment.Id);
-                        items.Add(Item(
-                            segment.Id,
-                            TimelineItemKind.Segment,
-                            segment.ProjectStartTick,
-                            checked(segment.ProjectStartTick + segment.LengthTicks),
-                            lane,
-                            z: 0) with
-                        { AccentColor = accentColor });
-                        previews[segment.Id] = GetOrCreateSegmentPreview(segment);
-                    }
+                    liveSegmentIds.Add(segment.Id);
+                    items.Add(Item(
+                        segment.Id,
+                        TimelineItemKind.Segment,
+                        segment.ProjectStartTick,
+                        checked(segment.ProjectStartTick + segment.LengthTicks),
+                        lane,
+                        z: 0) with
+                    { AccentColor = accentColor });
+                    previews[segment.Id] = GetOrCreateSegmentPreview(segment);
                 }
                 continue;
             }
 
-            if (parent.Kind == ArrangementParentKind.EventInstrument
-                && damagedInstruments.TryGetValue(parent.ParentId, out DamagedProjectObject? damagedInstrument))
+            if (reference.Kind == ArrangementTrackKind.PureMidiTrack
+                && midiTracks.TryGetValue(reference.TrackId, out PureMidiTrack? midiTrack))
             {
-                int childCount = damagedInstrument.ChildIds?.Count ?? project.Tracks.Count(value =>
-                    value.EventInstrumentId == damagedInstrument.Id);
+                roots.TryGetValue(midiTrack.MidiChannelRootId, out MidiChannelRoot? root);
+                uint accentColor = midiTrack.Color is MidoraColor trackColor
+                    ? ToOpaqueArgb(trackColor)
+                    : 0;
+                string route = root is null
+                    ? "Missing MIDI Channel Root"
+                    : root.RoutingMode == MidiChannelRootRoutingMode.Auto
+                        ? $"Auto {root.ChannelMode}"
+                        : $"P.{root.FixedZeroBasedPort + 1} Ch.{root.FixedZeroBasedChannel + 1} {root.ChannelMode}";
+                string secondary = shared ? $"{route} · Shared state · {groupCount} tracks" : route;
+                int lane = labels.Count;
                 AddLane(
-                    ArrangementLaneKind.DamagedEventInstrument,
-                    damagedInstrument.Id,
-                    null,
-                    0,
-                    $"[Damaged] {DisplayDamagedName(damagedInstrument)}",
-                    $"Event Instrument placeholder · {childCount} retained child track{(childCount == 1 ? string.Empty : "s")} · {damagedInstrument.Error}",
-                    0xffe9414d,
-                    TimelineLaneState.None,
+                    ArrangementLaneKind.PureMidiTrack,
+                    midiTrack.Id,
+                    root?.Id,
+                    string.IsNullOrWhiteSpace(midiTrack.Name) ? "Unnamed MIDI Track" : midiTrack.Name,
+                    secondary,
+                    accentColor,
+                    TrackMonitoringState(midiTrack.Id),
                     true,
-                    false,
-                    false);
-                continue;
-            }
-
-            if (parent.Kind == ArrangementParentKind.MidiChannelRoot
-                && roots.TryGetValue(parent.ParentId, out MidiChannelRoot? root))
-            {
-                MidoraId[] childIds = root.MidiTrackIds.ToArray();
-                bool expanded = !_collapsedArrangementParentIds.Contains(root.Id);
-                string route = root.RoutingMode == MidiChannelRootRoutingMode.Auto
-                    ? $"Auto {root.ChannelMode}"
-                    : $"P.{root.FixedZeroBasedPort + 1} Ch.{root.FixedZeroBasedChannel + 1} {root.ChannelMode}";
-                AddLane(
-                    ArrangementLaneKind.MidiChannelRoot,
-                    root.Id,
-                    null,
-                    0,
-                    string.IsNullOrWhiteSpace(root.Name) ? "Unnamed MIDI Channel Root" : root.Name,
-                    $"{route} {childIds.Length} Tracks",
-                    0,
-                    ParentMonitoringState(root.Id),
-                    expanded,
-                    childIds.Length != 0,
-                    false);
-                if (!expanded) continue;
-                foreach (MidoraId childId in childIds)
+                    groupId,
+                    shared,
+                    groupStart,
+                    groupEnd,
+                    groupCount);
+                foreach (MidiSegment segment in midiTrack.Segments)
                 {
-                    if (!midiTracks.TryGetValue(childId, out PureMidiTrack? track))
-                    {
-                        if (damagedMidiTracks.TryGetValue(childId, out DamagedProjectObject? damaged))
-                        {
-                            AddLane(
-                                ArrangementLaneKind.DamagedPureMidiTrack,
-                                damaged.Id,
-                                root.Id,
-                                1,
-                                $"[Damaged] {DisplayDamagedName(damaged)}",
-                                damaged.Error,
-                                0xffe9414d,
-                                TimelineLaneState.None,
-                                true,
-                                false,
-                                false);
-                        }
-                        continue;
-                    }
-                    uint accentColor = track.Color is MidoraColor trackColor
-                        ? ToOpaqueArgb(trackColor)
-                        : 0;
-                    int lane = labels.Count;
-                    AddLane(
-                        ArrangementLaneKind.PureMidiTrack,
-                        track.Id,
-                        root.Id,
-                        1,
-                        string.IsNullOrWhiteSpace(track.Name) ? "Unnamed MIDI Track" : track.Name,
-                        "MIDI Track",
-                        accentColor,
-                        TrackMonitoringState(track.Id),
-                        true,
-                        false,
-                        true);
-                    foreach (MidiSegment segment in track.Segments)
-                    {
-                        liveSegmentIds.Add(segment.Id);
-                        items.Add(Item(
-                            segment.Id,
-                            TimelineItemKind.Segment,
-                            segment.ProjectStartTick,
-                            checked(segment.ProjectStartTick + segment.LengthTicks),
-                            lane,
-                            z: 0) with
-                        { AccentColor = accentColor });
-                        previews[segment.Id] = GetOrCreateSegmentPreview(segment);
-                    }
+                    liveSegmentIds.Add(segment.Id);
+                    items.Add(Item(
+                        segment.Id,
+                        TimelineItemKind.Segment,
+                        segment.ProjectStartTick,
+                        checked(segment.ProjectStartTick + segment.LengthTicks),
+                        lane,
+                        z: 0) with
+                    { AccentColor = accentColor });
+                    previews[segment.Id] = GetOrCreateSegmentPreview(segment);
                 }
                 continue;
             }
 
-            if (parent.Kind == ArrangementParentKind.MidiChannelRoot
-                && damagedRoots.TryGetValue(parent.ParentId, out DamagedProjectObject? damagedRoot))
+            DamagedProjectObject? damaged = reference.Kind == ArrangementTrackKind.LogicalTrack
+                ? damagedLogicalTracks.GetValueOrDefault(reference.TrackId)
+                : damagedMidiTracks.GetValueOrDefault(reference.TrackId);
+            if (damaged is not null)
             {
-                int childCount = damagedRoot.ChildIds?.Count ?? project.PureMidiTracks.Count(value =>
-                    value.MidiChannelRootId == damagedRoot.Id);
                 AddLane(
-                    ArrangementLaneKind.DamagedMidiChannelRoot,
-                    damagedRoot.Id,
+                    reference.Kind == ArrangementTrackKind.LogicalTrack
+                        ? ArrangementLaneKind.DamagedLogicalTrack
+                        : ArrangementLaneKind.DamagedPureMidiTrack,
+                    damaged.Id,
                     null,
-                    0,
-                    $"[Damaged] {DisplayDamagedName(damagedRoot)}",
-                    $"MIDI Channel Root placeholder · {childCount} retained child track{(childCount == 1 ? string.Empty : "s")} · {damagedRoot.Error}",
+                    $"[Damaged] {DisplayDamagedName(damaged)}",
+                    damaged.Error,
                     0xffe9414d,
                     TimelineLaneState.None,
-                    true,
-                    false,
                     false);
             }
+        }
+
+        EventInstrumentBrowser.Clear();
+        foreach (EventInstrument instrument in project.EventInstruments)
+        {
+            EventInstrumentUsage[] definitionUsages = project.EventInstrumentUsages
+                .Where(value => value.EventInstrumentId == instrument.Id)
+                .ToArray();
+            HashSet<MidoraId> definitionUsageIds = definitionUsages.Select(value => value.Id).ToHashSet();
+            EventInstrumentBrowser.Add(new(
+                instrument.Id,
+                string.IsNullOrWhiteSpace(instrument.Name) ? "Unnamed Event Instrument" : instrument.Name,
+                definitionUsages.Length,
+                project.Tracks.Count(value => value.EventInstrumentUsageId is MidoraId id
+                    && definitionUsageIds.Contains(id))));
         }
         foreach (MidoraId staleId in _segmentPreviewCache.Keys.Where(id => !liveSegmentIds.Contains(id)).ToArray())
         {
             _segmentPreviewCache.Remove(staleId);
         }
-        Context = $"{project.ArrangementParents.Count} parents · {project.Tracks.Count + project.PureMidiTracks.Count} tracks · {items.Count(item => item.Kind == TimelineItemKind.Segment)} segments";
+        Context = $"{order.Length} tracks · {items.Count(item => item.Kind == TimelineItemKind.Segment)} segments";
         Snapshot = new(
             revision,
             "arrangement",
@@ -1382,9 +1360,6 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         TimelineLaneState TrackMonitoringState(MidoraId trackId) =>
             (_mutedTrackIds.Contains(trackId) ? TimelineLaneState.Muted : TimelineLaneState.None)
             | (_soloTrackIds.Contains(trackId) ? TimelineLaneState.Solo : TimelineLaneState.None);
-        TimelineLaneState ParentMonitoringState(MidoraId parentId) =>
-            (_mutedArrangementParentIds.Contains(parentId) ? TimelineLaneState.Muted : TimelineLaneState.None)
-            | (_soloArrangementParentIds.Contains(parentId) ? TimelineLaneState.Solo : TimelineLaneState.None);
     }
 
     private TimelineSegmentPreview GetOrCreateSegmentPreview(Segment segment)
@@ -1618,9 +1593,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                     : TimelineItemState.None)),
             ["Velocity"]);
 
-        EventInstrument? instrument = track.EventInstrumentId is MidoraId instrumentId
-            ? project.EventInstruments.FirstOrDefault(item => item.Id == instrumentId)
-            : null;
+        EventInstrument? instrument = project.FindEventInstrumentDefinition(track);
         List<TimelineRenderItem> parameterItems = [];
         List<string> parameterLabels = [];
         MidoraId? previousParameterId = GetActiveParameterLaneOption()?.ParameterId;
@@ -2046,17 +2019,24 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         {
             return track.Name;
         }
-        int index = project.Tracks.IndexOf(track) + 1;
+        int index = project.ArrangementTracks.IndexOf(
+            new(ArrangementTrackKind.LogicalTrack, track.Id)) + 1;
+        if (index == 0)
+        {
+            index = project.Tracks.IndexOf(track) + 1;
+        }
         return $"Logical Track {index}";
     }
 
     internal static string BoundInstrumentDisplayName(MidoraProject project, LogicalTrack track)
     {
-        if (track.EventInstrumentId is not MidoraId instrumentId)
+        MidoraId? instrumentId = project.ResolveEventInstrumentDefinitionId(track);
+        if (instrumentId is not MidoraId definitionId)
         {
             return "Unbound";
         }
-        EventInstrument? instrument = project.EventInstruments.FirstOrDefault(item => item.Id == instrumentId);
+        EventInstrument? instrument = project.EventInstruments.FirstOrDefault(
+            item => item.Id == definitionId);
         if (instrument is not null)
         {
             return string.IsNullOrWhiteSpace(instrument.Name) ? "Unnamed Event Instrument" : instrument.Name;
@@ -2120,7 +2100,6 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
 public sealed record InstrumentListItem(
     MidoraId Id,
     string Name,
-    string Folder,
     int UsageCount,
     string Status);
 
@@ -2128,7 +2107,6 @@ public enum InstrumentLibrarySortMode
 {
     Manual,
     Name,
-    Folder,
     Usage
 }
 
@@ -2200,12 +2178,14 @@ public sealed class LibraryWorkspaceViewModel()
         _allInstruments.Clear();
         foreach (EventInstrument instrument in project.EventInstruments)
         {
-            string folder = instrument.LibraryFolderId is MidoraId folderId
-                ? project.EventInstrumentFolders.FirstOrDefault(folder => folder.Id == folderId)?.Name
-                    ?? "Broken Folder"
-                : "Unfiled";
-            int usage = project.Tracks.Count(track => track.EventInstrumentId == instrument.Id);
-            _allInstruments.Add(new(instrument.Id, instrument.Name, folder, usage, "Current"));
+            HashSet<MidoraId> usageIds = project.EventInstrumentUsages
+                .Where(value => value.EventInstrumentId == instrument.Id)
+                .Select(value => value.Id)
+                .ToHashSet();
+            int usage = project.Tracks.Count(track =>
+                track.EventInstrumentUsageId is MidoraId usageId
+                && usageIds.Contains(usageId));
+            _allInstruments.Add(new(instrument.Id, instrument.Name, usage, "Current"));
         }
         ApplyView();
         SelectedInstrument = selectedId is MidoraId id
@@ -2220,14 +2200,11 @@ public sealed class LibraryWorkspaceViewModel()
         if (search.Length != 0)
         {
             query = query.Where(item => item.Name.Contains(search, StringComparison.CurrentCultureIgnoreCase)
-                || item.Folder.Contains(search, StringComparison.CurrentCultureIgnoreCase)
                 || item.Status.Contains(search, StringComparison.CurrentCultureIgnoreCase));
         }
         query = SortMode switch
         {
             InstrumentLibrarySortMode.Name => query.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
-            InstrumentLibrarySortMode.Folder => query.OrderBy(item => item.Folder, StringComparer.CurrentCultureIgnoreCase)
-                .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
             InstrumentLibrarySortMode.Usage => query.OrderByDescending(item => item.UsageCount)
                 .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
             _ => query
@@ -3153,11 +3130,15 @@ public sealed class SettingsWorkspaceViewModel()
             new("settings.audio.sampleRate", "SAMPLE RATE", project.AudioRender.SampleRate.ToString()),
             new("settings.audio.voices", "MAXIMUM SAMPLE VOICES / UNIT", project.AudioRender.MaximumSampleVoicesPerUnitStream.ToString()));
         AudioRenderTracks.Clear();
-        foreach (LogicalTrack track in project.Tracks)
+        foreach (LogicalTrack track in project.LogicalTracksInArrangementOrder())
         {
+            int arrangementIndex = project.ArrangementTracks.IndexOf(
+                new(ArrangementTrackKind.LogicalTrack, track.Id)) + 1;
             AudioRenderTracks.Add(new(
                 track.Id,
-                string.IsNullOrWhiteSpace(track.Name) ? $"Logical Track {project.Tracks.IndexOf(track) + 1}" : track.Name,
+                string.IsNullOrWhiteSpace(track.Name)
+                    ? $"Logical Track {arrangementIndex}"
+                    : track.Name,
                 project.AudioRender.ExplicitLogicalTrackIds.Contains(track.Id)));
         }
         Replace(InitialStateFields, StateFields("settings.initial", project.GlobalInitialState));

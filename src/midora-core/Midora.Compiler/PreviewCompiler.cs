@@ -227,9 +227,9 @@ public sealed class PreviewCompiler
                 request.Velocity,
                 gateLength)
             : instrument;
-        AddInstrumentContext(source, context, compileInstrument);
+        AddInstrumentContext(context, compileInstrument);
 
-        LogicalTrack track = new(context) { Name = "Event Instrument Preview", EventInstrumentId = instrument.Id };
+        LogicalTrack track = new(context) { Name = "Event Instrument Preview" };
         Segment segment = new(context) { ProjectStartTick = 0, ContentOffsetTick = 0, LengthTicks = previewLength };
         segment.Notes.Add(new LogicalNote(context)
         {
@@ -239,7 +239,7 @@ public sealed class PreviewCompiler
             Velocity = request.Velocity
         });
         track.Segments.Add(segment);
-        context.Tracks.Add(track);
+        AddPreviewLogicalTrack(context, track, instrument.Id);
 
         using MidoraCompiler compiler = new();
         return compiler.CompileFull(context, new CompilationRequest
@@ -329,13 +329,14 @@ public sealed class PreviewCompiler
             ?? throw new ArgumentException(
                 "The Segment does not belong to the Logical Track.",
                 nameof(request));
-        if (!track.EventInstrumentId.HasValue)
+        MidoraId? instrumentId = source.ResolveEventInstrumentDefinitionId(track);
+        if (!instrumentId.HasValue)
         {
             throw new InvalidOperationException(
                 "Segment Note preview requires a bound Event Instrument.");
         }
         EventInstrument instrument = source.EventInstruments.FirstOrDefault(
-            value => value.Id == track.EventInstrumentId.Value)
+            value => value.Id == instrumentId.Value)
             ?? throw new InvalidOperationException(
                 "The Segment Note preview Event Instrument binding is missing or damaged.");
         if (request.StartTick < segment.ContentOffsetTick
@@ -389,12 +390,11 @@ public sealed class PreviewCompiler
             0,
             GetTempoAt(source.Conductor, projectStartTick)));
         context.Conductor.TimeSignatures.Add(new TimeSignatureChange(context, 0, 4, 4));
-        AddInstrumentContext(source, context, instrument);
+        AddInstrumentContext(context, instrument);
         LogicalTrack track = new(context)
         {
             Id = sourceTrack.Id,
             Name = sourceTrack.Name,
-            EventInstrumentId = instrument.Id,
             LastBoundEventInstrumentName = sourceTrack.LastBoundEventInstrumentName
         };
         Segment segment = new(context)
@@ -413,7 +413,7 @@ public sealed class PreviewCompiler
             Velocity = request.Velocity
         });
         track.Segments.Add(segment);
-        context.Tracks.Add(track);
+        AddPreviewLogicalTrack(context, track, instrument.Id);
 
         using MidoraCompiler compiler = new();
         return compiler.CompileFull(context, new CompilationRequest
@@ -503,26 +503,26 @@ public sealed class PreviewCompiler
 
         MidoraProject context = CreateContextShell(source);
         CopyConductor(source.Conductor, context);
-        if (sourceTrack.EventInstrumentId.HasValue)
+        MidoraId? sourceInstrumentId = source.ResolveEventInstrumentDefinitionId(sourceTrack);
+        if (sourceInstrumentId.HasValue)
         {
             EventInstrument? instrument = source.EventInstruments.FirstOrDefault(
-                value => value.Id == sourceTrack.EventInstrumentId.Value);
+                value => value.Id == sourceInstrumentId.Value);
             if (instrument is not null)
             {
-                AddInstrumentContext(source, context, instrument);
+                AddInstrumentContext(context, instrument);
             }
             context.DamagedEventInstruments.AddRange(source.DamagedEventInstruments.Where(
-                value => value.Id == sourceTrack.EventInstrumentId.Value));
+                value => value.Id == sourceInstrumentId.Value));
         }
         LogicalTrack track = new(context)
         {
             Id = sourceTrack.Id,
             Name = sourceTrack.Name,
-            EventInstrumentId = sourceTrack.EventInstrumentId,
             LastBoundEventInstrumentName = sourceTrack.LastBoundEventInstrumentName
         };
         track.Segments.Add(sourceSegment);
-        context.Tracks.Add(track);
+        AddPreviewLogicalTrack(context, track, sourceInstrumentId);
 
         long endTick = sourceSegment.LengthTicks > 0
             && sourceSegment.ProjectStartTick > long.MaxValue - sourceSegment.LengthTicks
@@ -550,21 +550,30 @@ public sealed class PreviewCompiler
     }
 
     private static void AddInstrumentContext(
-        MidoraProject source,
         MidoraProject context,
         EventInstrument instrument)
     {
         context.EventInstruments.Add(instrument);
-        if (!instrument.LibraryFolderId.HasValue)
+    }
+
+    private static void AddPreviewLogicalTrack(
+        MidoraProject context,
+        LogicalTrack track,
+        MidoraId? eventInstrumentId)
+    {
+        if (eventInstrumentId is MidoraId definitionId)
         {
-            return;
+            EventInstrumentUsage usage = new(context)
+            {
+                EventInstrumentId = definitionId
+            };
+            context.EventInstrumentUsages.Add(usage);
+            track.EventInstrumentUsageId = usage.Id;
         }
-        EventInstrumentLibraryFolder? folder = source.EventInstrumentFolders.FirstOrDefault(
-            value => value.Id == instrument.LibraryFolderId.Value);
-        if (folder is not null)
-        {
-            context.EventInstrumentFolders.Add(folder);
-        }
+        context.Tracks.Add(track);
+        context.ArrangementTracks.Add(new(
+            ArrangementTrackKind.LogicalTrack,
+            track.Id));
     }
 
     private static void CopyConductor(ConductorTrack source, MidoraProject targetProject)

@@ -134,11 +134,11 @@ public sealed class ProjectObjectProtobufV1Tests
         Assert.Empty(opened.Project.DamagedEventInstruments);
         Assert.Empty(opened.Project.DamagedLogicalTracks);
         Assert.Equal(nextStableId, opened.Project.NextStableId);
-        Assert.Empty(opened.Project.EventInstrumentFolders);
         EventInstrument instrument = Assert.Single(opened.Project.EventInstruments);
         LogicalTrack track = Assert.Single(opened.Project.Tracks);
-        Assert.Null(instrument.LibraryFolderId);
-        Assert.Equal(instrument.Id, track.EventInstrumentId);
+        EventInstrumentUsage usage = Assert.Single(opened.Project.EventInstrumentUsages);
+        Assert.Equal(usage.Id, track.EventInstrumentUsageId);
+        Assert.Equal(instrument.Id, usage.EventInstrumentId);
         Assert.Contains(track.Id, opened.Project.AudioRender.ExplicitLogicalTrackIds);
         Assert.Equal(
             EventInstrumentProtobufCodecV1.Serialize(source.EventInstruments[0]),
@@ -149,6 +149,7 @@ public sealed class ProjectObjectProtobufV1Tests
 
         using ZipArchive archive = ZipFile.OpenRead(firstPath);
         Assert.NotNull(archive.GetEntry($"event-instruments/ei_{instrument.Id}.pb"));
+        Assert.NotNull(archive.GetEntry($"event-instrument-usages/eiu_{usage.Id}.pb"));
         Assert.NotNull(archive.GetEntry($"logical-tracks/lt_{track.Id}.pb"));
         Assert.Equal(
             new[]
@@ -164,6 +165,7 @@ public sealed class ProjectObjectProtobufV1Tests
                 "settings/soundfont-settings.json",
                 "settings/global-reset-defaults.json",
                 "settings/global-event-scope-defaults.json",
+                $"event-instrument-usages/eiu_{usage.Id}.pb",
                 $"event-instruments/ei_{instrument.Id}.pb",
                 $"logical-tracks/lt_{track.Id}.pb"
             },
@@ -295,7 +297,9 @@ public sealed class ProjectObjectProtobufV1Tests
         MidoraProjectOpenResultV1 opened = await packages.OpenAsync(packagePath);
         DamagedProjectObject placeholder = Assert.Single(opened.Project.DamagedEventInstruments);
         LogicalTrack track = Assert.Single(opened.Project.Tracks);
-        Assert.Equal(placeholder.Id, track.EventInstrumentId);
+        EventInstrumentUsage usage = Assert.Single(opened.Project.EventInstrumentUsages);
+        Assert.Equal(placeholder.Id, usage.EventInstrumentId);
+        Assert.Equal(usage.Id, track.EventInstrumentUsageId);
 
         DamagedEventInstrumentDeletion deletion = DamagedProjectObjectEditing.DeleteEventInstrument(
             opened.Project,
@@ -303,7 +307,7 @@ public sealed class ProjectObjectProtobufV1Tests
         Assert.DoesNotContain(track, opened.Project.Tracks);
         DamagedProjectObjectEditing.UndoDeleteEventInstrument(opened.Project, deletion);
         Assert.Contains(track, opened.Project.Tracks);
-        Assert.Equal(placeholder.Id, track.EventInstrumentId);
+        Assert.Equal(usage.Id, track.EventInstrumentUsageId);
         Assert.Single(opened.Project.DamagedEventInstruments);
 
         _ = DamagedProjectObjectEditing.DeleteEventInstrument(opened.Project, placeholder.Id);
@@ -333,12 +337,9 @@ public sealed class ProjectObjectProtobufV1Tests
             Name = "Track",
             MidiChannelRootId = root.Id
         };
-        root.MidiTrackIds.Add(track.Id);
         source.MidiChannelRoots.Add(root);
         source.PureMidiTracks.Add(track);
-        source.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            root.Id));
+        source.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         string rootPath = $"midi-channel-roots/mcr_{root.Id}.pb";
         string trackPath = $"midi-tracks/mt_{track.Id}.pb";
         MidoraProjectPackageV1 packages = CreateService();
@@ -351,7 +352,6 @@ public sealed class ProjectObjectProtobufV1Tests
         DamagedProjectObject damagedRoot = Assert.Single(opened.Project.DamagedMidiChannelRoots);
         DamagedProjectObject damagedTrack = Assert.Single(opened.Project.DamagedPureMidiTracks);
         Assert.Equal(root.Id, damagedRoot.Id);
-        Assert.Equal(new[] { track.Id }, damagedRoot.ChildIds);
         Assert.Equal(root.Id, damagedTrack.ParentId);
 
         DamagedMidiChannelRootDeletion deletion = DamagedProjectObjectEditing.DeleteMidiChannelRoot(
@@ -379,6 +379,11 @@ public sealed class ProjectObjectProtobufV1Tests
         string secondPath = temporary.PathFor("pure-midi-b.midora");
         MidoraProject project = new(480, CreatedAt);
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        LogicalTrack logicalTrack = new(project) { Name = "Logical Track" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(
+            project,
+            logicalTrack,
+            instrument.Id);
         MidiChannelRoot root = new(project)
         {
             Name = "Imported Channel",
@@ -425,15 +430,9 @@ public sealed class ProjectObjectProtobufV1Tests
             Order = 10
         });
         track.Segments.Add(segment);
-        root.MidiTrackIds.Add(track.Id);
         project.MidiChannelRoots.Add(root);
         project.PureMidiTracks.Add(track);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.EventInstrument,
-            instrument.Id));
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            root.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
 
         byte[] rootBytes = MidiChannelRootProtobufCodecV1.Serialize(root);
         string contentPackPath = MidoraPackagePathsV1.PureMidiContentPack(track.Id);
@@ -459,13 +458,13 @@ public sealed class ProjectObjectProtobufV1Tests
         MidoraProjectOpenResultV1 opened = await packages.OpenAsync(firstPath);
         Assert.Empty(opened.Diagnostics);
         Assert.Equal(
-            [ArrangementParentKind.EventInstrument, ArrangementParentKind.MidiChannelRoot],
-            opened.Project.ArrangementParents.Select(value => value.Kind));
+            [ArrangementTrackKind.LogicalTrack, ArrangementTrackKind.PureMidiTrack],
+            opened.Project.ArrangementTracks.Select(value => value.Kind));
         MidiChannelRoot openedRoot = Assert.Single(opened.Project.MidiChannelRoots);
         PureMidiTrack openedTrack = Assert.Single(opened.Project.PureMidiTracks);
         Assert.Equal(MidiChannelRootRoutingMode.Fixed, openedRoot.RoutingMode);
         Assert.Equal(MidiChannelMode.Percussion, openedRoot.ChannelMode);
-        Assert.Equal(openedTrack.Id, Assert.Single(openedRoot.MidiTrackIds));
+        Assert.Equal(openedRoot.Id, openedTrack.MidiChannelRootId);
         DirectMidiNote openedNote = Assert.Single(Assert.Single(openedTrack.Segments).Notes);
         Assert.Equal(45, openedNote.NoteOffVelocity);
         Assert.Equal(0, openedNote.NoteOnOrder);
@@ -487,11 +486,15 @@ public sealed class ProjectObjectProtobufV1Tests
         Assert.Equal(8, LogicalTrackV1.Descriptor.FindFieldByName("segments")!.FieldNumber);
         Assert.Equal(1, MidiChannelRootV1.Descriptor.FindFieldByName("schema_version")!.FieldNumber);
         Assert.Equal(3, MidiChannelRootV1.Descriptor.FindFieldByName("id")!.FieldNumber);
-        Assert.Equal(9, MidiChannelRootV1.Descriptor.FindFieldByName("midi_track_ids")!.FieldNumber);
+        Assert.Null(MidiChannelRootV1.Descriptor.FindFieldByName("midi_track_ids"));
+        Assert.Equal(1, EventInstrumentUsageV1.Descriptor.FindFieldByName("schema_version")!.FieldNumber);
+        Assert.Equal(3, EventInstrumentUsageV1.Descriptor.FindFieldByName("id")!.FieldNumber);
+        Assert.Equal(4, EventInstrumentUsageV1.Descriptor.FindFieldByName("event_instrument_id")!.FieldNumber);
         Assert.Equal(1, PureMidiTrackV1.Descriptor.FindFieldByName("schema_version")!.FieldNumber);
         Assert.Equal(3, PureMidiTrackV1.Descriptor.FindFieldByName("id")!.FieldNumber);
         Assert.Equal(7, PureMidiTrackV1.Descriptor.FindFieldByName("segments")!.FieldNumber);
         MessageDescriptor[] messages = EventInstrumentV1.Descriptor.File.MessageTypes
+            .Concat(EventInstrumentUsageV1.Descriptor.File.MessageTypes)
             .Concat(LogicalTrackV1.Descriptor.File.MessageTypes)
             .Concat(PureMidiTrackV1.Descriptor.File.MessageTypes)
             .ToArray();
@@ -510,22 +513,34 @@ public sealed class ProjectObjectProtobufV1Tests
             LogicalTrackV1.Descriptor.File,
             "midora-logical-track-v1.descriptor.sha256");
         AssertDescriptorHash(
+            EventInstrumentUsageV1.Descriptor.File,
+            "midora-event-instrument-usage-v1.descriptor.sha256");
+        AssertDescriptorHash(
             PureMidiTrackV1.Descriptor.File,
             "midora-pure-midi-v1.descriptor.sha256");
 
         MidoraProject minimal = new(480, CreatedAt);
         EventInstrument instrument = EventInstrumentLibrary.Create(minimal, "Minimal");
-        LogicalTrack track = new(minimal) { Name = string.Empty, EventInstrumentId = instrument.Id };
+        EventInstrumentUsage usage = new(minimal) { EventInstrumentId = instrument.Id };
+        minimal.EventInstrumentUsages.Add(usage);
+        LogicalTrack track = new(minimal)
+        {
+            Name = string.Empty,
+            EventInstrumentUsageId = usage.Id
+        };
         minimal.Tracks.Add(track);
-        instrument.LogicalTrackIds.Add(track.Id);
+        minimal.ArrangementTracks.Add(new(ArrangementTrackKind.LogicalTrack, track.Id));
         MidiChannelRoot root = new(minimal) { Name = "Root" };
         PureMidiTrack midiTrack = new(minimal)
         {
             Name = "MIDI",
             MidiChannelRootId = root.Id
         };
-        root.MidiTrackIds.Add(midiTrack.Id);
+        minimal.MidiChannelRoots.Add(root);
+        minimal.PureMidiTracks.Add(midiTrack);
+        minimal.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, midiTrack.Id));
         byte[] instrumentBytes = EventInstrumentProtobufCodecV1.Serialize(instrument);
+        byte[] usageBytes = EventInstrumentUsageProtobufCodecV1.Serialize(usage);
         byte[] trackBytes = LogicalTrackProtobufCodecV1.Serialize(track);
         byte[] rootBytes = MidiChannelRootProtobufCodecV1.Serialize(root);
         byte[] midiTrackBytes = PureMidiTrackProtobufCodecV1.Serialize(
@@ -533,19 +548,23 @@ public sealed class ProjectObjectProtobufV1Tests
             MidoraPackagePathsV1.PureMidiContentPack(midiTrack.Id));
 
         string instrumentBase64 = Convert.ToBase64String(instrumentBytes);
+        string usageBase64 = Convert.ToBase64String(usageBytes);
         string trackBase64 = Convert.ToBase64String(trackBytes);
         string rootBase64 = Convert.ToBase64String(rootBytes);
         string midiTrackBase64 = Convert.ToBase64String(midiTrackBytes);
         const string expectedInstrumentBase64 =
-            "CAESEGV2ZW50LWluc3RydW1lbnQYAyIHTWluaW1hbCoHCGsQchiAATg8QOADSABQAFgAYABoAIIBAJIBBAgEIgCyAQEF";
+            "CAESEGV2ZW50LWluc3RydW1lbnQYAyIHTWluaW1hbCoHCGsQchiAATg8QOADSABQAFgAYABoAIIBAJIBBAgEIgA=";
+        const string expectedUsageBase64 = "CAESFmV2ZW50LWluc3RydW1lbnQtdXNhZ2UYBSAD";
         const string expectedTrackBase64 =
-            "CAESDWxvZ2ljYWwtdHJhY2sYBSIAKAM=";
+            "CAESDWxvZ2ljYWwtdHJhY2sYBiIAKAU=";
         const string expectedRootBase64 =
-            "CAESEW1pZGktY2hhbm5lbC1yb290GAYiBFJvb3QoADAAOABAAEoBBw==";
+            "CAESEW1pZGktY2hhbm5lbC1yb290GAciBFJvb3QoADAAOABAAA==";
         const string expectedMidiTrackBase64 =
-            "CAESD3B1cmUtbWlkaS10cmFjaxgHIgRNSURJKAZCFW1pZGktY29udGVudC9tdF83Lm1waw==";
+            "CAESD3B1cmUtbWlkaS10cmFjaxgIIgRNSURJKAdCFW1pZGktY29udGVudC9tdF84Lm1waw==";
         Assert.True(string.Equals(expectedInstrumentBase64, instrumentBase64, StringComparison.Ordinal),
             $"Event Instrument golden mismatch. Actual={instrumentBase64}");
+        Assert.True(string.Equals(expectedUsageBase64, usageBase64, StringComparison.Ordinal),
+            $"Event Instrument Usage golden mismatch. Actual={usageBase64}");
         Assert.True(string.Equals(expectedTrackBase64, trackBase64, StringComparison.Ordinal),
             $"Logical Track golden mismatch. Actual={trackBase64}");
         Assert.True(string.Equals(expectedRootBase64, rootBase64, StringComparison.Ordinal),
@@ -569,9 +588,7 @@ public sealed class ProjectObjectProtobufV1Tests
     private static MidoraProject CreateObjectProject()
     {
         MidoraProject project = new(480, CreatedAt);
-        EventInstrumentLibraryFolder folder = EventInstrumentLibrary.CreateFolder(project, "Orchestra");
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Layered");
-        instrument.LibraryFolderId = folder.Id;
         instrument.Description = "Complete object graph\nfor persistence.";
         instrument.Color = new MidoraColor(1, 2, 3);
         instrument.RootNote = 62;
@@ -677,10 +694,12 @@ public sealed class ProjectObjectProtobufV1Tests
         LogicalTrack track = new(project)
         {
             Name = string.Empty,
-            EventInstrumentId = instrument.Id,
             LastBoundEventInstrumentName = "Layered",
             ColorOverride = new MidoraColor(9, 8, 7)
         };
+        EventInstrumentUsage usage = new(project) { EventInstrumentId = instrument.Id };
+        project.EventInstrumentUsages.Add(usage);
+        track.EventInstrumentUsageId = usage.Id;
         Segment segment = new(project)
         {
             ProjectStartTick = 240,
@@ -700,10 +719,7 @@ public sealed class ProjectObjectProtobufV1Tests
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
         project.Tracks.Add(track);
-        instrument.LogicalTrackIds.Add(track.Id);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.EventInstrument,
-            instrument.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.LogicalTrack, track.Id));
         project.AudioRender.TrackSelectionMode = ProjectTrackSelectionMode.ExplicitLogicalTrackIds;
         project.AudioRender.ExplicitLogicalTrackIds.Add(track.Id);
         return project;

@@ -401,11 +401,11 @@ internal sealed class BoundedCanonicalMidiRenderEventSorter : IDisposable
             if (value != 0) return value;
             value = x.ZeroBasedChannel.CompareTo(y.ZeroBasedChannel);
             if (value != 0) return value;
+            value = x.SmfTrackOrder.CompareTo(y.SmfTrackOrder);
+            if (value != 0) return value;
             if (x.Role == CanonicalEventRole.DirectMidi
                 && y.Role == CanonicalEventRole.DirectMidi)
             {
-                value = x.SmfTrackOrder.CompareTo(y.SmfTrackOrder);
-                if (value != 0) return value;
                 value = x.SmfEventOrder.CompareTo(y.SmfEventOrder);
                 if (value != 0) return value;
             }

@@ -162,9 +162,9 @@ public sealed class PersistenceContractV1Tests
         Assert.Equal(FieldType.Int64, EventInstrumentV1.Descriptor.FindFieldByName("id")!.FieldType);
         Assert.Equal(3, LogicalTrackV1.Descriptor.FindFieldByName("id")!.FieldNumber);
         Assert.Equal(FieldType.Int64, LogicalTrackV1.Descriptor.FindFieldByName("id")!.FieldType);
-        Assert.Equal(5, LogicalTrackV1.Descriptor.FindFieldByName("event_instrument_id")!.FieldNumber);
+        Assert.Equal(5, LogicalTrackV1.Descriptor.FindFieldByName("event_instrument_usage_id")!.FieldNumber);
         Assert.Equal(FieldType.Int64,
-            LogicalTrackV1.Descriptor.FindFieldByName("event_instrument_id")!.FieldType);
+            LogicalTrackV1.Descriptor.FindFieldByName("event_instrument_usage_id")!.FieldType);
 
         PersistenceValueValidationV1.ValidateStableId(long.MaxValue, "id");
         PersistenceValueValidationV1.ValidateStableIdText("9223372036854775807", "id");
@@ -204,18 +204,22 @@ public sealed class PersistenceContractV1Tests
         Assert.Equal("9223372036854775807", JsonSerializer.Serialize(maximum));
 
         MidoraProject project = new(480, new DateTimeOffset(2026, 8, 7, 0, 0, 0, TimeSpan.Zero));
-        EventInstrumentLibraryFolder folder = EventInstrumentLibrary.CreateFolder(project, "Folder");
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
-        instrument.LibraryFolderId = folder.Id;
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.EventInstrument,
-            instrument.Id));
+        EventInstrumentUsage usage = new(project) { EventInstrumentId = instrument.Id };
+        project.EventInstrumentUsages.Add(usage);
+        LogicalTrack track = new(project)
+        {
+            Name = "Track",
+            EventInstrumentUsageId = usage.Id
+        };
+        project.Tracks.Add(track);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.LogicalTrack, track.Id));
 
         using JsonDocument projectJson = JsonDocument.Parse(ProjectCodecV1.Serialize(project));
         JsonElement root = projectJson.RootElement;
         Assert.Equal(JsonValueKind.Number, root.GetProperty("nextStableId").ValueKind);
         Assert.Equal(JsonValueKind.Number,
-            root.GetProperty("arrangementParents")[0].GetProperty("id").ValueKind);
+            root.GetProperty("arrangementTracks")[0].GetProperty("id").ValueKind);
 
         using JsonDocument conductorJson = JsonDocument.Parse(ConductorTrackCodecV1.Serialize(project));
         Assert.Equal(JsonValueKind.Number,

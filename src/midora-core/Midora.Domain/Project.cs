@@ -85,7 +85,11 @@ public sealed class LogicalTrack
 
     public MidoraId Id { get; init; }
     public required string Name { get; set; }
-    public MidoraId? EventInstrumentId { get; set; }
+    /// <summary>
+    /// Stable identity of the shared Event Instrument execution state used by
+    /// this Track. Null is permitted only for an empty, unbound Track shell.
+    /// </summary>
+    public MidoraId? EventInstrumentUsageId { get; set; }
     public string? LastBoundEventInstrumentName { get; set; }
     public MidoraColor? ColorOverride { get; set; }
     public List<Segment> Segments { get; } = [];
@@ -253,10 +257,11 @@ public sealed class MidoraProject : IDisposable
     public GlobalEventScopeDefaults GlobalEventScopeDefaults { get; } = new();
     public List<EventInstrument> EventInstruments { get; } = [];
     public List<DamagedProjectObject> DamagedEventInstruments { get; } = [];
-    public List<EventInstrumentLibraryFolder> EventInstrumentFolders { get; } = [];
+    public List<EventInstrumentUsage> EventInstrumentUsages { get; } = [];
+    public List<DamagedProjectObject> DamagedEventInstrumentUsages { get; } = [];
     public List<LogicalTrack> Tracks { get; } = [];
     public List<DamagedProjectObject> DamagedLogicalTracks { get; } = [];
-    public List<ArrangementParentReference> ArrangementParents { get; } = [];
+    public List<ArrangementTrackReference> ArrangementTracks { get; } = [];
     public List<MidiChannelRoot> MidiChannelRoots { get; } = [];
     public List<DamagedProjectObject> DamagedMidiChannelRoots { get; } = [];
     public List<PureMidiTrack> PureMidiTracks { get; } = [];
@@ -342,24 +347,6 @@ public sealed record DamagedProjectObject(
     MidoraId? ParentId = null,
     IReadOnlyList<MidoraId>? ChildIds = null);
 
-public sealed class EventInstrumentLibraryFolder
-{
-    public EventInstrumentLibraryFolder(MidoraProject project)
-    {
-        ArgumentNullException.ThrowIfNull(project);
-        Id = project.AllocateStableId();
-    }
-
-    internal EventInstrumentLibraryFolder(MidoraId preservedId)
-    {
-        if (preservedId == default) throw new ArgumentOutOfRangeException(nameof(preservedId));
-        Id = preservedId;
-    }
-
-    public MidoraId Id { get; init; }
-    public required string Name { get; set; }
-}
-
 public sealed class ProjectChangeSet
 {
     public static ProjectChangeSet Everything { get; } = new() { AffectsEverything = true };
@@ -369,6 +356,7 @@ public sealed class ProjectChangeSet
     public bool AffectsAudioPcmCacheGeneration { get; init; }
     public HashSet<MidoraId> TrackIds { get; } = [];
     public HashSet<MidoraId> EventInstrumentIds { get; } = [];
+    public HashSet<MidoraId> EventInstrumentUsageIds { get; } = [];
     public HashSet<MidoraId> MidiChannelRootIds { get; } = [];
     public HashSet<MidoraId> PureMidiTrackIds { get; } = [];
 }

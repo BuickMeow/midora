@@ -7,7 +7,7 @@ namespace Midora.Application.Tests;
 public sealed class ProjectObjectClipboardPureMidiTests
 {
     [Fact]
-    public void MidiChannelRootClipboardDeepCopiesSubtreeAndForcesAutoRouting()
+    public void IndependentFixedPureMidiTrackPasteDeepCopiesContentAndJoinsExistingRoute()
     {
         MidoraProject project = new(480);
         MidiChannelRoot root = AddRoot(
@@ -51,24 +51,22 @@ public sealed class ProjectObjectClipboardPureMidiTests
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
 
-        ProjectObjectClipboardPayload payload = ProjectObjectClipboard.CopyMidiChannelRoot(
+        ProjectObjectClipboardPayload payload = ProjectObjectClipboard.CopyPureMidiTrack(
             document,
-            root.Id);
+            track.Id);
         note.Key = 40;
         directEvent.Data2 = 1;
         opaque.Payload[0] = 99;
-        document.Execute(ProjectObjectClipboard.CreatePasteMidiChannelRootCommand(
+        document.Execute(ProjectObjectClipboard.CreatePastePureMidiTrackIndependentCommand(
             document,
             payload,
-            insertionIndex: 1));
+            insertionIndex: project.ArrangementTracks.Count));
 
-        MidiChannelRoot copy = project.MidiChannelRoots.Single(value => value.Id != root.Id);
-        Assert.Equal(MidiChannelRootRoutingMode.Auto, copy.RoutingMode);
-        Assert.Equal(MidiChannelMode.Percussion, copy.ChannelMode);
-        Assert.Equal(root.Name, copy.Name);
+        Assert.Same(root, Assert.Single(project.MidiChannelRoots));
         PureMidiTrack copiedTrack = Assert.Single(
             project.PureMidiTracks,
-            value => value.MidiChannelRootId == copy.Id);
+            value => value.Id != track.Id);
+        Assert.Equal(root.Id, copiedTrack.MidiChannelRootId);
         Assert.NotEqual(track.Id, copiedTrack.Id);
         MidiSegment copiedSegment = Assert.Single(copiedTrack.Segments);
         Assert.NotEqual(segment.Id, copiedSegment.Id);
@@ -81,10 +79,10 @@ public sealed class ProjectObjectClipboardPureMidiTests
         Assert.Equal([1, 2, 3], Assert.Single(copiedSegment.OpaqueEvents).Payload);
 
         document.Undo();
-        Assert.DoesNotContain(copy, project.MidiChannelRoots);
+        Assert.Same(root, Assert.Single(project.MidiChannelRoots));
         Assert.DoesNotContain(copiedTrack, project.PureMidiTracks);
         document.Redo();
-        Assert.Contains(copy, project.MidiChannelRoots);
+        Assert.Same(root, Assert.Single(project.MidiChannelRoots));
         Assert.Contains(copiedTrack, project.PureMidiTracks);
     }
 
@@ -93,15 +91,11 @@ public sealed class ProjectObjectClipboardPureMidiTests
     {
         MidoraProject project = new(480);
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.EventInstrument,
-            instrument.Id));
-        LogicalTrack logicalTrack = new(project)
-        {
+        LogicalTrack logicalTrack = new(project) {
             Name = "Logical",
-            EventInstrumentId = instrument.Id,
             LastBoundEventInstrumentName = instrument.Name
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, logicalTrack, instrument.Id);
         Segment logicalSegment = new(project) { LengthTicks = 960 };
         LogicalNote logical = new(project)
         {
@@ -112,8 +106,6 @@ public sealed class ProjectObjectClipboardPureMidiTests
         };
         logicalSegment.Notes.Add(logical);
         logicalTrack.Segments.Add(logicalSegment);
-        project.Tracks.Add(logicalTrack);
-        instrument.LogicalTrackIds.Add(logicalTrack.Id);
 
         MidiChannelRoot root = AddRoot(project, "Root");
         PureMidiTrack midiTrack = AddTrack(project, root, "MIDI");
@@ -390,8 +382,8 @@ public sealed class ProjectObjectClipboardPureMidiTests
             MidiChannelRootId = secondRoot.Id
         };
         project.PureMidiTracks.AddRange([secondTrack, firstTrack]);
-        firstRoot.MidiTrackIds.Add(firstTrack.Id);
-        secondRoot.MidiTrackIds.Add(secondTrack.Id);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, secondTrack.Id));
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, firstTrack.Id));
         MidiSegment first = AddSegment(project, firstTrack, 0, 100);
         MidiSegment second = AddSegment(project, secondTrack, 0, 100);
         using ProjectCompilationSession compilation = new(project);
@@ -470,9 +462,6 @@ public sealed class ProjectObjectClipboardPureMidiTests
             ChannelMode = channelMode
         };
         project.MidiChannelRoots.Add(root);
-        project.ArrangementParents.Add(new(
-            ArrangementParentKind.MidiChannelRoot,
-            root.Id));
         return root;
     }
 
@@ -487,7 +476,7 @@ public sealed class ProjectObjectClipboardPureMidiTests
             MidiChannelRootId = root.Id
         };
         project.PureMidiTracks.Add(track);
-        root.MidiTrackIds.Add(track.Id);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         return track;
     }
 

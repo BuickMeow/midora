@@ -236,12 +236,11 @@ public sealed class ProjectLogicalParameterDefinitionMigrationCommandsTests
         LogicalParameterDefinition parameter,
         IReadOnlyList<double> values)
     {
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = $"Track {project.Tracks.Count + 1}",
-            EventInstrumentId = instrument.Id,
             LastBoundEventInstrumentName = instrument.Name
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { ProjectStartTick = 0, LengthTicks = 480 };
         LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
         for (int index = 0; index < values.Count; index++)
@@ -256,7 +255,6 @@ public sealed class ProjectLogicalParameterDefinitionMigrationCommandsTests
         }
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         return track;
     }
 

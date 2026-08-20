@@ -35,11 +35,10 @@ public sealed class PagedPureMidiCompilationTests
                 LengthTicks = 384,
                 ContentOffsetTick = 0
             };
-            root.MidiTrackIds.Add(track.Id);
             track.Segments.Add(segment);
             project.MidiChannelRoots.Add(root);
             project.PureMidiTracks.Add(track);
-            project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+            project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
             using PureMidiContentPackWriter writer = new(path);
             writer.AddNote(segment.Id, new(
                 project.AllocateStableId(), 0, 96, 60, 100, 17, 1, 2));
@@ -126,11 +125,10 @@ public sealed class PagedPureMidiCompilationTests
                 LengthTicks = 21_000,
                 ContentOffsetTick = 0
             };
-            root.MidiTrackIds.Add(track.Id);
             track.Segments.Add(segment);
             project.MidiChannelRoots.Add(root);
             project.PureMidiTracks.Add(track);
-            project.ArrangementParents.Add(new(ArrangementParentKind.MidiChannelRoot, root.Id));
+            project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
             using (PureMidiContentPackWriter writer = new(path))
             {
                 for (int tick = 0; tick < 20_000; tick++)

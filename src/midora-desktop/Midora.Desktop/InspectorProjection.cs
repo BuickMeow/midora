@@ -401,9 +401,8 @@ internal static class InspectorProjection
                 CurvePoint? point = lane?.Points.FirstOrDefault(candidate => candidate.Id == noteId);
                 if (lane is not null && point is not null)
                 {
-                    EventInstrument? instrument = location.Value.Track.EventInstrumentId is MidoraId instrumentId
-                        ? project.EventInstruments.FirstOrDefault(item => item.Id == instrumentId)
-                        : null;
+                    EventInstrument? instrument = project.FindEventInstrumentDefinition(
+                        location.Value.Track);
                     LogicalParameterDefinition? definition = instrument?.LogicalParameters
                         .FirstOrDefault(item => item.Id == lane.ParameterId);
                     inspector.Replace(

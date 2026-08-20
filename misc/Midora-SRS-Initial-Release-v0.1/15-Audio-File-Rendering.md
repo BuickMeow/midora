@@ -97,7 +97,7 @@ Per Logical Track / 按 Logical Track 分轨渲染
 分轨模式中：
 ```text
 每条被选择且有效的 Logical Track 生成一个独立 WAV。
-各 Track 按 Arrangement mixed parent order 展平 Event Instrument children 后的 Logical Track 顺序依次处理。
+各 Track 按 global Arrangement Track Order 过滤得到的 Logical Track 顺序依次处理。
 每条 Track 使用独立 Audio Render CompileContext。
 每条 Track 独立编译、分配 Channel Unit、创建干净后端状态并执行完整输出链。
 不要求保留整曲编译中的 Port / Channel 编号。
@@ -105,7 +105,7 @@ Per Logical Track / 按 Logical Track 分轨渲染
 所有分轨使用同一渲染范围和同一最终采样长度。
 
 Per Logical Track 模式仍只生成 Logical Track 文件；Pure MIDI Track 不产生独立 WAV，但其选择状态保持以便切回 Whole Mix。Pure MIDI 分轨音频不是本次 Pure MIDI/SMF 需求的一部分；Whole Mix、实时播放和正式 MIDI 导出必须完整包含被选择 Pure MIDI Track。
-### 15.2.3 Track 选择与父节点状态
+### 15.2.3 Track 选择与 Usage / Root 状态
 Track Mute / Solo 不影响音频文件渲染。
 显式 Track 选择是唯一决定因素：
 ```text
@@ -113,7 +113,7 @@ Track Mute / Solo 不影响音频文件渲染。
 未选择的 Solo Track 不渲染。
 Mute / Solo 不与 Track 选择取交集。
 ```
-Logical Track 必须有唯一 Event Instrument parent。parent/child 结构错误或 Damaged Parent Placeholder 使渲染准备失败；不得静默忽略为无输出 Track。
+无内容且无 Usage 的 Logical Track 不是有效渲染目标；有内容 Track 必须有唯一有效 Usage/Definition。引用结构错误或任何相关 Damaged Placeholder 使渲染准备失败；不得静默忽略为无输出 Track。
 已绑定但没有发声音频的 Track仍是有效目标：
 ```text
 整曲模式中贡献静音。
@@ -532,7 +532,7 @@ Midora Render
 ```
 序号规则：
 ```text
-使用整个 Project 按 mixed parent order、再按 parent 内 child order 展平后的当前显示序号。
+使用整个 Project global Arrangement Track Order 中的当前显示序号。
 不只对本次选中的 Track 重新编号。
 未选中的 Track 仍占用 UI 显示序号。
 允许输出序号跳号。

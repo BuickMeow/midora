@@ -270,7 +270,7 @@ Worker 的事件边界计算必须先消费当前 render frame 的全部滚动�
 
 Worker 收到 Monitoring 后固定执行：停止并 reset WASAPI 已提交 PCM → 暂停外层 Render-Ahead producer → 把 PCM ring 重置到可听 frontier → 丢弃旧 recovery → 对 rolling source 或直接 `IMonitoringResettableRenderSource` 执行干净 stream reset、来源状态应用和 event reader generation Seek → 重启 producer generation并达到预填充水位 → 重启输出。快速连续切换继续在同一可听 frontier 合并；Stop 可抢占。新 generation 发布、Seek、refill 或原生 reset 任一步失败都必须成为显式播放故障，禁止静默重试、继续消费不匹配 generation 或维持假的 Playing 状态。
 
-Requirement trace：输入为 canonical source table、当前 parent/child Mute/Solo 推导出的 Monitoring commands、event-stream generation 和设备可听 frontier；正式输出为同一播放任务内从该 frontier 开始、只包含最新 audible set 的连续 PCM，或结构化故障。generation、rewind frame、ring/reset 状态都只属于 runtime，不进入 Project、canonical fingerprint、PCM cache key、Undo/Redo 或 `.midora`。本决定不改变 Mute/Solo 语义、Logical rolling path、SMF/音频文件输出或共享 ABI 字节布局。
+Requirement trace：输入为 canonical source table、当前 Shared Usage/Root 与 Track Mute/Solo 推导出的 Monitoring commands、event-stream generation 和设备可听 frontier；正式输出为同一播放任务内从该 frontier 开始、只包含最新 audible set 的连续 PCM，或结构化故障。generation、rewind frame、ring/reset 状态都只属于 runtime，不进入 Project、canonical fingerprint、PCM cache key、Undo/Redo 或 `.midora`。本决定不改变 Mute/Solo 语义、Logical rolling path、SMF/音频文件输出或共享 ABI 字节布局。
 
 ## 11. 验证门
 

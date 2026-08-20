@@ -1,427 +1,402 @@
-# 第 24 章 Arrangement 层级、父子轨道与概览渲染
+# 第 24 章 Arrangement 平铺轨道、共享执行组与概览渲染
 
 > 文档：**Midora Software Requirements Specification — Initial Release Scope**  
 > 规格版本：**v0.1**  
-> 适用产品范围：**Midora 初版**
+> 本章最近破坏性修订：**2026-08-20**
 
-本章定义 Arrangement 的唯一外层对象层级、Event Instrument / MIDI Channel Root 父节点、Logical / Pure MIDI 子轨道、层级 Mute/Solo、复制删除、跨类型 Note 剪贴板，以及 Pure MIDI Segment 与 Conductor 的高性能概览渲染。本章是这些主题的专项规范；与旧章节中的 Project Panel、Event Instrument Library Folder、独立全局 Track 列表、Unbound Logical Track 或平铺 Arrangement 描述冲突时，以本章与第 22 章不变量为准。
+## 24.1 目的与优先级
 
-## 24.1 正式对象层级
+本章定义 Arrangement 的正式平铺顺序、Event Instrument Definition、Event Instrument Usage、MIDI Channel Root、共享状态组、轨道拖放、Event Instruments 辅助栏，以及 Pure MIDI / Conductor 高性能概览。
 
-Project 的正式 Arrangement 结构固定为：
-
-```text
-Project
-├─ Conductor Track                         fixed first row
-└─ Arrangement Parents                    explicit mixed order
-   ├─ Event Instrument
-   │  └─ Logical Tracks                   explicit child order
-   └─ MIDI Channel Root
-      └─ Pure MIDI Tracks                 explicit child order
-```
-
-强制规则：
+本章替代 2026-08-18 建立的可见两级 parent/child Arrangement。与旧章节中的以下描述冲突时，以本章与第 22 章不变量为准：
 
 ```text
-Conductor Track 必须且只能有一个，并且始终位于第一行。
-Event Instrument 与 MIDI Channel Root 共用一个可混排的顶层顺序。
-每个 Logical Track 必须且只能属于一个 Event Instrument。
-每个 Pure MIDI Track 必须且只能属于一个 MIDI Channel Root。
-不存在 Project 顶层的独立 Logical Track 顺序。
-不存在 Project 顶层的独立 MIDI Channel Root 顺序；Root 顺序由混合父节点顺序中过滤 Root 得到。
-不存在 Unbound / Unassigned Logical Track 正常状态。
+Event Instrument / MIDI Channel Root 占据可见 parent row；
+parent child list 决定 Track 顺序；
+Event Instrument 普通 Duplicate 级联复制 child subtree；
+空 Fixed Root 合法并预留 Unit；
+Logical Track 直接以 Event Instrument ID 表示独立 binding；
+删除 Event Instrument 级联删除其全部 Logical Tracks。
 ```
 
-Event Instrument Library 可以作为领域实现中的按稳定 ID 查找索引，但不再是用户可见 Workspace、独立手动顺序或 Folder 组织模型。Event Instrument 的唯一正式外层位置就是 Arrangement parent list；Library index 不得形成第二套所有权或顺序。
+本次仍是未发布开发期破坏性格式替换，不更新产品/SRS 版本，不兼容读取旧开发布局。
 
-## 24.2 顺序与身份语义
+## 24.2 正式对象与权威顺序
 
-### 24.2.1 顶层父节点顺序
+### 24.2.1 Event Instrument Definition
 
-顶层父节点顺序属于 Project Source Data，必须持久化、进入 Undo/Redo 并标记 Project Modified。Event Instrument 与 Root 可以任意交错，例如：
+Event Instrument 是可复用、可独立保存和编辑的重型声音定义。Project 保存独立的、有序 `Event Instrument Definition Index`。Definition：
 
 ```text
-Event Instrument A
-MIDI Channel Root 1
-Event Instrument B
-MIDI Channel Root 2
+可以没有任何 Usage；
+不会因为 Track 或 Usage 被删除而自动删除；
+不直接占用 Channel Unit；
+不直接出现在 Arrangement 轨道行；
+不拥有 ordered Logical Track child list。
 ```
 
-从该混合顺序派生：
+### 24.2.2 Event Instrument Usage
+
+`Event Instrument Usage` 是 Project 内部、无用户名称的共享执行身份。每个 Usage：
 
 ```text
-Root allocation/export order = 过滤并保留所有 MIDI Channel Root 的相对顺序
-Logical display/output auxiliary order = 依父节点顺序，再依各 Event Instrument child order 展平
-Pure MIDI Track order = 依 Root 过滤顺序，再依各 Root child order展平
+有稳定 ID；
+引用且只引用一个 Event Instrument Definition；
+被一个或多个 Logical Track 引用；
+定义共享 Channel 状态、Segment 活动连通区间、Overlap 域、编译 dirty 域和缓存 owner；
+不进入普通 Event Instrument 管理列表；
+成员数降为 0 时必须在同一原子编辑中删除。
 ```
 
-移动 Event Instrument 只改变正式展示、导航与依赖显示顺序，不得成为 Logical/Event Instrument Channel Unit 抢占优先级。移动 Root 会改变 Auto Root 的确定性分配顺序、Pure MIDI SMF Track 顺序和同 Root 相关诊断顺序，必须使相应 canonical 投影失效。
+Usage 不是 Event Instrument Instance。Instance 仍表示一次 Logical Note 触发形成的编译/运行时实例。
 
-### 24.2.2 子轨道顺序
+一个成员的 Usage 在 UI 中表现为普通独立 Logical Track；两个及以上成员的 Usage 表现为 Shared Logical Track block。
 
-Logical Track 顺序只在其 Event Instrument 内定义；Pure MIDI Track 顺序只在其 Root 内定义。两者均为 Project Source Data。
+### 24.2.3 MIDI Channel Root
 
-Pure MIDI Track 顺序继续是同 Root 同 tick 总序的一部分。Logical Track 顺序只用于展示、确定性辅助顺序和按 Track 的输出命名，不得替代编译期资源分配语义。
+MIDI Channel Root 仍是 Pure MIDI 的持久 Channel Unit、共享状态和生命周期身份。每个 Pure MIDI Track 必须引用且只引用一个 Root。
 
-### 24.2.3 稳定身份
+所有 Root 必须至少有一个 Track。Auto/Fixed Root 的最后一条 Track 被删除、剪切、改路由或移走时，Root 必须在同一原子编辑中自动删除；Undo 必须以原稳定 ID、路由、模式和成员关系恢复它。
 
-父子关系、复制、移动、诊断与持久化必须使用稳定 ID。名称、显示序号、Port.Channel、文件路径或当前位置不得替代身份。重排和跨父移动保持原对象稳定 ID；复制产生全新稳定 ID。
-
-## 24.3 创建、移动与改绑
-
-### 24.3.1 创建入口
-
-Arrangement Toolbar 左侧必须提供一个 Fluent System Icons `Add` 图标按钮。按钮弹出菜单：
+Fixed Root 不具有独立用户可见对象生命周期：
 
 ```text
-New Event Instrument
-New MIDI Channel Root
+没有“创建空 Fixed Root”入口；
+没有独立 Fixed Root row；
+没有独立 Fixed Root 排序或删除命令；
+Port、Channel、Routing Mode 和 Channel Mode 在 UI 中表现为 MIDI Track 的 Route 属性；
+底层仍只在 Root 保存一份权威值，Track 不复制这些字段。
 ```
 
-主菜单 `Project` 必须提供相同两项。新建父节点追加到顶层父节点顺序末尾；新建 Event Instrument 是最小合法定义且 child list 为空；新建 Root 的默认 Routing Mode 为 `Auto` 且 child list 为空。
+Auto Root 只有在多个 Track 共享时，才以 Shared MIDI Track block 的形式显式表现其组身份。
 
-Logical Track 只能从某个 Event Instrument 的 Header / context menu 创建；Pure MIDI Track 只能从某个 Root 的 Header / context menu 创建。不存在脱离父节点创建子轨道的入口。
+### 24.2.4 全局 Arrangement Track Order
 
-### 24.3.2 父节点移动
-
-Event Instrument 与 Root Header 可拖动并在同一个顶层列表中混排。移动父节点必须携带整个 child subtree；不得改变任何 child 的稳定 ID、内容或父子关系。
-
-### 24.3.3 子轨道移动
-
-Pure MIDI Track 可在 Root 内重排，也可拖到其他 Root。跨 Root 移动提交正式 parent 变更，保持 Track、Segment、direct/opaque 内容和全部稳定 ID。
-
-Logical Track 可在 Event Instrument 内重排，也可拖到其他 Event Instrument。跨 Event Instrument 移动沿用 Rebind 影响审查：保留 Segment、Logical Note、Logical Parameter Lane、隐藏内容和稳定 ID；不得按名称自动匹配、删除或重建 Logical Parameter Lane。确认并成功提交后，目标 Event Instrument 成为唯一父节点；不保留 Unbound 中间状态。
-
-拖动只在越过通用控件拖动阈值后开始；Pointer Down 的轻微移动不得触发排序。插入线必须明确显示顶层、同父或跨父目标。
-
-## 24.4 复制、剪切、粘贴、Duplicate 与删除
-
-### 24.4.1 父节点完整复制
-
-对 Event Instrument 或 Root 执行 `Copy`/`Paste` 或普通 `Duplicate` 时，复制完整 subtree：
+Project 保存唯一、有序、tagged 的 `Arrangement Track Order`：
 
 ```text
-父定义与配置
-全部 child Tracks
-全部 Segments
-全部 Notes / Points / direct / opaque data
-父子内部引用
+Logical Track | Pure MIDI Track
 ```
 
-复制必须深拷贝全部可变 Project 对象，为每个复制对象生成新稳定 ID，并把 subtree 内引用重映射到新 ID。外部共享引用只在其正式语义要求共享时保留；不得让副本与原对象共享可变定义对象。
-
-复制 Root 后，副本 Routing Mode 必须强制改为 `Auto`，不得复制为占用相同 Fixed Port.Channel。复制 Event Instrument 保留定义配置，但不会改动原 subtree。
-
-`Duplicate` 把完整副本插入原父节点之后。Paste 在当前兼容插入目标之后插入；没有兼容目标时追加到对应顶层或目标父节点末尾。一次完整复制形成一个原子 Project Undo。
-
-### 24.4.2 Duplicate Instrument Only
-
-Event Instrument 菜单必须额外提供 `Duplicate Instrument Only`。该命令：
+它是以下语义的唯一权威：
 
 ```text
-深拷贝 Event Instrument 定义及全部内部对象；
-生成全新稳定 ID 并重映射内部引用；
-不复制任何 Logical Track；
-创建一个 child list 为空的新顶层 Event Instrument；
-把副本插入原 Event Instrument 之后；
-形成一个 Project Undo。
+Arrangement 可见轨道顺序；
+SMF 导入后的用户轨道顺序；
+Pure MIDI SMF Track Projection 顺序；
+同 Usage / Root 的跨 Track 同 tick 确定性顺序；
+Auto Root 与 Usage 的首次出现顺序；
+Track 编号、Move Up/Down 和拖放插入位置。
 ```
 
-### 24.4.3 子轨道复制
+Conductor 固定显示为第一行，但不进入该集合。Event Instrument Definition order、Usage membership 和 Root membership 不得替代或重复保存 Track order。
 
-复制 Logical Track 时深拷贝其全部 Segment 和内容，并默认保留在同一 Event Instrument 下；复制 Pure MIDI Track 时深拷贝全部 Midi Segment 和 direct/opaque 内容，并默认保留在同一 Root 下。跨父 Paste 必须使用第 24.3.3 节的 parent/rebind 规则。
+## 24.3 Logical Track 绑定与空壳状态
 
-### 24.4.4 Cut 与拖动
+Logical Track 保存可空的 `Event Instrument Usage ID`，并通过 Usage 间接引用 Definition。
 
-Cut/Paste 和拖动是移动原对象，不是复制：对象及其 subtree 保持稳定 ID。跨父移动不得先创建副本再删除原对象；失败必须保持原结构不变。
-
-### 24.4.5 删除
-
-删除空父节点可直接提交。删除包含 child Track 的 Event Instrument 或 Root 必须先显示明确确认，列出将级联删除的 child Track 和主要内容摘要；确认后原子删除整个 subtree，并形成一个 Undo。不得把 child 降级为 Unbound、移到隐藏集合或留下孤立文件。
-
-删除 child Track 时沿用 Track 删除确认和 Undo 规则。Conductor Track 不允许删除、剪切、复制、Duplicate、重排或更换父节点。
-
-## 24.5 层级 Mute / Solo
-
-Event Instrument / Root 父节点与 Logical / Pure MIDI 子轨道分别拥有独立的运行期 `Mute` 和 `Solo` 状态。它们：
+`New Logical Track` 可以创建未指定 Usage 的空壳 Track。该状态仅用于安排和后续指定乐器：
 
 ```text
-不属于 Project Source Data；
-不持久化；
-不进入 Undo/Redo；
-不标记 Project Modified；
-不影响 canonical、MIDI Export 或 Audio Render；
-新建、打开或替换 Project 后全部为 false。
+允许命名、排序、复制和删除；
+没有 Segment/Note/Parameter 内容时不产生诊断；
+在指定 Event Instrument 前禁止创建或粘贴音乐内容；
+若结构损坏或非法路径形成“有内容但无 Usage”，编译为 Error。
 ```
 
-父节点开关不得改写 child 开关；child 开关也不得改写父节点开关。播放候选 Track 集合严格按以下顺序计算：
+`New Logical Track with Instrument...` 或 `Add Logical Track Using This Instrument` 必须创建新的独立 Usage，再创建并绑定 Track；不得默认把新 Track 加入同 Definition 的既有 Usage。刚创建新 Definition 时，Definition + Usage + Track 是一次原子编辑，成功后打开 Definition Editor。
 
-1. 若至少一个父节点 `Solo = true`：只考虑 `Solo = true && Mute = false` 的父节点；这些父节点内完全忽略所有 child `Solo` 状态，最终只输出 `child Mute = false` 的有效 child Track。
-2. 否则，若任意 child Track `Solo = true`：在全 Project 范围只考虑 `child Solo = true` 的 Track，再排除 `parent Mute = true` 或 `child Mute = true` 的 Track。
-3. 否则：输出 `parent Mute = false && child Mute = false` 的全部有效 child Track。
-
-`Mute` 始终胜过同层或另一层的 `Solo`。可以同时 Solo 多个父节点或多个 child Track。Conductor Track 永远不受这些开关影响。
-
-播放中改变任一层状态时，播放消费者必须在稳定 producer frontier 原子替换未来后缀，按来源精确释放新被过滤 Track 的活动 Note，并为重新进入候选集的 Track 恢复必要状态；不得修改 Project/canonical、不得清空无关 Track 或使 Playing 指针停滞。
-
-## 24.6 跨 Logical / Pure MIDI 的 Note 剪贴板
-
-Logical Note 与 Direct MIDI Note 允许通过 Copy/Cut/Paste 在 Logical Segment 与 Midi Segment 之间转换。只转换双方共同字段：
+Track 菜单必须提供：
 
 ```text
-relative Tick
-Gate Length
-Key Number
-NoteOn / Instance Velocity
+Assign / Change Event Instrument...
+Share Instrument State With...
+Make Independent
 ```
 
-转换规则：
+`Share Instrument State With...` 选择目标 Logical Track/Usage。目标使用相同 Definition 时直接加入；Definition 不同时属于 Rebind，必须使用既有影响审查，取消或失败不得留下部分修改。
+
+`Make Independent` 创建引用同一 Definition 的新 Usage，并只迁出当前 Track。旧 Usage 无成员时自动删除；变为单成员时保留但隐藏 block brace。
+
+## 24.4 共享执行语义
+
+### 24.4.1 Usage 活动连通区间
+
+对一个 Usage 的全部参与 Logical Tracks，将其 Segment Project ranges 求并集；重叠或首尾相接的 ranges 形成一个 `[startTick, endTick)` 活动连通区间。该区间是真正的共享 Channel Group 生命周期。
+
+当 Event Instrument 未启用 Per-Note Instance Isolation：
 
 ```text
-Logical → Direct：Direct NoteOff Velocity = 0。
-Direct → Logical：丢弃 Direct NoteOff Velocity。
-Direct → Direct：保留导入或用户数据中的 NoteOff Velocity。
-Logical → Logical：保持 Logical Note 的既有共同字段语义。
+一个 Usage 活动区间按 SubVoice 分配一个共享 Channel Unit；
+Usage 内所有成员 Track 的实例共享该 SubVoice 的 Channel 状态；
+同 tick 顺序使用全局 Arrangement Track Order，再使用对象显式顺序/稳定顺序；
+Overlap Policy / Scope 在整个 Usage 内验证，不能通过拆成多条 Track 绕过；
+成员 Segment End 只精确关闭该 Segment 拥有的 Note/Instance；
+成员 Segment End 不发送 Usage 级 CC120/Reset，不杀死 sibling Track 的 Note；
+Usage 活动区间结束才执行精确 NoteOff、CC120、最终 Reset 和 Unit 释放。
 ```
 
-Direct MIDI Note 的 NoteOff Velocity 虽然可被当前 BASS 音频后端忽略，但必须在 Project、canonical SMF projection、Direct Note 移动/Resize/复制和 MIDI 导出中保留。
+启用 Per-Note Instance Isolation 时，每个 Note 仍使用独立 Channel Group；Usage 继续承担 Definition 绑定、顺序、Overlap 域、监控来源与缓存 dirty owner，但不把并发 Note 合并到同一 Unit。
 
-本能力不转换 Segment、Logical Parameter、MIDI Channel Event、opaque event、Event Instrument 定义或 Root。Paste 仍服从目标 Segment 暴露范围、pitch/tick 边界、精确同 Tick+Key newcomer 冲突和一个操作一个 Undo 的既有规则。
+### 24.4.2 Usage 缓存与增量编译
 
-## 24.7 Arrangement Workspace
-
-### 24.7.1 唯一外层入口
-
-现有软件左侧 Project Panel 删除。Arrangement 是唯一的：
+Logical Segment 可继续产生规范化 fragment，但共享状态的正式合并层必须以 Usage 为 owner：
 
 ```text
-外层对象创建入口；
-父节点与子轨道正式顺序定义处；
-父子关系编辑入口；
-轨道 Segment 总览；
-Event Instrument / Root / Track context menu 入口。
+Segment normalized fragment
+→ Usage merged event/checkpoint stream
+→ Usage/SubVoice raw PCM fragment
 ```
 
-Project Settings、Diagnostics、Conductor Editor 和其他 Workspace 继续通过主菜单、状态栏或明确导航命令打开。删除 Project Panel 不删除这些 Workspace。
+编辑一个成员 Track 时，dirty 起点至少回退到该 Usage 中最早受影响 tick；后续只可在状态与活动 Note 集均收敛后复用。不得错误失效其他 Usage/Root，也不得按成员 Track 分别合成后求和。
 
-Arrangement Workspace 在 Project 打开期间常驻、始终为第一个 Tab、不可关闭、不可重排。顶层父节点与 child 展开/折叠只改变当前会话显示，不改变 Project。
+## 24.5 Root 路由与 Track 属性 UX
 
-### 24.7.2 行层级与布局
+### 24.5.1 Fixed 路由
+
+编辑某 MIDI Track 的 Fixed route 实际执行 Root membership 变更：
+
+```text
+目标 Port.Channel 未使用：创建新 Fixed Root并迁入 Track；
+目标 Port.Channel 已由 Fixed Root 使用：加入该 Root；
+离开后的旧 Root 无成员：自动删除；
+整个变更是一个失败原子 Undo。
+```
+
+同一个 Port.Channel 只能有一个 Fixed Root。Fixed Track 可以在全局 Arrangement 中任意分散，不能强制连续；这用于保持导入 SMF 的 MTrk 顺序。
+
+每条 Fixed Track Header 显示 route chip。多个 Track 共享同一 Fixed Root 时，chip tooltip/settings 显示 `Shared with N tracks`，悬停可低强调高亮可见成员。修改共享 Root 的 Channel Mode 会影响同 Root 全部 Track，必须在多成员时明确提示并确认；同一 Port.Channel 不允许同时拥有 Melodic 与 Percussion 两种模式。
+
+### 24.5.2 Auto 路由
+
+一个 Track 的独立 Auto Root 表现为 `Auto`。多个 Track 共享一个 Auto Root 时，它们必须在全局 Track Order 中连续，形成 Shared MIDI Track block。
+
+Auto→Fixed 时解除连续约束且不自动改动全局顺序。Fixed→既有 Auto block 时加入 block；Fixed→新独立 Auto 时创建新 Auto Root。将若干非连续 Fixed members 作为一个整体改为 Auto 前，必须预览并确认将它们收拢为连续 block 的原子重排。
+
+### 24.5.3 新建 MIDI Track
+
+Arrangement `+ → New MIDI Track...` 提供：
+
+```text
+New Auto MIDI Channel
+New Fixed MIDI Channel (Port, Channel, Melodic/Percussion)
+Use Existing MIDI Channel
+```
+
+选择未使用 Fixed Port.Channel 时原子创建 Root + 首条 Track；选择已使用 Port.Channel 时加入现有 Root，并禁用会与其 Root 配置矛盾的字段。不存在仅创建 Root 的提交结果。
+
+## 24.6 平铺 Arrangement UI
+
+### 24.6.1 行与工具栏
 
 Arrangement 行顺序固定为：
 
 ```text
-Conductor Track row
-each mixed parent row
-    zero or more child Track rows when expanded
+Conductor
+Arrangement Track Order[0]
+Arrangement Track Order[1]
+...
 ```
 
-父节点行比普通 Track 行紧凑，因为父节点不承载 Segment；其高度随 Arrangement 垂直缩放变化，但始终按小于 Track 行的固定比例显示。父节点只在左侧 Header 提供展开箭头、名称、摘要、Mute/Solo 与 context menu。父节点 Header 使用比 child Track / Conductor Header 稍亮的 Surface 色；右侧 Timeline 内容区使用不透明纯黑完整覆盖当前可见宽度，使 Bar/Grid 线在父节点行不可见。播放/编辑指针等瞬时 overlay 可以继续绘制在黑色覆盖层上，但父节点右侧不得响应 Draw 创建、hover 创建预览或 Segment 命中。父节点缩放到无法完整容纳标题与摘要两行时，自动隐藏摘要并保留完整标题，不得裁切摘要残片。
+不显示 Event Instrument 或 Root 空白 parent row。Logical/Pure MIDI Track 均直接承载 Segment，继续使用手工渲染、可视 tile 和范围查询，不得为 Segment/Note/Event 堆 WPF Control。
 
-Event Instrument 与 Root child Track 使用相同的二级缩进；所有 Header 的右边界保持对齐，并为名称与次级摘要保留足够的固定宽度。Pure MIDI Track 名称左侧显示 MIDI 图标；Logical Track 显示与其可明确区分的 Logical/Music 图标。Event Instrument Header 显示名称和定义状态；Root Header 显示名称，次级摘要固定为 `Auto <Mode> <N> Tracks` 或 `P.<Port> Ch.<Channel> <Mode> <N> Tracks`，其中 `<Mode>` 为 `Melodic` 或 `Percussion`。
+工具栏从左至右至少包括：
 
-Logical Track Header 不再显示 Bind/Unbind；它位于当前 Event Instrument 下即表示唯一绑定。可以显示父 Event Instrument 的次级摘要。MIDI Track Header 显示其 Track 名称和 MIDI 图标，不重复 Root 名称。
+```text
+Event Instruments pane toggle（Fluent chevron + “Event Instruments”）
+red Fluent + creation menu
+其他 Timeline 工具
+```
 
-### 24.7.3 打开与菜单
-
-单击 Event Instrument / Root Header 的任意非命令区域即展开或折叠该父节点；disclosure 图标只是同一命令的视觉提示，不是唯一 hit target。双击 Event Instrument Header 打开或激活该 Event Instrument Editor，且双击路径不得额外执行两次折叠。双击 child Track 或 Segment 使用既有 Arrangement/Segment 导航语义。
-
-Event Instrument 菜单至少包含：
+创建菜单固定提供：
 
 ```text
 New Logical Track
-Open Editor
-Copy / Cut / Paste
-Duplicate
-Duplicate Instrument Only
-Rename
-Move Up / Move Down
-Delete
+New Logical Track with Instrument...
+New MIDI Track...
 ```
 
-Root 菜单至少包含：
+主菜单 Project 也提供等价入口。播放或其他 Project 编辑锁期间创建/结构编辑命令禁用。
+
+### 24.6.2 Event Instruments 辅助栏
+
+Event Instruments pane 是 Arrangement 内的 Definition Browser，不是旧 Project Panel。它显示全部 Definition，包含未使用项及 usage/track count，并保存独立 Definition order。
+
+支持：
 
 ```text
-New MIDI Track
-Copy / Cut / Paste
-Duplicate
-Rename
-Settings (Name, Routing, Port, Channel, Channel Mode)
-Move Up / Move Down
-Delete
+New / Copy / Cut / Paste / Duplicate / Rename / Edit / Move / Delete
+Add Logical Track Using This Instrument
+拖 Definition 到 Arrangement 空隙以创建独立 Usage + Logical Track
 ```
 
-Logical/Pure MIDI Track 菜单至少包含既有的 Copy/Cut/Paste/Duplicate/Rename/Delete/Move、选择其全部 Segment（替换或追加）和适用的 Segment 命令。Logical Track 菜单不提供 Unbind；Pure MIDI Track 菜单不提供 Event Instrument binding。
+删除被引用 Definition 不得级联删除 Track。默认必须阻止，并列出引用 Usage/Track；用户须先改绑或删除相关 Track。删除最后一个 Track/Usage也绝不删除 Definition。
 
-通用快捷键：`Ctrl+C`、`Ctrl+X`、`Ctrl+V`、`Ctrl+D`、`F2`、`Delete` 按当前 Header 焦点和兼容目标路由。命令不得依赖已经失效的 Project Panel selection。
+### 24.6.3 Header 与块视觉
 
-Arrangement 工具栏在红色 Fluent `+` 创建菜单之后提供 `Expand All` 与 `Collapse All` 图标按钮；图标使用批准的 Fluent System Icons 且采用可辨识的亮色。`+` 在播放或其他 Project 编辑锁期间禁用。工具栏不重复显示静态 `Arrangement` 标题。`Ctrl + Mouse Wheel` 仅在指针位于 Header 区域时调整 Arrangement 行的垂直缩放；普通滚轮和 Timeline 内容区既有缩放/滚动语义不改变。垂直滚动到最大值时最后一行必须完整露出在水平 Overview/滚动条上方，不得被其覆盖。
+所有 Track Header 预留同宽的左侧 group gutter，使独立 Track 与 block member 的标题对齐。
 
-Arrangement Grid 仅提供启用开关；启用时固定按完整 Time Signature Map 绘制 Bar 主线和分母拍低强调子线，Ruler 显示一基小节号。极端水平缩小时采用 device-pixel 最小间距跳过不可辨识的竖线，保证绘制工作量受可视宽度约束。
-
-拖动 Event Instrument / Root 父节点时，插入预览线只能位于顶层父节点之间，不得落在任何 child Track 边界；最终重排与预览必须使用同一规范化目标。Header context menu 的目标必须来自本次右键按下位置的即时 hit test：右键空白处必须打开 Arrangement 空白菜单，不得复用上一次点击或右键过的隐式 Header 目标。该要求不引入父/子 Header 单选视觉状态。
-
-## 24.8 Pure MIDI Segment 概览
-
-### 24.8.1 图层与视觉
-
-Logical Segment 继续只显示 Note Preview。Pure MIDI Segment 必须显示两个独立概览图层：
+以下对象在成员数至少为 2 时形成连续 block：
 
 ```text
-lower layer: Direct MIDI Note graphics
-upper layer: non-Note MIDI event vertical lines
+同一 Event Instrument Usage 的 Logical Tracks；
+同一 Auto MIDI Channel Root 的 Pure MIDI Tracks。
 ```
 
-所有 non-Note event 线使用同一种与 Note 明确区分的颜色，不按 event type 改色。Event 线透明度固定为 `50%`，并绘制在 Note 图形上层，使极密 Note 与 Event 仍可同时辨认。
+block gutter 绘制跨全部成员的大括号。括号区域是独立 hit target：hover 高亮，按下后越过通用拖动阈值才拖动整个 block；右键提供共享状态/route、Mute/Solo group、Make Independent 等适用命令。Fixed Root members 不绘制 block。
 
-每个 event 线：
+Track Header 保留类型图标、名称、route/instrument 摘要、Mute/Solo、hover/pressed 和菜单。Header 点击不形成持久单选；右键菜单目标必须来自本次指针 hit test，空白右键不得复用旧目标。
+
+## 24.7 Track 拖放与组变更
+
+### 24.7.1 一般规则
+
+拖放开始必须越过通用总移动阈值。所有排序、Usage/Root 创建删除、Definition rebind 和 global order 修改构成一次原子 Project Edit；失败或取消时 Project 完全不变。
+
+Logical 与 Pure MIDI Track 不允许跨类型成组。brace drag 只整体重排 block，永不合并到另一个 block。
+
+### 24.7.2 目标区域
+
+共享 block 的上、下边缘内侧各提供约 8 DIP 的外部插入 hit zone，实际绘制 3–4 DIP 的低强调实线；中间 body 是“加入 block”目标。目标切换使用约 4 DIP hysteresis，避免边缘抖动。
 
 ```text
-横向位于 event tick；
-从 Segment 可视内容底部向上绘制；
-高度 = normalizedValue × 100%；
-最小宽度 = 1 device pixel；
-value = 0 时仍至少显示 1 device pixel 高度。
+外部 Track → block body：加入目标并追加为最后成员，目标 block 全体显示虚线外框；
+外部 Track → block top/bottom strip：放在 block 前/后，保持或变为独立；
+其他 block member → target body：离开旧组并加入目标末尾；
+同 block member → member insertion gap：精确内部重排；
+同 block member → block exterior strip：脱离为新的独立 Usage/Auto Root；
+brace → global gap：整体移动 block。
 ```
 
-数值规范化：
+同 block 内第一行上半部和最后一行下半部必须分别能定位到第一/最后成员。相邻 block 间归一化为一个全局插入 gap，不得出现两个竞争目标。
+
+### 24.7.3 singleton 与 Fixed chip drop
+
+singleton Usage/Auto Root 没有 brace，因此其 Instrument/Auto chip 是显式 join target。Fixed Track 可分散排列，只有其 Fixed route chip（而非整行 body）是“加入该 Fixed Root”的目标；整行其余区域继续表示普通排序。
+
+不同 Definition 的 Logical Track 拖入 Usage 时，使用琥珀色虚线预览并执行 Rebind 影响审查。取消时不移动 Track。
+
+## 24.8 Copy / Cut / Paste / Duplicate / Delete
+
+### 24.8.1 Event Instrument Definition
+
+Definition Copy/Paste/Duplicate 只深拷贝 Definition 与全部内部对象，生成并重映射全部稳定 ID，不复制任何 Track 或 Usage。`Duplicate Instrument Only` 与 Definition Browser 的普通 Duplicate 语义相同；保留该命令名称用于 Track/Usage 上下文中的明确入口。
+
+### 24.8.2 Logical Track
+
+Logical Track Duplicate 深拷贝 Track、Segments 和内容，默认保留同一 Usage，并插入源 Track 后。若源为独立 singleton，这会形成 Shared block。Paste 到明确 Usage target 时加入目标；普通空白 Paste 创建引用同一 Definition 的新独立 Usage。未绑定空壳 Track 的副本仍未绑定且必须保持无内容约束。
+
+### 24.8.3 Pure MIDI Track
+
+Pure MIDI Track Duplicate 深拷贝 Track/Segments/direct/opaque 内容并保留可见 route：Fixed 副本加入同一 Fixed Root；Auto 副本加入同一 Auto Root。普通 Paste 到 route/block target 时加入目标；空白 Paste 使用来源 route，Fixed route 已存在时加入现有 Fixed Root，不创建冲突 Root。
+
+### 24.8.4 Cut / Delete 与自动 owner 清理
+
+Header/brace Drag Move 在一个原子命令中保持对象稳定 ID。Clipboard Cut 先冻结不可变快照再执行删除；后续 Paste 与普通 Copy 一样创建新的 Track/内容稳定 ID，避免 Cut 被 Undo 后再 Paste 时发生身份冲突。删除 Track 继续按内容确认规则执行。任一删除/移动后 Usage/Root 成员数为 0 时自动删除 owner；该删除命令的 Undo 必须恢复原 Track、owner、stable ID、global order、membership 和配置。
+
+## 24.9 Mute / Solo
+
+Track Mute/Solo 仍只属于运行期，不持久化、不进入 Undo、不影响 canonical、MIDI Export 或 Audio Render。Shared block/root 可以有独立 group Mute/Solo runtime state；它不改写成员 Track 开关。
+
+运行期过滤必须按来源精确释放被过滤 Track 的活动 Note并恢复重新进入成员所需状态。不得因单个 Track Mute 对整个 Usage/Root发送CC120/Reset，不得杀死 sibling Note、卡住 producer 或无限 Buffering。
+
+## 24.10 跨 Logical / Pure MIDI Note 剪贴板
+
+Logical Note 与 Direct MIDI Note 只转换共同字段：relative Tick、Gate Length、Key、NoteOn/Instance Velocity。Logical→Direct 的 NoteOff Velocity 为 0；Direct→Logical 丢弃 NoteOff Velocity；Direct→Direct 保留它。该能力不转换 Segment、参数、Channel Event、Definition、Usage 或 Root。
+
+## 24.11 Pure MIDI Segment 与 Conductor 概览
+
+Pure MIDI Segment 的 Note 与 non-Note event 使用独立 tile/layer。event 线位于 Note 上层、透明度 50%、至少 1 device pixel，高度按正式值域归一化；同 device column 使用最大高度聚合。Logical Segment 继续只显示 Note。
+
+Conductor 固定第一行，直接显示按类型着色且大小不随缩放变化的圆点；End Marker 仍为专用竖线。
+
+两者均必须：
 
 ```text
-7-bit CC / Program / Poly Pressure / Channel Pressure / Channel Mode: value / 127
-Pitch Bend: unsigned14 / 16383
-无标量值的 opaque SysEx/Meta: full height presence line
+只查询可见 source pages/range；
+使用分块缓存、LOD 和局部失效；
+不创建逐对象 WPF Controls；
+不把 Grid/cursor/selection/hover 烘焙进稳定 tile；
+不从 bitmap 反推 hit test 或音乐语义；
+在数千万对象时不建立全 Segment render array/dictionary/index。
 ```
 
-如果当前缩放下多个 event 落到同一 device-pixel column，以该列最大高度聚合；不得通过叠画数量提高不受控亮度。聚合只属于概览 LOD，不改变命中、编辑、canonical 或导出事件。
+## 24.12 SMF 导入与导出顺序
 
-### 24.8.2 坐标和裁剪
+`Open MIDI as New Project` 按源 MTrk index 排列导入 Track；单 MTrk 被 Port/Channel 拆分时，派生 Track 按该 MTrk 中 effective Port.Channel 首次出现顺序紧随排列。标准 MIDI 无法表达 Auto Root，因此普通外部导入产生 Fixed Roots。
 
-Note 与 event 必须使用同一个 Segment-local tick 到 device pixel 变换，并严格裁剪到当前 Segment 暴露 Content Window。视图平移时是内容在世界坐标中的连续平移，不得把每个可见片段重新当作 Segment tick 0，也不得水平压缩整张缓存。Segment 本地 tick 0 的 Note/Event 不得因边界查询丢失。
+Pure MIDI SMF Track Projection 过滤全局 Arrangement Track Order 中的 Pure MIDI Tracks；Root 不再决定 MTrk 分组顺序。同 Root 同 tick canonical merge 也使用该全局顺序。Logical Unit MTrk 继续按分配后的 Port/Channel 顺序位于 Pure MIDI MTrks 之后。
 
-### 24.8.3 缓存与性能
+Midora Sequencer-Specific Meta 可以保存 Track/Root stable ID、membership、routing、mode 和 Auto identity，以支持 Midora→MIDI→Midora 结构恢复。若第三方重排使恢复出的 Auto members 不连续，导入必须保留文件 Track order、放弃该 Auto 恢复并按实际 Fixed Port.Channel 重建，同时给出一次性 Warning。
 
-Pure MIDI Segment 概览必须使用手工渲染、分块缓存和可视范围查询，不得为每个 Note/Event 创建 WPF Control。Note 与 Event 使用独立内容指纹和独立 tile/layer：
+## 24.13 持久化
+
+`project.json` 必须保存：
 
 ```text
-Note 编辑只失效受影响 Note tiles；
-Event 编辑只失效受影响 Event tiles；
-Segment 内容窗口改变只失效受影响投影范围；
-Segment 移动、选择、播放指针、Grid、普通 pan 不重建未变化内容；
-折叠父节点只停止组合不可见 tiles，不要求无条件销毁可复用缓存。
+ordered Event Instrument Definition index；
+ordered Event Instrument Usage index；
+ordered MIDI Channel Root index；
+ordered tagged Arrangement Track index；
+各对象文件路径与名称快照。
 ```
 
-cache key 至少包含：Segment 稳定 ID、相应内容 fingerprint、精确 tick-to-device transform/LOD、DPI 与 style revision。Grid、play/edit cursor、selection outline、hover 和 drag preview 不得烘焙进稳定内容 tile。
-
-在极端内容下，UI 线程只组合可见 tile 和少量 transient overlay；后台 tile 失败不得阻塞输入或回退到逐对象 WPF 绘制。对象命中和编辑使用原始稳定 ID 及空间索引，不从 bitmap 反推对象。
-
-概览 source 不能是为整个 Segment 复制生成的 normalized Note/Event array。Rasterizer 必须直接查询与目标 tile 的 normalized/tick 范围相交的 immutable source pages，并在读取页时完成 device-column LOD 聚合。Cache entry 只保存 tile bitmap、page/generation fingerprint 与小型 descriptor；Segment 拥有数千万对象时，首次进入 Arrangement 仍不得建立逐对象 preview cache。
-
-## 24.9 Conductor Arrangement 概览
-
-Conductor Track 不使用 Segment。Arrangement 第一行直接按 absolute Project tick 显示 Conductor 事件概览：
+对象文件必须保存：
 
 ```text
-Tempo
-Time Signature
-Key Signature
-Marker
-other supported Conductor point events
+Event Instrument：Definition 本体，不保存 Track child list；
+Event Instrument Usage：ID + Definition ID；
+Logical Track：可空 Usage ID + Track/Segment 内容；
+MIDI Channel Root：Routing/Port/Channel/Mode，不保存 Track child order；
+Pure MIDI Track：Root ID + Track/Segment/direct/opaque 内容。
 ```
 
-不同事件类型使用不同且稳定的颜色。普通事件使用与缩放无关的固定 device-size 圆点；同 tick 多类型可使用固定的纵向 band/offset 保持可辨。Project End Marker 继续使用专用竖线，不转换为圆点。
-
-该行只提供概览和导航；精确编辑仍进入 Conductor Editor。概览必须使用独立的分块缓存、可视 tick 查询和空间索引；不得为每个事件创建 WPF Control。极端缩小时按 `(tile, device-pixel column, event type)` 聚合，一个类型在同列最多绘制一个点。
-
-Conductor 内容变更只失效覆盖受影响 tick/type 的 tiles。Grid、play/edit cursor、selection/hover 与 Project End Marker transient state 不进入稳定点缓存。任何命中或导航都使用正式 Conductor event ID/index，不从像素颜色反推。
-
-## 24.10 持久化
-
-`project.json` 必须保存一个有序 tagged union `Arrangement Parent` 索引，每项至少冻结：
+membership 由 Track 的 owner ID 表达，顺序仅由 Arrangement Track index 表达；不得再保存 parent ordered child arrays 形成第二套顺序。以下结构均拒绝打开/编译：
 
 ```text
-Parent Kind: Event Instrument | MIDI Channel Root
-Parent Stable ID
-Object file path
-Display-name snapshot
+Usage 或 Root 无成员；
+非空 Logical Track 无 Usage；
+Track owner 缺失或 kind 错误；
+同一 Track 在 Arrangement index 缺失或重复；
+Shared Usage / Auto Root 成员在 Track order 中不连续；
+两个 Fixed Root 使用同一 Port.Channel；
+对象 ID、manifest、index 与文件 path 不一致。
 ```
 
-Event Instrument protobuf 保存其 ordered Logical Track stable ID references；Logical Track protobuf 保存唯一 parent Event Instrument ID。Root protobuf 与 Pure MIDI Track protobuf 同理保存双向 parent/child 关系。`project.json`、parent object、child object 三方必须一致。
+Definition pane 展开、Arrangement viewport、selection、header focus、Mute/Solo 和 drag preview 属于 session/runtime state，不进入 `.midora`。
 
-以下内容不再持久化：
-
-```text
-Event Instrument Library folders
-independent Event Instrument manual order
-independent global Logical Track order
-independent global Root order
-Unbound/Unassigned Logical Track state
-Project Panel width/collapse/selection
-```
-
-父节点展开状态、Arrangement viewport、selection、Header focus 与 Mute/Solo 属于 Project Session UI State 或 Runtime State，不进入 `.midora`。
-
-父子索引缺失、重复、多重归属、kind 不匹配或顺序不一致属于结构损坏。单个 parent object 文件损坏但 `project.json` 仍能可信确定 subtree 时，可以创建同位置的 Damaged Parent Placeholder 并保留 child 归属；不得把 child 降级为 Unbound。无法可信确定唯一父子关系时打开失败。
-
-本次是未发布开发格式的破坏性基线替换：产品与 SRS 版本继续为 `v0.1`，但实现必须更新内部 schema/descriptor/file-format 基线并明确拒绝旧开发布局；不得双写或静默迁移旧 Event Instrument Folder / Unbound Track 布局。
-
-## 24.11 SMF 导入与导出结构
-
-`Open MIDI as New Project` 产生的 Root 按导入确定顺序写入混合父节点列表；其 Pure MIDI Tracks 写入各 Root child order。新建 Project 不自动创建 Event Instrument，因此导入结果可以只包含 Root parents。
-
-标准 SMF Track Name 只写 Pure MIDI child Track 名称，不写 Root 名称。可忽略的版本化 Midora Sequencer-Specific Meta 可以保存 Root 名称、Root filtered order、child order、routing 和 channel mode，用于 Midora → MIDI → Midora 的结构恢复；它不得影响普通 MIDI 播放，也不得替代标准 Track Name、MIDI Port 或 Channel status。
-
-## 24.12 失败、诊断与原子性
-
-以下操作必须整体拒绝且不留下部分结构：
-
-```text
-创建无父 Logical/Pure MIDI Track；
-同一 child 同时属于多个 parent；
-跨 kind parent 归属；
-复制后出现重复稳定 ID 或未重映射 subtree 引用；
-Fixed Root copy 保留冲突路由；
-删除 non-empty parent 未获得确认；
-跨父移动/改绑验证失败；
-无法可信恢复父子关系的项目打开。
-```
-
-结构错误产生可定位到 parent/child stable ID 的英文 Error。普通空 Event Instrument 或空 Root 合法且不产生诊断。未引用 Event Instrument 不再是独立概念：顶层 Event Instrument 即使没有 child Track 仍是合法空 parent。
-
-## 24.13 明确非目标
-
-初版不提供：
-
-```text
-可见 Event Instrument Library Workspace；
-Event Instrument Folder / Unfiled 分组；
-Project Panel；
-Unbound Logical Track；
-父节点右侧直接承载 Segment；
-Root 名称作为标准 SMF Track Name；
-Logical Segment 的 non-Note event 概览；
-从概览 bitmap 反推命中或音乐语义；
-跨类型 Segment / Parameter / Channel Event 自动转换。
-```
-
-## 24.14 验收与验证门
+## 24.14 失败原子性与验收门
 
 至少覆盖：
 
 ```text
-混排父节点保存/重开/Undo/Redo 与确定性顺序；
-过滤 Root 顺序后的 Auto allocation 与 SMF Track order；
-Logical/Pure child 同父重排与跨父移动；
-Rebind 失败原子性和隐藏 Segment 内容保留；
-完整 subtree Copy/Paste/Duplicate 的 ID/reference remap；
-Duplicate Instrument Only 不复制 Track；
-Fixed Root duplicate 强制 Auto；
-non-empty parent cascade delete、确认和单 Undo；
-三层父/子 Mute-Solo 分支及播放中原子切换；
-Logical↔Direct Note clipboard 和 Direct NoteOff Velocity 保留；
-Project Panel/Folder/Unbound schema 明确拒绝；
-Pure MIDI preview 的 Event-above-Note、50% opacity、1px 最小线与缩放/平移正确性；
-Note/Event 独立 tile invalidation 和百万级可视内容性能；
-Conductor 多类型颜色、固定设备圆点、极端事件聚合和局部失效；
-Grid/cursor/selection 变化不重建稳定内容 tile；
-损坏 parent placeholder 不制造 Unbound child。
+混合 Logical/Pure global track order 保存、重开、Undo/Redo；
+SMF 导入/导出保持源 Track 顺序与多 Channel bucket 次序；
+Definition 0 usage 持久化，最后 Track 删除不删除 Definition；
+Usage/Auto/Fixed Root 最后成员离开时同事务删除且 Undo 恢复原 ID；
+Fixed route UI 改属、既有 P.C 合并及共享 Mode 确认；
+shared Usage 活动连通区间、跨 Track overlap、同 tick 顺序与 Unit 数；
+成员 Segment End 不清空 sibling state/note，Usage end 才最终 cleanup；
+Auto/Usage block 连续性、brace reorder、body join、edge detach 和 hysteresis；
+Fixed Track 任意分散且 route chip join；
+不同 Definition rebind 取消/失败原子性；
+未绑定空壳限制与非法非空无 Usage诊断；
+Definition/Track/Usage/Root Copy/Paste/Duplicate 的 ID/remap/membership；
+Pure MIDI event-above-note preview、Conductor tile 和极端范围查询性能；
+后台 Full/Incremental 对共享 Usage 完全等价。
+```
+
+## 24.15 明确非目标
+
+初版不提供：
+
+```text
+可见 Event Instrument Usage 管理器或 Usage 命名；
+空 MIDI Channel Root 或 Unit 预留 UI；
+Event Instrument/Root 的 Arrangement 空白 parent row；
+按 Definition 自动让所有 Logical Tracks 共享状态；
+Fixed Root members 强制连续；
+从概览 bitmap 反推命中；
+把 Route 字段复制到每个 Pure MIDI Track 形成多份权威值；
+旧树形开发布局的迁移、双写或兼容读取。
 ```

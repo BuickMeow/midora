@@ -434,24 +434,23 @@ Mute / Solo 不保存进 Project。
 Mute / Solo 不进入 Undo / Redo。
 Mute / Solo 切换不标记 Project 已修改。
 关闭 Project 或打开新 Project 后，Mute / Solo 状态全部丢弃。
-新建或打开 Project 后，所有 Event Instrument / Root parent 与 child Track 默认 Mute = false，Solo = false。
+新建或打开 Project 后，所有 Logical Track 与 Pure MIDI Track 默认 Mute = false，Solo = false。
 ```
 ### 13.10.2 播放过滤规则
 主时间线播放默认包含全部结构有效的 Logical Track 与 Pure MIDI Track。
 初版主播放不提供独立于 Mute / Solo 的显式 Track 选择。
 
-Event Instrument / Root parent 与其 child Tracks 拥有相互独立的开关。候选集合固定按以下三分支计算：
+平铺 Arrangement 只为实际 Track 提供 Mute / Solo；不可见的 Event Instrument Usage 与 MIDI Channel Root 不再拥有第二套运行时开关。候选集合固定按以下规则计算：
 
-1. 至少一个 parent Solo 时，只保留 `parent Solo && !parent Mute` 的 parents；完全忽略所有 child Solo，再排除 child Mute。
-2. 否则，至少一个 child Solo 时，在全 Project 只保留 child Solo，再排除 parent Mute 与 child Mute。
-3. 否则，保留 parent 与 child 均未 Mute 的全部有效 child Track。
+1. 至少一个 Track Solo 时，在全 Project 只保留 `Track Solo && !Track Mute` 的 Track。
+2. 否则，保留全部未 Mute 的结构有效 Track。
 
-Mute 始终胜过 Solo；多个 parent 或 child 可以同时 Solo。Conductor Track 不参与该集合。
+Mute 始终胜过 Solo；多个 Track 可以同时 Solo。Conductor Track 不参与该集合。
 ### 13.10.3 Mute / Solo 不改变 compiled result
 Mute / Solo 只作为播放消费者层实时过滤。
 规则：
 ```text
-parent/child Mute / Solo 不改变 canonical compiled result。
+Track Mute / Solo 不改变 canonical compiled result。
 Mute / Solo 不影响 MIDI 导出。
 Mute / Solo 不影响音频文件渲染。
 成品输出由导出 / 渲染设置中的 Track 选择决定。
@@ -511,7 +510,8 @@ Reset All Controllers
 为了支持 Mute / Solo，播放事件至少需要能追踪到：
 ```text
 Logical Track ID
-Parent Event Instrument ID
+Event Instrument Usage ID
+Event Instrument Definition ID
 Pure MIDI Track ID
 MIDI Channel Root ID
 Segment ID
@@ -520,11 +520,13 @@ SubVoice ID
 Port / Channel Unit
 ```
 
-### 13.10.10 Pure MIDI Root 上的 Track 过滤
+### 13.10.10 共享执行组上的 Track 过滤
 
 同一 MIDI Channel Root 的多个 Pure MIDI Track 共享一个 Channel Unit。播放层不得通过清空整个 Unit 来实现单个子 Track 的 Mute/Solo，因为这会杀死 sibling Track 的 Note 并破坏其共享状态。
 
 过滤变化必须在稳定 producer frontier 原子替换未来 suffix，并基于 canonical 来源追踪：精确释放刚被过滤 Track 拥有的活动 Note；保留仍可听 Track 的活动 Note；随后从当前 tick 重建该 Root 由仍可听 Track 决定的必要 Channel 状态。若当前 canonical/source tracing 不能证明该恢复安全，必须进入受控 Buffering 并从当前 tick 冷启动该 Root，不能继续输出旧 suffix、卡在 Playing 或静默清空整个 Root。
+
+多个 Logical Track 共享同一 Event Instrument Usage 时适用同一原则：不得为静音单个成员而清空整个 Usage Unit；必须以 Track 来源追踪精确释放 Note，并从当前 tick 重建该 Usage 的必要映射后 Channel 状态。
 ---
 ## 13.11 SoundFont 与播放
 ### 13.11.1 播放需要有效 SF2
@@ -1111,9 +1113,9 @@ Playback span cache
 Render-Ahead ring
 ```
 
-Segment/Unit raw PCM 位于 Mute/Solo、Playback Master Volume 与 Limiter 之前。Playback span 对当前 audible Track 集合做确定性求和，再统一应用 Master 与一个全局 Limiter。Limiter 不得分别作用于每个 Unit 或 Segment。
+Segment/Usage/Root raw PCM 位于 Mute/Solo、Playback Master Volume 与 Limiter 之前。Playback span 对当前 audible Track 集合做确定性求和，再统一应用 Master 与一个全局 Limiter。Limiter 不得分别作用于每个 Unit 或 Segment。
 
-同一 Pure MIDI Root 的子 Track 必须先按 canonical execution order 合并，再由一个 Root/Unit synth stream 生成 PCM；严禁按子 Track 分别合成后相加。Root PCM 同样位于 Mute/Solo 后缀重建结果与全局 Master/Limiter 之前，详细 key、dirty range 与 checkpoint 收敛规则见第 23.10 节。
+同一 Pure MIDI Root 的 Track，以及同一 Event Instrument Usage 的 Logical Track，必须分别先按 global Arrangement order 与 canonical execution order 合并，再由一个共享 Unit synth stream 生成 PCM；严禁按成员 Track 分别合成后相加。共享组 PCM 同样位于 Mute/Solo 后缀重建结果与全局 Master/Limiter 之前；Pure MIDI 的详细 key、dirty range 与 checkpoint 收敛规则见第 23.10 节，Logical Usage 使用同构的 group key 与连通区间规则。
 
 相同 Project semantic revision、CompileContext、范围和完整 cache key 的 exact replay 命中时，不得再次进行语义编译或 BASSMIDI 合成。跨范围复用必须把范围冷启动上下文纳入 key；不得把含范围前持续 Note 的连续 PCM 切片冒充从中途冷启动的结果。
 
@@ -1442,7 +1444,7 @@ Segment 预览只播放被预览 Segment 所在 Track / Segment。
 ```
 但以下情况仍不能预览：
 ```text
-Track 的唯一 Event Instrument parent 缺失、重复或引用断裂
+Track 未绑定 Event Instrument Usage，或 Usage / Definition 引用断裂
 Segment 预览编译失败
 无有效 SF2
 播放后端错误

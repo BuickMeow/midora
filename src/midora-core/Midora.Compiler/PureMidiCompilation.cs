@@ -62,8 +62,10 @@ public sealed partial class MidoraCompiler
             return PureMidiPlan.Empty;
         }
 
-        Dictionary<MidoraId, PureMidiTrack> tracksById = project.PureMidiTracks
-            .ToDictionary(value => value.Id);
+        PureMidiTrack[] globalTracks = project.PureMidiTracksInArrangementOrder().ToArray();
+        Dictionary<MidoraId, int> globalTrackOrder = globalTracks
+            .Select((track, index) => (track.Id, index))
+            .ToDictionary(value => value.Id, value => value.index);
         List<PureMidiRootPlan> roots = [];
         List<CanonicalSmfTrackDescriptor> descriptors = [];
         List<CanonicalOpaqueMidiEvent> opaque = [];
@@ -71,23 +73,20 @@ public sealed partial class MidoraCompiler
         foreach (MidiChannelRoot root in project.MidiChannelRootsInOrder())
         {
             cancellationToken.ThrowIfCancellationRequested();
+            PureMidiTrack[] rootTracks = globalTracks
+                .Where(value => value.MidiChannelRootId == root.Id)
+                .ToArray();
             bool participatesInRequest = request.IncludedTrackIds is null
-                || root.MidiTrackIds.Any(request.IncludedTrackIds.Contains);
+                || rootTracks.Any(value => request.IncludedTrackIds.Contains(value.Id));
             List<PureMidiTrackPlan> tracks = [];
-            int childOrder = 0;
-            foreach (MidoraId trackId in root.MidiTrackIds)
+            foreach (PureMidiTrack track in rootTracks)
             {
-                if (!tracksById.TryGetValue(trackId, out PureMidiTrack? track))
-                {
-                    childOrder++;
-                    continue;
-                }
                 if (request.IncludedTrackIds is not null
                     && !request.IncludedTrackIds.Contains(track.Id))
                 {
-                    childOrder++;
                     continue;
                 }
+                int childOrder = globalTrackOrder[track.Id];
 
                 MidiSegment[] segments = track.Segments
                     .Where(segment => IsRepresentable(segment)
@@ -123,7 +122,6 @@ public sealed partial class MidoraCompiler
                     rootOrder,
                     childOrder,
                     root.RoutingMode));
-                childOrder++;
             }
 
             PureMidiRootInterval[] intervals = BuildRootIntervals(tracks, cancellationToken);

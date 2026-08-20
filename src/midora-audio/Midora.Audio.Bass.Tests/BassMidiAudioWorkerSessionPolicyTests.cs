@@ -618,11 +618,10 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
         voice.Events.Add(TemplateEvent.Note(project, 0, 480, 60, 100));
         instrument.SubVoices.Add(voice);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project)
-        {
+        LogicalTrack track = new(project) {
             Name = "Track",
-            EventInstrumentId = instrument.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 960 };
         segment.Notes.Add(new LogicalNote(project)
         {
@@ -631,7 +630,6 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
             Velocity = 100
         });
         track.Segments.Add(segment);
-        project.Tracks.Add(track);
         return project;
     }
 

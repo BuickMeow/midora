@@ -153,7 +153,7 @@ Readme / 诊断中说明该 Track 无音乐输出。
 每个 Port 文件内部：
 ```text
 Track 0 = Conductor / Meta Track
-随后 = 该原始 Port 内的 Pure MIDI Track，按 Root/Track 显式顺序
+随后 = 该原始 Port 内的 Pure MIDI Track，按 global Arrangement Track Order 过滤顺序
 最后 = 该原始 Port 内 Logical/Event Instrument 实际有事件的 Unit，按原始 Channel 编号
 ```
 按 Port 导出时不在事件 Track 层保留 Logical Track 拆分；同一 Logical Unit 即使被多个 Logical Track 先后复用，也只生成一个事件 Track。Pure MIDI Track 拆分、名称和相对顺序必须保留。
@@ -302,7 +302,7 @@ Key Signature 是全局状态型 Meta Event，因此范围起点应恢复当前�
 所有有效 Pure MIDI Track
 ```
 `Per Logical Track` 默认且只能选择所有有效 Logical Track；Pure MIDI Track 不属于该模式的候选集合。
-Damaged Parent Placeholder subtree 不参与导出并阻止正式任务；正常 Logical Track 不允许缺少 Event Instrument parent。
+Damaged Definition/Usage/Track/Root Placeholder 不参与导出并阻止正式任务。无内容且无 Usage 的 Logical Track 是合法空壳但不是有效导出目标；有内容却无有效 Usage/Definition 是结构 Error。
 ### 14.6.2 显式选择 Track
 `Whole Project` 与 `Per Port` 允许用户勾选要导出的 Logical Track 与 Pure MIDI Track；`Per Logical Track` 只允许勾选 Logical Track。切换模式时可以保留不适用于当前模式的临时勾选状态以便切回，但当前任务的冻结 Track 集合不得包含该模式不支持的类型。
 用户取消勾选某个 Track 后：
@@ -316,8 +316,8 @@ Readme 记录即可。
 Track 选择集合会影响本次导出 CompileContext 的资源需求和 Port / Channel Unit 分配。
 
 选择同一 Root 的部分 Pure MIDI Track 不得自动带入未选择 sibling Track；Root 生命周期与状态按本次被选择集合重新建立。Fixed Root 的路由仍必须保留。
-### 14.6.3 Logical Track 父节点错误
-Logical Track 无唯一 Event Instrument parent 是结构 Error，导出准备失败。Damaged Parent Placeholder subtree 不得生成空 Track 或把 Logical Note 直接当作普通 MIDI Note 导出。
+### 14.6.3 Logical Track Usage / Definition 错误
+有内容 Logical Track 无唯一有效 Usage/Definition 是结构 Error，导出准备失败。Damaged Placeholder 不得生成空 Track 或把 Logical Note 直接当作普通 MIDI Note 导出。
 ### 14.6.4 Mute / Solo 不影响导出
 MIDI 导出不受当前临时 Mute / Solo 状态影响。
 Mute / Solo 是实时监听状态，不是成品输出选择。
@@ -468,7 +468,7 @@ Readme 可能较长，MIDI Text 只写必要简短非语义信息。
 
 ### 14.8.6 Midora Pure MIDI 结构 Meta
 
-Pure MIDI MTrk 可在 tick 0 写版本化 Sequencer-Specific Meta，以保存 Root/Track Stable ID、Root 名称、从 Arrangement mixed parent order 过滤得到的 Root 顺序、Track child 顺序、Routing Mode 和 Channel Mode。它必须有固定 magic/version、有界长度和严格校验，不得影响播放，也不得替代标准 Track Name、MIDI Port 与 Channel status。标准 Track Name 只写 Pure MIDI child Track 名称，不写 Root 名称。
+Pure MIDI MTrk 可在 tick 0 写版本化 Sequencer-Specific Meta，以保存 Root/Track Stable ID、global Arrangement Track position、Root membership、Routing Mode 和 Channel Mode。它必须有固定 magic/version、有界长度和严格校验，不得影响播放，也不得替代标准 Track Name、MIDI Port 与 Channel status。标准 Track Name 只写 Pure MIDI Track 名称，不写内部 Root 名称。
 
 其他软件可以安全忽略或删除该 Meta。重新导入时仅在 payload 合法且与标准事件结构一致时采用；否则按 Port.Channel 与 MTrk 顺序退化重建，不得因此拒绝原本合法的 SMF。SMF 没有标准 Root/folder 层级，Midora 只保证平级 Pure MIDI MTrk 的名称、顺序与独立性。
 ---

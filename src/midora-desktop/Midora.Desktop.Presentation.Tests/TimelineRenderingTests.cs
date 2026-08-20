@@ -92,6 +92,59 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void ArrangementInstrumentDropTargetsOnlyGlobalTrackGaps()
+    {
+        RunOnSta(() =>
+        {
+            MidoraId sharedUsageId = new(100);
+            TimelineRenderSnapshot snapshot = new(
+                1,
+                "arrangement:instrument-drop-gaps",
+                [],
+                ["Conductor", "Shared A", "Shared B", "Independent"],
+                arrangementLanes:
+                [
+                    new(0, ArrangementLaneKind.Conductor, null, null, 0, true, false, false),
+                    new(1, ArrangementLaneKind.LogicalTrack, new MidoraId(11), null, 0, true, false, true)
+                    {
+                        SharedGroupId = sharedUsageId,
+                        IsSharedGroup = true,
+                        IsSharedGroupStart = true,
+                        SharedGroupMemberCount = 2
+                    },
+                    new(2, ArrangementLaneKind.LogicalTrack, new MidoraId(12), null, 0, true, false, true)
+                    {
+                        SharedGroupId = sharedUsageId,
+                        IsSharedGroup = true,
+                        IsSharedGroupEnd = true,
+                        SharedGroupMemberCount = 2
+                    },
+                    new(3, ArrangementLaneKind.PureMidiTrack, new MidoraId(13), null, 0, true, false, true)
+                ]);
+            TimelineSurface surface = new()
+            {
+                Snapshot = snapshot,
+                SurfaceMode = TimelineSurfaceMode.Arrangement,
+                LaneHeight = 60,
+                TickSpan = 1_920
+            };
+            Grid host = new();
+            host.Children.Add(surface);
+            host.Measure(new Size(800, 320));
+            host.Arrange(new Rect(0, 0, 800, 320));
+
+            Assert.True(surface.TryGetArrangementTrackInsertionIndex(new Point(400, 84), out int first));
+            Assert.Equal(0, first);
+            Assert.False(surface.TryGetArrangementTrackInsertionIndex(new Point(400, 144), out _));
+            Assert.True(surface.TryGetArrangementTrackInsertionIndex(new Point(400, 204), out int afterGroup));
+            Assert.Equal(2, afterGroup);
+            Assert.False(surface.TryGetArrangementTrackInsertionIndex(new Point(400, 234), out _));
+            Assert.True(surface.TryGetArrangementTrackInsertionIndex(new Point(400, 280), out int last));
+            Assert.Equal(3, last);
+        });
+    }
+
+    [Fact]
     public void PianoNoteBoundsOccupyTheWholePixelAlignedKeyRow()
     {
         TimelineViewport viewport = new(0, 100, 4, 8, 400, 24, 3);

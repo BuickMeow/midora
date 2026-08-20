@@ -168,7 +168,7 @@
 
 - 决定：Arrangement Draw 在空白区域按下时建立 transient Segment placement；未越过阈值使用 `1 × TPQ` 默认长度，向右拖动则按操作粒度改变结束 tick，MouseUp 只提交一次 `CreateSegment`。目标间隙不足时仍沿用新建 Segment 的可用间隙裁剪规则。
 - 决定：Track Header 作为 Timeline 内容以外的独立命中区，维护 hover、pressed 和 reorder transient state；拖动完成只调用正式 `ReorderLogicalTrack`。上下文菜单调用既有 Rename、Bind、Delete 和 Reorder Project command，不另建 UI 业务模型。
-- 历史决定：Arrangement snapshot 曾增加绑定 Event Instrument 名称或 Unbound / missing 状态，并允许从 Event Instrument Library 拖放绑定。ADR-UI-039 与 ADR-CORE-045 已删除可见 Library、Unbound 状态和独立 Track order；当前 Arrangement 必须投影 mixed parent union 及其 children，跨 Event Instrument 拖动 Logical Track 走原子 rebind review。
+- 历史决定：Arrangement snapshot 曾增加绑定 Event Instrument 名称或 Unbound / missing 状态，并允许从 Event Instrument Library 拖放绑定；ADR-UI-039 后续又建立了 mixed parent tree。两者均已由 ADR-UI-041 / ADR-CORE-046 取代。当前 Arrangement 投影 global mixed Track order，跨 Usage/Root 拖放走原子换组或独立化命令。
 - 仍有效边界：Track Header 的 hover、pressed、drag target 和菜单 target 不保存、不进入 Undo；正式名称、父子顺序和所有权只属于 Project Content。
 
 ## ADR-UI-025：Note pitch 越界删除与损坏来源安全投影
@@ -285,22 +285,24 @@
 - 决定：Select marquee 保持未裁剪的世界坐标投影矩形；绘制时对 lane content viewport 执行 clip。不得先把矩形与 viewport 求交后再绘制完整边框，因为这种做法会在实际边缘已经出界时，于 viewport 边缘制造一条假的虚线边界。
 - 归属：下方编辑器可见性、高度、当前 Lane tab、timeline viewport 与 marquee 均为每个 Workspace 的 session UI state，不进入 Project、Undo/Redo、canonical、编译、输出或 `.midora`。本决定不改变上回已确定的世界坐标框选范围和 MouseUp 命中结果。
 
-## ADR-UI-038：Pure MIDI 复用 Timeline 核心并以 adapter 隔离领域语义
+## ADR-UI-038（Track Header 分组条款已由 ADR-UI-041 取代）：Pure MIDI 复用 Timeline 核心并以 adapter 隔离领域语义
 
 - 决定：Arrangement、Piano Roll、Velocity Lane、Point/Event Lane、Grid/Snap、tile cache、hit testing 和通用手势继续使用同一套高性能 presentation/interaction engine；Logical Segment、SubVoice 与 Midi Segment 只通过各自 adapter 提供不可变查询、选择身份、预览投影和原子 Application command。不得复制第三套 TimelineSurface 或把 Pure MIDI 事件转换成 Logical Parameter / Template Event。
-- 决定：Pure MIDI Track Header 显示 MIDI 图标并位于明确的 MIDI Channel Root 分组内。Root 提供 Auto/Fixed route、Port.Channel、Melodic/Percussion 与 child Track 管理入口；Pure MIDI Track 不显示 Event Instrument Bind/Unbind。Root 与 child Track 重排都使用既有控件拖动阈值和 UI 状态样式，但 Track 顺序提交后属于正式音乐语义。
+- 历史 Header 条款：曾要求 Pure MIDI Track 位于可见 Root parent 下。该显示结构已由 ADR-UI-041 取代；仍有效的是 MIDI 图标、Root 权威路由、无 Event Instrument Bind/Unbind，以及所有正式顺序/成员变更通过 Application command 提交。
 - 决定：Midi Segment Editor 的 Piano Roll 与 Velocity Lane 沿用 Logical Segment 的视觉和手势；下方 Event Lane 使用完整 MIDI 1.0 Channel Voice 事件目录。CC91/93、CC120～127、Poly Pressure 与 Channel Pressure 在该 adapter 中合法；ADR-UI-029 的受限目录只适用于 Event Instrument/SubVoice。Opaque imported SysEx/Meta 仅在 Event List/Inspector 查看、移动和删除，不提供自由 payload 编辑器。
 - 决定：共享 UI 核心不得重建 Root 生命周期、Unit 路由、跨 Track 总序、SMF Track 拓扑或 Reset。所有正式结果仍经 Project command、Semantic Validation、Compiler 与 canonical；SMF 打开工作流使用 detached candidate 与 Level 3 modal lock。
 - 依据：产品所有者于 2026-08-18 接受 Pure MIDI Track 与 SMF 导入方案。正式领域、缓存、持久化与导出决定见 SRS 第 23 章、INV-050～INV-057 与 ADR-PMIDI-001～008。
 - 边界：viewport、lane height、selection、tile、drag overlay 和 import review draft 属于 session/runtime；Root/Track/Segment/direct/opaque 对象属于 Project。修复共享交互或性能缺陷必须对全部 adapter 做契约回归，但不要求三套复制实现。
 
-## ADR-UI-039：删除 Project Panel，并由 Conductor-first 两级 Arrangement 统一外层导航
+## ADR-UI-039（已被 ADR-UI-041 取代）：删除 Project Panel，并由 Conductor-first 两级 Arrangement 统一外层导航
 
 - 决定：主窗口删除左侧 Project Panel；Arrangement 固定为第一 Tab、常驻、不可关闭和不可重排。其行结构固定为 Conductor、混排 Event Instrument/Root parents、展开后的对应 child Tracks。父节点 Timeline 侧留白但继续绘制 Grid；展开只由左侧 disclosure target 触发。
 - 决定：Arrangement Toolbar 左侧 `Add` Fluent icon 与主菜单 Project 提供 New Event Instrument / New MIDI Channel Root。Event Instrument Header 双击打开 Editor；parent/child Header 提供完整 context menu、drag threshold、插入线、层级移动、复制和删除。Logical Track 不显示 Unbind，所在 Event Instrument 就是绑定。
 - 决定：Event Instrument/Root 与 child Tracks 各有独立 runtime Mute/Solo。父 Solo 存在时忽略 child Solo；否则 child Solo 使用全局 Track 规则；两层 Mute 始终过滤。开关视觉状态不得改写另一层状态。
 - 归属：mixed/child order 和 parent ownership 通过 Application command 进入 Project；expand、viewport、selection、focus、drag state 和 Mute/Solo 属于 session/runtime。Project Settings 与 Diagnostics 继续由菜单、Bottom Panel/Status Bar 打开。
 - 依据：产品所有者于 2026-08-18 确认移除 Project Panel、两级混排层级、整体 parent 操作、`Duplicate Instrument Only` 和层级 Mute/Solo。正式语义见 SRS 第 24 章、INV-058～062 与 ADR-CORE-045。
+
+本历史决定中的可见 parent 行、展开/折叠、parent subtree command 与层级 Mute/Solo 已全部被 ADR-UI-041 取代；Arrangement 常驻第一 Tab、无 Project Panel、高性能自绘与菜单入口仍然有效。
 
 ## ADR-UI-040：Pure MIDI event-on-note 概览与 Conductor point 概览使用独立瓦片层
 
@@ -309,6 +311,14 @@
 - 缓存：两种概览使用可视 tick 查询、空间索引、device-pixel tile、内容 fingerprint、DPI/style/transform key 与局部失效。Pure MIDI Note/Event 分开失效；Grid、cursor、selection、hover/drag overlay 不进入稳定 tile。UI 线程只组合可视 tiles，不得为对象创建 WPF Controls，也不得在 tile 失败时回退逐对象绘制。
 - 边界：bitmap/LOD 只属于 session presentation，不参与 hit test、Project、Undo、编译、canonical 或导出。命中和导航始终读取稳定 ID/index。Logical Segment 不增加 non-Note event preview。
 - 依据：产品所有者明确更正 Event 线应在 Note 上层并使用 50% 透明度，以便密集内容同时可读。正式视觉与验收见 SRS 第 24.8～24.9 节、INV-063～064。
+
+## ADR-UI-041（已接受）：平铺 Track、Shared brace 与 Event Instrument Definition 管理栏
+
+- 决定：Arrangement 只显示固定第一行 Conductor 与 global mixed Logical/Pure MIDI Track rows，不显示 Event Instrument Usage 或 MIDI Channel Root parent row。独立 Track 与 Fixed Root members 可自由混排；同 Usage 或 Auto Root 的多 Track 成员必须连续，并以左侧 Shared brace 表示。Brace 是独立命中区，可整体拖动，并提供独立 runtime Mute/Solo；Track 自身 Mute/Solo 保持独立。
+- 决定：Track body 拖入 Shared block 内部时加入该组；block 顶/底各 `8 DIP` 实心插入带表示置于组外。外部 Track 只能追加到 block 末尾，组内 Track 可精确重排；拖出后建立独立 Usage/Auto Root，最后成员离开时原 owner 随同删除。Fixed route 作为 Track property 显示，但底层 Root 仍是唯一权威身份且永不为空。
+- 决定：Arrangement Toolbar 左侧提供可显隐 Event Instrument Definition 管理栏。Definition 可独立创建、复制、剪切、粘贴、删除、重命名、编辑和排序，并提供 `Add Logical Track Using This Instrument`；删除最后一条 Track 不删除 Definition。`Add` 菜单提供空 Logical Track、选择/便捷创建 Definition 后建立独立 Usage 的 Logical Track，以及配置/复用 route 后建立 Raw MIDI Track。
+- 归属：global order、Usage/Root membership 与 Definition order 经 Application command 进入 Project/History；brace hover、插入带、管理栏可见性、selection、drag transient 与 Mute/Solo 属于 session/runtime。所有时间线仍使用现有 tile/cache/hit-test 核心，不能因平铺重构退回逐对象 WPF Controls。
+- 依据：产品所有者于 2026-08-20 接受平铺结构、自动 Usage、非空内部 Root、Fixed property UX、Shared block drag 和独立 Definition 浏览工作流。正式领域与持久化规则见 ADR-CORE-046、SRS 第 24 章及 INV-058～064、INV-073～074。
 
 ## 小决定审计
 

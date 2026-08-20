@@ -50,7 +50,7 @@ Time Signature 4/4 at tick 0
 Key Signature Unspecified
 No Marker
 No Project End Marker
-Empty Arrangement parent list
+Empty Arrangement Track order
 No Logical Track
 No MIDI Channel Root or Pure MIDI Track
 No Segment
@@ -392,7 +392,7 @@ MIDI Export 允许零长度范围。
 ### 19.5.4 Tracks
 Whole Project 与 Per Port 默认选择所有有效 Logical Tracks 与 Pure MIDI Tracks；Per Logical Track 默认且只能选择 Logical Tracks。Pure MIDI Track 不得被复制进每个 Logical Track 输出文件；单独导出 Pure MIDI Track 使用 Whole Project + 显式选择。
 Mute / Solo 被忽略。成品由显式 Track Selection 决定。
-Damaged Parent Placeholder subtree 不产生正式输出，并以结构 Error 呈现；正常 Logical Track 不允许缺少 Event Instrument parent。
+Damaged Definition/Usage/Track/Root Placeholder 不产生正式输出并阻止任务。无内容且无 Usage 的 Logical Track 是合法空壳但不属于有效输出目标；有内容却无有效 Usage/Definition 是结构 Error。
 ### 19.5.5 Routing
 ```text
 Compact
@@ -723,7 +723,7 @@ Starting a configured Export or Render after Review
 需要确认：
 ```text
 Delete object containing substantial data
-Delete non-empty Event Instrument / MIDI Channel Root subtree
+Delete a non-empty unreferenced Event Instrument Definition
 Delete all Lane events
 Replace Track Event Instrument binding
 Close or switch with Function Draft
@@ -733,12 +733,8 @@ Cancel Audio Rendering
 Reset all UI preferences
 ```
 初版不提供破坏性确认的 `Do Not Ask Again`。
-### 19.9.4 删除 Event Instrument
-必须说明：
-- 将级联删除的 child Logical Tracks 与主要内容摘要；
-- 确认后整个 subtree 作为一个 Undo 原子删除；
-- 不生成 Unbound Track、不自动改绑、不留下孤立对象；
-- 若要保留 Track，用户必须先取消并移动/改绑 Track。
+### 19.9.4 删除 Event Instrument Definition
+被任何 Usage 引用的 Definition 不允许删除；UI 必须列出引用 Usage/Track，用户须先改绑或删除相关 Track。删除未引用但内部含大量定义数据的 Definition 时，应显示内容摘要并以一个 Undo 原子删除。删除 Logical Track 或最后 Usage 绝不得连带删除 Definition。
 ### 19.9.5 Track Binding 替换
 必须显示 Logical Parameter Lane 影响摘要。
 ### 19.9.6 任务错误

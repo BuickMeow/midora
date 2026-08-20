@@ -160,16 +160,14 @@ public sealed class ResourceStatisticsTests
         secondVoice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 120, 60, 100));
         second.SubVoices.Add(secondVoice);
         fixture.Project.EventInstruments.Add(second);
-        LogicalTrack secondTrack = new(fixture.Project)
-        {
+        LogicalTrack secondTrack = new(fixture.Project) {
             Name = "Second",
-            EventInstrumentId = second.Id
         };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(fixture.Project, secondTrack, second.Id);
         Segment secondSegment = new(fixture.Project) { LengthTicks = 2_000 };
         CompilerTestProject.RegisterSegment(fixture.Project, secondSegment);
         CompilerTestProject.AddNote(secondSegment, second, startTick, 480);
         secondTrack.Segments.Add(secondSegment);
-        fixture.Project.Tracks.Add(secondTrack);
         return fixture.Project;
     }
 }

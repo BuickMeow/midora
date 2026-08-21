@@ -362,19 +362,21 @@ Note → Event 映射
 ### 5.6.3 关闭音符实例隔离时的共享范围
 关闭音符实例隔离时，Channel Group 共享范围定义为：
 ```text
-仅同一 Logical Track / Event Instrument Binding 内的重叠音符共享 Channel Group
+同一 Event Instrument Usage 的活动连通区间内，全部成员 Logical Track 的重叠音符共享 Channel Group
 ```
 不允许：
 ```text
-同一 Event Instrument 在整个 Project 内共享 Channel Group
-不同 Logical Track 即使引用同一 Event Instrument 也共享 Channel Group
-同一 Event Instrument Library 定义的所有使用处共享运行状态
+同一 Event Instrument Definition 的全部 Usage 在整个 Project 内自动共享 Channel Group
+不同 Usage 仅因引用同一 Event Instrument Definition 而共享运行状态
+按名称、Track 相邻关系或历史分配结果隐式合并 Usage
 ```
 原因：
 ```text
-多个 Logical Track 即使引用同一 Event Instrument，其运行状态也必须分离
-Logical Track / Event Instrument Binding 是更符合直觉的运行状态边界
+Usage 是用户明确建立的共享执行身份，可以有一个或多个 Logical Track 成员
+不同 Usage 即使引用同一 Definition，其运行状态也必须分离
+Usage 的跨 Track Segment 活动连通区间是正式 Channel Group 生命周期边界
 ```
+完整 membership、连通区间、同 tick 顺序和成员 Segment End 规则见第 24.4 节。
 ---
 ## 5.7 空项目、无 SF2、父节点损坏与资源系统
 ### 5.7.1 空项目

@@ -958,10 +958,10 @@ Same Pitch Only
 ### 10.17.3 Overlap 判断范围
 初版 Overlap 策略只在同一：
 ```text
-Logical Track / Event Instrument Binding
+Event Instrument Usage
 ```
-内判断。
-跨 Logical Track 的资源冲突由 Channel Group 分配 / 编译系统处理，不由 Event Instrument Overlap 策略直接决定。
+内判断；同一 Usage 的成员可以跨多个 Logical Track，因此跨成员 Track 的实例重叠仍属于同一个 Overlap 域。
+不同 Usage 之间的资源冲突由 Channel Group 分配 / 编译系统处理，不由 Event Instrument Overlap 策略直接决定；不得仅因两个 Usage 引用同一 Definition 就合并 Overlap 域。
 ### 10.17.4 Overlap 判断长度
 Overlap 判断应基于：
 ```text
@@ -981,14 +981,14 @@ Reset 阶段至少在资源占用上视为尚未完全释放。
 ### 10.17.5 Per-Note Instance Isolation 开启
 当 Per-Note Instance Isolation 开启时：
 ```text
-同一 Binding 内重叠 Note 会生成多个独立实例
+同一 Usage 内重叠 Note 会生成多个独立实例
 但仍需通过 Overlap 策略判断是否允许
 ```
 实例隔离解决状态隔离，不自动代表音乐上允许重叠。
 ### 10.17.6 Per-Note Instance Isolation 关闭
 当 Per-Note Instance Isolation 关闭时：
 ```text
-同一 Binding 内重叠 Note 可共享 Channel Group
+同一 Usage 活动连通区间内的重叠 Note 可共享 Channel Group
 但仍需遵守生命周期与功能限制
 ```
 ### 10.17.7 初版支持的 Overlap 策略

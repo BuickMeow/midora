@@ -155,7 +155,7 @@
 
 - Arrangement 左侧 ruler header 固定接收 Event Instruments 栏开关、Track 创建菜单和“清除全部 Track/共享组 Mute/Solo”命令；ruler 的正式小节标签仍只绘制在内容区。
 - Mute/Solo 清除一次性清空 Track 与共享 Usage/Root 的四组运行时过滤状态，并在正在播放时只提交一次 monitoring 差量；失败时恢复调用前的运行时集合。
-- Segment editor horizontal overview 使用两个独立的内容指纹缓存层：NoteOn/GateStart 为蓝灰色 1 device-pixel 竖线，任意非音符 MIDI event / logical parameter point 为浅红色 1 device-pixel 竖线并绘制在其上。普通内存对象与分页 Direct MIDI 均按真实 onset/event tick 投影；raw `NoteOn` 进入 Note 通道，raw `NoteOff` 不冒充 non-Note event。
+- Segment editor horizontal overview 使用两个独立的内容指纹缓存层：NoteOn/GateStart 为蓝灰色 1 device-pixel 竖线，任意非音符 MIDI event / logical parameter point 为红色系 1 device-pixel 竖线并绘制在其上（最终暗红色由第 10 节修订）。普通内存对象与分页 Direct MIDI 均按真实 onset/event tick 投影；raw `NoteOn` 进入 Note 通道，raw `NoteOff` 不冒充 non-Note event。
 - Audio Render 继续以 `processed frames / total frames` 产生确定进度；WPF 仅合并显示最新样本，最高 10 次/秒，任务完成仍固定为 100%。
 
 边界、失败条件与归属：
@@ -187,6 +187,6 @@ UI/runtime 边界：
 - Event Instruments pane toggle 的 hover border 只在该按钮本地复用相邻 Add 按钮的 hover token；不修改全局 ToggleButton 模板。
 - `New Logical Track with Instrument...` 创建新 Definition 时，提交后激活新 Event Instrument Workspace；使用既有 Definition 时仍返回 Arrangement。
 
-规格差异记录：
+规格同步记录：
 
-- 本节的 Logical Track Duplicate 行为来自产品所有者 2026-08-21 的当前明确指令，与 SRS 24.8.1～24.8.2 中“普通 Duplicate 保留 Usage、Track/Usage 上下文保留 `Duplicate Instrument Only`”的文字不一致。本文只记录当前实现依据，不擅自改写 SRS；其余 SRS 第 24 章共享状态、连续 block、稳定 ID 与 Undo/Redo 不变量继续适用。
+- 产品所有者于 2026-08-21 授权全面更新后，Logical Track 普通独立 Duplicate、显式 `Duplicate and Share State`、Definition-only Duplicate、共享 Fixed Root Channel Mode 编辑与 Arrangement chrome / Marker / overview 投影已同步进入 SRS 第 5、7、10～12、17、18、20、22、24 章及 ADR-CORE-046 / ADR-UI-041；本节不再记录未解决的规格差异。

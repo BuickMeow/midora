@@ -501,6 +501,7 @@ Time Signature 修改只更新网格和音乐位置显示，不移动任何内�
 Key Signature 不自动转调或修改 Note 音高。
 ### 18.7.4 Marker
 普通 Marker 名称可空、可重复，同一 tick 可以存在多个。编辑器必须按稳定 ID 维持各 Marker 的独立身份，并使同 tick 或密集 Marker 在选择和编辑时可区分。
+Arrangement ruler 以只读、不可命中的浅灰圆角标签投影普通 Marker；标签左边界落在正式 tick，小节号保留在 ruler 底部刻度附近。该投影不替代 Conductor Editor 的正式选择和编辑入口。
 Project End Marker 使用贯穿 Lane 的特殊竖线：
 - 不可重命名；
 - 最多一个；
@@ -513,11 +514,11 @@ Event List 与 Timeline Selection 同步。
 
 ### 18.7.6 Arrangement 概览
 
-Conductor 在 Arrangement 第一行直接按 absolute Project tick 显示事件圆点，不使用 Segment。不同类型使用稳定不同颜色，Project End Marker 保持专用竖线。极端内容必须使用固定 device-size glyph、可视 tile、按 event type/device-pixel column 聚合和局部失效；完整规则见第 24.9 节。
+Conductor 在 Arrangement 第一行直接按 absolute Project tick 显示事件圆点，不使用 Segment。不同类型使用稳定不同颜色，Project End Marker 保持专用竖线。极端内容必须使用固定 device-size glyph、可视 tile、按 event type/device-pixel column 聚合和局部失效；完整规则见第 24.11 节。
 ---
 ## 18.8 Event Instruments 管理栏
 
-初版不提供独立 Library Workspace、Folder、Unfiled 或 Card Library。Arrangement 顶部左侧使用 `< Event Instruments` / `> Event Instruments` 按钮切换左侧管理栏；该栏按独立 Definition order 浏览、创建、复制、粘贴、Duplicate、删除、重命名、编辑和排序 Event Instrument Definition，并提供 `Add Logical Track Using This Instrument`。Definition 可没有任何 Usage；删除仍被 Usage 引用的 Definition 必须拒绝。Event Instrument 详细内容在对象 Editor 中编辑，完整规则见第 24 章。
+初版不提供独立 Library Workspace、Folder、Unfiled 或 Card Library。Arrangement 左侧 ruler header 使用 Fluent guitar 单图标 toggle 切换左侧 Event Instruments 管理栏；该栏按独立 Definition order 浏览、创建、复制、粘贴、Duplicate、删除、重命名、编辑和排序 Event Instrument Definition，并提供 `Add Logical Track Using This Instrument`。Definition 可没有任何 Usage；删除仍被 Usage 引用的 Definition 必须拒绝。Event Instrument 详细内容在对象 Editor 中编辑，完整规则见第 24 章。
 ---
 ## 18.9 Project Settings Workspace
 ### 18.9.1 布局

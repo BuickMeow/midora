@@ -110,10 +110,23 @@ Logical Track 允许没有任何 Segment。
 ```text
 深拷贝 Track 内 Segment、Logical Note、Logical Parameter Lane、裁剪窗口与其他 Track 内容
 新 Track 获得新的稳定 ID
-Duplicate Track 默认插入源 Track 后并保留同一 Usage；空白 Paste 默认创建独立 Usage
 Segment、Logical Note、Lane、点、曲线等对象生成新的稳定 ID
 Event Instrument 定义不复制
 ```
+普通 `Duplicate`：
+```text
+源 Track 已绑定时，创建引用同一 Event Instrument Definition 的新独立 Usage
+源 Track 属于 Shared Usage block 时，将新 singleton Track 插入整个源 block 之后
+源 Track 为 singleton 或未绑定空壳时，将副本插入源 Track 之后
+未绑定空壳的副本仍未绑定，并继续满足无内容约束
+```
+显式 `Duplicate and Share State`：
+```text
+只对已绑定 Logical Track 可用
+保留源 Usage，并把副本紧邻插入源 Track 之后、留在同一 Shared block 内
+源 Usage 原为 singleton 时，该命令建立一个两成员 Shared block
+```
+两种命令都只产生一个 Project Undo，并原子创建/恢复 Track、全部内容、必要 Usage、global order 和 membership。普通空白 Paste 继续创建引用同一 Definition 的独立 Usage；Paste 到明确 Usage target 时加入该 Usage。完整规则见第 24.8 节。
 复制后名称：
 ```text
 系统可自动生成便于识别的名称
@@ -231,7 +244,8 @@ length > 0
 不同 Logical Track 的 Segment：
 ```text
 允许重叠
-不同 Logical Track 运行状态彼此独立
+引用不同 Event Instrument Usage 时运行状态彼此独立
+引用同一 Usage 时按第 24.4 节共享 Channel 状态、Overlap 域和活动连通区间
 ```
 移动或拉伸 Segment 导致同一 Track 内重叠时：
 ```text
@@ -953,9 +967,9 @@ Logical Parameter 是 Track / Segment 层状态。
 ### 11.17.4 Per-Note Instance Isolation 关闭
 关闭 Per-Note Instance Isolation 时：
 ```text
-参数作用于该 Track / Event Instrument Binding 的共享 Channel Group
+参数作用于该 Event Instrument Usage 活动连通区间的共享 Channel Group
 ```
-这适合持续弦乐类 Mod / Expression 等控制。
+同一 Usage 的其他成员 Logical Track 若在同一时刻使用该 Channel Group，也会观察到按正式同 tick 顺序合并后的 Channel-Wide 状态；不同 Usage 不受影响。这适合需要跨编曲线共享 Mod / Expression 等状态的持续乐器。
 ### 11.17.5 无活动实例时
 Logical Parameter 在没有活动 Note / 实例时：
 ```text

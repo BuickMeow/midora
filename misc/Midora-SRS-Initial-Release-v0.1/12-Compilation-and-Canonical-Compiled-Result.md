@@ -1007,7 +1007,7 @@ Port 使用数量
 ---
 ## 12.16 Per-Note Instance Isolation 关闭时的编译语义
 ### 12.16.1 重叠 Note 仍各自触发
-Per-Note Instance Isolation 关闭时，同一 Logical Track / Event Instrument Binding 内重叠 Logical Note：
+Per-Note Instance Isolation 关闭时，同一 Event Instrument Usage 内、可跨多个成员 Logical Track 的重叠 Logical Note：
 ```text
 仍按各自 Logical Note 触发模板事件。
 但共享同一 Channel Group / Channel-Wide 状态。
@@ -1246,7 +1246,7 @@ Project 数据不改变。
 Info / Debug 永远不导致失败。
 ```
 ### 12.19.8 Overlap Reject 与 Warn
-同一 Logical Track / Event Instrument Binding 内发生第 10.17 节定义的策略范围内重叠时：
+同一 Event Instrument Usage 内发生第 10.17 节定义的策略范围内重叠时：
 ```text
 Overlap Strategy = Reject -> Error
 Overlap Strategy = Warn   -> Warning

@@ -45,6 +45,8 @@
 - Logical Track Cut/Copy/Paste/Duplicate 使用深快照；复制所有 Segment、隐藏 Note、Logical Parameter Lane/Point、颜色覆盖与有效 Event Instrument binding。Paste/duplicate 为全部 owned object 分配新稳定 ID，并在明确目标 Track 之后插入；Cut 仍先成功写 Windows Clipboard，再执行独立删除命令。
 - 精确同 tick 冲突和选择集 Flip/Scale/Transpose/表达式 Batch Edit 的正式边界见 ADR-UI-033。该扩展不改变 Clipboard 的同一 `ProjectDocumentSession` 身份限制，也不把 payload 或 Selection 写入 `.midora`。
 
+2026-08-21 supersession：普通 Logical Track `Duplicate` 现在创建引用同一 Definition 的独立 Usage；若源 Track 属于 Shared block，副本插入完整 block 之后。显式 `Duplicate and Share State` 才保留源 Usage并紧邻源 Track 插入。Clipboard Paste 的明确 Usage target / 空白独立 Usage 规则不变；正式边界见 SRS 11.4.3、20.7.10.2、24.8.2 与 INV-059。
+
 ## 7. 自动证据
 
 - `ProjectBatchTimelineEditCommandsTests`：10 项，覆盖 Note/Segment/Parameter Point 的原子批量语义、非法整批拒绝、一个 Undo、跨 Track 相对映射与 Full/Incremental oracle。

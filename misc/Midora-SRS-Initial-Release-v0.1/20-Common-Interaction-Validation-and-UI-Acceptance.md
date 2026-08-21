@@ -584,10 +584,10 @@ Delete
 ```
 #### 20.7.10.2 Logical Track
 ```text
-Open Instrument
+Edit Event Instrument...
 Copy / Cut / Paste
 Duplicate
-Duplicate Instrument Only
+Duplicate and Share State
 Rename
 Change Instrument
 Share Instrument State With
@@ -596,9 +596,11 @@ Move Up / Move Down
 Show Details
 Delete
 ```
-`Change Instrument` 原子修改当前 Usage 的 Definition；未绑定空壳可通过该入口建立独立 Usage。`Share Instrument State With` 与 `Make Independent` 显式改变 Usage membership；不提供独立可见 Usage 管理器。
+`Edit Event Instrument...` 打开当前 Usage 引用的 Definition；未绑定 Track 没有目标，因此该命令 Disabled 或隐藏。`Duplicate` 创建引用同一 Definition 的新独立 Usage；`Duplicate and Share State` 仅对已绑定 Track 可用，并保留源 Usage。Definition-only 复制只由 Event Instruments pane 的普通 Definition `Duplicate` 提供，Track/Usage 上下文不再提供 `Duplicate Instrument Only`。
+
+`Change Instrument` 原子修改当前 Usage 的 Definition；未绑定空壳可通过该入口建立独立 Usage。`Share Instrument State With` 与 `Make Independent` 显式改变 Usage membership；不提供独立可见 Usage 管理器。Duplicate 的插入位置、稳定 ID 和 Undo 规则见第 24.8 节。
 #### 20.7.10.2.1 Pure MIDI Track / Shared group
-Pure MIDI Track 菜单至少提供 Copy/Cut/Paste、Duplicate、Rename、MIDI Route Settings、Share MIDI Channel With、Make Independent、Move Up/Down、Show Details、Delete；不得显示 Event Instrument binding 命令。共享 brace 菜单提供 group Mute/Solo、Shared Route/Instrument Settings、Move Shared Group 与 Make All Tracks Independent。Root 不显示独立菜单。
+Pure MIDI Track 菜单至少提供 Copy/Cut/Paste、Duplicate、Rename、MIDI Route Settings、Share MIDI Channel With、Make Independent、Move Up/Down、Show Details、Delete；不得显示 Event Instrument binding 命令。任一共享 Fixed Root 成员的 MIDI Route Settings 都可编辑唯一 Root 的 Channel Mode；多成员时必须先明确提示影响范围并确认，不要求转到另一个命名为 `Shared MIDI Route Settings` 的入口。共享 brace 菜单按类型提供 group Mute/Solo、Route/Instrument Settings、Move Shared Group 与 Make All Tracks Independent。Root 不显示独立菜单。
 #### 20.7.10.3 Segment
 ```text
 Open in Segment Editor
@@ -1221,6 +1223,8 @@ Project 对象区域使用 Project Clipboard 命令。
 只针对当前焦点区域。
 Text / Code Editor 不触发 Project Duplicate、Delete 或 Rename。
 F2 在 Segment、Project End Marker、Conductor 固定行、Damaged Placeholder、多选或文本编辑器中 No Action。Event Instruments pane 的 Definition 与 Arrangement Logical/Pure MIDI Track 支持 F2 Rename；Usage/Root 不可直接重命名。
+
+`Ctrl+D` 作用于 Logical Track 时执行普通独立 `Duplicate`，不得隐式加入源 Usage。`Duplicate and Share State` 是显式 Track 命令，初版不为其注册默认全局快捷键。
 ### 20.12.6 Space
 主窗口没有活动 Modal、Popup、Menu 或本地编辑会话，且焦点不在 TextBox、PasswordBox、RichTextBox 或代码编辑器时：
 ```text

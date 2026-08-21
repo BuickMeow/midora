@@ -75,7 +75,7 @@ Compile
 Export
 Help
 ```
-`Project` 菜单必须提供 `New Event Instrument` 与 `New MIDI Channel Root`，与 Arrangement Toolbar 左侧 `Add` 菜单调用同一 Project command。播放或前台任务持有 Project 编辑锁时，`Project` 一级菜单本身仍保持可用，`Project Settings` 仍可打开；只禁用其中会创建 Project 对象的两个 `New...` 项及其他受编辑锁约束的命令。
+`Project` 菜单必须提供 `New Event Instrument`、`New Logical Track`、`New Logical Track with Instrument...` 与 `New Raw MIDI Track...`，并与 Arrangement 左侧 ruler header 的 `Add` 菜单调用同一 Project command。播放或前台任务持有 Project 编辑锁时，`Project` 一级菜单本身仍保持可用，`Project Settings` 仍可打开；只禁用其中会创建或编辑 Project 对象的命令。
 #### 17.1.3.3 [C] Global Command Bar and Transport
 常驻入口：
 ```text

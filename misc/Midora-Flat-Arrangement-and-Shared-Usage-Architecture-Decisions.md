@@ -1,6 +1,7 @@
 # Midora Flat Arrangement and Shared Usage Architecture Decisions
 
 Date: 2026-08-20
+Amended: 2026-08-21
 Status: Accepted
 Scope: destructive development-time replacement; no legacy `.midora` compatibility
 
@@ -17,6 +18,10 @@ Midora replaces the visible `Event Instrument / MIDI Channel Root → child Trac
 Event Instrument Usage is an unnamed stable-ID object referencing one Definition. Logical Tracks reference a Usage. Multiple Tracks referencing one Usage share channel state and connected Segment lifecycle when per-note isolation is disabled. A zero-member Usage is deleted atomically; its Definition remains.
 
 MIDI Channel Root remains the authoritative Unit identity. All Roots are non-empty. Fixed Root routing is presented as a Track property, but the Root stores the only authoritative route. Moving/deleting the final member deletes the Root in the same Undo transaction. Fixed members may be globally non-contiguous; Auto shared members must be contiguous and render as a brace block.
+
+Logical Track duplication has two deliberately different commands. Ordinary `Duplicate` deep-copies the Track subtree but creates a new independent Usage referencing the same Definition; if the source is in a shared block, the independent copy is inserted after the complete block. Explicit `Duplicate and Share State` retains the source Usage and inserts the copy immediately after the source inside that block. Definition Browser `Duplicate` remains Definition-only, and Track/Usage contexts do not expose the obsolete `Duplicate Instrument Only` alias.
+
+Any member Track may open `MIDI Route Settings...` for a shared Fixed Root. A Channel Mode-only change updates the single authoritative Root for every member after an explicit multi-member impact confirmation; it does not require a separate shared-route settings command.
 
 ## Reasons
 
@@ -41,9 +46,10 @@ MIDI Channel Root remains the authoritative Unit identity. All Roots are non-emp
 - Compiler allocation and overlap grouping move from Track/Segment binding to Usage connected intervals.
 - Pure MIDI merge/SMF order use the global Track order rather than Root child order.
 - Arrangement drag/drop can change order and owner membership in one atomic edit.
+- Ordinary Logical Track duplication no longer creates accidental state sharing; state sharing requires the explicit command or existing share/move workflow.
 - Cache dirty ownership for shared Logical state moves to Usage.
 - Event Instrument Definition deletion is blocked while referenced; deleting Tracks never deletes Definitions.
 
 ## Required verification
 
-See SRS §24.14. Full/incremental equivalence, same-tick deterministic order, non-empty owner invariants, failure atomicity, route collision, shared-state cleanup and SMF order are release-blocking.
+See SRS §24.14. Full/incremental equivalence, same-tick deterministic order, non-empty owner invariants, independent/share duplication placement and membership, failure atomicity, route collision, shared-state cleanup and SMF order are release-blocking.

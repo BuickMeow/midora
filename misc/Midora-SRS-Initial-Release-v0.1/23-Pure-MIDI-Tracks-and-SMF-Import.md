@@ -681,7 +681,7 @@ Arrangement 固定显示 Conductor 第一行，随后按一个 global mixed orde
 
 Track Header 的 hover/pressed、重排、Rename、Copy/Cut/Paste/Duplicate、Delete、Mute/Solo 与 Segment 操作复用既有样式和交互。Root 不显示独立 Header 或 Mute/Solo；Event Instrument binding 命令不显示在 Pure MIDI Track 菜单。
 
-Pure MIDI Segment 除 Direct Note preview 外，还在 Note 上层绘制统一颜色、50% 透明度的 non-Note event 线；两层独立缓存和局部失效。Conductor 第一行使用独立缓存的按类型着色圆点概览。完整视觉、LOD 与性能边界见第 24.8～24.9 节。
+Pure MIDI Segment 除 Direct Note preview 外，还在 Note 上层绘制统一颜色、50% 透明度的 non-Note event 线；两层独立缓存和局部失效。Conductor 第一行使用独立缓存的按类型着色圆点概览。完整视觉、LOD 与性能边界见第 24.11、24.14 节。
 
 ### 23.14.2 共享 Segment/Piano Roll
 

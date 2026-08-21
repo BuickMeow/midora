@@ -300,7 +300,7 @@
 - 决定：Arrangement Toolbar 左侧 `Add` Fluent icon 与主菜单 Project 提供 New Event Instrument / New MIDI Channel Root。Event Instrument Header 双击打开 Editor；parent/child Header 提供完整 context menu、drag threshold、插入线、层级移动、复制和删除。Logical Track 不显示 Unbind，所在 Event Instrument 就是绑定。
 - 决定：Event Instrument/Root 与 child Tracks 各有独立 runtime Mute/Solo。父 Solo 存在时忽略 child Solo；否则 child Solo 使用全局 Track 规则；两层 Mute 始终过滤。开关视觉状态不得改写另一层状态。
 - 归属：mixed/child order 和 parent ownership 通过 Application command 进入 Project；expand、viewport、selection、focus、drag state 和 Mute/Solo 属于 session/runtime。Project Settings 与 Diagnostics 继续由菜单、Bottom Panel/Status Bar 打开。
-- 依据：产品所有者于 2026-08-18 确认移除 Project Panel、两级混排层级、整体 parent 操作、`Duplicate Instrument Only` 和层级 Mute/Solo。正式语义见 SRS 第 24 章、INV-058～062 与 ADR-CORE-045。
+- 历史依据：产品所有者于 2026-08-18 接受本 ADR 所记录的两级 parent/child 方案。该方案后续由 2026-08-20 的平铺 Arrangement 与 2026-08-21 的 Track Duplicate 命令修订取代；正式语义见 SRS 第 24 章、INV-058～062 与 ADR-CORE-046。
 
 本历史决定中的可见 parent 行、展开/折叠、parent subtree command 与层级 Mute/Solo 已全部被 ADR-UI-041 取代；Arrangement 常驻第一 Tab、无 Project Panel、高性能自绘与菜单入口仍然有效。
 
@@ -310,13 +310,15 @@
 - 决定：Conductor Arrangement row 不创建 Segment，直接用固定 device-size 圆点显示 event；不同类型使用稳定不同颜色和固定纵向 band，Project End Marker 保持专用线。缩小时按 tile/column/type 聚合。
 - 缓存：两种概览使用可视 tick 查询、空间索引、device-pixel tile、内容 fingerprint、DPI/style/transform key 与局部失效。Pure MIDI Note/Event 分开失效；Grid、cursor、selection、hover/drag overlay 不进入稳定 tile。UI 线程只组合可视 tiles，不得为对象创建 WPF Controls，也不得在 tile 失败时回退逐对象绘制。
 - 边界：bitmap/LOD 只属于 session presentation，不参与 hit test、Project、Undo、编译、canonical 或导出。命中和导航始终读取稳定 ID/index。Logical Segment 不增加 non-Note event preview。
-- 依据：产品所有者明确更正 Event 线应在 Note 上层并使用 50% 透明度，以便密集内容同时可读。正式视觉与验收见 SRS 第 24.8～24.9 节、INV-063～064。
+- 依据：产品所有者明确更正 Event 线应在 Note 上层并使用 50% 透明度，以便密集内容同时可读。正式视觉与验收见 SRS 第 24.11、24.14 节及 INV-063～064。
 
 ## ADR-UI-041（已接受）：平铺 Track、Shared brace 与 Event Instrument Definition 管理栏
 
 - 决定：Arrangement 只显示固定第一行 Conductor 与 global mixed Logical/Pure MIDI Track rows，不显示 Event Instrument Usage 或 MIDI Channel Root parent row。独立 Track 与 Fixed Root members 可自由混排；同 Usage 或 Auto Root 的多 Track 成员必须连续，并以左侧 Shared brace 表示。Brace 是独立命中区，可整体拖动，并提供独立 runtime Mute/Solo；Track 自身 Mute/Solo 保持独立。
 - 决定：Track body 拖入 Shared block 内部时加入该组；block 顶/底各 `8 DIP` 实心插入带表示置于组外。外部 Track 只能追加到 block 末尾，组内 Track 可精确重排；拖出后建立独立 Usage/Auto Root，最后成员离开时原 owner 随同删除。Fixed route 作为 Track property 显示，但底层 Root 仍是唯一权威身份且永不为空。
-- 决定：Arrangement Toolbar 左侧提供可显隐 Event Instrument Definition 管理栏。Definition 可独立创建、复制、剪切、粘贴、删除、重命名、编辑和排序，并提供 `Add Logical Track Using This Instrument`；删除最后一条 Track 不删除 Definition。`Add` 菜单提供空 Logical Track、选择/便捷创建 Definition 后建立独立 Usage 的 Logical Track，以及配置/复用 route 后建立 Raw MIDI Track。
+- 决定：Arrangement 左侧 ruler header 提供 Fluent guitar 单图标 toggle，以显隐 Event Instrument Definition 管理栏；同一区域承载 `Add` 与 Reset All Monitoring。Definition 可独立创建、复制、剪切、粘贴、删除、重命名、编辑和排序，并提供 `Add Logical Track Using This Instrument`；删除最后一条 Track 不删除 Definition。`Add` 菜单提供空 Logical Track、选择/便捷创建 Definition 后建立独立 Usage 的 Logical Track，以及配置/复用 route 后建立 Raw MIDI Track。
+- 2026-08-21 命令修订：Logical Track 普通 `Duplicate` 创建引用同一 Definition 的新独立 Usage，并在源 Shared block 之后插入；`Duplicate and Share State` 才保留源 Usage并紧邻源 Track 插入。Track 菜单提供 `Edit Event Instrument...`，不再提供 `Duplicate Instrument Only`；Definition Browser 的普通 Duplicate 仍只复制 Definition。`Ctrl+D` 固定调用普通独立 Duplicate。
+- 2026-08-21 路由修订：共享 Fixed Root 的任一成员 Track 都可通过自己的 `MIDI Route Settings...` 修改唯一 Root 的 Channel Mode；多成员时先显示影响数量并确认，确认后原子更新全部成员，不跳转到另一套共享设置命令。
 - 归属：global order、Usage/Root membership 与 Definition order 经 Application command 进入 Project/History；brace hover、插入带、管理栏可见性、selection、drag transient 与 Mute/Solo 属于 session/runtime。所有时间线仍使用现有 tile/cache/hit-test 核心，不能因平铺重构退回逐对象 WPF Controls。
 - 依据：产品所有者于 2026-08-20 接受平铺结构、自动 Usage、非空内部 Root、Fixed property UX、Shared block drag 和独立 Definition 浏览工作流。正式领域与持久化规则见 ADR-CORE-046、SRS 第 24 章及 INV-058～064、INV-073～074。
 

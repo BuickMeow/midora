@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-08-20**
+> 最近修订日期：**2026-08-21**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -50,13 +50,22 @@
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
 
+## 2026-08-21 修订摘要
+
+- Logical Track 的普通 `Duplicate` 改为深拷贝 Track/Segment/内容并创建引用同一 Event Instrument Definition 的新独立 Usage；显式 `Duplicate and Share State` 才保留源 Usage。普通副本位于源 Shared Usage block 之后，共享副本位于源 Track 之后且留在 block 内；两者均以一次原子 Undo 创建全部新稳定 ID。
+- Event Instruments pane 中的 Definition `Duplicate` 继续只深拷贝 Definition 及其内部对象，不复制 Track/Usage；Track/Usage 上下文不再提供 `Duplicate Instrument Only`。Logical Track 菜单增加可直接打开有效 Definition 的 `Edit Event Instrument...`，未绑定 Track 不执行该命令。
+- 第 5、7、10、11、12 章中旧的“Logical Track / Event Instrument Binding”共享与 Overlap 边界统一改为 Event Instrument Usage：同一 Usage 可以跨多个 Logical Track 共享状态、Overlap 域和活动连通区间；不同 Usage 即使引用同一 Definition 也保持隔离。
+- 任一共享 Fixed Root 成员 Track 的 `MIDI Route Settings...` 均可修改 Root 唯一的 Channel Mode；多成员时必须明确提示影响范围并确认，确认后一次性更新全部成员，不要求用户寻找独立的 `Shared MIDI Route Settings` 入口。
+- Arrangement ruler 增加从 Conductor Marker 派生的只读标签投影；Segment horizontal overview 以真实 NoteOn/GateStart tick 和 non-Note event/parameter tick 绘制独立缓存线，不得把持续范围、页摘要跨度或空洞错误填满。
+- 本次是 `v0.1` 未发布开发期规格的全面同步，不改变产品/SRS 版本，也不恢复已被第 24 章取代的旧 parent/child Arrangement 或旧开发格式兼容路径。
+
 ## 2026-08-20 修订摘要
 
 - Arrangement 从可见 parent/child 树替换为 `Conductor + global mixed Track order`。Event Instrument Definition 独立有序保存；新增无名称 Event Instrument Usage 作为可被多条 Logical Track 共享的执行/状态/生命周期身份。Shared Usage 与 Auto Root 以连续大括号 block 表现，Fixed Root 作为 Track route 属性表现且 members 可分散。
 - 所有 Usage/Root 必须非空；最后成员 Track 离开时 owner 在同一个 Undo 中自动删除。Event Instrument Definition 可以零 Usage，删除 Track 永不删除 Definition。Fixed Root 不再提供空 Root 创建/预留入口。
 - Pure MIDI SMF 投影和同 Root 同 tick 顺序改用 global Arrangement Track order；普通 SMF 导入保持源 MTrk 顺序。Logical shared Usage 在未启用逐音符隔离时按跨 Track Segment 活动连通区间共享 Channel state 与 Unit，成员 Segment End 不做 Usage 级 reset。
 - Application Preferences 增加可清空的 Default Embedded SoundFont 本机路径，只用于 `New Project` 与 `Open MIDI as New Project`。有效文件按 Embedded snapshot 流程复制、哈希和验证；路径不进入 `.midora`，启动时缺失自动清空，任务开始时缺失按未设置处理。
-- 播放期间 `Project` 一级菜单和 `Project Settings` 保持可用，只禁用受编辑锁约束的 `New Event Instrument` / `New MIDI Channel Root` 等命令；Status Bar 的 `Playing` 使用绿色文本。
+- 播放期间 `Project` 一级菜单和 `Project Settings` 保持可用，只禁用受编辑锁约束的 `New Event Instrument` / `New Logical Track` / `New Logical Track with Instrument...` / `New Raw MIDI Track...` 等对象创建命令；Status Bar 的 `Playing` 使用绿色文本。
 - Arrangement 与共享 piano roll 的可见 Grid 固定为 Bar/分母拍子线，Ruler 显示一基小节号；Segment local tick 通过 Project offset 对齐完整 Time Signature Map，极端水平缩小时按 device-pixel 密度上限跳过不可辨识竖线。
 - 2026-08-19 的 parent-row 遮罩与折叠 UI 已被本次平铺 Arrangement 取代；Track 行直接承载内容，Shared Usage / Auto Root 只以 header gutter 大括号和显式 drop target 表现，不再占空白时间线行。
 - piano roll 纵向缩放固定为不小于 3 的整数 device pixels/key，Note 顶边与 Key 上分割线重合且总高度等于 Key 高度。Pure MIDI Segment 的 Overview 通过 page summary 聚合音符密度，Add Lane 使用分步目标选择器并支持全部 CC 0..127 的统一名称格式。
@@ -78,7 +87,7 @@
 - `Open MIDI as New Project` 在 detached candidate 验证前增加确定性导入兼容归一化：缺失 tick 0 Tempo / Time Signature 时分别补齐 120 BPM / 4/4，同 tick 重复 Tempo 按源 MTrk 与事件顺序使用后来者。
 - SMF Track Name 缺失、trim 后为空或非严格 UTF-8 不再使整个导入失败；非法名称事件被丢弃，需要的 Pure MIDI Track 获得确定性回退名称。所有兼容处理只进入一次性、可复制的导入报告，不放松 Project 内部不变量或导出的严格 UTF-8 要求。
 
-## 2026-08-18 修订摘要（其中 Arrangement 树与 Root 顺序已由 2026-08-20 修订取代）
+## 2026-08-18 修订摘要（其中 Arrangement 树、parent subtree Duplicate 与 `Duplicate Instrument Only` 已由 2026-08-20～21 修订取代）
 
 - Arrangement 改为 `Conductor → 混排的 Event Instrument / MIDI Channel Root → 各自 child Track` 两级正式结构；删除 Project Panel、可见 Event Instrument Library Workspace、Library Folder、独立全局 Track/Root 顺序和 Unbound Logical Track。Event Instrument / Root 的混排顺序及 parent/child 关系进入 Project、Undo/Redo 和严格持久化索引。
 - Event Instrument / Root 支持携带完整 subtree 的复制、剪切、粘贴与 Duplicate；Root 副本强制改为 Auto。Event Instrument 另提供 `Duplicate Instrument Only`；删除 non-empty parent 必须确认并原子级联 child。Logical Track 跨 Event Instrument 继续执行 rebind 影响审查，Pure MIDI Track 可跨 Root 移动。

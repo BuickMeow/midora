@@ -67,7 +67,7 @@
 | INV-056 | `.midora` 分别以 `midi-channel-roots/mcr_<id>.pb`、`midi-tracks/mt_<id>.pb` 与单 Track `midi-content/mt_<id>.mpk` 保存 Root/Track metadata 和 Direct/Opaque source pages；Auto 分配、canonical 投影、运行期 checkpoint 和 PCM 不持久化。本次未发布开发格式为破坏性替换，不提供旧开发格式迁移或双写。 |
 | INV-057 | SMF 多 Channel/Port MTrk 拆分时，每个 opaque SysEx/Meta 必须恰好归属一个同 source MTrk/effective Port 的派生 Track，不得复制或丢弃；无 Channel bucket 但必须保留 opaque/空结构时创建确定的 structure-only Track，纯 Conductor 的 Format 1 MTrk 0 除外。 |
 | INV-058 | Arrangement 的正式结构固定为唯一 Conductor 第一行与一个混排 Logical/Pure MIDI Track 的 global tagged order。Event Instrument Definition order、Usage/Root membership 与 Track order 正交；Arrangement 不显示 Event Instrument/Root 空白 parent row。 |
-| INV-059 | Event Instrument Definition 的 Copy/Paste/Duplicate 只深拷贝定义及内部对象；Track Duplicate 深拷贝 Track subtree并按目标规则保留/创建 Usage 或 Root membership。Copy/Paste 与 Clipboard Cut 后 Paste 的新对象使用新稳定 ID；只有单命令 Header/brace Drag Move 保持 ID。owner 自动创建/删除与对应 Track 变更必须是一个 Undo。 |
+| INV-059 | Event Instrument Definition 的 Copy/Paste/Duplicate 只深拷贝定义及内部对象，不复制 Track/Usage。Logical Track 普通 Duplicate 深拷贝 Track subtree、创建引用同一 Definition 的新独立 Usage并插入完整源 block 之后；只有显式 `Duplicate and Share State` 保留源 Usage并紧邻源 Track 插入。Pure MIDI Track Duplicate 按第 24.8.3 节保留 route membership。Copy/Paste 与 Clipboard Cut 后 Paste 的新对象使用新稳定 ID；只有单命令 Header/brace Drag Move 保持 ID。owner 自动创建/删除与对应 Track 变更必须是一个 Undo。 |
 | INV-060 | Track 与共享 Usage/Root block 的 Mute/Solo 仅属运行期且相互独立；过滤必须按来源精确释放和恢复，不得因单 Track 变化向整个共享 Unit 发送 CC120/Reset、杀死 sibling Note 或改变 Project/canonical。 |
 | INV-061 | Logical Note 与 Direct MIDI Note 跨类型剪贴板只转换 relative tick、gate、key 和 NoteOn/instance velocity；Logical→Direct 的 NoteOff velocity 为 0，Direct→Logical 丢弃 NoteOff velocity，Direct→Direct 以及 Project/canonical SMF/export 必须保留原 Direct NoteOff velocity。 |
 | INV-062 | `.midora` 分别保存 ordered Definition/Usage/Root indexes 与唯一 ordered tagged Arrangement Track index；Track 保存唯一 owner ID，Definition/Root 不再保存第二套 child order。Usage/Root 无成员、Track order 缺失/重复或 owner 不一致时打开失败。 |
@@ -108,7 +108,7 @@
 | 选择、拖放、验证、快捷键和 UI 验收 | 第 20 章 |
 | 初版排除项、实现自由度和变更控制 | 第 21 章 |
 | MIDI Channel Root、Pure MIDI Track、Midi Segment、SMF 导入、Running Status、Pure MIDI 导出拓扑 | 第 23 章 |
-| Arrangement 平铺 Track order、Event Instrument Usage、隐式 Root、共享块、跨类型 Note 剪贴板、Pure MIDI/Conductor 概览缓存 | 第 24 章 |
+| Arrangement 平铺 Track order、Event Instrument Usage、隐式 Root、独立/共享 Duplicate、共享块、跨类型 Note 剪贴板、Pure MIDI/Conductor 概览缓存 | 第 24 章 |
 | 极端 Pure MIDI page pack、分页 canonical、滚动事件 IPC、范围查询 UI | 第 12、13、16、18、23、24 章 |
 ## 22.3 推荐引用方式
 在讨论、设计记录、Issue 和代码评审中，应使用：

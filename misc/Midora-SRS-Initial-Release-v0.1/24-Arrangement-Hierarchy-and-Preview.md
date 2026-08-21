@@ -2,7 +2,7 @@
 
 > 文档：**Midora Software Requirements Specification — Initial Release Scope**  
 > 规格版本：**v0.1**  
-> 本章最近破坏性修订：**2026-08-20**
+> 本章最近破坏性修订：**2026-08-21**
 
 ## 24.1 目的与优先级
 
@@ -104,15 +104,20 @@ Logical Track 保存可空的 `Event Instrument Usage ID`，并通过 Usage 间�
 若结构损坏或非法路径形成“有内容但无 Usage”，编译为 Error。
 ```
 
-`New Logical Track with Instrument...` 或 `Add Logical Track Using This Instrument` 必须创建新的独立 Usage，再创建并绑定 Track；不得默认把新 Track 加入同 Definition 的既有 Usage。刚创建新 Definition 时，Definition + Usage + Track 是一次原子编辑，成功后打开 Definition Editor。
+`New Logical Track with Instrument...` 或 `Add Logical Track Using This Instrument` 必须创建新的独立 Usage，再创建并绑定 Track；不得默认把新 Track 加入同 Definition 的既有 Usage。刚创建新 Definition 时，Definition + Usage + Track 是一次原子编辑，成功后打开并激活 Definition Editor；选择既有 Definition 时保持 Arrangement 为活动 Workspace。
 
 Track 菜单必须提供：
 
 ```text
+Edit Event Instrument...
+Duplicate
+Duplicate and Share State
 Assign / Change Event Instrument...
 Share Instrument State With...
 Make Independent
 ```
+
+`Edit Event Instrument...` 只打开当前 Usage 引用的 Definition，不修改 Project；未绑定 Track 不存在目标。普通 `Duplicate` 与显式 `Duplicate and Share State` 的 membership 和插入位置见第 24.8.2 节。
 
 `Share Instrument State With...` 选择目标 Logical Track/Usage。目标使用相同 Definition 时直接加入；Definition 不同时属于 Rebind，必须使用既有影响审查，取消或失败不得留下部分修改。
 
@@ -165,7 +170,7 @@ Segment normalized fragment
 
 同一个 Port.Channel 只能有一个 Fixed Root。Fixed Track 可以在全局 Arrangement 中任意分散，不能强制连续；这用于保持导入 SMF 的 MTrk 顺序。
 
-每条 Fixed Track Header 显示 route chip。多个 Track 共享同一 Fixed Root 时，chip tooltip/settings 显示 `Shared with N tracks`，悬停可低强调高亮可见成员。修改共享 Root 的 Channel Mode 会影响同 Root 全部 Track，必须在多成员时明确提示并确认；同一 Port.Channel 不允许同时拥有 Melodic 与 Percussion 两种模式。
+每条 Fixed Track Header 显示 route chip。多个 Track 共享同一 Fixed Root 时，chip tooltip/settings 显示 `Shared with N tracks`，悬停可低强调高亮可见成员。用户可以从任一成员 Track 的 `MIDI Route Settings...` 修改该 Root 唯一的 Channel Mode；多成员时必须明确提示受影响 Track 数并确认，确认后一次原子更新 Root 与全部成员的有效显示/行为。不得以报错要求用户寻找另一个 `Shared MIDI Route Settings` 入口。同一 Port.Channel 不允许同时拥有 Melodic 与 Percussion 两种模式。
 
 ### 24.5.2 Auto 路由
 
@@ -175,7 +180,7 @@ Auto→Fixed 时解除连续约束且不自动改动全局顺序。Fixed→既�
 
 ### 24.5.3 新建 MIDI Track
 
-Arrangement `+ → New MIDI Track...` 提供：
+Arrangement `+ → New Raw MIDI Track...` 提供：
 
 ```text
 New Auto MIDI Channel
@@ -200,20 +205,22 @@ Arrangement Track Order[1]
 
 不显示 Event Instrument 或 Root 空白 parent row。Logical/Pure MIDI Track 均直接承载 Segment，继续使用手工渲染、可视 tile 和范围查询，不得为 Segment/Note/Event 堆 WPF Control。
 
-工具栏从左至右至少包括：
+Arrangement 左侧 ruler header 与 Event Instruments pane title bar 等高，并承载以下紧凑入口：
 
 ```text
-Event Instruments pane toggle（Fluent chevron + “Event Instruments”）
+Fluent guitar 单图标 Event Instruments pane toggle
 red Fluent + creation menu
-其他 Timeline 工具
+Fluent speaker_2 Reset All Monitoring command
 ```
+
+上述入口不得占用独立空白 Track row；小节号只绘制在右侧时间内容区。`Reset All Monitoring` 一次性清空 Track 与共享 Usage/Root 的运行期 Mute/Solo 状态，不修改 Project、Undo/Redo 或 canonical；播放中只提交一次一致的 monitoring 更新，失败时恢复调用前状态。其他 Timeline 工具继续位于 Arrangement 顶部工具栏。
 
 创建菜单固定提供：
 
 ```text
 New Logical Track
 New Logical Track with Instrument...
-New MIDI Track...
+New Raw MIDI Track...
 ```
 
 主菜单 Project 也提供等价入口。播放或其他 Project 编辑锁期间创建/结构编辑命令禁用。
@@ -280,11 +287,24 @@ singleton Usage/Auto Root 没有 brace，因此其 Instrument/Auto chip 是显�
 
 ### 24.8.1 Event Instrument Definition
 
-Definition Copy/Paste/Duplicate 只深拷贝 Definition 与全部内部对象，生成并重映射全部稳定 ID，不复制任何 Track 或 Usage。`Duplicate Instrument Only` 与 Definition Browser 的普通 Duplicate 语义相同；保留该命令名称用于 Track/Usage 上下文中的明确入口。
+Definition Copy/Paste/Duplicate 只深拷贝 Definition 与全部内部对象，生成并重映射全部稳定 ID，不复制任何 Track 或 Usage。Event Instruments pane 的普通 `Duplicate` 是 Definition-only 复制入口；Track/Usage 上下文不得再显示同义的 `Duplicate Instrument Only`。
 
 ### 24.8.2 Logical Track
 
-Logical Track Duplicate 深拷贝 Track、Segments 和内容，默认保留同一 Usage，并插入源 Track 后。若源为独立 singleton，这会形成 Shared block。Paste 到明确 Usage target 时加入目标；普通空白 Paste 创建引用同一 Definition 的新独立 Usage。未绑定空壳 Track 的副本仍未绑定且必须保持无内容约束。
+Logical Track 的普通 `Duplicate` 深拷贝 Track、Segments 和全部内容，但不得保留源 Usage：
+
+```text
+源 Track 已绑定：创建新稳定 ID 的独立 Usage，并让它引用源 Usage 的同一 Definition；
+源 Track 属于 Shared Usage block：将新 singleton Track 插入整个源 block 之后，不拆开原 block；
+源 Track 为绑定 singleton：将副本插入源 Track 之后；
+源 Track 为未绑定空壳：副本仍未绑定、插入源 Track 之后，并保持无内容约束。
+```
+
+`Duplicate and Share State` 是独立的显式命令，只对已绑定 Logical Track 可用。它深拷贝相同 Track subtree，但保留源 Usage，并把副本紧邻插入源 Track 之后、留在同一连续 block；源 Usage 原为 singleton 时由此形成两成员 Shared block。
+
+两种 Duplicate 都不复制 Definition，且必须为 Track、Segments、Notes、Lanes、Points、Curves 等 owned objects 生成新稳定 ID。创建新 Usage、global order 插入与 membership 变更必须构成一个原子 Project command 和一个 Undo；失败不得留下空 Usage 或部分副本。成功后按第 20.3.12 节选择新 Track，该 Selection 仍只属于 session UI state。
+
+Paste 到明确 Usage target 时加入目标；普通空白 Paste 创建引用同一 Definition 的新独立 Usage。未绑定空壳 Track 的 Clipboard 副本仍未绑定且必须保持无内容约束。
 
 ### 24.8.3 Pure MIDI Track
 
@@ -304,13 +324,25 @@ Track Mute/Solo 仍只属于运行期，不持久化、不进入 Undo、不影�
 
 Logical Note 与 Direct MIDI Note 只转换共同字段：relative Tick、Gate Length、Key、NoteOn/Instance Velocity。Logical→Direct 的 NoteOff Velocity 为 0；Direct→Logical 丢弃 NoteOff Velocity；Direct→Direct 保留它。该能力不转换 Segment、参数、Channel Event、Definition、Usage 或 Root。
 
-## 24.11 Pure MIDI Segment 与 Conductor 概览
+## 24.11 Pure MIDI Segment、Conductor 与编辑器概览
 
 Pure MIDI Segment 的 Note 与 non-Note event 使用独立 tile/layer。event 线位于 Note 上层、透明度 50%、至少 1 device pixel，高度按正式值域归一化；同 device column 使用最大高度聚合。Logical Segment 继续只显示 Note。
 
 Conductor 固定第一行，直接显示按类型着色且大小不随缩放变化的圆点；End Marker 仍为专用竖线。
 
-两者均必须：
+Arrangement ruler 另从 Conductor Marker 建立只读、不可命中的标签投影。标签左边界精确定位到 Marker tick，使用低强调浅灰圆角边框与 secondary text；小节号贴近 ruler 底部刻度，Marker 标签使用其上方空间。该投影不替代 Conductor Editor 的正式选择、命中或编辑入口。
+
+Logical/Pure MIDI Segment Editor 的 horizontal overview 使用两个独立内容层和缓存：
+
+```text
+Note layer：只在 NoteOn / Gate Start 的真实 tick 绘制蓝灰色 1 device-pixel 竖线；
+Event layer：只在 non-Note MIDI event / Logical Parameter point 的真实 tick 绘制暗红色 1 device-pixel 竖线；
+Event layer 位于 Note layer 上方，且必须与播放指针红色可辨。
+```
+
+普通内存内容与分页 Direct MIDI 内容必须产生一致投影。不得把 Note Gate End、Note 持续区间、page min/max/count 跨度或已删除/移动对象的旧位置当作新 onset/event；没有对象的 tick 区间必须保持空白。缓存键至少区分内容指纹、extent 和 device-column width，Copy-on-write overlay 必须在叠加当前编辑值前排除被替换/删除的源 stable ID。
+
+Pure MIDI Segment Arrangement 概览与 Conductor row 概览均必须：
 
 ```text
 只查询可见 source pages/range；
@@ -382,7 +414,11 @@ Fixed Track 任意分散且 route chip join；
 不同 Definition rebind 取消/失败原子性；
 未绑定空壳限制与非法非空无 Usage诊断；
 Definition/Track/Usage/Root Copy/Paste/Duplicate 的 ID/remap/membership；
+Logical ordinary Duplicate 建立独立 Usage 并位于源 block 之后，Duplicate and Share State 保留 Usage 并位于源 Track 之后；
+未绑定 Logical Track Duplicate 保持未绑定无内容约束，Ctrl+D 不得隐式共享；
 Pure MIDI event-above-note preview、Conductor tile 和极端范围查询性能；
+Arrangement ruler Marker label 的 tick 对齐、只读命中边界与小节号共存；
+Segment horizontal overview 的真实 onset/event tick、空洞、移动/删除 overlay 与缓存命中一致性；
 后台 Full/Incremental 对共享 Usage 完全等价。
 ```
 

@@ -438,7 +438,7 @@ Event Instrument 未被任何 Logical Track 使用，不应默认作为诊断
 Definition Index 中没有 Event Instrument
 Event Instrument 是项目级定义，不是 SF2 preset
 修改 Event Instrument 会影响引用它的全部 Usages/Logical Tracks
-如需只复制定义，应使用 Duplicate Instrument Only
+Event Instruments pane 中的 Duplicate 只复制 Definition，不复制 Track 或 Usage
 Event Instrument 颜色只作为 UI 主色，不影响 MIDI 语义
 ```
 ---
@@ -473,7 +473,7 @@ Event Instrument 颜色只作为 UI 主色，不影响 MIDI 语义
 Definition Index 中没有 Event Instrument
 Event Instrument 是项目级定义，不是 SF2 preset
 修改 Event Instrument 会影响引用它的全部 Usages/Logical Tracks
-如需仅复制定义而不复制 Track，应使用 Duplicate Instrument Only
+Event Instruments pane 中的 Duplicate 只复制 Definition，不复制 Track 或 Usage
 Event Instrument 颜色只作为 UI 主色，不影响 MIDI 语义
 ```
 ### 7.21.4 失败条件
@@ -747,7 +747,7 @@ Event Instrument 必须拥有 `Per-Note Instance Isolation` 设置。
 系统级语义：
 ```text
 开启时：每个逻辑音符生成独立 Event Instrument Instance，并独占一组 Channel Group。
-关闭时：同一 Logical Track / Event Instrument Binding 内的重叠音符可以共用一组 Channel Group。
+关闭时：同一 Event Instrument Usage 活动连通区间内、可跨多个成员 Logical Track 的重叠音符可以共用一组 Channel Group。
 ```
 要求：
 ```text
@@ -795,7 +795,7 @@ Note → Event 映射
 ```
 ---
 ## 7.33 Overlap 策略入口
-Event Instrument 定义应包含同一 Logical Track / Event Instrument Binding 内实例重叠时的策略入口。
+Event Instrument 定义应包含同一 Event Instrument Usage 内实例重叠时的策略入口；Usage 可以拥有一个或多个 Logical Track 成员。
 本规格已保留策略：
 ```text
 Cut Previous
@@ -824,7 +824,7 @@ Reject
 默认状态下，不自动裁剪旧实例。
 默认状态下，不自动合并实例。
 默认状态下，不自动使用 Retrigger Same Channel。
-当同一 Logical Track / Event Instrument Binding 内出现需要 Overlap 策略处理的重叠时，默认按 Reject 策略处理。
+当同一 Event Instrument Usage 内出现需要 Overlap 策略处理的重叠时，默认按 Reject 策略处理。
 ```
 采用 `Reject` 作为默认值的理由：
 ```text
@@ -1183,7 +1183,7 @@ SubVoice 不允许手动指定固定 Port 或 Channel。
 资源分配由编译器自动完成。
 初版每条 SubVoice 在一次 Event Instrument Instance 中占用一个 Channel Unit。
 Per-Note Instance Isolation 开启时，每个逻辑音符独占 Channel Group。
-Per-Note Instance Isolation 关闭时，共享范围限于同一 Logical Track / Event Instrument Binding。
+Per-Note Instance Isolation 关闭时，共享范围限于同一 Event Instrument Usage 的活动连通区间；同一 Usage 可以跨多个 Logical Track，不同 Usage 不共享。
 ```
 ---
 ## 7.46 与编译、播放、预览、渲染、MIDI 导出的关系

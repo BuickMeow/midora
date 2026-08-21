@@ -114,6 +114,7 @@ Project Source Data
 23. Logical Track 可以是未绑定且无内容的空壳，也可引用独立或共享 Event Instrument Usage；Usage 引用一个 Definition。Pure MIDI Track 必须引用非空 Root，最后一条成员移走或删除时必须原子删除 Root，Undo 同时恢复。Definition 可有零个 Usage，仍被引用时禁止删除。
 24. Arrangement 的实际 Track 与共享 Usage/Root block 可分别拥有独立的运行时 Mute/Solo；这些状态不得持久化、进入 Undo 或修改 Project/canonical，且 group 开关不得改写成员 Track 开关。Logical/Direct Note 跨类型剪贴板只转换共同字段；Direct NoteOff velocity 在 Direct 数据链和 SMF 中必须保留。
 25. Pure MIDI Segment preview 的 event 线绘制在 Note 上层、固定 50% 透明度、至少 1 device pixel，并与 Note 使用独立 tile cache；Conductor 第一行使用按类型着色的固定 device-size point tile。两者不得堆 WPF Controls、不得从 bitmap 反推命中或音乐语义。
+26. Logical Track 普通 `Duplicate` 深拷贝 Track subtree 并创建引用同一 Definition 的新独立 Usage；只有显式 `Duplicate and Share State` 保留源 Usage。普通副本位于完整源 Shared block 之后，共享副本位于源 Track 之后且留在 block 内。Definition Browser 的普通 Duplicate 只复制 Definition；Track/Usage 上下文不得恢复 `Duplicate Instrument Only`。
 
 ## 8. 已批准的 UI 样式基线
 

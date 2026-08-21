@@ -1181,6 +1181,99 @@ public sealed class PureMidiContentPack : IDisposable
                 page.MaximumTick,
                 page.RecordCount));
 
+        public IEnumerable<PureMidiContentRangeSummary> GetChannelEventRangeSummaries() =>
+            _channelEndpointPages.Select(static page => new PureMidiContentRangeSummary(
+                page.MinimumTick,
+                page.MaximumTick,
+                page.RecordCount));
+
+        public IEnumerable<PureMidiContentRangeSummary> GetOpaqueEventRangeSummaries() =>
+            _opaquePages.Select(static page => new PureMidiContentRangeSummary(
+                page.MinimumTick,
+                page.MaximumTick,
+                page.RecordCount));
+
+        public bool TryAccumulateNoteStartColumns(
+            long extent,
+            Span<byte> destination,
+            IReadOnlySet<MidoraId>? excludedIds)
+        {
+            PureMidiOverviewProjection.Validate(extent, destination);
+            if (destination.IsEmpty) return true;
+            AccumulateNoteStartPages(
+                _noteOnEndpointPages,
+                extent,
+                destination,
+                excludedIds);
+            return true;
+        }
+
+        public bool TryAccumulateChannelEventColumns(
+            long extent,
+            Span<byte> noteStartColumns,
+            Span<byte> eventColumns,
+            IReadOnlySet<MidoraId>? excludedIds)
+        {
+            PureMidiOverviewProjection.Validate(
+                extent,
+                noteStartColumns,
+                eventColumns);
+            if (noteStartColumns.IsEmpty) return true;
+            foreach (PageDescriptor page in _channelEndpointPages)
+            {
+                foreach (DirectMidiChannelEventValue value in
+                    (DirectMidiChannelEventValue[])_owner.GetDecodedPage(page.Index))
+                {
+                    if (excludedIds?.Contains(value.Id) == true) continue;
+                    PureMidiOverviewProjection.Mark(
+                        value.Kind,
+                        value.Data2,
+                        value.Tick,
+                        extent,
+                        noteStartColumns,
+                        eventColumns);
+                }
+            }
+            return true;
+        }
+
+        public bool TryAccumulateOpaqueEventColumns(
+            long extent,
+            Span<byte> destination,
+            IReadOnlySet<MidoraId>? excludedIds)
+        {
+            PureMidiOverviewProjection.Validate(extent, destination);
+            if (destination.IsEmpty) return true;
+            foreach (PageDescriptor page in _opaquePages)
+            {
+                int firstColumn = PureMidiOverviewProjection.Column(
+                    page.MinimumTick,
+                    extent,
+                    destination.Length);
+                int lastColumn = PureMidiOverviewProjection.Column(
+                    page.MaximumTick,
+                    extent,
+                    destination.Length);
+                if (firstColumn == lastColumn
+                    && !MayContainExcludedId(page, excludedIds))
+                {
+                    destination[firstColumn] = 1;
+                    continue;
+                }
+
+                foreach (OpaqueMidiEventValue value in
+                    (OpaqueMidiEventValue[])_owner.GetDecodedPage(page.Index))
+                {
+                    if (excludedIds?.Contains(value.Id) == true) continue;
+                    PureMidiOverviewProjection.Mark(
+                        destination,
+                        value.Tick,
+                        extent);
+                }
+            }
+            return true;
+        }
+
         public DirectMidiNoteValue GetNote(int index)
         {
             PageDescriptor page = FindPage(_notePages, index);
@@ -1352,6 +1445,57 @@ public sealed class PureMidiContentPack : IDisposable
                     queue.Enqueue(cursor, NotePriority(cursor.Current, noteOn));
                 }
             }
+        }
+
+        private void AccumulateNoteStartPages(
+            IEnumerable<PageDescriptor> pages,
+            long extent,
+            Span<byte> destination,
+            IReadOnlySet<MidoraId>? excludedIds)
+        {
+            foreach (PageDescriptor page in pages)
+            {
+                int firstColumn = PureMidiOverviewProjection.Column(
+                    page.MinimumTick,
+                    extent,
+                    destination.Length);
+                int lastColumn = PureMidiOverviewProjection.Column(
+                    page.MaximumTick,
+                    extent,
+                    destination.Length);
+                if (firstColumn == lastColumn
+                    && !MayContainExcludedId(page, excludedIds))
+                {
+                    destination[firstColumn] = 1;
+                    continue;
+                }
+
+                foreach (DirectMidiNoteValue value in
+                    (DirectMidiNoteValue[])_owner.GetDecodedPage(page.Index))
+                {
+                    if (excludedIds?.Contains(value.Id) == true) continue;
+                    PureMidiOverviewProjection.Mark(
+                        destination,
+                        value.StartTick,
+                        extent);
+                }
+            }
+        }
+
+        private static bool MayContainExcludedId(
+            PageDescriptor page,
+            IReadOnlySet<MidoraId>? excludedIds)
+        {
+            if (excludedIds is null || excludedIds.Count == 0) return false;
+            foreach (MidoraId id in excludedIds)
+            {
+                if (id.CompareTo(page.MinimumId) >= 0
+                    && id.CompareTo(page.MaximumId) <= 0)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static int LowerBoundNote(

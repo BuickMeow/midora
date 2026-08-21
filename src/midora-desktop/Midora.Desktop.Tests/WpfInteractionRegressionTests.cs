@@ -253,11 +253,17 @@ public sealed class WpfInteractionRegressionTests
             {
                 Style combo = Assert.IsType<Style>(controls[typeof(ComboBox)]);
                 Style scrollBar = Assert.IsType<Style>(controls[typeof(ScrollBar)]);
+                Style menuSeparator = Assert.IsType<Style>(
+                    controls[MenuItem.SeparatorStyleKey]);
 
                 Assert.Contains(combo.Setters.OfType<Setter>(), setter =>
                     setter.Property == Control.TemplateProperty && setter.Value is ControlTemplate);
                 Assert.Contains(scrollBar.Setters.OfType<Setter>(), setter =>
                     setter.Property == Control.TemplateProperty && setter.Value is ControlTemplate);
+                Assert.Equal(typeof(Separator), menuSeparator.TargetType);
+                Assert.Contains(menuSeparator.Setters.OfType<Setter>(), setter =>
+                    setter.Property == Control.TemplateProperty
+                    && setter.Value is ControlTemplate);
                 Assert.Contains(combo.Setters.OfType<Setter>(), setter =>
                     setter.Property == Control.VerticalContentAlignmentProperty
                     && Equals(setter.Value, VerticalAlignment.Center));

@@ -587,6 +587,7 @@ public partial class MainWindow : Window
                             dialog.NewInstrumentName));
                     _session.OpenInstrument(project.EventInstruments[^1].Id);
                 });
+                return;
             }
             else if (dialog.ExistingInstrumentId is MidoraId instrumentId)
             {
@@ -1211,7 +1212,7 @@ public partial class MainWindow : Window
                         }
                         else if (header.Kind == ArrangementLaneKind.PureMidiTrack)
                         {
-                            Add("Shared MIDI Route Settings…", OnArrangementSharedRootSettingsClick, enabled: editable);
+                            Add("MIDI Channel Settings…", OnArrangementSharedRootSettingsClick, enabled: editable);
                         }
                         if (header.IsSharedGroup)
                         {
@@ -1234,6 +1235,8 @@ public partial class MainWindow : Window
                         Add("Rename…", OnArrangementHeaderRenameClick, "F2", editable);
                     if (header.Kind == ArrangementLaneKind.LogicalTrack)
                     {
+                        Add("Edit Event Instrument…", OnArrangementHeaderEditEventInstrumentClick,
+                            enabled: header.ParentId.HasValue);
                         Add("Change Event Instrument…", OnTrackHeaderBindClick,
                             enabled: editable && _session.Project?.EventInstruments.Count > 0);
                         Add("Share Instrument State With…", OnLogicalTrackShareStateClick,
@@ -1259,9 +1262,8 @@ public partial class MainWindow : Window
                         Add("Duplicate", OnArrangementHeaderDuplicateClick, "Ctrl+D", editable);
                         if (header.Kind == ArrangementLaneKind.LogicalTrack)
                         {
-                            Add(
-                                "Duplicate Instrument Only",
-                                OnArrangementHeaderDuplicateInstrumentOnlyClick,
+                            Add("Duplicate and Share State",
+                                OnArrangementHeaderDuplicateAndShareStateClick,
                                 enabled: editable && header.ParentId.HasValue);
                         }
                         Separator();
@@ -3731,6 +3733,9 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnResetAllTrackMonitoringClick(object sender, RoutedEventArgs e) =>
+        RunSynchronous("Reset Track Monitoring", _session.ResetAllTrackMonitoringStates);
+
     private static EventInstrumentBrowserRow? EventInstrumentBrowserRowFrom(object sender) =>
         sender switch
         {
@@ -4294,6 +4299,25 @@ public partial class MainWindow : Window
             _session.OpenWorkspace(new ProjectTreeNode(ProjectTreeNodeKind.Conductor, "Conductor Track"));
     }
 
+    private void OnArrangementHeaderEditEventInstrumentClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.Project is not MidoraProject project
+            || !TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)
+            || descriptor.Kind != ArrangementLaneKind.LogicalTrack
+            || descriptor.ParentId is not MidoraId instrumentId
+            || !project.EventInstruments.Any(value => value.Id == instrumentId))
+        {
+            return;
+        }
+        RunAfterMenuClosed(sender, () =>
+        {
+            if (_session.Project?.EventInstruments.Any(value => value.Id == instrumentId) == true)
+            {
+                _session.OpenInstrument(instrumentId);
+            }
+        });
+    }
+
     private void OnArrangementHeaderRenameClick(object sender, RoutedEventArgs e)
     {
         if (_session.Project is not MidoraProject project
@@ -4338,6 +4362,25 @@ public partial class MainWindow : Window
         MidiChannelRoot root = project.MidiChannelRoots.Single(value => value.Id == rootId);
         MidiChannelRootSettingsDialog dialog = new(root) { Owner = this };
         if (dialog.ShowDialog() != true) return;
+        int memberCount = project.PureMidiTracks.Count(
+            value => value.MidiChannelRootId == root.Id);
+        bool changesSharedFixedChannelMode = memberCount > 1
+            && root.RoutingMode == MidiChannelRootRoutingMode.Fixed
+            && dialog.RoutingMode == MidiChannelRootRoutingMode.Fixed
+            && dialog.OneBasedPort == root.FixedZeroBasedPort + 1
+            && dialog.OneBasedChannel == root.FixedZeroBasedChannel + 1
+            && dialog.ChannelMode != root.ChannelMode;
+        if (changesSharedFixedChannelMode
+            && MessageDialog.Show(
+                this,
+                $"This Fixed MIDI channel is used by {memberCount} Tracks. "
+                    + $"Changing its Channel Mode to {dialog.ChannelMode} will affect all of them. Continue?",
+                "Change Shared MIDI Channel Mode",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
         RunSynchronous("Configure MIDI Route", () => _session.Execute(
             ProjectDomainEditCommands.ConfigurePureMidiTrackRoute(
                 trackId, dialog.RoutingMode,
@@ -4720,36 +4763,29 @@ public partial class MainWindow : Window
         return last + 1;
     }
 
-    private void OnArrangementHeaderDuplicateClick(object sender, RoutedEventArgs e) => DuplicateArrangementHeader(instrumentOnly: false);
-    private void OnArrangementHeaderDuplicateInstrumentOnlyClick(object sender, RoutedEventArgs e) => DuplicateArrangementHeader(instrumentOnly: true);
+    private void OnArrangementHeaderDuplicateClick(object sender, RoutedEventArgs e) =>
+        DuplicateArrangementHeader(shareInstrumentState: false);
 
-    private void DuplicateArrangementHeader(bool instrumentOnly)
+    private void OnArrangementHeaderDuplicateAndShareStateClick(object sender, RoutedEventArgs e) =>
+        DuplicateArrangementHeader(shareInstrumentState: true);
+
+    private void DuplicateArrangementHeader(bool shareInstrumentState)
     {
         if (!TryGetArrangementHeaderContext(out ArrangementLaneDescriptor descriptor)
             || descriptor.ObjectId is not MidoraId id) return;
         RunSynchronous("Duplicate Arrangement Object", () =>
         {
-            IProjectEditCommand command;
-            if (instrumentOnly)
+            IProjectEditCommand command = descriptor.Kind switch
             {
-                if (descriptor.Kind != ArrangementLaneKind.LogicalTrack
-                    || descriptor.ParentId is not MidoraId eventInstrumentId)
-                {
-                    throw new InvalidOperationException(
-                        "The selected Arrangement row has no Event Instrument to duplicate.");
-                }
-                command = ProjectDomainEditCommands.DuplicateEventInstrumentOnly(eventInstrumentId);
-            }
-            else
-            {
-                command = descriptor.Kind switch
-                {
-                    ArrangementLaneKind.LogicalTrack => ProjectDomainEditCommands.DuplicateLogicalTrack(id),
-                    ArrangementLaneKind.PureMidiTrack => ProjectDomainEditCommands.DuplicatePureMidiTrack(id),
-                    _ => throw new InvalidOperationException(
-                        "The selected Arrangement row cannot be duplicated.")
-                };
-            }
+                ArrangementLaneKind.LogicalTrack when shareInstrumentState =>
+                    ProjectDomainEditCommands.DuplicateLogicalTrackAndShareState(id),
+                ArrangementLaneKind.LogicalTrack =>
+                    ProjectDomainEditCommands.DuplicateLogicalTrack(id),
+                ArrangementLaneKind.PureMidiTrack when !shareInstrumentState =>
+                    ProjectDomainEditCommands.DuplicatePureMidiTrack(id),
+                _ => throw new InvalidOperationException(
+                    "The selected Arrangement row cannot be duplicated with the requested state sharing.")
+            };
             _session.Execute(command);
         });
     }
@@ -7879,23 +7915,26 @@ public partial class MainWindow : Window
             if (overwrite ? confirmation != MessageBoxResult.Yes : confirmation != MessageBoxResult.OK) return;
 
             AudioRenderTaskResult? result = null;
-            Progress<AudioRenderTaskProgress> progress = new(value =>
-            {
-                string detail = $"{value.Status}: output {Math.Max(0, value.CurrentOutputIndex + 1)}/{value.OutputCount}, {value.ProcessedFrameCount:N0}/{value.TotalFrameCount:N0} frames";
-                DesktopTaskViewModel? active = _session.TaskHistory.LastOrDefault(item => item.IsRunning);
-                if (active is not null)
+            using DispatcherCoalescingProgress<AudioRenderTaskProgress> progress = new(
+                Dispatcher,
+                TimeSpan.FromMilliseconds(100),
+                value =>
                 {
-                    active.SetCancellationAvailable(value.Status is not AudioRenderTaskStatus.Finalizing
-                        and not AudioRenderTaskStatus.Completed
-                        and not AudioRenderTaskStatus.CompletedWithErrors
-                        and not AudioRenderTaskStatus.Failed
-                        and not AudioRenderTaskStatus.Cancelled);
-                    double? fraction = value.TotalFrameCount > 0
-                        ? value.ProcessedFrameCount / (double)value.TotalFrameCount
-                        : null;
-                    _session.ReportTask(active, detail, fraction);
-                }
-            });
+                    string detail = $"{value.Status}: output {Math.Max(0, value.CurrentOutputIndex + 1)}/{value.OutputCount}, {value.ProcessedFrameCount:N0}/{value.TotalFrameCount:N0} frames";
+                    DesktopTaskViewModel? active = _session.TaskHistory.LastOrDefault(item => item.IsRunning);
+                    if (active is not null)
+                    {
+                        active.SetCancellationAvailable(value.Status is not AudioRenderTaskStatus.Finalizing
+                            and not AudioRenderTaskStatus.Completed
+                            and not AudioRenderTaskStatus.CompletedWithErrors
+                            and not AudioRenderTaskStatus.Failed
+                            and not AudioRenderTaskStatus.Cancelled);
+                        double? fraction = value.TotalFrameCount > 0
+                            ? value.ProcessedFrameCount / (double)value.TotalFrameCount
+                            : null;
+                        _session.ReportTask(active, detail, fraction);
+                    }
+                });
             bool completed = await RunOperationAsync(
                 "Render Audio",
                 async cancellationToken => result = await _session.ExecuteAudioRenderAsync(
@@ -9470,7 +9509,7 @@ public partial class MainWindow : Window
     {
         if (_session.CanEditProject && IsArrangementHeaderShortcutContext())
         {
-            DuplicateArrangementHeader(instrumentOnly: false);
+            DuplicateArrangementHeader(shareInstrumentState: false);
             return;
         }
         if (_session.CanEditProject

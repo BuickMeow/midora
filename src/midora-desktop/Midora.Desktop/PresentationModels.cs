@@ -1355,7 +1355,10 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             secondaryLabels,
             laneColors,
             lanes);
-        RulerSnapshot = null;
+        RulerSnapshot = new(
+            revision,
+            "arrangement-marker-ruler",
+            conductor.Items.Where(item => item.Kind == TimelineItemKind.Marker));
 
         TimelineLaneState TrackMonitoringState(MidoraId trackId) =>
             (_mutedTrackIds.Contains(trackId) ? TimelineLaneState.Muted : TimelineLaneState.None)
@@ -1575,7 +1578,11 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             revision,
             $"segment:{segment.Id.Value}",
             items,
-            Enumerable.Range(0, 128).Select(lane => MidiNoteName(127 - lane)).ToArray());
+            Enumerable.Range(0, 128).Select(lane => MidiNoteName(127 - lane)).ToArray(),
+            overviewSource: new MaterializedTimelineOverviewSource(
+                segment.Notes.Select(static note => note.StartTick),
+                segment.ParameterLanes.SelectMany(static lane => lane.Points)
+                    .Select(static point => point.Tick)));
         VelocitySnapshot = new(
             revision,
             $"segment-velocities:{segment.Id.Value}",
@@ -1710,7 +1717,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 segment,
                 DirectMidiTimelineProjection.Notes,
                 selectedIds: Selection.Ids,
-                primaryId: Selection.Primary));
+                primaryId: Selection.Primary),
+            overviewSource: new PureMidiSegmentOverviewSource(segment));
         VelocitySnapshot = new(
             revision,
             $"midi-segment-velocities:{segment.Id.Value}",

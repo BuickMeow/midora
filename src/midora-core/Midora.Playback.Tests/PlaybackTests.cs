@@ -726,6 +726,36 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void ResetMonitoringStatesClearsTrackAndSharedGroupFiltersAtomically()
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            (MidoraProject project, LogicalTrack secondTrack) = CreateMonitoringRoutingProject();
+            LogicalTrack firstTrack = project.Tracks.Single(track => track.Id != secondTrack.Id);
+            FakeBackend backend = new();
+            ProjectCompilationSession session = new(project, soundFont);
+            using PlaybackController controller = new(session, backend);
+            long fingerprint = session.LastAttempt.Fingerprint;
+
+            controller.SetTrackMuted(secondTrack.Id, true);
+            controller.SetTrackSolo(firstTrack.Id, true);
+            controller.SetSharedGroupMuted(secondTrack.EventInstrumentUsageId!.Value, true);
+            controller.ResetMonitoringStates();
+            controller.Start();
+
+            MidiRenderPlan plan = Assert.IsType<MidiRenderPlan>(backend.LastStartedPlan);
+            Assert.Empty(plan.InitiallyDisabledSourceIndices.ToArray());
+            Assert.Equal(fingerprint, session.LastAttempt.Fingerprint);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void SharedGroupSoloTakesPriorityWhileGroupAndTrackMuteRemainIndependent()
     {
         string soundFont = Path.GetTempFileName();

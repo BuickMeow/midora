@@ -759,6 +759,21 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         SetSharedGroupMonitoringState(sharedGroupId, solo, isSolo: true);
     }
 
+    public void ResetAllTrackMonitoringStates()
+    {
+        _context?.Playback?.ResetMonitoringStates();
+        _mutedTrackIds.Clear();
+        _soloTrackIds.Clear();
+        _mutedSharedGroupIds.Clear();
+        _soloSharedGroupIds.Clear();
+        foreach (TimelineWorkspaceViewModel workspace in Workspaces
+                     .OfType<TimelineWorkspaceViewModel>()
+                     .Where(item => item.Mode == TimelineWorkspaceMode.Arrangement))
+        {
+            RefreshWorkspace(workspace);
+        }
+    }
+
     private void SetTrackMonitoringState(MidoraId trackId, bool enabled, bool isSolo)
     {
         if (Project is not MidoraProject project

@@ -172,7 +172,24 @@ public sealed class PureMidiContentPackTests
                 writer.AddOpaqueEvent(segment.Id, new(
                     opaqueEventId, 30, OpaqueMidiEventKind.Meta, 6, new byte[] { 1, 2, 3 }, 6));
                 using PureMidiContentPack pack = writer.Complete();
-                segment.AttachPagedContent(pack.GetSegmentSource(segment.Id));
+                IPureMidiSegmentContentSource contentSource = pack.GetSegmentSource(segment.Id);
+                IPureMidiContentOverviewSource overviewSource =
+                    Assert.IsAssignableFrom<IPureMidiContentOverviewSource>(contentSource);
+                long missesBeforeOverview = pack.PageCacheMissCount;
+                Assert.Equal(
+                    [(10L, 1_000L, 2)],
+                    overviewSource.GetNoteRangeSummaries()
+                        .Select(value => (value.MinimumTick, value.MaximumTick, value.RecordCount)));
+                Assert.Equal(
+                    [(20L, 20L, 1)],
+                    overviewSource.GetChannelEventRangeSummaries()
+                        .Select(value => (value.MinimumTick, value.MaximumTick, value.RecordCount)));
+                Assert.Equal(
+                    [(30L, 30L, 1)],
+                    overviewSource.GetOpaqueEventRangeSummaries()
+                        .Select(value => (value.MinimumTick, value.MaximumTick, value.RecordCount)));
+                Assert.Equal(missesBeforeOverview, pack.PageCacheMissCount);
+                segment.AttachPagedContent(contentSource);
 
                 Assert.Equal(2, segment.Notes.Count);
                 Assert.Equal(firstNoteId, segment.Notes[0].Id);
@@ -187,6 +204,134 @@ public sealed class PureMidiContentPackTests
 
                 Assert.InRange(pack.DecodedCacheByteCount, 1, pack.DecodedCacheByteLimit);
             }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ExactOverviewColumnsNeverInferOccupancyAcrossPageRanges()
+    {
+        string directory = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "midora-paged-content-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = System.IO.Path.Combine(directory, "overview.mpk");
+        try
+        {
+            MidoraProject project = new(192);
+            MidiSegment segment = new(project);
+            MidoraId firstNoteId = project.AllocateStableId();
+            using PureMidiContentPackWriter writer = new(path);
+            writer.AddNote(segment.Id, new(
+                firstNoteId, 100, 20, 60, 100, 0, 0, 1));
+            writer.AddNote(segment.Id, new(
+                project.AllocateStableId(), 800, 20, 64, 100, 0, 2, 3));
+            writer.AddChannelEvent(segment.Id, new(
+                project.AllocateStableId(), 200,
+                DirectMidiChannelEventKind.ControlChange, 1, 64, 4));
+            writer.AddChannelEvent(segment.Id, new(
+                project.AllocateStableId(), 300,
+                DirectMidiChannelEventKind.NoteOn, 67, 100, 5));
+            writer.AddChannelEvent(segment.Id, new(
+                project.AllocateStableId(), 400,
+                DirectMidiChannelEventKind.NoteOff, 67, 0, 6));
+            writer.AddChannelEvent(segment.Id, new(
+                project.AllocateStableId(), 700,
+                DirectMidiChannelEventKind.ProgramChange, 4, 0, 7));
+            writer.AddOpaqueEvent(segment.Id, new(
+                project.AllocateStableId(), 500,
+                OpaqueMidiEventKind.Meta, 6, new byte[] { 1 }, 8));
+            writer.AddOpaqueEvent(segment.Id, new(
+                project.AllocateStableId(), 900,
+                OpaqueMidiEventKind.SystemExclusive, 0, new byte[] { 0x7d }, 9));
+
+            using PureMidiContentPack pack = writer.Complete();
+            IPureMidiContentOverviewSource source =
+                Assert.IsAssignableFrom<IPureMidiContentOverviewSource>(
+                    pack.GetSegmentSource(segment.Id));
+            byte[] notes = new byte[10];
+            byte[] events = new byte[10];
+
+            Assert.True(source.TryAccumulateNoteStartColumns(
+                1_000,
+                notes,
+                excludedIds: null));
+            Assert.True(source.TryAccumulateChannelEventColumns(
+                1_000,
+                notes,
+                events,
+                excludedIds: null));
+            Assert.True(source.TryAccumulateOpaqueEventColumns(
+                1_000,
+                events,
+                excludedIds: null));
+
+            Assert.Equal([1, 3, 8], Occupied(notes));
+            Assert.Equal([2, 5, 7, 9], Occupied(events));
+
+            Array.Clear(notes);
+            Assert.True(source.TryAccumulateNoteStartColumns(
+                1_000,
+                notes,
+                new HashSet<MidoraId> { firstNoteId }));
+            Assert.Equal([8], Occupied(notes));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+
+        static int[] Occupied(byte[] columns) => columns
+            .Select((value, index) => (value, index))
+            .Where(static item => item.value != 0)
+            .Select(static item => item.index)
+            .ToArray();
+    }
+
+    [Fact]
+    public void ExactOverviewKeepsSingleDeviceColumnPagesOnTheDirectoryFastPath()
+    {
+        string directory = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "midora-paged-content-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = System.IO.Path.Combine(directory, "overview-fast-path.mpk");
+        try
+        {
+            MidoraProject project = new(192);
+            MidiSegment segment = new(project);
+            using PureMidiContentPackWriter writer = new(path);
+            for (int index = 0; index < 20_000; index++)
+            {
+                writer.AddNote(segment.Id, new(
+                    project.AllocateStableId(),
+                    100 + index % 2,
+                    1,
+                    index % 128,
+                    100,
+                    0,
+                    index * 2L,
+                    index * 2L + 1));
+            }
+
+            using PureMidiContentPack pack = writer.Complete();
+            IPureMidiContentOverviewSource source =
+                Assert.IsAssignableFrom<IPureMidiContentOverviewSource>(
+                    pack.GetSegmentSource(segment.Id));
+            byte[] notes = new byte[10];
+
+            Assert.True(source.TryAccumulateNoteStartColumns(
+                1_000,
+                notes,
+                excludedIds: null));
+
+            Assert.Equal(1, notes[1]);
+            Assert.Equal(0, pack.PageCacheMissCount);
         }
         finally
         {

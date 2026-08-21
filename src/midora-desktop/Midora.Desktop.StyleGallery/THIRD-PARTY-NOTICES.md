@@ -37,6 +37,7 @@ Assets used:
 - `ic_fluent_re_order_dots_vertical_20_regular.svg`
 - `ic_fluent_wrench_20_regular.svg`
 - `ic_fluent_midi_20_regular.svg`
+- `ic_fluent_speaker_2_20_regular.svg`
 - `ic_fluent_guitar_20_regular.svg`
 - `ic_fluent_arrow_expand_all_20_regular.svg`
 - `ic_fluent_arrow_collapse_all_20_regular.svg`

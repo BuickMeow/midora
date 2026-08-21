@@ -32,8 +32,11 @@ public sealed class TimelineOverviewSurface : Control
         nameof(EditCursorTick), typeof(long?), typeof(TimelineOverviewSurface),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
-    private readonly int[] _density = new int[2048];
-    private TimelineRenderSnapshot? _cachedSnapshot;
+    private byte[] _noteStartColumns = [];
+    private byte[] _eventColumns = [];
+    private int[] _density = [];
+    private ulong _cachedContentFingerprint;
+    private bool _hasCachedOverview;
     private long _cachedExtent;
     private int _cachedWidth;
     private int _maximumDensity;
@@ -110,21 +113,41 @@ public sealed class TimelineOverviewSurface : Control
         Brush border = ResourceBrush("Brush.Border", Color.FromRgb(42, 48, 58));
         Brush info = ResourceBrush("Brush.Info", Color.FromRgb(98, 166, 246));
         Brush red = ResourceBrush("Brush.Red", Color.FromRgb(229, 72, 77));
+        Brush eventRed = ResourceBrush("Brush.Overview.Event", Color.FromRgb(74, 47, 52));
         EnsurePens(border, info, red);
         drawingContext.DrawRectangle(surface, _borderPen, new Rect(0, 0, ActualWidth, ActualHeight));
         if (ActualWidth <= 2 || ActualHeight <= 2) return;
 
         long extent = EffectiveExtent();
-        BuildDensityIfNeeded(extent);
-        if (_maximumDensity > 0)
+        BuildOverviewIfNeeded(extent);
+        if (Snapshot?.HasDedicatedOverview == true)
+        {
+            double lineHeight = Math.Max(1, ActualHeight - 4);
+            for (int x = 0; x < _cachedWidth; x++)
+            {
+                if (_noteStartColumns[x] != 0)
+                    drawingContext.DrawRectangle(border, null, new Rect(x, 2, 1, lineHeight));
+            }
+            for (int x = 0; x < _cachedWidth; x++)
+            {
+                if (_eventColumns[x] != 0)
+                    drawingContext.DrawRectangle(eventRed, null, new Rect(x, 2, 1, lineHeight));
+            }
+        }
+        else if (_maximumDensity > 0)
         {
             double plotHeight = Math.Max(1, ActualHeight - 6);
             for (int x = 0; x < _cachedWidth; x++)
             {
                 int count = _density[x];
                 if (count == 0) continue;
-                double height = Math.Max(1, plotHeight * Math.Log2(count + 1) / Math.Log2(_maximumDensity + 1));
-                drawingContext.DrawRectangle(border, null, new Rect(x, ActualHeight - 3 - height, 1, height));
+                double height = Math.Max(
+                    1,
+                    plotHeight * Math.Log2(count + 1) / Math.Log2(_maximumDensity + 1));
+                drawingContext.DrawRectangle(
+                    border,
+                    null,
+                    new Rect(x, ActualHeight - 3 - height, 1, height));
             }
         }
 
@@ -221,22 +244,41 @@ public sealed class TimelineOverviewSurface : Control
         return Math.Max(1, Math.Max(ExtentEndTick, viewportEnd));
     }
 
-    private void BuildDensityIfNeeded(long extent)
+    private void BuildOverviewIfNeeded(long extent)
     {
-        int width = Math.Clamp((int)Math.Ceiling(ActualWidth), 0, _density.Length);
-        if (ReferenceEquals(Snapshot, _cachedSnapshot) && extent == _cachedExtent && width == _cachedWidth) return;
-        Array.Clear(_density);
+        int width = Math.Max(0, (int)Math.Ceiling(ActualWidth));
+        ulong fingerprint = Snapshot?.ContentFingerprint ?? 0;
+        if (_hasCachedOverview
+            && fingerprint == _cachedContentFingerprint
+            && extent == _cachedExtent
+            && width == _cachedWidth)
+        {
+            return;
+        }
+        if (_noteStartColumns.Length < width) Array.Resize(ref _noteStartColumns, width);
+        if (_eventColumns.Length < width) Array.Resize(ref _eventColumns, width);
+        if (_density.Length < width) Array.Resize(ref _density, width);
+        Array.Clear(_noteStartColumns, 0, width);
+        Array.Clear(_eventColumns, 0, width);
+        Array.Clear(_density, 0, width);
         _maximumDensity = 0;
-        _cachedSnapshot = Snapshot;
+        _hasCachedOverview = true;
+        _cachedContentFingerprint = fingerprint;
         _cachedExtent = extent;
         _cachedWidth = width;
         if (Snapshot is null || width == 0) return;
+        if (Snapshot.HasDedicatedOverview)
+        {
+            Snapshot.AccumulateOverviewChannels(
+                extent,
+                _noteStartColumns.AsSpan(0, width),
+                _eventColumns.AsSpan(0, width));
+            return;
+        }
+
         Snapshot.AccumulateOverviewDensity(extent, _density.AsSpan(0, width));
         for (int x = 0; x < width; x++)
-        {
-            int count = _density[x];
-            if (count > _maximumDensity) _maximumDensity = count;
-        }
+            _maximumDensity = Math.Max(_maximumDensity, _density[x]);
     }
 
     private static long SafeAdd(long left, long right) =>

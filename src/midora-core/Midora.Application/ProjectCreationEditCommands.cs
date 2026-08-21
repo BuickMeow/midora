@@ -136,48 +136,109 @@ public static partial class ProjectDomainEditCommands
     public static IProjectEditCommand DuplicateLogicalTrack(
         MidoraId trackId,
         string? name = null) =>
-        Command("Duplicate logical track", project =>
+        DuplicateLogicalTrack(trackId, shareInstrumentState: false, name);
+
+    public static IProjectEditCommand DuplicateLogicalTrackAndShareState(
+        MidoraId trackId,
+        string? name = null) =>
+        DuplicateLogicalTrack(trackId, shareInstrumentState: true, name);
+
+    private static IProjectEditCommand DuplicateLogicalTrack(
+        MidoraId trackId,
+        bool shareInstrumentState,
+        string? name) =>
+        Command(
+            shareInstrumentState
+                ? "Duplicate logical track and share state"
+                : "Duplicate logical track",
+            project =>
         {
             LogicalTrack source = FindTrack(project, trackId);
             string copyName = ProjectTextRules.NormalizeShortText(
                 name ?? $"{source.Name} Copy",
                 allowEmpty: true,
                 nameof(name));
-            int trackIndex = project.ArrangementTracks.IndexOf(
-                new(ArrangementTrackKind.LogicalTrack, source.Id)) + 1;
-            if (trackIndex == 0)
+            int sourceIndex = project.ArrangementTracks.IndexOf(
+                new(ArrangementTrackKind.LogicalTrack, source.Id));
+            if (sourceIndex < 0)
             {
                 throw new InvalidOperationException(
                     "The Logical Track is missing from the Arrangement Track order.");
+            }
+            int trackIndex = sourceIndex + 1;
+            if (!shareInstrumentState
+                && source.EventInstrumentUsageId is MidoraId sourceUsageId)
+            {
+                while (trackIndex < project.ArrangementTracks.Count
+                    && project.ArrangementTracks[trackIndex] is
+                    {
+                        Kind: ArrangementTrackKind.LogicalTrack,
+                        TrackId: MidoraId candidateTrackId
+                    }
+                    && FindTrack(project, candidateTrackId).EventInstrumentUsageId == sourceUsageId)
+                {
+                    trackIndex++;
+                }
             }
             return DeferredCreate(
                 EverythingChange(),
                 value =>
                 {
                     LogicalTrack copy = CloneLogicalTrack(value, source, copyName);
+                    EventInstrumentUsage? independentUsage = null;
+                    if (!shareInstrumentState
+                        && source.EventInstrumentUsageId is MidoraId sourceUsageId)
+                    {
+                        EventInstrumentUsage sourceUsage = value.EventInstrumentUsages.SingleOrDefault(
+                            candidate => candidate.Id == sourceUsageId)
+                            ?? throw new InvalidOperationException(
+                                "The Logical Track Event Instrument Usage no longer exists.");
+                        independentUsage = new(value)
+                        {
+                            EventInstrumentId = sourceUsage.EventInstrumentId
+                        };
+                        copy.EventInstrumentUsageId = independentUsage.Id;
+                        value.EventInstrumentUsages.Add(independentUsage);
+                    }
                     value.Tracks.Add(copy);
                     value.ArrangementTracks.Insert(
                         trackIndex,
                         new(ArrangementTrackKind.LogicalTrack, copy.Id));
-                    return copy;
+                    return new LogicalTrackDuplication(copy, independentUsage);
                 },
-                (value, copy) =>
+                (value, duplication) =>
                 {
-                    EnsureLogicalTrackIdAvailable(value, copy.Id);
-                    value.Tracks.Add(copy);
+                    if (duplication.IndependentUsage is EventInstrumentUsage independentUsage)
+                    {
+                        EnsureEventInstrumentUsageIdAvailable(value, independentUsage.Id);
+                        value.EventInstrumentUsages.Add(independentUsage);
+                    }
+                    EnsureLogicalTrackIdAvailable(value, duplication.Track.Id);
+                    value.Tracks.Add(duplication.Track);
                     InsertAt(
                         value.ArrangementTracks,
                         trackIndex,
-                        new ArrangementTrackReference(ArrangementTrackKind.LogicalTrack, copy.Id),
+                        new ArrangementTrackReference(
+                            ArrangementTrackKind.LogicalTrack,
+                            duplication.Track.Id),
                         "Arrangement Track reference");
                 },
-                (value, copy) =>
+                (value, duplication) =>
                 {
                     RemoveRequired(
                         value.ArrangementTracks,
-                        new ArrangementTrackReference(ArrangementTrackKind.LogicalTrack, copy.Id),
+                        new ArrangementTrackReference(
+                            ArrangementTrackKind.LogicalTrack,
+                            duplication.Track.Id),
                         "Arrangement Track reference");
-                    RemoveRequired(value.Tracks, copy, "Logical Track");
+                    RemoveRequired(value.Tracks, duplication.Track, "Logical Track");
+                    if (duplication.IndependentUsage is EventInstrumentUsage independentUsage)
+                    {
+                        RemoveRequired(
+                            value.EventInstrumentUsages,
+                            independentUsage,
+                            "Event Instrument Usage");
+                    }
                 });
         });
 
@@ -661,6 +722,10 @@ public static partial class ProjectDomainEditCommands
         }
         return copy;
     }
+
+    private sealed record LogicalTrackDuplication(
+        LogicalTrack Track,
+        EventInstrumentUsage? IndependentUsage);
 
     private static void InsertCurvePoint(List<CurvePoint> points, CurvePoint point)
     {

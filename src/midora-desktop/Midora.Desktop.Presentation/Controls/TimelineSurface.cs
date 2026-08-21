@@ -459,11 +459,15 @@ public sealed class TimelineSurface : Control
     private Brush? _penInfoBrush;
     private Brush? _penTextBrush;
     private Brush? _penRedBrush;
+    private Brush? _penRedSubtleBrush;
+    private Brush? _penSuccessBrush;
+    private Brush? _penSuccessSubtleBrush;
     private Brush? _penSegmentSelectionBrush;
     private Pen? _borderPen;
     private Pen? _infoPen;
     private Pen? _textPen;
     private Pen? _redPen;
+    private Pen? _successPen;
     private Pen? _selectionPen;
     private Pen? _segmentSelectionPen;
     private Pen? _beatGridPen;
@@ -1097,7 +1101,10 @@ public sealed class TimelineSurface : Control
         Brush border = Brush("Brush.Border", Color.FromRgb(42, 48, 58));
         Brush red = Brush("Brush.Red", Color.FromRgb(229, 72, 77));
         Brush redDark = Brush("Brush.Red.Dark", Color.FromRgb(143, 36, 41));
+        Brush redSubtle = Brush("Brush.Red.Subtle", Color.FromRgb(44, 17, 20));
         Brush info = Brush("Brush.Info", Color.FromRgb(98, 166, 246));
+        Brush success = Brush("Brush.Success", Color.FromRgb(88, 196, 135));
+        Brush successSubtle = Brush("Brush.Success.Subtle", Color.FromRgb(16, 37, 27));
         Brush warning = Brush("Brush.Warning", Color.FromRgb(232, 179, 75));
         Brush text = Brush("Brush.Text.Primary", Color.FromRgb(241, 243, 245));
         Brush segment = Brush("Brush.Segment", Color.FromRgb(66, 78, 88));
@@ -1109,7 +1116,7 @@ public sealed class TimelineSurface : Control
         Brush pianoWhiteKey = Brush("Brush.PianoKey.White", Color.FromRgb(212, 216, 221));
         Brush pianoBlackKey = Brush("Brush.PianoKey.Black", Color.FromRgb(21, 24, 29));
         Brush pianoKeyLabel = Brush("Brush.PianoKey.Label", Color.FromRgb(37, 43, 51));
-        EnsurePens(border, info, text, red, segmentSelection);
+        EnsurePens(border, info, text, red, redSubtle, success, successSubtle, segmentSelection);
 
         drawingContext.DrawRectangle(surface, null, new Rect(0, 0, ActualWidth, ActualHeight));
         double laneHeaderWidth = GetLaneHeaderWidth();
@@ -5825,13 +5832,6 @@ public sealed class TimelineSurface : Control
             Brush pressedBackground = Brush("Brush.Surface.0", Color.FromRgb(9, 11, 14));
             Brush parentBackground = Brush("Brush.Surface.2", Color.FromRgb(20, 24, 30));
             context.PushClip(new RectangleGeometry(new Rect(0, rulerHeight, laneHeaderWidth, Math.Max(0, ActualHeight - rulerHeight))));
-            if (SurfaceMode == TimelineSurfaceMode.Arrangement)
-            {
-                DrawArrangementSharedGroupBraces(
-                    context,
-                    viewport,
-                    rulerHeight);
-            }
             for (int relativeLane = 0; relativeLane < viewport.LaneCount; relativeLane++)
             {
                 int lane = viewport.FirstLane + relativeLane;
@@ -5965,6 +5965,15 @@ public sealed class TimelineSurface : Control
                         text);
                 }
             }
+            if (SurfaceMode == TimelineSurfaceMode.Arrangement)
+            {
+                // Braces are a group-level affordance and must remain visible
+                // above per-Track hover/pressed fills and accent strips.
+                DrawArrangementSharedGroupBraces(
+                    context,
+                    viewport,
+                    rulerHeight);
+            }
             if (_pressedLaneHeader is int sourceLane && _laneHeaderDragActivated)
             {
                 DrawArrangementSharedGroupDropZones(
@@ -6091,7 +6100,7 @@ public sealed class TimelineSurface : Control
         double laneHeaderWidth,
         double rulerHeight)
     {
-        if (laneHeaderWidth > 0)
+        if (laneHeaderWidth > 0 && SurfaceMode != TimelineSurfaceMode.Arrangement)
         {
             context.DrawText(GetFormattedText("BAR", text, 10, FontWeights.SemiBold), new Point(8, 5));
         }
@@ -6126,13 +6135,17 @@ public sealed class TimelineSurface : Control
                 && x - previousLabelX >= 88)
             {
                 context.DrawLine(_textPen, new Point(x, rulerHeight - 5), new Point(x, rulerHeight));
+                FormattedText label = GetFormattedText(
+                    bar.Bar.ToString(CultureInfo.InvariantCulture),
+                    text,
+                    10,
+                    FontWeights.Normal);
+                double labelY = SurfaceMode == TimelineSurfaceMode.Arrangement
+                    ? Math.Max(1, rulerHeight - label.Height - 1)
+                    : 4;
                 context.DrawText(
-                    GetFormattedText(
-                        bar.Bar.ToString(CultureInfo.InvariantCulture),
-                        text,
-                        10,
-                        FontWeights.Normal),
-                    new Point(x + 4, 4));
+                    label,
+                    new Point(x + 4, labelY));
                 previousLabelX = x;
             }
 
@@ -6238,9 +6251,51 @@ public sealed class TimelineSurface : Control
         }
 
         snapshot.QueryInto(viewport.StartTick, viewport.EndTick, 0, 1, _rulerItems);
+        Rect rulerContentBounds = new(
+            laneHeaderWidth,
+            0,
+            Math.Max(0, ActualWidth - laneHeaderWidth),
+            rulerHeight);
+        if (rulerContentBounds.Width <= 0)
+        {
+            return;
+        }
+        context.PushClip(new RectangleGeometry(rulerContentBounds));
+        Brush markerBorder = Brush("Brush.Text.Tertiary", Color.FromRgb(116, 126, 143));
+        Brush markerText = Brush("Brush.Text.Secondary", Color.FromRgb(183, 191, 204));
+        Brush markerBackground = Brush("Brush.Surface.1", Color.FromRgb(14, 17, 21));
+        Pen markerChipPen = FrozenPen(markerBorder, 1);
         foreach (TimelineRenderItem item in _rulerItems)
         {
             double x = laneHeaderWidth + Math.Round(viewport.TickToX(item.StartTick)) + 0.5;
+            if (SurfaceMode == TimelineSurfaceMode.Arrangement
+                && item.Kind == TimelineItemKind.Marker)
+            {
+                FormattedText label = GetFormattedText(
+                    string.IsNullOrWhiteSpace(item.Label) ? "Marker" : item.Label,
+                    markerText,
+                    9,
+                    FontWeights.SemiBold);
+                const double horizontalPadding = 5;
+                const double markerHeight = 15;
+                Rect bounds = new(
+                    x,
+                    1.5,
+                    Math.Max(12, label.Width + horizontalPadding * 2),
+                    markerHeight);
+                context.DrawRoundedRectangle(
+                    markerBackground,
+                    markerChipPen,
+                    bounds,
+                    3,
+                    3);
+                context.DrawText(
+                    label,
+                    new Point(
+                        bounds.X + horizontalPadding,
+                        bounds.Y + (bounds.Height - label.Height) / 2));
+                continue;
+            }
             Brush brush = item.Kind == TimelineItemKind.ProjectEndMarker ? warning : text;
             Pen pen = item.Kind == TimelineItemKind.ProjectEndMarker ? _redPen! : _infoPen!;
             context.DrawLine(pen, new Point(x, Math.Max(1, rulerHeight - 9)), new Point(x, rulerHeight));
@@ -6264,6 +6319,7 @@ public sealed class TimelineSurface : Control
                 context.DrawText(label, new Point(labelX, Math.Max(1, rulerHeight - label.Height - 1)));
             }
         }
+        context.Pop();
     }
 
     private void DrawArrangementLaneCommand(
@@ -6275,7 +6331,11 @@ public sealed class TimelineSurface : Control
         Brush text)
     {
         Rect bounds = new(x, Math.Floor(textY - 1), 16, 16);
-        context.DrawRectangle(active ? _penRedBrush : null, active ? _redPen : _borderPen, bounds);
+        bool solo = label == "S";
+        context.DrawRectangle(
+            active ? solo ? _penSuccessSubtleBrush : _penRedSubtleBrush : null,
+            active ? solo ? _successPen : _redPen : _borderPen,
+            bounds);
         FormattedText formatted = GetFormattedText(label, text, 9, FontWeights.SemiBold);
         context.DrawText(
             formatted,
@@ -7443,14 +7503,30 @@ public sealed class TimelineSurface : Control
         _ => 0
     };
 
-    private double GetRulerHeight() => SurfaceMode == TimelineSurfaceMode.General ? 0 : 24;
+    private double GetRulerHeight() => SurfaceMode switch
+    {
+        TimelineSurfaceMode.General => 0,
+        TimelineSurfaceMode.Arrangement => 32,
+        _ => 24
+    };
 
-    private void EnsurePens(Brush border, Brush info, Brush text, Brush red, Brush segmentSelection)
+    private void EnsurePens(
+        Brush border,
+        Brush info,
+        Brush text,
+        Brush red,
+        Brush redSubtle,
+        Brush success,
+        Brush successSubtle,
+        Brush segmentSelection)
     {
         if (ReferenceEquals(_penBorderBrush, border)
             && ReferenceEquals(_penInfoBrush, info)
             && ReferenceEquals(_penTextBrush, text)
             && ReferenceEquals(_penRedBrush, red)
+            && ReferenceEquals(_penRedSubtleBrush, redSubtle)
+            && ReferenceEquals(_penSuccessBrush, success)
+            && ReferenceEquals(_penSuccessSubtleBrush, successSubtle)
             && ReferenceEquals(_penSegmentSelectionBrush, segmentSelection))
         {
             return;
@@ -7460,11 +7536,15 @@ public sealed class TimelineSurface : Control
         _penInfoBrush = info;
         _penTextBrush = text;
         _penRedBrush = red;
+        _penRedSubtleBrush = redSubtle;
+        _penSuccessBrush = success;
+        _penSuccessSubtleBrush = successSubtle;
         _penSegmentSelectionBrush = segmentSelection;
         _borderPen = FrozenPen(border, 1);
         _infoPen = FrozenPen(info, 1);
         _textPen = FrozenPen(text, 2);
         _redPen = FrozenPen(red, 1);
+        _successPen = FrozenPen(success, 1);
         Brush selection = Brush("Brush.Red.Hover", Color.FromRgb(255, 96, 101));
         _selectionPen = FrozenPen(selection, 2);
         Brush segmentSelectionOutline = segmentSelection.Clone();

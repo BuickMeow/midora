@@ -74,6 +74,132 @@ public sealed class PureMidiPagedPresentationTests
     }
 
     [Fact]
+    public void DirectMidiOverviewDensityDoesNotFillGapsInsidePagedRangeSummary()
+    {
+        using MidoraProject project = new(480);
+        MidiSegment segment = new(project) { LengthTicks = 1_000 };
+        SparsePagedNoteSource source = new();
+        segment.AttachPagedContent(source);
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "direct-midi-sparse-paged-overview",
+            [],
+            itemSource: new PagedDirectMidiTimelineItemSource(
+                segment,
+                DirectMidiTimelineProjection.Notes));
+        int[] density = new int[10];
+
+        snapshot.AccumulateOverviewDensity(1_000, density);
+
+        Assert.True(density[1] > 0);
+        Assert.True(density[8] > 0);
+        Assert.All(
+            density.Where((_, index) => index is not 1 and not 8),
+            value => Assert.Equal(0, value));
+        Assert.Equal(1, source.NoteStartQueryCount);
+    }
+
+    [Fact]
+    public void DirectMidiOverviewChannelsSeparateNoteStartsFromEvents()
+    {
+        using MidoraProject project = new(480);
+        MidiSegment segment = new(project) { LengthTicks = 1_000 };
+        segment.Notes.Add(new DirectMidiNote(project)
+        {
+            StartTick = 100,
+            LengthTicks = 40,
+            Key = 60
+        });
+        segment.ChannelEvents.Add(new DirectMidiChannelEvent(project)
+        {
+            Tick = 300,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 1,
+            Data2 = 64
+        });
+        segment.OpaqueEvents.Add(new OpaqueMidiEvent(project)
+        {
+            Tick = 700,
+            Kind = OpaqueMidiEventKind.SystemExclusive,
+            Payload = [0x7d]
+        });
+        segment.ChannelEvents.Add(new DirectMidiChannelEvent(project)
+        {
+            Tick = 400,
+            Kind = DirectMidiChannelEventKind.NoteOn,
+            Data1 = 67,
+            Data2 = 90
+        });
+        segment.ChannelEvents.Add(new DirectMidiChannelEvent(project)
+        {
+            Tick = 500,
+            Kind = DirectMidiChannelEventKind.NoteOff,
+            Data1 = 67,
+            Data2 = 0
+        });
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "direct-midi-two-channel-overview",
+            [],
+            overviewSource: new PureMidiSegmentOverviewSource(segment));
+        byte[] notes = new byte[10];
+        byte[] events = new byte[10];
+
+        snapshot.AccumulateOverviewChannels(1_000, notes, events);
+
+        Assert.Equal(1, notes[1]);
+        Assert.Equal(1, notes[4]);
+        Assert.Equal(1, events[3]);
+        Assert.Equal(1, events[7]);
+        Assert.Equal(0, events[4]);
+        Assert.Equal(0, events[5]);
+        Assert.Equal(0, notes[3]);
+        Assert.Equal(0, events[1]);
+    }
+
+    [Fact]
+    public void DirectMidiDedicatedOverviewUsesRealTicksInsteadOfFillingPagedGaps()
+    {
+        using MidoraProject project = new(480);
+        MidiSegment segment = new(project) { LengthTicks = 1_000 };
+        SparsePagedNoteSource source = new();
+        segment.AttachPagedContent(source);
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "direct-midi-exact-paged-overview",
+            [],
+            overviewSource: new PureMidiSegmentOverviewSource(segment));
+        byte[] notes = new byte[10];
+        byte[] events = new byte[10];
+
+        snapshot.AccumulateOverviewChannels(1_000, notes, events);
+
+        Assert.Equal(1, notes[1]);
+        Assert.Equal(1, notes[8]);
+        Assert.All(
+            notes.Where((_, index) => index is not 1 and not 8),
+            value => Assert.Equal(0, value));
+        Assert.All(events, value => Assert.Equal(0, value));
+        Assert.Equal(1, source.NoteStartQueryCount);
+
+        DirectMidiNote moved = segment.Notes[0];
+        moved.StartTick = 600;
+        Array.Clear(notes);
+        TimelineRenderSnapshot editedSnapshot = new(
+            2,
+            "direct-midi-exact-paged-overview-edited",
+            [],
+            overviewSource: new PureMidiSegmentOverviewSource(segment));
+
+        editedSnapshot.AccumulateOverviewChannels(1_000, notes, events);
+
+        Assert.Equal(0, notes[1]);
+        Assert.Equal(1, notes[6]);
+        Assert.Equal(1, notes[8]);
+        Assert.Equal(2, source.NoteStartQueryCount);
+    }
+
+    [Fact]
     public async Task OptInImportedSampleProvidesArrangementAndEditorItemsFromPagedContent()
     {
         string? path = Environment.GetEnvironmentVariable("MIDORA_UI_SAMPLE_MIDI_PATH");
@@ -151,5 +277,59 @@ public sealed class PureMidiPagedPresentationTests
         {
             imported.Project.Dispose();
         }
+    }
+
+    private sealed class SparsePagedNoteSource :
+        IPureMidiSegmentContentSource,
+        IPureMidiPlaybackEndpointSource,
+        IPureMidiContentOverviewSource
+    {
+        private readonly DirectMidiNoteValue[] _notes =
+        [
+            new(new MidoraId(1), 100, 40, 60, 100, 0, 0, 1),
+            new(new MidoraId(2), 800, 40, 64, 100, 0, 2, 3)
+        ];
+
+        public int NoteCount => _notes.Length;
+        public int ChannelEventCount => 0;
+        public int OpaqueEventCount => 0;
+        public string ContentFingerprint => "sparse-overview-test";
+        public int NoteStartQueryCount { get; private set; }
+        public DirectMidiNoteValue GetNote(int index) => _notes[index];
+        public DirectMidiChannelEventValue GetChannelEvent(int index) =>
+            throw new ArgumentOutOfRangeException(nameof(index));
+        public OpaqueMidiEventValue GetOpaqueEvent(int index) =>
+            throw new ArgumentOutOfRangeException(nameof(index));
+        public int FindNoteIndex(MidoraId id) => Array.FindIndex(_notes, value => value.Id == id);
+        public int FindChannelEventIndex(MidoraId id) => -1;
+        public int FindOpaqueEventIndex(MidoraId id) => -1;
+
+        public IEnumerable<DirectMidiNoteValue> QueryNotes(
+            long startTick,
+            long endTick,
+            int minimumKey = 0,
+            int maximumKey = 127) => _notes.Where(value =>
+                value.StartTick < endTick
+                && value.StartTick + value.LengthTicks > startTick
+                && value.Key >= minimumKey
+                && value.Key <= maximumKey);
+
+        public IEnumerable<DirectMidiChannelEventValue> QueryChannelEvents(long startTick, long endTick) => [];
+        public IEnumerable<OpaqueMidiEventValue> QueryOpaqueEvents(long startTick, long endTick) => [];
+        public IEnumerable<DirectMidiNoteValue> QueryNoteStarts(long startTick, long endTick)
+        {
+            NoteStartQueryCount++;
+            return _notes.Where(value => value.StartTick >= startTick && value.StartTick < endTick);
+        }
+        public IEnumerable<DirectMidiNoteValue> QueryNoteEnds(long startTick, long endTick) =>
+            _notes.Where(value => value.StartTick + value.LengthTicks >= startTick
+                && value.StartTick + value.LengthTicks < endTick);
+        public IEnumerable<DirectMidiNoteValue> QueryActiveNotes(long tick) =>
+            _notes.Where(value => value.StartTick < tick && value.StartTick + value.LengthTicks > tick);
+        public IEnumerable<DirectMidiChannelEventValue> QueryOrderedChannelEvents(
+            long startTick,
+            long endTick) => [];
+        public IEnumerable<PureMidiContentRangeSummary> GetNoteRangeSummaries() =>
+            [new(100, 800, _notes.Length)];
     }
 }

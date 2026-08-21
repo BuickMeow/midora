@@ -262,6 +262,48 @@ public sealed class ProjectFlatArrangementEditCommandsTests
     }
 
     [Fact]
+    public void ConfiguringSharedFixedAddressChannelModeUpdatesAllMembersAtomically()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot shared = new(project)
+        {
+            Name = "Shared Fixed",
+            RoutingMode = MidiChannelRootRoutingMode.Fixed,
+            FixedZeroBasedPort = 2,
+            FixedZeroBasedChannel = 4,
+            ChannelMode = MidiChannelMode.Melodic
+        };
+        project.MidiChannelRoots.Add(shared);
+        PureMidiTrack first = AddPureMidiTrack(project, shared, "First");
+        PureMidiTrack second = AddPureMidiTrack(project, shared, "Second");
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
+
+        document.Execute(ProjectDomainEditCommands.ConfigurePureMidiTrackRoute(
+            first.Id,
+            MidiChannelRootRoutingMode.Fixed,
+            oneBasedPort: 3,
+            oneBasedChannel: 5,
+            MidiChannelMode.Percussion));
+
+        Assert.Equal(MidiChannelMode.Percussion, shared.ChannelMode);
+        Assert.Equal(shared.Id, first.MidiChannelRootId);
+        Assert.Equal(shared.Id, second.MidiChannelRootId);
+        Assert.Single(project.MidiChannelRoots);
+
+        document.Undo();
+
+        Assert.Equal(MidiChannelMode.Melodic, shared.ChannelMode);
+        Assert.Equal(shared.Id, first.MidiChannelRootId);
+        Assert.Equal(shared.Id, second.MidiChannelRootId);
+
+        document.Redo();
+
+        Assert.Equal(MidiChannelMode.Percussion, shared.ChannelMode);
+        Assert.Single(project.MidiChannelRoots);
+    }
+
+    [Fact]
     public void ConfiguringMiddleAutoMemberMovesItOutsideTheRemainingBlock()
     {
         MidoraProject project = new(480);

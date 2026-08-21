@@ -824,13 +824,35 @@
     </Setter>
   </Style>
 
-  <Style x:Key="ScrollBar.Thumb" TargetType="Thumb">
+  <Style x:Key="ScrollBar.Thumb.Vertical" TargetType="Thumb">
     <Setter Property="Background" Value="{StaticResource Brush.Border.Strong}" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Thumb">
           <Border x:Name="Chrome"
-                  Margin="2"
+                  Margin="2,0"
+                  Background="{TemplateBinding Background}"
+                  CornerRadius="4" />
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.Text.Tertiary}" />
+            </Trigger>
+            <Trigger Property="IsDragging" Value="True">
+              <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.Red}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="ScrollBar.Thumb.Horizontal" TargetType="Thumb">
+    <Setter Property="Background" Value="{StaticResource Brush.Border.Strong}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Thumb">
+          <Border x:Name="Chrome"
+                  Margin="0,2"
                   Background="{TemplateBinding Background}"
                   CornerRadius="4" />
           <ControlTemplate.Triggers>
@@ -873,7 +895,7 @@
                             Style="{StaticResource ScrollBar.PageButton}" />
             </Track.DecreaseRepeatButton>
             <Track.Thumb>
-              <Thumb MinHeight="24" Style="{StaticResource ScrollBar.Thumb}" />
+              <Thumb Style="{StaticResource ScrollBar.Thumb.Vertical}" />
             </Track.Thumb>
             <Track.IncreaseRepeatButton>
               <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}"
@@ -896,7 +918,7 @@
                                 Style="{StaticResource ScrollBar.PageButton}" />
                 </Track.DecreaseRepeatButton>
                 <Track.Thumb>
-                  <Thumb MinWidth="24" Style="{StaticResource ScrollBar.Thumb}" />
+                  <Thumb Style="{StaticResource ScrollBar.Thumb.Horizontal}" />
                 </Track.Thumb>
                 <Track.IncreaseRepeatButton>
                   <RepeatButton Command="{x:Static ScrollBar.PageRightCommand}"
@@ -1297,13 +1319,31 @@
     </Setter>
   </Style>
 
+  <!-- Menu separators are represented by MenuItem containers, so the generic
+       Separator style below does not participate in either menu-bar popups or
+       ContextMenu popups. -->
+  <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
+    <Setter Property="Height" Value="9" />
+    <Setter Property="Focusable" Value="False" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Separator">
+          <Border Height="1"
+                  Margin="7,4"
+                  Background="{StaticResource Brush.Surface.4}"
+                  SnapsToDevicePixels="True" />
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <Style TargetType="Separator">
     <Setter Property="Margin" Value="7,4" />
     <Setter Property="Height" Value="1" />
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Separator">
-          <Border Height="1" Background="{StaticResource Brush.Border}" />
+          <Border Height="1" Background="{StaticResource Brush.Surface.4}" />
         </ControlTemplate>
       </Setter.Value>
     </Setter>

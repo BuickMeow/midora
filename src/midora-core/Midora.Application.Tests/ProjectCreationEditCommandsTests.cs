@@ -129,7 +129,8 @@ public sealed class ProjectCreationEditCommandsTests
             value.Id != track.Id
             && project.ResolveEventInstrumentDefinitionId(value) == source.Id);
         Assert.NotEqual(track.Id, trackCopy.Id);
-        Assert.Equal(track.EventInstrumentUsageId, trackCopy.EventInstrumentUsageId);
+        Assert.NotEqual(track.EventInstrumentUsageId, trackCopy.EventInstrumentUsageId);
+        Assert.Equal(2, project.EventInstrumentUsages.Count);
         Assert.NotEqual(segment.Id, trackCopy.Segments[0].Id);
         Assert.NotEqual(segment.Notes[0].Id, trackCopy.Segments[0].Notes[0].Id);
         trackCopy.Segments[0].Notes[0].Note = 72;
@@ -144,6 +145,7 @@ public sealed class ProjectCreationEditCommandsTests
         document.Undo();
         Assert.Single(project.Tracks);
         Assert.Single(project.EventInstruments);
+        Assert.Single(project.EventInstrumentUsages);
         Assert.Equal(highWater, project.NextStableId);
         Assert.False(document.IsModified);
 
@@ -152,6 +154,79 @@ public sealed class ProjectCreationEditCommandsTests
         Assert.Equal(copyInstrumentId, project.EventInstruments[1].Id);
         Assert.Contains(project.Tracks, value => value.Id == copyTrackId);
         Assert.Equal(highWater, project.NextStableId);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void DuplicateLogicalTrackAndShareStateRetainsUsageAndUndoRestoresIdentity()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = CreateInstrument(project, "Instrument");
+        LogicalTrack source = new(project) { Name = "Source" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, source, instrument.Id);
+        MidoraId usageId = source.EventInstrumentUsageId!.Value;
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
+
+        document.Execute(ProjectDomainEditCommands.DuplicateLogicalTrackAndShareState(source.Id));
+
+        LogicalTrack copy = Assert.Single(project.Tracks, value => value.Id != source.Id);
+        Assert.Equal(usageId, copy.EventInstrumentUsageId);
+        Assert.Single(project.EventInstrumentUsages);
+        Assert.Equal(
+            [source.Id, copy.Id],
+            project.TracksInArrangementOrder().Select(value => value.TrackId));
+
+        MidoraId copyId = copy.Id;
+        document.Undo();
+
+        Assert.Same(source, Assert.Single(project.Tracks));
+        Assert.Single(project.EventInstrumentUsages);
+
+        document.Redo();
+
+        Assert.Contains(project.Tracks, value => value.Id == copyId);
+        Assert.All(project.Tracks, value => Assert.Equal(usageId, value.EventInstrumentUsageId));
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void DuplicateLogicalTrackCreatesIndependentUsageAfterExistingSharedBlock()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = CreateInstrument(project, "Instrument");
+        LogicalTrack first = new(project) { Name = "First" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, first, instrument.Id);
+        LogicalTrack second = new(project)
+        {
+            Name = "Second",
+            EventInstrumentUsageId = first.EventInstrumentUsageId,
+            LastBoundEventInstrumentName = instrument.Name
+        };
+        project.Tracks.Add(second);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.LogicalTrack, second.Id));
+        LogicalTrack tail = new(project) { Name = "Tail" };
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, tail, instrument.Id);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
+
+        document.Execute(ProjectDomainEditCommands.DuplicateLogicalTrack(first.Id));
+
+        LogicalTrack copy = Assert.Single(
+            project.Tracks,
+            value => value.Id != first.Id && value.Id != second.Id && value.Id != tail.Id);
+        Assert.NotEqual(first.EventInstrumentUsageId, copy.EventInstrumentUsageId);
+        Assert.Equal(
+            [first.Id, second.Id, copy.Id, tail.Id],
+            project.TracksInArrangementOrder().Select(value => value.TrackId));
+        Assert.Equal(3, project.EventInstrumentUsages.Count);
+
+        document.Undo();
+
+        Assert.Equal(
+            [first.Id, second.Id, tail.Id],
+            project.TracksInArrangementOrder().Select(value => value.TrackId));
+        Assert.Equal(2, project.EventInstrumentUsages.Count);
         AssertMatchesFull(compilation);
     }
 

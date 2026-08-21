@@ -734,6 +734,40 @@ public sealed class PlaybackController : IDisposable
         }
     }
 
+    public void ResetMonitoringStates()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_mutedTracks.Count == 0
+            && _soloTracks.Count == 0
+            && _mutedSharedGroups.Count == 0
+            && _soloSharedGroups.Count == 0)
+        {
+            return;
+        }
+
+        HashSet<MidoraId> mutedTracks = new(_mutedTracks);
+        HashSet<MidoraId> soloTracks = new(_soloTracks);
+        HashSet<MidoraId> mutedSharedGroups = new(_mutedSharedGroups);
+        HashSet<MidoraId> soloSharedGroups = new(_soloSharedGroups);
+        _mutedTracks.Clear();
+        _soloTracks.Clear();
+        _mutedSharedGroups.Clear();
+        _soloSharedGroups.Clear();
+        try
+        {
+            ApplyMonitoringChange();
+        }
+        catch
+        {
+            _mutedTracks.UnionWith(mutedTracks);
+            _soloTracks.UnionWith(soloTracks);
+            _mutedSharedGroups.UnionWith(mutedSharedGroups);
+            _soloSharedGroups.UnionWith(soloSharedGroups);
+            RebuildAudibleTracks();
+            throw;
+        }
+    }
+
     public void SetTrackAudible(MidoraId trackId, bool audible) => SetTrackMuted(trackId, !audible);
 
     public void ResetPlaybackEngine()

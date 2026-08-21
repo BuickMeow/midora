@@ -8,6 +8,35 @@
         WindowStyle="None" ResizeMode="CanResize" ShowInTaskbar="False"
         Background="{StaticResource Brush.Surface.0}" UseLayoutRounding="True">
   <shell:WindowChrome.WindowChrome><shell:WindowChrome CaptionHeight="38" CornerRadius="0" GlassFrameThickness="0" ResizeBorderThickness="6" UseAeroCaptionButtons="False"/></shell:WindowChrome.WindowChrome>
+  <Window.Resources>
+    <!-- The platform ListBox template paints a light disabled background.  This
+         dialog deliberately keeps the list surface transparent while disabling
+         interaction; opacity alone communicates the inactive source choice. -->
+    <Style x:Key="TransparentDisabledListBox"
+           TargetType="ListBox"
+           BasedOn="{StaticResource {x:Type ListBox}}">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ListBox">
+            <Border Padding="{TemplateBinding Padding}"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="{StaticResource Radius.Small}"
+                    SnapsToDevicePixels="True">
+              <ScrollViewer Focusable="False"
+                            CanContentScroll="{TemplateBinding ScrollViewer.CanContentScroll}"
+                            HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
+                            VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}">
+                <ItemsPresenter/>
+              </ScrollViewer>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
   <Border BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1">
     <Grid>
       <Grid.RowDefinitions><RowDefinition Height="38"/><RowDefinition Height="*"/><RowDefinition Height="58"/></Grid.RowDefinitions>
@@ -18,7 +47,10 @@
           <TextBlock Margin="22,8,0,0" Style="{StaticResource Text.Overline}" Text="INSTRUMENT NAME"/>
           <TextBox x:Name="NewInstrumentNameBox" Margin="22,5,0,16" Text="Event Instrument"/>
           <RadioButton x:Name="ExistingInstrumentRadio" GroupName="Source" Checked="OnSourceChanged" Content="Use Existing Event Instrument"/>
-          <ListBox x:Name="ExistingInstrumentList" Margin="22,8,0,0" Height="210" ItemsSource="{Binding Options}" DisplayMemberPath="Display" MouseDoubleClick="OnOptionsDoubleClick"/>
+          <ListBox x:Name="ExistingInstrumentList" Margin="22,8,0,0" Height="210"
+                   Style="{StaticResource TransparentDisabledListBox}"
+                   ItemsSource="{Binding Options}" DisplayMemberPath="Display"
+                   MouseDoubleClick="OnOptionsDoubleClick"/>
           <TextBlock x:Name="ErrorText" Margin="0,12,0,0" Foreground="{StaticResource Brush.Red.Hover}" TextWrapping="Wrap"/>
         </StackPanel>
       </ScrollViewer>

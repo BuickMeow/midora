@@ -251,18 +251,12 @@ public static partial class ProjectDomainEditCommands
                     && value.FixedZeroBasedPort == targetPort
                     && value.FixedZeroBasedChannel == targetChannel)
                 : null;
-            if (existingFixed is not null && existingFixed.ChannelMode != channelMode)
+            if (existingFixed is not null
+                && existingFixed.Id != sourceRoot.Id
+                && existingFixed.ChannelMode != channelMode)
             {
-                if (existingFixed.Id == sourceRoot.Id && sourceMembers.Length > 1)
-                {
-                    throw new InvalidOperationException(
-                        "The selected Port.Channel is shared. Use Shared MIDI Route Settings to change its Channel Mode for all members.");
-                }
-                if (existingFixed.Id != sourceRoot.Id)
-                {
-                    throw new InvalidOperationException(
-                        "The selected Fixed Port.Channel already exists with a different Channel Mode.");
-                }
+                throw new InvalidOperationException(
+                    "The selected Fixed Port.Channel already exists with a different Channel Mode.");
             }
 
             bool sameRoute = sourceRoot.RoutingMode == routingMode
@@ -290,10 +284,10 @@ public static partial class ProjectDomainEditCommands
                 targetChannel,
                 channelMode);
 
-            // A singleton Root can keep its identity unless it is merging into an
-            // already existing Fixed Root.
-            if (sourceMembers.Length == 1
-                && (existingFixed is null || existingFixed.Id == sourceRoot.Id))
+            // The Root is the single Channel Mode authority. Editing the same
+            // Fixed address therefore updates that Root atomically, including
+            // all of its members; the UI confirms this shared change first.
+            if (existingFixed?.Id == sourceRoot.Id)
             {
                 return Prepared(
                     before != after,
@@ -302,10 +296,15 @@ public static partial class ProjectDomainEditCommands
                     _ => ApplyRootConfiguration(sourceRoot, before));
             }
 
-            if (existingFixed?.Id == sourceRoot.Id)
+            // A singleton Root can keep its identity unless it is merging into an
+            // already existing Fixed Root.
+            if (sourceMembers.Length == 1 && existingFixed is null)
             {
-                throw new InvalidOperationException(
-                    "The selected Port.Channel already belongs to this shared MIDI route.");
+                return Prepared(
+                    before != after,
+                    EverythingChange(),
+                    _ => ApplyRootConfiguration(sourceRoot, after),
+                    _ => ApplyRootConfiguration(sourceRoot, before));
             }
 
             ArrangementTrackReference reference = new(

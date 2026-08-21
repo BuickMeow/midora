@@ -355,26 +355,15 @@ internal sealed class PagedDirectMidiTimelineItemSource : ITimelineRenderItemSou
         {
             return;
         }
-        foreach (PureMidiContentRangeSummary summary in _segment.Notes.GetOverviewRangeSummaries())
+
+        Span<byte> occupiedColumns = destination.Length <= 4096
+            ? stackalloc byte[destination.Length]
+            : new byte[destination.Length];
+        _segment.Notes.AccumulateOverviewColumns(extent, occupiedColumns);
+        for (int x = 0; x < occupiedColumns.Length; x++)
         {
-            int first = Math.Clamp(
-                (int)(Math.Max(0, summary.MinimumTick) / (double)extent * destination.Length),
-                0,
-                destination.Length - 1);
-            int last = Math.Clamp(
-                (int)(Math.Max(0, summary.MaximumTick) / (double)extent * destination.Length),
-                first,
-                destination.Length - 1);
-            int columns = checked(last - first + 1);
-            int perColumn = Math.Max(1, summary.RecordCount / columns);
-            int remainder = Math.Max(0, summary.RecordCount - perColumn * columns);
-            for (int x = first; x <= last; x++)
-            {
-                int increment = perColumn + (x - first < remainder ? 1 : 0);
-                destination[x] = destination[x] > int.MaxValue - increment
-                    ? int.MaxValue
-                    : destination[x] + increment;
-            }
+            if (occupiedColumns[x] != 0 && destination[x] < int.MaxValue)
+                destination[x]++;
         }
     }
 
@@ -489,6 +478,47 @@ internal sealed class PagedDirectMidiTimelineItemSource : ITimelineRenderItemSou
         if (_selectedIds.Contains(id)) state |= TimelineItemState.Selected;
         if (_primaryId == id) state |= TimelineItemState.Primary;
         return state;
+    }
+}
+
+/// <summary>
+/// Exact, device-column-bounded overview projection for a complete Direct MIDI
+/// Segment. Paged sources use their ordered endpoint indexes and may only use a
+/// page range without decoding when the complete page maps to one output column.
+/// Collection generations keep the surface cache coherent with copy-on-write edits.
+/// </summary>
+internal sealed class PureMidiSegmentOverviewSource : ITimelineOverviewSource
+{
+    private readonly MidiSegment _segment;
+
+    public PureMidiSegmentOverviewSource(MidiSegment segment) =>
+        _segment = segment ?? throw new ArgumentNullException(nameof(segment));
+
+    public ulong ContentFingerprint => PureMidiPresentationFingerprint.Create(
+        _segment.PagedContentFingerprint,
+        _segment.Notes.Generation,
+        _segment.ChannelEvents.Generation,
+        _segment.OpaqueEvents.Generation,
+        _segment.ContentOffsetTick,
+        _segment.LengthTicks,
+        0x4f56455256494557);
+
+    public void Accumulate(
+        long extent,
+        Span<byte> noteStartColumns,
+        Span<byte> eventColumns)
+    {
+        if (extent <= 0) throw new ArgumentOutOfRangeException(nameof(extent));
+        if (noteStartColumns.Length != eventColumns.Length)
+            throw new ArgumentException("Timeline overview channels must have equal widths.");
+        if (noteStartColumns.IsEmpty) return;
+
+        _segment.Notes.AccumulateOverviewColumns(extent, noteStartColumns);
+        _segment.ChannelEvents.AccumulateOverviewColumns(
+            extent,
+            noteStartColumns,
+            eventColumns);
+        _segment.OpaqueEvents.AccumulateOverviewColumns(extent, eventColumns);
     }
 }
 

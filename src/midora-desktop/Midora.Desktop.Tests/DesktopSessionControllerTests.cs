@@ -1033,7 +1033,11 @@ public sealed class DesktopSessionControllerTests
         TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
 
         TimelineRenderSnapshot snapshot = Assert.IsType<TimelineRenderSnapshot>(arrangement.Snapshot);
-        Assert.Null(arrangement.RulerSnapshot);
+        TimelineRenderSnapshot ruler = Assert.IsType<TimelineRenderSnapshot>(arrangement.RulerSnapshot);
+        TimelineRenderItem marker = Assert.Single(ruler.Items);
+        Assert.Equal(TimelineItemKind.Marker, marker.Kind);
+        Assert.Equal("Verse", marker.Label);
+        Assert.True(marker.State.HasFlag(TimelineItemState.HitTestDisabled));
         Assert.True(snapshot.Items.Count >= 3);
         Assert.All(snapshot.Items, item =>
             Assert.True(item.State.HasFlag(TimelineItemState.HitTestDisabled)));

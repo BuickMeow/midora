@@ -477,6 +477,83 @@ public interface ITimelineRenderItemSource
     }
 }
 
+/// <summary>
+/// Supplies the complete, bounded-cost horizontal overview for an editor.
+/// Implementations may project paged content through summaries; callers must
+/// not infer editable objects or hit-test results from these presentation lines.
+/// </summary>
+public interface ITimelineOverviewSource
+{
+    ulong ContentFingerprint { get; }
+
+    void Accumulate(
+        long extent,
+        Span<byte> noteStartColumns,
+        Span<byte> eventColumns);
+}
+
+public sealed class MaterializedTimelineOverviewSource : ITimelineOverviewSource
+{
+    private readonly long[] _noteStartTicks;
+    private readonly long[] _eventTicks;
+
+    public MaterializedTimelineOverviewSource(
+        IEnumerable<long> noteStartTicks,
+        IEnumerable<long> eventTicks)
+    {
+        ArgumentNullException.ThrowIfNull(noteStartTicks);
+        ArgumentNullException.ThrowIfNull(eventTicks);
+        _noteStartTicks = noteStartTicks.ToArray();
+        _eventTicks = eventTicks.ToArray();
+        if (_noteStartTicks.Any(static tick => tick < 0)
+            || _eventTicks.Any(static tick => tick < 0))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(noteStartTicks),
+                "Timeline overview ticks must be non-negative.");
+        }
+        ContentFingerprint = TimelineContentFingerprint.ForOverviewTicks(
+            _noteStartTicks,
+            _eventTicks);
+    }
+
+    public ulong ContentFingerprint { get; }
+
+    public void Accumulate(
+        long extent,
+        Span<byte> noteStartColumns,
+        Span<byte> eventColumns)
+    {
+        ValidateOverviewColumns(extent, noteStartColumns, eventColumns);
+        foreach (long tick in _noteStartTicks)
+            MarkOverviewColumn(noteStartColumns, tick, extent);
+        foreach (long tick in _eventTicks)
+            MarkOverviewColumn(eventColumns, tick, extent);
+    }
+
+    internal static void MarkOverviewColumn(Span<byte> destination, long tick, long extent)
+    {
+        if (destination.IsEmpty) return;
+        int x = Math.Clamp(
+            (int)(Math.Max(0, tick) / (double)extent * destination.Length),
+            0,
+            destination.Length - 1);
+        destination[x] = 1;
+    }
+
+    internal static void ValidateOverviewColumns(
+        long extent,
+        Span<byte> noteStartColumns,
+        Span<byte> eventColumns)
+    {
+        if (extent <= 0) throw new ArgumentOutOfRangeException(nameof(extent));
+        if (noteStartColumns.Length != eventColumns.Length)
+        {
+            throw new ArgumentException("Timeline overview channels must have equal widths.");
+        }
+    }
+}
+
 public sealed class TimelineSelectionSnapshot
 {
     private readonly HashSet<MidoraId> _ids;
@@ -591,6 +668,7 @@ public sealed class TimelineRenderSnapshot
     private readonly object _conductorTileFingerprintGate = new();
     private readonly Dictionary<ConductorTileFingerprintKey, ulong> _conductorTileFingerprints = [];
     private readonly ITimelineRenderItemSource? _itemSource;
+    private readonly ITimelineOverviewSource? _overviewSource;
 
     public TimelineRenderSnapshot(
         long semanticRevision,
@@ -602,7 +680,8 @@ public sealed class TimelineRenderSnapshot
         IReadOnlyList<string>? laneSecondaryLabels = null,
         IReadOnlyList<uint>? laneColors = null,
         IReadOnlyList<ArrangementLaneDescriptor>? arrangementLanes = null,
-        ITimelineRenderItemSource? itemSource = null)
+        ITimelineRenderItemSource? itemSource = null,
+        ITimelineOverviewSource? overviewSource = null)
     {
         if (semanticRevision < 0)
         {
@@ -627,6 +706,7 @@ public sealed class TimelineRenderSnapshot
         SemanticRevision = semanticRevision;
         ProjectionKey = projectionKey.Trim();
         _itemSource = itemSource;
+        _overviewSource = overviewSource;
         Items = Array.AsReadOnly(materialized);
         LaneLabels = laneLabels is null
             ? Array.Empty<string>()
@@ -651,8 +731,10 @@ public sealed class TimelineRenderSnapshot
             .GroupBy(static item => item.Id)
             .ToDictionary(static group => group.Key, static group => group.OrderByDescending(item => item.ZIndex).First());
         ContentFingerprint = TimelineContentFingerprint.Combine(
-            TimelineContentFingerprint.ForRenderItems(materialized),
-            itemSource?.ContentFingerprint ?? 0);
+            TimelineContentFingerprint.Combine(
+                TimelineContentFingerprint.ForRenderItems(materialized),
+                itemSource?.ContentFingerprint ?? 0),
+            overviewSource?.ContentFingerprint ?? 0);
         ConductorPreviewFingerprint = TimelineContentFingerprint.ForConductorPreview(materialized);
     }
 
@@ -669,6 +751,7 @@ public sealed class TimelineRenderSnapshot
     public IReadOnlyDictionary<MidoraId, TimelineRenderItem> ItemsById { get; }
     public ulong ContentFingerprint { get; }
     public ulong ConductorPreviewFingerprint { get; }
+    public bool HasDedicatedOverview => _overviewSource is not null;
     public long TotalItemCount => checked(Items.Count + (_itemSource?.Count ?? 0));
     public long MaximumEndTick => Math.Max(
         Items.Count == 0 ? 0 : Items.Max(value => value.EndTick),
@@ -684,6 +767,38 @@ public sealed class TimelineRenderSnapshot
             if (destination[x] < int.MaxValue) destination[x]++;
         }
         _itemSource?.AccumulateOverviewDensity(extent, destination);
+    }
+
+    public void AccumulateOverviewChannels(
+        long extent,
+        Span<byte> noteStartColumns,
+        Span<byte> eventColumns)
+    {
+        MaterializedTimelineOverviewSource.ValidateOverviewColumns(
+            extent,
+            noteStartColumns,
+            eventColumns);
+        if (noteStartColumns.IsEmpty) return;
+        if (_overviewSource is not null)
+        {
+            _overviewSource.Accumulate(extent, noteStartColumns, eventColumns);
+            return;
+        }
+
+        foreach (TimelineRenderItem item in Items)
+        {
+            Span<byte> destination = item.Kind is TimelineItemKind.DirectMidiEvent
+                or TimelineItemKind.OpaqueMidiEvent
+                or TimelineItemKind.LogicalParameterPoint
+                or TimelineItemKind.LogicalParameterCurve
+                or TimelineItemKind.TemplateEvent
+                    ? eventColumns
+                    : noteStartColumns;
+            MaterializedTimelineOverviewSource.MarkOverviewColumn(
+                destination,
+                item.StartTick,
+                extent);
+        }
     }
 
     public void QueryInto(
@@ -915,6 +1030,20 @@ internal static class TimelineContentFingerprint
             Add(ref hash, unchecked((ulong)item.ZIndex));
             Add(ref hash, item.AccentColor);
         }
+        return hash;
+    }
+
+    public static ulong ForOverviewTicks(
+        IEnumerable<long> noteStartTicks,
+        IEnumerable<long> eventTicks)
+    {
+        ulong hash = Offset;
+        Add(ref hash, 0x4e4f544553UL);
+        foreach (long tick in noteStartTicks)
+            Add(ref hash, unchecked((ulong)tick));
+        Add(ref hash, 0x4556454e5453UL);
+        foreach (long tick in eventTicks)
+            Add(ref hash, unchecked((ulong)tick));
         return hash;
     }
 

@@ -36,6 +36,82 @@ public readonly record struct PureMidiContentRangeSummary(
 public interface IPureMidiContentOverviewSource
 {
     IEnumerable<PureMidiContentRangeSummary> GetNoteRangeSummaries();
+
+    IEnumerable<PureMidiContentRangeSummary> GetChannelEventRangeSummaries() => [];
+
+    IEnumerable<PureMidiContentRangeSummary> GetOpaqueEventRangeSummaries() => [];
+
+    bool TryAccumulateNoteStartColumns(
+        long extent,
+        Span<byte> destination,
+        IReadOnlySet<MidoraId>? excludedIds) => false;
+
+    bool TryAccumulateChannelEventColumns(
+        long extent,
+        Span<byte> noteStartColumns,
+        Span<byte> eventColumns,
+        IReadOnlySet<MidoraId>? excludedIds) => false;
+
+    bool TryAccumulateOpaqueEventColumns(
+        long extent,
+        Span<byte> destination,
+        IReadOnlySet<MidoraId>? excludedIds) => false;
+}
+
+internal static class PureMidiOverviewProjection
+{
+    public static void Validate(long extent, Span<byte> destination)
+    {
+        if (extent <= 0) throw new ArgumentOutOfRangeException(nameof(extent));
+        if (destination.IsEmpty) return;
+    }
+
+    public static void Validate(
+        long extent,
+        Span<byte> noteStartColumns,
+        Span<byte> eventColumns)
+    {
+        Validate(extent, noteStartColumns);
+        if (noteStartColumns.Length != eventColumns.Length)
+        {
+            throw new ArgumentException(
+                "Pure MIDI overview channels must have equal widths.");
+        }
+    }
+
+    public static int Column(long tick, long extent, int width)
+    {
+        if (extent <= 0) throw new ArgumentOutOfRangeException(nameof(extent));
+        if (width <= 0) throw new ArgumentOutOfRangeException(nameof(width));
+        if (tick <= 0) return 0;
+        double projected = tick / (double)extent * width;
+        return projected >= width ? width - 1 : (int)projected;
+    }
+
+    public static void Mark(Span<byte> destination, long tick, long extent)
+    {
+        if (destination.IsEmpty) return;
+        destination[Column(tick, extent, destination.Length)] = 1;
+    }
+
+    public static void Mark(
+        DirectMidiChannelEventKind kind,
+        int data2,
+        long tick,
+        long extent,
+        Span<byte> noteStartColumns,
+        Span<byte> eventColumns)
+    {
+        if (kind == DirectMidiChannelEventKind.NoteOn && data2 > 0)
+        {
+            Mark(noteStartColumns, tick, extent);
+        }
+        else if (kind is not (DirectMidiChannelEventKind.NoteOn
+            or DirectMidiChannelEventKind.NoteOff))
+        {
+            Mark(eventColumns, tick, extent);
+        }
+    }
 }
 
 public interface IPureMidiSegmentContentSource
@@ -370,6 +446,37 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         }
     }
 
+    public void AccumulateOverviewColumns(long extent, Span<byte> destination)
+    {
+        PureMidiOverviewProjection.Validate(extent, destination);
+        if (destination.IsEmpty) return;
+
+        HashSet<MidoraId>? excludedIds = SourceExclusions();
+        if (!_clearSource && _source is not null)
+        {
+            bool accumulated = _source is IPureMidiContentOverviewSource overviewSource
+                && overviewSource.TryAccumulateNoteStartColumns(
+                    extent,
+                    destination,
+                    excludedIds);
+            if (!accumulated)
+            {
+                IEnumerable<DirectMidiNoteValue> sourceValues =
+                    _source is IPureMidiPlaybackEndpointSource endpoints
+                        ? endpoints.QueryNoteStarts(0, long.MaxValue)
+                        : _source.QueryNotes(0, long.MaxValue);
+                foreach (DirectMidiNoteValue value in sourceValues)
+                {
+                    if (excludedIds?.Contains(value.Id) == true) continue;
+                    PureMidiOverviewProjection.Mark(destination, value.StartTick, extent);
+                }
+            }
+        }
+
+        foreach (DirectMidiNote value in _replacements.Values.Concat(_added))
+            PureMidiOverviewProjection.Mark(destination, value.StartTick, extent);
+    }
+
     public IEnumerable<DirectMidiNoteValue> QueryStartValues(
         long startTick,
         long endTick) => QueryEndpointValues(startTick, endTick, noteOn: true);
@@ -536,6 +643,14 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
     private int SourceIndexOf(MidoraId id) => _source is null || _clearSource
         ? -1
         : _source.FindNoteIndex(id);
+
+    private HashSet<MidoraId>? SourceExclusions()
+    {
+        if (_removed.Count == 0 && _replacements.Count == 0) return null;
+        HashSet<MidoraId> result = [.. _removed];
+        result.UnionWith(_replacements.Keys);
+        return result;
+    }
 
     private int FindSourceIndexForVisibleIndex(int visibleIndex)
     {
@@ -840,6 +955,68 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
         }
     }
 
+    public IEnumerable<PureMidiContentRangeSummary> GetOverviewRangeSummaries()
+    {
+        if (!_clearSource && _source is IPureMidiContentOverviewSource overviewSource)
+        {
+            foreach (PureMidiContentRangeSummary summary in overviewSource.GetChannelEventRangeSummaries())
+                yield return summary;
+        }
+        else if (!_clearSource && _source is not null)
+        {
+            foreach (DirectMidiChannelEventValue value in _source.QueryChannelEvents(0, long.MaxValue))
+                yield return new(value.Tick, value.Tick, 1);
+        }
+        foreach (DirectMidiChannelEvent value in _replacements.Values.Concat(_added))
+            yield return new(value.Tick, value.Tick, 1);
+    }
+
+    public void AccumulateOverviewColumns(
+        long extent,
+        Span<byte> noteStartColumns,
+        Span<byte> eventColumns)
+    {
+        PureMidiOverviewProjection.Validate(extent, noteStartColumns, eventColumns);
+        if (noteStartColumns.IsEmpty) return;
+
+        HashSet<MidoraId>? excludedIds = SourceExclusions();
+        if (!_clearSource && _source is not null)
+        {
+            bool accumulated = _source is IPureMidiContentOverviewSource overviewSource
+                && overviewSource.TryAccumulateChannelEventColumns(
+                    extent,
+                    noteStartColumns,
+                    eventColumns,
+                    excludedIds);
+            if (!accumulated)
+            {
+                foreach (DirectMidiChannelEventValue value in
+                    _source.QueryChannelEvents(0, long.MaxValue))
+                {
+                    if (excludedIds?.Contains(value.Id) == true) continue;
+                    PureMidiOverviewProjection.Mark(
+                        value.Kind,
+                        value.Data2,
+                        value.Tick,
+                        extent,
+                        noteStartColumns,
+                        eventColumns);
+                }
+            }
+        }
+
+        foreach (DirectMidiChannelEvent value in _replacements.Values.Concat(_added))
+        {
+            PureMidiOverviewProjection.Mark(
+                value.Kind,
+                value.Data2,
+                value.Tick,
+                extent,
+                noteStartColumns,
+                eventColumns);
+        }
+    }
+
     public IEnumerable<DirectMidiChannelEventValue> QueryOrderedValues(
         long startTick,
         long endTick)
@@ -934,6 +1111,14 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
     private int SourceIndexOf(MidoraId id) => _source is null || _clearSource
         ? -1
         : _source.FindChannelEventIndex(id);
+
+    private HashSet<MidoraId>? SourceExclusions()
+    {
+        if (_removed.Count == 0 && _replacements.Count == 0) return null;
+        HashSet<MidoraId> result = [.. _removed];
+        result.UnionWith(_replacements.Keys);
+        return result;
+    }
 
     private int FindSourceIndexForVisibleIndex(int visibleIndex)
     {
@@ -1220,6 +1405,50 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
         }
     }
 
+    public IEnumerable<PureMidiContentRangeSummary> GetOverviewRangeSummaries()
+    {
+        if (!_clearSource && _source is IPureMidiContentOverviewSource overviewSource)
+        {
+            foreach (PureMidiContentRangeSummary summary in overviewSource.GetOpaqueEventRangeSummaries())
+                yield return summary;
+        }
+        else if (!_clearSource && _source is not null)
+        {
+            foreach (OpaqueMidiEventValue value in _source.QueryOpaqueEvents(0, long.MaxValue))
+                yield return new(value.Tick, value.Tick, 1);
+        }
+        foreach (OpaqueMidiEvent value in _replacements.Values.Concat(_added))
+            yield return new(value.Tick, value.Tick, 1);
+    }
+
+    public void AccumulateOverviewColumns(long extent, Span<byte> destination)
+    {
+        PureMidiOverviewProjection.Validate(extent, destination);
+        if (destination.IsEmpty) return;
+
+        HashSet<MidoraId>? excludedIds = SourceExclusions();
+        if (!_clearSource && _source is not null)
+        {
+            bool accumulated = _source is IPureMidiContentOverviewSource overviewSource
+                && overviewSource.TryAccumulateOpaqueEventColumns(
+                    extent,
+                    destination,
+                    excludedIds);
+            if (!accumulated)
+            {
+                foreach (OpaqueMidiEventValue value in
+                    _source.QueryOpaqueEvents(0, long.MaxValue))
+                {
+                    if (excludedIds?.Contains(value.Id) == true) continue;
+                    PureMidiOverviewProjection.Mark(destination, value.Tick, extent);
+                }
+            }
+        }
+
+        foreach (OpaqueMidiEvent value in _replacements.Values.Concat(_added))
+            PureMidiOverviewProjection.Mark(destination, value.Tick, extent);
+    }
+
     internal void AttachSource(IPureMidiSegmentContentSource source)
     {
         if (_source is not null || _added.Count != 0)
@@ -1258,6 +1487,14 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
     private int SourceIndexOf(MidoraId id) => _source is null || _clearSource
         ? -1
         : _source.FindOpaqueEventIndex(id);
+
+    private HashSet<MidoraId>? SourceExclusions()
+    {
+        if (_removed.Count == 0 && _replacements.Count == 0) return null;
+        HashSet<MidoraId> result = [.. _removed];
+        result.UnionWith(_replacements.Keys);
+        return result;
+    }
 
     private int FindSourceIndexForVisibleIndex(int visibleIndex)
     {

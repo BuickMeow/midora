@@ -148,3 +148,45 @@
 - Worker 正式 file protocol 集成测试使用固定 Native AOT Worker 和真实 SF2 完成 prepare/render，证明 Worker 基线本身没有复现无限等待。
 
 本地仅检查无音频资源的 UI 时可直接使用 `dotnet run`。需要选择/验证 SF2、枚举音频设备、播放、预览或渲染时，使用仓库根目录 `Run-MidoraDesktop.ps1`：脚本只接受通过固定 manifest 校验的 operator-supplied BASS 目录，发布当前 `win-x64` Native AOT Worker 到桌面构建输出旁的 `audio-worker/`，再启动 WPF。BASS 路径、Worker 路径和发布产物均不写入 Project、Application Preferences 或源码树正式资产。
+
+## 9. 2026-08-21 Arrangement chrome、概览与任务进度修正 trace
+
+输入与正式输出：
+
+- Arrangement 左侧 ruler header 固定接收 Event Instruments 栏开关、Track 创建菜单和“清除全部 Track/共享组 Mute/Solo”命令；ruler 的正式小节标签仍只绘制在内容区。
+- Mute/Solo 清除一次性清空 Track 与共享 Usage/Root 的四组运行时过滤状态，并在正在播放时只提交一次 monitoring 差量；失败时恢复调用前的运行时集合。
+- Segment editor horizontal overview 使用两个独立的内容指纹缓存层：NoteOn/GateStart 为蓝灰色 1 device-pixel 竖线，任意非音符 MIDI event / logical parameter point 为浅红色 1 device-pixel 竖线并绘制在其上。普通内存对象与分页 Direct MIDI 均按真实 onset/event tick 投影；raw `NoteOn` 进入 Note 通道，raw `NoteOff` 不冒充 non-Note event。
+- Audio Render 继续以 `processed frames / total frames` 产生确定进度；WPF 仅合并显示最新样本，最高 10 次/秒，任务完成仍固定为 100%。
+
+边界、失败条件与归属：
+
+- 上述 Mute/Solo、pane visibility、overview density、scrollbar thumb 和进度合并器均为 UI/runtime session 状态；不修改 Project、canonical、Undo/Redo、持久化格式或可听内容。
+- MIDI 分页 overview 的输出宽度受实际控件宽度约束，缓存键由内容指纹、extent 与 device-column 宽度组成；不得把 Note 的 Gate End/持续范围误当作新的 NoteOn，也不得根据页级 `min/max/count` 在二者之间补画或均匀猜测内容。只有当完整 endpoint page 的最小和最大 tick 明确落入同一 device column、且没有会话编辑排除项时，才可仅凭目录摘要命中该列；跨列页必须读取现有 endpoint index 的真实 tick。Copy-on-write 删除/替换先排除源 stable ID，再叠加当前编辑值，保证空洞、移动和删除后的概览准确。
+- Audio Render 进度总数无效时保持 indeterminate；已知总帧数时必须显示 determinate indicator。取消、失败和输出原子发布语义不变。
+- 滚动条视觉 Thumb 必须使用 Track 分配的实际长度，不得用最小视觉长度越过碰撞区域；菜单栏与右键菜单的分割线必须显式覆盖 `MenuItem.SeparatorStyleKey`，不得回退到明亮的系统默认模板。禁用的 Event Instrument 选择列表保持透明背景；Arrangement Event Instruments pane 开关的未选中态只在该按钮上复用相邻 Add 按钮的背景/前景，不修改全局 ToggleButton。
+
+明确非目标：
+
+- 不改变 MIDI Segment 内容、分页 pack 格式、Audio Render worker 协议、monitoring 的可听筛选规则或 Arrangement Track 模型；概览 endpoint page 解码继续受现有 project-wide decoded-page LRU 上限约束。
+- 不把 Reset Monitoring 解释为重置 Playback Engine，也不修改任何持久化 Track 属性。
+
+## 10. 2026-08-21 Arrangement Track 命令、共享路由与 Marker 标尺 trace
+
+输入与正式输出：
+
+- Logical Track 的普通 `Duplicate` 深拷贝 Track、Segment 及其内容，并创建引用同一 Event Instrument Definition 的独立 Usage；`Duplicate and Share State` 才保留源 Usage。两种命令均生成新的 Track/内容稳定 ID，Undo/Redo 原子恢复对应 Usage、global order 与对象身份。
+- Logical Track 右键菜单可直接打开其有效绑定的 Event Instrument Definition；未绑定 Track 不提供可执行目标。Track 上下文不再显示 `Duplicate Instrument Only`，Definition Browser 的普通 Definition Duplicate 不受影响。
+- 从单个 Pure MIDI Track 打开 route settings 时，如仅修改共享 Fixed Port.Channel 的 Channel Mode，UI 明确提示影响的 Track 数；确认后原子更新唯一 Root，所有成员同步生效。改到其他 route 时仍只移动当前 Track。旧的 `Shared MIDI Route Settings` 术语不再作为错误恢复指引。
+- Arrangement ruler 从 Conductor Marker 建立只读、不可命中的专用投影；Marker 的左边界定位到正式 tick，以浅灰圆角边框和 secondary text 显示。小节号贴近底部刻度，Marker 使用其上方空间。
+- Segment horizontal overview 的 event channel 使用与 Note 概览接近暗度的暗红色，继续与播放指针红色明确区分；Note/event tick 与既有内容指纹缓存不变。
+
+UI/runtime 边界：
+
+- shared brace 在 Track hover/pressed fill 之后绘制，保证组边界处于 Track header 视觉最上层；它不改变命中、排序或 membership。
+- Arrangement、Logical Segment 与 MIDI Segment toolbar 的左侧 context text 使用与右侧工具相称的外边距；Conductor workspace 只隐藏 toolbar 中冗余的 `Conductor Track` header，不改变 Tab 标题或 Workspace identity。
+- Event Instruments pane toggle 的 hover border 只在该按钮本地复用相邻 Add 按钮的 hover token；不修改全局 ToggleButton 模板。
+- `New Logical Track with Instrument...` 创建新 Definition 时，提交后激活新 Event Instrument Workspace；使用既有 Definition 时仍返回 Arrangement。
+
+规格差异记录：
+
+- 本节的 Logical Track Duplicate 行为来自产品所有者 2026-08-21 的当前明确指令，与 SRS 24.8.1～24.8.2 中“普通 Duplicate 保留 Usage、Track/Usage 上下文保留 `Duplicate Instrument Only`”的文字不一致。本文只记录当前实现依据，不擅自改写 SRS；其余 SRS 第 24 章共享状态、连续 block、稳定 ID 与 Undo/Redo 不变量继续适用。

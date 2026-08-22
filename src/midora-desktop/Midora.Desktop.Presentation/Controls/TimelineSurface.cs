@@ -54,13 +54,15 @@ public sealed class TimelinePointEventArgs(
     int lane,
     double normalizedValue,
     ModifierKeys modifiers,
-    bool isDoubleClick) : RoutedEventArgs
+    bool isDoubleClick,
+    bool isEmptyBackground = false) : RoutedEventArgs
 {
     public long Tick { get; } = tick;
     public int Lane { get; } = lane;
     public double NormalizedValue { get; } = normalizedValue;
     public ModifierKeys Modifiers { get; } = modifiers;
     public bool IsDoubleClick { get; } = isDoubleClick;
+    public bool IsEmptyBackground { get; } = isEmptyBackground;
 }
 
 public sealed class TimelineLanePreviewEventArgs(int lane, int pitch, int velocity) : RoutedEventArgs
@@ -147,9 +149,12 @@ public sealed class TimelineLaneHeaderCommandEventArgs(
     public TimelineLaneHeaderCommand Command { get; } = command;
 }
 
-public sealed class TimelineLaneHeaderEventArgs(int lane) : RoutedEventArgs
+public sealed class TimelineLaneHeaderEventArgs(
+    int lane,
+    bool isSharedGroupTarget = false) : RoutedEventArgs
 {
     public int Lane { get; } = lane;
+    public bool IsSharedGroupTarget { get; } = isSharedGroupTarget;
 }
 
 public sealed class TimelineLaneHeaderReorderEventArgs(
@@ -223,6 +228,18 @@ public sealed class TimelineSurface : Control
         typeof(TimelineSelectionSnapshot),
         typeof(TimelineSurface),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty SelectedArrangementTrackIdProperty = DependencyProperty.Register(
+        nameof(SelectedArrangementTrackId),
+        typeof(MidoraId?),
+        typeof(TimelineSurface),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty IsConductorTrackSelectedProperty = DependencyProperty.Register(
+        nameof(IsConductorTrackSelected),
+        typeof(bool),
+        typeof(TimelineSurface),
+        new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
 
     public static readonly DependencyProperty RulerSnapshotProperty = DependencyProperty.Register(
         nameof(RulerSnapshot),
@@ -470,11 +487,13 @@ public sealed class TimelineSurface : Control
     private Pen? _successPen;
     private Pen? _selectionPen;
     private Pen? _segmentSelectionPen;
+    private Pen? _trackSelectionPen;
     private Pen? _beatGridPen;
     private Pen? _editCursorPen;
     private Pen? _marqueePen;
     private Pen? _dragPreviewPen;
     private Pen? _warningDashPen;
+    private Pen? _groupDetachBoundaryPen;
     private readonly Dictionary<string, FormattedText> _textCache = new(StringComparer.Ordinal);
     private readonly Dictionary<uint, SegmentAccentResources> _segmentAccentResources = [];
     private readonly Dictionary<uint, SolidColorBrush> _rawAccentBrushes = [];
@@ -548,7 +567,11 @@ public sealed class TimelineSurface : Control
     private readonly Dictionary<long, double> _eventPointEdits = [];
     private readonly List<Point> _eventPointTracePoints = new(capacity: 128);
     private int? _hoverLaneHeader;
+    private MidoraId? _hoverSharedGroupId;
+    private MidoraId? _contextSharedGroupId;
     private int? _pressedLaneHeader;
+    private bool _pressedLaneHeaderTargetsSharedGroup;
+    private MidoraId? _pressedSharedGroupId;
     private int _laneHeaderDragTarget;
     private Point _laneHeaderDragOrigin;
     private bool _laneHeaderDragActivated;
@@ -556,6 +579,8 @@ public sealed class TimelineSurface : Control
     private bool _laneHeaderDragMovesWholeGroup;
     private bool _laneHeaderDragInsertsAfterTarget;
     private bool _laneHeaderDragDetachesFromSourceGroup;
+    private MidoraId? _laneHeaderDragExteriorBoundaryGroupId;
+    private ArrangementSharedGroupDropZone _laneHeaderDragExteriorBoundaryZone;
     private bool _laneHeaderDragJoinUsesChip;
     private bool _laneHeaderDragRequiresRebind;
     private int? _externalArrangementInsertionIndex;
@@ -608,6 +633,18 @@ public sealed class TimelineSurface : Control
     {
         get => (TimelineSelectionSnapshot?)GetValue(SelectionSnapshotProperty);
         set => SetValue(SelectionSnapshotProperty, value);
+    }
+
+    public MidoraId? SelectedArrangementTrackId
+    {
+        get => (MidoraId?)GetValue(SelectedArrangementTrackIdProperty);
+        set => SetValue(SelectedArrangementTrackIdProperty, value);
+    }
+
+    public bool IsConductorTrackSelected
+    {
+        get => (bool)GetValue(IsConductorTrackSelectedProperty);
+        set => SetValue(IsConductorTrackSelectedProperty, value);
     }
 
     public TimelineRenderSnapshot? RulerSnapshot
@@ -922,6 +959,13 @@ public sealed class TimelineSurface : Control
         InvalidateVisual();
     }
 
+    public void SetArrangementSharedGroupContextHighlight(MidoraId? sharedGroupId)
+    {
+        if (_contextSharedGroupId == sharedGroupId) return;
+        _contextSharedGroupId = sharedGroupId;
+        InvalidateVisual();
+    }
+
     public bool TryGetArrangementSharedGroupHeaderTarget(
         Point point,
         out MidoraId sharedGroupId)
@@ -943,6 +987,39 @@ public sealed class TimelineSurface : Control
         if (!hit) return false;
         sharedGroupId = groupId;
         return true;
+    }
+
+    public bool TryGetArrangementSharedGroupBraceTarget(
+        Point point,
+        out MidoraId sharedGroupId)
+    {
+        sharedGroupId = default;
+        if (!TryGetArrangementLaneHeader(point, out int lane)
+            || Snapshot is not TimelineRenderSnapshot snapshot
+            || (uint)lane >= (uint)snapshot.ArrangementLanes.Count
+            || snapshot.ArrangementLanes[lane] is not
+                { IsSharedGroup: true, SharedGroupId: MidoraId groupId }
+            || point.X >= 13)
+        {
+            return false;
+        }
+        sharedGroupId = groupId;
+        return true;
+    }
+
+    public bool IsArrangementEmptyBackground(Point point)
+    {
+        if (SurfaceMode != TimelineSurfaceMode.Arrangement
+            || point.Y < GetRulerHeight()
+            || point.X < 0
+            || point.X >= ActualWidth)
+        {
+            return false;
+        }
+        if (TryGetArrangementLaneHeader(point, out _)) return false;
+        if (!TryGetArrangementLaneAt(point, out _)) return true;
+        return TryCreateViewport(out TimelineViewport viewport)
+            && !TryHitTimelineItem(point, viewport, out _);
     }
 
     protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
@@ -1142,6 +1219,21 @@ public sealed class TimelineSurface : Control
                         Math.Min(rowHeight, Math.Max(0, rulerHeight + GetLaneContentHeight(viewport) - y))));
             }
             drawingContext.DrawLine(_borderPen, new Point(0, y), new Point(ActualWidth, y));
+        }
+        if (SurfaceMode == TimelineSurfaceMode.Arrangement
+            && Snapshot is TimelineRenderSnapshot arrangementRows
+            && arrangementRows.ArrangementLanes.Count > 0)
+        {
+            int finalLane = arrangementRows.ArrangementLanes.Count - 1;
+            double finalBottom = GetLaneTop(viewport, finalLane, rulerHeight)
+                + GetLaneVisualHeight(finalLane);
+            if (finalBottom >= rulerHeight && finalBottom <= ActualHeight)
+            {
+                drawingContext.DrawLine(
+                    _borderPen,
+                    new Point(0, finalBottom),
+                    new Point(ActualWidth, finalBottom));
+            }
         }
 
         DrawPianoOutsideActiveRange(
@@ -1422,7 +1514,8 @@ public sealed class TimelineSurface : Control
             return;
         }
         int lane = YToLane(viewport, point.Y - rulerHeight);
-        if (SurfaceMode == TimelineSurfaceMode.Arrangement
+        if (e.ChangedButton == MouseButton.Left
+            && SurfaceMode == TimelineSurfaceMode.Arrangement
             && TryGetArrangementLaneHeader(point, out int commandLane)
             && (lane = commandLane) >= 0
             && TryGetArrangementLaneCommand(point.X, lane, out TimelineLaneHeaderCommand laneCommand))
@@ -1431,29 +1524,33 @@ public sealed class TimelineSurface : Control
             e.Handled = true;
             return;
         }
-        if (SurfaceMode == TimelineSurfaceMode.Arrangement
+        if (e.ChangedButton == MouseButton.Left
+            && SurfaceMode == TimelineSurfaceMode.Arrangement
             && TryGetArrangementLaneHeader(point, out int pressedHeaderLane))
         {
             lane = pressedHeaderLane;
+            bool targetsSharedGroup = TryGetArrangementSharedGroupBraceTarget(
+                point,
+                out MidoraId pressedGroupId);
             if (e.ClickCount >= 2)
             {
-                LaneHeaderDoubleInvoked?.Invoke(this, new(lane));
+                LaneHeaderDoubleInvoked?.Invoke(this, new(lane, targetsSharedGroup));
                 e.Handled = true;
                 return;
             }
             _pressedLaneHeader = lane;
+            _pressedLaneHeaderTargetsSharedGroup = targetsSharedGroup;
+            _pressedSharedGroupId = targetsSharedGroup ? pressedGroupId : null;
             _laneHeaderDragTarget = lane;
             _laneHeaderDragOrigin = point;
             _laneHeaderDragActivated = false;
             _laneHeaderDragJoinsTargetGroup = false;
             _laneHeaderDragInsertsAfterTarget = false;
             _laneHeaderDragDetachesFromSourceGroup = false;
+            _laneHeaderDragExteriorBoundaryGroupId = null;
             _laneHeaderDragJoinUsesChip = false;
             _laneHeaderDragRequiresRebind = false;
-            _laneHeaderDragMovesWholeGroup = point.X < 13
-                && Snapshot is TimelineRenderSnapshot headerSnapshot
-                && (uint)lane < (uint)headerSnapshot.ArrangementLanes.Count
-                && headerSnapshot.ArrangementLanes[lane].IsSharedGroup;
+            _laneHeaderDragMovesWholeGroup = targetsSharedGroup;
             CaptureMouse();
             InvalidateVisual();
             e.Handled = true;
@@ -1685,7 +1782,10 @@ public sealed class TimelineSurface : Control
                 return;
             }
             bool requestsCreation = CanEdit
-                && TimelineToolPolicy.RequestsBackgroundCreation(ToolMode, SurfaceMode, e.ClickCount);
+                && TimelineToolPolicy.RequestsBackgroundCreation(
+                    ToolMode,
+                    SurfaceMode,
+                    e.ClickCount);
             BackgroundInvoked?.Invoke(
                 this,
                 new TimelinePointEventArgs(
@@ -1693,7 +1793,8 @@ public sealed class TimelineSurface : Control
                     lane,
                     normalizedValue,
                     Keyboard.Modifiers,
-                    requestsCreation));
+                    requestsCreation,
+                    isEmptyBackground: SurfaceMode == TimelineSurfaceMode.Arrangement));
             if (requestsCreation)
             {
                 e.Handled = true;
@@ -1726,7 +1827,11 @@ public sealed class TimelineSurface : Control
         if (SurfaceMode == TimelineSurfaceMode.Arrangement
             && TryGetArrangementLaneHeader(point, out int headerLane))
         {
-            LaneHeaderContextRequested?.Invoke(this, new(headerLane));
+            LaneHeaderContextRequested?.Invoke(
+                this,
+                new(
+                    headerLane,
+                    TryGetArrangementSharedGroupBraceTarget(point, out _)));
             return;
         }
         if (point.X < laneHeaderWidth
@@ -1756,9 +1861,15 @@ public sealed class TimelineSurface : Control
             UpdatePointerPositionText(point, pointerViewport);
         }
         int? previousHoverLaneHeader = _hoverLaneHeader;
-        _hoverLaneHeader = TryGetArrangementLaneHeader(point, out int hoverLane)
-            ? hoverLane
-            : null;
+        MidoraId? previousHoverSharedGroupId = _hoverSharedGroupId;
+        bool hoversSharedGroupBrace = TryGetArrangementSharedGroupBraceTarget(
+            point,
+            out MidoraId hoverSharedGroupId);
+        _hoverSharedGroupId = hoversSharedGroupBrace ? hoverSharedGroupId : null;
+        _hoverLaneHeader = !hoversSharedGroupBrace
+            && TryGetArrangementLaneHeader(point, out int hoverLane)
+                ? hoverLane
+                : null;
         if (_pressedLaneHeader is int pressedLane
             && e.LeftButton == MouseButtonState.Pressed
             && TryCreateViewport(out TimelineViewport headerViewport))
@@ -1774,6 +1885,7 @@ public sealed class TimelineSurface : Control
             _laneHeaderDragJoinsTargetGroup = false;
             _laneHeaderDragInsertsAfterTarget = _laneHeaderDragTarget > pressedLane;
             _laneHeaderDragDetachesFromSourceGroup = false;
+            _laneHeaderDragExteriorBoundaryGroupId = null;
             _laneHeaderDragJoinUsesChip = false;
             _laneHeaderDragRequiresRebind = false;
             if (Snapshot is TimelineRenderSnapshot arrangementSnapshot
@@ -1803,20 +1915,28 @@ public sealed class TimelineSurface : Control
                     bool retainedJoin = differentGroup
                         && wasJoiningTargetGroup
                         && previousTargetGroupId == targetGroupId;
-                    double outsideStrip = differentGroup
-                        ? retainedJoin ? 4 : 12
-                        : 8;
-                    if (point.Y < groupTop + outsideStrip)
+                    ArrangementSharedGroupDropZone dropZone =
+                        TimelineToolPolicy.ResolveArrangementSharedGroupDropZone(
+                            point.Y,
+                            groupTop,
+                            groupBottom,
+                            differentGroup,
+                            retainedJoin);
+                    if (dropZone == ArrangementSharedGroupDropZone.Before)
                     {
                         _laneHeaderDragTarget = firstGroupLane;
                         _laneHeaderDragInsertsAfterTarget = false;
                         _laneHeaderDragDetachesFromSourceGroup = !differentGroup;
+                        _laneHeaderDragExteriorBoundaryGroupId = targetGroupId;
+                        _laneHeaderDragExteriorBoundaryZone = dropZone;
                     }
-                    else if (point.Y > groupBottom - outsideStrip)
+                    else if (dropZone == ArrangementSharedGroupDropZone.After)
                     {
                         _laneHeaderDragTarget = lastGroupLane;
                         _laneHeaderDragInsertsAfterTarget = true;
                         _laneHeaderDragDetachesFromSourceGroup = !differentGroup;
+                        _laneHeaderDragExteriorBoundaryGroupId = targetGroupId;
+                        _laneHeaderDragExteriorBoundaryZone = dropZone;
                     }
                     else if (differentGroup)
                     {
@@ -1846,6 +1966,15 @@ public sealed class TimelineSurface : Control
             double reorderDeltaY = point.Y - _laneHeaderDragOrigin.Y;
             _laneHeaderDragActivated |= reorderDeltaX * reorderDeltaX
                 + reorderDeltaY * reorderDeltaY >= 100;
+            if (_laneHeaderDragJoinsTargetGroup
+                || _laneHeaderDragExteriorBoundaryGroupId.HasValue)
+            {
+                // A group body or exterior-boundary drop does not target the
+                // member Track currently under the pointer. Keep the semantic
+                // group preview as the only hover target during this gesture.
+                _hoverLaneHeader = null;
+                _hoverSharedGroupId = null;
+            }
             Cursor = _laneHeaderDragActivated ? Cursors.SizeNS : Cursors.Arrow;
             InvalidateVisual();
             return;
@@ -2014,7 +2143,9 @@ public sealed class TimelineSurface : Control
         {
             UpdateHoverCursor(point, hoverViewport);
         }
-        if (hoverChangesVisual || previousHoverLaneHeader != _hoverLaneHeader)
+        if (hoverChangesVisual
+            || previousHoverLaneHeader != _hoverLaneHeader
+            || previousHoverSharedGroupId != _hoverSharedGroupId)
         {
             InvalidateVisual();
         }
@@ -2075,12 +2206,16 @@ public sealed class TimelineSurface : Control
             bool movesWholeGroup = _laneHeaderDragMovesWholeGroup;
             bool insertsAfterTarget = _laneHeaderDragInsertsAfterTarget;
             bool detachesFromSourceGroup = _laneHeaderDragDetachesFromSourceGroup;
+            bool targetsSharedGroup = _pressedLaneHeaderTargetsSharedGroup;
             _pressedLaneHeader = null;
+            _pressedLaneHeaderTargetsSharedGroup = false;
+            _pressedSharedGroupId = null;
             _laneHeaderDragActivated = false;
             _laneHeaderDragJoinsTargetGroup = false;
             _laneHeaderDragMovesWholeGroup = false;
             _laneHeaderDragInsertsAfterTarget = false;
             _laneHeaderDragDetachesFromSourceGroup = false;
+            _laneHeaderDragExteriorBoundaryGroupId = null;
             _laneHeaderDragJoinUsesChip = false;
             _laneHeaderDragRequiresRebind = false;
             Cursor = Cursors.Arrow;
@@ -2099,7 +2234,7 @@ public sealed class TimelineSurface : Control
             }
             else
             {
-                LaneHeaderInvoked?.Invoke(this, new(pressedLane));
+                LaneHeaderInvoked?.Invoke(this, new(pressedLane, targetsSharedGroup));
             }
             InvalidateVisual();
             e.Handled = true;
@@ -2299,11 +2434,14 @@ public sealed class TimelineSurface : Control
         _eventPointEdits.Clear();
         _eventPointTracePoints.Clear();
         _pressedLaneHeader = null;
+        _pressedLaneHeaderTargetsSharedGroup = false;
+        _pressedSharedGroupId = null;
         _laneHeaderDragActivated = false;
         _laneHeaderDragJoinsTargetGroup = false;
         _laneHeaderDragMovesWholeGroup = false;
         _laneHeaderDragInsertsAfterTarget = false;
         _laneHeaderDragDetachesFromSourceGroup = false;
+        _laneHeaderDragExteriorBoundaryGroupId = null;
         _laneHeaderDragJoinUsesChip = false;
         _laneHeaderDragRequiresRebind = false;
         if (IsMouseOver)
@@ -2420,8 +2558,10 @@ public sealed class TimelineSurface : Control
                 or TimelineSurfaceMode.PianoRoll
                 or TimelineSurfaceMode.EventLanes;
         hoverChangedVisual |= _hoverLaneHeader is not null;
+        hoverChangedVisual |= _hoverSharedGroupId is not null;
         _hoverPoint = null;
         _hoverLaneHeader = null;
+        _hoverSharedGroupId = null;
         if (!IsMouseCaptured)
         {
             SetValue(PointerPositionTextPropertyKey, "(-, -)");
@@ -2449,11 +2589,14 @@ public sealed class TimelineSurface : Control
         if (e.Key == Key.Escape && _pressedLaneHeader is not null)
         {
             _pressedLaneHeader = null;
+            _pressedLaneHeaderTargetsSharedGroup = false;
+            _pressedSharedGroupId = null;
             _laneHeaderDragActivated = false;
             _laneHeaderDragJoinsTargetGroup = false;
             _laneHeaderDragMovesWholeGroup = false;
             _laneHeaderDragInsertsAfterTarget = false;
             _laneHeaderDragDetachesFromSourceGroup = false;
+            _laneHeaderDragExteriorBoundaryGroupId = null;
             _laneHeaderDragJoinUsesChip = false;
             _laneHeaderDragRequiresRebind = false;
             Cursor = Cursors.Arrow;
@@ -5831,6 +5974,7 @@ public sealed class TimelineSurface : Control
             Brush hoverBackground = Brush("Brush.Surface.2", Color.FromRgb(20, 24, 30));
             Brush pressedBackground = Brush("Brush.Surface.0", Color.FromRgb(9, 11, 14));
             Brush parentBackground = Brush("Brush.Surface.2", Color.FromRgb(20, 24, 30));
+            Brush selectedTrackBackground = Brush("Brush.Red.Subtle", Color.FromRgb(44, 17, 20));
             context.PushClip(new RectangleGeometry(new Rect(0, rulerHeight, laneHeaderWidth, Math.Max(0, ActualHeight - rulerHeight))));
             for (int relativeLane = 0; relativeLane < viewport.LaneCount; relativeLane++)
             {
@@ -5854,13 +5998,30 @@ public sealed class TimelineSurface : Control
                         null,
                         new Rect(0, laneTop, laneHeaderWidth, headerVisualHeight));
                 }
+                bool selectedArrangementTrack = SurfaceMode == TimelineSurfaceMode.Arrangement
+                    && arrangementLane is ArrangementLaneDescriptor selectedDescriptor
+                    && IsSelectedArrangementTrackLane(selectedDescriptor);
+                Rect selectedBounds = new(
+                    0.5,
+                    laneTop + 0.5,
+                    Math.Max(0, laneHeaderWidth - 1),
+                    Math.Max(0, headerVisualHeight - 1));
+                if (selectedArrangementTrack)
+                {
+                    context.DrawRectangle(selectedTrackBackground, null, selectedBounds);
+                }
                 if (SurfaceMode == TimelineSurfaceMode.Arrangement
-                    && (_hoverLaneHeader == lane || _pressedLaneHeader == lane))
+                    && (_hoverLaneHeader == lane
+                        || _pressedLaneHeader == lane && !_pressedLaneHeaderTargetsSharedGroup))
                 {
                     context.DrawRectangle(
                         _pressedLaneHeader == lane ? pressedBackground : hoverBackground,
                         null,
                         new Rect(0, laneTop, laneHeaderWidth, headerVisualHeight));
+                }
+                if (selectedArrangementTrack)
+                {
+                    context.DrawRectangle(null, _trackSelectionPen, selectedBounds);
                 }
                 if (SurfaceMode == TimelineSurfaceMode.Arrangement
                     && (uint)lane < (uint)laneColors.Count
@@ -6005,18 +6166,45 @@ public sealed class TimelineSurface : Control
                     }
                     else
                     {
-                        ArrangementLaneDescriptor groupFirst = dragSnapshot.ArrangementLanes
-                            .First(value => value.SharedGroupId == groupId);
-                        ArrangementLaneDescriptor groupLast = dragSnapshot.ArrangementLanes
-                            .Last(value => value.SharedGroupId == groupId);
-                        double top = GetLaneTop(viewport, groupFirst.Lane, rulerHeight);
-                        double bottom = GetLaneTop(viewport, groupLast.Lane, rulerHeight)
-                            + GetLaneVisualHeight(groupLast.Lane);
-                        context.DrawRectangle(
-                            null,
-                            outline,
-                            new Rect(0.5, top + 0.5, laneHeaderWidth - 1, Math.Max(1, bottom - top - 1)));
+                        if (TryGetArrangementSharedGroupBounds(
+                                dragSnapshot,
+                                viewport,
+                                groupId,
+                                rulerHeight,
+                                out double top,
+                                out double bottom))
+                        {
+                            context.DrawRectangle(
+                                null,
+                                outline,
+                                new Rect(0.5, top + 0.5, laneHeaderWidth - 1, Math.Max(1, bottom - top - 1)));
+                        }
                     }
+                }
+                else if (_laneHeaderDragExteriorBoundaryGroupId is MidoraId boundaryGroupId
+                    && Snapshot is TimelineRenderSnapshot boundarySnapshot
+                    && TryGetArrangementSharedGroupBounds(
+                        boundarySnapshot,
+                        viewport,
+                        boundaryGroupId,
+                        rulerHeight,
+                        out double groupTop,
+                        out double groupBottom))
+                {
+                    double boundaryY = TimelineToolPolicy.ResolveArrangementSharedGroupBoundaryY(
+                        groupTop,
+                        groupBottom,
+                        _laneHeaderDragExteriorBoundaryZone);
+                    double alignedBoundaryY = _laneHeaderDragExteriorBoundaryZone
+                        == ArrangementSharedGroupDropZone.After
+                            ? boundaryY - 0.5
+                            : boundaryY + 0.5;
+                    context.DrawLine(
+                        _laneHeaderDragDetachesFromSourceGroup
+                            ? _groupDetachBoundaryPen
+                            : _infoPen,
+                        new Point(0, alignedBoundaryY),
+                        new Point(laneHeaderWidth, alignedBoundaryY));
                 }
                 else
                 {
@@ -6457,6 +6645,19 @@ public sealed class TimelineSurface : Control
             or ArrangementLaneKind.LogicalTrack
             or ArrangementLaneKind.PureMidiTrack;
 
+    private static bool IsSelectableArrangementTrackLane(ArrangementLaneKind kind) =>
+        kind is ArrangementLaneKind.LogicalTrack
+            or ArrangementLaneKind.PureMidiTrack
+            or ArrangementLaneKind.DamagedLogicalTrack
+            or ArrangementLaneKind.DamagedPureMidiTrack;
+
+    private bool IsSelectedArrangementTrackLane(ArrangementLaneDescriptor descriptor) =>
+        descriptor.Kind == ArrangementLaneKind.Conductor
+            ? IsConductorTrackSelected
+            : SelectedArrangementTrackId is MidoraId selectedTrackId
+                && descriptor.ObjectId == selectedTrackId
+                && IsSelectableArrangementTrackLane(descriptor.Kind);
+
     private void DrawArrangementDisclosure(
         DrawingContext context,
         double laneTop,
@@ -6539,11 +6740,16 @@ public sealed class TimelineSurface : Control
                     false);
             }
             geometry.Freeze();
-            bool highlighted = _hoverLaneHeader is int hoverLane
-                && (uint)hoverLane < (uint)snapshot.ArrangementLanes.Count
-                && snapshot.ArrangementLanes[hoverLane].SharedGroupId == groupId
-                && _hoverPoint is Point pointer
-                && pointer.X < 13;
+            bool highlighted = _hoverSharedGroupId == groupId
+                || _pressedSharedGroupId == groupId
+                || _contextSharedGroupId == groupId;
+            if (highlighted)
+            {
+                context.DrawRectangle(
+                    Brush("Brush.Red.Subtle", Color.FromRgb(44, 17, 20)),
+                    null,
+                    new Rect(0, top - 3, 13, bottom - top + 6));
+            }
             context.DrawGeometry(null, highlighted ? _redPen : _borderPen, geometry);
         }
     }
@@ -6587,6 +6793,60 @@ public sealed class TimelineSurface : Control
             context.DrawRectangle(brush, null, new Rect(13, top, width, 3));
             context.DrawRectangle(brush, null, new Rect(13, Math.Max(top, bottom - 3), width, 3));
         }
+
+        if (!_laneHeaderDragDetachesFromSourceGroup
+            || snapshot.ArrangementLanes[sourceLane].SharedGroupId is not MidoraId sourceGroupId)
+        {
+            return;
+        }
+
+        if (!TryGetArrangementSharedGroupBounds(
+                snapshot,
+                viewport,
+                sourceGroupId,
+                rulerHeight,
+                out double sourceTop,
+                out double sourceBottom))
+        {
+            return;
+        }
+        double activeY = _laneHeaderDragInsertsAfterTarget
+            ? Math.Max(sourceTop, sourceBottom - 5)
+            : sourceTop;
+        double activeWidth = Math.Max(0, GetLaneHeaderWidth() - 13);
+        context.DrawRectangle(
+            Brush("Brush.Info.Subtle", Color.FromRgb(20, 46, 70)),
+            null,
+            new Rect(13, activeY, activeWidth, 5));
+    }
+
+    private bool TryGetArrangementSharedGroupBounds(
+        TimelineRenderSnapshot snapshot,
+        TimelineViewport viewport,
+        MidoraId groupId,
+        double rulerHeight,
+        out double top,
+        out double bottom)
+    {
+        int firstLane = -1;
+        int lastLane = -1;
+        for (int index = 0; index < snapshot.ArrangementLanes.Count; index++)
+        {
+            if (snapshot.ArrangementLanes[index].SharedGroupId != groupId) continue;
+            firstLane = firstLane < 0 ? snapshot.ArrangementLanes[index].Lane : firstLane;
+            lastLane = snapshot.ArrangementLanes[index].Lane;
+        }
+        if (firstLane < 0)
+        {
+            top = 0;
+            bottom = 0;
+            return false;
+        }
+
+        top = GetLaneTop(viewport, firstLane, rulerHeight);
+        bottom = GetLaneTop(viewport, lastLane, rulerHeight)
+            + GetLaneVisualHeight(lastLane);
+        return true;
     }
 
     private void DrawMidiTrackIcon(
@@ -7159,7 +7419,8 @@ public sealed class TimelineSurface : Control
     private void RaiseBackgroundInvoked(
         Point point,
         TimelineViewport viewport,
-        bool isDoubleClick)
+        bool isDoubleClick,
+        bool isEmptyBackground = false)
     {
         double header = GetLaneHeaderWidth();
         double ruler = GetRulerHeight();
@@ -7185,7 +7446,8 @@ public sealed class TimelineSurface : Control
                 lane,
                 normalizedValue,
                 Keyboard.Modifiers,
-                isDoubleClick));
+                isDoubleClick,
+                isEmptyBackground));
     }
 
     private void ZoomValueAxis(double pointerY, int wheelDelta, double rulerHeight)
@@ -7547,6 +7809,10 @@ public sealed class TimelineSurface : Control
         _successPen = FrozenPen(success, 1);
         Brush selection = Brush("Brush.Red.Hover", Color.FromRgb(255, 96, 101));
         _selectionPen = FrozenPen(selection, 2);
+        Brush trackSelectionOutline = red.Clone();
+        trackSelectionOutline.Opacity *= 0.6;
+        trackSelectionOutline.Freeze();
+        _trackSelectionPen = FrozenPen(trackSelectionOutline, 1);
         Brush segmentSelectionOutline = segmentSelection.Clone();
         segmentSelectionOutline.Opacity *= 0.6;
         segmentSelectionOutline.Freeze();
@@ -7561,6 +7827,7 @@ public sealed class TimelineSurface : Control
             Brush("Brush.Warning", Color.FromRgb(232, 179, 75)),
             1,
             DashStyles.Dash);
+        _groupDetachBoundaryPen = FrozenPen(info, 3);
         Brush dragPreview = info.Clone();
         dragPreview.Opacity *= 0.88;
         dragPreview.Freeze();

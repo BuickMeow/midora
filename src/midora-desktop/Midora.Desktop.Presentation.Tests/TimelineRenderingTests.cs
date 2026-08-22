@@ -28,6 +28,18 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void ArrangementTrackSelectionInvalidatesTheSurface()
+    {
+        FrameworkPropertyMetadata trackMetadata = Assert.IsType<FrameworkPropertyMetadata>(
+            TimelineSurface.SelectedArrangementTrackIdProperty.GetMetadata(typeof(TimelineSurface)));
+        FrameworkPropertyMetadata conductorMetadata = Assert.IsType<FrameworkPropertyMetadata>(
+            TimelineSurface.IsConductorTrackSelectedProperty.GetMetadata(typeof(TimelineSurface)));
+
+        Assert.True(trackMetadata.AffectsRender);
+        Assert.True(conductorMetadata.AffectsRender);
+    }
+
+    [Fact]
     public void OverviewPlaybackAndEditCursorsInvalidateTheOverview()
     {
         FrameworkPropertyMetadata playbackMetadata = Assert.IsType<FrameworkPropertyMetadata>(
@@ -142,6 +154,159 @@ public sealed class TimelineRenderingTests
             Assert.True(surface.TryGetArrangementTrackInsertionIndex(new Point(400, 280), out int last));
             Assert.Equal(3, last);
         });
+    }
+
+    [Fact]
+    public void ArrangementBraceAndEmptyBackgroundHaveIndependentHitTargets()
+    {
+        RunOnSta(() =>
+        {
+            MidoraId sharedUsageId = new(100);
+            TimelineRenderSnapshot snapshot = new(
+                1,
+                "arrangement:brace-hit-target",
+                [],
+                ["Conductor", "Shared A", "Shared B"],
+                arrangementLanes:
+                [
+                    new(0, ArrangementLaneKind.Conductor, null, null, 0, true, false, false),
+                    new(1, ArrangementLaneKind.LogicalTrack, new MidoraId(11), null, 0, true, false, true)
+                    {
+                        SharedGroupId = sharedUsageId,
+                        IsSharedGroup = true,
+                        IsSharedGroupStart = true,
+                        SharedGroupMemberCount = 2
+                    },
+                    new(2, ArrangementLaneKind.LogicalTrack, new MidoraId(12), null, 0, true, false, true)
+                    {
+                        SharedGroupId = sharedUsageId,
+                        IsSharedGroup = true,
+                        IsSharedGroupEnd = true,
+                        SharedGroupMemberCount = 2
+                    }
+                ]);
+            TimelineSurface surface = new()
+            {
+                Snapshot = snapshot,
+                SurfaceMode = TimelineSurfaceMode.Arrangement,
+                LaneHeight = 60,
+                TickSpan = 1_920
+            };
+            Grid host = new();
+            host.Children.Add(surface);
+            host.Measure(new Size(800, 260));
+            host.Arrange(new Rect(0, 0, 800, 260));
+
+            Assert.True(surface.TryGetArrangementSharedGroupBraceTarget(
+                new Point(5, 100),
+                out MidoraId groupId));
+            Assert.Equal(sharedUsageId, groupId);
+            Assert.False(surface.TryGetArrangementSharedGroupBraceTarget(new Point(20, 100), out _));
+            Assert.False(surface.IsArrangementEmptyBackground(new Point(5, 100)));
+            Assert.True(surface.IsArrangementEmptyBackground(new Point(400, 100)));
+            Assert.True(surface.IsArrangementEmptyBackground(new Point(400, 240)));
+        });
+    }
+
+    [Fact]
+    public void ArrangementSharedGroupContextHighlightPersistsUntilExplicitlyCleared()
+    {
+        RunOnSta(() =>
+        {
+            MidoraId sharedUsageId = new(100);
+            TimelineRenderSnapshot snapshot = new(
+                1,
+                "arrangement:brace-context-highlight",
+                [],
+                ["Conductor", "Shared A", "Shared B"],
+                arrangementLanes:
+                [
+                    new(0, ArrangementLaneKind.Conductor, null, null, 0, true, false, false),
+                    new(1, ArrangementLaneKind.LogicalTrack, new MidoraId(11), null, 0, true, false, true)
+                    {
+                        SharedGroupId = sharedUsageId,
+                        IsSharedGroup = true,
+                        IsSharedGroupStart = true,
+                        SharedGroupMemberCount = 2
+                    },
+                    new(2, ArrangementLaneKind.LogicalTrack, new MidoraId(12), null, 0, true, false, true)
+                    {
+                        SharedGroupId = sharedUsageId,
+                        IsSharedGroup = true,
+                        IsSharedGroupEnd = true,
+                        SharedGroupMemberCount = 2
+                    }
+                ]);
+            TimelineSurface surface = new()
+            {
+                Snapshot = snapshot,
+                SurfaceMode = TimelineSurfaceMode.Arrangement,
+                LaneHeight = 60,
+                TickSpan = 1_920
+            };
+            Grid host = new();
+            host.Children.Add(surface);
+            host.Measure(new Size(800, 260));
+            host.Arrange(new Rect(0, 0, 800, 260));
+
+            byte[] initial = RenderVisual(surface);
+            surface.SetArrangementSharedGroupContextHighlight(sharedUsageId);
+            byte[] highlighted = RenderVisual(surface);
+            surface.SetArrangementSharedGroupContextHighlight(null);
+            byte[] cleared = RenderVisual(surface);
+
+            Assert.False(initial.SequenceEqual(highlighted));
+            Assert.Equal(initial, cleared);
+        });
+    }
+
+    [Theory]
+    [InlineData(111.999, true, false, ArrangementSharedGroupDropZone.Before)]
+    [InlineData(112, true, false, ArrangementSharedGroupDropZone.Body)]
+    [InlineData(208, true, false, ArrangementSharedGroupDropZone.Body)]
+    [InlineData(208.001, true, false, ArrangementSharedGroupDropZone.After)]
+    [InlineData(103.999, true, true, ArrangementSharedGroupDropZone.Before)]
+    [InlineData(104, true, true, ArrangementSharedGroupDropZone.Body)]
+    [InlineData(107.999, false, false, ArrangementSharedGroupDropZone.Before)]
+    [InlineData(108, false, false, ArrangementSharedGroupDropZone.Body)]
+    [InlineData(212, false, false, ArrangementSharedGroupDropZone.Body)]
+    [InlineData(212.001, false, false, ArrangementSharedGroupDropZone.After)]
+    public void ArrangementSharedGroupDropZoneSeparatesExteriorAndBodyTargets(
+        double pointerY,
+        bool differentGroup,
+        bool retainedJoin,
+        ArrangementSharedGroupDropZone expected)
+    {
+        Assert.Equal(
+            expected,
+            TimelineToolPolicy.ResolveArrangementSharedGroupDropZone(
+                pointerY,
+                groupTop: 100,
+                groupBottom: 220,
+                differentGroup,
+                retainedJoin));
+    }
+
+    [Fact]
+    public void ArrangementExteriorPreviewUsesTheSharedGroupOuterBoundary()
+    {
+        Assert.Equal(
+            100,
+            TimelineToolPolicy.ResolveArrangementSharedGroupBoundaryY(
+                100,
+                220,
+                ArrangementSharedGroupDropZone.Before));
+        Assert.Equal(
+            220,
+            TimelineToolPolicy.ResolveArrangementSharedGroupBoundaryY(
+                100,
+                220,
+                ArrangementSharedGroupDropZone.After));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            TimelineToolPolicy.ResolveArrangementSharedGroupBoundaryY(
+                100,
+                220,
+                ArrangementSharedGroupDropZone.Body));
     }
 
     [Fact]
@@ -2159,5 +2324,17 @@ public sealed class TimelineRenderingTests
         {
             ExceptionDispatchInfo.Capture(failure).Throw();
         }
+    }
+
+    private static byte[] RenderVisual(Visual visual)
+    {
+        visual.Dispatcher.Invoke(
+            DispatcherPriority.Render,
+            new Action(() => { }));
+        RenderTargetBitmap target = new(800, 260, 96, 96, PixelFormats.Pbgra32);
+        target.Render(visual);
+        byte[] pixels = new byte[800 * 260 * 4];
+        target.CopyPixels(pixels, 800 * 4, 0);
+        return pixels;
     }
 }

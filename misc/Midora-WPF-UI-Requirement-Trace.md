@@ -190,3 +190,69 @@ UI/runtime 边界：
 规格同步记录：
 
 - 产品所有者于 2026-08-21 授权全面更新后，Logical Track 普通独立 Duplicate、显式 `Duplicate and Share State`、Definition-only Duplicate、共享 Fixed Root Channel Mode 编辑与 Arrangement chrome / Marker / overview 投影已同步进入 SRS 第 5、7、10～12、17、18、20、22、24 章及 ADR-CORE-046 / ADR-UI-041；本节不再记录未解决的规格差异。
+
+## 11. 2026-08-21 Arrangement Track 单选与 Pure MIDI cache identity 修正 trace
+
+输入与正式输出：
+
+- Arrangement Track Header 点击产生至多一个、按 Track stable ID 标识的会话选择；选中态只驱动 Header 视觉与 Track 快捷键/命令目标，不替代 Segment、Note 或 Event 的 Workspace Selection。空白左/右键清除该选择，brace 仍是独立 group hit target且不参与单选。
+- brace hover 优先于同位置 Track Header hover，并同时高亮 brace gutter 背景；最后一个 Track 内容底边补齐与行间一致的分割线。Event Instruments pane 在新建 Arrangement Workspace 时默认折叠。
+- Pure MIDI reusable PCM key 的正式输入是实际 Direct Note / Channel Event 内容、分页内容 fingerprint、copy-on-write 删除/替换/新增 delta、Root/Track/Segment identity、生命周期范围及既有音频环境。集合编辑次数不再充当内容 identity；相同 stable ID 与相同编辑次数但内容不同的 Project 必须得到不同 key。
+- 状态栏任何完整消息均提供 `Details`，包括 cache retention Warning；省略显示只影响紧凑状态栏文本，不得丢失完整消息。
+
+边界、失败条件与归属：
+
+- Track Header selection、brace hover、pane visibility 与状态消息展开只属于 UI/runtime session，不持久化、不进入 Undo/Redo、canonical 或 `.midora`。
+- reusable quota 满只停止新 reusable retention；既有合法命中继续可读，miss 必须现场合成。它不得导致静音、阻止播放或改变 canonical。旧的、不完整内容寻址 key 通过 fingerprint schema 修订自然失效，不静默接受为新条目。
+- 本轮不改变 Pure MIDI 可听语义、Root 生命周期、正式分配、SoundFont/renderer identity 或缓存容量策略；只修复错误缓存别名。
+
+验证重点：
+
+- 两个 stable ID 序列与集合 `Generation` 完全相同、但 Note/Channel Event 内容不同的 Pure MIDI Project，其 fragment fingerprint 和 PCM key 必须不同；内容完全相同则仍确定相等。
+- quota 已满的 miss staging 不得伪造 hit 或移除 live-synthesis plan。
+- Arrangement 选择按 stable ID 跨 Rebuild/重排保持，目标删除时清除；空白清除与 brace 命中不得留下旧快捷键目标。
+
+## 12. 2026-08-21 Shared brace drag/context 与新建 Pure MIDI 首播修正 trace
+
+输入与输出：
+
+- brace 右键菜单的当前 shared-group stable ID 在菜单打开期间形成独立 context-highlight；菜单关闭时只清除视觉状态，不改变 Track selection、Project 或共享组身份。
+- member 从本组 top/bottom exterior strip 脱离时，高亮实际生效的上/下边界；外部 Track 指向目标 block body 时，仅绘制 block 外框并压制成员 Header hover。
+- 每次主播放在 Project edit lock 内按当前 Arrangement Track、Mute/Solo 与共享归属重建 audible set。Playback Controller 创建后新增的 Pure MIDI Track 不得沿用空的旧集合。
+- 全部 Pure MIDI Track 均从 canonical SMF descriptor 建立 Track-to-Root cache ownership。初始不可听 owner 的不完整 journal 不发布；后续 playback-span batch 不得把既有 retention failure 重标为 quota-full。
+
+归属与非目标：
+
+- brace context/drag 高亮只属于 WPF session interaction，不持久化、不进入 Undo/Redo 或 canonical。
+- audible set 只属于 realtime consumer；修正不改变 canonical、MIDI Export、Audio Render、Project 数据格式或正式 Mute/Solo 语义。
+- 本轮不实施 Inspector 重设计。
+
+验证重点：
+
+- 在空 Project 已创建 Playback Controller 后新增 Auto/Fixed Pure MIDI Track 与 Note，首次播放计划必须包含其 NoteOn，Track source 不得初始禁用。
+- 初始禁用 Pure MIDI child 时，Root miss 不得发布不完整 Segment cache，retention 保持 Enabled；已存在 write failure 的 Store 接收后续 batch 后仍保持原 failure 分类。
+- 使用正式 Native AOT Worker 与真实 SF2 的新建 Pure MIDI 管线必须完成播放、保留非静音 PCM 且 cache retention 不被禁用。
+
+## 13. 2026-08-22 Shared block exterior drop preview 修正 trace
+
+输入与正式输出：
+
+- 输入是单 Track Header 拖动期间的实时指针位置、来源/目标 Track 类型、来源/目标 shared-group stable ID，以及目标 block 的真实上/下边界。
+- 外部 Track 尚处于 block top/bottom exterior strip 时，预览线固定显示在 block 的真实外边界；进入 body 后才切换为整 block 虚线外框。不得在这两个语义之间显示成员间隙插入线。
+- 同组成员从 exterior strip 脱离时，预览固定在对应外边界，并使用 3 DIP 的高强调粗线叠加既有低强调边界带；组内插入线不得残留。
+- 约 4 DIP 的 body/exterior hysteresis、通用 10 DIP 拖动启动阈值和最终原子 drop 行为保持不变。
+
+边界、失败条件与诊断：
+
+- 预览状态必须由本次命中解析结果显式携带，不能再从目标成员 lane 二次推断；Snapshot 在手势中失去对应 group 时只跳过该帧预览，不得抛出异常或提交错误目标。
+- 本交互没有业务诊断；取消、失去鼠标捕获或手势完成时必须清除 exterior-boundary 会话状态，避免下一次拖动继承旧预览。
+
+归属与明确非目标：
+
+- pointer、hysteresis、hover、exterior-boundary 和粗线均只属于 WPF session/runtime，不持久化、不进入 Undo/Redo、Project、canonical、MIDI 或音频结果。
+- 本轮不改变 Track 实际排序、Usage/Root 创建删除、Rebind 审查、block 连续性、Fixed route 或 brace 整组拖动语义。
+
+验证重点：
+
+- 自动测试覆盖外部进入时的 12 DIP 边缘带、已进入 body 后的 4 DIP hysteresis、同组成员的 8 DIP 脱离带，以及 top/bottom 外边界映射。
+- 源码渲染分支必须对 exterior-boundary 使用 group top/bottom；只有普通 member insertion 才允许调用按 lane 计算的通用插入线。

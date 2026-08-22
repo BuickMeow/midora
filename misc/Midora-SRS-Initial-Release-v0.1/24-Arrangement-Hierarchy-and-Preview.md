@@ -239,6 +239,8 @@ Add Logical Track Using This Instrument
 
 删除被引用 Definition 不得级联删除 Track。默认必须阻止，并列出引用 Usage/Track；用户须先改绑或删除相关 Track。删除最后一个 Track/Usage也绝不删除 Definition。
 
+Event Instruments pane 属于 Arrangement 会话 UI，Project 打开时默认折叠；用户可从 Arrangement 左上角显式切换显示。该可见性不进入 Project、Undo/Redo 或 canonical。
+
 ### 24.6.3 Header 与块视觉
 
 所有 Track Header 预留同宽的左侧 group gutter，使独立 Track 与 block member 的标题对齐。
@@ -250,9 +252,11 @@ Add Logical Track Using This Instrument
 同一 Auto MIDI Channel Root 的 Pure MIDI Tracks。
 ```
 
-block gutter 绘制跨全部成员的大括号。括号区域是独立 hit target：hover 高亮，按下后越过通用拖动阈值才拖动整个 block；右键提供共享状态/route、Mute/Solo group、Make Independent 等适用命令。Fixed Root members 不绘制 block。
+block gutter 绘制跨全部成员的大括号。括号区域是独立 hit target：hover 时大括号及其 gutter 矩形背景整体高亮，且不得同时触发成员 Track Header 的 hover；在其右键菜单保持打开期间，同一大括号及 gutter 高亮必须保持，菜单关闭后才清除该 context highlight；按下后越过通用拖动阈值才拖动整个 block；右键提供共享状态/route、Mute/Solo group、Make Independent 等适用命令。Fixed Root members 不绘制 block。
 
-Track Header 保留类型图标、名称、route/instrument 摘要、Mute/Solo、hover/pressed 和菜单。Header 点击不形成持久单选；右键菜单目标必须来自本次指针 hit test，空白右键不得复用旧目标。
+Track Header 保留类型图标、名称、route/instrument 摘要、Mute/Solo、hover/pressed 和菜单。Header 左键或右键点击形成会话内单选：普通 Track 按 stable ID 保存，固定唯一 Conductor 以其固定 lane identity 保存；选中项以明确但低噪声的背景与内边框显示。该选择只作为 Track 命令和快捷键目标，不替代 Segment/Note/Event 的 Workspace Selection。brace 永不成为 Track 单选目标。Arrangement 空白处左键或右键均清除 Track 单选；空白右键菜单目标必须来自本次指针 hit test，不得复用旧 Track。Track 删除或 Project 切换时失效选择必须自动清除，且该状态不持久化、不进入 Undo/Redo。
+
+Track 内容区在最后一个可见 Track 的底边绘制与行间一致的分割线，使 Track 区域与后续空白明确分界。
 
 ## 24.7 Track 拖放与组变更
 
@@ -264,7 +268,7 @@ Logical 与 Pure MIDI Track 不允许跨类型成组。brace drag 只整体重�
 
 ### 24.7.2 目标区域
 
-共享 block 的上、下边缘内侧各提供约 8 DIP 的外部插入 hit zone，实际绘制 3–4 DIP 的低强调实线；中间 body 是“加入 block”目标。目标切换使用约 4 DIP hysteresis，避免边缘抖动。
+共享 block 的上、下边缘内侧各提供约 8 DIP 的外部插入 hit zone，实际绘制 3–4 DIP 的低强调实线；中间 body 是“加入 block”目标。目标切换使用约 4 DIP hysteresis，避免边缘抖动。命中解析、预览与最终 drop 必须冻结为同一个语义目标：一旦解析为 top/bottom exterior strip，插入线必须固定绘制在整个 block 的真实上/下外边界，不得因当前成员 lane 或重排归一化而短暂落入 block 内部间隙。同 block member 指向 exterior strip、即本次 drop 会脱离到 block 上/下方时，当前上/下目标边界必须在通用 strip 之上使用更粗的强调实线。外部 Track 指向 block body 时，只显示整个目标 block 的虚线外框，不得同时显示指针下成员 Track Header 的 hover 高亮。
 
 ```text
 外部 Track → block body：加入目标并追加为最后成员，目标 block 全体显示虚线外框；
@@ -410,6 +414,7 @@ Fixed route UI 改属、既有 P.C 合并及共享 Mode 确认；
 shared Usage 活动连通区间、跨 Track overlap、同 tick 顺序与 Unit 数；
 成员 Segment End 不清空 sibling state/note，Usage end 才最终 cleanup；
 Auto/Usage block 连续性、brace reorder、body join、edge detach 和 hysteresis；
+exterior strip 的预览线与最终 drop 同处 block 外边界，组内成员脱离时显示粗边界且不残留内部插入线；
 Fixed Track 任意分散且 route chip join；
 不同 Definition rebind 取消/失败原子性；
 未绑定空壳限制与非法非空无 Usage诊断；

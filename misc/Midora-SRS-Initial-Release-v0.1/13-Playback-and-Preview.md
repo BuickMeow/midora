@@ -446,6 +446,8 @@ Mute / Solo 切换不标记 Project 已修改。
 2. 否则，保留全部未 Mute 的结构有效 Track。
 
 Mute 始终胜过 Solo；多个 Track 可以同时 Solo。Conductor Track 不参与该集合。
+
+每次主播放任务在取得 Project edit lock、确认当前 canonical 可消费之后，必须根据**当前** Project Track 集合和当前 Mute/Solo 状态重新冻结候选集合，再生成 realtime plan。候选集合不得只在 Playback Controller、Project Session 或窗口创建时计算一次；播放控制器存活期间新建、删除、改绑或改变共享组归属的 Track 必须从下一次播放开始正确参与。
 ### 13.10.3 Mute / Solo 不改变 compiled result
 Mute / Solo 只作为播放消费者层实时过滤。
 规则：
@@ -1117,7 +1119,7 @@ Segment/Usage/Root raw PCM 位于 Mute/Solo、Playback Master Volume 与 Limiter
 
 同一 Pure MIDI Root 的 Track，以及同一 Event Instrument Usage 的 Logical Track，必须分别先按 global Arrangement order 与 canonical execution order 合并，再由一个共享 Unit synth stream 生成 PCM；严禁按成员 Track 分别合成后相加。共享组 PCM 同样位于 Mute/Solo 后缀重建结果与全局 Master/Limiter 之前；Pure MIDI 的详细 key、dirty range 与 checkpoint 收敛规则见第 23.10 节，Logical Usage 使用同构的 group key 与连通区间规则。
 
-相同 Project semantic revision、CompileContext、范围和完整 cache key 的 exact replay 命中时，不得再次进行语义编译或 BASSMIDI 合成。跨范围复用必须把范围冷启动上下文纳入 key；不得把含范围前持续 Note 的连续 PCM 切片冒充从中途冷启动的结果。
+相同 Project semantic revision、CompileContext、范围和完整 cache key 的 exact replay 命中时，不得再次进行语义编译或 BASSMIDI 合成。Pure MIDI Root/Segment 的正式可听内容 identity 必须确定性覆盖实际 Direct Note / Channel Event 字段、分页源 fingerprint 与 copy-on-write 删除/替换/新增 delta；集合 `Generation`、编辑次数或仅 stable ID 不得代替内容 identity。跨范围复用必须把范围冷启动上下文纳入 key；不得把含范围前持续 Note 的连续 PCM 切片冒充从中途冷启动的结果。
 
 精确 Root/Unit PCM 命中还必须在 rolling event producer 查询 canonical/source pages 之前形成 source demand schedule。完整由 exact PCM 覆盖的 owner 在相应 frame range 内不得查询、排序或通过 IPC 发送其 MIDI events；混合 hit/miss 只为 miss owner 生产事件。Mute/Solo/monitoring 一旦使某个 cached owner 需要实时重建，必须从命令生效时的实际可听 frame 重建事件 suffix，并在本次 playback generation 后续保持 synthesis bypass；不得因过早丢弃事件而产生不可恢复的未来缺口。
 
@@ -1158,6 +1160,8 @@ cache miss 现渲染，不直接使播放失败。
 Buffering 完整恢复区间使用独立于 reusable quota 的 transient recovery spool；消费或 Stop 后删除。系统必须分别报告 reusable 当前占用/上限、transient 当前/峰值和 retention Warning。若 spool 不可用且预留 RAM 也不足以容纳完整恢复区间，在 `F` 受控 Stop 并报告 `AudioRecoveryStorageUnavailable`，不得退化为短块断续播放。
 
 完整 tile 写完并校验 checksum/generation 后才原子发布。WASAPI callback、BASSMIDI render/mix、ring 搬运线程不得做 cache 文件 I/O。损坏或半写 entry 必须隔离并重建，不能作为命中。
+
+realtime plan 必须为全部 Pure MIDI Track（无论其内容由内存集合还是分页源承载）建立 `Track source → Root cache owner` 绑定。若某 Source 在播放开始时已被 Mute/Solo 过滤，或运行期 Monitoring 使其 owner 进入 synthesis/cache bypass，则本次 generation 中未被完整写出的 owner entry 不得列入 completed-key 集合、不得发布、也不得因此禁用整个 session 的 reusable retention。缓存发布队列发现 retention 已因另一项明确原因禁用时只跳过新条目，不得把原有 write-failure/preference 状态覆盖成 quota-full Warning。
 
 缓存 miss 的 PCM 以 16,384-frame block 直接顺序追加到当前 reusable generation journal；不得先形成完整随机写 sparse spool，再为发布复制一遍完整 payload。每个 block 在追加前计算并写入 checksum，journal 结构、block index/count/length 与 completed-key集合经校验后，完整 generation 通过同卷原子移动和索引提交变为可命中 Pack。未完成 generation、缺失/重复 block、任务取消或崩溃留下的文件只是不在索引内的 dead/orphan bytes，由后续重整回收；任何部分 block 均不得单独命中或被解释为可恢复 BASS voice state。
 

@@ -122,6 +122,7 @@ public sealed partial class MidoraCompiler
             PureMidiRootInterval interval)
         {
             using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            AppendText("MIDORA_PURE_MIDI_AUDIO_FRAGMENT_V2");
             AppendLong(rootPlan.Root.Id.Value);
             AppendLong((int)rootPlan.Root.ChannelMode);
             AppendLong(interval.GroupId.Value);
@@ -143,11 +144,59 @@ public sealed partial class MidoraCompiler
                     AppendLong(segment.LengthTicks);
                     AppendLong(segment.ContentOffsetTick);
                     AppendText(segment.PagedContentFingerprint ?? string.Empty);
-                    AppendLong(segment.Notes.Generation);
-                    AppendLong(segment.ChannelEvents.Generation);
+                    AppendDirectNoteContent(segment.Notes);
+                    AppendDirectChannelEventContent(segment.ChannelEvents);
                 }
             }
             return Convert.ToHexStringLower(hash.GetHashAndReset());
+
+            void AppendDirectNoteContent(DirectMidiNoteCollection notes)
+            {
+                AppendLong(notes.HasPagedSource ? 1 : 0);
+                AppendLong(notes.ClearsPagedSource ? 1 : 0);
+                MidoraId[] removed = notes.RemovedSourceIds.Order().ToArray();
+                AppendLong(removed.Length);
+                foreach (MidoraId id in removed)
+                    AppendLong(id.Value);
+                DirectMidiNote[] edited = notes.EditedItems
+                    .OrderBy(value => value.Id)
+                    .ToArray();
+                AppendLong(edited.Length);
+                foreach (DirectMidiNote value in edited)
+                {
+                    AppendLong(value.Id.Value);
+                    AppendLong(value.StartTick);
+                    AppendLong(value.LengthTicks);
+                    AppendLong(value.Key);
+                    AppendLong(value.NoteOnVelocity);
+                    AppendLong(value.NoteOffVelocity);
+                    AppendLong(value.NoteOnOrder);
+                    AppendLong(value.NoteOffOrder);
+                }
+            }
+
+            void AppendDirectChannelEventContent(DirectMidiChannelEventCollection events)
+            {
+                AppendLong(events.HasPagedSource ? 1 : 0);
+                AppendLong(events.ClearsPagedSource ? 1 : 0);
+                MidoraId[] removed = events.RemovedSourceIds.Order().ToArray();
+                AppendLong(removed.Length);
+                foreach (MidoraId id in removed)
+                    AppendLong(id.Value);
+                DirectMidiChannelEvent[] edited = events.EditedItems
+                    .OrderBy(value => value.Id)
+                    .ToArray();
+                AppendLong(edited.Length);
+                foreach (DirectMidiChannelEvent value in edited)
+                {
+                    AppendLong(value.Id.Value);
+                    AppendLong(value.Tick);
+                    AppendLong((int)value.Kind);
+                    AppendLong(value.Data1);
+                    AppendLong(value.Data2);
+                    AppendLong(value.Order);
+                }
+            }
 
             void AppendInitialState(MidiInitialState value)
             {

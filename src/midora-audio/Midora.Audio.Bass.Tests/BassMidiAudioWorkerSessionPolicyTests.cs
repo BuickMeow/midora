@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Runtime.Versioning;
 using Midora.Audio;
+using Midora.Application;
+using Midora.Compiler;
 using Midora.Domain;
 using Midora.Midi;
 using Midora.Playback;
@@ -430,6 +432,159 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
         }
         finally
         {
+            if (Directory.Exists(cacheRoot))
+            {
+                Directory.Delete(cacheRoot, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task NativeAotFreshPureMidiEditPipelineKeepsAudibleAndMutedCachePublicationHealthy(
+        bool trackAudible)
+    {
+        string? configured = Environment.GetEnvironmentVariable(
+            "MIDORA_TEST_NATIVE_AOT_REALTIME_WORKER");
+        if (string.IsNullOrWhiteSpace(configured) || !File.Exists(configured))
+        {
+            throw SkipException.ForSkip(
+                "Native AOT Pure MIDI cache integration requires MIDORA_TEST_NATIVE_AOT_REALTIME_WORKER.");
+        }
+
+        string workerPath = Path.GetFullPath(configured);
+        string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
+        string soundFontPath = NativeAudioIntegrationEnvironment.RequireSoundFontPath();
+        string soundFontSha256 =
+            NativeAudioIntegrationEnvironment.RequireVerifiedSoundFontSha256(soundFontPath);
+        string cacheRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"midora-fresh-pure-midi-cache-{Guid.NewGuid():N}");
+        MidoraProject project = new(192);
+        string soundFontName = Path.GetFileName(soundFontPath);
+        ProjectCompilationSession compilation = new(
+            project,
+            effectiveSoundFontPath: null,
+            executionMode: ProjectCompilationExecutionMode.Background,
+            backgroundDebounce: TimeSpan.Zero);
+        ProjectDocumentSession document = new(compilation);
+        try
+        {
+            _ = compilation.ConfigureAudioCache(
+                cacheRoot,
+                AudioCachePreferences.DefaultMaximumReusableBytes);
+            project.SoundFont.SetExternal(
+                soundFontName,
+                soundFontName,
+                soundFontSha256,
+                new FileInfo(soundFontPath).Length);
+            compilation.SetEffectiveSoundFontPath(soundFontPath);
+            _ = document.Execute(
+                ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot());
+            PureMidiTrack track = Assert.Single(project.PureMidiTracks);
+            _ = document.Execute(
+                ProjectDomainEditCommands.CreateMidiSegment(
+                    track.Id,
+                    projectStartTick: 0,
+                    lengthTicks: 192));
+            MidiSegment segment = Assert.Single(track.Segments);
+            _ = document.Execute(
+                ProjectDomainEditCommands.CreateDirectMidiNote(
+                    segment.Id,
+                    startTick: 0,
+                    lengthTicks: 96,
+                    key: 60,
+                    noteOnVelocity: 100));
+
+            CanonicalCompiledResult compiled = await compilation
+                .EnsureCurrentCompilationAsync();
+            Assert.True(
+                compiled.IsConsumable,
+                string.Join(Environment.NewLine, compiled.Diagnostics));
+            using PersistentBassMidiAudioWorkerHost host = new(
+                workerPath,
+                nativeDirectory,
+                soundFontPath,
+                TimeSpan.FromSeconds(30),
+                allowManagedTestWorker: false);
+            BassMidiAudioWorkerProbeResult probe = host.Probe(
+                deviceId: null,
+                deviceBufferRequestMilliseconds: 50);
+            MidiRenderPlan plan = compilation.GetOrCreateRealtimeRenderPlan(
+                compiled,
+                probe.ActualSampleRate,
+                trackAudible
+                    ? new HashSet<MidoraId> { track.Id }
+                    : new HashSet<MidoraId>());
+            Assert.Contains(
+                plan.Ports.ToArray().SelectMany(static port => port.Events.ToArray()),
+                static value => value.Message.MessageType == MidiMessageType.NoteOn
+                    && value.Message.Byte2 != 0);
+            Assert.Single(plan.Segments.ToArray());
+
+            using (PersistentBassMidiAudioWorkerSession playback = new(
+                host,
+                plan,
+                soundFontSha256,
+                new BassMidiRendererSettings(500, 256),
+                AudioMasterSettings.LimiterV1,
+                renderAheadMilliseconds: 100,
+                deviceBufferRequestMilliseconds: 50,
+                deviceId: null,
+                preparingTimeout: TimeSpan.FromSeconds(30),
+                audioCache: compilation,
+                bufferingRecoverySpoolPath: null,
+                bufferingRecoveryMemoryFrameCapacity: 0,
+                playbackSpanCacheEnabled: true))
+            {
+                long deadline = Environment.TickCount64 + 10_000;
+                AudioWorkerStatus status = playback.Status;
+                while (status.State is AudioWorkerState.Playing or AudioWorkerState.Buffering
+                    && Environment.TickCount64 < deadline)
+                {
+                    Thread.Sleep(2);
+                    status = playback.Status;
+                }
+                Assert.Equal(AudioWorkerState.Completed, status.State);
+                playback.Stop(flush: true, TimeSpan.FromSeconds(5));
+            }
+
+            AudioCacheSessionSnapshot snapshot = Assert.IsType<AudioCacheSessionSnapshot>(
+                compilation.AudioCacheSnapshot);
+            Assert.True(
+                snapshot.RetentionState == AudioCacheRetentionState.Enabled,
+                $"state={snapshot.RetentionState}; reusable={snapshot.ReusableBytes}; "
+                    + $"maximum={snapshot.MaximumReusableBytes}; physical={snapshot.PhysicalReusableBytes}; "
+                    + $"journalEntries={snapshot.JournalPublishedEntryCount}; "
+                    + $"journalBytes={snapshot.JournalPublishedLiveBytes}; "
+                    + $"pending={snapshot.PendingPublishCount}; backlog={snapshot.WriterBacklogBytes}; "
+                    + $"planFrames={plan.TotalFrameCount}; "
+                    + $"segmentBytes={plan.Segments[0].PcmPayloadByteCount}; "
+                    + $"warning={snapshot.Warning.Message}");
+            string nativeIdentity = AudioUnitCacheStaging.ComputeNativeIdentity(nativeDirectory);
+            string segmentKey = MidiSegmentPcmCacheKey.Create(
+                plan.Segments[0],
+                plan.SampleRate,
+                soundFontSha256,
+                nativeIdentity,
+                maximumSampleVoicesPerUnitStream: 500);
+            if (trackAudible)
+            {
+                Assert.True(compilation.TryReadReusableAudio(segmentKey, out byte[] payload));
+                Assert.Contains(
+                    payload.AsSpan(AudioPcmCachePayload.HeaderByteCount).ToArray(),
+                    static value => value != 0);
+            }
+            else
+            {
+                Assert.False(compilation.TryReadReusableAudio(segmentKey, out _));
+            }
+        }
+        finally
+        {
+            compilation.Dispose();
+            project.Dispose();
             if (Directory.Exists(cacheRoot))
             {
                 Directory.Delete(cacheRoot, recursive: true);

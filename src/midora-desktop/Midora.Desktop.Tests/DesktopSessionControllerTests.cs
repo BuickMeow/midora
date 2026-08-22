@@ -1452,6 +1452,34 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public async Task ArrangementTrackSelectionDefaultsClosedSurvivesRebuildAndClearsOnDelete()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Arrangement selection",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot("MIDI Track"));
+        PureMidiTrack track = Assert.Single(session.Project!.PureMidiTracks);
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+
+        Assert.False(arrangement.IsEventInstrumentPaneVisible);
+        arrangement.SelectedArrangementTrackId = track.Id;
+        arrangement.IsConductorTrackSelected = false;
+        session.Execute(ProjectDomainEditCommands.RenamePureMidiTrack(track.Id, "Renamed"));
+
+        Assert.Equal(track.Id, arrangement.SelectedArrangementTrackId);
+        Assert.False(arrangement.IsConductorTrackSelected);
+
+        session.Execute(ProjectDomainEditCommands.DeletePureMidiTrack(
+            track.Id,
+            nonEmptyDeletionConfirmed: false));
+
+        Assert.Null(arrangement.SelectedArrangementTrackId);
+    }
+
+    [Fact]
     public async Task MidiImportActivatesOneDetachedProjectCandidate()
     {
         await using DesktopSessionController session = new();

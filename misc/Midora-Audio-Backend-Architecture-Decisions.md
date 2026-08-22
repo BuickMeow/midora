@@ -172,7 +172,7 @@ Requirement trace：输入为固定版本 BASS/BASSWASAPI、进程全局字符�
 
 决定采用分层结构：canonical range cache、编译器内部 Logical Segment/Unit fragment 与 Pure MidiSegment/Root checkpoint cache、pre-Master/pre-Limiter Unit/Root PCM tile cache、post-sum/Master/Limiter playback span cache、精确 Render-Ahead ring。缓存只能位于 canonical 之后或编译器内部，不得成为新的正式语义来源。
 
-相同 semantic revision、CompileContext、范围和完整渲染 key 的 exact replay，若 reusable entry 完整有效，则不得再次执行语义编译或 BASSMIDI 合成。Logical Segment/Unit PCM key 必须包含既有 fingerprint；Pure MIDI Root PCM key 必须包含 Root composite/start-state/mode fingerprint；二者均包含 SF2 hash、Tempo 投影、采样率/格式、固定 native 基线、voice policy 与 renderer version。playback span key 另包含 audible set、Master、Limiter、范围起点和 Limiter 状态。
+相同 semantic revision、CompileContext、范围和完整渲染 key 的 exact replay，若 reusable entry 完整有效，则不得再次执行语义编译或 BASSMIDI 合成。Logical Segment/Unit PCM key 必须包含既有 fingerprint；Pure MIDI Root PCM key 必须包含 Root composite/start-state/mode fingerprint，并对其可听 Direct Note / Channel Event 的实际字段、分页源内容 identity 与 copy-on-write delta 做确定内容寻址，严禁用集合 `Generation`、编辑次数或仅 stable ID 代替内容 identity；二者均包含 SF2 hash、Tempo 投影、采样率/格式、固定 native 基线、voice policy 与 renderer version。playback span key 另包含 audible set、Master、Limiter、范围起点和 Limiter 状态。
 
 缓存是 Project-open-session 范围的磁盘后备存储加有界 RAM hot set，不跨会话，不进入 `.midora`。已完成条目在 Project 打开期间不驱逐；Project 关闭时只删除由版本化 manifest 识别的本 session 目录。默认 root 为 `%LOCALAPPDATA%\Midora\AudioCache`，只接受可写本机绝对路径；reusable quota 默认 16 GiB，允许 0 到 `Int64.MaxValue` bytes。程序只能管理 root 下已知的 `session-*` 子目录，不得递归清空 root 或删除未知文件。
 
@@ -251,6 +251,8 @@ Worker 的事件边界计算必须先消费当前 render frame 的全部滚动�
 缓存miss不再写完整随机访问sparse spool后复制进Pack。专用cache I/O bridge把stereo float32 PCM按16,384-frame block顺序追加到generation journal，每个block携带既有96-byte header与SHA-256；2 GiB record边界轮换Pack文件。Generation完成时只扫描header/extent、验证completed key的block连续性并以同卷move采用文件，然后原子发布内存索引；payload checksum由writer在append前计算、reader在命中读取时再次验证，不为发布重新读取或复制全部payload。崩溃、取消和不完整key只留下不可达dead blocks，由既有代际重整回收。
 
 专用cache线程允许有界等待SSD来保证缓存最终写入；callback与native decode仍不做文件I/O。诊断分别记录event queried/emitted/suppressed/lag、cache read/write wait、journal adopted entries/live bytes。SoundFont继续使用持久MMAP与引用Preset预载，本ADR不增加Preload All或完整`.mpk`常驻内存模式。
+
+每次主播放在取得Project edit lock并确认canonical后重新冻结当前audible Track集合，不能复用Playback Controller构造时的Track快照。Pure MIDI monitoring/cache ownership统一从全部canonical SMF Pure Track descriptors建立`Track source → Root owner`绑定，不能只依赖分页内容metadata；因此新建的小型内存Track与大型分页Track遵守同一规则。初始不可听或运行期bypass的owner若未形成完整journal，不列入completed keys；跳过该entry不属于write failure或quota full。缓存retention一旦以明确原因禁用，后续异步batch只能跳过，不得改变失败分类。
 
 验证覆盖全PCM hit零source query/零BASS synthesis、mixed hit/miss、Monitoring后单调bypass、在已抑制prefix之后从可听frame发布并读取新generation、journal多block/短尾/损坏/取消/配额、采用后byte-exact读取、原生BASS第二次播放PCM一致且synthesis frames为零。
 

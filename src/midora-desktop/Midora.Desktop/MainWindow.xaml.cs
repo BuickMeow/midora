@@ -1152,6 +1152,14 @@ public partial class MainWindow : Window
         bool isLaneHeader = contextPoint.X < headerWidth;
         if (surface.SurfaceMode == TimelineSurfaceMode.Arrangement)
         {
+            if (surface.IsArrangementEmptyBackground(contextPoint)
+                && _session.ActiveWorkspace is TimelineWorkspaceViewModel
+                {
+                    Mode: TimelineWorkspaceMode.Arrangement
+                } arrangementWorkspace)
+            {
+                ClearArrangementTrackSelection(arrangementWorkspace);
+            }
             _trackHeaderContextLane = surface.TryGetArrangementLaneHeader(contextPoint, out int contextLane)
                 ? contextLane
                 : null;
@@ -1160,6 +1168,8 @@ public partial class MainWindow : Window
                     out MidoraId sharedGroupId)
                 ? sharedGroupId
                 : null;
+            surface.SetArrangementSharedGroupContextHighlight(
+                _arrangementSharedGroupContextId);
         }
         if (isLaneHeader)
         {
@@ -3680,24 +3690,17 @@ public partial class MainWindow : Window
         {
             return;
         }
-        _trackHeaderContextLane = e.Lane;
-        workspace.ActiveLane = e.Lane;
         if (workspace is TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement } arrangement
-            && arrangement.GetArrangementLane(e.Lane) is { ObjectId: MidoraId arrangementObjectId } arrangementLane)
+            && arrangement.GetArrangementLane(e.Lane) is ArrangementLaneDescriptor arrangementLane)
         {
-            if (arrangementLane.Kind is ArrangementLaneKind.LogicalTrack
-                or ArrangementLaneKind.PureMidiTrack)
-            {
-                _arrangementHeaderShortcut = (arrangementLane.Kind, arrangementObjectId);
-                _logicalTrackShortcutTrackId = arrangementLane.Kind == ArrangementLaneKind.LogicalTrack
-                    ? arrangementObjectId
-                    : null;
-            }
-            else
-            {
-                _arrangementHeaderShortcut = null;
-                _logicalTrackShortcutTrackId = null;
-            }
+            if (e.IsSharedGroupTarget) return;
+            _trackHeaderContextLane = e.Lane;
+            SelectArrangementTrack(arrangement, arrangementLane);
+        }
+        else
+        {
+            _trackHeaderContextLane = e.Lane;
+            workspace.ActiveLane = e.Lane;
         }
         if (sender is TimelineSurface { Tag: "ParameterLanes" }
             && workspace is TimelineWorkspaceViewModel
@@ -3730,6 +3733,14 @@ public partial class MainWindow : Window
             menu.PlacementTarget = button;
             menu.IsOpen = true;
             e.Handled = true;
+        }
+    }
+
+    private void OnTimelineContextMenuClosed(object sender, RoutedEventArgs e)
+    {
+        if (sender is ContextMenu { PlacementTarget: TimelineSurface surface })
+        {
+            surface.SetArrangementSharedGroupContextHighlight(null);
         }
     }
 
@@ -3919,6 +3930,7 @@ public partial class MainWindow : Window
 
     private void OnTimelineLaneHeaderDoubleInvoked(object? sender, TimelineLaneHeaderEventArgs e)
     {
+        if (e.IsSharedGroupTarget) return;
         if (_session.ActiveWorkspace is not TimelineWorkspaceViewModel
             {
                 Mode: TimelineWorkspaceMode.Arrangement
@@ -4079,14 +4091,17 @@ public partial class MainWindow : Window
         _trackHeaderContextLane = e.Lane;
         if (_session.ActiveWorkspace is WorkspaceViewModel workspace)
         {
-            workspace.ActiveLane = e.Lane;
             if (workspace is TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement } arrangement
-                && arrangement.GetArrangementLane(e.Lane) is { ObjectId: MidoraId arrangementObjectId } arrangementLane)
+                && arrangement.GetArrangementLane(e.Lane) is ArrangementLaneDescriptor arrangementLane)
             {
-                _arrangementHeaderShortcut = (arrangementLane.Kind, arrangementObjectId);
-                _logicalTrackShortcutTrackId = arrangementLane.Kind == ArrangementLaneKind.LogicalTrack
-                    ? arrangementObjectId
-                    : null;
+                if (!e.IsSharedGroupTarget)
+                {
+                    SelectArrangementTrack(arrangement, arrangementLane);
+                }
+            }
+            else
+            {
+                workspace.ActiveLane = e.Lane;
             }
         }
     }
@@ -6072,7 +6087,18 @@ public partial class MainWindow : Window
     {
         if (_session.ActiveWorkspace is WorkspaceViewModel activeWorkspace)
         {
-            activeWorkspace.ActiveLane = e.Lane;
+            if (activeWorkspace is TimelineWorkspaceViewModel
+                {
+                    Mode: TimelineWorkspaceMode.Arrangement
+                } arrangement
+                && e.IsEmptyBackground)
+            {
+                ClearArrangementTrackSelection(arrangement);
+            }
+            else
+            {
+                activeWorkspace.ActiveLane = e.Lane;
+            }
             if (sender is TimelineSurface { ToolMode: TimelineToolMode.Select }
                 && !e.IsDoubleClick
                 && e.Modifiers == ModifierKeys.None
@@ -9939,20 +9965,20 @@ public partial class MainWindow : Window
         TimelineSurface? surface = FindVisualAncestor<TimelineSurface>(source);
         if (surface is { SurfaceMode: TimelineSurfaceMode.Arrangement }
             && _session.ActiveWorkspace is TimelineWorkspaceViewModel
-            { Mode: TimelineWorkspaceMode.Arrangement }
-            && surface.TryGetArrangementLaneHeader(e.GetPosition(surface), out int lane)
-            && ((TimelineWorkspaceViewModel)_session.ActiveWorkspace).GetArrangementLane(lane) is
-            { ObjectId: MidoraId arrangementObjectId } arrangementLane)
+            { Mode: TimelineWorkspaceMode.Arrangement } arrangementWorkspace)
         {
-            _arrangementHeaderShortcut = (arrangementLane.Kind, arrangementObjectId);
-            _logicalTrackShortcutTrackId = arrangementLane.Kind == ArrangementLaneKind.LogicalTrack
-                ? arrangementObjectId
-                : null;
-        }
-        else
-        {
-            _logicalTrackShortcutTrackId = null;
-            _arrangementHeaderShortcut = null;
+            Point point = e.GetPosition(surface);
+            if (surface.IsArrangementEmptyBackground(point))
+            {
+                ClearArrangementTrackSelection(arrangementWorkspace);
+            }
+            else if (!surface.TryGetArrangementSharedGroupBraceTarget(point, out _)
+                && surface.TryGetArrangementLaneHeader(point, out int lane)
+                && arrangementWorkspace.GetArrangementLane(lane) is ArrangementLaneDescriptor arrangementLane)
+            {
+                _trackHeaderContextLane = lane;
+                SelectArrangementTrack(arrangementWorkspace, arrangementLane);
+            }
         }
         if (_spaceStartedPlayback
             && (FindVisualAncestor<TextBoxBase>(source) is not null
@@ -9965,16 +9991,67 @@ public partial class MainWindow : Window
 
     private bool IsLogicalTrackShortcutContext() =>
         ProjectTree.IsKeyboardFocusWithin
-        || _logicalTrackShortcutTrackId is not null
+        || _logicalTrackShortcutTrackId is MidoraId trackId
+        && _session.Project?.Tracks.Any(value => value.Id == trackId) == true
         && GetFocusedTimelineSurface() is { SurfaceMode: TimelineSurfaceMode.Arrangement }
         && _session.ActiveWorkspace is TimelineWorkspaceViewModel
         { Mode: TimelineWorkspaceMode.Arrangement };
 
     private bool IsArrangementHeaderShortcutContext() =>
-        _arrangementHeaderShortcut is not null
+        _arrangementHeaderShortcut is { } shortcut
+        && ArrangementShortcutTargetExists(shortcut)
         && GetFocusedTimelineSurface() is { SurfaceMode: TimelineSurfaceMode.Arrangement }
         && _session.ActiveWorkspace is TimelineWorkspaceViewModel
         { Mode: TimelineWorkspaceMode.Arrangement };
+
+    private bool ArrangementShortcutTargetExists((ArrangementLaneKind Kind, MidoraId Id) shortcut) =>
+        _session.Project is MidoraProject project
+        && (shortcut.Kind switch
+        {
+            ArrangementLaneKind.LogicalTrack => project.Tracks.Any(value => value.Id == shortcut.Id),
+            ArrangementLaneKind.PureMidiTrack => project.PureMidiTracks.Any(value => value.Id == shortcut.Id),
+            _ => false
+        });
+
+    private void SelectArrangementTrack(
+        TimelineWorkspaceViewModel workspace,
+        ArrangementLaneDescriptor descriptor)
+    {
+        bool conductor = descriptor.Kind == ArrangementLaneKind.Conductor;
+        bool selectableObject = descriptor.Kind is ArrangementLaneKind.LogicalTrack
+            or ArrangementLaneKind.PureMidiTrack
+            or ArrangementLaneKind.DamagedLogicalTrack
+            or ArrangementLaneKind.DamagedPureMidiTrack;
+        if (!conductor && (!selectableObject || descriptor.ObjectId is not MidoraId)) return;
+
+        workspace.ActiveLane = descriptor.Lane;
+        workspace.IsConductorTrackSelected = conductor;
+        workspace.SelectedArrangementTrackId = conductor ? null : descriptor.ObjectId;
+        if (descriptor.ObjectId is MidoraId objectId
+            && descriptor.Kind is ArrangementLaneKind.LogicalTrack or ArrangementLaneKind.PureMidiTrack)
+        {
+            _arrangementHeaderShortcut = (descriptor.Kind, objectId);
+            _logicalTrackShortcutTrackId = descriptor.Kind == ArrangementLaneKind.LogicalTrack
+                ? objectId
+                : null;
+        }
+        else
+        {
+            _arrangementHeaderShortcut = null;
+            _logicalTrackShortcutTrackId = null;
+        }
+    }
+
+    private void ClearArrangementTrackSelection(TimelineWorkspaceViewModel workspace)
+    {
+        workspace.SelectedArrangementTrackId = null;
+        workspace.IsConductorTrackSelected = false;
+        workspace.ActiveLane = null;
+        _trackHeaderContextLane = null;
+        _arrangementSharedGroupContextId = null;
+        _logicalTrackShortcutTrackId = null;
+        _arrangementHeaderShortcut = null;
+    }
 
     private static TimelineSurface? GetFocusedTimelineSurface() =>
         FindVisualAncestor<TimelineSurface>(Keyboard.FocusedElement as DependencyObject);

@@ -963,6 +963,11 @@ public sealed class PlaybackController : IDisposable
                 SetState(PlaybackState.Stopped);
                 return;
             }
+            // Runtime monitoring state is intentionally not part of Project or
+            // canonical compilation. Rebuild it only after the edit lock has
+            // frozen the Project so Tracks created since this controller was
+            // constructed cannot be omitted from the first realtime plan.
+            RebuildAudibleTracks();
             MidiRenderPlan plan = _session.GetOrCreateRealtimeRenderPlan(
                 compiled,
                 actualSampleRate,

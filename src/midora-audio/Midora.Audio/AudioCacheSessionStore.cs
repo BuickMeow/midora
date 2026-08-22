@@ -473,10 +473,13 @@ public sealed class AudioCacheSessionStore : IDisposable
                     }
                     long recordLength = AudioCachePackStore.ComputeRecordLength(
                         slice.PayloadLength);
-                    if (_retentionState != AudioCacheRetentionState.Enabled
-                        || recordLength > _maximumReusableBytes
-                            - _packStore.LiveBytes
-                            - _pendingPublishBytes)
+                    if (_retentionState != AudioCacheRetentionState.Enabled)
+                    {
+                        break;
+                    }
+                    if (recordLength > _maximumReusableBytes
+                        - _packStore.LiveBytes
+                        - _pendingPublishBytes)
                     {
                         DisableRetention(
                             AudioCacheRetentionState.DisabledByQuota,

@@ -642,7 +642,9 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     private bool _activeValueIntegral = true;
     private bool _isLowerEditorVisible = true;
     private double _lowerEditorHeight = TimelineLowerEditorLayout.DefaultHeight;
-    private bool _isEventInstrumentPaneVisible = true;
+    private bool _isEventInstrumentPaneVisible;
+    private MidoraId? _selectedArrangementTrackId;
+    private bool _isConductorTrackSelected;
 
     public TimelineWorkspaceViewModel(
         WorkspaceKey key,
@@ -722,6 +724,24 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     public GridLength EventInstrumentPaneWidth => IsEventInstrumentPaneVisible
         ? new GridLength(238)
         : new GridLength(0);
+    public MidoraId? SelectedArrangementTrackId
+    {
+        get => IsArrangement ? _selectedArrangementTrackId : null;
+        set
+        {
+            if (!IsArrangement) return;
+            Set(ref _selectedArrangementTrackId, value);
+        }
+    }
+    public bool IsConductorTrackSelected
+    {
+        get => IsArrangement && _isConductorTrackSelected;
+        set
+        {
+            if (!IsArrangement) return;
+            Set(ref _isConductorTrackSelected, value);
+        }
+    }
     public TimelineSurfaceMode SurfaceMode => Mode switch
     {
         TimelineWorkspaceMode.Arrangement => TimelineSurfaceMode.Arrangement,
@@ -1343,6 +1363,15 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         foreach (MidoraId staleId in _segmentPreviewCache.Keys.Where(id => !liveSegmentIds.Contains(id)).ToArray())
         {
             _segmentPreviewCache.Remove(staleId);
+        }
+        if (SelectedArrangementTrackId is MidoraId selectedTrackId
+            && !lanes.Any(value => value.ObjectId == selectedTrackId
+                && value.Kind is ArrangementLaneKind.LogicalTrack
+                    or ArrangementLaneKind.PureMidiTrack
+                    or ArrangementLaneKind.DamagedLogicalTrack
+                    or ArrangementLaneKind.DamagedPureMidiTrack))
+        {
+            SelectedArrangementTrackId = null;
         }
         Context = $"{order.Length} tracks · {items.Count(item => item.Kind == TimelineItemKind.Segment)} segments";
         Snapshot = new(

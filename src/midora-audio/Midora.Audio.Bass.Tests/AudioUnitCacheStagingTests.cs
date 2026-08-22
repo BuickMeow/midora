@@ -139,6 +139,76 @@ public sealed class AudioUnitCacheStagingTests
         Assert.NotNull(staging.Plan.UnitFragments[0].PcmCacheKey);
     }
 
+    [Fact]
+    public void QuotaFullSegmentMissKeepsTheOriginalLiveSynthesisPlan()
+    {
+        using TemporaryDirectory directory = new();
+        string cacheRoot = Path.Combine(directory.Path, "cache");
+        string native = Path.Combine(directory.Path, "native");
+        string manifests = Path.Combine(directory.Path, "manifests");
+        Directory.CreateDirectory(native);
+        Directory.CreateDirectory(manifests);
+        _ = WriteFile(native, "bass.dll", [2]);
+        _ = WriteFile(native, "bassmidi.dll", [3]);
+        _ = WriteFile(native, "basswasapi.dll", [4]);
+        using AudioCacheSessionStore store = new(cacheRoot, 112);
+        string retainedKey = AudioCacheSessionStore.ComputeKey([1]);
+        string rejectedKey = AudioCacheSessionStore.ComputeKey([2]);
+        Assert.True(store.PublishReusable(retainedKey, new byte[16]).Published);
+        Assert.False(store.PublishReusable(rejectedKey, new byte[16]).Published);
+        Assert.Equal(
+            AudioCacheRetentionState.DisabledByQuota,
+            store.GetSnapshot().RetentionState);
+        CacheAccess access = new(store);
+        MidiRenderPlan plan = CreateSegmentPlan();
+
+        AudioSegmentCacheStaging? staging = AudioSegmentCacheStaging.Create(
+            plan,
+            access,
+            SoundFontSha256,
+            native,
+            500,
+            manifests);
+
+        Assert.Null(staging);
+        Assert.False(plan.Segments[0].PcmCacheHit);
+        Assert.Null(plan.Segments[0].PcmCacheKey);
+        Assert.NotEmpty(plan.UnitFragments[0].Events.ToArray());
+    }
+
+    [Fact]
+    public void InitiallyDisabledPureMidiChildDoesNotPublishIncompleteRootSegment()
+    {
+        using TemporaryDirectory directory = new();
+        string cacheRoot = Path.Combine(directory.Path, "cache");
+        string native = Path.Combine(directory.Path, "native");
+        string manifests = Path.Combine(directory.Path, "manifests");
+        Directory.CreateDirectory(native);
+        Directory.CreateDirectory(manifests);
+        _ = WriteFile(native, "bass.dll", [2]);
+        _ = WriteFile(native, "bassmidi.dll", [3]);
+        _ = WriteFile(native, "basswasapi.dll", [4]);
+        using AudioCacheSessionStore store = new(cacheRoot, 4096);
+        CacheAccess access = new(store);
+
+        using AudioSegmentCacheStaging staging = Assert.IsType<AudioSegmentCacheStaging>(
+            AudioSegmentCacheStaging.Create(
+                CreateInitiallyMutedPureMidiSegmentPlan(),
+                access,
+                SoundFontSha256,
+                native,
+                500,
+                manifests));
+        string key = Assert.IsType<string>(staging.Plan.Segments[0].PcmCacheKey);
+
+        staging.PublishCompleted(access, staging.Plan.TotalFrameCount);
+
+        Assert.False(store.TryReadReusable(key, out _));
+        Assert.Equal(
+            AudioCacheRetentionState.Enabled,
+            store.GetSnapshot().RetentionState);
+    }
+
     private static MidiRenderPlan CreatePlan(byte port, byte channel)
     {
         const long sourceId = 101;
@@ -161,6 +231,75 @@ public sealed class AudioUnitCacheStagingTests
                 MidiMessage.NoteOn(0, 60, 100),
                 0)]);
         return new MidiRenderPlan(48_000, 2, [portPlan], [sourceId], [], [fragment]);
+    }
+
+    private static MidiRenderPlan CreateSegmentPlan()
+    {
+        MidiRenderPlan source = CreatePlan(0, 0);
+        MidiSegmentRenderPlan segment = new(
+            trackId: 101,
+            segmentId: 102,
+            sourceIndex: 0,
+            startFrame: 0,
+            endFrame: 2,
+            semanticFingerprint: new string('d', 64));
+        return new MidiRenderPlan(
+            source.SampleRate,
+            source.TotalFrameCount,
+            source.Ports,
+            source.SourceIds,
+            source.InitiallyDisabledSourceIndices,
+            source.UnitFragments,
+            [segment],
+            source.UnitDescriptors,
+            source.EventPageProvider,
+            source.EventStreamDescriptor,
+            source.CacheSourceBindings,
+            source.ReferencedPresetKeys);
+    }
+
+    private static MidiRenderPlan CreateInitiallyMutedPureMidiSegmentPlan()
+    {
+        const long trackId = 101;
+        const long rootId = 201;
+        const long segmentId = 102;
+        MidiPortRenderPlan port = new(0,
+        [
+            new ScheduledMidiMessage(0, MidiMessage.NoteOn(0, 60, 100), 0)
+        ]);
+        MidiUnitFragmentRenderPlan fragment = new(
+            canonicalZeroBasedPortNumber: 0,
+            canonicalZeroBasedChannelNumber: 0,
+            trackId,
+            segmentId,
+            eventInstrumentId: 0,
+            instanceGroupId: rootId,
+            subVoiceId: 202,
+            sourceIndex: 1,
+            startFrame: 0,
+            endFrame: 2,
+            semanticFingerprint: new string('e', 64),
+            events:
+            [
+                new ScheduledMidiMessage(0, MidiMessage.NoteOn(0, 60, 100), 0)
+            ],
+            midiChannelRootId: rootId);
+        MidiSegmentRenderPlan segment = new(
+            trackId,
+            segmentId,
+            sourceIndex: 1,
+            startFrame: 0,
+            endFrame: 2,
+            semanticFingerprint: new string('f', 64));
+        return new MidiRenderPlan(
+            48_000,
+            2,
+            [port],
+            [trackId, rootId],
+            initiallyDisabledSourceIndices: [0],
+            unitFragments: [fragment],
+            segments: [segment],
+            cacheSourceBindings: [new MidiRenderCacheSourceBinding(0, 1)]);
     }
 
     private static string WriteFile(string directory, string name, byte[] bytes)

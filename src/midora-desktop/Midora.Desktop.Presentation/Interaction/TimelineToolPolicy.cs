@@ -15,9 +15,53 @@ public enum TimelinePointerIntent
     ResizeVertical
 }
 
+public enum ArrangementSharedGroupDropZone
+{
+    Before,
+    Body,
+    After
+}
+
 public static class TimelineToolPolicy
 {
     public const double DirectEditEdgeTolerancePixels = 5;
+
+    public static ArrangementSharedGroupDropZone ResolveArrangementSharedGroupDropZone(
+        double pointerY,
+        double groupTop,
+        double groupBottom,
+        bool differentGroup,
+        bool retainedJoin)
+    {
+        if (!double.IsFinite(pointerY)
+            || !double.IsFinite(groupTop)
+            || !double.IsFinite(groupBottom)
+            || groupBottom <= groupTop)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pointerY));
+        }
+
+        double exteriorStrip = differentGroup
+            ? retainedJoin ? 4 : 12
+            : 8;
+        if (pointerY < groupTop + exteriorStrip)
+        {
+            return ArrangementSharedGroupDropZone.Before;
+        }
+        return pointerY > groupBottom - exteriorStrip
+            ? ArrangementSharedGroupDropZone.After
+            : ArrangementSharedGroupDropZone.Body;
+    }
+
+    public static double ResolveArrangementSharedGroupBoundaryY(
+        double groupTop,
+        double groupBottom,
+        ArrangementSharedGroupDropZone zone) => zone switch
+        {
+            ArrangementSharedGroupDropZone.Before => groupTop,
+            ArrangementSharedGroupDropZone.After => groupBottom,
+            _ => throw new ArgumentOutOfRangeException(nameof(zone))
+        };
 
     public static bool IsDirectEditingSurface(TimelineSurfaceMode surfaceMode) =>
         surfaceMode is TimelineSurfaceMode.Arrangement

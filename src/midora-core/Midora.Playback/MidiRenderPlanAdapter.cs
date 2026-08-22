@@ -228,12 +228,19 @@ public static class MidiRenderPlanAdapter
             .Distinct()
             .OrderBy(value => value.CanonicalUnitNumber)
             .ToArray();
-        MidiRenderCacheSourceBinding[] cacheSourceBindings = compiled.PureMidiAudioFragments
-            .SelectMany(fragment => fragment.ContributingTrackIds.Select(trackId => new
+        // SMF Track descriptors exist for both in-memory and paged Pure MIDI
+        // content. PureMidiAudioFragments is deliberately paged-content
+        // metadata, so deriving monitoring/cache ownership from it omitted small
+        // freshly-created MIDI Tracks and left merged Root caches unprotected.
+        MidiRenderCacheSourceBinding[] cacheSourceBindings = compiled.SmfTracks.ToArray()
+            .Where(value => value.Kind == CanonicalSmfTrackKind.PureMidiTrack
+                && value.SourceTrackId != default
+                && value.MidiChannelRootId != default)
+            .Select(value => new
             {
-                Track = sourceIndices[trackId],
-                Root = sourceIndices[fragment.MidiChannelRootId]
-            }))
+                Track = sourceIndices[value.SourceTrackId],
+                Root = sourceIndices[value.MidiChannelRootId]
+            })
             .Distinct()
             .OrderBy(value => value.Track)
             .ThenBy(value => value.Root)

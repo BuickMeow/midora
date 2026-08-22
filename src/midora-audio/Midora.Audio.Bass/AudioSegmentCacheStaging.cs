@@ -53,6 +53,8 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
             == AudioCacheRetentionState.Enabled;
         bool usePackJournal = retentionEnabled
             && cache.SupportsReusableAudioPackJournals;
+        HashSet<int> bypassedCacheOwnerSourceIndices =
+            ResolveInitiallyBypassedCacheOwnerSourceIndices(plan);
         string[] keys = new string[plan.Segments.Length];
         AudioCacheGenerationBinding[] generations =
             new AudioCacheGenerationBinding[plan.Segments.Length];
@@ -134,7 +136,13 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
                     // identity by the read-ahead schedule.
                     long directBinding = -2;
                     segments[index] = Clone(segment, key, directBinding, true);
-                    entries.Add(new(key, directBinding, expectedLength, segment.EndFrame, true));
+                    entries.Add(new(
+                        key,
+                        directBinding,
+                        expectedLength,
+                        segment.EndFrame,
+                        true,
+                        PublishEligible: false));
                     continue;
                 }
                 nextPayloadOffset = checked(nextPayloadOffset + expectedLength);
@@ -158,7 +166,14 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
                 }
                 staging.Position = checked(payloadOffset + expectedLength);
                 segments[index] = Clone(segment, key, payloadOffset, hit);
-                entries.Add(new(key, payloadOffset, expectedLength, segment.EndFrame, hit));
+                entries.Add(new(
+                    key,
+                    payloadOffset,
+                    expectedLength,
+                    segment.EndFrame,
+                    hit,
+                    PublishEligible: !bypassedCacheOwnerSourceIndices.Contains(
+                        segment.SourceIndex)));
             }
             staging.Flush(flushToDisk: true);
         }
@@ -217,12 +232,16 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
     {
         ArgumentNullException.ThrowIfNull(cache);
         if (File.Exists(FilePath + ".invalidated")
-            || _entries.All(entry => entry.Hit || entry.EndFrame > completedRenderFrame))
+            || _entries.All(entry => !entry.PublishEligible
+                || entry.Hit
+                || entry.EndFrame > completedRenderFrame))
         {
             return;
         }
         AudioCachePublishSlice[] slices = _entries
-            .Where(entry => !entry.Hit && entry.EndFrame <= completedRenderFrame)
+            .Where(entry => entry.PublishEligible
+                && !entry.Hit
+                && entry.EndFrame <= completedRenderFrame)
             .Select(entry => new AudioCachePublishSlice(
                 entry.Key,
                 entry.PayloadOffset,
@@ -321,6 +340,27 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
         }
     }
 
+    private static HashSet<int> ResolveInitiallyBypassedCacheOwnerSourceIndices(
+        MidiRenderPlan plan)
+    {
+        HashSet<int> bypassed = [.. plan.InitiallyDisabledSourceIndices.ToArray()];
+        MidiRenderCacheSourceBinding[] bindings = plan.CacheSourceBindings.ToArray();
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach (MidiRenderCacheSourceBinding binding in bindings)
+            {
+                if (bypassed.Contains(binding.SourceIndex))
+                {
+                    changed |= bypassed.Add(binding.CacheOwnerSourceIndex);
+                }
+            }
+        }
+        while (changed);
+        return bypassed;
+    }
+
     private static void TryDeleteDirectory(string? path)
     {
         if (path is null)
@@ -347,5 +387,6 @@ internal sealed class AudioSegmentCacheStaging : IDisposable
         long PayloadOffset,
         long PayloadLength,
         long EndFrame,
-        bool Hit);
+        bool Hit,
+        bool PublishEligible);
 }

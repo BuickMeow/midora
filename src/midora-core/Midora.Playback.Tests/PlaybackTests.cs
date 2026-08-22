@@ -755,6 +755,75 @@ public sealed class PlaybackTests
         }
     }
 
+    [Theory]
+    [InlineData(MidiChannelRootRoutingMode.Auto)]
+    [InlineData(MidiChannelRootRoutingMode.Fixed)]
+    public void FirstPlaybackIncludesPureMidiTrackCreatedAfterControllerConstruction(
+        MidiChannelRootRoutingMode routingMode)
+    {
+        string soundFont = Path.GetTempFileName();
+        try
+        {
+            MidoraProject project = new(480);
+            ProjectCompilationSession session = new(project, soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+            MidoraId trackId = default;
+
+            _ = session.ApplyEdit(value =>
+            {
+                MidiChannelRoot root = new(value)
+                {
+                    Name = "Root",
+                    RoutingMode = routingMode,
+                    FixedZeroBasedPort = 2,
+                    FixedZeroBasedChannel = 3,
+                    ChannelMode = MidiChannelMode.Melodic
+                };
+                PureMidiTrack track = new(value)
+                {
+                    Name = "MIDI Track",
+                    MidiChannelRootId = root.Id
+                };
+                MidiSegment segment = new(value) { LengthTicks = 480 };
+                segment.Notes.Add(new DirectMidiNote(value)
+                {
+                    StartTick = 0,
+                    LengthTicks = 240,
+                    Key = 60,
+                    NoteOnVelocity = 100,
+                    NoteOffVelocity = 0
+                });
+                track.Segments.Add(segment);
+                value.MidiChannelRoots.Add(root);
+                value.PureMidiTracks.Add(track);
+                value.ArrangementTracks.Add(new(
+                    ArrangementTrackKind.PureMidiTrack,
+                    track.Id));
+                trackId = track.Id;
+            }, ProjectChangeSet.Everything);
+
+            controller.Start();
+
+            MidiRenderPlan plan = Assert.IsType<MidiRenderPlan>(backend.LastStartedPlan);
+            int sourceIndex = plan.FindSourceIndex(trackId.Value);
+            Assert.True(sourceIndex >= 0);
+            Assert.DoesNotContain(
+                sourceIndex,
+                plan.InitiallyDisabledSourceIndices.ToArray());
+            Assert.Contains(
+                plan.Ports.ToArray().SelectMany(static value => value.Events.ToArray()),
+                value => value.SourceIndex == sourceIndex
+                    && value.Message.MessageType == MidiMessageType.NoteOn
+                    && value.Message.Byte2 != 0);
+            controller.Stop();
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
     [Fact]
     public void SharedGroupSoloTakesPriorityWhileGroupAndTrackMuteRemainIndependent()
     {

@@ -50,9 +50,9 @@
 | INV-039 | Event Instrument / SubVoice 虚拟键盘、Segment Editor Pitch Ruler 和单个 Logical/Direct MIDI Note 放置预览必须复用正式预览管线；Event Instrument held Preview 使用因果 Gate：Gate End 前 `MappingContext.gateLength = Int64.MaxValue`，Gate End 从 producer 尚未渲染的第一个 frame 起生效，不回写已消费或已缓冲 PCM。 |
 | INV-040 | Project 内全部稳定 ID 共享一个持久化单调正 `long` 分配器，合法范围为 `1..long.MaxValue`，不补缺、不复用且不具业务排序语义；JSON 使用 canonical 十进制 integer，对象文件名使用无符号无前导零十进制 ASCII，protobuf 在既有外层字段号上使用标量 `int64`。 |
 | INV-041 | 开发期 v1 中每个 Time Signature 必须满足 `4 × TPQ % denominator == 0`。变化 tick 立即开启新 Bar；若截断旧小节则产生 Warning。Domain、编译、持久化、`Bar:Beat:Tick` 与自然拍网格必须共用该整数、可逆语义。 |
-| INV-042 | 音频缓存分为 canonical range、Logical Segment/Unit fragment、Pure MidiSegment normalized fragment、Root merged checkpoint、Unit/Root raw PCM、playback span 与短 Render-Ahead ring；exact replay 的完整命中不得重复语义编译或 BASSMIDI 合成。 |
+| INV-042 | 音频缓存分为 canonical range、Logical Segment/Unit fragment、Pure MidiSegment normalized fragment、Root merged checkpoint、Unit/Root raw PCM、playback span 与短 Render-Ahead ring；exact replay 的完整命中不得重复语义编译或 BASSMIDI 合成。Pure MIDI 可听内容 identity 必须覆盖实际 Direct Note/Channel Event、分页源 fingerprint 与 COW delta，不得以集合 Generation、编辑次数或仅 stable ID 代替。 |
 | INV-043 | underrun 在失败位置锁存，完整准备“当前自然小节剩余 + 下一完整小节”（若位于小节起点则当前完整小节），并以播放终点与 16 个四分音符裁剪后才恢复；不得短块断续推进。 |
-| INV-044 | session 音频缓存不进入 `.midora`，默认 root `%LOCALAPPDATA%\Midora\AudioCache`、reusable quota 16 GiB 且允许 0；transient recovery spool 独立，无法取得 spool/RAM 时受控 Stop。 |
+| INV-044 | session 音频缓存不进入 `.midora`，默认 root `%LOCALAPPDATA%\Midora\AudioCache`、reusable quota 16 GiB 且允许 0；quota 满只停止新 reusable retention，既有命中继续可读且 miss 必须现场合成，不得静音或阻止播放；初始/运行期 Monitoring bypass 产生的不完整 entry 不得发布或禁用 retention，既有 failure state 不得被后续队列伪装成 quota-full；transient recovery spool 独立，无法取得 spool/RAM 时受控 Stop。 |
 | INV-045 | MIDI 导出中，Logical/Event Instrument 的每个实际有事件 Unit 在同一文件内严格对应一个单 Channel MTrk；Pure MIDI 的每个被选择 Track 对应一个独立单 Channel MTrk，同一 Root 的多个 MTrk 可以共享 Port.Channel，名称、global Arrangement Track 顺序和自身 EOT 必须保留。 |
 | INV-046 | 状态型非 Note Event Mapping 的原始值按最近原始事件或有效 Initial State/default 持有；Envelope/连续源在实例与 Release 的整数 tick 上从该值求值，非零 Release 的最后有效 tick 达到 End Value。普通 Gate/Release/Tail 结束不发送 CC120；CC120 只用于 Segment/消费者范围硬边界。 |
 | INV-047 | Note Number/Velocity Mapping 是强制共享目标；非 Note Event Mapping 与 Logical Parameter Mapping 是可删除 owner。缺少可选 Mapping 表示原始值直通，普通事件编辑和打开修复不得静默重建已删除 owner。 |

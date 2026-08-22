@@ -5,6 +5,7 @@
 ## 1. 事实来源与语言
 
 - 默认使用简体中文沟通、写开发说明和交付结论；代码标识符遵循项目既有风格。
+- `computer-use` 是显式 opt-in 工具：除非用户在当前请求中明确要求使用，否则默认不得调用；过去请求中的授权不得延续到后续请求。用户明确说明不使用时，不得以调试、验收或便利为由调用。
 - 完整需求基线位于 `misc/Midora-SRS-Initial-Release-v0.1/`。开始任务前必须阅读 `00-Table-of-Contents-and-Document-Control.md`、`22-Requirement-Locator-and-Cross-System-Invariants.md`，以及与任务直接相关的章节；不得只依据本提示词替代 SRS 原文。
 - `misc/Midora-Implementation-Roadmap.md` 是实施建议和现状记录，不是需求规范。它与 SRS 冲突时以 SRS 为准。
 - 明确区分：SRS 已规定的事实、从源码或文档确认的现状、设计推断、尚待决定的问题。不得把建议写成既定需求。

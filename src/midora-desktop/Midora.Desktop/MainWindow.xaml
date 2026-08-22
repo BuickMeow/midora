@@ -49,7 +49,7 @@
         </Setter.Value>
       </Setter>
     </Style>
-    <ContextMenu x:Key="TimelineContextMenu" x:Shared="False" Opened="OnTimelineContextMenuOpened">
+    <ContextMenu x:Key="TimelineContextMenu" x:Shared="False" Opened="OnTimelineContextMenuOpened" Closed="OnTimelineContextMenuClosed">
       <MenuItem Header="Open" Click="OnOpenWorkspaceSelectionClick"/>
       <Separator/>
       <MenuItem Header="Cut" InputGestureText="Ctrl+X" IsEnabled="{Binding PlacementTarget.CanEdit, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}" Click="OnCutClick"/>
@@ -340,6 +340,8 @@
                             Focusable="True"
                             Snapshot="{Binding Snapshot}"
                             SelectionSnapshot="{Binding SelectionSnapshot}"
+                            SelectedArrangementTrackId="{Binding SelectedArrangementTrackId}"
+                            IsConductorTrackSelected="{Binding IsConductorTrackSelected}"
                             RulerSnapshot="{Binding RulerSnapshot}"
                             CanEdit="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                             StartTick="{Binding StartTick, Mode=TwoWay}"
@@ -1236,7 +1238,7 @@
           </StackPanel>
           <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
             <TextBlock MaxWidth="520" VerticalAlignment="Center" Text="{Binding StatusMessage}" TextTrimming="CharacterEllipsis"><TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}"><Setter Property="Foreground" Value="{StaticResource Brush.Text.Tertiary}"/><Style.Triggers><DataTrigger Binding="{Binding StatusMessageIsError}" Value="True"><Setter Property="Foreground" Value="{StaticResource Brush.Red.Hover}"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
-            <Button Height="20" Margin="7,0,0,0" Padding="6,0" Content="Details" Click="OnStatusMessageDetailsClick"><Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><MultiDataTrigger><MultiDataTrigger.Conditions><Condition Binding="{Binding HasStatusMessage}" Value="True"/><Condition Binding="{Binding StatusMessageIsError}" Value="True"/></MultiDataTrigger.Conditions><Setter Property="Visibility" Value="Visible"/></MultiDataTrigger></Style.Triggers></Style></Button.Style></Button>
+            <Button Height="20" Margin="7,0,0,0" Padding="6,0" Content="Details" Click="OnStatusMessageDetailsClick"><Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding HasStatusMessage}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style></Button>
             <Button Height="20" Margin="7,0,0,0" Padding="6,0" Content="Dismiss" Click="OnDismissStatusMessageClick"><Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding HasStatusMessage}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style></Button>
           </StackPanel>
         </Grid>

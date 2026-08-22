@@ -212,6 +212,31 @@ public sealed class AudioCacheSessionStoreTests
     }
 
     [Fact]
+    public void SkippedBackgroundBatchDoesNotMisreportAnExistingWriteFailureAsQuotaFull()
+    {
+        using TemporaryDirectory root = new();
+        using AudioCacheSessionStore store = new(root.Path, 4096);
+        string key = AudioCacheSessionStore.ComputeKey([4, 2]);
+        AudioCacheSessionStore.AudioRecoverySpool spool = store.CreateRecoverySpool(64);
+        spool.Stream.Write(new byte[64]);
+        store.DisableReusableRetention("Injected reusable staging failure.");
+
+        store.QueueReusableBatch(
+            spool,
+            [new AudioCachePublishSlice(key, 0, 64)]);
+
+        AudioCacheSessionSnapshot snapshot = store.GetSnapshot();
+        Assert.Equal(
+            AudioCacheRetentionState.DisabledByWriteFailure,
+            snapshot.RetentionState);
+        Assert.Contains(
+            "Injected reusable staging failure",
+            snapshot.Warning.Message,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("quota", snapshot.Warning.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void CorruptEntryIsIsolatedAndReportedInsteadOfBeingReturned()
     {
         using TemporaryDirectory root = new();

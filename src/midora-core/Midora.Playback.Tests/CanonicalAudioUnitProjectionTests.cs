@@ -113,6 +113,9 @@ public sealed class CanonicalAudioUnitProjectionTests
         Assert.DoesNotContain(trackSourceIndex, audible.InitiallyDisabledSourceIndices.ToArray());
         Assert.DoesNotContain(rootSourceIndex, muted.InitiallyDisabledSourceIndices.ToArray());
         Assert.Contains(trackSourceIndex, muted.InitiallyDisabledSourceIndices.ToArray());
+        Assert.Contains(
+            new MidiRenderCacheSourceBinding(trackSourceIndex, rootSourceIndex),
+            audible.CacheSourceBindings.ToArray());
     }
 
     [Fact]
@@ -155,6 +158,42 @@ public sealed class CanonicalAudioUnitProjectionTests
             plan.UnitFragments.ToArray().SelectMany(value => value.Events.ToArray()),
             value => value.Message.MessageType == MidiMessageType.ControlChange
                 && value.Message.Byte1 == 91);
+    }
+
+    [Fact]
+    public void PureMidiPcmIdentityUsesActualContentInsteadOfCollectionGeneration()
+    {
+        MidoraProject firstProject = CreateSinglePureMidiProject(key: 60, controllerValue: 24);
+        MidoraProject differentProject = CreateSinglePureMidiProject(key: 61, controllerValue: 25);
+        MidoraProject equalProject = CreateSinglePureMidiProject(key: 60, controllerValue: 24);
+        MidiSegment firstSegment = firstProject.PureMidiTracks[0].Segments[0];
+        MidiSegment differentSegment = differentProject.PureMidiTracks[0].Segments[0];
+
+        Assert.Equal(firstProject.PureMidiTracks[0].Id, differentProject.PureMidiTracks[0].Id);
+        Assert.Equal(firstSegment.Id, differentSegment.Id);
+        Assert.Equal(firstSegment.Notes.Generation, differentSegment.Notes.Generation);
+        Assert.Equal(firstSegment.ChannelEvents.Generation, differentSegment.ChannelEvents.Generation);
+
+        using MidoraCompiler compiler = new();
+        CanonicalCompiledResult firstCompiled = compiler.CompileFull(firstProject);
+        CanonicalCompiledResult differentCompiled = compiler.CompileFull(differentProject);
+        CanonicalCompiledResult equalCompiled = compiler.CompileFull(equalProject);
+        MidiSegmentRenderPlan firstPlan = Assert.Single(
+            MidiRenderPlanAdapter.CreateRealtime(firstCompiled, 48_000).Segments.ToArray());
+        MidiSegmentRenderPlan differentPlan = Assert.Single(
+            MidiRenderPlanAdapter.CreateRealtime(differentCompiled, 48_000).Segments.ToArray());
+        MidiSegmentRenderPlan equalPlan = Assert.Single(
+            MidiRenderPlanAdapter.CreateRealtime(equalCompiled, 48_000).Segments.ToArray());
+
+        Assert.NotEqual(firstPlan.SemanticFingerprint, differentPlan.SemanticFingerprint);
+        Assert.Equal(firstPlan.SemanticFingerprint, equalPlan.SemanticFingerprint);
+        string soundFont = new('a', 64);
+        Assert.NotEqual(
+            MidiSegmentPcmCacheKey.Create(firstPlan, 48_000, soundFont, "native-v1", 500),
+            MidiSegmentPcmCacheKey.Create(differentPlan, 48_000, soundFont, "native-v1", 500));
+        Assert.Equal(
+            MidiSegmentPcmCacheKey.Create(firstPlan, 48_000, soundFont, "native-v1", 500),
+            MidiSegmentPcmCacheKey.Create(equalPlan, 48_000, soundFont, "native-v1", 500));
     }
 
     [Fact]
@@ -301,5 +340,27 @@ public sealed class CanonicalAudioUnitProjectionTests
         project.PureMidiTracks.Add(track);
         project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
         return track;
+    }
+
+    private static MidoraProject CreateSinglePureMidiProject(int key, int controllerValue)
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = new(project)
+        {
+            Name = "Root",
+            RoutingMode = MidiChannelRootRoutingMode.Auto,
+            ChannelMode = MidiChannelMode.Melodic
+        };
+        project.MidiChannelRoots.Add(root);
+        PureMidiTrack track = AddMidiTrack(project, root, "Track", startTick: 0, key: key);
+        track.Segments[0].ChannelEvents.Add(new DirectMidiChannelEvent(project)
+        {
+            Tick = 12,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 11,
+            Data2 = controllerValue,
+            Order = 2
+        });
+        return project;
     }
 }

@@ -99,7 +99,8 @@ public sealed class ProjectCreationEditCommandsTests
         };
         source.LogicalParameters.Add(parameter);
         source.SubVoices[0].Events.Add(TemplateEvent.Note(project, 0, 120, 60, 100));
-        LogicalTrack track = new(project) {
+        LogicalTrack track = new(project)
+        {
             Name = "Track",
             LastBoundEventInstrumentName = source.Name
         };
@@ -244,7 +245,8 @@ public sealed class ProjectCreationEditCommandsTests
             DefaultValue = 0
         };
         instrument.LogicalParameters.Add(parameter);
-        LogicalTrack track = new(project) {
+        LogicalTrack track = new(project)
+        {
             Name = "Track",
             LastBoundEventInstrumentName = instrument.Name
         };
@@ -270,13 +272,13 @@ public sealed class ProjectCreationEditCommandsTests
             lane.Id,
             0,
             0.25,
-            CurveInterpolation.Linear));
+            CurveInterpolation.Step));
         document.Execute(ProjectDomainEditCommands.CreateLogicalParameterPoint(
             original.Id,
             lane.Id,
             720,
             0.75,
-            CurveInterpolation.Linear));
+            CurveInterpolation.Step));
         long beforeSplit = project.NextStableId;
 
         document.Execute(ProjectDomainEditCommands.SplitSegment(original.Id, 480));
@@ -356,7 +358,8 @@ public sealed class ProjectCreationEditCommandsTests
     {
         MidoraProject project = new(480);
         EventInstrument instrument = CreateInstrument(project, "Instrument");
-        LogicalTrack track = new(project) {
+        LogicalTrack track = new(project)
+        {
             Name = "Track",
         };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
@@ -486,6 +489,47 @@ public sealed class ProjectCreationEditCommandsTests
     }
 
     [Fact]
+    public void LogicalParameterCreationCanCommitCompleteEnumDefinitionAtomically()
+    {
+        MidoraProject project = new(480);
+        EventInstrument instrument = CreateInstrument(project, "Instrument");
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
+
+        document.Execute(ProjectDomainEditCommands.CreateLogicalParameter(
+            instrument.Id,
+            "Mode",
+            LogicalParameterType.Enum,
+            minimum: 0,
+            maximum: 2,
+            displayMinimum: 0,
+            displayMaximum: 2,
+            defaultValue: 1,
+            usesExplicitEnumValues: true,
+            enumItems:
+            [
+                new(null, "Low", 0),
+                new(null, "High", 1)
+            ]));
+
+        LogicalParameterDefinition parameter = Assert.Single(instrument.LogicalParameters);
+        Assert.Collection(
+            parameter.EnumItems,
+            item => Assert.Equal(("Low", 0), (item.Name, item.Value)),
+            item => Assert.Equal(("High", 1), (item.Name, item.Value)));
+        long highWater = project.NextStableId;
+        AssertMatchesFull(compilation);
+
+        document.Undo();
+        Assert.Empty(instrument.LogicalParameters);
+        Assert.Equal(highWater, project.NextStableId);
+        document.Redo();
+        Assert.Same(parameter, Assert.Single(instrument.LogicalParameters));
+        Assert.Equal(highWater, project.NextStableId);
+        AssertMatchesFull(compilation);
+    }
+
+    [Fact]
     public void ParameterMappingEnvelopeAndFunctionCreationUseOneHistoryProtocol()
     {
         MidoraProject project = new(480);
@@ -568,7 +612,8 @@ public sealed class ProjectCreationEditCommandsTests
             DefaultValue = 0
         };
         instrument.LogicalParameters.Add(parameter);
-        LogicalTrack track = new(project) {
+        LogicalTrack track = new(project)
+        {
             Name = "Track",
         };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);

@@ -24,7 +24,7 @@
         <TextBlock Margin="12,0,50,0" VerticalAlignment="Center" FontWeight="SemiBold"
                    Text="MIDI Route Settings" TextTrimming="CharacterEllipsis"/>
         <Button Width="46" Height="38" HorizontalAlignment="Right"
-                Style="{StaticResource Button.Caption.Close}" IsCancel="True">
+                Style="{StaticResource Button.Caption.Close}" Click="OnCancelClick">
           <ui:FluentIcon Style="{StaticResource Icon.WindowControl}" Data="{StaticResource WindowControl.Close}"/>
         </Button>
       </Grid>
@@ -58,8 +58,8 @@
       <Border Grid.Row="2" MinHeight="58" Padding="12,10" Background="{StaticResource Brush.Surface.1}"
               BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
         <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
-          <Button Width="86" Margin="0,0,6,0" IsCancel="True" Content="Cancel"/>
-          <Button Width="86" Style="{StaticResource Button.Primary}" Content="Apply" Click="OnApplyClick"/>
+          <Button Margin="0,0,6,0" Style="{StaticResource Button.Dialog.Cancel}" Content="Cancel"/>
+          <Button Style="{StaticResource Button.Dialog.Confirm}" Content="Apply" Click="OnApplyClick"/>
         </StackPanel>
       </Border>
     </Grid>

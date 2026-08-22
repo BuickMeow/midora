@@ -111,7 +111,7 @@ public sealed class DomainEditingTests
     {
         MidoraProject project = new(480);
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Bound");
-        LogicalTrack track = new(project) { Name = "Track"};
+        LogicalTrack track = new(project) { Name = "Track" };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         segment.Notes.Add(new LogicalNote(project) { LengthTicks = 120 });
@@ -158,6 +158,7 @@ public sealed class DomainEditingTests
         CurvePoint merged = Assert.Single(joined.ParameterLanes[0].Points);
         Assert.Equal(220, merged.Tick);
         Assert.Equal(1, merged.Value);
+        Assert.Equal(CurveInterpolation.Step, merged.Interpolation);
     }
 
     [Fact]
@@ -190,6 +191,7 @@ public sealed class DomainEditingTests
         Assert.Equal((40L, 80), (note.LengthTicks, note.Velocity));
         CurvePoint point = Assert.Single(Assert.Single(duplicate.ParameterLanes).Points);
         Assert.Equal(0.25, point.Value);
+        Assert.Equal(CurveInterpolation.Step, point.Interpolation);
     }
 
     [Fact]

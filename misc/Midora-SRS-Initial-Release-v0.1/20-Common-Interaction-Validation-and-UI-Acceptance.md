@@ -134,7 +134,7 @@ Selection
 Primary Selection
 Active Workspace
 ```
-Active Workspace 由活动 Tab 决定，不因焦点进入 Inspector 或 Bottom Panel 而改变。
+Active Workspace 由活动 Tab 决定，不因焦点进入 Workspace 内的 Properties 对话框而改变。
 ### 20.2.2 命令路由优先级
 ```text
 1. Full Application Task Lock
@@ -149,7 +149,7 @@ Active Workspace 由活动 Tab 决定，不因焦点进入 Inspector 或 Bottom 
 命令被前一级接收后不得继续传播。
 例如：
 ```text
-Delete in an Inspector text field
+Delete in an object Properties text field
     -> delete text
     -> do not delete an Arrangement Segment
 ```
@@ -162,8 +162,6 @@ Shift+F6 -> previous main UI region
 ```text
 Global Toolbar
 Active Workspace
-Inspector
-Bottom Panel
 ```
 隐藏或折叠区域跳过。
 ### 20.2.4 Tab
@@ -188,11 +186,11 @@ Selection Anchor
 Time Range Selection
 Active Selection Scope
 ```
-Active Workspace Selection 是 Global Inspector 的默认 Project 对象上下文。
-Diagnostics、Tasks 和其他辅助列表保留自己的选择，不与 Workspace Selection 混合。
+Active Workspace Selection 只属于该 Workspace。它可以驱动同一 Workspace 内的渲染、命令和显式打开的所属属性编辑器，但不得持续驱动一个跨 Workspace 的全局属性面板。
+Diagnostics 和其他辅助列表保留自己的选择，不与 Workspace Selection 混合。
 ### 20.3.2 Context Object
 Workspace Context Object 与子对象选择分离。
-无子对象选择时 Inspector 显示 Context Object。
+无子对象选择时，所属 Workspace 可以把 Context Object 用作 `Properties...` 的显式目标；不得因此建立或改变任何跨 Workspace 属性目标。
 ### 20.3.3 祖先与后代
 同一 Selection Set 中不允许同时包含祖先对象与其后代。
 ### 20.3.4 异类对象
@@ -269,7 +267,7 @@ Snap Primary Selection
 不逐对象独立吸附。
 ### 20.4.3 时间移动
 同一时间坐标系对象可统一移动。
-异类选择需要显式 `Move in Time`，不得通过拖动某个对象主体隐式混合移动。
+异类选择通常需要显式 `Move in Time`。唯一直接拖动例外是 Arrangement 中混合选择的 Logical Segment 与 Midi Segment：二者共用 absolute Project tick，因此允许从任一已选 Segment 主体作统一水平移动，也允许从左右边缘作统一长度调整；该手势必须强制 Track delta 为 0，不得造成跨 Track、跨类型或垂直移动。
 ### 20.4.4 Piano Roll Notes
 多选移动保持：
 ```text
@@ -314,9 +312,15 @@ Randomize
 Humanize
 Independent Snap
 ```
-### 20.4.8 Delete
+### 20.4.8 混合 Segment Properties 与变换
+
+Arrangement 同时选择 Logical Segment 与 Midi Segment 时，`Properties...` 必须展示两类 Segment 语义一致的共同字段；Mixed 字段按第 17.4.3 节显式开始统一值并可还原。一次 `OK` 对全部目标形成一个原子 Project command。
+
+同一混合选择还必须支持 Horizontal Flip 的“仅暴露内容”和“内容 + Segment”、Vertical Flip、Scale、Transpose 与 Batch Edit。Logical Segment 适配 Logical Note/Parameter Point，Midi Segment 适配 Direct MIDI Note/Event；命令只处理各自正式模型中与该操作语义共同的字段，不得把两类子对象互相转换。Segment overlap、范围、碰撞归并和越界删除仍按各专项规则验证；任一不兼容或非法结果使整批失败，成功只形成一个 Undo 并保持选择。
+
+### 20.4.9 Delete
 批量 Delete 只弹一次汇总确认。任何不可删除对象都使整体命令 Disabled。
-### 20.4.9 Undo
+### 20.4.10 Undo
 一次批量手势只形成一个 Undo。Undo 恢复每个对象各自原状态；Redo 不根据当前 Grid 或 Snap 重新计算。
 ---
 ## 20.5 Drag and Drop Conventions
@@ -526,7 +530,7 @@ Clicked container
 Clicked timeline position
 Active Workspace
 ```
-Hover、Inspector 刷新或后台诊断更新不得改变命令目标。
+Hover、所属属性投影刷新或后台诊断更新不得改变命令目标。
 时间位置命令使用打开菜单时记录的 tick。
 ### 20.7.5 Hide 与 Disabled
 语义完全无关的命令隐藏。
@@ -578,7 +582,7 @@ Copy / Cut / Paste
 Duplicate
 Rename
 Show References
-Show Details
+Properties
 Move Up / Move Down
 Delete
 ```
@@ -593,14 +597,13 @@ Change Instrument
 Share Instrument State With
 Make Independent
 Move Up / Move Down
-Show Details
 Delete
 ```
 `Edit Event Instrument...` 打开当前 Usage 引用的 Definition；未绑定 Track 没有目标，因此该命令 Disabled 或隐藏。`Duplicate` 创建引用同一 Definition 的新独立 Usage；`Duplicate and Share State` 仅对已绑定 Track 可用，并保留源 Usage。Definition-only 复制只由 Event Instruments pane 的普通 Definition `Duplicate` 提供，Track/Usage 上下文不再提供 `Duplicate Instrument Only`。
 
 `Change Instrument` 原子修改当前 Usage 的 Definition；未绑定空壳可通过该入口建立独立 Usage。`Share Instrument State With` 与 `Make Independent` 显式改变 Usage membership；不提供独立可见 Usage 管理器。Duplicate 的插入位置、稳定 ID 和 Undo 规则见第 24.8 节。
 #### 20.7.10.2.1 Pure MIDI Track / Shared group
-Pure MIDI Track 菜单至少提供 Copy/Cut/Paste、Duplicate、Rename、MIDI Route Settings、Share MIDI Channel With、Make Independent、Move Up/Down、Show Details、Delete；不得显示 Event Instrument binding 命令。任一共享 Fixed Root 成员的 MIDI Route Settings 都可编辑唯一 Root 的 Channel Mode；多成员时必须先明确提示影响范围并确认，不要求转到另一个命名为 `Shared MIDI Route Settings` 的入口。共享 brace 菜单按类型提供 group Mute/Solo、Route/Instrument Settings、Move Shared Group 与 Make All Tracks Independent。Root 不显示独立菜单。
+Pure MIDI Track 菜单至少提供 Copy/Cut/Paste、Duplicate、Rename、MIDI Route Settings、Share MIDI Channel With、Make Independent、Move Up/Down、Delete；不得显示 Event Instrument binding 命令。任一共享 Fixed Root 成员的 MIDI Route Settings 都可编辑唯一 Root 的 Channel Mode；多成员时必须先明确提示影响范围并确认，不要求转到另一个命名为 `Shared MIDI Route Settings` 的入口。共享 brace 菜单按类型提供 group Mute/Solo、Route/Instrument Settings、Move Shared Group 与 Make All Tracks Independent。Root 不显示独立菜单。
 #### 20.7.10.3 Segment
 ```text
 Open in Segment Editor
@@ -608,7 +611,7 @@ Cut
 Copy
 Duplicate
 Split at Cursor
-Show Details
+Properties
 Delete
 ```
 Segment 无 `Rename`。
@@ -617,8 +620,7 @@ Segment 无 `Rename`。
 Cut
 Copy
 Duplicate
-Edit Properties
-Show Details
+Properties
 Delete
 ```
 不显示 Legato 命令。
@@ -628,7 +630,7 @@ Show Parameter Definition
 Show Mapping
 Hide Lane
 Delete Lane Data
-Show Details
+Parameter Definition Properties
 ```
 #### 20.7.10.6 Broken Lane
 ```text
@@ -645,7 +647,7 @@ Preview Selected SubVoice
 Duplicate
 Rename
 Show References
-Show Details
+Properties
 Delete
 ```
 最后一条 SubVoice 的 Delete 不显示。
@@ -663,7 +665,6 @@ Delete
 #### 20.7.10.9 Diagnostic
 ```text
 Go to Source
-Show Details
 Copy Message
 Copy Source Path
 Mark as Reviewed
@@ -676,7 +677,7 @@ Close Other Tabs
 ```
 关闭 Tab 只关闭界面。
 ### 20.7.11 播放与任务锁定
-播放期间允许 Open、Show Details、Go to Source、Copy 和纯查看命令；Project 编辑命令 Disabled。
+播放期间允许 Open、只读 Properties、Go to Source、Copy 和纯查看命令；Project 编辑命令 Disabled，Properties 内全部 Project-backed 输入 Disabled。
 模态任务和 Audio Render 完全锁定期间，主窗口 Context Menu 不可用。
 ---
 ## 20.8 Naming and Inline Rename
@@ -692,7 +693,7 @@ Close Other Tabs
 ```text
 F2
 Context Menu > Rename
-Inspector Name Field
+Owning Workspace Name Field
 Visible Rename command
 ```
 双击保留给 Open，不用于 Rename；不使用慢速第二次单击进入 Rename。
@@ -783,7 +784,7 @@ Rename 后同步更新：
 ```text
 Workspace Tab
 Editor Header
-Inspector
+Owning Workspace property editor
 Reference List
 Diagnostics Source Path
 Search Index
@@ -841,7 +842,7 @@ No relevance reordering
 已选对象被 Collection Search 隐藏时：
 - 通过稳定 ID 保持 Selection；
 - 不自动选择其他结果；
-- Inspector 可继续显示；
+- Workspace Selection 继续按稳定 ID 保留；所属编辑器可显示 Hidden Selection Notice；
 - 显示 Hidden Selection Notice；
 - `Show Selected` 可清除文字查询以重新显示对象。
 ### 20.9.5 键盘
@@ -917,7 +918,7 @@ Audio Render 完全锁定期间不允许主窗口搜索。
 - 不使用虚假示例内容；
 - Primary Action 调用正式创建命令，保持相同默认值、验证、Undo 和锁定规则；
 - 播放锁定时按钮保持可见但 Disabled，并说明原因；
-- Empty State 不是 Project 对象，不进入 Selection、Inspector 或 Undo。
+- Empty State 不是 Project 对象，不进入 Selection、显式 Properties 目标或 Undo。
 ### 20.10.4 无 Project
 ```text
 No Project Open
@@ -980,13 +981,7 @@ No matching diagnostics
 [ Clear Filters ]
 ```
 不得用绝对语句保证 Project 一定可编译。
-### 20.10.12 Tasks 为空
-```text
-No tasks
-Compile, export, and render activity will appear here.
-```
-不提供启动任务的 Primary Action。
-### 20.10.13 无 SoundFont
+### 20.10.12 无 SoundFont
 ```text
 No SoundFont Selected
 MIDI editing, compilation, and MIDI export remain usable.
@@ -994,7 +989,7 @@ Playback, preview, and audio rendering are unavailable.
 [ Select SF2 ]
 ```
 这是合法状态，不使用 Error 图标。
-### 20.10.14 无启用音频输出设备
+### 20.10.13 无启用音频输出设备
 ```text
 No Enabled Audio Output Device
 Playback and preview are unavailable. Audio file rendering remains available.
@@ -1059,7 +1054,7 @@ Damaged
 Unused
 Draft
 ```
-不得只依赖颜色；至少使用图标、短标签和 Tooltip / Details。
+不得只依赖颜色；至少使用图标、短标签和 Tooltip / Properties。
 父对象可聚合子对象问题，但不复制所有完整消息。
 Timeline 对象的问题不能用整块纯红色遮挡内容、Selection 或曲线形状。
 ### 20.11.4 Workspace Summary
@@ -1185,6 +1180,7 @@ No general-purpose toast system requirement
 | `Ctrl+A` | Select All | Focus-sensitive |
 | `Ctrl+D` | Duplicate Selection | Focused object scope |
 | `Ctrl+F` | Local Search / Find | Focus-sensitive |
+| `Ctrl+P` | Open Properties for the active supported target | Focus-sensitive |
 | `Ctrl+Tab` | Next Workspace Tab | Main Window |
 | `Ctrl+Shift+Tab` | Previous Workspace Tab | Main Window |
 | `F2` | Rename Focused Object | Focused object scope |
@@ -1231,7 +1227,7 @@ F2 在 Segment、Project End Marker、Conductor 固定行、Damaged Placeholder�
 Stopped                    -> Play
 Preparing / Playing / Buffering -> Stop
 ```
-Button、Checkbox、Tree、List、Inspector、Diagnostics、Tasks、Settings 与 Status Bar 不再优先消费 Space；这些区域的 Space 执行全局 Play / Stop。文本输入、代码输入、打开的菜单/Popup 和 Modal Dialog 仍优先处理 Space。
+Button、Checkbox、Tree、List、非文本 Properties 表面、Diagnostics、Settings 与 Status Bar 不再优先消费 Space；这些区域的 Space 执行全局 Play / Stop。文本输入、代码输入、打开的菜单/Popup 和 Modal Dialog 仍优先处理 Space。
 初版没有 Pause。
 ### 20.12.7 Escape
 优先顺序：
@@ -1268,7 +1264,7 @@ Tab / Shift+Tab 在当前焦点范围内移动；Function Editor 中 Tab 用于�
 F4       -> Next Active Diagnostic
 Shift+F4 -> Previous Active Diagnostic
 ```
-使用 Global Active Diagnostics，不受 Bottom Panel 当前搜索隐藏影响。
+使用 Global Active Diagnostics，不受 Diagnostics Workspace 当前搜索隐藏影响。
 ### 20.12.10 Alt
 ```text
 Alt+Drag on Segment / Note -> force Move regardless of Body / Resize hit region
@@ -1297,7 +1293,6 @@ Backspace 不删除 Project 对象、不返回导航、不关闭 Tab。
 Ctrl+W
 Ctrl+Shift+W
 Ctrl+Q
-Ctrl+P
 Ctrl+R
 Ctrl+E
 Ctrl+M
@@ -1370,7 +1365,7 @@ Program      -> 1-128
 ```
 用户侧 Track 和 SubVoice 显示顺序编号使用 1-based。
 ### 20.13.5 Enum
-主要显示 item name；显式整数值可以在 Details 中补充。
+主要显示 item name；显式整数值可在对象所属 Properties 或 Tooltip 中补充。
 ### 20.13.6 日期时间
 固定：
 ```text
@@ -1391,8 +1386,6 @@ Preference 自动保存不等于 Project Autosave。
 ### 20.14.2 持久化内容
 ```text
 Window position and maximized state
-Inspector width and collapsed state
-Bottom Panel height, state and last active tab
 Major splitters
 Follow Playback preference
 Default lane height
@@ -1484,8 +1477,6 @@ DPI override
 ```
 ### 20.14.9 初版默认值
 ```text
-Inspector: Visible
-Bottom Panel: Collapsed with Diagnostics active
 Follow Playback: Enabled
 Current Tool: Select
 Playback Output Device: System Default
@@ -1520,7 +1511,7 @@ Usable Active Workspace area
 ```
 ### 20.15.3 滚动与面板
 整个应用不出现全局二维 Scrollbar；滚动只存在于具体内容区域。
-Inspector、Bottom Panel 和 Active Workspace 均有最小可用尺寸。
+Active Workspace 及其内部可调侧栏/下部编辑区均有各自的最小可用尺寸。
 窗口缩小时不自动永久改变用户折叠偏好。
 ### 20.15.4 Toolbar 与 Tabs
 Toolbar 宽度不足时使用 Overflow。
@@ -1530,7 +1521,7 @@ Timeline Toolbar 的 Grid / Snap 选择框只显示 `Bar` 或简写分数（例�
 
 Arrangement Segment 使用较深的低饱和蓝灰色；选中 Segment 使用同色系强调边框和更深背景，Note Preview 使用高亮但低饱和的蓝灰色。Segment Piano Roll 的 active range 保留基础键位底色，界外范围进一步压暗；未选中 Note 使用高亮蓝灰色，选中 Note 的红色填充与红色边框保持不变。Velocity 未选中柱使用相同蓝灰色，选中 Note 对应柱使用红色；每个 Note 只在 start tick 显示固定窄柱，柱顶显示明显更宽的方形 onset marker，柱宽不得随 Note 长度变化。Piano Roll 白键行使用较亮底色、黑键行使用较暗底色；Segment 与 SubVoice Pitch Ruler 使用完整白键和较短黑键的钢琴外观，并且只在每个八度 C 键显示符合 MIDI 60 = C4 的音名。空 Timeline 不显示覆盖画布的 `No timeline content` 卡片。Disabled Ghost Button 不保留背景或边框。Transport 的位置与 BPM 使用亮色并以竖向分割线分隔；Play 图标不得裁切。Parameter / Event Lane 不显示额外白色外框。数值标尺顶部和底部标签不得被视口裁切。
 
-ComboBox 的可编辑文本和下拉指示必须分别在内容区与按钮区垂直居中；下拉指示使用同一 Fluent 图标体系，不得使用字体符号代替。显式垂直 ScrollBar 的 Track 必须完整铺满可用高度；Thumb 长度必须按当前可见范围相对完整有界范围的比例计算，不得使用与视口无关的固定值。Bottom Panel Diagnostics 的筛选 ComboBox 和 Segment Piano Roll 顶部左侧文本不得裁切或偏离垂直中心。
+ComboBox 的可编辑文本和下拉指示必须分别在内容区与按钮区垂直居中；下拉指示使用同一 Fluent 图标体系，不得使用字体符号代替。显式垂直 ScrollBar 的 Track 必须完整铺满可用高度；Thumb 长度必须按当前可见范围相对完整有界范围的比例计算，不得使用与视口无关的固定值。Diagnostics Workspace 的筛选 ComboBox 和 Segment Piano Roll 顶部左侧文本不得裁切或偏离垂直中心。Timeline 和 piano roll 的显式垂直 ScrollBar 必须始终占据其布局位置；无可滚动范围时只 Disabled，不得 Collapsed 或以透明 Disabled 样式消失。
 ### 20.15.5 Resize 语义
 Resize 只改变视图，不：
 ```text
@@ -1553,6 +1544,8 @@ Segment 下部 Lane 编辑区的分隔条调整下部编辑区与“Piano Roll +
 复杂 Configuration、Progress 和 Result Dialog 可调整尺寸；普通 Confirmation 通常内容自适应且不可调。
 所有模态 Dialog 必须有明确 Owner。
 Dialog 主操作始终可达，长内容内部滚动。
+带确认提交的 Dialog 使用共享、统一宽度的红色 Primary 主按钮和共享 Cancel 按钮；主按钮为 Enter 默认动作，Cancel 为 Escape 取消动作，不得由各 Dialog 分别复制样式和键盘契约。
+每个 Dialog 只允许注册一个 Escape Cancel target。标题栏关闭按钮必须调用同一取消语义，但不得同时设置 `IsCancel` 与底部 Cancel 争用 Escape；因此 Escape 在 TextBox、List、Button 或普通空白焦点下均产生相同取消结果。打开的 ComboBox / Popup 等内层临时状态仍按第 20.12.7 节先消费第一次 Escape。
 Dialog 尺寸和位置不跨重启持久化。
 Context Menu、Dropdown、Popup、Tooltip 和 Drag Tooltip 必须保持在当前工作区内。
 ### 20.15.8 DPI
@@ -1584,7 +1577,7 @@ Hover
 Read-only
 Disabled
 ```
-常用鼠标目标必须有合理命中区域；极端精度需求可通过 Inspector 数值输入完成。
+常用鼠标目标必须有合理命中区域；极端精度需求通过对象所属的精确属性字段或显式 `Properties...` 完成。
 无效操作必须提供明确视觉反馈，但不需要语音或自定义音效。
 初版明确不承诺：
 ```text

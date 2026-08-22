@@ -56,6 +56,34 @@ public sealed class ApplicationPreferencesStoreTests
             loaded.Preferences.RecentDirectories.AudioRender);
     }
 
+    [Fact]
+    public void LegacyInspectorDesktopFieldsAreReadButNotWrittenAgain()
+    {
+        using TemporaryDirectory directory = new();
+        string path = Path.Combine(directory.Path, "preferences.json");
+        ApplicationPreferencesStore store = new(path);
+        Assert.True(store.Save(ApplicationPreferences.Default).Succeeded);
+        string current = File.ReadAllText(path, Encoding.UTF8);
+        const string anchor = "    \"bottomPanelHeight\"";
+        string legacy = current.Replace(
+            anchor,
+            "    \"inspectorWidth\": 312,\n"
+            + "    \"inspectorVisible\": false,\n"
+            + anchor,
+            StringComparison.Ordinal);
+        Assert.NotEqual(current, legacy);
+        File.WriteAllText(path, legacy, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        ApplicationPreferencesLoadResult loaded = store.Load();
+
+        Assert.Null(loaded.Notice);
+        Assert.Equal(ApplicationPreferences.Default, loaded.Preferences);
+        Assert.True(store.Save(loaded.Preferences).Succeeded);
+        string rewritten = File.ReadAllText(path, Encoding.UTF8);
+        Assert.DoesNotContain("inspectorWidth", rewritten, StringComparison.Ordinal);
+        Assert.DoesNotContain("inspectorVisible", rewritten, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(20, 5, 1)]
     [InlineData(2_000, 200, 16_777_216)]

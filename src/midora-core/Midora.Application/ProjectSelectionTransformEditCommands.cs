@@ -363,7 +363,7 @@ public static partial class ProjectDomainEditCommands
                 value.Point.Id,
                 ticks[index],
                 value.Point.Value,
-                value.Point.Interpolation)).ToArray();
+                CurveInterpolation.Step)).ToArray();
             return ResolveExactLogicalParameterPointCollisions(
                 PrepareCurvePointReplacementBatch(
                     location.Track.Id,
@@ -548,7 +548,7 @@ public static partial class ProjectDomainEditCommands
                                 point.Id,
                                 tick,
                                 point.Value,
-                                point.Interpolation);
+                                CurveInterpolation.Step);
                             points.Add(new(lane, point, replacement));
                         }
                     }

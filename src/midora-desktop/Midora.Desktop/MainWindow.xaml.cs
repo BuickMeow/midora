@@ -70,6 +70,7 @@ public partial class MainWindow : Window
     {
         Segments,
         MidiSegments,
+        MixedSegments,
         LogicalNotes,
         LogicalParameterPoints,
         DirectMidiNotes,
@@ -774,7 +775,7 @@ public partial class MainWindow : Window
             ?? throw new InvalidOperationException("No Project is open.");
         if (source.ObjectId is not MidoraId sourceId)
         {
-            throw new InvalidOperationException("The dragged Project node has no stable identity.");
+            throw new InvalidOperationException("The dragged Project object is unavailable.");
         }
         switch (source.Kind, target.Kind)
         {
@@ -804,7 +805,7 @@ public partial class MainWindow : Window
                     EventInstrument replacement = project.EventInstruments.Single(item => item.Id == sourceId);
                     if (MessageDialog.Show(
                             this,
-                            $"Rebind Logical Track '{track.Name}' from '{current?.Name ?? track.LastBoundEventInstrumentName ?? currentId.ToString()}' to '{replacement.Name}'? Existing Segments and Logical Parameter lanes are preserved; incompatible references will be diagnosed and are not repaired automatically.",
+                            $"Rebind Logical Track '{track.Name}' from '{current?.Name ?? track.LastBoundEventInstrumentName ?? "Unavailable Event Instrument"}' to '{replacement.Name}'? Existing Segments and Logical Parameter lanes are preserved; incompatible references will be diagnosed and are not repaired automatically.",
                             "Rebind Logical Track",
                             MessageBoxButton.YesNo,
                             MessageBoxImage.Warning) != MessageBoxResult.Yes)
@@ -1359,7 +1360,8 @@ public partial class MainWindow : Window
         {
             bool hasOperationSelection = operationContext.Ids.Length != 0;
             if (operationContext.Kind is TimelineSelectionObjectKind.Segments
-                or TimelineSelectionObjectKind.MidiSegments)
+                or TimelineSelectionObjectKind.MidiSegments
+                or TimelineSelectionObjectKind.MixedSegments)
             {
                 MenuItem flipHorizontal = new()
                 {
@@ -1383,6 +1385,7 @@ public partial class MainWindow : Window
             }
             if (operationContext.Kind is TimelineSelectionObjectKind.Segments
                 or TimelineSelectionObjectKind.MidiSegments
+                or TimelineSelectionObjectKind.MixedSegments
                 or TimelineSelectionObjectKind.LogicalNotes
                 or TimelineSelectionObjectKind.DirectMidiNotes
                 or TimelineSelectionObjectKind.TemplateNotes)
@@ -1399,6 +1402,7 @@ public partial class MainWindow : Window
                 enabled: canEdit && hasOperationSelection);
             if (operationContext.Kind is TimelineSelectionObjectKind.Segments
                 or TimelineSelectionObjectKind.MidiSegments
+                or TimelineSelectionObjectKind.MixedSegments
                 or TimelineSelectionObjectKind.LogicalNotes
                 or TimelineSelectionObjectKind.DirectMidiNotes
                 or TimelineSelectionObjectKind.TemplateNotes)
@@ -1416,9 +1420,35 @@ public partial class MainWindow : Window
                 enabled: canEdit && hasOperationSelection);
             Separator();
         }
+        if (_session.ActiveWorkspace is WorkspaceViewModel activeWorkspace)
+        {
+            ObjectPropertiesViewModel properties = _session.CreateObjectProperties(activeWorkspace);
+            Add(
+                "Properties…",
+                OnEditTimelinePropertiesClick,
+                "Ctrl+P",
+                enabled: ObjectPropertiesProjection.CanEditInPropertiesDialog(
+                    activeWorkspace,
+                    properties));
+            Separator();
+        }
         Add("Set Time Range from Object Selection", OnSetTimeRangeFromObjectsClick);
         Add("Select Objects in Time Range", OnSelectObjectsInTimeRangeClick);
         Add("Clear Time Range", OnClearTimeRangeClick);
+    }
+
+    private void OnEditTimelinePropertiesClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
+        ObjectPropertiesViewModel properties = _session.CreateObjectProperties(workspace);
+        if (!ObjectPropertiesProjection.CanEditInPropertiesDialog(workspace, properties))
+        {
+            ShowUnavailable("Properties", "The current object has no available properties.");
+            return;
+        }
+        ObjectPropertiesDialog dialog = new(_session, workspace) { Owner = this };
+        _ = dialog.ShowDialog();
+        _session.RefreshWorkspaceSelection(workspace);
     }
 
     private void OnTreeRenameClick(object sender, RoutedEventArgs e) => BeginTreeRename();
@@ -1531,7 +1561,7 @@ public partial class MainWindow : Window
         options.AddRange(_session.Project.EventInstruments.Select(instrument => new SelectionDialogItem(
             instrument.Id,
             string.IsNullOrWhiteSpace(instrument.Name) ? "Unnamed Event Instrument" : instrument.Name,
-            $"Stable ID {instrument.Id}")));
+            $"{instrument.SubVoices.Count} SubVoice(s)")));
         SelectionDialog dialog = new(
             "Bind Logical Track",
             "Select the Event Instrument used by this Logical Track.",
@@ -2204,7 +2234,7 @@ public partial class MainWindow : Window
             project.EventInstruments.Select(value => new SelectionDialogItem(
                 value.Id,
                 string.IsNullOrWhiteSpace(value.Name) ? "Unnamed Event Instrument" : value.Name,
-                $"Stable ID {value.Id}")))
+                $"{value.SubVoices.Count} SubVoice(s)")))
         {
             Owner = this
         };
@@ -2446,7 +2476,7 @@ public partial class MainWindow : Window
 
     private void OnInstrumentInitialStateFieldLostFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
-        if (sender is not TextBox { Tag: InspectorField field }
+        if (sender is not TextBox { Tag: PropertyField field }
             || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel
             {
                 ObjectId: MidoraId instrumentId
@@ -2471,6 +2501,93 @@ public partial class MainWindow : Window
                 value));
         });
         _session.RefreshWorkspace(workspace);
+    }
+
+    private void OnSubVoiceConfigurationLostFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is not TextBox { Tag: string field }
+            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel
+            {
+                ObjectId: MidoraId instrumentId,
+                ActiveSubVoiceId: MidoraId subVoiceId
+            } workspace
+            || _session.Project?.EventInstruments.FirstOrDefault(item => item.Id == instrumentId)
+                is not EventInstrument instrument
+            || instrument.SubVoices.FirstOrDefault(item => item.Id == subVoiceId)
+                is not SubVoice subVoice)
+        {
+            return;
+        }
+        if (!_session.CanEditProject)
+        {
+            _session.RefreshWorkspace(workspace);
+            return;
+        }
+        bool succeeded = RunSynchronous("Update SubVoice configuration", () =>
+        {
+            IProjectEditCommand? command = field switch
+            {
+                "Name" when !string.Equals(subVoice.Name ?? string.Empty,
+                    workspace.ActiveSubVoiceNameText, StringComparison.Ordinal) =>
+                    ProjectDomainEditCommands.UpdateSubVoiceName(
+                        instrumentId,
+                        subVoiceId,
+                        workspace.ActiveSubVoiceNameText),
+                "RootNote" => CreateRootNoteCommand(),
+                _ => null
+            };
+            if (command is not null) _session.Execute(command);
+        });
+        if (!succeeded) _session.RefreshWorkspace(workspace);
+
+        IProjectEditCommand? CreateRootNoteCommand()
+        {
+            string text = workspace.ActiveSubVoiceRootNoteText.Trim();
+            int? root = text.Length == 0
+                ? null
+                : int.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture);
+            return root == subVoice.RootNoteOverride
+                ? null
+                : ProjectDomainEditCommands.UpdateSubVoiceRootNote(
+                    instrumentId,
+                    subVoiceId,
+                    root);
+        }
+    }
+
+    private void OnSubVoiceInitialStateFieldLostFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is not TextBox { Tag: PropertyField property }
+            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel
+            {
+                ObjectId: MidoraId instrumentId,
+                ActiveSubVoiceId: MidoraId subVoiceId
+            } workspace)
+        {
+            return;
+        }
+        if (!_session.CanEditProject)
+        {
+            _session.RefreshWorkspace(workspace);
+            return;
+        }
+        bool succeeded = RunSynchronous("Update SubVoice Initial State", () =>
+        {
+            string text = property.Value.Trim();
+            int? value = text.Length == 0
+                ? null
+                : int.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture);
+            _session.Execute(ProjectDomainEditCommands.UpdateSubVoiceInitialStateValue(
+                instrumentId,
+                subVoiceId,
+                ParseConfigurationMidiTarget(property.Key),
+                value));
+        });
+        _session.RefreshWorkspace(workspace);
+        if (!succeeded && sender is TextBox textBox)
+        {
+            textBox.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();
+        }
     }
 
     private static MidiValueTarget ParseConfigurationMidiTarget(string key)
@@ -2571,10 +2688,7 @@ public partial class MainWindow : Window
 
     private void OnInstrumentSectionSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!ReferenceEquals(e.OriginalSource, sender) || sender is not TabControl tabs) return;
-        _ = Dispatcher.BeginInvoke(
-            DispatcherPriority.Input,
-            () => tabs.Focus());
+        if (!ReferenceEquals(e.OriginalSource, sender)) return;
     }
 
     private void OnInstrumentSectionsLoaded(object sender, RoutedEventArgs e)
@@ -2593,6 +2707,45 @@ public partial class MainWindow : Window
         tabs.Items.Remove(configurations);
         tabs.Items.Insert(0, configurations);
         tabs.SelectedIndex = Math.Clamp(requestedIndex, 0, tabs.Items.Count - 1);
+    }
+
+    private void OnInstrumentNavigationScrollLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is ScrollViewer
+            {
+                DataContext: InstrumentWorkspaceViewModel workspace
+            } scrollViewer)
+        {
+            scrollViewer.ScrollToVerticalOffset(workspace.LeftPaneVerticalOffset);
+        }
+    }
+
+    private void OnInstrumentNavigationScrollChanged(
+        object sender,
+        ScrollChangedEventArgs e)
+    {
+        if (sender is ScrollViewer
+            {
+                DataContext: InstrumentWorkspaceViewModel workspace
+            } scrollViewer
+            && e.VerticalChange != 0)
+        {
+            workspace.LeftPaneVerticalOffset = scrollViewer.VerticalOffset;
+        }
+    }
+
+    private void OnInstrumentNavigationPreviewMouseWheel(
+        object sender,
+        MouseWheelEventArgs e)
+    {
+        if (sender is not ScrollViewer scrollViewer || e.Handled) return;
+        double oldOffset = scrollViewer.VerticalOffset;
+        scrollViewer.ScrollToVerticalOffset(
+            Math.Clamp(
+                oldOffset - e.Delta / 3d,
+                0,
+                scrollViewer.ScrollableHeight));
+        e.Handled = scrollViewer.VerticalOffset != oldOffset;
     }
 
     private void OnInstrumentLoopLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) =>
@@ -2915,22 +3068,31 @@ public partial class MainWindow : Window
 
     private void OnAddLogicalParameterClick(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: InstrumentWorkspaceViewModel { ObjectId: MidoraId instrumentId } }
+        if (sender is not FrameworkElement
+            {
+                DataContext: InstrumentWorkspaceViewModel
+                {
+                    ObjectId: MidoraId instrumentId
+                } workspace
+            }
             || _session.Project is null) return;
         EventInstrument instrument = _session.Project.EventInstruments.Single(item => item.Id == instrumentId);
-        SelectionDialog typeDialog = new(
-            "Create Logical Parameter",
-            "Select the formal input type. Initial legal/display ranges use safe defaults and remain editable in Inspector.",
-            Enum.GetValues<LogicalParameterType>().Select(type => new SelectionDialogItem(type, type.ToString())))
-        { Owner = this };
-        if (typeDialog.ShowDialog() != true || typeDialog.SelectedValue is not LogicalParameterType type) return;
         string name = UniqueName("Parameter", instrument.LogicalParameters.Select(item => item.Name));
-        double maximum = type == LogicalParameterType.Double ? 1 : 127;
-        InstrumentWorkspaceViewModel workspace = (InstrumentWorkspaceViewModel)_session.ActiveWorkspace!;
+        LogicalParameterDefinitionDialog dialog = new(name) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.DefinitionEdit is not { } edit) return;
         RunSynchronous("Create Logical Parameter", () => ExecuteAndSelectCreated(
             ProjectDomainEditCommands.CreateLogicalParameter(
-                instrumentId, name, type,
-                minimum: 0, maximum: maximum, displayMinimum: 0, displayMaximum: maximum, defaultValue: 0), workspace));
+                instrumentId,
+                dialog.ParameterName,
+                edit.Type,
+                edit.Minimum,
+                edit.Maximum,
+                edit.DisplayMinimum,
+                edit.DisplayMaximum,
+                edit.DefaultValue,
+                edit.UsesExplicitEnumValues,
+                enumItems: edit.EnumItems),
+            workspace));
     }
 
     private void OnAddEnumItemClick(object sender, RoutedEventArgs e)
@@ -3011,7 +3173,8 @@ public partial class MainWindow : Window
                 parameterId,
                 dialog.DefinitionEdit,
                 dialog.MigrationMode,
-                dialog.EnumSemanticWarningAcknowledged)));
+                dialog.EnumSemanticWarningAcknowledged,
+                dialog.ParameterName)));
     }
 
     private void OnAddMappingFunctionClick(object sender, RoutedEventArgs e)
@@ -3234,26 +3397,6 @@ public partial class MainWindow : Window
         SaveDesktopPreferences();
     }
 
-    private void OnToggleInspectorClick(object sender, RoutedEventArgs e)
-    {
-        _preferences = _preferences with
-        {
-            DesktopUi = _preferences.DesktopUi with { InspectorVisible = InspectorMenuItem.IsChecked }
-        };
-        ApplyPanelVisibility();
-        SaveDesktopPreferences();
-    }
-
-    private void OnToggleBottomPanelClick(object sender, RoutedEventArgs e)
-    {
-        _preferences = _preferences with
-        {
-            DesktopUi = _preferences.DesktopUi with { BottomPanelVisible = BottomPanelMenuItem.IsChecked }
-        };
-        ApplyPanelVisibility();
-        SaveDesktopPreferences();
-    }
-
     private void OnToggleSnapClick(object sender, RoutedEventArgs e)
     {
         GetActiveEditorSettings().SnapEnabled = SnapMenuItem.IsChecked;
@@ -3296,16 +3439,10 @@ public partial class MainWindow : Window
             DesktopUi = _preferences.DesktopUi with
             {
                 ProjectPanelWidth = defaults.ProjectPanelWidth,
-                InspectorWidth = defaults.InspectorWidth,
-                BottomPanelHeight = defaults.BottomPanelHeight,
-                ProjectPanelVisible = true,
-                InspectorVisible = true,
-                BottomPanelVisible = true
+                ProjectPanelVisible = true
             }
         };
         ProjectPanelColumn.Width = new(defaults.ProjectPanelWidth);
-        InspectorColumn.Width = new(defaults.InspectorWidth);
-        BottomPanelRow.Height = new(defaults.BottomPanelHeight);
         ApplyPanelVisibility();
         SaveDesktopPreferences();
     }
@@ -3393,7 +3530,30 @@ public partial class MainWindow : Window
     {
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
         workspace.ActiveLane = e.Item.Lane;
-        if (!e.PreserveSelectionForPotentialCopyDrag)
+        bool replaceDrawSegmentSelection = ShouldReplaceDrawSegmentSelection(
+            (sender as TimelineSurface)?.ToolMode,
+            e.Item.Kind,
+            e.Modifiers,
+            e.PreserveSelectionForPotentialCopyDrag);
+        if (e.PreserveExistingSelection)
+        {
+            long selectionRevision = workspace.Selection.Revision;
+            workspace.Selection.Add(e.Item.Id);
+            if (workspace.Selection.Revision != selectionRevision)
+            {
+                _session.RefreshWorkspaceSelection(workspace);
+            }
+        }
+        else if (replaceDrawSegmentSelection)
+        {
+            long selectionRevision = workspace.Selection.Revision;
+            workspace.Selection.Replace(e.Item.Id);
+            if (workspace.Selection.Revision != selectionRevision)
+            {
+                _session.RefreshWorkspaceSelection(workspace);
+            }
+        }
+        else if (!e.PreserveSelectionForPotentialCopyDrag)
         {
             long selectionRevision = workspace.Selection.Revision;
             if (e.IsCopyDragStart) workspace.Selection.Add(e.Item.Id);
@@ -3481,21 +3641,6 @@ public partial class MainWindow : Window
         {
             workspace.ToolMode = mode;
             button.SetCurrentValue(ToggleButton.IsCheckedProperty, true);
-        }
-    }
-
-    private void OnSelectActiveSubVoiceClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is FrameworkElement
-            {
-                DataContext: InstrumentWorkspaceViewModel
-                {
-                    ActiveSubVoiceId: MidoraId subVoiceId
-                } workspace
-            })
-        {
-            workspace.Selection.Replace(subVoiceId);
-            _session.RefreshWorkspace(workspace);
         }
     }
 
@@ -3695,7 +3840,18 @@ public partial class MainWindow : Window
         {
             if (e.IsSharedGroupTarget) return;
             _trackHeaderContextLane = e.Lane;
-            SelectArrangementTrack(arrangement, arrangementLane);
+            bool alreadySelected = arrangementLane.Kind == ArrangementLaneKind.Conductor
+                ? arrangement.IsConductorTrackSelected
+                : arrangementLane.ObjectId is MidoraId trackId
+                    && arrangement.SelectedArrangementTrackId == trackId;
+            if (alreadySelected)
+            {
+                ClearArrangementTrackSelection(arrangement);
+            }
+            else
+            {
+                SelectArrangementTrack(arrangement, arrangementLane);
+            }
         }
         else
         {
@@ -3734,6 +3890,47 @@ public partial class MainWindow : Window
             menu.IsOpen = true;
             e.Handled = true;
         }
+    }
+
+    private void OnArrangementInstrumentInvoked(
+        object? sender,
+        TimelineArrangementInstrumentEventArgs e)
+    {
+        _session.OpenInstrument(e.InstrumentId);
+    }
+
+    private void OnArrangementMidiRouteInvoked(
+        object? sender,
+        TimelineArrangementMidiRouteEventArgs e) =>
+        ShowMidiRouteSettings(e.TrackId, e.RootId);
+
+    private void OnOpenInstrumentPropertiesClick(object sender, RoutedEventArgs e)
+    {
+        if (OpenInstrumentProperties()) e.Handled = true;
+    }
+
+    private bool OpenInstrumentProperties()
+    {
+        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace
+            || workspace.Selection.Primary is null)
+        {
+            ShowUnavailable(
+                "Properties",
+                "Select an Event Instrument object first.");
+            return false;
+        }
+        ObjectPropertiesViewModel properties = _session.CreateObjectProperties(workspace);
+        if (!ObjectPropertiesProjection.CanEditInPropertiesDialog(workspace, properties))
+        {
+            ShowUnavailable(
+                "Properties",
+                "This object has no available properties.");
+            return false;
+        }
+        ObjectPropertiesDialog dialog = new(_session, workspace) { Owner = this };
+        _ = dialog.ShowDialog();
+        _session.RefreshWorkspaceSelection(workspace);
+        return true;
     }
 
     private void OnTimelineContextMenuClosed(object sender, RoutedEventArgs e)
@@ -3779,9 +3976,20 @@ public partial class MainWindow : Window
     {
         EventInstrumentBrowserRow? row = EventInstrumentBrowserRowFrom(sender);
         if (row is null) return;
+        if (sender is ListBox { ContextMenu: { } menu }) menu.IsOpen = false;
         e.Handled = true;
         _session.OpenInstrument(row.Id);
     }
+
+    internal static bool ShouldReplaceDrawSegmentSelection(
+        TimelineToolMode? toolMode,
+        TimelineItemKind itemKind,
+        ModifierKeys modifiers,
+        bool preserveSelectionForPotentialDrag) =>
+        toolMode == TimelineToolMode.Draw
+        && itemKind == TimelineItemKind.Segment
+        && modifiers == ModifierKeys.None
+        && !preserveSelectionForPotentialDrag;
 
     private void OnEventInstrumentBrowserEditClick(object sender, RoutedEventArgs e)
     {
@@ -4283,13 +4491,13 @@ public partial class MainWindow : Window
         MidoraProject project,
         ArrangementTrackReference reference,
         MidoraId groupId) => reference.Kind switch
-    {
-        ArrangementTrackKind.LogicalTrack => project.Tracks.Single(
-            value => value.Id == reference.TrackId).EventInstrumentUsageId == groupId,
-        ArrangementTrackKind.PureMidiTrack => project.PureMidiTracks.Single(
-            value => value.Id == reference.TrackId).MidiChannelRootId == groupId,
-        _ => false
-    };
+        {
+            ArrangementTrackKind.LogicalTrack => project.Tracks.Single(
+                value => value.Id == reference.TrackId).EventInstrumentUsageId == groupId,
+            ArrangementTrackKind.PureMidiTrack => project.PureMidiTracks.Single(
+                value => value.Id == reference.TrackId).MidiChannelRootId == groupId,
+            _ => false
+        };
 
     private bool CanPasteArrangementHeader(ArrangementLaneDescriptor descriptor)
     {
@@ -4371,6 +4579,16 @@ public partial class MainWindow : Window
                 ObjectId: MidoraId trackId,
                 ParentId: MidoraId rootId
             })
+        {
+            return;
+        }
+        ShowMidiRouteSettings(trackId, rootId);
+    }
+
+    private void ShowMidiRouteSettings(MidoraId trackId, MidoraId rootId)
+    {
+        if (_session.Project is not MidoraProject project
+            || project.PureMidiTracks.All(value => value.Id != trackId))
         {
             return;
         }
@@ -4467,7 +4685,7 @@ public partial class MainWindow : Window
                     : instrument.Name,
                 instrument.Id == usage.EventInstrumentId
                     ? "Current definition"
-                    : $"Stable ID {instrument.Id}")))
+                    : $"{instrument.SubVoices.Count} SubVoice(s)")))
         {
             Owner = this
         };
@@ -4902,7 +5120,7 @@ public partial class MainWindow : Window
             project.EventInstruments.Select(instrument => new SelectionDialogItem(
                 instrument.Id,
                 string.IsNullOrWhiteSpace(instrument.Name) ? "Unnamed Event Instrument" : instrument.Name,
-                $"Stable ID {instrument.Id}")))
+                $"{instrument.SubVoices.Count} SubVoice(s)")))
         {
             Owner = this
         };
@@ -5298,6 +5516,7 @@ public partial class MainWindow : Window
         {
             return;
         }
+        if (workspace.Selection.Primary == row.Id) return;
         workspace.Selection.Replace(row.Id);
         workspace.EditCursorTick = row.Tick;
         if (row.Tick < workspace.StartTick || row.Tick >= workspace.StartTick + workspace.TickSpan)
@@ -5305,102 +5524,6 @@ public partial class MainWindow : Window
             workspace.StartTick = Math.Max(0, row.Tick - workspace.TickSpan / 4);
         }
         _session.RefreshWorkspaceSelection(workspace);
-    }
-
-    private void OnInspectorFieldLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
-    {
-        if (sender is TextBox textBox) CommitInspectorField(textBox, restoreOnFailure: true);
-    }
-
-    private void OnInspectorFieldKeyDown(object sender, KeyEventArgs e)
-    {
-        if (sender is not TextBox textBox) return;
-        if (e.Key == Key.Enter)
-        {
-            CommitInspectorField(textBox, restoreOnFailure: true);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.Escape)
-        {
-            textBox.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();
-            _session.Inspector.ErrorText = null;
-            e.Handled = true;
-        }
-    }
-
-    private void OnInspectorChoiceDropDownClosed(object sender, EventArgs e)
-    {
-        if (sender is not ComboBox { Tag: InspectorField field } || !field.IsEditable) return;
-        try
-        {
-            _session.ApplyInspectorField(field);
-            _session.Inspector.ErrorText = null;
-        }
-        catch (Exception exception)
-        {
-            if (_session.ActiveWorkspace is WorkspaceViewModel workspace)
-            {
-                _session.RefreshWorkspaceSelection(workspace);
-            }
-            _session.Inspector.ErrorText = exception.Message;
-        }
-    }
-
-    private void OnInspectorBooleanClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not CheckBox { Tag: InspectorField field }
-            || !field.IsEditable
-            || !field.IsBoolean) return;
-        try
-        {
-            _session.ApplyInspectorField(field);
-            _session.Inspector.ErrorText = null;
-        }
-        catch (Exception exception)
-        {
-            if (_session.ActiveWorkspace is WorkspaceViewModel workspace)
-            {
-                _session.RefreshWorkspaceSelection(workspace);
-            }
-            _session.Inspector.ErrorText = exception.Message;
-        }
-    }
-
-    private void CommitInspectorField(TextBox textBox, bool restoreOnFailure)
-    {
-        if (textBox.IsReadOnly
-            || textBox.Tag is not InspectorField field
-            || !_session.Inspector.Fields.Contains(field))
-        {
-            return;
-        }
-        string originalValue = field.Value;
-        if (string.Equals(textBox.Text, originalValue, StringComparison.Ordinal))
-        {
-            _session.Inspector.ErrorText = null;
-            return;
-        }
-        BindingExpression? binding = textBox.GetBindingExpression(TextBox.TextProperty);
-        binding?.UpdateSource();
-        try
-        {
-            _session.ApplyInspectorField(field);
-            _session.Inspector.ErrorText = null;
-        }
-        catch (Exception exception)
-        {
-            _session.Inspector.ErrorText = exception.Message;
-            if (restoreOnFailure)
-            {
-                field.Value = originalValue;
-                binding?.UpdateTarget();
-            }
-            else
-            {
-                textBox.Focus();
-                textBox.SelectAll();
-            }
-        }
     }
 
     private void OnProjectSettingLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -5427,7 +5550,7 @@ public partial class MainWindow : Window
 
     private void OnProjectSettingChoiceDropDownClosed(object sender, EventArgs e)
     {
-        if (sender is not ComboBox { Tag: InspectorField field }
+        if (sender is not ComboBox { Tag: PropertyField field }
             || !field.IsEditable
             || !IsCurrentProjectSettingField(field))
         {
@@ -5475,7 +5598,7 @@ public partial class MainWindow : Window
     private void CommitProjectSetting(TextBox textBox, bool restoreOnFailure)
     {
         if (textBox.IsReadOnly
-            || textBox.Tag is not InspectorField field
+            || textBox.Tag is not PropertyField field
             || !IsCurrentProjectSettingField(field))
         {
             return;
@@ -5510,7 +5633,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private bool IsCurrentProjectSettingField(InspectorField field)
+    private bool IsCurrentProjectSettingField(PropertyField field)
     {
         if (_session.Workspaces.OfType<SettingsWorkspaceViewModel>().FirstOrDefault() is not SettingsWorkspaceViewModel settings)
         {
@@ -5617,12 +5740,13 @@ public partial class MainWindow : Window
                         .Where(segment => selected.Contains(segment.Id))
                         .Select(static segment => segment.Id)
                         .ToArray();
-                    if (logical.Length != 0 && midi.Length != 0) return null;
                     return new(
-                        midi.Length == 0
-                            ? TimelineSelectionObjectKind.Segments
-                            : TimelineSelectionObjectKind.MidiSegments,
-                        midi.Length == 0 ? logical : midi);
+                        logical.Length != 0 && midi.Length != 0
+                            ? TimelineSelectionObjectKind.MixedSegments
+                            : midi.Length == 0
+                                ? TimelineSelectionObjectKind.Segments
+                                : TimelineSelectionObjectKind.MidiSegments,
+                        logical.Concat(midi).ToArray());
                 }
             case TimelineWorkspaceViewModel
             {
@@ -5756,6 +5880,10 @@ public partial class MainWindow : Window
             TimelineSelectionObjectKind.MidiSegments => ProjectDomainEditCommands.FlipMidiSegmentsHorizontal(
                 context.Ids,
                 segmentScope),
+            TimelineSelectionObjectKind.MixedSegments =>
+                ProjectDomainEditCommands.FlipArrangementSegmentsHorizontal(
+                    context.Ids,
+                    segmentScope),
             TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.FlipLogicalNotesHorizontal(
                 context.OwnerId!.Value,
                 context.Ids),
@@ -5795,6 +5923,8 @@ public partial class MainWindow : Window
                 ProjectDomainEditCommands.FlipSegmentsVertical(context.Ids),
             TimelineSelectionObjectKind.MidiSegments =>
                 ProjectDomainEditCommands.FlipMidiSegmentsVertical(context.Ids),
+            TimelineSelectionObjectKind.MixedSegments =>
+                ProjectDomainEditCommands.FlipArrangementSegmentsVertical(context.Ids),
             TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.FlipLogicalNotesVertical(
                 context.OwnerId!.Value,
                 context.Ids),
@@ -5828,7 +5958,8 @@ public partial class MainWindow : Window
         ScaleSelectionDialog dialog = new(
             currentLength,
             context.Kind is TimelineSelectionObjectKind.Segments
-                or TimelineSelectionObjectKind.MidiSegments)
+                or TimelineSelectionObjectKind.MidiSegments
+                or TimelineSelectionObjectKind.MixedSegments)
         {
             Owner = this
         };
@@ -5843,6 +5974,11 @@ public partial class MainWindow : Window
                 context.Ids,
                 dialog.ScaleFactor,
                 dialog.Scope),
+            TimelineSelectionObjectKind.MixedSegments =>
+                ProjectDomainEditCommands.ScaleArrangementSegments(
+                    context.Ids,
+                    dialog.ScaleFactor,
+                    dialog.Scope),
             TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.ScaleLogicalNotes(
                 context.OwnerId!.Value,
                 context.Ids,
@@ -5890,6 +6026,10 @@ public partial class MainWindow : Window
                 ProjectDomainEditCommands.TransposeSegments(context.Ids, dialog.Semitones),
             TimelineSelectionObjectKind.MidiSegments =>
                 ProjectDomainEditCommands.TransposeMidiSegments(context.Ids, dialog.Semitones),
+            TimelineSelectionObjectKind.MixedSegments =>
+                ProjectDomainEditCommands.TransposeArrangementSegments(
+                    context.Ids,
+                    dialog.Semitones),
             TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.TransposeLogicalNotes(
                 context.OwnerId!.Value,
                 context.Ids,
@@ -5933,6 +6073,10 @@ public partial class MainWindow : Window
                     ProjectDomainEditCommands.BatchEditSegmentExposedNotes(context.Ids, program),
                 TimelineSelectionObjectKind.MidiSegments =>
                     ProjectDomainEditCommands.BatchEditMidiSegmentExposedNotes(context.Ids, program),
+                TimelineSelectionObjectKind.MixedSegments =>
+                    ProjectDomainEditCommands.BatchEditArrangementSegmentExposedNotes(
+                        context.Ids,
+                        program),
                 TimelineSelectionObjectKind.LogicalNotes => ProjectDomainEditCommands.BatchEditLogicalNotes(
                     context.OwnerId!.Value,
                     context.Ids,
@@ -5997,6 +6141,18 @@ public partial class MainWindow : Window
                 .Select(static segment => (
                     Start: segment.ProjectStartTick,
                     End: segment.ProjectRange.EndTick))),
+            TimelineSelectionObjectKind.MixedSegments => RangeSpan(project.Tracks
+                .SelectMany(static track => track.Segments)
+                .Where(segment => ids.Contains(segment.Id))
+                .Select(static segment => (
+                    Start: segment.ProjectStartTick,
+                    End: segment.ProjectRange.EndTick))
+                .Concat(project.PureMidiTracks
+                    .SelectMany(static track => track.Segments)
+                    .Where(segment => ids.Contains(segment.Id))
+                    .Select(static segment => (
+                        Start: segment.ProjectStartTick,
+                        End: segment.ProjectRange.EndTick)))),
             TimelineSelectionObjectKind.LogicalNotes => RangeSpan(
                 TimelineWorkspaceViewModel.FindSegment(project, context.OwnerId)!.Value.Segment.Notes
                     .Where(note => ids.Contains(note.Id))
@@ -6182,9 +6338,7 @@ public partial class MainWindow : Window
                                 lane.Id,
                                 snapped,
                                 TimelineWorkspaceViewModel.DenormalizeParameterValue(definition, e.NormalizedValue),
-                                definition.Type == LogicalParameterType.Enum
-                                    ? CurveInterpolation.Step
-                                    : CurveInterpolation.Linear), timeline);
+                                CurveInterpolation.Step), timeline);
                             break;
                         }
                         IProjectEditCommand createNote = TimelineWorkspaceViewModel.FindMidiSegment(_session.Project, segmentId) is not null
@@ -6462,8 +6616,59 @@ public partial class MainWindow : Window
         long snappedTarget,
         long snappedDelta)
     {
+        MidoraProject project = _session.Project!;
+        MidoraId[] logicalSelected = project.Tracks
+            .SelectMany(track => track.Segments)
+            .Where(segment => selected.Contains(segment.Id))
+            .Select(segment => segment.Id)
+            .ToArray();
+        MidoraId[] midiSelected = project.PureMidiTracks
+            .SelectMany(track => track.Segments)
+            .Where(segment => selected.Contains(segment.Id))
+            .Select(segment => segment.Id)
+            .ToArray();
+        if (logicalSelected.Length != 0 && midiSelected.Length != 0)
+        {
+            MidoraId[] mixed = logicalSelected.Concat(midiSelected).ToArray();
+            if (edit.EditKind == TimelineItemEditKind.Move)
+            {
+                if (edit.CopyRequested)
+                {
+                    throw new InvalidOperationException(
+                        "Copy-drag is unavailable for a mixed Logical/MIDI Segment selection. Use Duplicate, then drag the copy.");
+                }
+                long minimumStart = logicalSelected
+                    .Select(id => TimelineWorkspaceViewModel.FindSegment(project, id)!.Value.Segment.ProjectStartTick)
+                    .Concat(midiSelected.Select(id =>
+                        TimelineWorkspaceViewModel.FindMidiSegment(project, id)!.Value.Segment.ProjectStartTick))
+                    .Min();
+                long delta = Math.Max(snappedDelta, -minimumStart);
+                _session.Execute(ProjectDomainEditCommands.MoveArrangementSegmentsHorizontal(
+                    mixed,
+                    delta));
+            }
+            else if (edit.EditKind == TimelineItemEditKind.ResizeStart)
+            {
+                _session.Execute(ProjectDomainEditCommands.AdjustArrangementSegmentEdges(
+                    mixed,
+                    snappedDelta,
+                    0));
+            }
+            else
+            {
+                long endDelta = workspace.EditorSettings.SnapDelta(
+                    edit.TickDelta,
+                    checked(edit.Item.EndTick + edit.TickDelta));
+                _session.Execute(ProjectDomainEditCommands.AdjustArrangementSegmentEdges(
+                    mixed,
+                    0,
+                    endDelta));
+            }
+            return;
+        }
+
         (LogicalTrack Track, Segment Segment)? location =
-            TimelineWorkspaceViewModel.FindSegment(_session.Project!, edit.Item.Id);
+            TimelineWorkspaceViewModel.FindSegment(project, edit.Item.Id);
         if (location is null)
         {
             if (TimelineWorkspaceViewModel.FindMidiSegment(_session.Project!, edit.Item.Id) is not null)
@@ -7270,25 +7475,17 @@ public partial class MainWindow : Window
                 "Create at least one Logical Parameter and one SubVoice first.");
             return;
         }
-        SelectionDialog parameterDialog = new(
-            "Add Logical Parameter Mapping",
-            "Select the source Logical Parameter.",
-            instrument.LogicalParameters.Select(item => new SelectionDialogItem(item.Id, item.Name, item.Type.ToString())))
-        { Owner = this };
-        if (parameterDialog.ShowDialog() != true || parameterDialog.SelectedValue is not MidoraId parameterId) return;
-        SelectionDialog voiceDialog = new(
-            "Add Logical Parameter Mapping",
-            "Select the target SubVoice.",
-            instrument.SubVoices.Select((voice, index) => new SelectionDialogItem(
-                voice.Id,
-                string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {index + 1}" : voice.Name)))
-        { Owner = this };
-        if (voiceDialog.ShowDialog() != true || voiceDialog.SelectedValue is not MidoraId voiceId) return;
-        MidiTargetDialog targetDialog = new("Add Logical Parameter Mapping") { Owner = this };
-        if (targetDialog.ShowDialog() != true || targetDialog.Result is not MidiValueTarget target) return;
+        ParameterMappingPropertiesDialog dialog = new(instrument) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
         RunSynchronous("Create Logical Parameter Mapping", () => ExecuteAndSelectCreated(
             ProjectDomainEditCommands.CreateLogicalParameterMapping(
-                instrumentId, parameterId, voiceId, target), workspace));
+                instrumentId,
+                dialog.ParameterId,
+                dialog.SubVoiceId,
+                dialog.Target,
+                dialog.Rounding,
+                dialog.Overflow),
+            workspace));
     }
 
     private void OnEditParameterMappingClick(object sender, RoutedEventArgs e)
@@ -7307,49 +7504,26 @@ public partial class MainWindow : Window
             .FirstOrDefault(item => item.Id == mappingId);
         if (mapping is null) return;
 
-        SelectionDialog parameterDialog = new(
-            "Edit Logical Parameter Mapping",
-            "Select the source Logical Parameter.",
-            instrument.LogicalParameters.Select(item =>
-                new SelectionDialogItem(item.Id, item.Name, item.Type.ToString())),
-            mapping.ParameterId)
-        { Owner = this };
-        if (parameterDialog.ShowDialog() != true
-            || parameterDialog.SelectedValue is not MidoraId parameterId)
-        {
-            return;
-        }
-        SelectionDialog voiceDialog = new(
-            "Edit Logical Parameter Mapping",
-            "Select the target SubVoice.",
-            instrument.SubVoices.Select((voice, index) => new SelectionDialogItem(
-                voice.Id,
-                string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {index + 1}" : voice.Name)),
-            mapping.SubVoiceId)
-        { Owner = this };
-        if (voiceDialog.ShowDialog() != true
-            || voiceDialog.SelectedValue is not MidoraId voiceId)
-        {
-            return;
-        }
-        MidiTargetDialog targetDialog = new(
-            "Edit Logical Parameter Mapping",
-            mapping.Target)
-        { Owner = this };
-        if (targetDialog.ShowDialog() != true
-            || targetDialog.Result is not MidiValueTarget target)
-        {
-            return;
-        }
+        ParameterMappingPropertiesDialog dialog = new(instrument, mapping) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
         RunSynchronous(
-            "Edit Logical Parameter Mapping",
+            "Update Logical Parameter Mapping",
             () => _session.Execute(
-                ProjectDomainEditCommands.UpdateLogicalParameterMappingRoute(
-                    instrumentId,
-                    mapping.Id,
-                    parameterId,
-                    voiceId,
-                    target)));
+                new SequentialProjectEditCommand(
+                    "Update Logical Parameter Mapping",
+                    [
+                        _ => ProjectDomainEditCommands.UpdateLogicalParameterMappingRoute(
+                            instrumentId,
+                            mapping.Id,
+                            dialog.ParameterId,
+                            dialog.SubVoiceId,
+                            dialog.Target),
+                        _ => ProjectDomainEditCommands.UpdateLogicalParameterMappingTargetSettings(
+                            instrumentId,
+                            mapping.Id,
+                            dialog.Rounding,
+                            dialog.Overflow)
+                    ])));
     }
 
     private void OnMoveParameterMappingClick(object sender, RoutedEventArgs e)
@@ -7406,113 +7580,25 @@ public partial class MainWindow : Window
             ? workspace.MappingChains.FirstOrDefault(chain => chain.Id == selectedId)?.Id
                 ?? workspace.MappingSteps.FirstOrDefault(step => step.Id == selectedId)?.ChainId
             : null;
-        SelectionDialog chainDialog = new(
-            "Add Mapping Step",
-            "Select the ordered Mapping Chain that will own the new step.",
-            workspace.MappingChains.Select(chain => new SelectionDialogItem(
-                chain.Id,
-                chain.Owner,
-                $"{chain.StepCount} existing step(s)")),
-            preferredChainId)
-        { Owner = this };
-        if (chainDialog.ShowDialog() != true || chainDialog.SelectedValue is not MidoraId chainId) return;
-        MappingChainEditingContext context = MappingEditingPolicy.Resolve(instrument, chainId);
-        IReadOnlyList<MappingSource> allowedSources = MappingEditingPolicy.AllowedSources(
-            instrument,
-            context);
-        if (allowedSources.Count == 0)
-        {
-            ShowUnavailable(
-                "Add Mapping Step",
-                context.IsNoteNumberMapping && !instrument.RequiresChannelIsolation
-                    ? "A Note Number Mapping Chain requires Per-Note Instance Isolation before steps can be added."
-                    : "No Mapping Source is legal in the selected chain context.");
-            return;
-        }
-        SelectionDialog sourceDialog = new(
-            "Mapping Source",
-            "Select the source read by this step.",
-            allowedSources.Select(value => new SelectionDialogItem(
-                value,
-                value.ToString(),
-                MappingEditingPolicy.DescribeSource(value))))
-        { Owner = this };
-        if (sourceDialog.ShowDialog() != true || sourceDialog.SelectedValue is not MappingSource source) return;
-        IReadOnlyList<CSharpMappingFunction> allowedFunctions = MappingEditingPolicy.AllowedFunctions(
-            instrument,
-            context);
-        MappingOperation[] allowedOperations = Enum.GetValues<MappingOperation>()
-            .Where(value => value != MappingOperation.CustomCSharp || allowedFunctions.Count != 0)
-            .ToArray();
-        SelectionDialog operationDialog = new(
-            "Mapping Operation",
-            "Select the operation. Numeric ranges remain editable in Inspector.",
-            allowedOperations.Select(value => new SelectionDialogItem(value, value.ToString())))
-        { Owner = this };
-        if (operationDialog.ShowDialog() != true || operationDialog.SelectedValue is not MappingOperation operation) return;
-
-        MidoraId? logicalParameterId = null;
-        MidoraId? envelopeId = null;
-        MidoraId? mappingFunctionId = null;
-        if (source == MappingSource.LogicalParameter)
-        {
-            SelectionDialog referenceDialog = new(
-                "Logical Parameter Source",
-                "Select the Logical Parameter read by this step.",
-                instrument.LogicalParameters.Select(parameter => new SelectionDialogItem(
-                    parameter.Id,
-                    parameter.Name,
-                    parameter.Type.ToString())))
-            { Owner = this };
-            if (referenceDialog.ShowDialog() != true
-                || referenceDialog.SelectedValue is not MidoraId selectedParameterId)
+        MidoraId chainId = preferredChainId ?? workspace.MappingChains[0].Id;
+        ObjectPropertiesViewModel properties =
+            ObjectPropertiesProjection.CreateMappingStepCreationProperties(
+                instrument,
+                workspace,
+                chainId);
+        ObjectPropertiesDialog dialog = new(
+            properties,
+            values =>
             {
-                return;
-            }
-            logicalParameterId = selectedParameterId;
-        }
-        if (source == MappingSource.Envelope)
-        {
-            SelectionDialog referenceDialog = new(
-                "Envelope Source",
-                "Select the Envelope Preset read by this step.",
-                instrument.Envelopes.Select(envelope => new SelectionDialogItem(
-                    envelope.Id,
-                    string.IsNullOrWhiteSpace(envelope.Name) ? "Envelope Preset" : envelope.Name)))
-            { Owner = this };
-            if (referenceDialog.ShowDialog() != true
-                || referenceDialog.SelectedValue is not MidoraId selectedEnvelopeId)
-            {
-                return;
-            }
-            envelopeId = selectedEnvelopeId;
-        }
-        if (operation == MappingOperation.CustomCSharp)
-        {
-            SelectionDialog referenceDialog = new(
-                "C# Mapping Function",
-                "Select a Mapping Function legal in this chain context.",
-                allowedFunctions.Select(function => new SelectionDialogItem(
-                    function.Id,
-                    function.Name,
-                    $"ABI v{function.AbiVersion}")))
-            { Owner = this };
-            if (referenceDialog.ShowDialog() != true
-                || referenceDialog.SelectedValue is not MidoraId selectedFunctionId)
-            {
-                return;
-            }
-            mappingFunctionId = selectedFunctionId;
-        }
-        RunSynchronous("Create Mapping Step", () => ExecuteAndSelectCreated(
-            ProjectDomainEditCommands.CreateMappingStep(
-                instrumentId,
-                chainId,
-                source,
-                operation,
-                logicalParameterId,
-                envelopeId,
-                mappingFunctionId), workspace));
+                ExecuteAndSelectCreated(
+                    ObjectPropertiesProjection.CreateMappingStepCreationCommand(
+                        instrument,
+                        values),
+                    workspace);
+                return true;
+            })
+        { Owner = this };
+        _ = dialog.ShowDialog();
     }
 
     private void OnMoveMappingStepClick(object sender, RoutedEventArgs e)
@@ -7546,15 +7632,27 @@ public partial class MainWindow : Window
         if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel
             {
                 ObjectId: MidoraId instrumentId
-            } workspace) return;
-        RunSynchronous("Create Envelope Preset", () => ExecuteAndSelectCreated(
-            ProjectDomainEditCommands.CreateInstrumentEnvelope(
-                instrumentId,
-                name: "Envelope Preset",
-                attackTicks: 48,
-                decayTicks: 48,
-                sustainValue: 0.75,
-                releaseTicks: 96), workspace));
+            } workspace
+            || _session.Project?.EventInstruments.FirstOrDefault(
+                value => value.Id == instrumentId) is not EventInstrument instrument) return;
+        string name = UniqueName(
+            "Envelope Preset",
+            instrument.Envelopes.Select(value => value.Name ?? string.Empty));
+        ObjectPropertiesViewModel properties =
+            ObjectPropertiesProjection.CreateEnvelopeCreationProperties(name);
+        ObjectPropertiesDialog dialog = new(
+            properties,
+            values =>
+            {
+                ExecuteAndSelectCreated(
+                    ObjectPropertiesProjection.CreateEnvelopeCreationCommand(
+                        instrumentId,
+                        values),
+                    workspace);
+                return true;
+            })
+        { Owner = this };
+        _ = dialog.ShowDialog();
     }
 
     private static IProjectEditCommand CreateTemplateEventCommand(
@@ -7672,7 +7770,7 @@ public partial class MainWindow : Window
     private void OnStatusMessageDetailsClick(object sender, RoutedEventArgs e)
     {
         if (_session.StatusMessage is not string message) return;
-        TextDetailsDialog dialog = new("Status Message Details", message)
+        TextDetailsDialog dialog = new("Status Message", message)
         {
             Owner = this
         };
@@ -7723,7 +7821,7 @@ public partial class MainWindow : Window
         {
             return selected;
         }
-        return _session.SelectedDiagnostic ?? _session.SelectedBottomDiagnostic;
+        return _session.SelectedDiagnostic;
     }
 
     private void OnCancelTaskClick(object sender, RoutedEventArgs e)
@@ -7947,7 +8045,7 @@ public partial class MainWindow : Window
                 value =>
                 {
                     string detail = $"{value.Status}: output {Math.Max(0, value.CurrentOutputIndex + 1)}/{value.OutputCount}, {value.ProcessedFrameCount:N0}/{value.TotalFrameCount:N0} frames";
-                    DesktopTaskViewModel? active = _session.TaskHistory.LastOrDefault(item => item.IsRunning);
+                    DesktopTaskViewModel? active = _session.ActiveForegroundTask;
                     if (active is not null)
                     {
                         active.SetCancellationAvailable(value.Status is not AudioRenderTaskStatus.Finalizing
@@ -8219,62 +8317,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnRecentProjectsSubmenuOpened(object sender, RoutedEventArgs e)
-    {
-        RecentProjectsMenu.Items.Clear();
-        IReadOnlyList<RecentProjectEntry> entries = _recentProjects.Current;
-        if (entries.Count == 0)
-        {
-            RecentProjectsMenu.Items.Add(new MenuItem { Header = "No recent Projects", IsEnabled = false });
-            return;
-        }
-        foreach (RecentProjectEntry entry in entries)
-        {
-            MenuItem item = new()
-            {
-                Header = entry.IsCurrentlyAvailable ? entry.Path : $"{entry.Path}  [Missing]",
-                Tag = entry.Path
-            };
-            item.Click += OnOpenRecentProjectClick;
-            RecentProjectsMenu.Items.Add(item);
-        }
-        RecentProjectsMenu.Items.Add(new Separator());
-        MenuItem clear = new() { Header = "Clear Recent Projects" };
-        clear.Click += OnClearRecentProjectsClick;
-        RecentProjectsMenu.Items.Add(clear);
-    }
-
-    private async void OnOpenRecentProjectClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not MenuItem { Tag: string path }) return;
-        if (!File.Exists(path))
-        {
-            if (MessageDialog.Show(
-                    this,
-                    $"This recent Project no longer exists:\n\n{path}\n\nRemove it from the recent list?",
-                    "Recent Project Missing",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Information) == MessageBoxResult.Yes)
-            {
-                RecentProjectsUpdateResult removed = _recentProjects.Remove(path);
-                if (!removed.Succeeded) _session.SetStatusMessage(removed.Notice?.Message, isError: true);
-            }
-            return;
-        }
-        if (!StopPlaybackForProjectCommand("Open Recent Project") || !await ConfirmCloseCurrentProjectAsync()) return;
-        if (await RunOperationAsync("Open Project", () => _session.OpenProjectAsync(path)))
-        {
-            RecordRecentDirectory(RecentDirectoryPurpose.OpenProject, Path.GetDirectoryName(path));
-            RecordRecentProject(path);
-        }
-    }
-
-    private void OnClearRecentProjectsClick(object sender, RoutedEventArgs e)
-    {
-        RecentProjectsUpdateResult result = _recentProjects.Clear();
-        if (!result.Succeeded) _session.SetStatusMessage(result.Notice?.Message, isError: true);
-    }
-
     private void LoadDesktopPreferences()
     {
         ApplicationPreferencesLoadResult loaded = _preferenceStore.Load();
@@ -8293,8 +8335,6 @@ public partial class MainWindow : Window
         Width = ui.MainWindowWidth;
         Height = ui.MainWindowHeight;
         ProjectPanelColumn.Width = new GridLength(0);
-        InspectorColumn.Width = new GridLength(ui.InspectorWidth);
-        BottomPanelRow.Height = new GridLength(ui.BottomPanelHeight);
         ApplyPanelVisibility();
         if (ui.MainWindowLeft is double left && ui.MainWindowTop is double top
             && left + Width >= SystemParameters.VirtualScreenLeft
@@ -8356,13 +8396,7 @@ public partial class MainWindow : Window
             MainWindowMaximized = WindowState == WindowState.Maximized,
             ProjectPanelWidth = currentUi.ProjectPanelVisible
                 ? Math.Clamp(ProjectPanelColumn.ActualWidth, 170, 360)
-                : currentUi.ProjectPanelWidth,
-            InspectorWidth = currentUi.InspectorVisible
-                ? Math.Clamp(InspectorColumn.ActualWidth, 220, 420)
-                : currentUi.InspectorWidth,
-            BottomPanelHeight = currentUi.BottomPanelVisible
-                ? Math.Clamp(BottomPanelRow.ActualHeight, 80, 500)
-                : currentUi.BottomPanelHeight
+                : currentUi.ProjectPanelWidth
         };
         _preferences = _preferences with { DesktopUi = ui };
         ApplicationPreferencesSaveResult saved = _preferenceStore.Save(_preferences);
@@ -8376,8 +8410,6 @@ public partial class MainWindow : Window
     {
         DesktopUiPreferences ui = _preferences.DesktopUi;
         ProjectPanelMenuItem.IsChecked = false;
-        InspectorMenuItem.IsChecked = ui.InspectorVisible;
-        BottomPanelMenuItem.IsChecked = ui.BottomPanelVisible;
         SnapMenuItem.IsChecked = GetActiveEditorSettings().SnapEnabled;
         FollowPlaybackMenuItem.IsChecked = ui.FollowPlayback;
         FollowPlaybackToggleButton.IsChecked = ui.FollowPlayback;
@@ -8388,16 +8420,6 @@ public partial class MainWindow : Window
         ProjectPanelColumn.Width = new(0);
         ProjectSplitterColumn.Width = new(0);
 
-        InspectorGrid.Visibility = ui.InspectorVisible ? Visibility.Visible : Visibility.Collapsed;
-        InspectorSplitter.Visibility = ui.InspectorVisible ? Visibility.Visible : Visibility.Collapsed;
-        InspectorColumn.MinWidth = ui.InspectorVisible ? 220 : 0;
-        InspectorColumn.Width = ui.InspectorVisible ? new(ui.InspectorWidth) : new(0);
-        InspectorSplitterColumn.Width = ui.InspectorVisible ? new(4) : new(0);
-
-        BottomTabs.Visibility = ui.BottomPanelVisible ? Visibility.Visible : Visibility.Collapsed;
-        BottomPanelSplitter.Visibility = ui.BottomPanelVisible ? Visibility.Visible : Visibility.Collapsed;
-        BottomPanelSplitterRow.Height = ui.BottomPanelVisible ? new(4) : new(0);
-        BottomPanelRow.Height = ui.BottomPanelVisible ? new(ui.BottomPanelHeight) : new(0);
     }
 
     private async void OnWindowClosing(object? sender, CancelEventArgs e)
@@ -8523,6 +8545,13 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        if (e.Key == Key.P
+            && Keyboard.Modifiers == ModifierKeys.Control
+            && !IsTransientInputSurfaceOpen())
+        {
+            e.Handled = TryOpenActiveProperties();
+            if (e.Handled) return;
+        }
         if (Keyboard.Modifiers == ModifierKeys.None
             && !IsTextEditingFocus()
             && !IsTransientInputSurfaceOpen()
@@ -8613,6 +8642,35 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool TryOpenActiveProperties()
+    {
+        if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return false;
+        if (workspace is InstrumentWorkspaceViewModel instrumentWorkspace
+            && _session.Project?.EventInstruments.FirstOrDefault(
+                value => value.Id == instrumentWorkspace.ObjectId) is EventInstrument instrument
+            && instrumentWorkspace.Selection.Primary is MidoraId selectedId)
+        {
+            if (instrument.LogicalParameters.Any(value => value.Id == selectedId))
+            {
+                OnEditLogicalParameterDefinitionClick(this, new RoutedEventArgs());
+                return true;
+            }
+            if (instrument.ParameterMappings.Any(value => value.Id == selectedId))
+            {
+                OnEditParameterMappingClick(this, new RoutedEventArgs());
+                return true;
+            }
+        }
+        ObjectPropertiesViewModel properties = _session.CreateObjectProperties(workspace);
+        if (!ObjectPropertiesProjection.CanEditInPropertiesDialog(workspace, properties)) return false;
+        if (workspace is InstrumentWorkspaceViewModel)
+        {
+            return OpenInstrumentProperties();
+        }
+        OnEditTimelinePropertiesClick(this, new RoutedEventArgs());
+        return true;
+    }
+
     private bool TryInvokeTimelineSelectionOperationShortcut(Key key)
     {
         if (key is not (Key.Q or Key.T or Key.E)
@@ -8635,6 +8693,7 @@ public partial class MainWindow : Window
                 break;
             case Key.T when context.Kind is TimelineSelectionObjectKind.Segments
                 or TimelineSelectionObjectKind.MidiSegments
+                or TimelineSelectionObjectKind.MixedSegments
                 or TimelineSelectionObjectKind.LogicalNotes
                 or TimelineSelectionObjectKind.DirectMidiNotes
                 or TimelineSelectionObjectKind.TemplateNotes:
@@ -9344,7 +9403,7 @@ public partial class MainWindow : Window
         }
         return project.TracksInArrangementOrder()
             .FirstOrDefault(value => value.Kind == ArrangementTrackKind.LogicalTrack) is
-                { TrackId: var first } && first != default
+        { TrackId: var first } && first != default
                     ? first
                     : project.Tracks[0].Id;
     }
@@ -9367,7 +9426,7 @@ public partial class MainWindow : Window
         }
         return project.TracksInArrangementOrder()
             .FirstOrDefault(value => value.Kind == ArrangementTrackKind.PureMidiTrack) is
-                { TrackId: var first } && first != default
+        { TrackId: var first } && first != default
                     ? first
                     : project.PureMidiTracks[0].Id;
     }
@@ -9856,7 +9915,7 @@ public partial class MainWindow : Window
             {
                 if (MessageDialog.Show(
                         this,
-                        "Delete the selected Envelope Preset? Mapping Steps that reference it will retain a broken stable-ID reference.",
+                        "Delete the selected Envelope Preset? Mapping Steps that reference it will retain an unavailable reference.",
                         "Delete Envelope Preset",
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Warning) == MessageBoxResult.Yes)
@@ -9971,13 +10030,6 @@ public partial class MainWindow : Window
             if (surface.IsArrangementEmptyBackground(point))
             {
                 ClearArrangementTrackSelection(arrangementWorkspace);
-            }
-            else if (!surface.TryGetArrangementSharedGroupBraceTarget(point, out _)
-                && surface.TryGetArrangementLaneHeader(point, out int lane)
-                && arrangementWorkspace.GetArrangementLane(lane) is ArrangementLaneDescriptor arrangementLane)
-            {
-                _trackHeaderContextLane = lane;
-                SelectArrangementTrack(arrangementWorkspace, arrangementLane);
             }
         }
         if (_spaceStartedPlayback

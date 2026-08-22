@@ -83,6 +83,10 @@
 | INV-072 | Reusable PCM miss 必须以16,384-frame block直接顺序写入generation journal；仅完整、结构校验通过的generation可原子进入可命中索引。未完成/损坏journal只形成不可命中的dead bytes并由重整回收，不得将部分PCM block当作可恢复的SoundFont/BASS voice状态。 |
 | INV-073 | Event Instrument Usage 是无用户名称的持久共享执行身份。Definition 可以零 Usage；Usage 必须至少一个 Logical Track。未启用逐音符隔离时，Usage 的跨 Track Segment 活动连通区间是真正 Channel Group 生命周期，成员 Segment End 不重置 sibling 状态。 |
 | INV-074 | 所有 MIDI Channel Root 必须非空。Fixed Root 没有独立 UI 生命周期，route 只在 Root 保存一份但作为 Track 属性编辑；最后 Track 离开时同事务删除 Root，Undo 恢复原 ID。Fixed members 可分散，Auto shared members 必须连续。 |
+| INV-075 | 主窗口不得设置 Global Inspector、Bottom Panel、Details/Tasks Tab 或可见 Task History。Project-backed 属性只由对象所属 Workspace 或固定 `Properties...` 模态对话框呈现；对话框必须编辑 Draft，`OK` 以一个正式原子 Project command 提交，`Cancel` 不改变 Project。所有确认对话框复用同宽度红色 Primary / Cancel action contract，Enter / Escape 分别执行确定 / 取消（焦点控件自身消费 Enter 时除外）。多选 Mixed 字段默认禁用，只有显式开始统一值后才能编辑，并可逐字段还原；UI 不显示 Stable ID 或内部引用编号。 |
+| INV-076 | Logical Parameter Lane 是离散 Step 点集：点值自该 tick 起保持到下一点，不存在 Linear/Step 用户选择。创建、复制、粘贴、变换、持久化校验、Full/Incremental Compile 与所有消费者必须保持该语义。Value Curve、Envelope 等其他正式曲线不受此规则替代。 |
+| INV-077 | 用户编辑造成 exact collision 时：Logical/Direct/Template Note 的同 start tick + key 后来对象静默丢弃；Logical Parameter、Direct MIDI Channel Event 与 Template MIDI Event 的同 tick + 同正式事件类型由后来编辑对象覆盖原对象。未触及该 exact key 的导入重复 Direct MIDI 数据必须原样保留；碰撞归并属于编辑命令事务并可 Undo，不得由打开、浏览或编译静默改写源数据。 |
+| INV-078 | 一次只允许一个可见前台任务表面；主窗口不保留历史任务列表。任务进度只有在有可靠 current/total 时才使用 determinate，取消仅在任务仍处于安全可取消阶段时可用。该运行时状态不持久化、不进入 Undo/Redo。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|
@@ -102,8 +106,8 @@
 | MIDI 文件结构与导出 | 第 14、23 章 |
 | 普通 RIFF/WAVE、自定义采样率与离线渲染 | 第 15 章 |
 | `.midora` package、schema、损坏与事务 | 第 16 章 |
-| 主窗口、导航和全局面板 | 第 17、24 章 |
-| 各编辑器工作区 | 第 18、24 章 |
+| 主窗口、导航、对象所属属性编辑器和全局面板 | 第 17、24 章 |
+| 各编辑器工作区、Timeline 精确属性与事务式 Properties | 第 17、18、20、24 章 |
 | New/Open/Open MIDI as New Project/Save/Export/Render 工作流 | 第 17、19、23 章 |
 | 选择、拖放、验证、快捷键和 UI 验收 | 第 20 章 |
 | 初版排除项、实现自由度和变更控制 | 第 21 章 |

@@ -493,7 +493,8 @@ public sealed class ProjectLogicalParameterEditCommandsTests
         instrument.ParameterMappings.Add(firstMapping);
         instrument.ParameterMappings.Add(secondMapping);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) {
+        LogicalTrack track = new(project)
+        {
             Name = "Track",
         };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
@@ -505,8 +506,8 @@ public sealed class ProjectLogicalParameterEditCommandsTests
             Velocity = 100
         });
         LogicalParameterLane lane = new(project) { ParameterId = firstParameter.Id };
-        lane.Points.Add(new CurvePoint(project, 0, 2));
-        lane.Points.Add(new CurvePoint(project, 120, 8));
+        lane.Points.Add(new CurvePoint(project, 0, 2, CurveInterpolation.Step));
+        lane.Points.Add(new CurvePoint(project, 120, 8, CurveInterpolation.Step));
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
         return new(

@@ -36,7 +36,7 @@
           <TextBlock x:Name="ValidationText" Margin="0,12,0,0" Foreground="{StaticResource Brush.Red.Hover}" TextWrapping="Wrap"/>
         </StackPanel>
       </Grid>
-      <Border Grid.Row="2" Padding="10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0"><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Width="86" Margin="0,0,7,0" IsCancel="True" Content="Cancel" Click="OnCancelClick"/><Button Width="110" IsDefault="True" Style="{StaticResource Button.Primary}" Content="Review Plan" Click="OnReviewClick"/></StackPanel></Border>
+      <Border Grid.Row="2" Padding="10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0"><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Margin="0,0,7,0" Style="{StaticResource Button.Dialog.Cancel}" Content="Cancel" Click="OnCancelClick"/><Button Style="{StaticResource Button.Dialog.Confirm}" Content="Review Plan" Click="OnReviewClick"/></StackPanel></Border>
     </Grid>
   </Border>
 </Window>

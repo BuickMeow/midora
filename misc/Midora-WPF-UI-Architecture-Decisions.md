@@ -82,10 +82,9 @@
 - 决定：同 tick 的多个 Conductor 事件按正式类型顺序稳定合并为一个视觉标签，避免标签覆盖；编辑仍只在 Conductor Workspace 发生。
 - 原因：SRS 18.1 要求 Arrangement 提供 Conductor 概览，但 UI 不得在概览中建立第二套编辑入口或改变同 tick 正式顺序。
 
-## ADR-UI-013：Diagnostics 身份共享、过滤状态隔离
+## ADR-UI-013（已由 ADR-UI-042 取代）：Diagnostics 身份共享、过滤状态隔离
 
-- 决定：Bottom compact Diagnostics 与完整 Diagnostics Workspace 共享同一 `DiagnosticRow` 身份；两者各自持有 Search/Severity/Status/Scope、Selection 和滚动状态。
-- 原因：SRS 17.5、18.10、20.11 要求身份一致且后台刷新不抢焦点；共享集合视图会导致一个面板的过滤操作改变另一个面板。
+- 历史决定：曾由 Bottom compact Diagnostics 与完整 Diagnostics Workspace 共享 `DiagnosticRow` 身份并隔离各自筛选。Bottom Panel 已由 ADR-UI-042 删除；仍有效的边界是 Diagnostics 后台刷新不得抢焦点，独立 Workspace 自己保存筛选、选择和滚动状态。
 
 ## ADR-UI-014：Project Tree 与 Workspace Tab 的可靠实现边界
 
@@ -227,7 +226,7 @@
 - 决定：Mapping Step 编辑器必须先解析 Mapping Chain 的正式 owner 和精确 target，再生成 Source 与 Mapping Function 候选。Logical Parameter Mapping 不提供 Template Note/Velocity；非 Note 事件链不提供 Template Note/Velocity；无 Per-Note Instance Isolation 时不提供 Envelope、Trigger Note、Gate Length 或 Pitch Delta。无 Isolation 的 Note Number 链不允许添加任何 Step。
 - 决定：无 Isolation 时唯一新增例外是共享 `Note · Velocity` target 可直接读取 `TriggerVelocity`。该值已属于每个 Logical Note 实例的 Mapping Context，并最终写入逐 NoteOn 事件，不占用或改变 Channel Unit 状态；同一 Source 映射到 CC、RPN/NRPN、Program、Pitch、Note Number 或其他 target 时仍要求 Isolation。声明任何 per-note context 的 C# Mapping Function仍要求 Isolation。
 - 决定：`Follow Instance Velocity` 不增加旁路字段或第二套编译语义；它是共享 Note Velocity Mapping Chain 的 UI 预设：首个 enabled Step 为 `TriggerVelocity / Override`。新建 Event Instrument 的默认 SubVoice和显式新建 SubVoice 都生成该预设；关闭时只移除这一个基准 Step，后续自定义 Step 保留。复制、粘贴、持久化和 Undo/Redo继续按普通 Mapping Chain 处理。
-- 决定：Parameter Mapping 的 source、target SubVoice 与 MIDI target 可在创建后修改，完整 route 变更是一个原子 Project command；列表提供正式重排。Mapping Chain Inspector公开 enabled、owner、target、最终 rounding/overflow、step count 与 stable ID；Step 的 Parameter、Envelope 与 Function 引用只通过带显示名称的对象选择器编辑，不要求用户手填 Stable ID。
+- 决定：Parameter Mapping 的 source、target SubVoice 与 MIDI target 可在创建后修改，完整 route 变更是一个原子 Project command；列表提供正式重排。Mapping Chain 的对象所属 Properties 公开 enabled、owner、target、最终 rounding/overflow、step count 与 stable ID；Step 的 Parameter、Envelope 与 Function 引用只通过带显示名称的对象选择器编辑，不要求用户手填 Stable ID。
 - 依据：用户于 2026-08-15 明确批准无 Isolation 的 `TriggerVelocity → Note Velocity`，并要求默认 Follow Instance Velocity。该决定收窄并替代 SRS 9.9 对这一精确 target 的 blanket isolation 要求，也把 SRS 8.53.3 的 fixed template velocity 默认改为新建 SubVoice 默认跟随；未修改 SRS 原文。
 - 边界：本决定不允许共享通道状态随 Note 实例变化，不改变 Channel Unit 分配、overlap、NoteOff 配对、canonical consumer 或 Mapping ABI。损坏/旧数据中的非法组合仍由 Semantic Validator 诊断；UI 过滤不是正式验证的替代品。
 
@@ -289,7 +288,7 @@
 
 - 决定：Arrangement、Piano Roll、Velocity Lane、Point/Event Lane、Grid/Snap、tile cache、hit testing 和通用手势继续使用同一套高性能 presentation/interaction engine；Logical Segment、SubVoice 与 Midi Segment 只通过各自 adapter 提供不可变查询、选择身份、预览投影和原子 Application command。不得复制第三套 TimelineSurface 或把 Pure MIDI 事件转换成 Logical Parameter / Template Event。
 - 历史 Header 条款：曾要求 Pure MIDI Track 位于可见 Root parent 下。该显示结构已由 ADR-UI-041 取代；仍有效的是 MIDI 图标、Root 权威路由、无 Event Instrument Bind/Unbind，以及所有正式顺序/成员变更通过 Application command 提交。
-- 决定：Midi Segment Editor 的 Piano Roll 与 Velocity Lane 沿用 Logical Segment 的视觉和手势；下方 Event Lane 使用完整 MIDI 1.0 Channel Voice 事件目录。CC91/93、CC120～127、Poly Pressure 与 Channel Pressure 在该 adapter 中合法；ADR-UI-029 的受限目录只适用于 Event Instrument/SubVoice。Opaque imported SysEx/Meta 仅在 Event List/Inspector 查看、移动和删除，不提供自由 payload 编辑器。
+- 决定：Midi Segment Editor 的 Piano Roll 与 Velocity Lane 沿用 Logical Segment 的视觉和手势；下方 Event Lane 使用完整 MIDI 1.0 Channel Voice 事件目录。CC91/93、CC120～127、Poly Pressure 与 Channel Pressure 在该 adapter 中合法；ADR-UI-029 的受限目录只适用于 Event Instrument/SubVoice。Opaque imported SysEx/Meta 仅在 Event List 中查看、移动和删除，并由只读 `Properties...` 显示 payload 摘要，不提供自由 payload 编辑器。
 - 决定：共享 UI 核心不得重建 Root 生命周期、Unit 路由、跨 Track 总序、SMF Track 拓扑或 Reset。所有正式结果仍经 Project command、Semantic Validation、Compiler 与 canonical；SMF 打开工作流使用 detached candidate 与 Level 3 modal lock。
 - 依据：产品所有者于 2026-08-18 接受 Pure MIDI Track 与 SMF 导入方案。正式领域、缓存、持久化与导出决定见 SRS 第 23 章、INV-050～INV-057 与 ADR-PMIDI-001～008。
 - 边界：viewport、lane height、selection、tile、drag overlay 和 import review draft 属于 session/runtime；Root/Track/Segment/direct/opaque 对象属于 Project。修复共享交互或性能缺陷必须对全部 adapter 做契约回归，但不要求三套复制实现。
@@ -321,6 +320,17 @@
 - 2026-08-21 路由修订：共享 Fixed Root 的任一成员 Track 都可通过自己的 `MIDI Route Settings...` 修改唯一 Root 的 Channel Mode；多成员时先显示影响数量并确认，确认后原子更新全部成员，不跳转到另一套共享设置命令。
 - 归属：global order、Usage/Root membership 与 Definition order 经 Application command 进入 Project/History；brace hover、插入带、管理栏可见性、selection、drag transient 与 Mute/Solo 属于 session/runtime。所有时间线仍使用现有 tile/cache/hit-test 核心，不能因平铺重构退回逐对象 WPF Controls。
 - 依据：产品所有者于 2026-08-20 接受平铺结构、自动 Usage、非空内部 Root、Fixed property UX、Shared block drag 和独立 Definition 浏览工作流。正式领域与持久化规则见 ADR-CORE-046、SRS 第 24 章及 INV-058～064、INV-073～074。
+
+## ADR-UI-042（已接受，2026-08-22 修订）：删除 Global Inspector、Bottom Panel 与 Details/Tasks，并迁移为事务式 Properties
+
+- 决定：主窗口永久删除右侧 Global Inspector、分隔条、View 菜单入口及其宽度/可见性 Application Preference。Active Workspace Selection 不再持续驱动任何全局属性面板；选择、hover、后台诊断和 Workspace 切换都不得令另一块全局 UI 自动改变编辑目标。
+- 决定：属性编辑归属对象自身 Workspace，但统一由固定目标模态 `Properties…` 呈现。对话框编辑 Draft，`OK` 以一个原子 Application command 提交，`Cancel` 或验证失败不改变 Project；多选 Mixed 字段默认禁用，显式开始统一值后才可编辑，并可逐字段还原。
+- 决定：Logical/Midi Segment、Logical/Direct/Template Note、Logical Parameter/Direct/Template Event、Value Curve Point、Conductor Event 和 Event Instrument 内部结构对象均使用相应语义包装。Direct MIDI 不暴露 raw Data1/Data2；opaque payload 只读。UI 不显示 Stable ID、内部引用编号或内部序号。
+- 决定：Event Instrument 仅保留 Configurations / SubVoice Tab；Parameters/Properties Tab 删除。Parameter Mapping 的 Source、SubVoice、Target Kind、适用 CC/RPN/NRPN 与其余属性在同一 Properties 对话框创建和编辑，不再拆分 route 步骤。
+- 决定：主窗口删除 Bottom Panel、Details/Tasks Tab 和 Task history。Diagnostics 只在独立 Workspace 呈现；一次只呈现当前前台任务 overlay。状态栏截断消息保留显式全文查看能力，但它不是通用对象 Details。
+- 决定：播放/前台任务锁定期间，Properties 的 Project-backed 输入 Disabled；只读 Properties 与 Diagnostics 可查看。属性提交必须继续经过 Application command、正式验证、Undo/Redo 和编译失效链，UI 不直接改 Domain 对象。
+- 性能边界：Selection、hover、viewport、播放指针和诊断刷新不得重建属性表。属性投影只在显式打开模态对话框时按目标对象构建；大型选择只物化实际需要的字段/对象，不得遍历未选中的大型 Segment 内容。
+- 依据：产品所有者于 2026-08-22 明确决定完全迁移并删除 Inspector，并批准先按上述推荐方向全量实施、再逐项进行 UI 验收。该决定取代 SRS 第 17 章 Global Inspector、相关默认偏好和把 Inspector 作为唯一精确编辑入口的旧要求；正式同步见 SRS 第 17、18、20、23 章。
 
 ## 小决定审计
 

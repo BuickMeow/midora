@@ -255,7 +255,7 @@ must not receive an invented gate
 must produce one aggregated import Warning per affected source Track
 ```
 
-Piano Roll 只把成功配对的 Note 显示为长度矩形；raw Note message 在 Event List/Inspector 中显示并可删除或移动。
+Piano Roll 只把成功配对的 Note 显示为长度矩形；raw Note message 在 Event List 中显示并可删除或移动，精确只读信息通过固定 `Properties...` 对话框查看。该只读包装不显示内部稳定 ID，也不提供无约束 wire payload 编辑。
 
 ### 23.6.5 Opaque imported events
 
@@ -700,7 +700,9 @@ Logical Segment、SubVoice 与 Midi Segment 通过数据/命令 adapter 提供�
 
 ### 23.14.3 Midi Segment Editor
 
-Midi Segment Editor 的上部 Piano Roll 与 Velocity 交互和 Logical Segment Editor 一致；下部 Lane 直接选择 MIDI Channel Event 类型。完整 Channel Voice Event 可创建；opaque imported event 只在 Event List/Inspector 中查看、移动、删除，不提供自由 payload 编辑器。
+Midi Segment Editor 的上部 Piano Roll 与 Velocity 交互和 Logical Segment Editor 一致；下部 Lane 直接选择 MIDI Channel Event 类型。完整 Channel Voice Event 可创建；opaque imported event 只在 Event List 中选择、移动、删除，并通过固定只读 `Properties...` 对话框查看 payload 摘要，不提供自由 payload 编辑器。
+
+用户编辑造成 exact collision 时，Direct Note 的同 start tick + key 后来对象静默丢弃；Direct Channel Event 的同 tick + 同正式事件类型由后来编辑对象覆盖原对象。该规则只在相关编辑命令提交时作用：SMF 导入所得、尚未被该 exact key 编辑触及的重复 Note/Event 必须保留，打开、浏览、编译和导出不得为了套用编辑器便利规则而静默清洗源数据。
 
 Root/Track/Grid/Snap/Lane 高度等视图状态仍属于 Project Session UI State，不进入 `.midora`。
 

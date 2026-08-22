@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-08-22**
+> 最近修订日期：**2026-08-23**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -50,9 +50,19 @@
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
 
+## 2026-08-23 修订摘要
+
+- 对象 `Properties...` 的 `Ctrl+P` 入口正式纳入焦点敏感快捷键；快捷键必须直接调用命令核心，不得构造无 `RoutedEvent` 的事件参数再调用 UI 事件处理器。
+- 所有带确认提交的自定义模态对话框统一使用同宽度的红色 Primary 确定按钮与普通取消按钮；除焦点控件自身消费 Enter 的情况外，Enter 执行确定、Escape 执行取消，不再由每个对话框各自定义不一致行为。每窗只允许一个 Escape Cancel target；标题栏关闭按钮执行显式取消，但不得再次注册 `IsCancel`。
+- Conductor 下部事件列表默认占可用编辑区的一半，并允许在硬性最小/最大高度内双向调整；Arrangement Draw 模式下，只有未形成移动/Resize 的 Segment 单击才在 MouseUp 替换选择，实际拖动不得在 MouseDown 清空多选。
+
 ## 2026-08-22 修订摘要
 
 - Arrangement shared block 的 Track 拖放预览必须与最终 drop 语义使用同一目标：exterior strip 始终把插入线固定在 block 的真实外边界，不得短暂显示在成员间隙；同组成员明确脱离时使用更粗的强调边界线。该变更只涉及会话 UI 反馈，不改变 global Track order、Usage/Root membership 或持久化模型。
+- 删除主窗口 Global Inspector、Bottom Panel、Details/Tasks Tab 及其 View/菜单入口。Diagnostics 只保留独立 Workspace；一次只显示当前前台任务的模态表面，不保存可见 Task History。
+- 所有对象精确属性统一迁移到所属 Workspace 的显式 `Properties...` 模态对话框：打开时冻结目标，所有控件只编辑 Draft，`OK` 以一个原子 Project command 提交、`Cancel` 全量丢弃。多选 Mixed 字段必须先显式启用统一值，并可逐字段恢复原始 Same/Mixed 状态；Logical/Pure MIDI Segment、Logical/Direct MIDI Note/Event 和跨类型 Segment 选择均纳入统一包装。
+- Event Instrument 删除 Properties/Parameters Tab；结构栏对象以双击或右键 `Properties...` 打开事务式编辑器。Parameter Mapping 的 Source、SubVoice、Target kind 与适用 CC/RPN/NRPN 在同一对话框创建或编辑，不再拆成 Route 与 Properties 两步。
+- UI 不显示 Stable ID 或内部引用编号；Broken/引用选择只用可识别名称、对象类型和显式修复动作。Logical Parameter Lane 固定为离散 Step 点集；Direct MIDI 编辑时 exact point 碰撞采用后来编辑者覆盖，exact Note start/key 碰撞丢弃后来对象，同时保留未经相关编辑的导入重复数据。
 
 ## 2026-08-21 修订摘要
 

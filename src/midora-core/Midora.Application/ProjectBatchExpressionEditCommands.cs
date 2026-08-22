@@ -188,7 +188,7 @@ public static partial class ProjectDomainEditCommands
                         value.Point.Id,
                         resolvedTick,
                         pointValue,
-                        value.Point.Interpolation)
+                        CurveInterpolation.Step)
                     : null;
                 return new BatchCurvePointResult(value, replacement);
             }).ToArray();

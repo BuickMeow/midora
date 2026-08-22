@@ -382,7 +382,8 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) {
+        LogicalTrack track = new(project)
+        {
             Name = "Track",
         };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
@@ -891,7 +892,7 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) { Name = "Track"};
+        LogicalTrack track = new(project) { Name = "Track" };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
@@ -936,7 +937,7 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) { Name = "Track"};
+        LogicalTrack track = new(project) { Name = "Track" };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
@@ -988,12 +989,12 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) { Name = "Track"};
+        LogicalTrack track = new(project) { Name = "Track" };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
-        CurvePoint first = new(project, 10, 2, CurveInterpolation.Linear);
-        CurvePoint second = new(project, 30, 4, CurveInterpolation.Linear);
+        CurvePoint first = new(project, 10, 2, CurveInterpolation.Step);
+        CurvePoint second = new(project, 30, 4, CurveInterpolation.Step);
         lane.Points.AddRange([first, second]);
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);
@@ -1015,7 +1016,7 @@ public sealed class ProjectBatchTimelineEditCommandsTests
         document.Undo();
 
         Assert.Equal([2d, 4d], lane.Points.Select(item => item.Value));
-        Assert.All(lane.Points, item => Assert.Equal(CurveInterpolation.Linear, item.Interpolation));
+        Assert.All(lane.Points, item => Assert.Equal(CurveInterpolation.Step, item.Interpolation));
         Assert.False(document.IsModified);
         AssertMatchesFull(compilation);
     }

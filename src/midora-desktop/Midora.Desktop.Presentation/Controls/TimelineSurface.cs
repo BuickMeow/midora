@@ -18,7 +18,8 @@ public sealed class TimelineItemEventArgs(
     ModifierKeys modifiers,
     bool isDoubleClick,
     bool isCopyDragStart = false,
-    bool preserveSelectionForPotentialCopyDrag = false) : RoutedEventArgs
+    bool preserveSelectionForPotentialCopyDrag = false,
+    bool preserveExistingSelection = false) : RoutedEventArgs
 {
     public TimelineRenderItem Item { get; } = item;
     public long Tick { get; } = tick;
@@ -28,6 +29,7 @@ public sealed class TimelineItemEventArgs(
     public bool IsCopyDragStart { get; } = isCopyDragStart;
     public bool PreserveSelectionForPotentialCopyDrag { get; } =
         preserveSelectionForPotentialCopyDrag;
+    public bool PreserveExistingSelection { get; } = preserveExistingSelection;
 }
 
 public sealed class TimelineMarqueeEventArgs(
@@ -155,6 +157,19 @@ public sealed class TimelineLaneHeaderEventArgs(
 {
     public int Lane { get; } = lane;
     public bool IsSharedGroupTarget { get; } = isSharedGroupTarget;
+}
+
+public sealed class TimelineArrangementInstrumentEventArgs(MidoraId instrumentId) : RoutedEventArgs
+{
+    public MidoraId InstrumentId { get; } = instrumentId;
+}
+
+public sealed class TimelineArrangementMidiRouteEventArgs(
+    MidoraId trackId,
+    MidoraId rootId) : RoutedEventArgs
+{
+    public MidoraId TrackId { get; } = trackId;
+    public MidoraId RootId { get; } = rootId;
 }
 
 public sealed class TimelineLaneHeaderReorderEventArgs(
@@ -425,6 +440,14 @@ public sealed class TimelineSurface : Control
 
     public static readonly DependencyProperty MaximumFirstLaneProperty = MaximumFirstLanePropertyKey.DependencyProperty;
 
+    private static readonly DependencyPropertyKey CanScrollLanesPropertyKey = DependencyProperty.RegisterReadOnly(
+        nameof(CanScrollLanes),
+        typeof(bool),
+        typeof(TimelineSurface),
+        new FrameworkPropertyMetadata(false));
+
+    public static readonly DependencyProperty CanScrollLanesProperty = CanScrollLanesPropertyKey.DependencyProperty;
+
     private static readonly DependencyPropertyKey VisibleLaneCountPropertyKey = DependencyProperty.RegisterReadOnly(
         nameof(VisibleLaneCount),
         typeof(int),
@@ -450,6 +473,14 @@ public sealed class TimelineSurface : Control
         new FrameworkPropertyMetadata(0d));
 
     public static readonly DependencyProperty ValueScrollMaximumProperty = ValueScrollMaximumPropertyKey.DependencyProperty;
+
+    private static readonly DependencyPropertyKey CanScrollValuesPropertyKey = DependencyProperty.RegisterReadOnly(
+        nameof(CanScrollValues),
+        typeof(bool),
+        typeof(TimelineSurface),
+        new FrameworkPropertyMetadata(false));
+
+    public static readonly DependencyProperty CanScrollValuesProperty = CanScrollValuesPropertyKey.DependencyProperty;
 
     private static readonly DependencyPropertyKey ValueScrollViewportSizePropertyKey = DependencyProperty.RegisterReadOnly(
         nameof(ValueScrollViewportSize),
@@ -520,6 +551,7 @@ public sealed class TimelineSurface : Control
     private bool _dragActivated;
     private bool _dragCopyRequested;
     private bool _deferredControlClickToggle;
+    private bool _deferredPlainDrawSegmentSelection;
     private bool _dragTimeLocked;
     private ModifierKeys _dragModifiers;
     private TimelineSelectionSnapshot? _dragPreviewSelection;
@@ -673,6 +705,8 @@ public sealed class TimelineSurface : Control
 
     public int MaximumFirstLane => (int)GetValue(MaximumFirstLaneProperty);
 
+    public bool CanScrollLanes => (bool)GetValue(CanScrollLanesProperty);
+
     public int VisibleLaneCount => (int)GetValue(VisibleLaneCountProperty);
 
     public double ValueScrollOffset
@@ -682,6 +716,8 @@ public sealed class TimelineSurface : Control
     }
 
     public double ValueScrollMaximum => (double)GetValue(ValueScrollMaximumProperty);
+
+    public bool CanScrollValues => (bool)GetValue(CanScrollValuesProperty);
 
     public double ValueScrollViewportSize => (double)GetValue(ValueScrollViewportSizeProperty);
 
@@ -843,6 +879,8 @@ public sealed class TimelineSurface : Control
     public event EventHandler<TimelineLaneHeaderEventArgs>? LaneHeaderDoubleInvoked;
     public event EventHandler<TimelineLaneHeaderEventArgs>? LaneHeaderContextRequested;
     public event EventHandler<TimelineLaneHeaderReorderEventArgs>? LaneHeaderReorderCompleted;
+    public event EventHandler<TimelineArrangementInstrumentEventArgs>? ArrangementInstrumentInvoked;
+    public event EventHandler<TimelineArrangementMidiRouteEventArgs>? ArrangementMidiRouteInvoked;
     public event EventHandler<TimelineVelocityEditEventArgs>? VelocityEditCompleted;
     public event EventHandler<TimelineEventPointEditEventArgs>? EventPointEditCompleted;
     public event EventHandler? ViewportChanged;
@@ -998,7 +1036,7 @@ public sealed class TimelineSurface : Control
             || Snapshot is not TimelineRenderSnapshot snapshot
             || (uint)lane >= (uint)snapshot.ArrangementLanes.Count
             || snapshot.ArrangementLanes[lane] is not
-                { IsSharedGroup: true, SharedGroupId: MidoraId groupId }
+            { IsSharedGroup: true, SharedGroupId: MidoraId groupId }
             || point.X >= 13)
         {
             return false;
@@ -1107,6 +1145,7 @@ public sealed class TimelineSurface : Control
         int maximum = ComputeMaximumFirstLane();
         SetValue(VisibleLaneCountPropertyKey, visibleLaneCount);
         SetValue(MaximumFirstLanePropertyKey, maximum);
+        SetValue(CanScrollLanesPropertyKey, maximum > 0);
         CoerceValue(FirstLaneProperty);
         UpdateValueScrollMetrics();
     }
@@ -1163,6 +1202,7 @@ public sealed class TimelineSurface : Control
         double maximum = Math.Max(0, 1 - range);
         SetValue(ValueScrollMaximumPropertyKey, maximum);
         SetValue(ValueScrollViewportSizePropertyKey, range);
+        SetValue(CanScrollValuesPropertyKey, maximum > 0);
         CoerceValue(ValueScrollOffsetProperty);
     }
 
@@ -1383,8 +1423,17 @@ public sealed class TimelineSurface : Control
     protected override void OnMouseDown(MouseButtonEventArgs e)
     {
         base.OnMouseDown(e);
-        Focus();
         Point point = e.GetPosition(this);
+        if (SurfaceMode == TimelineSurfaceMode.PianoRoll
+            && e.ChangedButton == MouseButton.Right
+            && point.X >= 0
+            && point.X < GetLaneHeaderWidth()
+            && point.Y >= GetRulerHeight())
+        {
+            e.Handled = true;
+            return;
+        }
+        Focus();
         if (e.ChangedButton == MouseButton.Middle)
         {
             _panOrigin = point;
@@ -1488,6 +1537,14 @@ public sealed class TimelineSurface : Control
             return;
         }
     ContinueDirectTimelineInteraction:
+        if (e.ChangedButton == MouseButton.Right
+            && SurfaceMode == TimelineSurfaceMode.PianoRoll
+            && point.X < GetLaneHeaderWidth()
+            && point.Y >= GetRulerHeight())
+        {
+            e.Handled = true;
+            return;
+        }
         if (e.ChangedButton != MouseButton.Left)
         {
             return;
@@ -1521,6 +1578,32 @@ public sealed class TimelineSurface : Control
             && TryGetArrangementLaneCommand(point.X, lane, out TimelineLaneHeaderCommand laneCommand))
         {
             LaneHeaderCommandInvoked?.Invoke(this, new(lane, laneCommand));
+            e.Handled = true;
+            return;
+        }
+        if (e.ChangedButton == MouseButton.Left
+            && TryGetArrangementSecondaryLink(
+                point,
+                viewport,
+                out ArrangementLaneDescriptor linkDescriptor,
+                out _))
+        {
+            if (linkDescriptor is
+                { Kind: ArrangementLaneKind.LogicalTrack, ParentId: MidoraId instrumentId })
+            {
+                ArrangementInstrumentInvoked?.Invoke(
+                    this,
+                    new TimelineArrangementInstrumentEventArgs(instrumentId));
+            }
+            else if (linkDescriptor is
+                { Kind: ArrangementLaneKind.PureMidiTrack,
+                  ObjectId: MidoraId trackId,
+                  ParentId: MidoraId rootId })
+            {
+                ArrangementMidiRouteInvoked?.Invoke(
+                    this,
+                    new TimelineArrangementMidiRouteEventArgs(trackId, rootId));
+            }
             e.Handled = true;
             return;
         }
@@ -1664,6 +1747,12 @@ public sealed class TimelineSurface : Control
                     hit.Kind,
                     modifiers,
                     IsSelected(hit));
+            bool deferPlainDrawSegmentSelection = ToolMode == TimelineToolMode.Draw
+                && SurfaceMode == TimelineSurfaceMode.Arrangement
+                && hit.Kind == TimelineItemKind.Segment
+                && modifiers == ModifierKeys.None
+                && IsSelected(hit)
+                && (SelectionSnapshot?.Count ?? 0) > 1;
             ItemInvoked?.Invoke(
                 this,
                 new TimelineItemEventArgs(
@@ -1673,7 +1762,8 @@ public sealed class TimelineSurface : Control
                     modifiers,
                     e.ClickCount == 2,
                     preserveSelectionForPotentialCopyDrag:
-                        preserveSelectionForPotentialCopyDrag));
+                        preserveSelectionForPotentialCopyDrag
+                            || deferPlainDrawSegmentSelection));
             if (CanEdit
                 && ToolMode == TimelineToolMode.Split
                 && SurfaceMode == TimelineSurfaceMode.Arrangement
@@ -1721,6 +1811,7 @@ public sealed class TimelineSurface : Control
                         hit.Kind,
                     _dragKind);
                 _deferredControlClickToggle = preserveSelectionForPotentialCopyDrag;
+                _deferredPlainDrawSegmentSelection = deferPlainDrawSegmentSelection;
                 _dragTimeLocked = TimelineToolPolicy.RequestsTimeLockedItemMove(
                     ToolMode,
                     SurfaceMode,
@@ -1818,10 +1909,18 @@ public sealed class TimelineSurface : Control
 
     protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
     {
+        Point point = e.GetPosition(this);
+        if (SurfaceMode == TimelineSurfaceMode.PianoRoll
+            && point.X < GetLaneHeaderWidth())
+        {
+            // The piano keyboard ruler is an audition surface only. Swallow the
+            // right-click before WPF can briefly open the Timeline ContextMenu.
+            e.Handled = true;
+            return;
+        }
         base.OnMouseRightButtonDown(e);
         if (SurfaceMode == TimelineSurfaceMode.Velocity || _eventPointOrigin is not null) return;
         if (!TryCreateViewport(out TimelineViewport viewport)) return;
-        Point point = e.GetPosition(this);
         double laneHeaderWidth = GetLaneHeaderWidth();
         double rulerHeight = GetRulerHeight();
         if (SurfaceMode == TimelineSurfaceMode.Arrangement
@@ -1848,7 +1947,26 @@ public sealed class TimelineSurface : Control
         TimelineRenderItem hit = _hitItems[0];
         ItemInvoked?.Invoke(
             this,
-            new TimelineItemEventArgs(hit, tick, lane, Keyboard.Modifiers, isDoubleClick: false));
+            new TimelineItemEventArgs(
+                hit,
+                tick,
+                lane,
+                Keyboard.Modifiers,
+                isDoubleClick: false,
+                preserveExistingSelection: true));
+    }
+
+    protected override void OnContextMenuOpening(ContextMenuEventArgs e)
+    {
+        if (SurfaceMode == TimelineSurfaceMode.PianoRoll
+            && Mouse.GetPosition(this).X < GetLaneHeaderWidth())
+        {
+            // The ContextMenuOpening event follows the mouse event. Handling
+            // both prevents the shared menu from flashing for one frame.
+            e.Handled = true;
+            return;
+        }
+        base.OnContextMenuOpening(e);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -1983,6 +2101,8 @@ public sealed class TimelineSurface : Control
             && SurfaceMode is TimelineSurfaceMode.Arrangement
                 or TimelineSurfaceMode.PianoRoll
                 or TimelineSurfaceMode.EventLanes;
+        hoverChangesVisual |= SurfaceMode == TimelineSurfaceMode.Arrangement
+            && point.X < GetLaneHeaderWidth();
         if (_velocityOrigin is Point velocityOrigin
             && (e.LeftButton == MouseButtonState.Pressed || e.RightButton == MouseButtonState.Pressed))
         {
@@ -2097,6 +2217,8 @@ public sealed class TimelineSurface : Control
                     ? Cursors.Arrow
                     : IsValueEditableEventPointKind(dragItem.Kind)
                         ? Cursors.SizeNS
+                        : IsMixedArrangementSegmentSelection(dragItem)
+                            ? Cursors.SizeWE
                         : _dragKind == TimelineItemEditKind.Move
                             ? Cursors.SizeAll
                             : Cursors.SizeWE;
@@ -2350,20 +2472,23 @@ public sealed class TimelineSurface : Control
             EndDragPitchPreview();
             if (_dragActivated)
             {
+                int laneDelta = IsMixedArrangementSegmentSelection(item)
+                    ? 0
+                    : checked(_dragCurrentLane - _dragOriginLane);
                 ItemEditCompleted?.Invoke(
                     this,
                     new TimelineItemEditEventArgs(
                         item,
                         _dragKind,
                         checked(_dragCurrentTick - _dragOriginTick),
-                        checked(_dragCurrentLane - _dragOriginLane),
+                        laneDelta,
                         IsValueEditableEventPointKind(item.Kind)
                             ? GetDragNormalizedValueDelta(e.GetPosition(this).Y)
                             : -(e.GetPosition(this).Y - _dragOrigin.Y) / Math.Max(1, LaneHeight),
                         _dragModifiers,
                         _dragCopyRequested));
             }
-            else if (_deferredControlClickToggle)
+            else if (_deferredControlClickToggle || _deferredPlainDrawSegmentSelection)
             {
                 ItemInvoked?.Invoke(
                     this,
@@ -5683,6 +5808,10 @@ public sealed class TimelineSurface : Control
         }
 
         int laneDelta = checked(_dragCurrentLane - _dragOriginLane);
+        if (IsMixedArrangementSegmentSelection(anchor))
+        {
+            laneDelta = 0;
+        }
         if (_dragCopyRequested
             && anchor.Kind is TimelineItemKind.LogicalNote or TimelineItemKind.DirectMidiNote or TimelineItemKind.TemplateNote)
         {
@@ -5817,12 +5946,48 @@ public sealed class TimelineSurface : Control
         && (_dragPreviewSelection?.Contains(candidate.Id) ?? candidate.Id == anchor.Id);
 
     private static bool SupportsFullSelectionDragPreview(TimelineItemKind kind) =>
-        kind is TimelineItemKind.LogicalNote
+        kind is TimelineItemKind.Segment
+            or TimelineItemKind.LogicalNote
             or TimelineItemKind.DirectMidiNote
             or TimelineItemKind.TemplateNote
             or TimelineItemKind.LogicalParameterPoint
             or TimelineItemKind.DirectMidiEvent
             or TimelineItemKind.OpaqueMidiEvent;
+
+    private bool IsMixedArrangementSegmentSelection(TimelineRenderItem anchor)
+    {
+        if (SurfaceMode != TimelineSurfaceMode.Arrangement
+            || anchor.Kind != TimelineItemKind.Segment
+            || SelectionSnapshot?.Contains(anchor.Id) != true
+            || Snapshot is not TimelineRenderSnapshot snapshot)
+        {
+            return false;
+        }
+
+        ArrangementLaneKind? selectedKind = null;
+        foreach (MidoraId id in SelectionSnapshot.Ids)
+        {
+            if (!snapshot.TryGetItem(id, out TimelineRenderItem item)
+                || item.Kind != TimelineItemKind.Segment
+                || (uint)item.Lane >= (uint)snapshot.ArrangementLanes.Count)
+            {
+                continue;
+            }
+
+            ArrangementLaneKind laneKind = snapshot.ArrangementLanes[item.Lane].Kind;
+            if (laneKind is not (ArrangementLaneKind.LogicalTrack
+                or ArrangementLaneKind.PureMidiTrack))
+            {
+                continue;
+            }
+            if (selectedKind.HasValue && selectedKind.Value != laneKind)
+            {
+                return true;
+            }
+            selectedKind = laneKind;
+        }
+        return false;
+    }
 
     private static void AppendRectangle(StreamGeometryContext context, Rect bounds)
     {
@@ -5975,6 +6140,16 @@ public sealed class TimelineSurface : Control
             Brush pressedBackground = Brush("Brush.Surface.0", Color.FromRgb(9, 11, 14));
             Brush parentBackground = Brush("Brush.Surface.2", Color.FromRgb(20, 24, 30));
             Brush selectedTrackBackground = Brush("Brush.Red.Subtle", Color.FromRgb(44, 17, 20));
+            int? hoveredSecondaryLinkLane = null;
+            if (_hoverPoint is Point secondaryPointer
+                && TryGetArrangementSecondaryLink(
+                    secondaryPointer,
+                    viewport,
+                    out ArrangementLaneDescriptor hoveredLinkDescriptor,
+                    out _))
+            {
+                hoveredSecondaryLinkLane = hoveredLinkDescriptor.Lane;
+            }
             context.PushClip(new RectangleGeometry(new Rect(0, rulerHeight, laneHeaderWidth, Math.Max(0, ActualHeight - rulerHeight))));
             for (int relativeLane = 0; relativeLane < viewport.LaneCount; relativeLane++)
             {
@@ -6072,9 +6247,16 @@ public sealed class TimelineSurface : Control
                 string secondaryLabel = (uint)lane < (uint)secondaryLabels.Count
                     ? secondaryLabels[lane]
                     : string.Empty;
+                bool secondaryLinkHovered = hoveredSecondaryLinkLane == lane;
                 FormattedText? secondaryFormatted = secondaryLabel.Length == 0
                     ? null
-                    : GetFormattedText(secondaryLabel, secondaryText, 9, FontWeights.Normal);
+                    : GetFormattedText(
+                        secondaryLabel,
+                        secondaryLinkHovered
+                            ? Brush("Brush.Red.Hover", Color.FromRgb(237, 72, 84))
+                            : secondaryText,
+                        9,
+                        FontWeights.Normal);
                 double combinedHeight = formatted.Height + (secondaryFormatted?.Height ?? 0) + (secondaryFormatted is null ? 0 : 1);
                 if (secondaryFormatted is not null && combinedHeight > headerVisualHeight - 2)
                 {
@@ -6090,7 +6272,7 @@ public sealed class TimelineSurface : Control
                         && chipBounds.Contains(pointer);
                     context.DrawRoundedRectangle(
                         chipHovered ? hoverBackground : null,
-                        _borderPen,
+                        secondaryLinkHovered ? _redPen : _borderPen,
                         chipBounds,
                         2,
                         2);
@@ -6099,7 +6281,24 @@ public sealed class TimelineSurface : Control
                 context.DrawText(formatted, new Point(8 + contentIndent, y));
                 if (secondaryFormatted is not null)
                 {
-                    context.DrawText(secondaryFormatted, new Point(8 + contentIndent, y + formatted.Height + 1));
+                    Point secondaryOrigin = new(8 + contentIndent, y + formatted.Height + 1);
+                    context.DrawText(secondaryFormatted, secondaryOrigin);
+                    if (arrangementLane?.IsSharedGroup == true && secondaryLinkHovered)
+                    {
+                        Rect outline = new(
+                            secondaryOrigin.X - 1,
+                            secondaryOrigin.Y - 1,
+                            Math.Min(
+                                Math.Max(1, laneHeaderWidth - 54 - contentIndent),
+                                secondaryFormatted.WidthIncludingTrailingWhitespace + 2),
+                            secondaryFormatted.Height + 2);
+                        context.DrawRoundedRectangle(
+                            null,
+                            _redPen,
+                            outline,
+                            2,
+                            2);
+                    }
                 }
                 context.Pop();
                 if (SurfaceMode == TimelineSurfaceMode.Arrangement
@@ -7216,6 +7415,11 @@ public sealed class TimelineSurface : Control
                 : Cursors.Arrow;
             return;
         }
+        if (TryGetArrangementSecondaryLink(point, viewport, out _, out _))
+        {
+            Cursor = Cursors.Hand;
+            return;
+        }
         double header = GetLaneHeaderWidth();
         double ruler = GetRulerHeight();
         if (point.X < header
@@ -7592,6 +7796,70 @@ public sealed class TimelineSurface : Control
         return Math.Max(1, checked(bar.EndTick - startTick));
     }
 
+    private bool TryGetArrangementSecondaryLink(
+        Point point,
+        TimelineViewport viewport,
+        out ArrangementLaneDescriptor descriptor,
+        out Rect bounds)
+    {
+        descriptor = default;
+        bounds = Rect.Empty;
+        if (SurfaceMode != TimelineSurfaceMode.Arrangement
+            || Snapshot is not TimelineRenderSnapshot snapshot
+            || point.X < 0
+            || point.X >= GetLaneHeaderWidth()
+            || point.Y < GetRulerHeight())
+        {
+            return false;
+        }
+        int lane = YToLane(viewport, point.Y - GetRulerHeight());
+        if ((uint)lane >= (uint)snapshot.ArrangementLanes.Count
+            || (uint)lane >= (uint)snapshot.LaneSecondaryLabels.Count
+            || string.IsNullOrWhiteSpace(snapshot.LaneSecondaryLabels[lane]))
+        {
+            return false;
+        }
+        ArrangementLaneDescriptor candidate = snapshot.ArrangementLanes[lane];
+        if (candidate.Kind is not (ArrangementLaneKind.LogicalTrack
+                or ArrangementLaneKind.PureMidiTrack)
+            || candidate.ParentId is null)
+        {
+            return false;
+        }
+        string label = (uint)lane < (uint)snapshot.LaneLabels.Count
+            ? snapshot.LaneLabels[lane]
+            : string.Empty;
+        double visualHeight = GetLaneVisualHeight(lane);
+        FormattedText primary = GetFormattedText(
+            label,
+            Brushes.Transparent,
+            11,
+            FontWeights.Normal);
+        FormattedText secondary = GetFormattedText(
+            snapshot.LaneSecondaryLabels[lane],
+            Brushes.Transparent,
+            9,
+            FontWeights.Normal);
+        double combinedHeight = primary.Height + secondary.Height + 1;
+        if (combinedHeight > visualHeight - 2) return false;
+
+        double contentIndent = candidate.IsSharedGroup ? 33 : 23;
+        double x = 8 + contentIndent;
+        double y = GetLaneTop(viewport, lane, GetRulerHeight())
+            + Math.Max(0, (visualHeight - combinedHeight) / 2)
+            + primary.Height
+            + 1;
+        double available = Math.Max(0, GetLaneHeaderWidth() - 52 - contentIndent);
+        bounds = new Rect(
+            x,
+            y,
+            Math.Min(available, Math.Max(1, secondary.WidthIncludingTrailingWhitespace)),
+            secondary.Height);
+        if (!bounds.Contains(point)) return false;
+        descriptor = candidate;
+        return true;
+    }
+
     private static long SaturatingAddSigned(long value, long increment)
     {
         if (increment > 0 && value > long.MaxValue - increment) return long.MaxValue;
@@ -7848,6 +8116,7 @@ public sealed class TimelineSurface : Control
         _dragActivated = false;
         _dragCopyRequested = false;
         _deferredControlClickToggle = false;
+        _deferredPlainDrawSegmentSelection = false;
         _dragTimeLocked = false;
         _dragModifiers = ModifierKeys.None;
         _dragPreviewSelection = null;

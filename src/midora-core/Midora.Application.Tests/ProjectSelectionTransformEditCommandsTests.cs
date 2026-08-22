@@ -189,7 +189,7 @@ public sealed class ProjectSelectionTransformEditCommandsTests
     }
 
     [Fact]
-    public void DirectMidiEventTransformsPreserveSameTickDuplicates()
+    public void DirectMidiEventTransformsKeepLastEditedPointAtExactTick()
     {
         MidoraProject project = new(480);
         MidiChannelRoot root = new(project) { Name = "Root" };
@@ -232,8 +232,8 @@ public sealed class ProjectSelectionTransformEditCommandsTests
             [first.Id, second.Id],
             factor: 2));
 
-        Assert.Equal([10L, 30L, 30L], segment.ChannelEvents.Select(value => value.Tick));
-        Assert.Equal([first, second, incumbent], segment.ChannelEvents);
+        Assert.Equal([10L, 30L], segment.ChannelEvents.Select(value => value.Tick));
+        Assert.Equal([first, second], segment.ChannelEvents);
         document.Undo();
         Assert.Equal([10L, 20L, 30L], segment.ChannelEvents.Select(value => value.Tick));
 
@@ -248,15 +248,14 @@ public sealed class ProjectSelectionTransformEditCommandsTests
             [first.Id, second.Id],
             program));
 
-        Assert.Equal(3, segment.ChannelEvents.Count);
-        Assert.All(segment.ChannelEvents, value => Assert.Equal(30, value.Tick));
-        Assert.Equal((40, 127), (first.Data2, second.Data2));
+        Assert.Same(second, Assert.Single(segment.ChannelEvents));
+        Assert.Equal((30L, 127), (second.Tick, second.Data2));
         document.Undo();
         Assert.Equal([first, second, incumbent], segment.ChannelEvents);
     }
 
     [Fact]
-    public void DirectMidiNoteTransformPreservesAnExistingExactStartAndKeyGroup()
+    public void DirectMidiNoteTransformDiscardsLaterExactStartAndKeyObject()
     {
         MidoraProject project = new(480);
         MidiChannelRoot root = new(project) { Name = "Root" };
@@ -290,12 +289,9 @@ public sealed class ProjectSelectionTransformEditCommandsTests
             tickDelta: 10,
             keyDelta: 1));
 
-        Assert.Equal([first, second], segment.Notes);
-        Assert.All(segment.Notes, value =>
-        {
-            Assert.Equal(20, value.StartTick);
-            Assert.Equal(61, value.Key);
-        });
+        Assert.Same(first, Assert.Single(segment.Notes));
+        Assert.Equal(20, first.StartTick);
+        Assert.Equal(61, first.Key);
         document.Undo();
         Assert.Equal([first, second], segment.Notes);
     }
@@ -538,7 +534,7 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) { Name = "Track"};
+        LogicalTrack track = new(project) { Name = "Track" };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
@@ -828,7 +824,8 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) {
+        LogicalTrack track = new(project)
+        {
             Name = "Track",
         };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
@@ -886,7 +883,8 @@ public sealed class ProjectSelectionTransformEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) {
+        LogicalTrack track = new(project)
+        {
             Name = "Track",
         };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);

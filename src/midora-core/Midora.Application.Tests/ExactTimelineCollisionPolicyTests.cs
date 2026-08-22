@@ -60,7 +60,7 @@ public sealed class ExactTimelineCollisionPolicyTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) { Name = "Track"};
+        LogicalTrack track = new(project) { Name = "Track" };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
         Segment segment = new(project) { LengthTicks = 480 };
         LogicalParameterLane lane = new(project) { ParameterId = parameter.Id };
@@ -77,7 +77,7 @@ public sealed class ExactTimelineCollisionPolicyTests
             lane.Id,
             100,
             0.5,
-            CurveInterpolation.Linear));
+            CurveInterpolation.Step));
         CurvePoint created = Assert.Single(lane.Points, point => point.Id != mover.Id);
         Assert.Equal((100L, 0.5), (created.Tick, created.Value));
         Assert.DoesNotContain(incumbent, lane.Points);
@@ -311,10 +311,224 @@ public sealed class ExactTimelineCollisionPolicyTests
         Assert.Equal([first, later], source.Events);
     }
 
+    [Fact]
+    public void UnrelatedDirectMidiEditDoesNotCleanImportedExactDuplicates()
+    {
+        (MidoraProject project, MidiSegment segment) = CreateDirectMidiFixture();
+        DirectMidiNote firstNote = new(project)
+        {
+            StartTick = 10,
+            LengthTicks = 20,
+            Key = 60,
+            NoteOnVelocity = 80
+        };
+        DirectMidiNote secondNote = new(project)
+        {
+            StartTick = 10,
+            LengthTicks = 40,
+            Key = 60,
+            NoteOnVelocity = 90
+        };
+        DirectMidiNote editedNote = new(project)
+        {
+            StartTick = 30,
+            LengthTicks = 20,
+            Key = 64,
+            NoteOnVelocity = 70
+        };
+        DirectMidiChannelEvent firstEvent = new(project)
+        {
+            Tick = 15,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 11,
+            Data2 = 40
+        };
+        DirectMidiChannelEvent secondEvent = new(project)
+        {
+            Tick = 15,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 11,
+            Data2 = 80
+        };
+        segment.Notes.AddRange([firstNote, secondNote, editedNote]);
+        segment.ChannelEvents.AddRange([firstEvent, secondEvent]);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.SetDirectMidiNoteValues(
+            segment.Id,
+            [editedNote.Id],
+            noteOnVelocity: 100));
+
+        Assert.Equal([firstNote, secondNote, editedNote], segment.Notes);
+        Assert.Equal([firstEvent, secondEvent], segment.ChannelEvents);
+        Assert.Equal(100, editedNote.NoteOnVelocity);
+        document.Undo();
+        Assert.Equal([firstNote, secondNote, editedNote], segment.Notes);
+        Assert.Equal([firstEvent, secondEvent], segment.ChannelEvents);
+        Assert.Equal(70, editedNote.NoteOnVelocity);
+    }
+
+    [Fact]
+    public void DirectMidiEventMoveReplacesIncumbentAndUndoRestoresBoth()
+    {
+        (MidoraProject project, MidiSegment segment) = CreateDirectMidiFixture();
+        DirectMidiChannelEvent mover = new(project)
+        {
+            Tick = 10,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 7,
+            Data2 = 96
+        };
+        DirectMidiChannelEvent incumbent = new(project)
+        {
+            Tick = 20,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 7,
+            Data2 = 32
+        };
+        segment.ChannelEvents.AddRange([mover, incumbent]);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.AdjustDirectMidiEventPoints(
+            segment.Id,
+            [mover.Id],
+            tickDelta: 10,
+            data1Delta: 0,
+            data2Delta: 0,
+            duplicate: false));
+
+        Assert.Same(mover, Assert.Single(segment.ChannelEvents));
+        Assert.Equal(20, mover.Tick);
+        document.Undo();
+        Assert.Equal([mover, incumbent], segment.ChannelEvents);
+        Assert.Equal(10, mover.Tick);
+        document.Redo();
+        Assert.Same(mover, Assert.Single(segment.ChannelEvents));
+    }
+
+    [Fact]
+    public void DirectMidiNoteMoveKeepsIncumbentAndUndoRestoresMover()
+    {
+        (MidoraProject project, MidiSegment segment) = CreateDirectMidiFixture();
+        DirectMidiNote incumbent = new(project)
+        {
+            StartTick = 20,
+            LengthTicks = 30,
+            Key = 64,
+            NoteOnVelocity = 80
+        };
+        DirectMidiNote mover = new(project)
+        {
+            StartTick = 10,
+            LengthTicks = 50,
+            Key = 64,
+            NoteOnVelocity = 100
+        };
+        segment.Notes.AddRange([incumbent, mover]);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.MoveDirectMidiNotes(
+            segment.Id,
+            [mover.Id],
+            tickDelta: 10,
+            keyDelta: 0));
+
+        Assert.Same(incumbent, Assert.Single(segment.Notes));
+        document.Undo();
+        Assert.Equal([incumbent, mover], segment.Notes);
+        Assert.Equal(10, mover.StartTick);
+        document.Redo();
+        Assert.Same(incumbent, Assert.Single(segment.Notes));
+    }
+
+    [Fact]
+    public void DirectMidiCollisionScopeQueriesOnlyTheEditedPagedKey()
+    {
+        (MidoraProject project, MidiSegment segment) = CreateDirectMidiFixture();
+        RecordingPagedContentSource source = new();
+        segment.AttachPagedContent(source);
+        IPreparedProjectEdit prepared = ProjectDomainEditCommands.CreateDirectMidiNote(
+            segment.Id,
+            startTick: 400,
+            lengthTicks: 20,
+            key: 72,
+            noteOnVelocity: 100).Prepare(project);
+        IPreparedProjectEdit wrapped = ExactTimelineCollisionPolicy.Wrap(project, prepared);
+
+        wrapped.Apply(project);
+
+        Assert.Equal(source.NoteCount + 1, segment.Notes.Count);
+        Assert.Equal(2, source.NoteQueries.Count);
+        Assert.All(source.NoteQueries, query => Assert.Equal((400L, 401L, 72, 72), query));
+
+        wrapped.Undo(project);
+        Assert.Equal(source.NoteCount, segment.Notes.Count);
+    }
+
+    private static (MidoraProject Project, MidiSegment Segment) CreateDirectMidiFixture()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = new(project) { Name = "Root" };
+        PureMidiTrack track = new(project)
+        {
+            Name = "Track",
+            MidiChannelRootId = root.Id
+        };
+        MidiSegment segment = new(project) { LengthTicks = 480 };
+        track.Segments.Add(segment);
+        project.MidiChannelRoots.Add(root);
+        project.PureMidiTracks.Add(track);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
+        return (project, segment);
+    }
+
     private static ProjectDocumentSession PersistedDocument(ProjectCompilationSession compilation)
     {
         ProjectDocumentSession result = new(compilation, ProjectDocumentOrigin.Persisted);
         result.MarkSaveSucceeded();
         return result;
+    }
+
+    private sealed class RecordingPagedContentSource : IPureMidiSegmentContentSource
+    {
+        public int NoteCount => 2_000_000;
+        public int ChannelEventCount => 0;
+        public int OpaqueEventCount => 0;
+        public string ContentFingerprint => "recording";
+        public List<(long Start, long End, int MinimumKey, int MaximumKey)> NoteQueries { get; } = [];
+
+        public DirectMidiNoteValue GetNote(int index) =>
+            throw new InvalidOperationException("A targeted collision edit must not enumerate the paged source.");
+
+        public DirectMidiChannelEventValue GetChannelEvent(int index) =>
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        public OpaqueMidiEventValue GetOpaqueEvent(int index) =>
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        public int FindNoteIndex(MidoraId id) => -1;
+        public int FindChannelEventIndex(MidoraId id) => -1;
+        public int FindOpaqueEventIndex(MidoraId id) => -1;
+
+        public IEnumerable<DirectMidiNoteValue> QueryNotes(
+            long startTick,
+            long endTick,
+            int minimumKey = 0,
+            int maximumKey = 127)
+        {
+            NoteQueries.Add((startTick, endTick, minimumKey, maximumKey));
+            return [];
+        }
+
+        public IEnumerable<DirectMidiChannelEventValue> QueryChannelEvents(
+            long startTick,
+            long endTick) => [];
+
+        public IEnumerable<OpaqueMidiEventValue> QueryOpaqueEvents(
+            long startTick,
+            long endTick) => [];
     }
 }

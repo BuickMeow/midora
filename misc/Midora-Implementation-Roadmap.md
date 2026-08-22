@@ -5,7 +5,7 @@
 
 > 现状提示（2026-08-08）：本文后续“当前进度/尚未实现”描述保留为历史路线记录，已经过时；不得据此判定源码缺口。当前权威实施状态见 `misc/Midora-Non-UI-Implementation-Tracker.md`，§7～§12 逐节证据见 `misc/Midora-Domain-Compiler-Conformance-Matrix.md`。
 >
-> UI 阶段现状（2026-08-08）：正式 `Midora.Desktop`、共享 `Midora.Desktop.Presentation` 及其测试项目已经建立。主窗口、Project 生命周期、工作区、Inspector、Diagnostics/Tasks、Preferences、MIDI/Audio 输出工作流和第 18 章主要编辑器已接入正式 Domain/Application/Compiler/consumer 入口；Arrangement、Segment、SubVoice、Logical Parameter 和 Conductor 的大量对象编辑采用专用渲染表面。Style Gallery 继续作为同一共享主题的视觉样例，不是生产依赖。当前 UI 需求映射与验证证据见 `misc/Midora-WPF-UI-Requirement-Trace.md`，架构决定见 `misc/Midora-WPF-UI-Architecture-Decisions.md`。
+> UI 阶段现状（2026-08-22）：正式 `Midora.Desktop`、共享 `Midora.Desktop.Presentation` 及其测试项目已经建立。主窗口、Project 生命周期、工作区、事务式对象 Properties、独立 Diagnostics、单前台 Task overlay、Preferences、MIDI/Audio 输出工作流和第 18 章主要编辑器已接入正式 Domain/Application/Compiler/consumer 入口；Arrangement、Segment、SubVoice、Logical Parameter 和 Conductor 的大量对象编辑采用专用渲染表面。生产主窗口已删除 Global Inspector、Bottom Panel 与 Details/Tasks；Style Gallery 继续作为同一共享主题的历史视觉样例，不是生产依赖。当前 UI 需求映射与验证证据见 `misc/Midora-WPF-UI-Requirement-Trace.md`，架构决定见 `misc/Midora-WPF-UI-Architecture-Decisions.md`。
 >
 > 规格修订提示（2026-08-18）：SRS 第 23 章已把 Pure MIDI Track 与 SMF Import 纳入初版，并限缩了本文关于“全部 Channel 10 melodic”“CC91/CC93 全局拒绝”“Logical-only Track/EOT”的旧描述。本文正文仍作为 2026-08-08 历史路线记录；现行实现与验证状态见 `misc/Midora-Pure-MIDI-Tracks-and-SMF-Import-Requirement-Trace.md`，规范仍以第 23 章、INV-050～INV-057 和 ADR-PMIDI-001～008 为准。
 >
@@ -60,7 +60,7 @@ flowchart LR
 - 音频渲染：Whole Mix 或 Per Logical Track；普通 RIFF/WAVE、stereo、interleaved IEEE float32 little-endian；任务采样率允许 8000～192000 Hz 的任意整数，默认 48000 Hz。渲染使用独立文件专用 `OutputDevice` 抽象，不依赖 WASAPI 或物理设备，并采用分块流式、事务发布和强制最终 Limiter。Preparing 必须精确预检 RIFF 可表示大小，任何目标超限都以 Error 阻止整个任务，不自动拆分、不回退 RF64、不降低采样率。
 - 输出命名：MIDI 与音频共用确定性的 Windows 安全文件名合法化和冲突检测；算法固定为 NFC、固定不安全字符表、设备保留名前缀、255 UTF-16 code unit、text-element 截断和稳定 ` (n)` 冲突后缀。Review 预览并冻结全部最终路径，合法化不回写源名称，已有目标不参与后缀分配且覆盖仍需明确授权。整曲、分 Track、逐 Port、Readme 和 MIDI Track Name 模板已经由 23.2A 固定，多文件模式不自动增加嵌套目录。
 - 持久化：`.midora` 是固定结构 ZIP，轻数据 JSON、重对象 protobuf；只保存源数据；严格 schema/version；确定性序列化；Save 采用同目录临时文件、重开校验和原子替换。
-- UI：单 WPF 主窗口；Project/工作区/Inspector/Diagnostics/Tasks/Status 分区；界面只操作正式模型，不重建编译语义。
+- UI：单 WPF 主窗口；Project/工作区/事务式对象 Properties/独立 Diagnostics/单前台 Task overlay/Status 分区；无 Global Inspector、Bottom Panel 或可见 Task History；界面只操作正式模型，不重建编译语义。
 
 ### 2.2 明确不在初版范围内
 
@@ -277,7 +277,7 @@ flowchart TD
 
 工作：
 
-1. Main Window shell、Project panel、workspace tabs、Inspector、Diagnostics/Tasks、status。
+1. Main Window shell、workspace tabs、事务式对象 Properties、独立 Diagnostics、单前台 Task overlay、status。旧 Project Panel、Global Inspector、Bottom Panel 与 Details/Tasks 已由后续正式规格删除。
 2. Arrangement、Segment、Event Instrument/SubVoice、Mapping/Function、Lifecycle、Conductor、Library、Settings、Diagnostics 编辑器。
 3. selection/focus/clipboard/drag/drop/rename/search/shortcut/validation 的共享基础设施。
 4. New/Open/Save/Export/Render 的模态级别、single active task、Stop-before-switch 和取消语义。

@@ -99,13 +99,11 @@ public sealed class ApplicationPreferencesStore
                         desktop.MainWindowTop,
                         desktop.MainWindowMaximized,
                         desktop.ProjectPanelWidth,
-                        desktop.InspectorWidth,
                         desktop.BottomPanelHeight,
                         desktop.TimelineSnapEnabled,
                         desktop.TimelineGridDivisionsPerQuarter)
                     {
                         ProjectPanelVisible = desktop.ProjectPanelVisible ?? true,
-                        InspectorVisible = desktop.InspectorVisible ?? true,
                         BottomPanelVisible = desktop.BottomPanelVisible ?? true,
                         FollowPlayback = desktop.FollowPlayback ?? true
                     }
@@ -176,12 +174,10 @@ public sealed class ApplicationPreferencesStore
                     MainWindowTop = preferences.DesktopUi.MainWindowTop,
                     MainWindowMaximized = preferences.DesktopUi.MainWindowMaximized,
                     ProjectPanelWidth = preferences.DesktopUi.ProjectPanelWidth,
-                    InspectorWidth = preferences.DesktopUi.InspectorWidth,
                     BottomPanelHeight = preferences.DesktopUi.BottomPanelHeight,
                     TimelineSnapEnabled = preferences.DesktopUi.TimelineSnapEnabled,
                     TimelineGridDivisionsPerQuarter = preferences.DesktopUi.TimelineGridDivisionsPerQuarter,
                     ProjectPanelVisible = preferences.DesktopUi.ProjectPanelVisible,
-                    InspectorVisible = preferences.DesktopUi.InspectorVisible,
                     BottomPanelVisible = preferences.DesktopUi.BottomPanelVisible,
                     FollowPlayback = preferences.DesktopUi.FollowPlayback
                 }
@@ -284,14 +280,20 @@ internal sealed class DesktopUiPreferencesJsonV1
     [JsonPropertyOrder(3)] public double? MainWindowTop { get; set; }
     [JsonPropertyOrder(4)] public bool MainWindowMaximized { get; set; }
     [JsonPropertyOrder(5)] public double ProjectPanelWidth { get; set; }
-    [JsonPropertyOrder(6)] public double InspectorWidth { get; set; }
-    [JsonPropertyOrder(7)] public double BottomPanelHeight { get; set; }
-    [JsonPropertyOrder(8)] public bool TimelineSnapEnabled { get; set; }
-    [JsonPropertyOrder(9)] public int TimelineGridDivisionsPerQuarter { get; set; }
-    [JsonPropertyOrder(10)] public bool? ProjectPanelVisible { get; set; }
-    [JsonPropertyOrder(11)] public bool? InspectorVisible { get; set; }
-    [JsonPropertyOrder(12)] public bool? BottomPanelVisible { get; set; }
-    [JsonPropertyOrder(13)] public bool? FollowPlayback { get; set; }
+    [JsonPropertyOrder(6)] public double BottomPanelHeight { get; set; }
+    [JsonPropertyOrder(7)] public bool TimelineSnapEnabled { get; set; }
+    [JsonPropertyOrder(8)] public int TimelineGridDivisionsPerQuarter { get; set; }
+    [JsonPropertyOrder(9)] public bool? ProjectPanelVisible { get; set; }
+    [JsonPropertyOrder(10)] public bool? BottomPanelVisible { get; set; }
+    [JsonPropertyOrder(11)] public bool? FollowPlayback { get; set; }
+    [JsonPropertyName("inspectorWidth")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyOrder(12)]
+    public double LegacyInspectorWidth { get; set; }
+    [JsonPropertyName("inspectorVisible")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyOrder(13)]
+    public bool? LegacyInspectorVisible { get; set; }
 }
 
 internal sealed class ApplicationRecentDirectoriesJsonV1

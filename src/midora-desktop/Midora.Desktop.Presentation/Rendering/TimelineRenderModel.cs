@@ -568,7 +568,7 @@ public sealed class TimelineSelectionSnapshot
         _ids = new HashSet<MidoraId>(ids);
         if (_ids.Any(static id => id.Value <= 0))
         {
-            throw new ArgumentException("Selection contains an invalid stable ID.", nameof(ids));
+            throw new ArgumentException("Selection contains an invalid object reference.", nameof(ids));
         }
         if (primary is MidoraId primaryId && !_ids.Contains(primaryId))
         {

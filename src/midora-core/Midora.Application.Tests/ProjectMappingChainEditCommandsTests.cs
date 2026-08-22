@@ -104,6 +104,58 @@ public sealed class ProjectMappingChainEditCommandsTests
     }
 
     [Fact]
+    public void StepPropertiesCanMoveOwnerAtomicallyAndUndoRestoresOwnerIndexAndValues()
+    {
+        Fixture fixture = CreateFixture();
+        SubVoice voice = Assert.Single(fixture.Instrument.SubVoices);
+        SubVoiceEventMapping targetOwner = new(
+            fixture.Project,
+            TemplateEventMappingTarget.Create(
+                TemplateEventKind.ControlChange,
+                7,
+                TemplateEventMappingParameter.Value));
+        voice.EventMappings.Add(targetOwner);
+        using ProjectCompilationSession compilation = new(fixture.Project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+        long nextStableId = fixture.Project.NextStableId;
+
+        document.Execute(ProjectDomainEditCommands.UpdateMappingStepAndOwner(
+            fixture.Instrument.Id,
+            fixture.Chain.Id,
+            targetOwner.Steps.Id,
+            fixture.FirstStep.Id,
+            isEnabled: false,
+            MappingSource.Constant,
+            MappingOperation.Override,
+            logicalParameterId: null,
+            envelopeId: null,
+            mappingFunctionId: null,
+            constant: 73,
+            sourceMinimum: 0,
+            sourceMaximum: 127,
+            targetMinimum: 0,
+            targetMaximum: 127,
+            MappingInputOverflow.Clamp,
+            DivideByZeroPolicy.TargetMaximum));
+
+        Assert.DoesNotContain(fixture.FirstStep, fixture.Chain);
+        Assert.Same(fixture.FirstStep, Assert.Single(targetOwner.Steps));
+        Assert.False(fixture.FirstStep.IsEnabled);
+        Assert.Equal(73, fixture.FirstStep.Constant);
+        Assert.Equal(nextStableId, fixture.Project.NextStableId);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+
+        Assert.Same(fixture.FirstStep, fixture.Chain[0]);
+        Assert.Empty(targetOwner.Steps);
+        Assert.True(fixture.FirstStep.IsEnabled);
+        Assert.Equal(5, fixture.FirstStep.Constant);
+        Assert.Equal(nextStableId, fixture.Project.NextStableId);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
     public void ReorderChangesExecutionOrderAndUndoRestoresObjectOrder()
     {
         Fixture fixture = CreateFixture();
@@ -423,7 +475,7 @@ public sealed class ProjectMappingChainEditCommandsTests
     }
 
     [Fact]
-    public void ChainInspectorTargetSettingsUpdateTheOwningEventMappingAndUndo()
+    public void ChainPropertiesTargetSettingsUpdateTheOwningEventMappingAndUndo()
     {
         Fixture fixture = CreateFixture();
         using ProjectCompilationSession compilation = new(fixture.Project);
@@ -449,7 +501,7 @@ public sealed class ProjectMappingChainEditCommandsTests
     }
 
     [Fact]
-    public void ChainInspectorTargetSettingsPropagateAcrossSharedParameterTarget()
+    public void ChainPropertiesTargetSettingsPropagateAcrossSharedParameterTarget()
     {
         Fixture fixture = CreateFixture();
         LogicalParameterMapping first = new(fixture.Project)
@@ -632,7 +684,8 @@ public sealed class ProjectMappingChainEditCommandsTests
         voice.Events.Add(TemplateEvent.Note(project, 0, 480, 60, 100));
         instrument.SubVoices.Add(voice);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) {
+        LogicalTrack track = new(project)
+        {
             Name = "Track",
         };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);

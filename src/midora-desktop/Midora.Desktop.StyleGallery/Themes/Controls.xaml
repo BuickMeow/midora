@@ -305,6 +305,16 @@
     </Setter>
   </Style>
 
+  <Style x:Key="Button.Dialog.Cancel" TargetType="Button" BasedOn="{StaticResource Button.Base}">
+    <Setter Property="Width" Value="112" />
+    <Setter Property="IsCancel" Value="True" />
+  </Style>
+
+  <Style x:Key="Button.Dialog.Confirm" TargetType="Button" BasedOn="{StaticResource Button.Primary}">
+    <Setter Property="Width" Value="112" />
+    <Setter Property="IsDefault" Value="True" />
+  </Style>
+
   <Style x:Key="Button.Ghost" TargetType="Button" BasedOn="{StaticResource Button.Base}">
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="BorderBrush" Value="Transparent" />
@@ -887,21 +897,37 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ScrollBar">
-          <Track x:Name="PART_Track"
-                 IsDirectionReversed="True"
-                 Orientation="{TemplateBinding Orientation}">
-            <Track.DecreaseRepeatButton>
-              <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}"
-                            Style="{StaticResource ScrollBar.PageButton}" />
-            </Track.DecreaseRepeatButton>
-            <Track.Thumb>
-              <Thumb Style="{StaticResource ScrollBar.Thumb.Vertical}" />
-            </Track.Thumb>
-            <Track.IncreaseRepeatButton>
-              <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}"
-                            Style="{StaticResource ScrollBar.PageButton}" />
-            </Track.IncreaseRepeatButton>
-          </Track>
+          <Grid Background="{TemplateBinding Background}">
+            <Track x:Name="PART_Track"
+                   IsDirectionReversed="True"
+                   Orientation="{TemplateBinding Orientation}">
+              <Track.DecreaseRepeatButton>
+                <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}"
+                              Style="{StaticResource ScrollBar.PageButton}" />
+              </Track.DecreaseRepeatButton>
+              <Track.Thumb>
+                <Thumb Style="{StaticResource ScrollBar.Thumb.Vertical}" />
+              </Track.Thumb>
+              <Track.IncreaseRepeatButton>
+                <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}"
+                              Style="{StaticResource ScrollBar.PageButton}" />
+              </Track.IncreaseRepeatButton>
+            </Track>
+            <Border x:Name="DisabledThumb"
+                    Width="4"
+                    Margin="3,2"
+                    HorizontalAlignment="Center"
+                    Background="{StaticResource Brush.Border}"
+                    CornerRadius="2"
+                    IsHitTestVisible="False"
+                    Visibility="Collapsed" />
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter TargetName="PART_Track" Property="Opacity" Value="0" />
+              <Setter TargetName="DisabledThumb" Property="Visibility" Value="Visible" />
+            </Trigger>
+          </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
@@ -912,19 +938,35 @@
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="ScrollBar">
-              <Track x:Name="PART_Track" Orientation="{TemplateBinding Orientation}">
-                <Track.DecreaseRepeatButton>
-                  <RepeatButton Command="{x:Static ScrollBar.PageLeftCommand}"
-                                Style="{StaticResource ScrollBar.PageButton}" />
-                </Track.DecreaseRepeatButton>
-                <Track.Thumb>
-                  <Thumb Style="{StaticResource ScrollBar.Thumb.Horizontal}" />
-                </Track.Thumb>
-                <Track.IncreaseRepeatButton>
-                  <RepeatButton Command="{x:Static ScrollBar.PageRightCommand}"
-                                Style="{StaticResource ScrollBar.PageButton}" />
-                </Track.IncreaseRepeatButton>
-              </Track>
+              <Grid Background="{TemplateBinding Background}">
+                <Track x:Name="PART_Track" Orientation="{TemplateBinding Orientation}">
+                  <Track.DecreaseRepeatButton>
+                    <RepeatButton Command="{x:Static ScrollBar.PageLeftCommand}"
+                                  Style="{StaticResource ScrollBar.PageButton}" />
+                  </Track.DecreaseRepeatButton>
+                  <Track.Thumb>
+                    <Thumb Style="{StaticResource ScrollBar.Thumb.Horizontal}" />
+                  </Track.Thumb>
+                  <Track.IncreaseRepeatButton>
+                    <RepeatButton Command="{x:Static ScrollBar.PageRightCommand}"
+                                  Style="{StaticResource ScrollBar.PageButton}" />
+                  </Track.IncreaseRepeatButton>
+                </Track>
+                <Border x:Name="DisabledThumb"
+                        Height="4"
+                        Margin="2,3"
+                        VerticalAlignment="Center"
+                        Background="{StaticResource Brush.Border}"
+                        CornerRadius="2"
+                        IsHitTestVisible="False"
+                        Visibility="Collapsed" />
+              </Grid>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                  <Setter TargetName="PART_Track" Property="Opacity" Value="0" />
+                  <Setter TargetName="DisabledThumb" Property="Visibility" Value="Visible" />
+                </Trigger>
+              </ControlTemplate.Triggers>
             </ControlTemplate>
           </Setter.Value>
         </Setter>
@@ -1180,7 +1222,9 @@
                   BorderBrush="{TemplateBinding BorderBrush}"
                   BorderThickness="{TemplateBinding BorderThickness}"
                   CornerRadius="{StaticResource Radius.Medium}">
-            <ScrollViewer CanContentScroll="True">
+            <ScrollViewer CanContentScroll="True"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
               <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle" />
             </ScrollViewer>
           </Border>
@@ -1262,7 +1306,9 @@
                       BorderBrush="{StaticResource Brush.Border.Strong}"
                       BorderThickness="1"
                       CornerRadius="{StaticResource Radius.Medium}">
-                <ScrollViewer CanContentScroll="True">
+                <ScrollViewer CanContentScroll="True"
+                              HorizontalScrollBarVisibility="Disabled"
+                              VerticalScrollBarVisibility="Auto">
                   <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle" />
                 </ScrollViewer>
               </Border>
@@ -1317,6 +1363,10 @@
         </ControlTemplate>
       </Setter.Value>
     </Setter>
+  </Style>
+
+  <Style TargetType="ScrollViewer">
+    <Setter Property="interaction:ScrollViewerWheelRouter.IsEnabled" Value="True" />
   </Style>
 
   <!-- Menu separators are represented by MenuItem containers, so the generic

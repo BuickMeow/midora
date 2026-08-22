@@ -33,7 +33,7 @@ public static class SegmentEditing
                 {
                     continue;
                 }
-                copy.Points.Add(new(project, point.Tick, point.Value, point.Interpolation));
+                copy.Points.Add(new(project, point.Tick, point.Value, CurveInterpolation.Step));
             }
             result.ParameterLanes.Add(copy);
         }
@@ -123,7 +123,11 @@ public static class SegmentEditing
                 {
                     long absoluteTick = checked(sourceOrigin + point.Tick);
                     long joinedTick = checked(absoluteTick - joinedContentOrigin);
-                    CurvePoint moved = point with { Tick = joinedTick };
+                    CurvePoint moved = point with
+                    {
+                        Tick = joinedTick,
+                        Interpolation = CurveInterpolation.Step
+                    };
                     if (preferIncomingAtSameTick || !target.Points.ContainsKey(joinedTick))
                     {
                         target.Points[joinedTick] = moved;
@@ -176,11 +180,11 @@ public static class SegmentEditing
             {
                 if (point.Tick < splitContentTick)
                 {
-                    leftLane.Points.Add(point);
+                    leftLane.Points.Add(point with { Interpolation = CurveInterpolation.Step });
                 }
                 else
                 {
-                    rightLane.Points.Add(point);
+                    rightLane.Points.Add(point with { Interpolation = CurveInterpolation.Step });
                 }
             }
             if (points.Any(value => value.Tick < splitContentTick)
@@ -230,12 +234,7 @@ public static class SegmentEditing
             CurvePoint right = points[i + 1];
             if (tick <= right.Tick)
             {
-                if (left.Interpolation == CurveInterpolation.Step)
-                {
-                    return left.Value;
-                }
-                double ratio = (tick - left.Tick) / (double)(right.Tick - left.Tick);
-                return left.Value + ((right.Value - left.Value) * ratio);
+                return left.Value;
             }
         }
         return points[^1].Value;

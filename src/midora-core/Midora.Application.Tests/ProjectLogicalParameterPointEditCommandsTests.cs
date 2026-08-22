@@ -36,7 +36,7 @@ public sealed class ProjectLogicalParameterPointEditCommandsTests
         Assert.Equal(0.6, replacement.Value);
         Assert.All(
             new[] { firstAdded, secondAdded },
-            value => Assert.Equal(CurveInterpolation.Linear, value.Interpolation));
+            value => Assert.Equal(CurveInterpolation.Step, value.Interpolation));
         Assert.Single(document.History);
 
         document.Undo();
@@ -94,7 +94,8 @@ public sealed class ProjectLogicalParameterPointEditCommandsTests
         };
         instrument.LogicalParameters.Add(parameter);
         project.EventInstruments.Add(instrument);
-        LogicalTrack track = new(project) {
+        LogicalTrack track = new(project)
+        {
             Name = "Track",
         };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);

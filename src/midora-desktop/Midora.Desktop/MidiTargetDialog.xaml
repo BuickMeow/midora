@@ -19,6 +19,6 @@
       <TextBox x:Name="NumberBox" Visibility="Collapsed" Text="0"/>
       <TextBlock x:Name="ValidationText" Margin="0,10,0,0" Foreground="{StaticResource Brush.Red.Hover}" TextWrapping="Wrap"/>
     </StackPanel>
-    <Border Grid.Row="2" Padding="10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0"><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Width="82" Margin="0,0,7,0" Content="Cancel" IsCancel="True" Click="OnCancelClick"/><Button Width="82" Style="{StaticResource Button.Primary}" Content="Select" IsDefault="True" Click="OnSelectClick"/></StackPanel></Border>
+    <Border Grid.Row="2" Padding="10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0"><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Margin="0,0,7,0" Style="{StaticResource Button.Dialog.Cancel}" Content="Cancel" Click="OnCancelClick"/><Button Style="{StaticResource Button.Dialog.Confirm}" Content="Select" Click="OnSelectClick"/></StackPanel></Border>
   </Grid></Border>
 </Window>

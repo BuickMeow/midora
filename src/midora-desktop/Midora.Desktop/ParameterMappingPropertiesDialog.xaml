@@ -1,0 +1,63 @@
+<Window x:Class="Midora.Desktop.ParameterMappingPropertiesDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls;assembly=Midora.Desktop.Presentation"
+        Title="Parameter Mapping Properties" Width="580" Height="520" MinHeight="500"
+        ResizeMode="CanResize" WindowStyle="None" WindowStartupLocation="CenterOwner"
+        Background="{StaticResource Brush.Surface.0}" SnapsToDevicePixels="True" UseLayoutRounding="True">
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight="38" CornerRadius="0" GlassFrameThickness="0"
+                        ResizeBorderThickness="6" UseAeroCaptionButtons="False"/>
+  </shell:WindowChrome.WindowChrome>
+  <Border BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid>
+      <Grid.RowDefinitions><RowDefinition Height="38"/><RowDefinition Height="*"/><RowDefinition Height="58"/></Grid.RowDefinitions>
+      <Grid Background="{StaticResource Brush.Black}" MouseLeftButtonDown="OnTitleMouseDown">
+        <TextBlock x:Name="DialogTitleText" Margin="12,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="Parameter Mapping Properties"/>
+        <Button Width="46" Height="38" HorizontalAlignment="Right" Style="{StaticResource Button.Caption.Close}" Click="OnCancelClick">
+          <ui:FluentIcon Style="{StaticResource Icon.WindowControl}" Data="{StaticResource WindowControl.Close}"/>
+        </Button>
+      </Grid>
+      <ScrollViewer Grid.Row="1" Padding="18" VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Text.Overline}" Text="LOGICAL PARAMETER SOURCE"/>
+          <ComboBox x:Name="SourceBox" Margin="0,4,0,14" DisplayMemberPath="Label"/>
+
+          <TextBlock Style="{StaticResource Text.Overline}" Text="TARGET SUBVOICE"/>
+          <ComboBox x:Name="SubVoiceBox" Margin="0,4,0,14" DisplayMemberPath="Label"/>
+
+          <TextBlock Style="{StaticResource Text.Overline}" Text="TARGET EVENT KIND"/>
+          <ComboBox x:Name="KindBox" Margin="0,4,0,14" SelectionChanged="OnKindChanged"/>
+
+          <StackPanel x:Name="ControllerRow" Margin="0,0,0,14">
+            <TextBlock Style="{StaticResource Text.Overline}" Text="CONTROLLER"/>
+            <ComboBox x:Name="ControllerBox" Margin="0,4,0,0" DisplayMemberPath="DisplayName"/>
+          </StackPanel>
+          <StackPanel x:Name="RpnRow" Margin="0,0,0,14" Visibility="Collapsed">
+            <TextBlock Style="{StaticResource Text.Overline}" Text="RPN"/>
+            <TextBox x:Name="RpnBox" Margin="0,4,0,0"/>
+          </StackPanel>
+          <StackPanel x:Name="NrpnRow" Margin="0,0,0,14" Visibility="Collapsed">
+            <TextBlock Style="{StaticResource Text.Overline}" Text="NRPN"/>
+            <TextBox x:Name="NrpnBox" Margin="0,4,0,0"/>
+          </StackPanel>
+
+          <TextBlock Margin="0,2,0,6" Style="{StaticResource Text.Section}" Text="Integer Target Settings"/>
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <StackPanel><TextBlock Style="{StaticResource Text.Overline}" Text="ROUNDING"/><ComboBox x:Name="RoundingBox" Margin="0,4,0,0"/></StackPanel>
+            <StackPanel Grid.Column="2"><TextBlock Style="{StaticResource Text.Overline}" Text="OVERFLOW"/><ComboBox x:Name="OverflowBox" Margin="0,4,0,0"/></StackPanel>
+          </Grid>
+          <TextBlock x:Name="ValidationText" Margin="0,14,0,0" Foreground="{StaticResource Brush.Red.Hover}" TextWrapping="Wrap"/>
+        </StackPanel>
+      </ScrollViewer>
+      <Border Grid.Row="2" Padding="10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+          <Button Margin="0,0,7,0" Style="{StaticResource Button.Dialog.Cancel}" Content="Cancel" Click="OnCancelClick"/>
+          <Button Style="{StaticResource Button.Dialog.Confirm}" Content="OK" Click="OnOkClick"/>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

@@ -113,4 +113,6 @@ public partial class NewRawMidiTrackDialog : Window
     {
         if (e.LeftButton == MouseButtonState.Pressed) DragMove();
     }
+
+    private void OnCancelClick(object sender, RoutedEventArgs e) => DialogResult = false;
 }

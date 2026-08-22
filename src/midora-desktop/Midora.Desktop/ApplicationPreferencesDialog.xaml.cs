@@ -37,7 +37,7 @@ public partial class ApplicationPreferencesDialog : Window
                 $"{device.Name}{(device.IsSystemDefault ? " — System Default" : string.Empty)} · {device.SampleRate:N0} Hz · {device.ChannelCount} ch")));
             if (selectedId is not null && choices.All(choice => choice.Id != selectedId))
             {
-                choices.Add(new(selectedId, $"Stored endpoint (currently unavailable) · {selectedId}"));
+                choices.Add(new(selectedId, "Stored endpoint (currently unavailable)"));
             }
             DeviceBox.ItemsSource = choices;
             DeviceBox.SelectedItem = choices.First(choice => choice.Id == selectedId);
@@ -56,7 +56,7 @@ public partial class ApplicationPreferencesDialog : Window
         RealtimeAudioPreferences realtime = preferences.RealtimeAudio;
         DeviceChoice current = realtime.PlaybackOutputDeviceId is null
             ? DeviceChoice.SystemDefault
-            : new(realtime.PlaybackOutputDeviceId, $"Stored endpoint · {realtime.PlaybackOutputDeviceId}");
+            : new(realtime.PlaybackOutputDeviceId, "Stored endpoint");
         DeviceBox.ItemsSource = new[] { current };
         DeviceBox.SelectedItem = current;
         RenderAheadBox.Text = realtime.RenderAheadMilliseconds.ToString(CultureInfo.InvariantCulture);

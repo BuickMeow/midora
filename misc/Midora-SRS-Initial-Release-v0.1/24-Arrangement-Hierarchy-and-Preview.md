@@ -254,7 +254,9 @@ Event Instruments pane 属于 Arrangement 会话 UI，Project 打开时默认折
 
 block gutter 绘制跨全部成员的大括号。括号区域是独立 hit target：hover 时大括号及其 gutter 矩形背景整体高亮，且不得同时触发成员 Track Header 的 hover；在其右键菜单保持打开期间，同一大括号及 gutter 高亮必须保持，菜单关闭后才清除该 context highlight；按下后越过通用拖动阈值才拖动整个 block；右键提供共享状态/route、Mute/Solo group、Make Independent 等适用命令。Fixed Root members 不绘制 block。
 
-Track Header 保留类型图标、名称、route/instrument 摘要、Mute/Solo、hover/pressed 和菜单。Header 左键或右键点击形成会话内单选：普通 Track 按 stable ID 保存，固定唯一 Conductor 以其固定 lane identity 保存；选中项以明确但低噪声的背景与内边框显示。该选择只作为 Track 命令和快捷键目标，不替代 Segment/Note/Event 的 Workspace Selection。brace 永不成为 Track 单选目标。Arrangement 空白处左键或右键均清除 Track 单选；空白右键菜单目标必须来自本次指针 hit test，不得复用旧 Track。Track 删除或 Project 切换时失效选择必须自动清除，且该状态不持久化、不进入 Undo/Redo。
+Track Header 保留类型图标、名称、route/instrument 摘要、Mute/Solo、hover/pressed 和菜单。Header 左键或右键点击形成会话内单选：普通 Track 按 stable ID 保存，固定唯一 Conductor 以其固定 lane identity 保存；对已经单选的 Header 再次普通左键单击必须取消该 Track 单选。选中项以明确但低噪声的背景与内边框显示。该选择只作为 Track 命令和快捷键目标，不替代 Segment/Note/Event 的 Workspace Selection。brace 永不成为 Track 单选目标。Arrangement 空白处左键或右键均清除 Track 单选；空白右键菜单目标必须来自本次指针 hit test，不得复用旧 Track。Track 删除或 Project 切换时失效选择必须自动清除，且该状态不持久化、不进入 Undo/Redo。
+
+Logical Track Header 的 Instrument 摘要是独立命中目标：有有效 Definition 时 hover 使用强调前景并显示 Hand，单击打开或激活该 Definition Editor；无绑定时保持普通不可点击摘要。该链接不得触发 Header 单选切换、拖动或 Mute/Solo。
 
 Track 内容区在最后一个可见 Track 的底边绘制与行间一致的分割线，使 Track 区域与后续空白明确分界。
 

@@ -43,7 +43,7 @@
         </Grid>
       </ScrollViewer>
       <Border Grid.Row="2" Padding="10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
-        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Width="86" Margin="0,0,7,0" Content="Cancel" IsCancel="True" Click="OnCancelClick"/><Button Width="106" Style="{StaticResource Button.Primary}" Content="Create Project" IsDefault="True" Click="OnCreateClick"/></StackPanel>
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Margin="0,0,7,0" Style="{StaticResource Button.Dialog.Cancel}" Content="Cancel" Click="OnCancelClick"/><Button Style="{StaticResource Button.Dialog.Confirm}" Content="Create Project" Click="OnCreateClick"/></StackPanel>
       </Border>
     </Grid>
   </Border>

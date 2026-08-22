@@ -740,7 +740,7 @@ public static partial class ProjectDomainEditCommands
         {
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
             ValidateDirectMidiNote(startTick, lengthTicks, key, noteOnVelocity, noteOffVelocity);
-            return DeferredCreate(
+            return ResolveTargetedExactDirectMidiCollisions(DeferredCreate(
                 PureMidiTrackChange(location.Track.Id),
                 value =>
                 {
@@ -758,7 +758,8 @@ public static partial class ProjectDomainEditCommands
                     return note;
                 },
                 (_, note) => location.Segment.Notes.Add(note),
-                (_, note) => location.Segment.Notes.Remove(note));
+                (_, note) => location.Segment.Notes.Remove(note)),
+                noteTargets: [new(location.Segment, startTick, key)]);
         });
 
     public static IProjectEditCommand CreateDirectMidiChannelEvent(
@@ -772,7 +773,7 @@ public static partial class ProjectDomainEditCommands
         {
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
             ValidateDirectMidiEvent(tick, kind, data1, data2);
-            return DeferredCreate(
+            return ResolveTargetedExactDirectMidiCollisions(DeferredCreate(
                 PureMidiTrackChange(location.Track.Id),
                 value =>
                 {
@@ -791,7 +792,8 @@ public static partial class ProjectDomainEditCommands
                 (_, directEvent) => RemoveRequired(
                     location.Segment.ChannelEvents,
                     directEvent,
-                    "Direct MIDI Event"));
+                    "Direct MIDI Event")),
+                eventTargets: [new(location.Segment, tick, kind, data1)]);
         });
 
     private static MidiChannelRoot FindMidiChannelRoot(MidoraProject project, MidoraId rootId) =>

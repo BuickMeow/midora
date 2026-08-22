@@ -16,7 +16,7 @@ public partial class NewLogicalTrackWithInstrumentDialog : Window
             Options.Add(new(
                 instrument.Id,
                 string.IsNullOrWhiteSpace(instrument.Name) ? "Unnamed Event Instrument" : instrument.Name,
-                $"Stable ID {instrument.Id}"));
+                $"{instrument.SubVoices.Count} SubVoice(s)"));
         }
         DataContext = this;
         if (Options.Count != 0) ExistingInstrumentList.SelectedIndex = 0;
@@ -73,4 +73,6 @@ public partial class NewLogicalTrackWithInstrumentDialog : Window
     {
         if (e.LeftButton == MouseButtonState.Pressed) DragMove();
     }
+
+    private void OnCancelClick(object sender, RoutedEventArgs e) => DialogResult = false;
 }

@@ -24,7 +24,8 @@ public static partial class ProjectDomainEditCommands
         MidoraId parameterId,
         LogicalParameterDefinitionEdit edit,
         LogicalParameterLaneRebindMode migrationMode,
-        bool enumSemanticWarningAcknowledged)
+        bool enumSemanticWarningAcknowledged,
+        string? name = null)
     {
         ArgumentNullException.ThrowIfNull(edit);
         ArgumentNullException.ThrowIfNull(edit.EnumItems);
@@ -37,6 +38,9 @@ public static partial class ProjectDomainEditCommands
             }
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             LogicalParameterDefinition parameter = FindLogicalParameter(instrument, parameterId);
+            string targetName = name is null
+                ? parameter.Name
+                : NormalizeUniqueLogicalParameterName(instrument, parameterId, name);
             ValidatedLogicalParameterDefinitionEdit target =
                 ValidateLogicalParameterDefinitionEdit(parameter, edit, frozenItems);
             if (target.Type == LogicalParameterType.Enum
@@ -65,6 +69,7 @@ public static partial class ProjectDomainEditCommands
                                 .ToArray()))))
                 .ToArray();
             LogicalParameterDefinitionSnapshot old = CaptureDefinition(parameter);
+            string oldName = parameter.Name;
             LogicalParameterEnumItemSnapshot[] oldItems = parameter.EnumItems
                 .Select(item => new LogicalParameterEnumItemSnapshot(item, item.Name, item.Value))
                 .ToArray();
@@ -73,7 +78,8 @@ public static partial class ProjectDomainEditCommands
             changes.TrackIds.UnionWith(laneMigrations.Select(value => value.TrackId));
 
             return Prepared(
-                DefinitionMigrationHasChanges(parameter, target, laneMigrations),
+                !string.Equals(oldName, targetName, StringComparison.Ordinal)
+                    || DefinitionMigrationHasChanges(parameter, target, laneMigrations),
                 changes,
                 owner =>
                 {
@@ -81,6 +87,7 @@ public static partial class ProjectDomainEditCommands
                         owner,
                         parameter,
                         target.Items);
+                    parameter.Name = targetName;
                     ApplyDefinition(parameter, target, replacementItems);
                     foreach (LaneMigration migration in laneMigrations)
                     {
@@ -89,6 +96,7 @@ public static partial class ProjectDomainEditCommands
                 },
                 _ =>
                 {
+                    parameter.Name = oldName;
                     RestoreDefinition(parameter, old, oldItems);
                     foreach (LaneMigration migration in laneMigrations)
                     {

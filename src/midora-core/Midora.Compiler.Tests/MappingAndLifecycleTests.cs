@@ -385,7 +385,7 @@ public sealed class MappingAndLifecycleTests
     }
 
     [Fact]
-    public void ParameterLaneGeneratesMappedControllerCurve()
+    public void ParameterLaneGeneratesMappedControllerSteps()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 20);
         LogicalParameterDefinition parameter = new(fixture.Project)
@@ -419,8 +419,8 @@ public sealed class MappingAndLifecycleTests
         mapping.TargetSettings.Rounding = MappingRounding.Floor;
         fixture.Instrument.ParameterMappings.Add(mapping);
         LogicalParameterLane lane = new(fixture.Project) { ParameterId = parameter.Id };
-        lane.Points.Add(new(fixture.Project, 0, 0));
-        lane.Points.Add(new(fixture.Project, 10, 1));
+        lane.Points.Add(new(fixture.Project, 0, 0, CurveInterpolation.Step));
+        lane.Points.Add(new(fixture.Project, 10, 1, CurveInterpolation.Step));
         fixture.Segment.ParameterLanes.Add(lane);
         fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 10, 60, 100));
         CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 20);
@@ -430,10 +430,9 @@ public sealed class MappingAndLifecycleTests
             && value.Message.MessageType == MidiMessageType.ControlChange
             && value.Message.Byte1 == 11).Select(value => value.Message.Byte2).ToArray();
 
-        Assert.Equal(11, values.Length);
+        Assert.Equal(2, values.Length);
         Assert.Equal((byte)0, values[0]);
-        Assert.Equal((byte)12, values[1]);
-        Assert.Equal((byte)127, values[10]);
+        Assert.Equal((byte)127, values[1]);
         Assert.Contains(result.Events.ToArray(), value => value.Tick == result.EndTick
             && value.Role == CanonicalEventRole.Reset
             && value.Message.MessageType == MidiMessageType.ControlChange

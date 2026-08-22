@@ -143,6 +143,7 @@ public static partial class ProjectDomainEditCommands
         CurveInterpolation interpolation) =>
         Command("Change logical parameter point", project =>
         {
+            interpolation = CurveInterpolation.Step;
             SegmentLocation segment = FindSegment(project, segmentId);
             LogicalParameterLane lane = FindLogicalParameterLane(segment.Segment, laneId);
             CurvePoint point = FindCurvePoint(lane, pointId);
@@ -318,11 +319,10 @@ public static partial class ProjectDomainEditCommands
                 "An Enum Logical Parameter point must use a defined enum value.",
                 nameof(value));
         }
-        if (target.Type == LogicalParameterType.Enum
-            && interpolation != CurveInterpolation.Step)
+        if (interpolation != CurveInterpolation.Step)
         {
             throw new ArgumentException(
-                "An Enum Logical Parameter only supports Step interpolation.",
+                "Logical Parameter points only support discrete Step changes.",
                 nameof(interpolation));
         }
     }
@@ -401,9 +401,7 @@ public static partial class ProjectDomainEditCommands
             }
         }
 
-        CurveInterpolation interpolation = target.Type == LogicalParameterType.Enum
-            ? CurveInterpolation.Step
-            : source.Interpolation;
+        const CurveInterpolation interpolation = CurveInterpolation.Step;
         if (converted == source.Value && interpolation == source.Interpolation)
         {
             return source;

@@ -60,7 +60,7 @@
         </StackPanel>
       </ScrollViewer>
       <Border Grid.Row="2" Padding="10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
-        <Grid><Button Width="132" HorizontalAlignment="Left" Content="Restore Defaults" Click="OnRestoreDefaultsClick"/><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Width="86" Margin="0,0,7,0" Content="Cancel" IsCancel="True" Click="OnCancelClick"/><Button Width="86" Style="{StaticResource Button.Primary}" Content="Apply" IsDefault="True" Click="OnApplyClick"/></StackPanel></Grid>
+        <Grid><Button Width="132" HorizontalAlignment="Left" Content="Restore Defaults" Click="OnRestoreDefaultsClick"/><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Margin="0,0,7,0" Style="{StaticResource Button.Dialog.Cancel}" Content="Cancel" Click="OnCancelClick"/><Button Style="{StaticResource Button.Dialog.Confirm}" Content="Apply" Click="OnApplyClick"/></StackPanel></Grid>
       </Border>
     </Grid>
   </Border>

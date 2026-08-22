@@ -91,7 +91,8 @@ public sealed class ProjectObjectClipboardPureMidiTests
     {
         MidoraProject project = new(480);
         EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
-        LogicalTrack logicalTrack = new(project) {
+        LogicalTrack logicalTrack = new(project)
+        {
             Name = "Logical",
             LastBoundEventInstrumentName = instrument.Name
         };
@@ -163,7 +164,7 @@ public sealed class ProjectObjectClipboardPureMidiTests
     }
 
     [Fact]
-    public void DirectMidiEventPastePreservesSameTickDuplicatesAndUndoRestoresExactOriginalOrder()
+    public void DirectMidiEventPasteKeepsLastPastedValueAndUndoRestoresExactOriginalOrder()
     {
         MidoraProject project = new(480);
         MidiChannelRoot root = AddRoot(project, "Root");
@@ -219,24 +220,25 @@ public sealed class ProjectObjectClipboardPureMidiTests
             editCursorTick: 20));
 
         Assert.Equal(
-            [12, 80, 99],
+            [99],
             target.ChannelEvents
                 .Where(value => value.Tick == 20 && value.Data1 == 1)
                 .Select(value => value.Data2));
-        Assert.Equal([existing, unaffected], target.ChannelEvents.Take(2));
+        Assert.Contains(unaffected, target.ChannelEvents);
+        Assert.DoesNotContain(existing, target.ChannelEvents);
 
         document.Undo();
         Assert.Equal(original, target.ChannelEvents);
         document.Redo();
         Assert.Equal(
-            [12, 80, 99],
+            [99],
             target.ChannelEvents
                 .Where(value => value.Tick == 20 && value.Data1 == 1)
                 .Select(value => value.Data2));
     }
 
     [Fact]
-    public void DirectMidiEventMoveAndDuplicatePreserveSameTickDuplicates()
+    public void DirectMidiEventMoveAndDuplicateUseLaterEditedPointAtExactTick()
     {
         MidoraProject project = new(480);
         MidiChannelRoot root = AddRoot(project, "Root");
@@ -270,14 +272,15 @@ public sealed class ProjectObjectClipboardPureMidiTests
             data2Delta: 0,
             duplicate: false));
 
-        Assert.Equal([moved, existing], segment.ChannelEvents);
-        Assert.All(segment.ChannelEvents, value => Assert.Equal(20, value.Tick));
+        Assert.Same(moved, Assert.Single(segment.ChannelEvents));
+        Assert.Equal(20, moved.Tick);
 
         document.Undo();
         Assert.Equal(10, moved.Tick);
         Assert.Equal([moved, existing], segment.ChannelEvents);
 
         document.Redo();
+        MidoraId movedId = moved.Id;
         document.Execute(ProjectDomainEditCommands.AdjustDirectMidiEventPoints(
             segment.Id,
             [moved.Id],
@@ -286,12 +289,13 @@ public sealed class ProjectObjectClipboardPureMidiTests
             data2Delta: 0,
             duplicate: true));
 
-        Assert.Equal(3, segment.ChannelEvents.Count);
-        Assert.All(segment.ChannelEvents, value => Assert.Equal(20, value.Tick));
+        DirectMidiChannelEvent duplicate = Assert.Single(segment.ChannelEvents);
+        Assert.NotEqual(movedId, duplicate.Id);
+        Assert.Equal((20L, 7, 40), (duplicate.Tick, duplicate.Data1, duplicate.Data2));
     }
 
     [Fact]
-    public void DirectMidiNotesPreserveExactSameTickKeyDuplicatesAcrossEditingCommands()
+    public void DirectMidiNoteEditsDiscardLaterExactStartAndKeyObjects()
     {
         MidoraProject project = new(480);
         MidiChannelRoot root = AddRoot(project, "Root");
@@ -328,21 +332,24 @@ public sealed class ProjectObjectClipboardPureMidiTests
             key: 60,
             noteOnVelocity: 90,
             noteOffVelocity: 14));
-        Assert.Equal(2, segment.Notes.Count(value => value.StartTick == 24 && value.Key == 60));
+        Assert.Equal([existing, moving], segment.Notes);
 
         document.Execute(ProjectDomainEditCommands.MoveDirectMidiNotes(
             segment.Id,
             [moving.Id],
             tickDelta: -24,
             keyDelta: 0));
-        Assert.Equal(3, segment.Notes.Count(value => value.StartTick == 24 && value.Key == 60));
+        Assert.Same(existing, Assert.Single(segment.Notes));
+
+        document.Undo();
+        Assert.Equal([existing, moving], segment.Notes);
 
         document.Execute(ProjectDomainEditCommands.DuplicateDirectMidiNotes(
             segment.Id,
             [existing.Id],
             tickDelta: 0,
             keyDelta: 0));
-        Assert.Equal(4, segment.Notes.Count(value => value.StartTick == 24 && value.Key == 60));
+        Assert.Equal([existing, moving], segment.Notes);
 
         ProjectObjectClipboardPayload payload = ProjectObjectClipboard.CopyDirectMidiNotes(
             document,
@@ -354,11 +361,11 @@ public sealed class ProjectObjectClipboardPureMidiTests
             segment.Id,
             editCursorTick: 24,
             targetIsDirectMidi: true));
-        Assert.Equal(5, segment.Notes.Count(value => value.StartTick == 24 && value.Key == 60));
+        Assert.Equal([existing, moving], segment.Notes);
 
         CanonicalCompiledResult compiled = compilation.LastAttempt;
         Assert.True(compiled.IsConsumable, string.Join(Environment.NewLine, compiled.Diagnostics));
-        Assert.Equal(5, compiled.Events.ToArray().Count(value =>
+        Assert.Equal(1, compiled.Events.ToArray().Count(value =>
             value.Tick == 24
             && value.Role == CanonicalEventRole.DirectMidi
             && value.Message.MessageType == Midora.Midi.MidiMessageType.NoteOn

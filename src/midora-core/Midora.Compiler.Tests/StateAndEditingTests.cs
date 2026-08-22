@@ -184,8 +184,8 @@ public sealed class StateAndEditingTests
         Segment source = new(project) { ProjectStartTick = 100, LengthTicks = 400, ContentOffsetTick = 20 };
         source.Notes.Add(new LogicalNote(project) { StartTick = 100, LengthTicks = 200, Note = 60, Velocity = 100 });
         LogicalParameterLane lane = new(project) { ParameterId = project.AllocateStableId() };
-        lane.Points.Add(new(project, 20, 0));
-        lane.Points.Add(new(project, 420, 1));
+        lane.Points.Add(new(project, 20, 0, CurveInterpolation.Step));
+        lane.Points.Add(new(project, 420, 1, CurveInterpolation.Step));
         source.ParameterLanes.Add(lane);
 
         SegmentSplitResult split = SegmentEditing.Split(project, source, 300);
@@ -196,7 +196,8 @@ public sealed class StateAndEditingTests
         Assert.Equal(120, leftNote.LengthTicks); // content split tick = 220
         Assert.Empty(split.Right.Notes);
         CurvePoint rightStart = Assert.Single(split.Right.ParameterLanes[0].Points, value => value.Tick == 220);
-        Assert.Equal(0.5, rightStart.Value, 12);
+        Assert.Equal(0, rightStart.Value, 12);
+        Assert.Equal(CurveInterpolation.Step, rightStart.Interpolation);
     }
 
     [Fact]

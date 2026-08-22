@@ -14,6 +14,29 @@ public partial class LogicalParameterDefinitionDialog : Window, INotifyPropertyC
 {
     private const NumberStyles DecimalStyles = NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint;
     private const NumberStyles IntegerStyles = NumberStyles.AllowLeadingSign;
+    private readonly bool _isCreation;
+
+    public LogicalParameterDefinitionDialog(string suggestedName)
+    {
+        _isCreation = true;
+        InitializeComponent();
+        DataContext = this;
+        TypeBox.ItemsSource = Enum.GetValues<LogicalParameterType>();
+        MigrationModeBox.ItemsSource = Enum.GetValues<LogicalParameterLaneRebindMode>();
+        MigrationModeBox.SelectedItem = LogicalParameterLaneRebindMode.Clamp;
+        NameBox.Text = suggestedName;
+        TypeBox.SelectedItem = LogicalParameterType.Double;
+        MinimumBox.Text = "0";
+        MaximumBox.Text = "1";
+        DisplayMinimumBox.Text = "0";
+        DisplayMaximumBox.Text = "1";
+        DefaultValueBox.Text = "0";
+        MigrationPanel.Visibility = Visibility.Collapsed;
+        WindowTitleText.Text = "Create Logical Parameter";
+        HeadingText.Text = "New Logical Parameter";
+        DescriptionText.Text = "Define the complete Logical Parameter before adding it to the Event Instrument.";
+        UpdateDefinitionShape();
+    }
 
     public LogicalParameterDefinitionDialog(
         LogicalParameterDefinition parameter,
@@ -26,6 +49,7 @@ public partial class LogicalParameterDefinitionDialog : Window, INotifyPropertyC
         TypeBox.ItemsSource = Enum.GetValues<LogicalParameterType>();
         MigrationModeBox.ItemsSource = Enum.GetValues<LogicalParameterLaneRebindMode>();
         MigrationModeBox.SelectedItem = LogicalParameterLaneRebindMode.Clamp;
+        NameBox.Text = parameter.Name;
         TypeBox.SelectedItem = parameter.Type;
         MinimumBox.Text = Format(parameter.Minimum);
         MaximumBox.Text = Format(parameter.Maximum);
@@ -44,6 +68,7 @@ public partial class LogicalParameterDefinitionDialog : Window, INotifyPropertyC
 
     public ObservableCollection<LogicalParameterEnumItemEditRow> EnumItems { get; } = [];
     public LogicalParameterDefinitionEdit? DefinitionEdit { get; private set; }
+    public string ParameterName { get; private set; } = string.Empty;
     public LogicalParameterLaneRebindMode MigrationMode { get; private set; }
     public bool EnumSemanticWarningAcknowledged { get; private set; }
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -124,6 +149,11 @@ public partial class LogicalParameterDefinitionDialog : Window, INotifyPropertyC
     {
         try
         {
+            ParameterName = NameBox.Text.Trim();
+            if (ParameterName.Length == 0)
+            {
+                throw new InvalidOperationException("Name must not be empty.");
+            }
             if (TypeBox.SelectedItem is not LogicalParameterType type)
             {
                 throw new InvalidOperationException("Select an input type.");
@@ -151,16 +181,21 @@ public partial class LogicalParameterDefinitionDialog : Window, INotifyPropertyC
                     items.Add(new(row.ExistingItemId, name, value));
                 }
             }
-            if (MigrationModeBox.SelectedItem is not LogicalParameterLaneRebindMode migrationMode)
+            if (!_isCreation
+                && MigrationModeBox.SelectedItem is not LogicalParameterLaneRebindMode)
             {
                 throw new InvalidOperationException("Select a migration policy for invalid existing values.");
             }
             DefinitionEdit = new(
                 type, minimum, maximum, displayMinimum, displayMaximum, defaultValue,
                 usesExplicitValues, items);
-            MigrationMode = migrationMode;
-            EnumSemanticWarningAcknowledged = EnumWarningBox.IsChecked == true;
-            if (type == LogicalParameterType.Enum && !EnumSemanticWarningAcknowledged)
+            MigrationMode = MigrationModeBox.SelectedItem is LogicalParameterLaneRebindMode migrationMode
+                ? migrationMode
+                : LogicalParameterLaneRebindMode.Clamp;
+            EnumSemanticWarningAcknowledged = _isCreation || EnumWarningBox.IsChecked == true;
+            if (!_isCreation
+                && type == LogicalParameterType.Enum
+                && !EnumSemanticWarningAcknowledged)
             {
                 throw new InvalidOperationException("Acknowledge the Enum semantic warning before applying the migration.");
             }
@@ -176,6 +211,8 @@ public partial class LogicalParameterDefinitionDialog : Window, INotifyPropertyC
     {
         if (e.LeftButton == MouseButtonState.Pressed) DragMove();
     }
+
+    private void OnCancelClick(object sender, RoutedEventArgs e) => DialogResult = false;
 
     private static double ParseDouble(string text, string label)
     {

@@ -4,7 +4,7 @@
 > 规格版本：**v0.1**  
 > 适用产品范围：**Midora 初版**
 
-本章定义单主窗口、全局框架、Workspace Tabs、Inspector、Bottom Panel、状态栏、Notice 和 UI 状态所有权。初版不再提供左侧 Project Panel；外层对象导航与层级编辑统一进入常驻 Arrangement，见第 24 章。
+本章定义单主窗口、全局框架、Workspace Tabs、对象所属属性编辑器、Diagnostics Workspace、状态栏、Notice 和 UI 状态所有权。初版不提供 Global Inspector、Bottom Panel 或左侧 Project Panel；外层对象导航与层级编辑统一进入常驻 Arrangement，见第 24 章。
 
 ## 17.1 全局界面架构
 ### 17.1.1 单主窗口
@@ -37,15 +37,13 @@ Tray mode
 | [B] Main Menu                                                            |
 +--------------------------------------------------------------------------+
 | [C] Global Command Bar and Transport                                     |
-+--------------------------------------------------------+----------------+
-| [D] Workspace Tabs                                     | [F] Inspector  |
-+--------------------------------------------------------+                |
-| [E] Active Workspace                                   |                |
-|                                                        |                |
-+--------------------------------------------------------+----------------+
-| [G] Bottom Panel: Diagnostics | Details | Tasks                          |
 +--------------------------------------------------------------------------+
-| [H] Global Status Bar                                                    |
+| [D] Workspace Tabs                                                       |
++--------------------------------------------------------------------------+
+| [E] Active Workspace                                                     |
+|                                                                          |
++--------------------------------------------------------------------------+
+| [F] Global Status Bar                                                    |
 +--------------------------------------------------------------------------+
 ```
 ### 17.1.3 区域职责
@@ -93,16 +91,7 @@ Global Undo / Redo 永远操作 Project History。Global Save 永远执行 Save 
 Arrangement 固定为第一个 Tab、常驻、不可关闭、不可重排。它提供 Conductor 与 Logical / Pure MIDI Track 的唯一全局平铺顺序入口，并可切换显示独立的 Event Instruments 管理栏。
 #### 17.1.3.5 [E] Active Workspace
 承载当前编辑器或完整功能 Workspace。
-#### 17.1.3.6 [F] Inspector
-显示 Active Workspace 的 Primary Selection 或 Workspace Context Object。
-#### 17.1.3.7 [G] Bottom Panel
-固定 Tab：
-```text
-Diagnostics
-Details
-Tasks
-```
-#### 17.1.3.8 [H] Global Status Bar
+#### 17.1.3.6 [F] Global Status Bar
 显示：
 ```text
 Issues
@@ -113,12 +102,8 @@ Playback State
 Transient Message
 ```
 ### 17.1.4 面板尺寸与折叠
-Inspector 和 Bottom Panel：
-- 可调整尺寸；
-- 可折叠；
-- 有最小可用尺寸；
-- 不覆盖 Active Workspace；
-- 布局属于 Application Preference，不属于 Project。
+
+Workspace 内部的显式侧栏、下部 Lane 编辑区和 Preview 区可按各自编辑器规格调整或折叠；主窗口不设置跨 Workspace 的 Bottom Panel。布局仍属于 Application Preference 或 Project Session UI State，不属于 Project Content。
 ---
 ## 17.2 Project 内容与 UI 状态边界
 初版统一分为四层。
@@ -142,8 +127,6 @@ Reset Defaults
 保存于当前 Windows 用户本机，跨 Project 共享：
 ```text
 Normal window bounds and maximized state
-Inspector width and collapsed state
-Bottom Panel height, state and last active tab
 Major splitters
 Follow Playback preference
 Default lane heights
@@ -275,124 +258,79 @@ Back / Forward 是 UI 导航历史，不是 Project Undo / Redo。初版提供�
 ### 17.3.7 打开 Project 后
 成功打开或创建 Project 后默认打开 Arrangement Workspace，不恢复上一应用会话的全部 Tabs。
 ---
-## 17.4 Global Inspector
-### 17.4.1 布局
+## 17.4 对象所属 Properties 对话框
+### 17.4.1 不设置 Global Inspector
+
+主窗口不得设置自动跟随 Active Workspace、Primary Selection、hover 或后台状态的 Global Inspector。`View` 菜单不提供 Inspector 开关，主窗口布局和 Application Preferences 不保存 Inspector 可见性或宽度。
+
+对象属性入口必须归属于对象的正式编辑上下文：
+
 ```text
-+--------------------------------------+
-| [A] Inspector Context Header         |
-| [B] Selection Summary               |
-| [C] Property Sections               |
-| [D] Value Source and References     |
-| [E] Validation and Navigation       |
-+--------------------------------------+
+Timeline object exact values -> context menu > Properties...
+Conductor event exact values -> Event List double-click / Properties...
+SubVoice definition/state    -> Structure list double-click / Properties...
+Logical Parameter definition -> definition-and-migration dialog
+Parameter Mapping            -> unified Properties dialog
+Mapping Chain / Step         -> Structure list double-click / Properties...
+Envelope Preset              -> Structure list double-click / Properties...
+Project settings             -> Project Settings Workspace
 ```
-### 17.4.2 上下文
-Inspector 默认跟随 Active Workspace 的 Primary Selection。初版不提供 Pin Inspector。
-无子对象选择时显示 Workspace Context Object。
-Diagnostics、Tasks 和其他辅助区域的选择不自动替换 Active Workspace 的 Inspector 上下文；只有明确导航或激活对应 Workspace 后才更新。
+
+复杂对象继续使用其专用编辑器，不在通用属性表中复制 Timeline、Mapping Function source、Loop 图形、曲线编辑器或完整事件列表。
+
+### 17.4.2 显式目标与稳定上下文
+
+属性编辑器只在用户显式打开对应 Section、Dialog 或命令后成为编辑目标。普通 Selection、hover、诊断刷新或 Workspace 切换不得使另一块全局 UI 自动变成不同对象的属性编辑器。
+
+`Properties...` 在打开时冻结 Workspace、Selection 与原始字段值；Modal 存续期间外部 Project 编辑被阻止。Event Instrument 不设置 Properties Tab 或自动跟随结构选择的属性面板；内部对象只能由双击或显式 `Properties...` 打开其模态对话框。
+
 ### 17.4.3 单选与多选
-单选显示：
-```text
-Object type
-Name or generated summary
-Source path
-Editable or read-only state
-Lock reason
-```
-多选只显示所有对象语义完全相同、可安全批量修改的共同字段。
-多选字段状态：
+
+单选属性编辑器可显示用户可理解的对象类型、名称/摘要和可编辑或只读字段。UI 不显示 Stable ID、内部引用编号或要求用户复制内部身份。多选只显示所有对象语义完全相同、可安全批量修改的共同字段，且必须区分：
+
 ```text
 Same Value
 Mixed
 Unavailable
 ```
-`Unavailable` 不得伪装成 `Mixed`。
+
+`Unavailable` 不得伪装成 `Mixed`。`Mixed` 字段初始 Disabled，并在右侧提供单图标“编辑为统一值”入口；启用后清空或使用安全默认值。每个已经修改或启用统一值的字段都提供单图标“恢复原值”入口；原始状态为 `Mixed` 时，恢复后重新 Disabled 并重新显示统一值入口。没有可展示字段时 `Properties...` Disabled；仅有只读字段时仍允许打开只读 Properties 对话框。
+
 ### 17.4.4 属性提交
-Toggle、Combo、枚举、引用选择、Reset、Use Inherited 等操作立即提交，一次操作形成一次 Project Undo。
-普通文本字段使用本地编辑缓冲：
+
+Properties 对话框中的文本、Toggle、Combo、枚举与引用选择全部只修改本地 Draft，不得因键入、选择、Enter 或失焦直接改 Project。底部固定提供 `OK` 与 `Cancel`：
+
 ```text
-Enter or valid focus loss -> Commit
-Escape                   -> Restore old value
-Invalid focus loss       -> Restore old value
+OK      -> validate all changed fields, apply one atomic Project command, create one Undo entry
+Cancel  -> discard every Draft change, Project remains byte-for-byte unchanged
 ```
-一次连续编辑形成一次 Project Undo。
-数值拖动：
-```text
-Pointer Down -> record initial value
-Drag         -> preview
-Pointer Up   -> one Project commit
-Escape       -> cancel and restore
-```
-### 17.4.5 值来源
-必须区分：
-```text
-Default
-Inherited
-Explicit Override
-Effective Value
-```
-`Use Inherited` 表示删除 Override，不是把继承值复制成显式值。
-### 17.4.6 复杂编辑器边界
-Inspector 不复制以下复杂编辑器：
-```text
-SubVoice timeline
-Mapping Chain
-C# source editor
-Envelope and Loop editor
-Logical Parameter curve editor
-Complete Conductor event list
-```
-只显示摘要和 `Open in Editor`。
-### 17.4.7 Broken 与只读
-Broken Reference 显示：
-```text
-Stable ID
-Last Known Name
-Expected object type
-```
-不得按名称自动修复。
-只读字段仍显示值、来源和原因，并在适用时提供 `Go to Source`。
-播放或任务锁定期间 Inspector 可查看、复制和导航，但 Project 属性只读。
+
+所有带确认提交的模态对话框必须复用同一 Dialog action contract：主操作使用统一宽度的红色 Primary Button 并作为 Enter 默认动作，Cancel 使用同一宽度的普通按钮并作为 Escape 取消动作。焦点控件拥有自身 Enter 语义时仍按第 20.12.8 节优先处理；除此之外不得要求每个对话框各自重复实现键盘路由。
+
+任一字段无效或命令失败时，对话框保持打开、显示具体错误且 Project 不发生部分修改。播放或前台任务锁定期间允许打开只读 Properties，但全部 Project-backed 输入、统一值与恢复按钮 Disabled。
+
+### 17.4.5 值来源、Broken 与锁定
+
+存在继承语义的字段必须区分 Default、Inherited、Explicit Override 和 Effective Value；`Use Inherited` 表示删除 Override，不是复制当前有效值。Broken Reference 只显示 Last Known Name、Expected object type 和可执行的重绑/删除动作；内部 ID 仍参与诊断定位，但不显示给用户，也不得按名称自动修复。
+
+### 17.4.6 Direct MIDI 包装
+
+Direct MIDI Note/Event 的 Properties 必须按音乐语义包装字段，不暴露 `Data1`、`Data2` 等 wire/storage 字段。Note 显示 start、gate、key、NoteOn velocity 与 NoteOff velocity；Event 按事件类型显示 Controller/Value、Program、Pressure、Pitch Bend 等适用字段。事件类型在既有 Event Lane 的 Properties 中只读；需要改变类型时使用创建/删除流程，避免在一个模态事务中产生含义不明确的数据迁移。
+
 ---
-## 17.5 Bottom Panel
-### 17.5.1 状态
-```text
-Expanded
-Compact
-Collapsed
-```
-高度、状态和最后活动 Tab 属于 Application Preference。
-### 17.5.2 Diagnostics Tab
-与完整 Diagnostics Workspace 使用同一诊断数据源和身份，但可以独立保存当前会话内的筛选、排序、选中行、列宽和滚动。
-紧凑筛选：
-```text
-Severity
-Active / Resolved / Runtime History
-Whole Project / Current Workspace / Current Selection / Current Task
-```
-用户主动 Compile、Play 或 Preview 失败时，可以自动展开 Diagnostics 并选中首个相关 Error，但不得抢键盘焦点或自动跳转来源。
-后台 Information、Warning 和普通非阻塞 Error 只更新 Badge。
-主动切换到 Diagnostics Workspace 时，键盘焦点必须落在非编辑的 Workspace 表面，不得自动进入搜索框、筛选下拉框或其他命令控件；用户显式点击这些控件后仍按普通输入规则工作。
-### 17.5.3 Details Tab
-只读扩展信息区，不是第二个 Inspector。通过显式 `Show Details` 更新，不随普通对象单击持续跳动。
-### 17.5.4 Tasks Tab
-显示当前和最近运行期任务，但不复制 MIDI Export 或 Audio Render 模态窗口的完整控制能力。
-只有任务明确支持安全取消时才显示 Cancel。
-模态 Task overlay 不显示内部 lock-level/debug 名称。任务没有可报告的确定总量时，进度条必须使用真实的 indeterminate 动画，不能以永久全填充伪装进度；只有任务提供可靠的当前值与总量时才显示 determinate 进度。Save / Save Copy 在持久化事务开始后不可安全取消，因此不得显示一个不可响应的 Cancel 控件。
-Task History：
-- 不属于 Project；
-- 不保存；
-- 不进入 Undo / Redo；
-- 不跨应用重启。
-### 17.5.5 导航
-单击 Diagnostic 不自动改变 Workspace Selection。只有 `Go to Source` 才导航并更新 Inspector。
-Global Notice 被关闭或折叠时，不清除对应 Diagnostic 或 Task。
+## 17.5 Diagnostics Workspace 与前台任务表面
+
+Diagnostics 是独立 Workspace，不在主窗口底部复制紧凑列表。它使用正式诊断数据源，保存当前会话内的筛选、排序、选中行、列宽和滚动。单击 Diagnostic 只选择该行；`Go to Source` 才导航、选择并滚动来源对象。Diagnostics 可在 Workspace 内显示完整 Message、Source Path、Code 与下一步，但不设置通用 `Show Details` 菜单或 Bottom Details 快照。
+
+主动切换到 Diagnostics Workspace 时，键盘焦点必须落在非编辑的 Workspace 表面，不得自动进入搜索框、筛选下拉框或其他命令控件。用户主动 Compile、Play 或 Preview 失败时可激活 Diagnostics，但不得抢键盘焦点或自动跳转来源；后台 Information、Warning 和普通非阻塞 Error 只更新状态栏计数。
+
+主窗口不设置 Tasks Tab 或 Task History 表。一次只存在一个前台任务；必要时由模态 Task overlay 展示当前任务。只有任务明确支持安全取消时才显示可响应的 Cancel。没有可靠总量时使用 indeterminate 动画；有可靠当前值与总量时才显示 determinate 进度。Save / Save Copy 进入不可取消事务后不得显示不可响应的 Cancel 控件。任务状态属于 Runtime Data，不保存、不进入 Undo/Redo。
 ---
 ## 17.6 外层对象导航
 
 初版删除 Project Panel。Conductor、Logical / Pure MIDI Track 的创建、全局排序、共享组操作、打开与 context menu 全部统一到常驻 Arrangement；Event Instrument Definition 由 Arrangement 内可切换的 Event Instruments 管理栏维护。Usage 与 Root 是内部共享执行身份，不占独立时间线行。完整规则见第 24 章。
 
-Project Settings 继续从主菜单 `Project` 打开；Diagnostics 可从主菜单、Bottom Panel 和 Status Bar Issues 导航；删除 Project Panel 不删除任何功能 Workspace。
+Project Settings 继续从主菜单 `Project` 打开；Diagnostics 可从主菜单和 Status Bar Issues 导航；删除 Project Panel 与 Bottom Panel 不删除任何功能 Workspace。
 
 播放期间允许在 Arrangement 浏览、切换 Event Instruments 管理栏、打开 Workspace 和查看诊断；Project 编辑锁仍禁止创建、删除、重命名、排序、复制与共享组改绑。管理栏可见性、选择和 viewport 是 session state。
 ---

@@ -8,7 +8,7 @@ internal static class ProjectSettingsProjection
 {
     public static IProjectEditCommand CreateEditCommand(
         MidoraProject project,
-        InspectorField field)
+        PropertyField field)
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(field);

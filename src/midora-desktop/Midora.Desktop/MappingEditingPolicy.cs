@@ -47,7 +47,7 @@ internal static class MappingEditingPolicy
                 eventMappings[0].Mapping),
             0 => throw new ArgumentOutOfRangeException(nameof(chainId)),
             _ => throw new InvalidOperationException(
-                "The Mapping Chain stable ID is duplicated in this Event Instrument.")
+                "This Event Instrument contains a duplicate Mapping Chain.")
         };
     }
 

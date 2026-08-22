@@ -23,7 +23,7 @@
         <TextBox x:Name="ValueBox" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"/>
       </StackPanel>
       <Border Grid.Row="2" Padding="12,10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
-        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Width="84" Margin="0,0,6,0" Content="Cancel" IsCancel="True" Click="OnCancelClick"/><Button Width="84" Style="{StaticResource Button.Primary}" Content="OK" IsDefault="True" Click="OnAcceptClick"/></StackPanel>
+        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Margin="0,0,6,0" Style="{StaticResource Button.Dialog.Cancel}" Content="Cancel" Click="OnCancelClick"/><Button Style="{StaticResource Button.Dialog.Confirm}" Content="OK" Click="OnAcceptClick"/></StackPanel>
       </Border>
     </Grid>
   </Border>

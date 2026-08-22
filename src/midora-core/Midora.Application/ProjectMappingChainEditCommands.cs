@@ -226,6 +226,78 @@ public static partial class ProjectDomainEditCommands
                 _ => SetMappingStep(step, old));
         });
 
+    public static IProjectEditCommand UpdateMappingStepAndOwner(
+        MidoraId eventInstrumentId,
+        MidoraId sourceMappingChainId,
+        MidoraId targetMappingChainId,
+        MidoraId mappingStepId,
+        bool isEnabled,
+        MappingSource source,
+        MappingOperation operation,
+        MidoraId? logicalParameterId,
+        MidoraId? envelopeId,
+        MidoraId? mappingFunctionId,
+        double constant,
+        double sourceMinimum,
+        double sourceMaximum,
+        double targetMinimum,
+        double targetMaximum,
+        MappingInputOverflow inputOverflow,
+        DivideByZeroPolicy divideByZero) =>
+        Command("Change mapping step properties and owner", project =>
+        {
+            EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
+            MappingChain sourceChain = FindMappingChain(instrument, sourceMappingChainId);
+            MappingChain targetChain = FindMappingChain(instrument, targetMappingChainId);
+            ValueMappingStep step = FindMappingStep(sourceChain, mappingStepId);
+            int sourceIndex = sourceChain.IndexOf(step);
+            bool ownerChanges = !ReferenceEquals(sourceChain, targetChain);
+            MappingStepValue old = CaptureMappingStep(step);
+            bool oldEnabled = step.IsEnabled;
+            MappingStepValue replacement = new(
+                source,
+                operation,
+                logicalParameterId,
+                envelopeId,
+                mappingFunctionId,
+                constant,
+                sourceMinimum,
+                sourceMaximum,
+                targetMinimum,
+                targetMaximum,
+                inputOverflow,
+                divideByZero);
+            ValidateMappingStepValue(replacement);
+            if (ownerChanges && targetChain.Any(value => value.Id == mappingStepId))
+            {
+                throw new InvalidOperationException(
+                    "The target Mapping Chain already contains this Mapping Step identity.");
+            }
+            return Prepared(
+                ownerChanges || oldEnabled != isEnabled || old != replacement,
+                EventInstrumentChange(eventInstrumentId),
+                _ =>
+                {
+                    if (ownerChanges)
+                    {
+                        RemoveMappingStepRequired(sourceChain, step);
+                        targetChain.Add(step);
+                    }
+                    SetMappingStep(step, replacement);
+                    step.IsEnabled = isEnabled;
+                },
+                _ =>
+                {
+                    if (ownerChanges)
+                    {
+                        RemoveMappingStepRequired(targetChain, step);
+                        InsertMappingStepAt(sourceChain, sourceIndex, step);
+                    }
+                    SetMappingStep(step, old);
+                    step.IsEnabled = oldEnabled;
+                });
+        });
+
     public static IProjectEditCommand ReorderMappingStep(
         MidoraId eventInstrumentId,
         MidoraId mappingChainId,

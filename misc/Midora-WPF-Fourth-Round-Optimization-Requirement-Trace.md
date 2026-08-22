@@ -28,15 +28,15 @@
 - CC 名称和可选范围以 BASSMIDI 2.4 官方 MIDI implementation chart 为事实来源。
 - Midora 初版只暴露官方列为 recognized、且满足普通可编辑 CC 边界的编号：`0, 1, 5, 6, 7, 10, 11, 32, 38, 42, 64, 65, 66, 67, 71, 72, 73, 74, 75, 76, 77, 78, 84, 94, 98, 99, 100, 101`。
 - CC120～127 属于模式或全局清理，不作为普通用户事件；CC91 / 93 按 Midora NOFX 基线继续完整禁止。Bank 与 RPN / NRPN 仍保留专用事件类型，但不会把官方明确 recognized 的 CC0 / 32 / 6 / 38 / 98～101 从普通 CC 选择器中静默删除。
-- 所有 CC 选择、Lane 标签和 Inspector 显示使用 `number - name`。内置目录是冻结的产品数据，不在运行时联网。
+- 所有 CC 选择、Lane 标签和对象所属 Properties/Details 显示使用 `number - name`。内置目录是冻结的产品数据，不在运行时联网。
 
-## 5. Lane、Inspector、Mapping 与窗口验收
+## 5. Lane、对象属性、Mapping 与窗口验收
 
 - SubVoice Event Lane 的选项集合在模型刷新后必须发出集合/属性通知；新建事件后立即选择对应精确 target Lane。
 - Segment Parameter Lane 下拉框投影当前绑定 Event Instrument 的全部 Logical Parameter Definition，而不是只投影已含点的 Segment Lane；选择尚不存在的定义时原子创建 Lane 并激活。
 - SubVoice Piano Ruler 中当前有效 Root Note 对应键使用低强调浅红底，其余黑白键样式不变。
 - Mapping Function 的代码编辑器填满可用垂直空间并从左上角开始排版；Find 输入框不裁切。
-- Inspector 的 Boolean 值使用 CheckBox 并提交 bool，不再接受自由文本。
+- 当轮 Inspector 的 Boolean 值使用 CheckBox 并提交 bool，不再接受自由文本。该编辑能力已于 2026-08-22 迁移到对象所属 Properties；生产 Global Inspector 已删除。
 - 所有自定义 Dialog 使用共享暗色 WindowChrome / caption 契约；内容区通过合理 MinHeight 与可滚动布局保证底部操作按钮可见。白色原生顶边、裁切按钮均视为失败。
 
 ## 6. 失败条件与非目标
@@ -56,7 +56,7 @@
 ## 8. 后续修正：Event Instrument 结构栏与 Mapping Function 布局
 
 - Event Instrument 左侧结构栏的 SubVoice、Logical Parameter、Parameter Mapping、Mapping Chain、Mapping Step、Envelope Preset 与 Mapping Function 均提供单项 Cut / Copy / Paste / Delete 右键入口；SubVoice 继续额外保留 Duplicate。
-- 本轮产品要求显式覆盖 SRS 20.3 的异构多选默认：该左侧结构栏在所有类别之间共用一个视觉焦点和一个 Inspector primary，任一次左键或右键命中都执行 Replace，并清除其他结构列表遗留的 `SelectedItem`。时间线、钢琴卷帘和事件点的多选语义不受影响。
+- 本轮产品要求显式覆盖当时 SRS 20.3 的异构多选默认：该左侧结构栏在所有类别之间共用一个视觉焦点和一个对象属性 primary，任一次左键或右键命中都执行 Replace，并清除其他结构列表遗留的 `SelectedItem`。2026-08-22 后该 primary 只驱动 Event Instrument 本地 Properties，不再驱动 Global Inspector；时间线、钢琴卷帘和事件点的多选语义不受影响。
 - 定义类 payload 是不可变快照；粘贴 Logical Parameter、Envelope Preset、Mapping Function 时分配全新稳定 ID，并作为单次 Undo 原子提交。Mapping Step 粘贴到目标 Chain 的选中 Step 后方或末尾。Mapping Chain 继续复制/替换有序链内容；不可删除的 Note Chain 同时禁止 Cut。
 - Logical Parameter Mapping 的 target 身份必须保持唯一，因此 Copy / Paste 只把 Target Settings 与 Mapping Chain 配置替换到显式选中的目标 Mapping，不复制其 Parameter / SubVoice / MIDI target 身份，也不创建重复 Mapping。
 - Mapping Chain 的 Delete 直接使用右键命中的 Chain ID，不再依赖其他结构列表残留的 primary；非空 Chain 继续要求确认并按既有正式命令清空，Note Chain 不允许删除。

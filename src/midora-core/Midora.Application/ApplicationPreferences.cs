@@ -159,13 +159,11 @@ public sealed record DesktopUiPreferences(
     double? MainWindowTop,
     bool MainWindowMaximized,
     double ProjectPanelWidth,
-    double InspectorWidth,
     double BottomPanelHeight,
     bool TimelineSnapEnabled,
     int TimelineGridDivisionsPerQuarter)
 {
     public bool ProjectPanelVisible { get; init; } = true;
-    public bool InspectorVisible { get; init; } = true;
     public bool BottomPanelVisible { get; init; } = true;
     public bool FollowPlayback { get; init; } = true;
 
@@ -176,7 +174,6 @@ public sealed record DesktopUiPreferences(
         null,
         false,
         224,
-        270,
         150,
         true,
         4);
@@ -188,7 +185,6 @@ public sealed record DesktopUiPreferences(
             || MainWindowLeft.HasValue && !double.IsFinite(MainWindowLeft.Value)
             || MainWindowTop.HasValue && !double.IsFinite(MainWindowTop.Value)
             || !double.IsFinite(ProjectPanelWidth) || ProjectPanelWidth is < 170 or > 360
-            || !double.IsFinite(InspectorWidth) || InspectorWidth is < 220 or > 420
             || !double.IsFinite(BottomPanelHeight) || BottomPanelHeight is < 80 or > 500)
         {
             throw new ArgumentOutOfRangeException(nameof(DesktopUiPreferences));

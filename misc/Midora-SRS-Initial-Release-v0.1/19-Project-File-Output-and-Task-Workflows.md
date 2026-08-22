@@ -171,7 +171,7 @@ Use current in-memory accumulated project time snapshot
 | [B] Candidate File Path                                                  |
 | [C] Current Stage                                                        |
 | [D] Validation Summary                                                   |
-| [E] Details                                                              |
+| [E] Stage Message                                                        |
 | [F] Cancel Open                                                          |
 +--------------------------------------------------------------------------+
 ```
@@ -291,7 +291,7 @@ Save Copy    -> Disabled
 | [B] Current Stage                                                        |
 | [C] Target Path                                                          |
 | [D] Transaction Status                                                   |
-| [E] Details                                                              |
+| [E] Stage Message                                                        |
 +--------------------------------------------------------------------------+
 ```
 ### 19.4.2 模态与取消
@@ -693,11 +693,12 @@ Close
 1. Inline Validation
 2. Tooltip or Field Message
 3. Global Notice Bar
-4. Bottom Panel Diagnostics or Details
-5. Non-destructive Modal Information
-6. Confirmation Dialog
-7. Blocking Error Dialog
-8. Progress or Task Modal
+4. Diagnostics Workspace or full Status Message
+5. Read-only Properties
+6. Non-destructive Modal Information
+7. Confirmation Dialog
+8. Blocking Error Dialog
+9. Progress or Task Modal
 ```
 优先使用最低干扰层级。
 ### 19.9.2 通用规则

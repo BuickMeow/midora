@@ -46,7 +46,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private long _revision;
     private string? _notice;
     private DiagnosticRow? _selectedDiagnostic;
-    private DiagnosticRow? _selectedBottomDiagnostic;
     private ProjectTimeSignatureMap? _timeSignatureMap;
     private string _projectTreeSearchText = string.Empty;
     private bool _isNavigatingHistory;
@@ -58,6 +57,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private int _activeTempoIndex = -1;
     private long _tempoLookupTick = -1;
     private string _tempoText = "— BPM";
+    private DesktopTaskViewModel? _foregroundTask;
 
     public DesktopSessionController()
     {
@@ -66,8 +66,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     }
 
     public bool HasProject => _context is not null;
-    public bool IsForegroundTaskRunning => TaskHistory.Any(item => item.IsRunning);
-    public DesktopTaskViewModel? ActiveForegroundTask => TaskHistory.LastOrDefault(item => item.IsRunning);
+    public bool IsForegroundTaskRunning => _foregroundTask?.IsRunning == true;
+    public DesktopTaskViewModel? ActiveForegroundTask => IsForegroundTaskRunning
+        ? _foregroundTask
+        : null;
     public bool IsMainWindowTaskLocked => ActiveForegroundTask?.LockLevel >= DesktopTaskLockLevel.MainWindow;
     public bool IsFullApplicationTaskLocked => ActiveForegroundTask?.LockLevel >= DesktopTaskLockLevel.FullApplication;
     public bool CanEditProject => HasProject && !IsForegroundTaskRunning && !IsPlaybackActive;
@@ -225,20 +227,12 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         get => _selectedDiagnostic;
         set => Set(ref _selectedDiagnostic, value);
     }
-    public DiagnosticRow? SelectedBottomDiagnostic
-    {
-        get => _selectedBottomDiagnostic;
-        set => Set(ref _selectedBottomDiagnostic, value);
-    }
     public string ActivityText => ActiveForegroundTask?.Status
         ?? PlaybackState.ToString();
 
     public ObservableCollection<ProjectTreeNode> ProjectTree { get; } = [];
     public ObservableCollection<WorkspaceViewModel> Workspaces { get; } = [];
     public ObservableCollection<DiagnosticRow> CompilerDiagnostics { get; } = [];
-    public DiagnosticsWorkspaceViewModel BottomDiagnosticsViewModel { get; } = new();
-    public ObservableCollection<DesktopTaskViewModel> TaskHistory { get; } = [];
-    public InspectorViewModel Inspector { get; } = new();
     public TimelineEditorSettings ArrangementEditorSettings { get; } = new();
     public TimelineEditorSettings PianoRollEditorSettings { get; } = new();
     public string? StatusMessage
@@ -279,14 +273,12 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     if (_backNavigation.Count > 100) _backNavigation.RemoveAt(0);
                     _forwardNavigation.Clear();
                 }
-                RefreshInspector();
                 if (value is not DiagnosticsWorkspaceViewModel)
                 {
                     _diagnosticScopeWorkspace = value;
                 }
                 Workspaces.OfType<DiagnosticsWorkspaceViewModel>()
                     .FirstOrDefault()?.SetScope(_diagnosticScopeWorkspace);
-                BottomDiagnosticsViewModel.SetScope(_diagnosticScopeWorkspace);
                 Raise(nameof(CanNavigateBack));
                 Raise(nameof(CanNavigateForward));
             }
@@ -1087,17 +1079,47 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         return result;
     }
 
-    public void ApplyInspectorField(InspectorField field)
+    public void ApplyObjectProperties(
+        WorkspaceViewModel workspace,
+        IReadOnlyCollection<PropertyField> fields)
     {
-        ArgumentNullException.ThrowIfNull(field);
-        if (!field.IsEditable || Project is null || ActiveWorkspace is null)
+        ArgumentNullException.ThrowIfNull(workspace);
+        ArgumentNullException.ThrowIfNull(fields);
+        if (Project is null || !Workspaces.Contains(workspace))
         {
-            throw new InvalidOperationException("This Inspector property is read-only.");
+            throw new InvalidOperationException(
+                "The Properties target is not an open Project Workspace.");
         }
-        Execute(InspectorProjection.CreateEditCommand(Project, ActiveWorkspace, field.Key, field.Value));
+
+        PropertyField[] pending = fields
+            .Where(field => field.HasPendingChange)
+            .ToArray();
+        if (pending.Length == 0) return;
+        if (pending.Any(field => !ObjectPropertiesProjection.CanApplyFromOwnedEditor(workspace, field)))
+        {
+            throw new InvalidOperationException("One or more object properties are read-only.");
+        }
+
+        Dictionary<string, string> edits = pending.ToDictionary(
+            field => field.Key,
+            field => field.Value,
+            StringComparer.Ordinal);
+        IProjectEditCommand command = ObjectPropertiesProjection.CreateEditCommand(
+            Project,
+            workspace,
+            edits);
+        ExecutePreservingWorkspaceSelection(command, workspace);
     }
 
-    public void ApplyProjectSettingsField(InspectorField field)
+    public ObjectPropertiesViewModel CreateObjectProperties(WorkspaceViewModel workspace)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        ObjectPropertiesViewModel result = new();
+        ObjectPropertiesProjection.Rebuild(result, Project, workspace);
+        return result;
+    }
+
+    public void ApplyProjectSettingsField(PropertyField field)
     {
         ArgumentNullException.ThrowIfNull(field);
         if (!field.IsEditable || Project is null)
@@ -1116,15 +1138,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             throw new InvalidOperationException("Another foreground task is already running.");
         }
+        _foregroundTask?.Dispose();
         DesktopTaskViewModel task = new(name, canCancel, lockLevel);
-        TaskHistory.Add(task);
-        while (TaskHistory.Count > 100)
-        {
-            DesktopTaskViewModel? removable = TaskHistory.FirstOrDefault(item => !item.IsRunning);
-            if (removable is null) break;
-            TaskHistory.Remove(removable);
-            removable.Dispose();
-        }
+        _foregroundTask = task;
         Raise(nameof(ActivityText));
         Raise(nameof(ActiveForegroundTask));
         Raise(nameof(IsMainWindowTaskLocked));
@@ -1142,7 +1158,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     public void ReportTask(DesktopTaskViewModel task, string detail, double? progress = null)
     {
-        if (!TaskHistory.Contains(task)) return;
+        if (!ReferenceEquals(_foregroundTask, task) || !task.IsRunning) return;
         task.Report(detail, progress);
         SetStatusMessage(detail);
         Raise(nameof(ActivityText));
@@ -1153,7 +1169,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     public void CompleteTask(DesktopTaskViewModel task, string status, string detail = "")
     {
-        if (!TaskHistory.Contains(task)) return;
+        if (!ReferenceEquals(_foregroundTask, task) || !task.IsRunning) return;
         task.Complete(status, detail);
         if (!string.IsNullOrWhiteSpace(detail))
         {
@@ -1599,9 +1615,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             if (ReferenceEquals(workspace, ActiveWorkspace)) _diagnosticScopeWorkspace = workspace;
             Workspaces.OfType<DiagnosticsWorkspaceViewModel>()
                 .FirstOrDefault()?.SetScope(_diagnosticScopeWorkspace);
-            BottomDiagnosticsViewModel.SetScope(_diagnosticScopeWorkspace);
         }
-        if (ReferenceEquals(workspace, ActiveWorkspace)) RefreshInspector();
     }
 
     public void RefreshProjectRuntimeInformation()
@@ -1633,9 +1647,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             if (ReferenceEquals(workspace, ActiveWorkspace)) _diagnosticScopeWorkspace = workspace;
             Workspaces.OfType<DiagnosticsWorkspaceViewModel>()
                 .FirstOrDefault()?.SetScope(_diagnosticScopeWorkspace);
-            BottomDiagnosticsViewModel.SetScope(_diagnosticScopeWorkspace);
         }
-        if (ReferenceEquals(workspace, ActiveWorkspace)) RefreshInspector();
     }
 
     public void SelectWorkspaceObject(WorkspaceViewModel workspace, MidoraId id)
@@ -1648,9 +1660,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             Workspaces.OfType<DiagnosticsWorkspaceViewModel>()
                 .FirstOrDefault()?.SetScope(workspace);
-            BottomDiagnosticsViewModel.SetScope(workspace);
         }
-        if (ReferenceEquals(workspace, ActiveWorkspace)) RefreshInspector();
     }
 
     public void ActivateSubVoiceEditor(InstrumentWorkspaceViewModel workspace, MidoraId subVoiceId)
@@ -1683,16 +1693,13 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ProjectTree.Clear();
         CompilerDiagnostics.Clear();
         SelectedDiagnostic = null;
-        SelectedBottomDiagnostic = null;
-        BottomDiagnosticsViewModel.Replace(Array.Empty<DiagnosticRow>());
-        BottomDiagnosticsViewModel.SetScope(null);
         _mappingDraftCompiler.Clear();
         _mutedTrackIds.Clear();
         _soloTrackIds.Clear();
         _mutedSharedGroupIds.Clear();
         _soloSharedGroupIds.Clear();
-        foreach (DesktopTaskViewModel task in TaskHistory) task.Dispose();
-        TaskHistory.Clear();
+        _foregroundTask?.Dispose();
+        _foregroundTask = null;
         ActiveWorkspace = null;
         _revision = 0;
         _timeSignatureMap = null;
@@ -1818,7 +1825,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             }
         }
         RefreshProperties();
-        RefreshInspector();
     }
 
     private void RefreshChanged(ProjectContentChangedEventArgs changes)
@@ -1859,7 +1865,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             }
         }
         RefreshProperties();
-        RefreshInspector();
     }
 
     private bool WorkspaceAffected(
@@ -1899,8 +1904,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             _ => false
         };
     }
-
-    private void RefreshInspector() => InspectorProjection.Rebuild(Inspector, Project, ActiveWorkspace);
 
     private void PrepareWorkspaceRuntimeState(WorkspaceViewModel workspace)
     {
@@ -2023,8 +2026,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             }
             _compilerErrorCount = diagnostics.Count(item => item.Severity == "Error");
             _compilerWarningCount = diagnostics.Count(item => item.Severity == "Warning");
-            BottomDiagnosticsViewModel.Replace(diagnostics);
-            BottomDiagnosticsViewModel.SetScope(_diagnosticScopeWorkspace);
         }
     }
 

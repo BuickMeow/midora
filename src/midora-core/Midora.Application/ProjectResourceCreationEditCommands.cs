@@ -254,8 +254,11 @@ public static partial class ProjectDomainEditCommands
         double displayMaximum,
         double defaultValue,
         bool usesExplicitEnumValues = false,
-        int? insertionIndex = null) =>
-        Command("Create logical parameter", project =>
+        int? insertionIndex = null,
+        IReadOnlyList<LogicalParameterEnumItemDefinitionEdit>? enumItems = null)
+    {
+        LogicalParameterEnumItemDefinitionEdit[] frozenItems = enumItems?.ToArray() ?? [];
+        return Command("Create logical parameter", project =>
         {
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             string normalizedName = NormalizeUniqueLogicalParameterName(instrument, default, name);
@@ -266,6 +269,61 @@ public static partial class ProjectDomainEditCommands
                 displayMinimum,
                 displayMaximum,
                 defaultValue);
+            if (type != LogicalParameterType.Enum && frozenItems.Length != 0)
+            {
+                throw new InvalidOperationException(
+                    "Only an Enum Logical Parameter can contain Enum items.");
+            }
+            if (type == LogicalParameterType.Enum
+                && enumItems is not null
+                && frozenItems.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    "An Enum Logical Parameter requires at least one Enum item.");
+            }
+            HashSet<string> enumNames = new(StringComparer.OrdinalIgnoreCase);
+            HashSet<int> enumValues = [];
+            (string Name, int Value)[] normalizedItems = frozenItems
+                .Select((item, itemIndex) =>
+                {
+                    if (item.ExistingItemId.HasValue)
+                    {
+                        throw new InvalidOperationException(
+                            "A newly created Logical Parameter cannot reuse an existing Enum item identity.");
+                    }
+                    string itemName = ProjectTextRules.NormalizeShortText(
+                        item.Name,
+                        allowEmpty: false,
+                        nameof(enumItems));
+                    if (!enumNames.Add(itemName))
+                    {
+                        throw new InvalidOperationException(
+                            "Enum item names must be non-empty and unique ignoring case.");
+                    }
+                    int itemValue = usesExplicitEnumValues ? item.Value : itemIndex;
+                    if (itemValue < minimum || itemValue > maximum)
+                    {
+                        throw new ArgumentOutOfRangeException(
+                            nameof(enumItems),
+                            "Every Enum item value must be inside the legal range.");
+                    }
+                    if (!enumValues.Add(itemValue))
+                    {
+                        throw new InvalidOperationException("Enum item values must be unique.");
+                    }
+                    return (itemName, itemValue);
+                })
+                .ToArray();
+            if (type == LogicalParameterType.Enum
+                && enumItems is not null
+                && (defaultValue < int.MinValue
+                    || defaultValue > int.MaxValue
+                    || !enumValues.Contains((int)defaultValue)))
+            {
+                throw new ArgumentException(
+                    "An Enum default value must identify one of the Enum items.",
+                    nameof(defaultValue));
+            }
             int index = insertionIndex ?? instrument.LogicalParameters.Count;
             ValidateInsertionIndex(index, instrument.LogicalParameters.Count, nameof(insertionIndex));
             return DeferredCreate(
@@ -283,6 +341,14 @@ public static partial class ProjectDomainEditCommands
                         DefaultValue = defaultValue,
                         UsesExplicitEnumValues = usesExplicitEnumValues
                     };
+                    foreach ((string itemName, int itemValue) in normalizedItems)
+                    {
+                        parameter.EnumItems.Add(new(owner)
+                        {
+                            Name = itemName,
+                            Value = itemValue
+                        });
+                    }
                     instrument.LogicalParameters.Insert(index, parameter);
                     return parameter;
                 },
@@ -296,6 +362,7 @@ public static partial class ProjectDomainEditCommands
                     parameter,
                     "Logical Parameter"));
         });
+    }
 
     public static IProjectEditCommand CreateLogicalParameterEnumItem(
         MidoraId eventInstrumentId,
@@ -573,6 +640,7 @@ public static partial class ProjectDomainEditCommands
         double targetMaximum = 127,
         MappingInputOverflow inputOverflow = MappingInputOverflow.Clamp,
         DivideByZeroPolicy divideByZero = DivideByZeroPolicy.TargetMaximum,
+        bool isEnabled = true,
         int? insertionIndex = null) =>
         Command("Create mapping step", project =>
         {
@@ -600,6 +668,7 @@ public static partial class ProjectDomainEditCommands
                 {
                     ValueMappingStep step = new(owner);
                     SetMappingStep(step, value);
+                    step.IsEnabled = isEnabled;
                     chain.Insert(index, step);
                     return step;
                 },

@@ -330,7 +330,7 @@ public static partial class ProjectObjectClipboard
                 value.Points.Select(point => new CurvePointClipboardSnapshot(
                     point.Tick,
                     point.Value,
-                    point.Interpolation)).ToArray())).ToArray());
+                    CurveInterpolation.Step)).ToArray())).ToArray());
 }
 
 internal abstract record ProjectObjectClipboardData;
@@ -508,7 +508,7 @@ public static partial class ProjectDomainEditCommands
                 int targetIndex = checked(primaryTrackIndex + snapshot.TrackOffset);
                 if ((uint)targetIndex >= (uint)project.ArrangementTracks.Count
                     || project.ArrangementTracks[targetIndex] is not
-                        { Kind: ArrangementTrackKind.LogicalTrack } targetReference)
+                    { Kind: ArrangementTrackKind.LogicalTrack } targetReference)
                 {
                     throw new InvalidOperationException(
                         "The Segment clipboard payload cannot preserve its relative Arrangement lane offsets at the target.");
@@ -661,7 +661,7 @@ public static partial class ProjectDomainEditCommands
                     project,
                     point.Tick,
                     point.Value,
-                    point.Interpolation));
+                    CurveInterpolation.Step));
             }
             result.ParameterLanes.Add(lane);
         }

@@ -38,9 +38,7 @@ public static partial class ProjectDomainEditCommands
 
             List<ExistingLogicalParameterPointEdit> replacements = [];
             List<LogicalParameterPointEdit> additions = [];
-            CurveInterpolation additionInterpolation = definition.Type == LogicalParameterType.Enum
-                ? CurveInterpolation.Step
-                : CurveInterpolation.Linear;
+            const CurveInterpolation additionInterpolation = CurveInterpolation.Step;
             foreach (LogicalParameterPointEdit edit in edits)
             {
                 if (edit.Tick < 0 || edit.Tick == long.MaxValue || !double.IsFinite(edit.Value))
@@ -55,7 +53,7 @@ public static partial class ProjectDomainEditCommands
                 }
                 else
                 {
-                    ValidatePointValue(definition, edit.Value, existing.Interpolation);
+                    ValidatePointValue(definition, edit.Value, CurveInterpolation.Step);
                     replacements.Add(new(existing, edit.Value));
                 }
             }
@@ -67,7 +65,7 @@ public static partial class ProjectDomainEditCommands
                     value.Point.Id,
                     value.Point.Tick,
                     value.Value,
-                    value.Point.Interpolation))
+                    CurveInterpolation.Step))
                 .ToArray();
             bool changesExisting = replacements
                 .Select((value, index) => value.Point.Value != replacementPoints[index].Value)
@@ -91,7 +89,7 @@ public static partial class ProjectDomainEditCommands
                             owner,
                             value.Tick,
                             value.Value,
-                            additionInterpolation))
+                            CurveInterpolation.Step))
                         .ToArray();
                     foreach (CurvePoint point in created)
                     {

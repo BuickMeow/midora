@@ -170,7 +170,7 @@ public static class FormalAudioOutputDeviceEnumerator
             }
             if (string.IsNullOrWhiteSpace(id) || !ids.Add(id))
             {
-                throw new InvalidDataException("The audio worker returned an empty or duplicate output-device ID.");
+                throw new InvalidDataException("The audio worker returned an empty or duplicate output-device reference.");
             }
             result.Add(new(
                 id,

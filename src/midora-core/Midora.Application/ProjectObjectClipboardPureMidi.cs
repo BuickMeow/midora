@@ -476,7 +476,7 @@ public static partial class ProjectDomainEditCommands
                 int index = checked(primaryIndex + snapshot.TrackOffset);
                 if ((uint)index >= (uint)project.ArrangementTracks.Count
                     || project.ArrangementTracks[index] is not
-                        { Kind: ArrangementTrackKind.PureMidiTrack } targetReference)
+                    { Kind: ArrangementTrackKind.PureMidiTrack } targetReference)
                 {
                     throw new InvalidOperationException(
                         "The MIDI Segment clipboard cannot preserve its relative Arrangement lane offsets.");
@@ -514,7 +514,7 @@ public static partial class ProjectDomainEditCommands
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
             if (snapshots.Count == 0 || editCursorTick < 0) throw new ArgumentOutOfRangeException(nameof(editCursorTick));
             DirectMidiNote[]? created = null;
-            return Prepared(true, PureMidiTrackChange(location.Track.Id), owner =>
+            return ResolveTargetedExactDirectMidiCollisions(Prepared(true, PureMidiTrackChange(location.Track.Id), owner =>
             {
                 created ??= snapshots.Select(value =>
                 {
@@ -540,7 +540,10 @@ public static partial class ProjectDomainEditCommands
             }, _ =>
             {
                 foreach (DirectMidiNote note in created ?? []) location.Segment.Notes.Remove(note);
-            });
+            }), noteTargets: snapshots.Select(value => new DirectMidiNoteCollisionTarget(
+                location.Segment,
+                checked(editCursorTick + value.StartOffset),
+                value.Key)));
         });
 
     internal static IProjectEditCommand PasteDirectMidiEventClipboard(
@@ -552,7 +555,7 @@ public static partial class ProjectDomainEditCommands
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
             if (snapshots.Count == 0 || editCursorTick < 0) throw new ArgumentOutOfRangeException(nameof(editCursorTick));
             DirectMidiChannelEvent[]? created = null;
-            return Prepared(true, PureMidiTrackChange(location.Track.Id), owner =>
+            return ResolveTargetedExactDirectMidiCollisions(Prepared(true, PureMidiTrackChange(location.Track.Id), owner =>
             {
                 created ??= snapshots.Select(value =>
                 {
@@ -572,7 +575,11 @@ public static partial class ProjectDomainEditCommands
             {
                 foreach (DirectMidiChannelEvent value in created ?? [])
                     location.Segment.ChannelEvents.Remove(value);
-            });
+            }), eventTargets: snapshots.Select(value => new DirectMidiEventCollisionTarget(
+                location.Segment,
+                checked(editCursorTick + value.Tick),
+                value.Kind,
+                value.Data1)));
         });
 
     internal static IProjectEditCommand PasteOpaqueMidiEventClipboard(

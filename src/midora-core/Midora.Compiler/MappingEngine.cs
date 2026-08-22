@@ -153,7 +153,7 @@ internal sealed class MappingEngine : IDisposable
             if (!step.MappingFunctionId.HasValue
                 || !functions.TryGetValue(step.MappingFunctionId.Value, out CSharpMappingFunction? function))
             {
-                throw new MappingException($"Mapping Function '{step.MappingFunctionId}' is unavailable.");
+                throw new MappingException("The referenced Mapping Function is unavailable.");
             }
             MappingContextV2 invocationContext = context with { CurrentValue = current };
             return _csharp.GetOrCompile(function)(current, in invocationContext);
@@ -189,8 +189,8 @@ internal sealed class MappingEngine : IDisposable
             MappingSource.Envelope when step.EnvelopeId.HasValue
                 && envelopes.TryGetValue(step.EnvelopeId.Value, out double value) => value,
             MappingSource.Constant => step.Constant,
-            MappingSource.LogicalParameter => throw new MappingException($"Logical Parameter '{step.LogicalParameterId}' is unavailable."),
-            MappingSource.Envelope => throw new MappingException($"Envelope '{step.EnvelopeId}' is unavailable."),
+            MappingSource.LogicalParameter => throw new MappingException("The referenced Logical Parameter is unavailable."),
+            MappingSource.Envelope => throw new MappingException("The referenced Envelope is unavailable."),
             _ => throw new MappingException($"Unknown mapping source {step.Source}.")
         };
 

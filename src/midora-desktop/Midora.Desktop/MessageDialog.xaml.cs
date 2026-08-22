@@ -88,13 +88,23 @@ public partial class MessageDialog : Window
     {
         Button button = new()
         {
-            Width = 84,
             Margin = ButtonPanel.Children.Count == 0 ? new Thickness() : new Thickness(6, 0, 0, 0),
             Content = label,
             IsDefault = isDefault,
             IsCancel = isCancel
         };
-        if (primary) button.SetResourceReference(StyleProperty, "Button.Primary");
+        if (isDefault || primary)
+        {
+            button.SetResourceReference(StyleProperty, "Button.Dialog.Confirm");
+        }
+        else if (isCancel)
+        {
+            button.SetResourceReference(StyleProperty, "Button.Dialog.Cancel");
+        }
+        else
+        {
+            button.Width = 112;
+        }
         button.Click += (_, _) => Complete(result);
         ButtonPanel.Children.Add(button);
     }

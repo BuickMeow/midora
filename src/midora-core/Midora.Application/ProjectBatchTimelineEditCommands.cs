@@ -701,7 +701,7 @@ public static partial class ProjectDomainEditCommands
                 targetPrimaryTrackIndex + value.TrackIndex - primary.TrackIndex);
             if ((uint)targetTrackIndex >= (uint)project.ArrangementTracks.Count
                 || project.ArrangementTracks[targetTrackIndex] is not
-                    { Kind: ArrangementTrackKind.LogicalTrack } targetReference)
+                { Kind: ArrangementTrackKind.LogicalTrack } targetReference)
             {
                 throw new InvalidOperationException(
                     "The Segment batch cannot preserve its relative Arrangement lane offsets at the target.");
@@ -853,7 +853,7 @@ public static partial class ProjectDomainEditCommands
                     point.Id,
                     checked(point.Tick + tickDelta),
                     point.Value,
-                    point.Interpolation);
+                    CurveInterpolation.Step);
             }
         }
     }

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls;assembly=Midora.Desktop.Presentation"
-        Title="Edit Logical Parameter Definition"
+        Title="Logical Parameter Properties"
         Width="720" Height="720" MinWidth="620" MinHeight="600"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResize" WindowStyle="None"
         ShowInTaskbar="False"
@@ -23,10 +23,10 @@
     </Grid.RowDefinitions>
 
     <Grid Background="{StaticResource Brush.Black}" MouseLeftButtonDown="OnTitleMouseLeftButtonDown">
-      <TextBlock Margin="12,0,50,0" VerticalAlignment="Center" FontWeight="SemiBold"
-                 Text="Edit Logical Parameter Definition" TextTrimming="CharacterEllipsis"/>
+      <TextBlock x:Name="WindowTitleText" Margin="12,0,50,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                 Text="Logical Parameter Properties" TextTrimming="CharacterEllipsis"/>
       <Button Width="46" Height="38" HorizontalAlignment="Right"
-              Style="{StaticResource Button.Caption.Close}" IsCancel="True">
+              Style="{StaticResource Button.Caption.Close}" Click="OnCancelClick">
         <ui:FluentIcon Style="{StaticResource Icon.WindowControl}" Data="{StaticResource WindowControl.Close}"/>
       </Button>
     </Grid>
@@ -34,13 +34,15 @@
     <Border Grid.Row="1" Padding="18,14" Background="{StaticResource Brush.Surface.1}"
             BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
       <StackPanel>
-        <TextBlock Style="{StaticResource Text.Title}" Text="Logical Parameter Definition"/>
-        <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Definition changes and every referencing Lane are migrated as one atomic Project edit."/>
+        <TextBlock x:Name="HeadingText" Style="{StaticResource Text.Title}" Text="Logical Parameter Definition"/>
+        <TextBlock x:Name="DescriptionText" Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Definition changes and every referencing Lane are migrated as one atomic Project edit."/>
       </StackPanel>
     </Border>
 
     <ScrollViewer Grid.Row="2" Padding="18" VerticalScrollBarVisibility="Auto">
       <StackPanel>
+        <TextBlock Style="{StaticResource Text.Overline}" Text="NAME"/>
+        <TextBox x:Name="NameBox" Margin="0,5,0,10"/>
         <UniformGrid Columns="2">
           <StackPanel Margin="0,0,8,10">
             <TextBlock Style="{StaticResource Text.Overline}" Text="INPUT TYPE"/>
@@ -98,7 +100,7 @@
           </Grid>
         </Border>
 
-        <Border Padding="12" Style="{StaticResource Card}">
+        <Border x:Name="MigrationPanel" Padding="12" Style="{StaticResource Card}">
           <StackPanel>
             <TextBlock Style="{StaticResource Text.Section}" Text="Existing Lane migration"/>
             <TextBlock x:Name="AffectedDataText" Margin="0,4,0,10" Style="{StaticResource Text.Caption}"/>
@@ -114,8 +116,8 @@
     <Border Grid.Row="3" MinHeight="58" Padding="12,10" Background="{StaticResource Brush.Surface.1}"
             BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
       <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
-        <Button Width="86" Margin="0,0,6,0" IsCancel="True" Content="Cancel"/>
-        <Button Width="112" Style="{StaticResource Button.Primary}" Content="Apply Migration" Click="OnApplyClick"/>
+        <Button Margin="0,0,6,0" Style="{StaticResource Button.Dialog.Cancel}" Content="Cancel"/>
+        <Button Style="{StaticResource Button.Dialog.Confirm}" Content="OK" Click="OnApplyClick"/>
       </StackPanel>
     </Border>
   </Grid>

@@ -1,6 +1,6 @@
 # Midora WPF UI Requirement Trace
 
-状态：既有正式实现基线；2026-08-20 第 24 章已破坏性修订为 flat Arrangement / Shared Usage，旧 Project Panel、Library tree 与 mixed parent hierarchy 证据不再表示当前符合
+状态：既有正式实现基线；2026-08-20 第 24 章已破坏性修订为 flat Arrangement / Shared Usage；2026-08-22 已删除 Global Inspector，旧 Project Panel、Library tree、mixed parent hierarchy 与 Inspector 证据不再表示当前符合
 创建日期：2026-08-08
 适用范围：`src/midora-desktop/` 正式 WPF 主应用、共享呈现基础设施及 UI 自动验收
 
@@ -21,19 +21,19 @@
 | 范围 | 正式输入 | UI 输出/行为 | 主要依据 | 验收重点 |
 |---|---|---|---|---|
 | 应用生命周期 | 启动参数、单实例转发、Project create/open result | 单持久主窗口；无 Project 空状态；第二次启动转发 | 3.3；17.1；19.1～19.4；20.10.4 | 单实例、候选打开失败不替换当前 Project、关闭 guard |
-| 主窗口 | 当前 Project、会话状态、任务状态 | Title、八个固定一级菜单、Command Bar、Workspace Tabs、Inspector、Bottom Panel、Status Bar；无 Project Panel | 17.1、17.7、24.7；20.15 | 最小尺寸、最大化工作区、Toolbar overflow、Arrangement 常驻第一 Tab |
+| 主窗口 | 当前 Project、会话状态、任务状态 | Title、八个固定一级菜单、Command Bar、Workspace Tabs、Active Workspace、Status Bar；无 Project Panel、Global Inspector 或 Bottom Panel | 17.1、17.7、24.7；20.15 | 最小尺寸、最大化工作区、Toolbar overflow、Arrangement 常驻第一 Tab |
 | 状态所有权 | Project、Preferences、Session、Transient | 四类状态分别存储；只有 Project edit 进入统一 History | 3.10～3.12；17.2；20.14 | `.midora` 无 UI 状态；Preference 失败不影响 Project |
 | 命令路由 | 焦点、Selection、锁定级别、Modal | 同一命令服务于菜单、Toolbar、Context Menu 和快捷键；焦点优先 | 19.10；20.2、20.7、20.12 | 文本焦点不误删对象；Ctrl+S/Undo/Clipboard 按上下文路由 |
 | Workspace | 类型或对象稳定 ID | 类型唯一、对象 ID 唯一、单行 Tab、会话内次序/焦点恢复 | 17.3 | 重复打开激活已有 Tab；对象删除自动关闭；Draft guard |
-| Inspector | Active Workspace Primary Selection | 单选、多选共同字段、值来源、验证和 Go to Source | 17.4；20.3～20.4 | 本地字段缓冲；一次手势一次 Undo；Broken 不按名称修复 |
+| 对象 Properties | 显式 Workspace/Selection 目标 | 固定目标模态 `Properties...`；Draft + OK/Cancel；多选 Mixed 显式统一/逐项还原；Diagnostics 使用独立 Workspace | 17.4；18.2～18.7；20.2～20.4 | 无全局自动跟随；一次 OK 一次 Undo；Cancel/失败不改变 Project；不显示内部 ID |
 | Arrangement | Conductor、global mixed Tracks、Definition index、Usage/Root membership、Segments、runtime Shared/Track Mute/Solo | 常驻平铺自绘 timeline、Shared brace/Fixed route property、Definition 管理栏、Note preview、Pure MIDI event-on-note preview、Conductor point preview | 18.1；24；20.1、20.3～20.5 | global order 唯一；Event 在 Note 上层 50%；极端内容可视 tile/局部失效 |
 | Segment Editor | Segment local notes/lanes、绑定 Instrument、Project Tempo context | 自绘 piano roll、Pitch Ruler、Logical Parameter lanes、crop 外弱化内容 | 13.22.7、13.24.5；18.2；20.1 | local/project time 不混淆；held preview 清理；预览失败不阻止合法放置 |
 | SubVoice Editor | SubVoice template events、Initial State、effective Root Note | 自绘 note/event lanes；独立 Initial State；高级事件语义呈现 | 8；18.4 | 不展开 RPN/NRPN CC；空 lane 不持久化；大量事件可视裁剪 |
-| Event Instrument | Instrument/Structure/Lifecycle/preview inputs | 一个对象 Workspace、四个 section、折叠 Preview、虚拟键盘 | 7～10；13.21～13.23；18.3～18.6 | Preview 走 canonical 管线；不暴露 Port/Channel；Incompatible 保留 |
+| Event Instrument | Instrument/Structure/Lifecycle/preview inputs | 一个对象 Workspace、Configurations/SubVoice 两个 Tab、470 DIP Structure Panel、折叠 Preview、虚拟键盘、结构对象事务式 Properties | 7～10；13.21～13.23；18.3～18.6 | Preview 走 canonical 管线；不暴露 Port/Channel/内部 ID；Incompatible 保留；视图宽度/滚动保留 |
 | Mapping/Function | Logical Parameter、Mapping Chain、Applied source、Draft | 有序 Mapping 编辑、单值测试、独立代码草稿和 Draft 诊断 | 9；18.5；20.12.2～20.12.3 | Global Save 不 Apply；关闭/切换/退出处理 Draft |
 | Conductor | Tempo/Time Signature/Key/Marker/End Marker | 自绘 lanes、同步事件列表、稳定 ID 密集 Marker 命中 | 4；18.7；20.13.3 | Tempo 离散；End Marker 特殊；不移动内容 tick |
 | Settings/Preferences | Project settings、Application preferences、runtime device info | 七个 Project pages；独立 Preference pages；只读 Derived 数据 | 17.2；18.9；20.14 | 非法值不 clamp；设备/音频设置仅 Stopped 提交 |
-| Diagnostics/Tasks | 正式 Diagnostics、Task snapshot/history | Bottom compact view 和完整 Workspace 共用身份；Details 显式更新 | 17.5；18.10；20.11 | 后台刷新不抢焦点/Selection；历史诊断不决定当前任务 |
+| Diagnostics/Task | 正式 Diagnostics、当前前台 Task snapshot | 独立 Diagnostics Workspace；单一模态 Task overlay；无 Bottom Panel/Tasks history | 17.5；18.10；20.11 | 后台刷新不抢焦点/Selection；取消只在安全可取消阶段可用 |
 | New/Open/Save | Application coordinators、Windows picker selection | Owned modal configuration/progress/result；失败原子 | 19.1～19.4 | Save 事务不可取消；Damaged 时禁用；Save Copy 不改当前状态 |
 | MIDI Export | 冻结的 Export request/review/result | 配置、最终路径预览、进度、原子 Result | 14；19.5～19.6 | Mute/Solo 忽略；全部路径先冻结；覆盖授权一次完成 |
 | Audio Render | 冻结的 Render request/review/result | 配置、RIFF 上限预检、完全锁定进度、逐 Track Result | 15；19.7～19.8 | Preparing 起 Level 4；已完成文件保留；当前临时文件清理 |
@@ -85,13 +85,13 @@
 
 ## 6. 当前实现证据（2026-08-08）
 
-- `Midora.Desktop` 已实现单实例入口、Project create/open/save/close guard、主窗口固定区域、统一命令路由、Workspace identity/navigation、Project Tree、Inspector、Bottom Panel、Diagnostics/Tasks、Preferences、MIDI Export 和 Audio Render owned workflows。
+- `Midora.Desktop` 已实现单实例入口、Project create/open/save/close guard、主窗口固定区域、统一命令路由、Workspace identity/navigation、事务式对象 Properties、独立 Diagnostics、单前台 Task overlay、Preferences、MIDI Export 和 Audio Render owned workflows；生产主窗口不包含 Global Inspector、Bottom Panel、Details/Tasks Tab。
 - `TimelineSurface`、`TimelineOverviewSurface`、`PianoKeyboardSurface` 和 `LifecyclePreviewSurface` 均为专用渲染控件；Arrangement、Segment、Logical Parameter、Conductor 与 SubVoice 编辑不创建逐 Note/Event WPF 控件。
 - Timeline snapshot 使用 lane interval index、可视裁剪、稳定 ID hit test、overlap cycle、marquee、drag/resize/draw/erase/split、共享 delta、grid/snap、time range 和 revision 重建。
-- Event Instrument 已按 Overview / SubVoices / Parameters / Lifecycle 固定分区；SubVoice Note 与事件层为共享时间视口的两个渲染表面；Initial State 与 tick 0 事件分离；Preview 可折叠且支持 Full Instrument / Selected SubVoice 会话模式。
-- Diagnostics Workspace 与 Bottom compact panel 共用诊断对象身份但保持独立 filters/selection；Conductor overview 是 Arrangement ruler 的只读确定投影。
-- Project Tree 是浅层语义导航，不使用不可靠的 WPF hierarchy virtualization；普通大列表使用 recycling virtualization；Workspace Tabs 支持重排、单行横向滚动、列表入口和新选中项实现。
-- 实际 100% DPI 窗口检查已覆盖 1440×900、1100×720、最大化工作区、caption、树导航、Arrangement、Project Settings、Event Instrument Overview/SubVoice、Bottom Diagnostics filters。Event Instrument 延迟实例化检查发现并修复了只读属性默认 TwoWay binding 导致的 XAML runtime crash。
+- Event Instrument 固定为 Configurations / SubVoice；Logical Parameter、Parameter Mapping、MIDI output mapping、Mapping Step、Envelope Preset 与 Mapping Function Preset 由左侧 Structure Panel 管理，双击或右键打开事务式 Properties；SubVoice Note 与事件层为共享时间视口的两个渲染表面；Initial State 与 tick 0 事件分离；Preview 可折叠且支持 Full Instrument / Selected SubVoice 会话模式。
+- Diagnostics 只在独立 Workspace 呈现；主窗口不维护 Tasks history。Conductor overview 是 Arrangement ruler 的只读确定投影。
+- 可见的外层对象导航统一位于常驻 Arrangement 与其 Event Instruments 管理栏；普通大列表使用 recycling virtualization；Workspace Tabs 支持重排、单行横向滚动、列表入口和新选中项实现。
+- 实际 100% DPI 窗口检查已覆盖 1440×900、1100×720、最大化工作区、caption、Arrangement、Project Settings、Event Instrument Configurations/SubVoice 与 Diagnostics filters。Event Instrument 延迟实例化检查发现并修复了只读属性默认 TwoWay binding 导致的 XAML runtime crash。
 - 主窗口 Exit Guard 使用串行关闭请求门；确认成功后的第二次 `Close()` 由 Dispatcher 延迟到首次 `Closing` 返回后执行，避免同步完成的 Guard 在 WPF 关闭调用栈内重入。退出流程异常保持窗口并显式报告。
 - Release 实际进程关闭验收覆盖无 Project 与成功打开 QA Project 两种状态：两次标准 `WM_CLOSE` 均在 20 秒内以进程退出码 0 结束，检查时间窗内没有新增对应的 `.NET Runtime` 1026 或 `Application Error` 1000 事件。
 - 项目“+”入口使用普通 ToggleButton/Popup/Button。2026-08-09 的用户回归推翻了此前“创建流程可用”的人工检查结论：原实现仍在 Popup `Click` 路由内同步重建绑定集合，并额外投递伪造 `WM_SIZE`，可导致输入捕获和布局重入。现实现改为先关闭 Popup，再把编辑排入 Dispatcher；不再使用伪造窗口消息。
@@ -123,7 +123,7 @@
 
 - 一次用户命令只产生一次正式 Project edit；创建结果按稳定 ID 进入正式模型、History 和对应 Workspace；第 24 章实施后外层投影只进入 global mixed Arrangement Track order、Definition index 与内部 Usage/Root membership；
 - Popup/Menu/DoubleClick 当前输入路由先完成，随后才允许重建 ItemsSource-backed collection 或切换 Workspace；
-- 所有 WPF `ObservableCollection`、Workspace、Inspector、Diagnostics 和属性通知只在其 Dispatcher 上刷新；后台 SoundFont 提交不得直接触碰 WPF 投影；
+- 所有 WPF `ObservableCollection`、Workspace、所属 Properties、Details、Diagnostics 和属性通知只在其 Dispatcher 上刷新；后台 SoundFont 提交不得直接触碰 WPF 投影；
 - SoundFont 长操作显示模态任务状态并允许 Cancel；取消在正式 Project edit 前生效，不留下部分 SoundFont 选择；
 - owned dialog 的 Caption Close 是 WindowChrome 内明确可命中的安全 Cancel 动作；
 - 不通过伪造 `WM_SIZE`、同步 `UpdateLayout`、阻塞等待或 PowerShell UI 自动化修补输入/布局状态。
@@ -225,7 +225,7 @@ UI/runtime 边界：
 
 - brace context/drag 高亮只属于 WPF session interaction，不持久化、不进入 Undo/Redo 或 canonical。
 - audible set 只属于 realtime consumer；修正不改变 canonical、MIDI Export、Audio Render、Project 数据格式或正式 Mute/Solo 语义。
-- 本轮不实施 Inspector 重设计。
+- 本条仅记录 2026-08-21 当轮边界；Global Inspector 已由 2026-08-22 的第 14 节迁移并删除。
 
 验证重点：
 
@@ -256,3 +256,25 @@ UI/runtime 边界：
 
 - 自动测试覆盖外部进入时的 12 DIP 边缘带、已进入 body 后的 4 DIP hysteresis、同组成员的 8 DIP 脱离带，以及 top/bottom 外边界映射。
 - 源码渲染分支必须对 exterior-boundary 使用 group top/bottom；只有普通 member insertion 才允许调用按 lane 计算的通用插入线。
+
+## 14. 2026-08-22 Global Inspector 全量迁移 trace
+
+输入与正式输出：
+
+- 输入是当前 Project、显式 Workspace、稳定 ID Selection、对象类型、编辑锁与用户提交的属性文本/选项；Global hover、播放指针和后台诊断不构成属性目标。
+- Logical/Midi Segment、Logical/Direct/Template Note、Logical Parameter Point、Direct/Template Event 与 Value Curve Point 的低频精确字段由 Timeline context menu 的 `Properties...` 模态窗口提交；混合 Segment 与同类多选只公开语义一致的共同字段。
+- Conductor Event、Event Instrument 内部结构对象与 Parameter Mapping 都使用固定目标模态 Properties。Parameter Mapping 在一个窗口直接展示 Source、Target SubVoice、Target Event Kind、适用 Controller/RPN/NRPN 与其他设置，创建和编辑不再拆成 route/property 两步。
+- Direct MIDI Note/Event 使用面向音乐语义的包装字段；不向用户暴露 raw `Data1`/`Data2`。Opaque imported payload 只读。内部 Stable ID、引用编号和序号不进入 UI。
+- 所有 Project-backed 提交继续调用 `IProjectEditCommand`；成功一次提交形成一次 History 项，失败不修改 Project、不创建 Undo，并把输入控件恢复为最后合法投影。
+
+焦点、任务与状态归属：
+
+- 属性 Modal 关闭后恢复来源 Workspace 的安全焦点。播放/Preview/前台任务期间 Project-backed 输入 Disabled，只读 Properties 与 Diagnostics 继续可查看。
+- 主窗口删除 Inspector column/splitter/View command、Bottom Panel、Details/Tasks Tab 和相关命令；Application Preferences 不再写这些布局字段。读取 schema v1 旧字段仅为本机偏好兼容并忽略，下一次保存不再输出；这不涉及 `.midora` 格式或音乐语义。
+- 一次只呈现当前前台 Task overlay，不保存可见历史表；状态栏截断消息通过 `View Full Message` 查看和复制全文。
+
+验证重点：
+
+- XAML/Release build 必须证明不存在只读属性默认 TwoWay binding crash；Global Inspector production type、binding、菜单和布局引用均不得残留。
+- 自动测试覆盖多 Note/Mixed Segment/Direct MIDI Properties 原子 Undo、Mixed 激活与还原、Event Instrument 本地属性投影、Conductor 精确属性提交/Undo、Logical Parameter Name 与 Definition migration 单一 Undo，以及旧偏好字段可读但不再写出。
+- 所属属性投影只能按显式对象或已经打开的本地编辑区重建；不得遍历大型 Segment 全内容或使 Selection/hover 热路径产生全局属性表刷新。

@@ -33,7 +33,7 @@ public sealed class ProjectLogicalParameterDefinitionMigrationCommandsTests
         foreach (LogicalParameterLane lane in fixture.Lanes)
         {
             Assert.Equal([0d, 1d, 5d], lane.Points.Select(value => value.Value));
-            Assert.All(lane.Points, point => Assert.Equal(CurveInterpolation.Linear, point.Interpolation));
+            Assert.All(lane.Points, point => Assert.Equal(CurveInterpolation.Step, point.Interpolation));
         }
         for (int laneIndex = 0; laneIndex < fixture.Lanes.Length; laneIndex++)
         {
@@ -61,6 +61,48 @@ public sealed class ProjectLogicalParameterDefinitionMigrationCommandsTests
         {
             Assert.True(fixture.Lanes[laneIndex].Points.SequenceEqual(replacements[laneIndex]));
         }
+        AssertMatchesFull(fixture.Compilation);
+    }
+
+    [Fact]
+    public void NameAndDefinitionMigrationShareOneUndoEntry()
+    {
+        using Fixture fixture = CreateDoubleFixture();
+        int historyCount = fixture.Document.History.Count;
+
+        fixture.Document.Execute(ProjectDomainEditCommands.MigrateLogicalParameterDefinition(
+            fixture.Instrument.Id,
+            fixture.Parameter.Id,
+            new LogicalParameterDefinitionEdit(
+                LogicalParameterType.Integer,
+                0,
+                5,
+                0,
+                5,
+                0,
+                UsesExplicitEnumValues: false,
+                EnumItems: []),
+            LogicalParameterLaneRebindMode.Clamp,
+            enumSemanticWarningAcknowledged: false,
+            name: "Renamed Amount"));
+
+        Assert.Equal("Renamed Amount", fixture.Parameter.Name);
+        Assert.Equal(LogicalParameterType.Integer, fixture.Parameter.Type);
+        Assert.Equal(historyCount + 1, fixture.Document.History.Count);
+        AssertMatchesFull(fixture.Compilation);
+
+        fixture.Document.Undo();
+
+        Assert.Equal("Amount", fixture.Parameter.Name);
+        Assert.Equal(LogicalParameterType.Double, fixture.Parameter.Type);
+        Assert.All(fixture.Lanes, lane =>
+            Assert.Equal([-3.5d, 0.5d, 4.9d], lane.Points.Select(point => point.Value)));
+        AssertMatchesFull(fixture.Compilation);
+
+        fixture.Document.Redo();
+
+        Assert.Equal("Renamed Amount", fixture.Parameter.Name);
+        Assert.Equal(LogicalParameterType.Integer, fixture.Parameter.Type);
         AssertMatchesFull(fixture.Compilation);
     }
 
@@ -236,7 +278,8 @@ public sealed class ProjectLogicalParameterDefinitionMigrationCommandsTests
         LogicalParameterDefinition parameter,
         IReadOnlyList<double> values)
     {
-        LogicalTrack track = new(project) {
+        LogicalTrack track = new(project)
+        {
             Name = $"Track {project.Tracks.Count + 1}",
             LastBoundEventInstrumentName = instrument.Name
         };
@@ -249,9 +292,7 @@ public sealed class ProjectLogicalParameterDefinitionMigrationCommandsTests
                 project,
                 index * 120,
                 values[index],
-                parameter.Type == LogicalParameterType.Enum
-                    ? CurveInterpolation.Step
-                    : CurveInterpolation.Linear));
+                CurveInterpolation.Step));
         }
         segment.ParameterLanes.Add(lane);
         track.Segments.Add(segment);

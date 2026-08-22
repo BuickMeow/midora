@@ -113,7 +113,7 @@ Project End Marker 后区域弱化，但仍显示并允许编辑。End Marker �
 
 Arrangement Toolbar 提供 Grid 开关，但不提供可见 Grid 粒度选择；启用时固定使用 `Bar`。操作粒度与 Snap 仍独立可选，并提供默认 Segment 创建长度（tick，输入即生效）；新建 Project / 重置编辑器时默认操作粒度为 `1/8`、Snap 开启、默认 Segment 创建长度为 `1 × TPQ`。小节边界使用主实线，每个分母拍的内部边界使用颜色更浅的低强调实线；拍线必须读取完整 Project Time Signature Map，因此 `3/4` 每小节显示 2 条四分音符间隔实线，`6/8` 每小节显示 5 条八分音符间隔实线，拍号变化 tick 立即作为新的主实线小节边界。极端水平缩小时必须按 device-pixel 最小间距聚合/跳过不可辨识的竖线，绘制成本不得随不可见的小节或拍数量线性增长。顶部 Timeline Ruler 显示一基小节号而非原始 tick。Draw 模式下，鼠标所在 Track 必须显示按当前操作粒度定位、按默认长度计算的虚线创建预览。空白处按下左键后进入 Segment 放置手势：未越过拖动阈值时按默认长度创建；向右拖动时按当前操作粒度实时调整结束 tick，松开后一次性提交。若请求长度超出当前可用间隙，创建命令静默缩短为从目标 tick 起可容纳的最大正长度；预览显示实际将提交的长度。不存在正长度空隙时预览为错误色并拒绝创建。该规则只适用于新建 Segment；已有 Segment 的移动和 Resize 仍不得因重叠而被静默缩短。
 
-Arrangement 中只有 Draw 模式允许拖动 Segment 主体或调整边缘；Select 模式的单次左键按下始终发起框选，即使起点位于 Segment 上也不得先命中或单独选择该 Segment，并且不得直接移动、Resize 或双击创建 Segment。既有双击导航不受该单击规则影响。拖动和 Resize 期间必须显示位置与长度预览，并隐藏同位置的创建预览。工具互斥、指针和快捷键规则见第 20.1.6、20.12 节。
+Arrangement 中只有 Draw 模式允许拖动 Segment 主体或调整边缘；Draw 模式左键按下已有 Segment 时必须先清除其他 Segment 选择并只保留本次目标，随后再按命中区域进入 Move/Resize。Select 模式的单次左键按下始终发起框选，即使起点位于 Segment 上也不得先命中或单独选择该 Segment，并且不得直接移动、Resize 或双击创建 Segment。既有双击导航不受该单击规则影响。拖动和 Resize 期间必须显示位置与长度预览，并隐藏同位置的创建预览。工具互斥、指针和快捷键规则见第 20.1.6、20.12 节。
 
 Draw 模式下，`Alt + Left Drag` 在 Segment 的任意命中位置强制执行 Move，即使指针位于左/右 Resize 边界；`Ctrl + Alt + Left Drag` 强制执行复制并移动。该替代手势仍服从当前 Snap 设置。操作类型及复制意图在按下时冻结，拖动途中改变修饰键不得在 Move、Copy 与 Resize 之间切换。
 
@@ -147,6 +147,7 @@ Logical Segment Editor 与 Midi Segment Editor 均以 Segment local tick 作为�
 - 初版不在键位上写 MIDI Note 编号；若其他 UI 必须显示黑键音名，仍使用升号；
 - 鼠标左键按下键位发起 held Preview，松开或取消结束 Gate；
 - 该预览不创建 Project Note，并严格使用第 13.22.7、13.24.5 节的因果 Gate 与当前 Segment 绑定的 Event Instrument。
+- Pitch Ruler 不提供右键语义；右键按下必须由 Ruler 自身消费，不显示空 Context Menu，也不得把事件冒泡到 Timeline Canvas。
 ### 18.2.4 Note Editor
 使用共享 piano roll 编辑 Logical Note 或 Direct MIDI Note；数据访问、命令提交和诊断通过领域 adapter 区分，不得复制第三套渲染/命中测试/选择/手势实现。
 
@@ -175,10 +176,11 @@ active crop window 外内容：
 Lane List 只允许添加当前绑定 Event Instrument 暴露的 Logical Parameters。
 支持：
 ```text
-Integer points and curves
-Double points and curves
+Integer step points
+Double step points
 Enum step states
 ```
+所有 Logical Parameter Point 都是离散突变点，不显示或编辑 interpolation；详细状态保持规则见第 9.8.3 节。
 Broken Lane 保留数据并明确显示，不按名称自动重绑。
 必须区分：
 ```text
@@ -201,7 +203,7 @@ Velocity 视图按 Note start tick 绘制固定窄柱，高度表示 velocity；
 ### 18.2.6 同步
 Segment 编辑后：
 - Arrangement Note Preview 实时更新；
-- Inspector 显示当前 Note、Point、Lane 或 Segment 摘要；
+- 当前 Workspace 的 Selection 与已关闭后重新打开的属性投影按 Project revision 更新；已经打开的模态 Properties 目标与 Draft 保持冻结；
 - 相关 Validation 和 Diagnostics 更新；
 - 一次用户手势形成一次 Project Undo。
 
@@ -211,9 +213,11 @@ Logical Segment 变体的下部 Lane 编辑 Logical Parameter，并通过 Track 
 
 Pure MIDI `Add Lane` 使用与 SubVoice `Add Event` 一致的分步目标选择器，不得平铺数百个条目。Pure MIDI 允许选择 MIDI 1.0 的全部 CC `0..127`；已被 BASSMIDI 名称表识别者统一显示为 `CC <n> - <Name>`，未识别者显示为 `CC <n>`。活动 Event Lane 下拉框使用同一格式。
 
-Pure MIDI 的 opaque SysEx/Meta 只在 Event List/Inspector 中查看、移动和删除，不提供自由 payload 编辑。两种变体必须共享 Grid/Snap/zoom/pan/scroll、tile cache、临时编辑覆盖层、批量选择与 Segment Content Window 行为；修复共享交互缺陷不得要求分别修改复制实现。
+Pure MIDI 的 opaque SysEx/Meta 只在 Event List 中选择、移动和删除，并通过只读 `Properties...` 查看 payload 摘要；不提供自由 payload 编辑。两种变体必须共享 Grid/Snap/zoom/pan/scroll、tile cache、临时编辑覆盖层、批量选择与 Segment Content Window 行为；修复共享交互缺陷不得要求分别修改复制实现。
 
-Pure MIDI 变体打开 Segment 时不得把全部 Direct Note/Event 转换为 `TimelineRenderItem[]`，也不得建立全量 `ItemsById` dictionary 或全 Segment interval tree。共享 Timeline 必须接受 range-query provider：piano roll 按可见 tick/pitch、Velocity/Event Lane 按可见 tick/active target 请求 source pages，并只为可见 tile 与当前 selection/edit overlay创建瞬时值记录。选择大量对象允许使用 page-local bitmap/range selection descriptor；只有 Inspector、剪贴板或实际 edit command 需要的对象才按 ID 读取。
+Pure MIDI 编辑器提交 Direct Note 创建、移动、复制、粘贴或其他位置变更时，若产生同 start tick + key exact collision，则静默保留原先/更早进入结果的 Note 并丢弃后来对象。提交 Direct Channel Event 创建、画线、移动、复制、粘贴或其他位置变更时，若产生同 tick + 同正式事件类型 exact collision，则后来编辑对象覆盖原对象。上述归并属于一次编辑事务并随 Undo 恢复；SMF 导入后尚未触及该 exact key 的重复 Direct 数据必须继续原样显示和保存。
+
+Pure MIDI 变体打开 Segment 时不得把全部 Direct Note/Event 转换为 `TimelineRenderItem[]`，也不得建立全量 `ItemsById` dictionary 或全 Segment interval tree。共享 Timeline 必须接受 range-query provider：piano roll 按可见 tick/pitch、Velocity/Event Lane 按可见 tick/active target 请求 source pages，并只为可见 tile 与当前 selection/edit overlay创建瞬时值记录。选择大量对象允许使用 page-local bitmap/range selection descriptor；只有显式 Properties、剪贴板或实际 edit command 需要的对象才按内部身份读取。
 
 缩放/平移只能改变查询窗口和 tile 组合；不得触发全 Segment 枚举或重新计算全内容 fingerprint。Page checksum + page-local generation 构成 tile fingerprint 输入，编辑只更新 overlay generation 并失效与修改 tick/pitch/lane 相交的 tiles。
 
@@ -234,13 +238,13 @@ Pure MIDI Segment 的水平 Overview 必须显示 Direct Note 时间密度。对
 +--------------------------------------------------------------------------+
 ```
 Instrument Header 的标题与摘要使用同一水平行：标题在左、摘要在右或紧随其后；保留各自既有字体层级，不以两行增加固定 Header 高度。
-内部固定分区：
+内部固定分区及顺序：
 ```text
-Overview
-SubVoices
-Parameters
-Lifecycle
+Configurations
+SubVoice
 ```
+
+`Configurations` 直接承载 General、Template、Routing / Isolation、Lifecycle、Loop、Overlap 与 Instrument Initial State；不设置无实际用途的 Overview。Logical Parameters、Parameter Mappings、MIDI output mapping chains、Mapping Steps、Envelope Presets 与 Mapping Function Presets 全部由左侧 Structure Panel 管理，不设置 Parameters 或 Properties Tab。结构对象双击或右键 `Properties...` 打开固定目标模态对话框。
 ### 18.3.2 Header
 显示：
 ```text
@@ -254,10 +258,10 @@ Preview state
 ### 18.3.3 Structure Panel
 根据当前分区显示：
 ```text
-SubVoices
+SubVoice
 Logical Parameters
 Mappings
-Mapping Functions
+Mapping Function Presets
 Envelope Presets
 Lifecycle objects
 ```
@@ -318,6 +322,8 @@ Initial State has no tick.
 Initial State does not affect Template Length.
 A user event at tick 0 may override the corresponding Initial State.
 ```
+
+同一 SubVoice Section 的 `Initial State` 子页还必须提供该 SubVoice 的 Name、Root Note inherited/override 与全部现有 Initial State target 的精确编辑。添加新的 CC/RPN/NRPN target 使用显式选择器；空值表示删除该 Initial State override。提交失败恢复最后合法值。
 ### 18.4.4 Template 与 Root Note
 Template Length 属于 Event Instrument，不是每条 SubVoice 独立长度。
 SubVoice 显示 Root Note 的 inherited / override 状态和 Effective Value。
@@ -375,6 +381,10 @@ SubVoice
 多个 Logical Parameter 指向同一目标时，必须显示正式执行顺序。
 Broken source、target 或 function reference 均保留，不自动重绑。
 Mapping Editor 提供单值测试；该测试不启动播放、不修改 Project 内容，也不进入 Undo / Redo。
+
+Parameter Mapping 的 Source Parameter、Target SubVoice 与 MIDI target 必须使用对象/目标选择器，不要求手填内部 ID；创建与编辑都在同一个 Properties 对话框按顺序直接展示 Source、Target SubVoice、Target Event Kind、适用 Controller/RPN/NRPN 和其余设置，不使用分步流程。完整提交是一个原子 Project edit。Mapping 顺序提供明确的 Move Up / Move Down 入口。
+
+Mapping Chain 与 Mapping Step 的完整属性由左侧结构列表的 `Properties...` 模态对话框编辑。Chain 至少公开 enabled、用户可理解的 owner/target、最终 rounding/overflow 和 step count，但不显示 Stable ID；Step 的 Parameter、Envelope 和 Function reference 使用显示名称的对象下拉框，并只提供当前 Chain 上下文合法的 Source/Function。文本、下拉和 Boolean 提交继续使用第 17.4.4 节的 Draft + OK/Cancel 规则。
 ### 18.5.4 C# Mapping Function
 C# Mapping Function 使用内置代码编辑器和独立 Draft Buffer。
 Draft Buffer：
@@ -459,6 +469,8 @@ Overlap Strategy
 本编辑器可以显示上述固定阶段的边界，但不得允许用户新增、删除或重排任意阶段，也不得把 Envelope 扩展为任意 Ordered Points 或 Curve Segments 数据模型。
 本节只规定编辑器呈现与操作入口；阶段语义、输出值域、时长单位、插值和 Gate End 后行为均以第 10.11 节为准。
 Release Start 是相对生命周期参考，不是固定 Project tick。
+
+Envelope Preset 的 Name、Delay、Attack、Hold、Decay、Release、Start、Peak、Sustain 与 End Value 在 Event Instrument `Properties` Section 中完整编辑。关闭 Per-Note Instance Isolation 时保留并显示全部值，但输入 Disabled / Incompatible；重新启用后恢复可编辑状态。
 ### 18.6.6 Scenario Preview
 支持输入：
 ```text
@@ -480,7 +492,7 @@ Lifecycle Preview Timeline 和 Scenario Preview 只用于解释和测试，不�
 +----------------------+---------------------------------------------------+
 |                      | [D] Global Event Timeline                         |
 +----------------------+---------------------------------------------------+
-| [E] Event List and Details                                               |
+| [E] Resizable Event List                                                 |
 +--------------------------------------------------------------------------+
 | [F] Timeline Overview and Horizontal Scroll                              |
 +--------------------------------------------------------------------------+
@@ -511,6 +523,8 @@ Project End Marker 使用贯穿 Lane 的特殊竖线：
 ### 18.7.5 Event List
 Event List 与 Timeline Selection 同步。
 播放期间允许查看和导航，不允许编辑 Conductor 事件。
+
+Event List 双击或右键 `Properties...` 打开当前单个 Conductor event 的固定目标模态编辑器。Tempo、Time Signature、Key Signature、Marker 与 Project End Marker 的 tick 和类型专属字段在 `OK` 时通过一个正式 Project command 提交；不显示 Stable ID。Event List 下部区域可由水平 splitter 调整，具有防止吞没上下编辑区的硬最小/最大高度；首次打开默认约占整个 Conductor Workspace 高度的一半。
 
 ### 18.7.6 Arrangement 概览
 
@@ -655,7 +669,7 @@ Segment / consumer hard-boundary Reset
 +----------------------+---------------------------------------------------+
 | [D] Summary Panel                                                        |
 +--------------------------------------------------------------------------+
-| [E] Diagnostic Details and Source Path                                  |
+| [E] Diagnostic Message and Source Path                                  |
 +--------------------------------------------------------------------------+
 ```
 ### 18.10.2 严重级别
@@ -709,7 +723,7 @@ Source Path
 Context
 Current or Historical Status
 ```
-完整 Details 可显示原因、相关值、可执行的下一步和诊断代码，但不默认暴露原始异常堆栈或内部类名。
+完整消息区可显示原因、相关值、可执行的下一步和诊断代码，但不默认暴露原始异常堆栈或内部类名。
 
 正式诊断的 `Message` 使用英文。Status Bar 的 `N Errors, N Warnings` 必须在每次后台验证或编译完成事件中，以同一最后尝试结果立即刷新；不得滞后一轮或在当前失败时仍显示前一次计数。
 ### 18.10.6 来源导航
@@ -718,7 +732,7 @@ Source Path 使用稳定 ID 定位并显示最新名称。
 - 激活或打开对应 Workspace；
 - 选择来源对象；
 - 滚动到可见位置；
-- 更新 Inspector；
+- 更新来源 Workspace 自己的 Selection 和所属编辑器投影；
 - 不修改 Project。
 来源已删除时显示 Last Known Path，不按名称寻找替代对象。
 多来源问题显示 Primary Source 和 Related Sources。

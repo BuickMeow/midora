@@ -205,6 +205,31 @@ public sealed class TimelineEditorSettingsTests
     }
 
     [Fact]
+    public void ConductorLowerEditorStartsAtHalfHeightThenAcceptsBothResizeDirections()
+    {
+        TimelineWorkspaceViewModel workspace = new(
+            WorkspaceKey.ForType(WorkspaceKind.ConductorTrack),
+            "Conductor",
+            TimelineWorkspaceMode.Conductor);
+
+        Assert.True(workspace.BottomEditorRowHeight.IsStar);
+        Assert.Equal(1, workspace.BottomEditorRowHeight.Value);
+
+        workspace.BottomEditorRowHeight = new System.Windows.GridLength(
+            1.75,
+            System.Windows.GridUnitType.Star);
+        Assert.True(workspace.BottomEditorRowHeight.IsStar);
+        Assert.Equal(1.75, workspace.BottomEditorRowHeight.Value);
+
+        workspace.BottomEditorRowHeight = new System.Windows.GridLength(420);
+        Assert.True(workspace.BottomEditorRowHeight.IsAbsolute);
+        Assert.Equal(420, workspace.BottomEditorRowHeight.Value);
+
+        workspace.BottomEditorRowHeight = new System.Windows.GridLength(180);
+        Assert.Equal(180, workspace.BottomEditorRowHeight.Value);
+    }
+
+    [Fact]
     public void TimelineToolModeAlwaysExposesExactlyOneActiveTool()
     {
         TimelineWorkspaceViewModel workspace = new(

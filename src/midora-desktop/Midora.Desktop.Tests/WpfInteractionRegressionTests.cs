@@ -8,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shell;
 using System.Windows.Threading;
+using System.Xml.Linq;
 using Midora.Application;
 using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Interaction;
@@ -320,6 +321,134 @@ public sealed class WpfInteractionRegressionTests
         });
     }
 
+    [Fact]
+    public void DialogActionStylesProvideOneWidthAndKeyboardContract()
+    {
+        RunOnSta(() =>
+        {
+            ResourceDictionary controls = (ResourceDictionary)System.Windows.Application.LoadComponent(
+                new Uri(
+                    "/Midora.Desktop.Presentation;component/Themes/Controls.xaml",
+                    UriKind.Relative));
+            Style cancel = Assert.IsType<Style>(controls["Button.Dialog.Cancel"]);
+            Style confirm = Assert.IsType<Style>(controls["Button.Dialog.Confirm"]);
+
+            Assert.Equal(
+                112d,
+                Assert.Single(cancel.Setters.OfType<Setter>(), setter =>
+                    setter.Property == FrameworkElement.WidthProperty).Value);
+            Assert.Equal(
+                true,
+                Assert.Single(cancel.Setters.OfType<Setter>(), setter =>
+                    setter.Property == Button.IsCancelProperty).Value);
+            Assert.Equal(
+                112d,
+                Assert.Single(confirm.Setters.OfType<Setter>(), setter =>
+                    setter.Property == FrameworkElement.WidthProperty).Value);
+            Assert.Equal(
+                true,
+                Assert.Single(confirm.Setters.OfType<Setter>(), setter =>
+                    setter.Property == Button.IsDefaultProperty).Value);
+            Assert.Same(controls["Button.Primary"], confirm.BasedOn);
+        });
+    }
+
+    [Fact]
+    public void XamlDialogsRegisterExactlyOneEscapeCancelTarget()
+    {
+        string repositoryRoot = FindRepositoryRoot();
+        string dialogDirectory = Path.Combine(
+            repositoryRoot,
+            "src",
+            "midora-desktop",
+            "Midora.Desktop");
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+
+        foreach (string path in Directory.EnumerateFiles(dialogDirectory, "*Dialog.xaml"))
+        {
+            if (Path.GetFileName(path).Equals("MessageDialog.xaml", StringComparison.Ordinal))
+            {
+                continue;
+            }
+            XElement[] buttons = XDocument.Load(path)
+                .Descendants(presentation + "Button")
+                .ToArray();
+            XElement[] cancelTargets = buttons
+                .Where(button =>
+                    string.Equals((string?)button.Attribute("IsCancel"), "True", StringComparison.OrdinalIgnoreCase)
+                    || ((string?)button.Attribute("Style"))?.Contains(
+                        "Button.Dialog.Cancel",
+                        StringComparison.Ordinal) == true)
+                .ToArray();
+
+            Assert.True(
+                cancelTargets.Length == 1,
+                $"{Path.GetFileName(path)} must register exactly one Escape cancel target, but registered {cancelTargets.Length}.");
+            Assert.DoesNotContain(buttons, button =>
+                ((string?)button.Attribute("Style"))?.Contains(
+                    "Button.Caption.Close",
+                    StringComparison.Ordinal) == true
+                && string.Equals(
+                    (string?)button.Attribute("IsCancel"),
+                    "True",
+                    StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public void DrawSegmentSelectionReplacementWaitsUntilAnUnmovedPointerUp(
+        bool preserveSelectionForPotentialDrag,
+        bool expectedPreserved)
+    {
+        bool replace = MainWindow.ShouldReplaceDrawSegmentSelection(
+            TimelineToolMode.Draw,
+            TimelineItemKind.Segment,
+            ModifierKeys.None,
+            preserveSelectionForPotentialDrag);
+
+        Assert.Equal(expectedPreserved, !replace);
+    }
+
+    [Fact]
+    public void OuterFormScrollViewerConsumesWheelAboveNonScrollingInput()
+    {
+        RunOnSta(() =>
+        {
+            TextBox input = new()
+            {
+                Height = 32,
+                Text = "Draft"
+            };
+            StackPanel content = new();
+            content.Children.Add(input);
+            content.Children.Add(new Border { Height = 500 });
+            ScrollViewer viewer = new()
+            {
+                Height = 100,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = content
+            };
+            ScrollViewerWheelRouter.SetIsEnabled(viewer, true);
+            viewer.Measure(new Size(300, 100));
+            viewer.Arrange(new Rect(0, 0, 300, 100));
+            viewer.UpdateLayout();
+            Assert.True(viewer.ScrollableHeight > 0);
+
+            MouseWheelEventArgs wheel = new(Mouse.PrimaryDevice, 0, -120)
+            {
+                RoutedEvent = UIElement.PreviewMouseWheelEvent,
+                Source = input
+            };
+            input.RaiseEvent(wheel);
+            DrainDispatcher();
+
+            Assert.True(wheel.Handled);
+            Assert.Equal(40, viewer.VerticalOffset);
+        });
+    }
+
     private static void PumpUntil(Task task)
     {
         Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
@@ -372,6 +501,25 @@ public sealed class WpfInteractionRegressionTests
         {
             ExceptionDispatchInfo.Capture(failure).Throw();
         }
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        DirectoryInfo? current = new(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            if (Directory.Exists(Path.Combine(
+                    current.FullName,
+                    "src",
+                    "midora-desktop",
+                    "Midora.Desktop")))
+            {
+                return current.FullName;
+            }
+            current = current.Parent;
+        }
+        throw new DirectoryNotFoundException(
+            $"Could not locate the Midora repository above '{AppContext.BaseDirectory}'.");
     }
 
 }

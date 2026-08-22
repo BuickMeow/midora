@@ -204,7 +204,7 @@ public static partial class ProjectObjectClipboard
         return selected.Select(value => new CurvePointClipboardSnapshot(
             checked(value.Tick - earliest),
             value.Value,
-            value.Interpolation)).ToArray();
+            CurveInterpolation.Step)).ToArray();
     }
 
     private static HashSet<MidoraId> ValidateDistinctIds(
@@ -307,7 +307,7 @@ public static partial class ProjectDomainEditCommands
                             owner,
                             value.Tick,
                             value.Value,
-                            value.Interpolation)));
+                            CurveInterpolation.Step)));
                     }
                     InsertAt(
                         target.Segment.ParameterLanes,
@@ -360,7 +360,7 @@ public static partial class ProjectDomainEditCommands
                         owner,
                         value.Tick,
                         value.Value,
-                        value.Interpolation)).ToArray();
+                        CurveInterpolation.Step)).ToArray();
                     lane.Points.AddRange(copies);
                 },
                 _ =>
@@ -444,8 +444,8 @@ public static partial class ProjectDomainEditCommands
         CurvePointClipboardValue[] values = snapshots.Select(value =>
         {
             long tick = checked(editCursorTick + value.Tick);
-            ValidatePointValue(definition, value.Value, value.Interpolation);
-            return new CurvePointClipboardValue(tick, value.Value, value.Interpolation);
+            ValidatePointValue(definition, value.Value, CurveInterpolation.Step);
+            return new CurvePointClipboardValue(tick, value.Value, CurveInterpolation.Step);
         }).Where(value => pointTicks.Add(value.Tick)).ToArray();
         return values;
     }

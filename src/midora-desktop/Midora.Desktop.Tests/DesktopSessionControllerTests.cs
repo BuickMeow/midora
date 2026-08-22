@@ -622,12 +622,12 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
-    public async Task MultiNoteInspectorDistinguishesMixedAndAppliesOneExactSetEdit()
+    public async Task MultiNotePropertiesDistinguishMixedAndApplyOneExactSetEdit()
     {
         await using DesktopSessionController session = new();
         await session.CreateProjectAsync(new NewProjectCreationRequest
         {
-            ProjectName = "Inspector",
+            ProjectName = "Object Properties",
             PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
         });
         CreateLogicalTrack(session, "Track");
@@ -643,21 +643,285 @@ public sealed class DesktopSessionControllerTests
         workspace.Selection.Add(second.Id);
         session.RefreshWorkspace(workspace);
 
-        InspectorField length = session.Inspector.Fields.Single(item => item.Key == "batch.note.length");
-        InspectorField velocity = session.Inspector.Fields.Single(item => item.Key == "batch.note.velocity");
+        ObjectPropertiesViewModel properties = session.CreateObjectProperties(workspace);
+        Assert.True(ObjectPropertiesProjection.CanEditInPropertiesDialog(workspace, properties));
+        PropertyField length = properties.Fields.Single(item => item.Key == "batch.note.length");
+        PropertyField velocity = properties.Fields.Single(item => item.Key == "batch.note.velocity");
         Assert.True(length.IsMixed);
         Assert.True(velocity.IsMixed);
         Assert.Equal("Mixed", velocity.Value);
 
         int historyCount = session.Document!.History.Count;
+        velocity.ActivateMixedEdit();
         velocity.Value = "72";
-        session.ApplyInspectorField(velocity);
+        Assert.True(velocity.CanReset);
+        velocity.Reset();
+        Assert.True(velocity.IsMixed);
+        Assert.Equal("Mixed", velocity.Value);
+        velocity.ActivateMixedEdit();
+        velocity.Value = "72";
+        session.ApplyObjectProperties(workspace, [velocity]);
 
         Assert.Equal(72, first.Velocity);
         Assert.Equal(72, second.Velocity);
         Assert.Equal(historyCount + 1, session.Document.History.Count);
         session.Document.Undo();
         Assert.Equal((100, 80), (first.Velocity, second.Velocity));
+    }
+
+    [Fact]
+    public async Task DirectMidiEventPropertiesUseMusicalFieldsAndApplyAtomically()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Direct MIDI Properties",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot("MIDI Track"));
+        PureMidiTrack track = Assert.Single(session.Project!.PureMidiTracks);
+        session.Execute(ProjectDomainEditCommands.CreateMidiSegment(track.Id, 0, 480));
+        MidiSegment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateDirectMidiChannelEvent(
+            segment.Id,
+            24,
+            DirectMidiChannelEventKind.ControlChange,
+            11,
+            32));
+        session.Execute(ProjectDomainEditCommands.CreateDirectMidiChannelEvent(
+            segment.Id,
+            72,
+            DirectMidiChannelEventKind.ControlChange,
+            74,
+            96));
+        DirectMidiChannelEvent first = segment.ChannelEvents[0];
+        DirectMidiChannelEvent second = segment.ChannelEvents[1];
+        TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+        workspace.Selection.Add(first.Id, makePrimary: false);
+        workspace.Selection.Add(second.Id);
+        session.RefreshWorkspace(workspace);
+
+        ObjectPropertiesViewModel properties = session.CreateObjectProperties(workspace);
+        PropertyField type = properties.Fields.Single(item => item.Key == "batch.midiEvent.kind");
+        PropertyField controller = properties.Fields.Single(
+            item => item.Key == "batch.midiEvent.controller");
+        PropertyField eventValue = properties.Fields.Single(
+            item => item.Key == "batch.midiEvent.value");
+        Assert.False(type.IsEditable);
+        Assert.Equal("EVENT TYPE", type.Label);
+        Assert.True(controller.IsMixed);
+        Assert.True(eventValue.IsMixed);
+        Assert.DoesNotContain(properties.Fields, item => item.Label is "DATA 1" or "DATA 2");
+
+        int historyCount = session.Document!.History.Count;
+        controller.ActivateMixedEdit();
+        controller.Value = "7";
+        eventValue.ActivateMixedEdit();
+        eventValue.Value = "100";
+        session.ApplyObjectProperties(workspace, [controller, eventValue]);
+
+        Assert.All(segment.ChannelEvents, item =>
+        {
+            Assert.Equal(7, item.Data1);
+            Assert.Equal(100, item.Data2);
+        });
+        Assert.Equal(historyCount + 1, session.Document.History.Count);
+        session.Document.Undo();
+        Assert.Equal((11, 32), (first.Data1, first.Data2));
+        Assert.Equal((74, 96), (second.Data1, second.Data2));
+    }
+
+    [Fact]
+    public async Task MultiFieldPropertiesValidateOnlyTheFinalSegmentAndNoteState()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Final Properties State",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        CreateLogicalTrack(session, "Track");
+        LogicalTrack track = Assert.Single(session.Project!.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 100));
+        session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 150, 100));
+        Segment editedSegment = track.Segments[0];
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+        arrangement.Selection.Replace(editedSegment.Id);
+        session.RefreshWorkspace(arrangement);
+
+        ObjectPropertiesViewModel segmentProperties = session.CreateObjectProperties(arrangement);
+        PropertyField segmentStart = segmentProperties.Fields.Single(value =>
+            value.Key == "segment.start");
+        PropertyField segmentLength = segmentProperties.Fields.Single(value =>
+            value.Key == "segment.length");
+        segmentStart.Value = "100";
+        segmentLength.Value = "50";
+        session.ApplyObjectProperties(arrangement, [segmentStart, segmentLength]);
+
+        Assert.Equal((100L, 50L), (
+            editedSegment.ProjectStartTick,
+            editedSegment.LengthTicks));
+
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(
+            editedSegment.Id,
+            startTick: 10,
+            lengthTicks: 10,
+            note: 60,
+            velocity: 90));
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(
+            editedSegment.Id,
+            startTick: 20,
+            lengthTicks: 10,
+            note: 60,
+            velocity: 100));
+        LogicalNote incumbent = editedSegment.Notes[0];
+        LogicalNote moved = editedSegment.Notes[1];
+        TimelineWorkspaceViewModel editor = session.OpenSegment(editedSegment.Id);
+        editor.Selection.Replace(moved.Id);
+        session.RefreshWorkspace(editor);
+        ObjectPropertiesViewModel noteProperties = session.CreateObjectProperties(editor);
+        PropertyField noteStart = noteProperties.Fields.Single(value => value.Key == "note.start");
+        PropertyField noteNumber = noteProperties.Fields.Single(value => value.Key == "note.number");
+        noteStart.Value = "10";
+        noteNumber.Value = "61";
+        session.ApplyObjectProperties(editor, [noteStart, noteNumber]);
+
+        Assert.Equal(2, editedSegment.Notes.Count);
+        Assert.Contains(incumbent, editedSegment.Notes);
+        Assert.Contains(moved, editedSegment.Notes);
+        Assert.Equal((10L, 61), (moved.StartTick, moved.Note));
+    }
+
+    [Fact]
+    public async Task DirectMidiEventPropertiesResolveCollisionsFromFinalRouteOnly()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Direct MIDI Final Properties State",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot("MIDI Track"));
+        PureMidiTrack track = Assert.Single(session.Project!.PureMidiTracks);
+        session.Execute(ProjectDomainEditCommands.CreateMidiSegment(track.Id, 0, 480));
+        MidiSegment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateDirectMidiChannelEvent(
+            segment.Id,
+            0,
+            DirectMidiChannelEventKind.ControlChange,
+            7,
+            32));
+        session.Execute(ProjectDomainEditCommands.CreateDirectMidiChannelEvent(
+            segment.Id,
+            10,
+            DirectMidiChannelEventKind.ControlChange,
+            7,
+            96));
+        DirectMidiChannelEvent incumbent = segment.ChannelEvents[0];
+        DirectMidiChannelEvent moved = segment.ChannelEvents[1];
+        TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+        workspace.Selection.Replace(moved.Id);
+        session.RefreshWorkspace(workspace);
+
+        ObjectPropertiesViewModel properties = session.CreateObjectProperties(workspace);
+        PropertyField tick = properties.Fields.Single(value => value.Key == "midiEvent.tick");
+        PropertyField controller = properties.Fields.Single(value =>
+            value.Key == "midiEvent.controller");
+        tick.Value = "0";
+        controller.Value = "74";
+        session.ApplyObjectProperties(workspace, [tick, controller]);
+
+        Assert.Equal(2, segment.ChannelEvents.Count);
+        Assert.Contains(incumbent, segment.ChannelEvents);
+        Assert.Contains(moved, segment.ChannelEvents);
+        Assert.Equal((0L, 74), (moved.Tick, moved.Data1));
+    }
+
+    [Fact]
+    public async Task MappingStepPropertiesChangeSourceAndReferenceInOneTransaction()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Mapping Step Properties",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+        EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+        SubVoice voice = Assert.Single(instrument.SubVoices);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalParameter(
+            instrument.Id,
+            "Expression",
+            LogicalParameterType.Double,
+            0,
+            1,
+            0,
+            1,
+            0));
+        LogicalParameterDefinition parameter = Assert.Single(instrument.LogicalParameters);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalParameterMapping(
+            instrument.Id,
+            parameter.Id,
+            voice.Id,
+            MidiValueTarget.ControlChange(11)));
+        LogicalParameterMapping mapping = Assert.Single(instrument.ParameterMappings);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalParameter(
+            instrument.Id,
+            "Brightness",
+            LogicalParameterType.Double,
+            0,
+            1,
+            0,
+            1,
+            0));
+        LogicalParameterDefinition secondParameter = instrument.LogicalParameters.Single(value =>
+            value.Name == "Brightness");
+        session.Execute(ProjectDomainEditCommands.CreateLogicalParameterMapping(
+            instrument.Id,
+            secondParameter.Id,
+            voice.Id,
+            MidiValueTarget.ControlChange(74)));
+        LogicalParameterMapping secondMapping = instrument.ParameterMappings.Single(value =>
+            value.ParameterId == secondParameter.Id);
+        session.Execute(ProjectDomainEditCommands.CreateMappingStep(
+            instrument.Id,
+            mapping.Steps.Id,
+            MappingSource.Constant,
+            MappingOperation.Override,
+            constant: 0.5));
+        ValueMappingStep step = Assert.Single(mapping.Steps);
+        InstrumentWorkspaceViewModel workspace = session.OpenInstrument(instrument.Id);
+        workspace.Selection.Replace(step.Id);
+        session.RefreshWorkspace(workspace);
+
+        ObjectPropertiesViewModel properties = session.CreateObjectProperties(workspace);
+        PropertyField owner = properties.Fields.Single(value =>
+            value.Key == "mappingStep.chain");
+        PropertyField source = properties.Fields.Single(value =>
+            value.Key == "mappingStep.source");
+        PropertyField parameterReference = properties.Fields.Single(value =>
+            value.Key == "mappingStep.logicalParameter");
+        Assert.True(parameterReference.IsChoice);
+        Assert.Contains(parameterReference.Choices, value =>
+            value.Value == parameter.Id.Value.ToString()
+            && value.Label == parameter.Name);
+
+        int historyCount = session.Document!.History.Count;
+        owner.Value = secondMapping.Steps.Id.Value.ToString();
+        source.Value = MappingSource.LogicalParameter.ToString();
+        parameterReference.Value = parameter.Id.Value.ToString();
+        session.ApplyObjectProperties(workspace, [owner, source, parameterReference]);
+
+        Assert.Equal(MappingSource.LogicalParameter, step.Source);
+        Assert.Equal(parameter.Id, step.LogicalParameterId);
+        Assert.Empty(mapping.Steps);
+        Assert.Same(step, Assert.Single(secondMapping.Steps));
+        Assert.Equal(historyCount + 1, session.Document.History.Count);
+        session.Document.Undo();
+        Assert.Same(step, Assert.Single(mapping.Steps));
+        Assert.Empty(secondMapping.Steps);
+        Assert.Equal(MappingSource.Constant, step.Source);
+        Assert.Null(step.LogicalParameterId);
     }
 
     [Fact]
@@ -1047,6 +1311,49 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public async Task ConductorPropertiesApplyOnlyOnExplicitTransaction()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Conductor Properties",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        TempoChange tempo = Assert.Single(session.Project!.Conductor.Tempos);
+        ProjectTreeNode conductorNode = session.ProjectTree.Single(value =>
+            value.Kind == ProjectTreeNodeKind.Conductor);
+        TimelineWorkspaceViewModel conductor = Assert.IsType<TimelineWorkspaceViewModel>(
+            session.OpenWorkspace(conductorNode));
+        session.SelectWorkspaceObject(conductor, tempo.Id);
+
+        ObjectPropertiesViewModel properties = session.CreateObjectProperties(conductor);
+        Assert.Equal("Tempo", properties.Title);
+        Assert.Equal(tempo.Id, conductor.SelectedConductorEvent?.Id);
+        Assert.True(ObjectPropertiesProjection.CanEditInPropertiesDialog(
+            conductor,
+            properties));
+        Assert.DoesNotContain(properties.Fields, value =>
+            value.Key.Contains("id", StringComparison.OrdinalIgnoreCase));
+        PropertyField bpm = properties.Fields.Single(value =>
+            value.Key == "conductor.bpm");
+        int historyCount = session.Document!.History.Count;
+        bpm.Value = "127.5";
+
+        Assert.Equal(120m, session.Project.Conductor.Tempos.Single(value =>
+            value.Id == tempo.Id).BeatsPerMinute);
+        session.ApplyObjectProperties(conductor, [bpm]);
+
+        Assert.Equal(127.5m, session.Project.Conductor.Tempos.Single(value =>
+            value.Id == tempo.Id).BeatsPerMinute);
+        Assert.Equal(historyCount + 1, session.Document.History.Count);
+
+        session.Document.Undo();
+
+        Assert.Equal(120m, session.Project.Conductor.Tempos.Single(value =>
+            value.Id == tempo.Id).BeatsPerMinute);
+    }
+
+    [Fact]
     public void DiagnosticPanelsKeepIndependentFilterStateOverSharedIdentities()
     {
         DiagnosticRow activeError = new(
@@ -1107,6 +1414,18 @@ public sealed class DesktopSessionControllerTests
         InstrumentWorkspaceViewModel workspace = session.OpenInstrument(instrument.Id);
         workspace.Selection.Replace(voice.Id);
         session.RefreshWorkspace(workspace);
+        ObjectPropertiesViewModel subVoiceProperties = session.CreateObjectProperties(workspace);
+        Assert.True(ObjectPropertiesProjection.CanEditInPropertiesDialog(
+            workspace,
+            subVoiceProperties));
+        Assert.DoesNotContain(subVoiceProperties.Fields, item =>
+            item.Key.StartsWith("subvoice.initial.", StringComparison.Ordinal));
+        PropertyField subVoiceName = subVoiceProperties.Fields.Single(item =>
+            item.Key == "subvoice.name");
+        subVoiceName.Value = "Attack Layer";
+        Assert.Equal("Attack", voice.Name);
+        session.ApplyObjectProperties(workspace, [subVoiceName]);
+        Assert.Equal("Attack Layer", voice.Name);
 
         TimelineRenderItem note = Assert.Single(workspace.SubVoiceNoteSnapshot!.Items);
         Assert.Equal(TimelineItemKind.TemplateNote, note.Kind);
@@ -1144,6 +1463,22 @@ public sealed class DesktopSessionControllerTests
         Assert.Equal(
             controlChangeMapping.Steps.Id,
             Assert.Single(workspace.RenderLanes).EventMappingChainId);
+        workspace.Selection.Replace(controlChangeMapping.Steps.Id);
+        session.RefreshWorkspace(workspace);
+        ObjectPropertiesViewModel mappingProperties = session.CreateObjectProperties(workspace);
+        Assert.Equal("Mapping Chain", mappingProperties.Title);
+        PropertyField enabledField = mappingProperties.Fields.Single(item =>
+            item.Key == "mappingChain.enabled");
+        Assert.True(enabledField.IsBoolean);
+        Assert.True(enabledField.IsEditable);
+        Assert.True(ObjectPropertiesProjection.CanEditInPropertiesDialog(
+            workspace,
+            mappingProperties));
+        enabledField.BooleanValue = false;
+        session.ApplyObjectProperties(workspace, [enabledField]);
+        Assert.False(controlChangeMapping.Steps.IsEnabled);
+        session.Undo();
+        Assert.True(controlChangeMapping.Steps.IsEnabled);
         int renderLaneSelectionNotifications = 0;
         workspace.PropertyChanged += (_, args) =>
         {
@@ -1167,6 +1502,10 @@ public sealed class DesktopSessionControllerTests
         Assert.Contains("override", workspace.ActiveSubVoiceContext, StringComparison.Ordinal);
         Assert.Contains(workspace.InitialStateEntries, item =>
             item.Target == "CC 7 - Channel Volume (MSB)" && item.Value == "100");
+        workspace.Selection.Replace(midiEvent.Id);
+        Assert.True(ObjectPropertiesProjection.CanEditInPropertiesDialog(
+            workspace,
+            session.CreateObjectProperties(workspace)));
         session.Execute(ProjectDomainEditCommands.DeleteTemplateEvents(
             instrument.Id,
             voice.Id,
@@ -1178,7 +1517,10 @@ public sealed class DesktopSessionControllerTests
         Assert.Empty(workspace.SubVoiceEventSnapshot!.Items);
         workspace.Selection.Clear();
         session.RefreshWorkspace(workspace);
-        Assert.True(session.Inspector.Fields.Single(item => item.Key == "instrument.isolation").IsBoolean);
+        ObjectPropertiesViewModel emptyProperties = session.CreateObjectProperties(workspace);
+        Assert.NotEmpty(emptyProperties.Fields);
+        Assert.Equal(instrument.Name, emptyProperties.Title);
+        Assert.Equal("Event Instrument", emptyProperties.Context);
     }
 
     [Fact]
@@ -1356,13 +1698,13 @@ public sealed class DesktopSessionControllerTests
             lane.Id,
             0,
             32,
-            CurveInterpolation.Linear));
+            CurveInterpolation.Step));
         session.Execute(ProjectDomainEditCommands.CreateLogicalParameterPoint(
             segment.Id,
             lane.Id,
             240,
             96,
-            CurveInterpolation.Linear));
+            CurveInterpolation.Step));
 
         TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
 
@@ -1525,7 +1867,7 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
-    public async Task ArrangementAndInspectorProjectPureMidiHierarchyAndOpaqueDetails()
+    public async Task ArrangementAndDetailsProjectPureMidiHierarchyAndOpaqueData()
     {
         await using DesktopSessionController session = new();
         await session.CreateProjectAsync(new NewProjectCreationRequest
@@ -1578,19 +1920,25 @@ public sealed class DesktopSessionControllerTests
         Assert.Equal("Auto Melodic", arrangementSnapshot.LaneSecondaryLabels[trackLane.Lane]);
         TimelineSegmentPreview preview = Assert.Single(arrangementSnapshot.SegmentPreviews).Value;
         Assert.Single(preview.Notes);
-        // Unpaired raw Note messages stay editable in the Event Lane/Inspector,
-        // but the Arrangement overlay is reserved for non-Note MIDI events.
+        // Unpaired raw Note messages stay editable in the Event Lane, but the
+        // Arrangement overlay is reserved for non-Note MIDI events.
         Assert.Equal(2, preview.Events.Count);
 
         TimelineWorkspaceViewModel editor = session.OpenSegment(segment.Id);
         editor.Selection.Replace(opaque.Id);
         session.RefreshWorkspace(editor);
 
-        Assert.Equal("Imported MIDI Event", session.Inspector.Title);
-        Assert.Equal("DEADBEEF", session.Inspector.Fields.Single(
+        ObjectPropertiesViewModel opaqueProperties = session.CreateObjectProperties(editor);
+        Assert.Equal("Imported MIDI Event", opaqueProperties.Title);
+        Assert.Equal("DEADBEEF", opaqueProperties.Fields.Single(
             value => value.Key == "opaqueMidi.payload").Value);
-        Assert.Equal("4", session.Inspector.Fields.Single(
+        Assert.Equal("4", opaqueProperties.Fields.Single(
             value => value.Key == "opaqueMidi.payloadLength").Value);
+
+        editor.Selection.Clear();
+        session.RefreshWorkspace(editor);
+        ObjectPropertiesViewModel clearedProperties = session.CreateObjectProperties(editor);
+        Assert.NotEqual("Imported MIDI Event", clearedProperties.Title);
     }
 
     [Fact]

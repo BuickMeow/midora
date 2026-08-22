@@ -519,6 +519,15 @@ public static partial class ProjectDomainEditCommands
         ValueCurve valueCurve) =>
         ExactTimelineCollisionPolicy.Scope(source, valueCurves: [valueCurve]);
 
+    private static IPreparedProjectEdit ResolveTargetedExactDirectMidiCollisions(
+        IPreparedProjectEdit source,
+        IEnumerable<DirectMidiNoteCollisionTarget>? noteTargets = null,
+        IEnumerable<DirectMidiEventCollisionTarget>? eventTargets = null) =>
+        ExactTimelineCollisionPolicy.Scope(
+            source,
+            directMidiNoteTargets: noteTargets,
+            directMidiEventTargets: eventTargets);
+
     private static IPreparedProjectEdit DeferredCreate<T>(
         ProjectChangeSet changes,
         Func<MidoraProject, T> createAndAttach,

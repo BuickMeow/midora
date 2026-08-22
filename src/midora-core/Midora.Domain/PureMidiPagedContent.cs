@@ -669,9 +669,12 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
 
     private int VisibleIndexForSourceIndex(int sourceIndex)
     {
-        int removedBefore = 0;
-        for (int index = 0; index < sourceIndex; index++)
-            if (_removed.Contains(_source!.GetNote(index).Id)) removedBefore++;
+        if (_removed.Count == 0) return sourceIndex;
+        int removedBefore = _removed.Count(id =>
+        {
+            int removedIndex = _source!.FindNoteIndex(id);
+            return removedIndex >= 0 && removedIndex < sourceIndex;
+        });
         return sourceIndex - removedBefore;
     }
 
@@ -1136,9 +1139,12 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
 
     private int VisibleIndexForSourceIndex(int sourceIndex)
     {
-        int removedBefore = 0;
-        for (int index = 0; index < sourceIndex; index++)
-            if (_removed.Contains(_source!.GetChannelEvent(index).Id)) removedBefore++;
+        if (_removed.Count == 0) return sourceIndex;
+        int removedBefore = _removed.Count(id =>
+        {
+            int removedIndex = _source!.FindChannelEventIndex(id);
+            return removedIndex >= 0 && removedIndex < sourceIndex;
+        });
         return sourceIndex - removedBefore;
     }
 
@@ -1512,9 +1518,12 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
 
     private int VisibleIndexForSourceIndex(int sourceIndex)
     {
-        int removedBefore = 0;
-        for (int index = 0; index < sourceIndex; index++)
-            if (_removed.Contains(_source!.GetOpaqueEvent(index).Id)) removedBefore++;
+        if (_removed.Count == 0) return sourceIndex;
+        int removedBefore = _removed.Count(id =>
+        {
+            int removedIndex = _source!.FindOpaqueEventIndex(id);
+            return removedIndex >= 0 && removedIndex < sourceIndex;
+        });
         return sourceIndex - removedBefore;
     }
 

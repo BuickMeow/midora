@@ -57,7 +57,7 @@ internal sealed class BoundedCanonicalOpaqueEventSorter : IDisposable
         if (payloadByteCount > PureMidiContentPackWriter.MaximumDecodedPageByteCount - 33)
         {
             throw new InvalidDataException(
-                $"Opaque MIDI event {value.Source.DirectMidiObjectId.Value} exceeds the bounded page payload limit.");
+                "An Opaque MIDI event exceeds the bounded page payload limit.");
         }
         if (_buffer.Count != 0
             && (_buffer.Count == _maximumRunRecordCount

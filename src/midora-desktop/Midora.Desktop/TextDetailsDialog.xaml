@@ -50,7 +50,7 @@
         <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
           <Button x:Name="CopyButton" Width="84" Margin="0,0,6,0"
                   Content="Copy" Click="OnCopyClick" />
-          <Button Width="84" Style="{StaticResource Button.Primary}"
+          <Button Style="{StaticResource Button.Dialog.Confirm}"
                   Content="Close" IsCancel="True" Click="OnCloseClick" />
         </StackPanel>
       </Border>

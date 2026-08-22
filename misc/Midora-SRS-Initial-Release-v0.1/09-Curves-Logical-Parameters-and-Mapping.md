@@ -707,17 +707,18 @@ Double
 Enum
 ```
 `defaultValue` 必须与 input type 和 legal range 兼容。
-### 9.8.3 Logical Parameter Lane / Point / Curve
+### 9.8.3 Logical Parameter Lane / Point
 Logical Parameter Lane 是 Segment 内某个 Logical Parameter 的时间变化数据。
 规则：
 ```text
 Logical Parameter Lane 属于 Segment。
 Lane 引用当前 Track 绑定 Event Instrument 中的 Logical Parameter 稳定 ID。
 Logical Parameter Point 表示某 tick 上的参数值。
-Logical Parameter Curve 表示参数随时间变化的曲线。
-Point / Curve 必须拥有稳定 ID。
+Point 必须拥有稳定 ID。
 Lane 可为空，空 Lane 不产生输出效果。
 ```
+
+Logical Parameter Lane 固定为离散突变点集。每个 Point 的值从该 tick 起保持，直到同 Lane 的下一个 Point；UI 不提供 Linear、Step 或其他自动插值选项。若当前持久化模型仍以通用 Curve/Point 容器承载该数据，则其中所有 Logical Parameter Point 的 interpolation 字段必须固定为 `Step`，语义验证必须拒绝其他值。该容器复用不得把 Logical Parameter Lane 解释为连续曲线，也不得影响 Envelope、SubVoice Value Curve 等其他正式曲线的插值能力。
 Logical Parameter Lane 不是裸 MIDI Lane。
 不采用：
 ```text
@@ -811,14 +812,14 @@ Logical Track 改绑 Event Instrument 后：
 
 Logical Parameter Definition 自身发生类型、Enum 显式模式、Enum 数值/顺序/删除或会使既有数据失效的合法范围变化时，必须由调用方提交显式迁移计划，并与全 Project 所有引用该 Parameter ID 的 Lane 形成单个原子撤销 / 重做项。迁移策略必须显式选择 `Clamp` 或 `DiscardInvalidValues`；目标为 Enum 时还必须确认数值兼容不保证 Enum 语义等价。Double 转 Integer/Enum 使用 Away From Zero 中点规则，Enum Clamp 选择最近已定义值且等距取较小值，目标 Enum 的保留点统一转为 Step。点与保留 Enum item 的稳定 ID 不变；新增 Enum item 首次提交时分配新 ID。不得静默迁移、按名称重绑定或留下 Definition 已变而 Lane 尚未处理的中间状态。
 ### 9.8.11 保存、复制与撤销 / 重做
-Logical Parameter Definition、Logical Parameter Lane、Point、Curve、Mapping 均属于项目内容。
+Logical Parameter Definition、Logical Parameter Lane、Point、Mapping 均属于项目内容。
 规则：
 ```text
 修改 Logical Parameter Definition 进入全项目撤销 / 重做。
 修改 Logical Parameter Mapping 进入全项目撤销 / 重做。
-编辑 Segment 中的 Logical Parameter Lane / Point / Curve 进入全项目撤销 / 重做。
+编辑 Segment 中的 Logical Parameter Lane / Point 进入全项目撤销 / 重做。
 复制 Event Instrument 时，Logical Parameter Definition 与 Mapping 深拷贝并生成新 ID。
-复制 Segment 时，Logical Parameter Lane / Point / Curve 深拷贝并生成新 ID。
+复制 Segment 时，Logical Parameter Lane / Point 深拷贝并生成新 ID。
 ```
 ### 9.8.12 与相关专项章节的边界
 本规格规定 Logical Parameter 的编辑、映射与状态继承语义。

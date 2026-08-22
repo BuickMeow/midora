@@ -171,7 +171,7 @@ public static partial class ProjectDomainEditCommands
                     }
                 }
             }
-            return Prepared(
+            return ResolveTargetedExactDirectMidiCollisions(Prepared(
                 old.Where((value, index) => value != replacement[index].Value || discarded[index]).Any(),
                 PureMidiTrackChange(location.Track.Id),
                 _ =>
@@ -192,7 +192,13 @@ public static partial class ProjectDomainEditCommands
                     {
                         InsertAt(location.Segment.Notes, value.Index, value.Note, "Direct MIDI Note");
                     }
-                });
+                }),
+                noteTargets: replacement
+                    .Where((_, index) => !discarded[index])
+                    .Select(value => new DirectMidiNoteCollisionTarget(
+                        location.Segment,
+                        value.Value.StartTick,
+                        value.Value.Key)));
         });
 
     public static IProjectEditCommand BatchEditDirectMidiEventPoints(
@@ -234,7 +240,7 @@ public static partial class ProjectDomainEditCommands
                     ValidateDirectMidiEvent(result.Tick, result.Kind, result.Data1, result.Data2);
                 return new DirectEventBatchResult(result, discard);
             }).ToArray();
-            return Prepared(
+            return ResolveTargetedExactDirectMidiCollisions(Prepared(
                 old.Where((value, index) => value != replacement[index].Value || replacement[index].Discard).Any(),
                 PureMidiTrackChange(location.Track.Id),
                 _ =>
@@ -257,7 +263,14 @@ public static partial class ProjectDomainEditCommands
                     {
                         InsertAt(location.Segment.ChannelEvents, value.Index, value.Event, "Direct MIDI Event");
                     }
-                });
+                }),
+                eventTargets: replacement
+                    .Where(value => !value.Discard)
+                    .Select(value => new DirectMidiEventCollisionTarget(
+                        location.Segment,
+                        value.Value.Tick,
+                        value.Value.Kind,
+                        value.Value.Data1)));
         });
 
     public static IProjectEditCommand FlipMidiSegmentsHorizontal(
@@ -477,7 +490,7 @@ public static partial class ProjectDomainEditCommands
                             replacement.Kind,
                             replacement.Data1,
                             replacement.Data2);
-                        events.Add(new(value, old, replacement));
+                        events.Add(new(segment, value, old, replacement));
                     }
                     foreach (OpaqueMidiEvent value in segment.OpaqueEvents.Where(value =>
                         value.Tick >= contentLeft && value.Tick < contentRight))
@@ -501,7 +514,7 @@ public static partial class ProjectDomainEditCommands
         IReadOnlyCollection<MidiSegmentDirectNoteTransform> notes,
         IReadOnlyCollection<MidiSegmentDirectEventTransform> events,
         IReadOnlyCollection<MidiSegmentOpaqueEventTransform> opaque) =>
-        Prepared(
+        ResolveTargetedExactDirectMidiCollisions(Prepared(
             windows.Any(value => value.Old != value.Replacement)
                 || notes.Any(value => value.Discard || value.Old != value.Replacement)
                 || events.Any(value => value.Old != value.Replacement)
@@ -543,7 +556,18 @@ public static partial class ProjectDomainEditCommands
                     value.Event.Tick = value.OldTick;
                 foreach (MidiSegmentDirectEventTransform value in events)
                     ApplyDirectEvent(value.Event, value.Old);
-            });
+            }),
+            noteTargets: notes
+                .Where(value => !value.Discard)
+                .Select(value => new DirectMidiNoteCollisionTarget(
+                    value.Segment,
+                    value.Replacement.StartTick,
+                    value.Replacement.Key)),
+            eventTargets: events.Select(value => new DirectMidiEventCollisionTarget(
+                value.Segment,
+                value.Replacement.Tick,
+                value.Replacement.Kind,
+                value.Replacement.Data1)));
 
     private static void ValidateMidiSegmentTransformWindows(
         IReadOnlyCollection<MidiSegmentWindowTransform> windows)
@@ -611,7 +635,7 @@ public static partial class ProjectDomainEditCommands
                 throw new InvalidOperationException("A Direct MIDI Event transform returned the wrong result count.");
             foreach (DirectMidiEventValue value in replacement)
                 ValidateDirectMidiEvent(value.Tick, value.Kind, value.Data1, value.Data2);
-            return Prepared(
+            return ResolveTargetedExactDirectMidiCollisions(Prepared(
                 old.Where((value, index) => value != replacement[index]).Any(),
                 PureMidiTrackChange(location.Track.Id),
                 _ =>
@@ -623,7 +647,12 @@ public static partial class ProjectDomainEditCommands
                 {
                     for (int index = 0; index < selected.Length; index++)
                         ApplyDirectEvent(selected[index].Event, old[index]);
-                });
+                }),
+                eventTargets: replacement.Select(value => new DirectMidiEventCollisionTarget(
+                    location.Segment,
+                    value.Tick,
+                    value.Kind,
+                    value.Data1)));
         });
 
     private static void EnsureSameDirectMidiEventLane(IReadOnlyList<DirectEventSelection> selected)
@@ -696,6 +725,7 @@ public static partial class ProjectDomainEditCommands
         DirectNoteValue Replacement,
         bool Discard);
     private readonly record struct MidiSegmentDirectEventTransform(
+        MidiSegment Segment,
         DirectMidiChannelEvent Event,
         DirectMidiEventValue Old,
         DirectMidiEventValue Replacement);

@@ -2132,7 +2132,7 @@ public sealed partial class MidoraCompiler : IDisposable
         foreach ((MidoraId id, LogicalParameterDefinition definition) in definitions)
         {
             double value = lanes.TryGetValue(id, out LogicalParameterLane? lane)
-                ? EvaluateCurve(lane.Points, contentTick, definition.DefaultValue)
+                ? EvaluateStepCurve(lane.Points, contentTick, definition.DefaultValue)
                 : definition.DefaultValue;
             value = definition.Type switch
             {
@@ -2143,6 +2143,24 @@ public sealed partial class MidoraCompiler : IDisposable
             result.Add(id, Math.Clamp(value, definition.Minimum, definition.Maximum));
         }
         return result;
+    }
+
+    private static double EvaluateStepCurve(
+        IReadOnlyList<CurvePoint> unsorted,
+        long tick,
+        double defaultValue)
+    {
+        if (unsorted.Count == 0) return defaultValue;
+        CurvePoint? winner = null;
+        foreach (CurvePoint point in unsorted)
+        {
+            if (point.Tick <= tick
+                && (winner is null || point.Tick > winner.Tick))
+            {
+                winner = point;
+            }
+        }
+        return winner?.Value ?? defaultValue;
     }
 
     private static double EvaluateCurve(IReadOnlyList<CurvePoint> unsorted, long tick, double defaultValue)

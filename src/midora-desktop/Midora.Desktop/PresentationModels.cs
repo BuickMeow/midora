@@ -159,43 +159,78 @@ public sealed class DesktopTaskViewModel : ObservableObject, IDisposable
     public void Dispose() => _cancellation.Dispose();
 }
 
-public enum InspectorFieldValueState
+public enum PropertyFieldValueState
 {
     SameValue,
     Mixed,
     Unavailable
 }
 
-public sealed record InspectorChoiceOption(string Value, string Label);
+public sealed record PropertyChoiceOption(string Value, string Label);
 
-public sealed class InspectorField(
+public sealed class PropertyField(
     string key,
     string label,
     string value,
     bool isEditable = true,
-    InspectorFieldValueState valueState = InspectorFieldValueState.SameValue,
+    PropertyFieldValueState valueState = PropertyFieldValueState.SameValue,
     IReadOnlyList<string>? options = null,
     bool isBoolean = false,
-    IReadOnlyList<InspectorChoiceOption>? choices = null) : ObservableObject
+    IReadOnlyList<PropertyChoiceOption>? choices = null) : ObservableObject
 {
     private string _value = value;
     private bool _booleanValue = bool.TryParse(value, out bool parsed) && parsed;
+    private PropertyFieldValueState _valueState = valueState;
 
     public string Key { get; } = key;
     public string Label { get; } = label;
     public bool IsEditable { get; } = isEditable;
-    public InspectorFieldValueState ValueState { get; } = valueState;
-    public bool IsMixed => ValueState == InspectorFieldValueState.Mixed;
-    public bool IsUnavailable => ValueState == InspectorFieldValueState.Unavailable;
+    public string OriginalValue { get; } = value;
+    public PropertyFieldValueState OriginalValueState { get; } = valueState;
+    public PropertyFieldValueState ValueState
+    {
+        get => _valueState;
+        private set
+        {
+            if (!Set(ref _valueState, value)) return;
+            Raise(nameof(IsMixed));
+            Raise(nameof(IsUnavailable));
+            Raise(nameof(IsInputEnabled));
+            Raise(nameof(CanActivateMixed));
+            Raise(nameof(HasPendingChange));
+            Raise(nameof(CanReset));
+        }
+    }
+    public bool IsMixed => ValueState == PropertyFieldValueState.Mixed;
+    public bool IsUnavailable => ValueState == PropertyFieldValueState.Unavailable;
     public IReadOnlyList<string> Options { get; } = options ?? [];
-    public IReadOnlyList<InspectorChoiceOption> Choices { get; } = choices
-        ?? (options ?? []).Select(option => new InspectorChoiceOption(option, option)).ToArray();
+    public IReadOnlyList<PropertyChoiceOption> Choices { get; } = choices
+        ?? (options ?? []).Select(option => new PropertyChoiceOption(option, option)).ToArray();
     public bool IsChoice => Choices.Count > 0;
     public bool IsBoolean { get; } = isBoolean;
+    public bool IsInputEnabled => IsEditable
+        && ValueState == PropertyFieldValueState.SameValue;
+    public bool CanActivateMixed => IsEditable && IsMixed;
+    public bool HasPendingChange => IsEditable
+        && (ValueState != OriginalValueState
+            || !string.Equals(Value, OriginalValue, StringComparison.Ordinal));
+    public bool CanReset => HasPendingChange;
     public string Value
     {
         get => _value;
-        set => Set(ref _value, value);
+        set
+        {
+            value ??= string.Empty;
+            if (!Set(ref _value, value)) return;
+            bool parsed = bool.TryParse(value, out bool booleanValue) && booleanValue;
+            if (_booleanValue != parsed)
+            {
+                _booleanValue = parsed;
+                Raise(nameof(BooleanValue));
+            }
+            Raise(nameof(HasPendingChange));
+            Raise(nameof(CanReset));
+        }
     }
     public bool BooleanValue
     {
@@ -206,9 +241,36 @@ public sealed class InspectorField(
             Value = value ? bool.TrueString : bool.FalseString;
         }
     }
+
+    public void ActivateMixedEdit()
+    {
+        if (!CanActivateMixed) return;
+        ValueState = PropertyFieldValueState.SameValue;
+        if (IsChoice)
+        {
+            Value = Choices[0].Value;
+        }
+        else if (IsBoolean)
+        {
+            BooleanValue = false;
+        }
+        else
+        {
+            Value = string.Empty;
+        }
+    }
+
+    public void Reset()
+    {
+        if (!IsEditable) return;
+        ValueState = OriginalValueState;
+        Value = OriginalValue;
+        Raise(nameof(HasPendingChange));
+        Raise(nameof(CanReset));
+    }
 }
 
-public sealed class InspectorViewModel : ObservableObject
+public sealed class ObjectPropertiesViewModel : ObservableObject
 {
     private string _title = "No selection";
     private string _context = "Select an object in the active Workspace.";
@@ -225,15 +287,26 @@ public sealed class InspectorViewModel : ObservableObject
         }
     }
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorText);
-    public ObservableCollection<InspectorField> Fields { get; } = [];
+    public ObservableCollection<PropertyField> Fields { get; } = [];
+    public bool HasEditableFields => Fields.Any(item => item.IsEditable);
+    public bool HasPendingChanges => Fields.Any(item => item.HasPendingChange);
+    public bool HasFields => Fields.Count != 0;
+    public string CopyText => string.Join(
+        Environment.NewLine,
+        new[] { Title, Context }
+            .Concat(Fields.Select(item => $"{item.Label}: {item.Value}")));
 
-    public void Replace(string title, string context, IEnumerable<InspectorField> fields)
+    public void Replace(string title, string context, IEnumerable<PropertyField> fields)
     {
         Title = title;
         Context = context;
         ErrorText = null;
         Fields.Clear();
-        foreach (InspectorField field in fields) Fields.Add(field);
+        foreach (PropertyField field in fields) Fields.Add(field);
+        Raise(nameof(HasEditableFields));
+        Raise(nameof(HasPendingChanges));
+        Raise(nameof(HasFields));
+        Raise(nameof(CopyText));
     }
 }
 
@@ -299,7 +372,7 @@ public abstract class WorkspaceViewModel(
 
     public abstract void Rebuild(MidoraProject project, long revision);
 
-    public void RefreshSelectionPresentation() =>
+    public virtual void RefreshSelectionPresentation() =>
         SelectionSnapshot = new(Selection.Revision, Selection.Ids, Selection.Primary);
 }
 
@@ -645,6 +718,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     private bool _isEventInstrumentPaneVisible;
     private MidoraId? _selectedArrangementTrackId;
     private bool _isConductorTrackSelected;
+    private ConductorEventRow? _selectedConductorEvent;
+    private GridLength _conductorBottomEditorRowHeight = new(1, GridUnitType.Star);
 
     public TimelineWorkspaceViewModel(
         WorkspaceKey key,
@@ -696,21 +771,76 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     public GridLength BottomEditorRowHeight
     {
         get => IsConductor
-            ? new GridLength(170)
+            ? _conductorBottomEditorRowHeight
             : IsLowerEditorVisible
                 ? new GridLength(_lowerEditorHeight)
                 : new GridLength(0);
         set
         {
-            if (!IsSegment || value.GridUnitType != GridUnitType.Pixel) return;
+            if (!(IsSegment || IsConductor) || !double.IsFinite(value.Value))
+            {
+                return;
+            }
+            if (IsConductor)
+            {
+                GridLength normalized;
+                if (value.IsStar && value.Value > 0)
+                {
+                    normalized = value;
+                }
+                else if (value.IsAbsolute)
+                {
+                    normalized = new GridLength(Math.Clamp(
+                        value.Value,
+                        BottomEditorMinimumHeight,
+                        BottomEditorMaximumHeight));
+                }
+                else
+                {
+                    return;
+                }
+                if (_conductorBottomEditorRowHeight == normalized) return;
+                _conductorBottomEditorRowHeight = normalized;
+                Raise();
+                return;
+            }
+            if (!value.IsAbsolute) return;
             double height = Math.Clamp(
                 value.Value,
-                TimelineLowerEditorLayout.MinimumHeight,
-                TimelineLowerEditorLayout.MaximumHeight);
+                BottomEditorMinimumHeight,
+                BottomEditorMaximumHeight);
             if (!Set(ref _lowerEditorHeight, height, nameof(BottomEditorRowHeight))) return;
         }
     }
+    public double BottomEditorMinimumHeight => IsConductor
+        ? 110
+        : IsLowerEditorVisible
+            ? TimelineLowerEditorLayout.MinimumHeight
+            : 0;
+    public double BottomEditorMaximumHeight => IsConductor
+        ? 720
+        : TimelineLowerEditorLayout.MaximumHeight;
+
     public ObservableCollection<ConductorEventRow> ConductorEvents { get; } = [];
+    public ConductorEventRow? SelectedConductorEvent
+    {
+        get => _selectedConductorEvent;
+        set
+        {
+            if (ReferenceEquals(_selectedConductorEvent, value)) return;
+            _selectedConductorEvent = value;
+            Raise();
+        }
+    }
+    public override void RefreshSelectionPresentation()
+    {
+        base.RefreshSelectionPresentation();
+        if (IsConductor)
+        {
+            SelectedConductorEvent = ConductorEvents.FirstOrDefault(value =>
+                value.Id == Selection.Primary);
+        }
+    }
     public ObservableCollection<EventInstrumentBrowserRow> EventInstrumentBrowser { get; } = [];
     public bool IsEventInstrumentPaneVisible
     {
@@ -1544,7 +1674,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
 
     private static string DisplayDamagedName(DamagedProjectObject value) =>
         string.IsNullOrWhiteSpace(value.NameSnapshot)
-            ? value.Id.ToString()
+            ? "Unnamed damaged object"
             : value.NameSnapshot;
 
     private static uint ToOpaqueArgb(MidoraColor color) =>
@@ -1652,7 +1782,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             ParameterLaneOptions.Add(new(
                 lane.ParameterId,
                 lane.Id,
-                $"Broken parameter {lane.ParameterId.Value}",
+                "Unavailable Logical Parameter",
                 IsBroken: true));
         }
         MidoraId? selectedParameterId = Selection.Primary is MidoraId selected
@@ -2267,6 +2397,8 @@ public sealed class InstrumentWorkspaceViewModel(
     private int _activeRenderLaneIndex;
     private MidoraId? _activeSubVoiceId;
     private string _activeSubVoiceName = "No SubVoice";
+    private string _activeSubVoiceNameText = string.Empty;
+    private string _activeSubVoiceRootNoteText = string.Empty;
     private string _activeSubVoiceContext = "Create or select a SubVoice to edit its timeline.";
     private bool _activeSubVoiceFollowsInstanceVelocity;
     private bool _requiresChannelIsolation;
@@ -2281,7 +2413,6 @@ public sealed class InstrumentWorkspaceViewModel(
     private string _instrumentColorText = "#6B7280";
     private string _instrumentRootNoteText = "60";
     private string _instrumentTemplateLengthText = "1";
-    private string _instrumentStableIdText = string.Empty;
     private long? _loopStartTick;
     private long? _loopEndTick;
     private long _templateLengthTicks = 1;
@@ -2311,6 +2442,8 @@ public sealed class InstrumentWorkspaceViewModel(
     private int _activeLowerEditorIndex;
     private double _velocityValueScrollOffset;
     private double _eventValueScrollOffset;
+    private GridLength _leftPaneWidth = new(470);
+    private double _leftPaneVerticalOffset;
 
     private TimelineEditorSettings _editorSettings = new();
     private TimelineEditorSettings _eventLaneEditorSettings = new();
@@ -2330,7 +2463,23 @@ public sealed class InstrumentWorkspaceViewModel(
     public int ActiveSectionIndex
     {
         get => _activeSectionIndex;
-        set => Set(ref _activeSectionIndex, Math.Clamp(value, 0, 2));
+        set => Set(ref _activeSectionIndex, Math.Clamp(value, 0, 1));
+    }
+
+    public GridLength LeftPaneWidth
+    {
+        get => _leftPaneWidth;
+        set
+        {
+            if (value.GridUnitType != GridUnitType.Pixel || !double.IsFinite(value.Value)) return;
+            Set(ref _leftPaneWidth, new GridLength(Math.Clamp(value.Value, 280, 760)));
+        }
+    }
+
+    public double LeftPaneVerticalOffset
+    {
+        get => _leftPaneVerticalOffset;
+        set => Set(ref _leftPaneVerticalOffset, Math.Max(0, value));
     }
 
     public long TimelineStartTick
@@ -2484,6 +2633,16 @@ public sealed class InstrumentWorkspaceViewModel(
         get => _activeSubVoiceName;
         private set => Set(ref _activeSubVoiceName, value);
     }
+    public string ActiveSubVoiceNameText
+    {
+        get => _activeSubVoiceNameText;
+        set => Set(ref _activeSubVoiceNameText, value ?? string.Empty);
+    }
+    public string ActiveSubVoiceRootNoteText
+    {
+        get => _activeSubVoiceRootNoteText;
+        set => Set(ref _activeSubVoiceRootNoteText, value ?? string.Empty);
+    }
     public string ActiveSubVoiceContext
     {
         get => _activeSubVoiceContext;
@@ -2510,7 +2669,6 @@ public sealed class InstrumentWorkspaceViewModel(
     public string InstrumentColorText { get => _instrumentColorText; set => Set(ref _instrumentColorText, value ?? string.Empty); }
     public string InstrumentRootNoteText { get => _instrumentRootNoteText; set => Set(ref _instrumentRootNoteText, value ?? string.Empty); }
     public string InstrumentTemplateLengthText { get => _instrumentTemplateLengthText; set => Set(ref _instrumentTemplateLengthText, value ?? string.Empty); }
-    public string InstrumentStableIdText { get => _instrumentStableIdText; private set => Set(ref _instrumentStableIdText, value); }
     public long? LoopStartTick { get => _loopStartTick; private set => Set(ref _loopStartTick, value); }
     public long? LoopEndTick { get => _loopEndTick; private set => Set(ref _loopEndTick, value); }
     public long TemplateLengthTicks { get => _templateLengthTicks; private set => Set(ref _templateLengthTicks, Math.Max(1, value)); }
@@ -2561,7 +2719,8 @@ public sealed class InstrumentWorkspaceViewModel(
     public ObservableCollection<MappingChainListItem> MappingChains { get; } = [];
     public ObservableCollection<MappingStepListItem> MappingSteps { get; } = [];
     public ObservableCollection<InitialStateListItem> InitialStateEntries { get; } = [];
-    public ObservableCollection<InspectorField> InstrumentInitialStateFields { get; } = [];
+    public ObservableCollection<PropertyField> ActiveSubVoiceInitialStateFields { get; } = [];
+    public ObservableCollection<PropertyField> InstrumentInitialStateFields { get; } = [];
     public ObservableCollection<InstrumentRenderLane> RenderLanes { get; } = [];
 
     public override void Rebuild(MidoraProject project, long revision)
@@ -2575,6 +2734,7 @@ public sealed class InstrumentWorkspaceViewModel(
         MappingChains.Clear();
         MappingSteps.Clear();
         InitialStateEntries.Clear();
+        ActiveSubVoiceInitialStateFields.Clear();
         InstrumentInitialStateFields.Clear();
         MidiValueTarget? previousTarget = GetRenderLane(ActiveRenderLaneIndex)?.Target;
         RenderLanes.Clear();
@@ -2599,7 +2759,6 @@ public sealed class InstrumentWorkspaceViewModel(
         InstrumentColorText = $"#{instrument.Color.Red:X2}{instrument.Color.Green:X2}{instrument.Color.Blue:X2}";
         InstrumentRootNoteText = instrument.RootNote.ToString(System.Globalization.CultureInfo.InvariantCulture);
         InstrumentTemplateLengthText = instrument.TemplateLengthTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        InstrumentStableIdText = instrument.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
         AddInstrumentInitialStateFields(instrument.InitialState);
         Summary = $"Root {MidiNoteName(instrument.RootNote)} · Template {instrument.TemplateLengthTicks} ticks · {instrument.SubVoices.Count} SubVoices";
         RequiresChannelIsolation = instrument.RequiresChannelIsolation;
@@ -2635,10 +2794,10 @@ public sealed class InstrumentWorkspaceViewModel(
         foreach (LogicalParameterMapping mapping in instrument.ParameterMappings)
         {
             string source = instrument.LogicalParameters.FirstOrDefault(item => item.Id == mapping.ParameterId)?.Name
-                ?? $"Broken {mapping.ParameterId}";
+                ?? "Unavailable Logical Parameter";
             SubVoice? voice = instrument.SubVoices.FirstOrDefault(item => item.Id == mapping.SubVoiceId);
             string targetVoice = voice is null
-                ? $"Broken {mapping.SubVoiceId}"
+                ? "Unavailable SubVoice"
                 : string.IsNullOrWhiteSpace(voice.Name) ? $"SubVoice {instrument.SubVoices.IndexOf(voice) + 1}" : voice.Name;
             ParameterMappings.Add(new(
                 mapping.Id,
@@ -2720,6 +2879,9 @@ public sealed class InstrumentWorkspaceViewModel(
             : string.IsNullOrWhiteSpace(activeVoice.Name)
                 ? $"SubVoice {instrument.SubVoices.IndexOf(activeVoice) + 1}"
                 : activeVoice.Name;
+        ActiveSubVoiceNameText = activeVoice?.Name ?? string.Empty;
+        ActiveSubVoiceRootNoteText = activeVoice?.RootNoteOverride?.ToString(
+            System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
         ActiveSubVoiceContext = activeVoice is null
             ? "Create or select a SubVoice to edit its timeline."
             : $"Root Note {(activeVoice.RootNoteOverride.HasValue ? "override" : "inherited")} · "
@@ -2795,6 +2957,7 @@ public sealed class InstrumentWorkspaceViewModel(
             }
 
             AddInitialStateEntries(activeVoice.InitialState);
+            AddActiveSubVoiceInitialStateFields(activeVoice.InitialState);
         }
 
         foreach (InstrumentRenderLane lane in lanes) RenderLanes.Add(lane);
@@ -2917,6 +3080,28 @@ public sealed class InstrumentWorkspaceViewModel(
 
             void Add(string key, string label, int? value) =>
                 InstrumentInitialStateFields.Add(new(
+                    key,
+                    label,
+                    value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty));
+        }
+
+        void AddActiveSubVoiceInitialStateFields(MidiInitialState state)
+        {
+            Add("bankMsb", "BANK MSB", state.BankMsb);
+            Add("bankLsb", "BANK LSB", state.BankLsb);
+            Add("program", "PROGRAM (0–127)", state.Program);
+            Add("pitchBend", "PITCH BEND", state.PitchBend);
+            Add("pitchRangeSemitones", "PITCH RANGE SEMITONES", state.PitchBendRangeSemitones);
+            Add("pitchRangeCents", "PITCH RANGE CENTS", state.PitchBendRangeCents);
+            foreach ((int number, int value) in state.Controllers.OrderBy(item => item.Key))
+                Add($"cc.{number}", MidiControlChangeCatalog.Format(number), value);
+            foreach ((int number, int value) in state.RegisteredParameters.OrderBy(item => item.Key))
+                Add($"rpn.{number}", $"RPN {number}", value);
+            foreach ((int number, int value) in state.NonRegisteredParameters.OrderBy(item => item.Key))
+                Add($"nrpn.{number}", $"NRPN {number}", value);
+
+            void Add(string key, string label, int? value) =>
+                ActiveSubVoiceInitialStateFields.Add(new(
                     key,
                     label,
                     value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty));
@@ -3115,13 +3300,13 @@ public sealed class SettingsWorkspaceViewModel()
     public bool HasEmbeddedSoundFont { get; private set; }
     public string Playback { get => _playback; private set => Set(ref _playback, value); }
     public string AudioRender { get => _audioRender; private set => Set(ref _audioRender, value); }
-    public ObservableCollection<InspectorField> GeneralFields { get; } = [];
-    public ObservableCollection<InspectorField> PlaybackFields { get; } = [];
-    public ObservableCollection<InspectorField> MidiExportFields { get; } = [];
-    public ObservableCollection<InspectorField> AudioRenderFields { get; } = [];
+    public ObservableCollection<PropertyField> GeneralFields { get; } = [];
+    public ObservableCollection<PropertyField> PlaybackFields { get; } = [];
+    public ObservableCollection<PropertyField> MidiExportFields { get; } = [];
+    public ObservableCollection<PropertyField> AudioRenderFields { get; } = [];
     public ObservableCollection<TrackSelectionRow> AudioRenderTracks { get; } = [];
-    public ObservableCollection<InspectorField> InitialStateFields { get; } = [];
-    public ObservableCollection<InspectorField> ResetDefaultFields { get; } = [];
+    public ObservableCollection<PropertyField> InitialStateFields { get; } = [];
+    public ObservableCollection<PropertyField> ResetDefaultFields { get; } = [];
 
     public override void Rebuild(MidoraProject project, long revision)
     {
@@ -3178,6 +3363,7 @@ public sealed class SettingsWorkspaceViewModel()
                     : track.Name,
                 project.AudioRender.ExplicitLogicalTrackIds.Contains(track.Id)));
         }
+
         Replace(InitialStateFields, StateFields("settings.initial", project.GlobalInitialState));
         Replace(ResetDefaultFields, StateFields("settings.reset", project.GlobalResetDefaults));
     }
@@ -3202,7 +3388,7 @@ public sealed class SettingsWorkspaceViewModel()
 
     private void UpdateReadOnlyField(string key, string value)
     {
-        InspectorField? field = GeneralFields.FirstOrDefault(item => item.Key == key);
+        PropertyField? field = GeneralFields.FirstOrDefault(item => item.Key == key);
         if (field is not null)
         {
             field.Value = value;
@@ -3221,9 +3407,9 @@ public sealed class SettingsWorkspaceViewModel()
             : $"{days:N0}d {hours:00}:{minutes:00}:{seconds:00}";
     }
 
-    private static InspectorField[] StateFields(string prefix, MidiInitialState state)
+    private static PropertyField[] StateFields(string prefix, MidiInitialState state)
     {
-        List<InspectorField> fields =
+        List<PropertyField> fields =
         [
             new($"{prefix}.bankMsb", "BANK MSB", state.BankMsb?.ToString() ?? string.Empty),
             new($"{prefix}.bankLsb", "BANK LSB", state.BankLsb?.ToString() ?? string.Empty),
@@ -3233,18 +3419,18 @@ public sealed class SettingsWorkspaceViewModel()
             new($"{prefix}.pitchRangeCents", "PITCH RANGE CENTS", state.PitchBendRangeCents?.ToString() ?? string.Empty)
         ];
         fields.AddRange(state.Controllers.OrderBy(item => item.Key)
-            .Select(item => new InspectorField(
+            .Select(item => new PropertyField(
                 $"{prefix}.cc.{item.Key}",
                 MidiControlChangeCatalog.Format(item.Key),
                 item.Value.ToString())));
         fields.AddRange(state.RegisteredParameters.OrderBy(item => item.Key)
-            .Select(item => new InspectorField($"{prefix}.rpn.{item.Key}", $"RPN {item.Key}", item.Value.ToString())));
+            .Select(item => new PropertyField($"{prefix}.rpn.{item.Key}", $"RPN {item.Key}", item.Value.ToString())));
         fields.AddRange(state.NonRegisteredParameters.OrderBy(item => item.Key)
-            .Select(item => new InspectorField($"{prefix}.nrpn.{item.Key}", $"NRPN {item.Key}", item.Value.ToString())));
+            .Select(item => new PropertyField($"{prefix}.nrpn.{item.Key}", $"NRPN {item.Key}", item.Value.ToString())));
         return fields.ToArray();
     }
 
-    private static InspectorField Choice<T>(
+    private static PropertyField Choice<T>(
         string key,
         string label,
         T value,
@@ -3255,10 +3441,10 @@ public sealed class SettingsWorkspaceViewModel()
             value.ToString() ?? string.Empty,
             options: options ?? (typeof(T).IsEnum ? Enum.GetNames(typeof(T)) : []));
 
-    private static void Replace(ObservableCollection<InspectorField> target, params InspectorField[] fields)
+    private static void Replace(ObservableCollection<PropertyField> target, params PropertyField[] fields)
     {
         target.Clear();
-        foreach (InspectorField field in fields) target.Add(field);
+        foreach (PropertyField field in fields) target.Add(field);
     }
 }
 
@@ -3398,12 +3584,12 @@ public static class DiagnosticProjection
 
     private static string SourceText(SourceReference source)
     {
-        if (source.LogicalNoteId != default) return $"Logical Note {source.LogicalNoteId}";
-        if (source.SegmentId != default) return $"Segment {source.SegmentId}";
-        if (source.TrackId != default) return $"Logical Track {source.TrackId}";
-        if (source.SubVoiceId != default) return $"SubVoice {source.SubVoiceId}";
-        if (source.EventInstrumentId != default) return $"Event Instrument {source.EventInstrumentId}";
-        if (source.MappingFunctionId != default) return $"Mapping Function {source.MappingFunctionId}";
+        if (source.LogicalNoteId != default) return "Logical Note";
+        if (source.SegmentId != default) return "Segment";
+        if (source.TrackId != default) return "Logical Track";
+        if (source.SubVoiceId != default) return "SubVoice";
+        if (source.EventInstrumentId != default) return "Event Instrument";
+        if (source.MappingFunctionId != default) return "Mapping Function";
         return source.Tick >= 0 ? $"Tick {source.Tick}" : "Project";
     }
 }

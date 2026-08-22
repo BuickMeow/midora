@@ -260,7 +260,9 @@
           <RowDefinition Height="38" />
           <RowDefinition Height="*" />
           <RowDefinition Height="5" />
-          <RowDefinition Height="{Binding BottomEditorRowHeight, Mode=TwoWay}" />
+          <RowDefinition Height="{Binding BottomEditorRowHeight, Mode=TwoWay}"
+                         MinHeight="{Binding BottomEditorMinimumHeight}"
+                         MaxHeight="{Binding BottomEditorMaximumHeight}" />
         </Grid.RowDefinitions>
         <Border Style="{StaticResource PanelHeader}">
           <Grid>
@@ -330,7 +332,20 @@
               <Border Padding="9,0" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1"><Grid><TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Event Instruments"/><Button Width="24" Height="22" HorizontalAlignment="Right" Padding="0" ToolTip="New Event Instrument" IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Click="OnNewInstrumentClick"><ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.Add20Regular}"/></Button></Grid></Border>
               <ListBox Grid.Row="1" Padding="5" Background="Transparent" BorderThickness="0" ItemsSource="{Binding EventInstrumentBrowser}" MouseDoubleClick="OnEventInstrumentBrowserDoubleClick" PreviewMouseLeftButtonDown="OnInstrumentListMouseLeftButtonDown" MouseMove="OnInstrumentListMouseMove" PreviewMouseRightButtonDown="OnEventInstrumentBrowserRightButtonDown" AllowDrop="True" DragOver="OnEventInstrumentBrowserDragOver" DragLeave="OnEventInstrumentBrowserDragLeave" Drop="OnEventInstrumentBrowserDrop" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                 <ListBox.ItemTemplate><DataTemplate><Grid Margin="4,3"><Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Grid.Row="1" Style="{StaticResource Text.Caption}" Text="{Binding Detail}" TextTrimming="CharacterEllipsis"/></Grid></DataTemplate></ListBox.ItemTemplate>
-                <ListBox.ContextMenu><ContextMenu DataContext="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource Self}}"><MenuItem Header="Edit" Click="OnEventInstrumentBrowserEditClick"/><MenuItem Header="Add Logical Track Using This Instrument" Click="OnEventInstrumentBrowserAddTrackClick"/><Separator/><MenuItem Header="Cut" Click="OnEventInstrumentBrowserCutClick"/><MenuItem Header="Copy" Click="OnEventInstrumentBrowserCopyClick"/><MenuItem Header="Paste" Click="OnEventInstrumentBrowserPasteClick"/><MenuItem Header="Duplicate" Click="OnEventInstrumentBrowserDuplicateClick"/><Separator/><MenuItem Header="Rename…" Click="OnEventInstrumentBrowserRenameClick"/><MenuItem Header="Move Up" Click="OnEventInstrumentBrowserMoveUpClick"/><MenuItem Header="Move Down" Click="OnEventInstrumentBrowserMoveDownClick"/><Separator/><MenuItem Header="Delete…" Click="OnEventInstrumentBrowserDeleteClick"/></ContextMenu></ListBox.ContextMenu>
+                <ListBox.ContextMenu>
+                  <ContextMenu DataContext="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource Self}}">
+                    <ContextMenu.Resources>
+                      <Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}" Value="{x:Null}">
+                            <Setter Property="IsEnabled" Value="False"/>
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </ContextMenu.Resources>
+                    <MenuItem Header="Edit" Click="OnEventInstrumentBrowserEditClick"/><MenuItem Header="Add Logical Track Using This Instrument" Click="OnEventInstrumentBrowserAddTrackClick"/><Separator/><MenuItem Header="Cut" Click="OnEventInstrumentBrowserCutClick"/><MenuItem Header="Copy" Click="OnEventInstrumentBrowserCopyClick"/><MenuItem Header="Paste" Click="OnEventInstrumentBrowserPasteClick"/><MenuItem Header="Duplicate" Click="OnEventInstrumentBrowserDuplicateClick"/><Separator/><MenuItem Header="Rename…" Click="OnEventInstrumentBrowserRenameClick"/><MenuItem Header="Move Up" Click="OnEventInstrumentBrowserMoveUpClick"/><MenuItem Header="Move Down" Click="OnEventInstrumentBrowserMoveDownClick"/><Separator/><MenuItem Header="Delete…" Click="OnEventInstrumentBrowserDeleteClick"/>
+                  </ContextMenu>
+                </ListBox.ContextMenu>
               </ListBox>
             </Grid>
           </Border>
@@ -382,6 +397,8 @@
                              LaneHeaderDoubleInvoked="OnTimelineLaneHeaderDoubleInvoked"
                              LaneHeaderContextRequested="OnTimelineLaneHeaderContextRequested"
                              LaneHeaderReorderCompleted="OnTimelineLaneHeaderReorderCompleted"
+                             ArrangementInstrumentInvoked="OnArrangementInstrumentInvoked"
+                             ArrangementMidiRouteInvoked="OnArrangementMidiRouteInvoked"
                              AllowDrop="True"
                              DragOver="OnTimelineInstrumentDragOver"
                              DragLeave="OnTimelineInstrumentDragLeave"
@@ -448,6 +465,13 @@
                             <Trigger Property="IsMouseOver" Value="True">
                               <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource Brush.Text.Tertiary}"/>
                             </Trigger>
+                            <MultiTrigger>
+                              <MultiTrigger.Conditions>
+                                <Condition Property="IsChecked" Value="True"/>
+                                <Condition Property="IsMouseOver" Value="True"/>
+                              </MultiTrigger.Conditions>
+                              <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource Brush.Red}"/>
+                            </MultiTrigger>
                             <Trigger Property="IsPressed" Value="True">
                               <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.Black}"/>
                               <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource Brush.Red.Dark}"/>
@@ -479,7 +503,7 @@
               </Button>
             </Grid>
           </Border>
-          <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding MaximumFirstLane, ElementName=Timeline}" Value="{Binding FirstLane, ElementName=Timeline, Mode=TwoWay}" SmallChange="1" LargeChange="{Binding VisibleLaneCount, ElementName=Timeline}" ViewportSize="{Binding VisibleLaneCount, ElementName=Timeline}">
+          <ScrollBar Grid.Column="1" Width="12" Background="{StaticResource Brush.Surface.1}" Orientation="Vertical" IsEnabled="{Binding CanScrollLanes, ElementName=Timeline}" Maximum="{Binding MaximumFirstLane, ElementName=Timeline}" Value="{Binding FirstLane, ElementName=Timeline, Mode=TwoWay}" SmallChange="1" LargeChange="{Binding VisibleLaneCount, ElementName=Timeline}" ViewportSize="{Binding VisibleLaneCount, ElementName=Timeline}">
             <ScrollBar.Style><Style TargetType="ScrollBar" BasedOn="{StaticResource {x:Type ScrollBar}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsSegment}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger><DataTrigger Binding="{Binding IsArrangement}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></ScrollBar.Style>
           </ScrollBar>
         </Grid>
@@ -499,7 +523,7 @@
         </GroupBox>
         </Grid>
         <GridSplitter Grid.Row="2" Height="5" HorizontalAlignment="Stretch" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext">
-          <GridSplitter.Style><Style TargetType="GridSplitter" BasedOn="{StaticResource {x:Type GridSplitter}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><MultiDataTrigger><MultiDataTrigger.Conditions><Condition Binding="{Binding IsSegment}" Value="True"/><Condition Binding="{Binding IsLowerEditorVisible}" Value="True"/></MultiDataTrigger.Conditions><Setter Property="Visibility" Value="Visible"/></MultiDataTrigger></Style.Triggers></Style></GridSplitter.Style>
+          <GridSplitter.Style><Style TargetType="GridSplitter" BasedOn="{StaticResource {x:Type GridSplitter}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><MultiDataTrigger><MultiDataTrigger.Conditions><Condition Binding="{Binding IsSegment}" Value="True"/><Condition Binding="{Binding IsLowerEditorVisible}" Value="True"/></MultiDataTrigger.Conditions><Setter Property="Visibility" Value="Visible"/></MultiDataTrigger><DataTrigger Binding="{Binding IsConductor}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></GridSplitter.Style>
         </GridSplitter>
         <TabControl Grid.Row="3">
           <TabControl.Style><Style TargetType="TabControl" BasedOn="{StaticResource {x:Type TabControl}}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsSegment}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TabControl.Style>
@@ -520,7 +544,7 @@
                                               TickSpan="{Binding TickSpan, ElementName=SegmentVelocityTimeline}"
                                               SurfaceMode="{Binding SurfaceMode, ElementName=SegmentVelocityTimeline}"
                                               PlaybackCursorTick="{Binding PlaybackCursorTick, ElementName=SegmentVelocityTimeline}"/>
-            <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding ValueScrollMaximum, ElementName=SegmentVelocityTimeline}" Value="{Binding ValueScrollOffset, ElementName=SegmentVelocityTimeline, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SegmentVelocityTimeline}"/>
+            <ScrollBar Grid.Column="1" Width="12" Background="{StaticResource Brush.Surface.1}" Orientation="Vertical" IsEnabled="{Binding CanScrollValues, ElementName=SegmentVelocityTimeline}" Maximum="{Binding ValueScrollMaximum, ElementName=SegmentVelocityTimeline}" Value="{Binding ValueScrollOffset, ElementName=SegmentVelocityTimeline, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SegmentVelocityTimeline}"/>
             </Grid>
           </TabItem>
           <TabItem Header="Parameter Lane">
@@ -558,7 +582,7 @@
                                                   TickSpan="{Binding TickSpan, ElementName=SegmentParameterTimeline}"
                                                   SurfaceMode="{Binding SurfaceMode, ElementName=SegmentParameterTimeline}"
                                                   PlaybackCursorTick="{Binding PlaybackCursorTick, ElementName=SegmentParameterTimeline}"/>
-                <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding ValueScrollMaximum, ElementName=SegmentParameterTimeline}" Value="{Binding ValueScrollOffset, ElementName=SegmentParameterTimeline, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SegmentParameterTimeline}"/>
+                <ScrollBar Grid.Column="1" Width="12" Background="{StaticResource Brush.Surface.1}" Orientation="Vertical" IsEnabled="{Binding CanScrollValues, ElementName=SegmentParameterTimeline}" Maximum="{Binding ValueScrollMaximum, ElementName=SegmentParameterTimeline}" Value="{Binding ValueScrollOffset, ElementName=SegmentParameterTimeline, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SegmentParameterTimeline}"/>
                 </Grid>
               </GroupBox>
             </Grid>
@@ -567,10 +591,13 @@
         <Border Grid.Row="3" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
           <Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsConductor}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Border.Style>
           <Grid><Grid.RowDefinitions><RowDefinition Height="27"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-            <Border Padding="8,0" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1"><Grid><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="CONDUCTOR EVENT LIST"/><TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Select to locate · Inspector edits the formal event"/></Grid></Border>
-            <ListBox Grid.Row="1" ItemsSource="{Binding ConductorEvents}" SelectionChanged="OnConductorEventSelectionChanged" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
-              <ListBox.ItemTemplate><DataTemplate><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Style="{StaticResource Text.Mono}" Text="{Binding Tick, StringFormat={}Tick {0}}"/><TextBlock Grid.Column="1" Text="{Binding Type}"/><TextBlock Grid.Column="2" Style="{StaticResource Text.Caption}" Text="{Binding Value}" TextTrimming="CharacterEllipsis"/></Grid></DataTemplate></ListBox.ItemTemplate>
-            </ListBox>
+            <Border Padding="8,0" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1"><Grid><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="CONDUCTOR EVENT LIST"/><TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Select an event to edit its exact values"/></Grid></Border>
+            <Grid Grid.Row="1">
+              <ListBox ItemsSource="{Binding ConductorEvents}" SelectedItem="{Binding SelectedConductorEvent, Mode=OneWay}" SelectionChanged="OnConductorEventSelectionChanged" MouseDoubleClick="OnEditTimelinePropertiesClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
+                <ListBox.ContextMenu><ContextMenu><MenuItem Header="Properties…" InputGestureText="Ctrl+P" Click="OnEditTimelinePropertiesClick"/></ContextMenu></ListBox.ContextMenu>
+                <ListBox.ItemTemplate><DataTemplate><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Style="{StaticResource Text.Mono}" Text="{Binding Tick, StringFormat={}Tick {0}}"/><TextBlock Grid.Column="1" Text="{Binding Type}"/><TextBlock Grid.Column="2" Style="{StaticResource Text.Caption}" Text="{Binding Value}" TextTrimming="CharacterEllipsis"/></Grid></DataTemplate></ListBox.ItemTemplate>
+              </ListBox>
+            </Grid>
           </Grid>
         </Border>
       </Grid>
@@ -624,22 +651,27 @@
           <Grid VerticalAlignment="Center"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Style="{StaticResource Text.Section}" Text="{Binding Header}"/><TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="{Binding Summary}" TextTrimming="CharacterEllipsis"/></Grid>
         </Border>
         <Grid Grid.Row="1">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="230"/><ColumnDefinition Width="4"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <ScrollViewer Padding="10" VerticalScrollBarVisibility="Auto">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="{Binding LeftPaneWidth, Mode=TwoWay}"/><ColumnDefinition Width="4"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <ScrollViewer Padding="10" VerticalScrollBarVisibility="Auto"
+                        Loaded="OnInstrumentNavigationScrollLoaded"
+                        ScrollChanged="OnInstrumentNavigationScrollChanged"
+                        PreviewMouseWheel="OnInstrumentNavigationPreviewMouseWheel">
             <StackPanel>
               <Grid Margin="0,0,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="SUBVOICES"/><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Width="24" Height="22" Margin="0,0,3,0" Padding="0" Content="↑" Tag="-1" ToolTip="Move selected SubVoice up" Click="OnMoveSubVoiceClick"/><Button Width="24" Height="22" Margin="0,0,3,0" Padding="0" Content="↓" Tag="1" ToolTip="Move selected SubVoice down" Click="OnMoveSubVoiceClick"/><Button Width="28" Height="22" Margin="0,0,3,0" Padding="0" Content="⧉" ToolTip="Duplicate selected SubVoice" Click="OnDuplicateSubVoiceClick"/><Button Width="24" Height="22" Padding="0" Content="+" ToolTip="Add SubVoice" Click="OnAddSubVoiceClick"/></StackPanel></Grid>
-              <ListBox MaxHeight="160" ItemsSource="{Binding SubVoices}" SelectionChanged="OnInstrumentStructureSelectionChanged" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
-                <ListBox.ContextMenu><ContextMenu><MenuItem Header="Duplicate" Click="OnDuplicateSubVoiceClick"/><Separator/><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu>
+              <ListBox MaxHeight="160" ItemsSource="{Binding SubVoices}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnOpenInstrumentPropertiesClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
+                <ListBox.ContextMenu><ContextMenu><MenuItem Header="Properties…" InputGestureText="Ctrl+P" Click="OnOpenInstrumentPropertiesClick"/><Separator/><MenuItem Header="Duplicate" Click="OnDuplicateSubVoiceClick"/><Separator/><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu>
                 <ListBox.ItemTemplate><DataTemplate><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource Text.Caption}" Text="{Binding EventCount, StringFormat={}{0} events}"/></Grid></DataTemplate></ListBox.ItemTemplate>
               </ListBox>
-              <Grid Margin="0,14,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="LOGICAL PARAMETERS"/><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Height="22" Margin="0,0,4,0" Padding="5,0" Content="Edit…" ToolTip="Edit definition and migrate every referencing Lane" Click="OnEditLogicalParameterDefinitionClick"/><Button Width="24" Height="22" Padding="0" Content="+" ToolTip="Add Logical Parameter" Click="OnAddLogicalParameterClick"/></StackPanel></Grid>
-              <ListBox MaxHeight="160" ItemsSource="{Binding Parameters}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnEditLogicalParameterDefinitionClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Type}"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
-              <Grid Margin="0,14,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="PARAMETER MAPPINGS"/><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Height="22" Margin="0,0,3,0" Padding="5,0" Content="Edit…" ToolTip="Change the selected Mapping source and target" Click="OnEditParameterMappingClick"/><Button Width="24" Height="22" Margin="0,0,3,0" Padding="0" Content="↑" Tag="-1" ToolTip="Move selected Mapping up" Click="OnMoveParameterMappingClick"/><Button Width="24" Height="22" Margin="0,0,3,0" Padding="0" Content="↓" Tag="1" ToolTip="Move selected Mapping down" Click="OnMoveParameterMappingClick"/><Button Width="24" Height="22" Padding="0" Content="+" ToolTip="Add Logical Parameter Mapping" Click="OnAddParameterMappingClick"/></StackPanel></Grid>
-              <ListBox MaxHeight="160" ItemsSource="{Binding ParameterMappings}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnEditParameterMappingClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Edit…" Click="OnEditParameterMappingClick"/><Separator/><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Source}" TextTrimming="CharacterEllipsis"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Target}" TextTrimming="CharacterEllipsis"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
+              <Grid Margin="0,14,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="LOGICAL PARAMETERS"/><Button Width="24" Height="22" HorizontalAlignment="Right" Padding="0" Content="+" ToolTip="Add Logical Parameter" Click="OnAddLogicalParameterClick"/></Grid>
+              <ListBox MaxHeight="160" ItemsSource="{Binding Parameters}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnEditLogicalParameterDefinitionClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Properties…" InputGestureText="Ctrl+P" Click="OnEditLogicalParameterDefinitionClick"/><Separator/><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Type}"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
+              <Grid Margin="0,14,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="PARAMETER MAPPINGS"/><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Width="24" Height="22" Margin="0,0,3,0" Padding="0" Content="↑" Tag="-1" ToolTip="Move selected Mapping up" Click="OnMoveParameterMappingClick"/><Button Width="24" Height="22" Margin="0,0,3,0" Padding="0" Content="↓" Tag="1" ToolTip="Move selected Mapping down" Click="OnMoveParameterMappingClick"/><Button Width="24" Height="22" Padding="0" Content="+" ToolTip="Add Logical Parameter Mapping" Click="OnAddParameterMappingClick"/></StackPanel></Grid>
+              <ListBox MaxHeight="160" ItemsSource="{Binding ParameterMappings}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnEditParameterMappingClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Properties…" InputGestureText="Ctrl+P" Click="OnEditParameterMappingClick"/><Separator/><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Source}" TextTrimming="CharacterEllipsis"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Target}" TextTrimming="CharacterEllipsis"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
               <Grid Margin="0,14,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="MAPPING CHAINS"/></Grid>
-              <ListBox MaxHeight="150" ItemsSource="{Binding MappingChains}" SelectionChanged="OnInstrumentStructureSelectionChanged" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+              <ListBox MaxHeight="150" ItemsSource="{Binding MappingChains}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnOpenInstrumentPropertiesClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                 <ListBox.ContextMenu>
                   <ContextMenu DataContext="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource Self}}">
+                    <MenuItem Header="Properties…" InputGestureText="Ctrl+P" Click="OnOpenInstrumentPropertiesClick"/>
+                    <Separator/>
                     <MenuItem Header="Cut" IsEnabled="{Binding CanDelete}" Click="OnInstrumentStructureCutClick"/>
                     <MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/>
                     <MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/>
@@ -650,19 +682,19 @@
                 <ListBox.ItemTemplate><DataTemplate><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="{Binding Owner}" TextTrimming="CharacterEllipsis"/><TextBlock Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource Text.Caption}" Text="{Binding StepCount, StringFormat={}{0} steps}"/></Grid></DataTemplate></ListBox.ItemTemplate>
               </ListBox>
               <Grid Margin="0,14,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="MAPPING STEPS"/><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Width="24" Height="22" Margin="0,0,3,0" Padding="0" Content="↑" Tag="-1" ToolTip="Move selected step up" Click="OnMoveMappingStepClick"/><Button Width="24" Height="22" Margin="0,0,3,0" Padding="0" Content="↓" Tag="1" ToolTip="Move selected step down" Click="OnMoveMappingStepClick"/><Button Width="24" Height="22" Padding="0" Content="+" ToolTip="Add Mapping Step" Click="OnAddMappingStepClick"/></StackPanel></Grid>
-              <ListBox MaxHeight="190" ItemsSource="{Binding MappingSteps}" SelectionChanged="OnInstrumentStructureSelectionChanged" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Summary}" TextTrimming="CharacterEllipsis"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Owner}" TextTrimming="CharacterEllipsis"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
+              <ListBox MaxHeight="190" ItemsSource="{Binding MappingSteps}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnOpenInstrumentPropertiesClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Properties…" InputGestureText="Ctrl+P" Click="OnOpenInstrumentPropertiesClick"/><Separator/><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Summary}" TextTrimming="CharacterEllipsis"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Owner}" TextTrimming="CharacterEllipsis"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
               <Grid Margin="0,14,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="ENVELOPE PRESETS"/><Button Width="24" Height="22" HorizontalAlignment="Right" Padding="0" Content="+" ToolTip="Add Envelope Preset" Click="OnAddEnvelopeClick"/></Grid>
-              <ListBox MaxHeight="160" ItemsSource="{Binding Envelopes}" SelectionChanged="OnInstrumentStructureSelectionChanged" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Summary}" TextTrimming="CharacterEllipsis"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
-              <Grid Margin="0,14,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="MAPPING FUNCTIONS"/><Button Width="24" Height="22" HorizontalAlignment="Right" Padding="0" Content="+" ToolTip="Add C# Mapping Function" Click="OnAddMappingFunctionClick"/></Grid>
+              <ListBox MaxHeight="160" ItemsSource="{Binding Envelopes}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnOpenInstrumentPropertiesClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Properties…" InputGestureText="Ctrl+P" Click="OnOpenInstrumentPropertiesClick"/><Separator/><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Summary}" TextTrimming="CharacterEllipsis"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
+              <Grid Margin="0,14,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="MAPPING FUNCTION PRESETS"/><Button Width="24" Height="22" HorizontalAlignment="Right" Padding="0" Content="+" ToolTip="Add C# Mapping Function" Click="OnAddMappingFunctionClick"/></Grid>
               <ListBox MaxHeight="160" ItemsSource="{Binding MappingFunctions}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnMappingFunctionDoubleClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource Text.Caption}" Text="{Binding AbiVersion, StringFormat={}ABI v{0}}"/></Grid></DataTemplate></ListBox.ItemTemplate></ListBox>
             </StackPanel>
           </ScrollViewer>
           <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" />
           <TabControl Grid.Column="2" SelectedIndex="{Binding ActiveSectionIndex, Mode=TwoWay}" Loaded="OnInstrumentSectionsLoaded" SelectionChanged="OnInstrumentSectionSelectionChanged">
-            <TabItem x:Name="InstrumentSubVoicesTab" Header="SubVoices">
+            <TabItem x:Name="InstrumentSubVoicesTab" Header="SubVoice">
               <Grid><Grid.RowDefinitions><RowDefinition Height="42"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                 <Border Padding="10,0" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
-                  <Grid><StackPanel VerticalAlignment="Center"><TextBlock FontWeight="SemiBold" Text="{Binding ActiveSubVoiceName}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding ActiveSubVoiceContext}"/></StackPanel><StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal"><CheckBox Margin="0,0,12,0" Style="{StaticResource InstrumentProjectCheckBox}" Content="Follow Instance Velocity" IsChecked="{Binding ActiveSubVoiceFollowsInstanceVelocity, Mode=OneWay}" ToolTip="Use the Logical Note instance velocity as the base of this SubVoice's Note Velocity Mapping" Click="OnFollowInstanceVelocityClick"/><Button Content="Select SubVoice" Click="OnSelectActiveSubVoiceClick"/></StackPanel></Grid>
+                  <Grid><StackPanel VerticalAlignment="Center"><TextBlock FontWeight="SemiBold" Text="{Binding ActiveSubVoiceName}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding ActiveSubVoiceContext}"/></StackPanel><CheckBox HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource InstrumentProjectCheckBox}" Content="Follow Instance Velocity" IsChecked="{Binding ActiveSubVoiceFollowsInstanceVelocity, Mode=OneWay}" ToolTip="Use the Logical Note instance velocity as the base of this SubVoice's Note Velocity Mapping" Click="OnFollowInstanceVelocityClick"/></Grid>
                 </Border>
                 <TabControl Grid.Row="1">
                   <TabItem Header="Timeline">
@@ -712,7 +744,7 @@
                                             PitchPreviewRequested="OnTimelinePitchPreviewRequested" PitchPreviewReleased="OnTimelinePitchPreviewReleased"
                                             NotePlacementStarted="OnTimelineNotePlacementStarted" NotePlacementCompleted="OnTimelineNotePlacementCompleted" NotePlacementCancelled="OnTimelineNotePlacementCancelled"
                                             MarqueeCompleted="OnTimelineMarqueeCompleted"/>
-                        <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding MaximumFirstLane, ElementName=SubVoiceNoteTimeline}" Value="{Binding FirstLane, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" SmallChange="1" LargeChange="{Binding VisibleLaneCount, ElementName=SubVoiceNoteTimeline}" ViewportSize="{Binding VisibleLaneCount, ElementName=SubVoiceNoteTimeline}"/>
+                        <ScrollBar Grid.Column="1" Width="12" Background="{StaticResource Brush.Surface.1}" Orientation="Vertical" IsEnabled="{Binding CanScrollLanes, ElementName=SubVoiceNoteTimeline}" Maximum="{Binding MaximumFirstLane, ElementName=SubVoiceNoteTimeline}" Value="{Binding FirstLane, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" SmallChange="1" LargeChange="{Binding VisibleLaneCount, ElementName=SubVoiceNoteTimeline}" ViewportSize="{Binding VisibleLaneCount, ElementName=SubVoiceNoteTimeline}"/>
                         </Grid>
                       </GroupBox>
                       <GroupBox Grid.Row="1" Style="{StaticResource RenderedSurfaceHost}" AutomationProperties.Name="SubVoice timeline overview and horizontal scroll">
@@ -730,7 +762,7 @@
                           StartTick="{Binding StartTick, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}" TickSpan="{Binding TickSpan, ElementName=SubVoiceNoteTimeline, Mode=TwoWay}"
                           FirstLane="0" LaneHeight="128" GridStepTicks="{Binding EditorSettings.DisplayGridStepTicks}" GridVisible="{Binding EditorSettings.GridVisible}"
                           DisplayGridUsesBars="{Binding EditorSettings.DisplayGridUsesBars}" TimeSignatureMap="{Binding EditorSettings.TimeSignatureMap}"
-                          VelocityEditCompleted="OnTimelineVelocityEditCompleted"/><ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding ValueScrollMaximum, ElementName=SubVoiceVelocityTimeline}" Value="{Binding VelocityValueScrollOffset, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SubVoiceVelocityTimeline}"/></Grid></TabItem>
+                          VelocityEditCompleted="OnTimelineVelocityEditCompleted"/><ScrollBar Grid.Column="1" Width="12" Background="{StaticResource Brush.Surface.1}" Orientation="Vertical" IsEnabled="{Binding CanScrollValues, ElementName=SubVoiceVelocityTimeline}" Maximum="{Binding ValueScrollMaximum, ElementName=SubVoiceVelocityTimeline}" Value="{Binding VelocityValueScrollOffset, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SubVoiceVelocityTimeline}"/></Grid></TabItem>
                         <TabItem Header="Event Lane"><Grid><Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                           <Border Padding="8,0" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
                             <Grid>
@@ -753,38 +785,29 @@
                                               EditCursorTick="{Binding EditCursorTick}" RangeStartTick="0" RangeEndTick="{Binding TemplateLengthTicks}"
                                               ItemInvoked="OnTimelineItemInvoked" ItemEditCompleted="OnTimelineItemEditCompleted" BackgroundInvoked="OnTimelineBackgroundInvoked" LaneHeaderInvoked="OnTimelineLaneHeaderInvoked"
                                               EventPointEditCompleted="OnTimelineEventPointEditCompleted" MarqueeCompleted="OnTimelineMarqueeCompleted"/>
-                          <ScrollBar Grid.Column="1" Width="12" Orientation="Vertical" Maximum="{Binding ValueScrollMaximum, ElementName=SubVoiceEventTimeline}" Value="{Binding EventValueScrollOffset, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SubVoiceEventTimeline}"/>
+                          <ScrollBar Grid.Column="1" Width="12" Background="{StaticResource Brush.Surface.1}" Orientation="Vertical" IsEnabled="{Binding CanScrollValues, ElementName=SubVoiceEventTimeline}" Maximum="{Binding ValueScrollMaximum, ElementName=SubVoiceEventTimeline}" Value="{Binding EventValueScrollOffset, Mode=TwoWay}" ViewportSize="{Binding ValueScrollViewportSize, ElementName=SubVoiceEventTimeline}"/>
                           </Grid>
                         </Grid></TabItem>
                       </TabControl>
                     </Grid>
                   </TabItem>
                   <TabItem Header="Initial State">
-                    <Grid Margin="12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                      <Border Style="{StaticResource Card}"><Grid><StackPanel><TextBlock Style="{StaticResource Text.Section}" Text="SubVoice Initial State"/><TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Initial State has no tick. It does not affect Template Length. A user event at tick 0 may override it." TextWrapping="Wrap"/></StackPanel><StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal"><Button Margin="0,0,5,0" Content="Select in Inspector" Click="OnSelectActiveSubVoiceClick"/><Button Style="{StaticResource Button.Primary}" Content="Add CC / RPN / NRPN…" Tag="ActiveSubVoice" Click="OnAddInstrumentStateClick"/></StackPanel></Grid></Border>
-                      <TextBlock Grid.Row="1" Margin="0,12,0,6" Style="{StaticResource Text.Caption}" Text="Blank/Not set values are edited by clearing their Inspector field. Program is displayed as the user-facing 1–128 value." TextWrapping="Wrap"/>
-                      <ListBox Grid.Row="2" ItemsSource="{Binding InitialStateEntries}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
-                        <ListBox.ItemTemplate><DataTemplate><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="230"/><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="{Binding Target}"/><TextBlock Grid.Column="1" Style="{StaticResource Text.Mono}" Text="{Binding Value}"/><TextBlock Grid.Column="2" Style="{StaticResource Text.Caption}" Text="{Binding Scope}"/></Grid></DataTemplate></ListBox.ItemTemplate>
-                      </ListBox>
+                    <Grid Margin="12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                      <Border Style="{StaticResource Card}"><Grid><StackPanel><TextBlock Style="{StaticResource Text.Section}" Text="SubVoice Initial State"/><TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Initial State has no tick. Blank removes a value; Program uses the internal 0–127 value." TextWrapping="Wrap"/></StackPanel><Button HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource Button.Primary}" Content="Add CC / RPN / NRPN…" Tag="ActiveSubVoice" Click="OnAddInstrumentStateClick"/></Grid></Border>
+                      <ScrollViewer Grid.Row="1" Margin="0,12,0,0" VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                          <UniformGrid Columns="2">
+                            <StackPanel Margin="0,0,8,10"><TextBlock Style="{StaticResource PropertyLabel}" Text="NAME"/><TextBox Style="{StaticResource InstrumentProjectTextBox}" Tag="Name" Text="{Binding ActiveSubVoiceNameText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnSubVoiceConfigurationLostFocus"/></StackPanel>
+                            <StackPanel Margin="8,0,0,10"><TextBlock Style="{StaticResource PropertyLabel}" Text="ROOT NOTE OVERRIDE (BLANK = INHERIT)"/><TextBox Style="{StaticResource InstrumentProjectTextBox}" Tag="RootNote" Text="{Binding ActiveSubVoiceRootNoteText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnSubVoiceConfigurationLostFocus"/></StackPanel>
+                          </UniformGrid>
+                          <ItemsControl ItemsSource="{Binding ActiveSubVoiceInitialStateFields}">
+                            <ItemsControl.ItemTemplate><DataTemplate><Grid Margin="0,0,0,7"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Style="{StaticResource PropertyLabel}" Text="{Binding Label}" TextTrimming="CharacterEllipsis"/><TextBox Grid.Column="1" Style="{StaticResource InstrumentProjectTextBox}" Tag="{Binding}" Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnSubVoiceInitialStateFieldLostFocus"/></Grid></DataTemplate></ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                        </StackPanel>
+                      </ScrollViewer>
                     </Grid>
                   </TabItem>
                 </TabControl>
-              </Grid>
-            </TabItem>
-            <TabItem Header="Parameters">
-              <Grid Margin="10"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                  <Grid Margin="0,0,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="LOGICAL PARAMETERS"/><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Margin="0,0,4,0" Content="Edit…" Click="OnEditLogicalParameterDefinitionClick"/><Button Content="Add…" Click="OnAddLogicalParameterClick"/></StackPanel></Grid>
-                  <ListBox Grid.Row="1" ItemsSource="{Binding Parameters}" SelectionChanged="OnInstrumentStructureSelectionChanged" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"><ListBox.ItemTemplate><DataTemplate><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="{Binding Name}"/><TextBlock Grid.Column="1" Style="{StaticResource Text.Caption}" Text="{Binding Type}"/></Grid></DataTemplate></ListBox.ItemTemplate></ListBox>
-                  <Grid Grid.Row="2" Margin="0,12,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="PARAMETER MAPPINGS"/><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Margin="0,0,4,0" Content="Edit…" Click="OnEditParameterMappingClick"/><Button Width="28" Margin="0,0,3,0" Padding="0" Content="↑" Tag="-1" ToolTip="Move selected Mapping up" Click="OnMoveParameterMappingClick"/><Button Width="28" Margin="0,0,4,0" Padding="0" Content="↓" Tag="1" ToolTip="Move selected Mapping down" Click="OnMoveParameterMappingClick"/><Button Content="Add…" Click="OnAddParameterMappingClick"/></StackPanel></Grid>
-                  <ListBox Grid.Row="3" ItemsSource="{Binding ParameterMappings}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnEditParameterMappingClick" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"><ListBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Source}"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Target}" TextTrimming="CharacterEllipsis"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
-                </Grid>
-                <Grid Grid.Column="2"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                  <Grid Margin="0,0,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="C# MAPPING FUNCTIONS · ABI V2"/><Button HorizontalAlignment="Right" Content="Add…" Click="OnAddMappingFunctionClick"/></Grid>
-                  <ListBox Grid.Row="1" ItemsSource="{Binding MappingFunctions}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnMappingFunctionDoubleClick" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"><ListBox.ItemTemplate><DataTemplate><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="{Binding Name}"/><TextBlock Grid.Column="1" Style="{StaticResource Text.Caption}" Text="{Binding AbiVersion, StringFormat={}ABI v{0}}"/></Grid></DataTemplate></ListBox.ItemTemplate></ListBox>
-                  <Grid Grid.Row="2" Margin="0,12,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="MAPPING CHAINS AND STEPS"/><Button HorizontalAlignment="Right" Content="Add Step" Click="OnAddMappingStepClick"/></Grid>
-                  <Grid Grid.Row="3"><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="*"/></Grid.RowDefinitions><ListBox ItemsSource="{Binding MappingChains}" SelectionChanged="OnInstrumentStructureSelectionChanged" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"><ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Owner}" TextTrimming="CharacterEllipsis"/></DataTemplate></ListBox.ItemTemplate></ListBox><ListBox Grid.Row="1" Margin="0,6,0,0" ItemsSource="{Binding MappingSteps}" SelectionChanged="OnInstrumentStructureSelectionChanged" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"><ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Summary}" TextTrimming="CharacterEllipsis"/></DataTemplate></ListBox.ItemTemplate></ListBox></Grid>
-                </Grid>
               </Grid>
             </TabItem>
             <TabItem Header="Configurations">
@@ -795,7 +818,6 @@
                     <StackPanel Margin="0,0,8,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="NAME"/><TextBox Style="{StaticResource InstrumentProjectTextBox}" Tag="Name" Text="{Binding InstrumentNameText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnInstrumentConfigurationLostFocus"/></StackPanel>
                     <StackPanel Margin="8,0,0,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="COLOR"/><Button HorizontalContentAlignment="Stretch" Click="OnSelectInstrumentColorClick"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Border Width="12" Height="12" VerticalAlignment="Center" Background="{Binding InstrumentColorText}" BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1"/><TextBlock Grid.Column="1" Margin="7,0,0,0" VerticalAlignment="Center" Text="{Binding InstrumentColorText}"/></Grid></Button></StackPanel>
                     <StackPanel Margin="0,0,8,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="DESCRIPTION"/><TextBox Style="{StaticResource InstrumentProjectTextBox}" Tag="Description" Text="{Binding InstrumentDescriptionText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" LostKeyboardFocus="OnInstrumentConfigurationLostFocus"/></StackPanel>
-                    <StackPanel Margin="8,0,0,8"><TextBlock Style="{StaticResource PropertyLabel}" Text="STABLE ID"/><TextBox IsReadOnly="True" Text="{Binding InstrumentStableIdText, Mode=OneWay}"/></StackPanel>
                   </UniformGrid>
                   <TextBlock Style="{StaticResource Text.Section}" Text="Template"/>
                   <UniformGrid Margin="0,8,0,8" Columns="2">
@@ -961,7 +983,7 @@
     <Grid>
       <Grid.RowDefinitions>
         <RowDefinition Height="36"/><RowDefinition Height="30"/><RowDefinition Height="46"/>
-        <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition x:Name="BottomPanelSplitterRow" Height="4"/><RowDefinition x:Name="BottomPanelRow" Height="150"/><RowDefinition Height="25"/>
+        <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="25"/>
       </Grid.RowDefinitions>
 
       <Grid Grid.Row="0" Background="{StaticResource Brush.Black}"
@@ -982,9 +1004,9 @@
 
       <Border Grid.Row="1" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
         <Menu x:Name="MainMenu" Margin="6,0">
-          <MenuItem Header="File"><MenuItem Header="New Project…" InputGestureText="Ctrl+N" Click="OnNewProjectClick"/><MenuItem Header="Open Project…" InputGestureText="Ctrl+O" Click="OnOpenProjectClick"/><MenuItem Header="Open MIDI as New Project…" Click="OnOpenMidiAsNewProjectClick"/><MenuItem x:Name="RecentProjectsMenu" Header="Open Recent" SubmenuOpened="OnRecentProjectsSubmenuOpened"/><Separator/><MenuItem Header="Save Project" InputGestureText="Ctrl+S" IsEnabled="{Binding CanSaveProject}" Click="OnSaveProjectClick"/><MenuItem Header="Save Copy…" IsEnabled="{Binding CanSaveProject}" Click="OnSaveCopyClick"/><Separator/><MenuItem Header="Close Project" Click="OnCloseProjectClick"/><MenuItem Header="Exit" Click="OnExitClick"/></MenuItem>
+          <MenuItem Header="File"><MenuItem Header="New Project…" InputGestureText="Ctrl+N" Click="OnNewProjectClick"/><MenuItem Header="Open Project…" InputGestureText="Ctrl+O" Click="OnOpenProjectClick"/><MenuItem Header="Open MIDI as New Project…" Click="OnOpenMidiAsNewProjectClick"/><Separator/><MenuItem Header="Save Project" InputGestureText="Ctrl+S" IsEnabled="{Binding CanSaveProject}" Click="OnSaveProjectClick"/><MenuItem Header="Save Copy…" IsEnabled="{Binding CanSaveProject}" Click="OnSaveCopyClick"/><Separator/><MenuItem Header="Close Project" Click="OnCloseProjectClick"/><MenuItem Header="Exit" Click="OnExitClick"/></MenuItem>
           <MenuItem Header="Edit"><MenuItem Header="Undo" InputGestureText="Ctrl+Z" IsEnabled="{Binding CanEditProject}" Click="OnUndoClick"/><MenuItem Header="Redo" InputGestureText="Ctrl+Y" IsEnabled="{Binding CanEditProject}" Click="OnRedoClick"/><Separator/><MenuItem Header="Cut" InputGestureText="Ctrl+X" IsEnabled="{Binding CanEditProject}" Click="OnCutClick"/><MenuItem Header="Copy" InputGestureText="Ctrl+C" IsEnabled="{Binding HasProject}" Click="OnCopyClick"/><MenuItem Header="Paste" InputGestureText="Ctrl+V" IsEnabled="{Binding CanEditProject}" Click="OnPasteClick"/><MenuItem Header="Select All" InputGestureText="Ctrl+A" IsEnabled="{Binding HasProject}" Click="OnSelectAllClick"/><MenuItem Header="Duplicate Selection" InputGestureText="Ctrl+D" IsEnabled="{Binding CanEditProject}" Click="OnDuplicateClick"/><Separator/><MenuItem Header="Application Preferences…" IsEnabled="{Binding CanStartForegroundTask}" Click="OnApplicationPreferencesClick"/></MenuItem>
-          <MenuItem Header="View"><MenuItem Header="Arrangement" Click="OnOpenArrangementClick"/><MenuItem Header="Diagnostics" Click="OnOpenDiagnosticsClick"/><Separator/><MenuItem x:Name="ProjectPanelMenuItem" Header="Project Panel" Visibility="Collapsed" IsCheckable="True" Click="OnToggleProjectPanelClick"/><MenuItem x:Name="InspectorMenuItem" Header="Inspector" IsCheckable="True" Click="OnToggleInspectorClick"/><MenuItem x:Name="BottomPanelMenuItem" Header="Bottom Panel" IsCheckable="True" Click="OnToggleBottomPanelClick"/><Separator/><MenuItem x:Name="SnapMenuItem" Header="Snap to Grid" IsCheckable="True" Click="OnToggleSnapClick"/><MenuItem x:Name="FollowPlaybackMenuItem" Header="Follow Playback" IsCheckable="True" Click="OnToggleFollowPlaybackClick"/><Separator/><MenuItem Header="Reset Layout" Click="OnResetLayoutClick"/><MenuItem Header="Reset Editor View Preferences" Click="OnResetEditorPreferencesClick"/><MenuItem Header="Reset All UI Preferences…" Click="OnResetAllUiPreferencesClick"/></MenuItem>
+          <MenuItem Header="View"><MenuItem Header="Arrangement" Click="OnOpenArrangementClick"/><MenuItem Header="Diagnostics" Click="OnOpenDiagnosticsClick"/><Separator/><MenuItem x:Name="ProjectPanelMenuItem" Header="Project Panel" Visibility="Collapsed" IsCheckable="True" Click="OnToggleProjectPanelClick"/><MenuItem x:Name="SnapMenuItem" Header="Snap to Grid" IsCheckable="True" Click="OnToggleSnapClick"/><MenuItem x:Name="FollowPlaybackMenuItem" Header="Follow Playback" IsCheckable="True" Click="OnToggleFollowPlaybackClick"/><Separator/><MenuItem Header="Reset Layout" Click="OnResetLayoutClick"/><MenuItem Header="Reset Editor View Preferences" Click="OnResetEditorPreferencesClick"/><MenuItem Header="Reset All UI Preferences…" Click="OnResetAllUiPreferencesClick"/></MenuItem>
           <MenuItem Header="Project" IsEnabled="{Binding HasProject}"><MenuItem Header="New Event Instrument" IsEnabled="{Binding CanEditProject}" Click="OnNewInstrumentClick"/><Separator/><MenuItem Header="New Logical Track" IsEnabled="{Binding CanEditProject}" Click="OnNewTrackClick"/><MenuItem Header="New Logical Track with Instrument…" IsEnabled="{Binding CanEditProject}" Click="OnNewTrackWithInstrumentClick"/><MenuItem Header="New Raw MIDI Track…" IsEnabled="{Binding CanEditProject}" Click="OnNewRawMidiTrackClick"/><Separator/><MenuItem Header="Project Settings" Click="OnOpenSettingsClick"/></MenuItem>
           <MenuItem Header="Playback"><MenuItem Header="Play" InputGestureText="Space" IsEnabled="{Binding CanPlayback}" Click="OnPlayClick"/><MenuItem Header="Stop" InputGestureText="Space" IsEnabled="{Binding IsPlaybackActive}" Click="OnStopClick"/><Separator/><MenuItem Header="Reset Playback Engine" Click="OnResetPlaybackClick"/></MenuItem>
           <MenuItem Header="Compile" IsEnabled="{Binding CanRunProjectTask}"><MenuItem Header="Compile Project" Click="OnCompileClick"/></MenuItem>
@@ -1067,7 +1089,7 @@
       </Border>
 
       <Grid Grid.Row="4">
-        <Grid.ColumnDefinitions><ColumnDefinition x:Name="ProjectPanelColumn" Width="0" MinWidth="0"/><ColumnDefinition x:Name="ProjectSplitterColumn" Width="0"/><ColumnDefinition Width="*" MinWidth="500"/><ColumnDefinition x:Name="InspectorSplitterColumn" Width="4"/><ColumnDefinition x:Name="InspectorColumn" Width="270" MinWidth="220" MaxWidth="420"/></Grid.ColumnDefinitions>
+        <Grid.ColumnDefinitions><ColumnDefinition x:Name="ProjectPanelColumn" Width="0" MinWidth="0"/><ColumnDefinition x:Name="ProjectSplitterColumn" Width="0"/><ColumnDefinition Width="*" MinWidth="500"/></Grid.ColumnDefinitions>
         <Grid x:Name="ProjectPanelGrid" Visibility="Collapsed" Background="{StaticResource Brush.Surface.1}">
           <Grid.RowDefinitions><RowDefinition Height="34"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
           <Border Style="{StaticResource PanelHeader}"><Grid><TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Project"/><ToggleButton x:Name="NewProjectItemButton" Width="26" Height="24" HorizontalAlignment="Right" Padding="0" AutomationProperties.Name="New Project item" ToolTip="New Project item" IsChecked="{Binding IsOpen, ElementName=NewProjectItemPopup, Mode=TwoWay}"><ui:FluentIcon Width="14" Height="14" Data="{StaticResource Fluent.Add20Regular}"/></ToggleButton><Popup x:Name="NewProjectItemPopup" Placement="Bottom" PlacementTarget="{Binding ElementName=NewProjectItemButton}" StaysOpen="False" AllowsTransparency="True"><Border MinWidth="230" Padding="4" Background="{StaticResource Brush.Surface.2}" BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1" CornerRadius="{StaticResource Radius.Medium}"><StackPanel><StackPanel.Resources><Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}"><Setter Property="Height" Value="28"/><Setter Property="Padding" Value="12,0"/><Setter Property="HorizontalContentAlignment" Value="Left"/><Setter Property="BorderThickness" Value="0"/></Style></StackPanel.Resources><Button Content="New Logical Track" Click="OnNewTrackClick"/><Button Content="New Event Instrument" Click="OnNewInstrumentClick"/></StackPanel></Border></Popup></Grid></Border>
@@ -1108,83 +1130,9 @@
             <Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding HasProject}" Value="False"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Border.Style>
           </Border>
         </Grid>
-        <GridSplitter x:Name="InspectorSplitter" Grid.Column="3" HorizontalAlignment="Stretch"/>
-        <Grid x:Name="InspectorGrid" Grid.Column="4" Background="{StaticResource Brush.Surface.1}">
-          <Grid.RowDefinitions><RowDefinition Height="34"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <Border Style="{StaticResource PanelHeader}"><TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="Inspector"/></Border>
-          <ScrollViewer Grid.Row="1" Padding="11" VerticalScrollBarVisibility="Auto">
-            <StackPanel DataContext="{Binding Inspector}">
-              <TextBlock Style="{StaticResource Text.Section}" Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
-              <TextBlock Margin="0,3,0,13" Style="{StaticResource Text.Caption}" Text="{Binding Context}" TextWrapping="Wrap"/>
-              <Border Margin="0,0,0,10" Padding="8" Background="{StaticResource Brush.Red.Subtle}" BorderBrush="{StaticResource Brush.Red}" BorderThickness="1" CornerRadius="3">
-                <Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding HasError}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Border.Style>
-                <TextBlock Foreground="{StaticResource Brush.Red.Hover}" Text="{Binding ErrorText}" TextWrapping="Wrap"/>
-              </Border>
-              <ItemsControl ItemsSource="{Binding Fields}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <StackPanel Margin="0,0,0,10">
-                      <TextBlock Style="{StaticResource PropertyLabel}" Text="{Binding Label}"/>
-                      <Grid>
-                      <TextBox Tag="{Binding}" Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=Explicit}"
-                               LostKeyboardFocus="OnInspectorFieldLostKeyboardFocus"
-                               KeyDown="OnInspectorFieldKeyDown">
-                        <TextBox.Style>
-                          <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
-                            <Setter Property="IsReadOnly" Value="True"/>
-                            <Setter Property="AutomationProperties.HelpText" Value="{Binding ValueState}"/>
-                            <Style.Triggers>
-                              <DataTrigger Binding="{Binding IsChoice}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
-                              <DataTrigger Binding="{Binding IsBoolean}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
-                              <MultiDataTrigger><MultiDataTrigger.Conditions><Condition Binding="{Binding IsEditable}" Value="True"/><Condition Binding="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="True"/></MultiDataTrigger.Conditions><Setter Property="IsReadOnly" Value="False"/></MultiDataTrigger>
-                              <DataTrigger Binding="{Binding IsMixed}" Value="True"><Setter Property="Foreground" Value="{StaticResource Brush.Warning}"/><Setter Property="FontStyle" Value="Italic"/></DataTrigger>
-                              <DataTrigger Binding="{Binding IsUnavailable}" Value="True"><Setter Property="Foreground" Value="{StaticResource Brush.Text.Disabled}"/><Setter Property="FontStyle" Value="Italic"/></DataTrigger>
-                            </Style.Triggers>
-                          </Style>
-                        </TextBox.Style>
-                      </TextBox>
-                      <ComboBox Tag="{Binding}" ItemsSource="{Binding Choices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" DropDownClosed="OnInspectorChoiceDropDownClosed">
-                        <ComboBox.Style><Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}"><Setter Property="Visibility" Value="Collapsed"/><Setter Property="IsEnabled" Value="False"/><Style.Triggers><DataTrigger Binding="{Binding IsChoice}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger><MultiDataTrigger><MultiDataTrigger.Conditions><Condition Binding="{Binding IsChoice}" Value="True"/><Condition Binding="{Binding IsEditable}" Value="True"/><Condition Binding="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="True"/></MultiDataTrigger.Conditions><Setter Property="IsEnabled" Value="True"/></MultiDataTrigger></Style.Triggers></Style></ComboBox.Style>
-                      </ComboBox>
-                      <CheckBox Tag="{Binding}" Content="Enabled" IsChecked="{Binding BooleanValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Click="OnInspectorBooleanClick">
-                        <CheckBox.Style><Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}"><Setter Property="Visibility" Value="Collapsed"/><Setter Property="IsEnabled" Value="False"/><Style.Triggers><DataTrigger Binding="{Binding IsBoolean}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger><MultiDataTrigger><MultiDataTrigger.Conditions><Condition Binding="{Binding IsBoolean}" Value="True"/><Condition Binding="{Binding IsEditable}" Value="True"/><Condition Binding="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="True"/></MultiDataTrigger.Conditions><Setter Property="IsEnabled" Value="True"/></MultiDataTrigger></Style.Triggers></Style></CheckBox.Style>
-                      </CheckBox>
-                      </Grid>
-                    </StackPanel>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </StackPanel>
-          </ScrollViewer>
-        </Grid>
       </Grid>
 
-      <GridSplitter x:Name="BottomPanelSplitter" Grid.Row="5" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"/>
-      <TabControl x:Name="BottomTabs" Grid.Row="6" Background="{StaticResource Brush.Surface.1}">
-        <TabItem Header="Diagnostics">
-          <Grid DataContext="{Binding BottomDiagnosticsViewModel}">
-            <Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-            <Grid Margin="5,3"><Grid.ColumnDefinitions><ColumnDefinition Width="130"/><ColumnDefinition Width="150"/><ColumnDefinition Width="170"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-              <ComboBox Height="24" Margin="0,0,5,0" VerticalAlignment="Center" ItemsSource="{Binding SeverityFilters}" SelectedItem="{Binding SeverityFilter}" ToolTip="Severity filter"/>
-              <ComboBox Grid.Column="1" Height="24" Margin="0,0,5,0" VerticalAlignment="Center" ItemsSource="{Binding StatusFilters}" SelectedItem="{Binding StatusFilter}" ToolTip="Activity filter"/>
-              <ComboBox Grid.Column="2" Height="24" Margin="0,0,5,0" VerticalAlignment="Center" ItemsSource="{Binding ScopeFilters}" SelectedItem="{Binding ScopeFilter}" ToolTip="Scope filter"/>
-              <TextBlock Grid.Column="3" HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="{Binding Summary}"/>
-            </Grid>
-            <ListBox x:Name="BottomDiagnosticsList" Grid.Row="1" ItemsSource="{Binding Diagnostics}" SelectedItem="{Binding DataContext.SelectedBottomDiagnostic, RelativeSource={RelativeSource AncestorType={x:Type Window}}, Mode=TwoWay}" MouseDoubleClick="OnDiagnosticDoubleClick" ContextMenu="{StaticResource DiagnosticContextMenu}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"><ListBox.ItemTemplate><DataTemplate><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="76"/><ColumnDefinition Width="85"/><ColumnDefinition Width="100"/><ColumnDefinition Width="*"/><ColumnDefinition Width="220"/></Grid.ColumnDefinitions><TextBlock Foreground="{StaticResource Brush.Red.Hover}" Text="{Binding Severity}"/><TextBlock Grid.Column="1" Style="{StaticResource Text.Mono}" Text="{Binding Code}"/><TextBlock Grid.Column="2" Style="{StaticResource Text.Caption}" Text="{Binding Status}"/><TextBlock Grid.Column="3" Text="{Binding Message}" TextTrimming="CharacterEllipsis"/><TextBlock Grid.Column="4" Style="{StaticResource Text.Caption}" Text="{Binding Source}" TextTrimming="CharacterEllipsis"/></Grid></DataTemplate></ListBox.ItemTemplate></ListBox>
-          </Grid>
-        </TabItem>
-        <TabItem Header="Details"><Grid Margin="12" DataContext="{Binding SelectedBottomDiagnostic}"><Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><StackPanel><TextBlock Style="{StaticResource PropertyLabel}" Text="SEVERITY"/><TextBlock Text="{Binding Severity, TargetNullValue=No diagnostic selected}"/><TextBlock Margin="0,10,0,0" Style="{StaticResource PropertyLabel}" Text="CODE"/><TextBlock Style="{StaticResource Text.Mono}" Text="{Binding Code}"/></StackPanel><StackPanel Grid.Column="1"><TextBlock Style="{StaticResource PropertyLabel}" Text="MESSAGE"/><TextBlock Text="{Binding Message}" TextWrapping="Wrap"/><TextBlock Margin="0,10,0,0" Style="{StaticResource PropertyLabel}" Text="SOURCE"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Source}"/></StackPanel></Grid></TabItem>
-        <TabItem Header="Tasks">
-          <Grid>
-            <ListBox ItemsSource="{Binding TaskHistory}"><ListBox.ItemTemplate><DataTemplate><Grid Margin="4,2"><Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/><ColumnDefinition Width="130"/><ColumnDefinition Width="78"/></Grid.ColumnDefinitions><TextBlock FontWeight="SemiBold" Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Grid.Column="1" Style="{StaticResource Text.Caption}" Text="{Binding Status}"/><TextBlock Grid.Column="2" Text="{Binding Detail}" TextTrimming="CharacterEllipsis"/><ProgressBar Grid.Column="3" Height="6" Margin="8,0" VerticalAlignment="Center" Minimum="0" Maximum="1" Value="{Binding Progress, Mode=OneWay, TargetNullValue=0}"><ProgressBar.Style><Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}"><Style.Triggers><DataTrigger Binding="{Binding Progress}" Value="{x:Null}"><Setter Property="IsIndeterminate" Value="True"/></DataTrigger><DataTrigger Binding="{Binding IsRunning}" Value="False"><Setter Property="IsIndeterminate" Value="False"/></DataTrigger></Style.Triggers></Style></ProgressBar.Style></ProgressBar><Button Grid.Column="4" Height="24" Padding="5,0" Content="Cancel" IsEnabled="{Binding CanRequestCancel}" Tag="{Binding}" Click="OnCancelTaskClick"><Button.Style><Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Style.Triggers><DataTrigger Binding="{Binding CanCancel}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></Button.Style></Button></Grid></DataTemplate></ListBox.ItemTemplate></ListBox>
-            <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Text="No tasks in this Project session">
-              <TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding TaskHistory.Count}" Value="0"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
-            </TextBlock>
-          </Grid>
-        </TabItem>
-      </TabControl>
-
-      <Border Grid.Row="7" Padding="9,0" Background="{StaticResource Brush.Black}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+      <Border Grid.Row="5" Padding="9,0" Background="{StaticResource Brush.Black}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
         <Grid>
           <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
             <Ellipse Width="6" Height="6" Margin="0,0,6,0" ToolTip="{Binding IssueSummary}">
@@ -1238,13 +1186,13 @@
           </StackPanel>
           <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
             <TextBlock MaxWidth="520" VerticalAlignment="Center" Text="{Binding StatusMessage}" TextTrimming="CharacterEllipsis"><TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}"><Setter Property="Foreground" Value="{StaticResource Brush.Text.Tertiary}"/><Style.Triggers><DataTrigger Binding="{Binding StatusMessageIsError}" Value="True"><Setter Property="Foreground" Value="{StaticResource Brush.Red.Hover}"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
-            <Button Height="20" Margin="7,0,0,0" Padding="6,0" Content="Details" Click="OnStatusMessageDetailsClick"><Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding HasStatusMessage}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style></Button>
+            <Button Height="20" Margin="7,0,0,0" Padding="6,0" Content="View Full Message" Click="OnStatusMessageDetailsClick"><Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding HasStatusMessage}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style></Button>
             <Button Height="20" Margin="7,0,0,0" Padding="6,0" Content="Dismiss" Click="OnDismissStatusMessageClick"><Button.Style><Style TargetType="Button" BasedOn="{StaticResource Button.Ghost}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding HasStatusMessage}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style></Button>
           </StackPanel>
         </Grid>
       </Border>
 
-      <Border x:Name="TaskLockOverlay" Grid.RowSpan="8" Panel.ZIndex="1000" Focusable="True"
+      <Border x:Name="TaskLockOverlay" Grid.RowSpan="6" Panel.ZIndex="1000" Focusable="True"
               Background="#D9101216" IsHitTestVisible="True">
         <Border.Style>
           <Style TargetType="Border">

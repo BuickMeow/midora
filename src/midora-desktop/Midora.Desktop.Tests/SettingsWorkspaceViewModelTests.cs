@@ -21,13 +21,13 @@ public sealed class SettingsWorkspaceViewModelTests
             },
             totalEditingTimeMilliseconds: ((2L * 86_400 + 3_661) * 1_000));
 
-        InspectorField notes = Assert.Single(
+        PropertyField notes = Assert.Single(
             workspace.GeneralFields,
             value => value.Key == "settings.project.noteCount");
-        InspectorField events = Assert.Single(
+        PropertyField events = Assert.Single(
             workspace.GeneralFields,
             value => value.Key == "settings.project.eventCount");
-        InspectorField workTime = Assert.Single(
+        PropertyField workTime = Assert.Single(
             workspace.GeneralFields,
             value => value.Key == "settings.project.totalWorkTime");
 

@@ -74,8 +74,8 @@
         <Grid>
           <Button Width="90" HorizontalAlignment="Left" Content="Validate" Click="OnValidateClick"/>
           <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
-            <Button Width="84" Margin="0,0,6,0" Content="Cancel" IsCancel="True" Click="OnCancelClick"/>
-            <Button Width="84" Style="{StaticResource Button.Primary}" Content="Apply" IsDefault="True" Click="OnApplyClick"/>
+            <Button Margin="0,0,6,0" Style="{StaticResource Button.Dialog.Cancel}" Content="Cancel" Click="OnCancelClick"/>
+            <Button Style="{StaticResource Button.Dialog.Confirm}" Content="Apply" Click="OnApplyClick"/>
           </StackPanel>
         </Grid>
       </Border>

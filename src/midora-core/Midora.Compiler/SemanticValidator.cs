@@ -46,7 +46,7 @@ public static class SemanticValidator
             if (!instruments.TryAdd(instrument.Id, instrument)
                 && (request.IncludedTrackIds is null || participates))
             {
-                Error("MIDORA1201", "The Event Instrument ID is duplicated.", source);
+                Error("MIDORA1201", "The Project contains a duplicate Event Instrument object.", source);
             }
             if ((request.IncludedTrackIds is null || participates)
                 && (string.IsNullOrWhiteSpace(instrument.Name)
@@ -316,7 +316,7 @@ public static class SemanticValidator
             SourceReference subSource = source with { SubVoiceId = subVoice.Id };
             if (!subVoiceIds.Add(subVoice.Id) || subVoice.RootNoteOverride is < 0 or > 127)
             {
-                AddError("MIDORA1220", "The SubVoice ID is duplicated or its Root Note Override is invalid.", subSource, diagnostics);
+                AddError("MIDORA1220", "The Project contains a duplicate SubVoice object or an invalid Root Note Override.", subSource, diagnostics);
             }
             ValidateState(subVoice.InitialState, subSource, diagnostics);
             HashSet<MidiValueTarget> curveTargets = [];
@@ -442,11 +442,11 @@ public static class SemanticValidator
             };
             if (!parameters.ContainsKey(mapping.ParameterId))
             {
-                AddError("MIDORA1230", $"The Parameter Mapping references unknown parameter '{mapping.ParameterId}'.", mappingSource, diagnostics);
+                AddError("MIDORA1230", "The Parameter Mapping references an unavailable Logical Parameter.", mappingSource, diagnostics);
             }
             if (!subVoiceIds.Contains(mapping.SubVoiceId))
             {
-                AddError("MIDORA1235", $"The Parameter Mapping references unknown SubVoice '{mapping.SubVoiceId}'.", mappingSource, diagnostics);
+                AddError("MIDORA1235", "The Parameter Mapping references an unavailable SubVoice.", mappingSource, diagnostics);
             }
             ValidateTarget(mapping.Target, mappingSource, diagnostics);
             ValidateTargetSettings(mapping.TargetSettings, mappingSource, diagnostics);
@@ -932,12 +932,12 @@ public static class SemanticValidator
                 {
                     if (!laneIds.Add(lane.ParameterId))
                     {
-                        AddError("MIDORA1312", $"Segment parameter Lane '{lane.ParameterId}' is duplicated.", segmentSource, diagnostics);
+                        AddError("MIDORA1312", "A Segment contains duplicate Lanes for the same Logical Parameter.", segmentSource, diagnostics);
                     }
                     else if (boundInstrument is not null && !parameters.ContainsKey(lane.ParameterId))
                     {
                         diagnostics.Add(new("MIDORA1314", DiagnosticSeverity.Warning,
-                            $"Segment parameter Lane '{lane.ParameterId}' has a broken reference; its data is preserved but excluded from compilation.", segmentSource));
+                            "A Segment parameter Lane has an unavailable Logical Parameter reference; its data is preserved but excluded from compilation.", segmentSource));
                     }
                     long prior = -1;
                     parameters.TryGetValue(lane.ParameterId, out LogicalParameterDefinition? definition);
@@ -954,10 +954,9 @@ public static class SemanticValidator
                             {
                                 AddError("MIDORA1315", "A parameter Lane point is outside the Logical Parameter valid range.", segmentSource with { Tick = point.Tick }, diagnostics);
                             }
-                            if (definition.Type == LogicalParameterType.Enum
-                                && point.Interpolation != CurveInterpolation.Step)
+                            if (point.Interpolation != CurveInterpolation.Step)
                             {
-                                AddError("MIDORA1316", "An Enum Logical Parameter only permits stepped changes.", segmentSource with { Tick = point.Tick }, diagnostics);
+                                AddError("MIDORA1316", "Logical Parameter points only permit discrete Step changes.", segmentSource with { Tick = point.Tick }, diagnostics);
                             }
                             if (definition.Type == LogicalParameterType.Integer
                                 && point.Value != Math.Truncate(point.Value))
@@ -1197,7 +1196,7 @@ public static class SemanticValidator
             if (id == default || id.Value >= project.NextStableId || !ids.Add(id))
             {
                 AddError("MIDORA1003",
-                    "A formal object's Stable ID is empty, duplicated within the Project, or outside the current Project's allocated counter range.",
+                    "The Project contains empty, duplicated, or out-of-range internal object data.",
                     source, diagnostics);
             }
         }
@@ -1330,17 +1329,17 @@ public static class SemanticValidator
             if (step.Source == MappingSource.LogicalParameter
                 && (!step.LogicalParameterId.HasValue || !parameters.ContainsKey(step.LogicalParameterId.Value)))
             {
-                AddError("MIDORA1232", "A Mapping step references an unknown Logical Parameter ID.", stepSource, diagnostics);
+                AddError("MIDORA1232", "A Mapping Step references an unavailable Logical Parameter.", stepSource, diagnostics);
             }
             if (step.Source == MappingSource.Envelope
                 && (!step.EnvelopeId.HasValue || !envelopes.Contains(step.EnvelopeId.Value)))
             {
-                AddError("MIDORA1233", "A Mapping step references an unknown Envelope Preset ID.", stepSource, diagnostics);
+                AddError("MIDORA1233", "A Mapping Step references an unavailable Envelope Preset.", stepSource, diagnostics);
             }
             if (step.Operation == MappingOperation.CustomCSharp
                 && (!step.MappingFunctionId.HasValue || !functions.ContainsKey(step.MappingFunctionId.Value)))
             {
-                AddError("MIDORA1234", "A Mapping step references an unknown Mapping Function ID.", stepSource, diagnostics);
+                AddError("MIDORA1234", "A Mapping Step references an unavailable Mapping Function.", stepSource, diagnostics);
             }
         }
     }

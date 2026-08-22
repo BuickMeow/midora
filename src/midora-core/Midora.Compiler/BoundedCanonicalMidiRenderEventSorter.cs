@@ -51,7 +51,7 @@ internal sealed class BoundedCanonicalMidiRenderEventSorter : IDisposable
             ? value.Source.MidiChannelRootId
             : value.Source.TrackId;
         if (monitoringSourceId == default)
-            throw new InvalidDataException("A paged MIDI render event has no monitoring source identity.");
+            throw new InvalidDataException("A paged MIDI render event has no monitoring source.");
         _buffer.Add(new(
             value.Tick,
             value.ZeroBasedPort,

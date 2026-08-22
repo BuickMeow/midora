@@ -96,7 +96,6 @@
         <RowDefinition Height="48" />
         <RowDefinition Height="32" />
         <RowDefinition Height="*" />
-        <RowDefinition Height="156" />
         <RowDefinition Height="26" />
       </Grid.RowDefinitions>
 
@@ -734,8 +733,8 @@
                           <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <StackPanel>
-                          <TextBlock Style="{StaticResource Field.Label}" Text="READ-ONLY STABLE ID" />
-                          <TextBox IsReadOnly="True" Text="trk_0187a3f0" />
+                          <TextBlock Style="{StaticResource Field.Label}" Text="READ-ONLY STATUS" />
+                          <TextBox IsReadOnly="True" Text="Compiled" />
                         </StackPanel>
                         <StackPanel Grid.Column="2">
                           <TextBlock Style="{StaticResource Field.Label}" Text="DISABLED VALUE" />
@@ -978,7 +977,7 @@
                           <StackPanel>
                             <ui:FluentIcon Width="18" Height="18" HorizontalAlignment="Left" Foreground="{StaticResource Brush.Damaged}" Data="{StaticResource Fluent.ErrorCircle20Regular}" />
                             <TextBlock Margin="0,7,0,0" FontWeight="SemiBold" Text="Damaged object" />
-                            <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Text="Name and ID remain readable; editing is blocked." />
+                            <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" TextWrapping="Wrap" Text="Name and object type remain readable; editing is blocked." />
                           </StackPanel>
                         </Border>
                         <Border Margin="5,5,0,0" Padding="12" Background="{StaticResource Brush.Warning.Subtle}" BorderBrush="#735820" BorderThickness="1" CornerRadius="4">
@@ -1116,8 +1115,8 @@
                   </Button>
                 </Grid>
 
-                <TextBlock Style="{StaticResource Field.Label}" Text="STABLE ID" />
-                <TextBox Margin="0,0,0,12" FontFamily="{StaticResource Font.Mono}" IsReadOnly="True" Text="trk_0187a3f0" />
+                <TextBlock Style="{StaticResource Field.Label}" Text="OBJECT TYPE" />
+                <TextBox Margin="0,0,0,12" IsReadOnly="True" Text="Logical Track" />
 
                 <Expander Header="Advanced" IsExpanded="False">
                   <StackPanel>
@@ -1131,87 +1130,8 @@
         </Border>
       </Grid>
 
-      <!-- Diagnostics / Details / Tasks -->
-      <Border Grid.Row="5" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
-        <TabControl SelectedIndex="0">
-          <TabItem Header="Diagnostics  3">
-            <Grid Margin="12,8,12,10">
-              <Grid.RowDefinitions>
-                <RowDefinition Height="22" />
-                <RowDefinition Height="*" />
-              </Grid.RowDefinitions>
-              <Grid>
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="74" />
-                  <ColumnDefinition Width="*" />
-                  <ColumnDefinition Width="170" />
-                  <ColumnDefinition Width="100" />
-                </Grid.ColumnDefinitions>
-                <TextBlock Style="{StaticResource Text.Caption}" Text="SEVERITY" />
-                <TextBlock Grid.Column="1" Style="{StaticResource Text.Caption}" Text="MESSAGE" />
-                <TextBlock Grid.Column="2" Style="{StaticResource Text.Caption}" Text="SOURCE" />
-                <TextBlock Grid.Column="3" Style="{StaticResource Text.Caption}" Text="CODE" />
-              </Grid>
-              <StackPanel Grid.Row="1">
-                <Border Padding="0,6" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="74" />
-                      <ColumnDefinition Width="*" />
-                      <ColumnDefinition Width="170" />
-                      <ColumnDefinition Width="100" />
-                    </Grid.ColumnDefinitions>
-                    <Border HorizontalAlignment="Left" Style="{StaticResource Badge.Error}"><TextBlock FontSize="10" Foreground="{StaticResource Brush.Red.Hover}" Text="ERROR" /></Border>
-                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Target logical parameter no longer exists." />
-                    <TextBlock Grid.Column="2" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Low Strings / Pressure" />
-                    <TextBlock Grid.Column="3" VerticalAlignment="Center" Style="{StaticResource Text.Mono}" Text="MAP-014" />
-                  </Grid>
-                </Border>
-                <Border Padding="0,6" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="74" />
-                      <ColumnDefinition Width="*" />
-                      <ColumnDefinition Width="170" />
-                      <ColumnDefinition Width="100" />
-                    </Grid.ColumnDefinitions>
-                    <Border HorizontalAlignment="Left" Style="{StaticResource Badge.Warning}"><TextBlock FontSize="10" Foreground="{StaticResource Brush.Warning}" Text="WARNING" /></Border>
-                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="External SoundFont hash changed; review and accept explicitly." />
-                    <TextBlock Grid.Column="2" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="Project SoundFont" />
-                    <TextBlock Grid.Column="3" VerticalAlignment="Center" Style="{StaticResource Text.Mono}" Text="SF2-008" />
-                  </Grid>
-                </Border>
-              </StackPanel>
-            </Grid>
-          </TabItem>
-          <TabItem Header="Details">
-            <Grid Margin="14">
-              <TextBlock Style="{StaticResource Text.Caption}" Text="Select a diagnostic or task to inspect provenance, affected range, and safe next actions." />
-            </Grid>
-          </TabItem>
-          <TabItem Header="Tasks  1">
-            <Grid Margin="14,10">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="220" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="90" />
-              </Grid.ColumnDefinitions>
-              <StackPanel>
-                <TextBlock FontWeight="SemiBold" Text="Whole Project Compile" />
-                <TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Building canonical result" />
-              </StackPanel>
-              <StackPanel Grid.Column="1" Margin="16,2">
-                <ProgressBar Value="71" />
-                <TextBlock Margin="0,6,0,0" Style="{StaticResource Text.Caption}" Text="14 of 20 segments · Project edit lock" />
-              </StackPanel>
-              <Button Grid.Column="2" Height="28" Content="Cancel" />
-            </Grid>
-          </TabItem>
-        </TabControl>
-      </Border>
-
       <!-- Status bar -->
-      <Border Grid.Row="6" Padding="10,0" Background="{StaticResource Brush.Black}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+      <Border Grid.Row="5" Padding="10,0" Background="{StaticResource Brush.Black}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
         <Grid>
           <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
             <Ellipse Style="{StaticResource Status.Dot}" Fill="{StaticResource Brush.Success}" />

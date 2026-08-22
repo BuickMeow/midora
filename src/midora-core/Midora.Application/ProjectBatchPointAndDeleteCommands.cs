@@ -23,7 +23,7 @@ public static partial class ProjectDomainEditCommands
                 value.Point.Id,
                 checked(value.Point.Tick + tickDelta),
                 value.Point.Value,
-                value.Point.Interpolation)).ToArray();
+                CurveInterpolation.Step)).ToArray();
             ValidateLogicalParameterPointBatch(
                 definition,
                 lane.Points,
@@ -62,7 +62,7 @@ public static partial class ProjectDomainEditCommands
                 value.Point.Id,
                 checked(value.Point.Tick + tickDelta),
                 value.Point.Value + valueDelta,
-                value.Point.Interpolation)).ToArray();
+                CurveInterpolation.Step)).ToArray();
             ValidateLogicalParameterPointBatch(
                 definition,
                 lane.Points,
@@ -102,7 +102,7 @@ public static partial class ProjectDomainEditCommands
                 value.Point.Id,
                 checked(value.Point.Tick + tickDelta),
                 value.Point.Value + valueDelta,
-                value.Point.Interpolation)).ToArray();
+                CurveInterpolation.Step)).ToArray();
             ValidateLogicalParameterPointBatch(
                 definition,
                 lane.Points,
@@ -171,7 +171,7 @@ public static partial class ProjectDomainEditCommands
                 mode == ProjectBatchValueEditMode.ExactSet
                     ? value
                     : item.Point.Value + value,
-                item.Point.Interpolation)).ToArray();
+                CurveInterpolation.Step)).ToArray();
             ValidateLogicalParameterPointBatch(
                 definition,
                 lane.Points,
@@ -204,7 +204,7 @@ public static partial class ProjectDomainEditCommands
                 throw new ArgumentOutOfRangeException(nameof(value));
             }
             if (interpolation is CurveInterpolation interpolationValue
-                && !Enum.IsDefined(interpolationValue))
+                && interpolationValue != CurveInterpolation.Step)
             {
                 throw new ArgumentOutOfRangeException(nameof(interpolation));
             }
@@ -220,7 +220,7 @@ public static partial class ProjectDomainEditCommands
                 item.Point.Id,
                 tick ?? item.Point.Tick,
                 value ?? item.Point.Value,
-                interpolation ?? item.Point.Interpolation)).ToArray();
+                CurveInterpolation.Step)).ToArray();
             ValidateLogicalParameterPointBatch(
                 definition,
                 lane.Points,

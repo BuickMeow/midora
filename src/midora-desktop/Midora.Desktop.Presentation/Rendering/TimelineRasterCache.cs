@@ -95,6 +95,59 @@ public static class TimelineRasterLod
 
 public static class TimelineRasterPlacement
 {
+    public static void BuildUncoveredHorizontalGaps(
+        Rect visibleBounds,
+        IReadOnlyList<Rect> coveredBounds,
+        List<Rect> destination)
+    {
+        ArgumentNullException.ThrowIfNull(coveredBounds);
+        ArgumentNullException.ThrowIfNull(destination);
+        destination.Clear();
+        if (visibleBounds.IsEmpty
+            || !double.IsFinite(visibleBounds.Left)
+            || !double.IsFinite(visibleBounds.Top)
+            || !double.IsFinite(visibleBounds.Width)
+            || !double.IsFinite(visibleBounds.Height)
+            || visibleBounds.Width <= 0
+            || visibleBounds.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(visibleBounds));
+        }
+
+        double cursor = visibleBounds.Left;
+        foreach (Rect covered in coveredBounds)
+        {
+            if (covered.IsEmpty || covered.Width <= 0) continue;
+            double coveredLeft = Math.Clamp(
+                covered.Left,
+                visibleBounds.Left,
+                visibleBounds.Right);
+            double coveredRight = Math.Clamp(
+                covered.Right,
+                visibleBounds.Left,
+                visibleBounds.Right);
+            if (coveredRight <= cursor) continue;
+            if (coveredLeft > cursor)
+            {
+                destination.Add(new(
+                    cursor,
+                    visibleBounds.Top,
+                    coveredLeft - cursor,
+                    visibleBounds.Height));
+            }
+            cursor = Math.Max(cursor, coveredRight);
+            if (cursor >= visibleBounds.Right) return;
+        }
+        if (cursor < visibleBounds.Right)
+        {
+            destination.Add(new(
+                cursor,
+                visibleBounds.Top,
+                visibleBounds.Right - cursor,
+                visibleBounds.Height));
+        }
+    }
+
     public static Rect GetUnclippedItemBounds(
         TimelineViewport viewport,
         TimelineRenderItem item,
@@ -810,6 +863,8 @@ public static class TimelineSegmentPreviewRasterizer
     public const int FixedPreviewLodLevelsPerOctave = 2;
     public const int MaximumFixedPreviewLod = 124;
     public const int MaximumWarmupTilesPerSegment = 4;
+    public const int MaximumFallbackTilesPerSegment =
+        MaximumWarmupTilesPerSegment * 2;
     public const int ContentWidth = 512;
     public const int Width = ContentWidth;
     public const int Height = 64;
@@ -985,6 +1040,22 @@ public static class TimelineSegmentPreviewRasterizer
             lod++;
         }
         return lod;
+    }
+
+    public static int SelectFallbackLod(
+        long segmentLengthTicks,
+        int ticksPerQuarterNote,
+        int displayLod)
+    {
+        if (displayLod is < 0 or > MaximumFixedPreviewLod)
+        {
+            throw new ArgumentOutOfRangeException(nameof(displayLod));
+        }
+        int warmupLod = SelectWarmupLod(segmentLengthTicks, ticksPerQuarterNote);
+        int doubledResolutionLod = Math.Max(
+            0,
+            warmupLod - FixedPreviewLodLevelsPerOctave);
+        return Math.Max(displayLod, doubledResolutionLod);
     }
 
     private static double GetFixedPreviewLodDivisor(int lod)

@@ -17,7 +17,7 @@
 | 项目 | 约束 |
 |---|---|
 | 输入 | 当前不可变 `TimelineRenderSnapshot`、Segment preview 内容、viewport/DPI、共享 theme token、独立 Selection/Transient state |
-| 正式 UI 输出 | Arrangement 每个可视 Segment 一次缓存图像绘制，图像映射到完整 Segment 世界矩形后按 viewport 裁剪；piano roll 只组合可视/预取 tile；Selection、drag、cursor 独立覆盖 |
+| 正式 UI 输出 | Arrangement 每个可视 Segment 先原子显示同内容版本的完整粗略 fallback；当前 LOD tile 就绪后独占其横向范围，未就绪范围继续显示 fallback。图像映射到完整 Segment 世界矩形后按 viewport 裁剪。piano roll 只组合可视/预取 tile；Selection、drag、cursor 独立覆盖 |
 | 命中 | 始终查询原始稳定 ID + lane/pitch interval index；不得按 bitmap 像素反推对象 |
 | 失效 | piano tile 使用局部视觉内容指纹，Note 编辑只轮换相交 tile；平移及未受影响 tile 跨 workspace revision 复用；Selection/cursor/hover 不失效基础内容 |
 | 并发 | 最多两个后台 raster worker、64 个不同 in-flight raster key；只读取不可变快照；UI 原子接收冻结 bitmap；过期结果丢弃 |
@@ -28,7 +28,7 @@
 
 ## 3. 初始实现参数
 
-- Arrangement preview：最高精度固定为 `96 pixels / quarter note`，较低精度只使用半八度 `1 / 2^(n/2)` 固定 LOD；各层均为 64-pixel 高度、256-pixel 横向 tile。Segment tick 长度与 Project TPQN 决定各层总宽度，精确 viewport zoom 不直接进入 cache identity，内容或主题颜色变化才重建。
+- Arrangement preview：最高精度固定为 `96 pixels / quarter note`，较低精度只使用半八度 `1 / 2^(n/2)` 固定 LOD；各层均为 64-pixel 高度、256-pixel 横向 tile。Segment tick 长度与 Project TPQN 决定各层总宽度，精确 viewport zoom 不直接进入 cache identity，内容或主题颜色变化才重建。后台全项目 prewarm 仍选择最多 4 tile 的完整层；可见 fallback 选择 `max(display LOD, warmup LOD - 2)`，即相对 prewarm 提高一倍水平分辨率、最多 8 tile，且永远不比当前显示层更精细。
 - Arrangement 的目标矩形始终是完整 Segment 的未裁剪矩形；viewport 只负责 clip，禁止把完整 bitmap 拉伸到可见切片。
 - Piano roll tile：`256 × 256` device pixels、Pbgra32。
 - 水平/垂直 LOD：以 device-pixel scale 的量化值作为 cache key；pan 不改变 scale key。
@@ -54,7 +54,7 @@
 - Piano tile cache keys now use the exact current device-pixel scales. A completed tile is composed at exactly one source pixel per device pixel; quantized-LOD bitmap resampling is no longer permitted.
 - Every Note edge is rounded from its absolute tick boundary. Adjacent Notes sharing a tick therefore share the same computed boundary; vertical edges use the same absolute lane-boundary rule across every horizontal tile.
 - The one-pixel tile gutter remains only for cross-tile coverage. Core clips and gutter destinations are expressed in final device-pixel units, so neighboring tiles cannot acquire different scaling phases.
-- Segment preview uses 256-pixel horizontal tiles at a maximum `96 pixels / quarter note` and 64-pixel height, with no horizontal source gutter. Start and end use nearest-boundary rounding, and reference pixel zero maps directly to the full Segment left edge. Viewport zoom selects the first fixed half-octave LOD whose source-pixel scale is not greater than the display scale; it does not create an exact-scale cache generation and never downsamples a one-source-pixel mark. Snapshot prewarm selects a complete LOD of at most four tiles per Segment, while visible detailed tiles remain non-blocking on-demand work. The full Segment destination is snapped once in device pixels and every tile boundary is derived from that same width, so pan cannot change the nearest-neighbor sampling phase.
+- Segment preview uses 256-pixel horizontal tiles at a maximum `96 pixels / quarter note` and 64-pixel height, with no horizontal source gutter. Start and end use nearest-boundary rounding, and reference pixel zero maps directly to the full Segment left edge. Viewport zoom selects the first fixed half-octave LOD whose source-pixel scale is not greater than the display scale; it does not create an exact-scale cache generation and never downsamples a one-source-pixel mark. Snapshot prewarm selects a complete LOD of at most four tiles per Segment. A visible Segment uses a fallback one octave finer than that prewarm level, bounded to eight tiles and never finer than the current display LOD; it publishes only after every fallback tile is present. All visible fallbacks form a barrier before new detailed requests are admitted. Each ready detail tile exclusively owns its horizontal destination, so fallback pixels are drawn only in uncovered gaps; the coarse cache is retained rather than deleted. The full Segment destination is snapped once in device pixels and every tile boundary is derived from that same width, so pan cannot change the nearest-neighbor sampling phase.
 - Each preview Note covers two adjacent source rows (edge-clamped). This preserves at least one visible row when the 64-row source is reduced to the normal Arrangement lane height with nearest-neighbor sampling; a one-row source mark can otherwise be skipped completely.
 - These are UI runtime cache rules only. Hit testing continues to use stable IDs and semantic intervals; Project data, Undo/Redo, compilation, playback, export and persistence are unchanged.
 

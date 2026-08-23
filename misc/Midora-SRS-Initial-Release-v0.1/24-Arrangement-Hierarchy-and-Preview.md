@@ -356,6 +356,8 @@ Arrangement Segment 的最高精度使用 `96 pixels / quarter note`、64-pixel 
 Segment 的正式 tick 长度与 Project TPQN 决定固定基准总宽度，禁止把任意长度 Segment 压缩进一个固定总像素宽度；
 固定 raster 以 256-pixel tile 分块；viewport 选择第一个 source-pixel 比例不大于当前显示比例的固定 LOD，禁止向下采样一像素对象，也不得为每个精确缩放值产生一套 tile；完整 Segment 目标矩形只执行一次 device-pixel 对齐，所有 tile 边界必须从该矩形的同一 device width 派生，使 pan 只能做整 device-pixel 平移而不能改变最近邻取样相位；
 Arrangement Snapshot 发布后，以最多两个后台 raster worker 持续预热全部 Segment；每个 Segment 的完整预热层必须选择不超过 4 个 tile 的固定 LOD，前台 Draw 不等待预热完成；
+当前 viewport 内的 Segment 必须先使用 `max(display LOD, warmup LOD - 2)` 取得同内容指纹、同颜色身份的完整粗略 fallback；固定 LOD 每八度含两级，因此该 fallback 相对后台 warmup 层提高一倍水平分辨率，完整 Segment 最多 8 个 tile。单个 Segment 只有在该 fallback 的全部 tile 就绪后才一次性可见，禁止暴露半幅粗略图；
+全部可见 Segment 的粗略 fallback 就绪前，不得启动新的当前 LOD 细化请求；barrier 完成后，当前 LOD tile 就绪一个即独占其横向目标范围，该范围内禁止继续绘制 fallback，以免透明像素同时暴露粗细两层。未被细 tile 接管的范围继续显示 fallback，且粗缓存不得因替换而删除。不可见 Segment 的低并发预热可继续进行；
 内容指纹或颜色变化只失效对应 Segment 的固定 LOD tile，未变化 Segment 在相同固定 LOD 间直接命中；
 使用有界分块缓存和局部失效；
 不创建逐对象 WPF Controls；

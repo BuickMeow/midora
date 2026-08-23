@@ -628,6 +628,12 @@ public sealed class TimelineSurface : Control
     private int? _externalArrangementInsertionIndex;
     private readonly HashSet<TimelineRasterCacheKey> _requestedRasterKeys = [];
     private readonly Queue<SegmentPreviewWarmupRequest> _segmentPreviewWarmupQueue = [];
+    private readonly Dictionary<MidoraId, SegmentPreviewFallbackFrame>
+        _visibleSegmentPreviewFallbackFrames = [];
+    private readonly List<SegmentPreviewDetailTile> _segmentPreviewDetailTiles =
+        new(capacity: 8);
+    private readonly List<Rect> _segmentPreviewDetailedBounds = new(capacity: 8);
+    private readonly List<Rect> _segmentPreviewFallbackGaps = new(capacity: 8);
     private long _segmentPreviewWarmupGeneration;
     private int _segmentPreviewWarmupInFlight;
     private bool _segmentPreviewWarmupRetryScheduled;
@@ -1407,6 +1413,17 @@ public sealed class TimelineSurface : Control
                     viewport.FirstLane,
                     viewport.LastLaneExclusive,
                     _visibleItems);
+                bool allowDetailedSegmentPreviewRequests = true;
+                _visibleSegmentPreviewFallbackFrames.Clear();
+                if (SurfaceMode == TimelineSurfaceMode.Arrangement)
+                {
+                    allowDetailedSegmentPreviewRequests = PrepareVisibleSegmentPreviewFallbacks(
+                        viewport,
+                        snapshot,
+                        _visibleItems,
+                        segmentNotePreview,
+                        red);
+                }
                 foreach (TimelineRenderItem item in _visibleItems)
                 {
                     if (SurfaceMode == TimelineSurfaceMode.Arrangement
@@ -1428,7 +1445,8 @@ public sealed class TimelineSurface : Control
                         segmentNotePreview,
                         segmentPianoNote,
                         laneHeaderWidth,
-                        rulerHeight);
+                        rulerHeight,
+                        allowDetailedSegmentPreviewRequests);
                 }
             }
         }
@@ -3564,7 +3582,8 @@ public sealed class TimelineSurface : Control
         Brush segmentNotePreview,
         Brush segmentPianoNote,
         double laneHeaderWidth,
-        double rulerHeight)
+        double rulerHeight,
+        bool allowDetailedSegmentPreviewRequests)
     {
         if (SurfaceMode == TimelineSurfaceMode.Arrangement
             && item.Kind == TimelineItemKind.ProjectEndMarker)
@@ -3679,7 +3698,8 @@ public sealed class TimelineSurface : Control
                 checked(item.EndTick - item.StartTick),
                 viewport.PixelsPerTick,
                 accent?.NotePreview ?? segmentNotePreview,
-                Brush("Brush.Red", Color.FromRgb(229, 61, 68)));
+                Brush("Brush.Red", Color.FromRgb(229, 61, 68)),
+                allowDetailedSegmentPreviewRequests);
         }
 
         if (selected)
@@ -3901,6 +3921,137 @@ public sealed class TimelineSurface : Control
         }
     }
 
+    private bool PrepareVisibleSegmentPreviewFallbacks(
+        TimelineViewport viewport,
+        TimelineRenderSnapshot snapshot,
+        IReadOnlyList<TimelineRenderItem> visibleItems,
+        Brush defaultNoteBrush,
+        Brush eventBrush)
+    {
+        Color defaultNoteColor = GetSolidColor(
+            defaultNoteBrush,
+            Color.FromRgb(189, 199, 207));
+        Color eventColor = GetSolidColor(
+            eventBrush,
+            Color.FromRgb(229, 61, 68));
+        int displayLod = TimelineSegmentPreviewRasterizer.SelectDisplayLod(
+            viewport.PixelsPerTick,
+            PreviewTicksPerQuarterNote);
+        bool allFallbacksReady = true;
+        foreach (TimelineRenderItem item in visibleItems)
+        {
+            if (item.Kind != TimelineItemKind.Segment
+                || !snapshot.SegmentPreviews.TryGetValue(
+                    item.Id,
+                    out TimelineSegmentPreview? preview)
+                || !preview.HasNoteContent && !preview.HasEventContent)
+            {
+                continue;
+            }
+            Color noteColor = item.AccentColor == 0
+                ? defaultNoteColor
+                : TimelineAccentPalette.FromArgb(item.AccentColor).NotePreview;
+            long segmentLengthTicks = checked(item.EndTick - item.StartTick);
+            int fallbackLod = TimelineSegmentPreviewRasterizer.SelectFallbackLod(
+                segmentLengthTicks,
+                PreviewTicksPerQuarterNote,
+                displayLod);
+            if (TryGetCompleteSegmentPreviewFallback(
+                preview,
+                segmentLengthTicks,
+                fallbackLod,
+                noteColor,
+                eventColor,
+                out SegmentPreviewFallbackFrame frame))
+            {
+                _visibleSegmentPreviewFallbackFrames[item.Id] = frame;
+            }
+            else
+            {
+                allFallbacksReady = false;
+            }
+        }
+        return allFallbacksReady;
+    }
+
+    private bool TryGetCompleteSegmentPreviewFallback(
+        TimelineSegmentPreview preview,
+        long segmentLengthTicks,
+        int lod,
+        Color noteColor,
+        Color eventColor,
+        out SegmentPreviewFallbackFrame frame)
+    {
+        long contentWidth = TimelineSegmentPreviewRasterizer.GetFixedPreviewContentWidth(
+            segmentLengthTicks,
+            PreviewTicksPerQuarterNote,
+            lod);
+        int tileCount = checked((int)(1 + ((contentWidth - 1)
+            / TimelineSegmentPreviewRasterizer.FixedPreviewTileSize)));
+        if (tileCount > TimelineSegmentPreviewRasterizer.MaximumFallbackTilesPerSegment)
+        {
+            throw new InvalidOperationException(
+                "A Segment preview fallback exceeded its bounded tile budget.");
+        }
+
+        BitmapSource? tile0 = null;
+        BitmapSource? tile1 = null;
+        BitmapSource? tile2 = null;
+        BitmapSource? tile3 = null;
+        BitmapSource? tile4 = null;
+        BitmapSource? tile5 = null;
+        BitmapSource? tile6 = null;
+        BitmapSource? tile7 = null;
+        bool complete = true;
+        for (int tile = 0; tile < tileCount; tile++)
+        {
+            SegmentPreviewWarmupRequest request = CreateSegmentPreviewRequest(
+                preview,
+                segmentLengthTicks,
+                PreviewTicksPerQuarterNote,
+                lod,
+                tile,
+                noteColor,
+                eventColor);
+            if (TimelineRasterCache.Shared.TryGet(request.Key, out BitmapSource? bitmap)
+                && bitmap is not null)
+            {
+                switch (tile)
+                {
+                    case 0: tile0 = bitmap; break;
+                    case 1: tile1 = bitmap; break;
+                    case 2: tile2 = bitmap; break;
+                    case 3: tile3 = bitmap; break;
+                    case 4: tile4 = bitmap; break;
+                    case 5: tile5 = bitmap; break;
+                    case 6: tile6 = bitmap; break;
+                    case 7: tile7 = bitmap; break;
+                }
+                continue;
+            }
+            complete = false;
+            RequestSegmentPreviewRaster(request, preview);
+        }
+        if (!complete)
+        {
+            frame = default;
+            return false;
+        }
+        frame = new(
+            lod,
+            contentWidth,
+            tileCount,
+            tile0,
+            tile1,
+            tile2,
+            tile3,
+            tile4,
+            tile5,
+            tile6,
+            tile7);
+        return true;
+    }
+
     private void DrawSegmentPreview(
         DrawingContext context,
         Rect visibleSegmentBounds,
@@ -3909,7 +4060,8 @@ public sealed class TimelineSurface : Control
         long segmentLengthTicks,
         double currentPixelsPerTick,
         Brush noteBrush,
-        Brush eventBrush)
+        Brush eventBrush,
+        bool allowDetailedRequests)
     {
         if (!preview.HasNoteContent && !preview.HasEventContent
             || visibleSegmentBounds.Width <= 0
@@ -3953,6 +4105,27 @@ public sealed class TimelineSurface : Control
         DpiScale dpi = VisualTreeHelper.GetDpi(this);
 
         context.PushClip(new RectangleGeometry(visibleSegmentBounds));
+        bool hasFallback = _visibleSegmentPreviewFallbackFrames.TryGetValue(
+            preview.SegmentId,
+            out SegmentPreviewFallbackFrame fallback);
+        if (hasFallback && fallback.Lod == lod)
+        {
+            DrawSegmentPreviewFallback(
+                context,
+                fullSegmentBounds,
+                fallback,
+                dpi);
+            context.Pop();
+            return;
+        }
+        if (!hasFallback && SurfaceMode == TimelineSurfaceMode.Arrangement)
+        {
+            context.Pop();
+            return;
+        }
+
+        _segmentPreviewDetailTiles.Clear();
+        _segmentPreviewDetailedBounds.Clear();
         for (long tile = firstTile; tile <= lastTile; tile++)
         {
             SegmentPreviewWarmupRequest request = CreateSegmentPreviewRequest(
@@ -3975,31 +4148,82 @@ public sealed class TimelineSurface : Control
                     tileLeft,
                     bitmap.PixelWidth,
                     dpi);
-                context.DrawImage(bitmap, destination);
+                _segmentPreviewDetailTiles.Add(new(destination, bitmap));
+                _segmentPreviewDetailedBounds.Add(destination);
                 continue;
             }
-            if (!_requestedRasterKeys.Add(key)) continue;
-            bool accepted = TimelineRasterCache.Shared.Request(
-                key,
-                request.Factory,
-                Dispatcher,
-                () =>
-                {
-                    _requestedRasterKeys.Remove(key);
-                    if (Snapshot?.SegmentPreviews.TryGetValue(
-                            preview.SegmentId,
-                            out TimelineSegmentPreview? current) == true
-                        && current.ContentFingerprint == preview.ContentFingerprint)
-                    {
-                        InvalidateVisual();
-                    }
-                });
-            if (!accepted)
+            if (allowDetailedRequests)
+                RequestSegmentPreviewRaster(request, preview);
+        }
+
+        if (hasFallback)
+        {
+            TimelineRasterPlacement.BuildUncoveredHorizontalGaps(
+                visibleSegmentBounds,
+                _segmentPreviewDetailedBounds,
+                _segmentPreviewFallbackGaps);
+            foreach (Rect gap in _segmentPreviewFallbackGaps)
             {
-                _requestedRasterKeys.Remove(key);
+                context.PushClip(new RectangleGeometry(gap));
+                DrawSegmentPreviewFallback(
+                    context,
+                    fullSegmentBounds,
+                    fallback,
+                    dpi);
+                context.Pop();
             }
         }
+        foreach (SegmentPreviewDetailTile detail in _segmentPreviewDetailTiles)
+            context.DrawImage(detail.Bitmap, detail.Destination);
         context.Pop();
+    }
+
+    private static void DrawSegmentPreviewFallback(
+        DrawingContext context,
+        Rect fullSegmentBounds,
+        SegmentPreviewFallbackFrame frame,
+        DpiScale dpi)
+    {
+        for (int tile = 0; tile < frame.TileCount; tile++)
+        {
+            BitmapSource bitmap = frame.GetBitmap(tile);
+            long tileLeft = checked(
+                (long)tile * TimelineSegmentPreviewRasterizer.FixedPreviewTileSize);
+            Rect destination = TimelineRasterPlacement.GetSegmentPreviewTileDestination(
+                fullSegmentBounds,
+                frame.ContentWidth,
+                tileLeft,
+                bitmap.PixelWidth,
+                dpi);
+            context.DrawImage(bitmap, destination);
+        }
+    }
+
+    private void RequestSegmentPreviewRaster(
+        SegmentPreviewWarmupRequest request,
+        TimelineSegmentPreview preview)
+    {
+        TimelineRasterCacheKey key = request.Key;
+        if (!_requestedRasterKeys.Add(key)) return;
+        bool accepted = TimelineRasterCache.Shared.Request(
+            key,
+            request.Factory,
+            Dispatcher,
+            () =>
+            {
+                _requestedRasterKeys.Remove(key);
+                if (Snapshot?.SegmentPreviews.TryGetValue(
+                        preview.SegmentId,
+                        out TimelineSegmentPreview? current) == true
+                    && current.ContentFingerprint == preview.ContentFingerprint)
+                {
+                    InvalidateVisual();
+                }
+            });
+        if (!accepted)
+        {
+            _requestedRasterKeys.Remove(key);
+        }
     }
 
     private void ScheduleSegmentPreviewWarmup()
@@ -8403,6 +8627,37 @@ public sealed class TimelineSurface : Control
     private readonly record struct SegmentPreviewWarmupRequest(
         TimelineRasterCacheKey Key,
         Func<TimelineRasterBuffer> Factory);
+
+    private readonly record struct SegmentPreviewDetailTile(
+        Rect Destination,
+        BitmapSource Bitmap);
+
+    private readonly record struct SegmentPreviewFallbackFrame(
+        int Lod,
+        long ContentWidth,
+        int TileCount,
+        BitmapSource? Tile0,
+        BitmapSource? Tile1,
+        BitmapSource? Tile2,
+        BitmapSource? Tile3,
+        BitmapSource? Tile4,
+        BitmapSource? Tile5,
+        BitmapSource? Tile6,
+        BitmapSource? Tile7)
+    {
+        public BitmapSource GetBitmap(int tile) => tile switch
+        {
+            0 when Tile0 is not null => Tile0,
+            1 when Tile1 is not null => Tile1,
+            2 when Tile2 is not null => Tile2,
+            3 when Tile3 is not null => Tile3,
+            4 when Tile4 is not null => Tile4,
+            5 when Tile5 is not null => Tile5,
+            6 when Tile6 is not null => Tile6,
+            7 when Tile7 is not null => Tile7,
+            _ => throw new ArgumentOutOfRangeException(nameof(tile))
+        };
+    }
 
     private sealed record SegmentAccentResources(
         SolidColorBrush Segment,

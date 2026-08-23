@@ -1514,6 +1514,66 @@ public sealed class TimelineRenderingTests
             TimelineSegmentPreviewRasterizer.MaximumWarmupTilesPerSegment);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(6)]
+    [InlineData(18)]
+    public void ProgressiveArrangementFallbackIsBoundedAndNeverFinerThanDisplay(int displayLod)
+    {
+        const long segmentLengthTicks = 18_000_000;
+        const int ticksPerQuarterNote = 768;
+
+        int fallbackLod = TimelineSegmentPreviewRasterizer.SelectFallbackLod(
+            segmentLengthTicks,
+            ticksPerQuarterNote,
+            displayLod);
+        int warmupLod = TimelineSegmentPreviewRasterizer.SelectWarmupLod(
+            segmentLengthTicks,
+            ticksPerQuarterNote);
+        long fallbackWidth = TimelineSegmentPreviewRasterizer.GetFixedPreviewContentWidth(
+            segmentLengthTicks,
+            ticksPerQuarterNote,
+            fallbackLod);
+        long fallbackTileCount = 1 + ((fallbackWidth - 1)
+            / TimelineSegmentPreviewRasterizer.FixedPreviewTileSize);
+
+        Assert.True(fallbackLod >= displayLod);
+        Assert.Equal(
+            Math.Max(
+                displayLod,
+                Math.Max(
+                    0,
+                    warmupLod - TimelineSegmentPreviewRasterizer.FixedPreviewLodLevelsPerOctave)),
+            fallbackLod);
+        Assert.InRange(
+            fallbackTileCount,
+            1,
+            TimelineSegmentPreviewRasterizer.MaximumFallbackTilesPerSegment);
+    }
+
+    [Fact]
+    public void ReadyDetailTilesExcludeFallbackFromTheirHorizontalRanges()
+    {
+        Rect visible = new(10, 20, 100, 40);
+        Rect[] detailTiles =
+        [
+            new(0, 20, 30, 40),
+            new(30, 20, 25, 40),
+            new(85, 20, 40, 40)
+        ];
+        List<Rect> gaps = [];
+
+        TimelineRasterPlacement.BuildUncoveredHorizontalGaps(
+            visible,
+            detailTiles,
+            gaps);
+
+        Assert.Equal(
+            [new Rect(55, 20, 30, 40)],
+            gaps);
+    }
+
     [Fact]
     public void SelectedArrangementPreviewLodKeepsOnePixelNoteVisibleAcrossPanPhases()
     {
@@ -1692,6 +1752,101 @@ public sealed class TimelineRenderingTests
             Assert.True(
                 composed,
                 $"The Segment preview never reached the composed surface; completed cache entries: {completedCount}.");
+        });
+    }
+
+    [Fact]
+    public void VisibleFallbackBarrierDefersDetailUntilEverySegmentHasACoarseFrame()
+    {
+        RunOnSta(() =>
+        {
+            const long segmentLengthTicks = 36_000;
+            ManualResetEventSlim releaseSlowFallback = new(false);
+            RecordingSegmentPreviewSource fastSource = new(fingerprint: 11);
+            RecordingSegmentPreviewSource slowSource = new(
+                fingerprint: 12,
+                firstQueryGate: releaseSlowFallback);
+            TimelineRenderItem fastSegment = Item(
+                1,
+                0,
+                segmentLengthTicks,
+                0,
+                kind: TimelineItemKind.Segment);
+            TimelineRenderItem slowSegment = Item(
+                2,
+                0,
+                segmentLengthTicks,
+                1,
+                kind: TimelineItemKind.Segment);
+            TimelineRenderSnapshot snapshot = new(
+                1,
+                "arrangement:progressive-fallback-barrier",
+                [fastSegment, slowSegment],
+                ["Fast", "Slow"],
+                segmentPreviews: new Dictionary<MidoraId, TimelineSegmentPreview>
+                {
+                    [fastSegment.Id] = new(fastSegment.Id, fastSource),
+                    [slowSegment.Id] = new(slowSegment.Id, slowSource)
+                },
+                arrangementLanes:
+                [
+                    new(
+                        0,
+                        ArrangementLaneKind.LogicalTrack,
+                        new MidoraId(101),
+                        null,
+                        0,
+                        true,
+                        false,
+                        true),
+                    new(
+                        1,
+                        ArrangementLaneKind.LogicalTrack,
+                        new MidoraId(102),
+                        null,
+                        0,
+                        true,
+                        false,
+                        true)
+                ]);
+            TimelineSurface surface = CreateArrangementSurface(snapshot, tickSpan: 3_072);
+            TimelineRasterCacheSession.Clear();
+            try
+            {
+                for (int attempt = 0; attempt < 200 && fastSource.CoarseQueryCount < 6; attempt++)
+                {
+                    _ = RenderVisual(surface);
+                    Thread.Sleep(5);
+                    PumpDispatcher();
+                }
+
+                Assert.True(
+                    fastSource.CoarseQueryCount >= 6,
+                    "The fast Segment never completed its bounded fallback frame.");
+                for (int attempt = 0; attempt < 20; attempt++)
+                {
+                    _ = RenderVisual(surface);
+                    Thread.Sleep(5);
+                    PumpDispatcher();
+                }
+                Assert.False(fastSource.HasDetailedQuery);
+
+                releaseSlowFallback.Set();
+                for (int attempt = 0; attempt < 200 && !fastSource.HasDetailedQuery; attempt++)
+                {
+                    _ = RenderVisual(surface);
+                    Thread.Sleep(5);
+                    PumpDispatcher();
+                }
+                Assert.True(
+                    fastSource.HasDetailedQuery,
+                    "Visible detail was not scheduled after every coarse fallback became complete.");
+            }
+            finally
+            {
+                releaseSlowFallback.Set();
+                TimelineRasterCacheSession.Clear();
+            }
         });
     }
 
@@ -2562,6 +2717,67 @@ public sealed class TimelineRenderingTests
         {
             if (normalizedStart <= 0.25 && normalizedEnd > 0.25)
                 destination.Add(new(0.25, 0.75));
+        }
+    }
+
+    private sealed class RecordingSegmentPreviewSource(
+        ulong fingerprint,
+        ManualResetEventSlim? firstQueryGate = null) : ITimelineSegmentPreviewSource
+    {
+        private readonly object _gate = new();
+        private readonly List<(double Start, double End)> _queries = [];
+        private int _claimedGate;
+
+        public bool HasNoteContent => true;
+        public bool HasEventContent => false;
+        public ulong NoteContentFingerprint => fingerprint;
+        public ulong EventContentFingerprint => 0;
+
+        public int CoarseQueryCount
+        {
+            get
+            {
+                lock (_gate)
+                    return _queries.Count(static query =>
+                    {
+                        double span = query.End - query.Start;
+                        return span is >= 0.14 and <= 0.2;
+                    });
+            }
+        }
+
+        public bool HasDetailedQuery
+        {
+            get
+            {
+                lock (_gate)
+                    return _queries.Any(static query =>
+                        query.Start < 0.1
+                        && query.End - query.Start < 0.1);
+            }
+        }
+
+        public void QueryNotes(
+            double normalizedStart,
+            double normalizedEnd,
+            List<TimelineSegmentPreviewNote> destination)
+        {
+            if (firstQueryGate is not null
+                && Interlocked.CompareExchange(ref _claimedGate, 1, 0) == 0)
+            {
+                _ = firstQueryGate.Wait(TimeSpan.FromSeconds(10));
+            }
+            lock (_gate)
+                _queries.Add((normalizedStart, normalizedEnd));
+            if (normalizedStart <= 0.05 && normalizedEnd > 0.05)
+                destination.Add(new(0.05, 0.06, 60));
+        }
+
+        public void QueryEvents(
+            double normalizedStart,
+            double normalizedEnd,
+            List<TimelineSegmentPreviewEvent> destination)
+        {
         }
     }
 

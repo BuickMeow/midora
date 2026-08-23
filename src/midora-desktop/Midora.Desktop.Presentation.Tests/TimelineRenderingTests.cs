@@ -2,6 +2,7 @@ using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Interaction;
 using Midora.Desktop.Presentation.Rendering;
 using Midora.Domain;
+using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -14,6 +15,28 @@ namespace Midora.Desktop.Presentation.Tests;
 
 public sealed class TimelineRenderingTests
 {
+    [Fact]
+    public void TimelineTextCacheSeparatesTransparentMeasurementFromVisibleText()
+    {
+        RunOnSta(() =>
+        {
+            TimelineSurface surface = new();
+            MethodInfo? method = typeof(TimelineSurface).GetMethod(
+                "GetFormattedText",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(method);
+
+            object? transparent = method!.Invoke(
+                surface,
+                ["Instrument", Brushes.Transparent, 9d, FontWeights.Normal]);
+            object? visible = method.Invoke(
+                surface,
+                ["Instrument", Brushes.White, 9d, FontWeights.Normal]);
+
+            Assert.NotSame(transparent, visible);
+        });
+    }
+
     [Fact]
     public void PlaybackCursorInvalidatesOnlyItsLightweightOverlay()
     {

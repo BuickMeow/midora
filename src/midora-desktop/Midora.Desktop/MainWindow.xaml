@@ -493,7 +493,7 @@
               <Button Grid.Column="1" Width="24" Height="22" Padding="0" ToolTip="Add Track"
                       IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
                       Click="OnArrangementAddClick">
-                <Button.ContextMenu><ContextMenu><MenuItem Header="New Logical Track" Click="OnNewTrackClick"/><MenuItem Header="New Logical Track with Instrument…" Click="OnNewTrackWithInstrumentClick"/><Separator/><MenuItem Header="New Raw MIDI Track…" Click="OnNewRawMidiTrackClick"/></ContextMenu></Button.ContextMenu>
+                <Button.ContextMenu><ContextMenu><MenuItem Header="New Logical Track" Click="OnNewTrackClick"/><MenuItem Header="New Logical Track with Instrument…" Click="OnNewTrackWithInstrumentClick"/><Separator/><MenuItem Header="New MIDI Track…" Click="OnNewRawMidiTrackClick"/></ContextMenu></Button.ContextMenu>
                 <ui:FluentIcon Width="13" Height="13" Data="{StaticResource Fluent.Add20Regular}"/>
               </Button>
               <Button Grid.Column="3" Width="24" Height="22" Padding="0"

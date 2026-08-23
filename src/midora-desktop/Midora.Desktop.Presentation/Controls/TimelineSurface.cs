@@ -535,7 +535,8 @@ public sealed class TimelineSurface : Control
     private Pen? _dragPreviewPen;
     private Pen? _warningDashPen;
     private Pen? _groupDetachBoundaryPen;
-    private readonly Dictionary<string, FormattedText> _textCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string Value, double Size, int Weight, Brush Brush), FormattedText>
+        _textCache = [];
     private readonly Dictionary<uint, SegmentAccentResources> _segmentAccentResources = [];
     private readonly Dictionary<uint, SolidColorBrush> _rawAccentBrushes = [];
     private double _cachedPixelsPerDip;
@@ -6615,14 +6616,15 @@ public sealed class TimelineSurface : Control
                     combinedHeight = formatted.Height;
                 }
                 double y = laneTop + Math.Max(0, (headerVisualHeight - combinedHeight) / 2);
-                if (arrangementLane is ArrangementLaneDescriptor chipDescriptor
-                    && !chipDescriptor.IsSharedGroup
-                    && TryGetArrangementJoinChipBounds(viewport, lane, out Rect chipBounds))
+                if (arrangementLane is ArrangementLaneDescriptor
+                    && TryGetArrangementSecondaryChipBounds(
+                        viewport,
+                        lane,
+                        out _,
+                        out Rect chipBounds))
                 {
-                    bool chipHovered = _hoverPoint is Point pointer
-                        && chipBounds.Contains(pointer);
                     context.DrawRoundedRectangle(
-                        chipHovered ? hoverBackground : null,
+                        secondaryLinkHovered ? hoverBackground : null,
                         secondaryLinkHovered ? _redPen : _borderPen,
                         chipBounds,
                         2,
@@ -6634,22 +6636,6 @@ public sealed class TimelineSurface : Control
                 {
                     Point secondaryOrigin = new(8 + contentIndent, y + formatted.Height + 1);
                     context.DrawText(secondaryFormatted, secondaryOrigin);
-                    if (arrangementLane?.IsSharedGroup == true && secondaryLinkHovered)
-                    {
-                        Rect outline = new(
-                            secondaryOrigin.X - 1,
-                            secondaryOrigin.Y - 1,
-                            Math.Min(
-                                Math.Max(1, laneHeaderWidth - 54 - contentIndent),
-                                secondaryFormatted.WidthIncludingTrailingWhitespace + 2),
-                            secondaryFormatted.Height + 2);
-                        context.DrawRoundedRectangle(
-                            null,
-                            _redPen,
-                            outline,
-                            2,
-                            2);
-                    }
                 }
                 context.Pop();
                 if (SurfaceMode == TimelineSurfaceMode.Arrangement
@@ -7121,6 +7107,24 @@ public sealed class TimelineSurface : Control
         int lane,
         out Rect bounds)
     {
+        if (!TryGetArrangementSecondaryChipBounds(
+                viewport,
+                lane,
+                out ArrangementLaneDescriptor descriptor,
+                out bounds))
+        {
+            return false;
+        }
+        return !descriptor.IsSharedGroup && descriptor.SharedGroupId.HasValue;
+    }
+
+    private bool TryGetArrangementSecondaryChipBounds(
+        TimelineViewport viewport,
+        int lane,
+        out ArrangementLaneDescriptor descriptor,
+        out Rect bounds)
+    {
+        descriptor = default;
         bounds = Rect.Empty;
         if (Snapshot is not TimelineRenderSnapshot snapshot
             || (uint)lane >= (uint)snapshot.ArrangementLanes.Count
@@ -7129,9 +7133,8 @@ public sealed class TimelineSurface : Control
         {
             return false;
         }
-        ArrangementLaneDescriptor descriptor = snapshot.ArrangementLanes[lane];
-        if (descriptor.IsSharedGroup
-            || !descriptor.SharedGroupId.HasValue
+        descriptor = snapshot.ArrangementLanes[lane];
+        if (descriptor.ParentId is null
             || descriptor.Kind is not (ArrangementLaneKind.LogicalTrack
                 or ArrangementLaneKind.PureMidiTrack)
             || string.IsNullOrWhiteSpace(snapshot.LaneSecondaryLabels[lane]))
@@ -7154,7 +7157,7 @@ public sealed class TimelineSurface : Control
         double combinedHeight = primary.Height + secondary.Height + 1;
         if (combinedHeight > headerHeight - 2) return false;
 
-        const double contentIndent = 23;
+        double contentIndent = descriptor.IsSharedGroup ? 33 : 23;
         double textX = 8 + contentIndent;
         double maximumRight = GetLaneHeaderWidth() - 46;
         double width = Math.Min(secondary.Width + 6, maximumRight - textX + 3);
@@ -8153,62 +8156,18 @@ public sealed class TimelineSurface : Control
         out ArrangementLaneDescriptor descriptor,
         out Rect bounds)
     {
-        descriptor = default;
-        bounds = Rect.Empty;
         if (SurfaceMode != TimelineSurfaceMode.Arrangement
-            || Snapshot is not TimelineRenderSnapshot snapshot
             || point.X < 0
             || point.X >= GetLaneHeaderWidth()
             || point.Y < GetRulerHeight())
         {
+            descriptor = default;
+            bounds = Rect.Empty;
             return false;
         }
         int lane = YToLane(viewport, point.Y - GetRulerHeight());
-        if ((uint)lane >= (uint)snapshot.ArrangementLanes.Count
-            || (uint)lane >= (uint)snapshot.LaneSecondaryLabels.Count
-            || string.IsNullOrWhiteSpace(snapshot.LaneSecondaryLabels[lane]))
-        {
-            return false;
-        }
-        ArrangementLaneDescriptor candidate = snapshot.ArrangementLanes[lane];
-        if (candidate.Kind is not (ArrangementLaneKind.LogicalTrack
-                or ArrangementLaneKind.PureMidiTrack)
-            || candidate.ParentId is null)
-        {
-            return false;
-        }
-        string label = (uint)lane < (uint)snapshot.LaneLabels.Count
-            ? snapshot.LaneLabels[lane]
-            : string.Empty;
-        double visualHeight = GetLaneVisualHeight(lane);
-        FormattedText primary = GetFormattedText(
-            label,
-            Brushes.Transparent,
-            11,
-            FontWeights.Normal);
-        FormattedText secondary = GetFormattedText(
-            snapshot.LaneSecondaryLabels[lane],
-            Brushes.Transparent,
-            9,
-            FontWeights.Normal);
-        double combinedHeight = primary.Height + secondary.Height + 1;
-        if (combinedHeight > visualHeight - 2) return false;
-
-        double contentIndent = candidate.IsSharedGroup ? 33 : 23;
-        double x = 8 + contentIndent;
-        double y = GetLaneTop(viewport, lane, GetRulerHeight())
-            + Math.Max(0, (visualHeight - combinedHeight) / 2)
-            + primary.Height
-            + 1;
-        double available = Math.Max(0, GetLaneHeaderWidth() - 52 - contentIndent);
-        bounds = new Rect(
-            x,
-            y,
-            Math.Min(available, Math.Max(1, secondary.WidthIncludingTrailingWhitespace)),
-            secondary.Height);
-        if (!bounds.Contains(point)) return false;
-        descriptor = candidate;
-        return true;
+        return TryGetArrangementSecondaryChipBounds(viewport, lane, out descriptor, out bounds)
+            && bounds.Contains(point);
     }
 
     private static long SaturatingAddSigned(long value, long increment)
@@ -8237,7 +8196,7 @@ public sealed class TimelineSurface : Control
             _cachedPixelsPerDip = pixelsPerDip;
             _textCache.Clear();
         }
-        string key = $"{size:R}|{weight.ToOpenTypeWeight()}|{value}";
+        var key = (value, size, weight.ToOpenTypeWeight(), brush);
         if (_textCache.TryGetValue(key, out FormattedText? cached))
         {
             return cached;

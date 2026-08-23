@@ -1083,6 +1083,50 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public async Task ArrangementLogicalSegmentPreviewIncludesLogicalParameterPoints()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Logical parameter preview",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+        EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalParameter(
+            instrument.Id,
+            "Expression",
+            LogicalParameterType.Integer,
+            0,
+            127,
+            0,
+            127,
+            0));
+        LogicalParameterDefinition parameter = Assert.Single(instrument.LogicalParameters);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track", instrument.Id));
+        LogicalTrack track = Assert.Single(session.Project.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
+        Segment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalParameterLane(
+            segment.Id,
+            parameter.Id));
+        LogicalParameterLane lane = Assert.Single(segment.ParameterLanes);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalParameterPoint(
+            segment.Id,
+            lane.Id,
+            120,
+            96,
+            CurveInterpolation.Step));
+
+        TimelineWorkspaceViewModel arrangement = session.OpenArrangement();
+        TimelineSegmentPreview preview = arrangement.Snapshot!.SegmentPreviews[segment.Id];
+
+        TimelineSegmentPreviewEvent value = Assert.Single(preview.Events);
+        Assert.Equal(0.25, value.NormalizedTick, precision: 10);
+        Assert.Equal(96 / 127d, value.NormalizedValue, precision: 10);
+    }
+
+    [Fact]
     public async Task SelectionOnlyRefreshDoesNotRebuildTimelineSnapshotOrIntervalIndex()
     {
         await using DesktopSessionController session = new();
@@ -2119,6 +2163,96 @@ public sealed class DesktopSessionControllerTests
         Assert.True(editor.Snapshot!.TryGetItem(note.Id, out TimelineRenderItem rendered));
         Assert.Equal(24, rendered.StartTick);
         Assert.Equal(127 - 61, rendered.Lane);
+    }
+
+    [Fact]
+    public async Task DirectMidiCopySelectionContainsOnlySurvivingCopies()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Direct MIDI copy selection",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot("MIDI Track"));
+        PureMidiTrack track = Assert.Single(session.Project!.PureMidiTracks);
+        session.Execute(ProjectDomainEditCommands.CreateMidiSegment(track.Id, 0, 480));
+        MidiSegment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateDirectMidiNote(
+            segment.Id, 0, 24, 60, 100));
+        session.Execute(ProjectDomainEditCommands.CreateDirectMidiNote(
+            segment.Id, 10, 24, 61, 100));
+        session.Execute(ProjectDomainEditCommands.CreateDirectMidiNote(
+            segment.Id, 20, 24, 61, 100));
+        MidoraId firstId = segment.Notes.QueryStartValues(0, 1).Single().Id;
+        MidoraId secondId = segment.Notes.QueryStartValues(10, 11).Single().Id;
+        long firstNewStableId = session.Project.NextStableId;
+
+        session.Execute(ProjectDomainEditCommands.DuplicateDirectMidiNotes(
+            segment.Id,
+            [firstId, secondId],
+            tickDelta: 10,
+            keyDelta: 0));
+
+        MidoraId selectedId = Assert.Single(
+            TimelineWorkspaceViewModel.FindCreatedSegmentObjectIds(
+                session.Project,
+                segment.Id,
+                firstNewStableId));
+        DirectMidiNote selectedCopy = Assert.Single(segment.Notes.ResolveByIds([selectedId])).Value;
+        Assert.Equal(10, selectedCopy.StartTick);
+        Assert.Equal(60, selectedCopy.Key);
+        Assert.NotEqual(firstId, selectedId);
+        Assert.NotEqual(secondId, selectedId);
+        Assert.Equal(4, segment.Notes.Count);
+
+        long allDiscardedFirstStableId = session.Project.NextStableId;
+        session.Execute(ProjectDomainEditCommands.DuplicateDirectMidiNotes(
+            segment.Id,
+            [selectedId],
+            tickDelta: 0,
+            keyDelta: 0));
+        Assert.Empty(TimelineWorkspaceViewModel.FindCreatedSegmentObjectIds(
+            session.Project,
+            segment.Id,
+            allDiscardedFirstStableId));
+        Assert.Equal(4, segment.Notes.Count);
+    }
+
+    [Fact]
+    public async Task ArrangementSharedTracksKeepConciseSecondaryLabels()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Arrangement secondary labels",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Shared Instrument"));
+        EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Logical", instrument.Id));
+        LogicalTrack logical = Assert.Single(session.Project.Tracks);
+        session.Execute(ProjectDomainEditCommands.DuplicateLogicalTrackAndShareState(logical.Id));
+        session.Execute(ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot("MIDI"));
+        PureMidiTrack midi = Assert.Single(session.Project.PureMidiTracks);
+        session.Execute(ProjectDomainEditCommands.DuplicatePureMidiTrack(midi.Id));
+
+        TimelineRenderSnapshot snapshot = Assert.IsType<TimelineRenderSnapshot>(
+            session.OpenArrangement().Snapshot);
+        ArrangementLaneDescriptor conductor = snapshot.ArrangementLanes.Single(
+            value => value.Kind == ArrangementLaneKind.Conductor);
+        ArrangementLaneDescriptor[] logicalLanes = snapshot.ArrangementLanes.Where(
+            value => value.Kind == ArrangementLaneKind.LogicalTrack).ToArray();
+        ArrangementLaneDescriptor[] midiLanes = snapshot.ArrangementLanes.Where(
+            value => value.Kind == ArrangementLaneKind.PureMidiTrack).ToArray();
+
+        Assert.Equal(string.Empty, snapshot.LaneSecondaryLabels[conductor.Lane]);
+        Assert.Equal(2, logicalLanes.Length);
+        Assert.All(logicalLanes, lane =>
+            Assert.Equal("Shared Instrument", snapshot.LaneSecondaryLabels[lane.Lane]));
+        Assert.Equal(2, midiLanes.Length);
+        Assert.All(midiLanes, lane =>
+            Assert.Equal("Auto Melodic", snapshot.LaneSecondaryLabels[lane.Lane]));
     }
 
     [Fact]

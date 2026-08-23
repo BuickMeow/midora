@@ -1326,7 +1326,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             null,
             null,
             "Conductor",
-            "Tempo · Meter · Key · Markers",
+            string.Empty,
             0,
             TimelineLaneState.None,
             false);
@@ -1418,9 +1418,9 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                     : string.IsNullOrWhiteSpace(instrument.Name)
                         ? "Unnamed Event Instrument"
                         : instrument.Name;
-                string secondary = shared
-                    ? $"{definitionName} · Shared state · {groupCount} tracks"
-                    : instrument is null ? "Unbound · Empty track only" : definitionName;
+                string secondary = instrument is null
+                    ? "Unbound · Empty track only"
+                    : definitionName;
                 int lane = labels.Count;
                 AddLane(
                     ArrangementLaneKind.LogicalTrack,
@@ -1447,7 +1447,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                         lane,
                         z: 0) with
                     { AccentColor = accentColor });
-                    previews[segment.Id] = GetOrCreateSegmentPreview(segment);
+                    previews[segment.Id] = GetOrCreateSegmentPreview(segment, instrument);
                 }
                 continue;
             }
@@ -1464,7 +1464,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                     : root.RoutingMode == MidiChannelRootRoutingMode.Auto
                         ? $"Auto {root.ChannelMode}"
                         : $"P.{root.FixedZeroBasedPort + 1} Ch.{root.FixedZeroBasedChannel + 1} {root.ChannelMode}";
-                string secondary = shared ? $"{route} · Shared state · {groupCount} tracks" : route;
+                string secondary = route;
                 int lane = labels.Count;
                 AddLane(
                     ArrangementLaneKind.PureMidiTrack,
@@ -1563,15 +1563,30 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             | (_soloTrackIds.Contains(trackId) ? TimelineLaneState.Solo : TimelineLaneState.None);
     }
 
-    private TimelineSegmentPreview GetOrCreateSegmentPreview(Segment segment)
+    private TimelineSegmentPreview GetOrCreateSegmentPreview(
+        Segment segment,
+        EventInstrument? instrument)
     {
         SegmentPreviewNoteSource[] source = segment.Notes
             .Select(note => new SegmentPreviewNoteSource(note.StartTick, note.LengthTicks, note.Note))
             .ToArray();
+        Dictionary<MidoraId, LogicalParameterDefinition> definitions = instrument?.LogicalParameters
+            .ToDictionary(static value => value.Id)
+            ?? [];
+        SegmentPreviewEventSource[] eventSource = segment.ParameterLanes
+            .SelectMany(lane => lane.Points.Select(point => new SegmentPreviewEventSource(
+                point.Tick,
+                Kind: -1,
+                Data1: 0,
+                Data2: 0,
+                Order: point.Id.Value,
+                NormalizeParameterValue(definitions.GetValueOrDefault(lane.ParameterId), point.Value))))
+            .ToArray();
         if (_segmentPreviewCache.TryGetValue(segment.Id, out SegmentPreviewCacheEntry? cached)
             && cached.ContentOffsetTick == segment.ContentOffsetTick
             && cached.LengthTicks == segment.LengthTicks
-            && cached.Source.AsSpan().SequenceEqual(source))
+            && cached.Source.AsSpan().SequenceEqual(source)
+            && cached.EventSource.AsSpan().SequenceEqual(eventSource))
         {
             return cached.Preview;
         }
@@ -1590,12 +1605,20 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 (clippedEnd - visibleStart) / (double)segment.LengthTicks,
                 Math.Clamp(note.Pitch, 0, 127)));
         }
-        TimelineSegmentPreview preview = new(segment.Id, notes);
+        List<TimelineSegmentPreviewEvent> events = new(eventSource.Length);
+        foreach (SegmentPreviewEventSource value in eventSource)
+        {
+            if (value.Tick < visibleStart || value.Tick >= visibleEnd) continue;
+            events.Add(new(
+                (value.Tick - visibleStart) / (double)segment.LengthTicks,
+                value.NormalizedValue));
+        }
+        TimelineSegmentPreview preview = new(segment.Id, notes, events);
         _segmentPreviewCache[segment.Id] = new(
             segment.ContentOffsetTick,
             segment.LengthTicks,
             source,
-            [],
+            eventSource,
             preview);
         return preview;
     }
@@ -1643,13 +1666,15 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 (int)value.Kind,
                 value.Data1,
                 value.Data2,
-                value.Order))
+                value.Order,
+                double.NaN))
             .Concat(segment.OpaqueEvents.Select(value => new SegmentPreviewEventSource(
                 value.Tick,
                 1000 + (int)value.Kind,
                 value.MetaType,
                 value.Payload.Length,
-                value.Order)))
+                value.Order,
+                double.NaN)))
             .ToArray();
         if (_segmentPreviewCache.TryGetValue(segment.Id, out SegmentPreviewCacheEntry? cached)
             && cached.ContentOffsetTick == segment.ContentOffsetTick
@@ -1693,7 +1718,9 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     }
 
     private static double NormalizeDirectEventPreviewValue(SegmentPreviewEventSource value) =>
-        value.Kind switch
+        double.IsFinite(value.NormalizedValue)
+            ? Math.Clamp(value.NormalizedValue, 0, 1)
+            : value.Kind switch
         {
             (int)DirectMidiChannelEventKind.PolyphonicKeyPressure => Math.Clamp(value.Data2 / 127d, 0, 1),
             (int)DirectMidiChannelEventKind.ControlChange => Math.Clamp(value.Data2 / 127d, 0, 1),
@@ -1709,7 +1736,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         int Kind,
         int Data1,
         int Data2,
-        long Order);
+        long Order,
+        double NormalizedValue);
 
     private static string DisplayDamagedName(DamagedProjectObject value) =>
         string.IsNullOrWhiteSpace(value.NameSnapshot)
@@ -2288,6 +2316,59 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             if (segment is not null) return (track, segment);
         }
         return null;
+    }
+
+    internal static MidoraId[] FindCreatedSegmentObjectIds(
+        MidoraProject project,
+        MidoraId segmentId,
+        long firstNewStableId)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (firstNewStableId <= 0 || firstNewStableId >= project.NextStableId)
+        {
+            return [];
+        }
+
+        if (FindSegment(project, segmentId) is { Segment: Segment logical })
+        {
+            MidoraId[] lanes = logical.ParameterLanes
+                .Select(static item => item.Id)
+                .Where(id => id.Value >= firstNewStableId)
+                .Distinct()
+                .ToArray();
+            if (lanes.Length != 0) return lanes;
+            return logical.Notes.Select(static item => item.Id)
+                .Concat(logical.ParameterLanes
+                    .SelectMany(static item => item.Points)
+                    .Select(static item => item.Id))
+                .Where(id => id.Value >= firstNewStableId)
+                .Distinct()
+                .ToArray();
+        }
+
+        if (FindMidiSegment(project, segmentId) is not { Segment: MidiSegment midi })
+        {
+            return [];
+        }
+
+        int candidateCount = checked((int)(project.NextStableId - firstNewStableId));
+        MidoraId[] candidates = new MidoraId[candidateCount];
+        for (int index = 0; index < candidates.Length; index++)
+        {
+            candidates[index] = new MidoraId(checked(firstNewStableId + index));
+        }
+
+        MidoraId[] preferred = midi.Notes.ResolveByIds(candidates)
+            .Select(static match => match.Value.Id)
+            .ToArray();
+        if (preferred.Length != 0) return preferred;
+        preferred = midi.ChannelEvents.ResolveByIds(candidates)
+            .Select(static match => match.Value.Id)
+            .ToArray();
+        if (preferred.Length != 0) return preferred;
+        return midi.OpaqueEvents.ResolveByIds(candidates)
+            .Select(static match => match.Value.Id)
+            .ToArray();
     }
 
     internal static string TrackDisplayName(MidoraProject project, LogicalTrack track)

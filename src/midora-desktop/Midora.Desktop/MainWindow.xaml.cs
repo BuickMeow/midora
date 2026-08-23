@@ -856,7 +856,8 @@ public partial class MainWindow : Window
 
     private void SelectCreatedWorkspaceObjects(
         WorkspaceViewModel workspace,
-        long firstNewStableId)
+        long firstNewStableId,
+        bool replaceSelectionWhenNoObjectSurvives = false)
     {
         if (_session.Project is not MidoraProject project) return;
         static MidoraId[] NewIds<T>(IEnumerable<T> items, Func<T, MidoraId> id, long first) =>
@@ -878,24 +879,25 @@ public partial class MainWindow : Window
                 InstrumentSelection(instrumentId),
             _ => []
         };
-        if (created.Length == 0) return;
+        if (created.Length == 0)
+        {
+            if (replaceSelectionWhenNoObjectSurvives)
+            {
+                workspace.Selection.Clear();
+                _session.RefreshWorkspaceSelection(workspace);
+            }
+            return;
+        }
         workspace.Selection.Clear();
         foreach (MidoraId id in created) workspace.Selection.Add(id, makePrimary: false);
         _session.RefreshWorkspaceSelection(workspace);
         return;
 
         MidoraId[] SegmentSelection(MidoraId segmentId)
-        {
-            Segment? segment = TimelineWorkspaceViewModel.FindSegment(project, segmentId)?.Segment;
-            if (segment is null) return [];
-            MidoraId[] lanes = NewIds(segment.ParameterLanes, item => item.Id, firstNewStableId);
-            if (lanes.Length != 0) return lanes;
-            return NewIds(
-                segment.Notes.Select(item => item.Id)
-                    .Concat(segment.ParameterLanes.SelectMany(item => item.Points).Select(item => item.Id)),
-                item => item,
+            => TimelineWorkspaceViewModel.FindCreatedSegmentObjectIds(
+                project,
+                segmentId,
                 firstNewStableId);
-        }
 
         MidoraId[] InstrumentSelection(MidoraId instrumentId)
         {
@@ -4226,6 +4228,9 @@ public partial class MainWindow : Window
                 detailsTitle: "MIDI Import Report");
             ShowMidiImportReport(report);
         }
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            RestorePlaybackShortcutFocus);
     }
 
     private static string FormatMidiImportProgress(MidiProjectImportProgress value) =>
@@ -6987,7 +6992,8 @@ public partial class MainWindow : Window
                         keyDelta));
                     SelectCreatedWorkspaceObjects(
                         (TimelineWorkspaceViewModel)_session.ActiveWorkspace!,
-                        firstNewStableId);
+                        firstNewStableId,
+                        replaceSelectionWhenNoObjectSurvives: true);
                 }
                 else
                 {

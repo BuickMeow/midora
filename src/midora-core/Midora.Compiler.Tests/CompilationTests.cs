@@ -84,6 +84,52 @@ public sealed class CompilationTests
     }
 
     [Fact]
+    public void RangeStartRestoresLogicalParameterMappedControllerState()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 960);
+        LogicalParameterDefinition parameter = new(fixture.Project)
+        {
+            Name = "Expression",
+            Type = LogicalParameterType.Integer,
+            Minimum = 0,
+            Maximum = 127,
+            DisplayMinimum = 0,
+            DisplayMaximum = 127,
+            DefaultValue = 0
+        };
+        fixture.Instrument.LogicalParameters.Add(parameter);
+        fixture.Instrument.ParameterMappings.Add(new LogicalParameterMapping(fixture.Project)
+        {
+            ParameterId = parameter.Id,
+            SubVoiceId = fixture.Voice.Id,
+            Target = MidiValueTarget.ControlChange(11)
+        });
+        LogicalParameterLane lane = new(fixture.Project) { ParameterId = parameter.Id };
+        lane.Points.Add(new(fixture.Project, 0, 40, CurveInterpolation.Step));
+        fixture.Segment.ParameterLanes.Add(lane);
+        fixture.Instrument.TemplateLengthTicks = 800;
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 800, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 900);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            new CompilationRequest
+            {
+                Purpose = CompilationPurpose.Range,
+                StartTick = 240,
+                EndTick = 720
+            });
+
+        Assert.Contains(result.Events.ToArray(), value =>
+            value.Tick == 240
+            && value.Role == CanonicalEventRole.RangeRestore
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Message.Byte2 == 40
+            && value.Source.Origin == SourceOrigin.RangeRestore);
+    }
+
+    [Fact]
     public void RangeStartRestoresEveryRpnTransactionWithNullFunction()
     {
         var fixture = CompilerTestProject.Create(segmentLength: 960);

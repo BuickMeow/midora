@@ -330,9 +330,9 @@ Track Mute/Solo 仍只属于运行期，不持久化、不进入 Undo、不影�
 
 Logical Note 与 Direct MIDI Note 只转换共同字段：relative Tick、Gate Length、Key、NoteOn/Instance Velocity。Logical→Direct 的 NoteOff Velocity 为 0；Direct→Logical 丢弃 NoteOff Velocity；Direct→Direct 保留它。该能力不转换 Segment、参数、Channel Event、Definition、Usage 或 Root。
 
-## 24.11 Pure MIDI Segment、Conductor 与编辑器概览
+## 24.11 Segment、Conductor 与编辑器概览
 
-Pure MIDI Segment 的 Note 与 non-Note event 使用独立 tile/layer。event 线位于 Note 上层、透明度 50%、至少 1 device pixel，高度按正式值域归一化；同 device column 使用最大高度聚合。Logical Segment 继续只显示 Note。
+Pure MIDI Segment 的 Note 与 non-Note event、Logical Segment 的 Note 与 Logical Parameter point 分别使用独立 tile/layer。event / parameter 线位于 Note 上层、透明度 50%、至少 1 device pixel，高度按各自正式值域归一化；同 device column 使用最大高度聚合。Logical Parameter 不得为该概览恢复曲线插值，只投影正式离散点。
 
 Conductor 固定第一行，直接显示按类型着色且大小不随缩放变化的圆点；End Marker 仍为专用竖线。
 
@@ -348,7 +348,7 @@ Event layer 位于 Note layer 上方，且必须与播放指针红色可辨。
 
 普通内存内容与分页 Direct MIDI 内容必须产生一致投影。不得把 Note Gate End、Note 持续区间、page min/max/count 跨度或已删除/移动对象的旧位置当作新 onset/event；没有对象的 tick 区间必须保持空白。缓存键至少区分内容指纹、extent 和 device-column width，Copy-on-write overlay 必须在叠加当前编辑值前排除被替换/删除的源 stable ID。
 
-Pure MIDI Segment Arrangement 概览与 Conductor row 概览均必须：
+Logical / Pure MIDI Segment Arrangement 概览与 Conductor row 概览均必须：
 
 ```text
 Conductor 继续只查询可见 source pages/range；

@@ -71,7 +71,7 @@ Logical Note preview
 
 Preview 使用固定 MIDI pitch `0..127` 的二维投影；Note 最小可见高度为 1 px，位置与边界执行布局取整，Segment 本地 tick 0 的 Note 不得因左边界或可见范围查询而遗漏。Preview 必须在 Arrangement 的手工渲染面内绘制，不得为每个 Note 创建 WPF Control。实现应按 Segment 稳定 ID 与 preview 相关内容指纹复用缓存；缩放、平移、选择或播放指针变化不得重建未变化 Segment 的 preview 内容。
 
-Pure MIDI Segment 还必须在 Note 上层绘制独立缓存的 non-Note event 线，统一 50% 透明度、最小 1 device pixel，并按正式事件值域归一化高度；Logical Segment 不绘制该层。详细 LOD、同列聚合、裁剪和独立失效规则见第 24.8 节。
+Pure MIDI Segment 必须在 Note 上层绘制独立缓存的 non-Note event 线；Logical Segment 必须在同一层绘制 Logical Parameter point 线。两者统一使用 50% 透明度、最小 1 device pixel，并按对应正式值域归一化高度。详细 LOD、同列聚合、裁剪和独立失效规则见第 24.11 节。
 ### 18.1.5 Segment 重叠
 正式规则：
 ```text

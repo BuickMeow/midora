@@ -322,6 +322,36 @@ public sealed class WpfInteractionRegressionTests
     }
 
     [Fact]
+    public void ComboDropDownWheelAdvancesByOneScrollLine()
+    {
+        RunOnSta(() =>
+        {
+            ScrollViewer viewer = new()
+            {
+                Height = 100,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = new Border { Height = 500 }
+            };
+            Border popupRoot = new() { Child = viewer };
+            ComboBoxWheelSelectionGuard.SetUseSingleStepDropDownWheel(popupRoot, true);
+            popupRoot.Measure(new Size(300, 100));
+            popupRoot.Arrange(new Rect(0, 0, 300, 100));
+            popupRoot.UpdateLayout();
+
+            MouseWheelEventArgs wheel = new(Mouse.PrimaryDevice, 0, -120)
+            {
+                RoutedEvent = UIElement.PreviewMouseWheelEvent,
+                Source = viewer
+            };
+            viewer.RaiseEvent(wheel);
+            DrainDispatcher();
+
+            Assert.True(wheel.Handled);
+            Assert.Equal(16, viewer.VerticalOffset);
+        });
+    }
+
+    [Fact]
     public void DialogActionStylesProvideOneWidthAndKeyboardContract()
     {
         RunOnSta(() =>

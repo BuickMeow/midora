@@ -704,7 +704,8 @@
                       BorderBrush="{StaticResource Brush.Border.Strong}"
                       BorderThickness="1"
                       CornerRadius="{StaticResource Radius.Medium}">
-                <Grid Margin="4">
+                <Grid Margin="4"
+                      interaction:ComboBoxWheelSelectionGuard.UseSingleStepDropDownWheel="True">
                   <ScrollViewer CanContentScroll="True"
                                 HorizontalScrollBarVisibility="Disabled"
                                 VerticalScrollBarVisibility="Auto">

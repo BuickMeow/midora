@@ -191,6 +191,27 @@ public sealed class SharedAudioWorkerControlTests
     }
 
     [Fact]
+    public void PendingMonitoringCanSupersedeRecoveryWithoutBeingConsumed()
+    {
+        string name = $"Midora.Audio.Control.RecoveryMonitoring.{Guid.NewGuid():N}";
+        using SharedAudioWorkerControl producer = SharedAudioWorkerControl.Create(name);
+        using SharedAudioWorkerControl consumer = SharedAudioWorkerControl.Open(name);
+        MidiMonitoringCommand expected = MidiMonitoringCommand.DisableSource(3);
+
+        Assert.True(producer.TryEnqueueBufferingRecovery(48_000));
+        Assert.True(producer.TryEnqueueMonitoringCommands([expected]));
+        Assert.True(consumer.TryDequeue(out AudioWorkerControlCommand recovery));
+        Assert.Equal(AudioWorkerControlCommandKind.BufferingRecoveryPrepare, recovery.Kind);
+
+        Assert.True(consumer.HasPendingMonitoringCommand());
+        Assert.False(consumer.HasPendingStopCommand());
+        Assert.True(consumer.TryDequeue(out AudioWorkerControlCommand actual));
+        Assert.Equal(AudioWorkerControlCommandKind.Monitoring, actual.Kind);
+        Assert.Equal(expected, actual.MonitoringCommand);
+        Assert.False(consumer.HasPendingMonitoringCommand());
+    }
+
+    [Fact]
     public void HeldPreviewStatusPublishesFrontierAndAcknowledgedPlanGenerationAtomically()
     {
         string name = $"Midora.Audio.Control.Test.{Guid.NewGuid():N}";
@@ -302,6 +323,7 @@ public sealed class SharedAudioWorkerControlTests
         for (int i = 0; i < 10_000; i++)
         {
             if (!producer.TryEnqueueMonitoringCommands(commands)
+                || !consumer.HasPendingMonitoringCommand()
                 || !consumer.TryDequeue(out AudioWorkerControlCommand actual)
                 || actual.Kind != AudioWorkerControlCommandKind.Monitoring
                 || actual.MonitoringCommand.Kind != command.Kind

@@ -36,7 +36,11 @@ public sealed class StreamingMidiProjectImportTests
                 ]);
             File.WriteAllBytes(path, bytes);
 
-            result = MidiProjectImportService.ImportFile(path, "Song");
+            RecordingProgress progress = new();
+            result = MidiProjectImportService.ImportFile(
+                path,
+                "Song",
+                progress: progress);
 
             PureMidiTrack track = Assert.Single(result.Project.PureMidiTracks);
             MidiSegment segment = Assert.Single(track.Segments);
@@ -50,6 +54,16 @@ public sealed class StreamingMidiProjectImportTests
             Assert.Equal(1, result.Metrics.ImportedNoteCount);
             Assert.True(result.Metrics.ContentPageCount >= 3);
             Assert.True(result.Metrics.ContentPackBytes > 0);
+            Assert.Equal(MidiProjectImportPhase.ScanningSource, progress.Values[0].Phase);
+            Assert.Equal(0, progress.Values[0].Fraction);
+            Assert.Contains(progress.Values, value =>
+                value.Phase == MidiProjectImportPhase.ImportingEvents
+                && value.ProcessedEventCount == value.TotalEventCount
+                && value.TotalEventCount == result.Metrics.ScannedEventCount);
+            Assert.Equal(
+                MidiProjectImportPhase.FinalizingProject,
+                progress.Values[^1].Phase);
+            Assert.Equal(0.98, progress.Values[^1].Fraction);
         }
         finally
         {
@@ -123,5 +137,12 @@ public sealed class StreamingMidiProjectImportTests
             result?.Project.Dispose();
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private sealed class RecordingProgress : IProgress<MidiProjectImportProgress>
+    {
+        public List<MidiProjectImportProgress> Values { get; } = [];
+
+        public void Report(MidiProjectImportProgress value) => Values.Add(value);
     }
 }

@@ -534,6 +534,7 @@ public sealed class TimelineEditorSettings : ObservableObject
     public long OperationStepTicks => OperationSubdivision.ToTicks(
         _ticksPerQuarterNote, _barNumerator, _barDenominator);
     public long EffectiveOperationStepTicks => SnapEnabled ? OperationStepTicks : 1;
+    public int TicksPerQuarterNote => _ticksPerQuarterNote;
     public bool DisplayGridUsesBars => DisplaySubdivision.IsBar;
     public bool EffectiveOperationUsesBars => SnapEnabled && OperationSubdivision.IsBar;
     public ProjectTimeSignatureMap? TimeSignatureMap => _timeSignatureMap;
@@ -580,6 +581,7 @@ public sealed class TimelineEditorSettings : ObservableObject
         Raise(nameof(DisplayGridStepTicks));
         Raise(nameof(OperationStepTicks));
         Raise(nameof(EffectiveOperationStepTicks));
+        Raise(nameof(TicksPerQuarterNote));
         Raise(nameof(TimeSignatureMap));
     }
 
@@ -613,6 +615,7 @@ public sealed class TimelineEditorSettings : ObservableObject
         DefaultLengthTicks = _ticksPerQuarterNote;
         DefaultVelocity = 100;
         ConfigureBarDefaults();
+        Raise(nameof(TicksPerQuarterNote));
         Raise(nameof(TimeSignatureMap));
     }
 
@@ -766,6 +769,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         {
             if (!IsSegment || !Set(ref _isLowerEditorVisible, value)) return;
             Raise(nameof(BottomEditorRowHeight));
+            Raise(nameof(BottomEditorMinimumHeight));
         }
     }
     public GridLength BottomEditorRowHeight

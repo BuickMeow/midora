@@ -4177,6 +4177,20 @@ public partial class MainWindow : Window
         while (true)
         {
             MidiImportPortMappingRequiredException? mappingRequired = null;
+            using DispatcherCoalescingProgress<MidiProjectImportProgress> progress = new(
+                Dispatcher,
+                TimeSpan.FromMilliseconds(100),
+                value =>
+                {
+                    DesktopTaskViewModel? active = _session.ActiveForegroundTask;
+                    if (active is not null)
+                    {
+                        _session.ReportTask(
+                            active,
+                            FormatMidiImportProgress(value),
+                            value.Fraction);
+                    }
+                });
             bool succeeded = await RunOperationAsync(
                 "Open MIDI as New Project",
                 async cancellationToken => diagnostics =
@@ -4184,7 +4198,8 @@ public partial class MainWindow : Window
                         dialog.FileName,
                         portMap,
                         cancellationToken,
-                        GetAvailableDefaultEmbeddedSoundFontPath()),
+                        GetAvailableDefaultEmbeddedSoundFontPath(),
+                        progress),
                 canCancel: true,
                 handledException: exception =>
                 {
@@ -4203,14 +4218,32 @@ public partial class MainWindow : Window
         {
             int warningCount = diagnostics.Count(value => value.Severity == DiagnosticSeverity.Warning);
             int informationCount = diagnostics.Count(value => value.Severity == DiagnosticSeverity.Info);
+            string report = BuildMidiImportReport(diagnostics);
             _session.SetStatusMessage(
                 $"MIDI import completed with {warningCount} warning(s) and {informationCount} information notice(s).",
-                isError: false);
-            ShowMidiImportReport(diagnostics);
+                isError: false,
+                details: report,
+                detailsTitle: "MIDI Import Report");
+            ShowMidiImportReport(report);
         }
     }
 
-    private void ShowMidiImportReport(IReadOnlyList<MidiProjectImportDiagnostic> diagnostics)
+    private static string FormatMidiImportProgress(MidiProjectImportProgress value) =>
+        value.Phase switch
+        {
+            MidiProjectImportPhase.ScanningSource =>
+                $"Scanning MIDI source: {value.ProcessedEventCount:N0} event(s) found, "
+                + $"{value.ProcessedSourceBytes:N0}/{value.TotalSourceBytes:N0} bytes",
+            MidiProjectImportPhase.ImportingEvents =>
+                $"Importing MIDI events: {value.ProcessedEventCount:N0}/{value.TotalEventCount:N0}",
+            MidiProjectImportPhase.ValidatingProject => "Validating imported Project",
+            MidiProjectImportPhase.FinalizingProject => "Finalizing imported Project",
+            MidiProjectImportPhase.Completed =>
+                $"Imported {value.TotalEventCount:N0} MIDI event(s)",
+            _ => "Importing MIDI"
+        };
+
+    private static string BuildMidiImportReport(IReadOnlyList<MidiProjectImportDiagnostic> diagnostics)
     {
         int warningCount = diagnostics.Count(value => value.Severity == DiagnosticSeverity.Warning);
         int informationCount = diagnostics.Count(value => value.Severity == DiagnosticSeverity.Info);
@@ -4252,7 +4285,12 @@ public partial class MainWindow : Window
             }
         }
 
-        TextDetailsDialog dialog = new("MIDI Import Report", report.ToString().TrimEnd())
+        return report.ToString().TrimEnd();
+    }
+
+    private void ShowMidiImportReport(string report)
+    {
+        TextDetailsDialog dialog = new("MIDI Import Report", report)
         {
             Owner = this
         };
@@ -7770,7 +7808,9 @@ public partial class MainWindow : Window
     private void OnStatusMessageDetailsClick(object sender, RoutedEventArgs e)
     {
         if (_session.StatusMessage is not string message) return;
-        TextDetailsDialog dialog = new("Status Message", message)
+        TextDetailsDialog dialog = new(
+            _session.StatusMessageDetailsTitle ?? "Status Message",
+            _session.StatusMessageDetails ?? message)
         {
             Owner = this
         };

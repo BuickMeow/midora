@@ -11,7 +11,8 @@ public static partial class MidiProjectImportService
         string path,
         string projectName,
         IReadOnlyDictionary<byte, byte>? zeroBasedPortMapping = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<MidiProjectImportProgress>? progress = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(projectName);
@@ -23,13 +24,27 @@ public static partial class MidiProjectImportService
             FileShare.Read,
             256 * 1024,
             FileOptions.SequentialScan);
+        progress?.Report(new(
+            MidiProjectImportPhase.ScanningSource,
+            0,
+            0,
+            0,
+            importSource.Length,
+            0));
         Stopwatch firstPassTimer = Stopwatch.StartNew();
-        StreamingFirstPassVisitor firstPass = new();
+        StreamingFirstPassVisitor firstPass = new(progress);
         StandardMidiFileStreamResult scan = StandardMidiFile.ScanType0Or1(
             importSource,
             firstPass,
             cancellationToken);
         firstPassTimer.Stop();
+        progress?.Report(new(
+            MidiProjectImportPhase.ScanningSource,
+            scan.EventCount,
+            scan.EventCount,
+            scan.Header.FileByteCount,
+            scan.Header.FileByteCount,
+            0.4));
         StreamingTrackPlan[] tracks = NormalizeStreamingMetadata(firstPass.Tracks);
         List<MidiProjectImportDiagnostic> diagnostics = [];
         AddStreamingTrackNameDiagnostic(tracks, diagnostics);
@@ -76,7 +91,10 @@ public static partial class MidiProjectImportService
                 tracks,
                 targets,
                 diagnostics,
-                cancellationToken);
+                cancellationToken,
+                scan.EventCount,
+                scan.Header.FileByteCount,
+                progress);
             importSource.Position = 0;
             StandardMidiFileStreamResult secondScan = StandardMidiFile.ScanType0Or1(
                 importSource,
@@ -93,6 +111,14 @@ public static partial class MidiProjectImportService
             secondPass.Complete();
             secondPassTimer.Stop();
 
+            progress?.Report(new(
+                MidiProjectImportPhase.ValidatingProject,
+                scan.EventCount,
+                scan.EventCount,
+                scan.Header.FileByteCount,
+                scan.Header.FileByteCount,
+                0.96));
+
             using MidoraCompiler compiler = new();
             CanonicalCompiledResult validation = compiler.CompileFull(project, cancellationToken: cancellationToken);
             if (!validation.IsConsumable)
@@ -106,6 +132,14 @@ public static partial class MidiProjectImportService
                     "The imported MIDI cannot form a valid Midora Project."
                     + (detail.Length == 0 ? string.Empty : Environment.NewLine + detail));
             }
+
+            progress?.Report(new(
+                MidiProjectImportPhase.FinalizingProject,
+                scan.EventCount,
+                scan.EventCount,
+                scan.Header.FileByteCount,
+                scan.Header.FileByteCount,
+                0.98));
 
             MidiProjectImportMetrics metrics = new(
                 scan.Header.FileByteCount,
@@ -640,15 +674,22 @@ public static partial class MidiProjectImportService
         }
     }
 
-    private sealed class StreamingFirstPassVisitor : IStandardMidiFileStreamVisitor
+    private sealed class StreamingFirstPassVisitor(
+        IProgress<MidiProjectImportProgress>? progress) : IStandardMidiFileStreamVisitor
     {
+        private const long ReportInterval = 8_192;
+        private readonly IProgress<MidiProjectImportProgress>? _progress = progress;
         private StreamingTrackPlan? _current;
         private byte _port;
+        private long _processedEventCount;
+        private long _totalSourceBytes;
+        private long _lastReportedEventCount;
 
         public StreamingTrackPlan[] Tracks { get; private set; } = [];
 
         public void OnHeader(StandardMidiFileStreamHeader header)
         {
+            _totalSourceBytes = header.FileByteCount;
             Tracks = Enumerable.Range(0, header.TrackCount)
                 .Select(value => new StreamingTrackPlan(value))
                 .ToArray();
@@ -676,6 +717,26 @@ public static partial class MidiProjectImportService
 
         public void OnEvent(in StreamedStandardMidiFileEvent value)
         {
+            _processedEventCount++;
+            if (_progress is not null
+                && _processedEventCount - _lastReportedEventCount >= ReportInterval)
+            {
+                _lastReportedEventCount = _processedEventCount;
+                long processedBytes = Math.Clamp(
+                    value.SourceByteOffset,
+                    0,
+                    _totalSourceBytes);
+                double sourceFraction = _totalSourceBytes == 0
+                    ? 0
+                    : processedBytes / (double)_totalSourceBytes;
+                _progress.Report(new(
+                    MidiProjectImportPhase.ScanningSource,
+                    _processedEventCount,
+                    0,
+                    processedBytes,
+                    _totalSourceBytes,
+                    sourceFraction * 0.4));
+            }
             StreamingTrackPlan track = _current
                 ?? throw new InvalidOperationException("No streaming Track is active.");
             int sourceOffset = value.SourceByteOffset > int.MaxValue
@@ -757,15 +818,23 @@ public static partial class MidiProjectImportService
         private readonly Dictionary<(int Track, byte Port), StreamingImportTarget> _opaqueOwners;
         private readonly ICollection<MidiProjectImportDiagnostic> _diagnostics;
         private readonly CancellationToken _cancellationToken;
+        private readonly long _totalEventCount;
+        private readonly long _totalSourceBytes;
+        private readonly IProgress<MidiProjectImportProgress>? _progress;
         private StreamingTrackPlan? _current;
         private byte _port;
+        private long _processedEventCount;
+        private long _lastReportedEventCount;
 
         public StreamingSecondPassVisitor(
             MidoraProject project,
             StreamingTrackPlan[] tracks,
             IEnumerable<StreamingImportTarget> targets,
             ICollection<MidiProjectImportDiagnostic> diagnostics,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            long totalEventCount,
+            long totalSourceBytes,
+            IProgress<MidiProjectImportProgress>? progress)
         {
             _project = project;
             _tracks = tracks;
@@ -781,6 +850,9 @@ public static partial class MidiProjectImportService
                         .First().Target);
             _diagnostics = diagnostics;
             _cancellationToken = cancellationToken;
+            _totalEventCount = totalEventCount;
+            _totalSourceBytes = totalSourceBytes;
+            _progress = progress;
         }
 
         public void OnHeader(StandardMidiFileStreamHeader header)
@@ -802,6 +874,23 @@ public static partial class MidiProjectImportService
         public void OnEvent(in StreamedStandardMidiFileEvent value)
         {
             _cancellationToken.ThrowIfCancellationRequested();
+            _processedEventCount++;
+            if (_progress is not null
+                && (_processedEventCount - _lastReportedEventCount >= 8_192
+                    || _processedEventCount == _totalEventCount))
+            {
+                _lastReportedEventCount = _processedEventCount;
+                double eventFraction = _totalEventCount == 0
+                    ? 1
+                    : Math.Clamp(_processedEventCount / (double)_totalEventCount, 0, 1);
+                _progress.Report(new(
+                    MidiProjectImportPhase.ImportingEvents,
+                    _processedEventCount,
+                    _totalEventCount,
+                    Math.Clamp(value.SourceByteOffset, 0, _totalSourceBytes),
+                    _totalSourceBytes,
+                    0.4 + eventFraction * 0.55));
+            }
             StreamingTrackPlan track = _current
                 ?? throw new InvalidOperationException("No streaming Track is active.");
             if (value.Kind == StandardMidiFileEventKind.Meta

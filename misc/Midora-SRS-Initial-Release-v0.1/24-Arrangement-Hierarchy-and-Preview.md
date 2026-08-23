@@ -351,13 +351,20 @@ Event layer 位于 Note layer 上方，且必须与播放指针红色可辨。
 Pure MIDI Segment Arrangement 概览与 Conductor row 概览均必须：
 
 ```text
-只查询可见 source pages/range；
-使用分块缓存、LOD 和局部失效；
+Conductor 继续只查询可见 source pages/range；
+Arrangement Segment 的最高精度使用 `96 pixels / quarter note`、64-pixel 高度的固定基准 raster；较低精度只允许使用该基准的半八度 `1 / 2^(n/2)` 固定 LOD，不得把任意 viewport zoom/DPI 后的 Segment 宽高直接放入缓存身份；
+Segment 的正式 tick 长度与 Project TPQN 决定固定基准总宽度，禁止把任意长度 Segment 压缩进一个固定总像素宽度；
+固定 raster 以 256-pixel tile 分块；viewport 选择第一个 source-pixel 比例不大于当前显示比例的固定 LOD，禁止向下采样一像素对象，也不得为每个精确缩放值产生一套 tile；完整 Segment 目标矩形只执行一次 device-pixel 对齐，所有 tile 边界必须从该矩形的同一 device width 派生，使 pan 只能做整 device-pixel 平移而不能改变最近邻取样相位；
+Arrangement Snapshot 发布后，以最多两个后台 raster worker 持续预热全部 Segment；每个 Segment 的完整预热层必须选择不超过 4 个 tile 的固定 LOD，前台 Draw 不等待预热完成；
+内容指纹或颜色变化只失效对应 Segment 的固定 LOD tile，未变化 Segment 在相同固定 LOD 间直接命中；
+使用有界分块缓存和局部失效；
 不创建逐对象 WPF Controls；
 不把 Grid/cursor/selection/hover 烘焙进稳定 tile；
 不从 bitmap 反推 hit test 或音乐语义；
 在数千万对象时不建立全 Segment render array/dictionary/index。
 ```
+
+预热属于低并发、可丢弃的 session presentation 工作；它不得取得 Project edit lock、不得阻塞 UI thread、音频 producer 或音频 IPC。缓存仍服从全局有界 LRU；Snapshot generation 改变时，旧预热结果可以留作普通内容键命中，但旧队列不得继续驱动当前视图重绘。
 
 ## 24.12 SMF 导入与导出顺序
 

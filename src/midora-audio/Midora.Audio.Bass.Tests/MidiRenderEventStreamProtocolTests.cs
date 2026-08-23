@@ -201,6 +201,90 @@ public sealed class MidiRenderEventStreamProtocolTests
     }
 
     [Fact]
+    public void ReaderSeekCannotMixOldPublishedCountsWithTheNewMonitoringGeneration()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        string directory = CreateDirectory();
+        try
+        {
+            DemandAwarePeriodicProvider provider = new();
+            MidiRenderPlan plan = CreateCachedPlan(provider, cacheHit: false);
+            using MidiRenderEventStreamProducer producer = Assert.IsType<MidiRenderEventStreamProducer>(
+                MidiRenderEventStreamProducer.Create(plan, directory));
+            using MidiRenderEventStreamReader reader = new(producer.Descriptor);
+            reader.RequestThrough(10_000);
+
+            for (int iteration = 0; iteration < 200; iteration++)
+            {
+                bool enabled = (iteration & 1) != 0;
+                producer.ApplyMonitoringCommands(
+                    [enabled
+                        ? MidiMonitoringCommand.EnableSource(0)
+                        : MidiMonitoringCommand.DisableSource(0)],
+                    rewindFrame: 0);
+                reader.Seek(0);
+                reader.RequestThrough(10_000);
+                Assert.False(reader.IsFaulted);
+            }
+
+            Assert.True(SpinWait.SpinUntil(
+                () => reader.IsCompleted || reader.IsFaulted,
+                TimeSpan.FromSeconds(5)));
+            Assert.False(reader.IsFaulted);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MonitoringSeekFiltersOlderRecordsPublishedAfterTheSeekSnapshot()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        string directory = CreateDirectory();
+        try
+        {
+            using DelayedDemandAwarePeriodicProvider provider = new();
+            MidiRenderPlan plan = CreateCachedPlan(provider, cacheHit: true);
+            using MidiRenderEventStreamProducer producer = Assert.IsType<MidiRenderEventStreamProducer>(
+                MidiRenderEventStreamProducer.Create(plan, directory));
+            using MidiRenderEventStreamReader reader = new(producer.Descriptor);
+            reader.RequestThrough(10_000);
+            Assert.True(SpinWait.SpinUntil(() => reader.IsCompleted, TimeSpan.FromSeconds(5)));
+
+            producer.ApplyMonitoringCommands(
+            [
+                MidiMonitoringCommand.DisableSource(0),
+                MidiMonitoringCommand.EnableSource(0)
+            ],
+            rewindFrame: 0);
+            Assert.True(provider.DemandedQueryStarted.Wait(TimeSpan.FromSeconds(5)));
+
+            reader.Seek(3_000);
+            reader.RequestThrough(10_000);
+            provider.ReleaseDemandedQuery();
+            Assert.True(SpinWait.SpinUntil(
+                () => reader.IsCompleted || reader.IsFaulted,
+                TimeSpan.FromSeconds(5)));
+            Assert.False(reader.IsFaulted);
+
+            List<long> frames = [];
+            while (reader.TryDequeue(out ScheduledPortMidiMessage value))
+            {
+                frames.Add(value.Scheduled.SampleFrame);
+            }
+            Assert.Equal(
+                [3_000L, 4_000L, 5_000L, 6_000L, 7_000L, 8_000L, 9_000L],
+                frames);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void RollingStreamExposesPartialSafeFrontierWhenCommittedWindowExceedsRing()
     {
         if (!OperatingSystem.IsWindows()) return;
@@ -643,5 +727,51 @@ public sealed class MidiRenderEventStreamProtocolTests
         }
 
         public void Dispose() => EnumerationStarted.Dispose();
+    }
+
+    private sealed class DelayedDemandAwarePeriodicProvider :
+        IMidiRenderEventDemandAwarePageProvider,
+        IDisposable
+    {
+        private readonly ManualResetEventSlim _releaseDemandedQuery = new(false);
+
+        public ManualResetEventSlim DemandedQueryStarted { get; } = new(false);
+
+        public IEnumerable<ScheduledPortMidiMessage> Query(
+            long startFrame,
+            long endFrame,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The rolling producer must use the demand-aware overload.");
+
+        public IEnumerable<ScheduledPortMidiMessage> Query(
+            long startFrame,
+            long endFrame,
+            MidiRenderEventDemandSnapshot demand,
+            CancellationToken cancellationToken = default)
+        {
+            if (!demand.MayDemandSource(0, startFrame, endFrame)) yield break;
+            DemandedQueryStarted.Set();
+            _releaseDemandedQuery.Wait(cancellationToken);
+            long first = checked(((startFrame + 999) / 1_000) * 1_000);
+            for (long frame = first; frame < endFrame; frame += 1_000)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (demand.IsSourceDemanded(0, frame))
+                {
+                    yield return new(
+                        0,
+                        new(frame, MidiMessage.NoteOn(0, 60, 100), 0));
+                }
+            }
+        }
+
+        public void ReleaseDemandedQuery() => _releaseDemandedQuery.Set();
+
+        public void Dispose()
+        {
+            _releaseDemandedQuery.Set();
+            _releaseDemandedQuery.Dispose();
+            DemandedQueryStarted.Dispose();
+        }
     }
 }

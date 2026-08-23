@@ -175,12 +175,19 @@ public sealed class TimelineEditorSettingsTests
             "Arrangement",
             TimelineWorkspaceMode.Arrangement);
 
+        List<string?> changedProperties = [];
+        segment.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
         segment.BottomEditorRowHeight = new System.Windows.GridLength(260);
+        changedProperties.Clear();
         segment.IsLowerEditorVisible = false;
 
         Assert.Equal(0, segment.BottomEditorRowHeight.Value);
+        Assert.Equal(0, segment.BottomEditorMinimumHeight);
+        Assert.Contains(nameof(TimelineWorkspaceViewModel.BottomEditorRowHeight), changedProperties);
+        Assert.Contains(nameof(TimelineWorkspaceViewModel.BottomEditorMinimumHeight), changedProperties);
         segment.IsLowerEditorVisible = true;
         Assert.Equal(260, segment.BottomEditorRowHeight.Value);
+        Assert.Equal(TimelineLowerEditorLayout.MinimumHeight, segment.BottomEditorMinimumHeight);
         Assert.Equal(0, arrangement.BottomEditorRowHeight.Value);
     }
 

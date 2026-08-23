@@ -1391,6 +1391,29 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public void StatusMessageKeepsStructuredImportReportUntilDismissed()
+    {
+        DesktopSessionController session = new();
+        const string summary = "MIDI import completed with 1 warning(s).";
+        const string report = "[Warning] IMPORT-001\nComplete compatibility detail";
+
+        session.SetStatusMessage(
+            summary,
+            details: report,
+            detailsTitle: "MIDI Import Report");
+
+        Assert.Equal(summary, session.StatusMessage);
+        Assert.Equal(report, session.StatusMessageDetails);
+        Assert.Equal("MIDI Import Report", session.StatusMessageDetailsTitle);
+
+        session.SetStatusMessage(null);
+
+        Assert.Null(session.StatusMessage);
+        Assert.Null(session.StatusMessageDetails);
+        Assert.Null(session.StatusMessageDetailsTitle);
+    }
+
+    [Fact]
     public async Task SubVoiceEditorSeparatesRenderedNotesFromEventLanesAndInitialState()
     {
         await using DesktopSessionController session = new();

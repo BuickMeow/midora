@@ -60,6 +60,37 @@ public sealed class TimelineRenderingTests
         Assert.Equal(128, TimelineSurface.MaximumPianoLaneHeight);
     }
 
+    [Theory]
+    [InlineData(TimelineSurfaceMode.Velocity)]
+    [InlineData(TimelineSurfaceMode.EventLanes)]
+    public void ContinuousValueSurfacesDoNotRenderHeightDependentLaneZebra(
+        TimelineSurfaceMode mode)
+    {
+        RunOnSta(() =>
+        {
+            const int width = 800;
+            const int height = 400;
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = mode,
+                LaneHeight = 160,
+                TickSpan = 1_920,
+                GridVisible = false
+            };
+            surface.Measure(new Size(width, height));
+            surface.Arrange(new Rect(0, 0, width, height));
+
+            RenderTargetBitmap target = new(width, height, 96, 96, PixelFormats.Pbgra32);
+            target.Render(surface);
+            byte[] upper = new byte[4];
+            byte[] lower = new byte[4];
+            target.CopyPixels(new Int32Rect(700, 100, 1, 1), upper, 4, 0);
+            target.CopyPixels(new Int32Rect(700, 250, 1, 1), lower, 4, 0);
+
+            Assert.Equal(upper, lower);
+        });
+    }
+
     [Fact]
     public void ArrangementScrollMaximumKeepsTheLastVariableHeightRowVisible()
     {
@@ -1427,6 +1458,244 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void FixedArrangementPreviewTileCombinesSourceBackedNotesAndEvents()
+    {
+        TimelineSegmentPreview preview = new(
+            new MidoraId(1),
+            new TestSegmentPreviewSource());
+
+        TimelineRasterBuffer raster =
+            TimelineSegmentPreviewRasterizer.RasterizeFixedPreviewTile(
+                preview,
+                segmentLengthTicks: 3_072,
+                ticksPerQuarterNote: 768,
+                lod: 0,
+                tileX: 0,
+                Color.FromRgb(189, 199, 207),
+                Color.FromRgb(105, 47, 52));
+
+        Assert.Equal(TimelineSegmentPreviewRasterizer.FixedPreviewTileSize, raster.Width);
+        Assert.Equal(TimelineSegmentPreviewRasterizer.Height, raster.Height);
+        Assert.Equal(2, raster.CandidateCount);
+        Assert.Contains(raster.Pixels.Where((_, index) => index % 4 == 3), alpha => alpha > 0);
+        Assert.Equal(
+            384,
+            TimelineSegmentPreviewRasterizer.GetFixedPreviewContentWidth(3_072, 768));
+    }
+
+    [Fact]
+    public void FixedArrangementPreviewUsesBoundedLodWhenZoomedOut()
+    {
+        const long segmentLengthTicks = 18_000_000;
+        const int ticksPerQuarterNote = 768;
+        int displayLod = TimelineSegmentPreviewRasterizer.SelectDisplayLod(
+            currentPixelsPerTick: 560d / segmentLengthTicks,
+            ticksPerQuarterNote);
+        long displayWidth = TimelineSegmentPreviewRasterizer.GetFixedPreviewContentWidth(
+            segmentLengthTicks,
+            ticksPerQuarterNote,
+            displayLod);
+        int warmupLod = TimelineSegmentPreviewRasterizer.SelectWarmupLod(
+            segmentLengthTicks,
+            ticksPerQuarterNote);
+        long warmupWidth = TimelineSegmentPreviewRasterizer.GetFixedPreviewContentWidth(
+            segmentLengthTicks,
+            ticksPerQuarterNote,
+            warmupLod);
+
+        Assert.InRange(displayWidth, 280, 1_120);
+        Assert.InRange(
+            1 + ((displayWidth - 1) / TimelineSegmentPreviewRasterizer.FixedPreviewTileSize),
+            1,
+            5);
+        Assert.InRange(
+            1 + ((warmupWidth - 1) / TimelineSegmentPreviewRasterizer.FixedPreviewTileSize),
+            1,
+            TimelineSegmentPreviewRasterizer.MaximumWarmupTilesPerSegment);
+    }
+
+    [Fact]
+    public void SelectedArrangementPreviewLodKeepsOnePixelNoteVisibleAcrossPanPhases()
+    {
+        const long segmentLengthTicks = 3_072;
+        const int ticksPerQuarterNote = 768;
+        const double currentPixelsPerTick = 0.05;
+        TimelineSegmentPreview preview = new(
+            new MidoraId(1),
+            [new TimelineSegmentPreviewNote(0.25, 0.250_001, 60)]);
+        int lod = TimelineSegmentPreviewRasterizer.SelectDisplayLod(
+            currentPixelsPerTick,
+            ticksPerQuarterNote);
+        Assert.True(
+            TimelineSegmentPreviewRasterizer.GetFixedPreviewPixelsPerTick(
+                ticksPerQuarterNote,
+                lod) <= currentPixelsPerTick);
+        TimelineRasterBuffer raster = TimelineSegmentPreviewRasterizer.RasterizeFixedPreviewTile(
+            preview,
+            segmentLengthTicks,
+            ticksPerQuarterNote,
+            lod,
+            tileX: 0,
+            Color.FromRgb(189, 199, 207),
+            Color.FromRgb(105, 47, 52));
+        BitmapSource bitmap = BitmapSource.Create(
+            raster.Width,
+            raster.Height,
+            96,
+            96,
+            PixelFormats.Pbgra32,
+            null,
+            raster.Pixels,
+            raster.Stride);
+        double destinationWidth = segmentLengthTicks * currentPixelsPerTick;
+
+        for (int phase = 0; phase < 16; phase++)
+        {
+            DrawingVisual visual = new();
+            RenderOptions.SetBitmapScalingMode(visual, BitmapScalingMode.NearestNeighbor);
+            using (DrawingContext context = visual.RenderOpen())
+            {
+                context.DrawImage(
+                    bitmap,
+                    new Rect(50 + phase / 16d, 0, destinationWidth, 60));
+            }
+            RenderTargetBitmap target = new(300, 60, 96, 96, PixelFormats.Pbgra32);
+            target.Render(visual);
+            byte[] pixels = new byte[300 * 60 * 4];
+            target.CopyPixels(pixels, 300 * 4, 0);
+
+            Assert.Contains(
+                pixels.Where((_, index) => index % 4 == 3),
+                alpha => alpha > 0);
+        }
+    }
+
+    [Fact]
+    public void ArrangementPreviewTilePlacementKeepsOneDevicePixelPhaseWhilePanning()
+    {
+        DpiScale dpi = new(1.25, 1.25);
+        double? expectedWidth = null;
+        for (int phase = 0; phase < 16; phase++)
+        {
+            Rect destination = TimelineRasterPlacement.GetSegmentPreviewTileDestination(
+                new Rect(100 + phase / 16d, 20.25, 600.3, 60),
+                contentWidth: 700,
+                tileLeft: 256,
+                tileWidth: 256,
+                dpi);
+            double leftDevice = destination.Left * dpi.DpiScaleX;
+            double widthDevice = destination.Width * dpi.DpiScaleX;
+
+            Assert.Equal(Math.Round(leftDevice), leftDevice, 9);
+            expectedWidth ??= widthDevice;
+            Assert.Equal(expectedWidth.Value, widthDevice, 9);
+        }
+    }
+
+    [Theory]
+    [InlineData(3_072L)]
+    [InlineData(18_000_000L)]
+    public void ArrangementSurfaceEventuallyComposesCachedSegmentPreview(
+        long segmentLengthTicks)
+    {
+        RunOnSta(() =>
+        {
+            TimelineRasterCacheSession.Clear();
+            TimelineRenderItem segment = Item(
+                1,
+                0,
+                segmentLengthTicks,
+                0,
+                kind: TimelineItemKind.Segment);
+            TimelineSegmentPreview preview = new(
+                segment.Id,
+                [new TimelineSegmentPreviewNote(0.25, 0.5, 60)],
+                [new TimelineSegmentPreviewEvent(0.75, 0.6)]);
+            TimelineRenderSnapshot withoutPreview = new(
+                1,
+                $"arrangement:preview-baseline:{segmentLengthTicks}",
+                [segment],
+                ["Track"],
+                arrangementLanes:
+                [
+                    new(
+                        0,
+                        ArrangementLaneKind.LogicalTrack,
+                        new MidoraId(2),
+                        null,
+                        0,
+                        true,
+                        false,
+                        true)
+                ]);
+            TimelineRenderSnapshot withPreview = new(
+                1,
+                $"arrangement:preview-composed:{segmentLengthTicks}",
+                [segment],
+                ["Track"],
+                segmentPreviews: new Dictionary<MidoraId, TimelineSegmentPreview>
+                {
+                    [segment.Id] = preview
+                },
+                arrangementLanes:
+                [
+                    new(
+                        0,
+                        ArrangementLaneKind.LogicalTrack,
+                        new MidoraId(2),
+                        null,
+                        0,
+                        true,
+                        false,
+                        true)
+                ]);
+            TimelineSurface baselineSurface = CreateArrangementSurface(
+                withoutPreview,
+                segmentLengthTicks);
+            TimelineSurface previewSurface = CreateArrangementSurface(
+                withPreview,
+                segmentLengthTicks);
+            byte[] baseline = RenderVisual(baselineSurface);
+            TimelineRenderSnapshot empty = new(
+                1,
+                $"arrangement:preview-empty:{segmentLengthTicks}",
+                [],
+                ["Track"],
+                arrangementLanes:
+                [
+                    new(
+                        0,
+                        ArrangementLaneKind.LogicalTrack,
+                        new MidoraId(2),
+                        null,
+                        0,
+                        true,
+                        false,
+                        true)
+                ]);
+            byte[] emptyPixels = RenderVisual(CreateArrangementSurface(
+                empty,
+                segmentLengthTicks));
+            Assert.False(emptyPixels.SequenceEqual(baseline));
+            bool composed = false;
+            for (int attempt = 0; attempt < 200 && !composed; attempt++)
+            {
+                byte[] rendered = RenderVisual(previewSurface);
+                composed = !baseline.SequenceEqual(rendered);
+                if (composed) break;
+                Thread.Sleep(10);
+                PumpDispatcher();
+            }
+
+            int completedCount = TimelineRasterCacheSession.CompletedCount;
+            TimelineRasterCacheSession.Clear();
+            Assert.True(
+                composed,
+                $"The Segment preview never reached the composed surface; completed cache entries: {completedCount}.");
+        });
+    }
+
+    [Fact]
     public void SegmentPreviewOnePixelPitchSurvivesNormalLaneDownsampling()
     {
         TimelineSegmentPreview preview = new(
@@ -2294,6 +2563,33 @@ public sealed class TimelineRenderingTests
             if (normalizedStart <= 0.25 && normalizedEnd > 0.25)
                 destination.Add(new(0.25, 0.75));
         }
+    }
+
+    private static TimelineSurface CreateArrangementSurface(
+        TimelineRenderSnapshot snapshot,
+        long tickSpan)
+    {
+        TimelineSurface surface = new()
+        {
+            SurfaceMode = TimelineSurfaceMode.Arrangement,
+            PreviewTicksPerQuarterNote = 768,
+            LaneHeight = 60,
+            TickSpan = tickSpan,
+            GridVisible = false,
+            Snapshot = snapshot
+        };
+        surface.Measure(new Size(800, 260));
+        surface.Arrange(new Rect(0, 0, 800, 260));
+        return surface;
+    }
+
+    private static void PumpDispatcher()
+    {
+        DispatcherFrame frame = new();
+        _ = Dispatcher.CurrentDispatcher.BeginInvoke(
+            DispatcherPriority.ApplicationIdle,
+            new Action(() => frame.Continue = false));
+        Dispatcher.PushFrame(frame);
     }
 
     private static void RunOnSta(Action action)

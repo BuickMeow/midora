@@ -52,6 +52,11 @@
 
 ## 2026-08-23 修订摘要
 
+- Monitoring generation 的 `Seek` 下界必须持续作用于该 generation 后续追加的记录；Producer 从更早 rewind frame 渐进追赶时，Reader 静默跳过晚到但早于 audible frontier 的记录，禁止把它们重新送入 renderer。render-ahead fault 必须保留 source exception/invalid-result 原因并连同 renderer fault 上报。
+- Arrangement Segment 概览的最高精度从错误的“每 Segment 固定 512 pixel”更正为 `96 pixels / quarter note`、256-pixel tile；较低精度只使用固定半八度 `1 / 2^(n/2)` LOD。Segment 长度、TPQN 与固定 LOD 决定 tile 数，精确 viewport zoom 不直接进入缓存身份。
+- `Open MIDI as New Project` 的模态任务使用确定进度：第一遍以已解析源字节计量，第二遍显示已处理事件/总事件；成功兼容报告的完整 Info/Warning 文本必须与状态栏摘要共同保留，后续 `View` 仍显示首次报告全文。
+- Arrangement Segment 概览在最多两个后台 worker 上为全部 Segment 预热完整且不超过四个 tile 的固定 LOD；缩放选择第一个不会向下采样 source pixel 的固定层，不产生任意 exact-scale cache generation，也不得遍历大量被压成亚像素的最高精度 tile。最终合成必须使用浮点目标宽度换算，并从一次 device-pixel-snapped 的完整 Segment 变换推导全部 tile 边界；禁止整数除法零宽和随 pan 改变最近邻采样相位。
+- Monitoring generation 切换时，event Reader 对 published generation 与 generation-local loaded counters 的读取必须与 `Seek` 使用同一 feeder lock，禁止把旧 generation 的 committed count 与新 generation 的 loaded count 混合。
 - 对象 `Properties...` 的 `Ctrl+P` 入口正式纳入焦点敏感快捷键；快捷键必须直接调用命令核心，不得构造无 `RoutedEvent` 的事件参数再调用 UI 事件处理器。
 - 所有带确认提交的自定义模态对话框统一使用同宽度的红色 Primary 确定按钮与普通取消按钮；除焦点控件自身消费 Enter 的情况外，Enter 执行确定、Escape 执行取消，不再由每个对话框各自定义不一致行为。每窗只允许一个 Escape Cancel target；标题栏关闭按钮执行显式取消，但不得再次注册 `IsCancel`。
 - Conductor 下部事件列表默认占可用编辑区的一半，并允许在硬性最小/最大高度内双向调整；Arrangement Draw 模式下，只有未形成移动/Resize 的 Segment 单击才在 MouseUp 替换选择，实际拖动不得在 MouseDown 清空多选。

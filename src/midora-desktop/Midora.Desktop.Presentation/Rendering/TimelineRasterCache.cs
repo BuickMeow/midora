@@ -8,6 +8,7 @@ namespace Midora.Desktop.Presentation.Rendering;
 
 internal enum TimelineRasterLayer
 {
+    ArrangementSegmentPreview,
     ArrangementSegmentNotePreview,
     ArrangementSegmentEventPreview,
     ArrangementConductorPreview,
@@ -112,6 +113,61 @@ public static class TimelineRasterPlacement
         double right = laneHeaderWidth + viewport.TickToX(item.EndTick);
         double top = rulerHeight + (item.Lane - viewport.FirstLane) * laneHeight;
         return new(left, top, Math.Max(1, right - left), laneHeight);
+    }
+
+    public static Rect GetSegmentPreviewTileDestination(
+        Rect fullSegmentBounds,
+        long contentWidth,
+        long tileLeft,
+        int tileWidth,
+        DpiScale dpi)
+    {
+        if (!fullSegmentBounds.IsEmpty
+            && double.IsFinite(fullSegmentBounds.Left)
+            && double.IsFinite(fullSegmentBounds.Top)
+            && double.IsFinite(fullSegmentBounds.Width)
+            && double.IsFinite(fullSegmentBounds.Height)
+            && fullSegmentBounds.Width > 0
+            && fullSegmentBounds.Height > 0
+            && contentWidth > 0
+            && tileLeft >= 0
+            && tileWidth > 0
+            && tileLeft <= contentWidth - tileWidth
+            && double.IsFinite(dpi.DpiScaleX)
+            && dpi.DpiScaleX > 0
+            && double.IsFinite(dpi.DpiScaleY)
+            && dpi.DpiScaleY > 0)
+        {
+            double fullLeftDevice = Math.Round(
+                fullSegmentBounds.Left * dpi.DpiScaleX,
+                MidpointRounding.AwayFromZero);
+            double fullTopDevice = Math.Round(
+                fullSegmentBounds.Top * dpi.DpiScaleY,
+                MidpointRounding.AwayFromZero);
+            double fullWidthDevice = Math.Max(
+                1,
+                Math.Round(
+                    fullSegmentBounds.Width * dpi.DpiScaleX,
+                    MidpointRounding.AwayFromZero));
+            double fullHeightDevice = Math.Max(
+                1,
+                Math.Round(
+                    fullSegmentBounds.Height * dpi.DpiScaleY,
+                    MidpointRounding.AwayFromZero));
+            double tileLeftDevice = fullLeftDevice + Math.Round(
+                tileLeft / (double)contentWidth * fullWidthDevice,
+                MidpointRounding.AwayFromZero);
+            double tileRightDevice = fullLeftDevice + Math.Round(
+                (tileLeft + tileWidth) / (double)contentWidth * fullWidthDevice,
+                MidpointRounding.AwayFromZero);
+            tileRightDevice = Math.Max(tileLeftDevice + 1, tileRightDevice);
+            return new(
+                tileLeftDevice / dpi.DpiScaleX,
+                fullTopDevice / dpi.DpiScaleY,
+                (tileRightDevice - tileLeftDevice) / dpi.DpiScaleX,
+                fullHeightDevice / dpi.DpiScaleY);
+        }
+        throw new ArgumentOutOfRangeException(nameof(fullSegmentBounds));
     }
 
     public static Rect GetPianoTileDestination(
@@ -749,9 +805,194 @@ public static class TimelineSegmentPreviewRasterizer
     private const ulong FingerprintOffset = 14695981039346656037UL;
     private const ulong FingerprintPrime = 1099511628211UL;
     public const int TileSize = 256;
+    public const int FixedPreviewTileSize = 256;
+    public const int FixedPreviewPixelsPerQuarterNote = 96;
+    public const int FixedPreviewLodLevelsPerOctave = 2;
+    public const int MaximumFixedPreviewLod = 124;
+    public const int MaximumWarmupTilesPerSegment = 4;
     public const int ContentWidth = 512;
     public const int Width = ContentWidth;
     public const int Height = 64;
+
+    public static TimelineRasterBuffer RasterizeFixedPreviewTile(
+        TimelineSegmentPreview preview,
+        long segmentLengthTicks,
+        int ticksPerQuarterNote,
+        int lod,
+        long tileX,
+        Color noteColor,
+        Color eventColor)
+    {
+        ArgumentNullException.ThrowIfNull(preview);
+        long contentWidth = GetFixedPreviewContentWidth(
+            segmentLengthTicks,
+            ticksPerQuarterNote,
+            lod);
+        long tileCount = 1 + ((contentWidth - 1) / FixedPreviewTileSize);
+        if (tileX < 0 || tileX >= tileCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(tileX));
+        }
+        long tileLeft = checked(tileX * FixedPreviewTileSize);
+        int tileWidth = checked((int)Math.Min(
+            FixedPreviewTileSize,
+            contentWidth - tileLeft));
+        long tileRight = checked(tileLeft + tileWidth);
+        byte[] pixels = new byte[checked(tileWidth * Height * 4)];
+        int rendered = 0;
+        double normalizedStart = Math.Max(0, (tileLeft - 1d) / contentWidth);
+        double normalizedEnd = Math.Min(
+            Math.BitIncrement(1d),
+            (tileRight + 1d) / contentWidth);
+
+        preview.VisitNotes(normalizedStart, normalizedEnd, note =>
+        {
+            long left = Math.Clamp(
+                RoundNormalizedBoundary(note.NormalizedStart, contentWidth),
+                0,
+                contentWidth - 1);
+            long right = Math.Clamp(
+                Math.Max(left + 1, RoundNormalizedBoundary(note.NormalizedEnd, contentWidth)),
+                1,
+                contentWidth);
+            if (right <= tileLeft || left >= tileRight) return;
+            int localLeft = checked((int)Math.Clamp(left - tileLeft, 0, tileWidth));
+            int localRight = checked((int)Math.Clamp(right - tileLeft, 0, tileWidth));
+            if (localRight <= localLeft) return;
+            int top = Math.Clamp(
+                (int)Math.Round(
+                    (127 - note.Pitch) / 127d * (Height - 1),
+                    MidpointRounding.AwayFromZero),
+                0,
+                Height - 1);
+            int bottom = Math.Min(Height, top + 2);
+            if (bottom - top < 2) top = Math.Max(0, bottom - 2);
+            TimelinePianoTileRasterizer.FillRectangle(
+                pixels,
+                tileWidth,
+                localLeft,
+                top,
+                localRight,
+                bottom,
+                noteColor,
+                0.72);
+            if (rendered < int.MaxValue) rendered++;
+        });
+
+        double[] eventHeights = new double[tileWidth];
+        Array.Fill(eventHeights, -1);
+        preview.VisitEvents(normalizedStart, normalizedEnd, value =>
+        {
+            long column = Math.Clamp(
+                RoundNormalizedBoundary(value.NormalizedTick, contentWidth),
+                0,
+                contentWidth - 1);
+            if (column < tileLeft || column >= tileRight) return;
+            int local = checked((int)(column - tileLeft));
+            eventHeights[local] = Math.Max(eventHeights[local], value.NormalizedValue);
+        });
+        for (int x = 0; x < eventHeights.Length; x++)
+        {
+            if (eventHeights[x] < 0) continue;
+            int top = Math.Clamp(
+                (int)Math.Floor((1 - eventHeights[x]) * Height),
+                0,
+                Height - 1);
+            TimelinePianoTileRasterizer.FillRectangle(
+                pixels,
+                tileWidth,
+                x,
+                top,
+                x + 1,
+                Height,
+                eventColor,
+                0.5);
+            if (rendered < int.MaxValue) rendered++;
+        }
+        return new(tileWidth, Height, pixels, rendered);
+    }
+
+    public static long GetFixedPreviewContentWidth(
+        long segmentLengthTicks,
+        int ticksPerQuarterNote,
+        int lod = 0)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(segmentLengthTicks);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ticksPerQuarterNote);
+        if (lod is < 0 or > MaximumFixedPreviewLod)
+        {
+            throw new ArgumentOutOfRangeException(nameof(lod));
+        }
+        double width = Math.Ceiling(
+            segmentLengthTicks
+            * (double)FixedPreviewPixelsPerQuarterNote
+            / ticksPerQuarterNote);
+        long baseWidth = width >= long.MaxValue
+            ? long.MaxValue
+            : Math.Max(1, checked((long)width));
+        double scaledWidth = baseWidth / GetFixedPreviewLodDivisor(lod);
+        return Math.Max(1, checked((long)Math.Ceiling(scaledWidth)));
+    }
+
+    public static int SelectDisplayLod(
+        double currentPixelsPerTick,
+        int ticksPerQuarterNote)
+    {
+        if (!double.IsFinite(currentPixelsPerTick) || currentPixelsPerTick <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(currentPixelsPerTick));
+        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ticksPerQuarterNote);
+        double referencePixelsPerTick = FixedPreviewPixelsPerQuarterNote
+            / (double)ticksPerQuarterNote;
+        double oversampling = referencePixelsPerTick / currentPixelsPerTick;
+        if (!double.IsFinite(oversampling)) return MaximumFixedPreviewLod;
+        if (oversampling <= 1) return 0;
+        double exactLod = Math.Log2(oversampling) * FixedPreviewLodLevelsPerOctave;
+        return Math.Clamp(
+            checked((int)Math.Ceiling(exactLod - 1e-12)),
+            0,
+            MaximumFixedPreviewLod);
+    }
+
+    public static double GetFixedPreviewPixelsPerTick(
+        int ticksPerQuarterNote,
+        int lod)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ticksPerQuarterNote);
+        if (lod is < 0 or > MaximumFixedPreviewLod)
+        {
+            throw new ArgumentOutOfRangeException(nameof(lod));
+        }
+        return FixedPreviewPixelsPerQuarterNote
+            / (double)ticksPerQuarterNote
+            / GetFixedPreviewLodDivisor(lod);
+    }
+
+    public static int SelectWarmupLod(
+        long segmentLengthTicks,
+        int ticksPerQuarterNote)
+    {
+        long maximumWidth = checked(
+            (long)FixedPreviewTileSize * MaximumWarmupTilesPerSegment);
+        int lod = 0;
+        while (GetFixedPreviewContentWidth(
+                segmentLengthTicks,
+                ticksPerQuarterNote,
+                lod) > maximumWidth
+            && lod < MaximumFixedPreviewLod)
+        {
+            lod++;
+        }
+        return lod;
+    }
+
+    private static double GetFixedPreviewLodDivisor(int lod)
+    {
+        int octave = lod / FixedPreviewLodLevelsPerOctave;
+        double divisor = Math.ScaleB(1d, octave);
+        return (lod & 1) == 0 ? divisor : divisor * Math.Sqrt(2);
+    }
 
     public static TimelineRasterBuffer RasterizeNoteTile(
         TimelineSegmentPreview preview,
@@ -958,6 +1199,16 @@ public static class TimelineSegmentPreviewRasterizer
 
     private static int RoundNormalizedBoundary(double value) =>
         checked((int)Math.Floor(value * ContentWidth + 0.5));
+
+    private static long RoundNormalizedBoundary(double value, long contentWidth)
+    {
+        double scaled = value * contentWidth + 0.5;
+        return scaled >= long.MaxValue
+            ? long.MaxValue
+            : scaled <= long.MinValue
+                ? long.MinValue
+                : checked((long)Math.Floor(scaled));
+    }
 
     private static void ValidateTileArguments(
         double deviceSegmentWidth,

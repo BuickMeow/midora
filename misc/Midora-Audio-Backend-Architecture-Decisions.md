@@ -274,6 +274,32 @@ Worker 收到 Monitoring 后固定执行：停止并 reset WASAPI 已提交 PCM 
 
 Requirement trace：输入为 canonical source table、当前 Shared Usage/Root 与 Track Mute/Solo 推导出的 Monitoring commands、event-stream generation 和设备可听 frontier；正式输出为同一播放任务内从该 frontier 开始、只包含最新 audible set 的连续 PCM，或结构化故障。generation、rewind frame、ring/reset 状态都只属于 runtime，不进入 Project、canonical fingerprint、PCM cache key、Undo/Redo 或 `.midora`。本决定不改变 Mute/Solo 语义、Logical rolling path、SMF/音频文件输出或共享 ABI 字节布局。
 
+## 10.8 ADR-AUDIO-017（已接受）：Monitoring 抢占进行中的 Buffering recovery
+
+问题根因：主进程必须先发布新的 event-stream generation，再把对应 Monitoring command 放入有界命令 ring；否则 Worker 可能先消费命令却看不到其 generation。若该发布发生在 Worker 同步准备旧 Buffering recovery 区间期间，旧 recovery source 已观察到代际替换并可能持续返回 `Buffering(0)`，而 Worker 又只有退出 recovery 后才能消费 Monitoring command，形成循环等待。手动 Stop 能打断该循环，但 Mute/Solo 本身不能生效，状态和进度永久停留在同一次 Buffering。
+
+决定：未消费的 Monitoring command 与 Stop 一样，都是旧 recovery generation 的显式取消条件，但两者后续语义不同。Worker 以不消费命令的只读检查取消 producer pause、完整 recovery prepare 或 recovery prefill；Stop 继续按优先级出队并结束任务，Monitoring 则保留在 ring 中并立即回到既有 cold-start 命令路径。cold start 在同一可听 frontier 停止并清空旧设备输出、重置 PCM ring、丢弃已准备的 recovery replay、Seek 到最新 event generation、重新预填充并恢复输出。如果命令顺序相反，Monitoring 已先完成 cold start、清除同一旧 Buffering generation，则随后到达的旧 `BufferingRecoveryPrepare` 是确定性的 superseded no-op。不得释放旧 Buffering 后再晚一步应用 Monitoring，也不得把 Monitoring 误当 Stop、静默丢弃或另建第二条状态恢复逻辑。
+
+Requirement trace：输入为已锁存的 Buffering failure/recovery target、按当前 Mute/Solo 状态发布的新 event generation、对应有序 Monitoring commands，以及可能并发到达的 Stop；正式输出为 Stop 终态，或从原可听 frontier 开始只含最新 audible set 的连续 PCM。命令观察、recovery replay 和 generation 都是当前 playback runtime；不进入 Project、canonical、cache key、Undo/Redo 或 `.midora`。共享 ABI 字节布局与协议版本不变。验证必须覆盖 Monitoring 的非消费观察、Stop 优先级、永久 `Buffering(0)` source 的可取消 recovery，以及 cold-start 后命令仍按原顺序可消费。
+
+## 10.9 ADR-AUDIO-018（已接受）：Monitoring event generation 的 Reader/Seek 同锁快照
+
+问题：极端事件流下，Reader feeder 曾在线程锁外读取 published generation，再等待 `_feederGate`；与此同时 Monitoring `Seek` 可在同一锁内切换 active generation 并清零 generation-local loaded counters。Reader 随后会把旧 published generation 的 committed count 与新 active generation 的 loaded count 混合，形成不可能成立的 record range，并可表现为 “render-ahead producer faulted while replacing a monitoring future”。这是必须独立消除的一处跨代竞争，但不是该通用故障文本背后的唯一可能原因。
+
+决定：Reader 对 published generation、base record offset、committed count、through frame 以及 active generation 的 loaded counters 的一次判定，必须全部位于与 `Seek` 相同的 `_feederGate` 互斥域。若 published generation 与 active generation 不同，Reader 必须先退出互斥域并等待显式 `Seek`；不得继续装载、忙等持锁、拼接跨代计数、在 fault 后静默重试或吞掉错误。`Seek` 仍是唯一切换 ring cursor 和 generation-local counters 的操作。
+
+Requirement trace：输入为当前 event-stream published snapshot、active generation、Reader loaded counters 与有序 Monitoring `Seek`；正式输出为只来自同一 generation 的连续 reader ring，或真实结构/IO 故障。互斥和 generation counters 仅属当前 playback runtime，不改变 Project、canonical、Mute/Solo 语义、PCM cache key、共享 IPC 布局、Undo/Redo 或 `.midora`。验证以高频发布/Seek/读取交错覆盖跨代竞争，并要求所有记录保持同代、有序且不丢失。
+
+## 10.10 ADR-AUDIO-019（已接受）：Monitoring Seek 持续下界与 render-ahead 根因诊断
+
+问题根因：Monitoring producer 为保证 generation 可及时切换，会先在保守 rewind frame 发布新 generation 的空 prefix，再渐进生成到 Worker 取得的实际 audible frontier。旧 Reader 只对 `Seek` 瞬间已经 published 的 prefix 做一次二分；若当时 prefix 仍为空，Seek 返回后才 appended 的 rewind-prefix 事件会被原样送进 ring。Renderer 已位于较晚 audible frame，于是把这些事件判定为过去事件并返回 Fault；音符越密集，Producer 追赶越慢，窗口越容易稳定出现。上一项同锁修复不会消除这个“同 generation、晚发布早事件”的问题。
+
+决定：每次 `Seek(sampleFrame)` 都把 `sampleFrame` 冻结为 active generation 的持续读取下界。Feeder 仍顺序读取并计数 generation 的全部 committed records，但任何晚到且 `record.SampleFrame < sampleFrame` 的记录只推进 file/loaded prefix，不进入 reader ring；等于下界及更晚的记录正常入 ring。同 frame partial-safe-frontier 规则保持不变。该过滤发生在 Reader 传输层，不修改 canonical/source 文件，也不以重试掩盖错误。
+
+同时，`AudioRenderAheadWorker` 在故障路径保留 source exception，或记录 source Fault、invalid pull result、destination rejection 三类明确原因；Worker 报错组合 producer 原因与 renderer fault。该诊断只在故障路径分配/格式化，不改变 Playing/Buffering 热路径零分配要求。
+
+Requirement trace：输入为 Monitoring generation rewind frame、Worker audible `Seek` frame、后续 append-only records 与 renderer fault；正式输出为从 Seek 下界开始的同代有序 event ring，或携带 producer/renderer 原因的显式故障。下界、loaded prefix 和诊断只属 playback runtime，不进入 Project、canonical、cache key、Undo/Redo、SMF、音频文件或 `.midora`。验证必须构造“generation 已发布、demand query 被阻塞、先 Seek 后释放旧前缀”的确定性交错，并断言下界前事件不进入 ring、下界事件不丢失。
+
 ## 11. 验证门
 
 - 相同事件计划以不同工作 block（含非 2 次幂）渲染必须逐 sample 相同。

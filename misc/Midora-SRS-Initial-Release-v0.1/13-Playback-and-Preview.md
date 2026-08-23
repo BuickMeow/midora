@@ -1125,6 +1125,12 @@ Segment/Usage/Root raw PCM 位于 Mute/Solo、Playback Master Volume 与 Limiter
 
 上述重建不得截断正在被 Worker 读取的 event stream。Producer 必须把新 suffix 追加为新的 event generation，并原子发布 generation ID、base record offset、committed count 与 through frame；旧 generation 在 Worker 显式 Seek 到新 generation 前继续可读。Reader 发现 generation 已变化时必须停止装载旧 suffix 的新增记录，只有在 Seek 获得同一代的稳定快照后才能清空 ring 并切换。这样 Monitoring 即使发生在 producer 已因 exact PCM 命中而跳过数秒事件之后，也必须从可听 frame 恢复完整 MIDI 需求，不能把已跳过区间留成静音缺口。
 
+Reader feeder 读取 published generation、committed count 和 generation-local loaded count 时，必须与 `Seek` 切换 active generation、base offset、loaded count 和 ring cursor 使用同一互斥域。不得在线程锁外冻结旧 published snapshot、等待 `Seek` 完成后再把该旧 snapshot 与新 generation 计数混算；这种竞争必须由结构消除，而不是在 fault 后重试或吞掉错误。
+
+Monitoring generation 可以在 rewind frame 处先发布空 prefix，再由 Producer 渐进生成到实际 audible frontier。Reader 的 `Seek(sampleFrame)` 因此不能只二分 Seek 当时已经 published 的记录；`sampleFrame` 必须成为该 active generation 的持续下界。之后才 appended、但 frame 仍小于该下界的记录必须计入已读取 file prefix、不得进入 reader ring；到达下界后的记录才允许发布给 renderer。否则 renderer 会在当前 render position 收到过去事件并 fault。该过滤不允许删除等于下界的事件，也不能推进越过尚未完整读取的同 frame suffix。
+
+render-ahead worker 的故障路径必须保留 source 抛出的异常，或区分 source `Fault`、invalid pull result 与 destination write rejection；Worker 报错必须同时包含该原因和正式 renderer fault。不得仅报告通用 ring fault，从而丢失可定位信息。
+
 缓存失效至少服从：
 ```text
 Segment 内容：从最早可证明 causal dirty tick 起；无法证明时从 Segment 有效起点起。

@@ -28,7 +28,7 @@
 
 ## 3. 初始实现参数
 
-- Arrangement preview bitmap：`512 × 64` device pixels；按目标矩形拉伸，内容变化才重建。
+- Arrangement preview：最高精度固定为 `96 pixels / quarter note`，较低精度只使用半八度 `1 / 2^(n/2)` 固定 LOD；各层均为 64-pixel 高度、256-pixel 横向 tile。Segment tick 长度与 Project TPQN 决定各层总宽度，精确 viewport zoom 不直接进入 cache identity，内容或主题颜色变化才重建。
 - Arrangement 的目标矩形始终是完整 Segment 的未裁剪矩形；viewport 只负责 clip，禁止把完整 bitmap 拉伸到可见切片。
 - Piano roll tile：`256 × 256` device pixels、Pbgra32。
 - 水平/垂直 LOD：以 device-pixel scale 的量化值作为 cache key；pan 不改变 scale key。
@@ -43,7 +43,7 @@
 ### 3.1 Corrective implementation parameters (2026-08-12)
 
 - Piano core tile remains `256 × 256`; the actual raster is `258 × 258`, with a 1-pixel world-coordinate gutter on every side. Screen placement includes that gutter and adjacent images overlap.
-- Segment preview keeps a 512-pixel content span mapped directly to the full unclipped Segment bounds. No horizontal source gutter is permitted.
+- Segment preview uses a TPQN-normalized maximum reference scale of 96 pixels per quarter note and fixed half-octave (`1 / 2^(n/2)`) lower LODs. Segment duration and LOD determine the horizontal tile count; no horizontal source gutter is permitted.
 - Note fill and real object borders are rasterized together. Tile clipping never creates a synthetic note border.
 - Piano selection is a separate cached tile layer. Velocity stems, selection color, outline, and onset marker use a horizontally tiled raster layer; freehand/line editing uses one bounded trajectory overlay, while direct single-Note adjustment may replace only that one stem transiently.
 - Marquee drawing and hit query share directional snapped tick/lane bounds: the independently snapped Pointer Down edge remains fixed, only the moving edge changes, and either drag direction covers at least one operation step. Workspace selection range mutations increment the selection revision once.
@@ -54,7 +54,7 @@
 - Piano tile cache keys now use the exact current device-pixel scales. A completed tile is composed at exactly one source pixel per device pixel; quantized-LOD bitmap resampling is no longer permitted.
 - Every Note edge is rounded from its absolute tick boundary. Adjacent Notes sharing a tick therefore share the same computed boundary; vertical edges use the same absolute lane-boundary rule across every horizontal tile.
 - The one-pixel tile gutter remains only for cross-tile coverage. Core clips and gutter destinations are expressed in final device-pixel units, so neighboring tiles cannot acquire different scaling phases.
-- Segment preview uses a `512 × 64` bitmap with no horizontal source gutter. Start and end use nearest-boundary rounding, and source pixel zero maps directly to the full Segment left edge.
+- Segment preview uses 256-pixel horizontal tiles at a maximum `96 pixels / quarter note` and 64-pixel height, with no horizontal source gutter. Start and end use nearest-boundary rounding, and reference pixel zero maps directly to the full Segment left edge. Viewport zoom selects the first fixed half-octave LOD whose source-pixel scale is not greater than the display scale; it does not create an exact-scale cache generation and never downsamples a one-source-pixel mark. Snapshot prewarm selects a complete LOD of at most four tiles per Segment, while visible detailed tiles remain non-blocking on-demand work. The full Segment destination is snapped once in device pixels and every tile boundary is derived from that same width, so pan cannot change the nearest-neighbor sampling phase.
 - Each preview Note covers two adjacent source rows (edge-clamped). This preserves at least one visible row when the 64-row source is reduced to the normal Arrangement lane height with nearest-neighbor sampling; a one-row source mark can otherwise be skipped completely.
 - These are UI runtime cache rules only. Hit testing continues to use stable IDs and semantic intervals; Project data, Undo/Redo, compilation, playback, export and persistence are unchanged.
 

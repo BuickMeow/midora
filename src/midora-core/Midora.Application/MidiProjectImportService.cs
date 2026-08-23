@@ -17,6 +17,23 @@ public sealed record MidiProjectImportDiagnostic(
     byte? ZeroBasedPort = null,
     byte? ZeroBasedChannel = null);
 
+public enum MidiProjectImportPhase
+{
+    ScanningSource,
+    ImportingEvents,
+    ValidatingProject,
+    FinalizingProject,
+    Completed
+}
+
+public readonly record struct MidiProjectImportProgress(
+    MidiProjectImportPhase Phase,
+    long ProcessedEventCount,
+    long TotalEventCount,
+    long ProcessedSourceBytes,
+    long TotalSourceBytes,
+    double Fraction);
+
 public sealed class MidiProjectImportResult
 {
     internal MidiProjectImportResult(

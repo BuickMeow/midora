@@ -966,5 +966,7 @@ all imported source data is one initial state, not Undo history
 
 ### 19.11.5 进度、诊断与锁定
 
-解析、候选构建、Review 和提交使用 Level 3 Main Window Modal Lock，并计入单一活动任务集合。进度至少显示当前 chunk/MTrk、解析字节、已发现 Root/Track 数与汇总 Warning；结构 Error 必须包含源 MTrk index 和 byte offset。Running Status、Track 拆分、opaque event、Note 配对和 Warning 聚合细则见第 23.11、23.16 节。
+解析、候选构建、Review 和提交使用 Level 3 Main Window Modal Lock，并计入单一活动任务集合。第一遍流式扫描按已解析源字节/源文件总字节显示确定进度并同时显示已发现事件数；第一遍得到正式总事件数后，第二遍必须显示 `processed events / total events`。验证与原子采用占据同一确定进度的收尾区间，不得退回 indeterminate。结构 Error 必须包含源 MTrk index 和 byte offset。Running Status、Track 拆分、opaque event、Note 配对和 Warning 聚合细则见第 23.11、23.16 节。
+
+导入兼容报告首次弹窗关闭后，其完整 Info/Warning 项、code、message 与 source location 必须继续由当前状态消息持有；状态栏只显示摘要，后续 `View` 必须重新显示与首次弹窗相同的全文，直到用户 Dismiss 或另一条状态消息明确取代它。
 ---

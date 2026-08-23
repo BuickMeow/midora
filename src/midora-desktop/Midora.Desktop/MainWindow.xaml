@@ -370,6 +370,7 @@
                             TimeSignatureMap="{Binding EditorSettings.TimeSignatureMap}"
                             ProjectTickOffset="{Binding ProjectTickOffset}"
                             DefaultCreationLengthTicks="{Binding EditorSettings.DefaultLengthTicks}"
+                            PreviewTicksPerQuarterNote="{Binding EditorSettings.TicksPerQuarterNote}"
                             DefaultVelocity="{Binding EditorSettings.DefaultVelocity}"
                             SurfaceMode="{Binding SurfaceMode}"
                             ToolMode="{Binding ToolMode}"

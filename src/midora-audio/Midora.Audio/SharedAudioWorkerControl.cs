@@ -546,17 +546,19 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
     public bool HasPendingStopCommand()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        long read = Int64At(CommandReadPositionOffset);
-        long write = Volatile.Read(ref Int64At(CommandWritePositionOffset));
-        ValidateCommandRingPositions(read, write);
-        for (long position = read; position < write; position++)
-        {
-            if (ReadCommand(position).Kind == AudioWorkerControlCommandKind.Stop)
-            {
-                return true;
-            }
-        }
-        return false;
+        return HasPendingCommand(AudioWorkerControlCommandKind.Stop);
+    }
+
+    /// <summary>
+    /// Observes a queued monitoring replacement without consuming it. Buffering
+    /// recovery uses this to yield its obsolete renderer generation so the
+    /// normal monitoring cold-start path can take ownership of the audible
+    /// frontier.
+    /// </summary>
+    public bool HasPendingMonitoringCommand()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return HasPendingCommand(AudioWorkerControlCommandKind.Monitoring);
     }
 
     /// <summary>
@@ -635,6 +637,21 @@ public sealed unsafe class SharedAudioWorkerControl : IDisposable
         WriteCommand(write, command);
         Volatile.Write(ref Int64At(CommandWritePositionOffset), write + 1);
         return true;
+    }
+
+    private bool HasPendingCommand(AudioWorkerControlCommandKind kind)
+    {
+        long read = Int64At(CommandReadPositionOffset);
+        long write = Volatile.Read(ref Int64At(CommandWritePositionOffset));
+        ValidateCommandRingPositions(read, write);
+        for (long position = read; position < write; position++)
+        {
+            if (ReadCommand(position).Kind == kind)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void WriteCommand(long position, AudioWorkerControlCommand command)

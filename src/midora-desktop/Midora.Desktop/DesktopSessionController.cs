@@ -50,6 +50,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private string _projectTreeSearchText = string.Empty;
     private bool _isNavigatingHistory;
     private string? _statusMessage;
+    private string? _statusMessageDetails;
+    private string? _statusMessageDetailsTitle;
     private bool _statusMessageIsError;
     private bool _isPlaybackStartPending;
     private long _displayCurrentTick;
@@ -244,16 +246,37 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
     }
     public bool HasStatusMessage => !string.IsNullOrWhiteSpace(StatusMessage);
+    public string? StatusMessageDetails
+    {
+        get => _statusMessageDetails;
+        private set => Set(ref _statusMessageDetails, value);
+    }
+    public string? StatusMessageDetailsTitle
+    {
+        get => _statusMessageDetailsTitle;
+        private set => Set(ref _statusMessageDetailsTitle, value);
+    }
     public bool StatusMessageIsError
     {
         get => _statusMessageIsError;
         private set => Set(ref _statusMessageIsError, value);
     }
 
-    public void SetStatusMessage(string? message, bool isError = false)
+    public void SetStatusMessage(
+        string? message,
+        bool isError = false,
+        string? details = null,
+        string? detailsTitle = null)
     {
         StatusMessageIsError = isError;
-        StatusMessage = string.IsNullOrWhiteSpace(message) ? null : message.Trim();
+        string? normalized = string.IsNullOrWhiteSpace(message) ? null : message.Trim();
+        StatusMessageDetails = normalized is null || string.IsNullOrWhiteSpace(details)
+            ? null
+            : details.Trim();
+        StatusMessageDetailsTitle = normalized is null || string.IsNullOrWhiteSpace(detailsTitle)
+            ? null
+            : detailsTitle.Trim();
+        StatusMessage = normalized;
     }
 
     public WorkspaceViewModel? ActiveWorkspace
@@ -372,7 +395,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         string path,
         IReadOnlyDictionary<byte, byte>? zeroBasedPortMapping = null,
         CancellationToken cancellationToken = default,
-        string? defaultEmbeddedSoundFontPath = null)
+        string? defaultEmbeddedSoundFontPath = null,
+        IProgress<MidiProjectImportProgress>? progress = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         string fullPath = Path.GetFullPath(path);
@@ -381,12 +405,22 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 fullPath,
                 Path.GetFileNameWithoutExtension(fullPath),
                 zeroBasedPortMapping,
-                cancellationToken),
+                cancellationToken,
+                progress),
             cancellationToken);
-        return await AdoptMidiImportAsNewProjectAsync(
+        IReadOnlyList<MidiProjectImportDiagnostic> diagnostics =
+            await AdoptMidiImportAsNewProjectAsync(
             imported,
             cancellationToken,
             defaultEmbeddedSoundFontPath);
+        progress?.Report(new(
+            MidiProjectImportPhase.Completed,
+            imported.Metrics?.ScannedEventCount ?? 0,
+            imported.Metrics?.ScannedEventCount ?? 0,
+            imported.Metrics?.SourceFileBytes ?? 0,
+            imported.Metrics?.SourceFileBytes ?? 0,
+            1));
+        return diagnostics;
     }
 
     internal async Task<IReadOnlyList<MidiProjectImportDiagnostic>> ImportMidiBytesAsNewProjectAsync(

@@ -16,6 +16,8 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
     private int _waitingForProducerRestart;
     private int _started;
     private int _finished;
+    private string? _faultReason;
+    private Exception? _faultException;
     private long _renderingThreadAllocatedBytes;
     private bool _disposed;
 
@@ -57,6 +59,9 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
     public bool IsFinished => Volatile.Read(ref _finished) != 0;
 
     public bool IsPaused => Volatile.Read(ref _paused) != 0;
+
+    public string? FaultDescription => Volatile.Read(ref _faultException)?.ToString()
+        ?? Volatile.Read(ref _faultReason);
 
     public long RenderingThreadAllocatedBytes => Volatile.Read(ref _renderingThreadAllocatedBytes);
 
@@ -253,6 +258,11 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
                 if (!result.IsValidForRequest(_workFrameCount)
                     || result.Status == AudioPullStatus.Fault)
                 {
+                    Volatile.Write(
+                        ref _faultReason,
+                        result.Status == AudioPullStatus.Fault
+                            ? "The render source returned Fault."
+                            : "The render source returned an invalid pull result.");
                     _destination.FaultProducer();
                     break;
                 }
@@ -266,6 +276,9 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
                 if (result.FrameCount != 0
                     && !_destination.TryWriteFrames(_workBuffer, result.FrameCount))
                 {
+                    Volatile.Write(
+                        ref _faultReason,
+                        "The render-ahead destination rejected a produced frame block.");
                     _destination.FaultProducer();
                     break;
                 }
@@ -281,8 +294,9 @@ public sealed unsafe class AudioRenderAheadWorker : IDisposable
                 }
             }
         }
-        catch
+        catch (Exception exception)
         {
+            Volatile.Write(ref _faultException, exception);
             _destination.FaultProducer();
         }
         finally

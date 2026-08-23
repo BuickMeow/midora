@@ -487,6 +487,21 @@ public sealed class AudioFrameRingBufferTests
         Assert.Equal(2f, replacement[1]);
     }
 
+    [Fact]
+    public void RenderAheadWorkerRetainsTheSourceExceptionForFaultDiagnostics()
+    {
+        ThrowingSource source = new();
+        using AudioFrameRingBuffer ring = new(source.Format, 64);
+        using AudioRenderAheadWorker worker = new(source, ring, 32);
+
+        worker.Start();
+
+        Assert.True(SpinWait.SpinUntil(
+            () => ring.ProducerFaulted,
+            TimeSpan.FromSeconds(5)));
+        Assert.Contains("diagnostic-source-failure", worker.FaultDescription);
+    }
+
     private static unsafe void FillFrames(float* destination, int frameCount, int startValue)
     {
         for (int frame = 0; frame < frameCount; frame++)
@@ -538,6 +553,14 @@ public sealed class AudioFrameRingBufferTests
                 checked((nuint)requestedFrameCount * (nuint)Format.BytesPerFrame));
             return AudioPullResult.EndOfStream(requestedFrameCount);
         }
+    }
+
+    private sealed unsafe class ThrowingSource : IAudioRenderSource
+    {
+        public AudioFormat Format => new(48_000, 2, AudioSampleFormat.Float32);
+
+        public AudioPullResult PullFrames(float* destination, int requestedFrameCount) =>
+            throw new InvalidOperationException("diagnostic-source-failure");
     }
 
     private sealed unsafe class RestartableCountingSource(long totalFramesPerGeneration)

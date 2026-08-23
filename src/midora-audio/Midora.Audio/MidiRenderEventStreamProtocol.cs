@@ -358,6 +358,7 @@ public sealed class MidiRenderEventStreamReader : IDisposable
     private long _fileOffset;
     private long _activeGeneration;
     private long _generationBaseRecordOffset;
+    private long _minimumSampleFrame;
     private bool _disposed;
 
     public MidiRenderEventStreamReader(MidiRenderEventStreamDescriptor descriptor)
@@ -461,6 +462,7 @@ public sealed class MidiRenderEventStreamReader : IDisposable
                 _loadedCount = low;
                 _activeGeneration = published.Generation;
                 _generationBaseRecordOffset = published.BaseRecordOffset;
+                _minimumSampleFrame = sampleFrame;
                 _fileOffset = checked(
                     (_generationBaseRecordOffset + low)
                     * MidiRenderEventStreamControl.RecordByteCount);
@@ -483,24 +485,37 @@ public sealed class MidiRenderEventStreamReader : IDisposable
             while (!_cancellation.IsCancellationRequested)
             {
                 _control.RequestThrough(Volatile.Read(ref _requestedThroughFrame));
-                MidiRenderEventStreamPublishedState published = _control.ReadPublishedState();
-                if (published.IsFaulted)
-                {
-                    Volatile.Write(ref _faulted, 1);
-                    return;
-                }
-                if (published.Generation != Volatile.Read(ref _activeGeneration))
-                {
-                    Thread.Sleep(1);
-                    continue;
-                }
                 int free;
                 lock (_feederGate)
                 {
+                    // Seek also owns _feederGate while it replaces the active
+                    // generation and its loaded counters. Read the published
+                    // snapshot only after taking the same lock; otherwise a
+                    // feeder can retain generation N, wait behind a Seek to
+                    // generation N+1, and then combine N's committed count with
+                    // N+1's loaded count. Dense streams make that race wide
+                    // enough to fault the reader during Mute/Solo replacement.
+                    MidiRenderEventStreamPublishedState published =
+                        _control.ReadPublishedState();
+                    if (published.IsFaulted)
+                    {
+                        Volatile.Write(ref _faulted, 1);
+                        return;
+                    }
+                    if (published.Generation != Volatile.Read(ref _activeGeneration))
+                    {
+                        free = 0;
+                        goto WaitForNextSnapshot;
+                    }
                     long committedCount = published.RecordCount;
                     long write = Volatile.Read(ref _writePosition);
                     long read = Volatile.Read(ref _readPosition);
                     long partiallyLoadedThroughFrame = -1;
+                    if (committedCount < _loadedCount)
+                    {
+                        throw new InvalidDataException(
+                            "The rolling MIDI event stream committed count moved behind its loaded prefix.");
+                    }
                     free = checked((int)Math.Min(
                         RingCapacity - (write - read),
                         committedCount - _loadedCount));
@@ -510,17 +525,29 @@ public sealed class MidiRenderEventStreamReader : IDisposable
                         int bytes = checked(take * MidiRenderEventStreamControl.RecordByteCount);
                         _data.Position = _fileOffset;
                         _data.ReadExactly(buffer.AsSpan(0, bytes));
+                        int enqueued = 0;
                         for (int index = 0; index < take; index++)
                         {
                             ScheduledPortMidiMessage record = ReadRecord(buffer.AsSpan(
                                 index * MidiRenderEventStreamControl.RecordByteCount,
                                 MidiRenderEventStreamControl.RecordByteCount));
-                            _ring[(int)((write + index) % RingCapacity)] = record;
+                            // A monitoring generation is published at its rewind
+                            // frame before the producer has necessarily caught up
+                            // to the Worker's later audible frontier. Seek can only
+                            // binary-search the prefix published at that instant;
+                            // records appended afterwards may still precede the
+                            // requested frame and must remain permanently filtered.
+                            if (record.Scheduled.SampleFrame < _minimumSampleFrame)
+                            {
+                                continue;
+                            }
+                            _ring[(int)((write + enqueued) % RingCapacity)] = record;
+                            enqueued++;
                             partiallyLoadedThroughFrame = record.Scheduled.SampleFrame;
                         }
                         _fileOffset = checked(_fileOffset + bytes);
                         _loadedCount += take;
-                        Volatile.Write(ref _writePosition, write + take);
+                        Volatile.Write(ref _writePosition, write + enqueued);
                     }
                     MidiRenderEventStreamPublishedState latest =
                         _control.ReadPublishedState();
@@ -554,6 +581,7 @@ public sealed class MidiRenderEventStreamReader : IDisposable
                         }
                     }
                 }
+            WaitForNextSnapshot:
                 Thread.Sleep(free == 0 ? 1 : 0);
             }
         }

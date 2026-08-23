@@ -561,7 +561,8 @@ public static class Program
         }
         if (ring.ProducerFaulted)
         {
-            throw new MidoraAudioException($"Render-ahead Preparing failed: {renderer.Fault}");
+            throw new MidoraAudioException(
+                $"Render-ahead Preparing failed: {DescribeRenderAheadFault(renderWorker, renderer)}");
         }
 
         BassWasapiOutputDeviceFactory factory = new(
@@ -578,6 +579,9 @@ public static class Program
         MidiMonitoringCommand[] monitoringCommandBatch =
             new MidiMonitoringCommand[SharedAudioWorkerControl.CommandCapacity];
         Func<bool> stopCommandPending = control.HasPendingStopCommand;
+        Func<bool> recoverySuperseded = () =>
+            control.HasPendingStopCommand()
+            || control.HasPendingMonitoringCommand();
         output.Start();
         control.PublishState(AudioWorkerState.Playing);
 
@@ -665,20 +669,32 @@ public static class Program
                             recoveryStorageFailure ?? new OutOfMemoryException(
                                 "The Worker could not reserve the in-memory fallback."));
                     }
-                    if (!ring.IsBuffering || heldPreviewPaused)
+                    if (heldPreviewPaused)
                     {
                         throw new InvalidDataException(
-                            "A Buffering recovery command requires a configured spool and latched underrun.");
+                            "A Buffering recovery command is invalid while held Preview is paused.");
+                    }
+                    if (!ring.IsBuffering)
+                    {
+                        // A monitoring cold start may have consumed the same
+                        // audible frontier before this already-published recovery
+                        // command reached the head of the ring. Its reset has
+                        // superseded the old recovery generation, so the command
+                        // is a deterministic no-op rather than a protocol fault.
+                        continue;
                     }
                     if (!renderWorker.TryPauseAtProducerFrontier(
                             TimeSpan.FromSeconds(5),
-                            stopCommandPending))
+                            recoverySuperseded))
                     {
-                        ConsumePrioritizedStop(
-                            control,
-                            ref stopRequested,
-                            ref flushOnStop);
-                        break;
+                        if (TryConsumeRecoveryCancellation(
+                                control,
+                                ref stopRequested,
+                                ref flushOnStop))
+                        {
+                            break;
+                        }
+                        continue;
                     }
                     bool recoveryPrepared;
                     try
@@ -686,7 +702,7 @@ public static class Program
                         recoveryPrepared = recoverySource.TryPrepareRecovery(
                             ring,
                             command.Payload,
-                            stopCommandPending);
+                            recoverySuperseded);
                     }
                     finally
                     {
@@ -694,12 +710,16 @@ public static class Program
                     }
                     if (!recoveryPrepared)
                     {
-                        ConsumePrioritizedStop(
-                            control,
-                            ref stopRequested,
-                            ref flushOnStop);
-                        break;
+                        if (TryConsumeRecoveryCancellation(
+                                control,
+                                ref stopRequested,
+                                ref flushOnStop))
+                        {
+                            break;
+                        }
+                        continue;
                     }
+                    bool monitoringSupersededRecovery = false;
                     while (ring.AvailableFrameCount < prefillThreshold
                         && !ring.ProducerCompleted
                         && !ring.ProducerFaulted)
@@ -710,16 +730,27 @@ public static class Program
                             flushOnStop = recoveryStopFlush;
                             break;
                         }
+                        if (control.HasPendingMonitoringCommand())
+                        {
+                            monitoringSupersededRecovery = true;
+                            break;
+                        }
                         Thread.Sleep(1);
                     }
                     if (stopRequested)
                     {
                         break;
                     }
+                    if (monitoringSupersededRecovery
+                        || control.HasPendingMonitoringCommand())
+                    {
+                        continue;
+                    }
                     if (ring.ProducerFaulted)
                     {
                         throw new MidoraAudioException(
-                            "The render-ahead producer faulted while publishing the recovery span.");
+                            "The render-ahead producer faulted while publishing the recovery span; "
+                            + DescribeRenderAheadFault(renderWorker, renderer));
                     }
                     ring.ReleaseBuffering();
                     continue;
@@ -881,7 +912,8 @@ public static class Program
                             if (ring.ProducerFaulted)
                             {
                                 throw new MidoraAudioException(
-                                    "The render-ahead producer faulted while replacing a monitoring future.");
+                                    "The render-ahead producer faulted while replacing a monitoring future; "
+                                    + DescribeRenderAheadFault(renderWorker, renderer));
                             }
                             if (superseded)
                             {
@@ -984,7 +1016,9 @@ public static class Program
                 throw new MidoraAudioException(
                     $"Audio worker fault: callback={output.CallbackFaulted}; deviceLost={output.DeviceLost}; "
                     + $"defaultMappingChanged={requestedDeviceId is null && output.DefaultDeviceChanged}; "
-                    + $"ring={ring.ProducerFaulted}; renderer={renderer.Fault}.");
+                    + $"ring={ring.ProducerFaulted}; "
+                    + $"producer={renderWorker.FaultDescription ?? "unspecified"}; "
+                    + $"renderer={renderer.Fault}.");
             }
 
             if (heldPreviewPaused)
@@ -1051,6 +1085,27 @@ public static class Program
         }
         stopRequested = true;
         flushOnStop = flush;
+    }
+
+    private static bool TryConsumeRecoveryCancellation(
+        SharedAudioWorkerControl control,
+        ref bool stopRequested,
+        ref bool flushOnStop)
+    {
+        if (control.HasPendingStopCommand())
+        {
+            ConsumePrioritizedStop(
+                control,
+                ref stopRequested,
+                ref flushOnStop);
+            return true;
+        }
+        if (control.HasPendingMonitoringCommand())
+        {
+            return false;
+        }
+        throw new InvalidOperationException(
+            "A cancelled Buffering recovery has no pending Stop or Monitoring command.");
     }
 
     private static bool TryCollectMonitoringCommandsUntilQuiescent(
@@ -1523,6 +1578,11 @@ public static class Program
             realtimeWorker.RenderingThreadAllocatedBytes
             + (rollingSource?.RenderingThreadAllocatedBytes ?? 0)
             + renderer.ParallelDecodeAllocatedBytesForDiagnostics);
+
+    private static string DescribeRenderAheadFault(
+        AudioRenderAheadWorker renderWorker,
+        BassMidiRenderer renderer) =>
+        $"producer={renderWorker.FaultDescription ?? "unspecified"}; renderer={renderer.Fault}";
 
     private static float ParseSingle(string value) =>
         float.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture);

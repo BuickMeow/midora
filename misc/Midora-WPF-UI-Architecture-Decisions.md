@@ -137,7 +137,7 @@
 - 修正 ADR-UI-018 的离散 LOD 部分：Piano Roll tile 仍为 `256 × 256` device-pixel 核心和四边 1 device-pixel 保护区，但 tile 必须按当前实际 `devicePixelsPerTick` 与 `devicePixelsPerLane` 生成，并以该精确缩放的 IEEE 754 bit pattern 作为 cache key。WPF 组合阶段只允许 1:1 device-pixel 映射，不再把量化 LOD bitmap 二次放大或缩小。
 - 同一 tick 的左右边界必须由同一表达式直接换算并执行一次最近像素舍入；禁止用 `floor(start)` 与 `ceil(end)` 两套方向相反的规则，也禁止用“已舍入 start + width”推导 end。相邻 Note 的共享 tick 因而得到完全相同的像素边界。
 - 同一 pitch lane 的 top/bottom 必须从全局 lane 边界计算并舍入，再换算到 tile 局部坐标；不得按每个 tile 单独缩放已栅格化的行，从而避免横向 tile 之间发生 1 device-pixel 的纵向相位差。
-- Arrangement Segment preview 的最高精度使用固定参考比例 `96 pixels / quarter note`、64-pixel 高度和 256-pixel 横向 tile；较低精度仅允许半八度 `1 / 2^(n/2)` 固定 LOD，精确 viewport zoom 不直接进入 cache key。Segment tick 长度、Project TPQN 与固定 LOD 决定总参考宽度；viewport 选择第一个 source-pixel 比例不大于当前显示比例的固定层，避免缩小时遍历亚像素 tile，也禁止最近邻向下采样跳过一像素短 Note。完整 Segment 的 left/top/width/height 先统一换算并舍入到 device pixel，所有 tile 的相对边界再从这一个固定 device width 派生；pan 因而只改变整 device-pixel translation，不改变 tile 内采样相位。normalized start/end 使用相同的最近像素边界规则，tile 精确映射到完整 Segment 世界矩形后裁剪。单个 Note 在源 bitmap 中覆盖相邻两行，以避免 `64 px` 预览缩小到常规轨道高度时，最近邻采样完整跳过只有一行的首音符。Snapshot 后台预热选择每个 Segment 不超过四个 tile 的完整固定层；可见 fallback 使用 `max(display LOD, warmup LOD - 2)`，即提高一倍水平分辨率且最多八个 tile，只有全套 tile 命中才原子呈现。全部可见 fallback 完成后才准入新的精细请求；细 tile 就绪后独占其横向范围，fallback 仅绘制在未覆盖间隙且缓存继续保留。该修正取代曾把任意长度 Segment 压进固定 512-pixel 总宽度、以及缩小时仍遍历最高精度全部 tile 的设计。
+- Arrangement Segment preview 的最高精度使用固定参考比例 `96 pixels / quarter note`、64-pixel 高度和 256-pixel 横向 tile；较低精度仅允许半八度 `1 / 2^(n/2)` 固定 LOD，精确 viewport zoom 不直接进入 cache key。Segment tick 长度、Project TPQN 与固定 LOD 决定总参考宽度；viewport 选择第一个 source-pixel 比例不大于当前显示比例的固定目标层，避免完成层遍历亚像素 tile，也禁止最近邻向下采样跳过一像素短 Note。完整 Segment 的 left/top/width/height 先统一换算并舍入到 device pixel，所有 tile 的相对边界再从这一个固定 device width 派生；pan 因而只改变整 device-pixel translation，不改变 tile 内采样相位。normalized start/end 使用相同的最近像素边界规则，tile 精确映射到完整 Segment 世界矩形后裁剪。单个 Note 在源 bitmap 中覆盖相邻两行，以避免 `64 px` 预览缩小到常规轨道高度时，最近邻采样完整跳过只有一行的首音符。Snapshot 后台预热选择每个 Segment 不超过四个 tile 的完整固定层；可见 fallback 固定使用 `max(0, warmup LOD - 2)`，即提高一倍水平分辨率且最多八个 tile，只有全套 tile 命中才原子呈现。fallback 身份不随 viewport 改变；显示层更粗时直接缩放复用，禁止因缩小视图重新空白。全部可见 fallback 完成后才准入新的目标请求；目标 tile 就绪后独占其横向范围，fallback 仅绘制在未覆盖间隙且缓存继续保留。该修正取代曾把任意长度 Segment 压进固定 512-pixel 总宽度、以及缩小时仍遍历最高精度全部 tile 的设计。
 - 合成不变量：tile 目标宽度必须执行浮点比例换算；禁止让整数除法把部分 tile 的目标宽度截断为零。Presentation 回归必须覆盖 `TimelineSurface → async raster cache → final DrawingContext composition`，不能只测试 rasterizer 输出。
 - 依据：实机复现确认离散 LOD bitmap 的 WPF 二次采样会让 1-pixel border 在特定缩放下坍缩，并让相邻 tile 出现不同采样相位。该修正只改变 UI runtime cache 与像素覆盖，不改变 Note/Segment 语义、命中、编辑、持久化或可听结果。
 - 后续边界：此实现吸收了高性能 MIDI 编辑器常见的“语义实例 + 统一最终像素变换”原则，但没有复制或引入 yinhe 的 AGPL 源码，仓库许可证因此不变。若将来改用 GPU instance renderer，需另立 ADR、性能门和许可证审计。
@@ -332,6 +332,16 @@
 - 决定：播放/前台任务锁定期间，Properties 的 Project-backed 输入 Disabled；只读 Properties 与 Diagnostics 可查看。属性提交必须继续经过 Application command、正式验证、Undo/Redo 和编译失效链，UI 不直接改 Domain 对象。
 - 性能边界：Selection、hover、viewport、播放指针和诊断刷新不得重建属性表。属性投影只在显式打开模态对话框时按目标对象构建；大型选择只物化实际需要的字段/对象，不得遍历未选中的大型 Segment 内容。
 - 依据：产品所有者于 2026-08-22 明确决定完全迁移并删除 Inspector，并批准先按上述推荐方向全量实施、再逐项进行 UI 验收。该决定取代 SRS 第 17 章 Global Inspector、相关默认偏好和把 Inspector 作为唯一精确编辑入口的旧要求；正式同步见 SRS 第 17、18、20、23 章。
+
+## ADR-UI-043：超大型分页 MIDI 编辑采用批量身份解析、目标碰撞查询与 Selection 指标快照
+
+- 决定：Direct MIDI paged source 提供 stable-ID set、Note start-key set 和 Event target-key set 的批量查询。Domain collection 负责把 source/replacement/added 统一投影为当前可编辑对象；UI 和 Application 层不得重新全量枚举 Segment 来定位少量对象。
+- 决定：Selection revision 变化时，各 active timeline projection 一次批量解析已选对象，并冻结按对象类型聚合的 tick/lane/value 边界及 earliest item。拖动约束、音高试听 anchor 和 Pointer Move 直接读取该快照；正式编辑后批量重建一次并移除不存在的 stable ID。
+- 决定：Direct Note/Event 多字段修改通过 collection-local batch scope 合并 source identity 判定和 generation publication。精确碰撞策略按 Segment 合并全部目标 key，并让 paged pack 每个候选 page 最多解码/扫描一次；collision winner、Undo/Redo 和 imported duplicate 边界不变。
+- 决定：不改变 Note 精确键的 Length/Velocity 等编辑直接绕过碰撞策略；Direct Note 起点候选从排序 NoteOn endpoint page 二分读取。Logical Note 与 Template Note 的常用创建、Move、Copy-Move 和边界调整同样提交目标 `(tick, key)`，而不是把整个 Segment/SubVoice 注册为碰撞范围。
+- 决定：Move/Copy-Move 的 selection-only tile 可以在后台未完全就绪时渐进组合已完成 tile。缺 tile 不得触发 UI 线程逐帧重建整个 Selection geometry；原始选中对象仍保留在源位置，因此渐进目标层不会造成已提交数据错觉。
+- 归属：批量查询索引、Selection metrics、materialized-source identity 和 raster in-flight 状态均为 runtime/session 数据，不进入 `.midora`、canonical、MIDI/Audio 输出或 Application Preferences。本决定不改变 Project 语义、碰撞规则、音频结果和缓存持久化。
+- 依据：产品所有者使用 `Krash Noets 6.7 million.mid` 观察到稳定视图流畅但任意编辑和大选区提交严重阻塞；源码审计确认旧路径存在 `O(total objects × selected IDs)` 定位、逐目标分页查询和每帧选区扫描。
 
 ## 小决定审计
 

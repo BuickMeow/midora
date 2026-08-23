@@ -608,11 +608,13 @@ public static partial class ProjectDomainEditCommands
                 }
                 ValidateDirectMidiNote(value.StartTick, value.LengthTicks, value.Key, value.NoteOnVelocity, value.NoteOffVelocity);
             }
-            return ResolveTargetedExactDirectMidiCollisions(Prepared(
+            IPreparedProjectEdit prepared = Prepared(
                 old.Where((value, index) => value != replacement[index] || discarded[index]).Any(),
                 PureMidiTrackChange(location.Track.Id),
                 _ =>
                 {
+                    using IDisposable batch = location.Segment.Notes.BeginBatchChange(
+                        selected.Select(static value => value.Note).ToArray());
                     for (int index = 0; index < selected.Length; index++)
                     {
                         if (discarded[index]) location.Segment.Notes.Remove(selected[index].Note);
@@ -621,17 +623,27 @@ public static partial class ProjectDomainEditCommands
                 },
                 _ =>
                 {
+                    using IDisposable batch = location.Segment.Notes.BeginBatchChange(
+                        selected.Select(static value => value.Note).ToArray());
                     for (int index = 0; index < selected.Length; index++)
                         ApplyDirectNote(selected[index].Note, old[index]);
                     foreach (DirectNoteSelection value in selected.Where((_, index) => discarded[index]).OrderBy(value => value.Index))
                         InsertAt(location.Segment.Notes, value.Index, value.Note, "Direct MIDI Note");
-                }),
-                noteTargets: replacement
-                    .Where((_, index) => !discarded[index])
+                });
+            DirectMidiNoteCollisionTarget[] collisionTargets = replacement
+                    .Where((value, index) => !discarded[index]
+                        && (value.StartTick != old[index].StartTick
+                            || value.Key != old[index].Key))
                     .Select(value => new DirectMidiNoteCollisionTarget(
                         location.Segment,
                         value.StartTick,
-                        value.Key)));
+                        value.Key))
+                    .ToArray();
+            return collisionTargets.Length == 0
+                ? prepared
+                : ResolveTargetedExactDirectMidiCollisions(
+                    prepared,
+                    noteTargets: collisionTargets);
         });
 
     public static IProjectEditCommand UpsertDirectMidiEventPoints(
@@ -724,6 +736,8 @@ public static partial class ProjectDomainEditCommands
                     }
                     else
                     {
+                        using IDisposable batch = location.Segment.ChannelEvents.BeginBatchChange(
+                            selected.Select(static value => value.Event).ToArray());
                         for (int index = 0; index < selected.Length; index++)
                             ApplyDirectEvent(selected[index].Event, values[index]);
                     }
@@ -737,6 +751,8 @@ public static partial class ProjectDomainEditCommands
                     }
                     else
                     {
+                        using IDisposable batch = location.Segment.ChannelEvents.BeginBatchChange(
+                            selected.Select(static value => value.Event).ToArray());
                         for (int index = 0; index < selected.Length; index++) ApplyDirectEvent(selected[index].Event, selected[index].Original);
                     }
                 }),
@@ -778,6 +794,8 @@ public static partial class ProjectDomainEditCommands
                 PureMidiTrackChange(location.Track.Id),
                 _ =>
                 {
+                    using IDisposable batch = location.Segment.ChannelEvents.BeginBatchChange(
+                        selected.Select(static value => value.Event).ToArray());
                     for (int index = 0; index < selected.Length; index++)
                     {
                         ApplyDirectEvent(selected[index].Event, replacement[index]);
@@ -785,6 +803,8 @@ public static partial class ProjectDomainEditCommands
                 },
                 _ =>
                 {
+                    using IDisposable batch = location.Segment.ChannelEvents.BeginBatchChange(
+                        selected.Select(static value => value.Event).ToArray());
                     for (int index = 0; index < selected.Length; index++)
                     {
                         ApplyDirectEvent(selected[index].Event, selected[index].Original);
@@ -908,13 +928,13 @@ public static partial class ProjectDomainEditCommands
         ArgumentNullException.ThrowIfNull(ids);
         if (ids.Count == 0) throw new ArgumentException("At least one Direct MIDI Note is required.", nameof(ids));
         HashSet<MidoraId> distinct = [];
-        return ids.Select(id =>
+        foreach (MidoraId id in ids)
         {
             if (id == default || !distinct.Add(id)) throw new ArgumentException("Direct MIDI Note IDs must be distinct.", nameof(ids));
-            int index = segment.Notes.FindIndex(value => value.Id == id);
-            if (index < 0) throw new ArgumentOutOfRangeException(nameof(ids));
-            return new DirectNoteSelection(segment.Notes[index], index);
-        }).ToArray();
+        }
+        IReadOnlyList<DirectMidiNoteMatch> matches = segment.Notes.ResolveByIds(ids);
+        if (matches.Count != ids.Count) throw new ArgumentOutOfRangeException(nameof(ids));
+        return matches.Select(value => new DirectNoteSelection(value.Value, value.Index)).ToArray();
     }
 
     private static DirectEventSelection[] SelectDirectEvents(MidiSegment segment, IReadOnlyCollection<MidoraId> ids)
@@ -922,14 +942,16 @@ public static partial class ProjectDomainEditCommands
         ArgumentNullException.ThrowIfNull(ids);
         if (ids.Count == 0) throw new ArgumentException("At least one Direct MIDI Event is required.", nameof(ids));
         HashSet<MidoraId> distinct = [];
-        return ids.Select(id =>
+        foreach (MidoraId id in ids)
         {
             if (id == default || !distinct.Add(id)) throw new ArgumentException("Direct MIDI Event IDs must be distinct.", nameof(ids));
-            int index = segment.ChannelEvents.FindIndex(value => value.Id == id);
-            if (index < 0) throw new ArgumentOutOfRangeException(nameof(ids));
-            DirectMidiChannelEvent value = segment.ChannelEvents[index];
-            return new DirectEventSelection(value, index, SnapshotDirectEvent(value));
-        }).ToArray();
+        }
+        IReadOnlyList<DirectMidiChannelEventMatch> matches = segment.ChannelEvents.ResolveByIds(ids);
+        if (matches.Count != ids.Count) throw new ArgumentOutOfRangeException(nameof(ids));
+        return matches.Select(value => new DirectEventSelection(
+            value.Value,
+            value.Index,
+            SnapshotDirectEvent(value.Value))).ToArray();
     }
 
     private static OpaqueEventSelection[] SelectOpaqueEvents(
@@ -939,15 +961,17 @@ public static partial class ProjectDomainEditCommands
         ArgumentNullException.ThrowIfNull(ids);
         if (ids.Count == 0) throw new ArgumentException("At least one imported MIDI event is required.", nameof(ids));
         HashSet<MidoraId> distinct = [];
-        return ids.Select(id =>
+        foreach (MidoraId id in ids)
         {
             if (id == default || !distinct.Add(id))
                 throw new ArgumentException("Imported MIDI event IDs must be distinct.", nameof(ids));
-            int index = segment.OpaqueEvents.FindIndex(value => value.Id == id);
-            if (index < 0) throw new ArgumentOutOfRangeException(nameof(ids));
-            OpaqueMidiEvent value = segment.OpaqueEvents[index];
-            return new OpaqueEventSelection(value, index, SnapshotOpaqueEvent(value));
-        }).ToArray();
+        }
+        IReadOnlyList<OpaqueMidiEventMatch> matches = segment.OpaqueEvents.ResolveByIds(ids);
+        if (matches.Count != ids.Count) throw new ArgumentOutOfRangeException(nameof(ids));
+        return matches.Select(value => new OpaqueEventSelection(
+            value.Value,
+            value.Index,
+            SnapshotOpaqueEvent(value.Value))).ToArray();
     }
 
     private static void ValidateMidiSegmentPlacements(

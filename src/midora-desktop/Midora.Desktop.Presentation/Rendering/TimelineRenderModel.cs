@@ -470,12 +470,36 @@ public interface ITimelineRenderItemSource
     }
 
     bool TryGetById(MidoraId id, out TimelineRenderItem item);
+
+    void QueryByIds(
+        IReadOnlySet<MidoraId> ids,
+        List<TimelineRenderItem> destination)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(destination);
+        foreach (MidoraId id in ids)
+        {
+            if (TryGetById(id, out TimelineRenderItem item))
+                destination.Add(item);
+        }
+    }
+
     IEnumerable<TimelineRenderItem> EnumerateAll();
 
     void AccumulateOverviewDensity(long extent, Span<int> destination)
     {
     }
 }
+
+public readonly record struct TimelineSelectionMetrics(
+    int Count,
+    long MinimumStartTick,
+    long MaximumEndTick,
+    int MinimumLane,
+    int MaximumLane,
+    double MinimumValue,
+    double MaximumValue,
+    TimelineRenderItem EarliestItem);
 
 /// <summary>
 /// Supplies the complete, bounded-cost horizontal overview for an editor.
@@ -557,11 +581,13 @@ public sealed class MaterializedTimelineOverviewSource : ITimelineOverviewSource
 public sealed class TimelineSelectionSnapshot
 {
     private readonly HashSet<MidoraId> _ids;
+    private readonly Dictionary<TimelineItemKind, TimelineSelectionMetrics> _metrics;
 
     public TimelineSelectionSnapshot(
         long revision,
         IEnumerable<MidoraId> ids,
-        MidoraId? primary)
+        MidoraId? primary,
+        IEnumerable<TimelineRenderItem>? resolvedItems = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(revision);
         ArgumentNullException.ThrowIfNull(ids);
@@ -576,6 +602,7 @@ public sealed class TimelineSelectionSnapshot
         }
         Revision = revision;
         Primary = primary;
+        _metrics = BuildMetrics(resolvedItems);
     }
 
     public long Revision { get; }
@@ -583,6 +610,50 @@ public sealed class TimelineSelectionSnapshot
     public int Count => _ids.Count;
     public IEnumerable<MidoraId> Ids => _ids;
     public bool Contains(MidoraId id) => _ids.Contains(id);
+
+    public bool TryGetMetrics(
+        TimelineItemKind kind,
+        out TimelineSelectionMetrics metrics) =>
+        _metrics.TryGetValue(kind, out metrics);
+
+    private Dictionary<TimelineItemKind, TimelineSelectionMetrics> BuildMetrics(
+        IEnumerable<TimelineRenderItem>? resolvedItems)
+    {
+        Dictionary<TimelineItemKind, TimelineSelectionMetrics> result = [];
+        if (resolvedItems is null) return result;
+        foreach (TimelineRenderItem item in resolvedItems)
+        {
+            if (!_ids.Contains(item.Id)) continue;
+            if (!result.TryGetValue(item.Kind, out TimelineSelectionMetrics current))
+            {
+                result.Add(item.Kind, new(
+                    1,
+                    item.StartTick,
+                    item.EndTick,
+                    item.Lane,
+                    item.Lane,
+                    item.Value,
+                    item.Value,
+                    item));
+                continue;
+            }
+            TimelineRenderItem earliest = item.StartTick < current.EarliestItem.StartTick
+                || item.StartTick == current.EarliestItem.StartTick
+                && item.Id.CompareTo(current.EarliestItem.Id) < 0
+                    ? item
+                    : current.EarliestItem;
+            result[item.Kind] = new(
+                checked(current.Count + 1),
+                Math.Min(current.MinimumStartTick, item.StartTick),
+                Math.Max(current.MaximumEndTick, item.EndTick),
+                Math.Min(current.MinimumLane, item.Lane),
+                Math.Max(current.MaximumLane, item.Lane),
+                Math.Min(current.MinimumValue, item.Value),
+                Math.Max(current.MaximumValue, item.Value),
+                earliest);
+        }
+        return result;
+    }
 }
 
 public readonly record struct TimelineViewport(
@@ -862,6 +933,26 @@ public sealed class TimelineRenderSnapshot
     {
         if (ItemsById.TryGetValue(id, out item)) return true;
         return _itemSource?.TryGetById(id, out item) == true;
+    }
+
+    public void QueryByIds(
+        IReadOnlySet<MidoraId> ids,
+        List<TimelineRenderItem> destination)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(destination);
+        HashSet<MidoraId>? remaining = null;
+        foreach (MidoraId id in ids)
+        {
+            if (ItemsById.TryGetValue(id, out TimelineRenderItem item))
+            {
+                destination.Add(item);
+                continue;
+            }
+            (remaining ??= []).Add(id);
+        }
+        if (remaining is { Count: > 0 })
+            _itemSource?.QueryByIds(remaining, destination);
     }
 
     public IEnumerable<TimelineRenderItem> EnumerateAllItems() =>

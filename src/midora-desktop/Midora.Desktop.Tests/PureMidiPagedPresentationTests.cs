@@ -100,6 +100,38 @@ public sealed class PureMidiPagedPresentationTests
     }
 
     [Fact]
+    public void PagedSelectionMetricsResolveAllSelectedNotesWithOneSourceQuery()
+    {
+        using MidoraProject project = new(480);
+        MidiSegment segment = new(project) { LengthTicks = 1_000 };
+        SparsePagedNoteSource source = new();
+        segment.AttachPagedContent(source);
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "direct-midi-paged-selection",
+            [],
+            itemSource: new PagedDirectMidiTimelineItemSource(
+                segment,
+                DirectMidiTimelineProjection.Notes));
+        HashSet<MidoraId> ids = [new(1), new(2)];
+        List<TimelineRenderItem> items = [];
+
+        snapshot.QueryByIds(ids, items);
+        TimelineSelectionSnapshot selection = new(3, ids, new MidoraId(1), items);
+
+        Assert.Equal(1, source.NoteIdQueryCount);
+        Assert.True(selection.TryGetMetrics(
+            TimelineItemKind.DirectMidiNote,
+            out TimelineSelectionMetrics metrics));
+        Assert.Equal(2, metrics.Count);
+        Assert.Equal(100, metrics.MinimumStartTick);
+        Assert.Equal(840, metrics.MaximumEndTick);
+        Assert.Equal(63, metrics.MinimumLane);
+        Assert.Equal(67, metrics.MaximumLane);
+        Assert.Equal(new MidoraId(1), metrics.EarliestItem.Id);
+    }
+
+    [Fact]
     public void DirectMidiOverviewChannelsSeparateNoteStartsFromEvents()
     {
         using MidoraProject project = new(480);
@@ -243,7 +275,16 @@ public sealed class PureMidiPagedPresentationTests
                 WorkspaceKey.ForObject(WorkspaceKind.SegmentEditor, segment.Id),
                 "MIDI Segment",
                 TimelineWorkspaceMode.Segment);
+            MidoraId[] selectedIds = segment.Notes.QueryValues(
+                    segment.ContentOffsetTick,
+                    segment.ContentEndTick)
+                .Take(4_096)
+                .Select(static value => value.Id)
+                .ToArray();
+            foreach (MidoraId id in selectedIds)
+                workspace.Selection.Add(id, makePrimary: false);
             workspace.Rebuild(imported.Project, revision: 1);
+            workspace.RefreshSelectionPresentation();
             List<TimelineRenderItem> items = [];
             int lane = 127 - first.Key;
             workspace.Snapshot!.QueryInto(
@@ -254,6 +295,14 @@ public sealed class PureMidiPagedPresentationTests
                 items);
 
             Assert.Contains(items, value => value.Id == first.Id);
+            Assert.True(workspace.SelectionSnapshot.TryGetMetrics(
+                TimelineItemKind.DirectMidiNote,
+                out TimelineSelectionMetrics selectionMetrics));
+            Assert.Equal(selectedIds.Length, selectionMetrics.Count);
+            Assert.True(workspace.SelectionSnapshot.TryGetMetrics(
+                TimelineItemKind.Velocity,
+                out TimelineSelectionMetrics velocitySelectionMetrics));
+            Assert.Equal(selectedIds.Length, velocitySelectionMetrics.Count);
 
             const double pixelsPerTick = 1;
             const double pixelsPerLane = 18;
@@ -295,6 +344,7 @@ public sealed class PureMidiPagedPresentationTests
         public int OpaqueEventCount => 0;
         public string ContentFingerprint => "sparse-overview-test";
         public int NoteStartQueryCount { get; private set; }
+        public int NoteIdQueryCount { get; private set; }
         public DirectMidiNoteValue GetNote(int index) => _notes[index];
         public DirectMidiChannelEventValue GetChannelEvent(int index) =>
             throw new ArgumentOutOfRangeException(nameof(index));
@@ -303,6 +353,15 @@ public sealed class PureMidiPagedPresentationTests
         public int FindNoteIndex(MidoraId id) => Array.FindIndex(_notes, value => value.Id == id);
         public int FindChannelEventIndex(MidoraId id) => -1;
         public int FindOpaqueEventIndex(MidoraId id) => -1;
+
+        public IEnumerable<DirectMidiNoteSourceMatch> QueryNotesByIds(
+            IReadOnlySet<MidoraId> ids)
+        {
+            NoteIdQueryCount++;
+            return _notes
+                .Select((value, index) => new DirectMidiNoteSourceMatch(index, value))
+                .Where(match => ids.Contains(match.Value.Id));
+        }
 
         public IEnumerable<DirectMidiNoteValue> QueryNotes(
             long startTick,

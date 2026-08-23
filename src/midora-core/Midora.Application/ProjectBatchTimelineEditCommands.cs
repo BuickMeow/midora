@@ -44,7 +44,7 @@ public static partial class ProjectDomainEditCommands
                     discarded[index] ? 0 : value.Note,
                     value.Velocity);
             }
-            return ResolveExactLogicalNoteCollisions(Prepared(
+            IPreparedProjectEdit prepared = Prepared(
                 old.Where((value, index) => value != replacement[index]).Any(),
                 TrackChange(segment.Track.Id),
                 _ =>
@@ -70,7 +70,19 @@ public static partial class ProjectDomainEditCommands
                     {
                         InsertAt(segment.Segment.Notes, value.Index, value.Note, "Logical Note");
                     }
-                }), segment.Segment);
+                });
+            LogicalNoteCollisionTarget[] collisionTargets = replacement
+                .Where((value, index) => !discarded[index]
+                    && (value.StartTick != old[index].StartTick
+                        || value.Note != old[index].Note))
+                .Select(value => new LogicalNoteCollisionTarget(
+                    segment.Segment,
+                    value.StartTick,
+                    value.Note))
+                .ToArray();
+            return collisionTargets.Length == 0
+                ? prepared
+                : ResolveTargetedExactLogicalNoteCollisions(prepared, collisionTargets);
         });
 
     public static IProjectEditCommand AdjustLogicalNoteEdges(
@@ -102,7 +114,12 @@ public static partial class ProjectDomainEditCommands
                 replacement);
             return startDelta == 0
                 ? prepared
-                : ResolveExactLogicalNoteCollisions(prepared, segment.Segment);
+                : ResolveTargetedExactLogicalNoteCollisions(
+                    prepared,
+                    replacement.Select(value => new LogicalNoteCollisionTarget(
+                        segment.Segment,
+                        value.StartTick,
+                        value.Note)));
         });
 
     public static IProjectEditCommand SetLogicalNoteVelocities(
@@ -426,7 +443,7 @@ public static partial class ProjectDomainEditCommands
             ValidateLogicalNoteBatch(snapshots);
             LogicalNote[]? copies = null;
             int insertionIndex = target.Segment.Notes.Count;
-            return ResolveExactLogicalNoteCollisions(Prepared(
+            return ResolveTargetedExactLogicalNoteCollisions(Prepared(
                 hasChanges: true,
                 TrackChange(source.Track.Id, target.Track.Id),
                 owner =>
@@ -461,7 +478,10 @@ public static partial class ProjectDomainEditCommands
                     {
                         RemoveRequired(target.Segment.Notes, copy, "Logical Note copy");
                     }
-                }), target.Segment);
+                }), snapshots.Select(value => new LogicalNoteCollisionTarget(
+                    target.Segment,
+                    value.StartTick,
+                    value.Note)));
         });
 
     public static IProjectEditCommand MoveSegments(

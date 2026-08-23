@@ -1514,20 +1514,15 @@ public sealed class TimelineRenderingTests
             TimelineSegmentPreviewRasterizer.MaximumWarmupTilesPerSegment);
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    [InlineData(6)]
-    [InlineData(18)]
-    public void ProgressiveArrangementFallbackIsBoundedAndNeverFinerThanDisplay(int displayLod)
+    [Fact]
+    public void ProgressiveArrangementFallbackIsBoundedAndViewportIndependent()
     {
         const long segmentLengthTicks = 18_000_000;
         const int ticksPerQuarterNote = 768;
 
         int fallbackLod = TimelineSegmentPreviewRasterizer.SelectFallbackLod(
             segmentLengthTicks,
-            ticksPerQuarterNote,
-            displayLod);
+            ticksPerQuarterNote);
         int warmupLod = TimelineSegmentPreviewRasterizer.SelectWarmupLod(
             segmentLengthTicks,
             ticksPerQuarterNote);
@@ -1538,18 +1533,91 @@ public sealed class TimelineRenderingTests
         long fallbackTileCount = 1 + ((fallbackWidth - 1)
             / TimelineSegmentPreviewRasterizer.FixedPreviewTileSize);
 
-        Assert.True(fallbackLod >= displayLod);
         Assert.Equal(
             Math.Max(
-                displayLod,
-                Math.Max(
-                    0,
-                    warmupLod - TimelineSegmentPreviewRasterizer.FixedPreviewLodLevelsPerOctave)),
+                0,
+                warmupLod - TimelineSegmentPreviewRasterizer.FixedPreviewLodLevelsPerOctave),
             fallbackLod);
         Assert.InRange(
             fallbackTileCount,
             1,
             TimelineSegmentPreviewRasterizer.MaximumFallbackTilesPerSegment);
+    }
+
+    [Fact]
+    public void ZoomingOutKeepsTheCompletedFallbackVisibleWhileTargetLodLoads()
+    {
+        RunOnSta(() =>
+        {
+            const long segmentLengthTicks = 36_000;
+            const long zoomedOutTickSpan = 360_000;
+            TimelineRasterCacheSession.Clear();
+            TimelineRenderItem segment = Item(
+                1,
+                0,
+                segmentLengthTicks,
+                0,
+                kind: TimelineItemKind.Segment);
+            TimelineSegmentPreview preview = new(
+                segment.Id,
+                [new TimelineSegmentPreviewNote(0, 1, 60)]);
+            ArrangementLaneDescriptor[] lanes =
+            [
+                new(
+                    0,
+                    ArrangementLaneKind.LogicalTrack,
+                    new MidoraId(2),
+                    null,
+                    0,
+                    true,
+                    false,
+                    true)
+            ];
+            TimelineRenderSnapshot withPreview = new(
+                1,
+                "arrangement:zoom-fallback",
+                [segment],
+                ["Track"],
+                segmentPreviews: new Dictionary<MidoraId, TimelineSegmentPreview>
+                {
+                    [segment.Id] = preview
+                },
+                arrangementLanes: lanes);
+            TimelineRenderSnapshot withoutPreview = new(
+                1,
+                "arrangement:zoom-fallback-baseline",
+                [segment],
+                ["Track"],
+                arrangementLanes: lanes);
+            TimelineSurface surface = CreateArrangementSurface(withPreview, tickSpan: 3_072);
+            byte[] initialBaseline = RenderVisual(
+                CreateArrangementSurface(withoutPreview, tickSpan: 3_072));
+            bool fallbackVisible = false;
+            try
+            {
+                for (int attempt = 0; attempt < 200 && !fallbackVisible; attempt++)
+                {
+                    fallbackVisible = !initialBaseline.SequenceEqual(RenderVisual(surface));
+                    if (fallbackVisible) break;
+                    Thread.Sleep(10);
+                    PumpDispatcher();
+                }
+                Assert.True(fallbackVisible, "The viewport-independent fallback never became visible.");
+
+                surface.TickSpan = zoomedOutTickSpan;
+                byte[] zoomedBaseline = RenderVisual(
+                    CreateArrangementSurface(withoutPreview, zoomedOutTickSpan));
+                byte[] firstZoomedFrame = RenderVisual(surface);
+
+                Assert.False(
+                    zoomedBaseline.SequenceEqual(firstZoomedFrame),
+                    "Zooming out cleared the completed fallback while a new target LOD was loading.");
+            }
+            finally
+            {
+                TimelineRasterCacheSession.Clear();
+            }
+        });
     }
 
     [Fact]

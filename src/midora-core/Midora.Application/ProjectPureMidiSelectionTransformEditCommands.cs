@@ -148,10 +148,7 @@ public static partial class ProjectDomainEditCommands
                 return new DirectNoteBatchResult(result, discard);
             }).ToArray();
             bool[] discarded = replacement.Select(value => value.Discard).ToArray();
-            Dictionary<(long Tick, int Key), (long Tick, int Key)> occupied = location.Segment.Notes
-                .Where(value => selected.All(selectedValue => !ReferenceEquals(selectedValue.Note, value)))
-                .GroupBy(value => (value.StartTick, value.Key))
-                .ToDictionary(group => group.Key, group => group.Key);
+            Dictionary<(long Tick, int Key), (long Tick, int Key)> occupied = [];
             for (int index = 0; index < replacement.Length; index++)
             {
                 if (!discarded[index])
@@ -176,6 +173,8 @@ public static partial class ProjectDomainEditCommands
                 PureMidiTrackChange(location.Track.Id),
                 _ =>
                 {
+                    using IDisposable batch = location.Segment.Notes.BeginBatchChange(
+                        selected.Select(static value => value.Note).ToArray());
                     for (int index = 0; index < selected.Length; index++)
                     {
                         if (discarded[index]) location.Segment.Notes.Remove(selected[index].Note);
@@ -184,6 +183,8 @@ public static partial class ProjectDomainEditCommands
                 },
                 _ =>
                 {
+                    using IDisposable batch = location.Segment.Notes.BeginBatchChange(
+                        selected.Select(static value => value.Note).ToArray());
                     for (int index = 0; index < selected.Length; index++)
                         ApplyDirectNote(selected[index].Note, old[index]);
                     foreach (DirectNoteSelection value in selected

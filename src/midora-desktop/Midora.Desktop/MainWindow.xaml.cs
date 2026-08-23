@@ -5834,8 +5834,9 @@ public partial class MainWindow : Window
                         return new(
                             TimelineSelectionObjectKind.DirectMidiEventPoints,
                             midi.Segment.ChannelEvents
-                                .Where(value => selected.Contains(value.Id)
-                                    && TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(value) == target)
+                                .ResolveByIds(selected)
+                                .Select(static match => match.Value)
+                                .Where(value => TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(value) == target)
                                 .Select(static value => value.Id)
                                 .ToArray(),
                             segmentId,
@@ -5846,8 +5847,8 @@ public partial class MainWindow : Window
                     return new(
                         TimelineSelectionObjectKind.DirectMidiNotes,
                         midi.Segment.Notes
-                            .Where(note => selected.Contains(note.Id))
-                            .Select(static note => note.Id)
+                            .ResolveByIds(selected)
+                            .Select(static match => match.Value.Id)
                             .ToArray(),
                         segmentId);
                 }
@@ -6798,20 +6799,44 @@ public partial class MainWindow : Window
     {
         Segment segment = TimelineWorkspaceViewModel.FindSegment(_session.Project!, segmentId)?.Segment
             ?? throw new InvalidOperationException("The Segment no longer exists.");
-        LogicalNote[] notes = segment.Notes.Where(item => selected.Contains(item.Id)).ToArray();
-        if (notes.Length == 0) return;
+        TimelineWorkspaceViewModel workspace =
+            (TimelineWorkspaceViewModel)_session.ActiveWorkspace!;
+        MidoraId[] noteIds = selected;
+        long minimumStart;
+        int minimumPitch;
+        int maximumPitch;
+        if (workspace.SelectionSnapshot.TryGetMetrics(
+                TimelineItemKind.LogicalNote,
+                out TimelineSelectionMetrics metrics)
+            && metrics.Count == selected.Length)
+        {
+            minimumStart = metrics.MinimumStartTick;
+            minimumPitch = 127 - metrics.MaximumLane;
+            maximumPitch = 127 - metrics.MinimumLane;
+        }
+        else
+        {
+            HashSet<MidoraId> requested = selected.ToHashSet();
+            LogicalNote[] notes = segment.Notes
+                .Where(item => requested.Contains(item.Id))
+                .ToArray();
+            if (notes.Length == 0) return;
+            noteIds = notes.Select(static item => item.Id).ToArray();
+            minimumStart = notes.Min(static item => item.StartTick);
+            minimumPitch = notes.Min(static item => item.Note);
+            maximumPitch = notes.Max(static item => item.Note);
+        }
         switch (edit.EditKind)
         {
             case TimelineItemEditKind.Move:
-                long tickDelta = Math.Max(snappedDelta, -notes.Min(item => item.StartTick));
+                long tickDelta = Math.Max(snappedDelta, -minimumStart);
                 int requestedPitchDelta = -edit.LaneDelta;
                 int pitchDelta = edit.CopyRequested
                     ? Math.Clamp(
                         requestedPitchDelta,
-                        -notes.Min(item => item.Note),
-                        127 - notes.Max(item => item.Note))
+                        -minimumPitch,
+                        127 - maximumPitch)
                     : requestedPitchDelta;
-                MidoraId[] noteIds = notes.Select(item => item.Id).ToArray();
                 if (edit.CopyRequested)
                 {
                     long firstNewStableId = _session.Project!.NextStableId;
@@ -6819,7 +6844,7 @@ public partial class MainWindow : Window
                         segmentId,
                         noteIds,
                         segmentId,
-                        checked(notes.Min(item => item.StartTick) + tickDelta),
+                        checked(minimumStart + tickDelta),
                         pitchDelta));
                     SelectCreatedWorkspaceObjects(
                         (TimelineWorkspaceViewModel)_session.ActiveWorkspace!,
@@ -6837,10 +6862,10 @@ public partial class MainWindow : Window
             case TimelineItemEditKind.ResizeStart:
                 long startDelta = Math.Max(
                     snappedDelta,
-                    -notes.Min(item => item.StartTick));
+                    -minimumStart);
                 _session.Execute(ProjectDomainEditCommands.AdjustLogicalNoteEdges(
                     segmentId,
-                    selected,
+                    noteIds,
                     startDelta,
                     endDelta: 0));
                 break;
@@ -6850,7 +6875,7 @@ public partial class MainWindow : Window
                     checked(edit.Item.EndTick + edit.TickDelta));
                 _session.Execute(ProjectDomainEditCommands.AdjustLogicalNoteEdges(
                     segmentId,
-                    selected,
+                    noteIds,
                     startDelta: 0,
                     endDelta));
                 break;
@@ -6928,13 +6953,29 @@ public partial class MainWindow : Window
     {
         MidiSegment segment = TimelineWorkspaceViewModel.FindMidiSegment(_session.Project!, segmentId)?.Segment
             ?? throw new InvalidOperationException("The MIDI Segment no longer exists.");
-        DirectMidiNote[] notes = segment.Notes.Where(item => selected.Contains(item.Id)).ToArray();
-        if (notes.Length == 0) return;
-        MidoraId[] noteIds = notes.Select(value => value.Id).ToArray();
+        MidoraId[] noteIds = selected;
+        long minimumStart;
+        if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline
+            && timeline.SelectionSnapshot.TryGetMetrics(
+                TimelineItemKind.DirectMidiNote,
+                out TimelineSelectionMetrics metrics)
+            && metrics.Count == selected.Length)
+        {
+            minimumStart = metrics.MinimumStartTick;
+        }
+        else
+        {
+            DirectMidiNote[] notes = segment.Notes.ResolveByIds(selected)
+                .Select(static match => match.Value)
+                .ToArray();
+            if (notes.Length == 0) return;
+            noteIds = notes.Select(static value => value.Id).ToArray();
+            minimumStart = notes.Min(static value => value.StartTick);
+        }
         switch (edit.EditKind)
         {
             case TimelineItemEditKind.Move:
-                long tickDelta = Math.Max(snappedDelta, -notes.Min(value => value.StartTick));
+                long tickDelta = Math.Max(snappedDelta, -minimumStart);
                 int keyDelta = -edit.LaneDelta;
                 if (edit.CopyRequested)
                 {
@@ -6961,7 +7002,7 @@ public partial class MainWindow : Window
                 _session.Execute(ProjectDomainEditCommands.AdjustDirectMidiNoteEdges(
                     segmentId,
                     noteIds,
-                    Math.Max(snappedDelta, -notes.Min(value => value.StartTick)),
+                    Math.Max(snappedDelta, -minimumStart),
                     0));
                 break;
             case TimelineItemEditKind.ResizeEnd:
@@ -6985,19 +7026,24 @@ public partial class MainWindow : Window
     {
         if (_session.Project is not MidoraProject project
             || TimelineWorkspaceViewModel.FindMidiSegment(project, segmentId) is not { } location
-            || location.Segment.ChannelEvents.FirstOrDefault(value => value.Id == edit.Item.Id)
-                is not DirectMidiChannelEvent point)
+            || !location.Segment.ChannelEvents.TryGetById(
+                edit.Item.Id,
+                out DirectMidiChannelEvent? point)
+            || point is null)
         {
             return;
         }
         DirectMidiChannelEvent[] selected = location.Segment.ChannelEvents
-            .Where(value => selectedIds.Contains(value.Id)
-                && TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(value)
+            .ResolveByIds(selectedIds.ToHashSet())
+            .Select(static match => match.Value)
+            .Where(value => TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(value)
                     == TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(point))
             .ToArray();
         if (selected.Length == 0) selected = [point];
+        MidoraId[] selectedEventIds = selected.Select(static value => value.Id).ToArray();
+        long minimumTick = selected.Min(static value => value.Tick);
         long tickDelta = edit.EditKind == TimelineItemEditKind.Move
-            ? Math.Max(checked(snappedTarget - point.Tick), -selected.Min(value => value.Tick))
+            ? Math.Max(checked(snappedTarget - point.Tick), -minimumTick)
             : 0;
         int valueDelta = checked((int)Math.Round(
             edit.ValueDelta * (point.Kind == DirectMidiChannelEventKind.PitchBend ? 16383 : 127),
@@ -7029,7 +7075,7 @@ public partial class MainWindow : Window
         long firstNewStableId = project.NextStableId;
         _session.Execute(ProjectDomainEditCommands.AdjustDirectMidiEventPoints(
             segmentId,
-            selected.Select(value => value.Id).ToArray(),
+            selectedEventIds,
             tickDelta,
             data1Delta,
             data2Delta,
@@ -7071,22 +7117,41 @@ public partial class MainWindow : Window
     {
         if (_session.Project is not MidoraProject project
             || TimelineWorkspaceViewModel.FindMidiSegment(project, segmentId) is not { } location
-            || location.Segment.OpaqueEvents.FirstOrDefault(value => value.Id == edit.Item.Id)
-                is not OpaqueMidiEvent point)
+            || !location.Segment.OpaqueEvents.TryGetById(
+                edit.Item.Id,
+                out OpaqueMidiEvent? point)
+            || point is null)
         {
             return;
         }
-        OpaqueMidiEvent[] selected = location.Segment.OpaqueEvents
-            .Where(value => selectedIds.Contains(value.Id))
-            .ToArray();
-        if (selected.Length == 0) selected = [point];
+        MidoraId[] selectedEventIds;
+        long minimumTick;
+        if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline
+            && timeline.SelectionSnapshot.TryGetMetrics(
+                TimelineItemKind.OpaqueMidiEvent,
+                out TimelineSelectionMetrics metrics)
+            && metrics.Count == selectedIds.Count)
+        {
+            selectedEventIds = selectedIds.ToArray();
+            minimumTick = metrics.MinimumStartTick;
+        }
+        else
+        {
+            OpaqueMidiEvent[] selected = location.Segment.OpaqueEvents
+                .ResolveByIds(selectedIds.ToHashSet())
+                .Select(static match => match.Value)
+                .ToArray();
+            if (selected.Length == 0) selected = [point];
+            selectedEventIds = selected.Select(static value => value.Id).ToArray();
+            minimumTick = selected.Min(static value => value.Tick);
+        }
         long tickDelta = Math.Max(
             checked(snappedTarget - point.Tick),
-            -selected.Min(value => value.Tick));
+            -minimumTick);
         long firstNewStableId = project.NextStableId;
         _session.Execute(ProjectDomainEditCommands.AdjustOpaqueMidiEvents(
             segmentId,
-            selected.Select(value => value.Id).ToArray(),
+            selectedEventIds,
             tickDelta,
             edit.CopyRequested));
         if (edit.CopyRequested)
@@ -7254,21 +7319,45 @@ public partial class MainWindow : Window
                 : template.Tick) + edit.TickDelta));
         if (template.Kind == TemplateEventKind.Note)
         {
-            TemplateEvent[] selectedNotes = voice.Events
-                .Where(item => item.Kind == TemplateEventKind.Note
-                    && (item.Id == template.Id || workspace.Selection.Ids.Contains(item.Id)))
+            HashSet<MidoraId> requested = workspace.Selection.Ids.ToHashSet();
+            requested.Add(template.Id);
+            List<TimelineRenderItem> resolvedNotes = new(requested.Count);
+            workspace.SubVoiceNoteSnapshot?.QueryByIds(requested, resolvedNotes);
+            MidoraId[] selectedIds = resolvedNotes
+                .Select(static item => item.Id)
+                .Distinct()
                 .ToArray();
-            MidoraId[] selectedIds = selectedNotes.Select(item => item.Id).ToArray();
+            if (selectedIds.Length == 0) selectedIds = [template.Id];
+            TimelineSelectionSnapshot noteSelection = new(
+                revision: 0,
+                selectedIds,
+                selectedIds.Contains(workspace.Selection.Primary ?? default)
+                    ? workspace.Selection.Primary
+                    : template.Id,
+                resolvedNotes.Count == 0
+                    ? [new TimelineRenderItem(
+                        template.Id,
+                        TimelineItemKind.TemplateNote,
+                        template.Tick,
+                        checked(template.Tick + template.LengthTicks),
+                        127 - template.Number,
+                        template.Value / 127d,
+                        1,
+                        TimelineItemState.None)]
+                    : resolvedNotes);
+            _ = noteSelection.TryGetMetrics(
+                TimelineItemKind.TemplateNote,
+                out TimelineSelectionMetrics noteMetrics);
             switch (edit.EditKind)
             {
                 case TimelineItemEditKind.Move:
-                    long tickDelta = Math.Max(snappedDelta, -selectedNotes.Min(item => item.Tick));
+                    long tickDelta = Math.Max(snappedDelta, -noteMetrics.MinimumStartTick);
                     int requestedPitchDelta = -edit.LaneDelta;
                     int pitchDelta = edit.CopyRequested
                         ? Math.Clamp(
                             requestedPitchDelta,
-                            -selectedNotes.Min(item => item.Number),
-                            127 - selectedNotes.Max(item => item.Number))
+                            -(127 - noteMetrics.MaximumLane),
+                            127 - (127 - noteMetrics.MinimumLane))
                         : requestedPitchDelta;
                     if (edit.CopyRequested)
                     {
@@ -7277,7 +7366,7 @@ public partial class MainWindow : Window
                             instrumentId,
                             voice.Id,
                             selectedIds,
-                            checked(selectedNotes.Min(item => item.Tick) + tickDelta),
+                            checked(noteMetrics.MinimumStartTick + tickDelta),
                             pitchDelta));
                         SelectCreatedWorkspaceObjects(workspace, firstNewStableId);
                     }
@@ -7294,7 +7383,7 @@ public partial class MainWindow : Window
                 case TimelineItemEditKind.ResizeStart:
                     long startDelta = Math.Max(
                         snappedDelta,
-                        -selectedNotes.Min(item => item.Tick));
+                        -noteMetrics.MinimumStartTick);
                     _session.Execute(ProjectDomainEditCommands.AdjustTemplateNoteEdges(
                         instrumentId,
                         voice.Id,
@@ -8860,8 +8949,8 @@ public partial class MainWindow : Window
                         {
                             if (TimelineWorkspaceViewModel.FindMidiSegment(project, segmentId) is not { } midi)
                                 throw new InvalidOperationException("The Segment no longer exists.");
-                            MidoraId[] directNotes = midi.Segment.Notes
-                                .Where(item => selected.Contains(item.Id)).Select(item => item.Id).ToArray();
+                            MidoraId[] directNotes = midi.Segment.Notes.ResolveByIds(selected)
+                                .Select(static match => match.Value.Id).ToArray();
                             if (directNotes.Length == ids.Length)
                             {
                                 if (cut)
@@ -8874,8 +8963,8 @@ public partial class MainWindow : Window
                                 else payload = ProjectObjectClipboard.CopyDirectMidiNotes(document, segmentId, directNotes);
                                 break;
                             }
-                            MidoraId[] directEvents = midi.Segment.ChannelEvents
-                                .Where(item => selected.Contains(item.Id)).Select(item => item.Id).ToArray();
+                            MidoraId[] directEvents = midi.Segment.ChannelEvents.ResolveByIds(selected)
+                                .Select(static match => match.Value.Id).ToArray();
                             if (directEvents.Length == ids.Length)
                             {
                                 if (cut)
@@ -8888,8 +8977,8 @@ public partial class MainWindow : Window
                                 else payload = ProjectObjectClipboard.CopyDirectMidiEvents(document, segmentId, directEvents);
                                 break;
                             }
-                            MidoraId[] opaqueEvents = midi.Segment.OpaqueEvents
-                                .Where(item => selected.Contains(item.Id)).Select(item => item.Id).ToArray();
+                            MidoraId[] opaqueEvents = midi.Segment.OpaqueEvents.ResolveByIds(selected)
+                                .Select(static match => match.Value.Id).ToArray();
                             if (opaqueEvents.Length == ids.Length)
                             {
                                 if (cut)
@@ -9709,7 +9798,9 @@ public partial class MainWindow : Window
                         }
                         else if (TimelineWorkspaceViewModel.FindMidiSegment(project, segmentId) is { } midi)
                         {
-                            DirectMidiNote[] notes = midi.Segment.Notes.Where(item => selected.Contains(item.Id)).ToArray();
+                            DirectMidiNote[] notes = midi.Segment.Notes.ResolveByIds(selected)
+                                .Select(static match => match.Value)
+                                .ToArray();
                             if (notes.Length != ids.Length)
                                 throw new InvalidOperationException("Ctrl+D currently duplicates Direct MIDI Notes in the piano-roll scope.");
                             long target = cursor == 0
@@ -9827,22 +9918,49 @@ public partial class MainWindow : Window
             if (TimelineWorkspaceViewModel.FindMidiSegment(_session.Project!, segmentId) is not { } midi)
                 return;
             HashSet<MidoraId> midiSelected = ids.ToHashSet();
-            MidoraId[] directNotes = midi.Segment.Notes.Where(value => midiSelected.Contains(value.Id))
-                .Select(value => value.Id).ToArray();
+            if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline
+                && timeline.SelectionSnapshot.TryGetMetrics(
+                    TimelineItemKind.DirectMidiNote,
+                    out TimelineSelectionMetrics noteMetrics)
+                && noteMetrics.Count == ids.Length)
+            {
+                _session.Execute(ProjectDomainEditCommands.DeleteDirectMidiNotes(segmentId, ids));
+                return;
+            }
+            if (_session.ActiveWorkspace is TimelineWorkspaceViewModel eventTimeline
+                && eventTimeline.SelectionSnapshot.TryGetMetrics(
+                    TimelineItemKind.DirectMidiEvent,
+                    out TimelineSelectionMetrics eventMetrics)
+                && eventMetrics.Count == ids.Length)
+            {
+                _session.Execute(ProjectDomainEditCommands.DeleteDirectMidiEvents(segmentId, ids));
+                return;
+            }
+            if (_session.ActiveWorkspace is TimelineWorkspaceViewModel opaqueTimeline
+                && opaqueTimeline.SelectionSnapshot.TryGetMetrics(
+                    TimelineItemKind.OpaqueMidiEvent,
+                    out TimelineSelectionMetrics opaqueMetrics)
+                && opaqueMetrics.Count == ids.Length)
+            {
+                _session.Execute(ProjectDomainEditCommands.DeleteOpaqueMidiEvents(segmentId, ids));
+                return;
+            }
+            MidoraId[] directNotes = midi.Segment.Notes.ResolveByIds(midiSelected)
+                .Select(static match => match.Value.Id).ToArray();
             if (directNotes.Length == ids.Length)
             {
                 _session.Execute(ProjectDomainEditCommands.DeleteDirectMidiNotes(segmentId, directNotes));
                 return;
             }
-            MidoraId[] events = midi.Segment.ChannelEvents.Where(value => midiSelected.Contains(value.Id))
-                .Select(value => value.Id).ToArray();
+            MidoraId[] events = midi.Segment.ChannelEvents.ResolveByIds(midiSelected)
+                .Select(static match => match.Value.Id).ToArray();
             if (events.Length == ids.Length)
             {
                 _session.Execute(ProjectDomainEditCommands.DeleteDirectMidiEvents(segmentId, events));
                 return;
             }
-            MidoraId[] opaqueEvents = midi.Segment.OpaqueEvents.Where(value => midiSelected.Contains(value.Id))
-                .Select(value => value.Id).ToArray();
+            MidoraId[] opaqueEvents = midi.Segment.OpaqueEvents.ResolveByIds(midiSelected)
+                .Select(static match => match.Value.Id).ToArray();
             if (opaqueEvents.Length == ids.Length)
             {
                 _session.Execute(ProjectDomainEditCommands.DeleteOpaqueMidiEvents(segmentId, opaqueEvents));

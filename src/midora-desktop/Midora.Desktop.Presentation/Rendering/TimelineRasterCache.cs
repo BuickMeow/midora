@@ -1044,18 +1044,12 @@ public static class TimelineSegmentPreviewRasterizer
 
     public static int SelectFallbackLod(
         long segmentLengthTicks,
-        int ticksPerQuarterNote,
-        int displayLod)
+        int ticksPerQuarterNote)
     {
-        if (displayLod is < 0 or > MaximumFixedPreviewLod)
-        {
-            throw new ArgumentOutOfRangeException(nameof(displayLod));
-        }
         int warmupLod = SelectWarmupLod(segmentLengthTicks, ticksPerQuarterNote);
-        int doubledResolutionLod = Math.Max(
+        return Math.Max(
             0,
             warmupLod - FixedPreviewLodLevelsPerOctave);
-        return Math.Max(displayLod, doubledResolutionLod);
     }
 
     private static double GetFixedPreviewLodDivisor(int lod)

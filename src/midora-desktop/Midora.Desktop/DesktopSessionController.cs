@@ -1848,6 +1848,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 }
                 PrepareWorkspaceRuntimeState(workspace);
                 workspace.Rebuild(Project, _revision);
+                workspace.RefreshSelectionPresentation();
                 if (workspace is TimelineWorkspaceViewModel timeline)
                 {
                     timeline.UpdatePlaybackCursor(Project, CurrentTick);
@@ -1893,6 +1894,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             if (!WorkspaceAffected(workspace, changes)) continue;
             PrepareWorkspaceRuntimeState(workspace);
             workspace.Rebuild(Project, _revision);
+            workspace.RefreshSelectionPresentation();
             if (workspace is TimelineWorkspaceViewModel timeline)
             {
                 timeline.UpdatePlaybackCursor(Project, CurrentTick);

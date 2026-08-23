@@ -499,6 +499,11 @@ public static partial class ProjectDomainEditCommands
         IEnumerable<Segment> segments) =>
         ExactTimelineCollisionPolicy.Scope(source, logicalNoteSegments: segments);
 
+    private static IPreparedProjectEdit ResolveTargetedExactLogicalNoteCollisions(
+        IPreparedProjectEdit source,
+        IEnumerable<LogicalNoteCollisionTarget> targets) =>
+        ExactTimelineCollisionPolicy.Scope(source, logicalNoteTargets: targets);
+
     private static IPreparedProjectEdit ResolveExactLogicalParameterPointCollisions(
         IPreparedProjectEdit source,
         LogicalParameterLane lane) =>
@@ -513,6 +518,11 @@ public static partial class ProjectDomainEditCommands
         IPreparedProjectEdit source,
         SubVoice subVoice) =>
         ExactTimelineCollisionPolicy.Scope(source, subVoices: [subVoice]);
+
+    private static IPreparedProjectEdit ResolveTargetedExactTemplateNoteCollisions(
+        IPreparedProjectEdit source,
+        IEnumerable<TemplateNoteCollisionTarget> targets) =>
+        ExactTimelineCollisionPolicy.Scope(source, templateNoteTargets: targets);
 
     private static IPreparedProjectEdit ResolveExactValueCurvePointCollisions(
         IPreparedProjectEdit source,

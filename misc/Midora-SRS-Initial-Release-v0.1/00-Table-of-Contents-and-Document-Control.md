@@ -56,7 +56,7 @@
 - Arrangement Segment 概览的最高精度从错误的“每 Segment 固定 512 pixel”更正为 `96 pixels / quarter note`、256-pixel tile；较低精度只使用固定半八度 `1 / 2^(n/2)` LOD。Segment 长度、TPQN 与固定 LOD 决定 tile 数，精确 viewport zoom 不直接进入缓存身份。
 - `Open MIDI as New Project` 的模态任务使用确定进度：第一遍以已解析源字节计量，第二遍显示已处理事件/总事件；成功兼容报告的完整 Info/Warning 文本必须与状态栏摘要共同保留，后续 `View` 仍显示首次报告全文。
 - Arrangement Segment 概览在最多两个后台 worker 上为全部 Segment 预热完整且不超过四个 tile 的固定 LOD；缩放选择第一个不会向下采样 source pixel 的固定层，不产生任意 exact-scale cache generation，也不得遍历大量被压成亚像素的最高精度 tile。最终合成必须使用浮点目标宽度换算，并从一次 device-pixel-snapped 的完整 Segment 变换推导全部 tile 边界；禁止整数除法零宽和随 pan 改变最近邻采样相位。
-- 当前 viewport 的 Segment 概览先原子发布同内容版本的完整粗略 fallback；该 fallback 比最多四个 tile 的后台预热层提高一倍水平分辨率，且自身最多八个 tile。全部可见 fallback 就绪后才启动新的当前 LOD 细化；细 tile 就绪后独占其横向范围，禁止继续在该范围下绘制粗图，但粗缓存仍保留供其余范围和后续视图复用。
+- 当前 viewport 的 Segment 概览先原子发布同内容版本的完整粗略 fallback；该 fallback 比最多四个 tile 的后台预热层提高一倍水平分辨率，且自身最多八个 tile。fallback LOD 只由 Segment 长度与 TPQN 决定，不随 viewport 缩放改变；当前显示层更粗时允许临时缩放既有 fallback，禁止因缩小视图重新进入空白。全部可见 fallback 就绪后才启动新的当前 LOD 细化；目标 tile 就绪后独占其横向范围，禁止继续在该范围下绘制 fallback，但粗缓存仍保留供其余范围和后续视图复用。
 - Monitoring generation 切换时，event Reader 对 published generation 与 generation-local loaded counters 的读取必须与 `Seek` 使用同一 feeder lock，禁止把旧 generation 的 committed count 与新 generation 的 loaded count 混合。
 - 对象 `Properties...` 的 `Ctrl+P` 入口正式纳入焦点敏感快捷键；快捷键必须直接调用命令核心，不得构造无 `RoutedEvent` 的事件参数再调用 UI 事件处理器。
 - 所有带确认提交的自定义模态对话框统一使用同宽度的红色 Primary 确定按钮与普通取消按钮；除焦点控件自身消费 Enter 的情况外，Enter 执行确定、Escape 执行取消，不再由每个对话框各自定义不一致行为。每窗只允许一个 Escape Cancel target；标题栏关闭按钮执行显式取消，但不得再次注册 `IsCancel`。

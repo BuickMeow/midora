@@ -744,7 +744,7 @@ public static partial class ProjectDomainEditCommands
                         && voice.EventMappings.All(mapping => mapping.Target != target))
                     .ToArray();
             SubVoiceEventMapping[]? createdMappings = null;
-            return ResolveExactSubVoiceEventCollisions(DeferredCreate(
+            IPreparedProjectEdit prepared = DeferredCreate(
                 EventInstrumentChange(eventInstrumentId),
                 owner =>
                 {
@@ -778,7 +778,12 @@ public static partial class ProjectDomainEditCommands
                             "SubVoice event Mapping");
                     }
                     instrument.TemplateLengthTicks = oldTemplateLength;
-                }), voice);
+                });
+            return replacement.Kind == TemplateEventKind.Note
+                ? ResolveTargetedExactTemplateNoteCollisions(
+                    prepared,
+                    [new(voice, replacement.Tick, replacement.Number)])
+                : ResolveExactSubVoiceEventCollisions(prepared, voice);
         });
 
     private static void RestoreNewTemplateEventMappings(

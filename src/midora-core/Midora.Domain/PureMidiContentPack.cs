@@ -1301,6 +1301,132 @@ public sealed class PureMidiContentPack : IDisposable
         public int FindOpaqueEventIndex(MidoraId id) => FindById(_opaquePages, id, static (page, owner) =>
             ((OpaqueMidiEventValue[])owner.GetDecodedPage(page.Index)).Select(value => value.Id));
 
+        public IEnumerable<DirectMidiNoteSourceMatch> QueryNotesByIds(
+            IReadOnlySet<MidoraId> ids)
+        {
+            ArgumentNullException.ThrowIfNull(ids);
+            if (ids.Count == 0) yield break;
+            MidoraId[] sortedIds = ids.Order().ToArray();
+            foreach (PageDescriptor page in _notePages)
+            {
+                if (!MayContainRequestedId(page, sortedIds)) continue;
+                DirectMidiNoteValue[] values =
+                    (DirectMidiNoteValue[])_owner.GetDecodedPage(page.Index);
+                for (int index = 0; index < values.Length; index++)
+                {
+                    DirectMidiNoteValue value = values[index];
+                    if (ids.Contains(value.Id))
+                        yield return new(checked(page.FirstOrdinal + index), value);
+                }
+            }
+        }
+
+        public IEnumerable<DirectMidiNoteSourceMatch> QueryNotesAtStarts(
+            IReadOnlySet<DirectMidiNoteStartKey> keys)
+        {
+            ArgumentNullException.ThrowIfNull(keys);
+            if (keys.Count == 0) yield break;
+            Dictionary<long, HashSet<int>> keysByTick = keys
+                .GroupBy(static key => key.Tick)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => group.Select(static key => key.Key).ToHashSet());
+            long[] sortedTicks = keysByTick.Keys.Order().ToArray();
+            foreach (PageDescriptor page in _noteOnEndpointPages)
+            {
+                if (!MayContainRequestedTick(page, sortedTicks)) continue;
+                DirectMidiNoteValue[] values =
+                    (DirectMidiNoteValue[])_owner.GetDecodedPage(page.Index);
+                int tickIndex = Array.BinarySearch(sortedTicks, page.MinimumTick);
+                if (tickIndex < 0) tickIndex = ~tickIndex;
+                while (tickIndex < sortedTicks.Length
+                    && sortedTicks[tickIndex] <= page.MaximumTick)
+                {
+                    long tick = sortedTicks[tickIndex++];
+                    HashSet<int> requestedKeys = keysByTick[tick];
+                    int index = LowerBoundNote(values, tick, noteOn: true);
+                    while (index < values.Length && values[index].StartTick == tick)
+                    {
+                        DirectMidiNoteValue value = values[index++];
+                        if (requestedKeys.Contains(value.Key))
+                        {
+                            // Endpoint pages are ordered by tick rather than source
+                            // ordinal. Note collision resolution never removes an
+                            // untouched source incumbent, so the source index is not
+                            // needed for this bounded lookup.
+                            yield return new(-1, value);
+                        }
+                    }
+                }
+            }
+        }
+
+        public IEnumerable<DirectMidiChannelEventSourceMatch> QueryChannelEventsByIds(
+            IReadOnlySet<MidoraId> ids)
+        {
+            ArgumentNullException.ThrowIfNull(ids);
+            if (ids.Count == 0) yield break;
+            MidoraId[] sortedIds = ids.Order().ToArray();
+            foreach (PageDescriptor page in _channelPages)
+            {
+                if (!MayContainRequestedId(page, sortedIds)) continue;
+                DirectMidiChannelEventValue[] values =
+                    (DirectMidiChannelEventValue[])_owner.GetDecodedPage(page.Index);
+                for (int index = 0; index < values.Length; index++)
+                {
+                    DirectMidiChannelEventValue value = values[index];
+                    if (ids.Contains(value.Id))
+                        yield return new(checked(page.FirstOrdinal + index), value);
+                }
+            }
+        }
+
+        public IEnumerable<DirectMidiChannelEventSourceMatch> QueryChannelEventsAtStarts(
+            IReadOnlySet<DirectMidiEventStartKey> keys)
+        {
+            ArgumentNullException.ThrowIfNull(keys);
+            if (keys.Count == 0) yield break;
+            long[] sortedTicks = keys.Select(static key => key.Tick).Distinct().Order().ToArray();
+            foreach (PageDescriptor page in _channelPages)
+            {
+                if (!MayContainRequestedTick(page, sortedTicks)) continue;
+                DirectMidiChannelEventValue[] values =
+                    (DirectMidiChannelEventValue[])_owner.GetDecodedPage(page.Index);
+                for (int index = 0; index < values.Length; index++)
+                {
+                    DirectMidiChannelEventValue value = values[index];
+                    int selector = value.Kind is DirectMidiChannelEventKind.ControlChange
+                        or DirectMidiChannelEventKind.PolyphonicKeyPressure
+                        or DirectMidiChannelEventKind.NoteOn
+                        or DirectMidiChannelEventKind.NoteOff
+                            ? value.Data1
+                            : 0;
+                    if (keys.Contains(new(value.Tick, value.Kind, selector)))
+                        yield return new(checked(page.FirstOrdinal + index), value);
+                }
+            }
+        }
+
+        public IEnumerable<OpaqueMidiEventSourceMatch> QueryOpaqueEventsByIds(
+            IReadOnlySet<MidoraId> ids)
+        {
+            ArgumentNullException.ThrowIfNull(ids);
+            if (ids.Count == 0) yield break;
+            MidoraId[] sortedIds = ids.Order().ToArray();
+            foreach (PageDescriptor page in _opaquePages)
+            {
+                if (!MayContainRequestedId(page, sortedIds)) continue;
+                OpaqueMidiEventValue[] values =
+                    (OpaqueMidiEventValue[])_owner.GetDecodedPage(page.Index);
+                for (int index = 0; index < values.Length; index++)
+                {
+                    OpaqueMidiEventValue value = values[index];
+                    if (ids.Contains(value.Id))
+                        yield return new(checked(page.FirstOrdinal + index), value);
+                }
+            }
+        }
+
         public IEnumerable<DirectMidiNoteValue> QueryNotes(
             long startTick,
             long endTick,
@@ -1496,6 +1622,31 @@ public sealed class PureMidiContentPack : IDisposable
                 }
             }
             return false;
+        }
+
+        private static bool MayContainRequestedId(
+            PageDescriptor page,
+            MidoraId[] sortedIds)
+        {
+            int low = 0;
+            int high = sortedIds.Length;
+            while (low < high)
+            {
+                int middle = low + ((high - low) >> 1);
+                if (sortedIds[middle].CompareTo(page.MinimumId) < 0) low = middle + 1;
+                else high = middle;
+            }
+            return low < sortedIds.Length
+                && sortedIds[low].CompareTo(page.MaximumId) <= 0;
+        }
+
+        private static bool MayContainRequestedTick(
+            PageDescriptor page,
+            long[] sortedTicks)
+        {
+            int low = Array.BinarySearch(sortedTicks, page.MinimumTick);
+            if (low < 0) low = ~low;
+            return low < sortedTicks.Length && sortedTicks[low] <= page.MaximumTick;
         }
 
         private static int LowerBoundNote(

@@ -28,7 +28,7 @@
 
 ## 3. 初始实现参数
 
-- Arrangement preview：最高精度固定为 `96 pixels / quarter note`，较低精度只使用半八度 `1 / 2^(n/2)` 固定 LOD；各层均为 64-pixel 高度、256-pixel 横向 tile。Segment tick 长度与 Project TPQN 决定各层总宽度，精确 viewport zoom 不直接进入 cache identity，内容或主题颜色变化才重建。后台全项目 prewarm 仍选择最多 4 tile 的完整层；可见 fallback 选择 `max(display LOD, warmup LOD - 2)`，即相对 prewarm 提高一倍水平分辨率、最多 8 tile，且永远不比当前显示层更精细。
+- Arrangement preview：最高精度固定为 `96 pixels / quarter note`，较低精度只使用半八度 `1 / 2^(n/2)` 固定 LOD；各层均为 64-pixel 高度、256-pixel 横向 tile。Segment tick 长度与 Project TPQN 决定各层总宽度，精确 viewport zoom 不直接进入 cache identity，内容或主题颜色变化才重建。后台全项目 prewarm 仍选择最多 4 tile 的完整层；可见 fallback 固定选择 `max(0, warmup LOD - 2)`，即相对 prewarm 提高一倍水平分辨率、最多 8 tile。该身份与 viewport 无关；显示比 fallback 更粗时临时缩放复用它，再由当前目标 LOD 接管。
 - Arrangement 的目标矩形始终是完整 Segment 的未裁剪矩形；viewport 只负责 clip，禁止把完整 bitmap 拉伸到可见切片。
 - Piano roll tile：`256 × 256` device pixels、Pbgra32。
 - 水平/垂直 LOD：以 device-pixel scale 的量化值作为 cache key；pan 不改变 scale key。
@@ -54,7 +54,7 @@
 - Piano tile cache keys now use the exact current device-pixel scales. A completed tile is composed at exactly one source pixel per device pixel; quantized-LOD bitmap resampling is no longer permitted.
 - Every Note edge is rounded from its absolute tick boundary. Adjacent Notes sharing a tick therefore share the same computed boundary; vertical edges use the same absolute lane-boundary rule across every horizontal tile.
 - The one-pixel tile gutter remains only for cross-tile coverage. Core clips and gutter destinations are expressed in final device-pixel units, so neighboring tiles cannot acquire different scaling phases.
-- Segment preview uses 256-pixel horizontal tiles at a maximum `96 pixels / quarter note` and 64-pixel height, with no horizontal source gutter. Start and end use nearest-boundary rounding, and reference pixel zero maps directly to the full Segment left edge. Viewport zoom selects the first fixed half-octave LOD whose source-pixel scale is not greater than the display scale; it does not create an exact-scale cache generation and never downsamples a one-source-pixel mark. Snapshot prewarm selects a complete LOD of at most four tiles per Segment. A visible Segment uses a fallback one octave finer than that prewarm level, bounded to eight tiles and never finer than the current display LOD; it publishes only after every fallback tile is present. All visible fallbacks form a barrier before new detailed requests are admitted. Each ready detail tile exclusively owns its horizontal destination, so fallback pixels are drawn only in uncovered gaps; the coarse cache is retained rather than deleted. The full Segment destination is snapped once in device pixels and every tile boundary is derived from that same width, so pan cannot change the nearest-neighbor sampling phase.
+- Segment preview uses 256-pixel horizontal tiles at a maximum `96 pixels / quarter note` and 64-pixel height, with no horizontal source gutter. Start and end use nearest-boundary rounding, and reference pixel zero maps directly to the full Segment left edge. Viewport zoom selects the first fixed half-octave target LOD whose source-pixel scale is not greater than the display scale; it does not create an exact-scale cache generation and never downsamples a one-source-pixel mark in the completed target layer. Snapshot prewarm selects a complete LOD of at most four tiles per Segment. A visible Segment uses a viewport-independent fallback one octave finer than that prewarm level and bounded to eight tiles; it publishes only after every fallback tile is present. When the target display is coarser, the completed fallback is temporarily scaled instead of changing fallback identity or clearing the preview. All visible fallbacks form a barrier before new target requests are admitted. Each ready target tile exclusively owns its horizontal destination, so fallback pixels are drawn only in uncovered gaps; the fallback cache is retained rather than deleted. The full Segment destination is snapped once in device pixels and every tile boundary is derived from that same width, so pan cannot change the nearest-neighbor sampling phase.
 - Each preview Note covers two adjacent source rows (edge-clamped). This preserves at least one visible row when the 64-row source is reduced to the normal Arrangement lane height with nearest-neighbor sampling; a one-row source mark can otherwise be skipped completely.
 - These are UI runtime cache rules only. Hit testing continues to use stable IDs and semantic intervals; Project data, Undo/Redo, compilation, playback, export and persistence are unchanged.
 
@@ -109,6 +109,16 @@
 - Marquee 的语义矩形不能先 `Intersect` 成 viewport 矩形后再描边。保留实际投影边界并在 DrawingContext 上施加 lane-content clip，使出界的真实边缘不可见，同时避免在 viewport 顶/底/左右制造合成边框。
 - 本节只改变布局和 transient 绘制。框选最终使用的 tick/lane/value 范围、Selection 集合运算、tile cache、正式 Project edit 和消费者链路均不变。
 
+### 3.9 超大型 Direct MIDI 选区编辑热路径（2026-08-23）
+
+- 分页 Direct MIDI Note/Event 的稳定 ID 解析必须由 content source 批量完成；UI、Properties、Clipboard 和 Application command 不得为每个 ID 分别调用全集合 `FindIndex`，也不得把整个 Segment 物化后再筛选 Selection。
+- 精确 `(start tick, key)` Note 冲突与 `(tick, event target)` Event 冲突按 Segment 合并为 key set，一次查询相关分页，而不是为每个目标重复查询 page range。正式 incumbent/newcomer 规则和 Undo 恢复顺序不变。
+- 大 Selection 的 min/max tick、lane/value 和最早 Note audition anchor 在 Selection 变化时一次计算并保存在不可变 presentation snapshot；Pointer Down/Move 不再遍历全部 selected IDs。编辑后仅受影响 Workspace 重新批量解析一次，以刷新指标并剔除确实被碰撞规则删除的对象。
+- Note/Event 批量属性写入使用 collection batch scope：源页身份只解析一次，多个字段写入只发布一次 generation 变化。该 scope 不改变原子 Project command、stable ID、Undo/Redo 或编译失效边界。
+- selection-only drag tile 未全部就绪时允许逐 tile 渐进呈现，并继续异步请求缺失 tile；禁止因单个缺失 tile 每帧回退为全可视 Selection 的同步 `StreamGeometry` 重建。
+- 只改变 Length/Velocity 等非碰撞键字段的 Note 编辑不得进入 `(start tick, key)` 碰撞流程。Direct MIDI 的目标起点查询使用排序 NoteOn endpoint page 和页内二分，不再解码/扫描 65,536 条主记录页；编辑量扩大时正式 Apply 必须保持近似线性，而不是因逐对象 source index/移除查找退化为平方复杂度。
+- Logical Segment 与 SubVoice 钢琴卷帘复用同一套 Selection 指标快照和目标键碰撞入口。两者当前仍是内存实体集合，不具备 Direct MIDI paged pack 的磁盘页索引，但拖动/创建只为实际目标 `(tick, key)` 建立候选，不再为无关对象分配碰撞候选；右边界/Velocity 编辑同样跳过 Note 键碰撞。
+
 ## 4. 验证门
 
 1. `TestProject.midora` 的 Arrangement 稳态绘制不枚举两个极端 Segment 的 43,008 个 Note，只绘制两个已缓存 preview bitmap。
@@ -138,3 +148,6 @@
 25. Piano Roll lane height 可缩小到 4 DIP；任意 viewport 高度仍不得生成 key `<0` 或 `>127`。
 26. SubVoice 的水平 overview/scroll 必须位于 Piano Roll 与下方 Lane 编辑器之间；`Lanes` 关闭后 Lane 行高度为 0，重新开启时恢复此前已 clamp 的 `110..520 DIP` 高度。
 27. 框选实际上边界/下边界滚出 lane viewport 后，相应虚线不得重新出现在 viewport 边缘；滚回后边界位置必须仍由原 tick/lane/value 投影得到，最终 Selection 结果不变。
+28. 在声明 `NoteCount = 6,700,000` 的分页测试源上，单 Note Move/Undo 只允许批量 stable-ID 查询与目标碰撞查询；不得调用 `GetNote(index)` 全枚举或 per-ID `FindNoteIndex`。
+29. 大 Selection Move 的 Pointer Move 成本不得随 Selection 数量线性增长；线性工作只允许发生在 Selection revision 改变、正式 Apply/Undo 和相应 tile 后台生成边界。
+30. 在 1,707,184 Note 的真实分页 Segment 上，100,000 Note 的边界编辑、Move、Undo 必须保持随选区大小近似线性；随后创建单 Note 的 Domain Prepare/Baseline/Apply 不得重新扫描主 Note 记录全集。

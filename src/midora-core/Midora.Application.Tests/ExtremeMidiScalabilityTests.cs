@@ -2,12 +2,117 @@ using System.Diagnostics;
 using Midora.Audio;
 using Midora.Compiler;
 using Midora.Playback;
+using Midora.Domain;
 using Xunit.Abstractions;
 
 namespace Midora.Application.Tests;
 
 public sealed class ExtremeMidiScalabilityTests(ITestOutputHelper output)
 {
+    [Fact]
+    public void OptInSamplePagedSelectionEditUsesBoundedTargetedWork()
+    {
+        string? path = Environment.GetEnvironmentVariable("MIDORA_SCALE_MIDI_PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            output.WriteLine("Set MIDORA_SCALE_MIDI_PATH to run the opt-in large-MIDI edit gate.");
+            return;
+        }
+
+        MidiProjectImportResult imported = MidiProjectImportService.ImportFile(
+            Path.GetFullPath(path),
+            Path.GetFileNameWithoutExtension(path));
+        try
+        {
+            MidiSegment segment = imported.Project.PureMidiTracks
+                .SelectMany(static track => track.Segments)
+                .OrderByDescending(static value => value.Notes.Count)
+                .First(static value => value.Notes.Count != 0);
+            int requestedEditCount = int.TryParse(
+                    Environment.GetEnvironmentVariable("MIDORA_SCALE_EDIT_COUNT"),
+                    out int configuredEditCount)
+                ? Math.Max(1, configuredEditCount)
+                : 4_096;
+            DirectMidiNoteValue[] selected = segment.Notes.QueryValues(
+                    segment.ContentOffsetTick,
+                    segment.ContentEndTick)
+                .Take(requestedEditCount)
+                .ToArray();
+            Assert.NotEmpty(selected);
+            long originalFirstLength = selected[0].LengthTicks;
+            IProjectEditCommand command = ProjectDomainEditCommands.AdjustDirectMidiNoteEdges(
+                segment.Id,
+                selected.Select(static value => value.Id).ToArray(),
+                startDelta: 0,
+                endDelta: 1);
+            Stopwatch prepareTimer = Stopwatch.StartNew();
+            IPreparedProjectEdit sourceEdit = command.Prepare(imported.Project);
+            prepareTimer.Stop();
+            Stopwatch collisionBaselineTimer = Stopwatch.StartNew();
+            IPreparedProjectEdit edit = ExactTimelineCollisionPolicy.Wrap(
+                imported.Project,
+                sourceEdit);
+            collisionBaselineTimer.Stop();
+
+            Stopwatch timer = Stopwatch.StartNew();
+            edit.Apply(imported.Project);
+            timer.Stop();
+            Assert.True(segment.Notes.TryGetById(selected[0].Id, out DirectMidiNote? edited));
+            Assert.NotNull(edited);
+            Assert.Equal(originalFirstLength + 1, edited!.LengthTicks);
+
+            Stopwatch undoTimer = Stopwatch.StartNew();
+            edit.Undo(imported.Project);
+            undoTimer.Stop();
+            Assert.Equal(originalFirstLength, edited.LengthTicks);
+
+            Stopwatch movePrepareTimer = Stopwatch.StartNew();
+            IPreparedProjectEdit moveSource = ProjectDomainEditCommands.MoveDirectMidiNotes(
+                segment.Id,
+                selected.Select(static value => value.Id).ToArray(),
+                tickDelta: 1,
+                keyDelta: 0).Prepare(imported.Project);
+            movePrepareTimer.Stop();
+            Stopwatch moveBaselineTimer = Stopwatch.StartNew();
+            IPreparedProjectEdit move = ExactTimelineCollisionPolicy.Wrap(imported.Project, moveSource);
+            moveBaselineTimer.Stop();
+            Stopwatch moveTimer = Stopwatch.StartNew();
+            move.Apply(imported.Project);
+            moveTimer.Stop();
+            Stopwatch moveUndoTimer = Stopwatch.StartNew();
+            move.Undo(imported.Project);
+            moveUndoTimer.Stop();
+            Assert.True(segment.Notes.TryGetById(selected[0].Id, out _));
+            long createTick = checked(segment.ContentEndTick + 1);
+            Stopwatch createPrepareTimer = Stopwatch.StartNew();
+            IPreparedProjectEdit createSource = ProjectDomainEditCommands.CreateDirectMidiNote(
+                segment.Id,
+                createTick,
+                lengthTicks: 1,
+                key: 0,
+                noteOnVelocity: 100).Prepare(imported.Project);
+            createPrepareTimer.Stop();
+            Stopwatch createBaselineTimer = Stopwatch.StartNew();
+            IPreparedProjectEdit create = ExactTimelineCollisionPolicy.Wrap(imported.Project, createSource);
+            createBaselineTimer.Stop();
+            Stopwatch createApplyTimer = Stopwatch.StartNew();
+            create.Apply(imported.Project);
+            createApplyTimer.Stop();
+            output.WriteLine(
+                $"notes={segment.Notes.Count}; selected={selected.Length}; "
+                + $"prepare={prepareTimer.Elapsed}; collisionBaseline={collisionBaselineTimer.Elapsed}; "
+                + $"edit={timer.Elapsed}; undo={undoTimer.Elapsed}; "
+                + $"movePrepare={movePrepareTimer.Elapsed}; moveBaseline={moveBaselineTimer.Elapsed}; "
+                + $"move={moveTimer.Elapsed}; moveUndo={moveUndoTimer.Elapsed}; "
+                + $"createPrepare={createPrepareTimer.Elapsed}; createBaseline={createBaselineTimer.Elapsed}; "
+                + $"createApply={createApplyTimer.Elapsed}");
+        }
+        finally
+        {
+            imported.Project.Dispose();
+        }
+    }
+
     [Fact]
     public void OptInSampleImportAndCompileRemainPaged()
     {

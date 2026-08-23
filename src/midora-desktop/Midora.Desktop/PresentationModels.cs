@@ -362,7 +362,7 @@ public abstract class WorkspaceViewModel(
     public TimelineSelectionSnapshot SelectionSnapshot
     {
         get => _selectionSnapshot;
-        private set => Set(ref _selectionSnapshot, value);
+        protected set => Set(ref _selectionSnapshot, value);
     }
     public int? ActiveLane
     {
@@ -723,6 +723,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     private bool _isConductorTrackSelected;
     private ConductorEventRow? _selectedConductorEvent;
     private GridLength _conductorBottomEditorRowHeight = new(1, GridUnitType.Star);
+    private TimelineRenderItem[]? _preResolvedSelectionItems;
+    private long _preResolvedSelectionRevision = -1;
 
     public TimelineWorkspaceViewModel(
         WorkspaceKey key,
@@ -838,7 +840,38 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     }
     public override void RefreshSelectionPresentation()
     {
-        base.RefreshSelectionPresentation();
+        HashSet<MidoraId> ids = Selection.Ids.ToHashSet();
+        List<TimelineRenderItem> resolved = new(ids.Count);
+        HashSet<MidoraId> unresolved = new(ids);
+        if (_preResolvedSelectionRevision == Selection.Revision
+            && _preResolvedSelectionItems is not null)
+        {
+            resolved.AddRange(_preResolvedSelectionItems);
+            foreach (TimelineRenderItem item in _preResolvedSelectionItems)
+                unresolved.Remove(item.Id);
+        }
+        else
+        {
+            foreach (TimelineRenderSnapshot? snapshot in new[]
+                     {
+                         Snapshot,
+                         VelocitySnapshot,
+                         ParameterSnapshot,
+                         RulerSnapshot
+                     })
+            {
+                if (snapshot is null || unresolved.Count == 0) continue;
+                int firstAdded = resolved.Count;
+                snapshot.QueryByIds(unresolved, resolved);
+                for (int index = firstAdded; index < resolved.Count; index++)
+                    unresolved.Remove(resolved[index].Id);
+            }
+        }
+        SelectionSnapshot = new(
+            Selection.Revision,
+            ids,
+            Selection.Primary,
+            resolved);
         if (IsConductor)
         {
             SelectedConductorEvent = ConductorEvents.FirstOrDefault(value =>
@@ -1190,6 +1223,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
 
     public override void Rebuild(MidoraProject project, long revision)
     {
+        _preResolvedSelectionItems = null;
+        _preResolvedSelectionRevision = -1;
         ProjectTickOffset = Mode == TimelineWorkspaceMode.Segment
             ? FindSegment(project, ObjectId) is { } logical
                 ? checked(logical.Segment.ProjectStartTick - logical.Segment.ContentOffsetTick)
@@ -1862,10 +1897,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         MidiSegment segment)
     {
         RulerSnapshot = null;
-        PruneSelection(Selection.Ids.Where(id =>
-            segment.Notes.TryGetById(id, out _)
-            || segment.ChannelEvents.TryGetById(id, out _)
-            || segment.OpaqueEvents.TryGetById(id, out _)));
+        ResolveAndPruneMidiSelection(segment);
         RangeStartTick = segment.ContentOffsetTick;
         RangeEndTick = segment.ContentEndTick;
         TabIconKind = WorkspaceTabIconKind.PureMidiTrack;
@@ -1959,6 +1991,80 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 ? ["Imported Meta / SysEx"]
                 : activeTarget is null ? [] : [DirectMidiLaneLabel(activeTarget.Value)],
             itemSource: activeSource);
+    }
+
+    private void ResolveAndPruneMidiSelection(MidiSegment segment)
+    {
+        HashSet<MidoraId> unresolved = Selection.Ids.ToHashSet();
+        if (unresolved.Count == 0)
+        {
+            _preResolvedSelectionItems = [];
+            _preResolvedSelectionRevision = Selection.Revision;
+            return;
+        }
+
+        List<TimelineRenderItem> resolved = new(unresolved.Count);
+        foreach (DirectMidiNoteMatch match in segment.Notes.ResolveByIds(unresolved))
+        {
+            DirectMidiNote value = match.Value;
+            resolved.Add(new(
+                value.Id,
+                TimelineItemKind.DirectMidiNote,
+                value.StartTick,
+                checked(value.StartTick + value.LengthTicks),
+                127 - Math.Clamp(value.Key, 0, 127),
+                value.NoteOnVelocity,
+                1,
+                TimelineItemState.None));
+            resolved.Add(new(
+                value.Id,
+                TimelineItemKind.Velocity,
+                value.StartTick,
+                checked(value.StartTick + 1),
+                0,
+                value.NoteOnVelocity / 127d,
+                1,
+                TimelineItemState.None));
+            unresolved.Remove(value.Id);
+        }
+        foreach (DirectMidiChannelEventMatch match in segment.ChannelEvents.ResolveByIds(unresolved))
+        {
+            DirectMidiChannelEvent value = match.Value;
+            double normalized = value.Kind switch
+            {
+                DirectMidiChannelEventKind.ProgramChange
+                    or DirectMidiChannelEventKind.ChannelPressure => value.Data1 / 127d,
+                DirectMidiChannelEventKind.PitchBend => ((value.Data2 << 7) | value.Data1) / 16383d,
+                _ => value.Data2 / 127d
+            };
+            resolved.Add(new(
+                value.Id,
+                TimelineItemKind.DirectMidiEvent,
+                value.Tick,
+                checked(value.Tick + 1),
+                0,
+                normalized,
+                1,
+                TimelineItemState.None));
+            unresolved.Remove(value.Id);
+        }
+        foreach (OpaqueMidiEventMatch match in segment.OpaqueEvents.ResolveByIds(unresolved))
+        {
+            OpaqueMidiEvent value = match.Value;
+            resolved.Add(new(
+                value.Id,
+                TimelineItemKind.OpaqueMidiEvent,
+                value.Tick,
+                checked(value.Tick + 1),
+                0,
+                1,
+                1,
+                TimelineItemState.None));
+            unresolved.Remove(value.Id);
+        }
+        foreach (MidoraId id in unresolved) Selection.Remove(id);
+        _preResolvedSelectionItems = resolved.ToArray();
+        _preResolvedSelectionRevision = Selection.Revision;
     }
 
     private void SetMissingSegmentSnapshots(long revision)
@@ -2726,6 +2832,30 @@ public sealed class InstrumentWorkspaceViewModel(
     public ObservableCollection<PropertyField> ActiveSubVoiceInitialStateFields { get; } = [];
     public ObservableCollection<PropertyField> InstrumentInitialStateFields { get; } = [];
     public ObservableCollection<InstrumentRenderLane> RenderLanes { get; } = [];
+
+    public override void RefreshSelectionPresentation()
+    {
+        HashSet<MidoraId> unresolved = Selection.Ids.ToHashSet();
+        List<TimelineRenderItem> resolved = new(unresolved.Count);
+        foreach (TimelineRenderSnapshot? snapshot in new[]
+                 {
+                     SubVoiceNoteSnapshot,
+                     SubVoiceEventSnapshot,
+                     SubVoiceVelocitySnapshot
+                 })
+        {
+            if (snapshot is null || unresolved.Count == 0) continue;
+            int firstAdded = resolved.Count;
+            snapshot.QueryByIds(unresolved, resolved);
+            for (int index = firstAdded; index < resolved.Count; index++)
+                unresolved.Remove(resolved[index].Id);
+        }
+        SelectionSnapshot = new(
+            Selection.Revision,
+            Selection.Ids,
+            Selection.Primary,
+            resolved);
+    }
 
     public override void Rebuild(MidoraProject project, long revision)
     {

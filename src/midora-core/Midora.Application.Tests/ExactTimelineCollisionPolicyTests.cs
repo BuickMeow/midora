@@ -468,6 +468,36 @@ public sealed class ExactTimelineCollisionPolicyTests
         Assert.Equal(source.NoteCount, segment.Notes.Count);
     }
 
+    [Fact]
+    public void DirectMidiMoveResolvesPagedSelectionInBatchesWithoutFullEnumeration()
+    {
+        (MidoraProject project, MidiSegment segment) = CreateDirectMidiFixture();
+        BatchResolvedPagedContentSource source = new();
+        segment.AttachPagedContent(source);
+        IPreparedProjectEdit prepared = ProjectDomainEditCommands.MoveDirectMidiNotes(
+            segment.Id,
+            [source.Note.Id],
+            tickDelta: 20,
+            keyDelta: 2).Prepare(project);
+
+        prepared.Apply(project);
+
+        Assert.True(segment.Notes.TryGetById(source.Note.Id, out DirectMidiNote? edited));
+        Assert.NotNull(edited);
+        Assert.Equal(30, edited!.StartTick);
+        Assert.Equal(62, edited.Key);
+        Assert.Equal(1, source.BatchIdQueryCount);
+        Assert.Equal(0, source.GetNoteCallCount);
+        Assert.Equal(0, source.FindNoteIndexCallCount);
+
+        prepared.Undo(project);
+
+        Assert.Equal(10, edited.StartTick);
+        Assert.Equal(60, edited.Key);
+        Assert.Equal(0, source.GetNoteCallCount);
+        Assert.Equal(0, source.FindNoteIndexCallCount);
+    }
+
     private static (MidoraProject Project, MidiSegment Segment) CreateDirectMidiFixture()
     {
         MidoraProject project = new(480);
@@ -522,6 +552,75 @@ public sealed class ExactTimelineCollisionPolicyTests
             NoteQueries.Add((startTick, endTick, minimumKey, maximumKey));
             return [];
         }
+
+        public IEnumerable<DirectMidiChannelEventValue> QueryChannelEvents(
+            long startTick,
+            long endTick) => [];
+
+        public IEnumerable<OpaqueMidiEventValue> QueryOpaqueEvents(
+            long startTick,
+            long endTick) => [];
+    }
+
+    private sealed class BatchResolvedPagedContentSource : IPureMidiSegmentContentSource
+    {
+        public DirectMidiNoteValue Note { get; } = new(
+            new MidoraId(9_000_001),
+            10,
+            4,
+            60,
+            100,
+            0,
+            0,
+            1);
+
+        public int NoteCount => 6_700_000;
+        public int ChannelEventCount => 0;
+        public int OpaqueEventCount => 0;
+        public string ContentFingerprint => "batch-resolved";
+        public int BatchIdQueryCount { get; private set; }
+        public int GetNoteCallCount { get; private set; }
+        public int FindNoteIndexCallCount { get; private set; }
+
+        public DirectMidiNoteValue GetNote(int index)
+        {
+            GetNoteCallCount++;
+            throw new InvalidOperationException("A selected paged Note must be resolved in one batch.");
+        }
+
+        public DirectMidiChannelEventValue GetChannelEvent(int index) =>
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        public OpaqueMidiEventValue GetOpaqueEvent(int index) =>
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        public int FindNoteIndex(MidoraId id)
+        {
+            FindNoteIndexCallCount++;
+            throw new InvalidOperationException("A selected paged Note must not use per-ID lookup.");
+        }
+
+        public int FindChannelEventIndex(MidoraId id) => -1;
+        public int FindOpaqueEventIndex(MidoraId id) => -1;
+
+        public IEnumerable<DirectMidiNoteSourceMatch> QueryNotesByIds(
+            IReadOnlySet<MidoraId> ids)
+        {
+            BatchIdQueryCount++;
+            return ids.Contains(Note.Id) ? [new(5_000_000, Note)] : [];
+        }
+
+        public IEnumerable<DirectMidiNoteValue> QueryNotes(
+            long startTick,
+            long endTick,
+            int minimumKey = 0,
+            int maximumKey = 127) =>
+            Note.StartTick < endTick
+            && Note.StartTick + Note.LengthTicks > startTick
+            && Note.Key >= minimumKey
+            && Note.Key <= maximumKey
+                ? [Note]
+                : [];
 
         public IEnumerable<DirectMidiChannelEventValue> QueryChannelEvents(
             long startTick,

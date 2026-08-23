@@ -49,7 +49,7 @@ public static partial class ProjectDomainEditCommands
             long replacementTemplateLength = Math.Max(oldTemplateLength, requiredBoundary);
             int insertionIndex = voice.Events.Count;
             TemplateEvent[]? copies = null;
-            return ResolveExactSubVoiceEventCollisions(Prepared(
+            return ResolveTargetedExactTemplateNoteCollisions(Prepared(
                 hasChanges: true,
                 EventInstrumentChange(eventInstrumentId),
                 owner =>
@@ -86,7 +86,10 @@ public static partial class ProjectDomainEditCommands
                         RemoveRequired(voice.Events, copy, "Template Note copy");
                     }
                     instrument.TemplateLengthTicks = oldTemplateLength;
-                }), voice);
+                }), replacements.Select(value => new TemplateNoteCollisionTarget(
+                    voice,
+                    value.Tick,
+                    value.Number)));
         });
 
     public static IProjectEditCommand MoveTemplateNotes(
@@ -131,7 +134,7 @@ public static partial class ProjectDomainEditCommands
                 .DefaultIfEmpty(oldTemplateLength)
                 .Max();
             long replacementTemplateLength = Math.Max(oldTemplateLength, requiredBoundary);
-            return ResolveExactSubVoiceEventCollisions(Prepared(
+            IPreparedProjectEdit prepared = Prepared(
                 old.Where((value, index) => value != replacement[index]).Any(),
                 EventInstrumentChange(eventInstrumentId),
                 _ =>
@@ -162,7 +165,19 @@ public static partial class ProjectDomainEditCommands
                         InsertAt(voice.Events, value.Index, value.Note, "Template Note");
                     }
                     instrument.TemplateLengthTicks = oldTemplateLength;
-                }), voice);
+                });
+            TemplateNoteCollisionTarget[] collisionTargets = replacement
+                .Where((value, index) => !discarded[index]
+                    && (value.Tick != old[index].Tick
+                        || value.Number != old[index].Number))
+                .Select(value => new TemplateNoteCollisionTarget(
+                    voice,
+                    value.Tick,
+                    value.Number))
+                .ToArray();
+            return collisionTargets.Length == 0
+                ? prepared
+                : ResolveTargetedExactTemplateNoteCollisions(prepared, collisionTargets);
         });
 
     public static IProjectEditCommand AdjustTemplateNoteEdges(
@@ -264,6 +279,11 @@ public static partial class ProjectDomainEditCommands
                 });
             return startDelta == 0
                 ? prepared
-                : ResolveExactSubVoiceEventCollisions(prepared, voice);
+                : ResolveTargetedExactTemplateNoteCollisions(
+                    prepared,
+                    replacement.Select(value => new TemplateNoteCollisionTarget(
+                        voice,
+                        value.Tick,
+                        value.Number)));
         });
 }

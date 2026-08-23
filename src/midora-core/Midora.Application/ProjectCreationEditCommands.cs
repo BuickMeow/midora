@@ -429,7 +429,7 @@ public static partial class ProjectDomainEditCommands
             ValidateLogicalNote(startTick, lengthTicks, note, velocity);
             int index = insertionIndex ?? segment.Segment.Notes.Count;
             ValidateInsertionIndex(index, segment.Segment.Notes.Count, nameof(insertionIndex));
-            return ResolveExactLogicalNoteCollisions(DeferredCreate(
+            return ResolveTargetedExactLogicalNoteCollisions(DeferredCreate(
                 TrackChange(segment.Track.Id),
                 value =>
                 {
@@ -451,7 +451,8 @@ public static partial class ProjectDomainEditCommands
                 (_, logicalNote) => RemoveRequired(
                     segment.Segment.Notes,
                     logicalNote,
-                    "Logical Note")), segment.Segment);
+                    "Logical Note")),
+                [new(segment.Segment, startTick, note)]);
         });
 
     public static IProjectEditCommand CreateLogicalParameterLane(

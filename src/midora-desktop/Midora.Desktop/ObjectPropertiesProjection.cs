@@ -1425,8 +1425,8 @@ internal static class ObjectPropertiesProjection
                 MidiSegment segment = midiLocation.Segment;
                 if (selectedId is MidoraId midiObjectId)
                 {
-                    if (segment.Notes.FirstOrDefault(item => item.Id == midiObjectId)
-                        is DirectMidiNote note)
+                    if (segment.Notes.TryGetById(midiObjectId, out DirectMidiNote? note)
+                        && note is not null)
                     {
                         properties.Replace(
                             "Direct MIDI Note",
@@ -1438,8 +1438,10 @@ internal static class ObjectPropertiesProjection
                              Field("midiNote.offVelocity", "NOTE OFF VELOCITY", note.NoteOffVelocity)]);
                         return;
                     }
-                    if (segment.ChannelEvents.FirstOrDefault(item => item.Id == midiObjectId)
-                        is DirectMidiChannelEvent channelEvent)
+                    if (segment.ChannelEvents.TryGetById(
+                            midiObjectId,
+                            out DirectMidiChannelEvent? channelEvent)
+                        && channelEvent is not null)
                     {
                         properties.Replace(
                             "Direct MIDI Event",
@@ -1448,8 +1450,8 @@ internal static class ObjectPropertiesProjection
                             DirectMidiEventFields(channelEvent));
                         return;
                     }
-                    if (segment.OpaqueEvents.FirstOrDefault(item => item.Id == midiObjectId)
-                        is OpaqueMidiEvent opaque)
+                    if (segment.OpaqueEvents.TryGetById(midiObjectId, out OpaqueMidiEvent? opaque)
+                        && opaque is not null)
                     {
                         string payloadPreview = Convert.ToHexString(
                             opaque.Payload.AsSpan(0, Math.Min(opaque.Payload.Length, 256)));
@@ -2276,8 +2278,8 @@ internal static class ObjectPropertiesProjection
             ?? throw new InvalidOperationException("The MIDI Segment no longer exists.");
         MidoraId id = workspace.Selection.Primary
             ?? throw new InvalidOperationException("Select one Direct MIDI Note first.");
-        DirectMidiNote note = segment.Notes.FirstOrDefault(item => item.Id == id)
-            ?? throw new InvalidOperationException("The Direct MIDI Note no longer exists.");
+        if (!segment.Notes.TryGetById(id, out DirectMidiNote? note) || note is null)
+            throw new InvalidOperationException("The Direct MIDI Note no longer exists.");
         return (segment, note);
     }
 
@@ -2294,8 +2296,8 @@ internal static class ObjectPropertiesProjection
             ?? throw new InvalidOperationException("The MIDI Segment no longer exists.");
         MidoraId id = workspace.Selection.Primary
             ?? throw new InvalidOperationException("Select one Direct MIDI Event first.");
-        DirectMidiChannelEvent value = segment.ChannelEvents.FirstOrDefault(item => item.Id == id)
-            ?? throw new InvalidOperationException("The Direct MIDI Event no longer exists.");
+        if (!segment.ChannelEvents.TryGetById(id, out DirectMidiChannelEvent? value) || value is null)
+            throw new InvalidOperationException("The Direct MIDI Event no longer exists.");
         return (segment, value);
     }
 

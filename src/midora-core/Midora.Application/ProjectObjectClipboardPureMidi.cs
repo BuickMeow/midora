@@ -73,7 +73,9 @@ public static partial class ProjectObjectClipboard
         HashSet<MidoraId> requested = noteIds.ToHashSet();
         if (requested.Count == 0 || requested.Count != noteIds.Count)
             throw new ArgumentException("Direct MIDI Note selections require distinct stable IDs.", nameof(noteIds));
-        DirectMidiNote[] notes = source.Notes.Where(value => requested.Contains(value.Id)).ToArray();
+        DirectMidiNote[] notes = source.Notes.ResolveByIds(requested)
+            .Select(static match => match.Value)
+            .ToArray();
         if (notes.Length != requested.Count)
             throw new ArgumentException("Every copied Direct MIDI Note must belong to the source Segment.", nameof(noteIds));
         long earliest = notes.Min(value => value.StartTick);
@@ -105,7 +107,9 @@ public static partial class ProjectObjectClipboard
         HashSet<MidoraId> requested = eventIds.ToHashSet();
         if (requested.Count == 0 || requested.Count != eventIds.Count)
             throw new ArgumentException("Direct MIDI Event selections require distinct stable IDs.", nameof(eventIds));
-        DirectMidiChannelEvent[] events = source.ChannelEvents.Where(value => requested.Contains(value.Id)).ToArray();
+        DirectMidiChannelEvent[] events = source.ChannelEvents.ResolveByIds(requested)
+            .Select(static match => match.Value)
+            .ToArray();
         if (events.Length != requested.Count)
             throw new ArgumentException("Every copied Direct MIDI Event must belong to the source Segment.", nameof(eventIds));
         long earliest = events.Min(value => value.Tick);
@@ -130,7 +134,9 @@ public static partial class ProjectObjectClipboard
         HashSet<MidoraId> requested = eventIds.ToHashSet();
         if (requested.Count == 0 || requested.Count != eventIds.Count)
             throw new ArgumentException("Imported MIDI event selections require distinct stable IDs.", nameof(eventIds));
-        OpaqueMidiEvent[] events = source.OpaqueEvents.Where(value => requested.Contains(value.Id)).ToArray();
+        OpaqueMidiEvent[] events = source.OpaqueEvents.ResolveByIds(requested)
+            .Select(static match => match.Value)
+            .ToArray();
         if (events.Length != requested.Count)
             throw new ArgumentException("Every copied imported MIDI event must belong to the source Segment.", nameof(eventIds));
         long earliest = events.Min(value => value.Tick);

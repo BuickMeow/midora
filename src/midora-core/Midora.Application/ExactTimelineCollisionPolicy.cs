@@ -8,6 +8,16 @@ internal readonly record struct DirectMidiNoteCollisionTarget(
     long Tick,
     int Key);
 
+internal readonly record struct LogicalNoteCollisionTarget(
+    Segment Segment,
+    long Tick,
+    int Key);
+
+internal readonly record struct TemplateNoteCollisionTarget(
+    SubVoice SubVoice,
+    long Tick,
+    int Key);
+
 internal readonly record struct DirectMidiEventCollisionTarget(
     MidiSegment Segment,
     long Tick,
@@ -32,6 +42,8 @@ internal static class ExactTimelineCollisionPolicy
         IEnumerable<SubVoice>? subVoices = null,
         IEnumerable<ValueCurve>? valueCurves = null,
         IEnumerable<MidiSegment>? directMidiSegments = null,
+        IEnumerable<LogicalNoteCollisionTarget>? logicalNoteTargets = null,
+        IEnumerable<TemplateNoteCollisionTarget>? templateNoteTargets = null,
         IEnumerable<DirectMidiNoteCollisionTarget>? directMidiNoteTargets = null,
         IEnumerable<DirectMidiEventCollisionTarget>? directMidiEventTargets = null)
     {
@@ -42,6 +54,8 @@ internal static class ExactTimelineCollisionPolicy
             (subVoices ?? []).Distinct().ToArray(),
             (valueCurves ?? []).Distinct().ToArray(),
             (directMidiSegments ?? []).Distinct().ToArray(),
+            (logicalNoteTargets ?? []).Distinct().ToArray(),
+            (templateNoteTargets ?? []).Distinct().ToArray(),
             (directMidiNoteTargets ?? []).Distinct().ToArray(),
             (directMidiEventTargets ?? []).Distinct().ToArray());
         if (additions.IsEmpty) return source;
@@ -120,9 +134,9 @@ internal static class ExactTimelineCollisionPolicy
                 continue;
             }
 
-            CollisionCandidate[] incumbents = occupants
+            HashSet<CollisionCandidate> incumbents = occupants
                 .Where(candidate => baseline.Contains(candidate.Id, group.Key))
-                .ToArray();
+                .ToHashSet();
             if (UsesLaterPointEditWins(group.Key.Scope))
             {
                 CollisionCandidate[] newcomers = occupants
@@ -146,13 +160,13 @@ internal static class ExactTimelineCollisionPolicy
                 continue;
             }
 
-            CollisionCandidate winner = incumbents.Length != 0
-                ? incumbents[0]
+            CollisionCandidate winner = incumbents.Count != 0
+                ? occupants.First(incumbents.Contains)
                 : occupants[0];
             foreach (CollisionCandidate candidate in occupants)
             {
                 if (!ReferenceEquals(candidate, winner)
-                    && !incumbents.Any(value => ReferenceEquals(value, candidate)))
+                    && !incumbents.Contains(candidate))
                 {
                     discarded.Add(candidate);
                 }
@@ -233,6 +247,56 @@ internal static class ExactTimelineCollisionPolicy
             }
         }
 
+        HashSet<Segment> fullLogicalNoteSegments = scopes.LogicalNoteSegments.ToHashSet();
+        foreach (IGrouping<Segment, LogicalNoteCollisionTarget> group in
+            scopes.LogicalNoteTargets
+                .Where(target => !fullLogicalNoteSegments.Contains(target.Segment))
+                .GroupBy(static target => target.Segment)
+                .OrderBy(static group => group.Key.Id))
+        {
+            HashSet<(long Tick, int Key)> keys = group
+                .Select(static target => (target.Tick, target.Key))
+                .ToHashSet();
+            foreach (LogicalNote note in group.Key.Notes)
+            {
+                if (!keys.Contains((note.StartTick, note.Note))) continue;
+                yield return CollisionCandidate.ForList(
+                    note.Id,
+                    [new(CollisionScope.LogicalNote, group.Key.Id, note.StartTick, note.Note)],
+                    order++,
+                    group.Key.Notes,
+                    note,
+                    "Logical Note");
+            }
+        }
+
+        HashSet<SubVoice> fullSubVoices = scopes.SubVoices.ToHashSet();
+        foreach (IGrouping<SubVoice, TemplateNoteCollisionTarget> group in
+            scopes.TemplateNoteTargets
+                .Where(target => !fullSubVoices.Contains(target.SubVoice))
+                .GroupBy(static target => target.SubVoice)
+                .OrderBy(static group => group.Key.Id))
+        {
+            HashSet<(long Tick, int Key)> keys = group
+                .Select(static target => (target.Tick, target.Key))
+                .ToHashSet();
+            foreach (TemplateEvent value in group.Key.Events)
+            {
+                if (value.Kind != TemplateEventKind.Note
+                    || !keys.Contains((value.Tick, value.Number)))
+                {
+                    continue;
+                }
+                yield return CollisionCandidate.ForCollection(
+                    value.Id,
+                    [new(CollisionScope.TemplateNote, group.Key.Id, value.Tick, value.Number)],
+                    order++,
+                    group.Key.Events,
+                    value,
+                    "Template Note");
+            }
+        }
+
         foreach (ValueCurve curve in scopes.ValueCurves.OrderBy(static value => value.Id))
         {
             for (int index = 0; index < curve.Points.Count; index++)
@@ -279,58 +343,49 @@ internal static class ExactTimelineCollisionPolicy
         }
 
         HashSet<MidiSegment> fullDirectMidiSegments = scopes.DirectMidiSegments.ToHashSet();
-        foreach (DirectMidiNoteCollisionTarget target in scopes.DirectMidiNoteTargets
-            .Where(target => !fullDirectMidiSegments.Contains(target.Segment))
-            .OrderBy(static target => target.Segment.Id)
-            .ThenBy(static target => target.Tick)
-            .ThenBy(static target => target.Key))
+        foreach (IGrouping<MidiSegment, DirectMidiNoteCollisionTarget> group in
+            scopes.DirectMidiNoteTargets
+                .Where(target => !fullDirectMidiSegments.Contains(target.Segment))
+                .GroupBy(static target => target.Segment)
+                .OrderBy(static group => group.Key.Id))
         {
-            IEnumerable<DirectMidiNote> notes = target.Tick == long.MaxValue
-                ? target.Segment.Notes.Where(note =>
-                    note.StartTick == target.Tick && note.Key == target.Key)
-                : target.Segment.Notes.Query(
-                    target.Tick,
-                    target.Tick + 1,
-                    target.Key,
-                    target.Key).Where(note => note.StartTick == target.Tick);
-            foreach (DirectMidiNote note in notes)
+            HashSet<DirectMidiNoteStartKey> keys = group
+                .Select(static target => new DirectMidiNoteStartKey(target.Tick, target.Key))
+                .ToHashSet();
+            foreach (DirectMidiNote note in group.Key.Notes.QueryStartKeys(keys))
             {
-                yield return CollisionCandidate.ForList(
+                yield return CollisionCandidate.ForDirectMidiNote(
                     note.Id,
-                    [new(CollisionScope.DirectMidiNote, target.Segment.Id, note.StartTick, note.Key)],
+                    [new(CollisionScope.DirectMidiNote, group.Key.Id, note.StartTick, note.Key)],
                     order++,
-                    target.Segment.Notes,
-                    note,
-                    "Direct MIDI Note");
+                    group.Key.Notes,
+                    note);
             }
         }
 
-        foreach (DirectMidiEventCollisionTarget target in scopes.DirectMidiEventTargets
-            .Where(target => !fullDirectMidiSegments.Contains(target.Segment))
-            .OrderBy(static target => target.Segment.Id)
-            .ThenBy(static target => target.Tick)
-            .ThenBy(static target => target.Kind)
-            .ThenBy(static target => target.Data1))
+        foreach (IGrouping<MidiSegment, DirectMidiEventCollisionTarget> group in
+            scopes.DirectMidiEventTargets
+                .Where(target => !fullDirectMidiSegments.Contains(target.Segment))
+                .GroupBy(static target => target.Segment)
+                .OrderBy(static group => group.Key.Id))
         {
-            IEnumerable<DirectMidiChannelEvent> events = target.Tick == long.MaxValue
-                ? target.Segment.ChannelEvents.Where(value => value.Tick == target.Tick)
-                : target.Segment.ChannelEvents.Query(target.Tick, target.Tick + 1);
-            foreach (DirectMidiChannelEvent value in events.Where(value =>
-                value.Kind == target.Kind
-                && (!DirectMidiEventUsesData1Selector(value.Kind)
-                    || value.Data1 == target.Data1)))
+            HashSet<DirectMidiEventStartKey> keys = group.Select(target => new DirectMidiEventStartKey(
+                    target.Tick,
+                    target.Kind,
+                    DirectMidiEventUsesData1Selector(target.Kind) ? target.Data1 : 0))
+                .ToHashSet();
+            foreach (DirectMidiChannelEvent value in group.Key.ChannelEvents.QueryStartKeys(keys))
             {
                 int selector = DirectMidiEventUsesData1Selector(value.Kind)
                     ? value.Data1 + 1
                     : 0;
                 int detail = ((int)value.Kind << 16) | selector;
-                yield return CollisionCandidate.ForList(
+                yield return CollisionCandidate.ForDirectMidiEvent(
                     value.Id,
-                    [new(CollisionScope.DirectMidiEventPoint, target.Segment.Id, value.Tick, detail)],
+                    [new(CollisionScope.DirectMidiEventPoint, group.Key.Id, value.Tick, detail)],
                     order++,
-                    target.Segment.ChannelEvents,
-                    value,
-                    "Direct MIDI Event");
+                    group.Key.ChannelEvents,
+                    value);
             }
         }
     }
@@ -394,6 +449,8 @@ internal static class ExactTimelineCollisionPolicy
         IReadOnlyCollection<SubVoice> SubVoices,
         IReadOnlyCollection<ValueCurve> ValueCurves,
         IReadOnlyCollection<MidiSegment> DirectMidiSegments,
+        IReadOnlyCollection<LogicalNoteCollisionTarget> LogicalNoteTargets,
+        IReadOnlyCollection<TemplateNoteCollisionTarget> TemplateNoteTargets,
         IReadOnlyCollection<DirectMidiNoteCollisionTarget> DirectMidiNoteTargets,
         IReadOnlyCollection<DirectMidiEventCollisionTarget> DirectMidiEventTargets)
     {
@@ -402,6 +459,8 @@ internal static class ExactTimelineCollisionPolicy
             && SubVoices.Count == 0
             && ValueCurves.Count == 0
             && DirectMidiSegments.Count == 0
+            && LogicalNoteTargets.Count == 0
+            && TemplateNoteTargets.Count == 0
             && DirectMidiNoteTargets.Count == 0
             && DirectMidiEventTargets.Count == 0;
 
@@ -412,6 +471,8 @@ internal static class ExactTimelineCollisionPolicy
                 left.SubVoices.Concat(right.SubVoices).Distinct().ToArray(),
                 left.ValueCurves.Concat(right.ValueCurves).Distinct().ToArray(),
                 left.DirectMidiSegments.Concat(right.DirectMidiSegments).Distinct().ToArray(),
+                left.LogicalNoteTargets.Concat(right.LogicalNoteTargets).Distinct().ToArray(),
+                left.TemplateNoteTargets.Concat(right.TemplateNoteTargets).Distinct().ToArray(),
                 left.DirectMidiNoteTargets.Concat(right.DirectMidiNoteTargets).Distinct().ToArray(),
                 left.DirectMidiEventTargets.Concat(right.DirectMidiEventTargets).Distinct().ToArray());
     }
@@ -488,6 +549,22 @@ internal static class ExactTimelineCollisionPolicy
                         values.Insert(Math.Clamp(index, 0, values.Count), value);
                     });
             });
+
+        public static CollisionCandidate ForDirectMidiNote(
+            MidoraId id,
+            IReadOnlyList<CollisionKey> keys,
+            long order,
+            DirectMidiNoteCollection values,
+            DirectMidiNote value) =>
+            new(id, keys, order, () => new(values.RemoveForExactCollision(value)));
+
+        public static CollisionCandidate ForDirectMidiEvent(
+            MidoraId id,
+            IReadOnlyList<CollisionKey> keys,
+            long order,
+            DirectMidiChannelEventCollection values,
+            DirectMidiChannelEvent value) =>
+            new(id, keys, order, () => new(values.RemoveForExactCollision(value)));
     }
 
     private sealed record CollisionRemoval(Action Restore);

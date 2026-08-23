@@ -1418,7 +1418,6 @@ public sealed class TimelineSurface : Control
                 if (SurfaceMode == TimelineSurfaceMode.Arrangement)
                 {
                     allowDetailedSegmentPreviewRequests = PrepareVisibleSegmentPreviewFallbacks(
-                        viewport,
                         snapshot,
                         _visibleItems,
                         segmentNotePreview,
@@ -3922,7 +3921,6 @@ public sealed class TimelineSurface : Control
     }
 
     private bool PrepareVisibleSegmentPreviewFallbacks(
-        TimelineViewport viewport,
         TimelineRenderSnapshot snapshot,
         IReadOnlyList<TimelineRenderItem> visibleItems,
         Brush defaultNoteBrush,
@@ -3934,9 +3932,6 @@ public sealed class TimelineSurface : Control
         Color eventColor = GetSolidColor(
             eventBrush,
             Color.FromRgb(229, 61, 68));
-        int displayLod = TimelineSegmentPreviewRasterizer.SelectDisplayLod(
-            viewport.PixelsPerTick,
-            PreviewTicksPerQuarterNote);
         bool allFallbacksReady = true;
         foreach (TimelineRenderItem item in visibleItems)
         {
@@ -3954,8 +3949,7 @@ public sealed class TimelineSurface : Control
             long segmentLengthTicks = checked(item.EndTick - item.StartTick);
             int fallbackLod = TimelineSegmentPreviewRasterizer.SelectFallbackLod(
                 segmentLengthTicks,
-                PreviewTicksPerQuarterNote,
-                displayLod);
+                PreviewTicksPerQuarterNote);
             if (TryGetCompleteSegmentPreviewFallback(
                 preview,
                 segmentLengthTicks,
@@ -5836,7 +5830,6 @@ public sealed class TimelineSurface : Control
             / TimelinePianoTileRasterizer.TileSize));
 
         _pianoTileFallbackEntries.Clear();
-        bool allReady = true;
         for (long tileY = firstTileY; tileY <= lastTileY; tileY++)
         {
             for (long tileX = firstTileX; tileX <= lastTileX; tileX++)
@@ -5869,7 +5862,6 @@ public sealed class TimelineSurface : Control
                     }
                     continue;
                 }
-                allReady = false;
                 long requestTileX = tileX;
                 long requestTileY = tileY;
                 RequestRaster(
@@ -5887,12 +5879,6 @@ public sealed class TimelineSurface : Control
                         outlineColor: outlineColor));
             }
         }
-        if (!allReady)
-        {
-            _pianoTileFallbackEntries.Clear();
-            return false;
-        }
-
         Rect contentBounds = new(
             laneHeaderWidth,
             rulerHeight,
@@ -5983,7 +5969,6 @@ public sealed class TimelineSurface : Control
             Color.FromRgb(42, 48, 58));
 
         _dragPreviewEventPointTiles.Clear();
-        bool allReady = true;
         for (long tileY = firstTileY; tileY <= lastTileY; tileY++)
         {
             for (long tileX = firstTileX; tileX <= lastTileX; tileX++)
@@ -6009,7 +5994,6 @@ public sealed class TimelineSurface : Control
                     }
                     continue;
                 }
-                allReady = false;
                 long requestTileX = tileX;
                 long requestTileY = tileY;
                 RequestRaster(
@@ -6029,12 +6013,6 @@ public sealed class TimelineSurface : Control
                         selectionOnly: true));
             }
         }
-        if (!allReady)
-        {
-            _dragPreviewEventPointTiles.Clear();
-            return false;
-        }
-
         Rect contentBounds = new(
             laneHeaderWidth,
             rulerHeight,
@@ -6294,41 +6272,22 @@ public sealed class TimelineSurface : Control
         _dragPreviewMaximumLane = anchor.Lane;
         _dragPreviewMinimumValue = anchor.Value;
         _dragPreviewMaximumValue = anchor.Value;
-        if (_dragPreviewSelection is null || Snapshot is not TimelineRenderSnapshot snapshot)
+        if (_dragPreviewSelection is null)
         {
             return;
         }
-
-        bool found = false;
-        foreach (MidoraId id in _dragPreviewSelection.Ids)
+        if (_dragPreviewSelection.TryGetMetrics(
+                anchor.Kind,
+                out TimelineSelectionMetrics metrics))
         {
-            if (!snapshot.TryGetItem(id, out TimelineRenderItem candidate)
-                || candidate.Kind != anchor.Kind)
-            {
-                continue;
-            }
-            if (!found)
-            {
-                _dragPreviewMinimumStartTick = candidate.StartTick;
-                _dragPreviewMinimumLane = candidate.Lane;
-                _dragPreviewMaximumLane = candidate.Lane;
-                _dragPreviewMinimumValue = candidate.Value;
-                _dragPreviewMaximumValue = candidate.Value;
-                found = true;
-                continue;
-            }
-            _dragPreviewMinimumStartTick = Math.Min(
-                _dragPreviewMinimumStartTick,
-                candidate.StartTick);
-            _dragPreviewMinimumLane = Math.Min(_dragPreviewMinimumLane, candidate.Lane);
-            _dragPreviewMaximumLane = Math.Max(_dragPreviewMaximumLane, candidate.Lane);
-            _dragPreviewMinimumValue = Math.Min(_dragPreviewMinimumValue, candidate.Value);
-            _dragPreviewMaximumValue = Math.Max(_dragPreviewMaximumValue, candidate.Value);
+            _dragPreviewMinimumStartTick = metrics.MinimumStartTick;
+            _dragPreviewMinimumLane = metrics.MinimumLane;
+            _dragPreviewMaximumLane = metrics.MaximumLane;
+            _dragPreviewMinimumValue = metrics.MinimumValue;
+            _dragPreviewMaximumValue = metrics.MaximumValue;
+            return;
         }
-        if (!found)
-        {
-            _dragPreviewSelection = null;
-        }
+        _dragPreviewSelection = null;
     }
 
     private bool IsDragPreviewSelectionMember(
@@ -8530,23 +8489,10 @@ public sealed class TimelineSurface : Control
             return;
         }
 
-        TimelineRenderItem anchor = hit;
-        if (SelectionSnapshot?.Contains(hit.Id) == true && Snapshot is not null)
-        {
-            foreach (MidoraId id in SelectionSnapshot.Ids)
-            {
-                if (!Snapshot.TryGetItem(id, out TimelineRenderItem candidate)
-                    || candidate.Kind != hit.Kind)
-                {
-                    continue;
-                }
-                if (candidate.StartTick < anchor.StartTick
-                    || candidate.StartTick == anchor.StartTick && candidate.Id.CompareTo(anchor.Id) < 0)
-                {
-                    anchor = candidate;
-                }
-            }
-        }
+        TimelineRenderItem anchor = SelectionSnapshot?.Contains(hit.Id) == true
+            && SelectionSnapshot.TryGetMetrics(hit.Kind, out TimelineSelectionMetrics metrics)
+                ? metrics.EarliestItem
+                : hit;
         _dragPitchPreviewAnchorLane = anchor.Lane;
         _dragPitchPreviewLastPitch = Math.Clamp(127 - anchor.Lane, 0, 127);
         double velocity = anchor.Value <= 1d ? anchor.Value * 127d : anchor.Value;

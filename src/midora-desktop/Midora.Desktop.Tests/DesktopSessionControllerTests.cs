@@ -17,6 +17,79 @@ namespace Midora.Desktop.Tests;
 public sealed class DesktopSessionControllerTests
 {
     [Fact]
+    public async Task OptInImportedSampleMeasuresCompletePagedSelectionEditPath()
+    {
+        string? path = Environment.GetEnvironmentVariable("MIDORA_SCALE_MIDI_PATH");
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
+
+        await using DesktopSessionController session = new();
+        await session.ImportMidiAsNewProjectAsync(Path.GetFullPath(path));
+        _ = session.OpenArrangement();
+        MidiSegment segment = session.Project!.PureMidiTracks
+            .SelectMany(static track => track.Segments)
+            .OrderByDescending(static value => value.Notes.Count)
+            .First(static value => value.Notes.Count != 0);
+        TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+        int requestedEditCount = int.TryParse(
+                Environment.GetEnvironmentVariable("MIDORA_SCALE_EDIT_COUNT"),
+                out int configuredEditCount)
+            ? Math.Max(1, configuredEditCount)
+            : 4_096;
+        MidoraId[] selected = segment.Notes.QueryValues(
+                segment.ContentOffsetTick,
+                segment.ContentEndTick)
+            .Take(requestedEditCount)
+            .Select(static value => value.Id)
+            .ToArray();
+        foreach (MidoraId id in selected) workspace.Selection.Add(id, makePrimary: false);
+        session.RefreshWorkspaceSelection(workspace);
+
+        System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
+        ProjectEditExecution execution = session.Execute(
+            ProjectDomainEditCommands.AdjustDirectMidiNoteEdges(
+                segment.Id,
+                selected,
+                startDelta: 0,
+                endDelta: 1));
+        timer.Stop();
+
+        Console.WriteLine(
+            $"[paged-ui-edit] notes={segment.Notes.Count}; selected={selected.Length}; "
+            + $"executeMs={timer.Elapsed.TotalMilliseconds:F1}");
+        Assert.True(execution.Changed);
+
+        System.Diagnostics.Stopwatch moveTimer = System.Diagnostics.Stopwatch.StartNew();
+        ProjectEditExecution move = session.Execute(
+            ProjectDomainEditCommands.MoveDirectMidiNotes(
+                segment.Id,
+                selected,
+                tickDelta: 1,
+                keyDelta: 0));
+        moveTimer.Stop();
+        Console.WriteLine(
+            $"[paged-ui-move] selected={selected.Length}; "
+            + $"executeMs={moveTimer.Elapsed.TotalMilliseconds:F1}");
+        Assert.True(move.Changed);
+
+        long createTick = checked(segment.ContentEndTick + 1);
+        System.Diagnostics.Stopwatch createTimer = System.Diagnostics.Stopwatch.StartNew();
+        ProjectEditExecution creation = session.Execute(
+            ProjectDomainEditCommands.CreateDirectMidiNote(
+                segment.Id,
+                createTick,
+                lengthTicks: 1,
+                key: 0,
+                noteOnVelocity: 100));
+        createTimer.Stop();
+        Console.WriteLine(
+            $"[paged-ui-create] overlays={selected.Length}; "
+            + $"executeMs={createTimer.Elapsed.TotalMilliseconds:F1}");
+        Assert.True(creation.Changed);
+        Assert.Contains(segment.Notes.QueryStartValues(createTick, checked(createTick + 1)),
+            static value => value.Key == 0);
+    }
+
+    [Fact]
     public async Task ProvidedProjectTimelineEditPerformanceProbe()
     {
         string? path = Environment.GetEnvironmentVariable("MIDORA_TEST_UI_PERF_PROJECT");
@@ -1036,6 +1109,41 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public async Task LogicalSegmentSelectionRefreshBuildsNoteMetricsWithoutRebuildingTheTimeline()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Logical selection metrics",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        CreateLogicalTrack(session, "Track");
+        LogicalTrack track = Assert.Single(session.Project!.Tracks);
+        session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 960));
+        Segment segment = Assert.Single(track.Segments);
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(segment.Id, 120, 240, 60, 100));
+        session.Execute(ProjectDomainEditCommands.CreateLogicalNote(segment.Id, 480, 120, 72, 110));
+        LogicalNote[] notes = segment.Notes.ToArray();
+        TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+        TimelineRenderSnapshot snapshot = workspace.Snapshot!;
+
+        workspace.Selection.Add(notes[0].Id, makePrimary: false);
+        workspace.Selection.Add(notes[1].Id, makePrimary: true);
+        session.RefreshWorkspaceSelection(workspace);
+
+        Assert.Same(snapshot, workspace.Snapshot);
+        Assert.True(workspace.SelectionSnapshot.TryGetMetrics(
+            TimelineItemKind.LogicalNote,
+            out TimelineSelectionMetrics metrics));
+        Assert.Equal(2, metrics.Count);
+        Assert.Equal(120, metrics.MinimumStartTick);
+        Assert.Equal(600, metrics.MaximumEndTick);
+        Assert.Equal(55, metrics.MinimumLane);
+        Assert.Equal(67, metrics.MaximumLane);
+        Assert.Equal(notes[0].Id, metrics.EarliestItem.Id);
+    }
+
+    [Fact]
     public async Task TrackEditDoesNotRebuildUnrelatedOpenSegmentWorkspace()
     {
         await using DesktopSessionController session = new();
@@ -1454,6 +1562,19 @@ public sealed class DesktopSessionControllerTests
         Assert.Equal(TimelineItemKind.TemplateNote, note.Kind);
         Assert.Equal(63, note.Lane);
         Assert.Equal(80 / 127d, note.Value, 10);
+        TimelineRenderSnapshot noteSnapshot = workspace.SubVoiceNoteSnapshot;
+        workspace.Selection.Replace(note.Id);
+        session.RefreshWorkspaceSelection(workspace);
+        Assert.Same(noteSnapshot, workspace.SubVoiceNoteSnapshot);
+        Assert.True(workspace.SelectionSnapshot.TryGetMetrics(
+            TimelineItemKind.TemplateNote,
+            out TimelineSelectionMetrics noteSelectionMetrics));
+        Assert.Equal(1, noteSelectionMetrics.Count);
+        Assert.Equal(48, noteSelectionMetrics.MinimumStartTick);
+        Assert.Equal(144, noteSelectionMetrics.MaximumEndTick);
+        Assert.Equal(63, noteSelectionMetrics.MinimumLane);
+        Assert.Equal(63, noteSelectionMetrics.MaximumLane);
+        Assert.Equal(note.Id, noteSelectionMetrics.EarliestItem.Id);
         TimelineRenderItem midiEvent = Assert.Single(workspace.SubVoiceEventSnapshot!.Items);
         Assert.Equal(TimelineItemKind.LogicalParameterPoint, midiEvent.Kind);
         Assert.DoesNotContain(workspace.SubVoiceEventSnapshot.Items, item => item.Kind == TimelineItemKind.TemplateNote);

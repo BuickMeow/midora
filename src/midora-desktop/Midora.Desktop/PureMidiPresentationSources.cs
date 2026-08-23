@@ -335,6 +335,36 @@ internal sealed class PagedDirectMidiTimelineItemSource : ITimelineRenderItemSou
         return false;
     }
 
+    public void QueryByIds(
+        IReadOnlySet<MidoraId> ids,
+        List<TimelineRenderItem> destination)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(destination);
+        switch (_projection)
+        {
+            case DirectMidiTimelineProjection.Notes:
+                foreach (DirectMidiNoteMatch match in _segment.Notes.ResolveByIds(ids))
+                    destination.Add(ToNoteItem(match.Value));
+                break;
+            case DirectMidiTimelineProjection.Velocities:
+                foreach (DirectMidiNoteMatch match in _segment.Notes.ResolveByIds(ids))
+                    destination.Add(ToVelocityItem(match.Value));
+                break;
+            case DirectMidiTimelineProjection.ChannelEvents when _eventTarget is DirectMidiEventLaneTarget target:
+                foreach (DirectMidiChannelEventMatch match in _segment.ChannelEvents.ResolveByIds(ids))
+                {
+                    if (TimelineWorkspaceViewModel.ToDirectMidiLaneTarget(match.Value) == target)
+                        destination.Add(ToEventItem(match.Value));
+                }
+                break;
+            case DirectMidiTimelineProjection.OpaqueEvents:
+                foreach (OpaqueMidiEventMatch match in _segment.OpaqueEvents.ResolveByIds(ids))
+                    destination.Add(ToOpaqueItem(match.Value));
+                break;
+        }
+    }
+
     public IEnumerable<TimelineRenderItem> EnumerateAll() => _projection switch
     {
         DirectMidiTimelineProjection.Notes => _segment.Notes.Select(ToNoteItem),

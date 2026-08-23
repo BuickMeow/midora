@@ -28,6 +28,37 @@ public readonly record struct OpaqueMidiEventValue(
     ReadOnlyMemory<byte> Payload,
     long Order);
 
+public readonly record struct DirectMidiNoteSourceMatch(
+    int Index,
+    DirectMidiNoteValue Value);
+
+public readonly record struct DirectMidiChannelEventSourceMatch(
+    int Index,
+    DirectMidiChannelEventValue Value);
+
+public readonly record struct OpaqueMidiEventSourceMatch(
+    int Index,
+    OpaqueMidiEventValue Value);
+
+public readonly record struct DirectMidiNoteMatch(
+    int Index,
+    DirectMidiNote Value);
+
+public readonly record struct DirectMidiNoteStartKey(long Tick, int Key);
+
+public readonly record struct DirectMidiEventStartKey(
+    long Tick,
+    DirectMidiChannelEventKind Kind,
+    int Data1);
+
+public readonly record struct DirectMidiChannelEventMatch(
+    int Index,
+    DirectMidiChannelEvent Value);
+
+public readonly record struct OpaqueMidiEventMatch(
+    int Index,
+    OpaqueMidiEvent Value);
+
 public readonly record struct PureMidiContentRangeSummary(
     long MinimumTick,
     long MaximumTick,
@@ -128,6 +159,87 @@ public interface IPureMidiSegmentContentSource
     int FindChannelEventIndex(MidoraId id);
     int FindOpaqueEventIndex(MidoraId id);
 
+    IEnumerable<DirectMidiNoteSourceMatch> QueryNotesByIds(
+        IReadOnlySet<MidoraId> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        foreach (MidoraId id in ids)
+        {
+            int index = FindNoteIndex(id);
+            if (index >= 0) yield return new(index, GetNote(index));
+        }
+    }
+
+    IEnumerable<DirectMidiNoteSourceMatch> QueryNotesAtStarts(
+        IReadOnlySet<DirectMidiNoteStartKey> keys)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        foreach (DirectMidiNoteStartKey key in keys)
+        {
+            long endTick = key.Tick == long.MaxValue ? long.MaxValue : key.Tick + 1;
+            foreach (DirectMidiNoteValue value in QueryNotes(
+                key.Tick,
+                endTick,
+                key.Key,
+                key.Key))
+            {
+                if (value.StartTick == key.Tick)
+                {
+                    int index = FindNoteIndex(value.Id);
+                    if (index >= 0) yield return new(index, value);
+                }
+            }
+        }
+    }
+
+    IEnumerable<DirectMidiChannelEventSourceMatch> QueryChannelEventsByIds(
+        IReadOnlySet<MidoraId> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        foreach (MidoraId id in ids)
+        {
+            int index = FindChannelEventIndex(id);
+            if (index >= 0) yield return new(index, GetChannelEvent(index));
+        }
+    }
+
+    IEnumerable<DirectMidiChannelEventSourceMatch> QueryChannelEventsAtStarts(
+        IReadOnlySet<DirectMidiEventStartKey> keys)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        foreach (DirectMidiEventStartKey key in keys)
+        {
+            IEnumerable<DirectMidiChannelEventValue> candidates = key.Tick == long.MaxValue
+                ? Enumerable.Range(0, ChannelEventCount).Select(GetChannelEvent)
+                : QueryChannelEvents(key.Tick, key.Tick + 1);
+            foreach (DirectMidiChannelEventValue value in candidates)
+            {
+                int selector = value.Kind is DirectMidiChannelEventKind.ControlChange
+                    or DirectMidiChannelEventKind.PolyphonicKeyPressure
+                    or DirectMidiChannelEventKind.NoteOn
+                    or DirectMidiChannelEventKind.NoteOff
+                        ? value.Data1
+                        : 0;
+                if (value.Tick == key.Tick && value.Kind == key.Kind && selector == key.Data1)
+                {
+                    int index = FindChannelEventIndex(value.Id);
+                    if (index >= 0) yield return new(index, value);
+                }
+            }
+        }
+    }
+
+    IEnumerable<OpaqueMidiEventSourceMatch> QueryOpaqueEventsByIds(
+        IReadOnlySet<MidoraId> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        foreach (MidoraId id in ids)
+        {
+            int index = FindOpaqueEventIndex(id);
+            if (index >= 0) yield return new(index, GetOpaqueEvent(index));
+        }
+    }
+
     IEnumerable<DirectMidiNoteValue> QueryNotes(
         long startTick,
         long endTick,
@@ -186,9 +298,14 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
     private readonly List<DirectMidiNote> _added = [];
     private readonly Dictionary<MidoraId, DirectMidiNote> _replacements = [];
     private readonly HashSet<MidoraId> _removed = [];
+    private readonly HashSet<MidoraId> _materializedSourceIds = [];
+    private readonly Dictionary<MidoraId, int> _sourceIndices = [];
     private IPureMidiSegmentContentSource? _source;
     private bool _clearSource;
     private long _generation;
+    private int _batchChangeDepth;
+    private bool _batchChanged;
+    private HashSet<MidoraId>? _batchSourceIds;
 
     internal DirectMidiNoteCollection(MidoraProject project) => _project = project;
 
@@ -218,7 +335,7 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
                 {
                     return replacement;
                 }
-                return Materialize(value);
+                return Materialize(value, sourceIndex);
             }
             int addedIndex = checked(index - LiveSourceCount);
             return _added[addedIndex];
@@ -233,6 +350,7 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
                 if (value.Id == original.Id)
                 {
                     Track(value);
+                    _sourceIndices[original.Id] = sourceIndex;
                     _replacements[original.Id] = value;
                 }
                 else
@@ -270,6 +388,8 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         _clearSource = _source is not null;
         _removed.Clear();
         _replacements.Clear();
+        _materializedSourceIds.Clear();
+        _sourceIndices.Clear();
         _added.Clear();
         Touch();
     }
@@ -292,7 +412,7 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
                 if (_removed.Contains(value.Id)) continue;
                 yield return _replacements.TryGetValue(value.Id, out DirectMidiNote? replacement)
                     ? replacement
-                    : Materialize(value);
+                    : Materialize(value, index);
             }
         }
         foreach (DirectMidiNote value in _added) yield return value;
@@ -303,13 +423,14 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
     public int IndexOf(DirectMidiNote item)
     {
         if (item is null) return -1;
+        int added = _added.FindIndex(value => value.Id == item.Id);
+        if (added >= 0) return checked(LiveSourceCount + added);
         int sourceOrdinal = SourceIndexOf(item.Id);
         if (sourceOrdinal >= 0 && !_removed.Contains(item.Id))
         {
             return VisibleIndexForSourceIndex(sourceOrdinal);
         }
-        int added = _added.FindIndex(value => value.Id == item.Id);
-        return added < 0 ? -1 : checked(LiveSourceCount + added);
+        return -1;
     }
 
     public int FindIndex(Predicate<DirectMidiNote> match)
@@ -332,12 +453,78 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
             int index = _source.FindNoteIndex(id);
             if (index >= 0)
             {
-                value = Materialize(_source.GetNote(index));
+                value = Materialize(_source.GetNote(index), index);
                 return true;
             }
         }
         value = _added.FirstOrDefault(item => item.Id == id);
         return value is not null;
+    }
+
+    public IReadOnlyList<DirectMidiNoteMatch> ResolveByIds(
+        IReadOnlyCollection<MidoraId> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        if (ids.Count == 0) return [];
+        HashSet<MidoraId> requested = [.. ids];
+        Dictionary<MidoraId, DirectMidiNoteMatch> matches = [];
+        if (!_clearSource && _source is not null)
+        {
+            HashSet<MidoraId> sourceIds = [.. requested];
+            sourceIds.ExceptWith(_removed);
+            int[] removedIndices = _removed.Count == 0
+                ? []
+                : _removed
+                    .Select(SourceIndexOf)
+                    .Where(static value => value >= 0)
+                    .Order()
+                    .ToArray();
+            foreach (DirectMidiNoteSourceMatch match in _source.QueryNotesByIds(sourceIds))
+            {
+                DirectMidiNote value = _replacements.TryGetValue(match.Value.Id, out DirectMidiNote? replacement)
+                    ? replacement
+                    : Materialize(match.Value, match.Index);
+                matches[match.Value.Id] = new(
+                    VisibleIndex(match.Index, removedIndices),
+                    value);
+            }
+        }
+        int addedBase = LiveSourceCount;
+        for (int index = 0; index < _added.Count; index++)
+        {
+            DirectMidiNote value = _added[index];
+            if (requested.Contains(value.Id))
+                matches[value.Id] = new(checked(addedBase + index), value);
+        }
+        List<DirectMidiNoteMatch> result = new(matches.Count);
+        HashSet<MidoraId> emitted = [];
+        foreach (MidoraId id in ids)
+        {
+            if (emitted.Add(id) && matches.TryGetValue(id, out DirectMidiNoteMatch match))
+                result.Add(match);
+        }
+        return result;
+    }
+
+    public IDisposable BeginBatchChange(IReadOnlyCollection<DirectMidiNote> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (_batchChangeDepth != 0)
+            throw new InvalidOperationException("Direct MIDI Note batch changes cannot be nested.");
+        _batchChangeDepth = 1;
+        _batchChanged = false;
+        if (!_clearSource && _source is not null && values.Count != 0)
+        {
+            _batchSourceIds = values
+                .Select(static value => value.Id)
+                .Where(id => _materializedSourceIds.Contains(id) && !_removed.Contains(id))
+                .ToHashSet();
+        }
+        else
+        {
+            _batchSourceIds = [];
+        }
+        return new BatchChangeScope(this);
     }
 
     public void Insert(int index, DirectMidiNote item)
@@ -353,6 +540,13 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
     public bool Remove(DirectMidiNote item)
     {
         if (item is null) return false;
+        int addedIndex = _added.FindIndex(value => value.Id == item.Id);
+        if (addedIndex >= 0)
+        {
+            _added.RemoveAt(addedIndex);
+            Touch();
+            return true;
+        }
         int sourceIndex = SourceIndexOf(item.Id);
         if (!_clearSource && sourceIndex >= 0 && !_removed.Contains(item.Id))
         {
@@ -361,11 +555,39 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
             Touch();
             return true;
         }
+        return false;
+    }
+
+    internal Action RemoveForExactCollision(DirectMidiNote item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
         int addedIndex = _added.FindIndex(value => value.Id == item.Id);
-        if (addedIndex < 0) return false;
-        _added.RemoveAt(addedIndex);
+        if (addedIndex >= 0)
+        {
+            _added.RemoveAt(addedIndex);
+            Touch();
+            return () =>
+            {
+                Track(item);
+                _added.Insert(Math.Clamp(addedIndex, 0, _added.Count), item);
+                Touch();
+            };
+        }
+
+        int sourceIndex = SourceIndexOf(item.Id);
+        if (_clearSource || sourceIndex < 0 || _removed.Contains(item.Id))
+            throw new InvalidOperationException("The conflicting Direct MIDI Note is no longer present.");
+        _replacements.TryGetValue(item.Id, out DirectMidiNote? replacement);
+        _removed.Add(item.Id);
+        _replacements.Remove(item.Id);
         Touch();
-        return true;
+        return () =>
+        {
+            if (!_removed.Remove(item.Id))
+                throw new InvalidOperationException("The conflicting Direct MIDI Note is already restored.");
+            if (replacement is not null) _replacements[item.Id] = replacement;
+            Touch();
+        };
     }
 
     public void RemoveAt(int index) => Remove(this[index]);
@@ -616,6 +838,9 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         if (_source is not null) target._source = _source;
         target._clearSource = _clearSource;
         target._removed.UnionWith(_removed);
+        target._materializedSourceIds.UnionWith(_materializedSourceIds);
+        foreach ((MidoraId id, int sourceIndex) in _sourceIndices)
+            target._sourceIndices.Add(id, sourceIndex);
         foreach ((MidoraId id, DirectMidiNote value) in _replacements)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -631,7 +856,12 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
 
     void IDirectMidiNoteChangeSink.OnChanged(DirectMidiNote value)
     {
-        if (!_clearSource && SourceIndexOf(value.Id) >= 0 && !_removed.Contains(value.Id))
+        bool sourceBacked = _batchChangeDepth != 0
+            ? _batchSourceIds?.Contains(value.Id) == true && !_removed.Contains(value.Id)
+            : !_clearSource
+                && _materializedSourceIds.Contains(value.Id)
+                && !_removed.Contains(value.Id);
+        if (sourceBacked)
             _replacements[value.Id] = value;
         Touch();
     }
@@ -640,9 +870,14 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         ? 0
         : checked(_source.NoteCount - _removed.Count);
 
-    private int SourceIndexOf(MidoraId id) => _source is null || _clearSource
-        ? -1
-        : _source.FindNoteIndex(id);
+    private int SourceIndexOf(MidoraId id)
+    {
+        if (_source is null || _clearSource) return -1;
+        if (_sourceIndices.TryGetValue(id, out int cached)) return cached;
+        int index = _source.FindNoteIndex(id);
+        if (index >= 0) _sourceIndices[id] = index;
+        return index;
+    }
 
     private HashSet<MidoraId>? SourceExclusions()
     {
@@ -672,14 +907,55 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         if (_removed.Count == 0) return sourceIndex;
         int removedBefore = _removed.Count(id =>
         {
-            int removedIndex = _source!.FindNoteIndex(id);
+            int removedIndex = SourceIndexOf(id);
             return removedIndex >= 0 && removedIndex < sourceIndex;
         });
         return sourceIndex - removedBefore;
     }
 
-    private DirectMidiNote Materialize(DirectMidiNoteValue value)
+    public IEnumerable<DirectMidiNote> QueryStartKeys(
+        IReadOnlySet<DirectMidiNoteStartKey> keys)
     {
+        ArgumentNullException.ThrowIfNull(keys);
+        if (keys.Count == 0) yield break;
+        if (!_clearSource && _source is not null)
+        {
+            foreach (DirectMidiNoteSourceMatch match in _source.QueryNotesAtStarts(keys))
+            {
+                DirectMidiNoteValue sourceValue = match.Value;
+                if (_removed.Contains(sourceValue.Id) || _replacements.ContainsKey(sourceValue.Id))
+                    continue;
+                yield return Materialize(sourceValue, match.Index);
+            }
+        }
+        foreach (DirectMidiNote replacement in _replacements.Values)
+        {
+            if (keys.Contains(new(replacement.StartTick, replacement.Key)))
+                yield return replacement;
+        }
+        foreach (DirectMidiNote value in _added)
+        {
+            if (keys.Contains(new(value.StartTick, value.Key))) yield return value;
+        }
+    }
+
+    private static int VisibleIndex(int sourceIndex, int[] sortedRemovedIndices)
+    {
+        int low = 0;
+        int high = sortedRemovedIndices.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (sortedRemovedIndices[middle] < sourceIndex) low = middle + 1;
+            else high = middle;
+        }
+        return checked(sourceIndex - low);
+    }
+
+    private DirectMidiNote Materialize(DirectMidiNoteValue value, int sourceIndex = -1)
+    {
+        _materializedSourceIds.Add(value.Id);
+        if (sourceIndex >= 0) _sourceIndices[value.Id] = sourceIndex;
         DirectMidiNote result = new(_project, value.Id)
         {
             StartTick = value.StartTick,
@@ -695,7 +971,36 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
     }
 
     private void Track(DirectMidiNote value) => value.SetChangeSink(this);
-    private void Touch() => _generation++;
+    private void Touch()
+    {
+        if (_batchChangeDepth != 0)
+        {
+            _batchChanged = true;
+            return;
+        }
+        _generation++;
+    }
+
+    private void EndBatchChange()
+    {
+        if (_batchChangeDepth != 1)
+            throw new InvalidOperationException("No Direct MIDI Note batch change is active.");
+        _batchChangeDepth = 0;
+        _batchSourceIds = null;
+        if (_batchChanged) _generation++;
+        _batchChanged = false;
+    }
+
+    private sealed class BatchChangeScope(DirectMidiNoteCollection owner) : IDisposable
+    {
+        private DirectMidiNoteCollection? _owner = owner;
+
+        public void Dispose()
+        {
+            DirectMidiNoteCollection? value = Interlocked.Exchange(ref _owner, null);
+            value?.EndBatchChange();
+        }
+    }
 
     private static bool Intersects(
         DirectMidiNote value,
@@ -744,9 +1049,14 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
     private readonly List<DirectMidiChannelEvent> _added = [];
     private readonly Dictionary<MidoraId, DirectMidiChannelEvent> _replacements = [];
     private readonly HashSet<MidoraId> _removed = [];
+    private readonly HashSet<MidoraId> _materializedSourceIds = [];
+    private readonly Dictionary<MidoraId, int> _sourceIndices = [];
     private IPureMidiSegmentContentSource? _source;
     private bool _clearSource;
     private long _generation;
+    private int _batchChangeDepth;
+    private bool _batchChanged;
+    private HashSet<MidoraId>? _batchSourceIds;
 
     internal DirectMidiChannelEventCollection(MidoraProject project) => _project = project;
 
@@ -774,7 +1084,7 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
                 DirectMidiChannelEventValue value = _source!.GetChannelEvent(sourceIndex);
                 return _replacements.TryGetValue(value.Id, out DirectMidiChannelEvent? replacement)
                     ? replacement
-                    : Materialize(value);
+                    : Materialize(value, sourceIndex);
             }
             return _added[checked(index - LiveSourceCount)];
         }
@@ -788,6 +1098,7 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
                 if (value.Id == original.Id)
                 {
                     Track(value);
+                    _sourceIndices[original.Id] = sourceIndex;
                     _replacements[original.Id] = value;
                 }
                 else
@@ -825,6 +1136,8 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
         _clearSource = _source is not null;
         _removed.Clear();
         _replacements.Clear();
+        _materializedSourceIds.Clear();
+        _sourceIndices.Clear();
         _added.Clear();
         Touch();
     }
@@ -846,7 +1159,7 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
                 if (_removed.Contains(value.Id)) continue;
                 yield return _replacements.TryGetValue(value.Id, out DirectMidiChannelEvent? replacement)
                     ? replacement
-                    : Materialize(value);
+                    : Materialize(value, index);
             }
         }
         foreach (DirectMidiChannelEvent value in _added) yield return value;
@@ -857,10 +1170,11 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
     public int IndexOf(DirectMidiChannelEvent item)
     {
         if (item is null) return -1;
+        int added = _added.FindIndex(value => value.Id == item.Id);
+        if (added >= 0) return checked(LiveSourceCount + added);
         int sourceOrdinal = SourceIndexOf(item.Id);
         if (sourceOrdinal >= 0 && !_removed.Contains(item.Id)) return VisibleIndexForSourceIndex(sourceOrdinal);
-        int added = _added.FindIndex(value => value.Id == item.Id);
-        return added < 0 ? -1 : checked(LiveSourceCount + added);
+        return -1;
     }
 
     public int FindIndex(Predicate<DirectMidiChannelEvent> match)
@@ -883,12 +1197,77 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
             int index = _source.FindChannelEventIndex(id);
             if (index >= 0)
             {
-                value = Materialize(_source.GetChannelEvent(index));
+                value = Materialize(_source.GetChannelEvent(index), index);
                 return true;
             }
         }
         value = _added.FirstOrDefault(item => item.Id == id);
         return value is not null;
+    }
+
+    public IReadOnlyList<DirectMidiChannelEventMatch> ResolveByIds(
+        IReadOnlyCollection<MidoraId> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        if (ids.Count == 0) return [];
+        HashSet<MidoraId> requested = [.. ids];
+        Dictionary<MidoraId, DirectMidiChannelEventMatch> matches = [];
+        if (!_clearSource && _source is not null)
+        {
+            HashSet<MidoraId> sourceIds = [.. requested];
+            sourceIds.ExceptWith(_removed);
+            int[] removedIndices = _removed.Count == 0
+                ? []
+                : _removed
+                    .Select(SourceIndexOf)
+                    .Where(static value => value >= 0)
+                    .Order()
+                    .ToArray();
+            foreach (DirectMidiChannelEventSourceMatch match in
+                _source.QueryChannelEventsByIds(sourceIds))
+            {
+                DirectMidiChannelEvent value = _replacements.TryGetValue(
+                    match.Value.Id,
+                    out DirectMidiChannelEvent? replacement)
+                        ? replacement
+                        : Materialize(match.Value, match.Index);
+                matches[match.Value.Id] = new(
+                    VisibleIndex(match.Index, removedIndices),
+                    value);
+            }
+        }
+        int addedBase = LiveSourceCount;
+        for (int index = 0; index < _added.Count; index++)
+        {
+            DirectMidiChannelEvent value = _added[index];
+            if (requested.Contains(value.Id))
+                matches[value.Id] = new(checked(addedBase + index), value);
+        }
+        List<DirectMidiChannelEventMatch> result = new(matches.Count);
+        HashSet<MidoraId> emitted = [];
+        foreach (MidoraId id in ids)
+        {
+            if (emitted.Add(id)
+                && matches.TryGetValue(id, out DirectMidiChannelEventMatch match))
+            {
+                result.Add(match);
+            }
+        }
+        return result;
+    }
+
+    public IDisposable BeginBatchChange(IReadOnlyCollection<DirectMidiChannelEvent> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (_batchChangeDepth != 0)
+            throw new InvalidOperationException("Direct MIDI Event batch changes cannot be nested.");
+        _batchChangeDepth = 1;
+        _batchChanged = false;
+        _batchSourceIds = values
+            .Select(static value => value.Id)
+            .Where(id => _materializedSourceIds.Contains(id) && !_removed.Contains(id))
+            .ToHashSet();
+        return new BatchChangeScope(this);
     }
 
     public void Insert(int index, DirectMidiChannelEvent item)
@@ -903,6 +1282,13 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
     public bool Remove(DirectMidiChannelEvent item)
     {
         if (item is null) return false;
+        int addedIndex = _added.FindIndex(value => value.Id == item.Id);
+        if (addedIndex >= 0)
+        {
+            _added.RemoveAt(addedIndex);
+            Touch();
+            return true;
+        }
         int sourceIndex = SourceIndexOf(item.Id);
         if (!_clearSource && sourceIndex >= 0 && !_removed.Contains(item.Id))
         {
@@ -911,11 +1297,39 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
             Touch();
             return true;
         }
+        return false;
+    }
+
+    internal Action RemoveForExactCollision(DirectMidiChannelEvent item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
         int addedIndex = _added.FindIndex(value => value.Id == item.Id);
-        if (addedIndex < 0) return false;
-        _added.RemoveAt(addedIndex);
+        if (addedIndex >= 0)
+        {
+            _added.RemoveAt(addedIndex);
+            Touch();
+            return () =>
+            {
+                Track(item);
+                _added.Insert(Math.Clamp(addedIndex, 0, _added.Count), item);
+                Touch();
+            };
+        }
+
+        int sourceIndex = SourceIndexOf(item.Id);
+        if (_clearSource || sourceIndex < 0 || _removed.Contains(item.Id))
+            throw new InvalidOperationException("The conflicting Direct MIDI Event is no longer present.");
+        _replacements.TryGetValue(item.Id, out DirectMidiChannelEvent? replacement);
+        _removed.Add(item.Id);
+        _replacements.Remove(item.Id);
         Touch();
-        return true;
+        return () =>
+        {
+            if (!_removed.Remove(item.Id))
+                throw new InvalidOperationException("The conflicting Direct MIDI Event is already restored.");
+            if (replacement is not null) _replacements[item.Id] = replacement;
+            Touch();
+        };
     }
 
     public void RemoveAt(int index) => Remove(this[index]);
@@ -935,6 +1349,32 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
             if (value.Tick >= startTick && value.Tick < endTick) yield return value;
         foreach (DirectMidiChannelEvent value in _added)
             if (value.Tick >= startTick && value.Tick < endTick) yield return value;
+    }
+
+    public IEnumerable<DirectMidiChannelEvent> QueryStartKeys(
+        IReadOnlySet<DirectMidiEventStartKey> keys)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        if (keys.Count == 0) yield break;
+        if (!_clearSource && _source is not null)
+        {
+            foreach (DirectMidiChannelEventSourceMatch match in
+                _source.QueryChannelEventsAtStarts(keys))
+            {
+                DirectMidiChannelEventValue sourceValue = match.Value;
+                if (_removed.Contains(sourceValue.Id) || _replacements.ContainsKey(sourceValue.Id))
+                    continue;
+                yield return Materialize(sourceValue, match.Index);
+            }
+        }
+        foreach (DirectMidiChannelEvent replacement in _replacements.Values)
+        {
+            if (keys.Contains(StartKey(replacement))) yield return replacement;
+        }
+        foreach (DirectMidiChannelEvent value in _added)
+        {
+            if (keys.Contains(StartKey(value))) yield return value;
+        }
     }
 
     public IEnumerable<DirectMidiChannelEventValue> QueryValues(long startTick, long endTick)
@@ -1088,6 +1528,9 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
         if (_source is not null) target._source = _source;
         target._clearSource = _clearSource;
         target._removed.UnionWith(_removed);
+        target._materializedSourceIds.UnionWith(_materializedSourceIds);
+        foreach ((MidoraId id, int sourceIndex) in _sourceIndices)
+            target._sourceIndices.Add(id, sourceIndex);
         foreach ((MidoraId id, DirectMidiChannelEvent value) in _replacements)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1103,7 +1546,12 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
 
     void IDirectMidiChannelEventChangeSink.OnChanged(DirectMidiChannelEvent value)
     {
-        if (!_clearSource && SourceIndexOf(value.Id) >= 0 && !_removed.Contains(value.Id))
+        bool sourceBacked = _batchChangeDepth != 0
+            ? _batchSourceIds?.Contains(value.Id) == true && !_removed.Contains(value.Id)
+            : !_clearSource
+                && _materializedSourceIds.Contains(value.Id)
+                && !_removed.Contains(value.Id);
+        if (sourceBacked)
             _replacements[value.Id] = value;
         Touch();
     }
@@ -1111,9 +1559,14 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
     private int LiveSourceCount => _source is null || _clearSource
         ? 0
         : checked(_source.ChannelEventCount - _removed.Count);
-    private int SourceIndexOf(MidoraId id) => _source is null || _clearSource
-        ? -1
-        : _source.FindChannelEventIndex(id);
+    private int SourceIndexOf(MidoraId id)
+    {
+        if (_source is null || _clearSource) return -1;
+        if (_sourceIndices.TryGetValue(id, out int cached)) return cached;
+        int index = _source.FindChannelEventIndex(id);
+        if (index >= 0) _sourceIndices[id] = index;
+        return index;
+    }
 
     private HashSet<MidoraId>? SourceExclusions()
     {
@@ -1142,14 +1595,41 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
         if (_removed.Count == 0) return sourceIndex;
         int removedBefore = _removed.Count(id =>
         {
-            int removedIndex = _source!.FindChannelEventIndex(id);
+            int removedIndex = SourceIndexOf(id);
             return removedIndex >= 0 && removedIndex < sourceIndex;
         });
         return sourceIndex - removedBefore;
     }
 
-    private DirectMidiChannelEvent Materialize(DirectMidiChannelEventValue value)
+    private static int VisibleIndex(int sourceIndex, int[] sortedRemovedIndices)
     {
+        int low = 0;
+        int high = sortedRemovedIndices.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (sortedRemovedIndices[middle] < sourceIndex) low = middle + 1;
+            else high = middle;
+        }
+        return checked(sourceIndex - low);
+    }
+
+    private static DirectMidiEventStartKey StartKey(DirectMidiChannelEvent value) => new(
+        value.Tick,
+        value.Kind,
+        value.Kind is DirectMidiChannelEventKind.ControlChange
+            or DirectMidiChannelEventKind.PolyphonicKeyPressure
+            or DirectMidiChannelEventKind.NoteOn
+            or DirectMidiChannelEventKind.NoteOff
+                ? value.Data1
+                : 0);
+
+    private DirectMidiChannelEvent Materialize(
+        DirectMidiChannelEventValue value,
+        int sourceIndex = -1)
+    {
+        _materializedSourceIds.Add(value.Id);
+        if (sourceIndex >= 0) _sourceIndices[value.Id] = sourceIndex;
         DirectMidiChannelEvent result = new(_project, value.Id)
         {
             Tick = value.Tick,
@@ -1163,7 +1643,36 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
     }
 
     private void Track(DirectMidiChannelEvent value) => value.SetChangeSink(this);
-    private void Touch() => _generation++;
+    private void Touch()
+    {
+        if (_batchChangeDepth != 0)
+        {
+            _batchChanged = true;
+            return;
+        }
+        _generation++;
+    }
+
+    private void EndBatchChange()
+    {
+        if (_batchChangeDepth != 1)
+            throw new InvalidOperationException("No Direct MIDI Event batch change is active.");
+        _batchChangeDepth = 0;
+        _batchSourceIds = null;
+        if (_batchChanged) _generation++;
+        _batchChanged = false;
+    }
+
+    private sealed class BatchChangeScope(DirectMidiChannelEventCollection owner) : IDisposable
+    {
+        private DirectMidiChannelEventCollection? _owner = owner;
+
+        public void Dispose()
+        {
+            DirectMidiChannelEventCollection? value = Interlocked.Exchange(ref _owner, null);
+            value?.EndBatchChange();
+        }
+    }
 
     private static DirectMidiChannelEventValue ToValue(DirectMidiChannelEvent value) => new(
         value.Id,
@@ -1197,6 +1706,7 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
     private readonly List<OpaqueMidiEvent> _added = [];
     private readonly Dictionary<MidoraId, OpaqueMidiEvent> _replacements = [];
     private readonly HashSet<MidoraId> _removed = [];
+    private readonly Dictionary<MidoraId, int> _sourceIndices = [];
     private IPureMidiSegmentContentSource? _source;
     private bool _clearSource;
     private long _generation;
@@ -1227,7 +1737,7 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
                 OpaqueMidiEventValue value = _source!.GetOpaqueEvent(sourceIndex);
                 return _replacements.TryGetValue(value.Id, out OpaqueMidiEvent? replacement)
                     ? replacement
-                    : Materialize(value);
+                    : Materialize(value, sourceIndex);
             }
             return _added[checked(index - LiveSourceCount)];
         }
@@ -1241,6 +1751,7 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
                 if (value.Id == original.Id)
                 {
                     Track(value);
+                    _sourceIndices[original.Id] = sourceIndex;
                     _replacements[original.Id] = value;
                 }
                 else
@@ -1278,6 +1789,7 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
         _clearSource = _source is not null;
         _removed.Clear();
         _replacements.Clear();
+        _sourceIndices.Clear();
         _added.Clear();
         Touch();
     }
@@ -1299,7 +1811,7 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
                 if (_removed.Contains(value.Id)) continue;
                 yield return _replacements.TryGetValue(value.Id, out OpaqueMidiEvent? replacement)
                     ? replacement
-                    : Materialize(value);
+                    : Materialize(value, index);
             }
         }
         foreach (OpaqueMidiEvent value in _added) yield return value;
@@ -1310,10 +1822,11 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
     public int IndexOf(OpaqueMidiEvent item)
     {
         if (item is null) return -1;
+        int added = _added.FindIndex(value => value.Id == item.Id);
+        if (added >= 0) return checked(LiveSourceCount + added);
         int sourceOrdinal = SourceIndexOf(item.Id);
         if (sourceOrdinal >= 0 && !_removed.Contains(item.Id)) return VisibleIndexForSourceIndex(sourceOrdinal);
-        int added = _added.FindIndex(value => value.Id == item.Id);
-        return added < 0 ? -1 : checked(LiveSourceCount + added);
+        return -1;
     }
 
     public int FindIndex(Predicate<OpaqueMidiEvent> match)
@@ -1336,12 +1849,57 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
             int index = _source.FindOpaqueEventIndex(id);
             if (index >= 0)
             {
-                value = Materialize(_source.GetOpaqueEvent(index));
+                value = Materialize(_source.GetOpaqueEvent(index), index);
                 return true;
             }
         }
         value = _added.FirstOrDefault(item => item.Id == id);
         return value is not null;
+    }
+
+    public IReadOnlyList<OpaqueMidiEventMatch> ResolveByIds(
+        IReadOnlyCollection<MidoraId> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        if (ids.Count == 0) return [];
+        HashSet<MidoraId> requested = [.. ids];
+        Dictionary<MidoraId, OpaqueMidiEventMatch> matches = [];
+        if (!_clearSource && _source is not null)
+        {
+            HashSet<MidoraId> sourceIds = [.. requested];
+            sourceIds.ExceptWith(_removed);
+            int[] removedIndices = _removed.Count == 0
+                ? []
+                : _removed
+                    .Select(SourceIndexOf)
+                    .Where(static value => value >= 0)
+                    .Order()
+                    .ToArray();
+            foreach (OpaqueMidiEventSourceMatch match in _source.QueryOpaqueEventsByIds(sourceIds))
+            {
+                OpaqueMidiEvent value = _replacements.TryGetValue(match.Value.Id, out OpaqueMidiEvent? replacement)
+                    ? replacement
+                    : Materialize(match.Value, match.Index);
+                matches[match.Value.Id] = new(
+                    VisibleIndex(match.Index, removedIndices),
+                    value);
+            }
+        }
+        int addedBase = LiveSourceCount;
+        for (int index = 0; index < _added.Count; index++)
+        {
+            OpaqueMidiEvent value = _added[index];
+            if (requested.Contains(value.Id))
+                matches[value.Id] = new(checked(addedBase + index), value);
+        }
+        List<OpaqueMidiEventMatch> result = new(matches.Count);
+        HashSet<MidoraId> emitted = [];
+        foreach (MidoraId id in ids)
+        {
+            if (emitted.Add(id) && matches.TryGetValue(id, out OpaqueMidiEventMatch match))
+                result.Add(match);
+        }
+        return result;
     }
 
     public void Insert(int index, OpaqueMidiEvent item)
@@ -1356,6 +1914,13 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
     public bool Remove(OpaqueMidiEvent item)
     {
         if (item is null) return false;
+        int addedIndex = _added.FindIndex(value => value.Id == item.Id);
+        if (addedIndex >= 0)
+        {
+            _added.RemoveAt(addedIndex);
+            Touch();
+            return true;
+        }
         int sourceIndex = SourceIndexOf(item.Id);
         if (!_clearSource && sourceIndex >= 0 && !_removed.Contains(item.Id))
         {
@@ -1364,11 +1929,7 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
             Touch();
             return true;
         }
-        int addedIndex = _added.FindIndex(value => value.Id == item.Id);
-        if (addedIndex < 0) return false;
-        _added.RemoveAt(addedIndex);
-        Touch();
-        return true;
+        return false;
     }
 
     public void RemoveAt(int index) => Remove(this[index]);
@@ -1467,6 +2028,8 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
         if (_source is not null) target._source = _source;
         target._clearSource = _clearSource;
         target._removed.UnionWith(_removed);
+        foreach ((MidoraId id, int sourceIndex) in _sourceIndices)
+            target._sourceIndices.Add(id, sourceIndex);
         foreach ((MidoraId id, OpaqueMidiEvent value) in _replacements)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1490,9 +2053,14 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
     private int LiveSourceCount => _source is null || _clearSource
         ? 0
         : checked(_source.OpaqueEventCount - _removed.Count);
-    private int SourceIndexOf(MidoraId id) => _source is null || _clearSource
-        ? -1
-        : _source.FindOpaqueEventIndex(id);
+    private int SourceIndexOf(MidoraId id)
+    {
+        if (_source is null || _clearSource) return -1;
+        if (_sourceIndices.TryGetValue(id, out int cached)) return cached;
+        int index = _source.FindOpaqueEventIndex(id);
+        if (index >= 0) _sourceIndices[id] = index;
+        return index;
+    }
 
     private HashSet<MidoraId>? SourceExclusions()
     {
@@ -1521,14 +2089,28 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
         if (_removed.Count == 0) return sourceIndex;
         int removedBefore = _removed.Count(id =>
         {
-            int removedIndex = _source!.FindOpaqueEventIndex(id);
+            int removedIndex = SourceIndexOf(id);
             return removedIndex >= 0 && removedIndex < sourceIndex;
         });
         return sourceIndex - removedBefore;
     }
 
-    private OpaqueMidiEvent Materialize(OpaqueMidiEventValue value)
+    private static int VisibleIndex(int sourceIndex, int[] sortedRemovedIndices)
     {
+        int low = 0;
+        int high = sortedRemovedIndices.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (sortedRemovedIndices[middle] < sourceIndex) low = middle + 1;
+            else high = middle;
+        }
+        return checked(sourceIndex - low);
+    }
+
+    private OpaqueMidiEvent Materialize(OpaqueMidiEventValue value, int sourceIndex = -1)
+    {
+        if (sourceIndex >= 0) _sourceIndices[value.Id] = sourceIndex;
         OpaqueMidiEvent result = new(_project, value.Id)
         {
             Tick = value.Tick,

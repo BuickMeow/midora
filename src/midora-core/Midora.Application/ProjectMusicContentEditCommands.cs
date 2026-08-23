@@ -28,11 +28,16 @@ public static partial class ProjectDomainEditCommands
                 logicalNote.Note,
                 logicalNote.Velocity);
             LogicalNoteValue replacement = new(startTick, lengthTicks, note, velocity);
-            return ResolveExactLogicalNoteCollisions(Prepared(
+            IPreparedProjectEdit prepared = Prepared(
                 old != replacement,
                 TrackChange(segment.Track.Id),
                 _ => SetLogicalNote(logicalNote, replacement),
-                _ => SetLogicalNote(logicalNote, old)), segment.Segment);
+                _ => SetLogicalNote(logicalNote, old));
+            return old.StartTick == replacement.StartTick && old.Note == replacement.Note
+                ? prepared
+                : ResolveTargetedExactLogicalNoteCollisions(
+                    prepared,
+                    [new(segment.Segment, replacement.StartTick, replacement.Note)]);
         });
 
     public static IProjectEditCommand DeleteLogicalNote(

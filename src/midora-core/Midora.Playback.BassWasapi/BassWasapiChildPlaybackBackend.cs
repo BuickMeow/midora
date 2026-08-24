@@ -76,11 +76,13 @@ public sealed class BassWasapiChildPlaybackBackend
                 $"Initial-release child-process work blocks must be {InitialReleaseAudioRuntimePolicy.WorkFrameCount} frames.");
         }
         if (_options.MasterSettings is null
-            || _options.MasterSettings.LimiterCeiling != 1f
-            || _options.MasterSettings.LimiterReleaseMilliseconds != 50f)
+            || _options.MasterSettings.LimiterCeiling
+                != AudioMasterSettings.LimiterCeilingV2
+            || _options.MasterSettings.LimiterReleaseMilliseconds
+                != AudioMasterSettings.LimiterReleaseMillisecondsV2)
         {
             throw new ArgumentOutOfRangeException(nameof(options),
-                "Initial-release realtime playback requires the fixed Limiter v1 algorithm.");
+                "Initial-release realtime playback requires the fixed limiter algorithm.");
         }
     }
 

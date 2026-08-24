@@ -47,7 +47,7 @@ $env:MIDORA_AUDIO_WORKER_PATH = (Resolve-Path -LiteralPath $WorkerPath).Path
 dotnet build 'src/midora-audio/midora-audio.slnx' -c Release --no-restore
 ```
 
-两个 `Test-Path` 必须分别得到 `True`。本机 BASS 目录和 Worker publish 目录都必须能看到 `bass.dll`、`bassmidi.dll`、`basswasapi.dll`；publish 目录还必须包含 `native-manifest.json`、`LICENSE` 与 `THIRD-PARTY-NOTICES.md`。开始前把系统输出音量调到安全水平；以下示例使用 Limiter v1，但这不代替安全音量设置。
+两个 `Test-Path` 必须分别得到 `True`。本机 BASS 目录和 Worker publish 目录都必须能看到 `bass.dll`、`bassmidi.dll`、`basswasapi.dll`；publish 目录还必须包含 `native-manifest.json`、`LICENSE` 与 `THIRD-PARTY-NOTICES.md`。开始前把系统输出音量调到安全水平；以下示例使用正式 Limiter，但这不代替安全音量设置。
 
 ## 2. 离线 WAVE 人耳试听
 

@@ -31,7 +31,7 @@ internal static class InitialReleaseAudioWorkerProtocolPolicy
         {
             throw new InvalidDataException("Realtime Device Buffer Request must be 5-200 ms.");
         }
-        ValidateLimiterV1(masterSettings, requireEnabled: false);
+        ValidateLimiterV2(masterSettings, requireEnabled: false);
     }
 
     public static void ValidateFileSettings(
@@ -50,7 +50,7 @@ internal static class InitialReleaseAudioWorkerProtocolPolicy
         {
             throw new InvalidDataException("Audio file sample rate must be 8000-192000 Hz.");
         }
-        ValidateLimiterV1(masterSettings, requireEnabled: true);
+        ValidateLimiterV2(masterSettings, requireEnabled: true);
     }
 
     public static string RequireExistingFile(string path, string argumentName)
@@ -92,16 +92,17 @@ internal static class InitialReleaseAudioWorkerProtocolPolicy
         return path;
     }
 
-    private static void ValidateLimiterV1(
+    private static void ValidateLimiterV2(
         AudioMasterSettings masterSettings,
         bool requireEnabled)
     {
-        if (masterSettings.LimiterCeiling != 1f
-            || masterSettings.LimiterReleaseMilliseconds != 50f
+        if (masterSettings.LimiterCeiling != AudioMasterSettings.LimiterCeilingV2
+            || masterSettings.LimiterReleaseMilliseconds
+                != AudioMasterSettings.LimiterReleaseMillisecondsV2
             || requireEnabled && !masterSettings.LimiterEnabled)
         {
             throw new InvalidDataException(
-                "The audio worker settings do not match the fixed initial-release Limiter v1 chain.");
+                "The audio worker settings do not match the fixed initial-release limiter chain.");
         }
     }
 

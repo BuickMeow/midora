@@ -57,7 +57,7 @@ Tempo Map 的查找、索引和缓存结构，但 tick→sample 结果必须与�
 Canonical Compiled Result 的最终内存布局
 BASSMIDI / BASSWASAPI 的具体封装与安全调用顺序和音频线程模型，但 WASAPI 模式、格式与 period 请求必须符合第 13.14.7 节，正式实时工作 block 与 ring 容量必须符合第 13.19.2、13.19.9 节
 内部音频子进程的类型拆分、轮询细节和共享内存字段打包，但不得改变第 13.30 节固定的完整子进程所有权、Native AOT、二进制 ABI 与零分配约束
-Limiter 的循环展开、SIMD 和状态存储实现，但算法与参数必须符合第 13.17.6 节版本 1 语义
+Limiter 的循环展开、SIMD 和状态存储实现，但算法与参数必须符合第 13.17.6 节版本 2 语义
 Roslyn 编译、缓存和 AssemblyLoadContext 方案
 JSON Schema、protobuf .proto 的其他最终字段名、字段号与代码生成方式；16.5.3 已固定的 `nextStableId`、16.13.2 已固定的稳定 ID 表示和既有外层 ID 字段号除外
 具体 WPF 控件、Visual Tree、MVVM 类型和 Timeline 虚拟化实现

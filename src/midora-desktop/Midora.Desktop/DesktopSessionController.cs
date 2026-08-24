@@ -2578,8 +2578,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     Midora.Audio.InitialReleaseAudioRuntimePolicy.WorkFrameCount),
                 new AudioMasterSettings(
                     checked((float)preferences.Playback.MasterVolumeDecibels),
-                    1f,
-                    50f),
+                    AudioMasterSettings.LimiterCeilingV2,
+                    AudioMasterSettings.LimiterReleaseMillisecondsV2),
                 TimeSpan.FromSeconds(30)));
         }
     }

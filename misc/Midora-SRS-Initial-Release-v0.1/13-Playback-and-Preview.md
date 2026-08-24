@@ -929,34 +929,34 @@ Playback Master Volume 之后
 Event Instrument 预览、SubVoice 预览、Segment 预览也默认经过播放 Limiter。
 所有实时发声都走同一播放输出链。
 ### 13.17.6 初版固定算法
-初版 Limiter 算法版本为 `1`，固定为 stereo-linked、zero-look-ahead、sample-peak limiter。
+初版 Limiter 算法版本为 `2`，固定为 stereo-linked、look-ahead、4× inter-sample peak limiter。用户界面只显示 `Limiter`，不得显示 `v2` 或其他内部版本文本。
 
-逐 sample frame 处理时，输入 `left` / `right` 已经过所有 Unit 确定性求和与 Playback Master Volume。令前一 frame 后保存的线性增益为 `gain`，新任务或显式重置后的初值为 `1.0`：
+固定参数：
 ```text
-peak = max(abs(left), abs(right))
-targetGain = peak > 1.0 ? 1.0 / peak : 1.0
-
-if targetGain < gain:
-    gain = targetGain
-else:
-    releaseCoefficient = exp(-1 / (sampleRate × 0.050))
-    gain = 1 - ((1 - gain) × releaseCoefficient)
-
-outputLeft  = left  × gain
-outputRight = right × gain
+ceiling = 0.8912509 linear（-1 dBFS）
+lookAhead = 5 ms
+hold = 10 ms
+release = 100 ms 单极指数时间常数
+oversampling = 4×
+interpolation = 固定 16-tap、a=8 的归一化 Lanczos-windowed sinc
+makeup gain = 0 dB（禁用）
 ```
+
+每个实际 sampleRate 都必须把 look-ahead 与 hold 毫秒数分别向上取整为完整 frame。检测器对原始 sample frame 及其间的 `1/4`、`1/2`、`3/4` 相位重建值取左右声道共同绝对峰值。当前 frame 的允许 gain 同时受当前 inter-sample peak 与未来 look-ahead 窗口约束；对未来峰值采用从 unity 到其 required gain 的线性前瞻 attack，使增益在峰值 frame 前到达所需值。gain 降低时重新开始 hold；hold 到期后按 100 ms 指数系数恢复，且恢复结果不得越过当前允许 gain。
+
+输入 `left` / `right` 已经过所有 Unit 确定性求和与 Playback Master Volume。实时渲染器必须先生成当前输出 frame 后完整的分析窗口，再发布当前 frame；该预取只增加 Preparing / producer 内部前方量，不得在设备输出前插入静音或改变 Project 时间。离线渲染必须以同一方式预取，在硬结束处只用零值补足检测上下文，不输出补足值，最终 frame 数必须与正式范围完全一致。
+
 规则：
 ```text
-左右声道共享同一个 peak、targetGain 和 gain，不得分别限制。
-attack 为当前 sample frame 立即生效，不做 look-ahead，也不引入算法延迟。
-sample-peak ceiling 固定为线性 1.0；初版不检测 true peak 或 inter-sample peak。
-release 是 50 ms 单极指数时间常数，按实际 sampleRate 计算系数。
-audio block 边界不得重置 gain；不同 callback / 工作 block 大小必须产生相同连续处理语义。
+左右声道共享同一 detector、attack、hold、release 与 gain，不得分别限制。
+不得在 Limiter 后追加硬削波、归一化或 makeup gain。
+audio block 边界不得重置 detector history、look-ahead、hold 或 gain；不同 callback / 工作 block 大小必须产生相同连续处理语义。
 新播放、预览或渲染任务以及 Stop / Reset 后必须把 gain 重置为 1.0；硬结束后不输出 release tail。
+Held Preview / monitoring 的未来计划替换只能发生在已经预取的 Limiter raw frontier 之后；cold start 必须丢弃旧预取并重置 Limiter，再由既定短淡入处理切换边界。
 任一输入或输出样本为 NaN / Infinity 时，当前音频任务按一致性错误失败，不得静默钳位或继续。
 ```
 
-这是最简易 sample-peak 保护算法，不承诺专业母带质量；瞬时 attack 可能改变极端瞬态，但不得替换成硬削波、自动归一化或另一套未版本化算法。
+这是确定性输出保护而非响度母带器，不承诺专业母带质量；不得静默替换成另一套未版本化算法。
 ---
 ## 13.18 clipping 与 limiter activity
 如果 Limiter 关闭且实时输出可能或已经发生削波：
@@ -974,7 +974,7 @@ audio block 边界不得重置 gain；不同 callback / 工作 block 大小必�
 不标记 Project 已修改。
 不保存进 Project 文件。
 ```
-初版音频文件渲染不检测或报告 clipping / limiter activity；其强制启用的版本 1 Limiter 必须按第 15 章《音频文件渲染》输出范围规则处理最终样本。
+初版音频文件渲染不检测或报告 clipping / limiter activity；其强制启用的版本 2 Limiter 必须按第 15 章《音频文件渲染》输出范围规则处理最终样本。
 ---
 ## 13.19 预渲染 buffer 与 Buffering
 ### 13.19.1 基本策略

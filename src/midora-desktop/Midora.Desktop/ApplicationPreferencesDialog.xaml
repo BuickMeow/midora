@@ -38,7 +38,7 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <StackPanel><TextBlock Style="{StaticResource Text.Overline}" Text="RENDER-AHEAD (ms)"/><TextBox x:Name="RenderAheadBox" Margin="0,5,0,0"/><TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="20–2,000"/></StackPanel>
                 <StackPanel Grid.Column="2"><TextBlock Style="{StaticResource Text.Overline}" Text="DEVICE REQUEST (ms)"/><TextBox x:Name="DeviceRequestBox" Margin="0,5,0,0"/><TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="5–200"/></StackPanel>
-                <StackPanel Grid.Column="4"><TextBlock Style="{StaticResource Text.Overline}" Text="MAX VOICES / UNIT"/><TextBox x:Name="VoicesBox" Margin="0,5,0,0"/><TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="1–16,777,216"/></StackPanel>
+                <StackPanel Grid.Column="4"><TextBlock Style="{StaticResource Text.Overline}" Text="MAX VOICES / CHANNEL"/><TextBox x:Name="VoicesBox" Margin="0,5,0,0"/><TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="1–16,777,216"/></StackPanel>
               </Grid>
               <Border Height="1" Margin="0,18" Background="{StaticResource Brush.Border}"/>
               <TextBlock Style="{StaticResource Text.Section}" Text="Audio Cache"/>

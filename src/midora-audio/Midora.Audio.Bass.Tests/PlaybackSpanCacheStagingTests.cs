@@ -18,7 +18,7 @@ public sealed class PlaybackSpanCacheStagingTests
 
         using (PlaybackSpanCacheStaging first = Assert.IsType<PlaybackSpanCacheStaging>(
             PlaybackSpanCacheStaging.Create(
-                plan, access, SoundFontSetCacheIdentity, inputs.Native, 500, AudioMasterSettings.LimiterV1)))
+                plan, access, SoundFontSetCacheIdentity, inputs.Native, 500, AudioMasterSettings.LimiterV2)))
         {
             Assert.False(first.Hit);
             using FileStream stream = new(
@@ -39,7 +39,7 @@ public sealed class PlaybackSpanCacheStagingTests
 
         using PlaybackSpanCacheStaging second = Assert.IsType<PlaybackSpanCacheStaging>(
             PlaybackSpanCacheStaging.Create(
-                plan, access, SoundFontSetCacheIdentity, inputs.Native, 500, AudioMasterSettings.LimiterV1));
+                plan, access, SoundFontSetCacheIdentity, inputs.Native, 500, AudioMasterSettings.LimiterV2));
         Assert.True(second.Hit);
         using FileStream cached = new(
             second.FilePath,
@@ -65,7 +65,7 @@ public sealed class PlaybackSpanCacheStagingTests
 
         using (PlaybackSpanCacheStaging incomplete = Assert.IsType<PlaybackSpanCacheStaging>(
             PlaybackSpanCacheStaging.Create(
-                plan, access, SoundFontSetCacheIdentity, inputs.Native, 500, AudioMasterSettings.LimiterV1)))
+                plan, access, SoundFontSetCacheIdentity, inputs.Native, 500, AudioMasterSettings.LimiterV2)))
         {
             incompleteKey = incomplete.Key;
             incomplete.PublishCompleted(access, completedRenderFrame: 1, totalFrameCount: 2);
@@ -74,7 +74,7 @@ public sealed class PlaybackSpanCacheStagingTests
 
         using (PlaybackSpanCacheStaging invalidated = Assert.IsType<PlaybackSpanCacheStaging>(
             PlaybackSpanCacheStaging.Create(
-                plan, access, SoundFontSetCacheIdentity, inputs.Native, 501, AudioMasterSettings.LimiterV1)))
+                plan, access, SoundFontSetCacheIdentity, inputs.Native, 501, AudioMasterSettings.LimiterV2)))
         {
             invalidatedKey = invalidated.Key;
             invalidated.InvalidateCapture();
@@ -119,7 +119,7 @@ public sealed class PlaybackSpanCacheStagingTests
             SoundFontSetCacheIdentity,
             inputs.Native,
             500,
-            AudioMasterSettings.LimiterV1));
+            AudioMasterSettings.LimiterV2));
         Assert.Equal(0, store.GetSnapshot().TransientBytes);
     }
 

@@ -42,7 +42,7 @@ public sealed class ExtremeMidiAudioIntegrationTests(ITestOutputHelper output)
                 new BassMidiRendererSettings(
                     BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
                     maximumWorkFrameCount: 256),
-                AudioMasterSettings.LimiterV1);
+                AudioMasterSettings.LimiterV2);
             float[] samples = new float[512 * 2];
             int completed = 0;
             long deadline = Environment.TickCount64 + 10_000;
@@ -105,7 +105,7 @@ public sealed class ExtremeMidiAudioIntegrationTests(ITestOutputHelper output)
                 plan,
                 soundFontPath,
                 settings,
-                AudioMasterSettings.LimiterV1,
+                AudioMasterSettings.LimiterV2,
                 segmentProducerConcurrency: 4);
 
             long requestedEnd;

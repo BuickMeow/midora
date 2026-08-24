@@ -30,7 +30,7 @@ public sealed class BassMidiChildProcessIntegrationTests
             plan,
             SoundFontPath,
             settings,
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             ipcAudioBufferMilliseconds: 100,
             workerPath,
             nativeDirectory,
@@ -84,7 +84,7 @@ public sealed class BassMidiChildProcessIntegrationTests
             plan,
             SoundFontPath,
             settings,
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             20,
             workerPath,
             nativeDirectory,
@@ -122,7 +122,7 @@ public sealed class BassMidiChildProcessIntegrationTests
             plan,
             SoundFontPath,
             settings,
-            AudioMasterSettings.LimiterV1);
+            AudioMasterSettings.LimiterV2);
         float[] result = new float[checked((int)plan.TotalFrameCount * 2)];
         fixed (float* destination = result)
         {

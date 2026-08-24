@@ -35,9 +35,9 @@ public static class PlaybackSpanCacheKey
         using MemoryStream payload = new();
         using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("MIDORA_PLAYBACK_SPAN_CACHE_KEY_V2");
+            writer.Write("MIDORA_PLAYBACK_SPAN_CACHE_KEY_V4");
             writer.Write(1); // BASS renderer / deterministic Unit mix algorithm version.
-            writer.Write(1); // Limiter algorithm version.
+            writer.Write(2); // Look-ahead inter-sample limiter algorithm.
             writer.Write(plan.SampleRate);
             writer.Write(plan.TotalFrameCount);
             writer.Write(soundFontSetCacheIdentity);

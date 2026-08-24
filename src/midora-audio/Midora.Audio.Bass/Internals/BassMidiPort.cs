@@ -35,11 +35,14 @@ public sealed unsafe class BassMidiRenderer
     private readonly object _monitoringProducerSync = new();
     private readonly float _masterGain;
     private readonly bool _limiterEnabled;
-    private StereoPeakLimiter _limiter;
+    private readonly StereoLookAheadLimiter _limiter;
     private byte* _packedMidiBuffer;
     private float* _unitScratchBuffer;
     private float* _segmentScratchBuffer;
     private float* _outputStagingBuffer;
+    private float* _limiterInputBuffer;
+    private readonly int _limiterInputCapacityFrames;
+    private int _limiterInputFrameCount;
     private uint[] _soundFontHandles = [];
     private readonly SoundFontConfiguration[] _soundFontConfigurations;
     private readonly PersistentBassMidiSoundFont? _persistentSoundFont;
@@ -207,10 +210,15 @@ public sealed unsafe class BassMidiRenderer
         _persistentSoundFont = persistentSoundFont;
         _masterGain = MathF.Pow(10f, masterSettings.VolumeDecibels / 20f);
         _limiterEnabled = masterSettings.LimiterEnabled;
-        _limiter = new StereoPeakLimiter(
+        _limiter = new StereoLookAheadLimiter(
             plan.SampleRate,
             masterSettings.LimiterCeiling,
-            masterSettings.LimiterReleaseMilliseconds);
+            AudioMasterSettings.LimiterLookAheadMilliseconds,
+            AudioMasterSettings.LimiterHoldMilliseconds,
+            masterSettings.LimiterReleaseMilliseconds,
+            DeterministicNativeDecodeFrameCount);
+        _limiterInputCapacityFrames = checked(
+            DeterministicNativeDecodeFrameCount + _limiter.RequiredFutureFrameCount);
         _fault = AudioRenderFault.None;
         _units = new UnitState[plan.Units.Length];
         _segments = plan.Segments.ToArray().Select(value => new SegmentState(value)).ToArray();
@@ -248,6 +256,11 @@ public sealed unsafe class BassMidiRenderer
             _segmentScratchBuffer = (float*)NativeMemory.Alloc(checked(
                 scratchByteCount * (nuint)Math.Max(1, plan.SourceIds.Length)));
             _outputStagingBuffer = (float*)NativeMemory.Alloc(scratchByteCount);
+            if (_limiterEnabled)
+            {
+                _limiterInputBuffer = (float*)NativeMemory.Alloc(checked(
+                    (nuint)_limiterInputCapacityFrames * 2 * sizeof(float)));
+            }
             OpenCacheStaging(cacheStagingPath, cacheReadManifestPath);
             if (plan.EventStreamDescriptor is MidiRenderEventStreamDescriptor eventStreamDescriptor)
             {
@@ -497,7 +510,8 @@ public sealed unsafe class BassMidiRenderer
         if (Volatile.Read(ref _pullActive) != 0
             || _renderPositionFrames != producerFrontierFrame
             || _positionFrames > producerFrontierFrame
-            || producerFrontierFrame - _positionFrames != _stagedFrameCount)
+            || producerFrontierFrame - _positionFrames
+                != _stagedFrameCount + _limiterInputFrameCount)
         {
             throw new InvalidOperationException(
                 "The MIDI render plan can only be replaced at a paused producer frontier.");
@@ -579,6 +593,7 @@ public sealed unsafe class BassMidiRenderer
         _cacheCaptureInvalidated |= _positionFrames != 0 || _renderPositionFrames != 0;
         _stagedFrameOffset = 0;
         _stagedFrameCount = 0;
+        _limiterInputFrameCount = 0;
         for (int i = 0; i < _units.Length; i++)
         {
             UnitState unit = _units[i];
@@ -620,6 +635,77 @@ public sealed unsafe class BassMidiRenderer
 
     private FillOutputResult FillOutputStagingBuffer()
     {
+        if (!_limiterEnabled)
+        {
+            FillOutputResult fill = RenderNextRawBlock(
+                _outputStagingBuffer,
+                DeterministicNativeDecodeFrameCount,
+                out int frameCount);
+            if (fill == FillOutputResult.Success)
+            {
+                _stagedFrameOffset = 0;
+                _stagedFrameCount = frameCount;
+            }
+            return fill;
+        }
+
+        int outputFrameCount = (int)Math.Min(
+            DeterministicNativeDecodeFrameCount,
+            _plan.TotalFrameCount - _positionFrames);
+        int requiredInputFrameCount = (int)Math.Min(
+            _plan.TotalFrameCount - _positionFrames,
+            outputFrameCount + _limiter.RequiredFutureFrameCount);
+        while (_limiterInputFrameCount < requiredInputFrameCount)
+        {
+            int availableFrameCount = requiredInputFrameCount - _limiterInputFrameCount;
+            FillOutputResult fill = RenderNextRawBlock(
+                _limiterInputBuffer + (_limiterInputFrameCount * 2),
+                availableFrameCount,
+                out int renderedFrameCount);
+            if (fill != FillOutputResult.Success)
+            {
+                return fill;
+            }
+            _limiterInputFrameCount += renderedFrameCount;
+        }
+
+        if (_limiterInputFrameCount < outputFrameCount
+            || !_limiter.Process(
+                _limiterInputBuffer,
+                _limiterInputFrameCount,
+                outputFrameCount,
+                _outputStagingBuffer))
+        {
+            SetFault(AudioRenderFaultCode.NonFiniteSample, 0, -1);
+            return FillOutputResult.Fault;
+        }
+
+        int remainingInputFrameCount = _limiterInputFrameCount - outputFrameCount;
+        if (remainingInputFrameCount > 0)
+        {
+            new Span<float>(
+                _limiterInputBuffer + (outputFrameCount * 2),
+                remainingInputFrameCount * 2).CopyTo(
+                    new Span<float>(_limiterInputBuffer, remainingInputFrameCount * 2));
+        }
+        _limiterInputFrameCount = remainingInputFrameCount;
+        _stagedFrameOffset = 0;
+        _stagedFrameCount = outputFrameCount;
+        return FillOutputResult.Success;
+    }
+
+    private FillOutputResult RenderNextRawBlock(
+        float* destination,
+        int maximumFrameCount,
+        out int renderedFrameCount)
+    {
+        renderedFrameCount = 0;
+        if (destination == null || maximumFrameCount <= 0)
+        {
+            SetFault(AudioRenderFaultCode.InvalidPullRequest, 0, -1);
+            return FillOutputResult.Fault;
+        }
+
         MidiRenderEventStreamReader? streamReader = _eventStreamReader;
         if (streamReader is not null)
         {
@@ -666,7 +752,7 @@ public sealed unsafe class BassMidiRenderer
             FindNextEventFrameAfterCurrent(),
             FindNextFragmentBoundaryFrame());
         int frameCount = (int)Math.Min(
-            DeterministicNativeDecodeFrameCount,
+            Math.Min(DeterministicNativeDecodeFrameCount, maximumFrameCount),
             _plan.TotalFrameCount - _renderPositionFrames);
         if (nextEventFrame != long.MaxValue)
         {
@@ -690,16 +776,15 @@ public sealed unsafe class BassMidiRenderer
                 ? FillOutputResult.Buffering
                 : FillOutputResult.Fault;
         }
-        if (!RenderFrames(_outputStagingBuffer, frameCount))
+        if (!RenderFrames(destination, frameCount))
         {
             return _fault.Code == AudioRenderFaultCode.None
                 ? FillOutputResult.Buffering
                 : FillOutputResult.Fault;
         }
 
-        _stagedFrameOffset = 0;
-        _stagedFrameCount = frameCount;
         _renderPositionFrames += frameCount;
+        renderedFrameCount = frameCount;
         return FillOutputResult.Success;
     }
 
@@ -1717,24 +1802,13 @@ public sealed unsafe class BassMidiRenderer
             int sampleIndex = frameIndex * 2;
             float left = destination[sampleIndex] * _masterGain;
             float right = destination[sampleIndex + 1] * _masterGain;
-            if (_limiterEnabled)
+            if (!float.IsFinite(left) || !float.IsFinite(right))
             {
-                if (!_limiter.Process(left, right, out destination[sampleIndex], out destination[sampleIndex + 1]))
-                {
-                    SetFault(AudioRenderFaultCode.NonFiniteSample, 0, -1);
-                    return false;
-                }
+                SetFault(AudioRenderFaultCode.NonFiniteSample, 0, -1);
+                return false;
             }
-            else
-            {
-                if (!float.IsFinite(left) || !float.IsFinite(right))
-                {
-                    SetFault(AudioRenderFaultCode.NonFiniteSample, 0, -1);
-                    return false;
-                }
-                destination[sampleIndex] = left;
-                destination[sampleIndex + 1] = right;
-            }
+            destination[sampleIndex] = left;
+            destination[sampleIndex + 1] = right;
         }
 
         return true;
@@ -1927,6 +2001,12 @@ public sealed unsafe class BassMidiRenderer
         {
             NativeMemory.Free(_outputStagingBuffer);
             _outputStagingBuffer = null;
+        }
+
+        if (_limiterInputBuffer != null)
+        {
+            NativeMemory.Free(_limiterInputBuffer);
+            _limiterInputBuffer = null;
         }
 
         if (_packedMidiBuffer != null)

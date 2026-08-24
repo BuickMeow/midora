@@ -51,7 +51,7 @@ public sealed class PersistentBassMidiAudioWorkerHostIntegrationTests
                 new BassMidiRendererSettings(
                     BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
                     InitialReleaseAudioRuntimePolicy.WorkFrameCount),
-                AudioMasterSettings.LimiterV1,
+                AudioMasterSettings.LimiterV2,
                 renderAheadMilliseconds: 100,
                 deviceBufferRequestMilliseconds: 50,
                 deviceId: null,
@@ -115,7 +115,7 @@ public sealed class PersistentBassMidiAudioWorkerHostIntegrationTests
                 new BassMidiRendererSettings(
                     BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
                     InitialReleaseAudioRuntimePolicy.WorkFrameCount),
-                AudioMasterSettings.LimiterV1,
+                AudioMasterSettings.LimiterV2,
                 renderAheadMilliseconds: 100,
                 deviceBufferRequestMilliseconds: 50,
                 deviceId: null,
@@ -168,7 +168,7 @@ public sealed class PersistentBassMidiAudioWorkerHostIntegrationTests
             new BassMidiRendererSettings(
                 BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
                 InitialReleaseAudioRuntimePolicy.WorkFrameCount),
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             renderAheadMilliseconds: 100,
             deviceBufferRequestMilliseconds: 50,
             deviceId: null,

@@ -53,7 +53,7 @@ Project Source Data
 - 不得用 `Thread.Sleep`、UI 定时器或“调用 API 的瞬间”承担正式 MIDI 时序。事件必须从 Canonical Compiled Result 经统一 tick→sample 映射后做采样级调度；同 tick 顺序必须保留。
 - 所有正式 BASSMIDI Stream 必须启用 `BASS_MIDI_NOFX | BASS_MIDI_NOTEOFF1`。Event Instrument/SubVoice 不得创建或映射 CC91/CC93；Pure MIDI Track 必须允许它们进入 Project、canonical 与 MIDI 导出，音频投影确定性忽略其 Reverb/Chorus 效果且不报一致性 Error。同 Port、Channel、pitch 的重叠 Note 实例按 FIFO 与逐个 NoteOff 配对，硬边界必须按活动实例数完整释放。
 - 所有正式 BASSMIDI Stream 固定 `BASS_ATTRIB_MIDI_SRC = 1`（8-point sinc）和 `BASS_ATTRIB_MIDI_CPU = 0`。实时与离线 `Maximum Sample Voices per Unit Stream` 分别配置，默认均为 500；同一任务全部 Unit Stream 使用同一冻结值。Preparing 必须用 `BASS_MIDI_FontLoad` 预加载计划引用的 presets/fallback，不得对实时事件 Stream 调用 `BASS_MIDI_StreamLoadSamples`。
-- 实时链固定为：实际 Port stereo 输出求和 → Playback Master Volume → Limiter → WASAPI；预览也走该链。离线整曲链语义相同，但不依赖 WASAPI 或物理设备。
+- 实时链固定为：实际 Port stereo 输出求和 → Playback Master Volume → Limiter v2 → WASAPI；预览也走该链。Limiter v2 固定 stereo-linked、5 ms look-ahead、4× 16-tap inter-sample detector、线性 ceiling `0.8912509`、10 ms hold、100 ms release、无 makeup gain；UI 只显示 `Limiter`。离线整曲链语义相同但补偿前瞻并保持精确 frame 数，不依赖 WASAPI 或物理设备。
 - WASAPI 回调不得编译、分配常规托管对象、阻塞、等待锁、做文件/网络 I/O 或让异常越过 native 边界。回调只消费已准备好的连续 float32 frame，正确处理短读、静音、停止和设备丢失。
 - Playing、Buffering、实时预览和文件 Rendering 阶段的 callback、调度、合成协调、混音、buffer 搬运及文件采样写入线程不得产生托管堆分配。Preparing / Finalizing 可以分配；同进程其他非音频线程可以分配和触发 GC。
 - 音频缓冲协议以 frame 为基本单位，显式携带采样率、声道数、sample format、frame count；不得混淆 byte count、sample count 和 frame count。

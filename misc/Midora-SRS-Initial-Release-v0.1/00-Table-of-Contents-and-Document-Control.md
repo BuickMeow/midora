@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-08-24**
+> 最近修订日期：**2026-08-25**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -49,6 +49,10 @@
 - **Initial Release Scope** 表示产品范围，不表示文档草稿序号。
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
+
+## 2026-08-25 修订摘要
+
+- 以 Limiter v2 破坏性替换旧零前瞻 sample-peak 算法：固定 stereo-linked、5 ms look-ahead、4× 16-tap 插值峰值检测、线性 `0.8912509`（-1 dBFS）ceiling、10 ms hold、100 ms 指数 release 且无 makeup gain。实时在首帧输出前预取分析窗口，离线输出补偿内部前瞻并保持精确 frame 数；算法状态跨工作块连续，旧 playback-span 缓存代际失效。UI 仍只显示 `Limiter`，不展示算法版本号。
 
 ## 2026-08-24 修订摘要
 
@@ -213,7 +217,7 @@
 
 - 初版正式实时音频工作 block 固定为最多 `256 frames`；音频子进程内 Render-Ahead 使用单个有界 SPSC PCM ring，容量按 `ceil(actualSampleRate × RenderAheadMilliseconds / 1000)` 计算，不固定 ring block 数；实时 PCM 不跨进程。
 - 初版 WASAPI 输出固定为 Shared Mode、event-driven、stereo interleaved float32；采样率采用端点初始化后的实际混音采样率，buffer 请求不等于实际值，period 与 callback frame 数由设备决定。
-- 初版 Limiter 版本 1 固定为 stereo-linked sample-peak 算法：瞬时 attack、zero-look-ahead、线性 ceiling `1.0`、50 ms 单极指数 release；实时与离线输出共用逐样本状态语义。
+- 当时曾将 Limiter 版本 1 固定为 stereo-linked sample-peak 算法；该历史决定已由 2026-08-25 的 Limiter v2 修订破坏性取代，不再是当前正式语义。
 - tick→sample frame 固定为完整 Tempo Map 的 decimal 区间积分乘采样率后只执行一次 `AwayFromZero`；实时播放、预览与音频渲染共用该语义，不得逐 Tempo 段取整。
 - 连续值源离散化固定以每个整数 tick 的最终目标值为参考语义；canonical 输出首次有效值及后续整数变化值，任何跳跃求值或缓存优化都必须与逐 tick 参考结果完全一致。
 - 整数目标参数默认使用 `Round / Away From Zero`，只在完整映射链最终输出时取整一次；取整与最终越界策略属于目标参数，不属于 Mapping Step。

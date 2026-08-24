@@ -301,7 +301,7 @@ Q-NUI-003 只暂停 Project `ExportProjectSettings` 正式字段、schema v2 和
 
 决定：音频文件渲染必须从专用 canonical 编译上下文开始。Whole Mix 使用一个 `AudioRender` 上下文；Per Logical Track 按 Project 手动顺序为每条已选且有效 Track 建立独立 `LogicalTrackAudioRender` 上下文。未选 Track 的内容和诊断不进入该上下文。默认自然范围先按各独立上下文的实际 Event Instrument Instance 输出、NoteOff、Release/Tail 与 Reset 求得，再冻结所有成功分轨共同使用的最大 `endTick` 并重新编译；显式范围直接冻结。空 SubVoice 合法、仍计入实例 Channel Unit 并产生 Info，因此已绑定但无 Note 输出的 Track 可生成同范围静音 WAV。
 
-正式任务在启动前冻结：canonical 结果、8,000～192,000 Hz 整数采样率、离线每 Stream sample voice 上限、Playback Master Volume、Limiter v1、已验证 SF2 内容快照、公共命名服务生成的最终绝对路径、目标存在状态和覆盖授权。External SF2 被动 hash 变化不能修改 Project；只有调用方明确接受变化时本次快照可继续，并产生 Warning。Embedded SF2 通过当前有效资源租约建立任务私有快照。任务结束释放快照，不把它写回 `.midora`。
+正式任务在启动前冻结：canonical 结果、8,000～192,000 Hz 整数采样率、离线每 Stream sample voice 上限、Playback Master Volume、正式 Limiter 算法、已验证 SF2 内容快照、公共命名服务生成的最终绝对路径、目标存在状态和覆盖授权。Limiter 当前由 ADR-AUDIO-002 v2 定义。External SF2 被动 hash 变化不能修改 Project；只有调用方明确接受变化时本次快照可继续，并产生 Warning。Embedded SF2 通过当前有效资源租约建立任务私有快照。任务结束释放快照，不把它写回 `.midora`。
 
 每个输出先在目标目录写唯一临时 WAV，完整渲染后严格校验 RIFF/WAVE、float32 stereo、采样率、frame 数和文件长度，再以移动或带备份替换原子发布。冻结时不存在而发布前新出现的路径不得覆盖。Whole Mix 任一失败使任务失败；Per Track 的编译、渲染、校验和发布彼此独立，失败后继续，已成功文件保留。取消清理当前临时文件、不开始后续 Track并保留已发布文件；清理失败必须报告残留路径，不能把残留物视为有效输出。
 

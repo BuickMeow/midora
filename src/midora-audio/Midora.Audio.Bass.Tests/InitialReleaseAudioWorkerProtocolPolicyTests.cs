@@ -34,14 +34,18 @@ public sealed class InitialReleaseAudioWorkerProtocolPolicyTests
     {
         InitialReleaseAudioWorkerProtocolPolicy.ValidateRealtimeSettings(
             new BassMidiRendererSettings(750, 256),
-            new AudioMasterSettings(-3, 1, 50, limiterEnabled: false),
+            new AudioMasterSettings(
+                -3,
+                AudioMasterSettings.LimiterCeilingV2,
+                AudioMasterSettings.LimiterReleaseMillisecondsV2,
+                limiterEnabled: false),
             20,
             5);
 
         Assert.Throws<InvalidDataException>(() =>
             InitialReleaseAudioWorkerProtocolPolicy.ValidateRealtimeSettings(
                 new BassMidiRendererSettings(750, 128),
-                AudioMasterSettings.LimiterV1,
+                AudioMasterSettings.LimiterV2,
                 100,
                 50));
         Assert.Throws<InvalidDataException>(() =>
@@ -70,37 +74,41 @@ public sealed class InitialReleaseAudioWorkerProtocolPolicyTests
         Assert.Throws<InvalidDataException>(() =>
             InitialReleaseAudioWorkerProtocolPolicy.ValidateRealtimeSettings(
                 new BassMidiRendererSettings(750, 256),
-                AudioMasterSettings.LimiterV1,
+                AudioMasterSettings.LimiterV2,
                 renderAheadMilliseconds,
                 deviceBufferRequestMilliseconds));
     }
 
     [Fact]
-    public void FilePolicyRequiresRateWorkBlockAndEnabledLimiterV1()
+    public void FilePolicyRequiresRateWorkBlockAndEnabledLimiter()
     {
         InitialReleaseAudioWorkerProtocolPolicy.ValidateFileSettings(
             new BassMidiRendererSettings(750, 256),
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             8_000);
         InitialReleaseAudioWorkerProtocolPolicy.ValidateFileSettings(
             new BassMidiRendererSettings(750, 256),
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             192_000);
 
         Assert.Throws<InvalidDataException>(() =>
             InitialReleaseAudioWorkerProtocolPolicy.ValidateFileSettings(
                 new BassMidiRendererSettings(750, 256),
-                AudioMasterSettings.LimiterV1,
+                AudioMasterSettings.LimiterV2,
                 7_999));
         Assert.Throws<InvalidDataException>(() =>
             InitialReleaseAudioWorkerProtocolPolicy.ValidateFileSettings(
                 new BassMidiRendererSettings(750, 128),
-                AudioMasterSettings.LimiterV1,
+                AudioMasterSettings.LimiterV2,
                 48_000));
         Assert.Throws<InvalidDataException>(() =>
             InitialReleaseAudioWorkerProtocolPolicy.ValidateFileSettings(
                 new BassMidiRendererSettings(750, 256),
-                new AudioMasterSettings(-3, 1, 50, limiterEnabled: false),
+                new AudioMasterSettings(
+                    -3,
+                    AudioMasterSettings.LimiterCeilingV2,
+                    AudioMasterSettings.LimiterReleaseMillisecondsV2,
+                    limiterEnabled: false),
                 48_000));
     }
 
@@ -167,8 +175,10 @@ public sealed class InitialReleaseAudioWorkerProtocolPolicyTests
         startInfo.ArgumentList.Add("48000");
         startInfo.ArgumentList.Add("750");
         startInfo.ArgumentList.Add("-0.1");
-        startInfo.ArgumentList.Add("1");
-        startInfo.ArgumentList.Add("50");
+        startInfo.ArgumentList.Add(AudioMasterSettings.LimiterCeilingV2.ToString(
+            System.Globalization.CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add(AudioMasterSettings.LimiterReleaseMillisecondsV2.ToString(
+            System.Globalization.CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add("1");
 
         using Process process = Process.Start(startInfo)

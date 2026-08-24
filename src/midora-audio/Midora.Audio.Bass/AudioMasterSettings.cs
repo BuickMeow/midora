@@ -2,7 +2,11 @@ namespace Midora.Audio.Bass;
 
 public sealed record class AudioMasterSettings
 {
-    public const int LimiterAlgorithmVersion = 1;
+    public const int LimiterAlgorithmVersion = 2;
+    public const float LimiterLookAheadMilliseconds = 5f;
+    public const float LimiterHoldMilliseconds = 10f;
+    public const float LimiterReleaseMillisecondsV2 = 100f;
+    public const float LimiterCeilingV2 = 0.8912509f;
 
     public AudioMasterSettings(
         float volumeDecibels,
@@ -39,5 +43,8 @@ public sealed record class AudioMasterSettings
 
     public bool LimiterEnabled { get; }
 
-    public static AudioMasterSettings LimiterV1 { get; } = new(-0.1f, 1f, 50f);
+    public static AudioMasterSettings LimiterV2 { get; } = new(
+        -0.1f,
+        LimiterCeilingV2,
+        LimiterReleaseMillisecondsV2);
 }

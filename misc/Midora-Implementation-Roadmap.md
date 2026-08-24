@@ -224,7 +224,7 @@ flowchart TD
 1. 重做 native runtime/handle/error/version 层，逐项核验官方 header ABI。
 2. 建每实际 Port 的 BASSMIDI float32 stereo decode stream，设置统一 SF2、`BASS_MIDI_NOFX`、melodic Channel 10 和必要属性；验证 CC91/CC93 不会到达后端。
 3. 按已确认的 decimal 分段积分与单次 `AwayFromZero` 规则生成 canonical sample positions，以其驱动 BASS 事件。
-4. 建 block-size-independent mixer、Playback Master Volume 和实时/离线共用的 Limiter v1。
+4. 建 block-size-independent mixer、Playback Master Volume 和实时/离线共用的 Limiter v2。
 5. 建预分配 realtime queue 和最薄 WASAPI callback；只枚举启用的输出设备，完成默认设备标记、通知、实际采样率、start/stop/reset/free 和错误恢复。
 6. 实现 Render-Ahead 与 Device Buffer Request 两项用户缓冲设置及 Stopped-only 重建规则；证明音频活动线程及运行时控制 IPC 热路径在正式活动阶段无托管堆分配。
 7. 建无需声卡的文件 `OutputDevice`/离线内存 sink，用于 CI 验证自定义采样率、时序、状态和数值。
@@ -356,7 +356,7 @@ flowchart TD
 下一次实现任务应从阶段 0 开始，最小交付建议是：
 
 1. 修复当前 solution 构建基线，但不把原型接口直接定为正式 API。
-2. 维护 requirement trace/ADR，按已确认的 tick→sample、Limiter v1、WASAPI shared event-driven 与完整音频子进程约束继续实现；不得在代码默认值中重新解释这些决定。
+2. 维护 requirement trace/ADR，按已确认的 tick→sample、Limiter v2、WASAPI shared event-driven 与完整音频子进程约束继续实现；不得在代码默认值中重新解释这些决定。
 3. 定义 Domain 基础类型、Canonical Result 最小 schema 和 golden test 格式。
 4. 用“单 Track/单 Segment/单 SubVoice/一个 Note”贯通 Compiler → timed BASSMIDI → memory sink；证明 sample-accurate 时序后再接 WASAPI。
 

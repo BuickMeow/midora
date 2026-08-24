@@ -29,7 +29,7 @@ public sealed class BassWasapiBackendPolicyTests
             100,
             50,
             CreateRendererSettings(512),
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             TimeSpan.FromSeconds(1));
 
         Assert.Throws<ArgumentOutOfRangeException>(() => new BassWasapiChildPlaybackBackend(options));
@@ -46,7 +46,7 @@ public sealed class BassWasapiBackendPolicyTests
             100,
             50,
             CreateRendererSettings(InitialReleaseAudioRuntimePolicy.WorkFrameCount),
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             TimeSpan.FromSeconds(1));
         using BassWasapiChildPlaybackBackend child = new(options);
     }
@@ -108,7 +108,7 @@ public sealed class BassWasapiBackendPolicyTests
             100,
             50,
             CreateRendererSettings(InitialReleaseAudioRuntimePolicy.WorkFrameCount),
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             TimeSpan.FromSeconds(1));
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>

@@ -69,7 +69,7 @@ public static partial class Program
             plan,
             soundFontPath,
             CreateOfflineRendererSettings(InitialReleaseAudioRuntimePolicy.WorkFrameCount),
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             100,
             GetWorkerPath(repositoryRoot),
             GetBassNativeDirectory(),
@@ -183,7 +183,7 @@ public static partial class Program
             100,
             50,
             CreateRealtimeRendererSettings(InitialReleaseAudioRuntimePolicy.WorkFrameCount),
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             TimeSpan.FromSeconds(30));
         using BassWasapiChildPlaybackBackend backend = new(options);
         using PlaybackController controller = new(session, backend);

@@ -55,20 +55,24 @@
 
 已决定：tick→sample frame 使用完整 Tempo Map 在 `[originTick, targetTick)` 上的 decimal 分段积分；总时长乘采样率后只执行一次 `AwayFromZero`。不得逐 Tempo 段取整，也不得先取整绝对 sample 位置再相减。算法位于 Compiler 的 sample-domain adapter，不由音频后端重新实现。
 
-## 3. ADR-AUDIO-002：Limiter v1
+## 3. ADR-AUDIO-002：Limiter v2（取代 v1）
 
-决定：版本号为 1 的 stereo-linked、sample-peak、零 look-ahead Limiter：
+决定：版本号为 2 的 stereo-linked look-ahead Limiter 破坏性取代旧 v1：
 
-- ceiling：`1.0f`；
-- attack：同一 sample 立即降低增益，确保有限输入的输出峰值不超过 ceiling；
-- release：50 ms 指数恢复，系数由实际采样率计算；
-- 左右声道使用同一增益；
-- 状态跨工作 block 连续，Reset 时回到 unity gain；
-- 算法、参数和版本进入渲染任务兼容性信息，但不进入 `.midora` 源数据。
+- ceiling：线性 `0.8912509f`（-1 dBFS）；
+- detector：每个原 sample 及 `1/4`、`1/2`、`3/4` 相位的固定 16-tap、a=8 归一化 Lanczos-windowed sinc 重建值，左右声道取共同绝对峰值；
+- look-ahead / attack：5 ms，按实际采样率向上取整为 frame；未来峰值的 required gain 在其到达前线性建立，当前 frame 仍受自身 required gain 约束；
+- hold：10 ms；每次进一步降低 gain 时重新开始；
+- release：100 ms 单极指数恢复，系数由实际采样率计算，恢复不得越过当前允许 gain；
+- makeup gain：无；Limiter 后不追加硬削波或自动归一化；
+- 状态跨工作 block 连续，Reset 时清除 detector history、前瞻、hold 并回到 unity gain；
+- 算法、参数和版本进入渲染任务兼容性及 playback-span cache key，但不进入 `.midora` 源数据；UI 只展示 `Limiter`，不展示版本号。
 
-理由：零 look-ahead 不引入起点预卷、范围末尾补偿或额外实时延迟，容易验证 block-size 不变性和精确总长度。代价是极端瞬态的失真可能高于 look-ahead 算法。
+实时 producer 在发布 frame 0 前先合成完整分析窗口；该前瞻属于 producer 内部 raw frontier，不插入前导静音、不改变设备消费 frame。离线渲染在末尾用零值补足 detector 上下文但不输出补足值，因此输出范围和文件 frame 数保持不变。Held Preview 只可替换 raw frontier 之后的未来；monitoring cold start 丢弃旧预取并重置 Limiter。
 
-限制：不检测 true peak / inter-sample peak。后续若升级算法必须增加版本并修订 SRS/ADR，不能静默改变 v1。
+理由：实机对比确认把 Master Volume 降至 -16 dB 后爆音明显改善或消失，而把每 Channel sample voice 上限提高到 4096 无改善，问题位于总线峰值/旧零前瞻增益高速调制，不是 voice stealing。5 ms 前瞻、hold 与较慢 release 降低密集事件造成的增益抖动；4× inter-sample detector 与 -1 dBFS ceiling 为重建峰值提供保护余量。
+
+旧 v1 历史定义为 stereo-linked、zero-look-ahead、sample-peak、ceiling 1.0、50 ms release。它只用于解释旧测试和缓存失效原因，不再是正式输出算法；不得提供运行时回退或 UI 版本选择。
 
 ## 4. ADR-AUDIO-003：BASSMIDI Unit stream 与 pool 策略
 
@@ -130,7 +134,7 @@ ABI v4 的 `BufferingRecoveryPrepare(endFrame)` 只在 ring 已锁存 Buffering 
 
 实时 Worker 启动事务先验证并冻结现存 SF2、Worker 和原生目录的绝对路径，再依次取得私有计划目录、MDAP、共享控制区和子进程；任何一步失败都反向释放已经取得的资源并删除私有计划目录。子进程启动后立即并发排空 stdout/stderr，不能等到 `WaitForExit` 之后才读取而形成重定向管道背压死锁；Preparing 的 Faulted、探测完成和显式 Stop 均须在同一个有界期限内等待退出，逾期强制结束。Worker 内等待 producer frontier、Buffering recovery 完整区间或 recovery replay 预填充的循环必须协作检查 Stop，使正常 Stop 不依赖 renderer/cache source 先脱离 Buffering。监控线程自身的异常必须被截获并提升为任务故障，不能越过线程边界成为未处理异常或让父进程无限等待。
 
-Worker 是独立的协议校验边界，不能只信任当前父进程会生成合法命令行。`probe/play/file-probe/file-render` 的文件与目录输入必须是现存的 fully-qualified 路径，文件渲染目标必须是 fully-qualified、父目录现存且尚未占用的新路径；协议布尔只接受精确 `0`/`1`。正式实时与文件模式只接受最大 256-frame 工作块、规定 buffer 值域和 Limiter v1 固定 ceiling/release；文件模式还强制 Limiter enabled 与 8,000～192,000 Hz。MDAP 解析与全部纯托管策略校验必须先于加载原生库，非法输入统一在 Preparing 失败并发布 Faulted。
+Worker 是独立的协议校验边界，不能只信任当前父进程会生成合法命令行。`probe/play/file-probe/file-render` 的文件与目录输入必须是现存的 fully-qualified 路径，文件渲染目标必须是 fully-qualified、父目录现存且尚未占用的新路径；协议布尔只接受精确 `0`/`1`。正式实时与文件模式只接受最大 256-frame 工作块、规定 buffer 值域和 Limiter v2 固定 ceiling/release；文件模式还强制 Limiter enabled 与 8,000～192,000 Hz。MDAP 解析与全部纯托管策略校验必须先于加载原生库，非法输入统一在 Preparing 失败并发布 Faulted。
 
 主进程释放正式实时会话时，读取最终共享状态、采集 stderr/exit code 与释放进程/映射/计划目录是相互独立的清理步骤。状态读取因 ABI 损坏失败时仍必须执行会话释放；读取失败、原 Stop 失败与释放失败按发生顺序聚合报告，不能由后一个异常覆盖前一个，也不能因诊断采集失败泄漏资源。一次 `IsFaulted`/FaultDescription 判断只使用一个已读取的状态值，不在同一判断内重复轮询并混合多个时刻。
 
@@ -150,9 +154,9 @@ Worker 是独立的协议校验边界，不能只信任当前父进程会生成�
 
 ## 8. ADR-AUDIO-007：离线文件 Worker 与双层原子发布边界
 
-决定：正式音频文件渲染仍使用 ADR-AUDIO-005 的唯一 `win-x64` Native AOT Worker，不依赖 WASAPI 或物理设备。主进程只向 Worker 传递固定二进制 `MidiRenderPlan`、冻结 SF2、sample voice 上限、Master Volume、Limiter v1 和一个已授权的任务临时 WAV 路径；不传 Project，不跨进程传 PCM。正式客户端只接受 `.exe`，托管 `.dll` 启动入口只供测试。
+决定：正式音频文件渲染仍使用 ADR-AUDIO-005 的唯一 `win-x64` Native AOT Worker，不依赖 WASAPI 或物理设备。主进程只向 Worker 传递固定二进制 `MidiRenderPlan`、冻结 SF2、sample voice 上限、Master Volume、Limiter v2 和一个已授权的任务临时 WAV 路径；不传 Project，不跨进程传 PCM。正式客户端只接受 `.exe`，托管 `.dll` 启动入口只供测试。
 
-公共 `file-probe` 在任务级 Preparing 验证原生基线、SF2 可加载性和固定输出链；每个 `file-render` 进程创建本文件实际 Port 的干净 BASSMIDI stream，按计划预加载实际 preset/fallback，以固定 256-frame 最大工作块执行“多 Port 求和 → Master Volume → Limiter v1”，直接流式写普通 RIFF/WAVE。Worker 内部先写其私有临时文件并最终化为主进程授权的任务临时路径；主进程随后独立校验 WAVE，再负责最终目标的移动/替换事务。Worker 不能直接获得最终覆盖权限。
+公共 `file-probe` 在任务级 Preparing 验证原生基线、SF2 可加载性和固定输出链；每个 `file-render` 进程创建本文件实际 Port 的干净 BASSMIDI stream，按计划预加载实际 preset/fallback，以固定 256-frame 最大工作块执行“多 Port 求和 → Master Volume → Limiter v2”，直接流式写普通 RIFF/WAVE。Worker 内部先写其私有临时文件并最终化为主进程授权的任务临时路径；主进程随后独立校验 WAVE，再负责最终目标的移动/替换事务。Worker 不能直接获得最终覆盖权限。
 
 共享内存状态协议只携带 Preparing/Rendering/Cancelling/Finalizing/Completed/Faulted、frame 进度、故障码和热路径分配计数；取消使用有界控制命令，不靠终止进程模拟正常 Stop。Preparing 超时可强制结束尚未建立正式输出的 Worker。正常取消等待资源安全释放，并扫描/清理 Worker 内层临时文件；任何无法删除的残留路径返回主任务诊断。
 

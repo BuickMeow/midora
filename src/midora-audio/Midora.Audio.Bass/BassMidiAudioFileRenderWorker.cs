@@ -350,8 +350,12 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
     private static void AddMasterSettings(ProcessStartInfo startInfo, float volumeDecibels)
     {
         startInfo.ArgumentList.Add(volumeDecibels.ToString("R", CultureInfo.InvariantCulture));
-        startInfo.ArgumentList.Add("1");
-        startInfo.ArgumentList.Add("50");
+        startInfo.ArgumentList.Add(AudioMasterSettings.LimiterCeilingV2.ToString(
+            "R",
+            CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add(AudioMasterSettings.LimiterReleaseMillisecondsV2.ToString(
+            "R",
+            CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add("1");
     }
 

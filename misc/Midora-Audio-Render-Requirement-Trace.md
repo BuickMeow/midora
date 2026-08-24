@@ -9,7 +9,7 @@
 - 专用 `AudioRender` / `LogicalTrackAudioRender` `CompilationRequest`，范围为 `[startTick, endTick)`。
 - Whole Mix 的选中有效 Logical / Pure MIDI Track 集合，或 Per Logical Track 的逐 Logical Track 独立集合。
 - 已解析且完成任务级验证的 SF2 绝对运行时路径及其冻结资源身份。
-- Project 当前正式生效的 Playback Master Volume；文件渲染强制使用 Limiter v1。
+- 程序级当前正式生效的 Playback Master Volume；文件渲染强制使用 Limiter v2。
 - 本次冻结的 8,000～192,000 Hz 整数采样率和每 Stream 1～16,777,216 的离线 sample voice 上限。
 - 冻结的最终输出路径、目标存在状态和覆盖授权。
 
@@ -23,7 +23,7 @@
 ## 边界与确定性
 
 - 正式消费者只接收 canonical compiled result，经统一 `TempoSampleMap` 一次 `AwayFromZero` 映射为 sample frame。
-- 实际使用的每个 Port 建一个干净 BASSMIDI decode stream；先混合 Port，再应用 Master Volume 与 Limiter v1。
+- 实际使用的每个 Port 建一个干净 BASSMIDI decode stream；先混合 Port，再应用 Master Volume 与 Limiter v2。
 - Mute / Solo 不参与渲染；显式 Track 选择是唯一运行输入。
 - 输出命名复用 MIDI 导出的公共 Windows 合法化与稳定冲突算法。
 - 普通 RIFF 上限在创建任何临时输出前，对整个冻结任务一次性精确预检；任一文件越界则任务不开始。

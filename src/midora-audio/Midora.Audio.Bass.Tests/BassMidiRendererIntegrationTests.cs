@@ -271,7 +271,7 @@ public sealed class BassMidiRendererIntegrationTests
             plan,
             SoundFontPath,
             new BassMidiRendererSettings(customVoiceLimit, 256),
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             segmentProducerConcurrency: 4);
 
         foreach (int port in new[] { 0, 1 })
@@ -367,17 +367,17 @@ public sealed class BassMidiRendererIntegrationTests
             new(0, MidiMessage.NoteOn(0, 60, 100)),
             new(128, MidiMessage.NoteOn(0, 60, 80)),
             new(256, MidiMessage.NoteOff(0, 60, 0)),
-            new(512, MidiMessage.NoteOff(0, 60, 0))
+            new(1_024, MidiMessage.NoteOff(0, 60, 0))
         ];
-        MidiRenderPlan plan = new(SampleRate, 768, [new MidiPortRenderPlan(0, events)]);
+        MidiRenderPlan plan = new(SampleRate, 1_280, [new MidiPortRenderPlan(0, events)]);
         using BassMidiRenderer renderer = CreateRenderer(plan, 256);
-        float* samples = stackalloc float[513 * 2];
+        float* samples = stackalloc float[1_025 * 2];
 
         Assert.Equal(257, renderer.PullFrames(samples, 257).FrameCount);
         Assert.Equal(1u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
         Assert.Contains(new ReadOnlySpan<float>(samples, 257 * 2).ToArray(), static sample => sample != 0);
 
-        Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
+        Assert.Equal(768, renderer.PullFrames(samples, 768).FrameCount);
         Assert.Equal(0u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
         Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
     }
@@ -397,6 +397,13 @@ public sealed class BassMidiRendererIntegrationTests
                         new(512, MidiMessage.NoteOff(0, 60, 0))
                     ])
             ]);
+        using BassMidiRenderer renderer = CreateRenderer(causal, 256);
+        float* samples = stackalloc float[512 * 2];
+
+        Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
+        Assert.Equal(1u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
+
+        long producerFrontier = renderer.RenderPositionFrames;
         MidiRenderPlan replacement = new(
             SampleRate,
             1_280,
@@ -405,22 +412,17 @@ public sealed class BassMidiRendererIntegrationTests
                     0,
                     [
                         new(0, MidiMessage.NoteOn(0, 72, 100)),
-                        new(256, MidiMessage.NoteOff(0, 60, 0)),
-                        new(256, MidiMessage.NoteOn(0, 64, 90)),
-                        new(768, MidiMessage.NoteOff(0, 64, 0))
+                        new(producerFrontier, MidiMessage.NoteOff(0, 60, 0)),
+                        new(producerFrontier, MidiMessage.NoteOn(0, 64, 90)),
+                        new(producerFrontier + 512, MidiMessage.NoteOff(0, 64, 0))
                     ])
             ]);
         MidiRenderPlan spliced = MidiRenderPlanSplicer.SpliceAtProducerFrontier(
             causal,
             replacement,
-            256);
-        using BassMidiRenderer renderer = CreateRenderer(causal, 256);
-        float* samples = stackalloc float[512 * 2];
+            producerFrontier);
 
-        Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
-        Assert.Equal(1u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
-
-        renderer.ReplaceFuturePlan(spliced, 256);
+        renderer.ReplaceFuturePlan(spliced, producerFrontier);
         Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
         Assert.Equal(1u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
         Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
@@ -443,8 +445,9 @@ public sealed class BassMidiRendererIntegrationTests
 
         Assert.Equal(1, renderer.PullFrames(samples, 1).FrameCount);
 
-        Assert.Equal(256, renderer.RenderPositionFrames);
-        renderer.ReplaceFuturePlan(plan, 256);
+        long producerFrontier = renderer.RenderPositionFrames;
+        Assert.True(producerFrontier > 256);
+        renderer.ReplaceFuturePlan(plan, producerFrontier);
         Assert.Equal(255, renderer.PullFrames(samples, 255).FrameCount);
         Assert.Equal(256, renderer.PositionFrames);
         Assert.Throws<InvalidOperationException>(() => renderer.ReplaceFuturePlan(plan, 255));
@@ -463,6 +466,11 @@ public sealed class BassMidiRendererIntegrationTests
                     new(0, MidiMessage.NoteOn(0, 0, 100)),
                     new(14_000, MidiMessage.NoteOff(0, 0, 0))
                 ])]);
+        using BassMidiRenderer renderer = CreateRenderer(causal, 256);
+        float* samples = stackalloc float[8_000 * 2];
+
+        Assert.Equal(7_936, renderer.PullFrames(samples, 7_936).FrameCount);
+        long producerFrontier = renderer.RenderPositionFrames;
         MidiRenderPlan continuation = new(
             SampleRate,
             20_000,
@@ -470,26 +478,22 @@ public sealed class BassMidiRendererIntegrationTests
                 0,
                 [
                     new(0, MidiMessage.NoteOn(0, 0, 100)),
-                    new(7_936, MidiMessage.NoteOff(0, 0, 0)),
-                    new(7_936, MidiMessage.ControlChange(0, 120, 0)),
-                    new(7_936, MidiMessage.ControlChange(0, 7, 100)),
-                    new(7_936, MidiMessage.PitchWheelChange(0, 0)),
-                    new(7_936, MidiMessage.ControlChange(0, 101, 0)),
-                    new(7_936, MidiMessage.ControlChange(0, 100, 0)),
-                    new(7_936, MidiMessage.ControlChange(0, 6, 2)),
-                    new(7_936, MidiMessage.ControlChange(0, 101, 127)),
-                    new(7_936, MidiMessage.ControlChange(0, 100, 127))
+                    new(producerFrontier, MidiMessage.NoteOff(0, 0, 0)),
+                    new(producerFrontier, MidiMessage.ControlChange(0, 120, 0)),
+                    new(producerFrontier, MidiMessage.ControlChange(0, 7, 100)),
+                    new(producerFrontier, MidiMessage.PitchWheelChange(0, 0)),
+                    new(producerFrontier, MidiMessage.ControlChange(0, 101, 0)),
+                    new(producerFrontier, MidiMessage.ControlChange(0, 100, 0)),
+                    new(producerFrontier, MidiMessage.ControlChange(0, 6, 2)),
+                    new(producerFrontier, MidiMessage.ControlChange(0, 101, 127)),
+                    new(producerFrontier, MidiMessage.ControlChange(0, 100, 127))
                 ])]);
         MidiRenderPlan replacement =
             MidiRenderPlanSplicer.SpliceHeldGateEndAtProducerFrontier(
                 causal,
                 continuation,
-                7_936);
-        using BassMidiRenderer renderer = CreateRenderer(causal, 256);
-        float* samples = stackalloc float[8_000 * 2];
-
-        Assert.Equal(7_936, renderer.PullFrames(samples, 7_936).FrameCount);
-        renderer.ReplaceFuturePlan(replacement, 7_936);
+                producerFrontier);
+        renderer.ReplaceFuturePlan(replacement, producerFrontier);
 
         Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
         Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
@@ -506,16 +510,16 @@ public sealed class BassMidiRendererIntegrationTests
             new(256, MidiMessage.NoteOn(0, 60, 90)),
             // The previous instance reaches its release NoteOff after the replacement starts.
             new(512, MidiMessage.NoteOff(0, 60, 0)),
-            new(768, MidiMessage.NoteOff(0, 60, 0))
+            new(1_280, MidiMessage.NoteOff(0, 60, 0))
         ];
-        MidiRenderPlan plan = new(SampleRate, 1_024, [new MidiPortRenderPlan(0, events)]);
+        MidiRenderPlan plan = new(SampleRate, 1_536, [new MidiPortRenderPlan(0, events)]);
         using BassMidiRenderer renderer = CreateRenderer(plan, 256);
-        float* samples = stackalloc float[769 * 2];
+        float* samples = stackalloc float[1_281 * 2];
 
         Assert.Equal(513, renderer.PullFrames(samples, 513).FrameCount);
         Assert.Equal(1u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
 
-        Assert.Equal(256, renderer.PullFrames(samples, 256).FrameCount);
+        Assert.Equal(768, renderer.PullFrames(samples, 768).FrameCount);
         Assert.Equal(0u, renderer.GetPressedKeyCountForDiagnostics(0, 0));
         Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
     }
@@ -703,7 +707,7 @@ public sealed class BassMidiRendererIntegrationTests
             plan,
             SoundFontPath,
             settings,
-            AudioMasterSettings.LimiterV1);
+            AudioMasterSettings.LimiterV2);
         float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
 
         fixed (float* destination = samples)
@@ -962,7 +966,7 @@ public sealed class BassMidiRendererIntegrationTests
             plan,
             SoundFontPath,
             new BassMidiRendererSettings(500, 256),
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             segmentProducerConcurrency: 4);
         float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
 
@@ -1010,7 +1014,7 @@ public sealed class BassMidiRendererIntegrationTests
             plan,
             SoundFontPath,
             settings,
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             segmentProducerConcurrency: segmentProducerConcurrency);
 
         float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
@@ -1048,7 +1052,7 @@ public sealed class BassMidiRendererIntegrationTests
             plan,
             SoundFontPath,
             settings,
-            AudioMasterSettings.LimiterV1);
+            AudioMasterSettings.LimiterV2);
     }
 
     private static MidiRenderPlan CreateSingleNotePlan(byte channel, byte velocity = 80)
@@ -1208,7 +1212,7 @@ public sealed class BassMidiRendererIntegrationTests
             plan,
             SoundFontPath,
             new BassMidiRendererSettings(maximumSampleVoices, 256),
-            AudioMasterSettings.LimiterV1,
+            AudioMasterSettings.LimiterV2,
             cacheStagingPath,
             cacheReadManifestPath: cacheReadManifestPath);
         fixed (float* destination = samples)
@@ -1259,7 +1263,7 @@ public sealed class BassMidiRendererIntegrationTests
             plan,
             soundFonts,
             new BassMidiRendererSettings(500, 256),
-            AudioMasterSettings.LimiterV1);
+            AudioMasterSettings.LimiterV2);
         float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
         fixed (float* destination = samples)
         {

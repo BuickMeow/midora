@@ -32,9 +32,7 @@ Tray mode
 ### 17.1.2 主窗口粗略布局
 ```text
 +--------------------------------------------------------------------------+
-| [A] Window Title Bar                                                     |
-+--------------------------------------------------------------------------+
-| [B] Main Menu                                                            |
+| [A+B] Window Title Bar + Main Menu                                       |
 +--------------------------------------------------------------------------+
 | [C] Global Command Bar and Transport                                     |
 +--------------------------------------------------------------------------+
@@ -50,11 +48,11 @@ Tray mode
 #### 17.1.3.1 [A] Window Title Bar
 显示：
 ```text
-Application name
-Derived project display name
-Project Modified state
-Current file path summary when useful
+Application mark + Main Menu + Derived project display name + Modified state
 ```
+标题栏左侧全部元素必须纵向居中；主菜单是标题栏内的显式交互区，菜单之外的空白仍承担窗口拖动与双击最大化。三个窗口控制按钮保持标题栏最右侧。
+标题栏不显示额外 `MIDORA` 文本，也不在 Main Menu 两侧显示竖向分割线；Application mark、Main Menu 与 Project display name 仅使用留白分组。
+Project display name 与 Main Menu 保持 8-pixel 外间距，并使用 12-pixel 字号。外框不得固定高度或通过 Padding 压缩文本可用高度；它按水平居中的文本 `8,2` Margin 与 1-pixel 边框自动测量，其中垂直留白为 2 pixels。外框及文本整体必须在标题栏内垂直居中；文本与圆角外框分别使用 `Brush.Text.Tertiary` 和 `Brush.Border` 低对比度颜色。
 Project Name 为空时：
 ```text
 Saved Project   -> current file name
@@ -62,6 +60,8 @@ Unsaved Project -> Untitled Project
 ```
 Project Name 与 `.midora` 文件名相互独立；修改 Project Name 不重命名磁盘文件。
 #### 17.1.3.2 [B] Main Menu
+Main Menu 不占独立纵向行，而是位于 36-pixel 自定义标题栏内、Application mark 与 Project display name 之间。一级菜单项必须纵向居中；Hover 与 Open 状态的背景四角均为圆角，不得保留只适用于旧独立菜单行的底边直角。
+
 固定一级菜单：
 ```text
 File
@@ -87,6 +87,8 @@ Audio Render
 Global context and task state
 ```
 Global Undo / Redo 永远操作 Project History。Global Save 永远执行 Save Project。
+
+左侧文件命令组在 Save 之前提供 Fluent `settings` 图标的 `Project Settings`；无 Project 时禁用。该图标使用保留原始 `20 × 20` 坐标系的固定设计画布一次缩放至 `16 × 16`，不得通过 Geometry 实际包围盒再次拉伸；偶数尺寸画布在 `32 × 32` 按钮内精确居中，Geometry 在画布内部围绕 `(10, 10)` 放大 10% 以补偿其相对其他命令图标偏小的视觉重量。Undo / Redo 之后以分割线区分并提供 Fluent `wrench_screwdriver` Regular 图标的 `Application Preferences`；它使用相同固定画布、尺寸和 10% 中心放大光学校正，播放或前台任务期间禁用。无 Project 时 Global Undo / Redo 必须禁用。
 #### 17.1.3.4 [D] Workspace Tabs
 中央编辑区域使用多 Workspace Tab。同一功能 Workspace 按类型唯一；对象 Workspace 按稳定 ID 唯一。
 Arrangement 固定为第一个 Tab、常驻、不可关闭、不可重排。它提供 Conductor 与 Logical / Pure MIDI Track 的唯一全局平铺顺序入口，并可切换显示独立的 Event Instruments 管理栏。
@@ -117,9 +119,6 @@ Logical Tracks, Segments, Notes and Logical Parameter data
 Manual object order
 Project object colors
 Project Metadata
-Playback Settings
-MIDI Export Settings
-Audio Render Settings
 Reset Defaults
 ```
 `Global Event Scope Defaults` 在初版只是持久化兼容所需的不可编辑空 marker，不属于用户可修改 Project 内容，也不提供独立设置入口。
@@ -133,12 +132,16 @@ Default lane heights
 List or card view preferences
 File picker recent directories by purpose
 Selected playback output device ID or System Default choice
+Playback Master Volume
+Playback Limiter
+Stop Cursor Behavior
 Render-Ahead Buffer
 Device Buffer Request
 Realtime Maximum Sample Voices per Unit Stream
 Audio Cache Root
 Maximum Reusable Audio Cache Bytes
 Ordered application SoundFont list: absolute local SF2/SFZ path + Enabled + optional target mapping
+Appearance Language (initial release only offers English)
 ```
 这些状态：
 - 不进入 Project Undo / Redo；
@@ -149,6 +152,8 @@ Ordered application SoundFont list: absolute local SF2/SFZ path + Enabled + opti
 设备实际采样率、实际 buffer、callback period、当前设备枚举结果和 IPC 运行状态属于 Derived / Runtime Data，不作为 Application Preference 保存。音频缓存的 reusable 当前占用、transient 当前/峰值、session 目录、retention 状态与 Warning 同样是运行时派生状态；只保存配置 root 和 reusable byte quota。
 
 SoundFont 列表对所有 Project 和从 MIDI 导入的新 Project 共用，不属于 Project 创建参数。列表支持新增 SF2/SFZ、删除、启用/禁用和排序；Enabled 只显示复选框，不重复显示 `Enabled` 文字。每项还提供完整 Target Bank MSB/LSB/Program 三元组：SF2 可关闭映射，SFZ 强制启用映射。顺序是正式 BASSMIDI 优先顺序。列表工具栏位于列表顶部；列表自身单个滚轮刻度使用小幅像素滚动，不得沿用下拉框或外层页面的大步进。Apply 的 Draft/持久化部分只保存路径与映射结构，不读取、复制或完整 hash 文件，不检查 SFZ 依赖；若 SoundFont、target、实时音频或音频缓存配置变化，持久化后必须显示 `Saving Settings` 模态任务并立即重建、加载和保留 Worker。加载失败必须明确报告且不得伪装成保存失败或静默恢复旧设置。列表不得进入 `.midora`、Project Modified 或 Undo/Redo。
+
+Application Preferences 必须分为 `Audio | SoundFonts | Appearance` 三个 Tab。Audio 包含 Playback、Realtime Audio 与 Audio Cache；SoundFonts 包含上述有序列表；Appearance 初版显示 Language 下拉框且唯一可选项为 `English`，为未来本地化预留稳定入口，但本轮不引入语言包或热切换。
 ### 17.2.3 Project Session UI State
 只存在于当前 Project 会话：
 ```text
@@ -205,7 +210,7 @@ Compiled result and playback buffer
 ```text
 Arrangement
 Project Settings
-Diagnostics
+Diagnostics（Tab 图标使用 Fluent `pulse`）
 Conductor Track
 ```
 对象 Workspace 按稳定 ID 唯一，例如：
@@ -328,7 +333,7 @@ Diagnostics 是独立 Workspace，不在主窗口底部复制紧凑列表。它�
 
 提交 Application Preferences 时，只有 SoundFont（包括 target）、实时音频或音频缓存配置实际变化才显示标题为 `Saving Settings` 的不可取消模态 Task overlay；其覆盖程序设置持久化、旧 Worker 释放、新 Worker 启动、Enabled SF2/SFZ 加载与设备探测的完整时段。纯 UI 或最近目录设置不得触发该 overlay。
 
-`New Project`、`Open Project`、命令行启动打开 Project 和 `Open MIDI as New Project` 在 Project 会话已经原子切换后，必须继续在原前台 Task overlay 内显示 `Preparing audio Worker` 并完成当前持久 Worker 的接管或预热尝试；存在 Enabled SoundFont 时不得等用户首次 Play/Preview 才启动 Worker。显式 `Reset Playback Engine` 使用同一预热路径。Project 会话切换成功后的 Worker 初始化失败不得回滚或误报 Project 创建/打开失败；overlay 正常结束 Project 工作流，随后以独立音频运行时错误明确报告，并允许后续音频 Preparing 重试。
+`New Project`、`Open Project`、命令行启动打开 Project 和 `Open MIDI as New Project` 在 Project 会话已经原子切换后，必须继续在原前台 Task overlay 内显示 `Preparing audio Worker` 并完成当前持久 Worker 的接管或预热尝试；该阶段文字只属于 overlay detail，不得复制到右下角 Status Bar 瞬时消息。存在 Enabled SoundFont 时不得等用户首次 Play/Preview 才启动 Worker。显式 `Reset Playback Engine` 使用同一预热路径。Project 会话切换成功后的 Worker 初始化失败不得回滚或误报 Project 创建/打开失败；overlay 正常结束 Project 工作流，随后以独立音频运行时错误明确报告，并允许后续音频 Preparing 重试。
 ---
 ## 17.6 外层对象导航
 
@@ -351,6 +356,10 @@ Audio Render
 ```
 
 播放位置文本的 Tick-in-beat 字段使用 Project TPQ 十进制位数作为最小零填充宽度；例如 TPQ `1920` 使用四位 Tick 字段。该字段宽度不得因播放中的 Tick 值跨越固定三位边界而左右抖动。
+
+Command Bar 右侧 `Compile`、`MIDI Export` 与 `Audio Export` 禁用时继续保持透明背景和边框，但文本固定使用显式 `#8A939F` 淡色，确保命令名称仍可辨识且不误示为可用。按钮内容自身和命令按钮专用模板的 Disabled 状态必须同时固定该颜色，不得被通用 Button 模板或前景色继承覆盖。
+
+上述三个命令在启用状态下固定使用显式 `#F1F3F5` 主文本色；禁用色不得泄漏到启用状态。
 ### 17.7.2 Global Notice Bar
 只用于持续、重要且影响全局工作流，或必须由用户关注才能继续的状态：
 ```text

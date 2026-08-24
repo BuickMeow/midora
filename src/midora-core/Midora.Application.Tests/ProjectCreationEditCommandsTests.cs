@@ -317,6 +317,114 @@ public sealed class ProjectCreationEditCommandsTests
     }
 
     [Fact]
+    public void MidiSegmentSplitPartitionsEveryDirectEventKindAndIsExactlyReversible()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = new(project)
+        {
+            Name = "Root",
+            RoutingMode = MidiChannelRootRoutingMode.Auto,
+            ChannelMode = MidiChannelMode.Melodic
+        };
+        PureMidiTrack track = new(project)
+        {
+            Name = "MIDI Track",
+            MidiChannelRootId = root.Id
+        };
+        MidiSegment original = new(project)
+        {
+            ProjectStartTick = 100,
+            LengthTicks = 800,
+            ContentOffsetTick = 20
+        };
+        DirectMidiNote crossing = new(project)
+        {
+            StartTick = 300,
+            LengthTicks = 500,
+            Key = 64,
+            NoteOnVelocity = 100,
+            NoteOffVelocity = 32,
+            NoteOnOrder = 1,
+            NoteOffOrder = 4
+        };
+        DirectMidiNote rightNote = new(project)
+        {
+            StartTick = 500,
+            LengthTicks = 120,
+            Key = 67,
+            NoteOnVelocity = 90,
+            NoteOffVelocity = 12,
+            NoteOnOrder = 5,
+            NoteOffOrder = 8
+        };
+        DirectMidiChannelEvent leftEvent = new(project)
+        {
+            Tick = 200,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 11,
+            Data2 = 72,
+            Order = 2
+        };
+        DirectMidiChannelEvent boundaryEvent = new(project)
+        {
+            Tick = 420,
+            Kind = DirectMidiChannelEventKind.ProgramChange,
+            Data1 = 10,
+            Order = 6
+        };
+        OpaqueMidiEvent opaque = new(project)
+        {
+            Tick = 700,
+            Kind = OpaqueMidiEventKind.SystemExclusive,
+            Payload = [0x7D, 0x01],
+            Order = 7
+        };
+        original.Notes.Add(crossing);
+        original.Notes.Add(rightNote);
+        original.ChannelEvents.Add(leftEvent);
+        original.ChannelEvents.Add(boundaryEvent);
+        original.OpaqueEvents.Add(opaque);
+        track.Segments.Add(original);
+        project.MidiChannelRoots.Add(root);
+        project.PureMidiTracks.Add(track);
+        project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, track.Id));
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = new(compilation, ProjectDocumentOrigin.Persisted);
+
+        document.Execute(ProjectDomainEditCommands.SplitMidiSegment(original.Id, 500));
+
+        Assert.Equal(2, track.Segments.Count);
+        MidiSegment left = track.Segments[0];
+        MidiSegment right = track.Segments[1];
+        Assert.Equal((100L, 400L, 20L),
+            (left.ProjectStartTick, left.LengthTicks, left.ContentOffsetTick));
+        Assert.Equal((500L, 400L, 420L),
+            (right.ProjectStartTick, right.LengthTicks, right.ContentOffsetTick));
+        Assert.Equal(original.Id, left.Id);
+        Assert.NotEqual(original.Id, right.Id);
+        DirectMidiNote splitCrossing = Assert.Single(left.Notes);
+        Assert.Equal(crossing.Id, splitCrossing.Id);
+        Assert.Equal(120, splitCrossing.LengthTicks);
+        Assert.Equal(rightNote.Id, Assert.Single(right.Notes).Id);
+        Assert.Equal(leftEvent.Id, Assert.Single(left.ChannelEvents).Id);
+        Assert.Equal(boundaryEvent.Id, Assert.Single(right.ChannelEvents).Id);
+        Assert.Equal(opaque.Id, Assert.Single(right.OpaqueEvents).Id);
+        Assert.Equal([0x7D, 0x01], right.OpaqueEvents[0].Payload);
+        MidiSegment rightAfterFirstApply = right;
+
+        document.Undo();
+
+        Assert.Same(original, Assert.Single(track.Segments));
+        Assert.Same(crossing, original.Notes[0]);
+        Assert.Same(opaque, Assert.Single(original.OpaqueEvents));
+
+        document.Redo();
+
+        Assert.Same(rightAfterFirstApply, track.Segments[1]);
+        Assert.Equal(opaque.Id, Assert.Single(track.Segments[1].OpaqueEvents).Id);
+    }
+
+    [Fact]
     public void ConductorCreationCommandsValidateConflictsAndRedoOriginalIds()
     {
         MidoraProject project = new(480);

@@ -139,7 +139,6 @@ public sealed class ProjectObjectProtobufV1Tests
         EventInstrumentUsage usage = Assert.Single(opened.Project.EventInstrumentUsages);
         Assert.Equal(usage.Id, track.EventInstrumentUsageId);
         Assert.Equal(instrument.Id, usage.EventInstrumentId);
-        Assert.Contains(track.Id, opened.Project.AudioRender.ExplicitLogicalTrackIds);
         Assert.Equal(
             EventInstrumentProtobufCodecV1.Serialize(source.EventInstruments[0]),
             EventInstrumentProtobufCodecV1.Serialize(instrument));
@@ -159,9 +158,6 @@ public sealed class ProjectObjectProtobufV1Tests
                 "metadata.json",
                 "conductor-track.json",
                 "settings/project-settings.json",
-                "settings/export-settings.json",
-                "settings/playback-settings.json",
-                "settings/audio-render-settings.json",
                 "settings/global-reset-defaults.json",
                 "settings/global-event-scope-defaults.json",
                 $"event-instrument-usages/eiu_{usage.Id}.pb",
@@ -719,8 +715,6 @@ public sealed class ProjectObjectProtobufV1Tests
         track.Segments.Add(segment);
         project.Tracks.Add(track);
         project.ArrangementTracks.Add(new(ArrangementTrackKind.LogicalTrack, track.Id));
-        project.AudioRender.TrackSelectionMode = ProjectTrackSelectionMode.ExplicitLogicalTrackIds;
-        project.AudioRender.ExplicitLogicalTrackIds.Add(track.Id);
         return project;
     }
 

@@ -331,7 +331,7 @@ Requirement trace：输入为 Project、来源状态、可逆 command、保存�
 
 首批具体命令采用同一约束：Prepare 完成引用、名称、确认、时间范围、重叠和可恢复索引校验；Apply/Undo 复用原对象与原稳定 ID。此处原有的 Track/Instrument/Folder/Damaged Placeholder、显式取消绑定、Library 组织和独立排序命令矩阵只记录当时实现；当前 Project 所有权、父子移动、级联删除和排序以 ADR-CORE-045 为准，Folder、Unbound、独立 Library/global child order 均不再是正式模型。Last Known Instrument Name 的旧维护规则同样只保留为历史证据，不得据此恢复 Unbound 工作流。
 
-Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复原记录对象；tick 0 Tempo/Time Signature、同 tick 唯一性及 SMF Tempo 可表示性在 Prepare 阶段阻止非法输入。Playback 与 Audio Render Settings 以整组快照原子替换；它们进入 Project History/Modified，但使用空 compilation change-set，canonical 保持不变，下一次播放/渲染任务从正式 Project Settings 冻结实际参数。
+Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复原记录对象；tick 0 Tempo/Time Signature、同 tick 唯一性及 SMF Tempo 可表示性在 Prepare 阶段阻止非法输入。本文原先记录的 Project Playback / Audio Render Settings History 命令已由 ADR-CORE-048 破坏性取代：Playback 属于 Application Preferences，Audio Render 参数只属于一次任务 Draft，二者均不再进入 Project History/Modified。
 
 第三批命令覆盖不分配 ID 的 Logical Note、Logical Parameter Lane/Point 与 Event Instrument Description/Color/Root Note。Note 编辑不把裁剪区当作数据合法边界；Point 正常编辑必须能从当前绑定定义验证值域和类型，断裂 Lane 只保留、删除或走显式重绑定修复。重绑定的 Clamp/Discard 由调用方每次明确选择，目标 Enum 还强制调用方确认整数兼容不代表语义兼容；转换后的点沿用原稳定 ID，Undo 恢复原对象图。Q-NUI-007 待确认期间，整数中点暂按现有 Mapping `Round` 一致的 AwayFromZero，目标 Enum 的保留点转为 Step；该局部选择不得扩散成持久化或编译器的新隐式默认。
 
@@ -503,9 +503,11 @@ MIDI Export 继续把 Project TPQ 原值写入 SMF Type 1 division，不缩放 t
 
 Requirement trace：输入为新建请求和 `settings/project-settings.json` 的 TPQ；正式输出为可被 Compiler、Playback、MIDI Export 与 Audio Render 共同消费的固定 Project 时间基准。边界是 1/32767 接受，0/32768/`Int32.MaxValue` 拒绝，默认 192；失败发生在写文件、SoundFont 验证或建立活动 Project 之前。TPQ 属于 Project 源数据并持久化；换算缓存属于运行时。明确非目标是创建后修改 TPQ、自动 tick 重映射、SMPTE division 或旧高 TPQ v1 迁移。
 
-## 39. ADR-CORE-037（已接受，Q-NUI-003）：Project MIDI Export Settings 开发期 v1 完整快照
+## 39. ADR-CORE-037（已被 ADR-CORE-048 取代，Q-NUI-003）：Project MIDI Export Settings 开发期 v1 完整快照
 
-决定：`ExportProjectSettings` 保存 Mode、Range、Track Selection 策略、Routing、Include Readme 与 Treat Warnings As Errors。默认固定为 Whole Project、Project Default Range、All Valid Logical and Pure MIDI Tracks、Compact、`includeReadme=true`、`treatWarningsAsErrors=false`。Manual Range 才保存成对且满足 `0 <= startTick < endTick` 的边界。Explicit 策略只表示任务开始时要求显式选择，不持久化具体 Track ID；该集合与输出/覆盖路径继续只属于一次性冻结任务。
+本节只保留开发历史，不再构成当前需求或兼容承诺。`ExportProjectSettings` 及其 package/schema/History 已由 ADR-CORE-048 删除；MIDI Export 参数只属于一次任务 Draft。
+
+原决定：`ExportProjectSettings` 保存 Mode、Range、Track Selection 策略、Routing、Include Readme 与 Treat Warnings As Errors。默认固定为 Whole Project、Project Default Range、All Valid Logical and Pure MIDI Tracks、Compact、`includeReadme=true`、`treatWarningsAsErrors=false`。Manual Range 才保存成对且满足 `0 <= startTick < endTick` 的边界。Explicit 策略只表示任务开始时要求显式选择，不持久化具体 Track ID；该集合与输出/覆盖路径继续只属于一次性冻结任务。
 
 开发期 `export-settings.json` v1 直接增加必填字段，不创建 v2 或 v1→v2 迁移器。缺失、hash 不符或字段损坏仍服从 ordinary settings 恢复规则：用上述当前默认值恢复，产生 Error 并标记 Modified。设置变更由单个 History 命令原子执行和撤销，因其只影响未来 MIDI Export 请求而使用空 compilation change set，不改变当前 canonical fingerprint。
 
@@ -602,3 +604,13 @@ Reusable PCM 仍必须隔离不同声音资源，但不得因此重新完整读�
 本决定破坏性替换原 Project 单 SF2、Embedded/External、完整 SHA-256、打开验证、提取和 New Project SoundFont 工作流；开发期不提供旧 `.midora` SoundFont 兼容读取、迁移或双写。MIDI Export Readme 不再暴露本机 SoundFont 列表。SoundFont 授权责任不因不嵌入 Project 而改变。
 
 Requirement trace：输入为 Application Preferences 的有序 Enabled SF2/SFZ 路径与 target、Project 会话激活/Reset 触发、实时音频与音频缓存设置、主文件元数据、canonical audio plan 与音频设备/渲染设置；正式输出为持久化设置、预热并保留的冻结 Font handle 配置、同配置实时/预览/离线声音和隔离的 sample-domain cache generation。边界是零 Enabled 禁止发声、主路径/BASS/SFZ 依赖失败保持已持久化设置或已提交 Project 但不假报 Loaded、音频配置变化只在 Stopped/Idle、Project 激活后立即预热、Worker 直接读源路径、Project/package/canonical 完全无 SoundFont。设置列表属于程序级持久化；Worker/Font handle、主文件元数据指纹和缓存属于本机运行时；明确非目标是内容完整性验证、SFZ 依赖解析/快照/监控、Project 可移植 SoundFont、每 Project/Port/Track 独立列表、运行中热切换或 DLS。
+
+## 50. ADR-CORE-048（已接受）：Playback 归属 Application Preferences，Export/Render 参数仅为任务 Draft
+
+决定：删除 Project Domain、Project History、`.midora` package/schema 与 Project Settings UI 中的 `PlaybackProjectSettings`、`ExportProjectSettings` 和 `AudioRenderProjectSettings`。Playback Master Volume、Limiter 与 Stop Cursor Behavior 迁移到 Application Preferences；它们和 Realtime Audio、Audio Cache 同属 `Audio` 页。Application Preferences 另设 `SoundFonts` 页和 `Appearance` 页；初版 Appearance 只持久化固定可选项 `Language = English`，不据此宣称已实现本地化。
+
+MIDI Export 与 Audio Render Dialog 每次打开都从规格固定值创建独立 Draft。MIDI Export 初值为 Whole Project、Project Default Range、全部有效 Track、Compact、包含 Readme、Warning 不视为 Error；Audio Render 初值为 Whole Mix、48,000 Hz、每 Unit Stream 500 voices、Project Default Range、全部 Track。Dialog 的 Cancel 丢弃 Draft，Start 只冻结本次任务；不提供 `Save as Project Defaults`，最近目录仍可作为纯本机 File Picker 偏好保存。开发期旧 `.midora` 中三个 settings 文件不迁移、不兼容读取、不双写。
+
+Playback Preferences 更新只允许在 Playback Stopped 时提交；Master/Limiter 立即应用到当前 Playback Controller，Stop Cursor Behavior 决定后续 Stop。只有 Realtime Audio、Audio Cache 或 SoundFont 列表变化才要求重建持久音频 Worker；Appearance、Playback 数值及纯 UI 偏好变化不得触发 Worker 重建。Audio Render 继续使用程序级 Playback Master Volume；Limiter 链仍服从第 15 章固定正式渲染语义，不由 Project 默认覆盖。
+
+Requirement trace：输入为 Application Preferences Draft、MIDI Export/Audio Render Dialog Draft 和当前 Project/canonical；正式输出为程序级 Playback/Appearance 偏好及一次性冻结的输出任务参数。边界包括 Playback 活动时拒绝设置提交、非法 dB/枚举/Language 拒绝、Dialog Cancel 零持久变更、旧开发格式明确拒绝。Playback/Appearance 属于用户本机设置；Export/Render 参数、路径、覆盖授权和进度属于任务运行时；三类数据均不属于 Project、Undo/Redo、Modified 或 canonical。明确非目标是 Project 级输出模板、最近参数自动记忆、多语言资源切换、旧 settings 迁移或隐藏兼容字段。

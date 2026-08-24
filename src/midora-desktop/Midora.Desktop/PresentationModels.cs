@@ -754,7 +754,7 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         {
             TimelineWorkspaceMode.Arrangement => 56,
             TimelineWorkspaceMode.Conductor => 27,
-            _ => 18
+            _ => 15
         };
         _firstLane = mode == TimelineWorkspaceMode.Segment ? 48 : 0;
         _tickSpan = 3072;
@@ -1094,7 +1094,12 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
         StartTick = 0;
         TickSpan = 3072;
         FirstLane = Mode == TimelineWorkspaceMode.Segment ? 48 : 0;
-        LaneHeight = Mode == TimelineWorkspaceMode.Arrangement ? 56 : 18;
+        LaneHeight = Mode switch
+        {
+            TimelineWorkspaceMode.Arrangement => 56,
+            TimelineWorkspaceMode.Conductor => 27,
+            _ => 15
+        };
     }
 
     public void CenterViewportOnTick(long tick)
@@ -2630,7 +2635,7 @@ public sealed class InstrumentWorkspaceViewModel(
     private long _timelineStartTick;
     private long _timelineTickSpan = 3072;
     private int _timelineFirstLane = 59;
-    private double _timelineLaneHeight = 18;
+    private double _timelineLaneHeight = 15;
     private bool _isLowerEditorVisible = true;
     private double _lowerEditorHeight = TimelineLowerEditorLayout.DefaultHeight;
     private int _activeLowerEditorIndex;
@@ -3496,8 +3501,6 @@ public sealed class SettingsWorkspaceViewModel()
     private string _projectName = string.Empty;
     private string _projectVersion = string.Empty;
     private string _author = string.Empty;
-    private string _playback = string.Empty;
-    private string _audioRender = string.Empty;
     private long _compiledNoteOnCount;
     private long _compiledMidiEventCount;
     private long _totalEditingTimeMilliseconds;
@@ -3505,13 +3508,7 @@ public sealed class SettingsWorkspaceViewModel()
     public string ProjectName { get => _projectName; private set => Set(ref _projectName, value); }
     public string ProjectVersion { get => _projectVersion; private set => Set(ref _projectVersion, value); }
     public string Author { get => _author; private set => Set(ref _author, value); }
-    public string Playback { get => _playback; private set => Set(ref _playback, value); }
-    public string AudioRender { get => _audioRender; private set => Set(ref _audioRender, value); }
     public ObservableCollection<PropertyField> GeneralFields { get; } = [];
-    public ObservableCollection<PropertyField> PlaybackFields { get; } = [];
-    public ObservableCollection<PropertyField> MidiExportFields { get; } = [];
-    public ObservableCollection<PropertyField> AudioRenderFields { get; } = [];
-    public ObservableCollection<TrackSelectionRow> AudioRenderTracks { get; } = [];
     public ObservableCollection<PropertyField> InitialStateFields { get; } = [];
     public ObservableCollection<PropertyField> ResetDefaultFields { get; } = [];
 
@@ -3520,8 +3517,6 @@ public sealed class SettingsWorkspaceViewModel()
         ProjectName = project.Metadata.ProjectName;
         ProjectVersion = project.Metadata.ProjectVersion;
         Author = project.Metadata.AuthorOrTeam;
-        Playback = $"Master {project.Playback.MasterVolumeDecibels:0.###} dB · Limiter {(project.Playback.LimiterEnabled ? "On" : "Off")}";
-        AudioRender = $"{project.AudioRender.Mode} · {project.AudioRender.SampleRate:N0} Hz · {project.AudioRender.MaximumSampleVoicesPerUnitStream:N0} voices / Unit";
         Replace(GeneralFields,
             new("settings.project.name", "PROJECT NAME", project.Metadata.ProjectName),
             new("settings.project.version", "PROJECT VERSION", project.Metadata.ProjectVersion),
@@ -3532,40 +3527,6 @@ public sealed class SettingsWorkspaceViewModel()
             new("settings.project.eventCount", "EVENTS", _compiledMidiEventCount.ToString("N0"), false),
             new("settings.project.totalWorkTime", "PROJECT WORK TIME", FormatDuration(_totalEditingTimeMilliseconds), false),
             new("settings.project.tpq", "TICKS PER QUARTER NOTE", project.TicksPerQuarterNote.ToString(), false));
-        Replace(PlaybackFields,
-            new("settings.playback.master", "MASTER VOLUME (DB)", project.Playback.MasterVolumeDecibels.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-            Choice("settings.playback.limiter", "LIMITER ENABLED", project.Playback.LimiterEnabled, ["False", "True"]),
-            Choice("settings.playback.stopCursor", "STOP CURSOR BEHAVIOR", project.Playback.StopCursorBehavior));
-        Replace(MidiExportFields,
-            Choice("settings.midi.mode", "MODE", project.Export.Mode),
-            Choice("settings.midi.rangeMode", "RANGE MODE", project.Export.RangeMode),
-            new("settings.midi.start", "MANUAL START TICK", project.Export.ManualStartTick?.ToString() ?? string.Empty),
-            new("settings.midi.end", "MANUAL END TICK", project.Export.ManualEndTick?.ToString() ?? string.Empty),
-            Choice("settings.midi.trackSelection", "TRACK SELECTION", project.Export.TrackSelectionMode),
-            Choice("settings.midi.routing", "ROUTING", project.Export.Routing),
-            Choice("settings.midi.readme", "INCLUDE README", project.Export.IncludeReadme, ["False", "True"]),
-            Choice("settings.midi.warnings", "WARNINGS AS ERRORS", project.Export.TreatWarningsAsErrors, ["False", "True"]));
-        Replace(AudioRenderFields,
-            Choice("settings.audio.mode", "MODE", project.AudioRender.Mode),
-            Choice("settings.audio.rangeMode", "RANGE MODE", project.AudioRender.RangeMode),
-            new("settings.audio.start", "MANUAL START TICK", project.AudioRender.ManualStartTick?.ToString() ?? string.Empty),
-            new("settings.audio.end", "MANUAL END TICK", project.AudioRender.ManualEndTick?.ToString() ?? string.Empty),
-            Choice("settings.audio.trackSelection", "TRACK SELECTION", project.AudioRender.TrackSelectionMode),
-            new("settings.audio.sampleRate", "SAMPLE RATE", project.AudioRender.SampleRate.ToString()),
-            new("settings.audio.voices", "MAXIMUM SAMPLE VOICES / UNIT", project.AudioRender.MaximumSampleVoicesPerUnitStream.ToString()));
-        AudioRenderTracks.Clear();
-        foreach (LogicalTrack track in project.LogicalTracksInArrangementOrder())
-        {
-            int arrangementIndex = project.ArrangementTracks.IndexOf(
-                new(ArrangementTrackKind.LogicalTrack, track.Id)) + 1;
-            AudioRenderTracks.Add(new(
-                track.Id,
-                string.IsNullOrWhiteSpace(track.Name)
-                    ? $"Logical Track {arrangementIndex}"
-                    : track.Name,
-                project.AudioRender.ExplicitLogicalTrackIds.Contains(track.Id)));
-        }
-
         Replace(InitialStateFields, StateFields("settings.initial", project.GlobalInitialState));
         Replace(ResetDefaultFields, StateFields("settings.reset", project.GlobalResetDefaults));
     }

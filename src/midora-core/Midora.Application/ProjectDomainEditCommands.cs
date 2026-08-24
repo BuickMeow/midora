@@ -162,7 +162,6 @@ public static partial class ProjectDomainEditCommands
             int usageIndex = usage is null ? -1 : project.EventInstrumentUsages.IndexOf(usage);
             bool removeUsage = usage is not null
                 && project.Tracks.Count(value => value.EventInstrumentUsageId == usage.Id) == 1;
-            bool wasExplicitlySelected = project.AudioRender.ExplicitLogicalTrackIds.Contains(trackId);
             return Prepared(
                 hasChanges: true,
                 EverythingChange(),
@@ -174,7 +173,6 @@ public static partial class ProjectDomainEditCommands
                     {
                         RemoveRequired(value.EventInstrumentUsages, usage!, "Event Instrument Usage");
                     }
-                    value.AudioRender.ExplicitLogicalTrackIds.Remove(trackId);
                 },
                 value =>
                 {
@@ -193,10 +191,6 @@ public static partial class ProjectDomainEditCommands
                         arrangementIndex,
                         reference,
                         "Arrangement Track reference");
-                    if (wasExplicitlySelected)
-                    {
-                        value.AudioRender.ExplicitLogicalTrackIds.Add(trackId);
-                    }
                 });
         });
 

@@ -16,7 +16,7 @@ public sealed class WorkspaceTabIconConverter : IValueConverter
             WorkspaceTabIconKind.LogicalTrack => "Fluent.MusicNote220Regular",
             WorkspaceTabIconKind.PureMidiTrack => "Fluent.Midi20Regular",
             WorkspaceTabIconKind.Conductor => "Fluent.Wrench20Regular",
-            WorkspaceTabIconKind.Diagnostics => "Fluent.ErrorCircle20Regular",
+            WorkspaceTabIconKind.Diagnostics => "Fluent.Pulse20Regular",
             WorkspaceTabIconKind.MappingFunction => "Fluent.Document20Regular",
             _ => null
         };

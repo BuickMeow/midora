@@ -1,9 +1,11 @@
 # Midora Project MIDI Export Settings Requirement Trace
 
 日期：2026-08-07
-状态：领域、History 与持久化 v1 已实施并通过 Core 全解测试
-决定依据：Q-NUI-003、ADR-CORE-037
-规格依据：《Midora SRS》14.7、14.15、14.16、16.7.3、19.5.7～19.5.8
+状态：**已由 ADR-CORE-048 破坏性取代；仅保留开发历史，不是当前需求**
+决定依据：原 Q-NUI-003、ADR-CORE-037；现行决定为 ADR-CORE-048
+现行规格依据：《Midora SRS》14.16、15.20、16.7、19.5、19.7、20.14
+
+当前实现已删除 `ExportProjectSettings`、Project History 命令、`settings/export-settings.json` 及对应 schema。MIDI Export Dialog 每次使用规格固定初值建立本次任务 Draft；Cancel 不持久化，Start 只冻结本次任务。开发期旧格式不迁移、不兼容读取、不双写。以下内容仅记录被取代方案。
 
 ## 输入与正式输出
 

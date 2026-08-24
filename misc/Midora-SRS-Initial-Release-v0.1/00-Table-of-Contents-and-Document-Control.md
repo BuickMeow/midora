@@ -52,6 +52,17 @@
 
 ## 2026-08-24 修订摘要
 
+- 三类 piano roll 左上角纵向缩放按钮必须在完整 `52 × 24` ruler header 内按 `3 + 22 + 2 + 22 + 3` 水平列和 `3 + 18 + 3` 垂直行直接定位，并根据实际宿主做向上的光学校正；按钮使用 Fluent 原生 `16 × 16` 设计画布，禁止再按 Geometry 实际边界二次拉伸。Global Command Bar 的 Project Settings 与 Application Preferences 都使用居中的 `20 → 16` 固定设计画布，并只在画布内部以中心点放大 10%；Application Preferences 使用与同排一致的 Fluent `wrench_screwdriver` Regular 图形。
+- Event Instrument 底部 Preview Keyboard 的纵向力度方向改为向下增大；切换到 `Configurations` 后焦点停留在分区导航而非 Name 输入框。无 Project 欢迎页增加 `Open MIDI as New Project`；Global Command Bar 增加 Project Settings 与 Application Preferences 图标入口，并明确无 Project 与播放期间的禁用状态。右侧 Compile / Export 命令显式区分启用主文本色与禁用淡色；音频 Worker 预热细节只显示在前台 Task overlay，不回显到右下角瞬时消息。三类 piano roll 左上角纵向缩放按钮统一按等距 Grid 居中。
+- Arrangement、Logical/MIDI Segment 与 SubVoice Timeline 工具栏改用 Fluent `pen`、`select_object`、`split_vertical`、`eraser` 及 `zoom_in/out` 图标；Tooltip 初次显示延迟统一为 250 ms。Arrangement、全部 piano roll 与全部 Event/Parameter Lane 的 Snap 按钮统一显示 `Enable/Disable Snap (A)`。piano roll 左上角不再显示 `BAR`，改为纵向缩放按钮，默认 Key 高度从 18 降为 15 个 100% DPI device pixels；Arrangement ruler header 也提供纵向缩放按钮。
+- Logical/MIDI Segment 与 SubVoice 的 Velocity、Event/Parameter Lane 时间 ruler 不再建立 Time Range；Conductor 固定行在 Arrangement Draw 模式下既不显示 Segment 创建预览，也不接受 Segment 创建手势起点。
+- 主窗口按焦点类型控制 Windows Input Method：实际文本编辑控件启用 IME，其他焦点目标禁用 IME，使无修饰键 `D` / `S` / `E` 不被中文输入法截获；该策略不得切换或持久修改用户的系统输入法状态。Arrangement 的 Split 图标使用 `16 × 16` 光学校正并保持按钮外部尺寸不变。
+- 主菜单从独立行迁入 36-pixel 自定义标题栏，固定顺序为 `Application mark + Main Menu + Project display name + modified marker`；标题栏不显示额外 `MIDORA` 文本或菜单两侧竖向分割线。29-pixel 一级菜单容器作为整体纵向居中，Hover/Open 背景使用四角圆角。SubVoice 切换到 Event Lane 后焦点必须进入事件编辑 Surface，不得停留在 Lane 下拉框。Arrangement Conductor 行允许单击改变 Edit Cursor，但仍不是 Segment host。
+- Global Command Bar 右侧 Compile/MIDI Export/Audio Export 在 Disabled 时使用显式 `#8A939F` 淡色文本；按钮内容自身与专用模板都固定该禁用色，不得被通用 Button Disabled 模板或前景色继承覆盖。标题栏 Project display name 与 Main Menu 保持 8-pixel 外间距，使用 12-pixel 字号；外框不固定高度且不设置 Padding，按居中文本 `8,2` Margin 与 1-pixel 边框自动测量，并分别使用 `Brush.Text.Tertiary` 与 `Brush.Border` 低对比度颜色。
+- Application Preferences 按 `Audio | SoundFonts | Appearance` 分页；原 Project Playback Settings 迁移为程序级 Playback Preferences，Audio 页统一承载 Playback、Realtime Audio 与 Audio Cache。Appearance 页初版只保存 `Language = English` 占位值。
+- 删除 Project MIDI Export Defaults 与 Audio Render Defaults：`.midora`、Domain、History 与损坏恢复均不再包含这些模型；MIDI Export / Audio Render Dialog 每次以规格固定初始值建立本次任务 Draft，用户修改不持久化为 Project 或程序默认。
+- Arrangement 空白行外区域不得成为 Segment 创建或选择手势起点；选中 Track 的 Hover 使用略亮红色。Diagnostics Workspace 使用 Fluent `pulse` 图标。Segment 下部事件/参数视图的 ruler 不建立 Time Range，切换 Parameter Lane 后必须把键盘焦点恢复到编辑 surface。
+- Pure MIDI Segment Split 使用独立的 MIDI Segment 命令，按 split tick 分割 Direct Notes、Channel Events 与 Opaque Events，并保持一次原子 Undo/Redo；不得把 MIDI Segment ID 交给 Logical Segment 命令。
 - 程序级 SoundFont 列表扩展为本机 SF2/SFZ：每项保存 Enabled、原绝对路径和可选目标 Bank MSB/LSB/Program；SFZ 目标必填，SF2 可保持原映射。Midora 不解析、快照或监控 SFZ sample/include 依赖，直接把原 SFZ 路径交给 BASSMIDI。
 - 目标映射使用 BASSMIDI `BASS_MIDI_FONTEX2`，三项必须整体出现且均为 0～127；配置、顺序与主文件元数据共同进入 sample-domain 缓存身份。SF2 继续使用 MMAP，SFZ 不使用只适用于 SF2 的 MMAP。
 - New Project、Open Project、命令行打开、Open MIDI as New Project 和 Reset Playback Engine 在存在 Enabled SoundFont 时，必须在对应前台任务结束前接管或预热持久 Worker；不得把首次 Worker 创建推迟到 Play/Preview。Project 已成功切换后的预热失败保留 Project，并作为独立音频运行时错误报告。

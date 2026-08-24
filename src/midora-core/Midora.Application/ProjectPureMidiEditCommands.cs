@@ -729,6 +729,44 @@ public static partial class ProjectDomainEditCommands
                 (_, segment) => RemoveRequired(track.Segments, segment, "MIDI Segment"));
         });
 
+    public static IProjectEditCommand SplitMidiSegment(
+        MidoraId segmentId,
+        long projectSplitTick) =>
+        Command("Split MIDI Segment", project =>
+        {
+            MidiSegmentLocation source = FindMidiSegment(project, segmentId);
+            if (projectSplitTick <= source.Segment.ProjectStartTick
+                || projectSplitTick >= source.Segment.ProjectRange.EndTick)
+            {
+                throw new ArgumentOutOfRangeException(nameof(projectSplitTick));
+            }
+
+            MidiSegmentSplitResult? result = null;
+            return Prepared(
+                hasChanges: true,
+                PureMidiTrackChange(source.Track.Id),
+                value =>
+                {
+                    result ??= SplitMidiSegmentContent(value, source.Segment, projectSplitTick);
+                    RequireContains(source.Track.Segments, source.Segment, "MIDI Segment");
+                    source.Track.Segments.RemoveAt(source.Track.Segments.IndexOf(source.Segment));
+                    source.Track.Segments.Insert(source.Index, result.Value.Left);
+                    source.Track.Segments.Insert(source.Index + 1, result.Value.Right);
+                },
+                _ =>
+                {
+                    if (result is null)
+                    {
+                        throw new InvalidOperationException(
+                            "A MIDI Segment split cannot be undone before its first Apply.");
+                    }
+
+                    RemoveRequired(source.Track.Segments, result.Value.Right, "right MIDI Segment");
+                    RemoveRequired(source.Track.Segments, result.Value.Left, "left MIDI Segment");
+                    InsertAt(source.Track.Segments, source.Index, source.Segment, "MIDI Segment");
+                });
+        });
+
     public static IProjectEditCommand CreateDirectMidiNote(
         MidoraId segmentId,
         long startTick,
@@ -821,6 +859,73 @@ public static partial class ProjectDomainEditCommands
             }
         }
         return result ?? throw new ArgumentOutOfRangeException(nameof(segmentId));
+    }
+
+    private static MidiSegmentSplitResult SplitMidiSegmentContent(
+        MidoraProject project,
+        MidiSegment source,
+        long projectSplitTick)
+    {
+        long leftLength = checked(projectSplitTick - source.ProjectStartTick);
+        long splitContentTick = checked(source.ContentOffsetTick + leftLength);
+        MidiSegment left = new(project, source.Id)
+        {
+            ProjectStartTick = source.ProjectStartTick,
+            LengthTicks = leftLength,
+            ContentOffsetTick = source.ContentOffsetTick
+        };
+        MidiSegment right = new(project)
+        {
+            ProjectStartTick = projectSplitTick,
+            LengthTicks = checked(source.LengthTicks - leftLength),
+            ContentOffsetTick = splitContentTick
+        };
+
+        foreach (DirectMidiNote note in source.Notes)
+        {
+            MidiSegment target = note.StartTick < splitContentTick ? left : right;
+            long length = note.StartTick < splitContentTick
+                ? Math.Min(note.LengthTicks, checked(splitContentTick - note.StartTick))
+                : note.LengthTicks;
+            target.Notes.Add(new DirectMidiNote(project, note.Id)
+            {
+                StartTick = note.StartTick,
+                LengthTicks = length,
+                Key = note.Key,
+                NoteOnVelocity = note.NoteOnVelocity,
+                NoteOffVelocity = note.NoteOffVelocity,
+                NoteOnOrder = note.NoteOnOrder,
+                NoteOffOrder = note.NoteOffOrder
+            });
+        }
+
+        foreach (DirectMidiChannelEvent value in source.ChannelEvents)
+        {
+            MidiSegment target = value.Tick < splitContentTick ? left : right;
+            target.ChannelEvents.Add(new DirectMidiChannelEvent(project, value.Id)
+            {
+                Tick = value.Tick,
+                Kind = value.Kind,
+                Data1 = value.Data1,
+                Data2 = value.Data2,
+                Order = value.Order
+            });
+        }
+
+        foreach (OpaqueMidiEvent value in source.OpaqueEvents)
+        {
+            MidiSegment target = value.Tick < splitContentTick ? left : right;
+            target.OpaqueEvents.Add(new OpaqueMidiEvent(project, value.Id)
+            {
+                Tick = value.Tick,
+                Kind = value.Kind,
+                MetaType = value.MetaType,
+                Payload = value.Payload.ToArray(),
+                Order = value.Order
+            });
+        }
+
+        return new(left, right);
     }
 
     private static void EnsureNoMidiSegmentOverlap(
@@ -994,4 +1099,8 @@ public static partial class ProjectDomainEditCommands
         PureMidiTrack Track,
         MidiSegment Segment,
         int Index);
+
+    private readonly record struct MidiSegmentSplitResult(
+        MidiSegment Left,
+        MidiSegment Right);
 }

@@ -1,4 +1,5 @@
 using System.Text;
+using Midora.Domain;
 
 namespace Midora.Application.Tests;
 
@@ -20,6 +21,8 @@ public sealed class ApplicationPreferencesStoreTests
         Assert.Equal(
             AudioCachePreferences.DefaultMaximumReusableBytes,
             result.Preferences.AudioCache.MaximumReusableBytes);
+        Assert.Equal(PlaybackPreferences.Default, result.Preferences.Playback);
+        Assert.Equal(AppearancePreferences.Default, result.Preferences.Appearance);
         Assert.Empty(result.Preferences.SoundFonts);
     }
 
@@ -39,6 +42,11 @@ public sealed class ApplicationPreferencesStoreTests
                 Path.Combine(directory.Path, "midi"),
                 Path.Combine(directory.Path, "audio")))
         {
+            Playback = new PlaybackPreferences(
+                -6.5,
+                false,
+                StopCursorBehavior.StayAtStoppedTick),
+            Appearance = new AppearancePreferences("English"),
             SoundFonts =
             [
                 new(
@@ -63,6 +71,8 @@ public sealed class ApplicationPreferencesStoreTests
         Assert.Null(loaded.Notice);
         Assert.Equal(preferences.RealtimeAudio, loaded.Preferences.RealtimeAudio);
         Assert.Equal(preferences.AudioCache, loaded.Preferences.AudioCache);
+        Assert.Equal(preferences.Playback, loaded.Preferences.Playback);
+        Assert.Equal(preferences.Appearance, loaded.Preferences.Appearance);
         Assert.Equal(preferences.RecentDirectories, loaded.Preferences.RecentDirectories);
         Assert.Equal(preferences.SoundFonts, loaded.Preferences.SoundFonts);
         Assert.Equal(

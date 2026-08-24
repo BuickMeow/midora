@@ -28,6 +28,15 @@ public sealed class DesktopSessionControllerTests
         };
         Assert.False(session.RequiresAudioWorkerRebuild(uiOnly));
 
+        ApplicationPreferences playbackOnly = baseline with
+        {
+            Playback = baseline.Playback with
+            {
+                MasterVolumeDecibels = baseline.Playback.MasterVolumeDecibels - 1
+            }
+        };
+        Assert.False(session.RequiresAudioWorkerRebuild(playbackOnly));
+
         int changedRenderAhead = baseline.RealtimeAudio.RenderAheadMilliseconds
             == RealtimeAudioPreferences.MaximumRenderAheadMilliseconds
                 ? RealtimeAudioPreferences.MinimumRenderAheadMilliseconds

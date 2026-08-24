@@ -83,6 +83,60 @@ public sealed class TimelineRenderingTests
         Assert.Equal(128, TimelineSurface.MaximumPianoLaneHeight);
     }
 
+    [Fact]
+    public void PianoRollVerticalZoomButtonsAdjustOneDevicePixelAndKeepTheViewportBounded()
+    {
+        RunOnSta(() =>
+        {
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                LaneHeight = 15,
+                FirstLane = 48,
+                TickSpan = 1_920
+            };
+            surface.Measure(new Size(800, 400));
+            surface.Arrange(new Rect(0, 0, 800, 400));
+
+            surface.AdjustVerticalZoom(zoomIn: true);
+
+            Assert.Equal(16, surface.LaneHeight);
+            Assert.InRange(surface.FirstLane, 0, surface.MaximumFirstLane);
+
+            surface.AdjustVerticalZoom(zoomIn: false);
+
+            Assert.Equal(15, surface.LaneHeight);
+            Assert.InRange(surface.FirstLane, 0, surface.MaximumFirstLane);
+        });
+    }
+
+    [Fact]
+    public void ArrangementVerticalZoomButtonsRemainWithinTheArrangementBounds()
+    {
+        RunOnSta(() =>
+        {
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.Arrangement,
+                LaneHeight = 56,
+                TickSpan = 1_920
+            };
+            surface.Measure(new Size(800, 400));
+            surface.Arrange(new Rect(0, 0, 800, 400));
+
+            surface.AdjustVerticalZoom(zoomIn: true);
+
+            Assert.InRange(surface.LaneHeight, 56.01, 112);
+
+            for (int index = 0; index < 100; index++)
+            {
+                surface.AdjustVerticalZoom(zoomIn: false);
+            }
+
+            Assert.Equal(28, surface.LaneHeight);
+        });
+    }
+
     [Theory]
     [InlineData(TimelineSurfaceMode.Velocity)]
     [InlineData(TimelineSurfaceMode.EventLanes)]

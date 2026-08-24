@@ -43,13 +43,6 @@ public sealed class ProjectCreationCoordinatorTests
         Assert.Empty(project.EventInstruments);
         Assert.Empty(project.Tracks);
         Assert.Empty(project.PureMidiTracks);
-        Assert.Equal(-0.1, project.Playback.MasterVolumeDecibels);
-        Assert.True(project.Playback.LimiterEnabled);
-        Assert.Equal(StopCursorBehavior.ReturnToPlaybackStart, project.Playback.StopCursorBehavior);
-        Assert.Equal(AudioRenderMode.WholeMix, project.AudioRender.Mode);
-        Assert.Equal(ProjectRangeMode.ProjectDefaultRange, project.AudioRender.RangeMode);
-        Assert.Equal(48_000, project.AudioRender.SampleRate);
-        Assert.Equal(500, project.AudioRender.MaximumSampleVoicesPerUnitStream);
         Assert.Empty(project.Conductor.KeySignatures);
         Assert.Empty(project.Conductor.Markers);
         Assert.Null(project.Conductor.EndMarker);

@@ -40,18 +40,9 @@ internal sealed class ProjectSettingsPathsJsonV1
     public required string Project { get; init; }
 
     [JsonPropertyOrder(1)]
-    public required string Export { get; init; }
-
-    [JsonPropertyOrder(2)]
-    public required string Playback { get; init; }
-
-    [JsonPropertyOrder(3)]
-    public required string AudioRender { get; init; }
-
-    [JsonPropertyOrder(4)]
     public required string GlobalResetDefaults { get; init; }
 
-    [JsonPropertyOrder(5)]
+    [JsonPropertyOrder(2)]
     public required string GlobalEventScopeDefaults { get; init; }
 }
 
@@ -111,103 +102,6 @@ internal sealed class ProjectSettingsJsonV1
 
     [JsonPropertyOrder(2)]
     public required MidiStateJsonV1 GlobalInitialState { get; init; }
-}
-
-[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-internal sealed class ExportSettingsJsonV1
-{
-    [JsonPropertyOrder(0)]
-    public required int SchemaVersion { get; init; }
-
-    [JsonPropertyOrder(1)]
-    public required string Mode { get; init; }
-
-    [JsonPropertyOrder(2)]
-    public required string RangeMode { get; init; }
-
-    [JsonPropertyOrder(3)]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public long? ManualStartTick { get; init; }
-
-    [JsonPropertyOrder(4)]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public long? ManualEndTick { get; init; }
-
-    [JsonPropertyOrder(5)]
-    public required string TrackSelectionMode { get; init; }
-
-    [JsonPropertyOrder(6)]
-    public required string Routing { get; init; }
-
-    [JsonPropertyOrder(7)]
-    public required bool IncludeReadme { get; init; }
-
-    [JsonPropertyOrder(8)]
-    public required bool TreatWarningsAsErrors { get; init; }
-}
-
-[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-internal sealed class PlaybackSettingsJsonV1
-{
-    [JsonPropertyOrder(0)]
-    public required int SchemaVersion { get; init; }
-
-    [JsonPropertyOrder(1)]
-    public required double MasterVolumeDecibels { get; init; }
-
-    [JsonPropertyOrder(2)]
-    public required bool LimiterEnabled { get; init; }
-
-    [JsonPropertyOrder(3)]
-    public required string StopCursorBehavior { get; init; }
-}
-
-[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-internal sealed class AudioRenderSettingsJsonV1
-{
-    [JsonPropertyOrder(0)]
-    public required int SchemaVersion { get; init; }
-
-    [JsonPropertyOrder(1)]
-    public required string Mode { get; init; }
-
-    [JsonPropertyOrder(2)]
-    public required string RangeMode { get; init; }
-
-    [JsonPropertyOrder(3)]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public long? ManualStartTick { get; init; }
-
-    [JsonPropertyOrder(4)]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public long? ManualEndTick { get; init; }
-
-    [JsonPropertyOrder(5)]
-    public required string TrackSelectionMode { get; init; }
-
-    [JsonPropertyOrder(6)]
-    public required StableIdJsonV1[] ExplicitLogicalTrackIds { get; init; }
-
-    [JsonPropertyOrder(7)]
-    public required string Container { get; init; }
-
-    [JsonPropertyOrder(8)]
-    public required string ChannelLayout { get; init; }
-
-    [JsonPropertyOrder(9)]
-    public required string SampleFormat { get; init; }
-
-    [JsonPropertyOrder(10)]
-    public required string Endianness { get; init; }
-
-    [JsonPropertyOrder(11)]
-    public required int SampleRate { get; init; }
-
-    [JsonPropertyOrder(12)]
-    public required int MaximumSampleVoicesPerUnitStream { get; init; }
-
-    [JsonPropertyOrder(13)]
-    public required string TrackFileNamePattern { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

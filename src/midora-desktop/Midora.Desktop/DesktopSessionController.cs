@@ -939,6 +939,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             Project,
             Persistence?.CurrentProjectPath,
             _applicationPreferences.GetEnabledSoundFontConfigurations(),
+            _applicationPreferences.Playback.MasterVolumeDecibels,
             options,
             cancellationToken);
     }
@@ -1163,6 +1164,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         _applicationPreferences = preferences;
         if (!rebuildAudioWorker)
         {
+            _context?.Playback?.ConfigurePlaybackPreferences(
+                new PlaybackMasterConfiguration(
+                    checked((float)preferences.Playback.MasterVolumeDecibels),
+                    preferences.Playback.LimiterEnabled),
+                preferences.Playback.StopCursorBehavior);
             Raise(nameof(SoundFontState));
             Raise(nameof(HasEnabledSoundFonts));
             return;
@@ -2527,7 +2533,13 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     // the already-loaded persistent Worker as a stale SoundFont host.
                     compilation.RefreshEffectiveSoundFontCacheIdentity();
                 }
-                playback = new(compilation, backend);
+                playback = new(
+                    compilation,
+                    backend,
+                    new PlaybackMasterConfiguration(
+                        checked((float)preferences.Playback.MasterVolumeDecibels),
+                        preferences.Playback.LimiterEnabled),
+                    preferences.Playback.StopCursorBehavior);
                 backend = null;
                 tasks = new(compilation, playback);
                 failure = null;
@@ -2564,7 +2576,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 new BassMidiRendererSettings(
                     audio.MaximumSampleVoicesPerUnitStream,
                     Midora.Audio.InitialReleaseAudioRuntimePolicy.WorkFrameCount),
-                new AudioMasterSettings(-0.1f, 1f, 50f),
+                new AudioMasterSettings(
+                    checked((float)preferences.Playback.MasterVolumeDecibels),
+                    1f,
+                    50f),
                 TimeSpan.FromSeconds(30)));
         }
     }

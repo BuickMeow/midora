@@ -14,7 +14,7 @@ SubVoice 属于 Event Instrument 定义内部
 SubVoice 不独立存在于 Event Instrument Library 中
 SubVoice 不属于 Logical Track
 SubVoice 不属于 Segment
-SubVoice 不属于 SoundFont Settings
+SubVoice 不属于程序级 SoundFont 列表配置
 SubVoice 不是 SF2 preset
 SubVoice 不是 MIDI Track
 SubVoice 接近于 Event Instrument 内部的一条原始 MIDI Channel 抽象

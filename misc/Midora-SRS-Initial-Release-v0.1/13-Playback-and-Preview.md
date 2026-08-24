@@ -119,7 +119,7 @@ Preparing 期间：
 禁止再次点击 Play 触发并发播放。
 允许点击 Stop 取消准备。
 禁止编辑 Project。
-禁止修改 SoundFont Settings。
+禁止修改程序级 SoundFont 列表。
 禁止修改播放设备。
 禁止 Undo / Redo。
 ```
@@ -165,7 +165,7 @@ Playing / Preparing / Buffering 期间禁止所有会改变 Project 内容或播
 创建 / 删除 / 重命名 / 复制 Event Instrument
 创建 / 删除 / 排序 Logical Track
 修改 Project Settings 中影响编译或播放的设置
-修改 SoundFont Settings
+修改程序级 SoundFont 列表
 修改播放设备
 Undo / Redo
 ```
@@ -700,15 +700,12 @@ Reset Playback Engine 应强制清空后端播放缓存，而不是仅发送 All
 Project 文件跨机器移动时，设备名 / 驱动 ID 容易失效。
 输出设备是本机环境状态，不是音乐内容。
 ```
-### 13.14.2 Project Playback Settings 与全局设置边界
-Project Playback Settings 包含：
+### 13.14.2 Application Playback Preferences
+Application Preferences 的 Audio 页包含：
 ```text
 Playback Master Volume
 Playback Limiter 开关
 Stop Cursor Behavior
-```
-软件全局 / 用户环境设置包含：
-```text
 输出设备选择
 音频后端偏好
 Render-Ahead Buffer
@@ -717,6 +714,7 @@ Realtime Maximum Sample Voices per Unit Stream
 Audio Cache Root
 Maximum Reusable Audio Cache Bytes
 ```
+以上均为当前 Windows 用户本机偏好，不进入 Project、`.midora`、Project Undo / Redo 或 canonical 编译结果。初版不提供 Project 级 Playback override。
 初版不提供 WASAPI Shared / Exclusive 模式选择；正式 BASSWASAPI 后端固定使用第 13.14.7 节策略。
 
 ### 13.14.3 设备枚举与选择
@@ -869,8 +867,8 @@ float64
 初版需要定义项目播放总音量 / 监听音量。
 规则：
 ```text
-Playback Master Volume 属于 Playback Settings。
-Playback Master Volume 保存进 Project。
+Playback Master Volume 属于 Application Playback Preferences。
+Playback Master Volume 不保存进 Project。
 Playback Master Volume 不改变 MIDI 编译结果。
 Playback Master Volume 不写入 MIDI 导出。
 Playback Master Volume 影响实时播放、预览和音频文件渲染的最终音频输出。
@@ -892,7 +890,7 @@ Midora 允许最多 256 个 Channel Unit 同时输出。
 播放实时输出链路默认启用 Limiter。
 音频文件渲染输出链路默认启用同一个或语义等价的 Limiter。
 ```
-实时播放的 Limiter 开关仍由 Playback Settings 管理。
+实时播放的 Limiter 开关由 Application Playback Preferences 管理。
 音频文件渲染使用同一算法 / 语义和正式生效的 Limiter 参数，但初版渲染链强制包含最终 Limiter：
 ```text
 不提供音频渲染专用 Limiter 开关。

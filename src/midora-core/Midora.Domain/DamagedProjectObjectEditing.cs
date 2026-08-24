@@ -3,8 +3,7 @@ namespace Midora.Domain;
 public sealed record DamagedLogicalTrackSnapshot(
     LogicalTrack Track,
     int ProjectIndex,
-    int ArrangementIndex,
-    bool WasExplicitlySelectedForAudioRender);
+    int ArrangementIndex);
 
 public sealed record DamagedPureMidiTrackSnapshot(
     PureMidiTrack Track,
@@ -13,8 +12,7 @@ public sealed record DamagedPureMidiTrackSnapshot(
 
 public sealed record DamagedChildPlaceholderSnapshot(
     DamagedProjectObject Placeholder,
-    int ArrangementIndex,
-    bool WasExplicitlySelectedForAudioRender = false);
+    int ArrangementIndex);
 
 public sealed record DamagedUsageSnapshot(EventInstrumentUsage Usage, int ProjectIndex);
 
@@ -32,8 +30,7 @@ public sealed record DamagedMidiChannelRootDeletion(
 
 public sealed record DamagedLogicalTrackDeletion(
     DamagedProjectObject Placeholder,
-    int ArrangementIndex,
-    bool WasExplicitlySelectedForAudioRender);
+    int ArrangementIndex);
 
 public sealed record DamagedPureMidiTrackDeletion(
     DamagedProjectObject Placeholder,
@@ -156,8 +153,7 @@ public static class DamagedProjectObjectEditing
         int arrangementIndex = project.ArrangementTracks.IndexOf(reference);
         if (arrangementIndex >= 0) project.ArrangementTracks.RemoveAt(arrangementIndex);
         _ = project.DamagedLogicalTracks.Remove(placeholder);
-        bool selected = project.AudioRender.ExplicitLogicalTrackIds.Remove(placeholderId);
-        return new(placeholder, arrangementIndex, selected);
+        return new(placeholder, arrangementIndex);
     }
 
     public static void UndoDeleteLogicalTrack(
@@ -174,8 +170,6 @@ public static class DamagedProjectObjectEditing
                 Math.Clamp(deletion.ArrangementIndex, 0, project.ArrangementTracks.Count),
                 new(ArrangementTrackKind.LogicalTrack, deletion.Placeholder.Id));
         }
-        if (deletion.WasExplicitlySelectedForAudioRender)
-            project.AudioRender.ExplicitLogicalTrackIds.Add(deletion.Placeholder.Id);
     }
 
     public static DamagedPureMidiTrackDeletion DeletePureMidiTrack(
@@ -214,8 +208,7 @@ public static class DamagedProjectObjectEditing
         new(
             track,
             project.Tracks.IndexOf(track),
-            project.ArrangementTracks.IndexOf(new(ArrangementTrackKind.LogicalTrack, track.Id)),
-            project.AudioRender.ExplicitLogicalTrackIds.Contains(track.Id));
+            project.ArrangementTracks.IndexOf(new(ArrangementTrackKind.LogicalTrack, track.Id)));
 
     private static DamagedPureMidiTrackSnapshot Snapshot(MidoraProject project, PureMidiTrack track) =>
         new(
@@ -229,9 +222,7 @@ public static class DamagedProjectObjectEditing
         ArrangementTrackKind kind) =>
         new(
             placeholder,
-            project.ArrangementTracks.IndexOf(new(kind, placeholder.Id)),
-            kind == ArrangementTrackKind.LogicalTrack
-                && project.AudioRender.ExplicitLogicalTrackIds.Contains(placeholder.Id));
+            project.ArrangementTracks.IndexOf(new(kind, placeholder.Id)));
 
     private static void RemoveLogicalTracks(
         MidoraProject project,
@@ -243,14 +234,12 @@ public static class DamagedProjectObjectEditing
             _ = project.Tracks.Remove(snapshot.Track);
             project.ArrangementTracks.Remove(
                 new(ArrangementTrackKind.LogicalTrack, snapshot.Track.Id));
-            project.AudioRender.ExplicitLogicalTrackIds.Remove(snapshot.Track.Id);
         }
         foreach (DamagedChildPlaceholderSnapshot snapshot in damagedTracks)
         {
             _ = project.DamagedLogicalTracks.Remove(snapshot.Placeholder);
             project.ArrangementTracks.Remove(
                 new(ArrangementTrackKind.LogicalTrack, snapshot.Placeholder.Id));
-            project.AudioRender.ExplicitLogicalTrackIds.Remove(snapshot.Placeholder.Id);
         }
     }
 
@@ -267,8 +256,6 @@ public static class DamagedProjectObjectEditing
                 project,
                 snapshot.ArrangementIndex,
                 new(ArrangementTrackKind.LogicalTrack, snapshot.Track.Id));
-            if (snapshot.WasExplicitlySelectedForAudioRender)
-                project.AudioRender.ExplicitLogicalTrackIds.Add(snapshot.Track.Id);
         }
         foreach (DamagedChildPlaceholderSnapshot snapshot in damagedTracks)
         {
@@ -278,8 +265,6 @@ public static class DamagedProjectObjectEditing
                 project,
                 snapshot.ArrangementIndex,
                 new(ArrangementTrackKind.LogicalTrack, snapshot.Placeholder.Id));
-            if (snapshot.WasExplicitlySelectedForAudioRender)
-                project.AudioRender.ExplicitLogicalTrackIds.Add(snapshot.Placeholder.Id);
         }
     }
 

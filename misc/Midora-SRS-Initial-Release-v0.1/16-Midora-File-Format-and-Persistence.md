@@ -70,9 +70,6 @@ Undo / Redo 栈
 ├─ conductor-track.json
 ├─ settings/
 │  ├─ project-settings.json
-│  ├─ export-settings.json
-│  ├─ playback-settings.json
-│  ├─ audio-render-settings.json
 │  ├─ global-reset-defaults.json
 │  └─ global-event-scope-defaults.json
 ├─ event-instruments/
@@ -98,9 +95,6 @@ project.json
 metadata.json
 conductor-track.json
 settings/project-settings.json
-settings/export-settings.json
-settings/playback-settings.json
-settings/audio-render-settings.json
 settings/global-reset-defaults.json
 settings/global-event-scope-defaults.json
 ```
@@ -333,12 +327,12 @@ Logical Track ID 到文件路径映射
 Logical Track 名称快照
 MIDI Channel Root 索引、文件路径与名称快照；Root 顺序由最早成员 Track 的全局位置派生
 Pure MIDI Track 集合索引、文件路径与名称快照
-settings 文件引用，包括 audio-render-settings.json
+settings 文件引用
 metadata 文件引用
 conductor-track 文件引用
 ```
 `project.json` 是决定哪些 Event Instrument Definition / Usage / Logical Track / MIDI Channel Root / Pure MIDI Track 属于当前 Project，以及 Definition order 与 global Arrangement Track order 的唯一顶层权威索引。Logical Track protobuf 的 Usage ID、Usage protobuf 的 Definition ID 与 Pure MIDI Track protobuf 的 Root ID 必须与索引完全一致；Definition、Usage 与 Root 文件不得保存第二套 child order。
-`project.json` 还必须明确当前 Project 顶层包含 `Audio Render Settings`，并通过固定结构约定或显式引用关联 `settings/audio-render-settings.json`。具体字段形式由最终 JSON Schema 定义。
+`project.json` 不得保存 Playback、MIDI Export defaults 或 Audio Render defaults 的引用；这些对象不属于当前 Project 模型。
 ### 16.5.2 Project ID
 初版不引入独立稳定 Project ID。
 因此初版不定义：
@@ -452,133 +446,30 @@ totalEditingTimeMilliseconds
 ---
 ## 16.7 settings 文件
 ### 16.7.1 拆分
-初版 settings 拆分为：
+当前开发格式只包含：
 ```text
 settings/project-settings.json
-settings/export-settings.json
-settings/playback-settings.json
-settings/audio-render-settings.json
 settings/global-reset-defaults.json
 settings/global-event-scope-defaults.json
 ```
-所有 settings 文件都必须在有效包结构中存在。
-除本章对 Audio Render Settings 的严格例外外，既有 settings 文件缺失或损坏时：
+以上文件都必须在有效包结构中存在。既有文件缺失或损坏时：
 ```text
 Project 可打开。
-该 settings 回退当前软件版本定义的默认值。
+对应设置回退当前软件版本定义的默认值。
 产生错误诊断。
 Project 标记为已修改。
 保存时写出完整 settings 文件。
 ```
-`settings/audio-render-settings.json` 的当前格式缺失 / 损坏规则见 11.5：如果当前 `fileFormatVersion` 明确要求该文件存在，则不得一律静默回退；只有明确旧格式迁移路径才允许补默认值。
+当前格式不包含 `settings/export-settings.json`、`settings/playback-settings.json` 或 `settings/audio-render-settings.json`。开发期旧包不要求兼容读取；不得通过隐藏兼容字段重新建立这些 Project 模型。
+
 ### 16.7.2 project-settings.json
-保存项目级系统设置，例如：
-```text
-TPQ
-项目创建后不可修改的项目级时间精度
-其他非 metadata、非 playback、非 export 的项目设置
-```
-TPQ 必须保存于 `settings/project-settings.json`。
-TPQ 是 Project 语义，不是文件格式语义。
-开发期 v1 的 `ticksPerQuarterNote` 只接受整数 `1..32767`；打开超出范围的值按 settings 结构损坏处理，不迁移、不自动缩放 tick。
-开发期 v1 还要求 `conductor-track.json` 中每个 Time Signature 满足 `4 × ticksPerQuarterNote % denominator == 0`。这是 project settings 与 Conductor 之间的跨文件一致性约束；读取和保存均必须校验，不创建新 schemaVersion、fileFormatVersion 或迁移器。
-### 16.7.3 export-settings.json
-保存 Project 默认导出设置。
-开发期当前格式固定保存：导出模式、范围策略、仅在 Manual Range 时存在的 start/end tick、Track 选择策略、Routing、Readme 开关与 Warning-as-error 开关。新 Project 默认 Whole Project / Project Default Range / All Valid Logical and Pure MIDI Tracks / Compact / Include Readme / 不把 Warning 当 Error。显式 Track 具体稳定 ID 不进入该 settings 文件。
-一次性导出参数不保存进 Project，除非用户明确将其保存为默认 Export Settings。
-不保存：
-```text
-最近一次导出路径
-最近一次导出范围
-最近一次导出 Track 选择
-最近导出产物
-```
-### 16.7.4 playback-settings.json
-保存 Project 播放设置，例如：
-```text
-Playback Master Volume
-Stop Cursor Behavior
-其他属于 Project Playback Settings 的设置
-```
-不保存：
-```text
-播放设备选择
-Render-Ahead Buffer
-Device Buffer Request
-Realtime Maximum Sample Voices per Unit Stream
-Audio Cache Root
-Maximum Reusable Audio Cache Bytes
-设备实际采样率 / buffer / callback period
-Mute / Solo
-播放光标位置
-最近播放位置
-播放进度
-```
-播放设备选择属于本机环境或运行期设置，不属于 Project 文件语义。
-### 16.7.5 audio-render-settings.json
-保存 Project 顶层 `Audio Render Settings`。
-初版至少保存：
-```text
-默认渲染模式：Whole Mix / Per Logical Track
-默认范围模式：Project Default Range / Manual Range
-可选默认 startTick / endTick
-默认 Track 选择策略：All Valid Logical and Pure MIDI Tracks / Explicit Track IDs
-显式 Logical Track / Pure MIDI Track 稳定 ID 集合
-有限命名偏好
-默认文件采样率：8,000–192,000 Hz 整数，默认 48,000 Hz
-默认 Offline Maximum Sample Voices per Unit Stream：1–16,777,216 整数，默认 500
-固定格式：RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float / Little-endian
-```
-不保存：
-```text
-最近整曲输出路径
-最近分轨输出目录
-本次一次性范围
-本次一次性 Track 选择
-本次覆盖决定
-渲染进度、耗时或剩余时间
-渲染任务历史
-WAV 产物
-音频样本缓存
-```
-该文件必须纳入 manifest：
-```text
-path
-settings-json kind
-schemaVersion
-SHA-256
-```
-严格规则：
-```text
-固定格式字段属于当前 schema 必需且用户不可编辑的版本化字段。
-默认文件采样率属于用户可编辑 Project 默认值，但必须是 8,000–192,000 Hz 整数。
-默认 Offline Maximum Sample Voices per Unit Stream 属于用户可编辑 Project 默认值，但必须是 1–16,777,216 整数。
-未知枚举、非法范围、无效字段组合或不支持的固定格式不得静默接受。
-当前 schema 要求文件存在而文件缺失 / hash 错误 / schema 无效时，按结构性设置损坏或不兼容规则处理。
-只有明确旧 fileFormatVersion 的迁移路径才允许生成默认设置。
-```
-旧格式迁移默认生成：
-```text
-Mode = Whole Mix
-Range = Project Default Range
-Track Selection = All Valid Logical and Pure MIDI Tracks
-Format = RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float
-Sample Rate = 48,000 Hz
-Offline Maximum Sample Voices per Unit Stream = 500
-```
-保存时只写出已规范化的合法设置；已删除 Track 的无效 ID 不得原样写回。
-### 16.7.6 global-reset-defaults.json
-保存 Project 级 Reset 默认值，例如：
-```text
-CC Reset 默认值
-Pitch Bend Reset 默认值
-RPN / NRPN Reset 默认值
-Program / Bank 相关 Reset 策略默认值
-其他 Project 级 Reset Defaults
-```
-### 16.7.7 global-event-scope-defaults.json
-初版保存不可编辑的版本化空 marker，只包含严格 schema 所要求的版本字段。该文件不得被解释为存在未定义的用户可配置事件作用域；Note 与 Channel-Wide 状态的作用域由各正式事件语义固定。未来如新增配置字段，必须发布新的 schema 版本并定义迁移规则。
----
+保存 TPQ 与其他正式 Project 级、非 metadata、非 Reset 的系统设置。TPQ 是 Project 语义，不是文件格式语义；开发期 v1 只接受整数 `1..32767`。每个 Time Signature 仍必须满足 `4 × ticksPerQuarterNote % denominator == 0`，读取和保存均须校验。
+
+### 16.7.3 global-reset-defaults.json
+保存 Project 级 CC、Pitch Bend、RPN / NRPN、Program / Bank 等正式 Reset 默认值。
+
+### 16.7.4 global-event-scope-defaults.json
+保存不可编辑的版本化空 marker，只包含严格 schema 所需版本字段。未来增加字段必须发布新 schema 并定义迁移。
 ## 16.8 conductor-track.json
 ### 16.8.1 内容
 `conductor-track.json` 保存完整 Conductor Track 内容，包括：
@@ -1342,7 +1233,7 @@ Track 保留 Usage ID；Usage 保留 Definition ID。
 event-instruments/ei_x.pb
 logical-tracks/lt_y.pb
 project.json
-settings/playback-settings.json
+settings/project-settings.json
 ```
 ### 16.20.5 保存诊断
 保存前如果因以下原因禁止保存，应收集并显示保存诊断：
@@ -1575,7 +1466,7 @@ manifest lastSavedWithSoftwareVersion 写为当前软件版本。
 提示用户该项目已在内存中迁移，保存后会变成当前格式。
 Project 视为已修改 / 已迁移未保存状态。
 ```
-对于首次引入 Audio Render Settings 的旧格式迁移，允许创建明确默认值；但当前格式中必需的 `settings/audio-render-settings.json` 缺失不得伪装成普通旧格式迁移。迁移结果必须符合当前严格 schema。
+当前开发格式已破坏性删除 Playback、Export defaults 与 Audio Render defaults；此前未发布开发包不提供兼容读取或迁移。
 
 Pure MIDI Track / SMF Import 引入时仍处于未发布开发期，采用破坏性文件格式替换：此前开发期 `.midora` 格式不提供自动迁移、兼容读取或兼容编译路径。实现必须提升对应 `fileFormatVersion`、JSON schema 与 protobuf descriptor 基线，并明确拒绝旧开发格式；不得根据缺失 Root/Track 字段猜测默认模型。该开发期例外不改变未来已发布格式必须走显式迁移评审的原则。
 ### 16.24.2 保存旧版本项目

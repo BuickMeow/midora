@@ -88,6 +88,7 @@
 | INV-077 | 用户编辑造成 exact collision 时：Logical/Direct/Template Note 的同 start tick + key 后来对象静默丢弃；Logical Parameter、Direct MIDI Channel Event 与 Template MIDI Event 的同 tick + 同正式事件类型由后来编辑对象覆盖原对象。未触及该 exact key 的导入重复 Direct MIDI 数据必须原样保留；碰撞归并属于编辑命令事务并可 Undo，不得由打开、浏览或编译静默改写源数据。 |
 | INV-078 | 一次只允许一个可见前台任务表面；主窗口不保留历史任务列表。任务进度只有在有可靠 current/total 时才使用 determinate；MIDI 导入第一遍以源字节、第二遍以 processed/total events 计量。取消仅在任务仍处于安全可取消阶段时可用。导入完整兼容报告必须保留到 Dismiss/替换。该运行时状态不持久化、不进入 Undo/Redo。 |
 | INV-079 | 所有实时/预览/离线音频任务使用任务开始时冻结的同一程序级 Enabled SF2/SFZ 有序配置；Worker 直接打开原绝对路径（仅 SF2 使用 `BASS_MIDI_FONT_MMAP`），并用 `BASS_MIDI_FONTEX2` 对每个 Unit 一次性设置完整 Font handle 与目标映射。列表、target 或其他音频配置变化只允许在 Stopped/Idle 提交，并在持久化后立即销毁旧 Worker、失效相关 sample-domain 缓存、重建并预热新 Worker；新建、打开、命令行打开、MIDI 导入形成 Project 会话和 Reset Playback Engine 也必须在其前台任务结束前接管或预热 Worker，不得推迟到首次 Play/Preview。成功后的 Worker 必须保留供后续音频操作复用；Project 已提交后的预热失败保留 Project 并作为独立音频运行时错误报告。缓存身份只可基于有序配置与主文件元数据的小型描述符；SFZ 依赖不进入身份，不得重新读取完整 SoundFont 或把该指纹描述为内容校验。 |
+| INV-080 | Playback Master Volume、Limiter 与 Stop Cursor Behavior 是 Application Preferences；MIDI Export 与 Audio Render 的模式、范围、选择及输出参数只属于当前任务 Draft。`.midora` 与 Project Domain 不得保存 Playback、Export defaults 或 Audio Render defaults；当前开发格式不包含对应三个 settings 文件，导出/渲染对话框每次使用规格固定初始值。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|
@@ -103,7 +104,7 @@
 | Release、Loop、Envelope、Overlap | 第 10 章 |
 | Logical Track、Logical Segment、裁剪与 Logical Note | 第 11 章 |
 | CompileContext、资源分配、Compiled Result | 第 12 章 |
-| 播放、预览、held Preview 因果 Gate、BASSMIDI、输出设备、采样率、buffer、Limiter | 第 9、12、13、18、20 章 |
+| 播放、预览、held Preview 因果 Gate、BASSMIDI、程序级 Playback Preferences、输出设备、采样率、buffer、Limiter | 第 9、12、13、17、20 章 |
 | MIDI 文件结构与导出 | 第 14、23 章 |
 | 普通 RIFF/WAVE、自定义采样率与离线渲染 | 第 15 章 |
 | `.midora` package、schema、损坏与事务 | 第 16 章 |

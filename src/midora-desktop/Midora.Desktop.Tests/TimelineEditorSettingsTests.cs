@@ -99,6 +99,9 @@ public sealed class TimelineEditorSettingsTests
         Assert.False(segmentWorkspace.GridVisible);
         Assert.NotEqual(segmentWorkspace.OperationStepTicks, arrangementWorkspace.OperationStepTicks);
         Assert.True(arrangementWorkspace.GridVisible);
+        Assert.Equal(56, arrangementWorkspace.LaneHeight);
+        Assert.Equal(15, segmentWorkspace.LaneHeight);
+        Assert.Equal(15, instrumentWorkspace.TimelineLaneHeight);
         Assert.True(arrangement.DisplayGridUsesBars);
         Assert.Equal("Bar", arrangement.DisplaySubdivisionText);
         Assert.Equal("1/8", arrangement.OperationSubdivisionText);

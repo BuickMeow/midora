@@ -14,29 +14,20 @@ public partial class MidiExportDialog : Window
     private readonly List<(TrackSelectionRow Row, bool IsPureMidi)> _allTrackRows = [];
 
     public MidiExportDialog(
-        ExportProjectSettings settings,
         MidoraProject project,
         string? initialDirectory)
     {
-        ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(project);
         InitializeComponent();
         ModeBox.ItemsSource = Enum.GetValues<MidiExportMode>();
         RoutingBox.ItemsSource = Enum.GetValues<MidiExportRoutingStrategy>();
-        ModeBox.SelectedItem = settings.Mode switch
-        {
-            ProjectMidiExportMode.PerLogicalTrack => MidiExportMode.PerLogicalTrack,
-            ProjectMidiExportMode.PerPort => MidiExportMode.PerPort,
-            _ => MidiExportMode.WholeProject
-        };
-        RoutingBox.SelectedItem = settings.Routing == ProjectMidiExportRoutingStrategy.Compact
-            ? MidiExportRoutingStrategy.Compact
-            : MidiExportRoutingStrategy.Preserve;
-        StartTickBox.Text = (settings.ManualStartTick ?? 0).ToString(CultureInfo.InvariantCulture);
-        EndTickBox.Text = settings.ManualEndTick?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-        ReadmeCheck.IsChecked = settings.IncludeReadme;
-        WarningsCheck.IsChecked = settings.TreatWarningsAsErrors;
-        SelectedTracksCheck.IsChecked = settings.TrackSelectionMode == ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart;
+        ModeBox.SelectedItem = MidiExportMode.WholeProject;
+        RoutingBox.SelectedItem = MidiExportRoutingStrategy.Compact;
+        StartTickBox.Text = "0";
+        EndTickBox.Text = string.Empty;
+        ReadmeCheck.IsChecked = true;
+        WarningsCheck.IsChecked = false;
+        SelectedTracksCheck.IsChecked = false;
         LogicalTrack[] logicalTracks = project.LogicalTracksInArrangementOrder().ToArray();
         for (int index = 0; index < logicalTracks.Length; index++)
         {

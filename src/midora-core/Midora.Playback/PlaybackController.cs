@@ -155,12 +155,24 @@ public sealed class PlaybackController : IDisposable
     private bool _bufferingRecoveryRequested;
     private long _bufferingRecoveryStartFrame = -1;
     private long _bufferingRecoveryEndFrame = -1;
+    private PlaybackMasterConfiguration _masterConfiguration;
+    private StopCursorBehavior _stopCursorBehavior;
     private bool _disposed;
 
-    public PlaybackController(ProjectCompilationSession session, IRealtimePlaybackBackend backend)
+    public PlaybackController(
+        ProjectCompilationSession session,
+        IRealtimePlaybackBackend backend,
+        PlaybackMasterConfiguration? masterConfiguration = null,
+        StopCursorBehavior stopCursorBehavior = StopCursorBehavior.ReturnToPlaybackStart)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _backend = backend ?? throw new ArgumentNullException(nameof(backend));
+        _masterConfiguration = masterConfiguration ?? new(-0.1f, true);
+        if (!Enum.IsDefined(stopCursorBehavior))
+        {
+            throw new ArgumentOutOfRangeException(nameof(stopCursorBehavior));
+        }
+        _stopCursorBehavior = stopCursorBehavior;
         if (backend is IRealtimePlaybackCacheBackend cacheBackend)
         {
             cacheBackend.SetAudioCacheStore(session);
@@ -169,6 +181,29 @@ public sealed class PlaybackController : IDisposable
         _session.CompilationChanged += HandleCompilationChangedForPrewarm;
         _session.EffectiveSoundFontChanged += HandleEffectiveSoundFontChanged;
         RefreshBackendSoundFontIdentity();
+    }
+
+    public void ConfigurePlaybackPreferences(
+        PlaybackMasterConfiguration masterConfiguration,
+        StopCursorBehavior stopCursorBehavior)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (State != PlaybackState.Stopped || ActiveTaskKind != PlaybackTaskKind.None)
+        {
+            throw new InvalidOperationException(
+                "Playback preferences can only change while playback is stopped.");
+        }
+        if (!float.IsFinite(masterConfiguration.VolumeDecibels)
+            || masterConfiguration.VolumeDecibels > 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(masterConfiguration));
+        }
+        if (!Enum.IsDefined(stopCursorBehavior))
+        {
+            throw new ArgumentOutOfRangeException(nameof(stopCursorBehavior));
+        }
+        _masterConfiguration = masterConfiguration;
+        _stopCursorBehavior = stopCursorBehavior;
     }
 
     public PlaybackState State { get; private set; } = PlaybackState.Stopped;
@@ -419,12 +454,9 @@ public sealed class PlaybackController : IDisposable
             MidiRenderPlan plan = MidiRenderPlanAdapter.CreateRealtime(
                 compiled,
                 actualSampleRate);
-            PlaybackProjectSettings settings = _session.Project.Playback;
             ConfigureNextBufferingRecovery(compiled, plan);
             SetNextPlaybackCacheMode(RealtimePlaybackCacheMode.Disabled);
-            _backend.Start(plan, soundFont, new(
-                checked((float)settings.MasterVolumeDecibels),
-                settings.LimiterEnabled));
+            _backend.Start(plan, soundFont, _masterConfiguration);
             _activeResult = compiled;
             _activePlan = plan;
             _activeTempoMap = new(compiled.TicksPerQuarterNote, compiled.Tempos);
@@ -993,11 +1025,9 @@ public sealed class PlaybackController : IDisposable
                 compiled,
                 actualSampleRate,
                 _audibleTracks);
-            PlaybackProjectSettings settings = _session.Project.Playback;
             ConfigureNextBufferingRecovery(compiled, plan);
             SetNextPlaybackCacheMode(RealtimePlaybackCacheMode.UnitPcmAndPlaybackSpan);
-            _backend.Start(plan, soundFont, new(
-                checked((float)settings.MasterVolumeDecibels), settings.LimiterEnabled));
+            _backend.Start(plan, soundFont, _masterConfiguration);
             _activeResult = compiled;
             _activePlan = plan;
             _activeTempoMap = new(compiled.TicksPerQuarterNote, compiled.Tempos);
@@ -1050,13 +1080,11 @@ public sealed class PlaybackController : IDisposable
                 return;
             }
             MidiRenderPlan plan = MidiRenderPlanAdapter.CreateRealtime(compiled, actualSampleRate);
-            PlaybackProjectSettings settings = _session.Project.Playback;
             ConfigureNextBufferingRecovery(compiled, plan);
             SetNextPlaybackCacheMode(taskKind == PlaybackTaskKind.SegmentPreview
                 ? RealtimePlaybackCacheMode.UnitPcm
                 : RealtimePlaybackCacheMode.Disabled);
-            _backend.Start(plan, soundFont, new(
-                checked((float)settings.MasterVolumeDecibels), settings.LimiterEnabled));
+            _backend.Start(plan, soundFont, _masterConfiguration);
             _activeResult = compiled;
             _activePlan = plan;
             _activeTempoMap = new(compiled.TicksPerQuarterNote, compiled.Tempos);
@@ -1281,7 +1309,7 @@ public sealed class PlaybackController : IDisposable
             if (stoppedTask == PlaybackTaskKind.MainTimeline)
             {
                 _cursorTick = applyCursorBehavior
-                    && _session.Project.Playback.StopCursorBehavior == StopCursorBehavior.ReturnToPlaybackStart
+                    && _stopCursorBehavior == StopCursorBehavior.ReturnToPlaybackStart
                     ? _taskStartTick
                     : stoppedTick;
             }

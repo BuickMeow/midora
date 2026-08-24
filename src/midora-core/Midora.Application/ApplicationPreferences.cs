@@ -1,4 +1,5 @@
 using Midora.Audio;
+using Midora.Domain;
 using Midora.Playback;
 
 namespace Midora.Application;
@@ -153,6 +154,46 @@ public sealed record ApplicationRecentDirectories(
         };
 }
 
+public sealed record PlaybackPreferences(
+    double MasterVolumeDecibels,
+    bool LimiterEnabled,
+    StopCursorBehavior StopCursorBehavior)
+{
+    public static PlaybackPreferences Default { get; } = new(
+        -0.1,
+        true,
+        StopCursorBehavior.ReturnToPlaybackStart);
+
+    public void Validate()
+    {
+        if (!double.IsFinite(MasterVolumeDecibels)
+            || MasterVolumeDecibels is < -float.MaxValue or > 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MasterVolumeDecibels));
+        }
+        if (!Enum.IsDefined(StopCursorBehavior))
+        {
+            throw new ArgumentOutOfRangeException(nameof(StopCursorBehavior));
+        }
+    }
+}
+
+public sealed record AppearancePreferences(string Language)
+{
+    public const string EnglishLanguage = "English";
+    public static AppearancePreferences Default { get; } = new(EnglishLanguage);
+
+    public void Validate()
+    {
+        if (!string.Equals(Language, EnglishLanguage, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "English is the only language available in this release.",
+                nameof(Language));
+        }
+    }
+}
+
 public sealed record ApplicationSoundFontPreference(
     string Path,
     bool Enabled,
@@ -225,6 +266,8 @@ public sealed record ApplicationPreferences(
     public DesktopUiPreferences DesktopUi { get; init; } = DesktopUiPreferences.Default;
     public IReadOnlyList<ApplicationSoundFontPreference> SoundFonts { get; init; } =
         Array.Empty<ApplicationSoundFontPreference>();
+    public PlaybackPreferences Playback { get; init; } = PlaybackPreferences.Default;
+    public AppearancePreferences Appearance { get; init; } = AppearancePreferences.Default;
 
     public static ApplicationPreferences Default { get; } =
         new(
@@ -238,9 +281,13 @@ public sealed record ApplicationPreferences(
         ArgumentNullException.ThrowIfNull(AudioCache);
         ArgumentNullException.ThrowIfNull(RecentDirectories);
         ArgumentNullException.ThrowIfNull(DesktopUi);
+        ArgumentNullException.ThrowIfNull(Playback);
+        ArgumentNullException.ThrowIfNull(Appearance);
         RealtimeAudio.Validate();
         AudioCache.Validate();
         DesktopUi.Validate();
+        Playback.Validate();
+        Appearance.Validate();
         ValidateDirectory(RecentDirectories.OpenProject);
         ValidateDirectory(RecentDirectories.SaveAndSaveCopy);
         ValidateDirectory(RecentDirectories.SoundFont);
@@ -364,6 +411,62 @@ public sealed class ApplicationPreferencesService
 
     public event EventHandler? RealtimeAudioPreferencesChanged;
     public event EventHandler? AudioCachePreferencesChanged;
+    public event EventHandler? PlaybackPreferencesChanged;
+    public event EventHandler? AppearancePreferencesChanged;
+
+    public ApplicationPreferenceUpdateResult UpdatePlayback(
+        PlaybackPreferences preferences)
+    {
+        ArgumentNullException.ThrowIfNull(preferences);
+        try
+        {
+            preferences.Validate();
+        }
+        catch (Exception exception) when (exception is ArgumentException)
+        {
+            return new(
+                ApplicationPreferenceUpdateStatus.RejectedInvalidValue,
+                new ApplicationPreferenceNotice(
+                    "PreferenceValueInvalid",
+                    exception.Message,
+                    exception));
+        }
+
+        return Persist(
+            current => current with { Playback = preferences },
+            realtimeMayChange: false,
+            audioCacheMayChange: false,
+            playbackMayChange: true,
+            appearanceMayChange: false,
+            requiresPlaybackStopped: true);
+    }
+
+    public ApplicationPreferenceUpdateResult UpdateAppearance(
+        AppearancePreferences preferences)
+    {
+        ArgumentNullException.ThrowIfNull(preferences);
+        try
+        {
+            preferences.Validate();
+        }
+        catch (Exception exception) when (exception is ArgumentException)
+        {
+            return new(
+                ApplicationPreferenceUpdateStatus.RejectedInvalidValue,
+                new ApplicationPreferenceNotice(
+                    "PreferenceValueInvalid",
+                    exception.Message,
+                    exception));
+        }
+
+        return Persist(
+            current => current with { Appearance = preferences },
+            realtimeMayChange: false,
+            audioCacheMayChange: false,
+            playbackMayChange: false,
+            appearanceMayChange: true,
+            requiresPlaybackStopped: true);
+    }
 
     public ApplicationPreferenceUpdateResult UpdateRealtimeAudio(
         RealtimeAudioPreferences preferences)
@@ -389,6 +492,8 @@ public sealed class ApplicationPreferencesService
             current => current with { RealtimeAudio = preferences },
             realtimeMayChange: true,
             audioCacheMayChange: false,
+            playbackMayChange: false,
+            appearanceMayChange: false,
             requiresPlaybackStopped: true);
     }
 
@@ -418,6 +523,8 @@ public sealed class ApplicationPreferencesService
             current => current with { AudioCache = normalized },
             realtimeMayChange: false,
             audioCacheMayChange: true,
+            playbackMayChange: false,
+            appearanceMayChange: false,
             requiresPlaybackStopped: true);
     }
 
@@ -447,6 +554,8 @@ public sealed class ApplicationPreferencesService
             },
             realtimeMayChange: false,
             audioCacheMayChange: false,
+            playbackMayChange: false,
+            appearanceMayChange: false,
             requiresPlaybackStopped: false);
     }
 
@@ -456,6 +565,8 @@ public sealed class ApplicationPreferencesService
             _ => ApplicationPreferences.Default,
             realtimeMayChange: true,
             audioCacheMayChange: true,
+            playbackMayChange: true,
+            appearanceMayChange: true,
             requiresPlaybackStopped: true);
     }
 
@@ -463,6 +574,8 @@ public sealed class ApplicationPreferencesService
         Func<ApplicationPreferences, ApplicationPreferences> update,
         bool realtimeMayChange,
         bool audioCacheMayChange,
+        bool playbackMayChange,
+        bool appearanceMayChange,
         bool requiresPlaybackStopped)
     {
         IDisposable? admission = _tasks.TryAcquirePreferenceUpdateLock(
@@ -480,6 +593,8 @@ public sealed class ApplicationPreferencesService
 
         bool realtimeChanged;
         bool audioCacheChanged;
+        bool playbackChanged;
+        bool appearanceChanged;
         ApplicationPreferencesSaveResult saved;
         try
         {
@@ -494,6 +609,10 @@ public sealed class ApplicationPreferencesService
                         && !Equals(_current.RealtimeAudio, candidate.RealtimeAudio);
                     audioCacheChanged = audioCacheMayChange
                         && !Equals(_current.AudioCache, candidate.AudioCache);
+                    playbackChanged = playbackMayChange
+                        && !Equals(_current.Playback, candidate.Playback);
+                    appearanceChanged = appearanceMayChange
+                        && !Equals(_current.Appearance, candidate.Appearance);
                     _current = candidate;
                 }
                 else
@@ -504,6 +623,12 @@ public sealed class ApplicationPreferencesService
                     audioCacheChanged = !Equals(
                         _current.AudioCache,
                         ApplicationPreferences.Default.AudioCache);
+                    playbackChanged = !Equals(
+                        _current.Playback,
+                        ApplicationPreferences.Default.Playback);
+                    appearanceChanged = !Equals(
+                        _current.Appearance,
+                        ApplicationPreferences.Default.Appearance);
                     _current = ApplicationPreferences.Default;
                 }
             }
@@ -521,6 +646,14 @@ public sealed class ApplicationPreferencesService
                 AudioCachePreferences cache = Current.AudioCache;
                 _session.ConfigureAudioCache(cache.RootPath, cache.MaximumReusableBytes);
                 AudioCachePreferencesChanged?.Invoke(this, EventArgs.Empty);
+            }
+            if (playbackChanged)
+            {
+                PlaybackPreferencesChanged?.Invoke(this, EventArgs.Empty);
+            }
+            if (appearanceChanged)
+            {
+                AppearancePreferencesChanged?.Invoke(this, EventArgs.Empty);
             }
             return saved.Succeeded
                 ? new(ApplicationPreferenceUpdateStatus.Applied)

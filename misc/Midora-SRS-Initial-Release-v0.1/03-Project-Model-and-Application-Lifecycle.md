@@ -8,7 +8,7 @@
 
 ## 3.1 Project 的定义
 Midora Project 是用户在 Midora 中进行完整工作的最高层单位。
-一个 Project 不是普通文件夹，也不是单个乐器定义，而是包含项目级设置、唯一 Conductor、有序 Event Instrument Definitions、内部非空 Usage / MIDI Channel Roots、混排的 Logical / Pure MIDI Arrangement Tracks、两类 Segment、全局音乐事件、Reset 默认值、播放设置、MIDI 导出设置和音频渲染设置的完整上下文。SoundFont 是程序级本机设置，不属于 Project。
+一个 Project 不是普通文件夹，也不是单个乐器定义，而是包含项目级设置、唯一 Conductor、有序 Event Instrument Definitions、内部非空 Usage / MIDI Channel Roots、混排的 Logical / Pure MIDI Arrangement Tracks、两类 Segment、全局音乐事件和 Reset 默认值的完整上下文。Playback、SoundFont 和本次导出/渲染任务参数均不属于 Project。
 编译、播放、预览、渲染和 MIDI 导出均以 Project 为上下文。
 单独的 Event Instrument、Logical Track、MIDI Channel Root、Pure MIDI Track 或 Segment 不构成完整项目上下文。
 ---
@@ -25,17 +25,11 @@ Midora Project 是用户在 Midora 中进行完整工作的最高层单位。
 | MIDI Channel Root Index | 是 | 否 | Pure MIDI 共享执行身份；每个 Root 非空，可为空 |
 | Global Reset Defaults | 是 | 否 | 项目级 Reset 默认值 |
 | Global Event Scope Defaults | 是 | 否 | 初版不可编辑的版本化空 marker；事件作用域由各正式事件语义固定 |
-| Export Settings | 是 | 否 | MIDI 导出默认设置 |
-| Playback Settings | 是 | 否 | 播放相关默认设置 |
-| Audio Render Settings | 是 | 否 | 音频文件渲染默认模式、范围、Track 选择、采样率与格式设置 |
-| SoundFont Settings | 是 | 否 | 初版项目级单一 SF2 设置，可为空状态 |
 说明：
 - 顶层对象必须存在，不代表其中必须已有用户内容。
 - Arrangement Track Order 与 Definition Index 都可以为空。
 - 每个 Pure MIDI Track 必须且只能引用一个 Root。Logical Track 可以是无内容、无 Usage 的待指定空壳；一旦包含 Segment/Note/Parameter 内容，就必须且只能引用一个 Usage。
 - Definition 顺序、Usage/Root membership 与混排 Track 顺序彼此独立；Definition/Root 不保存第二套 child order。
-- Audio Render Settings 必须存在，初版默认使用 Whole Mix、Project Default Range、All Valid Logical and Pure MIDI Tracks，以及普通 RIFF/WAVE / 48 kHz / Stereo / IEEE 32-bit Float；采样率可由用户在合法范围内修改。
-- SoundFont Settings 必须存在，但可以处于“未选择 SF2”状态。
 - Conductor Track 必须存在，且创建新项目时至少包含默认 Tempo 与默认拍号。
 ---
 ## 3.3 单项目 / 单实例规则
@@ -79,10 +73,6 @@ Conductor Track
 空 Event Instrument Definition / Usage / MIDI Channel Root Index
 Global Reset Defaults
 Global Event Scope Defaults
-Export Settings
-Playback Settings
-Audio Render Settings
-SoundFont Settings 空状态
 ```
 ### 3.4.1 Conductor Track 默认内容
 新项目必须有一个 Conductor Track。
@@ -98,19 +88,8 @@ Conductor Track 具体事件编辑规则由 第 4 章《时间、Conductor Track
 ### 3.4.3 Track 默认状态
 新项目默认无 Logical Track 或 Pure MIDI Track。用户可以直接创建未指定 Usage 的空 Logical Track、选择或新建 Definition 后创建独立 Usage + Logical Track，或通过 MIDI Track 创建流程原子建立非空 Root + 首条 Pure MIDI Track；不存在仅创建空 Root 的结果。
 初版不创建默认 Track，也不创建默认 Segment。
-### 3.4.4 SoundFont 默认状态
-创建项目时可以不选择 SF2。
-无 SF2 时：
-```text
-不创建任何 BASSMIDI 实例
-不能播放
-不能预览
-不能音频渲染
-状态栏用文字提示当前无 SF2
-```
-无 SF2 不影响 MIDI 导出。
-MIDI 导出输出的是 MIDI 事件数据，不依赖 SF2 加载状态。无 SF2 时允许 MIDI 导出，且不需要因为无 SF2 额外弹出导出前警告。
----
+### 3.4.4 程序级音频资源边界
+新 Project 不保存或创建 SoundFont 设置。是否可发声取决于当前 Application Preferences 的 Enabled SoundFont 列表；列表为空时仍允许 Project 创建、编辑、编译、保存和 MIDI 导出，但禁止播放、预览和音频渲染。
 ## 3.5 空项目规则
 空项目不作为特殊项目类型处理。
 空项目只是普通 Project 的一种内容状态。
@@ -229,10 +208,7 @@ Mapping Function 名称必填。
 Mapping Function 名称在单个 Event Instrument 内不可重复。
 Mapping Function 的具体内容、映射目标、编辑方式和编译行为由 第 9 章《曲线、Logical Parameter 与映射》 继续细化。
 ### 3.7.7 Export Preset
-初版不做 Export Preset。
-初版只需要保存当前项目的 Export Settings。
-如果未来导出系统需要支持多个导出配置方案，再在 第 14 章《MIDI 导出》 或实现设计阶段补充 Export Preset。
----
+初版不做 Export Preset，也不保存 Project Export defaults。每次 MIDI Export / Audio Render 使用固定初始值和本次任务 Draft。
 ## 3.8 Logical Track、Usage 与 Definition
 Logical Track 通过可空 Usage ID 间接引用 Event Instrument Definition。无 Usage 只允许作为没有任何音乐内容的待指定空壳；它不分配 Unit、不参与正式编译，也不产生“未绑定”诊断。非空 Logical Track 无 Usage 是结构 Error。
 
@@ -242,30 +218,9 @@ Definition 可在没有任何 Usage/Track 时独立存在。删除 Track 或最�
 ---
 ## 3.9 项目保存、打开与关闭
 ### 3.9.1 保存
-Project 必须支持普通保存。
-普通保存应覆盖当前 `.midora` Project 的完整已提交状态，包括：
-```text
-Project Settings
-Project Metadata
-Conductor Track
-Arrangement global Track order
-Event Instrument Definition and Usage indexes
-Event Instrument definitions and usages
-Logical Tracks
-Segments
-MIDI Channel Roots
-Pure MIDI Tracks
-Midi Segments and direct/opaque MIDI events
-Global Reset Defaults
-Global Event Scope Defaults
-Playback Settings
-Export Settings
-Audio Render Settings
-SoundFont Settings
-已 Apply 的 C# Mapping Function 源码
-```
-未 Apply 的 Function Draft 不属于 Project 已提交状态，不进入普通保存。
-具体安全写出事务、覆盖、备份、临时文件、自校验和路径规则由 第 16 章《.midora 文件格式与持久化》 细化。
+普通保存覆盖当前 `.midora` 的完整已提交 Project Source Data：Project Settings/Metadata、Conductor、Arrangement 与 Definition/Usage/Root indexes、Logical/Pure MIDI Tracks、两类 Segment、Event Instruments、Reset Defaults 与已 Apply 的 Mapping Function 源码。
+
+Playback Preferences、SoundFont 列表、MIDI Export 参数、Audio Render 参数、最近目录、未 Apply Draft、运行缓存和 UI 会话状态不属于 Project，不得写入包。安全事务、覆盖、临时文件、自校验和路径规则由第 16 章定义。
 ### 3.9.2 保存副本 / Save Copy
 初版不提供传统 Save As。
 Save Copy 把当前内存 Project 快照写出为新的 `.midora` 文件，但不改变：
@@ -346,41 +301,7 @@ Save Copy 禁止
 用户必须先删除全部 Damaged Placeholder，或放弃当前 Project 会话。
 该行为属于有界降级打开，不等于 Project Repair Mode。
 ### 3.9.6 缺失与损坏文件的分级规则
-初版至少遵循以下边界：
-#### 3.9.6.1 metadata.json 缺失
-```text
-Project 可打开
-Metadata 使用空默认值
-产生 Error Diagnostic
-Project 标记为 Modified
-```
-#### 3.9.6.2 metadata.json 存在但损坏、hash 不匹配或无法解析
-```text
-Project 打开失败
-```
-#### 3.9.6.3 普通 Settings 缺失或损坏
-除 Audio Render Settings 的严格例外外：
-```text
-Project 可打开
-对应 Settings 使用当前软件默认值
-产生 Error Diagnostic
-Project 标记为 Modified
-普通保存时写出完整 Settings
-```
-#### 3.9.6.4 当前文件格式强制要求的 Audio Render Settings 缺失或损坏
-```text
-不允许普通 fallback
-Project 打开失败
-```
-只有存在明确旧版本迁移路径时，才允许为旧格式补充默认 Audio Render Settings。
-#### 3.9.6.5 Conductor Track 缺失或损坏
-```text
-Project 可打开
-Conductor Track 回退为 tick 0 Tempo 120 BPM 与 Time Signature 4/4
-产生 Error Diagnostic
-Project 标记为 Modified
-```
-更精确的 manifest、hash、schema、版本迁移和对象文件规则由 第 16 章《.midora 文件格式与持久化》 定义。
+`metadata.json` 缺失时可用空 Metadata 恢复并产生 Error/Modified；既有 metadata 损坏或 hash 不匹配则打开失败。当前三个正式 settings 文件（project/reset/event-scope）缺失或损坏时按第 16.18 节恢复默认、产生 Error 并标记 Modified。Conductor 缺失或损坏时恢复 tick 0 Tempo 120 BPM 与 4/4 并产生 Error/Modified。当前格式不存在 Playback/Export/Audio Render settings 文件。
 ### 3.9.7 未知与孤立包文件
 Zip 包中存在但未被 `project.json` 纳入当前 Project 语义的未知或孤立文件：
 ```text
@@ -393,39 +314,7 @@ Zip 包中存在但未被 `project.json` 纳入当前 Project 语义的未知或
 初版不提供“保留未知包文件”选项。
 ---
 ## 3.10 项目修改状态
-Project 应维护未保存修改状态。
-以下行为应使项目进入已修改状态：
-```text
-修改 Project Settings
-修改 Project Metadata 中的用户可编辑项
-修改 Conductor Track
-新建、删除、重命名、编辑 Event Instrument
-重排 Event Instrument / MIDI Channel Root 混合父节点
-新建、删除、重命名、编辑 Logical Track
-在 Event Instrument 内重排或跨 Event Instrument 改绑 Logical Track
-新建、删除、重命名、重排或编辑 MIDI Channel Root / Pure MIDI Track
-修改 Root Auto/Fixed Route 或 Melodic/Percussion Mode
-新建、删除、移动、缩放、分割、连接、编辑 Segment
-修改 Global Reset Defaults
-修改 SoundFont Settings
-修改 Playback Settings
-修改 Export Settings
-修改 Audio Render Settings 中持久化的默认值
-修改任何影响编译、播放、预览、渲染或导出结果的项目内容
-```
-初版 `Global Event Scope Defaults` 没有可编辑字段；其空 marker 不形成独立 Project 编辑或 Modified 来源。未来如新增可配置作用域，必须先定义字段、默认值、覆盖层级和冲突语义，并发布对应 schema 版本与迁移规则。
-以下行为不应使项目进入已修改状态：
-```text
-改变当前播放位置
-打开或关闭临时面板
-临时缩放时间轴视图
-临时选择对象
-临时试听
-临时显示错误面板筛选条件
-执行 Save Copy
-```
-初版不保存 UI 视图状态，因此 UI 视图状态变化不应标记项目已修改。
----
+任何正式 Project Source Data 编辑都必须标记 Modified，包括 Metadata、Conductor、Event Instrument/Usage/Root/Track/Segment/Note/Event/Parameter、正式顺序与 Reset Defaults。播放位置、选择、缩放、试听、诊断筛选、Save Copy、Application Preferences，以及 MIDI Export / Audio Render Task Draft 不标记 Project Modified。
 ## 3.11 UI 视图状态
 初版不将 UI 视图状态保存进 Project。
 不保存的 UI 状态包括但不限于：
@@ -495,91 +384,13 @@ Project 应维护未保存修改状态。
 未来可以扩展项目模板、事件乐器导入导出或项目间复制功能，但初版不得依赖这些功能成立。
 ---
 ## 3.15 项目与编译的关系
-Project 是编译器的完整输入上下文。
-编译器不应只依赖某个孤立对象完成完整编译。
-初版中，空项目允许编译。
-编译至少需要读取：
-```text
-Project Settings
-Project Metadata 中可能影响导出的信息
-Conductor Track
-Arrangement global Track order and Event Instrument Definition/Usage indexes
-Logical Tracks and their optional Usage/Definition references
-Segments
-MIDI Channel Roots
-Pure MIDI Tracks
-Midi Segments / Direct MIDI Notes / Channel Events / Opaque Imported Events
-Global Reset Defaults
-Global Event Scope Defaults
-Event Instrument definitions
-Mapping functions
-Lifecycle policies
-Overlap policies
-Reset policies
-Export Settings、Playback Settings 或 Audio Render Settings
-SoundFont Settings 状态
-```
-具体编译输入输出由第 12 章《编译系统与 Canonical Compiled Result》规定。
----
+Project 是编译器完整输入。编译读取正式 Project Settings/Metadata（仅适用字段）、Conductor、Arrangement 与 Definition/Usage/Root indexes、Logical/Pure MIDI Track、两类 Segment、Direct/Opaque MIDI、Reset Defaults、Event Instrument、Mapping 与 Lifecycle/Overlap policies。编译不得读取 Application Playback/SoundFont Preferences 或当前 Export/Render Dialog Draft。
+
 ## 3.16 项目与播放、预览、音频渲染的关系
-播放、预览和音频渲染均以当前 Project 为上下文。
-无 SF2 状态下：
-```text
-不创建 BASSMIDI 实例
-不能播放
-不能预览
-不能音频渲染
-状态栏显示无 SF2 提示
-```
-播放和预览至少依赖：
-```text
-SoundFont Settings
-Playback Settings
-Conductor Track
-canonical compiled result
-Port / Channel / Channel Unit 规则
-Logical Channel 10 melodic 与 Pure MIDI Root Melodic/Percussion 规则
-C# 映射运行结果
-```
-音频文件渲染还必须依赖固定存在的：
-```text
-Audio Render Settings
-```
-其 Project 级默认设置至少包括：
-```text
-Whole Mix / Per Logical Track 默认模式
-Project Default Range / Manual Range 默认范围策略
-All Valid Logical and Pure MIDI Tracks / Explicit Track IDs 默认选择策略
-普通 RIFF/WAVE / Stereo / IEEE 32-bit Float 固定格式字段
-默认文件采样率，合法范围 8,000–192,000 Hz
-有限命名偏好
-```
-单纯执行、成功、失败或取消音频渲染不修改 Project。
-只有用户明确保存 Audio Render Settings 默认值时，Project 才进入已修改状态并进入 Undo / Redo。
-音频渲染允许使用当前尚未保存到磁盘的内存 Project，不要求先保存，也不自动保存。
-具体实时播放和预览行为由第 13 章《播放与预览》规定。
-具体音频文件渲染行为由第 15 章《音频文件渲染》规定。
----
+播放、预览与音频渲染消费 canonical，并额外冻结当前 Application Playback Preferences、程序级 Enabled SoundFont 配置和适用设备/任务参数。无 Enabled SoundFont 时阻止三类音频操作，但不修改 Project。Audio Render 模式、范围、Track 选择、采样率和离线复音上限只属于本次任务；执行、失败、取消均不修改 Project。
+
 ## 3.17 项目与 MIDI 导出的关系
-MIDI 导出系统以当前 Project 为导出上下文。
-导出至少依赖：
-```text
-Conductor Track
-Logical Tracks and their Usage/Definition references
-MIDI Channel Roots and their member Pure MIDI Tracks
-Pure MIDI Tracks
-Arrangement global Track order and Event Instrument Definition/Usage indexes
-Export Settings
-Reset 规则
-Port / Channel 分配结果
-Channel 10 Melodic/Percussion 初始化规则
-SoundFont Settings 中用于 Readme 的信息
-```
-无 SF2 状态下允许 MIDI 导出，且不需要因为无 SF2 额外显示导出前警告。
-原因是 MIDI 导出与 SF2 加载状态没有直接依赖关系。
-如果导出 Readme 需要记录推荐 SoundFont，而项目未设置 SF2，则该信息可以为空或标记为未指定。
-具体导出模式和 Readme 内容由第 14 章《MIDI 导出》规定。
----
+MIDI 导出消费 canonical/SMF projection 及本次导出 Draft；不读取 SoundFont 或 Application Playback Preferences。导出模式、范围、Track 选择、Routing、Readme 与 Warning-as-error 开关不保存为 Project defaults。无 Enabled SoundFont 时仍允许 MIDI 导出。
 ## 3.18 规则、限制与失败条件
 ### 3.18.1 强制规则
 1. 初版只允许同时打开一个 Project。
@@ -590,11 +401,8 @@ SoundFont Settings 中用于 Readme 的信息
 6. 每个 Project 必须有且只有一个有序 Arrangement Track tagged 集合，以及彼此正交的有序 Definition / Usage / Root indexes。
 7. 新 Project 的 Arrangement Track、Definition、Usage 与 Root indexes 默认均为空。
 8. 新 Project 默认无 Event Instrument、Logical Track、MIDI Channel Root 或 Pure MIDI Track。
-9. 初版一个 Project 只使用一个 SF2。
-10. 创建项目时可以不选择 SF2。
-11. 无 SF2 状态下不创建 BASSMIDI 实例。
-12. 无 SF2 状态下不能播放、预览或音频渲染。
-13. 无 SF2 状态下允许 MIDI 导出，不需要额外导出前警告。
+9. SoundFont 使用程序级有序 Enabled SF2/SFZ 列表，不属于 Project。
+10. 无 Enabled SoundFont 时不能播放、预览或音频渲染，但允许 MIDI 导出。
 14. 初版不提供项目模板。
 15. 初版不做跨项目导入 / 导出 Event Instrument。
 16. 初版不保存 UI 视图状态。
@@ -605,26 +413,24 @@ SoundFont Settings 中用于 Readme 的信息
 21. Logical Track、MIDI Channel Root 与 Pure MIDI Track 名称允许重复；global mixed Track order 与独立 Definition order 属于 Project 源数据。
 22. Segment 不持有名称。
 23. Mapping Function 名称必填，且在单个 Event Instrument 内不可重复。
-24. 初版不做 Export Preset。
-25. 每个 Project 必须有且只有一个 Audio Render Settings，且不可删除。
-26. 新 Project 默认音频渲染模式为 Whole Mix、默认范围为 Project Default Range、默认 Track 选择为 All Valid Logical and Pure MIDI Tracks。
-27. 初版音频文件输出普通 RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float；采样率为用户选择的 8,000–192,000 Hz 整数，新 Project 默认 48,000 Hz。
-28. Track Mute / Solo 不影响音频文件渲染成品。
-29. 音频渲染产物、缓存和任务状态不属于 Project 源数据。
-30. 内部引用必须基于稳定 ID，不得依赖名称。
-31. 无内容 Logical Track 可以不引用 Usage；含音乐内容的 Logical Track 必须且只能引用一个有效 Usage，该 Usage 必须引用一个有效 Definition。
-32. Usage 必须非空，最后成员离开时同事务删除；Definition 可以零 Usage，删除 Track/Usage 不得删除 Definition，被引用 Definition 不得删除。
-33. Logical Track 的 Definition rebind、Usage share/independent 与 global order 变更必须保留内容和稳定 ID，并按第 24 章原子提交。
-34. 初版应提供完整的全项目统一撤销 / 重做框架。
-35. 初版不提供传统 Save As，只提供普通保存与 Save Copy。
-36. Save Copy 不改变当前 Project 路径、Modified 状态或 Undo / Redo History。
-37. 只要 Project 中存在 Damaged Placeholder，普通保存和 Save Copy 均必须禁止。
-38. 未知或孤立包文件不形成 Project 对象，不创建 Damaged Placeholder，也不阻止保存；再次保存时不予保留。
-39. Pure MIDI Track 必须属于一个 MIDI Channel Root；Root/Track/Segment/Direct Event 的完整语义按第 23 章执行。
-40. 初版支持以 SMF Format 0 / 1、TPQN division 打开为新的未保存 Project，不支持导入当前 Project。
+24. 初版不做 Export Preset、Project MIDI Export defaults 或 Project Audio Render defaults。
+25. 初版音频文件输出普通 RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float；本次任务采样率为 8,000–192,000 Hz 整数，Dialog 初始值 48,000 Hz。
+26. Track Mute / Solo 不影响音频文件渲染成品。
+27. 音频渲染产物、缓存和任务参数不属于 Project 源数据。
+28. 内部引用必须基于稳定 ID，不得依赖名称。
+29. 无内容 Logical Track 可以不引用 Usage；含音乐内容的 Logical Track 必须且只能引用一个有效 Usage，该 Usage 必须引用一个有效 Definition。
+30. Usage 必须非空，最后成员离开时同事务删除；Definition 可以零 Usage，删除 Track/Usage 不得删除 Definition，被引用 Definition 不得删除。
+31. Logical Track 的 Definition rebind、Usage share/independent 与 global order 变更必须保留内容和稳定 ID，并按第 24 章原子提交。
+32. 初版应提供完整的全项目统一撤销 / 重做框架。
+33. 初版不提供传统 Save As，只提供普通保存与 Save Copy。
+34. Save Copy 不改变当前 Project 路径、Modified 状态或 Undo / Redo History。
+35. 只要 Project 中存在 Damaged Placeholder，普通保存和 Save Copy 均必须禁止。
+36. 未知或孤立包文件不形成 Project 对象，不创建 Damaged Placeholder，也不阻止保存；再次保存时不予保留。
+37. Pure MIDI Track 必须属于一个 MIDI Channel Root；Root/Track/Segment/Direct Event 的完整语义按第 23 章执行。
+38. 初版支持以 SMF Format 0 / 1、TPQN division 打开为新的未保存 Project，不支持导入当前 Project。
 ### 3.18.2 警告情况
 以下情况应产生项目级或跨系统警告，具体严重程度由统一诊断规则确定：
-1. 当前 SF2 缺失或无法访问，且用户尝试播放、预览或音频渲染；
+1. 当前无 Enabled SoundFont 或 SoundFont 无法由 BASSMIDI 使用，且用户尝试播放、预览或音频渲染；
 2. 项目格式版本较旧，需要迁移；
 3. 项目中存在未来版本功能标记；
 4. 项目中存在不会影响打开但会影响编译、播放、预览、渲染或导出的缺失资源；
@@ -636,12 +442,11 @@ SoundFont Settings 中用于 Readme 的信息
 | 文件无法识别为 Midora Project | 打开失败 |
 | manifest、project.json、schema、文件 kind 或 Project 索引存在无法恢复的结构性不一致 | 打开失败 |
 | metadata.json 存在但损坏、hash 不匹配或无法解析 | 打开失败 |
-| 当前文件格式强制要求的 Audio Render Settings 缺失或损坏，且不存在明确旧版本迁移路径 | 打开失败 |
 | 存在 Damaged Placeholder 时尝试普通保存或 Save Copy | 阻止保存 |
 | 保存目标不可写 | 保存失败 |
-| 无 SF2 时尝试播放 | 播放失败或阻止播放 |
-| 无 SF2 时尝试预览 | 预览失败或阻止预览 |
-| 无 SF2 时尝试音频渲染 | 渲染失败或阻止渲染 |
+| 无 Enabled SoundFont 时尝试播放 | 播放失败或阻止播放 |
+| 无 Enabled SoundFont 时尝试预览 | 预览失败或阻止预览 |
+| 无 Enabled SoundFont 时尝试音频渲染 | 渲染失败或阻止渲染 |
 | 项目内部引用断裂且影响编译 | 编译失败 |
 | C# 映射源码缺失或无法编译 | 编译失败 |
 | 项目配置违反本规格强制边界 | 应阻止保存、阻止编译或标记为错误，具体场景由实现设计确定 |

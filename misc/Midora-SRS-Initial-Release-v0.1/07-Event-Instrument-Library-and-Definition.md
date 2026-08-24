@@ -724,7 +724,7 @@ Event Instrument 允许没有任何 Note 或可发声事件。
 Event Instrument 可以包含 Program Change、Bank Select、Pitch Bend Range、CC、RPN、NRPN 等事件。
 边界：
 ```text
-Program Change / Bank Select 是 MIDI 事件语义，不属于 SoundFont Settings。
+Program Change / Bank Select 是 MIDI 事件语义，不属于程序级 SoundFont 列表配置。
 Event Instrument 不绑定独立 SF2。
 替换 SF2 不自动修改已有 Program / Bank 事件。
 初版不根据当前 SF2 校验 Bank / Program 是否存在。

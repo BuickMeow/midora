@@ -435,14 +435,14 @@ public sealed class AudioRenderTaskRunner
         ArgumentNullException.ThrowIfNull(request.Compilation);
         ArgumentNullException.ThrowIfNull(request.OutputPlan);
         ArgumentNullException.ThrowIfNull(request.SoundFont);
-        if (request.SampleRate is < AudioRenderProjectSettings.MinimumSampleRate
-            or > AudioRenderProjectSettings.MaximumSampleRate)
+        if (request.SampleRate is < AudioRenderSettingsPolicy.MinimumSampleRate
+            or > AudioRenderSettingsPolicy.MaximumSampleRate)
         {
             throw new ArgumentOutOfRangeException(nameof(request.SampleRate));
         }
         if (request.MaximumSampleVoicesPerUnitStream
-            is < AudioRenderProjectSettings.MinimumSampleVoicesPerUnitStream
-            or > AudioRenderProjectSettings.MaximumSampleVoicesPerUnitStreamLimit)
+            is < AudioRenderSettingsPolicy.MinimumSampleVoicesPerUnitStream
+            or > AudioRenderSettingsPolicy.MaximumSampleVoicesPerUnitStreamLimit)
         {
             throw new ArgumentOutOfRangeException(nameof(request.MaximumSampleVoicesPerUnitStream));
         }

@@ -9,6 +9,7 @@ using System.Windows.Media;
 using Microsoft.Win32;
 using Midora.Application;
 using Midora.Audio;
+using Midora.Domain;
 
 namespace Midora.Desktop;
 
@@ -22,6 +23,8 @@ public partial class ApplicationPreferencesDialog : Window
     {
         _initial = initial ?? throw new ArgumentNullException(nameof(initial));
         InitializeComponent();
+        StopCursorBox.ItemsSource = Enum.GetValues<StopCursorBehavior>();
+        LanguageBox.ItemsSource = new[] { AppearancePreferences.EnglishLanguage };
         SoundFontListBox.ItemsSource = _soundFonts;
         Populate(initial);
         Loaded += OnLoaded;
@@ -60,6 +63,11 @@ public partial class ApplicationPreferencesDialog : Window
 
     private void Populate(ApplicationPreferences preferences)
     {
+        PlaybackMasterVolumeBox.Text = preferences.Playback.MasterVolumeDecibels
+            .ToString(CultureInfo.InvariantCulture);
+        PlaybackLimiterBox.IsChecked = preferences.Playback.LimiterEnabled;
+        StopCursorBox.SelectedItem = preferences.Playback.StopCursorBehavior;
+        LanguageBox.SelectedItem = preferences.Appearance.Language;
         RealtimeAudioPreferences realtime = preferences.RealtimeAudio;
         DeviceChoice current = realtime.PlaybackOutputDeviceId is null
             ? DeviceChoice.SystemDefault
@@ -211,6 +219,24 @@ public partial class ApplicationPreferencesDialog : Window
         {
             return;
         }
+        if (!double.TryParse(
+                PlaybackMasterVolumeBox.Text,
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out double masterVolumeDecibels)
+            || !double.IsFinite(masterVolumeDecibels)
+            || masterVolumeDecibels is < -float.MaxValue or > 0)
+        {
+            ShowValidation("Playback Master Volume must be a finite dB value no greater than 0.");
+            PlaybackMasterVolumeBox.Focus();
+            return;
+        }
+        if (StopCursorBox.SelectedItem is not StopCursorBehavior stopCursorBehavior)
+        {
+            ShowValidation("Select a Stop Cursor Behavior.");
+            StopCursorBox.Focus();
+            return;
+        }
         if (!decimal.TryParse(
                 CacheQuotaBox.Text,
                 NumberStyles.AllowDecimalPoint,
@@ -238,6 +264,13 @@ public partial class ApplicationPreferencesDialog : Window
                     deviceRequest,
                     voices),
                 AudioCache = new AudioCachePreferences(CacheRootBox.Text, quotaBytes).Normalize(),
+                Playback = new PlaybackPreferences(
+                    masterVolumeDecibels,
+                    PlaybackLimiterBox.IsChecked == true,
+                    stopCursorBehavior),
+                Appearance = new AppearancePreferences(
+                    LanguageBox.SelectedItem as string
+                        ?? AppearancePreferences.EnglishLanguage),
                 SoundFonts = _soundFonts
                     .Select(value => value.ToPreference())
                     .ToArray()

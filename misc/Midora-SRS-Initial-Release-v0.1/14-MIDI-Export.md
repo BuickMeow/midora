@@ -32,7 +32,7 @@ MIDI 导出必须使用专用：
 ```text
 MIDI Export CompileContext
 ```
-导出流程可以复用等价缓存，但必须保证输出等价于在同一 Project 内容、同一 Source 状态、同一 Export Settings / 一次性导出参数下重新执行该导出上下文编译。
+导出流程可以复用等价缓存，但必须保证输出等价于在同一 Project 内容、同一 Source 状态和同一本次导出参数下重新执行该导出上下文编译。
 不得直接复用以下内容作为导出语义来源：
 ```text
 最近一次播放 compiled result
@@ -792,70 +792,24 @@ Readme 不用于还原路由语义。
 初版不要求 Readme 记录文件哈希。
 文件哈希可作为未来增强。
 ---
-## 14.16 Export Settings
-### 14.16.1 Export Settings 属于 Project 内容
-`Export Settings` 是 Project 顶层对象。
-用户修改 Project 默认导出设置时：
-```text
-进入 Undo / Redo。
-标记 Project 已修改。
-```
-### 14.16.2 一次性导出参数与项目默认设置
-导出对话框中的参数分为：
-```text
-一次性导出参数
-项目默认 Export Settings
-```
-一次性导出参数不必写入 Project。
-只有用户明确保存为默认 Export Settings，或导出设置本身被确认写入 Project 时，才标记 Project 已修改。
-用户临时修改设置但取消导出：
-```text
-不修改 Project。
-不标记 Project 已修改。
-```
-### 14.16.3 Export Settings 保存内容
-初版 Export Settings 可保存：
-```text
-导出模式
-默认范围策略
-默认 Track 选择策略
-默认 Routing 策略
-是否默认生成 Readme
-其他导出偏好
-```
+## 14.16 MIDI 导出任务参数
+### 14.16.1 归属
+MIDI 导出模式、范围、Track 选择、Routing、Readme 与 Warning-as-error 开关只属于当前导出任务 Draft。它们不是 Project Source Data，不进入 `.midora`、Project Undo / Redo、编译 fingerprint 或 Application Preferences。
 
-新 Project 与缺失/损坏 ordinary settings 的 v1 恢复默认值固定为：
+### 14.16.2 初始值
+每次打开 MIDI Export Dialog 时使用固定产品初始值：
 ```text
 Mode = Whole Project
 Range = Project Default Range
 Track Selection = All Valid Logical and Pure MIDI Tracks
 Routing = Compact
 Include Readme = true
-Treat Warnings As Errors = false
+Treat Warnings as Errors = false
 ```
+用户在对话框内的修改只在按 Start 后冻结给本次任务；Cancel 不产生任何持久状态。初版不提供 `Save as Project Defaults`。
 
-开发期 `export-settings.json` v1 直接保存上述字段。只有 Manual Range 保存合法的 `manualStartTick` / `manualEndTick`。Track Selection 只保存“全部有效 Track”或“任务开始时显式选择”策略，不保存具体 Track 稳定 ID；具体勾选集合只属于一次性任务冻结快照。
-可以保存范围策略，例如：
-```text
-Project End Marker / 自然结束
-手动范围
-```
-但不保存与当前编辑状态强绑定的临时选择对象。
-如果保存的默认手动范围超出当前 Project 有效内容：
-```text
-允许导出，只要范围合法。
-空白区间也可导出结构有效 MIDI。
-```
-### 14.16.4 不保存本机绝对输出目录
-初版不保存本机绝对输出目录进 Project。
-最多保存导出偏好，不保存本机路径依赖。
-不保存：
-```text
-绝对输出目录
-最近 10 个输出目录
-本机路径 fallback
-```
----
+### 14.16.3 本机路径
+最近导出目录可以按用途保存为 Application Preference；它不是导出语义，不进入 Project，也不得改变最终 MIDI 字节。
 ## 14.17 文件命名与文件系统行为
 ### 14.17.1 文件名来源
 初版固定命名模板：
@@ -985,8 +939,7 @@ Logical Track / Segment / Logical Note
 MIDI Channel Root / Pure MIDI Track / Midi Segment / Direct MIDI Event
 Logical Parameter Lane
 Event Instrument / SubVoice / Mapping / Lifecycle
-SoundFont Settings 中会影响 Readme / 导出说明的信息
-Export Settings 中本次导出使用的设置
+本次导出 Task Draft
 ```
 允许查看已有诊断面板。
 不允许执行会改变导出语义的编辑操作。
@@ -1002,7 +955,6 @@ Export Settings 中本次导出使用的设置
 不修改 Project 内容。
 不标记 Project 已修改。
 ```
-除非用户已经明确保存了 Export Settings。
 ### 14.18.5 导出自校验
 MIDI 编码完成后需要基本自校验。
 至少应检查：
@@ -1117,7 +1069,7 @@ MIDI 导出失败属于导出流程诊断。
 规则：
 ```text
 缓存不得成为语义来源。
-Project 或 Export Settings 变化后必须失效。
+Project 或本次导出参数变化后必须失效。
 ```
 初版不要求导出缓存跨软件版本复用。
 软件版本变化应保守失效。
@@ -1158,15 +1110,9 @@ MIDI 导出动作本身：
 不自动保存 Project。
 不更新 Project 修改时间。
 ```
-除非用户明确修改并保存了 Export Settings 这类 Project 内容。
-### 14.21.2 Export Settings 修改
-如果用户修改 Project 默认 Export Settings：
-```text
-该修改属于 Project 内容修改。
-进入 Undo / Redo。
-标记 Project 已修改。
-更新 Project 修改时间应遵守 Project 保存 / 修改规则。
-```
+本次导出 Task Draft 不属于 Project 内容。
+### 14.21.2 导出参数修改
+Dialog 内修改只影响本次任务 Draft，不进入 Undo / Redo、不标记 Project Modified；Cancel 丢弃 Draft。
 ### 14.21.3 工程总耗时
 按第 3.6.4 节的初版累计规则：
 ```text

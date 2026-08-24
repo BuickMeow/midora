@@ -216,7 +216,6 @@ Object schema newer than supported
 Object type or file kind mismatch
 Unrecoverable structural index inconsistency
 metadata.json present but corrupted or hash-invalid
-Required current-format Audio Render Settings invalid
 ```
 显示 Blocking Error，并允许查看 Open Diagnostics；不建立半加载 Project。
 ### 19.3.5 Metadata 缺失
@@ -227,11 +226,10 @@ Required current-format Audio Render Settings invalid
 - Project 标记 Modified。
 Metadata 存在但损坏时打开失败。
 ### 19.3.6 Settings 缺失或损坏
-除当前格式强制要求的 Audio Render Settings 外，普通 Settings 缺失或损坏时：
+当前正式 Settings 缺失或损坏时：
 - 使用当前默认值；
 - 生成 Error Diagnostic；
 - Project 标记 Modified。
-当前格式明确要求的 `audio-render-settings.json` 缺失、hash 无效或 schema 无效时打开失败。只有明确旧版本迁移路径可生成默认值。
 ### 19.3.7 Conductor Track 缺失或损坏
 回退为：
 ```text
@@ -404,14 +402,8 @@ MIDI 导出与音频渲染共用同一确定性安全文件名合法化服务。
 Review 使用第 14.8.2、14.15.3、14.17.1 节的固定 MIDI 文件、Track Name 和 `README.md` 模板，不允许编码器或写入器另行命名。
 ### 19.5.7 Warning 策略
 用户可以配置 Warning 阻止导出，但诊断严重级别仍是 Warning。
-### 19.5.8 Project Defaults
-Dialog 打开时从 Project Export Settings 初始化本次参数。
-Dialog 修改默认只影响本次任务。
-只有显式：
-```text
-Save as Project Defaults
-```
-才形成一次 Project 编辑，并进入 Undo / Redo。
+### 19.5.8 Task Defaults
+Dialog 每次使用第 14.16.2 节固定初始值。修改只影响本次任务 Draft，不提供 `Save as Project Defaults`。
 ### 19.5.9 Start
 Start Export 前执行预检查和 Review。存在阻止条件时 Start Disabled，并提供定位入口。
 正常 Start 不额外弹“确定开始”。
@@ -534,9 +526,9 @@ Sample Rate 提供常用选项：
 176,400
 192,000 Hz
 ```
-并允许手工输入 `8,000–192,000 Hz` 范围内的其他整数。默认取 Project Audio Render Settings，初始默认为 48,000 Hz。
+并允许手工输入 `8,000–192,000 Hz` 范围内的其他整数。每次打开初始为 48,000 Hz。
 
-同一窗口提供 `Offline Maximum Sample Voices per Unit Stream` 整数输入，合法范围 `1–16,777,216`，默认取 Project Audio Render Settings，初始默认为 `500`。该值与实时播放 Application Preference 分离；当前渲染任务的所有 Unit Stream 使用同一个冻结值。
+同一窗口提供 `Offline Maximum Sample Voices per Unit Stream` 整数输入，合法范围 `1–16,777,216`，每次打开初始为 `500`。该值与实时播放 Application Preference 分离；当前渲染任务的所有 Unit Stream 使用同一个冻结值。
 ### 19.7.4 Range
 Audio Render 不允许零长度范围。
 非零起点：
@@ -586,9 +578,8 @@ Blocked
 Whole Mix 与 Per Logical Track 分别使用第 15.10 节固定的 `<ProjectStem>.wav` 与 `<NN> - <LogicalTrackDisplayName>.wav` 模板。
 必须在创建任何临时输出前，按冻结的采样率、范围、最终 frame 数和 RIFF/WAVE 结构精确检查每个计划文件的 RIFF 大小上限。任一目标超过上限时，整个任务为 Blocked；不拆分、不回退 RF64、不自动降低采样率。
 Per Logical Track 模式可以在开始前显示哪些 Track 当前可准备、哪些存在已知问题，但正式任务仍按独立 Track 语义执行。
-### 19.7.8 Project Defaults
-本次模式、范围、Track 选择、文件采样率、输出路径和覆盖授权默认只属于本次任务。
-显式 `Save as Project Defaults` 才修改 Project Settings。
+### 19.7.8 Task-only Parameters
+模式、范围、Track 选择、采样率、离线复音上限、输出位置与覆盖授权只属于本次任务 Draft。Dialog 每次使用第 15.20.2 节固定初始值；不提供 `Save as Project Defaults`，Cancel 不修改 Project 或 Application Preferences（最近目录除外）。
 ### 19.7.9 Start
 点击 Start Rendering 并通过全部预检查后：
 - 冻结全部输入；
@@ -797,7 +788,7 @@ Project Paste
 Project Undo and Redo
 Apply Function Draft
 Change Project Settings
-Change SoundFont Settings
+Change Application Preferences
 Start a second global task
 ```
 ### 19.10.5 Level 3 — Main Window Modal Lock

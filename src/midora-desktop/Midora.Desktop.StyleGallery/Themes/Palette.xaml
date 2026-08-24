@@ -14,6 +14,7 @@
   <Color x:Key="Color.Red.Pressed">#C7373C</Color>
   <Color x:Key="Color.Red.Dark">#8F2429</Color>
   <Color x:Key="Color.Red.Subtle">#2A1215</Color>
+  <Color x:Key="Color.Red.Subtle.Hover">#3A1C20</Color>
 
   <Color x:Key="Color.Text.Primary">#F1F3F5</Color>
   <Color x:Key="Color.Text.Secondary">#A7AFBB</Color>
@@ -53,6 +54,7 @@
   <SolidColorBrush x:Key="Brush.Red.Pressed" Color="{StaticResource Color.Red.Pressed}" />
   <SolidColorBrush x:Key="Brush.Red.Dark" Color="{StaticResource Color.Red.Dark}" />
   <SolidColorBrush x:Key="Brush.Red.Subtle" Color="{StaticResource Color.Red.Subtle}" />
+  <SolidColorBrush x:Key="Brush.Red.Subtle.Hover" Color="{StaticResource Color.Red.Subtle.Hover}" />
 
   <SolidColorBrush x:Key="Brush.Text.Primary" Color="{StaticResource Color.Text.Primary}" />
   <SolidColorBrush x:Key="Brush.Text.Secondary" Color="{StaticResource Color.Text.Secondary}" />

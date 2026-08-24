@@ -25,45 +25,6 @@ internal static class ProjectSettingsProjection
                 field.Key == "settings.project.copyright" ? field.Value : metadata.Copyright);
         }
 
-        if (field.Key.StartsWith("settings.playback.", StringComparison.Ordinal))
-        {
-            PlaybackProjectSettings settings = project.Playback;
-            return ProjectDomainEditCommands.UpdatePlaybackSettings(
-                field.Key == "settings.playback.master" ? Double(value, field.Label) : settings.MasterVolumeDecibels,
-                field.Key == "settings.playback.limiter" ? Bool(value, field.Label) : settings.LimiterEnabled,
-                field.Key == "settings.playback.stopCursor"
-                    ? EnumValue<StopCursorBehavior>(value, field.Label)
-                    : settings.StopCursorBehavior);
-        }
-
-        if (field.Key.StartsWith("settings.midi.", StringComparison.Ordinal))
-        {
-            ExportProjectSettings settings = project.Export;
-            return ProjectDomainEditCommands.UpdateMidiExportSettings(
-                field.Key == "settings.midi.mode" ? EnumValue<ProjectMidiExportMode>(value, field.Label) : settings.Mode,
-                field.Key == "settings.midi.rangeMode" ? EnumValue<ProjectRangeMode>(value, field.Label) : settings.RangeMode,
-                field.Key == "settings.midi.start" ? NullableLong(value, field.Label) : settings.ManualStartTick,
-                field.Key == "settings.midi.end" ? NullableLong(value, field.Label) : settings.ManualEndTick,
-                field.Key == "settings.midi.trackSelection" ? EnumValue<ProjectMidiExportTrackSelectionMode>(value, field.Label) : settings.TrackSelectionMode,
-                field.Key == "settings.midi.routing" ? EnumValue<ProjectMidiExportRoutingStrategy>(value, field.Label) : settings.Routing,
-                field.Key == "settings.midi.readme" ? Bool(value, field.Label) : settings.IncludeReadme,
-                field.Key == "settings.midi.warnings" ? Bool(value, field.Label) : settings.TreatWarningsAsErrors);
-        }
-
-        if (field.Key.StartsWith("settings.audio.", StringComparison.Ordinal))
-        {
-            AudioRenderProjectSettings settings = project.AudioRender;
-            return ProjectDomainEditCommands.UpdateAudioRenderSettings(
-                field.Key == "settings.audio.mode" ? EnumValue<AudioRenderMode>(value, field.Label) : settings.Mode,
-                field.Key == "settings.audio.rangeMode" ? EnumValue<ProjectRangeMode>(value, field.Label) : settings.RangeMode,
-                field.Key == "settings.audio.start" ? NullableLong(value, field.Label) : settings.ManualStartTick,
-                field.Key == "settings.audio.end" ? NullableLong(value, field.Label) : settings.ManualEndTick,
-                field.Key == "settings.audio.trackSelection" ? EnumValue<ProjectTrackSelectionMode>(value, field.Label) : settings.TrackSelectionMode,
-                settings.ExplicitLogicalTrackIds,
-                field.Key == "settings.audio.sampleRate" ? Int(value, field.Label) : settings.SampleRate,
-                field.Key == "settings.audio.voices" ? Int(value, field.Label) : settings.MaximumSampleVoicesPerUnitStream);
-        }
-
         if (field.Key.StartsWith("settings.initial.", StringComparison.Ordinal))
         {
             return ProjectDomainEditCommands.UpdateProjectInitialStateValue(
@@ -79,20 +40,6 @@ internal static class ProjectSettingsProjection
         }
 
         throw new InvalidOperationException("This Project Settings field is read-only.");
-    }
-
-    private static bool Bool(string value, string label) => bool.TryParse(value, out bool result)
-        ? result : throw new FormatException($"{label} must be True or False.");
-
-    private static int Int(string value, string label) => int.TryParse(
-        value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int result)
-        ? result : throw new FormatException($"{label} must be a base-10 integer.");
-
-    private static long? NullableLong(string value, string label)
-    {
-        if (value.Length == 0) return null;
-        return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long result)
-            ? result : throw new FormatException($"{label} must be blank or a base-10 integer.");
     }
 
     private static int? NullableInt(string value, string label)
@@ -138,12 +85,4 @@ internal static class ProjectSettingsProjection
         return true;
     }
 
-    private static double Double(string value, string label) => double.TryParse(
-        value, NumberStyles.Float, CultureInfo.InvariantCulture, out double result)
-        ? result : throw new FormatException($"{label} must be a decimal number using '.'.");
-
-    private static T EnumValue<T>(string value, string label) where T : struct, Enum =>
-        Enum.TryParse(value, ignoreCase: true, out T result) && Enum.IsDefined(result)
-            ? result
-            : throw new FormatException($"{label} is not a supported {typeof(T).Name} value.");
 }

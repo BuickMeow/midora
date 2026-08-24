@@ -10,9 +10,6 @@ internal static class MidoraPackagePathsV1
     public const string Metadata = "metadata.json";
     public const string ConductorTrack = "conductor-track.json";
     public const string ProjectSettings = "settings/project-settings.json";
-    public const string ExportSettings = "settings/export-settings.json";
-    public const string PlaybackSettings = "settings/playback-settings.json";
-    public const string AudioRenderSettings = "settings/audio-render-settings.json";
     public const string GlobalResetDefaults = "settings/global-reset-defaults.json";
     public const string GlobalEventScopeDefaults = "settings/global-event-scope-defaults.json";
 
@@ -25,9 +22,6 @@ internal static class MidoraPackagePathsV1
         Metadata,
         ConductorTrack,
         ProjectSettings,
-        ExportSettings,
-        PlaybackSettings,
-        AudioRenderSettings,
         GlobalResetDefaults,
         GlobalEventScopeDefaults
     ];
@@ -58,9 +52,6 @@ internal static class ProjectCodecV1
             Settings = new ProjectSettingsPathsJsonV1
             {
                 Project = MidoraPackagePathsV1.ProjectSettings,
-                Export = MidoraPackagePathsV1.ExportSettings,
-                Playback = MidoraPackagePathsV1.PlaybackSettings,
-                AudioRender = MidoraPackagePathsV1.AudioRenderSettings,
                 GlobalResetDefaults = MidoraPackagePathsV1.GlobalResetDefaults,
                 GlobalEventScopeDefaults = MidoraPackagePathsV1.GlobalEventScopeDefaults
             },
@@ -121,9 +112,6 @@ internal static class ProjectCodecV1
             throw new InvalidDataException("project.json settings cannot be null.");
         }
         RequirePath(value.Settings.Project, MidoraPackagePathsV1.ProjectSettings, "settings.project");
-        RequirePath(value.Settings.Export, MidoraPackagePathsV1.ExportSettings, "settings.export");
-        RequirePath(value.Settings.Playback, MidoraPackagePathsV1.PlaybackSettings, "settings.playback");
-        RequirePath(value.Settings.AudioRender, MidoraPackagePathsV1.AudioRenderSettings, "settings.audioRender");
         RequirePath(value.Settings.GlobalResetDefaults, MidoraPackagePathsV1.GlobalResetDefaults,
             "settings.globalResetDefaults");
         RequirePath(value.Settings.GlobalEventScopeDefaults, MidoraPackagePathsV1.GlobalEventScopeDefaults,
@@ -289,7 +277,6 @@ internal static class ProjectCodecV1
         }
     }
 }
-
 internal static class ProjectSettingsCodecV1
 {
     public static ProjectSettingsJsonV1 Parse(ReadOnlySpan<byte> utf8)
@@ -329,308 +316,6 @@ internal static class ProjectSettingsCodecV1
         MidiStateCodecV1.Validate(value.GlobalInitialState, "globalInitialState");
     }
 }
-
-internal static class ExportSettingsCodecV1
-{
-    private const string WholeProject = "whole-project";
-    private const string PerLogicalTrack = "per-logical-track";
-    private const string PerPort = "per-port";
-    private const string ProjectDefaultRange = "project-default-range";
-    private const string ManualRange = "manual-range";
-    private const string AllValidLogicalTracks = "all-valid-logical-tracks";
-    private const string ExplicitAtTaskStart = "explicit-at-task-start";
-    private const string Compact = "compact";
-    private const string Preserve = "preserve";
-
-    public static ExportSettingsJsonV1 Parse(ReadOnlySpan<byte> utf8)
-    {
-        StrictJsonV1.ValidateInput(utf8);
-        ExportSettingsJsonV1 value = JsonSerializer.Deserialize(
-            utf8,
-            MidoraJsonSerializerContextV1.Default.ExportSettingsJsonV1)
-            ?? throw new InvalidDataException("export-settings.json cannot be null.");
-        Validate(value);
-        return value;
-    }
-
-    public static byte[] Serialize(ExportProjectSettings settings)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        ExportSettingsJsonV1 value = new()
-        {
-            SchemaVersion = PersistenceContractV1.SchemaVersion,
-            Mode = settings.Mode switch
-            {
-                ProjectMidiExportMode.WholeProject => WholeProject,
-                ProjectMidiExportMode.PerLogicalTrack => PerLogicalTrack,
-                ProjectMidiExportMode.PerPort => PerPort,
-                _ => throw new InvalidDataException("Unknown MIDI Export mode.")
-            },
-            RangeMode = settings.RangeMode switch
-            {
-                ProjectRangeMode.ProjectDefaultRange => ProjectDefaultRange,
-                ProjectRangeMode.ManualRange => ManualRange,
-                _ => throw new InvalidDataException("Unknown MIDI Export range mode.")
-            },
-            ManualStartTick = settings.ManualStartTick,
-            ManualEndTick = settings.ManualEndTick,
-            TrackSelectionMode = settings.TrackSelectionMode switch
-            {
-                ProjectMidiExportTrackSelectionMode.AllValidLogicalTracks => AllValidLogicalTracks,
-                ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart => ExplicitAtTaskStart,
-                _ => throw new InvalidDataException("Unknown MIDI Export Track selection mode.")
-            },
-            Routing = settings.Routing switch
-            {
-                ProjectMidiExportRoutingStrategy.Compact => Compact,
-                ProjectMidiExportRoutingStrategy.Preserve => Preserve,
-                _ => throw new InvalidDataException("Unknown MIDI Export routing strategy.")
-            },
-            IncludeReadme = settings.IncludeReadme,
-            TreatWarningsAsErrors = settings.TreatWarningsAsErrors
-        };
-        Validate(value);
-        return StrictJsonV1.SerializeWithFinalLf(
-            value,
-            MidoraJsonSerializerContextV1.Default.ExportSettingsJsonV1);
-    }
-
-    public static void Restore(ExportProjectSettings settings, ExportSettingsJsonV1 value)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        ArgumentNullException.ThrowIfNull(value);
-        Validate(value);
-        settings.Mode = value.Mode switch
-        {
-            WholeProject => ProjectMidiExportMode.WholeProject,
-            PerLogicalTrack => ProjectMidiExportMode.PerLogicalTrack,
-            _ => ProjectMidiExportMode.PerPort
-        };
-        settings.RangeMode = value.RangeMode == ProjectDefaultRange
-            ? ProjectRangeMode.ProjectDefaultRange
-            : ProjectRangeMode.ManualRange;
-        settings.ManualStartTick = value.ManualStartTick;
-        settings.ManualEndTick = value.ManualEndTick;
-        settings.TrackSelectionMode = value.TrackSelectionMode == AllValidLogicalTracks
-            ? ProjectMidiExportTrackSelectionMode.AllValidLogicalTracks
-            : ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart;
-        settings.Routing = value.Routing == Compact
-            ? ProjectMidiExportRoutingStrategy.Compact
-            : ProjectMidiExportRoutingStrategy.Preserve;
-        settings.IncludeReadme = value.IncludeReadme;
-        settings.TreatWarningsAsErrors = value.TreatWarningsAsErrors;
-    }
-
-    private static void Validate(ExportSettingsJsonV1 value)
-    {
-        if (value.SchemaVersion != PersistenceContractV1.SchemaVersion
-            || value.Mode is not WholeProject and not PerLogicalTrack and not PerPort
-            || value.RangeMode is not ProjectDefaultRange and not ManualRange
-            || value.TrackSelectionMode is not AllValidLogicalTracks and not ExplicitAtTaskStart
-            || value.Routing is not Compact and not Preserve)
-        {
-            throw new InvalidDataException("export-settings.json contains an invalid fixed value.");
-        }
-        bool manualRange = value.RangeMode == ManualRange;
-        if (manualRange != (value.ManualStartTick.HasValue && value.ManualEndTick.HasValue)
-            || manualRange && (value.ManualStartTick < 0 || value.ManualEndTick <= value.ManualStartTick)
-            || !manualRange && (value.ManualStartTick.HasValue || value.ManualEndTick.HasValue))
-        {
-            throw new InvalidDataException("export-settings.json range fields are inconsistent.");
-        }
-    }
-}
-
-internal static class PlaybackSettingsCodecV1
-{
-    private const string ReturnToPlaybackStart = "return-to-playback-start";
-    private const string StayAtStoppedTick = "stay-at-stopped-tick";
-
-    public static PlaybackSettingsJsonV1 Parse(ReadOnlySpan<byte> utf8)
-    {
-        StrictJsonV1.ValidateInput(utf8);
-        PlaybackSettingsJsonV1 value = JsonSerializer.Deserialize(
-            utf8,
-            MidoraJsonSerializerContextV1.Default.PlaybackSettingsJsonV1)
-            ?? throw new InvalidDataException("playback-settings.json cannot be null.");
-        Validate(value);
-        return value;
-    }
-
-    public static byte[] Serialize(PlaybackProjectSettings settings)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        PlaybackSettingsJsonV1 value = new()
-        {
-            SchemaVersion = PersistenceContractV1.SchemaVersion,
-            MasterVolumeDecibels = settings.MasterVolumeDecibels,
-            LimiterEnabled = settings.LimiterEnabled,
-            StopCursorBehavior = settings.StopCursorBehavior switch
-            {
-                StopCursorBehavior.ReturnToPlaybackStart => ReturnToPlaybackStart,
-                StopCursorBehavior.StayAtStoppedTick => StayAtStoppedTick,
-                _ => throw new InvalidDataException("Unknown Stop Cursor Behavior.")
-            }
-        };
-        Validate(value);
-        return StrictJsonV1.SerializeWithFinalLf(
-            value,
-            MidoraJsonSerializerContextV1.Default.PlaybackSettingsJsonV1);
-    }
-
-    public static void Restore(PlaybackProjectSettings settings, PlaybackSettingsJsonV1 value)
-    {
-        settings.MasterVolumeDecibels = value.MasterVolumeDecibels;
-        settings.LimiterEnabled = value.LimiterEnabled;
-        settings.StopCursorBehavior = value.StopCursorBehavior switch
-        {
-            ReturnToPlaybackStart => StopCursorBehavior.ReturnToPlaybackStart,
-            StayAtStoppedTick => StopCursorBehavior.StayAtStoppedTick,
-            _ => throw new InvalidDataException("Unknown Stop Cursor Behavior.")
-        };
-    }
-
-    private static void Validate(PlaybackSettingsJsonV1 value)
-    {
-        if (value.SchemaVersion != PersistenceContractV1.SchemaVersion
-            || !double.IsFinite(value.MasterVolumeDecibels)
-            || value.MasterVolumeDecibels is < -float.MaxValue or > 0
-            || value.StopCursorBehavior is not ReturnToPlaybackStart and not StayAtStoppedTick)
-        {
-            throw new InvalidDataException("playback-settings.json contains an invalid value.");
-        }
-    }
-}
-
-internal static class AudioRenderSettingsCodecV1
-{
-    private const string WholeMix = "whole-mix";
-    private const string PerLogicalTrack = "per-logical-track";
-    private const string ProjectDefaultRange = "project-default-range";
-    private const string ManualRange = "manual-range";
-    private const string AllValidLogicalTracks = "all-valid-logical-tracks";
-    private const string ExplicitLogicalTrackIds = "explicit-logical-track-ids";
-    private const string ProjectOrderNumberAndTrackName = "project-order-number-and-track-name";
-
-    public static AudioRenderSettingsJsonV1 Parse(ReadOnlySpan<byte> utf8)
-    {
-        StrictJsonV1.ValidateInput(utf8);
-        AudioRenderSettingsJsonV1 value = JsonSerializer.Deserialize(
-            utf8,
-            MidoraJsonSerializerContextV1.Default.AudioRenderSettingsJsonV1)
-            ?? throw new InvalidDataException("audio-render-settings.json cannot be null.");
-        Validate(value);
-        return value;
-    }
-
-    public static byte[] Serialize(AudioRenderProjectSettings settings)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        AudioRenderSettingsJsonV1 value = new()
-        {
-            SchemaVersion = PersistenceContractV1.SchemaVersion,
-            Mode = settings.Mode switch
-            {
-                AudioRenderMode.WholeMix => WholeMix,
-                AudioRenderMode.PerLogicalTrack => PerLogicalTrack,
-                _ => throw new InvalidDataException("Unknown Audio Render mode.")
-            },
-            RangeMode = settings.RangeMode switch
-            {
-                ProjectRangeMode.ProjectDefaultRange => ProjectDefaultRange,
-                ProjectRangeMode.ManualRange => ManualRange,
-                _ => throw new InvalidDataException("Unknown Audio Render range mode.")
-            },
-            ManualStartTick = settings.ManualStartTick,
-            ManualEndTick = settings.ManualEndTick,
-            TrackSelectionMode = settings.TrackSelectionMode switch
-            {
-                ProjectTrackSelectionMode.AllValidLogicalTracks => AllValidLogicalTracks,
-                ProjectTrackSelectionMode.ExplicitLogicalTrackIds => ExplicitLogicalTrackIds,
-                _ => throw new InvalidDataException("Unknown Audio Render Track selection mode.")
-            },
-            ExplicitLogicalTrackIds = settings.ExplicitLogicalTrackIds
-                .OrderBy(id => id)
-                .Select(id => new StableIdJsonV1(id.Value))
-                .ToArray(),
-            Container = "riff-wave",
-            ChannelLayout = "stereo",
-            SampleFormat = "interleaved-ieee-float32",
-            Endianness = "little-endian",
-            SampleRate = settings.SampleRate,
-            MaximumSampleVoicesPerUnitStream = settings.MaximumSampleVoicesPerUnitStream,
-            TrackFileNamePattern = ProjectOrderNumberAndTrackName
-        };
-        Validate(value);
-        return StrictJsonV1.SerializeWithFinalLf(
-            value,
-            MidoraJsonSerializerContextV1.Default.AudioRenderSettingsJsonV1);
-    }
-
-    public static void Restore(AudioRenderProjectSettings settings, AudioRenderSettingsJsonV1 value)
-    {
-        settings.Mode = value.Mode == WholeMix ? AudioRenderMode.WholeMix : AudioRenderMode.PerLogicalTrack;
-        settings.RangeMode = value.RangeMode == ProjectDefaultRange
-            ? ProjectRangeMode.ProjectDefaultRange
-            : ProjectRangeMode.ManualRange;
-        settings.ManualStartTick = value.ManualStartTick;
-        settings.ManualEndTick = value.ManualEndTick;
-        settings.TrackSelectionMode = value.TrackSelectionMode == AllValidLogicalTracks
-            ? ProjectTrackSelectionMode.AllValidLogicalTracks
-            : ProjectTrackSelectionMode.ExplicitLogicalTrackIds;
-        settings.ExplicitLogicalTrackIds.Clear();
-        foreach (StableIdJsonV1 idValue in value.ExplicitLogicalTrackIds)
-        {
-            settings.ExplicitLogicalTrackIds.Add(idValue.ToDomain());
-        }
-        settings.SampleRate = value.SampleRate;
-        settings.MaximumSampleVoicesPerUnitStream = value.MaximumSampleVoicesPerUnitStream;
-    }
-
-    private static void Validate(AudioRenderSettingsJsonV1 value)
-    {
-        if (value.SchemaVersion != PersistenceContractV1.SchemaVersion
-            || value.Mode is not WholeMix and not PerLogicalTrack
-            || value.RangeMode is not ProjectDefaultRange and not ManualRange
-            || value.TrackSelectionMode is not AllValidLogicalTracks and not ExplicitLogicalTrackIds
-            || value.Container != "riff-wave"
-            || value.ChannelLayout != "stereo"
-            || value.SampleFormat != "interleaved-ieee-float32"
-            || value.Endianness != "little-endian"
-            || value.TrackFileNamePattern != ProjectOrderNumberAndTrackName
-            || value.SampleRate is < AudioRenderProjectSettings.MinimumSampleRate
-                or > AudioRenderProjectSettings.MaximumSampleRate
-            || value.MaximumSampleVoicesPerUnitStream is < AudioRenderProjectSettings.MinimumSampleVoicesPerUnitStream
-                or > AudioRenderProjectSettings.MaximumSampleVoicesPerUnitStreamLimit)
-        {
-            throw new InvalidDataException("audio-render-settings.json contains an invalid fixed or ranged value.");
-        }
-        bool manualRange = value.RangeMode == ManualRange;
-        if (manualRange != (value.ManualStartTick.HasValue && value.ManualEndTick.HasValue)
-            || manualRange && (value.ManualStartTick < 0 || value.ManualEndTick <= value.ManualStartTick)
-            || !manualRange && (value.ManualStartTick.HasValue || value.ManualEndTick.HasValue))
-        {
-            throw new InvalidDataException("audio-render-settings.json range fields are inconsistent.");
-        }
-        if (value.ExplicitLogicalTrackIds is null)
-        {
-            throw new InvalidDataException("audio-render-settings.json explicitLogicalTrackIds cannot be null.");
-        }
-        HashSet<StableIdJsonV1> ids = [];
-        foreach (StableIdJsonV1 id in value.ExplicitLogicalTrackIds)
-        {
-            if (id.Value <= 0 || !ids.Add(id))
-            {
-                throw new InvalidDataException("audio-render-settings.json contains an invalid or duplicate Track ID.");
-            }
-        }
-        if (value.TrackSelectionMode == AllValidLogicalTracks && ids.Count != 0)
-        {
-            throw new InvalidDataException("All-valid Track selection cannot carry explicit Track IDs.");
-        }
-    }
-}
-
 internal static class GlobalResetDefaultsCodecV1
 {
     public static GlobalResetDefaultsJsonV1 Parse(ReadOnlySpan<byte> utf8)

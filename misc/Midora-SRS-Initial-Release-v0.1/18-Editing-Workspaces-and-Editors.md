@@ -113,6 +113,8 @@ Project End Marker 后区域弱化，但仍显示并允许编辑。End Marker �
 
 Arrangement Toolbar 提供 Grid 开关，但不提供可见 Grid 粒度选择；启用时固定使用 `Bar`。操作粒度与 Snap 仍独立可选，并提供默认 Segment 创建长度（tick，输入即生效）；新建 Project / 重置编辑器时默认操作粒度为 `1/8`、Snap 开启、默认 Segment 创建长度为 `1 × TPQ`。小节边界使用主实线，每个分母拍的内部边界使用颜色更浅的低强调实线；拍线必须读取完整 Project Time Signature Map，因此 `3/4` 每小节显示 2 条四分音符间隔实线，`6/8` 每小节显示 5 条八分音符间隔实线，拍号变化 tick 立即作为新的主实线小节边界。极端水平缩小时必须按 device-pixel 最小间距聚合/跳过不可辨识的竖线，绘制成本不得随不可见的小节或拍数量线性增长。顶部 Timeline Ruler 显示一基小节号而非原始 tick。Draw 模式下，鼠标所在 Track 必须显示按当前操作粒度定位、按默认长度计算的虚线创建预览。空白处按下左键后进入 Segment 放置手势：未越过拖动阈值时按默认长度创建；向右拖动时按当前操作粒度实时调整结束 tick，松开后一次性提交。若请求长度超出当前可用间隙，创建命令静默缩短为从目标 tick 起可容纳的最大正长度；预览显示实际将提交的长度。不存在正长度空隙时预览为错误色并拒绝创建。该规则只适用于新建 Segment；已有 Segment 的移动和 Resize 仍不得因重叠而被静默缩短。
 
+Arrangement 左侧 ruler header 在重置全部 Track Mute/Solo 按钮之前提供 Fluent `zoom_out` / `zoom_in` 纵向缩放按钮，并继续支持 Track header 上的 `Ctrl + Mouse Wheel` 纵向缩放。Conductor 固定行不是 Segment host；Draw 模式不得在其内容区显示 Segment 创建预览，也不得以该行作为 Segment 创建、框选或对象编辑手势起点。左键单击 Conductor 内容区仍必须按 Arrangement Snap 设置更新 Edit Cursor；双击不得因此创建对象。
+
 Arrangement 中只有 Draw 模式允许拖动 Segment 主体或调整边缘；Draw 模式左键按下已有 Segment 时必须先清除其他 Segment 选择并只保留本次目标，随后再按命中区域进入 Move/Resize。Select 模式的单次左键按下始终发起框选，即使起点位于 Segment 上也不得先命中或单独选择该 Segment，并且不得直接移动、Resize 或双击创建 Segment。既有双击导航不受该单击规则影响。拖动和 Resize 期间必须显示位置与长度预览，并隐藏同位置的创建预览。工具互斥、指针和快捷键规则见第 20.1.6、20.12 节。
 
 Draw 模式下，`Alt + Left Drag` 在 Segment 的任意命中位置强制执行 Move，即使指针位于左/右 Resize 边界；`Ctrl + Alt + Left Drag` 强制执行复制并移动。该替代手势仍服从当前 Snap 设置。操作类型及复制意图在按下时冻结，拖动途中改变修饰键不得在 Move、Copy 与 Resize 之间切换。
@@ -161,6 +163,8 @@ Draw 模式下，`Alt + Left Drag` 在 Logical Note 的任意命中位置强制�
 
 Segment Toolbar 必须提供共享 piano-roll 的可见分割线粒度、操作粒度、Snap、默认 Note 长度（tick）与默认 velocity。默认长度和 velocity 独立于 Grid；默认长度允许小于操作粒度。
 
+piano roll 左上角 ruler header 不显示 `BAR` 文本，而是提供紧凑的 Fluent `zoom_out` / `zoom_in` 按钮以逐 device-pixel 调整纵向 Key 高度。完整 `52 × 24` header 必须直接分成 `3 + 22 + 2 + 22 + 3` 水平列和 `3 + 18 + 3` 垂直行，两个按钮分别占用对称单元，不再使用嵌套容器的 Center 与布局取整推导位置。图标必须采用 Fluent 原生 `16 × 16` Geometry 和固定 `16 × 16` 设计画布，禁止按 Geometry 实际包围盒裁切后拉伸；按钮内容与设计画布均居中。由于 Segment 与 SubVoice 宿主的周边分割线造成不同光学中心，Logical/Pure MIDI Segment 共用 header 的整组按钮相对数学中心上移 2 device pixels，SubVoice 上移 1 device pixel。右侧与底部分割线必须作为不参与布局测量的 1 device-pixel 覆盖层绘制。新建或重置的 Segment piano roll 默认 `N = 15`（100% DPI），SubVoice piano roll 使用相同默认值。工具栏右侧的水平缩放按钮也使用相同 Fluent 图标，但不得与左上角纵向缩放命令混用。
+
 共享 piano roll 的 Grid 与 Arrangement 一样只提供开关、不提供可见粒度选择；启用时固定使用 `Bar`，小节主线与每个分母拍的低强调子线必须通过上述 local→Project 映射与 Arrangement 精确对齐。SubVoice local tick 0 直接按 Project tick 0 的 Time Signature Map 显示。水平极端缩小时执行相同的 device-pixel 密度上限。顶部 Ruler 显示小节号。
 
 piano roll 的每 Key 高度 `N` 固定为 device-pixel 整数，`N >= 3`；纵向缩放每一步只改变该整数。Note 的顶部 1 device pixel border 精确覆盖所在 Key 的上分割线，Note 总高度精确为 `N`，底部 border 停在下一条分割线前一 device pixel。左右 border、上下 border 与至少一 device pixel fill 在最小纵向缩放下均必须可辨；DPI 换算不得重新引入半像素高度或跨 Key 漂移。
@@ -196,6 +200,8 @@ Velocity 视图按 Note start tick 绘制固定窄柱，高度表示 velocity；
 左键在空白处按下并拖动形成自由轨迹，右键拖动使用起止点直线轨迹；无选择时手势作用于轨迹经过的全部柱，存在选择时只作用于经过且已选择的柱。按住期间只显示轻量轨迹覆盖层，不逐柱重绘、不更新 Velocity tile，也不提交 Project；松开时根据完整轨迹一次性计算最终值、提交一次 Project Undo，并异步重建受影响 tile。单击而未移动仍以该点作为单点轨迹，包括 tick 0。Escape 或 mouse capture 丢失取消轨迹且不提交。
 
 左键直接按住单柱或其 onset marker 上下拖动时，只调整命中的一个 Note，不显示轨迹；同 tick 重叠柱按上述最上层顺序命中。该单柱 transient 允许只覆盖一个柱，松开时提交。所有 Velocity 手势都不得改变 Note 的位置、长度或 pitch。
+
+Logical/MIDI Segment 与 SubVoice 的 Velocity ruler 不建立 Time Range Selection；从 Velocity 内容区向 ruler 或视图外拖动时，当前 velocity 手势继续按 pointer capture 完成或取消，不得被 ruler 的时间范围手势截获。Segment Logical Parameter / Direct MIDI Event Lane 与 SubVoice Event Lane 的 ruler 服从同一“无 Time Range”规则。
 
 `Alt + Left Drag` 必须强制使用自由轨迹手势：起点即使命中单柱或 onset marker，也不得进入单 Note 调整。该修饰键只覆盖 direct-hit 分流，不改变“存在选择时仅作用于已选择 Note”的过滤规则。
 
@@ -244,7 +250,7 @@ Configurations
 SubVoice
 ```
 
-`Configurations` 直接承载 General、Template、Routing / Isolation、Lifecycle、Loop、Overlap 与 Instrument Initial State；不设置无实际用途的 Overview。Logical Parameters、Parameter Mappings、MIDI output mapping chains、Mapping Steps、Envelope Presets 与 Mapping Function Presets 全部由左侧 Structure Panel 管理，不设置 Parameters 或 Properties Tab。结构对象双击或右键 `Properties...` 打开固定目标模态对话框。
+`Configurations` 直接承载 General、Template、Routing / Isolation、Lifecycle、Loop、Overlap 与 Instrument Initial State；不设置无实际用途的 Overview。切换到该分区或重新装载其容器时，键盘焦点必须停留在安全的分区导航目标，不得自动进入 Name 或其他文本输入框，以保证 Space、`D`、`S`、`E` 等 Workspace / Global 快捷键继续自然可用。Logical Parameters、Parameter Mappings、MIDI output mapping chains、Mapping Steps、Envelope Presets 与 Mapping Function Presets 全部由左侧 Structure Panel 管理，不设置 Parameters 或 Properties Tab。结构对象双击或右键 `Properties...` 打开固定目标模态对话框。
 ### 18.3.2 Header
 显示：
 ```text
@@ -272,7 +278,7 @@ Lifecycle objects
 Full Instrument
 Selected SubVoice
 ```
-预览键盘与 Segment Editor Pitch Ruler 采用统一琴键规则，不显示 MIDI Note 编号。
+预览键盘与 Segment Editor Pitch Ruler 采用统一琴键规则，不显示 MIDI Note 编号。Preview Keyboard 的 pointer 纵向位置映射为越靠下 velocity 越大、越靠上 velocity 越小；该映射只影响 Held Preview 请求，不修改 Project Note 或 Mapping 数据。
 Preview Mute / Solo 只影响预览任务，不属于 Project。
 ### 18.3.5 引用更新
 修改 Event Instrument 后：
@@ -313,6 +319,8 @@ Initial State
 - Program 只显示用户侧 1～128 编号。
 
 SubVoice Timeline 与 Segment Editor 共用当前 Project 会话的 piano-roll Grid / Snap、默认 Note 长度和默认 velocity。下部编辑区同样使用 Velocity 与单个活动事件/曲线 Lane 切换，不保留多 Lane 垂直堆叠模式。
+
+从 Velocity 切换到 Event Lane 后，键盘焦点必须在布局更新后进入 Event Lane Timeline Surface，不得停留在 `LANE` 下拉框；因此 `D` / `S` / `E`、Space 及其他焦点敏感 Workspace 快捷键必须立即可用。
 
 SubVoice Note piano roll 复用第 18.2.3～18.2.4 节的 Pitch Ruler 琴键与 C 音名规则、Draw / Select 直接编辑边界、拖动预览和第 20 章的工具互斥、指针及快捷键规则。
 ### 18.4.3 Initial State
@@ -535,117 +543,27 @@ Conductor 在 Arrangement 第一行直接按 absolute Project tick 显示事件�
 初版不提供独立 Library Workspace、Folder、Unfiled 或 Card Library。Arrangement 左侧 ruler header 使用 Fluent guitar 单图标 toggle 切换左侧 Event Instruments 管理栏；该栏按独立 Definition order 浏览、创建、复制、粘贴、Duplicate、删除、重命名、编辑和排序 Event Instrument Definition，并提供 `Add Logical Track Using This Instrument`。Definition 可没有任何 Usage；删除仍被 Usage 引用的 Definition 必须拒绝。Event Instrument 详细内容在对象 Editor 中编辑，完整规则见第 24 章。
 ---
 ## 18.9 Project Settings Workspace
-### 18.9.1 布局
-```text
-+--------------------------------------------------------------------------+
-| [A] Settings Header                                                      |
-+----------------------+---------------------------------------------------+
-| [B] Category        | [C] Category Toolbar                              |
-|     Navigation      +---------------------------------------------------+
-|                     | [D] Active Settings Page                           |
-+----------------------+---------------------------------------------------+
-| [E] Change and Validation Summary                                        |
-+--------------------------------------------------------------------------+
-```
-分类：
+### 18.9.1 分类
+Project Settings 只呈现 Project Source Data 与只读派生信息：
 ```text
 General
 Metadata
-SoundFont
-Playback
-MIDI Export
-Audio Render
 Reset Defaults
 ```
+不得恢复 SoundFont、Playback、MIDI Export Defaults 或 Audio Render Defaults 页面。
+
 ### 18.9.2 General 与 Metadata
-TPQ 创建 Project 后只读。
-Project Name 可空。Project Version 是用户自由文本，与 File Format Version 严格区分。
-Metadata 普通字段直接提交 Project，不使用 Function Draft 机制。
-General 只读显示：
-```text
-Notes
-Events
-Project Work Time
-TPQ
-```
-`Notes` 与 `Events` 来自最近一次正式全 Project 编译结果：前者显示正 velocity `NoteOn` 数量，后者显示 canonical MIDI channel event 总数；不可消费结果显示 `0`。它们不允许编辑，不持久化，也不进入 Undo / Redo。`Project Work Time` 显示当前持久化累计值加本次打开会话截至刷新瞬间的累计值。
+TPQ 创建 Project 后只读。Project Name 可空；Project Version 是用户自由文本，与 File Format Version 严格区分。
 
-用户 Metadata：
-```text
-Project Name
-Project Version
-Author or Team
-Original Work
-Copyright
-```
-File Information 只读显示：
-```text
-Created Time
-Modified Time
-Created With Midora
-Last Saved With Midora
-File Format Version
-```
-`Created With Midora` 和 `Last Saved With Midora` 来自 manifest，不属于用户 Metadata。
-### 18.9.3 SoundFont
-SoundFont 不属于 Project Settings。Application Preferences 提供程序级有序列表，每项包含：
-```text
-Enabled
-Local absolute .sf2 or .sfz path
-Optional target Bank MSB / Bank LSB / Program; required for SFZ
-Move Up / Move Down
-Add / Remove
-```
-列表顺序即 BASSMIDI preset fallback 优先级。编辑列表不复制、完整读取或预解析 SoundFont，也不解析 SFZ sample/include；Worker 重建或实际播放、预览、音频渲染 Preparing 直接打开原文件。无 Enabled SoundFont 是合法应用状态，不影响 Project 打开、编辑、编译、保存或 MIDI 导出。
-### 18.9.4 Playback
-Project Playback Settings 只包含：
-```text
-Playback Master Volume
-Playback Limiter
-Stop Cursor Behavior
-```
-Master Volume 和 Limiter 同时影响实时播放与音频渲染。
-Playback Device 属于 Application Preference，不放入 Project Settings。正式入口为：
-```text
-Playback > Output Device
-```
-该入口必须列出全部 enabled output device，标记 System Default，并排除输入、loopback input、disabled、unplugged 和 not-present 端点。
+General 只读显示 `Notes`、`Events`、`Project Work Time` 与 TPQ。Notes 是最近一次可消费全 Project canonical 中正 velocity NoteOn 数；Events 是同一冻结序列的 MIDI channel event 总数；不可消费结果二者为 0。它们不持久化、不进入 Undo / Redo。
 
-同一 Application Preference 页面还应提供：
-```text
-Render-Ahead Buffer: 20–2000 ms, default 100 ms
-Device Buffer Request: 5–200 ms, default 50 ms
-```
+用户 Metadata 包含 Project Name、Project Version、Author or Team、Original Work 与 Copyright。File Information 只读显示创建/修改时间、创建/最后保存软件版本与文件格式版本。
 
-页面只读显示设备实际采样率、实际 buffer 和 callback period。设备及 buffer 设置只能在 Stopped 状态提交。
-### 18.9.5 MIDI Export 与 Audio Render
-Settings Workspace 保存 Project 默认值，不保存绝对输出路径。
-Export / Render Dialog 中的本次参数默认不修改 Project；只有显式 `Save as Project Defaults` 才形成一次 Project 编辑。
+### 18.9.3 Reset 与固定 Event Scope
+Reset Defaults 编辑正式 Project 级 Reset 默认值。Global Event Scope Defaults 仅为持久化兼容空 marker，不提供 UI。
 
-Audio Render Settings 必须允许保存默认文件采样率：
-```text
-整数
-8,000–192,000 Hz
-默认 48,000 Hz
-```
-RIFF/WAVE、Stereo、Interleaved IEEE 32-bit Float 和 Little-endian 是只读固定格式字段。
-### 18.9.6 Reset 与固定 Event Scope
-Reset Defaults 必须与以下内容明确区分：
-```text
-SubVoice Initial State
-Timeline Event
-Lane activation Reset
-Segment / consumer hard-boundary Reset
-```
-初版不显示或编辑 `Global Event Scope Defaults`。Note 为逐实例事件；Bank、Program、CC、Pitch Bend、RPN、NRPN 与 Pitch Bend Range 等状态类事件的 Channel-Wide 作用域由各专项章节固定，不提供用户覆盖入口。
-### 18.9.7 字段提交
-设置字段提交后进入 Project Undo / Redo。
-非法值：
-- 不提交；
-- 不静默 Clamp；
-- 不创建 Undo；
-- 失焦时恢复最后合法值。
----
+### 18.9.4 提交
+Project-backed 字段必须通过正式 Project command 原子提交并进入 Undo / Redo；只读派生字段不得产生命令。
 ## 18.10 Diagnostics Workspace
 ### 18.10.1 布局
 ```text

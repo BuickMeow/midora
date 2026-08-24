@@ -44,25 +44,6 @@ public sealed class MidoraProjectPackageV1Tests
         Assert.Equal(12, opened.Project.GlobalInitialState.BankMsb);
         Assert.Equal(99, opened.Project.GlobalInitialState.Controllers[7]);
         Assert.Equal(64, opened.Project.GlobalResetDefaults.Controllers[64]);
-        Assert.Equal(ProjectMidiExportMode.PerPort, opened.Project.Export.Mode);
-        Assert.Equal(ProjectRangeMode.ManualRange, opened.Project.Export.RangeMode);
-        Assert.Equal(120, opened.Project.Export.ManualStartTick);
-        Assert.Equal(3_840, opened.Project.Export.ManualEndTick);
-        Assert.Equal(
-            ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart,
-            opened.Project.Export.TrackSelectionMode);
-        Assert.Equal(ProjectMidiExportRoutingStrategy.Preserve, opened.Project.Export.Routing);
-        Assert.False(opened.Project.Export.IncludeReadme);
-        Assert.True(opened.Project.Export.TreatWarningsAsErrors);
-        Assert.Equal(-6.5, opened.Project.Playback.MasterVolumeDecibels);
-        Assert.False(opened.Project.Playback.LimiterEnabled);
-        Assert.Equal(StopCursorBehavior.StayAtStoppedTick, opened.Project.Playback.StopCursorBehavior);
-        Assert.Equal(AudioRenderMode.PerLogicalTrack, opened.Project.AudioRender.Mode);
-        Assert.Equal(ProjectRangeMode.ManualRange, opened.Project.AudioRender.RangeMode);
-        Assert.Equal(240, opened.Project.AudioRender.ManualStartTick);
-        Assert.Equal(3_840, opened.Project.AudioRender.ManualEndTick);
-        Assert.Equal(44_100, opened.Project.AudioRender.SampleRate);
-        Assert.Equal(1_024, opened.Project.AudioRender.MaximumSampleVoicesPerUnitStream);
         using (FileStream exclusive = new(packagePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
             Assert.True(exclusive.Length > 0);
@@ -168,24 +149,15 @@ public sealed class MidoraProjectPackageV1Tests
         TamperEntriesWithoutUpdatingManifest(
             packagePath,
             "settings/project-settings.json",
-            "settings/export-settings.json",
-            "settings/playback-settings.json",
             "conductor-track.json");
 
         MidoraProjectOpenResultV1 opened = await packages.OpenAsync(packagePath);
 
         Assert.True(opened.IsModified);
-        Assert.Equal(4, opened.Diagnostics.Count(item =>
+        Assert.Equal(2, opened.Diagnostics.Count(item =>
             item.Severity == MidoraPackageDiagnosticSeverityV1.Error
             && item.Code == "MIDORA-PERSIST-RECOVERED-DEFAULT"));
         Assert.Equal(192, opened.Project.TicksPerQuarterNote);
-        Assert.Equal(ProjectMidiExportMode.WholeProject, opened.Project.Export.Mode);
-        Assert.Equal(ProjectRangeMode.ProjectDefaultRange, opened.Project.Export.RangeMode);
-        Assert.Equal(ProjectMidiExportRoutingStrategy.Compact, opened.Project.Export.Routing);
-        Assert.True(opened.Project.Export.IncludeReadme);
-        Assert.False(opened.Project.Export.TreatWarningsAsErrors);
-        Assert.Equal(-0.1, opened.Project.Playback.MasterVolumeDecibels);
-        Assert.True(opened.Project.Playback.LimiterEnabled);
         Assert.Single(opened.Project.Conductor.Tempos);
         Assert.Single(opened.Project.Conductor.TimeSignatures);
         Assert.Equal(0, opened.Project.Conductor.Tempos[0].Tick);
@@ -195,7 +167,6 @@ public sealed class MidoraProjectPackageV1Tests
     [Theory]
     [InlineData("project.json")]
     [InlineData("metadata.json")]
-    [InlineData("settings/audio-render-settings.json")]
     public async Task CorruptRequiredOrPresentMetadataFilesFailStrictly(string entryName)
     {
         using TemporaryDirectory temporary = new();
@@ -259,22 +230,6 @@ public sealed class MidoraProjectPackageV1Tests
         MidoraProjectOpenResultV1 reopened = await packages.OpenAsync(packagePath);
         Assert.False(reopened.IsModified);
         Assert.Empty(reopened.Diagnostics);
-    }
-
-    [Fact]
-    public async Task MissingRequiredAudioRenderSettingsFailsStructureValidation()
-    {
-        using TemporaryDirectory temporary = new();
-        string packagePath = temporary.PathFor("missing-required.midora");
-        MidoraProjectPackageV1 packages = CreateService();
-        await packages.SaveCopyAsync(CreatePopulatedProject(), packagePath);
-        DeleteEntries(packagePath, "settings/audio-render-settings.json");
-
-        MidoraPackageExceptionV1 failure = await Assert.ThrowsAsync<MidoraPackageExceptionV1>(() =>
-            packages.OpenAsync(packagePath));
-
-        Assert.Equal(MidoraPackageStageV1.Structure, failure.Stage);
-        Assert.Equal("settings/audio-render-settings.json", failure.PackagePath);
     }
 
     [Fact]
@@ -464,14 +419,6 @@ public sealed class MidoraProjectPackageV1Tests
         Assert.Throws<InvalidDataException>(() => ProjectSettingsCodecV1.Serialize(project));
     }
 
-    [Fact]
-    public void PlaybackSettingsRejectPositiveMasterGain()
-    {
-        PlaybackProjectSettings settings = new() { MasterVolumeDecibels = 0.01 };
-
-        Assert.Throws<InvalidDataException>(() => PlaybackSettingsCodecV1.Serialize(settings));
-    }
-
     private static MidoraProjectPackageV1 CreateService() =>
         new("0.1.0-test", new FixedTimeProvider(SavedAt));
 
@@ -493,23 +440,6 @@ public sealed class MidoraProjectPackageV1Tests
         project.GlobalInitialState.Controllers.Add(7, 99);
         project.GlobalInitialState.RegisteredParameters.Add(0, 256);
         project.GlobalResetDefaults.Controllers.Add(64, 64);
-        project.Export.Mode = ProjectMidiExportMode.PerPort;
-        project.Export.RangeMode = ProjectRangeMode.ManualRange;
-        project.Export.ManualStartTick = 120;
-        project.Export.ManualEndTick = 3_840;
-        project.Export.TrackSelectionMode = ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart;
-        project.Export.Routing = ProjectMidiExportRoutingStrategy.Preserve;
-        project.Export.IncludeReadme = false;
-        project.Export.TreatWarningsAsErrors = true;
-        project.Playback.MasterVolumeDecibels = -6.5;
-        project.Playback.LimiterEnabled = false;
-        project.Playback.StopCursorBehavior = StopCursorBehavior.StayAtStoppedTick;
-        project.AudioRender.Mode = AudioRenderMode.PerLogicalTrack;
-        project.AudioRender.RangeMode = ProjectRangeMode.ManualRange;
-        project.AudioRender.ManualStartTick = 240;
-        project.AudioRender.ManualEndTick = 3_840;
-        project.AudioRender.SampleRate = 44_100;
-        project.AudioRender.MaximumSampleVoicesPerUnitStream = 1_024;
         return project;
     }
 
@@ -522,9 +452,6 @@ public sealed class MidoraProjectPackageV1Tests
             "metadata.json",
             "conductor-track.json",
             "settings/project-settings.json",
-            "settings/export-settings.json",
-            "settings/playback-settings.json",
-            "settings/audio-render-settings.json",
             "settings/global-reset-defaults.json",
             "settings/global-event-scope-defaults.json"
         ];

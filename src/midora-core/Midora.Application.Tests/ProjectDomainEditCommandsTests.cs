@@ -224,7 +224,7 @@ public sealed class ProjectDomainEditCommandsTests
     }
 
     [Fact]
-    public void LogicalTrackReorderAndDeleteRestoreOrderIdentityAndRenderSelection()
+    public void LogicalTrackReorderAndDeleteRestoreOrderAndIdentity()
     {
         MidoraProject project = CreateProject();
         LogicalTrack first = project.Tracks[0];
@@ -234,7 +234,6 @@ public sealed class ProjectDomainEditCommandsTests
             LastBoundEventInstrumentName = parent.Name
         };
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, second, parent.Id);
-        project.AudioRender.ExplicitLogicalTrackIds.Add(first.Id);
         long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
@@ -254,12 +253,10 @@ public sealed class ProjectDomainEditCommandsTests
             first.Id,
             nonEmptyDeletionConfirmed: true));
         Assert.DoesNotContain(first, project.Tracks);
-        Assert.DoesNotContain(first.Id, project.AudioRender.ExplicitLogicalTrackIds);
         AssertCurrentCompilationMatchesFull(compilation);
 
         document.Undo();
         Assert.Same(first, project.Tracks[0]);
-        Assert.Contains(first.Id, project.AudioRender.ExplicitLogicalTrackIds);
         Assert.Equal(nextStableId, project.NextStableId);
         AssertCurrentCompilationMatchesFull(compilation);
     }
@@ -420,7 +417,6 @@ public sealed class ProjectDomainEditCommandsTests
             "broken",
             0);
         project.DamagedLogicalTracks.Add(damagedTrack);
-        project.AudioRender.ExplicitLogicalTrackIds.Add(damagedTrackId);
         long nextStableId = project.NextStableId;
         using ProjectCompilationSession compilation = new(project);
         ProjectDocumentSession document = PersistedDocument(compilation);
@@ -430,7 +426,6 @@ public sealed class ProjectDomainEditCommandsTests
         Assert.Empty(project.DamagedEventInstruments);
         Assert.Empty(project.DamagedLogicalTracks);
         Assert.DoesNotContain(track, project.Tracks);
-        Assert.DoesNotContain(damagedTrackId, project.AudioRender.ExplicitLogicalTrackIds);
 
         document.Undo();
         document.Undo();
@@ -439,7 +434,6 @@ public sealed class ProjectDomainEditCommandsTests
         Assert.Contains(track, project.Tracks);
         Assert.Equal(damagedInstrumentId, project.ResolveEventInstrumentDefinitionId(track));
         Assert.Equal("Old", track.LastBoundEventInstrumentName);
-        Assert.Contains(damagedTrackId, project.AudioRender.ExplicitLogicalTrackIds);
         Assert.Equal(nextStableId, project.NextStableId);
         Assert.False(document.IsModified);
         AssertCurrentCompilationMatchesFull(compilation);

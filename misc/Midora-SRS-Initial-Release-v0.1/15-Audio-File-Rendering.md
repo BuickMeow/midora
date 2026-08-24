@@ -4,7 +4,7 @@
 > 规格版本：**v0.1**  
 > 适用产品范围：**Midora 初版**
 
-本章定义整曲和按 Logical Track 离线渲染、普通 RIFF/WAVE 与用户可选采样率、采样映射、BASSMIDI 离线后端、文件专用 OutputDevice 抽象、主输出链、文件事务、取消、结果状态与 Audio Render Settings。
+本章定义整曲和按 Logical Track 离线渲染、普通 RIFF/WAVE 与用户可选采样率、采样映射、BASSMIDI 离线后端、文件专用 OutputDevice 抽象、主输出链、文件事务、取消、结果状态与任务参数。
 
 ## 15.1 核心语义与专用 CompileContext
 ### 15.1.1 只消费 canonical compiled result
@@ -1060,201 +1060,27 @@ buffer / chunk 大小不得改变音乐时间、事件顺序或可感知输出�
 
 涉及逐采样、逐字节或不同 block 完美一致性的音频测试，必须使用实际活动 sample voices 不超过本次 `Offline Maximum Sample Voices per Unit Stream` 的输入。达到配置上限时，允许 BASSMIDI 的固定 voice-limit 行为改变音频；不得把这种资源上限行为误判为编译器或 block-size 不确定性。
 ---
-## 15.20 Audio Render Settings
-### 15.20.1 Project 顶层对象
-每个 Project 必须有且只有一个：
-```text
-Audio Render Settings
-```
-它不可删除，属于 Project 持久内容。
-修改已保存的 Audio Render Settings：
-```text
-使 Project 进入已修改状态。
-进入全项目 Undo / Redo。
-```
-单纯执行渲染、成功、失败或取消均不修改 Project。
-### 15.20.2 初版字段语义
-至少包含：
-```text
-默认渲染模式
-默认范围模式
-可选默认手动 startTick / endTick
-默认 Track 选择策略
-显式 Logical Track / Pure MIDI Track 稳定 ID 集合
-有限的文件命名偏好
-固定格式字段
-默认文件采样率
-默认 Offline Maximum Sample Voices per Unit Stream
-```
-固定格式字段明确记录：
-```text
-RIFF/WAVE
-Stereo
-Interleaved IEEE 32-bit Float
-Little-endian
-```
-这些固定格式字段用于诊断、严格校验和未来迁移，用户不可编辑。
+## 15.20 Audio Render 任务参数
+### 15.20.1 归属
+渲染模式、范围、Track 选择、文件采样率、Offline Maximum Sample Voices per Unit Stream、输出位置与覆盖授权只属于当前 Audio Render Dialog / Task Draft。它们不是 Project 顶层对象，不进入 `.midora`、Project Undo / Redo、canonical fingerprint 或 Application Preferences。
 
-默认文件采样率是用户可编辑 Project 默认值：
-```text
-整数
-8,000–192,000 Hz
-```
-本次任务修改采样率默认不修改 Project；只有显式 `Save as Project Defaults` 才提交该值。
-
-默认 `Offline Maximum Sample Voices per Unit Stream` 是用户可编辑 Project 默认值：
-```text
-整数
-1–16,777,216
-默认 500
-```
-
-它与 Application Preferences 中的实时复音上限分别保存、分别修改。一次音频渲染任务的所有 Unit Stream 使用同一个冻结的离线值；分轨模式的每个 Track 任务也使用本次任务冻结的同一值。修改离线值失效所有离线音频 PCM/cache generations，但不失效 tick-domain canonical。
-### 15.20.3 默认值
-新 Project 默认：
+### 15.20.2 固定初始值
+每次打开 Audio Render Dialog 时使用：
 ```text
 Mode = Whole Mix
 Range = Project Default Range
 Track Selection = All Valid Logical and Pure MIDI Tracks
-Format = RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float
+Format = RIFF/WAVE / Stereo / Interleaved IEEE float32 little-endian
 Sample Rate = 48,000 Hz
 Offline Maximum Sample Voices per Unit Stream = 500
 ```
-### 15.20.4 范围设置
-默认范围模式至少支持：
-```text
-Project Default Range
-Manual Range
-```
-只有用户明确“保存为默认设置”时，才把本次手动范围写入 Project。
-保存的手动范围必须满足：
-```text
-startTick >= 0
-endTick > startTick
-```
-Project 内容缩短后，超出自然结束的手动范围仍合法，超出部分输出静音。
-### 15.20.5 Track 选择策略
-至少支持：
-```text
-All Valid Logical and Pure MIDI Tracks
-Explicit Track IDs
-```
-显式选择基于 Logical Track / Pure MIDI Track 稳定 ID，不依赖名称或排序。
-显式集合允许为空，但实际开始渲染时因没有有效目标而被阻止。
-Track 缺少、重复或引用错误类型的 parent 时 Project 不可正式消费；渲染必须失败并定位结构诊断，不得保留后静默忽略。
-已删除 Track ID 应在打开或编辑设置时移除并规范化。
-如果这种规范化来自旧格式迁移或损坏引用修复，应按迁移 / 修复规则决定是否标记 Project 已修改，并向用户说明；不得伪装成用户编辑。
-### 15.20.6 Track 编辑与 Undo / Redo
-复制 Logical Track：
-```text
-生成新稳定 ID。
-不自动加入显式默认选择。
-All Valid 策略自然包含新 Track。
-```
-删除 Track：
-```text
-从显式选择中移除该 ID。
-Track 删除和设置调整属于同一个可撤销 Project 编辑事务。
-```
-撤销删除：
-```text
-恢复原 Track 稳定 ID。
-恢复原显式选择状态。
-```
-重命名不改变选择；下次文件名使用新名称。
-排序不改变 ID 选择，只改变分轨顺序和文件序号。
-### 15.20.7 命名偏好
-初版可以保存有限命名偏好，例如是否包含 Track 序号。
-不要求完整自定义模板语言。
-非法命名偏好必须在保存前阻止提交，不得把无法生成合法目标列表的值写入 Project。
-修改命名偏好只影响未来渲染，不重命名历史 WAV。
-Project 名称修改只影响未来整曲建议文件名。
-### 15.20.8 一次性参数
-以下内容不属于 Project：
-```text
-本次输出路径
-最近输出目录
-本次临时范围
-本次文件采样率覆盖值
-本次 Offline Maximum Sample Voices per Unit Stream 覆盖值
-本次 Track 选择
-本次覆盖决定
-本次进度和剩余时间
-```
-它们不进入 Undo / Redo。
-实现可以作为会话级最近值记忆，但未明确保存时不得写入 Project。
-整曲与分轨最近输出位置可以分别记忆。
-Whole Mix 与 Per Logical Track 默认共用同一 Track 选择集合；模式切换不清空选择。两种模式的最近输出位置分别维护，不能把整曲文件路径机械转换为分轨目录或反向转换。
-### 15.20.9 设置提交
-打开参数窗口、切换选项或开始一次性渲染不会自动修改 Project。
-只有用户明确确认“保存为默认设置”时才提交，并作为一个原子 Undo / Redo 操作。
-取消设置编辑时：
-```text
-放弃未确认修改。
-不标记 Project 已修改。
-不进入 Undo / Redo。
-```
-设置保存与随后开始渲染是两个独立动作。
-渲染失败不回滚已经明确保存的默认设置。
----
-## 15.21 Audio Render Settings 持久化与迁移
-### 15.21.1 文件位置
-`.midora` 中新增：
-```text
-settings/audio-render-settings.json
-```
-该文件纳入：
-```text
-manifest 文件索引
-settings-json kind
-schemaVersion
-SHA-256 hash
-严格 schema 校验
-版本迁移
-确定性写出
-```
-### 15.21.2 project.json 语义
-Project 顶层结构必须明确包含 Audio Render Settings 的存在语义，并引用或约定其固定路径。
-具体字段形式由 第 16 章《.midora 文件格式与持久化》 / 最终 schema 定义。
-### 15.21.3 当前格式缺失与旧格式迁移
-如果当前 `fileFormatVersion` 明确要求 `settings/audio-render-settings.json` 存在，而文件缺失或无法通过 hash / schema 校验：
-```text
-按结构性设置损坏或不兼容规则处理。
-不得一律静默补默认值。
-```
-只有明确的旧格式迁移路径允许创建默认设置。
-旧格式迁移默认生成：
-```text
-Whole Mix
-Project Default Range
-All Valid Logical and Pure MIDI Tracks
-RIFF/WAVE / Stereo / Interleaved IEEE 32-bit Float
-Sample Rate = 48,000 Hz
-Offline Maximum Sample Voices per Unit Stream = 500
-```
-迁移后必须明确写入当前 schema 要求的固定格式字段和合法默认采样率。
-### 15.21.4 严格字段规则
-未知枚举值、缺失必填固定字段、非整数采样率、低于 8,000 Hz 或高于 192,000 Hz 的采样率：
-```text
-不能被静默接受。
-不能用应用最近值替代。
-不能静默回退为其他渲染行为。
-```
-必须按 schemaVersion、迁移、损坏或不兼容规则处理。
-当前版本不认识且 schema 不允许的未来字段，不保留并再次写出。
-保存 `.midora` 时只写出合法、规范化设置。
-### 15.21.5 保存副本与复制
-`Audio Render Settings` 作为 Project 内容随保存副本和 Project 深拷贝完整复制，包括：
-```text
-合法默认模式
-合法范围
-合法稳定 ID 选择
-命名偏好
-固定格式字段
-合法默认文件采样率
-```
-输出路径和历史 WAV 不复制进 Project。
----
+合法采样率仍为 8,000–192,000 Hz 整数；复音上限仍为 1–16,777,216。用户修改只在按 Start 后冻结给本次任务；Cancel 不产生持久状态。初版不提供 `Save as Project Defaults`。
+
+### 15.20.3 范围与 Track 选择
+Project Default Range、Manual Range、Whole Mix 与 Per Logical Track 的正式语义保持本章前文定义。Track 删除、排序或编辑不得维护任何“默认渲染选择”集合，因为该集合不再存在。本次任务开始前必须对当前 Project 重新解析并冻结选择。
+
+### 15.20.4 本机路径
+Whole Mix 与 Per Logical Track 的最近输出位置可以按用途保存为 Application Preference；它们不属于 Project，不进入 Undo / Redo，也不得参与音频内容 identity。
 ## 15.22 RIFF/WAVE 写出系统级要求
 初版必须正确声明：
 ```text

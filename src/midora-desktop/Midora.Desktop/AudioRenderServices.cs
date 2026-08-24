@@ -37,6 +37,7 @@ public static class DesktopAudioRenderService
         MidoraProject project,
         string? currentProjectPath,
         IReadOnlyList<SoundFontConfiguration> soundFonts,
+        double masterVolumeDecibels,
         DesktopAudioRenderOptions options,
         CancellationToken cancellationToken = default)
     {
@@ -90,7 +91,7 @@ public static class DesktopAudioRenderService
                 Worker = worker!,
                 SampleRate = options.SampleRate,
                 MaximumSampleVoicesPerUnitStream = options.MaximumSampleVoicesPerUnitStream,
-                MasterVolumeDecibels = project.Playback.MasterVolumeDecibels
+                MasterVolumeDecibels = masterVolumeDecibels
             };
             soundFont = null;
             return prepared;

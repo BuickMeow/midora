@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Midora.Domain;
 
 namespace Midora.Application;
 
@@ -111,7 +112,13 @@ public sealed class ApplicationPreferencesStore
                         ProjectPanelVisible = desktop.ProjectPanelVisible ?? true,
                         BottomPanelVisible = desktop.BottomPanelVisible ?? true,
                         FollowPlayback = desktop.FollowPlayback ?? true
-                    }
+                    },
+                Playback = new PlaybackPreferences(
+                    dto.MasterVolumeDecibels ?? PlaybackPreferences.Default.MasterVolumeDecibels,
+                    dto.LimiterEnabled ?? PlaybackPreferences.Default.LimiterEnabled,
+                    ParseStopCursorBehavior(dto.StopCursorBehavior)),
+                Appearance = new AppearancePreferences(
+                    dto.Language ?? AppearancePreferences.Default.Language)
             };
             preferences.Validate();
             return new(preferences, null);
@@ -162,6 +169,10 @@ public sealed class ApplicationPreferencesStore
                     preferences.RealtimeAudio.MaximumSampleVoicesPerUnitStream,
                 AudioCacheRootPath = preferences.AudioCache.RootPath,
                 MaximumReusableAudioCacheBytes = preferences.AudioCache.MaximumReusableBytes,
+                MasterVolumeDecibels = preferences.Playback.MasterVolumeDecibels,
+                LimiterEnabled = preferences.Playback.LimiterEnabled,
+                StopCursorBehavior = preferences.Playback.StopCursorBehavior.ToString(),
+                Language = preferences.Appearance.Language,
                 SoundFonts = preferences.SoundFonts
                     .Select(value => new ApplicationSoundFontPreferenceJsonV1
                     {
@@ -272,6 +283,21 @@ public sealed class ApplicationPreferencesStore
             value.TargetBankLsb!.Value,
             value.TargetProgram!.Value);
     }
+
+    private static StopCursorBehavior ParseStopCursorBehavior(string? value)
+    {
+        if (value is null)
+        {
+            return PlaybackPreferences.Default.StopCursorBehavior;
+        }
+        if (!Enum.TryParse(value, ignoreCase: false, out StopCursorBehavior result)
+            || !Enum.IsDefined(result))
+        {
+            throw new InvalidDataException(
+                $"Unknown stop cursor behavior '{value}'.");
+        }
+        return result;
+    }
 }
 
 internal sealed class ApplicationPreferencesJsonV1
@@ -305,6 +331,18 @@ internal sealed class ApplicationPreferencesJsonV1
 
     [JsonPropertyOrder(9)]
     public List<ApplicationSoundFontPreferenceJsonV1>? SoundFonts { get; set; }
+
+    [JsonPropertyOrder(10)]
+    public double? MasterVolumeDecibels { get; set; }
+
+    [JsonPropertyOrder(11)]
+    public bool? LimiterEnabled { get; set; }
+
+    [JsonPropertyOrder(12)]
+    public string? StopCursorBehavior { get; set; }
+
+    [JsonPropertyOrder(13)]
+    public string? Language { get; set; }
 }
 
 internal sealed class ApplicationSoundFontPreferenceJsonV1

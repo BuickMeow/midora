@@ -13,22 +13,20 @@ public partial class AudioRenderDialog : Window
     private readonly string _suggestedWholeMixName;
 
     public AudioRenderDialog(
-        AudioRenderProjectSettings settings,
         MidoraProject project,
         string initialDirectory,
         string suggestedWholeMixName)
     {
-        ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(project);
         InitializeComponent();
         _suggestedWholeMixName = suggestedWholeMixName;
         ModeBox.ItemsSource = Enum.GetValues<AudioRenderMode>();
-        ModeBox.SelectedItem = settings.Mode;
-        SampleRateBox.Text = settings.SampleRate.ToString(CultureInfo.InvariantCulture);
-        VoicesBox.Text = settings.MaximumSampleVoicesPerUnitStream.ToString(CultureInfo.InvariantCulture);
-        StartTickBox.Text = (settings.ManualStartTick ?? 0).ToString(CultureInfo.InvariantCulture);
-        EndTickBox.Text = settings.ManualEndTick?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-        SelectedTracksCheck.IsChecked = settings.TrackSelectionMode == ProjectTrackSelectionMode.ExplicitLogicalTrackIds;
+        ModeBox.SelectedItem = AudioRenderMode.WholeMix;
+        SampleRateBox.Text = AudioRenderSettingsPolicy.DefaultSampleRate.ToString(CultureInfo.InvariantCulture);
+        VoicesBox.Text = AudioRenderSettingsPolicy.DefaultSampleVoicesPerUnitStream.ToString(CultureInfo.InvariantCulture);
+        StartTickBox.Text = "0";
+        EndTickBox.Text = string.Empty;
+        SelectedTracksCheck.IsChecked = false;
         LogicalTrack[] trackArray = project.LogicalTracksInArrangementOrder().ToArray();
         for (int index = 0; index < trackArray.Length; index++)
         {
@@ -36,8 +34,7 @@ public partial class AudioRenderDialog : Window
             TrackRows.Add(new(
                 track.Id,
                 "Logical · " + (string.IsNullOrWhiteSpace(track.Name) ? $"Logical Track {index + 1}" : track.Name),
-                settings.TrackSelectionMode != ProjectTrackSelectionMode.ExplicitLogicalTrackIds
-                    || settings.ExplicitLogicalTrackIds.Contains(track.Id),
+                isSelected: true,
                 isPureMidi: false));
         }
         PureMidiTrack[] midiTrackArray = project.PureMidiTracksInArrangementOrder().ToArray();
@@ -47,13 +44,10 @@ public partial class AudioRenderDialog : Window
             TrackRows.Add(new(
                 track.Id,
                 "MIDI · " + (string.IsNullOrWhiteSpace(track.Name) ? $"MIDI Track {index + 1}" : track.Name),
-                settings.TrackSelectionMode != ProjectTrackSelectionMode.ExplicitLogicalTrackIds
-                    || settings.ExplicitLogicalTrackIds.Contains(track.Id),
+                isSelected: true,
                 isPureMidi: true));
         }
-        OutputPathBox.Text = settings.Mode == AudioRenderMode.WholeMix
-            ? Path.Combine(initialDirectory, suggestedWholeMixName)
-            : initialDirectory;
+        OutputPathBox.Text = Path.Combine(initialDirectory, suggestedWholeMixName);
         DataContext = this;
     }
 
@@ -134,13 +128,13 @@ public partial class AudioRenderDialog : Window
             end = value;
         }
         if (!int.TryParse(SampleRateBox.Text, NumberStyles.None, CultureInfo.InvariantCulture, out int sampleRate)
-            || sampleRate is < AudioRenderProjectSettings.MinimumSampleRate or > AudioRenderProjectSettings.MaximumSampleRate)
+            || sampleRate is < AudioRenderSettingsPolicy.MinimumSampleRate or > AudioRenderSettingsPolicy.MaximumSampleRate)
         {
             ValidationText.Text = "Sample rate must be an integer from 8,000 through 192,000 Hz.";
             return;
         }
         if (!int.TryParse(VoicesBox.Text, NumberStyles.None, CultureInfo.InvariantCulture, out int voices)
-            || voices is < AudioRenderProjectSettings.MinimumSampleVoicesPerUnitStream or > AudioRenderProjectSettings.MaximumSampleVoicesPerUnitStreamLimit)
+            || voices is < AudioRenderSettingsPolicy.MinimumSampleVoicesPerUnitStream or > AudioRenderSettingsPolicy.MaximumSampleVoicesPerUnitStreamLimit)
         {
             ValidationText.Text = "Maximum sample voices must be an integer from 1 through 16,777,216.";
             return;

@@ -9,6 +9,16 @@ public partial class App : System.Windows.Application
     private SingleApplicationInstanceCoordinator? _instance;
     private CancellationTokenSource? _instanceRequests;
 
+    static App()
+    {
+        System.Windows.Controls.ToolTipService.InitialShowDelayProperty.OverrideMetadata(
+            typeof(FrameworkElement),
+            new FrameworkPropertyMetadata(250));
+        System.Windows.Controls.ToolTipService.InitialShowDelayProperty.OverrideMetadata(
+            typeof(FrameworkContentElement),
+            new FrameworkPropertyMetadata(250));
+    }
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);

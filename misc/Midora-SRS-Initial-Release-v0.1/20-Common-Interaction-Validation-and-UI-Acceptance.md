@@ -49,6 +49,8 @@ max(1, Ceiling(TPQ * 4 * numerator / denominator))
 
 Display Grid 只控制分割线。Snap 应用 Operation Subdivision；Snap Disabled 时有效操作步长为 1 tick。改变任一设置不修改或重新量化已有对象。
 
+Arrangement、所有 Segment/SubVoice piano roll，以及所有 MIDI Event / Logical Parameter Lane 的 Snap ToggleButton 必须显示统一 Tooltip：`Enable/Disable Snap (A)`。
+
 有效操作步长用于 Marquee 与 Time Range 的开始和长度、Edit Cursor 与 Playback Cursor 定位、Segment / Note 放置位置、Segment / Note Resize 的 delta（而不是最终总长度），以及 Segment / Note Move 的共享 delta（而不是最终绝对位置）。
 
 Segment、Logical Note、Direct MIDI Note 与 Template Note 的 `Alt + Left Drag` 是强制 Move 手势，仍使用当前有效操作步长。需要逐 tick 编辑时关闭 Snap；Alt 不再临时绕过 Snap。
@@ -80,6 +82,8 @@ Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 的工具按钮必须�
 - `Select`：在 Arrangement、Segment Piano Roll 与 SubVoice Piano Roll 中，单次左键按下始终从当前位置发起框选，即使起点位于对象上也不执行单对象点击选择；不得直接移动、Resize 或双击创建对象；既有双击导航不受该单击规则影响；
 - `Split`：只在支持的对象上执行分割；
 - `Erase`：删除命中的可删除对象。
+
+上述工具按钮使用 Fluent System Icons：Draw=`pen`、Select=`select_object`、Split=`split_vertical`、Erase=`eraser`；Tooltip 分别为 `Draw (D)`、`Select (S)`、`Split`、`Erase (E)`。Arrangement 的 Split 图标固定为 `16 × 16`、在原按钮内水平和垂直居中，按钮外部尺寸不得改变。水平与纵向缩放按钮均使用 `zoom_out` / `zoom_in`，但必须通过所在位置和 Tooltip 明确区分缩放轴。
 
 `Draw` 在空白处使用默认指针，在可直接编辑对象的主体和边缘分别使用移动与水平 Resize 指针；`Select` 使用十字指针，但命中对象时不改变为移动或 Resize 指针；`Split` 命中 Segment 时始终使用文本选择形 I-beam 指针。`Draw` 悬停在可直接编辑的 Segment、Logical Note 或 Template Note 上时，始终绘制低强调 transient 外轮廓，不要求按住 Alt；该轮廓不得重建或失效基础 raster tile。`Draw` 命中已有对象或执行移动/Resize 时隐藏创建预览；移动/Resize 的 transient 预览必须显示提交后的位置与长度。
 ### 20.1.7 Drag Preview
@@ -925,8 +929,9 @@ No Project Open
 Create a new project or open an existing one.
 [ Create Project ]
 Open Project
+Open MIDI as New Project
 ```
-Transport、Compile、Save、Export、Render 和 Undo / Redo Disabled。
+Transport、Compile、Save、Export、Render 和 Undo / Redo Disabled；`File > Close Project`、`View > Arrangement` 与 `View > Diagnostics` 同样 Disabled。Application Preferences 仍可用。
 ### 20.10.5 无 Workspace
 Project 打开期间 Arrangement 常驻且不可关闭，因此不存在“无 Workspace”状态。
 ### 20.10.6 Arrangement 无 Track
@@ -1309,6 +1314,8 @@ Global Reset Playback Engine shortcut
 特别是 `Ctrl+W` 在任何 Workspace、Dialog 或 Project 状态都完全不注册。
 
 `D`、`S`、`E` 是上一表批准的唯一 letter-only tool shortcut。它们只在无修饰键、主窗口无活动 Modal / Popup / Menu / Inline Editing Session，且焦点不在 TextBox、PasswordBox、RichTextBox、ComboBox 或代码编辑器时生效；否则按焦点控件的文本输入或本地交互处理，不得切换背景 Workspace 工具。
+
+主窗口必须按当前键盘焦点控制 Windows Input Method：`TextBox`、`RichTextBox`、`PasswordBox`、可编辑 `ComboBox` 及其内部编辑元素启用 IME，其他焦点目标禁用 IME。焦点进入或离开真实文本编辑控件时必须立即恢复对应状态，使中文输入法不能截获非文本 Workspace 的 `D` / `S` / `E`，同时不妨碍文本输入。该规则只设置当前 WPF 焦点目标的 `InputMethod.IsInputMethodEnabled`，不得切换、关闭或持久修改用户的系统输入法、Preferred IME State 或输入语言。
 ### 20.12.14 无效快捷键反馈
 可预期的 No Action 不弹窗、不播放声音。
 持续锁定导致命令不可用时，可在 Status Bar 短暂显示原因。
@@ -1391,11 +1398,16 @@ Follow Playback preference
 Default lane height
 Recent directories by picker purpose
 Selected playback output device ID or System Default choice
+Playback Master Volume
+Playback Limiter
+Stop Cursor Behavior
 Render-Ahead Buffer
 Device Buffer Request
 Realtime Maximum Sample Voices per Unit Stream
 Audio Cache Root
 Maximum Reusable Audio Cache Bytes
+Ordered SoundFont list and target mappings
+Appearance Language
 ```
 ### 20.14.3 不持久化内容
 ```text
@@ -1471,7 +1483,6 @@ Preference Import or Export
 Preference Sync
 Preference Profiles
 Theme preference
-Language preference
 Accessibility preference
 DPI override
 ```
@@ -1482,6 +1493,10 @@ Current Tool: Select
 Playback Output Device: System Default
 Render-Ahead Buffer: 100 ms
 Device Buffer Request: 50 ms
+Playback Master Volume: -0.1 dB
+Playback Limiter: Enabled
+Stop Cursor Behavior: Return to Playback Start
+Language: English
 ```
 ---
 ## 20.15 Window Sizing and 100% DPI Boundary
@@ -1517,7 +1532,11 @@ Active Workspace 及其内部可调侧栏/下部编辑区均有各自的最小�
 Toolbar 宽度不足时使用 Overflow。
 Workspace Tabs 单行，使用滚动和 Tab List。
 
-Timeline Toolbar 的 Grid / Snap 选择框只显示 `Bar` 或简写分数（例如 `1/8`），选择后显示文本必须立即更新并与实际生效值一致；不得因可编辑文本与选择项绑定冲突而显示额外错误色块、空选择或完整说明文字。Arrangement、Segment 和 SubVoice 的顺序统一为 `Grid + 下拉 | Snap + 下拉 | Length [Vel] | - + | 工具`，其中 Arrangement 不显示不适用的 Vel；各组之间显示分割线。
+Timeline Toolbar 的 Grid / Snap 选择框只显示 `Bar` 或简写分数（例如 `1/8`），选择后显示文本必须立即更新并与实际生效值一致；不得因可编辑文本与选择项绑定冲突而显示额外错误色块、空选择或完整说明文字。Arrangement、Segment 和 SubVoice 的顺序统一为 `Grid + 下拉 | Snap + 下拉 | Length [Vel] | zoom_out zoom_in | 工具图标`，其中 Arrangement 不显示不适用的 Vel；各组之间显示分割线。
+
+应用内 Tooltip 的初次显示延迟统一为 250 ms；该设置只影响提示出现时机，不改变 Hover、焦点、Pressed 或命令触发语义。
+
+主菜单置于标题栏时，固定 29-pixel 高的一级菜单容器必须作为整体在 36-pixel 标题栏内纵向居中；标题栏不显示额外 `MIDORA` 文本或 Main Menu 两侧竖向分割线，Application mark、Main Menu 与 Project display name 通过留白分组。Project display name 与 Main Menu 保持 8-pixel 外间距并使用 12-pixel 字号；外框不固定高度且不设置 Padding，按水平居中的文本 `8,2` Margin 与 1-pixel 边框自动测量，整体垂直居中，文本和圆角外框分别使用 `Brush.Text.Tertiary` 与 `Brush.Border`。Hover、键盘高亮和子菜单打开状态使用完整四角圆角背景。菜单和窗口控制按钮必须标记为 WindowChrome 交互区域，点击不得触发窗口 DragMove；标题栏其余空白仍可拖动。
 
 Arrangement Segment 使用较深的低饱和蓝灰色；选中 Segment 使用同色系强调边框和更深背景，Note Preview 使用高亮但低饱和的蓝灰色。Segment Piano Roll 的 active range 保留基础键位底色，界外范围进一步压暗；未选中 Note 使用高亮蓝灰色，选中 Note 的红色填充与红色边框保持不变。Velocity 未选中柱使用相同蓝灰色，选中 Note 对应柱使用红色；每个 Note 只在 start tick 显示固定窄柱，柱顶显示明显更宽的方形 onset marker，柱宽不得随 Note 长度变化。Piano Roll 白键行使用较亮底色、黑键行使用较暗底色；Segment 与 SubVoice Pitch Ruler 使用完整白键和较短黑键的钢琴外观，并且只在每个八度 C 键显示符合 MIDI 60 = C4 的音名。空 Timeline 不显示覆盖画布的 `No timeline content` 卡片。Disabled Ghost Button 不保留背景或边框。Transport 的位置与 BPM 使用亮色并以竖向分割线分隔；Play 图标不得裁切。Parameter / Event Lane 不显示额外白色外框。数值标尺顶部和底部标签不得被视口裁切。
 

@@ -101,6 +101,10 @@ public partial class MainWindow : Window
         PreviewMouseDown += OnPreviewMouseDownForPlaybackShortcut;
         Deactivated += OnWindowDeactivated;
         AddHandler(
+            Keyboard.GotKeyboardFocusEvent,
+            new KeyboardFocusChangedEventHandler(OnKeyboardFocusChangedForInputMethod),
+            handledEventsToo: true);
+        AddHandler(
             TimelineSurface.AltGestureConsumedEvent,
             new RoutedEventHandler(OnTimelineAltGestureConsumed));
         LoadDesktopPreferences();
@@ -2801,7 +2805,8 @@ public partial class MainWindow : Window
 
     private void OnInstrumentSectionSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!ReferenceEquals(e.OriginalSource, sender)) return;
+        if (!ReferenceEquals(e.OriginalSource, sender) || sender is not TabControl tabs) return;
+        RestoreInstrumentConfigurationShortcutFocus(tabs);
     }
 
     private void OnInstrumentSectionsLoaded(object sender, RoutedEventArgs e)
@@ -2809,17 +2814,34 @@ public partial class MainWindow : Window
         if (sender is not TabControl tabs
             || tabs.Items.OfType<TabItem>().FirstOrDefault(item =>
                 string.Equals(item.Header as string, "Configurations", StringComparison.Ordinal))
-                is not TabItem configurations
-            || tabs.Items.IndexOf(configurations) == 0)
+                is not TabItem configurations)
         {
             return;
         }
-        int requestedIndex = tabs.DataContext is InstrumentWorkspaceViewModel workspace
-            ? workspace.ActiveSectionIndex
-            : 0;
-        tabs.Items.Remove(configurations);
-        tabs.Items.Insert(0, configurations);
-        tabs.SelectedIndex = Math.Clamp(requestedIndex, 0, tabs.Items.Count - 1);
+        if (tabs.Items.IndexOf(configurations) != 0)
+        {
+            int requestedIndex = tabs.DataContext is InstrumentWorkspaceViewModel workspace
+                ? workspace.ActiveSectionIndex
+                : 0;
+            tabs.Items.Remove(configurations);
+            tabs.Items.Insert(0, configurations);
+            tabs.SelectedIndex = Math.Clamp(requestedIndex, 0, tabs.Items.Count - 1);
+        }
+        RestoreInstrumentConfigurationShortcutFocus(tabs);
+    }
+
+    private void RestoreInstrumentConfigurationShortcutFocus(TabControl tabs)
+    {
+        if (tabs.SelectedItem is not TabItem { Header: "Configurations" }) return;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+        {
+            if (tabs.IsVisible
+                && tabs.IsEnabled
+                && tabs.SelectedItem is TabItem { Header: "Configurations" })
+            {
+                tabs.Focus();
+            }
+        });
     }
 
     private void OnInstrumentNavigationScrollLoaded(object sender, RoutedEventArgs e)
@@ -3840,6 +3862,16 @@ public partial class MainWindow : Window
             : long.MaxValue;
         workspace.TickSpan = span;
         workspace.StartTick = Math.Max(0, center - span / 2);
+    }
+
+    private void OnTimelineVerticalZoomClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string direction } source) return;
+        object timelineTag = source.DataContext is InstrumentWorkspaceViewModel
+            ? "SubVoiceNotes"
+            : "PrimaryTimeline";
+        FindWorkspaceElement<TimelineSurface>(timelineTag)
+            ?.AdjustVerticalZoom(string.Equals(direction, "In", StringComparison.Ordinal));
     }
 
     private void OnSubdivisionComboBoxLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -5732,29 +5764,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnApplyAudioTrackSelectionClick(object sender, RoutedEventArgs e)
-    {
-        if (_session.Project is not MidoraProject project
-            || _session.ActiveWorkspace is not SettingsWorkspaceViewModel settings)
-        {
-            return;
-        }
-        MidoraId[] selected = settings.AudioRenderTracks
-            .Where(track => track.IsSelected)
-            .Select(track => track.Id)
-            .ToArray();
-        RunSynchronous("Update Audio Render Track Selection", () => _session.Execute(
-            ProjectDomainEditCommands.UpdateAudioRenderSettings(
-                project.AudioRender.Mode,
-                project.AudioRender.RangeMode,
-                project.AudioRender.ManualStartTick,
-                project.AudioRender.ManualEndTick,
-                project.AudioRender.TrackSelectionMode,
-                selected,
-                project.AudioRender.SampleRate,
-                project.AudioRender.MaximumSampleVoicesPerUnitStream)));
-    }
-
     private void CommitProjectSetting(TextBox textBox, bool restoreOnFailure)
     {
         if (textBox.IsReadOnly
@@ -5800,9 +5809,6 @@ public partial class MainWindow : Window
             return false;
         }
         return settings.GeneralFields.Contains(field)
-            || settings.PlaybackFields.Contains(field)
-            || settings.MidiExportFields.Contains(field)
-            || settings.AudioRenderFields.Contains(field)
             || settings.InitialStateFields.Contains(field)
             || settings.ResetDefaultFields.Contains(field);
     }
@@ -5850,8 +5856,13 @@ public partial class MainWindow : Window
             return;
         }
         long splitTick = workspace.EditorSettings.SnapAbsolute(e.Tick);
+        bool isMidiSegment = _session.Project!.PureMidiTracks.Any(track =>
+            track.Segments.Any(segment => segment.Id == e.Item.Id));
         RunSynchronous("Split Segment", () => ExecuteAndSelectCreated(
-            ProjectDomainEditCommands.SplitSegment(e.Item.Id, splitTick), workspace));
+            isMidiSegment
+                ? ProjectDomainEditCommands.SplitMidiSegment(e.Item.Id, splitTick)
+                : ProjectDomainEditCommands.SplitSegment(e.Item.Id, splitTick),
+            workspace));
     }
 
     private void OnDeselectAllTimelineObjectsClick(object sender, RoutedEventArgs e)
@@ -8098,15 +8109,14 @@ public partial class MainWindow : Window
 
     private async void OnMidiExportClick(object sender, RoutedEventArgs e)
     {
-        if (!_session.HasProject) return;
+        if (_session.Project is not MidoraProject project) return;
         if (!StopPlaybackForProjectCommand("MIDI Export")) return;
         string? initialDirectory = ExistingRecentDirectory(RecentDirectoryPurpose.MidiExport)
             ?? (_session.Persistence?.CurrentProjectPath is string currentPath
             ? Path.GetDirectoryName(currentPath)
             : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
         MidiExportDialog dialog = new(
-            _session.Project!.Export,
-            _session.Project,
+            project,
             initialDirectory)
         { Owner = this };
         if (dialog.ShowDialog() != true || dialog.Options is null) return;
@@ -8196,7 +8206,6 @@ public partial class MainWindow : Window
             _session.Project.Metadata.ProjectName,
             currentStem);
         AudioRenderDialog dialog = new(
-            _session.Project.AudioRender,
             _session.Project,
             initialDirectory,
             suggested)
@@ -8338,12 +8347,59 @@ public partial class MainWindow : Window
         {
             return null;
         }
-        DesktopTaskViewModel? task = _session.ActiveForegroundTask;
-        if (task is not null)
-        {
-            _session.ReportTask(task, "Preparing audio Worker");
-        }
+        _session.ActiveForegroundTask?.Report("Preparing audio Worker");
         return await _session.TryInitializeAudioWorkerAsync(cancellationToken);
+    }
+
+    private void OnSegmentLowerEditorSelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(e.OriginalSource, sender)
+            || sender is not TabControl { SelectedItem: TabItem { Header: "Parameter Lane" } }
+            || _session.ActiveWorkspace is not TimelineWorkspaceViewModel
+            {
+                Mode: TimelineWorkspaceMode.Segment
+            } workspace)
+        {
+            return;
+        }
+
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            new Action(() =>
+            {
+                if (!ReferenceEquals(_session.ActiveWorkspace, workspace)) return;
+                TimelineSurface? timeline = FindWorkspaceElement<TimelineSurface>("ParameterLanes");
+                if (timeline is { IsVisible: true, IsEnabled: true, Focusable: true })
+                {
+                    timeline.Focus();
+                }
+            }));
+    }
+
+    private void OnSubVoiceLowerEditorSelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(e.OriginalSource, sender)
+            || sender is not TabControl { SelectedItem: TabItem { Header: "Event Lane" } }
+            || _session.ActiveWorkspace is not InstrumentWorkspaceViewModel workspace)
+        {
+            return;
+        }
+
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            new Action(() =>
+            {
+                if (!ReferenceEquals(_session.ActiveWorkspace, workspace)) return;
+                TimelineSurface? timeline = FindWorkspaceElement<TimelineSurface>("SubVoiceEvents");
+                if (timeline is { IsVisible: true, IsEnabled: true, Focusable: true })
+                {
+                    timeline.Focus();
+                }
+            }));
     }
 
     private void ReportAudioWorkerInitializationFailure(Exception? failure)
@@ -10177,6 +10233,33 @@ public partial class MainWindow : Window
         or PasswordBox
         or ComboBox;
 
+    private void OnKeyboardFocusChangedForInputMethod(
+        object sender,
+        KeyboardFocusChangedEventArgs e) =>
+        ApplyInputMethodPolicy(e.NewFocus as DependencyObject);
+
+    internal static void ApplyInputMethodPolicy(DependencyObject? focused)
+    {
+        if (focused is null) return;
+        InputMethod.SetIsInputMethodEnabled(focused, IsInputMethodTextTarget(focused));
+    }
+
+    internal static bool IsInputMethodTextTarget(DependencyObject? focused)
+    {
+        for (DependencyObject? current = focused; current is not null; current = GetUiParent(current))
+        {
+            if (current is TextBoxBase or PasswordBox)
+            {
+                return true;
+            }
+            if (current is ComboBox { IsEditable: true })
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static bool IsPlaybackShortcutInputFocus()
     {
         DependencyObject? focused = Keyboard.FocusedElement as DependencyObject;
@@ -10324,12 +10407,24 @@ public partial class MainWindow : Window
 
     private void OnTitleBarMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        DependencyObject? source = e.OriginalSource as DependencyObject;
+        if (IsInteractiveTitleBarSource(source))
+        {
+            return;
+        }
         if (e.ClickCount == 2) { ToggleMaximize(); return; }
         if (e.LeftButton == MouseButtonState.Pressed) DragMove();
     }
 
-    private void OnTitleBarMouseRightButtonUp(object sender, MouseButtonEventArgs e) =>
+    private void OnTitleBarMouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (IsInteractiveTitleBarSource(e.OriginalSource as DependencyObject)) return;
         SystemCommands.ShowSystemMenu(this, PointToScreen(e.GetPosition(this)));
+    }
+
+    private static bool IsInteractiveTitleBarSource(DependencyObject? source) =>
+        FindVisualAncestor<Menu>(source) is not null
+        || FindVisualAncestor<ButtonBase>(source) is not null;
 
     private void OnMinimizeClick(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
     private void OnMaximizeClick(object sender, RoutedEventArgs e) => ToggleMaximize();

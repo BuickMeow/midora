@@ -324,9 +324,9 @@ public static partial class Program
         ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, piano.Id);
         Segment segment = new(project) { LengthTicks = 3_840 };
         LogicalParameterLane lane = new(project) { ParameterId = expressionParameter.Id };
-        lane.Points.Add(new(project, 0, 0.25));
-        lane.Points.Add(new(project, 1_920, 1));
-        lane.Points.Add(new(project, 3_839, 0.45));
+        lane.Points.Add(new(project, 0, 0.25, CurveInterpolation.Step));
+        lane.Points.Add(new(project, 1_920, 1, CurveInterpolation.Step));
+        lane.Points.Add(new(project, 3_839, 0.45, CurveInterpolation.Step));
         segment.ParameterLanes.Add(lane);
         AddNotes(project, segment, 0, [48, 53, 55, 48], 900, spacing: 960);
         track.Segments.Add(segment);

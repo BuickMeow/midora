@@ -658,52 +658,6 @@ public sealed class MidoraProjectPackageV1
                 }
             }
 
-            ExportSettingsJsonV1? export = await RestoreOrdinarySettingsAsync(
-                MidoraPackagePathsV1.ExportSettings,
-                bytes => ExportSettingsCodecV1.Parse(bytes),
-                entries, index, path, diagnostics, cancellationToken,
-                () => isModified = true).ConfigureAwait(false);
-            if (export is not null) ExportSettingsCodecV1.Restore(project.Export, export);
-
-            PlaybackSettingsJsonV1? playback = await RestoreOrdinarySettingsAsync(
-                MidoraPackagePathsV1.PlaybackSettings,
-                bytes => PlaybackSettingsCodecV1.Parse(bytes),
-                entries, index, path, diagnostics, cancellationToken,
-                () => isModified = true).ConfigureAwait(false);
-            if (playback is not null) PlaybackSettingsCodecV1.Restore(project.Playback, playback);
-
-            byte[] audioRenderBytes = await ReadRequiredValidatedAsync(
-                MidoraPackagePathsV1.AudioRenderSettings, "settings-json", entries, index, path, cancellationToken)
-                .ConfigureAwait(false);
-            try
-            {
-                AudioRenderSettingsJsonV1 audio = AudioRenderSettingsCodecV1.Parse(audioRenderBytes);
-                AudioRenderSettingsCodecV1.Restore(project.AudioRender, audio);
-                HashSet<MidoraId> trackIds = project.Tracks.Select(track => track.Id)
-                    .Concat(project.DamagedLogicalTracks.Select(track => track.Id))
-                    .ToHashSet();
-                MidoraId[] missingTrackIds = project.AudioRender.ExplicitLogicalTrackIds
-                    .Where(id => !trackIds.Contains(id))
-                    .ToArray();
-                if (missingTrackIds.Length != 0)
-                {
-                    project.AudioRender.ExplicitLogicalTrackIds.ExceptWith(missingTrackIds);
-                    AddRecoveryDiagnostic(
-                        diagnostics,
-                        MidoraPackagePathsV1.AudioRenderSettings,
-                        "Explicit Track IDs not present in the Project were removed.");
-                    isModified = true;
-                }
-            }
-            catch (Exception exception) when (exception is InvalidDataException or System.Text.Json.JsonException)
-            {
-                throw StructureFailure(
-                    path,
-                    MidoraPackagePathsV1.AudioRenderSettings,
-                    "Required current-format Audio Render Settings are invalid.",
-                    exception);
-            }
-
             GlobalResetDefaultsJsonV1? reset = await RestoreOrdinarySettingsAsync(
                 MidoraPackagePathsV1.GlobalResetDefaults,
                 bytes => GlobalResetDefaultsCodecV1.Parse(bytes),
@@ -750,9 +704,6 @@ public sealed class MidoraProjectPackageV1
             [MidoraPackagePathsV1.Metadata] = MetadataCodecV1.Serialize(metadata),
             [MidoraPackagePathsV1.ConductorTrack] = ConductorTrackCodecV1.Serialize(project),
             [MidoraPackagePathsV1.ProjectSettings] = ProjectSettingsCodecV1.Serialize(project),
-            [MidoraPackagePathsV1.ExportSettings] = ExportSettingsCodecV1.Serialize(project.Export),
-            [MidoraPackagePathsV1.PlaybackSettings] = PlaybackSettingsCodecV1.Serialize(project.Playback),
-            [MidoraPackagePathsV1.AudioRenderSettings] = AudioRenderSettingsCodecV1.Serialize(project.AudioRender),
             [MidoraPackagePathsV1.GlobalResetDefaults] = GlobalResetDefaultsCodecV1.Serialize(
                 project.GlobalResetDefaults),
             [MidoraPackagePathsV1.GlobalEventScopeDefaults] = GlobalEventScopeDefaultsCodecV1.Serialize()
@@ -845,11 +796,6 @@ public sealed class MidoraProjectPackageV1
         {
             throw new InvalidDataException(
                 "Projects containing damaged object placeholders cannot be saved.");
-        }
-        HashSet<MidoraId> trackIds = project.Tracks.Select(track => track.Id).ToHashSet();
-        if (!project.AudioRender.ExplicitLogicalTrackIds.IsSubsetOf(trackIds))
-        {
-            throw new InvalidDataException("Audio Render Settings reference a Logical Track absent from the Project.");
         }
         ValidateArrangementGraph(project);
 
@@ -1781,9 +1727,6 @@ public sealed class MidoraProjectPackageV1
             MidoraPackagePathsV1.Metadata,
             MidoraPackagePathsV1.ConductorTrack,
             MidoraPackagePathsV1.ProjectSettings,
-            MidoraPackagePathsV1.ExportSettings,
-            MidoraPackagePathsV1.PlaybackSettings,
-            MidoraPackagePathsV1.AudioRenderSettings,
             MidoraPackagePathsV1.GlobalResetDefaults,
             MidoraPackagePathsV1.GlobalEventScopeDefaults
         ];

@@ -142,7 +142,7 @@ public sealed class PianoKeyboardSurface : Control
         }
         if (hit is not KeyLayout key) return;
         _pressedNote = key.Note;
-        _pressedVelocity = Math.Clamp((int)Math.Round(127 - point.Y / Math.Max(1, ActualHeight) * 96), 1, 127);
+        _pressedVelocity = CalculatePreviewVelocity(point.Y, ActualHeight);
         CaptureMouse();
         InvalidateVisual();
         NotePressed?.Invoke(this, new(key.Note, _pressedVelocity));
@@ -177,6 +177,12 @@ public sealed class PianoKeyboardSurface : Control
         if (IsMouseCaptured) ReleaseMouseCapture();
         InvalidateVisual();
         NoteReleased?.Invoke(this, new(note, velocity));
+    }
+
+    internal static int CalculatePreviewVelocity(double y, double height)
+    {
+        double normalizedY = Math.Clamp(y / Math.Max(1, height), 0, 1);
+        return Math.Clamp((int)Math.Round(31 + normalizedY * 96), 1, 127);
     }
 
     private void EnsureLayout()

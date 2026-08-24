@@ -543,9 +543,6 @@ public sealed class PreviewCompiler
         MidoraProject context = new(source.TicksPerQuarterNote, source.NextStableId);
         CopyState(source.GlobalInitialState, context.GlobalInitialState);
         CopyState(source.GlobalResetDefaults, context.GlobalResetDefaults);
-        context.Playback.MasterVolumeDecibels = source.Playback.MasterVolumeDecibels;
-        context.Playback.LimiterEnabled = source.Playback.LimiterEnabled;
-        context.Playback.StopCursorBehavior = source.Playback.StopCursorBehavior;
         return context;
     }
 

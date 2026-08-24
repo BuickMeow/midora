@@ -368,7 +368,7 @@ D:\Programing\midora\misc\Midora-Non-UI-Decision-Question-Library.md
    - Transport、播放范围、Loop、Mute/Solo、Preview、设备选择；
    - 钢琴卷帘左键琴键 held preview、放置单 Note held preview；
    - Preferences：Render-Ahead、Device Request、Realtime voices、cache root/quota；
-   - Project Audio Render Settings：Offline voices、采样率及任务覆盖；
+   - Audio Render task draft：Offline voices、采样率及本次任务范围；不持久化为 Project defaults；
    - MIDI/Audio 输出规划、路径预览、覆盖授权、Progress、取消和结果；
    - 诊断展示、Warning-as-error、损坏对象/资源修复工作流；
    - Clipboard、焦点、Selection、CanExecute、Pointer Capture、失焦释放；

@@ -498,6 +498,35 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void ConfiguredApplicationPlaybackPreferencesDriveBackendAndStopCursor()
+    {
+        string soundFont = CreateTemporarySoundFont();
+        try
+        {
+            MidoraProject project = CreateProject();
+            FakeBackend backend = new();
+            using PlaybackController controller = new(new(project, soundFont), backend);
+            controller.ConfigurePlaybackPreferences(
+                new PlaybackMasterConfiguration(-6f, false),
+                StopCursorBehavior.StayAtStoppedTick);
+
+            controller.Start(0);
+            backend.PositionFrames = 12_000;
+            Assert.Equal(240, controller.CurrentTick);
+            controller.Stop();
+
+            Assert.Equal(240, controller.CurrentTick);
+            Assert.Equal(
+                new PlaybackMasterConfiguration(-6f, false),
+                backend.LastMasterConfiguration);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void NaturalCompletionLoopsThroughColdRangeStart()
     {
         string soundFont = CreateTemporarySoundFont();
@@ -1957,6 +1986,7 @@ public sealed class PlaybackTests
         public bool ThrowStop { get; set; }
         public bool ThrowReset { get; set; }
         public MidiRenderPlan? LastStartedPlan { get; private set; }
+        public PlaybackMasterConfiguration? LastMasterConfiguration { get; private set; }
         public List<MidiMonitoringCommand> MonitoringCommands { get; } = [];
         public List<RealtimePlaybackCacheMode> CacheModes { get; } = [];
         public IRealtimePlaybackCacheStore? CacheStore { get; private set; }
@@ -1980,9 +2010,9 @@ public sealed class PlaybackTests
         {
             Assert.Equal(ActualSampleRate, plan.SampleRate);
             Assert.True(File.Exists(soundFontPath));
-            Assert.Equal(-0.1f, master.VolumeDecibels);
             StartCount++;
             LastStartedPlan = plan;
+            LastMasterConfiguration = master;
             PositionFrames = 0;
             ExplicitRenderPositionFrames = null;
             IsCompleted = false;

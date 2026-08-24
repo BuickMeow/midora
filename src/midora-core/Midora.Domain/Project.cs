@@ -95,13 +95,6 @@ public sealed class LogicalTrack
     public List<Segment> Segments { get; } = [];
 }
 
-public sealed class PlaybackProjectSettings
-{
-    public double MasterVolumeDecibels { get; set; } = -0.1;
-    public bool LimiterEnabled { get; set; } = true;
-    public StopCursorBehavior StopCursorBehavior { get; set; } = StopCursorBehavior.ReturnToPlaybackStart;
-}
-
 public enum StopCursorBehavior
 {
     ReturnToPlaybackStart,
@@ -113,58 +106,13 @@ public sealed class GlobalEventScopeDefaults
     public static bool IsChannelWide(TemplateEventKind kind) => kind != TemplateEventKind.Note;
 }
 
-public enum ProjectRangeMode
-{
-    ProjectDefaultRange,
-    ManualRange
-}
-
-public enum ProjectTrackSelectionMode
-{
-    AllValidLogicalTracks,
-    ExplicitLogicalTrackIds
-}
-
 public enum AudioRenderMode
 {
     WholeMix,
     PerLogicalTrack
 }
 
-public enum ProjectMidiExportMode
-{
-    WholeProject,
-    PerLogicalTrack,
-    PerPort
-}
-
-public enum ProjectMidiExportTrackSelectionMode
-{
-    AllValidLogicalTracks,
-    ExplicitAtTaskStart
-}
-
-public enum ProjectMidiExportRoutingStrategy
-{
-    Compact,
-    Preserve
-}
-
-public sealed class ExportProjectSettings
-{
-    public ProjectMidiExportMode Mode { get; set; } = ProjectMidiExportMode.WholeProject;
-    public ProjectRangeMode RangeMode { get; set; } = ProjectRangeMode.ProjectDefaultRange;
-    public long? ManualStartTick { get; set; }
-    public long? ManualEndTick { get; set; }
-    public ProjectMidiExportTrackSelectionMode TrackSelectionMode { get; set; } =
-        ProjectMidiExportTrackSelectionMode.AllValidLogicalTracks;
-    public ProjectMidiExportRoutingStrategy Routing { get; set; } =
-        ProjectMidiExportRoutingStrategy.Compact;
-    public bool IncludeReadme { get; set; } = true;
-    public bool TreatWarningsAsErrors { get; set; }
-}
-
-public sealed class AudioRenderProjectSettings
+public static class AudioRenderSettingsPolicy
 {
     public const int MinimumSampleRate = 8_000;
     public const int MaximumSampleRate = 192_000;
@@ -173,15 +121,6 @@ public sealed class AudioRenderProjectSettings
     public const int MaximumSampleVoicesPerUnitStreamLimit = 16_777_216;
     public const int DefaultSampleVoicesPerUnitStream = 500;
 
-    public AudioRenderMode Mode { get; set; } = AudioRenderMode.WholeMix;
-    public ProjectRangeMode RangeMode { get; set; } = ProjectRangeMode.ProjectDefaultRange;
-    public long? ManualStartTick { get; set; }
-    public long? ManualEndTick { get; set; }
-    public ProjectTrackSelectionMode TrackSelectionMode { get; set; } =
-        ProjectTrackSelectionMode.AllValidLogicalTracks;
-    public HashSet<MidoraId> ExplicitLogicalTrackIds { get; } = [];
-    public int SampleRate { get; set; } = DefaultSampleRate;
-    public int MaximumSampleVoicesPerUnitStream { get; set; } = DefaultSampleVoicesPerUnitStream;
 }
 
 public sealed class MidoraProject : IDisposable
@@ -266,9 +205,6 @@ public sealed class MidoraProject : IDisposable
     public List<DamagedProjectObject> DamagedMidiChannelRoots { get; } = [];
     public List<PureMidiTrack> PureMidiTracks { get; } = [];
     public List<DamagedProjectObject> DamagedPureMidiTracks { get; } = [];
-    public PlaybackProjectSettings Playback { get; } = new();
-    public ExportProjectSettings Export { get; } = new();
-    public AudioRenderProjectSettings AudioRender { get; } = new();
     public MidoraId AllocateStableId()
     {
         if (_nextStableId == long.MaxValue)

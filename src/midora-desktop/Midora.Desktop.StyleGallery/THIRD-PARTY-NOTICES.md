@@ -9,6 +9,14 @@ Microsoft's Fluent System Icons repository at revision
 Assets used:
 
 - `ic_fluent_add_20_regular.svg`
+- `ic_fluent_zoom_in_20_regular.svg`
+- `ic_fluent_zoom_out_20_regular.svg`
+- `ic_fluent_zoom_in_16_regular.svg`
+- `ic_fluent_zoom_out_16_regular.svg`
+- `ic_fluent_pen_20_regular.svg`
+- `ic_fluent_select_object_20_regular.svg`
+- `ic_fluent_split_vertical_20_regular.svg`
+- `ic_fluent_eraser_20_regular.svg`
 - `ic_fluent_subtract_20_regular.svg`
 - `ic_fluent_dismiss_20_regular.svg`
 - `ic_fluent_square_20_regular.svg`
@@ -36,12 +44,15 @@ Assets used:
 - `ic_fluent_arrow_fit_20_regular.svg`
 - `ic_fluent_re_order_dots_vertical_20_regular.svg`
 - `ic_fluent_wrench_20_regular.svg`
+- `ic_fluent_wrench_screwdriver_20_regular.svg`
+- `ic_fluent_wrench_screwdriver_20_filled.svg`
 - `ic_fluent_midi_20_regular.svg`
 - `ic_fluent_speaker_2_20_regular.svg`
 - `ic_fluent_guitar_20_regular.svg`
 - `ic_fluent_arrow_expand_all_20_regular.svg`
 - `ic_fluent_arrow_collapse_all_20_regular.svg`
 - `ic_fluent_movies_and_tv_20_regular.svg`
+- `ic_fluent_pulse_20_regular.svg`
 
 MIT License
 

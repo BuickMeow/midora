@@ -38,6 +38,32 @@ public sealed class WpfInteractionRegressionTests
     }
 
     [Fact]
+    public void InputMethodPolicyEnablesOnlyActualTextEntryTargets()
+    {
+        RunOnSta(() =>
+        {
+            TextBox textBox = new();
+            RichTextBox richTextBox = new();
+            PasswordBox passwordBox = new();
+            ComboBox editableComboBox = new() { IsEditable = true };
+            ComboBox selectionComboBox = new();
+            Button button = new();
+
+            Assert.True(MainWindow.IsInputMethodTextTarget(textBox));
+            Assert.True(MainWindow.IsInputMethodTextTarget(richTextBox));
+            Assert.True(MainWindow.IsInputMethodTextTarget(passwordBox));
+            Assert.True(MainWindow.IsInputMethodTextTarget(editableComboBox));
+            Assert.False(MainWindow.IsInputMethodTextTarget(selectionComboBox));
+            Assert.False(MainWindow.IsInputMethodTextTarget(button));
+
+            MainWindow.ApplyInputMethodPolicy(textBox);
+            MainWindow.ApplyInputMethodPolicy(button);
+            Assert.True(InputMethod.GetIsInputMethodEnabled(textBox));
+            Assert.False(InputMethod.GetIsInputMethodEnabled(button));
+        });
+    }
+
+    [Fact]
     public void ProjectEditsQueueBoundCollectionRefreshesOnTheDispatcher()
     {
         RunOnSta(() =>
@@ -515,6 +541,325 @@ public sealed class WpfInteractionRegressionTests
                 StringComparison.Ordinal));
         Assert.True(diagnosticsTemplate.Descendants(presentation + "ScrollViewer").Count() >= 2);
         Assert.Empty(diagnosticsTemplate.Descendants(presentation + "Run"));
+    }
+
+    [Fact]
+    public void SubVoiceLowerEditorsDisableTimeRangeSelectionAndSplitUsesOpticalSize()
+    {
+        string path = Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            "MainWindow.xaml");
+        XDocument document = XDocument.Load(path);
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+
+        foreach (string name in new[] { "SubVoiceVelocityTimeline", "SubVoiceEventTimeline" })
+        {
+            XElement timeline = document.Descendants().Single(element =>
+                string.Equals((string?)element.Attribute(x + "Name"), name, StringComparison.Ordinal));
+            Assert.Equal("False", (string?)timeline.Attribute("IsTimeRangeSelectionEnabled"));
+        }
+
+        XElement splitButton = document.Descendants().Single(element =>
+            element.Name.LocalName == "ToggleButton"
+            && string.Equals((string?)element.Attribute("Tag"), "Split", StringComparison.Ordinal));
+        XElement splitIcon = splitButton.Descendants().Single(element =>
+            element.Name.LocalName == "FluentIcon");
+        Assert.Equal("16", (string?)splitIcon.Attribute("Width"));
+        Assert.Equal("16", (string?)splitIcon.Attribute("Height"));
+        Assert.Equal("Center", (string?)splitIcon.Attribute("HorizontalAlignment"));
+        Assert.Equal("Center", (string?)splitIcon.Attribute("VerticalAlignment"));
+
+        XElement subVoiceLowerEditor = document.Descendants().Single(element =>
+            element.Name.LocalName == "TabControl"
+            && ((string?)element.Attribute("SelectedIndex"))?.Contains(
+                "ActiveLowerEditorIndex",
+                StringComparison.Ordinal) == true);
+        Assert.Equal(
+            "OnSubVoiceLowerEditorSelectionChanged",
+            (string?)subVoiceLowerEditor.Attribute("SelectionChanged"));
+    }
+
+    [Fact]
+    public void MainMenuIsHostedInsideTheCustomTitleBar()
+    {
+        string path = Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            "MainWindow.xaml");
+        XDocument document = XDocument.Load(path);
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+
+        XElement menu = document.Descendants(presentation + "Menu").Single(element =>
+            string.Equals((string?)element.Attribute(x + "Name"), "MainMenu", StringComparison.Ordinal));
+        Assert.Equal("29", (string?)menu.Attribute("Height"));
+        Assert.Equal("Center", (string?)menu.Attribute("VerticalAlignment"));
+        Assert.Contains(menu.Ancestors(presentation + "Grid"), element =>
+            string.Equals((string?)element.Attribute("Grid.Row"), "0", StringComparison.Ordinal));
+        Assert.Contains(menu.Elements(presentation + "MenuItem"), element =>
+            string.Equals((string?)element.Attribute("Header"), "Application", StringComparison.Ordinal));
+
+        XElement titleContent = Assert.IsType<XElement>(menu.Parent);
+        Assert.DoesNotContain(titleContent.Descendants(presentation + "TextBlock"), element =>
+            string.Equals((string?)element.Attribute("Text"), "MIDORA", StringComparison.Ordinal));
+        Assert.DoesNotContain(titleContent.Elements(presentation + "Border"), element =>
+            string.Equals((string?)element.Attribute("Width"), "1", StringComparison.Ordinal));
+        Assert.Equal("1", (string?)menu.Attribute("Grid.Column"));
+        XElement projectNameFrame = titleContent.Elements(presentation + "Border").Single(element =>
+            string.Equals((string?)element.Attribute(x + "Name"), "TitleBarProjectNameFrame", StringComparison.Ordinal));
+        Assert.Equal("2", (string?)projectNameFrame.Attribute("Grid.Column"));
+        Assert.Null(projectNameFrame.Attribute("Height"));
+        Assert.Equal("8,0,0,0", (string?)projectNameFrame.Attribute("Margin"));
+        Assert.Null(projectNameFrame.Attribute("Padding"));
+        Assert.Equal("Left", (string?)projectNameFrame.Attribute("HorizontalAlignment"));
+        Assert.Equal("Center", (string?)projectNameFrame.Attribute("VerticalAlignment"));
+        Assert.Equal(
+            "{StaticResource Brush.Border}",
+            (string?)projectNameFrame.Attribute("BorderBrush"));
+        Assert.Equal("1", (string?)projectNameFrame.Attribute("BorderThickness"));
+        Assert.Equal("3", (string?)projectNameFrame.Attribute("CornerRadius"));
+        XElement projectName = projectNameFrame.Elements(presentation + "TextBlock").Single(element =>
+            string.Equals(
+                (string?)element.Attribute("Text"),
+                "{Binding TitleBarProjectDisplayName}",
+                StringComparison.Ordinal));
+        Assert.Equal("8,2", (string?)projectName.Attribute("Margin"));
+        Assert.Equal("Center", (string?)projectName.Attribute("HorizontalAlignment"));
+        Assert.Equal("12", (string?)projectName.Attribute("FontSize"));
+        Assert.Equal(
+            "{StaticResource Brush.Text.Tertiary}",
+            (string?)projectName.Attribute("Foreground"));
+        Assert.Equal("Center", (string?)projectName.Attribute("VerticalAlignment"));
+
+        XElement commandBarStyle = document.Descendants(presentation + "Style").Single(element =>
+            string.Equals((string?)element.Attribute(x + "Key"), "Button.CommandBarText", StringComparison.Ordinal));
+        XElement disabledTrigger = commandBarStyle
+            .Descendants(presentation + "Trigger")
+            .Single(element =>
+                string.Equals((string?)element.Attribute("Property"), "IsEnabled", StringComparison.Ordinal) &&
+                string.Equals((string?)element.Attribute("Value"), "False", StringComparison.Ordinal));
+        Assert.Contains(disabledTrigger.Elements(presentation + "Setter"), element =>
+            string.Equals((string?)element.Attribute("Property"), "Foreground", StringComparison.Ordinal) &&
+            string.Equals(
+                (string?)element.Attribute("Value"),
+                "#8A939F",
+                StringComparison.Ordinal));
+
+        XElement commandTextStyle = document.Descendants(presentation + "Style").Single(element =>
+            string.Equals((string?)element.Attribute(x + "Key"), "Text.CommandBarButton", StringComparison.Ordinal));
+        XElement commandTextDisabledTrigger = commandTextStyle
+            .Descendants(presentation + "DataTrigger")
+            .Single(element => string.Equals((string?)element.Attribute("Value"), "False", StringComparison.Ordinal));
+        Assert.Contains(commandTextDisabledTrigger.Elements(presentation + "Setter"), element =>
+            string.Equals((string?)element.Attribute("Property"), "Foreground", StringComparison.Ordinal) &&
+            string.Equals((string?)element.Attribute("Value"), "#8A939F", StringComparison.Ordinal));
+        Assert.Contains(commandTextStyle.Elements(presentation + "Setter"), element =>
+            string.Equals((string?)element.Attribute("Property"), "Foreground", StringComparison.Ordinal) &&
+            string.Equals((string?)element.Attribute("Value"), "#F1F3F5", StringComparison.Ordinal));
+
+        foreach (string command in new[] { "Compile", "MIDI Export", "Audio Export" })
+        {
+            XElement button = document.Descendants(presentation + "Button").Single(element =>
+                string.Equals(
+                    (string?)element.Element(presentation + "TextBlock")?.Attribute("Text"),
+                    command,
+                    StringComparison.Ordinal));
+            Assert.Equal(
+                "{StaticResource Button.CommandBarText}",
+                (string?)button.Attribute("Style"));
+            Assert.Equal(
+                "{StaticResource Text.CommandBarButton}",
+                (string?)button.Element(presentation + "TextBlock")?.Attribute("Style"));
+        }
+    }
+
+    [Fact]
+    public void GlobalCommandsAndEmptyStateExposeTheRequiredProjectAndApplicationActions()
+    {
+        string path = Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            "MainWindow.xaml");
+        XDocument document = XDocument.Load(path);
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+
+        foreach (string header in new[] { "Close Project", "Arrangement", "Diagnostics" })
+        {
+            XElement menuItem = document.Descendants(presentation + "MenuItem").Single(element =>
+                string.Equals((string?)element.Attribute("Header"), header, StringComparison.Ordinal));
+            Assert.Equal("{Binding HasProject}", (string?)menuItem.Attribute("IsEnabled"));
+        }
+
+        XElement projectSettings = document.Descendants(presentation + "Button").Single(element =>
+            string.Equals((string?)element.Attribute("ToolTip"), "Project Settings", StringComparison.Ordinal));
+        Assert.Equal("{Binding HasProject}", (string?)projectSettings.Attribute("IsEnabled"));
+        Assert.Equal("OnOpenSettingsClick", (string?)projectSettings.Attribute("Click"));
+        Assert.Contains(projectSettings.Descendants(), element =>
+            string.Equals(
+                (string?)element.Attribute("Data"),
+                "{StaticResource Fluent.Settings20Regular}",
+                StringComparison.Ordinal));
+        XElement projectSettingsIcon = projectSettings.Descendants().Single(element =>
+            string.Equals(
+                (string?)element.Attribute("Data"),
+                "{StaticResource Fluent.Settings20Regular}",
+                StringComparison.Ordinal));
+        Assert.Equal(
+            "{StaticResource Icon.DesignCanvas20At16}",
+            (string?)projectSettingsIcon.Attribute("Style"));
+        Assert.Equal("Emphasized", (string?)projectSettingsIcon.Attribute("Tag"));
+
+        XElement applicationPreferences = document.Descendants(presentation + "Button").Single(element =>
+            string.Equals((string?)element.Attribute("ToolTip"), "Application Preferences", StringComparison.Ordinal));
+        Assert.Equal("{Binding CanStartForegroundTask}", (string?)applicationPreferences.Attribute("IsEnabled"));
+        Assert.Equal("OnApplicationPreferencesClick", (string?)applicationPreferences.Attribute("Click"));
+        Assert.Contains(applicationPreferences.Descendants(), element =>
+            string.Equals(
+                (string?)element.Attribute("Data"),
+                "{StaticResource Fluent.WrenchScrewdriver20Regular}",
+                StringComparison.Ordinal));
+        XElement applicationPreferencesIcon = applicationPreferences.Descendants().Single(element =>
+            string.Equals(
+                (string?)element.Attribute("Data"),
+                "{StaticResource Fluent.WrenchScrewdriver20Regular}",
+                StringComparison.Ordinal));
+        Assert.Equal(
+            "{StaticResource Icon.DesignCanvas20At16}",
+            (string?)applicationPreferencesIcon.Attribute("Style"));
+        Assert.Equal("Emphasized", (string?)applicationPreferencesIcon.Attribute("Tag"));
+
+        foreach (string tooltip in new[] { "Undo", "Redo" })
+        {
+            XElement button = document.Descendants(presentation + "Button").Single(element =>
+                string.Equals((string?)element.Attribute("ToolTip"), tooltip, StringComparison.Ordinal));
+            Assert.Equal("{Binding HasProject}", (string?)button.Attribute("IsEnabled"));
+        }
+
+        XElement emptyState = document.Descendants(presentation + "Border").Single(element =>
+            string.Equals((string?)element.Attribute(x + "Name"), "EmptyState", StringComparison.Ordinal));
+        Assert.Contains(emptyState.Descendants(presentation + "Button"), element =>
+            string.Equals(
+                (string?)element.Attribute("Content"),
+                "Open MIDI as New Project",
+                StringComparison.Ordinal)
+            && string.Equals(
+                (string?)element.Attribute("Click"),
+                "OnOpenMidiAsNewProjectClick",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PianoRollVerticalZoomPairsUseCenteredEqualSpacing()
+    {
+        string path = Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            "MainWindow.xaml");
+        XDocument document = XDocument.Load(path);
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+
+        XElement[] zoomOutButtons = document.Descendants(presentation + "Button")
+            .Where(element => string.Equals(
+                (string?)element.Attribute("ToolTip"),
+                "Vertical zoom out",
+                StringComparison.Ordinal))
+            .Where(element => string.Equals((string?)element.Attribute("Width"), "22", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(2, zoomOutButtons.Length);
+        List<string?> opticalOffsets = [];
+        foreach (XElement zoomOut in zoomOutButtons)
+        {
+            XElement grid = Assert.IsType<XElement>(zoomOut.Parent);
+            Assert.Equal("Grid", grid.Name.LocalName);
+            Assert.Equal("52", (string?)grid.Attribute("Width"));
+            Assert.Equal("24", (string?)grid.Attribute("Height"));
+            Assert.Null(grid.Attribute("BorderThickness"));
+            Assert.Equal(
+                new[] { "3", "22", "2", "22", "3" },
+                grid.Element(presentation + "Grid.ColumnDefinitions")!
+                    .Elements(presentation + "ColumnDefinition")
+                    .Select(element => (string?)element.Attribute("Width")));
+            Assert.Equal(
+                new[] { "3", "18", "3" },
+                grid.Element(presentation + "Grid.RowDefinitions")!
+                    .Elements(presentation + "RowDefinition")
+                    .Select(element => (string?)element.Attribute("Height")));
+            Assert.Contains(grid.Elements(presentation + "Border"), element =>
+                string.Equals((string?)element.Attribute("Width"), "1", StringComparison.Ordinal) &&
+                string.Equals((string?)element.Attribute("HorizontalAlignment"), "Right", StringComparison.Ordinal));
+            Assert.Contains(grid.Elements(presentation + "Border"), element =>
+                string.Equals((string?)element.Attribute("Height"), "1", StringComparison.Ordinal) &&
+                string.Equals((string?)element.Attribute("VerticalAlignment"), "Bottom", StringComparison.Ordinal));
+            Assert.Equal("1", (string?)zoomOut.Attribute("Grid.Column"));
+            Assert.Equal("1", (string?)zoomOut.Attribute("Grid.Row"));
+            Assert.Equal("18", (string?)zoomOut.Attribute("Height"));
+            string? opticalOffset = (string?)zoomOut
+                .Element(presentation + "Button.RenderTransform")?
+                .Element(presentation + "TranslateTransform")?
+                .Attribute("Y");
+            opticalOffsets.Add(opticalOffset);
+            Assert.Equal("Center", (string?)zoomOut.Attribute("HorizontalContentAlignment"));
+            Assert.Equal("Center", (string?)zoomOut.Attribute("VerticalContentAlignment"));
+            Assert.Contains(zoomOut.Descendants(), element =>
+                string.Equals(
+                    (string?)element.Attribute("Style"),
+                    "{StaticResource Icon.NativeCanvas16}",
+                    StringComparison.Ordinal) &&
+                string.Equals(
+                    (string?)element.Attribute("Data"),
+                    "{StaticResource Fluent.ZoomOut16Regular}",
+                    StringComparison.Ordinal));
+
+            XElement zoomIn = grid.Elements(presentation + "Button").Single(element =>
+                string.Equals((string?)element.Attribute("ToolTip"), "Vertical zoom in", StringComparison.Ordinal));
+            Assert.Equal("3", (string?)zoomIn.Attribute("Grid.Column"));
+            Assert.Equal("1", (string?)zoomIn.Attribute("Grid.Row"));
+            Assert.Equal(
+                opticalOffset,
+                (string?)zoomIn
+                    .Element(presentation + "Button.RenderTransform")?
+                    .Element(presentation + "TranslateTransform")?
+                    .Attribute("Y"));
+            Assert.Equal("Center", (string?)zoomIn.Attribute("HorizontalContentAlignment"));
+            Assert.Equal("Center", (string?)zoomIn.Attribute("VerticalContentAlignment"));
+        }
+        Assert.Equal(new[] { "-2", "-1" }, opticalOffsets);
+    }
+
+    [Fact]
+    public void EveryTimelineSnapButtonAdvertisesTheGlobalShortcut()
+    {
+        string path = Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            "MainWindow.xaml");
+        XDocument document = XDocument.Load(path);
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+
+        XElement[] snapButtons = document
+            .Descendants(presentation + "ToggleButton")
+            .Where(element => string.Equals(
+                (string?)element.Attribute("Content"),
+                "Snap",
+                StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.Equal(4, snapButtons.Length);
+        Assert.All(snapButtons, button => Assert.Equal(
+            "Enable/Disable Snap (A)",
+            (string?)button.Attribute("ToolTip")));
     }
 
     [Theory]

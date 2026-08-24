@@ -33,57 +33,6 @@ public sealed class PersistenceContractV1Tests
     }
 
     [Fact]
-    public void MidiExportSettingsV1RoundTripDefaultsAndManualSnapshot()
-    {
-        ExportProjectSettings defaults = new();
-        ExportSettingsJsonV1 defaultJson = ExportSettingsCodecV1.Parse(
-            ExportSettingsCodecV1.Serialize(defaults));
-        ExportProjectSettings restoredDefaults = new();
-        ExportSettingsCodecV1.Restore(restoredDefaults, defaultJson);
-
-        Assert.Equal(ProjectMidiExportMode.WholeProject, restoredDefaults.Mode);
-        Assert.Equal(ProjectRangeMode.ProjectDefaultRange, restoredDefaults.RangeMode);
-        Assert.Equal(
-            ProjectMidiExportTrackSelectionMode.AllValidLogicalTracks,
-            restoredDefaults.TrackSelectionMode);
-        Assert.Equal(ProjectMidiExportRoutingStrategy.Compact, restoredDefaults.Routing);
-        Assert.True(restoredDefaults.IncludeReadme);
-        Assert.False(restoredDefaults.TreatWarningsAsErrors);
-
-        ExportProjectSettings manual = new()
-        {
-            Mode = ProjectMidiExportMode.PerLogicalTrack,
-            RangeMode = ProjectRangeMode.ManualRange,
-            ManualStartTick = 240,
-            ManualEndTick = 3_840,
-            TrackSelectionMode = ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart,
-            Routing = ProjectMidiExportRoutingStrategy.Preserve,
-            IncludeReadme = false,
-            TreatWarningsAsErrors = true
-        };
-        ExportProjectSettings restoredManual = new();
-        ExportSettingsCodecV1.Restore(
-            restoredManual,
-            ExportSettingsCodecV1.Parse(ExportSettingsCodecV1.Serialize(manual)));
-
-        Assert.Equal(ProjectMidiExportMode.PerLogicalTrack, restoredManual.Mode);
-        Assert.Equal(ProjectRangeMode.ManualRange, restoredManual.RangeMode);
-        Assert.Equal(240, restoredManual.ManualStartTick);
-        Assert.Equal(3_840, restoredManual.ManualEndTick);
-        Assert.Equal(
-            ProjectMidiExportTrackSelectionMode.ExplicitAtTaskStart,
-            restoredManual.TrackSelectionMode);
-        Assert.Equal(ProjectMidiExportRoutingStrategy.Preserve, restoredManual.Routing);
-        Assert.False(restoredManual.IncludeReadme);
-        Assert.True(restoredManual.TreatWarningsAsErrors);
-
-        string invalid = Encoding.UTF8.GetString(ExportSettingsCodecV1.Serialize(defaults))
-            .Replace("\"mode\": \"whole-project\"", "\"mode\": \"unknown\"", StringComparison.Ordinal);
-        Assert.Throws<InvalidDataException>(() =>
-            ExportSettingsCodecV1.Parse(Encoding.UTF8.GetBytes(invalid)));
-    }
-
-    [Fact]
     public void ContractVersionsAndTextLimitsAreFrozen()
     {
         Assert.Equal(1, PersistenceContractV1.FileFormatVersion);
@@ -322,7 +271,7 @@ public sealed class PersistenceContractV1Tests
     {
         string schemaDirectory = Path.Combine(AppContext.BaseDirectory, "Schemas", "Json");
         string[] paths = Directory.GetFiles(schemaDirectory, "*.schema.json", SearchOption.TopDirectoryOnly);
-        Assert.Equal(11, paths.Length);
+        Assert.Equal(8, paths.Length);
         foreach (string path in paths)
         {
             using JsonDocument schema = JsonDocument.Parse(File.ReadAllBytes(path));

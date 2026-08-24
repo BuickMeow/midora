@@ -152,6 +152,36 @@ public sealed record ApplicationRecentDirectories(
         };
 }
 
+public sealed record ApplicationSoundFontPreference(string Path, bool Enabled)
+{
+    public ApplicationSoundFontPreference Normalize()
+    {
+        Validate();
+        return this with { Path = System.IO.Path.GetFullPath(Path) };
+    }
+
+    public void Validate()
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(Path);
+        if (!System.IO.Path.IsPathFullyQualified(Path)
+            || Path.StartsWith("\\\\", StringComparison.Ordinal)
+            || Path.StartsWith("//", StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "A SoundFont path must be a fully-qualified local file path.",
+                nameof(Path));
+        }
+        string fullPath = System.IO.Path.GetFullPath(Path);
+        if (!string.Equals(
+                System.IO.Path.GetExtension(fullPath),
+                ".sf2",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("Only .sf2 SoundFont files are supported.", nameof(Path));
+        }
+    }
+}
+
 public sealed record DesktopUiPreferences(
     double MainWindowWidth,
     double MainWindowHeight,
@@ -202,7 +232,8 @@ public sealed record ApplicationPreferences(
     ApplicationRecentDirectories RecentDirectories)
 {
     public DesktopUiPreferences DesktopUi { get; init; } = DesktopUiPreferences.Default;
-    public string? DefaultEmbeddedSoundFontPath { get; init; }
+    public IReadOnlyList<ApplicationSoundFontPreference> SoundFonts { get; init; } =
+        Array.Empty<ApplicationSoundFontPreference>();
 
     public static ApplicationPreferences Default { get; } =
         new(
@@ -224,9 +255,25 @@ public sealed record ApplicationPreferences(
         ValidateDirectory(RecentDirectories.SoundFont);
         ValidateDirectory(RecentDirectories.MidiExport);
         ValidateDirectory(RecentDirectories.AudioRender);
-        ValidateOptionalLocalFilePath(
-            DefaultEmbeddedSoundFontPath,
-            nameof(DefaultEmbeddedSoundFontPath));
+        ArgumentNullException.ThrowIfNull(SoundFonts);
+        if (SoundFonts.Count > 256)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(SoundFonts),
+                "At most 256 SoundFonts can be configured.");
+        }
+        HashSet<string> paths = new(StringComparer.OrdinalIgnoreCase);
+        foreach (ApplicationSoundFontPreference soundFont in SoundFonts)
+        {
+            ArgumentNullException.ThrowIfNull(soundFont);
+            soundFont.Validate();
+            if (!paths.Add(Path.GetFullPath(soundFont.Path)))
+            {
+                throw new ArgumentException(
+                    "The Application SoundFont list contains a duplicate path.",
+                    nameof(SoundFonts));
+            }
+        }
     }
 
     internal static string? NormalizeDirectory(string? directory)
@@ -258,33 +305,10 @@ public sealed record ApplicationPreferences(
         _ = Path.GetFullPath(directory);
     }
 
-    internal static string? NormalizeOptionalLocalFilePath(string? path)
-    {
-        if (path is null)
-        {
-            return null;
-        }
-        ValidateOptionalLocalFilePath(path, nameof(path));
-        return Path.GetFullPath(path);
-    }
-
-    private static void ValidateOptionalLocalFilePath(string? path, string parameterName)
-    {
-        if (path is null)
-        {
-            return;
-        }
-        if (path.Length == 0
-            || !Path.IsPathFullyQualified(path)
-            || path.StartsWith("\\\\", StringComparison.Ordinal)
-            || path.StartsWith("//", StringComparison.Ordinal))
-        {
-            throw new ArgumentException(
-                "The default embedded SoundFont must be null or a fully-qualified local file path.",
-                parameterName);
-        }
-        _ = Path.GetFullPath(path);
-    }
+    public string[] GetEnabledSoundFontPaths() => SoundFonts
+        .Where(value => value.Enabled)
+        .Select(value => Path.GetFullPath(value.Path))
+        .ToArray();
 }
 
 public enum ApplicationPreferenceUpdateStatus

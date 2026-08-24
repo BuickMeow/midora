@@ -20,7 +20,7 @@ public sealed class ApplicationPreferencesStoreTests
         Assert.Equal(
             AudioCachePreferences.DefaultMaximumReusableBytes,
             result.Preferences.AudioCache.MaximumReusableBytes);
-        Assert.Null(result.Preferences.DefaultEmbeddedSoundFontPath);
+        Assert.Empty(result.Preferences.SoundFonts);
     }
 
     [Fact]
@@ -39,7 +39,12 @@ public sealed class ApplicationPreferencesStoreTests
                 Path.Combine(directory.Path, "midi"),
                 Path.Combine(directory.Path, "audio")))
         {
-            DefaultEmbeddedSoundFontPath = Path.Combine(directory.Path, "default.sf2")
+            SoundFonts =
+            [
+                new(Path.Combine(directory.Path, "first.sf2"), true),
+                new(Path.Combine(directory.Path, "second.sf2"), false),
+                new(Path.Combine(directory.Path, "third.sf2"), true)
+            ]
         };
 
         Assert.True(store.Save(preferences).Succeeded);
@@ -50,7 +55,16 @@ public sealed class ApplicationPreferencesStoreTests
 
         Assert.Equal(first, second);
         Assert.Null(loaded.Notice);
-        Assert.Equal(preferences, loaded.Preferences);
+        Assert.Equal(preferences.RealtimeAudio, loaded.Preferences.RealtimeAudio);
+        Assert.Equal(preferences.AudioCache, loaded.Preferences.AudioCache);
+        Assert.Equal(preferences.RecentDirectories, loaded.Preferences.RecentDirectories);
+        Assert.Equal(preferences.SoundFonts, loaded.Preferences.SoundFonts);
+        Assert.Equal(
+            [
+                Path.Combine(directory.Path, "first.sf2"),
+                Path.Combine(directory.Path, "third.sf2")
+            ],
+            loaded.Preferences.GetEnabledSoundFontPaths());
         Assert.NotEqual(
             loaded.Preferences.RecentDirectories.MidiExport,
             loaded.Preferences.RecentDirectories.AudioRender);
@@ -200,15 +214,15 @@ public sealed class ApplicationPreferencesStoreTests
     }
 
     [Fact]
-    public void DefaultEmbeddedSoundFontRejectsRelativeAndUncPaths()
+    public void ApplicationSoundFontListRejectsRelativeAndUncPaths()
     {
         ApplicationPreferences relative = ApplicationPreferences.Default with
         {
-            DefaultEmbeddedSoundFontPath = "relative.sf2"
+            SoundFonts = [new("relative.sf2", true)]
         };
         ApplicationPreferences unc = ApplicationPreferences.Default with
         {
-            DefaultEmbeddedSoundFontPath = @"\\server\share\default.sf2"
+            SoundFonts = [new(@"\\server\share\default.sf2", true)]
         };
 
         Assert.Throws<ArgumentException>(relative.Validate);

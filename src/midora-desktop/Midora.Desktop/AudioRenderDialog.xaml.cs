@@ -167,7 +167,6 @@ public partial class AudioRenderDialog : Window
             sampleRate,
             voices,
             WarningsCheck.IsChecked == true,
-            AcceptExternalSoundFontHashChange: false,
             SelectedTrackIds: selectedTrackIds);
         DialogResult = true;
     }

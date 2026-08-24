@@ -344,11 +344,11 @@ Windows 应用音量混音器
 初版使用与播放一致的 BASSMIDI / SF2 发声语义。
 文件渲染由第 13.30 节规定的同一个 `win-x64` Native AOT 音频子进程执行，不允许用其他 CPU 架构或 JIT Worker 生成正式文件。
 本次 compiled result 必须先完成全局 Port / Channel 分配，再从 Execution Projection 确定性派生 Logical Segment/Unit 与 Pure MIDI Root 音频投影。每个 Unit/Root 使用独立、干净的 1-channel BASSMIDI Stream 语义；同 Root 子 Track 必须先合并，不能逐 Track 合成后求和。实际 native Stream 可由有界 pool 复用。
-所有 Unit 使用 Project 的同一个 SF2。
+所有 Unit 使用任务开始时冻结的同一个程序级 Enabled SF2 有序列表；BASSMIDI 按列表顺序建立完整 Font handle 数组。
 每个 Stream 必须完成：
 ```text
 干净初始化
-SF2 加载
+按冻结顺序以 `BASS_MIDI_FONT_MMAP` 直接打开每个原绝对路径，并一次性设置完整 SF2 handle 列表
 按 canonical Unit descriptor 建立 Melodic/Percussion mode；Logical Channel 10 强制 Melodic
 BASS_MIDI_NOFX 启用
 BASS_MIDI_NOTEOFF1 启用
@@ -609,13 +609,13 @@ Project 当前 Track 排序
 让后一个分轨覆盖前一个分轨
 未授权时覆盖任务中途新出现的文件
 自动覆盖当前 .midora
-自动覆盖当前外部 SF2
+自动覆盖程序级 SoundFont 列表中的任何原文件
 ```
 ### 15.11.4 禁止目标
 禁止 WAV 目标覆盖：
 ```text
 当前打开的 .midora 文件
-当前 Project 正在使用的外部 SF2
+程序级 SoundFont 列表中的任何原文件
 任何正式目标对应的临时文件路径
 ```
 `.midora` 是单文件 Zip package，不支持把 WAV “写入包内目录”。
@@ -646,7 +646,7 @@ Project 当前 Track 排序
 ### 15.12.2 创建时机
 整曲：
 ```text
-编译、SF2 和后端关键前置检查成功后才创建临时输出。
+编译、Enabled SF2 列表和后端关键前置检查成功后才创建临时输出。
 ```
 分轨：
 ```text
@@ -962,7 +962,7 @@ Mapping Function 或源对象
 | Channel Unit 峰值达到 248 | 编译 Info，不受 Warning-as-error 影响 |
 | 全静音检测结果 | Info |
 | Track 缺少、重复或引用错误类型的 parent | Preparing Error，整个任务不开始 |
-| 外部 SF2 hash 变化 | 资源 Warning，可确认后继续 |
+| Enabled SF2 路径缺失或 BASSMIDI 加载失败 | Preparing Error，整个任务不开始 |
 | 正式输出成功但临时文件残留 | 文件系统 Warning |
 | Warning 存在但所有正式输出成功 | 顶层仍为 Completed |
 Info 默认折叠展示，用户可以展开查看。
@@ -971,45 +971,32 @@ Info 默认折叠展示，用户可以展开查看。
 ---
 ## 15.18 SoundFont 资源规则
 ### 15.18.1 无 SF2
-无 SF2 时禁止音频文件渲染。
+程序级 SoundFont 列表无任何 Enabled 项时禁止音频文件渲染。
 不生成静音占位文件，也不自动使用系统默认音色库。
-### 15.18.2 渲染前验证
-开始前重新验证当前 SF2：
+### 15.18.2 任务冻结与直接读取
+Preparing 开始时冻结当前 Enabled 项的有序绝对路径列表。任务必须：
 ```text
-引用是否存在
-文件是否可读取
-内嵌资源 hash
-外部资源 last known hash
-BASSMIDI 是否可加载
+不复制 SF2 到临时目录
+不计算或校验完整文件 hash
+不读取 .midora 获取 SF2
+由音频 Worker 以 BASS_MIDI_FONT_MMAP 直接打开原路径
+任一路径缺失、不可读或加载失败时整体失败
 ```
-开始后锁定本次已加载资源，不在任务中热重载。
-内嵌 SF2 使用当前内存 Project 已加载或从当前打开项目包解析出的资源；任务中不反复重新打开磁盘 `.midora` 获取变化。
-### 15.18.3 外部 SF2 hash 变化
-遵循 第 6 章《SoundFont 与声音资源》：
-```text
-显示资源 Warning。
-允许用户确认后加载并继续。
-不自动更新持久化 hash。
-不自动标记 Project 已修改。
-```
-只有用户明确接受更新资源记录时才修改 Project。
-### 15.18.4 损坏与加载失败
-内嵌 SF2 hash 校验失败：
-```text
-视为项目资源损坏，任务失败。
-```
-SF2 可读但 BASSMIDI 无法加载：
+开始后使用本次已打开的 handle，不在任务中热重载。列表或原文件变化不修改 Project；用户必须在 Stopped / Idle 明确重新提交列表或重启任务。
+### 15.18.3 加载失败
+任一 Enabled SF2 无法由 BASSMIDI 加载：
 ```text
 任务级公共前置失败。
 不能生成任何新音频输出。
 ```
 不得自动寻找同名 SF2、使用系统音色库或输出静音代替。
-### 15.18.5 缓存失效
-SF2 路径、模式、hash 或实际内容变化：
+### 15.18.4 缓存失效
+有序 Enabled 路径列表或任一文件的 length / last-write-time 元数据变化：
 ```text
 使相关音频后端和音频样本缓存失效。
 不必使纯 MIDI canonical compiled result 失效。
 ```
+该缓存身份只是避免完整文件读取的本机性能键，不是内容完整性验证；用户在保持路径、长度和时间戳不变的情况下原地替换文件属于未检测的外部修改。
 ---
 ## 15.19 缓存与确定性
 ### 15.19.1 缓存允许范围
@@ -1037,8 +1024,7 @@ Audio Render CompileContext
 Track 选择
 范围
 Tempo Map
-SF2 资源状态
-SF2 完整 SHA-256
+程序级 Enabled SF2 有序列表的路径与文件元数据缓存身份
 Playback Master Volume
 渲染 Limiter 语义和参数
 固定容器 / 声道 / 样本格式

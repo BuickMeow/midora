@@ -532,13 +532,12 @@ Port / Channel Unit
 ---
 ## 13.11 SoundFont 与播放
 ### 13.11.1 播放需要有效 SF2
-点击播放时，如果 Project：
+点击播放时，如果 Application Preferences 的有序 SoundFont 列表：
 ```text
-未选择 SF2
-SF2 缺失
-SF2 不可读
-SF2 格式不支持
-SF2 加载失败
+没有任何 Enabled 项
+任一 Enabled 路径缺失或不可读取
+任一 Enabled SF2 格式不受 BASSMIDI 支持
+任一 Enabled SF2 加载失败
 ```
 则：
 ```text
@@ -548,14 +547,14 @@ SF2 加载失败
 ```
 Event Instrument 预览、SubVoice 预览、Segment 预览与主播放一样需要有效 SF2。
 ### 13.11.2 播放期间禁止修改 SoundFont
-播放期间禁止修改 SoundFont Settings。
+Playing、Buffering、实时 Preview 或文件 Rendering 期间禁止提交程序级 SoundFont 列表变更。
 包括：
 ```text
-选择 SF2
-取消选择 SF2
-替换 SF2
-改变 SF2 保存 / 引用模式
+新增或删除路径
+启用或禁用条目
+调整顺序
 ```
+列表只在 Stopped / Idle 提交；提交后销毁持久音频 Worker，并使相关 sample-domain 缓存 generation 失效。Project、canonical compiled result 和 Modified 状态不得因此变化。
 ---
 ## 13.12 BASSMIDI Stream 生命周期
 ### 13.12.1 Canonical Unit 音频投影
@@ -571,7 +570,7 @@ Event Instrument 预览、SubVoice 预览、Segment 预览与主播放一样需�
 ### 13.12.3 Stream 复用
 Stream 复用只能是性能优化。复用前必须重新确认：
 ```text
-SF2 是当前 Project 当前选择的 SF2
+SF2 handle 列表与本次任务冻结的程序级 Enabled SF2 有序列表完全一致
 采样率、格式和 Maximum Sample Voices per Unit Stream 匹配本次任务
 Stream 处于清洁状态
 channel 0 的 Melodic/Percussion mode 与本次 Unit descriptor 一致
@@ -1137,7 +1136,7 @@ Segment 内容：从最早可证明 causal dirty tick 起；无法证明时从 S
 Pure MIDI 数据：只使对应 normalized MidiSegment fragment 和所属 Root 从最早受影响 tick 起 dirty；其他 Root 与 Logical Unit 不得连带失效。
 Event Instrument / Mapping / Lifecycle：失效所有引用的 Segment/Unit。
 Tempo：失效局部 Tempo 投影改变的 sample-domain entry 与时间放置。
-SF2 hash、采样率/格式、native baseline、voice policy：失效全部相关 Unit PCM。
+SoundFont 列表缓存身份、采样率/格式、native baseline、voice policy：失效全部相关 Unit PCM。
 Mute/Solo：保留 Unit PCM，建立新 playback span generation。
 Master/Limiter：保留 Unit PCM，失效相关 playback span。
 设备变化且实际格式相同：保留 device-independent Unit raw PCM；重建设备连接和 device-bound generation。

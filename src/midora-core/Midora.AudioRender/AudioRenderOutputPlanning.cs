@@ -255,7 +255,7 @@ public static class AudioRenderOutputPlanner
             if (string.Equals(targetPath, normalized, StringComparison.OrdinalIgnoreCase))
             {
                 diagnostics.Add(Error(
-                    "A WAV target cannot overwrite the current Project or its active external SoundFont.",
+                    "A WAV target cannot overwrite the current Project or an enabled application SoundFont.",
                     sourceKey,
                     targetPath));
             }

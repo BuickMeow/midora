@@ -63,10 +63,6 @@ public sealed class MidoraProjectPackageV1Tests
         Assert.Equal(3_840, opened.Project.AudioRender.ManualEndTick);
         Assert.Equal(44_100, opened.Project.AudioRender.SampleRate);
         Assert.Equal(1_024, opened.Project.AudioRender.MaximumSampleVoicesPerUnitStream);
-        ExternalProjectSoundFontReference soundFont = Assert.IsType<ExternalProjectSoundFontReference>(
-            opened.Project.SoundFont.Reference);
-        Assert.Equal("soundfonts/Orchestra.sf2", soundFont.RelativePath);
-
         using (FileStream exclusive = new(packagePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
             Assert.True(exclusive.Length > 0);
@@ -135,35 +131,6 @@ public sealed class MidoraProjectPackageV1Tests
         Assert.Empty(Directory.GetFileSystemEntries(temporary.Path, ".*.midora-temp-*"));
         Assert.Empty(Directory.GetFileSystemEntries(temporary.Path, ".*.midora-backup-*"));
         Assert.False((await packages.OpenAsync(packagePath)).IsModified);
-    }
-
-    [Fact]
-    public async Task EmbeddedSoundFontWithoutRuntimeResourceFailsWithoutTouchingTarget()
-    {
-        using TemporaryDirectory temporary = new();
-        string packagePath = temporary.PathFor("atomic.midora");
-        byte[] original = [1, 2, 3, 4];
-        await File.WriteAllBytesAsync(packagePath, original);
-        MidoraProject project = new(480, CreatedAt);
-        project.SoundFont.SetEmbedded(
-            project,
-            "Orchestra.sf2",
-            new string('a', 64),
-            123);
-        MidoraProjectPackageV1 packages = CreateService();
-
-        MidoraEmbeddedSoundFontRepairRequiredExceptionV1 resourceFailure =
-            await Assert.ThrowsAsync<MidoraEmbeddedSoundFontRepairRequiredExceptionV1>(() =>
-                packages.SaveProjectAsync(project, packagePath, overwriteAuthorized: true));
-
-        Assert.Equal(MidoraPackageStageV1.Preflight, resourceFailure.Stage);
-        Assert.Equal(EmbeddedSoundFontResourceStatusV1.RuntimeResourceMissing, resourceFailure.ResourceStatus);
-        Assert.Collection(
-            resourceFailure.RepairActions,
-            action => Assert.Equal(EmbeddedSoundFontRepairActionV1.ReplaceOrRebind, action),
-            action => Assert.Equal(EmbeddedSoundFontRepairActionV1.ClearReference, action));
-        Assert.Equal(original, await File.ReadAllBytesAsync(packagePath));
-        Assert.Empty(Directory.GetFileSystemEntries(temporary.Path, ".midora-save-*"));
     }
 
     [Fact]
@@ -272,18 +239,17 @@ public sealed class MidoraProjectPackageV1Tests
         string packagePath = temporary.PathFor("missing-recoverable.midora");
         MidoraProjectPackageV1 packages = CreateService();
         await packages.SaveCopyAsync(CreatePopulatedProject(), packagePath);
-        DeleteEntries(packagePath, "metadata.json", "settings/soundfont-settings.json");
+        DeleteEntries(packagePath, "metadata.json");
 
         MidoraProjectOpenResultV1 opened = await packages.OpenAsync(packagePath);
 
         Assert.True(opened.IsModified);
-        Assert.Equal(2, opened.Diagnostics.Count(item =>
+        Assert.Equal(1, opened.Diagnostics.Count(item =>
             item.Severity == MidoraPackageDiagnosticSeverityV1.Error
             && item.Code == "MIDORA-PERSIST-RECOVERED-DEFAULT"));
         Assert.Equal(string.Empty, opened.Project.Metadata.ProjectName);
         Assert.Equal(SavedAt, opened.Project.Metadata.CreatedAtUtc);
         Assert.Equal(SavedAt, opened.Project.Metadata.ModifiedAtUtc);
-        Assert.Null(opened.Project.SoundFont.Reference);
 
         await packages.SaveProjectAsync(
             opened.Project,
@@ -544,11 +510,6 @@ public sealed class MidoraProjectPackageV1Tests
         project.AudioRender.ManualEndTick = 3_840;
         project.AudioRender.SampleRate = 44_100;
         project.AudioRender.MaximumSampleVoicesPerUnitStream = 1_024;
-        project.SoundFont.SetExternal(
-            "soundfonts/Orchestra.sf2",
-            "Orchestra.sf2",
-            new string('a', 64),
-            123_456);
         return project;
     }
 
@@ -564,7 +525,6 @@ public sealed class MidoraProjectPackageV1Tests
             "settings/export-settings.json",
             "settings/playback-settings.json",
             "settings/audio-render-settings.json",
-            "settings/soundfont-settings.json",
             "settings/global-reset-defaults.json",
             "settings/global-event-scope-defaults.json"
         ];

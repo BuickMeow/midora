@@ -51,7 +51,6 @@ internal sealed class ManifestFileEntryJsonV1
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(ManifestJsonV1))]
 [JsonSerializable(typeof(MetadataJsonV1))]
-[JsonSerializable(typeof(SoundFontSettingsJsonV1))]
 [JsonSerializable(typeof(ProjectJsonV1))]
 [JsonSerializable(typeof(ProjectSettingsJsonV1))]
 [JsonSerializable(typeof(ExportSettingsJsonV1))]

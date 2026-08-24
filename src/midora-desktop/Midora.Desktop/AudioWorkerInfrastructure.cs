@@ -65,7 +65,6 @@ public static class FormalAudioWorkerLocator
         return true;
     }
 }
-
 public sealed record FormalAudioOutputDevice(
     string Id,
     string Name,
@@ -180,45 +179,5 @@ public static class FormalAudioOutputDeviceEnumerator
                 fields[0] == "1"));
         }
         return result;
-    }
-}
-
-public sealed class WorkerSoundFontLoadabilityValidator : ISoundFontLoadabilityValidator
-{
-    public async ValueTask ValidateAsync(
-        string soundFontPath,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
-        if (!File.Exists(soundFontPath))
-        {
-            throw new SoundFontLoadabilityException(
-                SoundFontLoadabilityFailure.Missing,
-                "The selected SoundFont file does not exist.");
-        }
-        if (!FormalAudioWorkerLocator.TryCreateFileRenderWorker(out BassMidiAudioFileRenderWorker? worker, out string? failure))
-        {
-            throw new MidoraAudioException(failure ?? "The formal audio worker is unavailable.");
-        }
-        try
-        {
-            await worker!.PrepareAsync(
-                new(soundFontPath, 48_000, 1, 0),
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (UnauthorizedAccessException exception)
-        {
-            throw new SoundFontLoadabilityException(
-                SoundFontLoadabilityFailure.Unreadable,
-                "The selected SoundFont cannot be read.",
-                innerException: exception);
-        }
-        catch (AudioFileRenderWorkerException exception)
-        {
-            // A worker/native-baseline failure is deliberately not mislabeled as a corrupt SF2.
-            throw new MidoraAudioException(
-                $"The formal audio worker could not validate the SoundFont: {exception.Message}",
-                exception);
-        }
     }
 }

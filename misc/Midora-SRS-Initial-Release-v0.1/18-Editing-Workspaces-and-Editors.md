@@ -588,28 +588,14 @@ File Format Version
 ```
 `Created With Midora` 和 `Last Saved With Midora` 来自 manifest，不属于用户 Metadata。
 ### 18.9.3 SoundFont
-模式：
+SoundFont 不属于 Project Settings。Application Preferences 提供程序级有序列表，每项包含：
 ```text
-Embedded in Project
-External Relative Reference
+Enabled
+Local absolute .sf2 path
+Move Up / Move Down
+Add / Remove
 ```
-External Relative Reference 只允许：
-```text
-Same directory as the .midora file
-soundfonts\ under the Project directory
-```
-无 SF2 是合法 Project 状态。
-状态必须区分：
-```text
-No SoundFont
-SoundFont Configured
-SoundFont Missing
-SoundFont Changed
-Loading SoundFont
-SoundFont Loaded
-SoundFont Load Failed
-```
-Configured 不等于 Loaded。打开 Project 时不创建 BASSMIDI Stream，也不加载 SF2。
+列表顺序即 BASSMIDI preset fallback 优先级。编辑列表不复制、校验、完整读取或加载 SF2；只有实际播放、预览或音频渲染 Preparing 才由 Worker 直接打开原文件。无 Enabled SF2 是合法应用状态，不影响 Project 打开、编辑、编译、保存或 MIDI 导出。
 ### 18.9.4 Playback
 Project Playback Settings 只包含：
 ```text

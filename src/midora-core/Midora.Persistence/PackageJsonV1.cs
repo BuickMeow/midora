@@ -49,12 +49,9 @@ internal sealed class ProjectSettingsPathsJsonV1
     public required string AudioRender { get; init; }
 
     [JsonPropertyOrder(4)]
-    public required string SoundFont { get; init; }
-
-    [JsonPropertyOrder(5)]
     public required string GlobalResetDefaults { get; init; }
 
-    [JsonPropertyOrder(6)]
+    [JsonPropertyOrder(5)]
     public required string GlobalEventScopeDefaults { get; init; }
 }
 

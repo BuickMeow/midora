@@ -70,14 +70,13 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         {
             throw new ArgumentOutOfRangeException(nameof(backgroundDebounce));
         }
-        string? normalizedSoundFontPath = effectiveSoundFontPath is null
-            ? null
-            : Path.GetFullPath(effectiveSoundFontPath);
         _editingTime = new ProjectEditingTimeSession(project, editingTimeProvider);
-        EffectiveSoundFontPath = normalizedSoundFontPath;
-        EffectiveSoundFontSha256 = normalizedSoundFontPath is null
+        EffectiveSoundFontPaths = effectiveSoundFontPath is null
+            ? Array.Empty<string>()
+            : [Path.GetFullPath(effectiveSoundFontPath)];
+        EffectiveSoundFontSetCacheIdentity = effectiveSoundFontPath is null
             ? null
-            : project.SoundFont.Reference?.Sha256;
+            : SoundFontSetDefinition.CreateConfiguration(EffectiveSoundFontPaths).CacheIdentity;
         try
         {
             _compilationProject = executionMode == ProjectCompilationExecutionMode.Background
@@ -108,8 +107,9 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
 
     public MidoraProject Project { get; }
     internal ProjectEditingTimeSession EditingTimeSession => _editingTime;
-    public string? EffectiveSoundFontPath { get; private set; }
-    public string? EffectiveSoundFontSha256 { get; private set; }
+    public IReadOnlyList<string> EffectiveSoundFontPaths { get; private set; }
+    public string? EffectiveSoundFontPath => EffectiveSoundFontPaths.FirstOrDefault();
+    public string? EffectiveSoundFontSetCacheIdentity { get; private set; }
     public CanonicalCompiledResult LastAttempt { get; private set; }
     public CanonicalCompiledResult? LastSuccessfulResult { get; private set; }
     public CompilerRunTelemetry LastCompilationTelemetry => _compiler.LastTelemetry;
@@ -1241,8 +1241,16 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         }
     }
 
-    public void SetEffectiveSoundFontPath(string? value)
+    public void SetEffectiveSoundFontPath(string? value) =>
+        SetEffectiveSoundFontPaths(value is null ? [] : [value]);
+
+    public void SetEffectiveSoundFontPaths(IReadOnlyList<string> values)
     {
+        ArgumentNullException.ThrowIfNull(values);
+        string[] normalized = values.Select(Path.GetFullPath).ToArray();
+        string? identity = normalized.Length == 0
+            ? null
+            : SoundFontSetDefinition.CreateConfiguration(normalized).CacheIdentity;
         bool changed;
         lock (_sync)
         {
@@ -1252,104 +1260,32 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 throw new InvalidOperationException(
                     "The effective SoundFont cannot change while a Project edit lock is active.");
             }
-            string? normalized = value is null ? null : Path.GetFullPath(value);
-            string? sha256 = normalized is null ? null : Project.SoundFont.Reference?.Sha256;
-            changed = !string.Equals(
-                EffectiveSoundFontPath,
-                normalized,
-                StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(
-                    EffectiveSoundFontSha256,
-                    sha256,
-                    StringComparison.Ordinal);
-            EffectiveSoundFontPath = normalized;
-            EffectiveSoundFontSha256 = sha256;
+            changed = !EffectiveSoundFontPaths.SequenceEqual(
+                    normalized,
+                    StringComparer.OrdinalIgnoreCase)
+                || !string.Equals(EffectiveSoundFontSetCacheIdentity, identity, StringComparison.Ordinal);
+            EffectiveSoundFontPaths = normalized;
+            EffectiveSoundFontSetCacheIdentity = identity;
+            if (changed) ClearSampleDomainCachesCore();
         }
         if (changed) EffectiveSoundFontChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public bool TryBeginSoundFontVerification(
-        ProjectSoundFontReference? expectedReference)
+    public void RefreshEffectiveSoundFontCacheIdentity()
     {
+        IReadOnlyList<string> paths = EffectiveSoundFontPaths;
+        if (paths.Count == 0)
+        {
+            return;
+        }
+        string identity = SoundFontSetDefinition.Create(paths).CacheIdentity;
         bool changed;
         lock (_sync)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_editLockCount != 0)
-            {
-                throw new InvalidOperationException(
-                    "The effective SoundFont cannot be verified while a Project edit lock is active.");
-            }
-            if (Project.SoundFont.Reference != expectedReference)
-            {
-                return false;
-            }
-            changed = EffectiveSoundFontPath is not null
-                || EffectiveSoundFontSha256 is not null;
-            EffectiveSoundFontPath = null;
-            EffectiveSoundFontSha256 = null;
-            ClearSampleDomainCachesCore();
+            changed = !string.Equals(EffectiveSoundFontSetCacheIdentity, identity, StringComparison.Ordinal);
+            EffectiveSoundFontSetCacheIdentity = identity;
         }
         if (changed) EffectiveSoundFontChanged?.Invoke(this, EventArgs.Empty);
-        return true;
-    }
-
-    public bool TrySetVerifiedSoundFontPath(
-        ProjectSoundFontReference expectedReference,
-        string value)
-    {
-        ArgumentNullException.ThrowIfNull(expectedReference);
-        ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        string path = Path.GetFullPath(value);
-        bool changed;
-        lock (_sync)
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_editLockCount != 0)
-            {
-                throw new InvalidOperationException(
-                    "The effective SoundFont cannot change while a Project edit lock is active.");
-            }
-            if (Project.SoundFont.Reference != expectedReference)
-            {
-                return false;
-            }
-            changed = !string.Equals(
-                EffectiveSoundFontPath,
-                path,
-                StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(
-                    EffectiveSoundFontSha256,
-                    expectedReference.Sha256,
-                    StringComparison.Ordinal);
-            EffectiveSoundFontPath = path;
-            EffectiveSoundFontSha256 = expectedReference.Sha256;
-            ClearSampleDomainCachesCore();
-        }
-        if (changed) EffectiveSoundFontChanged?.Invoke(this, EventArgs.Empty);
-        return true;
-    }
-
-    public bool TryInvalidateSoundFontResource(
-        ProjectSoundFontReference expectedReference)
-    {
-        ArgumentNullException.ThrowIfNull(expectedReference);
-        bool changed;
-        lock (_sync)
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            if (Project.SoundFont.Reference != expectedReference)
-            {
-                return false;
-            }
-            changed = EffectiveSoundFontPath is not null
-                || EffectiveSoundFontSha256 is not null;
-            EffectiveSoundFontPath = null;
-            EffectiveSoundFontSha256 = null;
-            ClearSampleDomainCachesCore();
-        }
-        if (changed) EffectiveSoundFontChanged?.Invoke(this, EventArgs.Empty);
-        return true;
     }
 
     public long SnapshotTotalEditingTimeMilliseconds()

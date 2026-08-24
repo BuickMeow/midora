@@ -44,7 +44,7 @@
     "fileEntry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "kind", "sha256"],
+      "required": ["path", "kind", "schemaVersion", "sha256"],
       "properties": {
         "path": {
           "$ref": "common-v1.schema.json#/$defs/relativePath"
@@ -63,19 +63,6 @@
           "$ref": "common-v1.schema.json#/$defs/sha256"
         }
       },
-      "if": {
-        "properties": {
-          "kind": {
-            "const": "embedded-resource"
-          }
-        },
-        "required": ["kind"]
-      },
-      "then": {
-        "not": {
-          "required": ["schemaVersion"]
-        }
-      },
       "allOf": [
         {
           "if": {
@@ -87,14 +74,16 @@
                   "conductor-json",
                   "event-instrument-pb",
                   "event-instrument-usage-pb",
-                  "logical-track-pb"
+                  "logical-track-pb",
+                  "midi-channel-root-pb",
+                  "pure-midi-track-pb",
+                  "pure-midi-content-pack"
                 ]
               }
             },
             "required": ["kind"]
           },
           "then": {
-            "required": ["schemaVersion"],
             "properties": {
               "schemaVersion": {
                 "$ref": "common-v1.schema.json#/$defs/schemaVersion"

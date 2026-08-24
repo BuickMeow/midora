@@ -73,7 +73,7 @@ public interface IRealtimePlaybackCacheBackend
 
 public interface IRealtimePlaybackSoundFontBackend
 {
-    void SetSoundFontIdentity(string? soundFontPath, string? verifiedSha256);
+    void SetSoundFontSet(IReadOnlyList<string> soundFontPaths, string? cacheIdentity);
 }
 
 public interface ISimplePitchAuditionRealtimePlaybackBackend
@@ -918,11 +918,11 @@ public sealed class PlaybackController : IDisposable
         {
             return;
         }
-        string? path = _session.EffectiveSoundFontPath;
-        string? sha256 = path is null ? null : _session.EffectiveSoundFontSha256;
+        IReadOnlyList<string> paths = _session.EffectiveSoundFontPaths;
+        string? identity = paths.Count == 0 ? null : _session.EffectiveSoundFontSetCacheIdentity;
         lock (_backendPreparationSync)
         {
-            soundFontBackend.SetSoundFontIdentity(path, sha256);
+            soundFontBackend.SetSoundFontSet(paths, identity);
             Volatile.Write(ref _knownSampleRate, 0);
         }
     }
@@ -1447,13 +1447,15 @@ public sealed class PlaybackController : IDisposable
     {
         string soundFont = _session.EffectiveSoundFontPath
             ?? throw new InvalidOperationException(
-                $"{operation} requires an effective Project SoundFont.");
-        if (!File.Exists(soundFont))
+                $"{operation} requires at least one enabled application SoundFont.");
+        string? missing = _session.EffectiveSoundFontPaths.FirstOrDefault(path => !File.Exists(path));
+        if (missing is not null)
         {
             throw new FileNotFoundException(
-                "The effective Project SoundFont does not exist.",
-                soundFont);
+                "An enabled application SoundFont does not exist.",
+                missing);
         }
+        _session.RefreshEffectiveSoundFontCacheIdentity();
         return soundFont;
     }
 
@@ -1740,6 +1742,7 @@ public sealed class PlaybackController : IDisposable
     {
         if (_disposed
             || State != PlaybackState.Stopped
+            || Volatile.Read(ref _knownSampleRate) == 0
             || !_session.IsCompilationCurrent
             || _session.CompilationState != ProjectCompilationState.Succeeded)
         {

@@ -1,4 +1,3 @@
-using Midora.Audio;
 using Midora.Domain;
 using Midora.Persistence;
 using Midora.Playback;
@@ -22,7 +21,6 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
 
     private readonly MidoraProjectPackageV1 _packages;
     private readonly MidoraProjectOpenResultV1 _openResult;
-    private readonly ProjectSoundFontResourceSession _soundFontResources;
     private int _disposeStarted;
 
     internal ProjectOpenCandidate(
@@ -32,10 +30,8 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
     {
         _packages = packages;
         _openResult = openResult;
-        _soundFontResources = new(openResult.EmbeddedSoundFontResource);
         CurrentProjectPath = currentProjectPath;
         Diagnostics = Array.AsReadOnly(openResult.Diagnostics.ToArray());
-        InitialSoundFontState = CreateInitialSoundFontState(openResult);
     }
 
     public MidoraProject Project => _openResult.Project;
@@ -44,16 +40,12 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
     public MidoraProjectFileInformationV1 FileInformation => _openResult.FileInformation;
     public bool RequiresSave => _openResult.IsModified;
     public IReadOnlyList<MidoraPackageDiagnosticV1> Diagnostics { get; }
-    public EmbeddedSoundFontResourceV1? EmbeddedSoundFontResource =>
-        _soundFontResources.CurrentEmbeddedResource;
-    public ProjectSoundFontRuntimeSnapshot InitialSoundFontState { get; }
     public bool HasDamagedProjectObjects =>
         Project.DamagedEventInstruments.Count != 0
         || Project.DamagedLogicalTracks.Count != 0
         || Project.DamagedMidiChannelRoots.Count != 0
         || Project.DamagedPureMidiTracks.Count != 0;
-    public bool CanSaveProject => !HasDamagedProjectObjects
-        && IsEmbeddedSoundFontReadyForSave();
+    public bool CanSaveProject => !HasDamagedProjectObjects;
 
     public ProjectDocumentSession CreateDocumentSession(
         ProjectCompilationSession compilation)
@@ -79,26 +71,7 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
             document,
             _packages,
             CurrentProjectPath,
-            FileInformation,
-            () => EmbeddedSoundFontResource);
-    }
-
-    public ProjectSoundFontRuntimeSession CreateSoundFontRuntimeSession(
-        ProjectCompilationSession compilation,
-        ISoundFontLoadabilityValidator loadabilityValidator)
-    {
-        ThrowIfDisposed();
-        RequireCandidateProject(compilation.Project);
-        return new(compilation, loadabilityValidator);
-    }
-
-    public ProjectSoundFontEditing CreateSoundFontEditing(
-        ProjectDocumentSession document,
-        ISoundFontLoadabilityValidator loadabilityValidator)
-    {
-        ThrowIfDisposed();
-        RequireCandidateProject(document.Project);
-        return new(document, loadabilityValidator, _soundFontResources);
+            FileInformation);
     }
 
     public void Dispose()
@@ -107,7 +80,6 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
         {
             return;
         }
-        _soundFontResources.Dispose();
         _openResult.Dispose();
     }
 
@@ -117,22 +89,7 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
         {
             return;
         }
-        await _soundFontResources.DisposeAsync().ConfigureAwait(false);
         await _openResult.DisposeAsync().ConfigureAwait(false);
-    }
-
-    private bool IsEmbeddedSoundFontReadyForSave()
-    {
-        if (Project.SoundFont.Reference is not EmbeddedProjectSoundFontReference embedded)
-        {
-            return true;
-        }
-        EmbeddedSoundFontResourceV1? resource = EmbeddedSoundFontResource;
-        return resource is not null
-            && resource.IsAvailable
-            && resource.Reference == embedded
-            && resource.ResolvedAbsolutePath is not null
-            && File.Exists(resource.ResolvedAbsolutePath);
     }
 
     private void RequireCandidateProject(MidoraProject project)
@@ -149,27 +106,6 @@ public sealed class ProjectOpenCandidate : IDisposable, IAsyncDisposable
             Volatile.Read(ref _disposeStarted) != 0,
             this);
 
-    private static ProjectSoundFontRuntimeSnapshot CreateInitialSoundFontState(
-        MidoraProjectOpenResultV1 result)
-    {
-        ProjectSoundFontReference? reference = result.Project.SoundFont.Reference;
-        if (reference is null)
-        {
-            return new(ProjectSoundFontAvailability.NoReference, null);
-        }
-        if (reference is ExternalProjectSoundFontReference)
-        {
-            return new(ProjectSoundFontAvailability.VerificationRequired, reference);
-        }
-        EmbeddedSoundFontResourceV1? resource = result.EmbeddedSoundFontResource;
-        return resource is not null
-            && resource.IsAvailable
-            && resource.Reference == reference
-            && resource.ResolvedAbsolutePath is not null
-            && File.Exists(resource.ResolvedAbsolutePath)
-                ? new(ProjectSoundFontAvailability.VerificationRequired, reference)
-                : new(ProjectSoundFontAvailability.EmbeddedResourceUnavailable, reference);
-    }
 }
 
 public sealed class ProjectOpenCoordinator

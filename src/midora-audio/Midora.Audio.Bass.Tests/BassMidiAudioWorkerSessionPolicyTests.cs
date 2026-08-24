@@ -104,8 +104,8 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
 
         string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
         string soundFontPath = NativeAudioIntegrationEnvironment.RequireSoundFontPath();
-        string soundFontSha256 =
-            NativeAudioIntegrationEnvironment.RequireVerifiedSoundFontSha256(soundFontPath);
+        string soundFontSetCacheIdentity =
+            NativeAudioIntegrationEnvironment.RequireSoundFontSetCacheIdentity(soundFontPath);
         MidiRenderPlan plan = new(
             48_000,
             480_000,
@@ -141,7 +141,7 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
                 bufferingRecoverySpoolPath: recovery.Path,
                 bufferingRecoveryMemoryFrameCapacity: plan.TotalFrameCount,
                 playbackSpanCacheEnabled: true,
-                verifiedSoundFontSha256: soundFontSha256);
+                soundFontSetCacheIdentity: soundFontSetCacheIdentity);
 
             long deadline = Environment.TickCount64 + 2_000;
             AudioWorkerStatus status = session.Status;
@@ -456,13 +456,12 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
         string workerPath = Path.GetFullPath(configured);
         string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
         string soundFontPath = NativeAudioIntegrationEnvironment.RequireSoundFontPath();
-        string soundFontSha256 =
-            NativeAudioIntegrationEnvironment.RequireVerifiedSoundFontSha256(soundFontPath);
+        string soundFontSetCacheIdentity =
+            NativeAudioIntegrationEnvironment.RequireSoundFontSetCacheIdentity(soundFontPath);
         string cacheRoot = Path.Combine(
             Path.GetTempPath(),
             $"midora-fresh-pure-midi-cache-{Guid.NewGuid():N}");
         MidoraProject project = new(192);
-        string soundFontName = Path.GetFileName(soundFontPath);
         ProjectCompilationSession compilation = new(
             project,
             effectiveSoundFontPath: null,
@@ -474,11 +473,6 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
             _ = compilation.ConfigureAudioCache(
                 cacheRoot,
                 AudioCachePreferences.DefaultMaximumReusableBytes);
-            project.SoundFont.SetExternal(
-                soundFontName,
-                soundFontName,
-                soundFontSha256,
-                new FileInfo(soundFontPath).Length);
             compilation.SetEffectiveSoundFontPath(soundFontPath);
             _ = document.Execute(
                 ProjectDomainEditCommands.CreatePureMidiTrackWithNewRoot());
@@ -526,7 +520,7 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
             using (PersistentBassMidiAudioWorkerSession playback = new(
                 host,
                 plan,
-                soundFontSha256,
+                soundFontSetCacheIdentity,
                 new BassMidiRendererSettings(500, 256),
                 AudioMasterSettings.LimiterV1,
                 renderAheadMilliseconds: 100,
@@ -566,7 +560,7 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
             string segmentKey = MidiSegmentPcmCacheKey.Create(
                 plan.Segments[0],
                 plan.SampleRate,
-                soundFontSha256,
+                soundFontSetCacheIdentity,
                 nativeIdentity,
                 maximumSampleVoicesPerUnitStream: 500);
             if (trackAudible)
@@ -757,12 +751,6 @@ public sealed class BassMidiAudioWorkerSessionPolicyTests
     private static MidoraProject CreateAudibleProject(string soundFontPath)
     {
         MidoraProject project = new(480);
-        string fileName = Path.GetFileName(soundFontPath);
-        project.SoundFont.SetExternal(
-            fileName,
-            fileName,
-            NativeAudioIntegrationEnvironment.RequireVerifiedSoundFontSha256(soundFontPath),
-            new FileInfo(soundFontPath).Length);
         EventInstrument instrument = new(project)
         {
             Name = "Piano",

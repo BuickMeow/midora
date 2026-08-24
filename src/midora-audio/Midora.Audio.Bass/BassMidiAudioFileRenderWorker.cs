@@ -57,21 +57,34 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
     {
         ArgumentNullException.ThrowIfNull(preparation);
         ValidateCommon(
-            preparation.SoundFontPath,
+            preparation.SoundFontPaths,
             preparation.SampleRate,
             preparation.MaximumSampleVoicesPerUnitStream,
             preparation.MasterVolumeDecibels);
-        using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
-            $"Midora.Audio.FileProbe.{Guid.NewGuid():N}");
-        using Process process = Start(
-            CreateProbeStartInfo(preparation, control.Name));
-        await ObserveProcessAsync(
-            process,
-            control,
-            totalFrameCount: 0,
-            temporaryOutputPath: null,
-            progress: null,
-            cancellationToken).ConfigureAwait(false);
+        string ownedDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"midora-audio-file-probe-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(ownedDirectory);
+        try
+        {
+            string soundFontSetPath = Path.Combine(ownedDirectory, "soundfonts.masf");
+            SoundFontSetFile.Write(soundFontSetPath, preparation.SoundFontPaths);
+            using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
+                $"Midora.Audio.FileProbe.{Guid.NewGuid():N}");
+            using Process process = Start(
+                CreateProbeStartInfo(preparation, control.Name, soundFontSetPath));
+            await ObserveProcessAsync(
+                process,
+                control,
+                totalFrameCount: 0,
+                temporaryOutputPath: null,
+                progress: null,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            CleanupOwnedDirectory(ownedDirectory, "midora-audio-file-probe-");
+        }
     }
 
     public async Task<AudioFileRenderWorkerResult> RenderAsync(
@@ -82,7 +95,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Plan);
         ValidateCommon(
-            request.SoundFontPath,
+            request.SoundFontPaths,
             request.Plan.SampleRate,
             request.MaximumSampleVoicesPerUnitStream,
             request.MasterVolumeDecibels);
@@ -102,6 +115,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
             $"midora-audio-file-worker-{Guid.NewGuid():N}");
         Directory.CreateDirectory(ownedDirectory);
         string planPath = Path.Combine(ownedDirectory, "compiled-audio-plan.mdap");
+        string soundFontSetPath = Path.Combine(ownedDirectory, "soundfonts.masf");
         AudioUnitCacheStaging? cacheStaging = null;
         MidiRenderEventStreamProducer? eventStreamProducer = null;
         try
@@ -111,7 +125,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
                 cacheStaging = AudioUnitCacheStaging.Create(
                     request.Plan,
                     request.AudioCache,
-                    request.SoundFontSha256,
+                    request.SoundFontSetCacheIdentity,
                     _bassNativeDirectory,
                     request.MaximumSampleVoicesPerUnitStream);
             }
@@ -131,6 +145,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
                 plan = plan.WithEventStreamDescriptor(eventStreamProducer.Descriptor);
             }
             MidiRenderPlanFile.Write(planPath, plan);
+            SoundFontSetFile.Write(soundFontSetPath, request.SoundFontPaths);
             using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
                 $"Midora.Audio.FileRender.{Guid.NewGuid():N}");
             using Process process = Start(
@@ -138,6 +153,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
                     request,
                     control.Name,
                     planPath,
+                    soundFontSetPath,
                     temporaryOutputPath,
                     cacheStaging?.FilePath));
             AudioWorkerStatus status = await ObserveProcessAsync(
@@ -275,12 +291,13 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
 
     private ProcessStartInfo CreateProbeStartInfo(
         AudioFileRenderWorkerPreparation preparation,
-        string controlName)
+        string controlName,
+        string soundFontSetPath)
     {
         ProcessStartInfo result = CreateStartInfo();
         result.ArgumentList.Add("file-probe");
         result.ArgumentList.Add(controlName);
-        result.ArgumentList.Add(Path.GetFullPath(preparation.SoundFontPath));
+        result.ArgumentList.Add(soundFontSetPath);
         result.ArgumentList.Add(_bassNativeDirectory);
         result.ArgumentList.Add(preparation.SampleRate.ToString(CultureInfo.InvariantCulture));
         result.ArgumentList.Add(preparation.MaximumSampleVoicesPerUnitStream.ToString(CultureInfo.InvariantCulture));
@@ -292,6 +309,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         AudioFileRenderWorkerRequest request,
         string controlName,
         string planPath,
+        string soundFontSetPath,
         string temporaryOutputPath,
         string? cacheStagingPath)
     {
@@ -299,7 +317,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         result.ArgumentList.Add("file-render");
         result.ArgumentList.Add(controlName);
         result.ArgumentList.Add(planPath);
-        result.ArgumentList.Add(Path.GetFullPath(request.SoundFontPath));
+        result.ArgumentList.Add(soundFontSetPath);
         result.ArgumentList.Add(_bassNativeDirectory);
         result.ArgumentList.Add(temporaryOutputPath);
         result.ArgumentList.Add(request.MaximumSampleVoicesPerUnitStream.ToString(CultureInfo.InvariantCulture));
@@ -342,15 +360,27 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         ?? throw new InvalidOperationException("Could not start the Midora Native AOT audio worker process.");
 
     private static void ValidateCommon(
-        string soundFontPath,
+        IReadOnlyList<string> soundFontPaths,
         int sampleRate,
         int maximumSampleVoicesPerUnitStream,
         float masterVolumeDecibels)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
-        if (!File.Exists(soundFontPath))
+        ArgumentNullException.ThrowIfNull(soundFontPaths);
+        if (soundFontPaths.Count == 0)
         {
-            throw new FileNotFoundException("The frozen Project SoundFont does not exist.", soundFontPath);
+            throw new ArgumentException(
+                "At least one enabled application SoundFont is required.",
+                nameof(soundFontPaths));
+        }
+        foreach (string soundFontPath in soundFontPaths)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
+            if (!File.Exists(soundFontPath))
+            {
+                throw new FileNotFoundException(
+                    "An enabled application SoundFont does not exist.",
+                    soundFontPath);
+            }
         }
         if (sampleRate is < 8_000 or > 192_000)
         {
@@ -410,7 +440,9 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         return residual;
     }
 
-    private static void CleanupOwnedDirectory(string directory)
+    private static void CleanupOwnedDirectory(
+        string directory,
+        string expectedNamePrefix = "midora-audio-file-worker-")
     {
         try
         {
@@ -418,7 +450,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
             string expectedPrefix = Path.TrimEndingDirectorySeparator(
                 Path.GetFullPath(Path.GetTempPath())) + Path.DirectorySeparatorChar;
             if (fullPath.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase)
-                && Path.GetFileName(fullPath).StartsWith("midora-audio-file-worker-", StringComparison.Ordinal))
+                && Path.GetFileName(fullPath).StartsWith(expectedNamePrefix, StringComparison.Ordinal))
             {
                 Directory.Delete(fullPath, recursive: true);
             }

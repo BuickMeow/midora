@@ -40,7 +40,7 @@ public sealed unsafe class BassMidiRenderer
     private float* _unitScratchBuffer;
     private float* _segmentScratchBuffer;
     private float* _outputStagingBuffer;
-    private uint _soundFontHandle;
+    private uint[] _soundFontHandles = [];
     private readonly PersistentBassMidiSoundFont? _persistentSoundFont;
     private SegmentPcmCacheIoBridge? _cacheIo;
     private ParallelBassMidiDecodeCoordinator? _parallelDecoder;
@@ -79,6 +79,26 @@ public sealed unsafe class BassMidiRenderer
     {
     }
 
+    public BassMidiRenderer(
+        MidiRenderPlan plan,
+        IReadOnlyList<string> soundFontPaths,
+        BassMidiRendererSettings settings,
+        AudioMasterSettings masterSettings,
+        string? cacheStagingPath = null,
+        int segmentProducerConcurrency = 1,
+        string? cacheReadManifestPath = null)
+        : this(
+            plan,
+            soundFontPaths,
+            settings,
+            masterSettings,
+            cacheStagingPath,
+            segmentProducerConcurrency,
+            cacheReadManifestPath,
+            persistentSoundFont: null)
+    {
+    }
+
     internal BassMidiRenderer(
         MidiRenderPlan plan,
         string soundFontPath,
@@ -88,9 +108,34 @@ public sealed unsafe class BassMidiRenderer
         int segmentProducerConcurrency,
         string? cacheReadManifestPath,
         PersistentBassMidiSoundFont? persistentSoundFont)
+        : this(
+            plan,
+            [soundFontPath],
+            settings,
+            masterSettings,
+            cacheStagingPath,
+            segmentProducerConcurrency,
+            cacheReadManifestPath,
+            persistentSoundFont)
+    {
+    }
+
+    internal BassMidiRenderer(
+        MidiRenderPlan plan,
+        IReadOnlyList<string> soundFontPaths,
+        BassMidiRendererSettings settings,
+        AudioMasterSettings masterSettings,
+        string? cacheStagingPath,
+        int segmentProducerConcurrency,
+        string? cacheReadManifestPath,
+        PersistentBassMidiSoundFont? persistentSoundFont)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
+        ArgumentNullException.ThrowIfNull(soundFontPaths);
+        if (soundFontPaths.Count == 0)
+        {
+            throw new ArgumentException("At least one enabled SoundFont is required.", nameof(soundFontPaths));
+        }
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(masterSettings);
         if (segmentProducerConcurrency <= 0)
@@ -98,9 +143,11 @@ public sealed unsafe class BassMidiRenderer
             throw new ArgumentOutOfRangeException(nameof(segmentProducerConcurrency));
         }
 
-        if (!File.Exists(soundFontPath))
+        string[] normalizedSoundFontPaths = soundFontPaths.Select(Path.GetFullPath).ToArray();
+        if (normalizedSoundFontPaths.Any(path => !File.Exists(path)))
         {
-            throw new FileNotFoundException("The Project SoundFont does not exist.", soundFontPath);
+            string path = normalizedSoundFontPaths.First(value => !File.Exists(value));
+            throw new FileNotFoundException("An enabled application SoundFont does not exist.", path);
         }
 
         _plan = plan;
@@ -156,11 +203,11 @@ public sealed unsafe class BassMidiRenderer
             }
             if (_persistentSoundFont is null)
             {
-                CreateSoundFont(soundFontPath);
+                CreateSoundFonts(normalizedSoundFontPaths);
             }
             else
             {
-                _soundFontHandle = _persistentSoundFont.Handle;
+                _soundFontHandles = _persistentSoundFont.Handles;
             }
             PreloadReferencedPresets();
             CreateUnits();
@@ -700,18 +747,23 @@ public sealed unsafe class BassMidiRenderer
         _cacheIo = new SegmentPcmCacheIoBridge(path, cacheReadManifestPath, _plan);
     }
 
-    private void CreateSoundFont(string soundFontPath)
+    private void CreateSoundFonts(IReadOnlyList<string> soundFontPaths)
     {
-        fixed (char* path = soundFontPath)
+        _soundFontHandles = new uint[soundFontPaths.Count];
+        for (int index = 0; index < soundFontPaths.Count; index++)
         {
-            _soundFontHandle = NativeBassMidi.FontInit(
-                path,
-                NativeBass.BASS_UNICODE | NativeBassMidi.BASS_MIDI_FONT_MMAP);
-        }
+            string soundFontPath = soundFontPaths[index];
+            fixed (char* path = soundFontPath)
+            {
+                _soundFontHandles[index] = NativeBassMidi.FontInit(
+                    path,
+                    NativeBass.BASS_UNICODE | NativeBassMidi.BASS_MIDI_FONT_MMAP);
+            }
 
-        if (_soundFontHandle == 0)
-        {
-            ThrowBassPreparationFailure("BASS_MIDI_FontInit");
+            if (_soundFontHandles[index] == 0)
+            {
+                ThrowBassPreparationFailure("BASS_MIDI_FontInit");
+            }
         }
     }
 
@@ -730,25 +782,23 @@ public sealed unsafe class BassMidiRenderer
             int key = referencedPresets[i];
             int preset = key & 127;
             int bank = key >> 7;
-            if (NativeBassMidi.FontLoad(_soundFontHandle, preset, bank) != 0)
+            foreach (uint soundFontHandle in _soundFontHandles)
             {
-                continue;
-            }
+                if (NativeBassMidi.FontLoad(soundFontHandle, preset, bank) != 0)
+                {
+                    continue;
+                }
 
-            int error = NativeBass.ErrorGetCode();
-            if (error != NativeBass.BASS_ERROR_NOTAVAIL)
-            {
-                ThrowBassPreparationFailure("BASS_MIDI_FontLoad", error);
+                int error = NativeBass.ErrorGetCode();
+                if (error != NativeBass.BASS_ERROR_NOTAVAIL)
+                {
+                    ThrowBassPreparationFailure("BASS_MIDI_FontLoad", error);
+                }
+                if (NativeBassMidi.FontLoad(soundFontHandle, -1, -1) == 0)
+                {
+                    ThrowBassPreparationFailure("BASS_MIDI_FontLoad(all fallback presets)");
+                }
             }
-
-            // Initial release deliberately does not validate whether a Program/Bank exists.
-            // BASSMIDI may fall back to another bank/preset, so preload the whole SF2 in this
-            // exceptional case to keep fallback rendering free of runtime sample loading.
-            if (NativeBassMidi.FontLoad(_soundFontHandle, -1, -1) == 0)
-            {
-                ThrowBassPreparationFailure("BASS_MIDI_FontLoad(all fallback presets)");
-            }
-            return;
         }
     }
 
@@ -876,14 +926,22 @@ public sealed unsafe class BassMidiRenderer
 
         try
         {
-            NativeBassMidi.BASS_MIDI_FONT font = new()
+            NativeBassMidi.BASS_MIDI_FONT* fonts = stackalloc NativeBassMidi.BASS_MIDI_FONT[
+                _soundFontHandles.Length];
+            for (int index = 0; index < _soundFontHandles.Length; index++)
             {
-                font = _soundFontHandle,
-                preset = -1,
-                bank = 0
-            };
+                fonts[index] = new()
+                {
+                    font = _soundFontHandles[index],
+                    preset = -1,
+                    bank = 0
+                };
+            }
 
-            if (NativeBassMidi.StreamSetFonts(streamHandle, &font, 1) == 0)
+            if (NativeBassMidi.StreamSetFonts(
+                    streamHandle,
+                    fonts,
+                    checked((uint)_soundFontHandles.Length)) == 0)
             {
                 ThrowBassPreparationFailure("BASS_MIDI_StreamSetFonts");
             }
@@ -1746,16 +1804,19 @@ public sealed unsafe class BassMidiRenderer
             }
         }
 
-        if (_soundFontHandle != 0 && _persistentSoundFont is null)
+        if (_persistentSoundFont is null)
         {
-            if (NativeBassMidi.FontFree(_soundFontHandle) == 0)
+            foreach (uint soundFontHandle in _soundFontHandles.Reverse())
             {
-                int error = NativeBass.ErrorGetCode();
-                cleanupFailure = CombineFailures(
-                    cleanupFailure,
-                    new MidoraAudioException($"BASS_MIDI_FontFree failed with BASS error {error}."));
+                if (soundFontHandle != 0 && NativeBassMidi.FontFree(soundFontHandle) == 0)
+                {
+                    int error = NativeBass.ErrorGetCode();
+                    cleanupFailure = CombineFailures(
+                        cleanupFailure,
+                        new MidoraAudioException($"BASS_MIDI_FontFree failed with BASS error {error}."));
+                }
             }
-            _soundFontHandle = 0;
+            _soundFontHandles = [];
         }
 
         if (_unitScratchBuffer != null)
@@ -1765,7 +1826,7 @@ public sealed unsafe class BassMidiRenderer
         }
         else
         {
-            _soundFontHandle = 0;
+            _soundFontHandles = [];
         }
 
         if (_segmentScratchBuffer != null)

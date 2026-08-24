@@ -13,19 +13,19 @@ public static class PlaybackSpanCacheKey
 {
     public static string Create(
         MidiRenderPlan plan,
-        string soundFontSha256,
+        string soundFontSetCacheIdentity,
         string nativeBaselineIdentity,
         int maximumSampleVoicesPerUnitStream,
         PlaybackSpanMasterSettings masterSettings)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(nativeBaselineIdentity);
-        if (soundFontSha256.Length != 64
-            || soundFontSha256.Any(value => value is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
+        if (soundFontSetCacheIdentity.Length != 64
+            || soundFontSetCacheIdentity.Any(value => value is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
         {
             throw new ArgumentException(
-                "The SoundFont content identity must be a lowercase SHA-256 hexadecimal string.",
-                nameof(soundFontSha256));
+                "The SoundFont-set cache identity must be a lowercase SHA-256 hexadecimal string.",
+                nameof(soundFontSetCacheIdentity));
         }
         if (maximumSampleVoicesPerUnitStream is < 1 or > 16_777_216)
         {
@@ -40,7 +40,7 @@ public static class PlaybackSpanCacheKey
             writer.Write(1); // Limiter algorithm version.
             writer.Write(plan.SampleRate);
             writer.Write(plan.TotalFrameCount);
-            writer.Write(soundFontSha256);
+            writer.Write(soundFontSetCacheIdentity);
             writer.Write(nativeBaselineIdentity);
             writer.Write(maximumSampleVoicesPerUnitStream);
             writer.Write(masterSettings.VolumeDecibels);

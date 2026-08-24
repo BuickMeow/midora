@@ -28,7 +28,7 @@ internal sealed class AudioUnitCacheStaging : IDisposable
     public static AudioUnitCacheStaging? Create(
         MidiRenderPlan plan,
         IAudioPcmCacheSessionAccess? cache,
-        string soundFontSha256,
+        string soundFontSetCacheIdentity,
         string nativeDirectory,
         int maximumSampleVoicesPerUnitStream)
     {
@@ -40,7 +40,7 @@ internal sealed class AudioUnitCacheStaging : IDisposable
             return null;
         }
 
-        ValidateSoundFontSha256(soundFontSha256);
+        ValidateSoundFontSetCacheIdentity(soundFontSetCacheIdentity);
         string nativeIdentity = ComputeNativeIdentity(nativeDirectory);
         AudioFormat format = new(plan.SampleRate, 2, AudioSampleFormat.Float32);
         bool retentionEnabled = cache.AudioCacheSnapshot?.RetentionState
@@ -67,7 +67,7 @@ internal sealed class AudioUnitCacheStaging : IDisposable
                 string key = MidiUnitPcmCacheKey.Create(
                     fragment,
                     plan.SampleRate,
-                    soundFontSha256,
+                    soundFontSetCacheIdentity,
                     nativeIdentity,
                     maximumSampleVoicesPerUnitStream);
                 long payloadOffset = staging.Position;
@@ -263,14 +263,14 @@ internal sealed class AudioUnitCacheStaging : IDisposable
         return Convert.ToHexStringLower(SHA256.HashData(stream));
     }
 
-    internal static void ValidateSoundFontSha256(string value)
+    internal static void ValidateSoundFontSetCacheIdentity(string value)
     {
         ArgumentNullException.ThrowIfNull(value);
         if (value.Length != 64 || value.Any(character =>
                 character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
         {
             throw new ArgumentException(
-                "The verified Project SoundFont SHA-256 must be 64 lowercase hexadecimal characters.",
+                "The application SoundFont-set cache identity must be 64 lowercase hexadecimal characters.",
                 nameof(value));
         }
     }

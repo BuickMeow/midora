@@ -10,7 +10,7 @@ public static class MidiSegmentPcmCacheKey
     public static string Create(
         MidiSegmentRenderPlan segment,
         int sampleRate,
-        string soundFontSha256,
+        string soundFontSetCacheIdentity,
         string nativeBaselineIdentity,
         int maximumSampleVoicesPerUnitStream)
     {
@@ -19,7 +19,7 @@ public static class MidiSegmentPcmCacheKey
         {
             throw new ArgumentOutOfRangeException(nameof(sampleRate));
         }
-        ValidateSha256(soundFontSha256, nameof(soundFontSha256));
+        ValidateSha256(soundFontSetCacheIdentity, nameof(soundFontSetCacheIdentity));
         ArgumentException.ThrowIfNullOrWhiteSpace(nativeBaselineIdentity);
         if (maximumSampleVoicesPerUnitStream is < 1 or > 16_777_216)
         {
@@ -34,7 +34,7 @@ public static class MidiSegmentPcmCacheKey
             writer.Write(segment.SemanticFingerprint);
             writer.Write(segment.FrameCount);
             writer.Write(sampleRate);
-            writer.Write(soundFontSha256);
+            writer.Write(soundFontSetCacheIdentity);
             writer.Write(nativeBaselineIdentity);
             writer.Write(maximumSampleVoicesPerUnitStream);
             writer.Write(true); // BASS_MIDI_NOFX.

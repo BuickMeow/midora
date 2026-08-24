@@ -400,20 +400,9 @@ public sealed class AudioRenderTaskRunnerTests
         MidoraProject project,
         string directory)
     {
-        string projectPath = Path.Combine(directory, "Project.midora");
         string sf2 = Path.Combine(directory, "Project.sf2");
         await File.WriteAllBytesAsync(sf2, Enumerable.Range(0, 1024).Select(value => (byte)value).ToArray());
-        ExternalSoundFontBindingV1 binding = await SoundFontBindingV1.BindExternalAsync(projectPath, sf2);
-        project.SoundFont.SetExternal(
-            binding.Reference.RelativePath,
-            binding.Reference.OriginalFileName,
-            binding.Reference.Sha256,
-            binding.Reference.FileSizeBytes);
-        return await AudioRenderSoundFontSnapshot.CreateAsync(
-            project,
-            projectPath,
-            embeddedResource: null,
-            acceptExternalHashChange: false);
+        return await AudioRenderSoundFontSnapshot.CreateAsync([sf2]);
     }
 
     private sealed class TestContext : IAsyncDisposable

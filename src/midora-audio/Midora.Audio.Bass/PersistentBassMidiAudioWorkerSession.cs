@@ -24,7 +24,7 @@ internal sealed class PersistentBassMidiAudioWorkerSession : IBassMidiAudioWorke
     public PersistentBassMidiAudioWorkerSession(
         PersistentBassMidiAudioWorkerHost host,
         MidiRenderPlan plan,
-        string verifiedSoundFontSha256,
+        string soundFontSetCacheIdentity,
         BassMidiRendererSettings rendererSettings,
         AudioMasterSettings masterSettings,
         int renderAheadMilliseconds,
@@ -38,7 +38,7 @@ internal sealed class PersistentBassMidiAudioWorkerSession : IBassMidiAudioWorke
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         ArgumentNullException.ThrowIfNull(plan);
-        AudioUnitCacheStaging.ValidateSoundFontSha256(verifiedSoundFontSha256);
+        AudioUnitCacheStaging.ValidateSoundFontSetCacheIdentity(soundFontSetCacheIdentity);
         ArgumentNullException.ThrowIfNull(rendererSettings);
         ArgumentNullException.ThrowIfNull(masterSettings);
         InitialReleaseAudioWorkerProtocolPolicy.ValidateRealtimeSettings(
@@ -72,7 +72,7 @@ internal sealed class PersistentBassMidiAudioWorkerSession : IBassMidiAudioWorke
                     _playbackSpanCacheStaging = PlaybackSpanCacheStaging.Create(
                         plan,
                         audioCache,
-                        verifiedSoundFontSha256,
+                        soundFontSetCacheIdentity,
                         host.NativeDirectory,
                         rendererSettings.MaximumSampleVoicesPerUnitStream,
                         masterSettings);
@@ -91,7 +91,7 @@ internal sealed class PersistentBassMidiAudioWorkerSession : IBassMidiAudioWorke
                 _cacheStaging = AudioSegmentCacheStaging.Create(
                     plan,
                     audioCache,
-                    verifiedSoundFontSha256,
+                    soundFontSetCacheIdentity,
                     host.NativeDirectory,
                     rendererSettings.MaximumSampleVoicesPerUnitStream,
                     _ownedTemporaryDirectory);

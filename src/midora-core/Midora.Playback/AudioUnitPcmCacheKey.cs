@@ -7,7 +7,7 @@ namespace Midora.Playback;
 
 public sealed record AudioSynthesisCacheEnvironment(
     int SampleRate,
-    string SoundFontSha256,
+    string SoundFontSetCacheIdentity,
     string NativeBaselineIdentity,
     int MaximumSampleVoicesPerUnitStream)
 {
@@ -17,12 +17,12 @@ public sealed record AudioSynthesisCacheEnvironment(
         {
             throw new ArgumentOutOfRangeException(nameof(SampleRate));
         }
-        if (SoundFontSha256.Length != 64
-            || SoundFontSha256.Any(value => value is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
+        if (SoundFontSetCacheIdentity.Length != 64
+            || SoundFontSetCacheIdentity.Any(value => value is not (>= '0' and <= '9') and not (>= 'a' and <= 'f')))
         {
             throw new ArgumentException(
-                "The SoundFont content identity must be a lowercase SHA-256 hexadecimal string.",
-                nameof(SoundFontSha256));
+                "The SoundFont-set cache identity must be a lowercase SHA-256 hexadecimal string.",
+                nameof(SoundFontSetCacheIdentity));
         }
         ArgumentException.ThrowIfNullOrWhiteSpace(NativeBaselineIdentity);
         if (MaximumSampleVoicesPerUnitStream is < 1 or > 16_777_216)
@@ -68,7 +68,7 @@ public static class AudioUnitPcmCacheKey
             writer.Write(fragment.SemanticFingerprint);
             writer.Write(compiled.TicksPerQuarterNote);
             writer.Write(environment.SampleRate);
-            writer.Write(environment.SoundFontSha256);
+            writer.Write(environment.SoundFontSetCacheIdentity);
             writer.Write(environment.NativeBaselineIdentity);
             writer.Write(environment.MaximumSampleVoicesPerUnitStream);
             writer.Write(true); // BASS_MIDI_NOFX

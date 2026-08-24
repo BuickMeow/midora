@@ -269,8 +269,6 @@ public sealed class MidoraProject : IDisposable
     public PlaybackProjectSettings Playback { get; } = new();
     public ExportProjectSettings Export { get; } = new();
     public AudioRenderProjectSettings AudioRender { get; } = new();
-    public ProjectSoundFontSettings SoundFont { get; } = new();
-
     public MidoraId AllocateStableId()
     {
         if (_nextStableId == long.MaxValue)

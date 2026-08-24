@@ -42,7 +42,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
         string? bufferingRecoverySpoolPath = null,
         long bufferingRecoveryMemoryFrameCapacity = 0,
         bool playbackSpanCacheEnabled = false,
-        string? verifiedSoundFontSha256 = null)
+        string? soundFontSetCacheIdentity = null)
         : this(
             plan,
             soundFontPath,
@@ -59,7 +59,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
             bufferingRecoverySpoolPath,
             bufferingRecoveryMemoryFrameCapacity,
             playbackSpanCacheEnabled,
-            verifiedSoundFontSha256)
+            soundFontSetCacheIdentity)
     {
     }
 
@@ -79,7 +79,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
         string? bufferingRecoverySpoolPath = null,
         long bufferingRecoveryMemoryFrameCapacity = 0,
         bool playbackSpanCacheEnabled = false,
-        string? verifiedSoundFontSha256 = null)
+        string? soundFontSetCacheIdentity = null)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
@@ -103,7 +103,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
         if (!File.Exists(soundFontPath))
         {
             throw new FileNotFoundException(
-                "The frozen Project SoundFont does not exist.",
+                "The enabled application SoundFont does not exist.",
                 soundFontPath);
         }
         workerPath = Path.GetFullPath(workerPath);
@@ -121,13 +121,13 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
         }
         if (audioCache is not null)
         {
-            if (verifiedSoundFontSha256 is null)
+            if (soundFontSetCacheIdentity is null)
             {
                 throw new ArgumentException(
-                    "A verified Project SoundFont SHA-256 is required when reusable audio caching is enabled.",
-                    nameof(verifiedSoundFontSha256));
+                    "An application SoundFont-set cache identity is required when reusable audio caching is enabled.",
+                    nameof(soundFontSetCacheIdentity));
             }
-            AudioUnitCacheStaging.ValidateSoundFontSha256(verifiedSoundFontSha256);
+            AudioUnitCacheStaging.ValidateSoundFontSetCacheIdentity(soundFontSetCacheIdentity);
         }
         if (bufferingRecoveryMemoryFrameCapacity < 0
             || bufferingRecoveryMemoryFrameCapacity > plan.TotalFrameCount)
@@ -153,7 +153,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
                     _playbackSpanCacheStaging = PlaybackSpanCacheStaging.Create(
                         plan,
                         audioCache,
-                        verifiedSoundFontSha256 ?? string.Empty,
+                        soundFontSetCacheIdentity ?? string.Empty,
                         bassNativeDirectory,
                         rendererSettings.MaximumSampleVoicesPerUnitStream,
                         masterSettings);
@@ -173,7 +173,7 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
                 _cacheStaging = AudioSegmentCacheStaging.Create(
                     plan,
                     audioCache,
-                    verifiedSoundFontSha256 ?? string.Empty,
+                    soundFontSetCacheIdentity ?? string.Empty,
                     bassNativeDirectory,
                     rendererSettings.MaximumSampleVoicesPerUnitStream,
                     _ownedTemporaryDirectory);

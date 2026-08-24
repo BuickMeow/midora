@@ -8,7 +8,7 @@
 
 ## 3.1 Project 的定义
 Midora Project 是用户在 Midora 中进行完整工作的最高层单位。
-一个 Project 不是普通文件夹，也不是单个乐器定义，而是包含项目级设置、唯一 Conductor、有序 Event Instrument Definitions、内部非空 Usage / MIDI Channel Roots、混排的 Logical / Pure MIDI Arrangement Tracks、两类 Segment、全局音乐事件、Reset 默认值、播放设置、MIDI 导出设置、音频渲染设置和 SoundFont 设置的完整上下文。
+一个 Project 不是普通文件夹，也不是单个乐器定义，而是包含项目级设置、唯一 Conductor、有序 Event Instrument Definitions、内部非空 Usage / MIDI Channel Roots、混排的 Logical / Pure MIDI Arrangement Tracks、两类 Segment、全局音乐事件、Reset 默认值、播放设置、MIDI 导出设置和音频渲染设置的完整上下文。SoundFont 是程序级本机设置，不属于 Project。
 编译、播放、预览、渲染和 MIDI 导出均以 Project 为上下文。
 单独的 Event Instrument、Logical Track、MIDI Channel Root、Pure MIDI Track 或 Segment 不构成完整项目上下文。
 ---

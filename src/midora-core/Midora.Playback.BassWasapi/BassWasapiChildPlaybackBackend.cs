@@ -34,8 +34,8 @@ public sealed class BassWasapiChildPlaybackBackend
     private string? _selectedDeviceId;
     private IBassMidiAudioWorkerSession? _session;
     private PersistentBassMidiAudioWorkerHost? _host;
-    private string? _soundFontPath;
-    private string? _soundFontSha256;
+    private string[] _soundFontPaths = [];
+    private string? _soundFontSetCacheIdentity;
     private IRealtimePlaybackCacheStore? _audioCache;
     private RealtimePlaybackCacheMode _nextPlaybackCacheMode;
     private AudioCacheSessionStore.AudioRecoverySpool? _nextRecoverySpool;
@@ -153,7 +153,7 @@ public sealed class BassWasapiChildPlaybackBackend
         BassMidiAudioWorkerProbeResult result;
         try
         {
-            result = _soundFontPath is null
+            result = _soundFontPaths.Length == 0
                 ? BassMidiAudioWorkerSession.Probe(
                     _options.WorkerPath,
                     _options.BassNativeDirectory,
@@ -196,15 +196,15 @@ public sealed class BassWasapiChildPlaybackBackend
             throw new InvalidOperationException("The audio worker is already active.");
         }
         string normalizedSoundFontPath = Path.GetFullPath(soundFontPath);
-        if (_soundFontPath is null
-            || _soundFontSha256 is null
+        if (_soundFontPaths.Length == 0
+            || _soundFontSetCacheIdentity is null
             || !string.Equals(
                 normalizedSoundFontPath,
-                _soundFontPath,
+                _soundFontPaths[0],
                 StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                "Playback requires the currently verified Project SoundFont identity.");
+                "Playback requires the current application SoundFont-set cache identity.");
         }
 
         AudioMasterSettings masterSettings = new(
@@ -230,7 +230,7 @@ public sealed class BassWasapiChildPlaybackBackend
             _session = new PersistentBassMidiAudioWorkerSession(
                 EnsurePersistentHost(),
                 plan,
-                _soundFontSha256,
+                _soundFontSetCacheIdentity,
                 _options.RendererSettings,
                 masterSettings,
                 _options.RenderAheadMilliseconds,
@@ -287,44 +287,43 @@ public sealed class BassWasapiChildPlaybackBackend
         _audioCache = cacheStore;
     }
 
-    public void SetSoundFontIdentity(string? soundFontPath, string? verifiedSha256)
+    public void SetSoundFontSet(IReadOnlyList<string> soundFontPaths, string? cacheIdentity)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if ((soundFontPath is null) != (verifiedSha256 is null))
+        ArgumentNullException.ThrowIfNull(soundFontPaths);
+        if ((soundFontPaths.Count == 0) != (cacheIdentity is null))
         {
             throw new ArgumentException(
-                "The verified SoundFont path and SHA-256 must both be present or both be absent.");
+                "The enabled SoundFont list and cache identity must both be present or both be absent.");
         }
-        string? normalizedPath = soundFontPath is null ? null : Path.GetFullPath(soundFontPath);
-        if (verifiedSha256 is not null
-            && (verifiedSha256.Length != 64 || verifiedSha256.Any(character =>
+        string[] normalizedPaths = soundFontPaths.Select(Path.GetFullPath).ToArray();
+        if (cacheIdentity is not null
+            && (cacheIdentity.Length != 64 || cacheIdentity.Any(character =>
                 character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))))
         {
             throw new ArgumentException(
-                "The verified Project SoundFont SHA-256 is invalid.",
-                nameof(verifiedSha256));
+                "The SoundFont set cache identity is invalid.",
+                nameof(cacheIdentity));
         }
-        if (string.Equals(_soundFontPath, normalizedPath, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(_soundFontSha256, verifiedSha256, StringComparison.Ordinal))
+        if (_soundFontPaths.SequenceEqual(normalizedPaths, StringComparer.OrdinalIgnoreCase)
+            && string.Equals(_soundFontSetCacheIdentity, cacheIdentity, StringComparison.Ordinal))
         {
             return;
         }
         if (_session is not null)
         {
             throw new InvalidOperationException(
-                "The Project SoundFont cannot change while realtime audio is active.");
+                "The application SoundFont list cannot change while realtime audio is active.");
         }
 
         _host?.Dispose();
         _host = null;
-        _soundFontPath = normalizedPath;
-        _soundFontSha256 = verifiedSha256;
+        _soundFontPaths = normalizedPaths;
+        _soundFontSetCacheIdentity = cacheIdentity;
         _actualSampleRate = 0;
         _actualDeviceBufferFrameCount = 0;
-        if (_soundFontPath is not null)
-        {
-            _ = EnsurePersistentHost();
-        }
+        // The preference editor only commits paths. BASS opens the original files
+        // lazily when an audio operation actually needs the persistent host.
     }
 
     public void BeginPitchAudition(int pitch, int velocity)
@@ -602,12 +601,14 @@ public sealed class BassWasapiChildPlaybackBackend
     private PersistentBassMidiAudioWorkerHost EnsurePersistentHost()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        string path = _soundFontPath
-            ?? throw new InvalidOperationException("A verified Project SoundFont is required.");
+        if (_soundFontPaths.Length == 0)
+        {
+            throw new InvalidOperationException("At least one enabled application SoundFont is required.");
+        }
         return _host ??= new(
             _options.WorkerPath,
             _options.BassNativeDirectory,
-            path,
+            _soundFontPaths,
             _options.PreparingTimeout);
     }
 

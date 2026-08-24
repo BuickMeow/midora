@@ -3496,7 +3496,6 @@ public sealed class SettingsWorkspaceViewModel()
     private string _projectName = string.Empty;
     private string _projectVersion = string.Empty;
     private string _author = string.Empty;
-    private string _soundFont = string.Empty;
     private string _playback = string.Empty;
     private string _audioRender = string.Empty;
     private long _compiledNoteOnCount;
@@ -3506,16 +3505,6 @@ public sealed class SettingsWorkspaceViewModel()
     public string ProjectName { get => _projectName; private set => Set(ref _projectName, value); }
     public string ProjectVersion { get => _projectVersion; private set => Set(ref _projectVersion, value); }
     public string Author { get => _author; private set => Set(ref _author, value); }
-    public string SoundFont
-    {
-        get => _soundFont;
-        private set
-        {
-            if (Set(ref _soundFont, value)) Raise(nameof(HasSoundFont));
-        }
-    }
-    public bool HasSoundFont => !string.Equals(SoundFont, "No SoundFont Selected", StringComparison.Ordinal);
-    public bool HasEmbeddedSoundFont { get; private set; }
     public string Playback { get => _playback; private set => Set(ref _playback, value); }
     public string AudioRender { get => _audioRender; private set => Set(ref _audioRender, value); }
     public ObservableCollection<PropertyField> GeneralFields { get; } = [];
@@ -3531,11 +3520,6 @@ public sealed class SettingsWorkspaceViewModel()
         ProjectName = project.Metadata.ProjectName;
         ProjectVersion = project.Metadata.ProjectVersion;
         Author = project.Metadata.AuthorOrTeam;
-        SoundFont = project.SoundFont.Reference is null
-            ? "No SoundFont Selected"
-            : $"{project.SoundFont.Reference.Mode} · {project.SoundFont.Reference.OriginalFileName}";
-        HasEmbeddedSoundFont = project.SoundFont.Reference is EmbeddedProjectSoundFontReference;
-        Raise(nameof(HasEmbeddedSoundFont));
         Playback = $"Master {project.Playback.MasterVolumeDecibels:0.###} dB · Limiter {(project.Playback.LimiterEnabled ? "On" : "Off")}";
         AudioRender = $"{project.AudioRender.Mode} · {project.AudioRender.SampleRate:N0} Hz · {project.AudioRender.MaximumSampleVoicesPerUnitStream:N0} voices / Unit";
         Replace(GeneralFields,

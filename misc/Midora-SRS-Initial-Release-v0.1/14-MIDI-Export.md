@@ -761,7 +761,6 @@ README.md
 Readme 应记录以下信息：
 ```text
 Project Metadata：项目名称、项目版本、作者、Remix 信息、版权信息等可用元数据
-SoundFont Settings：当前 SoundFont 信息；无 SF2 时注明未选择推荐 SoundFont
 导出模式
 导出范围：startTick、endTick、范围来源、是否 Project End Marker / 自然结束 / 手动范围
 Track 选择集合：实际导出的 Track、被排除的 Track
@@ -776,6 +775,7 @@ Channel 10 melodic 初始化说明
 创建软件版本、最新保存软件版本、导出时软件版本
 导出时间
 ```
+SoundFont 是程序级本机音频设置，不属于 Project 或 MIDI 导出语义；Readme 不得记录程序级 SoundFont 路径、顺序、启用状态或推荐信息。
 Error 导致导出失败时：
 ```text
 不生成成功 Readme。

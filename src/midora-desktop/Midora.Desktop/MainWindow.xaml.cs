@@ -157,9 +157,7 @@ public partial class MainWindow : Window
     {
         if (!StopPlaybackForProjectCommand("New Project") || !await ConfirmCloseCurrentProjectAsync()) return;
         NewProjectDialog dialog = new(
-            ExistingRecentDirectory(RecentDirectoryPurpose.SaveAndSaveCopy),
-            ExistingRecentDirectory(RecentDirectoryPurpose.SoundFont),
-            GetAvailableDefaultEmbeddedSoundFontPath())
+            ExistingRecentDirectory(RecentDirectoryPurpose.SaveAndSaveCopy))
         {
             Owner = this
         };
@@ -171,12 +169,6 @@ public partial class MainWindow : Window
             {
                 RecordRecentDirectory(RecentDirectoryPurpose.SaveAndSaveCopy, Path.GetDirectoryName(targetPath));
                 RecordRecentProject(targetPath);
-            }
-            if (request.SoundFont.SelectedPath is string soundFontPath)
-            {
-                RecordRecentDirectory(
-                    RecentDirectoryPurpose.SoundFont,
-                    Path.GetDirectoryName(soundFontPath));
             }
         }
     }
@@ -4231,7 +4223,6 @@ public partial class MainWindow : Window
                         dialog.FileName,
                         portMap,
                         cancellationToken,
-                        GetAvailableDefaultEmbeddedSoundFontPath(),
                         progress),
                 canCancel: true,
                 handledException: exception =>
@@ -8092,9 +8083,11 @@ public partial class MainWindow : Window
     {
         if (_session.Project is null) return;
         if (!StopPlaybackForProjectCommand("Render Audio")) return;
-        if (_session.Project.SoundFont.Reference is null)
+        if (_preferences.GetEnabledSoundFontPaths().Length == 0)
         {
-            ShowUnavailable("Render Audio", "Audio rendering is unavailable because the Project has no SoundFont.");
+            ShowUnavailable(
+                "Render Audio",
+                "Audio rendering requires at least one enabled application SoundFont in Preferences.");
             return;
         }
         string initialDirectory = ExistingRecentDirectory(RecentDirectoryPurpose.AudioRender)
@@ -8143,19 +8136,6 @@ public partial class MainWindow : Window
                 prepared = await _session.PrepareAudioRenderAsync(options, task.CancellationToken);
                 _session.CompleteTask(task, "Succeeded");
                 break;
-            }
-            catch (AudioRenderSoundFontException exception)
-                when (exception.Failure == AudioRenderSoundFontFailure.ExternalHashChangeRequiresConfirmation)
-            {
-                _session.CompleteTask(task, "Attention", "External SoundFont identity changed; explicit task-only acceptance is required.");
-                MessageBoxResult accept = MessageDialog.Show(
-                    this,
-                    $"The external Project SoundFont content differs from its stored identity.\n\nCurrent SHA-256: {exception.CurrentSha256}\nCurrent size: {exception.CurrentFileSizeBytes:N0} bytes\n\nUse this changed file for this render only? The Project reference will not be modified.",
-                    "External SoundFont Changed",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
-                if (accept != MessageBoxResult.Yes) return;
-                options = options with { AcceptExternalSoundFontHashChange = true };
             }
             catch (OperationCanceledException) when (task.CancellationToken.IsCancellationRequested)
             {
@@ -8245,96 +8225,6 @@ public partial class MainWindow : Window
                 result.Status == AudioRenderTaskStatus.Completed ? MessageBoxImage.Information : MessageBoxImage.Warning);
         }
     }
-
-    private async void OnSelectEmbeddedSoundFontClick(object sender, RoutedEventArgs e)
-    {
-        if (!_session.HasProject) return;
-        OpenFileDialog dialog = CreateSoundFontDialog("Embed Project SoundFont");
-        if (dialog.ShowDialog(this) != true) return;
-        if (await RunOperationAsync(
-            "Embed Project SoundFont",
-            cancellationToken => _session.SelectEmbeddedSoundFontAsync(dialog.FileName, cancellationToken),
-            canCancel: true))
-        {
-            RecordRecentDirectory(RecentDirectoryPurpose.SoundFont, Path.GetDirectoryName(dialog.FileName));
-        }
-    }
-
-    private async void OnSelectExternalSoundFontClick(object sender, RoutedEventArgs e)
-    {
-        if (!_session.HasProject) return;
-        if (_session.Persistence?.CurrentProjectPath is null)
-        {
-            MessageDialog.Show(
-                this,
-                "Save the Project first. External SoundFonts must resolve relative to the Project root or its direct soundfonts directory.",
-                "Use External Project SoundFont",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-            return;
-        }
-        OpenFileDialog dialog = CreateSoundFontDialog("Select External Project SoundFont");
-        if (dialog.ShowDialog(this) != true) return;
-        if (await RunOperationAsync(
-            "Select External Project SoundFont",
-            cancellationToken => _session.SelectExternalSoundFontAsync(dialog.FileName, cancellationToken),
-            canCancel: true))
-        {
-            RecordRecentDirectory(RecentDirectoryPurpose.SoundFont, Path.GetDirectoryName(dialog.FileName));
-        }
-    }
-
-    private async void OnExtractEmbeddedSoundFontClick(object sender, RoutedEventArgs e)
-    {
-        if (_session.Project?.SoundFont.Reference is not EmbeddedProjectSoundFontReference reference)
-        {
-            return;
-        }
-        SaveFileDialog dialog = new()
-        {
-            Title = "Extract Embedded Project SoundFont",
-            Filter = "SoundFont 2 (*.sf2)|*.sf2|All files (*.*)|*.*",
-            AddExtension = true,
-            DefaultExt = ".sf2",
-            OverwritePrompt = true,
-            InitialDirectory = ExistingRecentDirectory(RecentDirectoryPurpose.SoundFont),
-            FileName = reference.OriginalFileName
-        };
-        if (dialog.ShowDialog(this) != true) return;
-        if (await RunOperationAsync(
-            "Extract Embedded Project SoundFont",
-            cancellationToken => _session.ExtractEmbeddedSoundFontAsync(
-                dialog.FileName,
-                overwriteAuthorized: true,
-                cancellationToken: cancellationToken),
-            canCancel: true))
-        {
-            RecordRecentDirectory(RecentDirectoryPurpose.SoundFont, Path.GetDirectoryName(dialog.FileName));
-        }
-    }
-
-    private void OnClearSoundFontClick(object sender, RoutedEventArgs e)
-    {
-        if (!_session.HasProject) return;
-        if (MessageDialog.Show(
-                this,
-                "Clear the Project SoundFont reference? Playback, preview, and audio rendering will become unavailable; editing and MIDI export remain available.",
-                "Clear Project SoundFont",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning) == MessageBoxResult.Yes)
-        {
-            RunSynchronous("Clear Project SoundFont", _session.ClearSoundFont);
-        }
-    }
-
-    private OpenFileDialog CreateSoundFontDialog(string title) => new()
-    {
-        Title = title,
-        Filter = "SoundFont 2 (*.sf2)|*.sf2|All files (*.*)|*.*",
-        CheckFileExists = true,
-        Multiselect = false,
-        InitialDirectory = ExistingRecentDirectory(RecentDirectoryPurpose.SoundFont)
-    };
 
     private void OnAboutClick(object sender, RoutedEventArgs e) => MessageDialog.Show(
         this,
@@ -8487,16 +8377,6 @@ public partial class MainWindow : Window
     {
         ApplicationPreferencesLoadResult loaded = _preferenceStore.Load();
         _preferences = loaded.Preferences;
-        if (_preferences.DefaultEmbeddedSoundFontPath is string defaultSoundFontPath
-            && !File.Exists(defaultSoundFontPath))
-        {
-            _preferences = _preferences with { DefaultEmbeddedSoundFontPath = null };
-            ApplicationPreferencesSaveResult cleared = _preferenceStore.Save(_preferences);
-            if (!cleared.Succeeded && cleared.Notice is not null)
-            {
-                _session.SetStatusMessage(cleared.Notice.Message, isError: true);
-            }
-        }
         DesktopUiPreferences ui = _preferences.DesktopUi;
         Width = ui.MainWindowWidth;
         Height = ui.MainWindowHeight;
@@ -8521,11 +8401,6 @@ public partial class MainWindow : Window
             _session.SetStatusMessage(loaded.Notice.Message, isError: true);
         }
     }
-
-    private string? GetAvailableDefaultEmbeddedSoundFontPath() =>
-        _preferences.DefaultEmbeddedSoundFontPath is string path && File.Exists(path)
-            ? path
-            : null;
 
     private void SaveDesktopPreferences()
     {

@@ -26,7 +26,6 @@ public sealed class ProjectPersistenceCoordinator
     private readonly object _sync = new();
     private readonly ProjectDocumentSession _document;
     private readonly MidoraProjectPackageV1 _packages;
-    private readonly Func<EmbeddedSoundFontResourceV1?> _embeddedSoundFontResourceProvider;
     private string? _currentProjectPath;
     private MidoraProjectFileInformationV1? _fileInformation;
     private bool _operationActive;
@@ -35,8 +34,7 @@ public sealed class ProjectPersistenceCoordinator
         ProjectDocumentSession document,
         MidoraProjectPackageV1 packages,
         string? currentProjectPath = null,
-        MidoraProjectFileInformationV1? fileInformation = null,
-        Func<EmbeddedSoundFontResourceV1?>? embeddedSoundFontResourceProvider = null)
+        MidoraProjectFileInformationV1? fileInformation = null)
     {
         _document = document ?? throw new ArgumentNullException(nameof(document));
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
@@ -58,8 +56,6 @@ public sealed class ProjectPersistenceCoordinator
             ? null
             : NormalizePath(currentProjectPath, nameof(currentProjectPath));
         _fileInformation = fileInformation;
-        _embeddedSoundFontResourceProvider = embeddedSoundFontResourceProvider
-            ?? (static () => null);
     }
 
     public ProjectDocumentSession Document => _document;
@@ -109,16 +105,7 @@ public sealed class ProjectPersistenceCoordinator
             {
                 return false;
             }
-            if (project.SoundFont.Reference is not EmbeddedProjectSoundFontReference embedded)
-            {
-                return true;
-            }
-            EmbeddedSoundFontResourceV1? resource = _embeddedSoundFontResourceProvider();
-            return resource is not null
-                && resource.IsAvailable
-                && resource.Reference == embedded
-                && resource.ResolvedAbsolutePath is not null
-                && File.Exists(resource.ResolvedAbsolutePath);
+            return true;
         }
     }
 
@@ -163,8 +150,7 @@ public sealed class ProjectPersistenceCoordinator
                 operation.FileInformation,
                 _document.Compilation.EditingTimeSession,
                 effectiveOverwriteAuthorization,
-                cancellationToken,
-                _embeddedSoundFontResourceProvider()).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
             lock (_sync)
             {
                 _currentProjectPath = result.TargetPath;
@@ -202,8 +188,7 @@ public sealed class ProjectPersistenceCoordinator
                 operation.FileInformation,
                 _document.Compilation.EditingTimeSession,
                 overwriteAuthorized,
-                cancellationToken,
-                _embeddedSoundFontResourceProvider()).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {

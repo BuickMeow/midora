@@ -43,7 +43,7 @@ public static class MidiExportReadmeFactory
             OriginalWork = project.Metadata.OriginalWork,
             Copyright = project.Metadata.Copyright,
             Notes = string.Empty,
-            SoundFontDescription = DescribeSoundFont(project.SoundFont.Reference),
+            SoundFontDescription = null,
             Mode = compilation.Mode,
             RangeSource = rangeSource,
             StartTick = compiled.StartTick,
@@ -90,13 +90,4 @@ public static class MidiExportReadmeFactory
                 fileName);
         }).ToArray();
 
-    private static string? DescribeSoundFont(ProjectSoundFontReference? reference) => reference switch
-    {
-        null => null,
-        ExternalProjectSoundFontReference external =>
-            $"External: {external.OriginalFileName}; SHA-256 {external.Sha256}",
-        EmbeddedProjectSoundFontReference embedded =>
-            $"Embedded: {embedded.OriginalFileName}; SHA-256 {embedded.Sha256}",
-        _ => throw new ArgumentOutOfRangeException(nameof(reference))
-    };
 }

@@ -963,12 +963,6 @@
               <ItemsControl ItemTemplate="{StaticResource ProjectSettingFieldTemplate}" ItemsSource="{Binding GeneralFields}"/>
             </StackPanel></Border>
             <Border Style="{StaticResource Card}"><StackPanel>
-              <TextBlock Style="{StaticResource Text.Overline}" Text="PROJECT SOUNDFONT"/>
-              <TextBlock Margin="0,8,0,0" Text="{Binding SoundFont}" TextWrapping="Wrap"/>
-              <StackPanel Margin="0,10,0,0" Orientation="Horizontal"><Button Margin="0,0,5,0" Content="Embed…" Click="OnSelectEmbeddedSoundFontClick"/><Button Margin="0,0,5,0" Content="Use External…" Click="OnSelectExternalSoundFontClick"/><Button Margin="0,0,5,0" Content="Extract…" Visibility="{Binding HasEmbeddedSoundFont, Converter={StaticResource BooleanToVisibility}}" Click="OnExtractEmbeddedSoundFontClick"/><Button Style="{StaticResource Button.Ghost}" Content="Clear" Click="OnClearSoundFontClick"/></StackPanel>
-              <TextBlock Margin="0,10,0,0" Text="No SoundFont is a legal Project state. It disables preview, playback, and audio render only." TextWrapping="Wrap"><TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource Text.Caption}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding HasSoundFont}" Value="False"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
-            </StackPanel></Border>
-            <Border Margin="0,12,0,0" Style="{StaticResource Card}"><StackPanel>
               <TextBlock Margin="0,0,0,10" Style="{StaticResource Text.Overline}" Text="PROJECT INITIAL MIDI STATE"/>
               <ItemsControl ItemTemplate="{StaticResource ProjectSettingFieldTemplate}" ItemsSource="{Binding InitialStateFields}"/>
               <Button Margin="0,3,0,7" HorizontalAlignment="Left" Content="Add CC / RPN / NRPN…" Tag="initial" Click="OnAddProjectStateClick"/>

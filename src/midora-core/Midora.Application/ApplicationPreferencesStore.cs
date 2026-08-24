@@ -87,9 +87,13 @@ public sealed class ApplicationPreferencesStore
                     ApplicationPreferences.NormalizeDirectory(recentDirectories.MidiExport),
                     ApplicationPreferences.NormalizeDirectory(recentDirectories.AudioRender)))
             {
-                DefaultEmbeddedSoundFontPath =
-                    ApplicationPreferences.NormalizeOptionalLocalFilePath(
-                        dto.DefaultEmbeddedSoundFontPath),
+                SoundFonts = (dto.SoundFonts
+                        ?? throw new InvalidDataException(
+                            "Application Preferences soundFonts is required."))
+                    .Select(value => new ApplicationSoundFontPreference(
+                        value.Path,
+                        value.Enabled).Normalize())
+                    .ToArray(),
                 DesktopUi = desktop is null
                     ? DesktopUiPreferences.Default
                     : new DesktopUiPreferences(
@@ -157,7 +161,13 @@ public sealed class ApplicationPreferencesStore
                     preferences.RealtimeAudio.MaximumSampleVoicesPerUnitStream,
                 AudioCacheRootPath = preferences.AudioCache.RootPath,
                 MaximumReusableAudioCacheBytes = preferences.AudioCache.MaximumReusableBytes,
-                DefaultEmbeddedSoundFontPath = preferences.DefaultEmbeddedSoundFontPath,
+                SoundFonts = preferences.SoundFonts
+                    .Select(value => new ApplicationSoundFontPreferenceJsonV1
+                    {
+                        Path = Path.GetFullPath(value.Path),
+                        Enabled = value.Enabled
+                    })
+                    .ToList(),
                 RecentDirectories = new ApplicationRecentDirectoriesJsonV1
                 {
                     OpenProject = preferences.RecentDirectories.OpenProject,
@@ -269,7 +279,16 @@ internal sealed class ApplicationPreferencesJsonV1
     public DesktopUiPreferencesJsonV1? DesktopUi { get; set; }
 
     [JsonPropertyOrder(9)]
-    public string? DefaultEmbeddedSoundFontPath { get; set; }
+    public List<ApplicationSoundFontPreferenceJsonV1>? SoundFonts { get; set; }
+}
+
+internal sealed class ApplicationSoundFontPreferenceJsonV1
+{
+    [JsonPropertyOrder(0)]
+    public required string Path { get; set; }
+
+    [JsonPropertyOrder(1)]
+    public bool Enabled { get; set; }
 }
 
 internal sealed class DesktopUiPreferencesJsonV1

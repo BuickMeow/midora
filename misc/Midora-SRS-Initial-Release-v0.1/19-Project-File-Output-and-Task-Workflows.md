@@ -25,7 +25,6 @@
 ```text
 General
 Metadata
-SoundFont
 Review
 ```
 ### 19.1.2 创建参数
@@ -34,7 +33,6 @@ Review
 Optional Project Name
 TPQ
 Metadata
-Optional SoundFont
 Create Unsaved or Create and Save
 ```
 默认 TPQ：
@@ -55,7 +53,6 @@ No Logical Track
 No MIDI Channel Root or Pure MIDI Track
 No Segment
 No default Event Instrument
-No selected SoundFont unless explicitly chosen
 ```
 新 Project 初始构建不进入 Undo History。
 ### 19.1.4 Project Name
@@ -65,19 +62,8 @@ Project Name 可空。
 Untitled Project
 ```
 该显示文本不是持久化名称。
-### 19.1.5 SoundFont 与路径
-无 SF2 是合法创建结果。
-External Relative Reference 需要先确定 Project 路径，因此只适用于 Create and Save 或已经明确目标路径的流程。
-
-New Project Dialog 必须把 SoundFont 作为正式创建参数展示，而不是固定的说明卡片。用户可以明确选择：
-```text
-No SoundFont
-Embed in Project
-External Relative Reference
-```
-`Embed in Project` 在 Create Unsaved 与 Create and Save 下均可用；`External Relative Reference` 只有启用 `Save Project immediately` 并确定目标 `.midora` 路径后才可提交。取消立即保存时，若当前模式为 External，UI 必须退回 Embedded 并保留已选择的 SF2 文件，禁止留下不可提交的隐藏模式。
-
-Application Preferences 的有效 Default Embedded SoundFont 必须以可见的 `Embed in Project` 初始选择呈现在该对话框中；用户可改为 No SoundFont、另选 Embedded 文件，或在立即保存时改为 External。对话框提交的显式结果是唯一创建输入，创建命令不得在对话框关闭后再静默替换 SoundFont 模式。
+### 19.1.5 SoundFont 边界
+New Project 和 Open MIDI as New Project 不接收 SoundFont 参数。SoundFont 是程序级偏好，创建、保存或打开 Project 不得读取、复制、hash、嵌入或建立 SF2 引用；当前程序级 Enabled 列表只在后续播放、预览或 Audio Render Preparing 时使用。
 ### 19.1.6 Create Unsaved
 创建后 Project 没有磁盘路径。即使用户未再编辑，关闭时仍需提示保存，因为该 Project 尚未持久化。
 ### 19.1.7 Create and Save
@@ -967,7 +953,7 @@ Project TPQ = source TPQN exactly
 Project Name = source file stem
 Project has no .midora save path
 Project is treated as an unsaved new Project
-Project SoundFont is unconfigured
+program-level SoundFont list remains unchanged
 Arrangement opens as the permanent first workspace
 all imported source data is one initial state, not Undo history
 ```

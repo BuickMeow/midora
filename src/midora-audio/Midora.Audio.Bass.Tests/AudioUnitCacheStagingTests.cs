@@ -5,7 +5,7 @@ namespace Midora.Audio.Bass.Tests;
 
 public sealed class AudioUnitCacheStagingTests
 {
-    private static readonly string SoundFontSha256 = new('a', 64);
+    private static readonly string SoundFontSetCacheIdentity = new('a', 64);
 
     [Fact]
     public void MissPublishesCompleteRawUnitPcmAndSecondStageIsAHit()
@@ -23,7 +23,7 @@ public sealed class AudioUnitCacheStagingTests
         using AudioCacheSessionStore store = new(cacheRoot, 4096);
         CacheAccess access = new(store);
         using AudioUnitCacheStaging first = Assert.IsType<AudioUnitCacheStaging>(
-            AudioUnitCacheStaging.Create(plan, access, SoundFontSha256, native, 500));
+            AudioUnitCacheStaging.Create(plan, access, SoundFontSetCacheIdentity, native, 500));
         string firstPath = first.FilePath;
         MidiUnitFragmentRenderPlan firstFragment = first.Plan.UnitFragments[0];
         Assert.False(firstFragment.PcmCacheHit);
@@ -42,7 +42,7 @@ public sealed class AudioUnitCacheStagingTests
         first.PublishCompleted(access, completedRenderFrame: 2);
 
         using AudioUnitCacheStaging second = Assert.IsType<AudioUnitCacheStaging>(
-            AudioUnitCacheStaging.Create(plan, access, SoundFontSha256, native, 500));
+            AudioUnitCacheStaging.Create(plan, access, SoundFontSetCacheIdentity, native, 500));
         string secondPath = second.FilePath;
         MidiUnitFragmentRenderPlan secondFragment = second.Plan.UnitFragments[0];
         Assert.True(secondFragment.PcmCacheHit);
@@ -94,7 +94,7 @@ public sealed class AudioUnitCacheStagingTests
 
         using (AudioUnitCacheStaging staging = Assert.IsType<AudioUnitCacheStaging>(
             AudioUnitCacheStaging.Create(
-                CreatePlan(0, 0), access, SoundFontSha256, native, 500)))
+                CreatePlan(0, 0), access, SoundFontSetCacheIdentity, native, 500)))
         {
             stagingPath = staging.FilePath;
             AudioCacheSessionSnapshot active = store.GetSnapshot();
@@ -133,7 +133,7 @@ public sealed class AudioUnitCacheStagingTests
 
         using AudioUnitCacheStaging staging = Assert.IsType<AudioUnitCacheStaging>(
             AudioUnitCacheStaging.Create(
-                rolling, access, SoundFontSha256, native, 500));
+                rolling, access, SoundFontSetCacheIdentity, native, 500));
 
         Assert.Same(rolling.EventPageProvider, staging.Plan.EventPageProvider);
         Assert.NotNull(staging.Plan.UnitFragments[0].PcmCacheKey);
@@ -165,7 +165,7 @@ public sealed class AudioUnitCacheStagingTests
         AudioSegmentCacheStaging? staging = AudioSegmentCacheStaging.Create(
             plan,
             access,
-            SoundFontSha256,
+            SoundFontSetCacheIdentity,
             native,
             500,
             manifests);
@@ -195,7 +195,7 @@ public sealed class AudioUnitCacheStagingTests
             AudioSegmentCacheStaging.Create(
                 CreateInitiallyMutedPureMidiSegmentPlan(),
                 access,
-                SoundFontSha256,
+                SoundFontSetCacheIdentity,
                 native,
                 500,
                 manifests));

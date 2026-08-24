@@ -112,12 +112,10 @@ internal static class ManifestCodecV1
             PersistenceValueValidationV1.ValidateShortText(
                 file.Kind, nameof(file.Kind), allowEmpty: false);
             bool structural = StructuralKinds.Contains(file.Kind);
-            bool embeddedResource = file.Kind == "embedded-resource";
-            bool unknown = !structural && !embeddedResource;
+            bool unknown = !structural;
             if (structural && file.SchemaVersion != PersistenceContractV1.SchemaVersion
-                || embeddedResource && file.SchemaVersion.HasValue
                 || unknown && !allowUnknownFileKinds
-                || unknown && file.SchemaVersion is <= 0)
+                || unknown && (!file.SchemaVersion.HasValue || file.SchemaVersion <= 0))
             {
                 throw new InvalidDataException($"manifest.json file kind/schemaVersion is invalid for '{file.Path}'.");
             }

@@ -441,7 +441,7 @@ post-sum playback span cache
 Render-Ahead ring
 ```
 
-Root PCM key 至少包括 Root composite fingerprint、start-state fingerprint、Channel Mode、SF2 hash、Tempo projection、sample rate/format、native baseline、voice policy 和 renderer version。Root composite fingerprint 对可听内容的投影必须覆盖实际 Direct Note / Channel Event 字段、分页源内容 fingerprint 与 copy-on-write delta；集合 `Generation`、编辑次数或仅 stable ID 不构成内容 identity。
+Root PCM key 至少包括 Root composite fingerprint、start-state fingerprint、Channel Mode、程序级 Enabled SF2 有序列表的文件元数据缓存身份、Tempo projection、sample rate/format、native baseline、voice policy 和 renderer version。Root composite fingerprint 对可听内容的投影必须覆盖实际 Direct Note / Channel Event 字段、分页源内容 fingerprint 与 copy-on-write delta；集合 `Generation`、编辑次数或仅 stable ID 不构成内容 identity。
 
 ### 23.10.3 失效与收敛
 
@@ -553,7 +553,7 @@ derive Project Name from source file stem
 create Roots / Tracks / Segments / Conductor atomically
 commit only after all mapping and validation succeeds
 open the new Project as unsaved
-leave Project SoundFont unconfigured
+leave the program-level SoundFont list unchanged
 ```
 
 失败或取消时保留当前 Project，不暴露 partial candidate，不产生 Undo entry。初版不提供“Import MIDI into Current Project”。

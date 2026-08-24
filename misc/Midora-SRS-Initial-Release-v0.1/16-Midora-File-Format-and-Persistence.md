@@ -73,7 +73,6 @@ Undo / Redo 栈
 │  ├─ export-settings.json
 │  ├─ playback-settings.json
 │  ├─ audio-render-settings.json
-│  ├─ soundfont-settings.json
 │  ├─ global-reset-defaults.json
 │  └─ global-event-scope-defaults.json
 ├─ event-instruments/
@@ -91,9 +90,6 @@ Undo / Redo 栈
 ├─ midi-content/
 │  ├─ mt_<id>.mpk
 │  └─ ...
-└─ resources/
-   └─ soundfonts/
-      └─ <resourceId>.sf2
 ```
 固定文件名：
 ```text
@@ -105,7 +101,6 @@ settings/project-settings.json
 settings/export-settings.json
 settings/playback-settings.json
 settings/audio-render-settings.json
-settings/soundfont-settings.json
 settings/global-reset-defaults.json
 settings/global-event-scope-defaults.json
 ```
@@ -117,7 +112,6 @@ logical-tracks/
 midi-channel-roots/
 midi-tracks/
 midi-content/
-resources/soundfonts/
 ```
 Event Instrument 对象文件路径模板：
 ```text
@@ -268,12 +262,12 @@ minimumReadableVersion 通常可以等于 fileFormatVersion。
 打开失败。
 ```
 ### 16.4.4 文件索引
-manifest 必须记录所有当前 Project 包内写出的核心文件、settings 文件、对象文件、资源文件。
+manifest 必须记录所有当前 Project 包内写出的核心文件、settings 文件、对象文件和 Pure MIDI content pack。
 每个文件索引至少具有以下系统级信息：
 ```text
 path
 file kind
-schemaVersion（结构性文件）
+schemaVersion
 SHA-256 hash
 ```
 file kind 至少应能区分：
@@ -282,8 +276,11 @@ core-json
 settings-json
 conductor-json
 event-instrument-pb
+event-instrument-usage-pb
 logical-track-pb
-embedded-resource
+midi-channel-root-pb
+pure-midi-track-pb
+pure-midi-content-pack
 ```
 初版不需要定义 `unknown-preserved` / `future-extension` 等保留类型。
 如果 manifest 中出现当前软件不认识的 file kind：
@@ -461,7 +458,6 @@ settings/project-settings.json
 settings/export-settings.json
 settings/playback-settings.json
 settings/audio-render-settings.json
-settings/soundfont-settings.json
 settings/global-reset-defaults.json
 settings/global-event-scope-defaults.json
 ```
@@ -480,7 +476,7 @@ Project 标记为已修改。
 ```text
 TPQ
 项目创建后不可修改的项目级时间精度
-其他非 metadata、非 playback、非 export、非 soundfont 的项目设置
+其他非 metadata、非 playback、非 export 的项目设置
 ```
 TPQ 必须保存于 `settings/project-settings.json`。
 TPQ 是 Project 语义，不是文件格式语义。
@@ -571,23 +567,7 @@ Sample Rate = 48,000 Hz
 Offline Maximum Sample Voices per Unit Stream = 500
 ```
 保存时只写出已规范化的合法设置；已删除 Track 的无效 ID 不得原样写回。
-### 16.7.6 soundfont-settings.json
-初版 schema v1 固定保存：
-```text
-schemaVersion = 1
-mode = none / external / embedded
-relativePath（仅 external）
-resourceId（仅 embedded）
-originalFileName（已选择时）
-sha256（已选择时）
-fileSizeBytes（已选择时，非负 int64）
-```
-`mode = none` 时不得保留其余 payload 字段。External 与 Embedded 的字段组合必须严格互斥，未知字段或无效组合导致该 settings 文件无效。
-
-外部引用只保存第 6.4.4 节允许的两种相对路径，不保存绝对路径 fallback。`resourceId` 使用 canonical 非零稳定 ID。`sha256` 是 64 个小写十六进制字符；external 表示用户最后明确接受的内容，embedded 表示包内资源的预期内容。
-
-缺失、不可读、hash mismatch、case-insensitive fallback、BASSMIDI 加载失败和“验证中”等状态属于打开后的派生资源状态，不写入 Project。被动状态变化不得改写本文件或使 Project 进入已修改状态。
-### 16.7.7 global-reset-defaults.json
+### 16.7.6 global-reset-defaults.json
 保存 Project 级 Reset 默认值，例如：
 ```text
 CC Reset 默认值
@@ -596,7 +576,7 @@ RPN / NRPN Reset 默认值
 Program / Bank 相关 Reset 策略默认值
 其他 Project 级 Reset Defaults
 ```
-### 16.7.8 global-event-scope-defaults.json
+### 16.7.7 global-event-scope-defaults.json
 初版保存不可编辑的版本化空 marker，只包含严格 schema 所要求的版本字段。该文件不得被解释为存在未定义的用户可配置事件作用域；Note 与 Channel-Wide 状态的作用域由各正式事件语义固定。未来如新增配置字段，必须发布新的 schema 版本并定义迁移规则。
 ---
 ## 16.8 conductor-track.json
@@ -1043,87 +1023,18 @@ LF
 每个已发布 protobuf schema 必须有 descriptor 基线和代表性 golden bytes；升级库、工具或生成 profile 时必须执行兼容性评审，不得仅因新版本仍声明 deterministic 就自动采用。
 ---
 ## 16.15 SoundFont 资源持久化
-### 16.15.1 内嵌 SF2 位置
-内嵌 SF2 保存于：
-```text
-resources/soundfonts/<resourceId>.sf2
-```
-包内文件名使用资源 ID。
-原始文件名保存于：
-```text
-settings/soundfont-settings.json
-```
-### 16.15.2 单一 SF2
-初版一个 Project 最多一个当前有效 SF2。
-因此包内最多允许一个当前有效内嵌 SF2 资源。
-Project 当前语义只允许一个 SoundFont 设置。
-### 16.15.3 外部引用 SF2
-外部引用 SF2 的信息保存于：
-```text
-settings/soundfont-settings.json
-```
-包括：
-```text
-相对路径
-last known hash
-原始文件名
-文件大小等辅助信息
-```
-初版只保存允许目录下的相对路径，不保存绝对路径 fallback。
-路径逐分量优先 ordinal 精确匹配；仅当精确匹配不存在且 ordinal-ignore-case 候选唯一时才允许回退，并产生 Warning。多个大小写近似候选导致资源歧义和不可用。回退只影响本次运行时解析，不改写已保存路径；用户明确重新绑定或接受当前文件后，才以实际解析到的大小写写入新路径。
+### 16.15.1 包内禁止项
+SoundFont 已脱离 Project。`.midora` 不得包含 SF2 字节、Embedded/External 引用、本机路径、文件名、大小、内容 hash、列表顺序或 Enabled 状态；不得生成 `settings/soundfont-settings.json` 或 `resources/soundfonts/` entry。
 
-外部 `sha256` 和 `fileSizeBytes` 只在用户明确选择、替换、重新绑定或接受当前内容时更新。打开时完整流式计算 SHA-256；普通保存、保存副本、文件监控和音频任务中的被动检查不得静默更新这些字段或 Project 修改状态。
-如果外部 SF2 缺失：
-```text
-Project 正常打开。
-SoundFont Settings 标记不可访问。
-播放 / 预览 / 音频渲染不可用。
-MIDI 导出仍可用。
-不标记 Project 已修改。
-```
-如果外部 SF2 hash 变化但文件可加载：
-```text
-警告后加载。
-```
-外部 SF2 是用户可替换资源，hash 变化只表示外部文件已变化。
-### 16.15.4 内嵌 SF2 完整性
-内嵌 SF2 是项目包内部资源。
-manifest 记录其 SHA-256。
-`soundfont-settings.json` 同时记录同一资源 ID、SHA-256、原始文件名和未压缩文件大小；settings hash、manifest hash 与实际未压缩资源字节必须一致。导入和 package 写出均流式计算，不得整文件读入单个托管数组。
-如果内嵌 SF2 hash 不匹配或无法加载：
-```text
-Project 正常打开。
-SoundFont Settings 标记资源损坏 / 无法加载。
-播放 / 预览 / 音频渲染不可用。
-MIDI 导出仍可用。
-不标记 Project 已修改。
-```
-内嵌 SF2 hash 不匹配代表项目包一致性损坏，不等同于外部 SF2 的普通变化。
-如果 Project 打开后当前内嵌 SF2 资源损坏但其他 Project 数据正常：
-```text
-允许普通保存和保存副本。
-保存写出当前内存 Project 中的 SoundFont Settings 与可用资源状态。
-```
-### 16.15.5 取消或替换 SF2
-用户取消选择 SF2 后保存：
-```text
-新包不再写出旧内嵌 SF2。
-```
-用户替换内嵌 SF2 后保存：
-```text
-新包只写出当前被引用的新内嵌 SF2。
-旧内嵌 SF2 不保留为历史资源。
-```
+### 16.15.2 打开与保存
+Project 新建、打开、Save、Save Copy、自校验和确定性 Zip 写出均不得访问程序级 SF2 文件。程序级 SoundFont 列表变化不标记 Project Modified，不进入 Project Undo/Redo，也不改变相同 Project 源数据的 package bytes。
+
+开发期格式破坏后不提供旧 Project SoundFont 字段、settings 或资源的兼容读取、迁移和双写；带旧字段的 source JSON 继续服从未知字段严格拒绝，旧未索引资源不提升为当前 Project 语义。
 ---
 ## 16.16 Zip 容器合法性
 ### 16.16.1 Zip64
 `.midora` 允许使用 Zip64。
-理由：
-```text
-内嵌 SF2
-长项目
-大量事件数据
-```
+理由：长项目和大量事件数据仍可能超过传统 Zip 限制；SoundFont 不再是原因。
 可能超过传统 Zip 限制。
 ### 16.16.2 根目录
 `manifest.json` 必须位于 Zip 根目录。
@@ -1470,9 +1381,6 @@ Project 内存结构无法生成合法包
 ```text
 settings 缺失 / 损坏并已回退默认值
 conductor-track 缺失 / 损坏并已回退默认值
-外部 SF2 缺失
-外部 SF2 hash 变化
-内嵌 SF2 损坏 / 无法加载
 存在打开时 Info：保存后会移除多余文件
 无内容 Logical Track 处于合法无 Usage 空壳状态
 ```
@@ -1716,7 +1624,6 @@ logical-tracks/*.pb
 midi-channel-roots/*.pb
 midi-tracks/*.pb
 midi-content/*.mpk
-resources/soundfonts/*.sf2
 ```
 但由于 manifest 需要记录所有文件 hash，实际内容生成顺序为：
 ```text
@@ -1819,8 +1726,7 @@ conductor-track 缺失 / 损坏后回退默认值。
 ### 16.27.4 不视为修改
 以下状态不视为 Project 已修改：
 ```text
-仅外部 SF2 缺失。
-仅内嵌 SF2 hash 不匹配 / 资源损坏诊断。
+仅程序级 SoundFont 路径缺失或加载失败。
 仅存在多余文件保存后会移除 Info。
 含损坏对象占位但用户未删除且没有其他编辑。
 ```

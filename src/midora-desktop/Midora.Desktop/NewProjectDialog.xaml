@@ -35,15 +35,6 @@
             <CheckBox x:Name="SaveNowCheck" Margin="0,12,0,0" Content="Save Project immediately" Checked="OnSaveNowChanged" Unchecked="OnSaveNowChanged"/>
             <TextBlock Margin="0,12,0,4" Style="{StaticResource Text.Caption}" Text="TARGET FILE"/>
             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox x:Name="PathBox" IsReadOnly="True"/><Button x:Name="BrowseButton" Grid.Column="1" Width="76" Margin="6,0,0,0" Content="Browse…" Click="OnBrowseClick"/></Grid>
-            <TextBlock Margin="0,16,0,4" Style="{StaticResource Text.Caption}" Text="SOUNDFONT MODE"/>
-            <ComboBox x:Name="SoundFontModeBox" SelectedIndex="0" SelectionChanged="OnSoundFontModeChanged">
-              <ComboBoxItem Content="No SoundFont"/>
-              <ComboBoxItem Content="Embed in Project"/>
-              <ComboBoxItem x:Name="ExternalSoundFontItem" Content="External Relative Reference"/>
-            </ComboBox>
-            <TextBlock Margin="0,10,0,4" Style="{StaticResource Text.Caption}" Text="SOUNDFONT FILE"/>
-            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox x:Name="SoundFontPathBox" IsReadOnly="True"/><Button x:Name="SoundFontBrowseButton" Grid.Column="1" Width="76" Margin="6,0,0,0" Content="Browse…" Click="OnBrowseSoundFontClick"/></Grid>
-            <TextBlock x:Name="SoundFontHelpText" Margin="0,6,0,0" Style="{StaticResource Text.Caption}" TextWrapping="Wrap"/>
             <TextBlock x:Name="ValidationText" Margin="0,12,0,0" Foreground="{StaticResource Brush.Red.Hover}" TextWrapping="Wrap"/>
           </StackPanel>
         </Grid>

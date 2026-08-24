@@ -162,7 +162,6 @@ public sealed class ProjectObjectProtobufV1Tests
                 "settings/export-settings.json",
                 "settings/playback-settings.json",
                 "settings/audio-render-settings.json",
-                "settings/soundfont-settings.json",
                 "settings/global-reset-defaults.json",
                 "settings/global-event-scope-defaults.json",
                 $"event-instrument-usages/eiu_{usage.Id}.pb",

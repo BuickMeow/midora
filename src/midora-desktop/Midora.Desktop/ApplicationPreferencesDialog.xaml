@@ -49,10 +49,28 @@
           <TextBlock Margin="0,5,0,0" Style="{StaticResource Text.Caption}" Text="0 disables reusable audio-cache retention. Transient recovery storage is separate." TextWrapping="Wrap"/>
 
           <Border Height="1" Margin="0,18" Background="{StaticResource Brush.Border}"/>
-          <TextBlock Style="{StaticResource Text.Section}" Text="New Project SoundFont"/>
-          <TextBlock Margin="0,5,0,14" Style="{StaticResource Text.Caption}" Text="Optionally embed this local SF2 automatically when creating a Project or opening MIDI as a new Project. Clear the path to leave new Projects without a SoundFont." TextWrapping="Wrap"/>
-          <TextBlock Style="{StaticResource Text.Overline}" Text="DEFAULT EMBEDDED SF2"/>
-          <Grid Margin="0,5,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox x:Name="DefaultSoundFontBox" IsReadOnly="True"/><Button Grid.Column="1" Width="82" Margin="7,0,0,0" Content="Browse…" Click="OnBrowseDefaultSoundFontClick"/><Button Grid.Column="2" Width="72" Margin="7,0,0,0" Content="Clear" Click="OnClearDefaultSoundFontClick"/></Grid>
+          <TextBlock Style="{StaticResource Text.Section}" Text="SoundFonts"/>
+          <TextBlock Margin="0,5,0,14" Style="{StaticResource Text.Caption}" Text="All Projects use the enabled SF2 files below. Order defines BASSMIDI priority. Midora stores only these local paths and reads each file directly; it does not copy or validate SoundFont contents." TextWrapping="Wrap"/>
+          <ListBox x:Name="SoundFontListBox" Height="220" SelectionMode="Single">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid Margin="2,3">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <CheckBox VerticalAlignment="Center" IsChecked="{Binding Enabled}" Content="Enabled"/>
+                  <StackPanel Grid.Column="2">
+                    <TextBlock FontWeight="SemiBold" Text="{Binding FileName}" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Path}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}"/>
+                  </StackPanel>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel Margin="0,8,0,0" Orientation="Horizontal">
+            <Button Width="82" Margin="0,0,7,0" Content="Add…" Click="OnAddSoundFontsClick"/>
+            <Button Width="82" Margin="0,0,7,0" Content="Remove" Click="OnRemoveSoundFontClick"/>
+            <Button Width="72" Margin="0,0,7,0" Content="Up" Click="OnMoveSoundFontUpClick"/>
+            <Button Width="72" Content="Down" Click="OnMoveSoundFontDownClick"/>
+          </StackPanel>
 
           <Border x:Name="ValidationBorder" Margin="0,18,0,0" Padding="9" Background="{StaticResource Brush.Red.Subtle}" BorderBrush="{StaticResource Brush.Red}" BorderThickness="1" CornerRadius="3" Visibility="Collapsed">
             <TextBlock x:Name="ValidationText" Foreground="{StaticResource Brush.Red.Hover}" TextWrapping="Wrap"/>

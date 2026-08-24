@@ -54,21 +54,12 @@ public sealed record MidoraProjectOpenResultV1(
     bool IsModified,
     IReadOnlyList<MidoraPackageDiagnosticV1> Diagnostics) : IDisposable, IAsyncDisposable
 {
-    public EmbeddedSoundFontResourceV1? EmbeddedSoundFontResource { get; init; }
+    public void Dispose() => Project.Dispose();
 
-    public void Dispose()
+    public ValueTask DisposeAsync()
     {
-        EmbeddedSoundFontResource?.Dispose();
         Project.Dispose();
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (EmbeddedSoundFontResource is not null)
-        {
-            await EmbeddedSoundFontResource.DisposeAsync().ConfigureAwait(false);
-        }
-        Project.Dispose();
+        return ValueTask.CompletedTask;
     }
 }
 
@@ -101,49 +92,6 @@ public class MidoraPackageExceptionV1 : IOException
     public string? PackagePath { get; }
     public string? BackupPath { get; }
     public string? TemporaryPath { get; }
-}
-
-public enum EmbeddedSoundFontRepairActionV1
-{
-    ReplaceOrRebind,
-    ClearReference
-}
-
-public sealed class MidoraEmbeddedSoundFontRepairRequiredExceptionV1 : MidoraPackageExceptionV1
-{
-    private static readonly IReadOnlyList<EmbeddedSoundFontRepairActionV1> AllowedActions =
-        Array.AsReadOnly<EmbeddedSoundFontRepairActionV1>(
-        [
-            EmbeddedSoundFontRepairActionV1.ReplaceOrRebind,
-            EmbeddedSoundFontRepairActionV1.ClearReference
-        ]);
-
-    internal MidoraEmbeddedSoundFontRepairRequiredExceptionV1(
-        MidoraPackageStageV1 stage,
-        string targetPath,
-        EmbeddedProjectSoundFontReference reference,
-        EmbeddedSoundFontResourceStatusV1 resourceStatus,
-        string? actualSha256 = null,
-        long? actualFileSizeBytes = null,
-        Exception? innerException = null)
-        : base(
-            stage,
-            "The Embedded SoundFont must be explicitly replaced, rebound, or cleared before this Project can be saved.",
-            targetPath,
-            MidoraPackagePathsV1.EmbeddedSoundFont(reference.ResourceId),
-            innerException: innerException)
-    {
-        Reference = reference;
-        ResourceStatus = resourceStatus;
-        ActualSha256 = actualSha256;
-        ActualFileSizeBytes = actualFileSizeBytes;
-    }
-
-    public EmbeddedProjectSoundFontReference Reference { get; }
-    public EmbeddedSoundFontResourceStatusV1 ResourceStatus { get; }
-    public string? ActualSha256 { get; }
-    public long? ActualFileSizeBytes { get; }
-    public IReadOnlyList<EmbeddedSoundFontRepairActionV1> RepairActions => AllowedActions;
 }
 
 public sealed class MidoraPackageVersionCompatibilityExceptionV1 : MidoraPackageExceptionV1
@@ -243,8 +191,7 @@ public sealed class MidoraProjectPackageV1
         MidoraProjectFileInformationV1? fileInformation = null,
         ProjectEditingTimeSession? editingTimeSession = null,
         bool overwriteAuthorized = false,
-        CancellationToken cancellationToken = default,
-        EmbeddedSoundFontResourceV1? embeddedSoundFontResource = null) =>
+        CancellationToken cancellationToken = default) =>
         SaveCoreAsync(
             project,
             targetPath,
@@ -252,7 +199,6 @@ public sealed class MidoraProjectPackageV1
             editingTimeSession,
             overwriteAuthorized,
             updateCurrentProject: true,
-            embeddedSoundFontResource,
             cancellationToken);
 
     public Task<MidoraProjectSaveResultV1> SaveCopyAsync(
@@ -261,8 +207,7 @@ public sealed class MidoraProjectPackageV1
         MidoraProjectFileInformationV1? fileInformation = null,
         ProjectEditingTimeSession? editingTimeSession = null,
         bool overwriteAuthorized = false,
-        CancellationToken cancellationToken = default,
-        EmbeddedSoundFontResourceV1? embeddedSoundFontResource = null) =>
+        CancellationToken cancellationToken = default) =>
         SaveCoreAsync(
             project,
             targetPath,
@@ -270,7 +215,6 @@ public sealed class MidoraProjectPackageV1
             editingTimeSession,
             overwriteAuthorized,
             updateCurrentProject: false,
-            embeddedSoundFontResource,
             cancellationToken);
 
     private async Task<MidoraProjectSaveResultV1> SaveCoreAsync(
@@ -280,7 +224,6 @@ public sealed class MidoraProjectPackageV1
         ProjectEditingTimeSession? editingTimeSession,
         bool overwriteAuthorized,
         bool updateCurrentProject,
-        EmbeddedSoundFontResourceV1? embeddedSoundFontResource,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(project);
@@ -301,11 +244,6 @@ public sealed class MidoraProjectPackageV1
                 "The target exists but overwrite was not explicitly authorized.",
                 targetPath: target);
         }
-        RequireEmbeddedSoundFontReadyForSave(
-            project,
-            embeddedSoundFontResource,
-            target);
-
         DateTimeOffset savedAtUtc = _timeProvider.GetUtcNow().ToUniversalTime();
         _ = editingTimeSession?.SnapshotTotalEditingTimeMilliseconds();
         ProjectMetadataSnapshot metadata = project.Metadata.Snapshot() with { ModifiedAtUtc = savedAtUtc };
@@ -374,7 +312,6 @@ public sealed class MidoraProjectPackageV1
                         project,
                         metadata,
                         outputFileInformation,
-                        embeddedSoundFontResource,
                         temporaryDirectory,
                         knownPureMidiPackEntries: null,
                         cancellationToken);
@@ -397,14 +334,6 @@ public sealed class MidoraProjectPackageV1
                     temporaryPackage);
                 await WriteZipAsync(temporaryDirectory, temporaryPackage, cancellationToken)
                     .ConfigureAwait(false);
-            }
-            catch (EmbeddedSoundFontResourceUnavailableExceptionV1 exception)
-            {
-                throw CreateEmbeddedSoundFontRepairRequired(
-                    MidoraPackageStageV1.Staging,
-                    target,
-                    project,
-                    exception);
             }
             catch (Exception exception) when (exception is IOException
                 or UnauthorizedAccessException
@@ -441,7 +370,6 @@ public sealed class MidoraProjectPackageV1
                         reopened.Project,
                         reopened.Project.Metadata.Snapshot(),
                         reopened.FileInformation,
-                        reopened.EmbeddedSoundFontResource,
                         contentRoot: null,
                         content.PureMidiPackEntries,
                         cancellationToken);
@@ -666,14 +594,6 @@ public sealed class MidoraProjectPackageV1
                 pureMidiContent,
                 cancellationToken).ConfigureAwait(false);
 
-            ProjectSoundFontReference? soundFont = await RestoreOrdinarySettingsAsync(
-                MidoraPackagePathsV1.SoundFontSettings,
-                bytes => SoundFontSettingsCodecV1.Parse(bytes),
-                entries, index, path, diagnostics, cancellationToken,
-                () => isModified = true).ConfigureAwait(false);
-            project.SoundFont.Restore(soundFont);
-            diagnostics.AddRange(CollectOrphanEmbeddedResourceDiagnostics(index, soundFont));
-
             bool conductorFallback = false;
             try
             {
@@ -699,7 +619,6 @@ public sealed class MidoraProjectPackageV1
                 projectIndex,
                 project,
                 conductorFallback ? null : project.Conductor,
-                soundFont,
                 storedNextStableId);
             project.RestoreNextStableId(storedNextStableId);
             if (conductorFallback)
@@ -802,26 +721,13 @@ public sealed class MidoraProjectPackageV1
                 entries, index, path, diagnostics, cancellationToken,
                 () => isModified = true).ConfigureAwait(false);
 
-            EmbeddedSoundFontResourceV1? embeddedSoundFontResource = soundFont is
-                EmbeddedProjectSoundFontReference embedded
-                    ? await RestoreEmbeddedSoundFontResourceAsync(
-                        embedded,
-                        entries,
-                        index,
-                        diagnostics,
-                        cancellationToken).ConfigureAwait(false)
-                    : null;
-
             return new MidoraProjectOpenResultV1(
                 project,
                 new MidoraProjectFileInformationV1(
                     manifest.CreatedWithSoftwareVersion,
                     manifest.LastSavedWithSoftwareVersion),
                 isModified,
-                diagnostics)
-            {
-                EmbeddedSoundFontResource = embeddedSoundFontResource
-            };
+                diagnostics);
         }
         catch
         {
@@ -834,7 +740,6 @@ public sealed class MidoraProjectPackageV1
         MidoraProject project,
         ProjectMetadataSnapshot metadata,
         MidoraProjectFileInformationV1 fileInformation,
-        EmbeddedSoundFontResourceV1? embeddedSoundFontResource,
         string? contentRoot,
         IReadOnlyList<ManifestFileEntryJsonV1>? knownPureMidiPackEntries,
         CancellationToken cancellationToken)
@@ -848,7 +753,6 @@ public sealed class MidoraProjectPackageV1
             [MidoraPackagePathsV1.ExportSettings] = ExportSettingsCodecV1.Serialize(project.Export),
             [MidoraPackagePathsV1.PlaybackSettings] = PlaybackSettingsCodecV1.Serialize(project.Playback),
             [MidoraPackagePathsV1.AudioRenderSettings] = AudioRenderSettingsCodecV1.Serialize(project.AudioRender),
-            [MidoraPackagePathsV1.SoundFontSettings] = SoundFontSettingsCodecV1.Serialize(project.SoundFont),
             [MidoraPackagePathsV1.GlobalResetDefaults] = GlobalResetDefaultsCodecV1.Serialize(
                 project.GlobalResetDefaults),
             [MidoraPackagePathsV1.GlobalEventScopeDefaults] = GlobalEventScopeDefaultsCodecV1.Serialize()
@@ -908,11 +812,6 @@ public sealed class MidoraProjectPackageV1
                     cancellationToken))
                 .ToArray();
         }
-        EmbeddedProjectSoundFontReference? embeddedReference =
-            project.SoundFont.Reference as EmbeddedProjectSoundFontReference;
-        string? embeddedPath = embeddedReference is null
-            ? null
-            : MidoraPackagePathsV1.EmbeddedSoundFont(embeddedReference.ResourceId);
         ManifestFileEntryJsonV1[] manifestFiles = content.Select(item => new ManifestFileEntryJsonV1
         {
             Path = item.Key,
@@ -921,18 +820,6 @@ public sealed class MidoraProjectPackageV1
             Sha256 = Convert.ToHexStringLower(SHA256.HashData(item.Value))
         })
             .Concat(pureMidiPackEntries)
-            .Concat(embeddedReference is null
-                ? []
-                :
-                [
-                    new ManifestFileEntryJsonV1
-                    {
-                        Path = embeddedPath!,
-                        Kind = "embedded-resource",
-                        SchemaVersion = null,
-                        Sha256 = embeddedReference.Sha256
-                    }
-                ])
             .ToArray();
         ManifestJsonV1 manifest = new()
         {
@@ -945,12 +832,7 @@ public sealed class MidoraProjectPackageV1
             Files = manifestFiles
         };
         content.Add(MidoraPackagePathsV1.Manifest, ManifestCodecV1.Serialize(manifest));
-        return new(
-            content,
-            pureMidiPackEntries,
-            embeddedPath,
-            embeddedReference,
-            embeddedSoundFontResource);
+        return new(content, pureMidiPackEntries);
     }
 
     private static void ValidateSupportedProject(MidoraProject project)
@@ -1004,10 +886,6 @@ public sealed class MidoraProjectPackageV1
             {
                 AddId(id, project.NextStableId, ids, "Pure MIDI Track object");
             }
-        }
-        if (project.SoundFont.Reference is EmbeddedProjectSoundFontReference embedded)
-        {
-            AddId(embedded.ResourceId, project.NextStableId, ids, "Embedded SoundFont resource");
         }
     }
 
@@ -1145,58 +1023,6 @@ public sealed class MidoraProjectPackageV1
         {
             throw new InvalidDataException(message);
         }
-    }
-
-    private static void RequireEmbeddedSoundFontReadyForSave(
-        MidoraProject project,
-        EmbeddedSoundFontResourceV1? embeddedSoundFontResource,
-        string targetPath)
-    {
-        if (project.SoundFont.Reference is not EmbeddedProjectSoundFontReference embeddedReference)
-        {
-            return;
-        }
-        try
-        {
-            if (embeddedSoundFontResource is null)
-            {
-                throw new EmbeddedSoundFontResourceUnavailableExceptionV1(
-                    EmbeddedSoundFontResourceStatusV1.RuntimeResourceMissing);
-            }
-            _ = embeddedSoundFontResource.RequireReadablePath(embeddedReference);
-        }
-        catch (EmbeddedSoundFontResourceUnavailableExceptionV1 exception)
-        {
-            throw new MidoraEmbeddedSoundFontRepairRequiredExceptionV1(
-                MidoraPackageStageV1.Preflight,
-                targetPath,
-                embeddedReference,
-                exception.Status,
-                exception.ActualSha256,
-                exception.ActualFileSizeBytes,
-                exception);
-        }
-    }
-
-    private static MidoraEmbeddedSoundFontRepairRequiredExceptionV1
-        CreateEmbeddedSoundFontRepairRequired(
-            MidoraPackageStageV1 stage,
-            string targetPath,
-            MidoraProject project,
-            EmbeddedSoundFontResourceUnavailableExceptionV1 exception)
-    {
-        EmbeddedProjectSoundFontReference reference =
-            project.SoundFont.Reference as EmbeddedProjectSoundFontReference
-            ?? throw new InvalidOperationException(
-                "An Embedded SoundFont repair failure requires an Embedded Project reference.");
-        return new(
-            stage,
-            targetPath,
-            reference,
-            exception.Status,
-            exception.ActualSha256,
-            exception.ActualFileSizeBytes,
-            exception);
     }
 
     private static Dictionary<string, ZipArchiveEntry> ValidateContainer(ZipArchive archive, string targetPath)
@@ -1468,179 +1294,6 @@ public sealed class MidoraProjectPackageV1
                 "The manifest object/content entry is not referenced by project.json and will not be preserved on save.",
                 item.Path);
         }
-    }
-
-    private static IEnumerable<MidoraPackageDiagnosticV1> CollectOrphanEmbeddedResourceDiagnostics(
-        IReadOnlyDictionary<string, ManifestFileEntryJsonV1> manifestIndex,
-        ProjectSoundFontReference? soundFont)
-    {
-        string? referencedPath = soundFont is EmbeddedProjectSoundFontReference embedded
-            ? MidoraPackagePathsV1.EmbeddedSoundFont(embedded.ResourceId)
-            : null;
-        foreach (ManifestFileEntryJsonV1 item in manifestIndex.Values
-            .Where(value => value.Kind == "embedded-resource")
-            .Where(value => !string.Equals(value.Path, referencedPath, StringComparison.Ordinal))
-            .OrderBy(value => value.Path, StringComparer.Ordinal))
-        {
-            yield return new(
-                MidoraPackageDiagnosticSeverityV1.Information,
-                MidoraPackageDiagnosticCategoryV1.FileFormat,
-                "MIDORA-PERSIST-INFO-ORPHAN-RESOURCE",
-                "The embedded resource is not referenced by SoundFont Settings and will not be preserved on save.",
-                item.Path);
-        }
-    }
-
-    private static async Task<EmbeddedSoundFontResourceV1> RestoreEmbeddedSoundFontResourceAsync(
-        EmbeddedProjectSoundFontReference reference,
-        IReadOnlyDictionary<string, ZipArchiveEntry> entries,
-        IReadOnlyDictionary<string, ManifestFileEntryJsonV1> manifestIndex,
-        ICollection<MidoraPackageDiagnosticV1> diagnostics,
-        CancellationToken cancellationToken)
-    {
-        string packagePath = MidoraPackagePathsV1.EmbeddedSoundFont(reference.ResourceId);
-        if (!manifestIndex.TryGetValue(packagePath, out ManifestFileEntryJsonV1? manifestEntry))
-        {
-            return DamagedEmbeddedSoundFont(
-                reference,
-                EmbeddedSoundFontResourceStatusV1.MissingManifestEntry,
-                packagePath,
-                "SoundFont Settings references a resource absent from manifest.json.",
-                diagnostics);
-        }
-        if (manifestEntry.Kind != "embedded-resource" || manifestEntry.SchemaVersion.HasValue)
-        {
-            return DamagedEmbeddedSoundFont(
-                reference,
-                EmbeddedSoundFontResourceStatusV1.InvalidManifestEntry,
-                packagePath,
-                "The Embedded SoundFont manifest kind or schemaVersion is invalid.",
-                diagnostics);
-        }
-        if (!entries.TryGetValue(packagePath, out ZipArchiveEntry? archiveEntry))
-        {
-            return DamagedEmbeddedSoundFont(
-                reference,
-                EmbeddedSoundFontResourceStatusV1.MissingPackageEntry,
-                packagePath,
-                "The Embedded SoundFont is indexed by manifest.json but absent from the Zip container.",
-                diagnostics);
-        }
-        if (archiveEntry.Length != reference.FileSizeBytes)
-        {
-            return DamagedEmbeddedSoundFont(
-                reference,
-                EmbeddedSoundFontResourceStatusV1.SizeMismatch,
-                packagePath,
-                "The Embedded SoundFont uncompressed size does not match SoundFont Settings.",
-                diagnostics,
-                actualFileSizeBytes: archiveEntry.Length);
-        }
-        if (!string.Equals(manifestEntry.Sha256, reference.Sha256, StringComparison.Ordinal))
-        {
-            return DamagedEmbeddedSoundFont(
-                reference,
-                EmbeddedSoundFontResourceStatusV1.HashMismatch,
-                packagePath,
-                "The Embedded SoundFont hashes in manifest.json and SoundFont Settings do not match.",
-                diagnostics,
-                actualFileSizeBytes: archiveEntry.Length);
-        }
-
-        string directory;
-        try
-        {
-            directory = EmbeddedSoundFontResourceV1.CreateRuntimeDirectory();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return DamagedEmbeddedSoundFont(
-                reference,
-                EmbeddedSoundFontResourceStatusV1.Unreadable,
-                packagePath,
-                $"The Embedded SoundFont runtime extraction directory could not be created. {exception.Message}",
-                diagnostics);
-        }
-
-        string extractedPath = Path.Combine(directory, "soundfont.sf2");
-        try
-        {
-            await using Stream source = archiveEntry.Open();
-            await using FileStream destination = new(
-                extractedPath,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                bufferSize: 128 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-            StreamCopyIdentityV1 actual = await EmbeddedSoundFontResourceV1.CopyAndHashAsync(
-                source,
-                destination,
-                cancellationToken).ConfigureAwait(false);
-            await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
-            if (actual.FileSizeBytes != reference.FileSizeBytes
-                || !string.Equals(actual.Sha256, reference.Sha256, StringComparison.Ordinal))
-            {
-                EmbeddedSoundFontResourceV1.TryDeleteDirectory(directory);
-                return DamagedEmbeddedSoundFont(
-                    reference,
-                    EmbeddedSoundFontResourceStatusV1.HashMismatch,
-                    packagePath,
-                    "The Embedded SoundFont bytes do not match manifest.json and SoundFont Settings.",
-                    diagnostics,
-                    actual.Sha256,
-                    actual.FileSizeBytes);
-            }
-            return new(
-                reference,
-                EmbeddedSoundFontResourceStatusV1.Available,
-                extractedPath,
-                directory,
-                actual.Sha256,
-                actual.FileSizeBytes);
-        }
-        catch (OperationCanceledException)
-        {
-            EmbeddedSoundFontResourceV1.TryDeleteDirectory(directory);
-            throw;
-        }
-        catch (Exception exception) when (exception is IOException
-            or UnauthorizedAccessException
-            or InvalidDataException
-            or CryptographicException)
-        {
-            EmbeddedSoundFontResourceV1.TryDeleteDirectory(directory);
-            return DamagedEmbeddedSoundFont(
-                reference,
-                EmbeddedSoundFontResourceStatusV1.Unreadable,
-                packagePath,
-                $"The Embedded SoundFont could not be extracted and verified. {exception.Message}",
-                diagnostics);
-        }
-    }
-
-    private static EmbeddedSoundFontResourceV1 DamagedEmbeddedSoundFont(
-        EmbeddedProjectSoundFontReference reference,
-        EmbeddedSoundFontResourceStatusV1 status,
-        string packagePath,
-        string detail,
-        ICollection<MidoraPackageDiagnosticV1> diagnostics,
-        string? actualSha256 = null,
-        long? actualFileSizeBytes = null)
-    {
-        diagnostics.Add(new(
-            MidoraPackageDiagnosticSeverityV1.Error,
-            MidoraPackageDiagnosticCategoryV1.Resource,
-            "MIDORA-PERSIST-EMBEDDED-SF2-DAMAGED",
-            detail,
-            packagePath));
-        return new(
-            reference,
-            status,
-            resolvedAbsolutePath: null,
-            ownedDirectory: null,
-            actualSha256,
-            actualFileSizeBytes);
     }
 
     private static async Task RestoreProjectObjectsAsync(
@@ -2074,41 +1727,6 @@ public sealed class MidoraProjectPackageV1
                 cancellationToken).ConfigureAwait(false);
         }
 
-        if (content.EmbeddedPackagePath is not null)
-        {
-            EmbeddedProjectSoundFontReference reference = content.EmbeddedReference
-                ?? throw new InvalidDataException("Embedded SoundFont package content has no reference.");
-            EmbeddedSoundFontResourceV1 resource = content.EmbeddedResource
-                ?? throw new EmbeddedSoundFontResourceUnavailableExceptionV1(
-                    EmbeddedSoundFontResourceStatusV1.RuntimeResourceMissing);
-            string destinationPath = Path.Combine(
-                root,
-                content.EmbeddedPackagePath.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
-            await using FileStream source = resource.OpenReadForSave(reference);
-            await using FileStream destination = new(
-                destinationPath,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                bufferSize: 128 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-            StreamCopyIdentityV1 actual = await EmbeddedSoundFontResourceV1.CopyAndHashAsync(
-                source,
-                destination,
-                cancellationToken).ConfigureAwait(false);
-            await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
-            if (actual.FileSizeBytes != reference.FileSizeBytes
-                || !string.Equals(actual.Sha256, reference.Sha256, StringComparison.Ordinal))
-            {
-                throw new EmbeddedSoundFontResourceUnavailableExceptionV1(
-                    actual.FileSizeBytes != reference.FileSizeBytes
-                        ? EmbeddedSoundFontResourceStatusV1.SizeMismatch
-                        : EmbeddedSoundFontResourceStatusV1.HashMismatch,
-                    actual.Sha256,
-                    actual.FileSizeBytes);
-            }
-        }
         await File.WriteAllBytesAsync(
             Path.Combine(root, MidoraPackagePathsV1.Manifest),
             content.MemoryFiles[MidoraPackagePathsV1.Manifest],
@@ -2134,9 +1752,7 @@ public sealed class MidoraProjectPackageV1
         foreach (string entryName in GetStableEntryOrder(contentPaths))
         {
             CompressionLevel compressionLevel =
-                entryName.StartsWith("resources/soundfonts/", StringComparison.Ordinal)
-                && entryName.EndsWith(".sf2", StringComparison.OrdinalIgnoreCase)
-                || entryName.StartsWith("midi-content/", StringComparison.Ordinal)
+                entryName.StartsWith("midi-content/", StringComparison.Ordinal)
                 && entryName.EndsWith(".mpk", StringComparison.OrdinalIgnoreCase)
                     ? CompressionLevel.NoCompression
                     : CompressionLevel.Optimal;
@@ -2168,7 +1784,6 @@ public sealed class MidoraProjectPackageV1
             MidoraPackagePathsV1.ExportSettings,
             MidoraPackagePathsV1.PlaybackSettings,
             MidoraPackagePathsV1.AudioRenderSettings,
-            MidoraPackagePathsV1.SoundFontSettings,
             MidoraPackagePathsV1.GlobalResetDefaults,
             MidoraPackagePathsV1.GlobalEventScopeDefaults
         ];
@@ -2191,21 +1806,18 @@ public sealed class MidoraProjectPackageV1
         _ when path.StartsWith("midi-channel-roots/", StringComparison.Ordinal) => "midi-channel-root-pb",
         _ when path.StartsWith("midi-tracks/", StringComparison.Ordinal) => "pure-midi-track-pb",
         _ when path.StartsWith("midi-content/", StringComparison.Ordinal) => "pure-midi-content-pack",
-        _ when path.StartsWith("resources/soundfonts/", StringComparison.Ordinal) => "embedded-resource",
         _ => throw new InvalidDataException($"No v1 manifest kind is defined for '{path}'.")
     };
 
     private static bool IsKnownKind(string kind) => kind is
         "core-json" or "settings-json" or "conductor-json" or
         "event-instrument-pb" or "event-instrument-usage-pb" or "logical-track-pb" or
-        "midi-channel-root-pb" or "pure-midi-track-pb" or
-        "pure-midi-content-pack" or "embedded-resource";
+        "midi-channel-root-pb" or "pure-midi-track-pb" or "pure-midi-content-pack";
 
     private static void ValidateLoadedStableIds(
         ProjectJsonV1 projectIndex,
         MidoraProject project,
         ConductorTrack? conductor,
-        ProjectSoundFontReference? soundFont,
         long nextStableId)
     {
         StableIdSetV1 ids = new();
@@ -2304,10 +1916,6 @@ public sealed class MidoraProjectPackageV1
                         "An indexed Pure MIDI Track was neither loaded nor isolated as damaged.");
                 }
             }
-        }
-        if (soundFont is EmbeddedProjectSoundFontReference embedded)
-        {
-            AddId(embedded.ResourceId, nextStableId, ids, "Embedded SoundFont resource");
         }
     }
 
@@ -2535,8 +2143,5 @@ public sealed class MidoraProjectPackageV1
 
     private sealed record PackageContentV1(
         Dictionary<string, byte[]> MemoryFiles,
-        IReadOnlyList<ManifestFileEntryJsonV1> PureMidiPackEntries,
-        string? EmbeddedPackagePath,
-        EmbeddedProjectSoundFontReference? EmbeddedReference,
-        EmbeddedSoundFontResourceV1? EmbeddedResource);
+        IReadOnlyList<ManifestFileEntryJsonV1> PureMidiPackEntries);
 }

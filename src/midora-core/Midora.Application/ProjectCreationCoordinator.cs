@@ -1,4 +1,3 @@
-using Midora.Audio;
 using Midora.Domain;
 using Midora.Persistence;
 
@@ -8,54 +7,6 @@ public enum NewProjectPersistenceMode
 {
     CreateUnsaved,
     CreateAndSave
-}
-
-public enum NewProjectSoundFontMode
-{
-    None,
-    Embedded,
-    ExternalRelative
-}
-
-public sealed record NewProjectSoundFontSelection
-{
-    public NewProjectSoundFontSelection(
-        NewProjectSoundFontMode mode,
-        string? selectedPath = null)
-    {
-        if (!Enum.IsDefined(mode))
-        {
-            throw new ArgumentOutOfRangeException(nameof(mode));
-        }
-        if (mode == NewProjectSoundFontMode.None)
-        {
-            if (selectedPath is not null)
-            {
-                throw new ArgumentException(
-                    "A Project without a SoundFont cannot have a selected SoundFont path.",
-                    nameof(selectedPath));
-            }
-        }
-        else
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(selectedPath);
-            if (!Path.IsPathFullyQualified(selectedPath))
-            {
-                throw new ArgumentException(
-                    "Selected SoundFont paths must be fully qualified.",
-                    nameof(selectedPath));
-            }
-        }
-
-        Mode = mode;
-        SelectedPath = selectedPath is null ? null : Path.GetFullPath(selectedPath);
-    }
-
-    public static NewProjectSoundFontSelection NoSoundFont { get; } =
-        new(NewProjectSoundFontMode.None);
-
-    public NewProjectSoundFontMode Mode { get; }
-    public string? SelectedPath { get; }
 }
 
 public sealed record NewProjectCreationRequest
@@ -70,8 +21,6 @@ public sealed record NewProjectCreationRequest
         NewProjectPersistenceMode.CreateUnsaved;
     public string? TargetPath { get; init; }
     public bool OverwriteAuthorized { get; init; }
-    public NewProjectSoundFontSelection SoundFont { get; init; } =
-        NewProjectSoundFontSelection.NoSoundFont;
 }
 
 public sealed class NewProjectCreationResult : IDisposable, IAsyncDisposable
@@ -81,18 +30,12 @@ public sealed class NewProjectCreationResult : IDisposable, IAsyncDisposable
         ProjectDocumentOrigin origin,
         string? currentProjectPath,
         MidoraProjectFileInformationV1? fileInformation,
-        string? effectiveSoundFontPath,
-        bool usedCaseInsensitiveSoundFontPathFallback,
-        EmbeddedSoundFontResourceV1? embeddedSoundFontResource,
         IReadOnlyList<MidoraPackageDiagnosticV1> diagnostics)
     {
         Project = project;
         Origin = origin;
         CurrentProjectPath = currentProjectPath;
         FileInformation = fileInformation;
-        EffectiveSoundFontPath = effectiveSoundFontPath;
-        UsedCaseInsensitiveSoundFontPathFallback = usedCaseInsensitiveSoundFontPathFallback;
-        EmbeddedSoundFontResource = embeddedSoundFontResource;
         Diagnostics = diagnostics;
     }
 
@@ -100,41 +43,27 @@ public sealed class NewProjectCreationResult : IDisposable, IAsyncDisposable
     public ProjectDocumentOrigin Origin { get; }
     public string? CurrentProjectPath { get; }
     public MidoraProjectFileInformationV1? FileInformation { get; }
-    public string? EffectiveSoundFontPath { get; }
-    public bool UsedCaseInsensitiveSoundFontPathFallback { get; }
-    public EmbeddedSoundFontResourceV1? EmbeddedSoundFontResource { get; }
     public IReadOnlyList<MidoraPackageDiagnosticV1> Diagnostics { get; }
 
-    public void Dispose()
-    {
-        EmbeddedSoundFontResource?.Dispose();
-        Project.Dispose();
-    }
+    public void Dispose() => Project.Dispose();
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (EmbeddedSoundFontResource is not null)
-        {
-            await EmbeddedSoundFontResource.DisposeAsync().ConfigureAwait(false);
-        }
         Project.Dispose();
+        return ValueTask.CompletedTask;
     }
 }
 
 public sealed class ProjectCreationCoordinator
 {
     private readonly MidoraProjectPackageV1 _packages;
-    private readonly ISoundFontLoadabilityValidator _soundFontValidator;
     private readonly TimeProvider _timeProvider;
 
     public ProjectCreationCoordinator(
         MidoraProjectPackageV1 packages,
-        ISoundFontLoadabilityValidator soundFontValidator,
         TimeProvider? timeProvider = null)
     {
         _packages = packages ?? throw new ArgumentNullException(nameof(packages));
-        _soundFontValidator = soundFontValidator
-            ?? throw new ArgumentNullException(nameof(soundFontValidator));
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -146,101 +75,36 @@ public sealed class ProjectCreationCoordinator
         ValidatedRequest input = ValidateRequest(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        MidoraProject project = new(
-            input.TicksPerQuarterNote,
-            _timeProvider.GetUtcNow());
+        MidoraProject project = new(input.TicksPerQuarterNote, _timeProvider.GetUtcNow());
         ApplyMetadata(project.Metadata, input);
 
-        EmbeddedSoundFontResourceV1? embeddedResource = null;
-        string? effectiveSoundFontPath = null;
-        bool usedCaseInsensitiveSoundFontPathFallback = false;
+        if (input.PersistenceMode == NewProjectPersistenceMode.CreateUnsaved)
+        {
+            return new(
+                project,
+                ProjectDocumentOrigin.Unsaved,
+                currentProjectPath: null,
+                fileInformation: null,
+                Array.Empty<MidoraPackageDiagnosticV1>());
+        }
+
         try
         {
-            switch (input.SoundFont.Mode)
-            {
-                case NewProjectSoundFontMode.None:
-                    break;
-                case NewProjectSoundFontMode.Embedded:
-                    embeddedResource = await SoundFontBindingV1.BindEmbeddedAsync(
-                        project,
-                        input.SoundFont.SelectedPath!,
-                        cancellationToken).ConfigureAwait(false);
-                    effectiveSoundFontPath = embeddedResource.ResolvedAbsolutePath
-                        ?? throw new InvalidOperationException(
-                            "A newly imported Embedded SoundFont has no runtime path.");
-                    await _soundFontValidator.ValidateAsync(
-                        effectiveSoundFontPath,
-                        cancellationToken).ConfigureAwait(false);
-                    break;
-                case NewProjectSoundFontMode.ExternalRelative:
-                    ExternalSoundFontBindingV1 binding =
-                        await SoundFontBindingV1.BindExternalAsync(
-                            input.TargetPath!,
-                            input.SoundFont.SelectedPath!,
-                            cancellationToken).ConfigureAwait(false);
-                    await _soundFontValidator.ValidateAsync(
-                        binding.ResolvedAbsolutePath,
-                        cancellationToken).ConfigureAwait(false);
-                    ExternalSoundFontVerificationV1 verification =
-                        await SoundFontBindingV1.VerifyExternalAsync(
-                            input.TargetPath!,
-                            binding.Reference,
-                            cancellationToken).ConfigureAwait(false);
-                    if (!verification.IsReadable
-                        || verification.HashMatches != true
-                        || verification.ResolvedAbsolutePath is null
-                        || !PathsEqual(
-                            verification.ResolvedAbsolutePath,
-                            binding.ResolvedAbsolutePath))
-                    {
-                        throw new ProjectSoundFontSelectionException(
-                            ProjectSoundFontSelectionFailure.ContentChangedDuringValidation,
-                            "The selected external SoundFont changed or became unavailable during validation.");
-                    }
-                    project.SoundFont.SetReference(binding.Reference);
-                    effectiveSoundFontPath = binding.ResolvedAbsolutePath;
-                    usedCaseInsensitiveSoundFontPathFallback =
-                        binding.UsedCaseInsensitiveFallback;
-                    break;
-                default:
-                    throw new InvalidOperationException("Unknown new Project SoundFont mode.");
-            }
-
-            if (input.PersistenceMode == NewProjectPersistenceMode.CreateUnsaved)
-            {
-                return new(
-                    project,
-                    ProjectDocumentOrigin.Unsaved,
-                    currentProjectPath: null,
-                    fileInformation: null,
-                    effectiveSoundFontPath,
-                    usedCaseInsensitiveSoundFontPathFallback,
-                    embeddedResource,
-                    Array.Empty<MidoraPackageDiagnosticV1>());
-            }
-
             MidoraProjectSaveResultV1 save = await _packages.SaveProjectAsync(
                 project,
                 input.TargetPath!,
                 overwriteAuthorized: input.OverwriteAuthorized,
-                cancellationToken: cancellationToken,
-                embeddedSoundFontResource: embeddedResource).ConfigureAwait(false);
+                cancellationToken: cancellationToken).ConfigureAwait(false);
             return new(
                 project,
                 ProjectDocumentOrigin.Persisted,
                 save.TargetPath,
                 save.FileInformation,
-                effectiveSoundFontPath,
-                usedCaseInsensitiveSoundFontPathFallback,
-                embeddedResource,
                 save.Diagnostics);
         }
         catch
         {
-            if (embeddedResource is not null)
-            {
-                await embeddedResource.DisposeAsync().ConfigureAwait(false);
-            }
+            project.Dispose();
             throw;
         }
     }
@@ -253,62 +117,12 @@ public sealed class ProjectCreationCoordinator
             ProjectDocumentOrigin.Unsaved,
             currentProjectPath: null,
             fileInformation: null,
-            effectiveSoundFontPath: null,
-            usedCaseInsensitiveSoundFontPathFallback: false,
-            embeddedSoundFontResource: null,
             Array.Empty<MidoraPackageDiagnosticV1>());
-    }
-
-    public async Task<NewProjectCreationResult> AdoptImportedProjectAsync(
-        MidoraProject project,
-        string? defaultEmbeddedSoundFontPath,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(project);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (defaultEmbeddedSoundFontPath is null)
-        {
-            return AdoptImportedProject(project);
-        }
-
-        string selectedPath = Path.GetFullPath(defaultEmbeddedSoundFontPath);
-        EmbeddedSoundFontResourceV1? embeddedResource = null;
-        try
-        {
-            embeddedResource = await SoundFontBindingV1.BindEmbeddedAsync(
-                project,
-                selectedPath,
-                cancellationToken).ConfigureAwait(false);
-            string effectiveSoundFontPath = embeddedResource.ResolvedAbsolutePath
-                ?? throw new InvalidOperationException(
-                    "A newly imported Embedded SoundFont has no runtime path.");
-            await _soundFontValidator.ValidateAsync(
-                effectiveSoundFontPath,
-                cancellationToken).ConfigureAwait(false);
-            return new(
-                project,
-                ProjectDocumentOrigin.Unsaved,
-                currentProjectPath: null,
-                fileInformation: null,
-                effectiveSoundFontPath,
-                usedCaseInsensitiveSoundFontPathFallback: false,
-                embeddedResource,
-                Array.Empty<MidoraPackageDiagnosticV1>());
-        }
-        catch
-        {
-            if (embeddedResource is not null)
-            {
-                await embeddedResource.DisposeAsync().ConfigureAwait(false);
-            }
-            throw;
-        }
     }
 
     private static ValidatedRequest ValidateRequest(NewProjectCreationRequest request)
     {
-        if (request.TicksPerQuarterNote is < MidoraProject.MinimumTicksPerQuarterNote
-            or > MidoraProject.MaximumTicksPerQuarterNote)
+        if (request.TicksPerQuarterNote <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(request.TicksPerQuarterNote));
         }
@@ -316,77 +130,48 @@ public sealed class ProjectCreationCoordinator
         {
             throw new ArgumentOutOfRangeException(nameof(request.PersistenceMode));
         }
-        ArgumentNullException.ThrowIfNull(request.SoundFont);
 
-        string? targetPath;
-        switch (request.PersistenceMode)
+        string? targetPath = request.TargetPath;
+        if (request.PersistenceMode == NewProjectPersistenceMode.CreateAndSave)
         {
-            case NewProjectPersistenceMode.CreateUnsaved:
-                if (request.TargetPath is not null || request.OverwriteAuthorized)
-                {
-                    throw new ArgumentException(
-                        "Create Unsaved cannot have a target path or overwrite authorization.",
-                        nameof(request));
-                }
-                if (request.SoundFont.Mode == NewProjectSoundFontMode.ExternalRelative)
-                {
-                    throw new ArgumentException(
-                        "An external relative SoundFont requires Create and Save so its Project-relative path is defined.",
-                        nameof(request));
-                }
-                targetPath = null;
-                break;
-            case NewProjectPersistenceMode.CreateAndSave:
-                ArgumentException.ThrowIfNullOrWhiteSpace(request.TargetPath);
-                if (!Path.IsPathFullyQualified(request.TargetPath))
-                {
-                    throw new ArgumentException(
-                        "Create and Save requires a fully qualified target path.",
-                        nameof(request));
-                }
-                targetPath = Path.GetFullPath(request.TargetPath);
-                break;
-            default:
-                throw new InvalidOperationException("Unknown new Project persistence mode.");
+            ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
+            if (!Path.IsPathFullyQualified(targetPath))
+            {
+                throw new ArgumentException(
+                    "The initial Project path must be fully qualified.",
+                    nameof(request.TargetPath));
+            }
+            targetPath = Path.GetFullPath(targetPath);
+        }
+        else if (targetPath is not null)
+        {
+            throw new ArgumentException(
+                "An unsaved Project cannot have an initial Project path.",
+                nameof(request.TargetPath));
         }
 
         return new(
             request.TicksPerQuarterNote,
-            ProjectTextRules.ValidateShortTextContent(
-                request.ProjectName,
-                nameof(request.ProjectName)),
-            ProjectTextRules.ValidateShortTextContent(
-                request.ProjectVersion,
-                nameof(request.ProjectVersion)),
-            ProjectTextRules.ValidateMetadataText(
-                request.AuthorOrTeam,
-                nameof(request.AuthorOrTeam)),
-            ProjectTextRules.ValidateMetadataText(
-                request.OriginalWork,
-                nameof(request.OriginalWork)),
-            ProjectTextRules.ValidateMetadataText(
-                request.Copyright,
-                nameof(request.Copyright)),
+            NormalizeText(request.ProjectName),
+            NormalizeText(request.ProjectVersion),
+            NormalizeText(request.AuthorOrTeam),
+            NormalizeText(request.OriginalWork),
+            NormalizeText(request.Copyright),
             request.PersistenceMode,
             targetPath,
-            request.OverwriteAuthorized,
-            request.SoundFont);
+            request.OverwriteAuthorized);
     }
 
-    private static void ApplyMetadata(ProjectMetadata metadata, ValidatedRequest request)
+    private static void ApplyMetadata(ProjectMetadata metadata, ValidatedRequest input)
     {
-        metadata.ProjectName = request.ProjectName;
-        metadata.ProjectVersion = request.ProjectVersion;
-        metadata.AuthorOrTeam = request.AuthorOrTeam;
-        metadata.OriginalWork = request.OriginalWork;
-        metadata.Copyright = request.Copyright;
+        metadata.ProjectName = input.ProjectName;
+        metadata.ProjectVersion = input.ProjectVersion;
+        metadata.AuthorOrTeam = input.AuthorOrTeam;
+        metadata.OriginalWork = input.OriginalWork;
+        metadata.Copyright = input.Copyright;
     }
 
-    private static bool PathsEqual(string left, string right) =>
-        string.Equals(
-            Path.GetFullPath(left),
-            Path.GetFullPath(right),
-            StringComparison.OrdinalIgnoreCase);
+    private static string NormalizeText(string? value) => value?.Trim() ?? string.Empty;
 
     private sealed record ValidatedRequest(
         int TicksPerQuarterNote,
@@ -397,6 +182,5 @@ public sealed class ProjectCreationCoordinator
         string Copyright,
         NewProjectPersistenceMode PersistenceMode,
         string? TargetPath,
-        bool OverwriteAuthorized,
-        NewProjectSoundFontSelection SoundFont);
+        bool OverwriteAuthorized);
 }

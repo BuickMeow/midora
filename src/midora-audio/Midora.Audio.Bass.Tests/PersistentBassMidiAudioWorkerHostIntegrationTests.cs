@@ -99,7 +99,7 @@ public sealed class PersistentBassMidiAudioWorkerHostIntegrationTests
         using PersistentBassMidiAudioWorkerSession session = new(
             host,
             plan,
-            NativeAudioIntegrationEnvironment.RequireVerifiedSoundFontSha256(soundFontPath),
+            NativeAudioIntegrationEnvironment.RequireSoundFontSetCacheIdentity(soundFontPath),
             new BassMidiRendererSettings(
                 BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
                 InitialReleaseAudioRuntimePolicy.WorkFrameCount),

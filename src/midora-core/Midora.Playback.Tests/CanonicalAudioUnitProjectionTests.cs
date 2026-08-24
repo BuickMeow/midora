@@ -269,7 +269,7 @@ public sealed class CanonicalAudioUnitProjectionTests
         Assert.NotEqual(key, AudioUnitPcmCacheKey.Create(
             fragment,
             compiled,
-            baseline with { SoundFontSha256 = new string('b', 64) }));
+            baseline with { SoundFontSetCacheIdentity = new string('b', 64) }));
         Assert.NotEqual(key, AudioUnitPcmCacheKey.Create(
             fragment,
             compiled,

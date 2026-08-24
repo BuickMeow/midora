@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.IO;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
@@ -11,11 +13,13 @@ public partial class ApplicationPreferencesDialog : Window
 {
     private const decimal BytesPerGibibyte = 1024m * 1024m * 1024m;
     private readonly ApplicationPreferences _initial;
+    private readonly ObservableCollection<SoundFontDraftItem> _soundFonts = [];
 
     public ApplicationPreferencesDialog(ApplicationPreferences initial)
     {
         _initial = initial ?? throw new ArgumentNullException(nameof(initial));
         InitializeComponent();
+        SoundFontListBox.ItemsSource = _soundFonts;
         Populate(initial);
         Loaded += OnLoaded;
     }
@@ -65,7 +69,11 @@ public partial class ApplicationPreferencesDialog : Window
         CacheRootBox.Text = preferences.AudioCache.RootPath;
         CacheQuotaBox.Text = (preferences.AudioCache.MaximumReusableBytes / BytesPerGibibyte)
             .ToString("0.###", CultureInfo.InvariantCulture);
-        DefaultSoundFontBox.Text = preferences.DefaultEmbeddedSoundFontPath ?? string.Empty;
+        _soundFonts.Clear();
+        foreach (ApplicationSoundFontPreference soundFont in preferences.SoundFonts)
+        {
+            _soundFonts.Add(new(soundFont.Path, soundFont.Enabled));
+        }
     }
 
     private void OnBrowseCacheClick(object sender, RoutedEventArgs e)
@@ -81,26 +89,71 @@ public partial class ApplicationPreferencesDialog : Window
         }
     }
 
-    private void OnBrowseDefaultSoundFontClick(object sender, RoutedEventArgs e)
+    private void OnAddSoundFontsClick(object sender, RoutedEventArgs e)
     {
         OpenFileDialog dialog = new()
         {
-            Title = "Select Default Embedded SoundFont",
+            Title = "Add SoundFonts",
             Filter = "SoundFont 2 (*.sf2)|*.sf2|All files (*.*)|*.*",
             CheckFileExists = true,
-            Multiselect = false,
-            InitialDirectory = File.Exists(DefaultSoundFontBox.Text)
-                ? Path.GetDirectoryName(DefaultSoundFontBox.Text)
-                : null
+            Multiselect = true,
+            InitialDirectory = _soundFonts.Count == 0
+                ? null
+                : Path.GetDirectoryName(_soundFonts[^1].Path)
         };
         if (dialog.ShowDialog(this) == true)
         {
-            DefaultSoundFontBox.Text = dialog.FileName;
+            foreach (string selected in dialog.FileNames)
+            {
+                string path = Path.GetFullPath(selected);
+                if (_soundFonts.Any(value => string.Equals(
+                        value.Path,
+                        path,
+                        StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+                _soundFonts.Add(new(path, enabled: true));
+            }
+            SoundFontListBox.SelectedItem = _soundFonts.LastOrDefault();
         }
     }
 
-    private void OnClearDefaultSoundFontClick(object sender, RoutedEventArgs e) =>
-        DefaultSoundFontBox.Text = string.Empty;
+    private void OnRemoveSoundFontClick(object sender, RoutedEventArgs e)
+    {
+        if (SoundFontListBox.SelectedItem is not SoundFontDraftItem selected)
+        {
+            return;
+        }
+        int index = _soundFonts.IndexOf(selected);
+        _soundFonts.RemoveAt(index);
+        if (_soundFonts.Count != 0)
+        {
+            SoundFontListBox.SelectedIndex = Math.Min(index, _soundFonts.Count - 1);
+        }
+    }
+
+    private void OnMoveSoundFontUpClick(object sender, RoutedEventArgs e) =>
+        MoveSelectedSoundFont(-1);
+
+    private void OnMoveSoundFontDownClick(object sender, RoutedEventArgs e) =>
+        MoveSelectedSoundFont(1);
+
+    private void MoveSelectedSoundFont(int delta)
+    {
+        if (SoundFontListBox.SelectedItem is not SoundFontDraftItem selected)
+        {
+            return;
+        }
+        int source = _soundFonts.IndexOf(selected);
+        int target = source + delta;
+        if (target < 0 || target >= _soundFonts.Count)
+        {
+            return;
+        }
+        _soundFonts.Move(source, target);
+        SoundFontListBox.SelectedItem = selected;
+    }
 
     private void OnRestoreDefaultsClick(object sender, RoutedEventArgs e)
     {
@@ -145,16 +198,12 @@ public partial class ApplicationPreferencesDialog : Window
                     deviceRequest,
                     voices),
                 AudioCache = new AudioCachePreferences(CacheRootBox.Text, quotaBytes).Normalize(),
-                DefaultEmbeddedSoundFontPath = string.IsNullOrWhiteSpace(DefaultSoundFontBox.Text)
-                    ? null
-                    : Path.GetFullPath(DefaultSoundFontBox.Text)
+                SoundFonts = _soundFonts
+                    .Select(value => new ApplicationSoundFontPreference(
+                        value.Path,
+                        value.Enabled).Normalize())
+                    .ToArray()
             };
-            if (Result.DefaultEmbeddedSoundFontPath is string defaultSoundFont
-                && !File.Exists(defaultSoundFont))
-            {
-                ShowValidation("The default embedded SoundFont file does not exist.");
-                return;
-            }
             Result.Validate();
             DialogResult = true;
         }
@@ -198,5 +247,34 @@ public partial class ApplicationPreferencesDialog : Window
     private sealed record DeviceChoice(string? Id, string DisplayName)
     {
         public static DeviceChoice SystemDefault { get; } = new(null, "System Default");
+    }
+
+    private sealed class SoundFontDraftItem : INotifyPropertyChanged
+    {
+        private bool _enabled;
+
+        public SoundFontDraftItem(string path, bool enabled)
+        {
+            Path = System.IO.Path.GetFullPath(path);
+            _enabled = enabled;
+        }
+
+        public string Path { get; }
+        public string FileName => System.IO.Path.GetFileName(Path);
+        public bool Enabled
+        {
+            get => _enabled;
+            set
+            {
+                if (_enabled == value)
+                {
+                    return;
+                }
+                _enabled = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
     }
 }

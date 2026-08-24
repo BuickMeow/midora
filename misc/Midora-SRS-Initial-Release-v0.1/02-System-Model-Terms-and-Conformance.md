@@ -15,7 +15,7 @@ Project Source Data
     -> Canonical Compiled Result
     -> Playback / Preview / MIDI Export / Audio Rendering
 ```
-Project 是唯一完整工作上下文。Conductor Track、有序 Event Instrument Definitions、内部 Event Instrument Usages / MIDI Channel Roots、混排的 Logical / Pure MIDI Arrangement Tracks、SoundFont Settings 和各类 Project Settings 均属于 Project。Definition 顺序、Usage/Root membership 与 Arrangement Track 顺序彼此正交；任何消费者不得把其中一项重新解释为另一项。播放、预览、MIDI 导出与音频渲染不得各自重新解释 Project 语义。
+Project 是唯一完整音乐语义工作上下文。Conductor Track、有序 Event Instrument Definitions、内部 Event Instrument Usages / MIDI Channel Roots、混排的 Logical / Pure MIDI Arrangement Tracks 和各类 Project Settings 均属于 Project。程序级 SoundFont 列表只属于本机音频消费者设置，不属于 Project。Definition 顺序、Usage/Root membership 与 Arrangement Track 顺序彼此正交；任何消费者不得把其中一项重新解释为另一项。播放、预览、MIDI 导出与音频渲染不得各自重新解释 Project 语义。
 ## 2.2 核心对象关系
 ```text
 Project

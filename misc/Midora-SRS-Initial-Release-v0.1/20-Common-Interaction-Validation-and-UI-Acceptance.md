@@ -390,7 +390,7 @@ Shared Usage / Auto Root block 的 brace 是整体移动 hit target；Track body
 ### 20.5.7 外部文件
 ```text
 .midora or candidate .zip dropped on Main Window -> Open Project flow
-SF2 dropped on explicit SoundFont target          -> Embed / External Relative Reference flow
+SF2 dropped on Application Preferences SoundFont list -> Add local path entry
 ```
 初版不通过拖放导入：
 ```text
@@ -981,14 +981,14 @@ No matching diagnostics
 [ Clear Filters ]
 ```
 不得用绝对语句保证 Project 一定可编译。
-### 20.10.12 无 SoundFont
+### 20.10.12 无启用 SoundFont
 ```text
-No SoundFont Selected
+No SoundFonts Enabled
 MIDI editing, compilation, and MIDI export remain usable.
 Playback, preview, and audio rendering are unavailable.
-[ Select SF2 ]
+[ Open Application Preferences ]
 ```
-这是合法状态，不使用 Error 图标。
+这是合法应用状态，不是 Project Error，不使用 Error 图标。
 ### 20.10.13 无启用音频输出设备
 ```text
 No Enabled Audio Output Device
@@ -1668,10 +1668,10 @@ Damaged     -> persistent source content could not be loaded
 ```
 ### 20.18.7 SoundFont
 ```text
-No SoundFont       -> legal Project state
-Configured         -> reference exists; backend not loaded
-Loaded             -> current backend loaded successfully
-Missing or Failed  -> playback, preview and render unavailable
+No Enabled SoundFont -> legal application state
+Configured           -> enabled local paths are stored; backend not loaded
+Loaded               -> current backend loaded the frozen enabled list successfully
+Missing or Failed    -> playback, preview and render unavailable
 ```
 Compile 和 MIDI Export 不依赖 SF2 加载。
 ### 20.18.8 English UI 与 Unicode

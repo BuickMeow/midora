@@ -29,33 +29,55 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
         string soundFontPath,
         TimeSpan preparingTimeout,
         bool allowManagedTestWorker = false)
+        : this(
+            workerPath,
+            bassNativeDirectory,
+            [soundFontPath],
+            preparingTimeout,
+            allowManagedTestWorker)
+    {
+    }
+
+    public PersistentBassMidiAudioWorkerHost(
+        string workerPath,
+        string bassNativeDirectory,
+        IReadOnlyList<string> soundFontPaths,
+        TimeSpan preparingTimeout,
+        bool allowManagedTestWorker = false)
     {
         BassMidiAudioWorkerSession.ValidateWorkerLaunchPath(workerPath, allowManagedTestWorker);
         ArgumentException.ThrowIfNullOrWhiteSpace(bassNativeDirectory);
-        ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
+        ArgumentNullException.ThrowIfNull(soundFontPaths);
+        if (soundFontPaths.Count == 0)
+        {
+            throw new ArgumentException("At least one enabled SoundFont is required.", nameof(soundFontPaths));
+        }
         if (preparingTimeout <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(preparingTimeout));
         }
         string nativeDirectory = Path.GetFullPath(bassNativeDirectory);
-        string fontPath = Path.GetFullPath(soundFontPath);
+        string[] fontPaths = soundFontPaths.Select(Path.GetFullPath).ToArray();
         if (!Directory.Exists(nativeDirectory))
         {
             throw new DirectoryNotFoundException(nativeDirectory);
         }
-        if (!File.Exists(fontPath))
+        string? missingPath = fontPaths.FirstOrDefault(path => !File.Exists(path));
+        if (missingPath is not null)
         {
-            throw new FileNotFoundException("The verified Project SoundFont does not exist.", fontPath);
+            throw new FileNotFoundException("An enabled application SoundFont does not exist.", missingPath);
         }
 
         WorkerPath = Path.GetFullPath(workerPath);
         NativeDirectory = nativeDirectory;
-        SoundFontPath = fontPath;
+        SoundFontPaths = Array.AsReadOnly(fontPaths);
         _defaultTimeout = preparingTimeout;
         _ownedDirectory = Path.Combine(
             Path.GetTempPath(),
             $"midora-audio-host-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_ownedDirectory);
+        string soundFontSetPath = Path.Combine(_ownedDirectory, "soundfonts.masf");
+        SoundFontSetFile.Write(soundFontSetPath, SoundFontPaths);
         _control = SharedAudioWorkerControl.Create($"Midora.Audio.Host.{Guid.NewGuid():N}");
         try
         {
@@ -63,7 +85,7 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
             startInfo.ArgumentList.Add("realtime-host");
             startInfo.ArgumentList.Add(_control.Name);
             startInfo.ArgumentList.Add(_ownedDirectory);
-            startInfo.ArgumentList.Add(SoundFontPath);
+            startInfo.ArgumentList.Add(soundFontSetPath);
             startInfo.ArgumentList.Add(NativeDirectory);
             _process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Could not start the persistent Midora audio worker.");
@@ -85,7 +107,8 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
 
     public string WorkerPath { get; }
     public string NativeDirectory { get; }
-    public string SoundFontPath { get; }
+    public IReadOnlyList<string> SoundFontPaths { get; }
+    public string SoundFontPath => SoundFontPaths[0];
     public SharedAudioWorkerControl Control => _control;
     public AudioWorkerStatus Status => _control.ReadStatus();
     public bool HasExited => _process.HasExited;

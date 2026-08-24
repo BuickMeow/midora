@@ -633,8 +633,8 @@ SubVoice 不允许绑定独立 SF2。
 SubVoice 不允许绑定 SF2 preset。
 规则：
 ```text
-SoundFont 仍是 Project 级单一 SF2
-所有实际使用 Port 使用同一个 Project SF2
+SoundFont 是程序级有序 Enabled SF2 列表
+所有实际使用 Unit 使用同一次任务冻结的相同列表和顺序
 SubVoice 只包含 MIDI 事件和 Midora 内置高级事件
 SubVoice 不管理声音资源
 SubVoice 不显示或选择 SF2 preset

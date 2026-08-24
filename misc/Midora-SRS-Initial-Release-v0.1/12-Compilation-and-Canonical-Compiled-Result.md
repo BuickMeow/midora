@@ -885,8 +885,7 @@ Port 3 使用
 Fixed Root 是初版正式功能；它可以有意保留 Port / Channel 空洞。任何 Compact Routing 都不得移动 Fixed Root，Auto Root 与 Logical allocation 必须绕开固定 Unit。以下项目仍属于初版外功能：
 ```text
 外部设备路由
-多 SF2
-每 Port 独立设置
+每 Project/Port/Track/Instrument 独立 SoundFont 列表
 ```
 ### 12.14.5 不保留历史稳定分配
 初版不采用“历史稳定分配”。

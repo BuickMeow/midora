@@ -518,48 +518,6 @@ public sealed class WpfInteractionRegressionTests
     }
 
     [Theory]
-    [InlineData(false, NewProjectSoundFontMode.None, NewProjectSoundFontMode.None)]
-    [InlineData(false, NewProjectSoundFontMode.Embedded, NewProjectSoundFontMode.Embedded)]
-    [InlineData(false, NewProjectSoundFontMode.ExternalRelative, NewProjectSoundFontMode.Embedded)]
-    [InlineData(true, NewProjectSoundFontMode.ExternalRelative, NewProjectSoundFontMode.ExternalRelative)]
-    public void NewProjectExternalSoundFontRequiresImmediateSave(
-        bool saveImmediately,
-        NewProjectSoundFontMode requested,
-        NewProjectSoundFontMode expected)
-    {
-        Assert.Equal(
-            expected,
-            NewProjectDialog.CoerceSoundFontMode(saveImmediately, requested));
-    }
-
-    [Fact]
-    public void NewProjectExternalSoundFontAcceptsOnlyProjectAdjacentLocations()
-    {
-        string root = Path.Combine(Path.GetTempPath(), $"midora-new-project-ui-{Guid.NewGuid():N}");
-        string nested = Path.Combine(root, "nested");
-        try
-        {
-            Directory.CreateDirectory(Path.Combine(root, "soundfonts"));
-            Directory.CreateDirectory(nested);
-            string project = Path.Combine(root, "Song.midora");
-
-            Assert.True(NewProjectDialog.IsAllowedExternalSoundFontLocation(
-                project,
-                Path.Combine(root, "Piano.sf2")));
-            Assert.True(NewProjectDialog.IsAllowedExternalSoundFontLocation(
-                project,
-                Path.Combine(root, "soundfonts", "Piano.sf2")));
-            Assert.False(NewProjectDialog.IsAllowedExternalSoundFontLocation(
-                project,
-                Path.Combine(nested, "Piano.sf2")));
-        }
-        finally
-        {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Theory]
     [InlineData(false, false)]
     [InlineData(true, true)]
     public void DrawSegmentSelectionReplacementWaitsUntilAnUnmovedPointerUp(

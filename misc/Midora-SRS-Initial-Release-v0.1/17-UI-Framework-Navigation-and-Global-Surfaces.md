@@ -138,7 +138,7 @@ Device Buffer Request
 Realtime Maximum Sample Voices per Unit Stream
 Audio Cache Root
 Maximum Reusable Audio Cache Bytes
-Optional default local SF2 path for new Projects
+Ordered application SoundFont list: absolute local path + Enabled
 ```
 这些状态：
 - 不进入 Project Undo / Redo；
@@ -148,7 +148,7 @@ Optional default local SF2 path for new Projects
 
 设备实际采样率、实际 buffer、callback period、当前设备枚举结果和 IPC 运行状态属于 Derived / Runtime Data，不作为 Application Preference 保存。音频缓存的 reusable 当前占用、transient 当前/峰值、session 目录、retention 状态与 Warning 同样是运行时派生状态；只保存配置 root 和 reusable byte quota。
 
-默认 SF2 路径只用于 `New Project` 与 `Open MIDI as New Project`：若路径在任务开始时仍指向可读本机文件，新 Project 使用 Embedded SoundFont 流程建立独立资源快照；它不是新 Project 的 external reference，也不得把绝对路径写入 `.midora`。偏好允许显式清空。应用启动时若文件不存在，必须自动清空该偏好；任务开始时再次发现文件不存在时视同未设置，新 Project 保持无 SoundFont。`New Project` 对话框必须把有效默认路径作为可见的 Embedded 初始选择，用户的最终对话框选择直接成为正式创建参数；不得在对话框关闭后静默覆盖。`Open MIDI as New Project` 继续在任务输入中应用该默认 Embedded 路径。
+SoundFont 列表对所有 Project 和从 MIDI 导入的新 Project 共用，不属于 Project 创建参数。列表支持新增、删除、启用/禁用和排序；顺序是正式 BASSMIDI 优先顺序。Apply 只保存路径结构，不读取、复制、hash 或调用 BASS 验证文件；真正的存在性、可读性和 BASS 加载失败在音频任务 Preparing 报告。列表不得进入 `.midora`、Project Modified 或 Undo/Redo。
 ### 17.2.3 Project Session UI State
 只存在于当前 Project 会话：
 ```text
@@ -352,7 +352,7 @@ Audio Render
 ```text
 Damaged Objects Prevent Saving
 Migrated Project Requires Saving
-External SoundFont Missing
+Enabled SoundFont Missing or Load Failed
 Save Failed
 Uncommitted Function Drafts
 Preference Storage Failed

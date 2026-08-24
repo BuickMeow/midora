@@ -57,7 +57,7 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
         if (!File.Exists(soundFontPath))
         {
             throw new FileNotFoundException(
-                "The frozen Project SoundFont does not exist.",
+                "The enabled application SoundFont does not exist.",
                 soundFontPath);
         }
         if (!Directory.Exists(bassNativeDirectory))

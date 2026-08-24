@@ -8,32 +8,23 @@ namespace Midora.Playback.Tests;
 public sealed class PlaybackTests
 {
     [Fact]
-    public void EffectiveSoundFontIdentityChangesWhenVerifiedHashChangesAtTheSamePath()
+    public void EffectiveSoundFontSetIdentityChangesWhenFileMetadataChangesAtTheSamePath()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
-            string firstSha256 = new('a', 64);
-            string secondSha256 = new('b', 64);
-            project.SoundFont.SetExternal(
-                "project.sf2",
-                "project.sf2",
-                firstSha256,
-                new FileInfo(soundFont).Length);
             using ProjectCompilationSession session = new(project, soundFont);
+            session.RefreshEffectiveSoundFontCacheIdentity();
+            string firstIdentity = session.EffectiveSoundFontSetCacheIdentity!;
             int changedCount = 0;
             session.EffectiveSoundFontChanged += (_, _) => changedCount++;
 
-            project.SoundFont.SetExternal(
-                "project.sf2",
-                "project.sf2",
-                secondSha256,
-                new FileInfo(soundFont).Length);
-            session.SetEffectiveSoundFontPath(soundFont);
+            File.WriteAllBytes(soundFont, [1, 2, 3]);
+            session.RefreshEffectiveSoundFontCacheIdentity();
 
             Assert.Equal(soundFont, session.EffectiveSoundFontPath);
-            Assert.Equal(secondSha256, session.EffectiveSoundFontSha256);
+            Assert.NotEqual(firstIdentity, session.EffectiveSoundFontSetCacheIdentity);
             Assert.Equal(1, changedCount);
         }
         finally
@@ -383,7 +374,7 @@ public sealed class PlaybackTests
     [Fact]
     public void DefaultPlaybackPreparationWarmsCanonicalAndSampleDomainCachesBeforeStart()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             using ProjectCompilationSession session = new(CreateProject(), soundFont);
@@ -411,7 +402,7 @@ public sealed class PlaybackTests
     [Fact]
     public void StartStopSeekAreColdStartsAndLockEdits()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -422,7 +413,6 @@ public sealed class PlaybackTests
             controller.Start();
             Assert.Equal(PlaybackState.Playing, controller.State);
             Assert.True(session.EditsLocked);
-            Assert.Null(project.SoundFont.Reference);
             Assert.Throws<InvalidOperationException>(() =>
                 session.SetEffectiveSoundFontPath(null));
             Assert.Throws<InvalidOperationException>(() => session.ApplyEdit(_ => { }, new ProjectChangeSet()));
@@ -462,7 +452,7 @@ public sealed class PlaybackTests
     [Fact]
     public void StopCursorBehaviorUsesOriginalTaskStartEvenAfterSeek()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -486,7 +476,7 @@ public sealed class PlaybackTests
     [Fact]
     public void NaturalCompletionLoopsThroughColdRangeStart()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -512,7 +502,7 @@ public sealed class PlaybackTests
     [Fact]
     public void DisablingLoopColdRestartsFromCurrentTickToOriginalRangeEnd()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -545,7 +535,7 @@ public sealed class PlaybackTests
     [Fact]
     public void SettingIdenticalLoopRangeDuringPlaybackIsANoOp()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -571,7 +561,7 @@ public sealed class PlaybackTests
     [Fact]
     public void DisablingLoopAfterOriginalRequestedEndCompletesPlaybackWithoutReversedRestart()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -597,7 +587,7 @@ public sealed class PlaybackTests
     [Fact]
     public void MuteSoloAreRuntimeOnlyAndResetPlaybackEngineClearsBackend()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -631,7 +621,7 @@ public sealed class PlaybackTests
     [Fact]
     public void FailedMonitoringCommandRollsBackRuntimeFilterState()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -658,7 +648,7 @@ public sealed class PlaybackTests
     [Fact]
     public void MonitoringRestoreUsesActivePlanRoutingInsteadOfColdRangeReallocation()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             (MidoraProject project, LogicalTrack restoredTrack) = CreateMonitoringRoutingProject();
@@ -698,7 +688,7 @@ public sealed class PlaybackTests
     [Fact]
     public void MonitoringRestoreUsesConsumedPositionInsteadOfSpeculativeRenderAheadPosition()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             (MidoraProject project, LogicalTrack restoredTrack) = CreateMonitoringRoutingProject();
@@ -728,7 +718,7 @@ public sealed class PlaybackTests
     [Fact]
     public void ResetMonitoringStatesClearsTrackAndSharedGroupFiltersAtomically()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             (MidoraProject project, LogicalTrack secondTrack) = CreateMonitoringRoutingProject();
@@ -761,7 +751,7 @@ public sealed class PlaybackTests
     public void FirstPlaybackIncludesPureMidiTrackCreatedAfterControllerConstruction(
         MidiChannelRootRoutingMode routingMode)
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = new(480);
@@ -827,7 +817,7 @@ public sealed class PlaybackTests
     [Fact]
     public void SharedGroupSoloTakesPriorityWhileGroupAndTrackMuteRemainIndependent()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             (MidoraProject project, LogicalTrack secondTrack) = CreateMonitoringRoutingProject();
@@ -884,7 +874,7 @@ public sealed class PlaybackTests
     [Fact]
     public void StartWithoutExplicitTickUsesStoppedCursor()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -906,7 +896,7 @@ public sealed class PlaybackTests
     [Fact]
     public void ZeroLengthPlaybackPreparesAndImmediatelyReturnsToStopped()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -933,7 +923,7 @@ public sealed class PlaybackTests
     [Fact]
     public void EventInstrumentPreviewSharesBackendExclusivelyAndPreservesMainCursor()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -972,7 +962,7 @@ public sealed class PlaybackTests
     [Fact]
     public void PreparingStateIsPublishedOnlyAfterProjectEditsAreLocked()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1010,7 +1000,7 @@ public sealed class PlaybackTests
     [Fact]
     public void PreviewCompilationFailureClearsTaskAndProjectEditLock()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1046,7 +1036,7 @@ public sealed class PlaybackTests
     [Fact]
     public void UnboundSegmentPreviewFailsBeforeBackendPreparation()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1075,7 +1065,7 @@ public sealed class PlaybackTests
     [Fact]
     public void RealtimePreviewUsesPositiveActualDeviceRateOutsideFileRange()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1100,7 +1090,7 @@ public sealed class PlaybackTests
     [Fact]
     public void SegmentPreviewNaturalCompletionDoesNotMoveMainCursor()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1125,7 +1115,7 @@ public sealed class PlaybackTests
     [Fact]
     public void BackendFaultStopsTaskUnlocksEditsAndPlayCanRecoverDirectly()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1163,7 +1153,7 @@ public sealed class PlaybackTests
     [Fact]
     public void ActiveOutputDeviceLossStopsWithoutThrowAndRequiresExplicitSelection()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1210,7 +1200,7 @@ public sealed class PlaybackTests
     [Fact]
     public void PlaybackKindsSelectOnlyTheirApprovedReusableCacheLayers()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1246,7 +1236,7 @@ public sealed class PlaybackTests
     [Fact]
     public void HeldPreviewGateEndFreezesConsumedLengthButChangesAudioAtProducerFrontier()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1287,7 +1277,7 @@ public sealed class PlaybackTests
     [Fact]
     public void HeldPreviewBackendFaultClearsTheCausalGateWithTheActiveTask()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1319,7 +1309,7 @@ public sealed class PlaybackTests
     [Fact]
     public void HeldPreviewUpdateRenewsTheFiniteCausalWindowBeforeProducerCompletion()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1350,7 +1340,7 @@ public sealed class PlaybackTests
     [Fact]
     public void SegmentPitchRulerPreviewUsesTheTrackBindingAndHasNoProjectEditSideEffect()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1391,7 +1381,7 @@ public sealed class PlaybackTests
     [Fact]
     public void OutputDeviceSelectionRejectsEmptyIdAndActivePlayback()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1430,7 +1420,7 @@ public sealed class PlaybackTests
         Assert.False(session.EditsLocked);
         Assert.Null(backend.LastStartedPlan);
 
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             session.SetEffectiveSoundFontPath(soundFont);
@@ -1449,7 +1439,7 @@ public sealed class PlaybackTests
     [Fact]
     public void PrepareFailureClearsTaskAndEditLockForDirectRecovery()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1487,7 +1477,7 @@ public sealed class PlaybackTests
     [Fact]
     public void StopFailureClearsActiveStateAndUnlocksBeforeRecovery()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1520,7 +1510,7 @@ public sealed class PlaybackTests
     [Fact]
     public void ResetContinuesAfterStopFailureAndRecoversToStopped()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1548,7 +1538,7 @@ public sealed class PlaybackTests
     [Fact]
     public void ResetFromStoppedClearsBackendWithoutStoppingOrChangingProjectCompilation()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1574,7 +1564,7 @@ public sealed class PlaybackTests
     [Fact]
     public void ResetFailurePreservesErrorAndAggregatesStopFailure()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1604,7 +1594,7 @@ public sealed class PlaybackTests
     [Fact]
     public void DirectPlayRecoveryKeepsErrorWhenBackendResetFails()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1632,7 +1622,7 @@ public sealed class PlaybackTests
     [Fact]
     public void SeekRestartStopFailureClearsTaskAndPreservesCurrentCursor()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1667,7 +1657,7 @@ public sealed class PlaybackTests
     [Fact]
     public void InvalidEffectiveLoopRangeIsRejectedBeforeMutatingPlaybackState()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             MidoraProject project = CreateProject();
@@ -1698,7 +1688,7 @@ public sealed class PlaybackTests
     [Fact]
     public void LatchedUnderrunRequestsOneCompleteRecoveryIntervalAndKeepsCursorFrozen()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         string cacheRoot = Path.Combine(
             Path.GetTempPath(),
             $"midora-playback-recovery-{Guid.NewGuid():N}");
@@ -1746,7 +1736,7 @@ public sealed class PlaybackTests
     [Fact]
     public void NonZeroPlaybackStartCanEnterBufferingWithoutLosingTheTickZeroSignature()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             using ProjectCompilationSession session = new(CreateProject(), soundFont);
@@ -1775,7 +1765,7 @@ public sealed class PlaybackTests
     [Fact]
     public void UnavailableDiskRecoveryStorageFallsBackToReservedWorkerMemory()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             using ProjectCompilationSession session = new(CreateProject(), soundFont);
@@ -1803,7 +1793,7 @@ public sealed class PlaybackTests
     [Fact]
     public void UnderrunWithoutDiskOrMemoryRecoveryStorageStopsAtStructuredError()
     {
-        string soundFont = Path.GetTempFileName();
+        string soundFont = CreateTemporarySoundFont();
         try
         {
             using ProjectCompilationSession session = new(CreateProject(), soundFont);
@@ -2127,6 +2117,15 @@ public sealed class PlaybackTests
             _activeSpool?.Dispose();
             _activeSpool = null;
         }
+    }
+
+    private static string CreateTemporarySoundFont()
+    {
+        string path = Path.Combine(
+            Path.GetTempPath(),
+            $"midora-playback-{Guid.NewGuid():N}.sf2");
+        File.WriteAllBytes(path, []);
+        return path;
     }
 
     private sealed class ManualTimeProvider : TimeProvider

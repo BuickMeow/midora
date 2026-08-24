@@ -4,7 +4,7 @@
 > 日常简称：**《Midora SRS》**  
 > 规格版本：**v0.1**  
 > 生成日期：**2026-07-15**  
-> 最近修订日期：**2026-08-23**
+> 最近修订日期：**2026-08-24**
 > 文档形态：**按章节拆分的 Markdown 规格书**
 
 ## 文档定位
@@ -49,6 +49,13 @@
 - **Initial Release Scope** 表示产品范围，不表示文档草稿序号。
 - `v0.x` 表示整合和审查阶段；成为正式开发基线后可升级为 `v1.0`。
 - 后续修订必须说明受影响章节，避免在实现中静默改变需求。
+
+## 2026-08-24 修订摘要
+
+- SoundFont 破坏性脱离 Project：`.midora` 不再保存 SF2 字节、Embedded/External 引用或任何 SoundFont metadata，New/Open/Save/Save Copy 不访问 SF2。
+- Application Preferences 改为有序 `{Enabled, absolute local .sf2 path}` 列表；所有实时播放、预览和离线渲染冻结同一 Enabled 顺序，BASS Worker 使用 `BASS_MIDI_FONT_MMAP` 直接打开原路径，不复制、不执行完整内容 hash 或预验证。
+- SoundFont 列表变更只允许在 Stopped/Idle 提交，并重建持久音频 Worker、失效 sample-domain cache。缓存键使用有序路径与 length/last-write-time 小型元数据描述符；该描述符不是内容完整性验证。
+- 本次为开发期格式破坏，旧 Project SoundFont 字段、settings 与内嵌资源不迁移、不兼容读取、不双写。受影响章节：2、3、6、8、12～23 及 ADR-CORE-047。
 
 ## 2026-08-23 修订摘要
 

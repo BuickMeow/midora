@@ -174,7 +174,7 @@ public sealed class AudioRenderTaskRunner
             _files.CreateDirectory(request.OutputPlan.OutputDirectory);
             await _worker.PrepareAsync(
                 new(
-                    request.SoundFont.FrozenPath,
+                    request.SoundFont.SoundFontPaths,
                     request.SampleRate,
                     request.MaximumSampleVoicesPerUnitStream,
                     checked((float)request.MasterVolumeDecibels)),
@@ -266,8 +266,8 @@ public sealed class AudioRenderTaskRunner
                     AudioFileRenderWorkerResult rendered = await _worker.RenderAsync(
                         new(
                             output.Plan,
-                            request.SoundFont.FrozenPath,
-                            request.SoundFont.Sha256,
+                            request.SoundFont.SoundFontPaths,
+                            request.SoundFont.CacheIdentity,
                             temporaryPath,
                             request.MaximumSampleVoicesPerUnitStream,
                             checked((float)request.MasterVolumeDecibels),

@@ -46,7 +46,6 @@
         "export",
         "playback",
         "audioRender",
-        "soundFont",
         "globalResetDefaults",
         "globalEventScopeDefaults"
       ],
@@ -55,7 +54,6 @@
         "export": { "const": "settings/export-settings.json" },
         "playback": { "const": "settings/playback-settings.json" },
         "audioRender": { "const": "settings/audio-render-settings.json" },
-        "soundFont": { "const": "settings/soundfont-settings.json" },
         "globalResetDefaults": { "const": "settings/global-reset-defaults.json" },
         "globalEventScopeDefaults": { "const": "settings/global-event-scope-defaults.json" }
       }

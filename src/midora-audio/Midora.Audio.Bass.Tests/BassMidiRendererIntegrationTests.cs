@@ -12,7 +12,7 @@ namespace Midora.Audio.Bass.Tests;
 public sealed class BassMidiRendererIntegrationTests
 {
     private const int SampleRate = 48_000;
-    private static readonly string SoundFontSha256 = new('a', 64);
+    private static readonly string SoundFontSetCacheIdentity = new('a', 64);
     private static string SoundFontPath =>
         NativeAudioIntegrationEnvironment.RequireSoundFontPath();
 
@@ -83,6 +83,25 @@ public sealed class BassMidiRendererIntegrationTests
         Assert.Equal(0, firstAllocated);
         Assert.Equal(0, secondAllocated);
         Assert.True(MemoryMarshal.AsBytes(first.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(second.AsSpan())));
+    }
+
+    [Fact]
+    public void OrderedMultipleSoundFontsUseFirstMatchingFontAsPriority()
+    {
+        EnsureEnvironment();
+        string secondSoundFont = NativeAudioIntegrationEnvironment.RequireSecondSoundFontPath();
+        MidiRenderPlan plan = CreateSingleNotePlan(channel: 0);
+        float[] firstOnly = RenderWithSoundFonts(plan, [SoundFontPath]);
+        float[] secondOnly = RenderWithSoundFonts(plan, [secondSoundFont]);
+        float[] firstPriority = RenderWithSoundFonts(plan, [SoundFontPath, secondSoundFont]);
+        float[] secondPriority = RenderWithSoundFonts(plan, [secondSoundFont, SoundFontPath]);
+
+        Assert.False(MemoryMarshal.AsBytes(firstOnly.AsSpan()).SequenceEqual(
+            MemoryMarshal.AsBytes(secondOnly.AsSpan())));
+        Assert.True(MemoryMarshal.AsBytes(firstOnly.AsSpan()).SequenceEqual(
+            MemoryMarshal.AsBytes(firstPriority.AsSpan())));
+        Assert.True(MemoryMarshal.AsBytes(secondOnly.AsSpan()).SequenceEqual(
+            MemoryMarshal.AsBytes(secondPriority.AsSpan())));
     }
 
     [Fact]
@@ -724,7 +743,7 @@ public sealed class BassMidiRendererIntegrationTests
                 AudioSegmentCacheStaging.Create(
                     sourcePlan,
                     cache,
-                    SoundFontSha256,
+                    SoundFontSetCacheIdentity,
                     nativeDirectory,
                     maximumSampleVoices,
                     manifestDirectory)))
@@ -748,7 +767,7 @@ public sealed class BassMidiRendererIntegrationTests
                 AudioSegmentCacheStaging.Create(
                     sourcePlan,
                     cache,
-                    SoundFontSha256,
+                    SoundFontSetCacheIdentity,
                     nativeDirectory,
                     maximumSampleVoices,
                     manifestDirectory)))
@@ -812,7 +831,7 @@ public sealed class BassMidiRendererIntegrationTests
                 AudioSegmentCacheStaging.Create(
                     sourcePlan,
                     cache,
-                    SoundFontSha256,
+                    SoundFontSetCacheIdentity,
                     nativeDirectory,
                     maximumSampleVoices,
                     manifestDirectory)))
@@ -836,7 +855,7 @@ public sealed class BassMidiRendererIntegrationTests
                 AudioSegmentCacheStaging.Create(
                     mutedPlan,
                     cache,
-                    SoundFontSha256,
+                    SoundFontSetCacheIdentity,
                     nativeDirectory,
                     maximumSampleVoices,
                     manifestDirectory)))
@@ -1155,6 +1174,29 @@ public sealed class BassMidiRendererIntegrationTests
         Assert.False(renderer.CacheCaptureInvalidated);
         Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
         nativeSynthesisFrames = renderer.NativeSynthesisFrameCountForDiagnostics;
+        return samples;
+    }
+
+    private static unsafe float[] RenderWithSoundFonts(
+        MidiRenderPlan plan,
+        IReadOnlyList<string> soundFontPaths)
+    {
+        using BassMidiRenderer renderer = new(
+            plan,
+            soundFontPaths,
+            new BassMidiRendererSettings(500, 256),
+            AudioMasterSettings.LimiterV1);
+        float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
+        fixed (float* destination = samples)
+        {
+            AudioPullResult result = renderer.PullFrames(
+                destination,
+                checked((int)plan.TotalFrameCount));
+            Assert.Equal(plan.TotalFrameCount, result.FrameCount);
+            Assert.NotEqual(AudioPullStatus.Fault, result.Status);
+        }
+        Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
+        Assert.Contains(samples, static sample => sample != 0f);
         return samples;
     }
 

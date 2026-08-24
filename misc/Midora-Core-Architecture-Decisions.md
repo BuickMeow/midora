@@ -43,7 +43,7 @@
 
 ### 1.6 持久化归属
 
-- 已建立 `.midora` v1 持久化契约基础：严格 `manifest.json`、`metadata.json`、`soundfont-settings.json` DTO/codec，Draft 2020-12 schema、Edition 2024 protobuf 通用类型、descriptor hash 与 golden bytes；完整 package 打开/保存和其余结构性文件 schema 尚未实现。
+- `.midora` v1 持久化契约不再包含 SoundFont settings 或 SF2 资源；旧 codec/schema 只属于已被 ADR-CORE-047 破坏性取代的开发历史。当前 package 只保存 Project 源数据。
 - Project 源数据中的稳定 ID、显式顺序、opaque sRGB 颜色、C# Mapping 源码和版本化设置属于未来 `.midora` 内容；只有发布了对应结构性文件 schema 后才形成文件兼容承诺。
 - Canonical result、编译 checkpoint、fingerprint、sample-domain 计划、PCM ring、播放状态、Mute/Solo 和诊断结果都是派生或运行时数据，不属于 Project 持久内容。
 
@@ -147,13 +147,15 @@ Requirement trace：
 - 边界：文本上限按 Unicode scalar；相对路径保留大小写和原 Unicode、不 normalization；颜色为 opaque sRGB；UTC 时间严格为七位小数秒 `Z`；总耗时为非负 int64 毫秒。
 - 失败条件：BOM、JSON 重复/未知字段、未知 protobuf tag、错误 wire type、非法 UTF-8、越界标量、非 canonical hash/path/version 或 descriptor/golden 漂移均失败，不截断也不静默修复。
 - 诊断：当前 codec 以 `JsonException` / `InvalidDataException` 保留失败类别；完整打开流程实现时再映射为 SRS 第 16.20 节的文件级正式诊断，不能把异常文本直接当 UI 诊断协议。
-- 持久化归属：本 ADR 冻结通用值类型和 `manifest.json` v1；`soundfont-settings.json` 与 `metadata.json` 分别随 ADR-CORE-008、ADR-CORE-009 冻结。受 MIDI 导出和文件命名决定影响的其余 settings 与完整对象 schema 尚未发布。
+- 持久化归属：本 ADR 冻结通用值类型和 `manifest.json` v1；`metadata.json` 随 ADR-CORE-009 冻结。旧 `soundfont-settings.json` 决定已由 ADR-CORE-047 破坏性取代。
 - 运行时归属：DTO、descriptor、codec 和校验属于 Preparing/open/save 路径，不进入编译器 canonical 语义或音频活动线程。
 - 明确非目标：本增量不实现 ZIP 结构、hash 全包校验、迁移、损坏占位、Save/Save Copy 原子事务和完整 Project round-trip。
 
 兼容规则：已发布 protobuf 字段号不得复用，删除字段必须 reserved。deterministic protobuf 不是跨 library/tool 版本的 canonical encoding；依赖升级必须显式评审 descriptor diff、golden bytes 和旧文件重开。受决定 21–22 影响的其余 v1 对象 / settings schema 只能在对应字段闭合后发布，不能用临时默认值提前冻结。
 
-## 10. ADR-CORE-008（已接受，19A）：Project SoundFont 可移植引用与内容身份
+## 10. ADR-CORE-008（已被 ADR-CORE-047 取代）：Project SoundFont 可移植引用与内容身份
+
+本节仅保留开发历史，不再构成当前需求或兼容承诺。
 
 决定：Project 不保存绝对 `SoundFontPath`。领域源数据使用严格 External/Embedded union；实际解析出的绝对路径、验证中/缺失/歧义/hash mismatch/加载失败状态和验证缓存均属于运行时。`settings/soundfont-settings.json` v1 已冻结为 `schemaVersion`、`mode` 及模式对应的 `relativePath`/`resourceId`、`originalFileName`、`sha256`、`fileSizeBytes`。
 
@@ -223,6 +225,8 @@ Requirement trace：输入是源名称、导出模式、扩展名、父目录和
 23.2A 固定模板：整曲 MIDI / 音频分别为 `<ProjectStem>.mid` 与 `<ProjectStem>.wav`，ProjectStem 依 Project 名称、当前 `.midora` stem、模式固定 fallback 选择；分 Track 为 `<NN> - <LogicalTrackDisplayName>.mid/.wav`，NN 使用整个 Project 的一基手动顺序且至少两位；逐 Port MIDI 为 `Port <PP>.mid`；Readme 为 `README.md`。MIDI Conductor Track Name 固定 `Conductor`，事件 Track Name 固定为一基 `Port <P> / Channel <C>`，描述原始 Channel Unit；不经过文件名合法化。多文件模式让用户选择完整输出目录，不自动增加嵌套目录。公共实现 `Midora.OutputPlanning.InitialReleaseOutputNaming` 只生成并合法化候选，不读取文件系统或推断覆盖权限。
 
 ## 14. ADR-CORE-012（已接受）：`.midora` v1 基础 Project 包垂直切片
+
+SoundFont settings、External/Embedded 输入及相关失败条件已被 ADR-CORE-047 破坏性取代；本节其余 package 事务和严格校验决定继续有效。
 
 决定：首个完整 package 切片只冻结当前已有领域能力可以无损重建的 JSON 边界，并贯通“内存 Project → 完整固定目录 ZIP → 严格自校验 → 同目录原子发布 → 释放句柄后重开”。本切片发布 `project.json`、`conductor-track.json`、`project-settings.json`、`export-settings.json`、`playback-settings.json`、`audio-render-settings.json`、`global-reset-defaults.json` 与 `global-event-scope-defaults.json` 的 schema v1；既有 `manifest.json`、`metadata.json` 与 `soundfont-settings.json` v1 保持不变。
 
@@ -349,7 +353,9 @@ Conductor 更新使用“同稳定 ID 的不可变记录替换”，Undo 恢复�
 
 第十二批命令覆盖 Project Metadata 六个用户字段与 Logical Track 颜色覆盖。Metadata 作为一个原子快照更新，项目名称/用户版本按 256 scalar 单行文本，作者/原曲/版权按 4,096 scalar 单行文本，备注按 65,536 scalar 描述文本校验；所有字段保留原 Unicode scalar 序列和空白，不执行 normalization 或 Trim。创建时间、修改时间和工程总耗时不进入可编辑快照，活动单调计时 owner 不被打断。Track color override 只保存 nullable opaque sRGB。两者均进入 History/Modified 和 `.midora`，但不属于音乐语义，使用空 change-set、复用 Track 编译缓存并保持 canonical fingerprint。
 
-## 22. ADR-CORE-020（已接受，Q-NUI-005 局部暂停）：SoundFont 选择的两阶段验证与可撤销运行时切换
+## 22. ADR-CORE-020（已被 ADR-CORE-047 取代）：SoundFont 选择的两阶段验证与可撤销运行时切换
+
+本节仅保留开发历史，不再构成当前需求或兼容承诺。
 
 决定：不分配稳定 ID 的 External SF2 选择、替换、重新绑定和取消选择统一进入 `ProjectDocumentSession`。选择先在 Project 事务外完成允许目录解析、完整 SHA-256/大小计算，再经注入的 `ISoundFontLoadabilityValidator` 使用正式固定版本 BASS/BASSMIDI 执行 `BASS_MIDI_FontInit`、全 preset/sample `BASS_MIDI_FontLoad` 和受检释放；随后重新解析并完整复核内容身份，只有仍与准备结果完全一致时才提交。提交命令在一个 Project Edit Lock/History 事务内同步替换可持久化 SoundFont union 和 `ProjectCompilationSession.EffectiveSoundFontPath`；Undo/Redo 同步恢复两者。取消选择使用同一命令把两者清空。
 
@@ -357,7 +363,9 @@ SoundFont 不属于 canonical MIDI 语义，命令使用空 `ProjectChangeSet`�
 
 Requirement trace：输入为当前 `.midora` 绝对路径、用户选择的绝对 SF2 路径、当前 Project/History、正式后端加载验证器和取消令牌；正式输出为 External 引用（相对路径、原文件名、SHA-256、大小）、本会话有效绝对路径及可撤销 History entry，或零源变更的结构化失败。边界是仅允许 Project 根或直属 `soundfonts/`、逐分量精确/唯一 ignore-case 解析、完整字节身份复核、Project Edit Lock 排他及 source/runtime 同步 Undo。绝对路径、BASS error、验证中间状态和 native handle 只属于运行时，不进入 `.midora` 或 canonical。明确非目标是文件监控/验证缓存、WPF 组合，以及 Q-NUI-005 决定前会分配 Embedded resource ID 的选择/替换；Embedded 旧/新资源租约跨 Undo 分支的所有权也必须在该分支实现时一并闭合。
 
-## 23. ADR-CORE-021（已接受）：External SoundFont 完整验证缓存与文件监控失效
+## 23. ADR-CORE-021（已被 ADR-CORE-047 取代）：External SoundFont 完整验证缓存与文件监控失效
+
+本节仅保留开发历史，不再构成当前需求或兼容承诺。
 
 决定：External SF2 完整验证缓存只在当前打开会话内存在。缓存命中键同时包含解析后的绝对路径、当前 Project 引用的已保存 SHA-256/大小、Windows volume serial + file ID、当前文件大小和原始 FILETIME 最后写入值；缺少其中任一项都不得复用完整 hash 结果。完整读取使用不共享写入/删除的异步文件句柄，在同一句柄上读取前后各获取一次 `GetFileInformationByHandle`，身份、大小或时间发生变化时拒绝该结果。缓存仍允许调用方强制完整复核。
 
@@ -365,7 +373,9 @@ Requirement trace：输入为当前 `.midora` 绝对路径、用户选择的绝�
 
 Requirement trace：输入为当前 `.midora` 绝对路径、External source reference、当前文件系统状态、强制复核标志和取消令牌；正式输出为精确/唯一 ignore-case/缺失/歧义/不可读解析状态、当前内容身份、hash match、文件 stamp 和会话缓存，或持续变化/取消失败。边界是 Windows 初版文件身份、完整原始字节 SHA-256、单 Project 会话 watcher 和缓存失效代次；Win32 handle、绝对路径、watcher、stamp 与缓存计数均只属于运行时。明确非目标是把监控结果持久化、用 mtime 代替首次 hash，以及尚未完成的 Project 打开/首次音频任务状态机接线。
 
-## 24. ADR-CORE-022（已接受）：Project SoundFont 运行时可用状态与音频消费门
+## 24. ADR-CORE-022（已被 ADR-CORE-047 取代）：Project SoundFont 运行时可用状态与音频消费门
+
+本节仅保留开发历史，不再构成当前需求或兼容承诺。
 
 决定：每个打开 Project 建立一个非持久化 `ProjectSoundFontRuntimeSession`。打开后状态先为 NotVerified/Verifying；无引用进入 NoReference，External 必须经 ADR-CORE-021 完整 hash/cache 验证和正式 `ISoundFontLoadabilityValidator`，Embedded 必须持有与 source reference 完全匹配的可用资源租约并通过同一后端加载验证。缺失、歧义、不可读、格式/损坏、后端不可用和 Embedded 资源错配分别保留稳定状态，不阻止 Project 打开、编译或 MIDI Export。External hash mismatch 与唯一 ignore-case fallback 在加载成功时仍为 Available，但 `RequiresWarning=true`，绝不被动改写 source hash。
 
@@ -578,3 +588,15 @@ Fixed Root 的 Port.Channel 只在 Root 上有一份权威值，但 UI 将其表
 2026-08-21 修订：Logical Track 普通 `Duplicate` 深拷贝 Track subtree，但创建引用同一 Definition 的新独立 Usage；显式 `Duplicate and Share State` 才保留源 Usage。普通独立副本位于完整源 Usage block 之后，共享副本位于源 Track 之后且留在 block 内。Event Instrument Definition Browser 的普通 Duplicate 继续只复制 Definition，Track/Usage 上下文不再提供 `Duplicate Instrument Only`。上述 owner 创建、global order 插入、stable ID remap 与 Undo/Redo 必须原子。
 
 Requirement trace：输入为 Definition index、Usage/Root membership、global Track order、Segment 内容、独立/共享 Duplicate、路由/共享编辑和 SMF Track order；正式输出为唯一可见顺序、确定的共享 Unit/lifecycle、原子成员变更、确定 SMF 顺序和严格可重开包。失败条件包括空 Usage/Root、断裂引用、非连续 Shared Usage/Auto Root、错误的 Duplicate membership/插入位置、重复 Fixed route、带内容的未绑定 Logical Track、kind 不匹配与部分提交；失败不得发布部分 Project。Definition、Usage、Root、Track、global order 和 membership 属于 Project 源数据；selection、brace hover、drag target、Mute/Solo 和 tile cache 属于 runtime/session。明确非目标是空 Fixed Root UI、可见 parent 行、第二次命名 Usage、Track 上下文 Definition-only Duplicate、旧 `.midora` 兼容或按名称修复关系。
+
+## 49. ADR-CORE-047（已接受）：SoundFont 脱离 Project，改为程序级有序列表与原路径 MMAP
+
+决定：删除 Project Domain、`.midora` manifest/settings/resource 和 Project 工作流中的全部 SoundFont 状态。Application Preferences 保存唯一的有序 `{absoluteLocalPath, enabled}` SF2 列表；顺序是 BASSMIDI Font 优先顺序。列表编辑是程序设置事务，只允许在播放停止且无前台任务时 Apply；它不进入 Project Modified/Undo/Redo，不随 Project/MIDI 文件切换。
+
+设置阶段只验证本机完全限定 `.sf2` 路径的结构，不复制、不读取完整文件、不计算内容 SHA-256、不预先调用 BASS。实时持久 Worker 与离线 Worker 都直接对 Enabled 原路径执行 `BASS_MIDI_FontInit(BASS_MIDI_FONT_MMAP)`，为每个 Unit Stream 一次设置完整有序 Font handle 列表。持久 Worker 冻结列表直到设置变化；变化时销毁并重建，不做活动任务热替换。没有 Enabled 项时，播放、预览和音频渲染不可用，但 Project 保存、编译和 MIDI 导入/导出不受影响。
+
+Reusable PCM 仍必须隔离不同声音资源，但不得因此重新完整读取 SF2。缓存指纹由 Enabled 项的有序规范绝对路径、任务开始时文件长度和 UTC 修改时间组成的小型描述符确定；可使用 SHA-256 编码该描述符，但它不是 SF2 内容 hash 或验证。任一路径缺失/不可读时不建立可复用命中，并由实际 BASS Preparing 失败报告。音频文件渲染不再复制“冻结 SF2”，只冻结路径列表和元数据指纹；外部进程在任务期间修改文件属于显式外部资源竞争。
+
+本决定破坏性替换原 Project 单 SF2、Embedded/External、完整 SHA-256、打开验证、提取和 New Project SoundFont 工作流；开发期不提供旧 `.midora` SoundFont 兼容读取、迁移或双写。MIDI Export Readme 不再暴露本机 SoundFont 列表。SoundFont 授权责任不因不嵌入 Project 而改变。
+
+Requirement trace：输入为 Application Preferences 的有序 Enabled SF2 路径、文件元数据、canonical audio plan 与音频设备/渲染设置；正式输出为冻结 Font handle 列表、同列表实时/预览/离线声音和隔离的 sample-domain cache generation。边界是零 Enabled 禁止发声、路径/BASS 失败不修改设置、列表变化只在 Stopped/Idle、Worker 直接读源路径、Project/package/canonical 完全无 SF2。设置列表属于程序级持久化；Font handle、元数据指纹和缓存属于本机运行时；明确非目标是内容完整性验证、Project 可移植 SoundFont、每 Project/Port/Track 独立列表、运行中热切换或 SFZ/DLS。

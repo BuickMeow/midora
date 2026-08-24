@@ -15,7 +15,6 @@ public sealed record DesktopAudioRenderOptions(
     int SampleRate,
     int MaximumSampleVoicesPerUnitStream,
     bool TreatWarningsAsErrors,
-    bool AcceptExternalSoundFontHashChange,
     IReadOnlySet<MidoraId>? SelectedTrackIds = null);
 
 public sealed class PreparedDesktopAudioRender : IAsyncDisposable
@@ -36,7 +35,7 @@ public static class DesktopAudioRenderService
     public static async Task<PreparedDesktopAudioRender> PrepareAsync(
         MidoraProject project,
         string? currentProjectPath,
-        EmbeddedSoundFontResourceV1? embeddedResource,
+        IReadOnlyList<string> soundFontPaths,
         DesktopAudioRenderOptions options,
         CancellationToken cancellationToken = default)
     {
@@ -53,10 +52,7 @@ public static class DesktopAudioRenderService
         try
         {
             soundFont = await AudioRenderSoundFontSnapshot.CreateAsync(
-                project,
-                currentProjectPath,
-                embeddedResource,
-                options.AcceptExternalSoundFontHashChange,
+                soundFontPaths,
                 cancellationToken).ConfigureAwait(false);
             using MidoraCompiler compiler = new();
             AudioRenderCompilationResult compilation = new AudioRenderCompilationCoordinator(compiler).Compile(new()
@@ -68,7 +64,8 @@ public static class DesktopAudioRenderService
                 SelectedTrackIds = options.SelectedTrackIds,
                 TreatWarningsAsErrors = options.TreatWarningsAsErrors
             });
-            string[] forbidden = new[] { currentProjectPath, soundFont.ResolvedSourcePath }
+            string[] forbidden = new[] { currentProjectPath }
+                .Concat(soundFont.SoundFontPaths)
                 .Where(path => !string.IsNullOrWhiteSpace(path))
                 .Select(path => Path.GetFullPath(path!))
                 .ToArray();

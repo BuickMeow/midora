@@ -309,7 +309,7 @@ public sealed class PersistenceContractV1Tests
         Assert.Throws<JsonException>(() => ManifestCodecV1.Parse(Encoding.UTF8.GetBytes(unknown)));
 
         string futureKind = Encoding.UTF8.GetString(first).Replace(
-            "\"embedded-resource\"",
+            "\"settings-json\"",
             "\"future-extension\"",
             StringComparison.Ordinal);
         ManifestJsonV1 withFutureKind = ManifestCodecV1.Parse(Encoding.UTF8.GetBytes(futureKind));
@@ -322,7 +322,7 @@ public sealed class PersistenceContractV1Tests
     {
         string schemaDirectory = Path.Combine(AppContext.BaseDirectory, "Schemas", "Json");
         string[] paths = Directory.GetFiles(schemaDirectory, "*.schema.json", SearchOption.TopDirectoryOnly);
-        Assert.Equal(12, paths.Length);
+        Assert.Equal(11, paths.Length);
         foreach (string path in paths)
         {
             using JsonDocument schema = JsonDocument.Parse(File.ReadAllBytes(path));
@@ -366,8 +366,9 @@ public sealed class PersistenceContractV1Tests
         [
             new ManifestFileEntryJsonV1
             {
-                Path = "resources/soundfonts/00000000000000000000000000000001.sf2",
-                Kind = "embedded-resource",
+                Path = "settings/project-settings.json",
+                Kind = "settings-json",
+                SchemaVersion = 1,
                 Sha256 = new string('a', 64)
             },
             new ManifestFileEntryJsonV1

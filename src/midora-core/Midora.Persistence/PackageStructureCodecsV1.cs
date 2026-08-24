@@ -13,12 +13,8 @@ internal static class MidoraPackagePathsV1
     public const string ExportSettings = "settings/export-settings.json";
     public const string PlaybackSettings = "settings/playback-settings.json";
     public const string AudioRenderSettings = "settings/audio-render-settings.json";
-    public const string SoundFontSettings = "settings/soundfont-settings.json";
     public const string GlobalResetDefaults = "settings/global-reset-defaults.json";
     public const string GlobalEventScopeDefaults = "settings/global-event-scope-defaults.json";
-
-    public static string EmbeddedSoundFont(MidoraId resourceId) =>
-        $"resources/soundfonts/{resourceId}.sf2";
 
     public static string PureMidiContentPack(MidoraId trackId) =>
         $"midi-content/mt_{trackId}.mpk";
@@ -32,7 +28,6 @@ internal static class MidoraPackagePathsV1
         ExportSettings,
         PlaybackSettings,
         AudioRenderSettings,
-        SoundFontSettings,
         GlobalResetDefaults,
         GlobalEventScopeDefaults
     ];
@@ -66,7 +61,6 @@ internal static class ProjectCodecV1
                 Export = MidoraPackagePathsV1.ExportSettings,
                 Playback = MidoraPackagePathsV1.PlaybackSettings,
                 AudioRender = MidoraPackagePathsV1.AudioRenderSettings,
-                SoundFont = MidoraPackagePathsV1.SoundFontSettings,
                 GlobalResetDefaults = MidoraPackagePathsV1.GlobalResetDefaults,
                 GlobalEventScopeDefaults = MidoraPackagePathsV1.GlobalEventScopeDefaults
             },
@@ -130,7 +124,6 @@ internal static class ProjectCodecV1
         RequirePath(value.Settings.Export, MidoraPackagePathsV1.ExportSettings, "settings.export");
         RequirePath(value.Settings.Playback, MidoraPackagePathsV1.PlaybackSettings, "settings.playback");
         RequirePath(value.Settings.AudioRender, MidoraPackagePathsV1.AudioRenderSettings, "settings.audioRender");
-        RequirePath(value.Settings.SoundFont, MidoraPackagePathsV1.SoundFontSettings, "settings.soundFont");
         RequirePath(value.Settings.GlobalResetDefaults, MidoraPackagePathsV1.GlobalResetDefaults,
             "settings.globalResetDefaults");
         RequirePath(value.Settings.GlobalEventScopeDefaults, MidoraPackagePathsV1.GlobalEventScopeDefaults,

@@ -27,6 +27,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private readonly MidoraProjectPackageV1 _packages = new(SoftwareVersion);
     private readonly ProjectCreationCoordinator _creation;
     private readonly ProjectOpenCoordinator _opening;
+    private ApplicationPreferences _applicationPreferences =
+        new ApplicationPreferencesStore().Load().Preferences;
     private readonly CSharpMappingDraftCompiler _mappingDraftCompiler = new();
     private readonly HashSet<MidoraId> _mutedTrackIds = [];
     private readonly HashSet<MidoraId> _soloTrackIds = [];
@@ -63,7 +65,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     public DesktopSessionController()
     {
-        _creation = new(_packages, new WorkerSoundFontLoadabilityValidator());
+        _creation = new(_packages);
         _opening = new(_packages);
     }
 
@@ -126,9 +128,12 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             ProjectCompilationState.Failed => "Compile Failed",
             _ => "Not Compiled"
         };
-    public string SoundFontState => Project?.SoundFont.Reference is null
-        ? "No SoundFont"
-        : "SoundFont Configured";
+    public string SoundFontState => _applicationPreferences.GetEnabledSoundFontPaths().Length switch
+    {
+        0 => "No SoundFonts Enabled",
+        1 => "1 SoundFont Enabled",
+        int count => $"{count} SoundFonts Enabled"
+    };
     public bool IsTrackMuted(MidoraId trackId) => _mutedTrackIds.Contains(trackId);
     public bool IsTrackSolo(MidoraId trackId) => _soloTrackIds.Contains(trackId);
     public bool IsSharedGroupMuted(MidoraId sharedGroupId) =>
@@ -176,7 +181,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         or PlaybackState.Stopping;
     public bool IsLoopEnabled => _context?.Playback?.LoopRange is not null;
     public bool CanPlayback => _context?.Playback is not null
-        && _context.Compilation.EffectiveSoundFontPath is not null
+        && _context.Compilation.EffectiveSoundFontPaths.Count != 0
         && _context.Compilation.CompilationState is not ProjectCompilationState.Failed
         && !_isPlaybackStartPending
         && !IsPlaybackActive;
@@ -186,15 +191,22 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ? "Stop"
         : PlaybackUnavailableReason ?? "Play";
     public bool CanPreview => _context?.Tasks is not null
-        && _context.Compilation.EffectiveSoundFontPath is not null
+        && _context.Compilation.EffectiveSoundFontPaths.Count != 0
         && !IsPlaybackActive
         && !IsForegroundTaskRunning;
-    public string? PlaybackUnavailableReason => _context?.PlaybackUnavailableReason
-        ?? (_context?.Compilation.EffectiveSoundFontPath is null
-            ? "A verified Project SoundFont is required."
-            : _context.Compilation.CompilationState == ProjectCompilationState.Failed
-                ? "The current canonical compilation is not consumable."
-                : null);
+    public string? PlaybackUnavailableReason
+    {
+        get
+        {
+            if (_context is null) return null;
+            return _context.PlaybackUnavailableReason
+                ?? (_context.Compilation.EffectiveSoundFontPaths.Count == 0
+                    ? "Enable at least one application SoundFont in Preferences."
+                    : _context.Compilation.CompilationState == ProjectCompilationState.Failed
+                        ? "The current canonical compilation is not consumable."
+                        : null);
+        }
+    }
     public int ErrorCount => _compilerErrorCount;
     public int WarningCount => _compilerWarningCount;
     public bool HasErrors => ErrorCount > 0;
@@ -344,9 +356,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ProjectContext? next = null;
         try
         {
-            next = ProjectContext.FromCreation(_packages, result);
+            next = ProjectContext.FromCreation(_packages, result, _applicationPreferences);
             result = null!;
-            await next.RefreshSoundFontAsync(cancellationToken);
             await ActivateAsync(next);
             next = null;
         }
@@ -372,9 +383,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ProjectContext? next = null;
         try
         {
-            next = ProjectContext.FromOpenCandidate(candidate);
+            next = ProjectContext.FromOpenCandidate(candidate, _applicationPreferences);
             candidate = null!;
-            await next.RefreshSoundFontAsync(cancellationToken);
             await ActivateAsync(next);
             next = null;
         }
@@ -395,7 +405,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         string path,
         IReadOnlyDictionary<byte, byte>? zeroBasedPortMapping = null,
         CancellationToken cancellationToken = default,
-        string? defaultEmbeddedSoundFontPath = null,
         IProgress<MidiProjectImportProgress>? progress = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -411,8 +420,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         IReadOnlyList<MidiProjectImportDiagnostic> diagnostics =
             await AdoptMidiImportAsNewProjectAsync(
             imported,
-            cancellationToken,
-            defaultEmbeddedSoundFontPath);
+            cancellationToken);
         progress?.Report(new(
             MidiProjectImportPhase.Completed,
             imported.Metrics?.ScannedEventCount ?? 0,
@@ -443,18 +451,14 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     internal async Task<IReadOnlyList<MidiProjectImportDiagnostic>> AdoptMidiImportAsNewProjectAsync(
         MidiProjectImportResult imported,
-        CancellationToken cancellationToken = default,
-        string? defaultEmbeddedSoundFontPath = null)
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(imported);
         cancellationToken.ThrowIfCancellationRequested();
         NewProjectCreationResult adopted;
         try
         {
-            adopted = await _creation.AdoptImportedProjectAsync(
-                imported.Project,
-                defaultEmbeddedSoundFontPath,
-                cancellationToken);
+            adopted = _creation.AdoptImportedProject(imported.Project);
         }
         catch
         {
@@ -464,9 +468,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ProjectContext? next = null;
         try
         {
-            next = ProjectContext.FromCreation(_packages, adopted);
+            next = ProjectContext.FromCreation(_packages, adopted, _applicationPreferences);
             adopted = null!;
-            await next.RefreshSoundFontAsync(cancellationToken);
             await ActivateAsync(next);
             next = null;
             return imported.Diagnostics;
@@ -575,108 +578,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             Readme = prepared.Readme,
             OverwriteAuthorized = overwriteAuthorized
         }, cancellationToken);
-    }
-
-    public async Task SelectEmbeddedSoundFontAsync(
-        string selectedPath,
-        CancellationToken cancellationToken = default)
-    {
-        if (_context is null) throw new InvalidOperationException("No Project is open.");
-        await _context.SoundFontEditing.SelectEmbeddedAsync(selectedPath, cancellationToken);
-        await _context.RefreshSoundFontAsync(cancellationToken);
-        RefreshAll();
-    }
-
-    public async Task SelectExternalSoundFontAsync(
-        string selectedPath,
-        CancellationToken cancellationToken = default)
-    {
-        if (_context is null) throw new InvalidOperationException("No Project is open.");
-        string projectPath = Persistence?.CurrentProjectPath
-            ?? throw new InvalidOperationException(
-                "Save the Project before selecting an external relative SoundFont.");
-        await _context.SoundFontEditing.SelectExternalAsync(
-            projectPath,
-            selectedPath,
-            cancellationToken);
-        await _context.RefreshSoundFontAsync(cancellationToken);
-        RefreshAll();
-    }
-
-    public async Task ExtractEmbeddedSoundFontAsync(
-        string destinationPath,
-        bool overwriteAuthorized,
-        CancellationToken cancellationToken = default)
-    {
-        if (_context is null || Project?.SoundFont.Reference is not EmbeddedProjectSoundFontReference reference)
-        {
-            throw new InvalidOperationException("The Project has no embedded SoundFont to extract.");
-        }
-        EmbeddedSoundFontResourceV1 resource = _context.SoundFontResources.CurrentEmbeddedResource
-            ?? throw new InvalidOperationException("The embedded SoundFont runtime resource is unavailable.");
-        if (!resource.IsAvailable
-            || resource.Reference != reference
-            || resource.ResolvedAbsolutePath is not string sourcePath
-            || !File.Exists(sourcePath))
-        {
-            throw new InvalidOperationException(
-                "The embedded SoundFont runtime resource is unavailable or no longer matches the Project.");
-        }
-
-        string destination = Path.GetFullPath(destinationPath);
-        string? directory = Path.GetDirectoryName(destination);
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
-        {
-            throw new DirectoryNotFoundException("The selected destination directory does not exist.");
-        }
-        if (File.Exists(destination) && !overwriteAuthorized)
-        {
-            throw new IOException("The destination file already exists and overwrite was not authorized.");
-        }
-
-        string temporary = Path.Combine(
-            directory,
-            $".{Path.GetFileName(destination)}.{Guid.NewGuid():N}.tmp");
-        try
-        {
-            await using (FileStream source = new(
-                sourcePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                128 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan))
-            await using (FileStream target = new(
-                temporary,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                128 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan))
-            {
-                await source.CopyToAsync(target, 128 * 1024, cancellationToken);
-                await target.FlushAsync(cancellationToken);
-            }
-            File.Move(temporary, destination, overwriteAuthorized);
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(temporary)) File.Delete(temporary);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                // Best-effort cleanup must not replace the extraction result or its causal error.
-            }
-        }
-    }
-
-    public void ClearSoundFont()
-    {
-        if (_context is null) throw new InvalidOperationException("No Project is open.");
-        _context.SoundFontEditing.Clear();
-        RefreshAll();
     }
 
     public void StartPlayback(long? cursorTick = null)
@@ -1023,7 +924,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         return await DesktopAudioRenderService.PrepareAsync(
             Project,
             Persistence?.CurrentProjectPath,
-            _context.SoundFontResources.CurrentEmbeddedResource,
+            _applicationPreferences.GetEnabledSoundFontPaths(),
             options,
             cancellationToken);
     }
@@ -1225,8 +1126,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         ArgumentNullException.ThrowIfNull(preferences);
         preferences.Validate();
+        _applicationPreferences = preferences;
         if (_context is null)
         {
+            Raise(nameof(SoundFontState));
             return;
         }
         if (IsForegroundTaskRunning || IsPlaybackActive)
@@ -1252,6 +1155,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             _context.Playback.StateChanged += OnPlaybackStateChanged;
         }
         RefreshProperties();
+        Raise(nameof(SoundFontState));
     }
 
     public void NavigateToDiagnostic(DiagnosticRow diagnostic)
@@ -2302,17 +2206,12 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private sealed class ProjectContext : IAsyncDisposable
     {
         private readonly IAsyncDisposable _owner;
-        private readonly ProjectSoundFontResourceSession _soundFontResources;
-        private readonly ProjectSoundFontRuntimeSession _soundFontRuntime;
 
         private ProjectContext(
             IAsyncDisposable owner,
             ProjectCompilationSession compilation,
             ProjectDocumentSession document,
             ProjectPersistenceCoordinator persistence,
-            ProjectSoundFontResourceSession soundFontResources,
-            ProjectSoundFontEditing soundFontEditing,
-            ProjectSoundFontRuntimeSession soundFontRuntime,
             PlaybackController? playback,
             ApplicationTaskCoordinator? tasks,
             string? playbackUnavailableReason)
@@ -2321,9 +2220,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             Compilation = compilation;
             Document = document;
             Persistence = persistence;
-            _soundFontResources = soundFontResources;
-            SoundFontEditing = soundFontEditing;
-            _soundFontRuntime = soundFontRuntime;
             Playback = playback;
             Tasks = tasks;
             PlaybackUnavailableReason = playbackUnavailableReason;
@@ -2332,43 +2228,30 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         public ProjectCompilationSession Compilation { get; }
         public ProjectDocumentSession Document { get; }
         public ProjectPersistenceCoordinator Persistence { get; }
-        public ProjectSoundFontEditing SoundFontEditing { get; }
-        public ProjectSoundFontResourceSession SoundFontResources => _soundFontResources;
         public PlaybackController? Playback { get; private set; }
         public ApplicationTaskCoordinator? Tasks { get; private set; }
         public string? PlaybackUnavailableReason { get; private set; }
 
         public static ProjectContext FromCreation(
             MidoraProjectPackageV1 packages,
-            NewProjectCreationResult result)
+            NewProjectCreationResult result,
+            ApplicationPreferences preferences)
         {
             ProjectCompilationSession compilation = new(
                 result.Project,
-                result.EffectiveSoundFontPath,
                 executionMode: ProjectCompilationExecutionMode.Background);
-            ProjectSoundFontResourceSession? resources = null;
-            ProjectSoundFontEditing? editing = null;
-            ProjectSoundFontRuntimeSession? runtime = null;
             try
             {
+                compilation.SetEffectiveSoundFontPaths(preferences.GetEnabledSoundFontPaths());
                 ProjectDocumentSession document = new(compilation, result.Origin);
-                resources = new(result.EmbeddedSoundFontResource);
-                editing = new(
-                    document,
-                    new WorkerSoundFontLoadabilityValidator(),
-                    resources);
-                runtime = new(
-                    compilation,
-                    new WorkerSoundFontLoadabilityValidator());
                 ProjectPersistenceCoordinator persistence = new(
                     document,
                     packages,
                     result.CurrentProjectPath,
-                    result.FileInformation,
-                    () => resources.CurrentEmbeddedResource);
+                    result.FileInformation);
                 CreatePlaybackServices(
                     compilation,
-                    null,
+                    preferences,
                     out PlaybackController? playback,
                     out ApplicationTaskCoordinator? tasks,
                     out string? playbackFailure);
@@ -2377,52 +2260,36 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     compilation,
                     document,
                     persistence,
-                    resources,
-                    editing,
-                    runtime,
                     playback,
                     tasks,
                     playbackFailure);
             }
             catch
             {
-                runtime?.Dispose();
-                editing?.Dispose();
-                resources?.Dispose();
                 compilation.Dispose();
                 throw;
             }
         }
 
-        public static ProjectContext FromOpenCandidate(ProjectOpenCandidate candidate)
+        public static ProjectContext FromOpenCandidate(
+            ProjectOpenCandidate candidate,
+            ApplicationPreferences preferences)
         {
             ProjectCompilationSession compilation = new(
                 candidate.Project,
-                candidate.InitialSoundFontState.ResolvedAbsolutePath,
                 executionMode: ProjectCompilationExecutionMode.Background);
-            ProjectSoundFontResourceSession? resources = null;
-            ProjectSoundFontEditing? editing = null;
-            ProjectSoundFontRuntimeSession? runtime = null;
             try
             {
+                compilation.SetEffectiveSoundFontPaths(preferences.GetEnabledSoundFontPaths());
                 ProjectDocumentSession document = candidate.CreateDocumentSession(compilation);
-                resources = new(candidate.EmbeddedSoundFontResource);
-                editing = new(
-                    document,
-                    new WorkerSoundFontLoadabilityValidator(),
-                    resources);
-                runtime = new(
-                    compilation,
-                    new WorkerSoundFontLoadabilityValidator());
                 ProjectPersistenceCoordinator persistence = new(
                     document,
                     new MidoraProjectPackageV1(SoftwareVersion),
                     candidate.CurrentProjectPath,
-                    candidate.FileInformation,
-                    () => resources.CurrentEmbeddedResource);
+                    candidate.FileInformation);
                 CreatePlaybackServices(
                     compilation,
-                    null,
+                    preferences,
                     out PlaybackController? playback,
                     out ApplicationTaskCoordinator? tasks,
                     out string? playbackFailure);
@@ -2431,18 +2298,12 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     compilation,
                     document,
                     persistence,
-                    resources,
-                    editing,
-                    runtime,
                     playback,
                     tasks,
                     playbackFailure);
             }
             catch
             {
-                runtime?.Dispose();
-                editing?.Dispose();
-                resources?.Dispose();
                 compilation.Dispose();
                 throw;
             }
@@ -2452,19 +2313,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             Tasks?.Dispose();
             Playback?.Dispose();
-            _soundFontRuntime.Dispose();
-            await SoundFontEditing.DisposeAsync();
-            await _soundFontResources.DisposeAsync();
             Compilation.Dispose();
             await _owner.DisposeAsync();
         }
-
-        public Task<ProjectSoundFontRuntimeSnapshot> RefreshSoundFontAsync(
-            CancellationToken cancellationToken = default) =>
-            _soundFontRuntime.RefreshAsync(
-                Persistence.CurrentProjectPath,
-                _soundFontResources.CurrentEmbeddedResource,
-                cancellationToken: cancellationToken);
 
         public void ReconfigurePlaybackServices(ApplicationPreferences preferences)
         {
@@ -2473,6 +2324,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             Playback?.Dispose();
             Tasks = null;
             Playback = null;
+            Compilation.SetEffectiveSoundFontPaths(preferences.GetEnabledSoundFontPaths());
             CreatePlaybackServices(
                 Compilation,
                 preferences,
@@ -2520,7 +2372,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                     new AudioMasterSettings(-0.1f, 1f, 50f),
                     TimeSpan.FromSeconds(30)));
                 playback = new(compilation, backend);
-                playback.BeginDefaultPlaybackPreparation();
                 tasks = new(compilation, playback);
                 failure = null;
             }

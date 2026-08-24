@@ -71,12 +71,16 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             throw new ArgumentOutOfRangeException(nameof(backgroundDebounce));
         }
         _editingTime = new ProjectEditingTimeSession(project, editingTimeProvider);
-        EffectiveSoundFontPaths = effectiveSoundFontPath is null
-            ? Array.Empty<string>()
-            : [Path.GetFullPath(effectiveSoundFontPath)];
+        EffectiveSoundFontConfigurations = effectiveSoundFontPath is null
+            ? Array.Empty<SoundFontConfiguration>()
+            : [new SoundFontConfiguration(Path.GetFullPath(effectiveSoundFontPath), null)];
+        EffectiveSoundFontPaths = EffectiveSoundFontConfigurations
+            .Select(value => value.Path)
+            .ToArray();
         EffectiveSoundFontSetCacheIdentity = effectiveSoundFontPath is null
             ? null
-            : SoundFontSetDefinition.CreateConfiguration(EffectiveSoundFontPaths).CacheIdentity;
+            : SoundFontSetDefinition.CreateConfiguration(
+                EffectiveSoundFontConfigurations).CacheIdentity;
         try
         {
             _compilationProject = executionMode == ProjectCompilationExecutionMode.Background
@@ -107,6 +111,11 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
 
     public MidoraProject Project { get; }
     internal ProjectEditingTimeSession EditingTimeSession => _editingTime;
+    public IReadOnlyList<SoundFontConfiguration> EffectiveSoundFontConfigurations
+    {
+        get;
+        private set;
+    }
     public IReadOnlyList<string> EffectiveSoundFontPaths { get; private set; }
     public string? EffectiveSoundFontPath => EffectiveSoundFontPaths.FirstOrDefault();
     public string? EffectiveSoundFontSetCacheIdentity { get; private set; }
@@ -1245,9 +1254,17 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         SetEffectiveSoundFontPaths(value is null ? [] : [value]);
 
     public void SetEffectiveSoundFontPaths(IReadOnlyList<string> values)
+        => SetEffectiveSoundFontConfigurations(
+            values.Select(value => new SoundFontConfiguration(value, null)).ToArray());
+
+    public void SetEffectiveSoundFontConfigurations(
+        IReadOnlyList<SoundFontConfiguration> values)
     {
         ArgumentNullException.ThrowIfNull(values);
-        string[] normalized = values.Select(Path.GetFullPath).ToArray();
+        SoundFontConfiguration[] normalized = values
+            .Select(value => value.Normalize())
+            .ToArray();
+        string[] normalizedPaths = normalized.Select(value => value.Path).ToArray();
         string? identity = normalized.Length == 0
             ? null
             : SoundFontSetDefinition.CreateConfiguration(normalized).CacheIdentity;
@@ -1260,11 +1277,10 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 throw new InvalidOperationException(
                     "The effective SoundFont cannot change while a Project edit lock is active.");
             }
-            changed = !EffectiveSoundFontPaths.SequenceEqual(
-                    normalized,
-                    StringComparer.OrdinalIgnoreCase)
+            changed = !EffectiveSoundFontConfigurations.SequenceEqual(normalized)
                 || !string.Equals(EffectiveSoundFontSetCacheIdentity, identity, StringComparison.Ordinal);
-            EffectiveSoundFontPaths = normalized;
+            EffectiveSoundFontConfigurations = normalized;
+            EffectiveSoundFontPaths = normalizedPaths;
             EffectiveSoundFontSetCacheIdentity = identity;
             if (changed) ClearSampleDomainCachesCore();
         }
@@ -1273,12 +1289,13 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
 
     public void RefreshEffectiveSoundFontCacheIdentity()
     {
-        IReadOnlyList<string> paths = EffectiveSoundFontPaths;
-        if (paths.Count == 0)
+        IReadOnlyList<SoundFontConfiguration> configurations =
+            EffectiveSoundFontConfigurations;
+        if (configurations.Count == 0)
         {
             return;
         }
-        string identity = SoundFontSetDefinition.Create(paths).CacheIdentity;
+        string identity = SoundFontSetDefinition.Create(configurations).CacheIdentity;
         bool changed;
         lock (_sync)
         {

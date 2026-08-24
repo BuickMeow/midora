@@ -1,3 +1,4 @@
+using Midora.Audio;
 using Midora.Playback;
 
 namespace Midora.Application;
@@ -152,7 +153,10 @@ public sealed record ApplicationRecentDirectories(
         };
 }
 
-public sealed record ApplicationSoundFontPreference(string Path, bool Enabled)
+public sealed record ApplicationSoundFontPreference(
+    string Path,
+    bool Enabled,
+    SoundFontTarget? Target = null)
 {
     public ApplicationSoundFontPreference Normalize()
     {
@@ -162,24 +166,11 @@ public sealed record ApplicationSoundFontPreference(string Path, bool Enabled)
 
     public void Validate()
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(Path);
-        if (!System.IO.Path.IsPathFullyQualified(Path)
-            || Path.StartsWith("\\\\", StringComparison.Ordinal)
-            || Path.StartsWith("//", StringComparison.Ordinal))
-        {
-            throw new ArgumentException(
-                "A SoundFont path must be a fully-qualified local file path.",
-                nameof(Path));
-        }
-        string fullPath = System.IO.Path.GetFullPath(Path);
-        if (!string.Equals(
-                System.IO.Path.GetExtension(fullPath),
-                ".sf2",
-                StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ArgumentException("Only .sf2 SoundFont files are supported.", nameof(Path));
-        }
+        new SoundFontConfiguration(Path, Target).Validate();
     }
+
+    public SoundFontConfiguration ToConfiguration() =>
+        new SoundFontConfiguration(Path, Target).Normalize();
 }
 
 public sealed record DesktopUiPreferences(
@@ -308,6 +299,11 @@ public sealed record ApplicationPreferences(
     public string[] GetEnabledSoundFontPaths() => SoundFonts
         .Where(value => value.Enabled)
         .Select(value => Path.GetFullPath(value.Path))
+        .ToArray();
+
+    public SoundFontConfiguration[] GetEnabledSoundFontConfigurations() => SoundFonts
+        .Where(value => value.Enabled)
+        .Select(value => value.ToConfiguration())
         .ToArray();
 }
 

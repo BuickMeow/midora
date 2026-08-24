@@ -22,13 +22,15 @@ public sealed class AudioRenderSoundFontException : Exception
 
 /// <summary>
 /// Freezes only the ordered application-level SoundFont path set and its cheap
-/// file-metadata cache identity. It never copies or hashes SF2 content.
+/// file-metadata cache identity. It never copies or hashes SoundFont content and
+/// does not inspect SFZ dependencies.
 /// </summary>
 public sealed class AudioRenderSoundFontSnapshot : IDisposable, IAsyncDisposable
 {
     private AudioRenderSoundFontSnapshot(SoundFontSetDefinition definition)
     {
         Definition = definition;
+        SoundFonts = Array.AsReadOnly(definition.Configurations.ToArray());
         SoundFontPaths = Array.AsReadOnly(definition.Paths.ToArray());
         CacheIdentity = definition.CacheIdentity;
         TotalFileSizeBytes = definition.Paths.Sum(value => new FileInfo(value).Length);
@@ -36,18 +38,28 @@ public sealed class AudioRenderSoundFontSnapshot : IDisposable, IAsyncDisposable
     }
 
     public SoundFontSetDefinition Definition { get; }
+    public IReadOnlyList<SoundFontConfiguration> SoundFonts { get; }
     public IReadOnlyList<string> SoundFontPaths { get; }
     public string CacheIdentity { get; }
     public long TotalFileSizeBytes { get; }
     public IReadOnlyList<AudioRenderDiagnostic> Diagnostics { get; }
 
-    public static Task<AudioRenderSoundFontSnapshot> CreateAsync(
+    public static Task<AudioRenderSoundFontSnapshot> CreateFromPathsAsync(
         IReadOnlyList<string> soundFontPaths,
+        CancellationToken cancellationToken = default) =>
+        CreateAsync(
+            soundFontPaths
+                .Select(path => new SoundFontConfiguration(path, null))
+                .ToArray(),
+            cancellationToken);
+
+    public static Task<AudioRenderSoundFontSnapshot> CreateAsync(
+        IReadOnlyList<SoundFontConfiguration> soundFonts,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(soundFontPaths);
+        ArgumentNullException.ThrowIfNull(soundFonts);
         cancellationToken.ThrowIfCancellationRequested();
-        if (soundFontPaths.Count == 0)
+        if (soundFonts.Count == 0)
         {
             throw new AudioRenderSoundFontException(
                 AudioRenderSoundFontFailure.NoEnabledSoundFonts,
@@ -57,7 +69,7 @@ public sealed class AudioRenderSoundFontSnapshot : IDisposable, IAsyncDisposable
         try
         {
             return Task.FromResult(new AudioRenderSoundFontSnapshot(
-                SoundFontSetDefinition.Create(soundFontPaths)));
+                SoundFontSetDefinition.Create(soundFonts)));
         }
         catch (FileNotFoundException exception)
         {

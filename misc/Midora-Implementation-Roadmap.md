@@ -64,7 +64,7 @@ flowchart LR
 
 ### 2.2 明确不在初版范围内
 
-MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、Pause/Scrub、语义级 Voice Stealing 策略、Channel 10 鼓通道、多 SoundFont、SFZ/DLS、多 Project、自动保存/崩溃恢复，以及 SRS 第 21 章列出的其他排除项。已确认的 BASSMIDI sample voice 资源上限除外。
+MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、Pause/Scrub、语义级 Voice Stealing 策略、Channel 10 鼓通道、每 Project/Port/Track/Instrument 独立 SoundFont、DLS、多 Project、自动保存/崩溃恢复，以及 SRS 第 21 章列出的其他排除项。程序级有序多 SF2/SFZ 列表属于已确认范围；已确认的 BASSMIDI sample voice 资源上限除外。
 
 ## 3. 现有源码基线
 

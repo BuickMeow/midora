@@ -71,8 +71,9 @@ Project
 Playback
 Compile
 Export
-Help
+Application
 ```
+`Application` 菜单提供 `Application Preferences...` 与 `About Midora`；程序设置不得继续放在 `Edit` 菜单中。
 `Project` 菜单必须提供 `New Event Instrument`、`New Logical Track`、`New Logical Track with Instrument...` 与 `New Raw MIDI Track...`，并与 Arrangement 左侧 ruler header 的 `Add` 菜单调用同一 Project command。播放或前台任务持有 Project 编辑锁时，`Project` 一级菜单本身仍保持可用，`Project Settings` 仍可打开；只禁用其中会创建或编辑 Project 对象的命令。
 #### 17.1.3.3 [C] Global Command Bar and Transport
 常驻入口：
@@ -116,7 +117,6 @@ Logical Tracks, Segments, Notes and Logical Parameter data
 Manual object order
 Project object colors
 Project Metadata
-SoundFont Settings
 Playback Settings
 MIDI Export Settings
 Audio Render Settings
@@ -138,7 +138,7 @@ Device Buffer Request
 Realtime Maximum Sample Voices per Unit Stream
 Audio Cache Root
 Maximum Reusable Audio Cache Bytes
-Ordered application SoundFont list: absolute local path + Enabled
+Ordered application SoundFont list: absolute local SF2/SFZ path + Enabled + optional target mapping
 ```
 这些状态：
 - 不进入 Project Undo / Redo；
@@ -148,7 +148,7 @@ Ordered application SoundFont list: absolute local path + Enabled
 
 设备实际采样率、实际 buffer、callback period、当前设备枚举结果和 IPC 运行状态属于 Derived / Runtime Data，不作为 Application Preference 保存。音频缓存的 reusable 当前占用、transient 当前/峰值、session 目录、retention 状态与 Warning 同样是运行时派生状态；只保存配置 root 和 reusable byte quota。
 
-SoundFont 列表对所有 Project 和从 MIDI 导入的新 Project 共用，不属于 Project 创建参数。列表支持新增、删除、启用/禁用和排序；顺序是正式 BASSMIDI 优先顺序。Apply 只保存路径结构，不读取、复制、hash 或调用 BASS 验证文件；真正的存在性、可读性和 BASS 加载失败在音频任务 Preparing 报告。列表不得进入 `.midora`、Project Modified 或 Undo/Redo。
+SoundFont 列表对所有 Project 和从 MIDI 导入的新 Project 共用，不属于 Project 创建参数。列表支持新增 SF2/SFZ、删除、启用/禁用和排序；Enabled 只显示复选框，不重复显示 `Enabled` 文字。每项还提供完整 Target Bank MSB/LSB/Program 三元组：SF2 可关闭映射，SFZ 强制启用映射。顺序是正式 BASSMIDI 优先顺序。列表工具栏位于列表顶部；列表自身单个滚轮刻度使用小幅像素滚动，不得沿用下拉框或外层页面的大步进。Apply 的 Draft/持久化部分只保存路径与映射结构，不读取、复制或完整 hash 文件，不检查 SFZ 依赖；若 SoundFont、target、实时音频或音频缓存配置变化，持久化后必须显示 `Saving Settings` 模态任务并立即重建、加载和保留 Worker。加载失败必须明确报告且不得伪装成保存失败或静默恢复旧设置。列表不得进入 `.midora`、Project Modified 或 Undo/Redo。
 ### 17.2.3 Project Session UI State
 只存在于当前 Project 会话：
 ```text
@@ -325,6 +325,10 @@ Diagnostics 是独立 Workspace，不在主窗口底部复制紧凑列表。它�
 主动切换到 Diagnostics Workspace 时，键盘焦点必须落在非编辑的 Workspace 表面，不得自动进入搜索框、筛选下拉框或其他命令控件。用户主动 Compile、Play 或 Preview 失败时可激活 Diagnostics，但不得抢键盘焦点或自动跳转来源；后台 Information、Warning 和普通非阻塞 Error 只更新状态栏计数。
 
 主窗口不设置 Tasks Tab 或 Task History 表。一次只存在一个前台任务；必要时由模态 Task overlay 展示当前任务。只有任务明确支持安全取消时才显示可响应的 Cancel。没有可靠总量时使用 indeterminate 动画；有可靠当前值与总量时才显示 determinate 进度。Save / Save Copy 进入不可取消事务后不得显示不可响应的 Cancel 控件。任务状态属于 Runtime Data，不保存、不进入 Undo/Redo。
+
+提交 Application Preferences 时，只有 SoundFont（包括 target）、实时音频或音频缓存配置实际变化才显示标题为 `Saving Settings` 的不可取消模态 Task overlay；其覆盖程序设置持久化、旧 Worker 释放、新 Worker 启动、Enabled SF2/SFZ 加载与设备探测的完整时段。纯 UI 或最近目录设置不得触发该 overlay。
+
+`New Project`、`Open Project`、命令行启动打开 Project 和 `Open MIDI as New Project` 在 Project 会话已经原子切换后，必须继续在原前台 Task overlay 内显示 `Preparing audio Worker` 并完成当前持久 Worker 的接管或预热尝试；存在 Enabled SoundFont 时不得等用户首次 Play/Preview 才启动 Worker。显式 `Reset Playback Engine` 使用同一预热路径。Project 会话切换成功后的 Worker 初始化失败不得回滚或误报 Project 创建/打开失败；overlay 正常结束 Project 工作流，随后以独立音频运行时错误明确报告，并允许后续音频 Preparing 重试。
 ---
 ## 17.6 外层对象导航
 

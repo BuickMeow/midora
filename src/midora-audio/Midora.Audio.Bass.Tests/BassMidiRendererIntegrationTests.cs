@@ -105,6 +105,71 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
+    public void SfzNominalPresetCanBeMappedToTargetBankAndProgram()
+    {
+        NativeAudioIntegrationEnvironment.LoadBassMidi();
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            $"midora-sfz-integration-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string samplePath = Path.Combine(directory, "tone.wav");
+            string sfzPath = Path.Combine(directory, "tone.sfz");
+            WriteTestWave(samplePath);
+            File.WriteAllText(
+                sfzPath,
+                "<region> sample=tone.wav key=60 pitch_keycenter=60 ampeg_release=0.01");
+            ScheduledMidiMessage[] events =
+            [
+                new(0, MidiMessage.ControlChange(0, 0, 11)),
+                new(0, MidiMessage.ControlChange(0, 32, 22)),
+                new(0, MidiMessage.ProgramChange(0, 33)),
+                new(256, MidiMessage.NoteOn(0, 60, 100)),
+                new(2_048, MidiMessage.NoteOff(0, 60, 0))
+            ];
+            MidiRenderPlan plan = new(
+                SampleRate,
+                4_096,
+                [new MidiPortRenderPlan(0, events)]);
+
+            float[] samples = RenderWithSoundFonts(
+                plan,
+                [new SoundFontConfiguration(sfzPath, new(11, 22, 33))]);
+
+            Assert.Contains(samples, static sample => sample != 0f);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Sf2PresetCanBeMappedToTargetBankAndProgram()
+    {
+        EnsureEnvironment();
+        ScheduledMidiMessage[] events =
+        [
+            new(0, MidiMessage.ControlChange(0, 0, 11)),
+            new(0, MidiMessage.ControlChange(0, 32, 22)),
+            new(0, MidiMessage.ProgramChange(0, 33)),
+            new(256, MidiMessage.NoteOn(0, 60, 100)),
+            new(2_048, MidiMessage.NoteOff(0, 60, 0))
+        ];
+        MidiRenderPlan plan = new(
+            SampleRate,
+            4_096,
+            [new MidiPortRenderPlan(0, events)]);
+
+        float[] samples = RenderWithSoundFonts(
+            plan,
+            [new SoundFontConfiguration(SoundFontPath, new(11, 22, 33))]);
+
+        Assert.Contains(samples, static sample => sample != 0f);
+    }
+
+    [Fact]
     public void ProducesIdenticalComplexCanonicalSamplesAcrossDifferentBlocksWithinConfiguredVoiceLimit()
     {
         EnsureEnvironment();
@@ -1180,10 +1245,19 @@ public sealed class BassMidiRendererIntegrationTests
     private static unsafe float[] RenderWithSoundFonts(
         MidiRenderPlan plan,
         IReadOnlyList<string> soundFontPaths)
+        => RenderWithSoundFonts(
+            plan,
+            soundFontPaths
+                .Select(path => new SoundFontConfiguration(path, null))
+                .ToArray());
+
+    private static unsafe float[] RenderWithSoundFonts(
+        MidiRenderPlan plan,
+        IReadOnlyList<SoundFontConfiguration> soundFonts)
     {
         using BassMidiRenderer renderer = new(
             plan,
-            soundFontPaths,
+            soundFonts,
             new BassMidiRendererSettings(500, 256),
             AudioMasterSettings.LimiterV1);
         float[] samples = new float[checked((int)plan.TotalFrameCount * 2)];
@@ -1198,6 +1272,36 @@ public sealed class BassMidiRendererIntegrationTests
         Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
         Assert.Contains(samples, static sample => sample != 0f);
         return samples;
+    }
+
+    private static void WriteTestWave(string path)
+    {
+        const int channelCount = 1;
+        const int bitsPerSample = 16;
+        const int sampleCount = 4_800;
+        const int byteRate = SampleRate * channelCount * bitsPerSample / 8;
+        const int blockAlign = channelCount * bitsPerSample / 8;
+        const int dataLength = sampleCount * blockAlign;
+        using FileStream stream = new(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        using BinaryWriter writer = new(stream);
+        writer.Write("RIFF"u8);
+        writer.Write(36 + dataLength);
+        writer.Write("WAVE"u8);
+        writer.Write("fmt "u8);
+        writer.Write(16);
+        writer.Write((ushort)1);
+        writer.Write((ushort)channelCount);
+        writer.Write(SampleRate);
+        writer.Write(byteRate);
+        writer.Write((ushort)blockAlign);
+        writer.Write((ushort)bitsPerSample);
+        writer.Write("data"u8);
+        writer.Write(dataLength);
+        for (int index = 0; index < sampleCount; index++)
+        {
+            double phase = (2d * Math.PI * 440d * index) / SampleRate;
+            writer.Write((short)Math.Round(Math.Sin(phase) * 16_000d));
+        }
     }
 
     private sealed class CacheAccess(AudioCacheSessionStore store) : IAudioPcmCacheSessionAccess

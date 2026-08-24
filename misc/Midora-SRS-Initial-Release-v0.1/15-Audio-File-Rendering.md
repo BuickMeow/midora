@@ -340,15 +340,15 @@ Windows 应用音量混音器
 声卡增强 / 空间音效 / 驱动 EQ
 播放设备故障
 ```
-### 15.7.2 BASSMIDI 与 SF2
-初版使用与播放一致的 BASSMIDI / SF2 发声语义。
+### 15.7.2 BASSMIDI 与 SoundFont
+初版使用与播放一致的 BASSMIDI / SF2/SFZ 发声语义。
 文件渲染由第 13.30 节规定的同一个 `win-x64` Native AOT 音频子进程执行，不允许用其他 CPU 架构或 JIT Worker 生成正式文件。
 本次 compiled result 必须先完成全局 Port / Channel 分配，再从 Execution Projection 确定性派生 Logical Segment/Unit 与 Pure MIDI Root 音频投影。每个 Unit/Root 使用独立、干净的 1-channel BASSMIDI Stream 语义；同 Root 子 Track 必须先合并，不能逐 Track 合成后求和。实际 native Stream 可由有界 pool 复用。
-所有 Unit 使用任务开始时冻结的同一个程序级 Enabled SF2 有序列表；BASSMIDI 按列表顺序建立完整 Font handle 数组。
+所有 Unit 使用任务开始时冻结的同一个程序级 Enabled SF2/SFZ 有序配置；BASSMIDI 按列表顺序建立完整 Font handle 与目标映射数组。
 每个 Stream 必须完成：
 ```text
 干净初始化
-按冻结顺序以 `BASS_MIDI_FONT_MMAP` 直接打开每个原绝对路径，并一次性设置完整 SF2 handle 列表
+按冻结顺序直接打开每个原绝对路径（仅 SF2 使用 `BASS_MIDI_FONT_MMAP`），并一次性设置完整 SoundFont handle/mapping 列表
 按 canonical Unit descriptor 建立 Melodic/Percussion mode；Logical Channel 10 强制 Melodic
 BASS_MIDI_NOFX 启用
 BASS_MIDI_NOTEOFF1 启用
@@ -646,7 +646,7 @@ Project 当前 Track 排序
 ### 15.12.2 创建时机
 整曲：
 ```text
-编译、Enabled SF2 列表和后端关键前置检查成功后才创建临时输出。
+编译、Enabled SoundFont 配置和后端关键前置检查成功后才创建临时输出。
 ```
 分轨：
 ```text
@@ -962,7 +962,7 @@ Mapping Function 或源对象
 | Channel Unit 峰值达到 248 | 编译 Info，不受 Warning-as-error 影响 |
 | 全静音检测结果 | Info |
 | Track 缺少、重复或引用错误类型的 parent | Preparing Error，整个任务不开始 |
-| Enabled SF2 路径缺失或 BASSMIDI 加载失败 | Preparing Error，整个任务不开始 |
+| Enabled SoundFont 主路径缺失、SFZ 依赖失败或 BASSMIDI 加载/映射失败 | Preparing Error，整个任务不开始 |
 | 正式输出成功但临时文件残留 | 文件系统 Warning |
 | Warning 存在但所有正式输出成功 | 顶层仍为 Completed |
 Info 默认折叠展示，用户可以展开查看。
@@ -970,28 +970,28 @@ Info 默认折叠展示，用户可以展开查看。
 是否提供“导出诊断文本”留给 第 17～20 章的 UI 与交互规格 或实现层。
 ---
 ## 15.18 SoundFont 资源规则
-### 15.18.1 无 SF2
+### 15.18.1 无 SoundFont
 程序级 SoundFont 列表无任何 Enabled 项时禁止音频文件渲染。
 不生成静音占位文件，也不自动使用系统默认音色库。
 ### 15.18.2 任务冻结与直接读取
-Preparing 开始时冻结当前 Enabled 项的有序绝对路径列表。任务必须：
+Preparing 开始时冻结当前 Enabled 项的有序绝对路径与目标映射。任务必须：
 ```text
-不复制 SF2 到临时目录
+不复制 SoundFont 或 SFZ 依赖到临时目录
 不计算或校验完整文件 hash
-不读取 .midora 获取 SF2
-由音频 Worker 以 BASS_MIDI_FONT_MMAP 直接打开原路径
-任一路径缺失、不可读或加载失败时整体失败
+不读取 .midora 获取 SoundFont
+由音频 Worker 直接打开原路径；仅 SF2 使用 BASS_MIDI_FONT_MMAP
+任一主路径、SFZ 依赖缺失/不可读或加载/映射失败时整体失败
 ```
 开始后使用本次已打开的 handle，不在任务中热重载。列表或原文件变化不修改 Project；用户必须在 Stopped / Idle 明确重新提交列表或重启任务。
 ### 15.18.3 加载失败
-任一 Enabled SF2 无法由 BASSMIDI 加载：
+任一 Enabled SoundFont 或其 SFZ 依赖无法由 BASSMIDI 加载：
 ```text
 任务级公共前置失败。
 不能生成任何新音频输出。
 ```
-不得自动寻找同名 SF2、使用系统音色库或输出静音代替。
+不得自动寻找同名 SoundFont、修复 SFZ 依赖、使用系统音色库或输出静音代替。
 ### 15.18.4 缓存失效
-有序 Enabled 路径列表或任一文件的 length / last-write-time 元数据变化：
+有序 Enabled 配置、目标映射或任一主文件的 length / last-write-time 元数据变化：
 ```text
 使相关音频后端和音频样本缓存失效。
 不必使纯 MIDI canonical compiled result 失效。
@@ -1024,7 +1024,7 @@ Audio Render CompileContext
 Track 选择
 范围
 Tempo Map
-程序级 Enabled SF2 有序列表的路径与文件元数据缓存身份
+程序级 Enabled SF2/SFZ 有序配置、目标映射与主文件元数据缓存身份
 Playback Master Volume
 渲染 Limiter 语义和参数
 固定容器 / 声道 / 样本格式

@@ -3,9 +3,12 @@ using System.IO;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using Microsoft.Win32;
 using Midora.Application;
+using Midora.Audio;
 
 namespace Midora.Desktop;
 
@@ -72,7 +75,7 @@ public partial class ApplicationPreferencesDialog : Window
         _soundFonts.Clear();
         foreach (ApplicationSoundFontPreference soundFont in preferences.SoundFonts)
         {
-            _soundFonts.Add(new(soundFont.Path, soundFont.Enabled));
+            _soundFonts.Add(new(soundFont.Path, soundFont.Enabled, soundFont.Target));
         }
     }
 
@@ -94,7 +97,7 @@ public partial class ApplicationPreferencesDialog : Window
         OpenFileDialog dialog = new()
         {
             Title = "Add SoundFonts",
-            Filter = "SoundFont 2 (*.sf2)|*.sf2|All files (*.*)|*.*",
+            Filter = "SoundFonts (*.sf2;*.sfz)|*.sf2;*.sfz|SoundFont 2 (*.sf2)|*.sf2|SFZ Instrument (*.sfz)|*.sfz|All files (*.*)|*.*",
             CheckFileExists = true,
             Multiselect = true,
             InitialDirectory = _soundFonts.Count == 0
@@ -113,7 +116,7 @@ public partial class ApplicationPreferencesDialog : Window
                 {
                     continue;
                 }
-                _soundFonts.Add(new(path, enabled: true));
+                _soundFonts.Add(new(path, enabled: true, target: null));
             }
             SoundFontListBox.SelectedItem = _soundFonts.LastOrDefault();
         }
@@ -138,6 +141,43 @@ public partial class ApplicationPreferencesDialog : Window
 
     private void OnMoveSoundFontDownClick(object sender, RoutedEventArgs e) =>
         MoveSelectedSoundFont(1);
+
+    private void OnSoundFontListPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        ScrollViewer? scrollViewer = FindVisualDescendant<ScrollViewer>(SoundFontListBox);
+        if (scrollViewer is null)
+        {
+            return;
+        }
+        const double pixelsPerWheelNotch = 24d;
+        double notchCount = e.Delta / (double)Mouse.MouseWheelDeltaForOneLine;
+        scrollViewer.ScrollToVerticalOffset(
+            Math.Clamp(
+                scrollViewer.VerticalOffset - (notchCount * pixelsPerWheelNotch),
+                0,
+                scrollViewer.ScrollableHeight));
+        e.Handled = true;
+    }
+
+    private static T? FindVisualDescendant<T>(DependencyObject parent)
+        where T : DependencyObject
+    {
+        int count = VisualTreeHelper.GetChildrenCount(parent);
+        for (int index = 0; index < count; index++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(parent, index);
+            if (child is T match)
+            {
+                return match;
+            }
+            T? nested = FindVisualDescendant<T>(child);
+            if (nested is not null)
+            {
+                return nested;
+            }
+        }
+        return null;
+    }
 
     private void MoveSelectedSoundFont(int delta)
     {
@@ -199,9 +239,7 @@ public partial class ApplicationPreferencesDialog : Window
                     voices),
                 AudioCache = new AudioCachePreferences(CacheRootBox.Text, quotaBytes).Normalize(),
                 SoundFonts = _soundFonts
-                    .Select(value => new ApplicationSoundFontPreference(
-                        value.Path,
-                        value.Enabled).Normalize())
+                    .Select(value => value.ToPreference())
                     .ToArray()
             };
             Result.Validate();
@@ -252,15 +290,32 @@ public partial class ApplicationPreferencesDialog : Window
     private sealed class SoundFontDraftItem : INotifyPropertyChanged
     {
         private bool _enabled;
+        private bool _hasTarget;
+        private string _bankMsbText;
+        private string _bankLsbText;
+        private string _programText;
 
-        public SoundFontDraftItem(string path, bool enabled)
+        public SoundFontDraftItem(
+            string path,
+            bool enabled,
+            SoundFontTarget? target)
         {
             Path = System.IO.Path.GetFullPath(path);
             _enabled = enabled;
+            _hasTarget = IsSfz || target is not null;
+            SoundFontTarget effectiveTarget = target ?? new(0, 0, 0);
+            _bankMsbText = effectiveTarget.BankMsb.ToString(CultureInfo.InvariantCulture);
+            _bankLsbText = effectiveTarget.BankLsb.ToString(CultureInfo.InvariantCulture);
+            _programText = effectiveTarget.Program.ToString(CultureInfo.InvariantCulture);
         }
 
         public string Path { get; }
         public string FileName => System.IO.Path.GetFileName(Path);
+        public bool IsSfz => string.Equals(
+            System.IO.Path.GetExtension(Path),
+            ".sfz",
+            StringComparison.OrdinalIgnoreCase);
+        public bool TargetOptional => !IsSfz;
         public bool Enabled
         {
             get => _enabled;
@@ -273,6 +328,79 @@ public partial class ApplicationPreferencesDialog : Window
                 _enabled = value;
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
             }
+        }
+
+        public bool HasTarget
+        {
+            get => _hasTarget;
+            set
+            {
+                bool normalized = IsSfz || value;
+                if (_hasTarget == normalized)
+                {
+                    return;
+                }
+                _hasTarget = normalized;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasTarget)));
+            }
+        }
+
+        public string BankMsbText
+        {
+            get => _bankMsbText;
+            set => SetText(ref _bankMsbText, value, nameof(BankMsbText));
+        }
+
+        public string BankLsbText
+        {
+            get => _bankLsbText;
+            set => SetText(ref _bankLsbText, value, nameof(BankLsbText));
+        }
+
+        public string ProgramText
+        {
+            get => _programText;
+            set => SetText(ref _programText, value, nameof(ProgramText));
+        }
+
+        public ApplicationSoundFontPreference ToPreference()
+        {
+            SoundFontTarget? target = null;
+            if (HasTarget)
+            {
+                target = new(
+                    ParseMidiValue(BankMsbText, "Bank MSB"),
+                    ParseMidiValue(BankLsbText, "Bank LSB"),
+                    ParseMidiValue(ProgramText, "Program"));
+            }
+            return new ApplicationSoundFontPreference(Path, Enabled, target).Normalize();
+        }
+
+        private byte ParseMidiValue(string text, string name)
+        {
+            if (byte.TryParse(
+                    text,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out byte result)
+                && result <= 127)
+            {
+                return result;
+            }
+            throw new ArgumentOutOfRangeException(
+                name,
+                $"{FileName}: target {name} must be an integer from 0 through 127.");
+        }
+
+        private void SetText(ref string field, string value, string propertyName)
+        {
+            value ??= string.Empty;
+            if (field == value)
+            {
+                return;
+            }
+            field = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

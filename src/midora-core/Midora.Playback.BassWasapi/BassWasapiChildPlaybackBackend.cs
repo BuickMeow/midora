@@ -34,6 +34,7 @@ public sealed class BassWasapiChildPlaybackBackend
     private string? _selectedDeviceId;
     private IBassMidiAudioWorkerSession? _session;
     private PersistentBassMidiAudioWorkerHost? _host;
+    private SoundFontConfiguration[] _soundFonts = [];
     private string[] _soundFontPaths = [];
     private string? _soundFontSetCacheIdentity;
     private IRealtimePlaybackCacheStore? _audioCache;
@@ -287,16 +288,21 @@ public sealed class BassWasapiChildPlaybackBackend
         _audioCache = cacheStore;
     }
 
-    public void SetSoundFontSet(IReadOnlyList<string> soundFontPaths, string? cacheIdentity)
+    public void SetSoundFontSet(
+        IReadOnlyList<SoundFontConfiguration> soundFonts,
+        string? cacheIdentity)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        ArgumentNullException.ThrowIfNull(soundFontPaths);
-        if ((soundFontPaths.Count == 0) != (cacheIdentity is null))
+        ArgumentNullException.ThrowIfNull(soundFonts);
+        if ((soundFonts.Count == 0) != (cacheIdentity is null))
         {
             throw new ArgumentException(
                 "The enabled SoundFont list and cache identity must both be present or both be absent.");
         }
-        string[] normalizedPaths = soundFontPaths.Select(Path.GetFullPath).ToArray();
+        SoundFontConfiguration[] normalized = soundFonts
+            .Select(value => value.Normalize())
+            .ToArray();
+        string[] normalizedPaths = normalized.Select(value => value.Path).ToArray();
         if (cacheIdentity is not null
             && (cacheIdentity.Length != 64 || cacheIdentity.Any(character =>
                 character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f'))))
@@ -305,7 +311,7 @@ public sealed class BassWasapiChildPlaybackBackend
                 "The SoundFont set cache identity is invalid.",
                 nameof(cacheIdentity));
         }
-        if (_soundFontPaths.SequenceEqual(normalizedPaths, StringComparer.OrdinalIgnoreCase)
+        if (SoundFontConfigurationsEqual(_soundFonts, normalized)
             && string.Equals(_soundFontSetCacheIdentity, cacheIdentity, StringComparison.Ordinal))
         {
             return;
@@ -318,12 +324,14 @@ public sealed class BassWasapiChildPlaybackBackend
 
         _host?.Dispose();
         _host = null;
+        _soundFonts = normalized;
         _soundFontPaths = normalizedPaths;
         _soundFontSetCacheIdentity = cacheIdentity;
         _actualSampleRate = 0;
         _actualDeviceBufferFrameCount = 0;
-        // The preference editor only commits paths. BASS opens the original files
-        // lazily when an audio operation actually needs the persistent host.
+        // SetSoundFontSet only changes the frozen configuration. Application Preferences
+        // explicitly follows this with Prepare so the replacement persistent host opens the
+        // original files immediately; other callers may still prepare lazily at task startup.
     }
 
     public void BeginPitchAudition(int pitch, int velocity)
@@ -608,8 +616,30 @@ public sealed class BassWasapiChildPlaybackBackend
         return _host ??= new(
             _options.WorkerPath,
             _options.BassNativeDirectory,
-            _soundFontPaths,
+            _soundFonts,
             _options.PreparingTimeout);
+    }
+
+    private static bool SoundFontConfigurationsEqual(
+        IReadOnlyList<SoundFontConfiguration> left,
+        IReadOnlyList<SoundFontConfiguration> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+        for (int index = 0; index < left.Count; index++)
+        {
+            if (!string.Equals(
+                    left[index].Path,
+                    right[index].Path,
+                    StringComparison.OrdinalIgnoreCase)
+                || left[index].Target != right[index].Target)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private Exception? DiscardPersistentHost()

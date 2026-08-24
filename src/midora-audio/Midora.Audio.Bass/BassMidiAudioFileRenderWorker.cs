@@ -57,7 +57,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
     {
         ArgumentNullException.ThrowIfNull(preparation);
         ValidateCommon(
-            preparation.SoundFontPaths,
+            preparation.SoundFonts,
             preparation.SampleRate,
             preparation.MaximumSampleVoicesPerUnitStream,
             preparation.MasterVolumeDecibels);
@@ -68,7 +68,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         try
         {
             string soundFontSetPath = Path.Combine(ownedDirectory, "soundfonts.masf");
-            SoundFontSetFile.Write(soundFontSetPath, preparation.SoundFontPaths);
+            SoundFontSetFile.Write(soundFontSetPath, preparation.SoundFonts);
             using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
                 $"Midora.Audio.FileProbe.{Guid.NewGuid():N}");
             using Process process = Start(
@@ -95,7 +95,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Plan);
         ValidateCommon(
-            request.SoundFontPaths,
+            request.SoundFonts,
             request.Plan.SampleRate,
             request.MaximumSampleVoicesPerUnitStream,
             request.MasterVolumeDecibels);
@@ -145,7 +145,7 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
                 plan = plan.WithEventStreamDescriptor(eventStreamProducer.Descriptor);
             }
             MidiRenderPlanFile.Write(planPath, plan);
-            SoundFontSetFile.Write(soundFontSetPath, request.SoundFontPaths);
+            SoundFontSetFile.Write(soundFontSetPath, request.SoundFonts);
             using SharedAudioWorkerControl control = SharedAudioWorkerControl.Create(
                 $"Midora.Audio.FileRender.{Guid.NewGuid():N}");
             using Process process = Start(
@@ -360,20 +360,22 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
         ?? throw new InvalidOperationException("Could not start the Midora Native AOT audio worker process.");
 
     private static void ValidateCommon(
-        IReadOnlyList<string> soundFontPaths,
+        IReadOnlyList<SoundFontConfiguration> soundFonts,
         int sampleRate,
         int maximumSampleVoicesPerUnitStream,
         float masterVolumeDecibels)
     {
-        ArgumentNullException.ThrowIfNull(soundFontPaths);
-        if (soundFontPaths.Count == 0)
+        ArgumentNullException.ThrowIfNull(soundFonts);
+        if (soundFonts.Count == 0)
         {
             throw new ArgumentException(
                 "At least one enabled application SoundFont is required.",
-                nameof(soundFontPaths));
+                nameof(soundFonts));
         }
-        foreach (string soundFontPath in soundFontPaths)
+        foreach (SoundFontConfiguration value in soundFonts)
         {
+            SoundFontConfiguration soundFont = value.Normalize();
+            string soundFontPath = soundFont.Path;
             ArgumentException.ThrowIfNullOrWhiteSpace(soundFontPath);
             if (!File.Exists(soundFontPath))
             {

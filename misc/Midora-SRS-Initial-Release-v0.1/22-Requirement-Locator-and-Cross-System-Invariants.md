@@ -39,7 +39,7 @@
 | INV-028 | 初版正式 BASS 原生基线固定为 BASS 2.4.18.3、BASSMIDI 2.4.16.0、BASSWASAPI 2.4.4.1 及第 13.30 节列出的 win-x64 DLL SHA-256；正式构建和运行时必须分别校验文件 hash 与完整版本码，不得自动跟随 vendor current/latest。 |
 | INV-029 | 初版 C# Mapping ABI v2 固定 `double Transform(double value, in MappingContextV2 context)`、单 `long` 的 `MappingStableIdV2`、C# 14、`Microsoft.NETCore.App.Ref 10.0.10` 与独立只读契约；每 Project 仅缓存当前源码修订并用 collectible AssemblyLoadContext 卸载旧项，编译产物不得持久化。引用白名单不是 sandbox。 |
 | INV-030 | 初版持久化兼容基线固定为 JSON Schema Draft 2020-12 与 protobuf Edition 2024；结构性 JSON/protobuf 严格拒绝未知字段，JSON 还拒绝重复属性。已发布 `.proto` 字段号、descriptor、golden bytes 与固定 runtime/codegen profile 属于兼容承诺。 |
-| INV-031 | `.midora`、Project Domain 与 canonical 不得保存或引用 SF2。Application Preferences 只保存有序 `{absolute local path, enabled}` 列表；设置阶段不复制、不完整读取、不计算内容 hash、不调用 BASS 验证。 |
+| INV-031 | `.midora`、Project Domain 与 canonical 不得保存或引用 SoundFont。Application Preferences 只保存有序 `{absolute local .sf2/.sfz path, enabled, optional target Bank MSB/LSB/Program}` 列表；target 三项整体出现且均为 0～127，SFZ target 必填。Draft/持久化阶段不复制、不完整读取、不计算内容 hash，也不解析/快照/监控 SFZ 依赖。音频相关设置持久化后必须在 `Saving Settings` 运行时阶段销毁旧 Worker、直接由 BASSMIDI 加载原路径并保留新 Worker；失败保持已保存设置并明确报告。 |
 | INV-032 | 工程总耗时按 Project 成功打开后的完整会话单调累计，包含空闲、最小化、失焦、Buffering、MIDI 导出与音频渲染；系统睡眠 / 休眠和关闭流程暂停。自动累计不单独标记 Modified，也不影响 canonical 语义。 |
 | INV-033 | 初版 SMF Type 1 导出兼容档固定：Tempo 用 `60,000,000 / BPM` 后一次 `AwayFromZero`；拍号 `cc=24`、`bb=8`；Bank 顺序为 CC0→CC32→Program；文本 Meta 为严格 UTF-8；每个 Channel Event 显式 status；导出器不在 canonical 之外追加 Channel 清理。Conductor/Logical Unit MTrk 的 EOT 使用统一 endTick；Pure MIDI MTrk 使用冻结的自身 EOT。 |
 | INV-034 | MIDI 导出中，Logical Channel 10 Unit MTrk 与 Melodic Channel 10 Pure MIDI MTrk 在相对 tick 0、Track Name/Port/结构 Meta 后、canonical Channel Event 前固定写一次 GS Normal Part 与一次 XG Normal Part SysEx，顺序 GS→XG；Percussion Root、不相关 MTrk 与 Conductor 不写；不得发送 GS/XG/GM Reset 或改变 canonical Bank/Program。 |
@@ -87,7 +87,7 @@
 | INV-076 | Logical Parameter Lane 是离散 Step 点集：点值自该 tick 起保持到下一点，不存在 Linear/Step 用户选择。创建、复制、粘贴、变换、持久化校验、Full/Incremental Compile 与所有消费者必须保持该语义。Value Curve、Envelope 等其他正式曲线不受此规则替代。 |
 | INV-077 | 用户编辑造成 exact collision 时：Logical/Direct/Template Note 的同 start tick + key 后来对象静默丢弃；Logical Parameter、Direct MIDI Channel Event 与 Template MIDI Event 的同 tick + 同正式事件类型由后来编辑对象覆盖原对象。未触及该 exact key 的导入重复 Direct MIDI 数据必须原样保留；碰撞归并属于编辑命令事务并可 Undo，不得由打开、浏览或编译静默改写源数据。 |
 | INV-078 | 一次只允许一个可见前台任务表面；主窗口不保留历史任务列表。任务进度只有在有可靠 current/total 时才使用 determinate；MIDI 导入第一遍以源字节、第二遍以 processed/total events 计量。取消仅在任务仍处于安全可取消阶段时可用。导入完整兼容报告必须保留到 Dismiss/替换。该运行时状态不持久化、不进入 Undo/Redo。 |
-| INV-079 | 所有实时/预览/离线音频任务使用任务开始时冻结的同一程序级 Enabled SF2 有序列表；Worker 以 `BASS_MIDI_FONT_MMAP` 直接打开原绝对路径并对每个 Unit 一次性设置完整 Font handle 列表。列表变化只允许在 Stopped/Idle 提交，并销毁持久 Worker、失效相关 sample-domain 缓存。缓存身份只可基于有序路径与文件元数据的小型描述符，不得重新读取完整 SF2 或把该指纹描述为内容校验。 |
+| INV-079 | 所有实时/预览/离线音频任务使用任务开始时冻结的同一程序级 Enabled SF2/SFZ 有序配置；Worker 直接打开原绝对路径（仅 SF2 使用 `BASS_MIDI_FONT_MMAP`），并用 `BASS_MIDI_FONTEX2` 对每个 Unit 一次性设置完整 Font handle 与目标映射。列表、target 或其他音频配置变化只允许在 Stopped/Idle 提交，并在持久化后立即销毁旧 Worker、失效相关 sample-domain 缓存、重建并预热新 Worker；新建、打开、命令行打开、MIDI 导入形成 Project 会话和 Reset Playback Engine 也必须在其前台任务结束前接管或预热 Worker，不得推迟到首次 Play/Preview。成功后的 Worker 必须保留供后续音频操作复用；Project 已提交后的预热失败保留 Project 并作为独立音频运行时错误报告。缓存身份只可基于有序配置与主文件元数据的小型描述符；SFZ 依赖不进入身份，不得重新读取完整 SoundFont 或把该指纹描述为内容校验。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|
@@ -96,7 +96,7 @@
 | Project、保存入口、修改状态 | 第 3 章 |
 | tick、TPQ、Tempo、拍号、Marker | 第 4 章 |
 | Port、Channel Unit、资源不足 | 第 5 章 |
-| 程序级多 SF2 列表、无 Enabled SF2、BASS 直接读取与缓存身份 | 第 6、13、15、17 章 |
+| 程序级多 SF2/SFZ 列表、目标 Bank/Program 映射、无 Enabled SoundFont、BASS 直接读取与缓存身份 | 第 6、13、15、17 章 |
 | Event Instrument 定义与内部索引 | 第 7、24 章 |
 | SubVoice、Note/CC/RPN 等事件 | 第 8 章 |
 | Logical Parameter、映射和 C# 函数 | 第 9 章 |

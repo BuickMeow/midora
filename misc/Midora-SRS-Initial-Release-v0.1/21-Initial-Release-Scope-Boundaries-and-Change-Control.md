@@ -15,7 +15,7 @@
 创建 MIDI Channel Root，并在 Pure MIDI Track / Midi Segment 中直接编辑 MIDI Notes 与 Channel Events
 把 SMF 1.0 Format 0/1、TPQN `.mid` 原子打开为新的未保存 Project
 执行确定性编译与资源分配
-使用程序级有序多 SF2 列表进行播放、预览和音频渲染
+使用程序级有序多 SF2/SFZ 列表及目标 Bank/Program 映射进行播放、预览和音频渲染
 导出标准 MIDI 1.0 SMF Type 1
 渲染普通 RIFF/WAVE、Stereo、IEEE 32-bit Float，并允许选择 8,000–192,000 Hz 整数采样率
 保存、Save Copy 并重新打开 .midora Project
@@ -38,7 +38,7 @@ MPE 或 MIDI 2.0 per-note controllers
 Pause、Scrubbing、Recording、Count-in、Legato、Tempo Ramp
 由 Compiler、Overlap 或 Channel Group 实施的语义级 Voice Steal；不包括第 13.12.9、15.7.2 节明确允许的 BASSMIDI sample voice 资源上限
 每 Project/Port/Track/Instrument 独立 SoundFont 列表
-SFZ、DLS、Kontakt、LV2 等声音资源
+DLS、Kontakt、LV2 等 SF2/SFZ 以外的声音资源
 纯键盘完整工作流、屏幕阅读器和 Access Keys
 多主题、高对比度主题、额外交互音效
 非 100% DPI 的专项验收承诺

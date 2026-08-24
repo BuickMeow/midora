@@ -1,5 +1,6 @@
 using System.IO;
 using Midora.Audio.Bass;
+using Midora.Audio;
 using Midora.AudioRender;
 using Midora.Compiler;
 using Midora.Domain;
@@ -35,7 +36,7 @@ public static class DesktopAudioRenderService
     public static async Task<PreparedDesktopAudioRender> PrepareAsync(
         MidoraProject project,
         string? currentProjectPath,
-        IReadOnlyList<string> soundFontPaths,
+        IReadOnlyList<SoundFontConfiguration> soundFonts,
         DesktopAudioRenderOptions options,
         CancellationToken cancellationToken = default)
     {
@@ -52,7 +53,7 @@ public static class DesktopAudioRenderService
         try
         {
             soundFont = await AudioRenderSoundFontSnapshot.CreateAsync(
-                soundFontPaths,
+                soundFonts,
                 cancellationToken).ConfigureAwait(false);
             using MidoraCompiler compiler = new();
             AudioRenderCompilationResult compilation = new AudioRenderCompilationCoordinator(compiler).Compile(new()

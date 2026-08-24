@@ -441,7 +441,7 @@ post-sum playback span cache
 Render-Ahead ring
 ```
 
-Root PCM key 至少包括 Root composite fingerprint、start-state fingerprint、Channel Mode、程序级 Enabled SF2 有序列表的文件元数据缓存身份、Tempo projection、sample rate/format、native baseline、voice policy 和 renderer version。Root composite fingerprint 对可听内容的投影必须覆盖实际 Direct Note / Channel Event 字段、分页源内容 fingerprint 与 copy-on-write delta；集合 `Generation`、编辑次数或仅 stable ID 不构成内容 identity。
+Root PCM key 至少包括 Root composite fingerprint、start-state fingerprint、Channel Mode、程序级 Enabled SF2/SFZ 有序配置（含 target）及主文件元数据缓存身份、Tempo projection、sample rate/format、native baseline、voice policy 和 renderer version。Root composite fingerprint 对可听内容的投影必须覆盖实际 Direct Note / Channel Event 字段、分页源内容 fingerprint 与 copy-on-write delta；集合 `Generation`、编辑次数或仅 stable ID 不构成内容 identity。
 
 ### 23.10.3 失效与收敛
 

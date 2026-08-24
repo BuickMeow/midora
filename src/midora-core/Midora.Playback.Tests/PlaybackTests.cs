@@ -400,6 +400,30 @@ public sealed class PlaybackTests
     }
 
     [Fact]
+    public void AudioBackendWarmUpPreparesWithoutStartingPlayback()
+    {
+        string soundFont = CreateTemporarySoundFont();
+        try
+        {
+            using ProjectCompilationSession session = new(CreateProject(), soundFont);
+            FakeBackend backend = new();
+            using PlaybackController controller = new(session, backend);
+
+            int sampleRate = controller.WarmUpAudioBackend();
+
+            Assert.Equal(backend.ActualSampleRate, sampleRate);
+            Assert.Equal(1, backend.PrepareCount);
+            Assert.Equal(0, backend.StartCount);
+            Assert.Equal(PlaybackState.Stopped, controller.State);
+            Assert.Equal(PlaybackTaskKind.None, controller.ActiveTaskKind);
+        }
+        finally
+        {
+            File.Delete(soundFont);
+        }
+    }
+
+    [Fact]
     public void StartStopSeekAreColdStartsAndLockEdits()
     {
         string soundFont = CreateTemporarySoundFont();

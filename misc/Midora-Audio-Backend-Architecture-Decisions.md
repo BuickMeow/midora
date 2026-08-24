@@ -10,7 +10,7 @@
 
 - 正式音乐语义只能来自 Canonical Compiled Result。
 - 音频后端接收 Preparing 阶段冻结的、由成功 canonical Execution Projection 确定性派生的抽象 Unit/Root 绝对 sample-frame MIDI 事件与 Channel Mode descriptor；同一 Unit 内同 frame 的事件保持 canonical 稳定顺序。物理 Port/Channel 仍保留在 canonical 中，但不单独构成 PCM 身份。
-- 输入同时包含精确总 frame 数、目标采样率、单个 Project SoundFont、Playback Master Volume 和版本化 Limiter 参数。
+- 输入同时包含精确总 frame 数、目标采样率、任务开始时冻结的程序级有序 SF2/SFZ 配置与目标 Bank/Program 映射、Playback Master Volume 和版本化 Limiter 参数。
 - tick / absolute-seconds 到整数 sample frame 的转换不属于 BASSMIDI、WASAPI 或 WAVE 输出端职责。
 
 ### 1.2 正式输出
@@ -43,7 +43,7 @@
 ### 1.6 明确非目标
 
 - 后端不解释 Project、Event Instrument、Mapping、Lifecycle、Segment、tempo 或资源分配规则。
-- 初版不提供 Reverb/Chorus 音频效果、effect tail、语义级 Voice Stealing 策略、传统 MIDI OUT、MIDI 2.0、多 SoundFont、SFZ/DLS、录音或用户可见的进程拓扑切换。Pure MIDI CC91/CC93 只保留 MIDI 文件语义；opaque imported SysEx/Meta 不送入 synth。已确认的 BASSMIDI sample voice 资源上限不属于语义级 Voice Stealing。
+- 初版不提供 Reverb/Chorus 音频效果、effect tail、语义级 Voice Stealing 策略、传统 MIDI OUT、MIDI 2.0、每 Project/Port/Track/Instrument 独立 SoundFont、DLS、录音或用户可见的进程拓扑切换。程序级有序多 SF2/SFZ 列表属于正式输入。Pure MIDI CC91/CC93 只保留 MIDI 文件语义；opaque imported SysEx/Meta 不送入 synth。已确认的 BASSMIDI sample voice 上限不属于语义级 Voice Stealing。
 
 ## 2. ADR-AUDIO-001：绝对 sample-frame 消费协议
 

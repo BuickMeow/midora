@@ -14,6 +14,70 @@ namespace Midora.Desktop.Tests;
 public sealed class DesktopSessionControllerTests
 {
     [Fact]
+    public async Task AudioWorkerRebuildDetectionIgnoresUiPreferencesAndTracksAudioInputs()
+    {
+        ApplicationPreferences baseline = new ApplicationPreferencesStore().Load().Preferences;
+        await using DesktopSessionController session = new();
+
+        ApplicationPreferences uiOnly = baseline with
+        {
+            DesktopUi = baseline.DesktopUi with
+            {
+                FollowPlayback = !baseline.DesktopUi.FollowPlayback
+            }
+        };
+        Assert.False(session.RequiresAudioWorkerRebuild(uiOnly));
+
+        int changedRenderAhead = baseline.RealtimeAudio.RenderAheadMilliseconds
+            == RealtimeAudioPreferences.MaximumRenderAheadMilliseconds
+                ? RealtimeAudioPreferences.MinimumRenderAheadMilliseconds
+                : baseline.RealtimeAudio.RenderAheadMilliseconds + 1;
+        ApplicationPreferences realtimeChanged = baseline with
+        {
+            RealtimeAudio = baseline.RealtimeAudio with
+            {
+                RenderAheadMilliseconds = changedRenderAhead
+            }
+        };
+        Assert.True(session.RequiresAudioWorkerRebuild(realtimeChanged));
+
+        ApplicationSoundFontPreference[] soundFonts = baseline.SoundFonts.ToArray();
+        if (soundFonts.Length == 0)
+        {
+            soundFonts = [new(Path.GetFullPath("audio-worker-rebuild-test.sf2"), true)];
+        }
+        else
+        {
+            soundFonts[0] = soundFonts[0] with { Enabled = !soundFonts[0].Enabled };
+        }
+        Assert.True(session.RequiresAudioWorkerRebuild(
+            baseline with { SoundFonts = soundFonts }));
+
+        ApplicationSoundFontPreference[] remapped = baseline.SoundFonts.ToArray();
+        if (remapped.Length == 0)
+        {
+            remapped =
+            [
+                new(
+                    Path.GetFullPath("audio-worker-remap-test.sf2"),
+                    true,
+                    new(1, 2, 3))
+            ];
+        }
+        else
+        {
+            remapped[0] = remapped[0] with
+            {
+                Target = remapped[0].Target == new Midora.Audio.SoundFontTarget(1, 2, 3)
+                    ? new(4, 5, 6)
+                    : new(1, 2, 3)
+            };
+        }
+        Assert.True(session.RequiresAudioWorkerRebuild(
+            baseline with { SoundFonts = remapped }));
+    }
+
+    [Fact]
     public async Task OptInImportedSampleMeasuresCompletePagedSelectionEditPath()
     {
         string? path = Environment.GetEnvironmentVariable("MIDORA_SCALE_MIDI_PATH");

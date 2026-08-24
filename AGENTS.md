@@ -38,7 +38,7 @@ Project Source Data
 
 - 目标是 Windows Desktop、.NET 10、WPF、MIDI 1.0、`win-x64`、单个用户可启动的应用实例、单 Project、程序级有序多 SoundFont 列表、最多 16 Port × 16 Channel Unit。主应用、Native AOT 音频子进程及 BASS/BASSMIDI/BASSWASAPI 必须同为 x64；初版不发布 x86、Arm64 或 AnyCPU 正式产物。
 - Logical/Event Instrument 获配的 Channel 10 必须按 melodic 初始化；Pure MIDI Root 的 Channel 10 由正式 Root Channel Mode 决定，不能把 BASSMIDI 默认鼓通道行为当作隐式语义。
-- 不得顺手加入 MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、由 Compiler/Overlap/Channel Group 实施的语义级 Voice Stealing、每 Project/Port/Track/Instrument 独立 SoundFont、SFZ/DLS、Pause/Scrub、多 Project 或 SRS 明确排除的能力。BASSMIDI 每 Stream sample voice 上限是已确认的后端资源配置，不属于该禁止项。
+- 不得顺手加入 MIDI 2.0、VST/DAW host、传统实时 MIDI OUT、录音、由 Compiler/Overlap/Channel Group 实施的语义级 Voice Stealing、每 Project/Port/Track/Instrument 独立 SoundFont、DLS、Pause/Scrub、多 Project 或 SRS 明确排除的能力。程序级 SFZ 属于已确认范围；BASSMIDI 每 Stream sample voice 上限是已确认的后端资源配置，不属于该禁止项。
 - Event Instrument、SubVoice、Mapping、Lifecycle、Logical Track、MIDI Channel Root、Pure MIDI Track、Segment 等正式语义以各自 SRS 章节为准，不以当前原型类结构为准。
 - 满足正确性、确定性、失败原子性和资源上限的候选实现中，时间性能优先于最小内存占用；允许用更多但有明确上限和释放时机的内存换取速度。
 
@@ -48,7 +48,7 @@ Project Source Data
 
 - BASS 是渲染实现细节，不是 Project/Compiler 领域模型。领域层不得暴露原生 handle、BASS 常量或设备回调约束。
 - 正式 canonical 仍保留物理 Port / Channel 分配；音频投影在 canonical 成功后按抽象 Channel Unit 拆分。每个 Unit 以干净的 1-channel BASSMIDI decode stream 语义渲染，由有界可复用 stream pool 执行；不得为 Project 中每个 Unit 永久保留原生 stream。
-- 所有实际 Port 使用任务开始时冻结的同一程序级 Enabled SF2 有序列表。`.midora`、Project Domain 和 canonical 不得保存或引用 SF2。无 Enabled SF2 时允许打开、保存、编译和 MIDI 导出，但必须阻止播放、预览和音频渲染。
+- 所有实际 Port 使用任务开始时冻结的同一程序级 Enabled SF2/SFZ 有序列表及目标 Bank/Program 映射。`.midora`、Project Domain 和 canonical 不得保存或引用 SoundFont。无 Enabled SoundFont 时允许打开、保存、编译和 MIDI 导出，但必须阻止播放、预览和音频渲染。
 - 每次 stream 创建、重建和复用前都要清除旧 mode/state，并按 canonical Unit descriptor 显式建立 Melodic 或 Percussion 状态。只有完成精确 NoteOff、Reset 与状态清理后才允许复用。
 - 不得用 `Thread.Sleep`、UI 定时器或“调用 API 的瞬间”承担正式 MIDI 时序。事件必须从 Canonical Compiled Result 经统一 tick→sample 映射后做采样级调度；同 tick 顺序必须保留。
 - 所有正式 BASSMIDI Stream 必须启用 `BASS_MIDI_NOFX | BASS_MIDI_NOTEOFF1`。Event Instrument/SubVoice 不得创建或映射 CC91/CC93；Pure MIDI Track 必须允许它们进入 Project、canonical 与 MIDI 导出，音频投影确定性忽略其 Reverb/Chorus 效果且不报一致性 Error。同 Port、Channel、pitch 的重叠 Note 实例按 FIFO 与逐个 NoteOff 配对，硬边界必须按活动实例数完整释放。
@@ -100,7 +100,7 @@ Project Source Data
 8. 初版三项 BASS DLL 的完整版本和 SHA-256 固定；仓库保存 manifest 而不提交 DLL，升级必须显式变更基线并完成全回归。
 9. 初版 C# Mapping 当前固定 ABI v2、`MappingStableIdV2(long)`、Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10` 和独立只读 Mapping 契约；每 Project 只缓存当前源码修订并使用 collectible ALC，编译产物不持久化。ABI v1 已在开发期被 v2 取代且不提供并行回退；该机制不是 sandbox。
 10. 初版持久化固定 JSON Schema Draft 2020-12、内部版本化 System.Text.Json source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 与 Grpc.Tools 2.83.0；未知/重复字段严格拒绝，已发布 descriptor/字段号/golden bytes 必须保持兼容。文本、路径、opaque sRGB、UTC 七位小数秒和非负 int64 毫秒表示按 SRS 16.13 固定。
-11. SoundFont 只属于 Application Preferences：保存最多 256 个有序 `{absolute local .sf2 path, enabled}` 项。设置阶段不复制、不读取完整 SF2、不计算内容 SHA-256、不调用 BASS 验证；音频 Worker 以 `BASS_MIDI_FONT_MMAP` 直接打开 Enabled 原路径并按列表顺序设置 Font handles。缓存只使用有序路径、文件长度和 UTC 修改时间的小型描述符身份；它不是内容校验。
+11. SoundFont 只属于 Application Preferences：保存最多 256 个有序 `{absolute local .sf2/.sfz path, enabled, optional target Bank MSB/LSB/Program}` 项；SFZ target 必填，SF2 target 可省略，三字段只能整体出现且均为 0～127。设置 Draft/持久化阶段不复制、不读取完整 SoundFont、不计算内容 SHA-256，也不解析、快照或监控 SFZ 的 sample/include 依赖；音频相关设置成功持久化后必须在 `Saving Settings` 运行时阶段销毁旧 Worker，直接以原路径交给 BASSMIDI（仅 SF2 使用 `BASS_MIDI_FONT_MMAP`），按列表顺序和映射设置 Font handles 并保留新 Worker供后续复用。新建/打开/命令行打开/MIDI 导入形成 Project 会话及 Reset Playback Engine 必须在前台任务结束前接管或预热 Worker，不得延迟到首次 Play；Project 已提交后的预热失败保留 Project、明确报告并允许后续重试。缓存只使用有序配置、主文件长度和 UTC 修改时间的小型描述符身份；它不是内容或 SFZ 依赖校验。
 12. 工程总耗时按 Project 成功打开后的完整会话时间累计，包括空闲、最小化、失焦、Buffering、MIDI 导出和音频渲染；系统睡眠 / 休眠及关闭流程暂停。会话使用单调时钟；自动累计不单独标记 Modified，不进入 Undo / Redo，不影响编译或 canonical fingerprint。
 13. 初版 SMF Type 1 导出固定：Tempo 以十进制 `60,000,000 / BPM` 后只执行一次 `AwayFromZero`，24-bit 越界即失败；Time Signature 固定 `cc=24`、`bb=8`；Bank 顺序固定 CC0→CC32→Program；Channel Event 显式 status；文本 Meta 严格 UTF-8；导出器不得在 canonical 之外追加 Channel 清理。Track 顺序为 Conductor→global Arrangement order 过滤出的 Pure MIDI Tracks→Logical Unit Tracks（Port/Channel 顺序）；Pure MIDI 每 Track 一个 MTrk 并保留名称与自身 EOT，Logical 每 Unit 一个 MTrk 并使用统一 endTick。导入单独支持合法 Running Status，但不保存其 wire 表达。
 14. MIDI 导出的 Channel 10 melodic 初始化固定为每个 Logical Channel 10 Unit MTrk 与 Melodic Channel 10 Pure MIDI MTrk，在相对 tick 0、Track Name/MIDI Port/结构 Meta 后、canonical 事件前各写一次 Roland GS Normal Part `F0 41 10 42 12 40 10 15 00 1B F7` 与 Yamaha XG Normal Part `F0 43 10 4C 08 09 07 00 F7`，顺序 GS→XG。Percussion Root、不使用 Channel 10 的 MTrk 和 Conductor 不写；不得发送 GS/XG/GM Reset 或改变 canonical Bank/Program。

@@ -107,9 +107,9 @@ Recording
 `Preparing` 表示：
 ```text
 正在执行播放前编译 / 缓存检查
-正在检查 SF2 和播放设备
+正在检查 SoundFont 和播放设备
 正在创建或复用 BASSMIDI Stream
-正在加载当前 SF2
+正在加载当前 SoundFont 配置
 正在执行 Channel 10 melodic 初始化
 正在恢复播放起点状态
 正在准备初始预渲染 buffer
@@ -531,13 +531,13 @@ Port / Channel Unit
 多个 Logical Track 共享同一 Event Instrument Usage 时适用同一原则：不得为静音单个成员而清空整个 Usage Unit；必须以 Track 来源追踪精确释放 Note，并从当前 tick 重建该 Usage 的必要映射后 Channel 状态。
 ---
 ## 13.11 SoundFont 与播放
-### 13.11.1 播放需要有效 SF2
+### 13.11.1 播放需要有效 SoundFont 配置
 点击播放时，如果 Application Preferences 的有序 SoundFont 列表：
 ```text
 没有任何 Enabled 项
 任一 Enabled 路径缺失或不可读取
-任一 Enabled SF2 格式不受 BASSMIDI 支持
-任一 Enabled SF2 加载失败
+任一 Enabled SF2/SFZ 格式不受 BASSMIDI 支持
+任一 Enabled SoundFont、SFZ include/sample 或目标映射加载失败
 ```
 则：
 ```text
@@ -545,7 +545,7 @@ Port / Channel Unit
 显示不可播放原因。
 不修改 Project 内容。
 ```
-Event Instrument 预览、SubVoice 预览、Segment 预览与主播放一样需要有效 SF2。
+Event Instrument 预览、SubVoice 预览、Segment 预览与主播放一样需要有效 SoundFont 配置。
 ### 13.11.2 播放期间禁止修改 SoundFont
 Playing、Buffering、实时 Preview 或文件 Rendering 期间禁止提交程序级 SoundFont 列表变更。
 包括：
@@ -554,7 +554,11 @@ Playing、Buffering、实时 Preview 或文件 Rendering 期间禁止提交程�
 启用或禁用条目
 调整顺序
 ```
-列表只在 Stopped / Idle 提交；提交后销毁持久音频 Worker，并使相关 sample-domain 缓存 generation 失效。Project、canonical compiled result 和 Modified 状态不得因此变化。
+列表只在 Stopped / Idle 提交；提交后销毁持久音频 Worker，使相关 sample-domain 缓存 generation 失效，并在 `Saving Settings` 模态任务中立即创建新 Worker、加载冻结的 Enabled SF2/SFZ 列表及目标映射并探测输出设备。该预热不编译 Project、不创建播放计划、不进入 Playing；成功后的 Worker 必须保留并供下一次播放或预览复用。实时音频参数或音频缓存配置变化采用同一重建规则；纯 UI/最近目录等非音频设置变化不得重建 Worker。Project、canonical compiled result 和 Modified 状态不得因此变化。
+
+若 Application Preferences 已成功持久化、但 Worker 创建、SoundFont/SFZ 依赖加载或映射应用失败，则设置保持为已保存的新值，Worker 进入不可用状态并报告具体失败；后续重新 Apply 或音频任务 Preparing 可以重试。不得静默恢复旧设置、假报已加载或保留指向旧列表的 Worker。
+
+新建、打开或从 MIDI 导入形成的新 Project 会话，以及显式 `Reset Playback Engine`，都必须在其前台操作完成前调用同一 Worker 预热路径。该路径只建立/探测持久实时 Worker与冻结 Font handles，不执行 canonical 编译或播放计划生成。Project 会话切换已经成功后发生的预热失败只属于音频运行时失败：Project 保持打开，操作结果不得误报为 Project 打开/创建失败，后续 Play/Preview Preparing 仍可重试。
 ---
 ## 13.12 BASSMIDI Stream 生命周期
 ### 13.12.1 Canonical Unit 音频投影
@@ -570,7 +574,7 @@ Playing、Buffering、实时 Preview 或文件 Rendering 期间禁止提交程�
 ### 13.12.3 Stream 复用
 Stream 复用只能是性能优化。复用前必须重新确认：
 ```text
-SF2 handle 列表与本次任务冻结的程序级 Enabled SF2 有序列表完全一致
+SoundFont handle/mapping 列表与本次任务冻结的程序级 Enabled SF2/SFZ 有序配置完全一致
 采样率、格式和 Maximum Sample Voices per Unit Stream 匹配本次任务
 Stream 处于清洁状态
 channel 0 的 Melodic/Percussion mode 与本次 Unit descriptor 一致
@@ -641,7 +645,7 @@ BASS_ATTRIB_MIDI_CPU = 0      // automatic
 
 初版只支持 `win-x64`，x64 的 SSE2 基线满足 8-point sinc 的处理器前提。若未来增加其他 CPU 架构，必须重新验证 BASSMIDI 对应架构的 sinc 支持和逐采样回归，不得静默降低为 linear interpolation。
 
-Preparing 必须从冻结的 sample-domain 计划收集实际会被 Note On 使用的 Bank MSB / Program 组合，并在进入 Playing / Preview Playing 前通过 `BASS_MIDI_FontLoad` 预加载对应 SF2 presets。实时事件 Stream 不得调用只适用于 MIDI 文件/序列 Stream 的 `BASS_MIDI_StreamLoadSamples`。若引用的组合不存在，不得把它提升为 Project 或编译错误；后端必须保持第 6.12.3 节允许的 BASSMIDI fallback 语义，并确保 fallback 所需样本也在 Preparing 完成加载。
+Preparing 必须从冻结的 sample-domain 计划收集实际会被 Note On 使用的 Bank MSB / Program 组合，并在进入 Playing / Preview Playing 前通过 `BASS_MIDI_FontLoad` 预加载对应 SoundFont source。未映射 SF2 按引用组合预载；映射 SF2 按映射 source 预载；SFZ 按名义 source `0/0` 预载。实时事件 Stream 不得调用只适用于 MIDI 文件/序列 Stream 的 `BASS_MIDI_StreamLoadSamples`。若引用的 SF2 精确组合不存在，不得把它提升为 Project 或编译错误；后端必须保持第 6.4 节允许的 BASSMIDI fallback 语义，并确保 fallback 所需样本也在 Preparing 完成加载。SFZ sample/include 加载错误属于音频任务错误。
 
 Application Preferences 提供用户可编辑的 `Realtime Maximum Sample Voices per Unit Stream`：
 ```text
@@ -1070,7 +1074,7 @@ CPU 暂时跟不上导致 buffer underrun
 ```text
 C# Mapping Function 运行时异常
 BASSMIDI Stream 创建失败
-SF2 加载失败
+SoundFont 或 SFZ 依赖加载失败
 输出设备丢失且无法恢复
 compiled result 与播放缓存一致性校验失败
 ```
@@ -1455,7 +1459,7 @@ Segment 预览只播放被预览 Segment 所在 Track / Segment。
 ```text
 Track 未绑定 Event Instrument Usage，或 Usage / Definition 引用断裂
 Segment 预览编译失败
-无有效 SF2
+无有效 SoundFont
 播放后端错误
 ```
 ### 13.24.3 项目时间绑定
@@ -1498,7 +1502,7 @@ velocity = 当前 Event Instrument 预览 velocity
 单音符放置手势不启动声音 Preview；只使用第 18、20 章规定的虚线视觉草稿。该视觉草稿不创建额外 Project 对象，不单独进入 Undo / Redo。Pitch Ruler 点击没有 Project 编辑副作用，只报告预览不可用。
 ---
 ## 13.25 空项目播放
-空项目在有有效 SF2 的情况下允许点击播放。
+空项目在有有效 SoundFont 的情况下允许点击播放。
 行为：
 ```text
 进入播放流程。
@@ -1506,7 +1510,7 @@ velocity = 当前 Event Instrument 预览 velocity
 可按 Conductor Track 时间状态运行。
 如果默认范围为零长度，则立即进入 Stop 清理流程。
 ```
-无 SF2 时仍不能播放。
+无 Enabled SoundFont 时仍不能播放。
 ---
 ## 13.26 初版明确不支持的功能
 初版播放系统不支持：
@@ -1579,7 +1583,7 @@ buffer 设置和实际值面板布局
 ```text
 它不提供 UI。
 它不能独立打开或解释 .midora Project。
-它只接收冻结的 canonical compiled result、已解析音频设置、必要 SF2 资源信息和控制命令。
+它只接收冻结的 canonical compiled result、已解析音频设置、必要 SoundFont 配置和控制命令。
 它不得重新解释 Event Instrument、Mapping、Lifecycle、Segment 或资源分配语义。
 实时 PCM 只在子进程内部的 Render-Ahead ring 与 WASAPI callback 之间流动，不跨进程传输。
 运行时命令与状态使用固定版本、固定布局、有界的二进制共享内存 ABI；禁止 JSON、文本协议和逐消息对象反序列化。

@@ -48,13 +48,13 @@ public sealed class BassMidiAudioFileRenderWorkerIntegrationTests
                 ])]);
 
             await worker.PrepareAsync(new(
-                [SoundFontPath],
+                [new SoundFontConfiguration(SoundFontPath, null)],
                 plan.SampleRate,
                 BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
                 -0.1f));
             AudioFileRenderWorkerResult rendered = await worker.RenderAsync(new(
                 plan,
-                [SoundFontPath],
+                [new SoundFontConfiguration(SoundFontPath, null)],
                 SoundFontSetDefinition.Create([SoundFontPath]).CacheIdentity,
                 outputPath,
                 BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,

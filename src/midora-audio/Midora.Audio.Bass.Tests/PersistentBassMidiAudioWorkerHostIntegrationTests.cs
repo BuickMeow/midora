@@ -6,6 +6,71 @@ namespace Midora.Audio.Bass.Tests;
 [SupportedOSPlatform("windows")]
 public sealed class PersistentBassMidiAudioWorkerHostIntegrationTests
 {
+    private const int TestSampleRate = 48_000;
+
+    [Fact]
+    public void MappedSfzConfigurationSurvivesPersistentFormalPlaybackPreparation()
+    {
+        string nativeDirectory = NativeAudioIntegrationEnvironment.RequireNativeDirectory();
+        string? configuredFormalWorker = Environment.GetEnvironmentVariable(
+            "MIDORA_TEST_NATIVE_AOT_REALTIME_WORKER");
+        bool useManagedWorker = string.IsNullOrWhiteSpace(configuredFormalWorker);
+        string workerPath = useManagedWorker
+            ? NativeAudioIntegrationEnvironment.RequireManagedWorkerPath()
+            : Path.GetFullPath(configuredFormalWorker!);
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            $"midora-persistent-sfz-integration-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string samplePath = Path.Combine(directory, "tone.wav");
+            string sfzPath = Path.Combine(directory, "tone.sfz");
+            WriteTestWave(samplePath);
+            File.WriteAllText(
+                sfzPath,
+                "<region> sample=tone.wav key=60 pitch_keycenter=60 ampeg_release=0.01");
+            using PersistentBassMidiAudioWorkerHost host = new(
+                workerPath,
+                nativeDirectory,
+                [new SoundFontConfiguration(sfzPath, new(11, 22, 33))],
+                TimeSpan.FromSeconds(30),
+                allowManagedTestWorker: useManagedWorker);
+            BassMidiAudioWorkerProbeResult probe = host.Probe(
+                deviceId: null,
+                deviceBufferRequestMilliseconds: 50);
+            MidiRenderPlan plan = new(
+                probe.ActualSampleRate,
+                totalFrameCount: Math.Max(1, probe.ActualSampleRate / 100),
+                ports: []);
+
+            using PersistentBassMidiAudioWorkerSession session = new(
+                host,
+                plan,
+                new string('a', 64),
+                new BassMidiRendererSettings(
+                    BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
+                    InitialReleaseAudioRuntimePolicy.WorkFrameCount),
+                AudioMasterSettings.LimiterV1,
+                renderAheadMilliseconds: 100,
+                deviceBufferRequestMilliseconds: 50,
+                deviceId: null,
+                preparingTimeout: TimeSpan.FromSeconds(30),
+                audioCache: null,
+                bufferingRecoverySpoolPath: null,
+                bufferingRecoveryMemoryFrameCapacity: 0,
+                playbackSpanCacheEnabled: false);
+            session.Stop(flush: true, TimeSpan.FromSeconds(30));
+
+            Assert.Equal(0, session.ExitCode);
+            Assert.Equal(0, session.Status.FaultCode);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void OneWorkerProcessCompletesTwoFormalSilentPlaybackTasks()
     {
@@ -162,6 +227,36 @@ public sealed class PersistentBassMidiAudioWorkerHostIntegrationTests
                 + $"after={status.PositionFrame}; render={status.RenderPositionFrame}; "
                 + $"state={status.State}; stderr={session.StandardError}.");
         return status;
+    }
+
+    private static void WriteTestWave(string path)
+    {
+        const int channelCount = 1;
+        const int bitsPerSample = 16;
+        const int sampleCount = 4_800;
+        const int byteRate = TestSampleRate * channelCount * bitsPerSample / 8;
+        const int blockAlign = channelCount * bitsPerSample / 8;
+        const int dataLength = sampleCount * blockAlign;
+        using FileStream stream = new(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        using BinaryWriter writer = new(stream);
+        writer.Write("RIFF"u8);
+        writer.Write(36 + dataLength);
+        writer.Write("WAVE"u8);
+        writer.Write("fmt "u8);
+        writer.Write(16);
+        writer.Write((ushort)1);
+        writer.Write((ushort)channelCount);
+        writer.Write(TestSampleRate);
+        writer.Write(byteRate);
+        writer.Write((ushort)blockAlign);
+        writer.Write((ushort)bitsPerSample);
+        writer.Write("data"u8);
+        writer.Write(dataLength);
+        for (int index = 0; index < sampleCount; index++)
+        {
+            double phase = (2d * Math.PI * 440d * index) / TestSampleRate;
+            writer.Write((short)Math.Round(Math.Sin(phase) * 16_000d));
+        }
     }
 
     private sealed class PeriodicControllerPageProvider(int sampleRate)

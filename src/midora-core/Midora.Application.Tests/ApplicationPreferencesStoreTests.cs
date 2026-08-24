@@ -41,9 +41,15 @@ public sealed class ApplicationPreferencesStoreTests
         {
             SoundFonts =
             [
-                new(Path.Combine(directory.Path, "first.sf2"), true),
+                new(
+                    Path.Combine(directory.Path, "first.sf2"),
+                    true,
+                    new(1, 2, 3)),
                 new(Path.Combine(directory.Path, "second.sf2"), false),
-                new(Path.Combine(directory.Path, "third.sf2"), true)
+                new(
+                    Path.Combine(directory.Path, "third.sfz"),
+                    true,
+                    new(4, 5, 6))
             ]
         };
 
@@ -62,9 +68,13 @@ public sealed class ApplicationPreferencesStoreTests
         Assert.Equal(
             [
                 Path.Combine(directory.Path, "first.sf2"),
-                Path.Combine(directory.Path, "third.sf2")
+                Path.Combine(directory.Path, "third.sfz")
             ],
             loaded.Preferences.GetEnabledSoundFontPaths());
+        Assert.Equal(
+            [new Midora.Audio.SoundFontTarget(1, 2, 3), new(4, 5, 6)],
+            loaded.Preferences.GetEnabledSoundFontConfigurations()
+                .Select(value => value.Target));
         Assert.NotEqual(
             loaded.Preferences.RecentDirectories.MidiExport,
             loaded.Preferences.RecentDirectories.AudioRender);
@@ -227,6 +237,27 @@ public sealed class ApplicationPreferencesStoreTests
 
         Assert.Throws<ArgumentException>(relative.Validate);
         Assert.Throws<ArgumentException>(unc.Validate);
+    }
+
+    [Fact]
+    public void SfzRequiresCompleteTargetWhileSf2MayUseOriginalMapping()
+    {
+        ApplicationPreferences sf2 = ApplicationPreferences.Default with
+        {
+            SoundFonts = [new(Path.GetFullPath("original.sf2"), true)]
+        };
+        ApplicationPreferences sfzWithoutTarget = ApplicationPreferences.Default with
+        {
+            SoundFonts = [new(Path.GetFullPath("instrument.sfz"), true)]
+        };
+        ApplicationPreferences sfzWithTarget = ApplicationPreferences.Default with
+        {
+            SoundFonts = [new(Path.GetFullPath("instrument.sfz"), true, new(0, 0, 0))]
+        };
+
+        sf2.Validate();
+        Assert.Throws<ArgumentException>(sfzWithoutTarget.Validate);
+        sfzWithTarget.Validate();
     }
 
     [Theory]

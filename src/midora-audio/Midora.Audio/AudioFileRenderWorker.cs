@@ -1,14 +1,14 @@
 namespace Midora.Audio;
 
 public sealed record AudioFileRenderWorkerPreparation(
-    IReadOnlyList<string> SoundFontPaths,
+    IReadOnlyList<SoundFontConfiguration> SoundFonts,
     int SampleRate,
     int MaximumSampleVoicesPerUnitStream,
     float MasterVolumeDecibels);
 
 public sealed record AudioFileRenderWorkerRequest(
     MidiRenderPlan Plan,
-    IReadOnlyList<string> SoundFontPaths,
+    IReadOnlyList<SoundFontConfiguration> SoundFonts,
     string SoundFontSetCacheIdentity,
     string TemporaryOutputPath,
     int MaximumSampleVoicesPerUnitStream,

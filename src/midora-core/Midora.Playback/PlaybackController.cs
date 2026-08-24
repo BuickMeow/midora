@@ -73,7 +73,9 @@ public interface IRealtimePlaybackCacheBackend
 
 public interface IRealtimePlaybackSoundFontBackend
 {
-    void SetSoundFontSet(IReadOnlyList<string> soundFontPaths, string? cacheIdentity);
+    void SetSoundFontSet(
+        IReadOnlyList<SoundFontConfiguration> soundFonts,
+        string? cacheIdentity);
 }
 
 public interface ISimplePitchAuditionRealtimePlaybackBackend
@@ -827,6 +829,22 @@ public sealed class PlaybackController : IDisposable
         throw LastError;
     }
 
+    /// <summary>
+    /// Initializes the current realtime backend and keeps its persistent audio Worker ready for
+    /// subsequent playback and preview. This does not compile Project content or start playback.
+    /// </summary>
+    public int WarmUpAudioBackend(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (State != PlaybackState.Stopped || ActiveTaskKind != PlaybackTaskKind.None)
+        {
+            throw new InvalidOperationException(
+                "The audio Worker can only be initialized while playback is stopped.");
+        }
+        _ = RequireEffectiveSoundFont("Audio Worker initialization");
+        return PrepareBackend(cancellationToken);
+    }
+
     public void RecoverFromError()
     {
         if (State == PlaybackState.Error)
@@ -918,11 +936,14 @@ public sealed class PlaybackController : IDisposable
         {
             return;
         }
-        IReadOnlyList<string> paths = _session.EffectiveSoundFontPaths;
-        string? identity = paths.Count == 0 ? null : _session.EffectiveSoundFontSetCacheIdentity;
+        IReadOnlyList<SoundFontConfiguration> soundFonts =
+            _session.EffectiveSoundFontConfigurations;
+        string? identity = soundFonts.Count == 0
+            ? null
+            : _session.EffectiveSoundFontSetCacheIdentity;
         lock (_backendPreparationSync)
         {
-            soundFontBackend.SetSoundFontSet(paths, identity);
+            soundFontBackend.SetSoundFontSet(soundFonts, identity);
             Volatile.Write(ref _knownSampleRate, 0);
         }
     }

@@ -390,7 +390,7 @@ Shared Usage / Auto Root block 的 brace 是整体移动 hit target；Track body
 ### 20.5.7 外部文件
 ```text
 .midora or candidate .zip dropped on Main Window -> Open Project flow
-SF2 dropped on Application Preferences SoundFont list -> Add local path entry
+SF2 or SFZ dropped on Application Preferences SoundFont list -> Add local path entry; SFZ still requires a target mapping before Apply
 ```
 初版不通过拖放导入：
 ```text
@@ -1669,11 +1669,14 @@ Damaged     -> persistent source content could not be loaded
 ### 20.18.7 SoundFont
 ```text
 No Enabled SoundFont -> legal application state
-Configured           -> enabled local paths are stored; backend not loaded
-Loaded               -> current backend loaded the frozen enabled list successfully
+Configured           -> enabled local paths are stored; latest eager Worker initialization failed or has not yet completed
+Loading              -> Saving Settings or Project session activation is rebuilding/adopting the Worker and loading the frozen enabled list
+Loaded               -> retained current backend loaded the frozen enabled list successfully
 Missing or Failed    -> playback, preview and render unavailable
 ```
-Compile 和 MIDI Export 不依赖 SF2 加载。
+Compile 和 MIDI Export 不依赖 SoundFont 加载。
+
+新建、打开、命令行打开或从 MIDI 导入形成 Project 会话时，只要存在 Enabled SoundFont，前台任务必须在 Project 会话提交后立即尝试预热 Worker。验收必须区分两种结果：Project 会话失败时保持原会话；Project 会话已经成功但 Worker 预热失败时保留新会话、显示可查看全文的音频初始化错误，并令后续 Play/Preview 可以重试。不得把后者包装成 Project 打开失败，也不得要求用户先按一次 Play 才创建 Worker。Reset Playback Engine 清理后同样立即预热。
 ### 20.18.8 English UI 与 Unicode
 内置标签和消息为 English；用户作品文本允许 Unicode。
 ### 20.18.9 自动修复

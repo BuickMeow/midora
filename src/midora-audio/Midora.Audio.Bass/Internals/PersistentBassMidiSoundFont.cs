@@ -7,25 +7,37 @@ namespace Midora.Audio.Bass;
 internal sealed unsafe class PersistentBassMidiSoundFont : IDisposable
 {
     private readonly BassNativeRuntime.Lease _runtimeLease;
+    private readonly SoundFontConfiguration[] _configurations;
+    private readonly IReadOnlyList<SoundFontConfiguration> _readOnlyConfigurations;
     private readonly FontState[] _fonts;
     private bool _disposed;
 
     public PersistentBassMidiSoundFont(string soundFontPath)
-        : this([soundFontPath])
+        : this([new SoundFontConfiguration(soundFontPath, null)])
     {
     }
 
     public PersistentBassMidiSoundFont(IReadOnlyList<string> soundFontPaths)
+        : this(soundFontPaths
+            .Select(path => new SoundFontConfiguration(path, null))
+            .ToArray())
     {
-        ArgumentNullException.ThrowIfNull(soundFontPaths);
-        if (soundFontPaths.Count == 0)
+    }
+
+    public PersistentBassMidiSoundFont(
+        IReadOnlyList<SoundFontConfiguration> soundFonts)
+    {
+        ArgumentNullException.ThrowIfNull(soundFonts);
+        if (soundFonts.Count == 0)
         {
-            throw new ArgumentException("At least one enabled SoundFont is required.", nameof(soundFontPaths));
+            throw new ArgumentException("At least one enabled SoundFont is required.", nameof(soundFonts));
         }
 
-        string[] paths = soundFontPaths.Select(Path.GetFullPath).ToArray();
-        foreach (string path in paths)
+        _configurations = soundFonts.Select(value => value.Normalize()).ToArray();
+        _readOnlyConfigurations = Array.AsReadOnly(_configurations);
+        foreach (SoundFontConfiguration configuration in _configurations)
         {
+            string path = configuration.Path;
             if (!File.Exists(path))
             {
                 throw new FileNotFoundException("An enabled application SoundFont does not exist.", path);
@@ -33,22 +45,32 @@ internal sealed unsafe class PersistentBassMidiSoundFont : IDisposable
         }
 
         _runtimeLease = BassNativeRuntime.Acquire();
-        _fonts = new FontState[paths.Length];
+        _fonts = new FontState[_configurations.Length];
         try
         {
-            for (int index = 0; index < paths.Length; index++)
+            for (int index = 0; index < _configurations.Length; index++)
             {
-                fixed (char* pointer = paths[index])
+                SoundFontConfiguration configuration = _configurations[index];
+                fixed (char* pointer = configuration.Path)
                 {
+                    uint flags = NativeBass.BASS_UNICODE;
+                    if (!configuration.IsSfz)
+                    {
+                        flags |= NativeBassMidi.BASS_MIDI_FONT_MMAP;
+                    }
                     _fonts[index] = new FontState(NativeBassMidi.FontInit(
                         pointer,
-                        NativeBass.BASS_UNICODE | NativeBassMidi.BASS_MIDI_FONT_MMAP));
+                        flags));
                 }
                 if (_fonts[index].Handle == 0)
                 {
                     Throw("BASS_MIDI_FontInit");
                 }
-                EnsurePreset(_fonts[index], 0, 0);
+                SoundFontTarget? target = configuration.Target;
+                EnsurePreset(
+                    _fonts[index],
+                    configuration.IsSfz ? 0 : target?.Program ?? 0,
+                    configuration.IsSfz ? 0 : target?.BankMsb ?? 0);
             }
         }
         catch
@@ -68,14 +90,50 @@ internal sealed unsafe class PersistentBassMidiSoundFont : IDisposable
         }
     }
 
+    public IReadOnlyList<SoundFontConfiguration> Configurations
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _readOnlyConfigurations;
+        }
+    }
+
+    public void ApplyToStream(uint streamHandle)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (streamHandle == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(streamHandle));
+        }
+        NativeBassMidi.BASS_MIDI_FONTEX2* fonts = stackalloc NativeBassMidi.BASS_MIDI_FONTEX2[
+            _fonts.Length];
+        for (int index = 0; index < _fonts.Length; index++)
+        {
+            SoundFontConfiguration configuration = _configurations[index];
+            fonts[index] = BassMidiSoundFontMapping.Create(
+                _fonts[index].Handle,
+                configuration);
+        }
+        uint count = BassMidiSoundFontMapping.AddExtendedConfigurationFlag(_fonts.Length);
+        if (NativeBassMidi.StreamSetFonts(streamHandle, fonts, count) == 0)
+        {
+            Throw("BASS_MIDI_StreamSetFonts");
+        }
+    }
+
     public void EnsureReferencedPresets(MidiRenderPlan plan)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         foreach (int key in BassMidiRenderer.CollectReferencedPresetKeys(plan))
         {
-            foreach (FontState font in _fonts)
+            for (int index = 0; index < _fonts.Length; index++)
             {
-                EnsurePreset(font, key & 127, key >> 7);
+                if (_configurations[index].Target is not null)
+                {
+                    continue;
+                }
+                EnsurePreset(_fonts[index], key & 127, key >> 7);
             }
         }
     }

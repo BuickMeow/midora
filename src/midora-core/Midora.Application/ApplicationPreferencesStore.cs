@@ -92,7 +92,8 @@ public sealed class ApplicationPreferencesStore
                             "Application Preferences soundFonts is required."))
                     .Select(value => new ApplicationSoundFontPreference(
                         value.Path,
-                        value.Enabled).Normalize())
+                        value.Enabled,
+                        ReadTarget(value)).Normalize())
                     .ToArray(),
                 DesktopUi = desktop is null
                     ? DesktopUiPreferences.Default
@@ -165,7 +166,10 @@ public sealed class ApplicationPreferencesStore
                     .Select(value => new ApplicationSoundFontPreferenceJsonV1
                     {
                         Path = Path.GetFullPath(value.Path),
-                        Enabled = value.Enabled
+                        Enabled = value.Enabled,
+                        TargetBankMsb = value.Target?.BankMsb,
+                        TargetBankLsb = value.Target?.BankLsb,
+                        TargetProgram = value.Target?.Program
                     })
                     .ToList(),
                 RecentDirectories = new ApplicationRecentDirectoriesJsonV1
@@ -247,6 +251,27 @@ public sealed class ApplicationPreferencesStore
             }
         }
     }
+
+    private static Midora.Audio.SoundFontTarget? ReadTarget(
+        ApplicationSoundFontPreferenceJsonV1 value)
+    {
+        bool hasMsb = value.TargetBankMsb.HasValue;
+        bool hasLsb = value.TargetBankLsb.HasValue;
+        bool hasProgram = value.TargetProgram.HasValue;
+        if (!hasMsb && !hasLsb && !hasProgram)
+        {
+            return null;
+        }
+        if (!hasMsb || !hasLsb || !hasProgram)
+        {
+            throw new InvalidDataException(
+                "A SoundFont target mapping must specify Bank MSB, Bank LSB, and Program together.");
+        }
+        return new(
+            value.TargetBankMsb!.Value,
+            value.TargetBankLsb!.Value,
+            value.TargetProgram!.Value);
+    }
 }
 
 internal sealed class ApplicationPreferencesJsonV1
@@ -289,6 +314,15 @@ internal sealed class ApplicationSoundFontPreferenceJsonV1
 
     [JsonPropertyOrder(1)]
     public bool Enabled { get; set; }
+
+    [JsonPropertyOrder(2)]
+    public byte? TargetBankMsb { get; set; }
+
+    [JsonPropertyOrder(3)]
+    public byte? TargetBankLsb { get; set; }
+
+    [JsonPropertyOrder(4)]
+    public byte? TargetProgram { get; set; }
 }
 
 internal sealed class DesktopUiPreferencesJsonV1

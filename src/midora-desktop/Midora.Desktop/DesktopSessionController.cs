@@ -43,6 +43,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             ? dispatcherContext
             : null;
     private ProjectContext? _context;
+    private BassWasapiChildPlaybackBackend? _preparedPlaybackBackend;
     private WorkspaceViewModel? _activeWorkspace;
     private WorkspaceViewModel? _diagnosticScopeWorkspace;
     private long _revision;
@@ -134,6 +135,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         1 => "1 SoundFont Enabled",
         int count => $"{count} SoundFonts Enabled"
     };
+    public bool HasEnabledSoundFonts =>
+        _applicationPreferences.GetEnabledSoundFontPaths().Length != 0;
     public bool IsTrackMuted(MidoraId trackId) => _mutedTrackIds.Contains(trackId);
     public bool IsTrackSolo(MidoraId trackId) => _soloTrackIds.Contains(trackId);
     public bool IsSharedGroupMuted(MidoraId sharedGroupId) =>
@@ -356,7 +359,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ProjectContext? next = null;
         try
         {
-            next = ProjectContext.FromCreation(_packages, result, _applicationPreferences);
+            next = ProjectContext.FromCreation(
+                _packages,
+                result,
+                _applicationPreferences,
+                TakePreparedPlaybackBackend());
             result = null!;
             await ActivateAsync(next);
             next = null;
@@ -383,7 +390,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ProjectContext? next = null;
         try
         {
-            next = ProjectContext.FromOpenCandidate(candidate, _applicationPreferences);
+            next = ProjectContext.FromOpenCandidate(
+                candidate,
+                _applicationPreferences,
+                TakePreparedPlaybackBackend());
             candidate = null!;
             await ActivateAsync(next);
             next = null;
@@ -468,7 +478,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ProjectContext? next = null;
         try
         {
-            next = ProjectContext.FromCreation(_packages, adopted, _applicationPreferences);
+            next = ProjectContext.FromCreation(
+                _packages,
+                adopted,
+                _applicationPreferences,
+                TakePreparedPlaybackBackend());
             adopted = null!;
             await ActivateAsync(next);
             next = null;
@@ -924,7 +938,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         return await DesktopAudioRenderService.PrepareAsync(
             Project,
             Persistence?.CurrentProjectPath,
-            _applicationPreferences.GetEnabledSoundFontPaths(),
+            _applicationPreferences.GetEnabledSoundFontConfigurations(),
             options,
             cancellationToken);
     }
@@ -1122,20 +1136,71 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         Raise(nameof(CanUseContextMenus));
     }
 
-    public void ApplyApplicationPreferences(ApplicationPreferences preferences)
+    public bool RequiresAudioWorkerRebuild(ApplicationPreferences preferences)
     {
         ArgumentNullException.ThrowIfNull(preferences);
         preferences.Validate();
-        _applicationPreferences = preferences;
-        if (_context is null)
-        {
-            Raise(nameof(SoundFontState));
-            return;
-        }
-        if (IsForegroundTaskRunning || IsPlaybackActive)
+        return !_applicationPreferences.RealtimeAudio.Equals(preferences.RealtimeAudio)
+            || !_applicationPreferences.AudioCache.Equals(preferences.AudioCache)
+            || !SoundFontPreferencesEqual(
+                _applicationPreferences.SoundFonts,
+                preferences.SoundFonts);
+    }
+
+    public async Task ApplyApplicationPreferencesAsync(
+        ApplicationPreferences preferences,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(preferences);
+        preferences.Validate();
+        bool rebuildAudioWorker = RequiresAudioWorkerRebuild(preferences);
+        if (IsPlaybackActive)
         {
             throw new InvalidOperationException(
-                "Application Preferences can only change while playback is stopped and no foreground task is running.");
+                "Application Preferences can only change while playback is stopped.");
+        }
+
+        _applicationPreferences = preferences;
+        if (!rebuildAudioWorker)
+        {
+            Raise(nameof(SoundFontState));
+            Raise(nameof(HasEnabledSoundFonts));
+            return;
+        }
+
+        BassWasapiChildPlaybackBackend? stalePreparedBackend = _preparedPlaybackBackend;
+        _preparedPlaybackBackend = null;
+        stalePreparedBackend?.Dispose();
+
+        if (_context is null)
+        {
+            SoundFontConfiguration[] enabledSoundFonts =
+                preferences.GetEnabledSoundFontConfigurations();
+            if (enabledSoundFonts.Length != 0)
+            {
+                BassWasapiChildPlaybackBackend? preparedBackend =
+                    ProjectContext.CreatePlaybackBackend(preferences);
+                try
+                {
+                    SoundFontSetDefinition soundFontSet =
+                        SoundFontSetDefinition.Create(enabledSoundFonts);
+                    preparedBackend.SetSoundFontSet(
+                        enabledSoundFonts,
+                        soundFontSet.CacheIdentity);
+                    await Task.Run(
+                        () => preparedBackend.Prepare(cancellationToken),
+                        cancellationToken);
+                    _preparedPlaybackBackend = preparedBackend;
+                    preparedBackend = null;
+                }
+                finally
+                {
+                    preparedBackend?.Dispose();
+                }
+            }
+            Raise(nameof(SoundFontState));
+            Raise(nameof(HasEnabledSoundFonts));
+            return;
         }
 
         PlaybackController? previousPlayback = _context.Playback;
@@ -1154,8 +1219,90 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 _context.Playback.SetSharedGroupSolo(sharedGroupId, true);
             _context.Playback.StateChanged += OnPlaybackStateChanged;
         }
-        RefreshProperties();
-        Raise(nameof(SoundFontState));
+        try
+        {
+            if (preferences.GetEnabledSoundFontPaths().Length != 0)
+            {
+                PlaybackController playback = _context.Playback
+                    ?? throw new InvalidOperationException(
+                        _context.PlaybackUnavailableReason
+                        ?? "The formal audio Worker is unavailable.");
+                await Task.Run(
+                    () => playback.WarmUpAudioBackend(cancellationToken),
+                    cancellationToken);
+            }
+        }
+        finally
+        {
+            RefreshProperties();
+            Raise(nameof(SoundFontState));
+            Raise(nameof(HasEnabledSoundFonts));
+        }
+    }
+
+    public async Task<Exception?> TryInitializeAudioWorkerAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (_context is null || _applicationPreferences.GetEnabledSoundFontPaths().Length == 0)
+        {
+            return null;
+        }
+        PlaybackController? playback = _context.Playback;
+        if (playback is null)
+        {
+            return new InvalidOperationException(
+                _context.PlaybackUnavailableReason
+                ?? "The formal audio Worker is unavailable.");
+        }
+        try
+        {
+            await Task.Run(
+                () => playback.WarmUpAudioBackend(cancellationToken),
+                cancellationToken);
+            return null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+        finally
+        {
+            RefreshProperties();
+        }
+    }
+
+    private BassWasapiChildPlaybackBackend? TakePreparedPlaybackBackend()
+    {
+        BassWasapiChildPlaybackBackend? result = _preparedPlaybackBackend;
+        _preparedPlaybackBackend = null;
+        return result;
+    }
+
+    private static bool SoundFontPreferencesEqual(
+        IReadOnlyList<ApplicationSoundFontPreference> left,
+        IReadOnlyList<ApplicationSoundFontPreference> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+        for (int index = 0; index < left.Count; index++)
+        {
+            if (left[index].Enabled != right[index].Enabled
+                || left[index].Target != right[index].Target
+                || !string.Equals(
+                    left[index].Path,
+                    right[index].Path,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     public void NavigateToDiagnostic(DiagnosticRow diagnostic)
@@ -1654,6 +1801,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     public async ValueTask DisposeAsync()
     {
         await CloseProjectAsync();
+        _preparedPlaybackBackend?.Dispose();
+        _preparedPlaybackBackend = null;
         _mappingDraftCompiler.Dispose();
     }
 
@@ -1999,6 +2148,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         Raise(nameof(ProjectState));
         Raise(nameof(CompileState));
         Raise(nameof(SoundFontState));
+        Raise(nameof(HasEnabledSoundFonts));
         Raise(nameof(PositionText));
         Raise(nameof(CurrentTick));
         Raise(nameof(TempoText));
@@ -2235,14 +2385,16 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         public static ProjectContext FromCreation(
             MidoraProjectPackageV1 packages,
             NewProjectCreationResult result,
-            ApplicationPreferences preferences)
+            ApplicationPreferences preferences,
+            BassWasapiChildPlaybackBackend? preparedPlaybackBackend = null)
         {
             ProjectCompilationSession compilation = new(
                 result.Project,
                 executionMode: ProjectCompilationExecutionMode.Background);
             try
             {
-                compilation.SetEffectiveSoundFontPaths(preferences.GetEnabledSoundFontPaths());
+                compilation.SetEffectiveSoundFontConfigurations(
+                    preferences.GetEnabledSoundFontConfigurations());
                 ProjectDocumentSession document = new(compilation, result.Origin);
                 ProjectPersistenceCoordinator persistence = new(
                     document,
@@ -2252,9 +2404,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 CreatePlaybackServices(
                     compilation,
                     preferences,
+                    preparedPlaybackBackend,
                     out PlaybackController? playback,
                     out ApplicationTaskCoordinator? tasks,
                     out string? playbackFailure);
+                preparedPlaybackBackend = null;
                 return new(
                     result,
                     compilation,
@@ -2266,6 +2420,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             }
             catch
             {
+                preparedPlaybackBackend?.Dispose();
                 compilation.Dispose();
                 throw;
             }
@@ -2273,14 +2428,16 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
         public static ProjectContext FromOpenCandidate(
             ProjectOpenCandidate candidate,
-            ApplicationPreferences preferences)
+            ApplicationPreferences preferences,
+            BassWasapiChildPlaybackBackend? preparedPlaybackBackend = null)
         {
             ProjectCompilationSession compilation = new(
                 candidate.Project,
                 executionMode: ProjectCompilationExecutionMode.Background);
             try
             {
-                compilation.SetEffectiveSoundFontPaths(preferences.GetEnabledSoundFontPaths());
+                compilation.SetEffectiveSoundFontConfigurations(
+                    preferences.GetEnabledSoundFontConfigurations());
                 ProjectDocumentSession document = candidate.CreateDocumentSession(compilation);
                 ProjectPersistenceCoordinator persistence = new(
                     document,
@@ -2290,9 +2447,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 CreatePlaybackServices(
                     compilation,
                     preferences,
+                    preparedPlaybackBackend,
                     out PlaybackController? playback,
                     out ApplicationTaskCoordinator? tasks,
                     out string? playbackFailure);
+                preparedPlaybackBackend = null;
                 return new(
                     candidate,
                     compilation,
@@ -2304,6 +2463,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             }
             catch
             {
+                preparedPlaybackBackend?.Dispose();
                 compilation.Dispose();
                 throw;
             }
@@ -2324,10 +2484,12 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             Playback?.Dispose();
             Tasks = null;
             Playback = null;
-            Compilation.SetEffectiveSoundFontPaths(preferences.GetEnabledSoundFontPaths());
+            Compilation.SetEffectiveSoundFontConfigurations(
+                preferences.GetEnabledSoundFontConfigurations());
             CreatePlaybackServices(
                 Compilation,
                 preferences,
+                preparedPlaybackBackend: null,
                 out PlaybackController? playback,
                 out ApplicationTaskCoordinator? tasks,
                 out string? failure);
@@ -2339,6 +2501,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         private static void CreatePlaybackServices(
             ProjectCompilationSession compilation,
             ApplicationPreferences? suppliedPreferences,
+            BassWasapiChildPlaybackBackend? preparedPlaybackBackend,
             out PlaybackController? playback,
             out ApplicationTaskCoordinator? tasks,
             out string? failure)
@@ -2350,38 +2513,59 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             compilation.ConfigureAudioCache(
                 preferences.AudioCache.RootPath,
                 preferences.AudioCache.MaximumReusableBytes);
-            if (!FormalAudioWorkerLocator.TryLocate(
-                    out string? workerPath,
-                    out string? nativeDirectory,
-                    out failure))
-            {
-                return;
-            }
+            BassWasapiChildPlaybackBackend? backend = preparedPlaybackBackend;
             try
             {
-                RealtimeAudioPreferences audio = preferences.RealtimeAudio;
-                BassWasapiChildPlaybackBackend backend = new(new(
-                    workerPath!,
-                    nativeDirectory!,
-                    audio.PlaybackOutputDeviceId,
-                    audio.RenderAheadMilliseconds,
-                    audio.DeviceBufferRequestMilliseconds,
-                    new BassMidiRendererSettings(
-                        audio.MaximumSampleVoicesPerUnitStream,
-                        Midora.Audio.InitialReleaseAudioRuntimePolicy.WorkFrameCount),
-                    new AudioMasterSettings(-0.1f, 1f, 50f),
-                    TimeSpan.FromSeconds(30)));
+                if (backend is null)
+                {
+                    backend = CreatePlaybackBackend(preferences);
+                }
+                else
+                {
+                    // The detached backend was prepared with the metadata identity. Align the
+                    // Project session before PlaybackController attaches so it does not discard
+                    // the already-loaded persistent Worker as a stale SoundFont host.
+                    compilation.RefreshEffectiveSoundFontCacheIdentity();
+                }
                 playback = new(compilation, backend);
+                backend = null;
                 tasks = new(compilation, playback);
                 failure = null;
             }
             catch (Exception exception)
             {
+                backend?.Dispose();
                 playback?.Dispose();
                 playback = null;
                 tasks = null;
                 failure = exception.Message;
             }
+        }
+
+        public static BassWasapiChildPlaybackBackend CreatePlaybackBackend(
+            ApplicationPreferences preferences)
+        {
+            ArgumentNullException.ThrowIfNull(preferences);
+            if (!FormalAudioWorkerLocator.TryLocate(
+                    out string? workerPath,
+                    out string? nativeDirectory,
+                    out string? failure))
+            {
+                throw new InvalidOperationException(
+                    failure ?? "The formal audio Worker is unavailable.");
+            }
+            RealtimeAudioPreferences audio = preferences.RealtimeAudio;
+            return new(new(
+                workerPath!,
+                nativeDirectory!,
+                audio.PlaybackOutputDeviceId,
+                audio.RenderAheadMilliseconds,
+                audio.DeviceBufferRequestMilliseconds,
+                new BassMidiRendererSettings(
+                    audio.MaximumSampleVoicesPerUnitStream,
+                    Midora.Audio.InitialReleaseAudioRuntimePolicy.WorkFrameCount),
+                new AudioMasterSettings(-0.1f, 1f, 50f),
+                TimeSpan.FromSeconds(30)));
         }
     }
 }

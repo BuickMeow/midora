@@ -591,11 +591,12 @@ File Format Version
 SoundFont 不属于 Project Settings。Application Preferences 提供程序级有序列表，每项包含：
 ```text
 Enabled
-Local absolute .sf2 path
+Local absolute .sf2 or .sfz path
+Optional target Bank MSB / Bank LSB / Program; required for SFZ
 Move Up / Move Down
 Add / Remove
 ```
-列表顺序即 BASSMIDI preset fallback 优先级。编辑列表不复制、校验、完整读取或加载 SF2；只有实际播放、预览或音频渲染 Preparing 才由 Worker 直接打开原文件。无 Enabled SF2 是合法应用状态，不影响 Project 打开、编辑、编译、保存或 MIDI 导出。
+列表顺序即 BASSMIDI preset fallback 优先级。编辑列表不复制、完整读取或预解析 SoundFont，也不解析 SFZ sample/include；Worker 重建或实际播放、预览、音频渲染 Preparing 直接打开原文件。无 Enabled SoundFont 是合法应用状态，不影响 Project 打开、编辑、编译、保存或 MIDI 导出。
 ### 18.9.4 Playback
 Project Playback Settings 只包含：
 ```text

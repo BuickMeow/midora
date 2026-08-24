@@ -52,8 +52,13 @@
 
 ## 2026-08-24 修订摘要
 
+- 程序级 SoundFont 列表扩展为本机 SF2/SFZ：每项保存 Enabled、原绝对路径和可选目标 Bank MSB/LSB/Program；SFZ 目标必填，SF2 可保持原映射。Midora 不解析、快照或监控 SFZ sample/include 依赖，直接把原 SFZ 路径交给 BASSMIDI。
+- 目标映射使用 BASSMIDI `BASS_MIDI_FONTEX2`，三项必须整体出现且均为 0～127；配置、顺序与主文件元数据共同进入 sample-domain 缓存身份。SF2 继续使用 MMAP，SFZ 不使用只适用于 SF2 的 MMAP。
+- New Project、Open Project、命令行打开、Open MIDI as New Project 和 Reset Playback Engine 在存在 Enabled SoundFont 时，必须在对应前台任务结束前接管或预热持久 Worker；不得把首次 Worker 创建推迟到 Play/Preview。Project 已成功切换后的预热失败保留 Project，并作为独立音频运行时错误报告。
+- Application Preferences 的 SoundFont、实时音频或音频缓存配置变化在成功持久化后立即显示 `Saving Settings` 模态任务，销毁旧持久 Worker、直接加载 Enabled SF2/SFZ、探测设备并保留新 Worker供后续播放/预览复用；无 Project 时允许由后续 Project 会话接管预热后端。加载失败保持已保存设置并明确报告，不静默回退旧设置。
+- 主菜单 `Help` 更名为 `Application`，`Application Preferences...` 从 `Edit` 移入该菜单；SoundFont 列表操作按钮移至列表顶部并采用较小的列表专用滚轮步进。
 - SoundFont 破坏性脱离 Project：`.midora` 不再保存 SF2 字节、Embedded/External 引用或任何 SoundFont metadata，New/Open/Save/Save Copy 不访问 SF2。
-- Application Preferences 改为有序 `{Enabled, absolute local .sf2 path}` 列表；所有实时播放、预览和离线渲染冻结同一 Enabled 顺序，BASS Worker 使用 `BASS_MIDI_FONT_MMAP` 直接打开原路径，不复制、不执行完整内容 hash 或预验证。
+- Application Preferences 改为有序 `{Enabled, absolute local .sf2/.sfz path, optional target}` 列表；所有实时播放、预览和离线渲染冻结同一 Enabled 顺序与映射，BASS Worker 直接打开原路径，不复制、不执行完整内容 hash 或预验证。
 - SoundFont 列表变更只允许在 Stopped/Idle 提交，并重建持久音频 Worker、失效 sample-domain cache。缓存键使用有序路径与 length/last-write-time 小型元数据描述符；该描述符不是内容完整性验证。
 - 本次为开发期格式破坏，旧 Project SoundFont 字段、settings 与内嵌资源不迁移、不兼容读取、不双写。受影响章节：2、3、6、8、12～23 及 ADR-CORE-047。
 

@@ -12,7 +12,7 @@ public sealed class AudioRenderSoundFontSnapshotTests
         await File.WriteAllBytesAsync(second, [4, 5]);
 
         await using AudioRenderSoundFontSnapshot snapshot =
-            await AudioRenderSoundFontSnapshot.CreateAsync([first, second]);
+            await AudioRenderSoundFontSnapshot.CreateFromPathsAsync([first, second]);
 
         Assert.Equal([Path.GetFullPath(first), Path.GetFullPath(second)], snapshot.SoundFontPaths);
         Assert.Equal(5, snapshot.TotalFileSizeBytes);
@@ -24,7 +24,7 @@ public sealed class AudioRenderSoundFontSnapshotTests
     public async Task EmptyApplicationSoundFontListIsRejected()
     {
         AudioRenderSoundFontException failure = await Assert.ThrowsAsync<AudioRenderSoundFontException>(
-            () => AudioRenderSoundFontSnapshot.CreateAsync([]));
+            () => AudioRenderSoundFontSnapshot.CreateFromPathsAsync([]));
 
         Assert.Equal(AudioRenderSoundFontFailure.NoEnabledSoundFonts, failure.Failure);
     }
@@ -36,7 +36,7 @@ public sealed class AudioRenderSoundFontSnapshotTests
         string missing = directory.PathFor("Missing.sf2");
 
         AudioRenderSoundFontException failure = await Assert.ThrowsAsync<AudioRenderSoundFontException>(
-            () => AudioRenderSoundFontSnapshot.CreateAsync([missing]));
+            () => AudioRenderSoundFontSnapshot.CreateFromPathsAsync([missing]));
 
         Assert.Equal(AudioRenderSoundFontFailure.Missing, failure.Failure);
     }

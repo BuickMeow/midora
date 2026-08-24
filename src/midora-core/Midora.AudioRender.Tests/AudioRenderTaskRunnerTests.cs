@@ -402,7 +402,7 @@ public sealed class AudioRenderTaskRunnerTests
     {
         string sf2 = Path.Combine(directory, "Project.sf2");
         await File.WriteAllBytesAsync(sf2, Enumerable.Range(0, 1024).Select(value => (byte)value).ToArray());
-        return await AudioRenderSoundFontSnapshot.CreateAsync([sf2]);
+        return await AudioRenderSoundFontSnapshot.CreateFromPathsAsync([sf2]);
     }
 
     private sealed class TestContext : IAsyncDisposable

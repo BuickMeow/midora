@@ -132,10 +132,20 @@ public partial class MainWindow : Window
             return;
         }
         if (!StopPlaybackForProjectCommand("Open Project") || !await ConfirmCloseCurrentProjectAsync()) return;
-        if (await RunOperationAsync("Open Project", () => _session.OpenProjectAsync(candidate)))
+        Exception? audioInitializationFailure = null;
+        if (await RunOperationAsync(
+                "Open Project",
+                async cancellationToken =>
+                {
+                    await _session.OpenProjectAsync(candidate, cancellationToken: cancellationToken);
+                    audioInitializationFailure =
+                        await InitializeAudioWorkerForActiveProjectAsync(cancellationToken);
+                },
+                canCancel: false))
         {
             RecordRecentDirectory(RecentDirectoryPurpose.OpenProject, Path.GetDirectoryName(candidate));
             RecordRecentProject(candidate);
+            ReportAudioWorkerInitializationFailure(audioInitializationFailure);
         }
     }
 
@@ -163,13 +173,23 @@ public partial class MainWindow : Window
         };
         if (dialog.ShowDialog() != true || dialog.Request is null) return;
         NewProjectCreationRequest request = dialog.Request;
-        if (await RunOperationAsync("Create Project", () => _session.CreateProjectAsync(request)))
+        Exception? audioInitializationFailure = null;
+        if (await RunOperationAsync(
+                "Create Project",
+                async cancellationToken =>
+                {
+                    await _session.CreateProjectAsync(request, cancellationToken);
+                    audioInitializationFailure =
+                        await InitializeAudioWorkerForActiveProjectAsync(cancellationToken);
+                },
+                canCancel: false))
         {
             if (request.TargetPath is string targetPath)
             {
                 RecordRecentDirectory(RecentDirectoryPurpose.SaveAndSaveCopy, Path.GetDirectoryName(targetPath));
                 RecordRecentProject(targetPath);
             }
+            ReportAudioWorkerInitializationFailure(audioInitializationFailure);
         }
     }
 
@@ -185,10 +205,22 @@ public partial class MainWindow : Window
             InitialDirectory = ExistingRecentDirectory(RecentDirectoryPurpose.OpenProject)
         };
         if (dialog.ShowDialog(this) != true) return;
-        if (await RunOperationAsync("Open Project", () => _session.OpenProjectAsync(dialog.FileName)))
+        Exception? audioInitializationFailure = null;
+        if (await RunOperationAsync(
+                "Open Project",
+                async cancellationToken =>
+                {
+                    await _session.OpenProjectAsync(
+                        dialog.FileName,
+                        cancellationToken: cancellationToken);
+                    audioInitializationFailure =
+                        await InitializeAudioWorkerForActiveProjectAsync(cancellationToken);
+                },
+                canCancel: false))
         {
             RecordRecentDirectory(RecentDirectoryPurpose.OpenProject, Path.GetDirectoryName(dialog.FileName));
             RecordRecentProject(dialog.FileName);
+            ReportAudioWorkerInitializationFailure(audioInitializationFailure);
         }
     }
 
@@ -240,7 +272,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnApplicationPreferencesClick(object sender, RoutedEventArgs e)
+    private async void OnApplicationPreferencesClick(object sender, RoutedEventArgs e)
     {
         if (!_session.CanStartForegroundTask)
         {
@@ -252,27 +284,67 @@ public partial class MainWindow : Window
         ApplicationPreferencesDialog dialog = new(_preferences) { Owner = this };
         if (dialog.ShowDialog() != true || dialog.Result is null) return;
 
-        ApplicationPreferencesSaveResult saved = _preferenceStore.Save(dialog.Result);
-        if (!saved.Succeeded)
+        ApplicationPreferences preferences = dialog.Result;
+        bool rebuildAudioWorker = _session.RequiresAudioWorkerRebuild(preferences);
+        if (!rebuildAudioWorker)
         {
-            ShowError(
-                "Application Preferences",
-                saved.Notice?.Message ?? "Application Preferences could not be saved.");
+            ApplicationPreferencesSaveResult saved = _preferenceStore.Save(preferences);
+            if (!saved.Succeeded)
+            {
+                ShowError(
+                    "Application Preferences",
+                    saved.Notice?.Message ?? "Application Preferences could not be saved.");
+                return;
+            }
+            try
+            {
+                await _session.ApplyApplicationPreferencesAsync(preferences);
+                _preferences = preferences;
+                _session.SetStatusMessage("Application Preferences were saved and applied.");
+            }
+            catch (Exception exception)
+            {
+                _preferences = preferences;
+                ShowError(
+                    "Application Preferences",
+                    $"Preferences were saved, but could not be applied: {exception.Message}");
+            }
             return;
         }
-        try
+
+        bool persisted = false;
+        bool applied = await RunOperationAsync(
+            "Saving Settings",
+            async cancellationToken =>
+            {
+                ApplicationPreferencesSaveResult saved = await Task.Run(
+                    () => _preferenceStore.Save(preferences),
+                    cancellationToken);
+                if (!saved.Succeeded)
+                {
+                    throw new IOException(
+                        saved.Notice?.Message
+                        ?? "Application Preferences could not be saved.");
+                }
+                persisted = true;
+                _preferences = preferences;
+                await _session.ApplyApplicationPreferencesAsync(
+                    preferences,
+                    cancellationToken);
+            },
+            canCancel: false,
+            lockLevel: DesktopTaskLockLevel.FullApplication);
+        if (applied)
         {
-            _session.ApplyApplicationPreferences(dialog.Result);
-            _preferences = dialog.Result;
-            _session.SetStatusMessage("Application Preferences were saved and applied.");
+            _session.SetStatusMessage(
+                "Application Preferences were saved; the audio Worker is ready.");
         }
-        catch (Exception exception)
+        else if (persisted)
         {
-            // Persistence already succeeded. The next Project session will still use these values.
-            _preferences = dialog.Result;
-            ShowError(
-                "Application Preferences",
-                $"Preferences were saved, but the current Project session could not apply them: {exception.Message}");
+            // The durable settings and in-memory preference snapshot must agree even when
+            // operational BASS initialization fails. A later settings Apply or playback attempt
+            // can retry initialization without silently reverting what was saved.
+            _preferences = preferences;
         }
     }
 
@@ -444,8 +516,24 @@ public partial class MainWindow : Window
             timeline.ToProjectRange(_session.Project!, start, end)));
     }
 
-    private void OnResetPlaybackClick(object sender, RoutedEventArgs e) =>
-        RunSynchronous("Reset Playback Engine", _session.ResetPlaybackEngine);
+    private async void OnResetPlaybackClick(object sender, RoutedEventArgs e)
+    {
+        Exception? audioInitializationFailure = null;
+        bool completed = await RunOperationAsync(
+            "Reset Playback Engine",
+            async cancellationToken =>
+            {
+                _session.ResetPlaybackEngine();
+                audioInitializationFailure =
+                    await InitializeAudioWorkerForActiveProjectAsync(cancellationToken);
+            },
+            canCancel: false,
+            lockLevel: DesktopTaskLockLevel.FullApplication);
+        if (completed)
+        {
+            ReportAudioWorkerInitializationFailure(audioInitializationFailure);
+        }
+    }
 
     private void OnPlaybackTimerTick(object? sender, EventArgs e)
     {
@@ -4199,6 +4287,7 @@ public partial class MainWindow : Window
 
         IReadOnlyDictionary<byte, byte>? portMap = null;
         IReadOnlyList<MidiProjectImportDiagnostic>? diagnostics = null;
+        Exception? audioInitializationFailure = null;
         while (true)
         {
             MidiImportPortMappingRequiredException? mappingRequired = null;
@@ -4218,12 +4307,17 @@ public partial class MainWindow : Window
                 });
             bool succeeded = await RunOperationAsync(
                 "Open MIDI as New Project",
-                async cancellationToken => diagnostics =
-                    await _session.ImportMidiAsNewProjectAsync(
+                async cancellationToken =>
+                {
+                    diagnostics = await _session.ImportMidiAsNewProjectAsync(
                         dialog.FileName,
                         portMap,
                         cancellationToken,
-                        progress),
+                        progress);
+                    _session.ActiveForegroundTask?.SetCancellationAvailable(false);
+                    audioInitializationFailure =
+                        await InitializeAudioWorkerForActiveProjectAsync(CancellationToken.None);
+                },
                 canCancel: true,
                 handledException: exception =>
                 {
@@ -4250,6 +4344,7 @@ public partial class MainWindow : Window
                 detailsTitle: "MIDI Import Report");
             ShowMidiImportReport(report);
         }
+        ReportAudioWorkerInitializationFailure(audioInitializationFailure);
         _ = Dispatcher.BeginInvoke(
             DispatcherPriority.Input,
             RestorePlaybackShortcutFocus);
@@ -8235,6 +8330,40 @@ public partial class MainWindow : Window
 
     private void ShowUnavailable(string title, string message) =>
         _session.SetStatusMessage($"{title}: {message}", isError: true);
+
+    private async Task<Exception?> InitializeAudioWorkerForActiveProjectAsync(
+        CancellationToken cancellationToken)
+    {
+        if (!_session.HasEnabledSoundFonts)
+        {
+            return null;
+        }
+        DesktopTaskViewModel? task = _session.ActiveForegroundTask;
+        if (task is not null)
+        {
+            _session.ReportTask(task, "Preparing audio Worker");
+        }
+        return await _session.TryInitializeAudioWorkerAsync(cancellationToken);
+    }
+
+    private void ReportAudioWorkerInitializationFailure(Exception? failure)
+    {
+        if (failure is null)
+        {
+            return;
+        }
+        const string summary =
+            "The Project is available, but the audio Worker could not be initialized. "
+            + "Playback will retry initialization when started.";
+        _session.SetStatusMessage(
+            summary,
+            isError: true,
+            details: failure.ToString(),
+            detailsTitle: "Audio Worker Initialization");
+        ShowError(
+            "Audio Worker Initialization",
+            $"{summary}\n\n{failure.Message}");
+    }
 
     private Task<bool> RunOperationAsync(
         string title,

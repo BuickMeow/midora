@@ -166,8 +166,8 @@ public static class Program
             args[4],
             "native library");
         LoadBassLibraries(nativeDirectory, includeWasapi: true);
-        string[] soundFontPaths = SoundFontSetFile.Read(soundFontSetPath);
-        using PersistentBassMidiSoundFont soundFont = new(soundFontPaths);
+        SoundFontConfiguration[] soundFonts = SoundFontSetFile.Read(soundFontSetPath);
+        using PersistentBassMidiSoundFont soundFont = new(soundFonts);
         using PersistentPitchAudition audition = new(soundFont);
         control.PublishState(AudioWorkerState.Created);
         PublishPersistentResponse(
@@ -275,7 +275,7 @@ public static class Program
                         if (request.Length != 23
                             || !string.Equals(
                                 Path.GetFullPath(request[3]),
-                                Path.GetFullPath(soundFontPaths[0]),
+                                soundFonts[0].Path,
                                 StringComparison.OrdinalIgnoreCase)
                             || !string.Equals(
                                 Path.GetFullPath(request[4]),
@@ -471,7 +471,8 @@ public static class Program
 
         using BassMidiRenderer renderer = new(
             plan,
-            soundFontPath,
+            persistentSoundFont?.Configurations
+                ?? [new SoundFontConfiguration(soundFontPath, null)],
             rendererSettings,
             masterSettings,
             cacheStagingPath,
@@ -1223,7 +1224,7 @@ public static class Program
         string soundFontSetPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
             args[2],
             "SoundFont set descriptor");
-        string[] soundFontPaths = SoundFontSetFile.Read(soundFontSetPath);
+        SoundFontConfiguration[] soundFonts = SoundFontSetFile.Read(soundFontSetPath);
         string nativeDirectory = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingDirectory(
             args[3],
             "native library");
@@ -1241,7 +1242,7 @@ public static class Program
         MidiRenderPlan plan = new(sampleRate, 0, []);
         using BassMidiRenderer renderer = new(
             plan,
-            soundFontPaths,
+            soundFonts,
             rendererSettings,
             masterSettings);
         control.PublishPrepared(sampleRate, 0);
@@ -1258,7 +1259,7 @@ public static class Program
         string soundFontSetPath = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingFile(
             args[3],
             "SoundFont set descriptor");
-        string[] soundFontPaths = SoundFontSetFile.Read(soundFontSetPath);
+        SoundFontConfiguration[] soundFonts = SoundFontSetFile.Read(soundFontSetPath);
         string nativeDirectory = InitialReleaseAudioWorkerProtocolPolicy.RequireExistingDirectory(
             args[4],
             "native library");
@@ -1285,7 +1286,7 @@ public static class Program
         LoadBassLibraries(nativeDirectory, includeWasapi: false);
         using BassMidiRenderer renderer = new(
             plan,
-            soundFontPaths,
+            soundFonts,
             rendererSettings,
             masterSettings,
             cacheStagingPath);
@@ -1811,25 +1812,7 @@ public static class Program
             }
             try
             {
-                uint[] handles = _soundFont.Handles;
-                NativeBassMidi.BASS_MIDI_FONT* fonts = stackalloc NativeBassMidi.BASS_MIDI_FONT[
-                    handles.Length];
-                for (int index = 0; index < handles.Length; index++)
-                {
-                    fonts[index] = new()
-                    {
-                        font = handles[index],
-                        preset = -1,
-                        bank = 0
-                    };
-                }
-                if (NativeBassMidi.StreamSetFonts(
-                        _streamHandle,
-                        fonts,
-                        checked((uint)handles.Length)) == 0)
-                {
-                    ThrowBass("BASS_MIDI_StreamSetFonts");
-                }
+                _soundFont.ApplyToStream(_streamHandle);
                 SetAttribute(NativeBassMidi.BASS_ATTRIB_MIDI_SRC, 1f, "BASS_ATTRIB_MIDI_SRC");
                 SetAttribute(NativeBassMidi.BASS_ATTRIB_MIDI_VOICES, 500f, "BASS_ATTRIB_MIDI_VOICES");
                 SetAttribute(NativeBassMidi.BASS_ATTRIB_MIDI_CPU, 0f, "BASS_ATTRIB_MIDI_CPU");

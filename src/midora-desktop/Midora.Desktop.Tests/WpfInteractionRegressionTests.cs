@@ -3,6 +3,7 @@ using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -20,6 +21,22 @@ namespace Midora.Desktop.Tests;
 
 public sealed class WpfInteractionRegressionTests
 {
+    [Fact]
+    public void AncestorLookupTraversesDocumentContentElementsWithoutTreatingThemAsVisuals()
+    {
+        RunOnSta(() =>
+        {
+            Border root = new();
+            TextBlock text = new();
+            Run run = new("Diagnostic message");
+            text.Inlines.Add(run);
+            root.Child = text;
+
+            Assert.Same(text, MainWindow.FindVisualAncestor<TextBlock>(run));
+            Assert.Same(root, MainWindow.FindVisualAncestor<Border>(run));
+        });
+    }
+
     [Fact]
     public void ProjectEditsQueueBoundCollectionRefreshesOnTheDispatcher()
     {
@@ -253,6 +270,7 @@ public sealed class WpfInteractionRegressionTests
             try
             {
                 Style combo = Assert.IsType<Style>(controls[typeof(ComboBox)]);
+                Style comboItem = Assert.IsType<Style>(controls[typeof(ComboBoxItem)]);
                 Style scrollBar = Assert.IsType<Style>(controls[typeof(ScrollBar)]);
                 Style menuSeparator = Assert.IsType<Style>(
                     controls[MenuItem.SeparatorStyleKey]);
@@ -271,6 +289,33 @@ public sealed class WpfInteractionRegressionTests
                 Assert.Contains(combo.Setters.OfType<Setter>(), setter =>
                     setter.Property == ComboBoxWheelSelectionGuard.IsEnabledProperty
                     && Equals(setter.Value, true));
+                ControlTemplate comboItemTemplate = Assert.IsType<ControlTemplate>(
+                    Assert.Single(comboItem.Setters.OfType<Setter>(), setter =>
+                        setter.Property == Control.TemplateProperty).Value);
+                Trigger disabledComboItemTrigger = Assert.Single(
+                    comboItemTemplate.Triggers.OfType<Trigger>(), trigger =>
+                        trigger.Property == UIElement.IsEnabledProperty
+                        && Equals(trigger.Value, false));
+                Assert.Contains(disabledComboItemTrigger.Setters.OfType<Setter>(), setter =>
+                    setter.Property == Control.ForegroundProperty
+                    && ReferenceEquals(setter.Value, palette["Brush.Text.Disabled"]));
+
+                ComboBoxItem disabledComboItem = new()
+                {
+                    Content = "External Relative Reference",
+                    IsEnabled = false,
+                    Style = comboItem
+                };
+                disabledComboItem.Measure(new Size(300, 32));
+                disabledComboItem.Arrange(new Rect(0, 0, 300, 32));
+                disabledComboItem.ApplyTemplate();
+                ContentPresenter disabledContent = Assert.IsType<ContentPresenter>(
+                    disabledComboItem.Template.FindName("ContentSite", disabledComboItem));
+                Assert.Equal(
+                    Assert.IsType<SolidColorBrush>(palette["Brush.Text.Disabled"]).Color,
+                    Assert.IsType<SolidColorBrush>(
+                        System.Windows.Documents.TextElement.GetForeground(disabledContent)).Color);
+                Assert.Equal(0.45d, disabledContent.Opacity);
 
                 ComboBox displayMemberCombo = new()
                 {
@@ -422,6 +467,95 @@ public sealed class WpfInteractionRegressionTests
                     (string?)button.Attribute("IsCancel"),
                     "True",
                     StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
+    public void DiagnosticsTemplateUsesSeverityColorsAndScrollableSelectedItemDetails()
+    {
+        string path = Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            "MainWindow.xaml");
+        XDocument document = XDocument.Load(path);
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+
+        XElement severityStyle = document.Descendants(presentation + "Style").Single(element =>
+            string.Equals(
+                (string?)element.Attribute(x + "Key"),
+                "DiagnosticSeverityText",
+                StringComparison.Ordinal));
+        string severityContract = severityStyle.ToString(SaveOptions.DisableFormatting);
+        Assert.Contains("Brush.Info", severityContract, StringComparison.Ordinal);
+        Assert.Contains("Value=\"Warning\"", severityContract, StringComparison.Ordinal);
+        Assert.Contains("Brush.Warning", severityContract, StringComparison.Ordinal);
+        Assert.Contains("Value=\"Error\"", severityContract, StringComparison.Ordinal);
+        Assert.Contains("Brush.Red.Hover", severityContract, StringComparison.Ordinal);
+
+        XElement diagnosticsTemplate = document.Descendants(presentation + "DataTemplate")
+            .Single(element => ((string?)element.Attribute("DataType"))?.Contains(
+                "DiagnosticsWorkspaceViewModel",
+                StringComparison.Ordinal) == true);
+        Assert.Contains(diagnosticsTemplate.Descendants(presentation + "ListBox"), element =>
+            string.Equals((string?)element.Attribute(x + "Name"), "DiagnosticList", StringComparison.Ordinal));
+        Assert.Contains(diagnosticsTemplate.Descendants(presentation + "TextBlock"), element =>
+            string.Equals((string?)element.Attribute("Text"), "MESSAGE", StringComparison.Ordinal));
+        Assert.Contains(diagnosticsTemplate.Descendants(presentation + "TextBlock"), element =>
+            string.Equals((string?)element.Attribute("Text"), "SOURCE", StringComparison.Ordinal));
+        Assert.DoesNotContain(diagnosticsTemplate.Descendants(presentation + "TextBlock"), element =>
+            string.Equals((string?)element.Attribute("Text"), "SOURCE PATH", StringComparison.Ordinal));
+        Assert.Contains(diagnosticsTemplate.Descendants(presentation + "Button"), element =>
+            string.Equals((string?)element.Attribute("Content"), "Go to Source", StringComparison.Ordinal)
+            && string.Equals(
+                (string?)element.Attribute("Click"),
+                "OnNavigateDiagnosticClick",
+                StringComparison.Ordinal));
+        Assert.True(diagnosticsTemplate.Descendants(presentation + "ScrollViewer").Count() >= 2);
+        Assert.Empty(diagnosticsTemplate.Descendants(presentation + "Run"));
+    }
+
+    [Theory]
+    [InlineData(false, NewProjectSoundFontMode.None, NewProjectSoundFontMode.None)]
+    [InlineData(false, NewProjectSoundFontMode.Embedded, NewProjectSoundFontMode.Embedded)]
+    [InlineData(false, NewProjectSoundFontMode.ExternalRelative, NewProjectSoundFontMode.Embedded)]
+    [InlineData(true, NewProjectSoundFontMode.ExternalRelative, NewProjectSoundFontMode.ExternalRelative)]
+    public void NewProjectExternalSoundFontRequiresImmediateSave(
+        bool saveImmediately,
+        NewProjectSoundFontMode requested,
+        NewProjectSoundFontMode expected)
+    {
+        Assert.Equal(
+            expected,
+            NewProjectDialog.CoerceSoundFontMode(saveImmediately, requested));
+    }
+
+    [Fact]
+    public void NewProjectExternalSoundFontAcceptsOnlyProjectAdjacentLocations()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"midora-new-project-ui-{Guid.NewGuid():N}");
+        string nested = Path.Combine(root, "nested");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "soundfonts"));
+            Directory.CreateDirectory(nested);
+            string project = Path.Combine(root, "Song.midora");
+
+            Assert.True(NewProjectDialog.IsAllowedExternalSoundFontLocation(
+                project,
+                Path.Combine(root, "Piano.sf2")));
+            Assert.True(NewProjectDialog.IsAllowedExternalSoundFontLocation(
+                project,
+                Path.Combine(root, "soundfonts", "Piano.sf2")));
+            Assert.False(NewProjectDialog.IsAllowedExternalSoundFontLocation(
+                project,
+                Path.Combine(nested, "Piano.sf2")));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
 

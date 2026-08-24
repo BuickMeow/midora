@@ -670,8 +670,10 @@ public sealed record EventInstrumentBrowserRow(
     MidoraId Id,
     string Name,
     int UsageCount,
-    int TrackCount)
+    int TrackCount,
+    uint ColorArgb)
 {
+    public string ColorText => $"#{ColorArgb:X8}";
     public string Detail => UsageCount == 0
         ? "Unused"
         : $"{UsageCount} usage{(UsageCount == 1 ? string.Empty : "s")} · "
@@ -1527,7 +1529,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
                 string.IsNullOrWhiteSpace(instrument.Name) ? "Unnamed Event Instrument" : instrument.Name,
                 definitionUsages.Length,
                 project.Tracks.Count(value => value.EventInstrumentUsageId is MidoraId id
-                    && definitionUsageIds.Contains(id))));
+                    && definitionUsageIds.Contains(id)),
+                ToOpaqueArgb(instrument.Color)));
         }
         foreach (MidoraId staleId in _segmentPreviewCache.Keys.Where(id => !liveSegmentIds.Contains(id)).ToArray())
         {

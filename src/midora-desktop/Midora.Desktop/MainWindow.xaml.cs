@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -155,14 +156,28 @@ public partial class MainWindow : Window
     private async void OnNewProjectClick(object sender, RoutedEventArgs e)
     {
         if (!StopPlaybackForProjectCommand("New Project") || !await ConfirmCloseCurrentProjectAsync()) return;
-        NewProjectDialog dialog = new(ExistingRecentDirectory(RecentDirectoryPurpose.SaveAndSaveCopy)) { Owner = this };
-        if (dialog.ShowDialog() != true || dialog.Request is null) return;
-        NewProjectCreationRequest request = ApplyDefaultEmbeddedSoundFont(dialog.Request);
-        if (await RunOperationAsync("Create Project", () => _session.CreateProjectAsync(request))
-            && request.TargetPath is string targetPath)
+        NewProjectDialog dialog = new(
+            ExistingRecentDirectory(RecentDirectoryPurpose.SaveAndSaveCopy),
+            ExistingRecentDirectory(RecentDirectoryPurpose.SoundFont),
+            GetAvailableDefaultEmbeddedSoundFontPath())
         {
-            RecordRecentDirectory(RecentDirectoryPurpose.SaveAndSaveCopy, Path.GetDirectoryName(targetPath));
-            RecordRecentProject(targetPath);
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true || dialog.Request is null) return;
+        NewProjectCreationRequest request = dialog.Request;
+        if (await RunOperationAsync("Create Project", () => _session.CreateProjectAsync(request)))
+        {
+            if (request.TargetPath is string targetPath)
+            {
+                RecordRecentDirectory(RecentDirectoryPurpose.SaveAndSaveCopy, Path.GetDirectoryName(targetPath));
+                RecordRecentProject(targetPath);
+            }
+            if (request.SoundFont.SelectedPath is string soundFontPath)
+            {
+                RecordRecentDirectory(
+                    RecentDirectoryPurpose.SoundFont,
+                    Path.GetDirectoryName(soundFontPath));
+            }
         }
     }
 
@@ -820,14 +835,30 @@ public partial class MainWindow : Window
         }
     }
 
-    private static T? FindVisualAncestor<T>(DependencyObject? current)
+    internal static T? FindVisualAncestor<T>(DependencyObject? current)
         where T : DependencyObject
     {
         while (current is not null && current is not T)
         {
-            current = VisualTreeHelper.GetParent(current);
+            current = GetUiParent(current);
         }
         return current as T;
+    }
+
+    private static DependencyObject? GetUiParent(DependencyObject current)
+    {
+        if (current is ContentElement content)
+        {
+            return ContentOperations.GetParent(content)
+                ?? (content as FrameworkContentElement)?.Parent;
+        }
+        if (current is Visual or Visual3D)
+        {
+            return VisualTreeHelper.GetParent(current)
+                ?? (current as FrameworkElement)?.Parent
+                ?? (current as FrameworkElement)?.TemplatedParent;
+        }
+        return LogicalTreeHelper.GetParent(current);
     }
 
     private static bool HasReachedUiReorderDragThreshold(Point origin, Point current)
@@ -8491,24 +8522,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private NewProjectCreationRequest ApplyDefaultEmbeddedSoundFont(
-        NewProjectCreationRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        string? defaultPath = GetAvailableDefaultEmbeddedSoundFontPath();
-        if (request.SoundFont.Mode != NewProjectSoundFontMode.None
-            || defaultPath is null)
-        {
-            return request;
-        }
-        return request with
-        {
-            SoundFont = new NewProjectSoundFontSelection(
-                NewProjectSoundFontMode.Embedded,
-                defaultPath)
-        };
-    }
-
     private string? GetAvailableDefaultEmbeddedSoundFontPath() =>
         _preferences.DefaultEmbeddedSoundFontPath is string path && File.Exists(path)
             ? path
@@ -10300,9 +10313,7 @@ public partial class MainWindow : Window
             {
                 return true;
             }
-            current = current is Visual or Visual3D
-                ? VisualTreeHelper.GetParent(current)
-                : LogicalTreeHelper.GetParent(current);
+            current = GetUiParent(current);
         }
         return false;
     }

@@ -85,4 +85,11 @@
 - Application Preferences 可保存一个可清空的本机 SF2 绝对文件路径；不接受相对路径或 UNC 路径。该路径只属于当前 Windows 用户的本机偏好，不进入 Project、Undo/Redo、canonical 或 `.midora`。
 - 该偏好只作用于未显式选择其他 SoundFont 的 `New Project` 和 `Open MIDI as New Project`。创建流程复用正式 Embedded 导入：流式复制到 Project 会话拥有的临时资源，同时计算完整 SHA-256，再执行 BASSMIDI loadability validation；成功候选持有独立 snapshot，源文件后续变化不改写当前 Project。
 - 应用启动时若路径不存在则自动清空并原子保存偏好；每次创建任务开始前再次检查，竞态缺失视为未配置并保持新 Project 无 SoundFont。其他读取、权限、格式或 loadability 错误仍显式失败，不把损坏文件静默降级为空。
+
+### 2026-08-23 New Project 正式 SoundFont 编辑项
+
+- New Project Dialog 删除固定的 Project SoundFont 说明卡片，改为 `No SoundFont / Embed in Project / External Relative Reference` 正式模式、只读文件路径与文件选择器。
+- Embedded 在未保存 Project 中合法；External 只在 `Save Project immediately` 启用时开放，并继续由正式创建协调器验证目标 Project 相对路径、完整 SHA-256、文件竞态与 BASSMIDI loadability。取消立即保存会把 External 降为 Embedded，但保留文件选择。
+- 有效的 Application Preferences 默认 SF2 以可见 Embedded 初始值进入对话框。用户在对话框中选择 None 或其他模式后，Main Window 不再二次覆盖；Open MIDI as New Project 的默认 Embedded 行为不变。
+- 创建与首次保存仍是一个 detached、失败原子的任务；成功前不替换当前 Project，不建立 Undo History，不提前累计工程时间。SoundFont 绝对选择路径只属于任务输入与运行时，External 持久化为受限相对引用，Embedded 持久化为项目资源。
 - MIDI 导入候选先 detached 完成；默认 SF2 绑定和验证也在替换当前 Project 前完成。失败时释放候选 Project 与 Embedded 临时资源，保持原 Project 不变。

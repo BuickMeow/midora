@@ -601,7 +601,8 @@
                   Padding="{TemplateBinding Padding}"
                   Background="{TemplateBinding Background}"
                   CornerRadius="{StaticResource Radius.Small}">
-            <ContentPresenter />
+            <ContentPresenter x:Name="ContentSite"
+                              TextElement.Foreground="{TemplateBinding Foreground}" />
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsHighlighted" Value="True">
@@ -611,6 +612,13 @@
             <Trigger Property="IsSelected" Value="True">
               <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Brush.Red.Subtle}" />
               <Setter Property="Foreground" Value="{StaticResource Brush.Red.Hover}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Foreground" Value="{StaticResource Brush.Text.Disabled}" />
+              <Setter TargetName="ContentSite"
+                      Property="TextElement.Foreground"
+                      Value="{StaticResource Brush.Text.Disabled}" />
+              <Setter TargetName="ContentSite" Property="Opacity" Value="0.45" />
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>

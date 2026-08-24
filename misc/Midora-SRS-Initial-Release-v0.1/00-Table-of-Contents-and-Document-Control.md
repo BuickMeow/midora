@@ -52,6 +52,8 @@
 
 ## 2026-08-23 修订摘要
 
+- Arrangement 的 Event Instruments 管理栏为 Definition 项固定显示正式颜色竖线；该列表的选中态只改变背景，不得用通用红色左边框覆盖颜色语义。
+- New Project Dialog 将 SoundFont 改为正式创建参数，明确提供 None、Embedded 与 External Relative；External 只在立即保存时开放。Application Preferences 的 Default Embedded SF2 以可见初始选择进入对话框，不再在关闭对话框后静默注入。
 - Monitoring generation 的 `Seek` 下界必须持续作用于该 generation 后续追加的记录；Producer 从更早 rewind frame 渐进追赶时，Reader 静默跳过晚到但早于 audible frontier 的记录，禁止把它们重新送入 renderer。render-ahead fault 必须保留 source exception/invalid-result 原因并连同 renderer fault 上报。
 - Arrangement Segment 概览的最高精度从错误的“每 Segment 固定 512 pixel”更正为 `96 pixels / quarter note`、256-pixel tile；较低精度只使用固定半八度 `1 / 2^(n/2)` LOD。Segment 长度、TPQN 与固定 LOD 决定 tile 数，精确 viewport zoom 不直接进入缓存身份。
 - `Open MIDI as New Project` 的模态任务使用确定进度：第一遍以已解析源字节计量，第二遍显示已处理事件/总事件；成功兼容报告的完整 Info/Warning 文本必须与状态栏摘要共同保留，后续 `View` 仍显示首次报告全文。

@@ -185,6 +185,7 @@ UI/runtime 边界：
 - shared brace 在 Track hover/pressed fill 之后绘制，保证组边界处于 Track header 视觉最上层；它不改变命中、排序或 membership。
 - Arrangement、Logical Segment 与 MIDI Segment toolbar 的左侧 context text 使用与右侧工具相称的外边距；Conductor workspace 只隐藏 toolbar 中冗余的 `Conductor Track` header，不改变 Tab 标题或 Workspace identity。
 - Event Instruments pane toggle 的 hover border 只在该按钮本地复用相邻 Add 按钮的 hover token；不修改全局 ToggleButton 模板。
+- Arrangement 的 Event Instruments pane 为 Definition 项使用特化列表容器：左侧窄竖线始终显示该 Event Instrument 的正式颜色，选中态只改变背景而不得用公共红色左边框覆盖或替代该颜色线。
 - `New Logical Track with Instrument...` 创建新 Definition 时，提交后激活新 Event Instrument Workspace；使用既有 Definition 时仍返回 Arrangement。
 
 规格同步记录：

@@ -1530,6 +1530,28 @@ public sealed class DesktopSessionControllerTests
     }
 
     [Fact]
+    public async Task OpenDiagnosticsWorkspaceRefreshesWhenCompilationChanges()
+    {
+        await using DesktopSessionController session = new();
+        await session.CreateProjectAsync(new NewProjectCreationRequest
+        {
+            ProjectName = "Live diagnostics",
+            PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+        });
+        ProjectTreeNode diagnosticsNode = session.ProjectTree.Single(value =>
+            value.Kind == ProjectTreeNodeKind.Diagnostics);
+        DiagnosticsWorkspaceViewModel diagnostics = Assert.IsType<DiagnosticsWorkspaceViewModel>(
+            session.OpenWorkspace(diagnosticsNode));
+        Assert.DoesNotContain(diagnostics.Diagnostics, value => value.Code == "MIDORA1010");
+
+        session.Project!.Conductor.Tempos.Clear();
+        CanonicalCompiledResult result = await session.CompileProjectAsync();
+
+        Assert.Contains(result.Diagnostics, value => value.Code == "MIDORA1010");
+        Assert.Contains(diagnostics.Diagnostics, value => value.Code == "MIDORA1010");
+    }
+
+    [Fact]
     public void StatusMessageRetainsFullErrorTextForDetails()
     {
         DesktopSessionController session = new();
@@ -1978,6 +2000,9 @@ public sealed class DesktopSessionControllerTests
 
         Assert.Equal(0xff336699u, segment.AccentColor);
         Assert.Equal(0xff336699u, snapshot.LaneColors[segment.Lane]);
+        EventInstrumentBrowserRow browserRow = Assert.Single(arrangement.EventInstrumentBrowser);
+        Assert.Equal(0xff336699u, browserRow.ColorArgb);
+        Assert.Equal("#FF336699", browserRow.ColorText);
         Assert.Equal(27, conductor.LaneHeight);
     }
 

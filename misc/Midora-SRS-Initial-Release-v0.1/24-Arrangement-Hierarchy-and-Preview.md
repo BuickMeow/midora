@@ -241,6 +241,8 @@ Add Logical Track Using This Instrument
 
 Event Instruments pane 属于 Arrangement 会话 UI，Project 打开时默认折叠；用户可从 Arrangement 左上角显式切换显示。该可见性不进入 Project、Undo/Redo 或 canonical。
 
+每个 Definition 项左侧固定显示由其正式不透明 sRGB 颜色派生的窄竖线。该竖线在未选择、hover 与选择状态下均保持 Definition 颜色；该列表不得复用会以红色左边框覆盖颜色语义的通用选中态，选择仍可使用背景变化表达。
+
 ### 24.6.3 Header 与块视觉
 
 所有 Track Header 预留同宽的左侧 group gutter，使独立 Track 与 block member 的标题对齐。

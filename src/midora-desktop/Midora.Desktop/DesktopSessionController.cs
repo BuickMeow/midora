@@ -1853,10 +1853,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 {
                     timeline.UpdatePlaybackCursor(Project, CurrentTick);
                 }
-                if (workspace is DiagnosticsWorkspaceViewModel diagnostics)
-                {
-                    diagnostics.Replace(CompilerDiagnostics);
-                }
             }
         }
         RefreshProperties();
@@ -1886,9 +1882,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 CloseWorkspace(workspace);
                 continue;
             }
-            if (workspace is DiagnosticsWorkspaceViewModel diagnostics)
+            if (workspace is DiagnosticsWorkspaceViewModel)
             {
-                diagnostics.Replace(CompilerDiagnostics);
                 continue;
             }
             if (!WorkspaceAffected(workspace, changes)) continue;
@@ -2059,6 +2054,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             foreach (DiagnosticRow diagnostic in diagnostics)
             {
                 CompilerDiagnostics.Add(diagnostic);
+            }
+            foreach (DiagnosticsWorkspaceViewModel workspace in
+                Workspaces.OfType<DiagnosticsWorkspaceViewModel>())
+            {
+                workspace.Replace(diagnostics);
             }
             _compilerErrorCount = diagnostics.Count(item => item.Severity == "Error");
             _compilerWarningCount = diagnostics.Count(item => item.Severity == "Warning");

@@ -643,6 +643,36 @@ Event Instrument/SubVoice 路径不得产生 CC91 或 CC93。Pure MIDI Track 的
 ### 14.12.6 SysEx 与 opaque Meta 边界
 初版不允许用户创建或任意编辑自由 SysEx payload。
 但系统可写入内置必要初始化事件；从 SMF 导入并保存为 Pure MIDI opaque event 的合法 SysEx/Meta 必须按 canonical descriptor 原样重新导出。导出器不得解释其业务含义。具体范围见第 23.6.5、23.12.6 节。
+### 14.12.7 Reverb / Chorus Send 零值初始化
+
+MIDI 导出器必须在每个实际输出的单 Channel 事件 MTrk 的相对 tick 0 各写一次：
+
+```text
+CC91 Reverb Send = 0
+CC93 Chorus Send = 0
+```
+
+规则：
+
+```text
+顺序固定为 CC91 后 CC93
+Logical Unit Track 与 Pure MIDI Track 都写入
+Whole Project、Per Logical Track、Per Port 以及分页/非分页编码路径完全一致
+Conductor Track 没有 Channel，永远不写入
+该初始化只属于 MIDI 导出编码结果，不进入 Project 或 Canonical Compiled Result
+```
+
+同 tick 顺序固定为：
+
+```text
+Track Name / MIDI Port / Midora Pure MIDI 结构 Meta
+→ Channel 10 melodic GS/XG 初始化（如适用）
+→ CC91=0
+→ CC93=0
+→ canonical / opaque 事件
+```
+
+Pure MIDI canonical 中显式存在的 CC91/CC93 必须继续按冻结 tick/order 原样写出；若也位于相对 tick 0，则它们在系统零值初始化后生效。导出器不得借此删除、覆盖或折叠用户事件。Event Instrument/SubVoice canonical 仍服从第 14.12.5 节的禁止规则。
 ---
 ## 14.13 同 tick 排序与编码优化边界
 ### 14.13.1 状态恢复事件与用户事件
@@ -776,6 +806,7 @@ Channel 10 melodic 初始化说明
 导出时间
 ```
 SoundFont 是程序级本机音频设置，不属于 Project 或 MIDI 导出语义；Readme 不得记录程序级 SoundFont 路径、顺序、启用状态或推荐信息。
+Project Metadata 的 `Notes` 字段必须是本次冻结 MIDI 导出编译结果中的准确 MIDI Note On 事件总数，来源固定为 Canonical Compiled Result；以 invariant 十进制单行字段输出，不得使用估算值、源对象数量或 Markdown 引用块格式。
 Error 导致导出失败时：
 ```text
 不生成成功 Readme。

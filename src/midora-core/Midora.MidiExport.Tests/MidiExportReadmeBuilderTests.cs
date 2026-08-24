@@ -18,6 +18,9 @@ public sealed class MidiExportReadmeBuilderTests
         Assert.DoesNotContain('\r', markdown);
         Assert.EndsWith("\n", markdown, StringComparison.Ordinal);
         Assert.Contains("- Mode: Per Port", markdown, StringComparison.Ordinal);
+        Assert.Contains("- Notes: 12345", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("SoundFont:", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("\n  >", markdown, StringComparison.Ordinal);
         Assert.Contains("- Range: \\[120, 480\\)", markdown, StringComparison.Ordinal);
         Assert.Contains("- Midora Port 3 → output Port 1", markdown, StringComparison.Ordinal);
         Assert.Contains("GS and Yamaha XG Normal Part", markdown, StringComparison.Ordinal);
@@ -46,8 +49,7 @@ public sealed class MidiExportReadmeBuilderTests
         AuthorOrTeam = "Midora contributors",
         OriginalWork = "Original",
         Copyright = "Copyright",
-        Notes = "Line 1\r\nLine 2",
-        SoundFontDescription = null,
+        NoteOnEventCount = 12_345,
         Mode = MidiExportMode.PerPort,
         RangeSource = MidiExportRangeSource.Manual,
         StartTick = 120,
@@ -83,8 +85,7 @@ public sealed class MidiExportReadmeBuilderTests
             AuthorOrTeam = source.AuthorOrTeam,
             OriginalWork = source.OriginalWork,
             Copyright = source.Copyright,
-            Notes = source.Notes,
-            SoundFontDescription = source.SoundFontDescription,
+            NoteOnEventCount = source.NoteOnEventCount,
             Mode = source.Mode,
             RangeSource = source.RangeSource,
             StartTick = startTick ?? source.StartTick,

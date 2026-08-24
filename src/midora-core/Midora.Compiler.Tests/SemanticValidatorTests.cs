@@ -371,6 +371,29 @@ public sealed class SemanticValidatorTests
             && value.Severity == DiagnosticSeverity.Error);
     }
 
+    [Theory]
+    [InlineData(120L, null)]
+    [InlineData(null, 360L)]
+    public void ParticipatingInstrumentWithIncompleteLoopIsRejected(
+        long? loopStartTick,
+        long? loopEndTick)
+    {
+        var fixture = CompilerTestProject.Create();
+        fixture.Instrument.RequiresChannelIsolation = true;
+        fixture.Instrument.LoopStartTick = loopStartTick;
+        fixture.Instrument.LoopEndTick = loopEndTick;
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 480);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.False(result.IsConsumable);
+        CompilerDiagnostic diagnostic = Assert.Single(result.Diagnostics, value => value.Code == "MIDORA1212");
+        Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
+        Assert.Equal(
+            "Loop Start and Loop End must both be present or both be absent.",
+            diagnostic.Message);
+    }
+
     [Fact]
     public void EventInstrumentPreviewTreatsSelectedDefinitionAsParticipating()
     {

@@ -37,8 +37,7 @@ public sealed class MidiExportReadmeRequest
     public required string AuthorOrTeam { get; init; }
     public required string OriginalWork { get; init; }
     public required string Copyright { get; init; }
-    public required string Notes { get; init; }
-    public string? SoundFontDescription { get; init; }
+    public required long NoteOnEventCount { get; init; }
     public required MidiExportMode Mode { get; init; }
     public required MidiExportRangeSource RangeSource { get; init; }
     public required long StartTick { get; init; }
@@ -77,12 +76,10 @@ public static class MidiExportReadmeBuilder
         AppendField(output, "Author or team", request.AuthorOrTeam);
         AppendField(output, "Original work / remix source", request.OriginalWork);
         AppendField(output, "Copyright", request.Copyright);
-        AppendField(output, "SoundFont", request.SoundFontDescription ?? "No recommended SoundFont selected");
-        AppendLine(output, "- Notes:");
-        foreach (string line in NormalizeLines(request.Notes))
-        {
-            AppendLine(output, $"  > {Escape(line)}");
-        }
+        AppendField(
+            output,
+            "Notes",
+            request.NoteOnEventCount.ToString(CultureInfo.InvariantCulture));
 
         AppendLine(output);
         AppendLine(output, "## Export Configuration");
@@ -207,7 +204,7 @@ public static class MidiExportReadmeBuilder
         ArgumentNullException.ThrowIfNull(request.AuthorOrTeam);
         ArgumentNullException.ThrowIfNull(request.OriginalWork);
         ArgumentNullException.ThrowIfNull(request.Copyright);
-        ArgumentNullException.ThrowIfNull(request.Notes);
+        ArgumentOutOfRangeException.ThrowIfNegative(request.NoteOnEventCount);
         ArgumentNullException.ThrowIfNull(request.Tracks);
         ArgumentNullException.ThrowIfNull(request.PortMappings);
         ArgumentNullException.ThrowIfNull(request.Diagnostics);
@@ -285,14 +282,6 @@ public static class MidiExportReadmeBuilder
     };
 
     private static string Inline(string? value) => string.IsNullOrWhiteSpace(value) ? "not specified" : value;
-
-    private static IEnumerable<string> NormalizeLines(string value)
-    {
-        string[] lines = value.Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Replace('\r', '\n')
-            .Split('\n');
-        return lines.Length == 1 && lines[0].Length == 0 ? ["(not set)"] : lines;
-    }
 
     private static string Escape(string value)
     {

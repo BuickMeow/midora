@@ -89,6 +89,11 @@
 | INV-078 | 一次只允许一个可见前台任务表面；主窗口不保留历史任务列表。任务进度只有在有可靠 current/total 时才使用 determinate；MIDI 导入第一遍以源字节、第二遍以 processed/total events 计量。取消仅在任务仍处于安全可取消阶段时可用。导入完整兼容报告必须保留到 Dismiss/替换。该运行时状态不持久化、不进入 Undo/Redo。 |
 | INV-079 | 所有实时/预览/离线音频任务使用任务开始时冻结的同一程序级 Enabled SF2/SFZ 有序配置；Worker 直接打开原绝对路径（仅 SF2 使用 `BASS_MIDI_FONT_MMAP`），并用 `BASS_MIDI_FONTEX2` 对每个 Unit 一次性设置完整 Font handle 与目标映射。列表、target 或其他音频配置变化只允许在 Stopped/Idle 提交，并在持久化后立即销毁旧 Worker、失效相关 sample-domain 缓存、重建并预热新 Worker；新建、打开、命令行打开、MIDI 导入形成 Project 会话和 Reset Playback Engine 也必须在其前台任务结束前接管或预热 Worker，不得推迟到首次 Play/Preview。成功后的 Worker 必须保留供后续音频操作复用；Project 已提交后的预热失败保留 Project 并作为独立音频运行时错误报告。缓存身份只可基于有序配置与主文件元数据的小型描述符；SFZ 依赖不进入身份，不得重新读取完整 SoundFont 或把该指纹描述为内容校验。 |
 | INV-080 | Playback Master Volume、Limiter 与 Stop Cursor Behavior 是 Application Preferences；MIDI Export 与 Audio Render 的模式、范围、选择及输出参数只属于当前任务 Draft。`.midora` 与 Project Domain 不得保存 Playback、Export defaults 或 Audio Render defaults；当前开发格式不包含对应三个 settings 文件，导出/渲染对话框每次使用规格固定初始值。 |
+| INV-081 | Event Instrument 可以持久化只存在 Loop Start 或 Loop End 的不完整 Loop Draft，以支持独立字段逐项编辑；该状态必须可 Undo/Redo 和确定性重开，但 Full/Incremental Compile 都必须产生 Error MIDORA1212 且结果不可消费，所有正式消费者不得解释它。两端都空表示禁用；两端齐全时必须满足 `0 <= Start < End <= Template Length`，单个已存在端点也必须位于 Template Length 内。 |
+| INV-082 | 离开或关闭 Event Instrument Workspace 时，只自动停止由该 Workspace 底部 Preview Keyboard 启动且仍活动的 Held Preview（包括 Gate-open 与 release-tail）；判定必须基于该键盘预览的显式任务所有权，不得按宽泛 Playback/Preview 状态停止主时间线播放、普通 Preview、Segment/Pitch Ruler Preview 或其他音频任务。该行为是 Runtime/UI 清理，不修改 Project、canonical 或播放光标。 |
+| INV-083 | Arrangement Segment 与 Logical/Direct/Template Note 的边界 Resize 在 Snap 开启时以当前有效 Operation Subdivision、Snap 关闭时以 `1 tick` 作为最小长度；批量对象逐项独立饱和。手势前已短于有效步长的对象以原长度为本次最小值，不能被约束反向扩长。交互预览与原子编辑命令必须采用同一最小长度。 |
+| INV-084 | MIDI 导出 `README.md` 不记录程序级 SoundFont；其 `Notes` 单行字段必须直接使用本次冻结 Canonical Compiled Result 的准确 MIDI Note On 事件总数，并以 invariant 十进制输出，不得重新统计源对象、估算或使用 Markdown 引用块。 |
+| INV-085 | MIDI 导出的每个实际单 Channel 事件 MTrk 都必须在相对 tick 0、结构 Meta 和可选 Channel 10 GS/XG 初始化之后、canonical/opaque 事件之前，依次写入 CC91=0、CC93=0；Conductor 不写。该初始化只属于 SMF 编码结果，不进入 Project/canonical，且不得删除或覆盖随后按冻结顺序写出的 Pure MIDI 用户 CC91/CC93。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|

@@ -185,39 +185,46 @@ public static partial class ProjectDomainEditCommands
         MidoraId subVoiceId,
         IReadOnlyCollection<MidoraId> noteIds,
         long startDelta,
-        long endDelta) =>
+        long endDelta,
+        long minimumLengthTicks = 1) =>
         PrepareTemplateNoteBatch(
             "Resize template notes",
             eventInstrumentId,
             subVoiceId,
             noteIds,
             startDelta,
-            endDelta);
+            endDelta,
+            minimumLengthTicks);
 
     private static TemplateEventValue AdjustTemplateNoteEdgesSaturated(
         TemplateEventValue value,
         long startDelta,
-        long endDelta)
+        long endDelta,
+        long minimumLengthTicks)
     {
         long oldEnd = checked(value.Tick + value.LengthTicks);
+        long effectiveMinimumLengthTicks = Math.Min(value.LengthTicks, minimumLengthTicks);
         long requestedStart = checked(value.Tick + startDelta);
         long requestedEnd = checked(oldEnd + endDelta);
         long start;
         long end;
         if (startDelta != 0 && endDelta == 0)
         {
-            start = Math.Clamp(requestedStart, 0, checked(oldEnd - 1));
+            start = Math.Clamp(
+                requestedStart,
+                0,
+                Math.Max(0, checked(oldEnd - effectiveMinimumLengthTicks)));
             end = oldEnd;
         }
         else if (startDelta == 0)
         {
             start = value.Tick;
-            end = Math.Max(checked(start + 1), requestedEnd);
+            end = Math.Max(checked(start + effectiveMinimumLengthTicks), requestedEnd);
         }
         else
         {
             start = Math.Max(0, requestedStart);
-            end = Math.Max(checked(start + 1), requestedEnd);
+            end = Math.Max(checked(start + effectiveMinimumLengthTicks), requestedEnd);
         }
         return value with
         {
@@ -232,9 +239,12 @@ public static partial class ProjectDomainEditCommands
         MidoraId subVoiceId,
         IReadOnlyCollection<MidoraId> noteIds,
         long startDelta,
-        long endDelta) =>
+        long endDelta,
+        long minimumLengthTicks) =>
         Command(commandName, project =>
         {
+            if (minimumLengthTicks < 1)
+                throw new ArgumentOutOfRangeException(nameof(minimumLengthTicks));
             ArgumentNullException.ThrowIfNull(noteIds);
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
@@ -254,7 +264,8 @@ public static partial class ProjectDomainEditCommands
                 .Select(value => AdjustTemplateNoteEdgesSaturated(
                     value,
                     boundedStartDelta,
-                    endDelta))
+                    endDelta,
+                    minimumLengthTicks))
                 .ToArray();
             for (int index = 0; index < notes.Length; index++)
             {

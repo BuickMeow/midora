@@ -380,6 +380,31 @@ public sealed class ApplicationTaskCoordinator : IDisposable
         _playback.CancelHeldPreview();
     }
 
+    public bool StopHeldEventInstrumentKeyboardPreview()
+    {
+        bool shouldStop;
+        lock (_sync)
+        {
+            ThrowIfDisposed();
+            shouldStop = _activeHeldEventInstrumentKeyboardPreview
+                && _activeTaskKind is ApplicationTaskKind.EventInstrumentPreview
+                    or ApplicationTaskKind.SubVoicePreview;
+            if (shouldStop)
+            {
+                _phase = ApplicationTaskPhase.Stopping;
+            }
+        }
+        if (!shouldStop)
+        {
+            return false;
+        }
+
+        // Stop, rather than only cancelling an open Gate, because the keyboard
+        // preview may still be rendering its release after the pointer was released.
+        _playback.Stop();
+        return true;
+    }
+
     public void StopPlayback()
     {
         bool shouldStop;

@@ -52,6 +52,11 @@
 
 ## 2026-08-25 修订摘要
 
+- MIDI 导出的每个实际单 Channel 事件 MTrk 在相对 tick 0 固定写入 CC91 Reverb Send=0、CC93 Chorus Send=0；初始化只属于 SMF 编码结果，位于结构/Channel 10 初始化之后、canonical 事件之前，Conductor 不写，Pure MIDI 用户 CC91/CC93 仍原样保留。
+- MIDI 导出 `README.md` 删除程序级 SoundFont 占位信息；`Notes` 改为本次冻结 Canonical Compiled Result 的准确 MIDI Note On 事件总数，并以单行 invariant 十进制字段输出。
+- Arrangement Segment 与 Logical/Direct/Template Note 的边界 Resize 在 Snap 开启时以当前有效 Operation Subdivision 作为最小长度，在 Snap 关闭时以 `1 tick` 作为最小长度；批量 Resize 对每个对象独立饱和。打开手势前已经短于当前吸附步长的既有对象不得因约束被反向扩长，其本次最小长度保持原长度。拖动预览与正式提交必须一致。
+- 离开或关闭 Event Instrument Workspace 时，自动停止其底部 Preview Keyboard 专有的活动 Held Preview，包括仍按住的 Gate 和已经松开但仍在播放的 release tail；该清理使用显式键盘预览所有权，不得停止主时间线播放或其他 Preview 类型。
+- Event Instrument Loop 允许保存只填写 Start 或 End 的不完整编辑 Draft，使两个独立字段可以逐项提交；该状态可持久化和 Undo/Redo，但 Full/Incremental Compile 固定产生 `MIDORA1212` Error，任何正式消费者不得执行部分 Loop。完整 Loop 的范围规则保持不变。
 - 以 Limiter v2 破坏性替换旧零前瞻 sample-peak 算法：固定 stereo-linked、5 ms look-ahead、4× 16-tap 插值峰值检测、线性 `0.8912509`（-1 dBFS）ceiling、10 ms hold、100 ms 指数 release 且无 makeup gain。实时在首帧输出前预取分析窗口，离线输出补偿内部前瞻并保持精确 frame 数；算法状态跨工作块连续，旧 playback-span 缓存代际失效。UI 仍只显示 `Limiter`，不展示算法版本号。
 
 ## 2026-08-24 修订摘要

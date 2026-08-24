@@ -411,23 +411,39 @@ Loop Start = 0
 Loop End = Template Length
 ```
 ### 10.9.4 Loop 区间合法性
-Loop 区间必须满足：
+完整 Loop 区间必须满足：
 ```text
 0 <= Loop Start < Loop End <= Template Length
+```
+源数据允许暂时只填写 `Loop Start` 或 `Loop End`，以支持两个独立编辑控件逐项提交。该状态定义为“不完整 Loop Draft”：
+```text
+只存在 Loop Start 或只存在 Loop End
+可以保存、打开、Undo / Redo
+没有 Loop 执行语义
+Full Compile 与 Incremental Compile 必须产生 Error MIDORA1212，结果不可消费
+播放、预览、MIDI 导出和音频渲染不得接收或解释该不完整状态
+```
+两端都不存在仍表示 Loop disabled；两端都存在时才形成完整 Loop 区间。
+
+每个已存在端点自身仍必须位于 Template Length 内：
+```text
+0 <= Loop Start < Template Length
+0 < Loop End <= Template Length
 ```
 如果 Template Length 缩短会导致现有 Loop End 超过 Template Length：
 ```text
 不允许将 Template Length 缩短到小于 Loop End
 除非用户先调整或禁用 Loop
 ```
+如果当前只存在 Loop Start，则同样不允许把 Template Length 缩短到 `Loop Start` 或更小。
 用户编辑 Loop Start / End 导致以下非法状态时：
 ```text
 Loop Start < 0
-Loop Start >= Loop End
+完整 Loop 的 Loop Start >= Loop End
 Loop End > Template Length
 ```
 编辑操作不被接受或即时修正到合法范围。
-系统不保存非法 Loop 区间。
+除上述明确允许的不完整 Loop Draft 外，系统不保存非法 Loop 区间。
 ### 10.9.5 Loop 触发条件
 初版 Loop 只用于长音 / 持续场景。
 规则：

@@ -53,6 +53,8 @@ Arrangement、所有 Segment/SubVoice piano roll，以及所有 MIDI Event / Log
 
 有效操作步长用于 Marquee 与 Time Range 的开始和长度、Edit Cursor 与 Playback Cursor 定位、Segment / Note 放置位置、Segment / Note Resize 的 delta（而不是最终总长度），以及 Segment / Note Move 的共享 delta（而不是最终绝对位置）。
 
+Arrangement Segment、Logical Note、Direct MIDI Note 与 Template Note 的左/右边界 Resize 还必须使用本次手势开始时的有效操作步长作为最小结果长度；Snap Disabled 时该最小值为 `1 tick`。批量 Resize 继续对每个对象独立饱和，不得让最短对象限制其他对象的缩短量。若某个既有对象在手势开始前已经短于当前有效操作步长，则该对象本次最小长度保持其原长度，不得为了满足新吸附设置而反向扩长。拖动预览与正式命令提交必须使用相同最小值。
+
 Segment、Logical Note、Direct MIDI Note 与 Template Note 的 `Alt + Left Drag` 是强制 Move 手势，仍使用当前有效操作步长。需要逐 tick 编辑时关闭 Snap；Alt 不再临时绕过 Snap。
 ### 20.1.5 Zoom 与 Pan
 ```text

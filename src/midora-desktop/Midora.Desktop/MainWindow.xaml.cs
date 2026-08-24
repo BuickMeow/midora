@@ -2908,7 +2908,7 @@ public partial class MainWindow : Window
                 || !_session.CanEditProject
                 || _session.Project?.EventInstruments.FirstOrDefault(value => value.Id == instrumentId)
                     is not EventInstrument instrument
-                || !TryParseCompleteLoop(workspace, instrument, out long? start, out long? end))
+                || !TryParseLoopDraft(workspace, instrument, out long? start, out long? end))
             {
                 return;
             }
@@ -2992,7 +2992,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static bool TryParseCompleteLoop(
+    private static bool TryParseLoopDraft(
         InstrumentWorkspaceViewModel workspace,
         EventInstrument instrument,
         out long? start,
@@ -3003,19 +3003,35 @@ public partial class MainWindow : Window
         string startText = workspace.LoopStartText.Trim();
         string endText = workspace.LoopEndText.Trim();
         if (startText.Length == 0 && endText.Length == 0) return true;
-        if (startText.Length == 0
-            || endText.Length == 0
-            || !long.TryParse(startText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedStart)
-            || !long.TryParse(endText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedEnd)
-            || !instrument.RequiresChannelIsolation
-            || parsedStart < 0
-            || parsedEnd <= parsedStart
-            || parsedEnd > instrument.TemplateLengthTicks)
+        if (!instrument.RequiresChannelIsolation)
         {
             return false;
         }
-        start = parsedStart;
-        end = parsedEnd;
+
+        if (startText.Length > 0)
+        {
+            if (!long.TryParse(startText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedStart)
+                || parsedStart < 0
+                || parsedStart >= instrument.TemplateLengthTicks)
+            {
+                return false;
+            }
+            start = parsedStart;
+        }
+        if (endText.Length > 0)
+        {
+            if (!long.TryParse(endText, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedEnd)
+                || parsedEnd <= 0
+                || parsedEnd > instrument.TemplateLengthTicks)
+            {
+                return false;
+            }
+            end = parsedEnd;
+        }
+        if (start.HasValue && end.HasValue && end.Value <= start.Value)
+        {
+            return false;
+        }
         return true;
     }
 
@@ -6824,7 +6840,8 @@ public partial class MainWindow : Window
                 _session.Execute(ProjectDomainEditCommands.AdjustArrangementSegmentEdges(
                     mixed,
                     snappedDelta,
-                    0));
+                    0,
+                    workspace.EditorSettings.EffectiveOperationStepTicks));
             }
             else
             {
@@ -6834,7 +6851,8 @@ public partial class MainWindow : Window
                 _session.Execute(ProjectDomainEditCommands.AdjustArrangementSegmentEdges(
                     mixed,
                     0,
-                    endDelta));
+                    endDelta,
+                    workspace.EditorSettings.EffectiveOperationStepTicks));
             }
             return;
         }
@@ -6910,7 +6928,8 @@ public partial class MainWindow : Window
             _session.Execute(ProjectDomainEditCommands.AdjustSegmentEdges(
                 selectedSegmentIds,
                 startDelta: snappedDelta,
-                endDelta: 0));
+                endDelta: 0,
+                minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks));
         }
         else
         {
@@ -6920,7 +6939,8 @@ public partial class MainWindow : Window
             _session.Execute(ProjectDomainEditCommands.AdjustSegmentEdges(
                 selectedSegmentIds,
                 startDelta: 0,
-                endDelta));
+                endDelta,
+                minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks));
         }
     }
 
@@ -7000,7 +7020,8 @@ public partial class MainWindow : Window
                     segmentId,
                     noteIds,
                     startDelta,
-                    endDelta: 0));
+                    endDelta: 0,
+                    minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks));
                 break;
             case TimelineItemEditKind.ResizeEnd:
                 long endDelta = ((TimelineWorkspaceViewModel)_session.ActiveWorkspace!).EditorSettings.SnapDelta(
@@ -7010,7 +7031,8 @@ public partial class MainWindow : Window
                     segmentId,
                     noteIds,
                     startDelta: 0,
-                    endDelta));
+                    endDelta,
+                    minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks));
                 break;
         }
     }
@@ -7064,7 +7086,8 @@ public partial class MainWindow : Window
             _session.Execute(ProjectDomainEditCommands.AdjustMidiSegmentEdges(
                 selectedIds,
                 snappedDelta,
-                0));
+                0,
+                workspace.EditorSettings.EffectiveOperationStepTicks));
         }
         else
         {
@@ -7074,7 +7097,8 @@ public partial class MainWindow : Window
             _session.Execute(ProjectDomainEditCommands.AdjustMidiSegmentEdges(
                 selectedIds,
                 0,
-                endDelta));
+                endDelta,
+                workspace.EditorSettings.EffectiveOperationStepTicks));
         }
     }
 
@@ -7086,10 +7110,11 @@ public partial class MainWindow : Window
     {
         MidiSegment segment = TimelineWorkspaceViewModel.FindMidiSegment(_session.Project!, segmentId)?.Segment
             ?? throw new InvalidOperationException("The MIDI Segment no longer exists.");
+        TimelineWorkspaceViewModel workspace =
+            (TimelineWorkspaceViewModel)_session.ActiveWorkspace!;
         MidoraId[] noteIds = selected;
         long minimumStart;
-        if (_session.ActiveWorkspace is TimelineWorkspaceViewModel timeline
-            && timeline.SelectionSnapshot.TryGetMetrics(
+        if (workspace.SelectionSnapshot.TryGetMetrics(
                 TimelineItemKind.DirectMidiNote,
                 out TimelineSelectionMetrics metrics)
             && metrics.Count == selected.Length)
@@ -7137,17 +7162,19 @@ public partial class MainWindow : Window
                     segmentId,
                     noteIds,
                     Math.Max(snappedDelta, -minimumStart),
-                    0));
+                    0,
+                    workspace.EditorSettings.EffectiveOperationStepTicks));
                 break;
             case TimelineItemEditKind.ResizeEnd:
-                long endDelta = ((TimelineWorkspaceViewModel)_session.ActiveWorkspace!).EditorSettings.SnapDelta(
+                long endDelta = workspace.EditorSettings.SnapDelta(
                     edit.TickDelta,
                     checked(edit.Item.EndTick + edit.TickDelta));
                 _session.Execute(ProjectDomainEditCommands.AdjustDirectMidiNoteEdges(
                     segmentId,
                     noteIds,
                     0,
-                    endDelta));
+                    endDelta,
+                    workspace.EditorSettings.EffectiveOperationStepTicks));
                 break;
         }
     }
@@ -7523,7 +7550,8 @@ public partial class MainWindow : Window
                         voice.Id,
                         selectedIds,
                         startDelta,
-                        endDelta: 0));
+                        endDelta: 0,
+                        minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks));
                     return;
                 case TimelineItemEditKind.ResizeEnd:
                     _session.Execute(ProjectDomainEditCommands.AdjustTemplateNoteEdges(
@@ -7531,7 +7559,8 @@ public partial class MainWindow : Window
                         voice.Id,
                         selectedIds,
                         startDelta: 0,
-                        endDelta: snappedDelta));
+                        endDelta: snappedDelta,
+                        minimumLengthTicks: workspace.EditorSettings.EffectiveOperationStepTicks));
                     return;
             }
         }

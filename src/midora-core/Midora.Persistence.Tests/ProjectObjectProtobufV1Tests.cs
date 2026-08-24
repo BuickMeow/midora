@@ -114,6 +114,53 @@ public sealed class ProjectObjectProtobufV1Tests
         Assert.Equal(bytes, EventInstrumentProtobufCodecV1.Serialize(restored));
     }
 
+    [Theory]
+    [InlineData(120L, null)]
+    [InlineData(null, 840L)]
+    public void EventInstrumentRoundTripPreservesIncompleteLoopDraft(
+        long? loopStartTick,
+        long? loopEndTick)
+    {
+        MidoraProject project = new(480, CreatedAt);
+        EventInstrument instrument = EventInstrumentLibrary.Create(project, "Instrument");
+        instrument.TemplateLengthTicks = 960;
+        instrument.RequiresChannelIsolation = true;
+        instrument.LoopStartTick = loopStartTick;
+        instrument.LoopEndTick = loopEndTick;
+
+        byte[] bytes = EventInstrumentProtobufCodecV1.Serialize(instrument);
+        EventInstrument restored = EventInstrumentProtobufCodecV1.Restore(
+            new MidoraProject(480, CreatedAt),
+            bytes);
+
+        Assert.Equal(loopStartTick, restored.LoopStartTick);
+        Assert.Equal(loopEndTick, restored.LoopEndTick);
+        Assert.Equal(bytes, EventInstrumentProtobufCodecV1.Serialize(restored));
+    }
+
+    [Theory]
+    [InlineData(120L, null)]
+    [InlineData(null, 840L)]
+    public async Task PackageRoundTripPreservesIncompleteLoopDraft(
+        long? loopStartTick,
+        long? loopEndTick)
+    {
+        using TemporaryDirectory temporary = new();
+        string packagePath = temporary.PathFor("incomplete-loop.midora");
+        MidoraProject source = CreateObjectProject();
+        EventInstrument sourceInstrument = Assert.Single(source.EventInstruments);
+        sourceInstrument.LoopStartTick = loopStartTick;
+        sourceInstrument.LoopEndTick = loopEndTick;
+        MidoraProjectPackageV1 packages = CreateService();
+
+        await packages.SaveCopyAsync(source, packagePath);
+        MidoraProjectOpenResultV1 opened = await packages.OpenAsync(packagePath);
+
+        EventInstrument restored = Assert.Single(opened.Project.EventInstruments);
+        Assert.Equal(loopStartTick, restored.LoopStartTick);
+        Assert.Equal(loopEndTick, restored.LoopEndTick);
+    }
+
     [Fact]
     public async Task PackageRoundTripsCompleteObjectGraphWithStableBytesAndIds()
     {

@@ -8,6 +8,8 @@ namespace Midora.MidiExport;
 public static class CanonicalMidiFileExporter
 {
     private const string GenericEncodingErrorCode = "MIDORA-MIDI-EXPORT-ENCODING";
+    private const byte ReverbSendController = 91;
+    private const byte ChorusSendController = 93;
     private static ReadOnlySpan<byte> RolandGsChannel10NormalPart =>
         [0x41, 0x10, 0x42, 0x12, 0x40, 0x10, 0x15, 0x00, 0x1b, 0xf7];
     private static ReadOnlySpan<byte> YamahaXgChannel10NormalPart =>
@@ -410,6 +412,8 @@ public static class CanonicalMidiFileExporter
             yield return StandardMidiFileEvent.SystemExclusive(0, RolandGsChannel10NormalPart);
             yield return StandardMidiFileEvent.SystemExclusive(0, YamahaXgChannel10NormalPart);
         }
+        yield return EffectsOffEvent(descriptor.ZeroBasedChannel, ReverbSendController);
+        yield return EffectsOffEvent(descriptor.ZeroBasedChannel, ChorusSendController);
 
         IEnumerable<CanonicalSmfTrackChannelEvent> channelSource = compiled
             .QuerySmfTrackChannelEventPages(descriptor.ExportTrackId)
@@ -695,6 +699,7 @@ public static class CanonicalMidiFileExporter
             events.Add(StandardMidiFileEvent.SystemExclusive(0, RolandGsChannel10NormalPart));
             events.Add(StandardMidiFileEvent.SystemExclusive(0, YamahaXgChannel10NormalPart));
         }
+        AddEffectsOffInitialization(events, unit.ZeroBasedChannel);
         foreach (CanonicalMidiEvent value in values)
         {
             events.Add(StandardMidiFileEvent.ChannelVoice(
@@ -732,6 +737,7 @@ public static class CanonicalMidiFileExporter
             events.Add(StandardMidiFileEvent.SystemExclusive(0, RolandGsChannel10NormalPart));
             events.Add(StandardMidiFileEvent.SystemExclusive(0, YamahaXgChannel10NormalPart));
         }
+        AddEffectsOffInitialization(events, descriptor.ZeroBasedChannel);
 
         List<(long Tick, long Order, int KindOrder, StandardMidiFileEvent Event)> timed = [];
         foreach (CanonicalMidiEvent value in channelEvents)
@@ -778,6 +784,21 @@ public static class CanonicalMidiFileExporter
             .Select(value => value.Event));
         return new(descriptor.EndTick, events);
     }
+
+    private static void AddEffectsOffInitialization(
+        ICollection<StandardMidiFileEvent> events,
+        byte zeroBasedChannel)
+    {
+        events.Add(EffectsOffEvent(zeroBasedChannel, ReverbSendController));
+        events.Add(EffectsOffEvent(zeroBasedChannel, ChorusSendController));
+    }
+
+    private static StandardMidiFileEvent EffectsOffEvent(
+        byte zeroBasedChannel,
+        byte controller) =>
+        StandardMidiFileEvent.ChannelVoice(
+            0,
+            MidiMessage.ControlChange(zeroBasedChannel, controller, 0));
 
     private static byte[] BuildMidoraTrackMetadata(
         CanonicalSmfTrackDescriptor descriptor,

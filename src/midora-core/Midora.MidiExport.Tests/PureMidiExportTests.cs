@@ -55,6 +55,7 @@ public sealed class PureMidiExportTests
             Assert.True(encoded.Succeeded, string.Join(Environment.NewLine, encoded.Diagnostics));
             ParsedStandardMidiFile parsed = StandardMidiFile.ParseType0Or1(encoded.FileBytes);
             ParsedStandardMidiFileTrack midiTrack = parsed.Tracks[1];
+            AssertEffectsDisabledAtTrackStart(midiTrack, zeroBasedChannel: 2);
             Assert.Contains(midiTrack.Events, value =>
                 value.Kind == StandardMidiFileEventKind.ChannelVoice
                 && value.Message.MessageType == MidiMessageType.NoteOn
@@ -130,6 +131,9 @@ public sealed class PureMidiExportTests
         Assert.Equal([960L, 240L, 960L], parsed.Tracks.Select(value => value.EndTick).ToArray());
         Assert.Equal("Short", TrackName(parsed.Tracks[1]));
         Assert.Equal("Long", TrackName(parsed.Tracks[2]));
+        Assert.All(parsed.Tracks.Skip(1), track => AssertEffectsDisabledAtTrackStart(
+            track,
+            zeroBasedChannel: 4));
         ParsedStandardMidiFileEvent noteOff = Assert.Single(parsed.Tracks[1].Events,
             value => value.Kind == StandardMidiFileEventKind.ChannelVoice
                 && value.Message.MessageType == MidiMessageType.NoteOff);
@@ -206,4 +210,19 @@ public sealed class PureMidiExportTests
         Encoding.UTF8.GetString(Assert.Single(track.Events, value =>
             value.Kind == StandardMidiFileEventKind.Meta
             && value.Type == StandardMidiFile.TrackNameMetaType).Data.Span);
+
+    private static void AssertEffectsDisabledAtTrackStart(
+        ParsedStandardMidiFileTrack track,
+        byte zeroBasedChannel)
+    {
+        ParsedStandardMidiFileEvent[] channelEvents = track.Events
+            .Where(value => value.Kind == StandardMidiFileEventKind.ChannelVoice)
+            .Take(2)
+            .ToArray();
+        Assert.Equal(2, channelEvents.Length);
+        Assert.Equal(0, channelEvents[0].Tick);
+        Assert.Equal(MidiMessage.ControlChange(zeroBasedChannel, 91, 0), channelEvents[0].Message);
+        Assert.Equal(0, channelEvents[1].Tick);
+        Assert.Equal(MidiMessage.ControlChange(zeroBasedChannel, 93, 0), channelEvents[1].Message);
+    }
 }

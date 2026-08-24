@@ -105,23 +105,21 @@ public static partial class ProjectDomainEditCommands
             bool disabling = !loopStartTick.HasValue && !loopEndTick.HasValue;
             if (!disabling)
             {
-                if (!loopStartTick.HasValue || !loopEndTick.HasValue)
-                {
-                    throw new ArgumentException(
-                        "Loop Start and Loop End must either both be present or both be absent.");
-                }
                 if (!instrument.RequiresChannelIsolation)
                 {
                     throw new InvalidOperationException(
                         "A Loop can only be enabled or edited while Per-Note Instance Isolation is enabled.");
                 }
-                if (loopStartTick.Value < 0
-                    || loopEndTick.Value <= loopStartTick.Value
-                    || loopEndTick.Value > instrument.TemplateLengthTicks)
+                if (loopStartTick is < 0
+                    || loopStartTick >= instrument.TemplateLengthTicks
+                    || loopEndTick is <= 0
+                    || loopEndTick > instrument.TemplateLengthTicks
+                    || loopStartTick.HasValue && loopEndTick.HasValue
+                        && loopEndTick.Value <= loopStartTick.Value)
                 {
                     throw new ArgumentOutOfRangeException(
                         nameof(loopEndTick),
-                        "Loop must be a non-empty range inside Template Length.");
+                        "Each Loop endpoint must be inside Template Length, and a complete Loop must be non-empty.");
                 }
             }
             LoopValue old = new(instrument.LoopStartTick, instrument.LoopEndTick);
@@ -293,6 +291,10 @@ public static partial class ProjectDomainEditCommands
     private static long GetMinimumTemplateLength(EventInstrument instrument)
     {
         long minimum = 1;
+        if (instrument.LoopStartTick.HasValue)
+        {
+            minimum = Math.Max(minimum, checked(instrument.LoopStartTick.Value + 1));
+        }
         if (instrument.LoopEndTick.HasValue)
         {
             minimum = Math.Max(minimum, instrument.LoopEndTick.Value);

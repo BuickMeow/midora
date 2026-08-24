@@ -302,6 +302,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             WorkspaceViewModel? previous = _activeWorkspace;
             if (Set(ref _activeWorkspace, value))
             {
+                StopEventInstrumentKeyboardPreviewOnWorkspaceExit(previous, value);
                 if (!_isNavigatingHistory
                     && previous is not null
                     && value is not null
@@ -320,6 +321,32 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 Raise(nameof(CanNavigateBack));
                 Raise(nameof(CanNavigateForward));
             }
+        }
+    }
+
+    private void StopEventInstrumentKeyboardPreviewOnWorkspaceExit(
+        WorkspaceViewModel? previous,
+        WorkspaceViewModel? current)
+    {
+        if (previous is not InstrumentWorkspaceViewModel
+            || ReferenceEquals(previous, current)
+            || _context?.Tasks is not ApplicationTaskCoordinator tasks)
+        {
+            return;
+        }
+
+        try
+        {
+            if (tasks.StopHeldEventInstrumentKeyboardPreview())
+            {
+                RefreshProperties();
+            }
+        }
+        catch (Exception exception)
+        {
+            SetStatusMessage(
+                $"Stop Event Instrument keyboard Preview: {exception.Message}",
+                isError: true);
         }
     }
 

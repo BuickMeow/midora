@@ -282,6 +282,8 @@ Selected SubVoice
 ```
 预览键盘与 Segment Editor Pitch Ruler 采用统一琴键规则，不显示 MIDI Note 编号。Preview Keyboard 的 pointer 纵向位置映射为越靠下 velocity 越大、越靠上 velocity 越小；该映射只影响 Held Preview 请求，不修改 Project Note 或 Mapping 数据。
 Preview Mute / Solo 只影响预览任务，不属于 Project。
+
+当用户从 Event Instrument Workspace 切换到其他顶层 Workspace（包括另一个 Event Instrument）或关闭当前 Workspace 时，如果底部 Preview Keyboard 启动的 Held Preview 仍在 Gate-open、Buffering、Playing 或 release-tail 状态，必须立即停止该键盘预览任务。该导航清理只按 Preview Keyboard 的任务所有权执行，不得停止主时间线播放、普通 Event Instrument / SubVoice Preview、Segment Preview、Pitch Ruler Preview 或其他音频任务。
 ### 18.3.5 引用更新
 修改 Event Instrument 后：
 - 所有引用它的 Logical Track 使用最新定义；

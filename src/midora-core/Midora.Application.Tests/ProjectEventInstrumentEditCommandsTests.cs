@@ -83,6 +83,63 @@ public sealed class ProjectEventInstrumentEditCommandsTests
     }
 
     [Fact]
+    public void IncompleteLoopEndpointsAreEditableButCompilationRejectsThemUntilCompleted()
+    {
+        MidoraProject project = CreateProject();
+        EventInstrument instrument = project.EventInstruments[0];
+        instrument.RequiresChannelIsolation = true;
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.UpdateEventInstrumentLoop(
+            instrument.Id,
+            120,
+            null));
+
+        Assert.Equal(120, instrument.LoopStartTick);
+        Assert.Null(instrument.LoopEndTick);
+        Assert.False(compilation.LastAttempt.IsConsumable);
+        Assert.Contains(compilation.LastAttempt.Diagnostics, value =>
+            value.Code == "MIDORA1212"
+            && value.Message == "Loop Start and Loop End must both be present or both be absent.");
+        Assert.Throws<InvalidOperationException>(() => document.Execute(
+            ProjectDomainEditCommands.UpdateEventInstrumentTemplateLength(instrument.Id, 120)));
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Execute(ProjectDomainEditCommands.UpdateEventInstrumentLoop(
+            instrument.Id,
+            120,
+            360));
+
+        Assert.True(compilation.LastAttempt.IsConsumable);
+        Assert.Equal(120, instrument.LoopStartTick);
+        Assert.Equal(360, instrument.LoopEndTick);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+        Assert.Equal(120, instrument.LoopStartTick);
+        Assert.Null(instrument.LoopEndTick);
+        Assert.False(compilation.LastAttempt.IsConsumable);
+
+        document.Undo();
+        Assert.Null(instrument.LoopStartTick);
+        Assert.Null(instrument.LoopEndTick);
+        Assert.True(compilation.LastAttempt.IsConsumable);
+        Assert.False(document.IsModified);
+
+        document.Execute(ProjectDomainEditCommands.UpdateEventInstrumentLoop(
+            instrument.Id,
+            null,
+            360));
+
+        Assert.Null(instrument.LoopStartTick);
+        Assert.Equal(360, instrument.LoopEndTick);
+        Assert.False(compilation.LastAttempt.IsConsumable);
+        Assert.Contains(compilation.LastAttempt.Diagnostics, value => value.Code == "MIDORA1212");
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
     public void OverlapAndLifecycleSettingsAreAtomicValidatedHistoryEdits()
     {
         MidoraProject project = CreateProject();

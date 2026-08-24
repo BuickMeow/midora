@@ -87,9 +87,12 @@ public static partial class ProjectDomainEditCommands
     public static IProjectEditCommand AdjustArrangementSegmentEdges(
         IReadOnlyCollection<MidoraId> segmentIds,
         long startDelta,
-        long endDelta) =>
+        long endDelta,
+        long minimumLengthTicks = 1) =>
         Command("Adjust Arrangement Segment edges", project =>
         {
+            if (minimumLengthTicks < 1)
+                throw new ArgumentOutOfRangeException(nameof(minimumLengthTicks));
             MixedArrangementSegmentSelection selection =
                 SelectMixedArrangementSegments(project, segmentIds);
             if (startDelta != 0 && endDelta != 0)
@@ -107,14 +110,16 @@ public static partial class ProjectDomainEditCommands
                 factories.Add(_ => AdjustSegmentEdges(
                     selection.LogicalIds,
                     boundedStartDelta,
-                    endDelta));
+                    endDelta,
+                    minimumLengthTicks));
             }
             if (selection.MidiIds.Length != 0)
             {
                 factories.Add(_ => AdjustMidiSegmentEdges(
                     selection.MidiIds,
                     boundedStartDelta,
-                    endDelta));
+                    endDelta,
+                    minimumLengthTicks));
             }
             return new SequentialProjectEditCommand(
                 "Adjust Arrangement Segment edges",

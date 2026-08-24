@@ -68,6 +68,58 @@ public sealed class ApplicationTaskCoordinatorTests
         Assert.False(fixture.Session.EditsLocked);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SelectiveInstrumentKeyboardStopEndsOpenGateAndReleasedTail(bool releaseGateFirst)
+    {
+        using TestContext fixture = TestContext.Create();
+        EventInstrument instrument = fixture.Session.Project.EventInstruments[0];
+        fixture.Coordinator.StartHeldEventInstrumentPreview(
+            new EventInstrumentPreviewRequest(instrument.Id, Tempo: 120m));
+        if (releaseGateFirst)
+        {
+            fixture.Coordinator.EndHeldPreviewGate(240);
+        }
+
+        bool stopped = fixture.Coordinator.StopHeldEventInstrumentKeyboardPreview();
+
+        Assert.True(stopped);
+        Assert.Equal(1, fixture.Backend.StopCount);
+        Assert.Equal(PlaybackState.Stopped, fixture.Playback.State);
+        Assert.Equal(ApplicationTaskKind.None, fixture.Coordinator.ActiveTaskKind);
+        Assert.False(fixture.Session.EditsLocked);
+    }
+
+    [Fact]
+    public void SelectiveInstrumentKeyboardStopDoesNotStopMainPlaybackOrOtherHeldPreview()
+    {
+        using TestContext fixture = TestContext.Create();
+
+        fixture.Coordinator.StartMainPlayback();
+
+        Assert.False(fixture.Coordinator.StopHeldEventInstrumentKeyboardPreview());
+        Assert.Equal(0, fixture.Backend.StopCount);
+        Assert.Equal(PlaybackState.Playing, fixture.Playback.State);
+        Assert.Equal(ApplicationTaskKind.MainPlayback, fixture.Coordinator.ActiveTaskKind);
+        fixture.Coordinator.StopPlayback();
+
+        LogicalTrack track = fixture.Session.Project.Tracks[0];
+        Segment segment = track.Segments[0];
+        fixture.Coordinator.StartHeldSegmentPitchRulerPreview(
+            track.Id,
+            segment.Id,
+            pitch: 60,
+            velocity: 100,
+            previewTempo: 120m);
+
+        Assert.False(fixture.Coordinator.StopHeldEventInstrumentKeyboardPreview());
+        Assert.Equal(1, fixture.Backend.StopCount);
+        Assert.Equal(PlaybackState.Playing, fixture.Playback.State);
+        Assert.Equal(ApplicationTaskKind.EventInstrumentPreview, fixture.Coordinator.ActiveTaskKind);
+        fixture.Coordinator.StopPlayback();
+    }
+
     [Fact]
     public void PlaybackStartedAfterHeldPreviewFaultRemainsStoppable()
     {

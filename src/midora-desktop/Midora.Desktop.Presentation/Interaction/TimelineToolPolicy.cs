@@ -24,6 +24,15 @@ public enum ArrangementSharedGroupDropZone
 
 public static class TimelineToolPolicy
 {
+    public static long ResolveResizeMinimumLength(long currentLengthTicks, long operationStepTicks)
+    {
+        if (currentLengthTicks < 1)
+            throw new ArgumentOutOfRangeException(nameof(currentLengthTicks));
+        if (operationStepTicks < 1)
+            throw new ArgumentOutOfRangeException(nameof(operationStepTicks));
+        return Math.Min(currentLengthTicks, operationStepTicks);
+    }
+
     public const double DirectEditEdgeTolerancePixels = 5;
 
     public static ArrangementSharedGroupDropZone ResolveArrangementSharedGroupDropZone(

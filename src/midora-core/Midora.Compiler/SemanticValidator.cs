@@ -283,8 +283,16 @@ public static class SemanticValidator
         }
         bool usesEnvelope = EnumerateMappingSteps(instrument)
             .Any(value => value.Source == MappingSource.Envelope);
-        if (hasLoop && (!instrument.LoopStartTick.HasValue || !instrument.LoopEndTick.HasValue
-            || instrument.LoopStartTick < 0 || instrument.LoopEndTick <= instrument.LoopStartTick
+        if (instrument.LoopStartTick.HasValue != instrument.LoopEndTick.HasValue)
+        {
+            AddError(
+                "MIDORA1212",
+                "Loop Start and Loop End must both be present or both be absent.",
+                source,
+                diagnostics);
+        }
+        else if (hasLoop && (instrument.LoopStartTick < 0
+            || instrument.LoopEndTick <= instrument.LoopStartTick
             || instrument.LoopEndTick > instrument.TemplateLengthTicks))
         {
             AddError("MIDORA1212", "The Loop must be a non-empty [loopStart, loopEnd) range within the Template.", source, diagnostics);

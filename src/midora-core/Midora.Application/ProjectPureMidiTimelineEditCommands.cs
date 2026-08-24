@@ -357,9 +357,12 @@ public static partial class ProjectDomainEditCommands
     public static IProjectEditCommand AdjustMidiSegmentEdges(
         IReadOnlyCollection<MidoraId> segmentIds,
         long startDelta,
-        long endDelta) =>
+        long endDelta,
+        long minimumLengthTicks = 1) =>
         Command("Adjust MIDI Segment edges", project =>
         {
+            if (minimumLengthTicks < 1)
+                throw new ArgumentOutOfRangeException(nameof(minimumLengthTicks));
             if (startDelta != 0 && endDelta != 0)
                 throw new ArgumentException("Exactly one MIDI Segment edge may change.");
             MidiSegmentSelection[] selected = SelectMidiSegments(project, segmentIds);
@@ -372,7 +375,11 @@ public static partial class ProjectDomainEditCommands
                     value.Segment.ProjectStartTick,
                     value.Segment.LengthTicks,
                     value.Segment.ContentOffsetTick);
-                SegmentEdgeAdjustment adjustment = AdjustSegmentEdgesSaturated(old, boundedStartDelta, endDelta);
+                SegmentEdgeAdjustment adjustment = AdjustSegmentEdgesSaturated(
+                    old,
+                    boundedStartDelta,
+                    endDelta,
+                    minimumLengthTicks);
                 return new MidiSegmentEdgeEdit(value, old, adjustment.Window, adjustment.ContentShift);
             }).ToArray();
             ValidateMidiSegmentEdgeEdits(edits);
@@ -495,20 +502,29 @@ public static partial class ProjectDomainEditCommands
         MidoraId segmentId,
         IReadOnlyCollection<MidoraId> noteIds,
         long startDelta,
-        long endDelta) =>
+        long endDelta,
+        long minimumLengthTicks = 1) =>
         ChangeDirectMidiNotes(
             "Adjust Direct MIDI Note edges",
             segmentId,
             noteIds,
             value =>
             {
+                if (minimumLengthTicks < 1)
+                    throw new ArgumentOutOfRangeException(nameof(minimumLengthTicks));
                 long oldEnd = checked(value.StartTick + value.LengthTicks);
+                long effectiveMinimumLengthTicks = Math.Min(value.LengthTicks, minimumLengthTicks);
                 long start = startDelta == 0
                     ? value.StartTick
-                    : Math.Clamp(checked(value.StartTick + startDelta), 0, checked(oldEnd - 1));
+                    : Math.Clamp(
+                        checked(value.StartTick + startDelta),
+                        0,
+                        Math.Max(0, checked(oldEnd - effectiveMinimumLengthTicks)));
                 long end = endDelta == 0
                     ? oldEnd
-                    : Math.Max(checked(start + 1), checked(oldEnd + endDelta));
+                    : Math.Max(
+                        checked(start + effectiveMinimumLengthTicks),
+                        checked(oldEnd + endDelta));
                 return value with { StartTick = start, LengthTicks = checked(end - start) };
             });
 

@@ -614,3 +614,11 @@ MIDI Export 与 Audio Render Dialog 每次打开都从规格固定值创建独�
 Playback Preferences 更新只允许在 Playback Stopped 时提交；Master/Limiter 立即应用到当前 Playback Controller，Stop Cursor Behavior 决定后续 Stop。只有 Realtime Audio、Audio Cache 或 SoundFont 列表变化才要求重建持久音频 Worker；Appearance、Playback 数值及纯 UI 偏好变化不得触发 Worker 重建。Audio Render 继续使用程序级 Playback Master Volume；Limiter 链仍服从第 15 章固定正式渲染语义，不由 Project 默认覆盖。
 
 Requirement trace：输入为 Application Preferences Draft、MIDI Export/Audio Render Dialog Draft 和当前 Project/canonical；正式输出为程序级 Playback/Appearance 偏好及一次性冻结的输出任务参数。边界包括 Playback 活动时拒绝设置提交、非法 dB/枚举/Language 拒绝、Dialog Cancel 零持久变更、旧开发格式明确拒绝。Playback/Appearance 属于用户本机设置；Export/Render 参数、路径、覆盖授权和进度属于任务运行时；三类数据均不属于 Project、Undo/Redo、Modified 或 canonical。明确非目标是 Project 级输出模板、最近参数自动记忆、多语言资源切换、旧 settings 迁移或隐藏兼容字段。
+
+## 51. ADR-CORE-049（已接受）：MIDI 导出事件 Track 固定关闭 Reverb/Chorus Send
+
+决定：MIDI 导出器在每个实际输出的单 Channel 事件 MTrk 的相对 tick 0 固定追加 `CC91 = 0` 与 `CC93 = 0`，顺序为 CC91 后 CC93。该系统初始化只存在于 SMF 编码结果，不进入 Project、编译器或 Canonical Compiled Result。Conductor MTrk 没有 Channel，禁止写入这两条 Channel Event。
+
+同 tick 顺序固定为 `Track Name / MIDI Port / Midora Pure MIDI 结构 Meta → Channel 10 melodic GS/XG（如适用）→ CC91=0 → CC93=0 → canonical/opaque 事件`。因此 Pure MIDI Track 在 canonical 中显式存在的 CC91/CC93 仍原样保留，并在系统零值初始化之后按冻结 tick/order 生效；导出器不得去重、替换或删除用户事件。Logical/Event Instrument canonical 继续禁止 CC91/CC93，导出器生成的两条兼容初始化不改变该领域约束。
+
+Requirement trace：输入为冻结 MIDI Export canonical、SMF Track Projection、输出 Port 映射和每条事件 Track 的 Channel；正式输出为每条 Logical Unit/Pure MIDI MTrk 各一次确定的 tick 0 CC91/CC93 零值初始化及其后完整 canonical/opaque 数据。边界是 Conductor 不写、每个实际 MTrk 独立写、Per Track/Per Port/Whole Project 与分页/非分页路径完全一致、用户同 tick 事件后写并优先。编码失败仍原子失败且不发布部分文件。该初始化只属于导出产物，不持久化、不进入 Undo/Redo、编译统计、canonical fingerprint、播放或音频渲染；明确非目标是修改 Project 默认事件、改变 BASSMIDI `NOFX` 策略、清除其他 CC，或让 MIDI 导出器重新解释用户效果事件。

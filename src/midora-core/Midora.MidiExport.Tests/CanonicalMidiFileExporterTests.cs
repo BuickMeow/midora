@@ -9,7 +9,7 @@ namespace Midora.MidiExport.Tests;
 public sealed class CanonicalMidiFileExporterTests
 {
     [Fact]
-    public void ExportsCanonicalType1WithCompatibilityProfileAndNoExtraChannelCleanup()
+    public void ExportsCanonicalType1WithCompatibilityProfileAndEffectsOffInitialization()
     {
         (MidoraProject project, LogicalTrack track, _, SubVoice voice) = CreateProject();
         voice.InitialState.BankMsb = 1;
@@ -54,10 +54,12 @@ public sealed class CanonicalMidiFileExporterTests
 
         List<byte[]> exportedMessages = ParseTracks(first.FileBytes)[1].ChannelMessages;
         byte[][] canonicalMessages = compiled.Events.ToArray().Select(value => value.Message.ToArray()).ToArray();
-        Assert.Equal(canonicalMessages.Length, exportedMessages.Count);
+        Assert.Equal(canonicalMessages.Length + 2, exportedMessages.Count);
+        Assert.Equal(new byte[] { 0xb0, 91, 0 }, exportedMessages[0]);
+        Assert.Equal(new byte[] { 0xb0, 93, 0 }, exportedMessages[1]);
         for (int index = 0; index < canonicalMessages.Length; index++)
         {
-            Assert.Equal(canonicalMessages[index], exportedMessages[index]);
+            Assert.Equal(canonicalMessages[index], exportedMessages[index + 2]);
         }
 
         int bankMsb = Find(exportedMessages, 0xb0, 0, 1);
@@ -69,6 +71,7 @@ public sealed class CanonicalMidiFileExporterTests
 
         ParsedTrack[] parsed = ParseTracks(first.FileBytes);
         Assert.All(parsed, value => Assert.Equal(192, value.EndTick));
+        AssertEffectsDisabledAtTrackStart(parsed[1], zeroBasedChannel: 0);
     }
 
     [Fact]
@@ -183,8 +186,10 @@ public sealed class CanonicalMidiFileExporterTests
             new byte[] { 0x00, 0xf0, 0x0a, 0x41, 0x10, 0x42, 0x12, 0x40, 0x10, 0x15, 0x00, 0x1b, 0xf7 });
         int xg = encoded.FileBytes.AsSpan().IndexOf(
             new byte[] { 0x00, 0xf0, 0x08, 0x43, 0x10, 0x4c, 0x08, 0x09, 0x07, 0x00, 0xf7 });
+        int reverbOff = encoded.FileBytes.AsSpan().IndexOf(new byte[] { 0x00, 0xb9, 91, 0 });
+        int chorusOff = encoded.FileBytes.AsSpan().IndexOf(new byte[] { 0x00, 0xb9, 93, 0 });
         int noteOn = encoded.FileBytes.AsSpan().IndexOf(new byte[] { 0x00, 0x99, 0x3c, 0x64 });
-        Assert.True(port < gs && gs < xg && xg < noteOn);
+        Assert.True(port < gs && gs < xg && xg < reverbOff && reverbOff < chorusOff && chorusOff < noteOn);
     }
 
     [Fact]
@@ -314,8 +319,11 @@ public sealed class CanonicalMidiFileExporterTests
         Assert.Equal(
             ["Conductor", "Port 1 / Channel 1", "Port 1 / Channel 2", "Port 2 / Channel 1"],
             parsed.Select(GetTrackName));
-        Assert.Equal(2, parsed[1].ChannelEvents.Count);
+        Assert.Equal(4, parsed[1].ChannelEvents.Count);
         Assert.All(parsed.Skip(1), AssertUsesSingleChannel);
+        Assert.All(parsed.Skip(1), track => AssertEffectsDisabledAtTrackStart(
+            track,
+            (byte)(track.ChannelEvents[0].Data[0] & 0x0f)));
     }
 
     [Fact]
@@ -389,6 +397,9 @@ public sealed class CanonicalMidiFileExporterTests
             value.Type == StandardMidiFile.MidiPortMetaType && value.Data.SequenceEqual(new byte[] { 0 }));
         Assert.Contains(tracks[2].MetaEvents, value =>
             value.Type == StandardMidiFile.MidiPortMetaType && value.Data.SequenceEqual(new byte[] { 2 }));
+        Assert.All(tracks.Skip(1), track => AssertEffectsDisabledAtTrackStart(
+            track,
+            (byte)(track.ChannelEvents[0].Data[0] & 0x0f)));
         Assert.DoesNotContain(
             tracks.SelectMany(track => track.ChannelEvents),
             value => value.Data.Length > 1 && value.Data[1] == 72);
@@ -443,6 +454,9 @@ public sealed class CanonicalMidiFileExporterTests
         Assert.All(tracks.Skip(1), track => Assert.Contains(track.MetaEvents, value =>
             value.Type == StandardMidiFile.MidiPortMetaType && value.Data.SequenceEqual(new byte[] { 0 })));
         Assert.All(tracks.Skip(1), AssertUsesSingleChannel);
+        Assert.All(tracks.Skip(1), track => AssertEffectsDisabledAtTrackStart(
+            track,
+            (byte)(track.ChannelEvents[0].Data[0] & 0x0f)));
         Assert.DoesNotContain(tracks.SelectMany(track => track.ChannelEvents), value => value.Data[1] == 62);
         Assert.False(unused.Succeeded);
         Assert.Contains(unused.Diagnostics, value => value.Code == "MIDORA-MIDI-EXPORT-UNUSED-PORT");
@@ -573,6 +587,18 @@ public sealed class CanonicalMidiFileExporterTests
             .Distinct()
             .ToArray();
         Assert.Single(channels);
+    }
+
+    private static void AssertEffectsDisabledAtTrackStart(
+        ParsedTrack track,
+        byte zeroBasedChannel)
+    {
+        TimedChannelEvent[] initialization = track.ChannelEvents.Take(2).ToArray();
+        Assert.Equal(2, initialization.Length);
+        Assert.Equal(0, initialization[0].Tick);
+        Assert.Equal(new byte[] { (byte)(0xb0 | zeroBasedChannel), 91, 0 }, initialization[0].Data);
+        Assert.Equal(0, initialization[1].Tick);
+        Assert.Equal(new byte[] { (byte)(0xb0 | zeroBasedChannel), 93, 0 }, initialization[1].Data);
     }
 
     private static ParsedTrack[] ParseTracks(byte[] file)

@@ -169,10 +169,13 @@ public sealed class MidiExportTaskRunnerTests
 
         Assert.Equal(MidiExportTaskStatus.Succeeded, result.Status);
         Assert.True(File.Exists(Path.Combine(outputDirectory, "Project.mid")));
+        string readmeContents = await File.ReadAllTextAsync(Path.Combine(outputDirectory, "README.md"));
+        Assert.Contains("# Midora MIDI Export", readmeContents, StringComparison.Ordinal);
         Assert.Contains(
-            "# Midora MIDI Export",
-            await File.ReadAllTextAsync(Path.Combine(outputDirectory, "README.md")),
+            $"- Notes: {compilation.CompiledResult.TotalNoteOnEventCount}",
+            readmeContents,
             StringComparison.Ordinal);
+        Assert.DoesNotContain("SoundFont:", readmeContents, StringComparison.Ordinal);
     }
 
     [Fact]

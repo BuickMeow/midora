@@ -89,9 +89,12 @@ public static partial class ProjectDomainEditCommands
         MidoraId segmentId,
         IReadOnlyCollection<MidoraId> logicalNoteIds,
         long startDelta,
-        long endDelta) =>
+        long endDelta,
+        long minimumLengthTicks = 1) =>
         Command("Adjust logical note edges", project =>
         {
+            if (minimumLengthTicks < 1)
+                throw new ArgumentOutOfRangeException(nameof(minimumLengthTicks));
             SegmentLocation segment = FindSegment(project, segmentId);
             SelectedLogicalNote[] selected = SelectLogicalNotes(
                 segment.Segment,
@@ -104,7 +107,8 @@ public static partial class ProjectDomainEditCommands
                 .Select(value => AdjustLogicalNoteEdgesSaturated(
                     value,
                     boundedStartDelta,
-                    endDelta))
+                    endDelta,
+                    minimumLengthTicks))
                 .ToArray();
             ValidateLogicalNoteBatch(replacement);
             IPreparedProjectEdit prepared = PrepareLogicalNoteBatch(
@@ -156,9 +160,12 @@ public static partial class ProjectDomainEditCommands
     public static IProjectEditCommand AdjustSegmentEdges(
         IReadOnlyCollection<MidoraId> segmentIds,
         long startDelta,
-        long endDelta) =>
+        long endDelta,
+        long minimumLengthTicks = 1) =>
         Command("Adjust segment edges", project =>
         {
+            if (minimumLengthTicks < 1)
+                throw new ArgumentOutOfRangeException(nameof(minimumLengthTicks));
             ArgumentNullException.ThrowIfNull(segmentIds);
             if (segmentIds.Count == 0)
             {
@@ -198,7 +205,8 @@ public static partial class ProjectDomainEditCommands
                 SegmentEdgeAdjustment adjustment = AdjustSegmentEdgesSaturated(
                     value.Old,
                     boundedStartDelta,
-                    endDelta);
+                    endDelta,
+                    minimumLengthTicks);
                 SegmentWindow replacement = adjustment.Window;
                 ValidateSegmentRange(
                     replacement.ProjectStartTick,
@@ -792,27 +800,32 @@ public static partial class ProjectDomainEditCommands
     private static LogicalNoteValue AdjustLogicalNoteEdgesSaturated(
         LogicalNoteValue value,
         long startDelta,
-        long endDelta)
+        long endDelta,
+        long minimumLengthTicks)
     {
         long oldEnd = checked(value.StartTick + value.LengthTicks);
+        long effectiveMinimumLengthTicks = Math.Min(value.LengthTicks, minimumLengthTicks);
         long requestedStart = checked(value.StartTick + startDelta);
         long requestedEnd = checked(oldEnd + endDelta);
         long start;
         long end;
         if (startDelta != 0 && endDelta == 0)
         {
-            start = Math.Clamp(requestedStart, 0, checked(oldEnd - 1));
+            start = Math.Clamp(
+                requestedStart,
+                0,
+                Math.Max(0, checked(oldEnd - effectiveMinimumLengthTicks)));
             end = oldEnd;
         }
         else if (startDelta == 0)
         {
             start = value.StartTick;
-            end = Math.Max(checked(start + 1), requestedEnd);
+            end = Math.Max(checked(start + effectiveMinimumLengthTicks), requestedEnd);
         }
         else
         {
             start = Math.Max(0, requestedStart);
-            end = Math.Max(checked(start + 1), requestedEnd);
+            end = Math.Max(checked(start + effectiveMinimumLengthTicks), requestedEnd);
         }
         return value with
         {
@@ -824,13 +837,18 @@ public static partial class ProjectDomainEditCommands
     private static SegmentEdgeAdjustment AdjustSegmentEdgesSaturated(
         SegmentWindow value,
         long startDelta,
-        long endDelta)
+        long endDelta,
+        long minimumLengthTicks)
     {
         long oldEnd = checked(value.ProjectStartTick + value.LengthTicks);
+        long effectiveMinimumLengthTicks = Math.Min(value.LengthTicks, minimumLengthTicks);
         if (startDelta != 0)
         {
             long requestedStart = checked(value.ProjectStartTick + startDelta);
-            long start = Math.Clamp(requestedStart, 0, checked(oldEnd - 1));
+            long start = Math.Clamp(
+                requestedStart,
+                0,
+                Math.Max(0, checked(oldEnd - effectiveMinimumLengthTicks)));
             long appliedDelta = checked(start - value.ProjectStartTick);
             long requestedContentOffset = checked(value.ContentOffsetTick + appliedDelta);
             long contentShift = requestedContentOffset < 0
@@ -844,7 +862,9 @@ public static partial class ProjectDomainEditCommands
                 contentShift);
         }
         long requestedEnd = checked(oldEnd + endDelta);
-        long end = Math.Max(checked(value.ProjectStartTick + 1), requestedEnd);
+        long end = Math.Max(
+            checked(value.ProjectStartTick + effectiveMinimumLengthTicks),
+            requestedEnd);
         return new(
             new SegmentWindow(
                 value.ProjectStartTick,

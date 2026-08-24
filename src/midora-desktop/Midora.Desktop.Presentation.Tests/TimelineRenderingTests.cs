@@ -1610,6 +1610,22 @@ public sealed class TimelineRenderingTests
             TimelineSegmentPreviewRasterizer.GetFixedPreviewContentWidth(3_072, 768));
     }
 
+    [Theory]
+    [InlineData(100, 48, 48)]
+    [InlineData(20, 48, 20)]
+    [InlineData(100, 1, 1)]
+    public void ResizePreviewUsesSnapStepAsMinimumWithoutExpandingShortExistingItems(
+        long currentLengthTicks,
+        long operationStepTicks,
+        long expected)
+    {
+        Assert.Equal(
+            expected,
+            TimelineToolPolicy.ResolveResizeMinimumLength(
+                currentLengthTicks,
+                operationStepTicks));
+    }
+
     [Fact]
     public void FixedArrangementPreviewUsesBoundedLodWhenZoomedOut()
     {

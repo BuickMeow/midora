@@ -1816,8 +1816,8 @@ internal static class ObjectPropertiesProjection
              Field("instrument.overlapScope", "OVERLAP SCOPE", instrument.OverlapScope),
              Field("instrument.shortLifecycle", "SHORT NOTE LIFECYCLE", instrument.ShortLifecycle),
              Field("instrument.longLifecycle", "LONG NOTE LIFECYCLE", instrument.LongLifecycle),
-             Field("instrument.loopStart", "LOOP START (blank = disabled)", instrument.LoopStartTick?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
-             Field("instrument.loopEnd", "LOOP END (blank = disabled)", instrument.LoopEndTick?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
+             Field("instrument.loopStart", "LOOP START (blank = unset)", instrument.LoopStartTick?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
+             Field("instrument.loopEnd", "LOOP END (blank = unset)", instrument.LoopEndTick?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
              StateField("instrument.initial.bankMsb", "INITIAL BANK MSB", instrument.InitialState.BankMsb),
              StateField("instrument.initial.bankLsb", "INITIAL BANK LSB", instrument.InitialState.BankLsb),
              StateField("instrument.initial.program", "INITIAL PROGRAM (0–127)", instrument.InitialState.Program),
@@ -1859,10 +1859,6 @@ internal static class ObjectPropertiesProjection
         string value)
     {
         long? edited = NullableLong(value, key == "instrument.loopStart" ? "Loop Start" : "Loop End");
-        if (!edited.HasValue)
-        {
-            return ProjectDomainEditCommands.UpdateEventInstrumentLoop(instrument.Id, null, null);
-        }
         return ProjectDomainEditCommands.UpdateEventInstrumentLoop(
             instrument.Id,
             key == "instrument.loopStart" ? edited : instrument.LoopStartTick,

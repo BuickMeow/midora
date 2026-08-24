@@ -6216,14 +6216,20 @@ public sealed class TimelineSurface : Control
                 }
                 break;
             case TimelineItemEditKind.ResizeStart:
+                long startMinimumLength = TimelineToolPolicy.ResolveResizeMinimumLength(
+                    Math.Max(1, item.Length),
+                    Math.Max(1, OperationStepTicks));
                 start = Math.Clamp(
                     SaturatingAddTick(start, transform.TickDelta),
                     0,
-                    end - 1);
+                    end - startMinimumLength);
                 break;
             case TimelineItemEditKind.ResizeEnd:
+                long endMinimumLength = TimelineToolPolicy.ResolveResizeMinimumLength(
+                    Math.Max(1, item.Length),
+                    Math.Max(1, OperationStepTicks));
                 end = Math.Max(
-                    start + 1,
+                    start + endMinimumLength,
                     SaturatingAddTick(end, transform.TickDelta));
                 break;
         }

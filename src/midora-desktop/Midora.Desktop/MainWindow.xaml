@@ -1324,7 +1324,15 @@
             <TabControl.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal"><StackPanel.ContextMenu><ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"><MenuItem Header="Close" IsEnabled="{Binding CanClose}" Click="OnCloseWorkspaceClick"/><MenuItem Header="Close Other Workspaces" Click="OnCloseOtherWorkspacesClick"/></ContextMenu></StackPanel.ContextMenu><ui:FluentIcon Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center" Style="{StaticResource Icon.Stepper}" Data="{Binding TabIconKind, Converter={StaticResource WorkspaceTabIconConverter}}"/><TextBlock VerticalAlignment="Center" Text="{Binding Header}"/><Button Width="20" Height="20" Margin="7,0,0,0" Padding="0" Style="{StaticResource Button.Ghost}" ToolTip="Close Workspace" Visibility="{Binding CanClose, Converter={StaticResource BooleanToVisibility}}" Click="OnCloseWorkspaceClick"><ui:FluentIcon Width="10" Height="10" Data="{StaticResource Fluent.Dismiss20Regular}"/></Button></StackPanel></DataTemplate></TabControl.ItemTemplate>
           </TabControl>
           <Border x:Name="EmptyState" Margin="48" HorizontalAlignment="Center" VerticalAlignment="Center" Background="Transparent">
-            <StackPanel Width="360"><TextBlock HorizontalAlignment="Center" FontSize="22" FontWeight="SemiBold" Text="Midora"/><TextBlock Margin="0,8,0,18" HorizontalAlignment="Center" Style="{StaticResource Text.Muted}" Text="Open an existing Project or create a new one."/><StackPanel HorizontalAlignment="Center" Orientation="Horizontal"><Button Margin="0,0,7,0" Style="{StaticResource Button.Primary}" Content="New Project" Click="OnNewProjectClick"/><Button Content="Open Project" Click="OnOpenProjectClick"/></StackPanel><Button Margin="0,7,0,0" HorizontalAlignment="Center" Content="Open MIDI as New Project" Click="OnOpenMidiAsNewProjectClick"/></StackPanel>
+            <StackPanel Width="460">
+              <TextBlock HorizontalAlignment="Center" FontSize="22" FontWeight="SemiBold" Text="Midora"/>
+              <TextBlock Margin="0,8,0,18" HorizontalAlignment="Center" Style="{StaticResource Text.Muted}" Text="Open an existing Project or create a new one."/>
+              <StackPanel HorizontalAlignment="Center" Orientation="Horizontal">
+                <Button Margin="0,0,7,0" Style="{StaticResource Button.Primary}" Content="New Project" Click="OnNewProjectClick"/>
+                <Button Margin="0,0,7,0" Content="Open Project" Click="OnOpenProjectClick"/>
+                <Button Content="Open MIDI as New Project" Click="OnOpenMidiAsNewProjectClick"/>
+              </StackPanel>
+            </StackPanel>
             <Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding HasProject}" Value="False"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Border.Style>
           </Border>
         </Grid>

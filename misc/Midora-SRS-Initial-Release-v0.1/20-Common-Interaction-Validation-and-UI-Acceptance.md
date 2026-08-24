@@ -927,10 +927,10 @@ Audio Render 完全锁定期间不允许主窗口搜索。
 ```text
 No Project Open
 Create a new project or open an existing one.
-[ Create Project ]
-Open Project
-Open MIDI as New Project
+[ Create Project ] [ Open Project ] [ Open MIDI as New Project ]
 ```
+三个入口必须位于同一水平命令行；窗口宽度不足时由外层 Welcome surface 承担布局约束，不得把 MIDI 导入入口单独降为第二行的次级操作。
+
 Transport、Compile、Save、Export、Render 和 Undo / Redo Disabled；`File > Close Project`、`View > Arrangement` 与 `View > Diagnostics` 同样 Disabled。Application Preferences 仍可用。
 ### 20.10.5 无 Workspace
 Project 打开期间 Arrangement 常驻且不可关闭，因此不存在“无 Workspace”状态。

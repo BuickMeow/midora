@@ -141,6 +141,8 @@ Draw 模式下在 Segment 主体执行 `Ctrl+Drag` 时，复制当前 Segment �
 ### 18.2.2 时间坐标
 Logical Segment Editor 与 Midi Segment Editor 均以 Segment local tick 作为编辑、命中和命令坐标；左上角不重复显示 `(MIDI) Segment: <Name> @ <Tick>` 摘要。Timeline Ruler 可以把 local tick 通过 `ProjectStartTick - ContentOffsetTick` 映射到正式 Project Time Signature Map，并显示对应的一基小节号，但不得改变 local tick 数据语义或把 local tick 本身伪装成 Project `Bar:Beat:Tick`。
 
+Logical Segment、Midi Segment 与 SubVoice Piano Roll 的顶部工具栏必须显示当前指针的 `(local tick, MIDI Key Number)`，并在读数右侧以分割线隔开后续工具；读数使用 Primary text 前景色，与 Event/Parameter Lane 坐标读数一致。tick 使用当前 Operation Grid/Snap 的正式目标坐标，Key Number 使用 `0..127`。指针不在对应 Piano Roll 内容区，或落在 128 键之外的空白区时，分割线与读数整体隐藏。该读数是会话期 transient UI state，不进入 Project、Undo/Redo、编译、缓存或持久化。
+
 用户从 Arrangement 显式打开 Logical 或 Pure MIDI Segment 时，若 Arrangement Edit Cursor 位于该 Segment 的 Project 范围 `[ProjectStartTick, ProjectStartTick + LengthTicks)`，Segment Editor 必须把它映射为 `ContentOffsetTick + (EditCursorTick - ProjectStartTick)` 的local edit cursor，并把该位置水平置于当前viewport中央；靠近local tick 0而无法严格居中时只允许把viewport起点clamp到0。该规则同样适用于显式重新打开已有Segment Tab；仅通过Tab切换返回既有编辑器时保留原viewport。Arrangement Edit Cursor不在Segment范围内时不得因此改动Segment Editor的既有viewport。
 ### 18.2.3 Pitch Ruler
 - 使用完整白键底板与较短黑键叠层构成的真实横向钢琴键样式；

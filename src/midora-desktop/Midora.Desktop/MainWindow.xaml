@@ -393,6 +393,22 @@
             </StackPanel>
             <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
               <StackPanel Orientation="Horizontal">
+                <StackPanel.Style>
+                  <Style TargetType="StackPanel">
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding PointerPositionText, ElementName=Timeline}" Value="">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                      </DataTrigger>
+                      <DataTrigger Binding="{Binding IsConductor}" Value="True">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </StackPanel.Style>
+                <TextBlock MinWidth="82" Margin="0,0,7,0" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource Brush.Text.Primary}" Style="{StaticResource Text.Mono}" Text="{Binding PointerPositionText, ElementName=Timeline}"/>
+                <Border Width="1" Height="18" Margin="0,0,7,0" Background="{StaticResource Brush.Border}"/>
+              </StackPanel>
+              <StackPanel Orientation="Horizontal">
                 <StackPanel.Style><Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsSegment}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></StackPanel.Style>
                 <ToggleButton Margin="0,0,4,0" Padding="7,0" Content="Lanes" IsChecked="{Binding IsLowerEditorVisible, Mode=TwoWay}"/>
                 <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
@@ -828,6 +844,19 @@
                       <Border Height="34" Style="{StaticResource PanelHeader}">
                         <Grid>
                           <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+                            <StackPanel Orientation="Horizontal">
+                              <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                  <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PointerPositionText, ElementName=SubVoiceNoteTimeline}" Value="">
+                                      <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                  </Style.Triggers>
+                                </Style>
+                              </StackPanel.Style>
+                              <TextBlock MinWidth="82" Margin="0,0,7,0" VerticalAlignment="Center" TextAlignment="Right" Foreground="{StaticResource Brush.Text.Primary}" Style="{StaticResource Text.Mono}" Text="{Binding PointerPositionText, ElementName=SubVoiceNoteTimeline}"/>
+                              <Border Width="1" Height="18" Margin="0,0,7,0" Background="{StaticResource Brush.Border}"/>
+                            </StackPanel>
                             <ToggleButton Margin="0,0,4,0" Padding="7,0" Content="Lanes" IsChecked="{Binding IsLowerEditorVisible, Mode=TwoWay}"/>
                             <Border Width="1" Height="18" Margin="3,0,7,0" Background="{StaticResource Brush.Border}"/>
                             <ToggleButton Width="44" Margin="0,0,4,0" Padding="0" Content="Grid" IsChecked="{Binding EditorSettings.GridVisible, Mode=TwoWay}"/>

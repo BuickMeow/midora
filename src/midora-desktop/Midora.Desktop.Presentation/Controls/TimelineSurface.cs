@@ -511,7 +511,7 @@ public sealed class TimelineSurface : Control
         nameof(PointerPositionText),
         typeof(string),
         typeof(TimelineSurface),
-        new FrameworkPropertyMetadata("(-, -)"));
+        new FrameworkPropertyMetadata(string.Empty));
 
     public static readonly DependencyProperty PointerPositionTextProperty = PointerPositionTextPropertyKey.DependencyProperty;
 
@@ -2708,7 +2708,7 @@ public sealed class TimelineSurface : Control
         }
         else
         {
-            SetValue(PointerPositionTextPropertyKey, "(-, -)");
+            ResetPointerPositionText();
         }
         InvalidateVisual();
         base.OnLostMouseCapture(e);
@@ -2820,9 +2820,10 @@ public sealed class TimelineSurface : Control
         _hoverPoint = null;
         _hoverLaneHeader = null;
         _hoverSharedGroupId = null;
-        if (!IsMouseCaptured)
+        if (!IsMouseCaptured
+            || SurfaceMode is TimelineSurfaceMode.Arrangement or TimelineSurfaceMode.PianoRoll)
         {
-            SetValue(PointerPositionTextPropertyKey, "(-, -)");
+            ResetPointerPositionText();
         }
         if (_dragItem is null)
         {
@@ -8155,17 +8156,53 @@ public sealed class TimelineSurface : Control
         }
         else if (!IsMouseCaptured)
         {
-            SetValue(PointerPositionTextPropertyKey, "(-, -)");
+            ResetPointerPositionText();
         }
     }
 
     private void UpdatePointerPositionText(Point point, TimelineViewport viewport)
     {
-        if (SurfaceMode != TimelineSurfaceMode.EventLanes
-            || point.X < GetLaneHeaderWidth()
-            || point.Y < GetRulerHeight())
+        double laneHeaderWidth = GetLaneHeaderWidth();
+        double rulerHeight = GetRulerHeight();
+        bool inTimelineContent = point.X >= laneHeaderWidth
+            && point.X < ActualWidth
+            && point.Y >= rulerHeight
+            && point.Y < ActualHeight;
+
+        if (SurfaceMode == TimelineSurfaceMode.Arrangement)
         {
-            SetValue(PointerPositionTextPropertyKey, "(-, -)");
+            SetValue(
+                PointerPositionTextPropertyKey,
+                inTimelineContent
+                    ? string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"({SnapAbsolute(viewport.XToTick(point.X - laneHeaderWidth))})")
+                    : string.Empty);
+            return;
+        }
+
+        if (SurfaceMode == TimelineSurfaceMode.PianoRoll)
+        {
+            if (!inTimelineContent || !IsInsideLaneContent(viewport, point.Y, rulerHeight))
+            {
+                SetValue(PointerPositionTextPropertyKey, string.Empty);
+                return;
+            }
+
+            long pianoTick = SnapAbsolute(viewport.XToTick(point.X - laneHeaderWidth));
+            int lane = YToLane(viewport, point.Y - rulerHeight);
+            int keyNumber = Math.Clamp(127 - lane, 0, 127);
+            SetValue(
+                PointerPositionTextPropertyKey,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"({pianoTick}, {keyNumber})"));
+            return;
+        }
+
+        if (SurfaceMode != TimelineSurfaceMode.EventLanes || !inTimelineContent)
+        {
+            ResetPointerPositionText();
             return;
         }
 
@@ -8209,6 +8246,10 @@ public sealed class TimelineSurface : Control
                 CultureInfo.InvariantCulture,
                 $"({tick}, {formattedValue})"));
     }
+
+    private void ResetPointerPositionText() => SetValue(
+        PointerPositionTextPropertyKey,
+        SurfaceMode == TimelineSurfaceMode.EventLanes ? "(-, -)" : string.Empty);
 
     private long SnapAbsolute(long tick) => TimelineGridQuantization.SnapAbsolute(
         Math.Max(0, tick),

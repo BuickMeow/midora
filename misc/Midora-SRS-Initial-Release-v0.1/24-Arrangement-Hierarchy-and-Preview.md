@@ -215,6 +215,8 @@ Fluent speaker_2 Reset All Monitoring command
 
 上述入口不得占用独立空白 Track row；小节号只绘制在右侧时间内容区。`Reset All Monitoring` 一次性清空 Track 与共享 Usage/Root 的运行期 Mute/Solo 状态，不修改 Project、Undo/Redo 或 canonical；播放中只提交一次一致的 monitoring 更新，失败时恢复调用前状态。其他 Timeline 工具继续位于 Arrangement 顶部工具栏。
 
+Arrangement 顶部工具栏必须显示指针当前所在的 `(absolute Project tick)`，并在读数右侧以分割线隔开后续工具；读数使用 Primary text 前景色，与 Event/Parameter Lane 坐标读数一致。tick 使用当前 Operation Grid/Snap 的正式目标坐标。指针不在 Arrangement 时间内容区时，分割线与读数整体隐藏。该读数只是会话期 transient UI state，不修改 Edit Cursor、Project、Undo/Redo、canonical 或持久化。
+
 创建菜单固定提供：
 
 ```text

@@ -84,6 +84,56 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void TimelinePointerReadoutUsesArrangementAndPianoRollCoordinates()
+    {
+        RunOnSta(() =>
+        {
+            MethodInfo? updatePointer = typeof(TimelineSurface).GetMethod(
+                "UpdatePointerPositionText",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(updatePointer);
+            TimelineViewport viewport = new(
+                StartTick: 100,
+                EndTick: 1_100,
+                FirstLane: 20,
+                LaneCount: 30,
+                Width: 600,
+                Height: 300,
+                LaneHeight: 10);
+
+            TimelineSurface arrangement = ArrangeSurface(TimelineSurfaceMode.Arrangement);
+            updatePointer!.Invoke(
+                arrangement,
+                [new Point(TimelineSurface.ArrangementLaneHeaderWidth + 120, 42), viewport]);
+            Assert.Equal("(300)", arrangement.PointerPositionText);
+            updatePointer.Invoke(
+                arrangement,
+                [new Point(TimelineSurface.ArrangementLaneHeaderWidth - 1, 42), viewport]);
+            Assert.Empty(arrangement.PointerPositionText);
+
+            TimelineSurface pianoRoll = ArrangeSurface(TimelineSurfaceMode.PianoRoll);
+            updatePointer.Invoke(pianoRoll, [new Point(52 + 120, 24 + 35), viewport]);
+            Assert.Equal("(300, 104)", pianoRoll.PointerPositionText);
+            updatePointer.Invoke(pianoRoll, [new Point(51, 24 + 35), viewport]);
+            Assert.Empty(pianoRoll.PointerPositionText);
+        });
+
+        static TimelineSurface ArrangeSurface(TimelineSurfaceMode mode)
+        {
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = mode,
+                OperationStepTicks = 1,
+                TickSpan = 1_000,
+                LaneHeight = 10
+            };
+            surface.Measure(new Size(1_000, 400));
+            surface.Arrange(new Rect(0, 0, 1_000, 400));
+            return surface;
+        }
+    }
+
+    [Fact]
     public void PianoRollVerticalZoomButtonsAdjustOneDevicePixelAndKeepTheViewportBounded()
     {
         RunOnSta(() =>

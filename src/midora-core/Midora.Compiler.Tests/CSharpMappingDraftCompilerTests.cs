@@ -11,7 +11,7 @@ public sealed class CSharpMappingDraftCompilerTests
 
         CSharpMappingDraftCompilationResult result = compiler.Compile(
             MappingExpressionAbiV3.Version,
-            "context.GateLength > 192 ? value : 0");
+            "context.GateLength > 192 ? Clamp(value, 0, 127) : 0");
 
         Assert.True(result.Succeeded, result.ErrorMessage);
         Assert.Equal([nameof(MappingContextV2.GateLength)], result.ReferencedContextFields);

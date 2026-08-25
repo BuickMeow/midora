@@ -506,6 +506,11 @@ public partial class MappingFunctionCodeEditor : UserControl
                            && MappingFunctionCompletionProvider.MathMethodNames.Contains(value) => MethodBrush,
                     _ when HasReceiver(tokens, index, "Math")
                            && MappingFunctionCompletionProvider.MathConstantNames.Contains(value) => NumberBrush,
+                    _ when !HasReceiver(tokens, index)
+                           && IsInvocationName(tokens, index)
+                           && MappingFunctionCompletionProvider.MathMethodNames.Contains(value) => MethodBrush,
+                    _ when !HasReceiver(tokens, index)
+                           && MappingFunctionCompletionProvider.MathConstantNames.Contains(value) => NumberBrush,
                     _ => null
                 };
             }
@@ -591,6 +596,12 @@ public partial class MappingFunctionCodeEditor : UserControl
             index >= 2
             && tokens[index - 1].IsKind(SyntaxKind.DotToken)
             && string.Equals(tokens[index - 2].ValueText, receiver, StringComparison.Ordinal);
+
+        private static bool HasReceiver(SyntaxToken[] tokens, int index) =>
+            index >= 1 && tokens[index - 1].IsKind(SyntaxKind.DotToken);
+
+        private static bool IsInvocationName(SyntaxToken[] tokens, int index) =>
+            index + 1 < tokens.Length && tokens[index + 1].IsKind(SyntaxKind.OpenParenToken);
 
         private sealed record ColoredSpan(int Start, int Length, Brush Brush);
     }

@@ -64,6 +64,26 @@ public sealed class MappingExpressionAbiV3Tests
     }
 
     [Fact]
+    public void ApprovedMathMethodsAndConstantsHaveEquivalentImplicitAndQualifiedForms()
+    {
+        MidoraProject project = new(480);
+        CSharpMappingFunction implicitForm = Function(
+            project,
+            "Clamp(value + Sin(PI / 2) * Pow(2, 3) + E - E + Tau - Tau, 0, 127)");
+        CSharpMappingFunction qualifiedForm = Function(
+            project,
+            "Math.Clamp(value + Math.Sin(Math.PI / 2) * Math.Pow(2, 3) + Math.E - Math.E + Math.Tau - Math.Tau, 0, 127)");
+        using MappingExpressionCompiler compiler = new();
+        MappingContextV2 context = Context();
+
+        double implicitResult = compiler.GetOrCompile(implicitForm)(20, in context);
+        double qualifiedResult = compiler.GetOrCompile(qualifiedForm)(20, in context);
+
+        Assert.Equal(28, implicitResult, 8);
+        Assert.Equal(qualifiedResult, implicitResult, 8);
+    }
+
+    [Fact]
     public void ConditionalAndApprovedEnumsAreSupported()
     {
         MidoraProject project = new(480);
@@ -97,6 +117,7 @@ public sealed class MappingExpressionAbiV3Tests
     [InlineData("context.EventInstrumentId.Value")]
     [InlineData("Math.GetType()")]
     [InlineData("Math.Sign(value)")]
+    [InlineData("Sign(value)")]
     public void FreeCSharpAndNonWhitelistedCapabilitiesAreRejected(string expression)
     {
         MidoraProject project = new(480);

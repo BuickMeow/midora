@@ -32,6 +32,8 @@ public sealed class MappingFunctionCodeEditorTests
             MappingFunctionCompletionProvider.GetCompletions("", 0);
         Assert.Contains(globals, item => item.Text == "value" && item.Kind == "Parameter");
         Assert.Contains(globals, item => item.Text == "context" && item.Kind == "Parameter");
+        Assert.Contains(globals, item => item.Text == "Sin" && item.Kind == "Method");
+        Assert.Contains(globals, item => item.Text == "PI" && item.Kind == "Constant");
         Assert.DoesNotContain(globals, item => item.Text == nameof(MappingContextV2));
         Assert.DoesNotContain(globals, item => item.Text == "return");
 
@@ -41,6 +43,13 @@ public sealed class MappingFunctionCodeEditorTests
         Assert.Equal("Sin()", sine.InsertText);
         Assert.Equal(1, sine.CaretBacktrack);
         Assert.NotEmpty(sine.Signatures!);
+
+        MappingFunctionCompletionItem implicitSine = Assert.Single(
+            MappingFunctionCompletionProvider.GetCompletions("Si", "Si".Length),
+            item => item.Text == "Sin");
+        Assert.Equal("Sin()", implicitSine.InsertText);
+        Assert.All(implicitSine.Signatures!, signature =>
+            Assert.DoesNotContain("Math.", signature, StringComparison.Ordinal));
 
         IReadOnlyList<MappingFunctionCompletionItem> eventKinds =
             MappingFunctionCompletionProvider.GetCompletions(

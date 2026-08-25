@@ -52,6 +52,7 @@
 
 ## 2026-08-25 修订摘要
 
+- Mapping Function ABI v3 将批准的 `System.Math` 方法及 `E` / `PI` / `Tau` 固定为隐式导入；`Sin(x)` / `PI` 与既有 `Math.Sin(x)` / `Math.PI` 完全等价。无前缀名称仍由同一版本化白名单绑定，不开放真正的 C# `using static`、任意类型解析或额外 API 面。
 - 打开的 ComboBox 下拉内容独占鼠标滚轮：无论当前内容是否产生可见滚动条，滚轮都不得传递给外层 Settings、Properties 或 Workspace ScrollViewer。Event Instrument 底部 Keyboard Held Preview 活动时，Global Primary Transport 的鼠标点击必须直接执行 Stop；预处理不得先结束 Preview、再把同一次点击重新解释为主时间线 Play。
 - Mapping Function 不再打开独立 Workspace/Tab，也不保留跨窗口的 session Draft。创建与编辑统一使用 Event Instrument 所属的模态表达式对话框：名称与单行表达式只在对话框本地存在，提供同款自动折行增高编辑器、补全/括号高亮、Help、Validate 和结果栏；OK 必须先通过正式 ABI v3 校验，再以一次原子 Project command 提交名称、表达式与自动推导的 Context 依赖，Cancel/关闭直接丢弃本地内容。事件乐器底部 Keyboard Held Preview 在任何模态窗口、菜单或 Tab/Workspace 转场前同步停止，且该清理只识别键盘预览所有权，不得停止主时间线播放。
 - Mapping Function 由可执行自由 C# ABI v2 破坏性收缩为受限表达式 ABI v3：只允许版本化白名单内的单行数值/枚举表达式，固定 8,192 scalar、512 syntax node、64 depth 上限，Context 依赖由正式分析器自动推导并复核。正式路径只绑定为 `System.Linq.Expressions` 委托，不 Emit/加载 Project 源码程序集；旧 ABI v1/v2 只可识别并明确拒绝，绝不执行。Batch Edit 表达式不是 Project 内容，不在本次变更范围。

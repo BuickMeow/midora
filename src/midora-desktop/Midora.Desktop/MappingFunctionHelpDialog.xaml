@@ -36,14 +36,14 @@
             <TextBlock Grid.Row="1" FontFamily="{StaticResource Font.Mono}" Text="context"/>
             <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource Text.Caption}" Text="The bounded MappingContextV2 snapshot. Type context. and press Ctrl+Space to inspect its legal fields." TextWrapping="Wrap"/>
             <TextBlock Grid.Row="2" FontFamily="{StaticResource Font.Mono}" Text="Math"/>
-            <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource Text.Caption}" Text="The approved System.Math numeric methods and constants. Type Math. and press Ctrl+Space for the exact allowlist." TextWrapping="Wrap"/>
+            <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource Text.Caption}" Text="The approved System.Math numeric methods and constants are implicitly imported. Use Sin(value) or Math.Sin(value); press Ctrl+Space for the exact allowlist." TextWrapping="Wrap"/>
           </Grid>
 
           <TextBlock Style="{StaticResource Text.Section}" Text="Examples"/>
           <Border Margin="0,8,0,6" Padding="10,8" Style="{StaticResource Card}"><StackPanel><TextBlock FontFamily="{StaticResource Font.Mono}" Foreground="#DCDCAA" Text="value"/><TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Identity: preserve the incoming value."/></StackPanel></Border>
-          <Border Margin="0,0,0,6" Padding="10,8" Style="{StaticResource Card}"><StackPanel><TextBlock FontFamily="{StaticResource Font.Mono}" Foreground="#DCDCAA" Text="Math.Clamp(value * 1.25, 0, 127)"/><TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Scale and clamp a MIDI-range value."/></StackPanel></Border>
+          <Border Margin="0,0,0,6" Padding="10,8" Style="{StaticResource Card}"><StackPanel><TextBlock FontFamily="{StaticResource Font.Mono}" Foreground="#DCDCAA" Text="Clamp(value * 1.25, 0, 127)"/><TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Scale and clamp a MIDI-range value without the optional Math. prefix."/></StackPanel></Border>
           <Border Margin="0,0,0,6" Padding="10,8" Style="{StaticResource Card}"><StackPanel><TextBlock FontFamily="{StaticResource Font.Mono}" Foreground="#DCDCAA" Text="context.TriggerVelocity * (value / 127.0)"/><TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Combine the source value with the current note's trigger velocity."/></StackPanel></Border>
-          <Border Margin="0,0,0,14" Padding="10,8" Style="{StaticResource Card}"><StackPanel><TextBlock FontFamily="{StaticResource Font.Mono}" Foreground="#DCDCAA" Text="Math.Round(Math.Clamp(value + Math.Sin(context.Tick / 48.0) * 12, 0, 127))" TextWrapping="Wrap"/><TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Apply a bounded periodic offset using the current tick."/></StackPanel></Border>
+          <Border Margin="0,0,0,14" Padding="10,8" Style="{StaticResource Card}"><StackPanel><TextBlock FontFamily="{StaticResource Font.Mono}" Foreground="#DCDCAA" Text="Round(Clamp(value + Sin(context.TemplateTick / 48.0) * 12, 0, 127))" TextWrapping="Wrap"/><TextBlock Margin="0,4,0,0" Style="{StaticResource Text.Caption}" Text="Apply a bounded periodic offset using the source Template Event tick."/></StackPanel></Border>
 
           <TextBlock Style="{StaticResource Text.Section}" Text="Editing"/>
           <TextBlock Margin="0,6,0,0" Style="{StaticResource Text.Caption}" TextWrapping="Wrap"

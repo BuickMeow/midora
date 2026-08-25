@@ -174,6 +174,11 @@ internal static class MappingFunctionCompletionProvider
         yield return new(nameof(MappingEventKindV2), nameof(MappingEventKindV2), 0, "Enum", "The approved ABI v3 event-kind enum.");
         yield return new(nameof(MappingTargetParameterV2), nameof(MappingTargetParameterV2), 0, "Enum", "The approved ABI v3 target-parameter enum.");
 
+        foreach (MappingFunctionCompletionItem item in MathMembers)
+        {
+            yield return item;
+        }
+
         foreach ((string text, string description) in new (string, string)[]
                  {
                      ("true", "Boolean true literal."),
@@ -223,8 +228,8 @@ internal static class MappingFunctionCompletionProvider
                     1,
                     "Method",
                     signatures.Length == 1
-                        ? "System.Math method."
-                        : $"System.Math method ({signatures.Length} overloads).",
+                        ? "Implicitly imported System.Math method; the Math. prefix is optional."
+                        : $"Implicitly imported System.Math method ({signatures.Length} overloads); the Math. prefix is optional.",
                     signatures);
             });
         return methods
@@ -255,7 +260,7 @@ internal static class MappingFunctionCompletionProvider
             ", ",
             method.GetParameters().Select(parameter =>
                 $"{FormatParameterModifier(parameter)}{FormatType(parameter.ParameterType)} {parameter.Name}"));
-        return $"{FormatType(method.ReturnType)} Math.{method.Name}({parameters})";
+        return $"{FormatType(method.ReturnType)} {method.Name}({parameters})";
     }
 
     private static string FormatParameterModifier(ParameterInfo parameter) =>

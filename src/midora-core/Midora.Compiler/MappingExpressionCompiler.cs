@@ -255,10 +255,13 @@ internal sealed class MappingExpressionCompiler : IDisposable
 
         private BoundExpression BindIdentifier(IdentifierNameSyntax identifier)
         {
-            if (identifier.Identifier.ValueText == "value")
+            string name = identifier.Identifier.ValueText;
+            if (name == "value")
                 return new(valueParameter, BoundKind.Number);
+            if (MathConstants.TryGetValue(name, out double constant))
+                return new(Expression.Constant(constant), BoundKind.Number);
             throw new MappingExpressionBindingException(
-                $"Identifier '{identifier.Identifier.ValueText}' is not available. Use value, context.<field>, approved enum members, or Math.<member>.");
+                $"Identifier '{name}' is not available. Use value, context.<field>, approved enum members, or an approved System.Math member.");
         }
 
         private BoundExpression BindMember(MemberAccessExpressionSyntax member)
@@ -387,17 +390,26 @@ internal sealed class MappingExpressionCompiler : IDisposable
 
         private BoundExpression BindInvocation(InvocationExpressionSyntax invocation)
         {
-            if (invocation.Expression is not MemberAccessExpressionSyntax
-                {
-                    Expression: IdentifierNameSyntax { Identifier.ValueText: "Math" }
-                } member)
+            string name;
+            if (invocation.Expression is IdentifierNameSyntax identifier)
             {
-                throw new MappingExpressionBindingException("Only approved Math.<method> calls are available.");
+                name = identifier.Identifier.ValueText;
             }
-            string name = member.Name.Identifier.ValueText;
+            else if (invocation.Expression is MemberAccessExpressionSyntax
+                     {
+                         Expression: IdentifierNameSyntax { Identifier.ValueText: "Math" }
+                     } member)
+            {
+                name = member.Name.Identifier.ValueText;
+            }
+            else
+            {
+                throw new MappingExpressionBindingException(
+                    "Only approved System.Math calls, with an optional Math. prefix, are available.");
+            }
             if (!MathMethods.TryGetValue((name, invocation.ArgumentList.Arguments.Count), out MethodInfo? method))
                 throw new MappingExpressionBindingException(
-                    $"Math.{name} with {invocation.ArgumentList.Arguments.Count} argument(s) is not available.");
+                    $"System.Math method '{name}' with {invocation.ArgumentList.Arguments.Count} argument(s) is not available.");
             List<System.Linq.Expressions.Expression> arguments = [];
             foreach (ArgumentSyntax argument in invocation.ArgumentList.Arguments)
             {
@@ -405,7 +417,7 @@ internal sealed class MappingExpressionCompiler : IDisposable
                     throw Unsupported(argument);
                 BoundExpression bound = Bind(argument.Expression);
                 if (bound.Kind != BoundKind.Number)
-                    throw new MappingExpressionBindingException($"Math.{name} arguments must be numeric.");
+                    throw new MappingExpressionBindingException($"System.Math method '{name}' arguments must be numeric.");
                 arguments.Add(bound.Expression);
             }
             return new(Expression.Call(method, arguments), BoundKind.Number);

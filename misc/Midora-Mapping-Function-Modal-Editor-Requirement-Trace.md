@@ -5,6 +5,7 @@
 - Input: an Event Instrument Mapping Function name and one ABI v3 numeric expression entered in a modal dialog.
 - Formal output: one atomic Project edit containing the normalized name, validated expression, ABI v3, and automatically inferred Mapping Context dependencies.
 - Create and update use the existing Project commands; the dialog never mutates Project objects directly while typing or validating.
+- Approved `System.Math` methods and constants are available both as implicit names (`Sin`, `PI`) and qualified names (`Math.Sin`, `Math.PI`); both forms bind to the same ABI v3 allowlist.
 
 ## Boundaries and failure behavior
 
@@ -25,4 +26,5 @@
 
 - No change to Batch Edit expressions.
 - No free C# statements, arbitrary .NET calls, multiline source, persisted compiled delegate, or Project-level draft recovery.
+- The Math implicit import is not a general `using static`: unknown methods, types, and members remain unavailable.
 - No change to Mapping ABI v3 evaluation semantics or canonical consumer flow.

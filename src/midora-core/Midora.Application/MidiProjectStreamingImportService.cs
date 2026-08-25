@@ -8,6 +8,9 @@ namespace Midora.Application;
 
 public static partial class MidiProjectImportService
 {
+    private const double ScanningSourceProgressEnd = 0.15;
+    private const double ImportingEventsProgressEnd = 0.95;
+
     public static MidiProjectImportResult ImportFile(
         string path,
         string projectName,
@@ -45,7 +48,7 @@ public static partial class MidiProjectImportService
             scan.EventCount,
             scan.Header.FileByteCount,
             scan.Header.FileByteCount,
-            0.4));
+            ScanningSourceProgressEnd));
         StreamingTrackPlan[] tracks = NormalizeStreamingMetadata(firstPass.Tracks);
         List<MidiProjectImportDiagnostic> diagnostics = [];
         AddStreamingTrackNameDiagnostic(tracks, diagnostics);
@@ -732,7 +735,7 @@ public static partial class MidiProjectImportService
                     0,
                     processedBytes,
                     _totalSourceBytes,
-                    sourceFraction * 0.4));
+                    sourceFraction * ScanningSourceProgressEnd));
             }
             StreamingTrackPlan track = _current
                 ?? throw new InvalidOperationException("No streaming Track is active.");
@@ -897,7 +900,9 @@ public static partial class MidiProjectImportService
                     _totalEventCount,
                     Math.Clamp(value.SourceByteOffset, 0, _totalSourceBytes),
                     _totalSourceBytes,
-                    0.4 + eventFraction * 0.55));
+                    ScanningSourceProgressEnd
+                        + eventFraction
+                        * (ImportingEventsProgressEnd - ScanningSourceProgressEnd)));
             }
             StreamingTrackPlan track = _current
                 ?? throw new InvalidOperationException("No streaming Track is active.");

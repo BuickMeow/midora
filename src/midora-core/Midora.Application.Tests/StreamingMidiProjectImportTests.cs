@@ -60,9 +60,19 @@ public sealed class StreamingMidiProjectImportTests
             Assert.Equal(MidiProjectImportPhase.ScanningSource, progress.Values[0].Phase);
             Assert.Equal(0, progress.Values[0].Fraction);
             Assert.Contains(progress.Values, value =>
+                value.Phase == MidiProjectImportPhase.ScanningSource
+                && value.ProcessedEventCount == value.TotalEventCount
+                && value.Fraction == 0.15);
+            Assert.Contains(progress.Values, value =>
                 value.Phase == MidiProjectImportPhase.ImportingEvents
                 && value.ProcessedEventCount == value.TotalEventCount
-                && value.TotalEventCount == result.Metrics.ScannedEventCount);
+                && value.TotalEventCount == result.Metrics.ScannedEventCount
+                && value.Fraction == 0.95);
+            Assert.True(progress.Values
+                .Select(value => value.Fraction)
+                .SequenceEqual(progress.Values
+                    .Select(value => value.Fraction)
+                    .Order()));
             Assert.Equal(
                 MidiProjectImportPhase.FinalizingProject,
                 progress.Values[^1].Phase);

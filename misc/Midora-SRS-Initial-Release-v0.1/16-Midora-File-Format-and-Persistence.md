@@ -55,7 +55,7 @@ MIDI 导出产物
 音频渲染最终样本和中间样本缓存
 播放预渲染 buffer
 BASSMIDI Stream 状态
-C# Mapping Function 编译产物 / DLL / 编译缓存
+Mapping Function Expression 委托 / 编译缓存
 诊断结果
 Undo / Redo 栈
 ```
@@ -860,7 +860,7 @@ SoundFont 外部引用进一步限制为第 6.4.4 与 16.15 节的两种直接�
 | 短名称、标签、用户可见版本、Marker 名称、名称快照 | 256 |
 | 作者、版权及其他单行 metadata | 4,096 |
 | 描述、备注 | 65,536 |
-| 单个 C# Mapping Function 函数体 | 1,048,576 |
+| 单个 Mapping Function 单行表达式 | 8,192 |
 | 相对路径 | 4,096 |
 
 超过上限必须拒绝，不得截断。短文本和单行 metadata 不允许控制字符；描述可包含 Tab、LF、CR，但不允许 NUL 或其他控制字符。
@@ -1671,7 +1671,7 @@ MIDI 导出产物
 canonical compiled result
 编译缓存
 编译器 fingerprint
-C# Mapping Function 编译产物
+Mapping Function Expression 编译产物
 BASSMIDI Stream 状态
 音频设备信息
 窗口布局
@@ -1696,7 +1696,7 @@ BASSMIDI Stream 状态
 保存未知文件
 保存孤立对象文件
 保存编译结果 / 播放缓存 / 导出产物
-打开时自动编译 C# Mapping Function
+打开时自动编译 Mapping Function Expression
 打开时将 SoundFont 加载到 BASSMIDI
 ```
 打开项目只负责：
@@ -1706,7 +1706,7 @@ BASSMIDI Stream 状态
 生成内存 Project。
 生成打开诊断。
 ```
-C# Mapping Function 编译由后续诊断、编译、播放或导出流程触发。
+Mapping Function Expression 验证与编译由后续诊断、编译、播放或导出流程触发。
 SoundFont 实际加载由播放、预览或音频渲染触发。
 打开时可以检查外部 SF2 文件存在性与 last known hash，但不加载到 BASSMIDI。
 ---

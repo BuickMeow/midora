@@ -1072,7 +1072,7 @@ CPU 暂时跟不上导致 buffer underrun
 ```
 不可恢复播放错误例子：
 ```text
-C# Mapping Function 运行时异常
+Mapping Function Expression 求值失败
 BASSMIDI Stream 创建失败
 SoundFont 或 SFZ 依赖加载失败
 输出设备丢失且无法恢复

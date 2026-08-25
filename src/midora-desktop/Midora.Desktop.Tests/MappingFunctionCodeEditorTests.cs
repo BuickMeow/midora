@@ -6,22 +6,23 @@ namespace Midora.Desktop.Tests;
 public sealed class MappingFunctionCodeEditorTests
 {
     [Fact]
-    public void ContextCompletionIsDerivedFromTheCompleteAbiV2Contract()
+    public void ContextCompletionIsRestrictedToTheAbiV3Whitelist()
     {
         IReadOnlyList<MappingFunctionCompletionItem> completion =
             MappingFunctionCompletionProvider.GetCompletions("context.", "context.".Length);
 
-        string[] expected = typeof(MappingContextV2)
-            .GetProperties()
-            .Select(property => property.Name)
+        string[] expected = MappingExpressionLanguageV3.NumericContextFields
+            .Concat(MappingExpressionLanguageV3.EnumContextFields)
             .Order(StringComparer.Ordinal)
             .ToArray();
         Assert.Equal(expected, completion.Select(item => item.Text).Order(StringComparer.Ordinal));
         Assert.All(completion, item =>
         {
             Assert.Equal("Property", item.Kind);
-            Assert.Contains("DECLARED ABI V2 CONTEXT FIELDS", item.Description, StringComparison.Ordinal);
+            Assert.Contains("inferred automatically", item.Description, StringComparison.Ordinal);
         });
+        Assert.DoesNotContain(completion, item => item.Text.EndsWith("Id", StringComparison.Ordinal));
+        Assert.DoesNotContain(completion, item => item.Text.EndsWith("Name", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -31,8 +32,8 @@ public sealed class MappingFunctionCodeEditorTests
             MappingFunctionCompletionProvider.GetCompletions("", 0);
         Assert.Contains(globals, item => item.Text == "value" && item.Kind == "Parameter");
         Assert.Contains(globals, item => item.Text == "context" && item.Kind == "Parameter");
-        Assert.Contains(globals, item => item.Text == nameof(MappingContextV2));
-        Assert.Contains(globals, item => item.Text == "return");
+        Assert.DoesNotContain(globals, item => item.Text == nameof(MappingContextV2));
+        Assert.DoesNotContain(globals, item => item.Text == "return");
 
         MappingFunctionCompletionItem sine = Assert.Single(
             MappingFunctionCompletionProvider.GetCompletions("Math.Si", "Math.Si".Length),
@@ -66,11 +67,11 @@ public sealed class MappingFunctionCodeEditorTests
     }
 
     [Fact]
-    public void BracketMatcherUsesCSharpTokensAndIgnoresBracketsInTextOrComments()
+    public void BracketMatcherUsesExpressionTokensAndIgnoresBracketsInComments()
     {
-        const string body = "if (value > 0) { return Math.Max(value, 1); } // )";
+        const string body = "Math.Max(value, (1 + 2)) // )";
         int open = body.IndexOf('(', StringComparison.Ordinal);
-        int close = body.IndexOf(')', StringComparison.Ordinal);
+        int close = body.IndexOf("))", StringComparison.Ordinal) + 1;
 
         Assert.True(MappingFunctionBracketMatcher.TryFind(
             body,
@@ -79,7 +80,7 @@ public sealed class MappingFunctionCodeEditorTests
         Assert.True(match.IsMatched);
         Assert.Equal(close, match.MatchingOffset);
 
-        string stringBody = "return \"(\";";
+        string stringBody = "\"(\"";
         Assert.False(MappingFunctionBracketMatcher.TryFind(
             stringBody,
             stringBody.IndexOf('(', StringComparison.Ordinal) + 1,
@@ -89,7 +90,7 @@ public sealed class MappingFunctionCodeEditorTests
     [Fact]
     public void BracketMatcherReportsAnUnmatchedCodeBracket()
     {
-        const string body = "if (value > 0 { return value; }";
+        const string body = "Math.Max(value, (1 + 2)";
         int open = body.IndexOf('(', StringComparison.Ordinal);
 
         Assert.True(MappingFunctionBracketMatcher.TryFind(

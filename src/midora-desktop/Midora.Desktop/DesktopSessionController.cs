@@ -13,6 +13,7 @@ using Midora.Playback;
 using Midora.MidiExport;
 using Midora.AudioRender;
 using Midora.Audio.Bass;
+using Midora.Mapping.Contract.V2;
 using Midora.Playback.BassWasapi;
 using Midora.Midi;
 
@@ -83,7 +84,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private readonly ProjectOpenCoordinator _opening;
     private ApplicationPreferences _applicationPreferences =
         new ApplicationPreferencesStore().Load().Preferences;
-    private readonly CSharpMappingDraftCompiler _mappingDraftCompiler = new();
     private readonly HashSet<MidoraId> _mutedTrackIds = [];
     private readonly HashSet<MidoraId> _soloTrackIds = [];
     private readonly HashSet<MidoraId> _mutedSharedGroupIds = [];
@@ -145,7 +145,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     public bool CanUseContextMenus => !IsMainWindowTaskLocked;
     public bool CanNavigateBack => _backNavigation.Any(key => Workspaces.Any(item => item.Key == key));
     public bool CanNavigateForward => _forwardNavigation.Any(key => Workspaces.Any(item => item.Key == key));
-    public bool HasUnsavedDrafts => Workspaces.OfType<MappingFunctionWorkspaceViewModel>().Any(item => item.IsDirty);
     public ProjectDocumentSession? Document => _context?.Document;
     public MidoraProject? Project => Document?.Project;
     public ProjectPersistenceCoordinator? Persistence => _context?.Persistence;
@@ -386,10 +385,17 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         if (previous is not InstrumentWorkspaceViewModel
             || ReferenceEquals(previous, current)
-            || _context?.Tasks is not ApplicationTaskCoordinator tasks)
+            || _context?.Tasks is not ApplicationTaskCoordinator)
         {
             return;
         }
+
+        _ = StopEventInstrumentKeyboardPreviewForEditing();
+    }
+
+    public bool StopEventInstrumentKeyboardPreviewForEditing()
+    {
+        if (_context?.Tasks is not ApplicationTaskCoordinator tasks) return true;
 
         try
         {
@@ -397,12 +403,14 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             {
                 RefreshProperties();
             }
+            return true;
         }
         catch (Exception exception)
         {
             SetStatusMessage(
                 $"Stop Event Instrument keyboard Preview: {exception.Message}",
                 isError: true);
+            return false;
         }
     }
 
@@ -1419,13 +1427,12 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
         if (source.EventInstrumentId != default)
         {
-            if (source.MappingFunctionId != default)
-            {
-                OpenMappingFunction(source.EventInstrumentId, source.MappingFunctionId);
-                return;
-            }
             InstrumentWorkspaceViewModel workspace = OpenInstrument(source.EventInstrumentId);
-            MidoraId target = source.SourceEventId != default ? source.SourceEventId : source.EventInstrumentId;
+            MidoraId target = source.MappingFunctionId != default
+                ? source.MappingFunctionId
+                : source.SourceEventId != default
+                    ? source.SourceEventId
+                    : source.EventInstrumentId;
             workspace.Selection.Replace(target);
             RefreshWorkspace(workspace);
             return;
@@ -1687,52 +1694,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         return workspace;
     }
 
-    public MappingFunctionWorkspaceViewModel OpenMappingFunction(MidoraId instrumentId, MidoraId functionId)
-    {
-        EventInstrument instrument = Project?.EventInstruments.FirstOrDefault(item => item.Id == instrumentId)
-            ?? throw new InvalidOperationException("The Event Instrument no longer exists.");
-        CSharpMappingFunction function = instrument.MappingFunctions.FirstOrDefault(item => item.Id == functionId)
-            ?? throw new InvalidOperationException("The Mapping Function no longer exists.");
-        MappingFunctionWorkspaceViewModel workspace = (MappingFunctionWorkspaceViewModel)GetOrCreate(
-            WorkspaceKey.ForObject(WorkspaceKind.MappingFunctionEditor, functionId),
-            () => new MappingFunctionWorkspaceViewModel(instrumentId, functionId, function.Name));
-        ActiveWorkspace = workspace;
-        return workspace;
-    }
-
-    public CSharpMappingDraftCompilationResult CompileMappingDraft(MappingFunctionWorkspaceViewModel workspace)
-    {
-        ArgumentNullException.ThrowIfNull(workspace);
-        EventInstrument instrument = Project?.EventInstruments.FirstOrDefault(item => item.Id == workspace.InstrumentId)
-            ?? throw new InvalidOperationException("The Event Instrument no longer exists.");
-        CSharpMappingFunction function = instrument.MappingFunctions.FirstOrDefault(item => item.Id == workspace.ObjectId)
-            ?? throw new InvalidOperationException("The Mapping Function no longer exists.");
-        CSharpMappingDraftCompilationResult result = _mappingDraftCompiler.Compile(
-            function.AbiVersion,
-            workspace.DraftBody,
-            workspace.ParseDeclaredContextFields());
-        workspace.SetValidationStatus(result.Succeeded
-            ? "Draft compiled successfully"
-            : result.ErrorMessage ?? "Draft compilation failed");
-        return result;
-    }
-
-    public bool ApplyMappingDraft(MappingFunctionWorkspaceViewModel workspace)
-    {
-        ArgumentNullException.ThrowIfNull(workspace);
-        CSharpMappingDraftCompilationResult validation = CompileMappingDraft(workspace);
-        if (!validation.Succeeded) return false;
-        Execute(ProjectDomainEditCommands.UpdateMappingFunction(
-            workspace.InstrumentId,
-            workspace.ObjectId!.Value,
-            workspace.DraftName,
-            workspace.DraftBody,
-            workspace.ParseDeclaredContextFields()));
-        workspace.MarkApplied();
-        RefreshWorkspace(workspace);
-        return true;
-    }
-
     public void CloseWorkspace(WorkspaceViewModel workspace)
     {
         ArgumentNullException.ThrowIfNull(workspace);
@@ -1867,7 +1828,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         ProjectTree.Clear();
         CompilerDiagnostics.Clear();
         SelectedDiagnostic = null;
-        _mappingDraftCompiler.Clear();
         _mutedTrackIds.Clear();
         _soloTrackIds.Clear();
         _mutedSharedGroupIds.Clear();
@@ -1892,12 +1852,10 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         await CloseProjectAsync();
         _preparedPlaybackBackend?.Dispose();
         _preparedPlaybackBackend = null;
-        _mappingDraftCompiler.Dispose();
     }
 
     private async Task ActivateAsync(ProjectContext next)
     {
-        _mappingDraftCompiler.Clear();
         _mutedTrackIds.Clear();
         _soloTrackIds.Clear();
         _mutedSharedGroupIds.Clear();
@@ -2068,10 +2026,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             WorkspaceKind.EventInstrumentLibrary => instrumentIds.Count != 0,
             WorkspaceKind.EventInstrumentEditor => workspace.ObjectId is MidoraId eventInstrumentId
                 && instrumentIds.Contains(eventInstrumentId),
-            WorkspaceKind.MappingFunctionEditor => workspace.ObjectId is MidoraId mappingId
-                && Project!.EventInstruments.Any(instrument =>
-                    instrumentIds.Contains(instrument.Id)
-                    && instrument.MappingFunctions.Any(mapping => mapping.Id == mappingId)),
             WorkspaceKind.ProjectSettings => true,
             WorkspaceKind.Diagnostics => false,
             _ => false
@@ -2216,8 +2170,6 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 TimelineWorkspaceViewModel.FindSegment(Project, id) is not null
                 || TimelineWorkspaceViewModel.FindMidiSegment(Project, id) is not null,
             WorkspaceKind.EventInstrumentEditor => Project.EventInstruments.Any(item => item.Id == id),
-            WorkspaceKind.MappingFunctionEditor => Project.EventInstruments.Any(
-                instrument => instrument.MappingFunctions.Any(function => function.Id == id)),
             _ => true
         };
     }

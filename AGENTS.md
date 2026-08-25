@@ -78,7 +78,7 @@ Project Source Data
 ## 6. 必须设置的验证门
 
 - 编译器：golden tests、同输入重复编译、乱序集合输入、Full/Incremental 等价、范围起点状态恢复、同 tick 排序、资源峰值和来源追踪。
-- C# Mapping ABI：v1 公共契约快照、固定 Roslyn/C# profile、.NET 10 核心引用允许、Midora/第三方引用拒绝、ABI/源码缓存键、当前修订失效、collectible ALC 卸载和 Project 关闭释放。
+- Mapping Function Expression ABI：v3 语法/API/Context 白名单快照、8,192 scalar / 512 node / 64 depth 边界、依赖推导、旧 ABI 拒绝、ABI/源码缓存键、当前修订失效和 Project 关闭释放；攻击型测试必须覆盖语句、循环、赋值、lambda、对象创建、任意 API、名称/ID 与资源上限。
 - MIDI：0/127 边界、真实 NoteOff、Bank/Program、RPN/NRPN、Pitch Bend Range、同音高重叠、Segment/Root/End Marker 精确截断、Pure MIDI Track 拓扑与自身 EOT、Format 0/1 + TPQN 导入、Running Status、多 Channel MTrk 拆分和 opaque event round-trip。
 - 输出命名：MIDI/音频公共合法化 golden、非法字符、保留设备名、尾部空格/句点、控制与不可见字符、Unicode 规范化别名、长度预算、大小写冲突、同批唯一性、最终路径预览冻结和覆盖授权分离。
 - Native interop：结构布局、calling convention、32/64 位宽度、错误返回、版本不匹配、重复 init/free、handle/delegate 泄漏。
@@ -98,7 +98,7 @@ Project Source Data
 6. 正式 BASSMIDI Stream 使用 8-point sinc、CPU 属性 0；Realtime/Offline Maximum Sample Voices per Unit Stream 分别配置且默认均为 500，完美音频一致性测试以未触顶为前提。
 7. 初版产品 CPU 架构固定为 `win-x64`；音频 Worker 只允许以该 RID Native AOT 发布。
 8. 初版三项 BASS DLL 的完整版本和 SHA-256 固定；仓库保存 manifest 而不提交 DLL，升级必须显式变更基线并完成全回归。
-9. 初版 C# Mapping 当前固定 ABI v2、`MappingStableIdV2(long)`、Roslyn 5.3.0/C# 14/`Microsoft.NETCore.App.Ref 10.0.10` 和独立只读 Mapping 契约；每 Project 只缓存当前源码修订并使用 collectible ALC，编译产物不持久化。ABI v1 已在开发期被 v2 取代且不提供并行回退；该机制不是 sandbox。
+9. Mapping Function 当前固定为受限表达式 ABI v3：只允许版本化白名单内的单行数值/枚举表达式，Context 依赖自动推导并在正式编译时复核；固定 8,192 scalar、512 syntax node、64 depth 上限。正式路径只建立 `System.Linq.Expressions` 委托，不 Emit 或加载 Project 源码程序集。自由 C# ABI v1/v2 属于已取代的开发期格式，只可识别并明确拒绝，绝不保留执行器；编译产物不持久化。Batch Edit 表达式不是 Project 内容，不受该 ABI 变更影响。
 10. 初版持久化固定 JSON Schema Draft 2020-12、内部版本化 System.Text.Json source-generated DTO、protobuf Edition 2024、Google.Protobuf 3.35.1 与 Grpc.Tools 2.83.0；未知/重复字段严格拒绝，已发布 descriptor/字段号/golden bytes 必须保持兼容。文本、路径、opaque sRGB、UTC 七位小数秒和非负 int64 毫秒表示按 SRS 16.13 固定。
 11. SoundFont 只属于 Application Preferences：保存最多 256 个有序 `{absolute local .sf2/.sfz path, enabled, optional target Bank MSB/LSB/Program}` 项；SFZ target 必填，SF2 target 可省略，三字段只能整体出现且均为 0～127。设置 Draft/持久化阶段不复制、不读取完整 SoundFont、不计算内容 SHA-256，也不解析、快照或监控 SFZ 的 sample/include 依赖；音频相关设置成功持久化后必须在 `Saving Settings` 运行时阶段销毁旧 Worker，直接以原路径交给 BASSMIDI（仅 SF2 使用 `BASS_MIDI_FONT_MMAP`），按列表顺序和映射设置 Font handles 并保留新 Worker供后续复用。新建/打开/命令行打开/MIDI 导入形成 Project 会话及 Reset Playback Engine 必须在前台任务结束前接管或预热 Worker，不得延迟到首次 Play；Project 已提交后的预热失败保留 Project、明确报告并允许后续重试。缓存只使用有序配置、主文件长度和 UTC 修改时间的小型描述符身份；它不是内容或 SFZ 依赖校验。
 12. 工程总耗时按 Project 成功打开后的完整会话时间累计，包括空闲、最小化、失焦、Buffering、MIDI 导出和音频渲染；系统睡眠 / 休眠及关闭流程暂停。会话使用单调时钟；自动累计不单独标记 Modified，不进入 Undo / Redo，不影响编译或 canonical fingerprint。

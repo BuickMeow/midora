@@ -15,6 +15,9 @@ namespace Midora.Desktop;
 
 public partial class MappingFunctionCodeEditor : UserControl
 {
+    public event EventHandler? TextChanged;
+    public event EventHandler? CommitRequested;
+
     public static readonly DependencyProperty TextProperty = DependencyProperty.Register(
         nameof(Text),
         typeof(string),
@@ -140,6 +143,14 @@ public partial class MappingFunctionCodeEditor : UserControl
     private void OnEditorTextChanged(object? sender, EventArgs e)
     {
         if (_synchronizing) return;
+        string normalized = CodeEditor.Text.Replace('\r', ' ').Replace('\n', ' ');
+        if (!string.Equals(normalized, CodeEditor.Text, StringComparison.Ordinal))
+        {
+            int caret = Math.Min(CodeEditor.CaretOffset, normalized.Length);
+            CodeEditor.Text = normalized;
+            CodeEditor.CaretOffset = caret;
+            return;
+        }
         _synchronizing = true;
         try
         {
@@ -154,6 +165,7 @@ public partial class MappingFunctionCodeEditor : UserControl
         CodeEditor.TextArea.TextView.Redraw();
         UpdateCaretStatus();
         UpdateBracketMatch();
+        TextChanged?.Invoke(this, EventArgs.Empty);
         if (_refreshCompletionAfterChange || CompletionPopup.IsOpen)
         {
             _refreshCompletionAfterChange = false;
@@ -213,6 +225,13 @@ public partial class MappingFunctionCodeEditor : UserControl
             }
         }
 
+        if (key == Key.Enter)
+        {
+            CommitRequested?.Invoke(this, EventArgs.Empty);
+            e.Handled = true;
+            return;
+        }
+
         if (key is Key.Back or Key.Delete && Keyboard.Modifiers == ModifierKeys.None)
         {
             _refreshCompletionAfterChange = CompletionPopup.IsOpen;
@@ -224,11 +243,7 @@ public partial class MappingFunctionCodeEditor : UserControl
         (char Open, char Close) pair = value switch
         {
             '(' => ('(', ')'),
-            '[' => ('[', ']'),
-            '{' => ('{', '}'),
             ')' => ('\0', ')'),
-            ']' => ('\0', ']'),
-            '}' => ('\0', '}'),
             _ => ('\0', '\0')
         };
         if (pair.Close == '\0') return false;

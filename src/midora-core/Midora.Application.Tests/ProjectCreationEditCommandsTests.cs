@@ -669,7 +669,7 @@ public sealed class ProjectCreationEditCommandsTests
         document.Execute(ProjectDomainEditCommands.CreateMappingFunction(
             instrument.Id,
             "Identity",
-            "return value;",
+            "value",
             []));
         document.Execute(ProjectDomainEditCommands.DuplicateMappingFunction(
             instrument.Id,

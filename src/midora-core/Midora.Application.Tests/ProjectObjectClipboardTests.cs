@@ -107,7 +107,7 @@ public sealed class ProjectObjectClipboardTests
         CSharpMappingFunction function = new(project)
         {
             Name = "Identity",
-            Body = "return value;"
+            Body = "value"
         };
         source.LogicalParameters.Add(parameter);
         source.Envelopes.Add(envelope);
@@ -144,7 +144,7 @@ public sealed class ProjectObjectClipboardTests
             document,
             source.Id);
         parameter.Name = "Mutated after copy";
-        function.Body = "return 0;";
+        function.Body = "0";
         long firstPastedId = project.NextStableId;
 
         document.Execute(ProjectObjectClipboard.CreatePasteEventInstrumentCommand(
@@ -162,7 +162,7 @@ public sealed class ProjectObjectClipboardTests
         SubVoice voiceCopy = Assert.Single(copy.SubVoices);
         LogicalParameterMapping mappingCopy = Assert.Single(copy.ParameterMappings);
         Assert.Equal("Amount", parameterCopy.Name);
-        Assert.Equal("return value;", functionCopy.Body);
+        Assert.Equal("value", functionCopy.Body);
         Assert.NotEqual(parameter.Id, parameterCopy.Id);
         Assert.NotEqual(envelope.Id, envelopeCopy.Id);
         Assert.NotEqual(function.Id, functionCopy.Id);
@@ -558,7 +558,7 @@ public sealed class ProjectObjectClipboardTests
         CSharpMappingFunction function = new(project)
         {
             Name = "Function",
-            Body = "return value;"
+            Body = "value"
         };
         SubVoice source = new(project) { Name = "Source" };
         SubVoice target = new(project) { Name = "Target" };
@@ -642,7 +642,7 @@ public sealed class ProjectObjectClipboardTests
             DefaultValue = 0.5
         };
         InstrumentEnvelope envelope = new(project) { Name = "Envelope", AttackTicks = 12 };
-        CSharpMappingFunction function = new(project) { Name = "Function", Body = "return value;" };
+        CSharpMappingFunction function = new(project) { Name = "Function", Body = "value" };
         SubVoice source = new(project) { Name = "Layer", RootNoteOverride = 72 };
         source.InitialState.Controllers.Add(11, 90);
         TemplateEvent controller = TemplateEvent.ControlChange(project, 20, 11, 64);
@@ -1232,7 +1232,7 @@ public sealed class ProjectObjectClipboardTests
         CSharpMappingFunction function = new(project)
         {
             Name = "Identity",
-            Body = "return value;"
+            Body = "value"
         };
         instrument.LogicalParameters.Add(parameter);
         instrument.Envelopes.Add(envelope);

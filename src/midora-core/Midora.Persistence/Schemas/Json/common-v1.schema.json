@@ -38,7 +38,8 @@
     },
     "mappingBody": {
       "type": "string",
-      "maxLength": 1048576
+      "maxLength": 8192,
+      "pattern": "^[^\\r\\n]*$"
     },
     "utcTimestamp": {
       "type": "string",

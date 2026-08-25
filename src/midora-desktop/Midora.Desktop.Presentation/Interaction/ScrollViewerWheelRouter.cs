@@ -52,6 +52,7 @@ public static class ScrollViewerWheelRouter
     {
         if (sender is not ScrollViewer viewer
             || args.Handled
+            || IsInsideOpenComboBoxDropDown(args.OriginalSource as DependencyObject)
             || viewer.VerticalScrollBarVisibility is ScrollBarVisibility.Disabled
                 or ScrollBarVisibility.Hidden
             || viewer.ScrollableHeight <= 0)
@@ -77,6 +78,27 @@ public static class ScrollViewerWheelRouter
         if (targetOffset == oldOffset) return;
         viewer.ScrollToVerticalOffset(targetOffset);
         args.Handled = true;
+    }
+
+    private static bool IsInsideOpenComboBoxDropDown(DependencyObject? current)
+    {
+        while (current is not null)
+        {
+            if (current is ComboBox { IsDropDownOpen: true }) return true;
+            if (current is ComboBoxItem item
+                && ItemsControl.ItemsControlFromItemContainer(item) is ComboBox
+                {
+                    IsDropDownOpen: true
+                })
+            {
+                return true;
+            }
+
+            current = current is Visual or Visual3D
+                ? VisualTreeHelper.GetParent(current)
+                : LogicalTreeHelper.GetParent(current);
+        }
+        return false;
     }
 
     private static ScrollViewer? FindNearestScrollViewer(DependencyObject? current)

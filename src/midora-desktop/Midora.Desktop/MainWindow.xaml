@@ -802,6 +802,15 @@
                         Loaded="OnInstrumentNavigationScrollLoaded"
                         ScrollChanged="OnInstrumentNavigationScrollChanged"
                         PreviewMouseWheel="OnInstrumentNavigationPreviewMouseWheel">
+            <ScrollViewer.Resources>
+              <Style TargetType="{x:Type ui:FluentIcon}" BasedOn="{StaticResource Icon.CommandBar}">
+                <Setter Property="UseLayoutRounding" Value="True"/>
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+                <Setter Property="LayoutTransform">
+                  <Setter.Value><ScaleTransform ScaleX="0.9166667" ScaleY="0.9166667"/></Setter.Value>
+                </Setter>
+              </Style>
+            </ScrollViewer.Resources>
             <StackPanel>
               <Grid Margin="0,0,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="SUBVOICES"/><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Width="24" Height="22" Margin="0,0,3,0" Padding="0" Tag="-1" ToolTip="Move selected SubVoice up" Click="OnMoveSubVoiceClick"><ui:FluentIcon Width="12" Height="12" Data="{StaticResource Fluent.ArrowUp20Regular}"/></Button><Button Width="24" Height="22" Margin="0,0,3,0" Padding="0" Tag="1" ToolTip="Move selected SubVoice down" Click="OnMoveSubVoiceClick"><ui:FluentIcon Width="12" Height="12" Data="{StaticResource Fluent.ArrowDown20Regular}"/></Button><Button Width="28" Height="22" Margin="0,0,3,0" Padding="0" ToolTip="Duplicate selected SubVoice" Click="OnDuplicateSubVoiceClick"><ui:FluentIcon Width="12" Height="12" Data="{StaticResource Fluent.SquareMultiple20Regular}"/></Button><Button Width="24" Height="22" Padding="0" ToolTip="Add SubVoice" Click="OnAddSubVoiceClick"><ui:FluentIcon Width="12" Height="12" Data="{StaticResource Fluent.Add20Regular}"/></Button></StackPanel></Grid>
               <ListBox MaxHeight="160" ItemsSource="{Binding SubVoices}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnOpenInstrumentPropertiesClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
@@ -831,8 +840,8 @@
               <ListBox MaxHeight="190" ItemsSource="{Binding MappingSteps}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnOpenInstrumentPropertiesClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Properties…" InputGestureText="Ctrl+P" Click="OnOpenInstrumentPropertiesClick"/><Separator/><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Summary}" TextTrimming="CharacterEllipsis"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Owner}" TextTrimming="CharacterEllipsis"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
               <Grid Margin="0,14,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="ENVELOPE PRESETS"/><Button Width="24" Height="22" HorizontalAlignment="Right" Padding="0" ToolTip="Add Envelope Preset" Click="OnAddEnvelopeClick"><ui:FluentIcon Width="12" Height="12" Data="{StaticResource Fluent.Add20Regular}"/></Button></Grid>
               <ListBox MaxHeight="160" ItemsSource="{Binding Envelopes}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnOpenInstrumentPropertiesClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Properties…" InputGestureText="Ctrl+P" Click="OnOpenInstrumentPropertiesClick"/><Separator/><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Style="{StaticResource Text.Caption}" Text="{Binding Summary}" TextTrimming="CharacterEllipsis"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
-              <Grid Margin="0,14,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="MAPPING FUNCTION PRESETS"/><Button Width="24" Height="22" HorizontalAlignment="Right" Padding="0" ToolTip="Add C# Mapping Function" Click="OnAddMappingFunctionClick"><ui:FluentIcon Width="12" Height="12" Data="{StaticResource Fluent.Add20Regular}"/></Button></Grid>
-              <ListBox MaxHeight="160" ItemsSource="{Binding MappingFunctions}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnMappingFunctionDoubleClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource Text.Caption}" Text="{Binding AbiVersion, StringFormat={}ABI v{0}}"/></Grid></DataTemplate></ListBox.ItemTemplate></ListBox>
+              <Grid Margin="0,14,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="MAPPING FUNCTION PRESETS"/><Button Width="24" Height="22" HorizontalAlignment="Right" Padding="0" ToolTip="Add Mapping Function" Click="OnAddMappingFunctionClick"><ui:FluentIcon Width="12" Height="12" Data="{StaticResource Fluent.Add20Regular}"/></Button></Grid>
+              <ListBox MaxHeight="160" ItemsSource="{Binding MappingFunctions}" SelectionChanged="OnInstrumentStructureSelectionChanged" MouseDoubleClick="OnMappingFunctionDoubleClick" PreviewMouseRightButtonDown="OnListBoxRightButtonDown" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True"><ListBox.ContextMenu><ContextMenu><MenuItem Header="Properties…" InputGestureText="Ctrl+P" Click="OnEditMappingFunctionClick"/><Separator/><MenuItem Header="Cut" Click="OnInstrumentStructureCutClick"/><MenuItem Header="Copy" Click="OnInstrumentStructureCopyClick"/><MenuItem Header="Paste" Click="OnInstrumentStructurePasteClick"/><Separator/><MenuItem Header="Delete" Click="OnInstrumentStructureDeleteClick"/></ContextMenu></ListBox.ContextMenu><ListBox.ItemTemplate><DataTemplate><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource Text.Caption}" Text="{Binding AbiVersion, StringFormat={}ABI v{0}}"/></Grid></DataTemplate></ListBox.ItemTemplate></ListBox>
             </StackPanel>
           </ScrollViewer>
           <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" />
@@ -1035,26 +1044,6 @@
       </Grid>
     </DataTemplate>
 
-    <DataTemplate DataType="{x:Type local:MappingFunctionWorkspaceViewModel}">
-      <Grid Background="{StaticResource Brush.Surface.0}">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="34"/></Grid.RowDefinitions>
-        <Border Padding="12,10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1">
-          <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="260"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <StackPanel><TextBlock Style="{StaticResource PropertyLabel}" Text="FUNCTION NAME"/><TextBox Text="{Binding DraftName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-            <StackPanel Grid.Column="2"><TextBlock Style="{StaticResource PropertyLabel}" Text="DECLARED ABI V2 CONTEXT FIELDS"/><TextBox ToolTip="Comma-separated MappingContextV2 field names" Text="{Binding DeclaredContextFields, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
-            <StackPanel Grid.Column="3" Margin="12,18,0,0" Orientation="Horizontal"><Button Margin="0,0,5,0" Content="Compile Draft" Click="OnCompileMappingDraftClick"/><Button Style="{StaticResource Button.Primary}" Content="Apply" IsEnabled="{Binding DataContext.CanEditProject, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Click="OnApplyMappingDraftClick"/></StackPanel>
-          </Grid>
-        </Border>
-        <Border Grid.Row="1" Padding="10,6" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="240"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBox VerticalAlignment="Center" Tag="MappingFind" Text="{Binding FindText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="Find in Function (Ctrl+F)"/><Button Grid.Column="1" Margin="5,0,0,0" Content="Find Next" Click="OnFindMappingClick"/><TextBlock Grid.Column="2" Margin="8,0,0,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="{Binding FindStatus}"/></Grid></Border>
-        <local:MappingFunctionCodeEditor Grid.Row="2" Margin="10" Tag="MappingEditor"
-                                         Text="{Binding DraftBody, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                         CaretStatus="{Binding CaretStatus, Mode=TwoWay}"/>
-        <Border Grid.Row="3" Padding="10,0" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
-          <Grid><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Caption}" Text="{Binding Status}"/><StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal"><TextBlock Margin="0,0,14,0" Style="{StaticResource Text.Caption}" Text="{Binding CaretStatus}"/><TextBlock Style="{StaticResource Text.Caption}" Text="Draft is session UI state until Apply succeeds."/></StackPanel></Grid>
-        </Border>
-      </Grid>
-    </DataTemplate>
-
     <DataTemplate DataType="{x:Type local:SettingsWorkspaceViewModel}">
       <ScrollViewer Padding="14" VerticalScrollBarVisibility="Auto">
         <Grid>
@@ -1209,7 +1198,9 @@
               </Border>
               <TextBlock Margin="8,2" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="12"
                          Foreground="{StaticResource Brush.Text.Tertiary}"
-                         Text="{Binding TitleBarProjectDisplayName}" TextTrimming="CharacterEllipsis"/>
+                         Text="{Binding TitleBarProjectDisplayName}" TextTrimming="CharacterEllipsis">
+                <TextBlock.RenderTransform><TranslateTransform Y="1"/></TextBlock.RenderTransform>
+              </TextBlock>
             </Grid>
           </Border>
         </Grid>
@@ -1239,7 +1230,7 @@
           </StackPanel>
           <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal">
             <Button Width="34" Height="32" Style="{StaticResource Button.Icon}" ToolTip="Reset Playback Engine" IsEnabled="{Binding HasProject}" Click="OnResetPlaybackClick"><ui:FluentIcon Style="{StaticResource Icon.CommandBar}" Data="{StaticResource Fluent.Flash20Filled}"/></Button>
-            <Button Width="34" Height="32" Margin="4,0" Style="{StaticResource Button.PrimaryTransport}"
+            <Button x:Name="PrimaryTransportButton" Width="34" Height="32" Margin="4,0" Style="{StaticResource Button.PrimaryTransport}"
                     AutomationProperties.Name="{Binding PrimaryTransportAction}"
                     ToolTip="{Binding PrimaryTransportToolTip}"
                     IsEnabled="{Binding CanTogglePlayback}" Click="OnPrimaryTransportClick">

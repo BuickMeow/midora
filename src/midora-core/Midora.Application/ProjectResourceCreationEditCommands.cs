@@ -1,4 +1,5 @@
 using Midora.Domain;
+using Midora.Mapping.Contract.V2;
 
 namespace Midora.Application;
 
@@ -502,7 +503,11 @@ public static partial class ProjectDomainEditCommands
             string normalizedName = NormalizeUniqueMappingFunctionName(instrument, default, name);
             string validatedBody = ProjectTextRules.ValidateMappingBody(body, nameof(body));
             string[] normalizedFields = NormalizeContextFields(frozenFields);
-            MappingFunctionValue value = new(normalizedName, validatedBody, normalizedFields);
+            MappingFunctionValue value = new(
+                normalizedName,
+                validatedBody,
+                MappingExpressionAbiV3.Version,
+                normalizedFields);
             int index = insertionIndex ?? instrument.MappingFunctions.Count;
             ValidateInsertionIndex(index, instrument.MappingFunctions.Count, nameof(insertionIndex));
             return DeferredCreate(
@@ -544,6 +549,7 @@ public static partial class ProjectDomainEditCommands
             MappingFunctionValue value = new(
                 normalizedName,
                 source.Body,
+                source.AbiVersion,
                 source.DeclaredContextFields.Order(StringComparer.Ordinal).ToArray());
             int index = instrument.MappingFunctions.IndexOf(source) + 1;
             return DeferredCreate(

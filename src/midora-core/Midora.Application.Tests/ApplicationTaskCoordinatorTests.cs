@@ -399,14 +399,12 @@ public sealed class ApplicationTaskCoordinatorTests
     }
 
     [Fact]
-    public async Task ProjectSwitchStopsPlaybackThenResolvesDraftsAndUnsavedChangesInOrder()
+    public async Task ProjectSwitchStopsPlaybackThenResolvesUnsavedChangesInOrder()
     {
         using TestContext fixture = TestContext.Create();
         fixture.Coordinator.StartMainPlayback();
         RecordingSwitchActions actions = new(fixture.Session)
         {
-            HasFunctionDrafts = true,
-            DraftResolution = FunctionDraftResolution.Apply,
             HasUnsavedProjectChanges = true,
             UnsavedResolution = UnsavedProjectResolution.SaveProject
         };
@@ -423,34 +421,11 @@ public sealed class ApplicationTaskCoordinatorTests
         Assert.Equal("switched", result.Value);
         Assert.Equal(1, fixture.Backend.StopCount);
         Assert.Equal(
-            ["resolve-drafts", "apply-drafts", "resolve-unsaved", "save", "switch"],
+            ["resolve-unsaved", "save", "switch"],
             actions.Events);
-        Assert.False(actions.WasEditLockedWhileApplyingDrafts);
         Assert.True(actions.WasEditLockedWhileResolvingUnsaved);
         Assert.True(actions.WasEditLockedWhileSaving);
         Assert.True(actions.WasEditLockedWhileSwitching);
-        Assert.False(fixture.Session.EditsLocked);
-    }
-
-    [Fact]
-    public async Task ProjectSwitchCancellationAtDraftStageSkipsUnsavedPromptAndSwitch()
-    {
-        using TestContext fixture = TestContext.Create();
-        RecordingSwitchActions actions = new(fixture.Session)
-        {
-            HasFunctionDrafts = true,
-            DraftResolution = FunctionDraftResolution.Cancel,
-            HasUnsavedProjectChanges = true
-        };
-
-        ApplicationTaskExecution<ProjectSwitchGuardResult<string>> execution =
-            await fixture.Coordinator.ExecuteProjectSwitchAsync(
-                ApplicationTaskKind.CloseProject,
-                actions);
-
-        Assert.Equal(ApplicationTaskOutcome.Completed, execution.Outcome);
-        Assert.Equal(ProjectSwitchGuardStatus.Cancelled, execution.Value?.Status);
-        Assert.Equal(["resolve-drafts"], actions.Events);
         Assert.False(fixture.Session.EditsLocked);
     }
 
@@ -913,15 +888,11 @@ public sealed class ApplicationTaskCoordinatorTests
     private sealed class RecordingSwitchActions(ProjectCompilationSession session)
         : IProjectSwitchGuardActions<string>
     {
-        public bool HasFunctionDrafts { get; set; }
         public bool HasUnsavedProjectChanges { get; set; }
         public bool CanSaveProject { get; set; } = true;
-        public FunctionDraftResolution DraftResolution { get; set; } =
-            FunctionDraftResolution.Discard;
         public UnsavedProjectResolution UnsavedResolution { get; set; } =
             UnsavedProjectResolution.CloseWithoutSaving;
         public List<string> Events { get; } = [];
-        public bool WasEditLockedWhileApplyingDrafts { get; private set; }
         public bool WasEditLockedWhileResolvingUnsaved { get; private set; }
         public bool WasEditLockedWhileSaving { get; private set; }
         public bool WasEditLockedWhileSwitching { get; private set; }
@@ -930,29 +901,6 @@ public sealed class ApplicationTaskCoordinatorTests
         public TaskCompletionSource? SwitchEntered { get; set; }
         public TaskCompletionSource? SwitchRelease { get; set; }
         public Exception? SwitchError { get; set; }
-
-        public ValueTask<FunctionDraftResolution> ResolveFunctionDraftsAsync(
-            CancellationToken cancellationToken)
-        {
-            Events.Add("resolve-drafts");
-            return ValueTask.FromResult(DraftResolution);
-        }
-
-        public Task ApplyFunctionDraftsAsync(CancellationToken cancellationToken)
-        {
-            Events.Add("apply-drafts");
-            WasEditLockedWhileApplyingDrafts = session.EditsLocked;
-            session.ApplyEdit(
-                project => project.Metadata.ProjectName = "Draft applied",
-                ProjectChangeSet.Everything);
-            return Task.CompletedTask;
-        }
-
-        public Task DiscardFunctionDraftsAsync(CancellationToken cancellationToken)
-        {
-            Events.Add("discard-drafts");
-            return Task.CompletedTask;
-        }
 
         public ValueTask<UnsavedProjectResolution> ResolveUnsavedProjectAsync(
             CancellationToken cancellationToken)

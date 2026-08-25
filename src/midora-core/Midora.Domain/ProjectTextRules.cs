@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Text;
+using Midora.Mapping.Contract.V2;
 
 namespace Midora.Domain;
 
@@ -9,7 +10,7 @@ internal static class ProjectTextRules
     public const int ShortTextMaximumScalars = 256;
     public const int MetadataTextMaximumScalars = 4_096;
     public const int DescriptionMaximumScalars = 65_536;
-    public const int MappingBodyMaximumScalars = 1_048_576;
+    public const int MappingBodyMaximumScalars = MappingExpressionAbiV3.MaximumSourceLength;
 
     public static string NormalizeShortText(
         string value,
@@ -87,6 +88,12 @@ internal static class ProjectTextRules
     public static string ValidateMappingBody(string value, string parameterName)
     {
         ArgumentNullException.ThrowIfNull(value, parameterName);
+        if (value.IndexOfAny(['\r', '\n']) >= 0)
+        {
+            throw new ArgumentException(
+                "A Mapping Function expression must be a single line.",
+                parameterName);
+        }
         int scalarCount = CountScalars(value, parameterName);
         if (scalarCount > MappingBodyMaximumScalars)
         {

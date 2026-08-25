@@ -21,15 +21,15 @@ public sealed class ProjectMappingFunctionEditCommandsTests
             fixture.Instrument.Id,
             fixture.Function.Id,
             "  More Boost  ",
-            "return value + 10;",
+            "value + 10 + context.ProjectTick - context.ProjectTick",
             [nameof(MappingContextV2.ProjectTick)]));
 
         Assert.Same(fixture.Function, fixture.Instrument.MappingFunctions.Single());
         Assert.Equal("More Boost", fixture.Function.Name);
-        Assert.Equal("return value + 10;", fixture.Function.Body);
+        Assert.Equal("value + 10 + context.ProjectTick - context.ProjectTick", fixture.Function.Body);
         Assert.Equal([nameof(MappingContextV2.ProjectTick)],
             fixture.Function.DeclaredContextFields.Order().ToArray());
-        Assert.Equal(MappingAbiV2.Version, fixture.Function.AbiVersion);
+        Assert.Equal(MappingExpressionAbiV3.Version, fixture.Function.AbiVersion);
         Assert.Equal(fixture.Function.Id, fixture.Step.MappingFunctionId);
         Assert.Equal(nextStableId, fixture.Project.NextStableId);
         AssertController(compilation.LastAttempt, 30);
@@ -38,7 +38,7 @@ public sealed class ProjectMappingFunctionEditCommandsTests
         document.Undo();
         Assert.Same(fixture.Function, fixture.Instrument.MappingFunctions.Single());
         Assert.Equal("Boost", fixture.Function.Name);
-        Assert.Equal("return value + 1;", fixture.Function.Body);
+        Assert.Equal("value + 1", fixture.Function.Body);
         Assert.Empty(fixture.Function.DeclaredContextFields);
         Assert.Equal(fixture.Function.Id, fixture.Step.MappingFunctionId);
         AssertController(compilation.LastAttempt, 21);
@@ -65,7 +65,7 @@ public sealed class ProjectMappingFunctionEditCommandsTests
         AssertCurrentCompilationMatchesFull(compilation);
 
         document.Undo();
-        Assert.Equal("return value + 1;", fixture.Function.Body);
+        Assert.Equal("value + 1", fixture.Function.Body);
         Assert.True(compilation.LastAttempt.IsConsumable);
         Assert.False(document.IsModified);
         AssertCurrentCompilationMatchesFull(compilation);
@@ -78,7 +78,7 @@ public sealed class ProjectMappingFunctionEditCommandsTests
         fixture.Instrument.MappingFunctions.Add(new CSharpMappingFunction(fixture.Project)
         {
             Name = "Other",
-            Body = "return value;"
+            Body = "value"
         });
         using ProjectCompilationSession compilation = new(fixture.Project);
         ProjectDocumentSession document = PersistedDocument(compilation);
@@ -157,7 +157,7 @@ public sealed class ProjectMappingFunctionEditCommandsTests
         CSharpMappingFunction unused = new(fixture.Project)
         {
             Name = "Unused",
-            Body = "return value;"
+            Body = "value"
         };
         fixture.Instrument.MappingFunctions.Add(unused);
         using ProjectCompilationSession compilation = new(fixture.Project);
@@ -198,7 +198,7 @@ public sealed class ProjectMappingFunctionEditCommandsTests
         CSharpMappingFunction function = new(project)
         {
             Name = "Boost",
-            Body = "return value + 1;"
+            Body = "value + 1"
         };
         instrument.MappingFunctions.Add(function);
         SubVoice voice = new(project);

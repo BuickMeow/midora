@@ -52,6 +52,9 @@
 
 ## 2026-08-25 修订摘要
 
+- 打开的 ComboBox 下拉内容独占鼠标滚轮：无论当前内容是否产生可见滚动条，滚轮都不得传递给外层 Settings、Properties 或 Workspace ScrollViewer。Event Instrument 底部 Keyboard Held Preview 活动时，Global Primary Transport 的鼠标点击必须直接执行 Stop；预处理不得先结束 Preview、再把同一次点击重新解释为主时间线 Play。
+- Mapping Function 不再打开独立 Workspace/Tab，也不保留跨窗口的 session Draft。创建与编辑统一使用 Event Instrument 所属的模态表达式对话框：名称与单行表达式只在对话框本地存在，提供同款自动折行增高编辑器、补全/括号高亮、Help、Validate 和结果栏；OK 必须先通过正式 ABI v3 校验，再以一次原子 Project command 提交名称、表达式与自动推导的 Context 依赖，Cancel/关闭直接丢弃本地内容。事件乐器底部 Keyboard Held Preview 在任何模态窗口、菜单或 Tab/Workspace 转场前同步停止，且该清理只识别键盘预览所有权，不得停止主时间线播放。
+- Mapping Function 由可执行自由 C# ABI v2 破坏性收缩为受限表达式 ABI v3：只允许版本化白名单内的单行数值/枚举表达式，固定 8,192 scalar、512 syntax node、64 depth 上限，Context 依赖由正式分析器自动推导并复核。正式路径只绑定为 `System.Linq.Expressions` 委托，不 Emit/加载 Project 源码程序集；旧 ABI v1/v2 只可识别并明确拒绝，绝不执行。Batch Edit 表达式不是 Project 内容，不在本次变更范围。
 - Pure MIDI Track 的音频投影新增严格限缩的 Channel Mode SysEx 特权：仅识别有效 Roland GS DT1 Part Mode 与 Yamaha XG Part Mode，导入按 payload Channel 归属，canonical 保留来源/顺序并支持 Root 活动区间中途的状态恢复，BASSMIDI Unit 统一重定向到 channel 0；Worker 在原样发送后于同一顺序点显式同步等价 Unit mode，避免依赖 SoundFont 相关的隐式 preset remap。其他 opaque SysEx/Meta 仍只保留、导出而不发送到音频后端；该可听语义变更同步提升 Unit PCM / playback-span renderer cache generation，禁止命中旧版忽略 SysEx 或未显式同步 mode 时生成的 PCM。
 - 主应用取得单实例所有权后自动回收上次异常退出遗留的 session 音频缓存和 Pure MIDI session backing content。两类目录均采用版本清单、独占活动锁、直接子目录校验与逐目录 best-effort 删除；活动、未知、清单不匹配和重解析点目录必须保留。旧版裸 GUID `SessionContent` 目录只在名称及内容包结构均严格可识别时兼容回收。
 - MIDI 导出的每个实际单 Channel 事件 MTrk 在相对 tick 0 固定写入 CC91 Reverb Send=0、CC93 Chorus Send=0；初始化只属于 SMF 编码结果，位于结构/Channel 10 初始化之后、canonical 事件之前，Conductor 不写，Pure MIDI 用户 CC91/CC93 仍原样保留。

@@ -98,9 +98,14 @@ public static class ComboBoxWheelSelectionGuard
     {
         if (sender is not DependencyObject owner || args.Delta == 0) return;
         ScrollViewer? viewer = owner as ScrollViewer ?? FindDescendantScrollViewer(owner);
-        if (viewer is null) return;
-        if (args.Delta > 0) viewer.LineUp();
-        else viewer.LineDown();
+        if (viewer is not null)
+        {
+            if (args.Delta > 0) viewer.LineUp();
+            else viewer.LineDown();
+        }
+
+        // An open drop-down owns the gesture even when its items fit without a
+        // scrollbar or the wheel points beyond the current scroll boundary.
         args.Handled = true;
     }
 

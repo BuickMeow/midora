@@ -10,8 +10,7 @@ public enum WorkspaceKind
     Diagnostics,
     ConductorTrack,
     SegmentEditor,
-    EventInstrumentEditor,
-    MappingFunctionEditor
+    EventInstrumentEditor
 }
 
 public readonly record struct WorkspaceKey(WorkspaceKind Kind, MidoraId? ObjectId)
@@ -19,8 +18,7 @@ public readonly record struct WorkspaceKey(WorkspaceKind Kind, MidoraId? ObjectI
     public static WorkspaceKey ForType(WorkspaceKind kind)
     {
         if (kind is WorkspaceKind.SegmentEditor
-            or WorkspaceKind.EventInstrumentEditor
-            or WorkspaceKind.MappingFunctionEditor)
+            or WorkspaceKind.EventInstrumentEditor)
         {
             throw new ArgumentException("This workspace kind requires an object identity.", nameof(kind));
         }
@@ -30,8 +28,7 @@ public readonly record struct WorkspaceKey(WorkspaceKind Kind, MidoraId? ObjectI
     public static WorkspaceKey ForObject(WorkspaceKind kind, MidoraId objectId)
     {
         if (kind is not (WorkspaceKind.SegmentEditor
-            or WorkspaceKind.EventInstrumentEditor
-            or WorkspaceKind.MappingFunctionEditor))
+            or WorkspaceKind.EventInstrumentEditor))
         {
             throw new ArgumentException("This workspace kind is unique by type.", nameof(kind));
         }

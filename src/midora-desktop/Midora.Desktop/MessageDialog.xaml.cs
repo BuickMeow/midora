@@ -41,6 +41,10 @@ public partial class MessageDialog : Window
         MessageBoxButton buttons,
         MessageBoxImage image)
     {
+        if (owner is MainWindow mainWindow)
+        {
+            _ = mainWindow.PrepareForModalSurface();
+        }
         MessageDialog dialog = new(message, title, buttons, image);
         if (owner is not null && owner.IsVisible) dialog.Owner = owner;
         _ = dialog.ShowDialog();

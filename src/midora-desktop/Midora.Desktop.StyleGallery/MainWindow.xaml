@@ -935,19 +935,19 @@
                           <ui:FluentIcon Width="16" Height="16" Foreground="{StaticResource Brush.Text.Tertiary}" Data="{StaticResource Fluent.ReOrderDotsVertical20Regular}" />
                           <StackPanel Grid.Column="1">
                             <TextBlock FontWeight="SemiBold" Text="Gate length → Release" />
-                            <TextBlock Margin="0,2,0,0" Style="{StaticResource Text.Caption}" Text="C# Mapping Function · ABI v2" />
+                            <TextBlock Margin="0,2,0,0" Style="{StaticResource Text.Caption}" Text="Mapping Function Expression · ABI v3" />
                           </StackPanel>
                           <ToggleButton Grid.Column="2" VerticalAlignment="Center" IsChecked="True" Style="{StaticResource Toggle.Switch}" />
                         </Grid>
                       </Border>
-                      <Expander Margin="0,12,0,0" Header="C# Mapping draft" IsExpanded="True">
+                      <Expander Margin="0,12,0,0" Header="Mapping Function draft" IsExpanded="True">
                         <TextBox Height="116"
                                  Padding="10"
                                  AcceptsReturn="True"
                                  FontFamily="{StaticResource Font.Mono}"
                                  FontSize="11"
                                  HorizontalScrollBarVisibility="Auto"
-                                 Text="return context.GateLength &gt; 192&#x0a;    ? 96L&#x0a;    : 48L;"
+                                 Text="context.GateLength &gt; 192 ? 96 : 48"
                                  VerticalScrollBarVisibility="Auto" />
                       </Expander>
                     </StackPanel>

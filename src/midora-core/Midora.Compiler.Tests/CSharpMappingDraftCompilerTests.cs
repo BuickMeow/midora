@@ -5,16 +5,16 @@ namespace Midora.Compiler.Tests;
 public sealed class CSharpMappingDraftCompilerTests
 {
     [Fact]
-    public void DraftUsesTheFormalAbiAndRoslynProfileWithoutMutatingAProject()
+    public void DraftUsesTheFormalBoundedExpressionAbiAndInfersDependencies()
     {
         using CSharpMappingDraftCompiler compiler = new();
 
         CSharpMappingDraftCompilationResult result = compiler.Compile(
-            MappingAbiV2.Version,
-            "return context.GateLength > 192 ? value : 0d;",
-            [nameof(MappingContextV2.GateLength)]);
+            MappingExpressionAbiV3.Version,
+            "context.GateLength > 192 ? value : 0");
 
         Assert.True(result.Succeeded, result.ErrorMessage);
+        Assert.Equal([nameof(MappingContextV2.GateLength)], result.ReferencedContextFields);
     }
 
     [Fact]
@@ -23,9 +23,8 @@ public sealed class CSharpMappingDraftCompilerTests
         using CSharpMappingDraftCompiler compiler = new();
 
         CSharpMappingDraftCompilationResult result = compiler.Compile(
-            MappingAbiV2.Version,
-            "return missingSymbol;",
-            []);
+            MappingExpressionAbiV3.Version,
+            "missingSymbol");
 
         Assert.False(result.Succeeded);
         Assert.Contains("missingSymbol", result.ErrorMessage, StringComparison.Ordinal);

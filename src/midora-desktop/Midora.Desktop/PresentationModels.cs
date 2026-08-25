@@ -319,8 +319,7 @@ public enum WorkspaceTabIconKind
     LogicalTrack,
     PureMidiTrack,
     Conductor,
-    Diagnostics,
-    MappingFunction
+    Diagnostics
 }
 
 public abstract class WorkspaceViewModel(
@@ -339,7 +338,6 @@ public abstract class WorkspaceViewModel(
         WorkspaceKind.Diagnostics => WorkspaceTabIconKind.Diagnostics,
         WorkspaceKind.ConductorTrack => WorkspaceTabIconKind.Conductor,
         WorkspaceKind.SegmentEditor => WorkspaceTabIconKind.LogicalTrack,
-        WorkspaceKind.MappingFunctionEditor => WorkspaceTabIconKind.MappingFunction,
         _ => WorkspaceTabIconKind.None
     };
 
@@ -3425,75 +3423,6 @@ public sealed class InstrumentWorkspaceViewModel(
     }
 
     private static string MidiNoteName(int note) => TimelineWorkspaceViewModel.MidiNoteName(note);
-}
-
-public sealed class MappingFunctionWorkspaceViewModel(
-    MidoraId instrumentId,
-    MidoraId functionId,
-    string header)
-    : WorkspaceViewModel(
-        WorkspaceKey.ForObject(WorkspaceKind.MappingFunctionEditor, functionId),
-        header)
-{
-    private string _draftName = string.Empty;
-    private string _draftBody = string.Empty;
-    private string _declaredContextFields = string.Empty;
-    private string _status = "Applied";
-    private string _findText = string.Empty;
-    private string _findStatus = string.Empty;
-    private string _caretStatus = "Ln 1, Col 1";
-    private bool _initialized;
-    private bool _synchronizing;
-    private bool _isDirty;
-
-    public MidoraId InstrumentId { get; } = instrumentId;
-    public string DraftName { get => _draftName; set { if (Set(ref _draftName, value)) MarkDirty(); } }
-    public string DraftBody { get => _draftBody; set { if (Set(ref _draftBody, value)) MarkDirty(); } }
-    public string DeclaredContextFields { get => _declaredContextFields; set { if (Set(ref _declaredContextFields, value)) MarkDirty(); } }
-    public string Status { get => _status; private set => Set(ref _status, value); }
-    public string FindText { get => _findText; set => Set(ref _findText, value ?? string.Empty); }
-    public string FindStatus { get => _findStatus; set => Set(ref _findStatus, value ?? string.Empty); }
-    public string CaretStatus { get => _caretStatus; set => Set(ref _caretStatus, value ?? string.Empty); }
-    public bool IsDirty { get => _isDirty; private set => Set(ref _isDirty, value); }
-
-    public override void Rebuild(MidoraProject project, long revision)
-    {
-        EventInstrument? instrument = project.EventInstruments.FirstOrDefault(item => item.Id == InstrumentId);
-        CSharpMappingFunction? function = instrument?.MappingFunctions.FirstOrDefault(item => item.Id == ObjectId);
-        if (function is null)
-        {
-            Status = "The Mapping Function no longer exists.";
-            return;
-        }
-        Header = function.Name;
-        if (_initialized && IsDirty) return;
-        _synchronizing = true;
-        DraftName = function.Name;
-        DraftBody = function.Body;
-        DeclaredContextFields = string.Join(", ", function.DeclaredContextFields.Order(StringComparer.Ordinal));
-        _synchronizing = false;
-        _initialized = true;
-        IsDirty = false;
-        Status = $"Applied · ABI v{function.AbiVersion}";
-    }
-
-    public IReadOnlyList<string> ParseDeclaredContextFields() => DeclaredContextFields
-        .Split([',', ';', '\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-
-    public void MarkApplied()
-    {
-        IsDirty = false;
-        Status = "Applied";
-    }
-
-    public void SetValidationStatus(string status) => Status = status;
-
-    private void MarkDirty()
-    {
-        if (_synchronizing || !_initialized) return;
-        IsDirty = true;
-        Status = "Draft differs from applied version";
-    }
 }
 
 public sealed class SettingsWorkspaceViewModel()

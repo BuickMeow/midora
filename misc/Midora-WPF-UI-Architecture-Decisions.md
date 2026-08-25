@@ -70,7 +70,7 @@
 - 决定：viewport math、interval index、selection、snap、workspace identity、command availability 和 lock routing 使用不依赖 live WPF Window 的纯 C# 类型；WPF controls 只做输入适配和绘制。
 - 原因：使确定性、规模、边界和失败语义能在 CI 自动验证；实际窗口截图只承担视觉验收，不能替代逻辑测试。
 
-## ADR-UI-011：C# Mapping Draft 复用正式编译配置
+## ADR-UI-011（已由 ADR-CORE-052 的 ABI v3 规则取代）：历史 C# Mapping Draft 复用正式编译配置
 
 - 决定：由 `Midora.Compiler.CSharpMappingDraftCompiler` 暴露只验证未应用 Draft 的窄接口；内部直接复用正式 `CSharpMappingCompiler`，不得在 WPF 端另配 Roslyn、引用集、ABI、语言版本或缓存键。
 - 边界：Draft 编译不修改 Project、不进入 History、不替换 Applied Version，也不是 canonical consumer 输入；Apply 仍通过 `ProjectDomainEditCommands.UpdateMappingFunction` 做一次原子 Project 编辑，并触发正式编译。
@@ -225,7 +225,7 @@
 ## ADR-UI-031：目标感知的 Mapping 编辑与 Instance Velocity 预设
 
 - 决定：Mapping Step 编辑器必须先解析 Mapping Chain 的正式 owner 和精确 target，再生成 Source 与 Mapping Function 候选。Logical Parameter Mapping 不提供 Template Note/Velocity；非 Note 事件链不提供 Template Note/Velocity；无 Per-Note Instance Isolation 时不提供 Envelope、Trigger Note、Gate Length 或 Pitch Delta。无 Isolation 的 Note Number 链不允许添加任何 Step。
-- 决定：无 Isolation 时唯一新增例外是共享 `Note · Velocity` target 可直接读取 `TriggerVelocity`。该值已属于每个 Logical Note 实例的 Mapping Context，并最终写入逐 NoteOn 事件，不占用或改变 Channel Unit 状态；同一 Source 映射到 CC、RPN/NRPN、Program、Pitch、Note Number 或其他 target 时仍要求 Isolation。声明任何 per-note context 的 C# Mapping Function仍要求 Isolation。
+- 决定：无 Isolation 时唯一新增例外是共享 `Note · Velocity` target 可直接读取 `TriggerVelocity`。该值已属于每个 Logical Note 实例的 Mapping Context，并最终写入逐 NoteOn 事件，不占用或改变 Channel Unit 状态；同一 Source 映射到 CC、RPN/NRPN、Program、Pitch、Note Number 或其他 target 时仍要求 Isolation。Mapping Function Expression 经正式推导后依赖任何 per-note Context 时仍要求 Isolation。
 - 决定：`Follow Instance Velocity` 不增加旁路字段或第二套编译语义；它是共享 Note Velocity Mapping Chain 的 UI 预设：首个 enabled Step 为 `TriggerVelocity / Override`。新建 Event Instrument 的默认 SubVoice和显式新建 SubVoice 都生成该预设；关闭时只移除这一个基准 Step，后续自定义 Step 保留。复制、粘贴、持久化和 Undo/Redo继续按普通 Mapping Chain 处理。
 - 决定：Parameter Mapping 的 source、target SubVoice 与 MIDI target 可在创建后修改，完整 route 变更是一个原子 Project command；列表提供正式重排。Mapping Chain 的对象所属 Properties 公开 enabled、owner、target、最终 rounding/overflow、step count 与 stable ID；Step 的 Parameter、Envelope 与 Function 引用只通过带显示名称的对象选择器编辑，不要求用户手填 Stable ID。
 - 依据：用户于 2026-08-15 明确批准无 Isolation 的 `TriggerVelocity → Note Velocity`，并要求默认 Follow Instance Velocity。该决定收窄并替代 SRS 9.9 对这一精确 target 的 blanket isolation 要求，也把 SRS 8.53.3 的 fixed template velocity 默认改为新建 SubVoice 默认跟随；未修改 SRS 原文。

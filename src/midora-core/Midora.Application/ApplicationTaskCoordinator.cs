@@ -500,25 +500,6 @@ public sealed class ApplicationTaskCoordinator : IDisposable
             taskKind,
             async (_, token) =>
             {
-                if (actions.HasFunctionDrafts)
-                {
-                    FunctionDraftResolution draftResolution =
-                        await actions.ResolveFunctionDraftsAsync(token).ConfigureAwait(false);
-                    switch (draftResolution)
-                    {
-                        case FunctionDraftResolution.Apply:
-                            await actions.ApplyFunctionDraftsAsync(token).ConfigureAwait(false);
-                            break;
-                        case FunctionDraftResolution.Discard:
-                            await actions.DiscardFunctionDraftsAsync(token).ConfigureAwait(false);
-                            break;
-                        case FunctionDraftResolution.Cancel:
-                            return ProjectSwitchGuardResult<T>.Cancelled();
-                        default:
-                            throw new InvalidOperationException("Unknown Function Draft resolution.");
-                    }
-                }
-
                 using IDisposable editLock = _session.AcquireProjectEditLock();
                 if (actions.HasUnsavedProjectChanges)
                 {

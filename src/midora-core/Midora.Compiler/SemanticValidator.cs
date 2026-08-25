@@ -394,7 +394,7 @@ public static class SemanticValidator
                 {
                     AddError(
                         "MIDORA1254",
-                        "A C# Mapping Function for a non-Note event must not declare TemplateNote/TemplateVelocity.",
+                        "A Mapping Function expression for a non-Note event must not depend on TemplateNote/TemplateVelocity.",
                         subSource,
                         diagnostics);
                 }
@@ -468,7 +468,7 @@ public static class SemanticValidator
             }
             if (DeclaresNoteOnlyContext(ActiveSteps(mapping.Steps), functions))
             {
-                AddError("MIDORA1254", "A Logical Parameter C# Mapping Function must not declare TemplateNote/TemplateVelocity.",
+                AddError("MIDORA1254", "A Logical Parameter Mapping Function expression must not depend on TemplateNote/TemplateVelocity.",
                     mappingSource, diagnostics);
             }
         }
@@ -1281,7 +1281,7 @@ public static class SemanticValidator
             }
             if (step.Operation == MappingOperation.CustomCSharp && !step.MappingFunctionId.HasValue)
             {
-                AddError("MIDORA1271", "A C# Mapping step is missing its Mapping Function reference.", stepSource, diagnostics);
+                AddError("MIDORA1271", "A Mapping Function step is missing its Mapping Function reference.", stepSource, diagnostics);
             }
         }
     }

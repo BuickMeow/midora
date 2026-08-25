@@ -12,7 +12,7 @@ public sealed class SourceTraceTests
             fixture.Project,
             fixture.Instrument,
             "Too loud",
-            "return 200;");
+            "200");
         TemplateEvent sourceEvent = TemplateEvent.Note(fixture.Project, 0, 120, 60, 100);
         ValueMappingStep step = new(fixture.Project)
         {
@@ -34,14 +34,14 @@ public sealed class SourceTraceTests
     }
 
     [Fact]
-    public void MappingRuntimeFailureReportsTheUserExceptionTypeAndMessage()
+    public void MappingRuntimeFailureReportsTheBoundedEvaluationFailure()
     {
         var fixture = CompilerTestProject.Create();
         CSharpMappingFunction function = AddFunction(
             fixture.Project,
             fixture.Instrument,
             "Runtime failure",
-            "throw new InvalidOperationException(\"probe detail\");");
+            "value / 0");
         TemplateEvent sourceEvent = TemplateEvent.ControlChange(fixture.Project, 0, 1, 20);
         ValueMappingStep step = new(fixture.Project)
         {
@@ -57,8 +57,7 @@ public sealed class SourceTraceTests
         CompilerDiagnostic diagnostic = Assert.Single(
             result.Diagnostics,
             value => value.Code == "MIDORA2101");
-        Assert.Contains("System.InvalidOperationException", diagnostic.Message, StringComparison.Ordinal);
-        Assert.Contains("probe detail", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains("NaN or Infinity", diagnostic.Message, StringComparison.Ordinal);
         Assert.Equal(sourceEvent.Id, diagnostic.Source.SourceEventId);
         Assert.Equal(step.Id, diagnostic.Source.MappingStepId);
         Assert.Equal(function.Id, diagnostic.Source.MappingFunctionId);
@@ -72,7 +71,7 @@ public sealed class SourceTraceTests
             fixture.Project,
             fixture.Instrument,
             "Controller value",
-            "return 65;");
+            "65");
         TemplateEvent sourceEvent = TemplateEvent.ControlChange(
             fixture.Project,
             0,
@@ -109,7 +108,7 @@ public sealed class SourceTraceTests
             fixture.Project,
             fixture.Instrument,
             "Not finite",
-            "return double.NaN;");
+            "value / 0");
         LogicalParameterMapping mapping = AddLogicalParameterMapping(
             fixture.Project,
             fixture.Instrument,
@@ -143,7 +142,7 @@ public sealed class SourceTraceTests
             fixture.Project,
             fixture.Instrument,
             "Constant",
-            "return 65;");
+            "65");
         LogicalParameterMapping mapping = AddLogicalParameterMapping(
             fixture.Project,
             fixture.Instrument,

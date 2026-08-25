@@ -485,13 +485,13 @@ Requirement trace：输入为当前打开 `ProjectCompilationSession`、四类 P
 
 Requirement trace：输入为成功激活的持久化 Project 绝对路径、现有本机 MRU 和显式移除/清空请求；正式输出为确定顺序、有界、原子发布的本机列表及当前 `File.Exists` 可用投影。边界是成功激活后才记录、大小写路径同一、最多 10 项、离线路径不自动丢弃。MRU、可用投影、notice 和绝对路径不进入 `.midora`、Project、Modified、Undo/Redo 或 canonical；明确非目标是云同步、跨用户/跨设备列表、时间戳、固定/分组、扫描式内容验证及 WPF 菜单展示。
 
-## 37. ADR-CORE-035（已接受，Q-NUI-024/Q-NUI-025）：单 `long` 稳定 ID 与 Mapping ABI v2
+## 37. ADR-CORE-035（稳定 ID 部分仍有效；Mapping 部分已由 ADR-CORE-052 取代，Q-NUI-024/Q-NUI-025）：单 `long` 稳定 ID 与历史 Mapping ABI v2
 
 决定：Project 内所有对象类型共享一个以单个 C# `long` 为核心的 `MidoraId` 值类型和持久化单调分配器。合法值为 `1..long.MaxValue`；default/零和负值非法。分配器不补缺、不复用，现存对象全局唯一且小于 `NextStableId`；到达 `long.MaxValue` 时在分配前结构化失败。ID 只表示身份，不以数值推断用户顺序、创建顺序或同 tick 事件顺序。
 
 开发期 `.midora` v1 契约直接修订：JSON ID 与 `nextStableId` 使用原始 token 匹配 `[1-9][0-9]*` 的十进制 integer；对象文件名使用相同值的 invariant 十进制 ASCII，无符号、无前导零；protobuf 删除嵌套 high/low `StableId`，在每个既有外层 ID 字段号上直接使用标量 `int64`。读取器拒绝零、负值、非 canonical token/文件名和溢出。旧 128-bit v1 未冻结、未发布，不提供迁移、兼容读取或双写分支；schema、descriptor 和 golden bytes 作为同一开发期 v1 资产重建。
 
-C# Mapping 内部 ABI 从 v1 升级为 v2，签名为 `double Transform(double value, in MappingContextV2 context)`；`MappingStableIdV2` 只含单个 `long Value`，default 值表示无来源，其余值必须为正。Project 新建 Mapping Function 写 `abiVersion = 2`，正式编译器只消费 v2；v1 契约不作为兼容运行分支保留。Roslyn 5.3.0、C# 14、`Microsoft.NETCore.App.Ref 10.0.10`、独立只读契约、确定性 source-hash identity、当前修订 collectible AssemblyLoadContext 缓存和非 sandbox 边界保持不变。
+历史 Mapping 决定：当时内部 ABI 从 v1 升级为 v2，签名为 `double Transform(double value, in MappingContextV2 context)`，`MappingStableIdV2` 改为单个 `long Value`。该自由 C# 执行语义、v2 新建默认和 collectible ALC 已由 ADR-CORE-052 破坏性取代，不再构成当前要求；单 `long` Context 身份表示仍有效，但 ABI v3 表达式不能读取 Stable ID。
 
 Requirement trace：输入为 Project 分配状态、对象身份/引用、Mapping Context、JSON/protobuf/路径及开发期 v1 schema 资产；正式输出为无 Guid/UInt128/high-low 转换的单 `long` Domain/Compiler/Mapping/持久化全链。边界为正值、全局唯一、小于 `NextStableId`、分配耗尽、严格 token/wire/path 一致性、ABI v2 快照和确定性重开。稳定 ID 与分配器属于 Project 源数据；compiled source trace、Mapping 程序集/缓存及解析路径属于派生或运行时状态。明确非目标是跨 Project 全局身份、随机/分布式生成、128-bit 迁移、JavaScript Number 精度兼容层、根据 ID 数值建立业务优先级或同时运行 Mapping ABI v1/v2。
 
@@ -642,3 +642,15 @@ Compiler 从该 opaque source 派生独立 `CanonicalMidiChannelModeSystemExclus
 正式 1-channel synth 将 target 归一化为 channel 0，并在 BASSMIDI RAW batch 中编码完整 F0…F7 消息。Root descriptor 的 Melodic/Percussion 初始化仍发生在 Stream 创建/复用阶段，privileged event 只表示时间线中的后续状态改变。该事件首次进入可听投影、以及修复默认 Playback View 遗漏该事件时，都必须提升 canonical Unit PCM、sample-domain Unit PCM、实时 Segment PCM 与 playback-span renderer cache generation；opaque source fingerprint 不能用于自然淘汰这些旧版静音 PCM。任意其他 SysEx、Meta、F7 continuation、GM/GS/XG Reset、无效 checksum/长度/mode 均不派生音频事件、不报兼容诊断，仍仅保留和导出。Worker 不允许直接读取 Project opaque bytes 或自行识别厂商消息。
 
 Requirement trace：输入为 Pure MIDI Segment opaque source、SMF source Track/Port/channel buckets、Root 活动连通区间、CompileContext 与 Unit allocation；正式输出为不变的 opaque SMF projection及额外的有类型 canonical audio event，经非分页/分页计划、IPC、缓存 identity 和 BASS RAW submission 到达 Unit stream。边界包括多 Channel MTrk 归属、GS part-address 特殊映射、合法 checksum、同 tick order、range-start restore、Mute/Solo future replacement、Root 空闲断点与 channel-0 normalization。Project/persistence 格式不新增字段；canonical/计划/IPC/cache generation 属于派生与运行时。明确非目标是任意 SysEx 音频回放、外部硬件兼容层、Reset 消息、F7 continuation 合并、识别未知厂商 payload 或把 SysEx 语义加入 Event Instrument。
+
+## 54. ADR-CORE-052（已接受）：Mapping Function 使用受限表达式 ABI v3
+
+决定：破坏性停止执行 Project 内的自由 C# Mapping Function ABI v1/v2。当前 Mapping Function 固定为 ABI v3 单行 `double` 表达式；只允许版本化白名单中的字面量、`value`、批准的 `MappingContextV2` 数值/枚举字段、算术/比较/布尔/条件运算、批准的 Contract 枚举成员和纯数值 `System.Math` 成员。禁止语句、循环、赋值、lambda、对象/数组创建、任意 API、字符串、名称、Stable ID、反射、I/O、进程、网络、时间、随机数、异常构造和其他副作用。
+
+Roslyn 仅执行 Expression 语法解析；Midora 自有 binder 逐节点检查并建立 `System.Linq.Expressions`。不得 Emit 或加载 Project 源码程序集，不得提供 .NET reference pack、unsafe 或运行机器 TPA。固定限制为 8,192 Unicode scalars、512 syntax nodes、64 depth。批准的 Context/Math/枚举集合由 ABI Contract 集中定义，并由正式编译、Draft 验证和 UI 补全共用。
+
+Context 依赖由正式分析器推导；UI 不再允许手工声明。Apply 原子写入表达式与推导集合；正式编译重新推导并要求与持久化集合精确相等，以拒绝陈旧或篡改的依赖元数据。缓存键继续使用 ABI/profile/精确源码 UTF-8 SHA-256，只保留当前 Project 仍存在的修订并在关闭时释放；不再存在 collectible ALC，因为没有用户程序集。
+
+旧 ABI v1/v2 可以被格式层读取以形成明确诊断，但绝不执行、不自动迁移、不保留兼容执行器；用户重新编辑并 Apply 后形成 ABI v3。该安全替换不改变 Mapping Chain 的累计 `value`、取整/越界、Source Trace、Full/Incremental 等价或 canonical consumers。Batch Edit 的表达式不属于 Project Source Data，不受本决定改变。
+
+Requirement trace：输入为 Project Mapping Function expression/ABI/dependency metadata、Mapping Chain 当前值和只读 Context；正式输出为有界确定性委托及既有 canonical Mapping 结果。失败边界包括未知/旧 ABI、非法节点/API/字段、依赖不一致、超长/超节点/超深、非有限结果和目标类型/范围失败。表达式与推导依赖属于 Project；委托/cache/diagnostic 属于当前编译会话；明确非目标是通用脚本、完整 C#、沙箱进程、旧源码自动迁移、Batch Edit 语言变更或扩大 Context 对象图。

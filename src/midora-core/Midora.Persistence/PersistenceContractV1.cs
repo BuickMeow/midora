@@ -15,7 +15,7 @@ public static class PersistenceContractV1
     public const int ShortTextMaximumScalars = 256;
     public const int MetadataTextMaximumScalars = 4_096;
     public const int DescriptionMaximumScalars = 65_536;
-    public const int MappingBodyMaximumScalars = 1_048_576;
+    public const int MappingBodyMaximumScalars = 8_192;
     public const int RelativePathMaximumScalars = 4_096;
 
     public const string UtcTimestampFormat = "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'";

@@ -100,6 +100,15 @@ public partial class MainWindow : Window
         PreviewKeyUp += OnPreviewKeyUp;
         PreviewMouseDown += OnPreviewMouseDownForPlaybackShortcut;
         Deactivated += OnWindowDeactivated;
+        ContextMenuOpening += OnEditingSurfaceContextMenuOpening;
+        MainMenu.AddHandler(
+            MenuItem.SubmenuOpenedEvent,
+            new RoutedEventHandler(OnMainMenuSubmenuOpened),
+            handledEventsToo: true);
+        AddHandler(
+            Selector.SelectionChangedEvent,
+            new SelectionChangedEventHandler(OnAnyTabSelectionChangedForPreviewPriority),
+            handledEventsToo: true);
         AddHandler(
             Keyboard.GotKeyboardFocusEvent,
             new KeyboardFocusChangedEventHandler(OnKeyboardFocusChangedForInputMethod),
@@ -278,6 +287,7 @@ public partial class MainWindow : Window
 
     private async void OnApplicationPreferencesClick(object sender, RoutedEventArgs e)
     {
+        if (!PrepareForModalSurface()) return;
         if (!_session.CanStartForegroundTask)
         {
             _session.SetStatusMessage(
@@ -359,6 +369,7 @@ public partial class MainWindow : Window
 
     private bool StopPlaybackForProjectCommand(string command)
     {
+        if (!PrepareForModalSurface()) return false;
         if (_operationInProgress)
         {
             _session.SetStatusMessage(
@@ -381,27 +392,6 @@ public partial class MainWindow : Window
 
     private async Task<bool> ConfirmCloseCurrentProjectAsync()
     {
-        if (_session.HasUnsavedDrafts)
-        {
-            MessageBoxResult drafts = MessageDialog.Show(
-                this,
-                "Apply all C# Mapping drafts before closing the current Project? Drafts are session UI state and are discarded when the Project closes.",
-                "Unapplied C# Mapping Drafts",
-                MessageBoxButton.YesNoCancel,
-                MessageBoxImage.Warning);
-            if (drafts == MessageBoxResult.Cancel) return false;
-            if (drafts == MessageBoxResult.Yes)
-            {
-                foreach (MappingFunctionWorkspaceViewModel workspace in _session.Workspaces
-                             .OfType<MappingFunctionWorkspaceViewModel>()
-                             .Where(item => item.IsDirty)
-                             .ToArray())
-                {
-                    _session.ActiveWorkspace = workspace;
-                    if (!_session.ApplyMappingDraft(workspace)) return false;
-                }
-            }
-        }
         if (!_session.HasProject
             || (_session.Document?.IsModified != true
                 && _session.Persistence?.CurrentProjectPath is not null))
@@ -734,6 +724,7 @@ public partial class MainWindow : Window
     private void RunAfterMenuClosed(object sender, Action action)
     {
         ArgumentNullException.ThrowIfNull(action);
+        if (!PrepareForModalSurface()) return;
 
         // A Popup owns a separate HWND. Close it and let the current routed input
         // event unwind before an edit rebuilds ItemsSource-backed WPF collections.
@@ -3035,39 +3026,6 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private void OnFindMappingClick(object sender, RoutedEventArgs e) => FindNextInMappingEditor();
-
-    private void FocusMappingFind()
-    {
-        if (FindWorkspaceElement<TextBox>("MappingFind") is TextBox find)
-        {
-            find.Focus();
-            find.SelectAll();
-        }
-    }
-
-    private void FindNextInMappingEditor()
-    {
-        if (_session.ActiveWorkspace is not MappingFunctionWorkspaceViewModel workspace
-            || FindWorkspaceElement<MappingFunctionCodeEditor>("MappingEditor") is not MappingFunctionCodeEditor editor)
-        {
-            return;
-        }
-        string needle = workspace.FindText;
-        if (needle.Length == 0)
-        {
-            workspace.FindStatus = "Enter text to find.";
-            FocusMappingFind();
-            return;
-        }
-        if (!editor.FindNext(needle, out bool wrapped))
-        {
-            workspace.FindStatus = "No match.";
-            return;
-        }
-        workspace.FindStatus = wrapped ? "Wrapped to the first match." : "Match selected.";
-    }
-
     private T? FindWorkspaceElement<T>(object tag) where T : FrameworkElement
     {
         return FindDescendant<T>(WorkspaceTabs, element =>
@@ -3311,15 +3269,8 @@ public partial class MainWindow : Window
         if (sender is not FrameworkElement { DataContext: InstrumentWorkspaceViewModel { ObjectId: MidoraId instrumentId } }
             || _session.Project is null) return;
         EventInstrument instrument = _session.Project.EventInstruments.Single(item => item.Id == instrumentId);
-        HashSet<MidoraId> before = instrument.MappingFunctions.Select(item => item.Id).ToHashSet();
         string name = UniqueName("Mapping", instrument.MappingFunctions.Select(item => item.Name));
-        RunSynchronous("Create C# Mapping Function", () =>
-        {
-            _session.Execute(ProjectDomainEditCommands.CreateMappingFunction(
-                instrumentId, name, "return value;", Array.Empty<string>()));
-            CSharpMappingFunction created = instrument.MappingFunctions.Single(item => !before.Contains(item.Id));
-            _session.OpenMappingFunction(instrumentId, created.Id);
-        });
+        ShowMappingFunctionDialog(instrumentId, functionId: null, name, "value");
     }
 
     private void OnMappingFunctionDoubleClick(object sender, MouseButtonEventArgs e)
@@ -3332,11 +3283,93 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             _ = Dispatcher.BeginInvoke(
-                () => RunSynchronous(
-                    "Open C# Mapping Function",
-                    () => _session.OpenMappingFunction(instrumentId, function.Id)),
+                () => ShowMappingFunctionDialog(instrumentId, function.Id),
                 DispatcherPriority.Normal);
         }
+    }
+
+    private void OnEditMappingFunctionClick(object sender, RoutedEventArgs e)
+    {
+        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel
+            {
+                ObjectId: MidoraId instrumentId,
+                Selection.Primary: MidoraId functionId
+            }
+            || _session.Project?.EventInstruments.FirstOrDefault(value => value.Id == instrumentId)
+                ?.MappingFunctions.Any(value => value.Id == functionId) != true)
+        {
+            ShowUnavailable("Mapping Function Properties", "Select a Mapping Function first.");
+            return;
+        }
+        ShowMappingFunctionDialog(instrumentId, functionId);
+        e.Handled = true;
+    }
+
+    private void ShowMappingFunctionDialog(
+        MidoraId instrumentId,
+        MidoraId? functionId,
+        string? initialName = null,
+        string? initialExpression = null)
+    {
+        if (_session.Project?.EventInstruments.FirstOrDefault(value => value.Id == instrumentId)
+            is not EventInstrument instrument)
+        {
+            ShowUnavailable("Mapping Function", "The Event Instrument no longer exists.");
+            return;
+        }
+
+        CSharpMappingFunction? function = functionId is MidoraId id
+            ? instrument.MappingFunctions.FirstOrDefault(value => value.Id == id)
+            : null;
+        if (functionId.HasValue && function is null)
+        {
+            ShowUnavailable("Mapping Function", "The Mapping Function no longer exists.");
+            return;
+        }
+
+        HashSet<MidoraId> before = instrument.MappingFunctions.Select(value => value.Id).ToHashSet();
+        MappingFunctionDialog dialog = new(
+            function is null ? "New Mapping Function" : "Mapping Function Properties",
+            function?.Name ?? initialName ?? UniqueName("Mapping", instrument.MappingFunctions.Select(value => value.Name)),
+            function?.Body ?? initialExpression ?? "value",
+            submission =>
+            {
+                try
+                {
+                    if (function is null)
+                    {
+                        _session.Execute(ProjectDomainEditCommands.CreateMappingFunction(
+                            instrumentId,
+                            submission.Name,
+                            submission.Expression,
+                            submission.ReferencedContextFields));
+                        CSharpMappingFunction created = instrument.MappingFunctions.Single(value => !before.Contains(value.Id));
+                        if (_session.ActiveWorkspace is InstrumentWorkspaceViewModel workspace)
+                        {
+                            workspace.Selection.Replace(created.Id);
+                            _session.RefreshWorkspace(workspace);
+                        }
+                    }
+                    else
+                    {
+                        _session.Execute(ProjectDomainEditCommands.UpdateMappingFunction(
+                            instrumentId,
+                            function.Id,
+                            submission.Name,
+                            submission.Expression,
+                            submission.ReferencedContextFields));
+                    }
+                    return null;
+                }
+                catch (Exception exception)
+                {
+                    return exception.Message;
+                }
+            })
+        {
+            Owner = this
+        };
+        _ = ShowModalDialog(dialog);
     }
 
     private void OnInstrumentStructureSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -3463,18 +3496,6 @@ public partial class MainWindow : Window
         {
             _synchronizingInstrumentStructureSelection = false;
         }
-    }
-
-    private void OnCompileMappingDraftClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { DataContext: MappingFunctionWorkspaceViewModel workspace }) return;
-        RunSynchronous("Compile C# Mapping Draft", () => _session.CompileMappingDraft(workspace));
-    }
-
-    private void OnApplyMappingDraftClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { DataContext: MappingFunctionWorkspaceViewModel workspace }) return;
-        RunSynchronous("Apply C# Mapping Draft", () => _session.ApplyMappingDraft(workspace));
     }
 
     private static string UniqueName(string basis, IEnumerable<string> existing)
@@ -3624,17 +3645,6 @@ public partial class MainWindow : Window
     {
         if (sender is FrameworkElement { DataContext: WorkspaceViewModel workspace })
         {
-            if (workspace is MappingFunctionWorkspaceViewModel { IsDirty: true } mapping)
-            {
-                MessageBoxResult result = MessageDialog.Show(
-                    this,
-                    "Apply this C# Mapping draft before closing the Workspace?",
-                    "Unapplied C# Mapping Draft",
-                    MessageBoxButton.YesNoCancel,
-                    MessageBoxImage.Warning);
-                if (result == MessageBoxResult.Cancel) return;
-                if (result == MessageBoxResult.Yes && !_session.ApplyMappingDraft(mapping)) return;
-            }
             _session.CloseWorkspace(workspace);
             e.Handled = true;
         }
@@ -3645,11 +3655,6 @@ public partial class MainWindow : Window
         if (sender is not FrameworkElement { DataContext: WorkspaceViewModel keep }) return;
         foreach (WorkspaceViewModel workspace in _session.Workspaces.Where(item => !ReferenceEquals(item, keep)).ToArray())
         {
-            if (workspace is MappingFunctionWorkspaceViewModel { IsDirty: true })
-            {
-                _session.Notice = "Close each dirty C# Mapping draft individually so its Apply decision is explicit.";
-                continue;
-            }
             _session.CloseWorkspace(workspace);
         }
         _session.ActiveWorkspace = keep;
@@ -3735,7 +3740,7 @@ public partial class MainWindow : Window
             && _session.Project?.EventInstruments.FirstOrDefault(item => item.Id == instrumentId)
                 ?.MappingFunctions.Any(function => function.Id == functionId) == true)
         {
-            _session.OpenMappingFunction(instrumentId, functionId);
+            ShowMappingFunctionDialog(instrumentId, functionId);
         }
     }
 
@@ -8055,7 +8060,7 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             _ = Dispatcher.BeginInvoke(
-                () => RunSynchronous("Navigate to Diagnostic", () => _session.NavigateToDiagnostic(diagnostic)),
+                () => NavigateToDiagnostic(diagnostic),
                 DispatcherPriority.Normal);
         }
     }
@@ -8064,7 +8069,17 @@ public partial class MainWindow : Window
     {
         if (GetDiagnosticCommandTarget(sender) is DiagnosticRow diagnostic)
         {
-            RunSynchronous("Navigate to Diagnostic", () => _session.NavigateToDiagnostic(diagnostic));
+            NavigateToDiagnostic(diagnostic);
+        }
+    }
+
+    private void NavigateToDiagnostic(DiagnosticRow diagnostic)
+    {
+        if (!RunSynchronous("Navigate to Diagnostic", () => _session.NavigateToDiagnostic(diagnostic))) return;
+        SourceReference source = diagnostic.SourceReference;
+        if (source.EventInstrumentId != default && source.MappingFunctionId != default)
+        {
+            ShowMappingFunctionDialog(source.EventInstrumentId, source.MappingFunctionId);
         }
     }
 
@@ -8501,6 +8516,45 @@ public partial class MainWindow : Window
         }
     }
 
+    internal bool PrepareForModalSurface()
+    {
+        if (_session.ActiveWorkspace is not InstrumentWorkspaceViewModel) return true;
+        return _session.StopEventInstrumentKeyboardPreviewForEditing();
+    }
+
+    private bool? ShowModalDialog(Window dialog)
+    {
+        ArgumentNullException.ThrowIfNull(dialog);
+        if (!PrepareForModalSurface()) return false;
+        if (dialog.Owner is null && IsVisible) dialog.Owner = this;
+        return dialog.ShowDialog();
+    }
+
+    private void OnEditingSurfaceContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (_session.ActiveWorkspace is InstrumentWorkspaceViewModel)
+        {
+            _ = PrepareForModalSurface();
+        }
+    }
+
+    private void OnMainMenuSubmenuOpened(object sender, RoutedEventArgs e)
+    {
+        if (_session.ActiveWorkspace is InstrumentWorkspaceViewModel)
+        {
+            _ = PrepareForModalSurface();
+        }
+    }
+
+    private void OnAnyTabSelectionChangedForPreviewPriority(object sender, SelectionChangedEventArgs e)
+    {
+        if (e.OriginalSource is TabControl
+            && _session.ActiveWorkspace is InstrumentWorkspaceViewModel)
+        {
+            _ = PrepareForModalSurface();
+        }
+    }
+
     private void ShowError(string title, string message) => MessageDialog.Show(this, message, title, MessageBoxButton.OK, MessageBoxImage.Error);
 
     private SaveFileDialog CreateProjectSaveDialog(string title) => new()
@@ -8750,12 +8804,6 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
-        if (e.Key == Key.F3 && _session.ActiveWorkspace is MappingFunctionWorkspaceViewModel)
-        {
-            FindNextInMappingEditor();
-            e.Handled = true;
-            return;
-        }
         if (e.Key == Key.F6)
         {
             WorkspaceTabs.Focus();
@@ -8766,6 +8814,11 @@ public partial class MainWindow : Window
             && Keyboard.Modifiers == ModifierKeys.Control
             && !IsTransientInputSurfaceOpen())
         {
+            if (!PrepareForModalSurface())
+            {
+                e.Handled = true;
+                return;
+            }
             e.Handled = TryOpenActiveProperties();
             if (e.Handled) return;
         }
@@ -8810,21 +8863,6 @@ public partial class MainWindow : Window
         bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
         if (IsTextEditingFocus())
         {
-            if (e.Key == Key.F
-                && !shift
-                && _session.ActiveWorkspace is MappingFunctionWorkspaceViewModel)
-            {
-                FocusMappingFind();
-                e.Handled = true;
-                return;
-            }
-            if (e.Key == Key.S
-                && !shift
-                && _session.ActiveWorkspace is MappingFunctionWorkspaceViewModel mapping)
-            {
-                RunSynchronous("Apply C# Mapping Draft", () => _session.ApplyMappingDraft(mapping));
-                e.Handled = true;
-            }
             return;
         }
         if (Keyboard.Modifiers == ModifierKeys.Control
@@ -8836,17 +8874,11 @@ public partial class MainWindow : Window
         }
         switch (e.Key)
         {
-            case Key.F when !shift && _session.ActiveWorkspace is MappingFunctionWorkspaceViewModel:
-                FocusMappingFind(); e.Handled = true; break;
             case Key.N: OnNewProjectClick(this, new RoutedEventArgs()); e.Handled = true; break;
             case Key.O: OnOpenProjectClick(this, new RoutedEventArgs()); e.Handled = true; break;
             case Key.S when shift: OnSaveCopyClick(this, new RoutedEventArgs()); e.Handled = true; break;
             case Key.S:
-                if (_session.ActiveWorkspace is MappingFunctionWorkspaceViewModel mapping)
-                {
-                    RunSynchronous("Apply C# Mapping Draft", () => _session.ApplyMappingDraft(mapping));
-                }
-                else OnSaveProjectClick(this, new RoutedEventArgs());
+                OnSaveProjectClick(this, new RoutedEventArgs());
                 e.Handled = true;
                 break;
             case Key.Z: OnUndoClick(this, new RoutedEventArgs()); e.Handled = true; break;
@@ -8877,6 +8909,11 @@ public partial class MainWindow : Window
                 OnEditParameterMappingClick(this, new RoutedEventArgs());
                 return true;
             }
+            if (instrument.MappingFunctions.Any(value => value.Id == selectedId))
+            {
+                ShowMappingFunctionDialog(instrument.Id, selectedId);
+                return true;
+            }
         }
         ObjectPropertiesViewModel properties = _session.CreateObjectProperties(workspace);
         if (!ObjectPropertiesProjection.CanEditInPropertiesDialog(workspace, properties)) return false;
@@ -8902,6 +8939,8 @@ public partial class MainWindow : Window
         {
             return true;
         }
+
+        if (!PrepareForModalSurface()) return true;
 
         switch (key)
         {
@@ -10134,8 +10173,8 @@ public partial class MainWindow : Window
             {
                 if (MessageDialog.Show(
                         this,
-                        "Delete the selected C# Mapping Function? Existing Mapping Steps that reference it may also be affected.",
-                        "Delete C# Mapping Function",
+                        "Delete the selected Mapping Function? Existing Mapping Steps that reference it may also be affected.",
+                        "Delete Mapping Function",
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Warning) == MessageBoxResult.Yes)
                 {
@@ -10305,6 +10344,13 @@ public partial class MainWindow : Window
     private void OnPreviewMouseDownForPlaybackShortcut(object sender, MouseButtonEventArgs e)
     {
         DependencyObject? source = e.OriginalSource as DependencyObject;
+        if (_session.ActiveWorkspace is InstrumentWorkspaceViewModel
+            && (e.ChangedButton == MouseButton.Right
+                || e.ClickCount > 1
+                || IsPreviewPriorityPointerTarget(source, PrimaryTransportButton)))
+        {
+            _ = PrepareForModalSurface();
+        }
         TimelineSurface? surface = FindVisualAncestor<TimelineSurface>(source);
         if (surface is { SurfaceMode: TimelineSurfaceMode.Arrangement }
             && _session.ActiveWorkspace is TimelineWorkspaceViewModel
@@ -10324,6 +10370,17 @@ public partial class MainWindow : Window
         {
             _spaceStartedPlayback = false;
         }
+    }
+
+    internal static bool IsPreviewPriorityPointerTarget(
+        DependencyObject? source,
+        ButtonBase? primaryTransportButton)
+    {
+        ButtonBase? button = FindVisualAncestor<ButtonBase>(source);
+        return (button is not null && !ReferenceEquals(button, primaryTransportButton))
+            || FindVisualAncestor<TabItem>(source) is not null
+            || FindVisualAncestor<ComboBox>(source) is not null
+            || FindVisualAncestor<MenuItem>(source) is not null;
     }
 
     private bool IsLogicalTrackShortcutContext() =>

@@ -4261,7 +4261,7 @@ internal static class SourceFingerprint
     {
         Add(ref hash, instrument.Id);
         // These display names are part of MappingContextV2 and can therefore affect
-        // a free C# Mapping Function's returned value.
+        // a bounded Mapping Function expression's returned value.
         Add(ref hash, instrument.Name);
         Add(ref hash, instrument.RootNote);
         Add(ref hash, instrument.TemplateLengthTicks);

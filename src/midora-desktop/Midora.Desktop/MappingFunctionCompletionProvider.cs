@@ -35,12 +35,6 @@ internal static class MappingFunctionCompletionProvider
             [nameof(MappingEventKindV2)] = CreateEnumMembers<MappingEventKindV2>(),
             [nameof(MappingTargetParameterV2)] = CreateEnumMembers<MappingTargetParameterV2>()
         };
-    private static readonly IReadOnlyList<MappingFunctionCompletionItem> StableIdMembers =
-    [
-        new("Value", "Value", 0, "Property", "The non-negative ABI v2 stable-ID value (long)."),
-        new("IsEmpty", "IsEmpty", 0, "Property", "True when the ABI v2 stable ID is empty.")
-    ];
-
     private static readonly IReadOnlyDictionary<string, string> ContextDescriptions =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -86,8 +80,6 @@ internal static class MappingFunctionCompletionProvider
     internal static IReadOnlySet<string> ContractTypeNames { get; } =
         new HashSet<string>(StringComparer.Ordinal)
         {
-            nameof(MappingContextV2),
-            nameof(MappingStableIdV2),
             nameof(MappingEventKindV2),
             nameof(MappingTargetParameterV2)
         };
@@ -161,15 +153,6 @@ internal static class MappingFunctionCompletionProvider
         {
             return EnumMembers[nameof(MappingTargetParameterV2)];
         }
-        if (receiver is nameof(MappingContextV2.CurrentEventId)
-            or nameof(MappingContextV2.LogicalParameterId)
-            or nameof(MappingContextV2.TrackId)
-            or nameof(MappingContextV2.SegmentId)
-            or nameof(MappingContextV2.SubVoiceId)
-            or nameof(MappingContextV2.EventInstrumentId))
-        {
-            return StableIdMembers;
-        }
         return [];
     }
 
@@ -180,33 +163,21 @@ internal static class MappingFunctionCompletionProvider
             "value",
             0,
             "Parameter",
-            "The input value of Transform(double value, in MappingContextV2 context).");
+            "The current accumulated Mapping Chain value (double).");
         yield return new(
             "context",
             "context",
             0,
             "Parameter",
-            "The read-only ABI v2 MappingContextV2 value.");
+            "The read-only bounded Mapping Expression context.");
         yield return new("Math", "Math", 0, "Type", "System.Math static methods and constants.");
-        yield return new(nameof(MappingContextV2), nameof(MappingContextV2), 0, "Type", "The fixed ABI v2 context type.");
-        yield return new(nameof(MappingStableIdV2), nameof(MappingStableIdV2), 0, "Type", "The fixed ABI v2 stable-ID value type.");
-        yield return new(nameof(MappingEventKindV2), nameof(MappingEventKindV2), 0, "Enum", "The fixed ABI v2 event-kind enum.");
-        yield return new(nameof(MappingTargetParameterV2), nameof(MappingTargetParameterV2), 0, "Enum", "The fixed ABI v2 target-parameter enum.");
+        yield return new(nameof(MappingEventKindV2), nameof(MappingEventKindV2), 0, "Enum", "The approved ABI v3 event-kind enum.");
+        yield return new(nameof(MappingTargetParameterV2), nameof(MappingTargetParameterV2), 0, "Enum", "The approved ABI v3 target-parameter enum.");
 
         foreach ((string text, string description) in new (string, string)[]
                  {
-                     ("return", "Return a double result from this function body."),
-                     ("if", "C# conditional statement."),
-                     ("else", "C# alternative branch."),
-                     ("switch", "C# switch statement or expression."),
-                     ("var", "C# implicitly typed local variable."),
-                     ("double", "C# double type."),
-                     ("long", "C# signed 64-bit integer type."),
-                     ("int", "C# signed 32-bit integer type."),
-                     ("bool", "C# Boolean type."),
                      ("true", "Boolean true literal."),
-                     ("false", "Boolean false literal."),
-                     ("null", "C# null literal.")
+                     ("false", "Boolean false literal.")
                  })
         {
             yield return new(text, text, 0, "Keyword", description);
@@ -217,6 +188,8 @@ internal static class MappingFunctionCompletionProvider
     {
         return typeof(MappingContextV2)
             .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+            .Where(property => MappingExpressionLanguageV3.NumericContextFields.Contains(property.Name)
+                || MappingExpressionLanguageV3.EnumContextFields.Contains(property.Name))
             .OrderBy(property => property.MetadataToken)
             .Select(property => new MappingFunctionCompletionItem(
                 property.Name,
@@ -224,7 +197,7 @@ internal static class MappingFunctionCompletionProvider
                 0,
                 "Property",
                 ContextDescriptions.TryGetValue(property.Name, out string? description)
-                    ? description + " Add this field name to DECLARED ABI V2 CONTEXT FIELDS when the body reads it."
+                    ? description + " Its dependency is inferred automatically."
                     : $"{FormatType(property.PropertyType)} context property."))
             .ToArray();
     }
@@ -233,7 +206,9 @@ internal static class MappingFunctionCompletionProvider
     {
         IEnumerable<MappingFunctionCompletionItem> methods = typeof(Math)
             .GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Where(method => !method.IsSpecialName && !method.ContainsGenericParameters)
+            .Where(method => MappingExpressionLanguageV3.MathMethodNames.Contains(method.Name)
+                && method.ReturnType == typeof(double)
+                && method.GetParameters().All(parameter => parameter.ParameterType == typeof(double)))
             .GroupBy(method => method.Name, StringComparer.Ordinal)
             .Select(group =>
             {
@@ -253,9 +228,13 @@ internal static class MappingFunctionCompletionProvider
                     signatures);
             });
         return methods
-            .Append(new("PI", "PI", 0, "Constant", "System.Math.PI."))
-            .Append(new("E", "E", 0, "Constant", "System.Math.E."))
-            .Append(new("Tau", "Tau", 0, "Constant", "System.Math.Tau."))
+            .Concat(MappingExpressionLanguageV3.MathConstantNames.Select(name =>
+                new MappingFunctionCompletionItem(
+                    name,
+                    name,
+                    0,
+                    "Constant",
+                    $"System.Math.{name}.")))
             .OrderBy(item => item.Text, StringComparer.Ordinal)
             .ToArray();
     }

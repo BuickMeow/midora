@@ -541,9 +541,9 @@ Error
 ```text
 可按既有规则诊断为 Warning。
 ```
-未知 `abiVersion`、ABI v2 函数体不符合固定方法体结构、引用了 ABI v2 未开放的程序集或使用了高于 C# 14 的语法，均按 Mapping Function 编译错误处理。
+未知 `abiVersion`、旧自由 C# ABI v1/v2、ABI v3 表达式超出语法/API/资源白名单、或持久化 Context 依赖与正式推导不一致，均按 Mapping Function 编译错误处理。
 ### 12.9.2 运行时异常
-C# Mapping Function 运行时异常：
+Mapping Function Expression 求值失败：
 ```text
 当前编译失败
 产生 Error
@@ -552,26 +552,13 @@ C# Mapping Function 运行时异常：
 不允许捕获后使用默认值继续。
 ### 12.9.3 只读 Context
 MappingContext 默认只读。
-C# Mapping Function 不允许修改 Project 内容。
+Mapping Function Expression 没有可修改 Project 或外部状态的语言能力。
 ### 12.9.4 确定性要求
-系统需求上要求用户函数应当对同一输入给出确定结果。
-如果函数使用：
-```text
-随机数
-当前时间
-外部文件
-外部进程状态
-网络状态
-全局可变状态
-```
-导致不确定，用户自担风险。
-Debug 可辅助暴露这种问题。
+ABI v3 只允许确定性的数值/枚举输入和纯数值运算。随机数、时间、I/O、网络、进程、反射和全局可变状态无法从该语言到达。表达式解析、白名单、限制、绑定规则和源码 hash identity 必须固定；不得依赖运行机器 API 面、缓存历史或集合遍历顺序改变结果。
 
-系统自身的 ABI v2 编译必须固定 C# 14、`Microsoft.NETCore.App.Ref 10.0.10`、Mapping v2 契约、编译选项和基于源码 hash 的程序集身份；不得使用 `LanguageVersion.Latest`、运行机器 TPA 枚举、随机程序集名称或缓存历史改变编译结果。
-
-每个 Project 的 Mapping 代码缓存只保留当前源码修订，并通过 collectible AssemblyLoadContext 在修订失效、清缓存或 Project 关闭后请求卸载。该缓存只影响性能，不得改变 Full/Incremental 输出或诊断。
+每个 Project 的 Mapping 表达式缓存只保留当前源码修订。该缓存只影响性能，不得改变 Full/Incremental 输出或诊断。
 ### 12.9.5 非法返回值
-C# Mapping Function 返回以下结果时：
+Mapping Function Expression 返回以下结果时：
 ```text
 NaN
 Infinity

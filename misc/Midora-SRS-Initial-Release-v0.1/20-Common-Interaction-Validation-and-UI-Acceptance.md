@@ -146,7 +146,7 @@ Active Workspace 由活动 Tab 决定，不因焦点进入 Workspace 内的 Prop
 1. Full Application Task Lock
 2. Active Modal Dialog
 3. Active Popup, Menu or Inline Editing Session
-4. Focused Text Field or Function Code Editor
+4. Focused Text Field or Mapping Expression Editor
 5. Focused Workspace or Panel
 6. Active Workspace
 7. Global Project Command
@@ -172,7 +172,7 @@ Active Workspace
 隐藏或折叠区域跳过。
 ### 20.2.4 Tab
 Tab / Shift+Tab 只在当前焦点范围内导航普通控件。海量 Timeline 对象不逐个成为 Tab Stop。
-Function Code Editor 中 Tab 用于代码缩进；离开编辑器使用鼠标或 F6。
+Mapping Expression Editor 仍是单行语义，Tab / Shift+Tab 用于离开控件并导航模态对话框，不插入缩进字符。
 ### 20.2.5 焦点恢复
 Workspace 记住当前 Project 会话中的最近焦点位置。目标失效时回退到最近有效父区域。
 后台验证、编译、播放、任务和 Status Bar 更新不得抢夺焦点。
@@ -659,15 +659,12 @@ Delete
 最后一条 SubVoice 的 Delete 不显示。
 #### 20.7.10.8 Mapping Function
 ```text
-Open Function
-Apply Draft
-Discard Draft
+Properties
 Duplicate
-Rename
 Show References
 Delete
 ```
-删除有 Draft 的 Function 前必须先处理 Draft。
+`Properties` 使用第 18.5.4 节的模态名称+单行表达式编辑器。没有独立 Function Workspace、Apply Draft 或 Discard Draft 命令。
 #### 20.7.10.9 Diagnostic
 ```text
 Go to Source
@@ -809,7 +806,6 @@ Inline 字段有焦点时 Ctrl+Z / Ctrl+Y 操作本地文本；提交后由 Proj
 ```text
 Collection Filter
 Diagnostics Search
-Find in current C# Function
 ```
 初版不提供：
 ```text
@@ -1177,7 +1173,7 @@ No general-purpose toast system requirement
 |---|---|---|
 | `Ctrl+N` | New Project | Global |
 | `Ctrl+O` | Open Project | Global |
-| `Ctrl+S` | Apply Function Draft / Save Project | Focus-sensitive |
+| `Ctrl+S` | Save Project | Global Project context |
 | `Ctrl+Shift+S` | Save Copy | Global |
 | `Ctrl+Z` | Undo | Focus-sensitive |
 | `Ctrl+Y` | Redo | Focus-sensitive |
@@ -1204,15 +1200,10 @@ No general-purpose toast system requirement
 | `Alt+F4` | Close active window / Exit request | Application or active Dialog |
 初版不增加表外的其他默认全局快捷键。
 ### 20.12.2 Ctrl+S
-```text
-Function Code Editor focus -> Apply Function Draft
-Other Project context      -> Save Project
-```
-Function Editor 接收 Ctrl+S 后，即使 Apply 无法执行，也不得回退为 Save Project。
-Global Save Button 和 File > Save Project 始终保存 Project。
+`Ctrl+S`、Global Save Button 和 `File > Save Project` 始终保存 Project。Mapping Function 模态对话框只由其 `OK` 提交本地编辑缓冲；对话框内不得把 `Ctrl+S` 重新解释为 Apply。
 ### 20.12.3 Undo / Redo
 ```text
-Function Code Editor -> Draft Undo / Redo
+Mapping Function expression editor -> dialog-local text Undo / Redo
 Ordinary text field  -> field-local Undo / Redo
 Other Project area   -> Project Undo / Redo
 ```
@@ -1252,7 +1243,6 @@ Clear stable Selection
 Close Workspace
 Close Project
 Exit application
-Discard Function Draft
 Stop playback
 Cancel Save transaction
 ```
@@ -1262,10 +1252,10 @@ Audio Render 中 Escape 打开 Cancel Rendering Confirmation。
 Text field      -> validate and commit
 Inline Rename   -> validate and commit
 List or tree    -> open or activate focused item
-Function Editor -> insert new line
+Mapping Function expression editor -> enabled default OK action（补全列表打开时先提交补全项）
 Dialog          -> enabled default action when focus control has no own Enter behavior
 ```
-Tab / Shift+Tab 在当前焦点范围内移动；Function Editor 中 Tab 用于缩进。
+Tab / Shift+Tab 在当前焦点范围内移动；单行 Mapping Function 表达式不得插入换行。
 ### 20.12.9 Diagnostics
 ```text
 F4       -> Next Active Diagnostic
@@ -1431,7 +1421,7 @@ Mute and Solo
 Playback state
 Task History
 Runtime Diagnostics
-Function Draft
+Modal Mapping Function edit buffer
 Arrangement Grid / Snap and default creation values
 Shared piano-roll Grid / Snap and default creation values
 当前设备枚举结果
@@ -1457,7 +1447,7 @@ Audio Render
 ```text
 Overwrite authorization
 Close without Saving
-Discard Draft
+Discard modal edit buffer
 Delete confirmation
 Cancel rendering confirmation
 ```
@@ -1543,6 +1533,8 @@ Timeline Toolbar 的 Grid / Snap 选择框只显示 `Bar` 或简写分数（例�
 Arrangement Segment 使用较深的低饱和蓝灰色；选中 Segment 使用同色系强调边框和更深背景，Note Preview 使用高亮但低饱和的蓝灰色。Segment Piano Roll 的 active range 保留基础键位底色，界外范围进一步压暗；未选中 Note 使用高亮蓝灰色，选中 Note 的红色填充与红色边框保持不变。Velocity 未选中柱使用相同蓝灰色，选中 Note 对应柱使用红色；每个 Note 只在 start tick 显示固定窄柱，柱顶显示明显更宽的方形 onset marker，柱宽不得随 Note 长度变化。Piano Roll 白键行使用较亮底色、黑键行使用较暗底色；Segment 与 SubVoice Pitch Ruler 使用完整白键和较短黑键的钢琴外观，并且只在每个八度 C 键显示符合 MIDI 60 = C4 的音名。空 Timeline 不显示覆盖画布的 `No timeline content` 卡片。Disabled Ghost Button 不保留背景或边框。Transport 的位置与 BPM 使用亮色并以竖向分割线分隔；Play 图标不得裁切。Parameter / Event Lane 不显示额外白色外框。数值标尺顶部和底部标签不得被视口裁切。
 
 ComboBox 的可编辑文本和下拉指示必须分别在内容区与按钮区垂直居中；下拉指示使用同一 Fluent 图标体系，不得使用字体符号代替。显式垂直 ScrollBar 的 Track 必须完整铺满可用高度；Thumb 长度必须按当前可见范围相对完整有界范围的比例计算，不得使用与视口无关的固定值。Diagnostics Workspace 的筛选 ComboBox 和 Segment Piano Roll 顶部左侧文本不得裁切或偏离垂直中心。Timeline 和 piano roll 的显式垂直 ScrollBar 必须始终占据其布局位置；无可滚动范围时只 Disabled，不得 Collapsed 或以透明 Disabled 样式消失。
+
+ComboBox 下拉内容打开时，鼠标滚轮必须由该下拉表面消费；即使当前项数不足以显示垂直 ScrollBar 或滚动位置已经到达边界，也不得把同一滚轮手势路由到外层 ScrollViewer。该规则由共享 ComboBox template 统一提供；非 ComboBox 的代码补全、Menu 与自定义 Popup 按各自交互规格处理。
 ### 20.15.5 Resize 语义
 Resize 只改变视图，不：
 ```text
@@ -1660,13 +1652,13 @@ MIDI, audio or arbitrary-file import by generic drag-and-drop
 - active crop window 外内容保留并可编辑；
 - Arrangement 显示 Note Preview；
 - 详细内容只在 Segment Editor 编辑。
-### 20.18.2 Function Draft
-- Draft 与 Project Applied Version 分离；
-- Ctrl+S 在 Code Editor 中 Apply；
-- Global Save 保存 Project；
-- Save 不自动 Apply；
-- Draft 不进入 `.midora`；
-- Close / Switch / Exit 时必须处理 Draft。
+### 20.18.2 Mapping Function Modal Edit
+- 名称与表达式缓冲只属于当前模态对话框；
+- Validate 不修改 Project；
+- OK 在正式 ABI v3 验证成功后以一次原子命令提交；
+- Cancel/关闭直接丢弃，不保留跨窗口 Draft；
+- Ctrl+S 与 Global Save 只保存 Project；
+- 本地缓冲不进入 `.midora`。
 ### 20.18.3 Save
 - 初版只有 Save 和 Save Copy；
 - Save Copy 不切换当前路径；

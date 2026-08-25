@@ -88,6 +88,8 @@ Global context and task state
 ```
 Global Undo / Redo 永远操作 Project History。Global Save 永远执行 Save Project。
 
+当 Event Instrument 底部 Preview Keyboard 拥有活动 Held Preview 时，Global Primary Transport 必须显示并执行 Stop。Transport 自身的 MouseDown 不得走“打开编辑/导航表面前先停止 Preview”的预处理，否则同一次 Click 会在 Preview 已停止后被错误解释为主时间线 Play；其他会打开模态表面、菜单或 Tab/Workspace 转场的入口仍按第 18.3.2 节先做选择性 Preview 清理。
+
 左侧文件命令组在 Save 之前提供 Fluent `settings` 图标的 `Project Settings`；无 Project 时禁用。该图标使用保留原始 `20 × 20` 坐标系的固定设计画布一次缩放至 `16 × 16`，不得通过 Geometry 实际包围盒再次拉伸；偶数尺寸画布在 `32 × 32` 按钮内精确居中，Geometry 在画布内部围绕 `(10, 10)` 放大 10% 以补偿其相对其他命令图标偏小的视觉重量。Undo / Redo 之后以分割线区分并提供 Fluent `wrench_screwdriver` Regular 图标的 `Application Preferences`；它使用相同固定画布、尺寸和 10% 中心放大光学校正，播放或前台任务期间禁用。无 Project 时 Global Undo / Redo 必须禁用。
 #### 17.1.3.4 [D] Workspace Tabs
 中央编辑区域使用多 Workspace Tab。同一功能 Workspace 按类型唯一；对象 Workspace 按稳定 ID 唯一。
@@ -185,9 +187,9 @@ Marquee selection gesture
 Inline Rename buffer
 Uncommitted ordinary field text
 Popup target
-Function Draft text buffer
+Modal Mapping Function edit buffer
 ```
-Function Draft 可持续到 Function Workspace 关闭，但仍不属于 Project Content、Application Preference 或恢复文件。
+Mapping Function 编辑缓冲只持续到当前模态对话框关闭；OK 成功前不属于 Project Content，Cancel、关闭、Project 切换或进程退出时直接丢弃，不设置跨对话框 Draft。
 ### 17.2.5 `.midora` 明确不保存
 ```text
 Window and panel layout
@@ -200,7 +202,7 @@ Mute and Solo
 Task History
 Runtime Diagnostics
 Undo and Redo history
-Function Draft
+Modal Mapping Function edit buffer
 Compiled result and playback buffer
 ```
 ---
@@ -217,11 +219,10 @@ Conductor Track
 ```text
 Segment Editor
 Event Instrument Editor
-Mapping Function Editor
 ```
 重复打开同一对象时激活已有 Tab。
 ### 17.3.2 复杂对象子页面
-同一复杂对象的不同子页面通常共用一个顶层 Workspace，通过内部 Section Navigation 切换。C# Mapping Function 可以使用独立对象 Workspace。
+同一复杂对象的不同子页面通常共用一个顶层 Workspace，通过内部 Section Navigation 切换。Mapping Function 归属于 Event Instrument Workspace 的 Structure Panel，以模态编辑对话框创建和编辑，不创建独立 Workspace/Tab。
 ### 17.3.3 Tab 标题
 使用用户可识别语义：
 ```text
@@ -229,23 +230,16 @@ Arrangement
 Project Settings
 Diagnostics
 <Instrument Name>
-Function: <Function Name>
 Segment: <Track Display Name> @ <Start Position>
 ```
 Segment 没有持久化名称；必要时在标题中补充 Track 顺序以消除同名歧义。
-普通 Tab 不显示独立“未保存文件”星号。Project Modified 是全局状态。Function 未 Apply 草稿使用独立 `[Draft]` 标记。
+普通 Tab 不显示独立“未保存文件”星号。Project Modified 是全局状态。
 ### 17.3.4 关闭 Tab
 关闭 Tab：
 - 只关闭界面；
 - 不删除对象；
 - 不修改 Project；
 - 不清除 Diagnostics。
-有 Function Draft 时，关闭前必须选择：
-```text
-Apply
-Discard Draft
-Cancel
-```
 对象被删除后，其 Workspace 自动关闭；Undo 恢复对象时不自动重开。
 Workspace 使用可见关闭按钮和 Tab Context Menu 关闭。初版不为关闭 Workspace 注册默认快捷键。Arrangement 隐藏关闭按钮，Tab Context Menu 的 Close 禁用，并始终固定为第一项。
 ### 17.3.5 Tab Strip
@@ -278,10 +272,11 @@ Logical Parameter definition -> definition-and-migration dialog
 Parameter Mapping            -> unified Properties dialog
 Mapping Chain / Step         -> Structure list double-click / Properties...
 Envelope Preset              -> Structure list double-click / Properties...
+Mapping Function             -> Structure list double-click / Properties...
 Project settings             -> Project Settings Workspace
 ```
 
-复杂对象继续使用其专用编辑器，不在通用属性表中复制 Timeline、Mapping Function source、Loop 图形、曲线编辑器或完整事件列表。
+复杂对象继续使用其专用编辑器，不在通用属性表中复制 Timeline、Loop 图形、曲线编辑器或完整事件列表。Mapping Function 使用专用的模态单行表达式对话框。
 
 ### 17.4.2 显式目标与稳定上下文
 
@@ -367,7 +362,6 @@ Damaged Objects Prevent Saving
 Migrated Project Requires Saving
 Enabled SoundFont Missing or Load Failed
 Save Failed
-Uncommitted Function Drafts
 Preference Storage Failed
 ```
 正常状态不占空间。

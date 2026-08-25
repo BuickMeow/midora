@@ -220,7 +220,7 @@ Definition 可在没有任何 Usage/Track 时独立存在。删除 Track 或最�
 ### 3.9.1 保存
 普通保存覆盖当前 `.midora` 的完整已提交 Project Source Data：Project Settings/Metadata、Conductor、Arrangement 与 Definition/Usage/Root indexes、Logical/Pure MIDI Tracks、两类 Segment、Event Instruments、Reset Defaults 与已 Apply 的 Mapping Function 源码。
 
-Playback Preferences、SoundFont 列表、MIDI Export 参数、Audio Render 参数、最近目录、未 Apply Draft、运行缓存和 UI 会话状态不属于 Project，不得写入包。安全事务、覆盖、临时文件、自校验和路径规则由第 16 章定义。
+Playback Preferences、SoundFont 列表、MIDI Export 参数、Audio Render 参数、最近目录、未提交的模态编辑缓冲、运行缓存和 UI 会话状态不属于 Project，不得写入包。安全事务、覆盖、临时文件、自校验和路径规则由第 16 章定义。
 ### 3.9.2 保存副本 / Save Copy
 初版不提供传统 Save As。
 Save Copy 把当前内存 Project 快照写出为新的 `.midora` 文件，但不改变：

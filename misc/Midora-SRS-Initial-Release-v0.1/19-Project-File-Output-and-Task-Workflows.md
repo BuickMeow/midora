@@ -80,7 +80,6 @@ Commit new Project to Main Window
 ```text
 Stop
 -> Complete cleanup
--> Resolve Function Drafts
 -> Resolve unsaved Project changes
 -> Create new Project
 ```
@@ -105,15 +104,8 @@ Exit
 ```text
 1. Stop active playback or preview
 2. Complete playback cleanup
-3. Resolve Function Drafts
-4. Resolve unsaved Project changes
-5. Perform the requested Project operation
-```
-Function Draft 处理：
-```text
-Apply
-Discard Draft
-Cancel
+3. Resolve unsaved Project changes
+4. Perform the requested Project operation
 ```
 未保存 Project 处理：
 ```text
@@ -130,7 +122,7 @@ Stop
 -> Save applied Project state
 -> Remain Stopped
 ```
-Save 不自动 Apply Function Draft。
+Save 只保存已经通过正式 Project command 提交的状态；模态 Mapping Function 对话框的本地缓冲不属于 Project，因此不会被保存或自动提交。
 ### 19.2.4 Save Copy
 Save Copy：
 - 写出当前内存 Project 的副本；
@@ -312,7 +304,7 @@ Clean temporary files
 - 当前 Project Modified 清除；
 - 当前路径保持或首次建立；
 - 当前内存保存信息更新；
-- Function Draft 状态不受影响。
+- 已打开模态编辑对话框的本地缓冲不属于 Save 输入，状态不受 Save 影响。
 ### 19.4.5 Save Copy 成功
 - 当前路径不变；
 - 当前 Modified 状态不变；
@@ -714,7 +706,6 @@ Delete object containing substantial data
 Delete a non-empty unreferenced Event Instrument Definition
 Delete all Lane events
 Replace Track Event Instrument binding
-Close or switch with Function Draft
 Close or switch with unsaved Project
 Overwrite output files
 Cancel Audio Rendering
@@ -749,7 +740,7 @@ Drag gesture
 Marquee selection
 Context menu
 Dropdown
-Function Draft editing
+Modal Mapping Function editing
 ```
 局部交互优先处理 Escape、文本快捷键和命令目标，不锁定整个 Project。
 ### 19.10.4 Level 2 — Project Edit Lock
@@ -786,7 +777,6 @@ Move or resize Project objects
 Cut
 Project Paste
 Project Undo and Redo
-Apply Function Draft
 Change Project Settings
 Change Application Preferences
 Start a second global task

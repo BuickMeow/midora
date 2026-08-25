@@ -64,3 +64,18 @@
 | 失败条件 | ABI、引用、源码、非有限返回值及运行异常规则不变；编辑器不吞掉 Compiler diagnostic，也不提供与正式 profile 不一致的伪成功。 |
 | 持久化归属 | 只有 Apply 成功后的 Function Body / Name / Declared Context Fields 属于 Project Source Data；补全列表、光标、括号高亮和弹窗状态不持久化。 |
 | 非目标 | 不改变 ABI v2、Roslyn/C# profile、允许引用集、collectible ALC、Mapping 求值或 canonical consumer；不引入 sandbox、语言服务进程或自动修改 Context 声明。 |
+
+## 6. Mapping Function 能力收缩与安全增强（2026-08-25，取代第 4～5 节中 ABI/语言/安全边界）
+
+| 项目 | 正式约束 |
+|---|---|
+| 输入 | Project 内的 Mapping Function 单行表达式、ABI v3、当前累计 `value` 与只读 `MappingContextV2`。Batch Edit 表达式属于非 Project 工具数据，明确不在本次范围。 |
+| 正式输出 | 经精确白名单验证和绑定的 `double` 表达式委托；输出仍进入既有 Mapping Chain、取整/越界和 canonical 编译主线。 |
+| 语言边界 | 只允许字面量、`value`、批准的数值/枚举 Context 字段、算术/比较/布尔/条件运算、批准的 Contract 枚举和纯数值 `Math` 成员。禁止语句、循环、赋值、lambda、对象创建、任意 API、字符串、名称、Stable ID、反射和副作用。 |
+| 资源边界 | 单行、最多 8,192 Unicode scalars、512 syntax nodes、64 depth；不存在用户可构造的循环/递归执行结构。 |
+| Context 依赖 | Validate/Apply 自动推导；用户不手工填写。持久化集合参与 fingerprint，但正式编译重新推导并要求精确一致。 |
+| 执行 | Roslyn 只用于 Expression 语法解析；正式 binder 逐节点建立 `System.Linq.Expressions`，不 Emit/加载 Project 源码程序集，不开放运行机器引用面。 |
+| 兼容 | ABI v1/v2 自由 C# 只可识别并明确诊断，绝不执行，也不保留隐藏迁移执行器。重新编辑并 Apply 生成 ABI v3。 |
+| 缓存 | 键为 ABI/profile/精确源码 UTF-8 SHA-256；只缓存当前 Project 仍存在的修订，切换/关闭/删除时释放，不持久化。 |
+| UI | 单行换行式编辑、暗色着色、括号高亮、查找和白名单补全；按钮为 `Validate`，说明依赖自动推导。 |
+| 诊断与测试 | 明确定位 Function/Step/来源；覆盖合法求值、Full/Incremental、旧 ABI、任意 API、语句、lambda、对象创建、赋值、名称/ID、超长/超深与非有限输出。 |

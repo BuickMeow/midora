@@ -141,7 +141,7 @@ public sealed class CSharpMappingFunction
     public MidoraId Id { get; init; }
     public required string Name { get; set; }
     public required string Body { get; set; }
-    public int AbiVersion { get; set; } = MappingAbiV2.Version;
+    public int AbiVersion { get; set; } = MappingExpressionAbiV3.Version;
     public HashSet<string> DeclaredContextFields { get; } = new(StringComparer.Ordinal);
 }
 

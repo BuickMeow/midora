@@ -732,7 +732,7 @@ public sealed class DesktopSessionControllerTests
         session.Execute(ProjectDomainEditCommands.CreateMappingFunction(
             instrument.Id,
             "Identity",
-            "return value;",
+            "value",
             []));
         session.Execute(ProjectDomainEditCommands.CreateLogicalParameter(
             instrument.Id,
@@ -796,6 +796,9 @@ public sealed class DesktopSessionControllerTests
             value.Value == MappingOperation.CustomCSharp.ToString()
             && value.Label.Contains("current accumulated chain value", StringComparison.OrdinalIgnoreCase));
         Assert.True(parameterReference.IsChoice);
+        Assert.Contains(parameterReference.Choices, value =>
+            value.Value == string.Empty
+            && value.Label == "None");
         Assert.Contains(parameterReference.Choices, value =>
             value.Value == parameter.Id.Value.ToString()
             && value.Label == parameter.Name);

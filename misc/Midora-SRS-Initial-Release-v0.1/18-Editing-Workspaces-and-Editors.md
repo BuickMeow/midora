@@ -399,37 +399,14 @@ Mapping Editor 提供单值测试；该测试不启动播放、不修改 Project
 Parameter Mapping 的 Source Parameter、Target SubVoice 与 MIDI target 必须使用对象/目标选择器，不要求手填内部 ID；创建与编辑都在同一个 Properties 对话框按顺序直接展示 Source、Target SubVoice、Target Event Kind、适用 Controller/RPN/NRPN 和其余设置，不使用分步流程。完整提交是一个原子 Project edit。Mapping 顺序提供明确的 Move Up / Move Down 入口。
 
 Mapping Chain 与 Mapping Step 的完整属性由左侧结构列表的 `Properties...` 模态对话框编辑。Chain 至少公开 enabled、用户可理解的 owner/target、最终 rounding/overflow 和 step count，但不显示 Stable ID；Step 的 Parameter、Envelope 和 Function reference 使用显示名称的对象下拉框，并只提供当前 Chain 上下文合法的 Source/Function。文本、下拉和 Boolean 提交继续使用第 17.4.4 节的 Draft + OK/Cancel 规则。
-### 18.5.4 C# Mapping Function
-C# Mapping Function 使用内置代码编辑器和独立 Draft Buffer。
-Draft Buffer：
-- 文本 Undo / Redo 独立；
-- Cut / Copy / Paste 独立；
-- 输入不实时写入 Project；
-- 未 Apply 草稿不进入 `.midora`；
-- Project Save 不自动 Apply 草稿。
-```text
-Ctrl+S while Function Code Editor has focus -> Apply Function Draft
-```
-Apply：
-- 将完整源码作为一次 Project 编辑写入；
-- 形成一次 Project Undo；
-- 标记 Project Modified；
-- 不写磁盘。
-Global Save Button 和 `File > Save Project` 永远保存 Project，不执行 Apply。
-关闭 Function Workspace、切换 Project 或退出时，有 Draft 必须选择：
-```text
-Apply
-Discard Draft
-Cancel
-```
-Function 名称修改与 Draft 内容是两个独立编辑状态。重命名不自动 Apply Draft。
+### 18.5.4 Mapping Function Expression
+Mapping Function 使用由 Event Instrument Structure Panel 打开的模态编辑对话框，不创建独立 Workspace/Tab。对话框同时编辑名称与受限单行表达式；表达式控件初始为单行高度，长表达式按宽度自动折行并随内容增高，必要时由对话框外层滚动。
+
+编辑器只补全 ABI v3 白名单中的 `value`、批准的 `context` 字段、枚举成员和 `Math` 成员；不得补全或接受语句、类型构造、任意 .NET API、名称或 Stable ID。Context 依赖由 Validate/OK 自动推导，不提供手工声明控件。对话框必须提供 `Help`、`Validate`、中性/成功/失败结果栏、`OK` 与 `Cancel`；补全、括号配对与暗色语义配色同正式 Mapping 表达式编辑体验。
+
+名称和表达式只存在于当前对话框本地缓冲。`Validate` 不修改 Project；`OK` 必须重新使用与 Full/Incremental Compile 相同的 ABI v3 语法、白名单、限制和依赖分析完成验证，成功后将名称、表达式及推导 Context 依赖作为一次原子 Project edit 提交，形成一次 Project Undo 并标记 Modified；正式命令失败时对话框保持打开并显示错误。`Cancel`、标题栏关闭、Project 切换或退出直接丢弃本地缓冲，不显示 Apply/Discard Draft 提示。Global Save Button、`File > Save Project` 与 `Ctrl+S` 始终保存 Project，不提交对话框缓冲。
 ### 18.5.5 Function 诊断
-Code Editor 内的 Draft 错误只对应 Draft。
-Project Diagnostics 对应最后 Apply 的版本，并在存在 Draft 时明确提示：
-```text
-Diagnostics refer to the applied version.
-An unapplied draft is currently open.
-```
+模态对话框的 Validate/OK 错误只对应其本地缓冲并显示在结果栏；Project Diagnostics 始终对应已成功提交的 Project 版本。诊断定位到 Mapping Function 时，应激活所属 Event Instrument、选中目标 Function，并打开同一模态编辑对话框；不得创建 Function Tab。
 ---
 ## 18.6 Lifecycle、Loop、Envelope 与 Overlap Editor
 ### 18.6.1 布局

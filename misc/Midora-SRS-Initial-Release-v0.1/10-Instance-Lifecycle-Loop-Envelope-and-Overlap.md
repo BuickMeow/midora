@@ -597,7 +597,7 @@ Envelope 可作为映射源，接入 Mapping Chain，作用到 第 9 章《曲�
 规则：
 ```text
 Envelope Step 是普通 Mapping Step
-Envelope Step 与 C# Mapping Function Step、图形映射 Step 等一起按 Mapping Chain 顺序组合
+Envelope Step 与 Mapping Function Expression Step、图形映射 Step 等一起按 Mapping Chain 顺序组合
 Envelope 不拥有固定优先级
 ```
 同一个 Envelope Preset 可被同一 Event Instrument 内多个事件参数引用。

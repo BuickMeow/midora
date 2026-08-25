@@ -43,7 +43,7 @@ public sealed class PersistenceContractV1Tests
         Assert.Equal(256, PersistenceContractV1.ShortTextMaximumScalars);
         Assert.Equal(4_096, PersistenceContractV1.MetadataTextMaximumScalars);
         Assert.Equal(65_536, PersistenceContractV1.DescriptionMaximumScalars);
-        Assert.Equal(1_048_576, PersistenceContractV1.MappingBodyMaximumScalars);
+        Assert.Equal(8_192, PersistenceContractV1.MappingBodyMaximumScalars);
         Assert.Equal(4_096, PersistenceContractV1.RelativePathMaximumScalars);
     }
 
@@ -84,6 +84,13 @@ public sealed class PersistenceContractV1Tests
             PersistenceValueValidationV1.ValidateRelativePath("soundfonts/", "path"));
         Assert.Throws<InvalidDataException>(() =>
             PersistenceValueValidationV1.ValidateShortText(string.Concat(Enumerable.Repeat("\U0001f3b5", 257)), "name"));
+        PersistenceValueValidationV1.ValidateMappingBody("Math.Clamp(value, 0, 127)", "mapping");
+        Assert.Throws<InvalidDataException>(() =>
+            PersistenceValueValidationV1.ValidateMappingBody("value +\n1", "mapping"));
+        Assert.Throws<InvalidDataException>(() =>
+            PersistenceValueValidationV1.ValidateMappingBody(
+                "value" + new string(' ', PersistenceContractV1.MappingBodyMaximumScalars),
+                "mapping"));
     }
 
     [Fact]

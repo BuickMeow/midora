@@ -57,6 +57,10 @@ internal static class PersistenceValueValidationV1
 
     public static void ValidateMappingBody(string value, string fieldName)
     {
+        if (value.IndexOfAny(['\r', '\n']) >= 0)
+        {
+            throw new InvalidDataException($"{fieldName} must be a single-line expression.");
+        }
         int count = PersistenceContractV1.ValidateUnicodeAndCountScalars(value, fieldName);
         if (count > PersistenceContractV1.MappingBodyMaximumScalars)
         {

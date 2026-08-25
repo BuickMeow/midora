@@ -3,8 +3,6 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <MappingAbiV2ReferencePackVersion>10.0.10</MappingAbiV2ReferencePackVersion>
-    <MappingAbiV2ReferencePackDirectory>$(NetCoreTargetingPackRoot)\Microsoft.NETCore.App.Ref\$(MappingAbiV2ReferencePackVersion)\ref\$(TargetFramework)</MappingAbiV2ReferencePackDirectory>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Midora.Mapping.Contract.V2\Midora.Mapping.Contract.V2.csproj" />
@@ -15,17 +13,11 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.3.0" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="$(MappingAbiV2ReferencePackDirectory)\*.dll"
-             Link="mapping-reference-pack\v2\%(Filename)%(Extension)"
-             CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest" />
-  </ItemGroup>
-  <Target Name="ValidateMappingAbiV2ReferencePack" BeforeTargets="Build">
-    <Error Condition="!Exists('$(MappingAbiV2ReferencePackDirectory)\System.Runtime.dll')"
-           Text="Mapping ABI v2 requires Microsoft.NETCore.App.Ref $(MappingAbiV2ReferencePackVersion) at '$(MappingAbiV2ReferencePackDirectory)'." />
-  </Target>
-  <ItemGroup>
     <InternalsVisibleTo Include="Midora.Compiler.Tests" />
     <InternalsVisibleTo Include="Midora.MidiExport.Tests" />
   </ItemGroup>
+  <Target Name="RemoveLegacyMappingReferencePack" BeforeTargets="PrepareForBuild">
+    <RemoveDir Directories="$(OutDir)mapping-reference-pack"
+               Condition="Exists('$(OutDir)mapping-reference-pack')" />
+  </Target>
 </Project>

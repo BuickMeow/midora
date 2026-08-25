@@ -720,7 +720,7 @@ public sealed class ProjectMappingChainEditCommandsTests
         CSharpMappingFunction function = new(project)
         {
             Name = "Identity",
-            Body = "return value;"
+            Body = "value"
         };
         instrument.LogicalParameters.Add(parameter);
         instrument.Envelopes.Add(envelope);

@@ -4,7 +4,7 @@
 > 规格版本：**v0.1**  
 > 适用产品范围：**Midora 初版**
 
-本章定义 Mapping Chain、Mapping Step、图形映射、C# Mapping Function、MappingContext、Logical Parameter Definition/Lane/Mapping、值域处理和断裂引用行为。
+本章定义 Mapping Chain、Mapping Step、图形映射、Mapping Function Expression、MappingContext、Logical Parameter Definition/Lane/Mapping、值域处理和断裂引用行为。
 
 ## 9.1 映射系统总体规则
 ### 9.1.1 映射挂载位置
@@ -295,7 +295,7 @@ Note number 越界本规格规定必须编译失败
 ```
 除非该目标参数明确配置为 clamp 并可合法 clamp。
 ### 9.4.4 NaN / Infinity
-如果 C# Mapping Function 返回：
+如果 Mapping Function Expression 返回：
 ```text
 NaN
 Infinity
@@ -390,54 +390,48 @@ Clamp
 ```
 图形 Step 输入源是枚举 key，因此系统可直接判断该 Step 是否依赖每音符上下文。
 ---
-## 9.6 C# Mapping Function
-### 9.6.1 函数模型
-C# Mapping Function 初版固定使用 ABI v2：
+## 9.6 Mapping Function Expression
+### 9.6.1 表达式模型
+Mapping Function 当前固定使用受限表达式 ABI v3。其概念签名仍为：
 ```csharp
 double Transform(double value, in MappingContextV2 context)
 ```
-含义：
-```text
-输入当前累计值或当前 Step 接收到的值
-输入只读 MappingContext
-返回新的中间数值
-```
-Project 保存的方法源码是该方法的函数体，不保存完整 compilation unit、包装类或编译产物。函数参数名固定为 `value` 与 `context`。
+Project 保存的是一条返回 `double` 的单行表达式，不是方法体、语句块、完整 compilation unit、程序集或编译产物。`value` 是当前累计链值，`context` 是只读 Mapping Context。
 
 每个 Mapping Function 必须保存：
 ```text
-abiVersion = 2
-函数体源码
-声明的 Context 字段集合
+abiVersion = 3
+单行表达式源码
+由正式分析器推导并冻结的 Context 依赖集合
 ```
 
-ABI v2 固定使用 `Microsoft.CodeAnalysis.CSharp 5.3.0`、允许 unsafe 的 C# 14、`Microsoft.NETCore.App.Ref 10.0.10` 和独立 Mapping ABI v2 契约程序集；稳定 ID Context 字段使用只承载单个正 `long` 的 `MappingStableIdV2`。不向函数编译开放 Midora Domain/Compiler、WPF/WindowsDesktop 或第三方程序集。引用集合用于兼容性收敛，不构成安全沙箱；`in MappingContextV2` 只提供普通 C# 语言层只读约束。
-### 9.6.2 自由 C# 边界
-初版：
+ABI v1/v2 的自由 C# 方法体属于已被安全原因破坏性取代的开发期格式。系统可以识别旧 ABI，但绝不执行；实际参与编译时必须明确失败，用户重新编辑并 Apply 后才升级为 ABI v3。不得保留隐藏的旧执行器或自动把旧方法体当作表达式执行。
+
+### 9.6.2 允许语言与安全边界
+ABI v3 只允许：
 ```text
-允许完整自由 C#
-不做沙箱
-Context 只读
-不提供 Midora Project 修改 API
-不提供访问其他事件参数的 API
-不提供完整 Project 对象图 API
+数值字面量、true、false
+value
+批准的 context 数值字段与枚举字段
++ - * / %、比较、==、!=、&&、||、!
+条件表达式 condition ? whenTrue : whenFalse
+批准的 MappingEventKindV2 / MappingTargetParameterV2 枚举成员
+批准的 System.Math 纯数值方法与 E / PI / Tau
 ```
-Midora 不主动提供：
+
+禁止范围至少包括：
 ```text
-随机数 API
-系统时间 API
-文件 IO API
+任何语句、声明、循环、赋值、递增/递减
+lambda、delegate、对象/数组创建、类型构造、dynamic
+任意方法、属性、索引器或反射访问
+文件、网络、进程、线程、任务、时间、随机数、环境变量
+字符串、名称、稳定 ID、Project 对象图和可变全局状态
+unsafe、指针、P/Invoke、异常构造与显式 throw
 ```
-但由于不做沙箱，用户若通过普通 .NET API 使用：
-```text
-随机数
-系统时间
-文件 IO
-外部状态
-其他副作用
-```
-则结果不保证可复现。
-初版不做静态分析，不主动诊断这些非确定性行为。
+
+解析器必须先以 Expression 模式解析，随后按精确语法节点和符号白名单自行绑定为 `System.Linq.Expressions`。不得 Emit 或加载由 Project 源码生成的程序集，不得把运行机器的引用程序集或 API 面交给用户源码。
+
+固定资源上限为：源码最多 8,192 Unicode scalars、语法节点最多 512、语法树深度最多 64。表达式编译和求值不得提供用户可构造的无界循环或递归路径。白名单必须由版本化 ABI 集中定义，UI 补全、Draft 验证与正式编译共用同一来源。
 ### 9.6.3 Mapping Function 稳定 ID 与名称
 Mapping Function 需要稳定 ID。
 引用基于稳定 ID。
@@ -456,38 +450,23 @@ Mapping Function 需要稳定 ID。
 进入全项目撤销 / 重做
 使 Project 进入已修改状态
 ```
-### 9.6.4 Mapping Function 所需 Context 字段声明
-初版要求用户为 C# Mapping Function 声明所需 Context 字段。
-用途：
-```text
-系统根据声明做 Per-Note Instance Isolation 兼容性检查
-系统可辅助诊断 Mapping Function 的上下文依赖
-```
-初版不静态验证 C# 源码实际使用字段是否与声明一致。
-规则：
-```text
-声明用于系统兼容性检查
-用户需保证声明正确
-```
-不采用：
-```text
-系统静态分析 C# 源码自动判断字段依赖
-所有 C# Mapping Function 都一律视为依赖每音符上下文
-运行时才检查
-```
+### 9.6.4 Mapping Function Context 依赖
+正式表达式分析器必须精确推导实际引用的批准 `context` 字段。用户不手工编辑依赖集合；UI Apply 将推导结果与表达式作为一个 Project 编辑提交。
+
+持久化依赖集合是确定性 fingerprint 与快速兼容性检查所需的派生源字段。正式编译必须重新推导并要求两者精确相等；不一致时失败，不能信任被篡改或陈旧的声明。Per-Note Instance Isolation 检查使用该已验证集合。
 ### 9.6.5 编译缓存边界
-初版 C# Mapping Function 缓存键固定包含：
+Mapping Function Expression 缓存键固定包含：
 ```text
 ABI version
 固定 compiler profile
 函数体精确 UTF-8 SHA-256
 ```
 
-声明的 Context 字段参与 Project/source fingerprint 和兼容性检查，但不改变生成代码，因此不进入代码缓存键。
+推导的 Context 字段参与 Project/source fingerprint 和兼容性检查，但不改变表达式代码缓存键。
 
-缓存属于当前打开 Project 的运行时编译会话，只保留当前 Project 中仍存在的不同源码修订。每个成功缓存项使用独立 collectible AssemblyLoadContext；编辑、删除、切换或关闭 Project、显式清缓存后，旧修订必须释放委托并请求卸载，不得随编辑历史无界累积。缓存和编译产物不得持久化。
+缓存属于当前打开 Project 的运行时编译会话，只保留当前 Project 中仍存在的不同源码修订；编辑、删除、切换或关闭 Project、显式清缓存后必须移除旧委托，不得随编辑历史无界累积。缓存和编译产物不得持久化。
 
-未来改变语言版本、函数签名、Context 类型、允许引用或编译 profile 时，必须增加 ABI version，并保留旧 ABI 执行器或提供显式迁移；不得静默用 `LanguageVersion.Latest` 或运行机器已加载程序集解释旧 Project。
+未来改变语法、函数签名、Context 类型、白名单或编译 profile 时必须增加 ABI version。安全收缩可以明确拒绝旧 ABI，不要求保留会执行旧不安全源码的兼容分支。
 ### 9.6.6 Mapping Function 复制
 初版支持在同一个 Event Instrument 内复制 Mapping Function。
 复制规则：
@@ -794,7 +773,7 @@ Pitch Bend Range semitone / cents
 Logical Parameter Mapping 中的除零、NaN、Infinity 和最终越界必须明确处理。
 系统级规则：
 ```text
-C# Mapping Function 返回 NaN / Infinity 视为运行失败。
+Mapping Function Expression 返回 NaN / Infinity 视为运行失败。
 图形映射或内置映射产生 NaN / Infinity 视为编译失败。
 最终输出值超出目标参数合法范围时，按 第 9 章《曲线、Logical Parameter 与映射》 既有最终合法性校验处理。
 系统不得自动静默 clamp，除非用户显式设置 Clamp Step。
@@ -872,8 +851,8 @@ Per-Note Instance Isolation 关闭时，不依赖逻辑触发上下文的映射�
 对固定 Pitch Bend value 做 Clamp
 ```
 这类映射只是模板参数变换，不需要每音符独立状态。
-### 9.9.4 C# Mapping Function 兼容性
-如果 C# Mapping Function 声明所需 Context 字段包含每音符字段，则：
+### 9.9.4 Mapping Function Expression 兼容性
+如果 Mapping Function Expression 经正式分析所得 Context 依赖包含每音符字段，则：
 ```text
 当 Per-Note Instance Isolation 关闭且该 Step 参与编译时，编译失败
 ```
@@ -926,7 +905,7 @@ Project 允许打开
 包括但不限于：
 ```text
 映射链断裂
-C# Mapping Function 编译错误
+Mapping Function Expression 验证错误
 曲线目标不合法
 被禁用配置中存在错误引用
 未完成映射配置

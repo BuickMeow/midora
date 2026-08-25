@@ -302,11 +302,14 @@ public sealed class WpfInteractionRegressionTests
         {
             ResourceDictionary icons = (ResourceDictionary)System.Windows.Application.LoadComponent(
                 new Uri("/Midora.Desktop.Presentation;component/Themes/FluentSystemIcons.xaml", UriKind.Relative));
+            ResourceDictionary windowControlIcons = (ResourceDictionary)System.Windows.Application.LoadComponent(
+                new Uri("/Midora.Desktop.Presentation;component/Themes/WindowControlIcons.xaml", UriKind.Relative));
             ResourceDictionary palette = (ResourceDictionary)System.Windows.Application.LoadComponent(
                 new Uri("/Midora.Desktop.Presentation;component/Themes/Palette.xaml", UriKind.Relative));
             System.Windows.Application application = new();
             application.Resources.MergedDictionaries.Add(palette);
             application.Resources.MergedDictionaries.Add(icons);
+            application.Resources.MergedDictionaries.Add(windowControlIcons);
             ResourceDictionary controls = (ResourceDictionary)System.Windows.Application.LoadComponent(
                 new Uri("/Midora.Desktop.Presentation;component/Themes/Controls.xaml", UriKind.Relative));
             application.Resources.MergedDictionaries.Add(controls);
@@ -378,6 +381,13 @@ public sealed class WpfInteractionRegressionTests
                     displayMemberCombo.Template.FindName("ContentSite", displayMemberCombo));
                 Assert.NotNull(contentSite.ContentTemplateSelector);
 
+                MappingFunctionDialog mappingFunctionDialog = new(
+                    "New Mapping Function",
+                    "Function",
+                    "value",
+                    _ => null);
+                Assert.NotNull(mappingFunctionDialog.Content);
+
                 MouseWheelEventArgs closedWheel = new(Mouse.PrimaryDevice, 0, 120)
                 {
                     RoutedEvent = UIElement.PreviewMouseWheelEvent,
@@ -436,6 +446,124 @@ public sealed class WpfInteractionRegressionTests
 
             Assert.True(wheel.Handled);
             Assert.Equal(16, viewer.VerticalOffset);
+        });
+    }
+
+    [Fact]
+    public void ComboDropDownWheelIsConsumedEvenWithoutScrollableContent()
+    {
+        RunOnSta(() =>
+        {
+            Border popupRoot = new() { Child = new TextBlock { Text = "Only item" } };
+            ComboBoxWheelSelectionGuard.SetUseSingleStepDropDownWheel(popupRoot, true);
+
+            MouseWheelEventArgs wheel = new(Mouse.PrimaryDevice, 0, -120)
+            {
+                RoutedEvent = UIElement.PreviewMouseWheelEvent,
+                Source = popupRoot.Child
+            };
+            popupRoot.Child.RaiseEvent(wheel);
+
+            Assert.True(wheel.Handled);
+        });
+    }
+
+    [Fact]
+    public void OpenComboWheelDoesNotMoveAnOuterFormScrollViewer()
+    {
+        RunOnSta(() =>
+        {
+            ComboBox combo = new() { IsDropDownOpen = true };
+            ComboBoxWheelSelectionGuard.SetIsEnabled(combo, true);
+            StackPanel content = new();
+            content.Children.Add(combo);
+            content.Children.Add(new Border { Height = 500 });
+            ScrollViewer outer = new()
+            {
+                Height = 100,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = content
+            };
+            ScrollViewerWheelRouter.SetIsEnabled(outer, true);
+            outer.Measure(new Size(300, 100));
+            outer.Arrange(new Rect(0, 0, 300, 100));
+            outer.UpdateLayout();
+
+            MouseWheelEventArgs wheel = new(Mouse.PrimaryDevice, 0, -120)
+            {
+                RoutedEvent = UIElement.PreviewMouseWheelEvent,
+                Source = combo
+            };
+            combo.RaiseEvent(wheel);
+
+            Assert.True(wheel.Handled);
+            Assert.Equal(0, outer.VerticalOffset);
+        });
+    }
+
+    [Fact]
+    public void MappingFunctionDialogUsesOnlyApplicationScopedLabelStyles()
+    {
+        string path = Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            "MappingFunctionDialog.xaml");
+        XDocument document = XDocument.Load(path);
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+
+        XElement[] labels = document.Descendants(presentation + "TextBlock")
+            .Where(element => (string?)element.Attribute("Text") is "NAME" or "EXPRESSION")
+            .ToArray();
+        Assert.Equal(2, labels.Length);
+        Assert.All(labels, label => Assert.Equal(
+            "{StaticResource Text.Caption}",
+            (string?)label.Attribute("Style")));
+        Assert.DoesNotContain(
+            "PropertyLabel",
+            document.ToString(SaveOptions.DisableFormatting),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EventInstrumentSidebarIconsRetainTheSharedFluentIconTemplate()
+    {
+        string path = Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            "MainWindow.xaml");
+        XDocument document = XDocument.Load(path);
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+
+        XElement iconStyle = document.Descendants(presentation + "Style").Single(element =>
+            string.Equals(
+                (string?)element.Attribute("TargetType"),
+                "{x:Type ui:FluentIcon}",
+                StringComparison.Ordinal));
+        Assert.Equal(
+            "{StaticResource Icon.CommandBar}",
+            (string?)iconStyle.Attribute("BasedOn"));
+        Assert.Null(iconStyle.Attribute(x + "Key"));
+    }
+
+    [Fact]
+    public void PrimaryTransportIsNotAKeyboardPreviewPrioritySurface()
+    {
+        RunOnSta(() =>
+        {
+            Button primaryTransport = new();
+            Button otherCommand = new();
+
+            Assert.False(MainWindow.IsPreviewPriorityPointerTarget(
+                primaryTransport,
+                primaryTransport));
+            Assert.True(MainWindow.IsPreviewPriorityPointerTarget(
+                otherCommand,
+                primaryTransport));
         });
     }
 

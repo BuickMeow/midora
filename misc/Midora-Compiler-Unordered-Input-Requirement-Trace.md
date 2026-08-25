@@ -5,7 +5,7 @@
 
 ## 范围
 
-- 输入：Project Global / Event Instrument / SubVoice 的 MIDI Initial State 与 Project Reset Defaults 字典；C# Mapping Function 的声明 Context 字段集合；CompileContext 的 Track / SubVoice 选择集合。
+- 输入：Project Global / Event Instrument / SubVoice 的 MIDI Initial State 与 Project Reset Defaults 字典；Mapping Function Expression 经推导并复核的 Context 依赖集合；CompileContext 的 Track / SubVoice 选择集合。
 - 正式输出：Canonical Compiled Result 的上下文摘要、Conductor、事件、Channel Unit 分配、诊断、统计和 fingerprint。
 - 边界：Track、SubVoice、Segment、Logical Note、Template Event、Mapping Step 等显式 `List` 顺序属于项目内容或用户结构顺序，不纳入“仅改变容器插入顺序”的等价变换。
 - 失败条件：仅改变上述无序容器的插入顺序后，任一正式输出字段发生变化。
@@ -16,6 +16,6 @@
 
 ## 验证
 
-使用同一合法 Project 构造跨两个 Logical Track、两个 SubVoice、三层 Initial State、Reset Defaults 和参与执行的 C# Mapping。第一次按正序插入全部无序集合，第二次仅反转插入顺序，并反转 CompileContext 集合构造顺序。逐字段比较两次全量编译的全部正式结果。
+使用同一合法 Project 构造跨两个 Logical Track、两个 SubVoice、三层 Initial State、Reset Defaults 和参与执行的 Mapping Function Expression。第一次按正序插入全部无序集合，第二次仅反转插入顺序，并反转 CompileContext 集合构造顺序。逐字段比较两次全量编译的全部正式结果。
 
 验证结果：`Midora.Compiler.Tests` 204/204 通过；其中新增门逐字段覆盖 context、events、allocations、conductor、diagnostics、statistics 与 fingerprint。完整非 UI 发布门 853/853、0 Skip、0 warning、0 error；Native AOT 产物位于 `artifacts/non-ui-release-gate-101f16d56a684539bb404186989bbc72/`。

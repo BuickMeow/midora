@@ -1,12 +1,5 @@
 namespace Midora.Application;
 
-public enum FunctionDraftResolution
-{
-    Apply,
-    Discard,
-    Cancel
-}
-
 public enum UnsavedProjectResolution
 {
     SaveProject,
@@ -44,13 +37,9 @@ public sealed class ProjectSwitchGuardResult<T>
 
 public interface IProjectSwitchGuardActions<T>
 {
-    bool HasFunctionDrafts { get; }
     bool HasUnsavedProjectChanges { get; }
     bool CanSaveProject { get; }
 
-    ValueTask<FunctionDraftResolution> ResolveFunctionDraftsAsync(CancellationToken cancellationToken);
-    Task ApplyFunctionDraftsAsync(CancellationToken cancellationToken);
-    Task DiscardFunctionDraftsAsync(CancellationToken cancellationToken);
     ValueTask<UnsavedProjectResolution> ResolveUnsavedProjectAsync(CancellationToken cancellationToken);
     Task SaveProjectAsync(CancellationToken cancellationToken);
     Task<T> PerformProjectSwitchAsync(CancellationToken cancellationToken);

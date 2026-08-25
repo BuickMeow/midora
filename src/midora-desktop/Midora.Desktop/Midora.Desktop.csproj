@@ -43,4 +43,9 @@
     <ProjectReference Include="..\..\midora-audio\Midora.Audio.Bass\Midora.Audio.Bass.csproj" />
     <ProjectReference Include="..\..\midora-core\Midora.Playback.BassWasapi\Midora.Playback.BassWasapi.csproj" />
   </ItemGroup>
+
+  <Target Name="RemoveLegacyMappingReferencePack" BeforeTargets="PrepareForBuild">
+    <RemoveDir Directories="$(OutDir)mapping-reference-pack"
+               Condition="Exists('$(OutDir)mapping-reference-pack')" />
+  </Target>
 </Project>

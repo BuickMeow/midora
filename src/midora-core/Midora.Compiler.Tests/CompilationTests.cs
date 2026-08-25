@@ -299,8 +299,8 @@ public sealed class CompilationTests
         CSharpMappingFunction function = new(fixture.Project)
         {
             Name = "context",
-            Body = "return value + context.ProjectTick - context.ProjectTick"
-                + " + context.EventInstrumentRootNote - context.EventInstrumentRootNote;"
+            Body = "value + context.ProjectTick - context.ProjectTick"
+                + " + context.EventInstrumentRootNote - context.EventInstrumentRootNote"
         };
         function.DeclaredContextFields.Add(nameof(MappingContextV2.ProjectTick));
         function.DeclaredContextFields.Add(nameof(MappingContextV2.EventInstrumentRootNote));
@@ -434,7 +434,7 @@ public sealed class CompilationTests
     public void IncrementalCacheReplaysTrackExpansionDiagnostics()
     {
         var fixture = CompilerTestProject.Create();
-        CSharpMappingFunction function = new(fixture.Project) { Name = "throws", Body = "throw new InvalidOperationException();" };
+        CSharpMappingFunction function = new(fixture.Project) { Name = "not finite", Body = "value / 0" };
         fixture.Instrument.MappingFunctions.Add(function);
         TemplateEvent value = TemplateEvent.ControlChange(fixture.Project, 0, 1, 20);
         value.ValueMappings.Add(new ValueMappingStep(fixture.Project)
@@ -539,16 +539,16 @@ public sealed class CompilationTests
     }
 
     [Fact]
-    public void MappingContextNameChangeInvalidatesIncrementalTrackFragment()
+    public void MappingContextRootNoteChangeInvalidatesIncrementalTrackFragment()
     {
         var fixture = CompilerTestProject.Create();
         fixture.Instrument.RequiresChannelIsolation = true;
         CSharpMappingFunction function = new(fixture.Project)
         {
-            Name = "name-sensitive",
-            Body = "return context.EventInstrumentName == \"Renamed\" ? 100 : 20;"
+            Name = "root-note-sensitive",
+            Body = "context.EventInstrumentRootNote == 61 ? 100 : 20"
         };
-        function.DeclaredContextFields.Add(nameof(MappingContextV2.EventInstrumentName));
+        function.DeclaredContextFields.Add(nameof(MappingContextV2.EventInstrumentRootNote));
         fixture.Instrument.MappingFunctions.Add(function);
         TemplateEvent note = TemplateEvent.Note(fixture.Project, 0, 120, 60, 80);
         note.ValueMappings.Add(new ValueMappingStep(fixture.Project)
@@ -561,7 +561,7 @@ public sealed class CompilationTests
         MidoraCompiler compiler = new();
         CanonicalCompiledResult before = compiler.CompileFull(fixture.Project);
 
-        fixture.Instrument.Name = "Renamed";
+        fixture.Instrument.RootNote = 61;
         CanonicalCompiledResult after = compiler.CompileIncremental(fixture.Project, new ProjectChangeSet());
 
         Assert.Contains(before.Events.ToArray(), value => value.Role == CanonicalEventRole.NoteOn

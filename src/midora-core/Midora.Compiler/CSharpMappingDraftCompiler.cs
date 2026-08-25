@@ -2,29 +2,35 @@ using Midora.Domain;
 
 namespace Midora.Compiler;
 
-public sealed record CSharpMappingDraftCompilationResult(bool Succeeded, string? ErrorMessage)
+public sealed record CSharpMappingDraftCompilationResult(
+    bool Succeeded,
+    string? ErrorMessage,
+    IReadOnlyList<string> ReferencedContextFields)
 {
-    public static CSharpMappingDraftCompilationResult Success { get; } = new(true, null);
+    public static CSharpMappingDraftCompilationResult Success(
+        IReadOnlyCollection<string> referencedContextFields) =>
+        new(
+            true,
+            null,
+            referencedContextFields.Order(StringComparer.Ordinal).ToArray());
 }
 
 /// <summary>
-/// Validates an unapplied C# Mapping draft with the same fixed ABI, Roslyn profile,
-/// references, cache key, and collectible load context as formal Project compilation.
+/// Validates an unapplied bounded Mapping Function expression with the same fixed ABI,
+/// whitelist, limits, cache key, and expression compiler as formal Project compilation.
 /// It does not mutate a Project and does not make the draft a formal consumer input.
 /// </summary>
 public sealed class CSharpMappingDraftCompiler : IDisposable
 {
-    private readonly CSharpMappingCompiler _compiler = new();
+    private readonly MappingExpressionCompiler _compiler = new();
     private bool _disposed;
 
     public CSharpMappingDraftCompilationResult Compile(
         int abiVersion,
-        string body,
-        IEnumerable<string> declaredContextFields)
+        string body)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(body);
-        ArgumentNullException.ThrowIfNull(declaredContextFields);
 
         MidoraProject owner = new(480);
         CSharpMappingFunction function = new(owner)
@@ -33,24 +39,20 @@ public sealed class CSharpMappingDraftCompiler : IDisposable
             Body = body,
             AbiVersion = abiVersion
         };
-        foreach (string field in declaredContextFields)
-        {
-            function.DeclaredContextFields.Add(field);
-        }
         try
         {
-            _ = _compiler.GetOrCompile(function);
-            return CSharpMappingDraftCompilationResult.Success;
+            IReadOnlySet<string> fields = _compiler.GetReferencedContextFields(function);
+            return CSharpMappingDraftCompilationResult.Success(fields);
         }
         catch (MappingException exception)
         {
-            return new(false, exception.Message);
+            return new(false, exception.Message, []);
         }
     }
 
     /// <summary>
-    /// Releases all compiled drafts and their collectible load contexts. Desktop callers invoke
-    /// this at Project-session boundaries so no draft compilation cache crosses Projects.
+    /// Releases all compiled draft delegates. Desktop callers invoke this at Project-session
+    /// boundaries so no draft compilation cache crosses Projects.
     /// </summary>
     public void Clear()
     {

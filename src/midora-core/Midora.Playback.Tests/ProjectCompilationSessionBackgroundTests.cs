@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using Midora.Compiler;
 using Midora.Domain;
+using Midora.Mapping.Contract.V2;
 using Midora.Midi;
 
 namespace Midora.Playback.Tests;
@@ -242,7 +242,7 @@ public sealed class ProjectCompilationSessionBackgroundTests
     }
 
     [Fact]
-    public async Task EditDoesNotWaitForNonCooperativeMappingExecutionInOlderRevision()
+    public async Task BackgroundCompilationNeverExecutesLegacyFreeCSharpAndCanRecover()
     {
         string markerPath = Path.Combine(
             Path.GetTempPath(),
@@ -256,7 +256,8 @@ public sealed class ProjectCompilationSessionBackgroundTests
             CSharpMappingFunction function = new(project)
             {
                 Name = "blocking-test",
-                Body = "return value;"
+                AbiVersion = MappingAbiV2.Version,
+                Body = $"System.IO.File.WriteAllText(@\"{markerPath.Replace("\"", "\"\"")}\", \"started\")"
             };
             instrument.MappingFunctions.Add(function);
             templateEvent.ValueMappings.Add(new ValueMappingStep(project)
@@ -270,24 +271,20 @@ public sealed class ProjectCompilationSessionBackgroundTests
                 backgroundDebounce: TimeSpan.Zero);
             ProjectChangeSet changes = new();
             changes.EventInstrumentIds.Add(instrument.Id);
-            string escapedMarkerPath = markerPath.Replace("\"", "\"\"");
+            CanonicalCompiledResult rejected = await session.EnsureCurrentCompilationAsync();
+            Assert.False(rejected.IsConsumable);
+            Assert.False(File.Exists(markerPath));
+            Assert.Contains(rejected.Diagnostics, diagnostic =>
+                diagnostic.Message.Contains("Free C# Mapping Functions are not executed", StringComparison.Ordinal));
 
-            _ = session.ApplyEdit(
-                _ => function.Body =
-                    $"System.IO.File.WriteAllText(@\"{escapedMarkerPath}\", \"started\"); "
-                    + "System.Threading.Thread.Sleep(1500); return value;",
-                changes);
-            await WaitForFileAsync(session, markerPath, TimeSpan.FromSeconds(5));
-
-            Stopwatch editDuration = Stopwatch.StartNew();
-            _ = session.ApplyEdit(_ => function.Body = "return value;", changes);
-            editDuration.Stop();
-
-            Assert.True(
-                editDuration.Elapsed < TimeSpan.FromMilliseconds(500),
-                $"The edit waited {editDuration.Elapsed.TotalMilliseconds:F1} ms for an obsolete compiler invocation.");
+            _ = session.ApplyEdit(_ =>
+            {
+                function.AbiVersion = MappingExpressionAbiV3.Version;
+                function.Body = "value";
+            }, changes);
             CanonicalCompiledResult current = await session.EnsureCurrentCompilationAsync();
             CanonicalCompiledResult full = new MidoraCompiler().CompileFull(project);
+            Assert.True(current.IsConsumable);
             Assert.Equal(full.Fingerprint, current.Fingerprint);
             Assert.Equal(full.Events.ToArray(), current.Events.ToArray());
         }
@@ -298,23 +295,6 @@ public sealed class ProjectCompilationSessionBackgroundTests
                 File.Delete(markerPath);
             }
         }
-    }
-
-    private static async Task WaitForFileAsync(
-        ProjectCompilationSession session,
-        string path,
-        TimeSpan timeout)
-    {
-        long deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
-        while (!File.Exists(path) && Environment.TickCount64 < deadline)
-        {
-            await Task.Delay(5);
-        }
-        Assert.True(
-            File.Exists(path),
-            "The background mapping invocation did not start in time. "
-                + $"state={session.CompilationState}; "
-                + $"diagnostics={string.Join(" | ", session.LastAttempt.Diagnostics.Select(value => value.Message))}");
     }
 
     private static (MidoraProject Project, LogicalTrack Track, LogicalNote First, LogicalNote Second)

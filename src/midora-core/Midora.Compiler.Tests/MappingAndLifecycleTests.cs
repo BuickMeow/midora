@@ -190,14 +190,14 @@ public sealed class MappingAndLifecycleTests
     }
 
     [Fact]
-    public void BuiltInAndCSharpMappingsRunDuringCompilation()
+    public void BuiltInAndExpressionMappingsRunDuringCompilation()
     {
         var fixture = CompilerTestProject.Create();
         fixture.Instrument.RequiresChannelIsolation = true;
         CSharpMappingFunction function = new(fixture.Project)
         {
             Name = "velocity boost",
-            Body = "return Math.Min(127, value + context.TriggerVelocity / 10.0);"
+            Body = "Math.Min(127, value + context.TriggerVelocity / 10.0)"
         };
         function.DeclaredContextFields.Add(nameof(MappingContextV2.TriggerVelocity));
         fixture.Instrument.MappingFunctions.Add(function);
@@ -326,7 +326,7 @@ public sealed class MappingAndLifecycleTests
         CSharpMappingFunction function = new(fixture.Project)
         {
             Name = "template tick",
-            Body = "return context.TemplateTick % 128;"
+            Body = "context.TemplateTick % 128"
         };
         function.DeclaredContextFields.Add(nameof(MappingContextV2.TemplateTick));
         fixture.Instrument.MappingFunctions.Add(function);
@@ -376,7 +376,7 @@ public sealed class MappingAndLifecycleTests
         CSharpMappingFunction function = new(fixture.Project)
         {
             Name = "effective root",
-            Body = "return context.EffectiveRootNote;"
+            Body = "context.EffectiveRootNote"
         };
         function.DeclaredContextFields.Add(nameof(MappingContextV2.EffectiveRootNote));
         fixture.Instrument.MappingFunctions.Add(function);

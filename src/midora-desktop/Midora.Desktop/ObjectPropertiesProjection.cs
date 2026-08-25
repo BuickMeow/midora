@@ -178,7 +178,7 @@ internal static class ObjectPropertiesProjection
         MappingSource source = operation == MappingOperation.CustomCSharp
             ? MappingSource.CurrentValue
             : EnumValue<MappingSource>(Required("mappingStep.source"), "Source");
-        MidoraId? functionId = NullableId(Required("mappingStep.function"), "C# Mapping Function");
+        MidoraId? functionId = NullableId(Required("mappingStep.function"), "Mapping Function");
         if (operation != MappingOperation.CustomCSharp
             && !MappingEditingPolicy.AllowedSources(instrument, context).Contains(source))
         {
@@ -191,7 +191,7 @@ internal static class ObjectPropertiesProjection
                     .All(candidate => candidate.Id != selectedFunctionId)))
         {
             throw new InvalidOperationException(
-                "Select a C# Mapping Function legal in the selected Mapping Chain context.");
+                "Select a Mapping Function legal in the selected Mapping Chain context.");
         }
         return ProjectDomainEditCommands.CreateMappingStep(
             instrument.Id,
@@ -530,7 +530,7 @@ internal static class ObjectPropertiesProjection
                     source = MappingSource.CurrentValue;
                 }
                 MidoraId? mappingFunctionId = TryValue("mappingStep.function", out string function)
-                    ? NullableId(function, "C# Mapping Function")
+                    ? NullableId(function, "Mapping Function")
                     : step.MappingFunctionId;
                 if (operation != MappingOperation.CustomCSharp
                     && !MappingEditingPolicy.AllowedSources(ownedInstrument, targetContext).Contains(source))
@@ -544,7 +544,7 @@ internal static class ObjectPropertiesProjection
                             .All(candidate => candidate.Id != functionId)))
                 {
                     throw new InvalidOperationException(
-                        "Select a C# Mapping Function legal in the selected Mapping Chain context.");
+                        "Select a Mapping Function legal in the selected Mapping Chain context.");
                 }
                 return ProjectDomainEditCommands.UpdateMappingStepAndOwner(
                     ownedInstrument.Id,
@@ -1578,9 +1578,8 @@ internal static class ObjectPropertiesProjection
             {
                 properties.Replace(
                     function.Name,
-                    "C# Mapping Function",
+                    "Mapping Function",
                     [Field("mapping.abi", "ABI VERSION", function.AbiVersion, false),
-                     Field("mapping.context", "DECLARED CONTEXT FIELDS", string.Join(", ", function.DeclaredContextFields), false),
                      Field("mapping.open", "EDITING", "Double-click the function to open its Draft Workspace.", false)]);
                 return;
             }
@@ -2023,7 +2022,7 @@ internal static class ObjectPropertiesProjection
             key == "mappingStep.operation" ? EnumValue<MappingOperation>(value, "Operation") : step.Operation,
             key == "mappingStep.logicalParameter" ? NullableId(value, "Logical Parameter") : step.LogicalParameterId,
             key == "mappingStep.envelope" ? NullableId(value, "Envelope") : step.EnvelopeId,
-            key == "mappingStep.function" ? NullableId(value, "C# Mapping Function") : step.MappingFunctionId,
+            key == "mappingStep.function" ? NullableId(value, "Mapping Function") : step.MappingFunctionId,
             key == "mappingStep.constant" ? Double(value, "Constant") : step.Constant,
             key == "mappingStep.sourceMinimum" ? Double(value, "Source Minimum") : step.SourceMinimum,
             key == "mappingStep.sourceMaximum" ? Double(value, "Source Maximum") : step.SourceMaximum,
@@ -2375,7 +2374,7 @@ internal static class ObjectPropertiesProjection
     {
         List<PropertyChoiceOption> result =
         [
-            new(string.Empty, "Select an object…")
+            new(string.Empty, "None")
         ];
         result.AddRange(values.Select(value => new PropertyChoiceOption(
             value.Id.Value.ToString(CultureInfo.InvariantCulture),
@@ -2490,7 +2489,7 @@ internal static class ObjectPropertiesProjection
 
     private static string DescribeMappingOperation(MappingOperation operation) =>
         operation == MappingOperation.CustomCSharp
-            ? "CustomCSharp — receives the current accumulated chain value"
+            ? "Expression — receives the current accumulated chain value"
             : operation.ToString();
 
     private static T EnumValue<T>(string value, string label) where T : struct, Enum =>

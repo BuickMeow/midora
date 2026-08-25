@@ -1,4 +1,5 @@
 using Midora.Domain;
+using Midora.Mapping.Contract.V2;
 
 namespace Midora.Application;
 
@@ -29,6 +30,7 @@ public static partial class ProjectDomainEditCommands
             MappingFunctionValue replacement = new(
                 normalizedName,
                 validatedBody,
+                MappingExpressionAbiV3.Version,
                 normalizedFields);
             return Prepared(
                 !MappingFunctionValuesEqual(old, replacement),
@@ -120,6 +122,7 @@ public static partial class ProjectDomainEditCommands
         new(
             value.Name,
             value.Body,
+            value.AbiVersion,
             value.DeclaredContextFields.Order(StringComparer.Ordinal).ToArray());
 
     private static bool MappingFunctionValuesEqual(
@@ -127,6 +130,7 @@ public static partial class ProjectDomainEditCommands
         MappingFunctionValue second) =>
         string.Equals(first.Name, second.Name, StringComparison.Ordinal)
         && string.Equals(first.Body, second.Body, StringComparison.Ordinal)
+        && first.AbiVersion == second.AbiVersion
         && first.DeclaredContextFields.SequenceEqual(
             second.DeclaredContextFields,
             StringComparer.Ordinal);
@@ -137,6 +141,7 @@ public static partial class ProjectDomainEditCommands
     {
         target.Name = value.Name;
         target.Body = value.Body;
+        target.AbiVersion = value.AbiVersion;
         target.DeclaredContextFields.Clear();
         target.DeclaredContextFields.UnionWith(value.DeclaredContextFields);
     }
@@ -144,5 +149,6 @@ public static partial class ProjectDomainEditCommands
     private sealed record MappingFunctionValue(
         string Name,
         string Body,
+        int AbiVersion,
         string[] DeclaredContextFields);
 }

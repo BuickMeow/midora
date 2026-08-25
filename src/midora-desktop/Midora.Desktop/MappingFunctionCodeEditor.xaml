@@ -2,11 +2,13 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:avalonEdit="http://icsharpcode.net/sharpdevelop/avalonedit"
+             MinHeight="42"
              FontFamily="{StaticResource Font.Mono}"
              Focusable="True"
              FocusVisualStyle="{x:Null}">
   <Grid>
-    <Border Background="{StaticResource Brush.Surface.0}"
+    <Border MinHeight="42"
+            Background="{StaticResource Brush.Surface.0}"
             BorderThickness="1"
             CornerRadius="3">
       <Border.Style>
@@ -23,16 +25,17 @@
         </Style>
       </Border.Style>
       <avalonEdit:TextEditor x:Name="CodeEditor"
-                             Padding="8,6"
+                             MinHeight="40"
+                             Padding="6,4"
                              Background="Transparent"
                              Foreground="#D4D4D4"
                              FontFamily="{StaticResource Font.Mono}"
-                             FontSize="13"
-                             ShowLineNumbers="True"
+                             FontSize="12"
+                             ShowLineNumbers="False"
                              LineNumbersForeground="{StaticResource Brush.Text.Tertiary}"
-                             WordWrap="False"
-                             HorizontalScrollBarVisibility="Auto"
-                             VerticalScrollBarVisibility="Auto"
+                             WordWrap="True"
+                             HorizontalScrollBarVisibility="Disabled"
+                             VerticalScrollBarVisibility="Disabled"
                              PreviewKeyDown="OnEditorPreviewKeyDown"
                              PreviewTextInput="OnEditorPreviewTextInput"
                              TextChanged="OnEditorTextChanged"

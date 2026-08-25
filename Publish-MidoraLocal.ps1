@@ -258,6 +258,7 @@ Invoke-DotNet -Arguments @(
     "--no-restore",
     "--output", $publishDirectory,
     "-p:PublishSingleFile=true",
+    "-p:EnableCompressionInSingleFile=true",
     "-p:IncludeNativeLibrariesForSelfExtract=true",
     "-p:PublishTrimmed=false",
     "-p:DebugSymbols=false",

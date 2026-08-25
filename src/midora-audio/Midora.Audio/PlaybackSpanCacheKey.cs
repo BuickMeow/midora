@@ -35,8 +35,8 @@ public static class PlaybackSpanCacheKey
         using MemoryStream payload = new();
         using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("MIDORA_PLAYBACK_SPAN_CACHE_KEY_V7");
-            writer.Write(4); // BASS renderer; default playback views preserve privileged GS/XG mode.
+            writer.Write("MIDORA_PLAYBACK_SPAN_CACHE_KEY_V8");
+            writer.Write(5); // BASS renderer; shared Root/Usage range state is restored cross-Track.
             writer.Write(2); // Look-ahead inter-sample limiter algorithm.
             writer.Write(plan.SampleRate);
             writer.Write(plan.TotalFrameCount);

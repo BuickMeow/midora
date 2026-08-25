@@ -296,6 +296,15 @@ public sealed partial class MidoraCompiler
                             cancellationToken);
                     }
                 }
+                AppendRootRangeState(
+                    rootPlan,
+                    port,
+                    channel,
+                    startTick,
+                    includeStateAtStart,
+                    demandedMonitoringSourceIds: null,
+                    events,
+                    cancellationToken);
                 AppendLifecycleRange(
                     rootPlan,
                     port,
@@ -399,6 +408,15 @@ public sealed partial class MidoraCompiler
                             cancellationToken);
                     }
                 }
+                AppendRootRangeState(
+                    rootPlan,
+                    port,
+                    channel,
+                    startTick,
+                    includeStateAtStart,
+                    demandedMonitoringSourceIds,
+                    sink,
+                    cancellationToken);
                 if (lifecycleDemanded)
                 {
                     List<CanonicalMidiEvent> lifecycle = [];
@@ -701,12 +719,6 @@ public sealed partial class MidoraCompiler
                 }
             }
 
-            Dictionary<long, DirectMidiChannelEventValue>? stateAtStart = includeStateAtStart
-                && startTick > segment.ProjectStartTick
-                    ? _channelAnalysis[segment.Id].GetStateAt(
-                        segment.ChannelEvents,
-                        queryContentStart)
-                    : null;
             foreach (DirectMidiChannelEventValue value in segment.ChannelEvents.QueryOrderedValues(
                 queryContentStart,
                 Math.Max(queryContentEnd, queryContentStart + 1)))
@@ -739,34 +751,6 @@ public sealed partial class MidoraCompiler
                     CanonicalEventRole.DirectMidi,
                     target);
             }
-            if (stateAtStart is not null)
-            {
-                foreach ((long target, DirectMidiChannelEventValue value) in stateAtStart.OrderBy(value => value.Key))
-                {
-                    MidiMessage message = ToMidiMessage(value, channel);
-                    SourceReference source = DirectSource(
-                        root.Id,
-                        trackPlan.Track.Id,
-                        segment.Id,
-                        value.Id,
-                        startTick,
-                        SourceOrigin.RangeRestore);
-                    AddDirect(
-                        startTick,
-                        value.Order,
-                        endpointOrder: 1,
-                        value.Id,
-                        message,
-                        source,
-                        trackPlan,
-                        output,
-                        port,
-                        channel,
-                        CanonicalEventRole.RangeRestore,
-                        target);
-                }
-            }
-
             if ((segmentEnd >= startTick
                     && (segmentEnd < endTick
                         || endTick == _compiledEndTick && segmentEnd == endTick))
@@ -825,9 +809,11 @@ public sealed partial class MidoraCompiler
                         interval.StartOwnerSegmentId,
                         lifecycleStart,
                         interval.StartOwnerTrackId);
-                    int trackOrder = rootPlan.Tracks
-                        .Single(value => value.Track.Id == interval.StartOwnerTrackId)
-                        .TrackOrder;
+                    int trackOrder = restoredStart
+                        ? int.MinValue
+                        : rootPlan.Tracks
+                            .Single(value => value.Track.Id == interval.StartOwnerTrackId)
+                            .TrackOrder;
                     long order = long.MinValue / 4 + lifecycleStart;
                     output.Add(new(
                         lifecycleStart,
@@ -903,19 +889,150 @@ public sealed partial class MidoraCompiler
             }
         }
 
+        private void AppendRootRangeState(
+            PureMidiRootPlan rootPlan,
+            byte port,
+            byte channel,
+            long startTick,
+            bool includeStateAtStart,
+            IReadOnlySet<MidoraId>? demandedMonitoringSourceIds,
+            ICollection<CanonicalMidiEvent> output,
+            CancellationToken cancellationToken)
+        {
+            if (!includeStateAtStart || startTick <= 0)
+            {
+                return;
+            }
+
+            PureMidiRootInterval? activeInterval = rootPlan.Intervals
+                .SingleOrDefault(value => value.StartTick < startTick && value.EndTick > startTick);
+            if (activeInterval is null)
+            {
+                return;
+            }
+
+            Dictionary<long, RootStateCandidate> state = [];
+            foreach (PureMidiTrackPlan trackPlan in rootPlan.Tracks)
+            {
+                if (demandedMonitoringSourceIds is not null
+                    && !demandedMonitoringSourceIds.Contains(trackPlan.Track.Id))
+                {
+                    continue;
+                }
+
+                foreach (MidiSegment segment in trackPlan.Track.Segments
+                    .Where(IsRepresentableMidiSegment)
+                    .Where(value => value.ProjectStartTick < startTick
+                        && checked(value.ProjectStartTick + value.LengthTicks) > activeInterval.StartTick)
+                    .OrderBy(value => value.ProjectStartTick)
+                    .ThenBy(value => value.Id))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!_channelAnalysis.TryGetValue(
+                            segment.Id,
+                            out SegmentChannelAnalysis? segmentAnalysis))
+                    {
+                        continue;
+                    }
+
+                    long contentStart = segment.ContentOffsetTick;
+                    long contentEnd = checked(contentStart + segment.LengthTicks);
+                    long absoluteStateEnd = Math.Min(
+                        startTick,
+                        checked(segment.ProjectStartTick + segment.LengthTicks));
+                    long stateContentEnd = checked(
+                        contentStart + absoluteStateEnd - segment.ProjectStartTick);
+                    foreach ((long target, DirectMidiChannelEventValue value) in segmentAnalysis
+                        .GetStateAt(segment.ChannelEvents, Math.Min(contentEnd, stateContentEnd)))
+                    {
+                        long absoluteTick = checked(
+                            segment.ProjectStartTick + value.Tick - contentStart);
+                        if (absoluteTick < activeInterval.StartTick || absoluteTick >= startTick)
+                        {
+                            continue;
+                        }
+
+                        RootStateCandidate candidate = new(
+                            trackPlan,
+                            segment,
+                            value,
+                            absoluteTick);
+                        if (!state.TryGetValue(target, out RootStateCandidate current)
+                            || CompareRootStateCandidate(candidate, current) > 0)
+                        {
+                            state[target] = candidate;
+                        }
+                    }
+                }
+            }
+
+            long restoreOrder = long.MinValue / 8;
+            foreach ((long target, RootStateCandidate candidate) in state
+                .OrderBy(value => RangeRestoreCategory(value.Value.Value))
+                .ThenBy(value => value.Key))
+            {
+                DirectMidiChannelEventValue value = candidate.Value;
+                MidiMessage message = ToMidiMessage(value, channel);
+                SourceReference source = DirectSource(
+                    rootPlan.Root.Id,
+                    candidate.TrackPlan.Track.Id,
+                    candidate.Segment.Id,
+                    value.Id,
+                    startTick,
+                    SourceOrigin.RangeRestore);
+                long order = restoreOrder++;
+                output.Add(new(
+                    startTick,
+                    port,
+                    channel,
+                    message,
+                    CanonicalEventRole.RangeRestore,
+                    order,
+                    target,
+                    order,
+                    source,
+                    candidate.TrackPlan.Track.Id,
+                    int.MinValue + 1,
+                    order));
+            }
+        }
+
+        private static int CompareRootStateCandidate(
+            RootStateCandidate left,
+            RootStateCandidate right)
+        {
+            int value = left.AbsoluteTick.CompareTo(right.AbsoluteTick);
+            if (value != 0) return value;
+            value = left.TrackPlan.TrackOrder.CompareTo(right.TrackPlan.TrackOrder);
+            if (value != 0) return value;
+            value = left.Value.Order.CompareTo(right.Value.Order);
+            return value != 0 ? value : left.Value.Id.CompareTo(right.Value.Id);
+        }
+
+        private static int RangeRestoreCategory(DirectMidiChannelEventValue value) =>
+            value.Kind switch
+            {
+                DirectMidiChannelEventKind.ControlChange when value.Data1 == 0 => 0,
+                DirectMidiChannelEventKind.ControlChange when value.Data1 == 32 => 1,
+                DirectMidiChannelEventKind.ProgramChange => 2,
+                DirectMidiChannelEventKind.ControlChange => 3,
+                DirectMidiChannelEventKind.PolyphonicKeyPressure => 4,
+                DirectMidiChannelEventKind.ChannelPressure => 5,
+                DirectMidiChannelEventKind.PitchBend => 6,
+                _ => 7
+            };
+
         private void BuildAnalysis(CancellationToken cancellationToken)
         {
             foreach (PureMidiRootPlan rootPlan in _plan.Roots)
             {
-                foreach (PureMidiTrackPlan trackPlan in rootPlan.Tracks)
+                foreach ((PureMidiTrackPlan _, MidiSegment segment) in
+                    EnumerateAnalysisSegments(rootPlan))
                 {
-                    foreach (MidiSegment segment in trackPlan.Segments)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        _channelAnalysis.TryAdd(
-                            segment.Id,
-                            BuildSegmentChannelAnalysis(segment, cancellationToken));
-                    }
+                    cancellationToken.ThrowIfCancellationRequested();
+                    _channelAnalysis.TryAdd(
+                        segment.Id,
+                        BuildSegmentChannelAnalysis(segment, cancellationToken));
                 }
             }
 
@@ -926,23 +1043,45 @@ public sealed partial class MidoraCompiler
                     cancellationToken.ThrowIfCancellationRequested();
                     HashSet<long> targets = [];
                     Dictionary<MidoraId, byte[]> rawBoundaryNotes = [];
-                    foreach (PureMidiTrackPlan trackPlan in rootPlan.Tracks)
+                    foreach ((PureMidiTrackPlan _, MidiSegment segment) in
+                        EnumerateAnalysisSegments(rootPlan))
                     {
-                        foreach (MidiSegment segment in trackPlan.Segments)
+                        long segmentEnd = checked(segment.ProjectStartTick + segment.LengthTicks);
+                        if (segment.ProjectStartTick >= interval.EndTick
+                            || segmentEnd <= interval.StartTick)
                         {
-                            long segmentEnd = checked(segment.ProjectStartTick + segment.LengthTicks);
-                            if (segment.ProjectStartTick >= interval.EndTick || segmentEnd <= interval.StartTick)
-                                continue;
-                            SegmentChannelAnalysis segmentAnalysis =
-                                _channelAnalysis[segment.Id];
-                            targets.UnionWith(segmentAnalysis.UsedTargets);
-                            byte[] activeKeys = segmentAnalysis.RawBoundaryNoteKeys;
-                            if (activeKeys.Length != 0) rawBoundaryNotes[segment.Id] = activeKeys;
+                            continue;
                         }
+                        SegmentChannelAnalysis segmentAnalysis = _channelAnalysis[segment.Id];
+                        targets.UnionWith(segmentAnalysis.UsedTargets);
+                        byte[] activeKeys = segmentAnalysis.RawBoundaryNoteKeys;
+                        if (activeKeys.Length != 0) rawBoundaryNotes[segment.Id] = activeKeys;
                     }
                     _analysis.Add(
                         (rootPlan.Root.Id, interval.GroupId),
                         new(targets.Order().ToArray(), rawBoundaryNotes));
+                }
+            }
+        }
+
+        private IEnumerable<(PureMidiTrackPlan TrackPlan, MidiSegment Segment)>
+            EnumerateAnalysisSegments(PureMidiRootPlan rootPlan)
+        {
+            foreach (PureMidiTrackPlan trackPlan in rootPlan.Tracks)
+            {
+                foreach (MidiSegment segment in trackPlan.Track.Segments
+                    .Where(IsRepresentableMidiSegment)
+                    .Where(value => value.ProjectStartTick < _compiledEndTick)
+                    .OrderBy(value => value.ProjectStartTick)
+                    .ThenBy(value => value.Id))
+                {
+                    long segmentEnd = checked(segment.ProjectStartTick + segment.LengthTicks);
+                    if (rootPlan.Intervals.Any(interval =>
+                        segment.ProjectStartTick < Math.Min(interval.EndTick, _compiledEndTick)
+                        && segmentEnd > interval.StartTick))
+                    {
+                        yield return (trackPlan, segment);
+                    }
                 }
             }
         }
@@ -1188,6 +1327,12 @@ public sealed partial class MidoraCompiler
         private sealed record RootIntervalAnalysis(
             long[] UsedTargets,
             IReadOnlyDictionary<MidoraId, byte[]> RawBoundaryNotes);
+
+        private readonly record struct RootStateCandidate(
+            PureMidiTrackPlan TrackPlan,
+            MidiSegment Segment,
+            DirectMidiChannelEventValue Value,
+            long AbsoluteTick);
 
         private sealed record SegmentChannelAnalysis(
             long ContentStartTick,

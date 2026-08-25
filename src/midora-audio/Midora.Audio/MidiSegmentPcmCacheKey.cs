@@ -5,10 +5,9 @@ namespace Midora.Audio;
 
 public static class MidiSegmentPcmCacheKey
 {
-    // v3 preserves privileged Pure MIDI GS/XG channel-mode SysEx in the default
-    // playback view. The Segment cache is the active realtime cache for paged
-    // MIDI Projects; v2 PCM may be silent because that view dropped the event.
-    private const int RenderImplementationVersion = 3;
+    // v4 restores shared Root/Usage state across sibling Tracks when rendering
+    // from a nonzero range. Earlier PCM may have started with incomplete state.
+    private const int RenderImplementationVersion = 4;
 
     public static string Create(
         MidiSegmentRenderPlan segment,
@@ -32,7 +31,7 @@ public static class MidiSegmentPcmCacheKey
         using MemoryStream payload = new();
         using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("MIDORA_SAMPLE_DOMAIN_SEGMENT_PCM_KEY_V3");
+            writer.Write("MIDORA_SAMPLE_DOMAIN_SEGMENT_PCM_KEY_V4");
             writer.Write(RenderImplementationVersion);
             writer.Write(segment.SemanticFingerprint);
             writer.Write(segment.FrameCount);

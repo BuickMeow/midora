@@ -263,8 +263,17 @@ public sealed partial class MidoraCompiler : IDisposable
                 .ToList();
         }
 
+        LogicalUsageInterval[] logicalUsageIntervals = BuildLogicalUsageIntervals(
+            project,
+            instances,
+            cancellationToken);
         instances = instances
-            .Where(instance => instance.StartTick < endTick && instance.EndTick > request.StartTick)
+            .Where(instance =>
+                instance.StartTick < endTick && instance.EndTick > request.StartTick
+                || IsHistoricalSharedUsageStateSource(
+                    instance,
+                    request.StartTick,
+                    logicalUsageIntervals))
             .ToList();
         AppendEmptySubVoiceDiagnostics(instances, instruments, diagnostics);
         cancellationToken.ThrowIfCancellationRequested();
@@ -334,6 +343,7 @@ public sealed partial class MidoraCompiler : IDisposable
                 pureMidiPlan,
                 allocation.UnitByRoot,
                 project.GlobalResetDefaults,
+                request.StartTick,
                 cancellationToken));
         }
         allEvents.Sort(CanonicalComparer.Instance);
@@ -2678,6 +2688,24 @@ public sealed partial class MidoraCompiler : IDisposable
         return result.ToArray();
     }
 
+    private static bool IsHistoricalSharedUsageStateSource(
+        RawInstance instance,
+        long startTick,
+        IReadOnlyList<LogicalUsageInterval> intervals)
+    {
+        if (startTick <= 0 || instance.Isolated || instance.StartTick >= startTick)
+        {
+            return false;
+        }
+
+        return intervals.Any(value =>
+            value.UsageId == instance.UsageId
+            && value.StartTick < startTick
+            && value.EndTick > startTick
+            && instance.StartTick >= value.StartTick
+            && instance.StartTick < value.EndTick);
+    }
+
     private static void ValidateOverlap(
         MidoraProject project,
         List<RawInstance> instances,
@@ -3351,7 +3379,9 @@ public sealed partial class MidoraCompiler : IDisposable
         foreach (((byte port, byte channel, long target), CanonicalStateGroup group) in state
             .Where(value => activeAtStart.Contains((value.Key.Port, value.Key.Channel)))
             .OrderBy(value => value.Key.Port).ThenBy(value => value.Key.Channel)
-            .ThenBy(value => value.Value.Role).ThenBy(value => value.Value.Tick)
+            .ThenBy(value => RangeRestoreSortCategory(value.Key.Target, value.Value))
+            .ThenBy(value => value.Key.Target)
+            .ThenBy(value => value.Value.Tick)
             .ThenBy(value => value.Value.StableOrder))
         {
             pollutedTargets.Add((port, channel, target));
@@ -3362,7 +3392,9 @@ public sealed partial class MidoraCompiler : IDisposable
                     Tick = startTick,
                     Role = CanonicalEventRole.RangeRestore,
                     StableOrder = restoreOrder++,
-                    Source = previous.Source with { Origin = SourceOrigin.RangeRestore }
+                    Source = previous.Source with { Origin = SourceOrigin.RangeRestore },
+                    SmfTrackOrder = int.MinValue + 1,
+                    SmfEventOrder = restoreOrder
                 });
             }
         }
@@ -3440,6 +3472,24 @@ public sealed partial class MidoraCompiler : IDisposable
         result.Sort(CanonicalComparer.Instance);
         cancellationToken.ThrowIfCancellationRequested();
         return FoldSameTickStates(result, cancellationToken).ToArray();
+    }
+
+    private static int RangeRestoreSortCategory(
+        long target,
+        CanonicalStateGroup group)
+    {
+        if (group.Role == CanonicalEventRole.Reset)
+        {
+            return 0;
+        }
+        if (target == ControlTargetKey(0)) return 1;
+        if (target == ControlTargetKey(32)) return 2;
+        if (target == ProgramTargetKey) return 3;
+        if (target >= RpnTargetKeyBase && target < RpnTargetKeyBase + 16_384) return 4;
+        if (target >= NrpnTargetKeyBase && target < NrpnTargetKeyBase + 16_384) return 5;
+        if (target >= ControlTargetKeyBase && target < ControlTargetKeyBase + 128) return 6;
+        if (target == PitchBendTargetKey) return 7;
+        return 8;
     }
 
     private static void AppendCanonicalReset(

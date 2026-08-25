@@ -635,6 +635,51 @@ public sealed class CompilationTests
         });
     }
 
+    [Fact]
+    public void SharedUsageRangeStartRestoresStateFromAnEarlierSiblingTrack()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 100);
+        fixture.Instrument.TemplateLengthTicks = 10;
+        fixture.Voice.Events.Add(TemplateEvent.ControlChange(fixture.Project, 0, 11, 40));
+        fixture.Voice.Events.Add(TemplateEvent.Note(fixture.Project, 0, 10, 60, 100));
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 10, 60);
+
+        LogicalTrack continuationTrack = new(fixture.Project)
+        {
+            Name = "Continuation",
+            EventInstrumentUsageId = fixture.Track.EventInstrumentUsageId
+        };
+        Segment continuation = new(fixture.Project)
+        {
+            ProjectStartTick = 100,
+            LengthTicks = 300
+        };
+        continuationTrack.Segments.Add(continuation);
+        fixture.Project.Tracks.Add(continuationTrack);
+        fixture.Project.ArrangementTracks.Add(new(
+            ArrangementTrackKind.LogicalTrack,
+            continuationTrack.Id));
+        CompilerTestProject.RegisterSegment(fixture.Project, continuation);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(
+            fixture.Project,
+            new CompilationRequest
+            {
+                Purpose = CompilationPurpose.Playback,
+                StartTick = 200,
+                EndTick = 300
+            });
+
+        Assert.True(result.IsConsumable, string.Join(Environment.NewLine, result.Diagnostics));
+        CanonicalMidiEvent restored = Assert.Single(result.Events.ToArray(), value =>
+            value.Tick == 200
+            && value.Role == CanonicalEventRole.RangeRestore
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 11);
+        Assert.Equal((byte)40, restored.Message.Byte2);
+        Assert.Equal(fixture.Track.Id, restored.Source.TrackId);
+    }
+
     [Theory]
     [InlineData(OverlapPolicy.Reject, false, DiagnosticSeverity.Error, false)]
     [InlineData(OverlapPolicy.Warn, false, DiagnosticSeverity.Warning, true)]

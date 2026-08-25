@@ -276,6 +276,129 @@ public sealed class PureMidiCompilationTests
         Assert.Equal(CompilationFailureStage.WarningPolicy, strictExport.FailureStage);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RangeStartRestoresStateFromEndedSiblingTrackWithinActiveRoot(
+        bool useAutoRouting)
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = AddRoot(project, fixedChannel: 2, MidiChannelMode.Melodic);
+        if (useAutoRouting)
+        {
+            root.RoutingMode = MidiChannelRootRoutingMode.Auto;
+        }
+
+        PureMidiTrack notes = AddTrack(project, root, "Notes");
+        MidiSegment noteSegment = AddSegment(project, notes, 0, 300);
+        noteSegment.Notes.Add(NewNote(project, 200, 30, 60));
+
+        PureMidiTrack firstState = AddTrack(project, root, "State 1");
+        MidiSegment firstStateSegment = AddSegment(project, firstState, 0, 100);
+        firstStateSegment.ChannelEvents.Add(new(project)
+        {
+            Tick = 10,
+            Kind = DirectMidiChannelEventKind.ProgramChange,
+            Data1 = 42,
+            Order = 0
+        });
+        firstStateSegment.ChannelEvents.Add(new(project)
+        {
+            Tick = 20,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 11,
+            Data2 = 40,
+            Order = 1
+        });
+        firstStateSegment.ChannelEvents.Add(new(project)
+        {
+            Tick = 30,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 7,
+            Data2 = 51,
+            Order = 2
+        });
+
+        PureMidiTrack secondState = AddTrack(project, root, "State 2");
+        MidiSegment secondStateSegment = AddSegment(project, secondState, 0, 120);
+        secondStateSegment.ChannelEvents.Add(new(project)
+        {
+            Tick = 30,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 0,
+            Data2 = 3,
+            Order = 3
+        });
+        secondStateSegment.ChannelEvents.Add(new(project)
+        {
+            Tick = 30,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 32,
+            Data2 = 4,
+            Order = 4
+        });
+        secondStateSegment.ChannelEvents.Add(new(project)
+        {
+            Tick = 20,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 11,
+            Data2 = 73,
+            Order = 1
+        });
+        secondStateSegment.ChannelEvents.Add(new(project)
+        {
+            Tick = 20,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 7,
+            Data2 = 99,
+            Order = 2
+        });
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(
+            project,
+            new CompilationRequest
+            {
+                Purpose = CompilationPurpose.Playback,
+                StartTick = 150,
+                EndTick = 250
+            });
+
+        Assert.True(result.IsConsumable, string.Join(Environment.NewLine, result.Diagnostics));
+        CanonicalMidiEvent restored = Assert.Single(result.Events.ToArray(), value =>
+            value.Tick == 150
+            && value.Role == CanonicalEventRole.RangeRestore
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 11
+            && value.Source.DirectMidiObjectId != default);
+        Assert.Equal((byte)73, restored.Message.Byte2);
+        Assert.Equal(secondState.Id, restored.Source.TrackId);
+        CanonicalMidiEvent volume = Assert.Single(result.Events.ToArray(), value =>
+            value.Tick == 150
+            && value.Role == CanonicalEventRole.RangeRestore
+            && value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 7
+            && value.Source.DirectMidiObjectId != default);
+        Assert.Equal((byte)51, volume.Message.Byte2);
+        Assert.Equal(firstState.Id, volume.Source.TrackId);
+        CanonicalMidiEvent[] orderedState = result.Events.ToArray()
+            .Where(value => value.Tick == 150
+                && value.Role == CanonicalEventRole.RangeRestore
+                && value.Source.DirectMidiObjectId != default)
+            .ToArray();
+        Assert.Equal(
+            [
+                MidiMessageType.ControlChange,
+                MidiMessageType.ControlChange,
+                MidiMessageType.ProgramChange,
+                MidiMessageType.ControlChange,
+                MidiMessageType.ControlChange
+            ],
+            orderedState.Select(value => value.Message.MessageType));
+        Assert.Equal((byte)0, orderedState[0].Message.Byte1);
+        Assert.Equal((byte)32, orderedState[1].Message.Byte1);
+        Assert.Equal((byte)42, orderedState[2].Message.Byte1);
+    }
+
     [Fact]
     public void RecognizedChannelModeSystemExclusiveIsMaterializedForAudio()
     {

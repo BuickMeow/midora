@@ -34,10 +34,9 @@ public sealed record AudioSynthesisCacheEnvironment(
 
 public static class AudioUnitPcmCacheKey
 {
-    // v3 preserves privileged Pure MIDI GS/XG channel-mode SysEx when a full
-    // canonical result is wrapped as the default playback view. v2 entries may
-    // have been rendered from a view that silently omitted those events.
-    private const int AudioRenderImplementationVersion = 3;
+    // v4 restores shared Root/Usage state across sibling Tracks when rendering
+    // from a nonzero range. Earlier PCM may have started with incomplete state.
+    private const int AudioRenderImplementationVersion = 4;
 
     public static string Create(
         CanonicalAudioUnitFragment fragment,
@@ -66,7 +65,7 @@ public static class AudioUnitPcmCacheKey
         using MemoryStream payload = new();
         using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("MIDORA_UNIT_PCM_CACHE_KEY_V4");
+            writer.Write("MIDORA_UNIT_PCM_CACHE_KEY_V5");
             writer.Write(AudioRenderImplementationVersion);
             writer.Write(fragment.SemanticFingerprint);
             writer.Write(compiled.TicksPerQuarterNote);

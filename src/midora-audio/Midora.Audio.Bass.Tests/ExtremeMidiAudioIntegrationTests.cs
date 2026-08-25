@@ -92,7 +92,14 @@ public sealed class ExtremeMidiAudioIntegrationTests(ITestOutputHelper output)
         try
         {
             using ProjectCompilationSession compilationSession = new(imported.Project);
-            CanonicalCompiledResult compiled = compilationSession.CompileForPlayback(0, null);
+            long startTick = long.TryParse(
+                    Environment.GetEnvironmentVariable("MIDORA_AUDIO_SAMPLE_START_TICK"),
+                    out long configuredStartTick)
+                ? configuredStartTick
+                : 0;
+            CanonicalCompiledResult compiled = compilationSession.CompileForPlayback(
+                startTick,
+                null);
             Assert.True(compiled.IsConsumable, string.Join(Environment.NewLine, compiled.Diagnostics));
             string[] audibleTrackNames = (Environment.GetEnvironmentVariable(
                     "MIDORA_AUDIO_SAMPLE_AUDIBLE_TRACK_NAMES") ?? string.Empty)

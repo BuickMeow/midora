@@ -167,4 +167,94 @@ public sealed class PagedPureMidiCompilationTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    [Fact]
+    public void RangeStartRestoresPagedStateFromEndedSiblingTrackWithinActiveRoot()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            "midora-paged-compiler-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "cross-track-state.mpk");
+        try
+        {
+            MidoraProject project = new(192);
+            MidiChannelRoot root = new(project)
+            {
+                Name = "Root",
+                RoutingMode = MidiChannelRootRoutingMode.Auto,
+                ChannelMode = MidiChannelMode.Melodic
+            };
+            PureMidiTrack notes = new(project)
+            {
+                Name = "Notes",
+                MidiChannelRootId = root.Id
+            };
+            MidiSegment noteSegment = new(project)
+            {
+                ProjectStartTick = 0,
+                LengthTicks = 300
+            };
+            notes.Segments.Add(noteSegment);
+            PureMidiTrack state = new(project)
+            {
+                Name = "State",
+                MidiChannelRootId = root.Id
+            };
+            MidiSegment stateSegment = new(project)
+            {
+                ProjectStartTick = 0,
+                LengthTicks = 100
+            };
+            state.Segments.Add(stateSegment);
+            project.MidiChannelRoots.Add(root);
+            project.PureMidiTracks.Add(notes);
+            project.PureMidiTracks.Add(state);
+            project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, notes.Id));
+            project.ArrangementTracks.Add(new(ArrangementTrackKind.PureMidiTrack, state.Id));
+
+            using (PureMidiContentPackWriter writer = new(path))
+            {
+                writer.AddNote(noteSegment.Id, new(
+                    project.AllocateStableId(), 200, 30, 60, 100, 0, 1, 2));
+                writer.AddChannelEvent(stateSegment.Id, new(
+                    project.AllocateStableId(),
+                    20,
+                    DirectMidiChannelEventKind.ControlChange,
+                    11,
+                    77,
+                    1));
+                using PureMidiContentPack pack = writer.Complete();
+                noteSegment.AttachPagedContent(pack.GetSegmentSource(noteSegment.Id));
+                stateSegment.AttachPagedContent(pack.GetSegmentSource(stateSegment.Id));
+
+                using MidoraCompiler compiler = new();
+                CanonicalCompiledResult result = compiler.CompileFull(
+                    project,
+                    new CompilationRequest
+                    {
+                        Purpose = CompilationPurpose.Playback,
+                        StartTick = 150,
+                        EndTick = 250
+                    });
+
+                Assert.True(result.IsConsumable, string.Join(Environment.NewLine, result.Diagnostics));
+                CanonicalMidiEvent restored = Assert.Single(
+                    result.QueryEventPages(150, 151, includeStateAtStart: true)
+                        .SelectMany(page => page.Items),
+                    value => value.Tick == 150
+                        && value.Role == CanonicalEventRole.RangeRestore
+                        && value.Message.MessageType == Midora.Midi.MidiMessageType.ControlChange
+                        && value.Message.Byte1 == 11
+                        && value.Source.DirectMidiObjectId != default);
+                Assert.Equal((byte)77, restored.Message.Byte2);
+                Assert.Equal(state.Id, restored.Source.TrackId);
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 }

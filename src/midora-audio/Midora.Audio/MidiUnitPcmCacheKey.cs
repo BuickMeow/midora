@@ -5,9 +5,9 @@ namespace Midora.Audio;
 
 public static class MidiUnitPcmCacheKey
 {
-    // v3 rejects PCM created from a default playback view that omitted the
-    // otherwise-valid privileged Pure MIDI GS/XG channel-mode SysEx events.
-    private const int RenderImplementationVersion = 3;
+    // v4 restores shared Root/Usage state across sibling Tracks when rendering
+    // from a nonzero range. Earlier PCM may have started with incomplete state.
+    private const int RenderImplementationVersion = 4;
 
     public static string Create(
         MidiUnitFragmentRenderPlan fragment,
@@ -31,7 +31,7 @@ public static class MidiUnitPcmCacheKey
         using MemoryStream payload = new();
         using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("MIDORA_SAMPLE_DOMAIN_UNIT_PCM_KEY_V4");
+            writer.Write("MIDORA_SAMPLE_DOMAIN_UNIT_PCM_KEY_V5");
             writer.Write(RenderImplementationVersion);
             writer.Write(fragment.SemanticFingerprint);
             writer.Write(fragment.EndFrame - fragment.StartFrame);

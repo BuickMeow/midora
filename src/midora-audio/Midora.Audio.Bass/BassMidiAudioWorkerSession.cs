@@ -223,8 +223,9 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
                 _playbackSpanCacheStaging?.Hit == true,
                 playbackSpanCacheEnabled,
                 audioCache?.AudioCacheSnapshot?.SequentialWriteBytesPerSecond ?? 0);
-            startedProcess = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("Could not start the Midora audio worker process.");
+            startedProcess = AudioWorkerProcessGroup.Start(
+                startInfo,
+                "Could not start the Midora audio worker process.");
             _process = startedProcess;
             Task<string> standardError = startedProcess.StandardError.ReadToEndAsync();
             Task<string> standardOutput = startedProcess.StandardOutput.ReadToEndAsync();
@@ -496,8 +497,9 @@ public sealed class BassMidiAudioWorkerSession : IDisposable, IBassMidiAudioWork
         startInfo.ArgumentList.Add(nativeDirectory);
         startInfo.ArgumentList.Add(deviceId ?? string.Empty);
         startInfo.ArgumentList.Add(deviceBufferRequestMilliseconds.ToString(CultureInfo.InvariantCulture));
-        return Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Could not start the Midora audio worker probe.");
+        return AudioWorkerProcessGroup.Start(
+            startInfo,
+            "Could not start the Midora audio worker probe.");
     }
 
     private static ProcessStartInfo CreateStartInfo(string workerPath)

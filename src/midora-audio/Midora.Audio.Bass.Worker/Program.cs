@@ -2,6 +2,7 @@ using Midora.AudioDevice;
 using Midora.AudioDevice.BassWasapi.Internals;
 using Midora.AudioDevice.BassWasapi.Settings;
 using Midora.AudioDevice.Wave;
+using Midora.Common;
 using Midora.Midi;
 using System.Globalization;
 using System.IO.Pipes;
@@ -26,6 +27,7 @@ public static class Program
 
     public static unsafe int Main(string[] args)
     {
+        _ = MidoraWindowsApplicationIdentity.TryApplyToCurrentProcess();
         SharedAudioWorkerControl? control = null;
         try
         {

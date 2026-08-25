@@ -102,8 +102,9 @@ public static class FormalAudioOutputDeviceEnumerator
         };
         start.ArgumentList.Add("list-output-devices");
         start.ArgumentList.Add(nativeDirectory!);
-        using Process process = Process.Start(start)
-            ?? throw new InvalidOperationException("The formal audio worker could not be started.");
+        using Process process = AudioWorkerProcessGroup.Start(
+            start,
+            "The formal audio worker could not be started.");
         try
         {
             Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);

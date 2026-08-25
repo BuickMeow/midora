@@ -108,8 +108,9 @@ internal sealed class PersistentBassMidiAudioWorkerHost : IDisposable
             startInfo.ArgumentList.Add(_ownedDirectory);
             startInfo.ArgumentList.Add(soundFontSetPath);
             startInfo.ArgumentList.Add(NativeDirectory);
-            _process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("Could not start the persistent Midora audio worker.");
+            _process = AudioWorkerProcessGroup.Start(
+                startInfo,
+                "Could not start the persistent Midora audio worker.");
             _standardError = _process.StandardError.ReadToEndAsync();
             _standardOutput = _process.StandardOutput.ReadToEndAsync();
             PersistentAudioWorkerResponse ready = WaitForResponse(0, preparingTimeout);

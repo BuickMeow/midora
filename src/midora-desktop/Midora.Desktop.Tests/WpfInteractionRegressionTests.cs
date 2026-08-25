@@ -1044,9 +1044,24 @@ public sealed class WpfInteractionRegressionTests
             "{Binding HasProject, Converter={StaticResource BooleanToVisibility}}",
             (string?)workspaceTabs.Attribute("Visibility"));
 
-        string code = File.ReadAllText(Path.ChangeExtension(path, ".xaml.cs"));
-        Assert.Contains("MidoraSoftwareVersion.ProductVersion", code, StringComparison.Ordinal);
-        Assert.DoesNotContain("0.1 development build", code, StringComparison.Ordinal);
+        XElement aboutMenuItem = document.Descendants(presentation + "MenuItem").Single(element =>
+            string.Equals((string?)element.Attribute("Header"), "About Midora", StringComparison.Ordinal));
+        Assert.Equal("F12", (string?)aboutMenuItem.Attribute("InputGestureText"));
+
+        string aboutPath = Path.Combine(Path.GetDirectoryName(path)!, "AboutDialog.xaml");
+        XDocument aboutDocument = XDocument.Load(aboutPath);
+        Assert.Contains(aboutDocument.Descendants(presentation + "TextBlock"), element =>
+            string.Equals((string?)element.Attribute("Text"), "Runtime resources", StringComparison.Ordinal));
+        Assert.Contains(aboutDocument.Descendants(presentation + "TextBlock"), element =>
+            string.Equals((string?)element.Attribute("Text"), "Combined", StringComparison.Ordinal));
+        string aboutCode = File.ReadAllText(Path.ChangeExtension(aboutPath, ".xaml.cs"));
+        Assert.Contains("MidoraSoftwareVersion.ProductVersion", aboutCode, StringComparison.Ordinal);
+        Assert.Contains("AudioWorkerProcessGroup.CaptureResources", aboutCode, StringComparison.Ordinal);
+        Assert.DoesNotContain("0.1 development build", aboutCode, StringComparison.Ordinal);
+
+        string mainCode = File.ReadAllText(Path.ChangeExtension(path, ".xaml.cs"));
+        Assert.Contains("e.Key == Key.F12", mainCode, StringComparison.Ordinal);
+        Assert.Contains("OpenAboutDialog()", mainCode, StringComparison.Ordinal);
     }
 
     [Fact]

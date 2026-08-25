@@ -360,8 +360,9 @@ public sealed class BassMidiAudioFileRenderWorker : IAudioFileRenderWorker
     }
 
     private static Process Start(ProcessStartInfo startInfo) =>
-        Process.Start(startInfo)
-        ?? throw new InvalidOperationException("Could not start the Midora Native AOT audio worker process.");
+        AudioWorkerProcessGroup.Start(
+            startInfo,
+            "Could not start the Midora Native AOT audio worker process.");
 
     private static void ValidateCommon(
         IReadOnlyList<SoundFontConfiguration> soundFonts,

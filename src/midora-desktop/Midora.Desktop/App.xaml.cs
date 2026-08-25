@@ -1,6 +1,8 @@
 using System.IO;
 using System.Windows;
 using Midora.Application;
+using Midora.Audio.Bass;
+using Midora.Common;
 
 namespace Midora.Desktop;
 
@@ -21,6 +23,7 @@ public partial class App : System.Windows.Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        _ = MidoraWindowsApplicationIdentity.TryApplyToCurrentProcess();
         base.OnStartup(e);
         try
         {
@@ -70,6 +73,7 @@ public partial class App : System.Windows.Application
             await _instance.DisposeAsync();
         }
         _instanceRequests?.Dispose();
+        AudioWorkerProcessGroup.Shutdown();
         base.OnExit(e);
     }
 

@@ -8354,12 +8354,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnAboutClick(object sender, RoutedEventArgs e) => MessageDialog.Show(
-        this,
-        $"Midora {MidoraSoftwareVersion.ProductVersion}\nWindows Desktop · .NET 10 · win-x64\n\nCopyright (c) 2026 Midora contributors",
-        "About Midora",
-        MessageBoxButton.OK,
-        MessageBoxImage.Information);
+    private void OnAboutClick(object sender, RoutedEventArgs e) => OpenAboutDialog();
+
+    private void OpenAboutDialog()
+    {
+        AboutDialog dialog = new();
+        _ = ShowModalDialog(dialog);
+    }
 
     private void ShowUnavailable(string title, string message) =>
         _session.SetStatusMessage($"{title}: {message}", isError: true);
@@ -8788,6 +8789,15 @@ public partial class MainWindow : Window
         if (_spaceStartedPlayback && e.Key == Key.Tab)
         {
             _spaceStartedPlayback = false;
+        }
+        if (e.Key == Key.F12 && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            e.Handled = true;
+            if (!e.IsRepeat && !IsTransientInputSurfaceOpen())
+            {
+                OpenAboutDialog();
+            }
+            return;
         }
         if (e.Key == Key.Tab && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
         {

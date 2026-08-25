@@ -118,8 +118,9 @@ internal sealed unsafe class BassMidiChildProcessSession : IAudioRenderSource, I
                 bassNativeDirectory,
                 rendererSettings,
                 masterSettings);
-            _process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("Could not start the Midora audio worker process.");
+            _process = AudioWorkerProcessGroup.Start(
+                startInfo,
+                "Could not start the Midora audio worker process.");
             Task<string> standardError = _process.StandardError.ReadToEndAsync();
             Task<string> standardOutput = _process.StandardOutput.ReadToEndAsync();
             _monitorThread = new Thread(

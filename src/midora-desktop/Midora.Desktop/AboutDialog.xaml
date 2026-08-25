@@ -1,0 +1,114 @@
+<Window x:Class="Midora.Desktop.AboutDialog"
+        FontFamily="{StaticResource Font.UI}"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls;assembly=Midora.Desktop.Presentation"
+        Title="About Midora" Width="696" Height="473" MinWidth="560" MinHeight="390"
+        Background="{StaticResource Brush.Surface.0}" WindowStyle="None"
+        ResizeMode="CanResize" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False" UseLayoutRounding="True" SnapsToDevicePixels="True">
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight="36" CornerRadius="0" GlassFrameThickness="0"
+                              ResizeBorderThickness="6" UseAeroCaptionButtons="False"/>
+  </shell:WindowChrome.WindowChrome>
+  <Window.Resources>
+    <Style x:Key="MetricHeader" TargetType="TextBlock" BasedOn="{StaticResource Text.Overline}">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="TextAlignment" Value="Right"/>
+    </Style>
+    <Style x:Key="MetricName" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}"/>
+    </Style>
+    <Style x:Key="MetricValue" TargetType="TextBlock" BasedOn="{StaticResource Text.Mono}">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="TextAlignment" Value="Right"/>
+      <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}"/>
+    </Style>
+  </Window.Resources>
+  <Border BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="36"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="58"/>
+      </Grid.RowDefinitions>
+      <Grid Background="{StaticResource Brush.Black}" MouseLeftButtonDown="OnTitleMouseLeftButtonDown">
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                   Text="About Midora"/>
+        <Button Width="46" Height="36" HorizontalAlignment="Right"
+                Style="{StaticResource Button.Caption.Close}" Click="OnCloseClick">
+          <ui:FluentIcon Style="{StaticResource Icon.WindowControl}"
+                         Data="{StaticResource WindowControl.Close}"/>
+        </Button>
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" Padding="22,20" VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <TextBlock FontSize="20" FontWeight="SemiBold" Text="Midora"/>
+          <TextBlock x:Name="VersionText" Margin="0,3,0,0"
+                     Foreground="{StaticResource Brush.Text.Secondary}"/>
+          <TextBlock Margin="0,3,0,0" Style="{StaticResource Text.Caption}"
+                     Text="Windows Desktop · .NET 10 · win-x64"/>
+
+          <Border Height="1" Margin="0,18,0,16" Background="{StaticResource Brush.Border}"/>
+          <TextBlock Style="{StaticResource Text.Section}" Text="Runtime resources"/>
+          <TextBlock Margin="0,4,0,12" Style="{StaticResource Text.Caption}"
+                     Text="Live values include the WPF process and every active audio Worker owned by this Midora instance."
+                     TextWrapping="Wrap"/>
+
+          <Border Background="{StaticResource Brush.Surface.1}"
+                  BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+            <Grid Margin="12,9">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="90"/>
+                <ColumnDefinition Width="120"/>
+                <ColumnDefinition Width="120"/>
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="24"/>
+                <RowDefinition Height="30"/>
+                <RowDefinition Height="30"/>
+                <RowDefinition Height="30"/>
+              </Grid.RowDefinitions>
+
+              <TextBlock Grid.Column="1" Style="{StaticResource MetricHeader}" Text="CPU"/>
+              <TextBlock Grid.Column="2" Style="{StaticResource MetricHeader}" Text="WORKING SET"/>
+              <TextBlock Grid.Column="3" Style="{StaticResource MetricHeader}" Text="PRIVATE MEMORY"/>
+
+              <TextBlock Grid.Row="1" Style="{StaticResource MetricName}" Text="Midora"/>
+              <TextBlock x:Name="MainCpuText" Grid.Row="1" Grid.Column="1" Style="{StaticResource MetricValue}"/>
+              <TextBlock x:Name="MainWorkingSetText" Grid.Row="1" Grid.Column="2" Style="{StaticResource MetricValue}"/>
+              <TextBlock x:Name="MainPrivateMemoryText" Grid.Row="1" Grid.Column="3" Style="{StaticResource MetricValue}"/>
+
+              <TextBlock x:Name="WorkerNameText" Grid.Row="2" Style="{StaticResource MetricName}"/>
+              <TextBlock x:Name="WorkerCpuText" Grid.Row="2" Grid.Column="1" Style="{StaticResource MetricValue}"/>
+              <TextBlock x:Name="WorkerWorkingSetText" Grid.Row="2" Grid.Column="2" Style="{StaticResource MetricValue}"/>
+              <TextBlock x:Name="WorkerPrivateMemoryText" Grid.Row="2" Grid.Column="3" Style="{StaticResource MetricValue}"/>
+
+              <Border Grid.Row="3" Grid.ColumnSpan="4" Height="1" VerticalAlignment="Top"
+                      Background="{StaticResource Brush.Border}"/>
+              <TextBlock Grid.Row="3" FontWeight="SemiBold" VerticalAlignment="Center" Text="Combined"/>
+              <TextBlock x:Name="CombinedCpuText" Grid.Row="3" Grid.Column="1" Style="{StaticResource MetricValue}" FontWeight="SemiBold"/>
+              <TextBlock x:Name="CombinedWorkingSetText" Grid.Row="3" Grid.Column="2" Style="{StaticResource MetricValue}" FontWeight="SemiBold"/>
+              <TextBlock x:Name="CombinedPrivateMemoryText" Grid.Row="3" Grid.Column="3" Style="{StaticResource MetricValue}" FontWeight="SemiBold"/>
+            </Grid>
+          </Border>
+          <TextBlock Margin="0,7,0,0" Style="{StaticResource Text.Caption}"
+                     Text="CPU is normalized to the total capacity of all logical processors."/>
+
+          <TextBlock Margin="0,18,0,0" Style="{StaticResource Text.Caption}"
+                     Text="Copyright (c) 2026 Midora contributors"/>
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Padding="12,10" Background="{StaticResource Brush.Surface.1}"
+              BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Button HorizontalAlignment="Right" Style="{StaticResource Button.Dialog.Confirm}"
+                Content="Close" IsCancel="True" Click="OnCloseClick"/>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

@@ -304,6 +304,16 @@ Requirement trace：输入为当前 event-stream published snapshot、active gen
 
 Requirement trace：输入为 Monitoring generation rewind frame、Worker audible `Seek` frame、后续 append-only records 与 renderer fault；正式输出为从 Seek 下界开始的同代有序 event ring，或携带 producer/renderer 原因的显式故障。下界、loaded prefix 和诊断只属 playback runtime，不进入 Project、canonical、cache key、Undo/Redo、SMF、音频文件或 `.midora`。验证必须构造“generation 已发布、demand query 被阻塞、先 Seek 后释放旧前缀”的确定性交错，并断言下界前事件不进入 ring、下界事件不丢失。
 
+## 10.11 ADR-AUDIO-020（已接受）：Worker 应用身份、Job Object 生命周期与资源统计
+
+决定：Desktop 与 Native AOT Audio Worker 在各自入口最早阶段设置同一稳定 Windows AppUserModelID `Zacksony.Midora`。该身份只用于 Windows shell 的应用归属提示，不进入 Project、Application Preferences、音频协议、缓存键或发布版本号；不能把 Task Manager 是否采用折叠展示当作正式功能保证。
+
+主进程启动的全部正式、探测及文件渲染 Worker 必须立即加入一个由主进程持有的 Windows Job Object，并启用 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`。主进程正常退出或异常终止导致 Job handle 关闭时，仍存活的已加入 Worker 由操作系统终止；若特定宿主环境拒绝嵌套 Job，启动不得因此改变音频结果，但主进程必须跟踪该 Worker 并在退出时尽力终止。不得为了任务管理器视觉分组把 BASS、WASAPI 或实时音频迁回 WPF 进程。
+
+Job 的累计 CPU accounting 与当前活动 Worker 进程的 Working Set / Private Memory 只作为 About 运行时观测数据。它们不得参与播放、Buffering、任务调度、性能自适应或诊断成败。CPU 百分比按全部逻辑处理器容量归一化；About 必须分别展示 Desktop、活动 Worker 总和及 Combined，并允许采样失败时显示 unavailable 而不影响应用。
+
+理由：直接子进程关系本已存在，但 Windows Task Manager 的应用分组是系统 UI 启发式行为，单靠父 PID 或 Job Object 均不能保证折叠。共享 AppUserModelID 提供正确应用身份提示，Job Object 提供可靠生命周期边界，而应用内合计统计提供不依赖 Task Manager 分组策略的准确解释。
+
 ## 11. 验证门
 
 - 相同事件计划以不同工作 block（含非 2 次幂）渲染必须逐 sample 相同。

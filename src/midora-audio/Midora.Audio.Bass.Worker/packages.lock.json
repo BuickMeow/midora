@@ -17,17 +17,17 @@
       "midora.audio": {
         "type": "Project",
         "dependencies": {
-          "Midora.AudioDevice": "[1.0.0, )",
-          "Midora.Midi": "[1.0.0, )"
+          "Midora.AudioDevice": "[1.0.0-dev, )",
+          "Midora.Midi": "[1.0.0-dev, )"
         }
       },
       "midora.audio.bass": {
         "type": "Project",
         "dependencies": {
-          "Midora.Audio": "[1.0.0, )",
-          "Midora.AudioDevice": "[1.0.0, )",
-          "Midora.NativeInterops.Bass": "[1.0.0, )",
-          "Midora.NativeInterops.BassMidi": "[1.0.0, )"
+          "Midora.Audio": "[1.0.0-dev, )",
+          "Midora.AudioDevice": "[1.0.0-dev, )",
+          "Midora.NativeInterops.Bass": "[1.0.0-dev, )",
+          "Midora.NativeInterops.BassMidi": "[1.0.0-dev, )"
         }
       },
       "midora.audiodevice": {
@@ -36,15 +36,18 @@
       "midora.audiodevice.basswasapi": {
         "type": "Project",
         "dependencies": {
-          "Midora.AudioDevice": "[1.0.0, )",
-          "Midora.NativeInterops.BassWasapi": "[1.0.0, )"
+          "Midora.AudioDevice": "[1.0.0-dev, )",
+          "Midora.NativeInterops.BassWasapi": "[1.0.0-dev, )"
         }
       },
       "midora.audiodevice.wave": {
         "type": "Project",
         "dependencies": {
-          "Midora.AudioDevice": "[1.0.0, )"
+          "Midora.AudioDevice": "[1.0.0-dev, )"
         }
+      },
+      "midora.common": {
+        "type": "Project"
       },
       "midora.midi": {
         "type": "Project"
@@ -55,13 +58,13 @@
       "midora.nativeinterops.bassmidi": {
         "type": "Project",
         "dependencies": {
-          "Midora.NativeInterops.Bass": "[1.0.0, )"
+          "Midora.NativeInterops.Bass": "[1.0.0-dev, )"
         }
       },
       "midora.nativeinterops.basswasapi": {
         "type": "Project",
         "dependencies": {
-          "Midora.NativeInterops.Bass": "[1.0.0, )"
+          "Midora.NativeInterops.Bass": "[1.0.0-dev, )"
         }
       }
     },

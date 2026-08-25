@@ -1187,7 +1187,7 @@
             <MenuItem Header="Playback"><MenuItem Header="Play" InputGestureText="Space" IsEnabled="{Binding CanPlayback}" Click="OnPlayClick"/><MenuItem Header="Stop" InputGestureText="Space" IsEnabled="{Binding IsPlaybackActive}" Click="OnStopClick"/><Separator/><MenuItem Header="Reset Playback Engine" Click="OnResetPlaybackClick"/></MenuItem>
             <MenuItem Header="Compile" IsEnabled="{Binding CanRunProjectTask}"><MenuItem Header="Compile Project" Click="OnCompileClick"/></MenuItem>
             <MenuItem Header="Export" IsEnabled="{Binding CanRunProjectTask}"><MenuItem Header="MIDI Export…" Click="OnMidiExportClick"/><MenuItem Header="Audio Export…" Click="OnAudioRenderClick"/></MenuItem>
-            <MenuItem Header="Application"><MenuItem Header="Application Preferences…" IsEnabled="{Binding CanStartForegroundTask}" Click="OnApplicationPreferencesClick"/><Separator/><MenuItem Header="About Midora" Click="OnAboutClick"/></MenuItem>
+            <MenuItem Header="Application"><MenuItem Header="Application Preferences…" IsEnabled="{Binding CanStartForegroundTask}" Click="OnApplicationPreferencesClick"/><Separator/><MenuItem Header="About Midora" InputGestureText="F12" Click="OnAboutClick"/></MenuItem>
           </Menu>
           <Border x:Name="TitleBarProjectNameFrame" Grid.Column="2" Margin="8,0,0,0"
                   HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent">

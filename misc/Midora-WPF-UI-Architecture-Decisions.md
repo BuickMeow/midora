@@ -343,6 +343,13 @@
 - 归属：批量查询索引、Selection metrics、materialized-source identity 和 raster in-flight 状态均为 runtime/session 数据，不进入 `.midora`、canonical、MIDI/Audio 输出或 Application Preferences。本决定不改变 Project 语义、碰撞规则、音频结果和缓存持久化。
 - 依据：产品所有者使用 `Krash Noets 6.7 million.mid` 观察到稳定视图流畅但任意编辑和大选区提交严重阻塞；源码审计确认旧路径存在 `O(total objects × selected IDs)` 定位、逐目标分页查询和每帧选区扫描。
 
+## ADR-UI-044：About 运行时资源快照与全局入口
+
+- 决定：About 改为独立只读模态窗口，继续从唯一程序集版本来源展示产品版本，并增加 Desktop、Audio Worker(s) 与 Combined 的 CPU、Working Set 和 Private Memory 定时快照。统计只读取 ADR-AUDIO-020 的运行时观测接口；采样失败不得关闭窗口、修改状态或影响音频线程。
+- 决定：`F12` 是无修饰键的全局 About 快捷键，在普通文本焦点下仍可用；打开前遵循既有模态界面优先规则，仅停止 Event Instrument 底部钢琴预览，不得错误停止项目播放。
+- 决定：CPU 百分比按整机逻辑处理器总容量归一化，并在界面中明确说明；第一帧尚无时间差时显示 Measuring，而不是伪造 `0%`。
+- 边界：About 不持久化采样、不建立历史图表、不驱动任务、缓存或降级策略，也不承诺 Windows Task Manager 必然按同样方式折叠进程。
+
 ## 小决定审计
 
 以下均是局部、可替换且不改变可听结果/持久化/公共业务接口的小决定，按用户授权采用推荐方案：

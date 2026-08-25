@@ -52,6 +52,8 @@
 
 ## 2026-08-25 修订摘要
 
+- Pure MIDI Track 的音频投影新增严格限缩的 Channel Mode SysEx 特权：仅识别有效 Roland GS DT1 Part Mode 与 Yamaha XG Part Mode，导入按 payload Channel 归属，canonical 保留来源/顺序并支持 Root 活动区间中途的状态恢复，BASSMIDI Unit 统一重定向到 channel 0；Worker 在原样发送后于同一顺序点显式同步等价 Unit mode，避免依赖 SoundFont 相关的隐式 preset remap。其他 opaque SysEx/Meta 仍只保留、导出而不发送到音频后端；该可听语义变更同步提升 Unit PCM / playback-span renderer cache generation，禁止命中旧版忽略 SysEx 或未显式同步 mode 时生成的 PCM。
+- 主应用取得单实例所有权后自动回收上次异常退出遗留的 session 音频缓存和 Pure MIDI session backing content。两类目录均采用版本清单、独占活动锁、直接子目录校验与逐目录 best-effort 删除；活动、未知、清单不匹配和重解析点目录必须保留。旧版裸 GUID `SessionContent` 目录只在名称及内容包结构均严格可识别时兼容回收。
 - MIDI 导出的每个实际单 Channel 事件 MTrk 在相对 tick 0 固定写入 CC91 Reverb Send=0、CC93 Chorus Send=0；初始化只属于 SMF 编码结果，位于结构/Channel 10 初始化之后、canonical 事件之前，Conductor 不写，Pure MIDI 用户 CC91/CC93 仍原样保留。
 - MIDI 导出 `README.md` 删除程序级 SoundFont 占位信息；`Notes` 改为本次冻结 Canonical Compiled Result 的准确 MIDI Note On 事件总数，并以单行 invariant 十进制字段输出。
 - Arrangement Segment 与 Logical/Direct/Template Note 的边界 Resize 在 Snap 开启时以当前有效 Operation Subdivision 作为最小长度，在 Snap 关闭时以 `1 tick` 作为最小长度；批量 Resize 对每个对象独立饱和。打开手势前已经短于当前吸附步长的既有对象不得因约束被反向扩长，其本次最小长度保持原长度。拖动预览与正式提交必须一致。

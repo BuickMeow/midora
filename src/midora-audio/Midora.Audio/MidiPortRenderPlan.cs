@@ -35,6 +35,7 @@ public sealed class MidiPortRenderPlan
             }
 
             MidiMessage message = scheduled.Message;
+            scheduled.ValidatePayload();
             if (!message.IsChannelVoiceMessage)
             {
                 throw new ArgumentException("Initial-release audio rendering only accepts MIDI channel voice messages.", nameof(events));
@@ -45,7 +46,9 @@ public sealed class MidiPortRenderPlan
                 throw new ArgumentException("The render plan contains a malformed MIDI channel message.", nameof(events));
             }
 
-            if (message.MessageType == MidiMessageType.ControlChange && message.Byte1 is 91 or 93)
+            if (!scheduled.IsChannelModeSystemExclusive
+                && message.MessageType == MidiMessageType.ControlChange
+                && message.Byte1 is 91 or 93)
             {
                 throw new ArgumentException("CC91 and CC93 are forbidden by the initial-release audio contract.", nameof(events));
             }

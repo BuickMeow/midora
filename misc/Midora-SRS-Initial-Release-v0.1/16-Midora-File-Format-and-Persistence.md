@@ -1021,6 +1021,9 @@ Project 成功打开并反序列化到内存后：
 打开完成后释放文件句柄。
 ```
 Pure MIDI page pack 必须从 Zip entry 顺序流式复制到本次 Project session 私有的只读 backing file，再关闭原 `.midora`。不得为了满足本条而把完整 `.mpk` 解压到托管 byte array。session backing file 只承载已持久化 source bytes，Project 关闭时删除；它不属于 audio cache，也不改变 `.midora` 的唯一持久源身份。
+
+session backing root 固定为 `%LOCALAPPDATA%\Midora\SessionContent`。当前版本每个 Project session 使用一个带版本 manifest 和独占活动锁的 `session-*` 直接子目录；正常关闭在释放 pack/page cache 后删除自身目录。主应用取得单实例所有权后，以及创建新 backing session 前，必须 best-effort 回收 manifest 可识别且未持有活动锁的异常退出残留。旧开发版本生成的裸 32 位 GUID 目录，仅当它是 root 的非 reparse-point 直接子项，且为空或只含名称严格匹配 `mt_<positive stable id>.mpk` 的普通文件时，允许作为兼容垃圾回收；任何其他未知目录或文件必须保留。单个目录无法读取或删除不得阻止打开/导入 Project。
+
 打开 / 反序列化过程中可以短暂占用文件，以避免读到半修改状态。
 打开后如果外部程序修改原 `.midora` 文件：
 ```text

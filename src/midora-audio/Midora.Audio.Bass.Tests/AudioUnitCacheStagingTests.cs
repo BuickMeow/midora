@@ -1,11 +1,55 @@
 using Midora.AudioDevice;
 using Midora.Midi;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Midora.Audio.Bass.Tests;
 
 public sealed class AudioUnitCacheStagingTests
 {
     private static readonly string SoundFontSetCacheIdentity = new('a', 64);
+
+    [Fact]
+    public void SegmentStageRejectsPlaybackViewGenerationThatDroppedChannelMode()
+    {
+        using TemporaryDirectory directory = new();
+        string cacheRoot = Path.Combine(directory.Path, "cache");
+        string native = Path.Combine(directory.Path, "native");
+        string manifests = Path.Combine(directory.Path, "manifests");
+        Directory.CreateDirectory(native);
+        Directory.CreateDirectory(manifests);
+        _ = WriteFile(native, "bass.dll", [2]);
+        _ = WriteFile(native, "bassmidi.dll", [3]);
+        _ = WriteFile(native, "basswasapi.dll", [4]);
+        MidiRenderPlan plan = CreateSegmentPlan();
+        MidiSegmentRenderPlan segment = plan.Segments[0];
+        string legacyKey = CreateLegacySegmentPcmCacheKey(
+            segment,
+            plan.SampleRate,
+            SoundFontSetCacheIdentity,
+            AudioUnitCacheStaging.ComputeNativeIdentity(native),
+            500);
+        byte[] legacyPayload = new byte[checked((int)segment.PcmPayloadByteCount)];
+        AudioPcmCachePayload.WriteHeader(
+            legacyPayload,
+            new AudioFormat(plan.SampleRate, 2, AudioSampleFormat.Float32),
+            segment.FrameCount);
+        using AudioCacheSessionStore store = new(cacheRoot, 4096);
+        Assert.True(store.PublishReusable(legacyKey, legacyPayload).Published);
+        CacheAccess access = new(store);
+
+        using AudioSegmentCacheStaging staging = Assert.IsType<AudioSegmentCacheStaging>(
+            AudioSegmentCacheStaging.Create(
+                plan,
+                access,
+                SoundFontSetCacheIdentity,
+                native,
+                500,
+                manifests));
+
+        Assert.False(staging.Plan.Segments[0].PcmCacheHit);
+        Assert.NotEqual(legacyKey, staging.Plan.Segments[0].PcmCacheKey);
+    }
 
     [Fact]
     public void MissPublishesCompleteRawUnitPcmAndSecondStageIsAHit()
@@ -307,6 +351,36 @@ public sealed class AudioUnitCacheStagingTests
         string path = Path.Combine(directory, name);
         File.WriteAllBytes(path, bytes);
         return path;
+    }
+
+    private static string CreateLegacySegmentPcmCacheKey(
+        MidiSegmentRenderPlan segment,
+        int sampleRate,
+        string soundFontSetCacheIdentity,
+        string nativeBaselineIdentity,
+        int maximumSampleVoicesPerUnitStream)
+    {
+        using MemoryStream payload = new();
+        using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write("MIDORA_SAMPLE_DOMAIN_SEGMENT_PCM_KEY_V2");
+            writer.Write(2);
+            writer.Write(segment.SemanticFingerprint);
+            writer.Write(segment.FrameCount);
+            writer.Write(sampleRate);
+            writer.Write(soundFontSetCacheIdentity);
+            writer.Write(nativeBaselineIdentity);
+            writer.Write(maximumSampleVoicesPerUnitStream);
+            writer.Write(true);
+            writer.Write(true);
+            writer.Write(1f);
+            writer.Write(0f);
+            writer.Write(16_384);
+            writer.Write(2);
+            writer.Write((int)AudioSampleFormat.Float32);
+        }
+        return Convert.ToHexStringLower(SHA256.HashData(
+            payload.GetBuffer().AsSpan(0, checked((int)payload.Length))));
     }
 
     private sealed class CacheAccess(AudioCacheSessionStore store) : IAudioPcmCacheSessionAccess

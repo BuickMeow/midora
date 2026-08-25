@@ -35,8 +35,8 @@ public static class PlaybackSpanCacheKey
         using MemoryStream payload = new();
         using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("MIDORA_PLAYBACK_SPAN_CACHE_KEY_V4");
-            writer.Write(1); // BASS renderer / deterministic Unit mix algorithm version.
+            writer.Write("MIDORA_PLAYBACK_SPAN_CACHE_KEY_V7");
+            writer.Write(4); // BASS renderer; default playback views preserve privileged GS/XG mode.
             writer.Write(2); // Look-ahead inter-sample limiter algorithm.
             writer.Write(plan.SampleRate);
             writer.Write(plan.TotalFrameCount);
@@ -85,6 +85,7 @@ public static class PlaybackSpanCacheKey
                     writer.Write(value.SampleFrame);
                     writer.Write(value.Message.PackedValue);
                     writer.Write(value.SourceIndex);
+                    WriteSystemExclusiveIdentity(writer, value);
                 }
             }
             if (fragments.Length == 0)
@@ -102,6 +103,7 @@ public static class PlaybackSpanCacheKey
                         writer.Write(value.SampleFrame);
                         writer.Write(value.Message.PackedValue);
                         writer.Write(value.SourceIndex);
+                        WriteSystemExclusiveIdentity(writer, value);
                     }
                 }
             }
@@ -109,5 +111,23 @@ public static class PlaybackSpanCacheKey
         return Convert.ToHexStringLower(SHA256.HashData(payload.GetBuffer().AsSpan(
             0,
             checked((int)payload.Length))));
+    }
+
+    private static void WriteSystemExclusiveIdentity(
+        BinaryWriter writer,
+        ScheduledMidiMessage value)
+    {
+        if (value.ChannelModeSystemExclusive is { } systemExclusive)
+        {
+            writer.Write((byte)systemExclusive.Kind);
+            writer.Write(systemExclusive.DeviceId);
+            writer.Write(systemExclusive.ModeValue);
+        }
+        else
+        {
+            writer.Write((byte)0);
+            writer.Write((byte)0);
+            writer.Write((byte)0);
+        }
     }
 }

@@ -91,22 +91,63 @@ public sealed class ExtremeMidiAudioIntegrationTests(ITestOutputHelper output)
             Path.GetFileNameWithoutExtension(path));
         try
         {
-            using MidoraCompiler compiler = new();
-            CanonicalCompiledResult compiled = compiler.CompileFull(imported.Project);
+            using ProjectCompilationSession compilationSession = new(imported.Project);
+            CanonicalCompiledResult compiled = compilationSession.CompileForPlayback(0, null);
             Assert.True(compiled.IsConsumable, string.Join(Environment.NewLine, compiled.Diagnostics));
-            MidiRenderPlan sourcePlan = MidiRenderPlanAdapter.CreateRealtime(compiled, 48_000);
+            string[] audibleTrackNames = (Environment.GetEnvironmentVariable(
+                    "MIDORA_AUDIO_SAMPLE_AUDIBLE_TRACK_NAMES") ?? string.Empty)
+                .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            HashSet<Midora.Domain.MidoraId>? audibleTrackIds = audibleTrackNames.Length == 0
+                ? null
+                : imported.Project.PureMidiTracks
+                    .Where(track => audibleTrackNames.Contains(track.Name, StringComparer.Ordinal))
+                    .Select(track => track.Id)
+                    .ToHashSet();
+            if (audibleTrackIds is not null)
+                Assert.Equal(audibleTrackNames.Length, audibleTrackIds.Count);
+            HashSet<Midora.Domain.MidoraId> demandedTracks = audibleTrackIds
+                ?? imported.Project.Tracks.Select(track => track.Id)
+                    .Concat(imported.Project.PureMidiTracks.Select(track => track.Id))
+                    .ToHashSet();
+            MidiRenderPlan sourcePlan = compilationSession.GetOrCreateRealtimeRenderPlan(
+                compiled,
+                48_000,
+                demandedTracks);
+            using AudioCacheSessionStore? cacheStore = Environment.GetEnvironmentVariable(
+                    "MIDORA_AUDIO_SAMPLE_USE_SEGMENT_CACHE") == "1"
+                ? new AudioCacheSessionStore(Path.Combine(directory, "cache"), 4L * 1024 * 1024 * 1024)
+                : null;
+            CacheAccess? cacheAccess = cacheStore is null ? null : new(cacheStore);
+            using AudioSegmentCacheStaging? cacheStaging = cacheAccess is null
+                ? null
+                : AudioSegmentCacheStaging.Create(
+                    sourcePlan,
+                    cacheAccess,
+                    NativeAudioIntegrationEnvironment.RequireSoundFontSetCacheIdentity(soundFontPath),
+                    NativeAudioIntegrationEnvironment.RequireNativeDirectory(),
+                    BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
+                    directory);
+            MidiRenderPlan stagedPlan = cacheStaging?.Plan ?? sourcePlan;
             using MidiRenderEventStreamProducer producer = Assert.IsType<MidiRenderEventStreamProducer>(
-                MidiRenderEventStreamProducer.Create(sourcePlan, directory));
-            MidiRenderPlan plan = sourcePlan.WithEventStreamDescriptor(producer.Descriptor);
+                MidiRenderEventStreamProducer.Create(stagedPlan, directory));
+            MidiRenderPlan transportPlan = stagedPlan.WithEventStreamDescriptor(producer.Descriptor);
+            string planPath = Path.Combine(directory, "compiled-audio-plan.mdap");
+            MidiRenderPlanFile.Write(planPath, transportPlan);
+            MidiRenderPlan plan = MidiRenderPlanFile.Read(planPath);
             BassMidiRendererSettings settings = new(
                 BassMidiPolyphonyConfiguration.DefaultMaximumSampleVoicesPerUnitStream,
                 maximumWorkFrameCount: 256);
+            SoundFontConfiguration[] soundFonts = [new(soundFontPath, null)];
+            using PersistentBassMidiSoundFont persistentSoundFont = new(soundFonts);
             using BassMidiRenderer renderer = new(
                 plan,
-                soundFontPath,
+                soundFonts,
                 settings,
                 AudioMasterSettings.LimiterV2,
-                segmentProducerConcurrency: 4);
+                cacheStaging?.FilePath,
+                segmentProducerConcurrency: 4,
+                cacheReadManifestPath: cacheStaging?.ReadManifestPath,
+                persistentSoundFont: persistentSoundFont);
 
             long requestedEnd;
             if (long.TryParse(
@@ -131,6 +172,13 @@ public sealed class ExtremeMidiAudioIntegrationTests(ITestOutputHelper output)
             }
             float[] block = new float[2_048 * 2];
             long completed = 0;
+            long audibleStartFrame = long.TryParse(
+                    Environment.GetEnvironmentVariable("MIDORA_AUDIO_SAMPLE_AUDIBLE_START_TICK"),
+                    out long audibleStartTick)
+                ? new TempoSampleMap(compiled.TicksPerQuarterNote, compiled.Tempos)
+                    .TickToSampleFrame(audibleStartTick, compiled.StartTick, 48_000)
+                : 0;
+            float peak = 0;
             int timeoutSeconds = int.TryParse(
                     Environment.GetEnvironmentVariable("MIDORA_AUDIO_SAMPLE_TIMEOUT_SECONDS"),
                     out int configuredTimeoutSeconds)
@@ -144,21 +192,58 @@ public sealed class ExtremeMidiAudioIntegrationTests(ITestOutputHelper output)
                     int request = (int)Math.Min(2_048, requestedEnd - completed);
                     AudioPullResult result = renderer.PullFrames(destination, request);
                     if (result.Status == AudioPullStatus.Fault) break;
+                    long blockStart = completed;
                     completed += result.FrameCount;
+                    if (completed > audibleStartFrame)
+                    {
+                        int firstSample = checked((int)Math.Max(
+                            0,
+                            (audibleStartFrame - blockStart) * 2));
+                        for (int index = firstSample; index < result.FrameCount * 2; index++)
+                            peak = Math.Max(peak, Math.Abs(block[index]));
+                    }
                     if (result.FrameCount == 0) Thread.Yield();
                 }
             }
 
             output.WriteLine(
-                $"sample={path}; completed={completed}; requestedEnd={requestedEnd}; fault={renderer.Fault}");
+                $"sample={path}; completed={completed}; requestedEnd={requestedEnd}; peak={peak}; fault={renderer.Fault}");
             Assert.True(completed == requestedEnd, $"The sample stopped at frame {completed}: {renderer.Fault}");
             Assert.Equal(AudioRenderFaultCode.None, renderer.Fault.Code);
+            if (audibleTrackIds is not null)
+                Assert.True(peak > 0.00001f, $"The selected sample Tracks produced no audible PCM; peak={peak}.");
         }
         finally
         {
             imported.Project.Dispose();
             try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
         }
+    }
+
+    private sealed class CacheAccess(AudioCacheSessionStore store) : IAudioPcmCacheSessionAccess
+    {
+        public AudioCacheSessionSnapshot? AudioCacheSnapshot => store.GetSnapshot();
+        public bool SupportsReusableAudioPackJournals => store.SupportsReusableAudioPackJournals;
+        public bool TryCopyReusableAudio(string key, Stream destination, out long payloadLength) =>
+            store.TryCopyReusable(key, destination, out payloadLength);
+        public ReusableAudioReadLease? AcquireReusableAudioReadLease(IReadOnlyList<string> keys) =>
+            store.AcquireReusableReadLease(keys);
+        public AudioCachePublishResult PublishReusableAudio(
+            string key,
+            Stream source,
+            long payloadLength) => store.PublishReusable(key, source, payloadLength);
+        public void InvalidateReusableAudio(string key) => store.InvalidateReusable(key);
+        public AudioCacheSessionStore.AudioRecoverySpool CreateTransientAudioSpool(long lengthBytes) =>
+            store.CreateRecoverySpool(lengthBytes);
+        public AudioCacheSessionStore.AudioRecoverySpool CreateSparseTransientAudioSpool(long lengthBytes) =>
+            store.CreateRecoverySpool(lengthBytes, sparse: true);
+        public void AdoptReusableAudioPackJournals(
+            AudioCacheSessionStore.AudioRecoverySpool spool,
+            string journalDirectory,
+            IReadOnlyCollection<string> completedKeys) =>
+            store.AdoptReusableAudioPackJournals(spool, journalDirectory, completedKeys);
+        public void DisableReusableAudioRetention(string reason) =>
+            store.DisableReusableRetention(reason);
     }
 
     private sealed class FixedEventPageProvider(

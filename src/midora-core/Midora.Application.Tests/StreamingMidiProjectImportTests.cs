@@ -1,5 +1,8 @@
+using Midora.Audio;
+using Midora.Compiler;
 using Midora.Domain;
 using Midora.Midi;
+using Midora.Playback;
 
 namespace Midora.Application.Tests;
 
@@ -131,6 +134,58 @@ public sealed class StreamingMidiProjectImportTests
                 value.Code == "MIDORA-MIDI-IMPORT-DUPLICATE-TIME-SIGNATURE");
             Assert.Contains(result.Diagnostics, value =>
                 value.Code == "MIDORA-MIDI-IMPORT-DUPLICATE-KEY-SIGNATURE");
+        }
+        finally
+        {
+            result?.Project.Dispose();
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ImportFileAssignsChannelModeSystemExclusiveToTargetChannel()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            "midora-streaming-import-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "channel-mode.mid");
+        MidiProjectImportResult? result = null;
+        try
+        {
+            File.WriteAllBytes(path, StandardMidiFile.EncodeType1(
+                480,
+                [new StandardMidiFileTrack(
+                    120,
+                    [
+                        StandardMidiFileEvent.ChannelVoice(0, MidiMessage.ProgramChange(0, 4)),
+                        StandardMidiFileEvent.SystemExclusive(
+                            24,
+                            [0x43, 0x10, 0x4c, 0x08, 0x01, 0x07, 0x01, 0xf7])
+                    ])]));
+
+            result = MidiProjectImportService.ImportFile(path, "Channel Mode");
+
+            PureMidiTrack owner = Assert.Single(result.Project.PureMidiTracks, track =>
+                track.Segments.SelectMany(segment => segment.OpaqueEvents).Any());
+            MidiChannelRoot root = result.Project.MidiChannelRoots.Single(value =>
+                value.Id == owner.MidiChannelRootId);
+            Assert.Equal(2, result.Project.PureMidiTracks.Count);
+            Assert.Equal((byte)1, root.FixedZeroBasedChannel);
+            using MidoraCompiler compiler = new();
+            CanonicalCompiledResult compiled = compiler.CompileFull(result.Project);
+            Assert.True(compiled.HasPagedEvents);
+            MidiRenderPlan plan = MidiRenderPlanAdapter.CreateRealtime(compiled, 48_000);
+            IMidiRenderEventPageProvider provider = Assert.IsAssignableFrom<
+                IMidiRenderEventPageProvider>(plan.EventPageProvider);
+            ScheduledPortMidiMessage mode = Assert.Single(
+                provider.Query(0, plan.TotalFrameCount),
+                value => value.Scheduled.IsChannelModeSystemExclusive);
+            Assert.Equal((byte)1, mode.Scheduled.Message.ChannelNumber);
+            Assert.DoesNotContain(
+                plan.UnitFragments.ToArray().SelectMany(value => value.Events.ToArray()),
+                value => value.IsChannelModeSystemExclusive);
         }
         finally
         {

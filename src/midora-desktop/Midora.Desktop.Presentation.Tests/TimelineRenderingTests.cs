@@ -77,6 +77,18 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void MaterializedOverviewEventsContributeToTimelineExtent()
+    {
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "logical-parameter-extent",
+            [],
+            overviewSource: new MaterializedTimelineOverviewSource([], [2_400]));
+
+        Assert.Equal(2_401, snapshot.MaximumEndTick);
+    }
+
+    [Fact]
     public void PianoRollVerticalZoomMinimumIsThreeDevicePixels()
     {
         Assert.Equal(3, TimelineSurface.MinimumPianoLaneHeight);

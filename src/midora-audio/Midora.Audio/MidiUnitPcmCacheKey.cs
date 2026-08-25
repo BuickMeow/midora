@@ -5,7 +5,9 @@ namespace Midora.Audio;
 
 public static class MidiUnitPcmCacheKey
 {
-    private const int RenderImplementationVersion = 1;
+    // v3 rejects PCM created from a default playback view that omitted the
+    // otherwise-valid privileged Pure MIDI GS/XG channel-mode SysEx events.
+    private const int RenderImplementationVersion = 3;
 
     public static string Create(
         MidiUnitFragmentRenderPlan fragment,
@@ -29,7 +31,7 @@ public static class MidiUnitPcmCacheKey
         using MemoryStream payload = new();
         using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("MIDORA_SAMPLE_DOMAIN_UNIT_PCM_KEY_V1");
+            writer.Write("MIDORA_SAMPLE_DOMAIN_UNIT_PCM_KEY_V4");
             writer.Write(RenderImplementationVersion);
             writer.Write(fragment.SemanticFingerprint);
             writer.Write(fragment.EndFrame - fragment.StartFrame);
@@ -46,10 +48,29 @@ public static class MidiUnitPcmCacheKey
             {
                 writer.Write(value.SampleFrame - fragment.StartFrame);
                 writer.Write(value.Message.PackedValue);
+                WriteSystemExclusiveIdentity(writer, value);
             }
         }
         return Convert.ToHexStringLower(SHA256.HashData(
             payload.GetBuffer().AsSpan(0, checked((int)payload.Length))));
+    }
+
+    private static void WriteSystemExclusiveIdentity(
+        BinaryWriter writer,
+        ScheduledMidiMessage value)
+    {
+        if (value.ChannelModeSystemExclusive is { } systemExclusive)
+        {
+            writer.Write((byte)systemExclusive.Kind);
+            writer.Write(systemExclusive.DeviceId);
+            writer.Write(systemExclusive.ModeValue);
+        }
+        else
+        {
+            writer.Write((byte)0);
+            writer.Write((byte)0);
+            writer.Write((byte)0);
+        }
     }
 
     private static void ValidateSha256(string value, string parameterName)

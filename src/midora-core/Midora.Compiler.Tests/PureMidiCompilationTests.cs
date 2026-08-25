@@ -276,6 +276,132 @@ public sealed class PureMidiCompilationTests
         Assert.Equal(CompilationFailureStage.WarningPolicy, strictExport.FailureStage);
     }
 
+    [Fact]
+    public void RecognizedChannelModeSystemExclusiveIsMaterializedForAudio()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = AddRoot(project, fixedChannel: 3, MidiChannelMode.Melodic);
+        PureMidiTrack track = AddTrack(project, root, "Mode");
+        MidiSegment segment = AddSegment(project, track, 0, 480);
+        OpaqueMidiEvent source = new(project)
+        {
+            Tick = 120,
+            Kind = OpaqueMidiEventKind.SystemExclusive,
+            Payload = [0x43, 0x10, 0x4c, 0x08, 0x03, 0x07, 0x01, 0xf7],
+            Order = 7
+        };
+        segment.OpaqueEvents.Add(source);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(project);
+
+        Assert.True(result.IsConsumable, string.Join(Environment.NewLine, result.Diagnostics));
+        CanonicalMidiChannelModeSystemExclusiveEvent value = Assert.Single(
+            result.ChannelModeSystemExclusiveEvents.ToArray());
+        Assert.Equal(120, value.Tick);
+        Assert.Equal((byte)0, value.ZeroBasedPort);
+        Assert.Equal((byte)3, value.ZeroBasedChannel);
+        Assert.Equal(MidiChannelModeSystemExclusiveKind.YamahaXgPartMode, value.Value.Kind);
+        Assert.Equal((byte)3, value.Value.TargetChannel);
+        Assert.Equal((byte)1, value.Value.ModeValue);
+        Assert.Equal(CanonicalEventRole.DirectMidi, value.Role);
+        Assert.Equal(track.Id, value.Source.TrackId);
+        Assert.Equal(source.Id, value.Source.DirectMidiObjectId);
+    }
+
+    [Fact]
+    public void RangeStartRestoresLatestRecognizedChannelModeWithinActiveRootInterval()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = AddRoot(project, fixedChannel: 5, MidiChannelMode.Melodic);
+        PureMidiTrack track = AddTrack(project, root, "Mode");
+        MidiSegment segment = AddSegment(project, track, 0, 480);
+        segment.OpaqueEvents.Add(new(project)
+        {
+            Tick = 40,
+            Kind = OpaqueMidiEventKind.SystemExclusive,
+            Payload = [0x43, 0x10, 0x4c, 0x08, 0x05, 0x07, 0x01, 0xf7],
+            Order = 4
+        });
+        segment.OpaqueEvents.Add(new(project)
+        {
+            Tick = 80,
+            Kind = OpaqueMidiEventKind.SystemExclusive,
+            Payload = [0x43, 0x10, 0x4c, 0x08, 0x05, 0x07, 0x00, 0xf7],
+            Order = 8
+        });
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(
+            project,
+            new CompilationRequest
+            {
+                Purpose = CompilationPurpose.Playback,
+                StartTick = 120,
+                EndTick = 240
+            });
+
+        Assert.True(result.IsConsumable, string.Join(Environment.NewLine, result.Diagnostics));
+        CanonicalMidiChannelModeSystemExclusiveEvent value = Assert.Single(
+            result.ChannelModeSystemExclusiveEvents.ToArray());
+        Assert.Equal(120, value.Tick);
+        Assert.Equal(CanonicalEventRole.RangeRestore, value.Role);
+        Assert.Equal((byte)0, value.Value.ModeValue);
+    }
+
+    [Fact]
+    public void ArbitrarySystemExclusiveRemainsOpaqueAndIsNotMaterializedForAudio()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = AddRoot(project, fixedChannel: 0, MidiChannelMode.Melodic);
+        PureMidiTrack track = AddTrack(project, root, "Opaque");
+        MidiSegment segment = AddSegment(project, track, 0, 480);
+        segment.OpaqueEvents.Add(new(project)
+        {
+            Tick = 12,
+            Kind = OpaqueMidiEventKind.SystemExclusive,
+            Payload = [0x7d, 0x01, 0x02, 0xf7],
+            Order = 1
+        });
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(project);
+
+        Assert.True(result.IsConsumable, string.Join(Environment.NewLine, result.Diagnostics));
+        Assert.Empty(result.ChannelModeSystemExclusiveEvents.ToArray());
+        Assert.Single(result.OpaqueMidiEvents.ToArray());
+    }
+
+    [Fact]
+    public void ChannelModeSystemExclusiveIsFullIncrementalEquivalentAfterEdit()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = AddRoot(project, fixedChannel: 2, MidiChannelMode.Melodic);
+        PureMidiTrack track = AddTrack(project, root, "Mode");
+        MidiSegment segment = AddSegment(project, track, 0, 480);
+        OpaqueMidiEvent source = new(project)
+        {
+            Tick = 24,
+            Kind = OpaqueMidiEventKind.SystemExclusive,
+            Payload = [0x43, 0x10, 0x4c, 0x08, 0x02, 0x07, 0x00, 0xf7],
+            Order = 1
+        };
+        segment.OpaqueEvents.Add(source);
+        using MidoraCompiler incrementalCompiler = new();
+        _ = incrementalCompiler.CompileFull(project);
+        source.Payload = [0x43, 0x10, 0x4c, 0x08, 0x02, 0x07, 0x01, 0xf7];
+        ProjectChangeSet changes = new();
+        changes.TrackIds.Add(track.Id);
+
+        CanonicalCompiledResult incremental = incrementalCompiler.CompileIncremental(
+            project,
+            changes);
+        using MidoraCompiler fullCompiler = new();
+        CanonicalCompiledResult full = fullCompiler.CompileFull(project);
+
+        Assert.Equal(full.Fingerprint, incremental.Fingerprint);
+        Assert.Equal(
+            full.ChannelModeSystemExclusiveEvents.ToArray(),
+            incremental.ChannelModeSystemExclusiveEvents.ToArray());
+    }
+
     private static MidiChannelRoot AddRoot(
         MidoraProject project,
         byte fixedChannel,

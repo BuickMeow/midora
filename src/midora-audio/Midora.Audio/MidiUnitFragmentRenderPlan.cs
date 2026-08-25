@@ -128,6 +128,7 @@ public sealed class MidiUnitFragmentRenderPlan
         for (int i = 0; i < events.Length; i++)
         {
             ScheduledMidiMessage value = events[i];
+            value.ValidatePayload();
             if (value.SampleFrame < StartFrame
                 || value.SampleFrame > EndFrame
                 || i != 0 && value.SampleFrame < previous

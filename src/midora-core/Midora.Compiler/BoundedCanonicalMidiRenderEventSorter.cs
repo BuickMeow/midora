@@ -335,7 +335,12 @@ internal sealed class BoundedCanonicalMidiRenderEventSorter : IDisposable
             ZeroBasedPort,
             Message,
             TrackId,
-            MonitoringSourceId);
+            MonitoringSourceId,
+            Role,
+            StableOrder,
+            SmfTrackOrder,
+            SmfEventOrder,
+            DirectMidiObjectId);
     }
 
     private readonly record struct RunDescriptor(long Offset, int RecordCount);

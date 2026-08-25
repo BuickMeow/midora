@@ -208,6 +208,7 @@ public sealed class AudioCacheSessionStore : IDisposable
         }
 
         Directory.CreateDirectory(_rootPath);
+        _ = ClearInactiveSessionsCore(_rootPath, excludedSessionPath: null);
         string sessionName = SessionPrefix + Guid.NewGuid().ToString("N");
         _sessionPath = ValidateOwnedSessionPath(_rootPath, Path.Combine(_rootPath, sessionName));
         _reusablePath = Path.Combine(_sessionPath, "reusable");
@@ -272,6 +273,24 @@ public sealed class AudioCacheSessionStore : IDisposable
 
     public static string ComputeKey(ReadOnlySpan<byte> canonicalKeyBytes) =>
         Convert.ToHexStringLower(SHA256.HashData(canonicalKeyBytes));
+
+    public static int ClearInactiveSessions(string rootPath)
+    {
+        try
+        {
+            string normalizedRoot = NormalizeLocalRoot(rootPath);
+            return Directory.Exists(normalizedRoot)
+                ? ClearInactiveSessionsCore(normalizedRoot, excludedSessionPath: null)
+                : 0;
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or ArgumentException
+            or NotSupportedException)
+        {
+            return 0;
+        }
+    }
 
     public AudioCacheSessionSnapshot GetSnapshot()
     {
@@ -771,23 +790,7 @@ public sealed class AudioCacheSessionStore : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            int removed = 0;
-            foreach (string candidate in Directory.EnumerateDirectories(
-                _rootPath,
-                SessionPrefix + "*",
-                SearchOption.TopDirectoryOnly))
-            {
-                string path = ValidateOwnedSessionPath(_rootPath, candidate);
-                if (string.Equals(path, _sessionPath, StringComparison.OrdinalIgnoreCase)
-                    || !HasValidManifest(path)
-                    || IsSessionActive(path))
-                {
-                    continue;
-                }
-                Directory.Delete(path, recursive: true);
-                removed++;
-            }
-            return removed;
+            return ClearInactiveSessionsCore(_rootPath, _sessionPath);
         }
     }
 
@@ -1294,7 +1297,7 @@ public sealed class AudioCacheSessionStore : IDisposable
         string name = Path.GetFileName(fullPath);
         if (!string.Equals(parent, rootPath, StringComparison.OrdinalIgnoreCase)
             || !name.StartsWith(SessionPrefix, StringComparison.Ordinal)
-            || name.Length <= SessionPrefix.Length)
+            || !Guid.TryParseExact(name[SessionPrefix.Length..], "N", out _))
         {
             throw new InvalidDataException("The audio cache session path is outside the configured cache root.");
         }
@@ -1346,12 +1349,80 @@ public sealed class AudioCacheSessionStore : IDisposable
         }
     }
 
+    private static bool IsReparsePoint(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or FileNotFoundException)
+        {
+            return true;
+        }
+    }
+
+    private static int ClearInactiveSessionsCore(
+        string rootPath,
+        string? excludedSessionPath)
+    {
+        int removed = 0;
+        IEnumerable<string> candidates;
+        try
+        {
+            candidates = Directory
+                .EnumerateDirectories(
+                    rootPath,
+                    SessionPrefix + "*",
+                    SearchOption.TopDirectoryOnly)
+                .ToArray();
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or DirectoryNotFoundException)
+        {
+            return 0;
+        }
+
+        foreach (string candidate in candidates)
+        {
+            try
+            {
+                string path = ValidateOwnedSessionPath(rootPath, candidate);
+                if ((excludedSessionPath is not null
+                        && string.Equals(
+                            path,
+                            excludedSessionPath,
+                            StringComparison.OrdinalIgnoreCase))
+                    || IsReparsePoint(path)
+                    || !HasValidManifest(path)
+                    || IsSessionActive(path))
+                {
+                    continue;
+                }
+                Directory.Delete(path, recursive: true);
+                removed++;
+            }
+            catch (Exception exception) when (exception is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException
+                or DirectoryNotFoundException)
+            {
+                // Cleanup is best effort. A later session activation retries this child.
+            }
+        }
+        return removed;
+    }
+
     private static void TryDeleteOwnedSession(string rootPath, string sessionPath)
     {
         try
         {
             string validated = ValidateOwnedSessionPath(rootPath, sessionPath);
-            if (Directory.Exists(validated) && HasValidManifest(validated))
+            if (Directory.Exists(validated)
+                && !IsReparsePoint(validated)
+                && HasValidManifest(validated))
             {
                 Directory.Delete(validated, recursive: true);
             }

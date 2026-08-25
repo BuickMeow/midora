@@ -230,6 +230,8 @@ Pure MIDI 变体打开 Segment 时不得把全部 Direct Note/Event 转换为 `T
 缩放/平移只能改变查询窗口和 tile 组合；不得触发全 Segment 枚举或重新计算全内容 fingerprint。Page checksum + page-local generation 构成 tile fingerprint 输入，编辑只更新 overlay generation 并失效与修改 tick/pitch/lane 相交的 tiles。
 
 Pure MIDI Segment 的水平 Overview 必须显示 Direct Note 时间密度。对于 paged content，Overview 只能使用页级 minimum/maximum tick、record count 和小型编辑增量聚合到有界 device columns；不得为了生成竖线概览解码或枚举全部 Direct Note。
+
+Logical 与 Pure MIDI Segment Editor 的水平滚动 extent 必须同时覆盖暴露的 Segment content window、Note 范围以及所有 non-Note event / Logical Parameter point 的最晚 tick；专用 Overview source 的 event tick 不得只参与画线而被排除在滚动终点之外。Paged Pure MIDI 必须使用页级范围摘要取得该终点，不得为此全量枚举事件。
 ---
 ## 18.3 Event Instrument Editor 总体框架
 ### 18.3.1 布局

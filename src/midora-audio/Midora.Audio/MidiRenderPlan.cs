@@ -157,6 +157,11 @@ public sealed class MidiRenderPlan
             programs.Clear();
             foreach (ScheduledMidiMessage scheduled in port.Events)
             {
+                // The ordinary MIDI message is only the channel-routing carrier for
+                // privileged channel-mode SysEx. It must not mutate preset state.
+                if (scheduled.IsChannelModeSystemExclusive)
+                    continue;
+
                 MidiMessage message = scheduled.Message;
                 int channel = message.ChannelNumber;
                 if (message.MessageType == MidiMessageType.ControlChange && message.Byte1 == 0)
@@ -269,7 +274,13 @@ public sealed class MidiRenderPlan
                 byte channel = scheduled.Message.ChannelNumber;
                 List<ScheduledMidiMessage> events = eventsByChannel[channel] ??= [];
                 uint packed = scheduled.Message.PackedValue & ~MidiMessage.ChannelNumberMask;
-                events.Add(scheduled with { Message = MidiMessage.FromPackedValue(packed) });
+                events.Add(scheduled with
+                {
+                    Message = MidiMessage.FromPackedValue(packed),
+                    ChannelModeSystemExclusive = scheduled.ChannelModeSystemExclusive is { } systemExclusive
+                        ? systemExclusive with { TargetChannel = 0 }
+                        : null
+                });
             }
             for (byte channel = 0; channel < eventsByChannel.Length; channel++)
             {

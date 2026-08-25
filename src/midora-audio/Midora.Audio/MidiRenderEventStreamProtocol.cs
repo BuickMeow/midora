@@ -309,6 +309,13 @@ public sealed class MidiRenderEventStreamProducer : IDisposable
         BinaryPrimitives.WriteUInt32LittleEndian(destination[8..], value.Scheduled.Message.PackedValue);
         BinaryPrimitives.WriteInt32LittleEndian(destination[12..], value.Scheduled.SourceIndex);
         destination[16] = value.ZeroBasedPortNumber;
+        destination[17..].Clear();
+        if (value.Scheduled.ChannelModeSystemExclusive is { } systemExclusive)
+        {
+            destination[17] = (byte)systemExclusive.Kind;
+            destination[18] = systemExclusive.DeviceId;
+            destination[19] = systemExclusive.ModeValue;
+        }
     }
 
     public void Dispose()
@@ -600,7 +607,27 @@ public sealed class MidiRenderEventStreamReader : IDisposable
         uint packed = BinaryPrimitives.ReadUInt32LittleEndian(source[8..]);
         int sourceIndex = BinaryPrimitives.ReadInt32LittleEndian(source[12..]);
         byte port = source[16];
-        return new(port, new(frame, MidiMessage.FromPackedValue(packed), sourceIndex));
+        MidiMessage message = MidiMessage.FromPackedValue(packed);
+        byte kind = source[17];
+        byte deviceId = source[18];
+        byte modeValue = source[19];
+        if (source[20..].IndexOfAnyExcept((byte)0) >= 0)
+            throw new InvalidDataException("The rolling MIDI event record has non-zero reserved fields.");
+        if (kind == 0 && (deviceId != 0 || modeValue != 0))
+            throw new InvalidDataException("The rolling MIDI channel event has non-zero SysEx fields.");
+        ScheduledMidiMessage scheduled = kind == 0
+            ? new(frame, message, sourceIndex)
+            : new(
+                frame,
+                message,
+                sourceIndex,
+                new MidiChannelModeSystemExclusive(
+                    (MidiChannelModeSystemExclusiveKind)kind,
+                    message.ChannelNumber,
+                    deviceId,
+                    modeValue));
+        scheduled.ValidatePayload();
+        return new(port, scheduled);
     }
 
     public void Dispose()
@@ -619,7 +646,7 @@ internal sealed class MidiRenderEventStreamControl : IDisposable
 {
     private const int Capacity = 4096;
     private const long Magic = 0x314d52545345524d;
-    private const int Version = 3;
+    private const int Version = 4;
     private const long MagicOffset = 0;
     private const long VersionOffset = 8;
     private const long RequestedOffset = 16;

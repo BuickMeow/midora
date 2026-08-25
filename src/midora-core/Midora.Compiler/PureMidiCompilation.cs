@@ -8,9 +8,10 @@ public sealed partial class MidoraCompiler
     private sealed record PureMidiPlan(
         PureMidiRootPlan[] Roots,
         CanonicalSmfTrackDescriptor[] TrackDescriptors,
-        CanonicalOpaqueMidiEvent[] OpaqueEvents)
+        CanonicalOpaqueMidiEvent[] OpaqueEvents,
+        PureMidiChannelModeSystemExclusiveEvent[] ChannelModeSystemExclusiveEvents)
     {
-        public static PureMidiPlan Empty { get; } = new([], [], []);
+        public static PureMidiPlan Empty { get; } = new([], [], [], []);
     }
 
     private sealed record PureMidiRootPlan(
@@ -49,6 +50,18 @@ public sealed partial class MidoraCompiler
         MidoraId ExportTrackId,
         CanonicalEventRole Role,
         long SemanticTargetKey);
+
+    private readonly record struct PureMidiChannelModeSystemExclusiveEvent(
+        MidoraId RootId,
+        MidoraId TrackId,
+        MidoraId SegmentId,
+        MidoraId ObjectId,
+        long Tick,
+        MidiChannelModeSystemExclusive Value,
+        CanonicalEventRole Role,
+        long StableOrder,
+        int SmfTrackOrder,
+        long SmfEventOrder);
 
     private static PureMidiPlan BuildPureMidiPlan(
         MidoraProject project,
@@ -189,7 +202,12 @@ public sealed partial class MidoraCompiler
             opaque.OrderBy(value => value.Tick)
                 .ThenBy(value => value.ExportTrackId)
                 .ThenBy(value => value.StableOrder)
-                .ToArray());
+                .ToArray(),
+            BuildChannelModeSystemExclusiveEvents(
+                roots,
+                startTick,
+                endTick,
+                cancellationToken));
 
         static bool IsRepresentable(MidiSegment segment) =>
             segment.ProjectStartTick >= 0
@@ -197,6 +215,158 @@ public sealed partial class MidoraCompiler
             && segment.ProjectStartTick <= long.MaxValue - segment.LengthTicks
             && segment.ContentOffsetTick >= 0
             && segment.ContentOffsetTick <= long.MaxValue - segment.LengthTicks;
+    }
+
+    private static PureMidiChannelModeSystemExclusiveEvent[]
+        BuildChannelModeSystemExclusiveEvents(
+            IReadOnlyList<PureMidiRootPlan> roots,
+            long startTick,
+            long endTick,
+            CancellationToken cancellationToken)
+    {
+        List<PureMidiChannelModeSystemExclusiveEvent> result = [];
+        foreach (PureMidiRootPlan rootPlan in roots)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            List<PureMidiChannelModeSystemExclusiveEvent> all = [];
+            foreach (PureMidiTrackPlan trackPlan in rootPlan.Tracks)
+            {
+                foreach (MidiSegment segment in trackPlan.Track.Segments
+                    .Where(IsRepresentableMidiSegment))
+                {
+                    long contentStart = segment.ContentOffsetTick;
+                    long contentEnd = checked(contentStart + segment.LengthTicks);
+                    foreach (OpaqueMidiEventValue opaque in segment.OpaqueEvents.QueryValues(
+                        contentStart,
+                        contentEnd))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (opaque.Kind != OpaqueMidiEventKind.SystemExclusive
+                            || !MidiChannelModeSystemExclusive.TryParseF0Payload(
+                                opaque.Payload.Span,
+                                out MidiChannelModeSystemExclusive parsed))
+                        {
+                            continue;
+                        }
+                        long tick = checked(
+                            segment.ProjectStartTick + opaque.Tick - contentStart);
+                        all.Add(new(
+                            rootPlan.Root.Id,
+                            trackPlan.Track.Id,
+                            segment.Id,
+                            opaque.Id,
+                            tick,
+                            parsed,
+                            CanonicalEventRole.DirectMidi,
+                            opaque.Order,
+                            trackPlan.TrackOrder,
+                            opaque.Order));
+                    }
+                }
+            }
+
+            all.Sort(CompareChannelModeSystemExclusive);
+            result.AddRange(all.Where(value => value.Tick >= startTick && value.Tick < endTick));
+
+            if (startTick <= 0) continue;
+            PureMidiRootInterval? activeInterval = BuildFullRootIntervals(rootPlan)
+                .FirstOrDefault(value => value.StartTick < startTick && value.EndTick > startTick);
+            if (activeInterval is null) continue;
+            PureMidiChannelModeSystemExclusiveEvent[] restoreCandidates = all
+                .Where(value => value.Tick >= activeInterval.StartTick && value.Tick < startTick)
+                .ToArray();
+            if (restoreCandidates.Length != 0)
+            {
+                PureMidiChannelModeSystemExclusiveEvent restored = restoreCandidates[^1];
+                result.Add(restored with
+                {
+                    Tick = startTick,
+                    Role = CanonicalEventRole.RangeRestore
+                });
+            }
+        }
+        result.Sort(CompareChannelModeSystemExclusive);
+        return result.ToArray();
+    }
+
+    private static PureMidiRootInterval[] BuildFullRootIntervals(PureMidiRootPlan rootPlan)
+    {
+        PureMidiTrackPlan[] fullTracks = rootPlan.Tracks
+            .Select(value => value with
+            {
+                Segments = value.Track.Segments
+                    .Where(IsRepresentableMidiSegment)
+                    .OrderBy(segment => segment.ProjectStartTick)
+                    .ThenBy(segment => segment.Id)
+                    .ToArray()
+            })
+            .ToArray();
+        return BuildRootIntervals(fullTracks, CancellationToken.None);
+    }
+
+    private static int CompareChannelModeSystemExclusive(
+        PureMidiChannelModeSystemExclusiveEvent left,
+        PureMidiChannelModeSystemExclusiveEvent right)
+    {
+        int value = left.Tick.CompareTo(right.Tick);
+        if (value != 0) return value;
+        value = left.Role.CompareTo(right.Role);
+        if (value != 0) return value;
+        value = left.SmfTrackOrder.CompareTo(right.SmfTrackOrder);
+        if (value != 0) return value;
+        value = left.SmfEventOrder.CompareTo(right.SmfEventOrder);
+        if (value != 0) return value;
+        return left.ObjectId.CompareTo(right.ObjectId);
+    }
+
+    private static bool IsRepresentableMidiSegment(MidiSegment segment) =>
+        segment.ProjectStartTick >= 0
+        && segment.LengthTicks > 0
+        && segment.ProjectStartTick <= long.MaxValue - segment.LengthTicks
+        && segment.ContentOffsetTick >= 0
+        && segment.ContentOffsetTick <= long.MaxValue - segment.LengthTicks;
+
+    private static CanonicalMidiChannelModeSystemExclusiveEvent[]
+        MaterializePureMidiChannelModeSystemExclusiveEvents(
+            PureMidiPlan plan,
+            IReadOnlyDictionary<MidoraId, int> unitByRoot)
+    {
+        CanonicalMidiChannelModeSystemExclusiveEvent[] result = new
+            CanonicalMidiChannelModeSystemExclusiveEvent[
+                plan.ChannelModeSystemExclusiveEvents.Length];
+        for (int index = 0; index < result.Length; index++)
+        {
+            PureMidiChannelModeSystemExclusiveEvent value =
+                plan.ChannelModeSystemExclusiveEvents[index];
+            int unit = unitByRoot[value.RootId];
+            byte port = checked((byte)(unit >> 4));
+            byte channel = checked((byte)(unit & 15));
+            SourceReference source = new(
+                TrackId: value.TrackId,
+                SegmentId: value.SegmentId,
+                SourceEventId: value.ObjectId,
+                Tick: value.Tick,
+                Origin: value.Role == CanonicalEventRole.RangeRestore
+                    ? SourceOrigin.RangeRestore
+                    : SourceOrigin.OpaqueMidiEvent,
+                MidiChannelRootId: value.RootId,
+                PureMidiTrackId: value.TrackId,
+                MidiSegmentId: value.SegmentId,
+                DirectMidiObjectId: value.ObjectId,
+                ExportTrackId: value.TrackId);
+            result[index] = new(
+                value.Tick,
+                port,
+                channel,
+                value.Value,
+                value.Role,
+                value.StableOrder,
+                source,
+                value.TrackId,
+                value.SmfTrackOrder,
+                value.SmfEventOrder);
+        }
+        return result;
     }
 
     private static void AppendPureMidiExportCompatibilityDiagnostics(

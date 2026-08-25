@@ -571,6 +571,8 @@ Playing、Buffering、实时 Preview 或文件 Rendering 期间禁止提交程�
 
 每次创建、重建或复用 Unit Stream 时，必须先清除前一任务的 mode/state，再按 canonical Unit descriptor 建立唯一 channel 0：Logical/Event Instrument Unit 与 Melodic Pure MIDI Root 显式建立为 melodic；Percussion Pure MIDI Root 显式建立为 percussion/drum。物理 Channel 10 的默认 BASSMIDI 行为不得替代该 descriptor。
 
+Pure MIDI Root 的 canonical audio projection 可以额外携带第 23.13.2 节限定的 GS/XG Part Mode privileged SysEx。该事件必须经过正式 canonical 顺序、range-start restore、Mute/Solo 来源过滤、paged event stream、IPC 与 PCM/cache identity 后，重定向并发送到抽象 Unit 的 channel 0；Worker 在发送完整规范化 SysEx 后还必须在同一正式顺序点通过 BASSMIDI 的显式 Unit mode 建立等价 Melodic/Percussion 状态，避免后端对厂商 SysEx 的 preset remap 因 SoundFont 而产生不一致。不得由 Worker 回读 opaque Project 数据或把任意 SysEx 直接送入后端。
+
 ### 13.12.3 Stream 复用
 Stream 复用只能是性能优化。复用前必须重新确认：
 ```text
@@ -1155,6 +1157,8 @@ Maximum Reusable Audio Cache Bytes：默认 16 GiB，范围 0..Int64.MaxValue
 ```
 
 Cache Root 只接受可写的本机 fully-qualified 路径，拒绝相对路径、UNC 和网络位置。程序只能管理 root 下由当前版本 manifest 标识的 `session-*` 子目录；不得递归删除 root 或未知文件。
+
+主应用成功取得单实例所有权后，以及新 audio-cache session 激活前，必须自动扫描并 best-effort 删除上次异常退出遗留的、当前版本 manifest 可识别且未持有活动独占锁的 `session-*` 直接子目录。删除失败不得阻止应用启动或建立新 session，后续 session 激活必须重试；仍活动、manifest 缺失/不匹配、路径不是 root 直接子项或属于 reparse point 的目录一律保留。自动清理不得扫描、删除或重建 root 本身，也不得把未知内容当作 Midora 缓存。
 
 quota 为 `0` 时不保留 reusable entry，cache miss 每次实时渲染。配额满、空间不足或普通 reusable 写入失败时：
 ```text

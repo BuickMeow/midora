@@ -134,7 +134,8 @@ public static class MidiRenderPlanAdapter
                 ? sourceIndices[fragment.MidiChannelRootId]
                 : sourceIndices[fragment.TrackId];
             ReadOnlySpan<CanonicalAudioUnitEvent> fragmentEvents = fragment.Events;
-            List<ScheduledMidiMessage> scheduledFragmentEvents = new(fragmentEvents.Length);
+            List<(CanonicalMidiRenderEvent Order, ScheduledMidiMessage Scheduled)>
+                orderedFragmentEvents = new(fragmentEvents.Length);
             for (int eventIndex = 0; eventIndex < fragmentEvents.Length; eventIndex++)
             {
                 CanonicalAudioUnitEvent value = fragmentEvents[eventIndex];
@@ -143,14 +144,65 @@ public static class MidiRenderPlanAdapter
                     continue;
                 }
 
-                scheduledFragmentEvents.Add(new(
-                    map.TickToSampleFrame(
-                        fragment.GroupStartTick + value.RelativeTick,
-                        compiled.StartTick,
-                        sampleRate),
-                    value.Message,
-                    ResolveMonitoringSourceIndex(value.Source, sourceIndices, sourceIndex)));
+                long tick = fragment.GroupStartTick + value.RelativeTick;
+                orderedFragmentEvents.Add((
+                    new(
+                        tick,
+                        allocation.ZeroBasedPort,
+                        value.Message,
+                        value.Source.TrackId,
+                        value.Source.Origin == SourceOrigin.MidiChannelRootLifecycle
+                            && value.Source.MidiChannelRootId != default
+                                ? value.Source.MidiChannelRootId
+                                : value.Source.TrackId,
+                        value.Role,
+                        value.StableOrder,
+                        value.SmfTrackOrder,
+                        value.SmfEventOrder,
+                        value.StableObjectId),
+                    new(
+                        map.TickToSampleFrame(tick, compiled.StartTick, sampleRate),
+                        value.Message,
+                        ResolveMonitoringSourceIndex(value.Source, sourceIndices, sourceIndex))));
             }
+            if (fragment.MidiChannelRootId != default && !compiled.HasPagedEvents)
+            {
+                foreach (CanonicalMidiChannelModeSystemExclusiveEvent value in
+                    compiled.ChannelModeSystemExclusiveEvents)
+                {
+                    if (value.Source.MidiChannelRootId != fragment.MidiChannelRootId
+                        || value.Tick < fragment.EffectiveStartTick
+                        || value.Tick >= fragment.EffectiveEndTick)
+                    {
+                        continue;
+                    }
+                    if (!preserveFilteredTrackEvents
+                        && audibleTrackIds is not null
+                        && !audibleTrackIds.Contains(value.Source.TrackId))
+                    {
+                        continue;
+                    }
+                    CanonicalMidiRenderEvent order = ToRenderEvent(value) with
+                    {
+                        Message = MidiMessage.ProgramChange(0, 0),
+                        ChannelModeSystemExclusive = value.Value with { TargetChannel = 0 }
+                    };
+                    orderedFragmentEvents.Add((
+                        order,
+                        ScheduledMidiMessage.CreateChannelModeSystemExclusive(
+                            map.TickToSampleFrame(value.Tick, compiled.StartTick, sampleRate),
+                            channel: 0,
+                            value.Value,
+                            ResolveMonitoringSourceIndex(
+                                value.Source,
+                                sourceIndices,
+                                sourceIndex))));
+                }
+            }
+            ScheduledMidiMessage[] scheduledFragmentEvents = orderedFragmentEvents
+                .OrderBy(value => value.Order, CanonicalMidiRenderEventPageProvider.RenderEventComparer.Instance)
+                .Select(value => value.Scheduled)
+                .ToArray();
             unitFragmentBuilder.Add(new MidiUnitFragmentRenderPlan(
                 allocation.ZeroBasedPort,
                 allocation.ZeroBasedChannel,
@@ -168,7 +220,7 @@ public static class MidiRenderPlanAdapter
                         out CanonicalPureMidiAudioFragmentDescriptor? pureDescriptor)
                             ? CreatePureMidiAudioFingerprint(compiled, pureDescriptor)
                             : fragment.SemanticFingerprint,
-                scheduledFragmentEvents.ToArray(),
+                scheduledFragmentEvents,
                 midiChannelRootId: fragment.MidiChannelRootId.Value,
                 isPercussion: fragment.ChannelMode == MidiChannelMode.Percussion));
         }
@@ -185,25 +237,42 @@ public static class MidiRenderPlanAdapter
             .ThenBy(value => value.StartFrame)
             .ThenBy(value => value.SegmentId)
             .ToArray();
-        List<ScheduledMidiMessage>?[] eventsByPort = new List<ScheduledMidiMessage>?[16];
-        foreach (CanonicalMidiEvent value in events)
+        List<CanonicalMidiRenderEvent> orderedRenderEvents = events
+            .Select(ToRenderEvent)
+            .ToList();
+        if (!compiled.HasPagedEvents)
         {
-            if (!IsSupportedByInitialReleaseAudioProjection(value.Message))
+            orderedRenderEvents.AddRange(compiled.ChannelModeSystemExclusiveEvents
+                .ToArray()
+                .Select(ToRenderEvent));
+        }
+        orderedRenderEvents.Sort(CanonicalMidiRenderEventPageProvider.RenderEventComparer.Instance);
+        List<ScheduledMidiMessage>?[] eventsByPort = new List<ScheduledMidiMessage>?[16];
+        foreach (CanonicalMidiRenderEvent value in orderedRenderEvents)
+        {
+            if (value.ChannelModeSystemExclusive is null
+                && !IsSupportedByInitialReleaseAudioProjection(value.Message))
             {
                 continue;
             }
 
-            bool hasTrack = value.Source.TrackId != default;
+            bool hasTrack = value.TrackId != default;
             if (!preserveFilteredTrackEvents && audibleTrackIds is not null
-                && hasTrack && !audibleTrackIds.Contains(value.Source.TrackId))
+                && hasTrack && !audibleTrackIds.Contains(value.TrackId))
             {
                 continue;
             }
             List<ScheduledMidiMessage> scheduled = eventsByPort[value.ZeroBasedPort]
                 ??= [];
             long frame = map.TickToSampleFrame(value.Tick, compiled.StartTick, sampleRate);
-            int sourceIndex = ResolveMonitoringSourceIndex(value.Source, sourceIndices, -1);
-            scheduled.Add(new(frame, value.Message, sourceIndex));
+            int sourceIndex = sourceIndices.GetValueOrDefault(value.MonitoringSourceId, -1);
+            scheduled.Add(value.ChannelModeSystemExclusive is { } systemExclusive
+                ? ScheduledMidiMessage.CreateChannelModeSystemExclusive(
+                    frame,
+                    value.Message.ChannelNumber,
+                    systemExclusive,
+                    sourceIndex)
+                : new(frame, value.Message, sourceIndex));
         }
         List<MidiPortRenderPlan> ports = [];
         for (byte port = 0; port < eventsByPort.Length; port++)
@@ -287,6 +356,35 @@ public static class MidiRenderPlanAdapter
         return Enumerable.Range(0, referenced.Length).Where(index => referenced[index]).ToArray();
     }
 
+    private static CanonicalMidiRenderEvent ToRenderEvent(CanonicalMidiEvent value) => new(
+        value.Tick,
+        value.ZeroBasedPort,
+        value.Message,
+        value.Source.TrackId,
+        value.Source.Origin == SourceOrigin.MidiChannelRootLifecycle
+            && value.Source.MidiChannelRootId != default
+                ? value.Source.MidiChannelRootId
+                : value.Source.TrackId,
+        value.Role,
+        value.StableOrder,
+        value.SmfTrackOrder,
+        value.SmfEventOrder,
+        value.Source.DirectMidiObjectId);
+
+    private static CanonicalMidiRenderEvent ToRenderEvent(
+        CanonicalMidiChannelModeSystemExclusiveEvent value) => new(
+        value.Tick,
+        value.ZeroBasedPort,
+        MidiMessage.ProgramChange(value.ZeroBasedChannel, 0),
+        value.Source.TrackId,
+        value.Source.TrackId,
+        value.Role,
+        value.StableOrder,
+        value.SmfTrackOrder,
+        value.SmfEventOrder,
+        value.Source.DirectMidiObjectId,
+        value.Value with { TargetChannel = value.ZeroBasedChannel });
+
     private static string CreatePureMidiAudioFingerprint(
         CanonicalCompiledResult compiled,
         CanonicalPureMidiAudioFragmentDescriptor descriptor)
@@ -346,6 +444,18 @@ public static class MidiRenderPlanAdapter
                 {
                     writer.Write(value.SampleFrame - startFrame);
                     writer.Write(value.Message.PackedValue);
+                    if (value.ChannelModeSystemExclusive is { } systemExclusive)
+                    {
+                        writer.Write((byte)systemExclusive.Kind);
+                        writer.Write(systemExclusive.DeviceId);
+                        writer.Write(systemExclusive.ModeValue);
+                    }
+                    else
+                    {
+                        writer.Write((byte)0);
+                        writer.Write((byte)0);
+                        writer.Write((byte)0);
+                    }
                 }
             }
         }

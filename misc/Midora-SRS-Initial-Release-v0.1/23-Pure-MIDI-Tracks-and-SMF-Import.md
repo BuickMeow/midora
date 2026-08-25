@@ -269,7 +269,7 @@ sequencer-specific metadata
 unknown but structurally valid SMF meta event types
 ```
 
-初版不提供自由 SysEx 或任意 Meta payload 创建/字节编辑。Opaque event 可以查看、选择、移动、删除、随 Segment 操作和重新导出；其 payload 不得被解释成 Event Instrument、Mapping 或 Channel 分配指令。
+初版不提供自由 SysEx 或任意 Meta payload 创建/字节编辑。Opaque event 可以查看、选择、移动、删除、随 Segment 操作和重新导出；除第 23.13.2 节明确列出的 GS/XG Part Mode target Channel 归属与音频特权外，其 payload 不得被解释成 Event Instrument、Mapping 或 Channel 分配指令。
 
 Tempo、Time Signature、Key Signature、Marker 等已由 Midora 正式建模的全局 Meta 必须导入 Conductor Track，不作为 opaque Track event 重复保存。Track Name、MIDI Port 与 End Of Track 是结构信息，分别进入 Track/Root/Segment 结构。
 
@@ -441,7 +441,7 @@ post-sum playback span cache
 Render-Ahead ring
 ```
 
-Root PCM key 至少包括 Root composite fingerprint、start-state fingerprint、Channel Mode、程序级 Enabled SF2/SFZ 有序配置（含 target）及主文件元数据缓存身份、Tempo projection、sample rate/format、native baseline、voice policy 和 renderer version。Root composite fingerprint 对可听内容的投影必须覆盖实际 Direct Note / Channel Event 字段、分页源内容 fingerprint 与 copy-on-write delta；集合 `Generation`、编辑次数或仅 stable ID 不构成内容 identity。
+Root PCM key 至少包括 Root composite fingerprint、start-state fingerprint、Channel Mode、程序级 Enabled SF2/SFZ 有序配置（含 target）及主文件元数据缓存身份、Tempo projection、sample rate/format、native baseline、voice policy 和 renderer version。Root composite fingerprint 对可听内容的投影必须覆盖实际 Direct Note / Channel Event 字段、分页 source opaque 内容 fingerprint 与 copy-on-write delta；renderer 新增或改变 privileged SysEx 等可听解释时必须提升 renderer cache generation，不能假设未改变的 source fingerprint 会自然淘汰旧 PCM。集合 `Generation`、编辑次数或仅 stable ID 不构成内容 identity。
 
 ### 23.10.3 失效与收敛
 
@@ -489,7 +489,7 @@ unsafe sizes or counts beyond implementation's documented bounded admission limi
 
 Format 0 的单 MTrk 可由此产生多个 Pure MIDI Track；Format 1 的多 Channel MTrk 同样拆分。拆分后的 Track 顺序按源 MTrk 顺序，再按该 MTrk 中 `(Port, Channel)` 首次出现顺序；名称使用源 Track Name，并追加确定的 Port/Channel 区分后缀。
 
-无 Channel 的 opaque SysEx/Meta 不得因拆分而复制。对每个 `(source MTrk, effective Port)`，这类事件按原顺序归属到该源 MTrk 在同 Port 首次出现的派生 Pure MIDI Track；若该 Port 没有 Channel bucket，但仍有必须保留的 opaque 内容，则创建一个 structure-only Pure MIDI Track。Structure-only Track 挂到该 Port 已存在的最低 Channel Root；若该 Port 尚无 Root，则建立 `Fixed(Port, Channel 1) / Melodic` Root。它自身不产生 Channel Event，但仍服从 Fixed Root 预留规则。
+无 Channel 的 opaque SysEx/Meta 不得因拆分而复制。第 23.13.2 节可识别的 GS/XG Part Mode SysEx 由 payload target Channel 建立或选择对应 bucket；其他 opaque event 对每个 `(source MTrk, effective Port)` 按原顺序归属到该源 MTrk 在同 Port 首次出现的派生 Pure MIDI Track。若该 Port 没有 Channel bucket，但仍有必须保留的普通 opaque 内容，则创建一个 structure-only Pure MIDI Track。Structure-only Track 挂到该 Port 已存在的最低 Channel Root；若该 Port 尚无 Root，则建立 `Fixed(Port, Channel 1) / Melodic` Root。它自身不产生 Channel Event，但仍服从 Fixed Root 预留规则。
 
 Format 1 的 MTrk 0 若在提取 Conductor 与结构 Meta 后没有剩余 Channel/opaque 内容，只由 Conductor Track 表达，不额外创建空 Pure MIDI Track。其他源 MTrk 若需要保留空 Track 名称/EOT，则按前述 structure-only 规则使用默认或当时有效 Port；不得丢弃、复制到所有拆分 Track 或虚构 Channel Event。
 
@@ -663,11 +663,20 @@ identical cross-MTrk tie ordering in every player
 
 Stream 创建、重建和复用前必须按 canonical Unit 的 Channel Mode 建立 Melodic 或 Percussion 状态；不能无条件执行 melodic `DEFDRUMS(0)`。
 
-### 23.13.2 CC91 / CC93 与 opaque SysEx
+### 23.13.2 CC91 / CC93 与 Channel Mode SysEx 特权
 
 正式 BASSMIDI Stream 继续启用 `BASS_MIDI_NOFX | BASS_MIDI_NOTEOFF1`。Pure MIDI canonical 中的 CC91 / CC93 在 MIDI 文件语义中保留，但 Midora 实时/离线音频投影确定性忽略其 Reverb/Chorus 效果，不产生诊断，也不改变缓存键以外的正式 MIDI 结果。
 
-初版音频消费者不解释或发送任意 opaque imported SysEx/Meta。它们继续存在于 Project/canonical SMF 投影并可重新导出；因此 Midora 音频试听不承诺复现依赖未知 SysEx 的外部设备行为。
+初版音频消费者原则上不解释或发送 opaque imported SysEx/Meta；它们继续存在于 Project/canonical SMF 投影并可重新导出。因此 Midora 音频试听不承诺复现依赖未知 SysEx 的外部设备行为。
+
+唯一特权是可确定归属单个 MIDI Channel 的 GS/XG Part Mode SysEx：
+
+- Roland GS DT1 `41 <device 10..1F> 42 12 40 <part 10..1F> 15 <mode 00..02> <valid checksum> F7`；
+- Yamaha XG `43 <device 10..1F> 4C 08 <part 00..0F> 07 <mode 00..02> F7`。
+
+导入拆分多 Channel MTrk 时，这两种消息必须归属其 payload 指定 Channel 的派生 Pure MIDI Track；不得沿用普通无 Channel opaque event 的 first-owner 规则。Compiler 在保留原 opaque source/SMF 投影的同时，额外产生明确类型的 canonical audio privileged event，保持 absolute tick、source Track、SMF Track order 与 event order。若播放/渲染从 Root 活动连通区间中途开始，必须在范围起点恢复该连通区间内最近一条先前 Part Mode；不得跨 Root 空闲边界继承。
+
+音频消费者把 privileged event 的目标重定向到该 Root 的 1-channel Unit stream channel 0，并以规范化完整 SysEx 原始字节提交给 BASSMIDI。Root `Channel Mode` 仍只负责 Stream 初始 Melodic/Percussion 状态；后续 privileged event 可以改变活动期间模式。任意其他 GS/XG 参数、GM/GS/XG Reset、厂商 SysEx、F7 continuation 与 Meta 继续不发送。识别失败、校验和错误或不支持的 mode 不产生特权，也不产生诊断，仍按普通 opaque event 保留和导出。
 
 ### 23.13.3 Mute / Solo
 

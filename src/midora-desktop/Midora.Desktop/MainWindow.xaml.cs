@@ -5471,7 +5471,7 @@ public partial class MainWindow : Window
     {
         ComboBox? comboBox = sender as ComboBox;
         if (_session.ActiveWorkspace is TimelineWorkspaceViewModel directTimeline
-            && directTimeline.GetActiveParameterLaneOption()?.DirectMidiTarget is not null)
+            && directTimeline.GetActiveParameterLaneOption()?.IsDirectMidiLane == true)
         {
             _session.RefreshWorkspace(directTimeline);
             RestoreEditorLaneTimelineFocus(comboBox, directTimeline);
@@ -5482,11 +5482,8 @@ public partial class MainWindow : Window
                 Mode: TimelineWorkspaceMode.Segment,
                 ObjectId: MidoraId segmentId
             } timeline
-            && timeline.GetActiveParameterLaneOption() is ParameterLaneOption
-            {
-                LaneId: null,
-                IsBroken: false
-            } option)
+            && timeline.GetActiveParameterLaneOption() is ParameterLaneOption option
+            && ShouldCreateLogicalParameterLane(option))
         {
             RunSynchronous("Create Logical Parameter Lane", () => ExecuteAndSelectCreated(
                 ProjectDomainEditCommands.CreateLogicalParameterLane(segmentId, option.ParameterId),
@@ -5500,6 +5497,11 @@ public partial class MainWindow : Window
             RestoreEditorLaneTimelineFocus(comboBox, workspace);
         }
     }
+
+    internal static bool ShouldCreateLogicalParameterLane(ParameterLaneOption option) =>
+        !option.IsDirectMidiLane
+        && option.LaneId is null
+        && !option.IsBroken;
 
     private void RestoreEditorLaneTimelineFocus(
         ComboBox? comboBox,

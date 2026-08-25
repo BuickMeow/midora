@@ -1,6 +1,7 @@
 using Midora.Audio;
 using Midora.Compiler;
 using Midora.Domain;
+using Midora.Midi;
 
 namespace Midora.Playback;
 
@@ -102,34 +103,141 @@ internal sealed class CanonicalMidiRenderEventPageProvider :
                 includeStateAtStart: startFrame == 0,
                 demandedSourceIds,
                 cancellationToken);
-        foreach (CanonicalMidiRenderEventPage page in pages)
+        CanonicalMidiRenderEvent[] channelModeEvents = _compiled
+            .ChannelModeSystemExclusiveEvents
+            .ToArray()
+            .Where(value => value.Tick >= startTick && value.Tick < endTick)
+            .Select(ToRenderEvent)
+            .Where(value => demandedSourceIds is null
+                || demandedSourceIds.Contains(value.MonitoringSourceId))
+            .OrderBy(value => value, RenderEventComparer.Instance)
+            .ToArray();
+        foreach (CanonicalMidiRenderEvent value in Merge(
+            Enumerate(pages),
+            channelModeEvents))
         {
-            foreach (CanonicalMidiRenderEvent value in page.Items)
+            cancellationToken.ThrowIfCancellationRequested();
+            if (value.ChannelModeSystemExclusive is null
+                && !MidiRenderPlanAdapter.IsSupportedByInitialReleaseAudioProjection(value.Message))
+                continue;
+            if (_audibleTrackIds is not null
+                && value.TrackId != default
+                && !_audibleTrackIds.Contains(value.TrackId))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!MidiRenderPlanAdapter.IsSupportedByInitialReleaseAudioProjection(value.Message))
-                    continue;
-                if (_audibleTrackIds is not null
-                    && value.TrackId != default
-                    && !_audibleTrackIds.Contains(value.TrackId))
-                {
-                    continue;
-                }
-                long frame = _map.TickToSampleFrame(
-                    value.Tick,
-                    _compiled.StartTick,
-                    _sampleRate);
-                if (frame < startFrame || frame >= endFrame) continue;
-                int sourceIndex = _sourceIndices[value.MonitoringSourceId];
-                if (demand is not null
-                    && !demand.IsSourceDemanded(sourceIndex, frame))
-                {
-                    continue;
-                }
-                yield return new(
-                    value.ZeroBasedPort,
-                    new(frame, value.Message, sourceIndex));
+                continue;
             }
+            long frame = _map.TickToSampleFrame(
+                value.Tick,
+                _compiled.StartTick,
+                _sampleRate);
+            if (frame < startFrame || frame >= endFrame) continue;
+            int sourceIndex = _sourceIndices[value.MonitoringSourceId];
+            if (demand is not null
+                && !demand.IsSourceDemanded(sourceIndex, frame))
+            {
+                continue;
+            }
+            ScheduledMidiMessage scheduled = value.ChannelModeSystemExclusive is { } systemExclusive
+                ? ScheduledMidiMessage.CreateChannelModeSystemExclusive(
+                    frame,
+                    value.Message.ChannelNumber,
+                    systemExclusive,
+                    sourceIndex)
+                : new(frame, value.Message, sourceIndex);
+            yield return new(value.ZeroBasedPort, scheduled);
+        }
+    }
+
+    private static CanonicalMidiRenderEvent ToRenderEvent(
+        CanonicalMidiChannelModeSystemExclusiveEvent value) => new(
+        value.Tick,
+        value.ZeroBasedPort,
+        MidiMessage.ProgramChange(value.ZeroBasedChannel, 0),
+        value.Source.TrackId,
+        value.Source.TrackId,
+        value.Role,
+        value.StableOrder,
+        value.SmfTrackOrder,
+        value.SmfEventOrder,
+        value.Source.DirectMidiObjectId,
+        value.Value with { TargetChannel = value.ZeroBasedChannel });
+
+    private static IEnumerable<CanonicalMidiRenderEvent> Enumerate(
+        IEnumerable<CanonicalMidiRenderEventPage> pages)
+    {
+        foreach (CanonicalMidiRenderEventPage page in pages)
+            foreach (CanonicalMidiRenderEvent value in page.Items)
+                yield return value;
+    }
+
+    private static IEnumerable<CanonicalMidiRenderEvent> Merge(
+        IEnumerable<CanonicalMidiRenderEvent> direct,
+        IReadOnlyList<CanonicalMidiRenderEvent> channelMode)
+    {
+        using IEnumerator<CanonicalMidiRenderEvent> enumerator = direct.GetEnumerator();
+        bool hasDirect = enumerator.MoveNext();
+        int specialIndex = 0;
+        while (hasDirect || specialIndex < channelMode.Count)
+        {
+            if (!hasDirect)
+            {
+                yield return channelMode[specialIndex++];
+                continue;
+            }
+            if (specialIndex >= channelMode.Count
+                || RenderEventComparer.Instance.Compare(
+                    enumerator.Current,
+                    channelMode[specialIndex]) <= 0)
+            {
+                yield return enumerator.Current;
+                hasDirect = enumerator.MoveNext();
+            }
+            else
+            {
+                yield return channelMode[specialIndex++];
+            }
+        }
+    }
+
+    internal sealed class RenderEventComparer : IComparer<CanonicalMidiRenderEvent>
+    {
+        public static RenderEventComparer Instance { get; } = new();
+
+        public int Compare(CanonicalMidiRenderEvent x, CanonicalMidiRenderEvent y)
+        {
+            int value = x.Tick.CompareTo(y.Tick);
+            if (value != 0) return value;
+            value = x.Role.CompareTo(y.Role);
+            if (value != 0) return value;
+            value = x.ZeroBasedPort.CompareTo(y.ZeroBasedPort);
+            if (value != 0) return value;
+            value = x.Message.ChannelNumber.CompareTo(y.Message.ChannelNumber);
+            if (value != 0) return value;
+            value = x.SmfTrackOrder.CompareTo(y.SmfTrackOrder);
+            if (value != 0) return value;
+            if (x.Role == CanonicalEventRole.DirectMidi
+                && y.Role == CanonicalEventRole.DirectMidi)
+            {
+                value = x.SmfEventOrder.CompareTo(y.SmfEventOrder);
+                if (value != 0) return value;
+            }
+            value = x.StableOrder.CompareTo(y.StableOrder);
+            if (value != 0) return value;
+            value = x.TrackId.CompareTo(y.TrackId);
+            if (value != 0) return value;
+            value = x.StableObjectId.CompareTo(y.StableObjectId);
+            if (value != 0) return value;
+            bool xHas = x.ChannelModeSystemExclusive.HasValue;
+            bool yHas = y.ChannelModeSystemExclusive.HasValue;
+            if (xHas != yHas) return xHas ? 1 : -1;
+            if (!xHas) return x.Message.PackedValue.CompareTo(y.Message.PackedValue);
+            MidiChannelModeSystemExclusive xMode = x.ChannelModeSystemExclusive!.Value;
+            MidiChannelModeSystemExclusive yMode = y.ChannelModeSystemExclusive!.Value;
+            value = xMode.Kind.CompareTo(yMode.Kind);
+            if (value != 0) return value;
+            value = xMode.DeviceId.CompareTo(yMode.DeviceId);
+            if (value != 0) return value;
+            return xMode.ModeValue.CompareTo(yMode.ModeValue);
         }
     }
 }

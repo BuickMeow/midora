@@ -25,6 +25,9 @@ public sealed class MidiRenderPlanFileTests
             Assert.Equal(plan.TotalFrameCount, restored.TotalFrameCount);
             Assert.Equal(plan.Ports[0].Events[1], restored.Ports[0].Events[1]);
             Assert.Equal(
+                plan.Ports[0].Events[1].ChannelModeSystemExclusive,
+                restored.Ports[0].Events[1].ChannelModeSystemExclusive);
+            Assert.Equal(
                 plan.UnitFragments[0].SemanticFingerprint,
                 restored.UnitFragments[0].SemanticFingerprint);
             Assert.Equal(
@@ -135,6 +138,15 @@ public sealed class MidiRenderPlanFileTests
         MidiPortRenderPlan port = new(0,
         [
             new ScheduledMidiMessage(0, MidiMessage.ProgramChange(0, 0), 0),
+            ScheduledMidiMessage.CreateChannelModeSystemExclusive(
+                50,
+                0,
+                new(
+                    MidiChannelModeSystemExclusiveKind.YamahaXgPartMode,
+                    0,
+                    0x10,
+                    1),
+                0),
             new ScheduledMidiMessage(100, MidiMessage.NoteOn(0, 60, 100), 0),
             new ScheduledMidiMessage(500, MidiMessage.NoteOff(0, 60, 17), 0)
         ]);

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Midora.Compiler;
 using Midora.Domain;
 using Midora.Midi;
+using Midora.Persistence;
 
 namespace Midora.Application;
 
@@ -61,13 +62,9 @@ public static partial class MidiProjectImportService
         Dictionary<byte, byte> portMap = ValidatePortMap(sourcePorts, zeroBasedPortMapping);
 
         MidoraProject project = new(scan.Header.TicksPerQuarterNote);
-        string backingRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Midora",
-            "SessionContent",
-            Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(backingRoot);
-        project.RegisterRuntimeResource(new ImportBackingDirectory(backingRoot));
+        SessionContentDirectoryLease backingDirectory =
+            SessionContentDirectoryLease.Create(project);
+        string backingRoot = backingDirectory.DirectoryPath;
         PureMidiContentPackDecodedCache decodedCache = new();
         project.RegisterRuntimeResource(decodedCache);
         List<StreamingImportTarget> targets = [];
@@ -795,6 +792,17 @@ public static partial class MidiProjectImportService
             }
             else
             {
+                if (value.Kind == StandardMidiFileEventKind.SystemExclusive
+                    && value.Type == 0xf0
+                    && MidiChannelModeSystemExclusive.TryParseF0Payload(
+                        value.Data.Span,
+                        out MidiChannelModeSystemExclusive channelMode))
+                {
+                    var route = (_port, channelMode.TargetChannel);
+                    if (!track.ChannelRoutes.TryGetValue(route, out long firstOrder)
+                        || value.Order < firstOrder)
+                        track.ChannelRoutes[route] = value.Order;
+                }
                 track.RecordOpaquePort(_port, value.Order);
             }
         }
@@ -921,7 +929,19 @@ public static partial class MidiProjectImportService
                 return;
             }
             if (ShouldStripChannel10Initialization(track, value)) return;
-            if (!_opaqueOwners.TryGetValue((track.SourceTrackIndex, _port), out StreamingImportTarget? owner))
+            StreamingImportTarget? owner = null;
+            if (value.Kind == StandardMidiFileEventKind.SystemExclusive
+                && value.Type == 0xf0
+                && MidiChannelModeSystemExclusive.TryParseF0Payload(
+                    value.Data.Span,
+                    out MidiChannelModeSystemExclusive channelMode))
+            {
+                _targets.TryGetValue(
+                    new StreamingBucketKey(track.SourceTrackIndex, _port, channelMode.TargetChannel),
+                    out owner);
+            }
+            owner ??= _opaqueOwners.GetValueOrDefault((track.SourceTrackIndex, _port));
+            if (owner is null)
                 throw new InvalidDataException("The streaming MIDI opaque-event ownership plan changed between passes.");
             owner.AcceptOpaqueEvent(_project, value);
         }
@@ -1226,27 +1246,4 @@ public static partial class MidiProjectImportService
         long Order,
         MidiMessage Message,
         long SourceByteOffset);
-
-    private sealed class ImportBackingDirectory(string path) : IDisposable
-    {
-        private readonly string _path = Path.GetFullPath(path);
-        private int _disposed;
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-            try
-            {
-                if (Directory.Exists(_path)) Directory.Delete(_path, recursive: true);
-            }
-            catch (IOException)
-            {
-                // Session cleanup is best effort; no content is published from here.
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // Session cleanup is best effort; no content is published from here.
-            }
-        }
-    }
 }

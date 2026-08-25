@@ -287,6 +287,35 @@ public sealed class MidiProjectImportServiceTests
     }
 
     [Fact]
+    public void ChannelModeSystemExclusiveIsOwnedByItsTargetChannelTrack()
+    {
+        StandardMidiFileTrack source = new(
+            120,
+            [
+                StandardMidiFileEvent.ChannelVoice(0, MidiMessage.ProgramChange(0, 4)),
+                StandardMidiFileEvent.SystemExclusive(
+                    24,
+                    [0x43, 0x10, 0x4c, 0x08, 0x01, 0x07, 0x01, 0xf7])
+            ]);
+
+        MidiProjectImportResult result = MidiProjectImportService.Import(
+            StandardMidiFile.EncodeType1(480, [source]),
+            "Channel Mode");
+
+        PureMidiTrack owner = Assert.Single(result.Project.PureMidiTracks, track =>
+            track.Segments.SelectMany(segment => segment.OpaqueEvents).Any());
+        MidiChannelRoot root = result.Project.MidiChannelRoots.Single(value =>
+            value.Id == owner.MidiChannelRootId);
+        Assert.Equal(2, result.Project.PureMidiTracks.Count);
+        Assert.Equal((byte)1, root.FixedZeroBasedChannel);
+        CanonicalCompiledResult compiled = new MidoraCompiler().CompileFull(result.Project);
+        CanonicalMidiChannelModeSystemExclusiveEvent mode = Assert.Single(
+            compiled.ChannelModeSystemExclusiveEvents.ToArray());
+        Assert.Equal((byte)1, mode.ZeroBasedChannel);
+        Assert.Equal(owner.Id, mode.Source.TrackId);
+    }
+
+    [Fact]
     public void OutOfRangeSourcePortRequiresExplicitOneToOneMapping()
     {
         StandardMidiFileTrack source = new(

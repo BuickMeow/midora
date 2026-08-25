@@ -2,6 +2,8 @@ using Midora.Audio;
 using Midora.Compiler;
 using Midora.Domain;
 using Midora.Midi;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Midora.Playback.Tests;
 
@@ -161,6 +163,50 @@ public sealed class CanonicalAudioUnitProjectionTests
     }
 
     [Fact]
+    public void PureMidiChannelModeSystemExclusiveReachesPortAndUnitPlans()
+    {
+        MidoraProject project = new(480);
+        MidiChannelRoot root = new(project)
+        {
+            Name = "Mode",
+            RoutingMode = MidiChannelRootRoutingMode.Fixed,
+            FixedZeroBasedPort = 2,
+            FixedZeroBasedChannel = 6,
+            ChannelMode = MidiChannelMode.Melodic
+        };
+        project.MidiChannelRoots.Add(root);
+        PureMidiTrack track = AddMidiTrack(project, root, "Track", startTick: 0, key: 60);
+        track.Segments[0].OpaqueEvents.Add(new(project)
+        {
+            Tick = 24,
+            Kind = OpaqueMidiEventKind.SystemExclusive,
+            Payload = [0x43, 0x10, 0x4c, 0x08, 0x06, 0x07, 0x01, 0xf7],
+            Order = 1
+        });
+
+        using ProjectCompilationSession session = new(project);
+        Assert.Single(session.LastAttempt.ChannelModeSystemExclusiveEvents.ToArray());
+        CanonicalCompiledResult compiled = session.CompileForPlayback(0, null);
+        Assert.Single(compiled.ChannelModeSystemExclusiveEvents.ToArray());
+        MidiRenderPlan plan = session.GetOrCreateRealtimeRenderPlan(
+            compiled,
+            48_000,
+            new HashSet<MidoraId> { track.Id });
+
+        ScheduledMidiMessage portEvent = Assert.Single(
+            plan.Ports.ToArray().SelectMany(value => value.Events.ToArray()),
+            value => value.IsChannelModeSystemExclusive);
+        Assert.Equal((byte)6, portEvent.Message.ChannelNumber);
+        Assert.Equal((byte)6, portEvent.ChannelModeSystemExclusive!.Value.TargetChannel);
+        ScheduledMidiMessage fragmentEvent = Assert.Single(
+            plan.UnitFragments.ToArray().SelectMany(value => value.Events.ToArray()),
+            value => value.IsChannelModeSystemExclusive);
+        Assert.Equal((byte)0, fragmentEvent.Message.ChannelNumber);
+        Assert.Equal((byte)0, fragmentEvent.ChannelModeSystemExclusive!.Value.TargetChannel);
+        Assert.Equal((byte)1, fragmentEvent.ChannelModeSystemExclusive.Value.ModeValue);
+    }
+
+    [Fact]
     public void PureMidiPcmIdentityUsesActualContentInsteadOfCollectionGeneration()
     {
         MidoraProject firstProject = CreateSinglePureMidiProject(key: 60, controllerValue: 24);
@@ -194,6 +240,9 @@ public sealed class CanonicalAudioUnitProjectionTests
         Assert.Equal(
             MidiSegmentPcmCacheKey.Create(firstPlan, 48_000, soundFont, "native-v1", 500),
             MidiSegmentPcmCacheKey.Create(equalPlan, 48_000, soundFont, "native-v1", 500));
+        Assert.NotEqual(
+            CreateLegacySegmentPcmCacheKey(firstPlan, 48_000, soundFont, "native-v1", 500),
+            MidiSegmentPcmCacheKey.Create(firstPlan, 48_000, soundFont, "native-v1", 500));
     }
 
     [Fact]
@@ -362,5 +411,35 @@ public sealed class CanonicalAudioUnitProjectionTests
             Order = 2
         });
         return project;
+    }
+
+    private static string CreateLegacySegmentPcmCacheKey(
+        MidiSegmentRenderPlan segment,
+        int sampleRate,
+        string soundFontSetCacheIdentity,
+        string nativeBaselineIdentity,
+        int maximumSampleVoicesPerUnitStream)
+    {
+        using MemoryStream payload = new();
+        using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write("MIDORA_SAMPLE_DOMAIN_SEGMENT_PCM_KEY_V2");
+            writer.Write(2);
+            writer.Write(segment.SemanticFingerprint);
+            writer.Write(segment.FrameCount);
+            writer.Write(sampleRate);
+            writer.Write(soundFontSetCacheIdentity);
+            writer.Write(nativeBaselineIdentity);
+            writer.Write(maximumSampleVoicesPerUnitStream);
+            writer.Write(true);
+            writer.Write(true);
+            writer.Write(1f);
+            writer.Write(0f);
+            writer.Write(16_384);
+            writer.Write(2);
+            writer.Write((int)Midora.AudioDevice.AudioSampleFormat.Float32);
+        }
+        return Convert.ToHexStringLower(SHA256.HashData(
+            payload.GetBuffer().AsSpan(0, checked((int)payload.Length))));
     }
 }

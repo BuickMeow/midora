@@ -225,7 +225,13 @@ public readonly record struct CanonicalMidiRenderEvent(
     byte ZeroBasedPort,
     MidiMessage Message,
     MidoraId TrackId,
-    MidoraId MonitoringSourceId);
+    MidoraId MonitoringSourceId,
+    CanonicalEventRole Role = CanonicalEventRole.DirectMidi,
+    long StableOrder = long.MaxValue,
+    int SmfTrackOrder = int.MaxValue,
+    long SmfEventOrder = long.MaxValue,
+    MidoraId StableObjectId = default,
+    MidiChannelModeSystemExclusive? ChannelModeSystemExclusive = null);
 
 public sealed class CanonicalMidiRenderEventPage
 {
@@ -390,6 +396,18 @@ public readonly record struct CanonicalOpaqueMidiEvent(
     SourceReference Source,
     int SmfTrackOrder = int.MaxValue);
 
+public readonly record struct CanonicalMidiChannelModeSystemExclusiveEvent(
+    long Tick,
+    byte ZeroBasedPort,
+    byte ZeroBasedChannel,
+    MidiChannelModeSystemExclusive Value,
+    CanonicalEventRole Role,
+    long StableOrder,
+    SourceReference Source,
+    MidoraId ExportTrackId,
+    int SmfTrackOrder,
+    long SmfEventOrder);
+
 public readonly record struct CanonicalTempo(
     MidoraId SourceId,
     long Tick,
@@ -457,6 +475,8 @@ public sealed class CanonicalCompiledResult
     private readonly CompilerDiagnostic[] _diagnostics;
     private readonly CanonicalSmfTrackDescriptor[] _smfTracks;
     private readonly CanonicalOpaqueMidiEvent[] _opaqueMidiEvents;
+    private readonly CanonicalMidiChannelModeSystemExclusiveEvent[]
+        _channelModeSystemExclusiveEvents;
     private readonly ICanonicalMidiEventPageSource? _pagedEventSource;
     private readonly ICanonicalMidiRenderPageSource? _pagedRenderSource;
     private readonly ICanonicalSmfTrackPageSource? _pagedSmfTrackSource;
@@ -476,7 +496,8 @@ public sealed class CanonicalCompiledResult
         CompilationStatistics statistics,
         CanonicalSmfTrackDescriptor[]? smfTracks = null,
         CanonicalOpaqueMidiEvent[]? opaqueMidiEvents = null,
-        ICanonicalMidiEventPageSource? pagedEventSource = null)
+        ICanonicalMidiEventPageSource? pagedEventSource = null,
+        CanonicalMidiChannelModeSystemExclusiveEvent[]? channelModeSystemExclusiveEvents = null)
     {
         TicksPerQuarterNote = ticksPerQuarterNote;
         Context = context ?? throw new ArgumentNullException(nameof(context));
@@ -494,6 +515,7 @@ public sealed class CanonicalCompiledResult
         Statistics = statistics;
         _smfTracks = smfTracks ?? [];
         _opaqueMidiEvents = opaqueMidiEvents ?? [];
+        _channelModeSystemExclusiveEvents = channelModeSystemExclusiveEvents ?? [];
         _pagedEventSource = pagedEventSource;
         _pagedRenderSource = pagedEventSource as ICanonicalMidiRenderPageSource;
         _pagedSmfTrackSource = pagedEventSource as ICanonicalSmfTrackPageSource;
@@ -521,6 +543,8 @@ public sealed class CanonicalCompiledResult
     public IReadOnlyList<CompilerDiagnostic> Diagnostics => _diagnostics;
     public ReadOnlySpan<CanonicalSmfTrackDescriptor> SmfTracks => _smfTracks;
     public ReadOnlySpan<CanonicalOpaqueMidiEvent> OpaqueMidiEvents => _opaqueMidiEvents;
+    public ReadOnlySpan<CanonicalMidiChannelModeSystemExclusiveEvent>
+        ChannelModeSystemExclusiveEvents => _channelModeSystemExclusiveEvents;
     public IReadOnlyList<CanonicalPureMidiAudioFragmentDescriptor> PureMidiAudioFragments =>
         _pureMidiAudioMetadataSource?.PureMidiAudioFragments ?? [];
     public IReadOnlyList<CanonicalMidiPresetReference> PureMidiPresetReferences =>
@@ -692,7 +716,8 @@ public sealed class CanonicalCompiledResult
             Statistics,
             _smfTracks,
             _opaqueMidiEvents,
-            _pagedEventSource);
+            _pagedEventSource,
+            _channelModeSystemExclusiveEvents);
     }
 
     private static long CountNoteOns(ReadOnlySpan<CanonicalMidiEvent> events)

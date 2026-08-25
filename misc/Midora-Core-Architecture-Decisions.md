@@ -622,3 +622,23 @@ Requirement trace：输入为 Application Preferences Draft、MIDI Export/Audio 
 同 tick 顺序固定为 `Track Name / MIDI Port / Midora Pure MIDI 结构 Meta → Channel 10 melodic GS/XG（如适用）→ CC91=0 → CC93=0 → canonical/opaque 事件`。因此 Pure MIDI Track 在 canonical 中显式存在的 CC91/CC93 仍原样保留，并在系统零值初始化之后按冻结 tick/order 生效；导出器不得去重、替换或删除用户事件。Logical/Event Instrument canonical 继续禁止 CC91/CC93，导出器生成的两条兼容初始化不改变该领域约束。
 
 Requirement trace：输入为冻结 MIDI Export canonical、SMF Track Projection、输出 Port 映射和每条事件 Track 的 Channel；正式输出为每条 Logical Unit/Pure MIDI MTrk 各一次确定的 tick 0 CC91/CC93 零值初始化及其后完整 canonical/opaque 数据。边界是 Conductor 不写、每个实际 MTrk 独立写、Per Track/Per Port/Whole Project 与分页/非分页路径完全一致、用户同 tick 事件后写并优先。编码失败仍原子失败且不发布部分文件。该初始化只属于导出产物，不持久化、不进入 Undo/Redo、编译统计、canonical fingerprint、播放或音频渲染；明确非目标是修改 Project 默认事件、改变 BASSMIDI `NOFX` 策略、清除其他 CC，或让 MIDI 导出器重新解释用户效果事件。
+
+## 52. ADR-CORE-050（已接受）：会话临时存储以 manifest 与活动锁自动回收
+
+决定：Audio Cache 与 Pure MIDI session backing content 使用两套独立的 session 所有权，不因路径接近而混为同一种缓存。Audio Cache 继续位于程序设置的 cache root 下，以 `session-<guid>`、`MIDORA_AUDIO_CACHE_SESSION_V1` manifest 和独占活动锁标识；Pure MIDI backing 固定在 `%LOCALAPPDATA%\Midora\SessionContent`，改用 `session-<guid>`、`MIDORA_SESSION_CONTENT_V1` manifest 和独占活动锁。主应用取得单实例所有权后同步执行一次 best-effort 清理；每次建立相应 session 前再次清理，以覆盖设置切换或先前删除失败。
+
+删除权限严格限制为父 root 的直接子项。当前格式目录必须 manifest 内容与目录名精确匹配且活动锁可独占取得；reparse point、未知目录、未知文件、错误清单和仍活动目录全部保留。为了回收当前已存在的开发期残留，Pure MIDI backing 额外识别裸 32 hex GUID 目录，但只有空目录或全部普通文件严格命名为 `mt_<positive id>.mpk` 时才删除；不把该兼容规则扩展到任意 GUID 目录内容。删除逐项捕获 I/O/权限/竞争失败，不阻止启动、Project 原子切换或音频 session 建立；正常 Project/session Dispose 仍先释放 pack/cache/lock 再删除自己的目录。
+
+Requirement trace：输入为程序级 Audio Cache Root、固定 SessionContent root、session manifest/name、独占 lock 和旧 `.mpk` 文件名结构；正式输出不是音乐数据，而是保留全部活动/未知内容并删除已确认 orphan 的本机运行时存储。边界包括异常退出、蓝屏、正常 Dispose、删除竞争、只读目录、未知子项、reparse point、旧裸 GUID 目录和同时活动 session。Project、canonical、`.midora`、Undo/Redo 与诊断均不变；目录/lock/manifest 只属于本机运行时。明确非目标是跨 session 复用、递归清空 root、按年龄猜测垃圾、删除无法确认所有权的内容或把 SessionContent 纳入 audio reusable quota。
+
+## 53. ADR-CORE-051（已接受）：Pure MIDI Channel Mode SysEx 使用有类型的 canonical 音频特权
+
+决定：不把“Pure MIDI 允许任意 SysEx”直接等同为“任意 SysEx 可以进入 BASSMIDI”。唯一音频特权固定为可确定映射单个 Channel 的 Roland GS DT1 Part Mode 与 Yamaha XG Part Mode，且只接受规格固定长度、设备编号、mode 范围及 GS checksum 合法的消息。SMF 导入根据 payload target Channel 把它归属对应派生 Pure MIDI Track；原 opaque event 继续原样保存在 Project 和 SMF Projection 中。
+
+Compiler 从该 opaque source 派生独立 `CanonicalMidiChannelModeSystemExclusiveEvent`，冻结 source Track/Segment/object、absolute tick、SMF Track/event order、分配后的 Port.Channel 和 Direct/RangeRestore role。范围从 Root 活动连通区间中途开始时，在起点补该区间内最近一条先前 mode；Root 空闲边界阻断继承。Playback adapter、滚动 event file、Worker IPC、fragment/segment/playback PCM key 都显式携带该有类型 payload，保持与普通 Channel Event 的 canonical 同 tick 顺序和 Track 级 Monitoring 来源。Worker 发送规范化 SysEx 后，在同一事件顺序点同步调用 BASSMIDI 的显式 Unit mode；该镜像只落实已由 canonical 识别的语义，不扩张可发送 SysEx 范围，并消除不同 SoundFont 对厂商 SysEx preset remap 的差异。
+
+完整 Project canonical 派生默认 Playback View 时必须连同有类型 Channel Mode SysEx 原样复制。该 View 只是同一 canonical 的播放用途包装，不得只保留普通 MIDI event/page source 而遗漏旁路的有类型事件集合；否则从 tick 0 的桌面播放会与直接消费 Full Compile 的离线/测试路径产生可听分歧。
+
+正式 1-channel synth 将 target 归一化为 channel 0，并在 BASSMIDI RAW batch 中编码完整 F0…F7 消息。Root descriptor 的 Melodic/Percussion 初始化仍发生在 Stream 创建/复用阶段，privileged event 只表示时间线中的后续状态改变。该事件首次进入可听投影、以及修复默认 Playback View 遗漏该事件时，都必须提升 canonical Unit PCM、sample-domain Unit PCM、实时 Segment PCM 与 playback-span renderer cache generation；opaque source fingerprint 不能用于自然淘汰这些旧版静音 PCM。任意其他 SysEx、Meta、F7 continuation、GM/GS/XG Reset、无效 checksum/长度/mode 均不派生音频事件、不报兼容诊断，仍仅保留和导出。Worker 不允许直接读取 Project opaque bytes 或自行识别厂商消息。
+
+Requirement trace：输入为 Pure MIDI Segment opaque source、SMF source Track/Port/channel buckets、Root 活动连通区间、CompileContext 与 Unit allocation；正式输出为不变的 opaque SMF projection及额外的有类型 canonical audio event，经非分页/分页计划、IPC、缓存 identity 和 BASS RAW submission 到达 Unit stream。边界包括多 Channel MTrk 归属、GS part-address 特殊映射、合法 checksum、同 tick order、range-start restore、Mute/Solo future replacement、Root 空闲断点与 channel-0 normalization。Project/persistence 格式不新增字段；canonical/计划/IPC/cache generation 属于派生与运行时。明确非目标是任意 SysEx 音频回放、外部硬件兼容层、Reset 消息、F7 continuation 合并、识别未知厂商 payload 或把 SysEx 语义加入 Event Instrument。

@@ -370,6 +370,10 @@ public sealed partial class MidoraCompiler : IDisposable
             pureMidiPlan,
             allocation.UnitByRoot);
         CanonicalOpaqueMidiEvent[] opaqueMidiEvents = pureMidiPlan.OpaqueEvents;
+        CanonicalMidiChannelModeSystemExclusiveEvent[] channelModeSystemExclusiveEvents =
+            MaterializePureMidiChannelModeSystemExclusiveEvents(
+                pureMidiPlan,
+                allocation.UnitByRoot);
         ICanonicalMidiEventPageSource? pagedEventSource = usesPagedPureMidi
             ? new PureMidiPagedCanonicalSource(
                 pureMidiPlan,
@@ -418,7 +422,8 @@ public sealed partial class MidoraCompiler : IDisposable
             successStatistics,
             smfTracks,
             opaqueMidiEvents,
-            pagedEventSource);
+            pagedEventSource,
+            channelModeSystemExclusiveEvents);
     }
 
     private static CanonicalCompiledResult Failure(

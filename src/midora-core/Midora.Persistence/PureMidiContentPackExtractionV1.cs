@@ -15,12 +15,9 @@ internal sealed class PureMidiContentPackExtractionV1 : IDisposable
     public PureMidiContentPackExtractionV1(MidoraProject project)
     {
         _project = project ?? throw new ArgumentNullException(nameof(project));
-        _root = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Midora",
-            "SessionContent",
-            Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_root);
+        SessionContentDirectoryLease directoryLease =
+            SessionContentDirectoryLease.Create(project);
+        _root = directoryLease.DirectoryPath;
         _project.RegisterRuntimeResource(this);
         _decodedCache = new();
         _project.RegisterRuntimeResource(_decodedCache);
@@ -110,18 +107,6 @@ internal sealed class PureMidiContentPackExtractionV1 : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        try
-        {
-            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
-        }
-        catch (IOException)
-        {
-            // Session cleanup is best effort; content is no longer reachable.
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Session cleanup is best effort; content is no longer reachable.
-        }
     }
 
     private static void TryDelete(string path)

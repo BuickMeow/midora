@@ -492,6 +492,43 @@ public sealed class AudioCacheSessionStoreTests
     }
 
     [Fact]
+    public void CreatingStoreAutomaticallyDeletesRecognizedInactiveSessions()
+    {
+        using TemporaryDirectory root = new();
+        string staleName = "session-" + Guid.NewGuid().ToString("N");
+        string stale = Path.Combine(root.Path, staleName);
+        Directory.CreateDirectory(stale);
+        File.WriteAllText(
+            Path.Combine(stale, "session.manifest"),
+            "MIDORA_AUDIO_CACHE_SESSION_V1\n" + staleName + "\n",
+            new UTF8Encoding(false));
+        string unknown = Path.Combine(root.Path, "session-unknown");
+        Directory.CreateDirectory(unknown);
+        string unrelated = Path.Combine(root.Path, "keep.txt");
+        File.WriteAllText(unrelated, "keep");
+
+        using AudioCacheSessionStore store = new(root.Path, 4096);
+
+        Assert.False(Directory.Exists(stale));
+        Assert.True(Directory.Exists(unknown));
+        Assert.True(File.Exists(unrelated));
+        Assert.True(Directory.Exists(store.SessionPath));
+    }
+
+    [Fact]
+    public void AutomaticCleanupPreservesAnotherActiveStore()
+    {
+        using TemporaryDirectory root = new();
+        using AudioCacheSessionStore first = new(root.Path, 4096);
+        string firstSessionPath = first.SessionPath;
+
+        using AudioCacheSessionStore second = new(root.Path, 4096);
+
+        Assert.True(Directory.Exists(firstSessionPath));
+        Assert.True(Directory.Exists(second.SessionPath));
+    }
+
+    [Fact]
     public void DisposeRemovesOnlyTheOwnedSessionDirectory()
     {
         using TemporaryDirectory root = new();

@@ -146,6 +146,7 @@ public sealed partial class MidoraCompiler
                     AppendText(segment.PagedContentFingerprint ?? string.Empty);
                     AppendDirectNoteContent(segment.Notes);
                     AppendDirectChannelEventContent(segment.ChannelEvents);
+                    AppendOpaqueMidiContent(segment.OpaqueEvents);
                 }
             }
             return Convert.ToHexStringLower(hash.GetHashAndReset());
@@ -195,6 +196,30 @@ public sealed partial class MidoraCompiler
                     AppendLong(value.Data1);
                     AppendLong(value.Data2);
                     AppendLong(value.Order);
+                }
+            }
+
+            void AppendOpaqueMidiContent(OpaqueMidiEventCollection events)
+            {
+                AppendLong(events.HasPagedSource ? 1 : 0);
+                AppendLong(events.ClearsPagedSource ? 1 : 0);
+                MidoraId[] removed = events.RemovedSourceIds.Order().ToArray();
+                AppendLong(removed.Length);
+                foreach (MidoraId id in removed)
+                    AppendLong(id.Value);
+                OpaqueMidiEvent[] edited = events.EditedItems
+                    .OrderBy(value => value.Id)
+                    .ToArray();
+                AppendLong(edited.Length);
+                foreach (OpaqueMidiEvent value in edited)
+                {
+                    AppendLong(value.Id.Value);
+                    AppendLong(value.Tick);
+                    AppendLong((int)value.Kind);
+                    AppendLong(value.MetaType);
+                    AppendLong(value.Order);
+                    AppendLong(value.Payload.Length);
+                    hash.AppendData(value.Payload);
                 }
             }
 

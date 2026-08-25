@@ -6,7 +6,7 @@ namespace Midora.Audio;
 public static class MidiRenderPlanFile
 {
     private const uint Magic = 0x5041444d;
-    private const int Version = 8;
+    private const int Version = 9;
     private const int ChecksumByteCount = 32;
     private const int MaximumFileByteCount = 256 * 1024 * 1024;
     private const int MaximumEventCount = 16 * 1024 * 1024;
@@ -15,7 +15,7 @@ public static class MidiRenderPlanFile
     private const int PortHeaderByteCount = 8;
     private const int UnitFragmentHeaderByteCount = 164;
     private const int SegmentHeaderByteCount = 120;
-    private const int EventByteCount = 16;
+    private const int EventByteCount = 20;
     private const int UnitDescriptorByteCount = 4;
 
     public static void Write(string filePath, MidiRenderPlan plan)
@@ -67,9 +67,7 @@ public static class MidiRenderPlanFile
                 writer.Write(events.Length);
                 foreach (ScheduledMidiMessage item in events)
                 {
-                    writer.Write(item.SampleFrame);
-                    writer.Write(item.Message.PackedValue);
-                    writer.Write(item.SourceIndex);
+                    WriteScheduledEvent(writer, item);
                 }
             }
             writer.Write(plan.UnitFragments.Length);
@@ -99,9 +97,7 @@ public static class MidiRenderPlanFile
                 writer.Write(fragment.Events.Length);
                 foreach (ScheduledMidiMessage item in fragment.Events)
                 {
-                    writer.Write(item.SampleFrame);
-                    writer.Write(item.Message.PackedValue);
-                    writer.Write(item.SourceIndex);
+                    WriteScheduledEvent(writer, item);
                 }
             }
             writer.Write(plan.Segments.Length);
@@ -271,10 +267,7 @@ public static class MidiRenderPlanFile
                 ScheduledMidiMessage[] events = new ScheduledMidiMessage[eventCount];
                 for (int eventIndex = 0; eventIndex < eventCount; eventIndex++)
                 {
-                    long sampleFrame = reader.ReadInt64();
-                    MidiMessage message = MidiMessage.FromPackedValue(reader.ReadUInt32());
-                    int sourceIndex = reader.ReadInt32();
-                    events[eventIndex] = new ScheduledMidiMessage(sampleFrame, message, sourceIndex);
+                    events[eventIndex] = ReadScheduledEvent(reader);
                 }
 
                 ports[portIndex] = new MidiPortRenderPlan(portNumber, events);
@@ -347,10 +340,7 @@ public static class MidiRenderPlanFile
                 ScheduledMidiMessage[] events = new ScheduledMidiMessage[eventCount];
                 for (int eventIndex = 0; eventIndex < eventCount; eventIndex++)
                 {
-                    events[eventIndex] = new(
-                        reader.ReadInt64(),
-                        MidiMessage.FromPackedValue(reader.ReadUInt32()),
-                        reader.ReadInt32());
+                    events[eventIndex] = ReadScheduledEvent(reader);
                 }
                 fragments[fragmentIndex] = new(
                     portNumber,
@@ -462,6 +452,52 @@ public static class MidiRenderPlanFile
         {
             throw new InvalidDataException("The IPC MIDI event plan structure is invalid.", exception);
         }
+    }
+
+    private static void WriteScheduledEvent(BinaryWriter writer, ScheduledMidiMessage value)
+    {
+        writer.Write(value.SampleFrame);
+        writer.Write(value.Message.PackedValue);
+        writer.Write(value.SourceIndex);
+        if (value.ChannelModeSystemExclusive is { } systemExclusive)
+        {
+            writer.Write((byte)systemExclusive.Kind);
+            writer.Write(systemExclusive.DeviceId);
+            writer.Write(systemExclusive.ModeValue);
+        }
+        else
+        {
+            writer.Write((byte)0);
+            writer.Write((byte)0);
+            writer.Write((byte)0);
+        }
+        writer.Write((byte)0);
+    }
+
+    private static ScheduledMidiMessage ReadScheduledEvent(BinaryReader reader)
+    {
+        long frame = reader.ReadInt64();
+        MidiMessage message = MidiMessage.FromPackedValue(reader.ReadUInt32());
+        int sourceIndex = reader.ReadInt32();
+        byte kind = reader.ReadByte();
+        byte deviceId = reader.ReadByte();
+        byte modeValue = reader.ReadByte();
+        if (reader.ReadByte() != 0)
+            throw new InvalidDataException("The IPC MIDI event has a non-zero reserved field.");
+        if (kind == 0)
+        {
+            if (deviceId != 0 || modeValue != 0)
+                throw new InvalidDataException("The IPC MIDI channel event has non-zero SysEx fields.");
+            return new(frame, message, sourceIndex);
+        }
+        MidiChannelModeSystemExclusive systemExclusive = new(
+            (MidiChannelModeSystemExclusiveKind)kind,
+            message.ChannelNumber,
+            deviceId,
+            modeValue);
+        ScheduledMidiMessage result = new(frame, message, sourceIndex, systemExclusive);
+        result.ValidatePayload();
+        return result;
     }
 
     private static void ValidateWritablePlanBounds(MidiRenderPlan plan)

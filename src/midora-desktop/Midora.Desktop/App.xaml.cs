@@ -41,6 +41,10 @@ public partial class App : System.Windows.Application
                 ?? throw new InvalidOperationException("The primary Midora instance was not created.");
             _instanceRequests = new CancellationTokenSource();
 
+            ApplicationPreferences startupPreferences =
+                new ApplicationPreferencesStore().Load().Preferences;
+            _ = ApplicationSessionStorageCleanup.ClearInactiveSessions(startupPreferences);
+
             MainWindow window = new();
             MainWindow = window;
             window.Show();

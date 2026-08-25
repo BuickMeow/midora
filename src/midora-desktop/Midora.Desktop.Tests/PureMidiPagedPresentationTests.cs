@@ -187,6 +187,27 @@ public sealed class PureMidiPagedPresentationTests
         Assert.Equal(0, events[5]);
         Assert.Equal(0, notes[3]);
         Assert.Equal(0, events[1]);
+        Assert.Equal(1_000, snapshot.MaximumEndTick);
+    }
+
+    [Fact]
+    public void DirectMidiOverviewExtentIncludesEventsBeyondTheExposedSegmentRange()
+    {
+        using MidoraProject project = new(480);
+        MidiSegment segment = new(project) { LengthTicks = 480 };
+        segment.OpaqueEvents.Add(new OpaqueMidiEvent(project)
+        {
+            Tick = 1_200,
+            Kind = OpaqueMidiEventKind.SystemExclusive,
+            Payload = [0x7d]
+        });
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "direct-midi-event-extent",
+            [],
+            overviewSource: new PureMidiSegmentOverviewSource(segment));
+
+        Assert.Equal(1_201, snapshot.MaximumEndTick);
     }
 
     [Fact]

@@ -1945,6 +1945,12 @@ public sealed class DesktopSessionControllerTests
         Assert.Equal(2, preview.Events.Count);
 
         TimelineWorkspaceViewModel editor = session.OpenSegment(segment.Id);
+        ParameterLaneOption opaqueOption = Assert.Single(
+            editor.ParameterLaneOptions,
+            value => value.Label == "Imported Meta / SysEx");
+        Assert.True(opaqueOption.IsDirectMidiLane);
+        Assert.True(opaqueOption.IsOpaqueMidiLane);
+        Assert.Null(opaqueOption.DirectMidiTarget);
         editor.Selection.Replace(opaque.Id);
         session.RefreshWorkspace(editor);
 

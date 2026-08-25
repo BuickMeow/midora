@@ -32,6 +32,31 @@ public sealed class MidiRenderPlanTests
     }
 
     [Fact]
+    public void ChannelModeSystemExclusiveCarrierDoesNotChangeReferencedPresetState()
+    {
+        MidiChannelModeSystemExclusive systemExclusive = new(
+            MidiChannelModeSystemExclusiveKind.YamahaXgPartMode,
+            TargetChannel: 0,
+            DeviceId: 0x10,
+            ModeValue: 0);
+        MidiRenderPlan plan = new(
+            48_000,
+            100,
+            [
+                new MidiPortRenderPlan(
+                    0,
+                    [
+                        new(0, MidiMessage.ControlChange(0, 0, 1)),
+                        new(0, MidiMessage.ProgramChange(0, 5)),
+                        ScheduledMidiMessage.CreateChannelModeSystemExclusive(0, 0, systemExclusive),
+                        new(10, MidiMessage.NoteOn(0, 60, 100))
+                    ])
+            ]);
+
+        Assert.Contains((1 << 7) | 5, plan.ReferencedPresetKeys.ToArray());
+    }
+
+    [Fact]
     public void DerivesOneChannelZeroStreamPlanPerActuallyUsedCanonicalUnit()
     {
         MidiRenderPlan plan = new(

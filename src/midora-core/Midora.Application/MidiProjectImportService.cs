@@ -129,12 +129,22 @@ public static partial class MidiProjectImportService
         {
             foreach (ScannedOpaqueEvent value in scan.OpaqueEvents)
             {
-                ImportBucket? owner = buckets.Values
+                ImportBucket[] candidates = buckets.Values
                     .Where(bucket => bucket.Key.SourceTrackIndex == scan.Track.SourceTrackIndex
                         && bucket.Key.SourcePort == value.SourcePort)
                     .OrderBy(bucket => bucket.FirstOrder)
                     .ThenBy(bucket => bucket.Key.Channel)
-                    .FirstOrDefault();
+                    .ToArray();
+                ImportBucket? owner = null;
+                if (TryGetChannelModeSystemExclusiveTarget(value, out byte targetChannel))
+                {
+                    owner = candidates.FirstOrDefault(bucket => bucket.Key.Channel == targetChannel)
+                        ?? GetBucket(
+                            new(scan.Track.SourceTrackIndex, value.SourcePort, targetChannel),
+                            scan,
+                            value.Order);
+                }
+                owner ??= candidates.FirstOrDefault();
                 if (owner is null)
                 {
                     byte channel = scan.MidoraMetadata is { SourcePort: byte metadataPort, SourceChannel: byte metadataChannel }
@@ -524,6 +534,23 @@ public static partial class MidiProjectImportService
         && value.Event.Type == 0xf0
         && (value.Event.Data.Span.SequenceEqual(RolandGsChannel10NormalPart)
             || value.Event.Data.Span.SequenceEqual(YamahaXgChannel10NormalPart));
+
+    private static bool TryGetChannelModeSystemExclusiveTarget(
+        ScannedOpaqueEvent value,
+        out byte targetChannel)
+    {
+        targetChannel = 0;
+        if (value.Event.Kind != StandardMidiFileEventKind.SystemExclusive
+            || value.Event.Type != 0xf0
+            || !MidiChannelModeSystemExclusive.TryParseF0Payload(
+                value.Event.Data.Span,
+                out MidiChannelModeSystemExclusive parsed))
+        {
+            return false;
+        }
+        targetChannel = parsed.TargetChannel;
+        return true;
+    }
 
     private static void ImportConductor(
         MidoraProject project,

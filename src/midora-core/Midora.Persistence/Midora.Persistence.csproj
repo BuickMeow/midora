@@ -34,6 +34,7 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Midora.Persistence.Tests" />
+    <InternalsVisibleTo Include="Midora.Application" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Midora.Domain\Midora.Domain.csproj" />

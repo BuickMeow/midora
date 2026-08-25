@@ -22,6 +22,23 @@ namespace Midora.Desktop.Tests;
 public sealed class WpfInteractionRegressionTests
 {
     [Fact]
+    public void ImportedOpaqueLaneNeverRoutesToLogicalParameterLaneCreation()
+    {
+        ParameterLaneOption opaque = new(
+            default,
+            null,
+            "Imported Meta / SysEx",
+            IsOpaqueMidiLane: true);
+        ParameterLaneOption logical = new(
+            new MidoraId(10),
+            null,
+            "Pressure · Empty");
+
+        Assert.False(MainWindow.ShouldCreateLogicalParameterLane(opaque));
+        Assert.True(MainWindow.ShouldCreateLogicalParameterLane(logical));
+    }
+
+    [Fact]
     public void AncestorLookupTraversesDocumentContentElementsWithoutTreatingThemAsVisuals()
     {
         RunOnSta(() =>

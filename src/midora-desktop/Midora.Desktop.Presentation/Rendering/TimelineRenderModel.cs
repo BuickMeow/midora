@@ -509,6 +509,7 @@ public readonly record struct TimelineSelectionMetrics(
 public interface ITimelineOverviewSource
 {
     ulong ContentFingerprint { get; }
+    long MaximumEndTick { get; }
 
     void Accumulate(
         long extent,
@@ -539,9 +540,16 @@ public sealed class MaterializedTimelineOverviewSource : ITimelineOverviewSource
         ContentFingerprint = TimelineContentFingerprint.ForOverviewTicks(
             _noteStartTicks,
             _eventTicks);
+        long maximumTick = _noteStartTicks.Concat(_eventTicks).DefaultIfEmpty(-1).Max();
+        MaximumEndTick = maximumTick < 0
+            ? 0
+            : maximumTick == long.MaxValue
+                ? long.MaxValue
+                : maximumTick + 1;
     }
 
     public ulong ContentFingerprint { get; }
+    public long MaximumEndTick { get; }
 
     public void Accumulate(
         long extent,
@@ -825,8 +833,10 @@ public sealed class TimelineRenderSnapshot
     public bool HasDedicatedOverview => _overviewSource is not null;
     public long TotalItemCount => checked(Items.Count + (_itemSource?.Count ?? 0));
     public long MaximumEndTick => Math.Max(
-        Items.Count == 0 ? 0 : Items.Max(value => value.EndTick),
-        _itemSource?.MaximumEndTick ?? 0);
+        Math.Max(
+            Items.Count == 0 ? 0 : Items.Max(value => value.EndTick),
+            _itemSource?.MaximumEndTick ?? 0),
+        _overviewSource?.MaximumEndTick ?? 0);
 
     public void AccumulateOverviewDensity(long extent, Span<int> destination)
     {

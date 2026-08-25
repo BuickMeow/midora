@@ -641,7 +641,10 @@ public sealed record ParameterLaneOption(
     string Label,
     bool IsBroken = false,
     DirectMidiEventLaneTarget? DirectMidiTarget = null,
-    bool IsOpaqueMidiLane = false);
+    bool IsOpaqueMidiLane = false)
+{
+    public bool IsDirectMidiLane => DirectMidiTarget is not null || IsOpaqueMidiLane;
+}
 
 public readonly record struct DirectMidiEventLaneTarget(
     DirectMidiChannelEventKind Kind,
@@ -1260,9 +1263,9 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             default:
                 throw new InvalidOperationException("Unknown timeline workspace mode.");
         }
-        long contentEnd = Snapshot?.TotalItemCount > 0
-            ? Snapshot.MaximumEndTick
-            : 0;
+        long contentEnd = Math.Max(
+            Snapshot?.MaximumEndTick ?? 0,
+            RangeEndTick ?? 0);
         long minimumExtent = StartTick <= long.MaxValue - TickSpan
             ? StartTick + TickSpan
             : long.MaxValue;

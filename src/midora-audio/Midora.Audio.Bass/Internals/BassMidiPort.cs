@@ -14,7 +14,8 @@ public sealed unsafe class BassMidiRenderer
       IMonitoringResettableRenderSource
 {
     private const int MaximumMidiBatchEventCount = 1_024;
-    private const int MaximumPackedMidiBatchByteCount = MaximumMidiBatchEventCount * 3;
+    private const int MaximumPackedMidiBatchByteCount =
+        MaximumMidiBatchEventCount * MidiChannelModeSystemExclusive.MaximumEncodedByteCount;
     private const int MonitoringCommandQueueCapacity = 4_096;
     private const int DeterministicNativeDecodeFrameCount = InitialReleaseAudioRuntimePolicy.WorkFrameCount;
     private const float InitialReleaseInterpolationQuality = 1f;
@@ -1257,6 +1258,7 @@ public sealed unsafe class BassMidiRenderer
                 int scanIndex = unit.EventIndex;
                 int batchCount = 0;
                 int packedByteCount = 0;
+                MidiChannelModeSystemExclusive? channelModeSystemExclusive = null;
 
                 while (scanIndex < events.Length
                     && batchCount < MaximumMidiBatchEventCount
@@ -1268,15 +1270,19 @@ public sealed unsafe class BassMidiRenderer
                         continue;
                     }
 
-                    MidiMessage message = scheduled.Message;
-                    _packedMidiBuffer[packedByteCount++] = message.Byte0;
-                    _packedMidiBuffer[packedByteCount++] = message.Byte1;
-                    if (message.Length == 3)
-                    {
-                        _packedMidiBuffer[packedByteCount++] = message.Byte2;
-                    }
+                    packedByteCount += WriteRawScheduledEvent(
+                        _packedMidiBuffer + packedByteCount,
+                        scheduled);
 
                     batchCount++;
+                    if (scheduled.ChannelModeSystemExclusive is { } systemExclusive)
+                    {
+                        // Keep the formal same-tick order exact. BASS accepts the
+                        // normalized vendor SysEx, then receives the equivalent
+                        // explicit Unit mode before any later event at this frame.
+                        channelModeSystemExclusive = systemExclusive;
+                        break;
+                    }
                 }
 
                 if (batchCount == 0)
@@ -1307,6 +1313,11 @@ public sealed unsafe class BassMidiRenderer
                 // other than uint.MaxValue is success for this complete input buffer; never
                 // split and resubmit a suffix based on the processed-event count.
                 unit.EventIndex = scanIndex;
+                if (channelModeSystemExclusive is { } mode
+                    && !ApplyChannelModeSystemExclusive(unit, mode))
+                {
+                    return false;
+                }
             }
         }
 
@@ -1343,6 +1354,7 @@ public sealed unsafe class BassMidiRenderer
             UnitState unit = _units[unitIndex];
             int batchCount = 0;
             int packedByteCount = 0;
+            MidiChannelModeSystemExclusive? channelModeSystemExclusive = null;
             while (batchCount < MaximumMidiBatchEventCount
                 && reader.TryPeek(out next)
                 && next.Scheduled.SampleFrame == _renderPositionFrames
@@ -1353,13 +1365,23 @@ public sealed unsafe class BassMidiRenderer
                 ScheduledMidiMessage canonical = scheduledPort.Scheduled;
                 MidiMessage unitMessage = MidiMessage.FromPackedValue(
                     canonical.Message.PackedValue & ~MidiMessage.ChannelNumberMask);
-                ScheduledMidiMessage scheduled = canonical with { Message = unitMessage };
+                ScheduledMidiMessage scheduled = canonical with
+                {
+                    Message = unitMessage,
+                    ChannelModeSystemExclusive = canonical.ChannelModeSystemExclusive is { } canonicalSystemExclusive
+                        ? canonicalSystemExclusive with { TargetChannel = 0 }
+                        : null
+                };
                 if (!ShouldSubmitScheduledEvent(unit, scheduled)) continue;
-                _packedMidiBuffer[packedByteCount++] = unitMessage.Byte0;
-                _packedMidiBuffer[packedByteCount++] = unitMessage.Byte1;
-                if (unitMessage.Length == 3)
-                    _packedMidiBuffer[packedByteCount++] = unitMessage.Byte2;
+                packedByteCount += WriteRawScheduledEvent(
+                    _packedMidiBuffer + packedByteCount,
+                    scheduled);
                 batchCount++;
+                if (scheduled.ChannelModeSystemExclusive is { } systemExclusive)
+                {
+                    channelModeSystemExclusive = systemExclusive;
+                    break;
+                }
             }
             if (batchCount == 0) continue;
             uint submitted = NativeBassMidi.StreamEvents(
@@ -1375,8 +1397,37 @@ public sealed unsafe class BassMidiRenderer
                     unit.Plan.CanonicalZeroBasedPortNumber);
                 return false;
             }
+            if (channelModeSystemExclusive is { } mode
+                && !ApplyChannelModeSystemExclusive(unit, mode))
+            {
+                return false;
+            }
         }
         return true;
+    }
+
+    private bool ApplyChannelModeSystemExclusive(
+        UnitState unit,
+        MidiChannelModeSystemExclusive value)
+    {
+        // The opaque message remains part of the formal event stream and is sent
+        // above. Mirror the already-validated semantic result through BASS's
+        // explicit Unit mode as well: vendor-SysEx preset remapping varies by
+        // SoundFont, while the canonical event has an unambiguous audible mode.
+        if (NativeBassMidi.StreamEvent(
+            unit.StreamHandle,
+            0,
+            NativeBassMidi.MIDI_EVENT_DEFDRUMS,
+            value.IsPercussion ? 1u : 0u) != 0)
+        {
+            return true;
+        }
+
+        SetFault(
+            AudioRenderFaultCode.BassMidiEventSubmissionFailed,
+            NativeBass.ErrorGetCode(),
+            unit.Plan.CanonicalZeroBasedPortNumber);
+        return false;
     }
 
     private bool ApplyPendingMonitoringCommands()
@@ -1455,6 +1506,26 @@ public sealed unsafe class BassMidiRenderer
             error,
             unit.Plan.CanonicalZeroBasedPortNumber);
         return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int WriteRawScheduledEvent(
+        byte* destination,
+        ScheduledMidiMessage scheduled)
+    {
+        if (scheduled.ChannelModeSystemExclusive is { } systemExclusive)
+        {
+            Span<byte> target = new(
+                destination,
+                MidiChannelModeSystemExclusive.MaximumEncodedByteCount);
+            return systemExclusive.WriteNormalizedForChannel(0, target);
+        }
+
+        MidiMessage message = scheduled.Message;
+        destination[0] = message.Byte0;
+        destination[1] = message.Byte1;
+        if (message.Length == 3) destination[2] = message.Byte2;
+        return message.Length;
     }
 
     private void ValidateMonitoringCommands(ReadOnlySpan<MidiMonitoringCommand> commands)

@@ -5,6 +5,42 @@ namespace Midora.Audio.Bass.Tests;
 public sealed class MidiRenderEventStreamProtocolTests
 {
     [Fact]
+    public void RoundTripsChannelModeSystemExclusivePayload()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        string directory = CreateDirectory();
+        try
+        {
+            MidiRenderPlan plan = CreateCachedPlan(
+                new ChannelModeSystemExclusiveProvider(),
+                cacheHit: false);
+            using MidiRenderEventStreamProducer producer = Assert.IsType<MidiRenderEventStreamProducer>(
+                MidiRenderEventStreamProducer.Create(plan, directory));
+            using MidiRenderEventStreamReader reader = new(producer.Descriptor);
+            reader.RequestThrough(10_000);
+            Assert.True(SpinWait.SpinUntil(() => reader.IsCompleted, TimeSpan.FromSeconds(5)));
+
+            ScheduledPortMidiMessage value = Assert.Single(ReadAll(reader));
+            MidiChannelModeSystemExclusive systemExclusive = Assert.IsType<
+                MidiChannelModeSystemExclusive>(value.Scheduled.ChannelModeSystemExclusive);
+            Assert.Equal(MidiChannelModeSystemExclusiveKind.RolandGsPartMode, systemExclusive.Kind);
+            Assert.Equal((byte)0x10, systemExclusive.DeviceId);
+            Assert.Equal((byte)1, systemExclusive.ModeValue);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+
+        static List<ScheduledPortMidiMessage> ReadAll(MidiRenderEventStreamReader reader)
+        {
+            List<ScheduledPortMidiMessage> result = [];
+            while (reader.TryDequeue(out ScheduledPortMidiMessage value)) result.Add(value);
+            return result;
+        }
+    }
+
+    [Fact]
     public void ExactPcmHitSuppressesDemandAwareSourceBeforeIpc()
     {
         if (!OperatingSystem.IsWindows()) return;
@@ -596,6 +632,31 @@ public sealed class MidiRenderEventStreamProtocolTests
                         0,
                         new(frame, MidiMessage.NoteOn(0, 60, 100), 0));
                 }
+            }
+        }
+    }
+
+    private sealed class ChannelModeSystemExclusiveProvider : IMidiRenderEventPageProvider
+    {
+        public IEnumerable<ScheduledPortMidiMessage> Query(
+            long startFrame,
+            long endFrame,
+            CancellationToken cancellationToken = default)
+        {
+            const long frame = 100;
+            if (startFrame <= frame && endFrame > frame)
+            {
+                yield return new(
+                    0,
+                    ScheduledMidiMessage.CreateChannelModeSystemExclusive(
+                        frame,
+                        0,
+                        new(
+                            MidiChannelModeSystemExclusiveKind.RolandGsPartMode,
+                            0,
+                            0x10,
+                            1),
+                        0));
             }
         }
     }

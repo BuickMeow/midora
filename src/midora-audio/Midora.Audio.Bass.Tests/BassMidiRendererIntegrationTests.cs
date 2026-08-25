@@ -72,6 +72,90 @@ public sealed class BassMidiRendererIntegrationTests
     }
 
     [Fact]
+    public void SubmitsRecognizedChannelModeSystemExclusiveWithoutRendererFault()
+    {
+        EnsureEnvironment();
+        ScheduledMidiMessage[] events =
+        [
+            ScheduledMidiMessage.CreateChannelModeSystemExclusive(
+                0,
+                0,
+                new(
+                    MidiChannelModeSystemExclusiveKind.RolandGsPartMode,
+                    0,
+                    0x10,
+                    1)),
+            ScheduledMidiMessage.CreateChannelModeSystemExclusive(
+                64,
+                0,
+                new(
+                    MidiChannelModeSystemExclusiveKind.YamahaXgPartMode,
+                    0,
+                    0x10,
+                    1)),
+            new(256, MidiMessage.NoteOn(0, 36, 100)),
+            new(2_048, MidiMessage.NoteOff(0, 36, 0))
+        ];
+        MidiRenderPlan plan = new(
+            SampleRate,
+            4_096,
+            [new MidiPortRenderPlan(0, events)]);
+
+        float[] samples = Render(plan, 256, 257, out _);
+
+        Assert.Equal(plan.TotalFrameCount * 2, samples.LongLength);
+    }
+
+    [Fact]
+    public void ChannelModeSystemExclusiveChangesAPercussionUnitToMelodicBeforeNotes()
+    {
+        EnsureEnvironment();
+        ScheduledMidiMessage[] events =
+        [
+            new(0, MidiMessage.ControlChange(0, 0, 0), 0),
+            new(0, MidiMessage.ControlChange(0, 32, 0), 0),
+            new(0, MidiMessage.ProgramChange(0, 0), 0),
+            ScheduledMidiMessage.CreateChannelModeSystemExclusive(
+                0,
+                0,
+                new(
+                    MidiChannelModeSystemExclusiveKind.RolandGsPartMode,
+                    0,
+                    0x10,
+                    0),
+                sourceIndex: 0),
+            new(0, MidiMessage.ControlChange(0, 11, 127), 0),
+            new(256, MidiMessage.NoteOn(0, 60, 100), 0),
+            new(2_048, MidiMessage.NoteOff(0, 60, 0), 0)
+        ];
+        MidiUnitFragmentRenderPlan fragment = new(
+            0,
+            0,
+            trackId: 1,
+            segmentId: 2,
+            eventInstrumentId: 0,
+            instanceGroupId: 2,
+            subVoiceId: 1,
+            sourceIndex: 0,
+            startFrame: 0,
+            endFrame: 4_096,
+            semanticFingerprint: new string('a', 64),
+            events,
+            midiChannelRootId: 3,
+            isPercussion: true);
+        MidiRenderPlan plan = new(
+            SampleRate,
+            4_096,
+            [new MidiPortRenderPlan(0, events)],
+            sourceIds: [1],
+            unitFragments: [fragment]);
+
+        float[] samples = Render(plan, 256, 257, out _);
+
+        Assert.Contains(samples, static sample => sample != 0f);
+    }
+
+    [Fact]
     public void ProducesIdenticalSamplesAcrossDifferentBlocksWithinConfiguredVoiceLimit()
     {
         EnsureEnvironment();

@@ -521,8 +521,13 @@ internal sealed class PureMidiSegmentOverviewSource : ITimelineOverviewSource
 {
     private readonly MidiSegment _segment;
 
-    public PureMidiSegmentOverviewSource(MidiSegment segment) =>
+    public PureMidiSegmentOverviewSource(MidiSegment segment)
+    {
         _segment = segment ?? throw new ArgumentNullException(nameof(segment));
+        MaximumEndTick = ResolveMaximumEndTick(segment);
+    }
+
+    public long MaximumEndTick { get; }
 
     public ulong ContentFingerprint => PureMidiPresentationFingerprint.Create(
         _segment.PagedContentFingerprint,
@@ -549,6 +554,21 @@ internal sealed class PureMidiSegmentOverviewSource : ITimelineOverviewSource
             noteStartColumns,
             eventColumns);
         _segment.OpaqueEvents.AccumulateOverviewColumns(extent, eventColumns);
+    }
+
+    private static long ResolveMaximumEndTick(MidiSegment segment)
+    {
+        long maximum = segment.ContentEndTick;
+        foreach (PureMidiContentRangeSummary summary in segment.Notes.GetOverviewRangeSummaries()
+            .Concat(segment.ChannelEvents.GetOverviewRangeSummaries())
+            .Concat(segment.OpaqueEvents.GetOverviewRangeSummaries()))
+        {
+            long end = summary.MaximumTick == long.MaxValue
+                ? long.MaxValue
+                : summary.MaximumTick + 1;
+            maximum = Math.Max(maximum, end);
+        }
+        return maximum;
     }
 }
 

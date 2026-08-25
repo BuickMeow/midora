@@ -13,7 +13,10 @@ public readonly record struct CanonicalAudioUnitEvent(
     long StableOrder,
     long SemanticTargetKey,
     long SemanticGroup,
-    SourceReference Source);
+    SourceReference Source,
+    int SmfTrackOrder,
+    long SmfEventOrder,
+    MidoraId StableObjectId);
 
 public sealed class CanonicalAudioUnitFragment
 {
@@ -173,7 +176,10 @@ public sealed class CanonicalAudioUnitProjection
                 value.StableOrder,
                 value.SemanticTargetKey,
                 value.SemanticGroup,
-                value.Source));
+                value.Source,
+                value.SmfTrackOrder,
+                value.SmfEventOrder,
+                value.Source.DirectMidiObjectId));
         }
 
         CanonicalAudioUnitFragment[] fragments = builders.Values

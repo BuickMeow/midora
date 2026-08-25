@@ -59,6 +59,9 @@ public partial class MidiExportDialog : Window
         if (e.LeftButton == MouseButtonState.Pressed) DragMove();
     }
 
+    private void OnTrackListPreviewMouseWheel(object sender, MouseWheelEventArgs e) =>
+        ListBoxWheelScroll.ScrollOneItemPerNotch(TrackListBox, e);
+
     private void OnBrowseClick(object sender, RoutedEventArgs e)
     {
         OpenFolderDialog dialog = new()

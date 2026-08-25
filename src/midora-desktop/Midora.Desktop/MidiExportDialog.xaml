@@ -23,7 +23,9 @@
           <CheckBox x:Name="ReadmeCheck" Margin="0,14,0,0" Content="Include README.md" IsChecked="True"/>
           <CheckBox x:Name="WarningsCheck" Margin="0,10,0,0" Content="Treat compiler warnings as errors"/>
           <CheckBox x:Name="SelectedTracksCheck" Margin="0,14,0,5" Content="Use only the checked Tracks"/>
-          <ListBox MaxHeight="145" ItemsSource="{Binding TrackRows}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"><ListBox.ItemTemplate><DataTemplate><CheckBox Content="{Binding Name}" IsChecked="{Binding IsSelected, Mode=TwoWay}"/></DataTemplate></ListBox.ItemTemplate></ListBox>
+          <ListBox x:Name="TrackListBox" MaxHeight="145" ItemsSource="{Binding TrackRows}"
+                   VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                   PreviewMouseWheel="OnTrackListPreviewMouseWheel"><ListBox.ItemTemplate><DataTemplate><CheckBox Content="{Binding Name}" IsChecked="{Binding IsSelected, Mode=TwoWay}"/></DataTemplate></ListBox.ItemTemplate></ListBox>
         </StackPanel>
         <StackPanel Grid.Column="2">
           <TextBlock Style="{StaticResource Text.Overline}" Text="RANGE"/>

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
@@ -26,6 +27,7 @@ public partial class ApplicationPreferencesDialog : Window
         StopCursorBox.ItemsSource = Enum.GetValues<StopCursorBehavior>();
         LanguageBox.ItemsSource = new[] { AppearancePreferences.EnglishLanguage };
         SoundFontListBox.ItemsSource = _soundFonts;
+        _soundFonts.CollectionChanged += OnSoundFontsCollectionChanged;
         Populate(initial);
         Loaded += OnLoaded;
     }
@@ -80,10 +82,14 @@ public partial class ApplicationPreferencesDialog : Window
         CacheRootBox.Text = preferences.AudioCache.RootPath;
         CacheQuotaBox.Text = (preferences.AudioCache.MaximumReusableBytes / BytesPerGibibyte)
             .ToString("0.###", CultureInfo.InvariantCulture);
+        foreach (SoundFontDraftItem item in _soundFonts)
+        {
+            item.PropertyChanged -= OnSoundFontDraftItemPropertyChanged;
+        }
         _soundFonts.Clear();
         foreach (ApplicationSoundFontPreference soundFont in preferences.SoundFonts)
         {
-            _soundFonts.Add(new(soundFont.Path, soundFont.Enabled, soundFont.Target));
+            AddSoundFontDraftItem(new(soundFont.Path, soundFont.Enabled, soundFont.Target));
         }
     }
 
@@ -124,7 +130,7 @@ public partial class ApplicationPreferencesDialog : Window
                 {
                     continue;
                 }
-                _soundFonts.Add(new(path, enabled: true, target: null));
+                AddSoundFontDraftItem(new(path, enabled: true, target: null));
             }
             SoundFontListBox.SelectedItem = _soundFonts.LastOrDefault();
         }
@@ -137,6 +143,7 @@ public partial class ApplicationPreferencesDialog : Window
             return;
         }
         int index = _soundFonts.IndexOf(selected);
+        selected.PropertyChanged -= OnSoundFontDraftItemPropertyChanged;
         _soundFonts.RemoveAt(index);
         if (_soundFonts.Count != 0)
         {
@@ -149,6 +156,33 @@ public partial class ApplicationPreferencesDialog : Window
 
     private void OnMoveSoundFontDownClick(object sender, RoutedEventArgs e) =>
         MoveSelectedSoundFont(1);
+
+    private void OnSoundFontsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        UpdateSelectedSoundFontCount();
+    }
+
+    private void OnSoundFontDraftItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (string.Equals(e.PropertyName, nameof(SoundFontDraftItem.Enabled), StringComparison.Ordinal))
+        {
+            UpdateSelectedSoundFontCount();
+        }
+    }
+
+    private void AddSoundFontDraftItem(SoundFontDraftItem item)
+    {
+        item.PropertyChanged += OnSoundFontDraftItemPropertyChanged;
+        _soundFonts.Add(item);
+    }
+
+    private void UpdateSelectedSoundFontCount()
+    {
+        int count = _soundFonts.Count(item => item.Enabled);
+        SoundFontCountText.Text = count == 1
+            ? "1 SoundFont selected"
+            : $"{count} SoundFonts selected";
+    }
 
     private void OnSoundFontListPreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {

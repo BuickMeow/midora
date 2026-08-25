@@ -9,7 +9,14 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PlatformTarget>x64</PlatformTarget>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\..\assets\midora.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\..\assets\midora.ico" Link="Assets\midora.ico" />
+    <Resource Include="..\..\..\assets\midora-note-transparent-256x256.png"
+              Link="Assets\midora-note-transparent-256x256.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Midora.Desktop.Presentation\Midora.Desktop.Presentation.csproj" />

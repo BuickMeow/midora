@@ -279,3 +279,30 @@ UI/runtime 边界：
 - XAML/Release build 必须证明不存在只读属性默认 TwoWay binding crash；Global Inspector production type、binding、菜单和布局引用均不得残留。
 - 自动测试覆盖多 Note/Mixed Segment/Direct MIDI Properties 原子 Undo、Mixed 激活与还原、Event Instrument 本地属性投影、Conductor 精确属性提交/Undo、Logical Parameter Name 与 Definition migration 单一 Undo，以及旧偏好字段可读但不再写出。
 - 所属属性投影只能按显式对象或已经打开的本地编辑区重建；不得遍历大型 Segment 全内容或使 Selection/hover 热路径产生全局属性表刷新。
+
+## 15. 2026-08-25 应用图标资源 trace
+
+输入与正式输出：
+
+- 正式输入为仓库 LFS 资源 `assets/midora.ico` 与 `assets/midora-note-transparent-256x256.png`；构建不得复制并维护第二套源文件。
+- `midora.ico` 作为 Win32 Application Icon 写入正式 `Midora.exe`，并作为主窗口 `Icon` 资源供 Windows 任务栏和窗口切换界面使用。
+- 透明 PNG 作为标题栏 `Application mark`，替换旧的三矩形占位图形；Main Menu、Project display name、WindowChrome 命中与标题栏拖动语义保持不变。
+
+边界与验证：
+
+- 图标只属于构建资源和 WPF 视觉输出，不进入 Project、`.midora`、Undo/Redo、canonical、MIDI 或音频结果。
+- 构建必须验证两个外部 LFS 文件可通过链接后的 WPF Resource URI 解析，且生成的 EXE 包含可提取的关联图标。
+- UI 回归测试固定 ApplicationIcon、主窗口 Icon URI 和标题栏透明 PNG URI，防止后续标题栏重构恢复占位图形。
+
+## 16. 2026-08-25 无 Project 欢迎界面 trace
+
+- 标题栏 Application mark 与 Main Menu 的水平间距在原基线上减少 7 pixels；窗口拖动和菜单命中区域保持不变。
+- 无 Project 时隐藏 Workspace Tab 条，只显示欢迎操作区；New Project、Open Project 与 Open MIDI as New Project 保持同排可达。
+- 欢迎标题在每次应用会话创建时从固定英文文案集合中随机选择一次，字号为 24 pixels、普通字重，并相对操作按钮视觉上移 8 pixels；同一会话内 Project 打开/关闭或绑定刷新不得使文案跳变。
+- 删除旧的 `Open an existing Project or create a new one.` 说明行。本改动只属于会话 UI，不进入 Project、Preferences、Undo/Redo 或持久化格式。
+
+## 17. 2026-08-25 导出轨道列表与 SoundFont 计数 trace
+
+- MIDI Export 与 Audio Export 的 Track 选择 ListBox 保持 UI virtualization/recycling；一个标准鼠标滚轮刻度只移动一个 Track item，不再采用 WPF 默认多行滚动量。
+- Application Preferences 的 SoundFonts 工具栏在 Add/Remove/Up/Down 右侧显示低强调的已选择 SoundFont 数量；“选择”严格指 `Enabled=true` 的复选项，并随勾选、取消、增删立即更新，不统计 Disabled 项或 ListBox 单行高亮。
+- 两项均只改变 Dialog 会话 UI，不修改 Export/Render Draft、Application Preferences 数据模型、Project 或正式消费者语义。

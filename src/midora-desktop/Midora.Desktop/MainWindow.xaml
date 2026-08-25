@@ -5,6 +5,7 @@
         xmlns:local="clr-namespace:Midora.Desktop"
         xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls;assembly=Midora.Desktop.Presentation"
         Title="{Binding WindowTitle}"
+        Icon="pack://application:,,,/Assets/midora.ico"
         Width="1440" Height="900" MinWidth="1100" MinHeight="680"
         Background="{StaticResource Brush.Surface.0}"
         ResizeMode="CanResize" WindowStartupLocation="CenterScreen" WindowStyle="None"
@@ -1183,7 +1184,10 @@
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <Grid Margin="12,0,0,0" VerticalAlignment="Center">
           <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <Grid Grid.Column="0" Width="18" Height="18" Margin="0,0,12,0"><Border Width="5" Height="18" HorizontalAlignment="Left" Background="{StaticResource Brush.Red}"/><Border Width="5" Height="12" Margin="6,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Bottom" Background="{StaticResource Brush.Red.Dark}"/><Border Width="5" Height="7" HorizontalAlignment="Right" VerticalAlignment="Bottom" Background="{StaticResource Brush.Text.Tertiary}"/></Grid>
+          <Image Grid.Column="0" Width="20" Height="20" Margin="0,0,5,0"
+                 Source="pack://application:,,,/Assets/midora-note-transparent-256x256.png"
+                 Stretch="Uniform" SnapsToDevicePixels="True"
+                 RenderOptions.BitmapScalingMode="HighQuality"/>
           <Menu x:Name="MainMenu" Grid.Column="1" Height="29" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
             <Menu.ItemContainerStyle><Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}"><Setter Property="VerticalAlignment" Value="Center"/></Style></Menu.ItemContainerStyle>
             <MenuItem Header="File"><MenuItem Header="New Project…" InputGestureText="Ctrl+N" Click="OnNewProjectClick"/><MenuItem Header="Open Project…" InputGestureText="Ctrl+O" Click="OnOpenProjectClick"/><MenuItem Header="Open MIDI as New Project…" Click="OnOpenMidiAsNewProjectClick"/><Separator/><MenuItem Header="Save Project" InputGestureText="Ctrl+S" IsEnabled="{Binding CanSaveProject}" Click="OnSaveProjectClick"/><MenuItem Header="Save Copy…" IsEnabled="{Binding CanSaveProject}" Click="OnSaveCopyClick"/><Separator/><MenuItem Header="Close Project" IsEnabled="{Binding HasProject}" Click="OnCloseProjectClick"/><MenuItem Header="Exit" Click="OnExitClick"/></MenuItem>
@@ -1318,15 +1322,17 @@
         </Grid>
         <GridSplitter x:Name="ProjectPanelSplitter" Grid.Column="1" Visibility="Collapsed" HorizontalAlignment="Stretch"/>
         <Grid Grid.Column="2">
-          <TabControl x:Name="WorkspaceTabs" Style="{StaticResource SingleLineWorkspaceTabs}" ItemContainerStyle="{StaticResource WorkspaceTabItemStyle}" FocusVisualStyle="{x:Null}" AutomationProperties.Name="Workspaces" ItemsSource="{Binding Workspaces}" SelectedItem="{Binding ActiveWorkspace, Mode=TwoWay}"
+          <TabControl x:Name="WorkspaceTabs" Style="{StaticResource SingleLineWorkspaceTabs}" ItemContainerStyle="{StaticResource WorkspaceTabItemStyle}" FocusVisualStyle="{x:Null}" AutomationProperties.Name="Workspaces" Visibility="{Binding HasProject, Converter={StaticResource BooleanToVisibility}}" ItemsSource="{Binding Workspaces}" SelectedItem="{Binding ActiveWorkspace, Mode=TwoWay}"
                       SelectionChanged="OnWorkspaceTabsSelectionChanged"
                       AllowDrop="True" PreviewMouseLeftButtonDown="OnWorkspaceTabsLeftButtonDown" PreviewMouseMove="OnWorkspaceTabsMouseMove" DragOver="OnWorkspaceTabsDragOver" Drop="OnWorkspaceTabsDrop">
             <TabControl.ItemTemplate><DataTemplate><StackPanel Orientation="Horizontal"><StackPanel.ContextMenu><ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"><MenuItem Header="Close" IsEnabled="{Binding CanClose}" Click="OnCloseWorkspaceClick"/><MenuItem Header="Close Other Workspaces" Click="OnCloseOtherWorkspacesClick"/></ContextMenu></StackPanel.ContextMenu><ui:FluentIcon Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center" Style="{StaticResource Icon.Stepper}" Data="{Binding TabIconKind, Converter={StaticResource WorkspaceTabIconConverter}}"/><TextBlock VerticalAlignment="Center" Text="{Binding Header}"/><Button Width="20" Height="20" Margin="7,0,0,0" Padding="0" Style="{StaticResource Button.Ghost}" ToolTip="Close Workspace" Visibility="{Binding CanClose, Converter={StaticResource BooleanToVisibility}}" Click="OnCloseWorkspaceClick"><ui:FluentIcon Width="10" Height="10" Data="{StaticResource Fluent.Dismiss20Regular}"/></Button></StackPanel></DataTemplate></TabControl.ItemTemplate>
           </TabControl>
           <Border x:Name="EmptyState" Margin="48" HorizontalAlignment="Center" VerticalAlignment="Center" Background="Transparent">
             <StackPanel Width="460">
-              <TextBlock HorizontalAlignment="Center" FontSize="22" FontWeight="SemiBold" Text="Midora"/>
-              <TextBlock Margin="0,8,0,18" HorizontalAlignment="Center" Style="{StaticResource Text.Muted}" Text="Open an existing Project or create a new one."/>
+              <TextBlock Margin="0,0,0,18" HorizontalAlignment="Center" FontSize="24" FontWeight="Normal"
+                         Text="{Binding WelcomeHeadline}" RenderTransformOrigin="0.5,0.5">
+                <TextBlock.RenderTransform><TranslateTransform Y="-8"/></TextBlock.RenderTransform>
+              </TextBlock>
               <StackPanel HorizontalAlignment="Center" Orientation="Horizontal">
                 <Button Margin="0,0,7,0" Style="{StaticResource Button.Primary}" Content="New Project" Click="OnNewProjectClick"/>
                 <Button Margin="0,0,7,0" Content="Open Project" Click="OnOpenProjectClick"/>

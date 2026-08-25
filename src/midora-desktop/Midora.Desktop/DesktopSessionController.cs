@@ -20,6 +20,60 @@ namespace Midora.Desktop;
 
 public sealed class DesktopSessionController : ObservableObject, IAsyncDisposable
 {
+    private static readonly string[] WelcomeHeadlines =
+    [
+        "What will you create?",
+        "Let's make some noise.",
+        "Ready when you are.",
+        "Let the notes begin.",
+        "Make something impossible.",
+        "Let's dance!",
+        "Your next score starts here.",
+        "Turn ideas into sound.",
+        "Start with a single note.",
+        "Make the silence interesting.",
+        "Compose without limits.",
+        "Something extraordinary starts here.",
+        "Time to bend some notes.",
+        "Let's build a wall of sound.",
+        "Your orchestra is waiting.",
+        "Give the silence a melody.",
+        "Ready to make history?",
+        "Paint with sound.",
+        "One note can start everything.",
+        "Let's write something unforgettable.",
+        "How many notes is too many?",
+        "Make every tick count.",
+        "Bring the score to life.",
+        "Let's break the note counter.",
+        "Millions of notes? Why not.",
+        "Make the CPU sing.",
+        "Push the score beyond reason.",
+        "More notes. Still not enough.",
+        "Turn density into art.",
+        "Build a storm, one tick at a time.",
+        "Ready for something absurd?",
+        "Follow the melody.",
+        "Write what words cannot say.",
+        "Find the rhythm.",
+        "Let the music take shape.",
+        "A new song begins here.",
+        "Create something worth replaying.",
+        "Give your ideas a voice.",
+        "Where will the music go?",
+        "Let's turn the timeline black.",
+        "One million notes is only the beginning.",
+        "How dense can a melody become?",
+        "Fill every tick.",
+        "Make the renderer earn its keep.",
+        "Compose beyond human limits.",
+        "Start where inspiration leads.",
+        "Every melody needs a first note.",
+        "Shape the sound in your head.",
+        "Let the next idea surprise you.",
+        "Write the music only you can hear."
+    ];
+
     private readonly object _modelRefreshGate = new();
     private int _compilerErrorCount;
     private int _compilerWarningCount;
@@ -71,6 +125,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     }
 
     public bool HasProject => _context is not null;
+    public string WelcomeHeadline { get; } =
+        WelcomeHeadlines[Random.Shared.Next(WelcomeHeadlines.Length)];
     public bool IsForegroundTaskRunning => _foregroundTask?.IsRunning == true;
     public DesktopTaskViewModel? ActiveForegroundTask => IsForegroundTaskRunning
         ? _foregroundTask

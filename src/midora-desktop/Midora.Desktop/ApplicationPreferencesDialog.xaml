@@ -55,7 +55,7 @@
           <Grid Margin="10">
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
             <TextBlock Style="{StaticResource Text.Caption}" Text="All Projects use the enabled SF2/SFZ files below. Order defines BASSMIDI priority. SFZ requires a target Bank MSB, Bank LSB, and Program." TextWrapping="Wrap"/>
-            <StackPanel Grid.Row="1" Margin="0,12,0,8" Orientation="Horizontal"><Button Width="82" Margin="0,0,7,0" Content="Add…" Click="OnAddSoundFontsClick"/><Button Width="82" Margin="0,0,7,0" Content="Remove" Click="OnRemoveSoundFontClick"/><Button Width="72" Margin="0,0,7,0" Content="Up" Click="OnMoveSoundFontUpClick"/><Button Width="72" Content="Down" Click="OnMoveSoundFontDownClick"/></StackPanel>
+            <StackPanel Grid.Row="1" Margin="0,12,0,8" Orientation="Horizontal"><Button Width="82" Margin="0,0,7,0" Content="Add…" Click="OnAddSoundFontsClick"/><Button Width="82" Margin="0,0,7,0" Content="Remove" Click="OnRemoveSoundFontClick"/><Button Width="72" Margin="0,0,7,0" Content="Up" Click="OnMoveSoundFontUpClick"/><Button Width="72" Content="Down" Click="OnMoveSoundFontDownClick"/><TextBlock x:Name="SoundFontCountText" Margin="12,0,0,0" VerticalAlignment="Center" Style="{StaticResource Text.Caption}"/></StackPanel>
             <ListBox x:Name="SoundFontListBox" Grid.Row="2" SelectionMode="Single" ScrollViewer.CanContentScroll="False" PreviewMouseWheel="OnSoundFontListPreviewMouseWheel">
               <ListBox.ItemTemplate><DataTemplate>
                 <Grid Margin="2,5">

@@ -696,6 +696,120 @@ public sealed class WpfInteractionRegressionTests
     }
 
     [Fact]
+    public void ApplicationBrandingUsesTheProductIconAssets()
+    {
+        string repositoryRoot = FindRepositoryRoot();
+        string projectPath = Path.Combine(
+            repositoryRoot,
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            "Midora.Desktop.csproj");
+        XDocument project = XDocument.Load(projectPath);
+
+        Assert.Equal(
+            @"..\..\..\assets\midora.ico",
+            project.Descendants("ApplicationIcon").Single().Value);
+        Assert.Contains(project.Descendants("Resource"), resource =>
+            string.Equals(
+                (string?)resource.Attribute("Include"),
+                @"..\..\..\assets\midora.ico",
+                StringComparison.Ordinal)
+            && string.Equals(
+                (string?)resource.Attribute("Link"),
+                @"Assets\midora.ico",
+                StringComparison.Ordinal));
+        Assert.Contains(project.Descendants("Resource"), resource =>
+            string.Equals(
+                (string?)resource.Attribute("Include"),
+                @"..\..\..\assets\midora-note-transparent-256x256.png",
+                StringComparison.Ordinal)
+            && string.Equals(
+                (string?)resource.Attribute("Link"),
+                @"Assets\midora-note-transparent-256x256.png",
+                StringComparison.Ordinal));
+
+        string mainWindowPath = Path.Combine(
+            repositoryRoot,
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            "MainWindow.xaml");
+        XDocument windowDocument = XDocument.Load(mainWindowPath);
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+
+        Assert.Equal(
+            "pack://application:,,,/Assets/midora.ico",
+            (string?)windowDocument.Root?.Attribute("Icon"));
+        XElement applicationMark = windowDocument.Descendants(presentation + "Image").Single(element =>
+            string.Equals(
+                (string?)element.Attribute("Source"),
+                "pack://application:,,,/Assets/midora-note-transparent-256x256.png",
+                StringComparison.Ordinal));
+        Assert.Equal("0", (string?)applicationMark.Attribute("Grid.Column"));
+        Assert.Equal("20", (string?)applicationMark.Attribute("Width"));
+        Assert.Equal("20", (string?)applicationMark.Attribute("Height"));
+        Assert.Equal("0,0,5,0", (string?)applicationMark.Attribute("Margin"));
+        Assert.Equal("HighQuality", (string?)applicationMark.Attribute("RenderOptions.BitmapScalingMode"));
+    }
+
+    [Fact]
+    public void ExportTrackListsUseFineWheelScrollingAndSoundFontsShowSelectedCount()
+    {
+        string repositoryRoot = FindRepositoryRoot();
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+
+        foreach (string fileName in new[] { "MidiExportDialog.xaml", "AudioRenderDialog.xaml" })
+        {
+            string path = Path.Combine(
+                repositoryRoot,
+                "src",
+                "midora-desktop",
+                "Midora.Desktop",
+                fileName);
+            XDocument document = XDocument.Load(path);
+            XElement trackList = document.Descendants(presentation + "ListBox").Single(element =>
+                string.Equals(
+                    (string?)element.Attribute(x + "Name"),
+                    "TrackListBox",
+                    StringComparison.Ordinal));
+            Assert.Equal(
+                "OnTrackListPreviewMouseWheel",
+                (string?)trackList.Attribute("PreviewMouseWheel"));
+            Assert.Equal("True", (string?)trackList.Attribute("VirtualizingPanel.IsVirtualizing"));
+            Assert.Equal("Recycling", (string?)trackList.Attribute("VirtualizingPanel.VirtualizationMode"));
+        }
+
+        string preferencesPath = Path.Combine(
+            repositoryRoot,
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            "ApplicationPreferencesDialog.xaml");
+        XDocument preferences = XDocument.Load(preferencesPath);
+        XElement countText = preferences.Descendants(presentation + "TextBlock").Single(element =>
+            string.Equals(
+                (string?)element.Attribute(x + "Name"),
+                "SoundFontCountText",
+                StringComparison.Ordinal));
+        Assert.Equal("Center", (string?)countText.Attribute("VerticalAlignment"));
+        Assert.Equal("{StaticResource Text.Caption}", (string?)countText.Attribute("Style"));
+        Assert.Equal("12,0,0,0", (string?)countText.Attribute("Margin"));
+        Assert.Equal(4, countText.Parent!.Elements(presentation + "Button").Count());
+
+        string preferencesCode = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            "ApplicationPreferencesDialog.xaml.cs"));
+        Assert.Contains("_soundFonts.Count(item => item.Enabled)", preferencesCode, StringComparison.Ordinal);
+        Assert.Contains("SoundFonts selected", preferencesCode, StringComparison.Ordinal);
+        Assert.DoesNotContain("SoundFonts configured", preferencesCode, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void GlobalCommandsAndEmptyStateExposeTheRequiredProjectAndApplicationActions()
     {
         string path = Path.Combine(
@@ -762,6 +876,17 @@ public sealed class WpfInteractionRegressionTests
 
         XElement emptyState = document.Descendants(presentation + "Border").Single(element =>
             string.Equals((string?)element.Attribute(x + "Name"), "EmptyState", StringComparison.Ordinal));
+        XElement welcomeHeadline = emptyState.Descendants(presentation + "TextBlock").Single();
+        Assert.Equal("24", (string?)welcomeHeadline.Attribute("FontSize"));
+        Assert.Equal("Normal", (string?)welcomeHeadline.Attribute("FontWeight"));
+        Assert.Equal("{Binding WelcomeHeadline}", (string?)welcomeHeadline.Attribute("Text"));
+        XElement welcomeTranslation = welcomeHeadline.Descendants(presentation + "TranslateTransform").Single();
+        Assert.Equal("-8", (string?)welcomeTranslation.Attribute("Y"));
+        Assert.DoesNotContain(emptyState.Descendants(presentation + "TextBlock"), element =>
+            string.Equals(
+                (string?)element.Attribute("Text"),
+                "Open an existing Project or create a new one.",
+                StringComparison.Ordinal));
         Assert.Contains(emptyState.Descendants(presentation + "Button"), element =>
             string.Equals(
                 (string?)element.Attribute("Content"),
@@ -771,6 +896,12 @@ public sealed class WpfInteractionRegressionTests
                 (string?)element.Attribute("Click"),
                 "OnOpenMidiAsNewProjectClick",
                 StringComparison.Ordinal));
+
+        XElement workspaceTabs = document.Descendants(presentation + "TabControl").Single(element =>
+            string.Equals((string?)element.Attribute(x + "Name"), "WorkspaceTabs", StringComparison.Ordinal));
+        Assert.Equal(
+            "{Binding HasProject, Converter={StaticResource BooleanToVisibility}}",
+            (string?)workspaceTabs.Attribute("Visibility"));
     }
 
     [Fact]

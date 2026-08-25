@@ -59,6 +59,9 @@ public partial class AudioRenderDialog : Window
         if (e.LeftButton == MouseButtonState.Pressed) DragMove();
     }
 
+    private void OnTrackListPreviewMouseWheel(object sender, MouseWheelEventArgs e) =>
+        ListBoxWheelScroll.ScrollOneItemPerNotch(TrackListBox, e);
+
     private void OnModeChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (OutputPathBox is null || ModeBox.SelectedItem is not AudioRenderMode mode) return;

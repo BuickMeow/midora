@@ -4,6 +4,7 @@ using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Midora.Desktop.Presentation.Typography;
 
 namespace Midora.Desktop.Presentation.Controls;
 
@@ -94,7 +95,11 @@ public sealed class PianoKeyboardSurface : Control
                         $"C{key.Note / 12 - 1}",
                         CultureInfo.InvariantCulture,
                         FlowDirection.LeftToRight,
-                        new Typeface("Segoe UI"),
+                        new Typeface(
+                            EmbeddedFontFamilies.Ui,
+                            FontStyles.Normal,
+                            FontWeights.Normal,
+                            FontStretches.Normal),
                         9,
                         LabelBrush,
                         pixelsPerDip);

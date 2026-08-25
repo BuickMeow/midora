@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Media;
+using Midora.Desktop.Presentation.Typography;
 
 namespace Midora.Desktop.Presentation.Controls;
 
@@ -174,7 +175,11 @@ public sealed class LifecyclePreviewSurface : Control
                 value,
                 CultureInfo.InvariantCulture,
                 FlowDirection.LeftToRight,
-                new Typeface("Segoe UI"),
+                new Typeface(
+                    EmbeddedFontFamilies.Ui,
+                    FontStyles.Normal,
+                    FontWeights.Normal,
+                    FontStretches.Normal),
                 size,
                 brush,
                 pixelsPerDip);

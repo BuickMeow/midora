@@ -306,3 +306,19 @@ UI/runtime 边界：
 - MIDI Export 与 Audio Export 的 Track 选择 ListBox 保持 UI virtualization/recycling；一个标准鼠标滚轮刻度只移动一个 Track item，不再采用 WPF 默认多行滚动量。
 - Application Preferences 的 SoundFonts 工具栏在 Add/Remove/Up/Down 右侧显示低强调的已选择 SoundFont 数量；“选择”严格指 `Enabled=true` 的复选项，并随勾选、取消、增删立即更新，不统计 Disabled 项或 ListBox 单行高亮。
 - 两项均只改变 Dialog 会话 UI，不修改 Export/Render Draft、Application Preferences 数据模型、Project 或正式消费者语义。
+
+## 18. 2026-08-25 内嵌字体 trace
+
+输入与正式输出：
+
+- 一般 UI 固定使用仓库 `assets/fonts/Sora/` 中的 Sora Regular、SemiBold、Bold 静态 TTF；代码、公式、标识符、位置读数和其他等宽场景固定使用 `assets/fonts/JetBrainsMono/` 中的 JetBrains Mono 对应字重。
+- 两组字体以 WPF `Resource` 嵌入共享 `Midora.Desktop.Presentation` 程序集；正式主应用和 Style Gallery 复用相同 `Font.UI` / `Font.Mono` 资源，不查询或要求用户安装同名字体。
+- 自绘 Surface 的 `FormattedText` 与普通 WPF Controls 使用同一内嵌 UI 字体；生产 XAML / C# 不再以 Segoe UI、Cascadia Mono 或 Consolas 作为正式字体来源。
+
+许可、边界与失败条件：
+
+- Sora 固定 revision `7f9a9c5d0ccd1c099cfac420aa27133df1c5fdc4`；JetBrains Mono 固定 release `v2.304` / revision `cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9`。二者均按 SIL Open Font License 1.1 原样分发，并在各自资源目录保存上游完整 `OFL.txt`。
+- 字体只属于程序视觉资源，不进入 Project、`.midora`、Undo/Redo、canonical、MIDI、音频或 Preferences。字体缺少某个用户输入 Unicode glyph 时仍由 WPF/Windows glyph fallback 处理；本轮不额外嵌入 CJK 字库。
+- 构建与 UI 回归测试必须验证六个静态 TTF 均进入 Presentation 资源、两个字体族可从共享 Palette 解析，并防止生产代码重新引入系统字体硬编码。
+- 每个应用 `Window` 根节点必须显式引用 `Font.UI`；共享控件样式必须为所有承载文字的普通控件、集合容器及与主视觉树断开的 `Popup` 内容（包括 `ContextMenu`、`MenuItem`、`ToolTip`、`ComboBoxItem`）显式建立字体来源。不得仅依赖一个可能被局部样式或独立 Popup 截断的隐式继承链。
+- 自绘文本只允许通过共享 `EmbeddedFontFamilies` 创建 `Typeface`；代码/公式/标识符/位置读数使用 `Font.Mono`，其余文本使用 `Font.UI`。自动测试枚举全部应用 Window 与共享文字控件类型，防止新窗口或新控件静默落回系统默认字体。

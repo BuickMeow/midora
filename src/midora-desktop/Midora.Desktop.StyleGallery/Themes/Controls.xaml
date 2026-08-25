@@ -193,34 +193,46 @@
     </Setter>
   </Style>
 
-  <Style x:Key="Text.Title" TargetType="TextBlock">
+  <Style x:Key="Text.Title"
+         TargetType="TextBlock"
+         BasedOn="{StaticResource {x:Type TextBlock}}">
     <Setter Property="FontSize" Value="{StaticResource FontSize.Title}" />
     <Setter Property="FontWeight" Value="SemiBold" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
   </Style>
 
-  <Style x:Key="Text.Section" TargetType="TextBlock">
+  <Style x:Key="Text.Section"
+         TargetType="TextBlock"
+         BasedOn="{StaticResource {x:Type TextBlock}}">
     <Setter Property="FontSize" Value="13" />
     <Setter Property="FontWeight" Value="SemiBold" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
   </Style>
 
-  <Style x:Key="Text.Overline" TargetType="TextBlock">
+  <Style x:Key="Text.Overline"
+         TargetType="TextBlock"
+         BasedOn="{StaticResource {x:Type TextBlock}}">
     <Setter Property="FontSize" Value="10" />
     <Setter Property="FontWeight" Value="SemiBold" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Red.Hover}" />
   </Style>
 
-  <Style x:Key="Text.Muted" TargetType="TextBlock">
+  <Style x:Key="Text.Muted"
+         TargetType="TextBlock"
+         BasedOn="{StaticResource {x:Type TextBlock}}">
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
   </Style>
 
-  <Style x:Key="Text.Caption" TargetType="TextBlock">
+  <Style x:Key="Text.Caption"
+         TargetType="TextBlock"
+         BasedOn="{StaticResource {x:Type TextBlock}}">
     <Setter Property="FontSize" Value="{StaticResource FontSize.Caption}" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Tertiary}" />
   </Style>
 
-  <Style x:Key="Text.Mono" TargetType="TextBlock">
+  <Style x:Key="Text.Mono"
+         TargetType="TextBlock"
+         BasedOn="{StaticResource {x:Type TextBlock}}">
     <Setter Property="FontFamily" Value="{StaticResource Font.Mono}" />
     <Setter Property="FontSize" Value="11" />
   </Style>
@@ -280,6 +292,7 @@
   </Style>
 
   <Style x:Key="Button.Base" TargetType="Button">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Height" Value="32" />
     <Setter Property="Padding" Value="12,0" />
     <Setter Property="Background" Value="{StaticResource Brush.Surface.3}" />
@@ -456,6 +469,7 @@
   </Style>
 
   <Style x:Key="Toggle.Segment" TargetType="ToggleButton">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Height" Value="28" />
     <Setter Property="Padding" Value="10,0" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
@@ -519,6 +533,7 @@
   </Style>
 
   <Style x:Key="Toggle.Switch" TargetType="ToggleButton">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Width" Value="36" />
     <Setter Property="Height" Value="20" />
     <Setter Property="Cursor" Value="Hand" />
@@ -564,6 +579,7 @@
   </Style>
 
   <Style TargetType="TextBox">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Height" Value="34" />
     <Setter Property="Padding" Value="10,3" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
@@ -613,6 +629,7 @@
   </Style>
 
   <Style TargetType="PasswordBox">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Height" Value="34" />
     <Setter Property="Padding" Value="10,3" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
@@ -648,6 +665,7 @@
   </Style>
 
   <Style TargetType="ComboBoxItem">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="Padding" Value="10,7" />
@@ -685,6 +703,7 @@
   </Style>
 
   <Style TargetType="ComboBox">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="interaction:ComboBoxWheelSelectionGuard.IsEnabled" Value="True" />
     <Setter Property="Height" Value="32" />
     <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -804,6 +823,7 @@
   </Style>
 
   <Style TargetType="CheckBox">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
     <Setter Property="Cursor" Value="Hand" />
     <Setter Property="Template">
@@ -855,6 +875,7 @@
   </Style>
 
   <Style TargetType="RadioButton">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
     <Setter Property="Cursor" Value="Hand" />
     <Setter Property="Template">
@@ -1120,6 +1141,7 @@
   </Style>
 
   <Style TargetType="ListBoxItem">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Padding" Value="9,7" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -1151,13 +1173,31 @@
   </Style>
 
   <Style TargetType="ListBox">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="BorderThickness" Value="0" />
     <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
     <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
   </Style>
 
+  <Style TargetType="ItemsControl">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
+  </Style>
+
+  <Style TargetType="TreeView">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
+  </Style>
+
+  <Style TargetType="TreeViewItem">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
+  </Style>
+
+  <Style TargetType="GroupBox">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
+  </Style>
+
   <Style TargetType="TabItem">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="Padding" Value="12,8" />
@@ -1187,6 +1227,7 @@
   </Style>
 
   <Style TargetType="TabControl">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="BorderThickness" Value="0" />
     <Setter Property="Template">
@@ -1213,6 +1254,7 @@
   </Style>
 
   <Style TargetType="Expander">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
     <Setter Property="Template">
       <Setter.Value>
@@ -1254,6 +1296,7 @@
   </Style>
 
   <Style TargetType="ToolTip">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
     <Setter Property="Background" Value="{StaticResource Brush.Surface.3}" />
     <Setter Property="BorderBrush" Value="{StaticResource Brush.Border.Strong}" />
@@ -1276,6 +1319,7 @@
   </Style>
 
   <Style TargetType="ContextMenu">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Background" Value="{StaticResource Brush.Surface.2}" />
     <Setter Property="BorderBrush" Value="{StaticResource Brush.Border.Strong}" />
     <Setter Property="BorderThickness" Value="1" />
@@ -1301,12 +1345,14 @@
   </Style>
 
   <Style TargetType="Menu">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
     <Setter Property="VerticalContentAlignment" Value="Stretch" />
   </Style>
 
   <Style TargetType="MenuItem">
+    <Setter Property="FontFamily" Value="{StaticResource Font.UI}" />
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
     <Setter Property="Padding" Value="9,5" />

@@ -3,6 +3,7 @@ using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Midora.Desktop.Presentation.Typography;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using System.Globalization;
@@ -6722,7 +6723,7 @@ public sealed class TimelineSurface : Control
                 context.DrawText(formatted, new Point(8 + contentIndent, y));
                 if (secondaryFormatted is not null)
                 {
-                    Point secondaryOrigin = new(8 + contentIndent, y + formatted.Height + 1);
+                    Point secondaryOrigin = new(8 + contentIndent, y + formatted.Height + 2);
                     context.DrawText(secondaryFormatted, secondaryOrigin);
                 }
                 context.Pop();
@@ -8337,7 +8338,7 @@ public sealed class TimelineSurface : Control
             value,
             CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight,
-            new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, weight, FontStretches.Normal),
+            new Typeface(EmbeddedFontFamilies.Ui, FontStyles.Normal, weight, FontStretches.Normal),
             size,
             brush,
             pixelsPerDip);

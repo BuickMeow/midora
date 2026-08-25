@@ -78,3 +78,25 @@ SOFTWARE.
 
 Upstream license:
 https://github.com/microsoft/fluentui-system-icons/blob/main/LICENSE
+
+## Sora
+
+The shared Midora presentation theme embeds unmodified Sora Regular, SemiBold, and Bold static TrueType fonts from revision `7f9a9c5d0ccd1c099cfac420aa27133df1c5fdc4`.
+
+Copyright 2019 The Sora Project Authors.
+
+Licensed under the SIL Open Font License, Version 1.1. The full license is stored at `assets/fonts/Sora/OFL.txt` in the repository root.
+
+Upstream:
+https://github.com/sora-xor/sora-font
+
+## JetBrains Mono
+
+The shared Midora presentation theme embeds unmodified JetBrains Mono Regular, SemiBold, and Bold static TrueType fonts from release `v2.304`, revision `cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9`.
+
+Copyright 2020 The JetBrains Mono Project Authors.
+
+Licensed under the SIL Open Font License, Version 1.1. The full license is stored at `assets/fonts/JetBrainsMono/OFL.txt` in the repository root.
+
+Upstream:
+https://github.com/JetBrains/JetBrainsMono

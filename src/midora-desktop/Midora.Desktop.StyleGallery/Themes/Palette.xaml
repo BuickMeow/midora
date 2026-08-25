@@ -86,8 +86,8 @@
   <Thickness x:Key="Thickness.ControlPadding">12,0</Thickness>
   <Thickness x:Key="Thickness.CardPadding">16</Thickness>
 
-  <FontFamily x:Key="Font.UI">Segoe UI</FontFamily>
-  <FontFamily x:Key="Font.Mono">Cascadia Mono, Consolas</FontFamily>
+  <FontFamily x:Key="Font.UI">/Midora.Desktop.Presentation;Component/Assets/Fonts/Sora/#Sora</FontFamily>
+  <FontFamily x:Key="Font.Mono">/Midora.Desktop.Presentation;Component/Assets/Fonts/JetBrainsMono/#JetBrains Mono</FontFamily>
   <sys:Double x:Key="FontSize.Caption"
               xmlns:sys="clr-namespace:System;assembly=System.Runtime">11</sys:Double>
   <sys:Double x:Key="FontSize.Body"

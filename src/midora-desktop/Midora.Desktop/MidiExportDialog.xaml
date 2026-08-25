@@ -1,4 +1,5 @@
 <Window x:Class="Midora.Desktop.MidiExportDialog"
+        FontFamily="{StaticResource Font.UI}"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls;assembly=Midora.Desktop.Presentation"

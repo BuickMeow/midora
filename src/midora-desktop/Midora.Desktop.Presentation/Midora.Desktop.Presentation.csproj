@@ -23,4 +23,19 @@
     <Page Include="..\Midora.Desktop.StyleGallery\Themes\Controls.xaml"
           Link="Themes\Controls.xaml" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\..\assets\fonts\Sora\Sora-Regular.ttf"
+              Link="Assets\Fonts\Sora\Sora-Regular.ttf" />
+    <Resource Include="..\..\..\assets\fonts\Sora\Sora-SemiBold.ttf"
+              Link="Assets\Fonts\Sora\Sora-SemiBold.ttf" />
+    <Resource Include="..\..\..\assets\fonts\Sora\Sora-Bold.ttf"
+              Link="Assets\Fonts\Sora\Sora-Bold.ttf" />
+    <Resource Include="..\..\..\assets\fonts\JetBrainsMono\JetBrainsMono-Regular.ttf"
+              Link="Assets\Fonts\JetBrainsMono\JetBrainsMono-Regular.ttf" />
+    <Resource Include="..\..\..\assets\fonts\JetBrainsMono\JetBrainsMono-SemiBold.ttf"
+              Link="Assets\Fonts\JetBrainsMono\JetBrainsMono-SemiBold.ttf" />
+    <Resource Include="..\..\..\assets\fonts\JetBrainsMono\JetBrainsMono-Bold.ttf"
+              Link="Assets\Fonts\JetBrainsMono\JetBrainsMono-Bold.ttf" />
+  </ItemGroup>
 </Project>

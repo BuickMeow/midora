@@ -15,6 +15,17 @@
     <Page Remove="Themes\*.xaml" />
     <None Remove="Resources\Vectors\control_*.svg" />
     <Resource Include="Resources\Vectors\control_*.svg" />
+    <Content Include="THIRD-PARTY-NOTICES.md"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Always" />
+    <Content Include="..\..\..\assets\fonts\Sora\OFL.txt"
+             Link="licenses\Sora-OFL-1.1.txt"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Always" />
+    <Content Include="..\..\..\assets\fonts\JetBrainsMono\OFL.txt"
+             Link="licenses\JetBrainsMono-OFL-1.1.txt"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="Always" />
   </ItemGroup>
 
   <ItemGroup>

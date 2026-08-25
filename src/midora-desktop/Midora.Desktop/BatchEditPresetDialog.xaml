@@ -1,4 +1,5 @@
 <Window x:Class="Midora.Desktop.BatchEditPresetDialog"
+        FontFamily="{StaticResource Font.UI}"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
@@ -13,7 +14,7 @@
     <Grid Background="{StaticResource Brush.Black}" MouseLeftButtonDown="OnTitleMouseLeftButtonDown"><TextBlock Margin="11,0,44,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="Batch Edit Presets"/><Button Width="46" Height="36" HorizontalAlignment="Right" Style="{StaticResource Button.Caption.Close}" Click="OnCancelClick"><ui:FluentIcon Style="{StaticResource Icon.WindowControl}" Data="{StaticResource WindowControl.Close}"/></Button></Grid>
     <Grid Grid.Row="1" Margin="12"><Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
       <ListBox x:Name="PresetList" ItemsSource="{Binding Presets}" DisplayMemberPath="Name" SelectionChanged="OnSelectionChanged" MouseDoubleClick="OnApplyClick"/>
-      <Border Grid.Column="2" Padding="10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3"><ScrollViewer VerticalScrollBarVisibility="Auto"><TextBlock x:Name="PreviewText" FontFamily="Cascadia Mono,Consolas" Text="Select a preset to preview it." TextWrapping="Wrap"/></ScrollViewer></Border>
+      <Border Grid.Column="2" Padding="10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3"><ScrollViewer VerticalScrollBarVisibility="Auto"><TextBlock x:Name="PreviewText" FontFamily="{StaticResource Font.Mono}" Text="Select a preset to preview it." TextWrapping="Wrap"/></ScrollViewer></Border>
     </Grid>
     <Border Grid.Row="2" Padding="12,10" Background="{StaticResource Brush.Surface.1}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0"><Grid><Button Width="112" HorizontalAlignment="Left" Content="Delete" Click="OnDeleteClick"/><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Margin="0,0,6,0" Style="{StaticResource Button.Dialog.Cancel}" Content="Cancel" Click="OnCancelClick"/><Button Style="{StaticResource Button.Dialog.Confirm}" Content="Apply" Click="OnApplyClick"/></StackPanel></Grid></Border>
   </Grid></Border>

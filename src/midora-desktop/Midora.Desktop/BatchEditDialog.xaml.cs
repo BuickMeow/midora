@@ -1,62 +1,17 @@
 using System.Globalization;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using Midora.Compiler;
 
 namespace Midora.Desktop;
 
 public partial class BatchEditDialog : Window
 {
-    private const string HelpText = """
-        Leave a field blank to keep its original value.
-
-        Direct value
-          Enter one value in the legal range, for example: 96
-
-        Single-step operations
-          n%   set the result to n percent of the original value
-          *n   multiply the original value by n
-          /n   divide the original value by n; n cannot be zero
-          +n   add n to the original value
-          -n   subtract n from the original value
-        Here n is any non-negative finite number.
-        Because -n means subtraction, enter a direct negative target as an expression,
-        for example: =-100
-
-        C# expression
-          Start the field with = and enter one C# numeric expression without a semicolon.
-          The expression result is double. System.Math methods are available both as Math.X(...)
-          and directly, for example =Clamp(v0 * 1.25, 1, 127).
-
-        Variables
-          v0 / v1   Velocity before / after calculation
-          p0 / p1   Point Value before / after calculation
-          k0 / k1   Key Number before / after calculation
-          g0 / g1   Gate before / after calculation
-          t0 / t1   Tick before / after calculation
-          tr        Tick relative to the earliest selected object before calculation
-
-        A result variable may depend on another available result variable. Circular dependencies,
-        including a field depending on itself, are rejected during validation. Expressions allow
-        bounded numeric operations, conditionals, comparisons, and System.Math only.
-
-        Result handling
-          Values are rounded away from zero where the target is integral.
-          Velocity and Point Value results are clamped to their target ranges.
-          Gate is clamped to at least 1 tick.
-          A note whose Key Number is outside 0–127 is removed.
-          A Segment Note or parameter point before the exposed left edge expands the Segment left
-          while preserving every hidden object's Project position. If that would cross Project
-          Tick 0, the calculated object is removed. A SubVoice object below Tick 0 is removed.
-          Evaluation of the entire batch is limited to 10 seconds.
-        """;
-
     private readonly BatchEditPresetKind _presetKind;
     private readonly double _pointMinimum;
     private readonly double _pointMaximum;
     private readonly BatchEditPresetStore _presetStore = new();
-    private bool _sanitizing;
 
     public BatchEditDialog(
         BatchEditPresetKind presetKind,
@@ -78,7 +33,12 @@ public partial class BatchEditDialog : Window
         KeyNumberRow.Visibility = note ? Visibility.Visible : Visibility.Collapsed;
         GateRow.Visibility = note ? Visibility.Visible : Visibility.Collapsed;
         PointValueRow.Visibility = note ? Visibility.Collapsed : Visibility.Visible;
-        Loaded += (_, _) => (note ? VelocityBox : PointValueBox).Focus();
+        VelocityBox.ConfigureContext(presetKind, BatchEditField.Velocity);
+        PointValueBox.ConfigureContext(presetKind, BatchEditField.PointValue);
+        KeyNumberBox.ConfigureContext(presetKind, BatchEditField.KeyNumber);
+        GateBox.ConfigureContext(presetKind, BatchEditField.Gate);
+        TickBox.ConfigureContext(presetKind, BatchEditField.Tick);
+        Loaded += (_, _) => (note ? VelocityBox : PointValueBox).FocusEditor();
     }
 
     public BatchEditExpressionProgram? Program { get; private set; }
@@ -146,15 +106,19 @@ public partial class BatchEditDialog : Window
         try
         {
             using BatchEditExpressionProgram program = CompileAndValidate();
-            ValidationText.Text = "Validation succeeded.";
+            SetValidationStatus("Validation succeeded.", ValidationStatus.Success);
         }
         catch (Exception exception)
         {
-            ValidationText.Text = exception.Message;
+            SetValidationStatus(exception.Message, ValidationStatus.Error);
         }
     }
 
-    private void OnApplyClick(object sender, RoutedEventArgs e)
+    private void OnApplyClick(object sender, RoutedEventArgs e) => TryApply();
+
+    private void OnExpressionCommitRequested(object? sender, EventArgs e) => TryApply();
+
+    private void TryApply()
     {
         try
         {
@@ -164,7 +128,7 @@ public partial class BatchEditDialog : Window
         }
         catch (Exception exception)
         {
-            ValidationText.Text = exception.Message;
+            SetValidationStatus(exception.Message, ValidationStatus.Error);
             _ = MessageDialog.Show(
                 this,
                 exception.Message,
@@ -174,20 +138,20 @@ public partial class BatchEditDialog : Window
         }
     }
 
-    private void OnHelpClick(object sender, RoutedEventArgs e) =>
-        _ = MessageDialog.Show(
-            this,
-            HelpText,
-            "Batch Edit Help",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
+    private void OnHelpClick(object sender, RoutedEventArgs e)
+    {
+        BatchEditHelpDialog dialog = new() { Owner = this };
+        _ = dialog.ShowDialog();
+    }
 
     private void OnPresetsClick(object sender, RoutedEventArgs e)
     {
         BatchEditPresetDialog dialog = new(_presetStore, _presetKind) { Owner = this };
         if (dialog.ShowDialog() != true || dialog.SelectedPreset is not BatchEditPreset preset) return;
         ApplyPreset(preset);
-        ValidationText.Text = $"Preset '{preset.Name}' loaded. Validate or apply it to the selection.";
+        SetValidationStatus(
+            $"Preset '{preset.Name}' loaded. Validate or apply it to the selection.",
+            ValidationStatus.Neutral);
     }
 
     private void OnSavePresetClick(object sender, RoutedEventArgs e)
@@ -211,7 +175,7 @@ public partial class BatchEditDialog : Window
                 KeyNumberBox.Text,
                 GateBox.Text,
                 TickBox.Text));
-            ValidationText.Text = $"Preset '{saved.Name}' saved.";
+            SetValidationStatus($"Preset '{saved.Name}' saved.", ValidationStatus.Neutral);
         }
         catch (Exception exception)
         {
@@ -233,19 +197,21 @@ public partial class BatchEditDialog : Window
         TickBox.Text = preset.Tick;
     }
 
-    private void OnFormulaTextChanged(object sender, TextChangedEventArgs e)
+    private void OnFormulaTextChanged(object? sender, EventArgs e)
     {
-        if (_sanitizing || sender is not TextBox textBox) return;
-        string sanitized = textBox.Text.Replace("\r", " ").Replace("\n", " ");
-        if (!string.Equals(sanitized, textBox.Text, StringComparison.Ordinal))
+        SetValidationStatus("Not validated.", ValidationStatus.Neutral);
+    }
+
+    private void SetValidationStatus(string message, ValidationStatus status)
+    {
+        ValidationText.Text = message;
+        string brushKey = status switch
         {
-            int caret = Math.Min(textBox.CaretIndex, sanitized.Length);
-            _sanitizing = true;
-            textBox.Text = sanitized;
-            textBox.CaretIndex = caret;
-            _sanitizing = false;
-        }
-        ValidationText.Text = "Not validated.";
+            ValidationStatus.Success => "Brush.Success",
+            ValidationStatus.Error => "Brush.Red.Hover",
+            _ => "Brush.Text.Tertiary"
+        };
+        ValidationText.Foreground = (Brush)FindResource(brushKey);
     }
 
     private void OnCancelClick(object sender, RoutedEventArgs e)
@@ -258,5 +224,12 @@ public partial class BatchEditDialog : Window
     private void OnTitleMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.LeftButton == MouseButtonState.Pressed) DragMove();
+    }
+
+    private enum ValidationStatus
+    {
+        Neutral,
+        Success,
+        Error
     }
 }

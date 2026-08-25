@@ -322,3 +322,26 @@ UI/runtime 边界：
 - 构建与 UI 回归测试必须验证六个静态 TTF 均进入 Presentation 资源、两个字体族可从共享 Palette 解析，并防止生产代码重新引入系统字体硬编码。
 - 每个应用 `Window` 根节点必须显式引用 `Font.UI`；共享控件样式必须为所有承载文字的普通控件、集合容器及与主视觉树断开的 `Popup` 内容（包括 `ContextMenu`、`MenuItem`、`ToolTip`、`ComboBoxItem`）显式建立字体来源。不得仅依赖一个可能被局部样式或独立 Popup 截断的隐式继承链。
 - 自绘文本只允许通过共享 `EmbeddedFontFamilies` 创建 `Typeface`；代码/公式/标识符/位置读数使用 `Font.Mono`，其余文本使用 `Font.UI`。自动测试枚举全部应用 Window 与共享文字控件类型，防止新窗口或新控件静默落回系统默认字体。
+
+## 19. 2026-08-25 Batch Edit 表达式编辑器 trace
+
+输入与正式输出：
+
+- 范围仅限 Batch Edit 各字段以 `=` 开头的 C# 表达式输入；直接数字、百分比和单步常量运算仍使用普通单行输入行为。
+- 进入表达式模式后使用内嵌 JetBrains Mono、暗色 C# 语义配色、自动括号配对和光标邻近括号匹配高亮；未配对括号使用错误色提示。
+- 补全候选严格来自当前 Batch Edit 上下文可用的 `v0/v1/p0/p1/k0/k1/g0/g1/t0/t1/tr` 变量、布尔/类型关键字，以及正式表达式编译器允许且返回数值的 `System.Math` 常量和方法。当前字段自己的结果变量不得出现在候选中。
+- 支持输入触发和 `Ctrl+Space` 手动补全、上下键选择、`Tab/Enter` 插入、`Escape` 关闭以及 `F1` 轮换查看同名 `System.Math` overload signature；该提示列表不构成新的表达式语言或合法性判定来源。
+- 补全 ListBox 的一个标准鼠标滚轮刻度只移动一个候选项，复用通用列表单步滚动实现；候选数量和虚拟化方式不变。
+- 每次补全筛选刷新必须向 WPF `ItemsSource` 发布新的只读候选快照；不得原地修改仍被虚拟化 `ItemContainerGenerator` 观察的普通 `List<T>`，避免滚动测量期间出现集合计数/索引不一致并导致进程崩溃。
+- Batch Edit `Help` 使用可调整尺寸的专用结构化窗口，不再把整份说明塞进 Message 文本。窗口按输入形式、编辑器快捷键、变量、常用 `System.Math`、结果规则分区，并由易到难固定展示 6 个可编译的实用例子；最后一例以 `tr`、`Sin` 和 `PI` 生成 `-64..64`、相对 `tr=0` 负四分之一周期相移的离散 Event Point 正弦序列。长内容只在窗口主体内滚动，Close 始终可达。
+
+边界、失败条件与归属：
+
+- 最终合法性、结果变量依赖、循环引用、数值范围、10 秒执行上限和原子 Batch Edit 提交仍完全由既有 `BatchEditExpressionProgram` 与 Project command 决定；编辑器不得静默改写表达式或接受编译器拒绝的输入。
+- 编辑器继续保持单行语义；粘贴的 CR/LF 仅转为空格。补全 Popup、当前候选、括号高亮和光标状态只属于 Dialog session，不持久化到 Project、Preset schema、Undo/Redo 或 canonical。
+- 编辑器基于固定 NuGet 包 `AvalonEdit 6.3.1.120`；其 MIT 许可和上游 revision 记录在根 `THIRD-PARTY-NOTICES.md`，正式发布继续随应用分发该 notices 文件。
+
+验证重点：
+
+- 自动测试覆盖 Note/Event 上下文变量过滤、当前结果变量排除、`Clamp` 的静态导入与 `Math.` 两种补全、非表达式不显示补全、非数值 `System.Math` 返回项排除、嵌套/未配对括号匹配，以及 Help 的 6 个例子都能由正式表达式编译器接受；正弦例在 `tr=0/96/192` 时必须分别得到 `-64/0/64`。
+- Release WPF build 必须验证 AvalonEdit XAML、内嵌等宽字体资源、Popup 和 Batch Edit Dialog 均可加载；表达式执行语义继续由既有 Compiler/Application 测试覆盖。

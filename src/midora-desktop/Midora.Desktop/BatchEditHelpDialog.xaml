@@ -1,0 +1,274 @@
+<Window x:Class="Midora.Desktop.BatchEditHelpDialog"
+        FontFamily="{StaticResource Font.UI}"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls;assembly=Midora.Desktop.Presentation"
+        Title="Batch Edit Help"
+        Width="920" Height="740" MinWidth="700" MinHeight="520"
+        Background="{StaticResource Brush.Surface.0}" WindowStyle="None"
+        ResizeMode="CanResize" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False" UseLayoutRounding="True" SnapsToDevicePixels="True">
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight="36" CornerRadius="0" GlassFrameThickness="0"
+                        ResizeBorderThickness="6" UseAeroCaptionButtons="False"/>
+  </shell:WindowChrome.WindowChrome>
+  <Window.Resources>
+    <Style x:Key="Help.SectionTitle" TargetType="TextBlock" BasedOn="{StaticResource Text.Section}">
+      <Setter Property="Margin" Value="0,0,0,9"/>
+    </Style>
+    <Style x:Key="Help.Body" TargetType="TextBlock" BasedOn="{StaticResource Text.Muted}">
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="LineHeight" Value="19"/>
+    </Style>
+    <Style x:Key="Help.Code" TargetType="TextBlock" BasedOn="{StaticResource Text.Mono}">
+      <Setter Property="Foreground" Value="#DCDCAA"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <Style x:Key="Help.CodeBox" TargetType="Border">
+      <Setter Property="Padding" Value="8,5"/>
+      <Setter Property="Background" Value="{StaticResource Brush.Surface.0}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource Brush.Border.Strong}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="3"/>
+    </Style>
+    <Style x:Key="Help.TableHeader" TargetType="TextBlock" BasedOn="{StaticResource Text.Overline}">
+      <Setter Property="Foreground" Value="{StaticResource Brush.Text.Tertiary}"/>
+    </Style>
+  </Window.Resources>
+
+  <Border BorderBrush="{StaticResource Brush.Border.Strong}" BorderThickness="1">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="36"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="58"/>
+      </Grid.RowDefinitions>
+
+      <Grid Background="{StaticResource Brush.Black}" MouseLeftButtonDown="OnTitleMouseLeftButtonDown">
+        <TextBlock Margin="11,0,44,0" VerticalAlignment="Center"
+                   FontWeight="SemiBold" Text="Batch Edit Help"/>
+        <Button Width="46" Height="36" HorizontalAlignment="Right"
+                Style="{StaticResource Button.Caption.Close}" Click="OnCloseClick">
+          <ui:FluentIcon Style="{StaticResource Icon.WindowControl}"
+                         Data="{StaticResource WindowControl.Close}"/>
+        </Button>
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" Padding="18,16"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <Border Style="{StaticResource Card}" Margin="0,0,0,18">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="4"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <Border Background="{StaticResource Brush.Red}" CornerRadius="2"/>
+              <StackPanel Grid.Column="1" Margin="14,1,4,2">
+                <TextBlock FontSize="19" FontWeight="SemiBold" Text="Shape many values with one operation"/>
+                <TextBlock Margin="0,5,0,0" Style="{StaticResource Help.Body}"
+                           Text="Each non-empty field is evaluated for every selected object. Start with a direct value or a one-step operation; use = only when you need variables, conditions, or System.Math."/>
+              </StackPanel>
+            </Grid>
+          </Border>
+
+          <TextBlock Style="{StaticResource Help.SectionTitle}" Text="1. Choose an input form"/>
+          <Grid Margin="10,0,10,5">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="180"/>
+              <ColumnDefinition Width="180"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Style="{StaticResource Help.TableHeader}" Text="INPUT"/>
+            <TextBlock Grid.Column="1" Style="{StaticResource Help.TableHeader}" Text="MEANING"/>
+            <TextBlock Grid.Column="2" Style="{StaticResource Help.TableHeader}" Text="EXAMPLE"/>
+          </Grid>
+          <ItemsControl ItemsSource="{Binding InputModes}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Margin="0,0,0,5" Padding="10,7"
+                        Background="{StaticResource Brush.Surface.1}"
+                        BorderBrush="{StaticResource Brush.Border}" BorderThickness="1" CornerRadius="3">
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="180"/>
+                      <ColumnDefinition Width="180"/>
+                      <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock VerticalAlignment="Center" Style="{StaticResource Help.Code}" Text="{Binding Input}"/>
+                    <TextBlock Grid.Column="1" Margin="0,0,12,0" VerticalAlignment="Center"
+                               Style="{StaticResource Help.Body}" Text="{Binding Meaning}"/>
+                    <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                               Style="{StaticResource Help.Body}" Text="{Binding Example}"/>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock Margin="10,5,10,0" Style="{StaticResource Text.Caption}" TextWrapping="Wrap"
+                     Text="For n%, *n, /n, +n, and -n, n must be a non-negative finite number and a divisor cannot be zero. Because -n means subtraction, use an expression such as =-100 when the target itself must be negative."/>
+
+          <Grid Margin="0,18,0,18">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="12"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Style="{StaticResource Card}">
+              <StackPanel>
+                <TextBlock Style="{StaticResource Help.SectionTitle}" Text="2. Expression editor"/>
+                <ItemsControl ItemsSource="{Binding Shortcuts}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Grid Margin="0,0,0,7">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="118"/>
+                          <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Style="{StaticResource Help.CodeBox}" Margin="0,0,9,0">
+                          <TextBlock HorizontalAlignment="Center" Style="{StaticResource Help.Code}" Text="{Binding Keys}"/>
+                        </Border>
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" Style="{StaticResource Help.Body}" Text="{Binding Action}"/>
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource Card}">
+              <StackPanel>
+                <TextBlock Style="{StaticResource Help.SectionTitle}" Text="3. Variables"/>
+                <Grid Margin="0,0,0,5">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="102"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <TextBlock Style="{StaticResource Help.Code}" Text="v0 / v1"/>
+                  <TextBlock Grid.Column="1" Style="{StaticResource Help.Body}" Text="Velocity before / after"/>
+                </Grid>
+                <Grid Margin="0,0,0,5">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="102"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <TextBlock Style="{StaticResource Help.Code}" Text="p0 / p1"/>
+                  <TextBlock Grid.Column="1" Style="{StaticResource Help.Body}" Text="Point value before / after"/>
+                </Grid>
+                <Grid Margin="0,0,0,5">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="102"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <TextBlock Style="{StaticResource Help.Code}" Text="k0 / k1"/>
+                  <TextBlock Grid.Column="1" Style="{StaticResource Help.Body}" Text="Key number before / after"/>
+                </Grid>
+                <Grid Margin="0,0,0,5">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="102"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <TextBlock Style="{StaticResource Help.Code}" Text="g0 / g1"/>
+                  <TextBlock Grid.Column="1" Style="{StaticResource Help.Body}" Text="Gate before / after"/>
+                </Grid>
+                <Grid Margin="0,0,0,5">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="102"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <TextBlock Style="{StaticResource Help.Code}" Text="t0 / t1"/>
+                  <TextBlock Grid.Column="1" Style="{StaticResource Help.Body}" Text="Tick before / after"/>
+                </Grid>
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="102"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <TextBlock Style="{StaticResource Help.Code}" Text="tr"/>
+                  <TextBlock Grid.Column="1" Style="{StaticResource Help.Body}" Text="Tick relative to the earliest selected object"/>
+                </Grid>
+                <TextBlock Style="{StaticResource Text.Caption}" TextWrapping="Wrap"
+                           Text="0 means the original value; 1 means another field's calculated result. The current field cannot reference its own result, and cycles are rejected."/>
+              </StackPanel>
+            </Border>
+          </Grid>
+
+          <Border Style="{StaticResource Card}" Margin="0,0,0,18">
+            <StackPanel>
+              <TextBlock Style="{StaticResource Help.SectionTitle}" Text="4. Useful System.Math functions"/>
+              <TextBlock Margin="0,0,0,9" Style="{StaticResource Help.Body}"
+                         Text="Call functions directly or through Math., for example Clamp(...) and Math.Clamp(...). Completion lists every supported numeric overload."/>
+              <ItemsControl ItemsSource="{Binding MathMembers}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Style="{StaticResource Badge}" Margin="0,0,7,7">
+                      <TextBlock Style="{StaticResource Help.Code}" Text="{Binding}"/>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <TextBlock Margin="0,2,0,0" Style="{StaticResource Text.Caption}" TextWrapping="Wrap"
+                         Text="Expressions also support +, -, *, /, %, comparisons, boolean logic, and condition ? valueWhenTrue : valueWhenFalse."/>
+            </StackPanel>
+          </Border>
+
+          <TextBlock Style="{StaticResource Help.SectionTitle}" Text="5. Practical examples — easy to advanced"/>
+          <ItemsControl ItemsSource="{Binding Examples}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="48"/>
+                      <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Width="34" Height="34" VerticalAlignment="Top"
+                            Background="{StaticResource Brush.Red.Subtle}"
+                            BorderBrush="{StaticResource Brush.Red.Dark}" BorderThickness="1" CornerRadius="17">
+                      <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                 FontFamily="{StaticResource Font.Mono}" FontWeight="SemiBold"
+                                 Foreground="{StaticResource Brush.Red.Hover}" Text="{Binding Number}"/>
+                    </Border>
+                    <StackPanel Grid.Column="1">
+                      <TextBlock Style="{StaticResource Text.Overline}" Text="{Binding Level}"/>
+                      <TextBlock Margin="0,2,0,7" FontWeight="SemiBold" FontSize="13" Text="{Binding Title}"/>
+                      <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="94"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <Border Style="{StaticResource Badge}" Margin="0,0,8,0">
+                          <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                     Style="{StaticResource Text.Caption}" Text="{Binding Field}"/>
+                        </Border>
+                        <Border Grid.Column="1" Style="{StaticResource Help.CodeBox}">
+                          <TextBlock Style="{StaticResource Help.Code}" Text="{Binding Code}"/>
+                        </Border>
+                      </Grid>
+                      <TextBlock Margin="0,7,0,0" Style="{StaticResource Help.Body}" Text="{Binding Explanation}"/>
+                    </StackPanel>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <Border Style="{StaticResource Card}" Margin="0,10,0,2">
+            <StackPanel>
+              <TextBlock Style="{StaticResource Help.SectionTitle}" Text="6. Result handling"/>
+              <ItemsControl ItemsSource="{Binding ResultRules}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid Margin="0,0,0,7">
+                      <Grid.ColumnDefinitions><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                      <Ellipse Width="5" Height="5" VerticalAlignment="Center" Fill="{StaticResource Brush.Info}"/>
+                      <TextBlock Grid.Column="1" Style="{StaticResource Help.Body}" Text="{Binding}"/>
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <Border Margin="0,5,0,0" Padding="10,8"
+                      Background="{StaticResource Brush.Info.Subtle}"
+                      BorderBrush="#28517A" BorderThickness="1" CornerRadius="3">
+                <TextBlock Style="{StaticResource Help.Body}"
+                           Text="Use Validate before Apply to catch syntax errors, unavailable variables, and circular result dependencies without changing the Project."/>
+              </Border>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Padding="12,10"
+              Background="{StaticResource Brush.Surface.1}"
+              BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0">
+        <Button HorizontalAlignment="Right" Style="{StaticResource Button.Dialog.Confirm}"
+                Content="Close" IsDefault="False" IsCancel="True" Click="OnCloseClick"/>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

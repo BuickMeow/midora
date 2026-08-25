@@ -4,6 +4,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:ui="clr-namespace:Midora.Desktop.Presentation.Controls;assembly=Midora.Desktop.Presentation"
+        xmlns:local="clr-namespace:Midora.Desktop"
         Width="620" Height="570" MinWidth="520" MinHeight="430" MaxHeight="760"
         Background="{StaticResource Brush.Surface.0}" WindowStyle="None"
         ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterOwner"
@@ -28,37 +29,42 @@
       <ScrollViewer Grid.Row="1" Padding="14,12" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel>
           <TextBlock Margin="0,0,0,12" Style="{StaticResource Text.Muted}"
-                     Text="Leave a field blank to keep it unchanged. Values use invariant decimal notation. Expressions are evaluated for each selected object."
+                     Text="Leave a field blank to keep it unchanged. Type = to enable expression colors, bracket matching, and completion (Ctrl+Space)."
                      TextWrapping="Wrap"/>
           <Grid x:Name="VelocityRow" Margin="0,0,0,10">
             <Grid.ColumnDefinitions><ColumnDefinition Width="116"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock VerticalAlignment="Top" Margin="0,7,10,0" Text="Velocity"/>
-            <TextBox x:Name="VelocityBox" Grid.Column="1" Height="Auto" MinHeight="32" Padding="7,5" AcceptsReturn="False"
-                     VerticalContentAlignment="Top" FontFamily="{StaticResource Font.Mono}" TextWrapping="Wrap" TextChanged="OnFormulaTextChanged"/>
+            <local:BatchExpressionEditor x:Name="VelocityBox" Grid.Column="1"
+                                         TextChanged="OnFormulaTextChanged"
+                                         CommitRequested="OnExpressionCommitRequested"/>
           </Grid>
           <Grid x:Name="PointValueRow" Margin="0,0,0,10">
             <Grid.ColumnDefinitions><ColumnDefinition Width="116"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock VerticalAlignment="Top" Margin="0,7,10,0" Text="Point Value"/>
-            <TextBox x:Name="PointValueBox" Grid.Column="1" Height="Auto" MinHeight="32" Padding="7,5" AcceptsReturn="False"
-                     VerticalContentAlignment="Top" FontFamily="{StaticResource Font.Mono}" TextWrapping="Wrap" TextChanged="OnFormulaTextChanged"/>
+            <local:BatchExpressionEditor x:Name="PointValueBox" Grid.Column="1"
+                                         TextChanged="OnFormulaTextChanged"
+                                         CommitRequested="OnExpressionCommitRequested"/>
           </Grid>
           <Grid x:Name="KeyNumberRow" Margin="0,0,0,10">
             <Grid.ColumnDefinitions><ColumnDefinition Width="116"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock VerticalAlignment="Top" Margin="0,7,10,0" Text="Key Number"/>
-            <TextBox x:Name="KeyNumberBox" Grid.Column="1" Height="Auto" MinHeight="32" Padding="7,5" AcceptsReturn="False"
-                     VerticalContentAlignment="Top" FontFamily="{StaticResource Font.Mono}" TextWrapping="Wrap" TextChanged="OnFormulaTextChanged"/>
+            <local:BatchExpressionEditor x:Name="KeyNumberBox" Grid.Column="1"
+                                         TextChanged="OnFormulaTextChanged"
+                                         CommitRequested="OnExpressionCommitRequested"/>
           </Grid>
           <Grid x:Name="GateRow" Margin="0,0,0,10">
             <Grid.ColumnDefinitions><ColumnDefinition Width="116"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock VerticalAlignment="Top" Margin="0,7,10,0" Text="Gate"/>
-            <TextBox x:Name="GateBox" Grid.Column="1" Height="Auto" MinHeight="32" Padding="7,5" AcceptsReturn="False"
-                     VerticalContentAlignment="Top" FontFamily="{StaticResource Font.Mono}" TextWrapping="Wrap" TextChanged="OnFormulaTextChanged"/>
+            <local:BatchExpressionEditor x:Name="GateBox" Grid.Column="1"
+                                         TextChanged="OnFormulaTextChanged"
+                                         CommitRequested="OnExpressionCommitRequested"/>
           </Grid>
           <Grid Margin="0,0,0,12">
             <Grid.ColumnDefinitions><ColumnDefinition Width="116"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <TextBlock VerticalAlignment="Top" Margin="0,7,10,0" Text="Tick"/>
-            <TextBox x:Name="TickBox" Grid.Column="1" Height="Auto" MinHeight="32" Padding="7,5" AcceptsReturn="False"
-                     VerticalContentAlignment="Top" FontFamily="{StaticResource Font.Mono}" TextWrapping="Wrap" TextChanged="OnFormulaTextChanged"/>
+            <local:BatchExpressionEditor x:Name="TickBox" Grid.Column="1"
+                                         TextChanged="OnFormulaTextChanged"
+                                         CommitRequested="OnExpressionCommitRequested"/>
           </Grid>
           <WrapPanel Margin="116,0,0,10">
             <Button Width="86" Margin="0,0,6,6" Content="Help" Click="OnHelpClick"/>

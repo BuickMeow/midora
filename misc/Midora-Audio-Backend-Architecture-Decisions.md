@@ -61,7 +61,7 @@
 
 - ceiling：线性 `0.8912509f`（-1 dBFS）；
 - detector：每个原 sample 及 `1/4`、`1/2`、`3/4` 相位的固定 16-tap、a=8 归一化 Lanczos-windowed sinc 重建值，左右声道取共同绝对峰值；
-- look-ahead / attack：5 ms，按实际采样率向上取整为 frame；未来峰值的 required gain 在其到达前线性建立，当前 frame 仍受自身 required gain 约束；
+- look-ahead / attack：5 ms，按实际采样率向上取整为 frame；窗口内每个未来峰值的 required gain 都按其距离独立形成线性约束，当前 gain 取全部约束的最小值并仍受自身 required gain 约束；禁止用“原始振幅最大的一个未来 frame”代替最严格约束，因为较近的中等峰值可能要求更早开始 attack；
 - hold：10 ms；每次进一步降低 gain 时重新开始；
 - release：100 ms 单极指数恢复，系数由实际采样率计算，恢复不得越过当前允许 gain；
 - makeup gain：无；Limiter 后不追加硬削波或自动归一化；
@@ -70,7 +70,7 @@
 
 实时 producer 在发布 frame 0 前先合成完整分析窗口；该前瞻属于 producer 内部 raw frontier，不插入前导静音、不改变设备消费 frame。离线渲染在末尾用零值补足 detector 上下文但不输出补足值，因此输出范围和文件 frame 数保持不变。Held Preview 只可替换 raw frontier 之后的未来；monitoring cold start 丢弃旧预取并重置 Limiter。
 
-理由：实机对比确认把 Master Volume 降至 -16 dB 后爆音明显改善或消失，而把每 Channel sample voice 上限提高到 4096 无改善，问题位于总线峰值/旧零前瞻增益高速调制，不是 voice stealing。5 ms 前瞻、hold 与较慢 release 降低密集事件造成的增益抖动；4× inter-sample detector 与 -1 dBFS ceiling 为重建峰值提供保护余量。
+理由：实机对比确认把 Master Volume 降至 -16 dB 后爆音明显改善或消失，而把每 Channel sample voice 上限提高到 4096 无改善，问题位于总线峰值/旧零前瞻增益高速调制，不是 voice stealing。5 ms 前瞻、hold 与较慢 release 降低密集事件造成的增益抖动；4× inter-sample detector 与 -1 dBFS ceiling 为重建峰值提供保护余量。实现审计进一步发现，若只追踪窗口内原始振幅最大的峰值，较近但较小的峰值会被忽略，直到到达时才骤降 gain，形成宽带瞬态；v2 的正式含义因此明确为逐未来 frame 求严格最小 attack 约束。修正后的最终 playback-span 输出必须使用新的缓存代际，禁止命中旧错误实现生成的结果；pre-Master/pre-Limiter Unit/Segment raw PCM 不受影响。
 
 旧 v1 历史定义为 stereo-linked、zero-look-ahead、sample-peak、ceiling 1.0、50 ms release。它只用于解释旧测试和缓存失效原因，不再是正式输出算法；不得提供运行时回退或 UI 版本选择。
 

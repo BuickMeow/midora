@@ -65,6 +65,33 @@ public sealed class StereoLookAheadLimiterTests
     }
 
     [Fact]
+    public void EveryFuturePeakContributesItsOwnAttackConstraint()
+    {
+        StereoLookAheadLimiter limiter = CreateLimiter(maximumOutputFrameCount: 1);
+        int lookAheadFrames = limiter.LookAheadFrameCount;
+        float[] input = new float[(1 + limiter.RequiredFutureFrameCount) * 2];
+        float[] output = new float[2];
+
+        // The distant peak is the largest raw peak, but at the edge of the
+        // look-ahead window it does not yet require attenuation. The closer
+        // peak must still begin its own attack at the current frame.
+        input[0] = 0.5f;
+        input[1] = 0.5f;
+        const int closePeakFrame = 20;
+        input[closePeakFrame * 2] = 1.25f;
+        input[(closePeakFrame * 2) + 1] = 1.25f;
+        input[lookAheadFrames * 2] = 100f;
+        input[(lookAheadFrames * 2) + 1] = 100f;
+
+        Assert.True(limiter.Process(input, 1, output));
+
+        float closePeakRequiredGain = AudioMasterSettings.LimiterCeilingV2 / 1.25f;
+        float expectedMaximumGain = closePeakRequiredGain
+            + ((1f - closePeakRequiredGain) * closePeakFrame / lookAheadFrames);
+        Assert.InRange(limiter.Gain, 0, expectedMaximumGain + 1e-5f);
+    }
+
+    [Fact]
     public void ProcessingIsIndependentOfCallerBlockSize()
     {
         const int frameCount = 4_096;
@@ -82,6 +109,49 @@ public sealed class StereoLookAheadLimiterTests
         {
             Assert.Equal(output256[sample], output37[sample], 5);
         }
+    }
+
+    [Fact]
+    public void ProcessingDoesNotAllocateAfterConstruction()
+    {
+        StereoLookAheadLimiter limiter = CreateLimiter();
+        int inputFrameCount = 256 + limiter.RequiredFutureFrameCount;
+        float[] input = new float[inputFrameCount * 2];
+        float[] output = new float[256 * 2];
+        for (int sample = 0; sample < input.Length; sample++)
+        {
+            input[sample] = MathF.Sin(sample * 0.031f) * 1.5f;
+        }
+        Assert.True(limiter.Process(input, 256, output));
+        limiter.Reset();
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        bool succeeded = limiter.Process(input, 256, output);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.True(succeeded);
+        Assert.Equal(0, allocated);
+    }
+
+    [Fact]
+    public void AdversarialProgramDoesNotProduceAnInterSamplePeakAboveUnity()
+    {
+        const int frameCount = 8_192;
+        float[] input = new float[frameCount * 2];
+        for (int frame = 0; frame < frameCount; frame++)
+        {
+            float burst = frame % 701 is >= 330 and < 350 ? 4f : 1f;
+            input[frame * 2] = MathF.Sin(frame * 2.71f) * burst;
+            input[(frame * 2) + 1] = MathF.Cos(frame * 2.37f) * burst * 0.83f;
+        }
+
+        float[] output = ProcessInBlocks(input, 37);
+        float measuredPeak = MeasureFourTimesInterSamplePeak(output);
+
+        Assert.InRange(
+            measuredPeak,
+            0,
+            1f);
     }
 
     [Fact]
@@ -144,5 +214,56 @@ public sealed class StereoLookAheadLimiterTests
             position += outputFrameCount;
         }
         return output;
+    }
+
+    private static float MeasureFourTimesInterSamplePeak(float[] interleaved)
+    {
+        const int firstTap = -7;
+        const int tapCount = 16;
+        int frameCount = interleaved.Length / 2;
+        float peak = 0;
+        for (int frame = 0; frame < frameCount; frame++)
+        {
+            peak = MathF.Max(
+                peak,
+                MathF.Max(
+                    MathF.Abs(interleaved[frame * 2]),
+                    MathF.Abs(interleaved[(frame * 2) + 1])));
+            for (int phaseIndex = 1; phaseIndex < 4; phaseIndex++)
+            {
+                double phase = phaseIndex / 4d;
+                double coefficientSum = 0;
+                double left = 0;
+                double right = 0;
+                for (int tapIndex = 0; tapIndex < tapCount; tapIndex++)
+                {
+                    int tap = firstTap + tapIndex;
+                    double distance = phase - tap;
+                    double coefficient = Sinc(distance) * Sinc(distance / 8d);
+                    coefficientSum += coefficient;
+                    int sourceFrame = frame + tap;
+                    if (sourceFrame is >= 0 && sourceFrame < frameCount)
+                    {
+                        left += interleaved[sourceFrame * 2] * coefficient;
+                        right += interleaved[(sourceFrame * 2) + 1] * coefficient;
+                    }
+                }
+                peak = MathF.Max(
+                    peak,
+                    checked((float)(Math.Max(Math.Abs(left), Math.Abs(right))
+                        / coefficientSum)));
+            }
+        }
+        return peak;
+    }
+
+    private static double Sinc(double value)
+    {
+        if (Math.Abs(value) < 1e-12)
+        {
+            return 1;
+        }
+        double radians = Math.PI * value;
+        return Math.Sin(radians) / radians;
     }
 }

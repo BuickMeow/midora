@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Numerics;
 
 namespace Midora.Audio.Bass.Internals;
 
@@ -19,7 +20,8 @@ internal sealed unsafe class StereoLookAheadLimiter
     private readonly int _lookAheadFrameCount;
     private readonly int _holdFrameCount;
     private readonly float[] _peakByFrame;
-    private readonly int[] _maximumDeque;
+    private readonly float[] _attackSlopeByFrame;
+    private readonly float[] _attackInterceptByFrame;
     private readonly float[] _interpolationCoefficients;
     private readonly float[] _historyLeft = new float[InterpolationHistoryFrameCount];
     private readonly float[] _historyRight = new float[InterpolationHistoryFrameCount];
@@ -72,7 +74,8 @@ internal sealed unsafe class StereoLookAheadLimiter
         int maximumAnalysisFrameCount = checked(
             maximumOutputFrameCount + RequiredFutureFrameCount);
         _peakByFrame = new float[maximumAnalysisFrameCount];
-        _maximumDeque = new int[maximumAnalysisFrameCount];
+        _attackSlopeByFrame = new float[maximumAnalysisFrameCount];
+        _attackInterceptByFrame = new float[maximumAnalysisFrameCount];
         _interpolationCoefficients = CreateInterpolationCoefficients();
     }
 
@@ -174,35 +177,16 @@ internal sealed unsafe class StereoLookAheadLimiter
                 return false;
             }
             _peakByFrame[frameIndex] = peak;
-        }
-
-        int dequeStart = 0;
-        int dequeEnd = 0;
-        int initialWindowEnd = Math.Min(_lookAheadFrameCount, inputFrameCount - 1);
-        for (int frameIndex = 0; frameIndex <= initialWindowEnd; frameIndex++)
-        {
-            PushMaximum(frameIndex, ref dequeStart, ref dequeEnd);
+            float requiredGain = RequiredGain(peak);
+            float attackSlope = (1f - requiredGain) / _lookAheadFrameCount;
+            _attackSlopeByFrame[frameIndex] = attackSlope;
+            _attackInterceptByFrame[frameIndex] = requiredGain
+                + (frameIndex * attackSlope);
         }
 
         for (int frameIndex = 0; frameIndex < outputFrameCount; frameIndex++)
         {
-            while (dequeStart < dequeEnd && _maximumDeque[dequeStart] < frameIndex)
-            {
-                dequeStart++;
-            }
-
-            int maximumFrameIndex = _maximumDeque[dequeStart];
-            float maximumPeak = _peakByFrame[maximumFrameIndex];
-            float currentPeak = _peakByFrame[frameIndex];
-            float currentRequiredGain = RequiredGain(currentPeak);
-            float futureRequiredGain = RequiredGain(maximumPeak);
-            int futureDistance = maximumFrameIndex - frameIndex;
-            float attackGain = futureDistance <= 0
-                ? futureRequiredGain
-                : futureRequiredGain
-                    + ((1f - futureRequiredGain)
-                        * MathF.Min(1f, futureDistance / (float)_lookAheadFrameCount));
-            float targetGain = MathF.Min(currentRequiredGain, attackGain);
+            float targetGain = FindStrictestAttackGain(frameIndex, inputFrameCount);
 
             if (targetGain < _gain)
             {
@@ -228,12 +212,6 @@ internal sealed unsafe class StereoLookAheadLimiter
             }
             interleavedOutput[sampleIndex] = outputLeft;
             interleavedOutput[sampleIndex + 1] = outputRight;
-
-            int enteringFrameIndex = frameIndex + _lookAheadFrameCount + 1;
-            if (enteringFrameIndex < inputFrameCount)
-            {
-                PushMaximum(enteringFrameIndex, ref dequeStart, ref dequeEnd);
-            }
         }
 
         for (int frameIndex = 0; frameIndex < outputFrameCount; frameIndex++)
@@ -255,14 +233,36 @@ internal sealed unsafe class StereoLookAheadLimiter
     private float RequiredGain(float peak) => peak > _ceiling ? _ceiling / peak : 1f;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void PushMaximum(int frameIndex, ref int dequeStart, ref int dequeEnd)
+    private float FindStrictestAttackGain(int frameIndex, int inputFrameCount)
     {
-        while (dequeStart < dequeEnd
-            && _peakByFrame[_maximumDeque[dequeEnd - 1]] < _peakByFrame[frameIndex])
+        int endExclusive = Math.Min(
+            inputFrameCount,
+            checked(frameIndex + _lookAheadFrameCount + 1));
+        int futureFrameIndex = frameIndex;
+        int vectorWidth = Vector<float>.Count;
+        Vector<float> frame = new(frameIndex);
+        Vector<float> minimum = new(1f);
+        int vectorEnd = endExclusive - vectorWidth;
+        for (; futureFrameIndex <= vectorEnd; futureFrameIndex += vectorWidth)
         {
-            dequeEnd--;
+            Vector<float> intercept = new(_attackInterceptByFrame, futureFrameIndex);
+            Vector<float> slope = new(_attackSlopeByFrame, futureFrameIndex);
+            minimum = Vector.Min(minimum, intercept - (slope * frame));
         }
-        _maximumDeque[dequeEnd++] = frameIndex;
+
+        float targetGain = 1f;
+        for (int lane = 0; lane < vectorWidth; lane++)
+        {
+            targetGain = MathF.Min(targetGain, minimum[lane]);
+        }
+        for (; futureFrameIndex < endExclusive; futureFrameIndex++)
+        {
+            targetGain = MathF.Min(
+                targetGain,
+                _attackInterceptByFrame[futureFrameIndex]
+                    - (frameIndex * _attackSlopeByFrame[futureFrameIndex]));
+        }
+        return Math.Clamp(targetGain, 0f, 1f);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

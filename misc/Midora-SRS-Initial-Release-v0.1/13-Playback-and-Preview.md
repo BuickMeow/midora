@@ -944,7 +944,7 @@ interpolation = 固定 16-tap、a=8 的归一化 Lanczos-windowed sinc
 makeup gain = 0 dB（禁用）
 ```
 
-每个实际 sampleRate 都必须把 look-ahead 与 hold 毫秒数分别向上取整为完整 frame。检测器对原始 sample frame 及其间的 `1/4`、`1/2`、`3/4` 相位重建值取左右声道共同绝对峰值。当前 frame 的允许 gain 同时受当前 inter-sample peak 与未来 look-ahead 窗口约束；对未来峰值采用从 unity 到其 required gain 的线性前瞻 attack，使增益在峰值 frame 前到达所需值。gain 降低时重新开始 hold；hold 到期后按 100 ms 指数系数恢复，且恢复结果不得越过当前允许 gain。
+每个实际 sampleRate 都必须把 look-ahead 与 hold 毫秒数分别向上取整为完整 frame。检测器对原始 sample frame 及其间的 `1/4`、`1/2`、`3/4` 相位重建值取左右声道共同绝对峰值。当前 frame 的允许 gain 同时受当前 inter-sample peak 与未来 look-ahead 窗口内**每一个** frame 的约束；不得只选择窗口内原始振幅最大的 frame，因为峰值距离同样决定当前所需的 attack gain。设当前 frame 为 `i`、未来 frame 为 `j`、look-ahead frame 数为 `L`、`requiredGain(j) = min(1, ceiling / peak(j))`，则该未来 frame 对当前 frame 的线性约束固定为 `requiredGain(j) + (1 - requiredGain(j)) * (j - i) / L`，当前允许 gain 取全部有效约束与 unity 的最小值。这样使每个峰值分别从 unity 建立线性前瞻 attack，并在各自峰值 frame 前到达所需值。gain 降低时重新开始 hold；hold 到期后按 100 ms 指数系数恢复，且恢复结果不得越过当前允许 gain。
 
 输入 `left` / `right` 已经过所有 Unit 确定性求和与 Playback Master Volume。实时渲染器必须先生成当前输出 frame 后完整的分析窗口，再发布当前 frame；该预取只增加 Preparing / producer 内部前方量，不得在设备输出前插入静音或改变 Project 时间。离线渲染必须以同一方式预取，在硬结束处只用零值补足检测上下文，不输出补足值，最终 frame 数必须与正式范围完全一致。
 

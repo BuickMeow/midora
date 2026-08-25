@@ -35,9 +35,9 @@ public static class PlaybackSpanCacheKey
         using MemoryStream payload = new();
         using (BinaryWriter writer = new(payload, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write("MIDORA_PLAYBACK_SPAN_CACHE_KEY_V8");
-            writer.Write(5); // BASS renderer; shared Root/Usage range state is restored cross-Track.
-            writer.Write(2); // Look-ahead inter-sample limiter algorithm.
+            writer.Write("MIDORA_PLAYBACK_SPAN_CACHE_KEY_V9");
+            writer.Write(6); // BASS renderer; every future peak constrains limiter attack.
+            writer.Write(2); // Corrected look-ahead inter-sample limiter algorithm.
             writer.Write(plan.SampleRate);
             writer.Write(plan.TotalFrameCount);
             writer.Write(soundFontSetCacheIdentity);

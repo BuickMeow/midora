@@ -25,6 +25,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Resource Include="..\..\..\assets\fonts\Sora\Sora-Light.ttf"
+              Link="Assets\Fonts\Sora\Sora-Light.ttf" />
     <Resource Include="..\..\..\assets\fonts\Sora\Sora-Regular.ttf"
               Link="Assets\Fonts\Sora\Sora-Regular.ttf" />
     <Resource Include="..\..\..\assets\fonts\Sora\Sora-SemiBold.ttf"

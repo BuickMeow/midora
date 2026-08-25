@@ -881,6 +881,10 @@ public sealed class WpfInteractionRegressionTests
             string.Equals(
                 (string?)element.Attribute("Source"),
                 "pack://application:,,,/Assets/midora-note-transparent-256x256.png",
+                StringComparison.Ordinal)
+            && string.Equals(
+                (string?)element.Attribute("Grid.Column"),
+                "0",
                 StringComparison.Ordinal));
         Assert.Equal("0", (string?)applicationMark.Attribute("Grid.Column"));
         Assert.Equal("20", (string?)applicationMark.Attribute("Width"));
@@ -1014,10 +1018,11 @@ public sealed class WpfInteractionRegressionTests
             string.Equals((string?)element.Attribute(x + "Name"), "EmptyState", StringComparison.Ordinal));
         XElement welcomeHeadline = emptyState.Descendants(presentation + "TextBlock").Single();
         Assert.Equal("24", (string?)welcomeHeadline.Attribute("FontSize"));
-        Assert.Equal("Normal", (string?)welcomeHeadline.Attribute("FontWeight"));
+        Assert.Equal("Light", (string?)welcomeHeadline.Attribute("FontWeight"));
         Assert.Equal("{Binding WelcomeHeadline}", (string?)welcomeHeadline.Attribute("Text"));
         XElement welcomeTranslation = welcomeHeadline.Descendants(presentation + "TranslateTransform").Single();
-        Assert.Equal("-8", (string?)welcomeTranslation.Attribute("Y"));
+        Assert.Equal("-18", (string?)welcomeTranslation.Attribute("Y"));
+        Assert.Empty(emptyState.Descendants(presentation + "Image"));
         Assert.DoesNotContain(emptyState.Descendants(presentation + "TextBlock"), element =>
             string.Equals(
                 (string?)element.Attribute("Text"),
@@ -1038,6 +1043,10 @@ public sealed class WpfInteractionRegressionTests
         Assert.Equal(
             "{Binding HasProject, Converter={StaticResource BooleanToVisibility}}",
             (string?)workspaceTabs.Attribute("Visibility"));
+
+        string code = File.ReadAllText(Path.ChangeExtension(path, ".xaml.cs"));
+        Assert.Contains("MidoraSoftwareVersion.ProductVersion", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("0.1 development build", code, StringComparison.Ordinal);
     }
 
     [Fact]

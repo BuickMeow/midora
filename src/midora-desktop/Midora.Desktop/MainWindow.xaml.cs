@@ -8356,7 +8356,7 @@ public partial class MainWindow : Window
 
     private void OnAboutClick(object sender, RoutedEventArgs e) => MessageDialog.Show(
         this,
-        "Midora 0.1 development build\nWindows Desktop · .NET 10 · win-x64\n\nCopyright (c) 2026 Midora contributors",
+        $"Midora {MidoraSoftwareVersion.ProductVersion}\nWindows Desktop · .NET 10 · win-x64\n\nCopyright (c) 2026 Midora contributors",
         "About Midora",
         MessageBoxButton.OK,
         MessageBoxImage.Information);

@@ -27,13 +27,13 @@
               AdditionalProtocArguments="--csharp_opt=internal_access" />
     <Content Include="Schemas\Json\*.schema.json"
              CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest" />
+             CopyToPublishDirectory="Never" />
     <Content Include="Schemas\Json\midora-json-v1.schema-set.sha256"
              CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest" />
+             CopyToPublishDirectory="Never" />
     <Content Include="Schemas\Proto\*.descriptor.sha256"
              CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest" />
+             CopyToPublishDirectory="Never" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Midora.Persistence.Tests" />

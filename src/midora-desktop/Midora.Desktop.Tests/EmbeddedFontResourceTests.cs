@@ -28,6 +28,7 @@ public sealed class EmbeddedFontResourceTests
 
             Assert.Equal(UiFamilySource, ui.Source);
             Assert.Equal(MonospaceFamilySource, monospace.Source);
+            AssertTypeface(ui, FontWeights.Light, "Sora");
             AssertTypeface(ui, FontWeights.Normal, "Sora");
             AssertTypeface(ui, FontWeights.SemiBold, "Sora");
             AssertTypeface(ui, FontWeights.Bold, "Sora");
@@ -43,6 +44,7 @@ public sealed class EmbeddedFontResourceTests
         string repositoryRoot = FindRepositoryRoot();
         string[] relativeFontPaths =
         [
+            "assets/fonts/Sora/Sora-Light.ttf",
             "assets/fonts/Sora/Sora-Regular.ttf",
             "assets/fonts/Sora/Sora-SemiBold.ttf",
             "assets/fonts/Sora/Sora-Bold.ttf",
@@ -110,6 +112,14 @@ public sealed class EmbeddedFontResourceTests
         Assert.Contains("THIRD-PARTY-NOTICES.md", distributedNotices, StringComparer.OrdinalIgnoreCase);
         Assert.Contains("licenses/Sora-OFL-1.1.txt", distributedNotices, StringComparer.OrdinalIgnoreCase);
         Assert.Contains("licenses/JetBrainsMono-OFL-1.1.txt", distributedNotices, StringComparer.OrdinalIgnoreCase);
+
+        string thirdPartyNotices = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "THIRD-PARTY-NOTICES.md"));
+        Assert.Contains("Fluent System Icons", thirdPartyNotices, StringComparison.Ordinal);
+        Assert.Contains("Microsoft.CodeAnalysis (Roslyn)", thirdPartyNotices, StringComparison.Ordinal);
+        Assert.Contains("Google.Protobuf", thirdPartyNotices, StringComparison.Ordinal);
+        Assert.Contains(".NET 10 self-contained runtime", thirdPartyNotices, StringComparison.Ordinal);
 
         string[] forbiddenInstalledFontNames = ["Segoe UI", "Cascadia Mono", "Consolas"];
         string[] productionDirectories =
@@ -236,6 +246,7 @@ public sealed class EmbeddedFontResourceTests
         Assert.Contains(
             glyphTypeface.FamilyNames.Values,
             name => string.Equals(name, expectedFamilyName, StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(weight, glyphTypeface.Weight);
         Assert.True(glyphTypeface.CharacterToGlyphMap.ContainsKey('A'));
     }
 

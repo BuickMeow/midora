@@ -88,6 +88,60 @@ function Move-CurrentArchivesToHistory {
     }
 }
 
+function Get-ExactDownloadDependencyVersion {
+    param(
+        [Parameter(Mandatory)] [object]$Assets,
+        [Parameter(Mandatory)] [string]$PackageId
+    )
+
+    $framework = @($Assets.project.frameworks.PSObject.Properties)[0].Value
+    $dependency = @($framework.downloadDependencies) |
+        Where-Object { $_.name -eq $PackageId } |
+        Select-Object -First 1
+    if ($null -eq $dependency) {
+        throw "The locked restore did not resolve required runtime pack $PackageId."
+    }
+
+    $range = [string]$dependency.version
+    $match = [regex]::Match($range, '^\[([^,]+),\s*([^\]]+)\]$')
+    if (-not $match.Success -or $match.Groups[1].Value -ne $match.Groups[2].Value) {
+        throw "Runtime pack $PackageId is not pinned to one exact version: $range"
+    }
+
+    return $match.Groups[1].Value
+}
+
+function Get-ExactLibraryVersion {
+    param(
+        [Parameter(Mandatory)] [object]$Assets,
+        [Parameter(Mandatory)] [string]$PackageId
+    )
+
+    $prefix = "$PackageId/"
+    $entry = @($Assets.libraries.PSObject.Properties.Name) |
+        Where-Object { $_.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) } |
+        Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($entry)) {
+        throw "The locked restore did not resolve required package $PackageId."
+    }
+
+    return $entry.Substring($prefix.Length)
+}
+
+function Copy-RequiredNotice {
+    param(
+        [Parameter(Mandatory)] [string]$SourcePath,
+        [Parameter(Mandatory)] [string]$DestinationPath
+    )
+
+    if (-not (Test-Path -LiteralPath $SourcePath -PathType Leaf)) {
+        throw "A required third-party notice is absent from the resolved package: $SourcePath"
+    }
+    $parent = Split-Path -Parent $DestinationPath
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    Copy-Item -LiteralPath $SourcePath -Destination $DestinationPath -Force
+}
+
 $repositoryRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $distDirectory = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot "dist"))
 $publishDirectory = [System.IO.Path]::GetFullPath((Join-Path $distDirectory "midora"))
@@ -173,6 +227,28 @@ Invoke-DotNet -Arguments @(
     "-r", "win-x64",
     "--locked-mode")
 
+$desktopAssetsPath = Join-Path `
+    (Split-Path -Parent $desktopProject) `
+    "obj\project.assets.json"
+$desktopAssets = Get-Content -LiteralPath $desktopAssetsPath -Raw -Encoding utf8 |
+    ConvertFrom-Json
+$packageRoot = @($desktopAssets.packageFolders.PSObject.Properties.Name)[0]
+if ([string]::IsNullOrWhiteSpace($packageRoot)) {
+    throw "The locked restore did not report a NuGet global package directory."
+}
+$netCoreVersion = Get-ExactDownloadDependencyVersion `
+    -Assets $desktopAssets `
+    -PackageId "Microsoft.NETCore.App.Runtime.win-x64"
+$aspNetCoreVersion = Get-ExactDownloadDependencyVersion `
+    -Assets $desktopAssets `
+    -PackageId "Microsoft.AspNetCore.App.Runtime.win-x64"
+$windowsDesktopVersion = Get-ExactDownloadDependencyVersion `
+    -Assets $desktopAssets `
+    -PackageId "Microsoft.WindowsDesktop.App.Runtime.win-x64"
+$roslynVersion = Get-ExactLibraryVersion `
+    -Assets $desktopAssets `
+    -PackageId "Microsoft.CodeAnalysis.CSharp"
+
 Write-Host "Publishing self-contained single-file Midora..."
 Invoke-DotNet -Arguments @(
     "publish", $desktopProject,
@@ -187,6 +263,38 @@ Invoke-DotNet -Arguments @(
     "-p:DebugSymbols=false",
     "-p:DebugType=None",
     "-p:ContinuousIntegrationBuild=true")
+
+$dotNetLicenseDirectory = Join-Path $publishDirectory "licenses\dotnet"
+Copy-RequiredNotice `
+    -SourcePath (Join-Path `
+        $packageRoot `
+        "microsoft.netcore.app.runtime.win-x64\$netCoreVersion\LICENSE.TXT") `
+    -DestinationPath (Join-Path $dotNetLicenseDirectory "Microsoft.NETCore.App-LICENSE.txt")
+Copy-RequiredNotice `
+    -SourcePath (Join-Path `
+        $packageRoot `
+        "microsoft.netcore.app.runtime.win-x64\$netCoreVersion\THIRD-PARTY-NOTICES.TXT") `
+    -DestinationPath (Join-Path $dotNetLicenseDirectory "Microsoft.NETCore.App-THIRD-PARTY-NOTICES.txt")
+Copy-RequiredNotice `
+    -SourcePath (Join-Path `
+        $packageRoot `
+        "microsoft.aspnetcore.app.runtime.win-x64\$aspNetCoreVersion\LICENSE.txt") `
+    -DestinationPath (Join-Path $dotNetLicenseDirectory "Microsoft.AspNetCore.App-LICENSE.txt")
+Copy-RequiredNotice `
+    -SourcePath (Join-Path `
+        $packageRoot `
+        "microsoft.aspnetcore.app.runtime.win-x64\$aspNetCoreVersion\THIRD-PARTY-NOTICES.TXT") `
+    -DestinationPath (Join-Path $dotNetLicenseDirectory "Microsoft.AspNetCore.App-THIRD-PARTY-NOTICES.txt")
+Copy-RequiredNotice `
+    -SourcePath (Join-Path `
+        $packageRoot `
+        "microsoft.windowsdesktop.app.runtime.win-x64\$windowsDesktopVersion\LICENSE") `
+    -DestinationPath (Join-Path $dotNetLicenseDirectory "Microsoft.WindowsDesktop.App-LICENSE.txt")
+Copy-RequiredNotice `
+    -SourcePath (Join-Path `
+        $packageRoot `
+        "microsoft.codeanalysis.csharp\$roslynVersion\ThirdPartyNotices.rtf") `
+    -DestinationPath (Join-Path $publishDirectory "licenses\Roslyn-ThirdPartyNotices.rtf")
 
 $workerDirectory = Join-Path $publishDirectory "audio-worker"
 New-Item -ItemType Directory -Path $workerDirectory -Force | Out-Null
@@ -210,6 +318,12 @@ $requiredFiles = @(
     (Join-Path $publishDirectory "Midora.exe"),
     (Join-Path $publishDirectory "LICENSE"),
     (Join-Path $publishDirectory "THIRD-PARTY-NOTICES.md"),
+    (Join-Path $publishDirectory "licenses\Roslyn-ThirdPartyNotices.rtf"),
+    (Join-Path $dotNetLicenseDirectory "Microsoft.NETCore.App-LICENSE.txt"),
+    (Join-Path $dotNetLicenseDirectory "Microsoft.NETCore.App-THIRD-PARTY-NOTICES.txt"),
+    (Join-Path $dotNetLicenseDirectory "Microsoft.AspNetCore.App-LICENSE.txt"),
+    (Join-Path $dotNetLicenseDirectory "Microsoft.AspNetCore.App-THIRD-PARTY-NOTICES.txt"),
+    (Join-Path $dotNetLicenseDirectory "Microsoft.WindowsDesktop.App-LICENSE.txt"),
     (Join-Path $workerDirectory "Midora.Audio.Bass.Worker.exe"),
     (Join-Path $workerDirectory "bass.dll"),
     (Join-Path $workerDirectory "bassmidi.dll"),
@@ -227,22 +341,15 @@ if ($pdbFiles.Count -ne 0) {
     throw "The local release contains PDB files."
 }
 
-$manifest = [ordered]@{
-    schemaVersion = 1
-    productVersion = $productVersion
-    informationalVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo(
-        (Join-Path $publishDirectory "Midora.exe")).ProductVersion
-    runtimeIdentifier = "win-x64"
-    configuration = $Configuration
-    selfContained = $true
-    desktopSingleFile = $true
-    audioWorkerNativeAot = $true
-    gitCommit = $commitId.ToLowerInvariant()
-    dirtyWorktree = $isDirty
-    publishedAtUtc = [DateTimeOffset]::UtcNow.ToString("O")
+$forbiddenPublishPaths = @(
+    (Join-Path $publishDirectory "Schemas"),
+    (Join-Path $publishDirectory "release-manifest.json")
+)
+foreach ($forbiddenPath in $forbiddenPublishPaths) {
+    if (Test-Path -LiteralPath $forbiddenPath) {
+        throw "The end-user release contains an internal-only artifact: $forbiddenPath"
+    }
 }
-$manifest | ConvertTo-Json -Depth 4 |
-    Set-Content -LiteralPath (Join-Path $publishDirectory "release-manifest.json") -Encoding utf8
 
 if (Test-Path -LiteralPath $archivePath) {
     throw "The current archive path unexpectedly already exists: $archivePath"

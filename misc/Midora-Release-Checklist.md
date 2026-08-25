@@ -29,7 +29,8 @@
 ## 4. 分发与许可
 
 - [ ] 根 MIT `LICENSE` 和 `THIRD-PARTY-NOTICES.md` 随产物发布。
-- [ ] Sora、JetBrains Mono、Fluent System Icons 等 notices/许可证完整。
+- [ ] Sora、JetBrains Mono、Fluent System Icons、AvalonEdit、Roslyn、Google.Protobuf 与精确 .NET runtime-pack notices/许可证完整。
+- [ ] 终端用户包不包含内部 `Schemas` 或 `release-manifest.json`。
 - [ ] BASS/BASSMIDI/BASSWASAPI 版本和 SHA-256 匹配固定 baseline。
 - [ ] 发布主体、收入方式、渠道和发布日 BASS 条款已经重新核验；未满足时不分发 BASS DLL。
 - [ ] 正式 ZIP/安装产物生成 SHA-256，且从空目录完成一次启动/项目重开验证。

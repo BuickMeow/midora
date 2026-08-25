@@ -20,6 +20,7 @@ function Invoke-DotNet {
 }
 
 $repositoryRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
+& (Join-Path $repositoryRoot "Test-VersionControl.ps1")
 $resolvedNativeDirectory = [System.IO.Path]::GetFullPath($BassNativeDirectory)
 $resolvedSoundFontPath = [System.IO.Path]::GetFullPath($SoundFontPath)
 if (-not (Test-Path -LiteralPath $resolvedSoundFontPath -PathType Leaf)) {

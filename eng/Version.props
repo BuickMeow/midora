@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <!-- The single source of truth for the Midora product version. -->
+    <VersionPrefix>1.0.0</VersionPrefix>
+    <VersionSuffix>dev</VersionSuffix>
+    <Version Condition="'$(VersionSuffix)' == ''">$(VersionPrefix)</Version>
+    <Version Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</Version>
+    <InformationalVersion>$(Version)</InformationalVersion>
+
+    <!-- Keep CLR assembly identity stable throughout the 1.x product line. -->
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+
+    <Product>Midora</Product>
+    <Authors>Midora contributors</Authors>
+    <Company>Midora contributors</Company>
+    <Copyright>Copyright (c) 2026 Midora contributors</Copyright>
+  </PropertyGroup>
+</Project>

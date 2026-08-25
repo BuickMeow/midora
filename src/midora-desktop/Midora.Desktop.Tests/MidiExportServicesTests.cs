@@ -28,6 +28,16 @@ public sealed class MidiExportServicesTests
         Assert.True(prepared.Succeeded);
         Assert.Equal(["Test Project.mid", "README.md"],
             prepared.OutputPlan.Targets.Select(item => item.FileName).ToArray());
+        Assert.NotNull(prepared.Readme);
+        Assert.Equal(
+            MidoraSoftwareVersion.InformationalVersion,
+            prepared.Readme.CreatedWithSoftwareVersion);
+        Assert.Equal(
+            MidoraSoftwareVersion.InformationalVersion,
+            prepared.Readme.LastSavedWithSoftwareVersion);
+        Assert.Equal(
+            MidoraSoftwareVersion.InformationalVersion,
+            prepared.Readme.ExportSoftwareVersion);
 
         MidiExportTaskResult result = await new MidiExportTaskRunner().ExecuteAsync(new()
         {

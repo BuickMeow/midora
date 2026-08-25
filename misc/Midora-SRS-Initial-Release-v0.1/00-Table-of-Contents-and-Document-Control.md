@@ -52,6 +52,7 @@
 
 ## 2026-08-25 修订摘要
 
+- Midora 产品版本基线固定为 `1.0.0-dev`，由仓库单一 MSBuild 版本源产生 Assembly/File/Informational Version、Project manifest 和 MIDI Export Readme 版本；删除业务源码中的第二份版本常量。当前 `.midora` Project Format 1 自本修订起成为完整作品验收及 1.0.0 的冻结兼容基线：后续修复必须持续读取既有 Format 1，任何新持久化语义必须进入新格式及显式 detached migration，不得原地改写 v1 schema、protobuf wire 或 page-pack 语义。
 - Mapping Function ABI v3 将批准的 `System.Math` 方法及 `E` / `PI` / `Tau` 固定为隐式导入；`Sin(x)` / `PI` 与既有 `Math.Sin(x)` / `Math.PI` 完全等价。无前缀名称仍由同一版本化白名单绑定，不开放真正的 C# `using static`、任意类型解析或额外 API 面。
 - 打开的 ComboBox 下拉内容独占鼠标滚轮：无论当前内容是否产生可见滚动条，滚轮都不得传递给外层 Settings、Properties 或 Workspace ScrollViewer。Event Instrument 底部 Keyboard Held Preview 活动时，Global Primary Transport 的鼠标点击必须直接执行 Stop；预处理不得先结束 Preview、再把同一次点击重新解释为主时间线 Play。
 - Mapping Function 不再打开独立 Workspace/Tab，也不保留跨窗口的 session Draft。创建与编辑统一使用 Event Instrument 所属的模态表达式对话框：名称与单行表达式只在对话框本地存在，提供同款自动折行增高编辑器、补全/括号高亮、Help、Validate 和结果栏；OK 必须先通过正式 ABI v3 校验，再以一次原子 Project command 提交名称、表达式与自动推导的 Context 依赖，Cancel/关闭直接丢弃本地内容。事件乐器底部 Keyboard Held Preview 在任何模态窗口、菜单或 Tab/Workspace 转场前同步停止，且该清理只识别键盘预览所有权，不得停止主时间线播放。

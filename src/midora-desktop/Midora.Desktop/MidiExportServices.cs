@@ -26,8 +26,6 @@ public sealed class PreparedDesktopMidiExport
 
 public static class DesktopMidiExportService
 {
-    private const string SoftwareVersion = "0.1.0-dev";
-
     public static PreparedDesktopMidiExport Prepare(
         MidoraProject project,
         string? currentProjectPath,
@@ -89,9 +87,9 @@ public static class DesktopMidiExportService
                 compilation,
                 plan,
                 rangeSource,
-                createdWithSoftwareVersion ?? SoftwareVersion,
-                lastSavedWithSoftwareVersion ?? SoftwareVersion,
-                SoftwareVersion,
+                createdWithSoftwareVersion ?? MidoraSoftwareVersion.InformationalVersion,
+                lastSavedWithSoftwareVersion ?? MidoraSoftwareVersion.InformationalVersion,
+                MidoraSoftwareVersion.InformationalVersion,
                 DateTimeOffset.UtcNow);
         }
 

@@ -96,6 +96,7 @@
 | INV-085 | MIDI 导出的每个实际单 Channel 事件 MTrk 都必须在相对 tick 0、结构 Meta 和可选 Channel 10 GS/XG 初始化之后、canonical/opaque 事件之前，依次写入 CC91=0、CC93=0；Conductor 不写。该初始化只属于 SMF 编码结果，不进入 Project/canonical，且不得删除或覆盖随后按冻结顺序写出的 Pure MIDI 用户 CC91/CC93。 |
 | INV-086 | 主应用取得单实例所有权后自动回收上次异常退出遗留的 audio-cache session 与 Pure MIDI session backing directory；当前目录必须同时满足直接子项、版本 manifest 和活动锁已释放才可删除。`SessionContent` 旧裸 GUID 目录只在名称及 `mt_<positive id>.mpk` 内容结构均严格可识别时兼容回收。活动、未知、清单不匹配、越界或 reparse-point 路径必须保留；逐项删除失败不得阻止启动、新 Project 或新 session。 |
 | INV-087 | Pure MIDI opaque SysEx 的唯一音频特权是可识别且校验有效的 Roland GS DT1 Part Mode 与 Yamaha XG Part Mode。导入必须按 payload target Channel 归属派生 Track；Compiler 保留原 opaque/SMF 数据并额外产生有类型、带来源和正式顺序的 canonical audio event，范围中途起播恢复 Root 当前活动连通区间内最近状态；音频投影重定向到 1-channel Unit channel 0 并以完整规范化 SysEx 发送，随后在同一顺序点显式建立 BASSMIDI Unit 的等价 Melodic/Percussion mode。任意其他 SysEx/Meta、Reset、无效校验和及 continuation 仍不进入音频后端。 |
+| INV-088 | Midora 产品 SemVer、Project file format、component schema、Mapping ABI、IPC/cache generation 与用户 Project Version 是独立版本轴。产品版本只有一个构建源。自 `1.0.0-dev` 冻结点起，后续新 1.x 软件必须持续读取有效 Format 1；Format 1 的 JSON/protobuf/content-pack wire 与字段语义不得原地改变，不能表示的新持久化语义必须进入新格式、独立 reader 和 detached migration。 |
 ## 22.2 常用主题定位
 | 需要查找的主题 | 主要章节 |
 |---|---|
@@ -115,6 +116,7 @@
 | MIDI 文件结构与导出 | 第 14、23 章 |
 | 普通 RIFF/WAVE、自定义采样率与离线渲染 | 第 15 章 |
 | `.midora` package、schema、损坏与事务 | 第 16 章 |
+| 产品 SemVer、Project Format 冻结、兼容迁移、Git tag 与发布门 | 第 16、21 章 |
 | 主窗口、导航、对象所属属性编辑器和全局面板 | 第 17、24 章 |
 | 各编辑器工作区、Timeline 精确属性与事务式 Properties | 第 17、18、20、24 章 |
 | New/Open/Open MIDI as New Project/Save/Export/Render 工作流 | 第 17、19、23 章 |

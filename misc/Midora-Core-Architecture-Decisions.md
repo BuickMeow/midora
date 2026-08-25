@@ -654,3 +654,13 @@ Context 依赖由正式分析器推导；UI 不再允许手工声明。Apply 原
 旧 ABI v1/v2 可以被格式层读取以形成明确诊断，但绝不执行、不自动迁移、不保留兼容执行器；用户重新编辑并 Apply 后形成 ABI v3。该安全替换不改变 Mapping Chain 的累计 `value`、取整/越界、Source Trace、Full/Incremental 等价或 canonical consumers。Batch Edit 的表达式不属于 Project Source Data，不受本决定改变。
 
 Requirement trace：输入为 Project Mapping Function expression/ABI/dependency metadata、Mapping Chain 当前值和只读 Context；正式输出为有界确定性委托及既有 canonical Mapping 结果。失败边界包括未知/旧 ABI、非法节点/API/字段、依赖不一致、超长/超节点/超深、非有限结果和目标类型/范围失败。表达式与推导依赖属于 Project；委托/cache/diagnostic 属于当前编译会话；明确非目标是通用脚本、完整 C#、沙箱进程、旧源码自动迁移、Batch Edit 语言变更或扩大 Context 对象图。
+
+## 55. ADR-CORE-053（已接受）：产品 SemVer 单一来源与 Project Format 1 兼容冻结
+
+决定：Midora 产品版本从 `1.0.0-dev` 开始采用 Semantic Versioning，并由仓库 `eng/Version.props` 唯一产生。1.x `AssemblyVersion` 固定 `1.0.0.0`，`FileVersion` 跟随产品三段版本，Informational Version 可追加 Git commit metadata。Desktop Project package、MIDI Export Readme 和未来 About/发布界面必须读取构建生成的同一版本，不得维护业务源码常量。
+
+产品版本与 Project Format、component schema、Mapping ABI、Application Preferences/preset schema、Worker IPC、缓存 generation 和用户自由文本 Project Version 分离。`createdWithSoftwareVersion` / `lastSavedWithSoftwareVersion` 只用于诊断和支持，不决定兼容。正式 release 使用不可移动 annotated `v<version>` tag、Changelog、兼容矩阵和发布清单。
+
+同日冻结当前 `.midora` Format 1，作为完整作品验收和 1.0.0 的持久化基线。V1 JSON schema set hash、protobuf descriptor hash、代表性 wire golden、strict reader、deterministic package 与事务测试构成自动门；后续 1.x 新软件必须读取此前有效 Format 1。无法由 V1 表示的新数据必须建立 V2 codec/schema/content-pack contract 和 detached V1 migration，不得修改 V1 字段/field number/wire 语义或通过更新 golden 掩盖破坏。缓存只提升 generation 并淘汰，不进入格式迁移。
+
+Requirement trace：输入为单一产品版本源、Git commit/tag、Format 1 schema/descriptor/golden assets、既有 Project package 与各独立 ABI/protocol version；正式输出为一致软件标识、严格版本预检、持续 V1 读取和可审计 release。失败边界包括版本源/EXE/manifest/Readme 不一致、dirty/mismatched tag、V1 hash/golden/旧文件重开失败、未知未来格式和部分迁移；失败不得发布或部分提交 Project。产品版本/tag/changelog 属于发布契约，Format/schema/Project source 属于持久化，ABI/IPC 属于对应执行边界，cache generation 属于运行时；明确非目标是一个全局万能版本号、旧 reader 前向猜读、保存回旧格式或在 V1 中隐藏新字段。

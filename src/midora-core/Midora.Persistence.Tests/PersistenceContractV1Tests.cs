@@ -293,6 +293,21 @@ public sealed class PersistenceContractV1Tests
         using JsonDocument manifest = JsonDocument.Parse(
             File.ReadAllBytes(Path.Combine(schemaDirectory, "manifest-v1.schema.json")));
         Assert.False(manifest.RootElement.GetProperty("additionalProperties").GetBoolean());
+
+        Dictionary<string, string> expectedHashes = File.ReadAllLines(
+                Path.Combine(schemaDirectory, "midora-json-v1.schema-set.sha256"))
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Select(line => line.Split("  ", 2, StringSplitOptions.None))
+            .ToDictionary(parts => parts[1], parts => parts[0], StringComparer.Ordinal);
+        Assert.Equal(paths.Length, expectedHashes.Count);
+        foreach (string path in paths)
+        {
+            string name = Path.GetFileName(path);
+            Assert.True(expectedHashes.TryGetValue(name, out string? expected),
+                $"JSON schema '{name}' is absent from the frozen format-v1 hash set.");
+            string actual = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
+            Assert.Equal(expected, actual);
+        }
     }
 
     [Fact]

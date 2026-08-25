@@ -460,10 +460,10 @@ Project 可打开。
 Project 标记为已修改。
 保存时写出完整 settings 文件。
 ```
-当前格式不包含 `settings/export-settings.json`、`settings/playback-settings.json` 或 `settings/audio-render-settings.json`。开发期旧包不要求兼容读取；不得通过隐藏兼容字段重新建立这些 Project 模型。
+当前 Format 1 不包含 `settings/export-settings.json`、`settings/playback-settings.json` 或 `settings/audio-render-settings.json`。Format 1 冻结前的旧开发包不属于兼容基线；冻结后的 Format 1 不得通过隐藏兼容字段重新建立这些 Project 模型。
 
 ### 16.7.2 project-settings.json
-保存 TPQ 与其他正式 Project 级、非 metadata、非 Reset 的系统设置。TPQ 是 Project 语义，不是文件格式语义；开发期 v1 只接受整数 `1..32767`。每个 Time Signature 仍必须满足 `4 × ticksPerQuarterNote % denominator == 0`，读取和保存均须校验。
+保存 TPQ 与其他正式 Project 级、非 metadata、非 Reset 的系统设置。TPQ 是 Project 语义，不是文件格式语义；Format 1 固定只接受整数 `1..32767`。每个 Time Signature 仍必须满足 `4 × ticksPerQuarterNote % denominator == 0`，读取和保存均须校验。
 
 ### 16.7.3 global-reset-defaults.json
 保存 Project 级 CC、Pitch Bend、RPN / NRPN、Program / Bank 等正式 Reset 默认值。
@@ -533,7 +533,7 @@ Project 可打开，但应产生错误诊断。
 相关编译、播放、导出应禁止，直到用户修复。
 这类问题不是文件结构损坏，而是 Project 语义错误。
 
-开发期 v1 的 TPQ/Time Signature 整除约束是例外：它同时决定 `Bar:Beat:Tick` 能否按 v1 固定整数语义读取。若单个文件各自结构有效、但二者组合不满足 `4 × TPQ % Denominator == 0`，持久化读取必须拒绝该 Conductor 内容，并按第 16.18.5 节的 Conductor 损坏/缺失有界回退规则处理；不得以分数 tick、量化或静默改拍号继续。
+Format 1 的 TPQ/Time Signature 整除约束是例外：它同时决定 `Bar:Beat:Tick` 能否按 v1 固定整数语义读取。若单个文件各自结构有效、但二者组合不满足 `4 × TPQ % Denominator == 0`，持久化读取必须拒绝该 Conductor 内容，并按第 16.18.5 节的 Conductor 损坏/缺失有界回退规则处理；不得以分数 tick、量化或静默改拍号继续。
 ---
 ## 16.9 Event Instrument protobuf 文件
 ### 16.9.1 文件粒度
@@ -1469,9 +1469,9 @@ manifest lastSavedWithSoftwareVersion 写为当前软件版本。
 提示用户该项目已在内存中迁移，保存后会变成当前格式。
 Project 视为已修改 / 已迁移未保存状态。
 ```
-当前开发格式已破坏性删除 Playback、Export defaults 与 Audio Render defaults；此前未发布开发包不提供兼容读取或迁移。
+Format 1 冻结前的开发格式曾破坏性删除 Playback、Export defaults、Audio Render defaults 并引入 Pure MIDI Track / SMF Import；这些未发布开发包不属于兼容基线，不提供自动迁移、兼容读取或兼容编译路径。
 
-Pure MIDI Track / SMF Import 引入时仍处于未发布开发期，采用破坏性文件格式替换：此前开发期 `.midora` 格式不提供自动迁移、兼容读取或兼容编译路径。实现必须提升对应 `fileFormatVersion`、JSON schema 与 protobuf descriptor 基线，并明确拒绝旧开发格式；不得根据缺失 Root/Track 字段猜测默认模型。该开发期例外不改变未来已发布格式必须走显式迁移评审的原则。
+自第 16.31 节的 Format 1 冻结点起，上述开发期例外终止。未来任何不能由冻结 Format 1 表示的持久化变化必须提升 `fileFormatVersion`，发布独立 JSON schema / protobuf descriptor / content-pack contract，并建立显式旧格式 reader 与 detached migration；不得根据缺失字段猜测默认模型或修改 V1 codec 伪装成兼容升级。
 ### 16.24.2 保存旧版本项目
 用户点击普通保存时：
 ```text
@@ -1758,9 +1758,9 @@ per-page decoded length, stored length and SHA-256
 deterministic internal compression
 ```
 
-当前开发期 pack 格式还必须从相同正式 source records 派生并保存 NoteOn endpoint、NoteOff endpoint 与 Channel Event endpoint pages。Endpoint page 按正式 tick/order key 局部有序、每页最多 16,384 records，并保存足以做目录裁剪和 bounded k-way merge 的 tick bounds；NoteOn endpoint目录还必须保存页内最大Note end tick，使active-note恢复只解码`minimumStart < cursor < maximumEnd`的候选endpoint页而不读取普通Note页。原始 source page 的 65,536-record / 4 MiB 双重上限不因此改变。Reader 必须交叉验证 endpoint record 与所属 Segment/source record 的身份、范围、数量和 checksum；派生索引损坏时拒绝该 pack，不得退回每窗口全量扫描并继续正式播放。
+Format 1 pack 必须从相同正式 source records 派生并保存 NoteOn endpoint、NoteOff endpoint 与 Channel Event endpoint pages。Endpoint page 按正式 tick/order key 局部有序、每页最多 16,384 records，并保存足以做目录裁剪和 bounded k-way merge 的 tick bounds；NoteOn endpoint目录还必须保存页内最大Note end tick，使active-note恢复只解码`minimumStart < cursor < maximumEnd`的候选endpoint页而不读取普通Note页。原始 source page 的 65,536-record / 4 MiB 双重上限不因此改变。Reader 必须交叉验证 endpoint record 与所属 Segment/source record 的身份、范围、数量和 checksum；派生索引损坏时拒绝该 pack，不得退回每窗口全量扫描并继续正式播放。
 
-这是首版冻结前的破坏性开发格式替换：当前 reader 只接受带 endpoint index 的现行 pack version，拒绝旧 pack version，不提供双读、迁移或静默重建后覆盖旧 Project。
+带 endpoint index 的现行 pack version 是冻结 Format 1 的组成部分。冻结前旧 pack version 不属于兼容基线；冻结后的 reader 必须持续接受该版本。未来替换 pack wire 必须进入新 Project Format 与显式迁移，禁止在 Format 1 中静默重建后覆盖旧 Project。
 
 Pack header/directory/footer、整数编码、compression profile、checksum coverage 和 entry order 必须版本化并有 golden bytes。完整 Track pack 的逻辑顺序由 Segment order、record kind 和各 page 内正式 record order定义；物理 page 边界不得成为 MIDI 语义边界。
 
@@ -1796,3 +1796,46 @@ Fixed Root 的用户 Port.Channel、Root Channel Mode、global Arrangement Track
 
 Track Copy/Duplicate 可以在内存中共享 immutable base extents，但保存输出必须为副本自己的确定 `.mpk` 和新稳定 ID 记录；不得持久化跨 Track 文件引用。
 ---
+
+## 16.31 Format 1 正式兼容冻结
+
+### 16.31.1 冻结点
+
+自 2026-08-25、Midora 产品版本 `1.0.0-dev` 起，当前 `.midora` Format 1 是第一首完整 Midora 作品和 1.0.0 的正式兼容基线。此前未发布开发包仍不属于兼容范围；此后由 Midora 写出的有效 Format 1 必须被所有后续 1.x 新版本可靠读取。
+
+### 16.31.2 不可原地改变的契约
+
+冻结内容包括：
+
+```text
+package 顶层结构、magic、file kind 与 entry 路径
+全部 Format 1 JSON schema、字段名称、类型、必填性与语义
+全部 Format 1 protobuf descriptor、字段号、wire type 与语义
+Pure MIDI content-pack header/directory/page/footer 与 endpoint index 语义
+稳定 ID、时间、文本、排序、checksum、压缩与 deterministic write 规则
+Format 1 的读取、损坏隔离、保存事务和版本预检行为
+```
+
+删除 protobuf 字段必须保留 field number/name；不得复用。修复 codec 时不得令已有效的冻结文件失效，或用新语义解释既有字段。
+
+### 16.31.3 自动兼容门
+
+Format 1 的 JSON schema set SHA-256、protobuf descriptor SHA-256、代表性 deterministic wire golden bytes、严格 unknown-field 拒绝、确定性 package round-trip、版本预检与事务故障注入必须持续作为自动测试门。发布候选还必须使用冻结点之后保存的真实完整作品执行：
+
+```text
+Open → Compile → Edit → Save Copy → Reopen
+```
+
+不得仅通过重写旧 hash/golden 基线令失败测试转绿；任何基线变化必须先证明它不属于 Format 1 原地变化，否则建立新版本。
+
+### 16.31.4 新格式与迁移
+
+不能由 Format 1 无损表达的新源数据或 wire 语义必须使用单调递增的新 `fileFormatVersion`。新软件按文件版本分派独立 reader，把旧 Project detached 迁移到当前 Domain，完整验证后一次提交；打开阶段不得覆盖源文件。用户保存时明确告知升级，并只通过安全保存事务写当前格式。初版不提供保存回旧格式。
+
+当前严格 reader 不提供前向兼容，因此 Format 1 固定：
+
+```text
+minimumReadableVersion = fileFormatVersion = 1
+```
+
+只有另行定义并验证前向兼容 reader 后，未来格式才可声明更低的 `minimumReadableVersion`。

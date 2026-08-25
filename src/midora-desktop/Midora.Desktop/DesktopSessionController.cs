@@ -78,8 +78,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private readonly object _modelRefreshGate = new();
     private int _compilerErrorCount;
     private int _compilerWarningCount;
-    private const string SoftwareVersion = "0.1.0-dev";
-    private readonly MidoraProjectPackageV1 _packages = new(SoftwareVersion);
+    private readonly MidoraProjectPackageV1 _packages =
+        new(MidoraSoftwareVersion.InformationalVersion);
     private readonly ProjectCreationCoordinator _creation;
     private readonly ProjectOpenCoordinator _opening;
     private ApplicationPreferences _applicationPreferences =
@@ -2482,7 +2482,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 ProjectDocumentSession document = candidate.CreateDocumentSession(compilation);
                 ProjectPersistenceCoordinator persistence = new(
                     document,
-                    new MidoraProjectPackageV1(SoftwareVersion),
+                    new MidoraProjectPackageV1(MidoraSoftwareVersion.InformationalVersion),
                     candidate.CurrentProjectPath,
                     candidate.FileInformation);
                 CreatePlaybackServices(

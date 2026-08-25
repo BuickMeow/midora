@@ -123,3 +123,13 @@ Midora 仓库不提交 BASS DLL。Midora 的开源许可证不得覆盖或重新
 - [BASS 产品与授权](https://www.un4seen.com/bass.html)
 - [Un4seen 关于 GitHub 免费开源发布与商业再使用的答复](https://www.un4seen.com/forum/?topic=20159.0)
 - [OSI 批准的 MIT License 标准文本](https://opensource.org/license/mit)
+
+## 21.7 产品版本、发布标识与规格基线
+
+Midora 产品版本使用 `MAJOR.MINOR.PATCH[-prerelease]`。首个产品版本从 `1.0.0-dev` 开始，经 `1.0.0-rc.N` 进入 `1.0.0`；产品 SemVer 与 Project `fileFormatVersion`、component schema、Mapping ABI、Worker IPC、缓存 generation 和用户自由文本 Project Version 均为独立契约，不得用一个数字替代。
+
+仓库必须只有一个产品版本源，并由它生成 Assembly/File/Informational Version、Project manifest 和 MIDI Export Readme 的软件版本。1.x 的 CLR `AssemblyVersion` 固定为 `1.0.0.0`；Windows `FileVersion` 使用产品三段版本加数值第四段。开发构建允许在 Informational Version 中追加 Git commit build metadata，但不得改变 Product Version。
+
+正式版本使用不可移动的 annotated Git tag `v<version>`。发布 commit 必须工作区干净、通过版本一致性门、Format 兼容门、自动/人工发布门，并更新 Changelog、兼容说明、许可证与第三方 notices。RC 后不得加入未完成的大型能力；正式 tag 不得重打、移动或复用。
+
+新 1.x 软件必须持续读取本产品线此前正式发布的 Project Format；旧软件不承诺读取未来格式。Project Format 是否提升只由持久化表示和语义变化决定，不由产品 MAJOR/MINOR/PATCH 机械决定。用户填写的 Project Version 只属于作品 metadata，不参与任何兼容判断。

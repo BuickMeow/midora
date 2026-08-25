@@ -729,6 +729,11 @@ public sealed class DesktopSessionControllerTests
         session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
         EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
         SubVoice voice = Assert.Single(instrument.SubVoices);
+        session.Execute(ProjectDomainEditCommands.CreateMappingFunction(
+            instrument.Id,
+            "Identity",
+            "return value;",
+            []));
         session.Execute(ProjectDomainEditCommands.CreateLogicalParameter(
             instrument.Id,
             "Expression",
@@ -779,8 +784,17 @@ public sealed class DesktopSessionControllerTests
             value.Key == "mappingStep.chain");
         PropertyField source = properties.Fields.Single(value =>
             value.Key == "mappingStep.source");
+        PropertyField operation = properties.Fields.Single(value =>
+            value.Key == "mappingStep.operation");
         PropertyField parameterReference = properties.Fields.Single(value =>
             value.Key == "mappingStep.logicalParameter");
+        Assert.Contains("BUILT-IN OPERATIONS ONLY", source.Label, StringComparison.Ordinal);
+        Assert.Contains(source.Choices, value =>
+            value.Value == MappingSource.CurrentValue.ToString()
+            && value.Label.Contains("current", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(operation.Choices, value =>
+            value.Value == MappingOperation.CustomCSharp.ToString()
+            && value.Label.Contains("current accumulated chain value", StringComparison.OrdinalIgnoreCase));
         Assert.True(parameterReference.IsChoice);
         Assert.Contains(parameterReference.Choices, value =>
             value.Value == parameter.Id.Value.ToString()

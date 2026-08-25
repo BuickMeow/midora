@@ -359,6 +359,51 @@ public sealed class MappingAndLifecycleTests
     }
 
     [Fact]
+    public void LogicalParameterMappingReceivesTheEffectiveSubVoiceRootNote()
+    {
+        var fixture = CompilerTestProject.Create(segmentLength: 120);
+        fixture.Instrument.RequiresChannelIsolation = true;
+        fixture.Instrument.RootNote = 60;
+        fixture.Voice.RootNoteOverride = 67;
+        LogicalParameterDefinition parameter = new(fixture.Project)
+        {
+            Name = "root probe",
+            Type = LogicalParameterType.Double,
+            Minimum = 0,
+            Maximum = 1
+        };
+        fixture.Instrument.LogicalParameters.Add(parameter);
+        CSharpMappingFunction function = new(fixture.Project)
+        {
+            Name = "effective root",
+            Body = "return context.EffectiveRootNote;"
+        };
+        function.DeclaredContextFields.Add(nameof(MappingContextV2.EffectiveRootNote));
+        fixture.Instrument.MappingFunctions.Add(function);
+        LogicalParameterMapping mapping = new(fixture.Project)
+        {
+            ParameterId = parameter.Id,
+            SubVoiceId = fixture.Voice.Id,
+            Target = MidiValueTarget.ControlChange(1)
+        };
+        mapping.Steps.Add(new ValueMappingStep(fixture.Project)
+        {
+            Operation = MappingOperation.CustomCSharp,
+            MappingFunctionId = function.Id
+        });
+        fixture.Instrument.ParameterMappings.Add(mapping);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        Assert.True(result.IsConsumable, string.Join(Environment.NewLine, result.Diagnostics.Select(value => value.Message)));
+        Assert.Contains(result.Events.ToArray(), value =>
+            value.Message.MessageType == MidiMessageType.ControlChange
+            && value.Message.Byte1 == 1
+            && value.Message.Byte2 == 67);
+    }
+
+    [Fact]
     public void NoteVelocityMappingZeroRequiresExplicitClampPolicy()
     {
         var fixture = CompilerTestProject.Create();

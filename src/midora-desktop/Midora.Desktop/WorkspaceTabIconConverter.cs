@@ -17,7 +17,7 @@ public sealed class WorkspaceTabIconConverter : IValueConverter
             WorkspaceTabIconKind.PureMidiTrack => "Fluent.Midi20Regular",
             WorkspaceTabIconKind.Conductor => "Fluent.Wrench20Regular",
             WorkspaceTabIconKind.Diagnostics => "Fluent.Pulse20Regular",
-            WorkspaceTabIconKind.MappingFunction => "Fluent.Document20Regular",
+            WorkspaceTabIconKind.MappingFunction => "Fluent.Code20Regular",
             _ => null
         };
         return resourceKey is null

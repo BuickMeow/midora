@@ -256,6 +256,57 @@ public sealed class CSharpMappingAbiV2Tests
     }
 
     [Fact]
+    public void CustomFunctionIgnoresTheBuiltInSourceField()
+    {
+        var fixture = CompilerTestProject.Create();
+        CSharpMappingFunction function = Function(fixture.Project, "return value + 1;");
+        fixture.Instrument.MappingFunctions.Add(function);
+        TemplateEvent value = TemplateEvent.ControlChange(fixture.Project, 0, 1, 20);
+        value.ValueMappings.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.LogicalParameter,
+            LogicalParameterId = null,
+            Operation = MappingOperation.CustomCSharp,
+            MappingFunctionId = function.Id
+        });
+        fixture.Voice.Events.Add(value);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        using MidoraCompiler compiler = new();
+        CanonicalCompiledResult result = compiler.CompileFull(fixture.Project);
+
+        Assert.True(result.IsConsumable, string.Join(Environment.NewLine, result.Diagnostics.Select(item => item.Message)));
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "MIDORA1232");
+        Assert.Contains(result.Events.ToArray(), midiEvent =>
+            midiEvent.Message.MessageType == Midora.Midi.MidiMessageType.ControlChange
+            && midiEvent.Message.Byte1 == 1 && midiEvent.Message.Byte2 == 21);
+    }
+
+    [Fact]
+    public void CustomFunctionStalePerNoteSourceDoesNotRequireIsolation()
+    {
+        var fixture = CompilerTestProject.Create();
+        Assert.False(fixture.Instrument.RequiresChannelIsolation);
+        CSharpMappingFunction function = Function(fixture.Project, "return value;");
+        fixture.Instrument.MappingFunctions.Add(function);
+        TemplateEvent value = TemplateEvent.ControlChange(fixture.Project, 0, 1, 20);
+        value.ValueMappings.Add(new ValueMappingStep(fixture.Project)
+        {
+            Source = MappingSource.TriggerNote,
+            Operation = MappingOperation.CustomCSharp,
+            MappingFunctionId = function.Id
+        });
+        fixture.Voice.Events.Add(value);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        using MidoraCompiler compiler = new();
+        CanonicalCompiledResult result = compiler.CompileFull(fixture.Project);
+
+        Assert.True(result.IsConsumable, string.Join(Environment.NewLine, result.Diagnostics.Select(item => item.Message)));
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Code == "MIDORA1214");
+    }
+
+    [Fact]
     public void NoteOnlyContextDeclarationsAreRejectedOutsideNoteTargets()
     {
         var fixture = CompilerTestProject.Create();

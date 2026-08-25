@@ -1334,12 +1334,14 @@ public static class SemanticValidator
                 LogicalParameterId = step.LogicalParameterId ?? source.LogicalParameterId,
                 EnvelopeId = step.EnvelopeId ?? default
             };
-            if (step.Source == MappingSource.LogicalParameter
+            if (step.Operation != MappingOperation.CustomCSharp
+                && step.Source == MappingSource.LogicalParameter
                 && (!step.LogicalParameterId.HasValue || !parameters.ContainsKey(step.LogicalParameterId.Value)))
             {
                 AddError("MIDORA1232", "A Mapping Step references an unavailable Logical Parameter.", stepSource, diagnostics);
             }
-            if (step.Source == MappingSource.Envelope
+            if (step.Operation != MappingOperation.CustomCSharp
+                && step.Source == MappingSource.Envelope
                 && (!step.EnvelopeId.HasValue || !envelopes.Contains(step.EnvelopeId.Value)))
             {
                 AddError("MIDORA1233", "A Mapping Step references an unavailable Envelope Preset.", stepSource, diagnostics);
@@ -1363,7 +1365,8 @@ public static class SemanticValidator
         IReadOnlyDictionary<MidoraId, CSharpMappingFunction> functions,
         TemplateEventMappingTarget? target = null)
     {
-        bool directSourceRequiresIsolation = IsPerNoteStep(step)
+        bool directSourceRequiresIsolation = step.Operation != MappingOperation.CustomCSharp
+            && IsPerNoteStep(step)
             && !(target.HasValue
                 && IsIsolationFreeTriggerVelocityToNoteVelocity(step, target.Value));
         bool functionRequiresIsolation = step.Operation == MappingOperation.CustomCSharp

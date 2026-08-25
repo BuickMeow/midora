@@ -35,3 +35,32 @@
 - Application：Parameter Mapping route 一次原子修改/Undo；Mapping Chain target settings；Follow preset enable/disable/Undo；默认创建与复制保持确定 Stable ID。
 - Desktop：Release build/XAML compile；对象所属 Properties choice 使用 Stable ID value + display label；Source policy 覆盖 Note Number、Note Velocity、非 Note 与 Logical Parameter chain。
 - Piano Roll：最终创建使用 MouseUp 时的 pitch；跨 lane 只在 pitch 实际变化时发试听更新；取消路径结束试听且不提交。
+
+## 4. Mapping Function 编辑器优化前纠正（2026-08-25）
+
+| 项目 | 正式约束 |
+|---|---|
+| 输入 | ABI v2 `CSharpMappingFunction`、Mapping Step 当前累计值、声明的 Context Fields、Logical Parameter / SubVoice Event Mapping 上下文。 |
+| 正式输出 | `CustomCSharp` 固定以当前累计链值作为 `Transform(value, in context)` 的 `value`；其 Mapping Step `Source` 不参与求值。所有 Mapping 上下文均填充正式的 `EffectiveRootNote`。 |
+| 编辑规范化 | 新建或修改 `CustomCSharp` Step 时将无意义的 `Source` 规范化为 `CurrentValue`；不改变持久化格式。旧数据中的其他 Source 仍可读取，但编译时忽略；Undo 恢复编辑前的精确旧值。 |
+| UI | Properties 明确标注 Source 仅用于内建 Operation，并说明 Custom C# 接收当前累计链值；本轮不加入语法着色、括号配对或补全。 |
+| 失败条件 | Function 缺失、ABI/源码编译失败、返回非有限值、用户代码抛出异常，继续使正式编译失败。 |
+| 诊断 | 运行异常诊断保留 Mapping Function / Step / 来源对象定位，并显示实际异常类型和消息；不吞掉异常原因。 |
+| 持久化归属 | Function 源码、声明 Context Fields 与 Step 引用仍属于 Project Source Data；Roslyn 产物和运行异常不持久化。 |
+| 运行时归属 | Function 编译与执行仍属于 Compiler/Mapping Engine；不进入音频 callback，也不改变 canonical consumer。 |
+| 非目标 | 不变更 ABI v2、不自动推断 Declared Context Fields、不引入脚本 sandbox、不实施代码编辑器体验增强。 |
+
+补充说明：SRS 第 9 章已经规定 Custom C# 的 `value` 为当前累计值、Mapping Context 包含 Effective Root Note，以及运行异常必须失败；本节只是纠正实现与 UI，不修改正式语义。
+
+## 5. Mapping Function 正式编辑体验优化（2026-08-25）
+
+| 项目 | 正式约束 |
+|---|---|
+| 输入 | 独立 Draft Body、固定 ABI v2 参数 `value` / `context`、`MappingContextV2` 公开属性、固定 Contract 枚举、`System.Math` 公共静态成员。 |
+| 编辑器 | 使用内嵌多行 C# 编辑器，提供 C# 词法着色、行号、`()` / `[]` / `{}` 配对输入与高亮、未配对错误高亮、查找和本地文本 Undo / Redo。代码着色复用 Batch Edit 的暗色 token 调色板，不使用 AvalonEdit 内置浅色 C# 主题；括号与补全必须忽略字符串及注释。 |
+| 补全 | `Ctrl+Space` 或标识符输入触发；支持 ABI 参数、`context.` 全部正式属性、`Math.` 方法/常量和 Contract 枚举成员；Enter/Tab 接受，Esc 关闭，F1 轮换重载签名。补全项从实际 ABI 类型和 `System.Math` 反射生成，不维护平行字段清单。 |
+| Context 声明 | 补全只插入源码成员，不自动修改 `DeclaredContextFields`；属性说明明确提示用户同步声明依赖，正式 Semantic Validation 继续负责未知/缺失声明。 |
+| Draft/提交 | 键入、补全、查找和本地文本 Undo / Redo 只改变 Workspace Draft；`Compile Draft` 只验证；`Apply` / `Ctrl+S` 才通过既有原子 Project command 提交。 |
+| 失败条件 | ABI、引用、源码、非有限返回值及运行异常规则不变；编辑器不吞掉 Compiler diagnostic，也不提供与正式 profile 不一致的伪成功。 |
+| 持久化归属 | 只有 Apply 成功后的 Function Body / Name / Declared Context Fields 属于 Project Source Data；补全列表、光标、括号高亮和弹窗状态不持久化。 |
+| 非目标 | 不改变 ABI v2、Roslyn/C# profile、允许引用集、collectible ALC、Mapping 求值或 canonical consumer；不引入 sandbox、语言服务进程或自动修改 Context 声明。 |

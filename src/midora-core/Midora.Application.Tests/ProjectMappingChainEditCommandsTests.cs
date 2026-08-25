@@ -104,6 +104,67 @@ public sealed class ProjectMappingChainEditCommandsTests
     }
 
     [Fact]
+    public void CustomCSharpStepUpdateNormalizesTheIrrelevantSourceAndUndoRestoresItExactly()
+    {
+        Fixture fixture = CreateFixture();
+        using ProjectCompilationSession compilation = new(fixture.Project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.UpdateMappingStep(
+            fixture.Instrument.Id,
+            fixture.Chain.Id,
+            fixture.FirstStep.Id,
+            MappingSource.LogicalParameter,
+            MappingOperation.CustomCSharp,
+            logicalParameterId: null,
+            envelopeId: null,
+            mappingFunctionId: fixture.Function.Id,
+            constant: 5,
+            sourceMinimum: 0,
+            sourceMaximum: 127,
+            targetMinimum: 0,
+            targetMaximum: 127,
+            MappingInputOverflow.Clamp,
+            DivideByZeroPolicy.TargetMaximum));
+
+        Assert.Equal(MappingSource.CurrentValue, fixture.FirstStep.Source);
+        Assert.Equal(MappingOperation.CustomCSharp, fixture.FirstStep.Operation);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+
+        Assert.Equal(MappingSource.Constant, fixture.FirstStep.Source);
+        Assert.Equal(MappingOperation.Add, fixture.FirstStep.Operation);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
+    public void CustomCSharpStepCreationNormalizesTheIrrelevantSource()
+    {
+        Fixture fixture = CreateFixture();
+        using ProjectCompilationSession compilation = new(fixture.Project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+        int oldCount = fixture.Chain.Count;
+
+        document.Execute(ProjectDomainEditCommands.CreateMappingStep(
+            fixture.Instrument.Id,
+            fixture.Chain.Id,
+            MappingSource.TriggerNote,
+            MappingOperation.CustomCSharp,
+            mappingFunctionId: fixture.Function.Id));
+
+        ValueMappingStep created = Assert.Single(fixture.Chain.Skip(oldCount));
+        Assert.Equal(MappingSource.CurrentValue, created.Source);
+        Assert.Equal(MappingOperation.CustomCSharp, created.Operation);
+        AssertCurrentCompilationMatchesFull(compilation);
+
+        document.Undo();
+
+        Assert.DoesNotContain(created, fixture.Chain);
+        AssertCurrentCompilationMatchesFull(compilation);
+    }
+
+    [Fact]
     public void StepPropertiesCanMoveOwnerAtomicallyAndUndoRestoresOwnerIndexAndValues()
     {
         Fixture fixture = CreateFixture();

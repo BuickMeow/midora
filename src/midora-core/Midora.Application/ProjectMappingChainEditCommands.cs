@@ -205,7 +205,7 @@ public static partial class ProjectDomainEditCommands
             MappingChain chain = FindMappingChain(instrument, mappingChainId);
             ValueMappingStep step = FindMappingStep(chain, mappingStepId);
             MappingStepValue old = CaptureMappingStep(step);
-            MappingStepValue replacement = new(
+            MappingStepValue replacement = NormalizeMappingStepValue(new(
                 source,
                 operation,
                 logicalParameterId,
@@ -217,7 +217,7 @@ public static partial class ProjectDomainEditCommands
                 targetMinimum,
                 targetMaximum,
                 inputOverflow,
-                divideByZero);
+                divideByZero));
             ValidateMappingStepValue(replacement);
             return Prepared(
                 old != replacement,
@@ -254,7 +254,7 @@ public static partial class ProjectDomainEditCommands
             bool ownerChanges = !ReferenceEquals(sourceChain, targetChain);
             MappingStepValue old = CaptureMappingStep(step);
             bool oldEnabled = step.IsEnabled;
-            MappingStepValue replacement = new(
+            MappingStepValue replacement = NormalizeMappingStepValue(new(
                 source,
                 operation,
                 logicalParameterId,
@@ -266,7 +266,7 @@ public static partial class ProjectDomainEditCommands
                 targetMinimum,
                 targetMaximum,
                 inputOverflow,
-                divideByZero);
+                divideByZero));
             ValidateMappingStepValue(replacement);
             if (ownerChanges && targetChain.Any(value => value.Id == mappingStepId))
             {
@@ -444,6 +444,11 @@ public static partial class ProjectDomainEditCommands
             value.TargetMaximum,
             value.InputOverflow,
             value.DivideByZero);
+
+    private static MappingStepValue NormalizeMappingStepValue(MappingStepValue value) =>
+        value.Operation == MappingOperation.CustomCSharp
+            ? value with { Source = MappingSource.CurrentValue }
+            : value;
 
     private static void ValidateMappingStepValue(MappingStepValue value)
     {

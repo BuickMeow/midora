@@ -513,12 +513,12 @@ public partial class BatchExpressionEditor : UserControl
         Func<IReadOnlyList<BatchExpressionVariable>> variables)
         : DocumentColorizingTransformer
     {
-        private static readonly Brush KeywordBrush = FrozenBrush("#569CD6");
-        private static readonly Brush VariableBrush = FrozenBrush("#9CDCFE");
-        private static readonly Brush TypeBrush = FrozenBrush("#4EC9B0");
-        private static readonly Brush MethodBrush = FrozenBrush("#DCDCAA");
-        private static readonly Brush NumberBrush = FrozenBrush("#B5CEA8");
-        private static readonly Brush OperatorBrush = FrozenBrush("#C586C0");
+        private static readonly Brush KeywordBrush = FrozenBrush(CodeEditorDarkPalette.Keyword);
+        private static readonly Brush VariableBrush = FrozenBrush(CodeEditorDarkPalette.Variable);
+        private static readonly Brush TypeBrush = FrozenBrush(CodeEditorDarkPalette.Type);
+        private static readonly Brush MethodBrush = FrozenBrush(CodeEditorDarkPalette.Method);
+        private static readonly Brush NumberBrush = FrozenBrush(CodeEditorDarkPalette.Number);
+        private static readonly Brush OperatorBrush = FrozenBrush(CodeEditorDarkPalette.Operator);
 
         [GeneratedRegex(@"\b(?:\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[A-Za-z_][A-Za-z0-9_]*)\b")]
         private static partial Regex TokenRegex();

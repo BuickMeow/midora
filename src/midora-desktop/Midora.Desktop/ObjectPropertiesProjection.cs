@@ -90,6 +90,7 @@ internal static class ObjectPropertiesProjection
         MappingSource[] sources = chains
             .Select(chain => MappingEditingPolicy.Resolve(instrument, chain.Id))
             .SelectMany(context => MappingEditingPolicy.AllowedSources(instrument, context))
+            .Append(MappingSource.CurrentValue)
             .Distinct()
             .ToArray();
         bool hasCustomFunction = chains.Any(chain =>
@@ -99,7 +100,8 @@ internal static class ObjectPropertiesProjection
         ObjectPropertiesViewModel result = new();
         result.Replace(
             "New Mapping Step",
-            "Choose the owner and every Mapping Step property before adding it.",
+            "Choose the owner and every Mapping Step property before adding it. "
+                + "Custom C# receives the current accumulated chain value; Source is ignored.",
             [ChoiceField(
                  "mappingStep.chain",
                  "MAPPING CHAIN",
@@ -110,11 +112,11 @@ internal static class ObjectPropertiesProjection
              Field("mappingStep.enabled", "ENABLED", true),
              ChoiceField(
                  "mappingStep.source",
-                 "SOURCE",
+                 "SOURCE (BUILT-IN OPERATIONS ONLY)",
                  MappingSource.CurrentValue.ToString(),
                  sources.Select(source => new PropertyChoiceOption(
                      source.ToString(),
-                     source.ToString()))),
+                     $"{source} — {MappingEditingPolicy.DescribeSource(source)}"))),
              ChoiceField(
                  "mappingStep.operation",
                  "OPERATION",
@@ -123,7 +125,7 @@ internal static class ObjectPropertiesProjection
                      .Where(operation => operation != MappingOperation.CustomCSharp || hasCustomFunction)
                      .Select(operation => new PropertyChoiceOption(
                          operation.ToString(),
-                         operation.ToString()))),
+                         DescribeMappingOperation(operation)))),
              ChoiceField(
                  "mappingStep.logicalParameter",
                  "LOGICAL PARAMETER (WHEN SOURCE USES IT)",
@@ -144,7 +146,7 @@ internal static class ObjectPropertiesProjection
                      "Missing Envelope")),
              ChoiceField(
                  "mappingStep.function",
-                 "C# MAPPING FUNCTION (WHEN OPERATION USES IT)",
+                 "C# MAPPING FUNCTION (CUSTOM C# OPERATION)",
                  string.Empty,
                  OptionalIdChoices(
                      instrument.MappingFunctions.Select(item => (item.Id, item.Name)),
@@ -172,10 +174,13 @@ internal static class ObjectPropertiesProjection
         MidoraId chainId = NullableId(Required("mappingStep.chain"), "Mapping Chain")
             ?? throw new InvalidOperationException("Select a Mapping Chain.");
         MappingChainEditingContext context = MappingEditingPolicy.Resolve(instrument, chainId);
-        MappingSource source = EnumValue<MappingSource>(Required("mappingStep.source"), "Source");
         MappingOperation operation = EnumValue<MappingOperation>(Required("mappingStep.operation"), "Operation");
+        MappingSource source = operation == MappingOperation.CustomCSharp
+            ? MappingSource.CurrentValue
+            : EnumValue<MappingSource>(Required("mappingStep.source"), "Source");
         MidoraId? functionId = NullableId(Required("mappingStep.function"), "C# Mapping Function");
-        if (!MappingEditingPolicy.AllowedSources(instrument, context).Contains(source))
+        if (operation != MappingOperation.CustomCSharp
+            && !MappingEditingPolicy.AllowedSources(instrument, context).Contains(source))
         {
             throw new InvalidOperationException(
                 $"{source} is not legal in the selected Mapping Chain context.");
@@ -520,10 +525,15 @@ internal static class ObjectPropertiesProjection
                 MappingOperation operation = TryValue("mappingStep.operation", out string operationText)
                     ? EnumValue<MappingOperation>(operationText, "Operation")
                     : step.Operation;
+                if (operation == MappingOperation.CustomCSharp)
+                {
+                    source = MappingSource.CurrentValue;
+                }
                 MidoraId? mappingFunctionId = TryValue("mappingStep.function", out string function)
                     ? NullableId(function, "C# Mapping Function")
                     : step.MappingFunctionId;
-                if (!MappingEditingPolicy.AllowedSources(ownedInstrument, targetContext).Contains(source))
+                if (operation != MappingOperation.CustomCSharp
+                    && !MappingEditingPolicy.AllowedSources(ownedInstrument, targetContext).Contains(source))
                 {
                     throw new InvalidOperationException(
                         $"{source} is not legal in the selected Mapping Chain context.");
@@ -1670,18 +1680,18 @@ internal static class ObjectPropertiesProjection
                     Field("mappingStep.enabled", "ENABLED", step.IsEnabled),
                     ChoiceField(
                         "mappingStep.source",
-                        "SOURCE",
+                        "SOURCE (BUILT-IN OPERATIONS ONLY)",
                         step.Source.ToString(),
                         sources.Select(source => new PropertyChoiceOption(
                             source.ToString(),
-                            source.ToString()))),
+                            $"{source} — {MappingEditingPolicy.DescribeSource(source)}"))),
                     ChoiceField(
                         "mappingStep.operation",
                         "OPERATION",
                         step.Operation.ToString(),
                         operations.Select(operation => new PropertyChoiceOption(
                             operation.ToString(),
-                            operation.ToString())))
+                            DescribeMappingOperation(operation))))
                 ];
                 // Keep every semantic reference selectable in the transactional dialog.
                 // Source and Operation may change in the same OK action, so deriving field
@@ -1707,7 +1717,7 @@ internal static class ObjectPropertiesProjection
                         "Missing Envelope")));
                 fields.Add(ChoiceField(
                     "mappingStep.function",
-                    "C# MAPPING FUNCTION (WHEN OPERATION USES IT)",
+                    "C# MAPPING FUNCTION (CUSTOM C# OPERATION)",
                     step.MappingFunctionId?.Value.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
                     OptionalIdChoices(
                         instrument.MappingFunctions.Select(item => (item.Id, item.Name)),
@@ -1725,7 +1735,8 @@ internal static class ObjectPropertiesProjection
                 ]);
                 properties.Replace(
                     $"Mapping Step {mappingStep.Index + 1}",
-                    "Ordered Mapping Step",
+                    "Ordered Mapping Step · Custom C# receives the current accumulated chain value; "
+                        + "Source applies only to built-in operations.",
                     fields);
                 return;
             }
@@ -2476,6 +2487,11 @@ internal static class ObjectPropertiesProjection
         value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double result)
         && double.IsFinite(result)
         ? result : throw new FormatException($"{label} must be a finite number using '.'.");
+
+    private static string DescribeMappingOperation(MappingOperation operation) =>
+        operation == MappingOperation.CustomCSharp
+            ? "CustomCSharp — receives the current accumulated chain value"
+            : operation.ToString();
 
     private static T EnumValue<T>(string value, string label) where T : struct, Enum =>
         Enum.TryParse(value.Trim(), ignoreCase: true, out T result) && Enum.IsDefined(result)

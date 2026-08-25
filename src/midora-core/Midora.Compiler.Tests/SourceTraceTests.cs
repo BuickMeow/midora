@@ -34,6 +34,37 @@ public sealed class SourceTraceTests
     }
 
     [Fact]
+    public void MappingRuntimeFailureReportsTheUserExceptionTypeAndMessage()
+    {
+        var fixture = CompilerTestProject.Create();
+        CSharpMappingFunction function = AddFunction(
+            fixture.Project,
+            fixture.Instrument,
+            "Runtime failure",
+            "throw new InvalidOperationException(\"probe detail\");");
+        TemplateEvent sourceEvent = TemplateEvent.ControlChange(fixture.Project, 0, 1, 20);
+        ValueMappingStep step = new(fixture.Project)
+        {
+            Operation = MappingOperation.CustomCSharp,
+            MappingFunctionId = function.Id
+        };
+        sourceEvent.ValueMappings.Add(step);
+        fixture.Voice.Events.Add(sourceEvent);
+        CompilerTestProject.AddNote(fixture.Segment, fixture.Instrument, 0, 120);
+
+        CanonicalCompiledResult result = new MidoraCompiler().CompileFull(fixture.Project);
+
+        CompilerDiagnostic diagnostic = Assert.Single(
+            result.Diagnostics,
+            value => value.Code == "MIDORA2101");
+        Assert.Contains("System.InvalidOperationException", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Contains("probe detail", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal(sourceEvent.Id, diagnostic.Source.SourceEventId);
+        Assert.Equal(step.Id, diagnostic.Source.MappingStepId);
+        Assert.Equal(function.Id, diagnostic.Source.MappingFunctionId);
+    }
+
+    [Fact]
     public void TemplateMappingCanonicalEventKeepsEventStepAndFunction()
     {
         var fixture = CompilerTestProject.Create();

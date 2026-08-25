@@ -79,24 +79,30 @@ internal sealed class MappingEngine : IDisposable
             lastAppliedStep = step;
             try
             {
-                double source = GetSource(step, current, context, parameters, envelopes);
-                current = step.Operation switch
+                if (step.Operation == MappingOperation.CustomCSharp)
                 {
-                    MappingOperation.Override => source,
-                    MappingOperation.Add => current + source,
-                    MappingOperation.Multiply => current * source,
-                    MappingOperation.Remap => Remap(source, step, legalMaximum, targetDefault),
-                    MappingOperation.Clamp => Math.Clamp(current, step.TargetMinimum, step.TargetMaximum),
-                    MappingOperation.Ignore => current,
-                    MappingOperation.ConstantPlusValue => step.Constant + source,
-                    MappingOperation.ConstantMultiplyValue => step.Constant * source,
-                    MappingOperation.ConstantMinusValue => step.Constant - source,
-                    MappingOperation.ValueMinusConstant => source - step.Constant,
-                    MappingOperation.ConstantDivideValue => Divide(step.Constant, source, step, legalMaximum, targetDefault),
-                    MappingOperation.ValueDivideConstant => Divide(source, step.Constant, step, legalMaximum, targetDefault),
-                    MappingOperation.CustomCSharp => EvaluateCSharp(step, current, context, functions),
-                    _ => throw new MappingException($"Unknown mapping operation {step.Operation}.")
-                };
+                    current = EvaluateCSharp(step, current, context, functions);
+                }
+                else
+                {
+                    double source = GetSource(step, current, context, parameters, envelopes);
+                    current = step.Operation switch
+                    {
+                        MappingOperation.Override => source,
+                        MappingOperation.Add => current + source,
+                        MappingOperation.Multiply => current * source,
+                        MappingOperation.Remap => Remap(source, step, legalMaximum, targetDefault),
+                        MappingOperation.Clamp => Math.Clamp(current, step.TargetMinimum, step.TargetMaximum),
+                        MappingOperation.Ignore => current,
+                        MappingOperation.ConstantPlusValue => step.Constant + source,
+                        MappingOperation.ConstantMultiplyValue => step.Constant * source,
+                        MappingOperation.ConstantMinusValue => step.Constant - source,
+                        MappingOperation.ValueMinusConstant => source - step.Constant,
+                        MappingOperation.ConstantDivideValue => Divide(step.Constant, source, step, legalMaximum, targetDefault),
+                        MappingOperation.ValueDivideConstant => Divide(source, step.Constant, step, legalMaximum, targetDefault),
+                        _ => throw new MappingException($"Unknown mapping operation {step.Operation}.")
+                    };
+                }
 
                 if (!double.IsFinite(current))
                 {
@@ -164,7 +170,13 @@ internal sealed class MappingEngine : IDisposable
         }
         catch (Exception exception)
         {
-            throw new MappingException("C# Mapping execution failed.", exception);
+            string typeName = exception.GetType().FullName ?? exception.GetType().Name;
+            string detail = string.IsNullOrWhiteSpace(exception.Message)
+                ? "No exception message was provided."
+                : exception.Message;
+            throw new MappingException(
+                $"C# Mapping execution failed: {typeName}: {detail}",
+                exception);
         }
     }
 

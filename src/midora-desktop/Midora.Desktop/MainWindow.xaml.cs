@@ -3037,17 +3037,6 @@ public partial class MainWindow : Window
 
     private void OnFindMappingClick(object sender, RoutedEventArgs e) => FindNextInMappingEditor();
 
-    private void OnMappingEditorSelectionChanged(object sender, RoutedEventArgs e)
-    {
-        if (sender is not TextBox { DataContext: MappingFunctionWorkspaceViewModel workspace } editor)
-        {
-            return;
-        }
-        int lineIndex = editor.GetLineIndexFromCharacterIndex(editor.CaretIndex);
-        int lineStart = lineIndex >= 0 ? editor.GetCharacterIndexFromLineIndex(lineIndex) : 0;
-        workspace.CaretStatus = $"Ln {Math.Max(0, lineIndex) + 1}, Col {editor.CaretIndex - Math.Max(0, lineStart) + 1}";
-    }
-
     private void FocusMappingFind()
     {
         if (FindWorkspaceElement<TextBox>("MappingFind") is TextBox find)
@@ -3060,7 +3049,7 @@ public partial class MainWindow : Window
     private void FindNextInMappingEditor()
     {
         if (_session.ActiveWorkspace is not MappingFunctionWorkspaceViewModel workspace
-            || FindWorkspaceElement<TextBox>("MappingEditor") is not TextBox editor)
+            || FindWorkspaceElement<MappingFunctionCodeEditor>("MappingEditor") is not MappingFunctionCodeEditor editor)
         {
             return;
         }
@@ -3071,22 +3060,11 @@ public partial class MainWindow : Window
             FocusMappingFind();
             return;
         }
-        int start = Math.Clamp(editor.SelectionStart + editor.SelectionLength, 0, editor.Text.Length);
-        int index = editor.Text.IndexOf(needle, start, StringComparison.OrdinalIgnoreCase);
-        bool wrapped = false;
-        if (index < 0 && start > 0)
-        {
-            index = editor.Text.IndexOf(needle, 0, start, StringComparison.OrdinalIgnoreCase);
-            wrapped = index >= 0;
-        }
-        if (index < 0)
+        if (!editor.FindNext(needle, out bool wrapped))
         {
             workspace.FindStatus = "No match.";
             return;
         }
-        editor.Focus();
-        editor.Select(index, needle.Length);
-        editor.ScrollToLine(Math.Max(0, editor.GetLineIndexFromCharacterIndex(index)));
         workspace.FindStatus = wrapped ? "Wrapped to the first match." : "Match selected.";
     }
 
@@ -10260,9 +10238,12 @@ public partial class MainWindow : Window
                 .SelectMany(voice => voice.EventMappings)
                 .Select(item => item.Steps));
 
-    private static bool IsTextEditingFocus() => Keyboard.FocusedElement is TextBoxBase
-        or PasswordBox
-        or ComboBox;
+    private static bool IsTextEditingFocus()
+    {
+        DependencyObject? focused = Keyboard.FocusedElement as DependencyObject;
+        return focused is TextBoxBase or PasswordBox or ComboBox
+               || FindVisualAncestor<MappingFunctionCodeEditor>(focused) is not null;
+    }
 
     private void OnKeyboardFocusChangedForInputMethod(
         object sender,
@@ -10283,6 +10264,10 @@ public partial class MainWindow : Window
             {
                 return true;
             }
+            if (current is MappingFunctionCodeEditor)
+            {
+                return true;
+            }
             if (current is ComboBox { IsEditable: true })
             {
                 return true;
@@ -10295,6 +10280,10 @@ public partial class MainWindow : Window
     {
         DependencyObject? focused = Keyboard.FocusedElement as DependencyObject;
         if (focused is TextBoxBase or PasswordBox)
+        {
+            return true;
+        }
+        if (FindVisualAncestor<MappingFunctionCodeEditor>(focused) is not null)
         {
             return true;
         }
@@ -10330,7 +10319,8 @@ public partial class MainWindow : Window
         if (_spaceStartedPlayback
             && (FindVisualAncestor<TextBoxBase>(source) is not null
                 || FindVisualAncestor<PasswordBox>(source) is not null
-                || FindVisualAncestor<ComboBox>(source) is not null))
+                || FindVisualAncestor<ComboBox>(source) is not null
+                || FindVisualAncestor<MappingFunctionCodeEditor>(source) is not null))
         {
             _spaceStartedPlayback = false;
         }

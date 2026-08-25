@@ -635,12 +635,20 @@ public sealed class WpfInteractionRegressionTests
         Assert.Null(projectNameFrame.Attribute("Padding"));
         Assert.Equal("Left", (string?)projectNameFrame.Attribute("HorizontalAlignment"));
         Assert.Equal("Center", (string?)projectNameFrame.Attribute("VerticalAlignment"));
+        Assert.Null(projectNameFrame.Attribute("BorderBrush"));
+        Assert.Null(projectNameFrame.Attribute("BorderThickness"));
+        XElement projectNameGrid = projectNameFrame.Elements(presentation + "Grid").Single();
+        XElement visualFrame = projectNameGrid.Elements(presentation + "Border").Single();
         Assert.Equal(
             "{StaticResource Brush.Border}",
-            (string?)projectNameFrame.Attribute("BorderBrush"));
-        Assert.Equal("1", (string?)projectNameFrame.Attribute("BorderThickness"));
-        Assert.Equal("3", (string?)projectNameFrame.Attribute("CornerRadius"));
-        XElement projectName = projectNameFrame.Elements(presentation + "TextBlock").Single(element =>
+            (string?)visualFrame.Attribute("BorderBrush"));
+        Assert.Equal("1", (string?)visualFrame.Attribute("BorderThickness"));
+        Assert.Equal("3", (string?)visualFrame.Attribute("CornerRadius"));
+        XElement translate = visualFrame
+            .Element(presentation + "Border.RenderTransform")!
+            .Element(presentation + "TranslateTransform")!;
+        Assert.Equal("1", (string?)translate.Attribute("Y"));
+        XElement projectName = projectNameGrid.Elements(presentation + "TextBlock").Single(element =>
             string.Equals(
                 (string?)element.Attribute("Text"),
                 "{Binding TitleBarProjectDisplayName}",

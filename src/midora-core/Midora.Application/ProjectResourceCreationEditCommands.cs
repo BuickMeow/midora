@@ -646,7 +646,7 @@ public static partial class ProjectDomainEditCommands
         {
             EventInstrument instrument = FindEventInstrument(project, eventInstrumentId);
             MappingChain chain = FindMappingChain(instrument, mappingChainId);
-            MappingStepValue value = new(
+            MappingStepValue value = NormalizeMappingStepValue(new(
                 source,
                 operation,
                 logicalParameterId,
@@ -658,7 +658,7 @@ public static partial class ProjectDomainEditCommands
                 targetMinimum,
                 targetMaximum,
                 inputOverflow,
-                divideByZero);
+                divideByZero));
             ValidateMappingStepValue(value);
             int index = insertionIndex ?? chain.Count;
             ValidateInsertionIndex(index, chain.Count, nameof(insertionIndex));

@@ -1787,6 +1787,7 @@ public sealed partial class MidoraCompiler : IDisposable
                     mapping.Target.EventNumber,
                     MappingEngine.Round(currentRawValue, MappingRounding.Round))
                 {
+                    EffectiveRootNote = root,
                     CurrentParameter = mapping.Target.Parameter switch
                     {
                         TemplateEventMappingParameter.SecondaryValue =>
@@ -1933,6 +1934,7 @@ public sealed partial class MidoraCompiler : IDisposable
                             0,
                             0)
                         {
+                            EffectiveRootNote = targetVoiceRoot,
                             CurrentParameter = MappingTargetParameterV2.LogicalParameterOutput,
                             CurrentEventKind = ToMappingEventKind(group.Key.Kind),
                             LogicalParameterId = ToMappingId(mapping.ParameterId),

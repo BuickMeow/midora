@@ -578,12 +578,59 @@ public static class TimelinePianoTileRasterizer
         {
             return TimelineContentFingerprint.ForPianoTileItems([]);
         }
-        List<TimelineRenderItem> candidates = [];
-        snapshot.Index.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, candidates);
-        ulong materialized = TimelineContentFingerprint.ForPianoTileItems(candidates);
-        return snapshot.HasExternalItemSource
-            ? TimelineContentFingerprint.Combine(materialized, snapshot.ExternalItemSourceFingerprint)
-            : materialized;
+        List<TimelineRenderItem> materialized = [];
+        snapshot.QueryMaterializedInto(
+            startTick,
+            endTick,
+            firstLane,
+            lastLaneExclusive,
+            materialized);
+        return TimelineContentFingerprint.Combine(
+            TimelineContentFingerprint.ForPianoTileItems(materialized),
+            snapshot.GetExternalRangeFingerprint(
+                startTick,
+                endTick,
+                firstLane,
+                lastLaneExclusive));
+    }
+
+    public static ulong ComputeSelectionFingerprint(
+        TimelineRenderSnapshot snapshot,
+        TimelineSelectionSnapshot selection,
+        double devicePixelsPerTick,
+        double devicePixelsPerLane,
+        long tileX,
+        long tileY)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(selection);
+        if (!TryGetTileBounds(
+                devicePixelsPerTick,
+                devicePixelsPerLane,
+                tileX,
+                tileY,
+                out long startTick,
+                out long endTick,
+                out int firstLane,
+                out int lastLaneExclusive))
+        {
+            return TimelineContentFingerprint.ForLocalSelection([], selection);
+        }
+        // Selection rasterization remains asynchronous. A global selection
+        // revision is intentionally cheap here: it may invalidate more of the
+        // lightweight selection layer, but never re-queries dense base content
+        // while WPF is rendering a frame.
+        return TimelineContentFingerprint.Combine(
+            snapshot.GetExternalRangeFingerprint(
+                startTick,
+                endTick,
+                firstLane,
+                lastLaneExclusive),
+            selection.GetRangeRevisionFingerprint(
+                startTick,
+                endTick,
+                firstLane,
+                lastLaneExclusive));
     }
 
     public static TimelineRasterBuffer Rasterize(
@@ -863,8 +910,7 @@ public static class TimelineSegmentPreviewRasterizer
     public const int FixedPreviewLodLevelsPerOctave = 2;
     public const int MaximumFixedPreviewLod = 124;
     public const int MaximumWarmupTilesPerSegment = 4;
-    public const int MaximumFallbackTilesPerSegment =
-        MaximumWarmupTilesPerSegment * 2;
+    public const int MaximumFallbackTilesPerSegment = MaximumWarmupTilesPerSegment;
     public const int ContentWidth = 512;
     public const int Width = ContentWidth;
     public const int Height = 64;
@@ -1040,16 +1086,6 @@ public static class TimelineSegmentPreviewRasterizer
             lod++;
         }
         return lod;
-    }
-
-    public static int SelectFallbackLod(
-        long segmentLengthTicks,
-        int ticksPerQuarterNote)
-    {
-        int warmupLod = SelectWarmupLod(segmentLengthTicks, ticksPerQuarterNote);
-        return Math.Max(
-            0,
-            warmupLod - FixedPreviewLodLevelsPerOctave);
     }
 
     private static double GetFixedPreviewLodDivisor(int lod)
@@ -1551,6 +1587,49 @@ public static class TimelineEventPointTileRasterizer
         }
     }
 
+    public static ulong ComputeContentFingerprint(
+        TimelineRenderSnapshot snapshot,
+        TimelineSelectionSnapshot? selection,
+        double devicePixelsPerTick,
+        double devicePixelsPerValue,
+        long tileX,
+        long tileY,
+        double dpiScaleX,
+        double dpiScaleY,
+        bool selectionOnly = false)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (!double.IsFinite(devicePixelsPerTick) || devicePixelsPerTick <= 0)
+            throw new ArgumentOutOfRangeException(nameof(devicePixelsPerTick));
+        if (!double.IsFinite(devicePixelsPerValue) || devicePixelsPerValue <= 0)
+            throw new ArgumentOutOfRangeException(nameof(devicePixelsPerValue));
+        int gutterX = GetGutter(dpiScaleX);
+        int gutterY = GetGutter(dpiScaleY);
+        int width = checked(TileSize + gutterX * 2);
+        int height = checked(TileSize + gutterY * 2);
+        double worldLeft = tileX * (double)TileSize - gutterX;
+        double worldTop = tileY * (double)TileSize - gutterY;
+        long startTick = Math.Max(0, FloorToLong(worldLeft / devicePixelsPerTick));
+        long endTick = Math.Max(
+            startTick + 1,
+            CeilingToLong((worldLeft + width) / devicePixelsPerTick));
+        double selectionRadiusY = Math.Max(1, SelectionRadius * dpiScaleY);
+        List<TimelineRenderItem> materialized = [];
+        snapshot.QueryMaterializedInto(startTick, endTick, 0, 1, materialized);
+        materialized.RemoveAll(item => item.Kind is not (
+            TimelineItemKind.LogicalParameterPoint
+                or TimelineItemKind.DirectMidiEvent
+                or TimelineItemKind.OpaqueMidiEvent));
+        ulong content = TimelineContentFingerprint.Combine(
+            TimelineContentFingerprint.ForRenderItems(materialized),
+            snapshot.GetExternalRangeFingerprint(startTick, endTick, 0, 1));
+        return selection is null
+            ? content
+            : TimelineContentFingerprint.Combine(
+                content,
+                selection.GetRangeRevisionFingerprint(startTick, endTick, 0, 1));
+    }
+
     internal static void FillEllipse(
         byte[] pixels,
         int width,
@@ -1862,14 +1941,16 @@ public static class TimelineVelocityTileRasterizer
         double worldLeft = tileX * (double)TileSize - Gutter;
         long startTick = Math.Max(0, FloorToLong(worldLeft / pixelsPerTick));
         long endTick = Math.Max(startTick + 1, CeilingToLong((worldLeft + RasterWidth) / pixelsPerTick));
-        List<TimelineRenderItem> candidates = [];
-        snapshot.Index.QueryInto(startTick, endTick, 0, 1, candidates);
-        ulong materialized = TimelineContentFingerprint.ForVelocityTileItems(candidates, selection);
-        if (!snapshot.HasExternalItemSource) return materialized;
-        ulong external = TimelineContentFingerprint.WithSelection(
-            snapshot.ExternalItemSourceFingerprint,
-            selection?.Revision ?? 0);
-        return TimelineContentFingerprint.Combine(materialized, external);
+        List<TimelineRenderItem> materialized = [];
+        snapshot.QueryMaterializedInto(startTick, endTick, 0, 1, materialized);
+        ulong content = TimelineContentFingerprint.Combine(
+            TimelineContentFingerprint.ForVelocityTileItems(materialized, selection),
+            snapshot.GetExternalRangeFingerprint(startTick, endTick, 0, 1));
+        return selection is null
+            ? content
+            : TimelineContentFingerprint.Combine(
+                content,
+                selection.GetRangeRevisionFingerprint(startTick, endTick, 0, 1));
     }
 
     private static long FloorToLong(double value) => value <= long.MinValue
@@ -1881,20 +1962,39 @@ public static class TimelineVelocityTileRasterizer
         : value >= long.MaxValue ? long.MaxValue : (long)Math.Ceiling(value);
 }
 
+internal enum TimelineRasterRequestPriority
+{
+    Background = 0,
+    Normal = 1,
+    Visible = 2
+}
+
 internal sealed class TimelineRasterCache
 {
     public const long MaximumBytes = 256L * 1024 * 1024;
     public const int MaximumInFlight = 64;
     private const int MaximumWorkers = 2;
+    private const int MaximumSpeculativeInFlight = MaximumInFlight / 2;
     private readonly object _gate = new();
     private readonly Dictionary<TimelineRasterCacheKey, CacheEntry> _completed = [];
-    private readonly Dictionary<TimelineRasterCacheKey, List<Completion>> _inFlight = [];
+    private readonly Dictionary<TimelineRasterCacheKey, PendingWork> _inFlight = [];
     private readonly LinkedList<TimelineRasterCacheKey> _lru = [];
-    private readonly SemaphoreSlim _workers = new(MaximumWorkers, MaximumWorkers);
+    private readonly Queue<TimelineRasterCacheKey> _visibleQueue = [];
+    private readonly Queue<TimelineRasterCacheKey> _normalQueue = [];
+    private readonly Queue<TimelineRasterCacheKey> _backgroundQueue = [];
+    private readonly SemaphoreSlim _workAvailable = new(0);
     private long _currentBytes;
     private long _generation;
+    private int _speculativeInFlight;
+    private int _runningSpeculative;
 
     public static TimelineRasterCache Shared { get; } = new();
+
+    public TimelineRasterCache()
+    {
+        for (int index = 0; index < MaximumWorkers; index++)
+            _ = Task.Run(WorkerLoopAsync);
+    }
 
     public long CurrentBytes
     {
@@ -1904,6 +2004,11 @@ internal sealed class TimelineRasterCache
     public int CompletedCount
     {
         get { lock (_gate) return _completed.Count; }
+    }
+
+    public int InFlightCount
+    {
+        get { lock (_gate) return _inFlight.Count; }
     }
 
     public bool TryGet(TimelineRasterCacheKey key, out BitmapSource? bitmap)
@@ -1926,60 +2031,155 @@ internal sealed class TimelineRasterCache
         TimelineRasterCacheKey key,
         Func<TimelineRasterBuffer> factory,
         Dispatcher dispatcher,
-        Action completion)
+        Action completion,
+        CancellationToken cancellationToken = default,
+        TimelineRasterRequestPriority priority = TimelineRasterRequestPriority.Normal)
     {
         ArgumentNullException.ThrowIfNull(factory);
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(completion);
-        long generation;
+        if (cancellationToken.IsCancellationRequested) return false;
+
+        bool alreadyCompleted = false;
+        bool signalWorker = false;
+        bool accepted = true;
         lock (_gate)
         {
             if (_completed.ContainsKey(key))
             {
-                dispatcher.BeginInvoke(completion, DispatcherPriority.Render);
-                return true;
+                alreadyCompleted = true;
             }
-            if (_inFlight.TryGetValue(key, out List<Completion>? completions))
+            else if (_inFlight.TryGetValue(key, out PendingWork? pending))
             {
-                completions.Add(new(dispatcher, completion));
-                return true;
+                pending.Completions.Add(new(dispatcher, completion, cancellationToken));
+                if (!pending.Running && priority > pending.Priority)
+                {
+                    if (pending.Priority != TimelineRasterRequestPriority.Visible
+                        && priority == TimelineRasterRequestPriority.Visible)
+                    {
+                        _speculativeInFlight--;
+                    }
+                    pending.Priority = priority;
+                    EnqueueLocked(key, priority);
+                    signalWorker = true;
+                }
             }
-            if (_inFlight.Count >= MaximumInFlight)
+            else if (_inFlight.Count >= MaximumInFlight
+                || priority != TimelineRasterRequestPriority.Visible
+                && _speculativeInFlight >= MaximumSpeculativeInFlight)
             {
-                return false;
+                accepted = false;
             }
-            _inFlight.Add(key, [new(dispatcher, completion)]);
-            generation = _generation;
+            else
+            {
+                PendingWork work = new(
+                    factory,
+                    _generation,
+                    priority,
+                    [new(dispatcher, completion, cancellationToken)]);
+                _inFlight.Add(key, work);
+                if (priority != TimelineRasterRequestPriority.Visible)
+                    _speculativeInFlight++;
+                EnqueueLocked(key, priority);
+                signalWorker = true;
+            }
         }
+        if (signalWorker) _workAvailable.Release();
+        if (alreadyCompleted && !cancellationToken.IsCancellationRequested)
+            dispatcher.BeginInvoke(completion, DispatcherPriority.Render);
+        return accepted;
+    }
 
-        _ = Task.Run(async () =>
+    private async Task WorkerLoopAsync()
+    {
+        while (true)
         {
-            BitmapSource? bitmap = null;
-            long bytes = 0;
             try
             {
-                await _workers.WaitAsync().ConfigureAwait(false);
-                try
-                {
-                    TimelineRasterBuffer buffer = factory();
-                    bitmap = buffer.CreateFrozenBitmap();
-                    bytes = buffer.ByteSize;
-                }
-                finally
-                {
-                    _workers.Release();
-                }
+                await _workAvailable.WaitAsync().ConfigureAwait(false);
+                if (!TryStartNext(out TimelineRasterCacheKey key, out PendingWork? work))
+                    continue;
+                Execute(key, work!);
             }
             catch (Exception exception)
             {
-                Trace.TraceError($"Timeline rasterization failed: {exception}");
+                Trace.TraceError($"Timeline raster worker failed: {exception}");
             }
+        }
+    }
 
-            List<Completion> callbacks;
+    private bool TryStartNext(
+        out TimelineRasterCacheKey key,
+        out PendingWork? work)
+    {
+        lock (_gate)
+        {
+            if (TryDequeueLocked(_visibleQueue, TimelineRasterRequestPriority.Visible, out key, out work)
+                || _runningSpeculative == 0
+                && (TryDequeueLocked(
+                        _normalQueue,
+                        TimelineRasterRequestPriority.Normal,
+                        out key,
+                        out work)
+                    || TryDequeueLocked(
+                        _backgroundQueue,
+                        TimelineRasterRequestPriority.Background,
+                        out key,
+                        out work)))
+            {
+                work!.Running = true;
+                if (work.Priority != TimelineRasterRequestPriority.Visible)
+                    _runningSpeculative++;
+                return true;
+            }
+        }
+        key = default;
+        work = null;
+        return false;
+    }
+
+    private void Execute(
+        TimelineRasterCacheKey key,
+        PendingWork work)
+    {
+        BitmapSource? bitmap = null;
+        long bytes = 0;
+        try
+        {
+            bool hasLiveConsumer;
             lock (_gate)
             {
-                callbacks = _inFlight.Remove(key, out List<Completion>? pending) ? pending : [];
-                if (bitmap is not null && generation == _generation && bytes <= MaximumBytes)
+                hasLiveConsumer = _inFlight.TryGetValue(key, out PendingWork? pending)
+                    && ReferenceEquals(pending, work)
+                    && pending.Completions.Any(static value =>
+                        !value.CancellationToken.IsCancellationRequested);
+            }
+            if (hasLiveConsumer)
+            {
+                TimelineRasterBuffer buffer = work.Factory();
+                bitmap = buffer.CreateFrozenBitmap();
+                bytes = buffer.ByteSize;
+            }
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError($"Timeline rasterization failed: {exception}");
+        }
+
+        List<Completion> callbacks = [];
+        bool signalQueuedWork = false;
+        lock (_gate)
+        {
+            if (_inFlight.TryGetValue(key, out PendingWork? pending)
+                && ReferenceEquals(pending, work))
+            {
+                _inFlight.Remove(key);
+                callbacks = pending.Completions;
+                if (work.Priority != TimelineRasterRequestPriority.Visible)
+                    _speculativeInFlight = Math.Max(0, _speculativeInFlight - 1);
+                if (bitmap is not null
+                    && work.Generation == _generation
+                    && bytes <= MaximumBytes)
                 {
                     LinkedListNode<TimelineRasterCacheKey> node = _lru.AddFirst(key);
                     _completed[key] = new(bitmap, bytes, node);
@@ -1987,12 +2187,13 @@ internal sealed class TimelineRasterCache
                     TrimLocked();
                 }
             }
-            foreach (Completion callback in callbacks)
-            {
-                _ = callback.Dispatcher.BeginInvoke(callback.Action, DispatcherPriority.Render);
-            }
-        });
-        return true;
+            if (work.Priority != TimelineRasterRequestPriority.Visible)
+                _runningSpeculative = Math.Max(0, _runningSpeculative - 1);
+            signalQueuedWork = HasRunnableQueuedWorkLocked();
+        }
+        foreach (Completion callback in callbacks)
+            _ = callback.Dispatcher.BeginInvoke(callback.Action, DispatcherPriority.Render);
+        if (signalQueuedWork) _workAvailable.Release();
     }
 
     public void Clear()
@@ -2018,17 +2219,77 @@ internal sealed class TimelineRasterCache
         }
     }
 
+    private void EnqueueLocked(
+        TimelineRasterCacheKey key,
+        TimelineRasterRequestPriority priority)
+    {
+        switch (priority)
+        {
+            case TimelineRasterRequestPriority.Visible:
+                _visibleQueue.Enqueue(key);
+                break;
+            case TimelineRasterRequestPriority.Normal:
+                _normalQueue.Enqueue(key);
+                break;
+            default:
+                _backgroundQueue.Enqueue(key);
+                break;
+        }
+    }
+
+    private bool TryDequeueLocked(
+        Queue<TimelineRasterCacheKey> queue,
+        TimelineRasterRequestPriority priority,
+        out TimelineRasterCacheKey key,
+        out PendingWork? work)
+    {
+        while (queue.TryDequeue(out key))
+        {
+            if (_inFlight.TryGetValue(key, out work)
+                && !work.Running
+                && work.Priority == priority)
+            {
+                return true;
+            }
+        }
+        key = default;
+        work = null;
+        return false;
+    }
+
+    private bool HasRunnableQueuedWorkLocked() =>
+        _visibleQueue.Count != 0
+        || _runningSpeculative == 0
+        && (_normalQueue.Count != 0 || _backgroundQueue.Count != 0);
+
     private sealed record CacheEntry(
         BitmapSource Bitmap,
         long Bytes,
         LinkedListNode<TimelineRasterCacheKey> Node);
 
-    private sealed record Completion(Dispatcher Dispatcher, Action Action);
+    private sealed record Completion(
+        Dispatcher Dispatcher,
+        Action Action,
+        CancellationToken CancellationToken);
+
+    private sealed class PendingWork(
+        Func<TimelineRasterBuffer> factory,
+        long generation,
+        TimelineRasterRequestPriority priority,
+        List<Completion> completions)
+    {
+        public Func<TimelineRasterBuffer> Factory { get; } = factory;
+        public long Generation { get; } = generation;
+        public TimelineRasterRequestPriority Priority { get; set; } = priority;
+        public List<Completion> Completions { get; } = completions;
+        public bool Running { get; set; }
+    }
 }
 
 public static class TimelineRasterCacheSession
 {
     public static long CurrentBytes => TimelineRasterCache.Shared.CurrentBytes;
     public static int CompletedCount => TimelineRasterCache.Shared.CompletedCount;
+    public static int InFlightCount => TimelineRasterCache.Shared.InFlightCount;
     public static void Clear() => TimelineRasterCache.Shared.Clear();
 }

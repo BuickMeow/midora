@@ -141,6 +141,20 @@ public sealed class DesktopSessionControllerTests
             + $"executeMs={moveTimer.Elapsed.TotalMilliseconds:F1}");
         Assert.True(move.Changed);
 
+        System.Diagnostics.Stopwatch undoTimer = System.Diagnostics.Stopwatch.StartNew();
+        session.Undo();
+        undoTimer.Stop();
+        Console.WriteLine(
+            $"[paged-ui-undo] selected={selected.Length}; "
+            + $"undoMs={undoTimer.Elapsed.TotalMilliseconds:F1}");
+
+        System.Diagnostics.Stopwatch redoTimer = System.Diagnostics.Stopwatch.StartNew();
+        session.Redo();
+        redoTimer.Stop();
+        Console.WriteLine(
+            $"[paged-ui-redo] selected={selected.Length}; "
+            + $"redoMs={redoTimer.Elapsed.TotalMilliseconds:F1}");
+
         long createTick = checked(segment.ContentEndTick + 1);
         System.Diagnostics.Stopwatch createTimer = System.Diagnostics.Stopwatch.StartNew();
         ProjectEditExecution creation = session.Execute(

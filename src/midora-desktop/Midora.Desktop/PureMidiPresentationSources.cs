@@ -4,9 +4,16 @@ using Midora.Domain;
 
 namespace Midora.Desktop;
 
-internal sealed class PagedMidiSegmentPreviewSource(MidiSegment segment) : ITimelineSegmentPreviewSource
+internal sealed class PagedMidiSegmentPreviewSource : ITimelineSegmentPreviewSource
 {
-    private readonly MidiSegment _segment = segment ?? throw new ArgumentNullException(nameof(segment));
+    private readonly MidiSegment _segment;
+    private readonly DirectMidiNoteQuerySnapshot _notes;
+
+    public PagedMidiSegmentPreviewSource(MidiSegment segment)
+    {
+        _segment = segment ?? throw new ArgumentNullException(nameof(segment));
+        _notes = segment.Notes.CreateQuerySnapshot();
+    }
 
     public bool HasNoteContent => _segment.Notes.Count != 0;
 
@@ -37,7 +44,7 @@ internal sealed class PagedMidiSegmentPreviewSource(MidiSegment segment) : ITime
         if (endTick <= startTick) return;
         long visibleStart = _segment.ContentOffsetTick;
         long visibleEnd = _segment.ContentEndTick;
-        foreach (DirectMidiNoteValue note in _segment.Notes.QueryValues(startTick, endTick))
+        foreach (DirectMidiNoteValue note in _notes.QueryValues(startTick, endTick))
         {
             long noteEnd = note.StartTick > long.MaxValue - Math.Max(1, note.LengthTicks)
                 ? long.MaxValue
@@ -86,7 +93,7 @@ internal sealed class PagedMidiSegmentPreviewSource(MidiSegment segment) : ITime
         if (endTick <= startTick) return;
         long visibleStart = _segment.ContentOffsetTick;
         long visibleEnd = _segment.ContentEndTick;
-        foreach (DirectMidiNoteValue note in _segment.Notes.QueryValues(startTick, endTick))
+        foreach (DirectMidiNoteValue note in _notes.QueryValues(startTick, endTick))
         {
             long noteEnd = note.StartTick > long.MaxValue - Math.Max(1, note.LengthTicks)
                 ? long.MaxValue
@@ -126,6 +133,30 @@ internal sealed class PagedMidiSegmentPreviewSource(MidiSegment segment) : ITime
         }
     }
 
+    public ulong GetTileContentFingerprint(
+        bool eventLayer,
+        double deviceSegmentWidth,
+        long tileX)
+    {
+        double normalizedStart = Math.Max(
+            0,
+            (tileX * TimelineSegmentPreviewRasterizer.TileSize - 1d) / deviceSegmentWidth);
+        double normalizedEnd = Math.Min(
+            Math.BitIncrement(1d),
+            ((tileX + 1d) * TimelineSegmentPreviewRasterizer.TileSize + 1d)
+            / deviceSegmentWidth);
+        (long startTick, long endTick) = ToContentRange(normalizedStart, normalizedEnd);
+        if (eventLayer)
+        {
+            return TimelineContentFingerprint.Combine(
+                EventContentFingerprint,
+                TimelineContentFingerprint.Combine(
+                    unchecked((ulong)startTick),
+                    unchecked((ulong)endTick)));
+        }
+        return _notes.GetRangeFingerprint(startTick, Math.Max(startTick + 1, endTick));
+    }
+
     private (long StartTick, long EndTick) ToContentRange(double normalizedStart, double normalizedEnd)
     {
         double clampedStart = Math.Clamp(normalizedStart, 0, 1);
@@ -163,25 +194,32 @@ internal sealed class PagedDirectMidiTimelineItemSource : ITimelineRenderItemSou
     private readonly MidiSegment _segment;
     private readonly DirectMidiTimelineProjection _projection;
     private readonly DirectMidiEventLaneTarget? _eventTarget;
-    private readonly HashSet<MidoraId> _selectedIds;
+    private readonly IReadOnlySet<MidoraId> _selectedIds;
     private readonly MidoraId? _primaryId;
     private readonly long _count;
+    private readonly DirectMidiNoteQuerySnapshot? _noteSnapshot;
 
     public PagedDirectMidiTimelineItemSource(
         MidiSegment segment,
         DirectMidiTimelineProjection projection,
         DirectMidiEventLaneTarget? eventTarget = null,
-        IEnumerable<MidoraId>? selectedIds = null,
-        MidoraId? primaryId = null)
+        IReadOnlySet<MidoraId>? selectedIds = null,
+        MidoraId? primaryId = null,
+        DirectMidiNoteQuerySnapshot? noteSnapshot = null)
     {
         _segment = segment ?? throw new ArgumentNullException(nameof(segment));
         _projection = projection;
         _eventTarget = eventTarget;
-        _selectedIds = selectedIds is null ? [] : new HashSet<MidoraId>(selectedIds);
+        _selectedIds = selectedIds ?? EmptySelection;
         _primaryId = primaryId;
+        _noteSnapshot = projection is DirectMidiTimelineProjection.Notes
+            or DirectMidiTimelineProjection.Velocities
+                ? noteSnapshot ?? segment.Notes.CreateQuerySnapshot()
+                : null;
         _count = projection switch
         {
-            DirectMidiTimelineProjection.Notes or DirectMidiTimelineProjection.Velocities => segment.Notes.Count,
+            DirectMidiTimelineProjection.Notes or DirectMidiTimelineProjection.Velocities =>
+                _noteSnapshot!.Count,
             DirectMidiTimelineProjection.OpaqueEvents => segment.OpaqueEvents.Count,
             DirectMidiTimelineProjection.ChannelEvents => eventTarget is null
                 ? 0
@@ -190,8 +228,10 @@ internal sealed class PagedDirectMidiTimelineItemSource : ITimelineRenderItemSou
         };
     }
 
+    private static IReadOnlySet<MidoraId> EmptySelection { get; } = new HashSet<MidoraId>();
+
     public long Count => _count;
-    public long MaximumEndTick => _segment.ContentEndTick;
+    public long MaximumEndTick => _noteSnapshot?.MaximumEndTick ?? _segment.ContentEndTick;
     public ulong ContentFingerprint => PureMidiPresentationFingerprint.Create(
         _segment.PagedContentFingerprint,
         _segment.Notes.Generation,
@@ -202,6 +242,35 @@ internal sealed class PagedDirectMidiTimelineItemSource : ITimelineRenderItemSou
         (long)_projection,
         _eventTarget is null ? -1 : (long)_eventTarget.Value.Kind,
         _eventTarget?.Data1 ?? -1);
+
+    public ulong GetRangeFingerprint(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive)
+    {
+        if (_projection == DirectMidiTimelineProjection.Notes)
+        {
+            int minimumKey = Math.Clamp(128 - lastLaneExclusive, 0, 127);
+            int maximumKey = Math.Clamp(127 - firstLane, 0, 127);
+            return maximumKey < minimumKey
+                ? 0
+                : _noteSnapshot!.GetRangeFingerprint(
+                    startTick,
+                    endTick,
+                    minimumKey,
+                    maximumKey);
+        }
+        if (_projection == DirectMidiTimelineProjection.Velocities)
+            return _noteSnapshot!.GetRangeFingerprint(startTick, endTick);
+        return PureMidiPresentationFingerprint.Create(
+            null,
+            unchecked((long)ContentFingerprint),
+            startTick,
+            endTick,
+            firstLane,
+            lastLaneExclusive);
+    }
 
     public void QueryInto(
         long startTick,
@@ -218,7 +287,7 @@ internal sealed class PagedDirectMidiTimelineItemSource : ITimelineRenderItemSou
                     int minimumKey = Math.Clamp(128 - lastLaneExclusive, 0, 127);
                     int maximumKey = Math.Clamp(127 - firstLane, 0, 127);
                     if (maximumKey < minimumKey) return;
-                    foreach (DirectMidiNoteValue note in _segment.Notes.QueryValues(
+                    foreach (DirectMidiNoteValue note in _noteSnapshot!.QueryValues(
                         startTick,
                         endTick,
                         minimumKey,
@@ -230,7 +299,7 @@ internal sealed class PagedDirectMidiTimelineItemSource : ITimelineRenderItemSou
                 }
             case DirectMidiTimelineProjection.Velocities:
                 if (firstLane > 0 || lastLaneExclusive <= 0) return;
-                foreach (DirectMidiNoteValue note in _segment.Notes.QueryValues(startTick, endTick))
+                foreach (DirectMidiNoteValue note in _noteSnapshot!.QueryValues(startTick, endTick))
                     destination.Add(ToVelocityItem(note));
                 break;
             case DirectMidiTimelineProjection.ChannelEvents:
@@ -265,7 +334,7 @@ internal sealed class PagedDirectMidiTimelineItemSource : ITimelineRenderItemSou
                     int minimumKey = Math.Clamp(128 - lastLaneExclusive, 0, 127);
                     int maximumKey = Math.Clamp(127 - firstLane, 0, 127);
                     if (maximumKey < minimumKey) return;
-                    foreach (DirectMidiNoteValue note in _segment.Notes.QueryValues(
+                    foreach (DirectMidiNoteValue note in _noteSnapshot!.QueryValues(
                         startTick,
                         endTick,
                         minimumKey,
@@ -277,7 +346,7 @@ internal sealed class PagedDirectMidiTimelineItemSource : ITimelineRenderItemSou
                 }
             case DirectMidiTimelineProjection.Velocities:
                 if (firstLane > 0 || lastLaneExclusive <= 0) return;
-                foreach (DirectMidiNoteValue note in _segment.Notes.QueryValues(startTick, endTick))
+                foreach (DirectMidiNoteValue note in _noteSnapshot!.QueryValues(startTick, endTick))
                     visitor(ToVelocityItem(note));
                 break;
             case DirectMidiTimelineProjection.ChannelEvents:

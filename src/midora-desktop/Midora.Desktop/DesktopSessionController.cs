@@ -1570,15 +1570,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             WorkspaceViewModel? workspace = Workspaces.FirstOrDefault(value => value.Key == key);
             if (workspace is null) continue;
-            workspace.Selection.Clear();
-            foreach (MidoraId id in bookmark.Ids.Where(id => id != bookmark.Primary))
-            {
-                workspace.Selection.Add(id, makePrimary: false);
-            }
-            if (bookmark.Primary is MidoraId primary)
-            {
-                workspace.Selection.Add(primary, makePrimary: true);
-            }
+            if (!workspace.Selection.ReplaceAll(bookmark.Ids, bookmark.Primary)) continue;
             RefreshWorkspaceSelection(workspace);
         }
     }

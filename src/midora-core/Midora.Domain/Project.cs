@@ -15,11 +15,42 @@ public sealed class LogicalNote
         Id = preservedId;
     }
 
+    private Action<LogicalNote>? _changeSink;
+    private long _startTick;
+    private long _lengthTicks;
+    private int _note = 60;
+    private int _velocity = 100;
+
     public MidoraId Id { get; init; }
-    public long StartTick { get; set; }
-    public long LengthTicks { get; set; }
-    public int Note { get; set; } = 60;
-    public int Velocity { get; set; } = 100;
+    public long StartTick
+    {
+        get => _startTick;
+        set => Set(ref _startTick, value);
+    }
+    public long LengthTicks
+    {
+        get => _lengthTicks;
+        set => Set(ref _lengthTicks, value);
+    }
+    public int Note
+    {
+        get => _note;
+        set => Set(ref _note, value);
+    }
+    public int Velocity
+    {
+        get => _velocity;
+        set => Set(ref _velocity, value);
+    }
+
+    internal void SetChangeSink(Action<LogicalNote>? sink) => _changeSink = sink;
+
+    private void Set<T>(ref T field, T value)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        field = value;
+        _changeSink?.Invoke(this);
+    }
 }
 
 public sealed class LogicalParameterLane
@@ -61,7 +92,7 @@ public sealed class Segment
     public long ProjectStartTick { get; set; }
     public long LengthTicks { get; set; }
     public long ContentOffsetTick { get; set; }
-    public List<LogicalNote> Notes { get; } = [];
+    public LogicalNoteCollection Notes { get; } = new();
     public List<LogicalParameterLane> ParameterLanes { get; } = [];
 
     public TickRange ProjectRange => new(ProjectStartTick, checked(ProjectStartTick + LengthTicks));

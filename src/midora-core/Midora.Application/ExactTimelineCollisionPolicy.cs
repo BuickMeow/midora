@@ -79,8 +79,272 @@ internal static class ExactTimelineCollisionPolicy
             return source;
         }
 
+        if (scoped.Scopes.HasOnlyTargetedNotes)
+        {
+            return new TargetedNoteCollisionPreparedEdit(
+                source,
+                CaptureTargetedLogicalNoteBaseline(scoped.Scopes.LogicalNoteTargets),
+                CaptureTargetedTemplateNoteBaseline(scoped.Scopes.TemplateNoteTargets),
+                CaptureTargetedDirectMidiNoteBaseline(scoped.Scopes.DirectMidiNoteTargets));
+        }
+
         CollisionBaseline baseline = CaptureBaseline(scoped.Scopes);
         return new CollisionResolvingPreparedEdit(source, baseline, scoped.Scopes);
+    }
+
+    private static TargetedLogicalNoteBaseline[] CaptureTargetedLogicalNoteBaseline(
+        IReadOnlyCollection<LogicalNoteCollisionTarget> targets) => targets
+        .GroupBy(static target => target.Segment)
+        .OrderBy(static group => group.Key.Id)
+        .Select(group =>
+        {
+            HashSet<TargetedNoteKey> keys = group
+                .Select(static target => new TargetedNoteKey(target.Tick, target.Key))
+                .ToHashSet();
+            Dictionary<TargetedNoteKey, HashSet<MidoraId>> occupants = [];
+            foreach (LogicalNote note in QueryTargetedLogicalNotes(group.Key, keys))
+            {
+                TargetedNoteKey key = new(note.StartTick, note.Note);
+                if (!occupants.TryGetValue(key, out HashSet<MidoraId>? ids))
+                {
+                    ids = [];
+                    occupants.Add(key, ids);
+                }
+                ids.Add(note.Id);
+            }
+            return new TargetedLogicalNoteBaseline(group.Key, keys, occupants);
+        })
+        .ToArray();
+
+    private static TargetedTemplateNoteBaseline[] CaptureTargetedTemplateNoteBaseline(
+        IReadOnlyCollection<TemplateNoteCollisionTarget> targets) => targets
+        .GroupBy(static target => target.SubVoice)
+        .OrderBy(static group => group.Key.Id)
+        .Select(group =>
+        {
+            HashSet<TargetedNoteKey> keys = group
+                .Select(static target => new TargetedNoteKey(target.Tick, target.Key))
+                .ToHashSet();
+            Dictionary<TargetedNoteKey, HashSet<MidoraId>> occupants = [];
+            foreach (TemplateEvent note in QueryTargetedTemplateNotes(group.Key, keys))
+            {
+                TargetedNoteKey key = new(note.Tick, note.Number);
+                if (!occupants.TryGetValue(key, out HashSet<MidoraId>? ids))
+                {
+                    ids = [];
+                    occupants.Add(key, ids);
+                }
+                ids.Add(note.Id);
+            }
+            return new TargetedTemplateNoteBaseline(group.Key, keys, occupants);
+        })
+        .ToArray();
+
+    private static TargetedDirectMidiNoteBaseline[] CaptureTargetedDirectMidiNoteBaseline(
+        IReadOnlyCollection<DirectMidiNoteCollisionTarget> targets) => targets
+        .GroupBy(static target => target.Segment)
+        .OrderBy(static group => group.Key.Id)
+        .Select(group =>
+        {
+            HashSet<DirectMidiNoteStartKey> keys = group
+                .Select(static target => new DirectMidiNoteStartKey(target.Tick, target.Key))
+                .ToHashSet();
+            Dictionary<DirectMidiNoteStartKey, HashSet<MidoraId>> occupants = [];
+            foreach (DirectMidiNote note in group.Key.Notes.QueryStartKeys(keys))
+            {
+                DirectMidiNoteStartKey key = new(note.StartTick, note.Key);
+                if (!occupants.TryGetValue(key, out HashSet<MidoraId>? ids))
+                {
+                    ids = [];
+                    occupants.Add(key, ids);
+                }
+                ids.Add(note.Id);
+            }
+            return new TargetedDirectMidiNoteBaseline(group.Key, keys, occupants);
+        })
+        .ToArray();
+
+    private static IReadOnlyList<CollisionRemoval> ResolveTargetedDirectMidiNotes(
+        IReadOnlyList<TargetedDirectMidiNoteBaseline> baselines)
+    {
+        List<TargetedDirectMidiNoteCandidate> discarded = [];
+        long order = 0;
+        foreach (TargetedDirectMidiNoteBaseline baseline in baselines)
+        {
+            Dictionary<DirectMidiNoteStartKey, List<TargetedDirectMidiNoteCandidate>> groups = [];
+            foreach (DirectMidiNote note in baseline.Segment.Notes.QueryEditedStartKeys(baseline.Keys))
+            {
+                DirectMidiNoteStartKey key = new(note.StartTick, note.Key);
+                if (!groups.TryGetValue(key, out List<TargetedDirectMidiNoteCandidate>? values))
+                {
+                    values = [];
+                    groups.Add(key, values);
+                }
+                values.Add(new(baseline.Segment.Notes, note, order++));
+            }
+
+            foreach ((DirectMidiNoteStartKey key, List<TargetedDirectMidiNoteCandidate> values) in groups)
+            {
+                baseline.Occupants.TryGetValue(key, out HashSet<MidoraId>? incumbents);
+                bool hasNewcomer = values.Any(value => incumbents?.Contains(value.Note.Id) != true);
+                if (!hasNewcomer) continue;
+                bool hasLiveIncumbent = incumbents?.Any(id =>
+                    baseline.Segment.Notes.IsUneditedSourceNotePresent(id)
+                    || values.Any(value => value.Note.Id == id)) == true;
+                if (hasLiveIncumbent)
+                {
+                    discarded.AddRange(values.Where(value => incumbents?.Contains(value.Note.Id) != true));
+                }
+                else
+                {
+                    discarded.AddRange(values.Skip(1));
+                }
+            }
+        }
+
+        return discarded
+            .GroupBy(static value => value.Collection)
+            .OrderBy(static group => group.Min(static value => value.Order))
+            .Select(static group => new CollisionRemoval(
+                group.Key.RemoveRangeForExactCollision(group
+                    .OrderBy(static value => value.Order)
+                    .Select(static value => value.Note)
+                    .ToArray())))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<CollisionRemoval> ResolveTargetedLogicalNotes(
+        IReadOnlyList<TargetedLogicalNoteBaseline> baselines)
+    {
+        List<TargetedLogicalNoteCandidate> discarded = [];
+        long order = 0;
+        foreach (TargetedLogicalNoteBaseline baseline in baselines)
+        {
+            Dictionary<TargetedNoteKey, List<TargetedLogicalNoteCandidate>> groups = [];
+            foreach (LogicalNote note in QueryTargetedLogicalNotes(baseline.Segment, baseline.Keys))
+            {
+                TargetedNoteKey key = new(note.StartTick, note.Note);
+                if (!groups.TryGetValue(key, out List<TargetedLogicalNoteCandidate>? values))
+                {
+                    values = [];
+                    groups.Add(key, values);
+                }
+                values.Add(new(baseline.Segment.Notes, note, order++));
+            }
+            foreach ((TargetedNoteKey key, List<TargetedLogicalNoteCandidate> values) in groups)
+            {
+                baseline.Occupants.TryGetValue(key, out HashSet<MidoraId>? incumbents);
+                if (!values.Any(value => incumbents?.Contains(value.Note.Id) != true)) continue;
+                TargetedLogicalNoteCandidate[] liveIncumbents = values
+                    .Where(value => incumbents?.Contains(value.Note.Id) == true)
+                    .ToArray();
+                discarded.AddRange(liveIncumbents.Length != 0
+                    ? values.Where(value => incumbents?.Contains(value.Note.Id) != true)
+                    : values.Skip(1));
+            }
+        }
+        return discarded
+            .GroupBy(static value => value.Collection)
+            .OrderBy(static group => group.Min(static value => value.Order))
+            .Select(static group => new CollisionRemoval(
+                group.Key.RemoveRangeForExactCollision(group
+                    .OrderBy(static value => value.Order)
+                    .Select(static value => value.Note)
+                    .ToArray())))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<CollisionRemoval> ResolveTargetedTemplateNotes(
+        IReadOnlyList<TargetedTemplateNoteBaseline> baselines)
+    {
+        List<TargetedTemplateNoteCandidate> discarded = [];
+        long order = 0;
+        foreach (TargetedTemplateNoteBaseline baseline in baselines)
+        {
+            Dictionary<TargetedNoteKey, List<TargetedTemplateNoteCandidate>> groups = [];
+            foreach (TemplateEvent note in QueryTargetedTemplateNotes(baseline.SubVoice, baseline.Keys))
+            {
+                TargetedNoteKey key = new(note.Tick, note.Number);
+                if (!groups.TryGetValue(key, out List<TargetedTemplateNoteCandidate>? values))
+                {
+                    values = [];
+                    groups.Add(key, values);
+                }
+                values.Add(new(baseline.SubVoice.Events, note, order++));
+            }
+            foreach ((TargetedNoteKey key, List<TargetedTemplateNoteCandidate> values) in groups)
+            {
+                baseline.Occupants.TryGetValue(key, out HashSet<MidoraId>? incumbents);
+                if (!values.Any(value => incumbents?.Contains(value.Note.Id) != true)) continue;
+                TargetedTemplateNoteCandidate[] liveIncumbents = values
+                    .Where(value => incumbents?.Contains(value.Note.Id) == true)
+                    .ToArray();
+                discarded.AddRange(liveIncumbents.Length != 0
+                    ? values.Where(value => incumbents?.Contains(value.Note.Id) != true)
+                    : values.Skip(1));
+            }
+        }
+        return discarded
+            .GroupBy(static value => value.Collection)
+            .OrderBy(static group => group.Min(static value => value.Order))
+            .Select(static group => new CollisionRemoval(
+                group.Key.RemoveRangeForExactCollision(group
+                    .OrderBy(static value => value.Order)
+                    .Select(static value => value.Note)
+                    .ToArray())))
+            .ToArray();
+    }
+
+    private static IEnumerable<LogicalNote> QueryTargetedLogicalNotes(
+        Segment segment,
+        IReadOnlySet<TargetedNoteKey> keys)
+    {
+        if (keys.Count == 0) yield break;
+        long minimumTick = keys.Min(static value => value.Tick);
+        long maximumTick = keys.Max(static value => value.Tick);
+        int minimumKey = keys.Min(static value => value.Key);
+        int maximumKey = keys.Max(static value => value.Key);
+        long endTick = maximumTick == long.MaxValue ? long.MaxValue : maximumTick + 1;
+        LogicalNoteQuerySnapshot snapshot = segment.Notes.CreateQuerySnapshot();
+        foreach (LogicalNoteSnapshotValue value in snapshot.QueryValues(
+            minimumTick,
+            endTick,
+            minimumKey,
+            maximumKey))
+        {
+            if (keys.Contains(new(value.StartTick, value.Note))
+                && segment.Notes.TryGetById(value.Id, out LogicalNote? note)
+                && note is not null)
+            {
+                yield return note;
+            }
+        }
+    }
+
+    private static IEnumerable<TemplateEvent> QueryTargetedTemplateNotes(
+        SubVoice voice,
+        IReadOnlySet<TargetedNoteKey> keys)
+    {
+        if (keys.Count == 0) yield break;
+        long minimumTick = keys.Min(static value => value.Tick);
+        long maximumTick = keys.Max(static value => value.Tick);
+        int minimumKey = keys.Min(static value => value.Key);
+        int maximumKey = keys.Max(static value => value.Key);
+        long endTick = maximumTick == long.MaxValue ? long.MaxValue : maximumTick + 1;
+        TemplateEventQuerySnapshot snapshot = voice.Events.CreateQuerySnapshot();
+        foreach (TemplateEventSnapshotValue value in snapshot.QueryNotes(
+            minimumTick,
+            endTick,
+            minimumKey,
+            maximumKey))
+        {
+            if (keys.Contains(new(value.Tick, value.Number))
+                && voice.Events.TryGetById(value.Id, out TemplateEvent? note)
+                && note is not null)
+            {
+                yield return note;
+            }
+        }
     }
 
     public static IPreparedProjectEdit CombineScopes(
@@ -433,6 +697,44 @@ internal static class ExactTimelineCollisionPolicy
         }
     }
 
+    private sealed class TargetedNoteCollisionPreparedEdit(
+        IPreparedProjectEdit source,
+        IReadOnlyList<TargetedLogicalNoteBaseline> logicalBaselines,
+        IReadOnlyList<TargetedTemplateNoteBaseline> templateBaselines,
+        IReadOnlyList<TargetedDirectMidiNoteBaseline> directBaselines) : IPreparedProjectEdit
+    {
+        private IReadOnlyList<CollisionRemoval>? _lastRemovals;
+        private bool _applyStarted;
+
+        public bool HasChanges => source.HasChanges;
+        public ProjectChangeSet Changes => source.Changes;
+
+        public void Apply(MidoraProject project)
+        {
+            _applyStarted = true;
+            _lastRemovals = [];
+            source.Apply(project);
+            _lastRemovals = ResolveTargetedLogicalNotes(logicalBaselines)
+                .Concat(ResolveTargetedTemplateNotes(templateBaselines))
+                .Concat(ResolveTargetedDirectMidiNotes(directBaselines))
+                .ToArray();
+        }
+
+        public void Undo(MidoraProject project)
+        {
+            if (!_applyStarted || _lastRemovals is null)
+            {
+                throw new InvalidOperationException(
+                    "An exact-collision edit cannot be undone before Apply.");
+            }
+            foreach (CollisionRemoval removal in _lastRemovals.Reverse())
+                removal.Restore();
+            source.Undo(project);
+            _lastRemovals = null;
+            _applyStarted = false;
+        }
+    }
+
     private sealed record CollisionScopedPreparedEdit(
         IPreparedProjectEdit Source,
         CollisionScopeSet Scopes) : IPreparedProjectEdit
@@ -462,6 +764,15 @@ internal static class ExactTimelineCollisionPolicy
             && LogicalNoteTargets.Count == 0
             && TemplateNoteTargets.Count == 0
             && DirectMidiNoteTargets.Count == 0
+            && DirectMidiEventTargets.Count == 0;
+
+        public bool HasOnlyTargetedNotes =>
+            LogicalNoteTargets.Count + TemplateNoteTargets.Count + DirectMidiNoteTargets.Count != 0
+            && LogicalNoteSegments.Count == 0
+            && LogicalParameterLanes.Count == 0
+            && SubVoices.Count == 0
+            && ValueCurves.Count == 0
+            && DirectMidiSegments.Count == 0
             && DirectMidiEventTargets.Count == 0;
 
         public static CollisionScopeSet Merge(CollisionScopeSet left, CollisionScopeSet right) =>
@@ -568,6 +879,38 @@ internal static class ExactTimelineCollisionPolicy
     }
 
     private sealed record CollisionRemoval(Action Restore);
+
+    private sealed record TargetedDirectMidiNoteBaseline(
+        MidiSegment Segment,
+        IReadOnlySet<DirectMidiNoteStartKey> Keys,
+        IReadOnlyDictionary<DirectMidiNoteStartKey, HashSet<MidoraId>> Occupants);
+
+    private sealed record TargetedLogicalNoteBaseline(
+        Segment Segment,
+        IReadOnlySet<TargetedNoteKey> Keys,
+        IReadOnlyDictionary<TargetedNoteKey, HashSet<MidoraId>> Occupants);
+
+    private sealed record TargetedTemplateNoteBaseline(
+        SubVoice SubVoice,
+        IReadOnlySet<TargetedNoteKey> Keys,
+        IReadOnlyDictionary<TargetedNoteKey, HashSet<MidoraId>> Occupants);
+
+    private readonly record struct TargetedDirectMidiNoteCandidate(
+        DirectMidiNoteCollection Collection,
+        DirectMidiNote Note,
+        long Order);
+
+    private readonly record struct TargetedLogicalNoteCandidate(
+        LogicalNoteCollection Collection,
+        LogicalNote Note,
+        long Order);
+
+    private readonly record struct TargetedTemplateNoteCandidate(
+        TemplateEventCollection Collection,
+        TemplateEvent Note,
+        long Order);
+
+    private readonly record struct TargetedNoteKey(long Tick, int Key);
 
     private readonly record struct CollisionKey(
         CollisionScope Scope,

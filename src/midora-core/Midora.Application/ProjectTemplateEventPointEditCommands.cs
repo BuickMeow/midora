@@ -85,10 +85,9 @@ public static partial class ProjectDomainEditCommands
                     {
                         throw new InvalidOperationException("Template Event points do not exist before the first Apply.");
                     }
-                    foreach (TemplateEvent value in created)
-                    {
-                        RemoveRequired(voice.Events, value, "drawn Template Event point");
-                    }
+                    int removed = voice.Events.RemoveRange(created);
+                    if (removed != created.Length)
+                        throw new InvalidOperationException("The drawn Template Event point set is no longer present.");
                     foreach (ExistingTemplateEventPointEdit edit in existing)
                     {
                         SetTemplateEvent(edit.Event, edit.OldValue);

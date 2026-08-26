@@ -1133,6 +1133,8 @@ public sealed class PureMidiContentPack : IDisposable
         IPureMidiSegmentContentSource,
         IPureMidiPlaybackEndpointSource,
         IPureMidiContentOverviewSource,
+        IPureMidiContentBoundsSource,
+        IPureMidiContentRangeFingerprintSource,
         IPureMidiContentPackSegmentSource
     {
         private readonly PureMidiContentPack _owner;
@@ -1142,6 +1144,7 @@ public sealed class PureMidiContentPack : IDisposable
         private readonly PageDescriptor[] _channelPages;
         private readonly PageDescriptor[] _channelEndpointPages;
         private readonly PageDescriptor[] _opaquePages;
+        private readonly long _maximumNoteEndTick;
 
         public SegmentSource(PureMidiContentPack owner, MidoraId segmentId)
         {
@@ -1153,6 +1156,9 @@ public sealed class PureMidiContentPack : IDisposable
             _channelPages = Pages(PureMidiContentRecordKind.ChannelEvent);
             _channelEndpointPages = Pages(PureMidiContentRecordKind.ChannelEventEndpoint);
             _opaquePages = Pages(PureMidiContentRecordKind.OpaqueEvent);
+            _maximumNoteEndTick = _noteOffEndpointPages.Length == 0
+                ? 0
+                : _noteOffEndpointPages.Max(static page => page.MaximumTick);
 
             if (Count(_notePages) != Count(_noteOnEndpointPages)
                 || Count(_notePages) != Count(_noteOffEndpointPages)
@@ -1173,7 +1179,38 @@ public sealed class PureMidiContentPack : IDisposable
         public int NoteCount => Count(_notePages);
         public int ChannelEventCount => Count(_channelPages);
         public int OpaqueEventCount => Count(_opaquePages);
+        public long MaximumNoteEndTick => _maximumNoteEndTick;
         public string ContentFingerprint => _owner.ContentFingerprint + ":" + SegmentId.Value;
+
+        public ulong GetNoteRangeFingerprint(
+            long startTick,
+            long endTick,
+            int minimumKey = 0,
+            int maximumKey = 127) => FingerprintPages(
+                _notePages,
+                startTick,
+                endTick,
+                minimumKey,
+                maximumKey,
+                notes: true);
+
+        public ulong GetChannelEventRangeFingerprint(long startTick, long endTick) =>
+            FingerprintPages(
+                _channelPages,
+                startTick,
+                endTick,
+                int.MinValue,
+                int.MaxValue,
+                notes: false);
+
+        public ulong GetOpaqueEventRangeFingerprint(long startTick, long endTick) =>
+            FingerprintPages(
+                _opaquePages,
+                startTick,
+                endTick,
+                int.MinValue,
+                int.MaxValue,
+                notes: false);
 
         public IEnumerable<PureMidiContentRangeSummary> GetNoteRangeSummaries() =>
             _noteOnEndpointPages.Select(static page => new PureMidiContentRangeSummary(
@@ -1734,6 +1771,41 @@ public sealed class PureMidiContentPack : IDisposable
                 else return page;
             }
             throw new InvalidDataException("Pure MIDI content ordinal is missing from the page catalog.");
+        }
+
+        private static ulong FingerprintPages(
+            IEnumerable<PageDescriptor> pages,
+            long startTick,
+            long endTick,
+            int minimumKey,
+            int maximumKey,
+            bool notes)
+        {
+            if (startTick < 0) throw new ArgumentOutOfRangeException(nameof(startTick));
+            if (endTick <= startTick) throw new ArgumentOutOfRangeException(nameof(endTick));
+            if (maximumKey < minimumKey) throw new ArgumentOutOfRangeException(nameof(maximumKey));
+            const ulong offset = 14695981039346656037UL;
+            const ulong prime = 1099511628211UL;
+            ulong fingerprint = offset;
+            foreach (PageDescriptor page in pages)
+            {
+                bool outsideTickRange = notes
+                    ? page.MinimumTick >= endTick || page.MaximumTick <= startTick
+                    : page.MinimumTick >= endTick || page.MaximumTick < startTick;
+                if (outsideTickRange
+                    || notes && (page.MaximumKey < minimumKey || page.MinimumKey > maximumKey))
+                {
+                    continue;
+                }
+                ulong checksum = BinaryPrimitives.ReadUInt64LittleEndian(page.DecodedSha256);
+                fingerprint ^= checksum;
+                fingerprint *= prime;
+                fingerprint ^= unchecked((ulong)page.FirstOrdinal);
+                fingerprint *= prime;
+                fingerprint ^= unchecked((ulong)page.RecordCount);
+                fingerprint *= prime;
+            }
+            return fingerprint;
         }
 
         private sealed class NoteEndpointCursor(

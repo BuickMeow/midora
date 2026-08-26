@@ -664,3 +664,17 @@ Requirement trace：输入为 Project Mapping Function expression/ABI/dependency
 同日冻结当前 `.midora` Format 1，作为完整作品验收和 1.0.0 的持久化基线。V1 JSON schema set hash、protobuf descriptor hash、代表性 wire golden、strict reader、deterministic package 与事务测试构成自动门；后续 1.x 新软件必须读取此前有效 Format 1。无法由 V1 表示的新数据必须建立 V2 codec/schema/content-pack contract 和 detached V1 migration，不得修改 V1 字段/field number/wire 语义或通过更新 golden 掩盖破坏。缓存只提升 generation 并淘汰，不进入格式迁移。
 
 Requirement trace：输入为单一产品版本源、Git commit/tag、Format 1 schema/descriptor/golden assets、既有 Project package 与各独立 ABI/protocol version；正式输出为一致软件标识、严格版本预检、持续 V1 读取和可审计 release。失败边界包括版本源/EXE/manifest/Readme 不一致、dirty/mismatched tag、V1 hash/golden/旧文件重开失败、未知未来格式和部分迁移；失败不得发布或部分提交 Project。产品版本/tag/changelog 属于发布契约，Format/schema/Project source 属于持久化，ABI/IPC 属于对应执行边界，cache generation 属于运行时；明确非目标是一个全局万能版本号、旧 reader 前向猜读、保存回旧格式或在 V1 中隐藏新字段。
+
+## 56. ADR-CORE-054（已接受）：大规模时间线的内存分页、批量历史与范围局部栅格缓存
+
+决定：Pure MIDI 保持 Format 1 Content Pack 的不可变外存分页与增量覆盖层；Logical Segment Note 与 SubVoice Template Event 在运行时改用固定 4,096 项的内存页集合。后两者的页是实现细节，只按稳定 ID、确定集合顺序和正式字段建立不可变值快照；页面首次变更采用 copy-on-write，连续批量编辑只标记受影响页，直到消费者请求快照时才重建脏页。该实现不得改变 `.midora` Format 1 的 JSON/protobuf 字段、顺序语义、stable ID、编译输入或 Undo/Redo 可观察结果，也不得把运行时页边界持久化。
+
+批量 Paste/Duplicate/编辑的 Apply、Undo、Redo 与同 Tick 精确碰撞处理不得逐项在线性 List/overlay 上查找并移动尾部。正式集合提供按 stable ID HashSet 的一次稳定压缩、一次 generation 提升和可恢复的原页/overlay位置记录；Undo 必须恢复相同对象引用、原有全局顺序、原页边界和选择语义。Direct MIDI Note 仍遵循“保留原占位者、删除后来编辑者”；Logical/SubVoice Note 的相同策略由同一 targeted collision transaction 执行。失败或冲突检测必须在发布 History entry 前完成，不能留下部分删除。
+
+钢琴卷帘、Velocity、Event Point 与 Arrangement Segment Preview 的栅格 identity 使用查询范围内的内容及选择局部指纹，不再把整个 Segment generation 或全局 selection revision 注入每个 tile。不可变 Pure MIDI Content Pack 的范围指纹只读取 page directory 与既有 page SHA-256，不解码 page payload；编辑 overlay、Logical Note 与 SubVoice Template Event 使用固定大小 block summary 的交换律聚合，只扫描范围首尾 block。WPF `OnRender` 只组合这些有界元数据和少量 materialized item，真正的分页查询、候选遍历与位图生成只在后台 raster worker 发生。远处编辑不能仅因 overlay 索引位移使未相交 tile 失效；Undo 恢复原内容时必须恢复原局部 fingerprint，从而直接重用编辑前缓存。
+
+Arrangement Segment Preview 固定为两层：第一层是每个 Segment 唯一、与当前 viewport zoom 无关、最多四个 tile 的 coarse fallback，Project/Workspace 建立后即后台预热，并在任何缩放下直接缩放显示；第二层才按半八度量化的显示 LOD 分 tile 生成。某 detail tile 完成后只在其覆盖区替换 coarse，未完成区继续显示 coarse，不得叠加两层造成重影，也不得因进入新缩放级别同步重算整条 Segment。钢琴卷帘、Velocity 和 Event Point 继续使用可见世界 tile；UI thread 建 key 时不得查询大型数据源，空白内容右侧不得创建无意义 piano tile。
+
+栅格调度固定为可见、邻域预取、全局预热三级优先级。两个 worker 中最多一个执行预取/预热任务，另一个容量始终为新出现的可见 tile 保留；64 项总在途上限中，非可见任务最多占 32 项，不能以后台暖缓存填满队列。Snapshot/Workspace/Surface Mode 修订后取消旧计划；已进入队列但已无有效消费者的请求在取得 worker 后必须跳过 factory；执行中的旧任务可以完成，但结果按 generation 丢弃且不得写入当前缓存。完成缓存继续受 256 MiB LRU 上限约束。
+
+Requirement trace：输入为 Project 时间线对象、stable ID、编辑范围、History command、Workspace selection、可见/预热 tile 范围及 Project revision；正式输出为与原数据模型完全相同的编辑结果、精确可逆 History、范围局部不可变 presentation snapshot 和确定栅格。边界包括跨页编辑、整页删除、碰撞产生的后来者删除、Redo、跨 Segment 粘贴、极端空白视区、缩放/平移、旧任务取消、缓存上限与 Project Close。Project 源对象和 Format 1 持久化不变；页、overlay 索引、快照、指纹、tile、取消令牌和 WPF bitmap 只属于进程内运行时。失败条件包括 stable ID 重复/缺失、恢复位置不一致、算术溢出和损坏分页源；失败不得发布部分 Project 或错误缓存。明确非目标是把 Logical/SubVoice 改成新的磁盘格式、让页边界影响编译顺序、无限保留 WPF 位图、保证执行中原生 WPF 栅格可抢占，或以缓存命中改变正式语义。

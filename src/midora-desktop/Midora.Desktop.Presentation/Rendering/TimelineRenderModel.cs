@@ -449,6 +449,28 @@ public interface ITimelineRenderItemSource
     long MaximumEndTick { get; }
     ulong ContentFingerprint { get; }
 
+    /// <summary>
+    /// Returns a bounded-cost fingerprint for a presentation range. Large
+    /// paged sources override this with page metadata; the default deliberately
+    /// invalidates broadly but never enumerates source items on the UI thread.
+    /// </summary>
+    ulong GetRangeFingerprint(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive)
+    {
+        ulong range = TimelineContentFingerprint.Combine(
+            unchecked((ulong)startTick),
+            unchecked((ulong)endTick));
+        range = TimelineContentFingerprint.Combine(
+            range,
+            TimelineContentFingerprint.Combine(
+                unchecked((ulong)firstLane),
+                unchecked((ulong)lastLaneExclusive)));
+        return TimelineContentFingerprint.Combine(ContentFingerprint, range);
+    }
+
     void QueryInto(
         long startTick,
         long endTick,
@@ -509,6 +531,28 @@ public readonly record struct TimelineSelectionMetrics(
 public interface ITimelineOverviewSource
 {
     ulong ContentFingerprint { get; }
+
+    /// <summary>
+    /// Returns a bounded-cost fingerprint for a presentation range. Large
+    /// paged sources override this with page metadata; the default deliberately
+    /// invalidates broadly but never enumerates source items on the UI thread.
+    /// </summary>
+    ulong GetRangeFingerprint(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive)
+    {
+        ulong range = TimelineContentFingerprint.Combine(
+            unchecked((ulong)startTick),
+            unchecked((ulong)endTick));
+        range = TimelineContentFingerprint.Combine(
+            range,
+            TimelineContentFingerprint.Combine(
+                unchecked((ulong)firstLane),
+                unchecked((ulong)lastLaneExclusive)));
+        return TimelineContentFingerprint.Combine(ContentFingerprint, range);
+    }
     long MaximumEndTick { get; }
 
     void Accumulate(
@@ -563,7 +607,7 @@ public sealed class MaterializedTimelineOverviewSource : ITimelineOverviewSource
             MarkOverviewColumn(eventColumns, tick, extent);
     }
 
-    internal static void MarkOverviewColumn(Span<byte> destination, long tick, long extent)
+    public static void MarkOverviewColumn(Span<byte> destination, long tick, long extent)
     {
         if (destination.IsEmpty) return;
         int x = Math.Clamp(
@@ -573,7 +617,7 @@ public sealed class MaterializedTimelineOverviewSource : ITimelineOverviewSource
         destination[x] = 1;
     }
 
-    internal static void ValidateOverviewColumns(
+    public static void ValidateOverviewColumns(
         long extent,
         Span<byte> noteStartColumns,
         Span<byte> eventColumns)
@@ -613,6 +657,29 @@ public sealed class TimelineSelectionSnapshot
         _metrics = BuildMetrics(resolvedItems);
     }
 
+    public TimelineSelectionSnapshot(
+        long revision,
+        IEnumerable<MidoraId> ids,
+        MidoraId? primary,
+        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> metrics)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(revision);
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(metrics);
+        _ids = new HashSet<MidoraId>(ids);
+        if (_ids.Any(static id => id.Value <= 0))
+        {
+            throw new ArgumentException("Selection contains an invalid object reference.", nameof(ids));
+        }
+        if (primary is MidoraId primaryId && !_ids.Contains(primaryId))
+        {
+            throw new ArgumentException("Primary selection must belong to the selection set.", nameof(primary));
+        }
+        Revision = revision;
+        Primary = primary;
+        _metrics = new(metrics);
+    }
+
     public long Revision { get; }
     public MidoraId? Primary { get; }
     public int Count => _ids.Count;
@@ -623,6 +690,27 @@ public sealed class TimelineSelectionSnapshot
         TimelineItemKind kind,
         out TimelineSelectionMetrics metrics) =>
         _metrics.TryGetValue(kind, out metrics);
+
+    internal ulong GetRangeRevisionFingerprint(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive)
+    {
+        if (Count == 0) return 0;
+        if (_metrics.Count == 0) return unchecked((ulong)Revision);
+        foreach (TimelineSelectionMetrics metrics in _metrics.Values)
+        {
+            if (metrics.MinimumStartTick < endTick
+                && metrics.MaximumEndTick > startTick
+                && metrics.MinimumLane < lastLaneExclusive
+                && metrics.MaximumLane >= firstLane)
+            {
+                return unchecked((ulong)Revision);
+            }
+        }
+        return 0;
+    }
 
     private Dictionary<TimelineItemKind, TimelineSelectionMetrics> BuildMetrics(
         IEnumerable<TimelineRenderItem>? resolvedItems)
@@ -915,6 +1003,30 @@ public sealed class TimelineRenderSnapshot
     internal bool HasExternalItemSource => _itemSource is not null;
     internal ulong ExternalItemSourceFingerprint => _itemSource?.ContentFingerprint ?? 0;
 
+    internal ulong GetExternalRangeFingerprint(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive) =>
+        _itemSource?.GetRangeFingerprint(
+            startTick,
+            endTick,
+            firstLane,
+            lastLaneExclusive) ?? 0;
+
+    internal void QueryMaterializedInto(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        List<TimelineRenderItem> destination) =>
+        Index.QueryInto(
+            startTick,
+            endTick,
+            firstLane,
+            lastLaneExclusive,
+            destination);
+
     public void HitTestInto(
         long tick,
         long toleranceTicks,
@@ -1048,7 +1160,7 @@ public sealed class TimelineRenderSnapshot
         long DpiScaleXKey);
 }
 
-internal static class TimelineContentFingerprint
+public static class TimelineContentFingerprint
 {
     private const ulong Offset = 14695981039346656037UL;
     private const ulong Prime = 1099511628211UL;
@@ -1186,6 +1298,28 @@ internal static class TimelineContentFingerprint
             bool selected = selection?.Contains(item.Id)
                 ?? item.State.HasFlag(TimelineItemState.Selected);
             Add(ref hash, selected ? 1UL : 0UL);
+        }
+        return hash;
+    }
+
+    public static ulong ForLocalSelection(
+        IEnumerable<TimelineRenderItem> items,
+        TimelineSelectionSnapshot selection,
+        bool includePrimary = false)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        ArgumentNullException.ThrowIfNull(selection);
+        ulong hash = Offset;
+        foreach (TimelineRenderItem item in items)
+        {
+            if (!selection.Contains(item.Id)) continue;
+            Add(ref hash, unchecked((ulong)item.Id.Value));
+            Add(ref hash, unchecked((ulong)item.Kind));
+            Add(ref hash, unchecked((ulong)item.StartTick));
+            Add(ref hash, unchecked((ulong)item.EndTick));
+            Add(ref hash, unchecked((ulong)item.Lane));
+            Add(ref hash, unchecked((ulong)BitConverter.DoubleToInt64Bits(item.Value)));
+            if (includePrimary) Add(ref hash, selection.Primary == item.Id ? 1UL : 0UL);
         }
         return hash;
     }

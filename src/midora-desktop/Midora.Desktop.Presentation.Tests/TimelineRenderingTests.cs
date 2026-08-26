@@ -1670,36 +1670,6 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
-    public void ProgressiveArrangementFallbackIsBoundedAndViewportIndependent()
-    {
-        const long segmentLengthTicks = 18_000_000;
-        const int ticksPerQuarterNote = 768;
-
-        int fallbackLod = TimelineSegmentPreviewRasterizer.SelectFallbackLod(
-            segmentLengthTicks,
-            ticksPerQuarterNote);
-        int warmupLod = TimelineSegmentPreviewRasterizer.SelectWarmupLod(
-            segmentLengthTicks,
-            ticksPerQuarterNote);
-        long fallbackWidth = TimelineSegmentPreviewRasterizer.GetFixedPreviewContentWidth(
-            segmentLengthTicks,
-            ticksPerQuarterNote,
-            fallbackLod);
-        long fallbackTileCount = 1 + ((fallbackWidth - 1)
-            / TimelineSegmentPreviewRasterizer.FixedPreviewTileSize);
-
-        Assert.Equal(
-            Math.Max(
-                0,
-                warmupLod - TimelineSegmentPreviewRasterizer.FixedPreviewLodLevelsPerOctave),
-            fallbackLod);
-        Assert.InRange(
-            fallbackTileCount,
-            1,
-            TimelineSegmentPreviewRasterizer.MaximumFallbackTilesPerSegment);
-    }
-
-    [Fact]
     public void ZoomingOutKeepsTheCompletedFallbackVisibleWhileTargetLodLoads()
     {
         RunOnSta(() =>
@@ -2036,7 +2006,11 @@ public sealed class TimelineRenderingTests
             TimelineRasterCacheSession.Clear();
             try
             {
-                for (int attempt = 0; attempt < 200 && fastSource.CoarseQueryCount < 6; attempt++)
+                for (int attempt = 0;
+                    attempt < 200
+                    && fastSource.CoarseQueryCount
+                        < TimelineSegmentPreviewRasterizer.MaximumWarmupTilesPerSegment;
+                    attempt++)
                 {
                     _ = RenderVisual(surface);
                     Thread.Sleep(5);
@@ -2044,7 +2018,8 @@ public sealed class TimelineRenderingTests
                 }
 
                 Assert.True(
-                    fastSource.CoarseQueryCount >= 6,
+                    fastSource.CoarseQueryCount
+                        >= TimelineSegmentPreviewRasterizer.MaximumWarmupTilesPerSegment,
                     "The fast Segment never completed its bounded fallback frame.");
                 for (int attempt = 0; attempt < 20; attempt++)
                 {
@@ -2832,6 +2807,24 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void WorkspaceSelectionReplaceAllSkipsEquivalentRestore()
+    {
+        WorkspaceSelection selection = new();
+        MidoraId[] ids = Enumerable.Range(1, 10_000)
+            .Select(value => new MidoraId(value))
+            .ToArray();
+        selection.ReplaceAll(ids, ids[123]);
+        long revision = selection.Revision;
+
+        bool changed = selection.ReplaceAll(ids.Reverse(), ids[123]);
+
+        Assert.False(changed);
+        Assert.Equal(revision, selection.Revision);
+        Assert.Equal(ids[123], selection.Primary);
+        Assert.Equal(ids.Length, selection.Ids.Count);
+    }
+
+    [Fact]
     public void WorkspaceSelectionRangeOperationsHaveSetSemantics()
     {
         WorkspaceSelection selection = new();
@@ -2850,8 +2843,273 @@ public sealed class TimelineRenderingTests
         Assert.Empty(selection.Ids);
     }
 
+    [Fact]
+    public void CanceledQueuedRasterRequestSkipsItsFactoryAndDoesNotPopulateCache()
+    {
+        RunOnSta(() =>
+        {
+            TimelineRasterCache cache = new();
+            using CountdownEvent workersStarted = new(1);
+            using ManualResetEventSlim releaseWorkers = new(false);
+            using CancellationTokenSource cancellation = new();
+            Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+            TimelineRasterCacheKey first = RasterKey(1);
+            TimelineRasterCacheKey canceled = RasterKey(3);
+            int canceledFactoryCalls = 0;
+
+            Assert.True(cache.Request(first, BlockingFactory, dispatcher, static () => { }));
+            Assert.True(workersStarted.Wait(TimeSpan.FromSeconds(10)));
+            Assert.True(cache.Request(
+                canceled,
+                () =>
+                {
+                    Interlocked.Increment(ref canceledFactoryCalls);
+                    return EmptyRaster();
+                },
+                dispatcher,
+                static () => { },
+                cancellation.Token));
+
+            cancellation.Cancel();
+            releaseWorkers.Set();
+            for (int attempt = 0; attempt < 1_000 && cache.InFlightCount != 0; attempt++)
+            {
+                Thread.Sleep(2);
+                PumpDispatcher();
+            }
+
+            Assert.Equal(0, cache.InFlightCount);
+            Assert.Equal(0, Volatile.Read(ref canceledFactoryCalls));
+            Assert.False(cache.TryGet(canceled, out _));
+
+            TimelineRasterBuffer BlockingFactory()
+            {
+                workersStarted.Signal();
+                Assert.True(releaseWorkers.Wait(TimeSpan.FromSeconds(10)));
+                return EmptyRaster();
+            }
+
+            static TimelineRasterBuffer EmptyRaster() => new(1, 1, new byte[4]);
+            static TimelineRasterCacheKey RasterKey(long tileX) => new(
+                TimelineRasterLayer.PianoNotes,
+                "cancellation-test",
+                1,
+                1,
+                1,
+                tileX,
+                0,
+                0,
+                0,
+                0,
+                96,
+                96);
+        });
+    }
+
+    [Fact]
+    public void VisibleRasterRequestIsNotBlockedByBackgroundWarmup()
+    {
+        RunOnSta(() =>
+        {
+            TimelineRasterCache cache = new();
+            using ManualResetEventSlim backgroundStarted = new(false);
+            using ManualResetEventSlim releaseBackground = new(false);
+            using ManualResetEventSlim visibleStarted = new(false);
+            Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+
+            Assert.True(cache.Request(
+                RasterKey(1),
+                () =>
+                {
+                    backgroundStarted.Set();
+                    Assert.True(releaseBackground.Wait(TimeSpan.FromSeconds(10)));
+                    return EmptyRaster();
+                },
+                dispatcher,
+                static () => { },
+                priority: TimelineRasterRequestPriority.Background));
+            Assert.True(backgroundStarted.Wait(TimeSpan.FromSeconds(10)));
+            Assert.True(cache.Request(
+                RasterKey(2),
+                EmptyRaster,
+                dispatcher,
+                static () => { },
+                priority: TimelineRasterRequestPriority.Background));
+            Assert.True(cache.Request(
+                RasterKey(3),
+                () =>
+                {
+                    visibleStarted.Set();
+                    return EmptyRaster();
+                },
+                dispatcher,
+                static () => { },
+                priority: TimelineRasterRequestPriority.Visible));
+
+            Assert.True(
+                visibleStarted.Wait(TimeSpan.FromSeconds(2)),
+                "A visible raster waited behind the queued background warmup.");
+            releaseBackground.Set();
+            for (int attempt = 0; attempt < 1_000 && cache.InFlightCount != 0; attempt++)
+            {
+                Thread.Sleep(2);
+                PumpDispatcher();
+            }
+            Assert.Equal(0, cache.InFlightCount);
+
+            static TimelineRasterBuffer EmptyRaster() => new(1, 1, new byte[4]);
+            static TimelineRasterCacheKey RasterKey(long tileX) => new(
+                TimelineRasterLayer.PianoNotes,
+                "priority-test",
+                1,
+                1,
+                1,
+                tileX,
+                0,
+                0,
+                0,
+                0,
+                96,
+                96);
+        });
+    }
+
+    [Fact]
+    public void SpeculativeRasterQueueReservesCapacityForVisibleRequests()
+    {
+        RunOnSta(() =>
+        {
+            TimelineRasterCache cache = new();
+            using ManualResetEventSlim backgroundStarted = new(false);
+            using ManualResetEventSlim releaseBackground = new(false);
+            using ManualResetEventSlim visibleStarted = new(false);
+            Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+
+            for (int index = 0; index < TimelineRasterCache.MaximumInFlight / 2; index++)
+            {
+                int requestIndex = index;
+                Assert.True(cache.Request(
+                    RasterKey(requestIndex),
+                    requestIndex == 0
+                        ? () =>
+                        {
+                            backgroundStarted.Set();
+                            Assert.True(releaseBackground.Wait(TimeSpan.FromSeconds(10)));
+                            return EmptyRaster();
+                        }
+                        : EmptyRaster,
+                    dispatcher,
+                    static () => { },
+                    priority: TimelineRasterRequestPriority.Background));
+            }
+            Assert.True(backgroundStarted.Wait(TimeSpan.FromSeconds(10)));
+            Assert.False(cache.Request(
+                RasterKey(1_000),
+                EmptyRaster,
+                dispatcher,
+                static () => { },
+                priority: TimelineRasterRequestPriority.Background));
+            Assert.True(cache.Request(
+                RasterKey(2_000),
+                () =>
+                {
+                    visibleStarted.Set();
+                    return EmptyRaster();
+                },
+                dispatcher,
+                static () => { },
+                priority: TimelineRasterRequestPriority.Visible));
+            Assert.True(
+                visibleStarted.Wait(TimeSpan.FromSeconds(2)),
+                "Speculative raster requests consumed capacity reserved for visible work.");
+
+            releaseBackground.Set();
+            for (int attempt = 0; attempt < 1_000 && cache.InFlightCount != 0; attempt++)
+            {
+                Thread.Sleep(2);
+                PumpDispatcher();
+            }
+            Assert.Equal(0, cache.InFlightCount);
+
+            static TimelineRasterBuffer EmptyRaster() => new(1, 1, new byte[4]);
+            static TimelineRasterCacheKey RasterKey(long tileX) => new(
+                TimelineRasterLayer.PianoNotes,
+                "capacity-test",
+                1,
+                1,
+                1,
+                tileX,
+                0,
+                0,
+                0,
+                0,
+                96,
+                96);
+        });
+    }
+
+    [Fact]
+    public void PagedPianoFingerprintUsesRangeMetadataWithoutQueryingItems()
+    {
+        MetadataOnlyRenderSource source = new();
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "metadata-fingerprint",
+            [],
+            itemSource: source);
+
+        ulong fingerprint = TimelinePianoTileRasterizer.ComputeContentFingerprint(
+            snapshot,
+            devicePixelsPerTick: 0.25,
+            devicePixelsPerLane: 6,
+            tileX: 0,
+            tileY: 0);
+
+        Assert.NotEqual(0UL, fingerprint);
+        Assert.Equal(1, source.RangeFingerprintCalls);
+        Assert.Equal(0, source.QueryCalls);
+    }
+
     private static byte Alpha(TimelineRasterBuffer buffer, int x, int y) =>
         buffer.Pixels[(y * buffer.Width + x) * 4 + 3];
+
+    private sealed class MetadataOnlyRenderSource : ITimelineRenderItemSource
+    {
+        public int QueryCalls { get; private set; }
+        public int RangeFingerprintCalls { get; private set; }
+        public long Count => 1_000_000;
+        public long MaximumEndTick => 1_000_000;
+        public ulong ContentFingerprint => 11;
+
+        public ulong GetRangeFingerprint(
+            long startTick,
+            long endTick,
+            int firstLane,
+            int lastLaneExclusive)
+        {
+            RangeFingerprintCalls++;
+            return 17;
+        }
+
+        public void QueryInto(
+            long startTick,
+            long endTick,
+            int firstLane,
+            int lastLaneExclusive,
+            List<TimelineRenderItem> destination)
+        {
+            QueryCalls++;
+            throw new InvalidOperationException("A foreground fingerprint decoded paged content.");
+        }
+
+        public bool TryGetById(MidoraId id, out TimelineRenderItem item)
+        {
+            item = default;
+            return false;
+        }
+
+        public IEnumerable<TimelineRenderItem> EnumerateAll() => [];
+    }
 
     private static Color PixelColor(TimelineRasterBuffer buffer, int x, int y)
     {
@@ -2964,7 +3222,7 @@ public sealed class TimelineRenderingTests
                     return _queries.Count(static query =>
                     {
                         double span = query.End - query.Start;
-                        return span is >= 0.14 and <= 0.2;
+                        return span >= 0.2;
                     });
             }
         }

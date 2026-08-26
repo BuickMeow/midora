@@ -482,10 +482,9 @@ public static partial class ProjectDomainEditCommands
                         throw new InvalidOperationException(
                             "Logical Note copies do not exist before the first Apply.");
                     }
-                    foreach (LogicalNote copy in copies)
-                    {
-                        RemoveRequired(target.Segment.Notes, copy, "Logical Note copy");
-                    }
+                    int removed = target.Segment.Notes.RemoveRange(copies);
+                    if (removed != copies.Length)
+                        throw new InvalidOperationException("The Logical Note copy set is no longer present.");
                 }), snapshots.Select(value => new LogicalNoteCollisionTarget(
                     target.Segment,
                     value.StartTick,

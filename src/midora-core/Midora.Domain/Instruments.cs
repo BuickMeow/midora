@@ -173,17 +173,63 @@ public sealed class TemplateEvent
     private readonly MidoraProject _project;
     private readonly Dictionary<TemplateEventMappingParameter, SubVoiceEventMapping> _detachedMappings = [];
     private SubVoice? _owner;
+    private Action<TemplateEvent>? _changeSink;
+    private TemplateEventKind _kind;
+    private long _tick;
+    private long _lengthTicks;
+    private int _number;
+    private int _value;
+    private int _secondaryValue;
+    private bool _hasBankMsb = true;
+    private bool _hasBankLsb = true;
+    private bool _followPitchDelta = true;
 
     public MidoraId Id { get; init; }
-    public TemplateEventKind Kind { get; set; }
-    public long Tick { get; set; }
-    public long LengthTicks { get; set; }
-    public int Number { get; set; }
-    public int Value { get; set; }
-    public int SecondaryValue { get; set; }
-    public bool HasBankMsb { get; internal set; } = true;
-    public bool HasBankLsb { get; internal set; } = true;
-    public bool FollowPitchDelta { get; set; } = true;
+    public TemplateEventKind Kind
+    {
+        get => _kind;
+        set => Set(ref _kind, value);
+    }
+    public long Tick
+    {
+        get => _tick;
+        set => Set(ref _tick, value);
+    }
+    public long LengthTicks
+    {
+        get => _lengthTicks;
+        set => Set(ref _lengthTicks, value);
+    }
+    public int Number
+    {
+        get => _number;
+        set => Set(ref _number, value);
+    }
+    public int Value
+    {
+        get => _value;
+        set => Set(ref _value, value);
+    }
+    public int SecondaryValue
+    {
+        get => _secondaryValue;
+        set => Set(ref _secondaryValue, value);
+    }
+    public bool HasBankMsb
+    {
+        get => _hasBankMsb;
+        internal set => Set(ref _hasBankMsb, value);
+    }
+    public bool HasBankLsb
+    {
+        get => _hasBankLsb;
+        internal set => Set(ref _hasBankLsb, value);
+    }
+    public bool FollowPitchDelta
+    {
+        get => _followPitchDelta;
+        set => Set(ref _followPitchDelta, value);
+    }
     public MappingChain NumberMappings
     {
         get => GetMapping(TemplateEventMappingParameter.Number).Steps;
@@ -236,6 +282,15 @@ public sealed class TemplateEvent
     }
 
     internal void EnsureMappings() => _owner?.EnsureEventMappings(this, createOptional: false);
+
+    internal void SetChangeSink(Action<TemplateEvent>? sink) => _changeSink = sink;
+
+    private void Set<T>(ref T field, T value)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        field = value;
+        _changeSink?.Invoke(this);
+    }
 
     private SubVoiceEventMapping GetMapping(TemplateEventMappingParameter parameter)
     {
@@ -441,21 +496,52 @@ public sealed class SubVoice
 public sealed class TemplateEventCollection : Collection<TemplateEvent>
 {
     private readonly SubVoice _owner;
+    private readonly PagedTimelineObjectList<TemplateEvent, TemplateEventSnapshotValue> _store;
     private bool _suppressOptionalMappingCreation;
 
     internal TemplateEventCollection(SubVoice owner)
+        : this(owner, CreateStore())
+    {
+    }
+
+    private TemplateEventCollection(
+        SubVoice owner,
+        PagedTimelineObjectList<TemplateEvent, TemplateEventSnapshotValue> store)
+        : base(store)
     {
         _owner = owner ?? throw new ArgumentNullException(nameof(owner));
+        _store = store;
     }
+
+    public long Generation => _store.Generation;
+    public int PageCount => _store.PageCount;
 
     public void AddRange(IEnumerable<TemplateEvent> values)
     {
         ArgumentNullException.ThrowIfNull(values);
+        using IDisposable batch = _store.BeginBatchChange();
         foreach (TemplateEvent value in values)
         {
             Add(value);
         }
     }
+
+    public int RemoveRange(IReadOnlyCollection<TemplateEvent> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        return _store.RemoveRange(values);
+    }
+
+    internal Action RemoveRangeForExactCollision(IReadOnlyCollection<TemplateEvent> values) =>
+        _store.RemoveRangeForExactCollision(values);
+
+    public IDisposable BeginBatchChange() => _store.BeginBatchChange();
+
+    public TemplateEventQuerySnapshot CreateQuerySnapshot() =>
+        new(_store.CreateSnapshot());
+
+    public bool TryGetById(MidoraId id, out TemplateEvent? value) =>
+        _store.TryGetById(id, out value);
 
     internal void AddRangeWithoutOptionalMappingCreation(IEnumerable<TemplateEvent> values)
     {
@@ -506,6 +592,32 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
             createOptional: newlyAttached && !_suppressOptionalMappingCreation);
         base.SetItem(index, item);
     }
+
+    private static PagedTimelineObjectList<TemplateEvent, TemplateEventSnapshotValue> CreateStore() =>
+        new(
+            static value => new(
+                value.Id,
+                value.Kind,
+                value.Tick,
+                value.LengthTicks,
+                value.Number,
+                value.Value,
+                value.SecondaryValue,
+                value.HasBankMsb,
+                value.HasBankLsb,
+                value.FollowPitchDelta),
+            static value => value.Id,
+            static value => value.Tick,
+            static value => value.Kind == TemplateEventKind.Note
+                ? SaturatingAdd(value.Tick, Math.Max(1, value.LengthTicks))
+                : SaturatingAdd(value.Tick, 1),
+            static value => value.Kind == TemplateEventKind.Note ? value.Number : 0,
+            static value => PagedTimelineFingerprint.ForTemplateEvent(value),
+            static (value, sink) => value.SetChangeSink(sink),
+            static value => value.Kind == TemplateEventKind.Note ? 1UL : 2UL);
+
+    private static long SaturatingAdd(long left, long right) =>
+        right <= 0 || left > long.MaxValue - right ? long.MaxValue : left + right;
 }
 
 public sealed class InstrumentEnvelope

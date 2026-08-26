@@ -81,10 +81,9 @@ public static partial class ProjectDomainEditCommands
                         throw new InvalidOperationException(
                             "Template Note copies do not exist before the first Apply.");
                     }
-                    foreach (TemplateEvent copy in copies)
-                    {
-                        RemoveRequired(voice.Events, copy, "Template Note copy");
-                    }
+                    int removed = voice.Events.RemoveRange(copies);
+                    if (removed != copies.Length)
+                        throw new InvalidOperationException("The Template Note copy set is no longer present.");
                     instrument.TemplateLengthTicks = oldTemplateLength;
                 }), replacements.Select(value => new TemplateNoteCollisionTarget(
                     voice,

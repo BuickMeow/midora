@@ -545,7 +545,7 @@ public static partial class ProjectDomainEditCommands
                 location.Segment.Notes.AddRange(created);
             }, _ =>
             {
-                foreach (DirectMidiNote note in created ?? []) location.Segment.Notes.Remove(note);
+                location.Segment.Notes.RemoveRange(created ?? []);
             }), noteTargets: snapshots.Select(value => new DirectMidiNoteCollisionTarget(
                 location.Segment,
                 checked(editCursorTick + value.StartOffset),
@@ -579,8 +579,7 @@ public static partial class ProjectDomainEditCommands
                 location.Segment.ChannelEvents.AddRange(created);
             }, _ =>
             {
-                foreach (DirectMidiChannelEvent value in created ?? [])
-                    location.Segment.ChannelEvents.Remove(value);
+                location.Segment.ChannelEvents.RemoveRange(created ?? []);
             }), eventTargets: snapshots.Select(value => new DirectMidiEventCollisionTarget(
                 location.Segment,
                 checked(editCursorTick + value.Tick),
@@ -622,8 +621,7 @@ public static partial class ProjectDomainEditCommands
                 },
                 _ =>
                 {
-                    foreach (OpaqueMidiEvent value in created ?? [])
-                        location.Segment.OpaqueEvents.Remove(value);
+                    location.Segment.OpaqueEvents.RemoveRange(created ?? []);
                 });
         });
 

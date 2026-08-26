@@ -581,7 +581,7 @@ public static partial class ProjectDomainEditCommands
                 },
                 _ =>
                 {
-                    foreach (DirectMidiNote copy in copies ?? []) location.Segment.Notes.Remove(copy);
+                    location.Segment.Notes.RemoveRange(copies ?? []);
                 }),
                 noteTargets: values.Select(value => new DirectMidiNoteCollisionTarget(
                     location.Segment,
@@ -609,6 +609,9 @@ public static partial class ProjectDomainEditCommands
         {
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
             DirectNoteSelection[] selected = SelectDirectNotes(location.Segment, noteIds);
+            DirectMidiNote[] selectedNotes = selected
+                .Select(static value => value.Note)
+                .ToArray();
             DirectNoteValue[] old = selected.Select(value => SnapshotDirectNote(value.Note)).ToArray();
             DirectNoteValue[] replacement = transform(old);
             if (replacement.Length != old.Length)
@@ -629,8 +632,7 @@ public static partial class ProjectDomainEditCommands
                 PureMidiTrackChange(location.Track.Id),
                 _ =>
                 {
-                    using IDisposable batch = location.Segment.Notes.BeginBatchChange(
-                        selected.Select(static value => value.Note).ToArray());
+                    using IDisposable batch = location.Segment.Notes.BeginBatchChange(selectedNotes);
                     for (int index = 0; index < selected.Length; index++)
                     {
                         if (discarded[index]) location.Segment.Notes.Remove(selected[index].Note);
@@ -639,8 +641,7 @@ public static partial class ProjectDomainEditCommands
                 },
                 _ =>
                 {
-                    using IDisposable batch = location.Segment.Notes.BeginBatchChange(
-                        selected.Select(static value => value.Note).ToArray());
+                    using IDisposable batch = location.Segment.Notes.BeginBatchChange(selectedNotes);
                     for (int index = 0; index < selected.Length; index++)
                         ApplyDirectNote(selected[index].Note, old[index]);
                     foreach (DirectNoteSelection value in selected.Where((_, index) => discarded[index]).OrderBy(value => value.Index))
@@ -710,7 +711,7 @@ public static partial class ProjectDomainEditCommands
                 },
                 _ =>
                 {
-                    foreach (DirectMidiChannelEvent value in created ?? []) location.Segment.ChannelEvents.Remove(value);
+                    location.Segment.ChannelEvents.RemoveRange(created ?? []);
                     for (int index = 0; index < existing.Length; index++) ApplyDirectEvent(existing[index], old[index]);
                 }),
                 eventTargets: edits.Select(value => new DirectMidiEventCollisionTarget(
@@ -762,8 +763,7 @@ public static partial class ProjectDomainEditCommands
                 {
                     if (duplicate)
                     {
-                        foreach (DirectMidiChannelEvent copy in copies ?? [])
-                            location.Segment.ChannelEvents.Remove(copy);
+                        location.Segment.ChannelEvents.RemoveRange(copies ?? []);
                     }
                     else
                     {
@@ -891,8 +891,7 @@ public static partial class ProjectDomainEditCommands
                 {
                     if (duplicate)
                     {
-                        foreach (OpaqueMidiEvent copy in copies ?? [])
-                            location.Segment.OpaqueEvents.Remove(copy);
+                        location.Segment.OpaqueEvents.RemoveRange(copies ?? []);
                     }
                     else
                     {
@@ -1100,13 +1099,14 @@ public static partial class ProjectDomainEditCommands
 
     private static void ApplyDirectNote(DirectMidiNote target, DirectNoteValue value)
     {
-        target.StartTick = value.StartTick;
-        target.LengthTicks = value.LengthTicks;
-        target.Key = value.Key;
-        target.NoteOnVelocity = value.NoteOnVelocity;
-        target.NoteOffVelocity = value.NoteOffVelocity;
-        target.NoteOnOrder = value.NoteOnOrder;
-        target.NoteOffOrder = value.NoteOffOrder;
+        target.SetValues(
+            value.StartTick,
+            value.LengthTicks,
+            value.Key,
+            value.NoteOnVelocity,
+            value.NoteOffVelocity,
+            value.NoteOnOrder,
+            value.NoteOffOrder);
     }
 
     private static DirectMidiEventValue SnapshotDirectEvent(DirectMidiChannelEvent value) => new(

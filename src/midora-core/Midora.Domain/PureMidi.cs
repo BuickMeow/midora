@@ -204,6 +204,25 @@ public sealed class DirectMidiNote
 
     internal void SetChangeSink(IDirectMidiNoteChangeSink? value) => _changeSink = value;
 
+    internal void SetValues(
+        long startTick,
+        long lengthTicks,
+        int key,
+        int noteOnVelocity,
+        int noteOffVelocity,
+        long noteOnOrder,
+        long noteOffOrder)
+    {
+        _startTick = startTick;
+        _lengthTicks = lengthTicks;
+        _key = key;
+        _noteOnVelocity = noteOnVelocity;
+        _noteOffVelocity = noteOffVelocity;
+        _noteOnOrder = noteOnOrder;
+        _noteOffOrder = noteOffOrder;
+        Changed();
+    }
+
     private void Changed() => _changeSink?.OnChanged(this);
 }
 

@@ -461,7 +461,7 @@ public sealed class ExactTimelineCollisionPolicyTests
         wrapped.Apply(project);
 
         Assert.Equal(source.NoteCount + 1, segment.Notes.Count);
-        Assert.Equal(2, source.NoteQueries.Count);
+        Assert.Single(source.NoteQueries);
         Assert.All(source.NoteQueries, query => Assert.Equal((400L, 401L, 72, 72), query));
 
         wrapped.Undo(project);
@@ -494,6 +494,11 @@ public sealed class ExactTimelineCollisionPolicyTests
 
         Assert.Equal(10, edited.StartTick);
         Assert.Equal(60, edited.Key);
+        Assert.Same(
+            edited,
+            Assert.Single(segment.Notes.ResolveValuesByIds(
+                new HashSet<MidoraId> { source.Note.Id })));
+        Assert.Equal(1, source.BatchIdQueryCount);
         Assert.Equal(0, source.GetNoteCallCount);
         Assert.Equal(0, source.FindNoteIndexCallCount);
     }

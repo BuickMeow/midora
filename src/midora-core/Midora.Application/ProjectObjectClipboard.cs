@@ -613,10 +613,9 @@ public static partial class ProjectDomainEditCommands
                         throw new InvalidOperationException(
                             "Logical Note clipboard copies do not exist before the first Apply.");
                     }
-                    foreach (LogicalNote copy in copies)
-                    {
-                        RemoveRequired(target.Segment.Notes, copy, "pasted Logical Note");
-                    }
+                    int removed = target.Segment.Notes.RemoveRange(copies);
+                    if (removed != copies.Length)
+                        throw new InvalidOperationException("The pasted Logical Note set is no longer present.");
                 }), target.Segment);
         });
 

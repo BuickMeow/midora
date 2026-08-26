@@ -345,10 +345,9 @@ public static partial class ProjectDomainEditCommands
                         throw new InvalidOperationException(
                             "Pasted Template Events do not exist before Apply.");
                     }
-                    foreach (TemplateEvent value in copies)
-                    {
-                        RemoveRequired(voice.Events, value, "pasted Template Event");
-                    }
+                    int removed = voice.Events.RemoveRange(copies);
+                    if (removed != copies.Length)
+                        throw new InvalidOperationException("The pasted Template Event set is no longer present.");
                     instrument.TemplateLengthTicks = oldTemplateLength;
                 }), voice);
         });

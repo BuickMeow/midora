@@ -173,6 +173,10 @@ public sealed class PureMidiContentPackTests
                     opaqueEventId, 30, OpaqueMidiEventKind.Meta, 6, new byte[] { 1, 2, 3 }, 6));
                 using PureMidiContentPack pack = writer.Complete();
                 IPureMidiSegmentContentSource contentSource = pack.GetSegmentSource(segment.Id);
+                Assert.Equal(
+                    1_100,
+                    Assert.IsAssignableFrom<IPureMidiContentBoundsSource>(contentSource)
+                        .MaximumNoteEndTick);
                 IPureMidiContentOverviewSource overviewSource =
                     Assert.IsAssignableFrom<IPureMidiContentOverviewSource>(contentSource);
                 long missesBeforeOverview = pack.PageCacheMissCount;
@@ -189,6 +193,13 @@ public sealed class PureMidiContentPackTests
                     overviewSource.GetOpaqueEventRangeSummaries()
                         .Select(value => (value.MinimumTick, value.MaximumTick, value.RecordCount)));
                 Assert.Equal(missesBeforeOverview, pack.PageCacheMissCount);
+                IPureMidiContentRangeFingerprintSource rangeFingerprints =
+                    Assert.IsAssignableFrom<IPureMidiContentRangeFingerprintSource>(contentSource);
+                long missesBeforeFingerprints = pack.PageCacheMissCount;
+                _ = rangeFingerprints.GetNoteRangeFingerprint(0, 200, 0, 127);
+                _ = rangeFingerprints.GetChannelEventRangeFingerprint(0, 200);
+                _ = rangeFingerprints.GetOpaqueEventRangeFingerprint(0, 200);
+                Assert.Equal(missesBeforeFingerprints, pack.PageCacheMissCount);
                 segment.AttachPagedContent(contentSource);
 
                 Assert.Equal(2, segment.Notes.Count);

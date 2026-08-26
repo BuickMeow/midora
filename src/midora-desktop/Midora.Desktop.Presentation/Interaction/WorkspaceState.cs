@@ -136,6 +136,32 @@ public sealed class WorkspaceSelection
         Revision = checked(Revision + 1);
     }
 
+    public bool ReplaceAll(IEnumerable<MidoraId> ids, MidoraId? primary)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        MidoraId[] materialized = ids.Distinct().ToArray();
+        foreach (MidoraId id in materialized) Validate(id);
+        HashSet<MidoraId> replacement = [.. materialized];
+        if (primary is MidoraId primaryId && !replacement.Contains(primaryId))
+        {
+            throw new ArgumentException(
+                "Primary selection must belong to the replacement set.",
+                nameof(primary));
+        }
+        MidoraId? normalizedPrimary = primary
+            ?? (materialized.Length == 0 ? null : materialized[0]);
+        if (Primary == normalizedPrimary && _ids.SetEquals(replacement))
+        {
+            return false;
+        }
+        _ids.Clear();
+        _ids.UnionWith(replacement);
+        Primary = normalizedPrimary;
+        Anchor = normalizedPrimary;
+        Revision = checked(Revision + 1);
+        return true;
+    }
+
     public void ApplyRange(
         IEnumerable<MidoraId> ids,
         WorkspaceSelectionRangeMode mode)

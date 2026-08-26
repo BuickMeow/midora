@@ -647,6 +647,7 @@ public sealed class TimelineSurface : Control
     private int _segmentPreviewWarmupInFlight;
     private bool _segmentPreviewWarmupRetryScheduled;
     private CancellationTokenSource? _segmentPreviewWarmupPlanCancellation;
+    private CancellationTokenSource _rasterRequestCancellation = new();
     private readonly List<PianoTileDrawEntry> _pianoTileDrawEntries = new(capacity: 64);
     private readonly List<PianoTileDrawEntry> _pianoTileFallbackEntries = new(capacity: 64);
     private readonly List<TimelineRasterCacheKey> _pianoTileVisibleKeys = new(capacity: 64);
@@ -1170,6 +1171,10 @@ public sealed class TimelineSurface : Control
             surface.RefreshPointerPositionText();
             if (args.Property == SnapshotProperty || args.Property == SurfaceModeProperty)
             {
+                surface._rasterRequestCancellation.Cancel();
+                surface._rasterRequestCancellation.Dispose();
+                surface._rasterRequestCancellation = new();
+                surface._requestedRasterKeys.Clear();
                 surface.ScheduleSegmentPreviewWarmup();
             }
         }
@@ -1401,7 +1406,6 @@ public sealed class TimelineSurface : Control
                 laneHeaderWidth,
                 rulerHeight);
         }
-
         TimelineRenderSnapshot? snapshot = Snapshot;
         if (snapshot is not null)
         {
@@ -3192,6 +3196,7 @@ public sealed class TimelineSurface : Control
         long lastVisibleTileX = FloorToLong(
             Math.Max(viewport.StartTick, viewport.EndTick - 1) * actualPixelsPerTickDevice
             / TimelinePianoTileRasterizer.TileSize);
+        long lastContentTileX = LastPianoContentTileX(snapshot, actualPixelsPerTickDevice);
         long firstVisibleTileY = FloorToLong(
             viewport.FirstLane * actualPixelsPerLaneDevice / TimelinePianoTileRasterizer.TileSize);
         long lastVisibleTileY = FloorToLong(
@@ -3222,7 +3227,8 @@ public sealed class TimelineSurface : Control
         for (int ring = 0; ring <= 1; ring++)
         {
             long firstX = Math.Max(0, firstVisibleTileX - ring);
-            long lastX = Math.Max(firstX, lastVisibleTileX + ring);
+            long lastX = Math.Min(lastContentTileX, lastVisibleTileX + ring);
+            if (lastX < firstX) continue;
             long firstY = Math.Max(0, firstVisibleTileY - ring);
             long lastY = Math.Max(firstY, lastVisibleTileY + ring);
             for (long tileY = firstY; tileY <= lastY; tileY++)
@@ -3277,7 +3283,10 @@ public sealed class TimelineSurface : Control
                     }
                     RequestRaster(
                         key,
-                        request.Rasterize);
+                        request.Rasterize,
+                        visible
+                            ? TimelineRasterRequestPriority.Visible
+                            : TimelineRasterRequestPriority.Normal);
                 }
             }
         }
@@ -3319,6 +3328,7 @@ public sealed class TimelineSurface : Control
         long lastTileX = Math.Max(firstTileX, FloorToLong(
             Math.Max(viewport.StartTick, viewport.EndTick - 1) * actualPixelsPerTickDevice
             / TimelinePianoTileRasterizer.TileSize));
+        long lastContentTileX = LastPianoContentTileX(snapshot, actualPixelsPerTickDevice);
         long firstTileY = Math.Max(0, FloorToLong(
             viewport.FirstLane * actualPixelsPerLaneDevice / TimelinePianoTileRasterizer.TileSize));
         long lastTileY = Math.Max(firstTileY, FloorToLong(
@@ -3341,7 +3351,8 @@ public sealed class TimelineSurface : Control
         for (int ring = 0; ring <= 1; ring++)
         {
             long firstX = Math.Max(0, firstTileX - ring);
-            long lastX = Math.Max(firstX, lastTileX + ring);
+            long lastX = Math.Min(lastContentTileX, lastTileX + ring);
+            if (lastX < firstX) continue;
             long firstY = Math.Max(0, firstTileY - ring);
             long lastY = Math.Max(firstY, lastTileY + ring);
             for (long tileY = firstY; tileY <= lastY; tileY++)
@@ -3354,13 +3365,19 @@ public sealed class TimelineSurface : Control
                     {
                         continue;
                     }
-                    ulong contentFingerprint = TimelineContentFingerprint.WithSelection(
+                    ulong contentFingerprint = TimelineContentFingerprint.Combine(
                         snapshot.GetPianoTileContentFingerprint(
                             actualPixelsPerTickDevice,
                             actualPixelsPerLaneDevice,
                             tileX,
                             tileY),
-                        selection.Revision);
+                        TimelinePianoTileRasterizer.ComputeSelectionFingerprint(
+                            snapshot,
+                            selection,
+                            actualPixelsPerTickDevice,
+                            actualPixelsPerLaneDevice,
+                            tileX,
+                            tileY));
                     TimelineRasterCacheKey key = new(
                         TimelineRasterLayer.PianoSelection,
                         snapshot.ProjectionKey,
@@ -3402,7 +3419,10 @@ public sealed class TimelineSurface : Control
                             warningColor,
                             selection,
                             selectionOnly: true,
-                            outlineColor: outlineColor));
+                            outlineColor: outlineColor),
+                        visible
+                            ? TimelineRasterRequestPriority.Visible
+                            : TimelineRasterRequestPriority.Normal);
                 }
             }
         }
@@ -3424,7 +3444,7 @@ public sealed class TimelineSurface : Control
             actualPixelsPerTickDevice,
             actualPixelsPerLaneDevice,
             firstTileX,
-            lastTileX,
+            Math.Min(lastTileX, lastContentTileX),
             firstTileY,
             lastTileY,
             dpiX,
@@ -3599,7 +3619,10 @@ public sealed class TimelineSurface : Control
         context.Pop();
     }
 
-    private void RequestRaster(TimelineRasterCacheKey key, Func<TimelineRasterBuffer> factory)
+    private void RequestRaster(
+        TimelineRasterCacheKey key,
+        Func<TimelineRasterBuffer> factory,
+        TimelineRasterRequestPriority priority = TimelineRasterRequestPriority.Normal)
     {
         if (!_requestedRasterKeys.Add(key))
         {
@@ -3617,7 +3640,9 @@ public sealed class TimelineSurface : Control
                 {
                     InvalidateVisual();
                 }
-            });
+            },
+            _rasterRequestCancellation.Token,
+            priority);
         if (!accepted)
         {
             _requestedRasterKeys.Remove(key);
@@ -3629,6 +3654,18 @@ public sealed class TimelineSurface : Control
         : value >= long.MaxValue
             ? long.MaxValue
             : (long)Math.Floor(value);
+
+    private static long LastPianoContentTileX(
+        TimelineRenderSnapshot snapshot,
+        double devicePixelsPerTick)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (snapshot.MaximumEndTick <= 0) return -1;
+        return Math.Max(0, FloorToLong(
+            (snapshot.MaximumEndTick - 1d)
+            * devicePixelsPerTick
+            / TimelinePianoTileRasterizer.TileSize));
+    }
 
     private static Color GetSolidColor(Brush brush, Color fallback) =>
         brush is SolidColorBrush solid ? solid.Color : fallback;
@@ -4024,7 +4061,11 @@ public sealed class TimelineSurface : Control
                 ? defaultNoteColor
                 : TimelineAccentPalette.FromArgb(item.AccentColor).NotePreview;
             long segmentLengthTicks = checked(item.EndTick - item.StartTick);
-            int fallbackLod = TimelineSegmentPreviewRasterizer.SelectFallbackLod(
+            // The first layer is one fixed, segment-scoped coarse image. It is
+            // identical at every viewport zoom and is also what the global
+            // background warmup produces. Only the second/detail layer varies
+            // by display LOD.
+            int fallbackLod = TimelineSegmentPreviewRasterizer.SelectWarmupLod(
                 segmentLengthTicks,
                 PreviewTicksPerQuarterNote);
             if (TryGetCompleteSegmentPreviewFallback(
@@ -4069,10 +4110,6 @@ public sealed class TimelineSurface : Control
         BitmapSource? tile1 = null;
         BitmapSource? tile2 = null;
         BitmapSource? tile3 = null;
-        BitmapSource? tile4 = null;
-        BitmapSource? tile5 = null;
-        BitmapSource? tile6 = null;
-        BitmapSource? tile7 = null;
         bool complete = true;
         for (int tile = 0; tile < tileCount; tile++)
         {
@@ -4093,10 +4130,6 @@ public sealed class TimelineSurface : Control
                     case 1: tile1 = bitmap; break;
                     case 2: tile2 = bitmap; break;
                     case 3: tile3 = bitmap; break;
-                    case 4: tile4 = bitmap; break;
-                    case 5: tile5 = bitmap; break;
-                    case 6: tile6 = bitmap; break;
-                    case 7: tile7 = bitmap; break;
                 }
                 continue;
             }
@@ -4115,11 +4148,7 @@ public sealed class TimelineSurface : Control
             tile0,
             tile1,
             tile2,
-            tile3,
-            tile4,
-            tile5,
-            tile6,
-            tile7);
+            tile3);
         return true;
     }
 
@@ -4179,7 +4208,7 @@ public sealed class TimelineSurface : Control
         bool hasFallback = _visibleSegmentPreviewFallbackFrames.TryGetValue(
             preview.SegmentId,
             out SegmentPreviewFallbackFrame fallback);
-        if (hasFallback && fallback.Lod == lod)
+        if (hasFallback && lod >= fallback.Lod)
         {
             DrawSegmentPreviewFallback(
                 context,
@@ -4283,14 +4312,13 @@ public sealed class TimelineSurface : Control
             () =>
             {
                 _requestedRasterKeys.Remove(key);
-                if (Snapshot?.SegmentPreviews.TryGetValue(
-                        preview.SegmentId,
-                        out TimelineSegmentPreview? current) == true
-                    && current.ContentFingerprint == preview.ContentFingerprint)
+                if (Snapshot?.SegmentPreviews.TryGetValue(preview.SegmentId, out _) == true)
                 {
                     InvalidateVisual();
                 }
-            });
+            },
+            _rasterRequestCancellation.Token,
+            TimelineRasterRequestPriority.Visible);
         if (!accepted)
         {
             _requestedRasterKeys.Remove(key);
@@ -4300,7 +4328,9 @@ public sealed class TimelineSurface : Control
     private void ScheduleSegmentPreviewWarmup()
     {
         long generation = checked(++_segmentPreviewWarmupGeneration);
-        _segmentPreviewWarmupPlanCancellation?.Cancel();
+        CancellationTokenSource? previousCancellation = _segmentPreviewWarmupPlanCancellation;
+        previousCancellation?.Cancel();
+        previousCancellation?.Dispose();
         _segmentPreviewWarmupPlanCancellation = null;
         _segmentPreviewWarmupQueue.Clear();
         _segmentPreviewWarmupInFlight = 0;
@@ -4434,7 +4464,9 @@ public sealed class TimelineSurface : Control
                     if (generation != _segmentPreviewWarmupGeneration) return;
                     _segmentPreviewWarmupInFlight = Math.Max(0, _segmentPreviewWarmupInFlight - 1);
                     PumpSegmentPreviewWarmup(generation);
-                });
+                },
+                _segmentPreviewWarmupPlanCancellation?.Token ?? default,
+                TimelineRasterRequestPriority.Background);
             if (accepted) continue;
             _segmentPreviewWarmupInFlight--;
             _segmentPreviewWarmupQueue.Enqueue(request);
@@ -4466,13 +4498,19 @@ public sealed class TimelineSurface : Control
         Color noteColor,
         Color eventColor)
     {
-        ulong contentFingerprint = TimelineContentFingerprint.Combine(
-            preview.ContentFingerprint,
-            unchecked((ulong)tile));
         long contentWidth = TimelineSegmentPreviewRasterizer.GetFixedPreviewContentWidth(
             segmentLengthTicks,
             ticksPerQuarterNote,
             lod);
+        ulong contentFingerprint = TimelineContentFingerprint.Combine(
+            preview.GetTileContentFingerprint(
+                eventLayer: false,
+                contentWidth,
+                tile),
+            preview.GetTileContentFingerprint(
+                eventLayer: true,
+                contentWidth,
+                tile));
         TimelineRasterCacheKey key = new(
             TimelineRasterLayer.ArrangementSegmentPreview,
             $"arrangement-segment-preview:{preview.SegmentId.Value}",
@@ -4582,7 +4620,10 @@ public sealed class TimelineSurface : Control
                         requestTileX,
                         normalColor,
                         selectedColor,
-                        borderColor));
+                        borderColor),
+                    visible
+                        ? TimelineRasterRequestPriority.Visible
+                        : TimelineRasterRequestPriority.Normal);
             }
         }
         PresentVelocityRasterLayer(
@@ -4779,9 +4820,6 @@ public sealed class TimelineSurface : Control
         long lastVisibleTileY = Math.Max(firstVisibleTileY, FloorToLong(
             Math.BitDecrement(visibleWorldBottom) / TimelineEventPointTileRasterizer.TileSize));
         TimelineSelectionSnapshot? selection = SelectionSnapshot;
-        ulong contentFingerprint = TimelineContentFingerprint.WithSelection(
-            snapshot.ContentFingerprint,
-            selection?.Revision ?? snapshot.SemanticRevision);
         Color normalColor = GetSolidColor(normalBrush, Color.FromRgb(98, 166, 246));
         Color primaryColor = GetSolidColor(primaryBrush, Color.FromRgb(241, 243, 245));
         Color borderColor = GetSolidColor(borderBrush, Color.FromRgb(42, 48, 58));
@@ -4807,6 +4845,15 @@ public sealed class TimelineSurface : Control
                     bool visible = tileX >= firstVisibleTileX && tileX <= lastVisibleTileX
                         && tileY >= firstVisibleTileY && tileY <= lastVisibleTileY;
                     if (ring == 1 && visible) continue;
+                    ulong contentFingerprint = TimelineEventPointTileRasterizer.ComputeContentFingerprint(
+                        snapshot,
+                        selection,
+                        devicePixelsPerTick,
+                        devicePixelsPerValue,
+                        tileX,
+                        tileY,
+                        rasterDpiScaleX,
+                        rasterDpiScaleY);
                     TimelineRasterCacheKey key = new(
                         TimelineRasterLayer.EventPoints,
                         snapshot.ProjectionKey,
@@ -4849,7 +4896,10 @@ public sealed class TimelineSurface : Control
                             rasterDpiScaleY,
                             normalColor,
                             primaryColor,
-                            borderColor));
+                            borderColor),
+                        visible
+                            ? TimelineRasterRequestPriority.Visible
+                            : TimelineRasterRequestPriority.Normal);
                 }
             }
         }
@@ -4905,9 +4955,6 @@ public sealed class TimelineSurface : Control
     {
         long horizontalScaleKey = BitConverter.DoubleToInt64Bits(devicePixelsPerTick);
         long verticalScaleKey = BitConverter.DoubleToInt64Bits(devicePixelsPerValue);
-        ulong contentFingerprint = TimelineContentFingerprint.WithSelection(
-            snapshot.ContentFingerprint,
-            selection.Revision);
         long firstX = Math.Max(0, firstVisibleTileX - 1);
         long lastX = Math.Max(firstX, lastVisibleTileX + 1);
         long firstY = Math.Max(0, firstVisibleTileY - 1);
@@ -4916,6 +4963,16 @@ public sealed class TimelineSurface : Control
         {
             for (long tileX = firstX; tileX <= lastX; tileX++)
             {
+                ulong contentFingerprint = TimelineEventPointTileRasterizer.ComputeContentFingerprint(
+                    snapshot,
+                    selection,
+                    devicePixelsPerTick,
+                    devicePixelsPerValue,
+                    tileX,
+                    tileY,
+                    dpiScaleX,
+                    dpiScaleY,
+                    selectionOnly: true);
                 TimelineRasterCacheKey key = new(
                     TimelineRasterLayer.EventPointSelection,
                     snapshot.ProjectionKey,
@@ -5781,10 +5838,12 @@ public sealed class TimelineSurface : Control
         long verticalScaleKey = BitConverter.DoubleToInt64Bits(devicePixelsPerLane);
         Color fillColor = Colors.Transparent;
         Color outlineColor = GetDragPreviewRasterColor();
+        long lastContentTileX = LastPianoContentTileX(snapshot, devicePixelsPerTick);
         for (int ring = 0; ring <= 1; ring++)
         {
             long firstX = Math.Max(0, firstVisibleTileX - ring);
-            long lastX = Math.Max(firstX, lastVisibleTileX + ring);
+            long lastX = Math.Min(lastContentTileX, lastVisibleTileX + ring);
+            if (lastX < firstX) continue;
             long firstY = Math.Max(0, firstVisibleTileY - ring);
             long lastY = Math.Max(firstY, lastVisibleTileY + ring);
             for (long tileY = firstY; tileY <= lastY; tileY++)
@@ -5900,6 +5959,13 @@ public sealed class TimelineSurface : Control
         long lastTileX = Math.Max(firstTileX, FloorToLong(
             Math.Max(sourceStartTick, sourceEndTick - 1) * devicePixelsPerTick
             / TimelinePianoTileRasterizer.TileSize));
+        lastTileX = Math.Min(
+            lastTileX,
+            LastPianoContentTileX(snapshot, devicePixelsPerTick));
+        if (lastTileX < firstTileX)
+        {
+            return false;
+        }
         long firstTileY = Math.Max(0, FloorToLong(
             sourceFirstLane * devicePixelsPerLane / TimelinePianoTileRasterizer.TileSize));
         long lastTileY = Math.Max(firstTileY, FloorToLong(
@@ -8677,11 +8743,7 @@ public sealed class TimelineSurface : Control
         BitmapSource? Tile0,
         BitmapSource? Tile1,
         BitmapSource? Tile2,
-        BitmapSource? Tile3,
-        BitmapSource? Tile4,
-        BitmapSource? Tile5,
-        BitmapSource? Tile6,
-        BitmapSource? Tile7)
+        BitmapSource? Tile3)
     {
         public BitmapSource GetBitmap(int tile) => tile switch
         {
@@ -8689,10 +8751,6 @@ public sealed class TimelineSurface : Control
             1 when Tile1 is not null => Tile1,
             2 when Tile2 is not null => Tile2,
             3 when Tile3 is not null => Tile3,
-            4 when Tile4 is not null => Tile4,
-            5 when Tile5 is not null => Tile5,
-            6 when Tile6 is not null => Tile6,
-            7 when Tile7 is not null => Tile7,
             _ => throw new ArgumentOutOfRangeException(nameof(tile))
         };
     }

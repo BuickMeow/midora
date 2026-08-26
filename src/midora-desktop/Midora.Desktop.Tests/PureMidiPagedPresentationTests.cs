@@ -129,6 +129,33 @@ public sealed class PureMidiPagedPresentationTests
         Assert.Equal(63, metrics.MinimumLane);
         Assert.Equal(67, metrics.MaximumLane);
         Assert.Equal(new MidoraId(1), metrics.EarliestItem.Id);
+
+        DirectMidiNote[] resolvedAgain = segment.Notes.ResolveValuesByIds(ids).ToArray();
+        Assert.Equal(2, resolvedAgain.Length);
+        Assert.Equal(1, source.NoteIdQueryCount);
+    }
+
+    [Fact]
+    public void DirectMidiNoteSnapshotRejectsBlankRangePastContentWithoutSourceQuery()
+    {
+        using MidoraProject project = new(480);
+        MidiSegment segment = new(project) { LengthTicks = 10_000 };
+        SparsePagedNoteSource source = new();
+        segment.AttachPagedContent(source);
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "direct-midi-blank-tail",
+            [],
+            itemSource: new PagedDirectMidiTimelineItemSource(
+                segment,
+                DirectMidiTimelineProjection.Notes));
+        List<TimelineRenderItem> items = [];
+
+        snapshot.QueryInto(1_000, 9_000, 0, 128, items);
+
+        Assert.Empty(items);
+        Assert.Equal(0, source.NoteRangeQueryCount);
+        Assert.Equal(840, snapshot.MaximumEndTick);
     }
 
     [Fact]
@@ -352,7 +379,8 @@ public sealed class PureMidiPagedPresentationTests
     private sealed class SparsePagedNoteSource :
         IPureMidiSegmentContentSource,
         IPureMidiPlaybackEndpointSource,
-        IPureMidiContentOverviewSource
+        IPureMidiContentOverviewSource,
+        IPureMidiContentBoundsSource
     {
         private readonly DirectMidiNoteValue[] _notes =
         [
@@ -366,6 +394,8 @@ public sealed class PureMidiPagedPresentationTests
         public string ContentFingerprint => "sparse-overview-test";
         public int NoteStartQueryCount { get; private set; }
         public int NoteIdQueryCount { get; private set; }
+        public int NoteRangeQueryCount { get; private set; }
+        public long MaximumNoteEndTick => 840;
         public DirectMidiNoteValue GetNote(int index) => _notes[index];
         public DirectMidiChannelEventValue GetChannelEvent(int index) =>
             throw new ArgumentOutOfRangeException(nameof(index));
@@ -388,11 +418,15 @@ public sealed class PureMidiPagedPresentationTests
             long startTick,
             long endTick,
             int minimumKey = 0,
-            int maximumKey = 127) => _notes.Where(value =>
+            int maximumKey = 127)
+        {
+            NoteRangeQueryCount++;
+            return _notes.Where(value =>
                 value.StartTick < endTick
                 && value.StartTick + value.LengthTicks > startTick
                 && value.Key >= minimumKey
                 && value.Key <= maximumKey);
+        }
 
         public IEnumerable<DirectMidiChannelEventValue> QueryChannelEvents(long startTick, long endTick) => [];
         public IEnumerable<OpaqueMidiEventValue> QueryOpaqueEvents(long startTick, long endTick) => [];

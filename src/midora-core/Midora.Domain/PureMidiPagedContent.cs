@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Numerics;
 
 namespace Midora.Domain;
 
@@ -87,6 +88,35 @@ public interface IPureMidiContentOverviewSource
         long extent,
         Span<byte> destination,
         IReadOnlySet<MidoraId>? excludedIds) => false;
+}
+
+/// <summary>
+/// Optional immutable bounds supplied by an out-of-core Pure MIDI source.
+/// Consumers use these bounds to reject empty range queries without walking
+/// every page descriptor. Values are conservative exclusive upper bounds.
+/// </summary>
+public interface IPureMidiContentBoundsSource
+{
+    long MaximumNoteEndTick { get; }
+}
+
+/// <summary>
+/// Optional metadata-only fingerprints for immutable Pure MIDI page ranges.
+/// Implementations must not decode page payloads. Presentation caches use these
+/// values on the UI thread to identify a local tile without enumerating millions
+/// of MIDI records.
+/// </summary>
+public interface IPureMidiContentRangeFingerprintSource
+{
+    ulong GetNoteRangeFingerprint(
+        long startTick,
+        long endTick,
+        int minimumKey = 0,
+        int maximumKey = 127);
+
+    ulong GetChannelEventRangeFingerprint(long startTick, long endTick);
+
+    ulong GetOpaqueEventRangeFingerprint(long startTick, long endTick);
 }
 
 internal static class PureMidiOverviewProjection
@@ -292,6 +322,396 @@ internal interface IPureMidiContentPackSegmentSource
     PureMidiContentPack Owner { get; }
 }
 
+/// <summary>
+/// Immutable range-query view over the source pages and the current copy-on-write
+/// Note overlay. The overlay interval index is built once per presentation revision,
+/// so each visible tile only visits edited Notes intersecting that tile.
+/// </summary>
+public sealed class DirectMidiNoteQuerySnapshot
+{
+    private const ulong FingerprintOffset = 14695981039346656037UL;
+    private const ulong FingerprintPrime = 1099511628211UL;
+    private readonly IPureMidiSegmentContentSource? _source;
+    private readonly HashSet<MidoraId>? _sourceExclusions;
+    private readonly DirectMidiNoteValue[] _editedByStart;
+    private readonly long[] _maximumEndPrefix;
+    private readonly FingerprintIndex _editedFingerprintIndex;
+    private readonly FingerprintIndex _excludedFingerprintIndex;
+    private readonly ulong _unknownExclusionFingerprint;
+    private readonly long _sourceMaximumEndTick;
+
+    internal DirectMidiNoteQuerySnapshot(
+        IPureMidiSegmentContentSource? source,
+        bool clearSource,
+        IReadOnlyCollection<MidoraId> removedSourceIds,
+        IReadOnlyDictionary<MidoraId, DirectMidiNoteValue> materializedSourceValues,
+        IEnumerable<DirectMidiNote> replacements,
+        IEnumerable<DirectMidiNote> added,
+        int count,
+        long generation)
+    {
+        ArgumentNullException.ThrowIfNull(removedSourceIds);
+        ArgumentNullException.ThrowIfNull(materializedSourceValues);
+        ArgumentNullException.ThrowIfNull(replacements);
+        ArgumentNullException.ThrowIfNull(added);
+        _source = clearSource ? null : source;
+        DirectMidiNote[] replacementValues = replacements.ToArray();
+        if (_source is not null && (removedSourceIds.Count != 0 || replacementValues.Length != 0))
+        {
+            _sourceExclusions = new(removedSourceIds);
+            foreach (DirectMidiNote value in replacementValues)
+                _sourceExclusions.Add(value.Id);
+        }
+        _editedByStart = replacementValues
+            .Concat(added)
+            .Select(ToValue)
+            .OrderBy(static value => value.StartTick)
+            .ThenBy(static value => value.NoteOnOrder)
+            .ThenBy(static value => value.Id)
+            .ToArray();
+        _editedFingerprintIndex = new(_editedByStart);
+        DirectMidiNoteValue[] excludedValues = _sourceExclusions is null
+            ? []
+            : _sourceExclusions
+                .Where(materializedSourceValues.ContainsKey)
+                .Select(id => materializedSourceValues[id])
+                .ToArray();
+        _excludedFingerprintIndex = new(excludedValues);
+        FingerprintAggregate unknownExclusions = default;
+        if (_sourceExclusions is not null)
+        {
+            foreach (MidoraId id in _sourceExclusions)
+            {
+                if (!materializedSourceValues.ContainsKey(id))
+                    unknownExclusions.Add(unchecked((ulong)id.Value));
+            }
+        }
+        _unknownExclusionFingerprint = unknownExclusions.ToFingerprint();
+        _maximumEndPrefix = new long[_editedByStart.Length];
+        long editedMaximumEndTick = 0;
+        for (int index = 0; index < _editedByStart.Length; index++)
+        {
+            editedMaximumEndTick = Math.Max(
+                editedMaximumEndTick,
+                EndTick(_editedByStart[index]));
+            _maximumEndPrefix[index] = editedMaximumEndTick;
+        }
+        _sourceMaximumEndTick = GetSourceMaximumEndTick(_source);
+        MaximumEndTick = Math.Max(_sourceMaximumEndTick, editedMaximumEndTick);
+        Count = count;
+        Generation = generation;
+    }
+
+    public int Count { get; }
+    public long Generation { get; }
+    public long MaximumEndTick { get; }
+
+    /// <summary>
+    /// Returns a content-derived local fingerprint without decoding immutable
+    /// source pages or enumerating edited Notes in the requested range.
+    /// </summary>
+    public ulong GetRangeFingerprint(
+        long startTick,
+        long endTick,
+        int minimumKey = 0,
+        int maximumKey = 127)
+    {
+        if (startTick < 0) throw new ArgumentOutOfRangeException(nameof(startTick));
+        if (endTick <= startTick) throw new ArgumentOutOfRangeException(nameof(endTick));
+        if (maximumKey < minimumKey) throw new ArgumentOutOfRangeException(nameof(maximumKey));
+
+        ulong fingerprint = FingerprintOffset;
+        if (_source is IPureMidiContentRangeFingerprintSource ranged)
+        {
+            AddFingerprint(
+                ref fingerprint,
+                ranged.GetNoteRangeFingerprint(startTick, endTick, minimumKey, maximumKey));
+        }
+        else if (_source is not null)
+        {
+            AddFingerprint(ref fingerprint, HashText(_source.ContentFingerprint));
+        }
+        AddFingerprint(
+            ref fingerprint,
+            _excludedFingerprintIndex.GetFingerprint(
+                startTick,
+                endTick,
+                minimumKey,
+                maximumKey));
+        AddFingerprint(ref fingerprint, _unknownExclusionFingerprint);
+        AddFingerprint(
+            ref fingerprint,
+            _editedFingerprintIndex.GetFingerprint(
+                startTick,
+                endTick,
+                minimumKey,
+                maximumKey));
+        return fingerprint;
+    }
+
+    public IEnumerable<DirectMidiNoteValue> QueryValues(
+        long startTick,
+        long endTick,
+        int minimumKey = 0,
+        int maximumKey = 127)
+    {
+        if (endTick <= startTick
+            || maximumKey < minimumKey
+            || startTick >= MaximumEndTick)
+        {
+            yield break;
+        }
+
+        if (_source is not null && startTick < _sourceMaximumEndTick)
+        {
+            foreach (DirectMidiNoteValue value in _source.QueryNotes(
+                startTick,
+                Math.Min(endTick, _sourceMaximumEndTick),
+                minimumKey,
+                maximumKey))
+            {
+                if (_sourceExclusions?.Contains(value.Id) != true)
+                    yield return value;
+            }
+        }
+
+        int first = FirstMaximumEndGreaterThan(startTick);
+        int lastExclusive = FirstStartAtOrAfter(endTick);
+        for (int index = first; index < lastExclusive; index++)
+        {
+            DirectMidiNoteValue value = _editedByStart[index];
+            if (EndTick(value) > startTick
+                && value.Key >= minimumKey
+                && value.Key <= maximumKey)
+            {
+                yield return value;
+            }
+        }
+    }
+
+    private int FirstMaximumEndGreaterThan(long tick)
+    {
+        int low = 0;
+        int high = _maximumEndPrefix.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (_maximumEndPrefix[middle] <= tick) low = middle + 1;
+            else high = middle;
+        }
+        return low;
+    }
+
+    private int FirstStartAtOrAfter(long tick)
+    {
+        int low = 0;
+        int high = _editedByStart.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (_editedByStart[middle].StartTick < tick) low = middle + 1;
+            else high = middle;
+        }
+        return low;
+    }
+
+    private static long GetSourceMaximumEndTick(IPureMidiSegmentContentSource? source)
+    {
+        if (source is null) return 0;
+        if (source is IPureMidiContentBoundsSource bounds)
+            return bounds.MaximumNoteEndTick;
+
+        long maximum = 0;
+        for (int index = 0; index < source.NoteCount; index++)
+            maximum = Math.Max(maximum, EndTick(source.GetNote(index)));
+        return maximum;
+    }
+
+    private static long EndTick(DirectMidiNoteValue value) =>
+        value.StartTick > long.MaxValue - Math.Max(1, value.LengthTicks)
+            ? long.MaxValue
+            : value.StartTick + Math.Max(1, value.LengthTicks);
+
+    private static DirectMidiNoteValue ToValue(DirectMidiNote value) => new(
+        value.Id,
+        value.StartTick,
+        value.LengthTicks,
+        value.Key,
+        value.NoteOnVelocity,
+        value.NoteOffVelocity,
+        value.NoteOnOrder,
+        value.NoteOffOrder);
+
+    private static ulong Fingerprint(DirectMidiNoteValue value)
+    {
+        ulong fingerprint = FingerprintOffset;
+        AddFingerprint(ref fingerprint, unchecked((ulong)value.Id.Value));
+        AddFingerprint(ref fingerprint, unchecked((ulong)value.StartTick));
+        AddFingerprint(ref fingerprint, unchecked((ulong)value.LengthTicks));
+        AddFingerprint(ref fingerprint, unchecked((ulong)value.Key));
+        AddFingerprint(ref fingerprint, unchecked((ulong)value.NoteOnVelocity));
+        AddFingerprint(ref fingerprint, unchecked((ulong)value.NoteOffVelocity));
+        AddFingerprint(ref fingerprint, unchecked((ulong)value.NoteOnOrder));
+        AddFingerprint(ref fingerprint, unchecked((ulong)value.NoteOffOrder));
+        return fingerprint;
+    }
+
+    private static ulong HashText(string value)
+    {
+        ulong fingerprint = FingerprintOffset;
+        foreach (char character in value)
+            AddFingerprint(ref fingerprint, character);
+        return fingerprint;
+    }
+
+    private static void AddFingerprint(ref ulong fingerprint, ulong value)
+    {
+        fingerprint ^= value;
+        fingerprint *= FingerprintPrime;
+    }
+
+    /// <summary>
+    /// Compact range index for the mutable overlay. The query snapshot already
+    /// owns a start-sorted value array for rendering; this index adds only one
+    /// summary per 128 values instead of allocating a two-node object tree for
+    /// every Note. Range aggregation is commutative, so inserting or removing a
+    /// far-away value cannot change the fingerprint of an unchanged tile merely
+    /// by shifting block boundaries.
+    /// </summary>
+    private sealed class FingerprintIndex
+    {
+        private const int BlockSize = 128;
+        private readonly DirectMidiNoteValue[] _values;
+        private readonly FingerprintBlock[] _blocks;
+
+        public FingerprintIndex(DirectMidiNoteValue[] values)
+        {
+            _values = values;
+            _blocks = new FingerprintBlock[(values.Length + BlockSize - 1) / BlockSize];
+            for (int blockIndex = 0; blockIndex < _blocks.Length; blockIndex++)
+            {
+                int first = checked(blockIndex * BlockSize);
+                int count = Math.Min(BlockSize, values.Length - first);
+                long minimumStartTick = long.MaxValue;
+                long maximumEndTick = 0;
+                int minimumKey = int.MaxValue;
+                int maximumKey = int.MinValue;
+                FingerprintAggregate aggregate = default;
+                for (int index = first; index < first + count; index++)
+                {
+                    DirectMidiNoteValue value = values[index];
+                    minimumStartTick = Math.Min(minimumStartTick, value.StartTick);
+                    maximumEndTick = Math.Max(maximumEndTick, EndTick(value));
+                    minimumKey = Math.Min(minimumKey, value.Key);
+                    maximumKey = Math.Max(maximumKey, value.Key);
+                    aggregate.Add(Fingerprint(value));
+                }
+                _blocks[blockIndex] = new(
+                    first,
+                    count,
+                    minimumStartTick,
+                    maximumEndTick,
+                    minimumKey,
+                    maximumKey,
+                    aggregate);
+            }
+        }
+
+        public ulong GetFingerprint(
+            long startTick,
+            long endTick,
+            int minimumKey,
+            int maximumKey)
+        {
+            FingerprintAggregate result = default;
+            foreach (FingerprintBlock block in _blocks)
+            {
+                if (block.MaximumEndTick <= startTick
+                    || block.MinimumStartTick >= endTick
+                    || block.MaximumKey < minimumKey
+                    || block.MinimumKey > maximumKey)
+                {
+                    continue;
+                }
+                if (startTick <= block.MinimumStartTick
+                    && endTick >= block.MaximumEndTick
+                    && minimumKey <= block.MinimumKey
+                    && maximumKey >= block.MaximumKey)
+                {
+                    result.Combine(block.Aggregate);
+                    continue;
+                }
+                int end = checked(block.First + block.Count);
+                for (int index = block.First; index < end; index++)
+                {
+                    DirectMidiNoteValue value = _values[index];
+                    if (value.StartTick < endTick
+                        && EndTick(value) > startTick
+                        && value.Key >= minimumKey
+                        && value.Key <= maximumKey)
+                    {
+                        result.Add(Fingerprint(value));
+                    }
+                }
+            }
+            return result.ToFingerprint();
+        }
+
+        private readonly record struct FingerprintBlock(
+            int First,
+            int Count,
+            long MinimumStartTick,
+            long MaximumEndTick,
+            int MinimumKey,
+            int MaximumKey,
+            FingerprintAggregate Aggregate);
+    }
+
+    private struct FingerprintAggregate
+    {
+        private ulong _xor;
+        private ulong _sum;
+        private ulong _rotatedSum;
+        private ulong _count;
+
+        public void Add(ulong value)
+        {
+            ulong mixed = Mix(value);
+            _xor ^= mixed;
+            _sum = unchecked(_sum + mixed);
+            _rotatedSum = unchecked(_rotatedSum + BitOperations.RotateLeft(mixed, 23));
+            _count++;
+        }
+
+        public void Combine(FingerprintAggregate other)
+        {
+            _xor ^= other._xor;
+            _sum = unchecked(_sum + other._sum);
+            _rotatedSum = unchecked(_rotatedSum + other._rotatedSum);
+            _count = unchecked(_count + other._count);
+        }
+
+        public ulong ToFingerprint()
+        {
+            ulong fingerprint = FingerprintOffset;
+            AddFingerprint(ref fingerprint, _xor);
+            AddFingerprint(ref fingerprint, _sum);
+            AddFingerprint(ref fingerprint, _rotatedSum);
+            AddFingerprint(ref fingerprint, _count);
+            return fingerprint;
+        }
+
+        private static ulong Mix(ulong value)
+        {
+            value ^= value >> 30;
+            value *= 0xbf58476d1ce4e5b9UL;
+            value ^= value >> 27;
+            value *= 0x94d049bb133111ebUL;
+            return value ^ (value >> 31);
+        }
+    }
+}
+
 public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyList<DirectMidiNote>, IDirectMidiNoteChangeSink
 {
     private readonly MidoraProject _project;
@@ -299,6 +719,8 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
     private readonly Dictionary<MidoraId, DirectMidiNote> _replacements = [];
     private readonly HashSet<MidoraId> _removed = [];
     private readonly HashSet<MidoraId> _materializedSourceIds = [];
+    private readonly Dictionary<MidoraId, DirectMidiNoteValue> _materializedSourceValues = [];
+    private readonly Dictionary<MidoraId, DirectMidiNote> _materializedSourceItems = [];
     private readonly Dictionary<MidoraId, int> _sourceIndices = [];
     private IPureMidiSegmentContentSource? _source;
     private bool _clearSource;
@@ -322,6 +744,16 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         && _removed.Count == 0
         && _replacements.Count == 0
         && _added.Count == 0;
+
+    public DirectMidiNoteQuerySnapshot CreateQuerySnapshot() => new(
+        _source,
+        _clearSource,
+        _removed,
+        _materializedSourceValues,
+        _replacements.Values,
+        _added,
+        Count,
+        _generation);
 
     public DirectMidiNote this[int index]
     {
@@ -389,6 +821,8 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         _removed.Clear();
         _replacements.Clear();
         _materializedSourceIds.Clear();
+        _materializedSourceValues.Clear();
+        _materializedSourceItems.Clear();
         _sourceIndices.Clear();
         _added.Clear();
         Touch();
@@ -448,12 +882,18 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
     public bool TryGetById(MidoraId id, out DirectMidiNote? value)
     {
         if (_replacements.TryGetValue(id, out value)) return true;
+        if (!_clearSource
+            && !_removed.Contains(id)
+            && _materializedSourceItems.TryGetValue(id, out value))
+        {
+            return true;
+        }
         if (!_clearSource && !_removed.Contains(id) && _source is not null)
         {
             int index = _source.FindNoteIndex(id);
             if (index >= 0)
             {
-                value = Materialize(_source.GetNote(index), index);
+                value = Materialize(_source.GetNote(index), index, retain: true);
                 return true;
             }
         }
@@ -467,11 +907,30 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         ArgumentNullException.ThrowIfNull(ids);
         if (ids.Count == 0) return [];
         HashSet<MidoraId> requested = [.. ids];
+        if (!_clearSource
+            && _source is not null
+            && _removed.Count == 0
+            && requested.All(id => _sourceIndices.ContainsKey(id)
+                && (_replacements.ContainsKey(id) || _materializedSourceItems.ContainsKey(id))))
+        {
+            List<DirectMidiNoteMatch> cached = new(requested.Count);
+            HashSet<MidoraId> emittedCached = [];
+            foreach (MidoraId id in ids)
+            {
+                if (!emittedCached.Add(id)) continue;
+                DirectMidiNote value = _replacements.GetValueOrDefault(id)
+                    ?? _materializedSourceItems[id];
+                cached.Add(new(_sourceIndices[id], value));
+            }
+            return cached;
+        }
         Dictionary<MidoraId, DirectMidiNoteMatch> matches = [];
         if (!_clearSource && _source is not null)
         {
             HashSet<MidoraId> sourceIds = [.. requested];
             sourceIds.ExceptWith(_removed);
+            sourceIds.ExceptWith(_replacements.Keys);
+            sourceIds.ExceptWith(_materializedSourceItems.Keys);
             int[] removedIndices = _removed.Count == 0
                 ? []
                 : _removed
@@ -479,14 +938,29 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
                     .Where(static value => value >= 0)
                     .Order()
                     .ToArray();
-            foreach (DirectMidiNoteSourceMatch match in _source.QueryNotesByIds(sourceIds))
+            foreach (DirectMidiNoteSourceMatch match in sourceIds.Count == 0
+                ? []
+                : _source.QueryNotesByIds(sourceIds))
             {
                 DirectMidiNote value = _replacements.TryGetValue(match.Value.Id, out DirectMidiNote? replacement)
                     ? replacement
-                    : Materialize(match.Value, match.Index);
+                    : Materialize(match.Value, match.Index, retain: true);
                 matches[match.Value.Id] = new(
                     VisibleIndex(match.Index, removedIndices),
                     value);
+            }
+            foreach (MidoraId id in requested)
+            {
+                DirectMidiNote? replacement = _replacements.GetValueOrDefault(id)
+                    ?? _materializedSourceItems.GetValueOrDefault(id);
+                if (replacement is null || _removed.Contains(id)) continue;
+                int sourceIndex = SourceIndexOf(id);
+                if (sourceIndex >= 0)
+                {
+                    matches[id] = new(
+                        VisibleIndex(sourceIndex, removedIndices),
+                        replacement);
+                }
             }
         }
         int addedBase = LiveSourceCount;
@@ -504,6 +978,44 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
                 result.Add(match);
         }
         return result;
+    }
+
+    public IEnumerable<DirectMidiNote> ResolveValuesByIds(
+        IReadOnlySet<MidoraId> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        if (ids.Count == 0) yield break;
+
+        foreach (MidoraId id in ids)
+        {
+            if (_removed.Contains(id)) continue;
+            if (_replacements.TryGetValue(id, out DirectMidiNote? replacement))
+            {
+                yield return replacement;
+            }
+            else if (_materializedSourceItems.TryGetValue(id, out DirectMidiNote? materialized))
+            {
+                yield return materialized;
+            }
+        }
+
+        if (!_clearSource && _source is not null)
+        {
+            HashSet<MidoraId> sourceIds = [.. ids];
+            sourceIds.ExceptWith(_removed);
+            sourceIds.ExceptWith(_replacements.Keys);
+            sourceIds.ExceptWith(_materializedSourceItems.Keys);
+            if (sourceIds.Count != 0)
+            {
+                foreach (DirectMidiNoteSourceMatch match in _source.QueryNotesByIds(sourceIds))
+                    yield return Materialize(match.Value, match.Index, retain: true);
+            }
+        }
+
+        foreach (DirectMidiNote value in _added)
+        {
+            if (ids.Contains(value.Id)) yield return value;
+        }
     }
 
     public IDisposable BeginBatchChange(IReadOnlyCollection<DirectMidiNote> values)
@@ -558,6 +1070,30 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         return false;
     }
 
+    /// <summary>
+    /// Removes a batch in one stable compaction pass. Large paste/duplicate
+    /// Undo must use this path; repeatedly searching and removing from the
+    /// edit overlay is quadratic.
+    /// </summary>
+    public int RemoveRange(IReadOnlyCollection<DirectMidiNote> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (values.Count == 0) return 0;
+        HashSet<MidoraId> ids = values.Select(static value => value.Id).ToHashSet();
+        int removed = _added.RemoveAll(value => ids.Contains(value.Id));
+        foreach (MidoraId id in ids)
+        {
+            if (_clearSource || _removed.Contains(id)) continue;
+            int sourceIndex = SourceIndexOf(id);
+            if (sourceIndex < 0) continue;
+            _removed.Add(id);
+            _replacements.Remove(id);
+            removed++;
+        }
+        if (removed != 0) Touch();
+        return removed;
+    }
+
     internal Action RemoveForExactCollision(DirectMidiNote item)
     {
         ArgumentNullException.ThrowIfNull(item);
@@ -586,6 +1122,90 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
             if (!_removed.Remove(item.Id))
                 throw new InvalidOperationException("The conflicting Direct MIDI Note is already restored.");
             if (replacement is not null) _replacements[item.Id] = replacement;
+            Touch();
+        };
+    }
+
+    /// <summary>
+    /// Removes exact-collision losers in one overlay pass and returns an exact
+    /// restoration action. This avoids the quadratic FindIndex/RemoveAt path
+    /// when a large paste contains many duplicate start-tick/key pairs.
+    /// </summary>
+    internal Action RemoveRangeForExactCollision(IReadOnlyCollection<DirectMidiNote> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (values.Count == 0) return static () => { };
+        Dictionary<MidoraId, DirectMidiNote> requested = [];
+        foreach (DirectMidiNote value in values)
+        {
+            if (!requested.TryAdd(value.Id, value))
+                throw new ArgumentException("Exact-collision Notes must be distinct.", nameof(values));
+        }
+
+        List<(int Index, DirectMidiNote Value)> added = [];
+        for (int index = 0; index < _added.Count; index++)
+        {
+            DirectMidiNote value = _added[index];
+            if (requested.Remove(value.Id)) added.Add((index, value));
+        }
+        List<(MidoraId Id, DirectMidiNote? Replacement)> source = [];
+        foreach ((MidoraId id, DirectMidiNote value) in requested)
+        {
+            if (_clearSource || _removed.Contains(id) || SourceIndexOf(id) < 0)
+                throw new InvalidOperationException("A conflicting Direct MIDI Note is no longer present.");
+            _replacements.TryGetValue(id, out DirectMidiNote? replacement);
+            if (replacement is null || !ReferenceEquals(replacement, value))
+                throw new InvalidOperationException("A conflicting Direct MIDI Note changed before removal.");
+            source.Add((id, replacement));
+        }
+
+        if (added.Count != 0)
+        {
+            HashSet<MidoraId> addedIds = added.Select(static value => value.Value.Id).ToHashSet();
+            _added.RemoveAll(value => addedIds.Contains(value.Id));
+        }
+        foreach ((MidoraId id, _) in source)
+        {
+            _removed.Add(id);
+            _replacements.Remove(id);
+        }
+        Touch();
+
+        return () =>
+        {
+            HashSet<MidoraId> liveIds = _added.Select(static value => value.Id).ToHashSet();
+            if (added.Any(value => liveIds.Contains(value.Value.Id)))
+                throw new InvalidOperationException("A conflicting Direct MIDI Note is already restored.");
+            int finalCount = checked(_added.Count + added.Count);
+            if (added.Count != 0)
+            {
+                List<DirectMidiNote> restored = new(finalCount);
+                int liveIndex = 0;
+                int removedIndex = 0;
+                for (int index = 0; index < finalCount; index++)
+                {
+                    if (removedIndex < added.Count && added[removedIndex].Index == index)
+                    {
+                        restored.Add(added[removedIndex++].Value);
+                    }
+                    else
+                    {
+                        if ((uint)liveIndex >= (uint)_added.Count)
+                            throw new InvalidOperationException("The Direct MIDI Note overlay changed before restoration.");
+                        restored.Add(_added[liveIndex++]);
+                    }
+                }
+                if (removedIndex != added.Count || liveIndex != _added.Count)
+                    throw new InvalidOperationException("The Direct MIDI Note overlay cannot be restored exactly.");
+                _added.Clear();
+                _added.AddRange(restored);
+            }
+            foreach ((MidoraId id, DirectMidiNote? replacement) in source)
+            {
+                if (!_removed.Remove(id))
+                    throw new InvalidOperationException("A conflicting Direct MIDI Note is already restored.");
+                if (replacement is not null) _replacements.Add(id, replacement);
+            }
             Touch();
         };
     }
@@ -839,6 +1459,8 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         target._clearSource = _clearSource;
         target._removed.UnionWith(_removed);
         target._materializedSourceIds.UnionWith(_materializedSourceIds);
+        foreach ((MidoraId id, DirectMidiNoteValue value) in _materializedSourceValues)
+            target._materializedSourceValues.Add(id, value);
         foreach ((MidoraId id, int sourceIndex) in _sourceIndices)
             target._sourceIndices.Add(id, sourceIndex);
         foreach ((MidoraId id, DirectMidiNote value) in _replacements)
@@ -939,6 +1561,29 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         }
     }
 
+    internal IEnumerable<DirectMidiNote> QueryEditedStartKeys(
+        IReadOnlySet<DirectMidiNoteStartKey> keys)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        if (keys.Count == 0) yield break;
+        foreach (DirectMidiNote replacement in _replacements.Values)
+        {
+            if (keys.Contains(new(replacement.StartTick, replacement.Key)))
+                yield return replacement;
+        }
+        foreach (DirectMidiNote value in _added)
+        {
+            if (keys.Contains(new(value.StartTick, value.Key))) yield return value;
+        }
+    }
+
+    internal bool IsUneditedSourceNotePresent(MidoraId id) =>
+        !_clearSource
+        && _source is not null
+        && _materializedSourceIds.Contains(id)
+        && !_removed.Contains(id)
+        && !_replacements.ContainsKey(id);
+
     private static int VisibleIndex(int sourceIndex, int[] sortedRemovedIndices)
     {
         int low = 0;
@@ -952,9 +1597,18 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         return checked(sourceIndex - low);
     }
 
-    private DirectMidiNote Materialize(DirectMidiNoteValue value, int sourceIndex = -1)
+    private DirectMidiNote Materialize(
+        DirectMidiNoteValue value,
+        int sourceIndex = -1,
+        bool retain = false)
     {
+        if (_materializedSourceItems.TryGetValue(value.Id, out DirectMidiNote? existing))
+        {
+            if (sourceIndex >= 0) _sourceIndices[value.Id] = sourceIndex;
+            return existing;
+        }
         _materializedSourceIds.Add(value.Id);
+        _materializedSourceValues.TryAdd(value.Id, value);
         if (sourceIndex >= 0) _sourceIndices[value.Id] = sourceIndex;
         DirectMidiNote result = new(_project, value.Id)
         {
@@ -967,6 +1621,7 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
             NoteOffOrder = value.NoteOffOrder
         };
         Track(result);
+        if (retain) _materializedSourceItems.Add(value.Id, result);
         return result;
     }
 
@@ -985,11 +1640,36 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
     {
         if (_batchChangeDepth != 1)
             throw new InvalidOperationException("No Direct MIDI Note batch change is active.");
+        CollapseSourceEquivalentReplacements();
         _batchChangeDepth = 0;
         _batchSourceIds = null;
         if (_batchChanged) _generation++;
         _batchChanged = false;
     }
+
+    private void CollapseSourceEquivalentReplacements()
+    {
+        if (_source is null || _clearSource || _batchSourceIds is not { Count: > 0 })
+            return;
+        foreach (MidoraId id in _batchSourceIds)
+        {
+            if (!_replacements.TryGetValue(id, out DirectMidiNote? replacement))
+                continue;
+            if (_materializedSourceValues.TryGetValue(id, out DirectMidiNoteValue source)
+                && Matches(replacement, source))
+                _replacements.Remove(id);
+        }
+    }
+
+    private static bool Matches(DirectMidiNote value, DirectMidiNoteValue source) =>
+        value.Id == source.Id
+        && value.StartTick == source.StartTick
+        && value.LengthTicks == source.LengthTicks
+        && value.Key == source.Key
+        && value.NoteOnVelocity == source.NoteOnVelocity
+        && value.NoteOffVelocity == source.NoteOffVelocity
+        && value.NoteOnOrder == source.NoteOnOrder
+        && value.NoteOffOrder == source.NoteOffOrder;
 
     private sealed class BatchChangeScope(DirectMidiNoteCollection owner) : IDisposable
     {
@@ -1298,6 +1978,25 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
             return true;
         }
         return false;
+    }
+
+    public int RemoveRange(IReadOnlyCollection<DirectMidiChannelEvent> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (values.Count == 0) return 0;
+        HashSet<MidoraId> ids = values.Select(static value => value.Id).ToHashSet();
+        int removed = _added.RemoveAll(value => ids.Contains(value.Id));
+        foreach (MidoraId id in ids)
+        {
+            if (_clearSource || _removed.Contains(id)) continue;
+            int sourceIndex = SourceIndexOf(id);
+            if (sourceIndex < 0) continue;
+            _removed.Add(id);
+            _replacements.Remove(id);
+            removed++;
+        }
+        if (removed != 0) Touch();
+        return removed;
     }
 
     internal Action RemoveForExactCollision(DirectMidiChannelEvent item)
@@ -1930,6 +2629,25 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
             return true;
         }
         return false;
+    }
+
+    public int RemoveRange(IReadOnlyCollection<OpaqueMidiEvent> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (values.Count == 0) return 0;
+        HashSet<MidoraId> ids = values.Select(static value => value.Id).ToHashSet();
+        int removed = _added.RemoveAll(value => ids.Contains(value.Id));
+        foreach (MidoraId id in ids)
+        {
+            if (_clearSource || _removed.Contains(id)) continue;
+            int sourceIndex = SourceIndexOf(id);
+            if (sourceIndex < 0) continue;
+            _removed.Add(id);
+            _replacements.Remove(id);
+            removed++;
+        }
+        if (removed != 0) Touch();
+        return removed;
     }
 
     public void RemoveAt(int index) => Remove(this[index]);

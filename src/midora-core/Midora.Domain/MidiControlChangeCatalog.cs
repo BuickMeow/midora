@@ -189,7 +189,50 @@ public static class TemplateEventMidiTargets
         }
     }
 
+    public static IEnumerable<MidiValueTarget> Enumerate(TemplateEventSnapshotValue value)
+    {
+        switch (value.Kind)
+        {
+            case TemplateEventKind.ControlChange:
+                yield return MidiValueTarget.ControlChange(value.Number);
+                break;
+            case TemplateEventKind.Bank:
+                if (value.HasBankMsb) yield return MidiValueTarget.BankMsb;
+                if (value.HasBankLsb) yield return MidiValueTarget.BankLsb;
+                break;
+            case TemplateEventKind.Program:
+                yield return MidiValueTarget.Program;
+                break;
+            case TemplateEventKind.PitchBend:
+                yield return MidiValueTarget.PitchBend;
+                break;
+            case TemplateEventKind.RegisteredParameter:
+                yield return MidiValueTarget.Rpn(value.Number);
+                break;
+            case TemplateEventKind.NonRegisteredParameter:
+                yield return MidiValueTarget.Nrpn(value.Number);
+                break;
+            case TemplateEventKind.PitchBendRange:
+                yield return MidiValueTarget.PitchBendRangeSemitones;
+                yield return MidiValueTarget.PitchBendRangeCents;
+                break;
+        }
+    }
+
     public static int GetValue(TemplateEvent value, MidiValueTarget target)
+    {
+        if (!Enumerate(value).Contains(target))
+        {
+            throw new ArgumentException("The Template Event does not expose the requested MIDI target.", nameof(target));
+        }
+        return target.Kind switch
+        {
+            MidiValueKind.BankLsb or MidiValueKind.PitchBendRangeCents => value.SecondaryValue,
+            _ => value.Value
+        };
+    }
+
+    public static int GetValue(TemplateEventSnapshotValue value, MidiValueTarget target)
     {
         if (!Enumerate(value).Contains(target))
         {

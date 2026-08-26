@@ -137,10 +137,9 @@ public static partial class ProjectDomainEditCommands
                             throw new InvalidOperationException(
                                 "Template Event copies do not exist before the first Apply.");
                         }
-                        foreach (TemplateEvent copy in copies)
-                        {
-                            RemoveRequired(voice.Events, copy, "Template Event copy");
-                        }
+                        int removed = voice.Events.RemoveRange(copies);
+                        if (removed != copies.Length)
+                            throw new InvalidOperationException("The Template Event copy set is no longer present.");
                     }
                     else
                     {

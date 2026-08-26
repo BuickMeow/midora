@@ -10,6 +10,84 @@ namespace Midora.Application.Tests;
 public sealed class ExtremeMidiScalabilityTests(ITestOutputHelper output)
 {
     [Fact]
+    public void OptInSampleLargeDuplicateUndoUsesBatchOverlayCompaction()
+    {
+        string? path = Environment.GetEnvironmentVariable("MIDORA_SCALE_MIDI_PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            output.WriteLine("Set MIDORA_SCALE_MIDI_PATH to run the opt-in large-MIDI Undo gate.");
+            return;
+        }
+
+        MidiProjectImportResult imported = MidiProjectImportService.ImportFile(
+            Path.GetFullPath(path),
+            Path.GetFileNameWithoutExtension(path));
+        try
+        {
+            MidiSegment segment = imported.Project.PureMidiTracks
+                .SelectMany(static track => track.Segments)
+                .OrderByDescending(static value => value.Notes.Count)
+                .First(static value => value.Notes.Count != 0);
+            int requestedCount = int.TryParse(
+                    Environment.GetEnvironmentVariable("MIDORA_SCALE_UNDO_COUNT"),
+                    out int configuredCount)
+                ? Math.Max(1, configuredCount)
+                : 100_000;
+            DirectMidiNoteValue[] selected = segment.Notes.QueryValues(
+                    segment.ContentOffsetTick,
+                    segment.ContentEndTick)
+                .Take(requestedCount)
+                .ToArray();
+            Assert.NotEmpty(selected);
+            int originalCount = segment.Notes.Count;
+            long destinationStart = checked(segment.Notes.CreateQuerySnapshot().MaximumEndTick + 1_024);
+            long tickDelta = checked(destinationStart - selected.Min(static value => value.StartTick));
+
+            Stopwatch prepareTimer = Stopwatch.StartNew();
+            IPreparedProjectEdit source = ProjectDomainEditCommands.DuplicateDirectMidiNotes(
+                    segment.Id,
+                    selected.Select(static value => value.Id).ToArray(),
+                    tickDelta,
+                    keyDelta: 0)
+                .Prepare(imported.Project);
+            IPreparedProjectEdit edit = ExactTimelineCollisionPolicy.Wrap(imported.Project, source);
+            prepareTimer.Stop();
+
+            Stopwatch firstApply = Stopwatch.StartNew();
+            edit.Apply(imported.Project);
+            firstApply.Stop();
+            int createdCount = segment.Notes.Count - originalCount;
+            Assert.InRange(createdCount, 1, selected.Length);
+
+            Stopwatch firstUndo = Stopwatch.StartNew();
+            edit.Undo(imported.Project);
+            firstUndo.Stop();
+            Assert.Equal(originalCount, segment.Notes.Count);
+
+            Stopwatch warmApply = Stopwatch.StartNew();
+            edit.Apply(imported.Project);
+            warmApply.Stop();
+            Assert.Equal(checked(originalCount + createdCount), segment.Notes.Count);
+
+            Stopwatch warmUndo = Stopwatch.StartNew();
+            edit.Undo(imported.Project);
+            warmUndo.Stop();
+            Assert.Equal(originalCount, segment.Notes.Count);
+
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+            output.WriteLine(
+                $"notes={originalCount}; requested={selected.Length}; created={createdCount}; "
+                + $"prepare={prepareTimer.Elapsed}; firstApply={firstApply.Elapsed}; "
+                + $"firstUndo={firstUndo.Elapsed}; warmApply={warmApply.Elapsed}; "
+                + $"warmUndo={warmUndo.Elapsed}; managedMiB={GC.GetTotalMemory(false) / 1048576d:F1}");
+        }
+        finally
+        {
+            imported.Project.Dispose();
+        }
+    }
+
+    [Fact]
     public void OptInSamplePagedSelectionEditUsesBoundedTargetedWork()
     {
         string? path = Environment.GetEnvironmentVariable("MIDORA_SCALE_MIDI_PATH");

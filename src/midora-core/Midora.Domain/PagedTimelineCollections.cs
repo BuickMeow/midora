@@ -84,6 +84,83 @@ public struct TimelineRasterColumnSummary
     }
 }
 
+/// <summary>
+/// Exact device-column projection shared by detailed and aggregated timeline
+/// rasterization.  Keeping a nearby tick origin avoids precision loss at very
+/// large project positions, while the half-up boundary rule matches the bitmap
+/// rasterizers exactly.
+/// </summary>
+public readonly record struct TimelineRasterColumnProjection
+{
+    public TimelineRasterColumnProjection(
+        long startTick,
+        long endTick,
+        long tickOrigin,
+        double deviceXAtOrigin,
+        double devicePixelsPerTick,
+        int columnCount)
+    {
+        if (startTick < 0) throw new ArgumentOutOfRangeException(nameof(startTick));
+        if (endTick <= startTick) throw new ArgumentOutOfRangeException(nameof(endTick));
+        if (!double.IsFinite(deviceXAtOrigin))
+            throw new ArgumentOutOfRangeException(nameof(deviceXAtOrigin));
+        if (!double.IsFinite(devicePixelsPerTick) || devicePixelsPerTick <= 0)
+            throw new ArgumentOutOfRangeException(nameof(devicePixelsPerTick));
+        if (columnCount <= 0) throw new ArgumentOutOfRangeException(nameof(columnCount));
+        StartTick = startTick;
+        EndTick = endTick;
+        TickOrigin = tickOrigin;
+        DeviceXAtOrigin = deviceXAtOrigin;
+        DevicePixelsPerTick = devicePixelsPerTick;
+        ColumnCount = columnCount;
+    }
+
+    public long StartTick { get; }
+    public long EndTick { get; }
+    public long TickOrigin { get; }
+    public double DeviceXAtOrigin { get; }
+    public double DevicePixelsPerTick { get; }
+    public int ColumnCount { get; }
+
+    public bool TryGetColumns(
+        long contentStartTick,
+        long contentEndTick,
+        out int first,
+        out int lastExclusive)
+    {
+        first = 0;
+        lastExclusive = 0;
+        if (contentEndTick <= StartTick || contentStartTick >= EndTick) return false;
+        long clippedStart = Math.Max(StartTick, contentStartTick);
+        long clippedEnd = Math.Min(EndTick, contentEndTick);
+        int rawFirst = Boundary(clippedStart);
+        int rawLastExclusive = Math.Max(rawFirst + 1, Boundary(clippedEnd));
+        first = Math.Clamp(rawFirst, 0, ColumnCount);
+        lastExclusive = Math.Clamp(rawLastExclusive, 0, ColumnCount);
+        return lastExclusive > first;
+    }
+
+    public int ColumnSpan(long contentStartTick, long contentEndTick) =>
+        TryGetColumns(contentStartTick, contentEndTick, out int first, out int lastExclusive)
+            ? lastExclusive - first
+            : 0;
+
+    public int PointColumn(long tick) => Math.Clamp(Boundary(tick), 0, ColumnCount - 1);
+
+    private int Boundary(long tick)
+    {
+        double relative = TickDifference(tick, TickOrigin) * DevicePixelsPerTick
+            + DeviceXAtOrigin;
+        if (relative <= int.MinValue) return int.MinValue;
+        if (relative >= int.MaxValue) return int.MaxValue;
+        return checked((int)Math.Floor(relative + 0.5));
+    }
+
+    private static double TickDifference(long left, long right) => left >= right
+        ? (double)unchecked((ulong)left - (ulong)right)
+        : -(double)unchecked((ulong)right - (ulong)left);
+}
+
 public sealed class LogicalNoteQuerySnapshot
 {
     private readonly PagedTimelineValueSnapshot<LogicalNoteSnapshotValue> _values;
@@ -122,14 +199,12 @@ public sealed class LogicalNoteQuerySnapshot
         _values.AccumulateStartColumns(extent, destination);
 
     public int AccumulateRasterColumns(
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int minimumNote,
         int maximumNote,
         Span<TimelineRasterColumnSummary> destination) =>
         _values.AccumulateRasterColumns(
-            startTick,
-            endTick,
+            projection,
             minimumNote,
             maximumNote,
             destination);
@@ -226,26 +301,22 @@ public sealed class TemplateEventQuerySnapshot
     }
 
     public int AccumulateNoteRasterColumns(
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int minimumNote,
         int maximumNote,
         Span<TimelineRasterColumnSummary> destination) =>
         _values.AccumulateRasterColumns(
-            startTick,
-            endTick,
+            projection,
             minimumNote,
             maximumNote,
             destination,
             NoteCategory);
 
     public int AccumulateEventRasterColumns(
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         Span<TimelineRasterColumnSummary> destination) =>
         _values.AccumulateRasterColumns(
-            startTick,
-            endTick,
+            projection,
             int.MinValue,
             int.MaxValue,
             destination,
@@ -283,10 +354,9 @@ public sealed class CurvePointQuerySnapshot
         _values.AccumulateStartColumns(extent, destination);
 
     public int AccumulateRasterColumns(
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         Span<TimelineRasterColumnSummary> destination) =>
-        _values.AccumulateRasterColumns(startTick, endTick, 0, 0, destination);
+        _values.AccumulateRasterColumns(projection, 0, 0, destination);
 
     internal int CountCandidateSpatialBlocks(long startTick, long endTick) =>
         _values.CountCandidateSpatialBlocks(startTick, endTick, 0, 0);
@@ -2084,8 +2154,7 @@ internal sealed class PagedTimelineValuePage<TValue>
 
     public int AccumulateSpatialBlockRasterColumns(
         PagedTimelineSpatialBlockMetadata block,
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int minimumLane,
         int maximumLane,
         ulong requiredCategoryMask,
@@ -2097,10 +2166,10 @@ internal sealed class PagedTimelineValuePage<TValue>
         {
             int localIndex = _spatialOrder[spatialIndex];
             TValue value = Values[localIndex];
-            if (_getStart(value) >= endTick) break;
+            if (_getStart(value) >= projection.EndTick) break;
             int lane = _getLane(value);
             ulong categoryMask = _getCategoryMask?.Invoke(value) ?? ulong.MaxValue;
-            if (_getEnd(value) <= startTick
+            if (_getEnd(value) <= projection.StartTick
                 || lane < minimumLane
                 || lane > maximumLane
                 || (categoryMask & requiredCategoryMask) == 0)
@@ -2111,8 +2180,7 @@ internal sealed class PagedTimelineValuePage<TValue>
             if (!double.IsFinite(rasterValue)) rasterValue = 0;
             PagedTimelineRasterProjection.Include(
                 destination,
-                startTick,
-                endTick,
+                projection,
                 _getStart(value),
                 _getEnd(value),
                 lane is >= 0 and < 64 ? 1UL << lane : 0,
@@ -2127,8 +2195,7 @@ internal sealed class PagedTimelineValuePage<TValue>
 
     public int AccumulateSpatialBlockRasterColumnsExcluding(
         PagedTimelineSpatialBlockMetadata block,
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int minimumLane,
         int maximumLane,
         ulong requiredCategoryMask,
@@ -2142,10 +2209,10 @@ internal sealed class PagedTimelineValuePage<TValue>
         {
             TValue value = Values[_spatialOrder[spatialIndex]];
             if (excluded.TryGetValue(getId(value), out _)) continue;
-            if (_getStart(value) >= endTick) break;
+            if (_getStart(value) >= projection.EndTick) break;
             int lane = _getLane(value);
             ulong categoryMask = _getCategoryMask?.Invoke(value) ?? ulong.MaxValue;
-            if (_getEnd(value) <= startTick
+            if (_getEnd(value) <= projection.StartTick
                 || lane < minimumLane
                 || lane > maximumLane
                 || (categoryMask & requiredCategoryMask) == 0)
@@ -2156,8 +2223,7 @@ internal sealed class PagedTimelineValuePage<TValue>
             if (!double.IsFinite(rasterValue)) rasterValue = 0;
             PagedTimelineRasterProjection.Include(
                 destination,
-                startTick,
-                endTick,
+                projection,
                 _getStart(value),
                 _getEnd(value),
                 lane is >= 0 and < 64 ? 1UL << lane : 0,
@@ -2374,8 +2440,7 @@ internal static class PagedTimelineRasterProjection
 {
     public static void Include(
         Span<TimelineRasterColumnSummary> destination,
-        long queryStartTick,
-        long queryEndTick,
+        TimelineRasterColumnProjection projection,
         long contentStartTick,
         long contentEndTick,
         ulong laneMaskLow,
@@ -2385,24 +2450,15 @@ internal static class PagedTimelineRasterProjection
         int approximateSourceCount)
     {
         if (destination.IsEmpty
-            || queryEndTick <= queryStartTick
-            || contentEndTick <= queryStartTick
-            || contentStartTick >= queryEndTick
             || (laneMaskLow | laneMaskHigh) == 0)
         {
             return;
         }
-        double span = (double)queryEndTick - queryStartTick;
-        double clippedStart = Math.Max(queryStartTick, contentStartTick);
-        double clippedEnd = Math.Min(queryEndTick, contentEndTick);
-        int first = Math.Clamp(
-            (int)Math.Floor((clippedStart - queryStartTick) / span * destination.Length),
-            0,
-            destination.Length - 1);
-        int lastExclusive = Math.Clamp(
-            (int)Math.Ceiling((clippedEnd - queryStartTick) / span * destination.Length),
-            first + 1,
-            destination.Length);
+        if (!projection.TryGetColumns(
+                contentStartTick,
+                contentEndTick,
+                out int first,
+                out int lastExclusive)) return;
         for (int column = first; column < lastExclusive; column++)
         {
             destination[column].Include(
@@ -2429,32 +2485,9 @@ internal static class PagedTimelineRasterProjection
     }
 
     public static int ColumnSpan(
-        int columnCount,
-        long queryStartTick,
-        long queryEndTick,
+        TimelineRasterColumnProjection projection,
         long contentStartTick,
-        long contentEndTick)
-    {
-        if (columnCount <= 0
-            || queryEndTick <= queryStartTick
-            || contentEndTick <= queryStartTick
-            || contentStartTick >= queryEndTick)
-        {
-            return 0;
-        }
-        double span = (double)queryEndTick - queryStartTick;
-        double clippedStart = Math.Max(queryStartTick, contentStartTick);
-        double clippedEnd = Math.Min(queryEndTick, contentEndTick);
-        int first = Math.Clamp(
-            (int)Math.Floor((clippedStart - queryStartTick) / span * columnCount),
-            0,
-            columnCount - 1);
-        int lastExclusive = Math.Clamp(
-            (int)Math.Ceiling((clippedEnd - queryStartTick) / span * columnCount),
-            first + 1,
-            columnCount);
-        return lastExclusive - first;
-    }
+        long contentEndTick) => projection.ColumnSpan(contentStartTick, contentEndTick);
 
     private static ulong RangeBits(int first, int last)
     {
@@ -3033,30 +3066,28 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
     }
 
     public int AccumulateRasterColumns(
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int minimumLane,
         int maximumLane,
         Span<TimelineRasterColumnSummary> destination,
         ulong requiredCategoryMask = ulong.MaxValue)
     {
         destination.Clear();
-        if (destination.IsEmpty || endTick <= startTick || maximumLane < minimumLane)
+        if (destination.IsEmpty || maximumLane < minimumLane)
             return 0;
         if (!_spatialValueOverlay.IsEmpty)
         {
             int work = 0;
             foreach (PagedTimelineSpatialBlockReference<TValue> candidate in _spatialIndex.Query(
-                startTick,
-                endTick,
+                projection.StartTick,
+                projection.EndTick,
                 minimumLane,
                 maximumLane,
                 requiredCategoryMask))
             {
                 work += candidate.Page.AccumulateSpatialBlockRasterColumnsExcluding(
                     candidate.Block,
-                    startTick,
-                    endTick,
+                    projection,
                     minimumLane,
                     maximumLane,
                     requiredCategoryMask,
@@ -3065,8 +3096,7 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
                     destination);
             }
             work += _spatialOverlayIndex.AccumulateRasterColumns(
-                startTick,
-                endTick,
+                projection,
                 minimumLane,
                 maximumLane,
                 requiredCategoryMask,
@@ -3074,8 +3104,7 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
             return work;
         }
         return _spatialIndex.AccumulateRasterColumns(
-            startTick,
-            endTick,
+            projection,
             minimumLane,
             maximumLane,
             requiredCategoryMask,
@@ -3321,8 +3350,7 @@ internal sealed class PagedTimelineSpatialBlockIndex<TValue>
     }
 
     public int AccumulateRasterColumns(
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int minimumLane,
         int maximumLane,
         ulong requiredCategoryMask,
@@ -3330,7 +3358,6 @@ internal sealed class PagedTimelineSpatialBlockIndex<TValue>
     {
         if (_root is null
             || destination.IsEmpty
-            || endTick <= startTick
             || maximumLane < minimumLane)
         {
             return 0;
@@ -3338,17 +3365,14 @@ internal sealed class PagedTimelineSpatialBlockIndex<TValue>
         (ulong laneMaskLow, ulong laneMaskHigh) =
             PagedTimelineRasterProjection.LaneRangeMask(minimumLane, maximumLane);
         int work = 0;
-        int budget = Math.Max(64, checked(destination.Length * 3));
         AccumulateRasterColumns(
             _root,
-            startTick,
-            endTick,
+            projection,
             minimumLane,
             maximumLane,
             requiredCategoryMask,
             laneMaskLow,
             laneMaskHigh,
-            budget,
             ref work,
             destination);
         return work;
@@ -3356,20 +3380,18 @@ internal sealed class PagedTimelineSpatialBlockIndex<TValue>
 
     private static void AccumulateRasterColumns(
         Node? node,
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int minimumLane,
         int maximumLane,
         ulong requiredCategoryMask,
         ulong queryLaneMaskLow,
         ulong queryLaneMaskHigh,
-        int budget,
         ref int work,
         Span<TimelineRasterColumnSummary> destination)
     {
         if (node is null
-            || node.MaximumEndTick <= startTick
-            || node.MinimumStartTick >= endTick
+            || node.MaximumEndTick <= projection.StartTick
+            || node.MinimumStartTick >= projection.EndTick
             || node.MaximumLane < minimumLane
             || node.MinimumLane > maximumLane
             || (node.CategoryMask & requiredCategoryMask) == 0)
@@ -3378,19 +3400,16 @@ internal sealed class PagedTimelineSpatialBlockIndex<TValue>
         }
         work++;
         int columnSpan = PagedTimelineRasterProjection.ColumnSpan(
-            destination.Length,
-            startTick,
-            endTick,
+            projection,
             node.MinimumStartTick,
             node.MaximumEndTick);
         bool categoryExact = requiredCategoryMask == ulong.MaxValue
             || (node.CategoryMask & ~requiredCategoryMask) == 0;
-        if (columnSpan <= 1 && categoryExact || work >= budget)
+        if (columnSpan <= 1 && categoryExact)
         {
             PagedTimelineRasterProjection.Include(
                 destination,
-                startTick,
-                endTick,
+                projection,
                 node.MinimumStartTick,
                 node.MaximumEndTick,
                 node.LaneMaskLow & queryLaneMaskLow,
@@ -3403,38 +3422,33 @@ internal sealed class PagedTimelineSpatialBlockIndex<TValue>
 
         AccumulateRasterColumns(
             node.Left,
-            startTick,
-            endTick,
+            projection,
             minimumLane,
             maximumLane,
             requiredCategoryMask,
             queryLaneMaskLow,
             queryLaneMaskHigh,
-            budget,
             ref work,
             destination);
 
         PagedTimelineSpatialBlockMetadata block = node.Entry.Block;
-        if (block.MaximumEndTick > startTick
-            && block.MinimumStartTick < endTick
+        if (block.MaximumEndTick > projection.StartTick
+            && block.MinimumStartTick < projection.EndTick
             && block.MaximumLane >= minimumLane
             && block.MinimumLane <= maximumLane
             && (block.CategoryMask & requiredCategoryMask) != 0)
         {
             int blockColumnSpan = PagedTimelineRasterProjection.ColumnSpan(
-                destination.Length,
-                startTick,
-                endTick,
+                projection,
                 block.MinimumStartTick,
                 block.MaximumEndTick);
             bool blockCategoryExact = requiredCategoryMask == ulong.MaxValue
                 || (block.CategoryMask & ~requiredCategoryMask) == 0;
-            if (blockColumnSpan <= 1 && blockCategoryExact || work >= budget)
+            if (blockColumnSpan <= 1 && blockCategoryExact)
             {
                 PagedTimelineRasterProjection.Include(
                     destination,
-                    startTick,
-                    endTick,
+                    projection,
                     block.MinimumStartTick,
                     block.MaximumEndTick,
                     block.LaneMaskLow & queryLaneMaskLow,
@@ -3447,8 +3461,7 @@ internal sealed class PagedTimelineSpatialBlockIndex<TValue>
             {
                 work += node.Entry.Page.AccumulateSpatialBlockRasterColumns(
                     block,
-                    startTick,
-                    endTick,
+                    projection,
                     minimumLane,
                     maximumLane,
                     requiredCategoryMask,
@@ -3458,14 +3471,12 @@ internal sealed class PagedTimelineSpatialBlockIndex<TValue>
 
         AccumulateRasterColumns(
             node.Right,
-            startTick,
-            endTick,
+            projection,
             minimumLane,
             maximumLane,
             requiredCategoryMask,
             queryLaneMaskLow,
             queryLaneMaskHigh,
-            budget,
             ref work,
             destination);
     }

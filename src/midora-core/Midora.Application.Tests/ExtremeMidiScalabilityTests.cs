@@ -193,6 +193,88 @@ public sealed class ExtremeMidiScalabilityTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void OptInSampleEditedCompilationRevisionRemainsPaged()
+    {
+        string? path = Environment.GetEnvironmentVariable("MIDORA_SCALE_MIDI_PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            output.WriteLine(
+                "Set MIDORA_SCALE_MIDI_PATH to run the opt-in edited-compilation gate.");
+            return;
+        }
+
+        MidiProjectImportResult imported = MidiProjectImportService.ImportFile(
+            Path.GetFullPath(path),
+            Path.GetFileNameWithoutExtension(path));
+        try
+        {
+            PureMidiTrack track = imported.Project.PureMidiTracks
+                .OrderByDescending(static value => value.Segments.Sum(segment => segment.Notes.Count))
+                .First(static value => value.Segments.Any(segment => segment.Notes.Count != 0));
+            MidiSegment segment = track.Segments
+                .OrderByDescending(static value => value.Notes.Count)
+                .First(static value => value.Notes.Count != 0);
+            int requestedCount = int.TryParse(
+                    Environment.GetEnvironmentVariable("MIDORA_SCALE_EDIT_COUNT"),
+                    out int configuredCount)
+                ? Math.Max(1, configuredCount)
+                : 60_000;
+            MidoraId[] ids = segment.Notes.QueryValues(
+                    segment.ContentOffsetTick,
+                    segment.ContentEndTick)
+                .Take(requestedCount)
+                .Select(static value => value.Id)
+                .ToArray();
+            Assert.NotEmpty(ids);
+
+            using MidoraProject mirror = ProjectCompilationSnapshot.Create(imported.Project);
+            IPreparedProjectEdit sourceEdit = ProjectDomainEditCommands.AdjustDirectMidiNoteEdges(
+                segment.Id,
+                ids,
+                startDelta: 0,
+                endDelta: 1).Prepare(imported.Project);
+            IPreparedProjectEdit edit = ExactTimelineCollisionPolicy.Wrap(
+                imported.Project,
+                sourceEdit);
+            edit.Apply(imported.Project);
+
+            ProjectChangeSet changes = new();
+            changes.PureMidiTrackIds.Add(track.Id);
+            Stopwatch captureTimer = Stopwatch.StartNew();
+            ProjectCompilationSnapshot.RevisionCapture capture =
+                ProjectCompilationSnapshot.CaptureRevision(mirror, imported.Project, changes);
+            captureTimer.Stop();
+            Stopwatch materializeTimer = Stopwatch.StartNew();
+            MidoraProject materialized = ProjectCompilationSnapshot.MaterializeRevision(capture);
+            materializeTimer.Stop();
+            Assert.Same(mirror, materialized);
+
+            Stopwatch compileTimer = Stopwatch.StartNew();
+            using MidoraCompiler compiler = new();
+            CanonicalCompiledResult compiled = compiler.CompileFull(materialized);
+            compileTimer.Stop();
+            Assert.True(compiled.EndTick > compiled.StartTick);
+            output.WriteLine(
+                $"editedNotes={ids.Length}; capture={captureTimer.Elapsed}; "
+                + $"materialize={materializeTimer.Elapsed}; compile={compileTimer.Elapsed}; "
+                + $"compiledRange=[{compiled.StartTick}, {compiled.EndTick})");
+            Assert.True(
+                captureTimer.Elapsed < TimeSpan.FromSeconds(3),
+                $"Edited compilation capture took {captureTimer.Elapsed}.");
+            Assert.True(
+                materializeTimer.Elapsed < TimeSpan.FromSeconds(5),
+                $"Edited compilation mirror materialization took {materializeTimer.Elapsed}.");
+            Assert.True(
+                compileTimer.Elapsed < TimeSpan.FromSeconds(10),
+                $"Edited full compile took {compileTimer.Elapsed}.");
+        }
+        finally
+        {
+            imported.Project.Dispose();
+        }
+    }
+
+    [Fact]
     public void OptInSampleImportAndCompileRemainPaged()
     {
         string? path = Environment.GetEnvironmentVariable("MIDORA_SCALE_MIDI_PATH");

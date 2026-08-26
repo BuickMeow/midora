@@ -159,11 +159,11 @@ public sealed partial class MidoraCompiler
                 AppendLong(removed.Length);
                 foreach (MidoraId id in removed)
                     AppendLong(id.Value);
-                DirectMidiNote[] edited = notes.EditedItems
+                DirectMidiNoteValue[] edited = notes.EditedValues
                     .OrderBy(value => value.Id)
                     .ToArray();
                 AppendLong(edited.Length);
-                foreach (DirectMidiNote value in edited)
+                foreach (DirectMidiNoteValue value in edited)
                 {
                     AppendLong(value.Id.Value);
                     AppendLong(value.StartTick);
@@ -184,11 +184,11 @@ public sealed partial class MidoraCompiler
                 AppendLong(removed.Length);
                 foreach (MidoraId id in removed)
                     AppendLong(id.Value);
-                DirectMidiChannelEvent[] edited = events.EditedItems
+                DirectMidiChannelEventValue[] edited = events.EditedValues
                     .OrderBy(value => value.Id)
                     .ToArray();
                 AppendLong(edited.Length);
-                foreach (DirectMidiChannelEvent value in edited)
+                foreach (DirectMidiChannelEventValue value in edited)
                 {
                     AppendLong(value.Id.Value);
                     AppendLong(value.Tick);
@@ -207,11 +207,11 @@ public sealed partial class MidoraCompiler
                 AppendLong(removed.Length);
                 foreach (MidoraId id in removed)
                     AppendLong(id.Value);
-                OpaqueMidiEvent[] edited = events.EditedItems
+                OpaqueMidiEventValue[] edited = events.EditedValues
                     .OrderBy(value => value.Id)
                     .ToArray();
                 AppendLong(edited.Length);
-                foreach (OpaqueMidiEvent value in edited)
+                foreach (OpaqueMidiEventValue value in edited)
                 {
                     AppendLong(value.Id.Value);
                     AppendLong(value.Tick);
@@ -219,7 +219,7 @@ public sealed partial class MidoraCompiler
                     AppendLong(value.MetaType);
                     AppendLong(value.Order);
                     AppendLong(value.Payload.Length);
-                    hash.AppendData(value.Payload);
+                    hash.AppendData(value.Payload.Span);
                 }
             }
 
@@ -1234,7 +1234,7 @@ public sealed partial class MidoraCompiler
                         AppendLong(segment.OpaqueEvents.ClearsPagedSource ? 1 : 0);
                         foreach (MidoraId id in segment.OpaqueEvents.RemovedSourceIds.Order())
                             AppendLong(id.Value);
-                        foreach (DirectMidiNote value in segment.Notes.EditedItems.OrderBy(value => value.Id))
+                        foreach (DirectMidiNoteValue value in segment.Notes.EditedValues.OrderBy(value => value.Id))
                         {
                             AppendLong(value.Id.Value);
                             AppendLong(value.StartTick);
@@ -1245,7 +1245,7 @@ public sealed partial class MidoraCompiler
                             AppendLong(value.NoteOnOrder);
                             AppendLong(value.NoteOffOrder);
                         }
-                        foreach (DirectMidiChannelEvent value in segment.ChannelEvents.EditedItems.OrderBy(value => value.Id))
+                        foreach (DirectMidiChannelEventValue value in segment.ChannelEvents.EditedValues.OrderBy(value => value.Id))
                         {
                             AppendLong(value.Id.Value);
                             AppendLong(value.Tick);
@@ -1254,7 +1254,7 @@ public sealed partial class MidoraCompiler
                             AppendLong(value.Data2);
                             AppendLong(value.Order);
                         }
-                        foreach (OpaqueMidiEvent value in segment.OpaqueEvents.EditedItems.OrderBy(value => value.Id))
+                        foreach (OpaqueMidiEventValue value in segment.OpaqueEvents.EditedValues.OrderBy(value => value.Id))
                         {
                             AppendLong(value.Id.Value);
                             AppendLong(value.Tick);
@@ -1262,7 +1262,7 @@ public sealed partial class MidoraCompiler
                             AppendLong(value.MetaType);
                             AppendLong(value.Order);
                             AppendLong(value.Payload.Length);
-                            hash.AppendData(value.Payload);
+                            hash.AppendData(value.Payload.Span);
                         }
                     }
                 }

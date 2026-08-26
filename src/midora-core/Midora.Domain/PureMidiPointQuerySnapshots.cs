@@ -71,6 +71,57 @@ public sealed class DirectMidiChannelEventQuerySnapshot
             yield return value;
     }
 
+    public IEnumerable<DirectMidiChannelEventValue> QueryOrderedValues(
+        long startTick,
+        long endTick)
+    {
+        if (endTick <= startTick) yield break;
+        IEnumerable<DirectMidiChannelEventValue> source = _source switch
+        {
+            IPureMidiPlaybackEndpointSource endpoints =>
+                endpoints.QueryOrderedChannelEvents(startTick, endTick),
+            not null => _source.QueryChannelEvents(startTick, endTick)
+                .OrderBy(static value => value.Tick)
+                .ThenBy(static value => value.Order)
+                .ThenBy(static value => value.Id),
+            _ => []
+        };
+        IEnumerable<DirectMidiChannelEventValue> filteredSource = source.Where(value =>
+            _sourceExclusions?.Contains(value.Id) != true);
+        IEnumerable<DirectMidiChannelEventValue> overlay = _overlayIndex.Query(
+            startTick,
+            endTick);
+        using IEnumerator<DirectMidiChannelEventValue> left = filteredSource.GetEnumerator();
+        using IEnumerator<DirectMidiChannelEventValue> right = overlay.GetEnumerator();
+        bool hasLeft = left.MoveNext();
+        bool hasRight = right.MoveNext();
+        while (hasLeft || hasRight)
+        {
+            bool takeLeft = !hasRight || hasLeft
+                && Compare(left.Current, right.Current) <= 0;
+            if (takeLeft)
+            {
+                yield return left.Current;
+                hasLeft = left.MoveNext();
+            }
+            else
+            {
+                yield return right.Current;
+                hasRight = right.MoveNext();
+            }
+        }
+    }
+
+    private static int Compare(
+        DirectMidiChannelEventValue left,
+        DirectMidiChannelEventValue right)
+    {
+        int result = left.Tick.CompareTo(right.Tick);
+        if (result != 0) return result;
+        result = left.Order.CompareTo(right.Order);
+        return result != 0 ? result : left.Id.CompareTo(right.Id);
+    }
+
     public bool TryQueryValuesCached(
         long startTick,
         long endTick,

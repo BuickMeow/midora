@@ -307,8 +307,9 @@ public sealed class WpfMemoryProbeTests(ITestOutputHelper output)
                 {
                     // Repeatedly cross the exact Segment end while also moving
                     // between adjacent zoom values.  The visible blank half must
-                    // remain O(1); it must not force a synchronous cold-page walk
-                    // or create an exact-double cache family.
+                    // remain O(1); it must not force a synchronous cold-page walk.
+                    // Piano pixels use the current exact projection, while work
+                    // queued for an obsolete zoom projection is canceled.
                     double phase = frame / 119d;
                     long span = Math.Max(1, checked((long)Math.Round(
                         baseSpan * (0.75 + 0.5 * Math.Abs(Math.Sin(phase * Math.PI * 6))))));

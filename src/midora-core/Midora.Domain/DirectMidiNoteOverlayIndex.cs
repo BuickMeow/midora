@@ -20,6 +20,15 @@ internal sealed class DirectMidiNoteOverlayIndex
 
     public static DirectMidiNoteOverlayIndex Empty { get; } = new(null, null);
 
+    internal static DirectMidiNoteOverlayIndex Create(
+        IEnumerable<DirectMidiNoteValue> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        DirectMidiNoteValue[] materialized = values as DirectMidiNoteValue[]
+            ?? values.ToArray();
+        return materialized.Length == 0 ? Empty : Build(materialized);
+    }
+
     public int Count => _idRoot?.Count ?? 0;
     public long MaximumEndTick => _spatialRoot?.MaximumEndTick ?? 0;
 
@@ -144,25 +153,21 @@ internal sealed class DirectMidiNoteOverlayIndex
     }
 
     public int AccumulateRasterColumns(
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int minimumKey,
         int maximumKey,
         Span<TimelineRasterColumnSummary> destination)
     {
-        if (endTick <= startTick || maximumKey < minimumKey || destination.IsEmpty)
+        if (maximumKey < minimumKey || destination.IsEmpty)
             return 0;
         int work = 0;
-        int budget = Math.Max(64, checked(destination.Length * 3));
         AccumulateRasterColumns(
             _spatialRoot,
-            startTick,
-            endTick,
+            projection,
             minimumKey,
             maximumKey,
             destination,
-            ref work,
-            budget);
+            ref work);
         return work;
     }
 
@@ -339,64 +344,59 @@ internal sealed class DirectMidiNoteOverlayIndex
 
     private static void AccumulateRasterColumns(
         SpatialNode? node,
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int minimumKey,
         int maximumKey,
         Span<TimelineRasterColumnSummary> destination,
-        ref int work,
-        int budget)
+        ref int work)
     {
         if (node is null
-            || node.MaximumEndTick <= startTick
-            || node.MinimumStartTick >= endTick
+            || node.MaximumEndTick <= projection.StartTick
+            || node.MinimumStartTick >= projection.EndTick
             || node.MaximumKey < minimumKey
             || node.MinimumKey > maximumKey)
         {
             return;
         }
 
-        int firstColumn = Column(node.MinimumStartTick, startTick, endTick, destination.Length);
-        int lastColumn = Column(
-            Math.Max(node.MinimumStartTick, node.MaximumEndTick - 1),
-            startTick,
-            endTick,
-            destination.Length);
-        bool fullyContained = startTick <= node.MinimumStartTick
-            && endTick >= node.MaximumEndTick
+        bool fullyContained = projection.StartTick <= node.MinimumStartTick
+            && projection.EndTick >= node.MaximumEndTick
             && minimumKey <= node.MinimumKey
             && maximumKey >= node.MaximumKey;
-        if (fullyContained && (firstColumn == lastColumn || work >= budget))
+        if (fullyContained
+            && projection.TryGetColumns(
+                node.MinimumStartTick,
+                node.MaximumEndTick,
+                out int firstColumn,
+                out int lastExclusive)
+            && lastExclusive - firstColumn == 1)
         {
-            IncludeNode(node, firstColumn, lastColumn, destination);
+            IncludeNode(node, firstColumn, lastExclusive, destination);
             work++;
             return;
         }
 
         AccumulateRasterColumns(
             node.Left,
-            startTick,
-            endTick,
+            projection,
             minimumKey,
             maximumKey,
             destination,
-            ref work,
-            budget);
+            ref work);
         DirectMidiNoteValue value = node.Value;
-        if (value.StartTick < endTick
-            && EndTick(value) > startTick
+        if (value.StartTick < projection.EndTick
+            && EndTick(value) > projection.StartTick
             && value.Key >= minimumKey
             && value.Key <= maximumKey)
         {
             ulong low = value.Key < 64 ? 1UL << value.Key : 0;
             ulong high = value.Key >= 64 ? 1UL << (value.Key - 64) : 0;
-            int from = Column(value.StartTick, startTick, endTick, destination.Length);
-            int to = Column(
-                Math.Max(value.StartTick, EndTick(value) - 1),
-                startTick,
-                endTick,
-                destination.Length);
-            for (int column = from; column <= to; column++)
+            projection.TryGetColumns(
+                value.StartTick,
+                EndTick(value),
+                out int from,
+                out int toExclusive);
+            for (int column = from; column < toExclusive; column++)
             {
                 destination[column].Include(
                     low,
@@ -409,22 +409,20 @@ internal sealed class DirectMidiNoteOverlayIndex
         }
         AccumulateRasterColumns(
             node.Right,
-            startTick,
-            endTick,
+            projection,
             minimumKey,
             maximumKey,
             destination,
-            ref work,
-            budget);
+            ref work);
     }
 
     private static void IncludeNode(
         SpatialNode node,
         int firstColumn,
-        int lastColumn,
+        int lastExclusive,
         Span<TimelineRasterColumnSummary> destination)
     {
-        for (int column = firstColumn; column <= lastColumn; column++)
+        for (int column = firstColumn; column < lastExclusive; column++)
         {
             destination[column].Include(
                 node.LaneMaskLow,

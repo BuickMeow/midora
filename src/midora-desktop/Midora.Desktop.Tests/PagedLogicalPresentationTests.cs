@@ -129,6 +129,127 @@ public sealed class PagedLogicalPresentationTests
     }
 
     [Fact]
+    public void LowZoomSelectionUsesTheSameRoundedPixelColumnsAsTheBaseNoteLayer()
+    {
+        using MidoraProject project = new(192);
+        Segment segment = new(project) { LengthTicks = 1_000 };
+        LogicalNote note = new(project)
+        {
+            StartTick = 4,
+            LengthTicks = 8,
+            Note = 60,
+            Velocity = 100
+        };
+        segment.Notes.Add(note);
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "low-zoom-selection-alignment",
+            [],
+            itemSource: new PagedLogicalNoteTimelineItemSource(
+                segment,
+                LogicalNoteTimelineProjection.Notes));
+        TimelineSelectionSnapshot selection = new(
+            1,
+            [note.Id],
+            primary: null,
+            [new TimelineRenderItem(
+                Id: note.Id,
+                Kind: TimelineItemKind.LogicalNote,
+                StartTick: note.StartTick,
+                EndTick: note.StartTick + note.LengthTicks,
+                Lane: note.Note,
+                Value: note.Velocity / 127d,
+                ZIndex: 0,
+                State: TimelineItemState.Selected)]);
+
+        TimelineRasterBuffer baseLayer = TimelinePianoTileRasterizer.Rasterize(
+            snapshot,
+            devicePixelsPerTick: 0.125,
+            devicePixelsPerLane: 4,
+            tileX: 0,
+            tileY: 0,
+            Colors.SlateGray,
+            Colors.OrangeRed);
+        TimelineRasterBuffer selectionLayer = TimelinePianoTileRasterizer.Rasterize(
+            snapshot,
+            devicePixelsPerTick: 0.125,
+            devicePixelsPerLane: 4,
+            tileX: 0,
+            tileY: 0,
+            Colors.DarkRed,
+            Colors.OrangeRed,
+            selection,
+            selectionOnly: true,
+            outlineColor: Colors.Red);
+
+        Assert.Equal(
+            OccupiedColumns(baseLayer, firstRow: 240, lastRowExclusive: 246),
+            OccupiedColumns(selectionLayer, firstRow: 240, lastRowExclusive: 246));
+
+        static int[] OccupiedColumns(
+            TimelineRasterBuffer buffer,
+            int firstRow,
+            int lastRowExclusive)
+        {
+            List<int> result = [];
+            for (int x = 0; x < buffer.Width; x++)
+            {
+                bool occupied = false;
+                for (int y = firstRow; y < lastRowExclusive; y++)
+                {
+                    int alpha = buffer.Pixels[(y * buffer.Width + x) * 4 + 3];
+                    if (alpha == 0) continue;
+                    occupied = true;
+                    break;
+                }
+                if (occupied) result.Add(x);
+            }
+            return result.ToArray();
+        }
+    }
+
+    [Fact]
+    public void InMemoryPagedNoteSourcesCanPrepareVisibleFingerprintsWithoutAnAsyncRoundTrip()
+    {
+        using MidoraProject project = new(192);
+        Segment segment = new(project) { LengthTicks = 10_000 };
+        segment.Notes.Add(new LogicalNote(project)
+        {
+            StartTick = 100,
+            LengthTicks = 120,
+            Note = 60,
+            Velocity = 100
+        });
+        SubVoice voice = new(project);
+        voice.Events.Add(new TemplateEvent(project)
+        {
+            Kind = TemplateEventKind.Note,
+            Tick = 100,
+            LengthTicks = 120,
+            Number = 60,
+            Value = 100
+        });
+
+        TimelineRenderSnapshot logical = new(
+            1,
+            "logical-non-blocking-fingerprint",
+            [],
+            itemSource: new PagedLogicalNoteTimelineItemSource(
+                segment,
+                LogicalNoteTimelineProjection.Notes));
+        TimelineRenderSnapshot subVoice = new(
+            1,
+            "subvoice-non-blocking-fingerprint",
+            [],
+            itemSource: new PagedTemplateNoteTimelineItemSource(
+                voice,
+                TemplateNoteTimelineProjection.Notes));
+
+        Assert.True(logical.CanComputeTileFingerprintSynchronously);
+        Assert.True(subVoice.CanComputeTileFingerprintSynchronously);
+    }
+
+    [Fact]
     public void LogicalSegmentRebuildDoesNotMaterializeAFullParameterLane()
     {
         const int pointCount = 100_000;

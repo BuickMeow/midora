@@ -400,13 +400,11 @@ internal static partial class ProjectCompilationSnapshot
                 }
                 segment.Shell.AttachPagedContent(source);
             }
-            segment.Shell.Notes.RestoreFormalSequence(segment.Notes, cancellationToken);
-            segment.Shell.ChannelEvents.RestoreFormalSequence(
-                segment.ChannelEvents,
-                cancellationToken);
-            segment.Shell.OpaqueEvents.RestoreFormalSequence(
-                segment.OpaqueEvents,
-                cancellationToken);
+            segment.Shell.Notes.RestoreFormalSequenceForCompilation(segment.Notes);
+            segment.Shell.ChannelEvents.RestoreFormalSequenceForCompilation(
+                segment.ChannelEvents);
+            segment.Shell.OpaqueEvents.RestoreFormalSequenceForCompilation(
+                segment.OpaqueEvents);
         }
         return capture.Shell;
     }

@@ -25,6 +25,7 @@ internal enum LogicalNoteTimelineProjection
 
 internal sealed class PagedLogicalNoteTimelineItemSource :
     ITimelineRenderItemSource,
+    INonBlockingTimelineFingerprintSource,
     ITimelineRasterAggregateSource
 {
     private readonly Segment _segment;
@@ -174,8 +175,7 @@ internal sealed class PagedLogicalNoteTimelineItemSource :
 
     public bool TryAccumulateRasterColumns(
         TimelineRasterAggregateKind kind,
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
@@ -196,8 +196,7 @@ internal sealed class PagedLogicalNoteTimelineItemSource :
             : 127;
         if (maximumNote < minimumNote) return true;
         sourceWorkCount = _snapshot.AccumulateRasterColumns(
-            startTick,
-            endTick,
+            projection,
             minimumNote,
             maximumNote,
             raw);
@@ -466,6 +465,7 @@ internal sealed class LogicalSegmentPreviewSource : ITimelineSegmentPreviewSourc
 
 internal sealed class PagedLogicalParameterTimelineItemSource :
     ITimelineRenderItemSource,
+    INonBlockingTimelineFingerprintSource,
     ITimelineRasterAggregateSource
 {
     private readonly LogicalParameterLane _lane;
@@ -555,8 +555,7 @@ internal sealed class PagedLogicalParameterTimelineItemSource :
 
     public bool TryAccumulateRasterColumns(
         TimelineRasterAggregateKind kind,
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
@@ -565,7 +564,7 @@ internal sealed class PagedLogicalParameterTimelineItemSource :
         sourceWorkCount = 0;
         if (kind != TimelineRasterAggregateKind.EventPoints) return false;
         TimelineRasterColumnSummary[] raw = new TimelineRasterColumnSummary[destination.Length];
-        sourceWorkCount = _snapshot.AccumulateRasterColumns(startTick, endTick, raw);
+        sourceWorkCount = _snapshot.AccumulateRasterColumns(projection, raw);
         for (int column = 0; column < raw.Length; column++)
         {
             TimelineRasterColumnSummary summary = raw[column];
@@ -655,6 +654,7 @@ internal enum TemplateNoteTimelineProjection
 
 internal sealed class PagedTemplateNoteTimelineItemSource :
     ITimelineRenderItemSource,
+    INonBlockingTimelineFingerprintSource,
     ITimelineRasterAggregateSource
 {
     private readonly SubVoice _voice;
@@ -808,8 +808,7 @@ internal sealed class PagedTemplateNoteTimelineItemSource :
 
     public bool TryAccumulateRasterColumns(
         TimelineRasterAggregateKind kind,
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
@@ -830,8 +829,7 @@ internal sealed class PagedTemplateNoteTimelineItemSource :
             : 127;
         if (maximumNote < minimumNote) return true;
         sourceWorkCount = _snapshot.AccumulateNoteRasterColumns(
-            startTick,
-            endTick,
+            projection,
             minimumNote,
             maximumNote,
             raw);
@@ -1038,8 +1036,7 @@ internal sealed class PagedTemplateEventLaneTimelineItemSource :
 
     public bool TryAccumulateRasterColumns(
         TimelineRasterAggregateKind kind,
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
@@ -1049,8 +1046,7 @@ internal sealed class PagedTemplateEventLaneTimelineItemSource :
         if (kind != TimelineRasterAggregateKind.EventPoints || _targetIndex is null)
             return false;
         sourceWorkCount = _targetIndex.AccumulateRasterColumns(
-            startTick,
-            endTick,
+            projection,
             destination);
         return true;
     }

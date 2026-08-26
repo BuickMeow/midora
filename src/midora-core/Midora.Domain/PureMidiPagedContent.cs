@@ -415,8 +415,7 @@ public interface IPureMidiContentOverviewSource
         IReadOnlySet<MidoraId>? excludedIds) => false;
 
     bool TryAccumulateNoteRasterColumns(
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int minimumKey,
         int maximumKey,
         Span<TimelineRasterColumnSummary> destination,
@@ -897,8 +896,7 @@ public sealed class DirectMidiNoteQuerySnapshot
     }
 
     public bool TryAccumulateRasterColumns(
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int minimumKey,
         int maximumKey,
         Span<TimelineRasterColumnSummary> destination,
@@ -906,14 +904,13 @@ public sealed class DirectMidiNoteQuerySnapshot
     {
         destination.Clear();
         sourceWorkCount = 0;
-        if (destination.IsEmpty || endTick <= startTick || maximumKey < minimumKey)
+        if (destination.IsEmpty || maximumKey < minimumKey)
             return true;
         if (_source is not null)
         {
             if (_source is not IPureMidiContentOverviewSource overview
                 || !overview.TryAccumulateNoteRasterColumns(
-                    startTick,
-                    endTick,
+                    projection,
                     minimumKey,
                     maximumKey,
                     destination,
@@ -924,8 +921,7 @@ public sealed class DirectMidiNoteQuerySnapshot
             }
         }
         int overlayWork = _overlayIndex.AccumulateRasterColumns(
-            startTick,
-            endTick,
+            projection,
             minimumKey,
             maximumKey,
             destination);
@@ -968,6 +964,115 @@ public sealed class DirectMidiNoteQuerySnapshot
             maximumKey))
             yield return value;
     }
+
+    public IEnumerable<DirectMidiNoteValue> QueryStartValues(
+        long startTick,
+        long endTick) => QueryEndpointValues(startTick, endTick, noteOn: true);
+
+    public IEnumerable<DirectMidiNoteValue> QueryEndValues(
+        long startTick,
+        long endTick) => QueryEndpointValues(startTick, endTick, noteOn: false);
+
+    public IEnumerable<DirectMidiNoteValue> QueryActiveValues(long tick)
+    {
+        if (tick < 0) yield break;
+        IEnumerable<DirectMidiNoteValue> source = [];
+        if (_source is not null)
+        {
+            source = _source is IPureMidiPlaybackEndpointSource endpoints
+                ? endpoints.QueryActiveNotes(tick)
+                : _source.QueryNotes(tick, tick == long.MaxValue ? tick : tick + 1);
+        }
+        foreach (DirectMidiNoteValue value in source)
+        {
+            if (_sourceExclusions?.Contains(value.Id) == true) continue;
+            if (IsActive(value, tick)) yield return value;
+        }
+        long endTick = tick == long.MaxValue ? tick : tick + 1;
+        foreach (DirectMidiNoteValue value in _overlayIndex.Query(tick, endTick, 0, 127))
+            if (IsActive(value, tick)) yield return value;
+    }
+
+    private IEnumerable<DirectMidiNoteValue> QueryEndpointValues(
+        long startTick,
+        long endTick,
+        bool noteOn)
+    {
+        if (endTick <= startTick) yield break;
+        IEnumerable<DirectMidiNoteValue> source = [];
+        if (_source is not null)
+        {
+            if (_source is IPureMidiPlaybackEndpointSource endpoints)
+            {
+                source = noteOn
+                    ? endpoints.QueryNoteStarts(startTick, endTick)
+                    : endpoints.QueryNoteEnds(startTick, endTick);
+            }
+            else
+            {
+                source = noteOn
+                    ? _source.QueryNotes(startTick, endTick)
+                    : _source.QueryNotes(0, endTick);
+            }
+        }
+        IEnumerable<DirectMidiNoteValue> filteredSource = source.Where(value =>
+            _sourceExclusions?.Contains(value.Id) != true
+            && EndpointTick(value, noteOn) >= startTick
+            && EndpointTick(value, noteOn) < endTick);
+        IEnumerable<DirectMidiNoteValue> edited = _overlayIndex
+            .Query(noteOn ? startTick : 0, endTick, 0, 127)
+            .Where(value => EndpointTick(value, noteOn) >= startTick
+                && EndpointTick(value, noteOn) < endTick)
+            .OrderBy(value => EndpointTick(value, noteOn))
+            .ThenBy(value => noteOn ? value.NoteOnOrder : value.NoteOffOrder)
+            .ThenBy(value => value.Id);
+        foreach (DirectMidiNoteValue value in MergeEndpoints(filteredSource, edited, noteOn))
+            yield return value;
+    }
+
+    private static IEnumerable<DirectMidiNoteValue> MergeEndpoints(
+        IEnumerable<DirectMidiNoteValue> left,
+        IEnumerable<DirectMidiNoteValue> right,
+        bool noteOn)
+    {
+        using IEnumerator<DirectMidiNoteValue> leftEnumerator = left.GetEnumerator();
+        using IEnumerator<DirectMidiNoteValue> rightEnumerator = right.GetEnumerator();
+        bool hasLeft = leftEnumerator.MoveNext();
+        bool hasRight = rightEnumerator.MoveNext();
+        while (hasLeft || hasRight)
+        {
+            bool takeLeft = !hasRight || hasLeft
+                && CompareEndpoint(leftEnumerator.Current, rightEnumerator.Current, noteOn) <= 0;
+            if (takeLeft)
+            {
+                yield return leftEnumerator.Current;
+                hasLeft = leftEnumerator.MoveNext();
+            }
+            else
+            {
+                yield return rightEnumerator.Current;
+                hasRight = rightEnumerator.MoveNext();
+            }
+        }
+    }
+
+    private static int CompareEndpoint(
+        DirectMidiNoteValue left,
+        DirectMidiNoteValue right,
+        bool noteOn)
+    {
+        int result = EndpointTick(left, noteOn).CompareTo(EndpointTick(right, noteOn));
+        if (result != 0) return result;
+        result = (noteOn ? left.NoteOnOrder : left.NoteOffOrder)
+            .CompareTo(noteOn ? right.NoteOnOrder : right.NoteOffOrder);
+        return result != 0 ? result : left.Id.CompareTo(right.Id);
+    }
+
+    private static long EndpointTick(DirectMidiNoteValue value, bool noteOn) =>
+        noteOn ? value.StartTick : EndTick(value);
+
+    private static bool IsActive(DirectMidiNoteValue value, long tick) =>
+        value.StartTick < tick && EndTick(value) > tick;
 
     public bool TryQueryValuesCached(
         long startTick,
@@ -1349,15 +1454,20 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
     private bool _batchChanged;
     private HashSet<MidoraId>? _batchSourceIds;
     private bool _batchIncludesAllMaterializedSource;
+    private DirectMidiNoteQuerySnapshot? _compilationSnapshot;
 
     internal DirectMidiNoteCollection(MidoraProject project) => _project = project;
 
-    public int Count => checked(LiveSourceCount + _added.Count);
+    public int Count => _compilationSnapshot?.Count
+        ?? checked(LiveSourceCount + _added.Count);
     public bool IsReadOnly => false;
     public bool HasPagedSource => _source is not null;
     public long Generation => _generation;
     internal IEnumerable<DirectMidiNote> EditedItems => _replacements.Values.Concat(_added);
-    internal IReadOnlyCollection<MidoraId> RemovedSourceIds => _removed;
+    internal IEnumerable<DirectMidiNoteValue> EditedValues =>
+        _formalReplacements.Values.Concat(_formalAdded.Enumerate());
+    internal IReadOnlyCollection<MidoraId> RemovedSourceIds =>
+        _compilationSnapshot is null ? _removed : _formalRemovedSourceIds;
     internal bool ClearsPagedSource => _clearSource;
     internal IPureMidiSegmentContentSource? PagedSource => _source;
     internal bool IsPristinePagedSource => _source is not null
@@ -1417,6 +1527,13 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
     {
         get
         {
+            if (_compilationSnapshot is not null)
+            {
+                if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+                using IEnumerator<DirectMidiNote> values = GetEnumerator();
+                for (int current = 0; current <= index; current++) values.MoveNext();
+                return values.Current;
+            }
             int sourceIndex = FindSourceIndexForVisibleIndex(index);
             if (sourceIndex >= 0)
             {
@@ -1541,6 +1658,18 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
 
     public IEnumerator<DirectMidiNote> GetEnumerator()
     {
+        if (_compilationSnapshot is { } compilationSnapshot)
+        {
+            foreach (DirectMidiNoteValue value in compilationSnapshot.QueryValues(
+                0,
+                long.MaxValue,
+                0,
+                127))
+            {
+                yield return FromValue(_project, value);
+            }
+            yield break;
+        }
         if (!_clearSource && _source is not null)
         {
             for (int index = 0; index < _source.NoteCount; index++)
@@ -1955,6 +2084,18 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
         int minimumKey = 0,
         int maximumKey = 127)
     {
+        if (_compilationSnapshot is { } compilationSnapshot)
+        {
+            foreach (DirectMidiNoteValue value in compilationSnapshot.QueryValues(
+                startTick,
+                endTick,
+                minimumKey,
+                maximumKey))
+            {
+                yield return value;
+            }
+            yield break;
+        }
         if (endTick <= startTick || maximumKey < minimumKey) yield break;
         EnsureOverlayIndex();
         if (!_clearSource && _source is not null)
@@ -2024,14 +2165,22 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
 
     public IEnumerable<DirectMidiNoteValue> QueryStartValues(
         long startTick,
-        long endTick) => QueryEndpointValues(startTick, endTick, noteOn: true);
+        long endTick) => _compilationSnapshot?.QueryStartValues(startTick, endTick)
+            ?? QueryEndpointValues(startTick, endTick, noteOn: true);
 
     public IEnumerable<DirectMidiNoteValue> QueryEndValues(
         long startTick,
-        long endTick) => QueryEndpointValues(startTick, endTick, noteOn: false);
+        long endTick) => _compilationSnapshot?.QueryEndValues(startTick, endTick)
+            ?? QueryEndpointValues(startTick, endTick, noteOn: false);
 
     public IEnumerable<DirectMidiNoteValue> QueryActiveValues(long tick)
     {
+        if (_compilationSnapshot is { } compilationSnapshot)
+        {
+            foreach (DirectMidiNoteValue value in compilationSnapshot.QueryActiveValues(tick))
+                yield return value;
+            yield break;
+        }
         if (tick < 0) yield break;
         EnsureOverlayIndex();
         IEnumerable<DirectMidiNoteValue> source = [];
@@ -2215,6 +2364,40 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
             _pendingFormalAdded = null;
             _formalFullRebuild = false;
         }
+    }
+
+    internal void RestoreFormalSequenceForCompilation(
+        DirectMidiNoteFormalSequenceSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (_added.Count != 0 || _replacements.Count != 0 || _removed.Count != 0)
+            throw new InvalidOperationException("The Direct MIDI Note target is not empty.");
+        if (_source is not null && !ReferenceEquals(_source, snapshot.Source))
+            throw new InvalidOperationException("The Direct MIDI Note source does not match the captured revision.");
+
+        _source = snapshot.Source;
+        _clearSource = snapshot.ClearsSource;
+        _formalRemovedSourceIds = snapshot.RemovedSourceIds;
+        _formalReplacements = snapshot.Replacements;
+        _formalAdded = snapshot.Added;
+        _formalCount = snapshot.Count;
+        _generation = snapshot.Generation;
+        IReadOnlySet<MidoraId>? exclusions = snapshot.Source is not null
+            && (snapshot.RemovedSourceIds.Count != 0 || snapshot.Replacements.Count != 0)
+                ? new PureMidiSourceExclusionSet<DirectMidiNoteValue>(
+                    snapshot.RemovedSourceIds,
+                    snapshot.Replacements)
+                : null;
+        _compilationSnapshot = new DirectMidiNoteQuerySnapshot(
+            snapshot.Source,
+            snapshot.ClearsSource,
+            exclusions,
+            new Dictionary<MidoraId, DirectMidiNoteValue>(),
+            DirectMidiNoteOverlayIndex.Create(
+                snapshot.Replacements.Values.Concat(snapshot.Added.Enumerate())),
+            CreateSourceIdCache(),
+            snapshot.Count,
+            snapshot.Generation);
     }
 
     void IDirectMidiNoteChangeSink.OnChanged(DirectMidiNote value)
@@ -2783,15 +2966,20 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
     private bool _batchChanged;
     private HashSet<MidoraId>? _batchSourceIds;
     private bool _batchIncludesAllMaterializedSource;
+    private DirectMidiChannelEventQuerySnapshot? _compilationSnapshot;
 
     internal DirectMidiChannelEventCollection(MidoraProject project) => _project = project;
 
-    public int Count => checked(LiveSourceCount + _added.Count);
+    public int Count => _compilationSnapshot?.Count
+        ?? checked(LiveSourceCount + _added.Count);
     public bool IsReadOnly => false;
     public bool HasPagedSource => _source is not null;
     public long Generation => _generation;
     internal IEnumerable<DirectMidiChannelEvent> EditedItems => _replacements.Values.Concat(_added);
-    internal IReadOnlyCollection<MidoraId> RemovedSourceIds => _removed;
+    internal IEnumerable<DirectMidiChannelEventValue> EditedValues =>
+        _formalReplacements.Values.Concat(_formalAdded.Enumerate());
+    internal IReadOnlyCollection<MidoraId> RemovedSourceIds =>
+        _compilationSnapshot is null ? _removed : _formalRemovedSourceIds;
     internal bool ClearsPagedSource => _clearSource;
     internal IPureMidiSegmentContentSource? PagedSource => _source;
     internal bool IsPristinePagedSource => _source is not null
@@ -2860,6 +3048,13 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
     {
         get
         {
+            if (_compilationSnapshot is not null)
+            {
+                if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+                using IEnumerator<DirectMidiChannelEvent> values = GetEnumerator();
+                for (int current = 0; current <= index; current++) values.MoveNext();
+                return values.Current;
+            }
             int sourceIndex = FindSourceIndexForVisibleIndex(index);
             if (sourceIndex >= 0)
             {
@@ -2983,6 +3178,15 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
 
     public IEnumerator<DirectMidiChannelEvent> GetEnumerator()
     {
+        if (_compilationSnapshot is { } compilationSnapshot)
+        {
+            foreach (DirectMidiChannelEventValue value in
+                compilationSnapshot.QueryValues(0, long.MaxValue))
+            {
+                yield return FromValue(_project, value);
+            }
+            yield break;
+        }
         if (!_clearSource && _source is not null)
         {
             for (int index = 0; index < _source.ChannelEventCount; index++)
@@ -3352,6 +3556,15 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
 
     public IEnumerable<DirectMidiChannelEventValue> QueryValues(long startTick, long endTick)
     {
+        if (_compilationSnapshot is { } compilationSnapshot)
+        {
+            foreach (DirectMidiChannelEventValue value in
+                compilationSnapshot.QueryValues(startTick, endTick))
+            {
+                yield return value;
+            }
+            yield break;
+        }
         if (endTick <= startTick) yield break;
         EnsureOverlayIndex();
         if (!_clearSource && _source is not null)
@@ -3432,6 +3645,15 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
         long startTick,
         long endTick)
     {
+        if (_compilationSnapshot is { } compilationSnapshot)
+        {
+            foreach (DirectMidiChannelEventValue value in
+                compilationSnapshot.QueryOrderedValues(startTick, endTick))
+            {
+                yield return value;
+            }
+            yield break;
+        }
         if (endTick <= startTick) yield break;
         EnsureOverlayIndex();
         IEnumerable<DirectMidiChannelEventValue> source = [];
@@ -3580,6 +3802,43 @@ public sealed class DirectMidiChannelEventCollection : IList<DirectMidiChannelEv
         int index = _source.FindChannelEventIndex(id);
         if (index >= 0) _sourceIndices[id] = index;
         return index;
+    }
+
+    internal void RestoreFormalSequenceForCompilation(
+        DirectMidiChannelEventFormalSequenceSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (_added.Count != 0 || _replacements.Count != 0 || _removed.Count != 0)
+            throw new InvalidOperationException("The Direct MIDI Event target is not empty.");
+        if (_source is not null && !ReferenceEquals(_source, snapshot.Source))
+            throw new InvalidOperationException("The Direct MIDI Event source does not match the captured revision.");
+
+        _source = snapshot.Source;
+        _clearSource = snapshot.ClearsSource;
+        _formalRemovedSourceIds = snapshot.RemovedSourceIds;
+        _formalReplacements = snapshot.Replacements;
+        _formalAdded = snapshot.Added;
+        _formalCount = snapshot.Count;
+        _generation = snapshot.Generation;
+        IReadOnlySet<MidoraId>? exclusions = snapshot.Source is not null
+            && (snapshot.RemovedSourceIds.Count != 0 || snapshot.Replacements.Count != 0)
+                ? new PureMidiSourceExclusionSet<DirectMidiChannelEventValue>(
+                    snapshot.RemovedSourceIds,
+                    snapshot.Replacements)
+                : null;
+        var emptyIndex = new PureMidiPointOverlayIndex<DirectMidiChannelEventValue>(
+            static value => value.Id,
+            static value => value.Tick,
+            static value => value.Order);
+        _compilationSnapshot = new DirectMidiChannelEventQuerySnapshot(
+            snapshot.Source,
+            snapshot.ClearsSource,
+            exclusions,
+            new Dictionary<MidoraId, DirectMidiChannelEventValue>(),
+            emptyIndex.Create(snapshot.Replacements.Values.Concat(snapshot.Added.Enumerate())),
+            CreateSourceIdCache(),
+            snapshot.Count,
+            snapshot.Generation);
     }
 
     private HashSet<MidoraId>? SourceExclusions()
@@ -4166,15 +4425,20 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
     private bool _batchChanged;
     private HashSet<MidoraId>? _batchSourceIds;
     private bool _batchIncludesAllMaterializedSource;
+    private OpaqueMidiEventQuerySnapshot? _compilationSnapshot;
 
     internal OpaqueMidiEventCollection(MidoraProject project) => _project = project;
 
-    public int Count => checked(LiveSourceCount + _added.Count);
+    public int Count => _compilationSnapshot?.Count
+        ?? checked(LiveSourceCount + _added.Count);
     public bool IsReadOnly => false;
     public bool HasPagedSource => _source is not null;
     public long Generation => _generation;
     internal IEnumerable<OpaqueMidiEvent> EditedItems => _replacements.Values.Concat(_added);
-    internal IReadOnlyCollection<MidoraId> RemovedSourceIds => _removed;
+    internal IEnumerable<OpaqueMidiEventValue> EditedValues =>
+        _formalReplacements.Values.Concat(_formalAdded.Enumerate());
+    internal IReadOnlyCollection<MidoraId> RemovedSourceIds =>
+        _compilationSnapshot is null ? _removed : _formalRemovedSourceIds;
     internal bool ClearsPagedSource => _clearSource;
     internal IPureMidiSegmentContentSource? PagedSource => _source;
     internal bool IsPristinePagedSource => _source is not null
@@ -4243,6 +4507,13 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
     {
         get
         {
+            if (_compilationSnapshot is not null)
+            {
+                if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+                using IEnumerator<OpaqueMidiEvent> values = GetEnumerator();
+                for (int current = 0; current <= index; current++) values.MoveNext();
+                return values.Current;
+            }
             int sourceIndex = FindSourceIndexForVisibleIndex(index);
             if (sourceIndex >= 0)
             {
@@ -4390,6 +4661,15 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
 
     public IEnumerator<OpaqueMidiEvent> GetEnumerator()
     {
+        if (_compilationSnapshot is { } compilationSnapshot)
+        {
+            foreach (OpaqueMidiEventValue value in
+                compilationSnapshot.QueryValues(0, long.MaxValue))
+            {
+                yield return FromValue(_project, value);
+            }
+            yield break;
+        }
         if (!_clearSource && _source is not null)
         {
             for (int index = 0; index < _source.OpaqueEventCount; index++)
@@ -4661,6 +4941,15 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
 
     public IEnumerable<OpaqueMidiEventValue> QueryValues(long startTick, long endTick)
     {
+        if (_compilationSnapshot is { } compilationSnapshot)
+        {
+            foreach (OpaqueMidiEventValue value in
+                compilationSnapshot.QueryValues(startTick, endTick))
+            {
+                yield return value;
+            }
+            yield break;
+        }
         if (endTick <= startTick) yield break;
         EnsureOverlayIndex();
         if (!_clearSource && _source is not null)
@@ -4905,6 +5194,43 @@ public sealed class OpaqueMidiEventCollection : IList<OpaqueMidiEvent>, IReadOnl
             _replacements[value.Id] = value;
         MarkOverlayDirty(value.Id);
         Touch();
+    }
+
+    internal void RestoreFormalSequenceForCompilation(
+        OpaqueMidiEventFormalSequenceSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (_added.Count != 0 || _replacements.Count != 0 || _removed.Count != 0)
+            throw new InvalidOperationException("The opaque MIDI Event target is not empty.");
+        if (_source is not null && !ReferenceEquals(_source, snapshot.Source))
+            throw new InvalidOperationException("The opaque MIDI Event source does not match the captured revision.");
+
+        _source = snapshot.Source;
+        _clearSource = snapshot.ClearsSource;
+        _formalRemovedSourceIds = snapshot.RemovedSourceIds;
+        _formalReplacements = snapshot.Replacements;
+        _formalAdded = snapshot.Added;
+        _formalCount = snapshot.Count;
+        _generation = snapshot.Generation;
+        IReadOnlySet<MidoraId>? exclusions = snapshot.Source is not null
+            && (snapshot.RemovedSourceIds.Count != 0 || snapshot.Replacements.Count != 0)
+                ? new PureMidiSourceExclusionSet<OpaqueMidiEventValue>(
+                    snapshot.RemovedSourceIds,
+                    snapshot.Replacements)
+                : null;
+        var emptyIndex = new PureMidiPointOverlayIndex<OpaqueMidiEventValue>(
+            static value => value.Id,
+            static value => value.Tick,
+            static value => value.Order);
+        _compilationSnapshot = new OpaqueMidiEventQuerySnapshot(
+            snapshot.Source,
+            snapshot.ClearsSource,
+            exclusions,
+            new Dictionary<MidoraId, OpaqueMidiEventValue>(),
+            emptyIndex.Create(snapshot.Replacements.Values.Concat(snapshot.Added.Enumerate())),
+            CreateSourceIdCache(),
+            snapshot.Count,
+            snapshot.Generation);
     }
 
     private int LiveSourceCount => _source is null || _clearSource

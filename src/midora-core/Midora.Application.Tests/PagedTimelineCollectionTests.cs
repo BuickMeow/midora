@@ -252,15 +252,27 @@ public sealed class PagedTimelineCollectionTests
         ulong originalContent = before.ContentFingerprint;
         ulong originalOldRange = before.GetRangeFingerprint(0, 100, 60, 60);
         TimelineRasterColumnSummary[] beforeOldRaster = new TimelineRasterColumnSummary[8];
-        before.AccumulateRasterColumns(0, 100, 60, 60, beforeOldRaster);
+        before.AccumulateRasterColumns(
+            RasterProjection(0, 100, beforeOldRaster.Length),
+            60,
+            60,
+            beforeOldRaster);
         Assert.Contains(beforeOldRaster, static column => column.HasContent);
 
         note.SetValues(900, note.LengthTicks, note.Note, note.Velocity);
         LogicalNoteQuerySnapshot moved = segment.Notes.CreateQuerySnapshot();
         TimelineRasterColumnSummary[] movedOldRaster = new TimelineRasterColumnSummary[8];
         TimelineRasterColumnSummary[] movedNewRaster = new TimelineRasterColumnSummary[8];
-        moved.AccumulateRasterColumns(0, 100, 60, 60, movedOldRaster);
-        moved.AccumulateRasterColumns(850, 1_000, 60, 60, movedNewRaster);
+        moved.AccumulateRasterColumns(
+            RasterProjection(0, 100, movedOldRaster.Length),
+            60,
+            60,
+            movedOldRaster);
+        moved.AccumulateRasterColumns(
+            RasterProjection(850, 1_000, movedNewRaster.Length),
+            60,
+            60,
+            movedNewRaster);
 
         Assert.Single(before.QueryValues(0, 100, 60, 60));
         Assert.Empty(moved.QueryValues(0, 100, 60, 60));
@@ -273,10 +285,136 @@ public sealed class PagedTimelineCollectionTests
         note.SetValues(10, note.LengthTicks, note.Note, note.Velocity);
         LogicalNoteQuerySnapshot restored = segment.Notes.CreateQuerySnapshot();
         TimelineRasterColumnSummary[] restoredOldRaster = new TimelineRasterColumnSummary[8];
-        restored.AccumulateRasterColumns(0, 100, 60, 60, restoredOldRaster);
+        restored.AccumulateRasterColumns(
+            RasterProjection(0, 100, restoredOldRaster.Length),
+            60,
+            60,
+            restoredOldRaster);
         Assert.Equal(originalContent, restored.ContentFingerprint);
         Assert.Equal(originalOldRange, restored.GetRangeFingerprint(0, 100, 60, 60));
         Assert.Contains(restoredOldRaster, static column => column.HasContent);
+
+        static TimelineRasterColumnProjection RasterProjection(
+            long startTick,
+            long endTick,
+            int columns) => new(
+                startTick,
+                endTick,
+                startTick,
+                0,
+                columns / (double)(endTick - startTick),
+                columns);
+    }
+
+    [Fact]
+    public void LowZoomRasterSummariesNeverInventTimeLaneCartesianProducts()
+    {
+        const int groupCount = 1_000;
+        const int columnCount = 256;
+        using MidoraProject project = new(192);
+        Segment logicalSegment = new(project) { LengthTicks = 12_000 };
+        logicalSegment.Notes.AddRange(CreateLogicalNotes(0, 0));
+        logicalSegment.Notes.AddRange(CreateLogicalNotes(10_000, 127));
+        SubVoice subVoice = new(project);
+        subVoice.Events.AddRange(CreateTemplateNotes(0, 0));
+        subVoice.Events.AddRange(CreateTemplateNotes(10_000, 127));
+        MidiSegment midiSegment = new(project) { LengthTicks = 12_000 };
+        midiSegment.Notes.AddRange(CreateDirectNotes(0, 0));
+        midiSegment.Notes.AddRange(CreateDirectNotes(10_000, 127));
+        var projection = new TimelineRasterColumnProjection(
+            0,
+            12_000,
+            0,
+            0,
+            columnCount / 12_000d,
+            columnCount);
+
+        TimelineRasterColumnSummary[] logical = new TimelineRasterColumnSummary[columnCount];
+        logicalSegment.Notes.CreateQuerySnapshot().AccumulateRasterColumns(
+            projection,
+            0,
+            127,
+            logical);
+        TimelineRasterColumnSummary[] template = new TimelineRasterColumnSummary[columnCount];
+        subVoice.Events.CreateQuerySnapshot().AccumulateNoteRasterColumns(
+            projection,
+            0,
+            127,
+            template);
+        TimelineRasterColumnSummary[] direct = new TimelineRasterColumnSummary[columnCount];
+        Assert.True(midiSegment.Notes.CreateQuerySnapshot().TryAccumulateRasterColumns(
+            projection,
+            0,
+            127,
+            direct,
+            out _));
+
+        AssertExactOccupancy(logical);
+        AssertExactOccupancy(template);
+        AssertExactOccupancy(direct);
+
+        IEnumerable<LogicalNote> CreateLogicalNotes(long tickOffset, int note) =>
+            Enumerable.Range(0, groupCount).Select(index => new LogicalNote(project)
+            {
+                StartTick = tickOffset + index * 2L,
+                LengthTicks = 1,
+                Note = note,
+                Velocity = 100
+            });
+
+        IEnumerable<TemplateEvent> CreateTemplateNotes(long tickOffset, int note) =>
+            Enumerable.Range(0, groupCount).Select(index => new TemplateEvent(project)
+            {
+                Kind = TemplateEventKind.Note,
+                Tick = tickOffset + index * 2L,
+                LengthTicks = 1,
+                Number = note,
+                Value = 100
+            });
+
+        IEnumerable<DirectMidiNote> CreateDirectNotes(long tickOffset, int note) =>
+            Enumerable.Range(0, groupCount).Select(index => new DirectMidiNote(project)
+            {
+                StartTick = tickOffset + index * 2L,
+                LengthTicks = 1,
+                Key = note,
+                NoteOnVelocity = 100
+            });
+
+        static void AssertExactOccupancy(TimelineRasterColumnSummary[] columns)
+        {
+            Assert.Contains(columns[..48], static column => column.HasContent);
+            Assert.All(columns[..48], static column =>
+                Assert.Equal(0UL, column.LaneMaskHigh));
+            Assert.All(columns[48..208], static column => Assert.False(column.HasContent));
+            Assert.Contains(columns[208..], static column => column.HasContent);
+            Assert.All(columns[208..], static column =>
+                Assert.Equal(0UL, column.LaneMaskLow));
+        }
+    }
+
+    [Fact]
+    public void RasterColumnProjectionKeepsAdjacentTicksDistinctBeyondDoubleIntegerPrecision()
+    {
+        const long origin = 9_007_199_254_740_992;
+        var projection = new TimelineRasterColumnProjection(
+            origin,
+            origin + 16,
+            origin,
+            0,
+            1,
+            16);
+
+        for (int offset = 0; offset < 16; offset++)
+        {
+            Assert.True(projection.TryGetColumns(
+                origin + offset,
+                origin + offset + 1,
+                out int first,
+                out int lastExclusive));
+            Assert.Equal(offset, first);
+            Assert.Equal(offset + 1, lastExclusive);
+        }
     }
 
     [Fact]

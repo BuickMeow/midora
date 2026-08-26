@@ -8,7 +8,7 @@
 
 - 输入：Direct MIDI、Logical Segment、SubVoice 的 Note/Event/Parameter 数据；Arrangement Segment；Workspace Selection；编辑命令；Undo/Redo；viewport、DPI、LOD 与后台编译/栅格任务。
 - 正式输出：语义不变的 Project Source Data、稳定 ID、确定顺序、碰撞结果、Selection 结果、Undo/Redo 状态与 Canonical Compiled Result。
-- 运行时输出：不可变分页修订、range change set、选择摘要、量化 LOD tile、coarse/detail preview、可取消后台任务和有界缓存。
+- 运行时输出：不可变分页修订、range change set、选择摘要、当前投影 tile、Arrangement coarse/detail preview、可取消后台任务和有界缓存。
 - 失败原子性：任何验证、算术、分页、碰撞、编译或取消失败都不得留下部分 Project 编辑、错误 History entry 或属于旧 revision 的可见 tile。
 - 持久化：性能实现不得把 selection、History、页边界、tile、编译结果或运行缓存写入 `.midora`。只有在现有 Project 数据契约确实无法表达正式结果时，才另立格式升级决定。
 
@@ -61,7 +61,9 @@
 
 - UI 线程不得执行 Content Pack 文件读取、Brotli、SHA-256、全量排序或按候选数无界的 hit test。
 - 60,000 Note Resize pointer-down/连续预览不得创建逐 Note WPF Geometry；预览成本由可见像素/tile 数限制，内存不得随鼠标帧数线性增长。
-- 连续 zoom 只能产生离散 LOD cache family；相邻 zoom 直接显示最近完整 LOD，不能从空白等待。
+- Arrangement 连续 zoom 只切换 detail LOD，始终保留唯一 zoom-independent coarse fallback。Piano Note + Selection、Velocity、Event Point 分别按视觉单元原子提交：同一精确投影/DPI 下，替代修订尚未完整时保留上一完整单元，完成后一次替换；绝不跨缩放/LOD/DPI 复用，也不得把旧选择像素与新内容像素混画。可见冷 tile 必须优先调度，过时投影必须取消，不能以 UI 线程同步扫描大型数据换取即时显示。
+- 低缩放聚合不得用跨多个 device column 的时间包围盒与 lane 并集生成近似矩形；聚合和详细 raster 必须共用 half-up device-column 投影。Selection 也必须复用相同列边界，低缩放边缘不得暴露未选颜色。
+- Segment overview 的 content extent 与 viewport/navigation extent 必须分离；进入/离开右侧空白只改变投影，不得同步重建或扫描完整 Segment 摘要。
 - 首次 Undo 不得等待正在运行的后台编译复制；冷/热差异必须可由明确、有界的页预取解释。
 - 每次文档 revision 在单个 Dispatcher frame 内最多触发一次合并刷新；局部 Note/Event 编辑不得重建无关 Workspace、Project Tree 和无关属性视图。
 - 过时后台 raster/compile 结果不得发布；Project/Workspace Close 后不得继续持有可释放的大型 revision。
@@ -86,6 +88,9 @@
 - 本轮曾发现并拒绝过一个“测试通过但性能失败”的中间状态：同步跨 Note/Velocity/Event 投影解析 60,000 个 Selection ID，使完整编辑路径退化到 `6.5～11.3 s`。最终实现以前台 O(1) 发布持久 Selection ID root、100 ms 防抖后的后台预取/指标汇总取代该路径；结果按 selection revision、presentation scope、request generation 校验后才发布。后台指标到达时，正在进行的拖动预览会从 anchor-only 安全升级为完整选区预览，不以删减功能换性能。
 - Pure MIDI 分页源 ID 解析由 live collection 与不可变 query snapshot 共享只读 source match cache；缓存只保存不可变 source index/raw value，overlay replacement/removal/exclusion 仍按各自 revision 独立判定。Note、Channel Event、Opaque Event 均覆盖；切换 source 时重建 cache。
 - 冷指纹准备不再使用进程级单槽队列；每个 `TimelineSurface` 拥有独立有界单槽，关闭或失效 Workspace 的非协作式慢 source 不会形成跨 Tab 队头阻塞。大批量 Direct Note 精确碰撞查询也由逐 key AVL 查询改成自适应批量有序遍历。
-- 真实 WPF 右侧空白边界连续 pan/zoom：cold convergence `69.6 ms`，foreground p50/p95/max `37.50/47.11/54.45 ms`；OnRender content p50/p95/max `0.05/0.07/1.23 ms`，total `1.73/2.90/9.12 ms`。冷帧：Arrangement initial/new/zoom `12.3/10.2/7.2 ms`，Piano initial/new/zoom `5.4/10.4/7.3 ms`。
-- 真实 WPF 内存探针：导入后 managed `79 MiB`、GC heap `198 MiB`、private `310 MiB`、working set `376 MiB`；Arrangement rebuild `133.5 ms`，Segment rebuild `0.2 ms`；冻结 Piano tile + `RenderTargetBitmap` 后 managed `112 MiB`、heap `200 MiB`、private `287 MiB`、working set `349 MiB`。该探针未观察到此前 2～11 GiB 的线性增长。
-- 最终 Release 构建：Core/Desktop 均 `0 warning / 0 error`。自动回归：Core `1,101/1,101`，Desktop `159/159`，Presentation `205/205`；真实 9KX2 Desktop 编辑门 `1/1`，真实 WPF 性能/内存门 `3/3`。
+- 2026-08-27 当前实现的真实 `9KX2` 60,000 Note 数据门：Duplicate prepare/apply/first Undo/warm Undo 为 `357/611/289/145 ms`（60,000 请求，52,141 实际创建）；Resize prepare/apply/Undo 为 `224/233/128 ms`；Move prepare/apply/Undo 为 `72/487/194 ms`。首次 Undo 不再出现 8 秒冷路径。
+- 同一轮 compiler revision 门：合成 60,000 Pure MIDI overlay 的 mutation-gate capture 为 `0.39 ms / 6,528 bytes`；只读 compilation mirror 建立为 `134.51 ms / 30,075,008 bytes`；一百万 formal-root 引用捕获为 `0.000 ms / 40 bytes`。真实 9KX2 先编辑 60,000 Note 后，capture / mirror / full compile 为 `8.53 / 282.84 / 527.56 ms`；同样本 pristine full compile 为 `48.79 ms`。正式编译不再重建 60,000 个领域对象。
+- 真实 WPF 右侧空白边界连续 pan/zoom：cold convergence `98.0 ms`；测试外层软件位图合成/Dispatcher p50/p95/max `42.85/50.73/73.30 ms`，其中 `OnRender` content p50/p95/max `0.33/0.87/3.46 ms`、total `2.37/5.20/6.74 ms`。测试反复让 Segment 右侧空白进入/离开视区，未出现约 0.7 秒同步摘要重建。
+- 冷 WPF 前台帧：Arrangement initial/new-region/zoom 为 `27.1/15.1/18.3 ms`，Piano 为 `21.0/21.1/15.1 ms`；Piano `OnRender` content 分别为 `3.56/1.87/2.33 ms`。同轮内存探针：导入后 managed `130 MiB`、GC heap `318 MiB`、private `407 MiB`、working set `451 MiB`；Arrangement rebuild `111.0 ms`、Segment rebuild `0.5 ms`；冻结 Piano tile + `RenderTargetBitmap` 后 managed `161 MiB`、heap `320 MiB`、private `413 MiB`、working set `454 MiB`、completed raster `4 MiB/15 entries`。未观察到此前 2～11 GiB 的手势线性增长。
+- 视觉正确性门固定：低缩放聚合只有在完整节点落入同一 device column 时才可摘要，否则下钻；详细与聚合、基础与选择共用同一 half-up 列投影。Piano Note/Selection、Velocity、Event Point 各自保留同投影的上一完整视觉单元，替代单元准备完毕后原子提交；不同缩放、LOD 或 DPI 的像素不得复用。少量 Note Move/Resize 使用当前 viewport 的即时矢量预览；大选区 Resize 不复用上一 delta/selection/DPI 的手势预览。hit-test 查询采用事务式暂存，Pending、异常或重入替换 Snapshot 不得修改调用者列表。
+- 当前自动回归：Core solution `1,104/1,104`、Desktop `161/161`、Presentation `232/232`；真实 9KX2 大选区编辑与 edited compile `3/3`、WPF 连续边界与冷帧/内存 `3/3`、真实导入/编译 `1/1`。本轮未使用 computer-use，仍需产品所有者进行实际鼠标操作和视觉验收。

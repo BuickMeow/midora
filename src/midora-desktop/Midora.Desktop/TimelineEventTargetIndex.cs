@@ -144,46 +144,35 @@ internal sealed class TimelineEventTargetLaneIndex
     }
 
     public int AccumulateRasterColumns(
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         Span<TimelineRasterColumnSummary> destination)
     {
         destination.Clear();
-        if (_root is null || destination.IsEmpty || endTick <= startTick) return 0;
+        if (_root is null || destination.IsEmpty) return 0;
         int work = 0;
-        int budget = Math.Max(64, checked(destination.Length * 3));
         Accumulate(
             _root,
-            startTick,
-            endTick,
+            projection,
             destination,
-            budget,
             ref work);
         return work;
     }
 
     private void Accumulate(
         AggregateNode node,
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         Span<TimelineRasterColumnSummary> destination,
-        int budget,
         ref int work)
     {
-        if (node.MaximumEndTick <= startTick || node.MinimumTick >= endTick) return;
+        if (node.MaximumEndTick <= projection.StartTick
+            || node.MinimumTick >= projection.EndTick) return;
         work++;
-        int columnSpan = ColumnSpan(
-            destination.Length,
-            startTick,
-            endTick,
-            node.MinimumTick,
-            node.MaximumEndTick);
-        if (columnSpan <= 1 || work >= budget)
+        int columnSpan = projection.ColumnSpan(node.MinimumTick, node.MaximumEndTick);
+        if (columnSpan <= 1)
         {
             Include(
                 destination,
-                startTick,
-                endTick,
+                projection,
                 node.MinimumTick,
                 node.MaximumEndTick,
                 node.MinimumValue,
@@ -193,20 +182,19 @@ internal sealed class TimelineEventTargetLaneIndex
         }
         if (node.Left is not null)
         {
-            Accumulate(node.Left, startTick, endTick, destination, budget, ref work);
-            Accumulate(node.Right!, startTick, endTick, destination, budget, ref work);
+            Accumulate(node.Left, projection, destination, ref work);
+            Accumulate(node.Right!, projection, destination, ref work);
             return;
         }
         int last = checked(node.First + node.Count);
         for (int index = node.First; index < last; index++)
         {
             TimelineEventTargetPoint point = _points[index];
-            if (point.Tick < startTick || point.Tick >= endTick) continue;
+            if (point.Tick < projection.StartTick || point.Tick >= projection.EndTick) continue;
             long pointEnd = point.Tick == long.MaxValue ? long.MaxValue : point.Tick + 1;
             Include(
                 destination,
-                startTick,
-                endTick,
+                projection,
                 point.Tick,
                 pointEnd,
                 point.Value,
@@ -281,26 +269,18 @@ internal sealed class TimelineEventTargetLaneIndex
 
     private static void Include(
         Span<TimelineRasterColumnSummary> destination,
-        long queryStartTick,
-        long queryEndTick,
+        TimelineRasterColumnProjection projection,
         long contentStartTick,
         long contentEndTick,
         double minimumValue,
         double maximumValue,
         int count)
     {
-        if (contentEndTick <= queryStartTick || contentStartTick >= queryEndTick) return;
-        double span = (double)queryEndTick - queryStartTick;
-        int first = Math.Clamp(
-            (int)Math.Floor((Math.Max(queryStartTick, contentStartTick) - queryStartTick)
-                / span * destination.Length),
-            0,
-            destination.Length - 1);
-        int lastExclusive = Math.Clamp(
-            (int)Math.Ceiling((Math.Min(queryEndTick, contentEndTick) - queryStartTick)
-                / span * destination.Length),
-            first + 1,
-            destination.Length);
+        if (!projection.TryGetColumns(
+                contentStartTick,
+                contentEndTick,
+                out int first,
+                out int lastExclusive)) return;
         for (int column = first; column < lastExclusive; column++)
         {
             destination[column].Include(
@@ -310,28 +290,6 @@ internal sealed class TimelineEventTargetLaneIndex
                 maximumValue,
                 count);
         }
-    }
-
-    private static int ColumnSpan(
-        int width,
-        long queryStartTick,
-        long queryEndTick,
-        long contentStartTick,
-        long contentEndTick)
-    {
-        if (contentEndTick <= queryStartTick || contentStartTick >= queryEndTick) return 0;
-        double span = (double)queryEndTick - queryStartTick;
-        int first = Math.Clamp(
-            (int)Math.Floor((Math.Max(queryStartTick, contentStartTick) - queryStartTick)
-                / span * width),
-            0,
-            width - 1);
-        int last = Math.Clamp(
-            (int)Math.Ceiling((Math.Min(queryEndTick, contentEndTick) - queryStartTick)
-                / span * width),
-            first + 1,
-            width);
-        return last - first;
     }
 
     private static ulong PointFingerprint(TimelineEventTargetPoint point)

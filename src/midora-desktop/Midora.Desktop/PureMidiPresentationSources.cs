@@ -202,6 +202,7 @@ internal enum DirectMidiTimelineProjection
 
 internal sealed class PagedDirectMidiTimelineItemSource :
     IPreparedTimelineRenderItemSource,
+    INonBlockingTimelineFingerprintSource,
     ITimelineRasterAggregateSource
 {
     private readonly MidiSegment _segment;
@@ -311,8 +312,7 @@ internal sealed class PagedDirectMidiTimelineItemSource :
 
     public bool TryAccumulateRasterColumns(
         TimelineRasterAggregateKind kind,
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
@@ -324,8 +324,7 @@ internal sealed class PagedDirectMidiTimelineItemSource :
             && _eventIndex is not null)
         {
             sourceWorkCount = _eventIndex.AccumulateRasterColumns(
-                startTick,
-                endTick,
+                projection,
                 destination);
             return true;
         }
@@ -345,8 +344,7 @@ internal sealed class PagedDirectMidiTimelineItemSource :
             : 127;
         if (maximumKey < minimumKey) return true;
         if (!_noteSnapshot!.TryAccumulateRasterColumns(
-                startTick,
-                endTick,
+                projection,
                 minimumKey,
                 maximumKey,
                 raw,

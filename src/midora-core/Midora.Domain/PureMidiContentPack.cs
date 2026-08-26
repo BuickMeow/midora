@@ -2002,31 +2002,32 @@ public sealed class PureMidiContentPack : IDisposable
         }
 
         public bool TryAccumulateNoteRasterColumns(
-            long startTick,
-            long endTick,
+            TimelineRasterColumnProjection projection,
             int minimumKey,
             int maximumKey,
             Span<TimelineRasterColumnSummary> destination,
             IReadOnlySet<MidoraId>? excludedIds,
             out int sourceWorkCount)
         {
-            if (startTick < 0) throw new ArgumentOutOfRangeException(nameof(startTick));
-            if (endTick <= startTick) throw new ArgumentOutOfRangeException(nameof(endTick));
             if (maximumKey < minimumKey) throw new ArgumentOutOfRangeException(nameof(maximumKey));
             sourceWorkCount = 0;
             if (destination.IsEmpty) return true;
             foreach (PageDescriptor page in _noteOnEndpointPages)
             {
-                if (page.MaximumActiveEndTick <= startTick
-                    || page.MinimumTick >= endTick
+                if (page.MaximumActiveEndTick <= projection.StartTick
+                    || page.MinimumTick >= projection.EndTick
                     || page.MaximumKey < minimumKey
                     || page.MinimumKey > maximumKey)
                 {
                     continue;
                 }
-                int first = RasterColumn(page.MinimumTick, startTick, endTick, destination.Length);
-                int last = RasterColumn(page.MaximumTick, startTick, endTick, destination.Length);
-                bool decode = first != last || MayContainExcludedId(page, excludedIds);
+                bool singleColumn = projection.TryGetColumns(
+                    page.MinimumTick,
+                    page.MaximumActiveEndTick,
+                    out int first,
+                    out int lastExclusive)
+                    && lastExclusive - first == 1;
+                bool decode = !singleColumn || MayContainExcludedId(page, excludedIds);
                 if (!decode)
                 {
                     (ulong low, ulong high) = FilterLaneMask(
@@ -2053,20 +2054,19 @@ public sealed class PureMidiContentPack : IDisposable
                     if (excludedIds?.Contains(value.Id) == true
                         || value.Key < minimumKey
                         || value.Key > maximumKey
-                        || value.StartTick >= endTick
-                        || value.StartTick + value.LengthTicks <= startTick)
+                        || value.StartTick >= projection.EndTick
+                        || SafeNoteEnd(value) <= projection.StartTick)
                     {
                         continue;
                     }
                     ulong low = value.Key < 64 ? 1UL << value.Key : 0;
                     ulong high = value.Key >= 64 ? 1UL << (value.Key - 64) : 0;
-                    int from = RasterColumn(value.StartTick, startTick, endTick, destination.Length);
-                    int to = RasterColumn(
-                        value.StartTick + value.LengthTicks - 1,
-                        startTick,
-                        endTick,
-                        destination.Length);
-                    for (int column = from; column <= to; column++)
+                    projection.TryGetColumns(
+                        value.StartTick,
+                        SafeNoteEnd(value),
+                        out int from,
+                        out int toExclusive);
+                    for (int column = from; column < toExclusive; column++)
                     {
                         destination[column].Include(
                             low,
@@ -2081,12 +2081,10 @@ public sealed class PureMidiContentPack : IDisposable
             return true;
         }
 
-        private static int RasterColumn(long tick, long startTick, long endTick, int width)
-        {
-            double normalized = (Math.Clamp(tick, startTick, endTick - 1) - startTick)
-                / (double)(endTick - startTick);
-            return Math.Clamp((int)(normalized * width), 0, width - 1);
-        }
+        private static long SafeNoteEnd(DirectMidiNoteValue value) =>
+            value.LengthTicks <= 0 || value.StartTick > long.MaxValue - value.LengthTicks
+                ? long.MaxValue
+                : value.StartTick + value.LengthTicks;
 
         private static (ulong Low, ulong High) FilterLaneMask(
             ulong low,

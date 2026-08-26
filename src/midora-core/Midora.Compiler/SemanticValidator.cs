@@ -1152,10 +1152,7 @@ public static class SemanticValidator
                     Tick = segment.ProjectStartTick
                 };
                 Add(segment.Id, segmentSource);
-                IEnumerable<DirectMidiNote> stableIdNotes = segment.UsesPagedContent
-                    ? segment.Notes.EditedItems
-                    : segment.Notes;
-                foreach (DirectMidiNote note in stableIdNotes)
+                foreach (DirectMidiNoteValue note in segment.Notes.EditedValues)
                 {
                     Add(note.Id, segmentSource with
                     {
@@ -1164,10 +1161,8 @@ public static class SemanticValidator
                         Origin = SourceOrigin.DirectMidiNote
                     });
                 }
-                IEnumerable<DirectMidiChannelEvent> stableIdChannelEvents = segment.UsesPagedContent
-                    ? segment.ChannelEvents.EditedItems
-                    : segment.ChannelEvents;
-                foreach (DirectMidiChannelEvent directEvent in stableIdChannelEvents)
+                foreach (DirectMidiChannelEventValue directEvent in
+                    segment.ChannelEvents.EditedValues)
                 {
                     Add(directEvent.Id, segmentSource with
                     {
@@ -1176,10 +1171,7 @@ public static class SemanticValidator
                         Origin = SourceOrigin.DirectMidiChannelEvent
                     });
                 }
-                IEnumerable<OpaqueMidiEvent> stableIdOpaqueEvents = segment.UsesPagedContent
-                    ? segment.OpaqueEvents.EditedItems
-                    : segment.OpaqueEvents;
-                foreach (OpaqueMidiEvent opaque in stableIdOpaqueEvents)
+                foreach (OpaqueMidiEventValue opaque in segment.OpaqueEvents.EditedValues)
                 {
                     Add(opaque.Id, segmentSource with
                     {
@@ -1439,10 +1431,7 @@ public static class SemanticValidator
                 {
                     previousEndTick = segment.ProjectStartTick + segment.LengthTicks;
                 }
-                IEnumerable<DirectMidiNote> notesToValidate = segment.UsesPagedContent
-                    ? segment.Notes.EditedItems
-                    : segment.Notes;
-                foreach (DirectMidiNote note in notesToValidate)
+                foreach (DirectMidiNoteValue note in segment.Notes.EditedValues)
                 {
                     if (note.StartTick < 0
                         || note.LengthTicks <= 0
@@ -1465,10 +1454,8 @@ public static class SemanticValidator
                             diagnostics);
                     }
                 }
-                IEnumerable<DirectMidiChannelEvent> channelEventsToValidate = segment.UsesPagedContent
-                    ? segment.ChannelEvents.EditedItems
-                    : segment.ChannelEvents;
-                foreach (DirectMidiChannelEvent directEvent in channelEventsToValidate)
+                foreach (DirectMidiChannelEventValue directEvent in
+                    segment.ChannelEvents.EditedValues)
                 {
                     bool oneByte = directEvent.Kind is DirectMidiChannelEventKind.ProgramChange
                         or DirectMidiChannelEventKind.ChannelPressure;
@@ -1491,16 +1478,12 @@ public static class SemanticValidator
                             diagnostics);
                     }
                 }
-                IEnumerable<OpaqueMidiEvent> opaqueEventsToValidate = segment.UsesPagedContent
-                    ? segment.OpaqueEvents.EditedItems
-                    : segment.OpaqueEvents;
-                foreach (OpaqueMidiEvent opaque in opaqueEventsToValidate)
+                foreach (OpaqueMidiEventValue opaque in segment.OpaqueEvents.EditedValues)
                 {
                     if (opaque.Tick < 0
                         || !Enum.IsDefined(opaque.Kind)
                         || opaque.Kind == OpaqueMidiEventKind.Meta
                             && opaque.MetaType == 0x2f
-                        || opaque.Payload is null
                         || opaque.Order < 0)
                     {
                         AddError(

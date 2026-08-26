@@ -718,10 +718,16 @@ public static class TimelinePianoTileRasterizer
         {
             TimelineRasterColumnSummary[] summaries =
                 new TimelineRasterColumnSummary[RasterSize];
+            var projection = new TimelineRasterColumnProjection(
+                startTick,
+                endTick,
+                startTick,
+                -(worldLeft / devicePixelsPerTick - startTick) * devicePixelsPerTick,
+                devicePixelsPerTick,
+                RasterSize);
             if (snapshot.TryAccumulateRasterColumns(
                     TimelineRasterAggregateKind.PianoNotes,
-                    startTick,
-                    endTick,
+                    projection,
                     firstLane,
                     lastLaneExclusive,
                     summaries,
@@ -1601,10 +1607,16 @@ public static class TimelineEventPointTileRasterizer
         {
             TimelineRasterColumnSummary[] summaries =
                 new TimelineRasterColumnSummary[width];
+            var projection = new TimelineRasterColumnProjection(
+                startTick,
+                endTick,
+                startTick,
+                -(worldLeft / devicePixelsPerTick - startTick) * devicePixelsPerTick,
+                devicePixelsPerTick,
+                width);
             if (snapshot.TryAccumulateRasterColumns(
                     TimelineRasterAggregateKind.EventPoints,
-                    startTick,
-                    endTick,
+                    projection,
                     0,
                     1,
                     summaries,
@@ -2016,10 +2028,16 @@ public static class TimelineVelocityTileRasterizer
         {
             TimelineRasterColumnSummary[] summaries =
                 new TimelineRasterColumnSummary[RasterWidth];
+            var projection = new TimelineRasterColumnProjection(
+                startTick,
+                endTick,
+                startTick,
+                -(worldLeft / pixelsPerTick - startTick) * pixelsPerTick,
+                pixelsPerTick,
+                RasterWidth);
             if (snapshot.TryAccumulateRasterColumns(
                     TimelineRasterAggregateKind.Velocity,
-                    startTick,
-                    endTick,
+                    projection,
                     0,
                     1,
                     summaries,
@@ -2376,9 +2394,15 @@ internal sealed class TimelineRasterCache
 {
     public const long MaximumBytes = 256L * 1024 * 1024;
     public const int MaximumInFlight = 64;
-    // ADR-CORE-054 reserves one of the two raster workers for visible work;
-    // speculative preview/prewarm may occupy at most the other worker.
-    internal const int WorkerCount = 2;
+    // Visible piano tiles may use a small, CPU-proportional worker set so a
+    // cold viewport converges promptly on machines with spare cores.  Keep the
+    // pool bounded; on machines with at least eight logical processors this
+    // leaves at least three quarters for UI, compilation, and audio work.
+    // Speculative preview/prewarm remains limited separately to one worker.
+    internal static readonly int WorkerCount = Math.Clamp(
+        Environment.ProcessorCount / 4,
+        2,
+        4);
     internal const int RecommendedBackgroundConcurrency = 1;
     private const int MaximumSpeculativeInFlight = MaximumInFlight / 2;
     private readonly object _gate = new();

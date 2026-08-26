@@ -39,6 +39,15 @@ internal sealed class PureMidiPointOverlayIndex<TValue>
     public int Count => _idRoot?.Count ?? 0;
     public long MaximumTick => _tickRoot?.MaximumTick ?? 0;
 
+    internal PureMidiPointOverlayIndex<TValue> Create(IEnumerable<TValue> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        TValue[] materialized = values as TValue[] ?? values.ToArray();
+        return materialized.Length == 0
+            ? new(_getId, _getTick, _getOrder)
+            : Build(materialized);
+    }
+
     public bool TryGetById(MidoraId id, out TValue value)
     {
         IdNode? current = _idRoot;

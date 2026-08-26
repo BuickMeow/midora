@@ -60,12 +60,28 @@ public sealed class ProjectCompilationRevisionCaptureTests
             stopwatch.Elapsed < TimeSpan.FromSeconds(1),
             $"Pure MIDI gate capture took {stopwatch.Elapsed.TotalMilliseconds:F1} ms.");
 
+        allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        stopwatch.Restart();
         MidoraProject materialized = ProjectCompilationSnapshot.MaterializeRevision(capture);
+        stopwatch.Stop();
+        long materializeAllocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+        Console.WriteLine(
+            $"60k Pure overlay compile-mirror materialization: "
+            + $"{stopwatch.Elapsed.TotalMilliseconds:F2} ms; "
+            + $"allocated={materializeAllocated:N0} bytes.");
         DirectMidiNoteCollection notes = Assert.Single(
             Assert.Single(materialized.PureMidiTracks).Segments).Notes;
         Assert.Equal(noteCount, notes.Count);
         Assert.Equal(0, notes[0].StartTick);
         Assert.Equal(noteCount - 1, notes[^1].StartTick);
+        Assert.True(
+            materializeAllocated < 48_000_000,
+            $"Pure MIDI compile-mirror materialization allocated "
+            + $"{materializeAllocated:N0} bytes for {noteCount:N0} overlay notes.");
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(3),
+            $"Pure MIDI compile-mirror materialization took "
+            + $"{stopwatch.Elapsed.TotalMilliseconds:F1} ms.");
     }
 
     [Fact]

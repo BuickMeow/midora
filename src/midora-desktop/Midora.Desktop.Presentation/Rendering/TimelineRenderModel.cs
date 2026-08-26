@@ -568,6 +568,14 @@ public interface IPreparedTimelineRenderItemSource : ITimelineRenderItemSource
         CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Marks an item source whose range fingerprint is metadata-only and cannot
+/// decode pages, wait for I/O, or otherwise block the WPF render thread.
+/// </summary>
+public interface INonBlockingTimelineFingerprintSource : ITimelineRenderItemSource
+{
+}
+
 public enum TimelineRasterAggregateKind
 {
     PianoNotes,
@@ -584,8 +592,7 @@ public interface ITimelineRasterAggregateSource
 {
     bool TryAccumulateRasterColumns(
         TimelineRasterAggregateKind kind,
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
@@ -945,6 +952,8 @@ public sealed class TimelineRenderSnapshot
 {
     private const int MaximumPianoFingerprintEntries = 16384;
     private const int MaximumConductorFingerprintEntries = 8192;
+    private const int MaximumQueryScratchCapacity = 4096;
+    private static readonly ConcurrentBag<List<TimelineRenderItem>> QueryScratchPool = [];
     private readonly ConcurrentDictionary<PianoTileFingerprintKey, Lazy<ulong>>
         _pianoTileFingerprints = [];
     private readonly ConcurrentDictionary<ConductorTileFingerprintKey, Lazy<ulong>>
@@ -1168,22 +1177,32 @@ public sealed class TimelineRenderSnapshot
         List<TimelineRenderItem> destination)
     {
         ArgumentNullException.ThrowIfNull(destination);
-        int originalCount = destination.Count;
-        Index.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, destination);
-        if (_itemSource is IPreparedTimelineRenderItemSource prepared
-            && !prepared.TryQueryIntoCached(
-                startTick,
-                endTick,
-                firstLane,
-                lastLaneExclusive,
-                destination))
+        List<TimelineRenderItem> staged = RentQueryScratch();
+        try
         {
-            destination.RemoveRange(originalCount, destination.Count - originalCount);
-            return false;
+            Index.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, staged);
+            if (_itemSource is IPreparedTimelineRenderItemSource prepared
+                && !prepared.TryQueryIntoCached(
+                    startTick,
+                    endTick,
+                    firstLane,
+                    lastLaneExclusive,
+                    staged))
+            {
+                return false;
+            }
+            if (_itemSource is not null and not IPreparedTimelineRenderItemSource)
+                _itemSource.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, staged);
+            // Cached range queries have replace semantics: Pending leaves the
+            // caller untouched, Success replaces the previous query atomically.
+            destination.Clear();
+            destination.AddRange(staged);
+            return true;
         }
-        if (_itemSource is not null and not IPreparedTimelineRenderItemSource)
-            _itemSource.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, destination);
-        return true;
+        finally
+        {
+            ReturnQueryScratch(staged);
+        }
     }
 
     public void PrefetchRange(
@@ -1217,12 +1236,13 @@ public sealed class TimelineRenderSnapshot
     }
 
     internal bool HasExternalItemSource => _itemSource is not null;
+    internal bool CanComputeTileFingerprintSynchronously =>
+        _itemSource is null or INonBlockingTimelineFingerprintSource;
     internal ulong ExternalItemSourceFingerprint => _itemSource?.ContentFingerprint ?? 0;
 
     internal bool TryAccumulateRasterColumns(
         TimelineRasterAggregateKind kind,
-        long startTick,
-        long endTick,
+        TimelineRasterColumnProjection projection,
         int firstLane,
         int lastLaneExclusive,
         Span<TimelineRasterColumnSummary> destination,
@@ -1230,13 +1250,18 @@ public sealed class TimelineRenderSnapshot
     {
         destination.Clear();
         sourceWorkCount = 0;
-        if (destination.IsEmpty || endTick <= startTick || lastLaneExclusive <= firstLane)
+        if (destination.IsEmpty || lastLaneExclusive <= firstLane)
             return true;
         if (_itemSource is not null and not ITimelineRasterAggregateSource)
             return false;
 
         List<TimelineRenderItem> materialized = [];
-        Index.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, materialized);
+        Index.QueryInto(
+            projection.StartTick,
+            projection.EndTick,
+            firstLane,
+            lastLaneExclusive,
+            materialized);
         foreach (TimelineRenderItem item in materialized)
         {
             if (!MatchesAggregateKind(item.Kind, kind)) continue;
@@ -1245,8 +1270,7 @@ public sealed class TimelineRenderSnapshot
             ulong high = lane is >= 64 and < 128 ? 1UL << (lane - 64) : 0;
             IncludeRasterColumns(
                 destination,
-                startTick,
-                endTick,
+                projection,
                 item.StartTick,
                 item.EndTick,
                 low,
@@ -1259,8 +1283,7 @@ public sealed class TimelineRenderSnapshot
         return _itemSource is not ITimelineRasterAggregateSource aggregate
             || aggregate.TryAccumulateRasterColumns(
                 kind,
-                startTick,
-                endTick,
+                projection,
                 firstLane,
                 lastLaneExclusive,
                 destination,
@@ -1294,8 +1317,7 @@ public sealed class TimelineRenderSnapshot
 
     private static void IncludeRasterColumns(
         Span<TimelineRasterColumnSummary> destination,
-        long queryStartTick,
-        long queryEndTick,
+        TimelineRasterColumnProjection projection,
         long contentStartTick,
         long contentEndTick,
         ulong laneMaskLow,
@@ -1304,23 +1326,15 @@ public sealed class TimelineRenderSnapshot
         double maximumValue,
         int approximateSourceCount)
     {
-        if ((laneMaskLow | laneMaskHigh) == 0
-            || contentEndTick <= queryStartTick
-            || contentStartTick >= queryEndTick)
+        if ((laneMaskLow | laneMaskHigh) == 0)
         {
             return;
         }
-        double span = (double)queryEndTick - queryStartTick;
-        int first = Math.Clamp(
-            (int)Math.Floor((Math.Max(queryStartTick, contentStartTick) - queryStartTick)
-                / span * destination.Length),
-            0,
-            destination.Length - 1);
-        int lastExclusive = Math.Clamp(
-            (int)Math.Ceiling((Math.Min(queryEndTick, contentEndTick) - queryStartTick)
-                / span * destination.Length),
-            first + 1,
-            destination.Length);
+        if (!projection.TryGetColumns(
+                contentStartTick,
+                contentEndTick,
+                out int first,
+                out int lastExclusive)) return;
         for (int column = first; column < lastExclusive; column++)
         {
             destination[column].Include(
@@ -1464,24 +1478,48 @@ public sealed class TimelineRenderSnapshot
     {
         ArgumentNullException.ThrowIfNull(ids);
         ArgumentNullException.ThrowIfNull(destination);
-        int originalCount = destination.Count;
+        List<TimelineRenderItem> staged = RentQueryScratch();
         HashSet<MidoraId>? remaining = null;
-        foreach (MidoraId id in ids)
+        try
         {
-            if (ItemsById.TryGetValue(id, out TimelineRenderItem item))
-                destination.Add(item);
-            else
-                (remaining ??= []).Add(id);
+            foreach (MidoraId id in ids)
+            {
+                if (ItemsById.TryGetValue(id, out TimelineRenderItem item))
+                    staged.Add(item);
+                else
+                    (remaining ??= []).Add(id);
+            }
+            if (remaining is not { Count: > 0 })
+            {
+                destination.AddRange(staged);
+                return true;
+            }
+            if (_itemSource is IPreparedTimelineRenderItemSource prepared)
+            {
+                if (!prepared.TryQueryByIdsCached(remaining, staged)) return false;
+                destination.AddRange(staged);
+                return true;
+            }
+            _itemSource?.QueryByIds(remaining, staged);
+            destination.AddRange(staged);
+            return true;
         }
-        if (remaining is not { Count: > 0 }) return true;
-        if (_itemSource is IPreparedTimelineRenderItemSource prepared)
+        finally
         {
-            if (prepared.TryQueryByIdsCached(remaining, destination)) return true;
-            destination.RemoveRange(originalCount, destination.Count - originalCount);
-            return false;
+            ReturnQueryScratch(staged);
         }
-        _itemSource?.QueryByIds(remaining, destination);
-        return true;
+    }
+
+    private static List<TimelineRenderItem> RentQueryScratch() =>
+        QueryScratchPool.TryTake(out List<TimelineRenderItem>? value)
+            ? value
+            : new(capacity: 16);
+
+    private static void ReturnQueryScratch(List<TimelineRenderItem> value)
+    {
+        if (value.Capacity > MaximumQueryScratchCapacity) return;
+        value.Clear();
+        QueryScratchPool.Add(value);
     }
 
     public void PrefetchIds(

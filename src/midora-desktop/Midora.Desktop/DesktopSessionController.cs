@@ -1,6 +1,8 @@
+using System.Collections.Immutable;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Windows.Threading;
 using Midora.Application;
 using Midora.Audio;
@@ -21,6 +23,16 @@ namespace Midora.Desktop;
 
 public sealed class DesktopSessionController : ObservableObject, IAsyncDisposable
 {
+    [Flags]
+    private enum ModelRefreshKind
+    {
+        None = 0,
+        History = 1 << 0,
+        Content = 1 << 1,
+        Compilation = 1 << 2,
+        Playback = 1 << 3
+    }
+
     private static readonly string[] WelcomeHeadlines =
     [
         "What will you create?",
@@ -76,6 +88,13 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     ];
 
     private readonly object _modelRefreshGate = new();
+    private ModelRefreshKind _pendingModelRefreshKinds;
+    private ProjectChangeSet? _pendingContentChanges;
+    private bool _modelRefreshScheduled;
+    private long? _pendingSelectionRestoreStateId;
+    private long? _pendingSelectionHistoryCaptureStateId;
+    private bool _workspaceSelectionHistoryPruneRequested;
+    private string? _projectTreeStructureStamp;
     private int _compilerErrorCount;
     private int _compilerWarningCount;
     private readonly MidoraProjectPackageV1 _packages =
@@ -92,9 +111,11 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private readonly List<WorkspaceKey> _forwardNavigation = [];
     private readonly Dictionary<long, Dictionary<WorkspaceKey, WorkspaceSelectionBookmark>>
         _workspaceSelectionHistory = [];
-    private readonly SynchronizationContext? _uiContext =
-        SynchronizationContext.Current is DispatcherSynchronizationContext dispatcherContext
-            ? dispatcherContext
+    private readonly Dictionary<WorkspaceKey, CachedWorkspaceSelectionBookmark>
+        _workspaceSelectionBookmarkCache = [];
+    private readonly Dispatcher? _uiDispatcher =
+        SynchronizationContext.Current is DispatcherSynchronizationContext
+            ? Dispatcher.FromThread(Thread.CurrentThread)
             : null;
     private ProjectContext? _context;
     private BassWasapiChildPlaybackBackend? _preparedPlaybackBackend;
@@ -117,6 +138,13 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     private long _tempoLookupTick = -1;
     private string _tempoText = "— BPM";
     private DesktopTaskViewModel? _foregroundTask;
+
+    internal long ModelRefreshPassCount { get; private set; }
+    internal long WorkspaceRebuildCount { get; private set; }
+    internal long ProjectTreeRefreshCount { get; private set; }
+    internal long DiagnosticRefreshCount { get; private set; }
+    internal long WorkspaceSelectionRefreshCount { get; private set; }
+    internal int WorkspaceSelectionHistoryStateCount => _workspaceSelectionHistory.Count;
 
     public DesktopSessionController()
     {
@@ -1074,6 +1102,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     public ProjectEditExecution Execute(IProjectEditCommand command)
     {
+        CompletePendingSelectionHistoryCaptureBeforeEdit();
         if (Document is null)
         {
             throw new InvalidOperationException("No Project is open.");
@@ -1083,7 +1112,37 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             throw new InvalidOperationException(
                 "Project editing is locked while playback or a foreground task is active.");
         }
-        ProjectEditExecution result = Document.Execute(command);
+        bool truncatesRedoBranch = Document.CanRedo;
+        if (truncatesRedoBranch)
+        {
+            lock (_modelRefreshGate)
+            {
+                _workspaceSelectionHistoryPruneRequested = true;
+            }
+        }
+        ProjectEditExecution result;
+        try
+        {
+            result = Document.Execute(command);
+        }
+        catch
+        {
+            if (truncatesRedoBranch)
+            {
+                lock (_modelRefreshGate)
+                {
+                    _workspaceSelectionHistoryPruneRequested = false;
+                }
+            }
+            throw;
+        }
+        if (!result.Changed && truncatesRedoBranch)
+        {
+            lock (_modelRefreshGate)
+            {
+                _workspaceSelectionHistoryPruneRequested = false;
+            }
+        }
         // ProjectDocumentSession raises HistoryChanged synchronously for a changed edit.
         // That event is the single refresh/revision path; refreshing here as well would
         // rebuild every rendered workspace twice for one atomic edit.
@@ -1096,6 +1155,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
     {
         ArgumentNullException.ThrowIfNull(command);
         ArgumentNullException.ThrowIfNull(workspace);
+        CompletePendingSelectionHistoryCaptureBeforeEdit();
         ProjectDocumentSession document = Document
             ?? throw new InvalidOperationException("No Project is open.");
         if (!Workspaces.Contains(workspace))
@@ -1105,18 +1165,26 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
 
         long beforeStateId = document.CurrentStateId;
-        WorkspaceSelectionBookmark before = CaptureSelection(workspace.Selection);
+        Dictionary<WorkspaceKey, WorkspaceSelectionBookmark> before =
+            CaptureOpenWorkspaceSelections();
         ProjectEditExecution result = Execute(command);
         if (!result.Changed)
         {
             return result;
         }
 
-        StoreSelection(beforeStateId, workspace.Key, before);
-        StoreSelection(
-            document.CurrentStateId,
-            workspace.Key,
-            CaptureSelection(workspace.Selection));
+        foreach ((WorkspaceKey key, WorkspaceSelectionBookmark bookmark) in before)
+        {
+            StoreSelection(beforeStateId, key, bookmark);
+        }
+        if (_uiDispatcher is null)
+        {
+            StoreCurrentWorkspaceSelections(document.CurrentStateId, before);
+        }
+        else
+        {
+            QueueSelectionHistoryCapture(document.CurrentStateId);
+        }
         return result;
     }
 
@@ -1417,7 +1485,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             }
             TimelineWorkspaceViewModel workspace = OpenSegment(source.SegmentId);
             MidoraId target = source.LogicalNoteId != default
-                && located.Value.Segment.Notes.Any(item => item.Id == source.LogicalNoteId)
+                && located.Value.Segment.Notes.TryGetById(source.LogicalNoteId, out _)
                     ? source.LogicalNoteId
                     : source.SegmentId;
             workspace.Selection.Replace(target);
@@ -1526,22 +1594,134 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     public void Undo()
     {
+        CompletePendingSelectionHistoryCaptureBeforeEdit();
         if (!CanEditProject) return;
         if (Document?.CanUndo != true) return;
-        Document.Undo();
-        RestoreWorkspaceSelections(Document.CurrentStateId);
+        ProjectHistoryEntryInfo target = Document.History.Single(value =>
+            value.AfterStateId == Document.CurrentStateId);
+        RequestWorkspaceSelectionRestore(target.BeforeStateId);
+        try
+        {
+            Document.Undo();
+        }
+        catch
+        {
+            CancelWorkspaceSelectionRestore(target.BeforeStateId);
+            throw;
+        }
     }
 
     public void Redo()
     {
+        CompletePendingSelectionHistoryCaptureBeforeEdit();
         if (!CanEditProject) return;
         if (Document?.CanRedo != true) return;
-        Document.Redo();
-        RestoreWorkspaceSelections(Document.CurrentStateId);
+        ProjectHistoryEntryInfo target = Document.History.Single(value =>
+            value.BeforeStateId == Document.CurrentStateId);
+        RequestWorkspaceSelectionRestore(target.AfterStateId);
+        try
+        {
+            Document.Redo();
+        }
+        catch
+        {
+            CancelWorkspaceSelectionRestore(target.AfterStateId);
+            throw;
+        }
     }
 
-    private static WorkspaceSelectionBookmark CaptureSelection(WorkspaceSelection selection) =>
-        new(selection.Ids.ToArray(), selection.Primary);
+    private WorkspaceSelectionBookmark CaptureSelection(WorkspaceViewModel workspace)
+    {
+        WorkspaceSelection selection = workspace.Selection;
+        if (_workspaceSelectionBookmarkCache.TryGetValue(
+                workspace.Key,
+                out CachedWorkspaceSelectionBookmark cached)
+            && cached.SelectionRevision == selection.Revision)
+        {
+            return cached.Bookmark;
+        }
+        ImmutableHashSet<MidoraId> materialized =
+            selection.IdSet as ImmutableHashSet<MidoraId>
+            ?? selection.IdSet.ToImmutableHashSet();
+        WorkspaceSelectionBookmark bookmark = new(
+            materialized,
+            selection.Primary,
+            selection.Anchor);
+        _workspaceSelectionBookmarkCache[workspace.Key] = new(
+            selection.Revision,
+            bookmark);
+        return bookmark;
+    }
+
+    private Dictionary<WorkspaceKey, WorkspaceSelectionBookmark>
+        CaptureOpenWorkspaceSelections()
+    {
+        Dictionary<WorkspaceKey, WorkspaceSelectionBookmark> result =
+            new(Workspaces.Count);
+        foreach (WorkspaceViewModel openWorkspace in Workspaces)
+        {
+            result[openWorkspace.Key] = CaptureSelection(openWorkspace);
+        }
+        return result;
+    }
+
+    private void StoreCurrentWorkspaceSelections(
+        long stateId,
+        IReadOnlyDictionary<WorkspaceKey, WorkspaceSelectionBookmark>? previous = null)
+    {
+        if (Document?.CurrentStateId != stateId) return;
+        foreach (WorkspaceViewModel openWorkspace in Workspaces)
+        {
+            WorkspaceSelectionBookmark bookmark = CaptureSelection(openWorkspace);
+            if (previous is not null
+                && previous.TryGetValue(openWorkspace.Key, out WorkspaceSelectionBookmark? old)
+                && SelectionsEqual(old, bookmark))
+            {
+                bookmark = old;
+            }
+            StoreSelection(stateId, openWorkspace.Key, bookmark);
+        }
+    }
+
+    private void QueueSelectionHistoryCapture(long stateId)
+    {
+        bool scheduleDispatcher = false;
+        lock (_modelRefreshGate)
+        {
+            _pendingSelectionHistoryCaptureStateId = stateId;
+            if (!_modelRefreshScheduled)
+            {
+                _modelRefreshScheduled = true;
+                scheduleDispatcher = _uiDispatcher is not null;
+            }
+        }
+        if (scheduleDispatcher)
+        {
+            _uiDispatcher!.BeginInvoke(
+                DispatcherPriority.Render,
+                new Action(DrainPendingModelRefresh));
+        }
+    }
+
+    private void CompletePendingSelectionHistoryCaptureBeforeEdit()
+    {
+        if (_uiDispatcher?.CheckAccess() != true) return;
+        bool pending;
+        lock (_modelRefreshGate)
+        {
+            pending = _pendingSelectionHistoryCaptureStateId is not null;
+        }
+        if (pending) DrainPendingModelRefresh();
+    }
+
+    private static bool SelectionsEqual(
+        WorkspaceSelectionBookmark left,
+        WorkspaceSelectionBookmark right) =>
+        ReferenceEquals(left, right)
+        || left.Primary == right.Primary
+        && left.Anchor == right.Anchor
+        && (ReferenceEquals(left.Ids, right.Ids)
+            || left.Ids.SetEquals(right.Ids));
 
     private void StoreSelection(
         long stateId,
@@ -1558,20 +1738,74 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         byWorkspace[workspaceKey] = bookmark;
     }
 
-    private void RestoreWorkspaceSelections(long stateId)
+    private void RequestWorkspaceSelectionRestore(long stateId)
     {
+        lock (_modelRefreshGate)
+        {
+            _pendingSelectionRestoreStateId = stateId;
+        }
+    }
+
+    private void CancelWorkspaceSelectionRestore(long stateId)
+    {
+        lock (_modelRefreshGate)
+        {
+            if (_pendingSelectionRestoreStateId == stateId)
+            {
+                _pendingSelectionRestoreStateId = null;
+            }
+        }
+    }
+
+    private List<WorkspaceViewModel> RestoreWorkspaceSelections(long stateId)
+    {
+        List<WorkspaceViewModel> changed = [];
         if (!_workspaceSelectionHistory.TryGetValue(
                 stateId,
                 out Dictionary<WorkspaceKey, WorkspaceSelectionBookmark>? byWorkspace))
         {
-            return;
+            return changed;
         }
         foreach ((WorkspaceKey key, WorkspaceSelectionBookmark bookmark) in byWorkspace)
         {
             WorkspaceViewModel? workspace = Workspaces.FirstOrDefault(value => value.Key == key);
             if (workspace is null) continue;
-            if (!workspace.Selection.ReplaceAll(bookmark.Ids, bookmark.Primary)) continue;
-            RefreshWorkspaceSelection(workspace);
+            if (workspace.Selection.Primary == bookmark.Primary
+                && workspace.Selection.Anchor == bookmark.Anchor
+                && workspace.Selection.IdSet is ImmutableHashSet<MidoraId> current
+                && (ReferenceEquals(current, bookmark.Ids)
+                    || current.SetEquals(bookmark.Ids)))
+            {
+                continue;
+            }
+            workspace.Selection.AdoptMaterialized(
+                bookmark.Ids,
+                bookmark.Primary,
+                bookmark.Anchor);
+            changed.Add(workspace);
+        }
+        return changed;
+    }
+
+    private void PruneWorkspaceSelectionHistory()
+    {
+        if (Document is null)
+        {
+            _workspaceSelectionHistory.Clear();
+            _workspaceSelectionBookmarkCache.Clear();
+            return;
+        }
+        HashSet<long> liveStateIds = [Document.CurrentStateId];
+        foreach (ProjectHistoryEntryInfo entry in Document.History)
+        {
+            liveStateIds.Add(entry.BeforeStateId);
+            liveStateIds.Add(entry.AfterStateId);
+        }
+        foreach (long staleStateId in _workspaceSelectionHistory.Keys
+            .Where(value => !liveStateIds.Contains(value))
+            .ToArray())
+        {
+            _workspaceSelectionHistory.Remove(staleStateId);
         }
     }
 
@@ -1693,6 +1927,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         int index = Workspaces.IndexOf(workspace);
         if (index < 0) return;
         Workspaces.RemoveAt(index);
+        _workspaceSelectionBookmarkCache.Remove(workspace.Key);
         _backNavigation.RemoveAll(key => key == workspace.Key);
         _forwardNavigation.RemoveAll(key => key == workspace.Key);
         if (ReferenceEquals(ActiveWorkspace, workspace))
@@ -1768,6 +2003,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             return;
         }
+        WorkspaceSelectionRefreshCount++;
         workspace.RefreshSelectionPresentation();
         if (workspace is not DiagnosticsWorkspaceViewModel)
         {
@@ -1816,6 +2052,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         _backNavigation.Clear();
         _forwardNavigation.Clear();
         _workspaceSelectionHistory.Clear();
+        _workspaceSelectionBookmarkCache.Clear();
+        ResetPendingModelRefresh();
+        _projectTreeStructureStamp = null;
         _diagnosticScopeWorkspace = null;
         ProjectTree.Clear();
         CompilerDiagnostics.Clear();
@@ -1858,6 +2097,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             Unsubscribe(previous);
         }
         _context = next;
+        ProjectSegmentIndex.Warm(next.Compilation.Project);
         _displayCurrentTick = next.Playback?.CurrentTick ?? 0;
         Subscribe(next);
         TimelineRasterCacheSession.Clear();
@@ -1865,6 +2105,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         _backNavigation.Clear();
         _forwardNavigation.Clear();
         _workspaceSelectionHistory.Clear();
+        _workspaceSelectionBookmarkCache.Clear();
+        ResetPendingModelRefresh();
+        _projectTreeStructureStamp = null;
         ActiveWorkspace = null;
         _revision = 1;
         _timeSignatureMap = new(Project!);
@@ -1950,23 +2193,26 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         RefreshProperties();
     }
 
-    private void RefreshChanged(ProjectContentChangedEventArgs changes)
+    private HashSet<WorkspaceViewModel> RefreshChanged(ProjectChangeSet changes)
     {
-        if (Project is null) return;
-        if (changes.IsEmpty)
+        HashSet<WorkspaceViewModel> rebuilt = [];
+        if (Project is null || IsEmpty(changes))
         {
-            RefreshAll();
-            return;
+            return rebuilt;
         }
         if (changes.AffectsEverything || changes.AffectsConductor)
         {
             _timeSignatureMap = new ProjectTimeSignatureMap(Project);
             RebuildTempoLookup();
+            ArrangementEditorSettings.ConfigureProject(Project, CurrentTick);
+            PianoRollEditorSettings.ConfigureProject(Project, CurrentTick);
         }
-        ArrangementEditorSettings.ConfigureProject(Project, CurrentTick);
-        PianoRollEditorSettings.ConfigureProject(Project, CurrentTick);
-        RefreshDiagnostics();
-        RefreshProjectTree();
+        RefreshProjectTreeIfChanged();
+        HashSet<MidoraId> trackIds = changes.TrackIds;
+        HashSet<MidoraId> instrumentIds = changes.EventInstrumentIds;
+        HashSet<MidoraId> usageIds = changes.EventInstrumentUsageIds;
+        HashSet<MidoraId> rootIds = changes.MidiChannelRootIds;
+        HashSet<MidoraId> pureTrackIds = changes.PureMidiTrackIds;
         foreach (WorkspaceViewModel workspace in Workspaces.ToArray())
         {
             if (!ObjectStillExists(workspace))
@@ -1978,38 +2224,64 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             {
                 continue;
             }
-            if (!WorkspaceAffected(workspace, changes)) continue;
+            if (!WorkspaceAffected(
+                    workspace,
+                    changes,
+                    trackIds,
+                    instrumentIds,
+                    usageIds,
+                    rootIds,
+                    pureTrackIds))
+            {
+                continue;
+            }
             PrepareWorkspaceRuntimeState(workspace);
             workspace.Rebuild(Project, _revision);
+            WorkspaceRebuildCount++;
             workspace.RefreshSelectionPresentation();
+            rebuilt.Add(workspace);
             if (workspace is TimelineWorkspaceViewModel timeline)
             {
                 timeline.UpdatePlaybackCursor(Project, CurrentTick);
             }
         }
-        RefreshProperties();
+        return rebuilt;
     }
+
+    private static bool IsEmpty(ProjectChangeSet changes) =>
+        !changes.AffectsEverything
+        && !changes.AffectsConductor
+        && !changes.AffectsAudioPcmCacheGeneration
+        && changes.TrackIds.Count == 0
+        && changes.EventInstrumentIds.Count == 0
+        && changes.EventInstrumentUsageIds.Count == 0
+        && changes.MidiChannelRootIds.Count == 0
+        && changes.PureMidiTrackIds.Count == 0;
 
     private bool WorkspaceAffected(
         WorkspaceViewModel workspace,
-        ProjectContentChangedEventArgs changes)
+        ProjectChangeSet changes,
+        HashSet<MidoraId> trackIds,
+        HashSet<MidoraId> instrumentIds,
+        HashSet<MidoraId> usageIds,
+        HashSet<MidoraId> rootIds,
+        HashSet<MidoraId> pureTrackIds)
     {
         if (changes.AffectsEverything) return true;
-        HashSet<MidoraId> trackIds = changes.TrackIds.ToHashSet();
-        HashSet<MidoraId> instrumentIds = changes.EventInstrumentIds.ToHashSet();
-        HashSet<MidoraId> rootIds = changes.MidiChannelRootIds.ToHashSet();
-        HashSet<MidoraId> pureTrackIds = changes.PureMidiTrackIds.ToHashSet();
         return workspace.Kind switch
         {
             WorkspaceKind.Arrangement => changes.AffectsConductor
                 || trackIds.Count != 0
                 || instrumentIds.Count != 0
+                || usageIds.Count != 0
                 || rootIds.Count != 0
                 || pureTrackIds.Count != 0,
             WorkspaceKind.ConductorTrack => changes.AffectsConductor,
             WorkspaceKind.SegmentEditor => workspace.ObjectId is MidoraId segmentId
                 && (TimelineWorkspaceViewModel.FindSegment(Project!, segmentId) is { } located
                     && (trackIds.Contains(located.Track.Id)
+                        || located.Track.EventInstrumentUsageId is MidoraId usageId
+                           && usageIds.Contains(usageId)
                         || Project!.ResolveEventInstrumentDefinitionId(located.Track) is MidoraId instrumentId
                            && instrumentIds.Contains(instrumentId))
                     || TimelineWorkspaceViewModel.FindMidiSegment(Project!, segmentId) is { } midi
@@ -2018,7 +2290,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             WorkspaceKind.EventInstrumentLibrary => instrumentIds.Count != 0,
             WorkspaceKind.EventInstrumentEditor => workspace.ObjectId is MidoraId eventInstrumentId
                 && instrumentIds.Contains(eventInstrumentId),
-            WorkspaceKind.ProjectSettings => true,
+            WorkspaceKind.ProjectSettings => false,
             WorkspaceKind.Diagnostics => false,
             _ => false
         };
@@ -2044,8 +2316,13 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     private void RefreshProjectTree()
     {
+        ProjectTreeRefreshCount++;
         ProjectTree.Clear();
-        if (Project is null) return;
+        if (Project is null)
+        {
+            _projectTreeStructureStamp = null;
+            return;
+        }
 
         string query = ProjectTreeSearchText.Trim();
         bool filtered = query.Length != 0;
@@ -2103,7 +2380,84 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             ProjectTree.Add(new(ProjectTreeNodeKind.ProjectSettings, "Project Settings"));
             ProjectTree.Add(new(ProjectTreeNodeKind.Diagnostics, $"Diagnostics ({IssueSummary})"));
         }
+        _projectTreeStructureStamp = CaptureProjectTreeStructureStamp(Project);
     }
+
+    private void RefreshProjectTreeIfChanged()
+    {
+        if (Project is null)
+        {
+            return;
+        }
+        string stamp = CaptureProjectTreeStructureStamp(Project);
+        if (!string.Equals(_projectTreeStructureStamp, stamp, StringComparison.Ordinal))
+        {
+            RefreshProjectTree();
+        }
+    }
+
+    private string CaptureProjectTreeStructureStamp(MidoraProject project)
+    {
+        StringBuilder builder = new();
+        AppendStampField(builder, ProjectTreeSearchText.Trim());
+        Dictionary<MidoraId, EventInstrument> instrumentsById = new(
+            project.EventInstruments.Count);
+        foreach (EventInstrument instrument in project.EventInstruments)
+        {
+            instrumentsById.TryAdd(instrument.Id, instrument);
+            AppendStampField(builder, instrument.Id.Value);
+            AppendStampField(builder, instrument.Name);
+        }
+        Dictionary<MidoraId, MidoraId> definitionIdByUsageId = new(
+            project.EventInstrumentUsages.Count);
+        foreach (EventInstrumentUsage usage in project.EventInstrumentUsages)
+        {
+            definitionIdByUsageId.TryAdd(usage.Id, usage.EventInstrumentId);
+        }
+        foreach (DamagedProjectObject damaged in project.DamagedEventInstruments)
+        {
+            AppendStampField(builder, damaged.Id.Value);
+            AppendStampField(builder, damaged.NameSnapshot);
+            AppendStampField(builder, damaged.OriginalIndex.ToString(CultureInfo.InvariantCulture));
+            AppendStampField(builder, damaged.Error);
+        }
+        foreach (LogicalTrack track in project.Tracks)
+        {
+            AppendStampField(builder, track.Id.Value);
+            AppendStampField(builder, track.Name);
+            AppendStampField(builder, track.EventInstrumentUsageId?.Value);
+            AppendStampField(builder, track.LastBoundEventInstrumentName);
+            EventInstrument? definition = track.EventInstrumentUsageId is MidoraId usageId
+                && definitionIdByUsageId.TryGetValue(usageId, out MidoraId definitionId)
+                && instrumentsById.TryGetValue(definitionId, out EventInstrument? resolved)
+                    ? resolved
+                    : null;
+            AppendStampField(builder, definition?.Id.Value);
+            AppendStampField(builder, definition?.Name);
+        }
+        foreach (DamagedProjectObject damaged in project.DamagedLogicalTracks)
+        {
+            AppendStampField(builder, damaged.Id.Value);
+            AppendStampField(builder, damaged.NameSnapshot);
+            AppendStampField(builder, damaged.OriginalIndex.ToString(CultureInfo.InvariantCulture));
+            AppendStampField(builder, damaged.Error);
+        }
+        return builder.ToString();
+    }
+
+    private static void AppendStampField(StringBuilder builder, string? value)
+    {
+        value ??= string.Empty;
+        builder.Append(value.Length).Append(':').Append(value).Append(';');
+    }
+
+    private static void AppendStampField(StringBuilder builder, long value) =>
+        AppendStampField(builder, value.ToString(CultureInfo.InvariantCulture));
+
+    private static void AppendStampField(StringBuilder builder, long? value) =>
+        AppendStampField(
+            builder,
+            value?.ToString(CultureInfo.InvariantCulture));
 
     private static bool MatchesProjectTreeFilter(string? value, string query) =>
         query.Length == 0 || (value?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false);
@@ -2129,6 +2483,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
 
     private void RefreshDiagnostics()
     {
+        DiagnosticRefreshCount++;
         lock (_modelRefreshGate)
         {
             DiagnosticRow[] diagnostics = _context is null
@@ -2211,6 +2566,37 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         Raise(nameof(HasDamagedProjectObjects));
         Raise(nameof(CanSaveProject));
         Raise(nameof(CanUseContextMenus));
+    }
+
+    private void RefreshDocumentStateProperties()
+    {
+        Raise(nameof(Document));
+        Raise(nameof(Project));
+        Raise(nameof(WindowTitle));
+        Raise(nameof(ProjectDisplayName));
+        Raise(nameof(TitleBarProjectDisplayName));
+        Raise(nameof(ProjectState));
+        Raise(nameof(CanEditProject));
+        Raise(nameof(HasDamagedProjectObjects));
+        Raise(nameof(CanSaveProject));
+        Raise(nameof(CanUseContextMenus));
+    }
+
+    private void RefreshCompilationProperties()
+    {
+        Raise(nameof(CompileState));
+        Raise(nameof(CanPlayback));
+        Raise(nameof(CanTogglePlayback));
+        Raise(nameof(PrimaryTransportAction));
+        Raise(nameof(PrimaryTransportToolTip));
+        Raise(nameof(CanPreview));
+        Raise(nameof(PlaybackUnavailableReason));
+        Raise(nameof(ErrorCount));
+        Raise(nameof(WarningCount));
+        Raise(nameof(HasErrors));
+        Raise(nameof(HasWarnings));
+        Raise(nameof(IssueSummary));
+        Raise(nameof(ActivityText));
     }
 
     private void RefreshTimelinePlaybackCursors() =>
@@ -2322,31 +2708,142 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         }
     }
 
-    private void OnDocumentHistoryChanged(object? sender, EventArgs e) => DispatchModelRefresh(() =>
-    {
-        RefreshProperties();
-    });
+    private void OnDocumentHistoryChanged(object? sender, EventArgs e) =>
+        ScheduleModelRefresh(ModelRefreshKind.History);
 
     private void OnDocumentContentChanged(
         object? sender,
-        ProjectContentChangedEventArgs e) => DispatchModelRefresh(() =>
-    {
-        _revision++;
-        RefreshChanged(e);
-    });
+        ProjectContentChangedEventArgs e) =>
+        ScheduleModelRefresh(ModelRefreshKind.Content, ToChangeSet(e));
 
-    private void OnCompilationChanged(object? sender, EventArgs e) => DispatchModelRefresh(() =>
-    {
-        RefreshDiagnostics();
-        RefreshDiagnosticProjectTreeNode();
-        RefreshProjectRuntimeInformation();
-        RefreshProperties();
-    });
+    private void OnCompilationChanged(object? sender, EventArgs e) =>
+        ScheduleModelRefresh(ModelRefreshKind.Compilation);
 
     private void OnPlaybackStateChanged(object? sender, EventArgs e) =>
-        DispatchModelRefresh(() =>
+        ScheduleModelRefresh(ModelRefreshKind.Playback);
+
+    private void ScheduleModelRefresh(
+        ModelRefreshKind kind,
+        ProjectChangeSet? changes = null)
+    {
+        bool scheduleDispatcher = false;
+        bool runSynchronously = false;
+        lock (_modelRefreshGate)
         {
-            if (sender is PlaybackController
+            _pendingModelRefreshKinds |= kind;
+            if (changes is not null)
+            {
+                _pendingContentChanges = _pendingContentChanges is null
+                    ? CloneChanges(changes)
+                    : MergeChanges(_pendingContentChanges, changes);
+            }
+            if (!_modelRefreshScheduled)
+            {
+                _modelRefreshScheduled = true;
+                scheduleDispatcher = _uiDispatcher is not null;
+                runSynchronously = !scheduleDispatcher;
+            }
+        }
+
+        if (scheduleDispatcher)
+        {
+            // A document transaction emits Compilation/Content/History in one
+            // synchronous burst. A single render-priority callback projects the
+            // final state once and avoids layout/input re-entrancy.
+            _uiDispatcher!.BeginInvoke(
+                DispatcherPriority.Render,
+                new Action(DrainPendingModelRefresh));
+        }
+        else if (runSynchronously)
+        {
+            DrainPendingModelRefresh();
+        }
+    }
+
+    private void DrainPendingModelRefresh()
+    {
+        ModelRefreshKind kinds;
+        ProjectChangeSet? changes;
+        long? restoreStateId;
+        long? selectionHistoryCaptureStateId;
+        bool pruneSelectionHistory;
+        lock (_modelRefreshGate)
+        {
+            kinds = _pendingModelRefreshKinds;
+            changes = _pendingContentChanges;
+            restoreStateId = _pendingSelectionRestoreStateId;
+            selectionHistoryCaptureStateId = _pendingSelectionHistoryCaptureStateId;
+            pruneSelectionHistory = (kinds & ModelRefreshKind.History) != 0
+                && _workspaceSelectionHistoryPruneRequested;
+            _pendingModelRefreshKinds = ModelRefreshKind.None;
+            _pendingContentChanges = null;
+            _pendingSelectionRestoreStateId = null;
+            _pendingSelectionHistoryCaptureStateId = null;
+            if (pruneSelectionHistory)
+            {
+                _workspaceSelectionHistoryPruneRequested = false;
+            }
+            _modelRefreshScheduled = false;
+        }
+        if (kinds == ModelRefreshKind.None
+            && restoreStateId is null
+            && selectionHistoryCaptureStateId is null)
+        {
+            return;
+        }
+
+        ModelRefreshPassCount++;
+        List<WorkspaceViewModel> selectionChanged = restoreStateId is long stateId
+            && Document?.CurrentStateId == stateId
+            ? RestoreWorkspaceSelections(stateId)
+            : [];
+        HashSet<WorkspaceViewModel> rebuilt = [];
+        if ((kinds & ModelRefreshKind.Content) != 0)
+        {
+            _revision++;
+            rebuilt = RefreshChanged(changes ?? ProjectChangeSet.Everything);
+        }
+        foreach (WorkspaceViewModel workspace in selectionChanged)
+        {
+            if (!rebuilt.Contains(workspace))
+            {
+                RefreshWorkspaceSelection(workspace);
+            }
+        }
+
+        if (selectionHistoryCaptureStateId is long captureStateId
+            && Document?.CurrentStateId == captureStateId)
+        {
+            StoreCurrentWorkspaceSelections(captureStateId);
+        }
+
+        if ((kinds & ModelRefreshKind.History) != 0 && pruneSelectionHistory)
+        {
+            PruneWorkspaceSelectionHistory();
+        }
+        if ((kinds & (ModelRefreshKind.Content | ModelRefreshKind.History)) != 0)
+        {
+            RefreshDocumentStateProperties();
+        }
+
+        if ((kinds & ModelRefreshKind.Compilation) != 0)
+        {
+            ProjectCompilationState state = _context?.Compilation.CompilationState
+                ?? ProjectCompilationState.NotCompiled;
+            if (state is ProjectCompilationState.NotCompiled
+                or ProjectCompilationState.Succeeded
+                or ProjectCompilationState.Failed)
+            {
+                RefreshDiagnostics();
+                RefreshDiagnosticProjectTreeNode();
+                RefreshProjectRuntimeInformation();
+            }
+            RefreshCompilationProperties();
+        }
+
+        if ((kinds & ModelRefreshKind.Playback) != 0)
+        {
+            if (_context?.Playback is PlaybackController
                 {
                     State: PlaybackState.Error,
                     LastError: Exception failure
@@ -2355,36 +2852,78 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 SetStatusMessage($"Playback failed: {failure.Message}", isError: true);
             }
             else if (_context?.Compilation.AudioCacheWarning is
-            { Code: not AudioCacheWarningCode.None } warning)
+                     { Code: not AudioCacheWarningCode.None } warning)
             {
                 SetStatusMessage("Audio cache warning: " + warning.Message);
             }
             RefreshProperties();
-        });
-
-    private void DispatchModelRefresh(Action refresh)
-    {
-        ArgumentNullException.ThrowIfNull(refresh);
-        if (_uiContext is null)
-        {
-            lock (_modelRefreshGate)
-            {
-                refresh();
-            }
-            return;
         }
+    }
 
-        // ProjectDocumentSession publishes notifications synchronously while its edit
-        // transaction is still unwinding. Always queue the WPF projection refresh,
-        // even when the edit originated on the Dispatcher thread. This keeps bound
-        // ObservableCollections on their owning UI thread and prevents layout/input
-        // re-entrancy from Click, Popup, and double-click routes.
-        _uiContext.Post(static state => ((Action)state!).Invoke(), refresh);
+    private void ResetPendingModelRefresh()
+    {
+        lock (_modelRefreshGate)
+        {
+            _pendingModelRefreshKinds = ModelRefreshKind.None;
+            _pendingContentChanges = null;
+            _pendingSelectionRestoreStateId = null;
+            _pendingSelectionHistoryCaptureStateId = null;
+            _workspaceSelectionHistoryPruneRequested = false;
+            _modelRefreshScheduled = false;
+        }
+    }
+
+    private static ProjectChangeSet ToChangeSet(ProjectContentChangedEventArgs source)
+    {
+        ProjectChangeSet result = new()
+        {
+            AffectsEverything = source.AffectsEverything,
+            AffectsConductor = source.AffectsConductor,
+            AffectsAudioPcmCacheGeneration = source.AffectsAudioPcmCacheGeneration
+        };
+        result.TrackIds.UnionWith(source.TrackIds);
+        result.EventInstrumentIds.UnionWith(source.EventInstrumentIds);
+        result.EventInstrumentUsageIds.UnionWith(source.EventInstrumentUsageIds);
+        result.MidiChannelRootIds.UnionWith(source.MidiChannelRootIds);
+        result.PureMidiTrackIds.UnionWith(source.PureMidiTrackIds);
+        return result;
+    }
+
+    private static ProjectChangeSet CloneChanges(ProjectChangeSet source) =>
+        MergeChanges(new ProjectChangeSet(), source);
+
+    private static ProjectChangeSet MergeChanges(
+        ProjectChangeSet left,
+        ProjectChangeSet right)
+    {
+        ProjectChangeSet result = new()
+        {
+            AffectsEverything = left.AffectsEverything || right.AffectsEverything,
+            AffectsConductor = left.AffectsConductor || right.AffectsConductor,
+            AffectsAudioPcmCacheGeneration = left.AffectsAudioPcmCacheGeneration
+                || right.AffectsAudioPcmCacheGeneration
+        };
+        result.TrackIds.UnionWith(left.TrackIds);
+        result.TrackIds.UnionWith(right.TrackIds);
+        result.EventInstrumentIds.UnionWith(left.EventInstrumentIds);
+        result.EventInstrumentIds.UnionWith(right.EventInstrumentIds);
+        result.EventInstrumentUsageIds.UnionWith(left.EventInstrumentUsageIds);
+        result.EventInstrumentUsageIds.UnionWith(right.EventInstrumentUsageIds);
+        result.MidiChannelRootIds.UnionWith(left.MidiChannelRootIds);
+        result.MidiChannelRootIds.UnionWith(right.MidiChannelRootIds);
+        result.PureMidiTrackIds.UnionWith(left.PureMidiTrackIds);
+        result.PureMidiTrackIds.UnionWith(right.PureMidiTrackIds);
+        return result;
     }
 
     private sealed record WorkspaceSelectionBookmark(
-        IReadOnlyList<MidoraId> Ids,
-        MidoraId? Primary);
+        ImmutableHashSet<MidoraId> Ids,
+        MidoraId? Primary,
+        MidoraId? Anchor);
+
+    private readonly record struct CachedWorkspaceSelectionBookmark(
+        long SelectionRevision,
+        WorkspaceSelectionBookmark Bookmark);
 
     private sealed class ProjectContext : IAsyncDisposable
     {

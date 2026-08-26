@@ -29,13 +29,14 @@ public static partial class ProjectDomainEditCommands
                 lane.Points,
                 selected,
                 replacement);
-            return ResolveExactLogicalParameterPointCollisions(
+            return ResolveTargetedExactLogicalParameterPointCollisions(
                 PrepareCurvePointReplacementBatch(
                     segment.Track.Id,
                     lane.Points,
                     selected,
                     replacement),
-                lane);
+                lane,
+                replacement.Select(static value => value.Tick));
         });
 
     public static IProjectEditCommand AdjustLogicalParameterPoints(
@@ -75,7 +76,10 @@ public static partial class ProjectDomainEditCommands
                 replacement);
             return tickDelta == 0
                 ? prepared
-                : ResolveExactLogicalParameterPointCollisions(prepared, lane);
+                : ResolveTargetedExactLogicalParameterPointCollisions(
+                    prepared,
+                    lane,
+                    replacement.Select(static value => value.Tick));
         });
 
     public static IProjectEditCommand DuplicateLogicalParameterPoints(
@@ -111,7 +115,7 @@ public static partial class ProjectDomainEditCommands
 
             int insertionIndex = lane.Points.Count;
             CurvePoint[]? copies = null;
-            return ResolveExactLogicalParameterPointCollisions(Prepared(
+            return ResolveTargetedExactLogicalParameterPointCollisions(Prepared(
                 hasChanges: true,
                 TrackChange(segment.Track.Id),
                 owner =>
@@ -121,14 +125,7 @@ public static partial class ProjectDomainEditCommands
                         value.Tick,
                         value.Value,
                         value.Interpolation)).ToArray();
-                    for (int index = 0; index < copies.Length; index++)
-                    {
-                        InsertAt(
-                            lane.Points,
-                            insertionIndex + index,
-                            copies[index],
-                            "Logical Parameter point copy");
-                    }
+                    lane.Points.AddRange(copies);
                 },
                 _ =>
                 {
@@ -137,11 +134,8 @@ public static partial class ProjectDomainEditCommands
                         throw new InvalidOperationException(
                             "Logical Parameter point copies do not exist before the first Apply.");
                     }
-                    foreach (CurvePoint copy in copies)
-                    {
-                        RemoveRequired(lane.Points, copy, "Logical Parameter point copy");
-                    }
-                }), lane);
+                    RemoveCurvePointBatch(lane.Points, copies, "Logical Parameter point copy");
+                }), lane, replacements.Select(static value => value.Tick));
         });
 
     public static IProjectEditCommand SetLogicalParameterPointValues(
@@ -233,7 +227,10 @@ public static partial class ProjectDomainEditCommands
                 replacement);
             return tick is null
                 ? prepared
-                : ResolveExactLogicalParameterPointCollisions(prepared, lane);
+                : ResolveTargetedExactLogicalParameterPointCollisions(
+                    prepared,
+                    lane,
+                    replacement.Select(static value => value.Tick));
         });
 
     public static IProjectEditCommand DeleteLogicalParameterPoints(
@@ -386,8 +383,8 @@ public static partial class ProjectDomainEditCommands
                 nameof(templateEventIds),
                 "Template Event");
             IndexedTemplateEvent[] selected = voice.Events
-                .Select((value, index) => new IndexedTemplateEvent(value, index))
-                .Where(value => requested.Contains(value.Event.Id))
+                .ResolveByIdsWithIndicesInCollectionOrder(requested)
+                .Select(static value => new IndexedTemplateEvent(value.Value, value.Index))
                 .ToArray();
             if (selected.Length != requested.Count)
             {
@@ -395,22 +392,17 @@ public static partial class ProjectDomainEditCommands
                     "Every selected Template Event must belong to the target SubVoice.",
                     nameof(templateEventIds));
             }
+            TemplateEvent[] values = selected.Select(static value => value.Event).ToArray();
+            Action? restore = null;
             return Prepared(
                 hasChanges: true,
                 EventInstrumentChange(eventInstrumentId),
+                _ => restore = voice.Events.RemoveRangeWithUndo(values),
                 _ =>
                 {
-                    foreach (IndexedTemplateEvent value in selected)
-                    {
-                        RemoveRequired(voice.Events, value.Event, "Template Event");
-                    }
-                },
-                _ =>
-                {
-                    foreach (IndexedTemplateEvent value in selected.OrderBy(value => value.Index))
-                    {
-                        InsertAt(voice.Events, value.Index, value.Event, "Template Event");
-                    }
+                    (restore ?? throw new InvalidOperationException(
+                        "Template Events do not have a pending removal to restore."))();
+                    restore = null;
                 });
         });
 
@@ -488,7 +480,7 @@ public static partial class ProjectDomainEditCommands
 
     private static IPreparedProjectEdit PrepareCurvePointReplacementBatch(
         MidoraId trackId,
-        List<CurvePoint> points,
+        CurvePointCollection points,
         SelectedCurvePoint[] selected,
         CurvePoint[] replacement) =>
         Prepared(
@@ -498,13 +490,28 @@ public static partial class ProjectDomainEditCommands
             _ => ReplaceCurvePointBatch(points, replacement, selected.Select(value => value.Point).ToArray()));
 
     private static void ReplaceCurvePointBatch(
-        List<CurvePoint> points,
+        CurvePointCollection points,
         CurvePoint[] expected,
         CurvePoint[] replacement)
     {
-        for (int index = 0; index < expected.Length; index++)
+        points.ReplaceRange(expected, replacement);
+    }
+
+    private static void ReplaceRequired(
+        CurvePointCollection points,
+        CurvePoint expected,
+        CurvePoint replacement,
+        string objectName)
+    {
+        try
         {
-            ReplaceRequired(points, expected[index], replacement[index], "Curve Point");
+            points.ReplaceRange([expected], [replacement]);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new InvalidOperationException(
+                $"The {objectName} is no longer present at its expected position.",
+                exception);
         }
     }
 
@@ -549,9 +556,13 @@ public static partial class ProjectDomainEditCommands
             }
         }
         HashSet<MidoraId> selectedIds = selected.Select(value => value.Point.Id).ToHashSet();
-        long[] ticks = replacement.Select(value => value.Tick).ToArray();
-        if (ticks.Distinct().Count() != ticks.Length
-            || curve.Points.Any(value => !selectedIds.Contains(value.Id) && ticks.Contains(value.Tick)))
+        HashSet<long> ticks = replacement.Select(value => value.Tick).ToHashSet();
+        bool collidesWithUnselected = ticks.Count != 0
+            && curve.Points.CreateQuerySnapshot()
+                .QueryTicks(ticks)
+                .Any(value => !selectedIds.Contains(value.Id));
+        if (ticks.Count != replacement.Count
+            || collidesWithUnselected)
         {
             throw new InvalidOperationException(
                 "The Value Curve point batch would create duplicate point ticks.");
@@ -559,7 +570,7 @@ public static partial class ProjectDomainEditCommands
     }
 
     private static SelectedCurvePoint[] SelectCurvePoints(
-        List<CurvePoint> points,
+        CurvePointCollection points,
         IReadOnlyCollection<MidoraId> pointIds)
     {
         ArgumentNullException.ThrowIfNull(pointIds);
@@ -568,8 +579,8 @@ public static partial class ProjectDomainEditCommands
             nameof(pointIds),
             "Curve Point");
         SelectedCurvePoint[] selected = points
-            .Select((value, index) => new SelectedCurvePoint(value, index))
-            .Where(value => requested.Contains(value.Point.Id))
+            .ResolveByIdsWithIndicesInCollectionOrder(requested)
+            .Select(static value => new SelectedCurvePoint(value.Value, value.Index))
             .ToArray();
         if (selected.Length != requested.Count)
         {
@@ -582,26 +593,41 @@ public static partial class ProjectDomainEditCommands
 
     private static IPreparedProjectEdit PrepareCurvePointDeleteBatch(
         ProjectChangeSet changes,
-        List<CurvePoint> points,
+        CurvePointCollection points,
         SelectedCurvePoint[] selected,
-        string objectName) =>
-        Prepared(
+        string objectName)
+    {
+        Action? restore = null;
+        return Prepared(
             hasChanges: true,
             changes,
+            _ => restore = RemoveCurvePointsWithUndo(points, selected, objectName),
             _ =>
             {
-                foreach (SelectedCurvePoint value in selected)
-                {
-                    RemoveRequired(points, value.Point, objectName);
-                }
-            },
-            _ =>
-            {
-                foreach (SelectedCurvePoint value in selected.OrderBy(value => value.Index))
-                {
-                    InsertAt(points, value.Index, value.Point, objectName);
-                }
+                (restore ?? throw new InvalidOperationException(
+                    $"{objectName} values do not have a pending removal to restore."))();
+                restore = null;
             });
+    }
+
+    private static Action RemoveCurvePointsWithUndo(
+        CurvePointCollection points,
+        IReadOnlyCollection<SelectedCurvePoint> selected,
+        string objectName)
+    {
+        CurvePoint[] values = selected.Select(static value => value.Point).ToArray();
+        return points.RemoveRangeWithUndo(values);
+    }
+
+    private static void RemoveCurvePointBatch(
+        CurvePointCollection points,
+        IReadOnlyCollection<CurvePoint> values,
+        string objectName)
+    {
+        int removed = points.RemoveRange(values);
+        if (removed != values.Count)
+            throw new InvalidOperationException($"The {objectName} batch is no longer fully present.");
+    }
 
     private static HashSet<MidoraId> ValidateBatchIds(
         IReadOnlyCollection<MidoraId> values,

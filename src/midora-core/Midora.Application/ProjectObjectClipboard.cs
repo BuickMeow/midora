@@ -152,7 +152,7 @@ public static partial class ProjectObjectClipboard
             }
         }
         LogicalNote[] selected = source.Notes
-            .Where(value => requested.Contains(value.Id))
+            .ResolveByIdsInCollectionOrder(requested)
             .ToArray();
         if (selected.Length != requested.Count)
         {
@@ -582,7 +582,7 @@ public static partial class ProjectDomainEditCommands
             ValidateLogicalNoteBatch(values);
             LogicalNote[]? copies = null;
             int insertionIndex = target.Segment.Notes.Count;
-            return ResolveExactLogicalNoteCollisions(Prepared(
+            return ResolveTargetedExactLogicalNoteCollisions(Prepared(
                 hasChanges: true,
                 TrackChange(target.Track.Id),
                 owner =>
@@ -616,7 +616,10 @@ public static partial class ProjectDomainEditCommands
                     int removed = target.Segment.Notes.RemoveRange(copies);
                     if (removed != copies.Length)
                         throw new InvalidOperationException("The pasted Logical Note set is no longer present.");
-                }), target.Segment);
+                }), values.Select(value => new LogicalNoteCollisionTarget(
+                    target.Segment,
+                    value.StartTick,
+                    value.Note)));
         });
 
     private static Segment CreateSegmentFromClipboard(

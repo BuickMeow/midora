@@ -35,6 +35,11 @@ public static partial class ProjectDomainEditCommands
                 checked(value.Note + pitchDelta),
                 value.Velocity)).ToArray();
             bool[] discarded = replacement.Select(value => value.Note is < 0 or > 127).ToArray();
+            LogicalNote[] discardedNotes = selected
+                .Where((_, index) => discarded[index])
+                .Select(static value => value.Note)
+                .ToArray();
+            Action? restoreDiscarded = null;
             for (int index = 0; index < replacement.Length; index++)
             {
                 LogicalNoteValue value = replacement[index];
@@ -49,26 +54,25 @@ public static partial class ProjectDomainEditCommands
                 TrackChange(segment.Track.Id),
                 _ =>
                 {
+                    using IDisposable batch = segment.Segment.Notes.BeginBatchChange();
                     for (int index = 0; index < selected.Length; index++)
                     {
-                        if (discarded[index])
-                        {
-                            RemoveRequired(segment.Segment.Notes, selected[index].Note, "Logical Note");
-                        }
-                        else
+                        if (!discarded[index])
                         {
                             SetLogicalNote(selected[index].Note, replacement[index]);
                         }
                     }
+                    if (discardedNotes.Length != 0)
+                        restoreDiscarded = segment.Segment.Notes.RemoveRangeWithUndo(discardedNotes);
                 },
                 _ =>
                 {
-                    SetLogicalNoteBatch(selected, old);
-                    foreach (SelectedLogicalNote value in selected
-                        .Where((_, index) => discarded[index])
-                        .OrderBy(value => value.Index))
+                    SetLogicalNoteBatch(segment.Segment.Notes, selected, old);
+                    if (discardedNotes.Length != 0)
                     {
-                        InsertAt(segment.Segment.Notes, value.Index, value.Note, "Logical Note");
+                        (restoreDiscarded ?? throw new InvalidOperationException(
+                            "Discarded Logical Notes do not have a pending removal to restore."))();
+                        restoreDiscarded = null;
                     }
                 });
             LogicalNoteCollisionTarget[] collisionTargets = replacement
@@ -113,6 +117,7 @@ public static partial class ProjectDomainEditCommands
             ValidateLogicalNoteBatch(replacement);
             IPreparedProjectEdit prepared = PrepareLogicalNoteBatch(
                 segment.Track.Id,
+                segment.Segment.Notes,
                 selected,
                 old,
                 replacement);
@@ -152,6 +157,7 @@ public static partial class ProjectDomainEditCommands
             ValidateLogicalNoteBatch(replacement);
             return PrepareLogicalNoteBatch(
                 segment.Track.Id,
+                segment.Segment.Notes,
                 selected,
                 old,
                 replacement);
@@ -320,12 +326,18 @@ public static partial class ProjectDomainEditCommands
             ValidateLogicalNoteBatch(replacement);
             IPreparedProjectEdit prepared = PrepareLogicalNoteBatch(
                 segment.Track.Id,
+                segment.Segment.Notes,
                 selected,
                 old,
                 replacement);
             return startTick is null && note is null
                 ? prepared
-                : ResolveExactLogicalNoteCollisions(prepared, segment.Segment);
+                : ResolveTargetedExactLogicalNoteCollisions(
+                    prepared,
+                    replacement.Select(value => new LogicalNoteCollisionTarget(
+                        segment.Segment,
+                        value.StartTick,
+                        value.Note)));
         });
 
     public static IProjectEditCommand AlignLogicalNotes(
@@ -370,12 +382,18 @@ public static partial class ProjectDomainEditCommands
             ValidateLogicalNoteBatch(replacement);
             IPreparedProjectEdit prepared = PrepareLogicalNoteBatch(
                 segment.Track.Id,
+                segment.Segment.Notes,
                 selected,
                 old,
                 replacement);
             return alignment == LogicalNoteAlignment.Length
                 ? prepared
-                : ResolveExactLogicalNoteCollisions(prepared, segment.Segment);
+                : ResolveTargetedExactLogicalNoteCollisions(
+                    prepared,
+                    replacement.Select(value => new LogicalNoteCollisionTarget(
+                        segment.Segment,
+                        value.StartTick,
+                        value.Note)));
         });
 
     public static IProjectEditCommand DeleteLogicalNotes(
@@ -387,26 +405,20 @@ public static partial class ProjectDomainEditCommands
             SelectedLogicalNote[] selected = SelectLogicalNotes(
                 segment.Segment,
                 logicalNoteIds);
+            LogicalNote[] values = selected.Select(static value => value.Note).ToArray();
+            Action? restore = null;
             return Prepared(
                 hasChanges: true,
                 TrackChange(segment.Track.Id),
                 _ =>
                 {
-                    foreach (SelectedLogicalNote value in selected)
-                    {
-                        RemoveRequired(segment.Segment.Notes, value.Note, "Logical Note");
-                    }
+                    restore = segment.Segment.Notes.RemoveRangeWithUndo(values);
                 },
                 _ =>
                 {
-                    foreach (SelectedLogicalNote value in selected.OrderBy(value => value.Index))
-                    {
-                        InsertAt(
-                            segment.Segment.Notes,
-                            value.Index,
-                            value.Note,
-                            "Logical Note");
-                    }
+                    (restore ?? throw new InvalidOperationException(
+                        "Logical Notes do not have a pending removal to restore."))();
+                    restore = null;
                 });
         });
 
@@ -787,14 +799,15 @@ public static partial class ProjectDomainEditCommands
 
     private static IPreparedProjectEdit PrepareLogicalNoteBatch(
         MidoraId trackId,
+        LogicalNoteCollection notes,
         SelectedLogicalNote[] selected,
         LogicalNoteValue[] old,
         LogicalNoteValue[] replacement) =>
         Prepared(
             old.Where((value, index) => value != replacement[index]).Any(),
             TrackChange(trackId),
-            _ => SetLogicalNoteBatch(selected, replacement),
-            _ => SetLogicalNoteBatch(selected, old));
+            _ => SetLogicalNoteBatch(notes, selected, replacement),
+            _ => SetLogicalNoteBatch(notes, selected, old));
 
     private static LogicalNoteValue AdjustLogicalNoteEdgesSaturated(
         LogicalNoteValue value,
@@ -878,29 +891,31 @@ public static partial class ProjectDomainEditCommands
         long tickDelta)
     {
         if (tickDelta == 0) return;
-        foreach (LogicalNote note in segment.Notes)
+        using (segment.Notes.BeginBatchChange())
         {
-            note.StartTick = checked(note.StartTick + tickDelta);
+            foreach (LogicalNote note in segment.Notes)
+                note.StartTick = checked(note.StartTick + tickDelta);
         }
         foreach (LogicalParameterLane lane in segment.ParameterLanes)
         {
-            for (int index = 0; index < lane.Points.Count; index++)
-            {
-                CurvePoint point = lane.Points[index];
-                lane.Points[index] = new CurvePoint(
+            CurvePoint[] old = lane.Points.ToArray();
+            CurvePoint[] replacement = old.Select(point => new CurvePoint(
                     project,
                     point.Id,
                     checked(point.Tick + tickDelta),
                     point.Value,
-                    CurveInterpolation.Step);
-            }
+                    CurveInterpolation.Step))
+                .ToArray();
+            lane.Points.ReplaceRange(old, replacement);
         }
     }
 
     private static void SetLogicalNoteBatch(
+        LogicalNoteCollection notes,
         SelectedLogicalNote[] selected,
         LogicalNoteValue[] values)
     {
+        using IDisposable batch = notes.BeginBatchChange();
         for (int index = 0; index < selected.Length; index++)
         {
             SetLogicalNote(selected[index].Note, values[index]);
@@ -929,8 +944,8 @@ public static partial class ProjectDomainEditCommands
             }
         }
         SelectedLogicalNote[] selected = segment.Notes
-            .Select((value, index) => new SelectedLogicalNote(value, index))
-            .Where(value => requested.Contains(value.Note.Id))
+            .ResolveByIdsWithIndicesInCollectionOrder(requested)
+            .Select(static value => new SelectedLogicalNote(value.Value, value.Index))
             .ToArray();
         if (selected.Length != requested.Count)
         {

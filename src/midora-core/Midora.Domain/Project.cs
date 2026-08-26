@@ -45,6 +45,27 @@ public sealed class LogicalNote
 
     internal void SetChangeSink(Action<LogicalNote>? sink) => _changeSink = sink;
 
+    internal void SetValues(
+        long startTick,
+        long lengthTicks,
+        int note,
+        int velocity)
+    {
+        if (_startTick == startTick
+            && _lengthTicks == lengthTicks
+            && _note == note
+            && _velocity == velocity)
+        {
+            return;
+        }
+
+        _startTick = startTick;
+        _lengthTicks = lengthTicks;
+        _note = note;
+        _velocity = velocity;
+        _changeSink?.Invoke(this);
+    }
+
     private void Set<T>(ref T field, T value)
     {
         if (EqualityComparer<T>.Default.Equals(field, value)) return;
@@ -70,7 +91,7 @@ public sealed class LogicalParameterLane
 
     public MidoraId Id { get; init; }
     public MidoraId ParameterId { get; set; }
-    public List<CurvePoint> Points { get; } = [];
+    public CurvePointCollection Points { get; } = new();
 }
 
 public sealed class Segment

@@ -5,6 +5,162 @@ namespace Midora.Application.Tests;
 public sealed class PagedTimelineCollectionTests
 {
     [Fact]
+    public void LogicalAndTemplateAtomicValueUpdatesPublishOneGeneration()
+    {
+        using MidoraProject project = new(192);
+        Segment segment = new(project) { LengthTicks = 1_000 };
+        LogicalNote note = new(project)
+        {
+            StartTick = 10,
+            LengthTicks = 20,
+            Note = 60,
+            Velocity = 100
+        };
+        segment.Notes.Add(note);
+        long noteGeneration = segment.Notes.Generation;
+
+        note.SetValues(30, 40, 72, 80);
+
+        Assert.Equal(noteGeneration + 1, segment.Notes.Generation);
+        LogicalNoteSnapshotValue noteValue = Assert.Single(
+            segment.Notes.CreateQuerySnapshot().EnumerateAll());
+        Assert.Equal((30L, 40L, 72, 80),
+            (noteValue.StartTick, noteValue.LengthTicks, noteValue.Note, noteValue.Velocity));
+        note.SetValues(30, 40, 72, 80);
+        Assert.Equal(noteGeneration + 1, segment.Notes.Generation);
+
+        SubVoice voice = new(project);
+        TemplateEvent template = TemplateEvent.Note(project, 10, 20, 60, 100);
+        voice.Events.Add(template);
+        long eventGeneration = voice.Events.Generation;
+
+        template.SetValues(
+            TemplateEventKind.Note,
+            30,
+            40,
+            72,
+            80,
+            12,
+            hasBankMsb: false,
+            hasBankLsb: false,
+            followPitchDelta: false);
+        template.EnsureMappings();
+
+        Assert.Equal(eventGeneration + 1, voice.Events.Generation);
+        TemplateEventSnapshotValue eventValue = Assert.Single(
+            voice.Events.CreateQuerySnapshot().EnumerateAll());
+        Assert.Equal((30L, 40L, 72, 80, 12, false, false, false),
+            (eventValue.Tick,
+                eventValue.LengthTicks,
+                eventValue.Number,
+                eventValue.Value,
+                eventValue.SecondaryValue,
+                eventValue.HasBankMsb,
+                eventValue.HasBankLsb,
+                eventValue.FollowPitchDelta));
+        template.SetValues(
+            TemplateEventKind.Note,
+            30,
+            40,
+            72,
+            80,
+            12,
+            hasBankMsb: false,
+            hasBankLsb: false,
+            followPitchDelta: false);
+        Assert.Equal(eventGeneration + 1, voice.Events.Generation);
+
+        MidiSegment midiSegment = new(project) { LengthTicks = 1_000 };
+        DirectMidiChannelEvent directEvent = new(project)
+        {
+            Tick = 10,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 1,
+            Data2 = 64,
+            Order = 2
+        };
+        midiSegment.ChannelEvents.Add(directEvent);
+        long directGeneration = midiSegment.ChannelEvents.Generation;
+
+        directEvent.SetValues(30, DirectMidiChannelEventKind.PitchBend, 2, 80, 4);
+
+        Assert.Equal(directGeneration + 1, midiSegment.ChannelEvents.Generation);
+        directEvent.SetValues(30, DirectMidiChannelEventKind.PitchBend, 2, 80, 4);
+        Assert.Equal(directGeneration + 1, midiSegment.ChannelEvents.Generation);
+    }
+
+    [Fact]
+    public void PureMidiQuerySnapshotsAreReusedWithinOneGeneration()
+    {
+        using MidoraProject project = new(192);
+        MidiSegment segment = new(project) { LengthTicks = 1_000 };
+        DirectMidiNote note = new(project) { StartTick = 10, LengthTicks = 20 };
+        DirectMidiChannelEvent channelEvent = new(project) { Tick = 10 };
+        OpaqueMidiEvent opaqueEvent = new(project) { Tick = 10, Payload = [1, 2, 3] };
+        segment.Notes.Add(note);
+        segment.ChannelEvents.Add(channelEvent);
+        segment.OpaqueEvents.Add(opaqueEvent);
+
+        DirectMidiNoteQuerySnapshot noteBefore = segment.Notes.CreateQuerySnapshot();
+        DirectMidiChannelEventQuerySnapshot channelBefore = segment.ChannelEvents.CreateQuerySnapshot();
+        OpaqueMidiEventQuerySnapshot opaqueBefore = segment.OpaqueEvents.CreateQuerySnapshot();
+        Assert.Same(noteBefore, segment.Notes.CreateQuerySnapshot());
+        Assert.Same(channelBefore, segment.ChannelEvents.CreateQuerySnapshot());
+        Assert.Same(opaqueBefore, segment.OpaqueEvents.CreateQuerySnapshot());
+
+        note.StartTick = 20;
+        channelEvent.Tick = 20;
+        opaqueEvent.Tick = 20;
+        DirectMidiNoteQuerySnapshot noteAfter = segment.Notes.CreateQuerySnapshot();
+        DirectMidiChannelEventQuerySnapshot channelAfter = segment.ChannelEvents.CreateQuerySnapshot();
+        OpaqueMidiEventQuerySnapshot opaqueAfter = segment.OpaqueEvents.CreateQuerySnapshot();
+
+        Assert.NotSame(noteBefore, noteAfter);
+        Assert.NotSame(channelBefore, channelAfter);
+        Assert.NotSame(opaqueBefore, opaqueAfter);
+        Assert.Same(noteAfter, segment.Notes.CreateQuerySnapshot());
+        Assert.Same(channelAfter, segment.ChannelEvents.CreateQuerySnapshot());
+        Assert.Same(opaqueAfter, segment.OpaqueEvents.CreateQuerySnapshot());
+    }
+
+    [Fact]
+    public void LogicalSnapshotPublishesTwoValuesAfterOneMovesOntoTheOther()
+    {
+        using MidoraProject project = new(192);
+        Segment segment = new(project) { LengthTicks = 1_000 };
+        LogicalNote incumbent = new(project) { StartTick = 100, LengthTicks = 40, Note = 64, Velocity = 90 };
+        LogicalNote mover = new(project) { StartTick = 20, LengthTicks = 80, Note = 64, Velocity = 100 };
+        segment.Notes.AddRange([incumbent, mover]);
+        Assert.Single(segment.Notes.CreateQuerySnapshot().QueryValues(100, 101, 64, 64));
+
+        mover.StartTick = 100;
+
+        Assert.Equal(
+            [incumbent.Id, mover.Id],
+            segment.Notes.CreateQuerySnapshot().QueryValues(100, 101, 64, 64)
+                .Select(static value => value.Id));
+
+        mover.StartTick = 20;
+        Assert.Single(segment.Notes.CreateQuerySnapshot().QueryValues(100, 101, 64, 64));
+        mover.StartTick = 100;
+        Assert.Equal(
+            [incumbent.Id, mover.Id],
+            segment.Notes.CreateQuerySnapshot().QueryValues(100, 101, 64, 64)
+                .Select(static value => value.Id));
+
+        Action restore = segment.Notes.RemoveRangeWithUndo([mover]);
+        Assert.Single(segment.Notes.CreateQuerySnapshot().QueryValues(100, 101, 64, 64));
+        restore();
+        mover.StartTick = 20;
+        Assert.Single(segment.Notes.CreateQuerySnapshot().QueryValues(100, 101, 64, 64));
+        mover.StartTick = 100;
+        Assert.Equal(
+            [incumbent.Id, mover.Id],
+            segment.Notes.CreateQuerySnapshot().QueryValues(100, 101, 64, 64)
+                .Select(static value => value.Id));
+    }
+
+    [Fact]
     public void DirectMidiLocalFingerprintRestoresAfterColdRegionEditUndo()
     {
         using MidoraProject project = new(192);
@@ -77,6 +233,82 @@ public sealed class PagedTimelineCollectionTests
         Assert.Contains(
             after.QueryValues(17_999, 18_003),
             value => value.Id == changed.Id && value.StartTick == 18_000);
+    }
+
+    [Fact]
+    public void LogicalValueOverlayKeepsOldSnapshotAndRestoresFingerprintAndRaster()
+    {
+        using MidoraProject project = new(192);
+        Segment segment = new(project) { LengthTicks = 2_000 };
+        LogicalNote note = new(project)
+        {
+            StartTick = 10,
+            LengthTicks = 20,
+            Note = 60,
+            Velocity = 100
+        };
+        segment.Notes.Add(note);
+        LogicalNoteQuerySnapshot before = segment.Notes.CreateQuerySnapshot();
+        ulong originalContent = before.ContentFingerprint;
+        ulong originalOldRange = before.GetRangeFingerprint(0, 100, 60, 60);
+        TimelineRasterColumnSummary[] beforeOldRaster = new TimelineRasterColumnSummary[8];
+        before.AccumulateRasterColumns(0, 100, 60, 60, beforeOldRaster);
+        Assert.Contains(beforeOldRaster, static column => column.HasContent);
+
+        note.SetValues(900, note.LengthTicks, note.Note, note.Velocity);
+        LogicalNoteQuerySnapshot moved = segment.Notes.CreateQuerySnapshot();
+        TimelineRasterColumnSummary[] movedOldRaster = new TimelineRasterColumnSummary[8];
+        TimelineRasterColumnSummary[] movedNewRaster = new TimelineRasterColumnSummary[8];
+        moved.AccumulateRasterColumns(0, 100, 60, 60, movedOldRaster);
+        moved.AccumulateRasterColumns(850, 1_000, 60, 60, movedNewRaster);
+
+        Assert.Single(before.QueryValues(0, 100, 60, 60));
+        Assert.Empty(moved.QueryValues(0, 100, 60, 60));
+        Assert.Single(moved.QueryValues(850, 1_000, 60, 60));
+        Assert.DoesNotContain(movedOldRaster, static column => column.HasContent);
+        Assert.Contains(movedNewRaster, static column => column.HasContent);
+        Assert.NotEqual(originalContent, moved.ContentFingerprint);
+        Assert.NotEqual(originalOldRange, moved.GetRangeFingerprint(0, 100, 60, 60));
+
+        note.SetValues(10, note.LengthTicks, note.Note, note.Velocity);
+        LogicalNoteQuerySnapshot restored = segment.Notes.CreateQuerySnapshot();
+        TimelineRasterColumnSummary[] restoredOldRaster = new TimelineRasterColumnSummary[8];
+        restored.AccumulateRasterColumns(0, 100, 60, 60, restoredOldRaster);
+        Assert.Equal(originalContent, restored.ContentFingerprint);
+        Assert.Equal(originalOldRange, restored.GetRangeFingerprint(0, 100, 60, 60));
+        Assert.Contains(restoredOldRaster, static column => column.HasContent);
+    }
+
+    [Fact]
+    public void LogicalValueOverlayRemovesGhostMaximumEndTick()
+    {
+        using MidoraProject project = new(192);
+        Segment segment = new(project) { LengthTicks = 2_000 };
+        LogicalNote near = new(project)
+        {
+            StartTick = 10,
+            LengthTicks = 20,
+            Note = 60,
+            Velocity = 100
+        };
+        LogicalNote far = new(project)
+        {
+            StartTick = 1_000,
+            LengthTicks = 100,
+            Note = 64,
+            Velocity = 100
+        };
+        segment.Notes.AddRange([near, far]);
+        LogicalNoteQuerySnapshot before = segment.Notes.CreateQuerySnapshot();
+        Assert.Equal(1_100L, before.MaximumEndTick);
+
+        far.SetValues(100, 5, far.Note, far.Velocity);
+        LogicalNoteQuerySnapshot moved = segment.Notes.CreateQuerySnapshot();
+
+        Assert.Equal(105L, moved.MaximumEndTick);
+        Assert.Equal(1_100L, before.MaximumEndTick);
+        Assert.Empty(moved.QueryValues(1_000, 1_100));
+        Assert.Single(moved.QueryValues(100, 106), value => value.Id == far.Id);
     }
 
     [Fact]
@@ -244,5 +476,280 @@ public sealed class PagedTimelineCollectionTests
         edit.Undo(project);
         Assert.Equal(notes, voice.Events);
         Assert.Equal(100_000, instrument.TemplateLengthTicks);
+    }
+
+    [Fact]
+    public void ConcurrentColdSnapshotPublicationReturnsOneImmutableRevision()
+    {
+        using MidoraProject project = new(192);
+        Segment segment = new(project) { LengthTicks = 100_000 };
+        segment.Notes.AddRange(Enumerable.Range(0, 20_000)
+            .Select(index => new LogicalNote(project)
+            {
+                StartTick = index * 2L,
+                LengthTicks = 2,
+                Note = index % 128,
+                Velocity = 100
+            })
+            .ToArray());
+
+        ulong[] fingerprints = new ulong[2_000];
+        Parallel.For(0, fingerprints.Length, index =>
+        {
+            LogicalNoteQuerySnapshot snapshot = segment.Notes.CreateQuerySnapshot();
+            Assert.Equal(20_000, snapshot.Count);
+            fingerprints[index] = snapshot.ContentFingerprint;
+        });
+
+        Assert.All(fingerprints, value => Assert.Equal(fingerprints[0], value));
+    }
+
+    [Fact]
+    public void InsertRangeRejectsDuplicateStableIdsWithoutPartialMutation()
+    {
+        using MidoraProject project = new(192);
+        Segment segment = new(project) { LengthTicks = 1_000 };
+        LogicalNote existing = new(project)
+        {
+            StartTick = 10,
+            LengthTicks = 20,
+            Note = 60,
+            Velocity = 100
+        };
+        segment.Notes.Add(existing);
+        LogicalNote valid = new(project)
+        {
+            StartTick = 40,
+            LengthTicks = 20,
+            Note = 62,
+            Velocity = 100
+        };
+        LogicalNote duplicate = new(project, existing.Id)
+        {
+            StartTick = 80,
+            LengthTicks = 20,
+            Note = 64,
+            Velocity = 100
+        };
+
+        Assert.Throws<InvalidOperationException>(() =>
+            segment.Notes.InsertRange(1, [valid, duplicate]));
+
+        Assert.Single(segment.Notes);
+        Assert.Same(existing, segment.Notes[0]);
+        Assert.DoesNotContain(valid, segment.Notes);
+    }
+
+    [Fact]
+    public void ExactCollisionRestoreSurvivesInterveningPageSplitsAndRestoresFingerprint()
+    {
+        using MidoraProject project = new(192);
+        Segment segment = new(project) { LengthTicks = 100_000 };
+        LogicalNote[] original = Enumerable.Range(0, 16_500)
+            .Select(index => new LogicalNote(project)
+            {
+                StartTick = index * 2L,
+                LengthTicks = 2,
+                Note = index % 128,
+                Velocity = 100
+            })
+            .ToArray();
+        segment.Notes.AddRange(original);
+        ulong originalFingerprint = segment.Notes.CreateQuerySnapshot().ContentFingerprint;
+        LogicalNote[] collisions = original.Where((_, index) => index % 3 == 0).ToArray();
+
+        Action restore = segment.Notes.RemoveRangeForExactCollision(collisions);
+        LogicalNote[] transient = Enumerable.Range(0, 9_000)
+            .Select(index => new LogicalNote(project)
+            {
+                StartTick = 60_000 + index,
+                LengthTicks = 1,
+                Note = index % 128,
+                Velocity = 80
+            })
+            .ToArray();
+        segment.Notes.InsertRange(17, transient);
+        Assert.Equal(transient.Length, segment.Notes.RemoveRange(transient));
+
+        restore();
+
+        Assert.Equal(original, segment.Notes);
+        Assert.Equal(
+            originalFingerprint,
+            segment.Notes.CreateQuerySnapshot().ContentFingerprint);
+    }
+
+    [Fact]
+    public void DirectCollectionIndexerReplacementIsAtomicAndDetachesOldSink()
+    {
+        using MidoraProject project = new(192);
+        MidiSegment segment = new(project) { LengthTicks = 1_000 };
+        DirectMidiNote first = new(project)
+        {
+            StartTick = 10,
+            LengthTicks = 20,
+            Key = 60,
+            NoteOnVelocity = 100
+        };
+        DirectMidiNote second = new(project)
+        {
+            StartTick = 40,
+            LengthTicks = 20,
+            Key = 62,
+            NoteOnVelocity = 100
+        };
+        segment.Notes.Add(first);
+        segment.Notes.Add(second);
+        DirectMidiNote duplicate = new(project, second.Id)
+        {
+            StartTick = 80,
+            LengthTicks = 10,
+            Key = 64,
+            NoteOnVelocity = 100
+        };
+
+        Assert.Throws<InvalidOperationException>(() => segment.Notes[0] = duplicate);
+        Assert.Equal([first, second], segment.Notes);
+
+        DirectMidiNote replacement = new(project)
+        {
+            StartTick = 100,
+            LengthTicks = 10,
+            Key = 65,
+            NoteOnVelocity = 100
+        };
+        segment.Notes[0] = replacement;
+        long generation = segment.Notes.Generation;
+        first.StartTick = 999;
+
+        Assert.Equal(generation, segment.Notes.Generation);
+        Assert.Equal([replacement, second], segment.Notes);
+    }
+
+    [Fact]
+    public void OpaqueSnapshotOwnsPayloadBytes()
+    {
+        using MidoraProject project = new(192);
+        MidiSegment segment = new(project) { LengthTicks = 1_000 };
+        byte[] payload = [1, 2, 3];
+        OpaqueMidiEvent value = new(project)
+        {
+            Tick = 12,
+            Kind = OpaqueMidiEventKind.Meta,
+            MetaType = 0x7f,
+            Payload = payload
+        };
+        segment.OpaqueEvents.Add(value);
+        OpaqueMidiEventQuerySnapshot before = segment.OpaqueEvents.CreateQuerySnapshot();
+
+        payload[0] = 99;
+        value.Payload = [7, 8, 9];
+        OpaqueMidiEventQuerySnapshot after = segment.OpaqueEvents.CreateQuerySnapshot();
+
+        Assert.Equal([1, 2, 3], Assert.Single(before.QueryValues(0, 100)).Payload.ToArray());
+        Assert.Equal([7, 8, 9], Assert.Single(after.QueryValues(0, 100)).Payload.ToArray());
+    }
+
+    [Fact]
+    public void PureMidiOverlayTargetedRemovalRestoresRandomFormalOrderAndOldSnapshots()
+    {
+        using MidoraProject project = new(192);
+        MidiSegment segment = new(project) { LengthTicks = 100_000 };
+        const int count = 12_000;
+        DirectMidiNote[] notes = Enumerable.Range(0, count)
+            .Select(index => new DirectMidiNote(project)
+            {
+                StartTick = index * 4L,
+                LengthTicks = 2,
+                Key = index & 0x7f,
+                NoteOnVelocity = 100,
+                NoteOffVelocity = 64,
+                NoteOnOrder = index * 3L,
+                NoteOffOrder = index * 3L + 1
+            })
+            .ToArray();
+        DirectMidiChannelEvent[] channelEvents = Enumerable.Range(0, count)
+            .Select(index => new DirectMidiChannelEvent(project)
+            {
+                Tick = index * 4L,
+                Kind = DirectMidiChannelEventKind.ControlChange,
+                Data1 = index % 120,
+                Data2 = index & 0x7f,
+                Order = index * 3L + 2
+            })
+            .ToArray();
+        OpaqueMidiEvent[] opaqueEvents = Enumerable.Range(0, count)
+            .Select(index => new OpaqueMidiEvent(project)
+            {
+                Tick = index * 4L,
+                Kind = OpaqueMidiEventKind.Meta,
+                MetaType = 0x7f,
+                Payload = [(byte)index],
+                Order = index
+            })
+            .ToArray();
+        segment.Notes.AddRange(notes);
+        segment.ChannelEvents.AddRange(channelEvents);
+        segment.OpaqueEvents.AddRange(opaqueEvents);
+        DirectMidiNoteQuerySnapshot oldNotes = segment.Notes.CreateQuerySnapshot();
+        DirectMidiChannelEventQuerySnapshot oldChannel = segment.ChannelEvents.CreateQuerySnapshot();
+        OpaqueMidiEventQuerySnapshot oldOpaque = segment.OpaqueEvents.CreateQuerySnapshot();
+
+        Random random = new(0x50414745);
+        int[] selectedIndices = Enumerable.Range(count * 3 / 4, count / 4)
+            .OrderBy(_ => random.Next())
+            .Take(1_000)
+            .Order()
+            .ToArray();
+        DirectMidiNote[] removedNotes = selectedIndices.Select(index => notes[index]).ToArray();
+        DirectMidiChannelEvent[] removedChannel = selectedIndices.Select(index => channelEvents[index]).ToArray();
+        OpaqueMidiEvent[] removedOpaque = selectedIndices.Select(index => opaqueEvents[index]).ToArray();
+
+        Verify(
+            notes,
+            removedNotes,
+            static value => value.Id,
+            () => segment.Notes.Select(static value => value.Id).ToArray(),
+            values => segment.Notes.RemoveRangeWithUndo(values));
+        Verify(
+            channelEvents,
+            removedChannel,
+            static value => value.Id,
+            () => segment.ChannelEvents.Select(static value => value.Id).ToArray(),
+            values => segment.ChannelEvents.RemoveRangeWithUndo(values));
+        Verify(
+            opaqueEvents,
+            removedOpaque,
+            static value => value.Id,
+            () => segment.OpaqueEvents.Select(static value => value.Id).ToArray(),
+            values => segment.OpaqueEvents.RemoveRangeWithUndo(values));
+
+        Assert.Equal(count, oldNotes.QueryValues(0, 100_000).Count());
+        Assert.Equal(count, oldChannel.QueryValues(0, 100_000).Count());
+        Assert.Equal(count, oldOpaque.QueryValues(0, 100_000).Count());
+
+        static void Verify<T>(
+            T[] original,
+            T[] removed,
+            Func<T, MidoraId> getId,
+            Func<MidoraId[]> currentIds,
+            Func<IReadOnlyCollection<T>, Action> remove)
+            where T : class
+        {
+            HashSet<MidoraId> removedIds = removed.Select(getId).ToHashSet();
+            MidoraId[] expectedRemoved = original
+                .Select(getId)
+                .Where(id => !removedIds.Contains(id))
+                .ToArray();
+            Action restore = remove(removed);
+            Assert.Equal(expectedRemoved, currentIds());
+            restore();
+            Assert.Equal(original.Select(getId), currentIds());
+
+            Action restoreRedo = remove(removed);
+            Assert.Equal(expectedRemoved, currentIds());
+            restoreRedo();
+            Assert.Equal(original.Select(getId), currentIds());
+        }
     }
 }

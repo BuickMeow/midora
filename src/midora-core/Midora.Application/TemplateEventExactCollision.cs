@@ -81,9 +81,9 @@ public static partial class ProjectDomainEditCommands
     private static void RemoveLaterExactTimelineCollisions(SubVoice voice)
     {
         HashSet<(bool Note, long Tick, int Detail)> occupied = [];
-        for (int index = 0; index < voice.Events.Count;)
+        List<TemplateEvent> discarded = [];
+        foreach (TemplateEvent value in voice.Events)
         {
-            TemplateEvent value = voice.Events[index];
             (bool Note, long Tick, int Detail)[] keys = value.Kind == TemplateEventKind.Note
                 ? [(true, value.Tick, value.Number)]
                 : TemplateEventExactCollision.GetNonNoteDetails(
@@ -95,12 +95,13 @@ public static partial class ProjectDomainEditCommands
                     .ToArray();
             if (keys.Any(occupied.Contains))
             {
-                voice.Events.RemoveAt(index);
+                discarded.Add(value);
                 continue;
             }
             occupied.UnionWith(keys);
-            index++;
         }
+        if (discarded.Count != 0)
+            _ = voice.Events.RemoveRange(discarded);
 
         foreach (ValueCurve curve in voice.Curves)
         {

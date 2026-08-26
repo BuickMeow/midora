@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -64,6 +65,7 @@ public partial class MainWindow : Window
     private bool _synchronizingInstrumentStructureSelection;
     private bool _followPlaybackViewportInteractionActive;
     private CancellationTokenSource? _instrumentLoopCommitDelay;
+    private CancellationTokenSource? _timelineSelectionMaterialization;
     private long _nextProjectRuntimeInformationRefresh;
     private TimelineSelectionOperationContext? _timelineSelectionOperationContext;
 
@@ -171,6 +173,7 @@ public partial class MainWindow : Window
         }
         _playbackTimer.Stop();
         Interlocked.Exchange(ref _instrumentLoopCommitDelay, null)?.Cancel();
+        Interlocked.Exchange(ref _timelineSelectionMaterialization, null)?.Cancel();
         await _session.DisposeAsync();
         SaveDesktopPreferences();
         base.OnClosed(e);
@@ -1457,8 +1460,7 @@ public partial class MainWindow : Window
         Add("Delete", OnDeleteWorkspaceSelectionClick, "Delete", canEdit);
         Separator();
         bool hasSelection = _session.ActiveWorkspace?.Selection.Ids.Count > 0;
-        bool hasInvertibleItems = surface.Snapshot?.Items.Any(static item =>
-            !item.State.HasFlag(TimelineItemState.HitTestDisabled)) == true;
+        bool hasInvertibleItems = surface.Snapshot?.HasHitTestableItems == true;
         Add("Deselect All", OnDeselectAllTimelineObjectsClick, enabled: hasSelection);
         Add("Invert Selection", OnInvertTimelineSelectionClick, enabled: hasInvertibleItems);
         Separator();
@@ -5873,7 +5875,7 @@ public partial class MainWindow : Window
         _session.RefreshWorkspaceSelection(workspace);
     }
 
-    private void OnInvertTimelineSelectionClick(object sender, RoutedEventArgs e)
+    private async void OnInvertTimelineSelectionClick(object sender, RoutedEventArgs e)
     {
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace
             || GetTimelineContextSurface(sender) is not TimelineSurface surface
@@ -5881,12 +5883,12 @@ public partial class MainWindow : Window
         {
             return;
         }
-        workspace.Selection.ApplyRange(
-            snapshot.EnumerateAllItems()
-                .Where(static item => !item.State.HasFlag(TimelineItemState.HitTestDisabled))
-                .Select(static item => item.Id),
-            WorkspaceSelectionRangeMode.Toggle);
-        _session.RefreshWorkspaceSelection(workspace);
+        await MaterializeTimelineSelectionAsync(
+            workspace,
+            surface,
+            snapshot,
+            invert: true,
+            lane: null);
     }
 
     private TimelineSelectionOperationContext? ResolveTimelineSelectionOperationContext(
@@ -5897,7 +5899,7 @@ public partial class MainWindow : Window
         {
             return null;
         }
-        HashSet<MidoraId> selected = workspace.Selection.Ids.ToHashSet();
+        IReadOnlySet<MidoraId> selected = workspace.Selection.IdSet;
         switch (workspace)
         {
             case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement }:
@@ -5940,7 +5942,7 @@ public partial class MainWindow : Window
                             }
                             return new(
                                 TimelineSelectionObjectKind.LogicalParameterPoints,
-                                lane.Points.Where(point => selected.Contains(point.Id))
+                                lane.Points.ResolveByIdsInCollectionOrder(selected)
                                     .Select(static point => point.Id)
                                     .ToArray(),
                                 segmentId,
@@ -5951,7 +5953,7 @@ public partial class MainWindow : Window
                         return new(
                             TimelineSelectionObjectKind.LogicalNotes,
                             location.Value.Segment.Notes
-                                .Where(note => selected.Contains(note.Id))
+                                .ResolveByIdsInCollectionOrder(selected)
                                 .Select(static note => note.Id)
                                 .ToArray(),
                             segmentId);
@@ -6001,8 +6003,8 @@ public partial class MainWindow : Window
                         return new(
                             TimelineSelectionObjectKind.TemplateNotes,
                             voice.Events
-                                .Where(value => value.Kind == TemplateEventKind.Note
-                                    && selected.Contains(value.Id))
+                                .ResolveByIdsInCollectionOrder(selected)
+                                .Where(static value => value.Kind == TemplateEventKind.Note)
                                 .Select(static value => value.Id)
                                 .ToArray(),
                             instrumentId,
@@ -6015,8 +6017,8 @@ public partial class MainWindow : Window
                         return new(
                             TimelineSelectionObjectKind.SubVoiceEventPoints,
                             voice.Events
+                                .ResolveByIdsInCollectionOrder(selected)
                                 .Where(value => value.Kind != TemplateEventKind.Note
-                                    && selected.Contains(value.Id)
                                     && TemplateEventMidiTargets.Enumerate(value).Contains(target))
                                 .Select(static value => value.Id)
                                 .ToArray(),
@@ -6328,53 +6330,67 @@ public partial class MainWindow : Window
                         End: segment.ProjectRange.EndTick)))),
             TimelineSelectionObjectKind.LogicalNotes => RangeSpan(
                 TimelineWorkspaceViewModel.FindSegment(project, context.OwnerId)!.Value.Segment.Notes
-                    .Where(note => ids.Contains(note.Id))
+                    .ResolveByIdsInCollectionOrder(ids)
                     .Select(static note => (
                         Start: note.StartTick,
                         End: checked(note.StartTick + note.LengthTicks)))),
             TimelineSelectionObjectKind.DirectMidiNotes => RangeSpan(
                 TimelineWorkspaceViewModel.FindMidiSegment(project, context.OwnerId)!.Value.Segment.Notes
-                    .Where(note => ids.Contains(note.Id))
-                    .Select(static note => (
-                        Start: note.StartTick,
-                        End: checked(note.StartTick + note.LengthTicks)))),
+                    .ResolveByIds(ids)
+                    .Select(static match => (
+                        Start: match.Value.StartTick,
+                        End: checked(match.Value.StartTick + match.Value.LengthTicks)))),
             TimelineSelectionObjectKind.TemplateNotes => RangeSpan(project.EventInstruments
                 .Single(value => value.Id == context.OwnerId)
                 .SubVoices.Single(value => value.Id == context.SecondaryId)
-                .Events.Where(value => value.Kind == TemplateEventKind.Note && ids.Contains(value.Id))
+                .Events.ResolveByIdsInCollectionOrder(ids)
+                .Where(static value => value.Kind == TemplateEventKind.Note)
                 .Select(static value => (
                     Start: value.Tick,
                     End: checked(value.Tick + value.LengthTicks)))),
             TimelineSelectionObjectKind.LogicalParameterPoints => PointSpan(
                 TimelineWorkspaceViewModel.FindSegment(project, context.OwnerId)!.Value.Segment
                     .ParameterLanes.Single(value => value.Id == context.SecondaryId)
-                    .Points.Where(value => ids.Contains(value.Id))
+                    .Points.ResolveByIdsInCollectionOrder(ids)
                     .Select(static value => value.Tick)),
             TimelineSelectionObjectKind.DirectMidiEventPoints => PointSpan(
                 TimelineWorkspaceViewModel.FindMidiSegment(project, context.OwnerId)!.Value.Segment
-                    .ChannelEvents.Where(value => ids.Contains(value.Id))
-                    .Select(static value => value.Tick)),
+                    .ChannelEvents.ResolveByIds(ids)
+                    .Select(static match => match.Value.Tick)),
             TimelineSelectionObjectKind.SubVoiceEventPoints => PointSpan(project.EventInstruments
                 .Single(value => value.Id == context.OwnerId)
                 .SubVoices.Single(value => value.Id == context.SecondaryId)
-                .Events.Where(value => ids.Contains(value.Id))
+                .Events.ResolveByIdsInCollectionOrder(ids)
                 .Select(static value => value.Tick)),
             _ => throw new ArgumentOutOfRangeException()
         };
 
         static long RangeSpan(IEnumerable<(long Start, long End)> source)
         {
-            (long Start, long End)[] values = source.ToArray();
-            return values.Length == 0
-                ? 0
-                : checked(values.Max(static value => value.End)
-                    - values.Min(static value => value.Start));
+            bool any = false;
+            long minimum = long.MaxValue;
+            long maximum = long.MinValue;
+            foreach ((long start, long end) in source)
+            {
+                any = true;
+                minimum = Math.Min(minimum, start);
+                maximum = Math.Max(maximum, end);
+            }
+            return any ? checked(maximum - minimum) : 0;
         }
 
         static long PointSpan(IEnumerable<long> source)
         {
-            long[] values = source.ToArray();
-            return values.Length == 0 ? 0 : checked(values.Max() - values.Min());
+            bool any = false;
+            long minimum = long.MaxValue;
+            long maximum = long.MinValue;
+            foreach (long value in source)
+            {
+                any = true;
+                minimum = Math.Min(minimum, value);
+                maximum = Math.Max(maximum, value);
+            }
+            return any ? checked(maximum - minimum) : 0;
         }
     }
 
@@ -6956,7 +6972,7 @@ public partial class MainWindow : Window
         {
             HashSet<MidoraId> requested = selected.ToHashSet();
             LogicalNote[] notes = segment.Notes
-                .Where(item => requested.Contains(item.Id))
+                .ResolveByIdsInCollectionOrder(requested)
                 .ToArray();
             if (notes.Length == 0) return;
             noteIds = notes.Select(static item => item.Id).ToArray();
@@ -7337,9 +7353,19 @@ public partial class MainWindow : Window
         (LogicalTrack Track, Segment Segment)? location =
             TimelineWorkspaceViewModel.FindSegment(_session.Project, segmentId);
         if (location is null) return;
-        LogicalParameterLane? lane = location.Value.Segment.ParameterLanes
-            .FirstOrDefault(item => item.Points.Any(point => point.Id == edit.Item.Id));
-        CurvePoint? point = lane?.Points.FirstOrDefault(item => item.Id == edit.Item.Id);
+        LogicalParameterLane? lane = null;
+        CurvePoint? point = null;
+        foreach (LogicalParameterLane candidate in location.Value.Segment.ParameterLanes)
+        {
+            if (!candidate.Points.TryGetById(edit.Item.Id, out CurvePoint? resolved)
+                || resolved is null)
+            {
+                continue;
+            }
+            lane = candidate;
+            point = resolved;
+            break;
+        }
         if (lane is null || point is null) return;
         EventInstrument instrument = _session.Project.FindEventInstrumentDefinition(location.Value.Track)
             ?? throw new InvalidOperationException(
@@ -7349,20 +7375,22 @@ public partial class MainWindow : Window
         double value = TimelineWorkspaceViewModel.DenormalizeParameterValue(
             definition,
             Math.Clamp(normalized + edit.ValueDelta, 0, 1));
-        MidoraId[] selected = lane.Points
-            .Where(candidate => candidate.Id == point.Id || selectedIds.Contains(candidate.Id))
-            .Select(candidate => candidate.Id)
-            .ToArray();
+        HashSet<MidoraId> requested = selectedIds.ToHashSet();
+        requested.Add(point.Id);
+        IReadOnlyList<CurvePoint> selectedPoints =
+            lane.Points.ResolveByIdsInCollectionOrder(requested);
+        if (selectedPoints.Count == 0) selectedPoints = [point];
+        MidoraId[] selected = selectedPoints.Select(static value => value.Id).ToArray();
         double requestedValueDelta = value - point.Value;
-        double minimumValueDelta = selected.Max(id =>
-            definition.Minimum - lane.Points.Single(candidate => candidate.Id == id).Value);
-        double maximumValueDelta = selected.Min(id =>
-            definition.Maximum - lane.Points.Single(candidate => candidate.Id == id).Value);
+        double selectedMinimumValue = selectedPoints.Min(static value => value.Value);
+        double selectedMaximumValue = selectedPoints.Max(static value => value.Value);
+        double minimumValueDelta = definition.Minimum - selectedMinimumValue;
+        double maximumValueDelta = definition.Maximum - selectedMaximumValue;
         double valueDelta = Math.Clamp(requestedValueDelta, minimumValueDelta, maximumValueDelta);
         long tickDelta = edit.EditKind == TimelineItemEditKind.Move
             ? Math.Max(
                 checked(snappedTarget - point.Tick),
-                -selected.Min(id => lane.Points.Single(candidate => candidate.Id == id).Tick))
+                -selectedPoints.Min(static value => value.Tick))
             : 0;
         if (edit.CopyRequested)
         {
@@ -7452,8 +7480,19 @@ public partial class MainWindow : Window
     {
         if (workspace.ObjectId is not MidoraId instrumentId) return;
         EventInstrument instrument = _session.Project!.EventInstruments.Single(item => item.Id == instrumentId);
-        SubVoice? voice = instrument.SubVoices.FirstOrDefault(item => item.Events.Any(value => value.Id == edit.Item.Id));
-        TemplateEvent? template = voice?.Events.FirstOrDefault(item => item.Id == edit.Item.Id);
+        SubVoice? voice = null;
+        TemplateEvent? template = null;
+        foreach (SubVoice candidate in instrument.SubVoices)
+        {
+            if (!candidate.Events.TryGetById(edit.Item.Id, out TemplateEvent? resolved)
+                || resolved is null)
+            {
+                continue;
+            }
+            voice = candidate;
+            template = resolved;
+            break;
+        }
         if (voice is null || template is null) return;
         TimelineEditorSettings activeSettings = template.Kind == TemplateEventKind.Note
             ? workspace.EditorSettings
@@ -7553,10 +7592,12 @@ public partial class MainWindow : Window
         if (activeTarget is MidiValueTarget target
             && TemplateEventMidiTargets.Enumerate(template).Contains(target))
         {
+            HashSet<MidoraId> requested = workspace.Selection.Ids.ToHashSet();
+            requested.Add(template.Id);
             TemplateEvent[] selectedEvents = voice.Events
+                .ResolveByIdsInCollectionOrder(requested)
                 .Where(item => item.Kind != TemplateEventKind.Note
-                    && TemplateEventMidiTargets.Enumerate(item).Contains(target)
-                    && (item.Id == template.Id || workspace.Selection.Ids.Contains(item.Id)))
+                    && TemplateEventMidiTargets.Enumerate(item).Contains(target))
                 .ToArray();
             long requestedTickDelta = workspace.EventLaneEditorSettings.SnapDelta(
                 edit.TickDelta,
@@ -7625,28 +7666,41 @@ public partial class MainWindow : Window
         EventInstrument instrument = _session.Project.EventInstruments.Single(item => item.Id == instrumentId);
         foreach (SubVoice voice in instrument.SubVoices)
         {
-            ValueCurve? curve = voice.Curves.FirstOrDefault(item => item.Points.Any(point => point.Id == edit.Item.Id));
-            CurvePoint? point = curve?.Points.FirstOrDefault(item => item.Id == edit.Item.Id);
+            ValueCurve? curve = null;
+            CurvePoint? point = null;
+            foreach (ValueCurve candidate in voice.Curves)
+            {
+                if (!candidate.Points.TryGetById(edit.Item.Id, out CurvePoint? resolved)
+                    || resolved is null)
+                {
+                    continue;
+                }
+                curve = candidate;
+                point = resolved;
+                break;
+            }
             if (curve is null || point is null) continue;
             (double minimum, double maximum) = InstrumentWorkspaceViewModel.MidiValueRange(curve.Target);
-            MidoraId[] selected = curve.Points
-                .Where(candidate => candidate.Id == point.Id || workspace.Selection.Ids.Contains(candidate.Id))
-                .Select(candidate => candidate.Id)
-                .ToArray();
+            HashSet<MidoraId> requested = workspace.Selection.Ids.ToHashSet();
+            requested.Add(point.Id);
+            IReadOnlyList<CurvePoint> selectedPoints =
+                curve.Points.ResolveByIdsInCollectionOrder(requested);
+            if (selectedPoints.Count == 0) selectedPoints = [point];
+            MidoraId[] selected = selectedPoints.Select(static value => value.Id).ToArray();
             double requestedValue = Math.Round(
                 Math.Clamp(point.Value + edit.ValueDelta * (maximum - minimum), minimum, maximum),
                 MidpointRounding.AwayFromZero);
             double requestedValueDelta = requestedValue - point.Value;
-            double minimumValueDelta = selected.Max(id =>
-                minimum - curve.Points.Single(candidate => candidate.Id == id).Value);
-            double maximumValueDelta = selected.Min(id =>
-                maximum - curve.Points.Single(candidate => candidate.Id == id).Value);
+            double minimumValueDelta = minimum
+                - selectedPoints.Min(static value => value.Value);
+            double maximumValueDelta = maximum
+                - selectedPoints.Max(static value => value.Value);
             long requestedTickDelta = workspace.EditorSettings.SnapDelta(
                 edit.TickDelta,
                 checked(edit.Item.StartTick + edit.TickDelta));
             long tickDelta = Math.Max(
                 requestedTickDelta,
-                -selected.Min(id => curve.Points.Single(candidate => candidate.Id == id).Tick));
+                -selectedPoints.Min(static value => value.Tick));
             _session.Execute(ProjectDomainEditCommands.AdjustValueCurvePoints(
                 instrumentId,
                 voice.Id,
@@ -9081,7 +9135,7 @@ public partial class MainWindow : Window
                     {
                         (LogicalTrack Track, Segment Segment)? location =
                             TimelineWorkspaceViewModel.FindSegment(project, segmentId);
-                        HashSet<MidoraId> selected = ids.ToHashSet();
+                        IReadOnlySet<MidoraId> selected = workspace.Selection.IdSet;
                         if (location is null)
                         {
                             if (TimelineWorkspaceViewModel.FindMidiSegment(project, segmentId) is not { } midi)
@@ -9150,7 +9204,9 @@ public partial class MainWindow : Window
                             break;
                         }
                         MidoraId[] notes = location.Value.Segment.Notes
-                            .Where(item => selected.Contains(item.Id)).Select(item => item.Id).ToArray();
+                            .ResolveByIdsInCollectionOrder(selected)
+                            .Select(static item => item.Id)
+                            .ToArray();
                         if (notes.Length == ids.Length)
                         {
                             if (cut)
@@ -9163,10 +9219,23 @@ public partial class MainWindow : Window
                             else payload = ProjectObjectClipboard.CopyLogicalNotes(document, segmentId, notes);
                             break;
                         }
-                        LogicalParameterLane[] lanes = location.Value.Segment.ParameterLanes
-                            .Where(lane => lane.Points.Any(point => selected.Contains(point.Id))).ToArray();
-                        if (lanes.Length != 1
-                            || lanes[0].Points.Count(point => selected.Contains(point.Id)) != ids.Length)
+                        LogicalParameterLane? selectedLane = null;
+                        IReadOnlyList<CurvePoint>? selectedPoints = null;
+                        foreach (LogicalParameterLane lane in location.Value.Segment.ParameterLanes)
+                        {
+                            IReadOnlyList<CurvePoint> matches =
+                                lane.Points.ResolveByIdsInCollectionOrder(selected);
+                            if (matches.Count == 0) continue;
+                            if (selectedLane is not null)
+                            {
+                                selectedLane = null;
+                                selectedPoints = null;
+                                break;
+                            }
+                            selectedLane = lane;
+                            selectedPoints = matches;
+                        }
+                        if (selectedLane is null || selectedPoints?.Count != ids.Length)
                         {
                             throw new InvalidOperationException(
                                 "Copy or Cut may target Logical Notes or points from one Logical Parameter Lane, not a mixed selection.");
@@ -9174,12 +9243,12 @@ public partial class MainWindow : Window
                         if (cut)
                         {
                             ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutLogicalParameterLaneContent(
-                                document, segmentId, lanes[0].Id, ids);
+                                document, segmentId, selectedLane.Id, ids);
                             payload = prepared.Payload;
                             deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
                         }
                         else payload = ProjectObjectClipboard.CopyLogicalParameterLaneContent(
-                            document, segmentId, lanes[0].Id, ids);
+                            document, segmentId, selectedLane.Id, ids);
                         break;
                     }
                 case TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Conductor }:
@@ -9200,7 +9269,7 @@ public partial class MainWindow : Window
                 case InstrumentWorkspaceViewModel instrumentWorkspace when instrumentWorkspace.ObjectId is MidoraId instrumentId:
                     {
                         EventInstrument instrument = project.EventInstruments.Single(item => item.Id == instrumentId);
-                        HashSet<MidoraId> selected = ids.ToHashSet();
+                        IReadOnlySet<MidoraId> selected = workspace.Selection.IdSet;
                         if (ids.Length == 1 && instrument.SubVoices.Any(voice => voice.Id == ids[0]))
                         {
                             if (cut)
@@ -9351,27 +9420,51 @@ public partial class MainWindow : Window
                             }
                             break;
                         }
-                        SubVoice[] voices = instrument.SubVoices
-                            .Where(voice => voice.Events.Any(item => selected.Contains(item.Id))).ToArray();
-                        if (voices.Length == 1
-                            && voices[0].Events.Count(item => selected.Contains(item.Id)) == ids.Length)
+                        SubVoice? selectedVoice = null;
+                        IReadOnlyList<TemplateEvent>? selectedEvents = null;
+                        foreach (SubVoice voice in instrument.SubVoices)
+                        {
+                            IReadOnlyList<TemplateEvent> matches =
+                                voice.Events.ResolveByIdsInCollectionOrder(selected);
+                            if (matches.Count == 0) continue;
+                            if (selectedVoice is not null)
+                            {
+                                selectedVoice = null;
+                                selectedEvents = null;
+                                break;
+                            }
+                            selectedVoice = voice;
+                            selectedEvents = matches;
+                        }
+                        if (selectedVoice is not null && selectedEvents?.Count == ids.Length)
                         {
                             if (cut)
                             {
                                 ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutSubVoiceTimelineEvents(
-                                    document, instrumentId, voices[0].Id, ids);
+                                    document, instrumentId, selectedVoice.Id, ids);
                                 payload = prepared.Payload;
                                 deleteAfterWrite = prepared.DeleteAfterSuccessfulClipboardWrite;
                             }
                             else payload = ProjectObjectClipboard.CopySubVoiceTimelineEvents(
-                                document, instrumentId, voices[0].Id, ids);
+                                document, instrumentId, selectedVoice.Id, ids);
                             break;
                         }
                         foreach (SubVoice voice in instrument.SubVoices)
                         {
-                            ValueCurve? curve = voice.Curves.FirstOrDefault(
-                                candidate => candidate.Points.Any(point => selected.Contains(point.Id)));
-                            if (curve is null || curve.Points.Count(point => selected.Contains(point.Id)) != ids.Length) continue;
+                            ValueCurve? curve = null;
+                            foreach (ValueCurve candidate in voice.Curves)
+                            {
+                                IReadOnlyList<CurvePoint> matches =
+                                    candidate.Points.ResolveByIdsInCollectionOrder(selected);
+                                if (matches.Count == 0) continue;
+                                if (curve is not null || matches.Count != ids.Length)
+                                {
+                                    curve = null;
+                                    break;
+                                }
+                                curve = candidate;
+                            }
+                            if (curve is null) continue;
                             if (cut)
                             {
                                 ProjectObjectClipboardCutPreparation prepared = ProjectObjectClipboard.PrepareCutValueCurveContent(
@@ -9835,7 +9928,7 @@ public partial class MainWindow : Window
             document, payload, instrumentId, lane.SubVoiceId, curveId, cursor);
     }
 
-    private void SelectAllInFocusedScope()
+    private async void SelectAllInFocusedScope()
     {
         if (_session.ActiveWorkspace is not WorkspaceViewModel workspace
             || Keyboard.FocusedElement is not TimelineSurface surface
@@ -9843,18 +9936,156 @@ public partial class MainWindow : Window
         {
             return;
         }
-        IEnumerable<TimelineRenderItem> candidates = surface.Snapshot.EnumerateAllItems()
-            .Where(item => (item.State & TimelineItemState.HitTestDisabled) == 0);
-        if (workspace.ActiveLane is int lane
-            && (surface.Tag as string) == "ParameterLanes")
-        {
-            candidates = candidates.Where(item => item.Lane == lane);
-        }
-        MidoraId[] ids = candidates.Select(item => item.Id).Distinct().ToArray();
-        workspace.Selection.Clear();
-        foreach (MidoraId id in ids) workspace.Selection.Add(id, makePrimary: false);
-        _session.RefreshWorkspaceSelection(workspace);
+        int? lane = workspace.ActiveLane is int activeLane
+            && (surface.Tag as string) == "ParameterLanes"
+                ? activeLane
+                : null;
+        await MaterializeTimelineSelectionAsync(
+            workspace,
+            surface,
+            surface.Snapshot,
+            invert: false,
+            lane);
     }
+
+    private async Task MaterializeTimelineSelectionAsync(
+        WorkspaceViewModel workspace,
+        TimelineSurface surface,
+        TimelineRenderSnapshot snapshot,
+        bool invert,
+        int? lane)
+    {
+        long selectionRevision = workspace.Selection.Revision;
+        TimelineSelectionSnapshot current = workspace.SelectionSnapshot;
+        MidoraId? currentAnchor = workspace.Selection.Anchor;
+        if (current.Revision != selectionRevision)
+        {
+            // Selection presentation is frame-coalesced. Do not synchronously
+            // resolve a potentially paged million-item selection merely to run
+            // this command; allow the pending frame to publish it first.
+            await System.Windows.Threading.Dispatcher.Yield(DispatcherPriority.Render);
+            current = workspace.SelectionSnapshot;
+            selectionRevision = workspace.Selection.Revision;
+            currentAnchor = workspace.Selection.Anchor;
+            if (current.Revision != selectionRevision) return;
+        }
+
+        CancellationTokenSource cancellation = new();
+        CancellationTokenSource? previous = Interlocked.Exchange(
+            ref _timelineSelectionMaterialization,
+            cancellation);
+        previous?.Cancel();
+        previous?.Dispose();
+        try
+        {
+            MaterializedTimelineSelection result = await Task.Run(
+                () => BuildTimelineSelection(
+                    snapshot,
+                    current,
+                    currentAnchor,
+                    invert,
+                    lane,
+                    cancellation.Token),
+                cancellation.Token);
+            cancellation.Token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_session.ActiveWorkspace, workspace)
+                || !ReferenceEquals(surface.Snapshot, snapshot)
+                || workspace.Selection.Revision != selectionRevision)
+            {
+                return;
+            }
+            if (result.IsUnchanged) return;
+            workspace.Selection.AdoptMaterialized(
+                result.Ids,
+                result.Primary,
+                result.Anchor);
+            _session.RefreshWorkspaceSelection(workspace);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _session.SetStatusMessage(
+                $"Selection operation failed: {ex.Message}",
+                isError: true);
+        }
+        finally
+        {
+            if (ReferenceEquals(
+                    Interlocked.CompareExchange(
+                        ref _timelineSelectionMaterialization,
+                        null,
+                        cancellation),
+                    cancellation))
+            {
+                cancellation.Dispose();
+            }
+        }
+    }
+
+    private static MaterializedTimelineSelection BuildTimelineSelection(
+        TimelineRenderSnapshot snapshot,
+        TimelineSelectionSnapshot current,
+        MidoraId? currentAnchor,
+        bool invert,
+        int? lane,
+        CancellationToken cancellationToken)
+    {
+        ImmutableHashSet<MidoraId>.Builder result = invert
+            ? current.Ids.ToImmutableHashSet().ToBuilder()
+            : ImmutableHashSet.CreateBuilder<MidoraId>();
+        MidoraId? first = null;
+        int visited = 0;
+        foreach (TimelineRenderItem item in snapshot.EnumerateAllItems())
+        {
+            if ((visited++ & 4095) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+            if (item.State.HasFlag(TimelineItemState.HitTestDisabled)
+                || lane is int requiredLane && item.Lane != requiredLane)
+            {
+                continue;
+            }
+            first ??= item.Id;
+            if (invert)
+            {
+                if (!result.Remove(item.Id)) result.Add(item.Id);
+            }
+            else
+            {
+                result.Add(item.Id);
+            }
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+
+        MidoraId? primary;
+        MidoraId? anchor;
+        if (!invert)
+        {
+            primary = first;
+            anchor = first;
+        }
+        else
+        {
+            primary = current.Primary is MidoraId currentPrimary
+                && result.Contains(currentPrimary)
+                    ? currentPrimary
+                    : result.Count == 0 ? null : result.Min();
+            anchor = primary;
+        }
+        ImmutableHashSet<MidoraId> materialized = result.ToImmutable();
+        bool unchanged = current.Count == materialized.Count
+            && materialized.SetEquals(current.Ids)
+            && primary == current.Primary
+            && anchor == currentAnchor;
+        return new(materialized, primary, anchor, unchanged);
+    }
+
+    private sealed record MaterializedTimelineSelection(
+        ImmutableHashSet<MidoraId> Ids,
+        MidoraId? Primary,
+        MidoraId? Anchor,
+        bool IsUnchanged);
 
     private void DuplicateFocusedSelection()
     {
@@ -9925,7 +10156,9 @@ public partial class MainWindow : Window
                         HashSet<MidoraId> selected = ids.ToHashSet();
                         if (TimelineWorkspaceViewModel.FindSegment(project, segmentId) is { } located)
                         {
-                            LogicalNote[] notes = located.Segment.Notes.Where(item => selected.Contains(item.Id)).ToArray();
+                            LogicalNote[] notes = located.Segment.Notes
+                                .ResolveByIdsInCollectionOrder(selected)
+                                .ToArray();
                             if (notes.Length != ids.Length)
                                 throw new InvalidOperationException("Ctrl+D currently duplicates Logical Notes in the Segment note scope.");
                             long target = cursor == 0
@@ -9965,7 +10198,7 @@ public partial class MainWindow : Window
                         SubVoice voice = instrument.SubVoices.Single(value => value.Id == lane.SubVoiceId);
                         HashSet<MidoraId> requested = ids.ToHashSet();
                         TemplateEvent[] events = voice.Events
-                            .Where(value => requested.Contains(value.Id))
+                            .ResolveByIdsInCollectionOrder(requested)
                             .ToArray();
                         if (events.Length != ids.Length
                             || events.Any(value => value.Kind == TemplateEventKind.Note
@@ -10125,20 +10358,35 @@ public partial class MainWindow : Window
             return;
         }
         MidoraId[] notes = location.Value.Segment.Notes
-            .Where(item => selected.Contains(item.Id)).Select(item => item.Id).ToArray();
+            .ResolveByIdsInCollectionOrder(selected)
+            .Select(static item => item.Id)
+            .ToArray();
         if (notes.Length == ids.Length)
         {
             _session.Execute(ProjectDomainEditCommands.DeleteLogicalNotes(segmentId, notes));
             return;
         }
-        LogicalParameterLane[] lanes = location.Value.Segment.ParameterLanes
-            .Where(lane => lane.Points.Any(point => selected.Contains(point.Id))).ToArray();
-        if (lanes.Length == 1
-            && lanes[0].Points.Count(point => selected.Contains(point.Id)) == ids.Length)
+        LogicalParameterLane? selectedLane = null;
+        IReadOnlyList<CurvePoint>? selectedPoints = null;
+        foreach (LogicalParameterLane lane in location.Value.Segment.ParameterLanes)
+        {
+            IReadOnlyList<CurvePoint> matches =
+                lane.Points.ResolveByIdsInCollectionOrder(selected);
+            if (matches.Count == 0) continue;
+            if (selectedLane is not null)
+            {
+                selectedLane = null;
+                selectedPoints = null;
+                break;
+            }
+            selectedLane = lane;
+            selectedPoints = matches;
+        }
+        if (selectedLane is not null && selectedPoints?.Count == ids.Length)
         {
             _session.Execute(ProjectDomainEditCommands.DeleteLogicalParameterPoints(
                 segmentId,
-                lanes[0].Id,
+                selectedLane.Id,
                 ids));
             return;
         }
@@ -10255,9 +10503,20 @@ public partial class MainWindow : Window
         HashSet<MidoraId> selected = ids.ToHashSet();
         foreach (SubVoice candidateVoice in instrument.SubVoices)
         {
-            ValueCurve? curve = candidateVoice.Curves.FirstOrDefault(
-                item => item.Points.Any(point => selected.Contains(point.Id)));
-            if (curve is not null && curve.Points.Count(point => selected.Contains(point.Id)) == ids.Length)
+            ValueCurve? curve = null;
+            foreach (ValueCurve candidate in candidateVoice.Curves)
+            {
+                IReadOnlyList<CurvePoint> matches =
+                    candidate.Points.ResolveByIdsInCollectionOrder(selected);
+                if (matches.Count == 0) continue;
+                if (curve is not null || matches.Count != ids.Length)
+                {
+                    curve = null;
+                    break;
+                }
+                curve = candidate;
+            }
+            if (curve is not null)
             {
                 _session.Execute(ProjectDomainEditCommands.DeleteValueCurvePoints(
                     instrumentId,
@@ -10267,17 +10526,30 @@ public partial class MainWindow : Window
                 return;
             }
         }
-        SubVoice[] voices = instrument.SubVoices
-            .Where(voice => voice.Events.Any(item => selected.Contains(item.Id))).ToArray();
-        if (voices.Length != 1
-            || voices[0].Events.Count(item => selected.Contains(item.Id)) != ids.Length)
+        SubVoice? selectedVoice = null;
+        IReadOnlyList<TemplateEvent>? selectedEvents = null;
+        foreach (SubVoice voice in instrument.SubVoices)
+        {
+            IReadOnlyList<TemplateEvent> matches =
+                voice.Events.ResolveByIdsInCollectionOrder(selected);
+            if (matches.Count == 0) continue;
+            if (selectedVoice is not null)
+            {
+                selectedVoice = null;
+                selectedEvents = null;
+                break;
+            }
+            selectedVoice = voice;
+            selectedEvents = matches;
+        }
+        if (selectedVoice is null || selectedEvents?.Count != ids.Length)
         {
             throw new InvalidOperationException(
                 "A single delete gesture may target Template Events from one SubVoice only.");
         }
         _session.Execute(ProjectDomainEditCommands.DeleteTemplateEvents(
             instrumentId,
-            voices[0].Id,
+            selectedVoice.Id,
             ids));
     }
 

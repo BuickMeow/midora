@@ -77,6 +77,22 @@ public static class MidiControlChangeCatalog
 
 public static class TemplateEventMidiTargets
 {
+    public static long EncodeDiscoveryKey(MidiValueTarget target) =>
+        ((long)(int)target.Kind << 32) | (uint)target.Number;
+
+    public static bool TryDecodeDiscoveryKey(long key, out MidiValueTarget target)
+    {
+        int kindValue = unchecked((int)(key >> 32));
+        int number = unchecked((int)(uint)key);
+        if (!Enum.IsDefined((MidiValueKind)kindValue) || number < 0)
+        {
+            target = default;
+            return false;
+        }
+        target = new((MidiValueKind)kindValue, number);
+        return true;
+    }
+
     public static TemplateEventMappingTarget ToMappingTarget(MidiValueTarget target) =>
         target.Kind switch
         {
@@ -218,6 +234,10 @@ public static class TemplateEventMidiTargets
                 break;
         }
     }
+
+    public static IEnumerable<long> EnumerateDiscoveryKeys(
+        TemplateEventSnapshotValue value) =>
+        Enumerate(value).Select(EncodeDiscoveryKey);
 
     public static int GetValue(TemplateEvent value, MidiValueTarget target)
     {

@@ -515,7 +515,7 @@ public static partial class ProjectDomainEditCommands
                 segment.Track,
                 lane.ParameterId);
             ValidatePointValue(definition, value, interpolation);
-            return ResolveExactLogicalParameterPointCollisions(DeferredCreate(
+            return ResolveTargetedExactLogicalParameterPointCollisions(DeferredCreate(
                 TrackChange(segment.Track.Id),
                 owner =>
                 {
@@ -525,7 +525,8 @@ public static partial class ProjectDomainEditCommands
                 },
                 (_, point) => InsertCurvePoint(lane.Points, point),
                 (_, point) => RemoveRequired(lane.Points, point, "Logical Parameter point")),
-                lane);
+                lane,
+                [tick]);
         });
 
     public static IProjectEditCommand CreateTempo(long tick, decimal beatsPerMinute) =>
@@ -728,17 +729,38 @@ public static partial class ProjectDomainEditCommands
         LogicalTrack Track,
         EventInstrumentUsage? IndependentUsage);
 
-    private static void InsertCurvePoint(List<CurvePoint> points, CurvePoint point)
+    private static void InsertCurvePoint(CurvePointCollection points, CurvePoint point)
     {
-        if (points.Any(value => value.Id == point.Id))
+        if (points.TryGetById(point.Id, out _))
         {
             throw new InvalidOperationException(
                 "The Logical Parameter point ID is already present.");
         }
-        int index = points.FindIndex(value =>
-            value.Tick > point.Tick
-            || value.Tick == point.Tick && value.Id.CompareTo(point.Id) > 0);
-        points.Insert(index < 0 ? points.Count : index, point);
+        points.Insert(FindCurvePointInsertionIndex(points, point.Tick, point.Id), point);
+    }
+
+    private static int FindCurvePointInsertionIndex(
+        CurvePointCollection points,
+        long tick,
+        MidoraId id)
+    {
+        int low = 0;
+        int high = points.Count;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            CurvePoint candidate = points[middle];
+            if (candidate.Tick < tick
+                || candidate.Tick == tick && candidate.Id.CompareTo(id) < 0)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        return low;
     }
 
     private static void InsertConductorEvent<T>(

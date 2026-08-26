@@ -1,4 +1,6 @@
 using System.Collections;
+using System.Collections.Frozen;
+using System.Collections.Immutable;
 using System.Collections.ObjectModel;
 using System.Numerics;
 
@@ -31,6 +33,57 @@ public readonly record struct TemplateEventSnapshotValue(
     bool HasBankLsb,
     bool FollowPitchDelta);
 
+/// <summary>
+/// Immutable render/compile value for a logical-parameter or ValueCurve point page.
+/// </summary>
+public readonly record struct CurvePointSnapshotValue(
+    MidoraId Id,
+    long Tick,
+    double Value,
+    CurveInterpolation Interpolation);
+
+internal readonly record struct TimelineStartLaneKey(long Tick, int Lane);
+
+/// <summary>
+/// Raster-only, fixed-width summary of immutable timeline content. It is a
+/// conservative presentation envelope and must never be used for hit testing,
+/// selection, editing, compilation, or persistence semantics.
+/// </summary>
+public struct TimelineRasterColumnSummary
+{
+    public ulong LaneMaskLow { get; private set; }
+    public ulong LaneMaskHigh { get; private set; }
+    public double MinimumValue { get; private set; }
+    public double MaximumValue { get; private set; }
+    public int ApproximateSourceCount { get; private set; }
+    public bool HasContent => ApproximateSourceCount != 0;
+
+    public void Include(
+        ulong laneMaskLow,
+        ulong laneMaskHigh,
+        double minimumValue,
+        double maximumValue,
+        int approximateSourceCount)
+    {
+        if (approximateSourceCount <= 0) return;
+        LaneMaskLow |= laneMaskLow;
+        LaneMaskHigh |= laneMaskHigh;
+        if (ApproximateSourceCount == 0)
+        {
+            MinimumValue = minimumValue;
+            MaximumValue = maximumValue;
+        }
+        else
+        {
+            MinimumValue = Math.Min(MinimumValue, minimumValue);
+            MaximumValue = Math.Max(MaximumValue, maximumValue);
+        }
+        ApproximateSourceCount = ApproximateSourceCount > int.MaxValue - approximateSourceCount
+            ? int.MaxValue
+            : ApproximateSourceCount + approximateSourceCount;
+    }
+}
+
 public sealed class LogicalNoteQuerySnapshot
 {
     private readonly PagedTimelineValueSnapshot<LogicalNoteSnapshotValue> _values;
@@ -52,6 +105,12 @@ public sealed class LogicalNoteQuerySnapshot
 
     public IEnumerable<LogicalNoteSnapshotValue> EnumerateAll() => _values.EnumerateAll();
 
+    public IReadOnlyList<LogicalNoteSnapshotValue> ResolveByIds(
+        IReadOnlyCollection<MidoraId> ids) => _values.ResolveByIds(ids);
+
+    internal IReadOnlyList<LogicalNoteSnapshotValue> QueryStartKeys(
+        IReadOnlySet<TimelineStartLaneKey> keys) => _values.QueryExactStarts(keys);
+
     public ulong GetRangeFingerprint(
         long startTick,
         long endTick,
@@ -61,6 +120,26 @@ public sealed class LogicalNoteQuerySnapshot
 
     public void AccumulateStartColumns(long extent, Span<byte> destination) =>
         _values.AccumulateStartColumns(extent, destination);
+
+    public int AccumulateRasterColumns(
+        long startTick,
+        long endTick,
+        int minimumNote,
+        int maximumNote,
+        Span<TimelineRasterColumnSummary> destination) =>
+        _values.AccumulateRasterColumns(
+            startTick,
+            endTick,
+            minimumNote,
+            maximumNote,
+            destination);
+
+    internal int CountCandidateSpatialBlocks(
+        long startTick,
+        long endTick,
+        int minimumNote = 0,
+        int maximumNote = 127) =>
+        _values.CountCandidateSpatialBlocks(startTick, endTick, minimumNote, maximumNote);
 }
 
 public sealed class TemplateEventQuerySnapshot
@@ -92,6 +171,19 @@ public sealed class TemplateEventQuerySnapshot
             .Where(static value => value.Kind != TemplateEventKind.Note);
 
     public IEnumerable<TemplateEventSnapshotValue> EnumerateAll() => _values.EnumerateAll();
+
+    public IReadOnlyList<TemplateEventSnapshotValue> ResolveByIds(
+        IReadOnlyCollection<MidoraId> ids) => _values.ResolveByIds(ids);
+
+    internal IReadOnlyList<TemplateEventSnapshotValue> QueryNoteStartKeys(
+        IReadOnlySet<TimelineStartLaneKey> keys) =>
+        _values.QueryExactStarts(keys, NoteCategory);
+
+    internal IReadOnlyList<TemplateEventSnapshotValue> QueryEventTicks(
+        IReadOnlySet<long> ticks) =>
+        _values.QueryExactTicks(ticks, int.MinValue, int.MaxValue, EventCategory);
+
+    public IReadOnlyList<long> DiscoveryKeys => _values.DiscoveryKeys;
 
     public ulong GetNoteRangeFingerprint(
         long startTick,
@@ -133,6 +225,71 @@ public sealed class TemplateEventQuerySnapshot
         }
     }
 
+    public int AccumulateNoteRasterColumns(
+        long startTick,
+        long endTick,
+        int minimumNote,
+        int maximumNote,
+        Span<TimelineRasterColumnSummary> destination) =>
+        _values.AccumulateRasterColumns(
+            startTick,
+            endTick,
+            minimumNote,
+            maximumNote,
+            destination,
+            NoteCategory);
+
+    public int AccumulateEventRasterColumns(
+        long startTick,
+        long endTick,
+        Span<TimelineRasterColumnSummary> destination) =>
+        _values.AccumulateRasterColumns(
+            startTick,
+            endTick,
+            int.MinValue,
+            int.MaxValue,
+            destination,
+            EventCategory);
+
+}
+
+public sealed class CurvePointQuerySnapshot
+{
+    private readonly PagedTimelineValueSnapshot<CurvePointSnapshotValue> _values;
+
+    internal CurvePointQuerySnapshot(PagedTimelineValueSnapshot<CurvePointSnapshotValue> values) =>
+        _values = values;
+
+    public int Count => _values.Count;
+    public long Generation => _values.Generation;
+    public long MaximumTick => Math.Max(0, _values.MaximumEndTick - 1);
+    public ulong ContentFingerprint => _values.ContentFingerprint;
+
+    public IEnumerable<CurvePointSnapshotValue> QueryValues(long startTick, long endTick) =>
+        _values.Query(startTick, endTick, 0, 0);
+
+    public IEnumerable<CurvePointSnapshotValue> EnumerateAll() => _values.EnumerateAll();
+
+    public IReadOnlyList<CurvePointSnapshotValue> ResolveByIds(
+        IReadOnlyCollection<MidoraId> ids) => _values.ResolveByIds(ids);
+
+    internal IReadOnlyList<CurvePointSnapshotValue> QueryTicks(IReadOnlySet<long> ticks) =>
+        _values.QueryExactTicks(ticks, 0, 0);
+
+    public ulong GetRangeFingerprint(long startTick, long endTick) =>
+        _values.GetRangeFingerprint(startTick, endTick, 0, 0);
+
+    public void AccumulateStartColumns(long extent, Span<byte> destination) =>
+        _values.AccumulateStartColumns(extent, destination);
+
+    public int AccumulateRasterColumns(
+        long startTick,
+        long endTick,
+        Span<TimelineRasterColumnSummary> destination) =>
+        _values.AccumulateRasterColumns(startTick, endTick, 0, 0, destination);
+
+    internal int CountCandidateSpatialBlocks(long startTick, long endTick) =>
+        _values.CountCandidateSpatialBlocks(startTick, endTick, 0, 0);
 }
 
 public sealed class LogicalNoteCollection : Collection<LogicalNote>
@@ -158,6 +315,9 @@ public sealed class LogicalNoteCollection : Collection<LogicalNote>
         foreach (LogicalNote value in values) Add(value);
     }
 
+    public void InsertRange(int index, IReadOnlyList<LogicalNote> values) =>
+        _store.InsertRange(index, values);
+
     public int RemoveRange(IReadOnlyCollection<LogicalNote> values)
     {
         ArgumentNullException.ThrowIfNull(values);
@@ -167,6 +327,9 @@ public sealed class LogicalNoteCollection : Collection<LogicalNote>
     internal Action RemoveRangeForExactCollision(IReadOnlyCollection<LogicalNote> values) =>
         _store.RemoveRangeForExactCollision(values);
 
+    internal Action RemoveRangeWithUndo(IReadOnlyCollection<LogicalNote> values) =>
+        _store.RemoveRangeForExactCollision(values);
+
     public IDisposable BeginBatchChange() => _store.BeginBatchChange();
 
     public LogicalNoteQuerySnapshot CreateQuerySnapshot() =>
@@ -174,6 +337,14 @@ public sealed class LogicalNoteCollection : Collection<LogicalNote>
 
     public bool TryGetById(MidoraId id, out LogicalNote? value) =>
         _store.TryGetById(id, out value);
+
+    public IReadOnlyList<LogicalNote> ResolveByIdsInCollectionOrder(
+        IReadOnlyCollection<MidoraId> ids) =>
+        _store.ResolveByIdsInCollectionOrder(ids);
+
+    public IReadOnlyList<(int Index, LogicalNote Value)> ResolveByIdsWithIndicesInCollectionOrder(
+        IReadOnlyCollection<MidoraId> ids) =>
+        _store.ResolveByIdsWithIndicesInCollectionOrder(ids);
 
     private static PagedTimelineObjectList<LogicalNote, LogicalNoteSnapshotValue> CreateStore() =>
         new(
@@ -188,10 +359,92 @@ public sealed class LogicalNoteCollection : Collection<LogicalNote>
             static value => SaturatingAdd(value.StartTick, Math.Max(1, value.LengthTicks)),
             static value => value.Note,
             static value => PagedTimelineFingerprint.ForLogicalNote(value),
-            static (value, sink) => value.SetChangeSink(sink));
+            static (value, sink) => value.SetChangeSink(sink),
+            getRasterValue: static value => value.Velocity / 127d);
 
     private static long SaturatingAdd(long left, long right) =>
         right <= 0 || left > long.MaxValue - right ? long.MaxValue : left + right;
+}
+
+public sealed class CurvePointCollection : Collection<CurvePoint>, IReadOnlyList<CurvePoint>
+{
+    private readonly PagedTimelineObjectList<CurvePoint, CurvePointSnapshotValue> _store;
+
+    internal CurvePointCollection()
+        : this(CreateStore())
+    {
+    }
+
+    private CurvePointCollection(
+        PagedTimelineObjectList<CurvePoint, CurvePointSnapshotValue> store)
+        : base(store) => _store = store;
+
+    public long Generation => _store.Generation;
+    public int PageCount => _store.PageCount;
+
+    public void AddRange(IEnumerable<CurvePoint> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        using IDisposable batch = _store.BeginBatchChange();
+        foreach (CurvePoint value in values) Add(value);
+    }
+
+    public void InsertRange(int index, IReadOnlyList<CurvePoint> values) =>
+        _store.InsertRange(index, values);
+
+    public int RemoveRange(IReadOnlyCollection<CurvePoint> values) =>
+        _store.RemoveRange(values);
+
+    internal Action RemoveRangeWithUndo(IReadOnlyCollection<CurvePoint> values) =>
+        _store.RemoveRangeForExactCollision(values);
+
+    public int RemoveAll(Predicate<CurvePoint> match)
+    {
+        ArgumentNullException.ThrowIfNull(match);
+        CurvePoint[] removed = this.Where(value => match(value)).ToArray();
+        return _store.RemoveRange(removed);
+    }
+
+    public void Reverse()
+    {
+        if (Count < 2) return;
+        CurvePoint[] values = this.ToArray();
+        Array.Reverse(values);
+        using IDisposable batch = _store.BeginBatchChange();
+        Clear();
+        _store.InsertRange(0, values);
+    }
+
+    public void ReplaceRange(
+        IReadOnlyList<CurvePoint> expected,
+        IReadOnlyList<CurvePoint> replacement) =>
+        _store.ReplaceRange(expected, replacement);
+
+    public IDisposable BeginBatchChange() => _store.BeginBatchChange();
+
+    public CurvePointQuerySnapshot CreateQuerySnapshot() => new(_store.CreateSnapshot());
+
+    public bool TryGetById(MidoraId id, out CurvePoint? value) =>
+        _store.TryGetById(id, out value);
+
+    public IReadOnlyList<CurvePoint> ResolveByIdsInCollectionOrder(
+        IReadOnlyCollection<MidoraId> ids) =>
+        _store.ResolveByIdsInCollectionOrder(ids);
+
+    public IReadOnlyList<(int Index, CurvePoint Value)> ResolveByIdsWithIndicesInCollectionOrder(
+        IReadOnlyCollection<MidoraId> ids) =>
+        _store.ResolveByIdsWithIndicesInCollectionOrder(ids);
+
+    private static PagedTimelineObjectList<CurvePoint, CurvePointSnapshotValue> CreateStore() =>
+        new(
+            static value => new(value.Id, value.Tick, value.Value, value.Interpolation),
+            static value => value.Id,
+            static value => value.Tick,
+            static value => value.Tick == long.MaxValue ? long.MaxValue : value.Tick + 1,
+            static _ => 0,
+            static value => PagedTimelineFingerprint.ForCurvePoint(value),
+            static (_, _) => { },
+            getRasterValue: static value => value.Value);
 }
 
 internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
@@ -206,15 +459,49 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
     private readonly Func<TValue, int> _getLane;
     private readonly Func<TValue, ulong> _getFingerprint;
     private readonly Func<TValue, ulong>? _getCategoryMask;
+    private readonly Func<TValue, double>? _getRasterValue;
+    private readonly Func<TValue, IEnumerable<long>>? _getDiscoveryKeys;
     private readonly Action<T, Action<T>?> _setChangeSink;
     private readonly List<Page> _pages = [];
+    // Membership is queried while publishing dirty snapshots.  A linear
+    // List.Contains here made a first snapshot after a large batch O(P^2).
+    private readonly HashSet<Page> _livePages = [];
     private readonly Dictionary<MidoraId, Entry> _entries = [];
     private Dictionary<T, int>? _duplicateReferenceCounts;
     private readonly HashSet<Page> _dirtyPages = [];
+    // Snapshot publication updates the persistent spatial root and each page's
+    // immutable published value. UI and compilation readers may request the
+    // same revision concurrently; serialize that publication so neither
+    // reader can observe a partially replaced root or mutate HashSet state
+    // concurrently with the other.
+    private readonly object _snapshotPublicationSync = new();
+    private PagedTimelineSpatialBlockIndex<TValue> _spatialIndex =
+        PagedTimelineSpatialBlockIndex<TValue>.Empty;
+    private readonly Dictionary<long, int> _discoveryKeyPageCounts = [];
+    private int[] _pageStarts = [0];
+    private Dictionary<Page, int> _pageIndices = [];
+    private bool _pageDirectoryDirty;
     private int _count;
     private int _batchDepth;
     private bool _batchChanged;
     private long _generation;
+    private PersistentTimelineSequence<TValue>? _publishedSequence;
+    private readonly Dictionary<PersistentTimelineSequence<TValue>.Leaf, PagedTimelineValuePage<TValue>>
+        _publishedLeafPages = [];
+    private FrozenDictionary<MidoraId, TValue>? _publishedBaseById;
+    private PersistentTimelineIdDeltaMap<TValue> _publishedIdDelta =
+        PersistentTimelineIdDeltaMap<TValue>.Empty;
+    private PersistentTimelineIdDeltaMap<TValue> _spatialBaseDelta =
+        PersistentTimelineIdDeltaMap<TValue>.Empty;
+    private PersistentTimelineIdDeltaMap<TValue> _spatialValueOverlay =
+        PersistentTimelineIdDeltaMap<TValue>.Empty;
+    private readonly Dictionary<PersistentTimelineIdDeltaMap<TValue>.Bucket,
+        PagedTimelineValuePage<TValue>> _spatialOverlayPages = [];
+    private PagedTimelineSpatialBlockIndex<TValue> _spatialOverlayIndex =
+        PagedTimelineSpatialBlockIndex<TValue>.Empty;
+    private readonly HashSet<MidoraId> _pendingPublishedValueIds = [];
+    private PagedTimelineValueSnapshot<TValue>? _publishedSnapshot;
+    private long _publishedSnapshotGeneration = long.MinValue;
 
     public PagedTimelineObjectList(
         Func<T, TValue> toValue,
@@ -224,7 +511,9 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         Func<TValue, int> getLane,
         Func<TValue, ulong> getFingerprint,
         Action<T, Action<T>?> setChangeSink,
-        Func<TValue, ulong>? getCategoryMask = null)
+        Func<TValue, ulong>? getCategoryMask = null,
+        Func<TValue, double>? getRasterValue = null,
+        Func<TValue, IEnumerable<long>>? getDiscoveryKeys = null)
     {
         _toValue = toValue ?? throw new ArgumentNullException(nameof(toValue));
         _getId = getId ?? throw new ArgumentNullException(nameof(getId));
@@ -234,6 +523,8 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         _getFingerprint = getFingerprint ?? throw new ArgumentNullException(nameof(getFingerprint));
         _setChangeSink = setChangeSink ?? throw new ArgumentNullException(nameof(setChangeSink));
         _getCategoryMask = getCategoryMask;
+        _getRasterValue = getRasterValue;
+        _getDiscoveryKeys = getDiscoveryKeys;
     }
 
     public int Count => _count;
@@ -255,9 +546,12 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
             T old = page.Items[localIndex];
             if (ReferenceEquals(old, value)) return;
             EnsureInsertable(value, old);
+            PublishPendingValueChanges();
             page.Items[localIndex] = value;
             Detach(old);
-            Attach(value, page);
+            Attach(value, page, localIndex);
+            ApplyPublishedMutation(_publishedSequence?.ReplaceBatch(
+                new Dictionary<int, TValue> { [index] = _toValue(value) }));
             MarkChanged(page);
         }
     }
@@ -265,28 +559,41 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
     public void Add(T item)
     {
         ArgumentNullException.ThrowIfNull(item);
+        EnsureInsertable(item);
+        PublishPendingValueChanges();
+        int publishedIndex = _count;
         Page page = _pages.Count == 0 || _pages[^1].Items.Count >= DefaultPageCapacity
             ? AddPage()
             : _pages[^1];
-        EnsureInsertable(item);
         page.Items.Add(item);
         _count++;
-        Attach(item, page);
+        InvalidatePageDirectory();
+        Attach(item, page, page.Items.Count - 1);
+        ApplyPublishedMutation(_publishedSequence?.InsertRange(
+            publishedIndex,
+            [_toValue(item)]));
         MarkChanged(page);
     }
 
     public void Clear()
     {
         if (_count == 0) return;
+        PublishPendingValueChanges();
         foreach (Page page in _pages)
         {
             foreach (T item in page.Items) _setChangeSink(item, null);
         }
         _pages.Clear();
+        _livePages.Clear();
         _entries.Clear();
         _duplicateReferenceCounts?.Clear();
         _dirtyPages.Clear();
+        _spatialIndex = PagedTimelineSpatialBlockIndex<TValue>.Empty;
+        _discoveryKeyPageCounts.Clear();
         _count = 0;
+        InvalidatePageDirectory();
+        if (_publishedSequence is not null)
+            ResetPublishedStateToEmpty();
         Touch();
     }
 
@@ -320,14 +627,12 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         {
             return -1;
         }
-        int result = 0;
-        foreach (Page page in _pages)
-        {
-            if (ReferenceEquals(page, entry.Page))
-                return checked(result + page.Items.IndexOf(item));
-            result = checked(result + page.Items.Count);
-        }
-        return -1;
+        EnsurePageDirectory();
+        if (!_pageIndices.TryGetValue(entry.Page, out int pageIndex)) return -1;
+        int localIndex = entry.LocalIndex;
+        if (localIndex < 0)
+            localIndex = entry.Page.Items.FindIndex(value => ReferenceEquals(value, item));
+        return localIndex < 0 ? -1 : checked(_pageStarts[pageIndex] + localIndex);
     }
 
     public void Insert(int index, T item)
@@ -340,12 +645,105 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
             return;
         }
         EnsureInsertable(item);
+        PublishPendingValueChanges();
         (Page page, int localIndex) = Locate(index, allowEnd: false);
         page.Items.Insert(localIndex, item);
         _count++;
-        Attach(item, page);
+        InvalidatePageDirectory();
+        ReindexPage(page, localIndex + 1);
+        Attach(item, page, localIndex);
+        ApplyPublishedMutation(_publishedSequence?.InsertRange(index, [_toValue(item)]));
         if (page.Items.Count > DefaultPageCapacity) Split(page);
         else MarkChanged(page);
+    }
+
+    public void InsertRange(int index, IReadOnlyList<T> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if ((uint)index > (uint)_count) throw new ArgumentOutOfRangeException(nameof(index));
+        if (values.Count == 0) return;
+        Dictionary<MidoraId, T> batchIds = new(values.Count);
+        foreach (T value in values)
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            EnsureInsertable(value);
+            MidoraId id = _getId(_toValue(value));
+            if (batchIds.TryGetValue(id, out T? existing)
+                && !ReferenceEquals(existing, value))
+            {
+                throw new InvalidOperationException(
+                    "A paged timeline insertion cannot contain distinct objects with duplicate Stable IDs.");
+            }
+            batchIds.TryAdd(id, value);
+        }
+
+        PublishPendingValueChanges();
+        TValue[] publishedValues = _publishedSequence is null
+            ? []
+            : values.Select(_toValue).ToArray();
+
+        using IDisposable batch = BeginBatchChange();
+        if (index == _count)
+        {
+            int valueIndex = 0;
+            Page? page = _pages.Count == 0 ? null : _pages[^1];
+            while (valueIndex < values.Count)
+            {
+                if (page is null || page.Items.Count >= DefaultPageCapacity)
+                    page = AddPage();
+                int take = Math.Min(
+                    DefaultPageCapacity - page.Items.Count,
+                    values.Count - valueIndex);
+                for (int offset = 0; offset < take; offset++)
+                {
+                    T value = values[valueIndex++];
+                    page.Items.Add(value);
+                    Attach(value, page, page.Items.Count - 1);
+                }
+                _count += take;
+                InvalidatePageDirectory();
+                MarkChanged(page);
+            }
+            ApplyPublishedMutation(_publishedSequence?.InsertRange(index, publishedValues));
+            return;
+        }
+
+        (Page target, int localIndex) = Locate(index, allowEnd: false);
+        EnsurePageDirectory();
+        int targetPageIndex = _pageIndices[target];
+        List<(T Value, bool Inserted)> combined = new(target.Items.Count + values.Count);
+        for (int existing = 0; existing < localIndex; existing++)
+            combined.Add((target.Items[existing], false));
+        foreach (T value in values) combined.Add((value, true));
+        for (int existing = localIndex; existing < target.Items.Count; existing++)
+            combined.Add((target.Items[existing], false));
+
+        foreach (T existing in target.Items) Detach(existing);
+        target.Items.Clear();
+        int combinedIndex = 0;
+        int pageOffset = 0;
+        while (combinedIndex < combined.Count)
+        {
+            Page page = pageOffset++ == 0 ? target : new Page();
+            if (!ReferenceEquals(page, target))
+            {
+                _pages.Insert(targetPageIndex + pageOffset - 1, page);
+                _livePages.Add(page);
+                InvalidatePageDirectory();
+            }
+            int take = Math.Min(DefaultPageCapacity, combined.Count - combinedIndex);
+            for (int offset = 0; offset < take; offset++)
+            {
+                T value = combined[combinedIndex++].Value;
+                page.Items.Add(value);
+                Attach(value, page, page.Items.Count - 1);
+            }
+            MarkChanged(page);
+        }
+        _count += values.Count;
+        InvalidatePageDirectory();
+        ApplyPublishedMutation(_publishedSequence?.InsertRange(index, publishedValues));
+        Touch();
     }
 
     public bool Remove(T item)
@@ -356,14 +754,24 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         {
             return false;
         }
-        int index = entry.Page.Items.IndexOf(item);
+        int index = entry.LocalIndex;
+        if (index < 0)
+            index = entry.Page.Items.FindIndex(value => ReferenceEquals(value, item));
         if (index < 0) return false;
+        EnsurePageDirectory();
+        int publishedIndex = checked(_pageStarts[_pageIndices[entry.Page]] + index);
+        PublishPendingValueChanges();
         entry.Page.Items.RemoveAt(index);
+        ReindexPage(entry.Page, index);
         _count--;
+        InvalidatePageDirectory();
         Detach(item);
+        ApplyPublishedMutation(_publishedSequence?.RemoveIndices([publishedIndex]));
         if (entry.Page.Items.Count == 0)
         {
+            RetirePage(entry.Page);
             _pages.Remove(entry.Page);
+            _livePages.Remove(entry.Page);
             _dirtyPages.Remove(entry.Page);
             Touch();
         }
@@ -377,12 +785,41 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
     public int RemoveRange(IReadOnlyCollection<T> values)
     {
         if (values.Count == 0 || _count == 0) return 0;
-        HashSet<T> requested = new(values, ReferenceEqualityComparer.Instance);
-        int removed = 0;
-        using IDisposable batch = BeginBatchChange();
-        for (int pageIndex = _pages.Count - 1; pageIndex >= 0; pageIndex--)
+        Dictionary<Page, HashSet<T>> requestedByPage = [];
+        foreach (T value in values)
         {
-            Page page = _pages[pageIndex];
+            if (!_entries.TryGetValue(_getId(_toValue(value)), out Entry? entry)
+                || !ReferenceEquals(entry.Item, value))
+            {
+                continue;
+            }
+            if (!requestedByPage.TryGetValue(entry.Page, out HashSet<T>? requested))
+            {
+                requested = new(ReferenceEqualityComparer.Instance);
+                requestedByPage.Add(entry.Page, requested);
+            }
+            requested.Add(value);
+        }
+        PublishPendingValueChanges();
+        int[] publishedIndices = [];
+        if (_publishedSequence is not null)
+        {
+            EnsurePageDirectory();
+            publishedIndices = requestedByPage
+                .SelectMany(pair => pair.Key.Items.Select((item, localIndex) =>
+                    pair.Value.Contains(item)
+                        ? checked(_pageStarts[_pageIndices[pair.Key]] + localIndex)
+                        : -1))
+                .Where(static index => index >= 0)
+                .Order()
+                .ToArray();
+        }
+        int removed = 0;
+        HashSet<Page>? emptyPages = null;
+        using IDisposable batch = BeginBatchChange();
+        foreach (Page page in requestedByPage.Keys)
+        {
+            HashSet<T> requested = requestedByPage[page];
             List<T>? removedFromPage = null;
             int write = 0;
             for (int read = 0; read < page.Items.Count; read++)
@@ -395,6 +832,11 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
                     continue;
                 }
                 if (write != read) page.Items[write] = item;
+                if (_entries.TryGetValue(_getId(_toValue(item)), out Entry? retainedEntry)
+                    && ReferenceEquals(retainedEntry.Item, item))
+                {
+                    retainedEntry.LocalIndex = write;
+                }
                 write++;
             }
             if (write == page.Items.Count) continue;
@@ -405,7 +847,9 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
             }
             if (page.Items.Count == 0)
             {
-                _pages.RemoveAt(pageIndex);
+                RetirePage(page);
+                (emptyPages ??= []).Add(page);
+                _livePages.Remove(page);
                 _dirtyPages.Remove(page);
             }
             else
@@ -415,116 +859,180 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         }
         if (removed != 0)
         {
+            if (emptyPages is not null)
+                _pages.RemoveAll(emptyPages.Contains);
             _count -= removed;
+            InvalidatePageDirectory();
+            ApplyPublishedMutation(_publishedSequence?.RemoveIndices(publishedIndices));
             Touch();
         }
         return removed;
+    }
+
+    public void ReplaceRange(IReadOnlyList<T> expected, IReadOnlyList<T> replacement)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        ArgumentNullException.ThrowIfNull(replacement);
+        if (expected.Count != replacement.Count)
+            throw new ArgumentException("Paged timeline replacement lengths must match.", nameof(replacement));
+        if (expected.Count == 0) return;
+
+        Dictionary<MidoraId, (T Expected, T Replacement)> changes = new(expected.Count);
+        Dictionary<Page, Dictionary<MidoraId, (T Expected, T Replacement)>> changesByPage = [];
+        for (int index = 0; index < expected.Count; index++)
+        {
+            T oldValue = expected[index] ?? throw new ArgumentNullException(nameof(expected));
+            T newValue = replacement[index] ?? throw new ArgumentNullException(nameof(replacement));
+            MidoraId id = _getId(_toValue(oldValue));
+            if (id != _getId(_toValue(newValue)))
+                throw new InvalidOperationException("A paged timeline replacement must preserve Stable ID.");
+            if (!changes.TryAdd(id, (oldValue, newValue)))
+                throw new InvalidOperationException("A paged timeline replacement contains duplicate Stable IDs.");
+            if (!_entries.TryGetValue(id, out Entry? entry)
+                || !ReferenceEquals(entry.Item, oldValue))
+            {
+                throw new InvalidOperationException("A paged timeline replacement is no longer fully present.");
+            }
+            if (_duplicateReferenceCounts?.ContainsKey(oldValue) == true)
+                throw new InvalidOperationException("A duplicate paged timeline reference cannot be batch-replaced.");
+            if (!changesByPage.TryGetValue(entry.Page, out var pageChanges))
+            {
+                pageChanges = [];
+                changesByPage.Add(entry.Page, pageChanges);
+            }
+            pageChanges.Add(id, (oldValue, newValue));
+        }
+
+        PublishPendingValueChanges();
+        Dictionary<int, TValue>? publishedReplacements = null;
+        if (_publishedSequence is not null)
+        {
+            EnsurePageDirectory();
+            publishedReplacements = new(expected.Count);
+            foreach ((Page page, var pageChanges) in changesByPage)
+            {
+                int pageStart = _pageStarts[_pageIndices[page]];
+                for (int localIndex = 0; localIndex < page.Items.Count; localIndex++)
+                {
+                    T current = page.Items[localIndex];
+                    if (pageChanges.TryGetValue(_getId(_toValue(current)), out var change))
+                        publishedReplacements.Add(
+                            checked(pageStart + localIndex),
+                            _toValue(change.Replacement));
+                }
+            }
+        }
+
+        int replaced = 0;
+        using IDisposable batch = BeginBatchChange();
+        foreach ((Page page, var pageChanges) in changesByPage)
+        {
+            bool pageChanged = false;
+            for (int index = 0; index < page.Items.Count; index++)
+            {
+                T current = page.Items[index];
+                MidoraId id = _getId(_toValue(current));
+                if (!pageChanges.TryGetValue(id, out var change)) continue;
+                if (!ReferenceEquals(current, change.Expected))
+                    throw new InvalidOperationException("A paged timeline value changed before batch replacement.");
+                if (ReferenceEquals(current, change.Replacement))
+                {
+                    replaced++;
+                    continue;
+                }
+                EnsureInsertable(change.Replacement, current);
+                page.Items[index] = change.Replacement;
+                Detach(current);
+                Attach(change.Replacement, page, index);
+                pageChanged = true;
+                replaced++;
+            }
+            if (pageChanged) MarkChanged(page);
+        }
+        if (replaced != changes.Count)
+            throw new InvalidOperationException("A paged timeline replacement is no longer fully present.");
+        ApplyPublishedMutation(publishedReplacements is null
+            ? null
+            : _publishedSequence!.ReplaceBatch(publishedReplacements));
     }
 
     public Action RemoveRangeForExactCollision(IReadOnlyCollection<T> values)
     {
         ArgumentNullException.ThrowIfNull(values);
         if (values.Count == 0) return static () => { };
-        HashSet<T> requested = new(values, ReferenceEqualityComparer.Instance);
-        if (requested.Count != values.Count)
+        HashSet<T> distinct = new(values, ReferenceEqualityComparer.Instance);
+        if (distinct.Count != values.Count)
             throw new ArgumentException("Exact-collision values must be distinct.", nameof(values));
 
-        List<CollisionPageRemoval> removals = [];
-        for (int pageIndex = 0; pageIndex < _pages.Count; pageIndex++)
+        Dictionary<Page, HashSet<T>> requestedByPage = [];
+        foreach (T value in distinct)
         {
-            Page page = _pages[pageIndex];
-            List<(int Index, T Value)> matches = [];
+            if (!_entries.TryGetValue(_getId(_toValue(value)), out Entry? entry)
+                || !ReferenceEquals(entry.Item, value))
+            {
+                throw new InvalidOperationException(
+                    "A conflicting paged timeline value is no longer present.");
+            }
+            if (_duplicateReferenceCounts?.ContainsKey(value) == true)
+                throw new InvalidOperationException(
+                    "A duplicate paged timeline reference cannot be removed exactly.");
+            if (!requestedByPage.TryGetValue(entry.Page, out HashSet<T>? pageValues))
+            {
+                pageValues = new(ReferenceEqualityComparer.Instance);
+                requestedByPage.Add(entry.Page, pageValues);
+            }
+            pageValues.Add(value);
+        }
+
+        EnsurePageDirectory();
+        List<CollisionRemoval> removals = [];
+        foreach ((Page page, HashSet<T> requested) in requestedByPage)
+        {
+            List<CollisionRemoval> matches = [];
             for (int localIndex = 0; localIndex < page.Items.Count; localIndex++)
             {
                 T value = page.Items[localIndex];
-                if (requested.Remove(value)) matches.Add((localIndex, value));
+                if (requested.Contains(value))
+                {
+                    matches.Add(new(
+                        checked(_pageStarts[_pageIndices[page]] + localIndex),
+                        value));
+                }
             }
-            if (matches.Count != 0) removals.Add(new(page, pageIndex, matches));
+            if (matches.Count != requested.Count)
+                throw new InvalidOperationException(
+                    "A conflicting paged timeline value is no longer present.");
+            removals.AddRange(matches);
         }
-        if (requested.Count != 0)
-            throw new InvalidOperationException("A conflicting paged timeline value is no longer present.");
+        removals.Sort(static (left, right) => left.OriginalIndex.CompareTo(right.OriginalIndex));
 
-        int removedCount = 0;
-        using (BeginBatchChange())
-        {
-            foreach (CollisionPageRemoval removal in removals)
-            {
-                HashSet<T> removed = new(
-                    removal.Values.Select(static value => value.Value),
-                    ReferenceEqualityComparer.Instance);
-                List<T>? removedFromPage = null;
-                int write = 0;
-                for (int read = 0; read < removal.Page.Items.Count; read++)
-                {
-                    T value = removal.Page.Items[read];
-                    if (removed.Contains(value))
-                    {
-                        (removedFromPage ??= []).Add(value);
-                        removedCount++;
-                        continue;
-                    }
-                    if (write != read) removal.Page.Items[write] = value;
-                    write++;
-                }
-                removal.Page.Items.RemoveRange(write, removal.Page.Items.Count - write);
-                if (removedFromPage is not null)
-                {
-                    foreach (T value in removedFromPage) Detach(value);
-                }
-                if (removal.Page.Items.Count == 0)
-                {
-                    _pages.Remove(removal.Page);
-                    _dirtyPages.Remove(removal.Page);
-                    Touch();
-                }
-                else
-                {
-                    MarkChanged(removal.Page);
-                }
-            }
-            _count -= removedCount;
-            Touch();
-        }
+        int removedCount = RemoveRange(removals.Select(static value => value.Value).ToArray());
+        if (removedCount != removals.Count)
+            throw new InvalidOperationException("A conflicting paged timeline value changed before removal.");
 
         return () =>
         {
-            foreach (CollisionPageRemoval removal in removals)
-            {
-                if (removal.Values.Any(value => _entries.ContainsKey(_getId(_toValue(value.Value)))))
+            foreach (CollisionRemoval removal in removals)
+                if (_entries.ContainsKey(_getId(_toValue(removal.Value))))
                     throw new InvalidOperationException("A conflicting paged timeline value is already restored.");
-            }
+
             using IDisposable batch = BeginBatchChange();
-            foreach (CollisionPageRemoval removal in removals.OrderBy(static value => value.OriginalPageIndex))
+            int removalIndex = 0;
+            while (removalIndex < removals.Count)
             {
-                if (!_pages.Contains(removal.Page))
-                    _pages.Insert(Math.Min(removal.OriginalPageIndex, _pages.Count), removal.Page);
-                int finalCount = checked(removal.Page.Items.Count + removal.Values.Count);
-                List<T> restored = new(finalCount);
-                int liveIndex = 0;
-                int removedIndex = 0;
-                for (int index = 0; index < finalCount; index++)
+                int runStart = removals[removalIndex].OriginalIndex;
+                List<T> run = [removals[removalIndex].Value];
+                removalIndex++;
+                while (removalIndex < removals.Count
+                    && removals[removalIndex].OriginalIndex == runStart + run.Count)
                 {
-                    if (removedIndex < removal.Values.Count
-                        && removal.Values[removedIndex].Index == index)
-                    {
-                        restored.Add(removal.Values[removedIndex++].Value);
-                    }
-                    else
-                    {
-                        if ((uint)liveIndex >= (uint)removal.Page.Items.Count)
-                            throw new InvalidOperationException("A paged timeline page changed before restoration.");
-                        restored.Add(removal.Page.Items[liveIndex++]);
-                    }
+                    run.Add(removals[removalIndex++].Value);
                 }
-                if (removedIndex != removal.Values.Count || liveIndex != removal.Page.Items.Count)
-                    throw new InvalidOperationException("A paged timeline page cannot be restored exactly.");
-                removal.Page.Items.Clear();
-                removal.Page.Items.AddRange(restored);
-                foreach ((int _, T value) in removal.Values) Attach(value, removal.Page);
-                MarkChanged(removal.Page);
+                if ((uint)runStart > (uint)_count)
+                    throw new InvalidOperationException(
+                        "A paged timeline sequence changed before exact restoration.");
+                InsertRange(runStart, run);
             }
-            _count += removedCount;
-            Touch();
         };
     }
 
@@ -551,38 +1059,501 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         return false;
     }
 
+    public IReadOnlyList<T> ResolveByIdsInCollectionOrder(IReadOnlyCollection<MidoraId> ids)
+        => ResolveByIdsWithIndicesInCollectionOrder(ids)
+            .Select(static match => match.Value)
+            .ToArray();
+
+    public IReadOnlyList<(int Index, T Value)> ResolveByIdsWithIndicesInCollectionOrder(
+        IReadOnlyCollection<MidoraId> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        if (ids.Count == 0) return [];
+        HashSet<MidoraId> requested = [.. ids];
+        Dictionary<Page, HashSet<MidoraId>> idsByPage = [];
+        foreach (MidoraId id in requested)
+        {
+            if (!_entries.TryGetValue(id, out Entry? entry)) continue;
+            if (!idsByPage.TryGetValue(entry.Page, out HashSet<MidoraId>? pageIds))
+            {
+                pageIds = [];
+                idsByPage.Add(entry.Page, pageIds);
+            }
+            pageIds.Add(id);
+        }
+        EnsurePageDirectory();
+        List<(int Index, T Value)> result = new(requested.Count);
+        foreach ((Page page, HashSet<MidoraId> pageIds) in idsByPage
+            .OrderBy(pair => _pageIndices[pair.Key]))
+        {
+            int pageStartIndex = _pageStarts[_pageIndices[page]];
+            for (int localIndex = 0; localIndex < page.Items.Count; localIndex++)
+            {
+                T value = page.Items[localIndex];
+                if (pageIds.Contains(_getId(_toValue(value))))
+                    result.Add((checked(pageStartIndex + localIndex), value));
+            }
+        }
+        return result;
+    }
+
     public PagedTimelineValueSnapshot<TValue> CreateSnapshot()
     {
-        FlushDirtyPages();
-        return new(
-            _pages.Select(static page => page.Snapshot!).ToArray(),
-            _count,
-            _generation,
+        lock (_snapshotPublicationSync)
+        {
+            EnsurePublishedState();
+            PublishPendingValueChanges();
+            if (_publishedSnapshot is not null
+                && _publishedSnapshotGeneration == _generation)
+            {
+                return _publishedSnapshot;
+            }
+            _publishedSnapshot = new(
+                _publishedSequence!,
+                _spatialIndex,
+                _spatialOverlayIndex,
+                _spatialValueOverlay,
+                _publishedBaseById!,
+                _publishedIdDelta,
+                _count,
+                _generation,
+                _getId,
+                _getStart,
+                _getEnd,
+                _getLane,
+                _getFingerprint,
+                _getRasterValue,
+                _discoveryKeyPageCounts.Keys.Order().ToArray());
+            _publishedSnapshotGeneration = _generation;
+            return _publishedSnapshot;
+        }
+    }
+
+    private void EnsurePublishedState()
+    {
+        if (_publishedSequence is not null) return;
+
+        PersistentTimelineSequence<TValue> sequence =
+            PersistentTimelineSequence<TValue>.Create(
+                this.Select(_toValue),
+                _getFingerprint);
+        _publishedLeafPages.Clear();
+        _discoveryKeyPageCounts.Clear();
+        List<PagedTimelineValuePage<TValue>> pages = [];
+        foreach (PersistentTimelineSequence<TValue>.Leaf leaf in sequence.EnumerateLeaves())
+        {
+            PagedTimelineValuePage<TValue> page = CreatePublishedPage(leaf);
+            _publishedLeafPages.Add(leaf, page);
+            pages.Add(page);
+            AddDiscoveryKeys(page);
+        }
+        _spatialIndex = PagedTimelineSpatialBlockIndex<TValue>.Create(pages);
+        _publishedSequence = sequence;
+        _publishedBaseById = sequence.Enumerate().ToFrozenDictionary(_getId);
+        _publishedIdDelta = PersistentTimelineIdDeltaMap<TValue>.Empty;
+        _spatialBaseDelta = PersistentTimelineIdDeltaMap<TValue>.Empty;
+        _spatialValueOverlay = PersistentTimelineIdDeltaMap<TValue>.Empty;
+        _spatialOverlayPages.Clear();
+        _spatialOverlayIndex = PagedTimelineSpatialBlockIndex<TValue>.Empty;
+        _pendingPublishedValueIds.Clear();
+        _dirtyPages.Clear();
+        _publishedSnapshot = null;
+    }
+
+    private void PublishPendingValueChanges()
+    {
+        lock (_snapshotPublicationSync)
+        {
+            if (_publishedSequence is null || _pendingPublishedValueIds.Count == 0) return;
+            EnsurePageDirectory();
+            PersistentTimelineSequence<TValue>.IndexedReplacement[] replacements =
+                new PersistentTimelineSequence<TValue>.IndexedReplacement[
+                    _pendingPublishedValueIds.Count];
+            int replacementCount = 0;
+            foreach (MidoraId id in _pendingPublishedValueIds)
+            {
+                if (!_entries.TryGetValue(id, out Entry? entry)) continue;
+                int localIndex = entry.LocalIndex;
+                if (localIndex < 0)
+                    localIndex = entry.Page.Items.FindIndex(
+                        item => ReferenceEquals(item, entry.Item));
+                if (localIndex < 0)
+                    throw new InvalidOperationException("A pending paged timeline value is no longer present.");
+                replacements[replacementCount++] = new(
+                    checked(_pageStarts[_pageIndices[entry.Page]] + localIndex),
+                    _toValue(entry.Item));
+            }
+            _pendingPublishedValueIds.Clear();
+            if (replacementCount != 0)
+            {
+                if (replacementCount != replacements.Length)
+                    Array.Resize(ref replacements, replacementCount);
+                Array.Sort(
+                    replacements,
+                    static (left, right) => left.Index.CompareTo(right.Index));
+                PersistentTimelineSequence<TValue>.Mutation mutation =
+                    _publishedSequence.ReplaceBatchSorted(replacements);
+                ApplyPublishedMutation(mutation);
+            }
+        }
+    }
+
+    private void ApplyPublishedMutation(
+        PersistentTimelineSequence<TValue>.Mutation? optionalMutation)
+    {
+        if (optionalMutation is not { } mutation) return;
+        lock (_snapshotPublicationSync)
+        {
+            ApplyPublishedMutationCore(mutation);
+        }
+    }
+
+    private void ApplyPublishedMutationCore(
+        PersistentTimelineSequence<TValue>.Mutation mutation)
+    {
+        bool useValueOverlay = CanPublishThroughValueOverlay(mutation);
+        if (useValueOverlay)
+        {
+            if (mutation.RemovedLeaves.Count != mutation.AddedLeaves.Count)
+                throw new InvalidOperationException("A value-only timeline mutation changed its formal leaf count.");
+            for (int index = 0; index < mutation.RemovedLeaves.Count; index++)
+            {
+                PersistentTimelineSequence<TValue>.Leaf removed = mutation.RemovedLeaves[index];
+                PersistentTimelineSequence<TValue>.Leaf added = mutation.AddedLeaves[index];
+                if (!_publishedLeafPages.Remove(removed, out PagedTimelineValuePage<TValue>? basePage))
+                    throw new InvalidOperationException("A published timeline leaf is not indexed.");
+                _publishedLeafPages.Add(added, basePage);
+            }
+        }
+        else
+        {
+            List<PagedTimelineValuePage<TValue>> removedPages = new(mutation.RemovedLeaves.Count);
+            foreach (PersistentTimelineSequence<TValue>.Leaf leaf in mutation.RemovedLeaves)
+            {
+                if (!_publishedLeafPages.Remove(leaf, out PagedTimelineValuePage<TValue>? page))
+                    throw new InvalidOperationException("A published timeline leaf is not indexed.");
+                removedPages.Add(page);
+                RemoveDiscoveryKeys(page);
+            }
+            List<PagedTimelineValuePage<TValue>> addedPages = new(mutation.AddedLeaves.Count);
+            foreach (PersistentTimelineSequence<TValue>.Leaf leaf in mutation.AddedLeaves)
+            {
+                PagedTimelineValuePage<TValue> page = CreatePublishedPage(leaf);
+                _publishedLeafPages.Add(leaf, page);
+                addedPages.Add(page);
+                AddDiscoveryKeys(page);
+            }
+            _spatialIndex = _spatialIndex.ReplacePages(removedPages, addedPages);
+        }
+
+        bool stableValueIds = mutation.ValueReplacements.Count != 0;
+        if (stableValueIds)
+        {
+            foreach (PersistentTimelineSequence<TValue>.ValueReplacement replacement in
+                mutation.ValueReplacements)
+            {
+                if (_getId(replacement.Expected) == _getId(replacement.Replacement)) continue;
+                stableValueIds = false;
+                break;
+            }
+        }
+        if (stableValueIds)
+        {
+            ApplyStableValueDelta(mutation.ValueReplacements, useValueOverlay);
+            _publishedSequence = mutation.Sequence;
+            _publishedSnapshot = null;
+            return;
+        }
+
+        HashSet<MidoraId> affectedIds = [];
+        Dictionary<MidoraId, TValue> finalValues = [];
+        if (mutation.ValueReplacements.Count != 0)
+        {
+            foreach (PersistentTimelineSequence<TValue>.ValueReplacement replacement in
+                mutation.ValueReplacements)
+            {
+                MidoraId expectedId = _getId(replacement.Expected);
+                MidoraId replacementId = _getId(replacement.Replacement);
+                affectedIds.Add(expectedId);
+                affectedIds.Add(replacementId);
+                finalValues[replacementId] = replacement.Replacement;
+            }
+        }
+        else
+        {
+            foreach (PersistentTimelineSequence<TValue>.Leaf leaf in mutation.RemovedLeaves)
+                foreach (TValue value in leaf.Values) affectedIds.Add(_getId(value));
+            foreach (PersistentTimelineSequence<TValue>.Leaf leaf in mutation.AddedLeaves)
+            {
+                foreach (TValue value in leaf.Values)
+                {
+                    MidoraId id = _getId(value);
+                    affectedIds.Add(id);
+                    finalValues[id] = value;
+                }
+            }
+        }
+        Dictionary<MidoraId, PagedTimelineIdDelta<TValue>?> deltaChanges =
+            new(affectedIds.Count);
+        foreach (MidoraId id in affectedIds)
+        {
+            if (finalValues.TryGetValue(id, out TValue? finalValue))
+            {
+                if (_publishedBaseById!.TryGetValue(id, out TValue? baseValue)
+                    && EqualityComparer<TValue>.Default.Equals(baseValue, finalValue))
+                {
+                    deltaChanges[id] = null;
+                }
+                else
+                {
+                    deltaChanges[id] = new(true, finalValue);
+                }
+            }
+            else if (_publishedBaseById!.ContainsKey(id))
+            {
+                deltaChanges[id] = new(false, default!);
+            }
+            else
+            {
+                deltaChanges[id] = null;
+            }
+        }
+        PersistentTimelineIdDeltaMap<TValue> previousPublishedDelta = _publishedIdDelta;
+        PersistentTimelineIdDeltaMap<TValue>.Mutation publishedDeltaMutation =
+            previousPublishedDelta.ApplyMutation(deltaChanges);
+        _publishedIdDelta = publishedDeltaMutation.Map;
+        if (useValueOverlay)
+        {
+            if (_spatialBaseDelta.IsEmpty
+                && ReferenceEquals(previousPublishedDelta, _spatialValueOverlay))
+            {
+                ApplySpatialOverlayMutation(publishedDeltaMutation);
+            }
+            else
+            {
+                Dictionary<MidoraId, PagedTimelineIdDelta<TValue>?> overlayChanges =
+                    new(affectedIds.Count);
+                foreach (MidoraId id in affectedIds)
+                {
+                    bool baseExists = TryGetSpatialBaseValue(id, out TValue? baseValue);
+                    if (finalValues.TryGetValue(id, out TValue? finalValue))
+                    {
+                        overlayChanges[id] = baseExists
+                            && EqualityComparer<TValue>.Default.Equals(baseValue, finalValue)
+                                ? null
+                                : new(true, finalValue);
+                    }
+                    else
+                    {
+                        overlayChanges[id] = baseExists
+                            ? new(false, default!)
+                            : null;
+                    }
+                }
+                ApplySpatialOverlayChanges(overlayChanges);
+            }
+        }
+        else
+        {
+            _spatialBaseDelta = _spatialBaseDelta.Apply(deltaChanges);
+            Dictionary<MidoraId, PagedTimelineIdDelta<TValue>?> overlayRemovals =
+                affectedIds.ToDictionary(static id => id,
+                    static _ => (PagedTimelineIdDelta<TValue>?)null);
+            ApplySpatialOverlayChanges(overlayRemovals);
+        }
+        _publishedSequence = mutation.Sequence;
+        _publishedSnapshot = null;
+    }
+
+    private void ApplyStableValueDelta(
+        IReadOnlyList<PersistentTimelineSequence<TValue>.ValueReplacement> replacements,
+        bool useValueOverlay)
+    {
+        PersistentTimelineIdDeltaMap<TValue>.Change[] deltaChanges =
+            new PersistentTimelineIdDeltaMap<TValue>.Change[replacements.Count];
+        for (int index = 0; index < replacements.Count; index++)
+        {
+            TValue value = replacements[index].Replacement;
+            MidoraId id = _getId(value);
+            deltaChanges[index] = new(
+                id,
+                _publishedBaseById!.TryGetValue(id, out TValue? baseValue)
+                    && EqualityComparer<TValue>.Default.Equals(baseValue, value)
+                        ? null
+                        : new PagedTimelineIdDelta<TValue>(true, value));
+        }
+
+        PersistentTimelineIdDeltaMap<TValue> previousPublishedDelta = _publishedIdDelta;
+        PersistentTimelineIdDeltaMap<TValue>.Mutation publishedDeltaMutation =
+            previousPublishedDelta.ApplyMutation(deltaChanges);
+        _publishedIdDelta = publishedDeltaMutation.Map;
+        if (useValueOverlay)
+        {
+            if (_spatialBaseDelta.IsEmpty
+                && ReferenceEquals(previousPublishedDelta, _spatialValueOverlay))
+            {
+                ApplySpatialOverlayMutation(publishedDeltaMutation);
+                return;
+            }
+
+            PersistentTimelineIdDeltaMap<TValue>.Change[] overlayChanges =
+                new PersistentTimelineIdDeltaMap<TValue>.Change[replacements.Count];
+            for (int index = 0; index < replacements.Count; index++)
+            {
+                TValue value = replacements[index].Replacement;
+                MidoraId id = _getId(value);
+                overlayChanges[index] = new(
+                    id,
+                    TryGetSpatialBaseValue(id, out TValue? baseValue)
+                        && EqualityComparer<TValue>.Default.Equals(baseValue, value)
+                            ? null
+                            : new PagedTimelineIdDelta<TValue>(true, value));
+            }
+            ApplySpatialOverlayChanges(overlayChanges);
+            return;
+        }
+
+        _spatialBaseDelta = _spatialBaseDelta.ApplyMutation(deltaChanges).Map;
+        PersistentTimelineIdDeltaMap<TValue>.Change[] removals =
+            new PersistentTimelineIdDeltaMap<TValue>.Change[replacements.Count];
+        for (int index = 0; index < replacements.Count; index++)
+        {
+            removals[index] = new(
+                _getId(replacements[index].Replacement),
+                null);
+        }
+        ApplySpatialOverlayChanges(removals);
+    }
+
+    private bool CanPublishThroughValueOverlay(
+        PersistentTimelineSequence<TValue>.Mutation mutation)
+    {
+        if (mutation.ValueReplacements.Count == 0) return false;
+        if (_getDiscoveryKeys is null) return true;
+        foreach (PersistentTimelineSequence<TValue>.ValueReplacement replacement in
+            mutation.ValueReplacements)
+        {
+            if (!_getDiscoveryKeys(replacement.Expected)
+                .SequenceEqual(_getDiscoveryKeys(replacement.Replacement)))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private bool TryGetSpatialBaseValue(MidoraId id, out TValue value)
+    {
+        if (_spatialBaseDelta.TryGetValue(id, out PagedTimelineIdDelta<TValue> delta))
+        {
+            value = delta.Value;
+            return delta.Exists;
+        }
+        return _publishedBaseById!.TryGetValue(id, out value!);
+    }
+
+    private void ApplySpatialOverlayChanges(
+        IReadOnlyDictionary<MidoraId, PagedTimelineIdDelta<TValue>?> changes)
+    {
+        if (changes.Count == 0) return;
+        PersistentTimelineIdDeltaMap<TValue>.Mutation mutation =
+            _spatialValueOverlay.ApplyMutation(changes);
+        ApplySpatialOverlayMutation(mutation);
+    }
+
+    private void ApplySpatialOverlayChanges(
+        PersistentTimelineIdDeltaMap<TValue>.Change[] changes)
+    {
+        if (changes.Length == 0) return;
+        PersistentTimelineIdDeltaMap<TValue>.Mutation mutation =
+            _spatialValueOverlay.ApplyMutation(changes);
+        ApplySpatialOverlayMutation(mutation);
+    }
+
+    private void ApplySpatialOverlayMutation(
+        PersistentTimelineIdDeltaMap<TValue>.Mutation mutation)
+    {
+        List<PagedTimelineValuePage<TValue>> removedPages = [];
+        foreach (PersistentTimelineIdDeltaMap<TValue>.Bucket bucket in mutation.RemovedBuckets)
+        {
+            if (_spatialOverlayPages.Remove(bucket, out PagedTimelineValuePage<TValue>? page))
+                removedPages.Add(page);
+        }
+        List<PagedTimelineValuePage<TValue>> addedPages = [];
+        foreach (PersistentTimelineIdDeltaMap<TValue>.Bucket bucket in mutation.AddedBuckets)
+        {
+            TValue[] values = bucket.CopyExistingValues();
+            if (values.Length == 0) continue;
+            PagedTimelineValuePage<TValue> page = CreatePublishedPage(values);
+            _spatialOverlayPages.Add(bucket, page);
+            addedPages.Add(page);
+        }
+        _spatialOverlayIndex = _spatialOverlayIndex.ReplacePages(removedPages, addedPages);
+        _spatialValueOverlay = mutation.Map;
+    }
+
+    private PagedTimelineValuePage<TValue> CreatePublishedPage(
+        PersistentTimelineSequence<TValue>.Leaf leaf) =>
+        CreatePublishedPage(leaf.Values);
+
+    private PagedTimelineValuePage<TValue> CreatePublishedPage(TValue[] values) =>
+        new(
+            values,
             _getStart,
             _getEnd,
             _getLane,
-            _getFingerprint);
+            _getFingerprint,
+            _getCategoryMask,
+            _getRasterValue,
+            _getDiscoveryKeys);
+
+    private void ResetPublishedStateToEmpty()
+    {
+        lock (_snapshotPublicationSync)
+        {
+            _publishedSequence = PersistentTimelineSequence<TValue>.Empty(_getFingerprint);
+            _publishedLeafPages.Clear();
+            _spatialIndex = PagedTimelineSpatialBlockIndex<TValue>.Empty;
+            _discoveryKeyPageCounts.Clear();
+            _publishedBaseById = FrozenDictionary<MidoraId, TValue>.Empty;
+            _publishedIdDelta = PersistentTimelineIdDeltaMap<TValue>.Empty;
+            _spatialBaseDelta = PersistentTimelineIdDeltaMap<TValue>.Empty;
+            _spatialValueOverlay = PersistentTimelineIdDeltaMap<TValue>.Empty;
+            _spatialOverlayPages.Clear();
+            _spatialOverlayIndex = PagedTimelineSpatialBlockIndex<TValue>.Empty;
+            _pendingPublishedValueIds.Clear();
+            _publishedSnapshot = null;
+        }
     }
 
     private Page AddPage()
     {
         Page result = new();
         _pages.Add(result);
+        _livePages.Add(result);
+        InvalidatePageDirectory();
         return result;
     }
 
     private void Split(Page page)
     {
-        int index = _pages.IndexOf(page);
+        EnsurePageDirectory();
+        int index = _pageIndices[page];
         int splitAt = page.Items.Count / 2;
         Page right = new();
         right.Items.AddRange(page.Items.GetRange(splitAt, page.Items.Count - splitAt));
         page.Items.RemoveRange(splitAt, page.Items.Count - splitAt);
         _pages.Insert(index + 1, right);
-        foreach (T item in right.Items)
+        _livePages.Add(right);
+        InvalidatePageDirectory();
+        ReindexPage(page, splitAt);
+        for (int localIndex = 0; localIndex < right.Items.Count; localIndex++)
         {
+            T item = right.Items[localIndex];
             if (_duplicateReferenceCounts?.ContainsKey(item) == true) continue;
-            _entries[_getId(_toValue(item))].Page = right;
+            Entry entry = _entries[_getId(_toValue(item))];
+            entry.Page = right;
+            entry.LocalIndex = localIndex;
         }
         if (_duplicateReferenceCounts is not null)
         {
@@ -597,7 +1568,7 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         MarkChanged(right);
     }
 
-    private void Attach(T item, Page page)
+    private void Attach(T item, Page page, int localIndex)
     {
         MidoraId id = _getId(_toValue(item));
         if (_entries.TryGetValue(id, out Entry? existing))
@@ -608,12 +1579,28 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
             _duplicateReferenceCounts[item] = _duplicateReferenceCounts.TryGetValue(item, out int count)
                 ? checked(count + 1)
                 : 2;
+            existing.LocalIndex = -1;
         }
         else
         {
-            _entries.Add(id, new(item, page));
+            _entries.Add(id, new(item, page, localIndex));
         }
         _setChangeSink(item, OnItemChanged);
+    }
+
+    private void ReindexPage(Page page, int first)
+    {
+        for (int localIndex = Math.Max(0, first); localIndex < page.Items.Count; localIndex++)
+        {
+            T item = page.Items[localIndex];
+            if (_duplicateReferenceCounts?.ContainsKey(item) == true) continue;
+            if (_entries.TryGetValue(_getId(_toValue(item)), out Entry? entry)
+                && ReferenceEquals(entry.Item, item))
+            {
+                entry.Page = page;
+                entry.LocalIndex = localIndex;
+            }
+        }
     }
 
     private void Detach(T item)
@@ -641,6 +1628,11 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         if (_entries.TryGetValue(id, out Entry? entry)
             && ReferenceEquals(entry.Item, item))
         {
+            if (_publishedSequence is not null)
+            {
+                lock (_snapshotPublicationSync)
+                    _pendingPublishedValueIds.Add(id);
+            }
             MarkChanged(entry.Page);
         }
     }
@@ -680,7 +1672,8 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
             _setChangeSink(item, null);
             return;
         }
-        _entries[id] = new(item, firstPage!);
+        int firstLocalIndex = firstPage!.Items.FindIndex(value => ReferenceEquals(value, item));
+        _entries[id] = new(item, firstPage, count == 1 ? firstLocalIndex : -1);
         if (count == 1)
             _duplicateReferenceCounts!.Remove(item);
         else
@@ -691,14 +1684,49 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
     {
         if (index < 0 || index > _count || !allowEnd && index == _count)
             throw new ArgumentOutOfRangeException(nameof(index));
-        int remaining = index;
-        foreach (Page page in _pages)
+        EnsurePageDirectory();
+        if (allowEnd && index == _count)
         {
-            if (remaining < page.Items.Count) return (page, remaining);
-            remaining -= page.Items.Count;
+            if (_pages.Count == 0) throw new ArgumentOutOfRangeException(nameof(index));
+            return (_pages[^1], _pages[^1].Items.Count);
         }
-        throw new ArgumentOutOfRangeException(nameof(index));
+        int low = 0;
+        int high = _pages.Count;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (_pageStarts[middle + 1] <= index)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+        if ((uint)low >= (uint)_pages.Count)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        return (_pages[low], checked(index - _pageStarts[low]));
     }
+
+    private void EnsurePageDirectory()
+    {
+        if (!_pageDirectoryDirty) return;
+        int[] starts = new int[_pages.Count + 1];
+        Dictionary<Page, int> indices = new(_pages.Count);
+        int start = 0;
+        for (int index = 0; index < _pages.Count; index++)
+        {
+            Page page = _pages[index];
+            starts[index] = start;
+            indices.Add(page, index);
+            start = checked(start + page.Items.Count);
+        }
+        starts[^1] = start;
+        if (start != _count)
+            throw new InvalidOperationException("The paged timeline page directory is inconsistent.");
+        _pageStarts = starts;
+        _pageIndices = indices;
+        _pageDirectoryDirty = false;
+    }
+
+    private void InvalidatePageDirectory() => _pageDirectoryDirty = true;
 
     private void MarkChanged(Page page)
     {
@@ -713,24 +1741,61 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
             _batchChanged = true;
             return;
         }
+        PublishPendingValueChanges();
         _generation++;
+        _publishedSnapshot = null;
     }
 
     private void FlushDirtyPages()
     {
         foreach (Page page in _dirtyPages)
         {
-            if (!_pages.Contains(page)) continue;
+            if (!_livePages.Contains(page)) continue;
             TValue[] values = page.Items.Select(_toValue).ToArray();
-            page.Snapshot = new(
+            PagedTimelineValuePage<TValue> snapshot = new(
                 values,
                 _getStart,
                 _getEnd,
                 _getLane,
                 _getFingerprint,
-                _getCategoryMask);
+                _getCategoryMask,
+                _getRasterValue,
+                _getDiscoveryKeys);
+            RemoveDiscoveryKeys(page.Snapshot);
+            AddDiscoveryKeys(snapshot);
+            _spatialIndex = _spatialIndex.ReplacePage(page.Snapshot, snapshot);
+            page.Snapshot = snapshot;
         }
         _dirtyPages.Clear();
+    }
+
+    private void RetirePage(Page page)
+    {
+        if (page.Snapshot is null) return;
+        RemoveDiscoveryKeys(page.Snapshot);
+        _spatialIndex = _spatialIndex.ReplacePage(page.Snapshot, replacement: null);
+        page.Snapshot = null;
+    }
+
+    private void AddDiscoveryKeys(PagedTimelineValuePage<TValue> page)
+    {
+        foreach (long key in page.DiscoveryKeys)
+        {
+            _discoveryKeyPageCounts[key] = _discoveryKeyPageCounts.TryGetValue(key, out int count)
+                ? checked(count + 1)
+                : 1;
+        }
+    }
+
+    private void RemoveDiscoveryKeys(PagedTimelineValuePage<TValue>? page)
+    {
+        if (page is null) return;
+        foreach (long key in page.DiscoveryKeys)
+        {
+            int count = _discoveryKeyPageCounts[key];
+            if (count == 1) _discoveryKeyPageCounts.Remove(key);
+            else _discoveryKeyPageCounts[key] = count - 1;
+        }
     }
 
     private void EndBatch()
@@ -739,7 +1804,9 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         _batchDepth--;
         if (_batchDepth != 0 || !_batchChanged) return;
         _batchChanged = false;
+        PublishPendingValueChanges();
         _generation++;
+        _publishedSnapshot = null;
     }
 
     private sealed class Page
@@ -748,16 +1815,14 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
         public PagedTimelineValuePage<TValue>? Snapshot { get; set; }
     }
 
-    private sealed class Entry(T item, Page page)
+    private sealed class Entry(T item, Page page, int localIndex)
     {
         public T Item { get; } = item;
         public Page Page { get; set; } = page;
+        public int LocalIndex { get; set; } = localIndex;
     }
 
-    private sealed record CollisionPageRemoval(
-        Page Page,
-        int OriginalPageIndex,
-        IReadOnlyList<(int Index, T Value)> Values);
+    private readonly record struct CollisionRemoval(int OriginalIndex, T Value);
 
     private sealed class BatchScope(PagedTimelineObjectList<T, TValue> owner) : IDisposable
     {
@@ -769,13 +1834,17 @@ internal sealed class PagedTimelineObjectList<T, TValue> : IList<T>
 
 internal sealed class PagedTimelineValuePage<TValue>
 {
+    private static long s_nextSpatialIdentity;
     private const int FingerprintBlockSize = 128;
+    private const int SpatialBlockSize = 128;
     private readonly Func<TValue, long> _getStart;
     private readonly Func<TValue, long> _getEnd;
     private readonly Func<TValue, int> _getLane;
     private readonly Func<TValue, ulong> _getFingerprint;
     private readonly Func<TValue, ulong>? _getCategoryMask;
+    private readonly Func<TValue, double>? _getRasterValue;
     private readonly FingerprintBlock[] _fingerprintBlocks;
+    private readonly int[] _spatialOrder;
 
     public PagedTimelineValuePage(
         TValue[] values,
@@ -783,14 +1852,18 @@ internal sealed class PagedTimelineValuePage<TValue>
         Func<TValue, long> getEnd,
         Func<TValue, int> getLane,
         Func<TValue, ulong> getFingerprint,
-        Func<TValue, ulong>? getCategoryMask)
+        Func<TValue, ulong>? getCategoryMask,
+        Func<TValue, double>? getRasterValue,
+        Func<TValue, IEnumerable<long>>? getDiscoveryKeys)
     {
+        SpatialIdentity = Interlocked.Increment(ref s_nextSpatialIdentity);
         Values = values;
         _getStart = getStart;
         _getEnd = getEnd;
         _getLane = getLane;
         _getFingerprint = getFingerprint;
         _getCategoryMask = getCategoryMask;
+        _getRasterValue = getRasterValue;
         if (values.Length == 0)
         {
             MinimumStartTick = long.MaxValue;
@@ -798,8 +1871,12 @@ internal sealed class PagedTimelineValuePage<TValue>
             MinimumLane = int.MaxValue;
             MaximumLane = int.MinValue;
             ContentFingerprint = PagedTimelineFingerprint.Offset;
+            ContentAggregate = default;
             CategoryMask = 0;
             _fingerprintBlocks = [];
+            _spatialOrder = [];
+            SpatialBlocks = [];
+            DiscoveryKeys = [];
             return;
         }
         long minimumStart = long.MaxValue;
@@ -807,6 +1884,7 @@ internal sealed class PagedTimelineValuePage<TValue>
         int minimumLane = int.MaxValue;
         int maximumLane = int.MinValue;
         ulong fingerprint = PagedTimelineFingerprint.Offset;
+        PagedTimelineSequenceFingerprintAggregate contentAggregate = default;
         ulong categoryMask = getCategoryMask is null ? ulong.MaxValue : 0;
         foreach (TValue value in values)
         {
@@ -816,6 +1894,7 @@ internal sealed class PagedTimelineValuePage<TValue>
             minimumLane = Math.Min(minimumLane, lane);
             maximumLane = Math.Max(maximumLane, lane);
             PagedTimelineFingerprint.Add(ref fingerprint, getFingerprint(value));
+            contentAggregate.Add(getFingerprint(value));
             if (getCategoryMask is not null) categoryMask |= getCategoryMask(value);
         }
         PagedTimelineFingerprint.Add(ref fingerprint, unchecked((ulong)values.Length));
@@ -824,17 +1903,272 @@ internal sealed class PagedTimelineValuePage<TValue>
         MinimumLane = minimumLane;
         MaximumLane = maximumLane;
         ContentFingerprint = fingerprint;
+        ContentAggregate = contentAggregate;
         CategoryMask = categoryMask;
         _fingerprintBlocks = BuildFingerprintBlocks(values);
+        _spatialOrder = BuildSpatialOrder(values);
+        SpatialBlocks = BuildSpatialBlocks(values, _spatialOrder);
+        DiscoveryKeys = getDiscoveryKeys is null
+            ? []
+            : values.SelectMany(getDiscoveryKeys).Distinct().Order().ToArray();
     }
 
     public TValue[] Values { get; }
+    public long SpatialIdentity { get; }
     public long MinimumStartTick { get; }
     public long MaximumEndTick { get; }
     public int MinimumLane { get; }
     public int MaximumLane { get; }
     public ulong ContentFingerprint { get; }
+    public PagedTimelineSequenceFingerprintAggregate ContentAggregate { get; }
     public ulong CategoryMask { get; }
+    public PagedTimelineSpatialBlockMetadata[] SpatialBlocks { get; }
+    public long[] DiscoveryKeys { get; }
+
+    public void AppendSpatialRangeValues(
+        List<PagedTimelineOrderedValue<TValue>> destination,
+        int pageIndex,
+        PagedTimelineSpatialBlockMetadata block,
+        long startTick,
+        long endTick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask)
+    {
+        int end = checked(block.First + block.Count);
+        for (int spatialIndex = block.First; spatialIndex < end; spatialIndex++)
+        {
+            int localIndex = _spatialOrder[spatialIndex];
+            TValue value = Values[localIndex];
+            if (_getStart(value) >= endTick) break;
+            int lane = _getLane(value);
+            ulong categoryMask = _getCategoryMask?.Invoke(value) ?? ulong.MaxValue;
+            if (_getEnd(value) > startTick
+                && lane >= minimumLane
+                && lane <= maximumLane
+                && (categoryMask & requiredCategoryMask) != 0)
+            {
+                destination.Add(new(pageIndex, localIndex, value));
+            }
+        }
+    }
+
+    public long GetMaximumEndTickExcluding(
+        PagedTimelineSpatialBlockMetadata block,
+        PersistentTimelineIdDeltaMap<TValue> excluded,
+        Func<TValue, MidoraId> getId)
+    {
+        long maximum = 0;
+        int end = checked(block.First + block.Count);
+        for (int index = block.First; index < end; index++)
+        {
+            TValue value = Values[_spatialOrder[index]];
+            if (excluded.TryGetValue(getId(value), out _)) continue;
+            maximum = Math.Max(maximum, _getEnd(value));
+        }
+        return maximum;
+    }
+
+    public void AppendExactStartValues(
+        List<TValue> destination,
+        PagedTimelineSpatialBlockMetadata block,
+        long tick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask)
+    {
+        int end = checked(block.First + block.Count);
+        for (int spatialIndex = block.First; spatialIndex < end; spatialIndex++)
+        {
+            int localIndex = _spatialOrder[spatialIndex];
+            TValue value = Values[localIndex];
+            long start = _getStart(value);
+            if (start < tick) continue;
+            if (start > tick) break;
+            int lane = _getLane(value);
+            ulong categoryMask = _getCategoryMask?.Invoke(value) ?? ulong.MaxValue;
+            if (lane >= minimumLane
+                && lane <= maximumLane
+                && (categoryMask & requiredCategoryMask) != 0)
+            {
+                destination.Add(value);
+            }
+        }
+    }
+
+    public void AccumulateSpatialRangeFingerprint(
+        ref PagedTimelineRangeFingerprintAggregate aggregate,
+        PagedTimelineSpatialBlockMetadata block,
+        long startTick,
+        long endTick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask)
+    {
+        if (startTick <= block.MinimumStartTick
+            && endTick >= block.MaximumEndTick
+            && minimumLane <= block.MinimumLane
+            && maximumLane >= block.MaximumLane
+            && (requiredCategoryMask == ulong.MaxValue
+                || (block.CategoryMask & ~requiredCategoryMask) == 0))
+        {
+            aggregate.Combine(block.Aggregate);
+            return;
+        }
+        int end = checked(block.First + block.Count);
+        for (int spatialIndex = block.First; spatialIndex < end; spatialIndex++)
+        {
+            int localIndex = _spatialOrder[spatialIndex];
+            TValue value = Values[localIndex];
+            if (_getStart(value) >= endTick) break;
+            int lane = _getLane(value);
+            ulong categoryMask = _getCategoryMask?.Invoke(value) ?? ulong.MaxValue;
+            if (_getEnd(value) > startTick
+                && lane >= minimumLane
+                && lane <= maximumLane
+                && (categoryMask & requiredCategoryMask) != 0)
+            {
+                aggregate.Add(_getFingerprint(value));
+            }
+        }
+    }
+
+    public void AccumulateSpatialRangeFingerprintExcluding(
+        ref PagedTimelineRangeFingerprintAggregate aggregate,
+        PagedTimelineSpatialBlockMetadata block,
+        long startTick,
+        long endTick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask,
+        PersistentTimelineIdDeltaMap<TValue> excluded,
+        Func<TValue, MidoraId> getId)
+    {
+        int blockEnd = checked(block.First + block.Count);
+        bool hasExclusion = false;
+        for (int spatialIndex = block.First; spatialIndex < blockEnd; spatialIndex++)
+        {
+            TValue value = Values[_spatialOrder[spatialIndex]];
+            if (!excluded.TryGetValue(getId(value), out _)) continue;
+            hasExclusion = true;
+            break;
+        }
+        if (!hasExclusion)
+        {
+            AccumulateSpatialRangeFingerprint(
+                ref aggregate,
+                block,
+                startTick,
+                endTick,
+                minimumLane,
+                maximumLane,
+                requiredCategoryMask);
+            return;
+        }
+        for (int spatialIndex = block.First; spatialIndex < blockEnd; spatialIndex++)
+        {
+            TValue value = Values[_spatialOrder[spatialIndex]];
+            if (excluded.TryGetValue(getId(value), out _)) continue;
+            if (_getStart(value) >= endTick) break;
+            int lane = _getLane(value);
+            ulong categoryMask = _getCategoryMask?.Invoke(value) ?? ulong.MaxValue;
+            if (_getEnd(value) > startTick
+                && lane >= minimumLane
+                && lane <= maximumLane
+                && (categoryMask & requiredCategoryMask) != 0)
+            {
+                aggregate.Add(_getFingerprint(value));
+            }
+        }
+    }
+
+    public int AccumulateSpatialBlockRasterColumns(
+        PagedTimelineSpatialBlockMetadata block,
+        long startTick,
+        long endTick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask,
+        Span<TimelineRasterColumnSummary> destination)
+    {
+        int visited = 0;
+        int end = checked(block.First + block.Count);
+        for (int spatialIndex = block.First; spatialIndex < end; spatialIndex++)
+        {
+            int localIndex = _spatialOrder[spatialIndex];
+            TValue value = Values[localIndex];
+            if (_getStart(value) >= endTick) break;
+            int lane = _getLane(value);
+            ulong categoryMask = _getCategoryMask?.Invoke(value) ?? ulong.MaxValue;
+            if (_getEnd(value) <= startTick
+                || lane < minimumLane
+                || lane > maximumLane
+                || (categoryMask & requiredCategoryMask) == 0)
+            {
+                continue;
+            }
+            double rasterValue = _getRasterValue?.Invoke(value) ?? 0;
+            if (!double.IsFinite(rasterValue)) rasterValue = 0;
+            PagedTimelineRasterProjection.Include(
+                destination,
+                startTick,
+                endTick,
+                _getStart(value),
+                _getEnd(value),
+                lane is >= 0 and < 64 ? 1UL << lane : 0,
+                lane is >= 64 and < 128 ? 1UL << (lane - 64) : 0,
+                rasterValue,
+                rasterValue,
+                1);
+            visited++;
+        }
+        return visited;
+    }
+
+    public int AccumulateSpatialBlockRasterColumnsExcluding(
+        PagedTimelineSpatialBlockMetadata block,
+        long startTick,
+        long endTick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask,
+        PersistentTimelineIdDeltaMap<TValue> excluded,
+        Func<TValue, MidoraId> getId,
+        Span<TimelineRasterColumnSummary> destination)
+    {
+        int visited = 0;
+        int end = checked(block.First + block.Count);
+        for (int spatialIndex = block.First; spatialIndex < end; spatialIndex++)
+        {
+            TValue value = Values[_spatialOrder[spatialIndex]];
+            if (excluded.TryGetValue(getId(value), out _)) continue;
+            if (_getStart(value) >= endTick) break;
+            int lane = _getLane(value);
+            ulong categoryMask = _getCategoryMask?.Invoke(value) ?? ulong.MaxValue;
+            if (_getEnd(value) <= startTick
+                || lane < minimumLane
+                || lane > maximumLane
+                || (categoryMask & requiredCategoryMask) == 0)
+            {
+                continue;
+            }
+            double rasterValue = _getRasterValue?.Invoke(value) ?? 0;
+            if (!double.IsFinite(rasterValue)) rasterValue = 0;
+            PagedTimelineRasterProjection.Include(
+                destination,
+                startTick,
+                endTick,
+                _getStart(value),
+                _getEnd(value),
+                lane is >= 0 and < 64 ? 1UL << lane : 0,
+                lane is >= 64 and < 128 ? 1UL << (lane - 64) : 0,
+                rasterValue,
+                rasterValue,
+                1);
+            visited++;
+        }
+        return visited;
+    }
 
     public void AccumulateRangeFingerprint(
         ref PagedTimelineRangeFingerprintAggregate aggregate,
@@ -920,6 +2254,96 @@ internal sealed class PagedTimelineValuePage<TValue>
         return result;
     }
 
+    private int[] BuildSpatialOrder(TValue[] values)
+    {
+        int[] result = Enumerable.Range(0, values.Length).ToArray();
+        bool alreadyOrdered = true;
+        for (int index = 1; index < values.Length; index++)
+        {
+            int start = _getStart(values[index - 1]).CompareTo(_getStart(values[index]));
+            if (start < 0) continue;
+            if (start == 0
+                && _getEnd(values[index - 1]) <= _getEnd(values[index]))
+            {
+                continue;
+            }
+            alreadyOrdered = false;
+            break;
+        }
+        if (alreadyOrdered) return result;
+        Array.Sort(result, (left, right) =>
+        {
+            int start = _getStart(values[left]).CompareTo(_getStart(values[right]));
+            if (start != 0) return start;
+            int end = _getEnd(values[left]).CompareTo(_getEnd(values[right]));
+            return end != 0 ? end : left.CompareTo(right);
+        });
+        return result;
+    }
+
+    private PagedTimelineSpatialBlockMetadata[] BuildSpatialBlocks(
+        TValue[] values,
+        int[] spatialOrder)
+    {
+        PagedTimelineSpatialBlockMetadata[] result = new PagedTimelineSpatialBlockMetadata[
+            (spatialOrder.Length + SpatialBlockSize - 1) / SpatialBlockSize];
+        for (int blockIndex = 0; blockIndex < result.Length; blockIndex++)
+        {
+            int first = checked(blockIndex * SpatialBlockSize);
+            int count = Math.Min(SpatialBlockSize, spatialOrder.Length - first);
+            long minimumStartTick = long.MaxValue;
+            long maximumStartTick = long.MinValue;
+            long maximumEndTick = 0;
+            int minimumLane = int.MaxValue;
+            int maximumLane = int.MinValue;
+            ulong laneMaskLow = 0;
+            ulong laneMaskHigh = 0;
+            double minimumRasterValue = double.PositiveInfinity;
+            double maximumRasterValue = double.NegativeInfinity;
+            ulong categoryMask = _getCategoryMask is null ? ulong.MaxValue : 0;
+            PagedTimelineRangeFingerprintAggregate aggregate = default;
+            for (int index = first; index < first + count; index++)
+            {
+                TValue value = values[spatialOrder[index]];
+                minimumStartTick = Math.Min(minimumStartTick, _getStart(value));
+                maximumStartTick = Math.Max(maximumStartTick, _getStart(value));
+                maximumEndTick = Math.Max(maximumEndTick, _getEnd(value));
+                int lane = _getLane(value);
+                minimumLane = Math.Min(minimumLane, lane);
+                maximumLane = Math.Max(maximumLane, lane);
+                if ((uint)lane < 64)
+                    laneMaskLow |= 1UL << lane;
+                else if ((uint)(lane - 64) < 64)
+                    laneMaskHigh |= 1UL << (lane - 64);
+                double rasterValue = _getRasterValue?.Invoke(value) ?? 0;
+                if (double.IsFinite(rasterValue))
+                {
+                    minimumRasterValue = Math.Min(minimumRasterValue, rasterValue);
+                    maximumRasterValue = Math.Max(maximumRasterValue, rasterValue);
+                }
+                categoryMask |= _getCategoryMask?.Invoke(value) ?? ulong.MaxValue;
+                aggregate.Add(_getFingerprint(value));
+            }
+            if (!double.IsFinite(minimumRasterValue)) minimumRasterValue = 0;
+            if (!double.IsFinite(maximumRasterValue)) maximumRasterValue = minimumRasterValue;
+            result[blockIndex] = new(
+                first,
+                count,
+                minimumStartTick,
+                maximumStartTick,
+                maximumEndTick,
+                minimumLane,
+                maximumLane,
+                laneMaskLow,
+                laneMaskHigh,
+                minimumRasterValue,
+                maximumRasterValue,
+                categoryMask,
+                aggregate);
+        }
+        return result;
+    }
+
     private readonly record struct FingerprintBlock(
         int First,
         int Count,
@@ -931,42 +2355,418 @@ internal sealed class PagedTimelineValuePage<TValue>
         PagedTimelineRangeFingerprintAggregate Aggregate);
 }
 
+internal readonly record struct PagedTimelineSpatialBlockMetadata(
+    int First,
+    int Count,
+    long MinimumStartTick,
+    long MaximumStartTick,
+    long MaximumEndTick,
+    int MinimumLane,
+    int MaximumLane,
+    ulong LaneMaskLow,
+    ulong LaneMaskHigh,
+    double MinimumRasterValue,
+    double MaximumRasterValue,
+    ulong CategoryMask,
+    PagedTimelineRangeFingerprintAggregate Aggregate);
+
+internal static class PagedTimelineRasterProjection
+{
+    public static void Include(
+        Span<TimelineRasterColumnSummary> destination,
+        long queryStartTick,
+        long queryEndTick,
+        long contentStartTick,
+        long contentEndTick,
+        ulong laneMaskLow,
+        ulong laneMaskHigh,
+        double minimumValue,
+        double maximumValue,
+        int approximateSourceCount)
+    {
+        if (destination.IsEmpty
+            || queryEndTick <= queryStartTick
+            || contentEndTick <= queryStartTick
+            || contentStartTick >= queryEndTick
+            || (laneMaskLow | laneMaskHigh) == 0)
+        {
+            return;
+        }
+        double span = (double)queryEndTick - queryStartTick;
+        double clippedStart = Math.Max(queryStartTick, contentStartTick);
+        double clippedEnd = Math.Min(queryEndTick, contentEndTick);
+        int first = Math.Clamp(
+            (int)Math.Floor((clippedStart - queryStartTick) / span * destination.Length),
+            0,
+            destination.Length - 1);
+        int lastExclusive = Math.Clamp(
+            (int)Math.Ceiling((clippedEnd - queryStartTick) / span * destination.Length),
+            first + 1,
+            destination.Length);
+        for (int column = first; column < lastExclusive; column++)
+        {
+            destination[column].Include(
+                laneMaskLow,
+                laneMaskHigh,
+                minimumValue,
+                maximumValue,
+                approximateSourceCount);
+        }
+    }
+
+    public static (ulong Low, ulong High) LaneRangeMask(int minimumLane, int maximumLane)
+    {
+        minimumLane = Math.Clamp(minimumLane, 0, 127);
+        maximumLane = Math.Clamp(maximumLane, 0, 127);
+        if (maximumLane < minimumLane) return default;
+        ulong low = minimumLane >= 64
+            ? 0
+            : RangeBits(minimumLane, Math.Min(63, maximumLane));
+        ulong high = maximumLane < 64
+            ? 0
+            : RangeBits(Math.Max(64, minimumLane) - 64, maximumLane - 64);
+        return (low, high);
+    }
+
+    public static int ColumnSpan(
+        int columnCount,
+        long queryStartTick,
+        long queryEndTick,
+        long contentStartTick,
+        long contentEndTick)
+    {
+        if (columnCount <= 0
+            || queryEndTick <= queryStartTick
+            || contentEndTick <= queryStartTick
+            || contentStartTick >= queryEndTick)
+        {
+            return 0;
+        }
+        double span = (double)queryEndTick - queryStartTick;
+        double clippedStart = Math.Max(queryStartTick, contentStartTick);
+        double clippedEnd = Math.Min(queryEndTick, contentEndTick);
+        int first = Math.Clamp(
+            (int)Math.Floor((clippedStart - queryStartTick) / span * columnCount),
+            0,
+            columnCount - 1);
+        int lastExclusive = Math.Clamp(
+            (int)Math.Ceiling((clippedEnd - queryStartTick) / span * columnCount),
+            first + 1,
+            columnCount);
+        return lastExclusive - first;
+    }
+
+    private static ulong RangeBits(int first, int last)
+    {
+        ulong upper = last == 63 ? ulong.MaxValue : (1UL << (last + 1)) - 1;
+        ulong lower = first == 0 ? 0 : (1UL << first) - 1;
+        return upper & ~lower;
+    }
+}
+
+internal readonly record struct PagedTimelineOrderedValue<TValue>(
+    int PageIndex,
+    int LocalIndex,
+    TValue Value);
+
+internal readonly record struct PagedTimelineIdDelta<TValue>(bool Exists, TValue Value);
+
+/// <summary>
+/// Immutable, structurally shared Stable-ID delta map. Timeline edits commonly
+/// change tens of thousands of values in one command. Updating an
+/// ImmutableDictionary one key at a time made that publication dominate the
+/// edit and Undo paths. Fixed hash partitions let a batch rebuild each touched
+/// partition once with a linear sorted merge while old snapshots retain all
+/// untouched partitions by reference.
+/// </summary>
+internal sealed class PersistentTimelineIdDeltaMap<TValue>
+{
+    private const int BucketCount = 2048;
+    private const int BucketMask = BucketCount - 1;
+    private readonly Bucket?[] _buckets;
+    private readonly int _count;
+
+    private PersistentTimelineIdDeltaMap(Bucket?[] buckets, int count = 0)
+    {
+        _buckets = buckets;
+        _count = count;
+    }
+
+    public static PersistentTimelineIdDeltaMap<TValue> Empty { get; } =
+        new(new Bucket?[BucketCount]);
+
+    public bool IsEmpty => _count == 0;
+
+    public bool TryGetValue(MidoraId id, out PagedTimelineIdDelta<TValue> value)
+    {
+        Bucket? bucket = _buckets[GetBucketIndex(id)];
+        if (bucket is not null)
+            return bucket.TryGetValue(id, out value);
+        value = default;
+        return false;
+    }
+
+    public PersistentTimelineIdDeltaMap<TValue> Apply(
+        IReadOnlyDictionary<MidoraId, PagedTimelineIdDelta<TValue>?> changes)
+        => ApplyMutation(changes).Map;
+
+    public Mutation ApplyMutation(
+        IReadOnlyDictionary<MidoraId, PagedTimelineIdDelta<TValue>?> changes)
+    {
+        ArgumentNullException.ThrowIfNull(changes);
+        if (changes.Count == 0) return new(this, [], []);
+        Change[] ordered = new Change[changes.Count];
+        int write = 0;
+        foreach ((MidoraId id, PagedTimelineIdDelta<TValue>? value) in changes)
+            ordered[write++] = new(id, value);
+        return ApplyMutation(ordered);
+    }
+
+    internal Mutation ApplyMutation(Change[] changes)
+    {
+        ArgumentNullException.ThrowIfNull(changes);
+        if (changes.Length == 0) return new(this, [], []);
+
+        int[] bucketOffsets = new int[BucketCount + 1];
+        foreach (Change change in changes)
+            bucketOffsets[GetBucketIndex(change.Id) + 1]++;
+        for (int index = 1; index < bucketOffsets.Length; index++)
+            bucketOffsets[index] = checked(bucketOffsets[index] + bucketOffsets[index - 1]);
+        int[] writeOffsets = (int[])bucketOffsets.Clone();
+        for (int bucketIndex = 0; bucketIndex < BucketCount; bucketIndex++)
+        {
+            int end = bucketOffsets[bucketIndex + 1];
+            while (writeOffsets[bucketIndex] < end)
+            {
+                int position = writeOffsets[bucketIndex];
+                int targetBucket = GetBucketIndex(changes[position].Id);
+                if (targetBucket == bucketIndex)
+                {
+                    writeOffsets[bucketIndex]++;
+                    continue;
+                }
+                int targetPosition = writeOffsets[targetBucket]++;
+                (changes[position], changes[targetPosition]) =
+                    (changes[targetPosition], changes[position]);
+            }
+        }
+
+        Bucket?[] buckets = (Bucket?[])_buckets.Clone();
+        int count = _count;
+        List<Bucket> removed = [];
+        List<Bucket> added = [];
+        for (int bucketIndex = 0; bucketIndex < BucketCount; bucketIndex++)
+        {
+            int first = bucketOffsets[bucketIndex];
+            int changeCount = bucketOffsets[bucketIndex + 1] - first;
+            if (changeCount == 0) continue;
+            Array.Sort(changes, first, changeCount, ChangeIdComparer.Instance);
+            for (int index = first + 1; index < first + changeCount; index++)
+            {
+                if (changes[index - 1].Id == changes[index].Id)
+                    throw new InvalidOperationException(
+                        "A persistent timeline ID delta batch contains a duplicate ID.");
+            }
+            Bucket? oldBucket = _buckets[bucketIndex];
+            Bucket? newBucket = Bucket.Merge(oldBucket, changes, first, changeCount);
+            count = checked(count - (oldBucket?.Count ?? 0) + (newBucket?.Count ?? 0));
+            if (oldBucket is not null) removed.Add(oldBucket);
+            if (newBucket is not null) added.Add(newBucket);
+            buckets[bucketIndex] = newBucket;
+        }
+        return new(new(buckets, count), removed, added);
+    }
+
+    private sealed class ChangeIdComparer : IComparer<Change>
+    {
+        public static ChangeIdComparer Instance { get; } = new();
+
+        public int Compare(Change left, Change right) => left.Id.CompareTo(right.Id);
+    }
+
+    private static int GetBucketIndex(MidoraId id)
+    {
+        ulong value = unchecked((ulong)id.Value);
+        value ^= value >> 33;
+        value *= 0xff51afd7ed558ccdUL;
+        value ^= value >> 33;
+        return unchecked((int)value) & BucketMask;
+    }
+
+    internal readonly record struct Change(
+        MidoraId Id,
+        PagedTimelineIdDelta<TValue>? Value);
+
+    private readonly record struct Entry(
+        MidoraId Id,
+        PagedTimelineIdDelta<TValue> Value);
+
+    internal sealed class Bucket
+    {
+        private readonly Entry[] _entries;
+
+        private Bucket(Entry[] entries) => _entries = entries;
+
+        public int Count => _entries.Length;
+
+        public IEnumerable<TValue> EnumerateExistingValues()
+        {
+            foreach (Entry entry in _entries)
+                if (entry.Value.Exists) yield return entry.Value.Value;
+        }
+
+        public TValue[] CopyExistingValues()
+        {
+            int count = 0;
+            foreach (Entry entry in _entries)
+                if (entry.Value.Exists) count++;
+            if (count == 0) return [];
+            TValue[] result = new TValue[count];
+            int write = 0;
+            foreach (Entry entry in _entries)
+            {
+                if (entry.Value.Exists) result[write++] = entry.Value.Value;
+            }
+            return result;
+        }
+
+        public bool TryGetValue(MidoraId id, out PagedTimelineIdDelta<TValue> value)
+        {
+            int low = 0;
+            int high = _entries.Length;
+            while (low < high)
+            {
+                int middle = low + ((high - low) >> 1);
+                int comparison = _entries[middle].Id.CompareTo(id);
+                if (comparison < 0) low = middle + 1;
+                else high = middle;
+            }
+            if (low < _entries.Length && _entries[low].Id == id)
+            {
+                value = _entries[low].Value;
+                return true;
+            }
+            value = default;
+            return false;
+        }
+
+        internal static Bucket? Merge(
+            Bucket? current,
+            Change[] changes,
+            int first,
+            int count)
+        {
+            Entry[] existing = current?._entries ?? [];
+            Entry[] result = new Entry[checked(existing.Length + count)];
+            int existingIndex = 0;
+            int changeIndex = first;
+            int changeEnd = checked(first + count);
+            int writeIndex = 0;
+            while (existingIndex < existing.Length || changeIndex < changeEnd)
+            {
+                if (changeIndex == changeEnd)
+                {
+                    result[writeIndex++] = existing[existingIndex++];
+                    continue;
+                }
+                Change change = changes[changeIndex];
+                if (existingIndex == existing.Length)
+                {
+                    if (change.Value is { } inserted)
+                        result[writeIndex++] = new(change.Id, inserted);
+                    changeIndex++;
+                    continue;
+                }
+
+                int comparison = existing[existingIndex].Id.CompareTo(change.Id);
+                if (comparison < 0)
+                {
+                    result[writeIndex++] = existing[existingIndex++];
+                    continue;
+                }
+                if (comparison == 0)
+                {
+                    if (change.Value is { } replacement)
+                        result[writeIndex++] = new(change.Id, replacement);
+                    existingIndex++;
+                    changeIndex++;
+                    continue;
+                }
+                if (change.Value is { } added)
+                    result[writeIndex++] = new(change.Id, added);
+                changeIndex++;
+            }
+            if (writeIndex == 0) return null;
+            if (writeIndex != result.Length) Array.Resize(ref result, writeIndex);
+            return new(result);
+        }
+    }
+
+    internal readonly record struct Mutation(
+        PersistentTimelineIdDeltaMap<TValue> Map,
+        IReadOnlyList<Bucket> RemovedBuckets,
+        IReadOnlyList<Bucket> AddedBuckets);
+}
+
 internal sealed class PagedTimelineValueSnapshot<TValue>
 {
-    private readonly PagedTimelineValuePage<TValue>[] _pages;
+    private readonly PersistentTimelineSequence<TValue> _sequence;
+    private readonly PagedTimelineSpatialBlockIndex<TValue> _spatialIndex;
+    private readonly PagedTimelineSpatialBlockIndex<TValue> _spatialOverlayIndex;
+    private readonly PersistentTimelineIdDeltaMap<TValue> _spatialValueOverlay;
+    private readonly FrozenDictionary<MidoraId, TValue> _baseById;
+    private readonly PersistentTimelineIdDeltaMap<TValue> _idDelta;
+    private readonly Func<TValue, MidoraId> _getId;
     private readonly Func<TValue, long> _getStart;
     private readonly Func<TValue, long> _getEnd;
     private readonly Func<TValue, int> _getLane;
     private readonly Func<TValue, ulong> _getFingerprint;
+    private readonly Func<TValue, double>? _getRasterValue;
 
     public PagedTimelineValueSnapshot(
-        PagedTimelineValuePage<TValue>[] pages,
+        PersistentTimelineSequence<TValue> sequence,
+        PagedTimelineSpatialBlockIndex<TValue> spatialIndex,
+        PagedTimelineSpatialBlockIndex<TValue> spatialOverlayIndex,
+        PersistentTimelineIdDeltaMap<TValue> spatialValueOverlay,
+        FrozenDictionary<MidoraId, TValue> baseById,
+        PersistentTimelineIdDeltaMap<TValue> idDelta,
         int count,
         long generation,
+        Func<TValue, MidoraId> getId,
         Func<TValue, long> getStart,
         Func<TValue, long> getEnd,
         Func<TValue, int> getLane,
-        Func<TValue, ulong> getFingerprint)
+        Func<TValue, ulong> getFingerprint,
+        Func<TValue, double>? getRasterValue,
+        long[] discoveryKeys)
     {
-        _pages = pages;
+        _sequence = sequence;
+        _spatialOverlayIndex = spatialOverlayIndex;
+        _spatialValueOverlay = spatialValueOverlay;
+        _baseById = baseById;
+        _idDelta = idDelta;
+        _getId = getId;
         _getStart = getStart;
         _getEnd = getEnd;
         _getLane = getLane;
         _getFingerprint = getFingerprint;
+        _getRasterValue = getRasterValue;
+        DiscoveryKeys = discoveryKeys;
+        _spatialIndex = spatialIndex;
         Count = count;
         Generation = generation;
-        MaximumEndTick = pages.Length == 0 ? 0 : pages.Max(static page => page.MaximumEndTick);
-        ulong fingerprint = PagedTimelineFingerprint.Offset;
-        foreach (PagedTimelineValuePage<TValue> page in pages)
-            PagedTimelineFingerprint.Add(ref fingerprint, page.ContentFingerprint);
-        PagedTimelineFingerprint.Add(ref fingerprint, unchecked((ulong)count));
-        ContentFingerprint = fingerprint;
+        long baseMaximumEndTick = spatialValueOverlay.IsEmpty
+            ? spatialIndex.MaximumEndTick
+            : spatialIndex.GetMaximumEndTickExcluding(spatialValueOverlay, getId);
+        MaximumEndTick = Math.Max(baseMaximumEndTick, spatialOverlayIndex.MaximumEndTick);
+        ContentFingerprint = sequence.ContentFingerprint;
     }
 
     public int Count { get; }
     public long Generation { get; }
     public long MaximumEndTick { get; }
     public ulong ContentFingerprint { get; }
+    public IReadOnlyList<long> DiscoveryKeys { get; }
 
     public IEnumerable<TValue> Query(
         long startTick,
@@ -976,35 +2776,189 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
         ulong requiredCategoryMask = ulong.MaxValue)
     {
         if (endTick <= startTick || maximumLane < minimumLane) yield break;
-        foreach (PagedTimelineValuePage<TValue> page in _pages)
+        List<PagedTimelineOrderedValue<TValue>> matches = [];
+        AppendRangeMatches(
+            _spatialIndex,
+            pageIndex: 0,
+            matches,
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask);
+        AppendRangeMatches(
+            _spatialOverlayIndex,
+            pageIndex: 1,
+            matches,
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask);
+        matches.Sort((left, right) =>
         {
-            if (page.MaximumEndTick <= startTick
-                || page.MinimumStartTick >= endTick
-                || page.MaximumLane < minimumLane
-                || page.MinimumLane > maximumLane
-                || (page.CategoryMask & requiredCategoryMask) == 0)
+            int start = _getStart(left.Value).CompareTo(_getStart(right.Value));
+            if (start != 0) return start;
+            int lane = _getLane(left.Value).CompareTo(_getLane(right.Value));
+            if (lane != 0) return lane;
+            int end = _getEnd(left.Value).CompareTo(_getEnd(right.Value));
+            if (end != 0) return end;
+            return _getId(left.Value).CompareTo(_getId(right.Value));
+        });
+        foreach (PagedTimelineOrderedValue<TValue> match in matches)
+        {
+            if (match.PageIndex == 0
+                && _spatialValueOverlay.TryGetValue(_getId(match.Value), out _))
             {
                 continue;
             }
-            foreach (TValue value in page.Values)
-            {
-                int lane = _getLane(value);
-                if (_getStart(value) < endTick
-                    && _getEnd(value) > startTick
-                    && lane >= minimumLane
-                    && lane <= maximumLane)
-                {
-                    yield return value;
-                }
-            }
+            yield return match.Value;
+        }
+    }
+
+    private static void AppendRangeMatches(
+        PagedTimelineSpatialBlockIndex<TValue> index,
+        int pageIndex,
+        List<PagedTimelineOrderedValue<TValue>> destination,
+        long startTick,
+        long endTick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask)
+    {
+        foreach (PagedTimelineSpatialBlockReference<TValue> candidate in index.Query(
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask))
+        {
+            candidate.Page.AppendSpatialRangeValues(
+                destination,
+                pageIndex,
+                candidate.Block,
+                startTick,
+                endTick,
+                minimumLane,
+                maximumLane,
+                requiredCategoryMask);
         }
     }
 
     public IEnumerable<TValue> EnumerateAll()
+        => _sequence.Enumerate();
+
+    public IReadOnlyList<TValue> ResolveByIds(IReadOnlyCollection<MidoraId> ids)
     {
-        foreach (PagedTimelineValuePage<TValue> page in _pages)
+        ArgumentNullException.ThrowIfNull(ids);
+        if (ids.Count == 0) return [];
+        List<TValue> result = new(ids.Count);
+        foreach (MidoraId id in ids.Order())
         {
-            foreach (TValue value in page.Values) yield return value;
+            if (_idDelta.TryGetValue(id, out PagedTimelineIdDelta<TValue> delta))
+            {
+                if (delta.Exists) result.Add(delta.Value);
+                continue;
+            }
+            if (_baseById.TryGetValue(id, out TValue? value)) result.Add(value);
+        }
+        return result;
+    }
+
+    public IReadOnlyList<TValue> QueryExactStarts(
+        IReadOnlySet<TimelineStartLaneKey> keys,
+        ulong requiredCategoryMask = ulong.MaxValue)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        if (keys.Count == 0) return [];
+        List<TValue> result = [];
+        foreach (TimelineStartLaneKey key in keys)
+        {
+            AppendExactStartValues(
+                _spatialIndex,
+                result,
+                key.Tick,
+                key.Lane,
+                key.Lane,
+                requiredCategoryMask,
+                excludeOverlayValues: true);
+            AppendExactStartValues(
+                _spatialOverlayIndex,
+                result,
+                key.Tick,
+                key.Lane,
+                key.Lane,
+                requiredCategoryMask,
+                excludeOverlayValues: false);
+        }
+        return result;
+    }
+
+    public IReadOnlyList<TValue> QueryExactTicks(
+        IReadOnlySet<long> ticks,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask = ulong.MaxValue)
+    {
+        ArgumentNullException.ThrowIfNull(ticks);
+        if (ticks.Count == 0 || maximumLane < minimumLane) return [];
+        List<TValue> result = [];
+        foreach (long tick in ticks)
+        {
+            AppendExactStartValues(
+                _spatialIndex,
+                result,
+                tick,
+                minimumLane,
+                maximumLane,
+                requiredCategoryMask,
+                excludeOverlayValues: true);
+            AppendExactStartValues(
+                _spatialOverlayIndex,
+                result,
+                tick,
+                minimumLane,
+                maximumLane,
+                requiredCategoryMask,
+                excludeOverlayValues: false);
+        }
+        return result;
+    }
+
+    private void AppendExactStartValues(
+        PagedTimelineSpatialBlockIndex<TValue> index,
+        List<TValue> destination,
+        long tick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask,
+        bool excludeOverlayValues)
+    {
+        foreach (PagedTimelineSpatialBlockReference<TValue> candidate in
+            index.QueryStarts(
+                tick,
+                minimumLane,
+                maximumLane,
+                requiredCategoryMask))
+        {
+            int first = destination.Count;
+            candidate.Page.AppendExactStartValues(
+                destination,
+                candidate.Block,
+                tick,
+                minimumLane,
+                maximumLane,
+                requiredCategoryMask);
+            if (!excludeOverlayValues) continue;
+            int write = first;
+            for (int read = first; read < destination.Count; read++)
+            {
+                TValue value = destination[read];
+                if (_spatialValueOverlay.TryGetValue(_getId(value), out _)) continue;
+                destination[write++] = value;
+            }
+            if (write != destination.Count)
+                destination.RemoveRange(write, destination.Count - write);
         }
     }
 
@@ -1020,18 +2974,55 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
         {
             return aggregate.ToFingerprint();
         }
-        foreach (PagedTimelineValuePage<TValue> page in _pages)
+        if (!_spatialValueOverlay.IsEmpty)
         {
-            if (page.MaximumEndTick <= startTick
-                || page.MinimumStartTick >= endTick
-                || page.MaximumLane < minimumLane
-                || page.MinimumLane > maximumLane
-                || (page.CategoryMask & requiredCategoryMask) == 0)
+            foreach (PagedTimelineSpatialBlockReference<TValue> candidate in _spatialIndex.Query(
+                startTick,
+                endTick,
+                minimumLane,
+                maximumLane,
+                requiredCategoryMask))
             {
-                continue;
+                candidate.Page.AccumulateSpatialRangeFingerprintExcluding(
+                    ref aggregate,
+                    candidate.Block,
+                    startTick,
+                    endTick,
+                    minimumLane,
+                    maximumLane,
+                    requiredCategoryMask,
+                    _spatialValueOverlay,
+                    _getId);
             }
-            page.AccumulateRangeFingerprint(
+            foreach (PagedTimelineSpatialBlockReference<TValue> candidate in
+                _spatialOverlayIndex.Query(
+                    startTick,
+                    endTick,
+                    minimumLane,
+                    maximumLane,
+                    requiredCategoryMask))
+            {
+                candidate.Page.AccumulateSpatialRangeFingerprint(
+                    ref aggregate,
+                    candidate.Block,
+                    startTick,
+                    endTick,
+                    minimumLane,
+                    maximumLane,
+                    requiredCategoryMask);
+            }
+            return aggregate.ToFingerprint();
+        }
+        foreach (PagedTimelineSpatialBlockReference<TValue> candidate in _spatialIndex.Query(
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask))
+        {
+            candidate.Page.AccumulateSpatialRangeFingerprint(
                 ref aggregate,
+                candidate.Block,
                 startTick,
                 endTick,
                 minimumLane,
@@ -1041,11 +3032,80 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
         return aggregate.ToFingerprint();
     }
 
+    public int AccumulateRasterColumns(
+        long startTick,
+        long endTick,
+        int minimumLane,
+        int maximumLane,
+        Span<TimelineRasterColumnSummary> destination,
+        ulong requiredCategoryMask = ulong.MaxValue)
+    {
+        destination.Clear();
+        if (destination.IsEmpty || endTick <= startTick || maximumLane < minimumLane)
+            return 0;
+        if (!_spatialValueOverlay.IsEmpty)
+        {
+            int work = 0;
+            foreach (PagedTimelineSpatialBlockReference<TValue> candidate in _spatialIndex.Query(
+                startTick,
+                endTick,
+                minimumLane,
+                maximumLane,
+                requiredCategoryMask))
+            {
+                work += candidate.Page.AccumulateSpatialBlockRasterColumnsExcluding(
+                    candidate.Block,
+                    startTick,
+                    endTick,
+                    minimumLane,
+                    maximumLane,
+                    requiredCategoryMask,
+                    _spatialValueOverlay,
+                    _getId,
+                    destination);
+            }
+            work += _spatialOverlayIndex.AccumulateRasterColumns(
+                startTick,
+                endTick,
+                minimumLane,
+                maximumLane,
+                requiredCategoryMask,
+                destination);
+            return work;
+        }
+        return _spatialIndex.AccumulateRasterColumns(
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask,
+            destination);
+    }
+
     public void AccumulateStartColumns(long extent, Span<byte> destination)
     {
         if (extent <= 0) throw new ArgumentOutOfRangeException(nameof(extent));
         foreach (TValue value in EnumerateAll()) MarkColumn(destination, _getStart(value), extent);
     }
+
+    internal int CountCandidateSpatialBlocks(
+        long startTick,
+        long endTick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask = ulong.MaxValue) =>
+        _spatialIndex.Query(
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask).Count
+        + _spatialOverlayIndex.Query(
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask).Count;
 
     internal static void MarkColumn(Span<byte> destination, long tick, long extent)
     {
@@ -1057,6 +3117,615 @@ internal sealed class PagedTimelineValueSnapshot<TValue>
         destination[column] = 1;
     }
 }
+
+internal sealed class PagedTimelineSpatialBlockIndex<TValue>
+{
+    private readonly Node? _root;
+
+    private PagedTimelineSpatialBlockIndex(Node? root) => _root = root;
+
+    public static PagedTimelineSpatialBlockIndex<TValue> Empty { get; } = new(root: null);
+
+    public long MaximumEndTick => _root?.MaximumEndTick ?? 0;
+
+    public long GetMaximumEndTickExcluding(
+        PersistentTimelineIdDeltaMap<TValue> excluded,
+        Func<TValue, MidoraId> getId)
+    {
+        ArgumentNullException.ThrowIfNull(excluded);
+        ArgumentNullException.ThrowIfNull(getId);
+        long maximum = 0;
+        AccumulateMaximumEndTick(_root, excluded, getId, ref maximum);
+        return maximum;
+    }
+
+    private static void AccumulateMaximumEndTick(
+        Node? node,
+        PersistentTimelineIdDeltaMap<TValue> excluded,
+        Func<TValue, MidoraId> getId,
+        ref long maximum)
+    {
+        if (node is null || node.MaximumEndTick <= maximum) return;
+        Node? first = node.Left;
+        Node? second = node.Right;
+        if ((second?.MaximumEndTick ?? long.MinValue)
+            > (first?.MaximumEndTick ?? long.MinValue))
+        {
+            (first, second) = (second, first);
+        }
+        AccumulateMaximumEndTick(first, excluded, getId, ref maximum);
+        if (node.Entry.Block.MaximumEndTick > maximum)
+        {
+            maximum = Math.Max(
+                maximum,
+                node.Entry.Page.GetMaximumEndTickExcluding(
+                    node.Entry.Block,
+                    excluded,
+                    getId));
+        }
+        AccumulateMaximumEndTick(second, excluded, getId, ref maximum);
+    }
+
+    public static PagedTimelineSpatialBlockIndex<TValue> Create(
+        IEnumerable<PagedTimelineValuePage<TValue>> pages)
+    {
+        ArgumentNullException.ThrowIfNull(pages);
+        PagedTimelineSpatialBlockReference<TValue>[] entries = pages
+            .SelectMany(static page => page.SpatialBlocks.Select(block => new PagedTimelineSpatialBlockReference<TValue>(page, block)))
+            .ToArray();
+        Array.Sort(entries, Compare);
+        return entries.Length == 0
+            ? Empty
+            : new(BuildBalanced(entries, 0, entries.Length));
+    }
+
+    public PagedTimelineSpatialBlockIndex<TValue> ReplacePage(
+        PagedTimelineValuePage<TValue>? expected,
+        PagedTimelineValuePage<TValue>? replacement)
+    {
+        Node? root = _root;
+        if (expected is not null)
+        {
+            foreach (PagedTimelineSpatialBlockMetadata block in expected.SpatialBlocks)
+                root = Remove(root, new(expected, block));
+        }
+        if (replacement is not null)
+        {
+            foreach (PagedTimelineSpatialBlockMetadata block in replacement.SpatialBlocks)
+                root = Insert(root, new(replacement, block));
+        }
+        return ReferenceEquals(root, _root) ? this : new(root);
+    }
+
+    public PagedTimelineSpatialBlockIndex<TValue> ReplacePages(
+        IReadOnlyCollection<PagedTimelineValuePage<TValue>> expected,
+        IReadOnlyCollection<PagedTimelineValuePage<TValue>> replacements)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        ArgumentNullException.ThrowIfNull(replacements);
+        if (expected.Count == 0 && replacements.Count == 0) return this;
+
+        int changedBlockCount = 0;
+        foreach (PagedTimelineValuePage<TValue> page in expected)
+            changedBlockCount = checked(changedBlockCount + page.SpatialBlocks.Length);
+        foreach (PagedTimelineValuePage<TValue> page in replacements)
+            changedBlockCount = checked(changedBlockCount + page.SpatialBlocks.Length);
+
+        // Path-copying the AVL is cheaper for a handful of pages and retains
+        // maximum sharing. A wide batch, however, must not perform thousands
+        // of independent remove/insert traversals. Merge the already ordered
+        // old root with the ordered replacement blocks and build one balanced
+        // immutable root in linear time instead.
+        if (changedBlockCount <= 64)
+        {
+            PagedTimelineSpatialBlockIndex<TValue> result = this;
+            foreach (PagedTimelineValuePage<TValue> page in expected)
+                result = result.ReplacePage(page, replacement: null);
+            foreach (PagedTimelineValuePage<TValue> page in replacements)
+                result = result.ReplacePage(expected: null, page);
+            return result;
+        }
+
+        HashSet<PagedTimelineValuePage<TValue>> removed =
+            new(expected, ReferenceEqualityComparer.Instance);
+        if (removed.Count != expected.Count)
+            throw new InvalidOperationException("A paged timeline spatial page is duplicated in a batch replacement.");
+
+        List<PagedTimelineSpatialBlockReference<TValue>> retained =
+            new(Math.Max(0, (_root?.Count ?? 0) - changedBlockCount));
+        AppendInOrder(_root, removed, retained);
+
+        PagedTimelineSpatialBlockReference<TValue>[] added = replacements
+            .SelectMany(static page => page.SpatialBlocks.Select(
+                block => new PagedTimelineSpatialBlockReference<TValue>(page, block)))
+            .ToArray();
+        Array.Sort(added, Compare);
+
+        PagedTimelineSpatialBlockReference<TValue>[] merged =
+            new PagedTimelineSpatialBlockReference<TValue>[retained.Count + added.Length];
+        int retainedIndex = 0;
+        int addedIndex = 0;
+        int writeIndex = 0;
+        while (retainedIndex < retained.Count || addedIndex < added.Length)
+        {
+            if (retainedIndex == retained.Count)
+            {
+                merged[writeIndex++] = added[addedIndex++];
+                continue;
+            }
+            if (addedIndex == added.Length)
+            {
+                merged[writeIndex++] = retained[retainedIndex++];
+                continue;
+            }
+            int comparison = Compare(retained[retainedIndex], added[addedIndex]);
+            if (comparison == 0)
+                throw new InvalidOperationException("A paged timeline spatial block is already indexed.");
+            merged[writeIndex++] = comparison < 0
+                ? retained[retainedIndex++]
+                : added[addedIndex++];
+        }
+        return merged.Length == 0
+            ? Empty
+            : new(BuildBalanced(merged, 0, merged.Length));
+    }
+
+    private static void AppendInOrder(
+        Node? node,
+        IReadOnlySet<PagedTimelineValuePage<TValue>> excludedPages,
+        List<PagedTimelineSpatialBlockReference<TValue>> destination)
+    {
+        if (node is null) return;
+        AppendInOrder(node.Left, excludedPages, destination);
+        if (!excludedPages.Contains(node.Entry.Page)) destination.Add(node.Entry);
+        AppendInOrder(node.Right, excludedPages, destination);
+    }
+
+    public IReadOnlyList<PagedTimelineSpatialBlockReference<TValue>> Query(
+        long startTick,
+        long endTick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask)
+    {
+        if (_root is null || endTick <= startTick || maximumLane < minimumLane)
+            return [];
+        List<PagedTimelineSpatialBlockReference<TValue>> result = [];
+        Query(
+            _root,
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask,
+            result);
+        return result;
+    }
+
+    public IReadOnlyList<PagedTimelineSpatialBlockReference<TValue>> QueryStarts(
+        long tick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask)
+    {
+        if (_root is null || maximumLane < minimumLane) return [];
+        List<PagedTimelineSpatialBlockReference<TValue>> result = [];
+        QueryStarts(
+            _root,
+            tick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask,
+            result);
+        return result;
+    }
+
+    public int AccumulateRasterColumns(
+        long startTick,
+        long endTick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask,
+        Span<TimelineRasterColumnSummary> destination)
+    {
+        if (_root is null
+            || destination.IsEmpty
+            || endTick <= startTick
+            || maximumLane < minimumLane)
+        {
+            return 0;
+        }
+        (ulong laneMaskLow, ulong laneMaskHigh) =
+            PagedTimelineRasterProjection.LaneRangeMask(minimumLane, maximumLane);
+        int work = 0;
+        int budget = Math.Max(64, checked(destination.Length * 3));
+        AccumulateRasterColumns(
+            _root,
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask,
+            laneMaskLow,
+            laneMaskHigh,
+            budget,
+            ref work,
+            destination);
+        return work;
+    }
+
+    private static void AccumulateRasterColumns(
+        Node? node,
+        long startTick,
+        long endTick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask,
+        ulong queryLaneMaskLow,
+        ulong queryLaneMaskHigh,
+        int budget,
+        ref int work,
+        Span<TimelineRasterColumnSummary> destination)
+    {
+        if (node is null
+            || node.MaximumEndTick <= startTick
+            || node.MinimumStartTick >= endTick
+            || node.MaximumLane < minimumLane
+            || node.MinimumLane > maximumLane
+            || (node.CategoryMask & requiredCategoryMask) == 0)
+        {
+            return;
+        }
+        work++;
+        int columnSpan = PagedTimelineRasterProjection.ColumnSpan(
+            destination.Length,
+            startTick,
+            endTick,
+            node.MinimumStartTick,
+            node.MaximumEndTick);
+        bool categoryExact = requiredCategoryMask == ulong.MaxValue
+            || (node.CategoryMask & ~requiredCategoryMask) == 0;
+        if (columnSpan <= 1 && categoryExact || work >= budget)
+        {
+            PagedTimelineRasterProjection.Include(
+                destination,
+                startTick,
+                endTick,
+                node.MinimumStartTick,
+                node.MaximumEndTick,
+                node.LaneMaskLow & queryLaneMaskLow,
+                node.LaneMaskHigh & queryLaneMaskHigh,
+                node.MinimumRasterValue,
+                node.MaximumRasterValue,
+                node.ApproximateSourceCount);
+            return;
+        }
+
+        AccumulateRasterColumns(
+            node.Left,
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask,
+            queryLaneMaskLow,
+            queryLaneMaskHigh,
+            budget,
+            ref work,
+            destination);
+
+        PagedTimelineSpatialBlockMetadata block = node.Entry.Block;
+        if (block.MaximumEndTick > startTick
+            && block.MinimumStartTick < endTick
+            && block.MaximumLane >= minimumLane
+            && block.MinimumLane <= maximumLane
+            && (block.CategoryMask & requiredCategoryMask) != 0)
+        {
+            int blockColumnSpan = PagedTimelineRasterProjection.ColumnSpan(
+                destination.Length,
+                startTick,
+                endTick,
+                block.MinimumStartTick,
+                block.MaximumEndTick);
+            bool blockCategoryExact = requiredCategoryMask == ulong.MaxValue
+                || (block.CategoryMask & ~requiredCategoryMask) == 0;
+            if (blockColumnSpan <= 1 && blockCategoryExact || work >= budget)
+            {
+                PagedTimelineRasterProjection.Include(
+                    destination,
+                    startTick,
+                    endTick,
+                    block.MinimumStartTick,
+                    block.MaximumEndTick,
+                    block.LaneMaskLow & queryLaneMaskLow,
+                    block.LaneMaskHigh & queryLaneMaskHigh,
+                    block.MinimumRasterValue,
+                    block.MaximumRasterValue,
+                    block.Count);
+            }
+            else
+            {
+                work += node.Entry.Page.AccumulateSpatialBlockRasterColumns(
+                    block,
+                    startTick,
+                    endTick,
+                    minimumLane,
+                    maximumLane,
+                    requiredCategoryMask,
+                    destination);
+            }
+        }
+
+        AccumulateRasterColumns(
+            node.Right,
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask,
+            queryLaneMaskLow,
+            queryLaneMaskHigh,
+            budget,
+            ref work,
+            destination);
+    }
+
+    private void Query(
+        Node? node,
+        long startTick,
+        long endTick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask,
+        List<PagedTimelineSpatialBlockReference<TValue>> destination)
+    {
+        if (node is null) return;
+        if (node.MaximumEndTick <= startTick
+            || node.MinimumStartTick >= endTick
+            || node.MaximumLane < minimumLane
+            || node.MinimumLane > maximumLane
+            || (node.CategoryMask & requiredCategoryMask) == 0)
+        {
+            return;
+        }
+        Query(
+            node.Left,
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask,
+            destination);
+        PagedTimelineSpatialBlockMetadata block = node.Entry.Block;
+        if (block.MinimumStartTick < endTick
+            && block.MaximumEndTick > startTick
+            && block.MaximumLane >= minimumLane
+            && block.MinimumLane <= maximumLane
+            && (block.CategoryMask & requiredCategoryMask) != 0)
+        {
+            destination.Add(node.Entry);
+        }
+        Query(
+            node.Right,
+            startTick,
+            endTick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask,
+            destination);
+    }
+
+    private static void QueryStarts(
+        Node? node,
+        long tick,
+        int minimumLane,
+        int maximumLane,
+        ulong requiredCategoryMask,
+        List<PagedTimelineSpatialBlockReference<TValue>> destination)
+    {
+        if (node is null
+            || node.MinimumStartTick > tick
+            || node.MaximumStartTick < tick
+            || node.MaximumLane < minimumLane
+            || node.MinimumLane > maximumLane
+            || (node.CategoryMask & requiredCategoryMask) == 0)
+        {
+            return;
+        }
+        QueryStarts(
+            node.Left,
+            tick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask,
+            destination);
+        PagedTimelineSpatialBlockMetadata block = node.Entry.Block;
+        if (block.MinimumStartTick <= tick
+            && block.MaximumStartTick >= tick
+            && block.MaximumLane >= minimumLane
+            && block.MinimumLane <= maximumLane
+            && (block.CategoryMask & requiredCategoryMask) != 0)
+        {
+            destination.Add(node.Entry);
+        }
+        QueryStarts(
+            node.Right,
+            tick,
+            minimumLane,
+            maximumLane,
+            requiredCategoryMask,
+            destination);
+    }
+
+    private static Node Insert(Node? node, PagedTimelineSpatialBlockReference<TValue> entry)
+    {
+        if (node is null) return new(entry, left: null, right: null);
+        int comparison = Compare(entry, node.Entry);
+        if (comparison == 0)
+            throw new InvalidOperationException("A paged timeline spatial block is already indexed.");
+        return Balance(comparison < 0
+            ? new(node.Entry, Insert(node.Left, entry), node.Right)
+            : new(node.Entry, node.Left, Insert(node.Right, entry)));
+    }
+
+    private static Node? BuildBalanced(
+        PagedTimelineSpatialBlockReference<TValue>[] entries,
+        int first,
+        int count)
+    {
+        if (count == 0) return null;
+        int leftCount = count / 2;
+        return new(
+            entries[first + leftCount],
+            BuildBalanced(entries, first, leftCount),
+            BuildBalanced(entries, first + leftCount + 1, count - leftCount - 1));
+    }
+
+    private static Node? Remove(Node? node, PagedTimelineSpatialBlockReference<TValue> entry)
+    {
+        if (node is null)
+            throw new InvalidOperationException("A paged timeline spatial block is not indexed.");
+        int comparison = Compare(entry, node.Entry);
+        if (comparison < 0)
+            return Balance(new(node.Entry, Remove(node.Left, entry), node.Right));
+        if (comparison > 0)
+            return Balance(new(node.Entry, node.Left, Remove(node.Right, entry)));
+        if (node.Left is null) return node.Right;
+        if (node.Right is null) return node.Left;
+        Node successor = Minimum(node.Right);
+        return Balance(new(successor.Entry, node.Left, RemoveMinimum(node.Right)));
+    }
+
+    private static Node Minimum(Node node)
+    {
+        while (node.Left is not null) node = node.Left;
+        return node;
+    }
+
+    private static Node? RemoveMinimum(Node node) => node.Left is null
+        ? node.Right
+        : Balance(new(node.Entry, RemoveMinimum(node.Left), node.Right));
+
+    private static Node Balance(Node node)
+    {
+        int balance = Height(node.Left) - Height(node.Right);
+        if (balance > 1)
+        {
+            if (Height(node.Left!.Left) < Height(node.Left.Right))
+                node = new(node.Entry, RotateLeft(node.Left), node.Right);
+            return RotateRight(node);
+        }
+        if (balance < -1)
+        {
+            if (Height(node.Right!.Right) < Height(node.Right.Left))
+                node = new(node.Entry, node.Left, RotateRight(node.Right));
+            return RotateLeft(node);
+        }
+        return node;
+    }
+
+    private static Node RotateLeft(Node node)
+    {
+        Node pivot = node.Right!;
+        return new(pivot.Entry, new(node.Entry, node.Left, pivot.Left), pivot.Right);
+    }
+
+    private static Node RotateRight(Node node)
+    {
+        Node pivot = node.Left!;
+        return new(pivot.Entry, pivot.Left, new(node.Entry, pivot.Right, node.Right));
+    }
+
+    private static int Height(Node? node) => node?.Height ?? 0;
+
+    private static int Compare(
+        PagedTimelineSpatialBlockReference<TValue> left,
+        PagedTimelineSpatialBlockReference<TValue> right)
+    {
+        int start = left.Block.MinimumStartTick.CompareTo(right.Block.MinimumStartTick);
+        if (start != 0) return start;
+        int page = left.Page.SpatialIdentity.CompareTo(right.Page.SpatialIdentity);
+        return page != 0 ? page : left.Block.First.CompareTo(right.Block.First);
+    }
+
+    private sealed class Node
+    {
+        public Node(
+            PagedTimelineSpatialBlockReference<TValue> entry,
+            Node? left,
+            Node? right)
+        {
+            Entry = entry;
+            Left = left;
+            Right = right;
+            Height = checked(1 + Math.Max(PagedTimelineSpatialBlockIndex<TValue>.Height(left), PagedTimelineSpatialBlockIndex<TValue>.Height(right)));
+            Count = checked(1 + (left?.Count ?? 0) + (right?.Count ?? 0));
+            MinimumStartTick = Math.Min(
+                entry.Block.MinimumStartTick,
+                Math.Min(left?.MinimumStartTick ?? long.MaxValue, right?.MinimumStartTick ?? long.MaxValue));
+            MaximumStartTick = Math.Max(
+                entry.Block.MaximumStartTick,
+                Math.Max(left?.MaximumStartTick ?? long.MinValue, right?.MaximumStartTick ?? long.MinValue));
+            MaximumEndTick = Math.Max(
+                entry.Block.MaximumEndTick,
+                Math.Max(left?.MaximumEndTick ?? long.MinValue, right?.MaximumEndTick ?? long.MinValue));
+            MinimumLane = Math.Min(
+                entry.Block.MinimumLane,
+                Math.Min(left?.MinimumLane ?? int.MaxValue, right?.MinimumLane ?? int.MaxValue));
+            MaximumLane = Math.Max(
+                entry.Block.MaximumLane,
+                Math.Max(left?.MaximumLane ?? int.MinValue, right?.MaximumLane ?? int.MinValue));
+            LaneMaskLow = entry.Block.LaneMaskLow
+                | (left?.LaneMaskLow ?? 0)
+                | (right?.LaneMaskLow ?? 0);
+            LaneMaskHigh = entry.Block.LaneMaskHigh
+                | (left?.LaneMaskHigh ?? 0)
+                | (right?.LaneMaskHigh ?? 0);
+            MinimumRasterValue = Math.Min(
+                entry.Block.MinimumRasterValue,
+                Math.Min(
+                    left?.MinimumRasterValue ?? double.PositiveInfinity,
+                    right?.MinimumRasterValue ?? double.PositiveInfinity));
+            MaximumRasterValue = Math.Max(
+                entry.Block.MaximumRasterValue,
+                Math.Max(
+                    left?.MaximumRasterValue ?? double.NegativeInfinity,
+                    right?.MaximumRasterValue ?? double.NegativeInfinity));
+            ApproximateSourceCount = SaturatingAdd(
+                entry.Block.Count,
+                SaturatingAdd(
+                    left?.ApproximateSourceCount ?? 0,
+                    right?.ApproximateSourceCount ?? 0));
+            CategoryMask = entry.Block.CategoryMask
+                | (left?.CategoryMask ?? 0)
+                | (right?.CategoryMask ?? 0);
+        }
+
+        public PagedTimelineSpatialBlockReference<TValue> Entry { get; }
+        public Node? Left { get; }
+        public Node? Right { get; }
+        public int Height { get; }
+        public int Count { get; }
+        public long MinimumStartTick { get; }
+        public long MaximumStartTick { get; }
+        public long MaximumEndTick { get; }
+        public int MinimumLane { get; }
+        public int MaximumLane { get; }
+        public ulong LaneMaskLow { get; }
+        public ulong LaneMaskHigh { get; }
+        public double MinimumRasterValue { get; }
+        public double MaximumRasterValue { get; }
+        public int ApproximateSourceCount { get; }
+        public ulong CategoryMask { get; }
+
+        private static int SaturatingAdd(int left, int right) =>
+            left > int.MaxValue - right ? int.MaxValue : left + right;
+    }
+}
+
+internal readonly record struct PagedTimelineSpatialBlockReference<TValue>(
+    PagedTimelineValuePage<TValue> Page,
+    PagedTimelineSpatialBlockMetadata Block);
 
 internal struct PagedTimelineRangeFingerprintAggregate
 {
@@ -1102,6 +3771,99 @@ internal struct PagedTimelineRangeFingerprintAggregate
     }
 }
 
+/// <summary>
+/// Order-sensitive polynomial sequence hash with an associative combine
+/// operation. Page aggregates can therefore be recombined after a page split
+/// or merge without making the fingerprint depend on those internal page
+/// boundaries.
+/// </summary>
+internal struct PagedTimelineSequenceFingerprintAggregate
+{
+    private const ulong Base = 0x9e3779b185ebca87UL;
+    private static readonly ulong[] s_powers = CreatePowers(4096);
+    private ulong _hash;
+    private ulong _power;
+    private ulong _count;
+
+    public void Add(ulong value)
+    {
+        if (_count == 0) _power = 1;
+        _hash = unchecked(_hash * Base + Mix(value));
+        _power = unchecked(_power * Base);
+        _count++;
+    }
+
+    public void Combine(PagedTimelineSequenceFingerprintAggregate other)
+    {
+        if (other._count == 0) return;
+        if (_count == 0)
+        {
+            this = other;
+            return;
+        }
+        _hash = unchecked(_hash * other._power + other._hash);
+        _power = unchecked(_power * other._power);
+        _count = unchecked(_count + other._count);
+    }
+
+    public void ReplaceAt(
+        int index,
+        int count,
+        ulong expectedValue,
+        ulong replacementValue)
+    {
+        if ((uint)index >= (uint)count || unchecked((ulong)count) != _count)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        if (expectedValue == replacementValue) return;
+        int exponent = checked(count - index - 1);
+        ulong weight = exponent < s_powers.Length
+            ? s_powers[exponent]
+            : Pow(Base, exponent);
+        _hash = unchecked(
+            _hash
+            + unchecked(Mix(replacementValue) - Mix(expectedValue)) * weight);
+    }
+
+    public readonly ulong ToFingerprint()
+    {
+        ulong fingerprint = PagedTimelineFingerprint.Offset;
+        PagedTimelineFingerprint.Add(ref fingerprint, _hash);
+        PagedTimelineFingerprint.Add(ref fingerprint, _count);
+        return fingerprint;
+    }
+
+    private static ulong Mix(ulong value)
+    {
+        value ^= value >> 30;
+        value *= 0xbf58476d1ce4e5b9UL;
+        value ^= value >> 27;
+        value *= 0x94d049bb133111ebUL;
+        return value ^ (value >> 31);
+    }
+
+    private static ulong[] CreatePowers(int maximumExponent)
+    {
+        ulong[] result = new ulong[checked(maximumExponent + 1)];
+        result[0] = 1;
+        for (int index = 1; index < result.Length; index++)
+            result[index] = unchecked(result[index - 1] * Base);
+        return result;
+    }
+
+    private static ulong Pow(ulong value, int exponent)
+    {
+        ulong result = 1;
+        while (exponent != 0)
+        {
+            if ((exponent & 1) != 0) result = unchecked(result * value);
+            exponent >>= 1;
+            if (exponent != 0) value = unchecked(value * value);
+        }
+        return result;
+    }
+
+}
+
 internal static class PagedTimelineFingerprint
 {
     internal const ulong Offset = 14695981039346656037UL;
@@ -1137,6 +3899,16 @@ internal static class PagedTimelineFingerprint
         Add(ref hash, value.HasBankMsb ? 1UL : 0UL);
         Add(ref hash, value.HasBankLsb ? 1UL : 0UL);
         Add(ref hash, value.FollowPitchDelta ? 1UL : 0UL);
+        return hash;
+    }
+
+    internal static ulong ForCurvePoint(CurvePointSnapshotValue value)
+    {
+        ulong hash = Offset;
+        Add(ref hash, unchecked((ulong)value.Id.Value));
+        Add(ref hash, unchecked((ulong)value.Tick));
+        Add(ref hash, unchecked((ulong)BitConverter.DoubleToInt64Bits(value.Value)));
+        Add(ref hash, unchecked((ulong)value.Interpolation));
         return hash;
     }
 }

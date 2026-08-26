@@ -1,5 +1,7 @@
 using Midora.Desktop.Presentation.Rendering;
+using Midora.Desktop.Presentation.Interaction;
 using Midora.Domain;
+using System.Diagnostics;
 using System.Windows.Media;
 using Xunit;
 
@@ -7,6 +9,167 @@ namespace Midora.Desktop.Tests;
 
 public sealed class PagedLogicalPresentationTests
 {
+    [Fact]
+    public void ArrangementContentRebuildDoesNotResetUnchangedInstrumentBrowser()
+    {
+        using MidoraProject project = new(192);
+        EventInstrument instrument = new(project) { Name = "Browser instrument" };
+        project.EventInstruments.Add(instrument);
+        LogicalTrack track = new(project) { Name = "Track" };
+        Segment segment = new(project) { LengthTicks = 480 };
+        LogicalNote note = new(project)
+        {
+            StartTick = 0,
+            LengthTicks = 120,
+            Note = 60,
+            Velocity = 100
+        };
+        segment.Notes.Add(note);
+        track.Segments.Add(segment);
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
+        TimelineWorkspaceViewModel workspace = new(
+            new WorkspaceKey(WorkspaceKind.Arrangement, null),
+            "Arrangement",
+            TimelineWorkspaceMode.Arrangement);
+        workspace.Rebuild(project, revision: 1);
+        int notifications = 0;
+        workspace.EventInstrumentBrowser.CollectionChanged += (_, _) => notifications++;
+
+        note.Note = 61;
+        workspace.Rebuild(project, revision: 2);
+
+        Assert.Equal(0, notifications);
+        EventInstrumentBrowserRow row = Assert.Single(workspace.EventInstrumentBrowser);
+        Assert.Equal(instrument.Id, row.Id);
+        Assert.Equal(1, row.UsageCount);
+        Assert.Equal(1, row.TrackCount);
+    }
+
+    [Theory]
+    [InlineData("logical")]
+    [InlineData("direct")]
+    [InlineData("subvoice")]
+    public void DensePianoLowLodRasterWorkIsBoundedByPixels(string sourceKind)
+    {
+        const int noteCount = 60_000;
+        using MidoraProject project = new(192);
+        TimelineRenderSnapshot snapshot;
+        if (sourceKind == "logical")
+        {
+            Segment segment = new(project) { LengthTicks = noteCount * 2L + 2 };
+            segment.Notes.AddRange(Enumerable.Range(0, noteCount).Select(index => new LogicalNote(project)
+            {
+                StartTick = index * 2L,
+                LengthTicks = 2,
+                Note = index % 128,
+                Velocity = 1 + index % 127
+            }));
+            snapshot = new(
+                1,
+                "logical-low-lod",
+                [],
+                itemSource: new PagedLogicalNoteTimelineItemSource(
+                    segment,
+                    LogicalNoteTimelineProjection.Notes));
+        }
+        else if (sourceKind == "direct")
+        {
+            MidiSegment segment = new(project) { LengthTicks = noteCount * 2L + 2 };
+            segment.Notes.AddRange(Enumerable.Range(0, noteCount).Select(index => new DirectMidiNote(project)
+            {
+                StartTick = index * 2L,
+                LengthTicks = 2,
+                Key = index % 128,
+                NoteOnVelocity = 1 + index % 127
+            }));
+            snapshot = new(
+                1,
+                "direct-low-lod",
+                [],
+                itemSource: new PagedDirectMidiTimelineItemSource(
+                    segment,
+                    DirectMidiTimelineProjection.Notes));
+        }
+        else
+        {
+            SubVoice voice = new(project);
+            voice.Events.AddRange(Enumerable.Range(0, noteCount).Select(index => new TemplateEvent(project)
+            {
+                Kind = TemplateEventKind.Note,
+                Tick = index * 2L,
+                LengthTicks = 2,
+                Number = index % 128,
+                Value = 1 + index % 127
+            }));
+            snapshot = new(
+                1,
+                "subvoice-low-lod",
+                [],
+                itemSource: new PagedTemplateNoteTimelineItemSource(
+                    voice,
+                    TemplateNoteTimelineProjection.Notes));
+        }
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        TimelineRasterBuffer raster = TimelinePianoTileRasterizer.Rasterize(
+            snapshot,
+            devicePixelsPerTick: 0.001,
+            devicePixelsPerLane: 2,
+            tileX: 0,
+            tileY: 0,
+            Colors.SlateGray,
+            Colors.OrangeRed);
+        stopwatch.Stop();
+
+        Assert.InRange(raster.CandidateCount, 1, TimelinePianoTileRasterizer.RasterSize * 4);
+        Assert.Contains(raster.Pixels, static value => value != 0);
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            $"{sourceKind} low-LOD raster took {stopwatch.Elapsed.TotalMilliseconds:F1} ms.");
+    }
+
+    [Fact]
+    public void LogicalSegmentRebuildDoesNotMaterializeAFullParameterLane()
+    {
+        const int pointCount = 100_000;
+        using MidoraProject project = new(192);
+        EventInstrument instrument = new(project) { Name = "Parameter instrument" };
+        LogicalParameterDefinition definition = new(project)
+        {
+            Name = "Dense parameter",
+            Type = LogicalParameterType.Integer,
+            Minimum = 0,
+            Maximum = 127,
+            DisplayMinimum = 0,
+            DisplayMaximum = 127
+        };
+        instrument.LogicalParameters.Add(definition);
+        project.EventInstruments.Add(instrument);
+        LogicalTrack track = new(project) { Name = "Track" };
+        Segment segment = new(project) { LengthTicks = pointCount + 1L };
+        LogicalParameterLane lane = new(project) { ParameterId = definition.Id };
+        lane.Points.AddRange(Enumerable.Range(0, pointCount).Select(index =>
+            new CurvePoint(project, index, index % 128, CurveInterpolation.Step)));
+        segment.ParameterLanes.Add(lane);
+        track.Segments.Add(segment);
+        ProjectGraphConstruction.AddIndependentLogicalTrack(project, track, instrument.Id);
+        TimelineWorkspaceViewModel workspace = new(
+            WorkspaceKey.ForObject(WorkspaceKind.SegmentEditor, segment.Id),
+            "Segment",
+            TimelineWorkspaceMode.Segment);
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        workspace.Rebuild(project, revision: 1);
+        stopwatch.Stop();
+
+        Assert.NotNull(workspace.ParameterSnapshot);
+        Assert.Equal(pointCount, workspace.ParameterSnapshot!.TotalItemCount);
+        Assert.Empty(workspace.ParameterSnapshot.Items);
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            $"Dense parameter rebuild took {stopwatch.Elapsed.TotalMilliseconds:F1} ms.");
+    }
+
     [Fact]
     public void LogicalPianoSourceQueriesOnlyVisibleNotePages()
     {
@@ -184,5 +347,273 @@ public sealed class PagedLogicalPresentationTests
         Assert.Equal(50, velocityItems.Count);
         Assert.All(noteItems, value => Assert.Equal(TimelineItemKind.TemplateNote, value.Kind));
         Assert.All(velocityItems, value => Assert.Equal(TimelineItemKind.Velocity, value.Kind));
+    }
+
+    [Fact]
+    public void SubVoiceEventLaneQueriesOnlyTheActiveTargetAndVisibleRange()
+    {
+        using MidoraProject project = new(192);
+        SubVoice voice = new(project);
+        voice.Events.AddRange(Enumerable.Range(0, 60_000).Select(index => new TemplateEvent(project)
+        {
+            Kind = TemplateEventKind.ControlChange,
+            Tick = index * 2L,
+            Number = index % 2 == 0 ? 1 : 11,
+            Value = index % 128
+        }));
+        TemplateEventQuerySnapshot values = voice.Events.CreateQuerySnapshot();
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "subvoice-event-lane-range",
+            [],
+            ["CC 1"],
+            itemSource: new PagedTemplateEventLaneTimelineItemSource(
+                voice,
+                values,
+                MidiValueTarget.ControlChange(1)));
+        List<TimelineRenderItem> items = [];
+
+        snapshot.QueryInto(20_000, 20_200, 0, 1, items);
+
+        Assert.Equal(50, items.Count);
+        Assert.All(items, item =>
+        {
+            Assert.Equal(TimelineItemKind.LogicalParameterPoint, item.Kind);
+            Assert.InRange(item.StartTick, 20_000, 20_199);
+            Assert.Equal(0, item.StartTick % 4);
+        });
+        Assert.Empty(snapshot.Items);
+        Assert.True(snapshot.TotalItemCount >= 60_000);
+    }
+
+    [Fact]
+    public void SubVoiceEventLaneRangeFingerprintIgnoresOtherTargets()
+    {
+        using MidoraProject project = new(192);
+        SubVoice voice = new(project);
+        TemplateEvent active = new(project)
+        {
+            Kind = TemplateEventKind.ControlChange,
+            Tick = 100,
+            Number = 1,
+            Value = 40
+        };
+        TemplateEvent unrelated = new(project)
+        {
+            Kind = TemplateEventKind.ControlChange,
+            Tick = 120,
+            Number = 11,
+            Value = 80
+        };
+        voice.Events.AddRange([active, unrelated]);
+        ulong before = Source().GetRangeFingerprint(0, 200, 0, 1);
+
+        unrelated.Value = 90;
+        ulong afterUnrelatedEdit = Source().GetRangeFingerprint(0, 200, 0, 1);
+        active.Value = 41;
+        ulong afterActiveEdit = Source().GetRangeFingerprint(0, 200, 0, 1);
+
+        Assert.Equal(before, afterUnrelatedEdit);
+        Assert.NotEqual(before, afterActiveEdit);
+
+        PagedTemplateEventLaneTimelineItemSource Source() => new(
+            voice,
+            voice.Events.CreateQuerySnapshot(),
+            MidiValueTarget.ControlChange(1));
+    }
+
+    [Fact]
+    public void DirectMidiEventLaneLargeSourceKeepsRangeQueriesBounded()
+    {
+        using MidoraProject project = new(192);
+        MidiSegment segment = new(project) { LengthTicks = 200_000 };
+        segment.ChannelEvents.AddRange(Enumerable.Range(0, 60_000).Select(index =>
+            new DirectMidiChannelEvent(project)
+            {
+                Tick = index * 2L,
+                Kind = DirectMidiChannelEventKind.ControlChange,
+                Data1 = index % 2 == 0 ? 1 : 11,
+                Data2 = index % 128
+            }));
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "direct-event-lane-range",
+            [],
+            ["CC 1"],
+            itemSource: new PagedDirectMidiTimelineItemSource(
+                segment,
+                DirectMidiTimelineProjection.ChannelEvents,
+                new DirectMidiEventLaneTarget(DirectMidiChannelEventKind.ControlChange, 1)));
+        List<TimelineRenderItem> items = [];
+
+        snapshot.QueryInto(20_000, 20_200, 0, 1, items);
+
+        Assert.Equal(50, items.Count);
+        Assert.All(items, item =>
+        {
+            Assert.Equal(TimelineItemKind.DirectMidiEvent, item.Kind);
+            Assert.InRange(item.StartTick, 20_000, 20_199);
+            Assert.Equal(0, item.StartTick % 4);
+        });
+        Assert.Empty(snapshot.Items);
+    }
+
+    [Fact]
+    public void SubVoiceEventDiscoveryKeysTrackExactTargetPresence()
+    {
+        using MidoraProject project = new(192);
+        SubVoice voice = new(project);
+        TemplateEvent cc1 = new(project)
+        {
+            Kind = TemplateEventKind.ControlChange,
+            Tick = 10,
+            Number = 1,
+            Value = 64
+        };
+        TemplateEvent cc11 = new(project)
+        {
+            Kind = TemplateEventKind.ControlChange,
+            Tick = 20,
+            Number = 11,
+            Value = 96
+        };
+        voice.Events.AddRange([cc1, cc11]);
+
+        MidiValueTarget[] before = voice.Events.CreateQuerySnapshot().DiscoveryKeys
+            .Select(key => TemplateEventMidiTargets.TryDecodeDiscoveryKey(
+                    key,
+                    out MidiValueTarget target)
+                ? target
+                : throw new InvalidOperationException("Invalid event discovery key."))
+            .OrderBy(static value => value.Kind)
+            .ThenBy(static value => value.Number)
+            .ToArray();
+        Assert.Equal(
+            [MidiValueTarget.ControlChange(1), MidiValueTarget.ControlChange(11)],
+            before);
+
+        Assert.True(voice.Events.Remove(cc11));
+        MidiValueTarget[] after = voice.Events.CreateQuerySnapshot().DiscoveryKeys
+            .Select(key => TemplateEventMidiTargets.TryDecodeDiscoveryKey(
+                    key,
+                    out MidiValueTarget target)
+                ? target
+                : throw new InvalidOperationException("Invalid event discovery key."))
+            .ToArray();
+
+        Assert.Equal([MidiValueTarget.ControlChange(1)], after);
+    }
+
+    [Theory]
+    [InlineData("direct")]
+    [InlineData("subvoice")]
+    public void DenseTargetSpecificEventRasterWorkIsBoundedByPixels(string sourceKind)
+    {
+        const int eventCount = 60_000;
+        using MidoraProject project = new(192);
+        TimelineRenderSnapshot snapshot;
+        if (sourceKind == "direct")
+        {
+            MidiSegment segment = new(project) { LengthTicks = eventCount * 2L + 2 };
+            segment.ChannelEvents.AddRange(Enumerable.Range(0, eventCount).Select(index =>
+                new DirectMidiChannelEvent(project)
+                {
+                    Tick = index * 2L,
+                    Kind = DirectMidiChannelEventKind.ControlChange,
+                    Data1 = index % 2 == 0 ? 1 : 11,
+                    Data2 = index % 128
+                }));
+            DirectMidiChannelEventQuerySnapshot values =
+                segment.ChannelEvents.CreateQuerySnapshot();
+            TimelineEventTargetIndex<DirectMidiEventLaneTarget> index =
+                TimelineEventTargetIndex<DirectMidiEventLaneTarget>.Build(
+                    values.QueryValues(0, long.MaxValue).Select(static value => (
+                        new DirectMidiEventLaneTarget(value.Kind, value.Data1),
+                        new TimelineEventTargetPoint(
+                            value.Id,
+                            value.Tick,
+                            value.Data2 / 127d))),
+                    Comparer<DirectMidiEventLaneTarget>.Create(static (left, right) =>
+                    {
+                        int kind = left.Kind.CompareTo(right.Kind);
+                        return kind != 0 ? kind : left.Data1.CompareTo(right.Data1);
+                    }));
+            Assert.True(index.TryGetLane(
+                new(DirectMidiChannelEventKind.ControlChange, 1),
+                out TimelineEventTargetLaneIndex? lane));
+            snapshot = new(
+                1,
+                "direct-target-aggregate",
+                [],
+                itemSource: new PagedDirectMidiTimelineItemSource(
+                    segment,
+                    DirectMidiTimelineProjection.ChannelEvents,
+                    new(DirectMidiChannelEventKind.ControlChange, 1),
+                    channelEventSnapshot: values,
+                    eventIndex: lane));
+        }
+        else
+        {
+            SubVoice voice = new(project);
+            voice.Events.AddRange(Enumerable.Range(0, eventCount).Select(index =>
+                new TemplateEvent(project)
+                {
+                    Kind = TemplateEventKind.ControlChange,
+                    Tick = index * 2L,
+                    Number = index % 2 == 0 ? 1 : 11,
+                    Value = index % 128
+                }));
+            TemplateEventQuerySnapshot values = voice.Events.CreateQuerySnapshot();
+            TimelineEventTargetIndex<MidiValueTarget> index =
+                TimelineEventTargetIndex<MidiValueTarget>.Build(
+                    values.QueryEvents(0, long.MaxValue).Select(static value => (
+                        MidiValueTarget.ControlChange(value.Number),
+                        new TimelineEventTargetPoint(
+                            value.Id,
+                            value.Tick,
+                            value.Value / 127d))),
+                    Comparer<MidiValueTarget>.Create(static (left, right) =>
+                    {
+                        int kind = left.Kind.CompareTo(right.Kind);
+                        return kind != 0 ? kind : left.Number.CompareTo(right.Number);
+                    }));
+            Assert.True(index.TryGetLane(
+                MidiValueTarget.ControlChange(1),
+                out TimelineEventTargetLaneIndex? lane));
+            snapshot = new(
+                1,
+                "subvoice-target-aggregate",
+                [],
+                itemSource: new PagedTemplateEventLaneTimelineItemSource(
+                    voice,
+                    values,
+                    MidiValueTarget.ControlChange(1),
+                    targetIndex: lane));
+        }
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        TimelineRasterBuffer raster = TimelineEventPointTileRasterizer.Rasterize(
+            snapshot,
+            selection: null,
+            devicePixelsPerTick: 0.001,
+            devicePixelsPerValue: 256,
+            tileX: 0,
+            tileY: 0,
+            dpiScaleX: 1,
+            dpiScaleY: 1,
+            normalColor: Colors.SlateGray,
+            primaryColor: Colors.White,
+            borderColor: Colors.Black);
+        stopwatch.Stop();
+
+        Assert.InRange(
+            raster.CandidateCount,
+            1,
+            TimelineEventPointTileRasterizer.GetRasterSize(1) * 4);
+        Assert.Contains(raster.Pixels, static value => value != 0);
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            $"{sourceKind} target-specific raster took "
+            + $"{stopwatch.Elapsed.TotalMilliseconds:F1} ms.");
     }
 }

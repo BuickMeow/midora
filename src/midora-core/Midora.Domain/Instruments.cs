@@ -285,6 +285,42 @@ public sealed class TemplateEvent
 
     internal void SetChangeSink(Action<TemplateEvent>? sink) => _changeSink = sink;
 
+    internal void SetValues(
+        TemplateEventKind kind,
+        long tick,
+        long lengthTicks,
+        int number,
+        int value,
+        int secondaryValue,
+        bool hasBankMsb,
+        bool hasBankLsb,
+        bool followPitchDelta)
+    {
+        if (_kind == kind
+            && _tick == tick
+            && _lengthTicks == lengthTicks
+            && _number == number
+            && _value == value
+            && _secondaryValue == secondaryValue
+            && _hasBankMsb == hasBankMsb
+            && _hasBankLsb == hasBankLsb
+            && _followPitchDelta == followPitchDelta)
+        {
+            return;
+        }
+
+        _kind = kind;
+        _tick = tick;
+        _lengthTicks = lengthTicks;
+        _number = number;
+        _value = value;
+        _secondaryValue = secondaryValue;
+        _hasBankMsb = hasBankMsb;
+        _hasBankLsb = hasBankLsb;
+        _followPitchDelta = followPitchDelta;
+        _changeSink?.Invoke(this);
+    }
+
     private void Set<T>(ref T field, T value)
     {
         if (EqualityComparer<T>.Default.Equals(field, value)) return;
@@ -526,6 +562,18 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
         }
     }
 
+    public void InsertRange(int index, IReadOnlyList<TemplateEvent> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if ((uint)index > (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+        // Route every value through Collection.Insert so TemplateEvent.AttachTo
+        // and mandatory/shared mapping ownership retain their exact single-item
+        // semantics. The store batch still publishes only one generation.
+        using IDisposable batch = _store.BeginBatchChange();
+        for (int valueIndex = 0; valueIndex < values.Count; valueIndex++)
+            Insert(checked(index + valueIndex), values[valueIndex]);
+    }
+
     public int RemoveRange(IReadOnlyCollection<TemplateEvent> values)
     {
         ArgumentNullException.ThrowIfNull(values);
@@ -535,6 +583,9 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
     internal Action RemoveRangeForExactCollision(IReadOnlyCollection<TemplateEvent> values) =>
         _store.RemoveRangeForExactCollision(values);
 
+    internal Action RemoveRangeWithUndo(IReadOnlyCollection<TemplateEvent> values) =>
+        _store.RemoveRangeForExactCollision(values);
+
     public IDisposable BeginBatchChange() => _store.BeginBatchChange();
 
     public TemplateEventQuerySnapshot CreateQuerySnapshot() =>
@@ -542,6 +593,14 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
 
     public bool TryGetById(MidoraId id, out TemplateEvent? value) =>
         _store.TryGetById(id, out value);
+
+    public IReadOnlyList<TemplateEvent> ResolveByIdsInCollectionOrder(
+        IReadOnlyCollection<MidoraId> ids) =>
+        _store.ResolveByIdsInCollectionOrder(ids);
+
+    public IReadOnlyList<(int Index, TemplateEvent Value)> ResolveByIdsWithIndicesInCollectionOrder(
+        IReadOnlyCollection<MidoraId> ids) =>
+        _store.ResolveByIdsWithIndicesInCollectionOrder(ids);
 
     internal void AddRangeWithoutOptionalMappingCreation(IEnumerable<TemplateEvent> values)
     {
@@ -614,7 +673,11 @@ public sealed class TemplateEventCollection : Collection<TemplateEvent>
             static value => value.Kind == TemplateEventKind.Note ? value.Number : 0,
             static value => PagedTimelineFingerprint.ForTemplateEvent(value),
             static (value, sink) => value.SetChangeSink(sink),
-            static value => value.Kind == TemplateEventKind.Note ? 1UL : 2UL);
+            static value => value.Kind == TemplateEventKind.Note ? 1UL : 2UL,
+            static value => value.Kind == TemplateEventKind.Note
+                ? value.Value / 127d
+                : value.Value,
+            static value => TemplateEventMidiTargets.EnumerateDiscoveryKeys(value));
 
     private static long SaturatingAdd(long left, long right) =>
         right <= 0 || left > long.MaxValue - right ? long.MaxValue : left + right;

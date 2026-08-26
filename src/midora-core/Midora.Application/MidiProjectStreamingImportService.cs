@@ -157,16 +157,34 @@ public static partial class MidiProjectImportService
                 Environment.WorkingSet);
             return new(project, diagnostics.ToArray(), metrics);
         }
-        catch
+        catch (Exception importFailure)
         {
-            foreach (StreamingImportTarget target in targets) target.DisposePendingWriter();
+            List<Exception>? cleanupFailures = null;
+            foreach (StreamingImportTarget target in targets)
+            {
+                try
+                {
+                    target.DisposePendingWriter();
+                }
+                catch (Exception cleanupFailure)
+                {
+                    (cleanupFailures ??= []).Add(cleanupFailure);
+                }
+            }
             try
             {
                 project.Dispose();
             }
-            catch
+            catch (Exception cleanupFailure)
             {
-                // Preserve the import failure. Session backing is unpublished.
+                (cleanupFailures ??= []).Add(cleanupFailure);
+            }
+            if (cleanupFailures is not null)
+            {
+                cleanupFailures.Insert(0, importFailure);
+                throw new AggregateException(
+                    "MIDI import failed and one or more unpublished content-pack resources also failed to clean up.",
+                    cleanupFailures);
             }
             throw;
         }
@@ -397,7 +415,9 @@ public static partial class MidiProjectImportService
                     ContentOffsetTick = 0
                 };
                 track.Segments.Add(segment);
-                writer = new(Path.Combine(backingRoot, $"mt_{track.Id.Value}.mpk"));
+                writer = new(
+                    Path.Combine(backingRoot, $"mt_{track.Id.Value}.mpk"),
+                    cancellationToken);
             }
             StreamingImportTarget target = new(
                 bucket,
@@ -1158,8 +1178,9 @@ public static partial class MidiProjectImportService
 
         public void DisposePendingWriter()
         {
-            Writer?.Dispose();
+            PureMidiContentPackWriter? writer = Writer;
             Writer = null;
+            writer?.Dispose();
         }
 
         private void WriteRaw(

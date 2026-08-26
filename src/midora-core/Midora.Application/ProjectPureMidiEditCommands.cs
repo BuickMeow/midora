@@ -844,21 +844,9 @@ public static partial class ProjectDomainEditCommands
 
     private static MidiSegmentLocation FindMidiSegment(MidoraProject project, MidoraId segmentId)
     {
-        MidiSegmentLocation? result = null;
-        foreach (PureMidiTrack track in project.PureMidiTracks)
-        {
-            for (int index = 0; index < track.Segments.Count; index++)
-            {
-                MidiSegment segment = track.Segments[index];
-                if (segment.Id != segmentId) continue;
-                if (result.HasValue)
-                {
-                    throw new InvalidOperationException("The MIDI Segment stable ID is duplicated.");
-                }
-                result = new(track, segment, index);
-            }
-        }
-        return result ?? throw new ArgumentOutOfRangeException(nameof(segmentId));
+        MidiSegmentIndexEntry result = ProjectSegmentIndex.FindMidi(project, segmentId)
+            ?? throw new ArgumentOutOfRangeException(nameof(segmentId));
+        return new(result.Track, result.Segment, result.Index);
     }
 
     private static MidiSegmentSplitResult SplitMidiSegmentContent(

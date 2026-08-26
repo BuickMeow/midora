@@ -272,13 +272,17 @@ public static partial class ProjectDomainEditCommands
                 throw new InvalidOperationException("A Logical Note transform returned the wrong result count.");
             }
             ValidateLogicalNoteBatch(replacement);
-            return ResolveExactLogicalNoteCollisions(
+            return ResolveTargetedExactLogicalNoteCollisions(
                 PrepareLogicalNoteBatch(
                     location.Track.Id,
+                    location.Segment.Notes,
                     selected,
                     old,
                     replacement),
-                location.Segment);
+                replacement.Select(value => new LogicalNoteCollisionTarget(
+                    location.Segment,
+                    value.StartTick,
+                    value.Note)));
         });
 
     private static IProjectEditCommand TransformTemplateNotes(
@@ -293,11 +297,11 @@ public static partial class ProjectDomainEditCommands
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
             HashSet<MidoraId> requested = ValidateBatchIds(noteIds, nameof(noteIds), "Template Note");
             TemplateEventTransformEntry[] selected = voice.Events
-                .Select((value, index) => new TemplateEventTransformEntry(
-                    value,
-                    index,
-                    CaptureTemplateEvent(value)))
-                .Where(value => requested.Contains(value.Event.Id))
+                .ResolveByIdsWithIndicesInCollectionOrder(requested)
+                .Select(static value => new TemplateEventTransformEntry(
+                    value.Value,
+                    value.Index,
+                    CaptureTemplateEvent(value.Value)))
                 .ToArray();
             if (selected.Length != requested.Count
                 || selected.Any(value => value.Event.Kind != TemplateEventKind.Note))
@@ -320,12 +324,13 @@ public static partial class ProjectDomainEditCommands
             long newLength = Math.Max(
                 oldLength,
                 replacement.Max(value => checked(value.Tick + value.LengthTicks)));
-            return ResolveExactSubVoiceEventCollisions(Prepared(
+            return ResolveTargetedExactTemplateNoteCollisions(Prepared(
                 old.Where((value, index) => value != replacement[index]).Any()
                     || oldLength != newLength,
                 EventInstrumentChange(eventInstrumentId),
                 _ =>
                 {
+                    using IDisposable batch = voice.Events.BeginBatchChange();
                     for (int index = 0; index < selected.Length; index++)
                     {
                         SetTemplateEvent(selected[index].Event, replacement[index]);
@@ -334,12 +339,16 @@ public static partial class ProjectDomainEditCommands
                 },
                 _ =>
                 {
+                    using IDisposable batch = voice.Events.BeginBatchChange();
                     for (int index = 0; index < selected.Length; index++)
                     {
                         SetTemplateEvent(selected[index].Event, old[index]);
                     }
                     instrument.TemplateLengthTicks = oldLength;
-                }), voice);
+                }), replacement.Select(value => new TemplateNoteCollisionTarget(
+                    voice,
+                    value.Tick,
+                    value.Number)));
         });
 
     private static IProjectEditCommand TransformLogicalParameterPoints(
@@ -364,13 +373,14 @@ public static partial class ProjectDomainEditCommands
                 ticks[index],
                 value.Point.Value,
                 CurveInterpolation.Step)).ToArray();
-            return ResolveExactLogicalParameterPointCollisions(
+            return ResolveTargetedExactLogicalParameterPointCollisions(
                 PrepareCurvePointReplacementBatch(
                     location.Track.Id,
                     lane.Points,
                     selected,
                     replacement),
-                lane);
+                lane,
+                replacement.Select(static value => value.Tick));
         });
 
     private static IProjectEditCommand TransformSubVoiceEventPoints(
@@ -386,11 +396,11 @@ public static partial class ProjectDomainEditCommands
             SubVoice voice = FindSubVoice(instrument, subVoiceId);
             HashSet<MidoraId> requested = ValidateBatchIds(eventIds, nameof(eventIds), "Template Event");
             TemplateEventTransformEntry[] selected = voice.Events
-                .Select((value, index) => new TemplateEventTransformEntry(
-                    value,
-                    index,
-                    CaptureTemplateEvent(value)))
-                .Where(value => requested.Contains(value.Event.Id))
+                .ResolveByIdsWithIndicesInCollectionOrder(requested)
+                .Select(static value => new TemplateEventTransformEntry(
+                    value.Value,
+                    value.Index,
+                    CaptureTemplateEvent(value.Value)))
                 .ToArray();
             if (selected.Length != requested.Count
                 || selected.Any(value => value.Event.Kind == TemplateEventKind.Note
@@ -413,12 +423,13 @@ public static partial class ProjectDomainEditCommands
             }
             long oldLength = instrument.TemplateLengthTicks;
             long newLength = Math.Max(oldLength, checked(replacement.Max(value => value.Tick) + 1));
-            return ResolveExactSubVoiceEventCollisions(Prepared(
+            return ResolveTargetedExactTemplateEventPointCollisions(Prepared(
                 selected.Where((value, index) => value.Old != replacement[index]).Any()
                     || oldLength != newLength,
                 EventInstrumentChange(eventInstrumentId),
                 _ =>
                 {
+                    using IDisposable batch = voice.Events.BeginBatchChange();
                     for (int index = 0; index < selected.Length; index++)
                     {
                         SetTemplateEvent(selected[index].Event, replacement[index]);
@@ -427,12 +438,14 @@ public static partial class ProjectDomainEditCommands
                 },
                 _ =>
                 {
+                    using IDisposable batch = voice.Events.BeginBatchChange();
                     foreach (TemplateEventTransformEntry value in selected)
                     {
                         SetTemplateEvent(value.Event, value.Old);
                     }
                     instrument.TemplateLengthTicks = oldLength;
-                }), voice);
+                }), replacement.SelectMany(value =>
+                    CreateTemplateEventPointCollisionTargets(voice, value)));
         });
 
     private static IProjectEditCommand TransformSegments(
@@ -496,9 +509,16 @@ public static partial class ProjectDomainEditCommands
                 }
                 windows.Add(new(entry, oldWindow, newWindow));
 
-                foreach ((LogicalNote note, int index) in segment.Notes
-                    .Select((value, index) => (value, index)))
+                LogicalNoteQuerySnapshot noteSnapshot = segment.Notes.CreateQuerySnapshot();
+                foreach (LogicalNoteSnapshotValue noteValue in noteSnapshot.QueryValues(
+                    contentLeft,
+                    contentRight))
                 {
+                    if (!segment.Notes.TryGetById(noteValue.Id, out LogicalNote? note)
+                        || note is null)
+                    {
+                        continue;
+                    }
                     long noteEnd = checked(note.StartTick + note.LengthTicks);
                     if (note.StartTick >= contentRight || noteEnd <= contentLeft) continue;
                     LogicalNoteValue old = Snapshot(note);
@@ -530,16 +550,22 @@ public static partial class ProjectDomainEditCommands
                         replacement.LengthTicks,
                         replacement.Note,
                         replacement.Velocity);
-                    notes.Add(new(segment, note, index, old, replacement, discard));
+                    notes.Add(new(segment, note, old, replacement, discard));
                 }
                 if (kind is SegmentContentTransformKind.FlipHorizontal
                     or SegmentContentTransformKind.Scale)
                 {
                     foreach (LogicalParameterLane lane in segment.ParameterLanes)
                     {
-                        foreach (CurvePoint point in lane.Points.Where(value =>
-                            value.Tick >= contentLeft && value.Tick < contentRight))
+                        foreach (CurvePointSnapshotValue pointValue in lane.Points
+                            .CreateQuerySnapshot()
+                            .QueryValues(contentLeft, contentRight))
                         {
+                            if (!lane.Points.TryGetById(pointValue.Id, out CurvePoint? point)
+                                || point is null)
+                            {
+                                continue;
+                            }
                             long tick = kind == SegmentContentTransformKind.FlipHorizontal
                                 ? checked(contentLeft + (checked(contentRight - 1) - point.Tick))
                                 : ScaleTick(contentLeft, point.Tick, factor);
@@ -559,28 +585,42 @@ public static partial class ProjectDomainEditCommands
             bool changed = windows.Any(value => value.Old != value.Replacement)
                 || notes.Any(value => value.Discard || value.Old != value.Replacement)
                 || points.Any(value => value.Old != value.Replacement);
-            IPreparedProjectEdit prepared = ResolveExactLogicalNoteCollisions(Prepared(
+            var noteGroups = notes
+                .GroupBy(static value => value.Segment)
+                .Select(static group => (Segment: group.Key, Values: group.ToArray()))
+                .ToArray();
+            var pointGroups = points
+                .GroupBy(static value => value.Lane)
+                .Select(static group => (Lane: group.Key, Values: group.ToArray()))
+                .ToArray();
+            Dictionary<Segment, Action> restoreDiscardedBySegment = [];
+            IPreparedProjectEdit prepared = ResolveTargetedExactLogicalNoteCollisions(Prepared(
                 changed,
                 TrackChange(segments.Select(value => value.Track.Id).Distinct().ToArray()),
                 _ =>
                 {
-                    foreach (CurvePointTransform point in points)
+                    foreach (var group in pointGroups)
                     {
-                        ReplaceRequired(
-                            point.Lane.Points,
-                            point.Old,
-                            point.Replacement,
-                            "Logical Parameter point");
+                        ReplaceCurvePointBatch(
+                            group.Lane.Points,
+                            group.Values.Select(static value => value.Old).ToArray(),
+                            group.Values.Select(static value => value.Replacement).ToArray());
                     }
-                    foreach (LogicalNoteTransform note in notes)
+                    foreach (var group in noteGroups)
                     {
-                        if (note.Discard)
+                        using IDisposable batch = group.Segment.Notes.BeginBatchChange();
+                        foreach (LogicalNoteTransform note in group.Values)
                         {
-                            RemoveRequired(note.Segment.Notes, note.Note, "out-of-range Logical Note");
+                            if (!note.Discard) SetLogicalNote(note.Note, note.Replacement);
                         }
-                        else
+                        LogicalNote[] discarded = group.Values
+                            .Where(static value => value.Discard)
+                            .Select(static value => value.Note)
+                            .ToArray();
+                        if (discarded.Length != 0)
                         {
-                            SetLogicalNote(note.Note, note.Replacement);
+                            restoreDiscardedBySegment[group.Segment] =
+                                group.Segment.Notes.RemoveRangeWithUndo(discarded);
                         }
                     }
                     foreach (SegmentWindowTransform window in windows)
@@ -596,32 +636,40 @@ public static partial class ProjectDomainEditCommands
                         SetWindow(window.Entry.Segment, window.Old);
                     }
                     SortTransformedSegments(windows);
-                    foreach (LogicalNoteTransform note in notes.Where(value => !value.Discard))
+                    foreach (var group in noteGroups)
                     {
-                        SetLogicalNote(note.Note, note.Old);
-                    }
-                    foreach (IGrouping<Segment, LogicalNoteTransform> group in notes
-                        .Where(value => value.Discard)
-                        .GroupBy(value => value.Segment))
-                    {
-                        foreach (LogicalNoteTransform note in group.OrderBy(value => value.Index))
+                        using IDisposable batch = group.Segment.Notes.BeginBatchChange();
+                        foreach (LogicalNoteTransform note in group.Values)
                         {
                             SetLogicalNote(note.Note, note.Old);
-                            InsertAt(group.Key.Notes, note.Index, note.Note, "Logical Note");
+                        }
+                        if (restoreDiscardedBySegment.TryGetValue(group.Segment, out Action? restore))
+                        {
+                            restore();
+                            restoreDiscardedBySegment.Remove(group.Segment);
                         }
                     }
-                    foreach (CurvePointTransform point in points)
+                    foreach (var group in pointGroups)
                     {
-                        ReplaceRequired(
-                            point.Lane.Points,
-                            point.Replacement,
-                            point.Old,
-                            "Logical Parameter point");
+                        ReplaceCurvePointBatch(
+                            group.Lane.Points,
+                            group.Values.Select(static value => value.Replacement).ToArray(),
+                            group.Values.Select(static value => value.Old).ToArray());
                     }
-                }), segments.Select(value => value.Segment));
-            return ResolveExactLogicalParameterPointCollisions(
-                prepared,
-                points.Select(value => value.Lane).Distinct());
+                }), notes
+                    .Where(static value => !value.Discard)
+                    .Select(static value => new LogicalNoteCollisionTarget(
+                        value.Segment,
+                        value.Replacement.StartTick,
+                        value.Replacement.Note)));
+            return points
+                .GroupBy(static value => value.Lane)
+                .Aggregate(
+                    prepared,
+                    static (current, group) => ResolveTargetedExactLogicalParameterPointCollisions(
+                        current,
+                        group.Key,
+                        group.Select(static value => value.Replacement.Tick)));
         });
 
     private static void ValidateSegmentTransformWindows(
@@ -734,7 +782,6 @@ public static partial class ProjectDomainEditCommands
     private readonly record struct LogicalNoteTransform(
         Segment Segment,
         LogicalNote Note,
-        int Index,
         LogicalNoteValue Old,
         LogicalNoteValue Replacement,
         bool Discard);

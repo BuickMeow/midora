@@ -355,7 +355,10 @@ public sealed class MidoraProjectPackageV1
                 _faultInjector.ThrowIfRequested(
                     MidoraPackageFaultPointV1.BeforeSelfValidation,
                     temporaryPackage);
-                reopened = await OpenAsync(temporaryPackage, cancellationToken).ConfigureAwait(false);
+                reopened = await OpenCoreAsync(
+                    temporaryPackage,
+                    cancellationToken,
+                    trustedStagingContentRoot: temporaryDirectory).ConfigureAwait(false);
                 using (reopened)
                 {
                     if (reopened.IsModified || reopened.Diagnostics.Count != 0)
@@ -453,7 +456,8 @@ public sealed class MidoraProjectPackageV1
 
     private async Task<MidoraProjectOpenResultV1> OpenCoreAsync(
         string path,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? trustedStagingContentRoot = null)
     {
         await using FileStream stream = new(
             path,
@@ -579,7 +583,9 @@ public sealed class MidoraProjectPackageV1
             projectSettings.TicksPerQuarterNote,
             storedNextStableId,
             _timeProvider.GetUtcNow());
-        PureMidiContentPackExtractionV1 pureMidiContent = new(project);
+        PureMidiContentPackExtractionV1 pureMidiContent = new(
+            project,
+            trustedStagingContentRoot);
         try
         {
             MidiStateCodecV1.Restore(project.GlobalInitialState, projectSettings.GlobalInitialState);

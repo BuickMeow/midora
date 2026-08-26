@@ -789,7 +789,9 @@ public static partial class ProjectDomainEditCommands
                 ? ResolveTargetedExactTemplateNoteCollisions(
                     prepared,
                     [new(voice, replacement.Tick, replacement.Number)])
-                : ResolveExactSubVoiceEventCollisions(prepared, voice);
+                : ResolveTargetedExactTemplateEventPointCollisions(
+                    prepared,
+                    CreateTemplateEventPointCollisionTargets(voice, replacement));
         });
 
     private static void RestoreNewTemplateEventMappings(
@@ -1024,17 +1026,15 @@ public static partial class ProjectDomainEditCommands
             "The Mapping Chain is no longer attached to the Event Instrument.");
     }
 
-    private static void InsertValueCurvePoint(List<CurvePoint> points, CurvePoint point)
+    private static void InsertValueCurvePoint(CurvePointCollection points, CurvePoint point)
     {
-        if (points.Any(value => value.Id == point.Id || value.Tick == point.Tick))
+        if (points.TryGetById(point.Id, out _)
+            || points.CreateQuerySnapshot().QueryValues(point.Tick, checked(point.Tick + 1)).Any())
         {
             throw new InvalidOperationException(
                 "The Value Curve point ID or tick is already present.");
         }
-        int index = points.FindIndex(value =>
-            value.Tick > point.Tick
-            || value.Tick == point.Tick && value.Id.CompareTo(point.Id) > 0);
-        points.Insert(index < 0 ? points.Count : index, point);
+        points.Insert(FindCurvePointInsertionIndex(points, point.Tick, point.Id), point);
     }
 
     private static void ValidateLogicalParameterDefinitionCreation(

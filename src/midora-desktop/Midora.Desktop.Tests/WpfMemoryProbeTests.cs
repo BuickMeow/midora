@@ -56,6 +56,9 @@ public sealed class WpfMemoryProbeTests(ITestOutputHelper output)
                 double PianoInitialMs,
                 double PianoNewRegionMs,
                 double PianoZoomMs) timings = default;
+            TimelineSurfaceRenderPhaseTiming pianoInitialPhases = default;
+            TimelineSurfaceRenderPhaseTiming pianoNewRegionPhases = default;
+            TimelineSurfaceRenderPhaseTiming pianoZoomPhases = default;
             RunOnSta(() =>
             {
                 TimelineRasterCacheSession.Clear();
@@ -83,14 +86,18 @@ public sealed class WpfMemoryProbeTests(ITestOutputHelper output)
                     Snapshot = editor.Snapshot,
                     TickSpan = 3_072,
                     LaneHeight = 6,
-                    GridVisible = false
+                    GridVisible = false,
+                    CaptureRenderPhaseTimings = true
                 };
                 Layout(piano);
                 timings.PianoInitialMs = RenderOne(piano);
+                pianoInitialPhases = piano.LastRenderPhaseTiming;
                 piano.StartTick = Math.Max(0, editor.Snapshot!.MaximumEndTick / 2);
                 timings.PianoNewRegionMs = RenderOne(piano);
+                pianoNewRegionPhases = piano.LastRenderPhaseTiming;
                 piano.TickSpan = 6_144;
                 timings.PianoZoomMs = RenderOne(piano);
+                pianoZoomPhases = piano.LastRenderPhaseTiming;
             });
 
             output.WriteLine(
@@ -103,12 +110,28 @@ public sealed class WpfMemoryProbeTests(ITestOutputHelper output)
                 timings.PianoInitialMs,
                 timings.PianoNewRegionMs,
                 timings.PianoZoomMs);
+            output.WriteLine(
+                "[dense-piano-phases] initial={0:0.00}/{1:0.00}/{2:0.00}ms; "
+                + "new-region={3:0.00}/{4:0.00}/{5:0.00}ms; "
+                + "zoom={6:0.00}/{7:0.00}/{8:0.00}ms (background/content/overlay)",
+                pianoInitialPhases.Background.TotalMilliseconds,
+                pianoInitialPhases.Content.TotalMilliseconds,
+                pianoInitialPhases.Overlay.TotalMilliseconds,
+                pianoNewRegionPhases.Background.TotalMilliseconds,
+                pianoNewRegionPhases.Content.TotalMilliseconds,
+                pianoNewRegionPhases.Overlay.TotalMilliseconds,
+                pianoZoomPhases.Background.TotalMilliseconds,
+                pianoZoomPhases.Content.TotalMilliseconds,
+                pianoZoomPhases.Overlay.TotalMilliseconds);
             Assert.InRange(timings.ArrangementInitialMs, 0, 1_000);
             Assert.InRange(timings.ArrangementNewRegionMs, 0, 1_000);
             Assert.InRange(timings.ArrangementZoomMs, 0, 1_000);
             Assert.InRange(timings.PianoInitialMs, 0, 1_000);
             Assert.InRange(timings.PianoNewRegionMs, 0, 1_000);
             Assert.InRange(timings.PianoZoomMs, 0, 1_000);
+            Assert.InRange(pianoInitialPhases.Content.TotalMilliseconds, 0, 250);
+            Assert.InRange(pianoNewRegionPhases.Content.TotalMilliseconds, 0, 250);
+            Assert.InRange(pianoZoomPhases.Content.TotalMilliseconds, 0, 250);
         }
         finally
         {
@@ -216,6 +239,173 @@ public sealed class WpfMemoryProbeTests(ITestOutputHelper output)
             value.RasterInFlight);
     }
 
+    [Fact]
+    public void OptInLargeMidiMeasuresContinuousPanZoomAcrossTheRightBlankBoundary()
+    {
+        string? path = Environment.GetEnvironmentVariable("MIDORA_WPF_MEMORY_SAMPLE_PATH");
+        if (string.IsNullOrWhiteSpace(path)) return;
+        path = Path.GetFullPath(path);
+        if (!File.Exists(path)) throw new FileNotFoundException("The WPF performance sample does not exist.", path);
+
+        MidiProjectImportResult imported = MidiProjectImportService.ImportFile(
+            path,
+            Path.GetFileNameWithoutExtension(path));
+        try
+        {
+            MidiSegment segment = imported.Project.PureMidiTracks
+                .SelectMany(static track => track.Segments)
+                .OrderByDescending(static value => value.Notes.Count)
+                .First(static value => value.Notes.Count != 0);
+            TimelineWorkspaceViewModel editor = new(
+                WorkspaceKey.ForObject(WorkspaceKind.SegmentEditor, segment.Id),
+                "MIDI Segment",
+                TimelineWorkspaceMode.Segment);
+            editor.Rebuild(imported.Project, revision: 1);
+
+            double[] foregroundMilliseconds = [];
+            double[] backgroundPhaseMilliseconds = [];
+            double[] contentPhaseMilliseconds = [];
+            double[] overlayPhaseMilliseconds = [];
+            double[] totalPhaseMilliseconds = [];
+            double coldConvergenceMilliseconds = 0;
+            long cacheBytes = 0;
+            RunOnSta(() =>
+            {
+                TimelineRasterCacheSession.Clear();
+                const int width = 1_280;
+                const int height = 720;
+                long baseSpan = Math.Clamp(segment.LengthTicks / 200, 1_536, 24_576);
+                TimelineSurface surface = new()
+                {
+                    SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                    Snapshot = editor.Snapshot,
+                    TickSpan = baseSpan,
+                    StartTick = Math.Max(0, segment.ContentEndTick - baseSpan / 2),
+                    LaneHeight = 6,
+                    GridVisible = false,
+                    RangeStartTick = segment.ContentOffsetTick,
+                    RangeEndTick = segment.ContentEndTick,
+                    CaptureRenderPhaseTimings = true
+                };
+                surface.Measure(new Size(width, height));
+                surface.Arrange(new Rect(0, 0, width, height));
+                RenderTargetBitmap target = new(width, height, 96, 96, PixelFormats.Pbgra32);
+
+                Stopwatch convergence = Stopwatch.StartNew();
+                target.Render(surface);
+                WaitForRasterIdle(TimeSpan.FromSeconds(30));
+                target.Render(surface);
+                convergence.Stop();
+                coldConvergenceMilliseconds = convergence.Elapsed.TotalMilliseconds;
+
+                List<double> frames = new(120);
+                List<double> backgroundPhases = new(120);
+                List<double> contentPhases = new(120);
+                List<double> overlayPhases = new(120);
+                List<double> totalPhases = new(120);
+                for (int frame = 0; frame < 120; frame++)
+                {
+                    // Repeatedly cross the exact Segment end while also moving
+                    // between adjacent zoom values.  The visible blank half must
+                    // remain O(1); it must not force a synchronous cold-page walk
+                    // or create an exact-double cache family.
+                    double phase = frame / 119d;
+                    long span = Math.Max(1, checked((long)Math.Round(
+                        baseSpan * (0.75 + 0.5 * Math.Abs(Math.Sin(phase * Math.PI * 6))))));
+                    long oscillation = checked((long)Math.Round(
+                        Math.Sin(phase * Math.PI * 10) * span * 0.35));
+                    surface.TickSpan = span;
+                    surface.StartTick = Math.Max(
+                        0,
+                        segment.ContentEndTick - span / 2 + oscillation);
+                    Stopwatch frameWatch = Stopwatch.StartNew();
+                    target.Render(surface);
+                    Dispatcher.CurrentDispatcher.Invoke(
+                        DispatcherPriority.Render,
+                        new Action(() => { }));
+                    frameWatch.Stop();
+                    frames.Add(frameWatch.Elapsed.TotalMilliseconds);
+                    backgroundPhases.Add(surface.LastRenderPhaseTiming.Background.TotalMilliseconds);
+                    contentPhases.Add(surface.LastRenderPhaseTiming.Content.TotalMilliseconds);
+                    overlayPhases.Add(surface.LastRenderPhaseTiming.Overlay.TotalMilliseconds);
+                    totalPhases.Add(surface.LastRenderPhaseTiming.Total.TotalMilliseconds);
+                }
+                foregroundMilliseconds = frames.ToArray();
+                backgroundPhaseMilliseconds = backgroundPhases.ToArray();
+                contentPhaseMilliseconds = contentPhases.ToArray();
+                overlayPhaseMilliseconds = overlayPhases.ToArray();
+                totalPhaseMilliseconds = totalPhases.ToArray();
+                WaitForRasterIdle(TimeSpan.FromSeconds(30));
+                cacheBytes = TimelineRasterCacheSession.CurrentBytes;
+                GC.KeepAlive(target);
+                GC.KeepAlive(surface);
+            });
+
+            Array.Sort(foregroundMilliseconds);
+            Array.Sort(backgroundPhaseMilliseconds);
+            Array.Sort(contentPhaseMilliseconds);
+            Array.Sort(overlayPhaseMilliseconds);
+            Array.Sort(totalPhaseMilliseconds);
+            double p50 = Percentile(foregroundMilliseconds, 0.50);
+            double p95 = Percentile(foregroundMilliseconds, 0.95);
+            double maximum = foregroundMilliseconds[^1];
+            double contentP50 = Percentile(contentPhaseMilliseconds, 0.50);
+            double contentP95 = Percentile(contentPhaseMilliseconds, 0.95);
+            double contentMaximum = contentPhaseMilliseconds[^1];
+            double backgroundP95 = Percentile(backgroundPhaseMilliseconds, 0.95);
+            double backgroundMaximum = backgroundPhaseMilliseconds[^1];
+            double overlayP95 = Percentile(overlayPhaseMilliseconds, 0.95);
+            double overlayMaximum = overlayPhaseMilliseconds[^1];
+            double phaseTotalP50 = Percentile(totalPhaseMilliseconds, 0.50);
+            double phaseTotalP95 = Percentile(totalPhaseMilliseconds, 0.95);
+            double phaseTotalMaximum = totalPhaseMilliseconds[^1];
+            string measurement = string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                "[pan-zoom-blank] cold-convergence={0:0.0}ms; p50={1:0.00}ms; "
+                + "p95={2:0.00}ms; max={3:0.00}ms; content-phase="
+                + "{4:0.00}/{5:0.00}/{6:0.00}ms; total-phase="
+                + "{7:0.00}/{8:0.00}/{9:0.00}ms; background-p95/max="
+                + "{10:0.00}/{11:0.00}ms; overlay-p95/max={12:0.00}/{13:0.00}ms; "
+                + "raster={14:0.0}MiB",
+                coldConvergenceMilliseconds,
+                p50,
+                p95,
+                maximum,
+                contentP50,
+                contentP95,
+                contentMaximum,
+                phaseTotalP50,
+                phaseTotalP95,
+                phaseTotalMaximum,
+                backgroundP95,
+                backgroundMaximum,
+                overlayP95,
+                overlayMaximum,
+                cacheBytes / 1048576d);
+            output.WriteLine(measurement);
+            Console.WriteLine(measurement);
+
+            Assert.InRange(maximum, 0, 1_000);
+            Assert.InRange(contentMaximum, 0, 250);
+            Assert.InRange(phaseTotalMaximum, 0, 500);
+            Assert.InRange(cacheBytes, 0, 256L * 1024 * 1024);
+        }
+        finally
+        {
+            TimelineRasterCacheSession.Clear();
+            imported.Project.Dispose();
+        }
+
+        static double Percentile(double[] sorted, double value)
+        {
+            int index = Math.Clamp(
+                (int)Math.Ceiling(sorted.Length * value) - 1,
+                0,
+                sorted.Length - 1);
+            return sorted[index];
+        }
+    }
+
     private static MemoryReading RenderActualWpfFrames(TimelineRenderSnapshot snapshot)
     {
         MemoryReading result = default;
@@ -277,6 +467,27 @@ public sealed class WpfMemoryProbeTests(ITestOutputHelper output)
             GC.KeepAlive(surface);
         });
         return result;
+    }
+
+    private static void WaitForRasterIdle(TimeSpan timeout)
+    {
+        Stopwatch watch = Stopwatch.StartNew();
+        while (TimelineRasterCacheSession.InFlightCount != 0)
+        {
+            if (watch.Elapsed >= timeout)
+            {
+                throw new TimeoutException(
+                    $"The WPF raster scheduler did not become idle; "
+                    + $"{TimelineRasterCacheSession.InFlightCount} request(s) remain.");
+            }
+            Dispatcher.CurrentDispatcher.Invoke(
+                DispatcherPriority.Background,
+                new Action(() => { }));
+            Thread.Sleep(2);
+        }
+        Dispatcher.CurrentDispatcher.Invoke(
+            DispatcherPriority.Render,
+            new Action(() => { }));
     }
 
     private static MemoryReading ReadMemory(bool forceCollection)

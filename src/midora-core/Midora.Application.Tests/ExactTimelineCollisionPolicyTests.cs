@@ -40,7 +40,7 @@ public sealed class ExactTimelineCollisionPolicyTests
 
         Assert.Same(incumbent, Assert.Single(segment.Notes));
         document.Undo();
-        Assert.Equal([incumbent, mover], segment.Notes);
+        Assert.Equal([incumbent, mover], segment.Notes.ToArray());
         Assert.Equal(20, mover.StartTick);
         document.Redo();
         Assert.Same(incumbent, Assert.Single(segment.Notes));

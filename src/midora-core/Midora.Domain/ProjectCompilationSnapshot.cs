@@ -5,7 +5,7 @@ namespace Midora.Domain;
 /// background compiler. Stable IDs are preserved because compiler checkpoints
 /// and diagnostics use them as identity.
 /// </summary>
-internal static class ProjectCompilationSnapshot
+internal static partial class ProjectCompilationSnapshot
 {
     public static MidoraProject Create(
         MidoraProject source,
@@ -186,23 +186,25 @@ internal static class ProjectCompilationSnapshot
             _ => throw new InvalidOperationException("Unsupported compilation snapshot object.")
         };
 
-        List<T> reusable = [.. snapshot];
+        Dictionary<MidoraId, T> reusable = new(snapshot.Count);
+        foreach (T value in snapshot)
+        {
+            reusable.TryAdd(IdOf(value), value);
+        }
         List<T> synchronized = new(source.Count);
         foreach (T sourceValue in source)
         {
             cancellationToken.ThrowIfCancellationRequested();
             MidoraId sourceId = IdOf(sourceValue);
-            int reusableIndex = changedIds.Contains(sourceId)
-                ? -1
-                : reusable.FindIndex(value => IdOf(value) == sourceId);
-            if (reusableIndex < 0)
+            if (changedIds.Contains(sourceId)
+                || !reusable.TryGetValue(sourceId, out T? reusableValue))
             {
                 synchronized.Add(clone(sourceValue));
                 continue;
             }
 
-            synchronized.Add(reusable[reusableIndex]);
-            reusable.RemoveAt(reusableIndex);
+            synchronized.Add(reusableValue);
+            reusable.Remove(sourceId);
         }
         snapshot.Clear();
         snapshot.AddRange(synchronized);
@@ -280,18 +282,7 @@ internal static class ProjectCompilationSnapshot
                 LengthTicks = segment.LengthTicks,
                 ContentOffsetTick = segment.ContentOffsetTick
             };
-            for (int index = 0; index < segment.Notes.Count; index++)
-            {
-                if ((index & 0xff) == 0) cancellationToken.ThrowIfCancellationRequested();
-                LogicalNote note = segment.Notes[index];
-                segmentCopy.Notes.Add(new LogicalNote(project, note.Id)
-                {
-                    StartTick = note.StartTick,
-                    LengthTicks = note.LengthTicks,
-                    Note = note.Note,
-                    Velocity = note.Velocity
-                });
-            }
+            segmentCopy.Notes.AddRange(CloneLogicalNotes());
             foreach (LogicalParameterLane lane in segment.ParameterLanes)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -299,15 +290,30 @@ internal static class ProjectCompilationSnapshot
                 {
                     ParameterId = lane.ParameterId
                 };
-                for (int index = 0; index < lane.Points.Count; index++)
-                {
-                    if ((index & 0xff) == 0) cancellationToken.ThrowIfCancellationRequested();
-                    CurvePoint point = lane.Points[index];
-                    laneCopy.Points.Add(ClonePoint(project, point));
-                }
+                laneCopy.Points.AddRange(CloneCurvePoints(
+                    lane.Points,
+                    project,
+                    cancellationToken));
                 segmentCopy.ParameterLanes.Add(laneCopy);
             }
             result.Segments.Add(segmentCopy);
+
+            IEnumerable<LogicalNote> CloneLogicalNotes()
+            {
+                int index = 0;
+                foreach (LogicalNote note in segment.Notes)
+                {
+                    if ((index++ & 0xff) == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+                    yield return new LogicalNote(project, note.Id)
+                    {
+                        StartTick = note.StartTick,
+                        LengthTicks = note.LengthTicks,
+                        Note = note.Note,
+                        Velocity = note.Velocity
+                    };
+                }
+            }
         }
         return result;
     }
@@ -483,37 +489,55 @@ internal static class ProjectCompilationSnapshot
             CopyChain(project, mapping.Steps, mappingCopy.Steps, cancellationToken);
             result.EventMappings.Add(mappingCopy);
         }
-        foreach (TemplateEvent value in source.Events)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            TemplateEvent eventCopy = new(project, value.Id)
-            {
-                Kind = value.Kind,
-                Tick = value.Tick,
-                LengthTicks = value.LengthTicks,
-                Number = value.Number,
-                Value = value.Value,
-                SecondaryValue = value.SecondaryValue,
-                HasBankMsb = value.HasBankMsb,
-                HasBankLsb = value.HasBankLsb,
-                FollowPitchDelta = value.FollowPitchDelta
-            };
-            result.Events.Add(eventCopy);
-        }
+        result.Events.AddRange(CloneTemplateEvents());
         foreach (ValueCurve curve in source.Curves)
         {
             cancellationToken.ThrowIfCancellationRequested();
             ValueCurve curveCopy = new(project, curve.Id) { Target = curve.Target };
             CopyTargetSettings(curve.TargetSettings, curveCopy.TargetSettings);
-            for (int index = 0; index < curve.Points.Count; index++)
-            {
-                if ((index & 0xff) == 0) cancellationToken.ThrowIfCancellationRequested();
-                CurvePoint point = curve.Points[index];
-                curveCopy.Points.Add(ClonePoint(project, point));
-            }
+            curveCopy.Points.AddRange(CloneCurvePoints(
+                curve.Points,
+                project,
+                cancellationToken));
             result.Curves.Add(curveCopy);
         }
         return result;
+
+        IEnumerable<TemplateEvent> CloneTemplateEvents()
+        {
+            int index = 0;
+            foreach (TemplateEvent value in source.Events)
+            {
+                if ((index++ & 0xff) == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
+                yield return new TemplateEvent(project, value.Id)
+                {
+                    Kind = value.Kind,
+                    Tick = value.Tick,
+                    LengthTicks = value.LengthTicks,
+                    Number = value.Number,
+                    Value = value.Value,
+                    SecondaryValue = value.SecondaryValue,
+                    HasBankMsb = value.HasBankMsb,
+                    HasBankLsb = value.HasBankLsb,
+                    FollowPitchDelta = value.FollowPitchDelta
+                };
+            }
+        }
+    }
+
+    private static IEnumerable<CurvePoint> CloneCurvePoints(
+        IEnumerable<CurvePoint> source,
+        MidoraProject project,
+        CancellationToken cancellationToken)
+    {
+        // Sequential page enumeration avoids IList[index]'s page-directory scan.
+        int index = 0;
+        foreach (CurvePoint point in source)
+        {
+            if ((index++ & 0xff) == 0) cancellationToken.ThrowIfCancellationRequested();
+            yield return ClonePoint(project, point);
+        }
     }
 
     private static CurvePoint ClonePoint(MidoraProject project, CurvePoint source) =>

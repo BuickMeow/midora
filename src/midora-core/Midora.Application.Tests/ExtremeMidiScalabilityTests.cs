@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using Midora.Audio;
 using Midora.Compiler;
 using Midora.Playback;
@@ -206,13 +207,23 @@ public sealed class ExtremeMidiScalabilityTests(ITestOutputHelper output)
         GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
         long baselineHeap = GC.GetTotalMemory(forceFullCollection: true);
         Process process = Process.GetCurrentProcess();
+        using ManagedHeapSampler managedHeapSampler = new();
         Stopwatch importTimer = Stopwatch.StartNew();
         MidiProjectImportResult imported = MidiProjectImportService.ImportFile(
             path,
             Path.GetFileNameWithoutExtension(path));
         importTimer.Stop();
+        managedHeapSampler.Stop();
         try
         {
+            PureMidiContentPack[] contentPacks = imported.Project.PureMidiTracks
+                .SelectMany(static track => track.Segments)
+                .Select(static segment => segment.TryGetPristineContentPack())
+                .OfType<PureMidiContentPack>()
+                .DistinctBy(static pack => pack.Path, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(static pack => pack.Path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            Assert.NotEmpty(contentPacks);
             Stopwatch compileTimer = Stopwatch.StartNew();
             using MidoraCompiler compiler = new();
             CanonicalCompiledResult compiled = compiler.CompileFull(imported.Project);
@@ -302,11 +313,95 @@ public sealed class ExtremeMidiScalabilityTests(ITestOutputHelper output)
             output.WriteLine($"pages={metrics.ContentPageCount}; packBytes={metrics.ContentPackBytes}");
             output.WriteLine($"pass1={metrics.FirstPassElapsed}; pass2={metrics.SecondPassElapsed}; import={importTimer.Elapsed}; compile={compileTimer.Elapsed}");
             output.WriteLine($"plan={planTimer.Elapsed}; startupWindow={windowTimer.Elapsed}; startupEvents={startupEventCount}");
-            output.WriteLine($"retainedManagedBytes={retainedHeap}; peakWorkingSetBytes={process.PeakWorkingSet64}");
+            output.WriteLine(
+                $"retainedManagedBytes={retainedHeap}; peakManagedBytes={managedHeapSampler.PeakByteCount}; "
+                + $"peakManagedDeltaBytes={Math.Max(0, managedHeapSampler.PeakByteCount - baselineHeap)}; "
+                + $"peakWorkingSetBytes={process.PeakWorkingSet64}");
+            byte[][] packHashes = contentPacks.Select(static pack =>
+            {
+                using FileStream stream = new(
+                    pack.Path,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read | FileShare.Delete,
+                    1024 * 1024,
+                    FileOptions.SequentialScan);
+                return SHA256.HashData(stream);
+            }).ToArray();
+            byte[] combinedHashInput = new byte[packHashes.Length * SHA256.HashSizeInBytes];
+            for (int index = 0; index < packHashes.Length; index++)
+            {
+                packHashes[index].CopyTo(
+                    combinedHashInput,
+                    index * SHA256.HashSizeInBytes);
+            }
+            output.WriteLine(
+                $"packCount={packHashes.Length}; packCombinedSha256="
+                + Convert.ToHexStringLower(SHA256.HashData(combinedHashInput)));
+
         }
         finally
         {
             imported.Project.Dispose();
         }
     }
+
+    private sealed class ManagedHeapSampler : IDisposable
+    {
+        private readonly ManualResetEventSlim _stop = new(initialState: false);
+        private readonly Thread _thread;
+        private long _peakByteCount = GC.GetTotalMemory(forceFullCollection: false);
+        private bool _stopped;
+
+        public ManagedHeapSampler()
+        {
+            _thread = new(Sample)
+            {
+                IsBackground = true,
+                Name = "Midora scale-test managed-heap sampler"
+            };
+            _thread.Start();
+        }
+
+        public long PeakByteCount => Volatile.Read(ref _peakByteCount);
+
+        public void Stop()
+        {
+            if (_stopped) return;
+            _stopped = true;
+            _stop.Set();
+            _thread.Join();
+            Observe(GC.GetTotalMemory(forceFullCollection: false));
+        }
+
+        public void Dispose()
+        {
+            Stop();
+            _stop.Dispose();
+        }
+
+        private void Sample()
+        {
+            do
+            {
+                Observe(GC.GetTotalMemory(forceFullCollection: false));
+            }
+            while (!_stop.Wait(TimeSpan.FromMilliseconds(25)));
+        }
+
+        private void Observe(long byteCount)
+        {
+            long previous = Volatile.Read(ref _peakByteCount);
+            while (byteCount > previous)
+            {
+                long observed = Interlocked.CompareExchange(
+                    ref _peakByteCount,
+                    byteCount,
+                    previous);
+                if (observed == previous) return;
+                previous = observed;
+            }
+        }
+    }
+
 }

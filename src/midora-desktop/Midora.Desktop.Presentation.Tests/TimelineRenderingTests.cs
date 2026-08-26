@@ -2,6 +2,7 @@ using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Interaction;
 using Midora.Desktop.Presentation.Rendering;
 using Midora.Domain;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Windows;
@@ -15,6 +16,138 @@ namespace Midora.Desktop.Presentation.Tests;
 
 public sealed class TimelineRenderingTests
 {
+    [Fact]
+    public void ViewportAndSelectionChangesDoNotCancelUsefulRasterWork()
+    {
+        RunOnSta(() =>
+        {
+            TimelineSurface surface = new();
+            Type type = typeof(TimelineSurface);
+            FieldInfo? rasterField = type.GetField(
+                "_rasterRequestCancellation",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo? gestureField = type.GetField(
+                "_pendingGestureCancellation",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(rasterField);
+            Assert.NotNull(gestureField);
+            CancellationTokenSource raster = Assert.IsType<CancellationTokenSource>(
+                rasterField!.GetValue(surface));
+            CancellationTokenSource gesture = Assert.IsType<CancellationTokenSource>(
+                gestureField!.GetValue(surface));
+
+            surface.StartTick = 128;
+            surface.TickSpan = 1_536;
+            surface.LaneHeight = 12;
+            surface.SelectionSnapshot = new TimelineSelectionSnapshot(1, [], null);
+
+            Assert.Same(raster, rasterField.GetValue(surface));
+            Assert.Same(gesture, gestureField.GetValue(surface));
+            Assert.False(raster.IsCancellationRequested);
+            Assert.False(gesture.IsCancellationRequested);
+        });
+    }
+
+    [Fact]
+    public void DeferredSelectionMetricsPromoteAnActiveFullSelectionPreview()
+    {
+        RunOnSta(() =>
+        {
+            MidoraId firstId = new(31_000_001);
+            MidoraId secondId = new(31_000_002);
+            TimelineRenderItem first = new(
+                firstId,
+                TimelineItemKind.DirectMidiNote,
+                100,
+                140,
+                60,
+                0,
+                0,
+                TimelineItemState.None);
+            TimelineRenderItem second = new(
+                secondId,
+                TimelineItemKind.DirectMidiNote,
+                400,
+                480,
+                72,
+                0,
+                0,
+                TimelineItemState.None);
+            TimelineSelectionSnapshot idsOnly = new(
+                7,
+                [firstId, secondId],
+                firstId);
+            TimelineSelectionSnapshot withMetrics = new(
+                7,
+                [firstId, secondId],
+                firstId,
+                [first, second]);
+            TimelineSurface surface = new() { SelectionSnapshot = idsOnly };
+            Type surfaceType = typeof(TimelineSurface);
+            FieldInfo? dragItemField = surfaceType.GetField(
+                "_dragItem",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo? dragSelectionField = surfaceType.GetField(
+                "_dragPreviewSelection",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo? prepare = surfaceType.GetMethod(
+                "PrepareDragPreviewSelection",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(dragItemField);
+            Assert.NotNull(dragSelectionField);
+            Assert.NotNull(prepare);
+            dragItemField!.SetValue(surface, first);
+
+            prepare!.Invoke(surface, [first]);
+
+            Assert.Null(dragSelectionField!.GetValue(surface));
+
+            surface.SelectionSnapshot = withMetrics;
+
+            Assert.Same(withMetrics, dragSelectionField.GetValue(surface));
+        });
+    }
+
+    [Fact]
+    public void UnloadedTimelineCancelsBackgroundConsumersAndReloadCreatesFreshEpoch()
+    {
+        RunOnSta(() =>
+        {
+            TimelineSurface surface = new();
+            Type type = typeof(TimelineSurface);
+            FieldInfo? rasterField = type.GetField(
+                "_rasterRequestCancellation",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo? exactField = type.GetField(
+                "_exactPrefetchCancellation",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo? pendingField = type.GetField(
+                "_pendingGestureCancellation",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo? suspendedField = type.GetField(
+                "_backgroundWorkSuspended",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(rasterField);
+            Assert.NotNull(exactField);
+            Assert.NotNull(pendingField);
+            Assert.NotNull(suspendedField);
+
+            surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+
+            Assert.True((bool)suspendedField!.GetValue(surface)!);
+            Assert.True(((CancellationTokenSource)rasterField!.GetValue(surface)!).IsCancellationRequested);
+            Assert.True(((CancellationTokenSource)exactField!.GetValue(surface)!).IsCancellationRequested);
+            Assert.True(((CancellationTokenSource)pendingField!.GetValue(surface)!).IsCancellationRequested);
+
+            surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent, surface));
+
+            Assert.False((bool)suspendedField.GetValue(surface)!);
+            Assert.False(((CancellationTokenSource)rasterField.GetValue(surface)!).IsCancellationRequested);
+            Assert.False(((CancellationTokenSource)exactField.GetValue(surface)!).IsCancellationRequested);
+            Assert.False(((CancellationTokenSource)pendingField.GetValue(surface)!).IsCancellationRequested);
+        });
+    }
+
     [Fact]
     public void TimelineTextCacheSeparatesTransparentMeasurementFromVisibleText()
     {
@@ -86,6 +219,333 @@ public sealed class TimelineRenderingTests
             overviewSource: new MaterializedTimelineOverviewSource([], [2_400]));
 
         Assert.Equal(2_401, snapshot.MaximumEndTick);
+    }
+
+    [Fact]
+    public void SnapshotCachesConductorHitTestAndSegmentPlacementMetadata()
+    {
+        TimelineRenderItem conductor = Item(
+            1,
+            5,
+            6,
+            0,
+            kind: TimelineItemKind.ConductorEvent);
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "arrangement-metadata",
+            [
+                conductor,
+                Item(2, 10, 20, 2, kind: TimelineItemKind.Segment),
+                Item(3, 30, 40, 2, kind: TimelineItemKind.Segment)
+            ]);
+
+        Assert.True(snapshot.HasConductorPreviewItems);
+        Assert.True(snapshot.HasHitTestableItems);
+
+        snapshot.GetSegmentPlacementInfo(2, 15, out bool occupied, out long nextStart);
+        Assert.True(occupied);
+        Assert.Equal(30, nextStart);
+
+        snapshot.GetSegmentPlacementInfo(2, 20, out occupied, out nextStart);
+        Assert.False(occupied);
+        Assert.Equal(30, nextStart);
+
+        snapshot.GetSegmentPlacementInfo(2, 40, out occupied, out nextStart);
+        Assert.False(occupied);
+        Assert.Equal(long.MaxValue, nextStart);
+
+        snapshot.GetSegmentPlacementInfo(7, 15, out occupied, out nextStart);
+        Assert.False(occupied);
+        Assert.Equal(long.MaxValue, nextStart);
+    }
+
+    [Fact]
+    public void HitTestableMetadataIncludesPagedSourcesWithoutForegroundEnumeration()
+    {
+        MetadataOnlyRenderSource source = new();
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "paged-hit-test-metadata",
+            [],
+            itemSource: source);
+
+        Assert.True(snapshot.HasHitTestableItems);
+        Assert.Equal(0, source.QueryCalls);
+    }
+
+    [Fact]
+    public void SegmentPlacementQueriesStayAllocationFreeAtLargeTrackCounts()
+    {
+        const int segmentCount = 100_000;
+        TimelineRenderItem[] segments = new TimelineRenderItem[segmentCount];
+        for (int index = 0; index < segments.Length; index++)
+        {
+            long start = index * 4L;
+            segments[index] = Item(
+                index + 1L,
+                start,
+                start + 2,
+                0,
+                kind: TimelineItemKind.Segment);
+        }
+        TimelineRenderSnapshot snapshot = new(1, "segment-placement-scale", segments);
+
+        snapshot.GetSegmentPlacementInfo(0, 1, out _, out _);
+        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        int occupiedCount = 0;
+        int nextStartMismatchCount = 0;
+        for (int index = 0; index < segmentCount; index++)
+        {
+            snapshot.GetSegmentPlacementInfo(
+                0,
+                index * 4L + 3,
+                out bool occupied,
+                out long nextStart);
+            if (occupied) occupiedCount++;
+            if (index + 1 < segmentCount && nextStart != (index + 1L) * 4L)
+                nextStartMismatchCount++;
+        }
+        stopwatch.Stop();
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
+        Assert.Equal(0, occupiedCount);
+        Assert.Equal(0, nextStartMismatchCount);
+        Assert.True(
+            allocated < 64 * 1024,
+            $"Segment placement queries allocated {allocated:N0} bytes.");
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            $"Segment placement queries took {stopwatch.Elapsed.TotalMilliseconds:N1} ms.");
+    }
+
+    [Fact]
+    public void ColdRulerOverviewSchedulesPrefetchWithoutForegroundDecode()
+    {
+        RunOnSta(() =>
+        {
+            using ManualResetEventSlim prefetchStarted = new(false);
+            using ManualResetEventSlim releasePrefetch = new(false);
+            BlockingPreparedRenderSource source = new(prefetchStarted, releasePrefetch);
+            TimelineRenderSnapshot ruler = new(
+                1,
+                "cold-ruler",
+                [],
+                itemSource: source);
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                Snapshot = new TimelineRenderSnapshot(1, "empty-piano", []),
+                RulerSnapshot = ruler,
+                TickSpan = 1_920,
+                LaneHeight = 8,
+                GridVisible = false,
+                CaptureRenderPhaseTimings = true
+            };
+            surface.Measure(new Size(800, 260));
+            surface.Arrange(new Rect(0, 0, 800, 260));
+
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            _ = RenderVisual(surface);
+            stopwatch.Stop();
+
+            Assert.True(prefetchStarted.Wait(TimeSpan.FromSeconds(2)));
+            Assert.Equal(0, source.BlockingQueryCalls);
+            Assert.True(source.CacheOnlyQueryCalls > 0);
+            Assert.True(
+                stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+                $"Cold ruler render blocked for {stopwatch.Elapsed.TotalMilliseconds:N1} ms.");
+            TimelineSurfaceRenderPhaseTiming phases = surface.LastRenderPhaseTiming;
+            Assert.True(phases.Total > TimeSpan.Zero);
+            Assert.InRange(phases.Background, TimeSpan.Zero, phases.Total);
+            Assert.InRange(phases.Content, TimeSpan.Zero, phases.Total);
+            Assert.InRange(phases.Overlay, TimeSpan.Zero, phases.Total);
+            Assert.True(
+                phases.Total < TimeSpan.FromMilliseconds(250),
+                $"Cold foreground phases: background={phases.Background.TotalMilliseconds:N1} ms, "
+                + $"content={phases.Content.TotalMilliseconds:N1} ms, "
+                + $"overlay={phases.Overlay.TotalMilliseconds:N1} ms.");
+
+            releasePrefetch.Set();
+            surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+        });
+    }
+
+    [Fact]
+    public void PianoViewportEntirelyRightOfSegmentRangeDoesNotQueryOrFingerprintContent()
+    {
+        RunOnSta(() =>
+        {
+            TimelineRasterCacheSession.Clear();
+            MetadataOnlyRenderSource source = new();
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                Snapshot = new TimelineRenderSnapshot(
+                    1,
+                    "right-of-segment-range",
+                    [],
+                    itemSource: source),
+                RangeStartTick = 0,
+                RangeEndTick = 1_000,
+                StartTick = 2_000,
+                TickSpan = 1_000,
+                LaneHeight = 6,
+                GridVisible = false,
+                CaptureRenderPhaseTimings = true
+            };
+            surface.Measure(new Size(800, 260));
+            surface.Arrange(new Rect(0, 0, 800, 260));
+
+            _ = RenderVisual(surface);
+
+            Assert.Equal(0, source.RangeFingerprintCalls);
+            Assert.Equal(0, source.QueryCalls);
+            Assert.True(
+                surface.LastRenderPhaseTiming.Content < TimeSpan.FromMilliseconds(100),
+                $"Right-side blank content phase took "
+                + $"{surface.LastRenderPhaseTiming.Content.TotalMilliseconds:N1} ms.");
+            surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+            TimelineRasterCacheSession.Clear();
+        });
+    }
+
+    [Theory]
+    [InlineData(TimelineSurfaceMode.Velocity)]
+    [InlineData(TimelineSurfaceMode.EventLanes)]
+    public void LaneViewportEntirelyRightOfSegmentRangeDoesNotQueryOrFingerprintContent(
+        TimelineSurfaceMode mode)
+    {
+        RunOnSta(() =>
+        {
+            TimelineRasterCacheSession.Clear();
+            MetadataOnlyRenderSource source = new();
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = mode,
+                Snapshot = new TimelineRenderSnapshot(
+                    1,
+                    $"right-of-segment-range:{mode}",
+                    [],
+                    itemSource: source),
+                RangeStartTick = 0,
+                RangeEndTick = 1_000,
+                StartTick = 2_000,
+                TickSpan = 1_000,
+                LaneHeight = 6,
+                GridVisible = false,
+                CaptureRenderPhaseTimings = true
+            };
+            surface.Measure(new Size(800, 260));
+            surface.Arrange(new Rect(0, 0, 800, 260));
+
+            _ = RenderVisual(surface);
+
+            Assert.Equal(0, source.RangeFingerprintCalls);
+            Assert.Equal(0, source.QueryCalls);
+            Assert.True(
+                surface.LastRenderPhaseTiming.Content < TimeSpan.FromMilliseconds(100),
+                $"{mode} right-side blank content phase took "
+                + $"{surface.LastRenderPhaseTiming.Content.TotalMilliseconds:N1} ms.");
+            surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+            TimelineRasterCacheSession.Clear();
+        });
+    }
+
+    [Theory]
+    [InlineData(TimelineSurfaceMode.PianoRoll)]
+    [InlineData(TimelineSurfaceMode.Velocity)]
+    [InlineData(TimelineSurfaceMode.EventLanes)]
+    public void ColdTileFingerprintNeverBlocksForegroundRender(TimelineSurfaceMode mode)
+    {
+        RunOnSta(() =>
+        {
+            using ManualResetEventSlim fingerprintStarted = new(false);
+            using ManualResetEventSlim releaseFingerprint = new(false);
+            BlockingFingerprintRenderSource source = new(fingerprintStarted, releaseFingerprint);
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = mode,
+                Snapshot = new TimelineRenderSnapshot(
+                    1,
+                    $"cold-fingerprint:{mode}",
+                    [],
+                    itemSource: source),
+                RangeStartTick = 0,
+                RangeEndTick = 1_000,
+                StartTick = 0,
+                TickSpan = 1_000,
+                LaneHeight = 6,
+                GridVisible = false,
+                CaptureRenderPhaseTimings = true
+            };
+            surface.Measure(new Size(800, 260));
+            surface.Arrange(new Rect(0, 0, 800, 260));
+            try
+            {
+                Stopwatch stopwatch = Stopwatch.StartNew();
+                _ = RenderVisual(surface);
+                stopwatch.Stop();
+
+                Assert.True(fingerprintStarted.Wait(TimeSpan.FromSeconds(2)));
+                Assert.Equal(0, source.QueryCalls);
+                Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(500),
+                    $"{mode} cold fingerprint blocked foreground for "
+                    + $"{stopwatch.Elapsed.TotalMilliseconds:N1} ms.");
+            }
+            finally
+            {
+                // A failed assertion must never strand the production worker
+                // in this deliberately non-cooperative test source.
+                releaseFingerprint.Set();
+                for (int attempt = 0; attempt < 100; attempt++) PumpDispatcher();
+                surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(TimelineItemKind.DirectMidiNote)]
+    [InlineData(TimelineItemKind.LogicalNote)]
+    [InlineData(TimelineItemKind.TemplateNote)]
+    public void PianoKeyboardChromeReusesDrawingAcrossHorizontalPanAndZoom(
+        TimelineItemKind kind)
+    {
+        RunOnSta(() =>
+        {
+            TimelineRasterCacheSession.Clear();
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                Snapshot = new TimelineRenderSnapshot(
+                    1,
+                    $"keyboard-cache:{kind}",
+                    [Item(1, 0, 1_000, 64, kind: kind)]),
+                RangeStartTick = 0,
+                RangeEndTick = 1_000,
+                StartTick = 0,
+                TickSpan = 600,
+                LaneHeight = 6,
+                GridVisible = false
+            };
+            surface.Measure(new Size(800, 260));
+            surface.Arrange(new Rect(0, 0, 800, 260));
+
+            _ = RenderVisual(surface);
+            Assert.Equal(1, surface.PianoKeyboardDrawingBuildCount);
+
+            surface.StartTick = 200;
+            surface.TickSpan = 700;
+            _ = RenderVisual(surface);
+            Assert.Equal(1, surface.PianoKeyboardDrawingBuildCount);
+
+            surface.FirstLane = 1;
+            _ = RenderVisual(surface);
+            Assert.Equal(2, surface.PianoKeyboardDrawingBuildCount);
+
+            surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+            TimelineRasterCacheSession.Clear();
+        });
     }
 
     [Fact]
@@ -2906,6 +3366,316 @@ public sealed class TimelineRenderingTests
         });
     }
 
+    [Theory]
+    [InlineData(TimelineItemKind.LogicalNote)]
+    [InlineData(TimelineItemKind.DirectMidiNote)]
+    [InlineData(TimelineItemKind.TemplateNote)]
+    public void QuantizedPianoLodIsSharedByAllThreePianoNoteKinds(TimelineItemKind kind)
+    {
+        int firstHorizontalLod = TimelineRasterLod.Quantize(0.94);
+        int secondHorizontalLod = TimelineRasterLod.Quantize(1.06);
+        int firstVerticalLod = TimelineRasterLod.Quantize(11.5);
+        int secondVerticalLod = TimelineRasterLod.Quantize(12.2);
+        Assert.Equal(firstHorizontalLod, secondHorizontalLod);
+        Assert.Equal(firstVerticalLod, secondVerticalLod);
+
+        TimelineRenderItem note = Item(1, 12, 24, 3, kind: kind);
+        TimelineRenderSnapshot snapshot = new(1, $"lod-{kind}", [note]);
+        ulong firstFingerprint = snapshot.GetPianoTileContentFingerprint(
+            firstHorizontalLod,
+            firstVerticalLod,
+            0,
+            0);
+        ulong secondFingerprint = snapshot.GetPianoTileContentFingerprint(
+            secondHorizontalLod,
+            secondVerticalLod,
+            0,
+            0);
+
+        Assert.Equal(firstFingerprint, secondFingerprint);
+        TimelineRasterBuffer raster = TimelinePianoTileRasterizer.Rasterize(
+            snapshot,
+            firstHorizontalLod,
+            firstVerticalLod,
+            0,
+            0,
+            Colors.SteelBlue,
+            Colors.Orange);
+        Assert.Equal(1, raster.CandidateCount);
+    }
+
+    [Theory]
+    [InlineData(TimelineItemKind.LogicalParameterPoint)]
+    [InlineData(TimelineItemKind.DirectMidiEvent)]
+    [InlineData(TimelineItemKind.OpaqueMidiEvent)]
+    public void QuantizedEventPointLodIsSharedByAllThreePointKinds(TimelineItemKind kind)
+    {
+        int horizontalLod = TimelineRasterLod.Quantize(1.06);
+        int verticalLod = TimelineRasterLod.Quantize(255.1);
+        double pixelsPerTick = TimelineRasterLod.GetScale(horizontalLod);
+        double pixelsPerValue = TimelineRasterLod.GetScale(verticalLod);
+        TimelineRenderItem point = Item(1, 12, 13, 0, kind: kind) with { Value = 0.5 };
+        TimelineRenderSnapshot snapshot = new(1, $"point-lod-{kind}", [point]);
+
+        ulong first = TimelineEventPointTileRasterizer.ComputeContentFingerprint(
+            snapshot, null, pixelsPerTick, pixelsPerValue, 0, 0, 1, 1);
+        ulong second = TimelineEventPointTileRasterizer.ComputeContentFingerprint(
+            snapshot,
+            null,
+            TimelineRasterLod.GetScale(TimelineRasterLod.Quantize(0.94)),
+            TimelineRasterLod.GetScale(TimelineRasterLod.Quantize(260.1)),
+            0,
+            0,
+            1,
+            1);
+        Assert.Equal(first, second);
+
+        TimelineRasterBuffer raster = TimelineEventPointTileRasterizer.Rasterize(
+            snapshot,
+            null,
+            pixelsPerTick,
+            pixelsPerValue,
+            0,
+            0,
+            1,
+            1,
+            Colors.SteelBlue,
+            Colors.White,
+            Colors.Black);
+        Assert.Equal(1, raster.CandidateCount);
+    }
+
+    [Theory]
+    [InlineData(TimelineItemKind.LogicalNote)]
+    [InlineData(TimelineItemKind.DirectMidiNote)]
+    [InlineData(TimelineItemKind.TemplateNote)]
+    public void SixtyThousandNoteResizePreviewUsesBoundedPixelAggregation(
+        TimelineItemKind kind)
+    {
+        const int count = 60_000;
+        TimelineRenderItem[] notes = new TimelineRenderItem[count];
+        MidoraId[] ids = new MidoraId[count];
+        for (int index = 0; index < count; index++)
+        {
+            long start = index % 128;
+            notes[index] = Item(index + 1, start, start + 192, index % 16,
+                kind: kind);
+            ids[index] = notes[index].Id;
+        }
+        TimelineRenderSnapshot snapshot = new(1, "resize-60k", notes);
+        TimelineSelectionSnapshot selection = new(1, ids, ids[0]);
+        double[] tops = Enumerable.Range(0, 128).Select(static lane => lane * 8d).ToArray();
+        double[] heights = Enumerable.Repeat(8d, 128).ToArray();
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        TimelineRasterBuffer raster = TimelineResizePreviewRasterizer.Rasterize(
+            snapshot,
+            selection,
+            ids[0],
+            kind,
+            TimelineResizeEdge.End,
+            tickDelta: 96,
+            minimumLength: 48,
+            viewportStartTick: 0,
+            devicePixelsPerTick: 1,
+            tops,
+            heights,
+            tileX: 0,
+            tileY: 0,
+            Color.FromRgb(98, 166, 246));
+        stopwatch.Stop();
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(count, raster.CandidateCount);
+        Assert.True(allocated < 8 * 1024 * 1024,
+            $"Resize raster allocated {allocated:N0} bytes.");
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            $"Resize raster took {stopwatch.Elapsed}.");
+        Assert.Contains(raster.Pixels, static value => value != 0);
+    }
+
+    [Theory]
+    [InlineData(TimelineItemKind.LogicalNote)]
+    [InlineData(TimelineItemKind.DirectMidiNote)]
+    [InlineData(TimelineItemKind.TemplateNote)]
+    public void SixtyThousandNoteContinuousResizeFramesRemainBounded(
+        TimelineItemKind kind)
+    {
+        const int count = 60_000;
+        const int frameCount = 48;
+        TimelineRenderItem[] notes = new TimelineRenderItem[count];
+        MidoraId[] ids = new MidoraId[count];
+        for (int index = 0; index < count; index++)
+        {
+            long start = index % 128;
+            notes[index] = Item(index + 1, start, start + 192, index % 16,
+                kind: kind);
+            ids[index] = notes[index].Id;
+        }
+        TimelineRenderSnapshot snapshot = new(1, $"resize-continuous:{kind}", notes);
+        TimelineSelectionSnapshot selection = new(1, ids, ids[0]);
+        double[] tops = Enumerable.Range(0, 128).Select(static lane => lane * 8d).ToArray();
+        double[] heights = Enumerable.Repeat(8d, 128).ToArray();
+        double[] elapsedMilliseconds = new double[frameCount];
+
+        _ = TimelineResizePreviewRasterizer.Rasterize(
+            snapshot, selection, ids[0], kind, TimelineResizeEdge.End,
+            1, 48, 0, 1, tops, heights, 0, 0, Color.FromRgb(98, 166, 246));
+        long workingSetBefore = Process.GetCurrentProcess().WorkingSet64;
+        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (int frame = 0; frame < frameCount; frame++)
+        {
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            TimelineRasterBuffer raster = TimelineResizePreviewRasterizer.Rasterize(
+                snapshot, selection, ids[0], kind, TimelineResizeEdge.End,
+                frame + 2, 48, 0, 1, tops, heights, 0, 0,
+                Color.FromRgb(98, 166, 246));
+            stopwatch.Stop();
+            elapsedMilliseconds[frame] = stopwatch.Elapsed.TotalMilliseconds;
+            Assert.Equal(count, raster.CandidateCount);
+        }
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+        long workingSetDelta = Process.GetCurrentProcess().WorkingSet64 - workingSetBefore;
+        Array.Sort(elapsedMilliseconds);
+        double p50 = elapsedMilliseconds[frameCount / 2];
+        double p95 = elapsedMilliseconds[(int)Math.Ceiling(frameCount * 0.95) - 1];
+        double maximum = elapsedMilliseconds[^1];
+
+        Console.WriteLine(
+            $"{kind}: resize p50/p95/max={p50:N2}/{p95:N2}/{maximum:N2} ms; "
+            + $"managed={allocated:N0} bytes; working-set delta={workingSetDelta:N0} bytes.");
+
+        Assert.True(allocated < 128L * 1024 * 1024,
+            $"{kind} continuous resize allocated {allocated:N0} bytes; "
+            + $"p50/p95/max={p50:N2}/{p95:N2}/{maximum:N2} ms.");
+        Assert.True(p95 < 250,
+            $"{kind} continuous resize p50/p95/max="
+            + $"{p50:N2}/{p95:N2}/{maximum:N2} ms; allocated={allocated:N0} bytes.");
+        Assert.True(workingSetDelta < 256L * 1024 * 1024,
+            $"{kind} continuous resize grew working set by {workingSetDelta:N0} bytes.");
+    }
+
+    [Fact]
+    public void CanceledRunningRasterRequestDoesNotPublishStaleResult()
+    {
+        RunOnSta(() =>
+        {
+            TimelineRasterCache cache = new();
+            TimelineRasterCacheKey key = new(
+                TimelineRasterLayer.ResizePreview,
+                "stale-running",
+                1,
+                1,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                96,
+                96);
+            using CancellationTokenSource cancellation = new();
+            using ManualResetEventSlim started = new(false);
+            using ManualResetEventSlim observedCancellation = new(false);
+            Assert.True(cache.Request(
+                key,
+                token =>
+                {
+                    started.Set();
+                    while (!token.IsCancellationRequested) Thread.Yield();
+                    observedCancellation.Set();
+                    token.ThrowIfCancellationRequested();
+                    return new(1, 1, new byte[4]);
+                },
+                Dispatcher.CurrentDispatcher,
+                static () => { },
+                cancellation.Token,
+                TimelineRasterRequestPriority.Visible));
+            Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
+            cancellation.Cancel();
+            Assert.True(observedCancellation.Wait(TimeSpan.FromSeconds(10)));
+            for (int attempt = 0; attempt < 1_000 && cache.InFlightCount != 0; attempt++)
+            {
+                Thread.Sleep(2);
+                PumpDispatcher();
+            }
+            Assert.Equal(0, cache.InFlightCount);
+            Assert.False(cache.TryGet(key, out _));
+        });
+    }
+
+    [Fact]
+    public void CanceledQueuedResizeFramesReleaseCapacityForLatestDelta()
+    {
+        RunOnSta(() =>
+        {
+            TimelineRasterCache cache = new();
+            using CountdownEvent workersStarted = new(2);
+            using ManualResetEventSlim releaseWorkers = new(false);
+            using CancellationTokenSource staleFrame = new();
+            Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+            for (int index = 0; index < 2; index++)
+            {
+                Assert.True(cache.Request(
+                    RasterKey(index),
+                    _ =>
+                    {
+                        workersStarted.Signal();
+                        Assert.True(releaseWorkers.Wait(TimeSpan.FromSeconds(10)));
+                        return EmptyRaster();
+                    },
+                    dispatcher,
+                    static () => { },
+                    priority: TimelineRasterRequestPriority.Visible));
+            }
+            Assert.True(workersStarted.Wait(TimeSpan.FromSeconds(10)));
+            for (int index = 2; index < TimelineRasterCache.MaximumInFlight; index++)
+            {
+                Assert.True(cache.Request(
+                    RasterKey(index),
+                    _ => EmptyRaster(),
+                    dispatcher,
+                    static () => { },
+                    staleFrame.Token,
+                    TimelineRasterRequestPriority.Visible));
+            }
+            Assert.Equal(TimelineRasterCache.MaximumInFlight, cache.InFlightCount);
+
+            staleFrame.Cancel();
+            Assert.Equal(2, cache.InFlightCount);
+            Assert.True(cache.Request(
+                RasterKey(10_000),
+                _ => EmptyRaster(),
+                dispatcher,
+                static () => { },
+                priority: TimelineRasterRequestPriority.Visible));
+
+            releaseWorkers.Set();
+            for (int attempt = 0; attempt < 1_000 && cache.InFlightCount != 0; attempt++)
+            {
+                Thread.Sleep(2);
+                PumpDispatcher();
+            }
+            Assert.Equal(0, cache.InFlightCount);
+
+            static TimelineRasterBuffer EmptyRaster() => new(1, 1, new byte[4]);
+            static TimelineRasterCacheKey RasterKey(long tileX) => new(
+                TimelineRasterLayer.ResizePreview,
+                "latest-delta",
+                1,
+                1,
+                1,
+                tileX,
+                0,
+                0,
+                0,
+                0,
+                96,
+                96);
+        });
+    }
+
     [Fact]
     public void VisibleRasterRequestIsNotBlockedByBackgroundWarmup()
     {
@@ -3100,6 +3870,121 @@ public sealed class TimelineRenderingTests
         {
             QueryCalls++;
             throw new InvalidOperationException("A foreground fingerprint decoded paged content.");
+        }
+
+        public bool TryGetById(MidoraId id, out TimelineRenderItem item)
+        {
+            item = default;
+            return false;
+        }
+
+        public IEnumerable<TimelineRenderItem> EnumerateAll() => [];
+    }
+
+    private sealed class BlockingFingerprintRenderSource(
+        ManualResetEventSlim started,
+        ManualResetEventSlim release) : ITimelineRenderItemSource
+    {
+        private int _queryCalls;
+        public int QueryCalls => Volatile.Read(ref _queryCalls);
+        public long Count => 1_000_000;
+        public long MaximumEndTick => 1_000;
+        public ulong ContentFingerprint => 19;
+
+        public ulong GetRangeFingerprint(
+            long startTick,
+            long endTick,
+            int firstLane,
+            int lastLaneExclusive)
+        {
+            started.Set();
+            release.Wait(TimeSpan.FromSeconds(10));
+            return 23;
+        }
+
+        public void QueryInto(
+            long startTick,
+            long endTick,
+            int firstLane,
+            int lastLaneExclusive,
+            List<TimelineRenderItem> destination)
+        {
+            Interlocked.Increment(ref _queryCalls);
+            throw new InvalidOperationException("A foreground tile query decoded cold content.");
+        }
+
+        public bool TryGetById(MidoraId id, out TimelineRenderItem item)
+        {
+            item = default;
+            return false;
+        }
+
+        public IEnumerable<TimelineRenderItem> EnumerateAll() => [];
+    }
+
+    private sealed class BlockingPreparedRenderSource(
+        ManualResetEventSlim prefetchStarted,
+        ManualResetEventSlim releasePrefetch) : IPreparedTimelineRenderItemSource
+    {
+        private int _blockingQueryCalls;
+        private int _cacheOnlyQueryCalls;
+
+        public int BlockingQueryCalls => Volatile.Read(ref _blockingQueryCalls);
+        public int CacheOnlyQueryCalls => Volatile.Read(ref _cacheOnlyQueryCalls);
+        public long Count => 1;
+        public long MaximumEndTick => 1_920;
+        public ulong ContentFingerprint => 31;
+
+        public ulong GetRangeFingerprint(
+            long startTick,
+            long endTick,
+            int firstLane,
+            int lastLaneExclusive) => 37;
+
+        public void QueryInto(
+            long startTick,
+            long endTick,
+            int firstLane,
+            int lastLaneExclusive,
+            List<TimelineRenderItem> destination)
+        {
+            _ = Interlocked.Increment(ref _blockingQueryCalls);
+            throw new InvalidOperationException("The UI thread decoded a cold ruler page.");
+        }
+
+        public bool TryQueryIntoCached(
+            long startTick,
+            long endTick,
+            int firstLane,
+            int lastLaneExclusive,
+            List<TimelineRenderItem> destination)
+        {
+            _ = Interlocked.Increment(ref _cacheOnlyQueryCalls);
+            return false;
+        }
+
+        public void PrefetchRange(
+            long startTick,
+            long endTick,
+            int firstLane,
+            int lastLaneExclusive,
+            CancellationToken cancellationToken)
+        {
+            prefetchStarted.Set();
+            WaitHandle.WaitAny(
+                [releasePrefetch.WaitHandle, cancellationToken.WaitHandle],
+                TimeSpan.FromSeconds(10));
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        public bool TryQueryByIdsCached(
+            IReadOnlySet<MidoraId> ids,
+            List<TimelineRenderItem> destination) => false;
+
+        public void PrefetchIds(
+            IReadOnlySet<MidoraId> ids,
+            CancellationToken cancellationToken)
+        {
         }
 
         public bool TryGetById(MidoraId id, out TimelineRenderItem item)

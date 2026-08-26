@@ -1,4 +1,6 @@
 using System.Collections.Specialized;
+using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -135,12 +137,15 @@ public sealed class WpfInteractionRegressionTests
                 List<int> collectionChangeThreads = [];
                 session.ProjectTree.CollectionChanged += (_, _) =>
                     collectionChangeThreads.Add(Environment.CurrentManagedThreadId);
+                long refreshPassBeforeEdit = session.ModelRefreshPassCount;
 
                 session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track", instrument.Id));
 
                 Assert.Single(session.Project!.Tracks);
                 Assert.Empty(tracks.Children);
+                Assert.Equal(refreshPassBeforeEdit, session.ModelRefreshPassCount);
                 DrainDispatcher();
+                Assert.Equal(refreshPassBeforeEdit + 1, session.ModelRefreshPassCount);
 
                 ProjectTreeNode refreshedTracks = session.ProjectTree.Single(
                     item => item.Kind == ProjectTreeNodeKind.LogicalTracks);
@@ -165,6 +170,94 @@ public sealed class WpfInteractionRegressionTests
                     WorkspaceKind.ConductorTrack,
                     session.OpenWorkspace(session.ProjectTree.Single(
                         item => item.Kind == ProjectTreeNodeKind.Conductor)).Kind);
+            }
+            finally
+            {
+                PumpUntil(session.DisposeAsync().AsTask());
+            }
+        });
+    }
+
+    [Fact]
+    public void MultipleContentChangesInOneDispatcherFrameMergeWithoutLosingAffectedWorkspaces()
+    {
+        RunOnSta(() =>
+        {
+            Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(dispatcher));
+            DesktopSessionController session = new();
+            try
+            {
+                PumpUntil(session.CreateProjectAsync(new NewProjectCreationRequest
+                {
+                    ProjectName = "Merged content refresh",
+                    PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+                }));
+                session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+                EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+                session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track A", instrument.Id));
+                session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track B", instrument.Id));
+                LogicalTrack firstTrack = session.Project.Tracks[0];
+                LogicalTrack secondTrack = session.Project.Tracks[1];
+                session.Execute(ProjectDomainEditCommands.CreateSegment(firstTrack.Id, 0, 480));
+                session.Execute(ProjectDomainEditCommands.CreateSegment(secondTrack.Id, 0, 480));
+                Segment firstSegment = Assert.Single(firstTrack.Segments);
+                Segment secondSegment = Assert.Single(secondTrack.Segments);
+                session.Execute(ProjectDomainEditCommands.CreateLogicalNote(
+                    firstSegment.Id,
+                    0,
+                    120,
+                    60,
+                    100));
+                session.Execute(ProjectDomainEditCommands.CreateLogicalNote(
+                    secondSegment.Id,
+                    0,
+                    120,
+                    64,
+                    100));
+                LogicalNote firstNote = Assert.Single(firstSegment.Notes);
+                LogicalNote secondNote = Assert.Single(secondSegment.Notes);
+                DrainDispatcher();
+
+                TimelineWorkspaceViewModel firstWorkspace = session.OpenSegment(firstSegment.Id);
+                TimelineWorkspaceViewModel secondWorkspace = session.OpenSegment(secondSegment.Id);
+                long passesBeforeEdits = session.ModelRefreshPassCount;
+                long rebuildsBeforeEdits = session.WorkspaceRebuildCount;
+
+                session.Execute(ProjectDomainEditCommands.MoveLogicalNotes(
+                    firstSegment.Id,
+                    [firstNote.Id],
+                    24,
+                    0));
+                session.Execute(ProjectDomainEditCommands.MoveLogicalNotes(
+                    secondSegment.Id,
+                    [secondNote.Id],
+                    48,
+                    0));
+
+                Assert.Equal(passesBeforeEdits, session.ModelRefreshPassCount);
+                Assert.True(firstWorkspace.Snapshot!.TryGetItem(
+                    firstNote.Id,
+                    out TimelineRenderItem firstBeforeDrain));
+                Assert.True(secondWorkspace.Snapshot!.TryGetItem(
+                    secondNote.Id,
+                    out TimelineRenderItem secondBeforeDrain));
+                Assert.Equal(0, firstBeforeDrain.StartTick);
+                Assert.Equal(0, secondBeforeDrain.StartTick);
+
+                DrainDispatcher();
+
+                Assert.Equal(passesBeforeEdits + 1, session.ModelRefreshPassCount);
+                Assert.Equal(rebuildsBeforeEdits + 3, session.WorkspaceRebuildCount);
+                Assert.True(firstWorkspace.Snapshot!.TryGetItem(
+                    firstNote.Id,
+                    out TimelineRenderItem firstAfterDrain));
+                Assert.True(secondWorkspace.Snapshot!.TryGetItem(
+                    secondNote.Id,
+                    out TimelineRenderItem secondAfterDrain));
+                Assert.Equal(24, firstAfterDrain.StartTick);
+                Assert.Equal(48, secondAfterDrain.StartTick);
             }
             finally
             {
@@ -445,6 +538,465 @@ public sealed class WpfInteractionRegressionTests
                 application.Shutdown();
             }
         });
+    }
+
+    [Fact]
+    public void ColdUndoRestoresSelectionInsideTheCoalescedWorkspaceRebuild()
+    {
+        RunOnSta(() =>
+        {
+            Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(dispatcher));
+            DesktopSessionController session = new();
+            try
+            {
+                PumpUntil(session.CreateProjectAsync(new NewProjectCreationRequest
+                {
+                    ProjectName = "Undo selection",
+                    PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+                }));
+                session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+                EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+                session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track", instrument.Id));
+                LogicalTrack track = Assert.Single(session.Project.Tracks);
+                session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
+                Segment segment = Assert.Single(track.Segments);
+                session.Execute(ProjectDomainEditCommands.CreateLogicalNote(
+                    segment.Id,
+                    0,
+                    120,
+                    60,
+                    100));
+                LogicalNote note = Assert.Single(segment.Notes);
+                DrainDispatcher();
+
+                TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+                _ = session.OpenInstrument(instrument.Id);
+                workspace.Selection.Replace(note.Id);
+                session.RefreshWorkspaceSelection(workspace);
+                long projectTreeRefreshesBeforeMove = session.ProjectTreeRefreshCount;
+                long workspaceRebuildsBeforeMove = session.WorkspaceRebuildCount;
+                session.ExecutePreservingWorkspaceSelection(
+                    ProjectDomainEditCommands.MoveLogicalNotes(
+                        segment.Id,
+                        [note.Id],
+                        24,
+                        0),
+                    workspace);
+                DrainDispatcher();
+
+                Assert.Equal(projectTreeRefreshesBeforeMove, session.ProjectTreeRefreshCount);
+                Assert.Equal(workspaceRebuildsBeforeMove + 2, session.WorkspaceRebuildCount);
+
+                workspace.Selection.Clear();
+                session.RefreshWorkspaceSelection(workspace);
+                long selectionRefreshesBeforeUndo = session.WorkspaceSelectionRefreshCount;
+                long passesBeforeUndo = session.ModelRefreshPassCount;
+
+                session.Undo();
+
+                Assert.Equal(selectionRefreshesBeforeUndo, session.WorkspaceSelectionRefreshCount);
+                Assert.Equal(passesBeforeUndo, session.ModelRefreshPassCount);
+                Assert.Empty(workspace.Selection.Ids);
+
+                DrainDispatcher();
+
+                Assert.Contains(note.Id, workspace.Selection.Ids);
+                Assert.Equal(passesBeforeUndo + 1, session.ModelRefreshPassCount);
+                Assert.Equal(selectionRefreshesBeforeUndo, session.WorkspaceSelectionRefreshCount);
+
+                session.ExecutePreservingWorkspaceSelection(
+                    ProjectDomainEditCommands.MoveLogicalNotes(
+                        segment.Id,
+                        [note.Id],
+                        48,
+                        0),
+                    workspace);
+                DrainDispatcher();
+                Assert.Equal(2, session.WorkspaceSelectionHistoryStateCount);
+            }
+            finally
+            {
+                PumpUntil(session.DisposeAsync().AsTask());
+            }
+        });
+    }
+
+    [Fact]
+    public void SelectionHistoryCapturesThePostRebuildSelectionForRedo()
+    {
+        RunOnSta(() =>
+        {
+            Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(dispatcher));
+            DesktopSessionController session = new();
+            try
+            {
+                PumpUntil(session.CreateProjectAsync(new NewProjectCreationRequest
+                {
+                    ProjectName = "Post rebuild selection",
+                    PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+                }));
+                session.Execute(ProjectDomainEditCommands.CreateEventInstrument("Instrument"));
+                EventInstrument instrument = Assert.Single(session.Project!.EventInstruments);
+                session.Execute(ProjectDomainEditCommands.CreateLogicalTrack("Track", instrument.Id));
+                LogicalTrack track = Assert.Single(session.Project.Tracks);
+                session.Execute(ProjectDomainEditCommands.CreateSegment(track.Id, 0, 480));
+                Segment segment = Assert.Single(track.Segments);
+                session.Execute(ProjectDomainEditCommands.CreateLogicalNote(
+                    segment.Id,
+                    0,
+                    120,
+                    60,
+                    100));
+                session.Execute(ProjectDomainEditCommands.CreateLogicalNote(
+                    segment.Id,
+                    120,
+                    120,
+                    70,
+                    100));
+                LogicalNote retained = segment.Notes[0];
+                LogicalNote discarded = segment.Notes[1];
+                DrainDispatcher();
+
+                TimelineWorkspaceViewModel workspace = session.OpenSegment(segment.Id);
+                workspace.Selection.Add(retained.Id, makePrimary: false);
+                workspace.Selection.Add(discarded.Id, makePrimary: true);
+                session.RefreshWorkspaceSelection(workspace);
+
+                session.ExecutePreservingWorkspaceSelection(
+                    ProjectDomainEditCommands.TransposeLogicalNotes(
+                        segment.Id,
+                        [retained.Id, discarded.Id],
+                        semitones: 64),
+                    workspace);
+
+                // The WPF projection intentionally rebuilds at Render priority. The
+                // history bookmark for the new state must be captured after that
+                // rebuild has pruned the note deleted by the transform.
+                Assert.Contains(discarded.Id, workspace.Selection.Ids);
+                DrainDispatcher();
+                Assert.Equal([retained.Id], workspace.Selection.Ids);
+
+                session.Undo();
+                DrainDispatcher();
+                Assert.Equal([retained.Id, discarded.Id], workspace.Selection.Ids);
+                Assert.Equal(discarded.Id, workspace.Selection.Primary);
+
+                session.Redo();
+                DrainDispatcher();
+                Assert.Equal([retained.Id], workspace.Selection.Ids);
+                Assert.Equal(retained.Id, workspace.Selection.Primary);
+            }
+            finally
+            {
+                PumpUntil(session.DisposeAsync().AsTask());
+            }
+        });
+    }
+
+    [Fact]
+    public void SelectionHistoryRestoresEveryOpenWorkspaceBookmark()
+    {
+        RunOnSta(() =>
+        {
+            Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(dispatcher));
+            DesktopSessionController session = new();
+            try
+            {
+                PumpUntil(session.CreateProjectAsync(new NewProjectCreationRequest
+                {
+                    ProjectName = "All workspace selections",
+                    PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+                }));
+                TestSelectionWorkspaceViewModel first = new();
+                TestSelectionWorkspaceViewModel second = new(WorkspaceKind.ProjectSettings);
+                session.Workspaces.Add(first);
+                session.Workspaces.Add(second);
+                MidoraId firstId = new(20_000_001);
+                MidoraId secondId = new(20_000_002);
+                first.Selection.Replace(firstId);
+                second.Selection.Replace(secondId);
+
+                session.ExecutePreservingWorkspaceSelection(
+                    ProjectDomainEditCommands.CreateProjectMarker(120, "All workspaces"),
+                    first);
+                DrainDispatcher();
+                first.Selection.Clear();
+                second.Selection.Clear();
+
+                session.Undo();
+                DrainDispatcher();
+
+                Assert.Equal([firstId], first.Selection.Ids);
+                Assert.Equal([secondId], second.Selection.Ids);
+            }
+            finally
+            {
+                PumpUntil(session.DisposeAsync().AsTask());
+            }
+        });
+    }
+
+    [Fact]
+    public void SequentialEditsFlushPendingSelectionBookmarksBeforeTheNextEdit()
+    {
+        RunOnSta(() =>
+        {
+            Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(dispatcher));
+            DesktopSessionController session = new();
+            try
+            {
+                PumpUntil(session.CreateProjectAsync(new NewProjectCreationRequest
+                {
+                    ProjectName = "Sequential selection history",
+                    PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+                }));
+                TestSelectionWorkspaceViewModel workspace = new();
+                session.Workspaces.Add(workspace);
+                MidoraId firstId = new(30_000_001);
+                MidoraId secondId = new(30_000_002);
+                MidoraId thirdId = new(30_000_003);
+                workspace.Selection.Replace(firstId);
+
+                session.ExecutePreservingWorkspaceSelection(
+                    ProjectDomainEditCommands.CreateProjectMarker(120, "First"),
+                    workspace);
+                workspace.Selection.Replace(secondId);
+
+                // This second edit runs before the Render-priority callback for the
+                // first edit. It must synchronously finish the first bookmark rather
+                // than overwrite the pending state id.
+                session.ExecutePreservingWorkspaceSelection(
+                    ProjectDomainEditCommands.CreateProjectMarker(240, "Second"),
+                    workspace);
+                workspace.Selection.Replace(thirdId);
+                DrainDispatcher();
+
+                session.Undo();
+                DrainDispatcher();
+                Assert.Equal([secondId], workspace.Selection.Ids);
+
+                session.Redo();
+                DrainDispatcher();
+                Assert.Equal([thirdId], workspace.Selection.Ids);
+            }
+            finally
+            {
+                PumpUntil(session.DisposeAsync().AsTask());
+            }
+        });
+    }
+
+    [Fact]
+    public void ColdUndoWithSixtyThousandSelectedIdsDoesNotResolveOnTheCallStack()
+    {
+        RunOnSta(() =>
+        {
+            Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(dispatcher));
+            DesktopSessionController session = new();
+            try
+            {
+                PumpUntil(session.CreateProjectAsync(new NewProjectCreationRequest
+                {
+                    ProjectName = "Large selection undo",
+                    PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+                }));
+                TestSelectionWorkspaceViewModel workspace = new();
+                session.Workspaces.Add(workspace);
+                MidoraId[] ids = Enumerable.Range(0, 60_000)
+                    .Select(index => new MidoraId(1_000_000L + index))
+                    .ToArray();
+                workspace.Selection.ReplaceAll(ids, ids[0]);
+                session.RefreshWorkspaceSelection(workspace);
+                session.ExecutePreservingWorkspaceSelection(
+                    ProjectDomainEditCommands.CreateProjectMarker(120, "Undo target"),
+                    workspace);
+                DrainDispatcher();
+                workspace.Selection.Clear();
+                session.RefreshWorkspaceSelection(workspace);
+                long selectionRefreshesBeforeUndo = session.WorkspaceSelectionRefreshCount;
+
+                Stopwatch stopwatch = Stopwatch.StartNew();
+                session.Undo();
+                stopwatch.Stop();
+
+                Assert.True(
+                    stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+                    $"Undo call stack took {stopwatch.Elapsed.TotalMilliseconds:F1} ms.");
+                Assert.Empty(workspace.Selection.Ids);
+                Assert.Equal(selectionRefreshesBeforeUndo, session.WorkspaceSelectionRefreshCount);
+
+                DrainDispatcher();
+
+                Assert.Equal(ids.Length, workspace.Selection.Ids.Count);
+                Assert.Equal(
+                    selectionRefreshesBeforeUndo + 1,
+                    session.WorkspaceSelectionRefreshCount);
+            }
+            finally
+            {
+                PumpUntil(session.DisposeAsync().AsTask());
+            }
+        });
+    }
+
+    [Fact]
+    public void LargeTimelineSelectionPublishesIdsImmediatelyThenRestoresFullMetrics()
+    {
+        RunOnSta(() =>
+        {
+            const int noteCount = 4_097;
+            using MidoraProject project = new(192);
+            MidiChannelRoot root = new(project) { Name = "Root" };
+            PureMidiTrack track = new(project) { Name = "Track" };
+            MidiSegment segment = new(project)
+            {
+                LengthTicks = noteCount * 4L + 4
+            };
+            DirectMidiNote[] notes = Enumerable.Range(0, noteCount)
+                .Select(index => new DirectMidiNote(project)
+                {
+                    StartTick = index * 4L,
+                    LengthTicks = 2,
+                    Key = index % 128,
+                    NoteOnVelocity = 1 + index % 127,
+                    NoteOnOrder = index * 2L,
+                    NoteOffOrder = index * 2L + 1
+                })
+                .ToArray();
+            segment.Notes.AddRange(notes);
+            track.Segments.Add(segment);
+            ProjectGraphConstruction.AddPureMidiTrack(
+                project,
+                root,
+                track,
+                addRoot: true);
+
+            TimelineWorkspaceViewModel workspace = new(
+                WorkspaceKey.ForObject(WorkspaceKind.SegmentEditor, segment.Id),
+                "MIDI Segment",
+                TimelineWorkspaceMode.Segment);
+            workspace.Rebuild(project, revision: 1);
+            MidoraId[] ids = notes.Select(static note => note.Id).ToArray();
+            workspace.Selection.ReplaceAll(ids, ids[0]);
+            TaskCompletionSource metricsPublished = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            workspace.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName == nameof(WorkspaceViewModel.SelectionSnapshot)
+                    && workspace.SelectionSnapshot.TryGetMetrics(
+                        TimelineItemKind.DirectMidiNote,
+                        out TimelineSelectionMetrics noteMetrics)
+                    && noteMetrics.Count == noteCount
+                    && workspace.SelectionSnapshot.TryGetMetrics(
+                        TimelineItemKind.Velocity,
+                        out TimelineSelectionMetrics velocityMetrics)
+                    && velocityMetrics.Count == noteCount)
+                {
+                    metricsPublished.TrySetResult();
+                }
+            };
+
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            workspace.RefreshSelectionPresentation();
+            stopwatch.Stop();
+
+            Assert.True(
+                stopwatch.Elapsed < TimeSpan.FromMilliseconds(500),
+                $"Large selection refresh blocked for {stopwatch.Elapsed.TotalMilliseconds:F1} ms.");
+            Assert.Equal(noteCount, workspace.SelectionSnapshot.Count);
+            Assert.False(workspace.SelectionSnapshot.TryGetMetrics(
+                TimelineItemKind.DirectMidiNote,
+                out _));
+
+            PumpUntil(metricsPublished.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+
+            Assert.True(workspace.SelectionSnapshot.TryGetMetrics(
+                TimelineItemKind.DirectMidiNote,
+                out TimelineSelectionMetrics finalNoteMetrics));
+            Assert.Equal(noteCount, finalNoteMetrics.Count);
+            Assert.Equal(0, finalNoteMetrics.MinimumStartTick);
+            Assert.Equal((noteCount - 1) * 4L + 2, finalNoteMetrics.MaximumEndTick);
+            Assert.True(workspace.SelectionSnapshot.TryGetMetrics(
+                TimelineItemKind.Velocity,
+                out TimelineSelectionMetrics finalVelocityMetrics));
+            Assert.Equal(noteCount, finalVelocityMetrics.Count);
+        });
+    }
+
+    [Theory]
+    [InlineData(60_000)]
+    [InlineData(1_000_000)]
+    public void FirstEditBookmarksLargePersistentSelectionWithoutCopyingEveryId(int idCount)
+    {
+        RunOnSta(() =>
+        {
+            Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(dispatcher));
+            DesktopSessionController session = new();
+            try
+            {
+                PumpUntil(session.CreateProjectAsync(new NewProjectCreationRequest
+                {
+                    ProjectName = "Persistent selection bookmark",
+                    PersistenceMode = NewProjectPersistenceMode.CreateUnsaved
+                }));
+                TestSelectionWorkspaceViewModel workspace = new();
+                session.Workspaces.Add(workspace);
+                ImmutableHashSet<MidoraId>.Builder builder =
+                    ImmutableHashSet.CreateBuilder<MidoraId>();
+                for (int index = 0; index < idCount; index++)
+                {
+                    builder.Add(new MidoraId(10_000_000L + index));
+                }
+                ImmutableHashSet<MidoraId> ids = builder.ToImmutable();
+                MidoraId primary = new(10_000_000);
+                workspace.Selection.AdoptMaterialized(ids, primary, primary);
+                session.RefreshWorkspaceSelection(workspace);
+                IProjectEditCommand command =
+                    ProjectDomainEditCommands.CreateProjectMarker(120, "Bookmark");
+
+                long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+                Stopwatch stopwatch = Stopwatch.StartNew();
+                session.ExecutePreservingWorkspaceSelection(command, workspace);
+                stopwatch.Stop();
+                long allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
+                Assert.True(
+                    stopwatch.Elapsed < TimeSpan.FromSeconds(2),
+                    $"Bookmarking {idCount:N0} selected IDs took {stopwatch.Elapsed.TotalMilliseconds:F1} ms.");
+                Assert.True(
+                    allocated < 1_000_000,
+                    $"Bookmarking {idCount:N0} selected IDs allocated {allocated:N0} UI-thread bytes.");
+                Assert.Same(ids, workspace.Selection.IdSet);
+
+                DrainDispatcher();
+            }
+            finally
+            {
+                PumpUntil(session.DisposeAsync().AsTask());
+            }
+        });
+    }
+
+    private sealed class TestSelectionWorkspaceViewModel(
+        WorkspaceKind kind = WorkspaceKind.EventInstrumentLibrary) : WorkspaceViewModel(
+        WorkspaceKey.ForType(kind),
+        "Selection Test")
+    {
+        public override void Rebuild(MidoraProject project, long revision)
+        {
+        }
     }
 
     [Fact]

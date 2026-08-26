@@ -1,4 +1,7 @@
 using Midora.Domain;
+using Midora.Desktop.Presentation.Interaction;
+using System.Collections.Concurrent;
+using System.Collections.Immutable;
 
 namespace Midora.Desktop.Presentation.Rendering;
 
@@ -157,12 +160,14 @@ public interface ITimelineSegmentPreviewSource
 
 public sealed class TimelineSegmentPreview
 {
+    private const int MaximumTileFingerprintEntries = 8192;
     private readonly TimelineSegmentPreviewNote[] _notes;
     private readonly double[] _noteMaximumEndPrefix;
     private readonly TimelineSegmentPreviewEvent[] _events;
     private readonly ITimelineSegmentPreviewSource? _source;
-    private readonly object _tileFingerprintGate = new();
-    private readonly Dictionary<SegmentPreviewTileFingerprintKey, ulong> _tileFingerprints = [];
+    private readonly ConcurrentDictionary<SegmentPreviewTileFingerprintKey, Lazy<ulong>>
+        _tileFingerprints = [];
+    private readonly ConcurrentQueue<SegmentPreviewTileFingerprintKey> _tileFingerprintOrder = [];
 
     public TimelineSegmentPreview(
         MidoraId segmentId,
@@ -376,25 +381,34 @@ public sealed class TimelineSegmentPreview
             eventLayer,
             BitConverter.DoubleToInt64Bits(deviceSegmentWidth),
             tileX);
-        lock (_tileFingerprintGate)
+        Lazy<ulong> created = new(
+                () => _source is not null
+                    ? _source.GetTileContentFingerprint(eventLayer, deviceSegmentWidth, tileX)
+                    : eventLayer
+                        ? TimelineSegmentPreviewRasterizer.ComputeEventTileContentFingerprint(
+                            this,
+                            deviceSegmentWidth,
+                            tileX)
+                        : TimelineSegmentPreviewRasterizer.ComputeNoteTileContentFingerprint(
+                            this,
+                            deviceSegmentWidth,
+                            tileX),
+                LazyThreadSafetyMode.ExecutionAndPublication);
+        Lazy<ulong> pending = _tileFingerprints.GetOrAdd(key, created);
+        if (ReferenceEquals(created, pending))
         {
-            if (_tileFingerprints.TryGetValue(key, out ulong fingerprint))
-            {
-                return fingerprint;
-            }
-            fingerprint = _source is not null
-                ? _source.GetTileContentFingerprint(eventLayer, deviceSegmentWidth, tileX)
-                : eventLayer
-                    ? TimelineSegmentPreviewRasterizer.ComputeEventTileContentFingerprint(
-                        this,
-                        deviceSegmentWidth,
-                        tileX)
-                    : TimelineSegmentPreviewRasterizer.ComputeNoteTileContentFingerprint(
-                        this,
-                        deviceSegmentWidth,
-                        tileX);
-            _tileFingerprints.Add(key, fingerprint);
-            return fingerprint;
+            _tileFingerprintOrder.Enqueue(key);
+            EvictOldTileFingerprint();
+        }
+        try
+        {
+            return pending.Value;
+        }
+        catch
+        {
+            _tileFingerprints.TryRemove(
+                new KeyValuePair<SegmentPreviewTileFingerprintKey, Lazy<ulong>>(key, pending));
+            throw;
         }
     }
 
@@ -437,6 +451,16 @@ public sealed class TimelineSegmentPreview
         return low;
     }
 
+    private void EvictOldTileFingerprint()
+    {
+        while (_tileFingerprints.Count > MaximumTileFingerprintEntries
+            && _tileFingerprintOrder.TryDequeue(out SegmentPreviewTileFingerprintKey oldest))
+        {
+            _tileFingerprints.TryRemove(oldest, out _);
+            break;
+        }
+    }
+
     private readonly record struct SegmentPreviewTileFingerprintKey(
         bool EventLayer,
         long DeviceSegmentWidthKey,
@@ -448,6 +472,7 @@ public interface ITimelineRenderItemSource
     long Count { get; }
     long MaximumEndTick { get; }
     ulong ContentFingerprint { get; }
+    bool HasHitTestableItems => Count > 0;
 
     /// <summary>
     /// Returns a bounded-cost fingerprint for a presentation range. Large
@@ -511,6 +536,60 @@ public interface ITimelineRenderItemSource
     void AccumulateOverviewDensity(long extent, Span<int> destination)
     {
     }
+}
+
+/// <summary>
+/// Exact cache-only access for an out-of-core item source. UI-thread consumers
+/// use these members instead of the blocking <see cref="ITimelineRenderItemSource"/>
+/// methods. A false result means Pending, never an empty range.
+/// </summary>
+public interface IPreparedTimelineRenderItemSource : ITimelineRenderItemSource
+{
+    bool TryQueryIntoCached(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        List<TimelineRenderItem> destination);
+
+    void PrefetchRange(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        CancellationToken cancellationToken);
+
+    bool TryQueryByIdsCached(
+        IReadOnlySet<MidoraId> ids,
+        List<TimelineRenderItem> destination);
+
+    void PrefetchIds(
+        IReadOnlySet<MidoraId> ids,
+        CancellationToken cancellationToken);
+}
+
+public enum TimelineRasterAggregateKind
+{
+    PianoNotes,
+    Velocity,
+    EventPoints
+}
+
+/// <summary>
+/// Optional raster-only projection whose work is bounded by the fixed output
+/// column count rather than by the number of source objects. Aggregate output
+/// is deliberately excluded from all semantic query and hit-test APIs.
+/// </summary>
+public interface ITimelineRasterAggregateSource
+{
+    bool TryAccumulateRasterColumns(
+        TimelineRasterAggregateKind kind,
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        Span<TimelineRasterColumnSummary> destination,
+        out int sourceWorkCount);
 }
 
 public readonly record struct TimelineSelectionMetrics(
@@ -632,7 +711,7 @@ public sealed class MaterializedTimelineOverviewSource : ITimelineOverviewSource
 
 public sealed class TimelineSelectionSnapshot
 {
-    private readonly HashSet<MidoraId> _ids;
+    private readonly ImmutableHashSet<MidoraId> _ids;
     private readonly Dictionary<TimelineItemKind, TimelineSelectionMetrics> _metrics;
 
     public TimelineSelectionSnapshot(
@@ -640,11 +719,28 @@ public sealed class TimelineSelectionSnapshot
         IEnumerable<MidoraId> ids,
         MidoraId? primary,
         IEnumerable<TimelineRenderItem>? resolvedItems = null)
+        : this(
+            revision,
+            ids as ImmutableHashSet<MidoraId> ?? ids.ToImmutableHashSet(),
+            primary,
+            resolvedItems,
+            metrics: null,
+            trustIds: false)
+    {
+    }
+
+    private TimelineSelectionSnapshot(
+        long revision,
+        ImmutableHashSet<MidoraId> ids,
+        MidoraId? primary,
+        IEnumerable<TimelineRenderItem>? resolvedItems,
+        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>? metrics,
+        bool trustIds)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(revision);
         ArgumentNullException.ThrowIfNull(ids);
-        _ids = new HashSet<MidoraId>(ids);
-        if (_ids.Any(static id => id.Value <= 0))
+        _ids = ids;
+        if (!trustIds && _ids.Any(static id => id.Value <= 0))
         {
             throw new ArgumentException("Selection contains an invalid object reference.", nameof(ids));
         }
@@ -654,7 +750,7 @@ public sealed class TimelineSelectionSnapshot
         }
         Revision = revision;
         Primary = primary;
-        _metrics = BuildMetrics(resolvedItems);
+        _metrics = metrics is null ? BuildMetrics(resolvedItems) : new(metrics);
     }
 
     public TimelineSelectionSnapshot(
@@ -662,29 +758,46 @@ public sealed class TimelineSelectionSnapshot
         IEnumerable<MidoraId> ids,
         MidoraId? primary,
         IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> metrics)
+        : this(
+            revision,
+            ids as ImmutableHashSet<MidoraId> ?? ids.ToImmutableHashSet(),
+            primary,
+            resolvedItems: null,
+            metrics,
+            trustIds: false)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(revision);
-        ArgumentNullException.ThrowIfNull(ids);
-        ArgumentNullException.ThrowIfNull(metrics);
-        _ids = new HashSet<MidoraId>(ids);
-        if (_ids.Any(static id => id.Value <= 0))
-        {
-            throw new ArgumentException("Selection contains an invalid object reference.", nameof(ids));
-        }
-        if (primary is MidoraId primaryId && !_ids.Contains(primaryId))
-        {
-            throw new ArgumentException("Primary selection must belong to the selection set.", nameof(primary));
-        }
-        Revision = revision;
-        Primary = primary;
-        _metrics = new(metrics);
+    }
+
+    internal static TimelineSelectionSnapshot FromTrustedIds(
+        long revision,
+        ImmutableHashSet<MidoraId> ids,
+        MidoraId? primary,
+        IEnumerable<TimelineRenderItem>? resolvedItems = null,
+        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>? metrics = null) =>
+        new(revision, ids, primary, resolvedItems, metrics, trustIds: true);
+
+    public static TimelineSelectionSnapshot FromWorkspaceSelection(
+        WorkspaceSelection selection,
+        IEnumerable<TimelineRenderItem>? resolvedItems = null,
+        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>? metrics = null)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+        return FromTrustedIds(
+            selection.Revision,
+            selection.SharedIds,
+            selection.Primary,
+            resolvedItems,
+            metrics);
     }
 
     public long Revision { get; }
     public MidoraId? Primary { get; }
     public int Count => _ids.Count;
     public IEnumerable<MidoraId> Ids => _ids;
+    public IReadOnlySet<MidoraId> IdSet => _ids;
     public bool Contains(MidoraId id) => _ids.Contains(id);
+
+    internal ImmutableHashSet<MidoraId> SharedIds => _ids;
 
     public bool TryGetMetrics(
         TimelineItemKind kind,
@@ -830,12 +943,19 @@ public readonly record struct TimelineViewport(
 
 public sealed class TimelineRenderSnapshot
 {
-    private readonly object _pianoTileFingerprintGate = new();
-    private readonly Dictionary<PianoTileFingerprintKey, ulong> _pianoTileFingerprints = [];
-    private readonly object _conductorTileFingerprintGate = new();
-    private readonly Dictionary<ConductorTileFingerprintKey, ulong> _conductorTileFingerprints = [];
+    private const int MaximumPianoFingerprintEntries = 16384;
+    private const int MaximumConductorFingerprintEntries = 8192;
+    private readonly ConcurrentDictionary<PianoTileFingerprintKey, Lazy<ulong>>
+        _pianoTileFingerprints = [];
+    private readonly ConcurrentDictionary<ConductorTileFingerprintKey, Lazy<ulong>>
+        _conductorTileFingerprints = [];
+    private readonly ConcurrentQueue<PianoTileFingerprintKey> _pianoTileFingerprintOrder = [];
+    private readonly ConcurrentQueue<ConductorTileFingerprintKey> _conductorTileFingerprintOrder = [];
     private readonly ITimelineRenderItemSource? _itemSource;
     private readonly ITimelineOverviewSource? _overviewSource;
+    private readonly long _materializedMaximumEndTick;
+    private readonly int _materializedMaximumLane;
+    private readonly Dictionary<int, SegmentPlacementInterval[]> _segmentIntervalsByLane;
 
     public TimelineRenderSnapshot(
         long semanticRevision,
@@ -874,6 +994,25 @@ public sealed class TimelineRenderSnapshot
         ProjectionKey = projectionKey.Trim();
         _itemSource = itemSource;
         _overviewSource = overviewSource;
+        _materializedMaximumEndTick = materialized.Length == 0
+            ? 0
+            : materialized.Max(static value => value.EndTick);
+        _materializedMaximumLane = materialized.Length == 0
+            ? -1
+            : materialized.Max(static value => value.Lane);
+        _segmentIntervalsByLane = materialized
+            .Where(static value => value.Kind == TimelineItemKind.Segment)
+            .GroupBy(static value => value.Lane)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group
+                    .OrderBy(static value => value.StartTick)
+                    .ThenBy(static value => value.EndTick)
+                    .ThenBy(static value => value.Id)
+                    .Select(static value => new SegmentPlacementInterval(
+                        value.StartTick,
+                        value.EndTick))
+                    .ToArray());
         Items = Array.AsReadOnly(materialized);
         LaneLabels = laneLabels is null
             ? Array.Empty<string>()
@@ -903,6 +1042,11 @@ public sealed class TimelineRenderSnapshot
                 itemSource?.ContentFingerprint ?? 0),
             overviewSource?.ContentFingerprint ?? 0);
         ConductorPreviewFingerprint = TimelineContentFingerprint.ForConductorPreview(materialized);
+        HasConductorPreviewItems = materialized.Any(static item => item.Kind is
+            TimelineItemKind.ConductorEvent or TimelineItemKind.Marker);
+        HasHitTestableItems = materialized.Any(static item =>
+                !item.State.HasFlag(TimelineItemState.HitTestDisabled))
+            || itemSource?.HasHitTestableItems == true;
     }
 
     public long SemanticRevision { get; }
@@ -918,13 +1062,48 @@ public sealed class TimelineRenderSnapshot
     public IReadOnlyDictionary<MidoraId, TimelineRenderItem> ItemsById { get; }
     public ulong ContentFingerprint { get; }
     public ulong ConductorPreviewFingerprint { get; }
+    public bool HasConductorPreviewItems { get; }
+    public bool HasHitTestableItems { get; }
     public bool HasDedicatedOverview => _overviewSource is not null;
     public long TotalItemCount => checked(Items.Count + (_itemSource?.Count ?? 0));
+    public int MaterializedMaximumLane => _materializedMaximumLane;
     public long MaximumEndTick => Math.Max(
         Math.Max(
-            Items.Count == 0 ? 0 : Items.Max(value => value.EndTick),
+            _materializedMaximumEndTick,
             _itemSource?.MaximumEndTick ?? 0),
         _overviewSource?.MaximumEndTick ?? 0);
+
+    internal void GetSegmentPlacementInfo(
+        int lane,
+        long tick,
+        out bool occupied,
+        out long nextStartTick)
+    {
+        occupied = false;
+        nextStartTick = long.MaxValue;
+        if (!_segmentIntervalsByLane.TryGetValue(
+                lane,
+                out SegmentPlacementInterval[]? intervals)
+            || intervals.Length == 0)
+        {
+            return;
+        }
+
+        int low = 0;
+        int high = intervals.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (intervals[middle].StartTick <= tick) low = middle + 1;
+            else high = middle;
+        }
+        if (low < intervals.Length) nextStartTick = intervals[low].StartTick;
+        if (low > 0)
+        {
+            SegmentPlacementInterval previous = intervals[low - 1];
+            occupied = previous.StartTick <= tick && tick < previous.EndTick;
+        }
+    }
 
     public void AccumulateOverviewDensity(long extent, Span<int> destination)
     {
@@ -981,6 +1160,45 @@ public sealed class TimelineRenderSnapshot
         _itemSource?.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, destination);
     }
 
+    public bool TryQueryIntoCached(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        List<TimelineRenderItem> destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        int originalCount = destination.Count;
+        Index.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, destination);
+        if (_itemSource is IPreparedTimelineRenderItemSource prepared
+            && !prepared.TryQueryIntoCached(
+                startTick,
+                endTick,
+                firstLane,
+                lastLaneExclusive,
+                destination))
+        {
+            destination.RemoveRange(originalCount, destination.Count - originalCount);
+            return false;
+        }
+        if (_itemSource is not null and not IPreparedTimelineRenderItemSource)
+            _itemSource.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, destination);
+        return true;
+    }
+
+    public void PrefetchRange(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        CancellationToken cancellationToken) =>
+        (_itemSource as IPreparedTimelineRenderItemSource)?.PrefetchRange(
+            startTick,
+            endTick,
+            firstLane,
+            lastLaneExclusive,
+            cancellationToken);
+
     internal void VisitInto(
         long startTick,
         long endTick,
@@ -989,9 +1207,7 @@ public sealed class TimelineRenderSnapshot
         Action<TimelineRenderItem> visitor)
     {
         ArgumentNullException.ThrowIfNull(visitor);
-        List<TimelineRenderItem> materialized = [];
-        Index.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, materialized);
-        foreach (TimelineRenderItem value in materialized) visitor(value);
+        Index.VisitInto(startTick, endTick, firstLane, lastLaneExclusive, visitor);
         _itemSource?.VisitInto(
             startTick,
             endTick,
@@ -1002,6 +1218,119 @@ public sealed class TimelineRenderSnapshot
 
     internal bool HasExternalItemSource => _itemSource is not null;
     internal ulong ExternalItemSourceFingerprint => _itemSource?.ContentFingerprint ?? 0;
+
+    internal bool TryAccumulateRasterColumns(
+        TimelineRasterAggregateKind kind,
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        Span<TimelineRasterColumnSummary> destination,
+        out int sourceWorkCount)
+    {
+        destination.Clear();
+        sourceWorkCount = 0;
+        if (destination.IsEmpty || endTick <= startTick || lastLaneExclusive <= firstLane)
+            return true;
+        if (_itemSource is not null and not ITimelineRasterAggregateSource)
+            return false;
+
+        List<TimelineRenderItem> materialized = [];
+        Index.QueryInto(startTick, endTick, firstLane, lastLaneExclusive, materialized);
+        foreach (TimelineRenderItem item in materialized)
+        {
+            if (!MatchesAggregateKind(item.Kind, kind)) continue;
+            int lane = kind == TimelineRasterAggregateKind.PianoNotes ? item.Lane : 0;
+            ulong low = lane is >= 0 and < 64 ? 1UL << lane : 0;
+            ulong high = lane is >= 64 and < 128 ? 1UL << (lane - 64) : 0;
+            IncludeRasterColumns(
+                destination,
+                startTick,
+                endTick,
+                item.StartTick,
+                item.EndTick,
+                low,
+                high,
+                item.Value,
+                item.Value,
+                1);
+            sourceWorkCount++;
+        }
+        return _itemSource is not ITimelineRasterAggregateSource aggregate
+            || aggregate.TryAccumulateRasterColumns(
+                kind,
+                startTick,
+                endTick,
+                firstLane,
+                lastLaneExclusive,
+                destination,
+                out int externalWork)
+                && AddWork(ref sourceWorkCount, externalWork);
+    }
+
+    private static bool AddWork(ref int destination, int value)
+    {
+        destination = destination > int.MaxValue - value
+            ? int.MaxValue
+            : destination + value;
+        return true;
+    }
+
+    private static bool MatchesAggregateKind(
+        TimelineItemKind itemKind,
+        TimelineRasterAggregateKind aggregateKind) => aggregateKind switch
+        {
+            TimelineRasterAggregateKind.PianoNotes => itemKind is
+                TimelineItemKind.LogicalNote
+                or TimelineItemKind.DirectMidiNote
+                or TimelineItemKind.TemplateNote,
+            TimelineRasterAggregateKind.Velocity => itemKind == TimelineItemKind.Velocity,
+            TimelineRasterAggregateKind.EventPoints => itemKind is
+                TimelineItemKind.LogicalParameterPoint
+                or TimelineItemKind.DirectMidiEvent
+                or TimelineItemKind.OpaqueMidiEvent,
+            _ => false
+        };
+
+    private static void IncludeRasterColumns(
+        Span<TimelineRasterColumnSummary> destination,
+        long queryStartTick,
+        long queryEndTick,
+        long contentStartTick,
+        long contentEndTick,
+        ulong laneMaskLow,
+        ulong laneMaskHigh,
+        double minimumValue,
+        double maximumValue,
+        int approximateSourceCount)
+    {
+        if ((laneMaskLow | laneMaskHigh) == 0
+            || contentEndTick <= queryStartTick
+            || contentStartTick >= queryEndTick)
+        {
+            return;
+        }
+        double span = (double)queryEndTick - queryStartTick;
+        int first = Math.Clamp(
+            (int)Math.Floor((Math.Max(queryStartTick, contentStartTick) - queryStartTick)
+                / span * destination.Length),
+            0,
+            destination.Length - 1);
+        int lastExclusive = Math.Clamp(
+            (int)Math.Ceiling((Math.Min(queryEndTick, contentEndTick) - queryStartTick)
+                / span * destination.Length),
+            first + 1,
+            destination.Length);
+        for (int column = first; column < lastExclusive; column++)
+        {
+            destination[column].Include(
+                laneMaskLow,
+                laneMaskHigh,
+                minimumValue,
+                maximumValue,
+                approximateSourceCount);
+        }
+    }
 
     internal ulong GetExternalRangeFingerprint(
         long startTick,
@@ -1051,10 +1380,62 @@ public sealed class TimelineRenderSnapshot
         });
     }
 
+    public bool TryHitTestCached(
+        long tick,
+        long toleranceTicks,
+        int lane,
+        List<TimelineRenderItem> destination)
+    {
+        if (tick < 0 || toleranceTicks < 0 || lane < 0)
+            throw new ArgumentOutOfRangeException(nameof(tick));
+        long start = Math.Max(0, tick - Math.Min(tick, toleranceTicks));
+        long end = tick > long.MaxValue - toleranceTicks - 1
+            ? long.MaxValue
+            : tick + toleranceTicks + 1;
+        if (!TryQueryIntoCached(start, end, lane, checked(lane + 1), destination))
+            return false;
+        destination.RemoveAll(static item =>
+            item.State.HasFlag(TimelineItemState.HitTestDisabled));
+        destination.Sort(static (x, y) =>
+        {
+            int value = y.ZIndex.CompareTo(x.ZIndex);
+            if (value != 0) return value;
+            value = x.Length.CompareTo(y.Length);
+            return value != 0 ? value : x.Id.CompareTo(y.Id);
+        });
+        return true;
+    }
+
     public bool TryGetItem(MidoraId id, out TimelineRenderItem item)
     {
         if (ItemsById.TryGetValue(id, out item)) return true;
         return _itemSource?.TryGetById(id, out item) == true;
+    }
+
+    public bool TryGetItemCached(
+        MidoraId id,
+        out TimelineRenderItem item,
+        out bool ready)
+    {
+        if (ItemsById.TryGetValue(id, out item))
+        {
+            ready = true;
+            return true;
+        }
+        if (_itemSource is not IPreparedTimelineRenderItemSource prepared)
+        {
+            ready = true;
+            return _itemSource?.TryGetById(id, out item) == true;
+        }
+        List<TimelineRenderItem> result = [];
+        ready = prepared.TryQueryByIdsCached(new HashSet<MidoraId> { id }, result);
+        if (ready && result.Count != 0)
+        {
+            item = result[0];
+            return true;
+        }
+        item = default;
+        return false;
     }
 
     public void QueryByIds(
@@ -1075,6 +1456,43 @@ public sealed class TimelineRenderSnapshot
         }
         if (remaining is { Count: > 0 })
             _itemSource?.QueryByIds(remaining, destination);
+    }
+
+    public bool TryQueryByIdsCached(
+        IReadOnlySet<MidoraId> ids,
+        List<TimelineRenderItem> destination)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(destination);
+        int originalCount = destination.Count;
+        HashSet<MidoraId>? remaining = null;
+        foreach (MidoraId id in ids)
+        {
+            if (ItemsById.TryGetValue(id, out TimelineRenderItem item))
+                destination.Add(item);
+            else
+                (remaining ??= []).Add(id);
+        }
+        if (remaining is not { Count: > 0 }) return true;
+        if (_itemSource is IPreparedTimelineRenderItemSource prepared)
+        {
+            if (prepared.TryQueryByIdsCached(remaining, destination)) return true;
+            destination.RemoveRange(originalCount, destination.Count - originalCount);
+            return false;
+        }
+        _itemSource?.QueryByIds(remaining, destination);
+        return true;
+    }
+
+    public void PrefetchIds(
+        IReadOnlySet<MidoraId> ids,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        if (_itemSource is not IPreparedTimelineRenderItemSource prepared) return;
+        HashSet<MidoraId> remaining = [.. ids];
+        remaining.ExceptWith(ItemsById.Keys);
+        if (remaining.Count != 0) prepared.PrefetchIds(remaining, cancellationToken);
     }
 
     public IEnumerable<TimelineRenderItem> EnumerateAllItems() =>
@@ -1106,20 +1524,29 @@ public sealed class TimelineRenderSnapshot
             BitConverter.DoubleToInt64Bits(devicePixelsPerLane),
             tileX,
             tileY);
-        lock (_pianoTileFingerprintGate)
+        Lazy<ulong> created = new(
+                () => TimelinePianoTileRasterizer.ComputeContentFingerprint(
+                    this,
+                    devicePixelsPerTick,
+                    devicePixelsPerLane,
+                    tileX,
+                    tileY),
+                LazyThreadSafetyMode.ExecutionAndPublication);
+        Lazy<ulong> pending = _pianoTileFingerprints.GetOrAdd(key, created);
+        if (ReferenceEquals(created, pending))
         {
-            if (_pianoTileFingerprints.TryGetValue(key, out ulong fingerprint))
-            {
-                return fingerprint;
-            }
-            fingerprint = TimelinePianoTileRasterizer.ComputeContentFingerprint(
-                this,
-                devicePixelsPerTick,
-                devicePixelsPerLane,
-                tileX,
-                tileY);
-            _pianoTileFingerprints.Add(key, fingerprint);
-            return fingerprint;
+            _pianoTileFingerprintOrder.Enqueue(key);
+            EvictOldPianoFingerprint();
+        }
+        try
+        {
+            return pending.Value;
+        }
+        catch
+        {
+            _pianoTileFingerprints.TryRemove(
+                new KeyValuePair<PianoTileFingerprintKey, Lazy<ulong>>(key, pending));
+            throw;
         }
     }
 
@@ -1138,19 +1565,28 @@ public sealed class TimelineRenderSnapshot
             BitConverter.DoubleToInt64Bits(devicePixelsPerTick),
             tileX,
             BitConverter.DoubleToInt64Bits(dpiScaleX));
-        lock (_conductorTileFingerprintGate)
+        Lazy<ulong> created = new(
+                () => TimelineConductorTileRasterizer.ComputeContentFingerprint(
+                    this,
+                    devicePixelsPerTick,
+                    tileX,
+                    dpiScaleX),
+                LazyThreadSafetyMode.ExecutionAndPublication);
+        Lazy<ulong> pending = _conductorTileFingerprints.GetOrAdd(key, created);
+        if (ReferenceEquals(created, pending))
         {
-            if (_conductorTileFingerprints.TryGetValue(key, out ulong fingerprint))
-            {
-                return fingerprint;
-            }
-            fingerprint = TimelineConductorTileRasterizer.ComputeContentFingerprint(
-                this,
-                devicePixelsPerTick,
-                tileX,
-                dpiScaleX);
-            _conductorTileFingerprints.Add(key, fingerprint);
-            return fingerprint;
+            _conductorTileFingerprintOrder.Enqueue(key);
+            EvictOldConductorFingerprint();
+        }
+        try
+        {
+            return pending.Value;
+        }
+        catch
+        {
+            _conductorTileFingerprints.TryRemove(
+                new KeyValuePair<ConductorTileFingerprintKey, Lazy<ulong>>(key, pending));
+            throw;
         }
     }
 
@@ -1158,6 +1594,30 @@ public sealed class TimelineRenderSnapshot
         long HorizontalScaleKey,
         long TileX,
         long DpiScaleXKey);
+
+    private void EvictOldPianoFingerprint()
+    {
+        if (_pianoTileFingerprints.Count <= MaximumPianoFingerprintEntries) return;
+        while (_pianoTileFingerprintOrder.TryDequeue(out PianoTileFingerprintKey oldest))
+        {
+            _pianoTileFingerprints.TryRemove(oldest, out _);
+            break;
+        }
+    }
+
+    private void EvictOldConductorFingerprint()
+    {
+        if (_conductorTileFingerprints.Count <= MaximumConductorFingerprintEntries) return;
+        while (_conductorTileFingerprintOrder.TryDequeue(out ConductorTileFingerprintKey oldest))
+        {
+            _conductorTileFingerprints.TryRemove(oldest, out _);
+            break;
+        }
+    }
+
+    private readonly record struct SegmentPlacementInterval(
+        long StartTick,
+        long EndTick);
 }
 
 public static class TimelineContentFingerprint

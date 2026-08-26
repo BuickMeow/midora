@@ -122,7 +122,7 @@ public sealed class ValueCurve
     public MidoraId Id { get; init; }
     public MidiValueTarget Target { get; set; }
     public MidiIntegerTargetSettings TargetSettings { get; }
-    public List<CurvePoint> Points { get; } = [];
+    public CurvePointCollection Points { get; } = new();
 }
 
 public enum MidiValueKind

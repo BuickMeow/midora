@@ -322,6 +322,7 @@ public sealed class DesktopSessionControllerTests
         ProjectTreeNode failedNode = session.ProjectTree.Single(item => item.Kind == ProjectTreeNodeKind.Diagnostics);
         Assert.Equal($"Diagnostics ({session.IssueSummary})", failedNode.Title);
         Assert.True(session.WarningCount > 0 || session.ErrorCount > 0);
+        string failedTitle = failedNode.Title;
 
         session.Execute(ProjectDomainEditCommands.DeleteTimeSignature(change.Id));
         await session.Document.Compilation.EnsureCurrentCompilationAsync();
@@ -333,7 +334,7 @@ public sealed class DesktopSessionControllerTests
 
         ProjectTreeNode repairedNode = session.ProjectTree.Single(item => item.Kind == ProjectTreeNodeKind.Diagnostics);
         Assert.Equal($"Diagnostics ({session.IssueSummary})", repairedNode.Title);
-        Assert.NotEqual(failedNode.Title, repairedNode.Title);
+        Assert.NotEqual(failedTitle, repairedNode.Title);
     }
 
     [Fact]

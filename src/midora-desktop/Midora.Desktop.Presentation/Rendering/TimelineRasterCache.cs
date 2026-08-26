@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Midora.Domain;
 
 namespace Midora.Desktop.Presentation.Rendering;
 
@@ -15,6 +16,7 @@ internal enum TimelineRasterLayer
     PianoNotes,
     PianoSelection,
     PianoDragPreview,
+    ResizePreview,
     VelocityBars,
     EventPoints,
     EventPointSelection
@@ -537,10 +539,28 @@ public readonly struct TimelinePianoTileRasterRequest
         NormalColor,
         WarningColor,
         normalOutlineColor: NormalOutlineColor);
+
+    public TimelineRasterBuffer Rasterize(CancellationToken cancellationToken) =>
+        TimelinePianoTileRasterizer.Rasterize(
+            Snapshot,
+            DevicePixelsPerTick,
+            DevicePixelsPerLane,
+            TileX,
+            TileY,
+            NormalColor,
+            WarningColor,
+            normalOutlineColor: NormalOutlineColor,
+            cancellationToken: cancellationToken);
 }
 
 public static class TimelinePianoTileRasterizer
 {
+    // Below this scale a single raster column covers enough ticks that exact
+    // object visitation makes tile cost proportional to project density.  The
+    // immutable presentation sources expose a conservative fixed-width
+    // occupancy envelope for this case.  Hit testing and editing never consume
+    // this raster-only path.
+    private const double AggregatePixelsPerTickThreshold = 0.125;
     public const int TileSize = 256;
     public const int Gutter = 1;
     public const int RasterSize = TileSize + Gutter * 2;
@@ -644,7 +664,8 @@ public static class TimelinePianoTileRasterizer
         TimelineSelectionSnapshot? selection = null,
         bool selectionOnly = false,
         Color? outlineColor = null,
-        Color? normalOutlineColor = null)
+        Color? normalOutlineColor = null,
+        CancellationToken cancellationToken = default)
         => Rasterize(
             snapshot,
             TimelineRasterLod.GetScale(horizontalLod),
@@ -656,7 +677,8 @@ public static class TimelinePianoTileRasterizer
             selection,
             selectionOnly,
             outlineColor,
-            normalOutlineColor);
+            normalOutlineColor,
+            cancellationToken);
 
     public static TimelineRasterBuffer Rasterize(
         TimelineRenderSnapshot snapshot,
@@ -669,7 +691,8 @@ public static class TimelinePianoTileRasterizer
         TimelineSelectionSnapshot? selection = null,
         bool selectionOnly = false,
         Color? outlineColor = null,
-        Color? normalOutlineColor = null)
+        Color? normalOutlineColor = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         if (!TryGetTileBounds(
@@ -689,13 +712,82 @@ public static class TimelinePianoTileRasterizer
         double worldTop = tileY * (double)TileSize - Gutter;
         byte[] pixels = new byte[RasterSize * RasterSize * 4];
         int candidateCount = 0;
+        if (!selectionOnly
+            && selection is null
+            && devicePixelsPerTick <= AggregatePixelsPerTickThreshold)
+        {
+            TimelineRasterColumnSummary[] summaries =
+                new TimelineRasterColumnSummary[RasterSize];
+            if (snapshot.TryAccumulateRasterColumns(
+                    TimelineRasterAggregateKind.PianoNotes,
+                    startTick,
+                    endTick,
+                    firstLane,
+                    lastLaneExclusive,
+                    summaries,
+                    out int sourceWorkCount))
+            {
+                DrawAggregate(summaries);
+                cancellationToken.ThrowIfCancellationRequested();
+                return new(RasterSize, RasterSize, pixels, sourceWorkCount);
+            }
+        }
         snapshot.VisitInto(
             startTick,
             endTick,
             firstLane,
             lastLaneExclusive,
             Draw);
+        cancellationToken.ThrowIfCancellationRequested();
         return new(RasterSize, RasterSize, pixels, candidateCount);
+
+        void DrawAggregate(ReadOnlySpan<TimelineRasterColumnSummary> summaries)
+        {
+            Color outline = normalOutlineColor ?? Darken(normalColor);
+            for (int column = 0; column < summaries.Length; column++)
+            {
+                if ((column & 31) == 0) cancellationToken.ThrowIfCancellationRequested();
+                TimelineRasterColumnSummary summary = summaries[column];
+                if (!summary.HasContent) continue;
+                for (int lane = firstLane; lane < lastLaneExclusive; lane++)
+                {
+                    bool occupied = lane < 64
+                        ? (summary.LaneMaskLow & (1UL << lane)) != 0
+                        : (summary.LaneMaskHigh & (1UL << (lane - 64))) != 0;
+                    if (!occupied) continue;
+                    int rawTop = RoundPixelBoundary(
+                        lane * devicePixelsPerLane - worldTop);
+                    int rawBottom = Math.Max(
+                        rawTop + 1,
+                        RoundPixelBoundary((lane + 1d) * devicePixelsPerLane - worldTop));
+                    int top = Math.Clamp(rawTop, 0, RasterSize);
+                    int bottom = Math.Clamp(rawBottom, 0, RasterSize);
+                    if (bottom <= top) continue;
+                    FillRectangle(
+                        pixels,
+                        RasterSize,
+                        column,
+                        top,
+                        Math.Min(RasterSize, column + 1),
+                        bottom,
+                        normalColor,
+                        0.78);
+                    DrawRectangleOutline(
+                        pixels,
+                        RasterSize,
+                        column,
+                        top,
+                        Math.Min(RasterSize, column + 1),
+                        bottom,
+                        outline,
+                        0.82,
+                        drawLeft: true,
+                        drawTop: rawTop >= 0,
+                        drawRight: true,
+                        drawBottom: rawBottom <= RasterSize);
+                }
+            }
+        }
 
         void Draw(TimelineRenderItem item)
         {
@@ -713,6 +805,8 @@ public static class TimelinePianoTileRasterizer
             }
 
             if (candidateCount < int.MaxValue) candidateCount++;
+            if ((candidateCount & 255) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
 
             int rawLeft = RoundPixelBoundary(item.StartTick * devicePixelsPerTick - worldLeft);
             int rawRight = Math.Max(
@@ -1443,6 +1537,7 @@ public static class TimelineSegmentPreviewRasterizer
 
 public static class TimelineEventPointTileRasterizer
 {
+    private const double AggregatePixelsPerTickThreshold = 0.125;
     public const int TileSize = 256;
     public const double PointRadius = 4;
     public const double SelectionRadius = 6;
@@ -1471,7 +1566,8 @@ public static class TimelineEventPointTileRasterizer
         Color normalColor,
         Color primaryColor,
         Color borderColor,
-        bool selectionOnly = false)
+        bool selectionOnly = false,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         if (!double.IsFinite(devicePixelsPerTick) || devicePixelsPerTick <= 0)
@@ -1499,8 +1595,29 @@ public static class TimelineEventPointTileRasterizer
         double selectionRadiusY = Math.Max(pointRadiusY + 1, SelectionRadius * dpiScaleY);
         double outlineX = Math.Max(1, dpiScaleX);
         double outlineY = Math.Max(1, dpiScaleY);
+        if (!selectionOnly
+            && (selection is null || selection.Count == 0)
+            && devicePixelsPerTick <= AggregatePixelsPerTickThreshold)
+        {
+            TimelineRasterColumnSummary[] summaries =
+                new TimelineRasterColumnSummary[width];
+            if (snapshot.TryAccumulateRasterColumns(
+                    TimelineRasterAggregateKind.EventPoints,
+                    startTick,
+                    endTick,
+                    0,
+                    1,
+                    summaries,
+                    out int sourceWorkCount))
+            {
+                DrawAggregate(summaries);
+                cancellationToken.ThrowIfCancellationRequested();
+                return new(width, height, pixels, sourceWorkCount);
+            }
+        }
         Dictionary<(int X, int Y, bool Selected, bool Primary), TimelineRenderItem> points = [];
         snapshot.VisitInto(startTick, endTick, 0, 1, Collect);
+        cancellationToken.ThrowIfCancellationRequested();
         foreach (TimelineRenderItem item in points.Values
             .OrderBy(value => value.StartTick)
             .ThenBy(value => value.Value)
@@ -1553,6 +1670,37 @@ public static class TimelineEventPointTileRasterizer
         }
         return new(width, height, pixels, points.Count);
 
+        void DrawAggregate(ReadOnlySpan<TimelineRasterColumnSummary> summaries)
+        {
+            double radiusX = Math.Max(0.75, dpiScaleX);
+            double radiusY = Math.Max(0.75, dpiScaleY);
+            for (int x = 0; x < summaries.Length; x++)
+            {
+                if ((x & 31) == 0) cancellationToken.ThrowIfCancellationRequested();
+                TimelineRasterColumnSummary summary = summaries[x];
+                if (!summary.HasContent) continue;
+                DrawValue(summary.MinimumValue);
+                if (summary.MaximumValue != summary.MinimumValue)
+                    DrawValue(summary.MaximumValue);
+
+                void DrawValue(double value)
+                {
+                    double centerY = (1 - Math.Clamp(value, 0, 1))
+                        * devicePixelsPerValue - worldTop;
+                    if (centerY + radiusY < 0 || centerY - radiusY >= height) return;
+                    FillEllipse(
+                        pixels,
+                        width,
+                        height,
+                        x,
+                        centerY,
+                        radiusX,
+                        radiusY,
+                        normalColor);
+                }
+            }
+        }
+
         void Collect(TimelineRenderItem item)
         {
             if (item.Kind is not (
@@ -1565,6 +1713,8 @@ public static class TimelineEventPointTileRasterizer
             bool selected = selection?.Contains(item.Id)
                 ?? item.State.HasFlag(TimelineItemState.Selected);
             if (selectionOnly && !selected) return;
+            if ((points.Count & 255) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
             bool primary = selection is not null
                 ? selection.Primary == item.Id
                 : item.State.HasFlag(TimelineItemState.Primary);
@@ -1838,6 +1988,7 @@ public static class TimelineConductorTileRasterizer
 
 public static class TimelineVelocityTileRasterizer
 {
+    private const double AggregatePixelsPerTickThreshold = 0.125;
     public const int TileSize = 256;
     public const int StemWidth = 3;
     public const int MarkerSize = 7;
@@ -1860,6 +2011,24 @@ public static class TimelineVelocityTileRasterizer
         long startTick = Math.Max(0, FloorToLong(worldLeft / pixelsPerTick));
         long endTick = Math.Max(startTick + 1, CeilingToLong((worldLeft + RasterWidth) / pixelsPerTick));
         byte[] pixels = new byte[RasterWidth * RasterHeight * 4];
+        if ((selection is null || selection.Count == 0)
+            && pixelsPerTick <= AggregatePixelsPerTickThreshold)
+        {
+            TimelineRasterColumnSummary[] summaries =
+                new TimelineRasterColumnSummary[RasterWidth];
+            if (snapshot.TryAccumulateRasterColumns(
+                    TimelineRasterAggregateKind.Velocity,
+                    startTick,
+                    endTick,
+                    0,
+                    1,
+                    summaries,
+                    out int sourceWorkCount))
+            {
+                DrawAggregate(summaries);
+                return new(RasterWidth, RasterHeight, pixels, sourceWorkCount);
+            }
+        }
         Dictionary<(int Center, int Top, bool Selected), TimelineRenderItem> columns = [];
         snapshot.VisitInto(startTick, endTick, 0, 1, Collect);
         foreach (TimelineRenderItem item in columns.Values
@@ -1905,6 +2074,49 @@ public static class TimelineVelocityTileRasterizer
                 drawBottom: true);
         }
         return new(RasterWidth, RasterHeight, pixels, columns.Count);
+
+        void DrawAggregate(ReadOnlySpan<TimelineRasterColumnSummary> summaries)
+        {
+            for (int x = 0; x < summaries.Length; x++)
+            {
+                TimelineRasterColumnSummary summary = summaries[x];
+                if (!summary.HasContent) continue;
+                DrawEnvelopeValue(x, summary.MinimumValue);
+                if (summary.MaximumValue != summary.MinimumValue)
+                    DrawEnvelopeValue(x, summary.MaximumValue);
+            }
+        }
+
+        void DrawEnvelopeValue(int center, double value)
+        {
+            int top = Math.Clamp(
+                (int)Math.Round(
+                    (1 - Math.Clamp(value, 0, 1)) * (RasterHeight - 1),
+                    MidpointRounding.AwayFromZero),
+                0,
+                RasterHeight - 1);
+            int left = Math.Clamp(center, 0, RasterWidth);
+            int right = Math.Min(RasterWidth, left + 1);
+            if (right <= left) return;
+            TimelinePianoTileRasterizer.FillRectangle(
+                pixels,
+                RasterWidth,
+                left,
+                top,
+                right,
+                RasterHeight,
+                normalColor,
+                0.32);
+            TimelinePianoTileRasterizer.FillRectangle(
+                pixels,
+                RasterWidth,
+                left,
+                top,
+                right,
+                Math.Min(RasterHeight, top + 2),
+                borderColor,
+                0.92);
+        }
 
         void Collect(TimelineRenderItem item)
         {
@@ -1962,6 +2174,191 @@ public static class TimelineVelocityTileRasterizer
         : value >= long.MaxValue ? long.MaxValue : (long)Math.Ceiling(value);
 }
 
+internal static class TimelineResizePreviewRasterizer
+{
+    public const int TileSize = 256;
+    public const int Gutter = 1;
+    public const int RasterSize = TileSize + Gutter * 2;
+
+    public static TimelineRasterBuffer Rasterize(
+        TimelineRenderSnapshot snapshot,
+        TimelineSelectionSnapshot? selection,
+        MidoraId anchorId,
+        TimelineItemKind itemKind,
+        TimelineResizeEdge edge,
+        long tickDelta,
+        long minimumLength,
+        long viewportStartTick,
+        double devicePixelsPerTick,
+        IReadOnlyList<double> laneTopsDevice,
+        IReadOnlyList<double> laneHeightsDevice,
+        long tileX,
+        long tileY,
+        Color color,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(laneTopsDevice);
+        ArgumentNullException.ThrowIfNull(laneHeightsDevice);
+        if (!double.IsFinite(devicePixelsPerTick) || devicePixelsPerTick <= 0)
+            throw new ArgumentOutOfRangeException(nameof(devicePixelsPerTick));
+        if (laneTopsDevice.Count != laneHeightsDevice.Count)
+            throw new ArgumentException("Lane layout arrays must have equal lengths.");
+        minimumLength = Math.Max(1, minimumLength);
+
+        double worldLeft = tileX * (double)TileSize - Gutter;
+        double worldTop = tileY * (double)TileSize - Gutter;
+        long destinationStart = Math.Max(0, FloorToLong(
+            viewportStartTick + worldLeft / devicePixelsPerTick));
+        long destinationEnd = Math.Max(destinationStart + 1, CeilingToLong(
+            viewportStartTick + (worldLeft + RasterSize) / devicePixelsPerTick));
+        long queryStart = destinationStart;
+        long queryEnd = destinationEnd;
+        if (edge == TimelineResizeEdge.End && tickDelta > 0)
+            queryStart = SaturatingAdd(destinationStart, -tickDelta);
+        else if (edge == TimelineResizeEdge.Start && tickDelta < 0)
+            queryEnd = SaturatingAdd(destinationEnd, -tickDelta);
+        queryStart = Math.Max(0, queryStart);
+        queryEnd = Math.Max(queryStart + 1, queryEnd);
+
+        int firstLane = laneTopsDevice.Count;
+        int lastLaneExclusive = 0;
+        double worldBottom = worldTop + RasterSize;
+        for (int lane = 0; lane < laneTopsDevice.Count; lane++)
+        {
+            double top = laneTopsDevice[lane];
+            double bottom = top + laneHeightsDevice[lane];
+            if (bottom <= worldTop || top >= worldBottom) continue;
+            firstLane = Math.Min(firstLane, lane);
+            lastLaneExclusive = lane + 1;
+        }
+        if (lastLaneExclusive <= firstLane)
+            return new(RasterSize, RasterSize, new byte[RasterSize * RasterSize * 4]);
+
+        int stride = RasterSize + 1;
+        int[] horizontal = new int[RasterSize * stride];
+        int[] vertical = new int[RasterSize * stride];
+        int candidateCount = 0;
+        snapshot.VisitInto(queryStart, queryEnd, firstLane, lastLaneExclusive, Visit);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        byte[] pixels = new byte[RasterSize * RasterSize * 4];
+        for (int y = 0; y < RasterSize; y++)
+        {
+            if ((y & 31) == 0) cancellationToken.ThrowIfCancellationRequested();
+            int active = 0;
+            int row = y * stride;
+            for (int x = 0; x < RasterSize; x++)
+            {
+                active += horizontal[row + x];
+                if (active > 0) WritePixel(pixels, x, y, color);
+            }
+        }
+        for (int x = 0; x < RasterSize; x++)
+        {
+            int active = 0;
+            int column = x * stride;
+            for (int y = 0; y < RasterSize; y++)
+            {
+                active += vertical[column + y];
+                if (active > 0) WritePixel(pixels, x, y, color);
+            }
+        }
+        return new(RasterSize, RasterSize, pixels, candidateCount);
+
+        void Visit(TimelineRenderItem item)
+        {
+            if (item.Kind != itemKind
+                || !(selection?.Contains(item.Id) ?? item.Id == anchorId))
+            {
+                return;
+            }
+            if ((candidateCount++ & 255) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+
+            long start = item.StartTick;
+            long end = item.EndTick;
+            long itemMinimum = Math.Min(Math.Max(1, item.Length), minimumLength);
+            if (edge == TimelineResizeEdge.Start)
+            {
+                long maximumStart = Math.Max(0, end - itemMinimum);
+                start = Math.Clamp(SaturatingAdd(start, tickDelta), 0, maximumStart);
+            }
+            else
+            {
+                end = Math.Max(
+                    SaturatingAdd(start, itemMinimum),
+                    SaturatingAdd(end, tickDelta));
+            }
+
+            int rawLeft = RoundBoundary((start - viewportStartTick) * devicePixelsPerTick - worldLeft);
+            int rawRight = Math.Max(
+                rawLeft + 1,
+                RoundBoundary((end - viewportStartTick) * devicePixelsPerTick - worldLeft));
+            int rawTop = RoundBoundary(laneTopsDevice[item.Lane] - worldTop);
+            int rawBottom = Math.Max(
+                rawTop + 1,
+                RoundBoundary(laneTopsDevice[item.Lane] + laneHeightsDevice[item.Lane] - worldTop));
+            int left = Math.Clamp(rawLeft, 0, RasterSize);
+            int right = Math.Clamp(rawRight, 0, RasterSize);
+            int top = Math.Clamp(rawTop, 0, RasterSize);
+            int bottom = Math.Clamp(rawBottom, 0, RasterSize);
+            if (right <= left || bottom <= top) return;
+
+            AddHorizontal(Math.Clamp(rawTop, 0, RasterSize - 1), left, right);
+            AddHorizontal(Math.Clamp(rawBottom - 1, 0, RasterSize - 1), left, right);
+            AddVertical(Math.Clamp(rawLeft, 0, RasterSize - 1), top, bottom);
+            AddVertical(Math.Clamp(rawRight - 1, 0, RasterSize - 1), top, bottom);
+        }
+
+        void AddHorizontal(int y, int left, int right)
+        {
+            int offset = y * stride;
+            horizontal[offset + left]++;
+            horizontal[offset + right]--;
+        }
+
+        void AddVertical(int x, int top, int bottom)
+        {
+            int offset = x * stride;
+            vertical[offset + top]++;
+            vertical[offset + bottom]--;
+        }
+    }
+
+    private static void WritePixel(byte[] pixels, int x, int y, Color color)
+    {
+        int offset = (y * RasterSize + x) * 4;
+        byte alpha = color.A;
+        pixels[offset] = Premultiply(color.B, alpha);
+        pixels[offset + 1] = Premultiply(color.G, alpha);
+        pixels[offset + 2] = Premultiply(color.R, alpha);
+        pixels[offset + 3] = alpha;
+    }
+
+    private static byte Premultiply(byte value, byte alpha) =>
+        (byte)((value * alpha + 127) / 255);
+
+    private static int RoundBoundary(double value) => value <= int.MinValue
+        ? int.MinValue
+        : value >= int.MaxValue ? int.MaxValue : (int)Math.Floor(value + 0.5);
+
+    private static long FloorToLong(double value) => value <= long.MinValue
+        ? long.MinValue
+        : value >= long.MaxValue ? long.MaxValue : (long)Math.Floor(value);
+
+    private static long CeilingToLong(double value) => value <= long.MinValue
+        ? long.MinValue
+        : value >= long.MaxValue ? long.MaxValue : (long)Math.Ceiling(value);
+
+    private static long SaturatingAdd(long value, long delta)
+    {
+        if (delta > 0 && value > long.MaxValue - delta) return long.MaxValue;
+        if (delta < 0 && value < long.MinValue - delta) return long.MinValue;
+        return value + delta;
+    }
+}
+
 internal enum TimelineRasterRequestPriority
 {
     Background = 0,
@@ -1969,11 +2366,20 @@ internal enum TimelineRasterRequestPriority
     Visible = 2
 }
 
+internal enum TimelineResizeEdge
+{
+    Start,
+    End
+}
+
 internal sealed class TimelineRasterCache
 {
     public const long MaximumBytes = 256L * 1024 * 1024;
     public const int MaximumInFlight = 64;
-    private const int MaximumWorkers = 2;
+    // ADR-CORE-054 reserves one of the two raster workers for visible work;
+    // speculative preview/prewarm may occupy at most the other worker.
+    internal const int WorkerCount = 2;
+    internal const int RecommendedBackgroundConcurrency = 1;
     private const int MaximumSpeculativeInFlight = MaximumInFlight / 2;
     private readonly object _gate = new();
     private readonly Dictionary<TimelineRasterCacheKey, CacheEntry> _completed = [];
@@ -1992,7 +2398,7 @@ internal sealed class TimelineRasterCache
 
     public TimelineRasterCache()
     {
-        for (int index = 0; index < MaximumWorkers; index++)
+        for (int index = 0; index < WorkerCount; index++)
             _ = Task.Run(WorkerLoopAsync);
     }
 
@@ -2034,6 +2440,21 @@ internal sealed class TimelineRasterCache
         Action completion,
         CancellationToken cancellationToken = default,
         TimelineRasterRequestPriority priority = TimelineRasterRequestPriority.Normal)
+        => Request(
+            key,
+            _ => factory(),
+            dispatcher,
+            completion,
+            cancellationToken,
+            priority);
+
+    public bool Request(
+        TimelineRasterCacheKey key,
+        Func<CancellationToken, TimelineRasterBuffer> factory,
+        Dispatcher dispatcher,
+        Action completion,
+        CancellationToken cancellationToken = default,
+        TimelineRasterRequestPriority priority = TimelineRasterRequestPriority.Normal)
     {
         ArgumentNullException.ThrowIfNull(factory);
         ArgumentNullException.ThrowIfNull(dispatcher);
@@ -2051,7 +2472,22 @@ internal sealed class TimelineRasterCache
             }
             else if (_inFlight.TryGetValue(key, out PendingWork? pending))
             {
-                pending.Completions.Add(new(dispatcher, completion, cancellationToken));
+                if (pending.ExecutionCancellation.IsCancellationRequested)
+                {
+                    RemovePendingLocked(key, pending);
+                    pending = CreatePendingLocked(
+                        key,
+                        factory,
+                        dispatcher,
+                        completion,
+                        cancellationToken,
+                        priority);
+                    signalWorker = true;
+                }
+                else
+                {
+                    AddCompletionLocked(key, pending, dispatcher, completion, cancellationToken);
+                }
                 if (!pending.Running && priority > pending.Priority)
                 {
                     if (pending.Priority != TimelineRasterRequestPriority.Visible
@@ -2072,15 +2508,13 @@ internal sealed class TimelineRasterCache
             }
             else
             {
-                PendingWork work = new(
+                _ = CreatePendingLocked(
+                    key,
                     factory,
-                    _generation,
-                    priority,
-                    [new(dispatcher, completion, cancellationToken)]);
-                _inFlight.Add(key, work);
-                if (priority != TimelineRasterRequestPriority.Visible)
-                    _speculativeInFlight++;
-                EnqueueLocked(key, priority);
+                    dispatcher,
+                    completion,
+                    cancellationToken,
+                    priority);
                 signalWorker = true;
             }
         }
@@ -2088,6 +2522,68 @@ internal sealed class TimelineRasterCache
         if (alreadyCompleted && !cancellationToken.IsCancellationRequested)
             dispatcher.BeginInvoke(completion, DispatcherPriority.Render);
         return accepted;
+    }
+
+    private PendingWork CreatePendingLocked(
+        TimelineRasterCacheKey key,
+        Func<CancellationToken, TimelineRasterBuffer> factory,
+        Dispatcher dispatcher,
+        Action completion,
+        CancellationToken cancellationToken,
+        TimelineRasterRequestPriority priority)
+    {
+        PendingWork work = new(factory, _generation, priority);
+        _inFlight[key] = work;
+        if (priority != TimelineRasterRequestPriority.Visible)
+            _speculativeInFlight++;
+        AddCompletionLocked(key, work, dispatcher, completion, cancellationToken);
+        EnqueueLocked(key, priority);
+        return work;
+    }
+
+    private void AddCompletionLocked(
+        TimelineRasterCacheKey key,
+        PendingWork work,
+        Dispatcher dispatcher,
+        Action completion,
+        CancellationToken cancellationToken)
+    {
+        Completion consumer = new(dispatcher, completion, cancellationToken);
+        work.Completions.Add(consumer);
+        if (cancellationToken.CanBeCanceled)
+        {
+            consumer.Registration = cancellationToken.Register(
+                () => CancelIfUnobserved(key, work));
+        }
+    }
+
+    private void CancelIfUnobserved(TimelineRasterCacheKey key, PendingWork work)
+    {
+        lock (_gate)
+        {
+            if (_inFlight.TryGetValue(key, out PendingWork? current)
+                && ReferenceEquals(current, work)
+                && !work.Completions.Any(static value =>
+                    !value.CancellationToken.IsCancellationRequested))
+            {
+                work.ExecutionCancellation.Cancel();
+                if (!work.Running)
+                {
+                    RemovePendingLocked(key, work);
+                }
+            }
+        }
+    }
+
+    private void RemovePendingLocked(TimelineRasterCacheKey key, PendingWork work)
+    {
+        if (!_inFlight.Remove(key)) return;
+        foreach (Completion completion in work.Completions)
+            _ = completion.Registration.Unregister();
+        if (work.Priority != TimelineRasterRequestPriority.Visible)
+            _speculativeInFlight = Math.Max(0, _speculativeInFlight - 1);
+        if (!work.Running)
+            work.ExecutionCancellation.Dispose();
     }
 
     private async Task WorkerLoopAsync()
@@ -2115,7 +2611,7 @@ internal sealed class TimelineRasterCache
         lock (_gate)
         {
             if (TryDequeueLocked(_visibleQueue, TimelineRasterRequestPriority.Visible, out key, out work)
-                || _runningSpeculative == 0
+                || _runningSpeculative < RecommendedBackgroundConcurrency
                 && (TryDequeueLocked(
                         _normalQueue,
                         TimelineRasterRequestPriority.Normal,
@@ -2156,17 +2652,31 @@ internal sealed class TimelineRasterCache
             }
             if (hasLiveConsumer)
             {
-                TimelineRasterBuffer buffer = work.Factory();
-                bitmap = buffer.CreateFrozenBitmap();
-                bytes = buffer.ByteSize;
+                TimelineRasterBuffer buffer = work.Factory(work.ExecutionCancellation.Token);
+                work.ExecutionCancellation.Token.ThrowIfCancellationRequested();
+                lock (_gate)
+                {
+                    hasLiveConsumer = _inFlight.TryGetValue(key, out PendingWork? pending)
+                        && ReferenceEquals(pending, work)
+                        && pending.Completions.Any(static value =>
+                            !value.CancellationToken.IsCancellationRequested);
+                }
+                if (hasLiveConsumer)
+                {
+                    bitmap = buffer.CreateFrozenBitmap();
+                    bytes = buffer.ByteSize;
+                }
             }
+        }
+        catch (OperationCanceledException) when (work.ExecutionCancellation.IsCancellationRequested)
+        {
         }
         catch (Exception exception)
         {
             Trace.TraceError($"Timeline rasterization failed: {exception}");
         }
 
-        List<Completion> callbacks = [];
+        List<Completion> callbacks = work.Completions;
         bool signalQueuedWork = false;
         lock (_gate)
         {
@@ -2174,7 +2684,6 @@ internal sealed class TimelineRasterCache
                 && ReferenceEquals(pending, work))
             {
                 _inFlight.Remove(key);
-                callbacks = pending.Completions;
                 if (work.Priority != TimelineRasterRequestPriority.Visible)
                     _speculativeInFlight = Math.Max(0, _speculativeInFlight - 1);
                 if (bitmap is not null
@@ -2192,7 +2701,12 @@ internal sealed class TimelineRasterCache
             signalQueuedWork = HasRunnableQueuedWorkLocked();
         }
         foreach (Completion callback in callbacks)
-            _ = callback.Dispatcher.BeginInvoke(callback.Action, DispatcherPriority.Render);
+        {
+            callback.Registration.Dispose();
+            if (!callback.CancellationToken.IsCancellationRequested)
+                _ = callback.Dispatcher.BeginInvoke(callback.Action, DispatcherPriority.Render);
+        }
+        work.ExecutionCancellation.Dispose();
         if (signalQueuedWork) _workAvailable.Release();
     }
 
@@ -2259,7 +2773,7 @@ internal sealed class TimelineRasterCache
 
     private bool HasRunnableQueuedWorkLocked() =>
         _visibleQueue.Count != 0
-        || _runningSpeculative == 0
+        || _runningSpeculative < RecommendedBackgroundConcurrency
         && (_normalQueue.Count != 0 || _backgroundQueue.Count != 0);
 
     private sealed record CacheEntry(
@@ -2267,21 +2781,27 @@ internal sealed class TimelineRasterCache
         long Bytes,
         LinkedListNode<TimelineRasterCacheKey> Node);
 
-    private sealed record Completion(
-        Dispatcher Dispatcher,
-        Action Action,
-        CancellationToken CancellationToken);
+    private sealed class Completion(
+        Dispatcher dispatcher,
+        Action action,
+        CancellationToken cancellationToken)
+    {
+        public Dispatcher Dispatcher { get; } = dispatcher;
+        public Action Action { get; } = action;
+        public CancellationToken CancellationToken { get; } = cancellationToken;
+        public CancellationTokenRegistration Registration { get; set; }
+    }
 
     private sealed class PendingWork(
-        Func<TimelineRasterBuffer> factory,
+        Func<CancellationToken, TimelineRasterBuffer> factory,
         long generation,
-        TimelineRasterRequestPriority priority,
-        List<Completion> completions)
+        TimelineRasterRequestPriority priority)
     {
-        public Func<TimelineRasterBuffer> Factory { get; } = factory;
+        public Func<CancellationToken, TimelineRasterBuffer> Factory { get; } = factory;
         public long Generation { get; } = generation;
         public TimelineRasterRequestPriority Priority { get; set; } = priority;
-        public List<Completion> Completions { get; } = completions;
+        public List<Completion> Completions { get; } = [];
+        public CancellationTokenSource ExecutionCancellation { get; } = new();
         public bool Running { get; set; }
     }
 }

@@ -220,7 +220,7 @@ public static partial class ProjectDomainEditCommands
             long oldTemplateLength = instrument.TemplateLengthTicks;
             long replacementTemplateLength = Math.Max(oldTemplateLength, requiredBoundary);
             SubVoiceEventMapping[]? createdMappings = null;
-            return ResolveExactSubVoiceEventCollisions(Prepared(
+            IPreparedProjectEdit prepared = Prepared(
                 old != replacement
                     || oldTemplateLength != replacementTemplateLength
                     || optionalMappingTargetsToCreate.Length != 0,
@@ -247,12 +247,20 @@ public static partial class ProjectDomainEditCommands
                     }
                     SetTemplateEvent(templateEvent, old);
                     instrument.TemplateLengthTicks = oldTemplateLength;
-                }), voice);
+                });
+            return replacement.Kind == TemplateEventKind.Note
+                ? ResolveTargetedExactTemplateNoteCollisions(
+                    prepared,
+                    [new(voice, replacement.Tick, replacement.Number)])
+                : ResolveTargetedExactTemplateEventPointCollisions(
+                    prepared,
+                    CreateTemplateEventPointCollisionTargets(voice, replacement));
         });
 
     private static TemplateEvent FindTemplateEvent(SubVoice voice, MidoraId templateEventId) =>
-        voice.Events.SingleOrDefault(value => value.Id == templateEventId)
-        ?? throw new ArgumentOutOfRangeException(nameof(templateEventId));
+        voice.Events.TryGetById(templateEventId, out TemplateEvent? value) && value is not null
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(templateEventId));
 
     private static void ValidateTemplateEventEdit(
         TemplateEvent templateEvent,
@@ -387,15 +395,16 @@ public static partial class ProjectDomainEditCommands
 
     private static void SetTemplateEvent(TemplateEvent target, TemplateEventValue value)
     {
-        target.Kind = value.Kind;
-        target.Tick = value.Tick;
-        target.LengthTicks = value.LengthTicks;
-        target.Number = value.Number;
-        target.Value = value.Value;
-        target.SecondaryValue = value.SecondaryValue;
-        target.HasBankMsb = value.HasBankMsb;
-        target.HasBankLsb = value.HasBankLsb;
-        target.FollowPitchDelta = value.FollowPitchDelta;
+        target.SetValues(
+            value.Kind,
+            value.Tick,
+            value.LengthTicks,
+            value.Number,
+            value.Value,
+            value.SecondaryValue,
+            value.HasBankMsb,
+            value.HasBankLsb,
+            value.FollowPitchDelta);
         target.EnsureMappings();
     }
 

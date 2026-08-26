@@ -170,12 +170,13 @@ public static partial class ProjectDomainEditCommands
                 lane.ParameterId);
             ValidatePointValue(definition, value, interpolation);
             CurvePoint replacement = new(project, point.Id, tick, value, interpolation);
-            return ResolveExactLogicalParameterPointCollisions(Prepared(
+            return ResolveTargetedExactLogicalParameterPointCollisions(Prepared(
                 point != replacement,
                 TrackChange(segment.Track.Id),
                 _ => ReplaceRequired(lane.Points, point, replacement, "Logical Parameter point"),
                 _ => ReplaceRequired(lane.Points, replacement, point, "Logical Parameter point")),
-                lane);
+                lane,
+                [replacement.Tick]);
         });
 
     public static IProjectEditCommand DeleteLogicalParameterPoint(
@@ -243,16 +244,18 @@ public static partial class ProjectDomainEditCommands
         });
 
     private static LogicalNote FindLogicalNote(Segment segment, MidoraId logicalNoteId) =>
-        segment.Notes.SingleOrDefault(value => value.Id == logicalNoteId)
-        ?? throw new ArgumentOutOfRangeException(nameof(logicalNoteId));
+        segment.Notes.TryGetById(logicalNoteId, out LogicalNote? value) && value is not null
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(logicalNoteId));
 
     private static LogicalParameterLane FindLogicalParameterLane(Segment segment, MidoraId laneId) =>
         segment.ParameterLanes.SingleOrDefault(value => value.Id == laneId)
         ?? throw new ArgumentOutOfRangeException(nameof(laneId));
 
     private static CurvePoint FindCurvePoint(LogicalParameterLane lane, MidoraId pointId) =>
-        lane.Points.SingleOrDefault(value => value.Id == pointId)
-        ?? throw new ArgumentOutOfRangeException(nameof(pointId));
+        lane.Points.TryGetById(pointId, out CurvePoint? value) && value is not null
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(pointId));
 
     private static LogicalParameterDefinition FindBoundLogicalParameter(
         MidoraProject project,
@@ -415,12 +418,11 @@ public static partial class ProjectDomainEditCommands
     }
 
     private static void SetLogicalNote(LogicalNote note, LogicalNoteValue value)
-    {
-        note.StartTick = value.StartTick;
-        note.LengthTicks = value.LengthTicks;
-        note.Note = value.Note;
-        note.Velocity = value.Velocity;
-    }
+        => note.SetValues(
+            value.StartTick,
+            value.LengthTicks,
+            value.Note,
+            value.Velocity);
 
     private static void SetLane(
         LogicalParameterLane lane,

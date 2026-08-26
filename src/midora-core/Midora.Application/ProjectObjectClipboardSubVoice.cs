@@ -48,7 +48,7 @@ public static partial class ProjectObjectClipboard
             templateEventIds,
             nameof(templateEventIds));
         TemplateEvent[] selected = voice.Events
-            .Where(value => requested.Contains(value.Id))
+            .ResolveByIdsInCollectionOrder(requested)
             .OrderBy(value => value.Tick)
             .ThenBy(value => value.Id)
             .ToArray();
@@ -97,7 +97,7 @@ public static partial class ProjectObjectClipboard
             ?? throw new ArgumentOutOfRangeException(nameof(sourceCurveId));
         HashSet<MidoraId> requested = ValidateDistinctIds(pointIds, nameof(pointIds));
         CurvePoint[] selected = curve.Points
-            .Where(value => requested.Contains(value.Id))
+            .ResolveByIdsInCollectionOrder(requested)
             .ToArray();
         if (selected.Length != requested.Count)
         {
@@ -328,7 +328,7 @@ public static partial class ProjectDomainEditCommands
                     ? checked(value.Value.Tick + value.Value.LengthTicks)
                     : checked(value.Value.Tick + 1)));
             TemplateEvent[]? copies = null;
-            return ResolveExactSubVoiceEventCollisions(Prepared(
+            IPreparedProjectEdit prepared = Prepared(
                 hasChanges: true,
                 EventInstrumentChange(targetEventInstrumentId),
                 owner =>
@@ -349,7 +349,22 @@ public static partial class ProjectDomainEditCommands
                     if (removed != copies.Length)
                         throw new InvalidOperationException("The pasted Template Event set is no longer present.");
                     instrument.TemplateLengthTicks = oldTemplateLength;
-                }), voice);
+                });
+            prepared = ResolveTargetedExactTemplateNoteCollisions(
+                prepared,
+                values
+                    .Where(static value => value.Value.Kind == TemplateEventKind.Note)
+                    .Select(value => new TemplateNoteCollisionTarget(
+                        voice,
+                        value.Value.Tick,
+                        value.Value.Number)));
+            return ResolveTargetedExactTemplateEventPointCollisions(
+                prepared,
+                values
+                    .Where(static value => value.Value.Kind != TemplateEventKind.Note)
+                    .SelectMany(value => CreateTemplateEventPointCollisionTargets(
+                        voice,
+                        value.Value)));
         });
 
     internal static IProjectEditCommand PasteValueCurveContentClipboard(
@@ -420,9 +435,11 @@ public static partial class ProjectDomainEditCommands
                         throw new InvalidOperationException(
                             "Pasted Value Curve points do not exist before Apply.");
                     }
-                    foreach (CurvePoint point in copies)
+                    int removed = curve.Points.RemoveRange(copies);
+                    if (removed != copies.Length)
                     {
-                        RemoveRequired(curve.Points, point, "pasted Value Curve point");
+                        throw new InvalidOperationException(
+                            "The pasted Value Curve point set is no longer present.");
                     }
                     instrument.TemplateLengthTicks = oldTemplateLength;
                 });

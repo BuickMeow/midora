@@ -850,11 +850,12 @@ internal static class ObjectPropertiesProjection
         WorkspaceViewModel workspace)
     {
         MidoraId[] ids = workspace.Selection.Ids.ToArray();
+        IReadOnlySet<MidoraId> selectedIds = workspace.Selection.IdSet;
         if (workspace is TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement })
         {
             ArrangementSegmentProperty[] segments = project.Tracks
                 .SelectMany(track => track.Segments)
-                .Where(segment => workspace.Selection.Ids.Contains(segment.Id))
+                .Where(segment => selectedIds.Contains(segment.Id))
                 .Select(segment => new ArrangementSegmentProperty(
                     segment.Id,
                     segment.ProjectStartTick,
@@ -862,7 +863,7 @@ internal static class ObjectPropertiesProjection
                     segment.ContentOffsetTick))
                 .Concat(project.PureMidiTracks
                     .SelectMany(track => track.Segments)
-                    .Where(segment => workspace.Selection.Ids.Contains(segment.Id))
+                    .Where(segment => selectedIds.Contains(segment.Id))
                     .Select(segment => new ArrangementSegmentProperty(
                         segment.Id,
                         segment.ProjectStartTick,
@@ -885,7 +886,7 @@ internal static class ObjectPropertiesProjection
             && TimelineWorkspaceViewModel.FindSegment(project, timeline.ObjectId) is { } location)
         {
             LogicalNote[] notes = location.Segment.Notes
-                .Where(item => workspace.Selection.Ids.Contains(item.Id))
+                .ResolveByIdsInCollectionOrder(selectedIds)
                 .ToArray();
             if (notes.Length == ids.Length)
             {
@@ -899,7 +900,7 @@ internal static class ObjectPropertiesProjection
                 return;
             }
 
-            if (TryFindLogicalParameterPointBatch(location.Segment, workspace.Selection.Ids)
+            if (TryFindLogicalParameterPointBatch(location.Segment, selectedIds)
                 is { } pointBatch)
             {
                 properties.Replace(
@@ -915,7 +916,8 @@ internal static class ObjectPropertiesProjection
             && TimelineWorkspaceViewModel.FindMidiSegment(project, midiTimeline.ObjectId) is { } midiLocation)
         {
             DirectMidiNote[] notes = midiLocation.Segment.Notes
-                .Where(item => workspace.Selection.Ids.Contains(item.Id))
+                .ResolveByIds(selectedIds)
+                .Select(static match => match.Value)
                 .ToArray();
             if (notes.Length == ids.Length)
             {
@@ -931,7 +933,8 @@ internal static class ObjectPropertiesProjection
             }
 
             DirectMidiChannelEvent[] events = midiLocation.Segment.ChannelEvents
-                .Where(item => workspace.Selection.Ids.Contains(item.Id))
+                .ResolveByIds(selectedIds)
+                .Select(static match => match.Value)
                 .ToArray();
             if (events.Length == ids.Length)
             {
@@ -964,7 +967,7 @@ internal static class ObjectPropertiesProjection
         if (workspace is InstrumentWorkspaceViewModel instrumentWorkspace
             && instrumentWorkspace.ObjectId is MidoraId instrumentId
             && project.EventInstruments.FirstOrDefault(item => item.Id == instrumentId) is EventInstrument instrument
-            && TryFindValueCurvePointBatch(instrument, workspace.Selection.Ids) is { } curveBatch)
+            && TryFindValueCurvePointBatch(instrument, selectedIds) is { } curveBatch)
         {
             properties.Replace(
                 $"{curveBatch.Points.Length} Value Curve Points",
@@ -993,14 +996,15 @@ internal static class ObjectPropertiesProjection
         string value)
     {
         MidoraId[] ids = workspace.Selection.Ids.ToArray();
+        IReadOnlySet<MidoraId> selectedIds = workspace.Selection.IdSet;
         if (workspace is TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Arrangement })
         {
             int selectedCount = project.Tracks
                     .SelectMany(track => track.Segments)
-                    .Count(segment => workspace.Selection.Ids.Contains(segment.Id))
+                    .Count(segment => selectedIds.Contains(segment.Id))
                 + project.PureMidiTracks
                     .SelectMany(track => track.Segments)
-                    .Count(segment => workspace.Selection.Ids.Contains(segment.Id));
+                    .Count(segment => selectedIds.Contains(segment.Id));
             if (selectedCount == ids.Length)
             {
                 return key switch
@@ -1022,7 +1026,7 @@ internal static class ObjectPropertiesProjection
         if (workspace is TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Segment } timeline
             && TimelineWorkspaceViewModel.FindSegment(project, timeline.ObjectId) is { } location)
         {
-            if (location.Segment.Notes.Count(item => workspace.Selection.Ids.Contains(item.Id)) == ids.Length)
+            if (location.Segment.Notes.ResolveByIdsInCollectionOrder(selectedIds).Count == ids.Length)
             {
                 return key switch
                 {
@@ -1038,7 +1042,7 @@ internal static class ObjectPropertiesProjection
                 };
             }
 
-            if (TryFindLogicalParameterPointBatch(location.Segment, workspace.Selection.Ids)
+            if (TryFindLogicalParameterPointBatch(location.Segment, selectedIds)
                 is { } pointBatch)
             {
                 return key switch
@@ -1055,7 +1059,7 @@ internal static class ObjectPropertiesProjection
         if (workspace is TimelineWorkspaceViewModel { Mode: TimelineWorkspaceMode.Segment } midiTimeline
             && TimelineWorkspaceViewModel.FindMidiSegment(project, midiTimeline.ObjectId) is { } midiLocation)
         {
-            if (midiLocation.Segment.Notes.Count(item => workspace.Selection.Ids.Contains(item.Id)) == ids.Length)
+            if (midiLocation.Segment.Notes.ResolveByIds(selectedIds).Count == ids.Length)
             {
                 return key switch
                 {
@@ -1072,7 +1076,7 @@ internal static class ObjectPropertiesProjection
                     _ => throw new InvalidOperationException("This Direct MIDI Note batch field is read-only.")
                 };
             }
-            if (midiLocation.Segment.ChannelEvents.Count(item => workspace.Selection.Ids.Contains(item.Id)) == ids.Length)
+            if (midiLocation.Segment.ChannelEvents.ResolveByIds(selectedIds).Count == ids.Length)
             {
                 return key switch
                 {
@@ -1110,7 +1114,7 @@ internal static class ObjectPropertiesProjection
         if (workspace is InstrumentWorkspaceViewModel instrumentWorkspace
             && instrumentWorkspace.ObjectId is MidoraId instrumentId
             && project.EventInstruments.FirstOrDefault(item => item.Id == instrumentId) is EventInstrument instrument
-            && TryFindValueCurvePointBatch(instrument, workspace.Selection.Ids) is { } curveBatch)
+            && TryFindValueCurvePointBatch(instrument, selectedIds) is { } curveBatch)
         {
             return key switch
             {
@@ -1137,7 +1141,7 @@ internal static class ObjectPropertiesProjection
     {
         foreach (LogicalParameterLane lane in segment.ParameterLanes)
         {
-            CurvePoint[] points = lane.Points.Where(item => ids.Contains(item.Id)).ToArray();
+            CurvePoint[] points = lane.Points.ResolveByIdsInCollectionOrder(ids).ToArray();
             if (points.Length == ids.Count) return new(lane, points);
         }
         return null;
@@ -1151,7 +1155,7 @@ internal static class ObjectPropertiesProjection
         {
             foreach (ValueCurve curve in voice.Curves)
             {
-                CurvePoint[] points = curve.Points.Where(item => ids.Contains(item.Id)).ToArray();
+                CurvePoint[] points = curve.Points.ResolveByIdsInCollectionOrder(ids).ToArray();
                 if (points.Length == ids.Count) return new(voice, curve, points);
             }
         }
@@ -1389,8 +1393,8 @@ internal static class ObjectPropertiesProjection
                 TimelineWorkspaceViewModel.FindSegment(project, workspace.ObjectId);
             if (location is not null && selectedId is MidoraId noteId)
             {
-                LogicalNote? note = location.Value.Segment.Notes.FirstOrDefault(item => item.Id == noteId);
-                if (note is not null)
+                if (location.Value.Segment.Notes.TryGetById(noteId, out LogicalNote? note)
+                    && note is not null)
                 {
                     properties.Replace(
                         "Logical Note",
@@ -1401,9 +1405,19 @@ internal static class ObjectPropertiesProjection
                          Field("note.velocity", "VELOCITY", note.Velocity)]);
                     return;
                 }
-                LogicalParameterLane? lane = location.Value.Segment.ParameterLanes
-                    .FirstOrDefault(candidate => candidate.Points.Any(point => point.Id == noteId));
-                CurvePoint? point = lane?.Points.FirstOrDefault(candidate => candidate.Id == noteId);
+                LogicalParameterLane? lane = null;
+                CurvePoint? point = null;
+                foreach (LogicalParameterLane candidate in location.Value.Segment.ParameterLanes)
+                {
+                    if (!candidate.Points.TryGetById(noteId, out CurvePoint? resolved)
+                        || resolved is null)
+                    {
+                        continue;
+                    }
+                    lane = candidate;
+                    point = resolved;
+                    break;
+                }
                 if (lane is not null && point is not null)
                 {
                     EventInstrument? instrument = project.FindEventInstrumentDefinition(
@@ -1761,9 +1775,19 @@ internal static class ObjectPropertiesProjection
             }
             foreach (SubVoice curveVoice in instrument.SubVoices)
             {
-                ValueCurve? curve = curveVoice.Curves.FirstOrDefault(
-                    candidate => candidate.Points.Any(point => point.Id == eventId));
-                CurvePoint? point = curve?.Points.FirstOrDefault(candidate => candidate.Id == eventId);
+                ValueCurve? curve = null;
+                CurvePoint? point = null;
+                foreach (ValueCurve candidate in curveVoice.Curves)
+                {
+                    if (!candidate.Points.TryGetById(eventId, out CurvePoint? resolved)
+                        || resolved is null)
+                    {
+                        continue;
+                    }
+                    curve = candidate;
+                    point = resolved;
+                    break;
+                }
                 if (curve is null || point is null) continue;
                 properties.Replace(
                     "Value Curve Point",
@@ -1773,8 +1797,19 @@ internal static class ObjectPropertiesProjection
                      Field("valueCurvePoint.interpolation", "INTERPOLATION", point.Interpolation)]);
                 return;
             }
-            SubVoice? voice = instrument.SubVoices.FirstOrDefault(item => item.Events.Any(value => value.Id == eventId));
-            TemplateEvent? template = voice?.Events.FirstOrDefault(item => item.Id == eventId);
+            SubVoice? voice = null;
+            TemplateEvent? template = null;
+            foreach (SubVoice candidate in instrument.SubVoices)
+            {
+                if (!candidate.Events.TryGetById(eventId, out TemplateEvent? resolved)
+                    || resolved is null)
+                {
+                    continue;
+                }
+                voice = candidate;
+                template = resolved;
+                break;
+            }
             if (voice is not null && template is not null)
             {
                 List<PropertyField> fields = [
@@ -1912,8 +1947,19 @@ internal static class ObjectPropertiesProjection
         MidoraId id = selectedId ?? throw new InvalidOperationException("Select one Value Curve point first.");
         foreach (SubVoice voice in instrument.SubVoices)
         {
-            ValueCurve? curve = voice.Curves.FirstOrDefault(candidate => candidate.Points.Any(point => point.Id == id));
-            CurvePoint? point = curve?.Points.FirstOrDefault(candidate => candidate.Id == id);
+            ValueCurve? curve = null;
+            CurvePoint? point = null;
+            foreach (ValueCurve candidate in voice.Curves)
+            {
+                if (!candidate.Points.TryGetById(id, out CurvePoint? resolved)
+                    || resolved is null)
+                {
+                    continue;
+                }
+                curve = candidate;
+                point = resolved;
+                break;
+            }
             if (curve is null || point is null) continue;
             return ProjectDomainEditCommands.UpdateValueCurvePoint(
                 instrument.Id,
@@ -2121,8 +2167,21 @@ internal static class ObjectPropertiesProjection
         ArgumentNullException.ThrowIfNull(project);
         MidoraId id = workspace.Selection.Primary
             ?? throw new InvalidOperationException("Select one SubVoice event first.");
-        SubVoice voice = instrument.SubVoices.Single(item => item.Events.Any(candidate => candidate.Id == id));
-        TemplateEvent item = voice.Events.Single(candidate => candidate.Id == id);
+        SubVoice? voice = null;
+        TemplateEvent? item = null;
+        foreach (SubVoice candidate in instrument.SubVoices)
+        {
+            if (!candidate.Events.TryGetById(id, out TemplateEvent? resolved)
+                || resolved is null)
+            {
+                continue;
+            }
+            voice = candidate;
+            item = resolved;
+            break;
+        }
+        if (voice is null || item is null)
+            throw new InvalidOperationException("The selected SubVoice event no longer exists.");
         bool TryValue(string key, out string value) => edits.TryGetValue(key, out value!);
         long tick = TryValue("template.tick", out string tickText)
             ? Long(tickText, "Tick")
@@ -2266,8 +2325,8 @@ internal static class ObjectPropertiesProjection
             ?? throw new InvalidOperationException("The Segment no longer exists.");
         MidoraId id = workspace.Selection.Primary
             ?? throw new InvalidOperationException("Select one Logical Note first.");
-        LogicalNote note = segment.Notes.FirstOrDefault(item => item.Id == id)
-            ?? throw new InvalidOperationException("The Logical Note no longer exists.");
+        if (!segment.Notes.TryGetById(id, out LogicalNote? note) || note is null)
+            throw new InvalidOperationException("The Logical Note no longer exists.");
         return (segment, note);
     }
 
@@ -2316,10 +2375,21 @@ internal static class ObjectPropertiesProjection
             ?? throw new InvalidOperationException("The Segment no longer exists.");
         MidoraId id = workspace.Selection.Primary
             ?? throw new InvalidOperationException("Select one Logical Parameter point first.");
-        LogicalParameterLane lane = segment.ParameterLanes.FirstOrDefault(
-                candidate => candidate.Points.Any(point => point.Id == id))
-            ?? throw new InvalidOperationException("The Logical Parameter point no longer exists.");
-        CurvePoint point = lane.Points.Single(item => item.Id == id);
+        LogicalParameterLane? lane = null;
+        CurvePoint? point = null;
+        foreach (LogicalParameterLane candidate in segment.ParameterLanes)
+        {
+            if (!candidate.Points.TryGetById(id, out CurvePoint? resolved)
+                || resolved is null)
+            {
+                continue;
+            }
+            lane = candidate;
+            point = resolved;
+            break;
+        }
+        if (lane is null || point is null)
+            throw new InvalidOperationException("The Logical Parameter point no longer exists.");
         return (segment, lane, point);
     }
 

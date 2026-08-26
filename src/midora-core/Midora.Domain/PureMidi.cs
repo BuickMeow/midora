@@ -268,6 +268,30 @@ public sealed class DirectMidiChannelEvent
 
     internal void SetChangeSink(IDirectMidiChannelEventChangeSink? value) => _changeSink = value;
 
+    internal void SetValues(
+        long tick,
+        DirectMidiChannelEventKind kind,
+        int data1,
+        int data2,
+        long order)
+    {
+        if (_tick == tick
+            && _kind == kind
+            && _data1 == data1
+            && _data2 == data2
+            && _order == order)
+        {
+            return;
+        }
+
+        _tick = tick;
+        _kind = kind;
+        _data1 = data1;
+        _data2 = data2;
+        _order = order;
+        Changed();
+    }
+
     private void Changed() => _changeSink?.OnChanged(this);
 }
 

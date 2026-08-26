@@ -43,7 +43,7 @@ public static partial class ProjectObjectClipboard
             ?? throw new ArgumentOutOfRangeException(nameof(laneId));
         HashSet<MidoraId> requested = ValidateDistinctIds(pointIds, nameof(pointIds));
         CurvePoint[] selected = lane.Points
-            .Where(value => requested.Contains(value.Id))
+            .ResolveByIdsInCollectionOrder(requested)
             .ToArray();
         if (selected.Length != requested.Count)
         {
@@ -351,7 +351,7 @@ public static partial class ProjectDomainEditCommands
                 snapshot.Points,
                 editCursorTick);
             CurvePoint[]? copies = null;
-            return ResolveExactLogicalParameterPointCollisions(Prepared(
+            return ResolveTargetedExactLogicalParameterPointCollisions(Prepared(
                 hasChanges: true,
                 TrackChange(target.Track.Id),
                 owner =>
@@ -370,11 +370,13 @@ public static partial class ProjectDomainEditCommands
                         throw new InvalidOperationException(
                             "Pasted Logical Parameter points do not exist before Apply.");
                     }
-                    foreach (CurvePoint point in copies)
+                    int removed = lane.Points.RemoveRange(copies);
+                    if (removed != copies.Length)
                     {
-                        RemoveRequired(lane.Points, point, "pasted Logical Parameter point");
+                        throw new InvalidOperationException(
+                            "The pasted Logical Parameter point set is no longer present.");
                     }
-                }), lane);
+                }), lane, values.Select(static value => value.Tick));
         });
 
     internal static IProjectEditCommand PasteConductorEventsClipboard(

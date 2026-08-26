@@ -53,8 +53,33 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
     private long _sampleDomainGeneration;
     private bool _compileSignalPending;
     private bool _forceImmediateCompilation;
+    private bool _compilerMirrorRecoveryRequired;
     private int _editLockCount;
     private bool _disposed;
+
+    internal Action<CancellationToken>? CompilationSnapshotSynchronizationStartingForTests
+    {
+        get;
+        set;
+    }
+
+    internal Action<CancellationToken>? CompilationSnapshotMaterializationStartingForTests
+    {
+        get;
+        set;
+    }
+
+    internal Action? CompilationSnapshotCommitFaultForTests
+    {
+        get;
+        set;
+    }
+
+    internal Action<CancellationToken>? CompilationStartingForTests
+    {
+        get;
+        set;
+    }
 
     public ProjectCompilationSession(
         MidoraProject project,
@@ -426,6 +451,10 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             _activeCompilationCancellation?.Cancel();
         }
 
+        // Source mutation and source-to-snapshot capture are mutually exclusive.
+        // The edit cancels the active capture before waiting; snapshot loops check
+        // that token at bounded intervals, so the gate protects correctness without
+        // waiting for the substantially longer compiler phase.
         lock (_projectGate)
         {
             lock (_sync)
@@ -510,6 +539,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 long targetRevision;
                 long targetGeneration;
                 ProjectChangeSet changes;
+                bool forceFullRecovery;
                 CancellationTokenSource compilationCancellation;
                 lock (_sync)
                 {
@@ -529,7 +559,10 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
 
                     targetRevision = _sourceRevision;
                     targetGeneration = _requestedCompilationGeneration;
-                    changes = CloneChanges(_pendingChanges);
+                    forceFullRecovery = _compilerMirrorRecoveryRequired;
+                    changes = forceFullRecovery
+                        ? CloneChanges(ProjectChangeSet.Everything)
+                        : CloneChanges(_pendingChanges);
                     compilationCancellation = CancellationTokenSource.CreateLinkedTokenSource(disposeToken);
                     _activeCompilationCancellation = compilationCancellation;
                     SetCompilationStateLocked(ProjectCompilationState.Compiling);
@@ -539,24 +572,45 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 CanonicalCompiledResult? result = null;
                 Exception? failure = null;
                 bool canceled = false;
+                bool materializationStarted = false;
                 MidoraProject compilationProject;
                 try
                 {
+                    ProjectCompilationSnapshot.RevisionCapture capture;
                     lock (_projectGate)
                     {
                         compilationCancellation.Token.ThrowIfCancellationRequested();
-                        _compilationProject = ProjectCompilationSnapshot.Synchronize(
+                        CompilationSnapshotSynchronizationStartingForTests?.Invoke(
+                            compilationCancellation.Token);
+                        capture = ProjectCompilationSnapshot.CaptureRevision(
                             _compilationProject,
                             Project,
                             changes,
                             compilationCancellation.Token);
-                        compilationProject = _compilationProject;
                     }
                     compilationCancellation.Token.ThrowIfCancellationRequested();
-                    result = _compiler.CompileIncremental(
-                        compilationProject,
-                        changes,
-                        cancellationToken: compilationCancellation.Token);
+                    CompilationSnapshotMaterializationStartingForTests?.Invoke(
+                        compilationCancellation.Token);
+                    materializationStarted = true;
+                    compilationProject = ProjectCompilationSnapshot.MaterializeRevision(
+                        capture,
+                        compilationCancellation.Token,
+                        afterFirstCommitMutationForTests:
+                            CompilationSnapshotCommitFaultForTests);
+                    compilationCancellation.Token.ThrowIfCancellationRequested();
+                    CompilationStartingForTests?.Invoke(compilationCancellation.Token);
+                    result = forceFullRecovery
+                        ? _compiler.CompileFull(
+                            compilationProject,
+                            cancellationToken: compilationCancellation.Token)
+                        : _compiler.CompileIncremental(
+                            compilationProject,
+                            changes,
+                            cancellationToken: compilationCancellation.Token);
+                    // The mirror revision becomes observable to later attempts only
+                    // after the compiler transaction has also completed. A failed
+                    // or canceled candidate is never published here.
+                    _compilationProject = compilationProject;
                 }
                 catch (OperationCanceledException) when (compilationCancellation.IsCancellationRequested)
                 {
@@ -588,6 +642,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                         _compiledRevision = targetRevision;
                         _publishedCompilationGeneration = targetGeneration;
                         _pendingChanges = new ProjectChangeSet();
+                        _compilerMirrorRecoveryRequired = false;
                         _backgroundCompilationFailure = null;
                         if (result.IsConsumable)
                         {
@@ -601,12 +656,23 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                     {
                         _compiledRevision = targetRevision;
                         _publishedCompilationGeneration = targetGeneration;
-                        _pendingChanges = new ProjectChangeSet();
+                        // Materialization commits several mutable Domain lists. If
+                        // any commit or compiler stage throws, its candidate mirror
+                        // must never serve as the base of a later delta. Preserve an
+                        // Everything change so the next requested attempt creates a
+                        // fresh Project root and runs a full compiler transaction.
+                        _pendingChanges = CloneChanges(ProjectChangeSet.Everything);
+                        _compilerMirrorRecoveryRequired = true;
                         _backgroundCompilationFailure = failure;
                         SetCompilationStateLocked(ProjectCompilationState.Failed);
                     }
                     else
                     {
+                        if (materializationStarted)
+                        {
+                            _pendingChanges = CloneChanges(ProjectChangeSet.Everything);
+                            _compilerMirrorRecoveryRequired = true;
+                        }
                         SetCompilationStateLocked(ProjectCompilationState.Outdated);
                         ScheduleCompilationLocked(immediate: true);
                     }
@@ -680,6 +746,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         || changes.AffectsConductor
         || changes.TrackIds.Count != 0
         || changes.EventInstrumentIds.Count != 0
+        || changes.EventInstrumentUsageIds.Count != 0
         || changes.MidiChannelRootIds.Count != 0
         || changes.PureMidiTrackIds.Count != 0;
 
@@ -693,6 +760,7 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         };
         result.TrackIds.UnionWith(source.TrackIds);
         result.EventInstrumentIds.UnionWith(source.EventInstrumentIds);
+        result.EventInstrumentUsageIds.UnionWith(source.EventInstrumentUsageIds);
         result.MidiChannelRootIds.UnionWith(source.MidiChannelRootIds);
         result.PureMidiTrackIds.UnionWith(source.PureMidiTrackIds);
         return result;
@@ -713,6 +781,8 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         result.TrackIds.UnionWith(right.TrackIds);
         result.EventInstrumentIds.UnionWith(left.EventInstrumentIds);
         result.EventInstrumentIds.UnionWith(right.EventInstrumentIds);
+        result.EventInstrumentUsageIds.UnionWith(left.EventInstrumentUsageIds);
+        result.EventInstrumentUsageIds.UnionWith(right.EventInstrumentUsageIds);
         result.MidiChannelRootIds.UnionWith(left.MidiChannelRootIds);
         result.MidiChannelRootIds.UnionWith(right.MidiChannelRootIds);
         result.PureMidiTrackIds.UnionWith(left.PureMidiTrackIds);

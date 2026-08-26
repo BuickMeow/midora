@@ -6,6 +6,136 @@ namespace Midora.Application.Tests;
 public sealed class PureMidiContentPackTests
 {
     [Fact]
+    public void BackgroundEncoderFaultIsObservedAndDeletesTheUnpublishedPack()
+    {
+        string directory = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "midora-paged-content-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = System.IO.Path.Combine(directory, "faulted.mpk");
+        try
+        {
+            MidoraProject project = new(192);
+            MidiSegment segment = new(project);
+            PureMidiContentPackWriter writer = new(
+                path,
+                CancellationToken.None,
+                encoderConcurrency: 1,
+                encodeBufferBudget: 64L * 1024 * 1024,
+                encodePageTestHook: static () =>
+                    throw new IOException("Injected background encoder failure."));
+            for (int index = 0; index < 16_385; index++)
+            {
+                writer.AddNote(segment.Id, new(
+                    project.AllocateStableId(),
+                    index,
+                    12,
+                    index % 128,
+                    100,
+                    0,
+                    index * 2L,
+                    index * 2L + 1));
+            }
+
+            InvalidDataException failure = Assert.Throws<InvalidDataException>(writer.Dispose);
+            Assert.IsType<IOException>(failure.InnerException);
+            writer.Dispose();
+        }
+        finally
+        {
+            Assert.False(File.Exists(path));
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void BoundedParallelEncodingIsByteDeterministicAcrossConcurrencyLevels()
+    {
+        string directory = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "midora-paged-content-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string serialPath = System.IO.Path.Combine(directory, "serial.mpk");
+        string parallelPath = System.IO.Path.Combine(directory, "parallel.mpk");
+        try
+        {
+            MidoraProject project = new(192);
+            MidiSegment segment = new(project);
+            DirectMidiNoteValue[] notes = Enumerable.Range(0, 100_000)
+                .Select(index => new DirectMidiNoteValue(
+                    project.AllocateStableId(),
+                    index * 3L,
+                    48 + index % 97,
+                    index % 128,
+                    1 + index % 127,
+                    index % 128,
+                    index * 2L,
+                    index * 2L + 1))
+                .ToArray();
+
+            Write(serialPath, encoderConcurrency: 1);
+            Write(parallelPath, encoderConcurrency: 4);
+
+            Assert.Equal(File.ReadAllBytes(serialPath), File.ReadAllBytes(parallelPath));
+
+            void Write(string path, int encoderConcurrency)
+            {
+                using PureMidiContentPackWriter writer = new(
+                    path,
+                    CancellationToken.None,
+                    encoderConcurrency,
+                    64L * 1024 * 1024);
+                foreach (DirectMidiNoteValue note in notes) writer.AddNote(segment.Id, note);
+                using PureMidiContentPack completed = writer.Complete();
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CancelledParallelEncodingDeletesTheUnpublishedPack()
+    {
+        string directory = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "midora-paged-content-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = System.IO.Path.Combine(directory, "cancelled.mpk");
+        try
+        {
+            MidoraProject project = new(192);
+            MidiSegment segment = new(project);
+            using CancellationTokenSource cancellation = new();
+            using PureMidiContentPackWriter writer = new(path, cancellation.Token);
+            for (int index = 0; index < 70_000; index++)
+            {
+                writer.AddNote(segment.Id, new(
+                    project.AllocateStableId(),
+                    index,
+                    12,
+                    index % 128,
+                    100,
+                    0,
+                    index * 2L,
+                    index * 2L + 1));
+            }
+            cancellation.Cancel();
+
+            Assert.ThrowsAny<OperationCanceledException>(() => writer.Complete());
+        }
+        finally
+        {
+            Assert.False(File.Exists(path));
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void PlaybackEndpointPagesAreGloballyOrderedAcrossLocalPageRuns()
     {
         string directory = System.IO.Path.Combine(

@@ -327,7 +327,7 @@ UI/runtime 边界：
 
 输入与正式输出：
 
-- 范围仅限 Batch Edit 各字段以 `=` 开头的 C# 表达式输入；直接数字、百分比和单步常量运算仍使用普通单行输入行为。
+- 范围仅限 Batch Edit 各字段以 `=` 开头的受限数值表达式输入；直接数字、百分比和单步常量运算仍使用普通单行输入行为。
 - 进入表达式模式后使用内嵌 JetBrains Mono、暗色 C# 语义配色、自动括号配对和光标邻近括号匹配高亮；未配对括号使用错误色提示。
 - 补全候选严格来自当前 Batch Edit 上下文可用的 `v0/v1/p0/p1/k0/k1/g0/g1/t0/t1/tr` 变量、布尔/类型关键字，以及正式表达式编译器允许且返回数值的 `System.Math` 常量和方法。当前字段自己的结果变量不得出现在候选中。
 - 支持输入触发和 `Ctrl+Space` 手动补全、上下键选择、`Tab/Enter` 插入、`Escape` 关闭以及 `F1` 轮换查看同名 `System.Math` overload signature；该提示列表不构成新的表达式语言或合法性判定来源。
@@ -338,10 +338,19 @@ UI/runtime 边界：
 边界、失败条件与归属：
 
 - 最终合法性、结果变量依赖、循环引用、数值范围、10 秒执行上限和原子 Batch Edit 提交仍完全由既有 `BatchEditExpressionProgram` 与 Project command 决定；编辑器不得静默改写表达式或接受编译器拒绝的输入。
+- Roslyn 只负责 Expression 语法树解析；正式执行由自有 binder 建立 `System.Linq.Expressions` 委托。运行时不得 Emit 用户程序集、创建 collectible ALC、读取 `TRUSTED_PLATFORM_ASSEMBLIES` 或要求 reference pack 路径，因此 self-contained 压缩 single-file 产物与普通开发构建必须接受同一表达式。
 - 编辑器继续保持单行语义；粘贴的 CR/LF 仅转为空格。补全 Popup、当前候选、括号高亮和光标状态只属于 Dialog session，不持久化到 Project、Preset schema、Undo/Redo 或 canonical。
 - 编辑器基于固定 NuGet 包 `AvalonEdit 6.3.1.120`；其 MIT 许可和上游 revision 记录在根 `THIRD-PARTY-NOTICES.md`，正式发布继续随应用分发该 notices 文件。
 
 验证重点：
 
-- 自动测试覆盖 Note/Event 上下文变量过滤、当前结果变量排除、`Clamp` 的静态导入与 `Math.` 两种补全、非表达式不显示补全、非数值 `System.Math` 返回项排除、嵌套/未配对括号匹配，以及 Help 的 6 个例子都能由正式表达式编译器接受；正弦例在 `tr=0/96/192` 时必须分别得到 `-64/0/64`。
-- Release WPF build 必须验证 AvalonEdit XAML、内嵌等宽字体资源、Popup 和 Batch Edit Dialog 均可加载；表达式执行语义继续由既有 Compiler/Application 测试覆盖。
+- 自动测试覆盖 Note/Event 上下文变量过滤、当前结果变量排除、`Clamp` 的静态导入与 `Math.` 两种补全、非表达式不显示补全、非数值 `System.Math` 返回项排除、嵌套/未配对括号匹配，以及 Help 的 6 个例子都能由正式表达式编译器接受；正弦例在 `tr=0/96/192` 时必须分别得到 `-64/0/64`。Compiler 回归还必须在 TPA 路径不可用时覆盖变量、DAG、C# 数值提升、整数参数 Math 重载、拒绝面和求值结果。
+- Release WPF build 必须验证 AvalonEdit XAML、内嵌等宽字体资源、Popup 和 Batch Edit Dialog 均可加载；表达式执行语义继续由 Compiler/Application 测试覆盖，并以 self-contained、压缩 single-file 临时 smoke 验证正式发布宿主不再依赖 TPA/reference assembly 文件路径。
+
+## 20. 2026-08-26 单行代码输入与欢迎文案修复 trace
+
+- 输入：欢迎页会话文案、Batch Edit 与 Mapping Function 补全候选的单次鼠标点击，以及从系统剪贴板进入两种 AvalonEdit 单行表达式编辑器的任意 CR/LF 文本。
+- Presentation 输出：欢迎文案占满既有父容器宽度、居中并允许自动折行，不以省略号截断；鼠标单击一个实际候选项立即插入该项并恢复编辑器焦点，滚动条和候选列表空白点击不提交。
+- 编辑边界：两种表达式编辑器在 AvalonEdit 默认 Paste 命令建立文档 Undo Group 之前拦截粘贴，将 CRLF/CR/LF 确定性替换为空格，再通过当前 Selection 的正式替换路径形成可撤销编辑。`TextChanged` 不得在第三方文档事务仍打开时重设整个 `Text` 或清空 Undo 栈。
+- 失败与归属：临时 Clipboard ownership 失败只取消本次粘贴，不得逃出 UI 输入路由终止进程。欢迎文案、Popup、候选和表达式编辑 Undo 都是 Dialog/应用会话状态，不修改 Project、canonical、持久化、编译或音频语义。
+- 验证：WPF STA 回归在已打开 Undo Group 时插入多行文本并确认无异常且结果为单行；XAML 回归固定欢迎文案布局与两处补全列表的单击提交入口。

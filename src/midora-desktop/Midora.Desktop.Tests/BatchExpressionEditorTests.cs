@@ -1,10 +1,34 @@
 using Midora.Compiler;
+using System.Xml.Linq;
 using Xunit;
 
 namespace Midora.Desktop.Tests;
 
 public sealed class BatchExpressionEditorTests
 {
+    [Theory]
+    [InlineData("BatchExpressionEditor.xaml")]
+    [InlineData("MappingFunctionCodeEditor.xaml")]
+    public void CompletionListsCommitOnOnePointerClick(string fileName)
+    {
+        string path = Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "midora-desktop",
+            "Midora.Desktop",
+            fileName);
+        XDocument document = XDocument.Load(path);
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        XElement list = document.Descendants(presentation + "ListBox").Single(element =>
+            string.Equals((string?)element.Attribute(x + "Name"), "CompletionList", StringComparison.Ordinal));
+
+        Assert.Equal(
+            "OnCompletionMouseLeftButtonDown",
+            (string?)list.Attribute("PreviewMouseLeftButtonDown"));
+        Assert.Null(list.Attribute("MouseDoubleClick"));
+    }
+
     [Fact]
     public void NoteCompletionExposesContextVariablesButRejectsTheCurrentResultVariable()
     {
@@ -178,5 +202,24 @@ public sealed class BatchExpressionEditorTests
             new BatchEditValues(0, 0, 0, 0, relativeTick, relativeTick),
             timeout,
             TimeSpan.FromSeconds(10)).PointValue;
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        DirectoryInfo? current = new(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            if (Directory.Exists(Path.Combine(
+                    current.FullName,
+                    "src",
+                    "midora-desktop",
+                    "Midora.Desktop")))
+            {
+                return current.FullName;
+            }
+            current = current.Parent;
+        }
+        throw new DirectoryNotFoundException(
+            $"Could not locate the Midora repository above '{AppContext.BaseDirectory}'.");
     }
 }

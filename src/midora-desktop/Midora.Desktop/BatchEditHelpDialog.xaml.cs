@@ -62,7 +62,7 @@ public partial class BatchEditHelpDialog : Window
         new("blank", "Keep the original value", "Leave Velocity empty to preserve every selected note's velocity."),
         new("96", "Set one exact value", "Set the selected field to 96."),
         new("n%  *n  /n  +n  -n", "Apply one operation", "Scale, multiply, divide, add, or subtract from each original value."),
-        new("= expression", "Evaluate C# per object", "Use variables, conditions, and System.Math.")
+        new("= expression", "Evaluate a bounded expression", "Use variables, conditions, and System.Math.")
     ];
 
     public IReadOnlyList<BatchEditHelpShortcut> Shortcuts { get; } =

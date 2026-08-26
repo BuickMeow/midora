@@ -40,6 +40,7 @@ public partial class BatchExpressionEditor : UserControl
         ExpressionEditor.Options.EnableHyperlinks = false;
         ExpressionEditor.Options.EnableEmailHyperlinks = false;
         ExpressionEditor.Options.HighlightCurrentLine = false;
+        SingleLineCodeEditorInput.Attach(ExpressionEditor);
 
         _colorizer = new BatchExpressionColorizer(() => _variables);
         _bracketRenderer = new BatchBracketRenderer();
@@ -140,13 +141,6 @@ public partial class BatchExpressionEditor : UserControl
         if (_synchronizing) return;
         string text = Sanitize(ExpressionEditor.Text);
         int caret = Math.Min(ExpressionEditor.CaretOffset, text.Length);
-        if (!string.Equals(text, ExpressionEditor.Text, StringComparison.Ordinal))
-        {
-            _synchronizing = true;
-            ExpressionEditor.Text = text;
-            ExpressionEditor.CaretOffset = caret;
-            _synchronizing = false;
-        }
         PushText(text);
         if (!BatchExpressionCompletionProvider.IsExpression(text))
         {
@@ -440,8 +434,15 @@ public partial class BatchExpressionEditor : UserControl
     private void OnCompletionListPreviewMouseWheel(object sender, MouseWheelEventArgs e) =>
         ListBoxWheelScroll.ScrollOneItemPerNotch(CompletionList, e);
 
-    private void OnCompletionMouseDoubleClick(object sender, MouseButtonEventArgs e)
+    private void OnCompletionMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (e.OriginalSource is not DependencyObject source
+            || ItemsControl.ContainerFromElement(CompletionList, source) is not ListBoxItem item)
+        {
+            return;
+        }
+
+        CompletionList.SelectedItem = item.DataContext;
         CommitCompletion();
         e.Handled = true;
     }
@@ -506,8 +507,7 @@ public partial class BatchExpressionEditor : UserControl
         ExpressionEditor.TextArea.TextView.InvalidateLayer(KnownLayer.Selection);
     }
 
-    private static string Sanitize(string? text) =>
-        (text ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ');
+    private static string Sanitize(string? text) => SingleLineCodeEditorInput.Normalize(text);
 
     private sealed partial class BatchExpressionColorizer(
         Func<IReadOnlyList<BatchExpressionVariable>> variables)

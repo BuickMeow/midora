@@ -21,6 +21,7 @@
 - dirty worktree 允许用于本地预览，但文件名必须明确记录 `dirty`，不得冒充可复现正式发布；EXE ProductVersion 继续记录完整 commit build metadata。
 - Project Format schema/descriptor baseline 只属于源码、测试和开发者材料，不进入终端用户包；用户包也不携带内部 release manifest。
 - self-contained publish 必须从 locked restore 的精确 .NET runtime pack 和 Roslyn package 复制许可证/第三方声明到 `licenses/`，不得使用与实际产物版本脱节的通用副本。
+- 压缩 single-file Desktop 产物必须能在不暴露 `TRUSTED_PLATFORM_ASSEMBLIES` 文件列表的宿主条件下编译并执行 Batch Edit 受限表达式；Batch Edit 不得要求旁置 reference assembly、动态 Emit DLL 或可回收 ALC。
 
 ## 文件操作与失败条件
 

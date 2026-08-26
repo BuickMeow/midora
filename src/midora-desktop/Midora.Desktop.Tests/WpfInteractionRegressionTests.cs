@@ -10,6 +10,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shell;
 using System.Windows.Threading;
 using System.Xml.Linq;
+using ICSharpCode.AvalonEdit;
 using Midora.Application;
 using Midora.Desktop.Presentation.Controls;
 using Midora.Desktop.Presentation.Interaction;
@@ -21,6 +22,33 @@ namespace Midora.Desktop.Tests;
 
 public sealed class WpfInteractionRegressionTests
 {
+    [Fact]
+    public void SingleLineCodeEditorPasteRemainsSafeInsideAnOpenUndoGroup()
+    {
+        RunOnSta(() =>
+        {
+            TextEditor editor = new() { Text = "=v0" };
+            SingleLineCodeEditorInput.Attach(editor);
+            Assert.Contains(
+                editor.TextArea.CommandBindings.Cast<CommandBinding>(),
+                binding => binding.Command == ApplicationCommands.Paste);
+            editor.CaretOffset = editor.Text.Length;
+            editor.Document.UndoStack.StartUndoGroup();
+            try
+            {
+                SingleLineCodeEditorInput.InsertText(editor, "\r\n+ k0\n");
+            }
+            finally
+            {
+                editor.Document.UndoStack.EndUndoGroup();
+            }
+
+            Assert.Equal("=v0 + k0 ", editor.Text);
+            Assert.DoesNotContain('\r', editor.Text);
+            Assert.DoesNotContain('\n', editor.Text);
+        });
+    }
+
     [Fact]
     public void ImportedOpaqueLaneNeverRoutesToLogicalParameterLaneCreation()
     {
@@ -1020,6 +1048,10 @@ public sealed class WpfInteractionRegressionTests
         Assert.Equal("24", (string?)welcomeHeadline.Attribute("FontSize"));
         Assert.Equal("Light", (string?)welcomeHeadline.Attribute("FontWeight"));
         Assert.Equal("{Binding WelcomeHeadline}", (string?)welcomeHeadline.Attribute("Text"));
+        Assert.Equal("Stretch", (string?)welcomeHeadline.Attribute("HorizontalAlignment"));
+        Assert.Equal("Center", (string?)welcomeHeadline.Attribute("TextAlignment"));
+        Assert.Equal("None", (string?)welcomeHeadline.Attribute("TextTrimming"));
+        Assert.Equal("Wrap", (string?)welcomeHeadline.Attribute("TextWrapping"));
         XElement welcomeTranslation = welcomeHeadline.Descendants(presentation + "TranslateTransform").Single();
         Assert.Equal("-18", (string?)welcomeTranslation.Attribute("Y"));
         Assert.Empty(emptyState.Descendants(presentation + "Image"));

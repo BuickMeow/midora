@@ -91,7 +91,7 @@
                    VirtualizingPanel.VirtualizationMode="Recycling"
                    PreviewMouseWheel="OnCompletionListPreviewMouseWheel"
                    SelectionChanged="OnCompletionSelectionChanged"
-                   MouseDoubleClick="OnCompletionMouseDoubleClick">
+                   PreviewMouseLeftButtonDown="OnCompletionMouseLeftButtonDown">
             <ListBox.ItemTemplate>
               <DataTemplate>
                 <Grid Margin="3,1">

@@ -1326,8 +1326,9 @@
           </TabControl>
           <Border x:Name="EmptyState" Margin="48" HorizontalAlignment="Center" VerticalAlignment="Center" Background="Transparent">
             <StackPanel Width="460">
-              <TextBlock Margin="0,0,0,18" HorizontalAlignment="Center" FontSize="24" FontWeight="Light"
-                         Text="{Binding WelcomeHeadline}" RenderTransformOrigin="0.5,0.5">
+              <TextBlock Margin="0,0,0,18" HorizontalAlignment="Stretch" FontSize="24" FontWeight="Light"
+                         Text="{Binding WelcomeHeadline}" TextAlignment="Center" TextTrimming="None"
+                         TextWrapping="Wrap" RenderTransformOrigin="0.5,0.5">
                 <TextBlock.RenderTransform><TranslateTransform Y="-18"/></TextBlock.RenderTransform>
               </TextBlock>
               <StackPanel HorizontalAlignment="Center" Orientation="Horizontal">

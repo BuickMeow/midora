@@ -51,6 +51,7 @@ public partial class MappingFunctionCodeEditor : UserControl
         CodeEditor.Options.EnableEmailHyperlinks = false;
         CodeEditor.Options.HighlightCurrentLine = false;
         CodeEditor.Options.AllowScrollBelowDocument = true;
+        SingleLineCodeEditorInput.Attach(CodeEditor);
         CodeEditor.TextArea.IndentationStrategy = new CSharpIndentationStrategy(CodeEditor.Options);
         CodeEditor.TextArea.TextView.LineTransformers.Add(_semanticColorizer);
         CodeEditor.TextArea.TextView.BackgroundRenderers.Add(_bracketRenderer);
@@ -65,7 +66,7 @@ public partial class MappingFunctionCodeEditor : UserControl
     public string Text
     {
         get => (string)GetValue(TextProperty);
-        set => SetValue(TextProperty, value ?? string.Empty);
+        set => SetValue(TextProperty, SingleLineCodeEditorInput.Normalize(value));
     }
 
     public string CaretStatus
@@ -119,7 +120,7 @@ public partial class MappingFunctionCodeEditor : UserControl
     {
         MappingFunctionCodeEditor editor = (MappingFunctionCodeEditor)dependencyObject;
         if (editor._synchronizing) return;
-        string text = eventArgs.NewValue as string ?? string.Empty;
+        string text = SingleLineCodeEditorInput.Normalize(eventArgs.NewValue as string);
         if (string.Equals(editor.CodeEditor.Text, text, StringComparison.Ordinal)) return;
 
         int caret = Math.Min(editor.CodeEditor.CaretOffset, text.Length);
@@ -143,18 +144,10 @@ public partial class MappingFunctionCodeEditor : UserControl
     private void OnEditorTextChanged(object? sender, EventArgs e)
     {
         if (_synchronizing) return;
-        string normalized = CodeEditor.Text.Replace('\r', ' ').Replace('\n', ' ');
-        if (!string.Equals(normalized, CodeEditor.Text, StringComparison.Ordinal))
-        {
-            int caret = Math.Min(CodeEditor.CaretOffset, normalized.Length);
-            CodeEditor.Text = normalized;
-            CodeEditor.CaretOffset = caret;
-            return;
-        }
         _synchronizing = true;
         try
         {
-            SetCurrentValue(TextProperty, CodeEditor.Text);
+            SetCurrentValue(TextProperty, SingleLineCodeEditorInput.Normalize(CodeEditor.Text));
         }
         finally
         {
@@ -356,8 +349,15 @@ public partial class MappingFunctionCodeEditor : UserControl
     private void OnCompletionListPreviewMouseWheel(object sender, MouseWheelEventArgs e) =>
         ListBoxWheelScroll.ScrollOneItemPerNotch(CompletionList, e);
 
-    private void OnCompletionMouseDoubleClick(object sender, MouseButtonEventArgs e)
+    private void OnCompletionMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (e.OriginalSource is not DependencyObject source
+            || ItemsControl.ContainerFromElement(CompletionList, source) is not ListBoxItem item)
+        {
+            return;
+        }
+
+        CompletionList.SelectedItem = item.DataContext;
         CommitCompletion();
         e.Handled = true;
     }

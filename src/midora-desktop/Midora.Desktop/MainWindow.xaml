@@ -812,6 +812,10 @@
                   <Setter.Value><ScaleTransform ScaleX="0.9166667" ScaleY="0.9166667"/></Setter.Value>
                 </Setter>
               </Style>
+              <Style TargetType="{x:Type ListBox}" BasedOn="{StaticResource {x:Type ListBox}}">
+                <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+                <EventSetter Event="PreviewMouseWheel" Handler="OnInstrumentStructureListPreviewMouseWheel"/>
+              </Style>
             </ScrollViewer.Resources>
             <StackPanel>
               <Grid Margin="0,0,0,6"><TextBlock VerticalAlignment="Center" Style="{StaticResource Text.Overline}" Text="SUBVOICES"/><StackPanel HorizontalAlignment="Right" Orientation="Horizontal"><Button Width="24" Height="22" Margin="0,0,3,0" Padding="0" Tag="-1" ToolTip="Move selected SubVoice up" Click="OnMoveSubVoiceClick"><ui:FluentIcon Width="12" Height="12" Data="{StaticResource Fluent.ArrowUp20Regular}"/></Button><Button Width="24" Height="22" Margin="0,0,3,0" Padding="0" Tag="1" ToolTip="Move selected SubVoice down" Click="OnMoveSubVoiceClick"><ui:FluentIcon Width="12" Height="12" Data="{StaticResource Fluent.ArrowDown20Regular}"/></Button><Button Width="28" Height="22" Margin="0,0,3,0" Padding="0" ToolTip="Duplicate selected SubVoice" Click="OnDuplicateSubVoiceClick"><ui:FluentIcon Width="12" Height="12" Data="{StaticResource Fluent.SquareMultiple20Regular}"/></Button><Button Width="24" Height="22" Padding="0" ToolTip="Add SubVoice" Click="OnAddSubVoiceClick"><ui:FluentIcon Width="12" Height="12" Data="{StaticResource Fluent.Add20Regular}"/></Button></StackPanel></Grid>

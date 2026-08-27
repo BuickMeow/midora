@@ -2867,13 +2867,30 @@ public partial class MainWindow : Window
         MouseWheelEventArgs e)
     {
         if (sender is not ScrollViewer scrollViewer || e.Handled) return;
-        double oldOffset = scrollViewer.VerticalOffset;
-        scrollViewer.ScrollToVerticalOffset(
-            Math.Clamp(
-                oldOffset - e.Delta / 3d,
-                0,
-                scrollViewer.ScrollableHeight));
-        e.Handled = scrollViewer.VerticalOffset != oldOffset;
+
+        DependencyObject? source = e.OriginalSource as DependencyObject;
+        if (FindVisualAncestor<ListBox>(source) is not null)
+        {
+            return;
+        }
+
+        ScrollBar? scrollBar = FindVisualAncestor<ScrollBar>(source);
+        if (scrollBar is { Orientation: Orientation.Vertical }
+            && FindVisualAncestor<ListBox>(scrollBar) is null)
+        {
+            return;
+        }
+
+        e.Handled = true;
+    }
+
+    private void OnInstrumentStructureListPreviewMouseWheel(
+        object sender,
+        MouseWheelEventArgs e)
+    {
+        if (sender is not ListBox listBox || e.Handled) return;
+        ListBoxWheelScroll.ScrollOneItemPerNotch(listBox, e);
+        e.Handled = true;
     }
 
     private void OnInstrumentLoopLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) =>

@@ -1671,10 +1671,13 @@ public sealed class TimelineSurface : Control
     private static void OnValueScrollOffsetChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs args)
     {
         TimelineSurface surface = (TimelineSurface)dependencyObject;
+        surface.SetValueViewRange(surface._valueViewMinimum, surface._valueViewMaximum);
         double range = Math.Clamp(surface._valueViewMaximum - surface._valueViewMinimum, 1d / 64, 1);
         double offset = Math.Clamp((double)args.NewValue, 0, Math.Max(0, 1 - range));
-        surface._valueViewMaximum = 1 - offset;
-        surface._valueViewMinimum = surface._valueViewMaximum - range;
+        double maximum = Math.Min(1, 1 - offset);
+        surface.SetValueViewRange(
+            Math.Max(0, maximum - range),
+            maximum);
         surface.ResetRasterRequests(scheduleArrangementWarmup: false);
         surface.InvalidateVisual();
         surface.RefreshPointerPositionText();
@@ -1740,12 +1743,38 @@ public sealed class TimelineSurface : Control
 
     private void UpdateValueScrollMetrics()
     {
+        SetValueViewRange(_valueViewMinimum, _valueViewMaximum);
         double range = Math.Clamp(_valueViewMaximum - _valueViewMinimum, 1d / 64, 1);
         double maximum = Math.Max(0, 1 - range);
         SetValue(ValueScrollMaximumPropertyKey, maximum);
         SetValue(ValueScrollViewportSizePropertyKey, range);
         SetValue(CanScrollValuesPropertyKey, maximum > 0);
         CoerceValue(ValueScrollOffsetProperty);
+    }
+
+    private void SetValueViewRange(double desiredMinimum, double desiredMaximum)
+    {
+        if (!double.IsFinite(desiredMinimum)
+            || !double.IsFinite(desiredMaximum)
+            || desiredMaximum <= desiredMinimum)
+        {
+            _valueViewMinimum = 0;
+            _valueViewMaximum = 1;
+            return;
+        }
+
+        double range = Math.Clamp(desiredMaximum - desiredMinimum, 1d / 64, 1);
+        double minimum = Math.Clamp(desiredMinimum, 0, Math.Max(0, 1 - range));
+        double maximum = Math.Min(1, minimum + range);
+        if (maximum <= minimum)
+        {
+            _valueViewMinimum = 0;
+            _valueViewMaximum = 1;
+            return;
+        }
+
+        _valueViewMinimum = minimum;
+        _valueViewMaximum = maximum;
     }
 
     protected override void OnRender(DrawingContext drawingContext)
@@ -2883,6 +2912,7 @@ public sealed class TimelineSurface : Control
                             ? Cursors.SizeAll
                             : Cursors.SizeWE;
             }
+            UpdatePointerPositionText(point, dragViewport);
             InvalidateVisual();
             return;
         }
@@ -3363,6 +3393,8 @@ public sealed class TimelineSurface : Control
 
     protected override void OnMouseLeave(MouseEventArgs e)
     {
+        bool retainsEventPointPosition = IsMouseCaptured
+            && HasActiveEventPointGesture();
         bool hoverChangedVisual = _hoverPoint is not null
             && ToolMode == TimelineToolMode.Draw
             && SurfaceMode is TimelineSurfaceMode.Arrangement
@@ -3370,7 +3402,10 @@ public sealed class TimelineSurface : Control
                 or TimelineSurfaceMode.EventLanes;
         hoverChangedVisual |= _hoverLaneHeader is not null;
         hoverChangedVisual |= _hoverSharedGroupId is not null;
-        _hoverPoint = null;
+        if (!retainsEventPointPosition)
+        {
+            _hoverPoint = null;
+        }
         _hoverLaneHeader = null;
         _hoverSharedGroupId = null;
         if (!IsMouseCaptured
@@ -9756,6 +9791,7 @@ public sealed class TimelineSurface : Control
         }
         _valueViewMinimum = Math.Clamp(newMinimum, 0, 1 - newRange);
         _valueViewMaximum = Math.Clamp(newMaximum, _valueViewMinimum + newRange, 1);
+        SetValueViewRange(_valueViewMinimum, _valueViewMaximum);
         UpdateValueScrollMetrics();
         SetCurrentValue(ValueScrollOffsetProperty, Math.Clamp(1 - _valueViewMaximum, 0, ValueScrollMaximum));
         InvalidateVisual();
@@ -9840,9 +9876,23 @@ public sealed class TimelineSurface : Control
             return;
         }
 
-        if (SurfaceMode != TimelineSurfaceMode.EventLanes || !inTimelineContent)
+        bool hasActiveEventPointGesture = HasActiveEventPointGesture();
+        if (SurfaceMode != TimelineSurfaceMode.EventLanes
+            || (!inTimelineContent && !hasActiveEventPointGesture))
         {
             ResetPointerPositionText();
+            return;
+        }
+
+        if (_dragActivated
+            && _dragKind == TimelineItemEditKind.Move
+            && _dragItem is TimelineRenderItem draggedPoint
+            && IsEventPointKind(draggedPoint.Kind))
+        {
+            DragPreviewTransform transform = GetDragPreviewTransform(draggedPoint);
+            SetEventPointPositionText(
+                Math.Max(0, SaturatingAddTick(draggedPoint.StartTick, transform.TickDelta)),
+                Math.Clamp(draggedPoint.Value + transform.ValueDelta, 0, 1));
             return;
         }
 
@@ -9869,13 +9919,25 @@ public sealed class TimelineSurface : Control
 
         long tick = SnapAbsolute(viewport.XToTick(tickX - GetLaneHeaderWidth()));
         double normalized = ValueYToNormalized(valueY, GetRulerHeight());
+        SetEventPointPositionText(tick, normalized);
+    }
+
+    private bool HasActiveEventPointGesture() =>
+        SurfaceMode == TimelineSurfaceMode.EventLanes
+        && (_eventPointOrigin is not null
+            || (_dragItem is TimelineRenderItem item
+                && _dragKind == TimelineItemEditKind.Move
+                && IsEventPointKind(item.Kind)));
+
+    private void SetEventPointPositionText(long tick, double normalized)
+    {
         double minimum = ValueAxisMinimum;
         double maximum = ValueAxisMaximum;
         double formalValue = double.IsFinite(minimum)
             && double.IsFinite(maximum)
             && maximum > minimum
-                ? minimum + normalized * (maximum - minimum)
-                : normalized;
+                ? minimum + Math.Clamp(normalized, 0, 1) * (maximum - minimum)
+                : Math.Clamp(normalized, 0, 1);
         string formattedValue = ValueAxisIntegral
             ? Math.Round(formalValue, MidpointRounding.AwayFromZero)
                 .ToString("0", CultureInfo.InvariantCulture)

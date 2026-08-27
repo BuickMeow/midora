@@ -984,6 +984,130 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void EventPointDragReadoutKeepsTheMovedPointCoordinatesOutsideTheViewport()
+    {
+        RunOnSta(() =>
+        {
+            MethodInfo updatePointer = typeof(TimelineSurface).GetMethod(
+                "UpdatePointerPositionText",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("Pointer readout method was not found.");
+            TimelineRenderItem point = Item(
+                1,
+                100,
+                101,
+                0,
+                kind: TimelineItemKind.DirectMidiEvent) with
+            { Value = 0.5 };
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.EventLanes,
+                Snapshot = new TimelineRenderSnapshot(1, "event-point:outside-readout", [point]),
+                SelectionSnapshot = new TimelineSelectionSnapshot(
+                    1,
+                    [point.Id],
+                    point.Id,
+                    [point]),
+                OperationStepTicks = 1,
+                TickSpan = 1_000,
+                LaneHeight = 160,
+                ValueAxisMinimum = 0,
+                ValueAxisMaximum = 127,
+                ValueAxisIntegral = true
+            };
+            surface.Measure(new Size(1_000, 400));
+            surface.Arrange(new Rect(0, 0, 1_000, 400));
+            TimelineViewport viewport = new(0, 1_000, 0, 1, 948, 376, 160);
+            ConfigureDragPreview(
+                surface,
+                point,
+                TimelineItemEditKind.Move,
+                originTick: 100,
+                currentTick: 1_000,
+                originLane: 0,
+                currentLane: 0);
+            SetPrivateField(surface, "_dragOrigin", new Point(
+                52 + viewport.TickToX(100),
+                24 + viewport.Height / 2));
+            SetPrivateField(surface, "_hoverPoint", new Point(1_100, 500));
+            SetPrivateField(surface, "_dragPreviewMinimumStartTick", 100L);
+            SetPrivateField(surface, "_dragPreviewMinimumValue", 0.5d);
+            SetPrivateField(surface, "_dragPreviewMaximumValue", 0.5d);
+
+            updatePointer.Invoke(surface, [new Point(1_100, 500), viewport]);
+
+            Assert.Equal("(1000, 0)", surface.PointerPositionText);
+
+            SetPrivateField(surface, "_dragItem", null);
+            updatePointer.Invoke(surface, [new Point(1_100, 500), viewport]);
+
+            Assert.Equal("(-, -)", surface.PointerPositionText);
+            surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+        });
+    }
+
+    [Fact]
+    public void EventLaneValueViewportRemainsNormalizedAtScrollExtremes()
+    {
+        RunOnSta(() =>
+        {
+            MethodInfo zoomValueAxis = typeof(TimelineSurface).GetMethod(
+                "ZoomValueAxis",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("Value-axis zoom method was not found.");
+            TimelineRenderItem point = Item(
+                1,
+                100,
+                101,
+                0,
+                kind: TimelineItemKind.TemplateEvent) with
+            { Value = 0.5 };
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.EventLanes,
+                Snapshot = new TimelineRenderSnapshot(1, "event-point:normalized-view", [point]),
+                StartTick = 0,
+                TickSpan = 1_000,
+                LaneHeight = 160,
+                GridVisible = false
+            };
+            surface.Measure(new Size(800, 260));
+            surface.Arrange(new Rect(0, 0, 800, 260));
+            const double rulerHeight = 24;
+            double contentHeight = 260 - rulerHeight;
+
+            for (int cycle = 0; cycle < 100; cycle++)
+            {
+                double ratio = cycle * 0.61803398875 % 1;
+                int wheelDelta = cycle % 7 < 4 ? 120 : -120;
+                zoomValueAxis.Invoke(
+                    surface,
+                    [rulerHeight + ratio * contentHeight, wheelDelta, rulerHeight]);
+                surface.ValueScrollOffset = cycle % 3 switch
+                {
+                    0 => surface.ValueScrollMaximum,
+                    1 => 0,
+                    _ => surface.ValueScrollMaximum * 0.413
+                };
+
+                double minimum = Assert.IsType<double>(
+                    GetPrivateField(surface, "_valueViewMinimum"));
+                double maximum = Assert.IsType<double>(
+                    GetPrivateField(surface, "_valueViewMaximum"));
+                Assert.True(double.IsFinite(minimum));
+                Assert.True(double.IsFinite(maximum));
+                Assert.InRange(minimum, 0, Math.BitDecrement(1d));
+                Assert.InRange(maximum, Math.BitIncrement(0d), 1);
+                Assert.True(maximum > minimum);
+            }
+
+            _ = RenderVisual(surface);
+            surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+            TimelineRasterCacheSession.Clear();
+        });
+    }
+
+    [Fact]
     public void PianoRollVerticalZoomButtonsAdjustOneDevicePixelAndKeepTheViewportBounded()
     {
         RunOnSta(() =>

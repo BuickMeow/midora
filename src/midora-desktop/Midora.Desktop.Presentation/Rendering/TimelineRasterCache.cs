@@ -455,17 +455,26 @@ public static class TimelineRasterPlacement
         double dpiScaleY)
     {
         viewport.Validate();
-        if (!double.IsFinite(devicePixelsPerTick) || devicePixelsPerTick <= 0
-            || !double.IsFinite(devicePixelsPerValue) || devicePixelsPerValue <= 0
-            || !double.IsFinite(laneHeaderWidth) || laneHeaderWidth < 0
-            || !double.IsFinite(rulerHeight) || rulerHeight < 0
-            || !double.IsFinite(valueMinimum) || !double.IsFinite(valueMaximum)
-            || valueMinimum < 0 || valueMaximum > 1 || valueMaximum <= valueMinimum
-            || !double.IsFinite(dpiScaleX) || dpiScaleX <= 0
-            || !double.IsFinite(dpiScaleY) || dpiScaleY <= 0)
-        {
+        if (!double.IsFinite(devicePixelsPerTick) || devicePixelsPerTick <= 0)
             throw new ArgumentOutOfRangeException(nameof(devicePixelsPerTick));
+        if (!double.IsFinite(devicePixelsPerValue) || devicePixelsPerValue <= 0)
+            throw new ArgumentOutOfRangeException(nameof(devicePixelsPerValue));
+        if (!double.IsFinite(laneHeaderWidth) || laneHeaderWidth < 0)
+            throw new ArgumentOutOfRangeException(nameof(laneHeaderWidth));
+        if (!double.IsFinite(rulerHeight) || rulerHeight < 0)
+            throw new ArgumentOutOfRangeException(nameof(rulerHeight));
+        if (!double.IsFinite(valueMinimum) || valueMinimum < 0 || valueMinimum >= 1)
+            throw new ArgumentOutOfRangeException(nameof(valueMinimum));
+        if (!double.IsFinite(valueMaximum)
+            || valueMaximum > 1
+            || valueMaximum <= valueMinimum)
+        {
+            throw new ArgumentOutOfRangeException(nameof(valueMaximum));
         }
+        if (!double.IsFinite(dpiScaleX) || dpiScaleX <= 0)
+            throw new ArgumentOutOfRangeException(nameof(dpiScaleX));
+        if (!double.IsFinite(dpiScaleY) || dpiScaleY <= 0)
+            throw new ArgumentOutOfRangeException(nameof(dpiScaleY));
     }
 }
 

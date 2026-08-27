@@ -1139,7 +1139,7 @@ public static class TimelineSegmentPreviewRasterizer
                 (int)Math.Floor((1 - eventHeights[x]) * Height),
                 0,
                 Height - 1);
-            TimelinePianoTileRasterizer.FillRectangle(
+            CompositeRectangleOver(
                 pixels,
                 tileWidth,
                 x,
@@ -1425,7 +1425,7 @@ public static class TimelineSegmentPreviewRasterizer
                 (int)Math.Floor((1 - value.NormalizedValue) * Height),
                 0,
                 Height - 1);
-            TimelinePianoTileRasterizer.FillRectangle(
+            CompositeRectangleOver(
                 pixels,
                 Width,
                 x,
@@ -1437,6 +1437,62 @@ public static class TimelineSegmentPreviewRasterizer
         }
         return new(Width, Height, pixels, checked(preview.Notes.Count + preview.Events.Count));
     }
+
+    private static void CompositeRectangleOver(
+        byte[] pixels,
+        int width,
+        int left,
+        int top,
+        int right,
+        int bottom,
+        Color color,
+        double opacity)
+    {
+        byte sourceAlpha = (byte)Math.Clamp(
+            (int)Math.Round(
+                color.A * Math.Clamp(opacity, 0, 1),
+                MidpointRounding.AwayFromZero),
+            0,
+            255);
+        if (sourceAlpha == 0) return;
+
+        int inverseSourceAlpha = 255 - sourceAlpha;
+        byte sourceBlue = Premultiply(color.B, sourceAlpha);
+        byte sourceGreen = Premultiply(color.G, sourceAlpha);
+        byte sourceRed = Premultiply(color.R, sourceAlpha);
+        for (int y = top; y < bottom; y++)
+        {
+            int offset = checked((y * width + left) * 4);
+            for (int x = left; x < right; x++, offset += 4)
+            {
+                pixels[offset] = CompositeChannel(
+                    sourceBlue,
+                    pixels[offset],
+                    inverseSourceAlpha);
+                pixels[offset + 1] = CompositeChannel(
+                    sourceGreen,
+                    pixels[offset + 1],
+                    inverseSourceAlpha);
+                pixels[offset + 2] = CompositeChannel(
+                    sourceRed,
+                    pixels[offset + 2],
+                    inverseSourceAlpha);
+                pixels[offset + 3] = CompositeChannel(
+                    sourceAlpha,
+                    pixels[offset + 3],
+                    inverseSourceAlpha);
+            }
+        }
+    }
+
+    private static byte CompositeChannel(
+        byte source,
+        byte destination,
+        int inverseSourceAlpha) =>
+        checked((byte)(source + ((destination * inverseSourceAlpha + 127) / 255)));
+
+    private static byte Premultiply(byte value, byte alpha) =>
+        checked((byte)((value * alpha + 127) / 255));
 
     private static int RoundNormalizedBoundary(double value) =>
         checked((int)Math.Floor(value * ContentWidth + 0.5));

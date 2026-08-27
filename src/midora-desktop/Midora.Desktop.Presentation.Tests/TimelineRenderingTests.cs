@@ -2063,6 +2063,43 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void ArrangementSegmentEventLayerCompositesAboveNoteLayer()
+    {
+        TimelineSegmentPreviewNote note = new(0.4, 0.6, 127);
+        TimelineSegmentPreview noteOnly = new(new MidoraId(133), [note]);
+        TimelineSegmentPreview withEvent = new(
+            new MidoraId(133),
+            [note],
+            [new TimelineSegmentPreviewEvent(0.5, 1)]);
+        Color noteColor = Color.FromRgb(189, 199, 207);
+        Color eventColor = Color.FromRgb(229, 61, 68);
+
+        TimelineRasterBuffer noteRaster =
+            TimelineSegmentPreviewRasterizer.RasterizeFixedPreviewTile(
+                noteOnly,
+                segmentLengthTicks: 768,
+                ticksPerQuarterNote: 768,
+                lod: 0,
+                tileX: 0,
+                noteColor,
+                eventColor);
+        TimelineRasterBuffer composedRaster =
+            TimelineSegmentPreviewRasterizer.RasterizeFixedPreviewTile(
+                withEvent,
+                segmentLengthTicks: 768,
+                ticksPerQuarterNote: 768,
+                lod: 0,
+                tileX: 0,
+                noteColor,
+                eventColor);
+
+        int offset = checked((0 * noteRaster.Width + 48) * 4);
+        Assert.True(composedRaster.Pixels[offset + 2] > noteRaster.Pixels[offset + 2]);
+        Assert.True(composedRaster.Pixels[offset] < noteRaster.Pixels[offset]);
+        Assert.True(composedRaster.Pixels[offset + 3] > noteRaster.Pixels[offset + 3]);
+    }
+
+    [Fact]
     public void ConductorPreviewUsesLocalTileFingerprintsAndAggregatesSameTypeColumns()
     {
         TimelineRenderItem near = Item(

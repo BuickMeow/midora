@@ -799,47 +799,56 @@ public static class TimelinePianoTileRasterizer
         void DrawAggregate(ReadOnlySpan<TimelineRasterColumnSummary> summaries)
         {
             Color outline = normalOutlineColor ?? Darken(normalColor);
-            for (int column = 0; column < summaries.Length; column++)
+            for (int lane = firstLane; lane < lastLaneExclusive; lane++)
             {
-                if ((column & 31) == 0) cancellationToken.ThrowIfCancellationRequested();
-                TimelineRasterColumnSummary summary = summaries[column];
-                if (!summary.HasContent) continue;
-                for (int lane = firstLane; lane < lastLaneExclusive; lane++)
+                cancellationToken.ThrowIfCancellationRequested();
+                int rawTop = RoundPixelBoundary(
+                    lane * devicePixelsPerLane - worldTop);
+                int rawBottom = Math.Max(
+                    rawTop + 1,
+                    RoundPixelBoundary((lane + 1d) * devicePixelsPerLane - worldTop));
+                int top = Math.Clamp(rawTop, 0, RasterSize);
+                int bottom = Math.Clamp(rawBottom, 0, RasterSize);
+                if (bottom <= top) continue;
+
+                int runStart = -1;
+                for (int column = 0; column <= summaries.Length; column++)
                 {
-                    bool occupied = lane < 64
-                        ? (summary.LaneMaskLow & (1UL << lane)) != 0
-                        : (summary.LaneMaskHigh & (1UL << (lane - 64))) != 0;
-                    if (!occupied) continue;
-                    int rawTop = RoundPixelBoundary(
-                        lane * devicePixelsPerLane - worldTop);
-                    int rawBottom = Math.Max(
-                        rawTop + 1,
-                        RoundPixelBoundary((lane + 1d) * devicePixelsPerLane - worldTop));
-                    int top = Math.Clamp(rawTop, 0, RasterSize);
-                    int bottom = Math.Clamp(rawBottom, 0, RasterSize);
-                    if (bottom <= top) continue;
+                    bool occupied = column < summaries.Length && (lane < 64
+                        ? (summaries[column].LaneMaskLow & (1UL << lane)) != 0
+                        : (summaries[column].LaneMaskHigh & (1UL << (lane - 64))) != 0);
+                    if (occupied)
+                    {
+                        if (runStart < 0) runStart = column;
+                        continue;
+                    }
+                    if (runStart < 0) continue;
+
                     FillRectangle(
                         pixels,
                         RasterSize,
-                        column,
+                        runStart,
                         top,
-                        Math.Min(RasterSize, column + 1),
+                        column,
                         bottom,
                         normalColor,
                         0.78);
+                    int runWidth = column - runStart;
+                    bool hasHorizontalInterior = runWidth > 2;
                     DrawRectangleOutline(
                         pixels,
                         RasterSize,
-                        column,
+                        runStart,
                         top,
-                        Math.Min(RasterSize, column + 1),
+                        column,
                         bottom,
                         outline,
                         0.82,
-                        drawLeft: true,
+                        drawLeft: hasHorizontalInterior && runStart > 0,
                         drawTop: rawTop >= 0,
-                        drawRight: true,
+                        drawRight: hasHorizontalInterior && column < RasterSize,
                         drawBottom: rawBottom <= RasterSize);
+                    runStart = -1;
                 }
             }
         }

@@ -967,6 +967,8 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     private TimelineRenderSnapshot? _parameterSnapshot;
     private TimelineRenderSnapshot? _velocitySnapshot;
     private int _activeParameterLaneIndex;
+    private MidoraId? _explicitParameterLaneId;
+    private long _explicitParameterLaneSelectionRevision = -1;
     private string _context = string.Empty;
     private long _startTick;
     private long _tickSpan;
@@ -1224,6 +1226,11 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     {
         get => _activeParameterLaneIndex;
         set => Set(ref _activeParameterLaneIndex, Math.Max(-1, value));
+    }
+    public void PreferCurrentParameterLaneOnNextRebuild()
+    {
+        _explicitParameterLaneId = GetActiveParameterLaneOption()?.ParameterId;
+        _explicitParameterLaneSelectionRevision = Selection.Revision;
     }
     public ParameterLaneOption? GetActiveParameterLaneOption() =>
         ActiveParameterLaneIndex >= 0 && ActiveParameterLaneIndex < ParameterLaneOptions.Count
@@ -2120,10 +2127,27 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
             ? segment.ParameterLanes.FirstOrDefault(lane =>
                 lane.Id == selected || lane.Points.TryGetById(selected, out _))?.ParameterId
             : null;
-        MidoraId? preferredParameterId = selectedParameterId ?? previousParameterId;
+        if (_explicitParameterLaneSelectionRevision != Selection.Revision)
+        {
+            _explicitParameterLaneId = null;
+            _explicitParameterLaneSelectionRevision = -1;
+        }
+        MidoraId? preferredParameterId = _explicitParameterLaneId
+            ?? selectedParameterId
+            ?? previousParameterId;
         int preferredIndex = preferredParameterId is MidoraId parameterId
             ? ParameterLaneOptions.ToList().FindIndex(option => option.ParameterId == parameterId)
             : -1;
+        if (_explicitParameterLaneId is not null && preferredIndex < 0)
+        {
+            _explicitParameterLaneId = null;
+            _explicitParameterLaneSelectionRevision = -1;
+            preferredParameterId = selectedParameterId ?? previousParameterId;
+            preferredIndex = preferredParameterId is MidoraId fallbackParameterId
+                ? ParameterLaneOptions.ToList().FindIndex(option =>
+                    option.ParameterId == fallbackParameterId)
+                : -1;
+        }
         ActiveParameterLaneIndex = ParameterLaneOptions.Count == 0
             ? -1
             : preferredIndex >= 0
@@ -2934,6 +2958,8 @@ public sealed class InstrumentWorkspaceViewModel(
     private TimelineRenderSnapshot? _subVoiceEventSnapshot;
     private TimelineRenderSnapshot? _subVoiceVelocitySnapshot;
     private int _activeRenderLaneIndex;
+    private MidiValueTarget? _explicitRenderLaneTarget;
+    private long _explicitRenderLaneSelectionRevision = -1;
     private MidoraId? _activeSubVoiceId;
     private string _activeSubVoiceName = "No SubVoice";
     private string _activeSubVoiceNameText = string.Empty;
@@ -3146,6 +3172,11 @@ public sealed class InstrumentWorkspaceViewModel(
     {
         get => _activeRenderLaneIndex;
         set => Set(ref _activeRenderLaneIndex, Math.Max(-1, value));
+    }
+    public void PreferCurrentRenderLaneOnNextRebuild()
+    {
+        _explicitRenderLaneTarget = GetRenderLane(ActiveRenderLaneIndex)?.Target;
+        _explicitRenderLaneSelectionRevision = Selection.Revision;
     }
     public double ActiveValueMinimum
     {
@@ -3519,10 +3550,26 @@ public sealed class InstrumentWorkspaceViewModel(
                         : selectedTargets[0];
             }
         }
-        MidiValueTarget? preferredTarget = selectedTarget ?? previousTarget;
+        if (_explicitRenderLaneSelectionRevision != Selection.Revision)
+        {
+            _explicitRenderLaneTarget = null;
+            _explicitRenderLaneSelectionRevision = -1;
+        }
+        MidiValueTarget? preferredTarget = _explicitRenderLaneTarget
+            ?? selectedTarget
+            ?? previousTarget;
         int preferredLane = preferredTarget is MidiValueTarget target
             ? lanes.FindIndex(item => item.Target == target)
             : -1;
+        if (_explicitRenderLaneTarget is not null && preferredLane < 0)
+        {
+            _explicitRenderLaneTarget = null;
+            _explicitRenderLaneSelectionRevision = -1;
+            preferredTarget = selectedTarget ?? previousTarget;
+            preferredLane = preferredTarget is MidiValueTarget fallbackTarget
+                ? lanes.FindIndex(item => item.Target == fallbackTarget)
+                : -1;
+        }
         ActiveRenderLaneIndex = lanes.Count == 0
             ? -1
             : preferredLane >= 0

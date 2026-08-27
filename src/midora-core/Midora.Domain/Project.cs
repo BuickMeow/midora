@@ -345,4 +345,8 @@ public sealed class ProjectChangeSet
     public HashSet<MidoraId> EventInstrumentUsageIds { get; } = [];
     public HashSet<MidoraId> MidiChannelRootIds { get; } = [];
     public HashSet<MidoraId> PureMidiTrackIds { get; } = [];
+    // Presentation-only source changes are propagated through document history
+    // without marking canonical compilation or PCM-cache generation affected.
+    public HashSet<MidoraId> PresentationTrackIds { get; } = [];
+    public HashSet<MidoraId> PresentationEventInstrumentIds { get; } = [];
 }

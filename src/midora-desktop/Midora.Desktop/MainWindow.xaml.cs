@@ -5472,6 +5472,15 @@ public partial class MainWindow : Window
     private void OnActiveEditorLaneDropDownClosed(object sender, EventArgs e)
     {
         ComboBox? comboBox = sender as ComboBox;
+        if (_session.ActiveWorkspace is TimelineWorkspaceViewModel selectedTimeline
+            && selectedTimeline.GetActiveParameterLaneOption()?.IsDirectMidiLane != true)
+        {
+            selectedTimeline.PreferCurrentParameterLaneOnNextRebuild();
+        }
+        else if (_session.ActiveWorkspace is InstrumentWorkspaceViewModel selectedInstrument)
+        {
+            selectedInstrument.PreferCurrentRenderLaneOnNextRebuild();
+        }
         if (_session.ActiveWorkspace is TimelineWorkspaceViewModel directTimeline
             && directTimeline.GetActiveParameterLaneOption()?.IsDirectMidiLane == true)
         {

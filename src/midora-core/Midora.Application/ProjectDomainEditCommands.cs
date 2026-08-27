@@ -811,6 +811,21 @@ public static partial class ProjectDomainEditCommands
         return result;
     }
 
+    private static ProjectChangeSet TrackPresentationChange(params MidoraId[] trackIds)
+    {
+        ProjectChangeSet result = new();
+        result.PresentationTrackIds.UnionWith(trackIds);
+        return result;
+    }
+
+    private static ProjectChangeSet EventInstrumentPresentationChange(
+        MidoraId eventInstrumentId)
+    {
+        ProjectChangeSet result = new();
+        result.PresentationEventInstrumentIds.Add(eventInstrumentId);
+        return result;
+    }
+
     private static ProjectChangeSet ConductorChange() => new() { AffectsConductor = true };
 
     private sealed class DelegateCommand(

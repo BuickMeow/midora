@@ -45,7 +45,7 @@ public static partial class ProjectDomainEditCommands
             MidoraColor? oldColor = track.ColorOverride;
             return Prepared(
                 oldColor != colorOverride,
-                NoCompilationChange(),
+                TrackPresentationChange(trackId),
                 _ => track.ColorOverride = colorOverride,
                 _ => track.ColorOverride = oldColor);
         });

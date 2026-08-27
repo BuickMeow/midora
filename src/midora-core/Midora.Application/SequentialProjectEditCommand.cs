@@ -92,6 +92,9 @@ public sealed class SequentialProjectEditCommand : IProjectEditCommand
             result.EventInstrumentUsageIds.UnionWith(value.EventInstrumentUsageIds);
             result.MidiChannelRootIds.UnionWith(value.MidiChannelRootIds);
             result.PureMidiTrackIds.UnionWith(value.PureMidiTrackIds);
+            result.PresentationTrackIds.UnionWith(value.PresentationTrackIds);
+            result.PresentationEventInstrumentIds.UnionWith(
+                value.PresentationEventInstrumentIds);
         }
         return result;
     }

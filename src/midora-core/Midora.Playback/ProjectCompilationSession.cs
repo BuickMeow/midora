@@ -235,13 +235,21 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                     "Project edits are forbidden while a Project edit lock is active.");
             }
             edit(Project);
-            LastAttempt = _compiler.CompileIncremental(Project, changes);
-            RecordSynchronousCompilationLocked(changes, sourceChanged: AffectsCompilation(changes));
-            ClearSampleDomainCachesCore();
-            _playbackRangeResults.Clear();
-            if (LastAttempt.IsConsumable)
+            bool affectsCompilation = AffectsCompilation(changes);
+            if (affectsCompilation)
             {
-                LastSuccessfulResult = LastAttempt;
+                LastAttempt = _compiler.CompileIncremental(Project, changes);
+                RecordSynchronousCompilationLocked(changes, sourceChanged: true);
+                ClearSampleDomainCachesCore();
+                _playbackRangeResults.Clear();
+                if (LastAttempt.IsConsumable)
+                {
+                    LastSuccessfulResult = LastAttempt;
+                }
+            }
+            else if (changes.AffectsAudioPcmCacheGeneration)
+            {
+                ClearSampleDomainCachesCore();
             }
         }
         if (changes.AffectsAudioPcmCacheGeneration)
@@ -275,16 +283,24 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
             }
 
             CanonicalCompiledResult? previousSuccessful = LastSuccessfulResult;
+            bool affectsCompilation = AffectsCompilation(changes);
             try
             {
                 edit(Project);
-                LastAttempt = _compiler.CompileIncremental(Project, changes);
-                RecordSynchronousCompilationLocked(changes, sourceChanged: AffectsCompilation(changes));
-                ClearSampleDomainCachesCore();
-                _playbackRangeResults.Clear();
-                if (LastAttempt.IsConsumable)
+                if (affectsCompilation)
                 {
-                    LastSuccessfulResult = LastAttempt;
+                    LastAttempt = _compiler.CompileIncremental(Project, changes);
+                    RecordSynchronousCompilationLocked(changes, sourceChanged: true);
+                    ClearSampleDomainCachesCore();
+                    _playbackRangeResults.Clear();
+                    if (LastAttempt.IsConsumable)
+                    {
+                        LastSuccessfulResult = LastAttempt;
+                    }
+                }
+                else if (changes.AffectsAudioPcmCacheGeneration)
+                {
+                    ClearSampleDomainCachesCore();
                 }
                 result = LastAttempt;
             }
@@ -293,15 +309,18 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                 try
                 {
                     rollback(Project);
-                    LastAttempt = _compiler.CompileFull(Project);
-                    RecordSynchronousCompilationLocked(
-                        ProjectChangeSet.Everything,
-                        sourceChanged: false);
-                    ClearSampleDomainCachesCore();
-                    _playbackRangeResults.Clear();
-                    LastSuccessfulResult = LastAttempt.IsConsumable
-                        ? LastAttempt
-                        : previousSuccessful;
+                    if (affectsCompilation)
+                    {
+                        LastAttempt = _compiler.CompileFull(Project);
+                        RecordSynchronousCompilationLocked(
+                            ProjectChangeSet.Everything,
+                            sourceChanged: false);
+                        ClearSampleDomainCachesCore();
+                        _playbackRangeResults.Clear();
+                        LastSuccessfulResult = LastAttempt.IsConsumable
+                            ? LastAttempt
+                            : previousSuccessful;
+                    }
                 }
                 catch (Exception rollbackError)
                 {
@@ -498,9 +517,13 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
                     _backgroundCompilationFailure = null;
                     SetCompilationStateLocked(ProjectCompilationState.Outdated);
                     ScheduleCompilationLocked(immediate: false);
+                    ClearSampleDomainCachesCore();
+                    _playbackRangeResults.Clear();
                 }
-                ClearSampleDomainCachesCore();
-                _playbackRangeResults.Clear();
+                else if (changes.AffectsAudioPcmCacheGeneration)
+                {
+                    ClearSampleDomainCachesCore();
+                }
             }
         }
 
@@ -763,6 +786,9 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         result.EventInstrumentUsageIds.UnionWith(source.EventInstrumentUsageIds);
         result.MidiChannelRootIds.UnionWith(source.MidiChannelRootIds);
         result.PureMidiTrackIds.UnionWith(source.PureMidiTrackIds);
+        result.PresentationTrackIds.UnionWith(source.PresentationTrackIds);
+        result.PresentationEventInstrumentIds.UnionWith(
+            source.PresentationEventInstrumentIds);
         return result;
     }
 
@@ -787,6 +813,12 @@ public sealed class ProjectCompilationSession : IDisposable, IRealtimePlaybackCa
         result.MidiChannelRootIds.UnionWith(right.MidiChannelRootIds);
         result.PureMidiTrackIds.UnionWith(left.PureMidiTrackIds);
         result.PureMidiTrackIds.UnionWith(right.PureMidiTrackIds);
+        result.PresentationTrackIds.UnionWith(left.PresentationTrackIds);
+        result.PresentationTrackIds.UnionWith(right.PresentationTrackIds);
+        result.PresentationEventInstrumentIds.UnionWith(
+            left.PresentationEventInstrumentIds);
+        result.PresentationEventInstrumentIds.UnionWith(
+            right.PresentationEventInstrumentIds);
         return result;
     }
 

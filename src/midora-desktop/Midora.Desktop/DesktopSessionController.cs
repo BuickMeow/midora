@@ -2281,7 +2281,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         && changes.EventInstrumentIds.Count == 0
         && changes.EventInstrumentUsageIds.Count == 0
         && changes.MidiChannelRootIds.Count == 0
-        && changes.PureMidiTrackIds.Count == 0;
+        && changes.PureMidiTrackIds.Count == 0
+        && changes.PresentationTrackIds.Count == 0
+        && changes.PresentationEventInstrumentIds.Count == 0;
 
     private bool WorkspaceAffected(
         WorkspaceViewModel workspace,
@@ -2300,21 +2302,27 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
                 || instrumentIds.Count != 0
                 || usageIds.Count != 0
                 || rootIds.Count != 0
-                || pureTrackIds.Count != 0,
+                || pureTrackIds.Count != 0
+                || changes.PresentationTrackIds.Count != 0
+                || changes.PresentationEventInstrumentIds.Count != 0,
             WorkspaceKind.ConductorTrack => changes.AffectsConductor,
             WorkspaceKind.SegmentEditor => workspace.ObjectId is MidoraId segmentId
                 && (TimelineWorkspaceViewModel.FindSegment(Project!, segmentId) is { } located
                     && (trackIds.Contains(located.Track.Id)
+                        || changes.PresentationTrackIds.Contains(located.Track.Id)
                         || located.Track.EventInstrumentUsageId is MidoraId usageId
                            && usageIds.Contains(usageId)
                         || Project!.ResolveEventInstrumentDefinitionId(located.Track) is MidoraId instrumentId
-                           && instrumentIds.Contains(instrumentId))
+                           && (instrumentIds.Contains(instrumentId)
+                               || changes.PresentationEventInstrumentIds.Contains(instrumentId)))
                     || TimelineWorkspaceViewModel.FindMidiSegment(Project!, segmentId) is { } midi
                     && (pureTrackIds.Contains(midi.Track.Id)
                         || rootIds.Contains(midi.Track.MidiChannelRootId))),
-            WorkspaceKind.EventInstrumentLibrary => instrumentIds.Count != 0,
+            WorkspaceKind.EventInstrumentLibrary => instrumentIds.Count != 0
+                || changes.PresentationEventInstrumentIds.Count != 0,
             WorkspaceKind.EventInstrumentEditor => workspace.ObjectId is MidoraId eventInstrumentId
-                && instrumentIds.Contains(eventInstrumentId),
+                && (instrumentIds.Contains(eventInstrumentId)
+                    || changes.PresentationEventInstrumentIds.Contains(eventInstrumentId)),
             WorkspaceKind.ProjectSettings => false,
             WorkspaceKind.Diagnostics => false,
             _ => false
@@ -2966,6 +2974,9 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         result.EventInstrumentUsageIds.UnionWith(source.EventInstrumentUsageIds);
         result.MidiChannelRootIds.UnionWith(source.MidiChannelRootIds);
         result.PureMidiTrackIds.UnionWith(source.PureMidiTrackIds);
+        result.PresentationTrackIds.UnionWith(source.PresentationTrackIds);
+        result.PresentationEventInstrumentIds.UnionWith(
+            source.PresentationEventInstrumentIds);
         return result;
     }
 
@@ -2993,6 +3004,12 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         result.MidiChannelRootIds.UnionWith(right.MidiChannelRootIds);
         result.PureMidiTrackIds.UnionWith(left.PureMidiTrackIds);
         result.PureMidiTrackIds.UnionWith(right.PureMidiTrackIds);
+        result.PresentationTrackIds.UnionWith(left.PresentationTrackIds);
+        result.PresentationTrackIds.UnionWith(right.PresentationTrackIds);
+        result.PresentationEventInstrumentIds.UnionWith(
+            left.PresentationEventInstrumentIds);
+        result.PresentationEventInstrumentIds.UnionWith(
+            right.PresentationEventInstrumentIds);
         return result;
     }
 

@@ -1477,13 +1477,8 @@ public sealed class TimelineSurface : Control
         long end = viewport.EndTick > long.MaxValue - guard
             ? long.MaxValue
             : viewport.EndTick + guard;
-        if (RangeStartTick is long rangeStartTick
-            && RangeEndTick is long rangeEndTick)
-        {
-            start = Math.Max(start, rangeStartTick);
-            end = Math.Min(end, rangeEndTick);
-            if (end <= start) return;
-        }
+        end = Math.Min(end, snapshot.MaximumEndTick);
+        if (end <= start) return;
         int laneGuard = Math.Max(1, viewport.LaneCount / 2);
         ScheduleExactPrefetch(
             snapshot,
@@ -4406,7 +4401,7 @@ public sealed class TimelineSurface : Control
             ? long.MaxValue
             : (long)Math.Floor(value);
 
-    private bool TryGetPianoContentBounds(
+    private static bool TryGetPianoContentBounds(
         TimelineRenderSnapshot snapshot,
         double devicePixelsPerTick,
         out long contentStartTick,
@@ -4415,12 +4410,8 @@ public sealed class TimelineSurface : Control
         out long lastTileX)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        contentStartTick = Math.Max(0, RangeStartTick ?? 0);
+        contentStartTick = 0;
         contentEndTick = snapshot.MaximumEndTick;
-        if (RangeEndTick is long rangeEndTick)
-        {
-            contentEndTick = Math.Min(contentEndTick, rangeEndTick);
-        }
         if (contentEndTick <= contentStartTick)
         {
             firstTileX = 0;
@@ -4437,7 +4428,7 @@ public sealed class TimelineSurface : Control
         return true;
     }
 
-    private bool TryGetHorizontalContentTileBounds(
+    private static bool TryGetHorizontalContentTileBounds(
         TimelineRenderSnapshot snapshot,
         double devicePixelsPerTick,
         int tileSize,
@@ -4445,12 +4436,8 @@ public sealed class TimelineSurface : Control
         out long lastTileX)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        long contentStartTick = Math.Max(0, RangeStartTick ?? 0);
+        long contentStartTick = 0;
         long contentEndTick = snapshot.MaximumEndTick;
-        if (RangeEndTick is long rangeEndTick)
-        {
-            contentEndTick = Math.Min(contentEndTick, rangeEndTick);
-        }
         if (contentEndTick <= contentStartTick)
         {
             firstTileX = 0;

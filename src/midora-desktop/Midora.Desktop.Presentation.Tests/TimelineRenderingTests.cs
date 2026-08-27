@@ -441,7 +441,7 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
-    public void PianoViewportEntirelyRightOfSegmentRangeDoesNotQueryOrFingerprintContent()
+    public void PianoViewportRightOfActiveRangeStillSchedulesSourceContent()
     {
         RunOnSta(() =>
         {
@@ -468,11 +468,13 @@ public sealed class TimelineRenderingTests
 
             _ = RenderVisual(surface);
 
-            Assert.Equal(0, source.RangeFingerprintCalls);
-            Assert.Equal(0, source.QueryCalls);
+            Assert.True(SpinWait.SpinUntil(
+                () => source.RangeFingerprintCalls > 0,
+                TimeSpan.FromSeconds(2)),
+                "Piano content outside the active Segment range was not scheduled.");
             Assert.True(
                 surface.LastRenderPhaseTiming.Content < TimeSpan.FromMilliseconds(100),
-                $"Right-side blank content phase took "
+                $"Outside-active-range piano content phase took "
                 + $"{surface.LastRenderPhaseTiming.Content.TotalMilliseconds:N1} ms.");
             surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
             TimelineRasterCacheSession.Clear();
@@ -707,7 +709,7 @@ public sealed class TimelineRenderingTests
     [Theory]
     [InlineData(TimelineSurfaceMode.Velocity)]
     [InlineData(TimelineSurfaceMode.EventLanes)]
-    public void LaneViewportEntirelyRightOfSegmentRangeDoesNotQueryOrFingerprintContent(
+    public void LaneViewportRightOfActiveRangeStillSchedulesSourceContent(
         TimelineSurfaceMode mode)
     {
         RunOnSta(() =>
@@ -735,11 +737,13 @@ public sealed class TimelineRenderingTests
 
             _ = RenderVisual(surface);
 
-            Assert.Equal(0, source.RangeFingerprintCalls);
-            Assert.Equal(0, source.QueryCalls);
+            Assert.True(SpinWait.SpinUntil(
+                () => source.RangeFingerprintCalls > 0,
+                TimeSpan.FromSeconds(2)),
+                $"{mode} content outside the active Segment range was not scheduled.");
             Assert.True(
                 surface.LastRenderPhaseTiming.Content < TimeSpan.FromMilliseconds(100),
-                $"{mode} right-side blank content phase took "
+                $"{mode} outside-active-range content phase took "
                 + $"{surface.LastRenderPhaseTiming.Content.TotalMilliseconds:N1} ms.");
             surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
             TimelineRasterCacheSession.Clear();
@@ -2500,6 +2504,73 @@ public sealed class TimelineRenderingTests
 
         Color outline = PixelColor(raster, 41, 40);
         Color fill = PixelColor(raster, 60, 40);
+        Assert.True(outline.R > fill.R);
+        Assert.True(outline.G > fill.G);
+        Assert.True(outline.B > fill.B);
+    }
+
+    [Theory]
+    [InlineData(TimelineItemKind.LogicalNote)]
+    [InlineData(TimelineItemKind.DirectMidiNote)]
+    [InlineData(TimelineItemKind.TemplateNote)]
+    public void AggregatePianoTileOutlinesTheOccupiedRunInsteadOfEveryPixelColumn(
+        TimelineItemKind kind)
+    {
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "segment:aggregate-note-colors",
+            [Item(1, 8, 80, 2, kind: kind)]);
+        Color darkFill = Color.FromRgb(68, 75, 80);
+        Color brightOutline = Color.FromRgb(163, 178, 190);
+
+        TimelineRasterBuffer raster = TimelinePianoTileRasterizer.Rasterize(
+            snapshot,
+            devicePixelsPerTick: 0.125,
+            devicePixelsPerLane: 16,
+            tileX: 0,
+            tileY: 0,
+            darkFill,
+            Color.FromRgb(232, 179, 75),
+            normalOutlineColor: brightOutline);
+
+        Color outline = PixelColor(raster, 5, 33);
+        Color fill = PixelColor(raster, 5, 40);
+        Assert.True(fill.A > 0);
+        Assert.True(outline.R > fill.R);
+        Assert.True(outline.G > fill.G);
+        Assert.True(outline.B > fill.B);
+    }
+
+    [Theory]
+    [InlineData(TimelineItemKind.LogicalNote)]
+    [InlineData(TimelineItemKind.DirectMidiNote)]
+    [InlineData(TimelineItemKind.TemplateNote)]
+    public void AggregatePianoTileKeepsOnePixelWideNoteDarkInsideItsVerticalOutline(
+        TimelineItemKind kind)
+    {
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "segment:aggregate-one-pixel-note",
+            [Item(1, 8, 16, 2, kind: kind)]);
+        Color darkFill = Color.FromRgb(68, 75, 80);
+        Color brightOutline = Color.FromRgb(163, 178, 190);
+
+        TimelineRasterBuffer raster = TimelinePianoTileRasterizer.Rasterize(
+            snapshot,
+            devicePixelsPerTick: 0.125,
+            devicePixelsPerLane: 16,
+            tileX: 0,
+            tileY: 0,
+            darkFill,
+            Color.FromRgb(232, 179, 75),
+            normalOutlineColor: brightOutline);
+
+        int occupiedColumn = Assert.Single(
+            Enumerable.Range(0, raster.Width),
+            x => Alpha(raster, x, 40) > 0);
+        Color outline = PixelColor(raster, occupiedColumn, 33);
+        Color fill = PixelColor(raster, occupiedColumn, 40);
+        Assert.True(fill.A > 0);
         Assert.True(outline.R > fill.R);
         Assert.True(outline.G > fill.G);
         Assert.True(outline.B > fill.B);
@@ -5091,8 +5162,10 @@ public sealed class TimelineRenderingTests
 
     private sealed class MetadataOnlyRenderSource : ITimelineRenderItemSource
     {
-        public int QueryCalls { get; private set; }
-        public int RangeFingerprintCalls { get; private set; }
+        private int _queryCalls;
+        private int _rangeFingerprintCalls;
+        public int QueryCalls => Volatile.Read(ref _queryCalls);
+        public int RangeFingerprintCalls => Volatile.Read(ref _rangeFingerprintCalls);
         public long Count => 1_000_000;
         public long MaximumEndTick => 1_000_000;
         public ulong ContentFingerprint => 11;
@@ -5103,7 +5176,7 @@ public sealed class TimelineRenderingTests
             int firstLane,
             int lastLaneExclusive)
         {
-            RangeFingerprintCalls++;
+            Interlocked.Increment(ref _rangeFingerprintCalls);
             return 17;
         }
 
@@ -5114,7 +5187,7 @@ public sealed class TimelineRenderingTests
             int lastLaneExclusive,
             List<TimelineRenderItem> destination)
         {
-            QueryCalls++;
+            Interlocked.Increment(ref _queryCalls);
             throw new InvalidOperationException("A foreground fingerprint decoded paged content.");
         }
 

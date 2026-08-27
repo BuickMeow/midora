@@ -206,7 +206,7 @@ public static partial class ProjectDomainEditCommands
             string? oldDescription = instrument.Description;
             return Prepared(
                 !string.Equals(oldDescription, validated, StringComparison.Ordinal),
-                NoCompilationChange(),
+                EventInstrumentPresentationChange(eventInstrumentId),
                 _ => instrument.Description = validated,
                 _ => instrument.Description = oldDescription);
         });
@@ -220,7 +220,7 @@ public static partial class ProjectDomainEditCommands
             MidoraColor oldColor = instrument.Color;
             return Prepared(
                 oldColor != color,
-                NoCompilationChange(),
+                EventInstrumentPresentationChange(eventInstrumentId),
                 _ => instrument.Color = color,
                 _ => instrument.Color = oldColor);
         });

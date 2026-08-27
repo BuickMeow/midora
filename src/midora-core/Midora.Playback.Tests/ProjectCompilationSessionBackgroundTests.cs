@@ -8,6 +8,43 @@ namespace Midora.Playback.Tests;
 
 public sealed class ProjectCompilationSessionBackgroundTests
 {
+    [Theory]
+    [InlineData(ProjectCompilationExecutionMode.Synchronous)]
+    [InlineData(ProjectCompilationExecutionMode.Background)]
+    public void PresentationOnlyEditPreservesCanonicalAndSampleDomainCaches(
+        ProjectCompilationExecutionMode executionMode)
+    {
+        (MidoraProject project, LogicalTrack track, LogicalNote _, LogicalNote _) =
+            CreateNoteProject(2);
+        EventInstrument instrument = Assert.Single(project.EventInstruments);
+        using ProjectCompilationSession session = new(
+            project,
+            executionMode: executionMode,
+            backgroundDebounce: TimeSpan.Zero);
+        CanonicalCompiledResult compiled = session.CompileForPlayback(0, 960);
+        var plan = session.GetOrCreateRealtimeRenderPlan(
+            compiled,
+            48_000,
+            new HashSet<MidoraId> { track.Id });
+        long sourceRevision = session.SourceRevision;
+        ProjectChangeSet changes = new();
+        changes.PresentationEventInstrumentIds.Add(instrument.Id);
+
+        _ = session.ApplyEdit(
+            _ => instrument.Color = new MidoraColor(0x33, 0x66, 0x99),
+            changes);
+
+        CanonicalCompiledResult replay = session.CompileForPlayback(0, 960);
+        var replayPlan = session.GetOrCreateRealtimeRenderPlan(
+            replay,
+            48_000,
+            new HashSet<MidoraId> { track.Id });
+        Assert.Same(compiled, replay);
+        Assert.Same(plan, replayPlan);
+        Assert.Equal(sourceRevision, session.SourceRevision);
+        Assert.True(session.IsCompilationCurrent);
+    }
+
     [Fact]
     public async Task BackgroundSnapshotIncludesAndSynchronizesPureMidiBranch()
     {

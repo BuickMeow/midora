@@ -32,6 +32,9 @@ public sealed class ProjectContentChangedEventArgs : EventArgs
         EventInstrumentUsageIds = Array.AsReadOnly(changes.EventInstrumentUsageIds.Order().ToArray());
         MidiChannelRootIds = Array.AsReadOnly(changes.MidiChannelRootIds.Order().ToArray());
         PureMidiTrackIds = Array.AsReadOnly(changes.PureMidiTrackIds.Order().ToArray());
+        PresentationTrackIds = Array.AsReadOnly(changes.PresentationTrackIds.Order().ToArray());
+        PresentationEventInstrumentIds = Array.AsReadOnly(
+            changes.PresentationEventInstrumentIds.Order().ToArray());
     }
 
     public bool AffectsEverything { get; }
@@ -42,6 +45,8 @@ public sealed class ProjectContentChangedEventArgs : EventArgs
     public IReadOnlyList<MidoraId> EventInstrumentUsageIds { get; }
     public IReadOnlyList<MidoraId> MidiChannelRootIds { get; }
     public IReadOnlyList<MidoraId> PureMidiTrackIds { get; }
+    public IReadOnlyList<MidoraId> PresentationTrackIds { get; }
+    public IReadOnlyList<MidoraId> PresentationEventInstrumentIds { get; }
     public bool IsEmpty => !AffectsEverything
         && !AffectsConductor
         && !AffectsAudioPcmCacheGeneration
@@ -49,7 +54,9 @@ public sealed class ProjectContentChangedEventArgs : EventArgs
         && EventInstrumentIds.Count == 0
         && EventInstrumentUsageIds.Count == 0
         && MidiChannelRootIds.Count == 0
-        && PureMidiTrackIds.Count == 0;
+        && PureMidiTrackIds.Count == 0
+        && PresentationTrackIds.Count == 0
+        && PresentationEventInstrumentIds.Count == 0;
 }
 
 public interface IProjectEditCommand
@@ -134,6 +141,9 @@ public sealed class ProjectPropertyEditCommand<T> : IProjectEditCommand
         result.EventInstrumentUsageIds.UnionWith(source.EventInstrumentUsageIds);
         result.MidiChannelRootIds.UnionWith(source.MidiChannelRootIds);
         result.PureMidiTrackIds.UnionWith(source.PureMidiTrackIds);
+        result.PresentationTrackIds.UnionWith(source.PresentationTrackIds);
+        result.PresentationEventInstrumentIds.UnionWith(
+            source.PresentationEventInstrumentIds);
         return result;
     }
 }
@@ -469,6 +479,9 @@ public sealed class ProjectDocumentSession
         changes.EventInstrumentUsageIds.UnionWith(prepared.Changes.EventInstrumentUsageIds);
         changes.MidiChannelRootIds.UnionWith(prepared.Changes.MidiChannelRootIds);
         changes.PureMidiTrackIds.UnionWith(prepared.Changes.PureMidiTrackIds);
+        changes.PresentationTrackIds.UnionWith(prepared.Changes.PresentationTrackIds);
+        changes.PresentationEventInstrumentIds.UnionWith(
+            prepared.Changes.PresentationEventInstrumentIds);
         return new(
             ExactTimelineCollisionPolicy.Wrap(project, prepared),
             changes);

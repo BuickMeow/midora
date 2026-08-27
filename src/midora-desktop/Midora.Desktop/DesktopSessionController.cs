@@ -1926,6 +1926,7 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         if (!workspace.CanClose) return;
         int index = Workspaces.IndexOf(workspace);
         if (index < 0) return;
+        workspace.CancelBackgroundPresentationWork();
         Workspaces.RemoveAt(index);
         _workspaceSelectionBookmarkCache.Remove(workspace.Key);
         _backNavigation.RemoveAll(key => key == workspace.Key);
@@ -2048,6 +2049,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         Unsubscribe(previous);
         _context = null;
         TimelineRasterCacheSession.Clear();
+        foreach (WorkspaceViewModel workspace in Workspaces)
+            workspace.CancelBackgroundPresentationWork();
         Workspaces.Clear();
         _backNavigation.Clear();
         _forwardNavigation.Clear();
@@ -2101,6 +2104,8 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         _displayCurrentTick = next.Playback?.CurrentTick ?? 0;
         Subscribe(next);
         TimelineRasterCacheSession.Clear();
+        foreach (WorkspaceViewModel workspace in Workspaces)
+            workspace.CancelBackgroundPresentationWork();
         Workspaces.Clear();
         _backNavigation.Clear();
         _forwardNavigation.Clear();
@@ -2246,6 +2251,26 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
             }
         }
         return rebuilt;
+    }
+
+    /// <summary>
+    /// Starts an unmodified marquee replacement by committing the empty
+    /// formal selection before any potentially long out-of-core range query.
+    /// If that query is canceled by a lane/snapshot rebuild, later edits must
+    /// observe the empty revision rather than resurrecting its predecessor.
+    /// </summary>
+    public TimelineSelectionSnapshot BeginWorkspaceSelectionReplacement(
+        WorkspaceViewModel workspace)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        if (Project is null || !Workspaces.Contains(workspace))
+        {
+            throw new InvalidOperationException(
+                "The selection replacement target is not an open Project Workspace.");
+        }
+        workspace.Selection.Clear();
+        RefreshWorkspaceSelection(workspace);
+        return workspace.SelectionSnapshot;
     }
 
     private static bool IsEmpty(ProjectChangeSet changes) =>
@@ -2394,6 +2419,61 @@ public sealed class DesktopSessionController : ObservableObject, IAsyncDisposabl
         {
             RefreshProjectTree();
         }
+    }
+
+    public bool TryApplyMaterializedWorkspaceSelection(
+        WorkspaceViewModel workspace,
+        TimelineMaterializedSelection materialization)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        ArgumentNullException.ThrowIfNull(materialization);
+        if (!IsWorkspaceSelectionMaterializationCurrent(
+                workspace,
+                materialization.BaseSelectionRevision))
+        {
+            return false;
+        }
+        if (!materialization.IsUnchanged)
+        {
+            workspace.Selection.AdoptMaterialized(
+                materialization.Ids,
+                materialization.Primary,
+                materialization.Anchor);
+        }
+        WorkspaceSelectionRefreshCount++;
+        workspace.PublishMaterializedSelection(
+            materialization.Metrics,
+            materialization.MetricsAreComplete,
+            materialization.RenderIndex);
+        if (workspace is not DiagnosticsWorkspaceViewModel)
+        {
+            if (ReferenceEquals(workspace, ActiveWorkspace)) _diagnosticScopeWorkspace = workspace;
+            Workspaces.OfType<DiagnosticsWorkspaceViewModel>()
+                .FirstOrDefault()?.SetScope(_diagnosticScopeWorkspace);
+        }
+        return true;
+    }
+
+    public bool IsWorkspaceSelectionMaterializationCurrent(
+        WorkspaceViewModel workspace,
+        long baseSelectionRevision)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        bool contentRefreshPending;
+        lock (_modelRefreshGate)
+        {
+            contentRefreshPending = (_pendingModelRefreshKinds & ModelRefreshKind.Content) != 0;
+        }
+        return Project is not null
+            && Workspaces.Contains(workspace)
+            // An asynchronous selection query belongs to the immutable Timeline
+            // snapshot on which it started. A Project edit can commit synchronously while
+            // its WPF projection rebuild is still queued at Render priority.
+            // Reject publication in that window; otherwise an old marquee can
+            // repopulate a selection that the user already cleared just before
+            // drawing an Event/Parameter point.
+            && !contentRefreshPending
+            && baseSelectionRevision == workspace.Selection.Revision;
     }
 
     private string CaptureProjectTreeStructureStamp(MidoraProject project)

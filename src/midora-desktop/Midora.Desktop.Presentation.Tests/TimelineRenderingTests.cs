@@ -17,6 +17,62 @@ namespace Midora.Desktop.Presentation.Tests;
 public sealed class TimelineRenderingTests
 {
     [Fact]
+    public void UnloadingTimelineSurfaceClearsBusyMarqueeCursor()
+    {
+        RunOnSta(() =>
+        {
+            TimelineSurface surface = new() { Cursor = Cursors.Wait };
+
+            surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent));
+
+            Assert.Same(Cursors.Arrow, surface.Cursor);
+        });
+    }
+
+    [Fact]
+    public void BackgroundMarqueeCapturesDependencyPropertiesOnDispatcherThread()
+    {
+        RunOnSta(() =>
+        {
+            TimelineRenderItem item = Item(
+                1,
+                5,
+                10,
+                lane: 0,
+                kind: TimelineItemKind.DirectMidiNote);
+            TimelineSurface surface = new()
+            {
+                SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                ToolMode = TimelineToolMode.Select,
+                StartTick = 0,
+                TickSpan = 100,
+                LaneHeight = 18,
+                Snapshot = new TimelineRenderSnapshot(1, "marquee-thread", [item]),
+                SelectionSnapshot = new TimelineSelectionSnapshot(0, [], null)
+            };
+            surface.Measure(new Size(800, 260));
+            surface.Arrange(new Rect(0, 0, 800, 260));
+            TimelineMarqueeEventArgs? completed = null;
+            surface.MarqueeCompleted += (_, args) => completed = args;
+            MethodInfo complete = typeof(TimelineSurface).GetMethod(
+                "CompleteMarquee",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+            _ = complete.Invoke(surface, [new Point(48, 25), new Point(300, 40)]);
+            Stopwatch timeout = Stopwatch.StartNew();
+            while (completed is null && timeout.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                PumpDispatcher();
+                Thread.Sleep(1);
+            }
+
+            Assert.NotNull(completed);
+            Assert.Contains(item.Id, completed!.ItemIds);
+            Assert.NotSame(Cursors.Wait, surface.Cursor);
+        });
+    }
+
+    [Fact]
     public void PanKeepsRasterWorkButSelectionStartsANewPixelFamily()
     {
         RunOnSta(() =>
@@ -26,13 +82,19 @@ public sealed class TimelineRenderingTests
             FieldInfo? rasterField = type.GetField(
                 "_rasterRequestCancellation",
                 BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo? selectionRasterField = type.GetField(
+                "_selectionRasterRequestCancellation",
+                BindingFlags.Instance | BindingFlags.NonPublic);
             FieldInfo? gestureField = type.GetField(
                 "_pendingGestureCancellation",
                 BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.NotNull(rasterField);
+            Assert.NotNull(selectionRasterField);
             Assert.NotNull(gestureField);
             CancellationTokenSource raster = Assert.IsType<CancellationTokenSource>(
                 rasterField!.GetValue(surface));
+            CancellationTokenSource selectionRaster = Assert.IsType<CancellationTokenSource>(
+                selectionRasterField!.GetValue(surface));
             CancellationTokenSource gesture = Assert.IsType<CancellationTokenSource>(
                 gestureField!.GetValue(surface));
 
@@ -46,9 +108,11 @@ public sealed class TimelineRenderingTests
 
             surface.SelectionSnapshot = new TimelineSelectionSnapshot(1, [], null);
 
-            Assert.NotSame(raster, rasterField.GetValue(surface));
+            Assert.Same(raster, rasterField.GetValue(surface));
+            Assert.NotSame(selectionRaster, selectionRasterField.GetValue(surface));
             Assert.Same(gesture, gestureField.GetValue(surface));
-            Assert.True(raster.IsCancellationRequested);
+            Assert.False(raster.IsCancellationRequested);
+            Assert.True(selectionRaster.IsCancellationRequested);
             Assert.False(gesture.IsCancellationRequested);
         });
     }
@@ -3121,6 +3185,154 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
+    public void PianoSelectionTileUsesOnlyTheSelectionIndexInsteadOfDenseSourceContent()
+    {
+        TimelineRenderItem selected = Item(
+            1,
+            20,
+            30,
+            60,
+            kind: TimelineItemKind.DirectMidiNote);
+        ThrowingDenseRenderSource source = new();
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "piano:selection-index",
+            [],
+            itemSource: source);
+        TimelineSelectionSnapshot selection = new(
+            3,
+            [selected.Id],
+            selected.Id,
+            [selected]);
+
+        ulong fingerprint = TimelinePianoTileRasterizer.ComputeSelectionFingerprint(
+            snapshot,
+            selection,
+            devicePixelsPerTick: 1,
+            devicePixelsPerLane: 4,
+            tileX: 0,
+            tileY: 0);
+        TimelineRasterBuffer raster = TimelinePianoTileRasterizer.Rasterize(
+            snapshot,
+            devicePixelsPerTick: 1,
+            devicePixelsPerLane: 4,
+            tileX: 0,
+            tileY: 0,
+            Color.FromRgb(143, 36, 41),
+            Color.FromRgb(232, 179, 75),
+            selection,
+            selectionOnly: true,
+            outlineColor: Color.FromRgb(229, 61, 68));
+
+        Assert.NotEqual(0UL, fingerprint);
+        Assert.Equal(1, raster.CandidateCount);
+        Assert.Equal(0, source.QueryCalls);
+        Assert.Equal(0, source.RangeFingerprintCalls);
+    }
+
+    [Fact]
+    public void MoreThanFourThousandNinetySixSelectedNotesEventuallyDrawSelectionPixels()
+    {
+        RunOnSta(() =>
+        {
+            const int count = 4_097;
+            TimelineRasterCacheSession.Clear();
+            TimelineRenderItem[] notes = Enumerable.Range(0, count)
+                .Select(index => Item(
+                    index + 1,
+                    index,
+                    index + 2,
+                    60,
+                    kind: TimelineItemKind.DirectMidiNote))
+                .ToArray();
+            TimelineRenderSnapshot snapshot = new(
+                1,
+                "piano:large-formal-selection",
+                notes);
+            TimelineSelectionSnapshot baseSelection = new(
+                1,
+                [notes[0].Id],
+                notes[0].Id,
+                [notes[0]]);
+            TimelineMaterializedSelection materialized = snapshot.MaterializeRangeSelection(
+                0,
+                count + 2,
+                0,
+                128,
+                0,
+                1,
+                filterByValue: false,
+                baseSelection,
+                WorkspaceSelectionRangeMode.Add);
+            TimelineSelectionSnapshot formalSelection = new(
+                2,
+                materialized.Ids,
+                materialized.Primary,
+                materialized.Metrics,
+                materialized.MetricsAreComplete,
+                materialized.Anchor,
+                materialized.RenderIndex);
+            Assert.Equal(count, formalSelection.Count);
+            Assert.True(formalSelection.HasRenderIndex);
+            TimelineSurface baseline = CreateSurface(
+                snapshot,
+                new TimelineSelectionSnapshot(1, [], primary: null));
+            TimelineSurface selected = CreateSurface(snapshot, formalSelection);
+
+            try
+            {
+                byte[] unselectedPixels = RenderVisual(baseline);
+                byte[] selectedPixels = RenderVisual(selected);
+                Stopwatch timeout = Stopwatch.StartNew();
+                while (selectedPixels.SequenceEqual(unselectedPixels)
+                    && timeout.Elapsed < TimeSpan.FromSeconds(5))
+                {
+                    PumpDispatcher();
+                    Thread.Sleep(5);
+                    selectedPixels = RenderVisual(selected);
+                }
+
+                Assert.False(
+                    selectedPixels.SequenceEqual(unselectedPixels),
+                    "A formal selection above the asynchronous 4,096-item threshold "
+                    + "never produced visible selection pixels.");
+            }
+            finally
+            {
+                baseline.RaiseEvent(new RoutedEventArgs(
+                    FrameworkElement.UnloadedEvent,
+                    baseline));
+                selected.RaiseEvent(new RoutedEventArgs(
+                    FrameworkElement.UnloadedEvent,
+                    selected));
+                TimelineRasterCacheSession.Clear();
+            }
+
+            static TimelineSurface CreateSurface(
+                TimelineRenderSnapshot snapshot,
+                TimelineSelectionSnapshot selection)
+            {
+                TimelineSurface surface = new()
+                {
+                    SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                    Snapshot = snapshot,
+                    SelectionSnapshot = selection,
+                    RangeStartTick = 0,
+                    RangeEndTick = count + 2,
+                    StartTick = 0,
+                    TickSpan = count + 2,
+                    FirstLane = 48,
+                    LaneHeight = 8,
+                    GridVisible = false
+                };
+                surface.Measure(new Size(800, 260));
+                surface.Arrange(new Rect(0, 0, 800, 260));
+                return surface;
+            }
+        });
+    }
+
+    [Fact]
     public void SemanticMarqueeAnchorDoesNotMoveWhenTheViewportScrolls()
     {
         TimelineViewport scrolledViewport = new(
@@ -3746,7 +3958,7 @@ public sealed class TimelineRenderingTests
     }
 
     [Fact]
-    public void PianoEditKeepsTheLastCompleteNoteAndSelectionFrameUntilReplacementIsReady()
+    public void PianoEditKeepsTheLastCompleteNoteFrameWithoutReplayingStaleSelection()
     {
         RunOnSta(() =>
         {
@@ -3759,9 +3971,16 @@ public sealed class TimelineRenderingTests
                 40,
                 60,
                 kind: TimelineItemKind.DirectMidiNote);
+            TimelineRenderSnapshot initialSnapshot = new(
+                1,
+                "coherent-piano-frame",
+                [original]);
             TimelineSurface surface = CreateSurface(
-                new TimelineRenderSnapshot(1, "coherent-piano-frame", [original]),
+                initialSnapshot,
                 new TimelineSelectionSnapshot(1, [original.Id], primary: null, [original]));
+            TimelineSurface unselectedReference = CreateSurface(
+                initialSnapshot,
+                new TimelineSelectionSnapshot(1, [], primary: null));
             byte[] initial = [];
             Stopwatch ready = Stopwatch.StartNew();
             while (GetPrivateField(surface, "_committedPianoFrame") is null
@@ -3773,6 +3992,17 @@ public sealed class TimelineRenderingTests
             }
             Assert.NotNull(GetPrivateField(surface, "_committedPianoFrame"));
             initial = RenderVisual(surface);
+            Stopwatch referenceReady = Stopwatch.StartNew();
+            while (GetPrivateField(unselectedReference, "_committedPianoFrame") is null
+                && referenceReady.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                _ = RenderVisual(unselectedReference);
+                Thread.Sleep(2);
+                PumpDispatcher();
+            }
+            Assert.NotNull(GetPrivateField(unselectedReference, "_committedPianoFrame"));
+            byte[] unselected = RenderVisual(unselectedReference);
+            Assert.False(initial.SequenceEqual(unselected));
 
             TimelineRenderItem replacement = original with
             {
@@ -3799,7 +4029,7 @@ public sealed class TimelineRenderingTests
             {
                 byte[] pending = RenderVisual(surface);
                 Assert.True(fingerprintStarted.Wait(TimeSpan.FromSeconds(5)));
-                Assert.Equal(initial, pending);
+                Assert.Equal(unselected, pending);
 
                 releaseFingerprint.Set();
                 byte[] completed = pending;
@@ -3817,6 +4047,9 @@ public sealed class TimelineRenderingTests
             {
                 releaseFingerprint.Set();
                 surface.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, surface));
+                unselectedReference.RaiseEvent(new RoutedEventArgs(
+                    FrameworkElement.UnloadedEvent,
+                    unselectedReference));
                 TimelineRasterCacheSession.Clear();
             }
 
@@ -3840,6 +4073,109 @@ public sealed class TimelineRenderingTests
                 surface.Measure(new Size(800, 320));
                 surface.Arrange(new Rect(0, 0, 800, 320));
                 return surface;
+            }
+        });
+    }
+
+    [Fact]
+    public void ClearedPianoSelectionNeverReappearsFromTheCommittedAntiFlashFrame()
+    {
+        RunOnSta(() =>
+        {
+            TimelineRasterCacheSession.Clear();
+            using ManualResetEventSlim fingerprintStarted = new(false);
+            using ManualResetEventSlim releaseFingerprint = new(false);
+            TimelineRenderItem note = Item(
+                1,
+                20,
+                40,
+                60,
+                kind: TimelineItemKind.DirectMidiNote);
+            TimelineRenderSnapshot initialSnapshot = new(
+                1,
+                "cleared-selection-frame",
+                [note]);
+            TimelineSurface selectedSurface = CreateSurface(
+                initialSnapshot,
+                new TimelineSelectionSnapshot(1, [note.Id], primary: null, [note]));
+            TimelineSurface unselectedReference = CreateSurface(
+                initialSnapshot,
+                new TimelineSelectionSnapshot(2, [], primary: null));
+
+            try
+            {
+                WaitForCommittedFrame(selectedSurface);
+                WaitForCommittedFrame(unselectedReference);
+                byte[] selected = RenderVisual(selectedSurface);
+                byte[] unselected = RenderVisual(unselectedReference);
+                Assert.False(selected.SequenceEqual(unselected));
+
+                selectedSurface.Snapshot = new TimelineRenderSnapshot(
+                    2,
+                    "cleared-selection-frame",
+                    [],
+                    itemSource: new BlockingFingerprintRenderSource(
+                        note,
+                        fingerprintStarted,
+                        releaseFingerprint));
+                selectedSurface.SelectionSnapshot = new TimelineSelectionSnapshot(
+                    2,
+                    [],
+                    primary: null);
+
+                byte[] pending = RenderVisual(selectedSurface);
+                Assert.True(fingerprintStarted.Wait(TimeSpan.FromSeconds(5)));
+
+                Assert.Equal(unselected, pending);
+                Assert.False(
+                    selected.SequenceEqual(pending),
+                    "The committed anti-flash frame replayed a cleared selection overlay.");
+            }
+            finally
+            {
+                releaseFingerprint.Set();
+                selectedSurface.RaiseEvent(new RoutedEventArgs(
+                    FrameworkElement.UnloadedEvent,
+                    selectedSurface));
+                unselectedReference.RaiseEvent(new RoutedEventArgs(
+                    FrameworkElement.UnloadedEvent,
+                    unselectedReference));
+                TimelineRasterCacheSession.Clear();
+            }
+
+            static TimelineSurface CreateSurface(
+                TimelineRenderSnapshot snapshot,
+                TimelineSelectionSnapshot selection)
+            {
+                TimelineSurface surface = new()
+                {
+                    SurfaceMode = TimelineSurfaceMode.PianoRoll,
+                    Snapshot = snapshot,
+                    SelectionSnapshot = selection,
+                    RangeStartTick = 0,
+                    RangeEndTick = 200,
+                    StartTick = 0,
+                    TickSpan = 200,
+                    FirstLane = 48,
+                    LaneHeight = 8,
+                    GridVisible = false
+                };
+                surface.Measure(new Size(800, 320));
+                surface.Arrange(new Rect(0, 0, 800, 320));
+                return surface;
+            }
+
+            static void WaitForCommittedFrame(TimelineSurface surface)
+            {
+                Stopwatch ready = Stopwatch.StartNew();
+                while (GetPrivateField(surface, "_committedPianoFrame") is null
+                    && ready.Elapsed < TimeSpan.FromSeconds(5))
+                {
+                    _ = RenderVisual(surface);
+                    Thread.Sleep(2);
+                    PumpDispatcher();
+                }
+                Assert.NotNull(GetPrivateField(surface, "_committedPianoFrame"));
             }
         });
     }
@@ -4628,6 +4964,48 @@ public sealed class TimelineRenderingTests
         }
 
         public IEnumerable<TimelineRenderItem> EnumerateAll() => [];
+    }
+
+    private sealed class ThrowingDenseRenderSource : ITimelineRenderItemSource
+    {
+        public int QueryCalls { get; private set; }
+        public int RangeFingerprintCalls { get; private set; }
+        public long Count => 18_000_000;
+        public long MaximumEndTick => 1_000_000;
+        public ulong ContentFingerprint => 0x9817_2401UL;
+
+        public ulong GetRangeFingerprint(
+            long startTick,
+            long endTick,
+            int firstLane,
+            int lastLaneExclusive)
+        {
+            RangeFingerprintCalls++;
+            throw new InvalidOperationException(
+                "Selection-only rasterization must not fingerprint dense base content.");
+        }
+
+        public void QueryInto(
+            long startTick,
+            long endTick,
+            int firstLane,
+            int lastLaneExclusive,
+            List<TimelineRenderItem> destination)
+        {
+            QueryCalls++;
+            throw new InvalidOperationException(
+                "Selection-only rasterization must not query dense base content.");
+        }
+
+        public bool TryGetById(MidoraId id, out TimelineRenderItem item)
+        {
+            item = default;
+            return false;
+        }
+
+        public IEnumerable<TimelineRenderItem> EnumerateAll() =>
+            throw new InvalidOperationException(
+                "Selection-only rasterization must not enumerate dense base content.");
     }
 
     private sealed class ThreadCheckingFingerprintRenderSource(

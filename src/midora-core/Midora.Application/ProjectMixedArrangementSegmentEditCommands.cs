@@ -121,6 +121,8 @@ public static partial class ProjectDomainEditCommands
                     endDelta,
                     minimumLengthTicks));
             }
+            if (factories.Count == 1)
+                return factories[0](project).Prepare(project);
             return new SequentialProjectEditCommand(
                 "Adjust Arrangement Segment edges",
                 factories).Prepare(project);
@@ -150,6 +152,8 @@ public static partial class ProjectDomainEditCommands
                     selection.MidiIds));
             }
             if (finalFactory is not null) factories.Add(finalFactory);
+            if (factories.Count == 1)
+                return factories[0](project).Prepare(project);
             return new SequentialProjectEditCommand(name, factories).Prepare(project);
         });
 

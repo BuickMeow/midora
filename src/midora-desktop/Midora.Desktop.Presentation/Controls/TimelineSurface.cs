@@ -35,11 +35,17 @@ public sealed class TimelineItemEventArgs(
 }
 
 public sealed class TimelineMarqueeEventArgs(
-    IReadOnlyList<MidoraId> itemIds,
+    TimelineMaterializedSelection materialization,
     ModifierKeys modifiers) : RoutedEventArgs
 {
-    public IReadOnlyList<MidoraId> ItemIds { get; } = itemIds;
+    public TimelineMaterializedSelection Materialization { get; } = materialization;
+    public IReadOnlyCollection<MidoraId> ItemIds { get; } = materialization.Ids;
     public ModifierKeys Modifiers { get; } = modifiers;
+}
+
+public sealed class TimelineSelectionReplacementEventArgs : RoutedEventArgs
+{
+    public TimelineSelectionSnapshot? BaseSelection { get; set; }
 }
 
 public sealed class TimelineRulerEventArgs(long tick) : RoutedEventArgs
@@ -551,7 +557,6 @@ public sealed class TimelineSurface : Control
     private readonly List<TimelineRenderItem> _rulerItems = new(capacity: 64);
     private readonly List<TimelineRenderItem> _rulerQueryItems = new(capacity: 64);
     private readonly List<TimelineRenderItem> _hitItems = new(capacity: 16);
-    private readonly List<MidoraId> _marqueeIds = new(capacity: 128);
     private readonly List<TimelineGridLine> _gridLines = new(capacity: 256);
     private Brush? _penBorderBrush;
     private Brush? _penInfoBrush;
@@ -707,6 +712,7 @@ public sealed class TimelineSurface : Control
     private bool _segmentPreviewWarmupRetryScheduled;
     private CancellationTokenSource? _segmentPreviewWarmupPlanCancellation;
     private CancellationTokenSource _rasterRequestCancellation = new();
+    private CancellationTokenSource _selectionRasterRequestCancellation = new();
     private ExactRasterProjectionSignature? _exactRasterProjectionSignature;
     private CancellationTokenSource _exactPrefetchCancellation = new();
     private long _exactPrefetchGeneration;
@@ -715,6 +721,7 @@ public sealed class TimelineSurface : Control
     private long _rulerPrefetchGeneration;
     private ExactPrefetchSignature? _rulerPrefetchSignature;
     private bool _exactQueryPending;
+    private bool _marqueeQueryPending;
     private CancellationTokenSource _pendingGestureCancellation = new();
     private long _gestureToken;
     private bool _viewportPrefetchQueued;
@@ -794,6 +801,8 @@ public sealed class TimelineSurface : Control
         _exactPrefetchSignature = null;
         _rulerPrefetchSignature = null;
         _exactQueryPending = false;
+        _marqueeQueryPending = false;
+        Cursor = Cursors.Arrow;
         _rasterInvalidationQueued = false;
         _gestureToken = checked(_gestureToken + 1);
         _exactPrefetchGeneration = checked(_exactPrefetchGeneration + 1);
@@ -1072,6 +1081,7 @@ public sealed class TimelineSurface : Control
     public event EventHandler<TimelineItemEventArgs>? ItemInvoked;
     public event EventHandler<TimelinePointEventArgs>? BackgroundInvoked;
     public event EventHandler<TimelineItemEditEventArgs>? ItemEditCompleted;
+    public event EventHandler<TimelineSelectionReplacementEventArgs>? SelectionReplacementStarted;
     public event EventHandler<TimelineMarqueeEventArgs>? MarqueeCompleted;
     public event EventHandler<TimelineRulerEventArgs>? RulerClicked;
     public event EventHandler<TimelineTimeRangeEventArgs>? TimeRangeSelected;
@@ -1331,10 +1341,11 @@ public sealed class TimelineSurface : Control
         {
             surface.TryPromotePreparedDragPreviewSelection(
                 args.NewValue as TimelineSelectionSnapshot);
-            // Selection pixels are an immutable raster family. Leaving the
-            // previous family's visible requests in the bounded queue can
-            // delay the current selection behind obsolete work.
-            surface.RestartPendingRasterWork();
+            // Selection is an independent raster family. Cancel only layers
+            // whose pixels depend on it; invalidating PianoNotes here would
+            // force a dense source fingerprint/raster pass when the user
+            // merely selected a handful of objects.
+            surface.RestartPendingSelectionRasterWork();
         }
         // Repeated viewport changes are coalesced below so one physical input
         // frame cannot enqueue an unbounded chain of source-page prefetches.
@@ -1365,6 +1376,9 @@ public sealed class TimelineSurface : Control
         _rasterRequestCancellation.Cancel();
         _rasterRequestCancellation.Dispose();
         _rasterRequestCancellation = new();
+        _selectionRasterRequestCancellation.Cancel();
+        _selectionRasterRequestCancellation.Dispose();
+        _selectionRasterRequestCancellation = new();
         _requestedRasterKeys.Clear();
         _preparedTileFingerprints.Clear();
         _pendingTileFingerprints.Clear();
@@ -1379,6 +1393,7 @@ public sealed class TimelineSurface : Control
         _rulerPrefetchCancellation = new();
         _rulerPrefetchSignature = null;
         _exactQueryPending = false;
+        _marqueeQueryPending = false;
         _pendingGestureCancellation.Cancel();
         _pendingGestureCancellation.Dispose();
         _pendingGestureCancellation = new();
@@ -1425,6 +1440,29 @@ public sealed class TimelineSurface : Control
         _pendingTileFingerprints.Clear();
         _preparedTileFingerprintOrder.Clear();
     }
+
+    private void RestartPendingSelectionRasterWork()
+    {
+        _selectionRasterRequestCancellation.Cancel();
+        _selectionRasterRequestCancellation.Dispose();
+        _selectionRasterRequestCancellation = new();
+        _requestedRasterKeys.RemoveWhere(static key =>
+            IsSelectionDependentRasterLayer(key.Layer));
+        foreach (TileFingerprintRequestKey key in _preparedTileFingerprints.Keys
+            .Where(static key => IsSelectionDependentRasterLayer(key.Layer))
+            .ToArray())
+        {
+            _preparedTileFingerprints.Remove(key);
+        }
+        _pendingTileFingerprints.RemoveWhere(static key =>
+            IsSelectionDependentRasterLayer(key.Layer));
+    }
+
+    private static bool IsSelectionDependentRasterLayer(TimelineRasterLayer layer) =>
+        layer is TimelineRasterLayer.PianoSelection
+            or TimelineRasterLayer.VelocityBars
+            or TimelineRasterLayer.EventPoints
+            or TimelineRasterLayer.EventPointSelection;
 
     private void ScheduleVisibleExactPrefetch()
     {
@@ -1987,6 +2025,11 @@ public sealed class TimelineSurface : Control
         _pendingGestureCancellation.Cancel();
         _pendingGestureCancellation.Dispose();
         _pendingGestureCancellation = new();
+        if (_marqueeQueryPending)
+        {
+            _marqueeQueryPending = false;
+            Cursor = Cursors.Arrow;
+        }
         _gestureToken = checked(_gestureToken + 1);
         Point point = e.GetPosition(this);
         if (SurfaceMode == TimelineSurfaceMode.PianoRoll
@@ -3493,108 +3536,86 @@ public sealed class TimelineSurface : Control
         }
         TimelineRenderSnapshot snapshot = Snapshot;
         ModifierKeys modifiers = Keyboard.Modifiers;
+        WorkspaceSelectionRangeMode mode =
+            TimelineToolPolicy.ResolveMarqueeSelectionMode(modifiers);
+        TimelineSelectionSnapshot baseSelection;
+        if (mode == WorkspaceSelectionRangeMode.Replace)
+        {
+            TimelineSelectionReplacementEventArgs replacement = new();
+            SelectionReplacementStarted?.Invoke(this, replacement);
+            baseSelection = replacement.BaseSelection
+                ?? SelectionSnapshot
+                ?? new TimelineSelectionSnapshot(0, [], null);
+        }
+        else
+        {
+            baseSelection = SelectionSnapshot
+                ?? new TimelineSelectionSnapshot(0, [], null);
+        }
         long gestureToken = _gestureToken;
         TimelineToolMode tool = ToolMode;
-        _visibleItems.Clear();
-        if (!snapshot.TryQueryIntoCached(start, end, firstLane, lastLaneExclusive, _visibleItems))
-        {
-            CancellationToken cancellationToken = _pendingGestureCancellation.Token;
-            _exactQueryPending = true;
-            _ = Task.Run(
-                () => snapshot.PrefetchRange(
+        bool filterByValue = SurfaceMode is TimelineSurfaceMode.EventLanes
+            or TimelineSurfaceMode.Velocity;
+        Dispatcher dispatcher = Dispatcher;
+        CancellationToken cancellationToken = _pendingGestureCancellation.Token;
+        _marqueeQueryPending = true;
+        _ = Task.Run(
+            () => snapshot.MaterializeRangeSelection(
                     start,
                     end,
                     firstLane,
                     lastLaneExclusive,
+                    minimumNormalizedValue,
+                    maximumNormalizedValue,
+                    filterByValue,
+                    baseSelection,
+                    mode,
                     cancellationToken),
-                cancellationToken).ContinueWith(
-                    task =>
-                    {
-                        _ = Dispatcher.BeginInvoke(
-                            () =>
+            cancellationToken).ContinueWith(
+                task =>
+                {
+                    if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+                    _ = dispatcher.BeginInvoke(
+                        () =>
+                        {
+                            bool currentRequest = gestureToken == _gestureToken;
+                            if (currentRequest) _marqueeQueryPending = false;
+                            if (task.IsFaulted)
                             {
-                                if (task.IsFaulted)
-                                {
-                                    System.Diagnostics.Trace.TraceError(
-                                        $"Timeline marquee prefetch failed: {task.Exception}");
-                                    return;
-                                }
-                                if (task.IsCanceled
-                                    || cancellationToken.IsCancellationRequested
-                                    || gestureToken != _gestureToken
-                                    || !ReferenceEquals(Snapshot, snapshot)
-                                    || snapshot.SemanticRevision != Snapshot?.SemanticRevision
-                                    || !string.Equals(
-                                        snapshot.ProjectionKey,
-                                        Snapshot?.ProjectionKey,
-                                        StringComparison.Ordinal)
-                                    || ToolMode != tool)
-                                {
-                                    return;
-                                }
-                                _exactQueryPending = false;
-                                CompletePreparedMarquee(
-                                    snapshot,
-                                    start,
-                                    end,
-                                    firstLane,
-                                    lastLaneExclusive,
-                                    minimumNormalizedValue,
-                                    maximumNormalizedValue,
-                                    modifiers);
+                                System.Diagnostics.Trace.TraceError(
+                                    $"Timeline marquee materialization failed: {task.Exception}");
+                            }
+                            if (task.IsCanceled
+                                || task.IsFaulted
+                                || cancellationToken.IsCancellationRequested
+                                || !currentRequest
+                                || !ReferenceEquals(Snapshot, snapshot)
+                                || snapshot.SemanticRevision != Snapshot?.SemanticRevision
+                                || !string.Equals(
+                                    snapshot.ProjectionKey,
+                                    Snapshot?.ProjectionKey,
+                                    StringComparison.Ordinal)
+                                || ToolMode != tool)
+                            {
                                 RefreshHoverIntent();
-                            },
-                            DispatcherPriority.Render);
-                    },
-                    CancellationToken.None,
-                    TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
-            Cursor = Cursors.Wait;
-            return;
-        }
-        CompletePreparedMarquee(
-            snapshot,
-            start,
-            end,
-            firstLane,
-            lastLaneExclusive,
-            minimumNormalizedValue,
-            maximumNormalizedValue,
-            modifiers);
-    }
-
-    private void CompletePreparedMarquee(
-        TimelineRenderSnapshot snapshot,
-        long start,
-        long end,
-        int firstLane,
-        int lastLaneExclusive,
-        double minimumNormalizedValue,
-        double maximumNormalizedValue,
-        ModifierKeys modifiers)
-    {
-        _visibleItems.Clear();
-        if (!snapshot.TryQueryIntoCached(start, end, firstLane, lastLaneExclusive, _visibleItems))
-        {
-            // A page was evicted between prefetch and publication. Preserve the
-            // previous selection and require a fresh, revision-bound gesture.
-            _exactQueryPending = true;
-            return;
-        }
-        _marqueeIds.Clear();
-        foreach (TimelineRenderItem item in _visibleItems)
-        {
-            if ((item.State & TimelineItemState.HitTestDisabled) == 0
-                && (SurfaceMode != TimelineSurfaceMode.EventLanes
-                    || item.Value >= minimumNormalizedValue
-                        && item.Value <= maximumNormalizedValue))
-            {
-                _marqueeIds.Add(item.Id);
-            }
-        }
-        MarqueeCompleted?.Invoke(
-            this,
-            new TimelineMarqueeEventArgs(_marqueeIds.ToArray(), modifiers));
+                                return;
+                            }
+                            if (!task.Result.IsUnchanged
+                                || !baseSelection.MetricsAreComplete
+                                    && task.Result.MetricsAreComplete)
+                            {
+                                MarqueeCompleted?.Invoke(
+                                    this,
+                                    new TimelineMarqueeEventArgs(task.Result, modifiers));
+                            }
+                            RefreshHoverIntent();
+                        },
+                        DispatcherPriority.Render);
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        Cursor = Cursors.Wait;
     }
 
     private void DrawGrid(
@@ -4023,6 +4044,14 @@ public sealed class TimelineSurface : Control
                     {
                         continue;
                     }
+                    // Large selections prepare their tile fingerprints on a
+                    // background worker. Capture immutable coordinates for
+                    // both factories: closing over the for-loop variables
+                    // makes every deferred factory observe the coordinates
+                    // after the loops have advanced, which can incorrectly
+                    // classify every already-visible selection tile as empty.
+                    long requestTileX = tileX;
+                    long requestTileY = tileY;
                     TileFingerprintRequestKey fingerprintKey = new(
                         TimelineRasterLayer.PianoSelection,
                         snapshot.SemanticRevision,
@@ -4037,23 +4066,25 @@ public sealed class TimelineSurface : Control
                     if (!TryGetPreparedTileFingerprint(
                             fingerprintKey,
                             snapshot,
-                            () => TimelineContentFingerprint.Combine(
-                                snapshot.GetPianoTileContentFingerprint(
-                                    actualPixelsPerTickDevice,
-                                    actualPixelsPerLaneDevice,
-                                    tileX,
-                                    tileY),
-                                TimelinePianoTileRasterizer.ComputeSelectionFingerprint(
-                                    snapshot,
-                                    selection,
-                                    actualPixelsPerTickDevice,
-                                    actualPixelsPerLaneDevice,
-                                    tileX,
-                                    tileY)),
-                            visible && snapshot.CanComputeTileFingerprintSynchronously,
+                            () => TimelinePianoTileRasterizer.ComputeSelectionFingerprint(
+                                snapshot,
+                                selection,
+                                actualPixelsPerTickDevice,
+                                actualPixelsPerLaneDevice,
+                                requestTileX,
+                                requestTileY),
+                            visible && selection.Count <= 4096,
                             out ulong contentFingerprint))
                     {
                         if (visible) selectionFrameComplete = false;
+                        continue;
+                    }
+                    if (contentFingerprint == 0)
+                    {
+                        // The immutable selection index proves that this tile
+                        // contains no selected geometry. It is already a
+                        // complete transparent tile and needs neither a cache
+                        // entry nor a background raster request.
                         continue;
                     }
                     TimelineRasterCacheKey key = new(
@@ -4082,8 +4113,6 @@ public sealed class TimelineSurface : Control
                         continue;
                     }
                     if (visible) selectionFrameComplete = false;
-                    long requestTileX = tileX;
-                    long requestTileY = tileY;
                     RequestRaster(
                         key,
                         cancellationToken => TimelinePianoTileRasterizer.Rasterize(
@@ -4165,7 +4194,10 @@ public sealed class TimelineSurface : Control
             frameToDraw = new(
                 projection,
                 _pianoNoteTileDrawEntries.ToArray(),
-                _pianoSelectionTileDrawEntries.ToArray());
+                _pianoSelectionTileDrawEntries.ToArray(),
+                SelectionSnapshot is { Count: > 0 } completedSelection
+                    ? completedSelection.Revision
+                    : -1);
             _committedPianoFrame = frameToDraw;
         }
         else if (_committedPianoFrame is PianoCompositeRasterFrame committed
@@ -4175,7 +4207,18 @@ public sealed class TimelineSurface : Control
             // while the replacement pair is prepared.  The two layers are
             // committed together, so an edit can neither expose a blank tile
             // nor combine an old selection overlay with new note pixels.
-            frameToDraw = committed;
+            TimelineSelectionSnapshot? replacementSelection =
+                SelectionSnapshot is { Count: > 0 } selected
+                    ? selected
+                    : null;
+            frameToDraw = new(
+                projection,
+                committed.NoteTiles,
+                replacementSelection is not null
+                    && committed.SelectionRevision == replacementSelection.Revision
+                        ? committed.SelectionTiles
+                        : _pianoSelectionTileDrawEntries.ToArray(),
+                replacementSelection?.Revision ?? -1);
         }
         else
         {
@@ -4185,7 +4228,10 @@ public sealed class TimelineSurface : Control
             frameToDraw = new(
                 projection,
                 _pianoNoteTileDrawEntries.ToArray(),
-                _pianoSelectionTileDrawEntries.ToArray());
+                _pianoSelectionTileDrawEntries.ToArray(),
+                SelectionSnapshot is { Count: > 0 } partialSelection
+                    ? partialSelection.Revision
+                    : -1);
         }
 
         Rect contentBounds = new(
@@ -4205,7 +4251,15 @@ public sealed class TimelineSurface : Control
         DrawPianoTileEntries(
             context,
             viewport,
-            frameToDraw.SelectionTiles,
+            // Selection clearing is authoritative even while an old note frame
+            // is retained to avoid flashing. Replaying the committed selection
+            // pixels here would make a formally empty selection appear to come
+            // back after another workspace refresh. Array.Empty also keeps this
+            // render-time guard allocation-free.
+            SelectionSnapshot is { Count: > 0 } currentSelection
+                && frameToDraw.SelectionRevision == currentSelection.Revision
+                ? frameToDraw.SelectionTiles
+                : Array.Empty<PianoTileDrawEntry>(),
             currentPixelsPerTickDevice,
             currentPixelsPerLaneDevice,
             laneHeaderWidth,
@@ -4286,6 +4340,9 @@ public sealed class TimelineSurface : Control
         {
             return;
         }
+        CancellationToken cancellationToken = IsSelectionDependentRasterLayer(key.Layer)
+            ? _selectionRasterRequestCancellation.Token
+            : _rasterRequestCancellation.Token;
         bool accepted = TimelineRasterCache.Shared.Request(
             key,
             factory,
@@ -4300,7 +4357,7 @@ public sealed class TimelineSurface : Control
                     QueueRasterInvalidation();
                 }
             },
-            _rasterRequestCancellation.Token,
+            cancellationToken,
             priority);
         if (!accepted)
         {
@@ -5019,7 +5076,9 @@ public sealed class TimelineSurface : Control
         }
         if (_backgroundWorkSuspended || !_pendingTileFingerprints.Add(key)) return false;
 
-        CancellationToken cancellationToken = _rasterRequestCancellation.Token;
+        CancellationToken cancellationToken = IsSelectionDependentRasterLayer(key.Layer)
+            ? _selectionRasterRequestCancellation.Token
+            : _rasterRequestCancellation.Token;
         _ = Task.Run(async () =>
         {
             bool entered = false;
@@ -5427,6 +5486,7 @@ public sealed class TimelineSurface : Control
             {
                 bool visible = tileX >= firstTileX && tileX <= lastTileX;
                 if (ring == 1 && visible) continue;
+                long requestTileX = tileX;
                 TileFingerprintRequestKey fingerprintKey = new(
                     TimelineRasterLayer.VelocityBars,
                     snapshot.SemanticRevision,
@@ -5442,7 +5502,7 @@ public sealed class TimelineSurface : Control
                         fingerprintKey,
                         snapshot,
                         () => TimelineVelocityTileRasterizer.ComputeContentFingerprint(
-                            snapshot, selection, horizontalLod, tileX),
+                            snapshot, selection, horizontalLod, requestTileX),
                         visible && snapshot.CanComputeTileFingerprintSynchronously,
                         out ulong fingerprint))
                 {
@@ -5471,7 +5531,6 @@ public sealed class TimelineSurface : Control
                     continue;
                 }
                 if (visible) currentFrameComplete = false;
-                long requestTileX = tileX;
                 RequestRaster(
                     key,
                     () => TimelineVelocityTileRasterizer.Rasterize(
@@ -5702,6 +5761,8 @@ public sealed class TimelineSurface : Control
                     bool visible = tileX >= firstVisibleTileX && tileX <= lastVisibleTileX
                         && tileY >= firstVisibleTileY && tileY <= lastVisibleTileY;
                     if (ring == 1 && visible) continue;
+                    long requestTileX = tileX;
+                    long requestTileY = tileY;
                     TileFingerprintRequestKey fingerprintKey = new(
                         TimelineRasterLayer.EventPoints,
                         snapshot.SemanticRevision,
@@ -5721,8 +5782,8 @@ public sealed class TimelineSurface : Control
                                 selection,
                                 devicePixelsPerTick,
                                 devicePixelsPerValue,
-                                tileX,
-                                tileY,
+                                requestTileX,
+                                requestTileY,
                                 rasterDpiScaleX,
                                 rasterDpiScaleY),
                             visible && snapshot.CanComputeTileFingerprintSynchronously,
@@ -5753,8 +5814,6 @@ public sealed class TimelineSurface : Control
                         continue;
                     }
                     if (visible) currentFrameComplete = false;
-                    long requestTileX = tileX;
-                    long requestTileY = tileY;
                     RequestRaster(
                         key,
                         cancellationToken => TimelineEventPointTileRasterizer.Rasterize(
@@ -5847,6 +5906,8 @@ public sealed class TimelineSurface : Control
             {
                 bool visible = tileX >= firstVisibleTileX && tileX <= lastVisibleTileX
                     && tileY >= firstVisibleTileY && tileY <= lastVisibleTileY;
+                long requestTileX = tileX;
+                long requestTileY = tileY;
                 TileFingerprintRequestKey fingerprintKey = new(
                     TimelineRasterLayer.EventPointSelection,
                     snapshot.SemanticRevision,
@@ -5866,8 +5927,8 @@ public sealed class TimelineSurface : Control
                             selection,
                             devicePixelsPerTick,
                             devicePixelsPerValue,
-                            tileX,
-                            tileY,
+                            requestTileX,
+                            requestTileY,
                             dpiScaleX,
                             dpiScaleY,
                             selectionOnly: true),
@@ -5893,8 +5954,6 @@ public sealed class TimelineSurface : Control
                 {
                     continue;
                 }
-                long requestTileX = tileX;
-                long requestTileY = tileY;
                 RequestRaster(
                     key,
                     cancellationToken => TimelineEventPointTileRasterizer.Rasterize(
@@ -7077,6 +7136,8 @@ public sealed class TimelineSurface : Control
                     {
                         continue;
                     }
+                    long requestTileX = tileX;
+                    long requestTileY = tileY;
                     TileFingerprintRequestKey fingerprintKey = new(
                         TimelineRasterLayer.PianoDragPreview,
                         snapshot.SemanticRevision,
@@ -7095,8 +7156,8 @@ public sealed class TimelineSurface : Control
                                 snapshot.GetPianoTileContentFingerprint(
                                     devicePixelsPerTick,
                                     devicePixelsPerLane,
-                                    tileX,
-                                    tileY),
+                                    requestTileX,
+                                    requestTileY),
                                 selection.Revision),
                             visible && snapshot.CanComputeTileFingerprintSynchronously,
                             out ulong contentFingerprint))
@@ -7120,8 +7181,6 @@ public sealed class TimelineSurface : Control
                     {
                         continue;
                     }
-                    long requestTileX = tileX;
-                    long requestTileY = tileY;
                     RequestRaster(
                         key,
                         cancellationToken => TimelinePianoTileRasterizer.Rasterize(
@@ -7229,6 +7288,8 @@ public sealed class TimelineSurface : Control
         {
             for (long tileX = firstTileX; tileX <= lastTileX; tileX++)
             {
+                long requestTileX = tileX;
+                long requestTileY = tileY;
                 TileFingerprintRequestKey fingerprintKey = new(
                     TimelineRasterLayer.PianoDragPreview,
                     snapshot.SemanticRevision,
@@ -7247,8 +7308,8 @@ public sealed class TimelineSurface : Control
                             snapshot.GetPianoTileContentFingerprint(
                                 devicePixelsPerTick,
                                 devicePixelsPerLane,
-                                tileX,
-                                tileY),
+                                requestTileX,
+                                requestTileY),
                             selection.Revision),
                         snapshot.CanComputeTileFingerprintSynchronously,
                         out ulong contentFingerprint))
@@ -7276,8 +7337,6 @@ public sealed class TimelineSurface : Control
                     }
                     continue;
                 }
-                long requestTileX = tileX;
-                long requestTileY = tileY;
                 RequestRaster(
                     key,
                     cancellationToken => TimelinePianoTileRasterizer.Rasterize(
@@ -9364,6 +9423,11 @@ public sealed class TimelineSurface : Control
 
     private void UpdateHoverCursor(Point point, TimelineViewport viewport)
     {
+        if (_marqueeQueryPending)
+        {
+            Cursor = Cursors.Wait;
+            return;
+        }
         if (SurfaceMode == TimelineSurfaceMode.Velocity)
         {
             _velocitySelectionRestricted = SelectionSnapshot is { Count: > 0 };
@@ -9455,11 +9519,21 @@ public sealed class TimelineSurface : Control
 
     private void RefreshHoverIntent()
     {
+        if (_marqueeQueryPending)
+        {
+            Cursor = Cursors.Wait;
+            InvalidateVisual();
+            return;
+        }
         if (_dragItem is null
             && _hoverPoint is Point point
             && TryCreateViewport(out TimelineViewport viewport))
         {
             UpdateHoverCursor(point, viewport);
+        }
+        else if (_dragItem is null)
+        {
+            Cursor = Cursors.Arrow;
         }
         InvalidateVisual();
     }
@@ -10315,7 +10389,8 @@ public sealed class TimelineSurface : Control
     private sealed record PianoCompositeRasterFrame(
         PianoRasterProjectionSignature Projection,
         PianoTileDrawEntry[] NoteTiles,
-        PianoTileDrawEntry[] SelectionTiles);
+        PianoTileDrawEntry[] SelectionTiles,
+        long SelectionRevision);
 
     private readonly record struct VelocityTileDrawEntry(
         TimelineRasterCacheKey Key,

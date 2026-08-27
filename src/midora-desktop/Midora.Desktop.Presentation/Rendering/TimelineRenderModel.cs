@@ -531,6 +531,17 @@ public interface ITimelineRenderItemSource
         }
     }
 
+    void VisitByIds(
+        IReadOnlySet<MidoraId> ids,
+        Action<TimelineRenderItem> visitor)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(visitor);
+        List<TimelineRenderItem> values = [];
+        QueryByIds(ids, values);
+        foreach (TimelineRenderItem value in values) visitor(value);
+    }
+
     IEnumerable<TimelineRenderItem> EnumerateAll();
 
     void AccumulateOverviewDensity(long extent, Span<int> destination)
@@ -608,6 +619,255 @@ public readonly record struct TimelineSelectionMetrics(
     double MinimumValue,
     double MaximumValue,
     TimelineRenderItem EarliestItem);
+
+/// <summary>
+/// Exact immutable geometry for the current formal selection. Selection
+/// rendering must query this index instead of scanning every object in a dense
+/// source tile and testing ID membership. The index is deliberately detached
+/// from WPF bitmaps, so it remains valid at every zoom level.
+/// </summary>
+public sealed class TimelineSelectionRenderIndex
+{
+    private const ulong FingerprintOffset = 14695981039346656037UL;
+    private const ulong FingerprintPrime = 1099511628211UL;
+    private readonly List<SelectionRenderItem> _items;
+    private readonly long[] _maximumEndPrefix;
+
+    private TimelineSelectionRenderIndex(List<SelectionRenderItem> items)
+    {
+        items.Sort(static (left, right) =>
+        {
+            int value = left.StartTick.CompareTo(right.StartTick);
+            if (value != 0) return value;
+            value = left.EndTick.CompareTo(right.EndTick);
+            if (value != 0) return value;
+            value = left.Lane.CompareTo(right.Lane);
+            if (value != 0) return value;
+            value = left.Kind.CompareTo(right.Kind);
+            return value != 0 ? value : left.Id.CompareTo(right.Id);
+        });
+        _items = items;
+        _maximumEndPrefix = new long[items.Count];
+        long maximumEnd = 0;
+        for (int index = 0; index < items.Count; index++)
+        {
+            maximumEnd = Math.Max(maximumEnd, items[index].EndTick);
+            _maximumEndPrefix[index] = maximumEnd;
+        }
+    }
+
+    public int Count => _items.Count;
+
+    public static TimelineSelectionRenderIndex Create(
+        IEnumerable<TimelineRenderItem> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        Builder builder = CreateBuilder();
+        foreach (TimelineRenderItem item in items) builder.Add(item);
+        return builder.Build();
+    }
+
+    internal static Builder CreateBuilder() => new();
+
+    public static TimelineSelectionRenderIndex Merge(
+        IEnumerable<TimelineSelectionRenderIndex> indexes)
+    {
+        ArgumentNullException.ThrowIfNull(indexes);
+        TimelineSelectionRenderIndex[] materialized = indexes.ToArray();
+        int capacity = materialized.Sum(static index => index.Count);
+        List<SelectionRenderItem> items = new(capacity);
+        foreach (TimelineSelectionRenderIndex index in materialized)
+            items.AddRange(index._items);
+        return new(items);
+    }
+
+    internal static TimelineSelectionRenderIndex MergeForSelection(
+        IReadOnlySet<MidoraId> selectedIds,
+        params TimelineSelectionRenderIndex[] indexes)
+    {
+        ArgumentNullException.ThrowIfNull(selectedIds);
+        ArgumentNullException.ThrowIfNull(indexes);
+        int capacity = indexes.Sum(static index => index.Count);
+        List<SelectionRenderItem> items = new(capacity);
+        HashSet<(MidoraId Id, TimelineItemKind Kind)> emitted = [];
+        foreach (TimelineSelectionRenderIndex index in indexes)
+        {
+            foreach (SelectionRenderItem item in index._items)
+            {
+                if (selectedIds.Contains(item.Id)
+                    && emitted.Add((item.Id, item.Kind)))
+                {
+                    items.Add(item);
+                }
+            }
+        }
+        return new(items);
+    }
+
+    internal void VisitInto(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        Action<TimelineRenderItem> visitor)
+    {
+        ArgumentNullException.ThrowIfNull(visitor);
+        if (endTick <= startTick || lastLaneExclusive <= firstLane || _items.Count == 0)
+            return;
+        int first = FirstPrefixEndGreaterThan(startTick);
+        int lastExclusive = FirstStartAtOrAfter(endTick);
+        for (int index = first; index < lastExclusive; index++)
+        {
+            SelectionRenderItem item = _items[index];
+            if (item.EndTick > startTick
+                && item.Lane >= firstLane
+                && item.Lane < lastLaneExclusive)
+            {
+                visitor(item.ToRenderItem());
+            }
+        }
+    }
+
+    internal ulong GetRangeFingerprint(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive)
+    {
+        ulong hash = FingerprintOffset;
+        int count = 0;
+        int first = FirstPrefixEndGreaterThan(startTick);
+        int lastExclusive = FirstStartAtOrAfter(endTick);
+        for (int index = first; index < lastExclusive; index++)
+        {
+            SelectionRenderItem item = _items[index];
+            if (item.EndTick <= startTick
+                || item.Lane < firstLane
+                || item.Lane >= lastLaneExclusive)
+            {
+                continue;
+            }
+            count++;
+            Add(ref hash, unchecked((ulong)item.Id.Value));
+            Add(ref hash, unchecked((ulong)item.Kind));
+            Add(ref hash, unchecked((ulong)item.StartTick));
+            Add(ref hash, unchecked((ulong)item.EndTick));
+            Add(ref hash, unchecked((ulong)item.Lane));
+            Add(ref hash, unchecked((ulong)item.State));
+        }
+        return count == 0 ? 0 : hash;
+    }
+
+    private int FirstPrefixEndGreaterThan(long value)
+    {
+        int low = 0;
+        int high = _maximumEndPrefix.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (_maximumEndPrefix[middle] <= value) low = middle + 1;
+            else high = middle;
+        }
+        return low;
+    }
+
+    private int FirstStartAtOrAfter(long value)
+    {
+        int low = 0;
+        int high = _items.Count;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (_items[middle].StartTick < value) low = middle + 1;
+            else high = middle;
+        }
+        return low;
+    }
+
+    private static void Add(ref ulong hash, ulong value)
+    {
+        hash ^= value;
+        hash *= FingerprintPrime;
+    }
+
+    internal sealed class Builder
+    {
+        private List<SelectionRenderItem>? _items = [];
+
+        public void Add(TimelineRenderItem item)
+        {
+            List<SelectionRenderItem> items = _items
+                ?? throw new InvalidOperationException(
+                    "The selection render index builder has already been consumed.");
+            if (item.Kind is not (TimelineItemKind.LogicalNote
+                or TimelineItemKind.DirectMidiNote
+                or TimelineItemKind.TemplateNote))
+            {
+                return;
+            }
+            items.Add(new(
+                item.Id,
+                item.Kind,
+                item.StartTick,
+                item.EndTick,
+                item.Lane,
+                item.State));
+        }
+
+        public TimelineSelectionRenderIndex Build()
+        {
+            List<SelectionRenderItem> items = _items
+                ?? throw new InvalidOperationException(
+                    "The selection render index builder has already been consumed.");
+            _items = null;
+            return new(items);
+        }
+    }
+
+    private readonly record struct SelectionRenderItem(
+        MidoraId Id,
+        TimelineItemKind Kind,
+        long StartTick,
+        long EndTick,
+        int Lane,
+        TimelineItemState State)
+    {
+        public TimelineRenderItem ToRenderItem() => new(
+            Id,
+            Kind,
+            StartTick,
+            EndTick,
+            Lane,
+            0,
+            0,
+            State);
+    }
+}
+
+/// <summary>
+/// Immutable result of an exact background selection query.  The ID set is
+/// already in the representation used by <see cref="WorkspaceSelection"/>, so
+/// Dispatcher publication never has to copy a million-object selection.  The
+/// metrics are accumulated while source pages are streamed and therefore do
+/// not require a second ID-based source scan.
+/// </summary>
+public sealed record TimelineMaterializedSelection(
+    long BaseSelectionRevision,
+    ImmutableHashSet<MidoraId> Ids,
+    MidoraId? Primary,
+    MidoraId? Anchor,
+    IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> Metrics,
+    bool MetricsAreComplete,
+    bool IsUnchanged,
+    TimelineSelectionRenderIndex? RenderIndex = null)
+{
+    public bool IsCurrent(long currentSelectionRevision) =>
+        BaseSelectionRevision == currentSelectionRevision;
+}
+
+public sealed record TimelineSelectionPresentationMaterialization(
+    IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> Metrics,
+    TimelineSelectionRenderIndex RenderIndex);
 
 /// <summary>
 /// Supplies the complete, bounded-cost horizontal overview for an editor.
@@ -720,18 +980,23 @@ public sealed class TimelineSelectionSnapshot
 {
     private readonly ImmutableHashSet<MidoraId> _ids;
     private readonly Dictionary<TimelineItemKind, TimelineSelectionMetrics> _metrics;
+    private readonly TimelineSelectionRenderIndex? _renderIndex;
 
     public TimelineSelectionSnapshot(
         long revision,
         IEnumerable<MidoraId> ids,
         MidoraId? primary,
-        IEnumerable<TimelineRenderItem>? resolvedItems = null)
+        IEnumerable<TimelineRenderItem>? resolvedItems = null,
+        MidoraId? anchor = null)
         : this(
             revision,
             ids as ImmutableHashSet<MidoraId> ?? ids.ToImmutableHashSet(),
             primary,
+            anchor ?? primary,
             resolvedItems,
             metrics: null,
+            metricsAreComplete: resolvedItems is not null,
+            renderIndex: null,
             trustIds: false)
     {
     }
@@ -740,8 +1005,11 @@ public sealed class TimelineSelectionSnapshot
         long revision,
         ImmutableHashSet<MidoraId> ids,
         MidoraId? primary,
+        MidoraId? anchor,
         IEnumerable<TimelineRenderItem>? resolvedItems,
         IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>? metrics,
+        bool metricsAreComplete,
+        TimelineSelectionRenderIndex? renderIndex,
         bool trustIds)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(revision);
@@ -755,22 +1023,44 @@ public sealed class TimelineSelectionSnapshot
         {
             throw new ArgumentException("Primary selection must belong to the selection set.", nameof(primary));
         }
+        if (anchor is MidoraId anchorId && !_ids.Contains(anchorId))
+        {
+            throw new ArgumentException("Selection anchor must belong to the selection set.", nameof(anchor));
+        }
         Revision = revision;
         Primary = primary;
-        _metrics = metrics is null ? BuildMetrics(resolvedItems) : new(metrics);
+        Anchor = anchor ?? primary;
+        TimelineRenderItem[]? materializedItems = resolvedItems switch
+        {
+            null => null,
+            TimelineRenderItem[] array => array,
+            _ => resolvedItems.ToArray()
+        };
+        _metrics = metrics is null ? BuildMetrics(materializedItems) : new(metrics);
+        _renderIndex = renderIndex ?? (materializedItems is null
+            ? null
+            : TimelineSelectionRenderIndex.Create(
+                materializedItems.Where(item => _ids.Contains(item.Id))));
+        MetricsAreComplete = _ids.Count == 0 || metricsAreComplete;
     }
 
     public TimelineSelectionSnapshot(
         long revision,
         IEnumerable<MidoraId> ids,
         MidoraId? primary,
-        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> metrics)
+        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> metrics,
+        bool metricsAreComplete = true,
+        MidoraId? anchor = null,
+        TimelineSelectionRenderIndex? renderIndex = null)
         : this(
             revision,
             ids as ImmutableHashSet<MidoraId> ?? ids.ToImmutableHashSet(),
             primary,
+            anchor ?? primary,
             resolvedItems: null,
             metrics,
+            metricsAreComplete,
+            renderIndex,
             trustIds: false)
     {
     }
@@ -780,13 +1070,27 @@ public sealed class TimelineSelectionSnapshot
         ImmutableHashSet<MidoraId> ids,
         MidoraId? primary,
         IEnumerable<TimelineRenderItem>? resolvedItems = null,
-        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>? metrics = null) =>
-        new(revision, ids, primary, resolvedItems, metrics, trustIds: true);
+        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>? metrics = null,
+        bool metricsAreComplete = false,
+        MidoraId? anchor = null,
+        TimelineSelectionRenderIndex? renderIndex = null) =>
+        new(
+            revision,
+            ids,
+            primary,
+            anchor ?? primary,
+            resolvedItems,
+            metrics,
+            metricsAreComplete || resolvedItems is not null,
+            renderIndex,
+            trustIds: true);
 
     public static TimelineSelectionSnapshot FromWorkspaceSelection(
         WorkspaceSelection selection,
         IEnumerable<TimelineRenderItem>? resolvedItems = null,
-        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>? metrics = null)
+        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>? metrics = null,
+        bool metricsAreComplete = false,
+        TimelineSelectionRenderIndex? renderIndex = null)
     {
         ArgumentNullException.ThrowIfNull(selection);
         return FromTrustedIds(
@@ -794,17 +1098,57 @@ public sealed class TimelineSelectionSnapshot
             selection.SharedIds,
             selection.Primary,
             resolvedItems,
-            metrics);
+            metrics,
+            metricsAreComplete,
+            selection.Anchor,
+            renderIndex);
     }
 
     public long Revision { get; }
     public MidoraId? Primary { get; }
+    public MidoraId? Anchor { get; }
+    public bool MetricsAreComplete { get; }
+    public bool HasRenderIndex => _renderIndex is not null;
     public int Count => _ids.Count;
     public IEnumerable<MidoraId> Ids => _ids;
     public IReadOnlySet<MidoraId> IdSet => _ids;
     public bool Contains(MidoraId id) => _ids.Contains(id);
 
     internal ImmutableHashSet<MidoraId> SharedIds => _ids;
+    internal IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> Metrics => _metrics;
+    internal TimelineSelectionRenderIndex? RenderIndex => _renderIndex;
+
+    internal void VisitRenderItems(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        Action<TimelineRenderItem> visitor) =>
+        _renderIndex?.VisitInto(
+            startTick,
+            endTick,
+            firstLane,
+            lastLaneExclusive,
+            visitor);
+
+    internal ulong GetRangeContentFingerprint(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive)
+    {
+        if (_renderIndex is null) return 0;
+        ulong rangeFingerprint = _renderIndex.GetRangeFingerprint(
+            startTick,
+            endTick,
+            firstLane,
+            lastLaneExclusive);
+        return rangeFingerprint == 0
+            ? 0
+            : TimelineContentFingerprint.Combine(
+                unchecked((ulong)Revision),
+                rangeFingerprint);
+    }
 
     public bool TryGetMetrics(
         TimelineItemKind kind,
@@ -840,18 +1184,39 @@ public sealed class TimelineSelectionSnapshot
         foreach (TimelineRenderItem item in resolvedItems)
         {
             if (!_ids.Contains(item.Id)) continue;
+            Include(item);
+            if (item.Kind is TimelineItemKind.LogicalNote
+                or TimelineItemKind.DirectMidiNote
+                or TimelineItemKind.TemplateNote)
+            {
+                Include(new(
+                    item.Id,
+                    TimelineItemKind.Velocity,
+                    item.StartTick,
+                    item.StartTick == long.MaxValue ? long.MaxValue : item.StartTick + 1,
+                    0,
+                    item.Value / 127d,
+                    127 - item.Lane,
+                    item.State));
+            }
+        }
+        return result;
+
+        void Include(TimelineRenderItem item)
+        {
+            TimelineSelectionMetrics value = new(
+                1,
+                item.StartTick,
+                item.EndTick,
+                item.Lane,
+                item.Lane,
+                item.Value,
+                item.Value,
+                item);
             if (!result.TryGetValue(item.Kind, out TimelineSelectionMetrics current))
             {
-                result.Add(item.Kind, new(
-                    1,
-                    item.StartTick,
-                    item.EndTick,
-                    item.Lane,
-                    item.Lane,
-                    item.Value,
-                    item.Value,
-                    item));
-                continue;
+                result[item.Kind] = value;
+                return;
             }
             TimelineRenderItem earliest = item.StartTick < current.EarliestItem.StartTick
                 || item.StartTick == current.EarliestItem.StartTick
@@ -868,7 +1233,6 @@ public sealed class TimelineSelectionSnapshot
                 Math.Max(current.MaximumValue, item.Value),
                 earliest);
         }
-        return result;
     }
 }
 
@@ -1235,6 +1599,296 @@ public sealed class TimelineRenderSnapshot
             visitor);
     }
 
+    /// <summary>
+    /// Builds an exact marquee selection by streaming source pages on the
+    /// caller's background thread.  It intentionally does not use the decoded
+    /// cache-only query: an arbitrarily large range must not require every page
+    /// to fit in the bounded LRU at once.
+    /// </summary>
+    public TimelineMaterializedSelection MaterializeRangeSelection(
+        long startTick,
+        long endTick,
+        int firstLane,
+        int lastLaneExclusive,
+        double minimumNormalizedValue,
+        double maximumNormalizedValue,
+        bool filterByValue,
+        TimelineSelectionSnapshot baseSelection,
+        WorkspaceSelectionRangeMode mode,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(baseSelection);
+        if (startTick < 0 || endTick <= startTick
+            || firstLane < 0 || lastLaneExclusive <= firstLane)
+        {
+            throw new ArgumentOutOfRangeException(nameof(endTick));
+        }
+        if (!double.IsFinite(minimumNormalizedValue)
+            || !double.IsFinite(maximumNormalizedValue)
+            || maximumNormalizedValue < minimumNormalizedValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maximumNormalizedValue));
+        }
+
+        ImmutableHashSet<MidoraId>.Builder rangeBuilder =
+            ImmutableHashSet.CreateBuilder<MidoraId>();
+        TimelineSelectionRenderIndex.Builder rangeRenderIndex =
+            TimelineSelectionRenderIndex.CreateBuilder();
+        SelectionMetricsAccumulator rangeMetrics = new();
+        SelectionMetricsAccumulator newlyAddedMetrics = new();
+        MidoraId? first = null;
+        int visited = 0;
+        VisitInto(startTick, endTick, firstLane, lastLaneExclusive, item =>
+        {
+            if ((visited++ & 0xfff) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+            if ((item.State & TimelineItemState.HitTestDisabled) != 0
+                || filterByValue
+                    && (item.Value < minimumNormalizedValue
+                        || item.Value > maximumNormalizedValue)
+                || !rangeBuilder.Add(item.Id))
+            {
+                return;
+            }
+            first ??= item.Id;
+            rangeRenderIndex.Add(item);
+            rangeMetrics.IncludeWithAliases(item);
+            if (!baseSelection.Contains(item.Id))
+                newlyAddedMetrics.IncludeWithAliases(item);
+        });
+        cancellationToken.ThrowIfCancellationRequested();
+
+        ImmutableHashSet<MidoraId> range = rangeBuilder.ToImmutable();
+        ImmutableHashSet<MidoraId> result = mode switch
+        {
+            WorkspaceSelectionRangeMode.Replace => range,
+            WorkspaceSelectionRangeMode.Add => baseSelection.SharedIds.Union(range),
+            WorkspaceSelectionRangeMode.Remove => baseSelection.SharedIds.Except(range),
+            WorkspaceSelectionRangeMode.Toggle => baseSelection.SharedIds.SymmetricExcept(range),
+            _ => throw new ArgumentOutOfRangeException(nameof(mode))
+        };
+        MidoraId? primary = mode == WorkspaceSelectionRangeMode.Replace
+            ? first
+            : baseSelection.Primary is MidoraId currentPrimary && result.Contains(currentPrimary)
+                ? currentPrimary
+                : result.Count == 0 ? null : result.Min();
+        MidoraId? anchor = mode == WorkspaceSelectionRangeMode.Replace
+            ? primary
+            : baseSelection.Anchor is MidoraId currentAnchor && result.Contains(currentAnchor)
+                ? currentAnchor
+                : primary;
+
+        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> metrics;
+        bool metricsAreComplete;
+        switch (mode)
+        {
+            case WorkspaceSelectionRangeMode.Replace:
+                metrics = rangeMetrics.ToDictionary();
+                // Velocity bars share Note identities but do not encode which
+                // formal Note projection owns those IDs. Publish immediately,
+                // then let the Workspace complete the corresponding Note
+                // metrics from its immutable snapshots.
+                metricsAreComplete = range.Count == 0
+                    || !rangeMetrics.ContainsOriginalVelocity;
+                break;
+            case WorkspaceSelectionRangeMode.Add
+                when baseSelection.MetricsAreComplete
+                    && !newlyAddedMetrics.ContainsOriginalVelocity:
+                metrics = MergeSelectionMetrics(
+                    baseSelection.Metrics,
+                    newlyAddedMetrics.ToDictionary());
+                metricsAreComplete = true;
+                break;
+            case WorkspaceSelectionRangeMode.Remove:
+            case WorkspaceSelectionRangeMode.Toggle:
+                metrics = RemoveChangedProjectionMetrics(
+                    baseSelection,
+                    rangeMetrics.Kinds);
+                metricsAreComplete = result.Count == 0;
+                break;
+            default:
+                metrics = MergeSelectionMetrics(
+                    baseSelection.Metrics,
+                    newlyAddedMetrics.ToDictionary());
+                metricsAreComplete = false;
+                break;
+        }
+
+        bool unchanged = baseSelection.Count == result.Count
+            && baseSelection.SharedIds.SetEquals(result)
+            && baseSelection.Primary == primary
+            && baseSelection.Anchor == anchor;
+        TimelineSelectionRenderIndex rangeIndex = rangeRenderIndex.Build();
+        TimelineSelectionRenderIndex? renderIndex = mode switch
+        {
+            WorkspaceSelectionRangeMode.Replace => rangeIndex,
+            WorkspaceSelectionRangeMode.Add or WorkspaceSelectionRangeMode.Remove
+                or WorkspaceSelectionRangeMode.Toggle
+                when baseSelection.RenderIndex is TimelineSelectionRenderIndex baseIndex =>
+                    TimelineSelectionRenderIndex.MergeForSelection(
+                        result,
+                        baseIndex,
+                        rangeIndex),
+            WorkspaceSelectionRangeMode.Add or WorkspaceSelectionRangeMode.Toggle
+                when baseSelection.Count == 0 => rangeIndex,
+            _ => null
+        };
+        return new(
+            baseSelection.Revision,
+            result,
+            primary,
+            anchor,
+            metrics,
+            metricsAreComplete,
+            unchanged,
+            renderIndex);
+    }
+
+    private static IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>
+        RemoveChangedProjectionMetrics(
+            TimelineSelectionSnapshot baseSelection,
+            IReadOnlyCollection<TimelineItemKind> changedKinds)
+    {
+        if (changedKinds.Count == 0)
+            return baseSelection.Metrics;
+
+        HashSet<TimelineItemKind> replacedKinds = [.. changedKinds];
+        if (replacedKinds.Any(IsPianoNoteKind))
+            replacedKinds.Add(TimelineItemKind.Velocity);
+        if (replacedKinds.Contains(TimelineItemKind.Velocity))
+        {
+            replacedKinds.Add(TimelineItemKind.LogicalNote);
+            replacedKinds.Add(TimelineItemKind.DirectMidiNote);
+            replacedKinds.Add(TimelineItemKind.TemplateNote);
+        }
+        return baseSelection.Metrics
+            .Where(pair => !replacedKinds.Contains(pair.Key))
+            .ToDictionary();
+    }
+
+    /// <summary>
+    /// Computes compact metrics for an already published selection without
+    /// resolving IDs or retaining per-item presentation objects.  This method
+    /// is intended for cancellable background completion of Remove/Toggle and
+    /// other selections whose aggregate cannot be updated algebraically.
+    /// </summary>
+    public IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>
+        AccumulateSelectionMetrics(
+            IReadOnlySet<MidoraId> selectedIds,
+            CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(selectedIds);
+        SelectionMetricsAccumulator accumulator = new();
+        int visited = 0;
+        foreach (TimelineRenderItem item in EnumerateAllItems())
+        {
+            if ((visited++ & 0xfff) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+            if ((item.State & TimelineItemState.HitTestDisabled) == 0
+                && selectedIds.Contains(item.Id))
+            {
+                accumulator.Include(item);
+            }
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return accumulator.ToDictionary();
+    }
+
+    public static IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics>
+        MergeSelectionMetrics(
+            IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> left,
+            IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> right)
+    {
+        Dictionary<TimelineItemKind, TimelineSelectionMetrics> result = new(left);
+        foreach ((TimelineItemKind kind, TimelineSelectionMetrics value) in right)
+        {
+            result[kind] = result.TryGetValue(kind, out TimelineSelectionMetrics existing)
+                ? SelectionMetricsAccumulator.Merge(existing, value)
+                : value;
+        }
+        return result;
+    }
+
+    private static bool IsPianoNoteKind(TimelineItemKind kind) => kind is
+        TimelineItemKind.LogicalNote
+        or TimelineItemKind.DirectMidiNote
+        or TimelineItemKind.TemplateNote;
+
+    private sealed class SelectionMetricsAccumulator
+    {
+        private readonly Dictionary<TimelineItemKind, TimelineSelectionMetrics> _values = [];
+
+        public IReadOnlyCollection<TimelineItemKind> Kinds => _values.Keys;
+        public bool ContainsOriginalVelocity { get; private set; }
+
+        public void IncludeWithAliases(TimelineRenderItem item)
+        {
+            ContainsOriginalVelocity |= item.Kind == TimelineItemKind.Velocity;
+            Include(item);
+            if (!IsPianoNoteKind(item.Kind)) return;
+            long velocityEnd = item.StartTick == long.MaxValue
+                ? long.MaxValue
+                : item.StartTick + 1;
+            Include(new(
+                item.Id,
+                TimelineItemKind.Velocity,
+                item.StartTick,
+                velocityEnd,
+                0,
+                item.Value / 127d,
+                127 - item.Lane,
+                item.State));
+        }
+
+        public void Include(TimelineRenderItem item)
+        {
+            _values[item.Kind] = _values.TryGetValue(
+                    item.Kind,
+                    out TimelineSelectionMetrics current)
+                ? Merge(current, new(
+                    1,
+                    item.StartTick,
+                    item.EndTick,
+                    item.Lane,
+                    item.Lane,
+                    item.Value,
+                    item.Value,
+                    item))
+                : new(
+                    1,
+                    item.StartTick,
+                    item.EndTick,
+                    item.Lane,
+                    item.Lane,
+                    item.Value,
+                    item.Value,
+                    item);
+        }
+
+        public IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> ToDictionary() =>
+            new Dictionary<TimelineItemKind, TimelineSelectionMetrics>(_values);
+
+        public static TimelineSelectionMetrics Merge(
+            TimelineSelectionMetrics left,
+            TimelineSelectionMetrics right)
+        {
+            TimelineRenderItem earliest = right.EarliestItem.StartTick < left.EarliestItem.StartTick
+                || right.EarliestItem.StartTick == left.EarliestItem.StartTick
+                && right.EarliestItem.Id.CompareTo(left.EarliestItem.Id) < 0
+                    ? right.EarliestItem
+                    : left.EarliestItem;
+            return new(
+                checked(left.Count + right.Count),
+                Math.Min(left.MinimumStartTick, right.MinimumStartTick),
+                Math.Max(left.MaximumEndTick, right.MaximumEndTick),
+                Math.Min(left.MinimumLane, right.MinimumLane),
+                Math.Max(left.MaximumLane, right.MaximumLane),
+                Math.Min(left.MinimumValue, right.MinimumValue),
+                Math.Max(left.MaximumValue, right.MaximumValue),
+                earliest);
+        }
+    }
+
     internal bool HasExternalItemSource => _itemSource is not null;
     internal bool CanComputeTileFingerprintSynchronously =>
         _itemSource is null or INonBlockingTimelineFingerprintSource;
@@ -1470,6 +2124,51 @@ public sealed class TimelineRenderSnapshot
         }
         if (remaining is { Count: > 0 })
             _itemSource?.QueryByIds(remaining, destination);
+    }
+
+    public void VisitByIds(
+        IReadOnlySet<MidoraId> ids,
+        Action<TimelineRenderItem> visitor)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(visitor);
+        HashSet<MidoraId>? remaining = null;
+        foreach (MidoraId id in ids)
+        {
+            if (ItemsById.TryGetValue(id, out TimelineRenderItem item))
+                visitor(item);
+            else
+                (remaining ??= []).Add(id);
+        }
+        if (remaining is { Count: > 0 })
+            _itemSource?.VisitByIds(remaining, visitor);
+    }
+
+    public TimelineSelectionPresentationMaterialization MaterializeSelectionPresentation(
+        IReadOnlySet<MidoraId> selectedIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(selectedIds);
+        SelectionMetricsAccumulator metrics = new();
+        TimelineSelectionRenderIndex.Builder renderIndex =
+            TimelineSelectionRenderIndex.CreateBuilder();
+        HashSet<(MidoraId Id, TimelineItemKind Kind)> emitted = [];
+        int visited = 0;
+        VisitByIds(selectedIds, item =>
+        {
+            if ((visited++ & 0xfff) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+            if ((item.State & TimelineItemState.HitTestDisabled) != 0
+                || !selectedIds.Contains(item.Id)
+                || !emitted.Add((item.Id, item.Kind)))
+            {
+                return;
+            }
+            renderIndex.Add(item);
+            metrics.IncludeWithAliases(item);
+        });
+        cancellationToken.ThrowIfCancellationRequested();
+        return new(metrics.ToDictionary(), renderIndex.Build());
     }
 
     public bool TryQueryByIdsCached(

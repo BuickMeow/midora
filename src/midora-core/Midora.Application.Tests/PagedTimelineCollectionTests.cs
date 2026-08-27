@@ -1,9 +1,142 @@
+using System.Collections.Immutable;
 using Midora.Domain;
 
 namespace Midora.Application.Tests;
 
 public sealed class PagedTimelineCollectionTests
 {
+    [Fact]
+    public void SmallIdResolutionNeverEnumeratesTheLargeSourceExclusionSet()
+    {
+        DirectMidiNoteValue retained = new(
+            new MidoraId(20_001),
+            10,
+            4,
+            60,
+            100,
+            0,
+            0,
+            1);
+        SingleNoteSource source = new(retained);
+        CountingReadOnlySet exclusions = new(Enumerable.Range(1, 10_000)
+            .Select(static value => new MidoraId(value)));
+        DirectMidiNoteQuerySnapshot snapshot = new(
+            source,
+            clearSource: false,
+            exclusions,
+            ImmutableDictionary<MidoraId, DirectMidiNoteValue>.Empty,
+            DirectMidiNoteOverlayIndex.Empty,
+            new PureMidiSourceIdResolutionCache<DirectMidiNoteSourceMatch>(
+                static match => match.Value.Id,
+                static match => match.Index),
+            count: 1,
+            generation: 1);
+        exclusions.ResetCounters();
+
+        DirectMidiNoteValue[] result = snapshot.ResolveByIds(
+            new HashSet<MidoraId> { new(5), retained.Id }).ToArray();
+
+        Assert.Equal([retained.Id], result.Select(static value => value.Id));
+        Assert.Equal(0, exclusions.EnumerationCount);
+        Assert.Equal(2, exclusions.ContainsCount);
+    }
+
+    [Fact]
+    public void SourceExclusionsUseAnExactSortedIdRangeIndex()
+    {
+        ImmutableDictionary<MidoraId, int>.Builder replacements =
+            ImmutableDictionary.CreateBuilder<MidoraId, int>();
+        for (int value = 20_000; value >= 10_000; value--)
+            replacements.Add(new MidoraId(value), value);
+        PureMidiSourceExclusionSet<int> exclusions = new(
+            ImmutableHashSet.Create(new MidoraId(5), new MidoraId(30_000)),
+            replacements.ToImmutable());
+
+        Assert.False(exclusions.MayContain(new MidoraId(6), new MidoraId(9_999)));
+        Assert.True(exclusions.MayContain(new MidoraId(9_999), new MidoraId(10_000)));
+        Assert.True(exclusions.MayContain(new MidoraId(19_999), new MidoraId(20_001)));
+        Assert.False(exclusions.MayContain(new MidoraId(20_001), new MidoraId(29_999)));
+        Assert.True(exclusions.MayContain(new MidoraId(30_000), new MidoraId(30_000)));
+    }
+
+    [Fact]
+    public void DirectMidiOverlaySpatialIndexKeepsKeyLocalFingerprintAndStartQueriesExact()
+    {
+        DirectMidiNoteValue[] values = Enumerable.Range(0, 8_192)
+            .Select(index => new DirectMidiNoteValue(
+                new MidoraId(index + 1),
+                index % 256,
+                4 + index % 13,
+                index % 128,
+                1 + index % 127,
+                0,
+                index * 2L,
+                index * 2L + 1))
+            .ToArray();
+        DirectMidiNoteOverlayIndex index = DirectMidiNoteOverlayIndex.Create(values);
+        const long startTick = 80;
+        const long endTick = 144;
+        const int minimumKey = 48;
+        const int maximumKey = 63;
+        DirectMidiNoteValue[] expected = values.Where(value =>
+                value.StartTick < endTick
+                && value.StartTick + value.LengthTicks > startTick
+                && value.Key >= minimumKey
+                && value.Key <= maximumKey)
+            .ToArray();
+
+        Assert.Equal(
+            expected.Select(static value => value.Id).Order().ToArray(),
+            index.Query(startTick, endTick, minimumKey, maximumKey)
+                .Select(static value => value.Id).Order().ToArray());
+        Assert.Equal(
+            DirectMidiNoteOverlayIndex.Create(expected).GetRangeFingerprint(
+                startTick,
+                endTick,
+                minimumKey,
+                maximumKey),
+            index.GetRangeFingerprint(startTick, endTick, minimumKey, maximumKey));
+
+        DirectMidiNoteValue[] atStart = values.Where(static value =>
+                value.StartTick == 100 && value.Key == 100)
+            .ToArray();
+        Assert.Equal(
+            atStart.Select(static value => value.Id).Order().ToArray(),
+            index.QueryStartKey(100, 100).Select(static value => value.Id).Order().ToArray());
+        HashSet<DirectMidiNoteStartKey> keys = [new(100, 100), new(101, 101)];
+        Assert.Equal(
+            values.Where(value => keys.Contains(new(value.StartTick, value.Key)))
+                .Select(static value => value.Id).Order().ToArray(),
+            index.QueryStartKeys(keys).Select(static value => value.Id).Order().ToArray());
+    }
+
+    [Fact]
+    public void SourceExclusionsIdentifyFullyReplacedOrdinalPages()
+    {
+        ImmutableDictionary<MidoraId, int> replacements = Enumerable.Range(0, 256)
+            .ToImmutableDictionary(
+                index => new MidoraId(10_000 + index),
+                static index => index);
+        Dictionary<MidoraId, int> ordinals = replacements.Keys
+            .ToDictionary(id => id, id => checked((int)(id.Value - 10_000)));
+        PureMidiSourceExclusionSet<int> exclusions = new(
+            ImmutableHashSet<MidoraId>.Empty,
+            replacements,
+            ordinals);
+
+        Assert.True(exclusions.ContainsAllOrdinals(0, 128));
+        Assert.True(exclusions.ContainsAllOrdinals(128, 128));
+        Assert.True(exclusions.MayContainOrdinalRange(96, 64));
+        Assert.False(exclusions.MayContainOrdinalRange(256, 64));
+
+        PureMidiSourceExclusionSet<int> partial = new(
+            ImmutableHashSet<MidoraId>.Empty,
+            replacements.Remove(new MidoraId(10_127)),
+            ordinals);
+        Assert.False(partial.ContainsAllOrdinals(0, 128));
+        Assert.True(partial.MayContainOrdinalRange(0, 128));
+    }
+
     [Fact]
     public void LogicalAndTemplateAtomicValueUpdatesPublishOneGeneration()
     {
@@ -889,5 +1022,97 @@ public sealed class PagedTimelineCollectionTests
             restoreRedo();
             Assert.Equal(original.Select(getId), currentIds());
         }
+    }
+
+    private sealed class SingleNoteSource(DirectMidiNoteValue note)
+        : IPureMidiSegmentContentSource
+    {
+        public int NoteCount => 1;
+        public int ChannelEventCount => 0;
+        public int OpaqueEventCount => 0;
+        public string ContentFingerprint => "single-note";
+
+        public DirectMidiNoteValue GetNote(int index) => index == 0
+            ? note
+            : throw new ArgumentOutOfRangeException(nameof(index));
+
+        public DirectMidiChannelEventValue GetChannelEvent(int index) =>
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        public OpaqueMidiEventValue GetOpaqueEvent(int index) =>
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        public int FindNoteIndex(MidoraId id) => id == note.Id ? 0 : -1;
+        public int FindChannelEventIndex(MidoraId id) => -1;
+        public int FindOpaqueEventIndex(MidoraId id) => -1;
+
+        public IEnumerable<DirectMidiNoteValue> QueryNotes(
+            long startTick,
+            long endTick,
+            int minimumKey = 0,
+            int maximumKey = 127) =>
+            note.StartTick < endTick
+            && note.StartTick + note.LengthTicks > startTick
+            && note.Key >= minimumKey
+            && note.Key <= maximumKey
+                ? [note]
+                : [];
+
+        public IEnumerable<DirectMidiChannelEventValue> QueryChannelEvents(
+            long startTick,
+            long endTick) => [];
+
+        public IEnumerable<OpaqueMidiEventValue> QueryOpaqueEvents(
+            long startTick,
+            long endTick) => [];
+    }
+
+    private sealed class CountingReadOnlySet(IEnumerable<MidoraId> values)
+        : IReadOnlySet<MidoraId>
+    {
+        private readonly HashSet<MidoraId> _values = [.. values];
+
+        public int Count => _values.Count;
+        public int ContainsCount { get; private set; }
+        public int EnumerationCount { get; private set; }
+
+        public bool Contains(MidoraId item)
+        {
+            ContainsCount++;
+            return _values.Contains(item);
+        }
+
+        public void ResetCounters()
+        {
+            ContainsCount = 0;
+            EnumerationCount = 0;
+        }
+
+        public IEnumerator<MidoraId> GetEnumerator()
+        {
+            EnumerationCount++;
+            return _values.GetEnumerator();
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
+            GetEnumerator();
+
+        public bool IsProperSubsetOf(IEnumerable<MidoraId> other) =>
+            _values.IsProperSubsetOf(other);
+
+        public bool IsProperSupersetOf(IEnumerable<MidoraId> other) =>
+            _values.IsProperSupersetOf(other);
+
+        public bool IsSubsetOf(IEnumerable<MidoraId> other) =>
+            _values.IsSubsetOf(other);
+
+        public bool IsSupersetOf(IEnumerable<MidoraId> other) =>
+            _values.IsSupersetOf(other);
+
+        public bool Overlaps(IEnumerable<MidoraId> other) =>
+            _values.Overlaps(other);
+
+        public bool SetEquals(IEnumerable<MidoraId> other) =>
+            _values.SetEquals(other);
     }
 }

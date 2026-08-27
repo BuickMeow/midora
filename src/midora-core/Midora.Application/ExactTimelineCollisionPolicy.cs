@@ -101,7 +101,7 @@ internal static class ExactTimelineCollisionPolicy
         if (scoped.Scopes.HasOnlyTargets)
         {
             return new TargetedCollisionPreparedEdit(
-                source,
+                scoped.Source,
                 CaptureTargetedLogicalNoteBaseline(scoped.Scopes.LogicalNoteTargets),
                 CaptureTargetedTemplateNoteBaseline(scoped.Scopes.TemplateNoteTargets),
                 CaptureTargetedDirectMidiNoteBaseline(scoped.Scopes.DirectMidiNoteTargets),
@@ -112,7 +112,7 @@ internal static class ExactTimelineCollisionPolicy
         }
 
         CollisionBaseline baseline = CaptureBaseline(scoped.Scopes);
-        return new CollisionResolvingPreparedEdit(source, baseline, scoped.Scopes);
+        return new CollisionResolvingPreparedEdit(scoped.Source, baseline, scoped.Scopes);
     }
 
     private static TargetedLogicalNoteBaseline[] CaptureTargetedLogicalNoteBaseline(

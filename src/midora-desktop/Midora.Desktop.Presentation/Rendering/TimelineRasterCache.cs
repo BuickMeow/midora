@@ -636,21 +636,33 @@ public static class TimelinePianoTileRasterizer
         {
             return TimelineContentFingerprint.ForLocalSelection([], selection);
         }
-        // Selection rasterization remains asynchronous. A global selection
-        // revision is intentionally cheap here: it may invalidate more of the
-        // lightweight selection layer, but never re-queries dense base content
-        // while WPF is rendering a frame.
-        return TimelineContentFingerprint.Combine(
-            snapshot.GetExternalRangeFingerprint(
+        if (selection.HasRenderIndex)
+        {
+            // Once the complete immutable selection geometry is available, its
+            // tile-local fingerprint avoids touching the dense base source.
+            return selection.GetRangeContentFingerprint(
                 startTick,
                 endTick,
                 firstLane,
-                lastLaneExclusive),
-            selection.GetRangeRevisionFingerprint(
-                startTick,
-                endTick,
-                firstLane,
-                lastLaneExclusive));
+                lastLaneExclusive);
+        }
+
+        // A large formal selection is published before its complete, potentially
+        // out-of-core render index has finished.  Visible tiles must not remain
+        // unselected while unrelated offscreen IDs are being resolved.  The
+        // regular piano fingerprint is range-local and uses prepared page
+        // summaries for external content; combine it with the immutable formal
+        // selection generation and let the selection-only raster pass filter the
+        // visible source range by ID.
+        ulong sourceFingerprint = snapshot.GetPianoTileContentFingerprint(
+            devicePixelsPerTick,
+            devicePixelsPerLane,
+            tileX,
+            tileY);
+        ulong selectionGeneration = TimelineContentFingerprint.Combine(
+            unchecked((ulong)selection.Revision),
+            unchecked((ulong)selection.Count));
+        return TimelineContentFingerprint.Combine(selectionGeneration, sourceFingerprint);
     }
 
     public static TimelineRasterBuffer Rasterize(
@@ -738,12 +750,40 @@ public static class TimelinePianoTileRasterizer
                 return new(RasterSize, RasterSize, pixels, sourceWorkCount);
             }
         }
-        snapshot.VisitInto(
-            startTick,
-            endTick,
-            firstLane,
-            lastLaneExclusive,
-            Draw);
+        if (selectionOnly)
+        {
+            if (selection?.HasRenderIndex == true)
+            {
+                selection.VisitRenderItems(
+                    startTick,
+                    endTick,
+                    firstLane,
+                    lastLaneExclusive,
+                    Draw);
+            }
+            else
+            {
+                // Small or directly-constructed selections may not need an
+                // auxiliary selection index. Preserve the exact legacy path
+                // for those snapshots while large paged selections use the
+                // selection-owned index above and never scan the dense source.
+                snapshot.VisitInto(
+                    startTick,
+                    endTick,
+                    firstLane,
+                    lastLaneExclusive,
+                    Draw);
+            }
+        }
+        else
+        {
+            snapshot.VisitInto(
+                startTick,
+                endTick,
+                firstLane,
+                lastLaneExclusive,
+                Draw);
+        }
         cancellationToken.ThrowIfCancellationRequested();
         return new(RasterSize, RasterSize, pixels, candidateCount);
 

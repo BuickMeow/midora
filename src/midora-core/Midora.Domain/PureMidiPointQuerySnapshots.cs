@@ -167,7 +167,8 @@ public sealed class DirectMidiChannelEventQuerySnapshot
         if (_source is not null)
         {
             HashSet<MidoraId> sourceIds = [.. ids];
-            if (_sourceExclusions is not null) sourceIds.ExceptWith(_sourceExclusions);
+            if (_sourceExclusions is not null)
+                sourceIds.RemoveWhere(_sourceExclusions.Contains);
             sourceMatches = [];
             if (_source is IPureMidiCachedContentSource cached)
             {
@@ -198,7 +199,8 @@ public sealed class DirectMidiChannelEventQuerySnapshot
         if (_source is not null)
         {
             HashSet<MidoraId> sourceIds = [.. ids];
-            if (_sourceExclusions is not null) sourceIds.ExceptWith(_sourceExclusions);
+            if (_sourceExclusions is not null)
+                sourceIds.RemoveWhere(_sourceExclusions.Contains);
             foreach (DirectMidiChannelEventSourceMatch match in _sourceIdCache.Resolve(
                 sourceIds,
                 _source.QueryChannelEventsByIds))
@@ -214,7 +216,8 @@ public sealed class DirectMidiChannelEventQuerySnapshot
     {
         if (_source is not IPureMidiCachedContentSource cached || ids.Count == 0) return;
         HashSet<MidoraId> sourceIds = [.. ids];
-        if (_sourceExclusions is not null) sourceIds.ExceptWith(_sourceExclusions);
+        if (_sourceExclusions is not null)
+            sourceIds.RemoveWhere(_sourceExclusions.Contains);
         cached.PrefetchChannelEventsByIds(sourceIds, cancellationToken);
     }
 
@@ -390,7 +393,8 @@ public sealed class OpaqueMidiEventQuerySnapshot
         if (_source is not null)
         {
             HashSet<MidoraId> sourceIds = [.. ids];
-            if (_sourceExclusions is not null) sourceIds.ExceptWith(_sourceExclusions);
+            if (_sourceExclusions is not null)
+                sourceIds.RemoveWhere(_sourceExclusions.Contains);
             sourceMatches = [];
             if (_source is IPureMidiCachedContentSource cached)
             {
@@ -417,7 +421,8 @@ public sealed class OpaqueMidiEventQuerySnapshot
         if (_source is not null)
         {
             HashSet<MidoraId> sourceIds = [.. ids];
-            if (_sourceExclusions is not null) sourceIds.ExceptWith(_sourceExclusions);
+            if (_sourceExclusions is not null)
+                sourceIds.RemoveWhere(_sourceExclusions.Contains);
             foreach (OpaqueMidiEventSourceMatch match in _sourceIdCache.Resolve(
                 sourceIds,
                 _source.QueryOpaqueEventsByIds))
@@ -433,7 +438,8 @@ public sealed class OpaqueMidiEventQuerySnapshot
     {
         if (_source is not IPureMidiCachedContentSource cached || ids.Count == 0) return;
         HashSet<MidoraId> sourceIds = [.. ids];
-        if (_sourceExclusions is not null) sourceIds.ExceptWith(_sourceExclusions);
+        if (_sourceExclusions is not null)
+            sourceIds.RemoveWhere(_sourceExclusions.Contains);
         cached.PrefetchOpaqueEventsByIds(sourceIds, cancellationToken);
     }
 

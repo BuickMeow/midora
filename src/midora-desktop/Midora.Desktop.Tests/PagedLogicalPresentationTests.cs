@@ -157,7 +157,7 @@ public sealed class PagedLogicalPresentationTests
                 Kind: TimelineItemKind.LogicalNote,
                 StartTick: note.StartTick,
                 EndTick: note.StartTick + note.LengthTicks,
-                Lane: note.Note,
+                Lane: 127 - note.Note,
                 Value: note.Velocity / 127d,
                 ZIndex: 0,
                 State: TimelineItemState.Selected)]);

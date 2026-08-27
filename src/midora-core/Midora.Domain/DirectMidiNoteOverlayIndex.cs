@@ -10,15 +10,20 @@ namespace Midora.Domain;
 internal sealed class DirectMidiNoteOverlayIndex
 {
     private readonly SpatialNode? _spatialRoot;
+    private readonly SpatialNode? _tickRoot;
     private readonly IdNode? _idRoot;
 
-    private DirectMidiNoteOverlayIndex(SpatialNode? spatialRoot, IdNode? idRoot)
+    private DirectMidiNoteOverlayIndex(
+        SpatialNode? spatialRoot,
+        SpatialNode? tickRoot,
+        IdNode? idRoot)
     {
         _spatialRoot = spatialRoot;
+        _tickRoot = tickRoot;
         _idRoot = idRoot;
     }
 
-    public static DirectMidiNoteOverlayIndex Empty { get; } = new(null, null);
+    public static DirectMidiNoteOverlayIndex Empty { get; } = new(null, null, null);
 
     internal static DirectMidiNoteOverlayIndex Create(
         IEnumerable<DirectMidiNoteValue> values)
@@ -70,21 +75,24 @@ internal sealed class DirectMidiNoteOverlayIndex
             return replacements.Length == 0 ? Empty : Build(replacements);
 
         SpatialNode? spatial = _spatialRoot;
+        SpatialNode? tick = _tickRoot;
         IdNode? ids = _idRoot;
         foreach (MidoraId id in dirtyIds)
         {
             if (TryGetById(id, out DirectMidiNoteValue previous))
             {
-                spatial = RemoveSpatial(spatial, previous);
+                spatial = RemoveSpatial(spatial, previous, tickFirst: false);
+                tick = RemoveSpatial(tick, previous, tickFirst: true);
                 ids = RemoveId(ids, id);
             }
         }
         foreach (DirectMidiNoteValue value in replacements)
         {
-            spatial = InsertSpatial(spatial, value);
+            spatial = InsertSpatial(spatial, value, tickFirst: false);
+            tick = InsertSpatial(tick, value, tickFirst: true);
             ids = InsertId(ids, value);
         }
-        return new(spatial, ids);
+        return new(spatial, tick, ids);
     }
 
     public IEnumerable<DirectMidiNoteValue> Query(
@@ -162,7 +170,7 @@ internal sealed class DirectMidiNoteOverlayIndex
             return 0;
         int work = 0;
         AccumulateRasterColumns(
-            _spatialRoot,
+            _tickRoot,
             projection,
             minimumKey,
             maximumKey,
@@ -193,10 +201,13 @@ internal sealed class DirectMidiNoteOverlayIndex
     {
         DirectMidiNoteValue[] spatial = [.. values];
         Array.Sort(spatial, CompareSpatial);
+        DirectMidiNoteValue[] tick = [.. values];
+        Array.Sort(tick, CompareTickSpatial);
         DirectMidiNoteValue[] ids = [.. values];
         Array.Sort(ids, static (left, right) => left.Id.CompareTo(right.Id));
         return new(
             BuildSpatial(spatial, 0, spatial.Length),
+            BuildSpatial(tick, 0, tick.Length),
             BuildIds(ids, 0, ids.Length));
     }
 
@@ -256,32 +267,17 @@ internal sealed class DirectMidiNoteOverlayIndex
         int key,
         List<DirectMidiNoteValue> destination)
     {
-        if (node is null) return;
+        if (node is null
+            || node.MinimumStartTick > startTick
+            || node.MaximumStartTick < startTick
+            || node.MinimumKey > key
+            || node.MaximumKey < key)
+        {
+            return;
+        }
         DirectMidiNoteValue value = node.Value;
-        int startComparison = startTick.CompareTo(value.StartTick);
-        if (startComparison < 0)
-        {
-            QueryStartKey(node.Left, startTick, key, destination);
-            return;
-        }
-        if (startComparison > 0)
-        {
-            QueryStartKey(node.Right, startTick, key, destination);
-            return;
-        }
-        int keyComparison = key.CompareTo(value.Key);
-        if (keyComparison < 0)
-        {
-            QueryStartKey(node.Left, startTick, key, destination);
-            return;
-        }
-        if (keyComparison > 0)
-        {
-            QueryStartKey(node.Right, startTick, key, destination);
-            return;
-        }
         QueryStartKey(node.Left, startTick, key, destination);
-        destination.Add(value);
+        if (value.StartTick == startTick && value.Key == key) destination.Add(value);
         QueryStartKey(node.Right, startTick, key, destination);
     }
 
@@ -292,18 +288,21 @@ internal sealed class DirectMidiNoteOverlayIndex
         long maximumTick,
         List<DirectMidiNoteValue> destination)
     {
-        if (node is null) return;
+        if (node is null
+            || node.MaximumStartTick < minimumTick
+            || node.MinimumStartTick > maximumTick)
+        {
+            return;
+        }
         DirectMidiNoteValue value = node.Value;
-        if (value.StartTick >= minimumTick)
-            QueryStartKeys(node.Left, keys, minimumTick, maximumTick, destination);
+        QueryStartKeys(node.Left, keys, minimumTick, maximumTick, destination);
         if (value.StartTick >= minimumTick
             && value.StartTick <= maximumTick
             && keys.Contains(new(value.StartTick, value.Key)))
         {
             destination.Add(value);
         }
-        if (value.StartTick <= maximumTick)
-            QueryStartKeys(node.Right, keys, minimumTick, maximumTick, destination);
+        QueryStartKeys(node.Right, keys, minimumTick, maximumTick, destination);
     }
 
     private static void AccumulateFingerprint(
@@ -440,23 +439,33 @@ internal sealed class DirectMidiNoteOverlayIndex
         return Math.Clamp((int)(normalized * width), 0, width - 1);
     }
 
-    private static SpatialNode InsertSpatial(SpatialNode? node, DirectMidiNoteValue value)
+    private static SpatialNode InsertSpatial(
+        SpatialNode? node,
+        DirectMidiNoteValue value,
+        bool tickFirst)
     {
         if (node is null) return new(value, null, null);
-        int comparison = CompareSpatial(value, node.Value);
+        int comparison = tickFirst
+            ? CompareTickSpatial(value, node.Value)
+            : CompareSpatial(value, node.Value);
         if (comparison == 0)
             throw new InvalidOperationException("A Direct MIDI Note overlay spatial key is duplicated.");
         return Balance(comparison < 0
-            ? new SpatialNode(node.Value, InsertSpatial(node.Left, value), node.Right)
-            : new SpatialNode(node.Value, node.Left, InsertSpatial(node.Right, value)));
+            ? new SpatialNode(node.Value, InsertSpatial(node.Left, value, tickFirst), node.Right)
+            : new SpatialNode(node.Value, node.Left, InsertSpatial(node.Right, value, tickFirst)));
     }
 
-    private static SpatialNode? RemoveSpatial(SpatialNode? node, DirectMidiNoteValue value)
+    private static SpatialNode? RemoveSpatial(
+        SpatialNode? node,
+        DirectMidiNoteValue value,
+        bool tickFirst)
     {
         if (node is null) return null;
-        int comparison = CompareSpatial(value, node.Value);
-        if (comparison < 0) return Balance(new SpatialNode(node.Value, RemoveSpatial(node.Left, value), node.Right));
-        if (comparison > 0) return Balance(new SpatialNode(node.Value, node.Left, RemoveSpatial(node.Right, value)));
+        int comparison = tickFirst
+            ? CompareTickSpatial(value, node.Value)
+            : CompareSpatial(value, node.Value);
+        if (comparison < 0) return Balance(new SpatialNode(node.Value, RemoveSpatial(node.Left, value, tickFirst), node.Right));
+        if (comparison > 0) return Balance(new SpatialNode(node.Value, node.Left, RemoveSpatial(node.Right, value, tickFirst)));
         if (node.Left is null) return node.Right;
         if (node.Right is null) return node.Left;
         SpatialNode successor = Minimum(node.Right);
@@ -571,6 +580,14 @@ internal sealed class DirectMidiNoteOverlayIndex
 
     private static int CompareSpatial(DirectMidiNoteValue left, DirectMidiNoteValue right)
     {
+        int key = left.Key.CompareTo(right.Key);
+        if (key != 0) return key;
+        int start = left.StartTick.CompareTo(right.StartTick);
+        return start != 0 ? start : left.Id.CompareTo(right.Id);
+    }
+
+    private static int CompareTickSpatial(DirectMidiNoteValue left, DirectMidiNoteValue right)
+    {
         int start = left.StartTick.CompareTo(right.StartTick);
         if (start != 0) return start;
         int key = left.Key.CompareTo(right.Key);
@@ -606,6 +623,7 @@ internal sealed class DirectMidiNoteOverlayIndex
             Height = 1 + Math.Max(DirectMidiNoteOverlayIndex.Height(left), DirectMidiNoteOverlayIndex.Height(right));
             Count = checked(1 + (left?.Count ?? 0) + (right?.Count ?? 0));
             MinimumStartTick = Math.Min(value.StartTick, Math.Min(left?.MinimumStartTick ?? long.MaxValue, right?.MinimumStartTick ?? long.MaxValue));
+            MaximumStartTick = Math.Max(value.StartTick, Math.Max(left?.MaximumStartTick ?? long.MinValue, right?.MaximumStartTick ?? long.MinValue));
             MaximumEndTick = Math.Max(EndTick(value), Math.Max(left?.MaximumEndTick ?? 0, right?.MaximumEndTick ?? 0));
             MinimumKey = Math.Min(value.Key, Math.Min(left?.MinimumKey ?? int.MaxValue, right?.MinimumKey ?? int.MaxValue));
             MaximumKey = Math.Max(value.Key, Math.Max(left?.MaximumKey ?? int.MinValue, right?.MaximumKey ?? int.MinValue));
@@ -634,6 +652,7 @@ internal sealed class DirectMidiNoteOverlayIndex
         public int Height { get; }
         public int Count { get; }
         public long MinimumStartTick { get; }
+        public long MaximumStartTick { get; }
         public long MaximumEndTick { get; }
         public int MinimumKey { get; }
         public int MaximumKey { get; }

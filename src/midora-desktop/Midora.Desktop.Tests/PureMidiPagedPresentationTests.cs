@@ -2,6 +2,7 @@ using Midora.Application;
 using Midora.Desktop.Presentation.Interaction;
 using Midora.Desktop.Presentation.Rendering;
 using Midora.Domain;
+using System.Diagnostics;
 using System.Windows.Media;
 using Xunit;
 
@@ -9,6 +10,149 @@ namespace Midora.Desktop.Tests;
 
 public sealed class PureMidiPagedPresentationTests
 {
+    [Fact]
+    public void OptInImportedSampleKeepsSmallSelectionBoundedAfterLargeFlip()
+    {
+        string? path = Environment.GetEnvironmentVariable("MIDORA_UI_SAMPLE_MIDI_PATH");
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        MidiProjectImportResult imported = MidiProjectImportService.ImportFile(
+            Path.GetFullPath(path),
+            Path.GetFileNameWithoutExtension(path));
+        try
+        {
+            PureMidiTrack? track = imported.Project.PureMidiTracks.FirstOrDefault(
+                static candidate => string.Equals(
+                    candidate.Name,
+                    "MIDI Out #23",
+                    StringComparison.Ordinal));
+            if (track is null) return;
+            MidiSegment segment = Assert.Single(track.Segments);
+            TimelineWorkspaceViewModel workspace = new(
+                WorkspaceKey.ForObject(WorkspaceKind.SegmentEditor, segment.Id),
+                "MIDI Segment",
+                TimelineWorkspaceMode.Segment);
+            workspace.Rebuild(imported.Project, revision: 1);
+            TimelineMaterializedSelection selection = workspace.Snapshot!
+                .MaterializeRangeSelection(
+                    168_816,
+                    193_536,
+                    0,
+                    128,
+                    0,
+                    1,
+                    filterByValue: false,
+                    new TimelineSelectionSnapshot(0, [], null),
+                    WorkspaceSelectionRangeMode.Replace);
+            Assert.Equal(1_382_908, selection.Ids.Count);
+
+            IPreparedProjectEdit flip = ProjectDomainEditCommands
+                .FlipDirectMidiNotesHorizontal(segment.Id, selection.Ids)
+                .Prepare(imported.Project);
+            Stopwatch flipWatch = Stopwatch.StartNew();
+            flip.Apply(imported.Project);
+            flipWatch.Stop();
+
+            workspace.Rebuild(imported.Project, revision: 2);
+            IReadOnlySet<MidoraId> smallSelection = selection.Ids
+                .Take(32)
+                .ToHashSet();
+            Stopwatch smallWatch = Stopwatch.StartNew();
+            TimelineSelectionPresentationMaterialization materialized =
+                workspace.Snapshot!.MaterializeSelectionPresentation(smallSelection);
+            smallWatch.Stop();
+
+            Assert.Equal(32, materialized.RenderIndex.Count);
+            Assert.Equal(
+                32,
+                materialized.Metrics[TimelineItemKind.DirectMidiNote].Count);
+            Assert.True(
+                smallWatch.Elapsed < TimeSpan.FromSeconds(5),
+                $"Resolving 32 Notes after a large flip took {smallWatch.Elapsed}.");
+            Console.WriteLine(
+                $"Post-flip 9KX2 selection: flip={flipWatch.Elapsed.TotalMilliseconds:N1} ms; "
+                + $"32-note materialization={smallWatch.Elapsed.TotalMilliseconds:N1} ms.");
+        }
+        finally
+        {
+            imported.Project.Dispose();
+        }
+    }
+
+    [Fact]
+    public void OptInImportedSampleStreamsExactLargeMarqueeBeyondDecodedCache()
+    {
+        string? path = Environment.GetEnvironmentVariable("MIDORA_UI_SAMPLE_MIDI_PATH");
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        MidiProjectImportResult imported = MidiProjectImportService.ImportFile(
+            Path.GetFullPath(path),
+            Path.GetFileNameWithoutExtension(path));
+        try
+        {
+            PureMidiTrack? track = imported.Project.PureMidiTracks.FirstOrDefault(
+                static candidate => string.Equals(
+                    candidate.Name,
+                    "MIDI Out #23",
+                    StringComparison.Ordinal));
+            if (track is null) return;
+            MidiSegment segment = Assert.Single(track.Segments);
+            TimelineWorkspaceViewModel workspace = new(
+                WorkspaceKey.ForObject(WorkspaceKind.SegmentEditor, segment.Id),
+                "MIDI Segment",
+                TimelineWorkspaceMode.Segment);
+            workspace.Rebuild(imported.Project, revision: 1);
+
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+            long retainedBefore = GC.GetTotalMemory(forceFullCollection: true);
+            long allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+            Stopwatch watch = Stopwatch.StartNew();
+            TimelineMaterializedSelection selection = workspace.Snapshot!
+                .MaterializeRangeSelection(
+                    168_816,
+                    193_536,
+                    0,
+                    128,
+                    0,
+                    1,
+                    filterByValue: false,
+                    new TimelineSelectionSnapshot(0, [], null),
+                    WorkspaceSelectionRangeMode.Replace);
+            watch.Stop();
+            long allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
+            workspace.Selection.AdoptMaterialized(
+                selection.Ids,
+                selection.Primary,
+                selection.Anchor);
+            workspace.PublishMaterializedSelection(
+                selection.Metrics,
+                selection.MetricsAreComplete,
+                selection.RenderIndex);
+            long retained = GC.GetTotalMemory(forceFullCollection: true) - retainedBefore;
+
+            Assert.Equal(1_382_908, selection.Ids.Count);
+            Assert.True(selection.MetricsAreComplete);
+            Assert.Equal(
+                selection.Ids.Count,
+                selection.Metrics[TimelineItemKind.DirectMidiNote].Count);
+            Assert.True(
+                allocated < 512L * 1024 * 1024,
+                $"Exact large marquee allocated {allocated:N0} bytes.");
+            Assert.True(
+                retained < 256L * 1024 * 1024,
+                $"Published exact marquee retained {retained:N0} bytes.");
+            Console.WriteLine(
+                $"Exact 9KX2 marquee: {selection.Ids.Count:N0} notes, " +
+                $"{watch.Elapsed.TotalMilliseconds:N1} ms, " +
+                $"{allocated / 1024d / 1024d:N1} MiB allocated, " +
+                $"{retained / 1024d / 1024d:N1} MiB retained.");
+        }
+        finally
+        {
+            imported.Project.Dispose();
+        }
+    }
+
     [Fact]
     public void DirectMidiOverviewDensityIncludesExternalTimelineSource()
     {

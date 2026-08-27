@@ -5816,13 +5816,27 @@ public partial class MainWindow : Window
             || settings.ResetDefaultFields.Contains(field);
     }
 
+    private void OnTimelineSelectionReplacementStarted(
+        object? sender,
+        TimelineSelectionReplacementEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not WorkspaceViewModel workspace)
+            return;
+        if (_session.Project is null || !_session.Workspaces.Contains(workspace)) return;
+        e.BaseSelection = _session.BeginWorkspaceSelectionReplacement(workspace);
+    }
+
     private void OnTimelineMarqueeCompleted(object? sender, TimelineMarqueeEventArgs e)
     {
-        if (_session.ActiveWorkspace is not WorkspaceViewModel workspace) return;
-        workspace.Selection.ApplyRange(
-            e.ItemIds,
-            TimelineToolPolicy.ResolveMarqueeSelectionMode(e.Modifiers));
-        _session.RefreshWorkspaceSelection(workspace);
+        // A large out-of-core marquee finishes asynchronously.  Resolve its
+        // owning workspace from the originating surface rather than whichever
+        // tab happens to be active when the background scan completes.
+        if ((sender as FrameworkElement)?.DataContext is not WorkspaceViewModel workspace)
+            return;
+        if (_session.Project is null || !_session.Workspaces.Contains(workspace)) return;
+        _session.TryApplyMaterializedWorkspaceSelection(
+            workspace,
+            e.Materialization);
     }
 
     private void OnTimelineRulerClicked(object? sender, TimelineRulerEventArgs e)
@@ -9990,7 +10004,9 @@ public partial class MainWindow : Window
             cancellation.Token.ThrowIfCancellationRequested();
             if (!ReferenceEquals(_session.ActiveWorkspace, workspace)
                 || !ReferenceEquals(surface.Snapshot, snapshot)
-                || workspace.Selection.Revision != selectionRevision)
+                || !_session.IsWorkspaceSelectionMaterializationCurrent(
+                    workspace,
+                    selectionRevision))
             {
                 return;
             }

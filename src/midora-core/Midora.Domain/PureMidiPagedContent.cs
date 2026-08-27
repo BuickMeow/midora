@@ -737,25 +737,115 @@ internal interface IOpaqueMidiEventChangeSink
 /// their persistent roots avoids copying every removed/replaced source ID for
 /// each presentation snapshot.
 /// </summary>
-internal sealed class PureMidiSourceExclusionSet<TValue> : IReadOnlySet<MidoraId>
+internal interface IPureMidiIdRangeSet
+{
+    bool MayContain(MidoraId minimumId, MidoraId maximumId);
+}
+
+internal interface IPureMidiOrdinalRangeSet
+{
+    bool HasUnknownOrdinals { get; }
+
+    bool MayContainOrdinalRange(int firstOrdinal, int count);
+
+    bool ContainsAllOrdinals(int firstOrdinal, int count);
+
+    ArraySegment<int> GetOrdinalsInRange(int firstOrdinal, int count);
+}
+
+internal interface IPureMidiNoteExclusionAwareSource
+{
+    IEnumerable<DirectMidiNoteValue> QueryNotesExcluding(
+        long startTick,
+        long endTick,
+        int minimumKey,
+        int maximumKey,
+        IReadOnlySet<MidoraId> excludedIds);
+
+    bool TryQueryCachedNotesExcluding(
+        long startTick,
+        long endTick,
+        int minimumKey,
+        int maximumKey,
+        IReadOnlySet<MidoraId> excludedIds,
+        List<DirectMidiNoteValue> destination);
+
+    void PrefetchNotesExcluding(
+        long startTick,
+        long endTick,
+        int minimumKey,
+        int maximumKey,
+        IReadOnlySet<MidoraId> excludedIds,
+        CancellationToken cancellationToken);
+}
+
+internal sealed class PureMidiSourceExclusionSet<TValue> :
+    IReadOnlySet<MidoraId>,
+    IPureMidiIdRangeSet,
+    IPureMidiOrdinalRangeSet
 {
     private readonly ImmutableHashSet<MidoraId> _removed;
     private readonly ImmutableDictionary<MidoraId, TValue> _replacements;
+    private readonly Lazy<long[]> _sortedIds;
+    private readonly int[] _sortedOrdinals;
+    private readonly bool _hasUnknownOrdinals;
 
     public PureMidiSourceExclusionSet(
         ImmutableHashSet<MidoraId> removed,
-        ImmutableDictionary<MidoraId, TValue> replacements)
+        ImmutableDictionary<MidoraId, TValue> replacements,
+        IReadOnlyDictionary<MidoraId, int>? sourceIndices = null)
     {
         ArgumentNullException.ThrowIfNull(removed);
         ArgumentNullException.ThrowIfNull(replacements);
         _removed = removed;
         _replacements = replacements;
+        _sortedIds = new(
+            CreateSortedIds,
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        (_sortedOrdinals, _hasUnknownOrdinals) = CreateSortedOrdinals(sourceIndices);
     }
 
     public int Count => checked(_removed.Count + _replacements.Count);
 
+    public bool HasUnknownOrdinals => _hasUnknownOrdinals;
+
     public bool Contains(MidoraId item) =>
         _removed.Contains(item) || _replacements.ContainsKey(item);
+
+    public bool MayContain(MidoraId minimumId, MidoraId maximumId)
+    {
+        if (Count == 0 || minimumId.CompareTo(maximumId) > 0) return false;
+
+        long[] sortedIds = _sortedIds.Value;
+        int index = Array.BinarySearch(sortedIds, minimumId.Value);
+        if (index < 0) index = ~index;
+        return index < sortedIds.Length && sortedIds[index] <= maximumId.Value;
+    }
+
+    public bool MayContainOrdinalRange(int firstOrdinal, int count)
+    {
+        if (firstOrdinal < 0) throw new ArgumentOutOfRangeException(nameof(firstOrdinal));
+        if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
+        if (count == 0) return false;
+        return _hasUnknownOrdinals || CountOrdinals(firstOrdinal, count) != 0;
+    }
+
+    public bool ContainsAllOrdinals(int firstOrdinal, int count)
+    {
+        if (firstOrdinal < 0) throw new ArgumentOutOfRangeException(nameof(firstOrdinal));
+        if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
+        return count != 0 && CountOrdinals(firstOrdinal, count) == count;
+    }
+
+    public ArraySegment<int> GetOrdinalsInRange(int firstOrdinal, int count)
+    {
+        if (firstOrdinal < 0) throw new ArgumentOutOfRangeException(nameof(firstOrdinal));
+        if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
+        int endOrdinal = checked(firstOrdinal + count);
+        int first = LowerBound(_sortedOrdinals, firstOrdinal);
+        int end = LowerBound(_sortedOrdinals, endOrdinal);
+        return new(_sortedOrdinals, first, end - first);
+    }
 
     public IEnumerator<MidoraId> GetEnumerator()
     {
@@ -783,6 +873,69 @@ internal sealed class PureMidiSourceExclusionSet<TValue> : IReadOnlySet<MidoraId
     public bool SetEquals(IEnumerable<MidoraId> other) => Materialize().SetEquals(other);
 
     private HashSet<MidoraId> Materialize() => [.. this];
+
+    private long[] CreateSortedIds()
+    {
+        long[] result = new long[Count];
+        int index = 0;
+        foreach (MidoraId id in _removed) result[index++] = id.Value;
+        foreach (MidoraId id in _replacements.Keys)
+        {
+            if (!_removed.Contains(id)) result[index++] = id.Value;
+        }
+        if (index != result.Length) Array.Resize(ref result, index);
+        Array.Sort(result);
+        return result;
+    }
+
+    private (int[] Ordinals, bool HasUnknown) CreateSortedOrdinals(
+        IReadOnlyDictionary<MidoraId, int>? sourceIndices)
+    {
+        if (sourceIndices is null) return ([], Count != 0);
+        int[] result = new int[Count];
+        int index = 0;
+        bool unknown = false;
+        foreach (MidoraId id in this)
+        {
+            if (sourceIndices.TryGetValue(id, out int ordinal) && ordinal >= 0)
+                result[index++] = ordinal;
+            else
+                unknown = true;
+        }
+        if (index != result.Length) Array.Resize(ref result, index);
+        Array.Sort(result);
+        if (result.Length > 1)
+        {
+            int write = 1;
+            for (int read = 1; read < result.Length; read++)
+            {
+                if (result[read] != result[write - 1]) result[write++] = result[read];
+            }
+            if (write != result.Length) Array.Resize(ref result, write);
+        }
+        return (result, unknown);
+    }
+
+    private int CountOrdinals(int firstOrdinal, int count)
+    {
+        int endOrdinal = checked(firstOrdinal + count);
+        return LowerBound(_sortedOrdinals, endOrdinal)
+            - LowerBound(_sortedOrdinals, firstOrdinal);
+    }
+
+    private static int LowerBound(int[] values, int value)
+    {
+        int low = 0;
+        int high = values.Length;
+        while (low < high)
+        {
+            int middle = low + ((high - low) >> 1);
+            if (values[middle] < value) low = middle + 1;
+            else high = middle;
+        }
+        return low;
+    }
+
 }
 
 internal interface IPureMidiContentPackSegmentSource
@@ -831,6 +984,13 @@ public sealed class DirectMidiNoteQuerySnapshot
                 .Where(materializedSourceValues.ContainsKey)
                 .Select(id => materializedSourceValues[id])
                 .ToArray();
+        Array.Sort(excludedValues, static (left, right) =>
+        {
+            int key = left.Key.CompareTo(right.Key);
+            if (key != 0) return key;
+            int tick = left.StartTick.CompareTo(right.StartTick);
+            return tick != 0 ? tick : left.Id.CompareTo(right.Id);
+        });
         _excludedFingerprintIndex = new(excludedValues);
         FingerprintAggregate unknownExclusions = default;
         if (_sourceExclusions is not null)
@@ -946,13 +1106,24 @@ public sealed class DirectMidiNoteQuerySnapshot
 
         if (_source is not null && startTick < _sourceMaximumEndTick)
         {
-            foreach (DirectMidiNoteValue value in _source.QueryNotes(
-                startTick,
-                Math.Min(endTick, _sourceMaximumEndTick),
-                minimumKey,
-                maximumKey))
+            long sourceEnd = Math.Min(endTick, _sourceMaximumEndTick);
+            bool filteredBySource = _sourceExclusions is not null
+                && _source is IPureMidiNoteExclusionAwareSource;
+            IEnumerable<DirectMidiNoteValue> sourceValues = filteredBySource
+                ? ((IPureMidiNoteExclusionAwareSource)_source).QueryNotesExcluding(
+                    startTick,
+                    sourceEnd,
+                    minimumKey,
+                    maximumKey,
+                    _sourceExclusions!)
+                : _source.QueryNotes(
+                    startTick,
+                    sourceEnd,
+                    minimumKey,
+                    maximumKey);
+            foreach (DirectMidiNoteValue value in sourceValues)
             {
-                if (_sourceExclusions?.Contains(value.Id) != true)
+                if (filteredBySource || _sourceExclusions?.Contains(value.Id) != true)
                     yield return value;
             }
         }
@@ -1094,7 +1265,21 @@ public sealed class DirectMidiNoteQuerySnapshot
         {
             sourceValues = [];
             long sourceEnd = Math.Min(endTick, _sourceMaximumEndTick);
-            if (_source is IPureMidiCachedContentSource cached)
+            if (_sourceExclusions is not null
+                && _source is IPureMidiNoteExclusionAwareSource exclusionAware)
+            {
+                if (!exclusionAware.TryQueryCachedNotesExcluding(
+                        startTick,
+                        sourceEnd,
+                        minimumKey,
+                        maximumKey,
+                        _sourceExclusions,
+                        sourceValues))
+                {
+                    return false;
+                }
+            }
+            else if (_source is IPureMidiCachedContentSource cached)
             {
                 if (!cached.TryQueryCachedNotes(
                         startTick,
@@ -1118,9 +1303,11 @@ public sealed class DirectMidiNoteQuerySnapshot
 
         if (sourceValues is not null)
         {
+            bool filteredBySource = _sourceExclusions is not null
+                && _source is IPureMidiNoteExclusionAwareSource;
             foreach (DirectMidiNoteValue value in sourceValues)
             {
-                if (_sourceExclusions?.Contains(value.Id) != true)
+                if (filteredBySource || _sourceExclusions?.Contains(value.Id) != true)
                     destination.Add(value);
             }
         }
@@ -1143,12 +1330,27 @@ public sealed class DirectMidiNoteQuerySnapshot
         {
             return;
         }
-        cached.PrefetchNotes(
-            startTick,
-            Math.Min(endTick, _sourceMaximumEndTick),
-            minimumKey,
-            maximumKey,
-            cancellationToken);
+        long sourceEnd = Math.Min(endTick, _sourceMaximumEndTick);
+        if (_sourceExclusions is not null
+            && _source is IPureMidiNoteExclusionAwareSource exclusionAware)
+        {
+            exclusionAware.PrefetchNotesExcluding(
+                startTick,
+                sourceEnd,
+                minimumKey,
+                maximumKey,
+                _sourceExclusions,
+                cancellationToken);
+        }
+        else
+        {
+            cached.PrefetchNotes(
+                startTick,
+                sourceEnd,
+                minimumKey,
+                maximumKey,
+                cancellationToken);
+        }
     }
 
     public bool TryQueryByIdsCached(
@@ -1163,7 +1365,8 @@ public sealed class DirectMidiNoteQuerySnapshot
         if (_source is not null)
         {
             HashSet<MidoraId> sourceIds = [.. ids];
-            if (_sourceExclusions is not null) sourceIds.ExceptWith(_sourceExclusions);
+            if (_sourceExclusions is not null)
+                sourceIds.RemoveWhere(_sourceExclusions.Contains);
             sourceMatches = [];
             if (_source is IPureMidiCachedContentSource cached)
             {
@@ -1199,7 +1402,8 @@ public sealed class DirectMidiNoteQuerySnapshot
         if (_source is not null)
         {
             HashSet<MidoraId> sourceIds = [.. ids];
-            if (_sourceExclusions is not null) sourceIds.ExceptWith(_sourceExclusions);
+            if (_sourceExclusions is not null)
+                sourceIds.RemoveWhere(_sourceExclusions.Contains);
             foreach (DirectMidiNoteSourceMatch match in _sourceIdCache.Resolve(
                 sourceIds,
                 _source.QueryNotesByIds))
@@ -1218,7 +1422,8 @@ public sealed class DirectMidiNoteQuerySnapshot
         ArgumentNullException.ThrowIfNull(ids);
         if (_source is not IPureMidiCachedContentSource cached || ids.Count == 0) return;
         HashSet<MidoraId> sourceIds = [.. ids];
-        if (_sourceExclusions is not null) sourceIds.ExceptWith(_sourceExclusions);
+        if (_sourceExclusions is not null)
+            sourceIds.RemoveWhere(_sourceExclusions.Contains);
         cached.PrefetchNotesByIds(sourceIds, cancellationToken);
     }
 
@@ -1290,38 +1495,50 @@ public sealed class DirectMidiNoteQuerySnapshot
         private const int BlockSize = 128;
         private readonly DirectMidiNoteValue[] _values;
         private readonly FingerprintBlock[] _blocks;
+        private readonly long[] _prefixMaximumEndTicks;
+        private readonly KeyBlockRange[] _keyBlockRanges = new KeyBlockRange[128];
 
         public FingerprintIndex(DirectMidiNoteValue[] values)
         {
             _values = values;
-            _blocks = new FingerprintBlock[(values.Length + BlockSize - 1) / BlockSize];
-            for (int blockIndex = 0; blockIndex < _blocks.Length; blockIndex++)
+            List<FingerprintBlock> blocks = new((values.Length + BlockSize - 1) / BlockSize);
+            List<long> prefixMaximumEndTicks = new(blocks.Capacity);
+            int valueIndex = 0;
+            for (int key = 0; key < _keyBlockRanges.Length; key++)
             {
-                int first = checked(blockIndex * BlockSize);
-                int count = Math.Min(BlockSize, values.Length - first);
-                long minimumStartTick = long.MaxValue;
-                long maximumEndTick = 0;
-                int minimumKey = int.MaxValue;
-                int maximumKey = int.MinValue;
-                FingerprintAggregate aggregate = default;
-                for (int index = first; index < first + count; index++)
+                while (valueIndex < values.Length && values[valueIndex].Key < key) valueIndex++;
+                int keyValueEnd = valueIndex;
+                while (keyValueEnd < values.Length && values[keyValueEnd].Key == key) keyValueEnd++;
+                int firstBlock = blocks.Count;
+                long prefixMaximumEndTick = 0;
+                while (valueIndex < keyValueEnd)
                 {
-                    DirectMidiNoteValue value = values[index];
-                    minimumStartTick = Math.Min(minimumStartTick, value.StartTick);
-                    maximumEndTick = Math.Max(maximumEndTick, EndTick(value));
-                    minimumKey = Math.Min(minimumKey, value.Key);
-                    maximumKey = Math.Max(maximumKey, value.Key);
-                    aggregate.Add(Fingerprint(value));
+                    int first = valueIndex;
+                    int count = Math.Min(BlockSize, keyValueEnd - first);
+                    long minimumStartTick = long.MaxValue;
+                    long maximumEndTick = 0;
+                    FingerprintAggregate aggregate = default;
+                    for (int index = first; index < first + count; index++)
+                    {
+                        DirectMidiNoteValue value = values[index];
+                        minimumStartTick = Math.Min(minimumStartTick, value.StartTick);
+                        maximumEndTick = Math.Max(maximumEndTick, EndTick(value));
+                        aggregate.Add(Fingerprint(value));
+                    }
+                    blocks.Add(new(
+                        first,
+                        count,
+                        minimumStartTick,
+                        maximumEndTick,
+                        aggregate));
+                    prefixMaximumEndTick = Math.Max(prefixMaximumEndTick, maximumEndTick);
+                    prefixMaximumEndTicks.Add(prefixMaximumEndTick);
+                    valueIndex += count;
                 }
-                _blocks[blockIndex] = new(
-                    first,
-                    count,
-                    minimumStartTick,
-                    maximumEndTick,
-                    minimumKey,
-                    maximumKey,
-                    aggregate);
+                _keyBlockRanges[key] = new(firstBlock, blocks.Count - firstBlock);
             }
+            _blocks = blocks.ToArray();
+            _prefixMaximumEndTicks = prefixMaximumEndTicks.ToArray();
         }
 
         public ulong GetFingerprint(
@@ -1331,37 +1548,56 @@ public sealed class DirectMidiNoteQuerySnapshot
             int maximumKey)
         {
             FingerprintAggregate result = default;
-            foreach (FingerprintBlock block in _blocks)
+            int firstKey = Math.Clamp(minimumKey, 0, 127);
+            int lastKey = Math.Clamp(maximumKey, 0, 127);
+            if (lastKey < firstKey) return result.ToFingerprint();
+            for (int key = firstKey; key <= lastKey; key++)
             {
-                if (block.MaximumEndTick <= startTick
-                    || block.MinimumStartTick >= endTick
-                    || block.MaximumKey < minimumKey
-                    || block.MinimumKey > maximumKey)
+                KeyBlockRange range = _keyBlockRanges[key];
+                int firstBlock = UpperBound(
+                    _prefixMaximumEndTicks,
+                    range.First,
+                    range.Count,
+                    startTick);
+                int blockEnd = range.First + range.Count;
+                for (int blockIndex = firstBlock; blockIndex < blockEnd; blockIndex++)
                 {
-                    continue;
-                }
-                if (startTick <= block.MinimumStartTick
-                    && endTick >= block.MaximumEndTick
-                    && minimumKey <= block.MinimumKey
-                    && maximumKey >= block.MaximumKey)
-                {
-                    result.Combine(block.Aggregate);
-                    continue;
-                }
-                int end = checked(block.First + block.Count);
-                for (int index = block.First; index < end; index++)
-                {
-                    DirectMidiNoteValue value = _values[index];
-                    if (value.StartTick < endTick
-                        && EndTick(value) > startTick
-                        && value.Key >= minimumKey
-                        && value.Key <= maximumKey)
+                    FingerprintBlock block = _blocks[blockIndex];
+                    if (block.MinimumStartTick >= endTick) break;
+                    if (block.MaximumEndTick <= startTick) continue;
+                    if (startTick <= block.MinimumStartTick
+                        && endTick >= block.MaximumEndTick)
                     {
-                        result.Add(Fingerprint(value));
+                        result.Combine(block.Aggregate);
+                        continue;
+                    }
+                    int end = checked(block.First + block.Count);
+                    for (int index = block.First; index < end; index++)
+                    {
+                        DirectMidiNoteValue value = _values[index];
+                        if (value.StartTick < endTick && EndTick(value) > startTick)
+                            result.Add(Fingerprint(value));
                     }
                 }
             }
             return result.ToFingerprint();
+        }
+
+        private static int UpperBound(
+            long[] values,
+            int first,
+            int count,
+            long value)
+        {
+            int low = first;
+            int high = first + count;
+            while (low < high)
+            {
+                int middle = low + ((high - low) >> 1);
+                if (values[middle] <= value) low = middle + 1;
+                else high = middle;
+            }
+            return low;
         }
 
         private readonly record struct FingerprintBlock(
@@ -1369,9 +1605,9 @@ public sealed class DirectMidiNoteQuerySnapshot
             int Count,
             long MinimumStartTick,
             long MaximumEndTick,
-            int MinimumKey,
-            int MaximumKey,
             FingerprintAggregate Aggregate);
+
+        private readonly record struct KeyBlockRange(int First, int Count);
     }
 
     private struct FingerprintAggregate
@@ -1492,7 +1728,8 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
                     ? null
                     : new PureMidiSourceExclusionSet<DirectMidiNoteValue>(
                         _formalRemovedSourceIds,
-                        _formalReplacements)
+                        _formalReplacements,
+                        _sourceIndices)
                 : SourceExclusions();
             var snapshot = new DirectMidiNoteQuerySnapshot(
                 _source,
@@ -1658,16 +1895,24 @@ public sealed class DirectMidiNoteCollection : IList<DirectMidiNote>, IReadOnlyL
 
     public IEnumerator<DirectMidiNote> GetEnumerator()
     {
-        if (_compilationSnapshot is { } compilationSnapshot)
+        if (_compilationSnapshot is not null)
         {
-            foreach (DirectMidiNoteValue value in compilationSnapshot.QueryValues(
-                0,
-                long.MaxValue,
-                0,
-                127))
+            // A compilation mirror must preserve the collection's formal sequence.
+            // The query snapshot is intentionally spatially indexed for viewport work,
+            // so its enumeration order is not the IList/formal order.
+            if (!_clearSource && _source is not null)
             {
-                yield return FromValue(_project, value);
+                for (int sourceIndex = 0; sourceIndex < _source.NoteCount; sourceIndex++)
+                {
+                    DirectMidiNoteValue sourceValue = _source.GetNote(sourceIndex);
+                    if (_formalRemovedSourceIds.Contains(sourceValue.Id)) continue;
+                    yield return FromValue(
+                        _project,
+                        _formalReplacements.GetValueOrDefault(sourceValue.Id, sourceValue));
+                }
             }
+            foreach (DirectMidiNoteValue value in _formalAdded.Enumerate())
+                yield return FromValue(_project, value);
             yield break;
         }
         if (!_clearSource && _source is not null)

@@ -409,6 +409,73 @@ public sealed class ExactTimelineCollisionPolicyTests
     }
 
     [Fact]
+    public void DirectMidiEventLineUpsertCreatesPointsInOneBatchAndSupportsUndoRedo()
+    {
+        (MidoraProject project, MidiSegment segment) = CreateDirectMidiFixture();
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.UpsertDirectMidiEventPoints(
+            segment.Id,
+            DirectMidiChannelEventKind.ControlChange,
+            laneData1: 11,
+            [new(10, 11, 40), new(20, 11, 80)]));
+
+        DirectMidiChannelEvent[] created = segment.ChannelEvents
+            .OrderBy(value => value.Tick)
+            .ToArray();
+        Assert.Equal(2, created.Length);
+        Assert.Equal((10L, 11, 40), (created[0].Tick, created[0].Data1, created[0].Data2));
+        Assert.Equal((20L, 11, 80), (created[1].Tick, created[1].Data1, created[1].Data2));
+
+        document.Undo();
+        Assert.Empty(segment.ChannelEvents);
+
+        document.Redo();
+        Assert.Equal(created, segment.ChannelEvents.OrderBy(value => value.Tick));
+    }
+
+    [Fact]
+    public void DirectMidiEventLineUpsertUpdatesExistingAndCreatesMissingAtomically()
+    {
+        (MidoraProject project, MidiSegment segment) = CreateDirectMidiFixture();
+        DirectMidiChannelEvent existing = new(project)
+        {
+            Tick = 10,
+            Kind = DirectMidiChannelEventKind.ControlChange,
+            Data1 = 11,
+            Data2 = 24
+        };
+        segment.ChannelEvents.Add(existing);
+        using ProjectCompilationSession compilation = new(project);
+        ProjectDocumentSession document = PersistedDocument(compilation);
+
+        document.Execute(ProjectDomainEditCommands.UpsertDirectMidiEventPoints(
+            segment.Id,
+            DirectMidiChannelEventKind.ControlChange,
+            laneData1: 11,
+            [new(10, 11, 64), new(20, 11, 96)]));
+
+        DirectMidiChannelEvent[] edited = segment.ChannelEvents
+            .OrderBy(value => value.Tick)
+            .ToArray();
+        Assert.Equal(2, edited.Length);
+        Assert.Same(existing, edited[0]);
+        Assert.Equal(64, existing.Data2);
+        Assert.Equal((20L, 11, 96), (edited[1].Tick, edited[1].Data1, edited[1].Data2));
+
+        document.Undo();
+        Assert.Same(existing, Assert.Single(segment.ChannelEvents));
+        Assert.Equal(24, existing.Data2);
+
+        document.Redo();
+        edited = segment.ChannelEvents.OrderBy(value => value.Tick).ToArray();
+        Assert.Equal(2, edited.Length);
+        Assert.Same(existing, edited[0]);
+        Assert.Equal(64, existing.Data2);
+    }
+
+    [Fact]
     public void DirectMidiNoteMoveKeepsIncumbentAndUndoRestoresMover()
     {
         (MidoraProject project, MidiSegment segment) = CreateDirectMidiFixture();

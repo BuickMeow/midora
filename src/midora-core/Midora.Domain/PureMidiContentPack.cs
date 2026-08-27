@@ -1701,6 +1701,7 @@ public sealed class PureMidiContentPack : IDisposable
         IPureMidiContentBoundsSource,
         IPureMidiContentRangeFingerprintSource,
         IPureMidiCachedContentSource,
+        IPureMidiNoteExclusionAwareSource,
         IPureMidiContentPackSegmentSource
     {
         private readonly PureMidiContentPack _owner;
@@ -1825,6 +1826,60 @@ public sealed class PureMidiContentPack : IDisposable
             return true;
         }
 
+        public bool TryQueryCachedNotesExcluding(
+            long startTick,
+            long endTick,
+            int minimumKey,
+            int maximumKey,
+            IReadOnlySet<MidoraId> excludedIds,
+            List<DirectMidiNoteValue> destination)
+        {
+            ArgumentNullException.ThrowIfNull(excludedIds);
+            ArgumentNullException.ThrowIfNull(destination);
+            PageDescriptor[] pages = NoteRangePages(
+                    startTick,
+                    endTick,
+                    minimumKey,
+                    maximumKey)
+                .Where(page => !IsFullyExcluded(page, excludedIds))
+                .ToArray();
+            if (!TryAcquirePages(pages, out object[] decoded)) return false;
+            for (int pageIndex = 0; pageIndex < pages.Length; pageIndex++)
+            {
+                PageDescriptor page = pages[pageIndex];
+                DirectMidiNoteValue[] values = (DirectMidiNoteValue[])decoded[pageIndex];
+                IPureMidiOrdinalRangeSet? ordinalExclusions =
+                    excludedIds as IPureMidiOrdinalRangeSet;
+                ArraySegment<int> pageOrdinals = ordinalExclusions?.GetOrdinalsInRange(
+                    page.FirstOrdinal,
+                    page.RecordCount) ?? default;
+                int ordinalCursor = pageOrdinals.Offset;
+                for (int localIndex = 0; localIndex < values.Length; localIndex++)
+                {
+                    DirectMidiNoteValue value = values[localIndex];
+                    long noteEnd = value.StartTick > long.MaxValue - Math.Max(1, value.LengthTicks)
+                        ? long.MaxValue
+                        : value.StartTick + Math.Max(1, value.LengthTicks);
+                    if (!IsExcludedSourceNote(
+                            page,
+                            localIndex,
+                            value.Id,
+                            excludedIds,
+                            ordinalExclusions,
+                            pageOrdinals,
+                            ref ordinalCursor)
+                        && value.StartTick < endTick
+                        && noteEnd > startTick
+                        && value.Key >= minimumKey
+                        && value.Key <= maximumKey)
+                    {
+                        destination.Add(value);
+                    }
+                }
+            }
+            return true;
+        }
+
         public bool TryQueryCachedChannelEvents(
             long startTick,
             long endTick,
@@ -1934,6 +1989,22 @@ public sealed class PureMidiContentPack : IDisposable
                 NoteRangePages(startTick, endTick, minimumKey, maximumKey),
                 cancellationToken);
 
+        public void PrefetchNotesExcluding(
+            long startTick,
+            long endTick,
+            int minimumKey,
+            int maximumKey,
+            IReadOnlySet<MidoraId> excludedIds,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(excludedIds);
+            PrefetchPages(
+                NoteRangePages(startTick, endTick, minimumKey, maximumKey)
+                    .Where(page => !IsFullyExcluded(page, excludedIds))
+                    .ToArray(),
+                cancellationToken);
+        }
+
         public void PrefetchChannelEvents(
             long startTick,
             long endTick,
@@ -2021,13 +2092,14 @@ public sealed class PureMidiContentPack : IDisposable
                 {
                     continue;
                 }
+                if (IsFullyExcluded(page, excludedIds)) continue;
                 bool singleColumn = projection.TryGetColumns(
                     page.MinimumTick,
                     page.MaximumActiveEndTick,
                     out int first,
                     out int lastExclusive)
                     && lastExclusive - first == 1;
-                bool decode = !singleColumn || MayContainExcludedId(page, excludedIds);
+                bool decode = !singleColumn || MayContainExcludedRecord(page, excludedIds);
                 if (!decode)
                 {
                     (ulong low, ulong high) = FilterLaneMask(
@@ -2349,6 +2421,55 @@ public sealed class PureMidiContentPack : IDisposable
             }
         }
 
+        public IEnumerable<DirectMidiNoteValue> QueryNotesExcluding(
+            long startTick,
+            long endTick,
+            int minimumKey,
+            int maximumKey,
+            IReadOnlySet<MidoraId> excludedIds)
+        {
+            ArgumentNullException.ThrowIfNull(excludedIds);
+            foreach (PageDescriptor page in _noteRangeIndex.Query(
+                startTick,
+                endTick,
+                minimumKey,
+                maximumKey,
+                filterKeys: true))
+            {
+                if (IsFullyExcluded(page, excludedIds)) continue;
+                DirectMidiNoteValue[] values =
+                    (DirectMidiNoteValue[])_owner.GetDecodedPage(page.Index);
+                IPureMidiOrdinalRangeSet? ordinalExclusions =
+                    excludedIds as IPureMidiOrdinalRangeSet;
+                ArraySegment<int> pageOrdinals = ordinalExclusions?.GetOrdinalsInRange(
+                    page.FirstOrdinal,
+                    page.RecordCount) ?? default;
+                int ordinalCursor = pageOrdinals.Offset;
+                for (int localIndex = 0; localIndex < values.Length; localIndex++)
+                {
+                    DirectMidiNoteValue value = values[localIndex];
+                    long noteEnd = value.StartTick > long.MaxValue - Math.Max(1, value.LengthTicks)
+                        ? long.MaxValue
+                        : value.StartTick + Math.Max(1, value.LengthTicks);
+                    if (!IsExcludedSourceNote(
+                            page,
+                            localIndex,
+                            value.Id,
+                            excludedIds,
+                            ordinalExclusions,
+                            pageOrdinals,
+                            ref ordinalCursor)
+                        && value.StartTick < endTick
+                        && noteEnd > startTick
+                        && value.Key >= minimumKey
+                        && value.Key <= maximumKey)
+                    {
+                        yield return value;
+                    }
+                }
+            }
+        }
+
         public IEnumerable<DirectMidiChannelEventValue> QueryChannelEvents(long startTick, long endTick)
         {
             foreach (PageDescriptor page in _channelRangeIndex.Query(
@@ -2495,6 +2616,7 @@ public sealed class PureMidiContentPack : IDisposable
         {
             foreach (PageDescriptor page in pages)
             {
+                if (IsFullyExcluded(page, excludedIds)) continue;
                 int firstColumn = PureMidiOverviewProjection.Column(
                     page.MinimumTick,
                     extent,
@@ -2504,7 +2626,7 @@ public sealed class PureMidiContentPack : IDisposable
                     extent,
                     destination.Length);
                 if (firstColumn == lastColumn
-                    && !MayContainExcludedId(page, excludedIds))
+                    && !MayContainExcludedRecord(page, excludedIds))
                 {
                     destination[firstColumn] = 1;
                     continue;
@@ -2527,6 +2649,8 @@ public sealed class PureMidiContentPack : IDisposable
             IReadOnlySet<MidoraId>? excludedIds)
         {
             if (excludedIds is null || excludedIds.Count == 0) return false;
+            if (excludedIds is IPureMidiIdRangeSet ranged)
+                return ranged.MayContain(page.MinimumId, page.MaximumId);
             foreach (MidoraId id in excludedIds)
             {
                 if (id.CompareTo(page.MinimumId) >= 0
@@ -2536,6 +2660,51 @@ public sealed class PureMidiContentPack : IDisposable
                 }
             }
             return false;
+        }
+
+        private static bool MayContainExcludedRecord(
+            PageDescriptor page,
+            IReadOnlySet<MidoraId>? excludedIds) =>
+            excludedIds is IPureMidiOrdinalRangeSet ordinal
+                ? ordinal.MayContainOrdinalRange(page.FirstOrdinal, page.RecordCount)
+                : MayContainExcludedId(page, excludedIds);
+
+        private static bool IsFullyExcluded(
+            PageDescriptor page,
+            IReadOnlySet<MidoraId>? excludedIds) =>
+            excludedIds is IPureMidiOrdinalRangeSet ordinal
+            && ordinal.ContainsAllOrdinals(page.FirstOrdinal, page.RecordCount);
+
+        private static bool IsExcludedSourceNote(
+            PageDescriptor page,
+            int localIndex,
+            MidoraId id,
+            IReadOnlySet<MidoraId> excludedIds,
+            IPureMidiOrdinalRangeSet? ordinalExclusions,
+            ArraySegment<int> pageOrdinals,
+            ref int ordinalCursor)
+        {
+            if (ordinalExclusions is null) return excludedIds.Contains(id);
+
+            int sourceOrdinal = checked(page.FirstOrdinal + localIndex);
+            int ordinalEnd = checked(pageOrdinals.Offset + pageOrdinals.Count);
+            int[]? values = pageOrdinals.Array;
+            while (values is not null
+                && ordinalCursor < ordinalEnd
+                && values[ordinalCursor] < sourceOrdinal)
+            {
+                ordinalCursor++;
+            }
+            if (values is not null
+                && ordinalCursor < ordinalEnd
+                && values[ordinalCursor] == sourceOrdinal)
+            {
+                return true;
+            }
+
+            // IDs without a resolved source ordinal are uncommon, but they must
+            // still be checked exactly rather than being dropped from the view.
+            return ordinalExclusions.HasUnknownOrdinals && excludedIds.Contains(id);
         }
 
         private static bool MayContainRequestedId(

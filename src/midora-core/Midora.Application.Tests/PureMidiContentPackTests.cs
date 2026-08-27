@@ -1,10 +1,120 @@
 using System.Buffers.Binary;
+using System.Collections.Immutable;
 using Midora.Domain;
 
 namespace Midora.Application.Tests;
 
 public sealed class PureMidiContentPackTests
 {
+    [Fact]
+    public void NoteOrdinalExclusionsRemainExactAcrossEndpointPageRuns()
+    {
+        string directory = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "midora-paged-content-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = System.IO.Path.Combine(directory, "ordinal-exclusions.mpk");
+        try
+        {
+            using MidoraProject project = new(192);
+            MidiSegment segment = new(project);
+            const int sourcePageSize = PureMidiContentPackWriter.MaximumPageRecordCount;
+            const int endpointPageSize = PureMidiContentPackWriter.MaximumEndpointPageRecordCount;
+            DirectMidiNoteValue[] notes = new DirectMidiNoteValue[sourcePageSize + 1];
+            using (PureMidiContentPackWriter writer = new(path))
+            {
+                for (int ordinal = 0; ordinal < notes.Length; ordinal++)
+                {
+                    // Keep the excluded source page and the remaining Note in
+                    // disjoint overview columns, while reversing tick order inside
+                    // each endpoint page. Endpoint serialization sorts each page,
+                    // so local endpoint indices no longer equal source ordinals even
+                    // though each page still owns one contiguous ordinal run.
+                    int withinEndpointPage = ordinal % endpointPageSize;
+                    long startTick = ordinal < sourcePageSize
+                        ? 150_000L + endpointPageSize - withinEndpointPage
+                        : 10_000L;
+                    DirectMidiNoteValue note = new(
+                        project.AllocateStableId(),
+                        startTick,
+                        24,
+                        ordinal % 128,
+                        100,
+                        0,
+                        ordinal * 2L,
+                        ordinal * 2L + 1);
+                    notes[ordinal] = note;
+                    writer.AddNote(segment.Id, note);
+                }
+
+                using PureMidiContentPack pack = writer.Complete();
+                IPureMidiSegmentContentSource source = pack.GetSegmentSource(segment.Id);
+                IPureMidiContentOverviewSource overview =
+                    Assert.IsAssignableFrom<IPureMidiContentOverviewSource>(source);
+                IPureMidiNoteExclusionAwareSource exclusionAware =
+                    Assert.IsAssignableFrom<IPureMidiNoteExclusionAwareSource>(source);
+                ImmutableDictionary<MidoraId, int> excluded = notes[..sourcePageSize]
+                    .ToImmutableDictionary(static note => note.Id, static _ => 0);
+                Dictionary<MidoraId, int> ordinals = notes[..sourcePageSize]
+                    .Select((note, ordinal) => (note.Id, ordinal))
+                    .ToDictionary(static value => value.Id, static value => value.ordinal);
+                PureMidiSourceExclusionSet<int> exclusions = new(
+                    ImmutableHashSet<MidoraId>.Empty,
+                    excluded,
+                    ordinals);
+
+                byte[] columns = new byte[20];
+                Assert.True(overview.TryAccumulateNoteStartColumns(
+                    200_000,
+                    columns,
+                    exclusions));
+                Assert.Equal(0, pack.PageCacheMissCount);
+                Assert.Contains((byte)1, columns[..3]);
+                Assert.DoesNotContain((byte)1, columns[14..]);
+
+                DirectMidiNoteValue[] remaining = exclusionAware.QueryNotesExcluding(
+                        0,
+                        200_000,
+                        0,
+                        127,
+                        exclusions)
+                    .ToArray();
+                Assert.Single(remaining);
+                Assert.Equal(
+                    notes[sourcePageSize..].Select(static note => note.Id).Order(),
+                    remaining.Select(static note => note.Id).Order());
+                Assert.Equal(1, pack.PageCacheMissCount);
+
+                // An unresolved exclusion ordinal must disable page-level skipping,
+                // then fall back to exact stable-ID filtering rather than leaking it.
+                Dictionary<MidoraId, int> incompleteOrdinals = new(ordinals);
+                incompleteOrdinals.Remove(notes[123].Id);
+                PureMidiSourceExclusionSet<int> incomplete = new(
+                    ImmutableHashSet<MidoraId>.Empty,
+                    excluded,
+                    incompleteOrdinals);
+                Assert.True(incomplete.HasUnknownOrdinals);
+                Assert.False(incomplete.ContainsAllOrdinals(0, sourcePageSize));
+                Assert.Equal(
+                    notes[sourcePageSize..].Select(static note => note.Id).Order(),
+                    exclusionAware.QueryNotesExcluding(
+                            0,
+                            200_000,
+                            0,
+                            127,
+                            incomplete)
+                        .Select(static note => note.Id)
+                        .Order());
+                Assert.Equal(2, pack.PageCacheMissCount);
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void BackgroundEncoderFaultIsObservedAndDeletesTheUnpublishedPack()
     {

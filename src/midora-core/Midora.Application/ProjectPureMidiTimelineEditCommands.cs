@@ -611,39 +611,37 @@ public static partial class ProjectDomainEditCommands
         Command(name, project =>
         {
             MidiSegmentLocation location = FindMidiSegment(project, segmentId);
-            DirectNoteSelection[] selected = SelectDirectNotes(location.Segment, noteIds);
-            DirectMidiNote[] selectedNotes = selected
+            DirectMidiNote[] selectedNotes = SelectDirectNotes(location.Segment, noteIds)
                 .Select(static value => value.Note)
                 .ToArray();
-            DirectNoteValue[] old = selected.Select(value => SnapshotDirectNote(value.Note)).ToArray();
+            DirectNoteValue[] old = selectedNotes.Select(SnapshotDirectNote).ToArray();
             DirectNoteValue[] replacement = transform(old);
             if (replacement.Length != old.Length)
                 throw new InvalidOperationException("A Direct MIDI Note transform returned the wrong result count.");
-            bool[] discarded = new bool[selected.Length];
             for (int index = 0; index < replacement.Length; index++)
             {
                 DirectNoteValue value = replacement[index];
                 if (value.Key is < 0 or > 127)
                 {
-                    discarded[index] = true;
                     continue;
                 }
                 ValidateDirectMidiNote(value.StartTick, value.LengthTicks, value.Key, value.NoteOnVelocity, value.NoteOffVelocity);
             }
-            DirectMidiNote[] discardedNotes = selected
-                .Where((_, index) => discarded[index])
-                .Select(static value => value.Note)
+            DirectMidiNote[] discardedNotes = selectedNotes
+                .Where((_, index) => replacement[index].Key is < 0 or > 127)
                 .ToArray();
             Action? restoreDiscarded = null;
             IPreparedProjectEdit prepared = Prepared(
-                old.Where((value, index) => value != replacement[index] || discarded[index]).Any(),
+                old.Where((value, index) => value != replacement[index]
+                    || replacement[index].Key is < 0 or > 127).Any(),
                 PureMidiTrackChange(location.Track.Id),
                 _ =>
                 {
                     using IDisposable batch = location.Segment.Notes.BeginBatchChange(selectedNotes);
-                    for (int index = 0; index < selected.Length; index++)
+                    for (int index = 0; index < selectedNotes.Length; index++)
                     {
-                        if (!discarded[index]) ApplyDirectNote(selected[index].Note, replacement[index]);
+                        if (replacement[index].Key is >= 0 and <= 127)
+                            ApplyDirectNote(selectedNotes[index], replacement[index]);
                     }
                     if (discardedNotes.Length != 0)
                         restoreDiscarded = location.Segment.Notes.RemoveRangeWithUndo(discardedNotes);
@@ -651,8 +649,8 @@ public static partial class ProjectDomainEditCommands
                 _ =>
                 {
                     using IDisposable batch = location.Segment.Notes.BeginBatchChange(selectedNotes);
-                    for (int index = 0; index < selected.Length; index++)
-                        ApplyDirectNote(selected[index].Note, old[index]);
+                    for (int index = 0; index < selectedNotes.Length; index++)
+                        ApplyDirectNote(selectedNotes[index], old[index]);
                     if (discardedNotes.Length != 0)
                     {
                         (restoreDiscarded ?? throw new InvalidOperationException(
@@ -661,7 +659,7 @@ public static partial class ProjectDomainEditCommands
                     }
                 });
             DirectMidiNoteCollisionTarget[] collisionTargets = replacement
-                    .Where((value, index) => !discarded[index]
+                    .Where((value, index) => value.Key is >= 0 and <= 127
                         && (value.StartTick != old[index].StartTick
                             || value.Key != old[index].Key))
                     .Select(value => new DirectMidiNoteCollisionTarget(
@@ -727,7 +725,12 @@ public static partial class ProjectDomainEditCommands
                             Order = owner.NextStableId
                         })
                         .ToArray();
-                    location.Segment.ChannelEvents.AddRange(created);
+                    // BeginBatchChange already owns publication for the complete
+                    // line gesture. AddRange opens its own collection batch, so
+                    // calling it here would incorrectly attempt to nest batches.
+                    // Add each prevalidated point to the active batch instead.
+                    foreach (DirectMidiChannelEvent value in created)
+                        location.Segment.ChannelEvents.Add(value);
                 },
                 _ =>
                 {

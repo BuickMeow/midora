@@ -380,9 +380,68 @@ public abstract class WorkspaceViewModel(
     public virtual void RefreshSelectionPresentation() =>
         SelectionSnapshot = TimelineSelectionSnapshot.FromWorkspaceSelection(Selection);
 
+    /// <summary>
+    /// Publishes metrics accumulated by an exact background selection query.
+    /// This is deliberately separate from <see cref="RefreshSelectionPresentation"/>:
+    /// resolving a million IDs again after the range query would defeat paging
+    /// and can retain gigabytes of optional presentation state.
+    /// </summary>
+    public virtual void PublishMaterializedSelection(
+        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> metrics,
+        bool metricsAreComplete,
+        TimelineSelectionRenderIndex? renderIndex = null)
+    {
+        ArgumentNullException.ThrowIfNull(metrics);
+        _selectionPrefetchCancellation.Cancel();
+        _selectionPrefetchGeneration = checked(_selectionPrefetchGeneration + 1);
+        SelectionSnapshot = TimelineSelectionSnapshot.FromWorkspaceSelection(
+            Selection,
+            metrics: metrics,
+            metricsAreComplete: metricsAreComplete,
+            renderIndex: renderIndex);
+    }
+
+    /// <summary>
+    /// Completes aggregate metrics for a selection that has already been
+    /// published.  The formal ID set remains immediately usable while this
+    /// optional, revision-bound scan runs in the background.
+    /// </summary>
+    protected void ScheduleMaterializedSelectionMetricsIfNeeded(
+        bool metricsAreComplete,
+        IReadOnlyList<TimelineRenderSnapshot?> snapshots,
+        Action? afterPublish = null)
+    {
+        ArgumentNullException.ThrowIfNull(snapshots);
+        if (Selection.IdSet.Count == 0
+            || metricsAreComplete && SelectionSnapshot.HasRenderIndex)
+        {
+            return;
+        }
+        ScheduleDeferredSelectionMetrics(
+            snapshots,
+            afterPublish,
+            Selection.IdSet,
+            Selection.Revision,
+            _selectionPresentationScope,
+            Dispatcher.CurrentDispatcher);
+    }
+
     protected void BeginPresentationRebuild()
     {
         _selectionPresentationScope = checked(_selectionPresentationScope + 1);
+        _selectionPrefetchCancellation.Cancel();
+    }
+
+    /// <summary>
+    /// Invalidates optional selection-presentation work when this Workspace is
+    /// removed from the live session. The immutable formal selection remains
+    /// untouched, but no orphaned metrics scan may retain paged snapshots or
+    /// publish back into a closed Workspace.
+    /// </summary>
+    public void CancelBackgroundPresentationWork()
+    {
+        _selectionPresentationScope = checked(_selectionPresentationScope + 1);
+        _selectionPrefetchGeneration = checked(_selectionPrefetchGeneration + 1);
         _selectionPrefetchCancellation.Cancel();
     }
 
@@ -461,7 +520,13 @@ public abstract class WorkspaceViewModel(
             cancellationToken).ContinueWith(
                 task =>
                 {
-                    if (task.IsCanceled || task.IsFaulted) return;
+                    if (task.IsCanceled) return;
+                    if (task.IsFaulted)
+                    {
+                        System.Diagnostics.Trace.TraceError(
+                            $"Selection ID prefetch failed: {task.Exception}");
+                        return;
+                    }
                     _ = dispatcher.BeginInvoke(
                         () =>
                         {
@@ -513,22 +578,24 @@ public abstract class WorkspaceViewModel(
                 await _selectionMetricsGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    List<TimelineRenderItem> resolved = new(ids.Count);
-                    HashSet<(MidoraId Id, TimelineItemKind Kind)> emitted = [];
+                    IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> metrics =
+                        new Dictionary<TimelineItemKind, TimelineSelectionMetrics>();
+                    List<TimelineSelectionRenderIndex> renderIndexes = [];
                     foreach (TimelineRenderSnapshot snapshot in capturedSnapshots)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        snapshot.PrefetchIds(ids, cancellationToken);
-                        cancellationToken.ThrowIfCancellationRequested();
-                        List<TimelineRenderItem> values = [];
-                        snapshot.QueryByIds(ids, values);
-                        foreach (TimelineRenderItem value in values)
-                        {
-                            if (emitted.Add((value.Id, value.Kind))) resolved.Add(value);
-                        }
+                        TimelineSelectionPresentationMaterialization materialization =
+                            snapshot.MaterializeSelectionPresentation(ids, cancellationToken);
+                        metrics = TimelineRenderSnapshot.MergeSelectionMetrics(
+                            metrics,
+                            materialization.Metrics);
+                        if (materialization.RenderIndex.Count != 0)
+                            renderIndexes.Add(materialization.RenderIndex);
                     }
                     cancellationToken.ThrowIfCancellationRequested();
-                    return resolved;
+                    return new TimelineSelectionPresentationMaterialization(
+                        metrics,
+                        TimelineSelectionRenderIndex.Merge(renderIndexes));
                 }
                 finally
                 {
@@ -538,7 +605,13 @@ public abstract class WorkspaceViewModel(
             cancellationToken).ContinueWith(
                 task =>
                 {
-                    if (task.IsCanceled || task.IsFaulted) return;
+                    if (task.IsCanceled) return;
+                    if (task.IsFaulted)
+                    {
+                        System.Diagnostics.Trace.TraceError(
+                            $"Deferred selection metrics failed: {task.Exception}");
+                        return;
+                    }
                     _ = dispatcher.BeginInvoke(
                         () =>
                         {
@@ -551,7 +624,9 @@ public abstract class WorkspaceViewModel(
                             }
                             SelectionSnapshot = TimelineSelectionSnapshot.FromWorkspaceSelection(
                                 Selection,
-                                task.Result);
+                                metrics: task.Result.Metrics,
+                                metricsAreComplete: true,
+                                renderIndex: task.Result.RenderIndex);
                             afterPublish?.Invoke();
                         },
                         DispatcherPriority.Background);
@@ -1035,7 +1110,30 @@ public sealed class TimelineWorkspaceViewModel : WorkspaceViewModel
     public override void RefreshSelectionPresentation()
     {
         TryRefreshSelectionPresentation(
-            [Snapshot, VelocitySnapshot, ParameterSnapshot, RulerSnapshot],
+            // Note snapshots also produce the Velocity metrics/render alias.
+            // Resolving the same million selected note IDs through the
+            // velocity projection would decode the identical pages twice.
+            [Snapshot, ParameterSnapshot, RulerSnapshot],
+            IsConductor
+                ? () => SelectedConductorEvent = ConductorEvents.FirstOrDefault(value =>
+                    value.Id == Selection.Primary)
+                : null);
+    }
+
+    public override void PublishMaterializedSelection(
+        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> metrics,
+        bool metricsAreComplete,
+        TimelineSelectionRenderIndex? renderIndex = null)
+    {
+        base.PublishMaterializedSelection(metrics, metricsAreComplete, renderIndex);
+        if (IsConductor)
+        {
+            SelectedConductorEvent = ConductorEvents.FirstOrDefault(value =>
+                value.Id == Selection.Primary);
+        }
+        ScheduleMaterializedSelectionMetricsIfNeeded(
+            metricsAreComplete,
+            [Snapshot, ParameterSnapshot, RulerSnapshot],
             IsConductor
                 ? () => SelectedConductorEvent = ConductorEvents.FirstOrDefault(value =>
                     value.Id == Selection.Primary)
@@ -3167,7 +3265,18 @@ public sealed class InstrumentWorkspaceViewModel(
     public override void RefreshSelectionPresentation()
     {
         TryRefreshSelectionPresentation(
-            [SubVoiceNoteSnapshot, SubVoiceEventSnapshot, SubVoiceVelocitySnapshot]);
+            [SubVoiceNoteSnapshot, SubVoiceEventSnapshot]);
+    }
+
+    public override void PublishMaterializedSelection(
+        IReadOnlyDictionary<TimelineItemKind, TimelineSelectionMetrics> metrics,
+        bool metricsAreComplete,
+        TimelineSelectionRenderIndex? renderIndex = null)
+    {
+        base.PublishMaterializedSelection(metrics, metricsAreComplete, renderIndex);
+        ScheduleMaterializedSelectionMetricsIfNeeded(
+            metricsAreComplete,
+            [SubVoiceNoteSnapshot, SubVoiceEventSnapshot]);
     }
 
     public override void Rebuild(MidoraProject project, long revision)

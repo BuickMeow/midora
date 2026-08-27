@@ -537,6 +537,36 @@ internal sealed class PagedDirectMidiTimelineItemSource :
         }
     }
 
+    public void VisitByIds(
+        IReadOnlySet<MidoraId> ids,
+        Action<TimelineRenderItem> visitor)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(visitor);
+        switch (_projection)
+        {
+            case DirectMidiTimelineProjection.Notes:
+                foreach (DirectMidiNoteValue value in _noteSnapshot!.ResolveByIds(ids))
+                    visitor(ToNoteItem(value));
+                break;
+            case DirectMidiTimelineProjection.Velocities:
+                foreach (DirectMidiNoteValue value in _noteSnapshot!.ResolveByIds(ids))
+                    visitor(ToVelocityItem(value));
+                break;
+            case DirectMidiTimelineProjection.ChannelEvents
+                when _eventTarget is DirectMidiEventLaneTarget target:
+                foreach (DirectMidiChannelEventValue value in _channelEventSnapshot!.ResolveByIds(ids))
+                {
+                    if (ToLaneTarget(value) == target) visitor(ToEventItem(value));
+                }
+                break;
+            case DirectMidiTimelineProjection.OpaqueEvents:
+                foreach (OpaqueMidiEventValue value in _opaqueEventSnapshot!.ResolveByIds(ids))
+                    visitor(ToOpaqueItem(value));
+                break;
+        }
+    }
+
     public bool TryQueryIntoCached(
         long startTick,
         long endTick,

@@ -152,10 +152,12 @@ public sealed class WorkspaceSelection
 
     public void Clear()
     {
-        if (_ids.Count == 0 && Primary is null && Anchor is null)
-        {
-            return;
-        }
+        // Revision is also the selection-intent epoch used to fence asynchronous
+        // range materializations.  Clearing an already-empty set is therefore
+        // not a semantic no-op: it means that the user explicitly rejected any
+        // older selection gesture which may still be running on another surface.
+        // Without this epoch advance, a pending Replace marquee can repopulate a
+        // selection after an explicit Deselect command.
         _ids = ImmutableHashSet<MidoraId>.Empty;
         Primary = null;
         Anchor = null;

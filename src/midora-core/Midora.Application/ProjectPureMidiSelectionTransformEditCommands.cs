@@ -400,7 +400,6 @@ public static partial class ProjectDomainEditCommands
                 return new MidiSegmentDirectNoteTransform(
                     value.Segment,
                     value.Note,
-                    value.Index,
                     value.Old,
                     replacement,
                     discard);
@@ -496,7 +495,7 @@ public static partial class ProjectDomainEditCommands
                             replacement.NoteOnVelocity,
                             replacement.NoteOffVelocity);
                     }
-                    notes.Add(new(segment, note, match.Index, old, replacement, discard));
+                    notes.Add(new(segment, note, old, replacement, discard));
                 }
 
                 if (kind is MidiSegmentContentTransformKind.FlipHorizontal
@@ -640,16 +639,23 @@ public static partial class ProjectDomainEditCommands
         return ResolveTargetedExactDirectMidiCollisions(
             prepared,
             noteTargets: notes
-                .Where(value => !value.Discard)
+                .Where(value => !value.Discard
+                    && (value.Old.StartTick != value.Replacement.StartTick
+                        || value.Old.Key != value.Replacement.Key))
                 .Select(value => new DirectMidiNoteCollisionTarget(
                     value.Segment,
                     value.Replacement.StartTick,
                     value.Replacement.Key)),
-            eventTargets: events.Select(value => new DirectMidiEventCollisionTarget(
-                value.Segment,
-                value.Replacement.Tick,
-                value.Replacement.Kind,
-                value.Replacement.Data1)));
+            eventTargets: events
+                .Where(value => value.Old.Tick != value.Replacement.Tick
+                    || value.Old.Kind != value.Replacement.Kind
+                    || DirectMidiEventUsesData1Selector(value.Old.Kind)
+                        && value.Old.Data1 != value.Replacement.Data1)
+                .Select(value => new DirectMidiEventCollisionTarget(
+                    value.Segment,
+                    value.Replacement.Tick,
+                    value.Replacement.Kind,
+                    value.Replacement.Data1)));
     }
 
     private static void ValidateMidiSegmentTransformWindows(
@@ -807,7 +813,6 @@ public static partial class ProjectDomainEditCommands
     private readonly record struct MidiSegmentDirectNoteTransform(
         MidiSegment Segment,
         DirectMidiNote Note,
-        int Index,
         DirectNoteValue Old,
         DirectNoteValue Replacement,
         bool Discard);

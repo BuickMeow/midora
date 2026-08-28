@@ -370,7 +370,12 @@ internal sealed class DirectMidiNoteOverlayIndex
                 out int lastExclusive)
             && lastExclusive - firstColumn == 1)
         {
-            IncludeNode(node, firstColumn, lastExclusive, destination);
+            IncludeNode(
+                node,
+                projection,
+                firstColumn,
+                lastExclusive,
+                destination);
             work++;
             return;
         }
@@ -390,20 +395,16 @@ internal sealed class DirectMidiNoteOverlayIndex
         {
             ulong low = value.Key < 64 ? 1UL << value.Key : 0;
             ulong high = value.Key >= 64 ? 1UL << (value.Key - 64) : 0;
-            projection.TryGetColumns(
+            PagedTimelineRasterProjection.IncludeExact(
+                destination,
+                projection,
                 value.StartTick,
                 EndTick(value),
-                out int from,
-                out int toExclusive);
-            for (int column = from; column < toExclusive; column++)
-            {
-                destination[column].Include(
-                    low,
-                    high,
-                    value.NoteOnVelocity / 127d,
-                    value.NoteOnVelocity / 127d,
-                    1);
-            }
+                low,
+                high,
+                value.NoteOnVelocity / 127d,
+                value.NoteOnVelocity / 127d,
+                1);
             work++;
         }
         AccumulateRasterColumns(
@@ -417,6 +418,7 @@ internal sealed class DirectMidiNoteOverlayIndex
 
     private static void IncludeNode(
         SpatialNode node,
+        TimelineRasterColumnProjection projection,
         int firstColumn,
         int lastExclusive,
         Span<TimelineRasterColumnSummary> destination)
@@ -429,6 +431,14 @@ internal sealed class DirectMidiNoteOverlayIndex
                 node.MinimumVelocity / 127d,
                 node.MaximumVelocity / 127d,
                 node.Count);
+        }
+        if (node.MinimumStartTick >= projection.StartTick
+            && node.MinimumStartTick < projection.EndTick)
+        {
+            destination[firstColumn].IncludeStartBoundary(
+                node.LaneMaskLow,
+                node.LaneMaskHigh,
+                spansMultipleColumns: false);
         }
     }
 

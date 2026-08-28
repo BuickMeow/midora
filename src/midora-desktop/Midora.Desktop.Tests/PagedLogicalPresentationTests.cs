@@ -128,6 +128,181 @@ public sealed class PagedLogicalPresentationTests
             $"{sourceKind} low-LOD raster took {stopwatch.Elapsed.TotalMilliseconds:F1} ms.");
     }
 
+    [Theory]
+    [InlineData("logical")]
+    [InlineData("direct")]
+    [InlineData("subvoice")]
+    public void PagedPianoSourcesKeepAdjacentNoteStartsVisibleAtLowLod(string sourceKind)
+    {
+        using MidoraProject project = new(192);
+        ITimelineRenderItemSource source;
+        if (sourceKind == "logical")
+        {
+            Segment segment = new(project) { LengthTicks = 128 };
+            segment.Notes.AddRange(
+            [
+                new LogicalNote(project)
+                {
+                    StartTick = 8,
+                    LengthTicks = 32,
+                    Note = 60,
+                    Velocity = 100
+                },
+                new LogicalNote(project)
+                {
+                    StartTick = 40,
+                    LengthTicks = 32,
+                    Note = 60,
+                    Velocity = 100
+                }
+            ]);
+            source = new PagedLogicalNoteTimelineItemSource(
+                segment,
+                LogicalNoteTimelineProjection.Notes);
+        }
+        else if (sourceKind == "direct")
+        {
+            MidiSegment segment = new(project) { LengthTicks = 128 };
+            segment.Notes.AddRange(
+            [
+                new DirectMidiNote(project)
+                {
+                    StartTick = 8,
+                    LengthTicks = 32,
+                    Key = 60,
+                    NoteOnVelocity = 100
+                },
+                new DirectMidiNote(project)
+                {
+                    StartTick = 40,
+                    LengthTicks = 32,
+                    Key = 60,
+                    NoteOnVelocity = 100
+                }
+            ]);
+            source = new PagedDirectMidiTimelineItemSource(
+                segment,
+                DirectMidiTimelineProjection.Notes);
+        }
+        else
+        {
+            SubVoice voice = new(project);
+            voice.Events.AddRange(
+            [
+                new TemplateEvent(project)
+                {
+                    Kind = TemplateEventKind.Note,
+                    Tick = 8,
+                    LengthTicks = 32,
+                    Number = 60,
+                    Value = 100
+                },
+                new TemplateEvent(project)
+                {
+                    Kind = TemplateEventKind.Note,
+                    Tick = 40,
+                    LengthTicks = 32,
+                    Number = 60,
+                    Value = 100
+                }
+            ]);
+            source = new PagedTemplateNoteTimelineItemSource(
+                voice,
+                TemplateNoteTimelineProjection.Notes);
+        }
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            $"{sourceKind}-adjacent-low-lod",
+            [],
+            itemSource: source);
+        Color darkFill = Color.FromRgb(68, 75, 80);
+        Color brightOutline = Color.FromRgb(163, 178, 190);
+
+        TimelineRasterBuffer raster = TimelinePianoTileRasterizer.Rasterize(
+            snapshot,
+            devicePixelsPerTick: 0.125,
+            devicePixelsPerLane: 4,
+            tileX: 0,
+            tileY: 1,
+            darkFill,
+            Colors.OrangeRed,
+            normalOutlineColor: brightOutline);
+
+        Color beforeBoundary = PixelColor(raster, 5, 15);
+        Color boundary = PixelColor(raster, 6, 15);
+        Color afterBoundary = PixelColor(raster, 7, 15);
+        Assert.True(boundary.R > beforeBoundary.R);
+        Assert.True(boundary.G > beforeBoundary.G);
+        Assert.True(boundary.B > beforeBoundary.B);
+        Assert.Equal(beforeBoundary, afterBoundary);
+
+        static Color PixelColor(TimelineRasterBuffer buffer, int x, int y)
+        {
+            int offset = (y * buffer.Width + x) * 4;
+            return Color.FromArgb(
+                buffer.Pixels[offset + 3],
+                buffer.Pixels[offset + 2],
+                buffer.Pixels[offset + 1],
+                buffer.Pixels[offset]);
+        }
+    }
+
+    [Fact]
+    public void ImportedPureMidiPianoSummaryPreservesDisplayLaneStartsAtATileSeam()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            "midora-imported-piano-raster-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "notes.mpk");
+        try
+        {
+            using MidoraProject project = new(192);
+            MidiSegment segment = new(project) { LengthTicks = 4_096 };
+            using PureMidiContentPackWriter writer = new(path);
+            writer.AddNote(segment.Id, new(
+                project.AllocateStableId(), 2_000, 96, 100, 100, 0, 0, 1));
+            writer.AddNote(segment.Id, new(
+                project.AllocateStableId(), 2_048, 48, 60, 100, 0, 2, 3));
+            using PureMidiContentPack pack = writer.Complete();
+            segment.AttachPagedContent(pack.GetSegmentSource(segment.Id));
+            ITimelineRasterAggregateSource source =
+                Assert.IsAssignableFrom<ITimelineRasterAggregateSource>(
+                    new PagedDirectMidiTimelineItemSource(
+                        segment,
+                        DirectMidiTimelineProjection.Notes));
+            var projection = new TimelineRasterColumnProjection(
+                2_040,
+                4_104,
+                2_040,
+                0,
+                0.125,
+                TimelinePianoTileRasterizer.RasterSize);
+            TimelineRasterColumnSummary[] columns =
+                new TimelineRasterColumnSummary[TimelinePianoTileRasterizer.RasterSize];
+
+            Assert.True(source.TryAccumulateRasterColumns(
+                TimelineRasterAggregateKind.PianoNotes,
+                projection,
+                0,
+                128,
+                columns,
+                out _));
+
+            const ulong continuedDisplayLaneMask = 1UL << 27; // key 100 -> lane 27
+            const ulong seamStartDisplayLaneMask = 1UL << 3; // key 60 -> lane 67
+            Assert.NotEqual(0UL, columns[0].LaneMaskLow & continuedDisplayLaneMask);
+            Assert.Equal(0UL, columns[0].StartLaneMaskLow & continuedDisplayLaneMask);
+            Assert.NotEqual(0UL, columns[1].StartLaneMaskHigh & seamStartDisplayLaneMask);
+            Assert.NotEqual(0UL, columns[1].WideStartLaneMaskHigh & seamStartDisplayLaneMask);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void LowZoomSelectionUsesTheSameRoundedPixelColumnsAsTheBaseNoteLayer()
     {

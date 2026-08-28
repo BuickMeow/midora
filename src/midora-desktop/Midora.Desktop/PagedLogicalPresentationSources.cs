@@ -225,15 +225,35 @@ internal sealed class PagedLogicalNoteTimelineItemSource :
             }
             ulong laneMaskLow = 0;
             ulong laneMaskHigh = 0;
+            ulong startLaneMaskLow = 0;
+            ulong startLaneMaskHigh = 0;
+            ulong wideStartLaneMaskLow = 0;
+            ulong wideStartLaneMaskHigh = 0;
             for (int note = 0; note < 128; note++)
             {
                 bool occupied = note < 64
                     ? (value.LaneMaskLow & (1UL << note)) != 0
                     : (value.LaneMaskHigh & (1UL << (note - 64))) != 0;
-                if (!occupied) continue;
+                bool starts = note < 64
+                    ? (value.StartLaneMaskLow & (1UL << note)) != 0
+                    : (value.StartLaneMaskHigh & (1UL << (note - 64))) != 0;
+                bool startsWide = note < 64
+                    ? (value.WideStartLaneMaskLow & (1UL << note)) != 0
+                    : (value.WideStartLaneMaskHigh & (1UL << (note - 64))) != 0;
+                if (!occupied && !starts && !startsWide) continue;
                 int lane = 127 - note;
-                if (lane < 64) laneMaskLow |= 1UL << lane;
-                else laneMaskHigh |= 1UL << (lane - 64);
+                if (lane < 64)
+                {
+                    if (occupied) laneMaskLow |= 1UL << lane;
+                    if (starts) startLaneMaskLow |= 1UL << lane;
+                    if (startsWide) wideStartLaneMaskLow |= 1UL << lane;
+                }
+                else
+                {
+                    if (occupied) laneMaskHigh |= 1UL << (lane - 64);
+                    if (starts) startLaneMaskHigh |= 1UL << (lane - 64);
+                    if (startsWide) wideStartLaneMaskHigh |= 1UL << (lane - 64);
+                }
             }
             destination[column].Include(
                 laneMaskLow,
@@ -241,6 +261,14 @@ internal sealed class PagedLogicalNoteTimelineItemSource :
                 value.MinimumValue,
                 value.MaximumValue,
                 value.ApproximateSourceCount);
+            destination[column].IncludeStartBoundary(
+                startLaneMaskLow,
+                startLaneMaskHigh,
+                spansMultipleColumns: false);
+            destination[column].IncludeStartBoundary(
+                wideStartLaneMaskLow,
+                wideStartLaneMaskHigh,
+                spansMultipleColumns: true);
         }
     }
 

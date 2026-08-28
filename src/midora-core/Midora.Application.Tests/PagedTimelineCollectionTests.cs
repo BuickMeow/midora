@@ -527,6 +527,140 @@ public sealed class PagedTimelineCollectionTests
     }
 
     [Fact]
+    public void LowZoomRasterSummariesPreserveNoteStartsAcrossAllPagedModels()
+    {
+        using MidoraProject project = new(192);
+        Segment logicalSegment = new(project) { LengthTicks = 128 };
+        logicalSegment.Notes.AddRange(
+        [
+            new LogicalNote(project)
+            {
+                StartTick = 8,
+                LengthTicks = 32,
+                Note = 60,
+                Velocity = 100
+            },
+            new LogicalNote(project)
+            {
+                StartTick = 40,
+                LengthTicks = 32,
+                Note = 60,
+                Velocity = 100
+            }
+        ]);
+        SubVoice subVoice = new(project);
+        subVoice.Events.AddRange(
+        [
+            new TemplateEvent(project)
+            {
+                Kind = TemplateEventKind.Note,
+                Tick = 8,
+                LengthTicks = 32,
+                Number = 60,
+                Value = 100
+            },
+            new TemplateEvent(project)
+            {
+                Kind = TemplateEventKind.Note,
+                Tick = 40,
+                LengthTicks = 32,
+                Number = 60,
+                Value = 100
+            }
+        ]);
+        MidiSegment midiSegment = new(project) { LengthTicks = 128 };
+        midiSegment.Notes.AddRange(
+        [
+            new DirectMidiNote(project)
+            {
+                StartTick = 8,
+                LengthTicks = 32,
+                Key = 60,
+                NoteOnVelocity = 100
+            },
+            new DirectMidiNote(project)
+            {
+                StartTick = 40,
+                LengthTicks = 32,
+                Key = 60,
+                NoteOnVelocity = 100
+            }
+        ]);
+        var projection = new TimelineRasterColumnProjection(
+            0,
+            128,
+            0,
+            0,
+            0.125,
+            16);
+
+        TimelineRasterColumnSummary[] logical = new TimelineRasterColumnSummary[16];
+        logicalSegment.Notes.CreateQuerySnapshot().AccumulateRasterColumns(
+            projection,
+            60,
+            60,
+            logical);
+        TimelineRasterColumnSummary[] template = new TimelineRasterColumnSummary[16];
+        subVoice.Events.CreateQuerySnapshot().AccumulateNoteRasterColumns(
+            projection,
+            60,
+            60,
+            template);
+        TimelineRasterColumnSummary[] direct = new TimelineRasterColumnSummary[16];
+        Assert.True(midiSegment.Notes.CreateQuerySnapshot().TryAccumulateRasterColumns(
+            projection,
+            60,
+            60,
+            direct,
+            out _));
+
+        AssertStarts(logical);
+        AssertStarts(template);
+        AssertStarts(direct);
+
+        static void AssertStarts(TimelineRasterColumnSummary[] columns)
+        {
+            const ulong noteMask = 1UL << 60;
+            Assert.Equal(noteMask, columns[1].StartLaneMaskLow & noteMask);
+            Assert.Equal(noteMask, columns[5].StartLaneMaskLow & noteMask);
+            Assert.All(
+                columns.Where((_, index) => index is not 1 and not 5),
+                column => Assert.Equal(0UL, column.StartLaneMaskLow & noteMask));
+        }
+    }
+
+    [Fact]
+    public void LowZoomRasterSummaryDoesNotInventAStartAtAClippedTileEdge()
+    {
+        using MidoraProject project = new(192);
+        Segment segment = new(project) { LengthTicks = 256 };
+        segment.Notes.Add(new LogicalNote(project)
+        {
+            StartTick = 0,
+            LengthTicks = 256,
+            Note = 60,
+            Velocity = 100
+        });
+        var projection = new TimelineRasterColumnProjection(
+            128,
+            256,
+            128,
+            0,
+            0.125,
+            16);
+        TimelineRasterColumnSummary[] columns = new TimelineRasterColumnSummary[16];
+
+        segment.Notes.CreateQuerySnapshot().AccumulateRasterColumns(
+            projection,
+            60,
+            60,
+            columns);
+
+        Assert.Contains(columns, static column => column.HasContent);
+        Assert.All(columns, static column => Assert.Equal(0UL, column.StartLaneMaskLow));
+    }
+
+    [Fact]
     public void RasterColumnProjectionKeepsAdjacentTicksDistinctBeyondDoubleIntegerPrecision()
     {
         const long origin = 9_007_199_254_740_992;

@@ -2115,6 +2115,14 @@ public sealed class PureMidiContentPack : IDisposable
                             page.MinimumRasterValue / 127d,
                             page.MaximumRasterValue / 127d,
                             page.RecordCount);
+                        if (projection.StartTick <= page.MinimumTick
+                            && projection.EndTick >= page.MaximumActiveEndTick)
+                        {
+                            destination[first].IncludeStartBoundary(
+                                low,
+                                high,
+                                spansMultipleColumns: false);
+                        }
                     }
                     sourceWorkCount++;
                     continue;
@@ -2133,20 +2141,16 @@ public sealed class PureMidiContentPack : IDisposable
                     }
                     ulong low = value.Key < 64 ? 1UL << value.Key : 0;
                     ulong high = value.Key >= 64 ? 1UL << (value.Key - 64) : 0;
-                    projection.TryGetColumns(
+                    PagedTimelineRasterProjection.IncludeExact(
+                        destination,
+                        projection,
                         value.StartTick,
                         SafeNoteEnd(value),
-                        out int from,
-                        out int toExclusive);
-                    for (int column = from; column < toExclusive; column++)
-                    {
-                        destination[column].Include(
-                            low,
-                            high,
-                            value.NoteOnVelocity / 127d,
-                            value.NoteOnVelocity / 127d,
-                            1);
-                    }
+                        low,
+                        high,
+                        value.NoteOnVelocity / 127d,
+                        value.NoteOnVelocity / 127d,
+                        1);
                     sourceWorkCount++;
                 }
             }

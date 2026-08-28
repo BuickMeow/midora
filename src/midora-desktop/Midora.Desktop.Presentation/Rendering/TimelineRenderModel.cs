@@ -1931,7 +1931,8 @@ public sealed class TimelineRenderSnapshot
                 high,
                 item.Value,
                 item.Value,
-                1);
+                1,
+                kind == TimelineRasterAggregateKind.PianoNotes);
             sourceWorkCount++;
         }
         return _itemSource is not ITimelineRasterAggregateSource aggregate
@@ -1978,7 +1979,8 @@ public sealed class TimelineRenderSnapshot
         ulong laneMaskHigh,
         double minimumValue,
         double maximumValue,
-        int approximateSourceCount)
+        int approximateSourceCount,
+        bool includeStartBoundary)
     {
         if ((laneMaskLow | laneMaskHigh) == 0)
         {
@@ -1997,6 +1999,15 @@ public sealed class TimelineRenderSnapshot
                 minimumValue,
                 maximumValue,
                 approximateSourceCount);
+        }
+        if (includeStartBoundary
+            && contentStartTick >= projection.StartTick
+            && contentStartTick < projection.EndTick)
+        {
+            destination[first].IncludeStartBoundary(
+                laneMaskLow,
+                laneMaskHigh,
+                lastExclusive - first > 1);
         }
     }
 

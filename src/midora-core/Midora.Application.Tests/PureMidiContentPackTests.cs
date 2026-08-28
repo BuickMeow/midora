@@ -544,6 +544,56 @@ public sealed class PureMidiContentPackTests
     }
 
     [Fact]
+    public void PagedNoteRasterColumnsPreserveDistinctStartBoundaries()
+    {
+        string directory = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "midora-paged-content-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = System.IO.Path.Combine(directory, "raster-starts.mpk");
+        try
+        {
+            using MidoraProject project = new(192);
+            MidiSegment segment = new(project) { LengthTicks = 128 };
+            using PureMidiContentPackWriter writer = new(path);
+            writer.AddNote(segment.Id, new(
+                project.AllocateStableId(), 8, 32, 60, 100, 0, 0, 1));
+            writer.AddNote(segment.Id, new(
+                project.AllocateStableId(), 40, 32, 60, 100, 0, 2, 3));
+            using PureMidiContentPack pack = writer.Complete();
+            IPureMidiContentOverviewSource source =
+                Assert.IsAssignableFrom<IPureMidiContentOverviewSource>(
+                    pack.GetSegmentSource(segment.Id));
+            var projection = new TimelineRasterColumnProjection(
+                0,
+                128,
+                0,
+                0,
+                0.125,
+                16);
+            TimelineRasterColumnSummary[] columns = new TimelineRasterColumnSummary[16];
+
+            Assert.True(source.TryAccumulateNoteRasterColumns(
+                projection,
+                60,
+                60,
+                columns,
+                excludedIds: null,
+                out int sourceWorkCount));
+
+            const ulong noteMask = 1UL << 60;
+            Assert.Equal(noteMask, columns[1].StartLaneMaskLow & noteMask);
+            Assert.Equal(noteMask, columns[5].StartLaneMaskLow & noteMask);
+            Assert.InRange(sourceWorkCount, 1, 2);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void ExactOverviewKeepsSingleDeviceColumnPagesOnTheDirectoryFastPath()
     {
         string directory = System.IO.Path.Combine(

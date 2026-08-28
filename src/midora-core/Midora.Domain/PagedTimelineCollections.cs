@@ -53,6 +53,10 @@ public struct TimelineRasterColumnSummary
 {
     public ulong LaneMaskLow { get; private set; }
     public ulong LaneMaskHigh { get; private set; }
+    public ulong StartLaneMaskLow { get; private set; }
+    public ulong StartLaneMaskHigh { get; private set; }
+    public ulong WideStartLaneMaskLow { get; private set; }
+    public ulong WideStartLaneMaskHigh { get; private set; }
     public double MinimumValue { get; private set; }
     public double MaximumValue { get; private set; }
     public int ApproximateSourceCount { get; private set; }
@@ -81,6 +85,23 @@ public struct TimelineRasterColumnSummary
         ApproximateSourceCount = ApproximateSourceCount > int.MaxValue - approximateSourceCount
             ? int.MaxValue
             : ApproximateSourceCount + approximateSourceCount;
+    }
+
+    /// <summary>
+    /// Preserves source-object starts which remain distinguishable after the
+    /// fixed-column projection.  This is presentation-only metadata; it must
+    /// never be used to reconstruct timeline objects or semantic boundaries.
+    /// </summary>
+    public void IncludeStartBoundary(
+        ulong laneMaskLow,
+        ulong laneMaskHigh,
+        bool spansMultipleColumns)
+    {
+        StartLaneMaskLow |= laneMaskLow;
+        StartLaneMaskHigh |= laneMaskHigh;
+        if (!spansMultipleColumns) return;
+        WideStartLaneMaskLow |= laneMaskLow;
+        WideStartLaneMaskHigh |= laneMaskHigh;
     }
 }
 
@@ -2178,7 +2199,7 @@ internal sealed class PagedTimelineValuePage<TValue>
             }
             double rasterValue = _getRasterValue?.Invoke(value) ?? 0;
             if (!double.IsFinite(rasterValue)) rasterValue = 0;
-            PagedTimelineRasterProjection.Include(
+            PagedTimelineRasterProjection.IncludeExact(
                 destination,
                 projection,
                 _getStart(value),
@@ -2221,7 +2242,7 @@ internal sealed class PagedTimelineValuePage<TValue>
             }
             double rasterValue = _getRasterValue?.Invoke(value) ?? 0;
             if (!double.IsFinite(rasterValue)) rasterValue = 0;
-            PagedTimelineRasterProjection.Include(
+            PagedTimelineRasterProjection.IncludeExact(
                 destination,
                 projection,
                 _getStart(value),
@@ -2468,6 +2489,70 @@ internal static class PagedTimelineRasterProjection
                 maximumValue,
                 approximateSourceCount);
         }
+    }
+
+    public static void IncludeExact(
+        Span<TimelineRasterColumnSummary> destination,
+        TimelineRasterColumnProjection projection,
+        long contentStartTick,
+        long contentEndTick,
+        ulong laneMaskLow,
+        ulong laneMaskHigh,
+        double minimumValue,
+        double maximumValue,
+        int approximateSourceCount)
+    {
+        if (destination.IsEmpty
+            || (laneMaskLow | laneMaskHigh) == 0
+            || !projection.TryGetColumns(
+                contentStartTick,
+                contentEndTick,
+                out int first,
+                out int lastExclusive))
+        {
+            return;
+        }
+        for (int column = first; column < lastExclusive; column++)
+        {
+            destination[column].Include(
+                laneMaskLow,
+                laneMaskHigh,
+                minimumValue,
+                maximumValue,
+                approximateSourceCount);
+        }
+        if (contentStartTick >= projection.StartTick
+            && contentStartTick < projection.EndTick)
+        {
+            destination[first].IncludeStartBoundary(
+                laneMaskLow,
+                laneMaskHigh,
+                lastExclusive - first > 1);
+        }
+    }
+
+    public static void IncludeStartBoundary(
+        Span<TimelineRasterColumnSummary> destination,
+        TimelineRasterColumnProjection projection,
+        long contentStartTick,
+        long contentEndTick,
+        ulong laneMaskLow,
+        ulong laneMaskHigh)
+    {
+        if (contentStartTick < projection.StartTick
+            || contentStartTick >= projection.EndTick
+            || !projection.TryGetColumns(
+                contentStartTick,
+                contentEndTick,
+                out int first,
+                out int lastExclusive))
+        {
+            return;
+        }
+        destination[first].IncludeStartBoundary(
+            laneMaskLow,
+            laneMaskHigh,
+            lastExclusive - first > 1);
     }
 
     public static (ulong Low, ulong High) LaneRangeMask(int minimumLane, int maximumLane)
@@ -3407,16 +3492,29 @@ internal sealed class PagedTimelineSpatialBlockIndex<TValue>
             || (node.CategoryMask & ~requiredCategoryMask) == 0;
         if (columnSpan <= 1 && categoryExact)
         {
+            ulong low = node.LaneMaskLow & queryLaneMaskLow;
+            ulong high = node.LaneMaskHigh & queryLaneMaskHigh;
             PagedTimelineRasterProjection.Include(
                 destination,
                 projection,
                 node.MinimumStartTick,
                 node.MaximumEndTick,
-                node.LaneMaskLow & queryLaneMaskLow,
-                node.LaneMaskHigh & queryLaneMaskHigh,
+                low,
+                high,
                 node.MinimumRasterValue,
                 node.MaximumRasterValue,
                 node.ApproximateSourceCount);
+            if (projection.StartTick <= node.MinimumStartTick
+                && projection.EndTick >= node.MaximumEndTick)
+            {
+                PagedTimelineRasterProjection.IncludeStartBoundary(
+                    destination,
+                    projection,
+                    node.MinimumStartTick,
+                    node.MaximumEndTick,
+                    low,
+                    high);
+            }
             return;
         }
 
@@ -3446,16 +3544,29 @@ internal sealed class PagedTimelineSpatialBlockIndex<TValue>
                 || (block.CategoryMask & ~requiredCategoryMask) == 0;
             if (blockColumnSpan <= 1 && blockCategoryExact)
             {
+                ulong low = block.LaneMaskLow & queryLaneMaskLow;
+                ulong high = block.LaneMaskHigh & queryLaneMaskHigh;
                 PagedTimelineRasterProjection.Include(
                     destination,
                     projection,
                     block.MinimumStartTick,
                     block.MaximumEndTick,
-                    block.LaneMaskLow & queryLaneMaskLow,
-                    block.LaneMaskHigh & queryLaneMaskHigh,
+                    low,
+                    high,
                     block.MinimumRasterValue,
                     block.MaximumRasterValue,
                     block.Count);
+                if (projection.StartTick <= block.MinimumStartTick
+                    && projection.EndTick >= block.MaximumEndTick)
+                {
+                    PagedTimelineRasterProjection.IncludeStartBoundary(
+                        destination,
+                        projection,
+                        block.MinimumStartTick,
+                        block.MaximumEndTick,
+                        low,
+                        high);
+                }
             }
             else
             {

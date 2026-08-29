@@ -53,6 +53,7 @@
 ## 2026-08-29 修订摘要
 
 - Follow Playback 的程序级偏好默认值由 Enabled 改为 Disabled。缺失偏好或重置 UI 偏好时使用 Disabled；用户已显式保存的 Enabled/Disabled 选择继续原样读取。跟随播放的运行时交互、Project 数据、canonical 结果及消费者语义不变。
+- SMF 导入的已建模文本兼容顺序固定为严格 UTF-8 后严格 Windows-31J/CP932。Windows-31J Track Name 与 Marker 正常转为 Project Unicode 文本并报告 `Info`；两种编码均无法解码的 Track Name 或 Marker 只丢弃该文本事件并报告，不再拒绝其余结构合法的 MIDI。opaque 文本 Meta 继续按原始 payload 保存，SMF 导出仍统一使用严格 UTF-8。
 
 ## 2026-08-26 修订摘要
 

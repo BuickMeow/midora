@@ -445,6 +445,22 @@ public static partial class MidiProjectImportService
         IReadOnlyList<StreamingTrackPlan> tracks,
         ICollection<MidiProjectImportDiagnostic> diagnostics)
     {
+        StreamingTrackPlan[] decodedWindows31J = tracks
+            .Where(value => value.Windows31JTrackNameCount != 0)
+            .OrderBy(value => value.SourceTrackIndex)
+            .ToArray();
+        if (decodedWindows31J.Length != 0)
+        {
+            diagnostics.Add(new(
+                "MIDORA-MIDI-IMPORT-WINDOWS-31J-TRACK-NAME",
+                DiagnosticSeverity.Info,
+                $"Decoded {decodedWindows31J.Sum(value => value.Windows31JTrackNameCount)} "
+                + $"non-UTF-8 Track Name Meta event(s) from {decodedWindows31J.Length} "
+                + "source MTrk(s) as Windows-31J (code page 932).",
+                decodedWindows31J[0].SourceTrackIndex,
+                decodedWindows31J[0].FirstWindows31JTrackNameByteOffset));
+        }
+
         StreamingTrackPlan[] affected = tracks
             .Where(value => value.InvalidTrackNameCount != 0)
             .OrderBy(value => value.SourceTrackIndex)
@@ -455,6 +471,7 @@ public static partial class MidiProjectImportService
             DiagnosticSeverity.Info,
             $"Discarded {affected.Sum(value => value.InvalidTrackNameCount)} Track Name Meta event(s) "
             + $"from {affected.Length} source MTrk(s) because the payload was not strict UTF-8. "
+            + "The payload also could not be decoded as Windows-31J. "
             + "A remaining valid name was used when available; otherwise a deterministic fallback name was assigned.",
             affected[0].SourceTrackIndex,
             affected[0].FirstInvalidTrackNameByteOffset));
@@ -487,6 +504,10 @@ public static partial class MidiProjectImportService
         int conflictingKeySignatureDuplicateCount = 0;
         HashSet<long> keySignatureDuplicateTicks = [];
         ImportedConductorDuplicate? firstKeySignatureDuplicate = null;
+        int windows31JMarkerCount = 0;
+        ImportedTextLocation? firstWindows31JMarker = null;
+        int invalidMarkerCount = 0;
+        ImportedTextLocation? firstInvalidMarker = null;
         foreach (StreamingTrackPlan track in tracks.OrderBy(value => value.SourceTrackIndex))
         {
             foreach (ParsedStandardMidiFileEvent value in track.ConductorEvents.OrderBy(value => value.Order))
@@ -583,10 +604,14 @@ public static partial class MidiProjectImportService
                         keySignatures[value.Tick] = importedKeySignature;
                         break;
                     case StandardMidiFile.MarkerMetaType:
-                        project.Conductor.Markers.Add(new(
+                        ImportMarker(
                             project,
-                            value.Tick,
-                            DecodeStreamingUtf8(value, track.SourceTrackIndex, "Marker")));
+                            value,
+                            track.SourceTrackIndex,
+                            ref windows31JMarkerCount,
+                            ref firstWindows31JMarker,
+                            ref invalidMarkerCount,
+                            ref firstInvalidMarker);
                         break;
                 }
             }
@@ -605,6 +630,12 @@ public static partial class MidiProjectImportService
                 value.Tick,
                 value.SharpsFlats,
                 value.IsMinor));
+        AppendMarkerEncodingDiagnostics(
+            diagnostics,
+            windows31JMarkerCount,
+            firstWindows31JMarker,
+            invalidMarkerCount,
+            firstInvalidMarker);
         if (!tempos.ContainsKey(0))
         {
             project.Conductor.Tempos.Insert(0, new(project, 0, 120m));
@@ -675,23 +706,6 @@ public static partial class MidiProjectImportService
         if (value.Data.Length != expected)
             throw new InvalidDataException(
                 $"SMF MTrk {track.SourceTrackIndex} {kind} payload has length {value.Data.Length}, expected {expected}, at byte {value.SourceByteOffset}.");
-    }
-
-    private static string DecodeStreamingUtf8(
-        ParsedStandardMidiFileEvent value,
-        int trackIndex,
-        string kind)
-    {
-        try
-        {
-            return StrictUtf8.GetString(value.Data.Span);
-        }
-        catch (System.Text.DecoderFallbackException exception)
-        {
-            throw new InvalidDataException(
-                $"SMF MTrk {trackIndex} {kind} is not strict UTF-8 at byte {value.SourceByteOffset}.",
-                exception);
-        }
     }
 
     private sealed class StreamingFirstPassVisitor(
@@ -774,8 +788,16 @@ public static partial class MidiProjectImportService
             if (value.Kind == StandardMidiFileEventKind.Meta
                 && value.Type == StandardMidiFile.TrackNameMetaType)
             {
-                if (TryDecodeUtf8(value.Data.Span, out string decoded))
+                if (TryDecodeImportedText(
+                        value.Data.Span,
+                        out string decoded,
+                        out ImportedTextEncoding encoding))
                 {
+                    if (encoding == ImportedTextEncoding.Windows31J)
+                    {
+                        track.Windows31JTrackNameCount++;
+                        track.FirstWindows31JTrackNameByteOffset ??= sourceOffset;
+                    }
                     string normalized = decoded.Trim();
                     if (normalized.Length != 0) track.TrackName = normalized;
                 }
@@ -1235,6 +1257,8 @@ public static partial class MidiProjectImportService
         public List<StreamingMetadataCandidate> MetadataCandidates { get; } = [];
         public MidoraTrackMetadata? AcceptedMetadata { get; set; }
         public long? AcceptedMetadataOrder { get; set; }
+        public int Windows31JTrackNameCount { get; set; }
+        public int? FirstWindows31JTrackNameByteOffset { get; set; }
         public int InvalidTrackNameCount { get; set; }
         public int? FirstInvalidTrackNameByteOffset { get; set; }
 

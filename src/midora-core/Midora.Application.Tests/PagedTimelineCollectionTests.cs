@@ -527,7 +527,7 @@ public sealed class PagedTimelineCollectionTests
     }
 
     [Fact]
-    public void LowZoomRasterSummariesPreserveNoteStartsAcrossAllPagedModels()
+    public void LowZoomRasterSummariesPreserveNoteBoundariesAcrossAllPagedModels()
     {
         using MidoraProject project = new(192);
         Segment logicalSegment = new(project) { LengthTicks = 128 };
@@ -623,6 +623,8 @@ public sealed class PagedTimelineCollectionTests
             const ulong noteMask = 1UL << 60;
             Assert.Equal(noteMask, columns[1].StartLaneMaskLow & noteMask);
             Assert.Equal(noteMask, columns[5].StartLaneMaskLow & noteMask);
+            Assert.Equal(noteMask, columns[4].EndLaneMaskLow & noteMask);
+            Assert.Equal(noteMask, columns[8].EndLaneMaskLow & noteMask);
             Assert.All(
                 columns.Where((_, index) => index is not 1 and not 5),
                 column => Assert.Equal(0UL, column.StartLaneMaskLow & noteMask));

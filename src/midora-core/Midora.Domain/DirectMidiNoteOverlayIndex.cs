@@ -437,8 +437,14 @@ internal sealed class DirectMidiNoteOverlayIndex
         {
             destination[firstColumn].IncludeStartBoundary(
                 node.LaneMaskLow,
-                node.LaneMaskHigh,
-                spansMultipleColumns: false);
+                node.LaneMaskHigh);
+        }
+        if (node.MaximumEndTick > projection.StartTick
+            && node.MaximumEndTick <= projection.EndTick)
+        {
+            destination[lastExclusive - 1].IncludeEndBoundary(
+                node.LaneMaskLow,
+                node.LaneMaskHigh);
         }
     }
 

@@ -544,7 +544,7 @@ public sealed class PureMidiContentPackTests
     }
 
     [Fact]
-    public void PagedNoteRasterColumnsPreserveDistinctStartBoundaries()
+    public void PagedNoteRasterColumnsPreserveDistinctBoundaries()
     {
         string directory = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(),
@@ -585,6 +585,8 @@ public sealed class PureMidiContentPackTests
             const ulong noteMask = 1UL << 60;
             Assert.Equal(noteMask, columns[1].StartLaneMaskLow & noteMask);
             Assert.Equal(noteMask, columns[5].StartLaneMaskLow & noteMask);
+            Assert.Equal(noteMask, columns[4].EndLaneMaskLow & noteMask);
+            Assert.Equal(noteMask, columns[8].EndLaneMaskLow & noteMask);
             Assert.InRange(sourceWorkCount, 1, 2);
         }
         finally

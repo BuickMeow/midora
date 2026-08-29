@@ -228,13 +228,15 @@ public sealed class PagedLogicalPresentationTests
             Colors.OrangeRed,
             normalOutlineColor: brightOutline);
 
-        Color beforeBoundary = PixelColor(raster, 5, 15);
-        Color boundary = PixelColor(raster, 6, 15);
-        Color afterBoundary = PixelColor(raster, 7, 15);
-        Assert.True(boundary.R > beforeBoundary.R);
-        Assert.True(boundary.G > beforeBoundary.G);
-        Assert.True(boundary.B > beforeBoundary.B);
-        Assert.Equal(beforeBoundary, afterBoundary);
+        Color fill = PixelColor(raster, 4, 15);
+        Color leftEnd = PixelColor(raster, 5, 15);
+        Color rightStart = PixelColor(raster, 6, 15);
+        Color rightFill = PixelColor(raster, 7, 15);
+        Assert.Equal(leftEnd, rightStart);
+        Assert.Equal(fill, rightFill);
+        Assert.True(leftEnd.R > fill.R);
+        Assert.True(leftEnd.G > fill.G);
+        Assert.True(leftEnd.B > fill.B);
 
         static Color PixelColor(TimelineRasterBuffer buffer, int x, int y)
         {
@@ -295,7 +297,7 @@ public sealed class PagedLogicalPresentationTests
             Assert.NotEqual(0UL, columns[0].LaneMaskLow & continuedDisplayLaneMask);
             Assert.Equal(0UL, columns[0].StartLaneMaskLow & continuedDisplayLaneMask);
             Assert.NotEqual(0UL, columns[1].StartLaneMaskHigh & seamStartDisplayLaneMask);
-            Assert.NotEqual(0UL, columns[1].WideStartLaneMaskHigh & seamStartDisplayLaneMask);
+            Assert.NotEqual(0UL, columns[6].EndLaneMaskHigh & seamStartDisplayLaneMask);
         }
         finally
         {

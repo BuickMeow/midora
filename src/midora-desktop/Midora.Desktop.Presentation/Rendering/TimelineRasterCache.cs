@@ -799,7 +799,6 @@ public static class TimelinePianoTileRasterizer
         void DrawAggregate(ReadOnlySpan<TimelineRasterColumnSummary> summaries)
         {
             Color outline = normalOutlineColor ?? Darken(normalColor);
-            Color narrowBoundary = Mix(normalColor, outline, 0.55);
             for (int lane = firstLane; lane < lastLaneExclusive; lane++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -834,8 +833,6 @@ public static class TimelinePianoTileRasterizer
                         bottom,
                         normalColor,
                         0.78);
-                    int runWidth = column - runStart;
-                    bool hasHorizontalInterior = runWidth > 2;
                     DrawRectangleOutline(
                         pixels,
                         RasterSize,
@@ -845,11 +842,11 @@ public static class TimelinePianoTileRasterizer
                         bottom,
                         outline,
                         0.82,
-                        drawLeft: hasHorizontalInterior && runStart > 0,
+                        drawLeft: false,
                         drawTop: rawTop >= 0,
-                        drawRight: hasHorizontalInterior && column < RasterSize,
+                        drawRight: false,
                         drawBottom: rawBottom <= RasterSize);
-                    for (int boundaryColumn = runStart + 1;
+                    for (int boundaryColumn = runStart;
                          boundaryColumn < column;
                          boundaryColumn++)
                     {
@@ -858,66 +855,21 @@ public static class TimelinePianoTileRasterizer
                                 & (1UL << lane)) != 0
                             : (summaries[boundaryColumn].StartLaneMaskHigh
                                 & (1UL << (lane - 64))) != 0;
-                        if (!startsHere) continue;
-                        bool startsWide = lane < 64
-                            ? (summaries[boundaryColumn].WideStartLaneMaskLow
+                        bool endsHere = lane < 64
+                            ? (summaries[boundaryColumn].EndLaneMaskLow
                                 & (1UL << lane)) != 0
-                            : (summaries[boundaryColumn].WideStartLaneMaskHigh
+                            : (summaries[boundaryColumn].EndLaneMaskHigh
                                 & (1UL << (lane - 64))) != 0;
-                        if (startsWide)
-                        {
-                            FillRectangle(
-                                pixels,
-                                RasterSize,
-                                boundaryColumn,
-                                top,
-                                boundaryColumn + 1,
-                                bottom,
-                                outline,
-                                0.82);
-                            continue;
-                        }
-                        if (bottom - top <= 3)
-                        {
-                            // At the legal 3 px/key minimum there is only one
-                            // interior fill row.  Keep it intact and notch the
-                            // existing horizontal outline instead of turning
-                            // the entire one-column note into boundary color.
-                            FillRectangle(
-                                pixels,
-                                RasterSize,
-                                boundaryColumn,
-                                top,
-                                boundaryColumn + 1,
-                                Math.Min(top + 1, bottom),
-                                narrowBoundary,
-                                0.82);
-                            if (bottom - top > 1)
-                            {
-                                FillRectangle(
-                                    pixels,
-                                    RasterSize,
-                                    boundaryColumn,
-                                    bottom - 1,
-                                    boundaryColumn + 1,
-                                    bottom,
-                                    narrowBoundary,
-                                    0.82);
-                            }
-                            continue;
-                        }
-                        for (int y = top + 1; y < bottom - 1; y += 2)
-                        {
-                            FillRectangle(
-                                pixels,
-                                RasterSize,
-                                boundaryColumn,
-                                y,
-                                boundaryColumn + 1,
-                                y + 1,
-                                narrowBoundary,
-                                0.82);
-                        }
+                        if (!startsHere && !endsHere) continue;
+                        FillRectangle(
+                            pixels,
+                            RasterSize,
+                            boundaryColumn,
+                            top,
+                            boundaryColumn + 1,
+                            bottom,
+                            outline,
+                            0.82);
                     }
                     runStart = -1;
                 }
@@ -1124,17 +1076,6 @@ public static class TimelinePianoTileRasterizer
         (byte)(color.R * 0.42),
         (byte)(color.G * 0.42),
         (byte)(color.B * 0.42));
-
-    private static Color Mix(Color left, Color right, double rightWeight)
-    {
-        rightWeight = Math.Clamp(rightWeight, 0, 1);
-        double leftWeight = 1 - rightWeight;
-        return Color.FromArgb(
-            (byte)Math.Round(left.A * leftWeight + right.A * rightWeight),
-            (byte)Math.Round(left.R * leftWeight + right.R * rightWeight),
-            (byte)Math.Round(left.G * leftWeight + right.G * rightWeight),
-            (byte)Math.Round(left.B * leftWeight + right.B * rightWeight));
-    }
 
     private static byte Premultiply(byte value, byte alpha) =>
         (byte)((value * alpha + 127) / 255);

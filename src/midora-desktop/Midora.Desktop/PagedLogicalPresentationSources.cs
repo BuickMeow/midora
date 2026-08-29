@@ -227,8 +227,8 @@ internal sealed class PagedLogicalNoteTimelineItemSource :
             ulong laneMaskHigh = 0;
             ulong startLaneMaskLow = 0;
             ulong startLaneMaskHigh = 0;
-            ulong wideStartLaneMaskLow = 0;
-            ulong wideStartLaneMaskHigh = 0;
+            ulong endLaneMaskLow = 0;
+            ulong endLaneMaskHigh = 0;
             for (int note = 0; note < 128; note++)
             {
                 bool occupied = note < 64
@@ -237,22 +237,22 @@ internal sealed class PagedLogicalNoteTimelineItemSource :
                 bool starts = note < 64
                     ? (value.StartLaneMaskLow & (1UL << note)) != 0
                     : (value.StartLaneMaskHigh & (1UL << (note - 64))) != 0;
-                bool startsWide = note < 64
-                    ? (value.WideStartLaneMaskLow & (1UL << note)) != 0
-                    : (value.WideStartLaneMaskHigh & (1UL << (note - 64))) != 0;
-                if (!occupied && !starts && !startsWide) continue;
+                bool ends = note < 64
+                    ? (value.EndLaneMaskLow & (1UL << note)) != 0
+                    : (value.EndLaneMaskHigh & (1UL << (note - 64))) != 0;
+                if (!occupied && !starts && !ends) continue;
                 int lane = 127 - note;
                 if (lane < 64)
                 {
                     if (occupied) laneMaskLow |= 1UL << lane;
                     if (starts) startLaneMaskLow |= 1UL << lane;
-                    if (startsWide) wideStartLaneMaskLow |= 1UL << lane;
+                    if (ends) endLaneMaskLow |= 1UL << lane;
                 }
                 else
                 {
                     if (occupied) laneMaskHigh |= 1UL << (lane - 64);
                     if (starts) startLaneMaskHigh |= 1UL << (lane - 64);
-                    if (startsWide) wideStartLaneMaskHigh |= 1UL << (lane - 64);
+                    if (ends) endLaneMaskHigh |= 1UL << (lane - 64);
                 }
             }
             destination[column].Include(
@@ -263,12 +263,10 @@ internal sealed class PagedLogicalNoteTimelineItemSource :
                 value.ApproximateSourceCount);
             destination[column].IncludeStartBoundary(
                 startLaneMaskLow,
-                startLaneMaskHigh,
-                spansMultipleColumns: false);
-            destination[column].IncludeStartBoundary(
-                wideStartLaneMaskLow,
-                wideStartLaneMaskHigh,
-                spansMultipleColumns: true);
+                startLaneMaskHigh);
+            destination[column].IncludeEndBoundary(
+                endLaneMaskLow,
+                endLaneMaskHigh);
         }
     }
 

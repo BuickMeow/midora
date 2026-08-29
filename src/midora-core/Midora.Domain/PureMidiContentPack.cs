@@ -2120,8 +2120,10 @@ public sealed class PureMidiContentPack : IDisposable
                         {
                             destination[first].IncludeStartBoundary(
                                 low,
-                                high,
-                                spansMultipleColumns: false);
+                                high);
+                            destination[lastExclusive - 1].IncludeEndBoundary(
+                                low,
+                                high);
                         }
                     }
                     sourceWorkCount++;

@@ -2545,7 +2545,7 @@ public sealed class TimelineRenderingTests
     [InlineData(TimelineItemKind.LogicalNote)]
     [InlineData(TimelineItemKind.DirectMidiNote)]
     [InlineData(TimelineItemKind.TemplateNote)]
-    public void AggregatePianoTileKeepsOnePixelWideNoteDarkInsideItsVerticalOutline(
+    public void AggregatePianoTileRendersOnePixelWideNoteAsBrightOutline(
         TimelineItemKind kind)
     {
         TimelineRenderSnapshot snapshot = new(
@@ -2568,9 +2568,69 @@ public sealed class TimelineRenderingTests
         int occupiedColumn = Assert.Single(
             Enumerable.Range(0, raster.Width),
             x => Alpha(raster, x, 40) > 0);
-        Color outline = PixelColor(raster, occupiedColumn, 33);
-        Color fill = PixelColor(raster, occupiedColumn, 40);
-        Assert.True(fill.A > 0);
+        Color top = PixelColor(raster, occupiedColumn, 33);
+        Color middle = PixelColor(raster, occupiedColumn, 40);
+        Assert.Equal(top, middle);
+        Assert.Equal(Premultiplied(brightOutline, 0.82), middle);
+    }
+
+    [Theory]
+    [InlineData(TimelineItemKind.LogicalNote)]
+    [InlineData(TimelineItemKind.DirectMidiNote)]
+    [InlineData(TimelineItemKind.TemplateNote)]
+    public void AggregatePianoTileRendersTwoPixelWideNoteAsBrightOutline(
+        TimelineItemKind kind)
+    {
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "segment:aggregate-two-pixel-note",
+            [Item(1, 8, 24, 2, kind: kind)]);
+        Color darkFill = Color.FromRgb(68, 75, 80);
+        Color brightOutline = Color.FromRgb(163, 178, 190);
+
+        TimelineRasterBuffer raster = TimelinePianoTileRasterizer.Rasterize(
+            snapshot,
+            devicePixelsPerTick: 0.125,
+            devicePixelsPerLane: 16,
+            tileX: 0,
+            tileY: 0,
+            darkFill,
+            Color.FromRgb(232, 179, 75),
+            normalOutlineColor: brightOutline);
+
+        Color expected = Premultiplied(brightOutline, 0.82);
+        Assert.Equal(expected, PixelColor(raster, 2, 40));
+        Assert.Equal(expected, PixelColor(raster, 3, 40));
+    }
+
+    [Theory]
+    [InlineData(TimelineItemKind.LogicalNote)]
+    [InlineData(TimelineItemKind.DirectMidiNote)]
+    [InlineData(TimelineItemKind.TemplateNote)]
+    public void AggregatePianoTileKeepsFillInsideThreePixelWideNote(
+        TimelineItemKind kind)
+    {
+        TimelineRenderSnapshot snapshot = new(
+            1,
+            "segment:aggregate-three-pixel-note",
+            [Item(1, 8, 32, 2, kind: kind)]);
+        Color darkFill = Color.FromRgb(68, 75, 80);
+        Color brightOutline = Color.FromRgb(163, 178, 190);
+
+        TimelineRasterBuffer raster = TimelinePianoTileRasterizer.Rasterize(
+            snapshot,
+            devicePixelsPerTick: 0.125,
+            devicePixelsPerLane: 16,
+            tileX: 0,
+            tileY: 0,
+            darkFill,
+            Color.FromRgb(232, 179, 75),
+            normalOutlineColor: brightOutline);
+
+        Color outline = Premultiplied(brightOutline, 0.82);
+        Color fill = PixelColor(raster, 3, 40);
+        Assert.Equal(outline, PixelColor(raster, 2, 40));
+        Assert.Equal(outline, PixelColor(raster, 4, 40));
         Assert.True(outline.R > fill.R);
         Assert.True(outline.G > fill.G);
         Assert.True(outline.B > fill.B);
@@ -2603,13 +2663,15 @@ public sealed class TimelineRenderingTests
             Color.FromRgb(232, 179, 75),
             normalOutlineColor: brightOutline);
 
-        Color beforeBoundary = PixelColor(raster, 5, 40);
-        Color boundary = PixelColor(raster, 6, 40);
-        Color afterBoundary = PixelColor(raster, 7, 40);
-        Assert.True(boundary.R > beforeBoundary.R);
-        Assert.True(boundary.G > beforeBoundary.G);
-        Assert.True(boundary.B > beforeBoundary.B);
-        Assert.Equal(beforeBoundary, afterBoundary);
+        Color fill = PixelColor(raster, 4, 40);
+        Color leftEnd = PixelColor(raster, 5, 40);
+        Color rightStart = PixelColor(raster, 6, 40);
+        Color rightFill = PixelColor(raster, 7, 40);
+        Assert.Equal(leftEnd, rightStart);
+        Assert.Equal(fill, rightFill);
+        Assert.True(leftEnd.R > fill.R);
+        Assert.True(leftEnd.G > fill.G);
+        Assert.True(leftEnd.B > fill.B);
     }
 
     [Theory]
@@ -2639,18 +2701,20 @@ public sealed class TimelineRenderingTests
             Color.FromRgb(232, 179, 75),
             normalOutlineColor: brightOutline);
 
-        Color fill = PixelColor(raster, 5, 40);
-        Color boundary = PixelColor(raster, 6, 40);
-        Assert.True(boundary.R > fill.R);
-        Assert.True(boundary.G > fill.G);
-        Assert.True(boundary.B > fill.B);
+        Color fill = PixelColor(raster, 4, 40);
+        Color leftEnd = PixelColor(raster, 5, 40);
+        Color rightStart = PixelColor(raster, 6, 40);
+        Assert.Equal(leftEnd, rightStart);
+        Assert.True(leftEnd.R > fill.R);
+        Assert.True(leftEnd.G > fill.G);
+        Assert.True(leftEnd.B > fill.B);
     }
 
     [Theory]
     [InlineData(TimelineItemKind.LogicalNote)]
     [InlineData(TimelineItemKind.DirectMidiNote)]
     [InlineData(TimelineItemKind.TemplateNote)]
-    public void AggregatePianoTileSeparatesAdjacentOnePixelNotesWithoutMakingThemSolidBright(
+    public void AggregatePianoTileRendersAdjacentOnePixelNotesAsBrightOutline(
         TimelineItemKind kind)
     {
         TimelineRenderSnapshot snapshot = new(
@@ -2673,24 +2737,18 @@ public sealed class TimelineRenderingTests
             Color.FromRgb(232, 179, 75),
             normalOutlineColor: brightOutline);
 
-        Color firstFill = PixelColor(raster, 2, 41);
-        Color narrowBoundary = PixelColor(raster, 3, 40);
-        Color secondFill = PixelColor(raster, 3, 41);
-        Color fullOutline = PixelColor(raster, 3, 33);
-        Assert.Equal(firstFill, secondFill);
-        Assert.True(narrowBoundary.R > secondFill.R);
-        Assert.True(narrowBoundary.G > secondFill.G);
-        Assert.True(narrowBoundary.B > secondFill.B);
-        Assert.True(narrowBoundary.R < fullOutline.R);
-        Assert.True(narrowBoundary.G < fullOutline.G);
-        Assert.True(narrowBoundary.B < fullOutline.B);
+        Color expected = Premultiplied(brightOutline, 0.82);
+        Assert.Equal(expected, PixelColor(raster, 2, 33));
+        Assert.Equal(expected, PixelColor(raster, 2, 41));
+        Assert.Equal(expected, PixelColor(raster, 3, 33));
+        Assert.Equal(expected, PixelColor(raster, 3, 41));
     }
 
     [Theory]
     [InlineData(TimelineItemKind.LogicalNote)]
     [InlineData(TimelineItemKind.DirectMidiNote)]
     [InlineData(TimelineItemKind.TemplateNote)]
-    public void AggregatePianoTileKeepsFillAtTheThreePixelLaneMinimum(
+    public void AggregatePianoTileKeepsOnePixelNotesBrightAtTheThreePixelLaneMinimum(
         TimelineItemKind kind)
     {
         TimelineRenderSnapshot snapshot = new(
@@ -2713,17 +2771,13 @@ public sealed class TimelineRenderingTests
             Color.FromRgb(232, 179, 75),
             normalOutlineColor: brightOutline);
 
-        Color firstFill = PixelColor(raster, 2, 8);
-        Color secondFill = PixelColor(raster, 3, 8);
-        Color ordinaryOutline = PixelColor(raster, 2, 7);
-        Color notchedOutline = PixelColor(raster, 3, 7);
-        Assert.Equal(firstFill, secondFill);
-        Assert.True(notchedOutline.R < ordinaryOutline.R);
-        Assert.True(notchedOutline.G < ordinaryOutline.G);
-        Assert.True(notchedOutline.B < ordinaryOutline.B);
-        Assert.True(notchedOutline.R > secondFill.R);
-        Assert.True(notchedOutline.G > secondFill.G);
-        Assert.True(notchedOutline.B > secondFill.B);
+        Color expected = Premultiplied(brightOutline, 0.82);
+        Assert.Equal(expected, PixelColor(raster, 2, 7));
+        Assert.Equal(expected, PixelColor(raster, 2, 8));
+        Assert.Equal(expected, PixelColor(raster, 2, 9));
+        Assert.Equal(expected, PixelColor(raster, 3, 7));
+        Assert.Equal(expected, PixelColor(raster, 3, 8));
+        Assert.Equal(expected, PixelColor(raster, 3, 9));
     }
 
     [Theory]
@@ -5738,6 +5792,21 @@ public sealed class TimelineRenderingTests
             buffer.Pixels[offset + 2],
             buffer.Pixels[offset + 1],
             buffer.Pixels[offset]);
+    }
+
+    private static Color Premultiplied(Color color, double opacity)
+    {
+        byte alpha = (byte)Math.Clamp(
+            (int)Math.Round(color.A * opacity, MidpointRounding.AwayFromZero),
+            0,
+            255);
+        static byte Apply(byte value, byte alpha) =>
+            (byte)((value * alpha + 127) / 255);
+        return Color.FromArgb(
+            alpha,
+            Apply(color.R, alpha),
+            Apply(color.G, alpha),
+            Apply(color.B, alpha));
     }
 
     private static (int Width, int Height) OpaqueSize(TimelineRasterBuffer buffer)

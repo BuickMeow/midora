@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Midora.Domain;
 
 namespace Midora.Application.Tests;
@@ -24,6 +26,34 @@ public sealed class ApplicationPreferencesStoreTests
         Assert.Equal(PlaybackPreferences.Default, result.Preferences.Playback);
         Assert.Equal(AppearancePreferences.Default, result.Preferences.Appearance);
         Assert.Empty(result.Preferences.SoundFonts);
+        Assert.False(result.Preferences.DesktopUi.FollowPlayback);
+    }
+
+    [Fact]
+    public void FollowPlaybackDefaultsOffButKeepsAnExplicitEnabledPreference()
+    {
+        using TemporaryDirectory directory = new();
+        string path = Path.Combine(directory.Path, "preferences.json");
+        ApplicationPreferencesStore store = new(path);
+        ApplicationPreferences explicitlyEnabled = ApplicationPreferences.Default with
+        {
+            DesktopUi = ApplicationPreferences.Default.DesktopUi with
+            {
+                FollowPlayback = true
+            }
+        };
+
+        Assert.True(store.Save(explicitlyEnabled).Succeeded);
+        Assert.True(store.Load().Preferences.DesktopUi.FollowPlayback);
+
+        JsonObject root = JsonNode.Parse(File.ReadAllText(path, Encoding.UTF8))!.AsObject();
+        Assert.True(root["desktopUi"]!.AsObject().Remove("followPlayback"));
+        File.WriteAllText(
+            path,
+            root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        Assert.False(store.Load().Preferences.DesktopUi.FollowPlayback);
     }
 
     [Fact]

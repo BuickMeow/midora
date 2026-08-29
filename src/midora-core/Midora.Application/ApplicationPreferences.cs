@@ -227,7 +227,7 @@ public sealed record DesktopUiPreferences(
 {
     public bool ProjectPanelVisible { get; init; } = true;
     public bool BottomPanelVisible { get; init; } = true;
-    public bool FollowPlayback { get; init; } = true;
+    public bool FollowPlayback { get; init; } = false;
 
     public static DesktopUiPreferences Default { get; } = new(
         1440,

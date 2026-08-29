@@ -111,7 +111,8 @@ public sealed class ApplicationPreferencesStore
                     {
                         ProjectPanelVisible = desktop.ProjectPanelVisible ?? true,
                         BottomPanelVisible = desktop.BottomPanelVisible ?? true,
-                        FollowPlayback = desktop.FollowPlayback ?? true
+                        FollowPlayback = desktop.FollowPlayback
+                            ?? DesktopUiPreferences.Default.FollowPlayback
                     },
                 Playback = new PlaybackPreferences(
                     dto.MasterVolumeDecibels ?? PlaybackPreferences.Default.MasterVolumeDecibels,

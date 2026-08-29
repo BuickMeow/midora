@@ -202,3 +202,10 @@
 - Presentation outputs: Arrangement displays `(absolute tick)` and Logical Segment, Pure MIDI Segment, and SubVoice Piano Rolls display `(local tick, Key Number)` at the left edge of their upper-right tool groups, followed by a separator before the remaining tools. Readouts explicitly use the Primary text foreground shared with Event/Parameter Lane coordinates. The entire readout group is hidden outside the corresponding timeline content; Piano Roll blank space outside the 128-key domain is also excluded.
 - Coordinate and ownership boundary: readouts reuse the same viewport and snapping transforms as editing. They are transient session UI state only and do not move the Edit Cursor, mutate Project data, enter Undo/Redo, affect compilation/canonical consumers, or persist.
 - Failure boundary and verification: unsupported surface modes expose no readout, while Event/Parameter Lane `(tick, value)` behavior remains unchanged. Automated WPF coverage checks Arrangement absolute tick, Piano Roll local tick/key conversion, and content-boundary clearing.
+
+## 2026-08-29 Follow Playback disabled default
+
+- Input and persistence owner: a missing Application Preferences file, a `desktopUi` object without `followPlayback`, or an explicit UI-preference reset. An explicitly persisted `true` or `false` remains authoritative.
+- Runtime output: Follow Playback initializes disabled for the default cases above; the View menu and command-bar toggle continue to mirror the stored preference. Enabling it still immediately follows the active playback cursor through the existing interaction contract.
+- Boundary: this changes only the program-level preference default. It does not modify Project source, `.midora`, Undo/Redo, playback state, canonical compilation, MIDI export, audio rendering, or the follow algorithm.
+- Verification: Application Preferences tests cover a missing file, a legacy/missing property, and round-trip preservation of an explicit enabled value.

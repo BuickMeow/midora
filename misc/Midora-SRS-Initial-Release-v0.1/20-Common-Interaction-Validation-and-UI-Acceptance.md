@@ -1480,7 +1480,7 @@ DPI override
 ```
 ### 20.14.9 初版默认值
 ```text
-Follow Playback: Enabled
+Follow Playback: Disabled
 Current Tool: Select
 Playback Output Device: System Default
 Render-Ahead Buffer: 100 ms
